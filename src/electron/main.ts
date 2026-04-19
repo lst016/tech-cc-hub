@@ -5,13 +5,61 @@ import { getPreloadPath, getUIPath, getIconPath } from "./pathResolver.js";
 import { getStaticData, pollResources, stopPolling } from "./test.js";
 import { handleClientEvent, sessions, cleanupAllSessions } from "./ipc-handlers.js";
 import { generateSessionTitle } from "./libs/util.js";
-import { saveApiConfig } from "./libs/config-store.js";
+import { loadApiConfigSettings, saveApiConfigSettings } from "./libs/config-store.js";
 import { getCurrentApiConfig } from "./libs/claude-settings.js";
 import type { ClientEvent } from "./types.js";
 import "./libs/claude-settings.js";
 
 let cleanupComplete = false;
 let mainWindow: BrowserWindow | null = null;
+
+async function scheduleDevAutostart(): Promise<void> {
+    if (!isDev()) return;
+
+    const prompt = process.env.AGENT_COWORK_DEV_AUTOSTART_PROMPT?.trim();
+    if (!prompt) return;
+    const continuePrompt = process.env.AGENT_COWORK_DEV_CONTINUE_PROMPT?.trim();
+
+    const cwd = process.env.AGENT_COWORK_DEV_AUTOSTART_CWD?.trim() || undefined;
+
+    setTimeout(async () => {
+        try {
+            const title = await generateSessionTitle(prompt);
+            handleClientEvent({
+                type: "session.start",
+                payload: { title, prompt, cwd, allowedTools: "Read,Edit,Bash" }
+            });
+
+            if (!continuePrompt) return;
+
+            const deadline = Date.now() + 60_000;
+            const timer = setInterval(() => {
+                if (!sessions) return;
+                const latest = sessions
+                    .listSessions()
+                    .find((session) => session.lastPrompt === prompt);
+
+                if (!latest) return;
+
+                if (latest.status === "completed" && latest.claudeSessionId) {
+                    clearInterval(timer);
+                    handleClientEvent({
+                        type: "session.continue",
+                        payload: { sessionId: latest.id, prompt: continuePrompt }
+                    });
+                    return;
+                }
+
+                if (latest.status === "error" || Date.now() > deadline) {
+                    clearInterval(timer);
+                    console.error("[dev-autostart] Continue prompt skipped because the initial session did not complete in time.");
+                }
+            }, 1500);
+        } catch (error) {
+            console.error("[dev-autostart] Failed to bootstrap session:", error);
+        }
+    }, 1800);
+}
 
 function killViteDevServer(): void {
     if (!isDev()) return;
@@ -58,9 +106,9 @@ app.on("ready", () => {
 
     // Create main window
     mainWindow = new BrowserWindow({
-        width: 1200,
-        height: 800,
-        minWidth: 900,
+        width: 1480,
+        height: 900,
+        minWidth: 1180,
         minHeight: 600,
         webPreferences: {
             preload: getPreloadPath(),
@@ -80,6 +128,7 @@ app.on("ready", () => {
     });
 
     pollResources(mainWindow);
+    void scheduleDevAutostart();
 
     ipcMainHandle("getStaticData", () => {
         return getStaticData();
@@ -116,7 +165,7 @@ app.on("ready", () => {
 
     // Handle API config
     ipcMainHandle("get-api-config", () => {
-        return getCurrentApiConfig();
+        return loadApiConfigSettings();
     });
 
     ipcMainHandle("check-api-config", () => {
@@ -126,7 +175,7 @@ app.on("ready", () => {
 
     ipcMainHandle("save-api-config", (_: any, config: any) => {
         try {
-            saveApiConfig(config);
+            saveApiConfigSettings(config);
             return { success: true };
         } catch (error) {
             return { 

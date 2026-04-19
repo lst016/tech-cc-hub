@@ -102,6 +102,32 @@ code, pre, textarea.mono, input.mono {
   background: #9B9B96;
 }
 
+.chat-scroll {
+  scrollbar-gutter: stable both-edges;
+}
+
+.chat-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.chat-scroll::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 999px;
+}
+
+.chat-scroll::-webkit-scrollbar-thumb {
+  background: rgba(26, 25, 21, 0.18);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.chat-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(26, 25, 21, 0.28);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
 /* Shimmer animation for partial message loading */
 @keyframes shimmer {
   0% { transform: translateX(-120%); }

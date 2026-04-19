@@ -6,7 +6,7 @@ import type {
   SDKResultMessage,
   SDKUserMessage
 } from "@anthropic-ai/claude-agent-sdk";
-import type { StreamMessage } from "../types";
+import type { PromptAttachment, StreamMessage } from "../types";
 import type { PermissionRequest } from "../store/useAppStore";
 import MDContent from "../render/markdown";
 import { DecisionPanel } from "./DecisionPanel";
@@ -74,19 +74,19 @@ const SessionResult = ({ message }: { message: SDKResultMessage }) => {
 
   return (
     <div className="flex flex-col gap-2 mt-4">
-      <div className="header text-accent">Session Result</div>
+      <div className="header text-accent">会话结果</div>
       <div className="flex flex-col rounded-xl px-4 py-3 border border-ink-900/10 bg-surface-secondary space-y-2">
         <div className="flex flex-wrap items-center gap-2 text-[14px]">
-          <span className="font-normal">Duration</span>
+          <span className="font-normal">总耗时</span>
           <span className="inline-flex items-center rounded-full bg-surface-tertiary px-2.5 py-0.5 text-ink-700 text-[13px]">{formatMinutes(message.duration_ms)}</span>
-          <span className="font-normal">API</span>
+          <span className="font-normal">API 耗时</span>
           <span className="inline-flex items-center rounded-full bg-surface-tertiary px-2.5 py-0.5 text-ink-700 text-[13px]">{formatMinutes(message.duration_api_ms)}</span>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[14px]">
-          <span className="font-normal">Usage</span>
-          <span className="inline-flex items-center rounded-full bg-accent/10 px-2.5 py-0.5 text-accent text-[13px]">Cost ${formatUsd(message.total_cost_usd)}</span>
-          <span className="inline-flex items-center rounded-full bg-surface-tertiary px-2.5 py-0.5 text-ink-700 text-[13px]">Input {formatMillions(message.usage?.input_tokens)}</span>
-          <span className="inline-flex items-center rounded-full bg-surface-tertiary px-2.5 py-0.5 text-ink-700 text-[13px]">Output {formatMillions(message.usage?.output_tokens)}</span>
+          <span className="font-normal">用量</span>
+          <span className="inline-flex items-center rounded-full bg-accent/10 px-2.5 py-0.5 text-accent text-[13px]">费用 ${formatUsd(message.total_cost_usd)}</span>
+          <span className="inline-flex items-center rounded-full bg-surface-tertiary px-2.5 py-0.5 text-ink-700 text-[13px]">输入 {formatMillions(message.usage?.input_tokens)}</span>
+          <span className="inline-flex items-center rounded-full bg-surface-tertiary px-2.5 py-0.5 text-ink-700 text-[13px]">输出 {formatMillions(message.usage?.output_tokens)}</span>
         </div>
       </div>
     </div>
@@ -110,7 +110,7 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
   const isFirstRender = useRef(true);
   let lines: string[] = [];
   
-  if (messageContent.type !== "tool_result") return null;
+  if (typeof messageContent === "string" || messageContent.type !== "tool_result") return null;
   
   const toolUseId = messageContent.tool_use_id;
   const status: ToolStatus = messageContent.is_error ? "error" : "success";
@@ -121,7 +121,10 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
   } else {
     try {
       if (Array.isArray(messageContent.content)) {
-        lines = messageContent.content.map((item: any) => item.text || "").join("\n").split("\n");
+        lines = messageContent.content
+          .map((item) => typeof item === "string" ? item : ("text" in item ? item.text ?? "" : ""))
+          .join("\n")
+          .split("\n");
       } else {
         lines = String(messageContent.content).split("\n");
       }
@@ -140,7 +143,7 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
 
   return (
     <div className="flex flex-col mt-4">
-      <div className="header text-accent">Output</div>
+      <div className="header text-accent">输出内容</div>
       <div className="mt-2 rounded-xl bg-surface-tertiary p-3">
         <pre className={`text-sm whitespace-pre-wrap break-words font-mono ${isError ? "text-red-500" : "text-ink-700"}`}>
           {isMarkdownContent ? <MDContent text={visibleContent} /> : visibleContent}
@@ -148,7 +151,7 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
         {hasMoreLines && (
           <button onClick={() => setIsExpanded(!isExpanded)} className="mt-2 text-sm text-accent hover:text-accent-hover transition-colors flex items-center gap-1">
             <span>{isExpanded ? "▲" : "▼"}</span>
-            <span>{isExpanded ? "Collapse" : `Show ${lines.length - MAX_VISIBLE_LINES} more lines`}</span>
+            <span>{isExpanded ? "收起" : `展开剩余 ${lines.length - MAX_VISIBLE_LINES} 行`}</span>
           </button>
         )}
         <div ref={bottomRef} />
@@ -236,7 +239,7 @@ const AskUserQuestionCard = ({
     <div className="flex flex-col gap-2 rounded-[1rem] bg-surface-tertiary px-3 py-2 mt-4">
       <div className="flex flex-row items-center gap-2">
         <StatusDot variant="success" isActive={false} isVisible={true} />
-        <span className="inline-flex items-center rounded-md text-accent py-0.5 text-sm font-medium">AskUserQuestion</span>
+        <span className="inline-flex items-center rounded-md text-accent py-0.5 text-sm font-medium">向你提问</span>
       </div>
       {questions.map((q, idx) => (
         <div key={idx} className="text-sm text-ink-700 ml-4">{q.question}</div>
@@ -261,25 +264,71 @@ const SystemInfoCard = ({ message, showIndicator = false }: { message: SDKMessag
     <div className="flex flex-col gap-2 mt-2">
       <div className="header text-accent flex items-center gap-2">
         <StatusDot variant="success" isActive={showIndicator} isVisible={showIndicator} />
-        System Init
+        系统初始化
       </div>
       <div className="flex flex-col rounded-xl px-4 py-2 border border-ink-900/10 bg-surface-secondary space-y-1">
-        <InfoItem name="Session ID" value={systemMsg.session_id || "-"} />
-        <InfoItem name="Model Name" value={systemMsg.model || "-"} />
-        <InfoItem name="Permission Mode" value={systemMsg.permissionMode || "-"} />
-        <InfoItem name="Working Directory" value={systemMsg.cwd || "-"} />
+        <InfoItem name="会话编号" value={systemMsg.session_id || "-"} />
+        <InfoItem name="模型名称" value={systemMsg.model || "-"} />
+        <InfoItem name="权限模式" value={systemMsg.permissionMode || "-"} />
+        <InfoItem name="工作目录" value={systemMsg.cwd || "-"} />
       </div>
     </div>
   );
 };
 
-const UserMessageCard = ({ message, showIndicator = false }: { message: { type: "user_prompt"; prompt: string }; showIndicator?: boolean }) => (
+const AttachmentChip = ({ attachment }: { attachment: PromptAttachment }) => (
+  <div className="rounded-2xl border border-ink-900/10 bg-surface-secondary px-3 py-2">
+    <div className="text-xs font-medium text-ink-700">{attachment.name}</div>
+    <div className="mt-1 text-[11px] text-muted">
+      {attachment.kind === "image" ? "图片附件" : "文本附件"}
+    </div>
+  </div>
+);
+
+const UserMessageCard = ({ message, showIndicator = false }: { message: { type: "user_prompt"; prompt: string; attachments?: PromptAttachment[] }; showIndicator?: boolean }) => (
   <div className="flex flex-col mt-4">
     <div className="header text-accent flex items-center gap-2">
       <StatusDot variant="success" isActive={showIndicator} isVisible={showIndicator} />
-      User
+      用户
     </div>
-    <MDContent text={message.prompt} />
+    {message.prompt.trim() ? (
+      <MDContent text={message.prompt} />
+    ) : (
+      <div className="rounded-2xl border border-ink-900/10 bg-surface-secondary px-4 py-3 text-sm text-muted">
+        已发送附件
+      </div>
+    )}
+    {message.attachments && message.attachments.length > 0 && (
+      <div className="mt-3 grid gap-3">
+        <div className="grid gap-2 sm:grid-cols-2">
+          {message.attachments.map((attachment) => (
+            <AttachmentChip key={attachment.id} attachment={attachment} />
+          ))}
+        </div>
+        {message.attachments.map((attachment) => {
+          if (attachment.kind === "image") {
+            return (
+              <div key={`${attachment.id}-preview`} className="overflow-hidden rounded-2xl border border-ink-900/10 bg-surface-secondary p-2">
+                <img
+                  src={attachment.preview || attachment.data}
+                  alt={attachment.name}
+                  className="max-h-64 w-full rounded-xl object-contain"
+                />
+              </div>
+            );
+          }
+
+          return (
+            <div key={`${attachment.id}-preview`} className="rounded-2xl border border-ink-900/10 bg-surface-secondary p-3">
+              <div className="mb-2 text-xs font-medium text-muted">{attachment.name}</div>
+              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-sm text-ink-700">
+                {attachment.preview || attachment.data}
+              </pre>
+            </div>
+          );
+        })}
+      </div>
+    )}
   </div>
 );
 
@@ -314,7 +363,7 @@ export function MessageCard({
     }
     return (
       <div className="flex flex-col gap-2 mt-4">
-        <div className="header text-error">Session Error</div>
+        <div className="header text-error">会话错误</div>
         <div className="rounded-xl bg-error-light p-3">
           <pre className="text-sm text-error whitespace-pre-wrap">{JSON.stringify(sdkMessage, null, 2)}</pre>
         </div>
@@ -329,10 +378,10 @@ export function MessageCard({
         {contents.map((content: MessageContent, idx: number) => {
           const isLastContent = idx === contents.length - 1;
           if (content.type === "thinking") {
-            return <AssistantBlockCard key={idx} title="Thinking" text={content.thinking} showIndicator={isLastContent && showIndicator} />;
+            return <AssistantBlockCard key={idx} title="思考" text={content.thinking} showIndicator={isLastContent && showIndicator} />;
           }
           if (content.type === "text") {
-            return <AssistantBlockCard key={idx} title="Assistant" text={content.text} showIndicator={isLastContent && showIndicator} />;
+            return <AssistantBlockCard key={idx} title="助手" text={content.text} showIndicator={isLastContent && showIndicator} />;
           }
           if (content.type === "tool_use") {
             if (content.name === "AskUserQuestion") {
@@ -347,11 +396,13 @@ export function MessageCard({
   }
 
   if (sdkMessage.type === "user") {
-    const contents = sdkMessage.message.content;
+    const contents = Array.isArray(sdkMessage.message.content)
+      ? sdkMessage.message.content
+      : [sdkMessage.message.content];
     return (
       <>
         {contents.map((content: ToolResultContent, idx: number) => {
-          if (content.type === "tool_result") {
+          if (typeof content !== "string" && content.type === "tool_result") {
             return <ToolResult key={idx} messageContent={content} />;
           }
           return null;

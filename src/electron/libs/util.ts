@@ -22,6 +22,15 @@ export function getEnhancedEnv(): Record<string, string | undefined> {
 
 export const generateSessionTitle = async (userIntent: string | null) => {
   if (!userIntent) return "New Session";
+  const trimmedIntent = userIntent.trim();
+
+  if (trimmedIntent.startsWith("/")) {
+    const parts = trimmedIntent.slice(1).split(/\s+/).filter(Boolean);
+    const command = parts[0] ?? "command";
+    const context = parts.slice(1, 3).join(" ");
+    const title = context ? `/${command} ${context}` : `/${command}`;
+    return title.slice(0, 60);
+  }
 
   // Get the Claude Code path when needed, not at module load time
   const claudeCodePath = getClaudeCodePath();
@@ -31,7 +40,7 @@ export const generateSessionTitle = async (userIntent: string | null) => {
   try {
     const result: SDKResultMessage = await unstable_v2_prompt(
       `please analynis the following user input to generate a short but clearly title to identify this conversation theme:
-      ${userIntent}
+      ${trimmedIntent}
       directly output the title, do not include any other content`, {
       model: getCurrentApiConfig()?.model || "claude-sonnet",
       env: currentEnv,

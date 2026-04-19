@@ -87,6 +87,20 @@ export function handleClientEvent(event: ClientEvent) {
     return;
   }
 
+  if (event.type === "session.create") {
+    const session = sessions.createSession({
+      cwd: event.payload.cwd,
+      title: event.payload.title || "新聊天",
+      allowedTools: event.payload.allowedTools,
+    });
+
+    emit({
+      type: "session.status",
+      payload: { sessionId: session.id, status: "idle", title: session.title, cwd: session.cwd }
+    });
+    return;
+  }
+
   if (event.type === "session.start") {
     const session = sessions.createSession({
       cwd: event.payload.cwd,
@@ -106,11 +120,12 @@ export function handleClientEvent(event: ClientEvent) {
 
     emit({
       type: "stream.user_prompt",
-      payload: { sessionId: session.id, prompt: event.payload.prompt }
+      payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: event.payload.attachments }
     });
 
     runClaude({
       prompt: event.payload.prompt,
+      attachments: event.payload.attachments,
       session,
       resumeSessionId: session.claudeSessionId,
       onEvent: emit,
@@ -150,13 +165,7 @@ export function handleClientEvent(event: ClientEvent) {
       return;
     }
 
-    if (!session.claudeSessionId) {
-      emit({
-        type: "runner.error",
-        payload: { sessionId: session.id, message: "Session has no resume id yet." }
-      });
-      return;
-    }
+    const resumeSessionId = session.claudeSessionId;
 
     sessions.updateSession(session.id, { status: "running", lastPrompt: event.payload.prompt });
     emit({
@@ -166,13 +175,14 @@ export function handleClientEvent(event: ClientEvent) {
 
     emit({
       type: "stream.user_prompt",
-      payload: { sessionId: session.id, prompt: event.payload.prompt }
+      payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: event.payload.attachments }
     });
 
     runClaude({
       prompt: event.payload.prompt,
+      attachments: event.payload.attachments,
       session,
-      resumeSessionId: session.claudeSessionId,
+      resumeSessionId,
       onEvent: emit,
       onSessionUpdate: (updates) => {
         sessions.updateSession(session.id, updates);

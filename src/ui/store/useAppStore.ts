@@ -12,6 +12,7 @@ export type SessionView = {
   title: string;
   status: SessionStatus;
   cwd?: string;
+  slashCommands?: string[];
   messages: StreamMessage[];
   permissionRequests: PermissionRequest[];
   lastPrompt?: string;
@@ -48,6 +49,21 @@ interface AppState {
 
 function createSession(id: string): SessionView {
   return { id, title: "", status: "idle", messages: [], permissionRequests: [], hydrated: false };
+}
+
+function extractSlashCommands(messages: StreamMessage[]): string[] | undefined {
+  for (const message of messages) {
+    if (
+      message.type === "system" &&
+      "subtype" in message &&
+      message.subtype === "init" &&
+      "slash_commands" in message &&
+      Array.isArray(message.slash_commands)
+    ) {
+      return message.slash_commands.filter((command): command is string => typeof command === "string");
+    }
+  }
+  return undefined;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -109,6 +125,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             status: session.status,
             title: session.title,
             cwd: session.cwd,
+            slashCommands: session.slashCommands ?? existing.slashCommands,
             createdAt: session.createdAt,
             updatedAt: session.updatedAt
           };
@@ -117,7 +134,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         set({ sessions: nextSessions, sessionsLoaded: true });
 
         const hasSessions = event.payload.sessions.length > 0;
-        set({ showStartModal: !hasSessions });
+        set({ showStartModal: false });
 
         if (!hasSessions) {
           get().setActiveSessionId(null);
@@ -146,12 +163,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       case "session.history": {
         const { sessionId, messages, status } = event.payload;
+        const slashCommands = extractSlashCommands(messages);
         set((state) => {
           const existing = state.sessions[sessionId] ?? createSession(sessionId);
           return {
             sessions: {
               ...state.sessions,
-              [sessionId]: { ...existing, status, messages, hydrated: true }
+              [sessionId]: { ...existing, status, messages, slashCommands: slashCommands ?? existing.slashCommands, hydrated: true }
             }
           };
         });
@@ -160,6 +178,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       case "session.status": {
         const { sessionId, status, title, cwd } = event.payload;
+        const isNewSession = !state.sessions[sessionId];
         set((state) => {
           const existing = state.sessions[sessionId] ?? createSession(sessionId);
           return {
@@ -179,6 +198,17 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (state.pendingStart) {
           get().setActiveSessionId(sessionId);
           set({ pendingStart: false, showStartModal: false });
+        }
+
+        if (isNewSession) {
+          get().setActiveSessionId(sessionId);
+        }
+
+        if (status === "error" && event.payload.error) {
+          set({ globalError: event.payload.error });
+        }
+        if (status === "completed") {
+          set({ globalError: null });
         }
         break;
       }
@@ -212,20 +242,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       case "stream.message": {
         const { sessionId, message } = event.payload;
-        set((state) => {
-          const existing = state.sessions[sessionId] ?? createSession(sessionId);
-          return {
-            sessions: {
-              ...state.sessions,
-              [sessionId]: { ...existing, messages: [...existing.messages, message] }
-            }
-          };
-        });
-        break;
-      }
-
-      case "stream.user_prompt": {
-        const { sessionId, prompt } = event.payload;
+        const slashCommands = extractSlashCommands([message]);
         set((state) => {
           const existing = state.sessions[sessionId] ?? createSession(sessionId);
           return {
@@ -233,7 +250,25 @@ export const useAppStore = create<AppState>((set, get) => ({
               ...state.sessions,
               [sessionId]: {
                 ...existing,
-                messages: [...existing.messages, { type: "user_prompt", prompt }]
+                slashCommands: slashCommands ?? existing.slashCommands,
+                messages: [...existing.messages, message]
+              }
+            }
+          };
+        });
+        break;
+      }
+
+      case "stream.user_prompt": {
+        const { sessionId, prompt, attachments } = event.payload;
+        set((state) => {
+          const existing = state.sessions[sessionId] ?? createSession(sessionId);
+          return {
+            sessions: {
+              ...state.sessions,
+              [sessionId]: {
+                ...existing,
+                messages: [...existing.messages, { type: "user_prompt", prompt, attachments }]
               }
             }
           };

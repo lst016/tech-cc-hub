@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import { useIPC } from "./hooks/useIPC";
 import { useMessageWindow } from "./hooks/useMessageWindow";
 import { useAppStore } from "./store/useAppStore";
-import type { ServerEvent } from "./types";
+import type { ServerEvent, StreamMessage } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { StartSessionModal } from "./components/StartSessionModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { PromptInput, usePromptActions } from "./components/PromptInput";
 import { MessageCard } from "./components/EventCard";
+import { ActivityRail } from "./components/ActivityRail";
 import MDContent from "./render/markdown";
 
 const SCROLL_THRESHOLD = 50;
@@ -109,6 +110,56 @@ function App() {
     resetToLatest,
     totalMessages,
   } = useMessageWindow(messages, permissionRequests, activeSessionId);
+
+  const displayMessages = visibleMessages.filter((item) => {
+    const currentMessage = item.message;
+    if (
+      currentMessage.type === "system" &&
+      "subtype" in currentMessage &&
+      currentMessage.subtype === "init"
+    ) {
+      for (let index = 0; index < item.originalIndex; index += 1) {
+        const previousMessage = messages[index];
+        if (
+          previousMessage?.type === "system" &&
+          "subtype" in previousMessage &&
+          previousMessage.subtype === "init"
+        ) {
+          return false;
+        }
+      }
+    }
+    return true;
+  });
+
+  const renderEntries = useMemo(() => {
+    const entries: Array<
+      | { type: "separator"; key: string; roundNumber: number }
+      | { type: "message"; key: string; originalIndex: number; message: StreamMessage }
+    > = [];
+
+    for (const item of displayMessages) {
+      if (item.message.type === "user_prompt") {
+        const roundNumber = messages
+          .slice(0, item.originalIndex + 1)
+          .filter((message) => message.type === "user_prompt").length;
+        entries.push({
+          type: "separator",
+          key: `${activeSessionId}-round-${item.originalIndex}`,
+          roundNumber,
+        });
+      }
+
+      entries.push({
+        type: "message",
+        key: `${activeSessionId}-msg-${item.originalIndex}`,
+        originalIndex: item.originalIndex,
+        message: item.message,
+      });
+    }
+
+    return entries;
+  }, [activeSessionId, displayMessages, messages]);
 
   // 启动时检查 API 配置
   useEffect(() => {
@@ -221,10 +272,26 @@ function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [resetToLatest]);
 
-  const handleNewSession = useCallback(() => {
+  const handleNewSession = useCallback((nextCwd?: string) => {
     useAppStore.getState().setActiveSessionId(null);
+    setPrompt("");
+
+    if (nextCwd) {
+      setCwd(nextCwd);
+      sendEvent({
+        type: "session.create",
+        payload: {
+          title: "新聊天",
+          cwd: nextCwd,
+          allowedTools: "Read,Edit,Bash",
+        },
+      });
+      return;
+    }
+
+    setCwd("");
     setShowStartModal(true);
-  }, [setShowStartModal]);
+  }, [sendEvent, setCwd, setPrompt, setShowStartModal]);
 
   const handleDeleteSession = useCallback((sessionId: string) => {
     sendEvent({ type: "session.delete", payload: { sessionId } });
@@ -250,18 +317,18 @@ function App() {
         onDeleteSession={handleDeleteSession}
       />
 
-      <main className="flex flex-1 flex-col ml-[280px] bg-surface-cream">
+      <main className="flex flex-1 flex-col bg-surface-cream ml-[320px] xl:mr-[320px]">
         <div
           className="flex items-center justify-center h-12 border-b border-ink-900/10 bg-surface-cream select-none"
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         >
-          <span className="text-sm font-medium text-ink-700">{activeSession?.title || "Agent Cowork"}</span>
+          <span className="text-sm font-medium text-ink-700">{activeSession?.title || "Open Claude Cowork"}</span>
         </div>
 
         <div
           ref={scrollContainerRef}
           onScroll={handleScroll}
-          className="flex-1 overflow-y-auto px-8 pb-40 pt-6"
+          className="chat-scroll flex-1 overflow-y-auto px-8 pb-40 pt-6"
         >
           <div className="mx-auto max-w-3xl">
             <div ref={topSentinelRef} className="h-1" />
@@ -270,7 +337,7 @@ function App() {
               <div className="flex items-center justify-center py-4 mb-4">
                 <div className="flex items-center gap-2 text-xs text-muted">
                   <div className="h-px w-12 bg-ink-900/10" />
-                  <span>Beginning of conversation</span>
+                  <span>对话开始</span>
                   <div className="h-px w-12 bg-ink-900/10" />
                 </div>
               </div>
@@ -283,27 +350,41 @@ function App() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                   </svg>
-                  <span>Loading...</span>
+                  <span>正在加载...</span>
                 </div>
               </div>
             )}
 
-            {visibleMessages.length === 0 ? (
+            {renderEntries.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center">
-                <div className="text-lg font-medium text-ink-700">No messages yet</div>
-                <p className="mt-2 text-sm text-muted">Start a conversation with agent cowork</p>
+                <div className="text-lg font-medium text-ink-700">直接开始聊天</div>
+                <p className="mt-2 text-sm text-muted">在下方输入需求就会自动开启新会话；“新建会话”只在你想切换工作目录时再用。</p>
               </div>
             ) : (
-              visibleMessages.map((item, idx) => (
-                <MessageCard
-                  key={`${activeSessionId}-msg-${item.originalIndex}`}
-                  message={item.message}
-                  isLast={idx === visibleMessages.length - 1}
-                  isRunning={isRunning}
-                  permissionRequest={permissionRequests[0]}
-                  onPermissionResult={handlePermissionResult}
-                />
-              ))
+              renderEntries.map((entry, idx) => {
+                if (entry.type === "separator") {
+                  return (
+                    <div key={entry.key} className="mb-4 mt-6 flex items-center justify-center">
+                      <div className="flex items-center gap-3 rounded-full border border-ink-900/10 bg-surface-secondary px-4 py-2 text-xs font-medium text-muted shadow-soft">
+                        <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+                        <span>第 {entry.roundNumber} 轮执行</span>
+                      </div>
+                    </div>
+                  );
+                }
+
+                const isLastMessage = idx === renderEntries.length - 1;
+                return (
+                  <MessageCard
+                    key={entry.key}
+                    message={entry.message}
+                    isLast={isLastMessage}
+                    isRunning={isRunning}
+                    permissionRequest={permissionRequests[0]}
+                    onPermissionResult={handlePermissionResult}
+                  />
+                );
+              })
             )}
 
             {/* Partial message display with skeleton loading */}
@@ -334,20 +415,22 @@ function App() {
           </div>
         </div>
 
-        <PromptInput sendEvent={sendEvent} onSendMessage={handleSendMessage} disabled={visibleMessages.length === 0} />
+        <PromptInput sendEvent={sendEvent} onSendMessage={handleSendMessage} disabled={!connected} />
 
         {hasNewMessages && !shouldAutoScroll && (
           <button
             onClick={scrollToBottom}
-            className="fixed bottom-28 left-1/2 ml-[140px] z-40 -translate-x-1/2 flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-medium text-white shadow-lg transition-all hover:bg-accent-hover hover:scale-105 animate-bounce-subtle"
+            className="fixed bottom-28 left-1/2 z-40 -translate-x-1/2 flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-medium text-white shadow-lg transition-all hover:bg-accent-hover hover:scale-105 animate-bounce-subtle lg:ml-[140px] xl:mr-[160px]"
           >
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 5v14M5 12l7 7 7-7" />
             </svg>
-            <span>New messages</span>
+            <span>有新消息</span>
           </button>
         )}
       </main>
+
+      <ActivityRail session={activeSession} partialMessage={partialMessage} globalError={globalError} />
 
       {showStartModal && (
         <StartSessionModal

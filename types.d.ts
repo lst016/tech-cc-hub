@@ -10,6 +10,21 @@ type StaticData = {
     totalMemoryGB: number;
 }
 
+type ApiConfig = {
+    id: string;
+    name: string;
+    apiKey: string;
+    baseURL: string;
+    model: string;
+    models?: string[];
+    enabled: boolean;
+    apiType?: "anthropic";
+}
+
+type ApiConfigSettings = {
+    profiles: ApiConfig[];
+}
+
 type UnsubscribeFunction = () => void;
 
 type EventPayloadMapping = {
@@ -18,9 +33,9 @@ type EventPayloadMapping = {
     "generate-session-title": string;
     "get-recent-cwds": string[];
     "select-directory": string | null;
-    "get-api-config": { apiKey: string; baseURL: string; model: string; apiType?: "anthropic" } | null;
+    "get-api-config": ApiConfigSettings;
     "save-api-config": { success: boolean; error?: string };
-    "check-api-config": { hasConfig: boolean; config: { apiKey: string; baseURL: string; model: string; apiType?: "anthropic" } | null };
+    "check-api-config": { hasConfig: boolean; config: ApiConfig | null };
 }
 
 interface Window {
@@ -33,8 +48,8 @@ interface Window {
         generateSessionTitle: (userInput: string | null) => Promise<string>;
         getRecentCwds: (limit?: number) => Promise<string[]>;
         selectDirectory: () => Promise<string | null>;
-        getApiConfig: () => Promise<{ apiKey: string; baseURL: string; model: string; apiType?: "anthropic" } | null>;
-        saveApiConfig: (config: { apiKey: string; baseURL: string; model: string; apiType?: "anthropic" }) => Promise<{ success: boolean; error?: string }>;
-        checkApiConfig: () => Promise<{ hasConfig: boolean; config: { apiKey: string; baseURL: string; model: string; apiType?: "anthropic" } | null }>;
+        getApiConfig: () => Promise<ApiConfigSettings>;
+        saveApiConfig: (config: ApiConfigSettings) => Promise<{ success: boolean; error?: string }>;
+        checkApiConfig: () => Promise<{ hasConfig: boolean; config: ApiConfig | null }>;
     }
 }

@@ -1,5 +1,5 @@
-import { query, type SDKMessage, type PermissionResult } from "@anthropic-ai/claude-agent-sdk";
-import type { ServerEvent } from "../types.js";
+import { query, type SDKMessage, type PermissionResult, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { PromptAttachment, ServerEvent } from "../types.js";
 import type { Session } from "./session-store.js";
 
 import { getCurrentApiConfig, buildEnvForConfig, getClaudeCodePath} from "./claude-settings.js";
@@ -8,6 +8,7 @@ import { getEnhancedEnv } from "./util.js";
 
 export type RunnerOptions = {
   prompt: string;
+  attachments?: PromptAttachment[];
   session: Session;
   resumeSessionId?: string;
   onEvent: (event: ServerEvent) => void;
@@ -22,7 +23,7 @@ const DEFAULT_CWD = process.cwd();
 
 
 export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
-  const { prompt, session, resumeSessionId, onEvent, onSessionUpdate } = options;
+  const { prompt, attachments = [], session, resumeSessionId, onEvent, onSessionUpdate } = options;
   const abortController = new AbortController();
 
   const sendMessage = (message: SDKMessage) => {
@@ -61,7 +62,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       };
       
       const q = query({
-        prompt,
+        prompt: createPromptSource(prompt, attachments),
         options: {
           cwd: session.cwd ?? DEFAULT_CWD,
           resume: resumeSessionId,
@@ -151,4 +152,67 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   return {
     abort: () => abortController.abort()
   };
+}
+
+function createPromptSource(prompt: string, attachments: PromptAttachment[]): string | AsyncIterable<SDKUserMessage> {
+  if (attachments.length === 0) {
+    return prompt;
+  }
+
+  return (async function* promptSource(): AsyncIterable<SDKUserMessage> {
+    const contentBlocks: Array<Record<string, unknown>> = [];
+
+    if (prompt.trim()) {
+      contentBlocks.push({
+        type: "text",
+        text: prompt.trim(),
+      });
+    }
+
+    for (const attachment of attachments) {
+      if (attachment.kind === "image") {
+        const base64Data = stripDataUrlPrefix(attachment.data);
+        contentBlocks.push({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: attachment.mimeType,
+            data: base64Data,
+          },
+        });
+        continue;
+      }
+
+      const normalizedText = attachment.data.trim();
+      if (!normalizedText) {
+        continue;
+      }
+
+      contentBlocks.push({
+        type: "text",
+        text: `附件文件：${attachment.name}\n\`\`\`\n${truncateTextAttachment(normalizedText)}\n\`\`\``,
+      });
+    }
+
+    yield {
+      type: "user",
+      message: {
+        role: "user",
+        content: contentBlocks as unknown as SDKUserMessage["message"]["content"],
+      },
+      parent_tool_use_id: null,
+    };
+  })();
+}
+
+function stripDataUrlPrefix(data: string): string {
+  const [, base64Data = data] = data.split(",", 2);
+  return base64Data;
+}
+
+function truncateTextAttachment(text: string, maxChars = 20_000): string {
+  if (text.length <= maxChars) {
+    return text;
+  }
+  return `${text.slice(0, maxChars)}\n\n[已截断，原始长度 ${text.length} 字符]`;
 }
