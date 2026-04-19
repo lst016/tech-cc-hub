@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useAppStore } from "../store/useAppStore";
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -55,6 +56,7 @@ function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
 }
 
 export function SettingsModal({ onClose }: SettingsModalProps) {
+  const setApiConfigSettings = useAppStore((state) => state.setApiConfigSettings);
   const [profiles, setProfiles] = useState<ApiConfigProfile[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -65,6 +67,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     setLoading(true);
     window.electron.getApiConfig()
       .then((settings: ApiConfigSettings) => {
+        setApiConfigSettings(settings);
         if (settings.profiles.length > 0) {
           setProfiles(settings.profiles.map((profile) => ({
             ...profile,
@@ -81,7 +84,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       .finally(() => {
         setLoading(false);
       });
-  }, []);
+  }, [setApiConfigSettings]);
 
   const handleSave = async () => {
     const normalizedProfiles = profiles.map((profile) => normalizeProfile(profile));
@@ -138,6 +141,12 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       });
 
       if (result.success) {
+        setApiConfigSettings({
+          profiles: normalizedProfiles.map((profile, index) => ({
+            ...profile,
+            enabled: index === enabledIndex,
+          })),
+        });
         setSuccess(true);
         setTimeout(() => {
           setSuccess(false);

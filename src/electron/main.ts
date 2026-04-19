@@ -13,6 +13,35 @@ import "./libs/claude-settings.js";
 let cleanupComplete = false;
 let mainWindow: BrowserWindow | null = null;
 
+async function sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function loadRenderer(window: BrowserWindow): Promise<void> {
+    if (!isDev()) {
+        await window.loadFile(getUIPath());
+        return;
+    }
+
+    const devUrl = `http://localhost:${DEV_PORT}`;
+    let lastError: unknown = null;
+
+    for (let attempt = 1; attempt <= 30; attempt += 1) {
+        try {
+            await window.loadURL(devUrl);
+            return;
+        } catch (error) {
+            lastError = error;
+            if (attempt === 30) break;
+            await sleep(300);
+        }
+    }
+
+    throw lastError instanceof Error
+        ? lastError
+        : new Error(`无法连接开发服务器：${devUrl}`);
+}
+
 async function scheduleDevAutostart(): Promise<void> {
     if (!isDev()) return;
 
@@ -90,7 +119,7 @@ function handleSignal(): void {
 }
 
 // Initialize everything when app is ready
-app.on("ready", () => {
+app.on("ready", async () => {
     Menu.setApplicationMenu(null);
     // Setup event handlers
     app.on("before-quit", cleanup);
@@ -119,8 +148,18 @@ app.on("ready", () => {
         trafficLightPosition: { x: 15, y: 18 }
     });
 
-    if (isDev()) mainWindow.loadURL(`http://localhost:${DEV_PORT}`)
-    else mainWindow.loadFile(getUIPath());
+    try {
+        await loadRenderer(mainWindow);
+    } catch (error) {
+        console.error("[main] Failed to load renderer:", error);
+        dialog.showErrorBox(
+            "桌面端启动失败",
+            error instanceof Error ? error.message : String(error)
+        );
+        cleanup();
+        app.quit();
+        return;
+    }
 
     globalShortcut.register('CommandOrControl+Q', () => {
         cleanup();

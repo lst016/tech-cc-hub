@@ -1,14 +1,39 @@
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, realpathSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { spawnSync } from "child_process";
 import { loadApiConfigSettings, saveApiConfigSettings, type ApiConfig } from "./config-store.js";
 import { app } from "electron";
 
+function isUsableConfig(config: ApiConfig | null | undefined): config is ApiConfig {
+  return Boolean(
+    config?.apiKey?.trim() &&
+    config.baseURL?.trim() &&
+    config.model?.trim(),
+  );
+}
+
 function resolveSystemClaudePath(): string | null {
-  const explicitPath = process.env.CLAUDE_CODE_PATH;
-  if (explicitPath && existsSync(explicitPath)) {
-    return explicitPath;
+  const candidates = [
+    process.env.CLAUDE_CODE_PATH,
+    process.env.CLAUDE_PATH,
+    ...getPathsFromEnvironment(),
+    "/opt/homebrew/bin/claude",
+    "/usr/local/bin/claude",
+    join(homedir(), ".local/bin/claude"),
+    join(homedir(), ".volta/bin/claude"),
+    join(homedir(), ".volta/tools/image/node/22.22.1/bin/claude"),
+  ].filter((candidate): candidate is string => Boolean(candidate?.trim()));
+
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) {
+      continue;
+    }
+
+    const resolvedPath = resolveNativeClaudePath(candidate);
+    if (resolvedPath) {
+      return resolvedPath;
+    }
   }
 
   const result = spawnSync("which", ["claude"], {
@@ -19,11 +44,39 @@ function resolveSystemClaudePath(): string | null {
   if (result.status === 0) {
     const path = result.stdout.trim();
     if (path && existsSync(path)) {
-      return path;
+      const resolvedPath = resolveNativeClaudePath(path);
+      if (resolvedPath) {
+        return resolvedPath;
+      }
     }
   }
 
   return null;
+}
+
+function getPathsFromEnvironment(): string[] {
+  const pathValue = process.env.PATH ?? "";
+  return pathValue
+    .split(":")
+    .filter(Boolean)
+    .map((entry) => join(entry, "claude"));
+}
+
+function resolveNativeClaudePath(candidatePath: string): string | null {
+  try {
+    const realPath = realpathSync(candidatePath);
+    if (
+      candidatePath.includes("/.volta/bin/") ||
+      realPath.includes("/.volta/bin/") ||
+      realPath.endsWith("/volta-shim")
+    ) {
+      return null;
+    }
+
+    return candidatePath;
+  } catch {
+    return null;
+  }
 }
 
 function resolveSdkBundledClaudePath(): string | null {
@@ -47,13 +100,18 @@ function resolveSdkBundledClaudePath(): string | null {
 
 // Get Claude Code executable path
 export function getClaudeCodePath(): string | undefined {
+  const explicitPath = process.env.CLAUDE_CODE_PATH;
+  if (explicitPath && existsSync(explicitPath)) {
+    return explicitPath;
+  }
+
   return resolveSystemClaudePath() ?? resolveSdkBundledClaudePath() ?? undefined;
 }
 
 // 获取当前有效的配置（优先界面配置，回退到文件配置）
 export function getCurrentApiConfig(): ApiConfig | null {
   const uiConfig = loadApiConfigSettings().profiles.find((profile) => profile.enabled) ?? null;
-  if (uiConfig) {
+  if (isUsableConfig(uiConfig)) {
     console.log("[claude-settings] Using UI config:", {
       name: uiConfig.name,
       baseURL: uiConfig.baseURL,
@@ -104,12 +162,21 @@ export function getCurrentApiConfig(): ApiConfig | null {
   return null;
 }
 
-export function buildEnvForConfig(config: ApiConfig): Record<string, string> {
+export function buildEnvForConfig(config: ApiConfig, modelOverride?: string): Record<string, string> {
   const baseEnv = { ...process.env } as Record<string, string>;
 
   baseEnv.ANTHROPIC_AUTH_TOKEN = config.apiKey;
   baseEnv.ANTHROPIC_BASE_URL = config.baseURL;
-  baseEnv.ANTHROPIC_MODEL = config.model;
+  baseEnv.ANTHROPIC_MODEL = modelOverride ?? config.model;
 
   return baseEnv;
+}
+
+export function supportsRemoteSessionResume(config: ApiConfig): boolean {
+  try {
+    const url = new URL(config.baseURL);
+    return url.hostname === "api.anthropic.com";
+  } catch {
+    return false;
+  }
 }

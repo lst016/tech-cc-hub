@@ -4,27 +4,27 @@
 @theme {
   /* Surface colors */
   --color-surface: #FFFFFF;
-  --color-surface-secondary: #F5F4F1;
-  --color-surface-tertiary: #EFEEE9;
-  --color-surface-cream: #FAF9F6;
+  --color-surface-secondary: #F3F4F6;
+  --color-surface-tertiary: #E9EBF0;
+  --color-surface-cream: #F8F9FB;
   
   /* Ink colors */
-  --color-ink-900: #1A1915;
-  --color-ink-800: #2D2D2A;
-  --color-ink-700: #4A4A45;
-  --color-ink-600: #666661;
-  --color-ink-500: #7A7A75;
-  --color-ink-400: #9B9B96;
+  --color-ink-900: #16181D;
+  --color-ink-800: #252932;
+  --color-ink-700: #3D4450;
+  --color-ink-600: #596272;
+  --color-ink-500: #768093;
+  --color-ink-400: #98A1B0;
   
   /* Muted colors */
-  --color-muted: #6B6B66;
-  --color-muted-light: #9B9B96;
+  --color-muted: #697384;
+  --color-muted-light: #98A1B0;
   
   /* Accent colors (Claude orange) */
-  --color-accent: #D97757;
-  --color-accent-hover: #CC785C;
-  --color-accent-light: #F5D0C5;
-  --color-accent-subtle: #FDF4F1;
+  --color-accent: #D26A3D;
+  --color-accent-hover: #BE5D34;
+  --color-accent-light: #F2C2AD;
+  --color-accent-subtle: #F9EEE9;
   
   /* Status colors */
   --color-error: #DC2626;
@@ -36,10 +36,10 @@
   
   /* Background colors */
   --color-bg-000: #FFFFFF;
-  --color-bg-100: #FAF9F6;
-  --color-bg-200: #F5F4F1;
-  --color-bg-300: #EFEEE9;
-  --color-bg-400: #E5E4DF;
+  --color-bg-100: #F8F9FB;
+  --color-bg-200: #F0F2F5;
+  --color-bg-300: #E6EAF0;
+  --color-bg-400: #D8DEE7;
   
   /* Shadows */
   --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.05);
@@ -59,11 +59,16 @@ body,
 }
 
 body {
-  font-family: "Söhne", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  background-color: var(--color-surface);
+  font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(255,255,255,0.98), rgba(245,247,250,0.96) 36%, rgba(230,234,240,0.98) 100%);
   color: var(--color-ink-900);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  background: transparent;
 }
 
 hr {
@@ -81,7 +86,7 @@ hr {
 }
 
 code, pre, textarea.mono, input.mono {
-  font-family: "Söhne Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "SF Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 ::-webkit-scrollbar {
@@ -126,6 +131,24 @@ code, pre, textarea.mono, input.mono {
   background: rgba(26, 25, 21, 0.28);
   border: 2px solid transparent;
   background-clip: padding-box;
+}
+
+.partial-message :where(p, ul, ol, pre, blockquote) {
+  margin-top: 0.75rem;
+}
+
+.partial-message pre {
+  border-radius: 18px;
+  border: 1px solid rgba(22, 24, 29, 0.08);
+  background: rgba(245, 247, 250, 0.9);
+  padding: 1rem 1rem;
+}
+
+.glass-panel {
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 18px 44px rgba(27, 31, 38, 0.08);
+  backdrop-filter: blur(18px);
 }
 
 /* Shimmer animation for partial message loading */

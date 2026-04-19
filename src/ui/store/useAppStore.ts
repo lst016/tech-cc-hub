@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ServerEvent, SessionStatus, StreamMessage } from "../types";
+import type { ApiConfigProfile, ApiConfigSettings, RuntimeReasoningMode, ServerEvent, SessionStatus, StreamMessage } from "../types";
 
 export type PermissionRequest = {
   toolUseId: string;
@@ -26,6 +26,9 @@ interface AppState {
   activeSessionId: string | null;
   prompt: string;
   cwd: string;
+  apiConfigSettings: ApiConfigSettings;
+  runtimeModel: string;
+  reasoningMode: RuntimeReasoningMode;
   pendingStart: boolean;
   globalError: string | null;
   sessionsLoaded: boolean;
@@ -36,6 +39,9 @@ interface AppState {
 
   setPrompt: (prompt: string) => void;
   setCwd: (cwd: string) => void;
+  setApiConfigSettings: (settings: ApiConfigSettings) => void;
+  setRuntimeModel: (model: string) => void;
+  setReasoningMode: (mode: RuntimeReasoningMode) => void;
   setPendingStart: (pending: boolean) => void;
   setGlobalError: (error: string | null) => void;
   setShowStartModal: (show: boolean) => void;
@@ -49,6 +55,10 @@ interface AppState {
 
 function createSession(id: string): SessionView {
   return { id, title: "", status: "idle", messages: [], permissionRequests: [], hydrated: false };
+}
+
+function getEnabledProfile(settings: ApiConfigSettings): ApiConfigProfile | undefined {
+  return settings.profiles.find((profile) => profile.enabled) ?? settings.profiles[0];
 }
 
 function extractSlashCommands(messages: StreamMessage[]): string[] | undefined {
@@ -71,6 +81,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeSessionId: null,
   prompt: "",
   cwd: "",
+  apiConfigSettings: { profiles: [] },
+  runtimeModel: "",
+  reasoningMode: "high",
   pendingStart: false,
   globalError: null,
   sessionsLoaded: false,
@@ -81,6 +94,24 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setPrompt: (prompt) => set({ prompt }),
   setCwd: (cwd) => set({ cwd }),
+  setApiConfigSettings: (apiConfigSettings) => {
+    set((state) => {
+      const enabledProfile = getEnabledProfile(apiConfigSettings);
+      const availableModels = enabledProfile
+        ? Array.from(new Set([enabledProfile.model, ...(enabledProfile.models ?? [])])).filter(Boolean)
+        : [];
+      const runtimeModel = availableModels.includes(state.runtimeModel)
+        ? state.runtimeModel
+        : (enabledProfile?.model || availableModels[0] || "");
+
+      return {
+        apiConfigSettings,
+        runtimeModel,
+      };
+    });
+  },
+  setRuntimeModel: (runtimeModel) => set({ runtimeModel }),
+  setReasoningMode: (reasoningMode) => set({ reasoningMode }),
   setPendingStart: (pendingStart) => set({ pendingStart }),
   setGlobalError: (globalError) => set({ globalError }),
   setShowStartModal: (showStartModal) => set({ showStartModal }),

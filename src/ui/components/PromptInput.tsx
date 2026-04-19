@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ClientEvent, PromptAttachment } from "../types";
+import type { ApiConfigProfile, ClientEvent, PromptAttachment, RuntimeOverrides, RuntimeReasoningMode } from "../types";
 import { useAppStore } from "../store/useAppStore";
 
 const DEFAULT_ALLOWED_TOOLS = "Read,Edit,Bash";
@@ -17,6 +17,13 @@ interface PromptInputProps {
 const MAX_TEXT_ATTACHMENT_LENGTH = 20_000;
 const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const TEXT_FILE_PATTERN = /\.(txt|md|markdown|json|ya?ml|xml|csv|tsv|log|js|jsx|ts|tsx|py|rb|java|go|rs|sh|css|html|sql|toml|ini|env)$/i;
+const REASONING_OPTIONS: Array<{ value: RuntimeReasoningMode; label: string }> = [
+  { value: "disabled", label: "关闭思考" },
+  { value: "low", label: "低" },
+  { value: "medium", label: "中" },
+  { value: "high", label: "高" },
+  { value: "xhigh", label: "超高" },
+];
 
 type QueuedMessageDraft = {
   id: string;
@@ -93,6 +100,9 @@ async function fileToAttachment(file: File): Promise<PromptAttachment> {
 export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   const prompt = useAppStore((state) => state.prompt);
   const cwd = useAppStore((state) => state.cwd);
+  const apiConfigSettings = useAppStore((state) => state.apiConfigSettings);
+  const runtimeModel = useAppStore((state) => state.runtimeModel);
+  const reasoningMode = useAppStore((state) => state.reasoningMode);
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const sessions = useAppStore((state) => state.sessions);
   const setPrompt = useAppStore((state) => state.setPrompt);
@@ -102,6 +112,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   const activeSession = activeSessionId ? sessions[activeSessionId] : undefined;
   const isRunning = activeSession?.status === "running";
   const slashCommands = activeSession?.slashCommands ?? [];
+  const activeProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
 
   const validatePromptDraft = useCallback((promptValue: string) => {
     if (promptValue.startsWith("/") && slashCommands.length > 0) {
@@ -115,6 +126,28 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
     return null;
   }, [slashCommands]);
 
+  const buildRuntimeOverrides = useCallback((): RuntimeOverrides | null => {
+    const selectedModel = runtimeModel.trim();
+    if (!selectedModel) {
+      setGlobalError("请先在设置里启用配置，并至少提供一个模型。");
+      return null;
+    }
+
+    const availableModels = activeProfile
+      ? Array.from(new Set([activeProfile.model, ...(activeProfile.models ?? [])])).filter(Boolean)
+      : [];
+
+    if (availableModels.length > 0 && !availableModels.includes(selectedModel)) {
+      setGlobalError("当前选择的模型不在已启用配置的模型列表里，请重新选择。");
+      return null;
+    }
+
+    return {
+      model: selectedModel,
+      reasoningMode,
+    };
+  }, [activeProfile, reasoningMode, runtimeModel, setGlobalError]);
+
   const sendPromptDraft = useCallback(async (
     promptValue: string,
     attachments: PromptAttachment[] = [],
@@ -122,6 +155,8 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   ) => {
     const { clearPrompt = true } = options;
     if (!promptValue.trim() && attachments.length === 0) return false;
+    const runtime = buildRuntimeOverrides();
+    if (!runtime) return false;
 
     if (!activeSessionId) {
       let title = "";
@@ -137,7 +172,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
       }
       sendEvent({
         type: "session.start",
-        payload: { title, prompt: promptValue, cwd: cwd.trim() || undefined, allowedTools: DEFAULT_ALLOWED_TOOLS, attachments }
+        payload: { title, prompt: promptValue, cwd: cwd.trim() || undefined, allowedTools: DEFAULT_ALLOWED_TOOLS, attachments, runtime }
       });
     } else {
       if (activeSession?.status === "running") {
@@ -149,14 +184,14 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
         setGlobalError(validationError);
         return false;
       }
-      sendEvent({ type: "session.continue", payload: { sessionId: activeSessionId, prompt: promptValue, attachments } });
+      sendEvent({ type: "session.continue", payload: { sessionId: activeSessionId, prompt: promptValue, attachments, runtime } });
     }
     if (clearPrompt) {
       setPrompt("");
     }
     setGlobalError(null);
     return true;
-  }, [activeSession, activeSessionId, cwd, sendEvent, setGlobalError, setPendingStart, setPrompt, validatePromptDraft]);
+  }, [activeSession, activeSessionId, buildRuntimeOverrides, cwd, sendEvent, setGlobalError, setPendingStart, setPrompt, validatePromptDraft]);
 
   const handleSend = useCallback((attachments: PromptAttachment[] = []) => {
     return sendPromptDraft(prompt, attachments);
@@ -191,6 +226,11 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
 
 export function PromptInput({ sendEvent, onSendMessage, disabled = false }: PromptInputProps) {
   const { prompt, setPrompt, isRunning, handleSend, handleStop, slashCommands, activeSessionId, sendPromptDraft, validatePromptDraft } = usePromptActions(sendEvent);
+  const apiConfigSettings = useAppStore((state) => state.apiConfigSettings);
+  const runtimeModel = useAppStore((state) => state.runtimeModel);
+  const setRuntimeModel = useAppStore((state) => state.setRuntimeModel);
+  const reasoningMode = useAppStore((state) => state.reasoningMode);
+  const setReasoningMode = useAppStore((state) => state.setReasoningMode);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [attachments, setAttachments] = useState<PromptAttachment[]>([]);
@@ -216,6 +256,15 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
       .slice(0, 8);
   }, [slashCommands, slashQuery]);
   const showSlashPalette = (prompt.startsWith("/") || showSlashBrowser) && filteredSlashCommands.length > 0 && !disabled;
+  const activeProfile = useMemo<ApiConfigProfile | undefined>(() => {
+    return apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
+  }, [apiConfigSettings]);
+  const availableModels = useMemo(() => {
+    if (!activeProfile) return [];
+    return Array.from(new Set([activeProfile.model, ...(activeProfile.models ?? [])]))
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }, [activeProfile]);
 
   const startSendCooldown = useCallback(() => {
     const nextLockedUntil = Date.now() + SEND_COOLDOWN_MS;
@@ -426,11 +475,11 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
   }, [activeQueue, activeSessionId, disabled, isRunning, onSendMessage, sendPromptDraft]);
 
   return (
-    <section className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-surface via-surface to-transparent pb-6 px-2 pt-8 lg:ml-[320px] lg:pb-8 xl:mr-[320px]">
+    <section className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[rgba(229,234,240,0.72)] via-[rgba(229,234,240,0.18)] to-transparent pb-6 px-3 pt-10 lg:ml-[320px] lg:pb-8 xl:mr-[340px]">
       {showSlashPalette && (
         <div className="mx-auto mb-3 w-full max-w-full lg:max-w-3xl">
-          <div className="overflow-hidden rounded-2xl border border-ink-900/10 bg-white shadow-card">
-            <div className="border-b border-ink-900/5 px-4 py-2 text-xs font-medium text-muted">
+          <div className="overflow-hidden rounded-[24px] border border-white/10 bg-[#23262d]/95 shadow-[0_18px_50px_rgba(15,18,24,0.28)] backdrop-blur">
+            <div className="border-b border-white/8 px-4 py-2 text-xs font-medium text-white/55">
               可用 Slash 命令
             </div>
             <div className="grid gap-1 p-2">
@@ -438,7 +487,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
                 <button
                   key={command}
                   type="button"
-                  className="rounded-xl px-3 py-2 text-left text-sm text-ink-700 transition-colors hover:bg-surface-secondary"
+                  className="rounded-xl px-3 py-2 text-left text-sm text-white/88 transition-colors hover:bg-white/8"
                   onClick={() => {
                     const suffix = prompt.includes(" ") ? prompt.slice(prompt.indexOf(" ")) : "";
                     setPrompt(`/${command.replace(/^\//, "")}${suffix}`);
@@ -453,12 +502,12 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
           </div>
         </div>
       )}
-      <div className="mx-auto w-full max-w-full rounded-2xl border border-ink-900/10 bg-surface px-4 py-3 shadow-card lg:max-w-3xl">
+      <div className="mx-auto w-full max-w-full rounded-[30px] border border-white/12 bg-[linear-gradient(180deg,rgba(36,39,46,0.96),rgba(30,33,39,0.94))] px-4 py-3 shadow-[0_24px_60px_rgba(15,18,24,0.34)] backdrop-blur-xl lg:max-w-[900px]">
         {activeQueue.length > 0 && (
-          <div className="mb-3 rounded-2xl border border-ink-900/10 bg-surface-secondary/80 px-3 py-3">
+          <div className="mb-3 rounded-2xl border border-white/8 bg-white/5 px-3 py-3">
             <div className="mb-2 flex items-center justify-between gap-3">
-              <div className="text-xs font-medium text-ink-700">待发送队列 · {activeQueue.length} 条</div>
-              <div className="text-[11px] text-muted">当前轮结束后会自动续发</div>
+              <div className="text-xs font-medium text-white/88">待发送队列 · {activeQueue.length} 条</div>
+              <div className="text-[11px] text-white/45">当前轮结束后会自动续发</div>
             </div>
             <div className="grid gap-2">
               {activeQueue.map((queuedMessage, index) => {
@@ -467,14 +516,14 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
                     ? `附件：${queuedMessage.attachments[0].name}`
                     : `${queuedMessage.attachments.length} 个附件`);
                 return (
-                  <div key={queuedMessage.id} className="flex items-center gap-2 rounded-2xl border border-ink-900/8 bg-white/80 px-3 py-2 text-xs text-ink-700">
-                    <span className="shrink-0 rounded-full bg-accent-subtle px-2 py-0.5 text-[11px] text-accent">
+                  <div key={queuedMessage.id} className="flex items-center gap-2 rounded-2xl border border-white/8 bg-white/7 px-3 py-2 text-xs text-white/82">
+                    <span className="shrink-0 rounded-full bg-accent/18 px-2 py-0.5 text-[11px] text-[#ffb290]">
                       {index === 0 ? "下一条" : `排队 ${index + 1}`}
                     </span>
                     <span className="min-w-0 flex-1 truncate">{label}</span>
                     <button
                       type="button"
-                      className="rounded-full p-1 text-muted transition-colors hover:bg-ink-900/10 hover:text-ink-700"
+                      className="rounded-full p-1 text-white/45 transition-colors hover:bg-white/10 hover:text-white/88"
                       onClick={() => removeQueuedDraft(queuedMessage.id)}
                       aria-label="移除待发送消息"
                     >
@@ -492,14 +541,14 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
         {attachments.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">
             {attachments.map((attachment) => (
-              <div key={attachment.id} className="flex max-w-full items-center gap-2 rounded-2xl border border-ink-900/10 bg-surface-secondary px-3 py-2 text-xs text-ink-700">
-                <span className="shrink-0 rounded-full bg-accent-subtle px-2 py-0.5 text-[11px] text-accent">
+              <div key={attachment.id} className="flex max-w-full items-center gap-2 rounded-2xl border border-white/8 bg-white/6 px-3 py-2 text-xs text-white/82">
+                <span className="shrink-0 rounded-full bg-accent/18 px-2 py-0.5 text-[11px] text-[#ffb290]">
                   {attachment.kind === "image" ? "图片" : "文本"}
                 </span>
                 <span className="truncate max-w-[180px]">{attachment.name}</span>
                 <button
                   type="button"
-                  className="rounded-full p-1 text-muted hover:bg-ink-900/10 hover:text-ink-700"
+                  className="rounded-full p-1 text-white/45 hover:bg-white/10 hover:text-white/88"
                   onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
                   aria-label={`移除附件 ${attachment.name}`}
                   disabled={isCooldownLocked}
@@ -517,7 +566,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
           {slashCommands.length > 0 && (
             <button
               type="button"
-              className={`flex h-9 shrink-0 items-center justify-center rounded-xl border px-3 text-sm transition-colors ${showSlashBrowser ? "border-accent/40 bg-accent-subtle text-accent" : "border-ink-900/10 text-ink-700 hover:bg-surface-secondary"}`}
+              className={`flex h-10 shrink-0 items-center justify-center rounded-2xl border px-3 text-sm transition-colors ${showSlashBrowser ? "border-accent/35 bg-accent/14 text-[#ffb290]" : "border-white/8 bg-white/6 text-white/78 hover:bg-white/10"}`}
               onClick={() => setShowSlashBrowser((value) => !value)}
               aria-label="打开 Slash 命令列表"
               disabled={disabled || isCooldownLocked}
@@ -527,7 +576,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
           )}
           <button
             type="button"
-            className="flex h-9 shrink-0 items-center justify-center rounded-xl border border-ink-900/10 px-3 text-sm text-ink-700 transition-colors hover:bg-surface-secondary"
+            className="flex h-10 shrink-0 items-center justify-center rounded-2xl border border-white/8 bg-white/6 px-3 text-sm text-white/78 transition-colors hover:bg-white/10"
             onClick={() => fileInputRef.current?.click()}
             aria-label="添加附件"
             disabled={disabled || isCooldownLocked}
@@ -538,7 +587,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
           </button>
           <textarea
             rows={1}
-            className="flex-1 resize-none bg-transparent py-1.5 text-sm text-ink-800 placeholder:text-muted focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex-1 resize-none bg-transparent py-2 text-[15px] leading-7 text-white placeholder:text-white/32 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
             placeholder={
               disabled
                 ? "先创建或选择一个会话..."
@@ -559,7 +608,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
             disabled={disabled || isCooldownLocked}
           />
           <button
-            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${!hasDraft && isRunning ? "bg-error text-white hover:bg-error/90" : "bg-accent text-white hover:bg-accent-hover"}`}
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full shadow-[0_12px_24px_rgba(15,18,24,0.26)] transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${!hasDraft && isRunning ? "bg-error text-white hover:bg-error/90" : "bg-white text-ink-900 hover:bg-[#f3f5f8]"}`}
             onClick={handleButtonClick}
             aria-label={!hasDraft && isRunning ? "停止会话" : isRunning ? "加入待发送队列" : "发送提示"}
             disabled={disabled || (isCooldownLocked && hasDraft)}
@@ -571,6 +620,38 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
             )}
           </button>
         </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/8 pt-3">
+          <label className="inline-flex items-center gap-2 rounded-xl border border-white/8 bg-white/6 px-3 py-1.5 text-xs text-white/78">
+            <span className="text-white/42">模型</span>
+            <select
+              className="min-w-[148px] bg-transparent text-sm text-white focus:outline-none"
+              value={runtimeModel}
+              onChange={(event) => setRuntimeModel(event.target.value)}
+              disabled={disabled || isCooldownLocked || availableModels.length === 0}
+            >
+              {availableModels.length === 0 ? (
+                <option value="">请先配置模型</option>
+              ) : (
+                availableModels.map((model) => (
+                  <option key={model} value={model}>{model}</option>
+                ))
+              )}
+            </select>
+          </label>
+          <label className="inline-flex items-center gap-2 rounded-xl border border-white/8 bg-white/6 px-3 py-1.5 text-xs text-white/78">
+            <span className="text-white/42">思考强度</span>
+            <select
+              className="min-w-[110px] bg-transparent text-sm text-white focus:outline-none"
+              value={reasoningMode}
+              onChange={(event) => setReasoningMode(event.target.value as RuntimeReasoningMode)}
+              disabled={disabled || isCooldownLocked}
+            >
+              {REASONING_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
         <input
           ref={fileInputRef}
           type="file"
@@ -579,10 +660,6 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
           accept="image/png,image/jpeg,image/gif,image/webp,.txt,.md,.markdown,.json,.yaml,.yml,.xml,.csv,.tsv,.log,.js,.jsx,.ts,.tsx,.py,.rb,.java,.go,.rs,.sh,.css,.html,.sql,.toml,.ini,.env"
           onChange={(event) => { void handleFileInputChange(event); }}
         />
-      </div>
-      <div className="mx-auto mt-2 flex w-full max-w-full items-center justify-between px-2 text-xs text-muted lg:max-w-3xl">
-        <span>Enter 发送，Shift + Enter 换行；发送后输入框会锁定 3 秒；支持粘贴图片和文本文件</span>
-        {slashCommands.length > 0 ? <span>输入 / 或点击 / 按钮查看当前会话支持的命令；运行中继续发送会自动排队</span> : <span>发送后会自动显示执行链路；运行中继续发送会自动排队</span>}
       </div>
     </section>
   );

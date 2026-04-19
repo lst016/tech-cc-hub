@@ -1,9 +1,10 @@
 import { BrowserWindow } from "electron";
-import type { ClientEvent, ServerEvent } from "./types.js";
+import type { ClientEvent, ServerEvent, StreamMessage } from "./types.js";
 import { runClaude, type RunnerHandle } from "./libs/runner.js";
 import { SessionStore } from "./libs/session-store.js";
 import { app } from "electron";
 import { join } from "path";
+import { getCurrentApiConfig, supportsRemoteSessionResume } from "./libs/claude-settings.js";
 
 let sessions: SessionStore;
 const runnerHandles = new Map<string, RunnerHandle>();
@@ -55,6 +56,54 @@ function emit(event: ServerEvent) {
     });
   }
   broadcast(event);
+}
+
+function extractTextFromMessage(message: StreamMessage): { role: "user" | "assistant"; text: string } | null {
+  if (message.type === "user_prompt") {
+    const text = message.prompt.trim();
+    return text ? { role: "user", text } : null;
+  }
+
+  if (message.type === "result" && message.subtype === "success") {
+    const text = message.result.trim();
+    return text ? { role: "assistant", text } : null;
+  }
+
+  return null;
+}
+
+function buildStatelessContinuationPrompt(messages: StreamMessage[], latestPrompt: string): string {
+  const condensedHistory = messages
+    .map((message) => extractTextFromMessage(message))
+    .filter((entry): entry is { role: "user" | "assistant"; text: string } => Boolean(entry));
+
+  const dedupedHistory: Array<{ role: "user" | "assistant"; text: string }> = [];
+  for (const item of condensedHistory) {
+    const previous = dedupedHistory[dedupedHistory.length - 1];
+    if (previous && previous.role === item.role && previous.text === item.text) {
+      continue;
+    }
+    dedupedHistory.push(item);
+  }
+
+  const recentHistory = dedupedHistory.slice(-12);
+  if (recentHistory.length === 0) {
+    return latestPrompt;
+  }
+
+  const historyText = recentHistory
+    .map((item) => `${item.role === "user" ? "用户" : "助手"}：${item.text}`)
+    .join("\n\n");
+
+  return [
+    "以下是当前会话的最近历史，请基于这些历史继续回答。",
+    "",
+    historyText,
+    "",
+    `用户的最新消息：${latestPrompt}`,
+    "",
+    "请直接继续当前对话，不要提及你看到了历史拼接。",
+  ].join("\n");
 }
 
 export function handleClientEvent(event: ClientEvent) {
@@ -126,6 +175,7 @@ export function handleClientEvent(event: ClientEvent) {
     runClaude({
       prompt: event.payload.prompt,
       attachments: event.payload.attachments,
+      runtime: event.payload.runtime,
       session,
       resumeSessionId: session.claudeSessionId,
       onEvent: emit,
@@ -165,7 +215,13 @@ export function handleClientEvent(event: ClientEvent) {
       return;
     }
 
-    const resumeSessionId = session.claudeSessionId;
+    const config = getCurrentApiConfig();
+    const canUseRemoteResume = config ? supportsRemoteSessionResume(config) : true;
+    const history = sessions.getSessionHistory(session.id);
+    const prompt = canUseRemoteResume
+      ? event.payload.prompt
+      : buildStatelessContinuationPrompt(history?.messages ?? [], event.payload.prompt);
+    const resumeSessionId = canUseRemoteResume ? session.claudeSessionId : undefined;
 
     sessions.updateSession(session.id, { status: "running", lastPrompt: event.payload.prompt });
     emit({
@@ -179,8 +235,9 @@ export function handleClientEvent(event: ClientEvent) {
     });
 
     runClaude({
-      prompt: event.payload.prompt,
+      prompt,
       attachments: event.payload.attachments,
+      runtime: event.payload.runtime,
       session,
       resumeSessionId,
       onEvent: emit,

@@ -1,142 +1,171 @@
+---
+title: tech-cc-hub
+version: 1.0.0
+status: active
+language: zh-CN
+---
 
-<div align="center">
+# tech-cc-hub
 
-# Open Claude Cowork
+`tech-cc-hub` 是一个基于 `Electron + React + Claude Agent SDK` 的桌面端 Agent 协作客户端。  
+当前方向不是重做底层 AgentOS，而是在 `Claude Code / Claude-compatible provider` 之上补齐：
 
-[![Version](https://img.shields.io/badge/version-0.0.2-blue.svg)](https://github.com/DevAgentForge/Claude-Cowork/releases)
-[![Platform](https://img.shields.io/badge/platform-%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/DevAgentForge/Claude-Cowork/releases)
+- 聊天优先的桌面工作台
+- 工作区内会话管理
+- 执行链路观测与复盘
+- 模型 / 思考强度的运行时切换
+- 附件输入、slash 命令、继续会话与治理能力
 
-[简体中文](README_ZH.md)
+这个仓库现在是在上游 `agent-cowork` 基础上持续改造，远端关系为：
 
-</div>
+- `origin`: [lst016/tech-cc-hub](https://github.com/lst016/tech-cc-hub)
+- `upstream`: [DevAgentForge/agent-cowork](https://github.com/DevAgentForge/agent-cowork)
 
-## ❤️ Collaboration
+## 当前产品口径
 
-[![MiniMax](assets/partners/minimax-en.png)](https://platform.minimax.io/subscribe/coding-plan?code=5q2B2ljfdw&source=link)
+当前客户端的默认设计原则：
 
-MiniMax M2.7 is a frontier LLM built for agentic execution, SOTA performance, and real-world productivity—it plans, codes, uses tools, and completes complex workflows end-to-end, then iteratively improves its own performance. It delivers state-of-the-art results on software engineering and agent benchmarks (e.g., ~56% SWE-Pro, strong performance across VIBE, Terminal Bench, and agent evaluations) while extending that same capability into office work—creating and editing high-quality Word, Excel, and PowerPoint outputs with deliverable-level accuracy . Designed for long-horizon tasks, M2.7 combines deep reasoning, tool orchestration, and reliable multi-step execution, pushing beyond static models toward systems that continuously optimize how they work across both technical and everyday productivity workflows.
+- `chat-first`
+  主界面优先是正常聊天，不要求手工建 task。
+- `workspace-first sidebar`
+  左侧按工作区组织会话，设置固定在底部。
+- `execution observability`
+  右侧默认展示执行指标，详细 prompt / 上下文 / 原子步骤按需展开。
+- `Electron-first QA`
+  验收以 Electron 真窗口为准，不以 `localhost` 页面替代客户端结论。
+- `中文 UI`
+  界面文案默认使用简体中文；品牌名、模型名、协议字段除外。
 
-[Click ](https://platform.minimax.io/subscribe/coding-plan?code=5q2B2ljfdw&source=link)  to get an exclusive 12% off the MiniMax Token Plan!
+## 已实现能力
 
+- 工作区分组与会话列表
+- 已有工作区内一键新建会话
+- 设置页多配置管理
+- 模型列表动态切换
+- 思考强度动态切换
+- `Enter` 发送，`Shift + Enter` 换行
+- 发送后输入框清空，并有短暂冷却
+- 图片与文本文件附件
+- slash 命令浏览与发送
+- 执行中会话的右侧执行观测
+- Token、时长、TTFT、费用、上下文快照、原子步骤轨迹
+- Electron 客户端窗口级 QA 工具
 
+## 技术栈
 
-## Agent Cowork
+- `Electron`
+- `React 19`
+- `TypeScript`
+- `Tailwind CSS v4`
+- `Zustand`
+- `better-sqlite3`
+- `@anthropic-ai/claude-agent-sdk`
 
-Agent Cowork is an open-source alternative to Claude Cowork — a desktop AI assistant that helps with programming, file management, and any task you can describe.
+## 目录结构
 
-> Not just a GUI.  
-> A real AI collaboration partner.  
-> No need to learn the Claude Agent SDK — just create tasks and choose execution paths.
-
-
-
-## ✨ Why Agent Cowork?
-
-Claude Code is powerful — but it **only runs in the terminal**.
-
-That means:
-- ❌ No visual feedback for complex tasks
-- ❌ Hard to track multiple sessions
-- ❌ Tool outputs are inconvenient to inspect
-
-**Agent Cowork solves these problems:**
-
-- 🖥️ Runs as a **native desktop application**
-- 🤖 Acts as your **AI collaboration partner** for any task
-- 🔁 Reuses your **existing `~/.claude/settings.json`**
-- No development environment or Claude Code installation required.
-
-
-
-## 🚀 Quick Start
-
-### Option 1: Download a Release
-
-👉 [Go to Releases](https://github.com/DevAgentForge/agent-cowork/releases)
-
-
-### Option 2: Build from Source
-
-#### Prerequisites
-
-- [Bun](https://bun.sh/) or Node.js 22+
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
-
-bash
-#### Clone the repository
-git clone https://github.com/DevAgentForge/agent-cowork.git
-cd agent-cowork
-
-#### Install dependencies
-bun install
-
-#### Run in development mode
-bun run dev
-
-#### Or build production binaries
-
-```bash
-bun run dist:mac-arm64    # macOS Apple Silicon (M1/M2/M3)
-bun run dist:mac-x64      # macOS Intel
-bun run dist:win          # Windows
-bun run dist:linux        # Linux
+```text
+tech-cc-hub/
+├── doc/                  # 产品、架构、PRD、开发规范
+├── scripts/qa/           # Electron 窗口级 QA 脚本
+├── src/
+│   ├── electron/         # 主进程、IPC、运行时、会话存储
+│   └── ui/               # React 客户端、侧栏、输入区、执行观测
+├── patches/              # SDK 补丁
+├── dist-electron/        # Electron 编译产物
+└── dist-react/           # 前端构建产物
 ```
 
-## Example
-An example of organizing a local folder:
+## 开发启动
 
-https://github.com/user-attachments/assets/8ce58c8b-4024-4c01-82ee-f8d8ed6d4bba
+先安装依赖：
 
+```bash
+npm install
+```
 
-## 🛠 Development
+启动桌面端开发：
 
-bash
-#### Start development server (hot reload)
-bun run dev
+```bash
+npm run dev
+```
 
-#### Type checking / build
-bun run build
+常用构建命令：
 
+```bash
+npm run transpile:electron
+npm run build
+```
 
+## QA 与调试
 
-## 🗺 Roadmap
+当前项目内置了 Electron 客户端级 QA 命令。
 
-Planned features:
+列出窗口：
 
-todo
+```bash
+npm run qa:window:list
+```
 
+抓取指定窗口截图：
 
+```bash
+npm run qa:window:capture -- <window_id> [output_path]
+```
 
-## 🤝 Contributing
+最小 smoke：
 
-Pull requests are welcome.
+```bash
+npm run qa:smoke
+```
 
-1. Fork this repository
-2. Create your feature branch
-3. Commit your changes
-4. Open a Pull Request
+续聊回归：
 
-Please make only minimal changes.
+```bash
+npm run qa:continue
+```
 
+slash 回归：
 
+```bash
+npm run qa:slash
+```
 
-## ⭐ Final Words
+## 配置说明
 
-If you’ve ever wanted:
+当前运行配置由客户端设置页管理，支持：
 
-* A persistent desktop AI collaboration partner
-* Visual insight into how Claude works
-* Convenient session management across projects
+- 多配置卡片
+- 启用中的唯一配置
+- base URL
+- API Key
+- 模型列表
+- 默认模型
 
-This project is built for you.
+发送时会把当前选中的：
 
-👉 **If it helps you, please give it a Star.**
+- `模型`
+- `思考强度`
 
+一起传到底层运行时。
 
+## 文档
+
+完整产品和开发文档在：
+
+- [doc](/Users/lst01/Desktop/学习/tech-cc-hub/doc)
+
+如果你从文档入口开始看，建议先看：
+
+- [doc/README.md](/Users/lst01/Desktop/学习/tech-cc-hub/doc/README.md)
+- [doc/00-overview/03-文档索引.md](/Users/lst01/Desktop/学习/tech-cc-hub/doc/00-overview/03-文档索引.md)
+- [doc/40-product/40-产品开发文档索引.md](/Users/lst01/Desktop/学习/tech-cc-hub/doc/40-product/40-产品开发文档索引.md)
+
+## 当前注意事项
+
+- 客户端验收默认走 Electron 真窗口，不走浏览器页面。
+- 右侧执行链路还会继续迭代，但当前已经具备基础观测口径。
+- 仓库当前仍保留上游的一些工程结构和依赖命名，例如包名 `agent-cowork`，后续可再统一收口。
 
 ## License
 
 MIT
-
-
-

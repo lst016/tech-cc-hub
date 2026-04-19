@@ -1,5 +1,12 @@
 import type { SDKMessage, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 
+export type RuntimeReasoningMode = "disabled" | "low" | "medium" | "high" | "xhigh";
+
+export type RuntimeOverrides = {
+  model?: string;
+  reasoningMode?: RuntimeReasoningMode;
+};
+
 export type PromptAttachment = {
   id: string;
   kind: "image" | "text";
@@ -44,8 +51,8 @@ export type ServerEvent =
 // Client -> Server events
 export type ClientEvent =
   | { type: "session.create"; payload: { title?: string; cwd?: string; allowedTools?: string } }
-  | { type: "session.start"; payload: { title: string; prompt: string; cwd?: string; allowedTools?: string; attachments?: PromptAttachment[] } }
-  | { type: "session.continue"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[] } }
+  | { type: "session.start"; payload: { title: string; prompt: string; cwd?: string; allowedTools?: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides } }
+  | { type: "session.continue"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides } }
   | { type: "session.stop"; payload: { sessionId: string } }
   | { type: "session.delete"; payload: { sessionId: string } }
   | { type: "session.list" }

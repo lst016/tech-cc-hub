@@ -110,7 +110,7 @@ export function Sidebar({
   };
 
   return (
-    <aside className="fixed inset-y-0 left-0 flex h-full w-[320px] flex-col gap-4 border-r border-ink-900/5 bg-[#FAF9F6] px-4 pb-4 pt-12">
+    <aside className="fixed inset-y-0 left-0 flex h-full w-[320px] flex-col gap-4 border-r border-white/6 bg-[linear-gradient(180deg,#24272d_0%,#1d2025_100%)] px-4 pb-4 pt-12 shadow-[inset_-1px_0_0_rgba(255,255,255,0.04)] backdrop-blur-xl">
       <div 
         className="absolute top-0 left-0 right-0 h-12"
         style={{ WebkitAppRegion: "drag" } as CSSProperties}
@@ -118,7 +118,7 @@ export function Sidebar({
       <div className="flex flex-col gap-4 min-h-0 flex-1">
         <div className="flex gap-2">
           <button
-            className="flex-1 rounded-2xl border border-ink-900/10 bg-surface px-4 py-3 text-sm font-medium text-ink-700 hover:bg-surface-tertiary hover:border-ink-900/20 transition-colors"
+            className="flex-1 rounded-2xl border border-white/8 bg-white/8 px-4 py-3 text-sm font-medium text-white shadow-[0_8px_24px_rgba(0,0,0,0.18)] transition-all hover:-translate-y-[1px] hover:border-white/16 hover:bg-white/12"
             onClick={() => onNewSession()}
           >
             + 新建聊天
@@ -126,17 +126,17 @@ export function Sidebar({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-          <div className="mb-3 text-xs font-semibold tracking-[0.18em] text-muted">工作区</div>
+          <div className="mb-3 px-1 text-[11px] font-semibold tracking-[0.22em] text-white/38">工作区</div>
 
           {workspaceGroups.length === 0 && (
-            <div className="rounded-2xl border border-ink-900/5 bg-surface px-4 py-5 text-center text-xs text-muted">
+            <div className="rounded-3xl border border-white/8 bg-white/6 px-4 py-5 text-center text-xs leading-6 text-white/55 shadow-[0_14px_34px_rgba(0,0,0,0.16)]">
               还没有会话。直接在底部聊天框输入即可开始；系统会自动按工作区归档到左侧。
             </div>
           )}
 
           <div className="flex flex-col gap-3">
             {workspaceGroups.map((group) => (
-              <div key={group.key} className="rounded-2xl border border-ink-900/5 bg-surface px-3 py-3">
+              <div key={group.key} className="rounded-[26px] border border-white/7 bg-white/6 px-3 py-3 shadow-[0_14px_34px_rgba(0,0,0,0.18)] backdrop-blur">
                 <div className="flex items-start justify-between gap-3">
                   <button
                     type="button"
@@ -146,14 +146,14 @@ export function Sidebar({
                       [group.key]: !current[group.key],
                     }))}
                   >
-                    <div className="flex items-center gap-2 text-sm font-semibold text-ink-800">
-                      <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-muted" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                      <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-white/40" fill="none" stroke="currentColor" strokeWidth="1.8">
                         <path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-10Z" />
                       </svg>
                       <span className="truncate">{formatWorkspaceName(group.cwd)}</span>
                       <svg
                         viewBox="0 0 24 24"
-                        className={`h-4 w-4 shrink-0 text-muted transition-transform ${expandedGroups[group.key] ? "rotate-90" : ""}`}
+                        className={`h-4 w-4 shrink-0 text-white/40 transition-transform ${expandedGroups[group.key] ? "rotate-90" : ""}`}
                         fill="none"
                         stroke="currentColor"
                         strokeWidth="1.8"
@@ -161,11 +161,11 @@ export function Sidebar({
                         <path d="m9 6 6 6-6 6" />
                       </svg>
                     </div>
-                    <div className="mt-1 text-[11px] text-muted truncate">{group.cwd || "未指定目录"}</div>
+                    <div className="mt-1 truncate text-[11px] text-white/38">{group.cwd || "未指定目录"}</div>
                   </button>
                   <button
                     type="button"
-                    className="shrink-0 rounded-full border border-ink-900/10 p-2 text-ink-600 hover:bg-surface-secondary hover:text-ink-800"
+                    className="shrink-0 rounded-full border border-white/8 bg-white/8 p-2 text-white/70 transition-colors hover:bg-white/14 hover:text-white"
                     onClick={() => onNewSession(group.cwd)}
                     aria-label={`在 ${formatWorkspaceName(group.cwd)} 中新增会话`}
                   >
@@ -179,7 +179,7 @@ export function Sidebar({
                   {group.sessions.map((session) => (
                     <div
                       key={session.id}
-                      className={`cursor-pointer rounded-xl border px-3 py-3 text-left transition ${activeSessionId === session.id ? "border-accent/30 bg-accent-subtle" : "border-ink-900/5 bg-surface-secondary hover:bg-surface-tertiary"}`}
+                      className={`cursor-pointer rounded-2xl border px-3 py-3 text-left transition-all ${activeSessionId === session.id ? "border-accent/35 bg-[linear-gradient(180deg,rgba(210,106,61,0.22),rgba(255,255,255,0.08))] shadow-[0_10px_24px_rgba(0,0,0,0.16)]" : "border-white/6 bg-white/4 hover:-translate-y-[1px] hover:bg-white/8"}`}
                       onClick={() => setActiveSessionId(session.id)}
                       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setActiveSessionId(session.id); } }}
                       role="button"
@@ -187,10 +187,10 @@ export function Sidebar({
                     >
                       <div className="flex items-center justify-between gap-2">
                         <div className="min-w-0 flex-1">
-                          <div className={`truncate text-[13px] font-medium ${session.status === "running" ? "text-info" : session.status === "completed" ? "text-success" : session.status === "error" ? "text-error" : "text-ink-800"}`}>
+                          <div className={`truncate text-[13px] font-medium ${session.status === "running" ? "text-blue-300" : session.status === "completed" ? "text-emerald-300" : session.status === "error" ? "text-red-300" : "text-white"}`}>
                             {session.title}
                           </div>
-                          <div className="mt-1 flex items-center justify-between gap-3 text-[11px] text-muted">
+                          <div className="mt-1 flex items-center justify-between gap-3 text-[11px] text-white/42">
                             <span className="truncate">{formatCwd(session.cwd)}</span>
                             <span className="shrink-0">
                               {session.status === "running" ? "执行中" : session.status === "completed" ? "已完成" : session.status === "error" ? "出错" : "待命"}
@@ -199,7 +199,7 @@ export function Sidebar({
                         </div>
                         <DropdownMenu.Root>
                           <DropdownMenu.Trigger asChild>
-                            <button className="flex-shrink-0 rounded-full p-1.5 text-ink-500 hover:bg-ink-900/10" aria-label="打开会话菜单" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+                            <button className="flex-shrink-0 rounded-full p-1.5 text-white/55 hover:bg-white/10" aria-label="打开会话菜单" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
                               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
                                 <circle cx="5" cy="12" r="1.7" />
                                 <circle cx="12" cy="12" r="1.7" />
@@ -234,11 +234,11 @@ export function Sidebar({
         </div>
 
         <div className="mt-auto space-y-2">
-          <div className="rounded-2xl border border-ink-900/5 bg-surface px-3 py-3 text-xs text-muted">
+          <div className="rounded-2xl border border-white/8 bg-white/6 px-3 py-3 text-xs leading-6 text-white/48 shadow-[0_12px_28px_rgba(0,0,0,0.16)]">
             {connected ? "客户端已连接，默认直接走 Electron 会话。" : "客户端暂未连接，稍后会自动重试。"}
           </div>
           <button
-            className="flex w-full items-center justify-between rounded-2xl border border-ink-900/10 bg-surface px-4 py-3 text-sm font-medium text-ink-700 hover:bg-surface-tertiary hover:border-ink-900/20 transition-colors"
+            className="flex w-full items-center justify-between rounded-2xl border border-white/8 bg-white/8 px-4 py-3 text-sm font-medium text-white shadow-[0_10px_28px_rgba(0,0,0,0.16)] transition-all hover:-translate-y-[1px] hover:bg-white/12 hover:border-white/16"
             onClick={() => useAppStore.getState().setShowSettingsModal(true)}
             aria-label="设置"
           >

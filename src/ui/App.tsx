@@ -43,6 +43,7 @@ function App() {
   const setPrompt = useAppStore((s) => s.setPrompt);
   const cwd = useAppStore((s) => s.cwd);
   const setCwd = useAppStore((s) => s.setCwd);
+  const setApiConfigSettings = useAppStore((s) => s.setApiConfigSettings);
   const pendingStart = useAppStore((s) => s.pendingStart);
   const apiConfigChecked = useAppStore((s) => s.apiConfigChecked);
   const setApiConfigChecked = useAppStore((s) => s.setApiConfigChecked);
@@ -175,6 +176,16 @@ function App() {
       });
     }
   }, [apiConfigChecked, setApiConfigChecked, setShowSettingsModal]);
+
+  useEffect(() => {
+    window.electron.getApiConfig()
+      .then((settings) => {
+        setApiConfigSettings(settings);
+      })
+      .catch((error) => {
+        console.error("Failed to load API config settings:", error);
+      });
+  }, [setApiConfigSettings]);
 
   useEffect(() => {
     if (connected) sendEvent({ type: "session.list" });
@@ -310,35 +321,35 @@ function App() {
   }, [resetToLatest]);
 
   return (
-    <div className="flex h-screen bg-surface">
+    <div className="flex h-screen bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.98),_rgba(243,246,250,0.97)_40%,_rgba(228,233,240,0.98)_100%)]">
       <Sidebar
         connected={connected}
         onNewSession={handleNewSession}
         onDeleteSession={handleDeleteSession}
       />
 
-      <main className="flex flex-1 flex-col bg-surface-cream ml-[320px] xl:mr-[320px]">
+      <main className="ml-[320px] flex flex-1 flex-col bg-transparent xl:mr-[340px]">
         <div
-          className="flex items-center justify-center h-12 border-b border-ink-900/10 bg-surface-cream select-none"
+          className="flex h-12 items-center justify-center border-b border-black/5 bg-[linear-gradient(180deg,rgba(255,255,255,0.78),rgba(249,250,252,0.68))] backdrop-blur-md select-none"
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         >
-          <span className="text-sm font-medium text-ink-700">{activeSession?.title || "Open Claude Cowork"}</span>
+          <span className="text-sm font-semibold tracking-[0.01em] text-ink-700">{activeSession?.title || "tech-cc-hub"}</span>
         </div>
 
         <div
           ref={scrollContainerRef}
           onScroll={handleScroll}
-          className="chat-scroll flex-1 overflow-y-auto px-8 pb-40 pt-6"
+          className="chat-scroll flex-1 overflow-y-auto px-8 pb-40 pt-8"
         >
-          <div className="mx-auto max-w-3xl">
+          <div className="mx-auto max-w-[920px] rounded-[34px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(248,250,252,0.82))] px-8 py-7 shadow-[0_24px_60px_rgba(30,38,52,0.08)] backdrop-blur-xl">
             <div ref={topSentinelRef} className="h-1" />
 
             {!hasMoreHistory && totalMessages > 0 && (
               <div className="flex items-center justify-center py-4 mb-4">
-                <div className="flex items-center gap-2 text-xs text-muted">
-                  <div className="h-px w-12 bg-ink-900/10" />
+                <div className="flex items-center gap-3 text-xs text-muted">
+                  <div className="h-px w-14 bg-ink-900/10" />
                   <span>对话开始</span>
-                  <div className="h-px w-12 bg-ink-900/10" />
+                  <div className="h-px w-14 bg-ink-900/10" />
                 </div>
               </div>
             )}
@@ -356,16 +367,19 @@ function App() {
             )}
 
             {renderEntries.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-center">
-                <div className="text-lg font-medium text-ink-700">直接开始聊天</div>
-                <p className="mt-2 text-sm text-muted">在下方输入需求就会自动开启新会话；“新建会话”只在你想切换工作目录时再用。</p>
+              <div className="flex flex-col items-center justify-center py-24 text-center">
+                <div className="rounded-full border border-black/6 bg-[#f4f7fb] px-4 py-1 text-[11px] font-semibold tracking-[0.16em] text-muted">
+                  CHAT FIRST
+                </div>
+                <div className="mt-5 text-2xl font-semibold text-ink-800">直接开始聊天</div>
+                <p className="mt-3 max-w-md text-sm leading-7 text-muted">在下方输入需求就会自动开启新会话；只有需要切换工作目录时，再去左侧新建。</p>
               </div>
             ) : (
               renderEntries.map((entry, idx) => {
                 if (entry.type === "separator") {
                   return (
-                    <div key={entry.key} className="mb-4 mt-6 flex items-center justify-center">
-                      <div className="flex items-center gap-3 rounded-full border border-ink-900/10 bg-surface-secondary px-4 py-2 text-xs font-medium text-muted shadow-soft">
+                    <div key={entry.key} className="mb-5 mt-7 flex items-center justify-center">
+                      <div className="flex items-center gap-3 rounded-full border border-black/6 bg-[#f5f7fb] px-4 py-2 text-xs font-medium text-muted shadow-[0_10px_24px_rgba(30,38,52,0.06)]">
                         <span className="h-1.5 w-1.5 rounded-full bg-accent" />
                         <span>第 {entry.roundNumber} 轮执行</span>
                       </div>
@@ -388,7 +402,7 @@ function App() {
             )}
 
             {/* Partial message display with skeleton loading */}
-            <div className="partial-message">
+            <div className="partial-message rounded-[26px] border border-black/5 bg-[linear-gradient(180deg,rgba(245,247,250,0.95),rgba(255,255,255,0.86))] px-6 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
               <MDContent text={partialMessage} />
               {showPartialMessage && (
                 <div className="mt-3 flex flex-col gap-2 px-1">

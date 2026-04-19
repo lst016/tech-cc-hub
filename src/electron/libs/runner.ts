@@ -1,6 +1,7 @@
-import { query, type SDKMessage, type PermissionResult, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { PromptAttachment, ServerEvent } from "../types.js";
+import { query, type EffortLevel, type SDKMessage, type PermissionResult, type SDKUserMessage, type ThinkingConfig } from "@anthropic-ai/claude-agent-sdk";
+import type { PromptAttachment, RuntimeOverrides, ServerEvent } from "../types.js";
 import type { Session } from "./session-store.js";
+import { existsSync } from "fs";
 
 import { getCurrentApiConfig, buildEnvForConfig, getClaudeCodePath} from "./claude-settings.js";
 import { getEnhancedEnv } from "./util.js";
@@ -9,6 +10,7 @@ import { getEnhancedEnv } from "./util.js";
 export type RunnerOptions = {
   prompt: string;
   attachments?: PromptAttachment[];
+  runtime?: RuntimeOverrides;
   session: Session;
   resumeSessionId?: string;
   onEvent: (event: ServerEvent) => void;
@@ -23,7 +25,7 @@ const DEFAULT_CWD = process.cwd();
 
 
 export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
-  const { prompt, attachments = [], session, resumeSessionId, onEvent, onSessionUpdate } = options;
+  const { prompt, attachments = [], runtime, session, resumeSessionId, onEvent, onSessionUpdate } = options;
   const abortController = new AbortController();
 
   const sendMessage = (message: SDKMessage) => {
@@ -55,19 +57,26 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       }
       
       // 使用 Anthropic SDK
-      const env = buildEnvForConfig(config);
+      const env = buildEnvForConfig(config, runtime?.model);
       const mergedEnv = {
         ...getEnhancedEnv(),
         ...env
       };
+      const thinking = buildThinkingConfig(runtime?.reasoningMode);
+      const effort = buildEffortLevel(runtime?.reasoningMode);
       
+      const resolvedCwd = session.cwd && existsSync(session.cwd) ? session.cwd : DEFAULT_CWD;
+
       const q = query({
         prompt: createPromptSource(prompt, attachments),
         options: {
-          cwd: session.cwd ?? DEFAULT_CWD,
+          model: runtime?.model?.trim() || undefined,
+          cwd: resolvedCwd,
           resume: resumeSessionId,
           abortController,
           env: mergedEnv,
+          thinking,
+          effort,
           pathToClaudeCodeExecutable: getClaudeCodePath(),
           permissionMode: "bypassPermissions",
           includePartialMessages: true,
@@ -152,6 +161,26 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   return {
     abort: () => abortController.abort()
   };
+}
+
+function buildThinkingConfig(reasoningMode?: RuntimeOverrides["reasoningMode"]): ThinkingConfig | undefined {
+  if (!reasoningMode) {
+    return undefined;
+  }
+
+  if (reasoningMode === "disabled") {
+    return { type: "disabled" };
+  }
+
+  return { type: "adaptive" };
+}
+
+function buildEffortLevel(reasoningMode?: RuntimeOverrides["reasoningMode"]): EffortLevel | undefined {
+  if (!reasoningMode || reasoningMode === "disabled") {
+    return undefined;
+  }
+
+  return reasoningMode;
 }
 
 function createPromptSource(prompt: string, attachments: PromptAttachment[]): string | AsyncIterable<SDKUserMessage> {

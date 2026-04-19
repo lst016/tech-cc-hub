@@ -25,6 +25,8 @@ type ApiConfigSettings = {
     profiles: ApiConfig[];
 }
 
+type RuntimeReasoningMode = "disabled" | "low" | "medium" | "high" | "xhigh";
+
 type UnsubscribeFunction = () => void;
 
 type EventPayloadMapping = {

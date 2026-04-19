@@ -1,5 +1,12 @@
 import Database from "better-sqlite3";
 import type { SessionStatus, StreamMessage } from "../types.js";
+import { existsSync } from "fs";
+import { app } from "electron";
+
+const LEGACY_CWD_SUFFIXES = [
+  "/upstream/open-claude-cowork",
+  "/Desktop/claw-open-cowork",
+];
 
 export type PendingPermission = {
   toolUseId: string;
@@ -45,6 +52,32 @@ export class SessionStore {
     this.db = new Database(dbPath);
     this.initialize();
     this.loadSessions();
+  }
+
+  private resolveCwd(cwd?: string): string | undefined {
+    if (!cwd) return undefined;
+    if (existsSync(cwd)) {
+      return cwd;
+    }
+
+    const appPath = app.getAppPath();
+    for (const suffix of LEGACY_CWD_SUFFIXES) {
+      if (cwd.endsWith(suffix) && existsSync(appPath)) {
+        return appPath;
+      }
+    }
+
+    return undefined;
+  }
+
+  private normalizeStoredCwd(sessionId: string, cwd?: string): string | undefined {
+    const resolvedCwd = this.resolveCwd(cwd);
+    if (resolvedCwd !== cwd) {
+      this.db
+        .prepare("update sessions set cwd = ?, updated_at = ? where id = ?")
+        .run(resolvedCwd ?? null, Date.now(), sessionId);
+    }
+    return resolvedCwd;
   }
 
   createSession(options: { cwd?: string; allowedTools?: string; prompt?: string; title: string }): Session {
@@ -96,7 +129,7 @@ export class SessionStore {
       id: String(row.id),
       title: String(row.title),
       status: row.status as SessionStatus,
-      cwd: row.cwd ? String(row.cwd) : undefined,
+      cwd: this.normalizeStoredCwd(String(row.id), row.cwd ? String(row.cwd) : undefined),
       allowedTools: row.allowed_tools ? String(row.allowed_tools) : undefined,
       lastPrompt: row.last_prompt ? String(row.last_prompt) : undefined,
       claudeSessionId: row.claude_session_id ? String(row.claude_session_id) : undefined,
@@ -116,7 +149,9 @@ export class SessionStore {
          limit ?`
       )
       .all(limit) as Array<Record<string, unknown>>;
-    return rows.map((row) => String(row.cwd));
+    return rows
+      .map((row) => this.resolveCwd(String(row.cwd)))
+      .filter((cwd): cwd is string => Boolean(cwd));
   }
 
   getSessionHistory(id: string): SessionHistory | null {
@@ -141,7 +176,7 @@ export class SessionStore {
         id: String(sessionRow.id),
         title: String(sessionRow.title),
         status: sessionRow.status as SessionStatus,
-        cwd: sessionRow.cwd ? String(sessionRow.cwd) : undefined,
+        cwd: this.normalizeStoredCwd(String(sessionRow.id), sessionRow.cwd ? String(sessionRow.cwd) : undefined),
         allowedTools: sessionRow.allowed_tools ? String(sessionRow.allowed_tools) : undefined,
         lastPrompt: sessionRow.last_prompt ? String(sessionRow.last_prompt) : undefined,
         claudeSessionId: sessionRow.claude_session_id ? String(sessionRow.claude_session_id) : undefined,
@@ -254,7 +289,7 @@ export class SessionStore {
         title: String(row.title),
         claudeSessionId: row.claude_session_id ? String(row.claude_session_id) : undefined,
         status: row.status as SessionStatus,
-        cwd: row.cwd ? String(row.cwd) : undefined,
+        cwd: this.normalizeStoredCwd(String(row.id), row.cwd ? String(row.cwd) : undefined),
         allowedTools: row.allowed_tools ? String(row.allowed_tools) : undefined,
         lastPrompt: row.last_prompt ? String(row.last_prompt) : undefined,
         pendingPermissions: new Map()

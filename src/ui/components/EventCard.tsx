@@ -73,20 +73,20 @@ const SessionResult = ({ message }: { message: SDKResultMessage }) => {
   const formatMillions = (tokens: number | undefined) => typeof tokens !== "number" ? "-" : `${(tokens / 1_000_000).toFixed(4)} M`;
 
   return (
-    <div className="flex flex-col gap-2 mt-4">
-      <div className="header text-accent">会话结果</div>
-      <div className="flex flex-col rounded-xl px-4 py-3 border border-ink-900/10 bg-surface-secondary space-y-2">
+    <div className="mt-5 flex flex-col gap-2">
+      <div className="text-[11px] font-semibold tracking-[0.16em] text-muted">会话结果</div>
+      <div className="flex flex-col rounded-[24px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(245,247,250,0.92))] px-4 py-4 shadow-[0_10px_26px_rgba(30,38,52,0.05)] space-y-2">
         <div className="flex flex-wrap items-center gap-2 text-[14px]">
           <span className="font-normal">总耗时</span>
-          <span className="inline-flex items-center rounded-full bg-surface-tertiary px-2.5 py-0.5 text-ink-700 text-[13px]">{formatMinutes(message.duration_ms)}</span>
+          <span className="inline-flex items-center rounded-full bg-[#eef2f8] px-2.5 py-0.5 text-ink-700 text-[13px]">{formatMinutes(message.duration_ms)}</span>
           <span className="font-normal">API 耗时</span>
-          <span className="inline-flex items-center rounded-full bg-surface-tertiary px-2.5 py-0.5 text-ink-700 text-[13px]">{formatMinutes(message.duration_api_ms)}</span>
+          <span className="inline-flex items-center rounded-full bg-[#eef2f8] px-2.5 py-0.5 text-ink-700 text-[13px]">{formatMinutes(message.duration_api_ms)}</span>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[14px]">
           <span className="font-normal">用量</span>
           <span className="inline-flex items-center rounded-full bg-accent/10 px-2.5 py-0.5 text-accent text-[13px]">费用 ${formatUsd(message.total_cost_usd)}</span>
-          <span className="inline-flex items-center rounded-full bg-surface-tertiary px-2.5 py-0.5 text-ink-700 text-[13px]">输入 {formatMillions(message.usage?.input_tokens)}</span>
-          <span className="inline-flex items-center rounded-full bg-surface-tertiary px-2.5 py-0.5 text-ink-700 text-[13px]">输出 {formatMillions(message.usage?.output_tokens)}</span>
+          <span className="inline-flex items-center rounded-full bg-[#eef2f8] px-2.5 py-0.5 text-ink-700 text-[13px]">输入 {formatMillions(message.usage?.input_tokens)}</span>
+          <span className="inline-flex items-center rounded-full bg-[#eef2f8] px-2.5 py-0.5 text-ink-700 text-[13px]">输出 {formatMillions(message.usage?.output_tokens)}</span>
         </div>
       </div>
     </div>
@@ -142,9 +142,9 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
   }, [hasMoreLines, isExpanded]);
 
   return (
-    <div className="flex flex-col mt-4">
-      <div className="header text-accent">输出内容</div>
-      <div className="mt-2 rounded-xl bg-surface-tertiary p-3">
+    <div className="mt-4 flex flex-col">
+      <div className="text-[11px] font-semibold tracking-[0.16em] text-muted">工具输出</div>
+      <div className="mt-2 rounded-[22px] border border-black/6 bg-[#f4f7fb] p-4">
         <pre className={`text-sm whitespace-pre-wrap break-words font-mono ${isError ? "text-red-500" : "text-ink-700"}`}>
           {isMarkdownContent ? <MDContent text={visibleContent} /> : visibleContent}
         </pre>
@@ -161,12 +161,14 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
 };
 
 const AssistantBlockCard = ({ title, text, showIndicator = false }: { title: string; text: string; showIndicator?: boolean }) => (
-  <div className="flex flex-col mt-4">
-    <div className="header text-accent flex items-center gap-2">
+  <div className="mt-5 flex flex-col">
+    <div className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.16em] text-muted">
       <StatusDot variant="success" isActive={showIndicator} isVisible={showIndicator} />
       {title}
     </div>
-    <MDContent text={text} />
+    <div className="mt-2 rounded-[24px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 shadow-[0_10px_24px_rgba(30,38,52,0.05)]">
+      <MDContent text={text} />
+    </div>
   </div>
 );
 
@@ -195,7 +197,7 @@ const ToolUseCard = ({ messageContent, showIndicator = false }: { messageContent
   };
 
   return (
-    <div className="flex flex-col gap-2 rounded-[1rem] bg-surface-tertiary px-3 py-2 mt-4 overflow-hidden">
+    <div className="mt-4 flex flex-col gap-2 rounded-[20px] border border-black/6 bg-[#f4f7fb] px-3 py-3 overflow-hidden">
       <div className="flex flex-row items-center gap-2 min-w-0">
         <StatusDot variant={statusVariant} isActive={isPending && showIndicator} isVisible={shouldShowDot} />
         <div className="flex flex-row items-center gap-2 tool-use-item min-w-0 flex-1">
@@ -236,7 +238,7 @@ const AskUserQuestionCard = ({
   }
 
   return (
-    <div className="flex flex-col gap-2 rounded-[1rem] bg-surface-tertiary px-3 py-2 mt-4">
+    <div className="mt-4 flex flex-col gap-2 rounded-[20px] border border-black/6 bg-[#f4f7fb] px-3 py-3">
       <div className="flex flex-row items-center gap-2">
         <StatusDot variant="success" isActive={false} isVisible={true} />
         <span className="inline-flex items-center rounded-md text-accent py-0.5 text-sm font-medium">向你提问</span>
@@ -261,12 +263,12 @@ const SystemInfoCard = ({ message, showIndicator = false }: { message: SDKMessag
   );
   
   return (
-    <div className="flex flex-col gap-2 mt-2">
-      <div className="header text-accent flex items-center gap-2">
+    <div className="mt-4 flex flex-col gap-2">
+      <div className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.16em] text-muted">
         <StatusDot variant="success" isActive={showIndicator} isVisible={showIndicator} />
         系统初始化
       </div>
-      <div className="flex flex-col rounded-xl px-4 py-2 border border-ink-900/10 bg-surface-secondary space-y-1">
+      <div className="flex flex-col rounded-[22px] border border-black/6 bg-[#f4f7fb] px-4 py-3 space-y-1">
         <InfoItem name="会话编号" value={systemMsg.session_id || "-"} />
         <InfoItem name="模型名称" value={systemMsg.model || "-"} />
         <InfoItem name="权限模式" value={systemMsg.permissionMode || "-"} />
@@ -277,7 +279,7 @@ const SystemInfoCard = ({ message, showIndicator = false }: { message: SDKMessag
 };
 
 const AttachmentChip = ({ attachment }: { attachment: PromptAttachment }) => (
-  <div className="rounded-2xl border border-ink-900/10 bg-surface-secondary px-3 py-2">
+  <div className="rounded-2xl border border-black/6 bg-[#eef2f8] px-3 py-2">
     <div className="text-xs font-medium text-ink-700">{attachment.name}</div>
     <div className="mt-1 text-[11px] text-muted">
       {attachment.kind === "image" ? "图片附件" : "文本附件"}
@@ -286,20 +288,22 @@ const AttachmentChip = ({ attachment }: { attachment: PromptAttachment }) => (
 );
 
 const UserMessageCard = ({ message, showIndicator = false }: { message: { type: "user_prompt"; prompt: string; attachments?: PromptAttachment[] }; showIndicator?: boolean }) => (
-  <div className="flex flex-col mt-4">
-    <div className="header text-accent flex items-center gap-2">
+  <div className="mt-5 flex flex-col items-end">
+    <div className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.16em] text-muted">
       <StatusDot variant="success" isActive={showIndicator} isVisible={showIndicator} />
       用户
     </div>
     {message.prompt.trim() ? (
-      <MDContent text={message.prompt} />
+      <div className="mt-2 w-full max-w-[78%] rounded-[24px] bg-[linear-gradient(180deg,#2a2e36,#1f232a)] px-5 py-4 text-white shadow-[0_16px_30px_rgba(17,20,26,0.26)]">
+        <MDContent text={message.prompt} />
+      </div>
     ) : (
-      <div className="rounded-2xl border border-ink-900/10 bg-surface-secondary px-4 py-3 text-sm text-muted">
+      <div className="mt-2 w-full max-w-[78%] rounded-[24px] border border-black/6 bg-[#eef2f8] px-4 py-3 text-sm text-muted">
         已发送附件
       </div>
     )}
     {message.attachments && message.attachments.length > 0 && (
-      <div className="mt-3 grid gap-3">
+      <div className="mt-3 grid w-full max-w-[78%] gap-3">
         <div className="grid gap-2 sm:grid-cols-2">
           {message.attachments.map((attachment) => (
             <AttachmentChip key={attachment.id} attachment={attachment} />
@@ -308,7 +312,7 @@ const UserMessageCard = ({ message, showIndicator = false }: { message: { type: 
         {message.attachments.map((attachment) => {
           if (attachment.kind === "image") {
             return (
-              <div key={`${attachment.id}-preview`} className="overflow-hidden rounded-2xl border border-ink-900/10 bg-surface-secondary p-2">
+              <div key={`${attachment.id}-preview`} className="overflow-hidden rounded-2xl border border-black/6 bg-[#eef2f8] p-2">
                 <img
                   src={attachment.preview || attachment.data}
                   alt={attachment.name}
@@ -319,7 +323,7 @@ const UserMessageCard = ({ message, showIndicator = false }: { message: { type: 
           }
 
           return (
-            <div key={`${attachment.id}-preview`} className="rounded-2xl border border-ink-900/10 bg-surface-secondary p-3">
+            <div key={`${attachment.id}-preview`} className="rounded-2xl border border-black/6 bg-[#eef2f8] p-3">
               <div className="mb-2 text-xs font-medium text-muted">{attachment.name}</div>
               <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-sm text-ink-700">
                 {attachment.preview || attachment.data}

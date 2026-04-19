@@ -19,6 +19,8 @@ export type ApiConfigSettings = {
   profiles: ApiConfig[];
 };
 
+const DEFAULT_MODEL = "claude-sonnet-4-5";
+
 const CONFIG_FILE_NAME = "api-config.json";
 
 function getConfigPath(): string {
@@ -30,14 +32,40 @@ export function loadApiConfigSettings(): ApiConfigSettings {
   try {
     const configPath = getConfigPath();
     if (!existsSync(configPath)) {
-      return { profiles: [] };
+      return {
+        profiles: [
+          {
+            id: crypto.randomUUID(),
+            name: "默认配置",
+            apiKey: "",
+            baseURL: "https://api.anthropic.com",
+            model: DEFAULT_MODEL,
+            models: [DEFAULT_MODEL],
+            enabled: true,
+            apiType: "anthropic",
+          },
+        ],
+      };
     }
     const raw = readFileSync(configPath, "utf8");
     const parsed = JSON.parse(raw) as ApiConfig | ApiConfigSettings;
     return normalizeApiSettings(parsed);
   } catch (error) {
     console.error("[config-store] Failed to load API config:", error);
-    return { profiles: [] };
+    return {
+      profiles: [
+        {
+          id: crypto.randomUUID(),
+          name: "默认配置",
+          apiKey: "",
+          baseURL: "https://api.anthropic.com",
+          model: DEFAULT_MODEL,
+          models: [DEFAULT_MODEL],
+          enabled: true,
+          apiType: "anthropic",
+        },
+      ],
+    };
   }
 }
 
@@ -79,7 +107,7 @@ export function deleteApiConfig(): void {
 }
 
 function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | null {
-  if (!config?.apiKey || !config.baseURL || !config.name) {
+  if (!config?.baseURL || !config.name) {
     return null;
   }
 

@@ -3,13 +3,18 @@
     "productName": "Agent Cowork",
     "files": [
         "dist-electron",
-        "dist-react"
+        "dist-react",
+        "node_modules/@anthropic-ai/claude-agent-sdk/**/*",
+        "node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/**/*",
+        "node_modules/@anthropic-ai/claude-agent-sdk-darwin-x64/**/*"
     ],
     "extraResources": [
         "dist-electron/preload.cjs"
     ],
     "asarUnpack": [
-        "node_modules/@anthropic-ai/claude-agent-sdk/**/*"
+        "node_modules/@anthropic-ai/claude-agent-sdk/**/*",
+        "node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/**/*",
+        "node_modules/@anthropic-ai/claude-agent-sdk-darwin-x64/**/*"
     ],
     "icon": "./claude-color.png",
     "mac": {
