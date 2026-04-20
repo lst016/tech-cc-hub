@@ -1,13 +1,10 @@
 import { isDev } from "./util.js"
 import path from "path"
 import { app } from "electron"
+import { resolveAppAssetPath } from "./pathResolverCore.js";
 
 export function getPreloadPath() {
-    return path.join(
-        app.getAppPath(),
-        isDev() ? './' : '../',
-        '/dist-electron/preload.cjs'
-    )
+    return resolveAppAssetPath(app.getAppPath(), "dist-electron/electron/preload.cjs")
 }
 
 export function getUIPath() {
@@ -15,9 +12,5 @@ export function getUIPath() {
 }
 
 export function getIconPath() {
-    return path.join(
-        app.getAppPath(),
-        isDev() ? './' : '../',
-        '/templateIcon.png'
-    )
+    return resolveAppAssetPath(app.getAppPath(), "templateIcon.png")
 }

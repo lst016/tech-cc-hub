@@ -292,6 +292,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       case "stream.user_prompt": {
         const { sessionId, prompt, attachments } = event.payload;
+        const capturedAt = Date.now();
         set((state) => {
           const existing = state.sessions[sessionId] ?? createSession(sessionId);
           return {
@@ -299,7 +300,7 @@ export const useAppStore = create<AppState>((set, get) => ({
               ...state.sessions,
               [sessionId]: {
                 ...existing,
-                messages: [...existing.messages, { type: "user_prompt", prompt, attachments }]
+                messages: [...existing.messages, { type: "user_prompt", prompt, attachments, capturedAt }]
               }
             }
           };

@@ -21,9 +21,12 @@ export type UserPromptMessage = {
   type: "user_prompt";
   prompt: string;
   attachments?: PromptAttachment[];
+  capturedAt?: number;
 };
 
-export type StreamMessage = SDKMessage | UserPromptMessage;
+export type StreamMessage = (SDKMessage | UserPromptMessage) & {
+  capturedAt?: number;
+};
 
 export type SessionStatus = "idle" | "running" | "completed" | "error";
 

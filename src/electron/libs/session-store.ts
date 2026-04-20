@@ -166,10 +166,19 @@ export class SessionStore {
 
     const messages = (this.db
       .prepare(
-        `select data from messages where session_id = ? order by created_at asc`
+        `select data, created_at from messages where session_id = ? order by created_at asc`
       )
       .all(id) as Array<Record<string, unknown>>)
-      .map((row) => JSON.parse(String(row.data)) as StreamMessage);
+      .map((row) => {
+        const parsed = JSON.parse(String(row.data)) as StreamMessage;
+        if (typeof parsed.capturedAt === "number") {
+          return parsed;
+        }
+        return {
+          ...parsed,
+          capturedAt: Number(row.created_at),
+        } satisfies StreamMessage;
+      });
 
     return {
       session: {
@@ -202,12 +211,14 @@ export class SessionStore {
   }
 
   recordMessage(sessionId: string, message: StreamMessage): void {
+    const capturedAt = typeof message.capturedAt === "number" ? message.capturedAt : Date.now();
+    const storedMessage = message.capturedAt === capturedAt ? message : { ...message, capturedAt };
     const id = ('uuid' in message && message.uuid) ? String(message.uuid) : crypto.randomUUID();
     this.db
       .prepare(
         `insert or ignore into messages (id, session_id, data, created_at) values (?, ?, ?, ?)`
       )
-      .run(id, sessionId, JSON.stringify(message), Date.now());
+      .run(id, sessionId, JSON.stringify(storedMessage), capturedAt);
   }
 
   deleteSession(id: string): boolean {

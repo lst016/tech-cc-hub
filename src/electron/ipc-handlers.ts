@@ -1,18 +1,20 @@
-import { BrowserWindow } from "electron";
-import type { ClientEvent, ServerEvent, StreamMessage } from "./types.js";
-import { runClaude, type RunnerHandle } from "./libs/runner.js";
-import { SessionStore } from "./libs/session-store.js";
-import { app } from "electron";
+import { app, BrowserWindow } from "electron";
 import { join } from "path";
+
+import { createStoredUserPromptMessage } from "../shared/attachments.js";
+import { runClaude, type RunnerHandle } from "./libs/runner.js";
 import { getCurrentApiConfig, supportsRemoteSessionResume } from "./libs/claude-settings.js";
+import { SessionStore } from "./libs/session-store.js";
+import { buildStatelessContinuationPrompt } from "./stateless-continuation.js";
+import type { ClientEvent, ServerEvent } from "./types.js";
 
 let sessions: SessionStore;
 const runnerHandles = new Map<string, RunnerHandle>();
 
 function initializeSessions() {
   if (!sessions) {
-    const DB_PATH = join(app.getPath("userData"), "sessions.db");
-    sessions = new SessionStore(DB_PATH);
+    const dbPath = join(app.getPath("userData"), "sessions.db");
+    sessions = new SessionStore(dbPath);
   }
   return sessions;
 }
@@ -31,113 +33,82 @@ function hasLiveSession(sessionId: string): boolean {
 }
 
 function emit(event: ServerEvent) {
+  let nextEvent = event;
+
   // If a session was deleted, drop late events that would resurrect it in the UI.
-  // (Session history lookups are DB-backed, so these late events commonly lead to "Unknown session".)
+  // Session history lookups are DB-backed, so late events commonly lead to
+  // "Unknown session" artifacts on the renderer side.
   if (
-    (event.type === "session.status" ||
-      event.type === "stream.message" ||
-      event.type === "stream.user_prompt" ||
-      event.type === "permission.request") &&
-    !hasLiveSession(event.payload.sessionId)
+    (nextEvent.type === "session.status" ||
+      nextEvent.type === "stream.message" ||
+      nextEvent.type === "stream.user_prompt" ||
+      nextEvent.type === "permission.request") &&
+    !hasLiveSession(nextEvent.payload.sessionId)
   ) {
     return;
   }
 
-  if (event.type === "session.status") {
-    sessions.updateSession(event.payload.sessionId, { status: event.payload.status });
+  if (nextEvent.type === "session.status") {
+    sessions.updateSession(nextEvent.payload.sessionId, { status: nextEvent.payload.status });
   }
-  if (event.type === "stream.message") {
-    sessions.recordMessage(event.payload.sessionId, event.payload.message);
+  if (nextEvent.type === "stream.message") {
+    const message =
+      typeof nextEvent.payload.message.capturedAt === "number"
+        ? nextEvent.payload.message
+        : { ...nextEvent.payload.message, capturedAt: Date.now() };
+    sessions.recordMessage(nextEvent.payload.sessionId, message);
+    nextEvent = {
+      ...nextEvent,
+      payload: {
+        ...nextEvent.payload,
+        message,
+      },
+    };
   }
-  if (event.type === "stream.user_prompt") {
-    sessions.recordMessage(event.payload.sessionId, {
-      type: "user_prompt",
-      prompt: event.payload.prompt
-    });
-  }
-  broadcast(event);
-}
-
-function extractTextFromMessage(message: StreamMessage): { role: "user" | "assistant"; text: string } | null {
-  if (message.type === "user_prompt") {
-    const text = message.prompt.trim();
-    return text ? { role: "user", text } : null;
-  }
-
-  if (message.type === "result" && message.subtype === "success") {
-    const text = message.result.trim();
-    return text ? { role: "assistant", text } : null;
-  }
-
-  return null;
-}
-
-function buildStatelessContinuationPrompt(messages: StreamMessage[], latestPrompt: string): string {
-  const condensedHistory = messages
-    .map((message) => extractTextFromMessage(message))
-    .filter((entry): entry is { role: "user" | "assistant"; text: string } => Boolean(entry));
-
-  const dedupedHistory: Array<{ role: "user" | "assistant"; text: string }> = [];
-  for (const item of condensedHistory) {
-    const previous = dedupedHistory[dedupedHistory.length - 1];
-    if (previous && previous.role === item.role && previous.text === item.text) {
-      continue;
-    }
-    dedupedHistory.push(item);
+  if (nextEvent.type === "stream.user_prompt") {
+    sessions.recordMessage(
+      nextEvent.payload.sessionId,
+      {
+        ...createStoredUserPromptMessage(nextEvent.payload.prompt, nextEvent.payload.attachments),
+        capturedAt: Date.now(),
+      },
+    );
   }
 
-  const recentHistory = dedupedHistory.slice(-12);
-  if (recentHistory.length === 0) {
-    return latestPrompt;
-  }
-
-  const historyText = recentHistory
-    .map((item) => `${item.role === "user" ? "用户" : "助手"}：${item.text}`)
-    .join("\n\n");
-
-  return [
-    "以下是当前会话的最近历史，请基于这些历史继续回答。",
-    "",
-    historyText,
-    "",
-    `用户的最新消息：${latestPrompt}`,
-    "",
-    "请直接继续当前对话，不要提及你看到了历史拼接。",
-  ].join("\n");
+  broadcast(nextEvent);
 }
 
 export function handleClientEvent(event: ClientEvent) {
-  // Initialize sessions on first event
-  const sessions = initializeSessions();
+  const store = initializeSessions();
 
   if (event.type === "session.list") {
     emit({
       type: "session.list",
-      payload: { sessions: sessions.listSessions() }
+      payload: { sessions: store.listSessions() },
     });
     return;
   }
 
   if (event.type === "session.history") {
-    const history = sessions.getSessionHistory(event.payload.sessionId);
+    const history = store.getSessionHistory(event.payload.sessionId);
     if (!history) {
-      // Session may have been deleted (or deleted concurrently). Treat as a sync event rather than an error toast.
       emit({ type: "session.deleted", payload: { sessionId: event.payload.sessionId } });
       return;
     }
+
     emit({
       type: "session.history",
       payload: {
         sessionId: history.session.id,
         status: history.session.status,
-        messages: history.messages
-      }
+        messages: history.messages,
+      },
     });
     return;
   }
 
   if (event.type === "session.create") {
-    const session = sessions.createSession({
+    const session = store.createSession({
       cwd: event.payload.cwd,
       title: event.payload.title || "新聊天",
       allowedTools: event.payload.allowedTools,
@@ -145,31 +116,32 @@ export function handleClientEvent(event: ClientEvent) {
 
     emit({
       type: "session.status",
-      payload: { sessionId: session.id, status: "idle", title: session.title, cwd: session.cwd }
+      payload: { sessionId: session.id, status: "idle", title: session.title, cwd: session.cwd },
     });
     return;
   }
 
   if (event.type === "session.start") {
-    const session = sessions.createSession({
+    const session = store.createSession({
       cwd: event.payload.cwd,
       title: event.payload.title,
       allowedTools: event.payload.allowedTools,
-      prompt: event.payload.prompt
+      prompt: event.payload.prompt,
     });
 
-    sessions.updateSession(session.id, {
+    store.updateSession(session.id, {
       status: "running",
-      lastPrompt: event.payload.prompt
+      lastPrompt: event.payload.prompt,
     });
+
     emit({
       type: "session.status",
-      payload: { sessionId: session.id, status: "running", title: session.title, cwd: session.cwd }
+      payload: { sessionId: session.id, status: "running", title: session.title, cwd: session.cwd },
     });
 
     emit({
       type: "stream.user_prompt",
-      payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: event.payload.attachments }
+      payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: event.payload.attachments },
     });
 
     runClaude({
@@ -180,15 +152,15 @@ export function handleClientEvent(event: ClientEvent) {
       resumeSessionId: session.claudeSessionId,
       onEvent: emit,
       onSessionUpdate: (updates) => {
-        sessions.updateSession(session.id, updates);
-      }
+        store.updateSession(session.id, updates);
+      },
     })
       .then((handle) => {
         runnerHandles.set(session.id, handle);
-        sessions.setAbortController(session.id, undefined);
+        store.setAbortController(session.id, undefined);
       })
       .catch((error) => {
-        sessions.updateSession(session.id, { status: "error" });
+        store.updateSession(session.id, { status: "error" });
         emit({
           type: "session.status",
           payload: {
@@ -196,8 +168,8 @@ export function handleClientEvent(event: ClientEvent) {
             status: "error",
             title: session.title,
             cwd: session.cwd,
-            error: String(error)
-          }
+            error: String(error),
+          },
         });
       });
 
@@ -205,33 +177,37 @@ export function handleClientEvent(event: ClientEvent) {
   }
 
   if (event.type === "session.continue") {
-    const session = sessions.getSession(event.payload.sessionId);
+    const session = store.getSession(event.payload.sessionId);
     if (!session) {
       emit({ type: "session.deleted", payload: { sessionId: event.payload.sessionId } });
       emit({
         type: "runner.error",
-        payload: { sessionId: event.payload.sessionId, message: "Session no longer exists." }
+        payload: { sessionId: event.payload.sessionId, message: "Session no longer exists." },
       });
       return;
     }
 
     const config = getCurrentApiConfig();
     const canUseRemoteResume = config ? supportsRemoteSessionResume(config) : true;
-    const history = sessions.getSessionHistory(session.id);
+    const history = store.getSessionHistory(session.id);
     const prompt = canUseRemoteResume
       ? event.payload.prompt
-      : buildStatelessContinuationPrompt(history?.messages ?? [], event.payload.prompt);
+      : buildStatelessContinuationPrompt(
+          history?.messages ?? [],
+          event.payload.prompt,
+          event.payload.attachments ?? [],
+        );
     const resumeSessionId = canUseRemoteResume ? session.claudeSessionId : undefined;
 
-    sessions.updateSession(session.id, { status: "running", lastPrompt: event.payload.prompt });
+    store.updateSession(session.id, { status: "running", lastPrompt: event.payload.prompt });
     emit({
       type: "session.status",
-      payload: { sessionId: session.id, status: "running", title: session.title, cwd: session.cwd }
+      payload: { sessionId: session.id, status: "running", title: session.title, cwd: session.cwd },
     });
 
     emit({
       type: "stream.user_prompt",
-      payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: event.payload.attachments }
+      payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: event.payload.attachments },
     });
 
     runClaude({
@@ -242,14 +218,14 @@ export function handleClientEvent(event: ClientEvent) {
       resumeSessionId,
       onEvent: emit,
       onSessionUpdate: (updates) => {
-        sessions.updateSession(session.id, updates);
-      }
+        store.updateSession(session.id, updates);
+      },
     })
       .then((handle) => {
         runnerHandles.set(session.id, handle);
       })
       .catch((error) => {
-        sessions.updateSession(session.id, { status: "error" });
+        store.updateSession(session.id, { status: "error" });
         emit({
           type: "session.status",
           payload: {
@@ -257,8 +233,8 @@ export function handleClientEvent(event: ClientEvent) {
             status: "error",
             title: session.title,
             cwd: session.cwd,
-            error: String(error)
-          }
+            error: String(error),
+          },
         });
       });
 
@@ -266,7 +242,7 @@ export function handleClientEvent(event: ClientEvent) {
   }
 
   if (event.type === "session.stop") {
-    const session = sessions.getSession(event.payload.sessionId);
+    const session = store.getSession(event.payload.sessionId);
     if (!session) return;
 
     const handle = runnerHandles.get(session.id);
@@ -275,10 +251,10 @@ export function handleClientEvent(event: ClientEvent) {
       runnerHandles.delete(session.id);
     }
 
-    sessions.updateSession(session.id, { status: "idle" });
+    store.updateSession(session.id, { status: "idle" });
     emit({
       type: "session.status",
-      payload: { sessionId: session.id, status: "idle", title: session.title, cwd: session.cwd }
+      payload: { sessionId: session.id, status: "idle", title: session.title, cwd: session.cwd },
     });
     return;
   }
@@ -291,25 +267,22 @@ export function handleClientEvent(event: ClientEvent) {
       runnerHandles.delete(sessionId);
     }
 
-    // Always try to delete and emit deleted event
-    // Don't emit error if session doesn't exist - it may have already been deleted
-    sessions.deleteSession(sessionId);
+    store.deleteSession(sessionId);
     emit({
       type: "session.deleted",
-      payload: { sessionId }
+      payload: { sessionId },
     });
     return;
   }
 
   if (event.type === "permission.response") {
-    const session = sessions.getSession(event.payload.sessionId);
+    const session = store.getSession(event.payload.sessionId);
     if (!session) return;
 
     const pending = session.pendingPermissions.get(event.payload.toolUseId);
     if (pending) {
       pending.resolve(event.payload.result);
     }
-    return;
   }
 }
 

@@ -477,7 +477,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
   return (
     <section className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[rgba(229,234,240,0.72)] via-[rgba(229,234,240,0.18)] to-transparent pb-6 px-3 pt-10 lg:ml-[320px] lg:pb-8 xl:mr-[340px]">
       {showSlashPalette && (
-        <div className="mx-auto mb-3 w-full max-w-full lg:max-w-3xl">
+        <div className="mx-auto mb-3 w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
           <div className="overflow-hidden rounded-[24px] border border-black/6 bg-white/94 shadow-[0_18px_50px_rgba(30,38,52,0.08)] backdrop-blur">
             <div className="border-b border-black/6 px-4 py-2 text-xs font-medium text-muted">
               可用 Slash 命令
@@ -502,7 +502,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
           </div>
         </div>
       )}
-      <div className="mx-auto w-full max-w-full rounded-[30px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,247,251,0.94))] px-4 py-3 shadow-[0_24px_60px_rgba(30,38,52,0.08)] backdrop-blur-xl lg:max-w-[900px]">
+      <div className="mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[30px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,247,251,0.94))] px-4 py-3 shadow-[0_24px_60px_rgba(30,38,52,0.08)] backdrop-blur-xl xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
         {activeQueue.length > 0 && (
           <div className="mb-3 rounded-2xl border border-black/6 bg-[#f6f8fb] px-3 py-3">
             <div className="mb-2 flex items-center justify-between gap-3">

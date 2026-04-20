@@ -10,6 +10,7 @@ import type { PromptAttachment, StreamMessage } from "../types";
 import type { PermissionRequest } from "../store/useAppStore";
 import MDContent from "../render/markdown";
 import { DecisionPanel } from "./DecisionPanel";
+import { resolveImageAttachmentSrc } from "../../shared/attachments";
 
 type MessageContent = SDKAssistantMessage["message"]["content"][number];
 type ToolResultContent = SDKUserMessage["message"]["content"][number];
@@ -311,10 +312,11 @@ const UserMessageCard = ({ message, showIndicator = false }: { message: { type: 
         </div>
         {message.attachments.map((attachment) => {
           if (attachment.kind === "image") {
+            const imageSrc = resolveImageAttachmentSrc(attachment);
             return (
               <div key={`${attachment.id}-preview`} className="overflow-hidden rounded-2xl border border-black/6 bg-[#eef2f8] p-2">
                 <img
-                  src={attachment.preview || attachment.data}
+                  src={imageSrc}
                   alt={attachment.name}
                   className="max-h-64 w-full rounded-xl object-contain"
                 />
