@@ -294,7 +294,7 @@ const UserMessageCard = ({ message, showIndicator = false }: { message: { type: 
       用户
     </div>
     {message.prompt.trim() ? (
-      <div className="mt-2 w-full max-w-[78%] rounded-[24px] bg-[linear-gradient(180deg,#2a2e36,#1f232a)] px-5 py-4 text-white shadow-[0_16px_30px_rgba(17,20,26,0.26)]">
+      <div className="mt-2 w-full max-w-[78%] rounded-[24px] border border-accent/18 bg-[linear-gradient(180deg,rgba(253,244,241,0.98),rgba(255,255,255,0.96))] px-5 py-4 text-ink-800 shadow-[0_16px_30px_rgba(210,106,61,0.08)]">
         <MDContent text={message.prompt} />
       </div>
     ) : (
