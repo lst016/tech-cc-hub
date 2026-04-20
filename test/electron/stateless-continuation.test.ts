@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildStatelessContinuationPrompt } from "./stateless-continuation.js";
+import { buildStatelessContinuationPrompt } from "../src/electron/stateless-continuation.js";
 
 test("buildStatelessContinuationPrompt marks image attachments on the latest turn in stateless mode", () => {
   const prompt = buildStatelessContinuationPrompt(

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildActivityRailModel } from "../shared/activity-rail-model.js";
+import { buildActivityRailModel } from "../../src/shared/activity-rail-model.js";
 
 test("buildActivityRailModel exposes plan steps separately from execution steps", () => {
   const model = buildActivityRailModel(

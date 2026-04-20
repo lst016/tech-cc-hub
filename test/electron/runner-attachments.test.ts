@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildAnthropicPromptContentBlocks } from "../shared/attachments.js";
+import { buildAnthropicPromptContentBlocks } from "../../src/shared/attachments.js";
 
 test("buildAnthropicPromptContentBlocks emits Anthropic image content blocks for image attachments", () => {
   const contentBlocks = buildAnthropicPromptContentBlocks("describe this image", [

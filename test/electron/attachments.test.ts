@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createStoredUserPromptMessage, resolveImageAttachmentSrc } from "../shared/attachments.js";
+import { createStoredUserPromptMessage, resolveImageAttachmentSrc } from "../../src/shared/attachments.js";
 
 test("createStoredUserPromptMessage preserves attachments for history replay", () => {
   const attachments = [
