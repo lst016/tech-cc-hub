@@ -16,6 +16,7 @@ export type ApiConfig = {
   apiKey: string;
   baseURL: string;
   model: string;
+  expertModel?: string;
   models?: ApiModelConfig[];
   enabled: boolean;
   apiType?: ApiType;
@@ -25,16 +26,24 @@ export type ApiConfigSettings = {
   profiles: ApiConfig[];
 };
 
+export type GlobalRuntimeConfig = Record<string, unknown>;
+
 const DEFAULT_MODEL = "claude-sonnet-4-5";
 const DEFAULT_MODEL_CONFIG: ApiModelConfig = {
   name: DEFAULT_MODEL,
   compressionThresholdPercent: 70,
 };
 const CONFIG_FILE_NAME = "api-config.json";
+const GLOBAL_CONFIG_FILE_NAME = "agent-runtime.json";
 
 function getConfigPath(): string {
   const userDataPath = app.getPath("userData");
   return join(userDataPath, CONFIG_FILE_NAME);
+}
+
+function getGlobalConfigPath(): string {
+  const userDataPath = app.getPath("userData");
+  return join(userDataPath, GLOBAL_CONFIG_FILE_NAME);
 }
 
 function createDefaultSettings(): ApiConfigSettings {
@@ -46,6 +55,7 @@ function createDefaultSettings(): ApiConfigSettings {
         apiKey: "",
         baseURL: "https://api.anthropic.com",
         model: DEFAULT_MODEL,
+        expertModel: DEFAULT_MODEL,
         models: [DEFAULT_MODEL_CONFIG],
         enabled: true,
         apiType: "anthropic",
@@ -103,12 +113,63 @@ export function deleteApiConfig(): void {
   }
 }
 
+export function loadGlobalRuntimeConfig(): GlobalRuntimeConfig {
+  try {
+    const configPath = getGlobalConfigPath();
+    if (!existsSync(configPath)) {
+      return {};
+    }
+
+    const raw = readFileSync(configPath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      console.error("[config-store] Invalid global runtime config format, expecting object:", configPath);
+      return {};
+    }
+
+    return parsed as GlobalRuntimeConfig;
+  } catch (error) {
+    console.error("[config-store] Failed to load global runtime config:", error);
+    return {};
+  }
+}
+
+export function saveGlobalRuntimeConfig(config: GlobalRuntimeConfig): void {
+  try {
+    const configPath = getGlobalConfigPath();
+    const userDataPath = app.getPath("userData");
+
+    if (!existsSync(userDataPath)) {
+      mkdirSync(userDataPath, { recursive: true });
+    }
+
+    if (typeof config !== "object" || config === null || Array.isArray(config)) {
+      throw new Error("Invalid global runtime config: expected an object");
+    }
+
+    writeFileSync(configPath, JSON.stringify(config, null, 2), "utf8");
+    console.info("[config-store] Global runtime config saved successfully");
+  } catch (error) {
+    console.error("[config-store] Failed to save global runtime config:", error);
+    throw error;
+  }
+}
+
 function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | null {
   if (!config?.baseURL || !config.name) {
     return null;
   }
 
-  const dedupedModels = dedupeModelConfigs([config.model, ...(config.models ?? [])]);
+  const dedupedModels = dedupeModelConfigs([
+    config.model,
+    config.expertModel,
+    ...(config.models ?? []),
+  ]);
   const dedupedModelNames = dedupedModels.map((item) => item.name);
   const selectedModel = config.model?.trim() || dedupedModelNames[0];
   if (!selectedModel) {
@@ -128,6 +189,7 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
     apiKey: config.apiKey.trim(),
     baseURL: config.baseURL.trim(),
     model: selectedModel,
+    expertModel: normalizeRoleModel(config.expertModel, selectedModel),
     models: dedupedModels,
     enabled: Boolean(config.enabled),
     apiType: config.apiType ?? "anthropic",
@@ -233,4 +295,9 @@ function normalizePercent(value: number | null | undefined): number | undefined 
   }
 
   return normalized;
+}
+
+function normalizeRoleModel(value: string | undefined, fallbackModel: string): string {
+  const normalized = value?.trim();
+  return normalized || fallbackModel;
 }

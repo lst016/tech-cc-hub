@@ -22,6 +22,7 @@ type ApiConfig = {
     apiKey: string;
     baseURL: string;
     model: string;
+    expertModel?: string;
     models?: ApiModelConfig[];
     enabled: boolean;
     apiType?: "anthropic";
@@ -30,6 +31,8 @@ type ApiConfig = {
 type ApiConfigSettings = {
     profiles: ApiConfig[];
 }
+
+type GlobalRuntimeConfig = Record<string, unknown>;
 
 type RuntimeReasoningMode = "disabled" | "low" | "medium" | "high" | "xhigh";
 
@@ -41,9 +44,11 @@ type EventPayloadMapping = {
     "generate-session-title": string;
     "get-recent-cwds": string[];
     "select-directory": string | null;
-    "get-api-config": ApiConfigSettings;
-    "save-api-config": { success: boolean; error?: string };
-    "check-api-config": { hasConfig: boolean; config: ApiConfig | null };
+        "get-api-config": ApiConfigSettings;
+        "save-api-config": { success: boolean; error?: string };
+        "check-api-config": { hasConfig: boolean; config: ApiConfig | null };
+        "get-global-config": GlobalRuntimeConfig;
+        "save-global-config": { success: boolean; error?: string };
 }
 
 interface Window {
@@ -51,13 +56,15 @@ interface Window {
         subscribeStatistics: (callback: (statistics: Statistics) => void) => UnsubscribeFunction;
         getStaticData: () => Promise<StaticData>;
         // Claude Agent IPC APIs
-        sendClientEvent: (event: any) => void;
-        onServerEvent: (callback: (event: any) => void) => UnsubscribeFunction;
+        sendClientEvent: (event: import("./src/ui/types").ClientEvent) => void;
+        onServerEvent: (callback: (event: import("./src/ui/types").ServerEvent) => void) => UnsubscribeFunction;
         generateSessionTitle: (userInput: string | null) => Promise<string>;
         getRecentCwds: (limit?: number) => Promise<string[]>;
         selectDirectory: () => Promise<string | null>;
         getApiConfig: () => Promise<ApiConfigSettings>;
         saveApiConfig: (config: ApiConfigSettings) => Promise<{ success: boolean; error?: string }>;
+        getGlobalConfig: () => Promise<GlobalRuntimeConfig>;
+        saveGlobalConfig: (config: GlobalRuntimeConfig) => Promise<{ success: boolean; error?: string }>;
         checkApiConfig: () => Promise<{ hasConfig: boolean; config: ApiConfig | null }>;
     }
 }

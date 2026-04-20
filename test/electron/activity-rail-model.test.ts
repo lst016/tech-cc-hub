@@ -331,3 +331,146 @@ test("buildActivityRailModel structures tool detail sections for drawer renderin
   assert.equal(toolItem.detailSections[1]?.summary, "命中工具引用 WebSearch");
   assert.match(toolItem.detailSections[1]?.raw ?? "", /"tool_name": "WebSearch"/);
 });
+
+test("buildActivityRailModel ignores option-style assistant lists as plan", () => {
+  const model = buildActivityRailModel(
+    {
+      id: "session-plan-noise",
+      title: "Noise List",
+      status: "completed",
+      messages: [
+        {
+          type: "user_prompt",
+          prompt: "我想要点建议",
+        },
+        {
+          type: "assistant",
+          capturedAt: 100,
+          uuid: "assistant-noise",
+          session_id: "remote-noise",
+          parent_tool_use_id: null,
+          message: {
+            id: "assistant-noise",
+            model: "Qwen3-Coder-480B-A35B-Instruct",
+            role: "assistant",
+            type: "message",
+            content: [
+              {
+                type: "text",
+                text: "常见选择：1. **Node.js + Express**（TypeScript） 2. **Python + FastAPI** 3. **Rust + Axum**",
+              },
+            ],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: {
+              input_tokens: 0,
+              output_tokens: 0,
+              cache_creation_input_tokens: null,
+              cache_read_input_tokens: null,
+            },
+          },
+        } as never,
+      ],
+    },
+    [],
+    "",
+  );
+
+  assert.equal(model.planSteps.length, 0);
+});
+
+test("buildActivityRailModel ignores answer-mode option lists as plan", () => {
+  const model = buildActivityRailModel(
+    {
+      id: "session-plan-answer",
+      title: "Answer Options",
+      status: "completed",
+      messages: [
+        {
+          type: "user_prompt",
+          prompt: "你推荐哪个工具？",
+        },
+        {
+          type: "assistant",
+          capturedAt: 100,
+          uuid: "assistant-answer-option",
+          session_id: "remote-answer-option",
+          parent_tool_use_id: null,
+          message: {
+            id: "assistant-answer-option",
+            model: "Qwen3-Coder-480B-A35B-Instruct",
+            role: "assistant",
+            type: "message",
+            content: [
+              {
+                type: "text",
+                text: "我不确定你指的是哪个工具：1. **Claude Code** 可更新到最新版本 2. **gstack** 可调用 /gstack-upgrade",
+              },
+            ],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: {
+              input_tokens: 0,
+              output_tokens: 0,
+              cache_creation_input_tokens: null,
+              cache_read_input_tokens: null,
+            },
+          },
+        } as never,
+      ],
+    },
+    [],
+    "",
+  );
+
+  assert.equal(model.planSteps.length, 0);
+});
+
+test("buildActivityRailModel keeps explicit plan when hint and actions appear", () => {
+  const model = buildActivityRailModel(
+    {
+      id: "session-plan-valid",
+      title: "Explicit Plan",
+      status: "completed",
+      messages: [
+        {
+          type: "user_prompt",
+          prompt: "请给我一个执行计划",
+        },
+        {
+          type: "assistant",
+          capturedAt: 100,
+          uuid: "assistant-plan-valid",
+          session_id: "remote-plan-valid",
+          parent_tool_use_id: null,
+          message: {
+            id: "assistant-plan-valid",
+            model: "Qwen3-Coder-480B-A35B-Instruct",
+            role: "assistant",
+            type: "message",
+            content: [
+            {
+              type: "text",
+              text: "我先按以下顺序执行：\n1. 检查当前仓库结构\n2. 修复异常\n3. 验证构建通过",
+            },
+            ],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: {
+              input_tokens: 0,
+              output_tokens: 0,
+              cache_creation_input_tokens: null,
+              cache_read_input_tokens: null,
+            },
+          },
+        } as never,
+      ],
+    },
+    [],
+    "",
+  );
+
+  assert.equal(model.planSteps.length, 3);
+  assert.equal(model.planSteps[0]?.title, "检查当前仓库结构");
+  assert.equal(model.planSteps[1]?.title, "修复异常");
+});

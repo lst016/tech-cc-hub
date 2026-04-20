@@ -33,6 +33,10 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("get-api-config"),
     saveApiConfig: (config: any) => 
         ipcInvoke("save-api-config", config),
+    getGlobalConfig: () =>
+        ipcInvoke("get-global-config"),
+    saveGlobalConfig: (config: any) =>
+        ipcInvoke("save-global-config", config),
     checkApiConfig: () =>
         ipcInvoke("check-api-config")
 } satisfies Window['electron'])

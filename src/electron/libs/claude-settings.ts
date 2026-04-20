@@ -2,7 +2,14 @@ import { existsSync, readFileSync, realpathSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { spawnSync } from "child_process";
-import { loadApiConfigSettings, saveApiConfigSettings, type ApiConfig, type ApiModelConfig } from "./config-store.js";
+import {
+  loadApiConfigSettings,
+  loadGlobalRuntimeConfig,
+  saveApiConfigSettings,
+  type ApiConfig,
+  type ApiModelConfig,
+  type GlobalRuntimeConfig,
+} from "./config-store.js";
 import { app } from "electron";
 
 function isUsableConfig(config: ApiConfig | null | undefined): config is ApiConfig {
@@ -140,6 +147,7 @@ export function getCurrentApiConfig(): ApiConfig | null {
           apiKey: String(authToken),
           baseURL: String(baseURL),
           model: String(model),
+          expertModel: String(model),
           models: [{ name: String(model), compressionThresholdPercent: 70 }],
           enabled: true,
           apiType: "anthropic"
@@ -160,6 +168,10 @@ export function getCurrentApiConfig(): ApiConfig | null {
   
   console.log("[claude-settings] No config found");
   return null;
+}
+
+export function getGlobalRuntimeConfig(): GlobalRuntimeConfig {
+  return loadGlobalRuntimeConfig();
 }
 
 export function buildEnvForConfig(config: ApiConfig, modelOverride?: string): Record<string, string> {

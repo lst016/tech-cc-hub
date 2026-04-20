@@ -394,8 +394,15 @@ function ContextDistributionModal({
   onClose: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-ink-900/30 px-4 py-8 backdrop-blur-sm">
-      <div className="w-full max-w-3xl rounded-[28px] border border-black/5 bg-surface p-6 shadow-elevated">
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-ink-900/30 px-4 py-8 backdrop-blur-sm"
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        className="w-full max-w-3xl rounded-[28px] border border-black/5 bg-surface p-6 shadow-elevated"
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="text-lg font-semibold text-ink-900">{title}</div>
@@ -403,7 +410,16 @@ function ContextDistributionModal({
               这是近似上下文构成，用来帮助你做 prompt 和执行流优化，不是模型的真实 token 账单拆分。
             </p>
           </div>
-          <button className="rounded-full p-2 text-ink-500 hover:bg-black/5" onClick={onClose} aria-label="关闭">
+          <button
+            type="button"
+            className="cursor-pointer rounded-full p-2 text-ink-500 hover:bg-black/5"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onClose();
+            }}
+            aria-label="关闭"
+          >
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>

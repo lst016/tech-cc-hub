@@ -210,6 +210,17 @@ type ParsedPlan = {
   steps: ActivityPlanStep[];
 };
 
+type HookQualitySignal = {
+  timelineId: string;
+  hookEvent: string;
+  detail: string;
+  tone: ActivityRailTone;
+  hasParamFix: boolean;
+  needsAttention: boolean;
+  permissionDecision?: string;
+  outcome: string;
+};
+
 type DistributionBucketDraft = {
   id: string;
   label: string;
@@ -228,6 +239,7 @@ const DISTRIBUTION_ORDER = [
   "tool-output",
   "assistant-output",
   "final-result",
+  "hook",
   "permission",
 ] as const;
 
@@ -362,6 +374,194 @@ function buildToolOutputSection(name: string, rawDetail: string, isError: boolea
   };
 }
 
+function parseHookOutput(rawOutput: string): {
+  additionalContext?: string;
+  reason?: string;
+  decision?: string;
+  hasUpdatedInput?: boolean;
+  permissionDecision?: string;
+} {
+  const parsed = tryParseJson(rawOutput);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {};
+  }
+
+  const record = parsed as Record<string, unknown>;
+  const hookSpecificOutput = isRecord(record.hookSpecificOutput) ? record.hookSpecificOutput : {};
+
+  return {
+    additionalContext: typeof hookSpecificOutput.additionalContext === "string"
+      ? hookSpecificOutput.additionalContext
+      : undefined,
+    reason: typeof record.reason === "string" ? record.reason : undefined,
+    decision: typeof record.decision === "string" ? record.decision : undefined,
+    permissionDecision: typeof hookSpecificOutput.permissionDecision === "string"
+      ? hookSpecificOutput.permissionDecision
+      : undefined,
+    hasUpdatedInput: "updatedInput" in hookSpecificOutput,
+  };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}
+
+function buildHookQualitySignal(
+  timelineId: string,
+  hookEvent: string,
+  outcome: string,
+  parsed: {
+    additionalContext?: string;
+    reason?: string;
+    decision?: string;
+    hasUpdatedInput?: boolean;
+    permissionDecision?: string;
+  },
+  stdout: string,
+  stderr: string,
+): HookQualitySignal {
+  const sourceText = [parsed.additionalContext, parsed.reason, stdout, stderr, outcome]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(" ");
+
+  const normalized = sourceText.toLowerCase();
+  const hasParamFix = Boolean(parsed.hasUpdatedInput) || /参数|updatedinput|清理|规范化|去除空白|参数修复|参数优化|参数校验/i.test(sourceText);
+  const needsAttention =
+    outcome === "error" ||
+    outcome === "cancelled" ||
+    /ask|deny|重复|未读|缺少|缺失|高风险|风险|先确认|建议|失败|重试/.test(normalized) ||
+    parsed.permissionDecision === "ask" ||
+    parsed.permissionDecision === "deny" ||
+    parsed.permissionDecision === "defer";
+
+  return {
+    timelineId,
+    hookEvent,
+    detail: sourceText || "Hook 已执行完成",
+    tone: needsAttention
+      ? "warning"
+      : /error|fail/i.test(parsed.decision ?? "")
+        ? "error"
+        : "info",
+    hasParamFix,
+    needsAttention,
+    permissionDecision: parsed.permissionDecision,
+    outcome,
+  };
+}
+
+function qualityToneFromScore(score: number, success: boolean | null): ActivityRailTone {
+  if (success === null) {
+    return "warning";
+  }
+
+  if (score >= 88) return "success";
+  if (score >= 65) return "warning";
+  return "error";
+}
+
+function buildFinalQualityScore({
+  success,
+  toolErrorCount,
+  duplicateToolCount,
+  hookAttentionCount,
+  hookParamFixCount,
+  hookAskCount,
+}: {
+  success: boolean | null;
+  toolErrorCount: number;
+  duplicateToolCount: number;
+  hookAttentionCount: number;
+  hookParamFixCount: number;
+  hookAskCount: number;
+}): {
+  score: number;
+  tone: ActivityRailTone;
+  summary: string;
+} {
+  let score = 100;
+  if (success === null) {
+    score -= 10;
+  } else if (success === false) {
+    score -= 40;
+  }
+  score -= Math.min(toolErrorCount * 18, 45);
+  score -= Math.min(duplicateToolCount * 6, 20);
+  score -= Math.min(hookAttentionCount * 8, 25);
+  score -= hookAskCount > 0 ? 10 : 0;
+  score += Math.min(hookParamFixCount * 3, 10);
+
+  const summary =
+    success === null
+      ? "当前轮次未稳定落到最终结果，需关注后续工具链回路是否打通。"
+      : success
+        ? "本轮已完成最终结果，建议关注 hook 与参数改造是否能复用到复盘策略。"
+        : "最终结果失败，优先核对失败工具与 hook 决策是否产生了偏差。";
+
+  return {
+    score: clamp(score, 0, 100),
+    tone: qualityToneFromScore(score, success),
+    summary,
+  };
+}
+
+function buildHookDetailSections(systemMessage: Record<string, unknown>): ActivityDetailSection[] {
+  const output = typeof systemMessage.output === "string" ? systemMessage.output : "";
+  const stdout = typeof systemMessage.stdout === "string" ? systemMessage.stdout : "";
+  const stderr = typeof systemMessage.stderr === "string" ? systemMessage.stderr : "";
+  const parsed = parseHookOutput(output);
+  const rows: ActivityDetailRow[] = [
+    { label: "hook_name", value: String(systemMessage.hook_name ?? "-") },
+    { label: "hook_event", value: String(systemMessage.hook_event ?? "-") },
+  ];
+
+  if (typeof systemMessage.outcome === "string") {
+    rows.push({ label: "outcome", value: systemMessage.outcome });
+  }
+  if (typeof parsed.permissionDecision === "string") {
+    rows.push({ label: "permission", value: parsed.permissionDecision });
+  }
+  if (typeof parsed.decision === "string") {
+    rows.push({ label: "decision", value: parsed.decision });
+  }
+  if (typeof systemMessage.exit_code === "number") {
+    rows.push({ label: "exit_code", value: String(systemMessage.exit_code) });
+  }
+
+  const sections: ActivityDetailSection[] = [{
+    id: "hook-summary",
+    title: "Hook 结果",
+    summary: parsed.additionalContext || parsed.reason || undefined,
+    rows,
+    raw: output || undefined,
+    rawLabel: "展开 Hook 原始输出",
+  }];
+
+  if (stdout.trim()) {
+    sections.push({
+      id: "hook-stdout",
+      title: "Hook 标准输出",
+      rows: [],
+      raw: stdout,
+      rawLabel: "展开 stdout",
+    });
+  }
+
+  if (stderr.trim()) {
+    sections.push({
+      id: "hook-stderr",
+      title: "Hook 错误输出",
+      rows: [],
+      raw: stderr,
+      rawLabel: "展开 stderr",
+    });
+  }
+
+  return sections;
+}
+
 function formatNumber(value?: number): string {
   if (typeof value !== "number" || Number.isNaN(value)) return "-";
   return new Intl.NumberFormat("zh-CN").format(value);
@@ -378,6 +578,10 @@ function formatCompactMetric(chars: number, tokens?: number): string {
     return `${formatNumber(tokens)} tok`;
   }
   return `${formatNumber(chars)} 字符`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function createEmptyMetrics(overrides?: Partial<ActivityExecutionMetrics>): ActivityExecutionMetrics {
@@ -559,28 +763,76 @@ function parseChineseNumber(raw: string): number {
   return mapping[raw] ?? Number.POSITIVE_INFINITY;
 }
 
+const PLAN_HINT_PATTERN =
+  /(计划|步骤|step|steps|task|tasks|roadmap|路线|时间表|先做|然后|接下来|接着|最后|执行|实施|方案|清单|按以下|我会先|我会按|我将|分解|先确认|按顺序|逐步|先完成|我先|我先做)/i;
+
+const PLAN_NON_PLAN_PREFIX_PATTERN =
+  /(常见选择|常见方案|常见|可选|选项|优化方向|主要改动|主要修改|主要调整|功能改进|当前上下文|上下文情况|我不确定|不确定|看了代码|看完代码|状态|结果)/i;
+
+const PLAN_ITEM_ACTION_PATTERN =
+  /(实现|创建|编写|生成|搭建|重构|优化|检查|验证|更新|补齐|修复|确认|读取|写入|安装|执行|配置|迁移|部署|提交|清理|拆解|处理|开发|分析|梳理|排查|调研|设计|构建|运行|重试|inspect|update|edit|build|run|fix|verify|check|search|create|read|write|prepare|implement|execute|decide|return|analyze)/i;
+
 function parseExplicitPlan(text: string): Array<{ index: number; title: string }> {
   const normalized = text.replace(/\r/g, "");
-  const numberedMatches = Array.from(
-    normalized.matchAll(/(?:^|\n)\s*(?:step\s*)?(\d+)[.):、-]\s*(.+)$/gim),
-  ).map((match) => ({
-    index: Number(match[1]),
-    title: match[2].trim(),
-  }));
+  type PlanCandidate = { index: number; title: string; start: number };
 
-  if (numberedMatches.length >= 2) {
-    return numberedMatches;
+  const buildMatches = (line: RegExp): PlanCandidate[] =>
+    Array.from(normalized.matchAll(line), (match) => ({
+      index: Number(match[1]),
+      title: String(match[2]).trim(),
+      start: match.index ?? 0,
+    }));
+
+  const acceptListAsPlan = (items: PlanCandidate[]): boolean => {
+    if (items.length < 2) return false;
+    const hintWindow = normalized.slice(0, Math.max(0, items[0]?.start ?? 0));
+    const prefixWindow = normalized.slice(Math.max(0, (items[0]?.start ?? 0) - 220), Math.max(0, items[0]?.start ?? 0));
+    const hasPlanHint = PLAN_HINT_PATTERN.test(hintWindow) || PLAN_HINT_PATTERN.test(prefixWindow);
+    const hasPlanNegativePrefix = PLAN_NON_PLAN_PREFIX_PATTERN.test(prefixWindow);
+    if (!hasPlanHint && hasPlanNegativePrefix) {
+      return false;
+    }
+
+    const actionHitCount = items.filter((item) => PLAN_ITEM_ACTION_PATTERN.test(item.title)).length;
+    const hasActionSignal = actionHitCount >= Math.max(1, Math.ceil(items.length / 2));
+    return hasPlanHint || hasActionSignal;
+  };
+
+  const numberedMatches = buildMatches(/(?:^|\n)\s*(?:step\s*)?(\d+)[.)）:：、-]\s*(.+)$/gim);
+  if (acceptListAsPlan(numberedMatches)) {
+    return numberedMatches.map((item) => ({ index: item.index, title: item.title }));
   }
 
-  const chineseMatches = Array.from(
-    normalized.matchAll(/(?:^|\n)\s*第([一二三四五六七八九十]+)步[:：、-]?\s*(.+)$/gm),
-  ).map((match) => ({
-    index: parseChineseNumber(match[1]),
-    title: match[2].trim(),
-  }));
+  const bracketedMatches = buildMatches(/(?:^|\n)\s*[(（](\d+)[)）]\s*(.+)$/gim);
+  if (acceptListAsPlan(bracketedMatches)) {
+    return bracketedMatches.map((item) => ({ index: item.index, title: item.title }));
+  }
 
-  if (chineseMatches.length >= 2) {
-    return chineseMatches;
+  const checkboxMatches = buildMatches(/(?:^|\n)\s*[-*]\s*\[[ xX]\]\s*(.+)$/gim).map((item, index) => ({
+    index: index + 1,
+    title: item.title,
+    start: item.start,
+  }));
+  if (acceptListAsPlan(checkboxMatches)) {
+    return checkboxMatches.map((item) => ({ index: item.index, title: item.title }));
+  }
+
+  const dashMatches = buildMatches(/(?:^|\n)\s*[-+*]\s*(.+)$/gim).map((item, index) => ({
+    index: index + 1,
+    title: item.title,
+    start: item.start,
+  }));
+  if (acceptListAsPlan(dashMatches)) {
+    return dashMatches.map((item) => ({ index: item.index, title: item.title }));
+  }
+
+  const chineseMatches = Array.from(normalized.matchAll(/(?:^|\n)\s*第([一二三四五六七八九十]+)步[:：、-]?\s*(.+)$/gm), (match) => ({
+    index: parseChineseNumber(match[1]),
+    title: String(match[2]).trim(),
+    start: match.index ?? 0,
+  }));
+  if (acceptListAsPlan(chineseMatches)) {
+    return chineseMatches.map((item) => ({ index: item.index, title: item.title }));
   }
 
   return [];
@@ -917,6 +1169,9 @@ export function buildActivityRailModel(
   let validationCount = 0;
   let duplicateToolCount = 0;
   let previousToolKey: string | null = null;
+  let finalResultSuccess: boolean | null = null;
+  let finalResultTimelineId: string | null = null;
+  const hookQualitySignals: HookQualitySignal[] = [];
   let latestParsedPlan: ParsedPlan | null = null;
   let roundContextChars = 0;
 
@@ -930,26 +1185,6 @@ export function buildActivityRailModel(
         if (content.type === "thinking") {
           sequence += 1;
           addDistribution(distributionBuckets, "thinking", "思考", "warning", content.thinking);
-          timelineChronological.push(
-            createTimelineItem({
-              id: `${assistant.uuid}-thinking-${sequence}`,
-              filterKey: "flow",
-              layer: "流程",
-              tone: "warning",
-              title: "分析任务",
-              detail: content.thinking,
-              round: Math.max(round, 1),
-              sequence,
-              statusLabel: "思考",
-              chips: [],
-              attention: false,
-              stageKind: "plan",
-              metrics: createEmptyMetrics({
-                contextChars: roundContextChars,
-                outputChars: content.thinking.length,
-              }),
-            }),
-          );
           roundContextChars += content.thinking.length;
           continue;
         }
@@ -1140,6 +1375,8 @@ export function buildActivityRailModel(
       latestOutputTokens = result.usage?.output_tokens ?? latestOutputTokens;
       latestResultText = getResultText(result) || latestResultText;
       latestRemoteSessionId = result.session_id ?? latestRemoteSessionId;
+      finalResultSuccess = result.subtype === "success";
+      finalResultTimelineId = `${result.uuid}-result`;
       addDistribution(
         distributionBuckets,
         "final-result",
@@ -1230,6 +1467,62 @@ export function buildActivityRailModel(
             chips: ["Hook"],
             attention: false,
             stageKind: "plan",
+            metrics: createEmptyMetrics({
+              contextChars: roundContextChars,
+            }),
+          }),
+        );
+        continue;
+      }
+
+      if (message.subtype === "hook_response") {
+        sequence += 1;
+        const hookOutput = typeof systemMessage.output === "string" ? systemMessage.output : "";
+        const parsed = parseHookOutput(hookOutput);
+        const outcome = typeof systemMessage.outcome === "string" ? systemMessage.outcome : "success";
+        const hookEvent = String(systemMessage.hook_event ?? systemMessage.hook_name ?? "未知 Hook");
+        const timelineId = `hook-response-${String(systemMessage.uuid ?? sequence)}`;
+        const hookQualitySignal = buildHookQualitySignal(
+          timelineId,
+          hookEvent,
+          outcome,
+          parsed,
+          typeof systemMessage.stdout === "string" ? systemMessage.stdout : "",
+          typeof systemMessage.stderr === "string" ? systemMessage.stderr : "",
+        );
+        hookQualitySignals.push(hookQualitySignal);
+        const detail =
+          parsed.additionalContext ||
+          parsed.reason ||
+          (typeof systemMessage.stderr === "string" && systemMessage.stderr.trim()) ||
+          (typeof systemMessage.stdout === "string" && systemMessage.stdout.trim()) ||
+          hookOutput ||
+          "Hook 已执行完成";
+        const tone = hookQualitySignal.tone;
+
+        addDistribution(
+          distributionBuckets,
+          "hook",
+          "Hook 输出",
+          tone,
+          detail,
+        );
+
+        timelineChronological.push(
+          createTimelineItem({
+            id: timelineId,
+            filterKey: "flow",
+            layer: "流程",
+            tone: hookQualitySignal.tone,
+            title: `Hook 结果：${hookEvent}`,
+            detail,
+            round: Math.max(round, 1),
+            sequence,
+            statusLabel: outcome === "error" ? "失败" : outcome === "cancelled" ? "取消" : "完成",
+            chips: ["Hook", String(systemMessage.hook_name ?? "Hook")],
+            attention: tone !== "info",
+            stageKind: "verify",
+            detailSections: buildHookDetailSections(systemMessage),
             metrics: createEmptyMetrics({
               contextChars: roundContextChars,
             }),
@@ -1411,6 +1704,64 @@ export function buildActivityRailModel(
           ? `本轮主请求是“${truncate(latestPrompt, 60)}”，建议对照时间线看模型在哪一步偏题。`
           : "当前没有新的用户输入证据，可从时间线最近步骤开始倒查。",
   });
+
+  const hookInterventionCount = hookQualitySignals.length;
+  const hookAttentionCount = hookQualitySignals.filter((signal) => signal.needsAttention).length;
+  const hookParamFixCount = hookQualitySignals.filter((signal) => signal.hasParamFix).length;
+  const hookAskCount = hookQualitySignals.filter((signal) =>
+    signal.permissionDecision === "ask" ||
+    signal.permissionDecision === "deny" ||
+    signal.permissionDecision === "defer"
+  ).length;
+  const finalQuality = buildFinalQualityScore({
+    success: finalResultSuccess,
+    toolErrorCount,
+    duplicateToolCount,
+    hookAttentionCount,
+    hookParamFixCount,
+    hookAskCount,
+  });
+  const qualitySummary = [
+    `最终评分 ${finalQuality.score} 分。${finalQuality.summary}`,
+    `工具：失败 ${toolErrorCount} 次，重复 ${duplicateToolCount} 次。`,
+    `Hook：触发 ${hookInterventionCount} 次，参数修复 ${hookParamFixCount} 次，需关注 ${hookAttentionCount} 次。`,
+  ].join(" ");
+  const attentionSignal = hookQualitySignals.find((signal) => signal.needsAttention);
+
+  analysisCards.push({
+    id: "execution-quality",
+    title: "本轮执行质量",
+    tone: finalQuality.tone,
+    detail:
+      finalQuality.tone === "success"
+        ? `${qualitySummary} 可以把“参数修复 + 复用建议”纳入本轮复盘模板。`
+        : qualitySummary,
+    supportingTimelineId: finalResultTimelineId ?? attentionSignal?.timelineId,
+  });
+
+  if (!finalResultSuccess || hookInterventionCount > 0 || toolErrorCount > 0) {
+    const suggestionItems = [];
+    if (finalResultSuccess === false) {
+      suggestionItems.push("先打开失败的最终结果节点，再逐层回溯到最后一次失败工具。");
+    }
+    if (toolErrorCount > 0) {
+      suggestionItems.push("核对工具输入与输出是否存在参数漂移或重试链条。");
+    }
+    if (hookAttentionCount > 0) {
+      suggestionItems.push("逐条打开 attention 的 Hook 节点，确认参数修复是否被采纳。");
+    }
+    if (hookParamFixCount > 0) {
+      suggestionItems.push("将成功修正参数提炼成执行规范，减少未来重复。");
+    }
+    if (suggestionItems.length > 0) {
+      analysisCards.push({
+        id: "next-step",
+        title: "建议下一步",
+        tone: finalQuality.tone === "error" || hookAttentionCount > 0 ? "warning" : "info",
+        detail: suggestionItems.join(" "),
+      });
+    }
+  }
 
   if (fileOpCount > 0 && validationCount === 0) {
     analysisCards.push({

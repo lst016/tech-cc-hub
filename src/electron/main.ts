@@ -1,11 +1,26 @@
-import { app, BrowserWindow, ipcMain, dialog, globalShortcut, Menu } from "electron"
+import {
+    app,
+    BrowserWindow,
+    dialog,
+    globalShortcut,
+    IpcMainEvent,
+    IpcMainInvokeEvent,
+    ipcMain,
+    Menu,
+} from "electron"
 import { execSync } from "child_process";
 import { ipcMainHandle, isDev, DEV_PORT } from "./util.js";
 import { getPreloadPath, getUIPath, getIconPath } from "./pathResolver.js";
 import { getStaticData, pollResources, stopPolling } from "./test.js";
 import { handleClientEvent, sessions, cleanupAllSessions } from "./ipc-handlers.js";
 import { generateSessionTitle } from "./libs/util.js";
-import { loadApiConfigSettings, saveApiConfigSettings } from "./libs/config-store.js";
+import {
+  loadApiConfigSettings,
+  type ApiConfigSettings,
+  saveApiConfigSettings,
+  loadGlobalRuntimeConfig,
+  saveGlobalRuntimeConfig,
+} from "./libs/config-store.js";
 import { getCurrentApiConfig } from "./libs/claude-settings.js";
 import type { ClientEvent } from "./types.js";
 import "./libs/claude-settings.js";
@@ -118,6 +133,41 @@ function handleSignal(): void {
     app.quit();
 }
 
+function registerReloadShortcuts(): void {
+    if (!mainWindow) {
+        return;
+    }
+
+    const reloadWindow = () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.reload();
+        }
+    };
+
+    const reloadWindowIgnoringCache = () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.reloadIgnoringCache();
+        }
+    };
+
+    const shortcuts = [
+        { accelerator: "CommandOrControl+R", handler: reloadWindow },
+        { accelerator: "F5", handler: reloadWindow },
+        { accelerator: "CommandOrControl+Shift+R", handler: reloadWindowIgnoringCache },
+    ];
+
+    for (const shortcut of shortcuts) {
+        try {
+            const registered = globalShortcut.register(shortcut.accelerator, shortcut.handler);
+            if (!registered) {
+                console.warn(`[main] Failed to register shortcut: ${shortcut.accelerator}`);
+            }
+        } catch (error) {
+            console.warn(`[main] Failed to bind shortcut ${shortcut.accelerator}:`, error);
+        }
+    }
+}
+
 // Initialize everything when app is ready
 app.on("ready", async () => {
     Menu.setApplicationMenu(null);
@@ -165,6 +215,7 @@ app.on("ready", async () => {
         cleanup();
         app.quit();
     });
+    registerReloadShortcuts();
 
     pollResources(mainWindow);
     void scheduleDevAutostart();
@@ -174,17 +225,17 @@ app.on("ready", async () => {
     });
 
     // Handle client events
-    ipcMain.on("client-event", (_: any, event: ClientEvent) => {
+    ipcMain.on("client-event", (_: IpcMainEvent, event: ClientEvent) => {
         handleClientEvent(event);
     });
 
     // Handle session title generation
-    ipcMainHandle("generate-session-title", async (_: any, userInput: string | null) => {
+    ipcMainHandle("generate-session-title", async (_: IpcMainInvokeEvent, userInput: string | null) => {
         return await generateSessionTitle(userInput);
     });
 
     // Handle recent cwds request
-    ipcMainHandle("get-recent-cwds", (_: any, limit?: number) => {
+    ipcMainHandle("get-recent-cwds", (_: IpcMainInvokeEvent, limit?: number) => {
         const boundedLimit = limit ? Math.min(Math.max(limit, 1), 20) : 8;
         return sessions.listRecentCwds(boundedLimit);
     });
@@ -212,14 +263,30 @@ app.on("ready", async () => {
         return { hasConfig: config !== null, config };
     });
 
-    ipcMainHandle("save-api-config", (_: any, config: any) => {
+    ipcMainHandle("save-api-config", (_: IpcMainInvokeEvent, config: unknown) => {
         try {
-            saveApiConfigSettings(config);
+            saveApiConfigSettings(config as ApiConfigSettings);
             return { success: true };
         } catch (error) {
             return { 
                 success: false, 
                 error: error instanceof Error ? error.message : String(error) 
+            };
+        }
+    });
+
+    ipcMainHandle("get-global-config", () => {
+        return loadGlobalRuntimeConfig();
+    });
+
+    ipcMainHandle("save-global-config", (_: IpcMainInvokeEvent, config: unknown) => {
+        try {
+            saveGlobalRuntimeConfig(config as Record<string, unknown>);
+            return { success: true };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : String(error),
             };
         }
     });

@@ -14,6 +14,7 @@ export type ApiConfig = {
   apiKey: string;
   baseURL: string;
   model: string;
+  expertModel?: string;
   models?: ApiModelConfig[];
   enabled: boolean;
   apiType?: "anthropic";

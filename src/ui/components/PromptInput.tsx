@@ -113,7 +113,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
 
   const activeSession = activeSessionId ? sessions[activeSessionId] : undefined;
   const isRunning = activeSession?.status === "running";
-  const slashCommands = activeSession?.slashCommands ?? [];
+  const slashCommands = useMemo(() => activeSession?.slashCommands ?? [], [activeSession?.slashCommands]);
   const activeProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
 
   const validatePromptDraft = useCallback((promptValue: string) => {
@@ -239,6 +239,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
   const reasoningMode = useAppStore((state) => state.reasoningMode);
   const setReasoningMode = useAppStore((state) => state.setReasoningMode);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [attachments, setAttachments] = useState<PromptAttachment[]>([]);
   const [queuedMessagesBySession, setQueuedMessagesBySession] = useState<Record<string, QueuedMessageDraft[]>>({});
@@ -277,11 +278,18 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
     return Array.from(
       new Set([
         activeProfile.model,
+        activeProfile.expertModel,
         ...(activeProfile.models ?? []).map((item) => item.name),
       ]),
     )
-      .map((item) => item.trim())
+      .map((item) => item?.trim() ?? "")
       .filter(Boolean);
+  }, [activeProfile]);
+  const roleSummary = useMemo(() => {
+    if (!activeProfile) return null;
+
+    const mainModel = activeProfile.model || "-";
+    return `当前分工：主 ${mainModel} · 专家 ${activeProfile.expertModel || mainModel}`;
   }, [activeProfile]);
 
   const startSendCooldown = useCallback(() => {
@@ -301,7 +309,8 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
     setQueuedMessagesBySession((current) => {
       const nextQueue = (current[activeSessionId] ?? []).filter((item) => item.id !== queueId);
       if (nextQueue.length === 0) {
-        const { [activeSessionId]: _removed, ...rest } = current;
+        const rest = { ...current };
+        delete rest[activeSessionId];
         return rest;
       }
       return {
@@ -439,10 +448,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
   }, [prompt]);
 
   useEffect(() => {
-    if (!sendLockedUntil) {
-      setCooldownRemainingMs(0);
-      return;
-    }
+    if (!sendLockedUntil) return;
 
     const updateCountdown = () => {
       const nextRemaining = Math.max(0, sendLockedUntil - Date.now());
@@ -477,7 +483,8 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
         setQueuedMessagesBySession((current) => {
           const remainingQueue = (current[activeSessionId] ?? []).filter((item) => item.id !== nextQueuedMessage.id);
           if (remainingQueue.length === 0) {
-            const { [activeSessionId]: _removed, ...rest } = current;
+            const rest = { ...current };
+            delete rest[activeSessionId];
             return rest;
           }
           return {
@@ -492,8 +499,33 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
     })();
   }, [activeQueue, activeSessionId, disabled, isRunning, onSendMessage, sendPromptDraft]);
 
+  useEffect(() => {
+    const composerElement = composerRef.current;
+    if (!composerElement) return;
+
+    const updateComposerOffset = () => {
+      const rect = composerElement.getBoundingClientRect();
+      document.documentElement.style.setProperty("--composer-bottom-offset", `${Math.ceil(rect.height)}px`);
+    };
+
+    const resizeObserver = new ResizeObserver(updateComposerOffset);
+    resizeObserver.observe(composerElement);
+    window.addEventListener("resize", updateComposerOffset);
+
+    updateComposerOffset();
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateComposerOffset);
+      document.documentElement.style.removeProperty("--composer-bottom-offset");
+    };
+  }, []);
+
   return (
-    <section className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[rgba(229,234,240,0.72)] via-[rgba(229,234,240,0.18)] to-transparent pb-6 px-3 pt-10 lg:ml-[320px] lg:pb-8 xl:mr-[340px]">
+    <section
+      ref={composerRef}
+      className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[rgba(229,234,240,0.72)] via-[rgba(229,234,240,0.18)] to-transparent pb-6 px-3 pt-10 lg:ml-[320px] lg:pb-8 xl:mr-[340px]"
+    >
       {showSlashPalette && (
         <div className="mx-auto mb-3 w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
           <div className="overflow-hidden rounded-[24px] border border-black/6 bg-white/94 shadow-[0_18px_50px_rgba(30,38,52,0.08)] backdrop-blur">
@@ -670,6 +702,11 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
             </select>
           </label>
         </div>
+        {roleSummary && (
+          <div className="mt-2 text-[11px] leading-6 text-muted">
+            {roleSummary}
+          </div>
+        )}
         <input
           ref={fileInputRef}
           type="file"
