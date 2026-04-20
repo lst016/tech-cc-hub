@@ -478,8 +478,8 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
     <section className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[rgba(229,234,240,0.72)] via-[rgba(229,234,240,0.18)] to-transparent pb-6 px-3 pt-10 lg:ml-[320px] lg:pb-8 xl:mr-[340px]">
       {showSlashPalette && (
         <div className="mx-auto mb-3 w-full max-w-full lg:max-w-3xl">
-          <div className="overflow-hidden rounded-[24px] border border-white/16 bg-[#50545c]/96 shadow-[0_18px_50px_rgba(34,37,43,0.18)] backdrop-blur">
-            <div className="border-b border-white/10 px-4 py-2 text-xs font-medium text-white/70">
+          <div className="overflow-hidden rounded-[24px] border border-black/6 bg-white/94 shadow-[0_18px_50px_rgba(30,38,52,0.08)] backdrop-blur">
+            <div className="border-b border-black/6 px-4 py-2 text-xs font-medium text-muted">
               可用 Slash 命令
             </div>
             <div className="grid gap-1 p-2">
@@ -487,7 +487,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
                 <button
                   key={command}
                   type="button"
-                  className="rounded-xl px-3 py-2 text-left text-sm text-white/92 transition-colors hover:bg-white/10"
+                  className="rounded-xl px-3 py-2 text-left text-sm text-ink-700 transition-colors hover:bg-surface-secondary"
                   onClick={() => {
                     const suffix = prompt.includes(" ") ? prompt.slice(prompt.indexOf(" ")) : "";
                     setPrompt(`/${command.replace(/^\//, "")}${suffix}`);
@@ -502,12 +502,12 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
           </div>
         </div>
       )}
-      <div className="mx-auto w-full max-w-full rounded-[30px] border border-white/18 bg-[linear-gradient(180deg,rgba(83,87,95,0.95),rgba(69,73,81,0.93))] px-4 py-3 shadow-[0_24px_60px_rgba(34,37,43,0.18)] backdrop-blur-xl lg:max-w-[900px]">
+      <div className="mx-auto w-full max-w-full rounded-[30px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,247,251,0.94))] px-4 py-3 shadow-[0_24px_60px_rgba(30,38,52,0.08)] backdrop-blur-xl lg:max-w-[900px]">
         {activeQueue.length > 0 && (
-          <div className="mb-3 rounded-2xl border border-white/12 bg-white/9 px-3 py-3">
+          <div className="mb-3 rounded-2xl border border-black/6 bg-[#f6f8fb] px-3 py-3">
             <div className="mb-2 flex items-center justify-between gap-3">
-              <div className="text-xs font-medium text-white/92">待发送队列 · {activeQueue.length} 条</div>
-              <div className="text-[11px] text-white/58">当前轮结束后会自动续发</div>
+              <div className="text-xs font-medium text-ink-700">待发送队列 · {activeQueue.length} 条</div>
+              <div className="text-[11px] text-muted">当前轮结束后会自动续发</div>
             </div>
             <div className="grid gap-2">
               {activeQueue.map((queuedMessage, index) => {
@@ -516,14 +516,14 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
                     ? `附件：${queuedMessage.attachments[0].name}`
                     : `${queuedMessage.attachments.length} 个附件`);
                 return (
-                  <div key={queuedMessage.id} className="flex items-center gap-2 rounded-2xl border border-white/12 bg-white/10 px-3 py-2 text-xs text-white/88">
+                  <div key={queuedMessage.id} className="flex items-center gap-2 rounded-2xl border border-black/6 bg-white px-3 py-2 text-xs text-ink-700">
                     <span className="shrink-0 rounded-full bg-accent/18 px-2 py-0.5 text-[11px] text-[#ffb290]">
                       {index === 0 ? "下一条" : `排队 ${index + 1}`}
                     </span>
                     <span className="min-w-0 flex-1 truncate">{label}</span>
                     <button
                       type="button"
-                      className="rounded-full p-1 text-white/55 transition-colors hover:bg-white/12 hover:text-white"
+                      className="rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
                       onClick={() => removeQueuedDraft(queuedMessage.id)}
                       aria-label="移除待发送消息"
                     >
@@ -541,14 +541,14 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
         {attachments.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">
             {attachments.map((attachment) => (
-              <div key={attachment.id} className="flex max-w-full items-center gap-2 rounded-2xl border border-white/12 bg-white/10 px-3 py-2 text-xs text-white/88">
+              <div key={attachment.id} className="flex max-w-full items-center gap-2 rounded-2xl border border-black/6 bg-white px-3 py-2 text-xs text-ink-700">
                 <span className="shrink-0 rounded-full bg-accent/18 px-2 py-0.5 text-[11px] text-[#ffb290]">
                   {attachment.kind === "image" ? "图片" : "文本"}
                 </span>
                 <span className="truncate max-w-[180px]">{attachment.name}</span>
                 <button
                   type="button"
-                  className="rounded-full p-1 text-white/55 hover:bg-white/12 hover:text-white"
+                  className="rounded-full p-1 text-muted hover:bg-black/5 hover:text-ink-700"
                   onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
                   aria-label={`移除附件 ${attachment.name}`}
                   disabled={isCooldownLocked}
@@ -566,7 +566,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
           {slashCommands.length > 0 && (
             <button
               type="button"
-              className={`flex h-10 shrink-0 items-center justify-center rounded-2xl border px-3 text-sm transition-colors ${showSlashBrowser ? "border-accent/35 bg-accent/14 text-[#ffb290]" : "border-white/12 bg-white/10 text-white/86 hover:bg-white/14"}`}
+              className={`flex h-10 shrink-0 items-center justify-center rounded-2xl border px-3 text-sm transition-colors ${showSlashBrowser ? "border-accent/30 bg-accent-subtle text-accent" : "border-black/6 bg-white text-ink-700 hover:bg-surface-secondary"}`}
               onClick={() => setShowSlashBrowser((value) => !value)}
               aria-label="打开 Slash 命令列表"
               disabled={disabled || isCooldownLocked}
@@ -576,7 +576,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
           )}
           <button
             type="button"
-            className="flex h-10 shrink-0 items-center justify-center rounded-2xl border border-white/12 bg-white/10 px-3 text-sm text-white/86 transition-colors hover:bg-white/14"
+            className="flex h-10 shrink-0 items-center justify-center rounded-2xl border border-black/6 bg-white px-3 text-sm text-ink-700 transition-colors hover:bg-surface-secondary"
             onClick={() => fileInputRef.current?.click()}
             aria-label="添加附件"
             disabled={disabled || isCooldownLocked}
@@ -587,7 +587,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
           </button>
           <textarea
             rows={1}
-            className="flex-1 resize-none bg-transparent py-2 text-[15px] leading-7 text-white placeholder:text-white/46 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex-1 resize-none bg-transparent py-2 text-[15px] leading-7 text-ink-800 placeholder:text-muted focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
             placeholder={
               disabled
                 ? "先创建或选择一个会话..."
@@ -620,11 +620,11 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
             )}
           </button>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/10 pt-3">
-          <label className="inline-flex items-center gap-2 rounded-xl border border-white/12 bg-white/10 px-3 py-1.5 text-xs text-white/84">
-            <span className="text-white/56">模型</span>
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-black/6 pt-3">
+          <label className="inline-flex items-center gap-2 rounded-xl border border-black/6 bg-white/86 px-3 py-1.5 text-xs text-ink-700">
+            <span className="text-muted">模型</span>
             <select
-              className="min-w-[148px] bg-transparent text-sm text-white focus:outline-none"
+              className="min-w-[148px] bg-transparent text-sm text-ink-800 focus:outline-none"
               value={runtimeModel}
               onChange={(event) => setRuntimeModel(event.target.value)}
               disabled={disabled || isCooldownLocked || availableModels.length === 0}
@@ -638,10 +638,10 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
               )}
             </select>
           </label>
-          <label className="inline-flex items-center gap-2 rounded-xl border border-white/12 bg-white/10 px-3 py-1.5 text-xs text-white/84">
-            <span className="text-white/56">思考强度</span>
+          <label className="inline-flex items-center gap-2 rounded-xl border border-black/6 bg-white/86 px-3 py-1.5 text-xs text-ink-700">
+            <span className="text-muted">思考强度</span>
             <select
-              className="min-w-[110px] bg-transparent text-sm text-white focus:outline-none"
+              className="min-w-[110px] bg-transparent text-sm text-ink-800 focus:outline-none"
               value={reasoningMode}
               onChange={(event) => setReasoningMode(event.target.value as RuntimeReasoningMode)}
               disabled={disabled || isCooldownLocked}
