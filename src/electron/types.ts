@@ -2,6 +2,27 @@ import type { SDKMessage, PermissionResult } from "@anthropic-ai/claude-agent-sd
 
 export type RuntimeReasoningMode = "disabled" | "low" | "medium" | "high" | "xhigh";
 
+export type ApiModelConfig = {
+  name: string;
+  contextWindow?: number;
+  compressionThresholdPercent?: number;
+};
+
+export type ApiConfig = {
+  id: string;
+  name: string;
+  apiKey: string;
+  baseURL: string;
+  model: string;
+  models?: ApiModelConfig[];
+  enabled: boolean;
+  apiType?: "anthropic";
+};
+
+export type ApiConfigSettings = {
+  profiles: ApiConfig[];
+};
+
 export type RuntimeOverrides = {
   model?: string;
   reasoningMode?: RuntimeReasoningMode;

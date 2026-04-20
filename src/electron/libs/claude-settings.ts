@@ -2,7 +2,7 @@ import { existsSync, readFileSync, realpathSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { spawnSync } from "child_process";
-import { loadApiConfigSettings, saveApiConfigSettings, type ApiConfig } from "./config-store.js";
+import { loadApiConfigSettings, saveApiConfigSettings, type ApiConfig, type ApiModelConfig } from "./config-store.js";
 import { app } from "electron";
 
 function isUsableConfig(config: ApiConfig | null | undefined): config is ApiConfig {
@@ -140,7 +140,7 @@ export function getCurrentApiConfig(): ApiConfig | null {
           apiKey: String(authToken),
           baseURL: String(baseURL),
           model: String(model),
-          models: [String(model)],
+          models: [{ name: String(model), compressionThresholdPercent: 70 }],
           enabled: true,
           apiType: "anthropic"
         };
@@ -170,6 +170,20 @@ export function buildEnvForConfig(config: ApiConfig, modelOverride?: string): Re
   baseEnv.ANTHROPIC_MODEL = modelOverride ?? config.model;
 
   return baseEnv;
+}
+
+export function getModelConfig(config: ApiConfig, modelName = config.model): ApiModelConfig | null {
+  const targetName = modelName.trim();
+  if (!targetName) {
+    return null;
+  }
+
+  const existing = config.models?.find((item) => item.name === targetName);
+  return (
+    existing ?? {
+      name: targetName,
+    }
+  );
 }
 
 export function supportsRemoteSessionResume(config: ApiConfig): boolean {

@@ -4,15 +4,21 @@ import { join } from "path";
 
 export type ApiType = "anthropic";
 
+export type ApiModelConfig = {
+  name: string;
+  contextWindow?: number;
+  compressionThresholdPercent?: number;
+};
+
 export type ApiConfig = {
   id: string;
   name: string;
   apiKey: string;
   baseURL: string;
   model: string;
-  models?: string[];
+  models?: ApiModelConfig[];
   enabled: boolean;
-  apiType?: ApiType; // "anthropic" 
+  apiType?: ApiType;
 };
 
 export type ApiConfigSettings = {
@@ -20,7 +26,10 @@ export type ApiConfigSettings = {
 };
 
 const DEFAULT_MODEL = "claude-sonnet-4-5";
-
+const DEFAULT_MODEL_CONFIG: ApiModelConfig = {
+  name: DEFAULT_MODEL,
+  compressionThresholdPercent: 70,
+};
 const CONFIG_FILE_NAME = "api-config.json";
 
 function getConfigPath(): string {
@@ -28,44 +37,35 @@ function getConfigPath(): string {
   return join(userDataPath, CONFIG_FILE_NAME);
 }
 
+function createDefaultSettings(): ApiConfigSettings {
+  return {
+    profiles: [
+      {
+        id: crypto.randomUUID(),
+        name: "默认配置",
+        apiKey: "",
+        baseURL: "https://api.anthropic.com",
+        model: DEFAULT_MODEL,
+        models: [DEFAULT_MODEL_CONFIG],
+        enabled: true,
+        apiType: "anthropic",
+      },
+    ],
+  };
+}
+
 export function loadApiConfigSettings(): ApiConfigSettings {
   try {
     const configPath = getConfigPath();
     if (!existsSync(configPath)) {
-      return {
-        profiles: [
-          {
-            id: crypto.randomUUID(),
-            name: "默认配置",
-            apiKey: "",
-            baseURL: "https://api.anthropic.com",
-            model: DEFAULT_MODEL,
-            models: [DEFAULT_MODEL],
-            enabled: true,
-            apiType: "anthropic",
-          },
-        ],
-      };
+      return createDefaultSettings();
     }
     const raw = readFileSync(configPath, "utf8");
     const parsed = JSON.parse(raw) as ApiConfig | ApiConfigSettings;
     return normalizeApiSettings(parsed);
   } catch (error) {
     console.error("[config-store] Failed to load API config:", error);
-    return {
-      profiles: [
-        {
-          id: crypto.randomUUID(),
-          name: "默认配置",
-          apiKey: "",
-          baseURL: "https://api.anthropic.com",
-          model: DEFAULT_MODEL,
-          models: [DEFAULT_MODEL],
-          enabled: true,
-          apiType: "anthropic",
-        },
-      ],
-    };
+    return createDefaultSettings();
   }
 }
 
@@ -73,19 +73,16 @@ export function saveApiConfigSettings(settings: ApiConfigSettings): void {
   try {
     const configPath = getConfigPath();
     const userDataPath = app.getPath("userData");
-    
-    // 确保目录存在 make sure directory exists
+
     if (!existsSync(userDataPath)) {
       mkdirSync(userDataPath, { recursive: true });
     }
-    
-    // 验证配置 validate config
+
     const normalized = normalizeApiSettings(settings);
     if (normalized.profiles.length === 0) {
       throw new Error("Invalid config: at least one valid profile is required");
     }
 
-    // 保存配置 save config
     writeFileSync(configPath, JSON.stringify(normalized, null, 2), "utf8");
     console.info("[config-store] API config saved successfully");
   } catch (error) {
@@ -111,21 +108,18 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
     return null;
   }
 
-  const dedupedModels = Array.from(
-    new Set(
-      [config.model, ...(config.models ?? [])]
-        .map((item) => item?.trim())
-        .filter((item): item is string => Boolean(item))
-    )
-  );
-
-  const selectedModel = config.model?.trim() || dedupedModels[0];
+  const dedupedModels = dedupeModelConfigs([config.model, ...(config.models ?? [])]);
+  const dedupedModelNames = dedupedModels.map((item) => item.name);
+  const selectedModel = config.model?.trim() || dedupedModelNames[0];
   if (!selectedModel) {
     return null;
   }
 
-  if (!dedupedModels.includes(selectedModel)) {
-    dedupedModels.unshift(selectedModel);
+  if (!dedupedModelNames.includes(selectedModel)) {
+    dedupedModels.unshift({
+      name: selectedModel,
+      compressionThresholdPercent: 70,
+    });
   }
 
   return {
@@ -156,7 +150,7 @@ function normalizeApiSettings(input: ApiConfig | ApiConfigSettings | null | unde
   }
 
   let hasEnabled = false;
-  const normalizedProfiles = profiles.map((profile, index) => {
+  const normalizedProfiles = profiles.map((profile) => {
     if (profile.enabled && !hasEnabled) {
       hasEnabled = true;
       return profile;
@@ -169,4 +163,74 @@ function normalizeApiSettings(input: ApiConfig | ApiConfigSettings | null | unde
   }
 
   return { profiles: normalizedProfiles };
+}
+
+function normalizeModelConfig(input: string | ApiModelConfig | null | undefined): ApiModelConfig | null {
+  if (typeof input === "string") {
+    const name = input.trim();
+    if (!name) {
+      return null;
+    }
+    return {
+      name,
+      compressionThresholdPercent: 70,
+    };
+  }
+
+  if (!input) {
+    return null;
+  }
+
+  const name = input.name?.trim();
+  if (!name) {
+    return null;
+  }
+
+  return {
+    name,
+    contextWindow: normalizePositiveInteger(input.contextWindow),
+    compressionThresholdPercent: normalizePercent(input.compressionThresholdPercent) ?? 70,
+  };
+}
+
+function dedupeModelConfigs(inputs: Array<string | ApiModelConfig | null | undefined>): ApiModelConfig[] {
+  const deduped = new Map<string, ApiModelConfig>();
+
+  for (const input of inputs) {
+    const model = normalizeModelConfig(input);
+    if (!model) {
+      continue;
+    }
+
+    const previous = deduped.get(model.name);
+    deduped.set(model.name, {
+      name: model.name,
+      contextWindow: model.contextWindow ?? previous?.contextWindow,
+      compressionThresholdPercent: model.compressionThresholdPercent ?? previous?.compressionThresholdPercent ?? 70,
+    });
+  }
+
+  return Array.from(deduped.values());
+}
+
+function normalizePositiveInteger(value: number | null | undefined): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  const normalized = Math.floor(value);
+  return normalized > 0 ? normalized : undefined;
+}
+
+function normalizePercent(value: number | null | undefined): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  const normalized = Math.floor(value);
+  if (normalized < 1 || normalized > 100) {
+    return undefined;
+  }
+
+  return normalized;
 }

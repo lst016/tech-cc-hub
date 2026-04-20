@@ -1,12 +1,18 @@
 import type { SDKMessage, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 
+export type ApiModelConfigProfile = {
+  name: string;
+  contextWindow?: number;
+  compressionThresholdPercent?: number;
+};
+
 export type ApiConfigProfile = {
   id: string;
   name: string;
   apiKey: string;
   baseURL: string;
   model: string;
-  models?: string[];
+  models?: ApiModelConfigProfile[];
   enabled: boolean;
   apiType?: "anthropic";
 };

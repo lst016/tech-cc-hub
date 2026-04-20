@@ -7,6 +7,8 @@ const SEND_COOLDOWN_MS = 3_000;
 const MAX_ROWS = 12;
 const LINE_HEIGHT = 21;
 const MAX_HEIGHT = MAX_ROWS * LINE_HEIGHT;
+const SLASH_PREVIEW_LIMIT = 8;
+const SLASH_QUERY_LIMIT = 16;
 
 interface PromptInputProps {
   sendEvent: (event: ClientEvent) => void;
@@ -134,7 +136,12 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
     }
 
     const availableModels = activeProfile
-      ? Array.from(new Set([activeProfile.model, ...(activeProfile.models ?? [])])).filter(Boolean)
+      ? Array.from(
+          new Set([
+            activeProfile.model,
+            ...(activeProfile.models ?? []).map((item) => item.name),
+          ]),
+        ).filter(Boolean)
       : [];
 
     if (availableModels.length > 0 && !availableModels.includes(selectedModel)) {
@@ -248,20 +255,31 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
   const isCooldownLocked = cooldownRemainingMs > 0;
   const hasDraft = prompt.trim().length > 0 || attachments.length > 0;
   const filteredSlashCommands = useMemo(() => {
-    if (!slashQuery) {
-      return slashCommands.slice(0, 8);
+    const matchedCommands = !slashQuery
+      ? slashCommands
+      : slashCommands.filter((command) => command.replace(/^\//, "").includes(slashQuery));
+
+    if (showSlashBrowser) {
+      return matchedCommands;
     }
-    return slashCommands
-      .filter((command) => command.replace(/^\//, "").includes(slashQuery))
-      .slice(0, 8);
-  }, [slashCommands, slashQuery]);
+
+    if (!slashQuery) {
+      return matchedCommands.slice(0, SLASH_PREVIEW_LIMIT);
+    }
+    return matchedCommands.slice(0, SLASH_QUERY_LIMIT);
+  }, [showSlashBrowser, slashCommands, slashQuery]);
   const showSlashPalette = (prompt.startsWith("/") || showSlashBrowser) && filteredSlashCommands.length > 0 && !disabled;
   const activeProfile = useMemo<ApiConfigProfile | undefined>(() => {
     return apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
   }, [apiConfigSettings]);
   const availableModels = useMemo(() => {
     if (!activeProfile) return [];
-    return Array.from(new Set([activeProfile.model, ...(activeProfile.models ?? [])]))
+    return Array.from(
+      new Set([
+        activeProfile.model,
+        ...(activeProfile.models ?? []).map((item) => item.name),
+      ]),
+    )
       .map((item) => item.trim())
       .filter(Boolean);
   }, [activeProfile]);
@@ -482,7 +500,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
             <div className="border-b border-black/6 px-4 py-2 text-xs font-medium text-muted">
               可用 Slash 命令
             </div>
-            <div className="grid gap-1 p-2">
+            <div className="grid max-h-[min(42vh,320px)] gap-1 overflow-y-auto p-2">
               {filteredSlashCommands.map((command) => (
                 <button
                   key={command}

@@ -1,24 +1,17 @@
 import { useEffect, useState } from "react";
 import { useAppStore } from "../store/useAppStore";
+import type { ApiConfigProfile, ApiConfigSettings, ApiModelConfigProfile } from "../types";
 
 interface SettingsModalProps {
   onClose: () => void;
 }
 
-type ApiConfigProfile = {
-  id: string;
-  name: string;
-  apiKey: string;
-  baseURL: string;
-  model: string;
-  models?: string[];
-  enabled: boolean;
-  apiType?: "anthropic";
-};
-
-type ApiConfigSettings = {
-  profiles: ApiConfigProfile[];
-};
+function createModel(): ApiModelConfigProfile {
+  return {
+    name: "",
+    compressionThresholdPercent: 70,
+  };
+}
 
 function createProfile(): ApiConfigProfile {
   return {
@@ -27,20 +20,37 @@ function createProfile(): ApiConfigProfile {
     apiKey: "",
     baseURL: "",
     model: "",
-    models: [""],
+    models: [createModel()],
     enabled: true,
     apiType: "anthropic",
   };
 }
 
-function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
-  const models = Array.from(
-    new Set((profile.models ?? []).map((item) => item.trim()).filter(Boolean))
-  );
-  const selectedModel = profile.model.trim() || models[0] || "";
+function normalizeModel(model: ApiModelConfigProfile): ApiModelConfigProfile | null {
+  const name = model.name.trim();
+  if (!name) {
+    return null;
+  }
 
-  if (selectedModel && !models.includes(selectedModel)) {
-    models.unshift(selectedModel);
+  const contextWindow = normalizePositiveInteger(model.contextWindow);
+  const compressionThresholdPercent = normalizePercent(model.compressionThresholdPercent) ?? 70;
+
+  return {
+    name,
+    contextWindow,
+    compressionThresholdPercent,
+  };
+}
+
+function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
+  const models = dedupeModels([...(profile.models ?? []), { name: profile.model }]);
+  const selectedModel = profile.model.trim() || models[0]?.name || "";
+
+  if (selectedModel && !models.some((item) => item.name === selectedModel)) {
+    models.unshift({
+      name: selectedModel,
+      compressionThresholdPercent: 70,
+    });
   }
 
   return {
@@ -55,6 +65,47 @@ function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
   };
 }
 
+function dedupeModels(models: ApiModelConfigProfile[]): ApiModelConfigProfile[] {
+  const deduped = new Map<string, ApiModelConfigProfile>();
+
+  for (const model of models) {
+    const normalized = normalizeModel(model);
+    if (!normalized) {
+      continue;
+    }
+
+    const previous = deduped.get(normalized.name);
+    deduped.set(normalized.name, {
+      name: normalized.name,
+      contextWindow: normalized.contextWindow ?? previous?.contextWindow,
+      compressionThresholdPercent: normalized.compressionThresholdPercent ?? previous?.compressionThresholdPercent ?? 70,
+    });
+  }
+
+  return Array.from(deduped.values());
+}
+
+function normalizePositiveInteger(value: number | null | undefined): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  const normalized = Math.floor(value);
+  return normalized > 0 ? normalized : undefined;
+}
+
+function normalizePercent(value: number | null | undefined): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  const normalized = Math.floor(value);
+  if (normalized < 1 || normalized > 100) {
+    return undefined;
+  }
+  return normalized;
+}
+
 export function SettingsModal({ onClose }: SettingsModalProps) {
   const setApiConfigSettings = useAppStore((state) => state.setApiConfigSettings);
   const [profiles, setProfiles] = useState<ApiConfigProfile[]>([]);
@@ -67,15 +118,11 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     setLoading(true);
     window.electron.getApiConfig()
       .then((settings: ApiConfigSettings) => {
-        setApiConfigSettings(settings);
-        if (settings.profiles.length > 0) {
-          setProfiles(settings.profiles.map((profile) => ({
-            ...profile,
-            models: profile.models && profile.models.length > 0 ? profile.models : [profile.model],
-          })));
-        } else {
-          setProfiles([createProfile()]);
-        }
+        const normalizedProfiles = settings.profiles.length > 0
+          ? settings.profiles.map((profile) => normalizeProfile(profile))
+          : [createProfile()];
+        setApiConfigSettings({ profiles: normalizedProfiles });
+        setProfiles(normalizedProfiles);
       })
       .catch((err) => {
         console.error("Failed to load API config:", err);
@@ -121,6 +168,12 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         return;
       }
 
+      const selectedModel = profile.models?.find((item) => item.name === profile.model);
+      if (!selectedModel?.contextWindow) {
+        setError(`配置「${profile.name}」的默认模型需要填写上下文窗口。`);
+        return;
+      }
+
       try {
         new URL(profile.baseURL);
       } catch {
@@ -133,20 +186,14 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     setSaving(true);
 
     try {
-      const result = await window.electron.saveApiConfig({
-        profiles: normalizedProfiles.map((profile, index) => ({
-          ...profile,
-          enabled: index === enabledIndex,
-        })),
-      });
+      const nextProfiles = normalizedProfiles.map((profile, index) => ({
+        ...profile,
+        enabled: index === enabledIndex,
+      }));
+      const result = await window.electron.saveApiConfig({ profiles: nextProfiles });
 
       if (result.success) {
-        setApiConfigSettings({
-          profiles: normalizedProfiles.map((profile, index) => ({
-            ...profile,
-            enabled: index === enabledIndex,
-          })),
-        });
+        setApiConfigSettings({ profiles: nextProfiles });
         setSuccess(true);
         setTimeout(() => {
           setSuccess(false);
@@ -165,11 +212,11 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/20 px-4 py-8 backdrop-blur-sm">
-      <div className="w-full max-w-3xl rounded-2xl border border-ink-900/5 bg-surface p-6 shadow-elevated">
+      <div className="w-full max-w-4xl rounded-2xl border border-ink-900/5 bg-surface p-6 shadow-elevated">
         <div className="flex items-center justify-between">
           <div className="text-base font-semibold text-ink-800">接口配置</div>
           <button
-            className="rounded-full p-1.5 text-muted hover:bg-surface-tertiary hover:text-ink-700 transition-colors"
+            className="rounded-full p-1.5 text-muted transition-colors hover:bg-surface-tertiary hover:text-ink-700"
             onClick={onClose}
             aria-label="关闭"
           >
@@ -178,7 +225,9 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
             </svg>
           </button>
         </div>
-        <p className="mt-2 text-sm text-muted">支持 Anthropic 官方接口，也支持兼容 Anthropic 格式的第三方接口。你可以保存多套配置，并指定当前启用的那一套。</p>
+        <p className="mt-2 text-sm text-muted">
+          支持 Anthropic 官方接口，也支持兼容 Anthropic 格式的第三方接口。每个模型都可以单独配置上下文窗口和压缩阈值，超过阈值后会自动保留最近 5 轮原文并压缩更早历史。
+        </p>
 
         {loading ? (
           <div className="mt-5 flex items-center justify-center py-8">
@@ -193,7 +242,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               <div className="text-xs font-medium text-muted">配置列表</div>
               <button
                 type="button"
-                className="rounded-xl border border-ink-900/10 bg-surface px-3 py-2 text-sm text-ink-700 hover:bg-surface-tertiary transition-colors"
+                className="rounded-xl border border-ink-900/10 bg-surface px-3 py-2 text-sm text-ink-700 transition-colors hover:bg-surface-tertiary"
                 onClick={() => setProfiles((current) => [
                   ...current.map((profile) => ({ ...profile, enabled: false })),
                   createProfile(),
@@ -203,7 +252,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               </button>
             </div>
 
-            <div className="max-h-[56vh] overflow-y-auto pr-1">
+            <div className="max-h-[60vh] overflow-y-auto pr-1">
               <div className="grid gap-4">
                 {profiles.map((profile) => (
                   <div key={profile.id} className="rounded-2xl border border-ink-900/10 bg-surface-secondary p-4">
@@ -249,8 +298,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                         <span className="text-xs font-medium text-muted">配置名称</span>
                         <input
                           type="text"
-                          className="rounded-xl border border-ink-900/10 bg-white px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20 transition-colors"
-                          placeholder="例如：MiniMax 代理"
+                          className="rounded-xl border border-ink-900/10 bg-white px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
+                          placeholder="例如：兼容网关"
                           value={profile.name}
                           onChange={(e) => setProfiles((current) => current.map((item) => item.id === profile.id ? { ...item, name: e.target.value } : item))}
                         />
@@ -260,7 +309,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                         <span className="text-xs font-medium text-muted">接口地址</span>
                         <input
                           type="url"
-                          className="rounded-xl border border-ink-900/10 bg-white px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20 transition-colors"
+                          className="rounded-xl border border-ink-900/10 bg-white px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
                           placeholder="https://..."
                           value={profile.baseURL}
                           onChange={(e) => setProfiles((current) => current.map((item) => item.id === profile.id ? { ...item, baseURL: e.target.value } : item))}
@@ -271,7 +320,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                         <span className="text-xs font-medium text-muted">API 密钥</span>
                         <input
                           type="text"
-                          className="rounded-xl border border-ink-900/10 bg-white px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20 transition-colors"
+                          className="rounded-xl border border-ink-900/10 bg-white px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
                           placeholder="sk-..."
                           value={profile.apiKey}
                           onChange={(e) => setProfiles((current) => current.map((item) => item.id === profile.id ? { ...item, apiKey: e.target.value } : item))}
@@ -284,44 +333,97 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                           <button
                             type="button"
                             className="rounded-xl border border-ink-900/10 bg-white px-3 py-1.5 text-xs text-ink-700 hover:bg-surface"
-                            onClick={() => setProfiles((current) => current.map((item) => item.id === profile.id ? { ...item, models: [...(item.models ?? []), ""] } : item))}
+                            onClick={() => setProfiles((current) => current.map((item) => item.id === profile.id ? { ...item, models: [...(item.models ?? []), createModel()] } : item))}
                           >
                             + 添加模型
                           </button>
                         </div>
-                        <div className="grid gap-2">
+                        <div className="grid gap-3">
                           {(profile.models ?? []).map((modelItem, modelIndex) => (
-                            <div key={`${profile.id}-${modelIndex}`} className="flex items-center gap-2">
-                              <input
-                                type="text"
-                                className="flex-1 rounded-xl border border-ink-900/10 bg-white px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20 transition-colors"
-                                placeholder="claude-sonnet-4-5"
-                                value={modelItem}
-                                onChange={(e) => setProfiles((current) => current.map((item) => {
-                                  if (item.id !== profile.id) return item;
-                                  const models = [...(item.models ?? [])];
-                                  models[modelIndex] = e.target.value;
-                                  const nextModel = item.model === modelItem ? e.target.value : item.model;
-                                  return { ...item, models, model: nextModel };
-                                }))}
-                              />
-                              {(profile.models ?? []).length > 1 && (
-                                <button
-                                  type="button"
-                                  className="rounded-full border border-ink-900/10 p-2 text-muted hover:bg-white hover:text-ink-700"
-                                  onClick={() => setProfiles((current) => current.map((item) => {
-                                    if (item.id !== profile.id) return item;
-                                    const models = (item.models ?? []).filter((_, index) => index !== modelIndex);
-                                    const nextModel = item.model === modelItem ? (models[0] ?? "") : item.model;
-                                    return { ...item, models, model: nextModel };
-                                  }))}
-                                  aria-label={`删除模型 ${modelItem || modelIndex + 1}`}
-                                >
-                                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-                                    <path d="M6 6l12 12M18 6 6 18" />
-                                  </svg>
-                                </button>
-                              )}
+                            <div key={`${profile.id}-${modelIndex}`} className="rounded-xl border border-ink-900/10 bg-white p-3">
+                              <div className="flex items-start gap-2">
+                                <div className="grid flex-1 gap-3 md:grid-cols-3">
+                                  <label className="grid gap-1.5">
+                                    <span className="text-[11px] font-medium text-muted">模型名</span>
+                                    <input
+                                      type="text"
+                                      className="rounded-xl border border-ink-900/10 bg-surface px-3 py-2 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
+                                      placeholder="claude-sonnet-4-5"
+                                      value={modelItem.name}
+                                      onChange={(e) => setProfiles((current) => current.map((item) => {
+                                        if (item.id !== profile.id) return item;
+                                        const models = [...(item.models ?? [])];
+                                        const previousName = models[modelIndex]?.name ?? "";
+                                        models[modelIndex] = { ...models[modelIndex], name: e.target.value };
+                                        const model = item.model === previousName ? e.target.value : item.model;
+                                        return { ...item, models, model };
+                                      }))}
+                                    />
+                                  </label>
+
+                                  <label className="grid gap-1.5">
+                                    <span className="text-[11px] font-medium text-muted">上下文窗口</span>
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      step={1}
+                                      className="rounded-xl border border-ink-900/10 bg-surface px-3 py-2 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
+                                      placeholder="例如 200000"
+                                      value={modelItem.contextWindow ?? ""}
+                                      onChange={(e) => setProfiles((current) => current.map((item) => {
+                                        if (item.id !== profile.id) return item;
+                                        const models = [...(item.models ?? [])];
+                                        models[modelIndex] = {
+                                          ...models[modelIndex],
+                                          contextWindow: e.target.value ? Number(e.target.value) : undefined,
+                                        };
+                                        return { ...item, models };
+                                      }))}
+                                    />
+                                  </label>
+
+                                  <label className="grid gap-1.5">
+                                    <span className="text-[11px] font-medium text-muted">压缩阈值 (%)</span>
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={100}
+                                      step={1}
+                                      className="rounded-xl border border-ink-900/10 bg-surface px-3 py-2 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
+                                      placeholder="70"
+                                      value={modelItem.compressionThresholdPercent ?? ""}
+                                      onChange={(e) => setProfiles((current) => current.map((item) => {
+                                        if (item.id !== profile.id) return item;
+                                        const models = [...(item.models ?? [])];
+                                        models[modelIndex] = {
+                                          ...models[modelIndex],
+                                          compressionThresholdPercent: e.target.value ? Number(e.target.value) : undefined,
+                                        };
+                                        return { ...item, models };
+                                      }))}
+                                    />
+                                  </label>
+                                </div>
+
+                                {(profile.models ?? []).length > 1 && (
+                                  <button
+                                    type="button"
+                                    className="rounded-full border border-ink-900/10 p-2 text-muted hover:bg-surface hover:text-ink-700"
+                                    onClick={() => setProfiles((current) => current.map((item) => {
+                                      if (item.id !== profile.id) return item;
+                                      const models = (item.models ?? []).filter((_, index) => index !== modelIndex);
+                                      const deletedName = modelItem.name;
+                                      const model = item.model === deletedName ? (models[0]?.name ?? "") : item.model;
+                                      return { ...item, models, model };
+                                    }))}
+                                    aria-label={`删除模型 ${modelItem.name || modelIndex + 1}`}
+                                  >
+                                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                      <path d="M6 6l12 12M18 6 6 18" />
+                                    </svg>
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -330,12 +432,12 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                       <label className="grid gap-1.5">
                         <span className="text-xs font-medium text-muted">默认模型</span>
                         <select
-                          className="rounded-xl border border-ink-900/10 bg-white px-4 py-2.5 text-sm text-ink-800 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20 transition-colors"
+                          className="rounded-xl border border-ink-900/10 bg-white px-4 py-2.5 text-sm text-ink-800 transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
                           value={profile.model}
                           onChange={(e) => setProfiles((current) => current.map((item) => item.id === profile.id ? { ...item, model: e.target.value } : item))}
                         >
-                          {(profile.models ?? []).filter((item) => item.trim()).map((item) => (
-                            <option key={item} value={item}>{item}</option>
+                          {(profile.models ?? []).filter((item) => item.name.trim()).map((item) => (
+                            <option key={item.name} value={item.name}>{item.name}</option>
                           ))}
                         </select>
                       </label>
@@ -359,14 +461,14 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
             <div className="flex gap-3">
               <button
-                className="flex-1 rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm font-medium text-ink-700 hover:bg-surface-tertiary transition-colors"
+                className="flex-1 rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm font-medium text-ink-700 transition-colors hover:bg-surface-tertiary"
                 onClick={onClose}
                 disabled={saving}
               >
                 取消
               </button>
               <button
-                className="flex-1 rounded-xl bg-accent px-4 py-2.5 text-sm font-medium text-white shadow-soft hover:bg-accent-hover transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex-1 rounded-xl bg-accent px-4 py-2.5 text-sm font-medium text-white shadow-soft transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={handleSave}
                 disabled={saving || profiles.length === 0}
               >

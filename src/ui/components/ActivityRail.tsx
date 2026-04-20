@@ -3,6 +3,7 @@ import {
   buildActivityRailModel,
   type ActivityAnalysisCard,
   type ActivityDetailSection,
+  type ActivityExecutionStep,
   type ActivityExecutionMetrics,
   type ActivityPlanStep,
   type ActivityRailFilterKey,
@@ -189,19 +190,35 @@ function TimelineFilter({
   );
 }
 
+function StepActionBar() {
+  const actions = ["标记", "备注", "AI 调优"] as const;
+
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {actions.map((action) => (
+        <button
+          key={action}
+          type="button"
+          className="rounded-full border border-black/5 bg-black/[0.03] px-3 py-1 text-[11px] text-ink-600 transition hover:bg-black/[0.05] hover:text-ink-900"
+        >
+          {action}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function TaskStepCard({
   step,
   active,
   onClick,
 }: {
-  step: ActivityTaskStep;
+  step: ActivityExecutionStep;
   active: boolean;
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <div
       className={[
         "w-full rounded-2xl border p-3 text-left transition",
         active
@@ -209,17 +226,19 @@ function TaskStepCard({
           : "border-black/5 bg-white/70 hover:border-black/10 hover:bg-white",
       ].join(" ")}
     >
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-sm font-semibold text-ink-900">{step.title}</span>
-        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${toneClasses(step.status === "completed" ? "success" : step.status === "running" ? "info" : "neutral")}`}>
-          {STEP_STATUS_LABELS[step.status]}
-        </span>
-      </div>
-      <div className="mt-2 text-[11px] text-ink-500">
-        关联节点 {step.timelineIds.length}
-      </div>
-      <MetricsStrip metrics={step.metrics} compact />
-    </button>
+      <button type="button" onClick={onClick} className="w-full text-left">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm font-semibold text-ink-900">{step.title}</span>
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${toneClasses(step.status === "completed" ? "success" : step.status === "running" ? "info" : "neutral")}`}>
+            {STEP_STATUS_LABELS[step.status]}
+          </span>
+        </div>
+        <div className="mt-2 text-[11px] text-ink-500">关联节点 {step.timelineIds.length}</div>
+        <div className="mt-1 text-[11px] text-ink-500">对应计划步骤 {step.planStepIds.length}</div>
+        <MetricsStrip metrics={step.metrics} compact />
+      </button>
+      <StepActionBar />
+    </div>
   );
 }
 
@@ -536,10 +555,12 @@ export function ActivityRail({
   session,
   partialMessage,
   globalError,
+  onOpenSessionAnalysis,
 }: {
   session: SessionView | undefined;
   partialMessage: string;
   globalError: string | null;
+  onOpenSessionAnalysis?: () => void;
 }) {
   const model = useMemo(
     () => buildActivityRailModel(session, session?.permissionRequests ?? [], partialMessage),
@@ -655,6 +676,15 @@ export function ActivityRail({
             </div>
 
             <div className="mt-4 flex gap-2">
+              {session && onOpenSessionAnalysis && (
+                <button
+                  type="button"
+                  onClick={onOpenSessionAnalysis}
+                  className="rounded-full border border-black/5 bg-white px-3 py-2 text-[11px] font-medium text-ink-700 hover:border-black/10 hover:bg-white/90"
+                >
+                  查看本会话分析
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setShowContextModal(true)}

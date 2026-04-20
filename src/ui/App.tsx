@@ -10,6 +10,7 @@ import { SettingsModal } from "./components/SettingsModal";
 import { PromptInput, usePromptActions } from "./components/PromptInput";
 import { MessageCard } from "./components/EventCard";
 import { ActivityRail } from "./components/ActivityRail";
+import { SessionAnalysisPage } from "./components/SessionAnalysisPage";
 import MDContent from "./render/markdown";
 
 const SCROLL_THRESHOLD = 50;
@@ -23,6 +24,7 @@ function App() {
   const [showPartialMessage, setShowPartialMessage] = useState(false);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const [hasNewMessages, setHasNewMessages] = useState(false);
+  const [showSessionAnalysis, setShowSessionAnalysis] = useState(false);
   const prevMessagesLengthRef = useRef(0);
   const scrollHeightBeforeLoadRef = useRef(0);
   const shouldRestoreScrollRef = useRef(false);
@@ -261,6 +263,7 @@ function App() {
   useEffect(() => {
     setShouldAutoScroll(true);
     setHasNewMessages(false);
+    setShowSessionAnalysis(false);
     prevMessagesLengthRef.current = 0;
     setTimeout(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
@@ -341,6 +344,13 @@ function App() {
           onScroll={handleScroll}
           className="chat-scroll flex-1 overflow-y-auto px-8 pb-40 pt-8"
         >
+          {showSessionAnalysis ? (
+            <SessionAnalysisPage
+              session={activeSession}
+              partialMessage={partialMessage}
+              onBack={() => setShowSessionAnalysis(false)}
+            />
+          ) : (
           <div className="mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[34px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(248,250,252,0.82))] px-8 py-7 shadow-[0_24px_60px_rgba(30,38,52,0.08)] backdrop-blur-xl xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
             <div ref={topSentinelRef} className="h-1" />
 
@@ -427,9 +437,12 @@ function App() {
 
             <div ref={messagesEndRef} />
           </div>
+          )}
         </div>
 
-        <PromptInput sendEvent={sendEvent} onSendMessage={handleSendMessage} disabled={!connected} />
+        {!showSessionAnalysis && (
+          <PromptInput sendEvent={sendEvent} onSendMessage={handleSendMessage} disabled={!connected} />
+        )}
 
         {hasNewMessages && !shouldAutoScroll && (
           <button
@@ -444,7 +457,12 @@ function App() {
         )}
       </main>
 
-      <ActivityRail session={activeSession} partialMessage={partialMessage} globalError={globalError} />
+      <ActivityRail
+        session={activeSession}
+        partialMessage={partialMessage}
+        globalError={globalError}
+        onOpenSessionAnalysis={() => setShowSessionAnalysis(true)}
+      />
 
       {showStartModal && (
         <StartSessionModal

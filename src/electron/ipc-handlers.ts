@@ -3,9 +3,9 @@ import { join } from "path";
 
 import { createStoredUserPromptMessage } from "../shared/attachments.js";
 import { runClaude, type RunnerHandle } from "./libs/runner.js";
-import { getCurrentApiConfig, supportsRemoteSessionResume } from "./libs/claude-settings.js";
+import { getCurrentApiConfig, getModelConfig, supportsRemoteSessionResume } from "./libs/claude-settings.js";
 import { SessionStore } from "./libs/session-store.js";
-import { buildStatelessContinuationPrompt } from "./stateless-continuation.js";
+import { buildStatelessContinuationPayload } from "./stateless-continuation.js";
 import type { ClientEvent, ServerEvent } from "./types.js";
 
 let sessions: SessionStore;
@@ -190,16 +190,33 @@ export function handleClientEvent(event: ClientEvent) {
     const config = getCurrentApiConfig();
     const canUseRemoteResume = config ? supportsRemoteSessionResume(config) : true;
     const history = store.getSessionHistory(session.id);
-    const prompt = canUseRemoteResume
-      ? event.payload.prompt
-      : buildStatelessContinuationPrompt(
+    const selectedModel = event.payload.runtime?.model ?? config?.model;
+    const modelConfig = config && selectedModel ? getModelConfig(config, selectedModel) : null;
+    const continuationPayload = canUseRemoteResume
+      ? null
+      : buildStatelessContinuationPayload(
           history?.messages ?? [],
           event.payload.prompt,
           event.payload.attachments ?? [],
+          {
+            contextWindow: modelConfig?.contextWindow,
+            compressionThresholdPercent: modelConfig?.compressionThresholdPercent,
+            recentTurnCount: 5,
+            existingSummary: history?.session.continuationSummary,
+            existingSummaryMessageCount: history?.session.continuationSummaryMessageCount,
+          },
         );
+    const prompt = canUseRemoteResume ? event.payload.prompt : continuationPayload?.prompt ?? event.payload.prompt;
     const resumeSessionId = canUseRemoteResume ? session.claudeSessionId : undefined;
 
-    store.updateSession(session.id, { status: "running", lastPrompt: event.payload.prompt });
+    store.updateSession(session.id, {
+      status: "running",
+      lastPrompt: event.payload.prompt,
+      continuationSummary: continuationPayload?.usedCompression ? continuationPayload.summaryText : undefined,
+      continuationSummaryMessageCount: continuationPayload?.usedCompression
+        ? continuationPayload.summaryMessageCount
+        : undefined,
+    });
     emit({
       type: "session.status",
       payload: { sessionId: session.id, status: "running", title: session.title, cwd: session.cwd },

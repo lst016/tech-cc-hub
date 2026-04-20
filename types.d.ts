@@ -10,13 +10,19 @@ type StaticData = {
     totalMemoryGB: number;
 }
 
+type ApiModelConfig = {
+    name: string;
+    contextWindow?: number;
+    compressionThresholdPercent?: number;
+}
+
 type ApiConfig = {
     id: string;
     name: string;
     apiKey: string;
     baseURL: string;
     model: string;
-    models?: string[];
+    models?: ApiModelConfig[];
     enabled: boolean;
     apiType?: "anthropic";
 }

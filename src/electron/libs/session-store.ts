@@ -23,6 +23,8 @@ export type Session = {
   cwd?: string;
   allowedTools?: string;
   lastPrompt?: string;
+  continuationSummary?: string;
+  continuationSummaryMessageCount?: number;
   pendingPermissions: Map<string, PendingPermission>;
   abortController?: AbortController;
 };
@@ -35,6 +37,8 @@ export type StoredSession = {
   allowedTools?: string;
   lastPrompt?: string;
   claudeSessionId?: string;
+  continuationSummary?: string;
+  continuationSummaryMessageCount?: number;
   createdAt: number;
   updatedAt: number;
 };
@@ -96,8 +100,8 @@ export class SessionStore {
     this.db
       .prepare(
         `insert into sessions
-          (id, title, claude_session_id, status, cwd, allowed_tools, last_prompt, created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          (id, title, claude_session_id, status, cwd, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` 
       )
       .run(
         id,
@@ -107,6 +111,8 @@ export class SessionStore {
         session.cwd ?? null,
         session.allowedTools ?? null,
         session.lastPrompt ?? null,
+        session.continuationSummary ?? null,
+        session.continuationSummaryMessageCount ?? null,
         now,
         now
       );
@@ -120,7 +126,7 @@ export class SessionStore {
   listSessions(): StoredSession[] {
     const rows = this.db
       .prepare(
-        `select id, title, claude_session_id, status, cwd, allowed_tools, last_prompt, created_at, updated_at
+        `select id, title, claude_session_id, status, cwd, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, created_at, updated_at
          from sessions
          order by updated_at desc`
       )
@@ -133,6 +139,10 @@ export class SessionStore {
       allowedTools: row.allowed_tools ? String(row.allowed_tools) : undefined,
       lastPrompt: row.last_prompt ? String(row.last_prompt) : undefined,
       claudeSessionId: row.claude_session_id ? String(row.claude_session_id) : undefined,
+      continuationSummary: row.continuation_summary ? String(row.continuation_summary) : undefined,
+      continuationSummaryMessageCount: typeof row.continuation_summary_message_count === "number"
+        ? Number(row.continuation_summary_message_count)
+        : undefined,
       createdAt: Number(row.created_at),
       updatedAt: Number(row.updated_at)
     }));
@@ -157,7 +167,7 @@ export class SessionStore {
   getSessionHistory(id: string): SessionHistory | null {
     const sessionRow = this.db
       .prepare(
-        `select id, title, claude_session_id, status, cwd, allowed_tools, last_prompt, created_at, updated_at
+        `select id, title, claude_session_id, status, cwd, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, created_at, updated_at
          from sessions
          where id = ?`
       )
@@ -189,6 +199,10 @@ export class SessionStore {
         allowedTools: sessionRow.allowed_tools ? String(sessionRow.allowed_tools) : undefined,
         lastPrompt: sessionRow.last_prompt ? String(sessionRow.last_prompt) : undefined,
         claudeSessionId: sessionRow.claude_session_id ? String(sessionRow.claude_session_id) : undefined,
+        continuationSummary: sessionRow.continuation_summary ? String(sessionRow.continuation_summary) : undefined,
+        continuationSummaryMessageCount: typeof sessionRow.continuation_summary_message_count === "number"
+          ? Number(sessionRow.continuation_summary_message_count)
+          : undefined,
         createdAt: Number(sessionRow.created_at),
         updatedAt: Number(sessionRow.updated_at)
       },
@@ -240,7 +254,9 @@ export class SessionStore {
       status: "status",
       cwd: "cwd",
       allowedTools: "allowed_tools",
-      lastPrompt: "last_prompt"
+      lastPrompt: "last_prompt",
+      continuationSummary: "continuation_summary",
+      continuationSummaryMessageCount: "continuation_summary_message_count",
     } as const;
 
     for (const key of Object.keys(updates) as Array<keyof typeof updatable>) {
@@ -248,7 +264,7 @@ export class SessionStore {
       if (!column) continue;
       fields.push(`${column} = ?`);
       const value = updates[key];
-      values.push(value === undefined ? null : (value as string));
+      values.push(value === undefined ? null : (value as string | number));
     }
 
     if (fields.length === 0) return;
@@ -271,10 +287,14 @@ export class SessionStore {
         cwd text,
         allowed_tools text,
         last_prompt text,
+        continuation_summary text,
+        continuation_summary_message_count integer,
         created_at integer not null,
         updated_at integer not null
       )`
     );
+    this.ensureSessionColumn("continuation_summary", "text");
+    this.ensureSessionColumn("continuation_summary_message_count", "integer");
     this.db.exec(
       `create table if not exists messages (
         id text primary key,
@@ -290,7 +310,7 @@ export class SessionStore {
   private loadSessions(): void {
     const rows = this.db
       .prepare(
-        `select id, title, claude_session_id, status, cwd, allowed_tools, last_prompt
+        `select id, title, claude_session_id, status, cwd, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count
          from sessions`
       )
       .all();
@@ -303,6 +323,10 @@ export class SessionStore {
         cwd: this.normalizeStoredCwd(String(row.id), row.cwd ? String(row.cwd) : undefined),
         allowedTools: row.allowed_tools ? String(row.allowed_tools) : undefined,
         lastPrompt: row.last_prompt ? String(row.last_prompt) : undefined,
+        continuationSummary: row.continuation_summary ? String(row.continuation_summary) : undefined,
+        continuationSummaryMessageCount: typeof row.continuation_summary_message_count === "number"
+          ? Number(row.continuation_summary_message_count)
+          : undefined,
         pendingPermissions: new Map()
       };
       this.sessions.set(session.id, session);
@@ -311,5 +335,13 @@ export class SessionStore {
 
   close(): void {
     this.db.close();
+  }
+
+  private ensureSessionColumn(columnName: string, columnType: "text" | "integer"): void {
+    const columns = this.db.prepare("pragma table_info(sessions)").all() as Array<Record<string, unknown>>;
+    const hasColumn = columns.some((column) => column.name === columnName);
+    if (!hasColumn) {
+      this.db.exec(`alter table sessions add column ${columnName} ${columnType}`);
+    }
   }
 }

@@ -98,7 +98,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => {
       const enabledProfile = getEnabledProfile(apiConfigSettings);
       const availableModels = enabledProfile
-        ? Array.from(new Set([enabledProfile.model, ...(enabledProfile.models ?? [])])).filter(Boolean)
+        ? Array.from(
+            new Set([
+              enabledProfile.model,
+              ...(enabledProfile.models ?? []).map((item) => item.name),
+            ]),
+          ).filter(Boolean)
         : [];
       const runtimeModel = availableModels.includes(state.runtimeModel)
         ? state.runtimeModel
