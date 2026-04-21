@@ -524,6 +524,7 @@ function DetailDrawer({
   );
 }
 
+
 export function ActivityRail({
   session,
   partialMessage,
@@ -643,7 +644,6 @@ export function ActivityRail({
                 <div className="mt-1 text-sm font-semibold text-ink-900">{model.summary.failureCount}</div>
               </div>
             </div>
-
             <div className="mt-4 flex gap-2">
               {session && onOpenSessionAnalysis && (
                 <button
@@ -673,6 +673,7 @@ export function ActivityRail({
             </div>
           </section>
 
+            <>
           {model.executionSteps.length > 0 && (
             <section className="rounded-[28px] border border-black/5 bg-white/68 p-4 shadow-[0_16px_32px_rgba(15,23,42,0.05)]">
               <div className="flex items-center justify-between gap-3">
@@ -784,6 +785,7 @@ export function ActivityRail({
               ))}
             </div>
           </section>
+            </>
         </div>
       </aside>
     </>

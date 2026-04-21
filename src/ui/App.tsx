@@ -105,7 +105,6 @@ function App() {
   const messages = activeSession?.messages ?? [];
   const permissionRequests = activeSession?.permissionRequests ?? [];
   const isRunning = activeSession?.status === "running";
-
   const {
     visibleMessages,
     hasMoreHistory,

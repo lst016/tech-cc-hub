@@ -2,11 +2,24 @@ import Database from "better-sqlite3";
 import type { AgentRunSurface, SessionStatus, StreamMessage } from "../types.js";
 import { existsSync } from "fs";
 import { app } from "electron";
+import type { SessionWorkflowState, WorkflowScope } from "../../shared/workflow-markdown.js";
 
 const LEGACY_CWD_SUFFIXES = [
   "/upstream/open-claude-cowork",
   "/Desktop/claw-open-cowork",
 ];
+
+function parseWorkflowState(value: unknown): SessionWorkflowState | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(value) as SessionWorkflowState;
+  } catch {
+    return undefined;
+  }
+}
 
 export type PendingPermission = {
   toolUseId: string;
@@ -27,6 +40,11 @@ export type Session = {
   lastPrompt?: string;
   continuationSummary?: string;
   continuationSummaryMessageCount?: number;
+  workflowMarkdown?: string;
+  workflowSourceLayer?: WorkflowScope;
+  workflowSourcePath?: string;
+  workflowState?: SessionWorkflowState;
+  workflowError?: string;
   pendingPermissions: Map<string, PendingPermission>;
   abortController?: AbortController;
 };
@@ -43,6 +61,11 @@ export type StoredSession = {
   claudeSessionId?: string;
   continuationSummary?: string;
   continuationSummaryMessageCount?: number;
+  workflowMarkdown?: string;
+  workflowSourceLayer?: WorkflowScope;
+  workflowSourcePath?: string;
+  workflowState?: SessionWorkflowState;
+  workflowError?: string;
   createdAt: number;
   updatedAt: number;
 };
@@ -113,8 +136,8 @@ export class SessionStore {
     this.db
       .prepare(
         `insert into sessions
-          (id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` 
+          (id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` 
       )
       .run(
         id,
@@ -128,6 +151,11 @@ export class SessionStore {
         session.lastPrompt ?? null,
         session.continuationSummary ?? null,
         session.continuationSummaryMessageCount ?? null,
+        session.workflowMarkdown ?? null,
+        session.workflowSourceLayer ?? null,
+        session.workflowSourcePath ?? null,
+        session.workflowState ? JSON.stringify(session.workflowState) : null,
+        session.workflowError ?? null,
         now,
         now
       );
@@ -141,7 +169,7 @@ export class SessionStore {
   listSessions(): StoredSession[] {
     const rows = this.db
       .prepare(
-        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, created_at, updated_at
+        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, created_at, updated_at
          from sessions
          order by updated_at desc`
       )
@@ -160,6 +188,11 @@ export class SessionStore {
       continuationSummaryMessageCount: typeof row.continuation_summary_message_count === "number"
         ? Number(row.continuation_summary_message_count)
         : undefined,
+      workflowMarkdown: row.workflow_markdown ? String(row.workflow_markdown) : undefined,
+      workflowSourceLayer: row.workflow_source_layer ? (String(row.workflow_source_layer) as WorkflowScope) : undefined,
+      workflowSourcePath: row.workflow_source_path ? String(row.workflow_source_path) : undefined,
+      workflowState: parseWorkflowState(row.workflow_state),
+      workflowError: row.workflow_error ? String(row.workflow_error) : undefined,
       createdAt: Number(row.created_at),
       updatedAt: Number(row.updated_at)
     }));
@@ -184,7 +217,7 @@ export class SessionStore {
   getSessionHistory(id: string): SessionHistory | null {
     const sessionRow = this.db
       .prepare(
-        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, created_at, updated_at
+        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, created_at, updated_at
          from sessions
          where id = ?`
       )
@@ -222,6 +255,11 @@ export class SessionStore {
         continuationSummaryMessageCount: typeof sessionRow.continuation_summary_message_count === "number"
           ? Number(sessionRow.continuation_summary_message_count)
           : undefined,
+        workflowMarkdown: sessionRow.workflow_markdown ? String(sessionRow.workflow_markdown) : undefined,
+        workflowSourceLayer: sessionRow.workflow_source_layer ? (String(sessionRow.workflow_source_layer) as WorkflowScope) : undefined,
+        workflowSourcePath: sessionRow.workflow_source_path ? String(sessionRow.workflow_source_path) : undefined,
+        workflowState: parseWorkflowState(sessionRow.workflow_state),
+        workflowError: sessionRow.workflow_error ? String(sessionRow.workflow_error) : undefined,
         createdAt: Number(sessionRow.created_at),
         updatedAt: Number(sessionRow.updated_at)
       },
@@ -278,6 +316,11 @@ export class SessionStore {
       lastPrompt: "last_prompt",
       continuationSummary: "continuation_summary",
       continuationSummaryMessageCount: "continuation_summary_message_count",
+      workflowMarkdown: "workflow_markdown",
+      workflowSourceLayer: "workflow_source_layer",
+      workflowSourcePath: "workflow_source_path",
+      workflowState: "workflow_state",
+      workflowError: "workflow_error",
     } as const;
 
     for (const key of Object.keys(updates) as Array<keyof typeof updatable>) {
@@ -285,6 +328,10 @@ export class SessionStore {
       if (!column) continue;
       fields.push(`${column} = ?`);
       const value = updates[key];
+      if (key === "workflowState") {
+        values.push(value === undefined ? null : JSON.stringify(value));
+        continue;
+      }
       values.push(value === undefined ? null : (value as string | number));
     }
 
@@ -312,6 +359,11 @@ export class SessionStore {
         last_prompt text,
         continuation_summary text,
         continuation_summary_message_count integer,
+        workflow_markdown text,
+        workflow_source_layer text,
+        workflow_source_path text,
+        workflow_state text,
+        workflow_error text,
         created_at integer not null,
         updated_at integer not null
       )`
@@ -320,6 +372,11 @@ export class SessionStore {
     this.ensureSessionColumn("continuation_summary_message_count", "integer");
     this.ensureSessionColumn("run_surface", "text");
     this.ensureSessionColumn("agent_id", "text");
+    this.ensureSessionColumn("workflow_markdown", "text");
+    this.ensureSessionColumn("workflow_source_layer", "text");
+    this.ensureSessionColumn("workflow_source_path", "text");
+    this.ensureSessionColumn("workflow_state", "text");
+    this.ensureSessionColumn("workflow_error", "text");
     this.db.exec(
       `create table if not exists messages (
         id text primary key,
@@ -335,7 +392,7 @@ export class SessionStore {
   private loadSessions(): void {
     const rows = this.db
       .prepare(
-        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count
+        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error
          from sessions`
       )
       .all();
@@ -354,6 +411,11 @@ export class SessionStore {
         continuationSummaryMessageCount: typeof row.continuation_summary_message_count === "number"
           ? Number(row.continuation_summary_message_count)
           : undefined,
+        workflowMarkdown: row.workflow_markdown ? String(row.workflow_markdown) : undefined,
+        workflowSourceLayer: row.workflow_source_layer ? (String(row.workflow_source_layer) as WorkflowScope) : undefined,
+        workflowSourcePath: row.workflow_source_path ? String(row.workflow_source_path) : undefined,
+        workflowState: parseWorkflowState(row.workflow_state),
+        workflowError: row.workflow_error ? String(row.workflow_error) : undefined,
         pendingPermissions: new Map()
       };
       this.sessions.set(session.id, session);

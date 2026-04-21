@@ -2,9 +2,11 @@ import { app, BrowserWindow } from "electron";
 import { join } from "path";
 
 import { createStoredUserPromptMessage } from "../shared/attachments.js";
+import { createInitialSessionWorkflowState, parseWorkflowMarkdown } from "../shared/workflow-markdown.js";
 import { runClaude, type RunnerHandle } from "./libs/runner.js";
 import { getCurrentApiConfig, getModelConfig, supportsRemoteSessionResume } from "./libs/claude-settings.js";
 import { SessionStore } from "./libs/session-store.js";
+import { buildSessionWorkflowCatalog } from "./libs/workflow-catalog.js";
 import { buildStatelessContinuationPayload } from "./stateless-continuation.js";
 import type { ClientEvent, ServerEvent } from "./types.js";
 
@@ -102,6 +104,113 @@ export function handleClientEvent(event: ClientEvent) {
         sessionId: history.session.id,
         status: history.session.status,
         messages: history.messages,
+      },
+    });
+    return;
+  }
+
+  if (event.type === "session.workflow.catalog.list") {
+    const history = store.getSessionHistory(event.payload.sessionId);
+    if (!history) {
+      emit({ type: "session.deleted", payload: { sessionId: event.payload.sessionId } });
+      return;
+    }
+
+    emit({
+      type: "session.workflow.catalog",
+      payload: buildSessionWorkflowCatalog({
+        sessionId: history.session.id,
+        cwd: history.session.cwd,
+        messages: history.messages,
+      }),
+    });
+    return;
+  }
+
+  if (event.type === "session.workflow.set") {
+    const session = store.getSession(event.payload.sessionId);
+    if (!session) {
+      emit({ type: "session.deleted", payload: { sessionId: event.payload.sessionId } });
+      emit({
+        type: "runner.error",
+        payload: { sessionId: event.payload.sessionId, message: "Session no longer exists." },
+      });
+      return;
+    }
+
+    const parsed = parseWorkflowMarkdown(event.payload.markdown);
+    if (!parsed.ok || !parsed.document) {
+      const errorMessage = parsed.errors.map((item) => item.message).join("；") || "工作流 Markdown 解析失败。";
+      store.updateSession(session.id, {
+        workflowMarkdown: event.payload.markdown,
+        workflowSourceLayer: event.payload.sourceLayer,
+        workflowSourcePath: event.payload.sourcePath,
+        workflowState: undefined,
+        workflowError: errorMessage,
+      });
+      emit({
+        type: "session.workflow",
+        payload: {
+          sessionId: session.id,
+          markdown: event.payload.markdown,
+          sourceLayer: event.payload.sourceLayer,
+          sourcePath: event.payload.sourcePath,
+          error: errorMessage,
+        },
+      });
+      emit({
+        type: "runner.error",
+        payload: { sessionId: session.id, message: errorMessage },
+      });
+      return;
+    }
+
+    const workflowState = createInitialSessionWorkflowState(
+      parsed.document,
+      event.payload.sourceLayer,
+      event.payload.sourcePath,
+    );
+
+    store.updateSession(session.id, {
+      workflowMarkdown: event.payload.markdown,
+      workflowSourceLayer: event.payload.sourceLayer,
+      workflowSourcePath: event.payload.sourcePath,
+      workflowState,
+      workflowError: undefined,
+    });
+
+    emit({
+      type: "session.workflow",
+      payload: {
+        sessionId: session.id,
+        markdown: event.payload.markdown,
+        sourceLayer: event.payload.sourceLayer,
+        sourcePath: event.payload.sourcePath,
+        state: workflowState,
+      },
+    });
+    return;
+  }
+
+  if (event.type === "session.workflow.clear") {
+    const session = store.getSession(event.payload.sessionId);
+    if (!session) {
+      emit({ type: "session.deleted", payload: { sessionId: event.payload.sessionId } });
+      return;
+    }
+
+    store.updateSession(session.id, {
+      workflowMarkdown: undefined,
+      workflowSourceLayer: undefined,
+      workflowSourcePath: undefined,
+      workflowState: undefined,
+      workflowError: undefined,
+    });
+
+    emit({
+      type: "session.workflow",
+      payload: {
+        sessionId: session.id,
       },
     });
     return;

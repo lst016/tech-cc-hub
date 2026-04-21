@@ -4,10 +4,17 @@ import type {
   ApiConfigSettings,
   RuntimePermissionMode,
   RuntimeReasoningMode,
+  SessionWorkflowCatalog,
   ServerEvent,
   SessionStatus,
   StreamMessage,
 } from "../types";
+import {
+  parseWorkflowMarkdown,
+  type SessionWorkflowState,
+  type WorkflowScope,
+  type WorkflowSpecDocument,
+} from "../../shared/workflow-markdown";
 
 export type PermissionRequest = {
   toolUseId: string;
@@ -24,6 +31,13 @@ export type SessionView = {
   messages: StreamMessage[];
   permissionRequests: PermissionRequest[];
   lastPrompt?: string;
+  workflowMarkdown?: string;
+  workflowSourceLayer?: WorkflowScope;
+  workflowSourcePath?: string;
+  workflowState?: SessionWorkflowState;
+  workflowSpec?: WorkflowSpecDocument;
+  workflowError?: string;
+  workflowCatalog?: SessionWorkflowCatalog;
   createdAt?: number;
   updatedAt?: number;
   hydrated: boolean;
@@ -65,6 +79,24 @@ interface AppState {
 
 function createSession(id: string): SessionView {
   return { id, title: "", status: "idle", messages: [], permissionRequests: [], hydrated: false };
+}
+
+function hydrateWorkflowView(
+  markdown?: string,
+  workflowState?: SessionWorkflowState,
+  workflowSourceLayer?: WorkflowScope,
+  workflowSourcePath?: string,
+  workflowError?: string,
+): Pick<SessionView, "workflowMarkdown" | "workflowState" | "workflowSourceLayer" | "workflowSourcePath" | "workflowSpec" | "workflowError"> {
+  const parsed = markdown ? parseWorkflowMarkdown(markdown) : null;
+  return {
+    workflowMarkdown: markdown,
+    workflowState,
+    workflowSourceLayer,
+    workflowSourcePath,
+    workflowSpec: parsed?.ok ? parsed.document ?? undefined : undefined,
+    workflowError: workflowError ?? (parsed && !parsed.ok ? parsed.errors.map((item) => item.message).join("；") : undefined),
+  };
 }
 
 function getEnabledProfile(settings: ApiConfigSettings): ApiConfigProfile | undefined {
@@ -174,6 +206,13 @@ export const useAppStore = create<AppState>((set, get) => ({
             title: session.title,
             cwd: session.cwd,
             slashCommands: session.slashCommands ?? existing.slashCommands,
+            ...hydrateWorkflowView(
+              session.workflowMarkdown,
+              session.workflowState,
+              session.workflowSourceLayer,
+              session.workflowSourcePath,
+              session.workflowError,
+            ),
             createdAt: session.createdAt,
             updatedAt: session.updatedAt
           };
@@ -218,6 +257,40 @@ export const useAppStore = create<AppState>((set, get) => ({
             sessions: {
               ...state.sessions,
               [sessionId]: { ...existing, status, messages, slashCommands: slashCommands ?? existing.slashCommands, hydrated: true }
+            }
+          };
+        });
+        break;
+      }
+
+      case "session.workflow": {
+        const { sessionId, markdown, state: workflowState, sourceLayer, sourcePath, error } = event.payload;
+        set((state) => {
+          const existing = state.sessions[sessionId] ?? createSession(sessionId);
+          return {
+            sessions: {
+              ...state.sessions,
+              [sessionId]: {
+                ...existing,
+                ...hydrateWorkflowView(markdown, workflowState, sourceLayer, sourcePath, error),
+              }
+            }
+          };
+        });
+        break;
+      }
+
+      case "session.workflow.catalog": {
+        const catalog = event.payload;
+        set((state) => {
+          const existing = state.sessions[catalog.sessionId] ?? createSession(catalog.sessionId);
+          return {
+            sessions: {
+              ...state.sessions,
+              [catalog.sessionId]: {
+                ...existing,
+                workflowCatalog: catalog,
+              }
             }
           };
         });
