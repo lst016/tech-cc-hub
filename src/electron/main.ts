@@ -20,7 +20,11 @@ import {
   saveApiConfigSettings,
   loadGlobalRuntimeConfig,
   saveGlobalRuntimeConfig,
+  loadSkillRegistry,
+  saveSkillRegistry,
+  type SkillSyncRequest,
 } from "./libs/config-store.js";
+import { startSkillSyncScheduler, stopSkillSyncScheduler, syncSkillSources } from "./libs/skill-registry-sync.js";
 import { getCurrentApiConfig } from "./libs/claude-settings.js";
 import type { ClientEvent } from "./types.js";
 import "./libs/claude-settings.js";
@@ -125,6 +129,7 @@ function cleanup(): void {
     globalShortcut.unregisterAll();
     stopPolling();
     cleanupAllSessions();
+    stopSkillSyncScheduler();
     killViteDevServer();
 }
 
@@ -219,6 +224,7 @@ app.on("ready", async () => {
 
     pollResources(mainWindow);
     void scheduleDevAutostart();
+    startSkillSyncScheduler();
 
     ipcMainHandle("getStaticData", () => {
         return getStaticData();
@@ -288,6 +294,31 @@ app.on("ready", async () => {
                 success: false,
                 error: error instanceof Error ? error.message : String(error),
             };
+        }
+    });
+
+    ipcMainHandle("get-skill-registry", () => {
+        return loadSkillRegistry();
+    });
+
+    ipcMainHandle("save-skill-registry", (_: IpcMainInvokeEvent, registry: unknown) => {
+        try {
+            saveSkillRegistry(registry);
+            return { success: true };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : String(error),
+            };
+        }
+    });
+
+    ipcMainHandle("sync-skill-sources", async (_: IpcMainInvokeEvent, request: SkillSyncRequest) => {
+        try {
+            return await syncSkillSources(request);
+        } catch (error) {
+            console.error("[main] Skill sync failed:", error);
+            return { results: [] };
         }
     });
 })

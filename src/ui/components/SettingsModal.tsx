@@ -1,10 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppStore } from "../store/useAppStore";
-import type { ApiConfigProfile } from "../types";
+import type {
+  ApiConfigProfile,
+  SettingsPageId,
+  SkillRegistry,
+  SkillSourceRecord,
+  SkillSyncRequest,
+  SkillSyncResult,
+} from "../types";
 import { ApiProfilesSettingsPage } from "./settings/ApiProfilesSettingsPage";
 import { GlobalJsonSettingsPage } from "./settings/GlobalJsonSettingsPage";
 import { ModelRoutingSettingsPage } from "./settings/ModelRoutingSettingsPage";
 import { SettingsSheet, type SettingsPageDefinition } from "./settings/SettingsSheet";
+import { SkillsManagementPage } from "./settings/SkillsManagementPage";
 import {
   buildRoutingSummary,
   createProfile,
@@ -15,11 +23,12 @@ import {
 
 interface SettingsModalProps {
   onClose: () => void;
+  initialPageId?: SettingsPageId;
 }
 
 type GlobalRuntimeConfig = Record<string, unknown>;
 
-type SettingsPageId = "profiles" | "routing" | "global-json";
+const DEFAULT_SKILL_PATH = "~/.claude/skills";
 
 const SETTINGS_PAGES: SettingsPageDefinition[] = [
   {
@@ -37,6 +46,14 @@ const SETTINGS_PAGES: SettingsPageDefinition[] = [
     title: "模型分工",
     description: "定义默认主模型、工具模型、图像识别模型和专家模型。这一页后续也可以继续挂路由和策略配置。",
     summary: "主模型与角色路由",
+  },
+  {
+    id: "skills",
+    label: "技能管理",
+    eyebrow: "SKILLS",
+    title: "技能管理",
+    description: "管理本地与远端技能源，支持 Git 同步与检查周期。默认路径使用 Claude 目录，与原生 skill 路径保持一致。",
+    summary: "本地与远端技能源",
   },
   {
     id: "global-json",
@@ -76,23 +93,61 @@ function parseGlobalConfig(rawText: string): GlobalRuntimeConfig | null {
   return JSON.parse(rawText) as GlobalRuntimeConfig;
 }
 
-export function SettingsModal({ onClose }: SettingsModalProps) {
+export function SettingsModal({ onClose, initialPageId }: SettingsModalProps) {
   const setApiConfigSettings = useAppStore((state) => state.setApiConfigSettings);
   const [profiles, setProfiles] = useState<ApiConfigProfile[]>([]);
   const [globalConfigText, setGlobalConfigText] = useState("{}");
   const [activePageId, setActivePageId] = useState<SettingsPageId>("profiles");
+  const [skillRegistry, setSkillRegistry] = useState<SkillRegistry>({ sources: [] });
+  const [syncingSourceIds, setSyncingSourceIds] = useState<Set<string>>(new Set());
+  const [syncNotes, setSyncNotes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: "error" | "success"; message: string } | null>(null);
   const [globalConfigParseError, setGlobalConfigParseError] = useState<string | null>(null);
+
+  const skillSourceCounts = useMemo(() => {
+    const local = skillRegistry.sources.filter((source) => source.kind === "local").length;
+    const remote = skillRegistry.sources.filter((source) => source.kind === "remote").length;
+    return { local, remote };
+  }, [skillRegistry.sources]);
+
+  useEffect(() => {
+    if (initialPageId) {
+      setActivePageId(initialPageId);
+    }
+  }, [initialPageId]);
+
+  const createDefaultSkillSource = useCallback((kind: "local" | "remote"): SkillSourceRecord => {
+    const defaults = kind === "remote"
+      ? {
+          gitUrl: "",
+          scope: "single" as const,
+          branch: "main",
+          checkEveryHours: 1,
+        }
+      : {
+          path: DEFAULT_SKILL_PATH,
+        };
+
+    return {
+      id: crypto.randomUUID(),
+      name: kind === "local" ? "本地技能源" : "远端技能源",
+      kind,
+      enabled: true,
+      path: DEFAULT_SKILL_PATH,
+      ...defaults,
+    };
+  }, []);
 
   useEffect(() => {
     setLoading(true);
     Promise.all([
       window.electron.getApiConfig(),
       window.electron.getGlobalConfig(),
+      window.electron.getSkillRegistry(),
     ])
-      .then(([apiSettings, globalSettings]) => {
+      .then(([apiSettings, globalSettings, registry]) => {
         const normalizedProfiles = apiSettings.profiles.length > 0
           ? apiSettings.profiles.map((profile) => normalizeProfile(profile))
           : [createProfile()];
@@ -104,9 +159,11 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
         setApiConfigSettings({ profiles: normalizedProfiles });
         setProfiles(normalizedProfiles);
-        setActivePageId(hasConfiguredProfile ? "routing" : "profiles");
+        setActivePageId(initialPageId ?? (hasConfiguredProfile ? "routing" : "profiles"));
         setGlobalConfigText(JSON.stringify(globalSettings, null, 2));
         setGlobalConfigParseError(validateGlobalConfigText(JSON.stringify(globalSettings, null, 2)));
+        setSkillRegistry(registry);
+        setSyncNotes({});
       })
       .catch((err) => {
         console.error("Failed to load API config:", err);
@@ -115,7 +172,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       .finally(() => {
         setLoading(false);
       });
-  }, [setApiConfigSettings]);
+  }, [setApiConfigSettings, initialPageId]);
 
   const enabledProfile = useMemo(() => getEnabledProfile(profiles), [profiles]);
   const pages = useMemo(() => SETTINGS_PAGES.map((page) => {
@@ -131,8 +188,14 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         summary: buildRoutingSummary(enabledProfile),
       };
     }
+    if (page.id === "skills") {
+      return {
+        ...page,
+        summary: `本地 ${skillSourceCounts.local} / 远端 ${skillSourceCounts.remote}`,
+      };
+    }
     return page;
-  }), [enabledProfile, profiles.length]);
+  }), [enabledProfile, profiles.length, skillSourceCounts.local, skillSourceCounts.remote]);
 
   const updateProfiles = (updater: (current: ApiConfigProfile[]) => ApiConfigProfile[]) => {
     setStatus(null);
@@ -144,6 +207,74 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     setGlobalConfigText(next);
     setGlobalConfigParseError(validateGlobalConfigText(next));
   };
+
+  const formatSyncMessage = useCallback((result: SkillSyncResult) => {
+    const baseMessage = result.message ? `· ${result.message}` : "";
+    if (result.status === "updated" && result.previousCommit && result.latestCommit) {
+      return `更新成功：${result.previousCommit.slice(0, 7)} -> ${result.latestCommit.slice(0, 7)} ${baseMessage}`;
+    }
+    return baseMessage || "无结果";
+  }, []);
+
+  const syncSkillSources = useCallback(async (request: SkillSyncRequest) => {
+    const targetIds = request.sourceIds ?? [];
+    const syncingIds = new Set(targetIds);
+    setSyncingSourceIds(syncingIds);
+
+    setStatus(null);
+    setSyncNotes((current) => {
+      const next = { ...current };
+      for (const sourceId of targetIds) {
+        delete next[sourceId];
+      }
+      return next;
+    });
+
+    try {
+      const response = await window.electron.syncSkillSources(request);
+      const nextNotes: Record<string, string> = {};
+      for (const result of response.results) {
+        nextNotes[result.sourceId] = formatSyncMessage(result);
+      }
+
+      if (response.results.length > 0) {
+        setSyncNotes((current) => ({ ...current, ...nextNotes }));
+      }
+
+      const registry = await window.electron.getSkillRegistry();
+      setSkillRegistry(registry);
+
+      if (response.results.some((item) => item.status === "error")) {
+        const failCount = response.results.filter((item) => item.status === "error").length;
+        setStatus({
+          tone: "error",
+          message: `远端技能同步完成，但有 ${failCount} 个源同步失败，请查看对应记录。`,
+        });
+      }
+    } catch (error) {
+      console.error("Failed to sync skill registry:", error);
+      setStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "同步技能源失败。",
+      });
+    } finally {
+      setSyncingSourceIds(new Set());
+    }
+  }, [formatSyncMessage]);
+
+  const validateSkillRegistry = useCallback((registry: SkillRegistry) => {
+    for (const source of registry.sources) {
+      if (!source.path.trim()) {
+        return "每个技能源都要有本地路径。";
+      }
+
+      if (source.kind === "remote" && !source.gitUrl?.trim()) {
+        return `远端技能源 ${source.name || source.id} 缺少 Git 地址。`;
+      }
+    }
+
+    return null;
+  }, []);
 
   const handleFormatGlobalConfig = () => {
     setStatus(null);
@@ -166,10 +297,16 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       setStatus({ tone: "error", message: validationError });
       return;
     }
-
+  
     if (globalError) {
       setGlobalConfigParseError(globalError);
       setStatus({ tone: "error", message: "全局配置 JSON 不合法，先修正后再保存。" });
+      return;
+    }
+
+    const skillError = validateSkillRegistry(skillRegistry);
+    if (skillError) {
+      setStatus({ tone: "error", message: skillError });
       return;
     }
 
@@ -188,9 +325,10 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     setSaving(true);
 
     try {
-      const [apiResult, globalResult] = await Promise.all([
+      const [apiResult, globalResult, skillResult] = await Promise.all([
         window.electron.saveApiConfig({ profiles: nextProfiles }),
         window.electron.saveGlobalConfig(normalizedGlobalConfig),
+        window.electron.saveSkillRegistry(skillRegistry),
       ]);
       const failures: string[] = [];
 
@@ -199,6 +337,9 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       }
       if (!globalResult.success) {
         failures.push(globalResult.error || "保存全局配置失败。");
+      }
+      if (!skillResult.success) {
+        failures.push(skillResult.error || "保存技能配置失败。");
       }
 
       if (failures.length > 0) {
@@ -227,6 +368,30 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         parseError={globalConfigParseError}
         onChange={handleGlobalConfigChange}
         onFormat={handleFormatGlobalConfig}
+      />
+    );
+  }
+
+  if (activePageId === "skills") {
+    content = (
+      <SkillsManagementPage
+        registry={skillRegistry}
+        onRegistryChange={setSkillRegistry}
+        onAddSource={
+          (kind) => {
+            setSkillRegistry((current) => ({
+              sources: [...current.sources, createDefaultSkillSource(kind)],
+            }));
+          }
+        }
+        onDeleteSource={(sourceId) => {
+          setSkillRegistry((current) => ({
+            sources: current.sources.filter((source) => source.id !== sourceId),
+          }));
+        }}
+        syncingSourceIds={syncingSourceIds}
+        syncNotes={syncNotes}
+        onSync={syncSkillSources}
       />
     );
   }

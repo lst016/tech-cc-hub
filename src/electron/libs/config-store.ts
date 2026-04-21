@@ -1,6 +1,7 @@
 import { app } from "electron";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from "fs";
 import { join } from "path";
+import { homedir } from "os";
 
 export type ApiType = "anthropic";
 
@@ -26,6 +27,49 @@ export type ApiConfigSettings = {
   profiles: ApiConfig[];
 };
 
+export type SkillSourceKind = "local" | "remote";
+
+export type SkillScope = "single" | "bundle";
+
+export type SkillSourceRecord = {
+  id: string;
+  name: string;
+  kind: SkillSourceKind;
+  enabled: boolean;
+  path: string;
+  gitUrl?: string;
+  scope?: SkillScope;
+  branch?: string;
+  lastPulledAt?: number;
+  lastCheckedAt?: number;
+  checkEveryHours?: number;
+  lastKnownCommit?: string;
+  lastError?: string;
+};
+
+export type SkillRegistry = {
+  sources: SkillSourceRecord[];
+};
+
+export type SkillSyncRequest = {
+  sourceIds?: string[];
+  force?: boolean;
+};
+
+export type SkillSyncResult = {
+  sourceId: string;
+  sourceName: string;
+  status: "updated" | "checked" | "skipped" | "error";
+  message?: string;
+  previousCommit?: string;
+  latestCommit?: string;
+  checkedAt: number;
+};
+
+export type SkillSyncResponse = {
+  results: SkillSyncResult[];
+};
+
 export type GlobalRuntimeConfig = Record<string, unknown>;
 
 const DEFAULT_MODEL = "claude-sonnet-4-5";
@@ -35,6 +79,8 @@ const DEFAULT_MODEL_CONFIG: ApiModelConfig = {
 };
 const CONFIG_FILE_NAME = "api-config.json";
 const GLOBAL_CONFIG_FILE_NAME = "agent-runtime.json";
+const SKILL_REGISTRY_FILE_NAME = "skill-registry.json";
+const DEFAULT_SKILL_PATH = join(homedir(), ".claude", "skills");
 
 function getConfigPath(): string {
   const userDataPath = app.getPath("userData");
@@ -44,6 +90,15 @@ function getConfigPath(): string {
 function getGlobalConfigPath(): string {
   const userDataPath = app.getPath("userData");
   return join(userDataPath, GLOBAL_CONFIG_FILE_NAME);
+}
+
+export function getDefaultSkillPath(): string {
+  return DEFAULT_SKILL_PATH;
+}
+
+function getSkillRegistryPath(): string {
+  const userDataPath = app.getPath("userData");
+  return join(userDataPath, SKILL_REGISTRY_FILE_NAME);
 }
 
 function createDefaultSettings(): ApiConfigSettings {
@@ -97,6 +152,43 @@ export function saveApiConfigSettings(settings: ApiConfigSettings): void {
     console.info("[config-store] API config saved successfully");
   } catch (error) {
     console.error("[config-store] Failed to save API config:", error);
+    throw error;
+  }
+}
+
+function createDefaultSkillRegistry(): SkillRegistry {
+  return { sources: [] };
+}
+
+export function loadSkillRegistry(): SkillRegistry {
+  try {
+    const registryPath = getSkillRegistryPath();
+    if (!existsSync(registryPath)) {
+      return createDefaultSkillRegistry();
+    }
+    const raw = readFileSync(registryPath, "utf8");
+    const parsed = JSON.parse(raw);
+    return normalizeSkillRegistry(parsed);
+  } catch (error) {
+    console.error("[config-store] Failed to load skill registry:", error);
+    return createDefaultSkillRegistry();
+  }
+}
+
+export function saveSkillRegistry(registry: unknown): void {
+  try {
+    const registryPath = getSkillRegistryPath();
+    const userDataPath = app.getPath("userData");
+
+    if (!existsSync(userDataPath)) {
+      mkdirSync(userDataPath, { recursive: true });
+    }
+
+    const normalized = normalizeSkillRegistry(registry);
+    writeFileSync(registryPath, JSON.stringify(normalized, null, 2), "utf8");
+    console.info("[config-store] Skill registry saved successfully");
+  } catch (error) {
+    console.error("[config-store] Failed to save skill registry:", error);
     throw error;
   }
 }
@@ -225,6 +317,71 @@ function normalizeApiSettings(input: ApiConfig | ApiConfigSettings | null | unde
   }
 
   return { profiles: normalizedProfiles };
+}
+
+function normalizeSkillRegistry(input: unknown): SkillRegistry {
+  const rawSources = Array.isArray((input as SkillRegistry | undefined)?.sources)
+    ? (input as SkillRegistry).sources
+    : [];
+
+  const normalized = rawSources
+    .map((source) => normalizeSkillSource(source))
+    .filter((source): source is SkillSourceRecord => Boolean(source));
+
+  return { sources: normalized };
+}
+
+function normalizeSkillSource(input: unknown): SkillSourceRecord | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const source = input as Partial<SkillSourceRecord>;
+  const kind = source.kind === "remote" ? "remote" : "local";
+  const path = typeof source.path === "string" ? source.path.trim() : "";
+  const name = typeof source.name === "string" ? source.name.trim() : "";
+  const gitUrl = typeof source.gitUrl === "string" ? source.gitUrl.trim() : "";
+  const scope = source.scope === "bundle" ? "bundle" : source.scope === "single" ? "single" : undefined;
+  const checkEveryHours = typeof source.checkEveryHours === "number" && Number.isFinite(source.checkEveryHours)
+    ? Math.max(1, Math.floor(source.checkEveryHours))
+    : undefined;
+  const lastPulledAt = normalizePositiveIntegerOrUndefined(source.lastPulledAt);
+  const lastCheckedAt = normalizePositiveIntegerOrUndefined(source.lastCheckedAt);
+
+  return {
+    id: typeof source.id === "string" && source.id.trim() ? source.id.trim() : crypto.randomUUID(),
+    name: name || "未命名Skill源",
+    kind,
+    enabled: source.enabled !== false,
+    path,
+    gitUrl,
+    scope: kind === "remote" ? scope : undefined,
+    branch: typeof source.branch === "string" ? source.branch.trim() : undefined,
+    lastPulledAt,
+    lastCheckedAt,
+    checkEveryHours,
+    lastKnownCommit: typeof source.lastKnownCommit === "string" ? source.lastKnownCommit.trim() : undefined,
+    lastError: typeof source.lastError === "string" ? source.lastError : undefined,
+  };
+}
+
+export function createDefaultSkillSource(path: string = "", kind: SkillSourceKind = "local"): SkillSourceRecord {
+  return {
+    id: crypto.randomUUID(),
+    name: kind === "local" ? "本地技能源" : "远端技能源",
+    kind,
+    enabled: true,
+    path: path.trim() || DEFAULT_SKILL_PATH,
+  };
+}
+
+function normalizePositiveIntegerOrUndefined(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  const normalized = Math.floor(value);
+  return normalized > 0 ? normalized : undefined;
 }
 
 function normalizeModelConfig(input: string | ApiModelConfig | null | undefined): ApiModelConfig | null {

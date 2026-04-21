@@ -24,9 +24,57 @@ export type ApiConfigSettings = {
 
 export type RuntimeReasoningMode = "disabled" | "low" | "medium" | "high" | "xhigh";
 
+export type RuntimePermissionMode = "default" | "bypassPermissions" | "plan";
+
+export type SkillSourceKind = "local" | "remote";
+
+export type SkillScope = "single" | "bundle";
+
+export type SkillSourceRecord = {
+  id: string;
+  name: string;
+  kind: SkillSourceKind;
+  enabled: boolean;
+  path: string;
+  gitUrl?: string;
+  scope?: SkillScope;
+  branch?: string;
+  lastPulledAt?: number;
+  lastCheckedAt?: number;
+  checkEveryHours?: number;
+  lastKnownCommit?: string;
+  lastError?: string;
+};
+
+export type SkillRegistry = {
+  sources: SkillSourceRecord[];
+};
+
+export type SkillSyncRequest = {
+  sourceIds?: string[];
+  force?: boolean;
+};
+
+export type SkillSyncResult = {
+  sourceId: string;
+  sourceName: string;
+  status: "updated" | "checked" | "skipped" | "error";
+  message?: string;
+  previousCommit?: string;
+  latestCommit?: string;
+  checkedAt: number;
+};
+
+export type SkillSyncResponse = {
+  results: SkillSyncResult[];
+};
+
+export type SettingsPageId = "profiles" | "routing" | "global-json" | "skills";
+
 export type RuntimeOverrides = {
   model?: string;
   reasoningMode?: RuntimeReasoningMode;
+  permissionMode?: RuntimePermissionMode;
 };
 
 export type PromptAttachment = {

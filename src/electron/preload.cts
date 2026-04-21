@@ -37,6 +37,12 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("get-global-config"),
     saveGlobalConfig: (config: any) =>
         ipcInvoke("save-global-config", config),
+    getSkillRegistry: () =>
+        ipcInvoke("get-skill-registry"),
+    saveSkillRegistry: (registry: any) =>
+        ipcInvoke("save-skill-registry", registry),
+    syncSkillSources: (request: any) =>
+        ipcInvoke("sync-skill-sources", request),
     checkApiConfig: () =>
         ipcInvoke("check-api-config")
 } satisfies Window['electron'])

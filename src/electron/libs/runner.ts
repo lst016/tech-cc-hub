@@ -34,6 +34,7 @@ const DEFAULT_CWD = process.cwd();
 export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   const { prompt, attachments = [], runtime, session, resumeSessionId, onEvent, onSessionUpdate } = options;
   const abortController = new AbortController();
+  const permissionMode = runtime?.permissionMode ?? "bypassPermissions";
 
   const sendMessage = (message: SDKMessage) => {
     onEvent({
@@ -88,12 +89,19 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           thinking,
           effort,
           pathToClaudeCodeExecutable: getClaudeCodePath(),
-          permissionMode: "bypassPermissions",
+          permissionMode,
           includePartialMessages: true,
           includeHookEvents: true,
           hooks,
-          allowDangerouslySkipPermissions: true,
+          allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
           canUseTool: async (toolName, input, { signal }) => {
+            if (permissionMode === "plan") {
+              return {
+                behavior: "deny",
+                message: "当前为计划模式，不会执行工具。",
+              };
+            }
+
             if (toolName === "AskUserQuestion") {
               const toolUseId = crypto.randomUUID();
 
@@ -166,6 +174,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
 }
 
 function buildQualityHooks(_cwd: string): Partial<Record<string, HookCallbackMatcher[]>> {
+  void _cwd;
   const readFiles = new Set<string>();
   let lastToolSignature: string | null = null;
   let toolFailureCount = 0;

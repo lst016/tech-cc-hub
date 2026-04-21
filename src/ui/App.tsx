@@ -3,7 +3,7 @@ import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import { useIPC } from "./hooks/useIPC";
 import { useMessageWindow } from "./hooks/useMessageWindow";
 import { useAppStore } from "./store/useAppStore";
-import type { ServerEvent, StreamMessage } from "./types";
+import type { ServerEvent, SettingsPageId, StreamMessage } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { StartSessionModal } from "./components/StartSessionModal";
 import { SettingsModal } from "./components/SettingsModal";
@@ -49,6 +49,7 @@ function App() {
   const pendingStart = useAppStore((s) => s.pendingStart);
   const apiConfigChecked = useAppStore((s) => s.apiConfigChecked);
   const setApiConfigChecked = useAppStore((s) => s.setApiConfigChecked);
+  const [settingsInitialPageId, setSettingsInitialPageId] = useState<SettingsPageId | null>(null);
 
   // Helper function to extract partial message content
   const getPartialMessageContent = (eventMessage: any) => {
@@ -170,6 +171,7 @@ function App() {
       window.electron.checkApiConfig().then((result) => {
         setApiConfigChecked(true);
         if (!result.hasConfig) {
+          setSettingsInitialPageId("profiles");
           setShowSettingsModal(true);
         }
       }).catch((err) => {
@@ -263,11 +265,11 @@ function App() {
   useEffect(() => {
     setShouldAutoScroll(true);
     setHasNewMessages(false);
-    setShowSessionAnalysis(false);
-    prevMessagesLengthRef.current = 0;
-    setTimeout(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
-    }, 100);
+        setShowSessionAnalysis(false);
+        prevMessagesLengthRef.current = 0;
+        setTimeout(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+        }, 100);
   }, [activeSessionId]);
 
   useEffect(() => {
@@ -323,12 +325,18 @@ function App() {
     resetToLatest();
   }, [resetToLatest]);
 
+  const openSettings = useCallback((pageId?: SettingsPageId) => {
+    setSettingsInitialPageId(pageId ?? null);
+    setShowSettingsModal(true);
+  }, [setShowSettingsModal]);
+
   return (
     <div className="flex h-screen bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.98),_rgba(243,246,250,0.97)_40%,_rgba(228,233,240,0.98)_100%)]">
       <Sidebar
         connected={connected}
         onNewSession={handleNewSession}
         onDeleteSession={handleDeleteSession}
+        onOpenSettings={openSettings}
       />
 
       <main className="ml-[320px] flex flex-1 flex-col bg-transparent xl:mr-[340px]">
@@ -478,7 +486,13 @@ function App() {
       )}
 
       {showSettingsModal && (
-        <SettingsModal onClose={() => setShowSettingsModal(false)} />
+        <SettingsModal
+          onClose={() => {
+            setShowSettingsModal(false);
+            setSettingsInitialPageId(null);
+          }}
+          initialPageId={settingsInitialPageId ?? undefined}
+        />
       )}
 
       {globalError && (

@@ -27,6 +27,7 @@ export type ApiConfigSettings = {
 export type RuntimeOverrides = {
   model?: string;
   reasoningMode?: RuntimeReasoningMode;
+  permissionMode?: "default" | "bypassPermissions" | "plan";
 };
 
 export type PromptAttachment = {

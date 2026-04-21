@@ -1,5 +1,13 @@
 import { create } from 'zustand';
-import type { ApiConfigProfile, ApiConfigSettings, RuntimeReasoningMode, ServerEvent, SessionStatus, StreamMessage } from "../types";
+import type {
+  ApiConfigProfile,
+  ApiConfigSettings,
+  RuntimePermissionMode,
+  RuntimeReasoningMode,
+  ServerEvent,
+  SessionStatus,
+  StreamMessage,
+} from "../types";
 
 export type PermissionRequest = {
   toolUseId: string;
@@ -29,6 +37,7 @@ interface AppState {
   apiConfigSettings: ApiConfigSettings;
   runtimeModel: string;
   reasoningMode: RuntimeReasoningMode;
+  permissionMode: RuntimePermissionMode;
   pendingStart: boolean;
   globalError: string | null;
   sessionsLoaded: boolean;
@@ -42,6 +51,7 @@ interface AppState {
   setApiConfigSettings: (settings: ApiConfigSettings) => void;
   setRuntimeModel: (model: string) => void;
   setReasoningMode: (mode: RuntimeReasoningMode) => void;
+  setPermissionMode: (mode: RuntimePermissionMode) => void;
   setPendingStart: (pending: boolean) => void;
   setGlobalError: (error: string | null) => void;
   setShowStartModal: (show: boolean) => void;
@@ -86,6 +96,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   reasoningMode: "high",
   pendingStart: false,
   globalError: null,
+  permissionMode: "bypassPermissions",
   sessionsLoaded: false,
   showStartModal: false,
   showSettingsModal: false,
@@ -117,6 +128,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   setRuntimeModel: (runtimeModel) => set({ runtimeModel }),
   setReasoningMode: (reasoningMode) => set({ reasoningMode }),
+  setPermissionMode: (permissionMode) => set({ permissionMode }),
   setPendingStart: (pendingStart) => set({ pendingStart }),
   setGlobalError: (globalError) => set({ globalError }),
   setShowStartModal: (showStartModal) => set({ showStartModal }),

@@ -2,17 +2,20 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useAppStore } from "../store/useAppStore";
+import type { SettingsPageId } from "../types";
 
 interface SidebarProps {
   connected: boolean;
   onNewSession: (cwd?: string) => void;
   onDeleteSession: (sessionId: string) => void;
+  onOpenSettings?: (pageId?: SettingsPageId) => void;
 }
 
 export function Sidebar({
   connected,
   onNewSession,
-  onDeleteSession
+  onDeleteSession,
+  onOpenSettings
 }: SidebarProps) {
   const sessions = useAppStore((state) => state.sessions);
   const activeSessionId = useAppStore((state) => state.activeSessionId);
@@ -107,6 +110,14 @@ export function Sidebar({
     closeTimerRef.current = window.setTimeout(() => {
       setResumeSessionId(null);
     }, 3000);
+  };
+
+  const openSettings = (pageId?: SettingsPageId) => {
+    if (onOpenSettings) {
+      onOpenSettings(pageId);
+      return;
+    }
+    useAppStore.getState().setShowSettingsModal(true);
   };
 
   return (
@@ -239,13 +250,23 @@ export function Sidebar({
           </div>
           <button
             className="flex w-full items-center justify-between rounded-2xl border border-black/6 bg-white/82 px-4 py-3 text-sm font-medium text-ink-800 shadow-[0_10px_28px_rgba(30,38,52,0.06)] transition-all hover:-translate-y-[1px] hover:bg-white hover:border-black/10"
-            onClick={() => useAppStore.getState().setShowSettingsModal(true)}
+            onClick={() => openSettings()}
             aria-label="设置"
           >
             <span>设置</span>
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
               <circle cx="12" cy="12" r="3" />
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+          <button
+            className="mt-2 flex w-full items-center justify-between rounded-2xl border border-black/6 bg-white/82 px-4 py-3 text-sm font-medium text-ink-800 shadow-[0_10px_28px_rgba(30,38,52,0.06)] transition-all hover:-translate-y-[1px] hover:bg-white hover:border-black/10"
+            onClick={() => openSettings("skills")}
+            aria-label="技能管理"
+          >
+            <span>技能管理</span>
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M21 7.3H3a1 1 0 0 0-1 1v7.4a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1V8.3a1 1 0 0 0-1-1Zm-17.2 4.6 3-2.2 2.4 2.2 2.8-2.2 4.8 4.5M6 15.6h12" />
             </svg>
           </button>
         </div>

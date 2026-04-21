@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ApiConfigProfile, ClientEvent, PromptAttachment, RuntimeOverrides, RuntimeReasoningMode } from "../types";
+import type {
+  ApiConfigProfile,
+  ClientEvent,
+  PromptAttachment,
+  RuntimeOverrides,
+  RuntimeReasoningMode,
+} from "../types";
 import { useAppStore } from "../store/useAppStore";
 
 const DEFAULT_ALLOWED_TOOLS = "Read,Edit,Bash";
@@ -26,6 +32,98 @@ const REASONING_OPTIONS: Array<{ value: RuntimeReasoningMode; label: string }> =
   { value: "high", label: "高" },
   { value: "xhigh", label: "超高" },
 ];
+type InlineOption = {
+  value: string;
+  label: string;
+};
+
+function InlineDropdown({
+  label,
+  value,
+  options,
+  disabled,
+  onChange,
+  minWidthClass,
+}: {
+  label: string;
+  value: string;
+  options: InlineOption[];
+  disabled: boolean;
+  minWidthClass: string;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const displayLabel = options.find((option) => option.value === value)?.label ?? (options[0]?.label ?? "请选择");
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [open]);
+
+  return (
+    <div
+      ref={containerRef}
+      className={`relative inline-flex ${minWidthClass} items-center justify-between gap-2 rounded-xl border border-black/10 bg-white/92 px-3 py-2 text-xs text-ink-700 shadow-[0_10px_28px_rgba(15,18,24,0.06)]`}
+    >
+      <span className="text-muted">{label}</span>
+      <button
+        type="button"
+        className={`inline-flex min-w-[96px] items-center justify-between gap-2 rounded-lg border border-black/12 px-3 py-1.5 text-[13px] text-ink-800 transition ${disabled ? "cursor-not-allowed bg-black/5 opacity-60" : "cursor-pointer bg-white hover:bg-surface-secondary"}`}
+        onClick={() => setOpen((current) => !current)}
+        disabled={disabled}
+      >
+        <span className="max-w-[170px] truncate">{displayLabel}</span>
+        <svg
+          viewBox="0 0 24 24"
+          className={`h-3.5 w-3.5 transition ${open ? "rotate-180" : ""} text-ink-500`}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          aria-hidden="true"
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      {open && !disabled && (
+        <div className="absolute right-0 top-full z-20 mt-2 w-full overflow-hidden rounded-xl border border-black/12 bg-white/98 shadow-lg">
+          <div className="max-h-48 overflow-y-auto">
+            {options.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`block w-full px-3 py-2 text-left text-sm transition ${option.value === value ? "bg-accent-subtle text-accent" : "text-ink-800 hover:bg-surface-secondary"}`}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 type QueuedMessageDraft = {
   id: string;
@@ -105,6 +203,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   const apiConfigSettings = useAppStore((state) => state.apiConfigSettings);
   const runtimeModel = useAppStore((state) => state.runtimeModel);
   const reasoningMode = useAppStore((state) => state.reasoningMode);
+  const permissionMode = useAppStore((state) => state.permissionMode);
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const sessions = useAppStore((state) => state.sessions);
   const setPrompt = useAppStore((state) => state.setPrompt);
@@ -152,8 +251,9 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
     return {
       model: selectedModel,
       reasoningMode,
+      permissionMode,
     };
-  }, [activeProfile, reasoningMode, runtimeModel, setGlobalError]);
+  }, [activeProfile, permissionMode, reasoningMode, runtimeModel, setGlobalError]);
 
   const sendPromptDraft = useCallback(async (
     promptValue: string,
@@ -238,6 +338,8 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
   const setRuntimeModel = useAppStore((state) => state.setRuntimeModel);
   const reasoningMode = useAppStore((state) => state.reasoningMode);
   const setReasoningMode = useAppStore((state) => state.setReasoningMode);
+  const permissionMode = useAppStore((state) => state.permissionMode);
+  const setPermissionMode = useAppStore((state) => state.setPermissionMode);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -671,35 +773,42 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
           </button>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-black/6 pt-3">
-          <label className="inline-flex items-center gap-2 rounded-xl border border-black/6 bg-white/86 px-3 py-1.5 text-xs text-ink-700">
-            <span className="text-muted">模型</span>
-            <select
-              className="min-w-[148px] bg-transparent text-sm text-ink-800 focus:outline-none"
-              value={runtimeModel}
-              onChange={(event) => setRuntimeModel(event.target.value)}
-              disabled={disabled || isCooldownLocked || availableModels.length === 0}
-            >
-              {availableModels.length === 0 ? (
-                <option value="">请先配置模型</option>
-              ) : (
-                availableModels.map((model) => (
-                  <option key={model} value={model}>{model}</option>
-                ))
-              )}
-            </select>
-          </label>
-          <label className="inline-flex items-center gap-2 rounded-xl border border-black/6 bg-white/86 px-3 py-1.5 text-xs text-ink-700">
-            <span className="text-muted">思考强度</span>
-            <select
-              className="min-w-[110px] bg-transparent text-sm text-ink-800 focus:outline-none"
-              value={reasoningMode}
-              onChange={(event) => setReasoningMode(event.target.value as RuntimeReasoningMode)}
+          <InlineDropdown
+            label="模型"
+            value={runtimeModel}
+            disabled={disabled || isCooldownLocked || availableModels.length === 0}
+            onChange={setRuntimeModel}
+            minWidthClass="min-w-[200px]"
+            options={
+              availableModels.length === 0
+                ? [{ value: "", label: "请先配置模型" }]
+                : availableModels.map((model) => ({ value: model, label: model }))
+            }
+          />
+          <InlineDropdown
+            label="思考强度"
+            value={reasoningMode}
+            disabled={disabled || isCooldownLocked}
+            onChange={(value) => setReasoningMode(value as RuntimeReasoningMode)}
+            minWidthClass="min-w-[180px]"
+            options={REASONING_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+          />
+          <label className="inline-flex min-w-[180px] cursor-pointer items-center justify-between gap-2 rounded-xl border border-black/10 bg-white/92 px-3 py-2 text-xs text-ink-700 shadow-[0_10px_28px_rgba(15,18,24,0.06)]">
+            <span className="text-muted">Plan 模式</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={permissionMode === "plan"}
+              aria-label="切换 Plan 模式"
+              className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border transition ${permissionMode === "plan" ? "border-[#f59a55] bg-[#ffddb8]" : "border-black/20 bg-black/10"} disabled:opacity-60`}
+              onClick={() => setPermissionMode(permissionMode === "plan" ? "bypassPermissions" : "plan")}
               disabled={disabled || isCooldownLocked}
             >
-              {REASONING_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
+              <span
+                aria-hidden="true"
+                className={`inline-block h-4 w-4 translate-y-[1px] rounded-full bg-white transition ${permissionMode === "plan" ? "translate-x-4" : "translate-x-0.5"} shadow`}
+              />
+            </button>
           </label>
         </div>
         {roleSummary && (
