@@ -11,7 +11,9 @@ import { existsSync } from "fs";
 
 import { buildAnthropicPromptContentBlocks } from "../../shared/attachments.js";
 import type { PromptAttachment, RuntimeOverrides, ServerEvent } from "../types.js";
+import { resolveAgentRuntimeContext } from "./agent-resolver.js";
 import { buildEnvForConfig, getClaudeCodePath, getCurrentApiConfig } from "./claude-settings.js";
+import { normalizeRunnerError } from "./runner-error.js";
 import type { Session } from "./session-store.js";
 import { getEnhancedEnv } from "./util.js";
 
@@ -30,6 +32,25 @@ export type RunnerHandle = {
 };
 
 const DEFAULT_CWD = process.cwd();
+const ALWAYS_ALLOWED_TOOLS = new Set(["AskUserQuestion"]);
+
+function getRequestedModelName(configModel: string | undefined, runtimeModel: string | undefined): string | undefined {
+  const normalizedRuntimeModel = runtimeModel?.trim();
+  if (normalizedRuntimeModel) {
+    return normalizedRuntimeModel;
+  }
+
+  const normalizedConfigModel = configModel?.trim();
+  return normalizedConfigModel || undefined;
+}
+
+function getConfiguredModelNames(config: NonNullable<ReturnType<typeof getCurrentApiConfig>>): string[] {
+  return Array.from(new Set([
+    config.model,
+    config.expertModel,
+    ...(config.models ?? []).map((item) => item.name),
+  ].map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
+}
 
 export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   const { prompt, attachments = [], runtime, session, resumeSessionId, onEvent, onSessionUpdate } = options;
@@ -53,6 +74,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   void (async () => {
     try {
       const config = getCurrentApiConfig();
+      const requestedModel = getRequestedModelName(config?.model, runtime?.model);
 
       if (!config) {
         onEvent({
@@ -68,6 +90,29 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         return;
       }
 
+      const configuredModelNames = getConfiguredModelNames(config);
+      if (requestedModel && configuredModelNames.length > 0 && !configuredModelNames.includes(requestedModel)) {
+        const errorMessage = `请求模型「${requestedModel}」失败：它不在当前启用配置的模型列表里，请先在设置里切换到可用模型。`;
+        onEvent({
+          type: "runner.error",
+          payload: {
+            sessionId: session.id,
+            message: errorMessage,
+          },
+        });
+        onEvent({
+          type: "session.status",
+          payload: {
+            sessionId: session.id,
+            status: "error",
+            title: session.title,
+            cwd: session.cwd,
+            error: errorMessage,
+          },
+        });
+        return;
+      }
+
       const env = buildEnvForConfig(config, runtime?.model);
       const mergedEnv = {
         ...getEnhancedEnv(),
@@ -75,7 +120,20 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       };
       const thinking = buildThinkingConfig(runtime?.reasoningMode);
       const effort = buildEffortLevel(runtime?.reasoningMode);
-      const resolvedCwd = session.cwd && existsSync(session.cwd) ? session.cwd : DEFAULT_CWD;
+      const projectCwd = session.cwd && existsSync(session.cwd) ? session.cwd : undefined;
+      const resolvedCwd = projectCwd ?? DEFAULT_CWD;
+      const runSurface = runtime?.runSurface ?? session.runSurface ?? "development";
+      const agentId = runtime?.agentId ?? session.agentId;
+      const agentContext = resolveAgentRuntimeContext({
+        cwd: projectCwd,
+        surface: runSurface,
+        agentId,
+      });
+      const effectiveAllowedTools = buildEffectiveAllowedToolSet(
+        session.allowedTools,
+        agentContext.allowedTools,
+        agentContext.enforceAllowedTools,
+      );
       const hooks = buildQualityHooks(resolvedCwd);
 
       const q = query({
@@ -90,6 +148,10 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           effort,
           pathToClaudeCodeExecutable: getClaudeCodePath(),
           permissionMode,
+          settingSources: agentContext.settingSources,
+          systemPrompt: agentContext.systemPromptAppend
+            ? { type: "preset", preset: "claude_code", append: agentContext.systemPromptAppend }
+            : undefined,
           includePartialMessages: true,
           includeHookEvents: true,
           hooks,
@@ -123,6 +185,13 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                   resolve({ behavior: "deny", message: "Session aborted" });
                 });
               });
+            }
+
+            if (effectiveAllowedTools && !effectiveAllowedTools.has(toolName) && !ALWAYS_ALLOWED_TOOLS.has(toolName)) {
+              return {
+                behavior: "deny",
+                message: `当前运行面不允许使用工具：${toolName}`,
+              };
             }
 
             return { behavior: "allow", updatedInput: input };
@@ -161,9 +230,22 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         return;
       }
 
+      const errorMessage = normalizeRunnerError(
+        error,
+        getRequestedModelName(getCurrentApiConfig()?.model, runtime?.model),
+      );
+
+      onEvent({
+        type: "runner.error",
+        payload: {
+          sessionId: session.id,
+          message: errorMessage,
+        },
+      });
+
       onEvent({
         type: "session.status",
-        payload: { sessionId: session.id, status: "error", title: session.title, error: String(error) },
+        payload: { sessionId: session.id, status: "error", title: session.title, error: errorMessage },
       });
     }
   })();
@@ -171,6 +253,44 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   return {
     abort: () => abortController.abort(),
   };
+}
+
+function buildEffectiveAllowedToolSet(
+  sessionAllowedTools: string | undefined,
+  agentAllowedTools: string[] | undefined,
+  enforceAgentPolicy: boolean,
+): Set<string> | null {
+  const parsedSessionTools = parseAllowedTools(sessionAllowedTools);
+  const parsedAgentTools = new Set((agentAllowedTools ?? []).map((tool) => tool.trim()).filter(Boolean));
+
+  if (enforceAgentPolicy) {
+    if (parsedSessionTools && parsedSessionTools.size > 0 && parsedAgentTools.size > 0) {
+      return new Set(Array.from(parsedSessionTools).filter((tool) => parsedAgentTools.has(tool)));
+    }
+    if (parsedAgentTools.size > 0) {
+      return parsedAgentTools;
+    }
+    return parsedSessionTools;
+  }
+
+  if (parsedAgentTools.size > 0) {
+    return parsedAgentTools;
+  }
+
+  return null;
+}
+
+function parseAllowedTools(value: string | undefined): Set<string> | null {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  const parsed = value
+    .split(",")
+    .map((tool) => tool.trim())
+    .filter(Boolean);
+
+  return parsed.length > 0 ? new Set(parsed) : null;
 }
 
 function buildQualityHooks(_cwd: string): Partial<Record<string, HookCallbackMatcher[]>> {

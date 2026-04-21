@@ -81,12 +81,12 @@ function InlineDropdown({
   return (
     <div
       ref={containerRef}
-      className={`relative inline-flex ${minWidthClass} items-center justify-between gap-2 rounded-xl border border-black/10 bg-white/92 px-3 py-2 text-xs text-ink-700 shadow-[0_10px_28px_rgba(15,18,24,0.06)]`}
+      className={`relative inline-flex h-9 ${minWidthClass} items-center justify-between gap-2 rounded-xl border border-black/10 bg-white/92 px-3 text-xs text-ink-700 shadow-[0_10px_28px_rgba(15,18,24,0.06)]`}
     >
       <span className="text-muted">{label}</span>
       <button
         type="button"
-        className={`inline-flex min-w-[96px] items-center justify-between gap-2 rounded-lg border border-black/12 px-3 py-1.5 text-[13px] text-ink-800 transition ${disabled ? "cursor-not-allowed bg-black/5 opacity-60" : "cursor-pointer bg-white hover:bg-surface-secondary"}`}
+        className={`inline-flex h-8 min-w-[96px] items-center justify-between gap-2 rounded-lg border border-black/12 px-3 text-[13px] text-ink-800 transition ${disabled ? "cursor-not-allowed bg-black/5 opacity-60" : "cursor-pointer bg-white hover:bg-surface-secondary"}`}
         onClick={() => setOpen((current) => !current)}
         disabled={disabled}
       >
@@ -103,13 +103,13 @@ function InlineDropdown({
         </svg>
       </button>
       {open && !disabled && (
-        <div className="absolute right-0 top-full z-20 mt-2 w-full overflow-hidden rounded-xl border border-black/12 bg-white/98 shadow-lg">
-          <div className="max-h-48 overflow-y-auto">
+        <div className="absolute right-0 bottom-full z-20 mb-2 w-full overflow-hidden rounded-xl border border-black/12 bg-white/98 shadow-lg">
+          <div className="max-h-40 overflow-y-auto">
             {options.map((option) => (
               <button
                 key={option.value}
                 type="button"
-                className={`block w-full px-3 py-2 text-left text-sm transition ${option.value === value ? "bg-accent-subtle text-accent" : "text-ink-800 hover:bg-surface-secondary"}`}
+                className={`flex h-9 w-full items-center px-3 text-left text-sm transition ${option.value === value ? "bg-accent-subtle text-accent" : "text-ink-800 hover:bg-surface-secondary"}`}
                 onClick={() => {
                   onChange(option.value);
                   setOpen(false);
@@ -314,8 +314,22 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
       setGlobalError("开始会话前必须填写工作目录。");
       return;
     }
-    void handleSend([]);
-  }, [cwd, handleSend, setGlobalError]);
+    if (prompt.trim()) {
+      void sendPromptDraft(prompt, [], { clearPrompt: true });
+      return;
+    }
+
+    setPendingStart(true);
+    sendEvent({
+      type: "session.create",
+      payload: {
+        title: "新聊天",
+        cwd: cwd.trim(),
+        allowedTools: DEFAULT_ALLOWED_TOOLS,
+      },
+    });
+    setGlobalError(null);
+  }, [cwd, prompt, sendEvent, sendPromptDraft, setGlobalError, setPendingStart]);
 
   return {
     prompt,
@@ -387,13 +401,6 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
       .map((item) => item?.trim() ?? "")
       .filter(Boolean);
   }, [activeProfile]);
-  const roleSummary = useMemo(() => {
-    if (!activeProfile) return null;
-
-    const mainModel = activeProfile.model || "-";
-    return `当前分工：主 ${mainModel} · 专家 ${activeProfile.expertModel || mainModel}`;
-  }, [activeProfile]);
-
   const startSendCooldown = useCallback(() => {
     const nextLockedUntil = Date.now() + SEND_COOLDOWN_MS;
     setSendLockedUntil(nextLockedUntil);
@@ -811,11 +818,6 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
             </button>
           </label>
         </div>
-        {roleSummary && (
-          <div className="mt-2 text-[11px] leading-6 text-muted">
-            {roleSummary}
-          </div>
-        )}
         <input
           ref={fileInputRef}
           type="file"

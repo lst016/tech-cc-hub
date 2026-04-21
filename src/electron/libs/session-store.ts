@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import type { SessionStatus, StreamMessage } from "../types.js";
+import type { AgentRunSurface, SessionStatus, StreamMessage } from "../types.js";
 import { existsSync } from "fs";
 import { app } from "electron";
 
@@ -21,6 +21,8 @@ export type Session = {
   claudeSessionId?: string;
   status: SessionStatus;
   cwd?: string;
+  runSurface?: AgentRunSurface;
+  agentId?: string;
   allowedTools?: string;
   lastPrompt?: string;
   continuationSummary?: string;
@@ -34,6 +36,8 @@ export type StoredSession = {
   title: string;
   status: SessionStatus;
   cwd?: string;
+  runSurface?: AgentRunSurface;
+  agentId?: string;
   allowedTools?: string;
   lastPrompt?: string;
   claudeSessionId?: string;
@@ -84,7 +88,14 @@ export class SessionStore {
     return resolvedCwd;
   }
 
-  createSession(options: { cwd?: string; allowedTools?: string; prompt?: string; title: string }): Session {
+  createSession(options: {
+    cwd?: string;
+    runSurface?: AgentRunSurface;
+    agentId?: string;
+    allowedTools?: string;
+    prompt?: string;
+    title: string;
+  }): Session {
     const id = crypto.randomUUID();
     const now = Date.now();
     const session: Session = {
@@ -92,6 +103,8 @@ export class SessionStore {
       title: options.title,
       status: "idle",
       cwd: options.cwd,
+      runSurface: options.runSurface,
+      agentId: options.agentId,
       allowedTools: options.allowedTools,
       lastPrompt: options.prompt,
       pendingPermissions: new Map()
@@ -100,8 +113,8 @@ export class SessionStore {
     this.db
       .prepare(
         `insert into sessions
-          (id, title, claude_session_id, status, cwd, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` 
+          (id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` 
       )
       .run(
         id,
@@ -109,6 +122,8 @@ export class SessionStore {
         session.claudeSessionId ?? null,
         session.status,
         session.cwd ?? null,
+        session.runSurface ?? null,
+        session.agentId ?? null,
         session.allowedTools ?? null,
         session.lastPrompt ?? null,
         session.continuationSummary ?? null,
@@ -126,7 +141,7 @@ export class SessionStore {
   listSessions(): StoredSession[] {
     const rows = this.db
       .prepare(
-        `select id, title, claude_session_id, status, cwd, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, created_at, updated_at
+        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, created_at, updated_at
          from sessions
          order by updated_at desc`
       )
@@ -136,6 +151,8 @@ export class SessionStore {
       title: String(row.title),
       status: row.status as SessionStatus,
       cwd: this.normalizeStoredCwd(String(row.id), row.cwd ? String(row.cwd) : undefined),
+      runSurface: row.run_surface ? (String(row.run_surface) as AgentRunSurface) : undefined,
+      agentId: row.agent_id ? String(row.agent_id) : undefined,
       allowedTools: row.allowed_tools ? String(row.allowed_tools) : undefined,
       lastPrompt: row.last_prompt ? String(row.last_prompt) : undefined,
       claudeSessionId: row.claude_session_id ? String(row.claude_session_id) : undefined,
@@ -167,7 +184,7 @@ export class SessionStore {
   getSessionHistory(id: string): SessionHistory | null {
     const sessionRow = this.db
       .prepare(
-        `select id, title, claude_session_id, status, cwd, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, created_at, updated_at
+        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, created_at, updated_at
          from sessions
          where id = ?`
       )
@@ -196,6 +213,8 @@ export class SessionStore {
         title: String(sessionRow.title),
         status: sessionRow.status as SessionStatus,
         cwd: this.normalizeStoredCwd(String(sessionRow.id), sessionRow.cwd ? String(sessionRow.cwd) : undefined),
+        runSurface: sessionRow.run_surface ? (String(sessionRow.run_surface) as AgentRunSurface) : undefined,
+        agentId: sessionRow.agent_id ? String(sessionRow.agent_id) : undefined,
         allowedTools: sessionRow.allowed_tools ? String(sessionRow.allowed_tools) : undefined,
         lastPrompt: sessionRow.last_prompt ? String(sessionRow.last_prompt) : undefined,
         claudeSessionId: sessionRow.claude_session_id ? String(sessionRow.claude_session_id) : undefined,
@@ -253,6 +272,8 @@ export class SessionStore {
       claudeSessionId: "claude_session_id",
       status: "status",
       cwd: "cwd",
+      runSurface: "run_surface",
+      agentId: "agent_id",
       allowedTools: "allowed_tools",
       lastPrompt: "last_prompt",
       continuationSummary: "continuation_summary",
@@ -285,6 +306,8 @@ export class SessionStore {
         claude_session_id text,
         status text not null,
         cwd text,
+        run_surface text,
+        agent_id text,
         allowed_tools text,
         last_prompt text,
         continuation_summary text,
@@ -295,6 +318,8 @@ export class SessionStore {
     );
     this.ensureSessionColumn("continuation_summary", "text");
     this.ensureSessionColumn("continuation_summary_message_count", "integer");
+    this.ensureSessionColumn("run_surface", "text");
+    this.ensureSessionColumn("agent_id", "text");
     this.db.exec(
       `create table if not exists messages (
         id text primary key,
@@ -310,7 +335,7 @@ export class SessionStore {
   private loadSessions(): void {
     const rows = this.db
       .prepare(
-        `select id, title, claude_session_id, status, cwd, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count
+        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count
          from sessions`
       )
       .all();
@@ -321,6 +346,8 @@ export class SessionStore {
         claudeSessionId: row.claude_session_id ? String(row.claude_session_id) : undefined,
         status: row.status as SessionStatus,
         cwd: this.normalizeStoredCwd(String(row.id), row.cwd ? String(row.cwd) : undefined),
+        runSurface: row.run_surface ? (String(row.run_surface) as AgentRunSurface) : undefined,
+        agentId: row.agent_id ? String(row.agent_id) : undefined,
         allowedTools: row.allowed_tools ? String(row.allowed_tools) : undefined,
         lastPrompt: row.last_prompt ? String(row.last_prompt) : undefined,
         continuationSummary: row.continuation_summary ? String(row.continuation_summary) : undefined,

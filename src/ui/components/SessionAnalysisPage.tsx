@@ -2,7 +2,6 @@ import { useMemo } from "react";
 import {
   buildActivityRailModel,
   type ActivityExecutionStep,
-  type ActivityPlanStep,
   type ActivityTimelineItem,
 } from "../../shared/activity-rail-model";
 import type { SessionView } from "../store/useAppStore";
@@ -18,6 +17,38 @@ function statusToneClass(status: "idle" | "running" | "completed" | "error") {
     default:
       return "border-black/8 bg-white/72 text-ink-600";
   }
+}
+
+function timelineToneClass(tone: ActivityTimelineItem["tone"]) {
+  switch (tone) {
+    case "info":
+      return "border-info/20 bg-info-light/55 text-info";
+    case "success":
+      return "border-success/20 bg-success-light/55 text-success";
+    case "warning":
+      return "border-warning/20 bg-warning-light/70 text-warning";
+    case "error":
+      return "border-error/20 bg-error-light text-error";
+    default:
+      return "border-black/8 bg-black/[0.03] text-ink-600";
+  }
+}
+
+function formatMetricAmount(value?: number, suffix = "字符") {
+  if (typeof value !== "number" || Number.isNaN(value) || value <= 0) {
+    return "-";
+  }
+  return `${value.toLocaleString("zh-CN")} ${suffix}`;
+}
+
+function formatDurationMs(value?: number) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "-";
+  }
+  if (value < 1000) {
+    return `${value} ms`;
+  }
+  return `${(value / 1000).toFixed(1)} s`;
 }
 
 function StepSummaryCard({
@@ -45,55 +76,98 @@ function StepSummaryCard({
   );
 }
 
-function PlanExecutionRow({
-  planStep,
-  executionSteps,
-}: {
-  planStep: ActivityPlanStep;
-  executionSteps: ActivityExecutionStep[];
-}) {
-  return (
-    <div className="grid gap-3 rounded-[24px] border border-black/6 bg-white/82 p-4 shadow-[0_16px_30px_rgba(15,23,42,0.04)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
-      <div>
-        <div className="flex items-center gap-2">
-          <span className="rounded-full border border-info/20 bg-info-light/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-info">
-            {planStep.indexLabel}
-          </span>
-          <span className="text-[11px] text-ink-500">{planStep.status}</span>
-        </div>
-        <div className="mt-2 text-sm font-semibold text-ink-900">{planStep.title}</div>
-      </div>
-      <div className="space-y-2">
-        {executionSteps.length > 0 ? (
-          executionSteps.map((step) => (
-            <div key={step.id} className="rounded-2xl border border-black/6 bg-black/[0.03] px-3 py-2">
-              <div className="text-[12px] font-semibold text-ink-800">{step.title}</div>
-              <div className="mt-1 text-[11px] text-ink-500">
-                节点 {step.timelineIds.length} · {step.status}
-              </div>
-            </div>
-          ))
-        ) : (
-          <div className="rounded-2xl border border-dashed border-black/10 bg-black/[0.02] px-3 py-3 text-[12px] text-ink-500">
-            这一步还没有落地到实际执行步骤。
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function ExecutionStepRow({ step }: { step: ActivityExecutionStep }) {
   return (
     <div className="grid gap-3 rounded-[22px] border border-black/6 bg-white/80 px-4 py-3 text-[12px] text-ink-700 shadow-[0_14px_28px_rgba(15,23,42,0.04)] md:grid-cols-[minmax(0,1.2fr)_120px_100px_100px_100px]">
       <div>
         <div className="font-semibold text-ink-900">{step.title}</div>
-        <div className="mt-1 text-[11px] text-ink-500">对应计划步骤 {step.planStepIds.length}</div>
+        <div className="mt-1 text-[11px] text-ink-500">状态 {step.status}</div>
       </div>
       <div>节点 {step.timelineIds.length}</div>
       <div>{step.metrics.durationMs ? `${step.metrics.durationMs} ms` : "-"}</div>
       <div>{step.metrics.contextChars.toLocaleString("zh-CN")} 字符</div>
       <div>{step.status}</div>
+    </div>
+  );
+}
+
+function ExecutionLogTable({ items }: { items: ActivityTimelineItem[] }) {
+  return (
+    <div className="overflow-hidden rounded-[24px] border border-black/6 bg-white/84 shadow-[0_16px_32px_rgba(15,23,42,0.04)]">
+      <div className="max-h-[440px] overflow-auto">
+        <table className="min-w-full border-separate border-spacing-0 text-[12px] text-ink-700">
+          <thead className="sticky top-0 z-10 bg-[#f6f8fb]/96 backdrop-blur">
+            <tr className="text-left text-[11px] uppercase tracking-[0.08em] text-ink-400">
+              <th className="px-4 py-3 font-medium">轮次</th>
+              <th className="px-4 py-3 font-medium">层级</th>
+              <th className="px-4 py-3 font-medium">标题</th>
+              <th className="px-4 py-3 font-medium">摘要</th>
+              <th className="px-4 py-3 font-medium">状态</th>
+              <th className="px-4 py-3 font-medium">耗时</th>
+              <th className="px-4 py-3 font-medium">输入</th>
+              <th className="px-4 py-3 font-medium">上下文</th>
+              <th className="px-4 py-3 font-medium">输出</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => (
+              <tr key={item.id} className="align-top odd:bg-white even:bg-[#fbfcfe]">
+                <td className="border-t border-black/6 px-4 py-3 text-ink-500">
+                  <div>第 {item.round} 轮</div>
+                  <div className="mt-1 text-[11px] text-ink-400">#{item.sequence}</div>
+                </td>
+                <td className="border-t border-black/6 px-4 py-3">
+                  <div className="flex flex-wrap gap-2">
+                    <span className={`rounded-full border px-2.5 py-1 text-[10px] ${timelineToneClass(item.tone)}`}>
+                      {item.layer}
+                    </span>
+                    <span className="rounded-full border border-black/6 bg-black/[0.03] px-2.5 py-1 text-[10px] text-ink-500">
+                      {item.stageKind}
+                    </span>
+                  </div>
+                </td>
+                <td className="border-t border-black/6 px-4 py-3">
+                  <div className="font-medium text-ink-900">{item.title}</div>
+                  {item.chips.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {item.chips.slice(0, 3).map((chip) => (
+                        <span
+                          key={`${item.id}-${chip}`}
+                          className="rounded-full bg-black/[0.03] px-2 py-0.5 text-[10px] text-ink-500"
+                        >
+                          {chip}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </td>
+                <td className="border-t border-black/6 px-4 py-3">
+                  <div className="max-w-[360px] whitespace-pre-wrap break-words leading-5 text-ink-600">
+                    {item.preview}
+                  </div>
+                </td>
+                <td className="border-t border-black/6 px-4 py-3">
+                  <span className={`rounded-full border px-2.5 py-1 text-[10px] ${timelineToneClass(item.tone)}`}>
+                    {item.statusLabel ?? item.metrics.status}
+                  </span>
+                </td>
+                <td className="border-t border-black/6 px-4 py-3 text-ink-500">
+                  {formatDurationMs(item.metrics.durationMs)}
+                </td>
+                <td className="border-t border-black/6 px-4 py-3 text-ink-500">
+                  {formatMetricAmount(item.metrics.inputChars)}
+                </td>
+                <td className="border-t border-black/6 px-4 py-3 text-ink-500">
+                  {formatMetricAmount(item.metrics.contextChars)}
+                </td>
+                <td className="border-t border-black/6 px-4 py-3 text-ink-500">
+                  {formatMetricAmount(item.metrics.outputChars)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -129,11 +203,6 @@ export function SessionAnalysisPage({
     [partialMessage, session],
   );
 
-  const keyedExecutionSteps = useMemo(
-    () => new Map(model.executionSteps.map((step) => [step.id, step])),
-    [model.executionSteps],
-  );
-
   const highlightedEvidence = useMemo(() => {
     const attentionItems = model.timeline.filter((item) => item.attention).slice(0, 2);
     if (attentionItems.length > 0) return attentionItems;
@@ -148,7 +217,7 @@ export function SessionAnalysisPage({
             <div className="text-[11px] uppercase tracking-[0.24em] text-ink-400">Session Analysis</div>
             <h1 className="mt-2 text-[28px] font-semibold tracking-[-0.02em] text-ink-900">本会话完整分析</h1>
             <p className="mt-2 max-w-2xl text-sm leading-7 text-ink-600">
-              这里把 AI 计划、实际执行步骤和关键节点证据拉平展示，用来做单次会话复盘。
+              这里把实际执行步骤和关键节点证据拉平展示，用来做单次会话复盘。
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -183,23 +252,23 @@ export function SessionAnalysisPage({
       <section className="rounded-[30px] border border-black/6 bg-white/78 p-5 shadow-[0_18px_40px_rgba(15,23,42,0.05)]">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold text-ink-900">计划 vs 执行</h2>
-            <p className="mt-1 text-[12px] leading-5 text-ink-500">左边是 AI 原计划，右边是已经落地的执行步骤。</p>
+            <h2 className="text-lg font-semibold text-ink-900">执行日志</h2>
+            <p className="mt-1 text-[12px] leading-5 text-ink-500">
+              按真实时间线展开每条执行记录，直接看发生了什么、耗时多少、上下文吃了多少。
+            </p>
           </div>
           <span className="rounded-full border border-black/6 bg-black/[0.03] px-3 py-1 text-[11px] text-ink-500">
-            {model.planSteps.length} 个计划步骤
+            {model.timeline.length} 条日志
           </span>
         </div>
-        <div className="mt-4 space-y-3">
-          {model.planSteps.map((planStep) => (
-            <PlanExecutionRow
-              key={planStep.id}
-              planStep={planStep}
-              executionSteps={planStep.executionStepIds
-                .map((id) => keyedExecutionSteps.get(id))
-                .filter((step): step is ActivityExecutionStep => Boolean(step))}
-            />
-          ))}
+        <div className="mt-4">
+          {model.timeline.length > 0 ? (
+            <ExecutionLogTable items={model.timeline} />
+          ) : (
+            <div className="rounded-[24px] border border-dashed border-black/10 bg-black/[0.02] px-4 py-5 text-sm text-ink-500">
+              这次会话还没有可展示的执行日志。
+            </div>
+          )}
         </div>
       </section>
 

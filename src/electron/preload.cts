@@ -27,6 +27,8 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("generate-session-title", userInput),
     getRecentCwds: (limit?: number) => 
         ipcInvoke("get-recent-cwds", limit),
+    getSystemWorkspace: () =>
+        ipcInvoke("get-system-workspace"),
     selectDirectory: () => 
         ipcInvoke("select-directory"),
     getApiConfig: () => 
@@ -37,10 +39,10 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("get-global-config"),
     saveGlobalConfig: (config: any) =>
         ipcInvoke("save-global-config", config),
-    getSkillRegistry: () =>
-        ipcInvoke("get-skill-registry"),
-    saveSkillRegistry: (registry: any) =>
-        ipcInvoke("save-skill-registry", registry),
+    getSkillInventory: () =>
+        ipcInvoke("get-skill-inventory"),
+    saveSkillInventory: (inventory: any) =>
+        ipcInvoke("save-skill-inventory", inventory),
     syncSkillSources: (request: any) =>
         ipcInvoke("sync-skill-sources", request),
     checkApiConfig: () =>

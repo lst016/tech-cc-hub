@@ -25,19 +25,22 @@ export type ApiConfigSettings = {
 export type RuntimeReasoningMode = "disabled" | "low" | "medium" | "high" | "xhigh";
 
 export type RuntimePermissionMode = "default" | "bypassPermissions" | "plan";
+export type AgentRunSurface = "development" | "maintenance";
 
-export type SkillSourceKind = "local" | "remote";
+export type SkillSourceType = "manual" | "git";
 
-export type SkillScope = "single" | "bundle";
+export type SkillKind = "single" | "bundle";
 
-export type SkillSourceRecord = {
+export type InstalledSkillRecord = {
   id: string;
   name: string;
-  kind: SkillSourceKind;
-  enabled: boolean;
+  kind: SkillKind;
   path: string;
-  gitUrl?: string;
-  scope?: SkillScope;
+  sourceType: SkillSourceType;
+  installedAt?: number;
+  syncEnabled?: boolean;
+  remoteUrl?: string;
+  remoteSubpath?: string;
   branch?: string;
   lastPulledAt?: number;
   lastCheckedAt?: number;
@@ -46,18 +49,19 @@ export type SkillSourceRecord = {
   lastError?: string;
 };
 
-export type SkillRegistry = {
-  sources: SkillSourceRecord[];
+export type SkillInventory = {
+  rootPath: string;
+  skills: InstalledSkillRecord[];
 };
 
 export type SkillSyncRequest = {
-  sourceIds?: string[];
+  skillIds?: string[];
   force?: boolean;
 };
 
 export type SkillSyncResult = {
-  sourceId: string;
-  sourceName: string;
+  skillId: string;
+  skillName: string;
   status: "updated" | "checked" | "skipped" | "error";
   message?: string;
   previousCommit?: string;
@@ -69,12 +73,14 @@ export type SkillSyncResponse = {
   results: SkillSyncResult[];
 };
 
-export type SettingsPageId = "profiles" | "routing" | "global-json" | "skills";
+export type SettingsPageId = "profiles" | "routing" | "global-json" | "skills" | "system-maintenance";
 
 export type RuntimeOverrides = {
   model?: string;
   reasoningMode?: RuntimeReasoningMode;
   permissionMode?: RuntimePermissionMode;
+  runSurface?: AgentRunSurface;
+  agentId?: string;
 };
 
 export type PromptAttachment = {
@@ -103,6 +109,8 @@ export type SessionInfo = {
   status: SessionStatus;
   claudeSessionId?: string;
   cwd?: string;
+  runSurface?: AgentRunSurface;
+  agentId?: string;
   slashCommands?: string[];
   createdAt: number;
   updatedAt: number;

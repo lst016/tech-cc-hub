@@ -125,12 +125,16 @@ export function handleClientEvent(event: ClientEvent) {
     const session = store.createSession({
       cwd: event.payload.cwd,
       title: event.payload.title,
+      runSurface: event.payload.runtime?.runSurface ?? "development",
+      agentId: event.payload.runtime?.agentId,
       allowedTools: event.payload.allowedTools,
       prompt: event.payload.prompt,
     });
 
     store.updateSession(session.id, {
       status: "running",
+      runSurface: event.payload.runtime?.runSurface ?? session.runSurface ?? "development",
+      agentId: event.payload.runtime?.agentId ?? session.agentId,
       lastPrompt: event.payload.prompt,
     });
 
@@ -211,6 +215,8 @@ export function handleClientEvent(event: ClientEvent) {
 
     store.updateSession(session.id, {
       status: "running",
+      runSurface: event.payload.runtime?.runSurface ?? session.runSurface ?? "development",
+      agentId: event.payload.runtime?.agentId ?? session.agentId,
       lastPrompt: event.payload.prompt,
       continuationSummary: continuationPayload?.usedCompression ? continuationPayload.summaryText : undefined,
       continuationSummaryMessageCount: continuationPayload?.usedCompression

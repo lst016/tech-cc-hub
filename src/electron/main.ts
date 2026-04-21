@@ -20,11 +20,12 @@ import {
   saveApiConfigSettings,
   loadGlobalRuntimeConfig,
   saveGlobalRuntimeConfig,
-  loadSkillRegistry,
-  saveSkillRegistry,
+  loadSkillInventory,
+  saveSkillInventory,
   type SkillSyncRequest,
 } from "./libs/config-store.js";
 import { startSkillSyncScheduler, stopSkillSyncScheduler, syncSkillSources } from "./libs/skill-registry-sync.js";
+import { ensureSystemWorkspace } from "./libs/system-workspace.js";
 import { getCurrentApiConfig } from "./libs/claude-settings.js";
 import type { ClientEvent } from "./types.js";
 import "./libs/claude-settings.js";
@@ -259,6 +260,10 @@ app.on("ready", async () => {
         return result.filePaths[0];
     });
 
+    ipcMainHandle("get-system-workspace", () => {
+        return ensureSystemWorkspace();
+    });
+
     // Handle API config
     ipcMainHandle("get-api-config", () => {
         return loadApiConfigSettings();
@@ -297,13 +302,13 @@ app.on("ready", async () => {
         }
     });
 
-    ipcMainHandle("get-skill-registry", () => {
-        return loadSkillRegistry();
+    ipcMainHandle("get-skill-inventory", () => {
+        return loadSkillInventory();
     });
 
-    ipcMainHandle("save-skill-registry", (_: IpcMainInvokeEvent, registry: unknown) => {
+    ipcMainHandle("save-skill-inventory", (_: IpcMainInvokeEvent, inventory: unknown) => {
         try {
-            saveSkillRegistry(registry);
+            saveSkillInventory(inventory);
             return { success: true };
         } catch (error) {
             return {

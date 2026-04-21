@@ -41,12 +41,12 @@ function App() {
   const markHistoryRequested = useAppStore((s) => s.markHistoryRequested);
   const resolvePermissionRequest = useAppStore((s) => s.resolvePermissionRequest);
   const handleServerEvent = useAppStore((s) => s.handleServerEvent);
-  const prompt = useAppStore((s) => s.prompt);
   const setPrompt = useAppStore((s) => s.setPrompt);
   const cwd = useAppStore((s) => s.cwd);
   const setCwd = useAppStore((s) => s.setCwd);
   const setApiConfigSettings = useAppStore((s) => s.setApiConfigSettings);
   const pendingStart = useAppStore((s) => s.pendingStart);
+  const setPendingStart = useAppStore((s) => s.setPendingStart);
   const apiConfigChecked = useAppStore((s) => s.apiConfigChecked);
   const setApiConfigChecked = useAppStore((s) => s.setApiConfigChecked);
   const [settingsInitialPageId, setSettingsInitialPageId] = useState<SettingsPageId | null>(null);
@@ -313,6 +313,19 @@ function App() {
     sendEvent({ type: "session.delete", payload: { sessionId } });
   }, [sendEvent]);
 
+  const handleDeleteWorkspace = useCallback((sessionIds: string[], workspaceName: string) => {
+    if (sessionIds.length === 0) return;
+
+    const shouldDelete = window.confirm(
+      `确认删除工作区“${workspaceName}”下的 ${sessionIds.length} 个会话吗？`
+    );
+    if (!shouldDelete) return;
+
+    for (const sessionId of sessionIds) {
+      sendEvent({ type: "session.delete", payload: { sessionId } });
+    }
+  }, [sendEvent]);
+
   const handlePermissionResult = useCallback((toolUseId: string, result: PermissionResult) => {
     if (!activeSessionId) return;
     sendEvent({ type: "permission.response", payload: { sessionId: activeSessionId, toolUseId, result } });
@@ -330,12 +343,52 @@ function App() {
     setShowSettingsModal(true);
   }, [setShowSettingsModal]);
 
+  const startMaintenanceSession = useCallback(async (maintenancePrompt: string) => {
+    const trimmedPrompt = maintenancePrompt.trim();
+    if (!trimmedPrompt) {
+      throw new Error("维护指令不能为空。");
+    }
+
+    const getSystemWorkspace = (
+      window.electron as typeof window.electron & { getSystemWorkspace?: () => Promise<string> }
+    ).getSystemWorkspace;
+    if (typeof getSystemWorkspace !== "function") {
+      throw new Error("当前窗口还是旧版本运行时，请刷新或重启应用后再试。");
+    }
+
+    const systemWorkspace = await getSystemWorkspace();
+    let title = "系统维护";
+    try {
+      setPendingStart(true);
+      title = await window.electron.generateSessionTitle("系统维护");
+    } catch (error) {
+      setPendingStart(false);
+      console.error("Failed to generate maintenance title:", error);
+      throw new Error("生成维护会话标题失败。");
+    }
+
+    sendEvent({
+      type: "session.start",
+      payload: {
+        title,
+        prompt: trimmedPrompt,
+        cwd: systemWorkspace,
+        allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,TodoWrite",
+        runtime: {
+          runSurface: "maintenance",
+          agentId: "system-maintenance",
+        },
+      },
+    });
+  }, [sendEvent, setPendingStart]);
+
   return (
     <div className="flex h-screen bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.98),_rgba(243,246,250,0.97)_40%,_rgba(228,233,240,0.98)_100%)]">
       <Sidebar
         connected={connected}
         onNewSession={handleNewSession}
         onDeleteSession={handleDeleteSession}
+        onDeleteWorkspace={handleDeleteWorkspace}
         onOpenSettings={openSettings}
       />
 
@@ -476,10 +529,8 @@ function App() {
       {showStartModal && (
         <StartSessionModal
           cwd={cwd}
-          prompt={prompt}
           pendingStart={pendingStart}
           onCwdChange={setCwd}
-          onPromptChange={setPrompt}
           onStart={handleStartFromModal}
           onClose={() => setShowStartModal(false)}
         />
@@ -492,6 +543,7 @@ function App() {
             setSettingsInitialPageId(null);
           }}
           initialPageId={settingsInitialPageId ?? undefined}
+          onStartMaintenanceSession={startMaintenanceSession}
         />
       )}
 

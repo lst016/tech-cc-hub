@@ -1,6 +1,7 @@
 import type { SDKMessage, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 
 export type RuntimeReasoningMode = "disabled" | "low" | "medium" | "high" | "xhigh";
+export type AgentRunSurface = "development" | "maintenance";
 
 export type ApiModelConfig = {
   name: string;
@@ -28,6 +29,8 @@ export type RuntimeOverrides = {
   model?: string;
   reasoningMode?: RuntimeReasoningMode;
   permissionMode?: "default" | "bypassPermissions" | "plan";
+  runSurface?: AgentRunSurface;
+  agentId?: string;
 };
 
 export type PromptAttachment = {
@@ -59,6 +62,8 @@ export type SessionInfo = {
   status: SessionStatus;
   claudeSessionId?: string;
   cwd?: string;
+  runSurface?: AgentRunSurface;
+  agentId?: string;
   createdAt: number;
   updatedAt: number;
 };

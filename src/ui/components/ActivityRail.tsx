@@ -1,11 +1,10 @@
-import { useMemo, useState, type CSSProperties } from "react";
+﻿import { useMemo, useState, type CSSProperties } from "react";
 import {
   buildActivityRailModel,
   type ActivityAnalysisCard,
   type ActivityDetailSection,
   type ActivityExecutionStep,
   type ActivityExecutionMetrics,
-  type ActivityPlanStep,
   type ActivityRailFilterKey,
   type ActivityRailTone,
   type ActivityTaskStep,
@@ -27,13 +26,6 @@ const STEP_STATUS_LABELS = {
   pending: "未开始",
   running: "进行中",
   completed: "已完成",
-} as const;
-
-const PLAN_STEP_STATUS_LABELS = {
-  pending: "未落地",
-  running: "执行中",
-  completed: "已落地",
-  drifted: "有偏航",
 } as const;
 
 function toneClasses(tone: ActivityRailTone) {
@@ -234,45 +226,10 @@ function TaskStepCard({
           </span>
         </div>
         <div className="mt-2 text-[11px] text-ink-500">关联节点 {step.timelineIds.length}</div>
-        <div className="mt-1 text-[11px] text-ink-500">对应计划步骤 {step.planStepIds.length}</div>
         <MetricsStrip metrics={step.metrics} compact />
       </button>
       <StepActionBar />
     </div>
-  );
-}
-
-function PlanStepCard({
-  step,
-  active,
-  onClick,
-}: {
-  step: ActivityPlanStep;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={[
-        "w-full rounded-2xl border p-3 text-left transition",
-        active
-          ? "border-info/30 bg-info-light/55 shadow-sm"
-          : "border-black/5 bg-white/70 hover:border-black/10 hover:bg-white",
-      ].join(" ")}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <span className="rounded-full border border-info/20 bg-info-light/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-info">
-          {step.indexLabel}
-        </span>
-        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${toneClasses(step.status === "completed" ? "success" : step.status === "running" ? "info" : step.status === "drifted" ? "warning" : "neutral")}`}>
-          {PLAN_STEP_STATUS_LABELS[step.status]}
-        </span>
-      </div>
-      <div className="mt-2 text-sm font-semibold text-ink-900">{step.title}</div>
-      <div className="mt-2 text-[11px] text-ink-500">映射执行步骤 {step.executionStepIds.length}</div>
-    </button>
   );
 }
 
@@ -584,7 +541,6 @@ export function ActivityRail({
   );
   const [activeFilter, setActiveFilter] = useState<ActivityRailFilterKey>("all");
   const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
-  const [selectedPlanStepId, setSelectedPlanStepId] = useState<string | null>(null);
   const [selectedTaskStepId, setSelectedTaskStepId] = useState<string | null>(null);
   const [showContextModal, setShowContextModal] = useState(false);
 
@@ -596,9 +552,6 @@ export function ActivityRail({
   const selectedItem =
     (selectedTimelineId ? filteredTimeline.find((item) => item.id === selectedTimelineId) : null) ??
     null;
-  const selectedPlanStep = selectedPlanStepId
-    ? model.planSteps.find((step) => step.id === selectedPlanStepId) ?? null
-    : null;
   const selectedTask = selectedTaskStepId
     ? model.executionSteps.find((step) => step.id === selectedTaskStepId) ?? null
     : null;
@@ -720,65 +673,18 @@ export function ActivityRail({
             </div>
           </section>
 
-          {model.planSteps.length > 0 && (
-            <section className="rounded-[28px] border border-black/5 bg-white/68 p-4 shadow-[0_16px_32px_rgba(15,23,42,0.05)]">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-ink-900">{model.planSectionTitle}</h3>
-                  <p className="mt-1 text-[12px] text-ink-500">优先保留模型原始 Step 1/2/3/4/5，用来对照它本来打算怎么做。</p>
-                </div>
-                {selectedPlanStep && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedPlanStepId(null);
-                      setSelectedTaskStepId(null);
-                    }}
-                    className="rounded-full border border-black/5 bg-white px-2.5 py-1 text-[10px] text-ink-500"
-                  >
-                    清除计划筛选
-                  </button>
-                )}
-              </div>
-              <div className="mt-4 space-y-2">
-                {model.planSteps.map((step) => (
-                  <PlanStepCard
-                    key={step.id}
-                    step={step}
-                    active={step.id === selectedPlanStepId}
-                    onClick={() => {
-                      const nextPlanId = selectedPlanStepId === step.id ? null : step.id;
-                      setSelectedPlanStepId(nextPlanId);
-
-                      const mappedExecutionId = nextPlanId ? step.executionStepIds[0] ?? null : null;
-                      setSelectedTaskStepId(mappedExecutionId);
-
-                      if (mappedExecutionId) {
-                        const mappedExecutionStep = model.executionSteps.find((executionStep) => executionStep.id === mappedExecutionId);
-                        if (mappedExecutionStep?.timelineIds[0]) {
-                          setSelectedTimelineId(mappedExecutionStep.timelineIds[0]);
-                        }
-                      }
-                    }}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-
           {model.executionSteps.length > 0 && (
             <section className="rounded-[28px] border border-black/5 bg-white/68 p-4 shadow-[0_16px_32px_rgba(15,23,42,0.05)]">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-semibold text-ink-900">{model.executionSectionTitle}</h3>
-                  <p className="mt-1 text-[12px] text-ink-500">这里只显示已经产生执行证据的步骤；空壳计划会继续留在上面的 AI 计划步骤里。</p>
+                  <p className="mt-1 text-[12px] text-ink-500">这里只显示已经产生执行证据的步骤，便于直接回看真实执行链路。</p>
                 </div>
                 {selectedTask && (
                   <button
                     type="button"
                     onClick={() => {
                       setSelectedTaskStepId(null);
-                      setSelectedPlanStepId(null);
                     }}
                     className="rounded-full border border-black/5 bg-white px-2.5 py-1 text-[10px] text-ink-500"
                   >
@@ -795,7 +701,6 @@ export function ActivityRail({
                     onClick={() => {
                       const nextExecutionId = selectedTaskStepId === step.id ? null : step.id;
                       setSelectedTaskStepId(nextExecutionId);
-                      setSelectedPlanStepId(nextExecutionId ? (step.planStepIds[0] ?? null) : null);
                       if (nextExecutionId && step.timelineIds[0]) {
                         setSelectedTimelineId(step.timelineIds[0]);
                       }
@@ -872,7 +777,6 @@ export function ActivityRail({
                   onJump={(timelineId) => {
                     const relatedStep = model.executionSteps.find((step) => step.timelineIds.includes(timelineId));
                     setSelectedTaskStepId(relatedStep?.id ?? null);
-                    setSelectedPlanStepId(relatedStep?.planStepIds[0] ?? null);
                     setSelectedTimelineId(timelineId);
                     setActiveFilter("all");
                   }}

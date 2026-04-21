@@ -104,20 +104,6 @@ export type ActivityTaskStep = {
   metrics: ActivityExecutionMetrics;
 };
 
-export type ActivityPlanStepStatus = "pending" | "running" | "completed" | "drifted";
-
-export type ActivityPlanStep = {
-  id: string;
-  index: number;
-  indexLabel: string;
-  title: string;
-  detail: string;
-  round: number;
-  status: ActivityPlanStepStatus;
-  sourceTimelineId: string;
-  executionStepIds: string[];
-};
-
 export type ActivityExecutionStep = {
   id: string;
   title: string;
@@ -127,7 +113,6 @@ export type ActivityExecutionStep = {
   status: ActivityTaskStepStatus;
   timelineIds: string[];
   sourceTimelineId: string;
-  planStepIds: string[];
   metrics: ActivityExecutionMetrics;
 };
 
@@ -158,7 +143,6 @@ export type ActivityRailModel = {
   primarySectionTitle: "实时执行轨迹";
   detailCardTitle: "步骤详情";
   detailDrawerTitle: "节点详情";
-  planSectionTitle: string;
   executionSectionTitle: string;
   taskSectionTitle: "任务步骤";
   analysisSectionTitle: "分析洞察";
@@ -178,7 +162,6 @@ export type ActivityRailModel = {
   };
   filterCounts: Record<ActivityRailFilterKey, number>;
   timeline: ActivityTimelineItem[];
-  planSteps: ActivityPlanStep[];
   executionSteps: ActivityExecutionStep[];
   taskSteps: ActivityTaskStep[];
   analysisCards: ActivityAnalysisCard[];
@@ -207,7 +190,15 @@ type ParsedPlan = {
   round: number;
   sequence: number;
   sourceTimelineId: string;
-  steps: ActivityPlanStep[];
+  steps: Array<{
+    id: string;
+    index: number;
+    indexLabel: string;
+    title: string;
+    detail: string;
+    round: number;
+    sourceTimelineId: string;
+  }>;
 };
 
 type HookQualitySignal = {
@@ -961,132 +952,103 @@ function createTimelineItem(
   };
 }
 
-function resolveTaskStepIndex(
-  steps: ActivityTaskStep[],
-  kind: ActivityStageKind,
-  currentIndex: number,
-): number {
-  if (steps.length === 0) return 0;
-  if (kind === "other" || kind === "plan") return currentIndex;
-
-  const exactIndex = steps.findIndex((step, index) => index >= currentIndex && step.kind === kind);
-  if (exactIndex !== -1) return exactIndex;
-
-  if (kind === "deliver") {
-    return steps.length - 1;
+function buildExecutionStepTitle(kind: ActivityStageKind, firstItem: ActivityTimelineItem): string {
+  if (firstItem.filterKey === "tool" || firstItem.filterKey === "result") {
+    return firstItem.title;
   }
 
-  return currentIndex;
+  switch (kind) {
+    case "inspect":
+      return "检查与理解";
+    case "implement":
+      return "实施与修改";
+    case "verify":
+      return "验证与确认";
+    case "deliver":
+      return "整理与输出";
+    default:
+      return firstItem.title;
+  }
 }
 
-function assignTimelineToTaskSteps(
+function shouldIncludeInExecutionStep(
+  item: ActivityTimelineItem,
+  hiddenTimelineId: string | null,
+): boolean {
+  if (item.filterKey === "context") return false;
+  if (hiddenTimelineId && item.id === hiddenTimelineId) return false;
+  if (item.stageKind === "plan") return false;
+
+  return (
+    item.filterKey === "tool" ||
+    item.filterKey === "result" ||
+    item.attention ||
+    item.stageKind === "inspect" ||
+    item.stageKind === "implement" ||
+    item.stageKind === "verify" ||
+    item.stageKind === "deliver"
+  );
+}
+
+function buildExecutionStepsFromTimeline(
   timelineChronological: ActivityTimelineItem[],
-  parsedPlan: ParsedPlan | null,
+  hiddenTimelineId: string | null,
   sessionStatus: SessionLike["status"],
-): ActivityTaskStep[] {
-  if (!parsedPlan) return [];
-
-  const taskSteps = parsedPlan.steps.map((step) => ({
-    id: step.id,
-    title: step.title,
-    detail: step.detail,
-    round: step.round,
-    kind: classifyStageKindFromText(step.title),
-    timelineIds: [] as string[],
-    status: "pending" as ActivityTaskStepStatus,
-    sourceTimelineId: step.sourceTimelineId,
-    metrics: createEmptyMetrics(),
-  }));
-
-  const candidateItems = timelineChronological.filter(
-    (item) =>
-      item.round === parsedPlan.round &&
-      item.sequence > parsedPlan.sequence &&
-      item.filterKey !== "context",
+): { taskSteps: ActivityTaskStep[]; executionSteps: ActivityExecutionStep[] } {
+  const candidateItems = timelineChronological.filter((item) =>
+    shouldIncludeInExecutionStep(item, hiddenTimelineId),
   );
 
-  let currentIndex = 0;
+  const taskSteps: ActivityTaskStep[] = [];
+  let currentStep: ActivityTaskStep | null = null;
+
   for (const item of candidateItems) {
-    currentIndex = resolveTaskStepIndex(taskSteps, item.stageKind, currentIndex);
-    const currentStep = taskSteps[currentIndex];
+    const shouldStartNewStep =
+      !currentStep ||
+      currentStep.round !== item.round ||
+      currentStep.kind !== item.stageKind;
+
+    if (shouldStartNewStep) {
+      currentStep = {
+        id: `execution-step-${taskSteps.length + 1}`,
+        title: buildExecutionStepTitle(item.stageKind, item),
+        detail: item.detail,
+        round: item.round,
+        kind: item.stageKind,
+        status: "pending",
+        timelineIds: [],
+        sourceTimelineId: item.id,
+        metrics: createEmptyMetrics(),
+      };
+      taskSteps.push(currentStep);
+    }
+
+    if (!currentStep) {
+      continue;
+    }
+
     currentStep.timelineIds.push(item.id);
+    currentStep.metrics = mergeMetrics(currentStep.metrics, item.metrics);
+    if (!currentStep.detail.includes(item.title)) {
+      currentStep.detail = truncate(`${currentStep.detail}\n${item.title}`, 240);
+    }
     item.taskStepIds.push(currentStep.id);
-    if (item.stageKind !== "deliver" || currentStep.kind === "deliver") {
-      currentStep.metrics = mergeMetrics(currentStep.metrics, item.metrics);
-    }
   }
 
-  let activeIndex = -1;
-  for (let index = taskSteps.length - 1; index >= 0; index -= 1) {
-    if (taskSteps[index]?.timelineIds.length) {
-      activeIndex = index;
-      break;
-    }
-  }
   taskSteps.forEach((step, index) => {
-    if (step.timelineIds.length === 0) {
-      step.status = "pending";
+    if (sessionStatus === "running" && index === taskSteps.length - 1) {
+      step.status = "running";
       return;
     }
-
-    if (sessionStatus === "completed") {
-      step.status = "completed";
-      return;
-    }
-
-    step.status = index < activeIndex ? "completed" : "running";
+    step.status = "completed";
   });
 
-  return taskSteps;
-}
-
-function buildPlanAndExecutionSteps(
-  taskSteps: ActivityTaskStep[],
-  parsedPlan: ParsedPlan | null,
-): { planSteps: ActivityPlanStep[]; executionSteps: ActivityExecutionStep[] } {
-  if (!parsedPlan) {
-    return {
-      planSteps: [],
-      executionSteps: [],
-    };
-  }
-
-  const hasActionableExecutionMetrics = (metrics: ActivityExecutionMetrics): boolean =>
-    metrics.totalCount > 0 ||
-    metrics.inputChars > 0 ||
-    metrics.outputChars > 0 ||
-    typeof metrics.durationMs === "number" ||
-    typeof metrics.inputTokens === "number" ||
-    typeof metrics.outputTokens === "number" ||
-    metrics.successCount > 0 ||
-    metrics.failureCount > 0;
-
-  const planSteps = parsedPlan.steps.map((step, index) => {
-    const taskStep = taskSteps[index];
-    const hasExecution = Boolean(taskStep && hasActionableExecutionMetrics(taskStep.metrics));
-
-    return {
-      ...step,
-      status: hasExecution ? (taskStep?.status === "running" ? "running" : "completed") : "pending",
-      executionStepIds: hasExecution && taskStep ? [taskStep.id] : [],
-    } satisfies ActivityPlanStep;
-  });
-
-  const executionSteps = taskSteps.flatMap((step, index) => {
-    if (!hasActionableExecutionMetrics(step.metrics)) {
-      return [];
-    }
-
-    return [
-      {
-        ...step,
-        planStepIds: [planSteps[index]?.id].filter((value): value is string => Boolean(value)),
-      } satisfies ActivityExecutionStep,
-    ];
-  });
+  const executionSteps: ActivityExecutionStep[] = taskSteps.map((step) => ({
+    ...step,
+  }));
 
   return {
-    planSteps,
+    taskSteps,
     executionSteps,
   };
 }
@@ -1101,7 +1063,6 @@ export function buildActivityRailModel(
       primarySectionTitle: "实时执行轨迹",
       detailCardTitle: "步骤详情",
       detailDrawerTitle: "节点详情",
-      planSectionTitle: "\u0041\u0049 \u8ba1\u5212\u6b65\u9aa4",
       executionSectionTitle: "\u5b9e\u9645\u6267\u884c\u6b65\u9aa4",
       taskSectionTitle: "任务步骤",
       analysisSectionTitle: "分析洞察",
@@ -1128,7 +1089,6 @@ export function buildActivityRailModel(
         flow: 0,
       },
       timeline: [],
-      planSteps: [],
       executionSteps: [],
       taskSteps: [],
       analysisCards: [],
@@ -1287,7 +1247,7 @@ export function buildActivityRailModel(
 
           if (explicitPlan.length >= 2) {
             const planTimelineId = `${assistant.uuid}-plan-${sequence}`;
-            addDistribution(distributionBuckets, "assistant-plan", "AI 计划", "info", text);
+            addDistribution(distributionBuckets, "assistant-output", "中间结果", "neutral", text);
             timelineChronological.push(
               createTimelineItem({
                 id: planTimelineId,
@@ -1321,9 +1281,7 @@ export function buildActivityRailModel(
                 title: step.title,
                 detail: step.title,
                 round: Math.max(round, 1),
-                status: "pending",
                 sourceTimelineId: planTimelineId,
-                executionStepIds: [],
               })),
             };
           } else {
@@ -1641,9 +1599,14 @@ export function buildActivityRailModel(
     );
   }
 
-  const taskSteps = assignTimelineToTaskSteps(timelineChronological, latestParsedPlan, session.status);
-  const { planSteps, executionSteps } = buildPlanAndExecutionSteps(taskSteps, latestParsedPlan);
-  const timeline = [...timelineChronological].reverse();
+  const { taskSteps, executionSteps } = buildExecutionStepsFromTimeline(
+    timelineChronological,
+    latestParsedPlan?.sourceTimelineId ?? null,
+    session.status,
+  );
+  const timeline = timelineChronological
+    .filter((item) => item.id !== latestParsedPlan?.sourceTimelineId)
+    .reverse();
   const filterCounts: Record<ActivityRailFilterKey, number> = {
     all: timeline.length,
     attention: timeline.filter((item) => item.attention).length,
@@ -1793,21 +1756,6 @@ export function buildActivityRailModel(
     });
   }
 
-  if (taskSteps.length > 0) {
-    const completedCount = taskSteps.filter((step) => step.status === "completed").length;
-    const pendingSteps = taskSteps.filter((step) => step.status === "pending").map((step) => step.title);
-    analysisCards.push({
-      id: "task-plan",
-      title: "任务计划覆盖",
-      tone: pendingSteps.length > 0 ? "warning" : "info",
-      detail:
-        pendingSteps.length > 0
-          ? `计划共 ${taskSteps.length} 步，已落地 ${completedCount} 步，仍未覆盖：${pendingSteps.join("、")}`
-          : `计划共 ${taskSteps.length} 步，当前轨迹已经覆盖全部步骤。`,
-      supportingTimelineId: latestParsedPlan?.sourceTimelineId,
-    });
-  }
-
   if (largestContextBucket) {
     analysisCards.push({
       id: "context-hotspot",
@@ -1821,7 +1769,6 @@ export function buildActivityRailModel(
     primarySectionTitle: "实时执行轨迹",
     detailCardTitle: "步骤详情",
     detailDrawerTitle: "节点详情",
-    planSectionTitle: "\u0041\u0049 \u8ba1\u5212\u6b65\u9aa4",
     executionSectionTitle: "\u5b9e\u9645\u6267\u884c\u6b65\u9aa4",
     taskSectionTitle: "任务步骤",
     analysisSectionTitle: "分析洞察",
@@ -1841,7 +1788,6 @@ export function buildActivityRailModel(
     },
     filterCounts,
     timeline,
-    planSteps,
     executionSteps,
     taskSteps,
     analysisCards,
