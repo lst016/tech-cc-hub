@@ -192,6 +192,13 @@ test("buildActivityRailModel exposes task-level steps and context distribution",
   assert.equal(model.taskSectionTitle, "任务步骤");
   assert.equal(model.contextModalTitle, "上下文分布");
 
+  assert.equal(model.planSteps.length, 3);
+  assert.deepEqual(
+    model.planSteps.map((step) => step.title),
+    ["检查当前右栏布局", "修改组件结构", "运行构建验证"],
+  );
+  assert.equal(model.planSteps[0]?.status, "completed");
+
   assert.equal(model.taskSteps.length, 3);
   assert.deepEqual(
     model.taskSteps.map((step) => step.title),
@@ -226,12 +233,25 @@ test("buildActivityRailModel exposes task-level steps and context distribution",
 
   const readItem = model.timeline.find((item) => item.id === "tool-read");
   assert.ok(readItem);
+  assert.equal(readItem.nodeKind, "file_read");
+  assert.equal(readItem.toolName, "Read");
+  assert.equal(readItem.provenance, "local");
   assert.equal(readItem.metrics.inputChars, "src/ui/components/ActivityRail.tsx".length);
   assert.equal(readItem.metrics.contextChars, promptText.length + 4096 + planText.length);
   assert.equal(readItem.metrics.outputChars, "file content".length);
   assert.equal(readItem.metrics.durationMs, 300);
   assert.equal(readItem.metrics.successCount, 1);
   assert.equal(readItem.metrics.failureCount, 0);
+
+  const promptBucket = model.contextDistribution.buckets.find((bucket) => bucket.id === "user-prompt");
+  assert.ok(promptBucket);
+  assert.deepEqual(promptBucket.sourceNodeIds, ["prompt-1-1"]);
+
+  const toolInputBucket = model.contextDistribution.buckets.find((bucket) => bucket.id === "tool-input");
+  assert.ok(toolInputBucket);
+  assert.ok(toolInputBucket.sourceNodeIds.includes("tool-read"));
+  assert.ok(toolInputBucket.sourceNodeIds.includes("tool-edit"));
+  assert.ok(toolInputBucket.sourceNodeIds.includes("tool-build"));
 
   assert.equal(model.taskSteps[0]?.metrics.inputChars, "src/ui/components/ActivityRail.tsx".length);
   assert.equal(model.taskSteps[0]?.metrics.contextChars, promptText.length + 4096 + planText.length);

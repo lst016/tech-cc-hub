@@ -15,6 +15,7 @@ export function createProfile(): ApiConfigProfile {
     baseURL: "",
     model: "",
     expertModel: "",
+    imageModel: undefined,
     models: [createModel()],
     enabled: true,
     apiType: "anthropic",
@@ -88,8 +89,10 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
     ...(profile.models ?? []),
     { name: profile.model },
     { name: profile.expertModel ?? "" },
+    { name: profile.imageModel ?? "" },
   ]);
   const selectedModel = profile.model.trim() || models[0]?.name || "";
+  const imageModel = profile.imageModel?.trim();
 
   if (selectedModel && !models.some((item) => item.name === selectedModel)) {
     models.unshift({
@@ -105,6 +108,7 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
     baseURL: profile.baseURL.trim(),
     model: selectedModel,
     expertModel: normalizeRoleModel(profile.expertModel, selectedModel),
+    imageModel: imageModel && models.some((item) => item.name === imageModel) ? imageModel : undefined,
     models,
     enabled: Boolean(profile.enabled),
     apiType: "anthropic",
@@ -120,6 +124,7 @@ export function getAvailableModels(profile: ApiConfigProfile): string[] {
     new Set([
       profile.model,
       profile.expertModel,
+      profile.imageModel,
       ...(profile.models ?? []).map((item) => item.name),
     ]),
   )
@@ -134,7 +139,7 @@ export function buildRoutingSummary(profile?: ApiConfigProfile): string {
 
   const mainModel = profile.model || "-";
   const expertModel = profile.expertModel || mainModel;
-  return `主 ${mainModel} · 专家 ${expertModel}`;
+  return `主 ${mainModel} / 专家 ${expertModel}`;
 }
 
 export function validateProfiles(profiles: ApiConfigProfile[]): string | null {
@@ -152,27 +157,31 @@ export function validateProfiles(profiles: ApiConfigProfile[]): string | null {
       return "每个配置都需要名称。";
     }
     if (!profile.apiKey) {
-      return `配置「${profile.name}」必须填写 API Key。`;
+      return `配置“${profile.name}”必须填写 API Key。`;
     }
     if (!profile.baseURL) {
-      return `配置「${profile.name}」必须填写接口地址。`;
+      return `配置“${profile.name}”必须填写接口地址。`;
     }
     if (!profile.model) {
-      return `配置「${profile.name}」必须选择默认主模型。`;
+      return `配置“${profile.name}”必须选择默认主模型。`;
     }
     if ((profile.models ?? []).length === 0) {
-      return `配置「${profile.name}」至少要保留一个模型。`;
+      return `配置“${profile.name}”至少要保留一个模型。`;
     }
 
     const selectedModel = profile.models?.find((item) => item.name === profile.model);
     if (!selectedModel?.contextWindow) {
-      return `配置「${profile.name}」的默认主模型需要填写上下文窗口。`;
+      return `配置“${profile.name}”的默认主模型需要填写上下文窗口。`;
+    }
+
+    if (profile.imageModel && !profile.models?.some((item) => item.name === profile.imageModel)) {
+      return `配置“${profile.name}”的图片预处理模型必须在模型列表中。`;
     }
 
     try {
       new URL(profile.baseURL);
     } catch {
-      return `配置「${profile.name}」的接口地址格式不正确。`;
+      return `配置“${profile.name}”的接口地址格式不正确。`;
     }
   }
 

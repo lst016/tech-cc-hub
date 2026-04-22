@@ -9,7 +9,6 @@ import type {
 import { useAppStore } from "../store/useAppStore";
 
 const DEFAULT_ALLOWED_TOOLS = "Read,Edit,Bash";
-const SEND_COOLDOWN_MS = 3_000;
 const MAX_ROWS = 12;
 const LINE_HEIGHT = 21;
 const MAX_HEIGHT = MAX_ROWS * LINE_HEIGHT;
@@ -255,6 +254,28 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
     };
   }, [activeProfile, permissionMode, reasoningMode, runtimeModel, setGlobalError]);
 
+  const prepareAttachmentsForDispatch = useCallback(async (
+    promptValue: string,
+    attachments: PromptAttachment[],
+  ): Promise<PromptAttachment[] | null> => {
+    const hasImageAttachments = attachments.some((attachment) => attachment.kind === "image");
+    if (!hasImageAttachments || !activeProfile?.imageModel?.trim()) {
+      return attachments;
+    }
+
+    const result = await window.electron.preprocessImageAttachments({
+      prompt: promptValue,
+      attachments,
+    });
+
+    if (!result.success) {
+      setGlobalError(result.error || "图片预处理失败。");
+      return null;
+    }
+
+    return result.attachments;
+  }, [activeProfile?.imageModel, setGlobalError]);
+
   const sendPromptDraft = useCallback(async (
     promptValue: string,
     attachments: PromptAttachment[] = [],
@@ -264,6 +285,8 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
     if (!promptValue.trim() && attachments.length === 0) return false;
     const runtime = buildRuntimeOverrides();
     if (!runtime) return false;
+    const preparedAttachments = await prepareAttachmentsForDispatch(promptValue, attachments);
+    if (!preparedAttachments) return false;
 
     if (!activeSessionId) {
       let title = "";
@@ -279,7 +302,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
       }
       sendEvent({
         type: "session.start",
-        payload: { title, prompt: promptValue, cwd: cwd.trim() || undefined, allowedTools: DEFAULT_ALLOWED_TOOLS, attachments, runtime }
+        payload: { title, prompt: promptValue, cwd: cwd.trim() || undefined, allowedTools: DEFAULT_ALLOWED_TOOLS, attachments: preparedAttachments, runtime }
       });
     } else {
       if (activeSession?.status === "running") {
@@ -291,14 +314,14 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
         setGlobalError(validationError);
         return false;
       }
-      sendEvent({ type: "session.continue", payload: { sessionId: activeSessionId, prompt: promptValue, attachments, runtime } });
+      sendEvent({ type: "session.continue", payload: { sessionId: activeSessionId, prompt: promptValue, attachments: preparedAttachments, runtime } });
     }
     if (clearPrompt) {
       setPrompt("");
     }
     setGlobalError(null);
     return true;
-  }, [activeSession, activeSessionId, buildRuntimeOverrides, cwd, sendEvent, setGlobalError, setPendingStart, setPrompt, validatePromptDraft]);
+  }, [activeSession, activeSessionId, buildRuntimeOverrides, cwd, prepareAttachmentsForDispatch, sendEvent, setGlobalError, setPendingStart, setPrompt, validatePromptDraft]);
 
   const handleSend = useCallback((attachments: PromptAttachment[] = []) => {
     return sendPromptDraft(prompt, attachments);
@@ -307,6 +330,10 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   const handleStop = useCallback(() => {
     if (!activeSessionId) return;
     sendEvent({ type: "session.stop", payload: { sessionId: activeSessionId } });
+    window.setTimeout(() => {
+      sendEvent({ type: "session.list" });
+      sendEvent({ type: "session.history", payload: { sessionId: activeSessionId } });
+    }, 250);
   }, [activeSessionId, sendEvent]);
 
   const handleStartFromModal = useCallback(() => {
@@ -359,17 +386,15 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [attachments, setAttachments] = useState<PromptAttachment[]>([]);
   const [queuedMessagesBySession, setQueuedMessagesBySession] = useState<Record<string, QueuedMessageDraft[]>>({});
-  const [sendLockedUntil, setSendLockedUntil] = useState<number | null>(null);
-  const [cooldownRemainingMs, setCooldownRemainingMs] = useState(0);
   const [showSlashBrowser, setShowSlashBrowser] = useState(false);
   const autoDispatchRef = useRef<string | null>(null);
+  const submitInFlightRef = useRef(false);
   const setGlobalError = useAppStore((state) => state.setGlobalError);
   const slashQuery = prompt.startsWith("/") ? prompt.trim().slice(1).split(/\s+/)[0] ?? "" : "";
   const activeQueue = useMemo(() => {
     if (!activeSessionId) return [];
     return queuedMessagesBySession[activeSessionId] ?? [];
   }, [activeSessionId, queuedMessagesBySession]);
-  const isCooldownLocked = cooldownRemainingMs > 0;
   const hasDraft = prompt.trim().length > 0 || attachments.length > 0;
   const filteredSlashCommands = useMemo(() => {
     const matchedCommands = !slashQuery
@@ -401,12 +426,6 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
       .map((item) => item?.trim() ?? "")
       .filter(Boolean);
   }, [activeProfile]);
-  const startSendCooldown = useCallback(() => {
-    const nextLockedUntil = Date.now() + SEND_COOLDOWN_MS;
-    setSendLockedUntil(nextLockedUntil);
-    setCooldownRemainingMs(SEND_COOLDOWN_MS);
-  }, []);
-
   const clearComposer = useCallback(() => {
     setPrompt("");
     setAttachments([]);
@@ -452,32 +471,32 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
     }));
     clearComposer();
     setGlobalError(null);
-    startSendCooldown();
     return true;
-  }, [activeSessionId, attachments, clearComposer, hasDraft, prompt, setGlobalError, startSendCooldown, validatePromptDraft]);
+  }, [activeSessionId, attachments, clearComposer, hasDraft, prompt, setGlobalError, validatePromptDraft]);
 
   const submitCurrentInput = useCallback(async () => {
     if (!hasDraft) return false;
+    if (submitInFlightRef.current) return false;
 
-    if (isCooldownLocked) {
-      return false;
-    }
+    submitInFlightRef.current = true;
+    try {
+      if (isRunning) {
+        return queueCurrentDraft();
+      }
 
-    if (isRunning) {
-      return queueCurrentDraft();
+      const sent = await handleSend(attachments);
+      if (sent) {
+        clearComposer();
+        onSendMessage?.();
+      }
+      return sent;
+    } finally {
+      submitInFlightRef.current = false;
     }
-
-    const sent = await handleSend(attachments);
-    if (sent) {
-      clearComposer();
-      startSendCooldown();
-      onSendMessage?.();
-    }
-    return sent;
-  }, [attachments, clearComposer, handleSend, hasDraft, isCooldownLocked, isRunning, onSendMessage, queueCurrentDraft, startSendCooldown]);
+  }, [attachments, clearComposer, handleSend, hasDraft, isRunning, onSendMessage, queueCurrentDraft]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (disabled || isCooldownLocked) return;
+    if (disabled) return;
     if (e.key !== "Enter" || e.shiftKey) return;
     e.preventDefault();
     void submitCurrentInput();
@@ -485,9 +504,6 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
 
   const handleButtonClick = () => {
     if (disabled) return;
-    if (isCooldownLocked) {
-      if (!isRunning || hasDraft) return;
-    }
     if (!hasDraft && isRunning) {
       handleStop();
       return;
@@ -555,22 +571,6 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
       promptRef.current.style.overflowY = "hidden";
     }
   }, [prompt]);
-
-  useEffect(() => {
-    if (!sendLockedUntil) return;
-
-    const updateCountdown = () => {
-      const nextRemaining = Math.max(0, sendLockedUntil - Date.now());
-      setCooldownRemainingMs(nextRemaining);
-      if (nextRemaining === 0) {
-        setSendLockedUntil(null);
-      }
-    };
-
-    updateCountdown();
-    const timer = window.setInterval(updateCountdown, 120);
-    return () => window.clearInterval(timer);
-  }, [sendLockedUntil]);
 
   useEffect(() => {
     if (!activeSessionId || disabled || isRunning || activeQueue.length === 0) {
@@ -710,7 +710,6 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
                   className="rounded-full p-1 text-muted hover:bg-black/5 hover:text-ink-700"
                   onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
                   aria-label={`移除附件 ${attachment.name}`}
-                  disabled={isCooldownLocked}
                 >
                   <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M18 6 6 18M6 6l12 12" />
@@ -728,7 +727,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
               className={`flex h-10 shrink-0 items-center justify-center rounded-2xl border px-3 text-sm transition-colors ${showSlashBrowser ? "border-accent/30 bg-accent-subtle text-accent" : "border-black/6 bg-white text-ink-700 hover:bg-surface-secondary"}`}
               onClick={() => setShowSlashBrowser((value) => !value)}
               aria-label="打开 Slash 命令列表"
-              disabled={disabled || isCooldownLocked}
+              disabled={disabled}
             >
               /
             </button>
@@ -738,7 +737,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
             className="flex h-10 shrink-0 items-center justify-center rounded-2xl border border-black/6 bg-white px-3 text-sm text-ink-700 transition-colors hover:bg-surface-secondary"
             onClick={() => fileInputRef.current?.click()}
             aria-label="添加附件"
-            disabled={disabled || isCooldownLocked}
+            disabled={disabled}
           >
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
               <path d="M21.44 11.05 12.25 20.24a6 6 0 1 1-8.49-8.49l9.2-9.19a4 4 0 1 1 5.65 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
@@ -750,9 +749,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
             placeholder={
               disabled
                 ? "先创建或选择一个会话..."
-                : isCooldownLocked
-                  ? `消息已送出，${Math.ceil(cooldownRemainingMs / 1000)} 秒后可继续输入…`
-                  : attachments.length > 0
+                : attachments.length > 0
                     ? "可以继续补充文字说明，或直接发送附件…"
                     : isRunning
                       ? "当前仍在执行中，你可以继续输入，系统会自动排队续发…"
@@ -764,13 +761,13 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
             onInput={handleInput}
             onPaste={(event) => { void handlePaste(event); }}
             ref={promptRef}
-            disabled={disabled || isCooldownLocked}
+            disabled={disabled}
           />
           <button
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full shadow-[0_12px_24px_rgba(15,18,24,0.26)] transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${!hasDraft && isRunning ? "bg-error text-white hover:bg-error/90" : "bg-white text-ink-900 hover:bg-[#f3f5f8]"}`}
             onClick={handleButtonClick}
             aria-label={!hasDraft && isRunning ? "停止会话" : isRunning ? "加入待发送队列" : "发送提示"}
-            disabled={disabled || (isCooldownLocked && hasDraft)}
+            disabled={disabled}
           >
             {!hasDraft && isRunning ? (
               <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" /></svg>
@@ -783,7 +780,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
           <InlineDropdown
             label="模型"
             value={runtimeModel}
-            disabled={disabled || isCooldownLocked || availableModels.length === 0}
+            disabled={disabled || availableModels.length === 0}
             onChange={setRuntimeModel}
             minWidthClass="min-w-[200px]"
             options={
@@ -795,7 +792,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
           <InlineDropdown
             label="思考强度"
             value={reasoningMode}
-            disabled={disabled || isCooldownLocked}
+            disabled={disabled}
             onChange={(value) => setReasoningMode(value as RuntimeReasoningMode)}
             minWidthClass="min-w-[180px]"
             options={REASONING_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
@@ -809,7 +806,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
               aria-label="切换 Plan 模式"
               className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border transition ${permissionMode === "plan" ? "border-[#f59a55] bg-[#ffddb8]" : "border-black/20 bg-black/10"} disabled:opacity-60`}
               onClick={() => setPermissionMode(permissionMode === "plan" ? "bypassPermissions" : "plan")}
-              disabled={disabled || isCooldownLocked}
+              disabled={disabled}
             >
               <span
                 aria-hidden="true"

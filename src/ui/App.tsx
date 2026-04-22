@@ -280,6 +280,39 @@ function App() {
     prevMessagesLengthRef.current = messages.length;
   }, [messages, partialMessage, shouldAutoScroll]);
 
+  useEffect(() => {
+    if (!showSessionAnalysis) {
+      return;
+    }
+
+    const html = document.documentElement;
+    const body = document.body;
+    const scrollingElement = document.scrollingElement as HTMLElement | null;
+    const previousHtmlOverflow = html.style.overflow;
+    const previousBodyOverflow = body.style.overflow;
+
+    const resetViewport = () => {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      html.scrollTop = 0;
+      body.scrollTop = 0;
+      scrollingElement?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    };
+
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    resetViewport();
+
+    const animationFrameId = window.requestAnimationFrame(resetViewport);
+    const timeoutId = window.setTimeout(resetViewport, 180);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrameId);
+      window.clearTimeout(timeoutId);
+      html.style.overflow = previousHtmlOverflow;
+      body.style.overflow = previousBodyOverflow;
+    };
+  }, [showSessionAnalysis]);
+
   const scrollToBottom = useCallback(() => {
     setShouldAutoScroll(true);
     setHasNewMessages(false);
@@ -382,7 +415,7 @@ function App() {
   }, [sendEvent, setPendingStart]);
 
   return (
-    <div className="flex h-screen bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.98),_rgba(243,246,250,0.97)_40%,_rgba(228,233,240,0.98)_100%)]">
+    <div className="flex h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.98),_rgba(243,246,250,0.97)_40%,_rgba(228,233,240,0.98)_100%)]">
       <Sidebar
         connected={connected}
         onNewSession={handleNewSession}
@@ -391,28 +424,36 @@ function App() {
         onOpenSettings={openSettings}
       />
 
-      <main className="ml-[320px] flex flex-1 flex-col bg-transparent xl:mr-[340px]">
-        <div
-          className="flex h-12 items-center justify-center border-b border-black/5 bg-[linear-gradient(180deg,rgba(255,255,255,0.78),rgba(249,250,252,0.68))] backdrop-blur-md select-none"
-          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
-        >
-          <span className="text-sm font-semibold tracking-[0.01em] text-ink-700">{activeSession?.title || "tech-cc-hub"}</span>
-        </div>
-
-        <div
-          ref={scrollContainerRef}
-          onScroll={handleScroll}
-          className="chat-scroll flex-1 overflow-y-auto px-8 pb-40 pt-8"
-        >
-          {showSessionAnalysis ? (
+      <main
+        className={[
+          "ml-[320px] flex min-h-0 flex-1 flex-col overflow-hidden bg-transparent",
+          showSessionAnalysis ? "" : "xl:mr-[340px]",
+        ].join(" ")}
+      >
+        {showSessionAnalysis ? (
+          <div className="flex-1 min-h-0 overflow-hidden">
             <SessionAnalysisPage
               session={activeSession}
               partialMessage={partialMessage}
               onBack={() => setShowSessionAnalysis(false)}
             />
-          ) : (
-          <div className="mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[34px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(248,250,252,0.82))] px-8 py-7 shadow-[0_24px_60px_rgba(30,38,52,0.08)] backdrop-blur-xl xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
-            <div ref={topSentinelRef} className="h-1" />
+          </div>
+        ) : (
+          <>
+            <div
+              className="flex h-12 items-center justify-center border-b border-black/5 bg-[linear-gradient(180deg,rgba(255,255,255,0.78),rgba(249,250,252,0.68))] backdrop-blur-md select-none"
+              style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+            >
+              <span className="text-sm font-semibold tracking-[0.01em] text-ink-700">{activeSession?.title || "tech-cc-hub"}</span>
+            </div>
+
+            <div
+              ref={scrollContainerRef}
+              onScroll={handleScroll}
+              className="chat-scroll flex-1 overflow-y-auto px-8 pb-40 pt-8"
+            >
+              <div className="mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[34px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(248,250,252,0.82))] px-8 py-7 shadow-[0_24px_60px_rgba(30,38,52,0.08)] backdrop-blur-xl xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
+                <div ref={topSentinelRef} className="h-1" />
 
             {!hasMoreHistory && totalMessages > 0 && (
               <div className="flex items-center justify-center py-4 mb-4">
@@ -495,10 +536,11 @@ function App() {
               )}
             </div>
 
-            <div ref={messagesEndRef} />
-          </div>
-          )}
-        </div>
+                <div ref={messagesEndRef} />
+              </div>
+            </div>
+          </>
+        )}
 
         {!showSessionAnalysis && (
           <PromptInput sendEvent={sendEvent} onSendMessage={handleSendMessage} disabled={!connected} />
@@ -518,12 +560,14 @@ function App() {
         )}
       </main>
 
-      <ActivityRail
-        session={activeSession}
-        partialMessage={partialMessage}
-        globalError={globalError}
-        onOpenSessionAnalysis={() => setShowSessionAnalysis(true)}
-      />
+      {!showSessionAnalysis && (
+        <ActivityRail
+          session={activeSession}
+          partialMessage={partialMessage}
+          globalError={globalError}
+          onOpenSessionAnalysis={() => setShowSessionAnalysis(true)}
+        />
+      )}
 
       {showStartModal && (
         <StartSessionModal

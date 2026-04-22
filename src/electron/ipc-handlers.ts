@@ -6,9 +6,12 @@ import { createInitialSessionWorkflowState, parseWorkflowMarkdown } from "../sha
 import { runClaude, type RunnerHandle } from "./libs/runner.js";
 import { getCurrentApiConfig, getModelConfig, supportsRemoteSessionResume } from "./libs/claude-settings.js";
 import { SessionStore } from "./libs/session-store.js";
+import { buildSessionSlashCommands } from "./libs/slash-command-catalog.js";
+import { stripInlineBase64ImagesFromMessage } from "./libs/tool-output-sanitizer.js";
 import { buildSessionWorkflowCatalog } from "./libs/workflow-catalog.js";
 import { buildStatelessContinuationPayload } from "./stateless-continuation.js";
 import type { ClientEvent, ServerEvent } from "./types.js";
+import { isDev } from "./util.js";
 
 let sessions: SessionStore;
 const runnerHandles = new Map<string, RunnerHandle>();
@@ -17,12 +20,16 @@ function initializeSessions() {
   if (!sessions) {
     const dbPath = join(app.getPath("userData"), "sessions.db");
     sessions = new SessionStore(dbPath);
+    sessions.recoverInterruptedSessions();
   }
   return sessions;
 }
 
 function broadcast(event: ServerEvent) {
   const payload = JSON.stringify(event);
+  if (isDev()) {
+    console.log("[meta][server-event]", payload);
+  }
   const windows = BrowserWindow.getAllWindows();
   for (const win of windows) {
     win.webContents.send("server-event", payload);
@@ -54,10 +61,11 @@ function emit(event: ServerEvent) {
     sessions.updateSession(nextEvent.payload.sessionId, { status: nextEvent.payload.status });
   }
   if (nextEvent.type === "stream.message") {
-    const message =
+    const normalizedMessage =
       typeof nextEvent.payload.message.capturedAt === "number"
         ? nextEvent.payload.message
         : { ...nextEvent.payload.message, capturedAt: Date.now() };
+    const message = stripInlineBase64ImagesFromMessage(normalizedMessage);
     sessions.recordMessage(nextEvent.payload.sessionId, message);
     nextEvent = {
       ...nextEvent,
@@ -84,9 +92,13 @@ export function handleClientEvent(event: ClientEvent) {
   const store = initializeSessions();
 
   if (event.type === "session.list") {
+    const sessionsWithSlashCommands = store.listSessions().map((session) => ({
+      ...session,
+      slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
+    }));
     emit({
       type: "session.list",
-      payload: { sessions: store.listSessions() },
+      payload: { sessions: sessionsWithSlashCommands },
     });
     return;
   }
@@ -104,6 +116,10 @@ export function handleClientEvent(event: ClientEvent) {
         sessionId: history.session.id,
         status: history.session.status,
         messages: history.messages,
+        slashCommands: buildSessionSlashCommands({
+          cwd: history.session.cwd,
+          messages: history.messages,
+        }),
       },
     });
     return;
@@ -225,7 +241,13 @@ export function handleClientEvent(event: ClientEvent) {
 
     emit({
       type: "session.status",
-      payload: { sessionId: session.id, status: "idle", title: session.title, cwd: session.cwd },
+      payload: {
+        sessionId: session.id,
+        status: "idle",
+        title: session.title,
+        cwd: session.cwd,
+        slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
+      },
     });
     return;
   }
@@ -249,7 +271,13 @@ export function handleClientEvent(event: ClientEvent) {
 
     emit({
       type: "session.status",
-      payload: { sessionId: session.id, status: "running", title: session.title, cwd: session.cwd },
+      payload: {
+        sessionId: session.id,
+        status: "running",
+        title: session.title,
+        cwd: session.cwd,
+        slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
+      },
     });
 
     emit({
@@ -334,7 +362,13 @@ export function handleClientEvent(event: ClientEvent) {
     });
     emit({
       type: "session.status",
-      payload: { sessionId: session.id, status: "running", title: session.title, cwd: session.cwd },
+      payload: {
+        sessionId: session.id,
+        status: "running",
+        title: session.title,
+        cwd: session.cwd,
+        slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
+      },
     });
 
     emit({
@@ -386,7 +420,13 @@ export function handleClientEvent(event: ClientEvent) {
     store.updateSession(session.id, { status: "idle" });
     emit({
       type: "session.status",
-      payload: { sessionId: session.id, status: "idle", title: session.title, cwd: session.cwd },
+      payload: {
+        sessionId: session.id,
+        status: "idle",
+        title: session.title,
+        cwd: session.cwd,
+        slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
+      },
     });
     return;
   }
@@ -424,6 +464,7 @@ export function cleanupAllSessions(): void {
   }
   runnerHandles.clear();
   if (sessions) {
+    sessions.recoverInterruptedSessions();
     sessions.close();
   }
 }

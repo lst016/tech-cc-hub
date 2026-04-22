@@ -3,6 +3,7 @@ import type { AgentRunSurface, SessionStatus, StreamMessage } from "../types.js"
 import { existsSync } from "fs";
 import { app } from "electron";
 import type { SessionWorkflowState, WorkflowScope } from "../../shared/workflow-markdown.js";
+import { stripInlineBase64ImagesFromMessage } from "./tool-output-sanitizer.js";
 
 const LEGACY_CWD_SUFFIXES = [
   "/upstream/open-claude-cowork",
@@ -230,7 +231,7 @@ export class SessionStore {
       )
       .all(id) as Array<Record<string, unknown>>)
       .map((row) => {
-        const parsed = JSON.parse(String(row.data)) as StreamMessage;
+        const parsed = stripInlineBase64ImagesFromMessage(JSON.parse(String(row.data)) as StreamMessage);
         if (typeof parsed.capturedAt === "number") {
           return parsed;
         }
@@ -273,6 +274,32 @@ export class SessionStore {
     Object.assign(session, updates);
     this.persistSession(id, updates);
     return session;
+  }
+
+  recoverInterruptedSessions(): string[] {
+    const recoveredIds: string[] = [];
+
+    for (const session of this.sessions.values()) {
+      if (session.status !== "running") {
+        continue;
+      }
+
+      session.status = "idle";
+      session.abortController = undefined;
+      session.pendingPermissions.clear();
+      recoveredIds.push(session.id);
+    }
+
+    if (recoveredIds.length === 0) {
+      return recoveredIds;
+    }
+
+    const placeholders = recoveredIds.map(() => "?").join(", ");
+    this.db
+      .prepare(`update sessions set status = ? where id in (${placeholders})`)
+      .run("idle", ...recoveredIds);
+
+    return recoveredIds;
   }
 
   setAbortController(id: string, controller: AbortController | undefined): void {

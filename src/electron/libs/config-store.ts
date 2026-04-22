@@ -27,6 +27,7 @@ export type ApiConfig = {
   baseURL: string;
   model: string;
   expertModel?: string;
+  imageModel?: string;
   models?: ApiModelConfig[];
   enabled: boolean;
   apiType?: ApiType;
@@ -158,6 +159,7 @@ function createDefaultSettings(): ApiConfigSettings {
         baseURL: "https://api.anthropic.com",
         model: DEFAULT_MODEL,
         expertModel: DEFAULT_MODEL,
+        imageModel: undefined,
         models: [DEFAULT_MODEL_CONFIG],
         enabled: true,
         apiType: "anthropic",
@@ -318,6 +320,7 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
   const dedupedModels = dedupeModelConfigs([
     config.model,
     config.expertModel,
+    config.imageModel,
     ...(config.models ?? []),
   ]);
   const dedupedModelNames = dedupedModels.map((item) => item.name);
@@ -340,6 +343,7 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
     baseURL: config.baseURL.trim(),
     model: selectedModel,
     expertModel: normalizeRoleModel(config.expertModel, selectedModel),
+    imageModel: normalizeOptionalModel(config.imageModel, dedupedModelNames),
     models: dedupedModels,
     enabled: Boolean(config.enabled),
     apiType: config.apiType ?? "anthropic",
@@ -816,4 +820,13 @@ function normalizePercent(value: number | null | undefined): number | undefined 
 function normalizeRoleModel(value: string | undefined, fallbackModel: string): string {
   const normalized = value?.trim();
   return normalized || fallbackModel;
+}
+
+function normalizeOptionalModel(value: string | undefined, availableModels: string[]): string | undefined {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  return availableModels.includes(normalized) ? normalized : undefined;
 }

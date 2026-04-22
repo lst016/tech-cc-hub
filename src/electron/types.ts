@@ -17,6 +17,7 @@ export type ApiConfig = {
   baseURL: string;
   model: string;
   expertModel?: string;
+  imageModel?: string;
   models?: ApiModelConfig[];
   enabled: boolean;
   apiType?: "anthropic";
@@ -65,6 +66,7 @@ export type SessionInfo = {
   cwd?: string;
   runSurface?: AgentRunSurface;
   agentId?: string;
+  slashCommands?: string[];
   workflowMarkdown?: string;
   workflowSourceLayer?: WorkflowScope;
   workflowSourcePath?: string;
@@ -95,11 +97,11 @@ export type SessionWorkflowCatalog = {
 export type ServerEvent =
   | { type: "stream.message"; payload: { sessionId: string; message: StreamMessage } }
   | { type: "stream.user_prompt"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[] } }
-  | { type: "session.status"; payload: { sessionId: string; status: SessionStatus; title?: string; cwd?: string; error?: string } }
+  | { type: "session.status"; payload: { sessionId: string; status: SessionStatus; title?: string; cwd?: string; error?: string; slashCommands?: string[] } }
   | { type: "session.workflow"; payload: { sessionId: string; markdown?: string; sourceLayer?: WorkflowScope; sourcePath?: string; state?: SessionWorkflowState; error?: string } }
   | { type: "session.workflow.catalog"; payload: SessionWorkflowCatalog }
   | { type: "session.list"; payload: { sessions: SessionInfo[] } }
-  | { type: "session.history"; payload: { sessionId: string; status: SessionStatus; messages: StreamMessage[] } }
+  | { type: "session.history"; payload: { sessionId: string; status: SessionStatus; messages: StreamMessage[]; slashCommands?: string[] } }
   | { type: "session.deleted"; payload: { sessionId: string } }
   | { type: "permission.request"; payload: { sessionId: string; toolUseId: string; toolName: string; input: unknown } }
   | { type: "runner.error"; payload: { sessionId?: string; message: string } };

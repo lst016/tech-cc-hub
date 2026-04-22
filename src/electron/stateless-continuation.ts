@@ -15,13 +15,16 @@ export type StatelessContinuationPayload = {
   usedCompression: boolean;
   summaryText?: string;
   summaryMessageCount: number;
-  estimatedCharacters: number;
+  estimatedTokens: number;
 };
 
 const DEFAULT_RECENT_TURN_COUNT = 5;
 const DEFAULT_RECENT_ENTRY_LIMIT = 12;
 const SUMMARY_ENTRY_PREVIEW_LIMIT = 6;
 const SUMMARY_TEXT_LIMIT = 160;
+const DEFAULT_CONTEXT_WINDOW = 200_000;
+const DEFAULT_COMPRESSION_THRESHOLD_PERCENT = 70;
+const DEFAULT_IMAGE_ATTACHMENT_TOKEN_ESTIMATE = 6_000;
 
 function summarizeAttachments(attachments?: PromptAttachment[]): string {
   if (!attachments || attachments.length === 0) {
@@ -123,25 +126,106 @@ function buildSummary(entries: ConversationEntry[], fallbackSummary?: string): s
   return summaryLines.join("\n");
 }
 
-function estimateCharacters(
-  historyText: string,
-  latestPrompt: string,
-  latestAttachmentSummary: string,
-  summaryText?: string,
-): number {
-  return historyText.length + latestPrompt.length + latestAttachmentSummary.length + (summaryText?.length ?? 0);
+function estimateTextTokens(text: string): number {
+  if (!text) {
+    return 0;
+  }
+
+  let cjkCount = 0;
+  let whitespaceCount = 0;
+  for (const char of text) {
+    if (/\s/.test(char)) {
+      whitespaceCount += 1;
+      continue;
+    }
+
+    if (/[\u3400-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]/.test(char)) {
+      cjkCount += 1;
+    }
+  }
+
+  const otherCount = Math.max(0, text.length - cjkCount - whitespaceCount);
+  return Math.ceil((cjkCount * 1.2) + (otherCount / 3) + (whitespaceCount * 0.15));
+}
+
+function estimatePromptTokens(parts: Array<string | undefined>): number {
+  return parts.reduce((total, part) => total + estimateTextTokens(part ?? ""), 0);
+}
+
+function estimateAttachmentTokens(attachments: PromptAttachment[] = []): number {
+  return attachments.reduce((total, attachment) => {
+    if (attachment.kind === "image") {
+      return total + Math.max(
+        DEFAULT_IMAGE_ATTACHMENT_TOKEN_ESTIMATE,
+        Math.ceil((attachment.size ?? attachment.data.length) / 64),
+      );
+    }
+
+    const normalizedText = attachment.data.trim();
+    if (!normalizedText) {
+      return total;
+    }
+
+    return total + estimateTextTokens(
+      `Attachment file: ${attachment.name || "unnamed"}\n\`\`\`\n${normalizedText}\n\`\`\``,
+    );
+  }, 0);
+}
+
+function resolveCompressionBudget(options: StatelessContinuationOptions): {
+  contextWindow: number;
+  compressionThresholdPercent: number;
+} {
+  return {
+    contextWindow: options.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+    compressionThresholdPercent:
+      options.compressionThresholdPercent ?? DEFAULT_COMPRESSION_THRESHOLD_PERCENT,
+  };
+}
+
+function buildContinuationPrompt(options: {
+  summaryText?: string;
+  recentHistoryText?: string;
+  latestMessageText: string;
+  latestAttachmentSummary: string;
+}): string {
+  const sections = [
+    "Recent conversation history is provided below. Continue the same conversation based on it.",
+  ];
+
+  if (options.summaryText?.trim()) {
+    sections.push("", "Earlier conversation summary:", options.summaryText.trim());
+  }
+
+  if (options.recentHistoryText?.trim()) {
+    sections.push("", "Recent conversation history:", options.recentHistoryText.trim());
+  }
+
+  if (options.latestAttachmentSummary) {
+    sections.push(
+      "",
+      `The latest message includes attachments: ${options.latestAttachmentSummary.replace(/^\[Attachments:\s*|\]$/g, "")}.`,
+      "If image attachments are present in the current turn, analyze them directly and do not repeat earlier claims that an image was missing.",
+    );
+  }
+
+  sections.push(
+    "",
+    `Latest user message: ${options.latestMessageText}`,
+    "",
+    "Respond naturally as if the conversation had continued normally. Do not mention that history was stitched together.",
+  );
+
+  return sections.join("\n");
 }
 
 function shouldCompressHistory(
-  estimatedCharacters: number,
+  estimatedTokens: number,
   options: StatelessContinuationOptions,
 ): boolean {
-  if (!options.contextWindow || !options.compressionThresholdPercent) {
-    return false;
-  }
-
-  const thresholdChars = Math.floor(options.contextWindow * (options.compressionThresholdPercent / 100));
-  return thresholdChars > 0 && estimatedCharacters >= thresholdChars;
+  const { contextWindow, compressionThresholdPercent } = resolveCompressionBudget(options);
+  const thresholdTokens = Math.floor(contextWindow * (compressionThresholdPercent / 100));
+  return thresholdTokens > 0 && estimatedTokens >= thresholdTokens;
 }
 
 export function buildStatelessContinuationPayload(
@@ -153,83 +237,82 @@ export function buildStatelessContinuationPayload(
   const dedupedHistory = dedupeHistory(messages);
   const recentTurnCount = options.recentTurnCount ?? DEFAULT_RECENT_TURN_COUNT;
   const recentEntryCount = Math.max(2, recentTurnCount * 2);
-  const rawRecentHistory = dedupedHistory.slice(-DEFAULT_RECENT_ENTRY_LIMIT);
-  const rawHistoryText = formatHistory(rawRecentHistory);
   const latestAttachmentSummary = summarizeAttachments(latestAttachments);
+  const latestAttachmentTokens = estimateAttachmentTokens(latestAttachments);
   const latestMessageText = latestPrompt.trim() || "[attachments only]";
-  const rawEstimatedCharacters = estimateCharacters(rawHistoryText, latestMessageText, latestAttachmentSummary);
+  const rawRecentHistory = dedupedHistory.slice(-Math.max(DEFAULT_RECENT_ENTRY_LIMIT, recentEntryCount));
+  const rawHistoryText = formatHistory(rawRecentHistory);
+  const rawEstimatedTokens =
+    estimatePromptTokens([rawHistoryText, latestMessageText, latestAttachmentSummary]) + latestAttachmentTokens;
 
-  const sections = [
-    "Recent conversation history is provided below. Continue the same conversation based on it.",
-  ];
+  if (!shouldCompressHistory(rawEstimatedTokens, options)) {
+    return {
+      prompt: buildContinuationPrompt({
+        recentHistoryText: rawHistoryText,
+        latestMessageText,
+        latestAttachmentSummary,
+      }),
+      usedCompression: false,
+      summaryMessageCount: 0,
+      estimatedTokens: rawEstimatedTokens,
+    };
+  }
 
-  if (
-    shouldCompressHistory(rawEstimatedCharacters, options) &&
-    dedupedHistory.length > recentEntryCount
-  ) {
-    const summaryEntries = dedupedHistory.slice(0, -recentEntryCount);
-    const recentHistory = dedupedHistory.slice(-recentEntryCount);
+  const maxRawEntries = Math.min(recentEntryCount, dedupedHistory.length);
+  for (let rawEntryCount = maxRawEntries; rawEntryCount >= 0; rawEntryCount -= 2) {
+    const summaryEntries = rawEntryCount > 0
+      ? dedupedHistory.slice(0, -rawEntryCount)
+      : dedupedHistory;
+    const recentHistory = rawEntryCount > 0
+      ? dedupedHistory.slice(-rawEntryCount)
+      : [];
     const canReuseExistingSummary =
+      rawEntryCount === maxRawEntries &&
       options.existingSummary?.trim() &&
       options.existingSummaryMessageCount === messages.length;
     const summaryText = canReuseExistingSummary
       ? options.existingSummary!.trim()
       : buildSummary(summaryEntries, options.existingSummary);
     const recentHistoryText = formatHistory(recentHistory);
+    const estimatedTokens = estimatePromptTokens([
+      summaryText,
+      recentHistoryText,
+      latestMessageText,
+      latestAttachmentSummary,
+    ]) + latestAttachmentTokens;
 
-    sections.push("", "Earlier conversation summary:", summaryText);
-    if (recentHistoryText) {
-      sections.push("", "Recent conversation history:", recentHistoryText);
+    if (rawEntryCount > 0 && shouldCompressHistory(estimatedTokens, options)) {
+      continue;
     }
-
-    if (latestAttachmentSummary) {
-      sections.push(
-        "",
-        `The latest message includes attachments: ${latestAttachmentSummary.replace(/^\[Attachments:\s*|\]$/g, "")}.`,
-        "If image attachments are present in the current turn, analyze them directly and do not repeat earlier claims that an image was missing.",
-      );
-    }
-
-    sections.push(
-      "",
-      `Latest user message: ${latestMessageText}`,
-      "",
-      "Respond naturally as if the conversation had continued normally. Do not mention that history was stitched together.",
-    );
 
     return {
-      prompt: sections.join("\n"),
+      prompt: buildContinuationPrompt({
+        summaryText,
+        recentHistoryText,
+        latestMessageText,
+        latestAttachmentSummary,
+      }),
       usedCompression: true,
       summaryText,
       summaryMessageCount: messages.length,
-      estimatedCharacters: estimateCharacters(recentHistoryText, latestMessageText, latestAttachmentSummary, summaryText),
+      estimatedTokens,
     };
   }
 
-  if (rawHistoryText) {
-    sections.push("", rawHistoryText);
-  }
-
-  if (latestAttachmentSummary) {
-    sections.push(
-      "",
-      `The latest message includes attachments: ${latestAttachmentSummary.replace(/^\[Attachments:\s*|\]$/g, "")}.`,
-      "If image attachments are present in the current turn, analyze them directly and do not repeat earlier claims that an image was missing.",
-    );
-  }
-
-  sections.push(
-    "",
-    `Latest user message: ${latestMessageText}`,
-    "",
-    "Respond naturally as if the conversation had continued normally. Do not mention that history was stitched together.",
-  );
+  const fallbackSummary = buildSummary(dedupedHistory, options.existingSummary);
+  const fallbackPrompt = buildContinuationPrompt({
+    summaryText: fallbackSummary,
+    latestMessageText,
+    latestAttachmentSummary,
+  });
 
   return {
-    prompt: sections.join("\n"),
-    usedCompression: false,
-    summaryMessageCount: 0,
-    estimatedCharacters: rawEstimatedCharacters,
+    prompt: fallbackPrompt,
+    usedCompression: true,
+    summaryText: fallbackSummary,
+    summaryMessageCount: messages.length,
+    estimatedTokens:
+      estimatePromptTokens([fallbackSummary, latestMessageText, latestAttachmentSummary]) + latestAttachmentTokens,
   };
 }
 

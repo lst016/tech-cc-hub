@@ -46,7 +46,11 @@ electron.contextBridge.exposeInMainWorld("electron", {
     syncSkillSources: (request: any) =>
         ipcInvoke("sync-skill-sources", request),
     checkApiConfig: () =>
-        ipcInvoke("check-api-config")
+        ipcInvoke("check-api-config"),
+    debugSaveTraceSnapshot: (snapshot: any) =>
+        ipcInvoke("debug-save-trace-snapshot", snapshot),
+    preprocessImageAttachments: (payload: any) =>
+        ipcInvoke("preprocess-image-attachments", payload),
 } satisfies Window['electron'])
 
 function ipcInvoke<Key extends keyof EventPayloadMapping>(key: Key, ...args: any[]): Promise<EventPayloadMapping[Key]> {

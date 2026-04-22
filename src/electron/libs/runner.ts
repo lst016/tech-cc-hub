@@ -7,14 +7,17 @@ import {
   type SDKUserMessage,
   type ThinkingConfig,
 } from "@anthropic-ai/claude-agent-sdk";
-import { existsSync } from "fs";
+import { existsSync, statSync } from "fs";
+import { extname } from "path";
 
 import { buildAnthropicPromptContentBlocks } from "../../shared/attachments.js";
 import type { PromptAttachment, RuntimeOverrides, ServerEvent } from "../types.js";
 import { resolveAgentRuntimeContext } from "./agent-resolver.js";
 import { buildEnvForConfig, getClaudeCodePath, getCurrentApiConfig } from "./claude-settings.js";
+import { summarizeBase64Image, summarizeLocalImageFile } from "./image-preprocessor.js";
 import { normalizeRunnerError } from "./runner-error.js";
 import type { Session } from "./session-store.js";
+import { buildToolImageReplacementText, extractInlineBase64ImageFromToolResponse } from "./tool-output-sanitizer.js";
 import { getEnhancedEnv } from "./util.js";
 
 export type RunnerOptions = {
@@ -33,6 +36,9 @@ export type RunnerHandle = {
 
 const DEFAULT_CWD = process.cwd();
 const ALWAYS_ALLOWED_TOOLS = new Set(["AskUserQuestion"]);
+const RASTER_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
+const MAX_IMAGE_READS_PER_RUN = 1;
+const MAX_SINGLE_IMAGE_READ_BYTES = 400_000;
 
 function getRequestedModelName(configModel: string | undefined, runtimeModel: string | undefined): string | undefined {
   const normalizedRuntimeModel = runtimeModel?.trim();
@@ -56,6 +62,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   const { prompt, attachments = [], runtime, session, resumeSessionId, onEvent, onSessionUpdate } = options;
   const abortController = new AbortController();
   const permissionMode = runtime?.permissionMode ?? "bypassPermissions";
+  let rasterImageReads = 0;
 
   const sendMessage = (message: SDKMessage) => {
     onEvent({
@@ -134,7 +141,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         agentContext.allowedTools,
         agentContext.enforceAllowedTools,
       );
-      const hooks = buildQualityHooks(resolvedCwd);
+      const hooks = buildQualityHooks(resolvedCwd, { config, prompt });
 
       const q = query({
         prompt: createPromptSource(prompt, attachments),
@@ -185,6 +192,22 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                   resolve({ behavior: "deny", message: "Session aborted" });
                 });
               });
+            }
+
+            if (toolName === "Read" && isRecord(input)) {
+              const filePath = typeof input.file_path === "string" ? input.file_path.trim() : "";
+              if (!shouldPreprocessImageRead(config, filePath)) {
+                const imageReadCheck = checkRasterImageRead(filePath, rasterImageReads);
+                if (imageReadCheck.denyMessage) {
+                  return {
+                    behavior: "deny",
+                    message: imageReadCheck.denyMessage,
+                  };
+                }
+                if (imageReadCheck.countRead) {
+                  rasterImageReads += 1;
+                }
+              }
             }
 
             if (effectiveAllowedTools && !effectiveAllowedTools.has(toolName) && !ALWAYS_ALLOWED_TOOLS.has(toolName)) {
@@ -293,12 +316,78 @@ function parseAllowedTools(value: string | undefined): Set<string> | null {
   return parsed.length > 0 ? new Set(parsed) : null;
 }
 
-function buildQualityHooks(_cwd: string): Partial<Record<string, HookCallbackMatcher[]>> {
+function checkRasterImageRead(
+  filePath: string,
+  currentImageReads: number,
+): { denyMessage?: string; countRead: boolean } {
+  if (!filePath) {
+    return { countRead: false };
+  }
+
+  const extension = extname(filePath).toLowerCase();
+  if (!RASTER_IMAGE_EXTENSIONS.has(extension)) {
+    return { countRead: false };
+  }
+
+  if (currentImageReads >= MAX_IMAGE_READS_PER_RUN) {
+    return {
+      denyMessage:
+        "当前这轮已经读取过一张图片。继续读取多张栅格图很容易撑爆上下文，请只保留最关键的一张，或改为让用户指定要看哪张。",
+      countRead: false,
+    };
+  }
+
+  if (!existsSync(filePath)) {
+    return { countRead: true };
+  }
+
+  try {
+    const { size } = statSync(filePath);
+    if (size > MAX_SINGLE_IMAGE_READ_BYTES) {
+      return {
+        denyMessage:
+          `图片文件过大（${Math.round(size / 1024)} KB），直接读取容易造成上下文溢出。请改读相邻文档说明，或只处理裁剪后的关键截图。`,
+        countRead: false,
+      };
+    }
+  } catch {
+    return { countRead: true };
+  }
+
+  return { countRead: true };
+}
+
+function isRasterImagePath(filePath: string): boolean {
+  return RASTER_IMAGE_EXTENSIONS.has(extname(filePath).toLowerCase());
+}
+
+function shouldPreprocessImageRead(
+  config: NonNullable<ReturnType<typeof getCurrentApiConfig>> | null,
+  filePath: string,
+): boolean {
+  return Boolean(config?.imageModel?.trim()) && isRasterImagePath(filePath);
+}
+
+function createImageSummaryToolOutput(summary: string): { content: Array<{ type: "text"; text: string }> } {
+  return {
+    content: [{ type: "text", text: summary }],
+  };
+}
+
+function buildQualityHooks(
+  _cwd: string,
+  options: {
+    config: NonNullable<ReturnType<typeof getCurrentApiConfig>>;
+    prompt: string;
+  },
+): Partial<Record<string, HookCallbackMatcher[]>> {
   void _cwd;
+  const { config, prompt } = options;
   const readFiles = new Set<string>();
   let lastToolSignature: string | null = null;
   let toolFailureCount = 0;
   let repeatWarningCount = 0;
+  let rasterImageReads = 0;
 
   return {
     UserPromptSubmit: [{
@@ -381,6 +470,24 @@ function buildQualityHooks(_cwd: string): Partial<Record<string, HookCallbackMat
               fixes.push("file_path 去除空白");
             }
             if (toolName === "Read") {
+              if (!shouldPreprocessImageRead(config, fixed)) {
+                const imageReadCheck = checkRasterImageRead(fixed, rasterImageReads);
+                if (imageReadCheck.denyMessage) {
+                  return {
+                    continue: true,
+                    hookSpecificOutput: {
+                      hookEventName: "PreToolUse",
+                      permissionDecision: "deny",
+                      permissionDecisionReason: imageReadCheck.denyMessage,
+                      additionalContext: imageReadCheck.denyMessage,
+                      ...(didMutate ? { updatedInput: normalizedInput } : {}),
+                    },
+                  };
+                }
+                if (imageReadCheck.countRead) {
+                  rasterImageReads += 1;
+                }
+              }
               readFiles.add(fixed);
             } else if (!readFiles.has(fixed)) {
               hints.push(`修改/写入前未读过 ${fixed}，建议补一次 Read`);
@@ -447,6 +554,109 @@ function buildQualityHooks(_cwd: string): Partial<Record<string, HookCallbackMat
             ...(didMutate ? { updatedInput: normalizedInput } : {}),
           },
         };
+      }],
+    }],
+    PostToolUse: [{
+      hooks: [async (input) => {
+        if (!("tool_name" in input) || typeof input.tool_name !== "string") {
+          return { continue: true };
+        }
+
+        if (input.tool_name === "Read") {
+
+        const toolInput = isRecord(input.tool_input) ? input.tool_input : {};
+        const filePath = typeof toolInput.file_path === "string" ? toolInput.file_path.trim() : "";
+        if (!shouldPreprocessImageRead(config, filePath)) {
+          return { continue: true };
+        }
+
+        try {
+          const summary = await summarizeLocalImageFile({ config, prompt, filePath });
+          if (!summary) {
+            return { continue: true };
+          }
+
+          return {
+            continue: true,
+            hookSpecificOutput: {
+              hookEventName: "PostToolUse",
+              additionalContext: `已将图片读取结果替换为 ${config.imageModel?.trim() || "图片模型"} 的中文摘要，避免原图进入上下文。`,
+              updatedMCPToolOutput: createImageSummaryToolOutput(summary),
+            },
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const fallback = [
+            `图片文件：${filePath}`,
+            "图片预处理失败，已阻止原图直接进入上下文。",
+            `失败原因：${message}`,
+            "请优先读取相邻文档说明，或只处理用户明确指定的一张关键图片。",
+          ].join("\n");
+
+          return {
+            continue: true,
+            hookSpecificOutput: {
+              hookEventName: "PostToolUse",
+              additionalContext: fallback,
+              updatedMCPToolOutput: createImageSummaryToolOutput(fallback),
+            },
+          };
+        }
+        }
+
+        if (!("tool_response" in input)) {
+          return { continue: true };
+        }
+
+        const inlineImage = extractInlineBase64ImageFromToolResponse(input.tool_response);
+        if (!inlineImage) {
+          return { continue: true };
+        }
+
+        const summarizedPrompt = [
+          prompt.trim(),
+          inlineImage.textContext.trim() ? `Tool response context: ${inlineImage.textContext.trim()}` : "",
+        ].filter(Boolean).join("\n\n");
+
+        try {
+          const summary = await summarizeBase64Image({
+            config,
+            prompt: summarizedPrompt,
+            attachmentName: `${input.tool_name}-result`,
+            mimeType: inlineImage.mimeType,
+            base64Data: inlineImage.base64Data,
+          });
+          const replacementText = buildToolImageReplacementText({
+            toolName: input.tool_name,
+            textContext: inlineImage.textContext,
+            summary: summary ?? undefined,
+          });
+
+          return {
+            continue: true,
+            hookSpecificOutput: {
+              hookEventName: "PostToolUse",
+              additionalContext: `Replaced ${input.tool_name} image output with text to avoid context overflow.`,
+              updatedMCPToolOutput: createImageSummaryToolOutput(replacementText),
+            },
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const fallback = buildToolImageReplacementText({
+            toolName: input.tool_name,
+            textContext: inlineImage.textContext,
+            error: message,
+          });
+
+          return {
+            continue: true,
+            hookSpecificOutput: {
+              hookEventName: "PostToolUse",
+              additionalContext: fallback,
+              updatedMCPToolOutput: createImageSummaryToolOutput(fallback),
+            },
+          };
+        }
       }],
     }],
     PostToolUseFailure: [{

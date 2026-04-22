@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ESNext",
+    "module": "NodeNext",
+    "outDir": "../../dist-test",
+    "rootDir": "../..",
+    "skipLibCheck": true,
+    "types": [
+      "node",
+      "../../types"
+    ]
+  },
+  "include": [
+    "../../src/shared/activity-rail-model.ts",
+    "./activity-rail-model.test.ts"
+  ]
+}

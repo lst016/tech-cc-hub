@@ -15,6 +15,7 @@ import {
   type WorkflowScope,
   type WorkflowSpecDocument,
 } from "../../shared/workflow-markdown";
+import { extractSlashCommandsFromMessages, mergeSlashCommandLists } from "../../shared/slash-commands";
 
 export type PermissionRequest = {
   toolUseId: string;
@@ -104,18 +105,7 @@ function getEnabledProfile(settings: ApiConfigSettings): ApiConfigProfile | unde
 }
 
 function extractSlashCommands(messages: StreamMessage[]): string[] | undefined {
-  for (const message of messages) {
-    if (
-      message.type === "system" &&
-      "subtype" in message &&
-      message.subtype === "init" &&
-      "slash_commands" in message &&
-      Array.isArray(message.slash_commands)
-    ) {
-      return message.slash_commands.filter((command): command is string => typeof command === "string");
-    }
-  }
-  return undefined;
+  return extractSlashCommandsFromMessages(messages);
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -250,7 +240,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       case "session.history": {
         const { sessionId, messages, status } = event.payload;
-        const slashCommands = extractSlashCommands(messages);
+        const slashCommands = mergeSlashCommandLists(event.payload.slashCommands, extractSlashCommands(messages));
         set((state) => {
           const existing = state.sessions[sessionId] ?? createSession(sessionId);
           return {
@@ -298,7 +288,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       case "session.status": {
-        const { sessionId, status, title, cwd } = event.payload;
+        const { sessionId, status, title, cwd, slashCommands } = event.payload;
         const isNewSession = !state.sessions[sessionId];
         set((state) => {
           const existing = state.sessions[sessionId] ?? createSession(sessionId);
@@ -310,6 +300,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                 status,
                 title: title ?? existing.title,
                 cwd: cwd ?? existing.cwd,
+                slashCommands: slashCommands ?? existing.slashCommands,
                 updatedAt: Date.now()
               }
             }
@@ -363,7 +354,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       case "stream.message": {
         const { sessionId, message } = event.payload;
-        const slashCommands = extractSlashCommands([message]);
+        const slashCommands = mergeSlashCommandLists(extractSlashCommands([message]));
         set((state) => {
           const existing = state.sessions[sessionId] ?? createSession(sessionId);
           return {

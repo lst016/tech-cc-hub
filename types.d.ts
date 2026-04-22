@@ -23,9 +23,17 @@ type ApiConfig = {
     baseURL: string;
     model: string;
     expertModel?: string;
+    imageModel?: string;
     models?: ApiModelConfig[];
     enabled: boolean;
     apiType?: "anthropic";
+}
+
+type ImagePreprocessResult = {
+    success: boolean;
+    attachments: import("./src/ui/types").PromptAttachment[];
+    usedImageModel?: string;
+    error?: string;
 }
 
 type ApiConfigSettings = {
@@ -99,6 +107,8 @@ type EventPayloadMapping = {
         "get-skill-inventory": SkillInventory;
         "save-skill-inventory": { success: boolean; error?: string };
         "sync-skill-sources": SkillSyncResponse;
+        "debug-save-trace-snapshot": { success: boolean; path?: string; error?: string };
+        "preprocess-image-attachments": ImagePreprocessResult;
 }
 
 interface Window {
@@ -120,5 +130,7 @@ interface Window {
         saveSkillInventory: (config: SkillInventory) => Promise<{ success: boolean; error?: string }>;
         syncSkillSources: (request: SkillSyncRequest) => Promise<SkillSyncResponse>;
         checkApiConfig: () => Promise<{ hasConfig: boolean; config: ApiConfig | null }>;
+        debugSaveTraceSnapshot: (snapshot: unknown) => Promise<{ success: boolean; path?: string; error?: string }>;
+        preprocessImageAttachments: (payload: { prompt: string; attachments: import("./src/ui/types").PromptAttachment[] }) => Promise<ImagePreprocessResult>;
     }
 }

@@ -9,6 +9,8 @@ import {
     Menu,
 } from "electron"
 import { execSync } from "child_process";
+import { mkdirSync, writeFileSync } from "fs";
+import { join } from "path";
 import { ipcMainHandle, isDev, DEV_PORT } from "./util.js";
 import { getPreloadPath, getUIPath, getIconPath } from "./pathResolver.js";
 import { getStaticData, pollResources, stopPolling } from "./test.js";
@@ -27,6 +29,7 @@ import {
 import { startSkillSyncScheduler, stopSkillSyncScheduler, syncSkillSources } from "./libs/skill-registry-sync.js";
 import { ensureSystemWorkspace } from "./libs/system-workspace.js";
 import { getCurrentApiConfig } from "./libs/claude-settings.js";
+import { preprocessImageAttachments } from "./libs/image-preprocessor.js";
 import type { ClientEvent } from "./types.js";
 import "./libs/claude-settings.js";
 
@@ -195,6 +198,7 @@ app.on("ready", async () => {
         height: 900,
         minWidth: 1180,
         minHeight: 600,
+        title: "tech-cc-hub",
         webPreferences: {
             preload: getPreloadPath(),
         },
@@ -324,6 +328,37 @@ app.on("ready", async () => {
         } catch (error) {
             console.error("[main] Skill sync failed:", error);
             return { results: [] };
+        }
+    });
+
+    ipcMainHandle("debug-save-trace-snapshot", (_: IpcMainInvokeEvent, snapshot: unknown) => {
+        try {
+            const debugDir = join(app.getPath("userData"), "debug-artifacts");
+            mkdirSync(debugDir, { recursive: true });
+            const filePath = join(debugDir, `trace-dom-snapshot-${Date.now()}.json`);
+            writeFileSync(filePath, JSON.stringify(snapshot, null, 2), "utf8");
+            return { success: true, path: filePath };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : String(error),
+            };
+        }
+    });
+
+    ipcMainHandle("preprocess-image-attachments", async (_: IpcMainInvokeEvent, payload: { prompt?: string; attachments?: unknown[] }) => {
+        try {
+            return await preprocessImageAttachments({
+                config: getCurrentApiConfig(),
+                prompt: payload?.prompt ?? "",
+                attachments: Array.isArray(payload?.attachments) ? payload.attachments as any : [],
+            });
+        } catch (error) {
+            return {
+                success: false,
+                attachments: Array.isArray(payload?.attachments) ? payload.attachments as any : [],
+                error: error instanceof Error ? error.message : String(error),
+            };
         }
     });
 })
