@@ -5,6 +5,7 @@ import {
 } from "fs";
 import { homedir } from "os";
 import { basename, dirname, extname, isAbsolute, join } from "path";
+import type { PromptLedgerSource } from "../../shared/prompt-ledger.js";
 
 export type AgentRunSurface = "development" | "maintenance";
 
@@ -43,6 +44,7 @@ export type ResolvedAgentRuntimeContext = {
   selectedAgentId?: string;
   settingSources: Array<"user" | "project">;
   systemPromptAppend?: string;
+  promptSources: PromptLedgerSource[];
   skills: string[];
   allowedTools?: string[];
   enforceAllowedTools: boolean;
@@ -94,6 +96,7 @@ export function resolveAgentRuntimeContext(options: {
       selectedAgentId: selectedProfile?.id,
       settingSources: [],
       systemPromptAppend: buildPromptAppend([], [selectedProfile]),
+      promptSources: buildPromptLedgerSources([], selectedProfile ? [selectedProfile] : []),
       skills: selectedProfile?.skills ?? [],
       allowedTools: selectedProfile?.allowedTools,
       enforceAllowedTools: true,
@@ -129,23 +132,71 @@ export function resolveAgentRuntimeContext(options: {
     new Set(appliedProfiles.flatMap((profile) => profile.skills).map((skill) => skill.trim()).filter(Boolean)),
   );
   const allowedTools = mergeAllowedTools(appliedProfiles);
+  const entryDocs = [
+    ...userLayer.entryDocs,
+    ...(projectLayer?.entryDocs ?? []),
+  ];
 
   return {
     surface,
     selectedAgentId: requestedAgentId,
     settingSources: projectRoot ? ["user", "project"] : ["user"],
     systemPromptAppend: buildPromptAppend(
-      [
-        ...userLayer.entryDocs,
-        ...(projectLayer?.entryDocs ?? []),
-      ],
+      entryDocs,
       appliedProfiles,
     ),
+    promptSources: buildPromptLedgerSources(entryDocs, appliedProfiles, skills),
     skills,
     allowedTools,
     enforceAllowedTools: false,
     appliedProfiles,
   };
+}
+
+function buildPromptLedgerSources(
+  entryDocs: Array<{ scope: AgentScope; path: string; label: string; content: string }>,
+  profiles: ResolvedAgentProfile[],
+  skills: string[] = [],
+): PromptLedgerSource[] {
+  const sources: PromptLedgerSource[] = [{
+    id: "system-preset",
+    label: "Claude Code 系统预设",
+    sourceKind: "system",
+    chars: 0,
+    sample: "SDK 内置系统提示，当前只能记录存在性，无法本地展开全文。",
+  }];
+
+  for (const doc of entryDocs) {
+    sources.push({
+      id: `${doc.scope}-entry-${doc.path}`,
+      label: `${scopeLabel(doc.scope)}入口：${doc.label}`,
+      sourceKind: doc.scope === "project" ? "project" : "system",
+      text: doc.content,
+      sourcePath: doc.path,
+    });
+  }
+
+  for (const profile of profiles) {
+    sources.push({
+      id: `${profile.scope}-agent-${profile.id}`,
+      label: `${scopeLabel(profile.scope)}Agent：${profile.name}`,
+      sourceKind: profile.scope === "project" ? "project" : "system",
+      text: [profile.description, profile.prompt].filter(Boolean).join("\n"),
+      sourcePath: profile.sourcePath,
+    });
+  }
+
+  if (skills.length > 0) {
+    sources.push({
+      id: "configured-skills",
+      label: "已配置 skills",
+      sourceKind: "skill",
+      chars: skills.join("\n").length,
+      sample: skills.join(", "),
+    });
+  }
+
+  return sources;
 }
 
 function discoverAgentLayer(

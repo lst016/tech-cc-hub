@@ -4,6 +4,7 @@ import type {
   SDKResultMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import type { PromptLedgerBucket, PromptLedgerMessage } from "./prompt-ledger.js";
 
 export type ActivityRailTone = "neutral" | "info" | "success" | "warning" | "error";
 export type ActivityRailLayer = "上下文" | "工具" | "结果" | "流程";
@@ -83,7 +84,7 @@ export type UserPromptMessageLike = {
   capturedAt?: number;
 };
 
-export type StreamMessageLike = (SDKMessage & { capturedAt?: number }) | UserPromptMessageLike;
+export type StreamMessageLike = (SDKMessage & { capturedAt?: number }) | UserPromptMessageLike | PromptLedgerMessage;
 
 export type SessionLike = {
   id: string;
@@ -188,6 +189,13 @@ export type ContextDistributionModel = {
   buckets: ContextDistributionBucket[];
 };
 
+export type PromptAnalysisModel = {
+  title: "Prompt 分析";
+  totalChars: number;
+  totalTokenEstimate: number;
+  buckets: PromptLedgerBucket[];
+};
+
 export type ActivityRailModel = {
   primarySectionTitle: "实时执行轨迹";
   detailCardTitle: "步骤详情";
@@ -226,6 +234,7 @@ export type ActivityRailModel = {
     latestResultText: string;
   };
   contextDistribution: ContextDistributionModel;
+  promptAnalysis: PromptAnalysisModel;
 };
 
 type ToolOutcome = {
@@ -865,8 +874,14 @@ const PLAN_NON_PLAN_PREFIX_PATTERN =
 const PLAN_ITEM_ACTION_PATTERN =
   /(实现|创建|编写|生成|搭建|重构|优化|检查|验证|更新|补齐|修复|确认|读取|写入|安装|执行|配置|迁移|部署|提交|清理|拆解|处理|开发|分析|梳理|排查|调研|设计|构建|运行|重试|inspect|update|edit|build|run|fix|verify|check|search|create|read|write|prepare|implement|execute|decide|return|analyze)/i;
 
+const READABLE_PLAN_HINT_PATTERN =
+  /(计划|步骤|顺序|先按|先做|然后|接下来|接着|最后|执行|实施|方案|清单|分解|逐步|我先|我会|我将)/i;
+
+const READABLE_PLAN_ITEM_ACTION_PATTERN =
+  /(实现|创建|编写|生成|搭建|重构|优化|检查|验证|更新|补齐|修复|确认|读取|写入|安装|执行|配置|迁移|部署|提交|清理|拆解|处理|开发|分析|梳理|排查|调研|设计|构建|运行|重试)/i;
+
 function parseExplicitPlan(text: string): Array<{ index: number; title: string }> {
-  const normalized = text.replace(/\r/g, "");
+  const normalized = text.replace(/\r/g, "").replace(/\u5213n/g, "\n");
   type PlanCandidate = { index: number; title: string; start: number };
 
   const buildMatches = (line: RegExp): PlanCandidate[] =>
@@ -880,16 +895,27 @@ function parseExplicitPlan(text: string): Array<{ index: number; title: string }
     if (items.length < 2) return false;
     const hintWindow = normalized.slice(0, Math.max(0, items[0]?.start ?? 0));
     const prefixWindow = normalized.slice(Math.max(0, (items[0]?.start ?? 0) - 220), Math.max(0, items[0]?.start ?? 0));
-    const hasPlanHint = PLAN_HINT_PATTERN.test(hintWindow) || PLAN_HINT_PATTERN.test(prefixWindow);
+    const hasPlanHint =
+      PLAN_HINT_PATTERN.test(hintWindow) ||
+      PLAN_HINT_PATTERN.test(prefixWindow) ||
+      READABLE_PLAN_HINT_PATTERN.test(hintWindow) ||
+      READABLE_PLAN_HINT_PATTERN.test(prefixWindow);
     const hasPlanNegativePrefix = PLAN_NON_PLAN_PREFIX_PATTERN.test(prefixWindow);
     if (!hasPlanHint && hasPlanNegativePrefix) {
       return false;
     }
 
-    const actionHitCount = items.filter((item) => PLAN_ITEM_ACTION_PATTERN.test(item.title)).length;
+    const actionHitCount = items.filter((item) =>
+      PLAN_ITEM_ACTION_PATTERN.test(item.title) || READABLE_PLAN_ITEM_ACTION_PATTERN.test(item.title)
+    ).length;
     const hasActionSignal = actionHitCount >= Math.max(1, Math.ceil(items.length / 2));
     return hasPlanHint || hasActionSignal;
   };
+
+  const readableNumberedMatches = buildMatches(/(?:^|\n)\s*(?:step\s*)?(\d+)[.)、:：]\s*(.+)$/gim);
+  if (acceptListAsPlan(readableNumberedMatches)) {
+    return readableNumberedMatches.map((item) => ({ index: item.index, title: item.title }));
+  }
 
   const numberedMatches = buildMatches(/(?:^|\n)\s*(?:step\s*)?(\d+)[.)）:：、-]\s*(.+)$/gim);
   if (acceptListAsPlan(numberedMatches)) {
@@ -1238,6 +1264,10 @@ function isPlanDrivenResultUsable(
     planDriven.planSteps.length > 0 ? matchedStepCount / planDriven.planSteps.length : 0;
   const coverageRatio = candidateItemCount > 0 ? coveredTimelineCount / candidateItemCount : 1;
 
+  if (candidateItemCount === 0) {
+    return true;
+  }
+
   if (matchedStepCount === 0) {
     return false;
   }
@@ -1400,6 +1430,12 @@ export function buildActivityRailModel(
         totalChars: 0,
         buckets: [],
       },
+      promptAnalysis: {
+        title: "Prompt 分析",
+        totalChars: 0,
+        totalTokenEstimate: 0,
+        buckets: [],
+      },
     };
   }
 
@@ -1428,8 +1464,36 @@ export function buildActivityRailModel(
   const hookQualitySignals: HookQualitySignal[] = [];
   let latestParsedPlan: ParsedPlan | null = null;
   let roundContextChars = 0;
+  let latestPromptLedger: PromptLedgerMessage | null = null;
 
   for (const message of session.messages) {
+    if (message.type === "prompt_ledger") {
+      latestPromptLedger = message;
+      sequence += 1;
+      timelineChronological.push(
+        createTimelineItem({
+          id: `prompt-ledger-${message.historyId ?? sequence}`,
+          filterKey: "context",
+          layer: "上下文",
+          tone: "info",
+          nodeKind: "context",
+          title: "记录 Prompt 分析",
+          detail: `本次请求约 ${formatNumber(message.totalChars)} 字符，估算 ${formatNumber(message.totalTokenEstimate)} tokens。`,
+          round: Math.max(round, 1),
+          sequence,
+          statusLabel: message.phase === "start" ? "开始" : "续聊",
+          chips: message.buckets.slice(0, 3).map((bucket) => bucket.label),
+          attention: false,
+          stageKind: "inspect",
+          metrics: createEmptyMetrics({
+            contextChars: message.totalChars,
+            inputChars: message.buckets.find((bucket) => bucket.id === "current-prompt")?.chars ?? 0,
+          }),
+        }),
+      );
+      continue;
+    }
+
     if (message.type === "assistant") {
       const assistant = message as SDKAssistantMessage;
       const assistantCapturedAt = getCapturedAt(message);
@@ -1975,7 +2039,23 @@ export function buildActivityRailModel(
     flow: timeline.filter((item) => item.filterKey === "flow").length,
   };
   const contextDistribution = buildContextDistribution(distributionBuckets);
+  const promptAnalysis: PromptAnalysisModel = latestPromptLedger
+    ? {
+        title: "Prompt 分析",
+        totalChars: latestPromptLedger.totalChars,
+        totalTokenEstimate: latestPromptLedger.totalTokenEstimate,
+        buckets: latestPromptLedger.buckets,
+      }
+    : {
+        title: "Prompt 分析",
+        totalChars: 0,
+        totalTokenEstimate: 0,
+        buckets: [],
+      };
   const largestContextBucket = contextDistribution.buckets
+    .slice()
+    .sort((left, right) => right.chars - left.chars)[0];
+  const largestPromptBucket = promptAnalysis.buckets
     .slice()
     .sort((left, right) => right.chars - left.chars)[0];
   const executionMetrics = timeline.reduce(
@@ -2124,6 +2204,15 @@ export function buildActivityRailModel(
     });
   }
 
+  if (largestPromptBucket) {
+    analysisCards.push({
+      id: "prompt-hotspot",
+      title: "Prompt 热点",
+      tone: largestPromptBucket.sourceKind === "tool" || largestPromptBucket.sourceKind === "history" ? "warning" : "info",
+      detail: `本次请求 Prompt 构成里最大的是“${largestPromptBucket.label}”，约 ${formatNumber(largestPromptBucket.chars)} 字符，占 ${(largestPromptBucket.ratio * 100).toFixed(1)}%。`,
+    });
+  }
+
   return {
     primarySectionTitle: "实时执行轨迹",
     detailCardTitle: "步骤详情",
@@ -2162,5 +2251,6 @@ export function buildActivityRailModel(
       latestResultText,
     },
     contextDistribution,
+    promptAnalysis,
   };
 }

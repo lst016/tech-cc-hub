@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   PermissionResult,
   SDKAssistantMessage,
@@ -18,6 +18,14 @@ type ToolStatus = "pending" | "success" | "error";
 const toolStatusMap = new Map<string, ToolStatus>();
 const toolStatusListeners = new Set<() => void>();
 const MAX_VISIBLE_LINES = 3;
+
+type SystemInitMessage = SDKMessage & {
+  subtype?: string;
+  session_id?: string;
+  model?: string;
+  permissionMode?: string;
+  cwd?: string;
+};
 
 type AskUserQuestionInput = {
   questions?: Array<{
@@ -41,6 +49,18 @@ const setToolStatus = (toolUseId: string | undefined, status: ToolStatus) => {
   toolStatusMap.set(toolUseId, status);
   toolStatusListeners.forEach((listener) => listener());
 };
+
+const getRecordString = (input: Record<string, unknown>, key: string) => {
+  const value = input[key];
+  return typeof value === "string" ? value : null;
+};
+
+const InfoItem = ({ name, value }: { name: string; value: string }) => (
+  <div className="text-[14px]">
+    <span className="mr-4 font-normal">{name}</span>
+    <span className="font-light">{value}</span>
+  </div>
+);
 
 const useToolStatus = (toolUseId: string | undefined) => {
   const [status, setStatus] = useState<ToolStatus | undefined>(() =>
@@ -107,14 +127,19 @@ function extractTagContent(input: string, tag: string): string | null {
 
 const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) => {
   const [isExpanded, setIsExpanded] = useState(false);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
-  const isFirstRender = useRef(true);
+  const isToolResult = typeof messageContent !== "string" && messageContent.type === "tool_result";
+  const toolUseId = isToolResult ? messageContent.tool_use_id : undefined;
+  const status: ToolStatus = isToolResult && messageContent.is_error ? "error" : "success";
   let lines: string[] = [];
-  
-  if (typeof messageContent === "string" || messageContent.type !== "tool_result") return null;
-  
-  const toolUseId = messageContent.tool_use_id;
-  const status: ToolStatus = messageContent.is_error ? "error" : "success";
+
+  useEffect(() => {
+    if (isToolResult) {
+      setToolStatus(toolUseId, status);
+    }
+  }, [isToolResult, status, toolUseId]);
+
+  if (!isToolResult) return null;
+
   const isError = messageContent.is_error;
 
   if (messageContent.is_error) {
@@ -136,12 +161,6 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
   const hasMoreLines = lines.length > MAX_VISIBLE_LINES;
   const visibleContent = hasMoreLines && !isExpanded ? lines.slice(0, MAX_VISIBLE_LINES).join("\n") : lines.join("\n");
 
-  useEffect(() => { setToolStatus(toolUseId, status); }, [toolUseId, status]);
-  useEffect(() => {
-    if (!hasMoreLines || isFirstRender.current) { isFirstRender.current = false; return; }
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [hasMoreLines, isExpanded]);
-
   return (
     <div className="mt-4 flex flex-col">
       <div className="text-[11px] font-semibold tracking-[0.16em] text-muted">工具输出</div>
@@ -155,7 +174,6 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
             <span>{isExpanded ? "收起" : `展开剩余 ${lines.length - MAX_VISIBLE_LINES} 行`}</span>
           </button>
         )}
-        <div ref={bottomRef} />
       </div>
     </div>
   );
@@ -174,25 +192,27 @@ const AssistantBlockCard = ({ title, text, showIndicator = false }: { title: str
 );
 
 const ToolUseCard = ({ messageContent, showIndicator = false }: { messageContent: MessageContent; showIndicator?: boolean }) => {
-  if (messageContent.type !== "tool_use") return null;
-  
-  const toolStatus = useToolStatus(messageContent.id);
+  const isToolUse = messageContent.type === "tool_use";
+  const toolUseId = isToolUse ? messageContent.id : undefined;
+  const toolStatus = useToolStatus(toolUseId);
   const statusVariant = toolStatus === "error" ? "error" : "success";
   const isPending = !toolStatus || toolStatus === "pending";
   const shouldShowDot = toolStatus === "success" || toolStatus === "error" || showIndicator;
 
   useEffect(() => {
-    if (messageContent?.id && !toolStatusMap.has(messageContent.id)) setToolStatus(messageContent.id, "pending");
-  }, [messageContent?.id]);
+    if (toolUseId && !toolStatusMap.has(toolUseId)) setToolStatus(toolUseId, "pending");
+  }, [toolUseId]);
+
+  if (!isToolUse) return null;
 
   const getToolInfo = (): string | null => {
-    const input = messageContent.input as Record<string, any>;
+    const input = messageContent.input as Record<string, unknown>;
     switch (messageContent.name) {
-      case "Bash": return input?.command || null;
-      case "Read": case "Write": case "Edit": return input?.file_path || null;
-      case "Glob": case "Grep": return input?.pattern || null;
-      case "Task": return input?.description || null;
-      case "WebFetch": return input?.url || null;
+      case "Bash": return getRecordString(input, "command");
+      case "Read": case "Write": case "Edit": return getRecordString(input, "file_path");
+      case "Glob": case "Grep": return getRecordString(input, "pattern");
+      case "Task": return getRecordString(input, "description");
+      case "WebFetch": return getRecordString(input, "url");
       default: return null;
     }
   };
@@ -254,14 +274,7 @@ const AskUserQuestionCard = ({
 const SystemInfoCard = ({ message, showIndicator = false }: { message: SDKMessage; showIndicator?: boolean }) => {
   if (message.type !== "system" || !("subtype" in message) || message.subtype !== "init") return null;
   
-  const systemMsg = message as any;
-  
-  const InfoItem = ({ name, value }: { name: string; value: string }) => (
-    <div className="text-[14px]">
-      <span className="mr-4 font-normal">{name}</span>
-      <span className="font-light">{value}</span>
-    </div>
-  );
+  const systemMsg = message as SystemInitMessage;
   
   return (
     <div className="mt-4 flex flex-col gap-2">

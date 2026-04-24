@@ -8,9 +8,13 @@ test("app exposes a session analysis entry and renders the analysis page skeleto
   const analysisPageSource = readFileSync(new URL("../../src/ui/components/SessionAnalysisPage.tsx", import.meta.url), "utf8");
 
   assert.match(appSource, /showSessionAnalysis/);
-  assert.match(railSource, /查看本会话分析/);
-  assert.match(analysisPageSource, /本会话完整分析/);
-  assert.match(analysisPageSource, /计划 vs 执行/);
-  assert.match(analysisPageSource, /执行步骤分析/);
-  assert.match(analysisPageSource, /关键节点证据/);
+  assert.match(railSource, /打开 Trace Viewer/);
+  assert.match(analysisPageSource, /Trace Flow/);
+  assert.match(analysisPageSource, /Node Inspector/);
+  assert.match(analysisPageSource, /Context Distribution/);
+  assert.match(analysisPageSource, /Analysis Cards/);
+  assert.match(analysisPageSource, /Prompt Ledger/);
+  assert.match(analysisPageSource, /Composition Breakdown/);
+  assert.match(analysisPageSource, /Compression Candidate/);
+  assert.match(analysisPageSource, /Full Prompt Payload/);
 });

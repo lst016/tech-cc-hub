@@ -46,6 +46,19 @@ function App() {
   const scrollHeightBeforeLoadRef = useRef(0);
   const shouldRestoreScrollRef = useRef(false);
 
+  const scrollChatToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const container = scrollContainerRef.current;
+    if (container) {
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior,
+      });
+      return;
+    }
+
+    messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
+  }, []);
+
   const sessions = useAppStore((s) => s.sessions);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const showStartModal = useAppStore((s) => s.showStartModal);
@@ -95,7 +108,7 @@ function App() {
       partialMessageRef.current += getPartialMessageContent(message.event) || "";
       setPartialMessage(partialMessageRef.current);
       if (shouldAutoScroll) {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        scrollChatToBottom("auto");
       } else {
         setHasNewMessages(true);
       }
@@ -108,7 +121,7 @@ function App() {
         setPartialMessage(partialMessageRef.current);
       }, 500);
     }
-  }, [shouldAutoScroll]);
+  }, [scrollChatToBottom, shouldAutoScroll]);
 
   // Combined event handler
   const onEvent = useCallback((event: ServerEvent) => {
@@ -319,19 +332,19 @@ function App() {
     setIsLoadingHistory(false);
     prevMessagesLengthRef.current = 0;
     setTimeout(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+      scrollChatToBottom("auto");
     }, 100);
-  }, [activeSessionId]);
+  }, [activeSessionId, scrollChatToBottom]);
 
   useEffect(() => {
     if (shouldAutoScroll) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      scrollChatToBottom("auto");
     } else if (messages.length > prevMessagesLengthRef.current && prevMessagesLengthRef.current > 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setHasNewMessages(true);
     }
     prevMessagesLengthRef.current = messages.length;
-  }, [messages, partialMessage, shouldAutoScroll]);
+  }, [messages, partialMessage, scrollChatToBottom, shouldAutoScroll]);
 
   useEffect(() => {
     if (!showSessionAnalysis) {
@@ -370,8 +383,8 @@ function App() {
     setShouldAutoScroll(true);
     setHasNewMessages(false);
     resetToLatest();
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [resetToLatest]);
+    scrollChatToBottom("smooth");
+  }, [resetToLatest, scrollChatToBottom]);
 
   const handleNewSession = useCallback((nextCwd?: string) => {
     useAppStore.getState().setActiveSessionId(null);
@@ -505,7 +518,7 @@ function App() {
               onScroll={handleScroll}
               className="chat-scroll flex-1 overflow-y-auto px-8 pb-40 pt-8"
             >
-              <div className="mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[34px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(248,250,252,0.82))] px-8 py-7 shadow-[0_24px_60px_rgba(30,38,52,0.08)] backdrop-blur-xl xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
+              <div className="chat-stream-content mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[34px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(248,250,252,0.82))] px-8 py-7 shadow-[0_24px_60px_rgba(30,38,52,0.08)] backdrop-blur-xl xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
                 <div ref={topSentinelRef} className="h-1" />
 
             {!hasMoreHistory && totalMessages > 0 && (
@@ -589,7 +602,7 @@ function App() {
               )}
             </div>
 
-                <div ref={messagesEndRef} />
+                <div ref={messagesEndRef} className="chat-bottom-anchor" />
               </div>
             </div>
           </>

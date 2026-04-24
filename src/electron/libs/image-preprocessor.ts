@@ -4,13 +4,7 @@ import { basename, extname } from "path";
 import type { PromptAttachment } from "../types.js";
 import type { ApiConfig } from "./config-store.js";
 import { persistImageAttachmentReference } from "./attachment-store.js";
-
-export type ImagePreprocessResult = {
-  success: boolean;
-  attachments: PromptAttachment[];
-  usedImageModel?: string;
-  error?: string;
-};
+import { preprocessImageAttachmentsCore, type ImagePreprocessResult } from "./image-preprocessor-core.js";
 
 const IMAGE_SUMMARY_MAX_TOKENS = 900;
 const IMAGE_MIME_TYPES: Record<string, string> = {
@@ -21,9 +15,6 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ".webp": "image/webp",
   ".bmp": "image/bmp",
 };
-const MAX_INLINE_IMAGE_ATTACHMENTS = 2;
-const MAX_INLINE_IMAGE_BYTES = 3_000_000;
-
 export async function preprocessImageAttachments(options: {
   config: ApiConfig | null;
   prompt: string;
@@ -42,59 +33,19 @@ export async function preprocessImageAttachments(options: {
     return { success: true, attachments };
   }
 
-  const shouldAllowInlineImages = Boolean(selectedModel?.trim() && selectedModel.trim() === imageModel);
-  const nextAttachments: PromptAttachment[] = [];
-  let inlineImageCount = 0;
-  let inlineImageBytes = 0;
-  for (const attachment of attachments) {
-    if (attachment.kind !== "image") {
-      nextAttachments.push(attachment);
-      continue;
-    }
-
-    try {
-      const storedReference = await persistImageAttachmentReference(attachment);
-      const summary = await summarizeBase64Image({
-        config,
-        prompt,
-        attachmentName: attachment.name,
-        mimeType: attachment.mimeType,
-        base64Data: stripDataUrlPrefix(attachment.runtimeData ?? attachment.data),
-      });
-      const canKeepInlineImage =
-        shouldAllowInlineImages &&
-        inlineImageCount < MAX_INLINE_IMAGE_ATTACHMENTS &&
-        inlineImageBytes + (attachment.size ?? 0) <= MAX_INLINE_IMAGE_BYTES;
-
-      if (canKeepInlineImage) {
-        inlineImageCount += 1;
-        inlineImageBytes += attachment.size ?? 0;
-      }
-
-      nextAttachments.push({
-        ...attachment,
-        data: storedReference?.storageUri ?? attachment.preview ?? attachment.data,
-        preview: storedReference?.storageUri ?? attachment.preview ?? attachment.data,
-        runtimeData: canKeepInlineImage ? (attachment.runtimeData ?? attachment.data) : undefined,
-        size: storedReference?.size ?? attachment.size,
-        storagePath: storedReference?.storagePath ?? attachment.storagePath,
-        storageUri: storedReference?.storageUri ?? attachment.storageUri,
-        summaryText: summary ?? attachment.summaryText,
-      });
-    } catch (error) {
-      return {
-        success: false,
-        attachments,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }
-
-  return {
-    success: true,
-    attachments: nextAttachments,
-    usedImageModel: imageModel,
-  };
+  return preprocessImageAttachmentsCore({
+    imageModel,
+    selectedModel,
+    attachments,
+    persistImageAttachmentReference,
+    summarizeImageAttachment: ({ attachment }) => summarizeBase64Image({
+      config,
+      prompt,
+      attachmentName: attachment.name,
+      mimeType: attachment.mimeType,
+      base64Data: stripDataUrlPrefix(attachment.runtimeData ?? attachment.data),
+    }),
+  });
 }
 
 export async function summarizeLocalImageFile(options: {

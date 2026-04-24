@@ -8,10 +8,25 @@ import {
   type ActivityPlanStep,
   type ActivityRailTone,
   type ActivityTimelineItem,
+  type PromptAnalysisModel,
 } from "../../shared/activity-rail-model";
+import type { PromptLedgerBucket, PromptLedgerSourceKind } from "../../shared/prompt-ledger";
 import type { SessionView } from "../store/useAppStore";
 
-type InspectorTabKey = "node" | "raw" | "analytics";
+type InspectorTabKey = "node" | "prompt" | "raw" | "analytics";
+
+type PromptSourceAggregate = {
+  id: PromptLedgerSourceKind;
+  label: string;
+  shortLabel: string;
+  chars: number;
+  tokenEstimate: number;
+  itemCount: number;
+  ratio: number;
+  sample: string;
+  barClass: string;
+  dotClass: string;
+};
 
 type TraceGroup = {
   id: string;
@@ -55,6 +70,35 @@ const STATUS_LABELS = {
   completed: "已完成",
   drifted: "计划偏移",
 } as const;
+
+const PROMPT_SOURCE_ORDER: PromptLedgerSourceKind[] = [
+  "system",
+  "project",
+  "skill",
+  "workflow",
+  "memory",
+  "current",
+  "attachment",
+  "tool",
+  "history",
+  "other",
+];
+
+const PROMPT_SOURCE_META: Record<
+  PromptLedgerSourceKind,
+  { label: string; shortLabel: string; barClass: string; dotClass: string }
+> = {
+  system: { label: "系统", shortLabel: "System", barClass: "bg-blue-600", dotClass: "bg-blue-600" },
+  project: { label: "项目", shortLabel: "Project", barClass: "bg-indigo-500", dotClass: "bg-indigo-500" },
+  skill: { label: "Skills", shortLabel: "Skills", barClass: "bg-sky-400", dotClass: "bg-sky-400" },
+  workflow: { label: "工作流", shortLabel: "Flow", barClass: "bg-emerald-400", dotClass: "bg-emerald-400" },
+  memory: { label: "记忆", shortLabel: "Memory", barClass: "bg-amber-400", dotClass: "bg-amber-400" },
+  current: { label: "当前输入", shortLabel: "Input", barClass: "bg-slate-500", dotClass: "bg-slate-500" },
+  attachment: { label: "附件", shortLabel: "Attach.", barClass: "bg-fuchsia-400", dotClass: "bg-fuchsia-400" },
+  tool: { label: "工具输出", shortLabel: "T-Output", barClass: "bg-rose-400", dotClass: "bg-rose-400" },
+  history: { label: "历史", shortLabel: "History", barClass: "bg-slate-700", dotClass: "bg-slate-700" },
+  other: { label: "其他", shortLabel: "Other", barClass: "bg-zinc-400", dotClass: "bg-zinc-400" },
+};
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -427,6 +471,266 @@ function SectionBlock({
       </div>
       <div className="max-h-52 overflow-y-auto whitespace-pre-wrap break-words bg-white p-3 text-[12px] leading-6 text-slate-700">
         {body}
+      </div>
+    </div>
+  );
+}
+
+function aggregatePromptBuckets(analysis: PromptAnalysisModel): PromptSourceAggregate[] {
+  const drafts = new Map<PromptLedgerSourceKind, Omit<PromptSourceAggregate, "ratio">>();
+
+  for (const kind of PROMPT_SOURCE_ORDER) {
+    const meta = PROMPT_SOURCE_META[kind];
+    drafts.set(kind, {
+      id: kind,
+      label: meta.label,
+      shortLabel: meta.shortLabel,
+      chars: 0,
+      tokenEstimate: 0,
+      itemCount: 0,
+      sample: "",
+      barClass: meta.barClass,
+      dotClass: meta.dotClass,
+    });
+  }
+
+  for (const bucket of analysis.buckets) {
+    const meta = PROMPT_SOURCE_META[bucket.sourceKind] ?? PROMPT_SOURCE_META.other;
+    const existing = drafts.get(bucket.sourceKind) ?? {
+      id: bucket.sourceKind,
+      label: meta.label,
+      shortLabel: meta.shortLabel,
+      chars: 0,
+      tokenEstimate: 0,
+      itemCount: 0,
+      sample: "",
+      barClass: meta.barClass,
+      dotClass: meta.dotClass,
+    };
+
+    existing.chars += bucket.chars;
+    existing.tokenEstimate += bucket.tokenEstimate;
+    existing.itemCount += bucket.itemCount;
+    if (!existing.sample && bucket.sample) {
+      existing.sample = bucket.sample;
+    }
+    drafts.set(bucket.sourceKind, existing);
+  }
+
+  const totalChars = Math.max(analysis.totalChars, 0);
+  return PROMPT_SOURCE_ORDER.map((kind) => {
+    const item = drafts.get(kind)!;
+    return {
+      ...item,
+      ratio: totalChars > 0 ? item.chars / totalChars : 0,
+    };
+  });
+}
+
+function formatPromptBucketAmount(bucket: Pick<PromptLedgerBucket, "chars" | "tokenEstimate">) {
+  if (bucket.tokenEstimate > 0) {
+    return `${bucket.tokenEstimate.toLocaleString("zh-CN")} tok`;
+  }
+  return `${bucket.chars.toLocaleString("zh-CN")} 字符`;
+}
+
+function buildPromptPayloadPreview(analysis: PromptAnalysisModel) {
+  if (analysis.buckets.length === 0) {
+    return "暂无 Prompt Ledger 数据。新的请求会自动记录系统、项目、Skills、记忆、当前输入和历史上下文来源。";
+  }
+
+  return analysis.buckets
+    .map((bucket) => {
+      const meta = PROMPT_SOURCE_META[bucket.sourceKind] ?? PROMPT_SOURCE_META.other;
+      return [
+        `[${meta.label}] ${bucket.label}`,
+        `chars=${bucket.chars}; estimated_tokens=${bucket.tokenEstimate}; items=${bucket.itemCount}; ratio=${(bucket.ratio * 100).toFixed(1)}%`,
+        bucket.sourcePath ? `source=${bucket.sourcePath}` : null,
+        bucket.sample ? `sample=${bucket.sample}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+    })
+    .join("\n\n");
+}
+
+function PromptLedgerPanel({
+  analysis,
+}: {
+  analysis: PromptAnalysisModel;
+}) {
+  const aggregates = aggregatePromptBuckets(analysis);
+  const nonEmptyAggregates = aggregates.filter((bucket) => bucket.chars > 0);
+  const largest = nonEmptyAggregates.reduce<PromptSourceAggregate | null>(
+    (current, bucket) => (current === null || bucket.chars > current.chars ? bucket : current),
+    null,
+  );
+  const compressionCandidate = nonEmptyAggregates
+    .filter((bucket) => bucket.id === "history" || bucket.id === "tool" || bucket.id === "memory")
+    .reduce((sum, bucket) => sum + bucket.tokenEstimate, 0);
+  const compressionCandidateRatio =
+    analysis.totalTokenEstimate > 0 ? compressionCandidate / analysis.totalTokenEstimate : 0;
+  const promptFillRatio = largest ? Math.min(100, Math.max(0, largest.ratio * 100)) : 0;
+  const payloadPreview = buildPromptPayloadPreview(analysis);
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Usage</p>
+            <p className="mt-1 text-2xl font-black text-slate-800">
+              {analysis.totalTokenEstimate.toLocaleString("zh-CN")}
+              <span className="ml-1 text-xs font-medium text-slate-400">tokens</span>
+            </p>
+            <p className="mt-1 text-[11px] text-slate-400">{analysis.totalChars.toLocaleString("zh-CN")} 字符</p>
+          </div>
+          <div className="relative flex h-12 w-12 items-center justify-center rounded-full border-4 border-blue-100">
+            <svg className="absolute inset-0 h-full w-full -rotate-90" viewBox="0 0 48 48" aria-hidden="true">
+              <circle
+                cx="24"
+                cy="24"
+                r="20"
+                fill="transparent"
+                stroke="currentColor"
+                strokeWidth="4"
+                strokeDasharray="125"
+                strokeDashoffset={String(125 - (125 * promptFillRatio) / 100)}
+                className="text-primary"
+              />
+            </svg>
+            <span className="text-[10px] font-bold text-slate-700">{promptFillRatio.toFixed(0)}%</span>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Compression Candidate</p>
+            <p className="mt-1 text-2xl font-black text-rose-700">
+              {compressionCandidate.toLocaleString("zh-CN")}
+              <span className="ml-1 text-xs font-medium text-slate-400">tokens</span>
+            </p>
+            <p className="mt-1 text-[11px] text-slate-400">
+              历史 / 工具输出 / 记忆占比 {(compressionCandidateRatio * 100).toFixed(1)}%
+            </p>
+          </div>
+          <div className="rounded-lg bg-rose-50 p-2 text-rose-700">
+            <span className="text-lg" aria-hidden="true">!</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+          <div>
+            <h3 className="text-[11px] font-black uppercase tracking-widest text-slate-700">Composition Breakdown</h3>
+            <p className="mt-1 text-[10px] text-slate-400">按 Prompt 来源拆分，用于定位上下文输入优化空间。</p>
+          </div>
+          <span className="shrink-0 text-[10px] font-medium text-slate-500">Prompt Ledger</span>
+        </div>
+
+        <div className="divide-y divide-slate-100">
+          {aggregates.map((bucket) => (
+            <div
+              key={bucket.id}
+              className="flex items-center gap-4 p-4 transition hover:bg-slate-50"
+            >
+              <span className={cx("h-2.5 w-2.5 shrink-0 rounded-full", bucket.dotClass)} />
+              <div className="min-w-0 flex-1">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <span className="truncate text-[12px] font-semibold text-slate-800">{bucket.label}</span>
+                  <span className="shrink-0 font-mono text-[11px] text-slate-500">
+                    {bucket.tokenEstimate.toLocaleString("zh-CN")} tokens
+                  </span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+                  <div
+                    className={bucket.barClass}
+                    style={{ width: `${Math.max(bucket.ratio * 100, bucket.chars > 0 ? 1 : 0)}%` }}
+                  />
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-3 text-[10px] text-slate-400">
+                  <span className="truncate">{bucket.sample || "暂无样本"}</span>
+                  <span className="shrink-0">{(bucket.ratio * 100).toFixed(1)}%</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-violet-200 bg-gradient-to-r from-violet-50 to-white p-4">
+        <div className="mb-2 flex items-center gap-2">
+          <span className="text-base text-violet-700" aria-hidden="true">*</span>
+          <span className="text-[11px] font-bold uppercase tracking-widest text-violet-700">Efficiency Insight</span>
+        </div>
+        <p className="text-[12px] leading-6 text-slate-600">
+          {largest
+            ? `最大来源是 ${largest.label}，占 ${(largest.ratio * 100).toFixed(1)}%。优先检查该来源是否包含重复历史、过长工具返回或可摘要的记忆内容。`
+            : "暂无足够的 Prompt Ledger 数据；新的请求会自动记录来源分布。"}
+        </p>
+      </div>
+
+      <div className="grid gap-2 md:grid-cols-2">
+        {analysis.buckets.slice(0, 8).map((bucket) => {
+          const meta = PROMPT_SOURCE_META[bucket.sourceKind] ?? PROMPT_SOURCE_META.other;
+          return (
+            <div key={bucket.id} className="rounded border border-slate-200 bg-white p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className={cx("h-2 w-2 shrink-0 rounded-full", meta.dotClass)} />
+                  <span className="truncate text-[12px] font-semibold text-slate-800">{bucket.label}</span>
+                </div>
+                <span className="shrink-0 font-mono text-[10px] text-slate-500">
+                  {(bucket.ratio * 100).toFixed(1)}%
+                </span>
+              </div>
+              <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500">
+                <span>{meta.label}</span>
+                <span>{formatPromptBucketAmount(bucket)}</span>
+              </div>
+              {bucket.sample ? (
+                <div className="mt-2 line-clamp-2 text-[11px] leading-5 text-slate-600">{bucket.sample}</div>
+              ) : null}
+            </div>
+          );
+        })}
+        {analysis.buckets.length === 0 ? (
+          <div className="rounded border border-dashed border-slate-200 bg-white p-4 text-[12px] text-slate-500">
+            暂无 Prompt Ledger 数据，新的请求会自动记录。
+          </div>
+        ) : null}
+      </div>
+
+      <div className="rounded-lg border border-slate-200 bg-white p-3">
+        <div className="mb-3 flex h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+          {nonEmptyAggregates.map((bucket) => (
+            <div
+              key={bucket.id}
+              className={bucket.barClass}
+              title={`${bucket.label}: ${(bucket.ratio * 100).toFixed(1)}%`}
+              style={{ width: `${Math.max(bucket.ratio * 100, 0.8)}%` }}
+            />
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-3">
+          {nonEmptyAggregates.map((bucket) => (
+            <div key={bucket.id} className="flex items-center gap-1.5 text-[10px] text-slate-500">
+              <span className={cx("h-2 w-2 rounded-full", bucket.dotClass)} />
+              <span>{bucket.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-lg border border-slate-200">
+        <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-1.5">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Full Prompt Payload</span>
+          <CopyButton label="复制摘要" value={payloadPreview} secondary />
+        </div>
+        <div className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words bg-white p-3 font-mono text-[11px] leading-5 text-slate-700">
+          {payloadPreview}
+        </div>
       </div>
     </div>
   );
@@ -991,6 +1295,18 @@ export function SessionAnalysisPage({
                 </button>
                 <button
                   type="button"
+                  onClick={() => setInspectorTab("prompt")}
+                  className={cx(
+                    "border-b-2 pb-1 text-[11px] font-bold transition",
+                    inspectorTab === "prompt"
+                      ? "border-primary text-slate-800"
+                      : "border-transparent text-slate-400 hover:text-slate-600",
+                  )}
+                >
+                  Prompt Ledger
+                </button>
+                <button
+                  type="button"
                   onClick={() => setInspectorTab("raw")}
                   className={cx(
                     "border-b-2 pb-1 text-[11px] font-bold transition",
@@ -1025,10 +1341,12 @@ export function SessionAnalysisPage({
             </div>
 
             <div data-trace-workbench-inspector className="min-h-0 flex-1 overflow-y-auto p-4">
-              {selectedItem === null ? (
+              {selectedItem === null && inspectorTab !== "prompt" ? (
                 <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-sm text-slate-500">
                   当前没有可查看的节点。
                 </div>
+              ) : inspectorTab === "prompt" ? (
+                <PromptLedgerPanel analysis={model.promptAnalysis} />
               ) : inspectorTab === "node" ? (
                 <div className="space-y-5">
                   <div className="flex items-start justify-between gap-4">

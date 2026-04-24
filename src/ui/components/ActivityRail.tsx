@@ -696,7 +696,6 @@ function DetailDrawer({
   );
 }
 
-
 export function ActivityRail({
   session,
   partialMessage,
@@ -768,7 +767,6 @@ export function ActivityRail({
           onClose={() => setShowContextModal(false)}
         />
       )}
-
       {selectedItem && (
         <DetailDrawer
           title={model.detailDrawerTitle}

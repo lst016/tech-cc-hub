@@ -2,6 +2,88 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildActivityRailModel } from "../../src/shared/activity-rail-model.js";
+import { buildPromptLedgerMessage } from "../../src/shared/prompt-ledger.js";
+
+test("buildPromptLedgerMessage separates prompt sources for optimization", () => {
+  const ledger = buildPromptLedgerMessage({
+    phase: "continue",
+    model: "GLM-5.1-FP8",
+    cwd: "D:/workspace/ligu",
+    prompt: "继续修复 OMG 报表",
+    attachments: [{ name: "需求截图.png", kind: "image", chars: 4096 }],
+    promptSources: [
+      { id: "system-preset", label: "Claude Code preset", sourceKind: "system", chars: 0, sample: "SDK preset" },
+      { id: "project-agents", label: "项目 AGENTS.md", sourceKind: "project", text: "项目规则：中文 UI" },
+      { id: "skill-doc", label: "feishu skill", sourceKind: "skill", text: "飞书表格读取规则" },
+    ],
+    memorySources: [
+      { id: "summary", label: "滚动摘要", sourceKind: "memory", text: "已读取总报表配置并定位 OMG 字段" },
+    ],
+    historyMessages: [
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "tool-read", content: "long tool output".repeat(100), is_error: false },
+          ],
+        },
+      } as never,
+    ],
+  });
+
+  assert.equal(ledger.type, "prompt_ledger");
+  assert.equal(ledger.phase, "continue");
+  assert.equal(ledger.model, "GLM-5.1-FP8");
+  assert.equal(ledger.buckets.find((bucket) => bucket.id === "project-agents")?.sourceKind, "project");
+  assert.equal(ledger.buckets.find((bucket) => bucket.id === "skill-doc")?.sourceKind, "skill");
+  assert.equal(ledger.buckets.find((bucket) => bucket.id === "current-prompt")?.chars, "继续修复 OMG 报表".length);
+  assert.equal(ledger.buckets.find((bucket) => bucket.id === "current-attachments")?.chars, 4096);
+  assert.equal(ledger.buckets.find((bucket) => bucket.id === "summary")?.sourceKind, "memory");
+  assert.ok((ledger.buckets.find((bucket) => bucket.id === "history-tool-output")?.chars ?? 0) > 1000);
+  assert.ok(ledger.totalChars > 4096);
+});
+
+test("buildActivityRailModel exposes prompt analysis from prompt ledger", () => {
+  const ledger = buildPromptLedgerMessage({
+    phase: "continue",
+    model: "GLM-5.1-FP8",
+    cwd: "D:/workspace/ligu",
+    prompt: "继续处理报表",
+    promptSources: [
+      { id: "system-preset", label: "Claude Code preset", sourceKind: "system", chars: 0, sample: "SDK preset" },
+      { id: "project-agents", label: "项目 CLAUDE.md", sourceKind: "project", text: "项目规则".repeat(20) },
+      { id: "skill-doc", label: "表格 skill", sourceKind: "skill", text: "读取表格规则".repeat(20) },
+    ],
+    memorySources: [
+      { id: "summary", label: "本地摘要", sourceKind: "memory", text: "历史摘要".repeat(20) },
+    ],
+  });
+
+  const model = buildActivityRailModel(
+    {
+      id: "session-prompt-analysis",
+      title: "Prompt Analysis",
+      status: "running",
+      messages: [
+        {
+          type: "user_prompt",
+          prompt: "继续处理报表",
+        },
+        ledger,
+      ],
+    },
+    [],
+    "",
+  );
+
+  assert.equal(model.promptAnalysis.title, "Prompt 分析");
+  assert.ok(model.promptAnalysis.totalChars > 0);
+  assert.ok(model.promptAnalysis.buckets.some((bucket) => bucket.sourceKind === "project"));
+  assert.ok(model.promptAnalysis.buckets.some((bucket) => bucket.sourceKind === "skill"));
+  assert.ok(model.promptAnalysis.buckets.some((bucket) => bucket.sourceKind === "memory"));
+  assert.ok(model.analysisCards.some((card) => card.id === "prompt-hotspot"));
+});
 
 test("buildActivityRailModel exposes task-level steps and context distribution", () => {
   const model = buildActivityRailModel(

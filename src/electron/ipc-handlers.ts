@@ -2,9 +2,11 @@ import { app, BrowserWindow } from "electron";
 import { join } from "path";
 
 import { createStoredUserPromptMessage, sanitizePromptAttachmentsForStorage } from "../shared/attachments.js";
+import { buildPromptLedgerMessage, type PromptLedgerMessage, type PromptLedgerSource } from "../shared/prompt-ledger.js";
 import { createInitialSessionWorkflowState, parseWorkflowMarkdown } from "../shared/workflow-markdown.js";
 import { runClaude, type RunnerHandle } from "./libs/runner.js";
 import { rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
+import { resolveAgentRuntimeContext } from "./libs/agent-resolver.js";
 import { getCurrentApiConfig, getModelConfig, supportsRemoteSessionResume } from "./libs/claude-settings.js";
 import { SessionStore } from "./libs/session-store.js";
 import { buildSessionSlashCommands } from "./libs/slash-command-catalog.js";
@@ -94,6 +96,64 @@ async function loadRecentReferencedImages(messages: StreamMessage[]): Promise<Pr
   }
 
   return hydrated;
+}
+
+function buildPromptLedgerForRun(options: {
+  phase: "start" | "continue";
+  prompt: string;
+  attachments?: PromptAttachment[];
+  session: { cwd?: string; runSurface?: "development" | "maintenance"; agentId?: string; workflowMarkdown?: string; continuationSummary?: string };
+  historyMessages?: StreamMessage[];
+  model?: string;
+  continuationSummary?: string;
+}): PromptLedgerMessage {
+  const agentContext = resolveAgentRuntimeContext({
+    cwd: options.session.cwd,
+    surface: options.session.runSurface ?? "development",
+    agentId: options.session.agentId,
+  });
+  const memorySources: PromptLedgerSource[] = [];
+
+  if (options.continuationSummary?.trim()) {
+    memorySources.push({
+      id: "continuation-summary",
+      label: "本地滚动摘要",
+      sourceKind: "memory",
+      text: options.continuationSummary,
+    });
+  } else if (options.session.continuationSummary?.trim()) {
+    memorySources.push({
+      id: "continuation-summary",
+      label: "本地滚动摘要",
+      sourceKind: "memory",
+      text: options.session.continuationSummary,
+    });
+  }
+
+  const promptSources: PromptLedgerSource[] = [...agentContext.promptSources];
+  if (options.session.workflowMarkdown?.trim()) {
+    promptSources.push({
+      id: "session-workflow",
+      label: "当前工作流",
+      sourceKind: "workflow",
+      text: options.session.workflowMarkdown,
+    });
+  }
+
+  return buildPromptLedgerMessage({
+    phase: options.phase,
+    model: options.model,
+    cwd: options.session.cwd,
+    prompt: options.prompt,
+    attachments: (options.attachments ?? []).map((attachment) => ({
+      name: attachment.name,
+      kind: attachment.kind,
+      chars: attachment.size ?? attachment.data.length,
+    })),
+    promptSources,
+    memorySources,
+    historyMessages: options.historyMessages ?? [],
+  });
 }
 
 function emit(event: ServerEvent) {
@@ -353,6 +413,21 @@ export async function handleClientEvent(event: ClientEvent) {
       },
     });
 
+    const config = getCurrentApiConfig();
+    emit({
+      type: "stream.message",
+      payload: {
+        sessionId: session.id,
+        message: buildPromptLedgerForRun({
+          phase: "start",
+          prompt: event.payload.prompt,
+          attachments: event.payload.attachments,
+          session,
+          model: event.payload.runtime?.model ?? config?.model,
+        }),
+      },
+    });
+
     emit({
       type: "stream.user_prompt",
       payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: event.payload.attachments },
@@ -446,6 +521,22 @@ export async function handleClientEvent(event: ClientEvent) {
         title: session.title,
         cwd: session.cwd,
         slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
+      },
+    });
+
+    emit({
+      type: "stream.message",
+      payload: {
+        sessionId: session.id,
+        message: buildPromptLedgerForRun({
+          phase: "continue",
+          prompt: event.payload.prompt,
+          attachments: currentAttachments,
+          session,
+          historyMessages: history?.messages ?? [],
+          model: selectedModel,
+          continuationSummary: continuationPayload?.summaryText,
+        }),
       },
     });
 
