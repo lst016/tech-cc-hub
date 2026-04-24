@@ -91,17 +91,26 @@ export type PromptAttachment = {
   name: string;
   mimeType: string;
   data: string;
+  runtimeData?: string;
   preview?: string;
   size?: number;
+  storagePath?: string;
+  storageUri?: string;
+  summaryText?: string;
 };
 
 export type UserPromptMessage = {
   type: "user_prompt";
   prompt: string;
   attachments?: PromptAttachment[];
+  capturedAt?: number;
+  historyId?: string;
 };
 
-export type StreamMessage = SDKMessage | UserPromptMessage;
+export type StreamMessage = (SDKMessage | UserPromptMessage) & {
+  capturedAt?: number;
+  historyId?: string;
+};
 
 export type SessionStatus = "idle" | "running" | "completed" | "error";
 
@@ -140,15 +149,20 @@ export type SessionWorkflowCatalog = {
   issues?: string[];
 };
 
+export type SessionHistoryCursor = {
+  beforeCreatedAt: number;
+  beforeId: string;
+};
+
 // Server -> Client events
 export type ServerEvent =
   | { type: "stream.message"; payload: { sessionId: string; message: StreamMessage } }
-  | { type: "stream.user_prompt"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[] } }
+  | { type: "stream.user_prompt"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[]; capturedAt?: number; historyId?: string } }
   | { type: "session.status"; payload: { sessionId: string; status: SessionStatus; title?: string; cwd?: string; error?: string; slashCommands?: string[] } }
   | { type: "session.workflow"; payload: { sessionId: string; markdown?: string; sourceLayer?: WorkflowScope; sourcePath?: string; state?: SessionWorkflowState; error?: string } }
   | { type: "session.workflow.catalog"; payload: SessionWorkflowCatalog }
   | { type: "session.list"; payload: { sessions: SessionInfo[] } }
-  | { type: "session.history"; payload: { sessionId: string; status: SessionStatus; messages: StreamMessage[]; slashCommands?: string[] } }
+  | { type: "session.history"; payload: { sessionId: string; status: SessionStatus; messages: StreamMessage[]; mode: "replace" | "prepend"; hasMore: boolean; nextCursor?: SessionHistoryCursor; slashCommands?: string[] } }
   | { type: "session.deleted"; payload: { sessionId: string } }
   | { type: "permission.request"; payload: { sessionId: string; toolUseId: string; toolName: string; input: unknown } }
   | { type: "runner.error"; payload: { sessionId?: string; message: string } };
@@ -164,5 +178,5 @@ export type ClientEvent =
   | { type: "session.stop"; payload: { sessionId: string } }
   | { type: "session.delete"; payload: { sessionId: string } }
   | { type: "session.list" }
-  | { type: "session.history"; payload: { sessionId: string } }
+  | { type: "session.history"; payload: { sessionId: string; before?: SessionHistoryCursor; limit?: number } }
   | { type: "permission.response"; payload: { sessionId: string; toolUseId: string; result: PermissionResult } };

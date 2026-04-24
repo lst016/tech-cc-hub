@@ -30,7 +30,7 @@ import { startSkillSyncScheduler, stopSkillSyncScheduler, syncSkillSources } fro
 import { ensureSystemWorkspace } from "./libs/system-workspace.js";
 import { getCurrentApiConfig } from "./libs/claude-settings.js";
 import { preprocessImageAttachments } from "./libs/image-preprocessor.js";
-import type { ClientEvent } from "./types.js";
+import type { ClientEvent, PromptAttachment } from "./types.js";
 import "./libs/claude-settings.js";
 
 let cleanupComplete = false;
@@ -77,7 +77,7 @@ async function scheduleDevAutostart(): Promise<void> {
     setTimeout(async () => {
         try {
             const title = await generateSessionTitle(prompt);
-            handleClientEvent({
+            void handleClientEvent({
                 type: "session.start",
                 payload: { title, prompt, cwd, allowedTools: "Read,Edit,Bash" }
             });
@@ -95,7 +95,7 @@ async function scheduleDevAutostart(): Promise<void> {
 
                 if (latest.status === "completed" && latest.claudeSessionId) {
                     clearInterval(timer);
-                    handleClientEvent({
+                    void handleClientEvent({
                         type: "session.continue",
                         payload: { sessionId: latest.id, prompt: continuePrompt }
                     });
@@ -177,6 +177,10 @@ function registerReloadShortcuts(): void {
     }
 }
 
+function readPromptAttachmentPayload(attachments?: unknown[]): PromptAttachment[] {
+    return Array.isArray(attachments) ? (attachments as PromptAttachment[]) : [];
+}
+
 // Initialize everything when app is ready
 app.on("ready", async () => {
     Menu.setApplicationMenu(null);
@@ -237,7 +241,7 @@ app.on("ready", async () => {
 
     // Handle client events
     ipcMain.on("client-event", (_: IpcMainEvent, event: ClientEvent) => {
-        handleClientEvent(event);
+        void handleClientEvent(event);
     });
 
     // Handle session title generation
@@ -346,17 +350,19 @@ app.on("ready", async () => {
         }
     });
 
-    ipcMainHandle("preprocess-image-attachments", async (_: IpcMainInvokeEvent, payload: { prompt?: string; attachments?: unknown[] }) => {
+    ipcMainHandle("preprocess-image-attachments", async (_: IpcMainInvokeEvent, payload: { prompt?: string; selectedModel?: string; attachments?: unknown[] }) => {
         try {
+            const attachments = readPromptAttachmentPayload(payload?.attachments);
             return await preprocessImageAttachments({
                 config: getCurrentApiConfig(),
                 prompt: payload?.prompt ?? "",
-                attachments: Array.isArray(payload?.attachments) ? payload.attachments as any : [],
+                selectedModel: payload?.selectedModel,
+                attachments,
             });
         } catch (error) {
             return {
                 success: false,
-                attachments: Array.isArray(payload?.attachments) ? payload.attachments as any : [],
+                attachments: readPromptAttachmentPayload(payload?.attachments),
                 error: error instanceof Error ? error.message : String(error),
             };
         }

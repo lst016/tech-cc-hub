@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import type { AgentRunSurface, SessionStatus, StreamMessage } from "../types.js";
+import type { AgentRunSurface, SessionHistoryCursor, SessionStatus, StreamMessage } from "../types.js";
 import { existsSync } from "fs";
 import { app } from "electron";
 import type { SessionWorkflowState, WorkflowScope } from "../../shared/workflow-markdown.js";
@@ -75,6 +75,35 @@ export type SessionHistory = {
   session: StoredSession;
   messages: StreamMessage[];
 };
+
+export type SessionHistoryPage = SessionHistory & {
+  hasMore: boolean;
+  nextCursor?: SessionHistoryCursor;
+};
+
+function isTransientStreamEventMessage(message: StreamMessage): boolean {
+  return "type" in message && message.type === "stream_event";
+}
+
+function parseStoredMessage(row: { id: string; data: string; created_at: number }): StreamMessage {
+  const parsed = stripInlineBase64ImagesFromMessage(JSON.parse(String(row.data)) as StreamMessage);
+  return {
+    ...parsed,
+    capturedAt: typeof parsed.capturedAt === "number" ? parsed.capturedAt : Number(row.created_at),
+    historyId: parsed.historyId ? String(parsed.historyId) : String(row.id),
+  } satisfies StreamMessage;
+}
+
+function createHistoryCursor(message: StreamMessage | undefined): SessionHistoryCursor | undefined {
+  if (!message || typeof message.capturedAt !== "number" || !message.historyId) {
+    return undefined;
+  }
+
+  return {
+    beforeCreatedAt: message.capturedAt,
+    beforeId: message.historyId,
+  };
+}
 
 export class SessionStore {
   private sessions = new Map<string, Session>();
@@ -216,55 +245,83 @@ export class SessionStore {
   }
 
   getSessionHistory(id: string): SessionHistory | null {
-    const sessionRow = this.db
-      .prepare(
-        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, created_at, updated_at
-         from sessions
-         where id = ?`
-      )
-      .get(id) as Record<string, unknown> | undefined;
+    const sessionRow = this.getSessionRow(id);
     if (!sessionRow) return null;
 
     const messages = (this.db
       .prepare(
-        `select data, created_at from messages where session_id = ? order by created_at asc`
+        `select id, data, created_at
+         from messages
+         where session_id = ?
+           and coalesce(json_extract(data, '$.type'), '') != 'stream_event'
+         order by created_at asc, id asc`
       )
       .all(id) as Array<Record<string, unknown>>)
-      .map((row) => {
-        const parsed = stripInlineBase64ImagesFromMessage(JSON.parse(String(row.data)) as StreamMessage);
-        if (typeof parsed.capturedAt === "number") {
-          return parsed;
-        }
-        return {
-          ...parsed,
-          capturedAt: Number(row.created_at),
-        } satisfies StreamMessage;
-      });
+      .map((row) =>
+        parseStoredMessage({
+          id: String(row.id),
+          data: String(row.data),
+          created_at: Number(row.created_at),
+        })
+      )
+      .filter((message) => !isTransientStreamEventMessage(message));
 
     return {
-      session: {
-        id: String(sessionRow.id),
-        title: String(sessionRow.title),
-        status: sessionRow.status as SessionStatus,
-        cwd: this.normalizeStoredCwd(String(sessionRow.id), sessionRow.cwd ? String(sessionRow.cwd) : undefined),
-        runSurface: sessionRow.run_surface ? (String(sessionRow.run_surface) as AgentRunSurface) : undefined,
-        agentId: sessionRow.agent_id ? String(sessionRow.agent_id) : undefined,
-        allowedTools: sessionRow.allowed_tools ? String(sessionRow.allowed_tools) : undefined,
-        lastPrompt: sessionRow.last_prompt ? String(sessionRow.last_prompt) : undefined,
-        claudeSessionId: sessionRow.claude_session_id ? String(sessionRow.claude_session_id) : undefined,
-        continuationSummary: sessionRow.continuation_summary ? String(sessionRow.continuation_summary) : undefined,
-        continuationSummaryMessageCount: typeof sessionRow.continuation_summary_message_count === "number"
-          ? Number(sessionRow.continuation_summary_message_count)
-          : undefined,
-        workflowMarkdown: sessionRow.workflow_markdown ? String(sessionRow.workflow_markdown) : undefined,
-        workflowSourceLayer: sessionRow.workflow_source_layer ? (String(sessionRow.workflow_source_layer) as WorkflowScope) : undefined,
-        workflowSourcePath: sessionRow.workflow_source_path ? String(sessionRow.workflow_source_path) : undefined,
-        workflowState: parseWorkflowState(sessionRow.workflow_state),
-        workflowError: sessionRow.workflow_error ? String(sessionRow.workflow_error) : undefined,
-        createdAt: Number(sessionRow.created_at),
-        updatedAt: Number(sessionRow.updated_at)
-      },
+      session: this.mapSessionRow(sessionRow),
       messages
+    };
+  }
+
+  getSessionHistoryPage(
+    id: string,
+    options?: {
+      before?: SessionHistoryCursor;
+      limit?: number;
+    }
+  ): SessionHistoryPage | null {
+    const sessionRow = this.getSessionRow(id);
+    if (!sessionRow) return null;
+
+    const limit = Math.max(1, Math.min(options?.limit ?? 400, 1_000));
+    const before = options?.before;
+    const rows = before
+      ? (this.db
+          .prepare(
+            `select id, data, created_at
+             from messages
+             where session_id = ?
+               and coalesce(json_extract(data, '$.type'), '') != 'stream_event'
+               and (created_at < ? or (created_at = ? and id < ?))
+             order by created_at desc, id desc
+             limit ?`
+          )
+          .all(id, before.beforeCreatedAt, before.beforeCreatedAt, before.beforeId, limit + 1) as Array<Record<string, unknown>>)
+      : (this.db
+          .prepare(
+            `select id, data, created_at
+             from messages
+             where session_id = ?
+               and coalesce(json_extract(data, '$.type'), '') != 'stream_event'
+             order by created_at desc, id desc
+             limit ?`
+          )
+          .all(id, limit + 1) as Array<Record<string, unknown>>);
+
+    const hasMore = rows.length > limit;
+    const pageRows = rows.slice(0, limit).reverse();
+    const messages = pageRows.map((row) =>
+      parseStoredMessage({
+        id: String(row.id),
+        data: String(row.data),
+        created_at: Number(row.created_at),
+      })
+    );
+
+    return {
+      session: this.mapSessionRow(sessionRow),
+      messages,
+      hasMore,
+      nextCursor: hasMore ? createHistoryCursor(messages[0]) : undefined,
     };
   }
 
@@ -308,15 +365,24 @@ export class SessionStore {
     session.abortController = controller;
   }
 
-  recordMessage(sessionId: string, message: StreamMessage): void {
+  recordMessage(sessionId: string, message: StreamMessage): StreamMessage {
     const capturedAt = typeof message.capturedAt === "number" ? message.capturedAt : Date.now();
-    const storedMessage = message.capturedAt === capturedAt ? message : { ...message, capturedAt };
-    const id = ('uuid' in message && message.uuid) ? String(message.uuid) : crypto.randomUUID();
+    const id = message.historyId
+      ? String(message.historyId)
+      : ('uuid' in message && message.uuid)
+        ? String(message.uuid)
+        : crypto.randomUUID();
+    const storedMessage = {
+      ...message,
+      capturedAt,
+      historyId: id,
+    } satisfies StreamMessage;
     this.db
       .prepare(
         `insert or ignore into messages (id, session_id, data, created_at) values (?, ?, ?, ?)`
       )
       .run(id, sessionId, JSON.stringify(storedMessage), capturedAt);
+    return storedMessage;
   }
 
   deleteSession(id: string): boolean {
@@ -459,5 +525,40 @@ export class SessionStore {
     if (!hasColumn) {
       this.db.exec(`alter table sessions add column ${columnName} ${columnType}`);
     }
+  }
+
+  private getSessionRow(id: string): Record<string, unknown> | undefined {
+    return this.db
+      .prepare(
+        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, created_at, updated_at
+         from sessions
+         where id = ?`
+      )
+      .get(id) as Record<string, unknown> | undefined;
+  }
+
+  private mapSessionRow(sessionRow: Record<string, unknown>): StoredSession {
+    return {
+      id: String(sessionRow.id),
+      title: String(sessionRow.title),
+      status: sessionRow.status as SessionStatus,
+      cwd: this.normalizeStoredCwd(String(sessionRow.id), sessionRow.cwd ? String(sessionRow.cwd) : undefined),
+      runSurface: sessionRow.run_surface ? (String(sessionRow.run_surface) as AgentRunSurface) : undefined,
+      agentId: sessionRow.agent_id ? String(sessionRow.agent_id) : undefined,
+      allowedTools: sessionRow.allowed_tools ? String(sessionRow.allowed_tools) : undefined,
+      lastPrompt: sessionRow.last_prompt ? String(sessionRow.last_prompt) : undefined,
+      claudeSessionId: sessionRow.claude_session_id ? String(sessionRow.claude_session_id) : undefined,
+      continuationSummary: sessionRow.continuation_summary ? String(sessionRow.continuation_summary) : undefined,
+      continuationSummaryMessageCount: typeof sessionRow.continuation_summary_message_count === "number"
+        ? Number(sessionRow.continuation_summary_message_count)
+        : undefined,
+      workflowMarkdown: sessionRow.workflow_markdown ? String(sessionRow.workflow_markdown) : undefined,
+      workflowSourceLayer: sessionRow.workflow_source_layer ? (String(sessionRow.workflow_source_layer) as WorkflowScope) : undefined,
+      workflowSourcePath: sessionRow.workflow_source_path ? String(sessionRow.workflow_source_path) : undefined,
+      workflowState: parseWorkflowState(sessionRow.workflow_state),
+      workflowError: sessionRow.workflow_error ? String(sessionRow.workflow_error) : undefined,
+      createdAt: Number(sessionRow.created_at),
+      updatedAt: Number(sessionRow.updated_at)
+    };
   }
 }

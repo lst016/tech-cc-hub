@@ -3,6 +3,7 @@ import { basename, extname } from "path";
 
 import type { PromptAttachment } from "../types.js";
 import type { ApiConfig } from "./config-store.js";
+import { persistImageAttachmentReference } from "./attachment-store.js";
 
 export type ImagePreprocessResult = {
   success: boolean;
@@ -20,13 +21,16 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ".webp": "image/webp",
   ".bmp": "image/bmp",
 };
+const MAX_INLINE_IMAGE_ATTACHMENTS = 2;
+const MAX_INLINE_IMAGE_BYTES = 3_000_000;
 
 export async function preprocessImageAttachments(options: {
   config: ApiConfig | null;
   prompt: string;
+  selectedModel?: string;
   attachments: PromptAttachment[];
 }): Promise<ImagePreprocessResult> {
-  const { config, prompt, attachments } = options;
+  const { config, prompt, selectedModel, attachments } = options;
   const imageAttachments = attachments.filter((attachment) => attachment.kind === "image");
 
   if (imageAttachments.length === 0) {
@@ -38,7 +42,10 @@ export async function preprocessImageAttachments(options: {
     return { success: true, attachments };
   }
 
+  const shouldAllowInlineImages = Boolean(selectedModel?.trim() && selectedModel.trim() === imageModel);
   const nextAttachments: PromptAttachment[] = [];
+  let inlineImageCount = 0;
+  let inlineImageBytes = 0;
   for (const attachment of attachments) {
     if (attachment.kind !== "image") {
       nextAttachments.push(attachment);
@@ -46,25 +53,33 @@ export async function preprocessImageAttachments(options: {
     }
 
     try {
+      const storedReference = await persistImageAttachmentReference(attachment);
       const summary = await summarizeBase64Image({
         config,
         prompt,
         attachmentName: attachment.name,
         mimeType: attachment.mimeType,
-        base64Data: stripDataUrlPrefix(attachment.data),
+        base64Data: stripDataUrlPrefix(attachment.runtimeData ?? attachment.data),
       });
-      if (!summary) {
-        nextAttachments.push(attachment);
-        continue;
+      const canKeepInlineImage =
+        shouldAllowInlineImages &&
+        inlineImageCount < MAX_INLINE_IMAGE_ATTACHMENTS &&
+        inlineImageBytes + (attachment.size ?? 0) <= MAX_INLINE_IMAGE_BYTES;
+
+      if (canKeepInlineImage) {
+        inlineImageCount += 1;
+        inlineImageBytes += attachment.size ?? 0;
       }
+
       nextAttachments.push({
-        id: `${attachment.id}-summary`,
-        kind: "text",
-        name: `${attachment.name || "image"}-summary.txt`,
-        mimeType: "text/plain",
-        data: summary,
-        preview: summary,
-        size: summary.length,
+        ...attachment,
+        data: storedReference?.storageUri ?? attachment.preview ?? attachment.data,
+        preview: storedReference?.storageUri ?? attachment.preview ?? attachment.data,
+        runtimeData: canKeepInlineImage ? (attachment.runtimeData ?? attachment.data) : undefined,
+        size: storedReference?.size ?? attachment.size,
+        storagePath: storedReference?.storagePath ?? attachment.storagePath,
+        storageUri: storedReference?.storageUri ?? attachment.storageUri,
+        summaryText: summary ?? attachment.summaryText,
       });
     } catch (error) {
       return {

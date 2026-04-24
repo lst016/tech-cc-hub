@@ -4,6 +4,7 @@ import type {
   ApiConfigSettings,
   RuntimePermissionMode,
   RuntimeReasoningMode,
+  SessionHistoryCursor,
   SessionWorkflowCatalog,
   ServerEvent,
   SessionStatus,
@@ -42,6 +43,8 @@ export type SessionView = {
   createdAt?: number;
   updatedAt?: number;
   hydrated: boolean;
+  hasMoreHistory: boolean;
+  historyCursor?: SessionHistoryCursor;
 };
 
 interface AppState {
@@ -79,7 +82,15 @@ interface AppState {
 }
 
 function createSession(id: string): SessionView {
-  return { id, title: "", status: "idle", messages: [], permissionRequests: [], hydrated: false };
+  return {
+    id,
+    title: "",
+    status: "idle",
+    messages: [],
+    permissionRequests: [],
+    hydrated: false,
+    hasMoreHistory: false,
+  };
 }
 
 function hydrateWorkflowView(
@@ -106,6 +117,75 @@ function getEnabledProfile(settings: ApiConfigSettings): ApiConfigProfile | unde
 
 function extractSlashCommands(messages: StreamMessage[]): string[] | undefined {
   return extractSlashCommandsFromMessages(messages);
+}
+
+function isTransientStreamEventMessage(message: StreamMessage): boolean {
+  return "type" in message && message.type === "stream_event";
+}
+
+const MAX_RENDERER_HISTORY_MESSAGES = 600;
+
+function getMessageCursor(message: StreamMessage | undefined): SessionHistoryCursor | undefined {
+  if (!message?.historyId || typeof message.capturedAt !== "number") {
+    return undefined;
+  }
+
+  return {
+    beforeCreatedAt: message.capturedAt,
+    beforeId: message.historyId,
+  };
+}
+
+function getMessageStableKey(message: StreamMessage): string {
+  if (message.historyId) {
+    return `history:${message.historyId}`;
+  }
+
+  if ("uuid" in message && typeof message.uuid === "string" && message.uuid.length > 0) {
+    return `uuid:${message.uuid}`;
+  }
+
+  if (message.type === "user_prompt") {
+    return `user:${message.capturedAt ?? "na"}:${message.prompt}`;
+  }
+
+  return `fallback:${message.type}:${message.capturedAt ?? "na"}:${JSON.stringify(message)}`;
+}
+
+function mergeMessages(olderMessages: StreamMessage[], newerMessages: StreamMessage[]): StreamMessage[] {
+  const merged: StreamMessage[] = [];
+  const seen = new Set<string>();
+
+  for (const message of [...olderMessages, ...newerMessages]) {
+    const key = getMessageStableKey(message);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(message);
+  }
+
+  return merged;
+}
+
+function trimMessagesToRecent(
+  messages: StreamMessage[],
+  fallbackCursor?: SessionHistoryCursor,
+): {
+  messages: StreamMessage[];
+  trimmed: boolean;
+  historyCursor?: SessionHistoryCursor;
+} {
+  if (messages.length <= MAX_RENDERER_HISTORY_MESSAGES) {
+    return { messages, trimmed: false, historyCursor: fallbackCursor };
+  }
+
+  const trimmedMessages = messages.slice(-MAX_RENDERER_HISTORY_MESSAGES);
+  return {
+    messages: trimmedMessages,
+    trimmed: true,
+    historyCursor: getMessageCursor(trimmedMessages[0]) ?? fallbackCursor,
+  };
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -239,14 +319,28 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       case "session.history": {
-        const { sessionId, messages, status } = event.payload;
-        const slashCommands = mergeSlashCommandLists(event.payload.slashCommands, extractSlashCommands(messages));
+        const { sessionId, messages, status, mode, hasMore, nextCursor } = event.payload;
         set((state) => {
           const existing = state.sessions[sessionId] ?? createSession(sessionId);
+          const mergedMessages = mode === "prepend"
+            ? mergeMessages(messages, existing.messages)
+            : messages;
+          const slashCommands = mergeSlashCommandLists(
+            event.payload.slashCommands,
+            extractSlashCommands(mergedMessages),
+          );
           return {
             sessions: {
               ...state.sessions,
-              [sessionId]: { ...existing, status, messages, slashCommands: slashCommands ?? existing.slashCommands, hydrated: true }
+              [sessionId]: {
+                ...existing,
+                status,
+                messages: mergedMessages,
+                slashCommands: slashCommands ?? existing.slashCommands,
+                hydrated: true,
+                hasMoreHistory: hasMore,
+                historyCursor: nextCursor,
+              }
             }
           };
         });
@@ -354,16 +448,25 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       case "stream.message": {
         const { sessionId, message } = event.payload;
+        if (isTransientStreamEventMessage(message)) {
+          break;
+        }
         const slashCommands = mergeSlashCommandLists(extractSlashCommands([message]));
         set((state) => {
           const existing = state.sessions[sessionId] ?? createSession(sessionId);
+          const trimmed = trimMessagesToRecent(
+            [...existing.messages, message],
+            existing.historyCursor,
+          );
           return {
             sessions: {
               ...state.sessions,
               [sessionId]: {
                 ...existing,
                 slashCommands: slashCommands ?? existing.slashCommands,
-                messages: [...existing.messages, message]
+                messages: trimmed.messages,
+                hasMoreHistory: trimmed.trimmed ? true : existing.hasMoreHistory,
+                historyCursor: trimmed.trimmed ? trimmed.historyCursor ?? existing.historyCursor : existing.historyCursor,
               }
             }
           };
@@ -372,16 +475,21 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       case "stream.user_prompt": {
-        const { sessionId, prompt, attachments } = event.payload;
-        const capturedAt = Date.now();
+        const { sessionId, prompt, attachments, capturedAt = Date.now(), historyId } = event.payload;
         set((state) => {
           const existing = state.sessions[sessionId] ?? createSession(sessionId);
+          const trimmed = trimMessagesToRecent(
+            [...existing.messages, { type: "user_prompt", prompt, attachments, capturedAt, historyId }],
+            existing.historyCursor,
+          );
           return {
             sessions: {
               ...state.sessions,
               [sessionId]: {
                 ...existing,
-                messages: [...existing.messages, { type: "user_prompt", prompt, attachments, capturedAt }]
+                messages: trimmed.messages,
+                hasMoreHistory: trimmed.trimmed ? true : existing.hasMoreHistory,
+                historyCursor: trimmed.trimmed ? trimmed.historyCursor ?? existing.historyCursor : existing.historyCursor,
               }
             }
           };

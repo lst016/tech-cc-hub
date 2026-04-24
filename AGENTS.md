@@ -50,16 +50,23 @@ tech-cc-hub/
 
 ## 开发命令
 
+## 启动口径
+
+- 在这个项目里，“本地启动”“启动项目”“把项目跑起来”默认都指启动 `Electron` 客户端，不是只启动网页端。
+- 默认执行命令是 `npm run dev`，它会同时拉起 `Vite + Electron`，最终验收对象是桌面客户端窗口。
+- `npm run dev:react` 只是单独启动前端调试服务，不能视为“项目已经启动完成”。
+- 只有用户明确说“只起前端页面”“只起网页端”“只跑 React”时，才使用 `npm run dev:react`。
+
 ### 基础命令
 
 ```bash
 # 安装依赖
 npm install
 
-# 启动开发环境 (同时启动 Vite 和 Electron)
+# 本地启动默认指客户端启动 (同时启动 Vite 和 Electron)
 npm run dev
 
-# 单独启动 React 前端
+# 仅在明确要求只起网页端时使用
 npm run dev:react
 
 # 单独启动 Electron

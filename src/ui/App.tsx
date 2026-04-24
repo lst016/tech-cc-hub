@@ -14,6 +14,22 @@ import { SessionAnalysisPage } from "./components/SessionAnalysisPage";
 import MDContent from "./render/markdown";
 
 const SCROLL_THRESHOLD = 50;
+const INITIAL_HISTORY_LIMIT = 400;
+const HISTORY_PAGE_LIMIT = 200;
+const EMPTY_MESSAGES: StreamMessage[] = [];
+const EMPTY_PERMISSION_REQUESTS: NonNullable<ReturnType<typeof useAppStore.getState>["sessions"][string]["permissionRequests"]> = [];
+
+type StreamEventPayload = {
+  type?: string;
+  delta?: {
+    type?: string;
+    [key: string]: unknown;
+  };
+};
+
+type StreamEventMessage = StreamMessage & {
+  event?: StreamEventPayload;
+};
 
 function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -25,6 +41,7 @@ function App() {
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const [hasNewMessages, setHasNewMessages] = useState(false);
   const [showSessionAnalysis, setShowSessionAnalysis] = useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const prevMessagesLengthRef = useRef(0);
   const scrollHeightBeforeLoadRef = useRef(0);
   const shouldRestoreScrollRef = useRef(false);
@@ -52,10 +69,11 @@ function App() {
   const [settingsInitialPageId, setSettingsInitialPageId] = useState<SettingsPageId | null>(null);
 
   // Helper function to extract partial message content
-  const getPartialMessageContent = (eventMessage: any) => {
+  const getPartialMessageContent = (eventMessage: StreamEventPayload) => {
     try {
-      const realType = eventMessage.delta.type.split("_")[0];
-      return eventMessage.delta[realType];
+      const realType = eventMessage.delta?.type?.split("_")[0];
+      const value = realType ? eventMessage.delta?.[realType] : undefined;
+      return typeof value === "string" ? value : "";
     } catch (error) {
       console.error(error);
       return "";
@@ -66,14 +84,14 @@ function App() {
   const handlePartialMessages = useCallback((partialEvent: ServerEvent) => {
     if (partialEvent.type !== "stream.message" || partialEvent.payload.message.type !== "stream_event") return;
 
-    const message = partialEvent.payload.message as any;
-    if (message.event.type === "content_block_start") {
+    const message = partialEvent.payload.message as StreamEventMessage;
+    if (message.event?.type === "content_block_start") {
       partialMessageRef.current = "";
       setPartialMessage(partialMessageRef.current);
       setShowPartialMessage(true);
     }
 
-    if (message.event.type === "content_block_delta") {
+    if (message.event?.type === "content_block_delta") {
       partialMessageRef.current += getPartialMessageContent(message.event) || "";
       setPartialMessage(partialMessageRef.current);
       if (shouldAutoScroll) {
@@ -83,7 +101,7 @@ function App() {
       }
     }
 
-    if (message.event.type === "content_block_stop") {
+    if (message.event?.type === "content_block_stop") {
       setShowPartialMessage(false);
       setTimeout(() => {
         partialMessageRef.current = "";
@@ -94,6 +112,9 @@ function App() {
 
   // Combined event handler
   const onEvent = useCallback((event: ServerEvent) => {
+    if (event.type === "session.history" || event.type === "session.deleted") {
+      setIsLoadingHistory(false);
+    }
     handleServerEvent(event);
     handlePartialMessages(event);
   }, [handleServerEvent, handlePartialMessages]);
@@ -102,17 +123,41 @@ function App() {
   const { handleStartFromModal } = usePromptActions(sendEvent);
 
   const activeSession = activeSessionId ? sessions[activeSessionId] : undefined;
-  const messages = activeSession?.messages ?? [];
-  const permissionRequests = activeSession?.permissionRequests ?? [];
+  const messages = activeSession?.messages ?? EMPTY_MESSAGES;
+  const permissionRequests = activeSession?.permissionRequests ?? EMPTY_PERMISSION_REQUESTS;
   const isRunning = activeSession?.status === "running";
+  const hasPersistedHistory = activeSession?.hasMoreHistory ?? false;
+  const requestOlderHistory = useCallback(() => {
+    if (!activeSessionId || !connected || isLoadingHistory) {
+      return;
+    }
+
+    const cursor = sessions[activeSessionId]?.historyCursor;
+    if (!cursor) {
+      return;
+    }
+
+    setIsLoadingHistory(true);
+    sendEvent({
+      type: "session.history",
+      payload: {
+        sessionId: activeSessionId,
+        before: cursor,
+        limit: HISTORY_PAGE_LIMIT,
+      },
+    });
+  }, [activeSessionId, connected, isLoadingHistory, sendEvent, sessions]);
   const {
     visibleMessages,
     hasMoreHistory,
-    isLoadingHistory,
     loadMoreMessages,
     resetToLatest,
     totalMessages,
-  } = useMessageWindow(messages, permissionRequests, activeSessionId);
+  } = useMessageWindow(messages, {
+    hasMoreHistory: hasPersistedHistory,
+    isLoadingHistory,
+    onLoadMore: requestOlderHistory,
+  });
 
   const displayMessages = visibleMessages.filter((item) => {
     const currentMessage = item.message;
@@ -199,7 +244,12 @@ function App() {
     const session = sessions[activeSessionId];
     if (session && !session.hydrated && !historyRequested.has(activeSessionId)) {
       markHistoryRequested(activeSessionId);
-      sendEvent({ type: "session.history", payload: { sessionId: activeSessionId } });
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setIsLoadingHistory(true);
+      sendEvent({
+        type: "session.history",
+        payload: { sessionId: activeSessionId, limit: INITIAL_HISTORY_LIMIT },
+      });
     }
   }, [activeSessionId, connected, sessions, historyRequested, markHistoryRequested, sendEvent]);
 
@@ -262,19 +312,22 @@ function App() {
 
   // Reset scroll state on session change
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setShouldAutoScroll(true);
     setHasNewMessages(false);
-        setShowSessionAnalysis(false);
-        prevMessagesLengthRef.current = 0;
-        setTimeout(() => {
-          messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
-        }, 100);
+    setShowSessionAnalysis(false);
+    setIsLoadingHistory(false);
+    prevMessagesLengthRef.current = 0;
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+    }, 100);
   }, [activeSessionId]);
 
   useEffect(() => {
     if (shouldAutoScroll) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     } else if (messages.length > prevMessagesLengthRef.current && prevMessagesLengthRef.current > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setHasNewMessages(true);
     }
     prevMessagesLengthRef.current = messages.length;

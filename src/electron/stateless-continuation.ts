@@ -25,6 +25,7 @@ const SUMMARY_TEXT_LIMIT = 160;
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 const DEFAULT_COMPRESSION_THRESHOLD_PERCENT = 70;
 const DEFAULT_IMAGE_ATTACHMENT_TOKEN_ESTIMATE = 6_000;
+const ATTACHMENT_HISTORY_TEXT_LIMIT = 280;
 
 function summarizeAttachments(attachments?: PromptAttachment[]): string {
   if (!attachments || attachments.length === 0) {
@@ -45,9 +46,36 @@ function summarizeAttachments(attachments?: PromptAttachment[]): string {
   return `[Attachments: ${summaryParts.join(", ")}]`;
 }
 
+function buildAttachmentHistoryLines(attachments?: PromptAttachment[]): string[] {
+  if (!attachments?.length) {
+    return [];
+  }
+
+  const detailLines = attachments.map((attachment) => {
+    const attachmentName = attachment.name?.trim() || "unnamed";
+    if (attachment.kind === "image") {
+      const summary = attachment.summaryText?.trim();
+      if (summary) {
+        return `Image attachment (${attachmentName}): ${compressText(summary, ATTACHMENT_HISTORY_TEXT_LIMIT)}`;
+      }
+
+      return `Image attachment (${attachmentName}) was provided.`;
+    }
+
+    const textBody = (attachment.summaryText ?? attachment.data).trim();
+    if (!textBody) {
+      return `Text attachment (${attachmentName}) was provided.`;
+    }
+
+    return `Text attachment (${attachmentName}): ${compressText(textBody, ATTACHMENT_HISTORY_TEXT_LIMIT)}`;
+  });
+
+  return [summarizeAttachments(attachments), ...detailLines].filter(Boolean);
+}
+
 function extractTextFromMessage(message: StreamMessage): ConversationEntry | null {
   if (message.type === "user_prompt") {
-    const text = [message.prompt.trim(), summarizeAttachments(message.attachments)]
+    const text = [message.prompt.trim(), ...buildAttachmentHistoryLines(message.attachments)]
       .filter(Boolean)
       .join("\n");
     return text ? { role: "user", text } : null;

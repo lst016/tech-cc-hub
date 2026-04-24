@@ -131,6 +131,6 @@ interface Window {
         syncSkillSources: (request: SkillSyncRequest) => Promise<SkillSyncResponse>;
         checkApiConfig: () => Promise<{ hasConfig: boolean; config: ApiConfig | null }>;
         debugSaveTraceSnapshot: (snapshot: unknown) => Promise<{ success: boolean; path?: string; error?: string }>;
-        preprocessImageAttachments: (payload: { prompt: string; attachments: import("./src/ui/types").PromptAttachment[] }) => Promise<ImagePreprocessResult>;
+        preprocessImageAttachments: (payload: { prompt: string; selectedModel?: string; attachments: import("./src/ui/types").PromptAttachment[] }) => Promise<ImagePreprocessResult>;
     }
 }

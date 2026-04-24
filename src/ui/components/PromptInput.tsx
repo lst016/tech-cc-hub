@@ -259,12 +259,16 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
     attachments: PromptAttachment[],
   ): Promise<PromptAttachment[] | null> => {
     const hasImageAttachments = attachments.some((attachment) => attachment.kind === "image");
-    if (!hasImageAttachments || !activeProfile?.imageModel?.trim()) {
+    const imageModel = activeProfile?.imageModel?.trim();
+    const selectedModel = runtimeModel.trim();
+
+    if (!hasImageAttachments || !imageModel) {
       return attachments;
     }
 
     const result = await window.electron.preprocessImageAttachments({
       prompt: promptValue,
+      selectedModel,
       attachments,
     });
 
@@ -274,7 +278,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
     }
 
     return result.attachments;
-  }, [activeProfile?.imageModel, setGlobalError]);
+  }, [activeProfile?.imageModel, runtimeModel, setGlobalError]);
 
   const sendPromptDraft = useCallback(async (
     promptValue: string,

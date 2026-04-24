@@ -1,16 +1,17 @@
 import { app, BrowserWindow } from "electron";
 import { join } from "path";
 
-import { createStoredUserPromptMessage } from "../shared/attachments.js";
+import { createStoredUserPromptMessage, sanitizePromptAttachmentsForStorage } from "../shared/attachments.js";
 import { createInitialSessionWorkflowState, parseWorkflowMarkdown } from "../shared/workflow-markdown.js";
 import { runClaude, type RunnerHandle } from "./libs/runner.js";
+import { rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
 import { getCurrentApiConfig, getModelConfig, supportsRemoteSessionResume } from "./libs/claude-settings.js";
 import { SessionStore } from "./libs/session-store.js";
 import { buildSessionSlashCommands } from "./libs/slash-command-catalog.js";
 import { stripInlineBase64ImagesFromMessage } from "./libs/tool-output-sanitizer.js";
 import { buildSessionWorkflowCatalog } from "./libs/workflow-catalog.js";
 import { buildStatelessContinuationPayload } from "./stateless-continuation.js";
-import type { ClientEvent, ServerEvent } from "./types.js";
+import type { ClientEvent, PromptAttachment, ServerEvent, StreamMessage } from "./types.js";
 import { isDev } from "./util.js";
 
 let sessions: SessionStore;
@@ -41,6 +42,60 @@ function hasLiveSession(sessionId: string): boolean {
   return Boolean(sessions.getSession(sessionId));
 }
 
+const MAX_REHYDRATED_IMAGE_ATTACHMENTS = 2;
+const VISUAL_REVIEW_REHYDRATE_PATTERN =
+  /(ui|design|interface|screenshot|image|compare|diff|align|layout|spacing|pixel|visual|button|style|\u8bbe\u8ba1|\u754c\u9762|\u622a\u56fe|\u770b\u56fe|\u6bd4\u5bf9|\u5bf9\u6bd4|\u4e00\u81f4|\u50cf\u7d20|\u5e03\u5c40|\u95f4\u8ddd|\u8fd8\u539f|\u89c6\u89c9|\u6309\u94ae|\u6837\u5f0f|\u9884\u671f)/i;
+
+function shouldRehydrateRecentImages(prompt: string, attachments?: PromptAttachment[]): boolean {
+  if (attachments?.some((attachment) => attachment.kind === "image")) {
+    return false;
+  }
+
+  return VISUAL_REVIEW_REHYDRATE_PATTERN.test(prompt);
+}
+
+async function loadRecentReferencedImages(messages: StreamMessage[]): Promise<PromptAttachment[]> {
+  const candidates: PromptAttachment[] = [];
+  const seenStoragePaths = new Set<string>();
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.type !== "user_prompt" || !message.attachments?.length) {
+      continue;
+    }
+
+    for (const attachment of message.attachments) {
+      if (attachment.kind !== "image" || !attachment.storagePath) {
+        continue;
+      }
+
+      if (seenStoragePaths.has(attachment.storagePath)) {
+        continue;
+      }
+
+      seenStoragePaths.add(attachment.storagePath);
+      candidates.push(attachment);
+      if (candidates.length >= MAX_REHYDRATED_IMAGE_ATTACHMENTS) {
+        break;
+      }
+    }
+
+    if (candidates.length >= MAX_REHYDRATED_IMAGE_ATTACHMENTS) {
+      break;
+    }
+  }
+
+  const hydrated: PromptAttachment[] = [];
+  for (const attachment of candidates.reverse()) {
+    const restored = await rehydrateStoredImageAttachment(attachment);
+    if (restored) {
+      hydrated.push(restored);
+    }
+  }
+
+  return hydrated;
+}
+
 function emit(event: ServerEvent) {
   let nextEvent = event;
 
@@ -65,8 +120,10 @@ function emit(event: ServerEvent) {
       typeof nextEvent.payload.message.capturedAt === "number"
         ? nextEvent.payload.message
         : { ...nextEvent.payload.message, capturedAt: Date.now() };
-    const message = stripInlineBase64ImagesFromMessage(normalizedMessage);
-    sessions.recordMessage(nextEvent.payload.sessionId, message);
+    const message = sessions.recordMessage(
+      nextEvent.payload.sessionId,
+      stripInlineBase64ImagesFromMessage(normalizedMessage),
+    );
     nextEvent = {
       ...nextEvent,
       payload: {
@@ -76,19 +133,29 @@ function emit(event: ServerEvent) {
     };
   }
   if (nextEvent.type === "stream.user_prompt") {
-    sessions.recordMessage(
+    const sanitizedAttachments = sanitizePromptAttachmentsForStorage(nextEvent.payload.attachments);
+    const storedPrompt = sessions.recordMessage(
       nextEvent.payload.sessionId,
       {
-        ...createStoredUserPromptMessage(nextEvent.payload.prompt, nextEvent.payload.attachments),
+        ...createStoredUserPromptMessage(nextEvent.payload.prompt, sanitizedAttachments),
         capturedAt: Date.now(),
       },
     );
+    nextEvent = {
+      ...nextEvent,
+      payload: {
+        ...nextEvent.payload,
+        attachments: sanitizedAttachments,
+        capturedAt: storedPrompt.capturedAt,
+        historyId: storedPrompt.historyId,
+      },
+    };
   }
 
   broadcast(nextEvent);
 }
 
-export function handleClientEvent(event: ClientEvent) {
+export async function handleClientEvent(event: ClientEvent) {
   const store = initializeSessions();
 
   if (event.type === "session.list") {
@@ -104,7 +171,10 @@ export function handleClientEvent(event: ClientEvent) {
   }
 
   if (event.type === "session.history") {
-    const history = store.getSessionHistory(event.payload.sessionId);
+    const history = store.getSessionHistoryPage(event.payload.sessionId, {
+      before: event.payload.before,
+      limit: event.payload.limit,
+    });
     if (!history) {
       emit({ type: "session.deleted", payload: { sessionId: event.payload.sessionId } });
       return;
@@ -116,6 +186,9 @@ export function handleClientEvent(event: ClientEvent) {
         sessionId: history.session.id,
         status: history.session.status,
         messages: history.messages,
+        mode: event.payload.before ? "prepend" : "replace",
+        hasMore: history.hasMore,
+        nextCursor: history.nextCursor,
         slashCommands: buildSessionSlashCommands({
           cwd: history.session.cwd,
           messages: history.messages,
@@ -349,6 +422,11 @@ export function handleClientEvent(event: ClientEvent) {
         );
     const prompt = canUseRemoteResume ? event.payload.prompt : continuationPayload?.prompt ?? event.payload.prompt;
     const resumeSessionId = canUseRemoteResume ? session.claudeSessionId : undefined;
+    const currentAttachments = event.payload.attachments ?? [];
+    const rehydratedAttachments = shouldRehydrateRecentImages(event.payload.prompt, currentAttachments)
+      ? await loadRecentReferencedImages(history?.messages ?? [])
+      : [];
+    const attachmentsForRun = [...currentAttachments, ...rehydratedAttachments];
 
     store.updateSession(session.id, {
       status: "running",
@@ -373,12 +451,12 @@ export function handleClientEvent(event: ClientEvent) {
 
     emit({
       type: "stream.user_prompt",
-      payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: event.payload.attachments },
+      payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: currentAttachments },
     });
 
     runClaude({
       prompt,
-      attachments: event.payload.attachments,
+      attachments: attachmentsForRun,
       runtime: event.payload.runtime,
       session,
       resumeSessionId,

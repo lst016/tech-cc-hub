@@ -5,10 +5,14 @@ const URL_PREFIX_PATTERN = /^(blob:|https?:|file:)/i;
 export type AttachmentLike = {
   kind: "image" | "text";
   data: string;
+  runtimeData?: string;
   mimeType: string;
   preview?: string;
   name?: string;
   size?: number;
+  storagePath?: string;
+  storageUri?: string;
+  summaryText?: string;
 };
 
 export type StoredUserPromptMessage<TAttachment> = {
@@ -53,6 +57,24 @@ export function resolveImageAttachmentSrc(attachment: Pick<AttachmentLike, "data
   return candidate;
 }
 
+export function isInlineImageAttachmentData(data?: string): boolean {
+  if (!data) {
+    return false;
+  }
+
+  const candidate = data.trim();
+  if (!candidate) {
+    return false;
+  }
+
+  if (DATA_URL_PREFIX_PATTERN.test(candidate)) {
+    return true;
+  }
+
+  const normalizedBase64 = candidate.replace(/\s+/g, "");
+  return Boolean(normalizedBase64 && BASE64_IMAGE_DATA_PATTERN.test(normalizedBase64));
+}
+
 export function buildAnthropicPromptContentBlocks(
   prompt: string,
   attachments: AttachmentLike[],
@@ -68,7 +90,19 @@ export function buildAnthropicPromptContentBlocks(
 
   for (const attachment of attachments) {
     if (attachment.kind === "image") {
-      const base64Data = stripDataUrlPrefix(attachment.data).replace(/\s+/g, "");
+      const runtimeImageData = attachment.runtimeData ?? attachment.data;
+      if (!isInlineImageAttachmentData(runtimeImageData)) {
+        const normalizedSummary = attachment.summaryText?.trim();
+        if (normalizedSummary) {
+          contentBlocks.push({
+            type: "text",
+            text: normalizedSummary,
+          });
+        }
+        continue;
+      }
+
+      const base64Data = stripDataUrlPrefix(runtimeImageData).replace(/\s+/g, "");
       if (!base64Data) {
         continue;
       }
@@ -84,7 +118,7 @@ export function buildAnthropicPromptContentBlocks(
       continue;
     }
 
-    const normalizedText = attachment.data.trim();
+    const normalizedText = (attachment.summaryText ?? attachment.data).trim();
     if (!normalizedText) {
       continue;
     }
@@ -96,6 +130,26 @@ export function buildAnthropicPromptContentBlocks(
   }
 
   return contentBlocks;
+}
+
+export function sanitizePromptAttachmentsForStorage<TAttachment extends AttachmentLike>(attachments?: TAttachment[]): TAttachment[] | undefined {
+  if (!attachments?.length) {
+    return attachments;
+  }
+
+  return attachments.map((attachment) => {
+    if (attachment.kind !== "image") {
+      return attachment;
+    }
+
+    const storageUri = attachment.storageUri?.trim() || attachment.preview?.trim() || attachment.data.trim();
+    return {
+      ...attachment,
+      data: storageUri,
+      preview: storageUri,
+      runtimeData: undefined,
+    };
+  }) as TAttachment[];
 }
 
 function stripDataUrlPrefix(data: string): string {
