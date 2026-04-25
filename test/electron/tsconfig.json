@@ -13,6 +13,7 @@
   },
   "include": [
     "../../src/shared/activity-rail-model.ts",
-    "./activity-rail-model.test.ts"
+    "./activity-rail-model.test.ts",
+    "./session-analysis-page.test.ts"
   ]
 }

@@ -9,7 +9,12 @@ import {
   type ActivityTimelineItem,
   type PromptAnalysisModel,
 } from "../../shared/activity-rail-model";
-import type { PromptLedgerRiskKind, PromptLedgerSegment, PromptLedgerSourceKind } from "../../shared/prompt-ledger";
+import {
+  derivePromptNodeScope,
+  type PromptLedgerRiskKind,
+  type PromptLedgerSegment,
+  type PromptLedgerSourceKind,
+} from "../../shared/prompt-ledger";
 import type { SessionView } from "../store/useAppStore";
 
 type InspectorTabKey = "node" | "prompt" | "raw" | "analytics";
@@ -1186,80 +1191,31 @@ function PromptLedgerPanel({
   const effectiveSelectedKind = hasFreshScopeState ? selectedKind : "all";
   const effectiveSelectedSegmentId = hasFreshScopeState ? selectedSegmentId : null;
 
-  const nodeRelation = useMemo(() => {
-    if (!selectedTimelineItem) {
-      return {
-        exactIds: new Set<string>(),
-        roundIds: new Set<string>(),
-        matchedIds: new Set<string>(),
-        mode: "none" as const,
-        label: "未选择节点",
-        detail: "从左侧 Trace Flow 选择节点后，这里会自动显示关联片段。",
-        tokenEstimate: 0,
-        sourceLabels: [] as string[],
-      };
-    }
-
-    const exact = analysis.segments.filter((segment) => {
-      if (segment.nodeId === selectedTimelineItem.id || segment.messageId === selectedTimelineItem.id) return true;
-      if (
-        selectedTimelineItem.toolName &&
-        segment.toolName === selectedTimelineItem.toolName &&
-        segment.round === selectedTimelineItem.round
-      ) {
-        return true;
-      }
-      if (
-        selectedTimelineItem.nodeKind === "context" &&
-        selectedTimelineItem.title === "发送用户输入" &&
-        (segment.segmentKind === "current_prompt" || segment.segmentKind === "attachment")
-      ) {
-        return true;
-      }
-      return false;
-    });
-
-    const round = exact.length > 0
-      ? []
-      : analysis.segments.filter((segment) => (
-        typeof selectedTimelineItem.round === "number" &&
-        selectedTimelineItem.round > 0 &&
-        segment.round === selectedTimelineItem.round
-      ));
-
-    const exactIds = new Set(exact.map((segment) => segment.id));
-    const roundIds = new Set(round.map((segment) => segment.id));
-    const matchedIds = exactIds.size > 0 ? exactIds : roundIds;
-    const mode = exactIds.size > 0 ? "exact" : roundIds.size > 0 ? "round" : "empty";
-    const matchedSegments = exactIds.size > 0 ? exact : round;
-    const tokenEstimate = matchedSegments.reduce((sum, segment) => sum + segment.tokenEstimate, 0);
-    const sourceLabels = Array.from(new Set(matchedSegments.map(segmentKindLabel))).slice(0, 4);
-
-    return {
-      exactIds,
-      roundIds,
-      matchedIds,
-      mode,
-      label: selectedTimelineItem.toolName || selectedTimelineItem.title,
-      tokenEstimate,
-      sourceLabels,
-      detail:
-        mode === "exact"
-          ? `已匹配 ${exactIds.size} 个直接关联片段。`
-          : mode === "round"
-            ? `没有直接节点片段，显示第 ${selectedTimelineItem.round} 轮上下文。`
-            : "这个节点暂时没有可追踪到 Prompt Ledger 的片段。",
-    };
-  }, [analysis.segments, selectedTimelineItem]);
+  const nodeRelation = useMemo(
+    () => derivePromptNodeScope(analysis.segments, selectedTimelineItem),
+    [analysis.segments, selectedTimelineItem],
+  );
+  const nodeMatchedIds = useMemo(
+    () => new Set(nodeRelation.matchedIds),
+    [nodeRelation.matchedIds],
+  );
+  const nodeExactIds = useMemo(
+    () => new Set(nodeRelation.exactIds),
+    [nodeRelation.exactIds],
+  );
+  const nodeRoundIds = useMemo(
+    () => new Set(nodeRelation.roundIds),
+    [nodeRelation.roundIds],
+  );
 
   const visibleSegments = useMemo(() => {
     const scoped = scopeMode === "node"
-      ? segments.filter((segment) => nodeRelation.matchedIds.has(segment.id))
+      ? segments.filter((segment) => nodeMatchedIds.has(segment.id))
       : segments;
     return effectiveSelectedKind === "all"
       ? scoped
       : scoped.filter((segment) => segment.sourceKind === effectiveSelectedKind);
-  }, [segments, nodeRelation.matchedIds, scopeMode, effectiveSelectedKind]);
+  }, [segments, nodeMatchedIds, scopeMode, effectiveSelectedKind]);
 
   const segmentById = useMemo(
     () => new Map(segments.map((segment) => [segment.id, segment])),
@@ -1268,10 +1224,10 @@ function PromptLedgerPanel({
   const visibleSegmentRows = useMemo(
     () => visibleSegments.map((segment) => ({
       segment,
-      linked: nodeRelation.matchedIds.has(segment.id),
-      traceLink: buildSegmentTraceLink(segment, selectedTimelineItem, nodeRelation.exactIds, nodeRelation.roundIds),
+      linked: nodeMatchedIds.has(segment.id),
+      traceLink: buildSegmentTraceLink(segment, selectedTimelineItem, nodeExactIds, nodeRoundIds),
     })),
-    [nodeRelation.exactIds, nodeRelation.matchedIds, nodeRelation.roundIds, selectedTimelineItem, visibleSegments],
+    [nodeExactIds, nodeMatchedIds, nodeRoundIds, selectedTimelineItem, visibleSegments],
   );
   const visibleSegmentDiagnosisById = useMemo(
     () => new Map(visibleSegments.map((segment) => [
@@ -1281,7 +1237,7 @@ function PromptLedgerPanel({
     [analysis.totalTokenEstimate, selectedTimelineItem, visibleSegments],
   );
 
-  const hasEmptyNodeScope = scopeMode === "node" && Boolean(selectedTimelineItem) && nodeRelation.matchedIds.size === 0;
+  const hasEmptyNodeScope = scopeMode === "node" && Boolean(selectedTimelineItem) && nodeRelation.matchedIds.length === 0;
   const selectedSegment =
     (effectiveSelectedSegmentId
       ? visibleSegments.find((segment) => segment.id === effectiveSelectedSegmentId) ??
@@ -1295,7 +1251,7 @@ function PromptLedgerPanel({
       diagnosePromptSegment(selectedSegment, selectedTimelineItem, analysis.totalTokenEstimate)
     : diagnosePromptSegment(null, selectedTimelineItem, analysis.totalTokenEstimate);
   const selectedTraceLink = selectedSegment
-    ? buildSegmentTraceLink(selectedSegment, selectedTimelineItem, nodeRelation.exactIds, nodeRelation.roundIds)
+    ? buildSegmentTraceLink(selectedSegment, selectedTimelineItem, nodeExactIds, nodeRoundIds)
     : null;
   const nodeJumpTarget = selectedSegment?.nodeId ?? selectedSegment?.messageId ?? null;
 
@@ -1448,17 +1404,17 @@ function PromptLedgerPanel({
                   setSelectedKind("all");
                   setSelectedSegmentId(null);
                 }}
-                disabled={!selectedTimelineItem || nodeRelation.matchedIds.size === 0}
+                disabled={!selectedTimelineItem || nodeRelation.matchedIds.length === 0}
                 className={cx(
                   "flex h-8 items-center gap-2 rounded-full border px-3 text-left text-[11px] font-bold transition",
-                  scopeMode === "node" && nodeRelation.matchedIds.size > 0
+                  scopeMode === "node" && nodeRelation.matchedIds.length > 0
                     ? "border-blue-200 bg-blue-50 text-slate-700"
                     : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50",
-                  (!selectedTimelineItem || nodeRelation.matchedIds.size === 0) && "cursor-not-allowed opacity-60",
+                  (!selectedTimelineItem || nodeRelation.matchedIds.length === 0) && "cursor-not-allowed opacity-60",
                 )}
               >
                 <span>当前节点</span>
-                <span className="font-mono text-slate-500">{nodeRelation.matchedIds.size}</span>
+                <span className="font-mono text-slate-500">{nodeRelation.matchedIds.length}</span>
               </button>
               <button
                 type="button"
@@ -1527,7 +1483,7 @@ function PromptLedgerPanel({
                   </div>
                   <div className="grid shrink-0 grid-cols-2 gap-2 text-right">
                     <div className="rounded border border-slate-100 bg-slate-50 px-2 py-1">
-                      <div className="font-mono text-[12px] font-black text-slate-800">{nodeRelation.matchedIds.size}</div>
+                      <div className="font-mono text-[12px] font-black text-slate-800">{nodeRelation.matchedIds.length}</div>
                       <div className="text-[9px] font-bold text-slate-400">片段</div>
                     </div>
                     <div className="rounded border border-slate-100 bg-slate-50 px-2 py-1">
