@@ -7,13 +7,20 @@ import {
   type SDKUserMessage,
   type ThinkingConfig,
 } from "@anthropic-ai/claude-agent-sdk";
+import { app } from "electron";
 import { existsSync, statSync } from "fs";
-import { extname } from "path";
+import { basename, extname } from "path";
 
 import { buildAnthropicPromptContentBlocks } from "../../shared/attachments.js";
 import type { PromptAttachment, RuntimeOverrides, ServerEvent } from "../types.js";
 import { resolveAgentRuntimeContext } from "./agent-resolver.js";
 import { buildEnvForConfig, getClaudeCodePath, getCurrentApiConfig } from "./claude-settings.js";
+import {
+  buildImageDevContextAnalysisFromSummary,
+  buildImageDevContextPromptNote,
+  createImageDevContextArtifacts,
+  type ImageDevContextArtifactResult,
+} from "./image-dev-context.js";
 import { summarizeBase64Image, summarizeLocalImageFile } from "./image-preprocessor.js";
 import {
   buildRasterImageReadBlockedMessage,
@@ -144,7 +151,36 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         agentContext.allowedTools,
         agentContext.enforceAllowedTools,
       );
-      const hooks = buildQualityHooks(resolvedCwd, { config, prompt });
+      const readImageDevContextCache = new Map<string, Promise<string | null>>();
+      const getReadImageDevContext = (filePath: string): Promise<string | null> => {
+        const existing = readImageDevContextCache.get(filePath);
+        if (existing) {
+          return existing;
+        }
+
+        const created = (async () => {
+          if (!shouldPreprocessImageRead(config, filePath)) {
+            return null;
+          }
+
+          const summary = await summarizeLocalImageFile({ config, prompt, filePath });
+          if (!summary) {
+            return null;
+          }
+
+          return createReadImageDevContext({
+            sessionId: session.id,
+            prompt,
+            filePath,
+            summary,
+            imageModel: config.imageModel,
+            emitMessage: sendMessage,
+          });
+        })();
+        readImageDevContextCache.set(filePath, created);
+        return created;
+      };
+      const hooks = buildQualityHooks(resolvedCwd, { config, prompt, sessionId: session.id, emitMessage: sendMessage });
 
       const q = query({
         prompt: createPromptSource(prompt, attachments),
@@ -201,9 +237,17 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               const filePath = typeof input.file_path === "string" ? input.file_path.trim() : "";
               const imageReadCheck = checkRasterImageRead(filePath, MAX_IMAGE_READS_PER_RUN);
               if (imageReadCheck.denyMessage) {
+                const imageDevContext = await getReadImageDevContext(filePath).catch((error) => {
+                  const message = error instanceof Error ? error.message : String(error);
+                  return `${buildRasterImageReadBlockedMessage({
+                    filePath,
+                    imageModel: config.imageModel,
+                  })}\n\n图片开发上下文生成失败：${message}`;
+                });
+
                 return {
                   behavior: "deny",
-                  message: buildRasterImageReadBlockedMessage({
+                  message: imageDevContext || buildRasterImageReadBlockedMessage({
                     filePath,
                     imageModel: config.imageModel,
                   }),
@@ -375,11 +419,121 @@ function createImageSummaryToolOutput(summary: string): { content: Array<{ type:
   };
 }
 
+function mimeTypeFromImagePath(filePath: string): string {
+  const extension = extname(filePath).toLowerCase();
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".gif") return "image/gif";
+  if (extension === ".webp") return "image/webp";
+  if (extension === ".bmp") return "image/bmp";
+  return "image/png";
+}
+
+function buildReadImageAttachment(filePath: string, summaryText: string): PromptAttachment {
+  const fileName = basename(filePath) || "image";
+  let size: number | undefined;
+  try {
+    size = statSync(filePath).size;
+  } catch {
+    size = undefined;
+  }
+
+  return {
+    id: `read-${fileName}-${Date.now()}`,
+    kind: "image",
+    name: fileName,
+    mimeType: mimeTypeFromImagePath(filePath),
+    data: filePath,
+    storagePath: filePath,
+    size,
+    summaryText,
+  };
+}
+
+function emitImageReadDevContextMessages(
+  emitMessage: (message: SDKMessage) => void,
+  result: ImageDevContextArtifactResult,
+) {
+  const toolUseId = `image-read-dev-context-${crypto.randomUUID()}`;
+  emitMessage({
+    type: "assistant",
+    uuid: crypto.randomUUID(),
+    message: {
+      role: "assistant",
+      model: "tech-cc-hub",
+      content: [{
+        type: "tool_use",
+        id: toolUseId,
+        name: "图片转开发上下文",
+        input: {
+          triggerReason: "read_raster_image",
+          imageCount: result.imageCount,
+          manifestPath: result.manifestPath,
+        },
+      }],
+    },
+  } as never);
+  emitMessage({
+    type: "user",
+    uuid: crypto.randomUUID(),
+    message: {
+      role: "user",
+      content: [{
+        type: "tool_result",
+        tool_use_id: toolUseId,
+        content: [
+          `已生成 ${result.imageCount} 份 Read 图片开发上下文。`,
+          `manifest.json: ${result.manifestPath}`,
+          `group-summary.md: ${result.groupSummaryPath}`,
+          `group-spec.json: ${result.groupSpecPath}`,
+          ...result.images.map((image) => `${image.fileName}: ${image.summaryPath} | ${image.specPath}`),
+        ].join("\n"),
+      }],
+    },
+  } as never);
+}
+
+async function createReadImageDevContext(options: {
+  sessionId: string;
+  prompt: string;
+  filePath: string;
+  summary: string;
+  imageModel?: string;
+  emitMessage?: (message: SDKMessage) => void;
+}): Promise<string | null> {
+  const attachment = buildReadImageAttachment(options.filePath, options.summary);
+  const result = await createImageDevContextArtifacts({
+    rootDir: app.getPath("userData"),
+    sessionId: options.sessionId,
+    batchId: `read-${Date.now()}`,
+    prompt: options.prompt,
+    taskKind: "visual",
+    attachments: [attachment],
+    analyzeImage: async ({ attachment: imageAttachment }) => buildImageDevContextAnalysisFromSummary({
+      attachment: imageAttachment,
+      prompt: options.prompt,
+      taskKind: "visual",
+      summaryText: options.summary,
+    }),
+  });
+
+  if (options.emitMessage) {
+    emitImageReadDevContextMessages(options.emitMessage, result);
+  }
+
+  return [
+    buildRasterImageReadBlockedMessage({ filePath: options.filePath, imageModel: options.imageModel }),
+    "",
+    buildImageDevContextPromptNote(result),
+  ].join("\n");
+}
+
 export function buildQualityHooks(
   _cwd: string,
   options: {
     config: NonNullable<ReturnType<typeof getCurrentApiConfig>>;
     prompt: string;
+    sessionId?: string;
+    emitMessage?: (message: SDKMessage) => void;
     summarizeLocalImageFile?: typeof summarizeLocalImageFile;
   },
 ): Partial<Record<string, HookCallbackMatcher[]>> {
@@ -479,6 +633,16 @@ export function buildQualityHooks(
                   imageModel: config.imageModel,
                   shouldSummarize: shouldPreprocessImageRead(config, fixed),
                   summarizeLocalImageFile: () => localImageSummarizer({ config, prompt, filePath: fixed }),
+                  createDevContextFromSummary: options.sessionId
+                    ? (summary) => createReadImageDevContext({
+                        sessionId: options.sessionId!,
+                        prompt,
+                        filePath: fixed,
+                        summary,
+                        imageModel: config.imageModel,
+                        emitMessage: options.emitMessage,
+                      })
+                    : undefined,
                   didMutate,
                   normalizedInput,
                 });

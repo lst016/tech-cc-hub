@@ -46,6 +46,7 @@ export async function buildRasterImageReadPreToolUseDecision(options: {
   imageModel?: string;
   shouldSummarize: boolean;
   summarizeLocalImageFile: () => Promise<string | null>;
+  createDevContextFromSummary?: (summary: string) => Promise<string | null>;
   didMutate?: boolean;
   normalizedInput?: Record<string, unknown>;
 }): Promise<{
@@ -67,13 +68,16 @@ export async function buildRasterImageReadPreToolUseDecision(options: {
   if (options.shouldSummarize) {
     try {
       const summary = await options.summarizeLocalImageFile();
-      additionalContext = summary
-        ? buildRasterImageReadSummaryContext({
-            filePath: options.filePath,
-            imageModel: options.imageModel,
-            summary,
-          })
-        : blockedMessage;
+      if (summary) {
+        const devContext = await options.createDevContextFromSummary?.(summary);
+        additionalContext = devContext?.trim() || buildRasterImageReadSummaryContext({
+          filePath: options.filePath,
+          imageModel: options.imageModel,
+          summary,
+        });
+      } else {
+        additionalContext = blockedMessage;
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       additionalContext = `${blockedMessage}\n\nImage summary failed: ${message}`;

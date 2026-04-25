@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildRasterImageReadBlockedMessage,
+  buildRasterImageReadPreToolUseDecision,
   buildRasterImageReadSummaryContext,
   shouldBlockRawRasterImageRead,
 } from "../../src/electron/libs/raster-image-read-policy.js";
@@ -23,6 +24,21 @@ test("buildRasterImageReadSummaryContext carries the image summary and denies ra
   assert.match(context, /已阻止直接 Read 图片原文/);
   assert.match(context, /vision-model/);
   assert.match(context, /这是图片摘要。/);
+});
+
+test("buildRasterImageReadPreToolUseDecision prefers generated dev context over plain summary", async () => {
+  const decision = await buildRasterImageReadPreToolUseDecision({
+    filePath: "D:\\workspace\\docs\\screen.png",
+    imageModel: "vision-model",
+    shouldSummarize: true,
+    summarizeLocalImageFile: async () => "这是图片摘要。",
+    createDevContextFromSummary: async (summary) => `## Image Dev Context\n\nsummary=${summary}\nGroup summary: D:\\tmp\\group-summary.md`,
+  });
+
+  assert.equal(decision.hookSpecificOutput.permissionDecision, "deny");
+  assert.match(decision.hookSpecificOutput.additionalContext, /Image Dev Context/);
+  assert.match(decision.hookSpecificOutput.additionalContext, /group-summary\.md/);
+  assert.doesNotMatch(decision.hookSpecificOutput.additionalContext, /已阻止直接 Read 图片原文，并改为注入以下图片摘要/);
 });
 
 test("buildRasterImageReadBlockedMessage explains why raw image reads are blocked", () => {
