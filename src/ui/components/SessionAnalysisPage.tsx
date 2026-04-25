@@ -1293,6 +1293,13 @@ function PromptLedgerPanel({
     setScopeAnchorId(selectedTimelineItemId);
     setSelectedSegmentId(segmentId);
   };
+  useEffect(() => {
+    setScopeAnchorId(selectedTimelineItemId);
+    setScopeModeState("node");
+    setSelectedKind("all");
+    setSelectedSegmentId(null);
+    setGeneratedSummary(null);
+  }, [selectedTimelineItemId]);
   const handleGenerateSummary = async (segment: PromptLedgerSegment) => {
     const summary = buildSegmentSummary(segment);
     setGeneratedSummary(summary);

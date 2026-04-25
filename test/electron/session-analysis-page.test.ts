@@ -24,4 +24,8 @@ test("app exposes a session analysis entry and renders the analysis page skeleto
   assert.match(analysisPageSource, /data-prompt-ledger-distribution/);
   assert.match(analysisPageSource, /data-prompt-ledger-diagnosis/);
   assert.doesNotMatch(analysisPageSource, /h-\[340px\]/);
+  assert.match(
+    analysisPageSource,
+    /useEffect\(\(\) => \{\s*setScopeAnchorId\(selectedTimelineItemId\);\s*setScopeModeState\("node"\);\s*setSelectedKind\("all"\);\s*setSelectedSegmentId\(null\);\s*setGeneratedSummary\(null\);\s*\}, \[selectedTimelineItemId\]\);/s,
+  );
 });
