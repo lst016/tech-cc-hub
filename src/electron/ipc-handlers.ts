@@ -2,7 +2,11 @@ import { app, BrowserWindow } from "electron";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
-import { createStoredUserPromptMessage, sanitizePromptAttachmentsForStorage } from "../shared/attachments.js";
+import {
+  createStoredUserPromptMessage,
+  isInlineImageAttachmentData,
+  sanitizePromptAttachmentsForStorage,
+} from "../shared/attachments.js";
 import { applyDevLoopToPrompt, classifyDevLoop, createDevLoopMessage } from "../shared/dev-loop.js";
 import { buildPromptLedgerMessage, type PromptLedgerMessage, type PromptLedgerSource } from "../shared/prompt-ledger.js";
 import {
@@ -19,6 +23,14 @@ import { runClaude, type RunnerHandle } from "./libs/runner.js";
 import { rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
 import { resolveAgentRuntimeContext } from "./libs/agent-resolver.js";
 import { getCurrentApiConfig, getModelConfig, supportsRemoteSessionResume } from "./libs/claude-settings.js";
+import {
+  buildImageDevContextAnalysisFromSummary,
+  buildImageDevContextPromptNote,
+  createImageDevContextArtifacts,
+  shouldCreateImageDevContext,
+  type ImageDevContextArtifactResult,
+} from "./libs/image-dev-context.js";
+import { summarizeBase64Image, summarizeLocalImageFile } from "./libs/image-preprocessor.js";
 import { SessionStore } from "./libs/session-store.js";
 import { buildSessionSlashCommands } from "./libs/slash-command-catalog.js";
 import { stripInlineBase64ImagesFromMessage } from "./libs/tool-output-sanitizer.js";
@@ -168,6 +180,181 @@ function shouldRehydrateRecentImages(prompt: string, attachments?: PromptAttachm
   }
 
   return VISUAL_REVIEW_REHYDRATE_PATTERN.test(prompt);
+}
+
+function appendImageDevContextPrompt(prompt: string, imageContext: ImageDevContextArtifactResult | null): string {
+  if (!imageContext) {
+    return prompt;
+  }
+
+  return `${prompt.trim()}\n\n${buildImageDevContextPromptNote(imageContext).trim()}`;
+}
+
+function stripCurrentImageAttachmentsAfterDevContext(
+  attachments: PromptAttachment[],
+  imageContext: ImageDevContextArtifactResult | null,
+): PromptAttachment[] {
+  if (!imageContext) {
+    return attachments;
+  }
+
+  return attachments.filter((attachment) => attachment.kind !== "image");
+}
+
+async function maybeCreateImageDevContext(options: {
+  sessionId: string;
+  prompt: string;
+  taskKind: string;
+  attachments?: PromptAttachment[];
+}): Promise<ImageDevContextArtifactResult | null> {
+  const attachments = options.attachments ?? [];
+  if (!shouldCreateImageDevContext({ taskKind: options.taskKind, attachments })) {
+    return null;
+  }
+
+  const batchId = `batch-${Date.now()}`;
+  const config = getCurrentApiConfig();
+
+  try {
+    const result = await createImageDevContextArtifacts({
+      rootDir: app.getPath("userData"),
+      sessionId: options.sessionId,
+      batchId,
+      prompt: options.prompt,
+      taskKind: options.taskKind,
+      attachments,
+      analyzeImage: async ({ attachment }) => {
+        const summaryText = await resolveImageDevContextSummary({
+          config,
+          prompt: options.prompt,
+          attachment,
+        });
+        return buildImageDevContextAnalysisFromSummary({
+          attachment,
+          prompt: options.prompt,
+          taskKind: options.taskKind,
+          summaryText,
+        });
+      },
+    });
+
+    emitImageDevContextToolMessages(options.sessionId, result);
+    return result;
+  } catch (error) {
+    emitImageDevContextToolMessages(options.sessionId, null, error);
+    return null;
+  }
+}
+
+async function resolveImageDevContextSummary(options: {
+  config: ReturnType<typeof getCurrentApiConfig>;
+  prompt: string;
+  attachment: PromptAttachment;
+}): Promise<string | null> {
+  const existingSummary = options.attachment.summaryText?.trim();
+  if (existingSummary) {
+    return existingSummary;
+  }
+
+  if (options.attachment.storagePath) {
+    return summarizeLocalImageFile({
+      config: options.config,
+      prompt: options.prompt,
+      filePath: options.attachment.storagePath,
+    });
+  }
+
+  const inlineBase64 = getInlineImageBase64(options.attachment);
+  if (!inlineBase64) {
+    return null;
+  }
+
+  return summarizeBase64Image({
+    config: options.config,
+    prompt: options.prompt,
+    attachmentName: options.attachment.name,
+    mimeType: options.attachment.mimeType,
+    base64Data: inlineBase64,
+  });
+}
+
+function getInlineImageBase64(attachment: PromptAttachment): string | null {
+  const data = attachment.runtimeData ?? attachment.data;
+  if (!isInlineImageAttachmentData(data)) {
+    return null;
+  }
+
+  const [, base64Data = data] = data.split(",", 2);
+  const normalized = base64Data.replace(/\s+/g, "");
+  return normalized || null;
+}
+
+function emitImageDevContextToolMessages(
+  sessionId: string,
+  result: ImageDevContextArtifactResult | null,
+  error?: unknown,
+) {
+  const toolUseId = `image-dev-context-${crypto.randomUUID()}`;
+  const isError = Boolean(error);
+  const errorMessage = error instanceof Error ? error.message : String(error ?? "");
+
+  emit({
+    type: "stream.message",
+    payload: {
+      sessionId,
+      message: {
+        type: "assistant",
+        uuid: crypto.randomUUID(),
+        message: {
+          role: "assistant",
+          model: "tech-cc-hub",
+          content: [{
+            type: "tool_use",
+            id: toolUseId,
+            name: "图片转开发上下文",
+            input: result
+              ? {
+                  imageCount: result.imageCount,
+                  triggerReason: "development_with_images",
+                  manifestPath: result.manifestPath,
+                }
+              : {
+                  triggerReason: "development_with_images",
+                  fallback: "image_summary_preprocessor",
+                },
+          }],
+        },
+      } as never,
+    },
+  });
+
+  emit({
+    type: "stream.message",
+    payload: {
+      sessionId,
+      message: {
+        type: "user",
+        uuid: crypto.randomUUID(),
+        message: {
+          role: "user",
+          content: [{
+            type: "tool_result",
+            tool_use_id: toolUseId,
+            is_error: isError,
+            content: result
+              ? [
+                  `已生成 ${result.imageCount} 份单图文档和 1 份组级文档。`,
+                  `manifest.json: ${result.manifestPath}`,
+                  `group-summary.md: ${result.groupSummaryPath}`,
+                  `group-spec.json: ${result.groupSpecPath}`,
+                  ...result.images.map((image) => `${image.fileName}: ${image.summaryPath} | ${image.specPath}`),
+                ].join("\n")
+              : `图片开发上下文生成失败，已回退到现有图片摘要链路。${errorMessage ? `错误：${errorMessage}` : ""}`,
+          }],
+        },
+      } as never,
+    },
+  });
 }
 
 async function loadRecentReferencedImages(messages: StreamMessage[]): Promise<PromptAttachment[]> {
@@ -542,10 +729,18 @@ export async function handleClientEvent(event: ClientEvent) {
       taskKind: devLoop.taskKind,
       loopMode: devLoop.loopMode,
     });
+    const imageDevContext = await maybeCreateImageDevContext({
+      sessionId: session.id,
+      prompt: event.payload.prompt,
+      taskKind: devLoop.taskKind,
+      attachments: event.payload.attachments,
+    });
     const promptWithProjectRuntime = projectRuntime.pack
       ? applyProjectRuntimeToPrompt(event.payload.prompt, projectRuntime.pack)
       : event.payload.prompt;
-    const promptForRun = applyDevLoopToPrompt(promptWithProjectRuntime, devLoop);
+    const promptWithImageDevContext = appendImageDevContextPrompt(promptWithProjectRuntime, imageDevContext);
+    const promptForRun = applyDevLoopToPrompt(promptWithImageDevContext, devLoop);
+    const attachmentsForRun = stripCurrentImageAttachmentsAfterDevContext(event.payload.attachments ?? [], imageDevContext);
 
     emit({
       type: "stream.message",
@@ -562,7 +757,7 @@ export async function handleClientEvent(event: ClientEvent) {
         message: buildPromptLedgerForRun({
           phase: "start",
           prompt: promptForRun,
-          attachments: event.payload.attachments,
+          attachments: attachmentsForRun,
           session,
           model: event.payload.runtime?.model ?? config?.model,
         }),
@@ -576,7 +771,7 @@ export async function handleClientEvent(event: ClientEvent) {
 
     runClaude({
       prompt: promptForRun,
-      attachments: event.payload.attachments,
+      attachments: attachmentsForRun,
       runtime: event.payload.runtime,
       session,
       resumeSessionId: session.claudeSessionId,
@@ -662,10 +857,21 @@ export async function handleClientEvent(event: ClientEvent) {
       taskKind: devLoop.taskKind,
       loopMode: devLoop.loopMode,
     });
+    const imageDevContext = await maybeCreateImageDevContext({
+      sessionId: session.id,
+      prompt: event.payload.prompt,
+      taskKind: devLoop.taskKind,
+      attachments: currentAttachments,
+    });
     const promptWithProjectRuntime = projectRuntime.pack
       ? applyProjectRuntimeToPrompt(prompt, projectRuntime.pack)
       : prompt;
-    const promptForRun = applyDevLoopToPrompt(promptWithProjectRuntime, devLoop);
+    const promptWithImageDevContext = appendImageDevContextPrompt(promptWithProjectRuntime, imageDevContext);
+    const promptForRun = applyDevLoopToPrompt(promptWithImageDevContext, devLoop);
+    const attachmentsForRunAfterImageContext = [
+      ...stripCurrentImageAttachmentsAfterDevContext(currentAttachments, imageDevContext),
+      ...rehydratedAttachments,
+    ];
 
     store.updateSession(session.id, {
       status: "running",
@@ -703,7 +909,7 @@ export async function handleClientEvent(event: ClientEvent) {
         message: buildPromptLedgerForRun({
           phase: "continue",
           prompt: promptForRun,
-          attachments: attachmentsForRun,
+          attachments: attachmentsForRunAfterImageContext,
           session,
           historyMessages: history?.messages ?? [],
           model: selectedModel,
@@ -719,7 +925,7 @@ export async function handleClientEvent(event: ClientEvent) {
 
     runClaude({
       prompt: promptForRun,
-      attachments: attachmentsForRun,
+      attachments: attachmentsForRunAfterImageContext,
       runtime: event.payload.runtime,
       session,
       resumeSessionId,
