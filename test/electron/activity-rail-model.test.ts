@@ -8,6 +8,38 @@ import {
   type PromptLedgerSegment,
 } from "../../src/shared/prompt-ledger.js";
 
+test("buildActivityRailModel shows dev loop classification as a trace node", () => {
+  const model = buildActivityRailModel(
+    {
+      id: "session-dev-loop",
+      title: "Default Dev Loop",
+      status: "running",
+      messages: [
+        {
+          type: "dev_loop",
+          phase: "prompt_injected",
+          taskKind: "electron",
+          loopMode: "electron-window",
+          confidence: 0.9,
+          summary: "Dev Loop 已启用：Electron 真窗口闭环。",
+          reasons: ["tech-cc-hub UI 任务需要 Electron 真窗口验收"],
+          instructions: "启动 Electron 真窗口并截图验证。",
+          capturedAt: 1,
+        },
+      ],
+    },
+    [],
+    "",
+  );
+
+  const node = model.timeline.find((item) => item.title.includes("Dev Loop"));
+  assert.ok(node);
+  assert.equal(node.nodeKind, "evaluation");
+  assert.ok(node.chips.includes("electron-window"));
+  assert.ok(node.detail.includes("Electron 真窗口"));
+  assert.equal(node.detailSections[0]?.title, "Dev Loop");
+});
+
 test("buildPromptLedgerMessage separates prompt sources for optimization", () => {
   const ledger = buildPromptLedgerMessage({
     phase: "continue",

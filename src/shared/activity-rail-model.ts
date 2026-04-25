@@ -4,6 +4,7 @@ import type {
   SDKResultMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import type { DevLoopMessage, DevLoopMode, DevLoopPhase, DevLoopTaskKind } from "./dev-loop.js";
 import type { PromptLedgerBucket, PromptLedgerMessage, PromptLedgerSegment } from "./prompt-ledger.js";
 
 export type ActivityRailTone = "neutral" | "info" | "success" | "warning" | "error";
@@ -84,7 +85,7 @@ export type UserPromptMessageLike = {
   capturedAt?: number;
 };
 
-export type StreamMessageLike = (SDKMessage & { capturedAt?: number }) | UserPromptMessageLike | PromptLedgerMessage;
+export type StreamMessageLike = (SDKMessage & { capturedAt?: number }) | UserPromptMessageLike | PromptLedgerMessage | DevLoopMessage;
 
 export type SessionLike = {
   id: string;
@@ -1118,6 +1119,104 @@ function createTimelineItem(
   };
 }
 
+function isDevLoopMessage(message: StreamMessageLike): message is DevLoopMessage {
+  return message.type === "dev_loop";
+}
+
+function formatDevLoopMode(mode: DevLoopMode): string {
+  switch (mode) {
+    case "dev":
+      return "开发验证闭环";
+    case "visual-dev":
+      return "视觉开发闭环";
+    case "electron-window":
+      return "Electron 真窗口闭环";
+    default:
+      return "未启用";
+  }
+}
+
+function formatDevLoopTaskKind(taskKind: DevLoopTaskKind): string {
+  switch (taskKind) {
+    case "code":
+      return "代码开发";
+    case "frontend":
+      return "前端开发";
+    case "visual":
+      return "视觉开发";
+    case "electron":
+      return "Electron 桌面端";
+    case "docs":
+      return "文档";
+    default:
+      return "未分类";
+  }
+}
+
+function formatDevLoopPhase(phase: DevLoopPhase): string {
+  switch (phase) {
+    case "prompt_injected":
+      return "已注入";
+    case "verified":
+      return "已验证";
+    case "paused":
+      return "已暂停";
+    case "completed":
+      return "已完成";
+    default:
+      return "已分类";
+  }
+}
+
+function buildDevLoopTimelineItem(
+  message: DevLoopMessage,
+  sequence: number,
+  round: number,
+): ActivityTimelineItem {
+  const modeLabel = formatDevLoopMode(message.loopMode);
+  const confidenceLabel = `${Math.round(message.confidence * 100)}%`;
+  const reasons = message.reasons.length > 0 ? message.reasons.join("\n") : "未记录额外原因";
+  const detail = [message.summary, reasons].filter(Boolean).join("\n");
+  const rows: ActivityDetailRow[] = [
+    { label: "阶段", value: formatDevLoopPhase(message.phase) },
+    { label: "任务类型", value: formatDevLoopTaskKind(message.taskKind) },
+    { label: "闭环模式", value: modeLabel },
+    { label: "置信度", value: confidenceLabel },
+  ];
+
+  return createTimelineItem({
+    id: `dev-loop-${message.phase}-${message.historyId ?? sequence}`,
+    filterKey: "flow",
+    layer: "流程",
+    tone: message.loopMode === "none" ? "neutral" : "info",
+    nodeKind: "evaluation",
+    title: `Dev Loop：${modeLabel}`,
+    detail,
+    round: Math.max(round, 1),
+    sequence,
+    statusLabel: formatDevLoopPhase(message.phase),
+    chips: [message.taskKind, message.loopMode, confidenceLabel],
+    attention: false,
+    stageKind: message.loopMode === "none" ? "plan" : "verify",
+    detailSections: [
+      {
+        id: "dev-loop",
+        title: "Dev Loop",
+        summary: message.summary,
+        rows,
+        raw: [reasons, message.instructions ?? ""].filter(Boolean).join("\n\n"),
+        rawLabel: "展开注入指令",
+      },
+    ],
+    metrics: createEmptyMetrics({
+      contextChars: message.instructions?.length ?? 0,
+      inputChars: message.summary.length,
+      totalCount: message.loopMode === "none" ? 0 : 1,
+      status: message.loopMode === "none" ? "neutral" : "running",
+    }),
+  });
+}
+
 function buildExecutionStepTitle(kind: ActivityStageKind, firstItem: ActivityTimelineItem): string {
   if (firstItem.filterKey === "tool" || firstItem.filterKey === "result") {
     return firstItem.title;
@@ -1559,6 +1658,12 @@ export function buildActivityRailModel(
   const promptLedgers: PromptLedgerMessage[] = [];
 
   for (const message of session.messages) {
+    if (isDevLoopMessage(message)) {
+      sequence += 1;
+      timelineChronological.push(buildDevLoopTimelineItem(message, sequence, round));
+      continue;
+    }
+
     if (message.type === "prompt_ledger") {
       latestPromptLedger = message;
       promptLedgers.push(message);
