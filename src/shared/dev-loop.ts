@@ -92,6 +92,28 @@ function isTechCcHubCwd(cwd?: string): boolean {
   return typeof cwd === "string" && /(?:^|[\\/])tech-cc-hub(?:[\\/]|$)/i.test(cwd);
 }
 
+function buildFirstShotDesignPack(mode: Extract<DevLoopMode, "visual-dev" | "electron-window">): string[] {
+  const common = [
+    "## First-Shot Design Pack（第一轮准确性优先）",
+    "",
+    "不要先写代码。写代码前先在回复或内部执行步骤里完成以下设计包，然后再基于设计包小步修改：",
+    "1. 先提取目标图规格：页面尺寸、主区域分块、颜色 token、字号/字重、间距、圆角、阴影、组件层级、滚动/固定区域。",
+    "2. 读取当前组件入口、现有 CSS/Tailwind 主题、可复用组件和不应改动的区域。",
+    "3. 把目标规格映射到当前代码：明确改哪个组件、哪个容器、哪些样式变量或 class。",
+    "4. 写出本轮验收标准：主布局、关键模块首屏可见、文字不溢出、不遮挡、交互状态正确。",
+    "5. 只根据上述设计包改代码；缺少证据时先补截图/DOM/组件上下文，不要凭感觉重写整页。",
+  ];
+
+  if (mode === "electron-window") {
+    return [
+      ...common,
+      "6. 当前组件入口要优先从 Electron 真窗口对应页面反查；验收标准必须包含 Electron 真窗口截图或真实窗口状态。",
+    ];
+  }
+
+  return common;
+}
+
 function buildPromptAddendum(mode: DevLoopMode): string {
   if (mode === "none") return "";
 
@@ -110,6 +132,9 @@ function buildPromptAddendum(mode: DevLoopMode): string {
   if (mode === "visual-dev") {
     return [
       ...common,
+      "",
+      ...buildFirstShotDesignPack("visual-dev"),
+      "",
       "如果任务涉及页面、组件、样式、截图、图片或 Figma，请启动可预览界面，截图当前结果，对照目标图或需求列出视觉偏差，并做至少一轮精准修复。",
       "视觉修复要优先小步调整颜色、间距、字体、布局和状态，不要无依据整页重写。",
     ].join("\n");
@@ -117,6 +142,9 @@ function buildPromptAddendum(mode: DevLoopMode): string {
 
   return [
     ...common,
+    "",
+    ...buildFirstShotDesignPack("electron-window"),
+    "",
     "这是 Electron 桌面端相关任务，验收以 Electron 真窗口为准。",
     "除非用户明确要求只跑网页端，否则需要启动项目默认 Electron 客户端，使用真实窗口或窗口截图验证 UI 状态。",
   ].join("\n");

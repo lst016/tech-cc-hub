@@ -61,6 +61,32 @@ test("injects instructions only when a loop is active", () => {
   assert.equal(applyDevLoopToPrompt("整理开发规范文档", docs), "整理开发规范文档");
 });
 
+test("injects a first-shot design pack for visual tasks", () => {
+  const visual = classifyDevLoop({
+    prompt: "按照 Figma 截图复刻这个页面",
+    cwd: "D:\\workspace\\app",
+  });
+  const injected = applyDevLoopToPrompt("按照 Figma 截图复刻这个页面", visual);
+
+  assert.ok(injected.includes("First-Shot Design Pack"));
+  assert.ok(injected.includes("先提取目标图规格"));
+  assert.ok(injected.includes("颜色 token"));
+  assert.ok(injected.includes("不要先写代码"));
+});
+
+test("injects first-shot constraints for electron window tasks", () => {
+  const electron = classifyDevLoop({
+    prompt: "优化右侧 Trace Viewer 的 UI 布局",
+    cwd: "D:\\tool\\tech-cc-hub",
+  });
+  const injected = applyDevLoopToPrompt("优化右侧 Trace Viewer 的 UI 布局", electron);
+
+  assert.ok(injected.includes("First-Shot Design Pack"));
+  assert.ok(injected.includes("Electron 真窗口"));
+  assert.ok(injected.includes("当前组件入口"));
+  assert.ok(injected.includes("验收标准"));
+});
+
 test("creates a typed dev loop stream message", () => {
   const classification = classifyDevLoop({ prompt: "按 Figma 改页面", cwd: "D:\\workspace\\app" });
   const message = createDevLoopMessage(classification, "classified");
