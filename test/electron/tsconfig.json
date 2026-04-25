@@ -17,6 +17,7 @@
     "../../src/shared/activity-rail-model.ts",
     "./dev-loop.test.ts",
     "./project-profile.test.ts",
+    "./session-store-project-profile.test.ts",
     "./activity-rail-model.test.ts",
     "./session-analysis-page.test.ts"
   ]

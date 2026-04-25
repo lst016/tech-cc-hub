@@ -1,7 +1,8 @@
 import Database from "better-sqlite3";
 import type { AgentRunSurface, SessionHistoryCursor, SessionStatus, StreamMessage } from "../types.js";
 import { existsSync } from "fs";
-import { app } from "electron";
+import { createRequire } from "module";
+import type { ProjectProfile } from "../../shared/project-profile.js";
 import type { SessionWorkflowState, WorkflowScope } from "../../shared/workflow-markdown.js";
 import { stripInlineBase64ImagesFromMessage } from "./tool-output-sanitizer.js";
 
@@ -9,6 +10,19 @@ const LEGACY_CWD_SUFFIXES = [
   "/upstream/open-claude-cowork",
   "/Desktop/claw-open-cowork",
 ];
+const require = createRequire(import.meta.url);
+
+function getElectronAppPath(): string | undefined {
+  try {
+    const electron = require("electron") as { app?: { getAppPath?: () => string } } | string;
+    if (typeof electron === "object" && typeof electron.app?.getAppPath === "function") {
+      return electron.app.getAppPath();
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
 
 function parseWorkflowState(value: unknown): SessionWorkflowState | undefined {
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -121,9 +135,9 @@ export class SessionStore {
       return cwd;
     }
 
-    const appPath = app.getAppPath();
+    const appPath = getElectronAppPath();
     for (const suffix of LEGACY_CWD_SUFFIXES) {
-      if (cwd.endsWith(suffix) && existsSync(appPath)) {
+      if (appPath && cwd.endsWith(suffix) && existsSync(appPath)) {
         return appPath;
       }
     }
@@ -242,6 +256,31 @@ export class SessionStore {
     return rows
       .map((row) => this.resolveCwd(String(row.cwd)))
       .filter((cwd): cwd is string => Boolean(cwd));
+  }
+
+  getProjectProfile(cwd: string): ProjectProfile | null {
+    const row = this.db
+      .prepare("select data from project_profiles where cwd = ?")
+      .get(cwd) as Record<string, unknown> | undefined;
+    if (!row || typeof row.data !== "string") {
+      return null;
+    }
+
+    try {
+      return JSON.parse(row.data) as ProjectProfile;
+    } catch {
+      return null;
+    }
+  }
+
+  upsertProjectProfile(profile: ProjectProfile): void {
+    this.db
+      .prepare(
+        `insert into project_profiles (cwd, data, updated_at)
+         values (?, ?, ?)
+         on conflict(cwd) do update set data = excluded.data, updated_at = excluded.updated_at`
+      )
+      .run(profile.cwd, JSON.stringify(profile), Date.now());
   }
 
   getSessionHistory(id: string): SessionHistory | null {
@@ -480,6 +519,13 @@ export class SessionStore {
       )`
     );
     this.db.exec(`create index if not exists messages_session_id on messages(session_id)`);
+    this.db.exec(
+      `create table if not exists project_profiles (
+        cwd text primary key,
+        data text not null,
+        updated_at integer not null
+      )`
+    );
   }
 
   private loadSessions(): void {
