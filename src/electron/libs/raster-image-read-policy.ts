@@ -40,3 +40,54 @@ export function buildRasterImageReadSummaryContext(options: {
     options.summary.trim(),
   ].join("\n");
 }
+
+export async function buildRasterImageReadPreToolUseDecision(options: {
+  filePath: string;
+  imageModel?: string;
+  shouldSummarize: boolean;
+  summarizeLocalImageFile: () => Promise<string | null>;
+  didMutate?: boolean;
+  normalizedInput?: Record<string, unknown>;
+}): Promise<{
+  continue: true;
+  hookSpecificOutput: {
+    hookEventName: "PreToolUse";
+    permissionDecision: "deny";
+    permissionDecisionReason: string;
+    additionalContext: string;
+    updatedInput?: Record<string, unknown>;
+  };
+}> {
+  const blockedMessage = buildRasterImageReadBlockedMessage({
+    filePath: options.filePath,
+    imageModel: options.imageModel,
+  });
+  let additionalContext = blockedMessage;
+
+  if (options.shouldSummarize) {
+    try {
+      const summary = await options.summarizeLocalImageFile();
+      additionalContext = summary
+        ? buildRasterImageReadSummaryContext({
+            filePath: options.filePath,
+            imageModel: options.imageModel,
+            summary,
+          })
+        : blockedMessage;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      additionalContext = `${blockedMessage}\n\nImage summary failed: ${message}`;
+    }
+  }
+
+  return {
+    continue: true,
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: blockedMessage,
+      additionalContext,
+      ...(options.didMutate ? { updatedInput: options.normalizedInput } : {}),
+    },
+  };
+}

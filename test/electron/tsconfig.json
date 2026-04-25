@@ -23,6 +23,7 @@
     "./activity-rail-model.test.ts",
     "./session-analysis-page.test.ts",
     "./prompt-ledger.test.ts",
-    "./raster-image-read-policy.test.ts"
+    "./raster-image-read-policy.test.ts",
+    "./runner-image-read-scenario.test.ts"
   ]
 }

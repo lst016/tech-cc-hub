@@ -17,7 +17,7 @@ import { buildEnvForConfig, getClaudeCodePath, getCurrentApiConfig } from "./cla
 import { summarizeBase64Image, summarizeLocalImageFile } from "./image-preprocessor.js";
 import {
   buildRasterImageReadBlockedMessage,
-  buildRasterImageReadSummaryContext,
+  buildRasterImageReadPreToolUseDecision,
 } from "./raster-image-read-policy.js";
 import { normalizeRunnerError } from "./runner-error.js";
 import type { Session } from "./session-store.js";
@@ -375,15 +375,17 @@ function createImageSummaryToolOutput(summary: string): { content: Array<{ type:
   };
 }
 
-function buildQualityHooks(
+export function buildQualityHooks(
   _cwd: string,
   options: {
     config: NonNullable<ReturnType<typeof getCurrentApiConfig>>;
     prompt: string;
+    summarizeLocalImageFile?: typeof summarizeLocalImageFile;
   },
 ): Partial<Record<string, HookCallbackMatcher[]>> {
   void _cwd;
   const { config, prompt } = options;
+  const localImageSummarizer = options.summarizeLocalImageFile ?? summarizeLocalImageFile;
   const readFiles = new Set<string>();
   let lastToolSignature: string | null = null;
   let toolFailureCount = 0;
@@ -472,37 +474,14 @@ function buildQualityHooks(
             if (toolName === "Read") {
               const imageReadCheck = checkRasterImageRead(fixed, MAX_IMAGE_READS_PER_RUN);
               if (imageReadCheck.denyMessage) {
-                const blockedMessage = buildRasterImageReadBlockedMessage({
+                return buildRasterImageReadPreToolUseDecision({
                   filePath: fixed,
                   imageModel: config.imageModel,
+                  shouldSummarize: shouldPreprocessImageRead(config, fixed),
+                  summarizeLocalImageFile: () => localImageSummarizer({ config, prompt, filePath: fixed }),
+                  didMutate,
+                  normalizedInput,
                 });
-                let additionalContext = blockedMessage;
-                if (shouldPreprocessImageRead(config, fixed)) {
-                  try {
-                    const summary = await summarizeLocalImageFile({ config, prompt, filePath: fixed });
-                    additionalContext = summary
-                      ? buildRasterImageReadSummaryContext({
-                          filePath: fixed,
-                          imageModel: config.imageModel,
-                          summary,
-                        })
-                      : blockedMessage;
-                  } catch (error) {
-                    const message = error instanceof Error ? error.message : String(error);
-                    additionalContext = `${blockedMessage}\n\nImage summary failed: ${message}`;
-                  }
-                }
-
-                return {
-                  continue: true,
-                  hookSpecificOutput: {
-                    hookEventName: "PreToolUse",
-                    permissionDecision: "deny",
-                    permissionDecisionReason: blockedMessage,
-                    additionalContext,
-                    ...(didMutate ? { updatedInput: normalizedInput } : {}),
-                  },
-                };
               }
               readFiles.add(fixed);
             } else if (!readFiles.has(fixed)) {
