@@ -975,7 +975,7 @@ function buildRoundTraceGroups(
   const latestRound = rounds.at(-1);
 
   return rounds
-    .map((round) => {
+    .map((round): TraceGroup | null => {
       const items = [...(byRound.get(round) ?? [])].sort((left, right) => left.sequence - right.sequence);
       const promptItem = items.find((item) => item.title === "发送用户输入");
       const firstUsefulItem = promptItem ?? items.find((item) => item.filterKey !== "context") ?? items[0];
