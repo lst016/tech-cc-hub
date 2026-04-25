@@ -1339,15 +1339,16 @@ function PromptLedgerPanel({
   };
 
   return (
-    <div className="flex h-full min-h-[680px] flex-col gap-3">
-      <div className="grid shrink-0 gap-2 md:grid-cols-4">
+    <div data-prompt-ledger-workbench className="flex h-full min-h-0 flex-col gap-2">
+      <div className="grid shrink-0 gap-2 md:grid-cols-5">
         <PromptMetricCard label="真实发送上下文" value={`${analysis.totalTokenEstimate.toLocaleString("zh-CN")} tok`} detail={`${analysis.totalChars.toLocaleString("zh-CN")} 字符`} />
         <PromptMetricCard label="可压缩候选" value={`${compressionCandidate.toLocaleString("zh-CN")} tok`} detail={`历史 / 工具 / 记忆 ${(compressionCandidateRatio * 100).toFixed(1)}%`} tone="warning" />
         <PromptMetricCard label="风险信号" value={`${riskCount}`} detail="按片段规则粗筛" tone={riskCount > 0 ? "warning" : "success"} />
         <PromptMetricCard label="记录轮次" value={`${analysis.ledgers.length}`} detail={largest ? `最大来源：${largest.label}` : "暂无来源"} />
+        <PromptMetricCard label="健康分" value={`${healthSummary.score}`} detail={healthSummary.label} tone={healthSummary.tone === "success" ? "success" : "warning"} />
       </div>
 
-      <section className={cx("shrink-0 rounded-lg border p-3", tonePanelClass(healthSummary.tone))}>
+      <section className={cx("shrink-0 rounded-lg border px-3 py-2", tonePanelClass(healthSummary.tone))}>
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -1361,27 +1362,17 @@ function PromptLedgerPanel({
             <div className="mt-1 text-[9px] font-bold uppercase tracking-widest opacity-70">score</div>
           </div>
         </div>
-        <div className="mt-3 grid gap-2 lg:grid-cols-2">
-          <div className="space-y-1.5">
-            {healthSummary.details.map((detail) => (
-              <div key={detail} className="rounded border border-white/50 bg-white/50 px-2 py-1.5 text-[11px] leading-5">
-                {detail}
-              </div>
-            ))}
-          </div>
-          <div className="space-y-1.5">
-            {healthSummary.nextActions.map((action, index) => (
-              <div key={action} className="flex gap-2 rounded border border-white/50 bg-white/50 px-2 py-1.5 text-[11px] leading-5">
-                <span className="font-mono font-bold opacity-70">{index + 1}</span>
-                <span>{action}</span>
-              </div>
-            ))}
-          </div>
+        <div className="mt-2 grid gap-2 lg:grid-cols-3">
+          {[...healthSummary.details.slice(0, 2), healthSummary.nextActions[0]].filter(Boolean).map((detail) => (
+            <div key={detail} className="rounded border border-white/50 bg-white/50 px-2 py-1 text-[11px] leading-5">
+              {detail}
+            </div>
+          ))}
         </div>
       </section>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3">
-        <main className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_360px] gap-3 max-xl:grid-cols-1">
+        <main data-prompt-ledger-distribution className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
           <div className="shrink-0 border-b border-slate-100 bg-slate-50 px-3 py-2">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -1541,7 +1532,7 @@ function PromptLedgerPanel({
           </div>
         </main>
 
-        <aside className="flex h-[340px] shrink-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <aside data-prompt-ledger-diagnosis className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white max-xl:min-h-[320px]">
           <div className="border-b border-slate-100 bg-slate-50 px-3 py-2">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -1558,10 +1549,10 @@ function PromptLedgerPanel({
           </div>
 
           {selectedSegment ? (
-            <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_380px]">
-              <div className="flex min-h-0 flex-col overflow-hidden border-r border-slate-100">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <div className="flex min-h-[220px] max-h-[46%] shrink-0 flex-col overflow-hidden border-b border-slate-100">
                 <div className="shrink-0 border-b border-slate-100 p-3">
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                     <div className="rounded border border-slate-200 bg-slate-50 px-2 py-2">
                       <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">质量分</div>
                       <div className="mt-1 font-mono text-lg font-black text-slate-800">{selectedDiagnosis.qualityScore}</div>
@@ -1617,7 +1608,7 @@ function PromptLedgerPanel({
                 </div>
               </div>
 
-              <div className="min-h-0 space-y-2 overflow-y-auto bg-slate-50 p-3">
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto bg-slate-50 p-3">
                 <div className="rounded border border-emerald-200 bg-white px-3 py-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-[11px] font-black uppercase tracking-widest text-emerald-700">优化建议</div>

@@ -20,4 +20,8 @@ test("app exposes a session analysis entry and renders the analysis page skeleto
   assert.match(analysisPageSource, /当前 Trace 节点/);
   assert.match(analysisPageSource, /derivePromptNodeScope/);
   assert.doesNotMatch(analysisPageSource, /const nodeRelation = useMemo\(\(\) => \{/);
+  assert.match(analysisPageSource, /data-prompt-ledger-workbench/);
+  assert.match(analysisPageSource, /data-prompt-ledger-distribution/);
+  assert.match(analysisPageSource, /data-prompt-ledger-diagnosis/);
+  assert.doesNotMatch(analysisPageSource, /h-\[340px\]/);
 });
