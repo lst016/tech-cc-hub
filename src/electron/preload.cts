@@ -1,6 +1,7 @@
 import electron from "electron";
 
 electron.contextBridge.exposeInMainWorld("electron", {
+    platform: process.platform,
     subscribeStatistics: (callback) =>
         ipcOn("statistics", stats => {
             callback(stats);
@@ -51,6 +52,39 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("debug-save-trace-snapshot", snapshot),
     preprocessImageAttachments: (payload: any) =>
         ipcInvoke("preprocess-image-attachments", payload),
+    openBrowserWorkbench: (url: string) =>
+        ipcInvoke("browser-open", url),
+    closeBrowserWorkbench: () =>
+        ipcInvoke("browser-close"),
+    setBrowserWorkbenchBounds: (bounds: any) =>
+        ipcInvoke("browser-set-bounds", bounds),
+    reloadBrowserWorkbench: () =>
+        ipcInvoke("browser-reload"),
+    goBackBrowserWorkbench: () =>
+        ipcInvoke("browser-back"),
+    goForwardBrowserWorkbench: () =>
+        ipcInvoke("browser-forward"),
+    getBrowserWorkbenchState: () =>
+        ipcInvoke("browser-state"),
+    getBrowserWorkbenchConsoleLogs: (limit?: number) =>
+        ipcInvoke("browser-console-logs", limit),
+    captureBrowserWorkbenchVisible: () =>
+        ipcInvoke("browser-capture-visible"),
+    inspectBrowserWorkbenchAtPoint: (point: any) =>
+        ipcInvoke("browser-inspect-at-point", point),
+    setBrowserWorkbenchAnnotationMode: (enabled: boolean) =>
+        ipcInvoke("browser-annotation-mode", enabled),
+    onBrowserWorkbenchEvent: (callback: (event: any) => void) => {
+        const cb = (_: Electron.IpcRendererEvent, payload: string) => {
+            try {
+                callback(JSON.parse(payload));
+            } catch (error) {
+                console.error("Failed to parse browser event:", error);
+            }
+        };
+        electron.ipcRenderer.on("browser-event", cb);
+        return () => electron.ipcRenderer.off("browser-event", cb);
+    },
 } satisfies Window['electron'])
 
 function ipcInvoke<Key extends keyof EventPayloadMapping>(key: Key, ...args: any[]): Promise<EventPayloadMapping[Key]> {

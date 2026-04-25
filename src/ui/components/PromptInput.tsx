@@ -19,6 +19,8 @@ interface PromptInputProps {
   sendEvent: (event: ClientEvent) => void;
   onSendMessage?: () => void;
   disabled?: boolean;
+  leftOffset?: number;
+  rightOffset?: number;
 }
 
 const MAX_TEXT_ATTACHMENT_LENGTH = 20_000;
@@ -31,6 +33,56 @@ const REASONING_OPTIONS: Array<{ value: RuntimeReasoningMode; label: string }> =
   { value: "high", label: "高" },
   { value: "xhigh", label: "超高" },
 ];
+
+function buildBrowserAnnotationsPrompt(annotations: BrowserWorkbenchAnnotation[]) {
+  if (annotations.length === 0) return "";
+  const payload = {
+    type: "browser_annotations",
+    version: 1,
+    count: annotations.length,
+    items: annotations.slice().reverse().map((annotation, index) => ({
+      type: "browser_annotation",
+      index: index + 1,
+      id: annotation.id,
+      comment: annotation.comment?.trim() || "",
+      page: {
+        url: annotation.url,
+        title: annotation.title,
+      },
+      nodePosition: {
+        x: Math.round(annotation.point.x),
+        y: Math.round(annotation.point.y),
+      },
+      target: annotation.domHint?.target ?? (
+        annotation.domHint?.text
+          ? { type: "text", value: annotation.domHint.text }
+          : undefined
+      ),
+      dom: annotation.domHint ? {
+        tagName: annotation.domHint.tagName,
+        role: annotation.domHint.role,
+        ariaLabel: annotation.domHint.ariaLabel,
+        selector: annotation.domHint.selector ?? annotation.domHint.selectorCandidates[0],
+        selectorCandidates: annotation.domHint.selectorCandidates,
+        path: annotation.domHint.path,
+        boundingBox: annotation.domHint.boundingBox,
+      } : undefined,
+    })),
+  };
+
+  return [
+    "<browser_annotations>",
+    JSON.stringify(payload, null, 2),
+    "</browser_annotations>",
+  ].join("\n");
+}
+
+function mergePromptWithBrowserAnnotations(prompt: string, annotations: BrowserWorkbenchAnnotation[]) {
+  const annotationPrompt = buildBrowserAnnotationsPrompt(annotations);
+  if (!annotationPrompt) return prompt;
+  return [prompt.trim(), annotationPrompt].filter(Boolean).join("\n\n");
+}
+
 type InlineOption = {
   value: string;
   label: string;
@@ -198,6 +250,7 @@ async function fileToAttachment(file: File): Promise<PromptAttachment> {
 
 export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   const prompt = useAppStore((state) => state.prompt);
+  const browserAnnotations = useAppStore((state) => state.browserAnnotations);
   const cwd = useAppStore((state) => state.cwd);
   const apiConfigSettings = useAppStore((state) => state.apiConfigSettings);
   const runtimeModel = useAppStore((state) => state.runtimeModel);
@@ -206,6 +259,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const activeSession = useAppStore((state) => (state.activeSessionId ? state.sessions[state.activeSessionId] : undefined));
   const setPrompt = useAppStore((state) => state.setPrompt);
+  const clearBrowserAnnotations = useAppStore((state) => state.clearBrowserAnnotations);
   const setPendingStart = useAppStore((state) => state.setPendingStart);
   const setGlobalError = useAppStore((state) => state.setGlobalError);
 
@@ -327,8 +381,12 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   }, [activeSession, activeSessionId, buildRuntimeOverrides, cwd, prepareAttachmentsForDispatch, sendEvent, setGlobalError, setPendingStart, setPrompt, validatePromptDraft]);
 
   const handleSend = useCallback((attachments: PromptAttachment[] = []) => {
-    return sendPromptDraft(prompt, attachments);
-  }, [prompt, sendPromptDraft]);
+    const promptWithAnnotations = mergePromptWithBrowserAnnotations(prompt, browserAnnotations);
+    return sendPromptDraft(promptWithAnnotations, attachments).then((sent) => {
+      if (sent) clearBrowserAnnotations();
+      return sent;
+    });
+  }, [browserAnnotations, clearBrowserAnnotations, prompt, sendPromptDraft]);
 
   const handleStop = useCallback(() => {
     if (!activeSessionId) return;
@@ -375,8 +433,16 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   };
 }
 
-export function PromptInput({ sendEvent, onSendMessage, disabled = false }: PromptInputProps) {
+export function PromptInput({
+  sendEvent,
+  onSendMessage,
+  disabled = false,
+  leftOffset = 320,
+  rightOffset = 340,
+}: PromptInputProps) {
   const { prompt, setPrompt, isRunning, handleSend, handleStop, slashCommands, activeSessionId, sendPromptDraft, validatePromptDraft } = usePromptActions(sendEvent);
+  const browserAnnotations = useAppStore((state) => state.browserAnnotations);
+  const clearBrowserAnnotations = useAppStore((state) => state.clearBrowserAnnotations);
   const apiConfigSettings = useAppStore((state) => state.apiConfigSettings);
   const runtimeModel = useAppStore((state) => state.runtimeModel);
   const setRuntimeModel = useAppStore((state) => state.setRuntimeModel);
@@ -400,7 +466,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
     if (!activeSessionId) return [];
     return queuedMessagesBySession[activeSessionId] ?? [];
   }, [activeSessionId, queuedMessagesBySession]);
-  const hasDraft = prompt.trim().length > 0 || attachments.length > 0;
+  const hasDraft = prompt.trim().length > 0 || attachments.length > 0 || browserAnnotations.length > 0;
   const filteredSlashCommands = useMemo(() => {
     const matchedCommands = !slashQuery
       ? slashCommands
@@ -434,8 +500,9 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
   const clearComposer = useCallback(() => {
     setPrompt("");
     setAttachments([]);
+    clearBrowserAnnotations();
     setShowSlashBrowser(false);
-  }, [setPrompt]);
+  }, [clearBrowserAnnotations, setPrompt]);
 
   const removeQueuedDraft = useCallback((queueId: string) => {
     if (!activeSessionId) return;
@@ -457,7 +524,8 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
     if (!activeSessionId) return false;
     if (!hasDraft) return false;
 
-    const validationError = validatePromptDraft(prompt);
+    const promptWithAnnotations = mergePromptWithBrowserAnnotations(prompt, browserAnnotations);
+    const validationError = validatePromptDraft(promptWithAnnotations);
     if (validationError) {
       setGlobalError(validationError);
       return false;
@@ -465,7 +533,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
 
     const nextQueuedMessage: QueuedMessageDraft = {
       id: crypto.randomUUID(),
-      prompt,
+      prompt: promptWithAnnotations,
       attachments,
       createdAt: Date.now(),
     };
@@ -477,7 +545,7 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
     clearComposer();
     setGlobalError(null);
     return true;
-  }, [activeSessionId, attachments, clearComposer, hasDraft, prompt, setGlobalError, validatePromptDraft]);
+  }, [activeSessionId, attachments, browserAnnotations, clearComposer, hasDraft, prompt, setGlobalError, validatePromptDraft]);
 
   const submitCurrentInput = useCallback(async () => {
     if (!hasDraft) return false;
@@ -640,7 +708,11 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
   return (
     <section
       ref={composerRef}
-      className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[rgba(229,234,240,0.72)] via-[rgba(229,234,240,0.18)] to-transparent pb-6 px-3 pt-10 lg:ml-[320px] lg:pb-8 xl:mr-[340px]"
+      className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[rgba(229,234,240,0.72)] via-[rgba(229,234,240,0.18)] to-transparent pb-6 px-3 pt-10 lg:pb-8"
+      style={{
+        marginLeft: `${leftOffset}px`,
+        marginRight: `${rightOffset}px`,
+      }}
     >
       {showSlashPalette && (
         <div className="mx-auto mb-3 w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
@@ -750,6 +822,18 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
               <path d="M21.44 11.05 12.25 20.24a6 6 0 1 1-8.49-8.49l9.2-9.19a4 4 0 1 1 5.65 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
             </svg>
           </button>
+          {browserAnnotations.length > 0 && (
+            <button
+              type="button"
+              className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full border border-black/8 bg-white px-3 text-sm font-semibold text-ink-800 shadow-[0_10px_24px_rgba(15,18,24,0.08)]"
+              title="浏览器批注会以结构化 JSON 随消息一起发送"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4 text-ink-600" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                <path d="M5 6.5A3.5 3.5 0 0 1 8.5 3h7A3.5 3.5 0 0 1 19 6.5v4A3.5 3.5 0 0 1 15.5 14H11l-4.5 4v-4A3.5 3.5 0 0 1 3 10.5v-4Z" />
+              </svg>
+              {browserAnnotations.length} 条批注
+            </button>
+          )}
           <textarea
             rows={1}
             className="flex-1 resize-none bg-transparent py-2 text-[15px] leading-7 text-ink-800 placeholder:text-muted focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"

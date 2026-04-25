@@ -1,3 +1,4 @@
+import type { MouseEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import { useIPC } from "./hooks/useIPC";
@@ -11,11 +12,15 @@ import { PromptInput, usePromptActions } from "./components/PromptInput";
 import { MessageCard } from "./components/EventCard";
 import { ActivityRail } from "./components/ActivityRail";
 import { SessionAnalysisPage } from "./components/SessionAnalysisPage";
+import { BrowserWorkbenchPage } from "./components/BrowserWorkbenchPage";
 import MDContent from "./render/markdown";
 
 const SCROLL_THRESHOLD = 50;
 const INITIAL_HISTORY_LIMIT = 400;
 const HISTORY_PAGE_LIMIT = 200;
+const MIN_CENTER_WIDTH = 300;
+const MIN_SIDEBAR_WIDTH = 250;
+const MIN_ACTIVITY_RAIL_WIDTH = 400;
 const EMPTY_MESSAGES: StreamMessage[] = [];
 const EMPTY_PERMISSION_REQUESTS: NonNullable<ReturnType<typeof useAppStore.getState>["sessions"][string]["permissionRequests"]> = [];
 
@@ -31,6 +36,8 @@ type StreamEventMessage = StreamMessage & {
   event?: StreamEventPayload;
 };
 
+type WorkspaceView = "chat" | "browser";
+
 function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -43,9 +50,18 @@ function App() {
   const [hasNewMessages, setHasNewMessages] = useState(false);
   const [showSessionAnalysis, setShowSessionAnalysis] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(true);
+  const [showActivityRail, setShowActivityRail] = useState(true);
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("chat");
+  const [sidebarWidth, setSidebarWidth] = useState(320);
+  const [activityRailWidth, setActivityRailWidth] = useState(420);
+  const [resizingPane, setResizingPane] = useState<"sidebar" | "activityRail" | null>(null);
   const prevMessagesLengthRef = useRef(0);
   const scrollHeightBeforeLoadRef = useRef(0);
   const shouldRestoreScrollRef = useRef(false);
+  const isMac = typeof window !== "undefined" && window.electron?.platform === "darwin";
+  const headerHeightClass = isMac ? "h-14 pb-2 pt-4 items-end" : "h-10 items-center";
+  const sidebarHeaderOffsetClass = isMac ? "top-14" : "top-10";
 
   const scrollChatToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const container = scrollContainerRef.current;
@@ -405,6 +421,51 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!resizingPane) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const viewportWidth = window.innerWidth;
+      if (resizingPane === "sidebar") {
+        const maxSidebarWidth = Math.max(
+          MIN_SIDEBAR_WIDTH,
+          viewportWidth - (showActivityRail ? activityRailWidth : 0) - MIN_CENTER_WIDTH,
+        );
+        const nextWidth = Math.min(Math.max(event.clientX, MIN_SIDEBAR_WIDTH), maxSidebarWidth);
+        setSidebarWidth(nextWidth);
+        return;
+      }
+
+      const proposedWidth = viewportWidth - event.clientX;
+      const maxRailWidth = Math.max(
+        MIN_ACTIVITY_RAIL_WIDTH,
+        viewportWidth - (showSidebar ? sidebarWidth : 0) - MIN_CENTER_WIDTH,
+      );
+      const nextWidth = Math.min(Math.max(proposedWidth, MIN_ACTIVITY_RAIL_WIDTH), maxRailWidth);
+      setActivityRailWidth(nextWidth);
+    };
+
+    const handlePointerUp = () => {
+      setResizingPane(null);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+
+    return () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [activityRailWidth, resizingPane, showActivityRail, showSidebar, sidebarWidth]);
+
   const scrollToBottom = useCallback(() => {
     setShouldAutoScroll(true);
     setHasNewMessages(false);
@@ -432,6 +493,21 @@ function App() {
     setCwd("");
     setShowStartModal(true);
   }, [sendEvent, setCwd, setPrompt, setShowStartModal]);
+
+  const handleNewSessionClick = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setWorkspaceView("chat");
+    handleNewSession();
+  }, [handleNewSession]);
+
+  const handleToggleBrowserWorkbench = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setShowSessionAnalysis(false);
+    setShowActivityRail(true);
+    setWorkspaceView((current) => current === "browser" ? "chat" : "browser");
+  }, []);
 
   const handleDeleteSession = useCallback((sessionId: string) => {
     sendEvent({ type: "session.delete", payload: { sessionId } });
@@ -461,6 +537,16 @@ function App() {
     setHasNewMessages(false);
     resetToLatest();
   }, [resetToLatest]);
+
+  useEffect(() => {
+    if (workspaceView !== "chat" || showSessionAnalysis) return;
+    setShouldAutoScroll(true);
+    setHasNewMessages(false);
+    resetToLatest();
+    requestAnimationFrame(() => {
+      scrollChatToBottom("auto");
+    });
+  }, [resetToLatest, scrollChatToBottom, showSessionAnalysis, workspaceView]);
 
   const openSettings = useCallback((pageId?: SettingsPageId) => {
     setSettingsInitialPageId(pageId ?? null);
@@ -506,160 +592,309 @@ function App() {
     });
   }, [sendEvent, setPendingStart]);
 
+  const sidebarOffset = showSidebar ? sidebarWidth : 0;
+  const activityRailOffset = !showSessionAnalysis && showActivityRail ? activityRailWidth : 0;
+
   return (
-    <div className="flex h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.98),_rgba(243,246,250,0.97)_40%,_rgba(228,233,240,0.98)_100%)]">
-      <Sidebar
-        connected={connected}
-        onNewSession={handleNewSession}
-        onDeleteSession={handleDeleteSession}
-        onDeleteWorkspace={handleDeleteWorkspace}
-        onOpenSettings={openSettings}
-      />
-
-      <main
-        className={[
-          "ml-[320px] flex min-h-0 flex-1 flex-col overflow-hidden bg-transparent",
-          showSessionAnalysis ? "" : "xl:mr-[340px]",
-        ].join(" ")}
+    <div className="flex h-screen flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.98),_rgba(243,246,250,0.97)_40%,_rgba(228,233,240,0.98)_100%)]">
+      <header
+        className={`flex shrink-0 justify-between border-b border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(246,248,251,0.86))] px-4 shadow-[inset_0_-1px_0_rgba(15,23,42,0.05)] backdrop-blur-md ${headerHeightClass}`}
+        style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
       >
-        {showSessionAnalysis ? (
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <SessionAnalysisPage
-              session={activeSession}
-              partialMessage={partialMessage}
-              onBack={() => setShowSessionAnalysis(false)}
-            />
+        <div
+          className={`flex items-center gap-2 ${isMac ? "pl-[86px]" : ""}`}
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+        >
+          <button
+            type="button"
+            onClick={() => setShowSidebar((current) => !current)}
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+            className={`inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/10 bg-white text-ink-700 transition hover:bg-ink-900/5 ${showSidebar ? "" : "bg-[#f3f6fb]"}`}
+            aria-label={showSidebar ? "收起左侧栏" : "展开左侧栏"}
+            title={showSidebar ? "收起左侧栏" : "展开左侧栏"}
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <rect x="3.5" y="5" width="17" height="14" rx="2" />
+              <path d="M9 5v14" />
+            <path d="m7 12-2-2m2 2-2 2" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={handleNewSessionClick}
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/10 bg-white text-ink-700 transition hover:bg-ink-900/5"
+            aria-label="新建会话"
+            title="新建会话"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              aria-hidden="true"
+            >
+              <path d="M4 20h4.5l9.4-9.4a2.1 2.1 0 0 0 0-3L16.4 6a2.1 2.1 0 0 0-3 0L4 15.4V20Z" />
+              <path d="m12.5 6.9 4.6 4.6" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={handleToggleBrowserWorkbench}
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+            className={`inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/10 text-ink-700 transition hover:bg-ink-900/5 ${workspaceView === "browser" ? "bg-ink-900 text-white hover:bg-ink-800" : "bg-white"}`}
+            aria-label={workspaceView === "browser" ? "回到聊天" : "打开浏览器工作台"}
+            title={workspaceView === "browser" ? "回到聊天" : "打开浏览器工作台"}
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <rect x="3.5" y="5" width="17" height="14" rx="2.2" />
+              <path d="M3.5 9h17" />
+              <path d="M8 7h.01M11 7h.01" />
+            </svg>
+          </button>
+        </div>
+        <div
+          className="flex items-center justify-end gap-2"
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+        >
+          <button
+            type="button"
+            onClick={() => setShowSessionAnalysis(true)}
+            disabled={!activeSessionId}
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+            className="rounded-full border border-black/10 bg-white px-3 py-1 text-[11px] font-medium text-ink-700 transition hover:bg-ink-900/5 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            执行复盘
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowActivityRail((current) => !current)}
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+            className={`inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/10 bg-white text-ink-700 transition hover:bg-ink-900/5 ${showActivityRail ? "" : "bg-[#f3f6fb]"}`}
+            aria-label={showActivityRail ? "收起右侧栏" : "展开右侧栏"}
+            title={showActivityRail ? "收起右侧栏" : "展开右侧栏"}
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <rect x="3.5" y="5" width="17" height="14" rx="2" />
+              <path d="M15 5v14" />
+              <path d="m17 12 2-2m-2 2 2 2" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        {showSidebar && (
+          <Sidebar
+            connected={connected}
+            onNewSession={handleNewSession}
+            onDeleteSession={handleDeleteSession}
+            onDeleteWorkspace={handleDeleteWorkspace}
+            onOpenSettings={openSettings}
+            width={sidebarWidth}
+          />
+        )}
+        {showSidebar && (
+          <div
+            className={`fixed bottom-0 ${sidebarHeaderOffsetClass} z-30 w-3 -translate-x-1/2 cursor-col-resize`}
+            style={{ left: sidebarWidth }}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              setResizingPane("sidebar");
+            }}
+          >
+            <div className="mx-auto h-full w-px bg-black/8" />
           </div>
-        ) : (
-          <>
-            <div
-              className="flex h-12 items-center justify-center border-b border-black/5 bg-[linear-gradient(180deg,rgba(255,255,255,0.78),rgba(249,250,252,0.68))] backdrop-blur-md select-none"
-              style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
-            >
-              <span className="text-sm font-semibold tracking-[0.01em] text-ink-700">{activeSession?.title || "tech-cc-hub"}</span>
+        )}
+
+        <main
+          className="flex min-h-0 flex-1 flex-col overflow-hidden bg-transparent"
+          style={{
+            marginLeft: `${sidebarOffset}px`,
+            marginRight: `${activityRailOffset}px`,
+          }}
+        >
+
+          {showSessionAnalysis ? (
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <SessionAnalysisPage
+                session={activeSession}
+                partialMessage={partialMessage}
+                onBack={() => setShowSessionAnalysis(false)}
+              />
             </div>
+          ) : (
+            <>
+              <div className="flex min-h-0 flex-1 flex-col">
+                <div
+                  ref={scrollContainerRef}
+                  onScroll={handleScroll}
+                  className="chat-scroll flex-1 overflow-y-auto px-8 pb-40 pt-8"
+                >
+                <div className="chat-stream-content mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[34px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(248,250,252,0.82))] px-8 py-7 shadow-[0_24px_60px_rgba(30,38,52,0.08)] backdrop-blur-xl xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
+                  <div ref={topSentinelRef} className="h-1" />
 
-            <div
-              ref={scrollContainerRef}
-              onScroll={handleScroll}
-              className="chat-scroll flex-1 overflow-y-auto px-8 pb-40 pt-8"
-            >
-              <div className="chat-stream-content mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[34px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(248,250,252,0.82))] px-8 py-7 shadow-[0_24px_60px_rgba(30,38,52,0.08)] backdrop-blur-xl xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
-                <div ref={topSentinelRef} className="h-1" />
-
-            {!hasMoreHistory && totalMessages > 0 && (
-              <div className="flex items-center justify-center py-4 mb-4">
-                <div className="flex items-center gap-3 text-xs text-muted">
-                  <div className="h-px w-14 bg-ink-900/10" />
-                  <span>对话开始</span>
-                  <div className="h-px w-14 bg-ink-900/10" />
-                </div>
-              </div>
-            )}
-
-            {isLoadingHistory && (
-              <div className="flex items-center justify-center py-4 mb-4">
-                <div className="flex items-center gap-2 text-xs text-muted">
-                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  <span>正在加载...</span>
-                </div>
-              </div>
-            )}
-
-            {renderEntries.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-24 text-center">
-                <div className="rounded-full border border-black/6 bg-[#f4f7fb] px-4 py-1 text-[11px] font-semibold tracking-[0.16em] text-muted">
-                  CHAT FIRST
-                </div>
-                <div className="mt-5 text-2xl font-semibold text-ink-800">直接开始聊天</div>
-                <p className="mt-3 max-w-md text-sm leading-7 text-muted">在下方输入需求就会自动开启新会话；只有需要切换工作目录时，再去左侧新建。</p>
-              </div>
-            ) : (
-              renderEntries.map((entry, idx) => {
-                if (entry.type === "separator") {
-                  return (
-                    <div key={entry.key} className="mb-5 mt-7 flex items-center justify-center">
-                      <div className="flex items-center gap-3 rounded-full border border-black/6 bg-[#f5f7fb] px-4 py-2 text-xs font-medium text-muted shadow-[0_10px_24px_rgba(30,38,52,0.06)]">
-                        <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-                        <span>第 {entry.roundNumber} 轮执行</span>
+                  {!hasMoreHistory && totalMessages > 0 && (
+                    <div className="mb-4 flex items-center justify-center py-4">
+                      <div className="flex items-center gap-3 text-xs text-muted">
+                        <div className="h-px w-14 bg-ink-900/10" />
+                        <span>对话开始</span>
+                        <div className="h-px w-14 bg-ink-900/10" />
                       </div>
                     </div>
-                  );
-                }
+                  )}
 
-                const isLastMessage = idx === renderEntries.length - 1;
-                return (
-                  <MessageCard
-                    key={entry.key}
-                    message={entry.message}
-                    isLast={isLastMessage}
-                    isRunning={isRunning}
-                    permissionRequest={permissionRequests[0]}
-                    onPermissionResult={handlePermissionResult}
-                  />
-                );
-              })
-            )}
+                  {isLoadingHistory && (
+                    <div className="mb-4 flex items-center justify-center py-4">
+                      <div className="flex items-center gap-2 text-xs text-muted">
+                        <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        <span>正在加载...</span>
+                      </div>
+                    </div>
+                  )}
 
-            {/* Partial message display with skeleton loading */}
-            <div className="partial-message rounded-[26px] border border-black/5 bg-[linear-gradient(180deg,rgba(245,247,250,0.95),rgba(255,255,255,0.86))] px-6 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
-              <MDContent text={partialMessage} />
-              {showPartialMessage && (
-                <div className="mt-3 flex flex-col gap-2 px-1">
-                  <div className="relative h-3 w-2/12 overflow-hidden rounded-full bg-ink-900/10">
-                    <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-ink-900/30 to-transparent animate-shimmer" />
+                  {renderEntries.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-24 text-center">
+                      <div className="rounded-full border border-black/6 bg-[#f4f7fb] px-4 py-1 text-[11px] font-semibold tracking-[0.16em] text-muted">
+                        CHAT FIRST
+                      </div>
+                      <div className="mt-5 text-2xl font-semibold text-ink-800">直接开始聊天</div>
+                      <p className="mt-3 max-w-md text-sm leading-7 text-muted">在下方输入需求就会自动开启新会话；只有需要切换工作目录时，再去左侧新建。</p>
+                    </div>
+                  ) : (
+                    renderEntries.map((entry, idx) => {
+                      if (entry.type === "separator") {
+                        return (
+                          <div key={entry.key} className="mb-5 mt-7 flex items-center justify-center">
+                            <div className="flex items-center gap-3 rounded-full border border-black/6 bg-[#f5f7fb] px-4 py-2 text-xs font-medium text-muted shadow-[0_10px_24px_rgba(30,38,52,0.06)]">
+                              <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+                              <span>第 {entry.roundNumber} 轮执行</span>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      const isLastMessage = idx === renderEntries.length - 1;
+                      return (
+                        <MessageCard
+                          key={entry.key}
+                          message={entry.message}
+                          isLast={isLastMessage}
+                          isRunning={isRunning}
+                          permissionRequest={permissionRequests[0]}
+                          onPermissionResult={handlePermissionResult}
+                        />
+                      );
+                    })
+                  )}
+
+                  <div className="partial-message rounded-[26px] border border-black/5 bg-[linear-gradient(180deg,rgba(245,247,250,0.95),rgba(255,255,255,0.86))] px-6 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
+                    <MDContent text={partialMessage} />
+                    {showPartialMessage && (
+                      <div className="mt-3 flex flex-col gap-2 px-1">
+                        <div className="relative h-3 w-2/12 overflow-hidden rounded-full bg-ink-900/10">
+                          <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-ink-900/30 to-transparent animate-shimmer" />
+                        </div>
+                        <div className="relative h-3 w-full overflow-hidden rounded-full bg-ink-900/10">
+                          <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-ink-900/30 to-transparent animate-shimmer" />
+                        </div>
+                        <div className="relative h-3 w-full overflow-hidden rounded-full bg-ink-900/10">
+                          <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-ink-900/30 to-transparent animate-shimmer" />
+                        </div>
+                        <div className="relative h-3 w-full overflow-hidden rounded-full bg-ink-900/10">
+                          <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-ink-900/30 to-transparent animate-shimmer" />
+                        </div>
+                        <div className="relative h-3 w-4/12 overflow-hidden rounded-full bg-ink-900/10">
+                          <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-ink-900/30 to-transparent animate-shimmer" />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="relative h-3 w-full overflow-hidden rounded-full bg-ink-900/10">
-                    <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-ink-900/30 to-transparent animate-shimmer" />
-                  </div>
-                  <div className="relative h-3 w-full overflow-hidden rounded-full bg-ink-900/10">
-                    <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-ink-900/30 to-transparent animate-shimmer" />
-                  </div>
-                  <div className="relative h-3 w-full overflow-hidden rounded-full bg-ink-900/10">
-                    <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-ink-900/30 to-transparent animate-shimmer" />
-                  </div>
-                  <div className="relative h-3 w-4/12 overflow-hidden rounded-full bg-ink-900/10">
-                    <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-ink-900/30 to-transparent animate-shimmer" />
-                  </div>
+
+                  <div ref={messagesEndRef} className="chat-bottom-anchor" />
                 </div>
-              )}
-            </div>
-
-                <div ref={messagesEndRef} className="chat-bottom-anchor" />
+                </div>
               </div>
-            </div>
-          </>
-        )}
+            </>
+          )}
 
-        {!showSessionAnalysis && (
-          <PromptInput sendEvent={sendEvent} onSendMessage={handleSendMessage} disabled={!connected} />
-        )}
+          {!showSessionAnalysis && (
+            <PromptInput
+              sendEvent={sendEvent}
+              onSendMessage={handleSendMessage}
+              disabled={!connected}
+              leftOffset={sidebarOffset}
+              rightOffset={activityRailOffset}
+            />
+          )}
 
-        {hasNewMessages && !shouldAutoScroll && (
-          <button
-            onClick={scrollToBottom}
-            style={{ bottom: "calc(var(--composer-bottom-offset, 160px) + 0.5rem)" }}
-            className="fixed left-1/2 z-40 -translate-x-1/2 flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-medium text-white shadow-lg transition-all hover:bg-accent-hover hover:scale-105 animate-bounce-subtle lg:ml-[140px] xl:mr-[160px]"
+          {hasNewMessages && !shouldAutoScroll && (
+            <button
+              onClick={scrollToBottom}
+              style={{
+                bottom: "calc(var(--composer-bottom-offset, 160px) + 0.5rem)",
+                marginLeft: `${sidebarOffset / 2}px`,
+                marginRight: `${activityRailOffset / 2}px`,
+              }}
+              className="fixed left-1/2 z-40 -translate-x-1/2 flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-medium text-white shadow-lg transition-all hover:bg-accent-hover hover:scale-105 animate-bounce-subtle"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 5v14M5 12l7 7 7-7" />
+              </svg>
+              <span>有新消息</span>
+            </button>
+          )}
+        </main>
+
+        {!showSessionAnalysis && showActivityRail && workspaceView !== "browser" && (
+          <ActivityRail
+            session={activeSession}
+            partialMessage={partialMessage}
+            globalError={globalError}
+            onOpenSessionAnalysis={() => setShowSessionAnalysis(true)}
+            width={activityRailWidth}
+          />
+        )}
+        {!showSessionAnalysis && showActivityRail && (
+          <aside
+            className={`fixed bottom-0 right-0 ${sidebarHeaderOffsetClass} z-40 min-w-[400px] overflow-hidden border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.94),rgba(240,244,248,0.98)_42%,rgba(234,239,245,0.99))] shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl ${workspaceView === "browser" ? "hidden xl:flex xl:flex-col" : "pointer-events-none hidden"}`}
+            style={{ width: activityRailWidth }}
           >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 5v14M5 12l7 7 7-7" />
-            </svg>
-            <span>有新消息</span>
-          </button>
+            <BrowserWorkbenchPage active={workspaceView === "browser"} />
+          </aside>
         )}
-      </main>
-
-      {!showSessionAnalysis && (
-        <ActivityRail
-          session={activeSession}
-          partialMessage={partialMessage}
-          globalError={globalError}
-          onOpenSessionAnalysis={() => setShowSessionAnalysis(true)}
-        />
-      )}
+        {!showSessionAnalysis && showActivityRail && (
+          <div
+            className={`fixed bottom-0 ${sidebarHeaderOffsetClass} z-30 w-3 translate-x-1/2 cursor-col-resize`}
+            style={{ right: activityRailWidth }}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              setResizingPane("activityRail");
+            }}
+          >
+            <div className="mx-auto h-full w-px bg-black/8" />
+          </div>
+        )}
+      </div>
 
       {showStartModal && (
         <StartSessionModal

@@ -701,12 +701,15 @@ export function ActivityRail({
   partialMessage,
   globalError,
   onOpenSessionAnalysis,
+  width = 420,
 }: {
   session: SessionView | undefined;
   partialMessage: string;
   globalError: string | null;
   onOpenSessionAnalysis?: () => void;
+  width?: number;
 }) {
+  const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-14" : "top-10";
   const model = useMemo(
     () => buildActivityRailModel(session, session?.permissionRequests ?? [], ""),
     [session],
@@ -779,8 +782,10 @@ export function ActivityRail({
         />
       )}
 
-      <aside className="fixed inset-y-0 right-0 hidden w-[360px] overflow-y-auto border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(240,244,248,0.96)_36%,rgba(234,239,245,0.98))] px-4 pb-6 pt-12 shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl xl:flex xl:flex-col">
-        <div className="absolute inset-x-0 top-0 h-12" style={{ WebkitAppRegion: "drag" } as CSSProperties} />
+      <aside
+        className={`fixed bottom-0 right-0 ${sidebarHeaderOffsetClass} hidden min-w-[400px] overflow-y-auto border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(240,244,248,0.96)_36%,rgba(234,239,245,0.98))] px-4 pb-6 pt-4 shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl xl:flex xl:flex-col`}
+        style={{ width }}
+      >
 
         <div className="space-y-4">
           <section className="rounded-[28px] border border-black/5 bg-white/70 p-4 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">

@@ -51,6 +51,7 @@ interface AppState {
   sessions: Record<string, SessionView>;
   activeSessionId: string | null;
   prompt: string;
+  browserAnnotations: BrowserWorkbenchAnnotation[];
   cwd: string;
   apiConfigSettings: ApiConfigSettings;
   runtimeModel: string;
@@ -65,6 +66,8 @@ interface AppState {
   apiConfigChecked: boolean;
 
   setPrompt: (prompt: string) => void;
+  setBrowserAnnotations: (annotations: BrowserWorkbenchAnnotation[]) => void;
+  clearBrowserAnnotations: () => void;
   setCwd: (cwd: string) => void;
   setApiConfigSettings: (settings: ApiConfigSettings) => void;
   setRuntimeModel: (model: string) => void;
@@ -192,6 +195,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sessions: {},
   activeSessionId: null,
   prompt: "",
+  browserAnnotations: [],
   cwd: "",
   apiConfigSettings: { profiles: [] },
   runtimeModel: "",
@@ -206,6 +210,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   apiConfigChecked: false,
 
   setPrompt: (prompt) => set({ prompt }),
+  setBrowserAnnotations: (browserAnnotations) => set({ browserAnnotations }),
+  clearBrowserAnnotations: () => set({ browserAnnotations: [] }),
   setCwd: (cwd) => set({ cwd }),
   setApiConfigSettings: (apiConfigSettings) => {
     set((state) => {

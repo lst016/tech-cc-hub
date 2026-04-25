@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useAppStore } from "../store/useAppStore";
@@ -10,15 +10,18 @@ interface SidebarProps {
   onDeleteSession: (sessionId: string) => void;
   onDeleteWorkspace: (sessionIds: string[], workspaceName: string) => void;
   onOpenSettings?: (pageId?: SettingsPageId) => void;
+  width?: number;
 }
 
 export function Sidebar({
-  connected,
+  connected: _connected,
   onNewSession,
   onDeleteSession,
   onDeleteWorkspace,
   onOpenSettings,
+  width = 320,
 }: SidebarProps) {
+  const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-14" : "top-10";
   const sessions = useAppStore((state) => state.sessions);
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const setActiveSessionId = useAppStore((state) => state.setActiveSessionId);
@@ -116,11 +119,10 @@ export function Sidebar({
   };
 
   return (
-    <aside className="fixed inset-y-0 left-0 flex h-full w-[320px] flex-col gap-4 border-r border-black/6 bg-[linear-gradient(180deg,rgba(248,249,252,0.96),rgba(238,241,246,0.94))] px-4 pb-4 pt-12 shadow-[inset_-1px_0_0_rgba(255,255,255,0.75)] backdrop-blur-xl">
-      <div
-        className="absolute left-0 right-0 top-0 h-12"
-        style={{ WebkitAppRegion: "drag" } as CSSProperties}
-      />
+    <aside
+      className={`fixed bottom-0 left-0 ${sidebarHeaderOffsetClass} flex min-w-[250px] flex-col gap-4 border-r border-black/6 bg-[linear-gradient(180deg,rgba(248,249,252,0.96),rgba(238,241,246,0.94))] px-4 pb-4 pt-4 shadow-[inset_-1px_0_0_rgba(255,255,255,0.75)] backdrop-blur-xl`}
+      style={{ width }}
+    >
       <div className="flex min-h-0 flex-1 flex-col gap-4">
         <div className="flex gap-2">
           <button
@@ -202,11 +204,11 @@ export function Sidebar({
                   </button>
                 </div>
 
-                <div className={`mt-3 flex flex-col gap-2 ${expandedGroups[group.key] ? "" : "hidden"}`}>
+                    <div className={`mt-3 flex flex-col gap-1.5 ${expandedGroups[group.key] ? "" : "hidden"}`}>
                   {group.sessions.map((session) => (
                     <div
                       key={session.id}
-                      className={`cursor-pointer rounded-2xl border px-3 py-2.5 text-left transition-all ${activeSessionId === session.id ? "border-accent/28 bg-[linear-gradient(180deg,rgba(253,244,241,1),rgba(255,255,255,0.92))] shadow-[0_10px_24px_rgba(210,106,61,0.10)]" : "border-black/6 bg-[#f7f9fc] hover:-translate-y-[1px] hover:bg-white"}`}
+                      className={`cursor-pointer rounded-[20px] border px-3 py-2 text-left transition-all ${activeSessionId === session.id ? "border-accent/28 bg-[linear-gradient(180deg,rgba(253,244,241,1),rgba(255,255,255,0.92))] shadow-[0_8px_20px_rgba(210,106,61,0.10)]" : "border-black/6 bg-[#f7f9fc] hover:-translate-y-[1px] hover:bg-white"}`}
                       onClick={() => setActiveSessionId(session.id)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
@@ -218,7 +220,7 @@ export function Sidebar({
                       tabIndex={0}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink-800">
+                        <div className="min-w-0 flex-1 truncate text-[12px] font-medium text-ink-800">
                           {session.title}
                         </div>
                         <DropdownMenu.Root>
@@ -273,9 +275,6 @@ export function Sidebar({
         </div>
 
         <div className="mt-auto space-y-2">
-          <div className="rounded-2xl border border-black/6 bg-white/72 px-3 py-3 text-xs leading-6 text-muted shadow-[0_12px_28px_rgba(30,38,52,0.06)]">
-            {connected ? "客户端已连接，默认直接走 Electron 会话。" : "客户端暂未连接，稍后会自动重试。"}
-          </div>
           <button
             className="flex w-full items-center justify-between rounded-2xl border border-black/6 bg-white/82 px-4 py-3 text-sm font-medium text-ink-800 shadow-[0_10px_28px_rgba(30,38,52,0.06)] transition-all hover:-translate-y-[1px] hover:border-black/10 hover:bg-white"
             onClick={() => openSettings()}

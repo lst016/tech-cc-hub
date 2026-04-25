@@ -119,13 +119,6 @@ export function getClaudeCodePath(): string | undefined {
 export function getCurrentApiConfig(): ApiConfig | null {
   const uiConfig = loadApiConfigSettings().profiles.find((profile) => profile.enabled) ?? null;
   if (isUsableConfig(uiConfig)) {
-    console.log("[claude-settings] Using UI config:", {
-      name: uiConfig.name,
-      baseURL: uiConfig.baseURL,
-      model: uiConfig.model,
-      models: uiConfig.models,
-      apiType: uiConfig.apiType
-    });
     return uiConfig;
   }
 
@@ -140,7 +133,6 @@ export function getCurrentApiConfig(): ApiConfig | null {
       const model = parsed.env.ANTHROPIC_MODEL;
 
       if (authToken && baseURL && model) {
-        console.log("[claude-settings] Using file config from ~/.claude/settings.json");
         const config: ApiConfig = {
           id: crypto.randomUUID(),
           name: "默认配置",
@@ -156,7 +148,6 @@ export function getCurrentApiConfig(): ApiConfig | null {
         // 持久化到 api-config.json
         try {
           saveApiConfigSettings({ profiles: [config] });
-          console.log("[claude-settings] Persisted config to api-config.json");
         } catch (e) {
           console.error("[claude-settings] Failed to persist config:", e);
         }
@@ -166,8 +157,7 @@ export function getCurrentApiConfig(): ApiConfig | null {
   } catch {
     // Ignore missing or invalid settings file.
   }
-  
-  console.log("[claude-settings] No config found");
+
   return null;
 }
 

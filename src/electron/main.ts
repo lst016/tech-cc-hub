@@ -31,10 +31,39 @@ import { ensureSystemWorkspace } from "./libs/system-workspace.js";
 import { getCurrentApiConfig } from "./libs/claude-settings.js";
 import { preprocessImageAttachments } from "./libs/image-preprocessor.js";
 import type { ClientEvent, PromptAttachment } from "./types.js";
+import { BrowserWorkbenchManager, type BrowserWorkbenchBounds } from "./browser-manager.js";
 import "./libs/claude-settings.js";
 
 let cleanupComplete = false;
 let mainWindow: BrowserWindow | null = null;
+let browserWorkbench: BrowserWorkbenchManager | null = null;
+
+function isIgnorableStreamError(error: unknown): error is NodeJS.ErrnoException {
+    return Boolean(
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error.code === "EPIPE" || error.code === "EIO" || error.code === "ERR_STREAM_DESTROYED"),
+    );
+}
+
+function installStdIoGuards(): void {
+    const swallowBrokenPipe = (error: Error) => {
+        if (isIgnorableStreamError(error)) {
+            return;
+        }
+        throw error;
+    };
+
+    process.stdout?.on("error", swallowBrokenPipe);
+    process.stderr?.on("error", swallowBrokenPipe);
+    process.on("uncaughtException", (error) => {
+        if (isIgnorableStreamError(error)) {
+            return;
+        }
+        throw error;
+    });
+}
 
 async function sleep(ms: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, ms));
@@ -132,6 +161,8 @@ function cleanup(): void {
 
     globalShortcut.unregisterAll();
     stopPolling();
+    browserWorkbench?.close();
+    browserWorkbench = null;
     cleanupAllSessions();
     stopSkillSyncScheduler();
     killViteDevServer();
@@ -181,6 +212,8 @@ function readPromptAttachmentPayload(attachments?: unknown[]): PromptAttachment[
     return Array.isArray(attachments) ? (attachments as PromptAttachment[]) : [];
 }
 
+installStdIoGuards();
+
 // Initialize everything when app is ready
 app.on("ready", async () => {
     Menu.setApplicationMenu(null);
@@ -211,6 +244,7 @@ app.on("ready", async () => {
         backgroundColor: "#FAF9F6",
         trafficLightPosition: { x: 15, y: 18 }
     });
+    browserWorkbench = new BrowserWorkbenchManager(mainWindow);
 
     try {
         await loadRenderer(mainWindow);
@@ -366,5 +400,49 @@ app.on("ready", async () => {
                 error: error instanceof Error ? error.message : String(error),
             };
         }
+    });
+
+    ipcMainHandle("browser-open", (_: IpcMainInvokeEvent, url: string) => {
+        return browserWorkbench!.open(url);
+    });
+
+    ipcMainHandle("browser-close", () => {
+        return browserWorkbench!.close();
+    });
+
+    ipcMainHandle("browser-set-bounds", (_: IpcMainInvokeEvent, bounds: BrowserWorkbenchBounds) => {
+        return browserWorkbench!.setBounds(bounds);
+    });
+
+    ipcMainHandle("browser-reload", () => {
+        return browserWorkbench!.reload();
+    });
+
+    ipcMainHandle("browser-back", () => {
+        return browserWorkbench!.goBack();
+    });
+
+    ipcMainHandle("browser-forward", () => {
+        return browserWorkbench!.goForward();
+    });
+
+    ipcMainHandle("browser-state", () => {
+        return browserWorkbench!.getState();
+    });
+
+    ipcMainHandle("browser-console-logs", (_: IpcMainInvokeEvent, limit?: number) => {
+        return browserWorkbench!.getConsoleLogs(limit);
+    });
+
+    ipcMainHandle("browser-capture-visible", async () => {
+        return await browserWorkbench!.captureVisible();
+    });
+
+    ipcMainHandle("browser-inspect-at-point", async (_: IpcMainInvokeEvent, point: { x: number; y: number }) => {
+        return await browserWorkbench!.inspectAtPoint(point);
+    });
+
+    ipcMainHandle("browser-annotation-mode", async (_: IpcMainInvokeEvent, enabled: boolean) => {
+        return await browserWorkbench!.setAnnotationMode(enabled);
     });
 })

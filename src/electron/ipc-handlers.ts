@@ -31,7 +31,7 @@ function initializeSessions() {
 function broadcast(event: ServerEvent) {
   const payload = JSON.stringify(event);
   if (isDev()) {
-    console.log("[meta][server-event]", payload);
+    console.log("[meta][server-event]", event.type);
   }
   const windows = BrowserWindow.getAllWindows();
   for (const win of windows) {

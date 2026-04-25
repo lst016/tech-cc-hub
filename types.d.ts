@@ -36,6 +36,64 @@ type ImagePreprocessResult = {
     error?: string;
 }
 
+type BrowserWorkbenchBounds = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+type BrowserWorkbenchState = {
+    url: string;
+    title?: string;
+    loading: boolean;
+    canGoBack: boolean;
+    canGoForward: boolean;
+    annotationMode: boolean;
+}
+
+type BrowserWorkbenchConsoleLog = {
+    level: "debug" | "info" | "log" | "warn" | "error";
+    message: string;
+    timestamp: number;
+    url?: string;
+    line?: number;
+}
+
+type BrowserWorkbenchDomHint = {
+    tagName: string;
+    role?: string;
+    text?: string;
+    ariaLabel?: string;
+    selector?: string;
+    path?: string;
+    target?: { type: "text"; value: string } | { type: "image"; url: string; alt?: string };
+    selectorCandidates: string[];
+    boundingBox?: { x: number; y: number; width: number; height: number };
+}
+
+type BrowserWorkbenchAnnotation = {
+    id: string;
+    url: string;
+    title?: string;
+    comment?: string;
+    removed?: boolean;
+    createdAt: number;
+    point: { x: number; y: number };
+    domHint?: BrowserWorkbenchDomHint;
+}
+
+type BrowserWorkbenchEvent =
+    | { type: "browser.state"; payload: BrowserWorkbenchState }
+    | { type: "browser.console"; payload: BrowserWorkbenchConsoleLog }
+    | { type: "browser.annotation"; payload: BrowserWorkbenchAnnotation };
+
+type BrowserWorkbenchCaptureResult = {
+    success: boolean;
+    dataUrl?: string;
+    error?: string;
+}
+
 type ApiConfigSettings = {
     profiles: ApiConfig[];
 }
@@ -109,10 +167,22 @@ type EventPayloadMapping = {
         "sync-skill-sources": SkillSyncResponse;
         "debug-save-trace-snapshot": { success: boolean; path?: string; error?: string };
         "preprocess-image-attachments": ImagePreprocessResult;
+        "browser-open": BrowserWorkbenchState;
+        "browser-close": BrowserWorkbenchState;
+        "browser-set-bounds": BrowserWorkbenchState;
+        "browser-reload": BrowserWorkbenchState;
+        "browser-back": BrowserWorkbenchState;
+        "browser-forward": BrowserWorkbenchState;
+        "browser-state": BrowserWorkbenchState;
+        "browser-console-logs": BrowserWorkbenchConsoleLog[];
+        "browser-capture-visible": BrowserWorkbenchCaptureResult;
+        "browser-inspect-at-point": BrowserWorkbenchDomHint | null;
+        "browser-annotation-mode": BrowserWorkbenchState;
 }
 
 interface Window {
     electron: {
+        platform: string;
         subscribeStatistics: (callback: (statistics: Statistics) => void) => UnsubscribeFunction;
         getStaticData: () => Promise<StaticData>;
         // Claude Agent IPC APIs
@@ -132,5 +202,17 @@ interface Window {
         checkApiConfig: () => Promise<{ hasConfig: boolean; config: ApiConfig | null }>;
         debugSaveTraceSnapshot: (snapshot: unknown) => Promise<{ success: boolean; path?: string; error?: string }>;
         preprocessImageAttachments: (payload: { prompt: string; selectedModel?: string; attachments: import("./src/ui/types").PromptAttachment[] }) => Promise<ImagePreprocessResult>;
+        openBrowserWorkbench: (url: string) => Promise<BrowserWorkbenchState>;
+        closeBrowserWorkbench: () => Promise<BrowserWorkbenchState>;
+        setBrowserWorkbenchBounds: (bounds: BrowserWorkbenchBounds) => Promise<BrowserWorkbenchState>;
+        reloadBrowserWorkbench: () => Promise<BrowserWorkbenchState>;
+        goBackBrowserWorkbench: () => Promise<BrowserWorkbenchState>;
+        goForwardBrowserWorkbench: () => Promise<BrowserWorkbenchState>;
+        getBrowserWorkbenchState: () => Promise<BrowserWorkbenchState>;
+        getBrowserWorkbenchConsoleLogs: (limit?: number) => Promise<BrowserWorkbenchConsoleLog[]>;
+        captureBrowserWorkbenchVisible: () => Promise<BrowserWorkbenchCaptureResult>;
+        inspectBrowserWorkbenchAtPoint: (point: { x: number; y: number }) => Promise<BrowserWorkbenchDomHint | null>;
+        setBrowserWorkbenchAnnotationMode: (enabled: boolean) => Promise<BrowserWorkbenchState>;
+        onBrowserWorkbenchEvent: (callback: (event: BrowserWorkbenchEvent) => void) => UnsubscribeFunction;
     }
 }
