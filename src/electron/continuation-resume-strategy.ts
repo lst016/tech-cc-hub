@@ -15,11 +15,9 @@ export function resolveContinuationResumeStrategy(
   input: ContinuationResumeStrategyInput,
 ): ContinuationResumeStrategy {
   const hasProviderSession = Boolean(input.claudeSessionId);
-  const shouldResumeProviderSession =
-    hasProviderSession && (input.apiSupportsRemoteResume || input.sessionStatus === "paused");
 
   return {
-    resumeSessionId: shouldResumeProviderSession ? input.claudeSessionId : undefined,
-    useStatelessContinuation: !shouldResumeProviderSession,
+    resumeSessionId: hasProviderSession ? input.claudeSessionId : undefined,
+    useStatelessContinuation: !hasProviderSession,
   };
 }

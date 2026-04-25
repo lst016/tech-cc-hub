@@ -14,15 +14,15 @@ test("resumes the provider session after an explicit pause even for stateless AP
   assert.equal(strategy.useStatelessContinuation, false);
 });
 
-test("uses stateless continuation for normal custom API turns", () => {
+test("resumes provider sessions for normal custom API turns", () => {
   const strategy = resolveContinuationResumeStrategy({
     apiSupportsRemoteResume: false,
     sessionStatus: "completed",
     claudeSessionId: "sdk-session-1",
   });
 
-  assert.equal(strategy.resumeSessionId, undefined);
-  assert.equal(strategy.useStatelessContinuation, true);
+  assert.equal(strategy.resumeSessionId, "sdk-session-1");
+  assert.equal(strategy.useStatelessContinuation, false);
 });
 
 test("resumes provider sessions when the API supports remote resume", () => {
