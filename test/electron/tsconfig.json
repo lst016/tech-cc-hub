@@ -13,8 +13,10 @@
   },
   "include": [
     "../../src/shared/dev-loop.ts",
+    "../../src/shared/project-profile.ts",
     "../../src/shared/activity-rail-model.ts",
     "./dev-loop.test.ts",
+    "./project-profile.test.ts",
     "./activity-rail-model.test.ts",
     "./session-analysis-page.test.ts"
   ]
