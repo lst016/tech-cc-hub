@@ -16,6 +16,7 @@ export function createProfile(): ApiConfigProfile {
     model: "",
     expertModel: "",
     imageModel: undefined,
+    analysisModel: "",
     models: [createModel()],
     enabled: true,
     apiType: "anthropic",
@@ -90,6 +91,7 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
     { name: profile.model },
     { name: profile.expertModel ?? "" },
     { name: profile.imageModel ?? "" },
+    { name: profile.analysisModel ?? "" },
   ]);
   const selectedModel = profile.model.trim() || models[0]?.name || "";
   const imageModel = profile.imageModel?.trim();
@@ -109,6 +111,7 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
     model: selectedModel,
     expertModel: normalizeRoleModel(profile.expertModel, selectedModel),
     imageModel: imageModel && models.some((item) => item.name === imageModel) ? imageModel : undefined,
+    analysisModel: normalizeRoleModel(profile.analysisModel, selectedModel),
     models,
     enabled: Boolean(profile.enabled),
     apiType: "anthropic",
@@ -125,6 +128,7 @@ export function getAvailableModels(profile: ApiConfigProfile): string[] {
       profile.model,
       profile.expertModel,
       profile.imageModel,
+      profile.analysisModel,
       ...(profile.models ?? []).map((item) => item.name),
     ]),
   )
@@ -139,7 +143,8 @@ export function buildRoutingSummary(profile?: ApiConfigProfile): string {
 
   const mainModel = profile.model || "-";
   const expertModel = profile.expertModel || mainModel;
-  return `主 ${mainModel} / 专家 ${expertModel}`;
+  const analysisModel = profile.analysisModel || mainModel;
+  return `主 ${mainModel} / 专家 ${expertModel} / 分析 ${analysisModel}`;
 }
 
 export function validateProfiles(profiles: ApiConfigProfile[]): string | null {
@@ -176,6 +181,9 @@ export function validateProfiles(profiles: ApiConfigProfile[]): string | null {
 
     if (profile.imageModel && !profile.models?.some((item) => item.name === profile.imageModel)) {
       return `配置“${profile.name}”的图片预处理模型必须在模型列表中。`;
+    }
+    if (profile.analysisModel && !profile.models?.some((item) => item.name === profile.analysisModel)) {
+      return `配置“${profile.name}”的 Prompt 分析模型必须在模型列表中。`;
     }
 
     try {

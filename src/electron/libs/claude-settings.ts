@@ -148,6 +148,7 @@ export function getCurrentApiConfig(): ApiConfig | null {
           baseURL: String(baseURL),
           model: String(model),
           expertModel: String(model),
+          analysisModel: String(model),
           models: [{ name: String(model), compressionThresholdPercent: 70 }],
           enabled: true,
           apiType: "anthropic"

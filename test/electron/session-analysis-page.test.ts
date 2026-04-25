@@ -14,7 +14,7 @@ test("app exposes a session analysis entry and renders the analysis page skeleto
   assert.match(analysisPageSource, /Context Distribution/);
   assert.match(analysisPageSource, /Analysis Cards/);
   assert.match(analysisPageSource, /Prompt Ledger/);
-  assert.match(analysisPageSource, /Composition Breakdown/);
-  assert.match(analysisPageSource, /Compression Candidate/);
-  assert.match(analysisPageSource, /Full Prompt Payload/);
+  assert.match(analysisPageSource, /Prompt 分布/);
+  assert.match(analysisPageSource, /上下文诊断/);
+  assert.match(analysisPageSource, /当前 Trace 节点/);
 });

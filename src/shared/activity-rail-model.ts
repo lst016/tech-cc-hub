@@ -4,7 +4,7 @@ import type {
   SDKResultMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { PromptLedgerBucket, PromptLedgerMessage } from "./prompt-ledger.js";
+import type { PromptLedgerBucket, PromptLedgerMessage, PromptLedgerSegment } from "./prompt-ledger.js";
 
 export type ActivityRailTone = "neutral" | "info" | "success" | "warning" | "error";
 export type ActivityRailLayer = "上下文" | "工具" | "结果" | "流程";
@@ -194,6 +194,16 @@ export type PromptAnalysisModel = {
   totalChars: number;
   totalTokenEstimate: number;
   buckets: PromptLedgerBucket[];
+  segments: PromptLedgerSegment[];
+  ledgers: Array<{
+    id: string;
+    phase: PromptLedgerMessage["phase"];
+    model?: string;
+    totalChars: number;
+    totalTokenEstimate: number;
+    bucketCount: number;
+    segmentCount: number;
+  }>;
 };
 
 export type ActivityRailModel = {
@@ -613,6 +623,23 @@ function buildHookDetailSections(systemMessage: Record<string, unknown>): Activi
   }
 
   return sections;
+}
+
+function formatHookEventLabel(value: unknown): string {
+  const raw = String(value ?? "未知 Hook");
+  if (/^SessionStart(?::|$)/i.test(raw)) {
+    return raw.replace(/^SessionStart/i, "运行启动");
+  }
+  if (/^UserPromptSubmit(?::|$)/i.test(raw)) {
+    return raw.replace(/^UserPromptSubmit/i, "提交用户输入");
+  }
+  if (/^PreToolUse(?::|$)/i.test(raw)) {
+    return raw.replace(/^PreToolUse/i, "工具调用前");
+  }
+  if (/^PostToolUse(?::|$)/i.test(raw)) {
+    return raw.replace(/^PostToolUse/i, "工具调用后");
+  }
+  return raw;
 }
 
 function formatNumber(value?: number): string {
@@ -1376,6 +1403,68 @@ function buildExecutionStepsFromTimeline(
   };
 }
 
+function enrichPromptSegmentsWithTimeline(
+  segments: PromptLedgerSegment[],
+  timelineItems: ActivityTimelineItem[],
+): PromptLedgerSegment[] {
+  if (segments.length === 0 || timelineItems.length === 0) return segments;
+
+  const timelineIds = new Set(timelineItems.map((item) => item.id));
+  const promptNodesByRound = new Map<number, ActivityTimelineItem>();
+  const assistantNodesByRound = new Map<number, ActivityTimelineItem[]>();
+  for (const item of timelineItems) {
+    if (item.title === "发送用户输入" && item.round > 0) {
+      promptNodesByRound.set(item.round, item);
+    }
+    if ((item.nodeKind === "plan" || item.nodeKind === "assistant_output") && item.round > 0) {
+      assistantNodesByRound.set(item.round, [...(assistantNodesByRound.get(item.round) ?? []), item]);
+    }
+  }
+
+  const latestPromptRound = Math.max(0, ...Array.from(promptNodesByRound.keys()));
+  const latestPromptNode = latestPromptRound > 0 ? promptNodesByRound.get(latestPromptRound) : undefined;
+
+  return segments.map((segment) => {
+    if (segment.nodeId && timelineIds.has(segment.nodeId)) return segment;
+
+    if (segment.segmentKind === "current_prompt" || segment.segmentKind === "attachment") {
+      if (!latestPromptNode) return segment;
+      return {
+        ...segment,
+        round: latestPromptNode.round,
+        messageId: segment.messageId ?? latestPromptNode.id,
+        nodeId: latestPromptNode.id,
+      };
+    }
+
+    if (segment.segmentKind === "history_user_prompt" && typeof segment.round === "number") {
+      const promptNode = promptNodesByRound.get(segment.round);
+      if (!promptNode) return segment;
+      return {
+        ...segment,
+        messageId: segment.messageId ?? promptNode.id,
+        nodeId: promptNode.id,
+      };
+    }
+
+    if (segment.segmentKind === "history_assistant_output" && typeof segment.round === "number") {
+      const assistantNodes = assistantNodesByRound.get(segment.round) ?? [];
+      const directNode = segment.messageId
+        ? assistantNodes.find((item) => item.id.startsWith(`${segment.messageId}-`))
+        : undefined;
+      const assistantNode = directNode ?? assistantNodes[0];
+      if (!assistantNode) return segment;
+      return {
+        ...segment,
+        messageId: segment.messageId ?? assistantNode.id,
+        nodeId: assistantNode.id,
+      };
+    }
+
+    return segment;
+  });
+}
+
 export function buildActivityRailModel(
   session: SessionLike | undefined,
   permissionRequests: PermissionRequestLike[],
@@ -1435,6 +1524,8 @@ export function buildActivityRailModel(
         totalChars: 0,
         totalTokenEstimate: 0,
         buckets: [],
+        segments: [],
+        ledgers: [],
       },
     };
   }
@@ -1465,10 +1556,12 @@ export function buildActivityRailModel(
   let latestParsedPlan: ParsedPlan | null = null;
   let roundContextChars = 0;
   let latestPromptLedger: PromptLedgerMessage | null = null;
+  const promptLedgers: PromptLedgerMessage[] = [];
 
   for (const message of session.messages) {
     if (message.type === "prompt_ledger") {
       latestPromptLedger = message;
+      promptLedgers.push(message);
       sequence += 1;
       timelineChronological.push(
         createTimelineItem({
@@ -1812,6 +1905,7 @@ export function buildActivityRailModel(
 
       if (message.subtype === "hook_started") {
         sequence += 1;
+        const hookLabel = formatHookEventLabel(systemMessage.hook_name ?? systemMessage.hook_event);
         timelineChronological.push(
           createTimelineItem({
             id: `hook-${String(systemMessage.uuid ?? sequence)}`,
@@ -1819,8 +1913,8 @@ export function buildActivityRailModel(
             layer: "流程",
             tone: "warning",
             nodeKind: "hook",
-            title: `触发 Hook：${String(systemMessage.hook_name ?? systemMessage.hook_event ?? "未知 Hook")}`,
-            detail: "当前执行链路进入外部钩子阶段，可用于后续复盘证据补全。",
+            title: `触发运行钩子：${hookLabel}`,
+            detail: "当前模型运行进入钩子阶段；这是单次请求的运行事件，不代表应用会话被重建。",
             round: Math.max(round, 1),
             sequence,
             statusLabel: "处理中",
@@ -1841,6 +1935,7 @@ export function buildActivityRailModel(
         const parsed = parseHookOutput(hookOutput);
         const outcome = typeof systemMessage.outcome === "string" ? systemMessage.outcome : "success";
         const hookEvent = String(systemMessage.hook_event ?? systemMessage.hook_name ?? "未知 Hook");
+        const hookLabel = formatHookEventLabel(hookEvent);
         const timelineId = `hook-response-${String(systemMessage.uuid ?? sequence)}`;
         const hookQualitySignal = buildHookQualitySignal(
           timelineId,
@@ -1877,12 +1972,12 @@ export function buildActivityRailModel(
             layer: "流程",
             tone: hookQualitySignal.tone,
             nodeKind: "hook",
-            title: `Hook 结果：${hookEvent}`,
+            title: `运行钩子结果：${hookLabel}`,
             detail,
             round: Math.max(round, 1),
             sequence,
             statusLabel: outcome === "error" ? "失败" : outcome === "cancelled" ? "取消" : "完成",
-            chips: ["Hook", String(systemMessage.hook_name ?? "Hook")],
+            chips: ["Hook", hookLabel],
             attention: tone !== "info",
             stageKind: "verify",
             detailSections: buildHookDetailSections(systemMessage),
@@ -2039,18 +2134,33 @@ export function buildActivityRailModel(
     flow: timeline.filter((item) => item.filterKey === "flow").length,
   };
   const contextDistribution = buildContextDistribution(distributionBuckets);
+  const latestPromptSegments = latestPromptLedger
+    ? enrichPromptSegmentsWithTimeline(latestPromptLedger.segments ?? [], timeline)
+    : [];
   const promptAnalysis: PromptAnalysisModel = latestPromptLedger
-    ? {
+      ? {
         title: "Prompt 分析",
         totalChars: latestPromptLedger.totalChars,
         totalTokenEstimate: latestPromptLedger.totalTokenEstimate,
         buckets: latestPromptLedger.buckets,
+        segments: latestPromptSegments,
+        ledgers: promptLedgers.map((ledger, index) => ({
+          id: ledger.historyId ?? `ledger-${index + 1}`,
+          phase: ledger.phase,
+          model: ledger.model,
+          totalChars: ledger.totalChars,
+          totalTokenEstimate: ledger.totalTokenEstimate,
+          bucketCount: ledger.buckets.length,
+          segmentCount: ledger.segments?.length ?? 0,
+        })),
       }
     : {
         title: "Prompt 分析",
         totalChars: 0,
         totalTokenEstimate: 0,
         buckets: [],
+        segments: [],
+        ledgers: [],
       };
   const largestContextBucket = contextDistribution.buckets
     .slice()

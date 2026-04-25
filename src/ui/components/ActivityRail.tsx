@@ -708,8 +708,8 @@ export function ActivityRail({
   onOpenSessionAnalysis?: () => void;
 }) {
   const model = useMemo(
-    () => buildActivityRailModel(session, session?.permissionRequests ?? [], partialMessage),
-    [partialMessage, session],
+    () => buildActivityRailModel(session, session?.permissionRequests ?? [], ""),
+    [session],
   );
   const [activeFilter, setActiveFilter] = useState<ActivityRailFilterKey>("all");
   const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
@@ -774,7 +774,7 @@ export function ActivityRail({
           relatedSteps={relatedSteps}
           latestPrompt={model.contextSnapshot.latestPrompt}
           attachmentSummary={attachmentSummary}
-          partialMessage={model.contextSnapshot.partialMessage}
+          partialMessage={partialMessage}
           onClose={() => setSelectedTimelineId(null)}
         />
       )}

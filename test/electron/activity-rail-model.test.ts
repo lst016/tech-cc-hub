@@ -21,6 +21,21 @@ test("buildPromptLedgerMessage separates prompt sources for optimization", () =>
     ],
     historyMessages: [
       {
+        type: "assistant",
+        uuid: "assistant-history-tool",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "tool-history-edit",
+              name: "Edit",
+              input: { file_path: "src/ui/components/ActivityRail.tsx", old_string: "old".repeat(100), new_string: "new" },
+            },
+          ],
+        },
+      } as never,
+      {
         type: "user",
         message: {
           role: "user",
@@ -41,6 +56,9 @@ test("buildPromptLedgerMessage separates prompt sources for optimization", () =>
   assert.equal(ledger.buckets.find((bucket) => bucket.id === "current-attachments")?.chars, 4096);
   assert.equal(ledger.buckets.find((bucket) => bucket.id === "summary")?.sourceKind, "memory");
   assert.ok((ledger.buckets.find((bucket) => bucket.id === "history-tool-output")?.chars ?? 0) > 1000);
+  assert.ok((ledger.buckets.find((bucket) => bucket.id === "history-tool-input")?.chars ?? 0) > 300);
+  assert.ok(ledger.segments.some((segment) => segment.segmentKind === "history_tool_input" && segment.toolName === "Edit"));
+  assert.ok(ledger.segments.some((segment) => segment.segmentKind === "history_tool_output"));
   assert.ok(ledger.totalChars > 4096);
 });
 
@@ -58,6 +76,25 @@ test("buildActivityRailModel exposes prompt analysis from prompt ledger", () => 
     memorySources: [
       { id: "summary", label: "本地摘要", sourceKind: "memory", text: "历史摘要".repeat(20) },
     ],
+    historyMessages: [
+      {
+        type: "user_prompt",
+        prompt: "先分析报表字段",
+      },
+      {
+        type: "assistant",
+        uuid: "assistant-history-plan",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "text",
+              text: "已检查字段来源，下一步需要对比输出口径。",
+            },
+          ],
+        },
+      } as never,
+    ],
   });
 
   const model = buildActivityRailModel(
@@ -68,9 +105,37 @@ test("buildActivityRailModel exposes prompt analysis from prompt ledger", () => 
       messages: [
         {
           type: "user_prompt",
+          prompt: "先分析报表字段",
+        },
+        {
+          type: "assistant",
+          uuid: "assistant-history-plan",
+          message: {
+            id: "assistant-history-plan",
+            model: "GLM-5.1-FP8",
+            role: "assistant",
+            type: "message",
+            content: [
+              {
+                type: "text",
+                text: "已检查字段来源，下一步需要对比输出口径。",
+              },
+            ],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: {
+              input_tokens: 0,
+              output_tokens: 0,
+              cache_creation_input_tokens: null,
+              cache_read_input_tokens: null,
+            },
+          },
+        } as never,
+        ledger,
+        {
+          type: "user_prompt",
           prompt: "继续处理报表",
         },
-        ledger,
       ],
     },
     [],
@@ -82,6 +147,18 @@ test("buildActivityRailModel exposes prompt analysis from prompt ledger", () => 
   assert.ok(model.promptAnalysis.buckets.some((bucket) => bucket.sourceKind === "project"));
   assert.ok(model.promptAnalysis.buckets.some((bucket) => bucket.sourceKind === "skill"));
   assert.ok(model.promptAnalysis.buckets.some((bucket) => bucket.sourceKind === "memory"));
+  assert.ok(model.promptAnalysis.segments.some((segment) => segment.segmentKind === "current_prompt"));
+  assert.ok(model.promptAnalysis.segments.some((segment) =>
+    segment.segmentKind === "current_prompt" &&
+    segment.round === 2 &&
+    segment.nodeId?.startsWith("prompt-2-"),
+  ));
+  assert.ok(model.promptAnalysis.segments.some((segment) =>
+    segment.segmentKind === "history_assistant_output" &&
+    segment.round === 1 &&
+    segment.nodeId?.startsWith("assistant-history-plan-text-"),
+  ));
+  assert.equal(model.promptAnalysis.ledgers.length, 1);
   assert.ok(model.analysisCards.some((card) => card.id === "prompt-hotspot"));
 });
 

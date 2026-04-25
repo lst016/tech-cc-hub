@@ -28,6 +28,7 @@ export type ApiConfig = {
   model: string;
   expertModel?: string;
   imageModel?: string;
+  analysisModel?: string;
   models?: ApiModelConfig[];
   enabled: boolean;
   apiType?: ApiType;
@@ -160,6 +161,7 @@ function createDefaultSettings(): ApiConfigSettings {
         model: DEFAULT_MODEL,
         expertModel: DEFAULT_MODEL,
         imageModel: undefined,
+        analysisModel: DEFAULT_MODEL,
         models: [DEFAULT_MODEL_CONFIG],
         enabled: true,
         apiType: "anthropic",
@@ -321,6 +323,7 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
     config.model,
     config.expertModel,
     config.imageModel,
+    config.analysisModel,
     ...(config.models ?? []),
   ]);
   const dedupedModelNames = dedupedModels.map((item) => item.name);
@@ -344,6 +347,7 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
     model: selectedModel,
     expertModel: normalizeRoleModel(config.expertModel, selectedModel),
     imageModel: normalizeOptionalModel(config.imageModel, dedupedModelNames),
+    analysisModel: normalizeRoleModel(config.analysisModel, selectedModel),
     models: dedupedModels,
     enabled: Boolean(config.enabled),
     apiType: config.apiType ?? "anthropic",
@@ -573,7 +577,11 @@ function discoverInstalledSkills(rootPath: string): InstalledSkillRecord[] {
         return [];
       }
     })
-    .map(({ resolvedPath: _resolvedPath, ...skill }) => skill);
+    .map((discovered) => {
+      const { resolvedPath, ...skill } = discovered;
+      void resolvedPath;
+      return skill;
+    });
 }
 
 function detectSkillKind(path: string): SkillKind | null {

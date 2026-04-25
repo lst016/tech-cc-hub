@@ -530,8 +530,8 @@ export async function handleClientEvent(event: ClientEvent) {
         sessionId: session.id,
         message: buildPromptLedgerForRun({
           phase: "continue",
-          prompt: event.payload.prompt,
-          attachments: currentAttachments,
+          prompt,
+          attachments: attachmentsForRun,
           session,
           historyMessages: history?.messages ?? [],
           model: selectedModel,

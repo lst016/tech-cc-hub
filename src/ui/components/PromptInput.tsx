@@ -204,12 +204,11 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   const reasoningMode = useAppStore((state) => state.reasoningMode);
   const permissionMode = useAppStore((state) => state.permissionMode);
   const activeSessionId = useAppStore((state) => state.activeSessionId);
-  const sessions = useAppStore((state) => state.sessions);
+  const activeSession = useAppStore((state) => (state.activeSessionId ? state.sessions[state.activeSessionId] : undefined));
   const setPrompt = useAppStore((state) => state.setPrompt);
   const setPendingStart = useAppStore((state) => state.setPendingStart);
   const setGlobalError = useAppStore((state) => state.setGlobalError);
 
-  const activeSession = activeSessionId ? sessions[activeSessionId] : undefined;
   const isRunning = activeSession?.status === "running";
   const slashCommands = useMemo(() => activeSession?.slashCommands ?? [], [activeSession?.slashCommands]);
   const activeProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
@@ -388,6 +387,8 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const isComposingRef = useRef(false);
+  const compositionEndedAtRef = useRef(0);
   const [attachments, setAttachments] = useState<PromptAttachment[]>([]);
   const [queuedMessagesBySession, setQueuedMessagesBySession] = useState<Record<string, QueuedMessageDraft[]>>({});
   const [showSlashBrowser, setShowSlashBrowser] = useState(false);
@@ -502,6 +503,8 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (disabled) return;
     if (e.key !== "Enter" || e.shiftKey) return;
+    const justEndedComposition = Date.now() - compositionEndedAtRef.current < 80;
+    if (e.nativeEvent.isComposing || isComposingRef.current || justEndedComposition) return;
     e.preventDefault();
     void submitCurrentInput();
   };
@@ -762,6 +765,13 @@ export function PromptInput({ sendEvent, onSendMessage, disabled = false }: Prom
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={handleKeyDown}
+            onCompositionStart={() => {
+              isComposingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              isComposingRef.current = false;
+              compositionEndedAtRef.current = Date.now();
+            }}
             onInput={handleInput}
             onPaste={(event) => { void handlePaste(event); }}
             ref={promptRef}

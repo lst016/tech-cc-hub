@@ -36,6 +36,7 @@ function App() {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const partialMessageRef = useRef("");
+  const partialFlushFrameRef = useRef<number | null>(null);
   const [partialMessage, setPartialMessage] = useState("");
   const [showPartialMessage, setShowPartialMessage] = useState(false);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
@@ -59,8 +60,10 @@ function App() {
     messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
   }, []);
 
-  const sessions = useAppStore((s) => s.sessions);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
+  const activeSession = useAppStore((s) => (s.activeSessionId ? s.sessions[s.activeSessionId] : undefined));
+  const activeHistoryCursor = useAppStore((s) => (s.activeSessionId ? s.sessions[s.activeSessionId]?.historyCursor : undefined));
+  const activeSessionHydrated = useAppStore((s) => (s.activeSessionId ? s.sessions[s.activeSessionId]?.hydrated : undefined));
   const showStartModal = useAppStore((s) => s.showStartModal);
   const setShowStartModal = useAppStore((s) => s.setShowStartModal);
   const showSettingsModal = useAppStore((s) => s.showSettingsModal);
@@ -94,8 +97,24 @@ function App() {
   };
 
   // Handle partial messages from stream events
+  const flushPartialMessage = useCallback(() => {
+    partialFlushFrameRef.current = null;
+    setPartialMessage(partialMessageRef.current);
+    if (shouldAutoScroll) {
+      scrollChatToBottom("auto");
+    } else {
+      setHasNewMessages(true);
+    }
+  }, [scrollChatToBottom, shouldAutoScroll]);
+
+  const schedulePartialFlush = useCallback(() => {
+    if (partialFlushFrameRef.current !== null) return;
+    partialFlushFrameRef.current = window.requestAnimationFrame(flushPartialMessage);
+  }, [flushPartialMessage]);
+
   const handlePartialMessages = useCallback((partialEvent: ServerEvent) => {
     if (partialEvent.type !== "stream.message" || partialEvent.payload.message.type !== "stream_event") return;
+    if (partialEvent.payload.sessionId !== activeSessionId) return;
 
     const message = partialEvent.payload.message as StreamEventMessage;
     if (message.event?.type === "content_block_start") {
@@ -106,22 +125,22 @@ function App() {
 
     if (message.event?.type === "content_block_delta") {
       partialMessageRef.current += getPartialMessageContent(message.event) || "";
-      setPartialMessage(partialMessageRef.current);
-      if (shouldAutoScroll) {
-        scrollChatToBottom("auto");
-      } else {
-        setHasNewMessages(true);
-      }
+      schedulePartialFlush();
     }
 
     if (message.event?.type === "content_block_stop") {
+      if (partialFlushFrameRef.current !== null) {
+        window.cancelAnimationFrame(partialFlushFrameRef.current);
+        partialFlushFrameRef.current = null;
+      }
+      setPartialMessage(partialMessageRef.current);
       setShowPartialMessage(false);
       setTimeout(() => {
         partialMessageRef.current = "";
         setPartialMessage(partialMessageRef.current);
       }, 500);
     }
-  }, [scrollChatToBottom, shouldAutoScroll]);
+  }, [activeSessionId, schedulePartialFlush]);
 
   // Combined event handler
   const onEvent = useCallback((event: ServerEvent) => {
@@ -135,7 +154,6 @@ function App() {
   const { connected, sendEvent } = useIPC(onEvent);
   const { handleStartFromModal } = usePromptActions(sendEvent);
 
-  const activeSession = activeSessionId ? sessions[activeSessionId] : undefined;
   const messages = activeSession?.messages ?? EMPTY_MESSAGES;
   const permissionRequests = activeSession?.permissionRequests ?? EMPTY_PERMISSION_REQUESTS;
   const isRunning = activeSession?.status === "running";
@@ -145,7 +163,7 @@ function App() {
       return;
     }
 
-    const cursor = sessions[activeSessionId]?.historyCursor;
+    const cursor = activeHistoryCursor;
     if (!cursor) {
       return;
     }
@@ -159,7 +177,7 @@ function App() {
         limit: HISTORY_PAGE_LIMIT,
       },
     });
-  }, [activeSessionId, connected, isLoadingHistory, sendEvent, sessions]);
+  }, [activeHistoryCursor, activeSessionId, connected, isLoadingHistory, sendEvent]);
   const {
     visibleMessages,
     hasMoreHistory,
@@ -198,12 +216,13 @@ function App() {
       | { type: "separator"; key: string; roundNumber: number }
       | { type: "message"; key: string; originalIndex: number; message: StreamMessage }
     > = [];
+    let roundNumber = messages
+      .slice(0, displayMessages[0]?.originalIndex ?? 0)
+      .filter((message) => message.type === "user_prompt").length;
 
     for (const item of displayMessages) {
       if (item.message.type === "user_prompt") {
-        const roundNumber = messages
-          .slice(0, item.originalIndex + 1)
-          .filter((message) => message.type === "user_prompt").length;
+        roundNumber += 1;
         entries.push({
           type: "separator",
           key: `${activeSessionId}-round-${item.originalIndex}`,
@@ -254,8 +273,7 @@ function App() {
 
   useEffect(() => {
     if (!activeSessionId || !connected) return;
-    const session = sessions[activeSessionId];
-    if (session && !session.hydrated && !historyRequested.has(activeSessionId)) {
+    if (activeSession && !activeSessionHydrated && !historyRequested.has(activeSessionId)) {
       markHistoryRequested(activeSessionId);
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsLoadingHistory(true);
@@ -264,7 +282,7 @@ function App() {
         payload: { sessionId: activeSessionId, limit: INITIAL_HISTORY_LIMIT },
       });
     }
-  }, [activeSessionId, connected, sessions, historyRequested, markHistoryRequested, sendEvent]);
+  }, [activeSession, activeSessionHydrated, activeSessionId, connected, historyRequested, markHistoryRequested, sendEvent]);
 
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current;
@@ -378,6 +396,14 @@ function App() {
       body.style.overflow = previousBodyOverflow;
     };
   }, [showSessionAnalysis]);
+
+  useEffect(() => {
+    return () => {
+      if (partialFlushFrameRef.current !== null) {
+        window.cancelAnimationFrame(partialFlushFrameRef.current);
+      }
+    };
+  }, []);
 
   const scrollToBottom = useCallback(() => {
     setShouldAutoScroll(true);

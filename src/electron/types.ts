@@ -19,6 +19,7 @@ export type ApiConfig = {
   model: string;
   expertModel?: string;
   imageModel?: string;
+  analysisModel?: string;
   models?: ApiModelConfig[];
   enabled: boolean;
   apiType?: "anthropic";
