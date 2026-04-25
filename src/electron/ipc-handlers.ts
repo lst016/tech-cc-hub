@@ -2,6 +2,7 @@ import { app, BrowserWindow } from "electron";
 import { join } from "path";
 
 import { createStoredUserPromptMessage, sanitizePromptAttachmentsForStorage } from "../shared/attachments.js";
+import { applyDevLoopToPrompt, classifyDevLoop, createDevLoopMessage } from "../shared/dev-loop.js";
 import { buildPromptLedgerMessage, type PromptLedgerMessage, type PromptLedgerSource } from "../shared/prompt-ledger.js";
 import { createInitialSessionWorkflowState, parseWorkflowMarkdown } from "../shared/workflow-markdown.js";
 import { runClaude, type RunnerHandle } from "./libs/runner.js";
@@ -414,13 +415,29 @@ export async function handleClientEvent(event: ClientEvent) {
     });
 
     const config = getCurrentApiConfig();
+    const devLoop = classifyDevLoop({
+      prompt: event.payload.prompt,
+      attachments: event.payload.attachments,
+      cwd: session.cwd,
+      runSurface: event.payload.runtime?.runSurface ?? session.runSurface,
+    });
+    const promptForRun = applyDevLoopToPrompt(event.payload.prompt, devLoop);
+
+    emit({
+      type: "stream.message",
+      payload: {
+        sessionId: session.id,
+        message: createDevLoopMessage(devLoop, devLoop.loopMode === "none" ? "classified" : "prompt_injected"),
+      },
+    });
+
     emit({
       type: "stream.message",
       payload: {
         sessionId: session.id,
         message: buildPromptLedgerForRun({
           phase: "start",
-          prompt: event.payload.prompt,
+          prompt: promptForRun,
           attachments: event.payload.attachments,
           session,
           model: event.payload.runtime?.model ?? config?.model,
@@ -434,7 +451,7 @@ export async function handleClientEvent(event: ClientEvent) {
     });
 
     runClaude({
-      prompt: event.payload.prompt,
+      prompt: promptForRun,
       attachments: event.payload.attachments,
       runtime: event.payload.runtime,
       session,
@@ -502,6 +519,13 @@ export async function handleClientEvent(event: ClientEvent) {
       ? await loadRecentReferencedImages(history?.messages ?? [])
       : [];
     const attachmentsForRun = [...currentAttachments, ...rehydratedAttachments];
+    const devLoop = classifyDevLoop({
+      prompt: event.payload.prompt,
+      attachments: attachmentsForRun,
+      cwd: session.cwd,
+      runSurface: event.payload.runtime?.runSurface ?? session.runSurface,
+    });
+    const promptForRun = applyDevLoopToPrompt(prompt, devLoop);
 
     store.updateSession(session.id, {
       status: "running",
@@ -528,9 +552,17 @@ export async function handleClientEvent(event: ClientEvent) {
       type: "stream.message",
       payload: {
         sessionId: session.id,
+        message: createDevLoopMessage(devLoop, devLoop.loopMode === "none" ? "classified" : "prompt_injected"),
+      },
+    });
+
+    emit({
+      type: "stream.message",
+      payload: {
+        sessionId: session.id,
         message: buildPromptLedgerForRun({
           phase: "continue",
-          prompt,
+          prompt: promptForRun,
           attachments: attachmentsForRun,
           session,
           historyMessages: history?.messages ?? [],
@@ -546,7 +578,7 @@ export async function handleClientEvent(event: ClientEvent) {
     });
 
     runClaude({
-      prompt,
+      prompt: promptForRun,
       attachments: attachmentsForRun,
       runtime: event.payload.runtime,
       session,

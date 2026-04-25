@@ -1,4 +1,5 @@
 import type { SDKMessage, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import type { DevLoopMessage } from "../shared/dev-loop.js";
 import type { PromptLedgerMessage } from "../shared/prompt-ledger.js";
 import type { SessionWorkflowState, WorkflowScope, WorkflowSpecDocument } from "../shared/workflow-markdown.js";
 
@@ -59,7 +60,7 @@ export type UserPromptMessage = {
   historyId?: string;
 };
 
-export type StreamMessage = (SDKMessage | UserPromptMessage | PromptLedgerMessage) & {
+export type StreamMessage = (SDKMessage | UserPromptMessage | PromptLedgerMessage | DevLoopMessage) & {
   capturedAt?: number;
   historyId?: string;
 };
