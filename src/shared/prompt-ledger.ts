@@ -99,6 +99,27 @@ export type PromptLedgerBuildInput = {
   historyMessages?: unknown[];
 };
 
+export type PromptLedgerTimelineScopeItem = {
+  id: string;
+  title: string;
+  toolName?: string;
+  round?: number;
+  nodeKind?: string;
+};
+
+export type PromptNodeScopeMode = "none" | "exact" | "round" | "empty";
+
+export type PromptNodeScope = {
+  exactIds: string[];
+  roundIds: string[];
+  matchedIds: string[];
+  mode: PromptNodeScopeMode;
+  label: string;
+  detail: string;
+  tokenEstimate: number;
+  sourceLabels: string[];
+};
+
 type BucketDraft = Omit<PromptLedgerBucket, "ratio">;
 type SegmentDraft = Omit<PromptLedgerSegment, "ratio">;
 
@@ -115,6 +136,91 @@ const SOURCE_ORDER: PromptLedgerSourceKind[] = [
   "history",
   "other",
 ];
+
+export function derivePromptNodeScope(
+  segments: PromptLedgerSegment[],
+  selectedTimelineItem: PromptLedgerTimelineScopeItem | null,
+): PromptNodeScope {
+  if (!selectedTimelineItem) {
+    return {
+      exactIds: [],
+      roundIds: [],
+      matchedIds: [],
+      mode: "none",
+      label: "未选择节点",
+      detail: "从左侧 Trace Flow 选择节点后，这里会自动显示关联片段。",
+      tokenEstimate: 0,
+      sourceLabels: [],
+    };
+  }
+
+  const exact = segments.filter((segment) => {
+    if (segment.nodeId === selectedTimelineItem.id || segment.messageId === selectedTimelineItem.id) return true;
+    if (
+      selectedTimelineItem.toolName &&
+      segment.toolName === selectedTimelineItem.toolName &&
+      segment.round === selectedTimelineItem.round
+    ) {
+      return true;
+    }
+    if (
+      selectedTimelineItem.nodeKind === "context" &&
+      selectedTimelineItem.title === "发送用户输入" &&
+      (segment.segmentKind === "current_prompt" || segment.segmentKind === "attachment")
+    ) {
+      return true;
+    }
+    return false;
+  });
+
+  const round = exact.length > 0
+    ? []
+    : segments.filter((segment) => (
+      typeof selectedTimelineItem.round === "number" &&
+      selectedTimelineItem.round > 0 &&
+      segment.round === selectedTimelineItem.round
+    ));
+
+  const exactIds = exact.map((segment) => segment.id);
+  const roundIds = round.map((segment) => segment.id);
+  const matchedSegments = exact.length > 0 ? exact : round;
+  const matchedIds = matchedSegments.map((segment) => segment.id);
+  const mode: PromptNodeScopeMode = exact.length > 0 ? "exact" : round.length > 0 ? "round" : "empty";
+  const tokenEstimate = matchedSegments.reduce((sum, segment) => sum + segment.tokenEstimate, 0);
+  const sourceLabels = Array.from(new Set(matchedSegments.map(getPromptSegmentKindLabel))).slice(0, 4);
+  const label = selectedTimelineItem.toolName || selectedTimelineItem.title;
+
+  return {
+    exactIds,
+    roundIds,
+    matchedIds,
+    mode,
+    label,
+    tokenEstimate,
+    sourceLabels,
+    detail:
+      mode === "exact"
+        ? `已匹配 ${exactIds.length} 个直接关联片段。`
+        : mode === "round"
+          ? `没有直接节点片段，显示同轮 ${selectedTimelineItem.round} 的上下文。`
+          : "这个节点暂时没有可追踪到 Prompt Ledger 的片段。",
+  };
+}
+
+export function getPromptSegmentKindLabel(segment: Pick<PromptLedgerSegment, "sourceKind" | "segmentKind">): string {
+  if (segment.segmentKind === "current_prompt") return "当前输入";
+  if (segment.segmentKind === "attachment") return "附件";
+  if (segment.segmentKind === "history_user_prompt") return "历史用户输入";
+  if (segment.segmentKind === "history_assistant_output") return "历史 AI 输出";
+  if (segment.segmentKind === "history_tool_input") return "工具输入";
+  if (segment.segmentKind === "history_tool_output") return "工具输出";
+  if (segment.sourceKind === "skill") return "Skill";
+  if (segment.sourceKind === "workflow") return "Workflow";
+  if (segment.sourceKind === "memory") return "记忆";
+  if (segment.sourceKind === "project") return "项目";
+  if (segment.sourceKind === "system") return "系统";
+  return "来源";
+}
 
 export function estimatePromptLedgerTokens(textOrChars: string | number): number {
   if (typeof textOrChars === "number") {

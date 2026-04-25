@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildActivityRailModel } from "../../src/shared/activity-rail-model.js";
-import { buildPromptLedgerMessage } from "../../src/shared/prompt-ledger.js";
+import {
+  buildPromptLedgerMessage,
+  derivePromptNodeScope,
+  type PromptLedgerSegment,
+} from "../../src/shared/prompt-ledger.js";
 
 test("buildPromptLedgerMessage separates prompt sources for optimization", () => {
   const ledger = buildPromptLedgerMessage({
@@ -60,6 +64,145 @@ test("buildPromptLedgerMessage separates prompt sources for optimization", () =>
   assert.ok(ledger.segments.some((segment) => segment.segmentKind === "history_tool_input" && segment.toolName === "Edit"));
   assert.ok(ledger.segments.some((segment) => segment.segmentKind === "history_tool_output"));
   assert.ok(ledger.totalChars > 4096);
+});
+
+test("derivePromptNodeScope returns exact matches for node ids and tool names", () => {
+  const segments: PromptLedgerSegment[] = [
+    {
+      id: "seg-tool-input",
+      bucketId: "history-tool-input",
+      label: "历史工具输入",
+      sourceKind: "tool",
+      segmentKind: "history_tool_input",
+      chars: 120,
+      tokenEstimate: 40,
+      ratio: 1,
+      sample: "Read ActivityRail",
+      text: "Read ActivityRail",
+      round: 2,
+      nodeId: "tool-read",
+      messageId: "assistant-read",
+      toolName: "Read",
+      risks: ["tool_payload"],
+    },
+  ];
+
+  const scope = derivePromptNodeScope(segments, {
+    id: "tool-read",
+    title: "Read",
+    toolName: "Read",
+    round: 2,
+    nodeKind: "tool",
+  });
+
+  assert.equal(scope.mode, "exact");
+  assert.deepEqual(scope.matchedIds, ["seg-tool-input"]);
+  assert.equal(scope.tokenEstimate, 40);
+  assert.match(scope.detail, /直接关联/);
+});
+
+test("derivePromptNodeScope falls back to same round when direct node match is missing", () => {
+  const segments: PromptLedgerSegment[] = [
+    {
+      id: "seg-round-history",
+      bucketId: "history-user-prompt",
+      label: "历史用户输入",
+      sourceKind: "history",
+      segmentKind: "history_user_prompt",
+      chars: 90,
+      tokenEstimate: 30,
+      ratio: 1,
+      sample: "上一轮需求",
+      text: "上一轮需求",
+      round: 3,
+      nodeId: "prompt-3-a",
+      messageId: "prompt-3-a",
+      risks: [],
+    },
+  ];
+
+  const scope = derivePromptNodeScope(segments, {
+    id: "assistant-3-no-direct",
+    title: "分析输出",
+    round: 3,
+    nodeKind: "result",
+  });
+
+  assert.equal(scope.mode, "round");
+  assert.deepEqual(scope.matchedIds, ["seg-round-history"]);
+  assert.match(scope.detail, /同轮/);
+});
+
+test("derivePromptNodeScope matches current prompt and attachments for user input node", () => {
+  const segments: PromptLedgerSegment[] = [
+    {
+      id: "seg-current",
+      bucketId: "current-prompt",
+      label: "当前用户输入",
+      sourceKind: "current",
+      segmentKind: "current_prompt",
+      chars: 60,
+      tokenEstimate: 20,
+      ratio: 0.5,
+      sample: "继续优化",
+      text: "继续优化",
+      risks: [],
+    },
+    {
+      id: "seg-attachment",
+      bucketId: "current-attachments",
+      label: "当前附件",
+      sourceKind: "attachment",
+      segmentKind: "attachment",
+      chars: 300,
+      tokenEstimate: 100,
+      ratio: 0.5,
+      sample: "screen.png(image)",
+      risks: [],
+    },
+  ];
+
+  const scope = derivePromptNodeScope(segments, {
+    id: "prompt-4-current",
+    title: "发送用户输入",
+    round: 4,
+    nodeKind: "context",
+  });
+
+  assert.equal(scope.mode, "exact");
+  assert.deepEqual(scope.matchedIds, ["seg-current", "seg-attachment"]);
+  assert.equal(scope.tokenEstimate, 120);
+});
+
+test("derivePromptNodeScope reports empty when no node or round segment matches", () => {
+  const segments: PromptLedgerSegment[] = [
+    {
+      id: "seg-other-round",
+      bucketId: "history",
+      label: "历史",
+      sourceKind: "history",
+      segmentKind: "history_user_prompt",
+      chars: 60,
+      tokenEstimate: 20,
+      ratio: 1,
+      sample: "其他轮次",
+      text: "其他轮次",
+      round: 1,
+      risks: [],
+    },
+  ];
+
+  const scope = derivePromptNodeScope(segments, {
+    id: "tool-edit-round-8",
+    title: "Edit",
+    toolName: "Edit",
+    round: 8,
+    nodeKind: "tool",
+  });
+
+  assert.equal(scope.mode, "empty");
+  assert.deepEqual(scope.matchedIds, []);
+  assert.equal(scope.tokenEstimate, 0);
 });
 
 test("buildActivityRailModel exposes prompt analysis from prompt ledger", () => {
