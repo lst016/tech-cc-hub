@@ -26,6 +26,7 @@ import {
   saveSkillInventory,
   type SkillSyncRequest,
 } from "./libs/config-store.js";
+import { setBrowserToolHost } from "./libs/browser-mcp-tools.js";
 import { startSkillSyncScheduler, stopSkillSyncScheduler, syncSkillSources } from "./libs/skill-registry-sync.js";
 import { ensureSystemWorkspace } from "./libs/system-workspace.js";
 import { getCurrentApiConfig } from "./libs/claude-settings.js";
@@ -37,6 +38,24 @@ import "./libs/claude-settings.js";
 let cleanupComplete = false;
 let mainWindow: BrowserWindow | null = null;
 let browserWorkbench: BrowserWorkbenchManager | null = null;
+
+function buildBrowserWorkbenchFallbackState(): {
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  annotationMode: boolean;
+} {
+  return {
+    url: "",
+    title: "浏览器预览",
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    annotationMode: false,
+  };
+}
 
 function isIgnorableStreamError(error: unknown): error is NodeJS.ErrnoException {
     return Boolean(
@@ -161,6 +180,7 @@ function cleanup(): void {
 
     globalShortcut.unregisterAll();
     stopPolling();
+    setBrowserToolHost(null);
     browserWorkbench?.close();
     browserWorkbench = null;
     cleanupAllSessions();
@@ -245,6 +265,34 @@ app.on("ready", async () => {
         trafficLightPosition: { x: 15, y: 18 }
     });
     browserWorkbench = new BrowserWorkbenchManager(mainWindow);
+    setBrowserToolHost({
+      open: (url) => browserWorkbench?.open(url) ?? buildBrowserWorkbenchFallbackState(),
+      close: () => browserWorkbench?.close() ?? buildBrowserWorkbenchFallbackState(),
+      setBounds: (bounds) => browserWorkbench?.setBounds(bounds) ?? buildBrowserWorkbenchFallbackState(),
+      reload: () => browserWorkbench?.reload() ?? buildBrowserWorkbenchFallbackState(),
+      goBack: () => browserWorkbench?.goBack() ?? buildBrowserWorkbenchFallbackState(),
+      goForward: () => browserWorkbench?.goForward() ?? buildBrowserWorkbenchFallbackState(),
+      getState: () => browserWorkbench?.getState() ?? buildBrowserWorkbenchFallbackState(),
+      getConsoleLogs: (limit) => browserWorkbench?.getConsoleLogs(limit) ?? [],
+      captureVisible: async () => {
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.captureVisible();
+      },
+      inspectAtPoint: async (point) => {
+        if (!browserWorkbench) {
+          return null;
+        }
+        return await browserWorkbench.inspectAtPoint(point);
+      },
+      setAnnotationMode: async (enabled) => {
+        if (!browserWorkbench) {
+          return buildBrowserWorkbenchFallbackState();
+        }
+        return await browserWorkbench.setAnnotationMode(enabled);
+      },
+    });
 
     try {
         await loadRenderer(mainWindow);

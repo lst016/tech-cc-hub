@@ -15,6 +15,7 @@ import type { PromptAttachment, RuntimeOverrides, ServerEvent } from "../types.j
 import { resolveAgentRuntimeContext } from "./agent-resolver.js";
 import { buildEnvForConfig, getClaudeCodePath, getCurrentApiConfig } from "./claude-settings.js";
 import { summarizeBase64Image, summarizeLocalImageFile } from "./image-preprocessor.js";
+import { BROWSER_TOOL_NAMES, getBrowserMcpServer } from "./browser-mcp-tools.js";
 import { normalizeRunnerError } from "./runner-error.js";
 import type { Session } from "./session-store.js";
 import { buildToolImageReplacementText, extractInlineBase64ImageFromToolResponse } from "./tool-output-sanitizer.js";
@@ -35,7 +36,10 @@ export type RunnerHandle = {
 };
 
 const DEFAULT_CWD = process.cwd();
-const ALWAYS_ALLOWED_TOOLS = new Set(["AskUserQuestion"]);
+const ALWAYS_ALLOWED_TOOLS = new Set([
+  "AskUserQuestion",
+  ...BROWSER_TOOL_NAMES,
+]);
 const RASTER_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
 const MAX_IMAGE_READS_PER_RUN = 1;
 const MAX_SINGLE_IMAGE_READ_BYTES = 400_000;
@@ -221,6 +225,14 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           },
         },
       });
+      const browserToolServer = getBrowserMcpServer();
+      try {
+        await q.setMcpServers({
+          [browserToolServer.name]: browserToolServer,
+        });
+      } catch {
+        // Browser tool registration is best-effort; keep execution running if it fails.
+      }
 
       for await (const message of q) {
         if (message.type === "system" && "subtype" in message && message.subtype === "init") {
