@@ -91,7 +91,7 @@ export type StreamMessageLike = (SDKMessage & { capturedAt?: number }) | UserPro
 export type SessionLike = {
   id: string;
   title: string;
-  status: "idle" | "running" | "completed" | "error";
+  status: "idle" | "running" | "paused" | "completed" | "error";
   cwd?: string;
   slashCommands?: string[];
   messages: StreamMessageLike[];
@@ -724,6 +724,8 @@ function buildStatusSummary(
   switch (status) {
     case "running":
       return { label: "执行中", tone: "info" };
+    case "paused":
+      return { label: "已暂停", tone: "warning" };
     case "completed":
       return { label: "已完成", tone: "success" };
     case "error":

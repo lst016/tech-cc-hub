@@ -23,6 +23,7 @@ import { SessionStore } from "./libs/session-store.js";
 import { buildSessionSlashCommands } from "./libs/slash-command-catalog.js";
 import { stripInlineBase64ImagesFromMessage } from "./libs/tool-output-sanitizer.js";
 import { buildSessionWorkflowCatalog } from "./libs/workflow-catalog.js";
+import { resolveContinuationResumeStrategy } from "./continuation-resume-strategy.js";
 import { buildStatelessContinuationPayload } from "./stateless-continuation.js";
 import type { ClientEvent, PromptAttachment, ServerEvent, StreamMessage } from "./types.js";
 import { isDev } from "./util.js";
@@ -617,11 +618,16 @@ export async function handleClientEvent(event: ClientEvent) {
     }
 
     const config = getCurrentApiConfig();
-    const canUseRemoteResume = config ? supportsRemoteSessionResume(config) : true;
+    const apiSupportsRemoteResume = config ? supportsRemoteSessionResume(config) : true;
+    const resumeStrategy = resolveContinuationResumeStrategy({
+      apiSupportsRemoteResume,
+      sessionStatus: session.status,
+      claudeSessionId: session.claudeSessionId,
+    });
     const history = store.getSessionHistory(session.id);
     const selectedModel = event.payload.runtime?.model ?? config?.model;
     const modelConfig = config && selectedModel ? getModelConfig(config, selectedModel) : null;
-    const continuationPayload = canUseRemoteResume
+    const continuationPayload = !resumeStrategy.useStatelessContinuation
       ? null
       : buildStatelessContinuationPayload(
           history?.messages ?? [],
@@ -635,8 +641,8 @@ export async function handleClientEvent(event: ClientEvent) {
             existingSummaryMessageCount: history?.session.continuationSummaryMessageCount,
           },
         );
-    const prompt = canUseRemoteResume ? event.payload.prompt : continuationPayload?.prompt ?? event.payload.prompt;
-    const resumeSessionId = canUseRemoteResume ? session.claudeSessionId : undefined;
+    const prompt = !resumeStrategy.useStatelessContinuation ? event.payload.prompt : continuationPayload?.prompt ?? event.payload.prompt;
+    const resumeSessionId = resumeStrategy.resumeSessionId;
     const currentAttachments = event.payload.attachments ?? [];
     const rehydratedAttachments = shouldRehydrateRecentImages(event.payload.prompt, currentAttachments)
       ? await loadRecentReferencedImages(history?.messages ?? [])
@@ -752,12 +758,12 @@ export async function handleClientEvent(event: ClientEvent) {
       runnerHandles.delete(session.id);
     }
 
-    store.updateSession(session.id, { status: "idle" });
+    store.updateSession(session.id, { status: "paused" });
     emit({
       type: "session.status",
       payload: {
         sessionId: session.id,
-        status: "idle",
+        status: "paused",
         title: session.title,
         cwd: session.cwd,
         slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),

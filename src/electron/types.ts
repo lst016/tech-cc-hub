@@ -66,7 +66,7 @@ export type StreamMessage = (SDKMessage | UserPromptMessage | PromptLedgerMessag
   historyId?: string;
 };
 
-export type SessionStatus = "idle" | "running" | "completed" | "error";
+export type SessionStatus = "idle" | "running" | "paused" | "completed" | "error";
 
 export type SessionInfo = {
   id: string;
