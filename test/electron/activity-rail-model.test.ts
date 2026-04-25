@@ -40,6 +40,40 @@ test("buildActivityRailModel shows dev loop classification as a trace node", () 
   assert.equal(node.detailSections[0]?.title, "Dev Loop");
 });
 
+test("buildActivityRailModel shows project runtime context as a trace node", () => {
+  const model = buildActivityRailModel(
+    {
+      id: "session-project-runtime",
+      title: "Project Runtime",
+      status: "running",
+      messages: [
+        {
+          type: "project_runtime",
+          phase: "context_pack_generated",
+          profileId: "profile-demo",
+          cwd: "D:\\workspace\\demo",
+          summary: "First-Shot Context Pack 已生成：demo",
+          stack: ["React", "Vite"],
+          commands: ["npm run dev", "npm run build"],
+          guardrails: ["不要清理未跟踪文件"],
+          previewTarget: "Web 预览",
+          instructions: "## Project Profile\n## First-Shot Context Pack",
+          capturedAt: 1,
+        },
+      ],
+    },
+    [],
+    "",
+  );
+
+  const node = model.timeline.find((item) => item.title.includes("Project Runtime"));
+  assert.ok(node);
+  assert.equal(node.nodeKind, "evaluation");
+  assert.ok(node.chips.includes("React"));
+  assert.ok(node.detail.includes("Context Pack"));
+  assert.equal(node.detailSections[0]?.title, "Project Runtime");
+});
+
 test("buildPromptLedgerMessage separates prompt sources for optimization", () => {
   const ledger = buildPromptLedgerMessage({
     phase: "continue",

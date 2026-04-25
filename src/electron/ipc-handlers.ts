@@ -1,9 +1,19 @@
 import { app, BrowserWindow } from "electron";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
 import { createStoredUserPromptMessage, sanitizePromptAttachmentsForStorage } from "../shared/attachments.js";
 import { applyDevLoopToPrompt, classifyDevLoop, createDevLoopMessage } from "../shared/dev-loop.js";
 import { buildPromptLedgerMessage, type PromptLedgerMessage, type PromptLedgerSource } from "../shared/prompt-ledger.js";
+import {
+  applyProjectRuntimeToPrompt,
+  buildFirstShotContextPack,
+  buildProjectProfile,
+  createProjectRuntimeMessage,
+  type FirstShotContextPack,
+  type ProjectManifestFile,
+  type ProjectProfile,
+} from "../shared/project-profile.js";
 import { createInitialSessionWorkflowState, parseWorkflowMarkdown } from "../shared/workflow-markdown.js";
 import { runClaude, type RunnerHandle } from "./libs/runner.js";
 import { rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
@@ -48,6 +58,108 @@ function hasLiveSession(sessionId: string): boolean {
 const MAX_REHYDRATED_IMAGE_ATTACHMENTS = 2;
 const VISUAL_REVIEW_REHYDRATE_PATTERN =
   /(ui|design|interface|screenshot|image|compare|diff|align|layout|spacing|pixel|visual|button|style|\u8bbe\u8ba1|\u754c\u9762|\u622a\u56fe|\u770b\u56fe|\u6bd4\u5bf9|\u5bf9\u6bd4|\u4e00\u81f4|\u50cf\u7d20|\u5e03\u5c40|\u95f4\u8ddd|\u8fd8\u539f|\u89c6\u89c9|\u6309\u94ae|\u6837\u5f0f|\u9884\u671f)/i;
+
+const PROJECT_PROFILE_MANIFEST_FILES = [
+  "package.json",
+  "vite.config.ts",
+  "vite.config.js",
+  "next.config.js",
+  "electron-builder.json",
+  "pom.xml",
+  "build.gradle",
+  "requirements.txt",
+  "pyproject.toml",
+  "README.md",
+  "AGENTS.md",
+  "CLAUDE.md",
+  "src/App.tsx",
+  "src/main.tsx",
+  "src/App.jsx",
+  "src/main.jsx",
+];
+
+function readProjectManifestFiles(cwd?: string): ProjectManifestFile[] {
+  if (!cwd || !existsSync(cwd)) {
+    return [];
+  }
+
+  const files: ProjectManifestFile[] = [];
+  for (const relativePath of PROJECT_PROFILE_MANIFEST_FILES) {
+    const absolutePath = join(cwd, relativePath);
+    if (!existsSync(absolutePath)) {
+      continue;
+    }
+
+    try {
+      files.push({
+        path: relativePath,
+        text: readFileSync(absolutePath, "utf8").slice(0, 80_000),
+      });
+    } catch {
+      // Ignore unreadable optional profile inputs; the profile will carry lower confidence.
+    }
+  }
+  return files;
+}
+
+function loadOrCreateProjectProfile(store: SessionStore, cwd?: string): ProjectProfile | null {
+  if (!cwd) {
+    return null;
+  }
+
+  const existing = store.getProjectProfile(cwd);
+  if (existing) {
+    return existing;
+  }
+
+  const profile = buildProjectProfile({
+    cwd,
+    files: readProjectManifestFiles(cwd),
+  });
+  store.upsertProjectProfile(profile);
+  return profile;
+}
+
+function emitProjectRuntimeContext(options: {
+  store: SessionStore;
+  sessionId: string;
+  cwd?: string;
+  prompt: string;
+  taskKind: string;
+  loopMode: ReturnType<typeof classifyDevLoop>["loopMode"];
+}): {
+  profile: ProjectProfile | null;
+  pack: FirstShotContextPack | null;
+} {
+  const profile = loadOrCreateProjectProfile(options.store, options.cwd);
+  if (!profile) {
+    return { profile: null, pack: null };
+  }
+
+  const pack = buildFirstShotContextPack({
+    profile,
+    taskKind: options.taskKind,
+    loopMode: options.loopMode,
+    prompt: options.prompt,
+  });
+
+  emit({
+    type: "stream.message",
+    payload: {
+      sessionId: options.sessionId,
+      message: createProjectRuntimeMessage("profile_loaded", profile),
+    },
+  });
+  emit({
+    type: "stream.message",
+    payload: {
+      sessionId: options.sessionId,
+      message: createProjectRuntimeMessage("context_pack_generated", profile, pack),
+    },
+  });
+
+  return { profile, pack };
+}
 
 function shouldRehydrateRecentImages(prompt: string, attachments?: PromptAttachment[]): boolean {
   if (attachments?.some((attachment) => attachment.kind === "image")) {
@@ -421,7 +533,18 @@ export async function handleClientEvent(event: ClientEvent) {
       cwd: session.cwd,
       runSurface: event.payload.runtime?.runSurface ?? session.runSurface,
     });
-    const promptForRun = applyDevLoopToPrompt(event.payload.prompt, devLoop);
+    const projectRuntime = emitProjectRuntimeContext({
+      store,
+      sessionId: session.id,
+      cwd: session.cwd,
+      prompt: event.payload.prompt,
+      taskKind: devLoop.taskKind,
+      loopMode: devLoop.loopMode,
+    });
+    const promptWithProjectRuntime = projectRuntime.pack
+      ? applyProjectRuntimeToPrompt(event.payload.prompt, projectRuntime.pack)
+      : event.payload.prompt;
+    const promptForRun = applyDevLoopToPrompt(promptWithProjectRuntime, devLoop);
 
     emit({
       type: "stream.message",
@@ -525,7 +648,18 @@ export async function handleClientEvent(event: ClientEvent) {
       cwd: session.cwd,
       runSurface: event.payload.runtime?.runSurface ?? session.runSurface,
     });
-    const promptForRun = applyDevLoopToPrompt(prompt, devLoop);
+    const projectRuntime = emitProjectRuntimeContext({
+      store,
+      sessionId: session.id,
+      cwd: session.cwd,
+      prompt: event.payload.prompt,
+      taskKind: devLoop.taskKind,
+      loopMode: devLoop.loopMode,
+    });
+    const promptWithProjectRuntime = projectRuntime.pack
+      ? applyProjectRuntimeToPrompt(prompt, projectRuntime.pack)
+      : prompt;
+    const promptForRun = applyDevLoopToPrompt(promptWithProjectRuntime, devLoop);
 
     store.updateSession(session.id, {
       status: "running",

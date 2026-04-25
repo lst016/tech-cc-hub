@@ -6,6 +6,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { DevLoopMessage, DevLoopMode, DevLoopPhase, DevLoopTaskKind } from "./dev-loop.js";
 import type { PromptLedgerBucket, PromptLedgerMessage, PromptLedgerSegment } from "./prompt-ledger.js";
+import type { ProjectRuntimeMessage } from "./project-profile.js";
 
 export type ActivityRailTone = "neutral" | "info" | "success" | "warning" | "error";
 export type ActivityRailLayer = "上下文" | "工具" | "结果" | "流程";
@@ -85,7 +86,7 @@ export type UserPromptMessageLike = {
   capturedAt?: number;
 };
 
-export type StreamMessageLike = (SDKMessage & { capturedAt?: number }) | UserPromptMessageLike | PromptLedgerMessage | DevLoopMessage;
+export type StreamMessageLike = (SDKMessage & { capturedAt?: number }) | UserPromptMessageLike | PromptLedgerMessage | DevLoopMessage | ProjectRuntimeMessage;
 
 export type SessionLike = {
   id: string;
@@ -1217,6 +1218,71 @@ function buildDevLoopTimelineItem(
   });
 }
 
+function isProjectRuntimeMessage(message: StreamMessageLike): message is ProjectRuntimeMessage {
+  return message.type === "project_runtime";
+}
+
+function buildProjectRuntimeTimelineItem(
+  message: ProjectRuntimeMessage,
+  sequence: number,
+  round: number,
+): ActivityTimelineItem {
+  const commandSummary = message.commands.length > 0 ? message.commands.join("\n") : "未识别到命令";
+  const guardrailSummary = message.guardrails.length > 0 ? message.guardrails.join("\n") : "未识别到项目规则";
+  const detail = [
+    message.summary,
+    message.stack.length > 0 ? `技术栈：${message.stack.join(" / ")}` : "",
+    message.previewTarget ? `预览：${message.previewTarget}` : "",
+    commandSummary,
+  ].filter(Boolean).join("\n");
+
+  return createTimelineItem({
+    id: `project-runtime-${message.phase}-${message.historyId ?? sequence}`,
+    filterKey: "flow",
+    layer: "流程",
+    tone: "info",
+    nodeKind: "evaluation",
+    title: message.phase === "profile_loaded" ? "Project Runtime：画像已加载" : "Project Runtime：Context Pack",
+    detail,
+    round: Math.max(round, 1),
+    sequence,
+    statusLabel: message.phase === "profile_loaded" ? "画像" : "上下文",
+    chips: message.stack.slice(0, 4),
+    attention: false,
+    stageKind: "inspect",
+    detailSections: [
+      {
+        id: "project-runtime",
+        title: "Project Runtime",
+        summary: message.summary,
+        rows: [
+          { label: "cwd", value: message.cwd },
+          { label: "profile", value: message.profileId },
+          { label: "phase", value: message.phase },
+          { label: "preview", value: message.previewTarget ?? "-" },
+        ],
+        raw: [
+          "Commands:",
+          commandSummary,
+          "",
+          "Guardrails:",
+          guardrailSummary,
+          "",
+          message.instructions ?? "",
+        ].join("\n"),
+        rawLabel: "展开项目上下文",
+      },
+    ],
+    metrics: createEmptyMetrics({
+      contextChars: message.instructions?.length ?? 0,
+      inputChars: message.summary.length,
+      totalCount: 1,
+      status: "success",
+      successCount: 1,
+    }),
+  });
+}
+
 function buildExecutionStepTitle(kind: ActivityStageKind, firstItem: ActivityTimelineItem): string {
   if (firstItem.filterKey === "tool" || firstItem.filterKey === "result") {
     return firstItem.title;
@@ -1658,6 +1724,12 @@ export function buildActivityRailModel(
   const promptLedgers: PromptLedgerMessage[] = [];
 
   for (const message of session.messages) {
+    if (isProjectRuntimeMessage(message)) {
+      sequence += 1;
+      timelineChronological.push(buildProjectRuntimeTimelineItem(message, sequence, round));
+      continue;
+    }
+
     if (isDevLoopMessage(message)) {
       sequence += 1;
       timelineChronological.push(buildDevLoopTimelineItem(message, sequence, round));
