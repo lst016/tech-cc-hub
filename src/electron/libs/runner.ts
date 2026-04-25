@@ -15,6 +15,10 @@ import type { PromptAttachment, RuntimeOverrides, ServerEvent } from "../types.j
 import { resolveAgentRuntimeContext } from "./agent-resolver.js";
 import { buildEnvForConfig, getClaudeCodePath, getCurrentApiConfig } from "./claude-settings.js";
 import { summarizeBase64Image, summarizeLocalImageFile } from "./image-preprocessor.js";
+import {
+  buildRasterImageReadBlockedMessage,
+  buildRasterImageReadSummaryContext,
+} from "./raster-image-read-policy.js";
 import { normalizeRunnerError } from "./runner-error.js";
 import type { Session } from "./session-store.js";
 import { buildToolImageReplacementText, extractInlineBase64ImageFromToolResponse } from "./tool-output-sanitizer.js";
@@ -62,7 +66,6 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   const { prompt, attachments = [], runtime, session, resumeSessionId, onEvent, onSessionUpdate } = options;
   const abortController = new AbortController();
   const permissionMode = runtime?.permissionMode ?? "bypassPermissions";
-  let rasterImageReads = 0;
 
   const sendMessage = (message: SDKMessage) => {
     onEvent({
@@ -196,17 +199,15 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
 
             if (toolName === "Read" && isRecord(input)) {
               const filePath = typeof input.file_path === "string" ? input.file_path.trim() : "";
-              if (!shouldPreprocessImageRead(config, filePath)) {
-                const imageReadCheck = checkRasterImageRead(filePath, rasterImageReads);
-                if (imageReadCheck.denyMessage) {
-                  return {
-                    behavior: "deny",
-                    message: imageReadCheck.denyMessage,
-                  };
-                }
-                if (imageReadCheck.countRead) {
-                  rasterImageReads += 1;
-                }
+              const imageReadCheck = checkRasterImageRead(filePath, MAX_IMAGE_READS_PER_RUN);
+              if (imageReadCheck.denyMessage) {
+                return {
+                  behavior: "deny",
+                  message: buildRasterImageReadBlockedMessage({
+                    filePath,
+                    imageModel: config.imageModel,
+                  }),
+                };
               }
             }
 
@@ -387,7 +388,6 @@ function buildQualityHooks(
   let lastToolSignature: string | null = null;
   let toolFailureCount = 0;
   let repeatWarningCount = 0;
-  let rasterImageReads = 0;
 
   return {
     UserPromptSubmit: [{
@@ -470,23 +470,39 @@ function buildQualityHooks(
               fixes.push("file_path 去除空白");
             }
             if (toolName === "Read") {
-              if (!shouldPreprocessImageRead(config, fixed)) {
-                const imageReadCheck = checkRasterImageRead(fixed, rasterImageReads);
-                if (imageReadCheck.denyMessage) {
-                  return {
-                    continue: true,
-                    hookSpecificOutput: {
-                      hookEventName: "PreToolUse",
-                      permissionDecision: "deny",
-                      permissionDecisionReason: imageReadCheck.denyMessage,
-                      additionalContext: imageReadCheck.denyMessage,
-                      ...(didMutate ? { updatedInput: normalizedInput } : {}),
-                    },
-                  };
+              const imageReadCheck = checkRasterImageRead(fixed, MAX_IMAGE_READS_PER_RUN);
+              if (imageReadCheck.denyMessage) {
+                const blockedMessage = buildRasterImageReadBlockedMessage({
+                  filePath: fixed,
+                  imageModel: config.imageModel,
+                });
+                let additionalContext = blockedMessage;
+                if (shouldPreprocessImageRead(config, fixed)) {
+                  try {
+                    const summary = await summarizeLocalImageFile({ config, prompt, filePath: fixed });
+                    additionalContext = summary
+                      ? buildRasterImageReadSummaryContext({
+                          filePath: fixed,
+                          imageModel: config.imageModel,
+                          summary,
+                        })
+                      : blockedMessage;
+                  } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    additionalContext = `${blockedMessage}\n\nImage summary failed: ${message}`;
+                  }
                 }
-                if (imageReadCheck.countRead) {
-                  rasterImageReads += 1;
-                }
+
+                return {
+                  continue: true,
+                  hookSpecificOutput: {
+                    hookEventName: "PreToolUse",
+                    permissionDecision: "deny",
+                    permissionDecisionReason: blockedMessage,
+                    additionalContext,
+                    ...(didMutate ? { updatedInput: normalizedInput } : {}),
+                  },
+                };
               }
               readFiles.add(fixed);
             } else if (!readFiles.has(fixed)) {

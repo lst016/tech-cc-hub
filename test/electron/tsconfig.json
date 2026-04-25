@@ -16,11 +16,13 @@
     "../../src/shared/project-profile.ts",
     "../../src/shared/activity-rail-model.ts",
     "../../src/shared/prompt-ledger.ts",
+    "../../src/electron/libs/raster-image-read-policy.ts",
     "./dev-loop.test.ts",
     "./project-profile.test.ts",
     "./session-store-project-profile.test.ts",
     "./activity-rail-model.test.ts",
     "./session-analysis-page.test.ts",
-    "./prompt-ledger.test.ts"
+    "./prompt-ledger.test.ts",
+    "./raster-image-read-policy.test.ts"
   ]
 }
