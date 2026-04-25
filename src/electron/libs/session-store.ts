@@ -4,6 +4,7 @@ import { existsSync } from "fs";
 import { createRequire } from "module";
 import type { ProjectProfile } from "../../shared/project-profile.js";
 import type { SessionWorkflowState, WorkflowScope } from "../../shared/workflow-markdown.js";
+import { parseWorkingMemory, type SessionWorkingMemory } from "../session-working-memory.js";
 import { stripInlineBase64ImagesFromMessage } from "./tool-output-sanitizer.js";
 
 const LEGACY_CWD_SUFFIXES = [
@@ -55,6 +56,7 @@ export type Session = {
   lastPrompt?: string;
   continuationSummary?: string;
   continuationSummaryMessageCount?: number;
+  workingMemory?: SessionWorkingMemory;
   workflowMarkdown?: string;
   workflowSourceLayer?: WorkflowScope;
   workflowSourcePath?: string;
@@ -76,6 +78,7 @@ export type StoredSession = {
   claudeSessionId?: string;
   continuationSummary?: string;
   continuationSummaryMessageCount?: number;
+  workingMemory?: SessionWorkingMemory;
   workflowMarkdown?: string;
   workflowSourceLayer?: WorkflowScope;
   workflowSourcePath?: string;
@@ -180,8 +183,8 @@ export class SessionStore {
     this.db
       .prepare(
         `insert into sessions
-          (id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` 
+          (id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, working_memory, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` 
       )
       .run(
         id,
@@ -195,6 +198,7 @@ export class SessionStore {
         session.lastPrompt ?? null,
         session.continuationSummary ?? null,
         session.continuationSummaryMessageCount ?? null,
+        session.workingMemory ? JSON.stringify(session.workingMemory) : null,
         session.workflowMarkdown ?? null,
         session.workflowSourceLayer ?? null,
         session.workflowSourcePath ?? null,
@@ -213,7 +217,7 @@ export class SessionStore {
   listSessions(): StoredSession[] {
     const rows = this.db
       .prepare(
-        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, created_at, updated_at
+        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, working_memory, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, created_at, updated_at
          from sessions
          order by updated_at desc`
       )
@@ -232,6 +236,7 @@ export class SessionStore {
       continuationSummaryMessageCount: typeof row.continuation_summary_message_count === "number"
         ? Number(row.continuation_summary_message_count)
         : undefined,
+      workingMemory: parseWorkingMemory(row.working_memory),
       workflowMarkdown: row.workflow_markdown ? String(row.workflow_markdown) : undefined,
       workflowSourceLayer: row.workflow_source_layer ? (String(row.workflow_source_layer) as WorkflowScope) : undefined,
       workflowSourcePath: row.workflow_source_path ? String(row.workflow_source_path) : undefined,
@@ -448,6 +453,7 @@ export class SessionStore {
       lastPrompt: "last_prompt",
       continuationSummary: "continuation_summary",
       continuationSummaryMessageCount: "continuation_summary_message_count",
+      workingMemory: "working_memory",
       workflowMarkdown: "workflow_markdown",
       workflowSourceLayer: "workflow_source_layer",
       workflowSourcePath: "workflow_source_path",
@@ -460,6 +466,10 @@ export class SessionStore {
       if (!column) continue;
       fields.push(`${column} = ?`);
       const value = updates[key];
+      if (key === "workingMemory") {
+        values.push(value === undefined ? null : JSON.stringify(value));
+        continue;
+      }
       if (key === "workflowState") {
         values.push(value === undefined ? null : JSON.stringify(value));
         continue;
@@ -491,6 +501,7 @@ export class SessionStore {
         last_prompt text,
         continuation_summary text,
         continuation_summary_message_count integer,
+        working_memory text,
         workflow_markdown text,
         workflow_source_layer text,
         workflow_source_path text,
@@ -502,6 +513,7 @@ export class SessionStore {
     );
     this.ensureSessionColumn("continuation_summary", "text");
     this.ensureSessionColumn("continuation_summary_message_count", "integer");
+    this.ensureSessionColumn("working_memory", "text");
     this.ensureSessionColumn("run_surface", "text");
     this.ensureSessionColumn("agent_id", "text");
     this.ensureSessionColumn("workflow_markdown", "text");
@@ -531,7 +543,7 @@ export class SessionStore {
   private loadSessions(): void {
     const rows = this.db
       .prepare(
-        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error
+        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, working_memory, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error
          from sessions`
       )
       .all();
@@ -550,6 +562,7 @@ export class SessionStore {
         continuationSummaryMessageCount: typeof row.continuation_summary_message_count === "number"
           ? Number(row.continuation_summary_message_count)
           : undefined,
+        workingMemory: parseWorkingMemory(row.working_memory),
         workflowMarkdown: row.workflow_markdown ? String(row.workflow_markdown) : undefined,
         workflowSourceLayer: row.workflow_source_layer ? (String(row.workflow_source_layer) as WorkflowScope) : undefined,
         workflowSourcePath: row.workflow_source_path ? String(row.workflow_source_path) : undefined,
@@ -576,7 +589,7 @@ export class SessionStore {
   private getSessionRow(id: string): Record<string, unknown> | undefined {
     return this.db
       .prepare(
-        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, created_at, updated_at
+        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, working_memory, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, created_at, updated_at
          from sessions
          where id = ?`
       )
@@ -598,6 +611,7 @@ export class SessionStore {
       continuationSummaryMessageCount: typeof sessionRow.continuation_summary_message_count === "number"
         ? Number(sessionRow.continuation_summary_message_count)
         : undefined,
+      workingMemory: parseWorkingMemory(sessionRow.working_memory),
       workflowMarkdown: sessionRow.workflow_markdown ? String(sessionRow.workflow_markdown) : undefined,
       workflowSourceLayer: sessionRow.workflow_source_layer ? (String(sessionRow.workflow_source_layer) as WorkflowScope) : undefined,
       workflowSourcePath: sessionRow.workflow_source_path ? String(sessionRow.workflow_source_path) : undefined,

@@ -41,3 +41,40 @@ test("SessionStore persists project profiles by cwd", () => {
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("SessionStore persists session working memory", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "tech-cc-hub-memory-"));
+  try {
+    const dbPath = join(tempDir, "sessions.db");
+    const store = new SessionStore(dbPath);
+    const session = store.createSession({
+      title: "memory test",
+      cwd: tempDir,
+      prompt: "修复 WA UI",
+    });
+
+    store.updateSession(session.id, {
+      workingMemory: {
+        currentGoal: "修复 WA UI",
+        nextAction: "继续改样式",
+        readFiles: ["D:\\workspace\\docs\\spec.md"],
+        touchedFiles: ["D:\\workspace\\src\\App.tsx"],
+        imageContextPaths: [],
+        userConstraints: ["不要重新读所有文档"],
+        verification: [],
+        updatedAt: 123,
+      },
+    });
+    store.close();
+
+    const reopened = new SessionStore(dbPath);
+    const loaded = reopened.getSession(session.id);
+
+    assert.equal(loaded?.workingMemory?.currentGoal, "修复 WA UI");
+    assert.deepEqual(loaded?.workingMemory?.readFiles, ["D:\\workspace\\docs\\spec.md"]);
+    assert.deepEqual(loaded?.workingMemory?.userConstraints, ["不要重新读所有文档"]);
+    reopened.close();
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});

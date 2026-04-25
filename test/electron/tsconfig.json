@@ -18,6 +18,7 @@
     "../../src/shared/prompt-ledger.ts",
     "../../src/electron/continuation-resume-strategy.ts",
     "../../src/electron/continuation-prompt-policy.ts",
+    "../../src/electron/session-working-memory.ts",
     "../../src/electron/libs/raster-image-read-policy.ts",
     "./dev-loop.test.ts",
     "./project-profile.test.ts",
@@ -27,6 +28,7 @@
     "./prompt-ledger.test.ts",
     "./continuation-resume-strategy.test.ts",
     "./continuation-prompt-policy.test.ts",
+    "./session-working-memory.test.ts",
     "./raster-image-read-policy.test.ts",
     "./runner-image-read-scenario.test.ts"
   ]

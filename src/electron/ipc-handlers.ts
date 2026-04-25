@@ -37,6 +37,13 @@ import { stripInlineBase64ImagesFromMessage } from "./libs/tool-output-sanitizer
 import { buildSessionWorkflowCatalog } from "./libs/workflow-catalog.js";
 import { resolveContinuationPromptPolicy } from "./continuation-prompt-policy.js";
 import { resolveContinuationResumeStrategy } from "./continuation-resume-strategy.js";
+import {
+  appendWorkingMemoryToPrompt,
+  buildWorkingMemoryPrompt,
+  updateWorkingMemoryFromStreamMessage,
+  updateWorkingMemoryFromUserPrompt,
+  type SessionWorkingMemory,
+} from "./session-working-memory.js";
 import { buildStatelessContinuationPayload } from "./stateless-continuation.js";
 import type { ClientEvent, PromptAttachment, ServerEvent, StreamMessage } from "./types.js";
 import { isDev } from "./util.js";
@@ -404,7 +411,14 @@ function buildPromptLedgerForRun(options: {
   phase: "start" | "continue";
   prompt: string;
   attachments?: PromptAttachment[];
-  session: { cwd?: string; runSurface?: "development" | "maintenance"; agentId?: string; workflowMarkdown?: string; continuationSummary?: string };
+  session: {
+    cwd?: string;
+    runSurface?: "development" | "maintenance";
+    agentId?: string;
+    workflowMarkdown?: string;
+    continuationSummary?: string;
+    workingMemory?: SessionWorkingMemory;
+  };
   historyMessages?: StreamMessage[];
   model?: string;
   continuationSummary?: string;
@@ -429,6 +443,15 @@ function buildPromptLedgerForRun(options: {
       label: "本地滚动摘要",
       sourceKind: "memory",
       text: options.session.continuationSummary,
+    });
+  }
+  const workingMemoryPrompt = buildWorkingMemoryPrompt(options.session.workingMemory);
+  if (workingMemoryPrompt) {
+    memorySources.push({
+      id: "session-working-memory",
+      label: "工作记忆",
+      sourceKind: "memory",
+      text: workingMemoryPrompt,
     });
   }
 
@@ -493,6 +516,13 @@ function emit(event: ServerEvent) {
         message,
       },
     };
+    const session = sessions.getSession(nextEvent.payload.sessionId);
+    if (session) {
+      const updatedMemory = updateWorkingMemoryFromStreamMessage(session.workingMemory, message);
+      if (buildWorkingMemoryPrompt(updatedMemory) !== buildWorkingMemoryPrompt(session.workingMemory)) {
+        sessions.updateSession(nextEvent.payload.sessionId, { workingMemory: updatedMemory });
+      }
+    }
   }
   if (nextEvent.type === "stream.user_prompt") {
     const sanitizedAttachments = sanitizePromptAttachmentsForStorage(nextEvent.payload.attachments);
@@ -503,6 +533,17 @@ function emit(event: ServerEvent) {
         capturedAt: Date.now(),
       },
     );
+    const session = sessions.getSession(nextEvent.payload.sessionId);
+    if (session) {
+      const updatedMemory = updateWorkingMemoryFromUserPrompt(
+        session.workingMemory,
+        nextEvent.payload.prompt,
+        sanitizedAttachments,
+      );
+      if (buildWorkingMemoryPrompt(updatedMemory) !== buildWorkingMemoryPrompt(session.workingMemory)) {
+        sessions.updateSession(nextEvent.payload.sessionId, { workingMemory: updatedMemory });
+      }
+    }
     nextEvent = {
       ...nextEvent,
       payload: {
@@ -696,13 +737,20 @@ export async function handleClientEvent(event: ClientEvent) {
       allowedTools: event.payload.allowedTools,
       prompt: event.payload.prompt,
     });
+    const workingMemory = updateWorkingMemoryFromUserPrompt(
+      session.workingMemory,
+      event.payload.prompt,
+      event.payload.attachments,
+    );
 
     store.updateSession(session.id, {
       status: "running",
       runSurface: event.payload.runtime?.runSurface ?? session.runSurface ?? "development",
       agentId: event.payload.runtime?.agentId ?? session.agentId,
       lastPrompt: event.payload.prompt,
+      workingMemory,
     });
+    session.workingMemory = workingMemory;
 
     emit({
       type: "session.status",
@@ -820,6 +868,13 @@ export async function handleClientEvent(event: ClientEvent) {
       sessionStatus: session.status,
       claudeSessionId: session.claudeSessionId,
     });
+    const workingMemory = updateWorkingMemoryFromUserPrompt(
+      session.workingMemory,
+      event.payload.prompt,
+      event.payload.attachments,
+    );
+    store.updateSession(session.id, { workingMemory });
+    session.workingMemory = workingMemory;
     const history = store.getSessionHistory(session.id);
     const selectedModel = event.payload.runtime?.model ?? config?.model;
     const modelConfig = config && selectedModel ? getModelConfig(config, selectedModel) : null;
@@ -837,12 +892,17 @@ export async function handleClientEvent(event: ClientEvent) {
             existingSummaryMessageCount: history?.session.continuationSummaryMessageCount,
           },
         );
-    const prompt = !resumeStrategy.useStatelessContinuation ? event.payload.prompt : continuationPayload?.prompt ?? event.payload.prompt;
+    const basePrompt = !resumeStrategy.useStatelessContinuation
+      ? event.payload.prompt
+      : continuationPayload?.prompt ?? event.payload.prompt;
     const resumeSessionId = resumeStrategy.resumeSessionId;
     const promptPolicy = resolveContinuationPromptPolicy({
       resumeSessionId,
       useStatelessContinuation: resumeStrategy.useStatelessContinuation,
     });
+    const prompt = promptPolicy.mode === "contextual-continuation"
+      ? appendWorkingMemoryToPrompt(basePrompt, workingMemory)
+      : basePrompt;
     const currentAttachments = event.payload.attachments ?? [];
     const rehydratedAttachments = shouldRehydrateRecentImages(event.payload.prompt, currentAttachments)
       ? await loadRecentReferencedImages(history?.messages ?? [])
