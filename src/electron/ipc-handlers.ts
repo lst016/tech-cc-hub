@@ -35,6 +35,7 @@ import { SessionStore } from "./libs/session-store.js";
 import { buildSessionSlashCommands } from "./libs/slash-command-catalog.js";
 import { stripInlineBase64ImagesFromMessage } from "./libs/tool-output-sanitizer.js";
 import { buildSessionWorkflowCatalog } from "./libs/workflow-catalog.js";
+import { resolveContinuationPromptPolicy } from "./continuation-prompt-policy.js";
 import { resolveContinuationResumeStrategy } from "./continuation-resume-strategy.js";
 import { buildStatelessContinuationPayload } from "./stateless-continuation.js";
 import type { ClientEvent, PromptAttachment, ServerEvent, StreamMessage } from "./types.js";
@@ -838,6 +839,10 @@ export async function handleClientEvent(event: ClientEvent) {
         );
     const prompt = !resumeStrategy.useStatelessContinuation ? event.payload.prompt : continuationPayload?.prompt ?? event.payload.prompt;
     const resumeSessionId = resumeStrategy.resumeSessionId;
+    const promptPolicy = resolveContinuationPromptPolicy({
+      resumeSessionId,
+      useStatelessContinuation: resumeStrategy.useStatelessContinuation,
+    });
     const currentAttachments = event.payload.attachments ?? [];
     const rehydratedAttachments = shouldRehydrateRecentImages(event.payload.prompt, currentAttachments)
       ? await loadRecentReferencedImages(history?.messages ?? [])
@@ -849,14 +854,16 @@ export async function handleClientEvent(event: ClientEvent) {
       cwd: session.cwd,
       runSurface: event.payload.runtime?.runSurface ?? session.runSurface,
     });
-    const projectRuntime = emitProjectRuntimeContext({
-      store,
-      sessionId: session.id,
-      cwd: session.cwd,
-      prompt: event.payload.prompt,
-      taskKind: devLoop.taskKind,
-      loopMode: devLoop.loopMode,
-    });
+    const projectRuntime = promptPolicy.injectProjectRuntime
+      ? emitProjectRuntimeContext({
+          store,
+          sessionId: session.id,
+          cwd: session.cwd,
+          prompt: event.payload.prompt,
+          taskKind: devLoop.taskKind,
+          loopMode: devLoop.loopMode,
+        })
+      : { profile: null, pack: null };
     const imageDevContext = await maybeCreateImageDevContext({
       sessionId: session.id,
       prompt: event.payload.prompt,
@@ -867,7 +874,9 @@ export async function handleClientEvent(event: ClientEvent) {
       ? applyProjectRuntimeToPrompt(prompt, projectRuntime.pack)
       : prompt;
     const promptWithImageDevContext = appendImageDevContextPrompt(promptWithProjectRuntime, imageDevContext);
-    const promptForRun = applyDevLoopToPrompt(promptWithImageDevContext, devLoop);
+    const promptForRun = promptPolicy.injectDevLoopPrompt
+      ? applyDevLoopToPrompt(promptWithImageDevContext, devLoop)
+      : promptWithImageDevContext;
     const attachmentsForRunAfterImageContext = [
       ...stripCurrentImageAttachmentsAfterDevContext(currentAttachments, imageDevContext),
       ...rehydratedAttachments,
@@ -898,7 +907,10 @@ export async function handleClientEvent(event: ClientEvent) {
       type: "stream.message",
       payload: {
         sessionId: session.id,
-        message: createDevLoopMessage(devLoop, devLoop.loopMode === "none" ? "classified" : "prompt_injected"),
+        message: createDevLoopMessage(
+          devLoop,
+          !promptPolicy.injectDevLoopPrompt || devLoop.loopMode === "none" ? "classified" : "prompt_injected",
+        ),
       },
     });
 
@@ -911,9 +923,9 @@ export async function handleClientEvent(event: ClientEvent) {
           prompt: promptForRun,
           attachments: attachmentsForRunAfterImageContext,
           session,
-          historyMessages: history?.messages ?? [],
+          historyMessages: promptPolicy.includeHistoryInPromptLedger ? history?.messages ?? [] : [],
           model: selectedModel,
-          continuationSummary: continuationPayload?.summaryText,
+          continuationSummary: promptPolicy.includeHistoryInPromptLedger ? continuationPayload?.summaryText : undefined,
         }),
       },
     });
