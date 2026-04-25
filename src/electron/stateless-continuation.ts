@@ -26,6 +26,8 @@ const DEFAULT_CONTEXT_WINDOW = 200_000;
 const DEFAULT_COMPRESSION_THRESHOLD_PERCENT = 70;
 const DEFAULT_IMAGE_ATTACHMENT_TOKEN_ESTIMATE = 6_000;
 const ATTACHMENT_HISTORY_TEXT_LIMIT = 280;
+const STORED_HISTORY_PRESSURE_MESSAGE_CHAR_LIMIT = 1_000_000;
+const STORED_HISTORY_PRESSURE_TOTAL_CHAR_LIMIT = 1_600_000;
 
 function summarizeAttachments(attachments?: PromptAttachment[]): string {
   if (!attachments || attachments.length === 0) {
@@ -200,6 +202,34 @@ function estimateAttachmentTokens(attachments: PromptAttachment[] = []): number 
   }, 0);
 }
 
+function estimateStoredHistoryPressureTokens(messages: StreamMessage[]): number {
+  let totalTokens = 0;
+  let totalChars = 0;
+
+  for (const message of messages) {
+    if (totalChars >= STORED_HISTORY_PRESSURE_TOTAL_CHAR_LIMIT) {
+      break;
+    }
+
+    let serialized = "";
+    try {
+      serialized = JSON.stringify(message);
+    } catch {
+      serialized = String(message);
+    }
+
+    const remainingChars = STORED_HISTORY_PRESSURE_TOTAL_CHAR_LIMIT - totalChars;
+    const pressureText = serialized.slice(
+      0,
+      Math.min(STORED_HISTORY_PRESSURE_MESSAGE_CHAR_LIMIT, remainingChars),
+    );
+    totalChars += pressureText.length;
+    totalTokens += estimateTextTokens(pressureText);
+  }
+
+  return totalTokens;
+}
+
 function resolveCompressionBudget(options: StatelessContinuationOptions): {
   contextWindow: number;
   compressionThresholdPercent: number;
@@ -256,6 +286,22 @@ function shouldCompressHistory(
   return thresholdTokens > 0 && estimatedTokens >= thresholdTokens;
 }
 
+function appendSummaryNote(summaryText: string, note: string): string {
+  const trimmedSummary = summaryText.trim();
+  const trimmedNote = note.trim();
+  if (!trimmedNote) {
+    return trimmedSummary;
+  }
+  return [trimmedNote, trimmedSummary].filter(Boolean).join("\n");
+}
+
+function buildStoredPressureSummary(estimatedTokens: number): string {
+  return [
+    "- Large stored tool/runtime history was compressed before this turn.",
+    `- Stored history pressure estimate before compression: ${Math.round(estimatedTokens)} tokens.`,
+  ].join("\n");
+}
+
 export function buildStatelessContinuationPayload(
   messages: StreamMessage[],
   latestPrompt: string,
@@ -272,8 +318,14 @@ export function buildStatelessContinuationPayload(
   const rawHistoryText = formatHistory(rawRecentHistory);
   const rawEstimatedTokens =
     estimatePromptTokens([rawHistoryText, latestMessageText, latestAttachmentSummary]) + latestAttachmentTokens;
+  const storedHistoryPressureTokens = estimateStoredHistoryPressureTokens(messages);
+  const shouldCompressForRawHistory = shouldCompressHistory(rawEstimatedTokens, options);
+  const shouldCompressForStoredPressure = shouldCompressHistory(storedHistoryPressureTokens, options);
+  const storedPressureSummary = shouldCompressForStoredPressure
+    ? buildStoredPressureSummary(storedHistoryPressureTokens)
+    : "";
 
-  if (!shouldCompressHistory(rawEstimatedTokens, options)) {
+  if (!shouldCompressForRawHistory && !shouldCompressForStoredPressure) {
     return {
       prompt: buildContinuationPrompt({
         recentHistoryText: rawHistoryText,
@@ -295,12 +347,14 @@ export function buildStatelessContinuationPayload(
       ? dedupedHistory.slice(-rawEntryCount)
       : [];
     const canReuseExistingSummary =
+      !shouldCompressForStoredPressure &&
       rawEntryCount === maxRawEntries &&
       options.existingSummary?.trim() &&
       options.existingSummaryMessageCount === messages.length;
-    const summaryText = canReuseExistingSummary
+    const baseSummaryText = canReuseExistingSummary
       ? options.existingSummary!.trim()
       : buildSummary(summaryEntries, options.existingSummary);
+    const summaryText = appendSummaryNote(baseSummaryText, storedPressureSummary);
     const recentHistoryText = formatHistory(recentHistory);
     const estimatedTokens = estimatePromptTokens([
       summaryText,
@@ -309,7 +363,7 @@ export function buildStatelessContinuationPayload(
       latestAttachmentSummary,
     ]) + latestAttachmentTokens;
 
-    if (rawEntryCount > 0 && shouldCompressHistory(estimatedTokens, options)) {
+    if (rawEntryCount > 0 && shouldCompressForRawHistory && shouldCompressHistory(estimatedTokens, options)) {
       continue;
     }
 
@@ -327,7 +381,10 @@ export function buildStatelessContinuationPayload(
     };
   }
 
-  const fallbackSummary = buildSummary(dedupedHistory, options.existingSummary);
+  const fallbackSummary = appendSummaryNote(
+    buildSummary(dedupedHistory, options.existingSummary),
+    storedPressureSummary,
+  );
   const fallbackPrompt = buildContinuationPrompt({
     summaryText: fallbackSummary,
     latestMessageText,

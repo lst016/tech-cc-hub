@@ -124,6 +124,7 @@ type BucketDraft = Omit<PromptLedgerBucket, "ratio">;
 type SegmentDraft = Omit<PromptLedgerSegment, "ratio">;
 
 const HISTORY_TOOL_OUTPUT_LIMIT = 120;
+const HISTORY_SEGMENT_TEXT_STORAGE_LIMIT = 4_000;
 const SOURCE_ORDER: PromptLedgerSourceKind[] = [
   "system",
   "project",
@@ -349,6 +350,7 @@ function addSourceWithSegment(
   const chars = Math.max(0, source.chars ?? text.length);
   const sample = source.sample ?? compressSample(text);
   if (chars <= 0 && !sample) return;
+  const storedText = capStoredSegmentText(text, segmentKind);
 
   const id = `${source.id}-segment-${segments.length + 1}`;
   segments.push({
@@ -360,7 +362,7 @@ function addSourceWithSegment(
     chars,
     tokenEstimate: estimatePromptLedgerTokens(chars || sample),
     sample,
-    text,
+    text: storedText,
     sourcePath: source.sourcePath,
     risks: inferSegmentRisks(segmentKind, source.sourceKind, text || sample, chars),
     optimizationHint: inferOptimizationHint(segmentKind, source.sourceKind, chars),
@@ -371,6 +373,23 @@ function addSourceWithSegment(
   if (bucket) {
     bucket.segmentIds = [...(bucket.segmentIds ?? []).filter((item) => item !== source.id), id];
   }
+}
+
+function capStoredSegmentText(text: string, segmentKind: PromptLedgerSegmentKind): string {
+  if (
+    segmentKind !== "history_tool_input" &&
+    segmentKind !== "history_tool_output" &&
+    segmentKind !== "history_assistant_output"
+  ) {
+    return text;
+  }
+
+  if (text.length <= HISTORY_SEGMENT_TEXT_STORAGE_LIMIT) {
+    return text;
+  }
+
+  const prefix = text.slice(0, HISTORY_SEGMENT_TEXT_STORAGE_LIMIT).trimEnd();
+  return `${prefix}\n\n[truncated: original ${text.length} chars]`;
 }
 
 function addHistoryBuckets(

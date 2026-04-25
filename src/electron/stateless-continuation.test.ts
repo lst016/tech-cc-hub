@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildStatelessContinuationPrompt } from "./stateless-continuation.js";
+import {
+  buildStatelessContinuationPayload,
+  buildStatelessContinuationPrompt,
+} from "./stateless-continuation.js";
 
 test("buildStatelessContinuationPrompt marks image attachments on the latest turn in stateless mode", () => {
   const prompt = buildStatelessContinuationPrompt(
@@ -172,4 +175,45 @@ test("buildStatelessContinuationPrompt still compresses when the latest five tur
 
   assert.match(prompt, /Earlier conversation summary:/);
   assert.match(prompt, /Latest user message: 继续处理当前问题/);
+});
+
+test("buildStatelessContinuationPayload compresses when stored tool history pressure exceeds the threshold", () => {
+  const hugeToolOutput = "history tool output chunk ".repeat(30_000);
+  const payload = buildStatelessContinuationPayload(
+    [
+      {
+        type: "user_prompt",
+        prompt: "先读一下这些文件",
+      },
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "read-large-spec",
+              content: hugeToolOutput,
+            },
+          ],
+        },
+      } as never,
+      {
+        type: "result",
+        subtype: "success",
+        result: "已读取，继续。",
+      } as never,
+    ],
+    "继续开发前端任务",
+    [],
+    {
+      contextWindow: 8_000,
+      compressionThresholdPercent: 50,
+      recentTurnCount: 5,
+    },
+  );
+
+  assert.equal(payload.usedCompression, true);
+  assert.match(payload.prompt, /Earlier conversation summary:/);
+  assert.match(payload.prompt, /Latest user message: 继续开发前端任务/);
 });
