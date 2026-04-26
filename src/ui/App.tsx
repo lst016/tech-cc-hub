@@ -197,6 +197,44 @@ function App() {
       },
     });
   }, [activeHistoryCursor, activeSessionId, connected, isLoadingHistory, sendEvent]);
+
+  useEffect(() => {
+    const applySvgButtonTooltips = () => {
+      const buttons = document.querySelectorAll("button");
+      buttons.forEach((button) => {
+        if (!(button instanceof HTMLButtonElement)) {
+          return;
+        }
+        if (!button.querySelector("svg")) {
+          return;
+        }
+        if (button.hasAttribute("title") || button.hasAttribute("aria-label")) {
+          if (!button.hasAttribute("title")) {
+            const ariaLabel = button.getAttribute("aria-label");
+            if (ariaLabel) {
+              button.setAttribute("title", ariaLabel);
+            }
+          }
+          return;
+        }
+        const label = button.textContent?.trim();
+        if (label) {
+          button.setAttribute("title", label);
+          return;
+        }
+        button.setAttribute("title", "按钮");
+      });
+    };
+
+    applySvgButtonTooltips();
+    const observer = new MutationObserver(() => {
+      applySvgButtonTooltips();
+    });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
   const {
     visibleMessages,
     hasMoreHistory,
