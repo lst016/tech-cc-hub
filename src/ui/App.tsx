@@ -59,7 +59,10 @@ function App() {
   const prevMessagesLengthRef = useRef(0);
   const scrollHeightBeforeLoadRef = useRef(0);
   const shouldRestoreScrollRef = useRef(false);
-  const isMac = typeof window !== "undefined" && window.electron?.platform === "darwin";
+  const isMac =
+    typeof window !== "undefined" &&
+    (window.electron?.platform === "darwin" ||
+      (typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent || "")));
   const headerHeightClass = isMac ? "h-14 pb-2 pt-4 items-end" : "h-10 items-center";
   const sidebarHeaderOffsetClass = isMac ? "top-14" : "top-10";
 
