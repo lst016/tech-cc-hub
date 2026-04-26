@@ -63,8 +63,8 @@ function App() {
     typeof window !== "undefined" &&
     (window.electron?.platform === "darwin" ||
       (typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent || "")));
-  const headerHeightClass = isMac ? "h-14 pb-2 pt-4 items-end" : "h-10 items-center";
-  const sidebarHeaderOffsetClass = isMac ? "top-14" : "top-10";
+  const headerHeightClass = isMac ? "h-12 items-center" : "h-10 items-center";
+  const sidebarHeaderOffsetClass = isMac ? "top-12" : "top-10";
 
   const scrollChatToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const container = scrollContainerRef.current;
