@@ -90,8 +90,10 @@ export function buildAnthropicPromptContentBlocks(
 
   for (const attachment of attachments) {
     if (attachment.kind === "image") {
-      const runtimeImageData = attachment.runtimeData ?? attachment.data;
-      if (!isInlineImageAttachmentData(runtimeImageData)) {
+      // 只有 runtimeData 才允许进入主 Agent 的图片块。
+      // data/preview 常用于 UI 预览和本地资产引用，不能兜底成 base64，否则截图会打爆主上下文。
+      const runtimeImageData = attachment.runtimeData;
+      if (typeof runtimeImageData !== "string" || !isInlineImageAttachmentData(runtimeImageData)) {
         const normalizedSummary = attachment.summaryText?.trim();
         if (normalizedSummary) {
           contentBlocks.push({
@@ -143,10 +145,12 @@ export function sanitizePromptAttachmentsForStorage<TAttachment extends Attachme
     }
 
     const storageUri = attachment.storageUri?.trim() || attachment.preview?.trim() || attachment.data.trim();
+    const displayPreview = attachment.preview?.trim() || attachment.data.trim();
     return {
       ...attachment,
       data: storageUri,
-      preview: storageUri,
+      // preview 是 UI 预览字段，保留原始 data URL 可以避免 localhost/浏览器预览加载 file:// 碎图。
+      preview: displayPreview,
       runtimeData: undefined,
     };
   }) as TAttachment[];

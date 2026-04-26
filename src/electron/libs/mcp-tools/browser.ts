@@ -1,3 +1,5 @@
+// 浏览器工作台 MCP 工具：把右侧 BrowserView 的导航、截图、DOM 查询能力暴露给 Agent。
+// 这里不直接依赖 UI 组件，只通过 BrowserWorkbenchToolHost 访问主进程维护的 BrowserView。
 import {
   createSdkMcpServer,
   tool,
@@ -16,7 +18,7 @@ import type {
   BrowserWorkbenchPageSnapshot,
   BrowserWorkbenchQueryStrategy,
   BrowserWorkbenchStyleInspection,
-} from "../browser-manager.js";
+} from "../../browser-manager.js";
 
 export const BROWSER_TOOL_NAMES = [
   "browser_open_page",
@@ -34,6 +36,7 @@ export const BROWSER_TOOL_NAMES = [
   "browser_set_annotation_mode",
 ] as const;
 
+// Host 是主进程注入的 BrowserView 适配层。MCP 工具只依赖这个接口，避免和窗口/UI 生命周期绑死。
 export type BrowserWorkbenchToolHost = {
   open: (url: string) => BrowserWorkbenchState;
   close: () => BrowserWorkbenchState;
@@ -70,6 +73,7 @@ const MAX_CAPTURE_SNIPPET = 4096;
 let browserHost: BrowserWorkbenchToolHost | null = null;
 let browserMcpServer: McpSdkServerConfigWithInstance | null = null;
 
+// main.ts 在 BrowserWorkbenchManager 创建后调用；cleanup 时会传 null，避免旧窗口残留。
 export function setBrowserToolHost(host: BrowserWorkbenchToolHost | null): void {
   browserHost = host;
 }
@@ -100,6 +104,7 @@ function clampInteger(value: unknown, fallback = 80, max = 300): number {
   return Math.max(1, Math.min(Math.trunc(parsed), max));
 }
 
+// 截图 data URL 很大，这里只返回片段给模型；真正做视觉对比要走 design MCP 保存文件。
 function getShortCaptureSnippet(dataUrl?: string): { dataUrl?: string; truncated: boolean } {
   if (!dataUrl) return { dataUrl, truncated: false };
   if (dataUrl.length <= MAX_CAPTURE_SNIPPET) {

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { AgentRuleDocuments } from "../../types";
 import { CodeEditor } from "./CodeEditor";
 
@@ -12,14 +13,35 @@ export function AgentRulesSettingsPage({
   userMarkdown,
   onUserMarkdownChange,
 }: AgentRulesSettingsPageProps) {
+  const [activeTab, setActiveTab] = useState<"system" | "user">("system");
   const systemMarkdown = documents?.systemDefaultMarkdown ?? "";
   const userAgentsPath = documents?.userAgentsPath ?? "~/.claude/AGENTS.md";
   const userClaudeRoot = documents?.userClaudeRoot ?? "~/.claude";
 
   return (
-    <section className="grid gap-4">
-      <div className="rounded-[28px] border border-ink-900/10 bg-white/86 p-5 shadow-[0_18px_44px_rgba(24,32,46,0.06)]">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+    <section className="flex h-full min-h-0 flex-col gap-4">
+      <div className="flex shrink-0 rounded-[24px] border border-ink-900/8 bg-white/82 p-1.5 shadow-[0_14px_30px_rgba(24,32,46,0.05)]">
+        <button
+          type="button"
+          onClick={() => setActiveTab("system")}
+          className={`flex-1 rounded-[18px] px-4 py-3 text-left transition ${activeTab === "system" ? "bg-ink-900 text-white shadow-sm" : "text-ink-600 hover:bg-ink-900/5"}`}
+        >
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] opacity-70">System</div>
+          <div className="mt-1 text-sm font-semibold">系统默认规则</div>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("user")}
+          className={`flex-1 rounded-[18px] px-4 py-3 text-left transition ${activeTab === "user" ? "bg-ink-900 text-white shadow-sm" : "text-ink-600 hover:bg-ink-900/5"}`}
+        >
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] opacity-70">Claude</div>
+          <div className="mt-1 text-sm font-semibold">用户全局规则</div>
+        </button>
+      </div>
+
+      {activeTab === "system" ? (
+        <div className="flex min-h-0 flex-1 flex-col rounded-[28px] border border-ink-900/10 bg-white/86 p-5 shadow-[0_18px_44px_rgba(24,32,46,0.06)]">
+          <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="text-xs font-medium text-muted">系统默认 Markdown</div>
             <h3 className="mt-1 text-base font-semibold text-ink-900">tech-cc-hub 内置规则</h3>
@@ -30,19 +52,20 @@ export function AgentRulesSettingsPage({
           <span className="rounded-full border border-ink-900/8 bg-surface px-3 py-1 text-[11px] font-medium text-muted">
             只读
           </span>
+          </div>
+
+          <CodeEditor
+            id="system-default-agent-rules"
+            value={systemMarkdown}
+            onChange={() => {}}
+            minHeight="0px"
+            className="mt-4 flex-1"
+            readOnly
+          />
         </div>
-
-        <CodeEditor
-          id="system-default-agent-rules"
-          value={systemMarkdown}
-          onChange={() => {}}
-          minHeight="240px"
-          readOnly
-        />
-      </div>
-
-      <div className="rounded-[28px] border border-ink-900/10 bg-white/86 p-5 shadow-[0_18px_44px_rgba(24,32,46,0.06)]">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col rounded-[28px] border border-ink-900/10 bg-white/86 p-5 shadow-[0_18px_44px_rgba(24,32,46,0.06)]">
+          <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="text-xs font-medium text-muted">Claude 全局目录 Markdown</div>
             <h3 className="mt-1 text-base font-semibold text-ink-900">用户级 AGENTS.md</h3>
@@ -56,23 +79,25 @@ export function AgentRulesSettingsPage({
               {userAgentsPath}
             </div>
           </div>
-        </div>
+          </div>
 
-        <label className="mt-4 block">
-          <span className="text-sm font-medium text-ink-900">编辑全局规则</span>
-          <CodeEditor
-            id="user-claude-agent-rules"
-            value={userMarkdown}
-            onChange={onUserMarkdownChange}
-            placeholder="# 用户级 Agent 规则\n\n写在这里的内容会保存到 ~/.claude/AGENTS.md"
-            minHeight="260px"
-          />
-        </label>
+          <label className="mt-4 flex min-h-0 flex-1 flex-col">
+            <span className="text-sm font-medium text-ink-900">编辑全局规则</span>
+            <CodeEditor
+              id="user-claude-agent-rules"
+              value={userMarkdown}
+              onChange={onUserMarkdownChange}
+              placeholder="# 用户级 Agent 规则\n\n写在这里的内容会保存到 ~/.claude/AGENTS.md"
+              minHeight="0px"
+              className="mt-2 flex-1"
+            />
+          </label>
 
-        <div className="mt-3 rounded-2xl border border-ink-900/8 bg-surface px-4 py-3 text-xs leading-5 text-muted">
-          当前全局目录：<span className="font-mono text-ink-700">{userClaudeRoot}</span>
+          <div className="mt-3 shrink-0 rounded-2xl border border-ink-900/8 bg-surface px-4 py-3 text-xs leading-5 text-muted">
+            当前全局目录：<span className="font-mono text-ink-700">{userClaudeRoot}</span>
+          </div>
         </div>
-      </div>
+      )}
     </section>
   );
 }

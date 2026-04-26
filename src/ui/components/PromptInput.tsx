@@ -85,6 +85,15 @@ function mergePromptWithBrowserAnnotations(prompt: string, annotations: BrowserW
   return [prompt.trim(), annotationPrompt].filter(Boolean).join("\n\n");
 }
 
+function getBrowserAnnotationLabel(annotation: BrowserWorkbenchAnnotation, index: number) {
+  const comment = annotation.comment?.trim();
+  if (comment) return comment;
+  const target = annotation.domHint?.target;
+  if (target?.type === "text" && target.value.trim()) return target.value.trim();
+  if (target?.type === "image") return target.alt?.trim() || "图片";
+  return annotation.domHint?.text?.trim() || annotation.domHint?.selector || `批注 ${index + 1}`;
+}
+
 type InlineOption = {
   value: string;
   label: string;
@@ -365,6 +374,11 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
     promptValue: string,
     attachments: PromptAttachment[],
   ): Promise<PromptAttachment[] | null> => {
+    void promptValue;
+    // 临时关闭图片预处理拦截：当前链路会影响聊天图片预览和真实附件传递。
+    // 先让图片按前端 downscale 后的 data URL 原样发送，保证核心聊天/截图参考功能可用。
+    return attachments;
+
     const hasImageAttachments = attachments.some((attachment) => attachment.kind === "image");
     const imageModel = activeProfile?.imageModel?.trim();
     const selectedModel = runtimeModel.trim();
@@ -501,6 +515,7 @@ export function PromptInput({
 }: PromptInputProps) {
   const { prompt, setPrompt, isRunning, handleStop, slashCommands, activeSessionId, sendPromptDraft, validatePromptDraft } = usePromptActions(sendEvent);
   const browserAnnotations = useAppStore((state) => state.browserAnnotations);
+  const setBrowserAnnotations = useAppStore((state) => state.setBrowserAnnotations);
   const clearBrowserAnnotations = useAppStore((state) => state.clearBrowserAnnotations);
   const apiConfigSettings = useAppStore((state) => state.apiConfigSettings);
   const runtimeModel = useAppStore((state) => state.runtimeModel);
@@ -883,25 +898,40 @@ export function PromptInput({
 
         {browserAnnotations.length > 0 && (
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <div
-              className="inline-flex h-10 items-center gap-2 rounded-full border border-black/8 bg-white px-3 text-sm font-semibold text-ink-800 shadow-[0_10px_24px_rgba(15,18,24,0.08)]"
-              title="浏览器批注会以结构化 JSON 随消息一起发送"
-            >
-              <svg viewBox="0 0 24 24" className="h-4 w-4 text-ink-600" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                <path d="M5 6.5A3.5 3.5 0 0 1 8.5 3h7A3.5 3.5 0 0 1 19 6.5v4A3.5 3.5 0 0 1 15.5 14H11l-4.5 4v-4A3.5 3.5 0 0 1 3 10.5v-4Z" />
-              </svg>
-              <span>{browserAnnotations.length} 条批注</span>
+            {browserAnnotations.slice().reverse().map((annotation, index) => {
+              const label = getBrowserAnnotationLabel(annotation, index);
+              return (
+                <div
+                  key={annotation.id}
+                  className="inline-flex h-10 max-w-[240px] items-center gap-2 rounded-full border border-black/8 bg-white px-3 text-sm font-semibold text-ink-800 shadow-[0_10px_24px_rgba(15,18,24,0.08)]"
+                  title="浏览器批注会以结构化 JSON 随消息一起发送"
+                >
+                  <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent text-[11px] font-bold text-white">
+                    {index + 1}
+                  </span>
+                  <span className="min-w-0 truncate">{label}</span>
+                  <button
+                    type="button"
+                    className="ml-1 rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
+                    onClick={() => setBrowserAnnotations(browserAnnotations.filter((item) => item.id !== annotation.id))}
+                    aria-label={`移除浏览器批注 ${index + 1}`}
+                  >
+                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M18 6 6 18M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              );
+            })}
+            {browserAnnotations.length > 1 && (
               <button
                 type="button"
-                className="ml-1 rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
+                className="inline-flex h-10 items-center rounded-full border border-black/8 bg-white px-3 text-xs font-semibold text-muted transition hover:bg-black/5 hover:text-ink-700"
                 onClick={clearBrowserAnnotations}
-                aria-label="移除浏览器批注"
               >
-                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M18 6 6 18M6 6l12 12" />
-                </svg>
+                清空
               </button>
-            </div>
+            )}
           </div>
         )}
 

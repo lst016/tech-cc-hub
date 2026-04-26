@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useAppStore } from "../store/useAppStore";
+import { normalizeWorkbenchUrl } from "../utils/workbench-url";
 
 type BrowserWorkbenchPageProps = {
   active?: boolean;
@@ -39,7 +40,7 @@ const hasBrowserWorkbenchRuntime = () => (
 export function BrowserWorkbenchPage({ active = true, initialUrl = "http://localhost:4173/" }: BrowserWorkbenchPageProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const hasOpenedRef = useRef(false);
-  const [url, setUrl] = useState(initialUrl);
+  const [url, setUrl] = useState(() => normalizeWorkbenchUrl(initialUrl) ?? initialUrl);
   const [state, setState] = useState<BrowserWorkbenchState>(defaultBrowserState);
   const [annotations, setAnnotations] = useState<BrowserWorkbenchAnnotation[]>([]);
   const [hasBrowserTab, setHasBrowserTab] = useState(true);
@@ -47,8 +48,20 @@ export function BrowserWorkbenchPage({ active = true, initialUrl = "http://local
   const [isPreviewRuntime] = useState(isBrowserPreviewRuntime);
   const [hasBrowserRuntime] = useState(hasBrowserWorkbenchRuntime);
   const canUseBrowserView = hasBrowserRuntime && !isPreviewRuntime;
+  const browserAnnotations = useAppStore((store) => store.browserAnnotations);
   const setBrowserAnnotations = useAppStore((store) => store.setBrowserAnnotations);
   const browserActive = active && hasBrowserTab;
+  const previewUrl = isPreviewRuntime ? (state.url || url) : "";
+  const isRecursivePreviewUrl = (() => {
+    if (!previewUrl || typeof window === "undefined") return false;
+    try {
+      const target = new URL(previewUrl, window.location.href);
+      const current = new URL(window.location.href);
+      return target.origin === current.origin && target.pathname === current.pathname;
+    } catch {
+      return false;
+    }
+  })();
 
   const syncBounds = useCallback(() => {
     if (!canUseBrowserView) return;
@@ -68,29 +81,35 @@ export function BrowserWorkbenchPage({ active = true, initialUrl = "http://local
   }, [browserActive, canUseBrowserView]);
 
   const openUrl = useCallback(async (nextUrl = url) => {
+    const targetUrl = normalizeWorkbenchUrl(nextUrl) ?? nextUrl.trim();
     if (!hasBrowserRuntime) {
       setStatusText("当前 Electron 主进程还是旧版本，请重启应用后再打开浏览器工作台");
       return;
     }
     if (isPreviewRuntime) {
       setState({
-        url: nextUrl,
+        url: targetUrl,
         title: "Codex 网页预览态",
         loading: false,
         canGoBack: false,
         canGoForward: false,
         annotationMode: false,
       });
-      setUrl(nextUrl);
+      setUrl(targetUrl);
       setStatusText("Codex 网页预览不挂载 Electron BrowserView，标注请在桌面端窗口使用");
       return;
     }
     syncBounds();
-    const nextState = await window.electron.openBrowserWorkbench(nextUrl);
+    setUrl(targetUrl);
+    const nextState = await window.electron.openBrowserWorkbench(targetUrl);
     setState(nextState);
-    setUrl(nextState.url || nextUrl);
+    setUrl(nextState.url || targetUrl);
     setStatusText(nextState.url ? "页面已打开" : "准备打开页面");
   }, [hasBrowserRuntime, isPreviewRuntime, syncBounds, url]);
+
+  useEffect(() => {
+    setAnnotations(browserAnnotations);
+  }, [browserAnnotations]);
 
   useEffect(() => {
     const unsubscribe = window.electron.onBrowserWorkbenchEvent((event) => {
@@ -395,13 +414,19 @@ export function BrowserWorkbenchPage({ active = true, initialUrl = "http://local
                   </p>
                 </div>
               </div>
-            ) : isPreviewRuntime && state.url ? (
+            ) : isPreviewRuntime && previewUrl && !isRecursivePreviewUrl ? (
+              <iframe
+                src={previewUrl}
+                title={state.title || "浏览器预览"}
+                className="h-full w-full border-0 bg-white"
+                sandbox="allow-downloads allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
+                onLoad={() => setStatusText("预览页面已打开")}
+              />
+            ) : isPreviewRuntime && isRecursivePreviewUrl ? (
               <div className="grid h-full place-items-center p-6">
                 <div className="w-full max-w-xl rounded-[14px] border border-dashed border-black/14 bg-white/78 px-6 py-8 text-center shadow-[0_16px_45px_rgba(30,38,52,0.08)]">
-                  <div className="text-base font-semibold text-ink-800">当前是 Codex 网页预览态</div>
-                  <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted">
-                    已收到地址：{state.url}。真实网页承载依赖 Electron BrowserView，必须在桌面 Electron 窗口里打开；Codex 内置浏览器这里只能预览工作台 UI。
-                  </p>
+                  <div className="text-base font-semibold text-ink-800">浏览器工作台</div>
+                  <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted">输入或点击一个页面地址后，会在这里打开预览。</p>
                 </div>
               </div>
             ) : !state.url && (

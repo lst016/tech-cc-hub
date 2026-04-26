@@ -26,7 +26,8 @@ import {
   saveSkillInventory,
   type SkillSyncRequest,
 } from "./libs/config-store.js";
-import { setBrowserToolHost } from "./libs/browser-mcp-tools.js";
+import { setBrowserToolHost } from "./libs/mcp-tools/browser.js";
+import { setDesignToolHost } from "./libs/mcp-tools/design.js";
 import { startSkillSyncScheduler, stopSkillSyncScheduler, syncSkillSources } from "./libs/skill-registry-sync.js";
 import { ensureSystemWorkspace } from "./libs/system-workspace.js";
 import { getCurrentApiConfig } from "./libs/claude-settings.js";
@@ -187,6 +188,7 @@ function cleanup(): void {
   stopDevBackendBridge?.();
   stopDevBackendBridge = null;
   setBrowserToolHost(null);
+  setDesignToolHost(null);
   browserWorkbench?.close();
   browserWorkbench = null;
     cleanupAllSessions();
@@ -414,6 +416,15 @@ app.on("ready", async () => {
           return buildBrowserWorkbenchFallbackState();
         }
         return await browserWorkbench.setAnnotationMode(enabled);
+      },
+    });
+    setDesignToolHost({
+      getState: () => browserWorkbench?.getState() ?? buildBrowserWorkbenchFallbackState(),
+      captureVisible: async () => {
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.captureVisible();
       },
     });
 

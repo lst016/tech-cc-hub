@@ -1,12 +1,9 @@
-﻿import { useMemo, useState, type CSSProperties } from "react";
+﻿import { useMemo, useState } from "react";
 import {
   buildActivityRailModel,
   type ActivityAnalysisCard,
   type ActivityDetailSection,
-  type ActivityExecutionStep,
   type ActivityExecutionMetrics,
-  type ActivityPlanStep,
-  type ActivityRailFilterKey,
   type ActivityRailTone,
   type ActivityTaskStep,
   type ActivityTimelineItem,
@@ -14,29 +11,6 @@ import {
   type ContextDistributionBucket,
 } from "../../shared/activity-rail-model";
 import type { SessionView } from "../store/useAppStore";
-import { VirtualizedRailList } from "./VirtualizedRailList";
-
-const FILTER_LABELS: Record<ActivityRailFilterKey, string> = {
-  all: "全部",
-  attention: "需关注",
-  context: "上下文",
-  tool: "工具",
-  result: "结果",
-  flow: "流程",
-};
-
-const STEP_STATUS_LABELS = {
-  pending: "未开始",
-  running: "进行中",
-  completed: "已完成",
-} as const;
-
-const PLAN_STEP_STATUS_LABELS = {
-  pending: "未开始",
-  running: "执行中",
-  completed: "已完成",
-  drifted: "计划偏移",
-} as const;
 
 const NODE_KIND_LABELS: Record<ActivityTimelineItem["nodeKind"], string> = {
   context: "上下文",
@@ -95,28 +69,6 @@ function toneAccentClasses(tone: ActivityRailTone) {
       return "bg-error";
     default:
       return "bg-ink-300";
-  }
-}
-
-function renderClampStyle(lineCount: number): CSSProperties {
-  return {
-    display: "-webkit-box",
-    WebkitLineClamp: lineCount,
-    WebkitBoxOrient: "vertical",
-    overflow: "hidden",
-  };
-}
-
-function getPlanStepTone(step: ActivityPlanStep): ActivityRailTone {
-  switch (step.status) {
-    case "completed":
-      return "success";
-    case "running":
-      return "info";
-    case "drifted":
-      return "warning";
-    default:
-      return "neutral";
   }
 }
 
@@ -195,219 +147,6 @@ function MetricsStrip({
         </tbody>
       </table>
     </div>
-  );
-}
-
-function buildTimeline(
-  items: ActivityTimelineItem[],
-  filter: ActivityRailFilterKey,
-  selectedTimelineIds: string[] | null,
-) {
-  const scoped = selectedTimelineIds
-    ? items.filter((item) => selectedTimelineIds.includes(item.id))
-    : items;
-
-  if (filter === "all") return scoped;
-  if (filter === "attention") {
-    return scoped.filter((item) => item.attention);
-  }
-  return scoped.filter((item) => item.filterKey === filter);
-}
-
-function TimelineFilter({
-  filter,
-  activeFilter,
-  count,
-  onClick,
-}: {
-  filter: ActivityRailFilterKey;
-  activeFilter: ActivityRailFilterKey;
-  count: number;
-  onClick: (next: ActivityRailFilterKey) => void;
-}) {
-  const active = filter === activeFilter;
-  return (
-    <button
-      type="button"
-      onClick={() => onClick(filter)}
-      className={[
-        "rounded-full border px-3 py-1.5 text-[11px] font-medium transition",
-        active
-          ? "border-accent/30 bg-accent-subtle text-accent shadow-sm"
-          : "border-black/5 bg-white/60 text-ink-600 hover:border-black/10 hover:bg-white/90",
-      ].join(" ")}
-    >
-      {FILTER_LABELS[filter]}
-      <span className="ml-1 text-[10px] text-ink-500">{count}</span>
-    </button>
-  );
-}
-
-function StepActionBar() {
-  const actions = ["标记", "备注", "AI 调优"] as const;
-
-  return (
-    <div className="mt-3 flex flex-wrap gap-2">
-      {actions.map((action) => (
-        <button
-          key={action}
-          type="button"
-          className="rounded-full border border-black/5 bg-black/[0.03] px-3 py-1 text-[11px] text-ink-600 transition hover:bg-black/[0.05] hover:text-ink-900"
-        >
-          {action}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function TaskStepCard({
-  step,
-  active,
-  onClick,
-}: {
-  step: ActivityExecutionStep;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <div
-      className={[
-        "w-full rounded-2xl border p-3 text-left transition",
-        active
-          ? "border-accent/30 bg-accent-subtle/70 shadow-sm"
-          : "border-black/5 bg-white/70 hover:border-black/10 hover:bg-white",
-      ].join(" ")}
-    >
-      <button type="button" onClick={onClick} className="w-full text-left">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-sm font-semibold text-ink-900">{step.title}</span>
-          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${toneClasses(step.status === "completed" ? "success" : step.status === "running" ? "info" : "neutral")}`}>
-            {STEP_STATUS_LABELS[step.status]}
-          </span>
-        </div>
-        <div className="mt-2 text-[11px] text-ink-500">关联节点 {step.timelineIds.length}</div>
-        <MetricsStrip metrics={step.metrics} compact />
-      </button>
-      <StepActionBar />
-    </div>
-  );
-}
-
-function PlanStepCard({
-  step,
-  active,
-  onClick,
-}: {
-  step: ActivityPlanStep;
-  active: boolean;
-  onClick: () => void;
-}) {
-  const tone = getPlanStepTone(step);
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={[
-        "w-full rounded-2xl border p-3 text-left transition",
-        active
-          ? "border-accent/30 bg-accent-subtle/75 shadow-sm"
-          : "border-black/5 bg-white/70 hover:border-black/10 hover:bg-white",
-      ].join(" ")}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full border border-black/5 bg-black/[0.03] px-2 py-0.5 text-[10px] font-medium text-ink-500">
-              Step {step.indexLabel}
-            </span>
-            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${toneClasses(tone)}`}>
-              {PLAN_STEP_STATUS_LABELS[step.status]}
-            </span>
-          </div>
-          <div className="mt-2 text-sm font-semibold text-ink-900">{step.title}</div>
-          <p className="mt-2 text-[12px] leading-5 text-ink-600" style={renderClampStyle(2)}>
-            {step.detail}
-          </p>
-        </div>
-        <span className="rounded-full border border-black/5 bg-white px-2 py-0.5 text-[10px] text-ink-500">
-          {step.timelineIds.length} 节点
-        </span>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-ink-500">
-        <span>执行轮次：第 {step.round} 轮</span>
-        <span>聚合步骤：{step.executionStepIds.length}</span>
-      </div>
-      <MetricsStrip metrics={step.metrics} compact />
-    </button>
-  );
-}
-
-function TimelineRow({
-  item,
-  active,
-  onClick,
-}: {
-  item: ActivityTimelineItem;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={[
-        "group relative w-full overflow-hidden rounded-2xl border px-4 py-3 text-left transition",
-        active
-          ? "border-accent/30 bg-white shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
-          : "border-black/5 bg-white/70 hover:border-black/10 hover:bg-white",
-      ].join(" ")}
-    >
-      <div className={`absolute inset-y-3 left-0 w-1 rounded-full ${toneAccentClasses(item.tone)}`} />
-      <div className="ml-1">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${toneClasses(item.tone)}`}>
-                {item.layer}
-              </span>
-              <span className="rounded-full border border-black/5 bg-black/[0.03] px-2 py-0.5 text-[10px] text-ink-500">
-                {getNodeKindLabel(item)}
-              </span>
-              {item.toolName && (
-                <span className="rounded-full border border-black/5 bg-black/[0.03] px-2 py-0.5 text-[10px] text-ink-500">
-                  {item.toolName}
-                </span>
-              )}
-              {item.provenance && (
-                <span className="rounded-full border border-black/5 bg-black/[0.03] px-2 py-0.5 text-[10px] text-ink-500">
-                  {PROVENANCE_LABELS[item.provenance]}
-                </span>
-              )}
-              {item.statusLabel && (
-                <span className="rounded-full border border-black/5 bg-black/5 px-2 py-0.5 text-[10px] text-ink-500">
-                  {item.statusLabel}
-                </span>
-              )}
-              <span className="text-[10px] text-ink-400">第 {item.round} 轮</span>
-            </div>
-            <div className="mt-2 text-sm font-semibold text-ink-900">{item.title}</div>
-          </div>
-          {item.attention && (
-            <span className="rounded-full border border-error/15 bg-error-light px-2 py-0.5 text-[10px] font-medium text-error">
-              关注
-            </span>
-          )}
-        </div>
-
-        <p className="mt-2 text-[12px] leading-5 text-ink-600" style={renderClampStyle(2)}>
-          {item.preview}
-        </p>
-        <MetricsStrip metrics={item.metrics} compact />
-      </div>
-    </button>
   );
 }
 
@@ -714,23 +453,11 @@ export function ActivityRail({
     () => buildActivityRailModel(session, session?.permissionRequests ?? [], ""),
     [session],
   );
-  const [activeFilter, setActiveFilter] = useState<ActivityRailFilterKey>("all");
   const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
-  const [selectedTaskStepId, setSelectedTaskStepId] = useState<string | null>(null);
   const [showContextModal, setShowContextModal] = useState(false);
 
-  const selectedTask = useMemo(
-    () => (selectedTaskStepId ? model.executionSteps.find((step) => step.id === selectedTaskStepId) ?? null : null),
-    [model.executionSteps, selectedTaskStepId],
-  );
-
-  const filteredTimeline = useMemo(
-    () => buildTimeline(model.timeline, activeFilter, selectedTask?.timelineIds ?? null),
-    [activeFilter, model.timeline, selectedTask],
-  );
-
   const selectedItem =
-    (selectedTimelineId ? filteredTimeline.find((item) => item.id === selectedTimelineId) : null) ??
+    (selectedTimelineId ? model.timeline.find((item) => item.id === selectedTimelineId) : null) ??
     null;
   const relatedSteps = selectedItem
     ? model.executionSteps.filter((step) => step.timelineIds.includes(selectedItem.id))
@@ -761,10 +488,7 @@ export function ActivityRail({
           totalChars={model.contextDistribution.totalChars}
           buckets={model.contextDistribution.buckets}
           onJumpToNode={(timelineId) => {
-            const relatedStep = model.executionSteps.find((step) => step.timelineIds.includes(timelineId));
-            setSelectedTaskStepId(relatedStep?.id ?? null);
             setSelectedTimelineId(timelineId);
-            setActiveFilter("all");
             setShowContextModal(false);
           }}
           onClose={() => setShowContextModal(false)}
@@ -794,7 +518,7 @@ export function ActivityRail({
                 <p className="text-[11px] uppercase tracking-[0.22em] text-ink-400">Right Context Rail</p>
                 <h2 className="mt-1 text-lg font-semibold text-ink-900">{model.primarySectionTitle}</h2>
                 <p className="mt-1 text-[12px] leading-5 text-ink-500">
-                  任务步骤在上，原子轨迹在中，细节通过右侧二级抽屉展开。
+                  聊天页只保留执行概览和分析入口，完整链路请进入 Trace Viewer 查看。
                 </p>
               </div>
               <span className={`rounded-full border px-3 py-1 text-[11px] font-medium ${toneClasses(model.summary.statusTone)}`}>
@@ -857,158 +581,6 @@ export function ActivityRail({
             </div>
           </section>
 
-          {model.planSteps.length > 0 && (
-            <section className="rounded-[28px] border border-black/5 bg-white/68 p-4 shadow-[0_16px_32px_rgba(15,23,42,0.05)]">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-ink-900">{model.taskSectionTitle}</h3>
-                  <p className="mt-1 text-[12px] text-ink-500">
-                    先看 AI 计划，再看它实际落到哪些执行节点，方便判断是否跑偏。
-                  </p>
-                </div>
-                <span className="rounded-full border border-black/5 bg-black/[0.03] px-2.5 py-1 text-[10px] text-ink-500">
-                  {model.planSteps.length} 步
-                </span>
-              </div>
-
-              <div className="mt-4 space-y-2">
-                {model.planSteps.map((step) => {
-                  const active = Boolean(selectedTask?.planStepIds?.includes(step.id));
-                  return (
-                    <PlanStepCard
-                      key={step.id}
-                      step={step}
-                      active={active}
-                      onClick={() => {
-                        const nextExecutionId = active ? null : (step.executionStepIds[0] ?? null);
-                        setSelectedTaskStepId(nextExecutionId);
-                        setSelectedTimelineId(
-                          active ? null : (step.timelineIds[0] ?? step.sourceTimelineId),
-                        );
-                        setActiveFilter("all");
-                      }}
-                    />
-                  );
-                })}
-              </div>
-            </section>
-          )}
-
-          {model.executionSteps.length > 0 && (
-            <details className="rounded-[28px] border border-black/5 bg-white/68 p-4 shadow-[0_16px_32px_rgba(15,23,42,0.05)]">
-              <summary className="list-none cursor-pointer">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-semibold text-ink-900">{model.executionSectionTitle}</h3>
-                    <p className="mt-1 text-[12px] text-ink-500">
-                      这里收纳已聚合的步骤，默认收起，避免和实时轨迹重复。
-                    </p>
-                  </div>
-                  <div className="flex flex-col items-end gap-2">
-                    {selectedTask && (
-                      <span className="rounded-full border border-accent/20 bg-accent-subtle px-2.5 py-1 text-[10px] text-accent">
-                        当前筛选：{selectedTask.title}
-                      </span>
-                    )}
-                    <span className="rounded-full border border-black/5 bg-white px-2.5 py-1 text-[10px] text-ink-500">
-                      {model.executionSteps.length} 步
-                    </span>
-                  </div>
-                </div>
-              </summary>
-              <div className="mt-4">
-                <VirtualizedRailList
-                  items={model.executionSteps}
-                  getKey={(step) => step.id}
-                  estimatedItemHeight={198}
-                  height="clamp(260px, 34vh, 420px)"
-                  className="overflow-y-auto rounded-[24px] border border-black/5 bg-white/55 p-2"
-                  scrollToKey={selectedTaskStepId}
-                  emptyState={
-                    <div className="rounded-2xl border border-dashed border-black/10 bg-black/[0.02] px-4 py-5 text-[12px] leading-5 text-ink-500">
-                      当前会话还没有可展示的执行步骤。
-                    </div>
-                  }
-                  renderItem={(step) => (
-                    <TaskStepCard
-                      step={step}
-                      active={step.id === selectedTaskStepId}
-                      onClick={() => {
-                        const nextExecutionId = selectedTaskStepId === step.id ? null : step.id;
-                        setSelectedTaskStepId(nextExecutionId);
-                        if (nextExecutionId && step.timelineIds[0]) {
-                          setSelectedTimelineId(step.timelineIds[0]);
-                        }
-                      }}
-                    />
-                  )}
-                />
-                {selectedTask && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedTaskStepId(null);
-                    }}
-                    className="mt-3 rounded-full border border-black/5 bg-white px-2.5 py-1 text-[10px] text-ink-500"
-                  >
-                    清除步骤筛选
-                  </button>
-                )}
-              </div>
-            </details>
-          )}
-
-          <section className="rounded-[28px] border border-black/5 bg-white/68 p-4 shadow-[0_16px_32px_rgba(15,23,42,0.05)]">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-semibold text-ink-900">{model.primarySectionTitle}</h3>
-                <p className="mt-1 text-[12px] text-ink-500">点击节点后会在右侧抽屉里展开完整细节。</p>
-              </div>
-              <span className="rounded-full border border-black/5 bg-black/[0.03] px-2.5 py-1 text-[10px] text-ink-500">
-                最新在上
-              </span>
-            </div>
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              {(Object.keys(FILTER_LABELS) as ActivityRailFilterKey[]).map((filter) => (
-                <TimelineFilter
-                  key={filter}
-                  filter={filter}
-                  activeFilter={activeFilter}
-                  count={model.filterCounts[filter]}
-                  onClick={setActiveFilter}
-                />
-              ))}
-            </div>
-
-            {selectedTask && (
-              <div className="mt-3 rounded-2xl border border-accent/20 bg-accent-subtle px-3 py-2 text-[12px] text-accent">
-                当前正在查看步骤：{selectedTask.title}
-              </div>
-            )}
-
-            <VirtualizedRailList
-              items={filteredTimeline}
-              getKey={(item) => item.id}
-              estimatedItemHeight={172}
-              height="clamp(360px, 44vh, 560px)"
-              className="mt-4 overflow-y-auto rounded-[24px] border border-black/5 bg-white/55 p-2"
-              scrollToKey={selectedTimelineId}
-              emptyState={
-                <div className="rounded-2xl border border-dashed border-black/10 bg-black/[0.02] px-4 py-5 text-[12px] leading-5 text-ink-500">
-                  当前筛选条件下还没有轨迹。可以先看“全部”，或者清除任务步骤筛选。
-                </div>
-              }
-              renderItem={(item) => (
-                <TimelineRow
-                  item={item}
-                  active={item.id === selectedTimelineId}
-                  onClick={() => setSelectedTimelineId(item.id)}
-                />
-              )}
-            />
-          </section>
-
           <section className="rounded-[28px] border border-black/5 bg-white/68 p-4 shadow-[0_16px_32px_rgba(15,23,42,0.05)]">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -1026,10 +598,7 @@ export function ActivityRail({
                   key={card.id}
                   card={card}
                   onJump={(timelineId) => {
-                    const relatedStep = model.executionSteps.find((step) => step.timelineIds.includes(timelineId));
-                    setSelectedTaskStepId(relatedStep?.id ?? null);
                     setSelectedTimelineId(timelineId);
-                    setActiveFilter("all");
                   }}
                 />
               ))}

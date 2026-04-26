@@ -33,7 +33,7 @@ test("preprocessImageAttachmentsCore keeps dispatchable image attachment when im
   assert.equal(result.success, true);
   assert.equal(result.attachments.length, 1);
   assert.equal(result.attachments[0].data, "file:///D:/tmp/image.png");
-  assert.equal(result.attachments[0].preview, "file:///D:/tmp/image.png");
+  assert.equal(result.attachments[0].preview, "data:image/png;base64,AAAA");
   assert.equal(result.attachments[0].runtimeData, undefined);
   assert.match(result.attachments[0].summaryText ?? "", /image\.png/);
   assert.match(result.attachments[0].summaryText ?? "", /not return a usable summary/i);

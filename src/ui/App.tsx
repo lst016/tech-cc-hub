@@ -14,7 +14,7 @@ import { MessageCard } from "./components/EventCard";
 import { ActivityRail } from "./components/ActivityRail";
 import { SessionAnalysisPage } from "./components/SessionAnalysisPage";
 import { BrowserWorkbenchPage } from "./components/BrowserWorkbenchPage";
-import MDContent from "./render/markdown";
+import MDContent, { OPEN_BROWSER_WORKBENCH_URL_EVENT, type OpenBrowserWorkbenchUrlDetail } from "./render/markdown";
 import {
   DEV_BRIDGE_READY_EVENT,
   getDevElectronRuntimeSource,
@@ -82,6 +82,7 @@ function App() {
   const [closeSidebarOnBrowserOpen, setCloseSidebarOnBrowserOpen] = useState(true);
   const [showActivityRail, setShowActivityRail] = useState(true);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("chat");
+  const [browserWorkbenchUrl, setBrowserWorkbenchUrl] = useState("http://localhost:4173/");
   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [activityRailWidth, setActivityRailWidth] = useState(420);
@@ -549,6 +550,26 @@ function App() {
     });
   }, [closeSidebarOnBrowserOpen, showSidebar]);
 
+  useEffect(() => {
+    const handleOpenBrowserWorkbenchUrl = (event: Event) => {
+      const url = (event as CustomEvent<OpenBrowserWorkbenchUrlDetail>).detail?.url?.trim();
+      if (!url) return;
+
+      setShowSessionAnalysis(false);
+      setShowActivityRail(true);
+      setBrowserWorkbenchUrl(url);
+      setWorkspaceView("browser");
+      if (closeSidebarOnBrowserOpen && showSidebar) {
+        setShowSidebar(false);
+      }
+    };
+
+    window.addEventListener(OPEN_BROWSER_WORKBENCH_URL_EVENT, handleOpenBrowserWorkbenchUrl);
+    return () => {
+      window.removeEventListener(OPEN_BROWSER_WORKBENCH_URL_EVENT, handleOpenBrowserWorkbenchUrl);
+    };
+  }, [closeSidebarOnBrowserOpen, showSidebar]);
+
   const handleDeleteSession = useCallback((sessionId: string) => {
     sendEvent({ type: "session.delete", payload: { sessionId } });
   }, [sendEvent]);
@@ -663,6 +684,28 @@ function App() {
       },
     });
   }, [sendEvent, setPendingStart]);
+
+  const sendWorkflowOptimizationPrompt = useCallback((workflowPrompt: string) => {
+    const trimmedPrompt = workflowPrompt.trim();
+    if (!activeSessionId || !trimmedPrompt) {
+      setGlobalError("当前没有可续聊的会话。");
+      return;
+    }
+    if (activeSession?.status === "running") {
+      setGlobalError("当前会话仍在执行中，请等待这一轮完成后再发送工作流优化任务。");
+      return;
+    }
+
+    sendEvent({
+      type: "session.continue",
+      payload: {
+        sessionId: activeSessionId,
+        prompt: trimmedPrompt,
+      },
+    });
+    setShowSessionAnalysis(false);
+    setGlobalError(null);
+  }, [activeSession?.status, activeSessionId, sendEvent, setGlobalError]);
 
   const sidebarOffset = showSidebar ? sidebarWidth : 0;
   const activityRailOffset = !showSessionAnalysis && showActivityRail ? activityRailWidth : 0;
@@ -825,6 +868,7 @@ function App() {
                 session={activeSession}
                 partialMessage={partialMessage}
                 onBack={() => setShowSessionAnalysis(false)}
+                onSendWorkflowOptimizationPrompt={sendWorkflowOptimizationPrompt}
               />
             </div>
           ) : (
@@ -971,7 +1015,7 @@ function App() {
             className={`fixed bottom-0 right-0 ${sidebarHeaderOffsetClass} z-40 min-w-[400px] overflow-hidden border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.94),rgba(240,244,248,0.98)_42%,rgba(234,239,245,0.99))] shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl ${workspaceView === "browser" ? "hidden lg:flex lg:flex-col" : "pointer-events-none hidden"}`}
             style={{ width: activityRailWidth }}
           >
-            <BrowserWorkbenchPage active={workspaceView === "browser"} />
+            <BrowserWorkbenchPage key={browserWorkbenchUrl} active={workspaceView === "browser"} initialUrl={browserWorkbenchUrl} />
           </aside>
         )}
         {!showSessionAnalysis && showActivityRail && (

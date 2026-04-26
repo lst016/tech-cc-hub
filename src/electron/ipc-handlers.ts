@@ -5,7 +5,7 @@ import { createStoredUserPromptMessage, sanitizePromptAttachmentsForStorage } fr
 import { buildPromptLedgerMessage, type PromptLedgerMessage, type PromptLedgerSource } from "../shared/prompt-ledger.js";
 import { createInitialSessionWorkflowState, parseWorkflowMarkdown } from "../shared/workflow-markdown.js";
 import { runClaude, type RunnerHandle } from "./libs/runner.js";
-import { rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
+import { persistImageAttachmentReference, rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
 import { resolveAgentRuntimeContext } from "./libs/agent-resolver.js";
 import { getCurrentApiConfig, getModelConfig, supportsRemoteSessionResume } from "./libs/claude-settings.js";
 import { SessionStore } from "./libs/session-store.js";
@@ -49,8 +49,8 @@ function hasLiveSession(sessionId: string): boolean {
 }
 
 const MAX_REHYDRATED_IMAGE_ATTACHMENTS = 2;
-const VISUAL_REVIEW_REHYDRATE_PATTERN =
-  /(ui|design|interface|screenshot|image|compare|diff|align|layout|spacing|pixel|visual|button|style|\u8bbe\u8ba1|\u754c\u9762|\u622a\u56fe|\u770b\u56fe|\u6bd4\u5bf9|\u5bf9\u6bd4|\u4e00\u81f4|\u50cf\u7d20|\u5e03\u5c40|\u95f4\u8ddd|\u8fd8\u539f|\u89c6\u89c9|\u6309\u94ae|\u6837\u5f0f|\u9884\u671f)/i;
+const RECENT_IMAGE_REFERENCE_PATTERN =
+  /(上一张|上张|上一轮|刚才那张|刚刚那张|之前那张|前面那张|之前的截图|前面的截图|之前的图片|前面的图片|previous (image|screenshot)|last (image|screenshot))/i;
 
 function isPlaceholderSessionTitle(title?: string): boolean {
   const normalized = title?.trim();
@@ -79,11 +79,51 @@ function buildTitleFromFirstPrompt(prompt: string, attachments?: PromptAttachmen
 }
 
 function shouldRehydrateRecentImages(prompt: string, attachments?: PromptAttachment[]): boolean {
+  void prompt;
+  void attachments;
+  // 临时关闭历史图片自动补入：这个功能容易在截图开发场景串到旧图。
+  // 后续如果恢复，必须在 UI 上明确提示“正在复用上一张图片”。
+  return false;
+
   if (attachments?.some((attachment) => attachment.kind === "image")) {
     return false;
   }
 
-  return VISUAL_REVIEW_REHYDRATE_PATTERN.test(prompt);
+  return RECENT_IMAGE_REFERENCE_PATTERN.test(prompt);
+}
+
+function hasInlineImagePreview(attachment: PromptAttachment): boolean {
+  return typeof attachment.preview === "string" && /^data:image\//i.test(attachment.preview.trim());
+}
+
+async function hydrateImagePreviewsForDisplay(messages: StreamMessage[]): Promise<StreamMessage[]> {
+  const hydratedMessages: StreamMessage[] = [];
+
+  for (const message of messages) {
+    if (message.type !== "user_prompt" || !message.attachments?.length) {
+      hydratedMessages.push(message);
+      continue;
+    }
+
+    const attachments: PromptAttachment[] = [];
+    for (const attachment of message.attachments) {
+      if (attachment.kind !== "image" || hasInlineImagePreview(attachment)) {
+        attachments.push(attachment);
+        continue;
+      }
+
+      try {
+        const restored = await rehydrateStoredImageAttachment(attachment);
+        attachments.push(restored?.runtimeData ? { ...attachment, preview: restored.runtimeData } : attachment);
+      } catch {
+        attachments.push(attachment);
+      }
+    }
+
+    hydratedMessages.push({ ...message, attachments });
+  }
+
+  return hydratedMessages;
 }
 
 async function loadRecentReferencedImages(messages: StreamMessage[]): Promise<PromptAttachment[]> {
@@ -126,6 +166,60 @@ async function loadRecentReferencedImages(messages: StreamMessage[]): Promise<Pr
   }
 
   return hydrated;
+}
+
+type PreparedPromptAttachments = {
+  displayAttachments: PromptAttachment[];
+  agentAttachments: PromptAttachment[];
+};
+
+function buildImageAssetSummary(attachment: PromptAttachment): string {
+  const parts = [
+    `用户当前轮上传/粘贴的图片附件已作为本地资产保存，主上下文不包含 base64：${attachment.name || "未命名图片"}`,
+    attachment.storagePath ? `本地路径：${attachment.storagePath}` : undefined,
+    attachment.storageUri ? `文件 URI：${attachment.storageUri}` : undefined,
+    typeof attachment.size === "number" ? `大小：${attachment.size} bytes` : undefined,
+    "重要：不要用 Read 直接读取这个图片文件，图片会打爆主上下文。",
+    "第一步必须调用 mcp__tech-cc-hub-design__design_inspect_image，并传入上面的本地路径，获取这张图的结构化视觉摘要。",
+    "如果已经有当前页面并需要还原对齐，再调用 mcp__tech-cc-hub-design__design_compare_current_view，把当前页面截图和这张参考图比较。",
+    "只有在确实有两张不同本地截图时，才调用 mcp__tech-cc-hub-design__design_compare_images；不要把同一张图同时作为 reference 和 candidate。",
+  ].filter(Boolean);
+
+  return parts.join("\n");
+}
+
+async function preparePromptAttachmentsForSession(attachments?: PromptAttachment[]): Promise<PreparedPromptAttachments> {
+  const displayAttachments: PromptAttachment[] = [];
+  const agentAttachments: PromptAttachment[] = [];
+
+  for (const attachment of attachments ?? []) {
+    if (attachment.kind !== "image") {
+      displayAttachments.push(attachment);
+      agentAttachments.push(attachment);
+      continue;
+    }
+
+    const storedReference = await persistImageAttachmentReference(attachment);
+    const displayAttachment: PromptAttachment = {
+      ...attachment,
+      storagePath: storedReference?.storagePath ?? attachment.storagePath,
+      storageUri: storedReference?.storageUri ?? attachment.storageUri,
+      size: storedReference?.size ?? attachment.size,
+      runtimeData: undefined,
+    };
+    const agentAttachment: PromptAttachment = {
+      ...displayAttachment,
+      data: storedReference?.storageUri ?? attachment.storageUri ?? attachment.data,
+      preview: undefined,
+      runtimeData: undefined,
+      summaryText: attachment.summaryText ?? buildImageAssetSummary(displayAttachment),
+    };
+
+    displayAttachments.push(displayAttachment);
+    agentAttachments.push(agentAttachment);
+  }
+
+  return { displayAttachments, agentAttachments };
 }
 
 function buildPromptLedgerForRun(options: {
@@ -270,18 +364,19 @@ export async function handleClientEvent(event: ClientEvent) {
       return;
     }
 
+    const displayMessages = await hydrateImagePreviewsForDisplay(history.messages);
     emit({
       type: "session.history",
       payload: {
         sessionId: history.session.id,
         status: history.session.status,
-        messages: history.messages,
+        messages: displayMessages,
         mode: event.payload.before ? "prepend" : "replace",
         hasMore: history.hasMore,
         nextCursor: history.nextCursor,
         slashCommands: buildSessionSlashCommands({
           cwd: history.session.cwd,
-          messages: history.messages,
+          messages: displayMessages,
         }),
       },
     });
@@ -416,6 +511,7 @@ export async function handleClientEvent(event: ClientEvent) {
   }
 
   if (event.type === "session.start") {
+    const { displayAttachments, agentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
     const session = store.createSession({
       cwd: event.payload.cwd,
       title: event.payload.title,
@@ -451,7 +547,7 @@ export async function handleClientEvent(event: ClientEvent) {
         message: buildPromptLedgerForRun({
           phase: "start",
           prompt: event.payload.prompt,
-          attachments: event.payload.attachments,
+          attachments: agentAttachments,
           session,
           model: event.payload.runtime?.model ?? config?.model,
         }),
@@ -460,12 +556,12 @@ export async function handleClientEvent(event: ClientEvent) {
 
     emit({
       type: "stream.user_prompt",
-      payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: event.payload.attachments },
+      payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: displayAttachments },
     });
 
     runClaude({
       prompt: event.payload.prompt,
-      attachments: event.payload.attachments,
+      attachments: agentAttachments,
       runtime: event.payload.runtime,
       session,
       resumeSessionId: session.claudeSessionId,
@@ -515,12 +611,13 @@ export async function handleClientEvent(event: ClientEvent) {
       : session.title;
     const selectedModel = event.payload.runtime?.model ?? config?.model;
     const modelConfig = config && selectedModel ? getModelConfig(config, selectedModel) : null;
+    const { displayAttachments, agentAttachments: currentAgentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
     const continuationPayload = canUseRemoteResume
       ? null
       : buildStatelessContinuationPayload(
           history?.messages ?? [],
           event.payload.prompt,
-          event.payload.attachments ?? [],
+          currentAgentAttachments,
           {
             contextWindow: modelConfig?.contextWindow,
             compressionThresholdPercent: modelConfig?.compressionThresholdPercent,
@@ -531,11 +628,10 @@ export async function handleClientEvent(event: ClientEvent) {
         );
     const prompt = canUseRemoteResume ? event.payload.prompt : continuationPayload?.prompt ?? event.payload.prompt;
     const resumeSessionId = canUseRemoteResume ? session.claudeSessionId : undefined;
-    const currentAttachments = event.payload.attachments ?? [];
-    const rehydratedAttachments = shouldRehydrateRecentImages(event.payload.prompt, currentAttachments)
+    const rehydratedAttachments = shouldRehydrateRecentImages(event.payload.prompt, displayAttachments)
       ? await loadRecentReferencedImages(history?.messages ?? [])
       : [];
-    const attachmentsForRun = [...currentAttachments, ...rehydratedAttachments];
+    const attachmentsForRun = [...currentAgentAttachments, ...rehydratedAttachments];
 
     store.updateSession(session.id, {
       status: "running",
@@ -577,7 +673,7 @@ export async function handleClientEvent(event: ClientEvent) {
 
     emit({
       type: "stream.user_prompt",
-      payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: currentAttachments },
+      payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: displayAttachments },
     });
 
     runClaude({

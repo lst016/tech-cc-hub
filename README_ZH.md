@@ -123,6 +123,61 @@ Agent Cowork **与 Claude Code 共享配置**。
 
 > 配置一次 Claude Code — 到处使用。
 
+## 🌐 全局运行参数（用于 skills / 工具）
+
+在设置页的「全局配置」里，`env` 会被注入到运行时环境变量。  
+适合放常用凭证（API Key、Token）和技能运行时参数，让 AI 在调用技能时优先从环境变量读取，不需要重复手工输入。首次运行会把已识别到的凭证名和值自动写入 `agent-runtime.json`（例如 Feishu/Figma 这类技能凭证），后续会直接复用。
+不想在页面维护这些配置也没关系：系统会自动从当前进程环境里识别常见凭证变量名，但不会读取/展示明文。
+
+示例：
+
+```json
+{
+  "env": {
+    "GITHUB_TOKEN": "ghp_xxx",
+    "SERPAPI_API_KEY": "xxx"
+  },
+  "skillCredentials": {
+    "github": ["GITHUB_TOKEN"],
+    "search": {
+      "env": ["SERPAPI_API_KEY"]
+    }
+  }
+}
+```
+
+建议注意：
+
+- `ANTHROPIC_` 开头的字段不会被写入系统提示（避免泄露主运行时配置）。
+- 仅在系统提示中露出变量名，不会回显具体密钥值。
+
+新增 AI 工具：
+
+- `set_global_runtime_config`：AI 可在运行时调用 MCP 工具 `mcp__tech-cc-hub-admin__set_global_runtime_config`，将 `env`、`skillCredentials`、`closeSidebarOnBrowserOpen` 持久化写入 `agent-runtime.json`。
+
+## 🎨 设计还原工具（用于 Figma / 截图对齐）
+
+内置 MCP 工具支持 AI 在开发时做视觉对齐：
+
+- `design_capture_current_view`：截取当前内置浏览器 BrowserView，并保存为 PNG 文件。
+- `design_compare_current_view`：将当前 BrowserView 截图与 Figma 导出的参考图做截图比照，生成当前截图、diff 图、三栏 comparison 图、差异比例和尺寸信息。
+- `design_compare_images`：直接比照两张本地截图，适合比较 Figma 导出图、页面截图和回归截图。
+
+这组工具用于把“看着不像”转成可执行的 UI 修正依据。comparison 图固定为「参考截图 / 当前截图 / 差异截图」三栏，AI 应先根据 diff 调整布局尺寸、间距和信息密度，再调整颜色、字体、阴影和图标细节。
+
+默认触发条件：
+
+- 用户提供截图、Figma 图、页面参考图，并要求生成或修改 UI/前端代码时，AI 应优先使用截图比照工具。
+- 用户反馈“看着不像”“和设计稿不一致”“按这个截图改”时，AI 应先生成当前截图、三栏 comparison 图和 diff 图，再修改代码。
+
+内置 MCP 工具源码统一放在：
+
+```text
+src/electron/libs/mcp-tools/
+```
+
+该目录下按能力拆分为 `browser.ts`、`design.ts`、`admin.ts`，并保留中文注释，方便审阅 Agent 到底能操作哪些能力。
+
 
 ## 🧩 架构概览
 

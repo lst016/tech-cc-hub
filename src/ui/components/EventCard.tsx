@@ -306,41 +306,74 @@ type BrowserAnnotationsPayload = {
   items?: unknown[];
 };
 
-function extractBrowserAnnotationsPrompt(prompt: string): { visiblePrompt: string; annotationCount: number } {
+type BrowserAnnotationSummary = {
+  index: number;
+  label: string;
+};
+
+function getBrowserAnnotationSummaryLabel(item: unknown, index: number): string {
+  if (!item || typeof item !== "object") return `批注 ${index + 1}`;
+  const record = item as Record<string, unknown>;
+  const comment = typeof record.comment === "string" ? record.comment.trim() : "";
+  if (comment) return comment;
+
+  const target = record.target && typeof record.target === "object" ? record.target as Record<string, unknown> : null;
+  if (target?.type === "text" && typeof target.value === "string" && target.value.trim()) return target.value.trim();
+  if (target?.type === "image") return (typeof target.alt === "string" && target.alt.trim()) || "图片";
+
+  const dom = record.dom && typeof record.dom === "object" ? record.dom as Record<string, unknown> : null;
+  return (typeof dom?.selector === "string" && dom.selector) || `批注 ${index + 1}`;
+}
+
+function extractBrowserAnnotationsPrompt(prompt: string): { visiblePrompt: string; annotations: BrowserAnnotationSummary[] } {
   const blocks = Array.from(prompt.matchAll(/<browser_annotations>\s*([\s\S]*?)\s*<\/browser_annotations>/g));
   if (blocks.length === 0) {
-    return { visiblePrompt: prompt, annotationCount: 0 };
+    return { visiblePrompt: prompt, annotations: [] };
   }
 
-  const annotationCount = blocks.reduce((sum, block) => {
+  const annotations = blocks.reduce<BrowserAnnotationSummary[]>((items, block) => {
     try {
       const payload = JSON.parse(block[1]) as BrowserAnnotationsPayload;
-      if (typeof payload.count === "number") return sum + payload.count;
-      if (Array.isArray(payload.items)) return sum + payload.items.length;
+      if (Array.isArray(payload.items)) {
+        payload.items.forEach((item) => {
+          items.push({
+            index: items.length + 1,
+            label: getBrowserAnnotationSummaryLabel(item, items.length),
+          });
+        });
+        return items;
+      }
+      if (typeof payload.count === "number") {
+        for (let index = 0; index < payload.count; index += 1) {
+          items.push({ index: items.length + 1, label: `批注 ${items.length + 1}` });
+        }
+        return items;
+      }
     } catch {
-      return sum + 1;
+      items.push({ index: items.length + 1, label: `批注 ${items.length + 1}` });
+      return items;
     }
-    return sum + 1;
-  }, 0);
+    items.push({ index: items.length + 1, label: `批注 ${items.length + 1}` });
+    return items;
+  }, []);
 
   return {
     visiblePrompt: prompt.replace(/<browser_annotations>[\s\S]*?<\/browser_annotations>/g, "").trim(),
-    annotationCount,
+    annotations,
   };
 }
 
-const BrowserAnnotationChip = ({ count }: { count: number }) => (
-  <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-base font-semibold text-ink-800 shadow-[0_12px_28px_rgba(15,23,42,0.08)]">
-    <svg viewBox="0 0 24 24" className="h-5 w-5 text-muted" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-      <path d="M7 8h10M7 12h6" />
-      <path d="M5.5 4.5h13A2.5 2.5 0 0 1 21 7v8a2.5 2.5 0 0 1-2.5 2.5h-7L7 21v-3.5H5.5A2.5 2.5 0 0 1 3 15V7a2.5 2.5 0 0 1 2.5-2.5Z" />
-    </svg>
-    <span>{count} 条批注</span>
+const BrowserAnnotationChip = ({ annotation }: { annotation: BrowserAnnotationSummary }) => (
+  <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-ink-800 shadow-[0_12px_28px_rgba(15,23,42,0.08)]">
+    <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent text-[11px] font-bold text-white">
+      {annotation.index}
+    </span>
+    <span className="truncate">{annotation.label}</span>
   </div>
 );
 
 const UserMessageCard = ({ message, showIndicator = false }: { message: { type: "user_prompt"; prompt: string; attachments?: PromptAttachment[] }; showIndicator?: boolean }) => {
-  const { visiblePrompt, annotationCount } = extractBrowserAnnotationsPrompt(message.prompt);
+  const { visiblePrompt, annotations } = extractBrowserAnnotationsPrompt(message.prompt);
   const hasVisiblePrompt = visiblePrompt.trim().length > 0;
   const hasAttachments = Boolean(message.attachments?.length);
 
@@ -354,14 +387,16 @@ const UserMessageCard = ({ message, showIndicator = false }: { message: { type: 
         <div className="mt-2 w-full max-w-[78%] rounded-[24px] border border-accent/18 bg-[linear-gradient(180deg,rgba(253,244,241,0.98),rgba(255,255,255,0.96))] px-5 py-4 text-ink-800 shadow-[0_16px_30px_rgba(210,106,61,0.08)]">
           <MDContent text={visiblePrompt} />
         </div>
-      ) : !hasAttachments && annotationCount === 0 ? (
+      ) : !hasAttachments && annotations.length === 0 ? (
         <div className="mt-2 w-full max-w-[78%] rounded-[24px] border border-black/6 bg-[#eef2f8] px-4 py-3 text-sm text-muted">
           已发送附件
         </div>
       ) : null}
-      {annotationCount > 0 && (
-        <div className="w-full max-w-[78%] text-right">
-          <BrowserAnnotationChip count={annotationCount} />
+      {annotations.length > 0 && (
+        <div className="mt-3 flex w-full max-w-[78%] flex-wrap justify-end gap-2">
+          {annotations.map((annotation) => (
+            <BrowserAnnotationChip key={annotation.index} annotation={annotation} />
+          ))}
         </div>
       )}
       {message.attachments && message.attachments.length > 0 && (

@@ -7,6 +7,7 @@ type CodeEditorProps = {
   onChange: (next: string) => void;
   placeholder?: string;
   minHeight?: string;
+  className?: string;
   readOnly?: boolean;
 };
 
@@ -16,6 +17,7 @@ export function CodeEditor({
   onChange,
   placeholder,
   minHeight = "360px",
+  className = "",
   readOnly = false,
 }: CodeEditorProps) {
   const lineNumbersRef = useRef<HTMLDivElement>(null);
@@ -60,14 +62,17 @@ export function CodeEditor({
   };
 
   return (
-    <div className="mt-2 rounded-2xl border border-ink-900/10 bg-white/95">
-      <div className="flex overflow-hidden rounded-2xl">
+    <div
+      className={`mt-2 flex min-h-0 flex-col rounded-2xl border border-ink-900/10 bg-white/95 ${className}`}
+      style={{ minHeight }}
+    >
+      <div className="flex min-h-0 flex-1 overflow-hidden rounded-2xl">
         <div
           ref={lineNumbersRef}
-          className="select-none overflow-y-auto border-r border-ink-900/10 bg-ink-900/6 py-3 px-3 text-xs leading-6 text-muted"
+          className="h-full select-none overflow-hidden border-r border-ink-900/10 bg-ink-900/6 px-3 py-3 text-xs leading-6 text-muted"
           aria-hidden="true"
         >
-          <div className="text-right" style={{ minHeight }}>
+          <div className="min-h-full text-right">
             {Array.from({ length: lines }).map((_, index) => (
               <div key={index} className="h-6 pr-2 text-right tabular-nums">
                 {index + 1}
@@ -77,8 +82,7 @@ export function CodeEditor({
         </div>
         <textarea
           id={id}
-          className={`h-full min-h-0 min-w-0 flex-1 resize-none border-0 bg-transparent p-3 font-mono text-xs leading-6 outline-none ring-0 transition-all placeholder:text-muted focus:ring-0 ${readOnly ? "text-ink-700" : "text-ink-800"}`}
-          style={{ minHeight }}
+          className={`h-full min-h-0 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent p-3 font-mono text-xs leading-6 outline-none ring-0 transition-all placeholder:text-muted focus:ring-0 ${readOnly ? "text-ink-700" : "text-ink-800"}`}
           value={value}
           onChange={handleChange}
           onScroll={handleScroll}

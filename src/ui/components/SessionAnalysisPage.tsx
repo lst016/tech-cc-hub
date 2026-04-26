@@ -77,6 +77,17 @@ type PromptHealthSummary = {
   nextActions: string[];
 };
 
+type WorkflowOptimizationCard = {
+  id: string;
+  title: string;
+  metric: string;
+  summary: string;
+  evidence: string;
+  action: string;
+  tone: ActivityRailTone;
+  targetTimelineId?: string;
+};
+
 const NODE_KIND_META: Record<
   ActivityTimelineItem["nodeKind"],
   { label: string; short: string }
@@ -250,11 +261,183 @@ function getStatusBadgeClass(status: TraceGroup["status"]) {
   }
 }
 
+const TOOL_LIKE_NODE_KINDS = new Set<ActivityTimelineItem["nodeKind"]>([
+  "tool_input",
+  "retrieval",
+  "file_read",
+  "file_write",
+  "terminal",
+  "browser",
+  "mcp",
+  "hook",
+]);
+
+function formatPercent(value: number) {
+  if (!Number.isFinite(value)) return "0%";
+  return `${Math.round(value * 100)}%`;
+}
+
 function getNodeKindMeta(item: ActivityTimelineItem) {
   if (item.nodeKind === "terminal" && item.nodeSubtype === "validation") {
     return { label: "终端校验", short: "CHK" };
   }
   return NODE_KIND_META[item.nodeKind];
+}
+
+function buildWorkflowOptimizationCards(
+  groups: TraceGroup[],
+  timeline: ActivityTimelineItem[],
+  promptAnalysis: PromptAnalysisModel,
+): WorkflowOptimizationCard[] {
+  const totalDurationMs = groups.reduce((sum, group) => sum + (group.metrics.durationMs ?? 0), 0);
+  const slowestGroup = [...groups].sort((left, right) => (right.metrics.durationMs ?? 0) - (left.metrics.durationMs ?? 0))[0];
+  const toolItems = timeline.filter((item) => TOOL_LIKE_NODE_KINDS.has(item.nodeKind));
+  const writeItems = timeline.filter((item) => item.nodeKind === "file_write");
+  const validationItems = timeline.filter((item) => (
+    item.nodeKind === "evaluation" ||
+    item.nodeSubtype === "validation" ||
+    /校验|验证|测试|test|build|lint|typecheck|tsc/i.test(`${item.title} ${item.detail} ${item.toolName ?? ""}`)
+  ));
+  const attentionItems = timeline.filter((item) => item.attention || item.tone === "warning" || item.tone === "error" || item.metrics.failureCount > 0);
+
+  const toolUsage = new Map<string, { count: number; durationMs: number; targetTimelineId?: string }>();
+  toolItems.forEach((item) => {
+    const key = item.toolName || getNodeKindMeta(item).label;
+    const existing = toolUsage.get(key) ?? { count: 0, durationMs: 0, targetTimelineId: item.id };
+    toolUsage.set(key, {
+      count: existing.count + 1,
+      durationMs: existing.durationMs + (item.metrics.durationMs ?? 0),
+      targetTimelineId: existing.targetTimelineId ?? item.id,
+    });
+  });
+  const topTool = [...toolUsage.entries()].sort(([, left], [, right]) => right.count - left.count || right.durationMs - left.durationMs)[0] ?? null;
+
+  const noisySegments = promptAnalysis.segments.filter((segment) => (
+    segment.sourceKind === "tool" ||
+    segment.sourceKind === "history" ||
+    segment.sourceKind === "memory"
+  ));
+  const noisyTokens = noisySegments.reduce((sum, segment) => sum + segment.tokenEstimate, 0);
+  const noisyRatio = promptAnalysis.totalTokenEstimate > 0 ? noisyTokens / promptAnalysis.totalTokenEstimate : 0;
+  const topNoisySegment = [...noisySegments].sort((left, right) => right.tokenEstimate - left.tokenEstimate)[0];
+
+  const cards: WorkflowOptimizationCard[] = [];
+
+  if (slowestGroup) {
+    const durationRatio = totalDurationMs > 0 ? (slowestGroup.metrics.durationMs ?? 0) / totalDurationMs : 0;
+    cards.push({
+      id: "slowest-round",
+      title: "先处理最慢轮次",
+      metric: formatDurationMs(slowestGroup.metrics.durationMs),
+      summary: `${slowestGroup.title} 占总耗时 ${formatPercent(durationRatio)}，是最值得拆开的流程段。`,
+      evidence: `${slowestGroup.items.length} 个节点，输出 ${formatMetricAmount(slowestGroup.metrics.outputChars, slowestGroup.metrics.outputTokens)}。`,
+      action: durationRatio >= 0.45
+        ? "下一轮把这一轮拆成“定位原因 -> 单点修改 -> 验证”三步，避免一次性连续执行太长。"
+        : "保留当前节奏，但把这一轮的关键产物写成检查点，方便失败后从中段恢复。",
+      tone: durationRatio >= 0.45 ? "warning" : "info",
+      targetTimelineId: slowestGroup.sourceTimelineId,
+    });
+  }
+
+  cards.push({
+    id: "context-noise",
+    title: "压缩历史和工具输出",
+    metric: `${noisyTokens.toLocaleString("zh-CN")} tok`,
+    summary: `历史 / 工具 / 记忆占 ${formatPercent(noisyRatio)}，继续原样续聊会稀释当前目标。`,
+    evidence: topNoisySegment
+      ? `最大片段来自 ${PROMPT_SOURCE_META[topNoisySegment.sourceKind]?.label ?? topNoisySegment.sourceKind}，约 ${topNoisySegment.tokenEstimate.toLocaleString("zh-CN")} tok。`
+      : "当前没有明显的历史或工具输出噪音。",
+    action: noisyRatio >= 0.55
+      ? "进入下一轮前先生成 3-5 条事实摘要，只带目标、约束、文件和验收标准。"
+      : "上下文体量可控，继续保留证据即可。",
+    tone: noisyRatio >= 0.75 ? "error" : noisyRatio >= 0.55 ? "warning" : "success",
+    targetTimelineId: topNoisySegment?.nodeId ?? topNoisySegment?.messageId,
+  });
+
+  if (topTool) {
+    const [toolName, stat] = topTool;
+    cards.push({
+      id: "tool-loop",
+      title: "合并重复工具调用",
+      metric: `${stat.count} 次`,
+      summary: `${toolName} 是本轮最高频工具，重复调用越多，越容易把上下文塞满。`,
+      evidence: `工具类节点共 ${toolItems.length} 个，${toolName} 累计 ${formatDurationMs(stat.durationMs)}。`,
+      action: stat.count >= 8
+        ? "已知多个具体文件时并发读取；目标不明确时先用 rg/find 收敛，再读取少量命中结果。"
+        : "工具调用还算克制，保持按问题聚合即可。",
+      tone: stat.count >= 12 ? "error" : stat.count >= 8 ? "warning" : "info",
+      targetTimelineId: stat.targetTimelineId,
+    });
+  }
+
+  cards.push({
+    id: "validation-gap",
+    title: "补齐验证关口",
+    metric: `${validationItems.length} 次`,
+    summary: writeItems.length > 0
+      ? `本轮有 ${writeItems.length} 个写入节点，验证节点 ${validationItems.length} 个。`
+      : `本轮主要是分析 / 读取，验证压力较低。`,
+    evidence: attentionItems.length > 0
+      ? `${attentionItems.length} 个节点带关注信号，优先看失败、警告或高耗时节点。`
+      : "没有明显失败或警告节点。",
+    action: writeItems.length > 0 && validationItems.length === 0
+      ? "每次代码写入后固定追加一个最小验证节点，例如构建、类型检查或页面截图。"
+      : "保留验证步骤，并把验证结果摘要写回最终回复，方便复盘。",
+    tone: writeItems.length > 0 && validationItems.length === 0 ? "error" : validationItems.length < Math.max(1, Math.floor(writeItems.length / 3)) ? "warning" : "success",
+    targetTimelineId: validationItems[0]?.id ?? writeItems[0]?.id ?? attentionItems[0]?.id,
+  });
+
+  return cards;
+}
+
+function buildWorkflowOptimizationPrompt(
+  cards: WorkflowOptimizationCard[],
+  diagnosticReport: string,
+  model: ActivityRailModel,
+) {
+  const cardSummary = cards.map((card, index) => [
+    `${index + 1}. ${card.title}：${card.metric}`,
+    `   观察：${card.summary}`,
+    `   证据：${card.evidence}`,
+    `   下一步：${card.action}`,
+  ].join("\n")).join("\n\n");
+
+  return [
+    "请基于本轮 Trace 诊断，优化你后续执行这类任务的工作流和 skill 使用方式。",
+    "",
+    "目标：",
+    "1. 找出本轮最浪费时间、上下文和工具调用的环节。",
+    "2. 把问题转成下一轮可执行的工作流规则，不要只做泛泛总结。",
+    "3. 如果适合沉淀成 skill 或项目规则，请给出具体文件、触发条件、输入输出格式和最小实现步骤。",
+    "4. 后续处理类似任务时，优先按这些规则约束自己。",
+    "",
+    "内置工具调用模式：",
+    "- 已知多个具体文件需要查看时，优先并发读取，不要串行一个个 Read。",
+    "- 目标文件不明确时，先用一次只读 Bash 搜索/筛选收敛范围，例如 rg/find/sed/awk，再读取少量命中文件。",
+    "- 避免碎片链路：ls -> cat -> grep -> cat。能用一次 rg 或一次批量只读命令得到结论时，不要拆成多次工具调用。",
+    "- 只读批量操作可以合并；写入、删除、移动、安装、提交等有副作用操作不要混进批量 Bash。",
+    "- 复盘时如果发现同目录串行多次 Read、重复 Bash、ls/cat/grep 链路，应优先建议改成并发读取或先搜索收敛。",
+    "",
+    "本轮概览：",
+    `- 状态：${model.summary.statusLabel}`,
+    `- 节点数：${model.timeline.length}`,
+    `- 输入规模：${model.summary.inputLabel}`,
+    `- 输出规模：${model.summary.outputLabel}`,
+    `- Prompt 估算：${model.promptAnalysis.totalTokenEstimate.toLocaleString("zh-CN")} tok`,
+    "",
+    "工作流优化卡片：",
+    cardSummary || "- 暂无优化卡片。",
+    "",
+    "诊断报告：",
+    diagnosticReport,
+    "",
+    "请输出：",
+    "- 优先级排序的工作流问题清单",
+    "- 每个问题的证据",
+    "- 下一轮执行 SOP",
+    "- 应该新增或修改的 skill / 规则",
+    "- 可以立刻落地的代码或文档改动建议",
+  ].join("\n");
 }
 
 function normalizeSearchText(text: string) {
@@ -581,7 +764,7 @@ function aggregatePromptBuckets(analysis: PromptAnalysisModel): PromptSourceAggr
 
 function buildPromptPayloadPreview(analysis: PromptAnalysisModel) {
   if (analysis.buckets.length === 0) {
-    return "暂无 Prompt Ledger 数据。新的请求会自动记录系统、项目、Skills、记忆、当前输入和历史上下文来源。";
+    return "暂无提示词账本数据。新的请求会自动记录系统、项目、Skills、记忆、当前输入和历史上下文来源。";
   }
 
   return analysis.buckets
@@ -778,7 +961,7 @@ function diagnosePromptSegment(
       compressionLabel: "未判断",
       actionLabel: "先选择片段",
       actionTone: "neutral",
-      reasons: ["选择 Prompt 分布表格中的片段后，这里会解释它是否有用、是否可压缩、应该怎么处理。"],
+      reasons: ["选择提示词分布表格中的片段后，这里会解释它是否有用、是否可压缩、应该怎么处理。"],
     };
   }
 
@@ -851,8 +1034,8 @@ function buildPromptHealthSummary(
       tone: "neutral",
       label: "暂无数据",
       headline: "还没有可分析的真实发送上下文。",
-      details: ["新的请求会自动记录 Prompt Ledger，再生成上下文健康度。"],
-      nextActions: ["先发起一轮真实会话，再回到 Prompt Ledger 查看诊断。"],
+      details: ["新的请求会自动记录提示词账本，再生成上下文健康度。"],
+      nextActions: ["先发起一轮真实会话，再回到提示词账本查看诊断。"],
     };
   }
 
@@ -1055,7 +1238,7 @@ function buildTraceDiagnosticReport(
       ? topSources.map((source, index) => (
         `${index + 1}. ${source.label}：${source.tokenEstimate.toLocaleString("zh-CN")} tok，${(source.ratio * 100).toFixed(1)}%`
       ))
-      : ["- 暂无 Prompt Ledger 来源"]),
+      : ["- 暂无提示词账本来源"]),
     "",
     "优先优化片段",
     ...(topSegments.length > 0
@@ -1093,27 +1276,27 @@ function PromptSegmentRow({
       )}
       onClick={onSelect}
     >
-      <td className="px-3 py-2 font-mono text-[11px] text-slate-500">
+      <td className="px-3 py-3.5 font-mono text-[11px] text-slate-500">
         {segment.round ? `#${segment.round}` : "-"}
       </td>
-      <td className="px-3 py-2">
+      <td className="px-3 py-3.5">
         <div className="flex min-w-0 items-center gap-2">
           <span className={cx("h-2 w-2 shrink-0 rounded-full", meta.dotClass)} />
           <span className="truncate text-[11px] font-bold text-slate-700">{segmentKindLabel(segment)}</span>
         </div>
       </td>
-      <td className="px-3 py-2">
-        <div className="truncate text-[12px] font-medium text-slate-800">{segment.sample || segment.label}</div>
-        <div className="mt-0.5 flex gap-2 text-[10px] text-slate-400">
+      <td className="px-3 py-3.5">
+        <div className="truncate text-[12px] font-medium leading-5 text-slate-800">{segment.sample || segment.label}</div>
+        <div className="mt-1 flex gap-2 text-[10px] leading-4 text-slate-400">
           {segment.toolName ? <span>{segment.toolName}</span> : null}
           {segment.nodeId ? <span>{truncate(segment.nodeId, 28)}</span> : null}
           {linked ? <span className="font-bold text-blue-600">当前节点</span> : null}
         </div>
       </td>
-      <td className="px-3 py-2 text-right font-mono text-[11px] text-slate-500">
+      <td className="px-3 py-3.5 text-right font-mono text-[11px] text-slate-500">
         {segment.tokenEstimate.toLocaleString("zh-CN")}
       </td>
-      <td className="px-3 py-2">
+      <td className="px-3 py-3.5">
         {risk ? (
           <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
             {riskLabel(risk)}
@@ -1124,7 +1307,7 @@ function PromptSegmentRow({
           </span>
         )}
       </td>
-      <td className="px-3 py-2">
+      <td className="px-3 py-3.5">
         <span
           className={cx(
             "inline-flex max-w-full rounded border px-1.5 py-0.5 text-[10px] font-bold",
@@ -1135,8 +1318,8 @@ function PromptSegmentRow({
           {traceLink.label}
         </span>
       </td>
-      <td className="px-3 py-2">
-        <span className="line-clamp-2 text-[10px] leading-4 text-slate-500">
+      <td className="px-3 py-3.5">
+        <span className="line-clamp-2 text-[11px] leading-5 text-slate-500">
           {segment.optimizationHint ? "可优化" : "保留"}
         </span>
       </td>
@@ -1194,7 +1377,7 @@ function PromptLedgerPanel({
         matchedIds: new Set<string>(),
         mode: "none" as const,
         label: "未选择节点",
-        detail: "从左侧 Trace Flow 选择节点后，这里会自动显示关联片段。",
+        detail: "从左侧执行链路选择节点后，这里会自动显示关联片段。",
         tokenEstimate: 0,
         sourceLabels: [] as string[],
       };
@@ -1219,19 +1402,11 @@ function PromptLedgerPanel({
       return false;
     });
 
-    const round = exact.length > 0
-      ? []
-      : analysis.segments.filter((segment) => (
-        typeof selectedTimelineItem.round === "number" &&
-        selectedTimelineItem.round > 0 &&
-        segment.round === selectedTimelineItem.round
-      ));
-
     const exactIds = new Set(exact.map((segment) => segment.id));
-    const roundIds = new Set(round.map((segment) => segment.id));
-    const matchedIds = exactIds.size > 0 ? exactIds : roundIds;
-    const mode = exactIds.size > 0 ? "exact" : roundIds.size > 0 ? "round" : "empty";
-    const matchedSegments = exactIds.size > 0 ? exact : round;
+    const roundIds = new Set<string>();
+    const matchedIds = exactIds;
+    const mode = exactIds.size > 0 ? "exact" : "empty";
+    const matchedSegments = exact;
     const tokenEstimate = matchedSegments.reduce((sum, segment) => sum + segment.tokenEstimate, 0);
     const sourceLabels = Array.from(new Set(matchedSegments.map(segmentKindLabel))).slice(0, 4);
 
@@ -1246,9 +1421,7 @@ function PromptLedgerPanel({
       detail:
         mode === "exact"
           ? `已匹配 ${exactIds.size} 个直接关联片段。`
-          : mode === "round"
-            ? `没有直接节点片段，显示第 ${selectedTimelineItem.round} 轮上下文。`
-            : "这个节点暂时没有可追踪到 Prompt Ledger 的片段。",
+          : "这个节点暂时没有可追踪到提示词账本的直接片段。",
     };
   }, [analysis.segments, selectedTimelineItem]);
 
@@ -1391,45 +1564,12 @@ function PromptLedgerPanel({
         <PromptMetricCard label="记录轮次" value={`${analysis.ledgers.length}`} detail={largest ? `最大来源：${largest.label}` : "暂无来源"} />
       </div>
 
-      <section className={cx("shrink-0 rounded-lg border p-3", tonePanelClass(healthSummary.tone))}>
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <div className="text-[11px] font-black uppercase tracking-widest opacity-70">上下文健康度</div>
-              <span className="rounded bg-white/60 px-2 py-0.5 text-[10px] font-bold">{healthSummary.label}</span>
-            </div>
-            <div className="mt-1 text-[13px] font-bold">{healthSummary.headline}</div>
-          </div>
-          <div className="shrink-0 text-right">
-            <div className="font-mono text-2xl font-black leading-none">{healthSummary.score}</div>
-            <div className="mt-1 text-[9px] font-bold uppercase tracking-widest opacity-70">score</div>
-          </div>
-        </div>
-        <div className="mt-3 grid gap-2 lg:grid-cols-2">
-          <div className="space-y-1.5">
-            {healthSummary.details.map((detail) => (
-              <div key={detail} className="rounded border border-white/50 bg-white/50 px-2 py-1.5 text-[11px] leading-5">
-                {detail}
-              </div>
-            ))}
-          </div>
-          <div className="space-y-1.5">
-            {healthSummary.nextActions.map((action, index) => (
-              <div key={action} className="flex gap-2 rounded border border-white/50 bg-white/50 px-2 py-1.5 text-[11px] leading-5">
-                <span className="font-mono font-bold opacity-70">{index + 1}</span>
-                <span>{action}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <div className="flex min-h-0 flex-1 flex-col gap-3">
-        <main className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <div className="flex min-h-[720px] flex-1 flex-col gap-3">
+        <main className="flex min-h-[360px] flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
           <div className="shrink-0 border-b border-slate-100 bg-slate-50 px-3 py-2">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-[11px] font-black uppercase tracking-widest text-slate-600">Prompt 分布</div>
+                <div className="text-[11px] font-black uppercase tracking-widest text-slate-600">提示词分布</div>
                 <div className="mt-1 text-[10px] text-slate-400">
                   {scopeMode === "node" && selectedTimelineItem
                     ? `${nodeRelation.label} · ${nodeRelation.detail}`
@@ -1510,13 +1650,11 @@ function PromptLedgerPanel({
                         "rounded px-1.5 py-0.5 text-[10px] font-bold",
                         nodeRelation.mode === "exact"
                           ? "bg-emerald-50 text-emerald-700"
-                          : nodeRelation.mode === "round"
-                            ? "bg-blue-50 text-blue-700"
-                            : "bg-slate-100 text-slate-500",
+                          : "bg-slate-100 text-slate-500",
                       )}>
-                        {nodeRelation.mode === "exact" ? "直接匹配" : nodeRelation.mode === "round" ? "同轮回退" : "未命中"}
+                        {nodeRelation.mode === "exact" ? "直接匹配" : "未命中"}
                       </span>
-                      <span className="font-mono text-[10px] text-slate-400">Round {selectedTimelineItem.round || "-"}</span>
+                      <span className="font-mono text-[10px] text-slate-400">第 {selectedTimelineItem.round || "-"} 轮</span>
                     </div>
                     <div className="mt-1 truncate text-[11px] font-bold text-slate-800">
                       {selectedTimelineItem.toolName || selectedTimelineItem.title}
@@ -1576,7 +1714,9 @@ function PromptLedgerPanel({
                 {visibleSegments.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="px-4 py-8 text-center text-[12px] text-slate-500">
-                      暂无 Prompt Ledger 片段。新的请求会自动记录真实发送上下文。
+                      {scopeMode === "node" && selectedTimelineItem
+                        ? "当前执行节点没有直接关联的提示词账本片段。"
+                        : "暂无提示词账本片段。新的请求会自动记录真实发送上下文。"}
                     </td>
                   </tr>
                 ) : null}
@@ -1766,10 +1906,43 @@ function PromptLedgerPanel({
               </div>
             </div>
           ) : (
-            <div className="p-4 text-[12px] text-slate-500">选择一段 Prompt 片段查看原文。</div>
+            <div className="p-4 text-[12px] text-slate-500">选择一段提示词片段查看原文。</div>
           )}
         </aside>
       </div>
+
+      <section className={cx("shrink-0 rounded-lg border p-3", tonePanelClass(healthSummary.tone))}>
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <div className="text-[11px] font-black uppercase tracking-widest opacity-70">上下文健康度</div>
+              <span className="rounded bg-white/60 px-2 py-0.5 text-[10px] font-bold">{healthSummary.label}</span>
+            </div>
+            <div className="mt-1 text-[13px] font-bold">{healthSummary.headline}</div>
+          </div>
+          <div className="shrink-0 text-right">
+            <div className="font-mono text-2xl font-black leading-none">{healthSummary.score}</div>
+            <div className="mt-1 text-[9px] font-bold uppercase tracking-widest opacity-70">score</div>
+          </div>
+        </div>
+        <div className="mt-3 grid gap-2 lg:grid-cols-2">
+          <div className="space-y-1.5">
+            {healthSummary.details.map((detail) => (
+              <div key={detail} className="rounded border border-white/50 bg-white/50 px-2 py-1.5 text-[11px] leading-5">
+                {detail}
+              </div>
+            ))}
+          </div>
+          <div className="space-y-1.5">
+            {healthSummary.nextActions.map((action, index) => (
+              <div key={action} className="flex gap-2 rounded border border-white/50 bg-white/50 px-2 py-1.5 text-[11px] leading-5">
+                <span className="font-mono font-bold opacity-70">{index + 1}</span>
+                <span>{action}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
@@ -1778,10 +1951,12 @@ export function SessionAnalysisPage({
   session,
   partialMessage,
   onBack,
+  onSendWorkflowOptimizationPrompt,
 }: {
   session: SessionView | undefined;
   partialMessage: string;
   onBack: () => void;
+  onSendWorkflowOptimizationPrompt: (prompt: string) => void;
 }) {
   const model = useMemo(
     () => buildActivityRailModel(session, session?.permissionRequests ?? [], ""),
@@ -2038,6 +2213,10 @@ export function SessionAnalysisPage({
   const relatedSteps = selectedItem
     ? baseGroups.filter((group) => group.items.some((item) => item.id === selectedItem.id))
     : [];
+  const workflowOptimizationCards = useMemo(
+    () => buildWorkflowOptimizationCards(baseGroups, model.timeline, model.promptAnalysis),
+    [baseGroups, model.timeline, model.promptAnalysis],
+  );
 
   const selectedNodeMeta = selectedItem ? getNodeKindMeta(selectedItem) : null;
   const selectedRawText =
@@ -2076,7 +2255,7 @@ export function SessionAnalysisPage({
               <span>返回会话</span>
             </button>
             <nav className="flex min-w-0 items-center gap-1.5 text-slate-400">
-              <span>Traces</span>
+              <span>执行轨迹</span>
               <span className="text-slate-300">{">"}</span>
               <span className="truncate text-primary font-bold">{session?.id.slice(0, 10) ?? "empty"}</span>
             </nav>
@@ -2143,7 +2322,7 @@ export function SessionAnalysisPage({
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
             <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-4 py-3">
               <div>
-                <h2 className="text-xs font-black uppercase tracking-[0.18em] text-slate-600">Trace Flow</h2>
+                <h2 className="text-xs font-black uppercase tracking-[0.18em] text-slate-600">执行链路</h2>
                 <p className="mt-1 text-[11px] text-slate-500">{currentScopeLabel}</p>
               </div>
               <div className="flex items-center gap-2">
@@ -2152,14 +2331,14 @@ export function SessionAnalysisPage({
                   onClick={() => setCollapsedGroupIds(baseGroups.map((group) => group.id))}
                   className="text-[10px] font-bold text-slate-500 transition hover:text-primary"
                 >
-                  Collapse All
+                  全部收起
                 </button>
                 <button
                   type="button"
                   onClick={() => setCollapsedGroupIds([])}
                   className="text-[10px] font-bold text-primary transition hover:underline"
                 >
-                  Expand All
+                  全部展开
                 </button>
               </div>
             </div>
@@ -2257,7 +2436,7 @@ export function SessionAnalysisPage({
 
                           <div className="mt-2 flex flex-wrap gap-1.5">
                             <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-slate-500">
-                              Round {group.indexLabel}
+                              第 {group.indexLabel} 轮
                             </span>
                             <span className={cx("rounded-full border px-2 py-0.5 text-[10px] font-bold", getStatusBadgeClass(group.status))}>
                               {STATUS_LABELS[group.status]}
@@ -2322,7 +2501,7 @@ export function SessionAnalysisPage({
                       : "border-transparent text-slate-400 hover:text-slate-600",
                   )}
                 >
-                  Node Inspector
+                  节点详情
                 </button>
                 <button
                   type="button"
@@ -2334,7 +2513,7 @@ export function SessionAnalysisPage({
                       : "border-transparent text-slate-400 hover:text-slate-600",
                   )}
                 >
-                  Prompt Ledger
+                  提示词账本
                 </button>
                 <button
                   type="button"
@@ -2346,7 +2525,7 @@ export function SessionAnalysisPage({
                       : "border-transparent text-slate-400 hover:text-slate-600",
                   )}
                 >
-                  Raw Log
+                  原始日志
                 </button>
                 <button
                   type="button"
@@ -2358,12 +2537,12 @@ export function SessionAnalysisPage({
                       : "border-transparent text-slate-400 hover:text-slate-600",
                   )}
                 >
-                  Analytics
+                  分析优化
                 </button>
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-[9px] font-bold uppercase text-slate-400">Status:</span>
+                <span className="text-[9px] font-bold uppercase text-slate-400">状态：</span>
                 <span className={cx("h-1.5 w-1.5 rounded-full", toneDotClass(selectedItem?.tone ?? model.summary.statusTone))} />
                 <span className="text-[10px] font-bold text-slate-700">
                   {selectedItem?.statusLabel || model.summary.statusLabel}
@@ -2421,7 +2600,7 @@ export function SessionAnalysisPage({
                   <div className="space-y-4">
                     {inputSections.length > 0 ? (
                       <SectionBlock
-                        title="Input Payload"
+                        title="输入载荷"
                         textModeLabel="Text"
                         altModeLabel="JSON"
                         body={sectionPrimaryText(inputSections[0]!)}
@@ -2430,7 +2609,7 @@ export function SessionAnalysisPage({
 
                     {outputSections.length > 0 ? (
                       <SectionBlock
-                        title="Output Result"
+                        title="输出结果"
                         textModeLabel="Preview"
                         altModeLabel="JSON"
                         body={sectionPrimaryText(outputSections[0]!)}
@@ -2439,7 +2618,7 @@ export function SessionAnalysisPage({
 
                     {inputSections.length === 0 && outputSections.length === 0 ? (
                       <SectionBlock
-                        title="Node Summary"
+                        title="节点摘要"
                         textModeLabel="Preview"
                         altModeLabel="JSON"
                         body={selectedItem.preview || selectedItem.detail}
@@ -2449,7 +2628,7 @@ export function SessionAnalysisPage({
 
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Technical Context</span>
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">技术上下文</span>
                       <div className="h-px flex-1 bg-slate-100" />
                     </div>
                     <div className="grid grid-cols-2 gap-2">
@@ -2469,7 +2648,7 @@ export function SessionAnalysisPage({
 
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Full Metadata Object</span>
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">完整元数据</span>
                       <div className="h-px flex-1 bg-slate-100" />
                     </div>
                     <CodeBlock text={selectedRawText} maxHeight={280} />
@@ -2501,6 +2680,62 @@ export function SessionAnalysisPage({
                 </div>
               ) : (
                 <div className="space-y-5">
+                  <section className="rounded-lg border border-slate-200 bg-white p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[11px] font-black uppercase tracking-widest text-slate-700">工作流优化</div>
+                        <div className="mt-1 text-[11px] leading-5 text-slate-500">
+                          从耗时、上下文噪音、工具重复和验证缺口里挑出下一轮最该改的地方。
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onSendWorkflowOptimizationPrompt(buildWorkflowOptimizationPrompt(workflowOptimizationCards, diagnosticReport, model))}
+                        disabled={!session?.id || session.status === "running"}
+                        className="shrink-0 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] font-bold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        发送给 AI 优化工作流
+                      </button>
+                    </div>
+                    <div className="mt-3 grid gap-2 xl:grid-cols-2">
+                      {workflowOptimizationCards.map((card) => (
+                        <button
+                          key={card.id}
+                          type="button"
+                          onClick={() => {
+                            if (!card.targetTimelineId) return;
+                            setSelectedTimelineId(card.targetTimelineId);
+                            const matchedGroup = baseGroups.find((group) =>
+                              group.items.some((item) => item.id === card.targetTimelineId),
+                            );
+                            setSelectedGroupId(matchedGroup?.id ?? "all");
+                            setInspectorTab("node");
+                          }}
+                          className={cx(
+                            "rounded-lg border p-3 text-left transition hover:shadow-sm",
+                            tonePanelClass(card.tone),
+                          )}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-[12px] font-black">{card.title}</div>
+                              <div className="mt-1 text-[11px] leading-5 opacity-90">{card.summary}</div>
+                            </div>
+                            <div className="shrink-0 rounded bg-white/70 px-2 py-1 font-mono text-[12px] font-black">
+                              {card.metric}
+                            </div>
+                          </div>
+                          <div className="mt-2 rounded border border-white/60 bg-white/55 px-2 py-1.5 text-[11px] leading-5">
+                            {card.evidence}
+                          </div>
+                          <div className="mt-2 rounded border border-white/60 bg-white/70 px-2 py-1.5 text-[11px] font-bold leading-5">
+                            下一步：{card.action}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+
                   <section className="rounded-lg border border-blue-200 bg-blue-50/60 p-3">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -2518,12 +2753,12 @@ export function SessionAnalysisPage({
 
                   <div className="grid gap-2 md:grid-cols-4">
                     <div className="rounded border border-slate-200 bg-slate-50 p-3">
-                      <div className="text-[10px] uppercase tracking-wider text-slate-400">Current Scope</div>
+                      <div className="text-[10px] uppercase tracking-wider text-slate-400">当前范围</div>
                       <div className="mt-1 text-[13px] font-bold text-slate-800">{currentScopeLabel}</div>
                       <div className="mt-1 text-[11px] leading-5 text-slate-500">{currentScopeDetail}</div>
                     </div>
                     <div className="rounded border border-slate-200 bg-slate-50 p-3">
-                      <div className="text-[10px] uppercase tracking-wider text-slate-400">Node Metrics</div>
+                      <div className="text-[10px] uppercase tracking-wider text-slate-400">节点指标</div>
                       <div className="mt-1 text-[13px] font-bold text-slate-800">
                         {formatDurationMs(selectedItem.metrics.durationMs)}
                       </div>
@@ -2532,13 +2767,13 @@ export function SessionAnalysisPage({
                       </div>
                     </div>
                     <div className="rounded border border-slate-200 bg-slate-50 p-3">
-                      <div className="text-[10px] uppercase tracking-wider text-slate-400">Latest Prompt</div>
+                      <div className="text-[10px] uppercase tracking-wider text-slate-400">最新提示词</div>
                       <div className="mt-1 text-[11px] leading-5 text-slate-700">
                         {truncate(model.contextSnapshot.latestPrompt || "当前会话没有显式主问题。", 120)}
                       </div>
                     </div>
                     <div className="rounded border border-slate-200 bg-slate-50 p-3">
-                      <div className="text-[10px] uppercase tracking-wider text-slate-400">Live Draft</div>
+                      <div className="text-[10px] uppercase tracking-wider text-slate-400">实时草稿</div>
                       <div className="mt-1 text-[11px] leading-5 text-slate-700">
                         {liveDraftPreview || "当前没有流式草稿。"}
                       </div>
@@ -2550,7 +2785,7 @@ export function SessionAnalysisPage({
 
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Context Distribution</span>
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">上下文分布</span>
                       <div className="h-px flex-1 bg-slate-100" />
                     </div>
                     <div className="grid gap-2 md:grid-cols-2">
@@ -2585,7 +2820,7 @@ export function SessionAnalysisPage({
 
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Analysis Cards</span>
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">分析卡片</span>
                       <div className="h-px flex-1 bg-slate-100" />
                     </div>
                     <div className="space-y-2">
@@ -2617,7 +2852,7 @@ export function SessionAnalysisPage({
 
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Related Steps</span>
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">关联步骤</span>
                       <div className="h-px flex-1 bg-slate-100" />
                     </div>
                     <div className="space-y-2">
@@ -2642,7 +2877,7 @@ export function SessionAnalysisPage({
                         ))
                       ) : (
                         <div className="rounded border border-slate-200 bg-slate-50 px-3 py-3 text-[11px] text-slate-500">
-                          当前节点没有映射到额外步骤，可以继续从左侧 Trace Flow 回看上下游节点。
+                          当前节点没有映射到额外步骤，可以继续从左侧执行链路回看上下游节点。
                         </div>
                       )}
                     </div>
@@ -2653,8 +2888,8 @@ export function SessionAnalysisPage({
 
             <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50 p-2.5">
               <div className="flex gap-1">
-                <CopyButton label="Raw JSON" value={metadataPreview} secondary />
-                <CopyButton label="Debug Text" value={selectedRawText} secondary />
+                <CopyButton label="原始 JSON" value={metadataPreview} secondary />
+                <CopyButton label="调试文本" value={selectedRawText} secondary />
               </div>
               <CopyButton label="复制 Metadata" value={metadataPreview} />
             </div>

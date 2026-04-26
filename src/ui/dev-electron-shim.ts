@@ -168,6 +168,8 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         "默认要求：涉及网页查看、抓取、调试、标注、截图的场景，默认优先使用 Electron 内置浏览器工作台（BrowserView）。",
         "",
         "禁止默认走外部 browse skill。请优先用浏览器 MCP（browser_get_state / browser_extract_page / browser_capture_visible ...）。",
+        "",
+        "设计还原默认规则：只要用户提供截图、Figma 图、页面参考图，并要求生成或修改 UI/前端代码，请优先使用设计 MCP。单张参考图先用 design_inspect_image 生成结构化视觉摘要；已有页面后再用 design_capture_current_view / design_compare_current_view / design_compare_images 生成当前截图、三栏比照图和差异图，再按差异修 UI。",
       ].join("\n"),
       userClaudeRoot: "/Users/lst01/.claude",
       userAgentsPath: "/Users/lst01/.claude/AGENTS.md",

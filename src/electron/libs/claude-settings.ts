@@ -172,7 +172,68 @@ export function buildEnvForConfig(config: ApiConfig, modelOverride?: string): Re
   baseEnv.ANTHROPIC_BASE_URL = config.baseURL;
   baseEnv.ANTHROPIC_MODEL = modelOverride ?? config.model;
 
-  return baseEnv;
+  const runtimeEnv = buildGlobalRuntimeEnvConfig();
+  return {
+    ...baseEnv,
+    ...runtimeEnv,
+  };
+}
+
+export function getGlobalRuntimeEnvConfig(): Record<string, string> {
+  return buildGlobalRuntimeEnvConfig();
+}
+
+function buildGlobalRuntimeEnvConfig(): Record<string, string> {
+  const config = loadGlobalRuntimeConfig();
+  const env = isRecord(config?.env) ? config.env : null;
+  if (!env) {
+    return {};
+  }
+
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (!isUsableEnvKey(key)) {
+      continue;
+    }
+    const normalizedValue = toEnvValue(value);
+    if (normalizedValue == null) {
+      continue;
+    }
+    result[key] = normalizedValue;
+  }
+
+  return result;
+}
+
+function isUsableEnvKey(name: unknown): name is string {
+  if (typeof name !== "string") {
+    return false;
+  }
+
+  const normalized = name.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  return /^([A-Z_][A-Z0-9_]*)$/i.test(normalized) && !normalized.toUpperCase().startsWith("ANTHROPIC_");
+}
+
+function toEnvValue(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  if (typeof value === "boolean") {
+    return value ? "true" : "false";
+  }
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 export function getModelConfig(config: ApiConfig, modelName = config.model): ApiModelConfig | null {

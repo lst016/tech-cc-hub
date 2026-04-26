@@ -13,9 +13,12 @@ import { extname } from "path";
 import { buildAnthropicPromptContentBlocks } from "../../shared/attachments.js";
 import type { PromptAttachment, RuntimeOverrides, ServerEvent } from "../types.js";
 import { resolveAgentRuntimeContext } from "./agent-resolver.js";
-import { buildEnvForConfig, getClaudeCodePath, getCurrentApiConfig } from "./claude-settings.js";
+import { buildEnvForConfig, getClaudeCodePath, getCurrentApiConfig, getGlobalRuntimeConfig } from "./claude-settings.js";
+import { saveGlobalRuntimeConfig } from "./config-store.js";
 import { summarizeBase64Image, summarizeLocalImageFile } from "./image-preprocessor.js";
-import { BROWSER_TOOL_NAMES, getBrowserMcpServer } from "./browser-mcp-tools.js";
+import { ADMIN_TOOL_NAMES, getAdminMcpServer } from "./mcp-tools/admin.js";
+import { BROWSER_TOOL_NAMES, getBrowserMcpServer } from "./mcp-tools/browser.js";
+import { DESIGN_TOOL_NAMES, getDesignMcpServer } from "./mcp-tools/design.js";
 import { normalizeRunnerError } from "./runner-error.js";
 import type { Session } from "./session-store.js";
 import { buildToolImageReplacementText, extractInlineBase64ImageFromToolResponse } from "./tool-output-sanitizer.js";
@@ -39,10 +42,27 @@ const DEFAULT_CWD = process.cwd();
 const ALWAYS_ALLOWED_TOOLS = new Set([
   "AskUserQuestion",
   ...BROWSER_TOOL_NAMES,
+  ...ADMIN_TOOL_NAMES,
+  ...DESIGN_TOOL_NAMES,
 ]);
+const SKILL_ENV_HINTS: Record<string, string[]> = {
+  feishu: ["FEISHU", "LARK"],
+  飞书: ["FEISHU", "LARK"],
+  "figma官方": ["FIGMA"],
+  lark: ["LARK", "FEISHU"],
+  figma: ["FIGMA"],
+  notion: ["NOTION"],
+  jira: ["JIRA"],
+  slack: ["SLACK"],
+  linear: ["LINEAR"],
+  github: ["GITHUB", "GH_"],
+  gitlab: ["GITLAB"],
+};
 const RASTER_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
 const MAX_IMAGE_READS_PER_RUN = 1;
 const MAX_SINGLE_IMAGE_READ_BYTES = 400_000;
+const LARGE_IMAGE_READ_GUIDANCE =
+  "图片文件过大，不能用 Read 直接读入主上下文。请改用内置图片/设计工具：如果是两张截图对比，用 mcp__tech-cc-hub-design__design_compare_images；如果是当前浏览器页面与参考图对齐，用 mcp__tech-cc-hub-design__design_compare_current_view；如果只需要图片信息，请基于用户消息里的图片资产路径/缩略图路径调用专门视觉工具或让用户裁剪关键区域。";
 
 function getRequestedModelName(configModel: string | undefined, runtimeModel: string | undefined): string | undefined {
   const normalizedRuntimeModel = runtimeModel?.trim();
@@ -125,10 +145,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       }
 
       const env = buildEnvForConfig(config, runtime?.model);
+      const globalRuntimeConfig = getGlobalRuntimeConfig();
       const mergedEnv = {
         ...getEnhancedEnv(),
         ...env,
       };
+      let syncedGlobalRuntimeConfig = persistDiscoveredRuntimeConfig(globalRuntimeConfig, mergedEnv);
       const thinking = buildThinkingConfig(runtime?.reasoningMode);
       const effort = buildEffortLevel(runtime?.reasoningMode);
       const projectCwd = session.cwd && existsSync(session.cwd) ? session.cwd : undefined;
@@ -147,9 +169,15 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       );
       const hooks = buildQualityHooks(resolvedCwd, { config, prompt });
       const browserToolServer = getBrowserMcpServer();
+      const adminToolServer = getAdminMcpServer();
+      const designToolServer = getDesignMcpServer();
       const systemPromptAppend = combineSystemPromptAppend(
+        buildGlobalRuntimePromptAppend(syncedGlobalRuntimeConfig, mergedEnv),
+        buildAdminConfigPromptAppend(),
         agentContext.systemPromptAppend,
+        buildToolCallOptimizationPromptAppend(),
         buildBrowserWorkbenchPromptAppend(),
+        buildDesignParityPromptAppend(),
       );
 
       const q = query({
@@ -172,6 +200,8 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           includeHookEvents: true,
           mcpServers: {
             [browserToolServer.name]: browserToolServer,
+            [adminToolServer.name]: adminToolServer,
+            [designToolServer.name]: designToolServer,
           },
           hooks,
           allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
@@ -211,6 +241,17 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                 behavior: "deny",
                 message: "当前任务是在测试 tech-cc-hub 的 Electron 内置浏览器工作台，请使用 mcp__tech-cc-hub-browser__browser_get_state / browser_extract_page 等 MCP 工具，不要使用外部 browse skill。",
               };
+            }
+
+            if (toolName === "Skill" && isRecord(input)) {
+              const requestedSkill = typeof input.skill === "string" ? input.skill.trim() : "";
+              if (requestedSkill) {
+                syncedGlobalRuntimeConfig = persistDiscoveredRuntimeConfig(
+                  syncedGlobalRuntimeConfig,
+                  mergedEnv,
+                  requestedSkill,
+                );
+              }
             }
 
             if (toolName === "Read" && isRecord(input)) {
@@ -340,10 +381,16 @@ function isAlwaysAllowedTool(toolName: string): boolean {
     return true;
   }
 
-  return BROWSER_TOOL_NAMES.some((browserToolName) => (
-    toolName.endsWith(`__${browserToolName}`) ||
-    toolName.endsWith(`:${browserToolName}`) ||
-    toolName.endsWith(`/${browserToolName}`)
+  const alwaysAllowedMcpTools = [
+    ...BROWSER_TOOL_NAMES,
+    ...ADMIN_TOOL_NAMES,
+    ...DESIGN_TOOL_NAMES,
+  ];
+
+  return alwaysAllowedMcpTools.some((allowedToolName) => (
+    toolName.endsWith(`__${allowedToolName}`) ||
+    toolName.endsWith(`:${allowedToolName}`) ||
+    toolName.endsWith(`/${allowedToolName}`)
   ));
 }
 
@@ -355,6 +402,286 @@ function combineSystemPromptAppend(...sections: Array<string | undefined>): stri
   return joined || undefined;
 }
 
+function persistDiscoveredRuntimeConfig(
+  globalRuntimeConfig: unknown,
+  runtimeEnv: Record<string, string | undefined>,
+  requestedSkill?: string,
+): unknown {
+  const nextConfig: Record<string, unknown> = isRecord(globalRuntimeConfig) ? { ...globalRuntimeConfig } : {};
+  let changed = false;
+
+  const discoveredEnvKeys = getDiscoveredCredentialEnvKeys(runtimeEnv);
+  if (discoveredEnvKeys.length > 0) {
+    const envSection = isRecord(nextConfig.env) ? { ...nextConfig.env } : {};
+    for (const key of discoveredEnvKeys) {
+      const existingValue = typeof envSection[key] === "string" ? envSection[key].trim() : "";
+      const nextValue = runtimeEnv[key]?.trim();
+      if (nextValue && !existingValue) {
+        envSection[key] = nextValue;
+        changed = true;
+      }
+    }
+
+    if (Object.keys(envSection).length > 0) {
+      nextConfig.env = envSection;
+    }
+  }
+
+  if (requestedSkill) {
+    const skillCredentialName = getBestMatchedSkillName(requestedSkill);
+    const candidateKeys = getSkillEnvCandidates(skillCredentialName, discoveredEnvKeys);
+    if (candidateKeys.length > 0) {
+      const skillCredentials = isRecord(nextConfig.skillCredentials) ? { ...nextConfig.skillCredentials } : {};
+      const existingConfig = skillCredentials[skillCredentialName];
+      const existing = extractEnvVarNames(existingConfig);
+      const merged = Array.from(new Set([...existing, ...candidateKeys])).sort();
+      if (!areStringArraysEqual(existing, merged)) {
+        skillCredentials[skillCredentialName] = merged;
+        nextConfig.skillCredentials = skillCredentials;
+        changed = true;
+      }
+    }
+  }
+
+  if (!changed) {
+    return globalRuntimeConfig;
+  }
+
+  try {
+    saveGlobalRuntimeConfig(nextConfig);
+  } catch (error) {
+    console.error("[runner] Failed to persist auto-discovered skill credentials:", error);
+    return globalRuntimeConfig;
+  }
+
+  return nextConfig;
+}
+
+function areStringArraysEqual(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((item, index) => item === right[index]);
+}
+
+function getBestMatchedSkillName(requestedSkill: string): string {
+  return normalizeSkillCredentialKey(requestedSkill);
+}
+
+function getSkillEnvCandidates(skillName: string, discoveredEnvKeys: string[]): string[] {
+  const normalized = getNormalizedSkillName(skillName);
+  if (!normalized) {
+    return [];
+  }
+
+  const aliasKey = skillName.trim().toLowerCase();
+  const normalizedHints = SKILL_ENV_HINTS[aliasKey] ?? [];
+  const aliasHints = SKILL_ENV_HINTS[normalized] ?? [];
+  const fallbackHints = normalized.length >= 3 ? [normalized.toUpperCase()] : [];
+  const mapFallback = Object.entries(SKILL_ENV_HINTS)
+    .filter(([skillAlias]) => {
+      const normalizedAlias = getNormalizedSkillName(skillAlias);
+      if (!normalizedAlias) {
+        return false;
+      }
+      return normalized.includes(normalizedAlias) || normalizedAlias.includes(normalized);
+    })
+    .flatMap(([, value]) => value);
+
+  const candidates = Array.from(new Set([...normalizedHints, ...aliasHints, ...fallbackHints, ...mapFallback]));
+
+  return discoveredEnvKeys
+    .filter((key) => {
+      const upper = key.toUpperCase();
+      return candidates.some((hint) => upper.includes(hint));
+    })
+    .sort();
+}
+
+function getNormalizedSkillName(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, "");
+}
+
+function normalizeSkillCredentialKey(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, "-").replace(/^-+|-+$/g, "");
+  return normalized || "unknown";
+}
+
+function buildGlobalRuntimePromptAppend(
+  globalRuntimeConfig: unknown,
+  runtimeEnv: Record<string, string | undefined>,
+): string | undefined {
+  const configuredEnvKeys = getConfiguredRuntimeEnvKeys(globalRuntimeConfig);
+  const discoveredEnvKeys = getDiscoveredCredentialEnvKeys(runtimeEnv);
+  const envKeys = Array.from(new Set([...configuredEnvKeys, ...discoveredEnvKeys])).sort();
+  const skillCredentialHints = getSkillCredentialHints(globalRuntimeConfig);
+  const hasConfiguredRuntime = configuredEnvKeys.length > 0 || skillCredentialHints.length > 0;
+  const autoDiscoverLabel = hasConfiguredRuntime ? "" : "（未发现自定义凭证映射，已自动发现当前环境候选）";
+
+  if (envKeys.length === 0 && skillCredentialHints.length === 0) {
+    return undefined;
+  }
+
+  const hints: string[] = [
+    "全局运行参数已启用（用于技能与工具执行）：",
+    "若执行 skill/tool 需要鉴权，请优先使用对应环境变量；不要向用户暴露或回显密钥原文。",
+  ];
+
+  if (configuredEnvKeys.length > 0 || discoveredEnvKeys.length > 0) {
+    hints.push(
+      `已注入环境变量（名字）${autoDiscoverLabel}：${envKeys.join("、")}`,
+    );
+  }
+
+  if (skillCredentialHints.length > 0) {
+    hints.push("技能凭证映射（按技能归纳）：");
+    hints.push(...skillCredentialHints.map((hint) => `- ${hint}`));
+  }
+
+  return hints.join("\n");
+}
+
+function getConfiguredRuntimeEnvKeys(globalRuntimeConfig: unknown): string[] {
+  if (!isRecord(globalRuntimeConfig)) {
+    return [];
+  }
+
+  const envSection = isRecord(globalRuntimeConfig.env) ? globalRuntimeConfig.env : null;
+  if (!envSection) {
+    return [];
+  }
+
+  return Object.keys(envSection)
+    .map((key) => key.trim())
+    .filter(Boolean)
+    .filter((key) => !key.toUpperCase().startsWith("ANTHROPIC_"))
+    .sort();
+}
+
+function getDiscoveredCredentialEnvKeys(runtimeEnv: Record<string, string | undefined>): string[] {
+  return Object.entries(runtimeEnv)
+    .filter(([, value]) => typeof value === "string" && value.trim())
+    .map(([key]) => key)
+    .filter(isLikelyCredentialEnvName)
+    .filter((key) => !key.toUpperCase().startsWith("ANTHROPIC_"))
+    .sort();
+}
+
+function isLikelyCredentialEnvName(name: string): boolean {
+  if (!/^[A-Z_][A-Z0-9_]*$/i.test(name)) {
+    return false;
+  }
+
+  const upper = name.toUpperCase();
+
+  if (upper === "ANTHROPIC_AUTH_TOKEN" || upper === "ANTHROPIC_BASE_URL" || upper === "ANTHROPIC_MODEL") {
+    return false;
+  }
+
+  const noisyEnvVars = new Set([
+    "PATH",
+    "HOME",
+    "SHELL",
+    "TERM",
+    "TERM_PROGRAM",
+    "TERM_PROGRAM_VERSION",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "HOSTNAME",
+    "PWD",
+    "OLDPWD",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "LC_ALL",
+    "SHLVL",
+    "COLORTERM",
+    "SSH_ASKPASS",
+    "SSH_AGENT_PID",
+    "SSH_CONNECTION",
+    "TZ",
+    "XDG_SESSION_ID",
+    "XDG_RUNTIME_DIR",
+    "LC_CTYPE",
+    "LC_COLLATE",
+    "LC_MESSAGES",
+    "COMSPEC",
+    "SYSTEMROOT",
+    "WINDIR",
+    "APPDATA",
+    "LOCALAPPDATA",
+  ]);
+
+  if (noisyEnvVars.has(upper) || upper.startsWith("LC_") || upper.startsWith("XDG_")) {
+    return false;
+  }
+
+  const credentialMarker = /(TOKEN|KEY|SECRET|PASSWORD|PASS|AUTH|CREDENTIAL|CLIENT|ACCESS|BEARER|PAT|SIGN|OAUTH|API|CERT|PRIVATE)/i;
+  return credentialMarker.test(upper);
+}
+
+function getSkillCredentialHints(globalRuntimeConfig: unknown): string[] {
+  if (!isRecord(globalRuntimeConfig)) {
+    return [];
+  }
+
+  const sections = [
+    "skillCredentials",
+    "skills",
+    "toolCredentials",
+    "credentials",
+  ];
+
+  const hints = new Set<string>();
+  for (const sectionName of sections) {
+    const section = globalRuntimeConfig[sectionName];
+    if (!isRecord(section)) {
+      continue;
+    }
+
+    for (const [skillName, configValue] of Object.entries(section)) {
+      const envs = extractEnvVarNames(configValue);
+      if (envs.length === 0) {
+        continue;
+      }
+      hints.add(`${skillName}: ${envs.join("、")}`);
+    }
+  }
+
+  return Array.from(hints).sort();
+}
+
+function extractEnvVarNames(value: unknown): string[] {
+  if (typeof value === "string") {
+    return [value.trim()].filter(Boolean);
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter(Boolean);
+  }
+
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  const fromEnv = isRecord(value.env) ? value.env : null;
+  if (fromEnv) {
+    return Object.keys(fromEnv)
+      .filter(Boolean)
+      .filter((key) => !key.toUpperCase().startsWith("ANTHROPIC_"));
+  }
+
+  const direct = value.envVar;
+  if (typeof direct === "string" && direct.trim()) {
+    return [direct.trim()];
+  }
+
+  return [];
+}
+
 function buildBrowserWorkbenchPromptAppend(): string {
   return [
     "内置规则默认要求：涉及网页查看、抓取、调试、标注、截图的场景，默认优先使用 Electron 内置浏览器工作台（BrowserView）。",
@@ -363,6 +690,32 @@ function buildBrowserWorkbenchPromptAppend(): string {
     "不要为这些请求调用 Skill browse、ToolSearch 查找浏览器工具或 ~/.claude/skills/gstack/browse；那些连接的是外部浏览器会话，不是 tech-cc-hub 的右侧 BrowserView。",
     "常用工具：browser_get_state 获取当前 URL/标题；browser_extract_page 提取当前页面正文、标题、链接和图片；browser_console_logs 读取控制台日志；browser_capture_visible 截取可见区域。",
     "开发诊断工具：browser_get_dom_stats 统计 DOM 节点规模；browser_query_nodes 按 CSS selector 或 XPath 定向查节点；browser_inspect_styles 读取目标节点的计算样式、CSS 变量和内联样式。",
+  ].join("\n");
+}
+
+function buildAdminConfigPromptAppend(): string {
+  return [
+    "运行配置持久化规则：如需向 `agent-runtime.json` 写入通用配置（如 `env`、`skillCredentials`、`closeSidebarOnBrowserOpen`），应优先使用 `mcp__tech-cc-hub-admin__set_global_runtime_config` 工具。",
+    "工具只做合规持久化更新，不应回显任何密钥明文；返回值按字段名统计变化即可。",
+  ].join("\n");
+}
+
+function buildToolCallOptimizationPromptAppend(): string {
+  return [
+    "工具调用优化规则：已知多个具体文件需要查看时，优先并发读取，不要串行一个个 Read。",
+    "目标文件不明确时，先用一次只读 Bash 搜索/筛选收敛范围，例如 rg/find/sed/awk，再读取少量命中文件。",
+    "避免碎片链路：ls -> cat -> grep -> cat。能用一次 rg 或一次批量只读命令得到结论时，不要拆成多次工具调用。",
+    "只读批量操作可以合并；写入、删除、移动、安装、提交等有副作用操作不要混进批量 Bash。",
+    "复盘时如果发现同目录串行多次 Read、重复 Bash、ls/cat/grep 链路，应优先建议改成并发读取或先搜索收敛。",
+  ].join("\n");
+}
+
+function buildDesignParityPromptAppend(): string {
+  return [
+    "设计还原规则：只要用户提供截图、Figma 图、页面参考图，并要求生成或修改 UI/前端代码，必须优先使用内置设计 MCP 工具。",
+    "如果当前轮包含用户上传/粘贴的单张参考图，第一步必须调用 `design_inspect_image` 读取结构化视觉摘要；不要用 Read 读取图片，也不要把同一张图传给 `design_compare_images` 的 reference 和 candidate。",
+    "`design_capture_current_view` 可将当前 BrowserView 截图保存成 PNG；`design_compare_current_view` 可将当前截图与 Figma/参考图做截图比照，并返回当前截图、diff 图、三栏 comparison 图、差异比例、尺寸信息；`design_compare_images` 仅用于两张不同本地截图。",
+    "修 UI 时先生成当前截图和 comparison 图，再根据差异依次调整布局尺寸、间距、信息密度、颜色、字体、阴影和图标细节。",
   ].join("\n");
 }
 
@@ -392,6 +745,14 @@ function checkRasterImageRead(
     return { countRead: false };
   }
 
+  if (filePath.includes("/prompt-attachments/")) {
+    return {
+      denyMessage:
+        `这是用户上传截图落盘后的图片资产，不允许用 Read 直接读入主 Agent。请用 mcp__tech-cc-hub-design__design_compare_images 或 mcp__tech-cc-hub-design__design_compare_current_view 处理该路径：${filePath}`,
+      countRead: false,
+    };
+  }
+
   if (currentImageReads >= MAX_IMAGE_READS_PER_RUN) {
     return {
       denyMessage:
@@ -409,7 +770,7 @@ function checkRasterImageRead(
     if (size > MAX_SINGLE_IMAGE_READ_BYTES) {
       return {
         denyMessage:
-          `图片文件过大（${Math.round(size / 1024)} KB），直接读取容易造成上下文溢出。请改读相邻文档说明，或只处理裁剪后的关键截图。`,
+          `${LARGE_IMAGE_READ_GUIDANCE} 当前文件大小：${Math.round(size / 1024)} KB。`,
         countRead: false,
       };
     }
@@ -428,7 +789,10 @@ function shouldPreprocessImageRead(
   config: NonNullable<ReturnType<typeof getCurrentApiConfig>> | null,
   filePath: string,
 ): boolean {
-  return Boolean(config?.imageModel?.trim()) && isRasterImagePath(filePath);
+  void config;
+  void filePath;
+  // 临时关闭 Read 图片时的图片模型摘要拦截，避免截图比照/附件链路被替换成不可靠文本。
+  return false;
 }
 
 function createImageSummaryToolOutput(summary: string): { content: Array<{ type: "text"; text: string }> } {

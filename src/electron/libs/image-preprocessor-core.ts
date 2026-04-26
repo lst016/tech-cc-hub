@@ -98,7 +98,9 @@ export async function preprocessImageAttachmentsCore(options: {
     nextAttachments.push({
       ...attachment,
       data: storedReference?.storageUri ?? attachment.preview ?? attachment.data,
-      preview: storedReference?.storageUri ?? attachment.preview ?? attachment.data,
+      // preview 专门给聊天记录/UI 展示使用，必须保留浏览器能直接渲染的 data URL。
+      // data/storageUri 可以指向持久化文件，runtimeData 再决定是否真正传给模型。
+      preview: attachment.preview ?? attachment.data,
       runtimeData: canKeepInlineImage ? (attachment.runtimeData ?? attachment.data) : undefined,
       size: storedReference?.size ?? attachment.size,
       storagePath: storedReference?.storagePath ?? attachment.storagePath,

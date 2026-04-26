@@ -13,6 +13,8 @@
   },
   "include": [
     "../../src/shared/activity-rail-model.ts",
-    "./activity-rail-model.test.ts"
+    "../../src/shared/attachments.ts",
+    "./activity-rail-model.test.ts",
+    "./runner-attachments.test.ts"
   ]
 }
