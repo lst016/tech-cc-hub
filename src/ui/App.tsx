@@ -8,12 +8,18 @@ import type { ServerEvent, SettingsPageId, StreamMessage } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { StartSessionModal } from "./components/StartSessionModal";
 import { SettingsModal } from "./components/SettingsModal";
+import { TooltipButton } from "./components/TooltipButton";
 import { PromptInput, usePromptActions } from "./components/PromptInput";
 import { MessageCard } from "./components/EventCard";
 import { ActivityRail } from "./components/ActivityRail";
 import { SessionAnalysisPage } from "./components/SessionAnalysisPage";
 import { BrowserWorkbenchPage } from "./components/BrowserWorkbenchPage";
 import MDContent from "./render/markdown";
+import {
+  DEV_BRIDGE_READY_EVENT,
+  getDevElectronRuntimeSource,
+  type DevElectronRuntimeSource,
+} from "./dev-electron-shim";
 
 const SCROLL_THRESHOLD = 50;
 const INITIAL_HISTORY_LIMIT = 400;
@@ -23,6 +29,7 @@ const MIN_SIDEBAR_WIDTH = 250;
 const MIN_ACTIVITY_RAIL_WIDTH = 400;
 const EMPTY_MESSAGES: StreamMessage[] = [];
 const EMPTY_PERMISSION_REQUESTS: NonNullable<ReturnType<typeof useAppStore.getState>["sessions"][string]["permissionRequests"]> = [];
+type GlobalRuntimeConfig = Record<string, unknown>;
 
 type StreamEventPayload = {
   type?: string;
@@ -38,6 +45,27 @@ type StreamEventMessage = StreamMessage & {
 
 type WorkspaceView = "chat" | "browser";
 
+const runtimeSourceMeta: Record<DevElectronRuntimeSource, { label: string; tooltip: string; className: string; dotClassName: string }> = {
+  bridge: {
+    label: "Dev Bridge",
+    tooltip: "localhost 正在连接 Electron 开发后端",
+    className: "border-emerald-500/20 bg-emerald-50 text-emerald-700",
+    dotClassName: "bg-emerald-500",
+  },
+  fallback: {
+    label: "Fallback",
+    tooltip: "当前使用浏览器预览占位后端",
+    className: "border-amber-500/24 bg-amber-50 text-amber-700",
+    dotClassName: "bg-amber-500",
+  },
+  electron: {
+    label: "Electron IPC",
+    tooltip: "当前连接桌面端 preload IPC",
+    className: "border-sky-500/20 bg-sky-50 text-sky-700",
+    dotClassName: "bg-sky-500",
+  },
+};
+
 function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -51,8 +79,10 @@ function App() {
   const [showSessionAnalysis, setShowSessionAnalysis] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
+  const [closeSidebarOnBrowserOpen, setCloseSidebarOnBrowserOpen] = useState(true);
   const [showActivityRail, setShowActivityRail] = useState(true);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("chat");
+  const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [activityRailWidth, setActivityRailWidth] = useState(420);
   const [resizingPane, setResizingPane] = useState<"sidebar" | "activityRail" | null>(null);
@@ -198,43 +228,6 @@ function App() {
     });
   }, [activeHistoryCursor, activeSessionId, connected, isLoadingHistory, sendEvent]);
 
-  useEffect(() => {
-    const applySvgButtonTooltips = () => {
-      const buttons = document.querySelectorAll("button");
-      buttons.forEach((button) => {
-        if (!(button instanceof HTMLButtonElement)) {
-          return;
-        }
-        if (!button.querySelector("svg")) {
-          return;
-        }
-        if (button.hasAttribute("title") || button.hasAttribute("aria-label")) {
-          if (!button.hasAttribute("title")) {
-            const ariaLabel = button.getAttribute("aria-label");
-            if (ariaLabel) {
-              button.setAttribute("title", ariaLabel);
-            }
-          }
-          return;
-        }
-        const label = button.textContent?.trim();
-        if (label) {
-          button.setAttribute("title", label);
-          return;
-        }
-        button.setAttribute("title", "按钮");
-      });
-    };
-
-    applySvgButtonTooltips();
-    const observer = new MutationObserver(() => {
-      applySvgButtonTooltips();
-    });
-    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
-    return () => {
-      observer.disconnect();
-    };
-  }, []);
   const {
     visibleMessages,
     hasMoreHistory,
@@ -547,8 +540,14 @@ function App() {
     event.stopPropagation();
     setShowSessionAnalysis(false);
     setShowActivityRail(true);
-    setWorkspaceView((current) => current === "browser" ? "chat" : "browser");
-  }, []);
+    setWorkspaceView((current) => {
+      const nextView = current === "browser" ? "chat" : "browser";
+      if (nextView === "browser" && closeSidebarOnBrowserOpen && showSidebar) {
+        setShowSidebar(false);
+      }
+      return nextView;
+    });
+  }, [closeSidebarOnBrowserOpen, showSidebar]);
 
   const handleDeleteSession = useCallback((sessionId: string) => {
     sendEvent({ type: "session.delete", payload: { sessionId } });
@@ -594,6 +593,38 @@ function App() {
     setShowSettingsModal(true);
   }, [setShowSettingsModal]);
 
+  const refreshBrowserWorkbenchPreference = useCallback(() => {
+    window.electron.getGlobalConfig()
+      .then((config) => {
+        const normalizedConfig = typeof config === "object" && config !== null && !Array.isArray(config)
+          ? config as GlobalRuntimeConfig
+          : {};
+        const configured = normalizedConfig.closeSidebarOnBrowserOpen;
+        setCloseSidebarOnBrowserOpen(configured !== false);
+      })
+      .catch((error) => {
+        console.error("Failed to load browser workbench preference:", error);
+      });
+  }, []);
+
+  useEffect(() => {
+    const handleDevBridgeReady = () => {
+      setRuntimeSource(getDevElectronRuntimeSource());
+      window.electron.getApiConfig()
+        .then((settings) => {
+          setApiConfigSettings(settings);
+        })
+        .catch((error) => {
+          console.error("Failed to refresh API config settings after bridge ready:", error);
+        });
+
+      refreshBrowserWorkbenchPreference();
+    };
+
+    window.addEventListener(DEV_BRIDGE_READY_EVENT, handleDevBridgeReady);
+    return () => window.removeEventListener(DEV_BRIDGE_READY_EVENT, handleDevBridgeReady);
+  }, [refreshBrowserWorkbenchPreference, setApiConfigSettings]);
+
   const startMaintenanceSession = useCallback(async (maintenancePrompt: string) => {
     const trimmedPrompt = maintenancePrompt.trim();
     if (!trimmedPrompt) {
@@ -635,44 +666,47 @@ function App() {
 
   const sidebarOffset = showSidebar ? sidebarWidth : 0;
   const activityRailOffset = !showSessionAnalysis && showActivityRail ? activityRailWidth : 0;
+  const runtimeMeta = runtimeSourceMeta[runtimeSource];
+
+  useEffect(() => {
+    refreshBrowserWorkbenchPreference();
+  }, [refreshBrowserWorkbenchPreference]);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.98),_rgba(243,246,250,0.97)_40%,_rgba(228,233,240,0.98)_100%)]">
       <header
-        className={`flex shrink-0 justify-between border-b border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(246,248,251,0.86))] px-4 shadow-[inset_0_-1px_0_rgba(15,23,42,0.05)] backdrop-blur-md ${headerHeightClass}`}
+        className={`relative z-[20000] flex shrink-0 justify-between border-b border-black/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(246,248,251,0.86))] px-4 shadow-[inset_0_-1px_0_rgba(15,23,42,0.08)] backdrop-blur-md ${headerHeightClass}`}
         style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
       >
         <div
           className={`flex items-center gap-2 ${isMac ? "pl-[86px]" : ""}`}
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
-          <button
+          <TooltipButton
             type="button"
+            tooltip={showSidebar ? "收起左侧栏" : "展开左侧栏"}
             onClick={() => setShowSidebar((current) => !current)}
             onMouseDown={(event) => {
               event.preventDefault();
             }}
             style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
             className={`inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/10 bg-white text-ink-700 transition hover:bg-ink-900/5 ${showSidebar ? "" : "bg-[#f3f6fb]"}`}
-            aria-label={showSidebar ? "收起左侧栏" : "展开左侧栏"}
-            title={showSidebar ? "收起左侧栏" : "展开左侧栏"}
           >
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
               <rect x="3.5" y="5" width="17" height="14" rx="2" />
               <path d="M9 5v14" />
             <path d="m7 12-2-2m2 2-2 2" />
             </svg>
-          </button>
-          <button
+          </TooltipButton>
+          <TooltipButton
             type="button"
+            tooltip="新建会话"
             onClick={handleNewSessionClick}
             onMouseDown={(event) => {
               event.preventDefault();
             }}
             style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
             className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/10 bg-white text-ink-700 transition hover:bg-ink-900/5"
-            aria-label="新建会话"
-            title="新建会话"
           >
             <svg
               viewBox="0 0 24 24"
@@ -685,31 +719,45 @@ function App() {
               <path d="M4 20h4.5l9.4-9.4a2.1 2.1 0 0 0 0-3L16.4 6a2.1 2.1 0 0 0-3 0L4 15.4V20Z" />
               <path d="m12.5 6.9 4.6 4.6" />
             </svg>
-          </button>
-          <button
+          </TooltipButton>
+          <TooltipButton
             type="button"
+            tooltip={workspaceView === "browser" ? "回到聊天" : "打开浏览器工作台"}
             onClick={handleToggleBrowserWorkbench}
             onMouseDown={(event) => {
               event.preventDefault();
             }}
             style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
             className={`inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/10 text-ink-700 transition hover:bg-ink-900/5 ${workspaceView === "browser" ? "bg-ink-900 text-white hover:bg-ink-800" : "bg-white"}`}
-            aria-label={workspaceView === "browser" ? "回到聊天" : "打开浏览器工作台"}
-            title={workspaceView === "browser" ? "回到聊天" : "打开浏览器工作台"}
           >
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
               <rect x="3.5" y="5" width="17" height="14" rx="2.2" />
               <path d="M3.5 9h17" />
               <path d="M8 7h.01M11 7h.01" />
             </svg>
-          </button>
+          </TooltipButton>
         </div>
         <div
           className="flex items-center justify-end gap-2"
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
-          <button
+          {import.meta.env.DEV && (
+            <TooltipButton
+              type="button"
+              tooltip={runtimeMeta.tooltip}
+              onMouseDown={(event) => {
+                event.preventDefault();
+              }}
+              style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+              className={`inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-semibold transition hover:brightness-[0.98] ${runtimeMeta.className}`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${runtimeMeta.dotClassName}`} />
+              <span>{runtimeMeta.label}</span>
+            </TooltipButton>
+          )}
+          <TooltipButton
             type="button"
+            tooltip="打开执行复盘"
             onClick={() => setShowSessionAnalysis(true)}
             disabled={!activeSessionId}
             onMouseDown={(event) => {
@@ -719,24 +767,23 @@ function App() {
             className="rounded-full border border-black/10 bg-white px-3 py-1 text-[11px] font-medium text-ink-700 transition hover:bg-ink-900/5 disabled:cursor-not-allowed disabled:opacity-45"
           >
             执行复盘
-          </button>
-          <button
+          </TooltipButton>
+          <TooltipButton
             type="button"
+            tooltip={showActivityRail ? "收起右侧栏" : "展开右侧栏"}
             onClick={() => setShowActivityRail((current) => !current)}
             onMouseDown={(event) => {
               event.preventDefault();
             }}
             style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
             className={`inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/10 bg-white text-ink-700 transition hover:bg-ink-900/5 ${showActivityRail ? "" : "bg-[#f3f6fb]"}`}
-            aria-label={showActivityRail ? "收起右侧栏" : "展开右侧栏"}
-            title={showActivityRail ? "收起右侧栏" : "展开右侧栏"}
           >
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
               <rect x="3.5" y="5" width="17" height="14" rx="2" />
               <path d="M15 5v14" />
               <path d="m17 12 2-2m-2 2 2 2" />
             </svg>
-          </button>
+          </TooltipButton>
         </div>
       </header>
 
@@ -889,20 +936,24 @@ function App() {
           )}
 
           {hasNewMessages && !shouldAutoScroll && (
-            <button
-              onClick={scrollToBottom}
+            <div
               style={{
+                left: `${sidebarOffset}px`,
+                right: `${activityRailOffset}px`,
                 bottom: "calc(var(--composer-bottom-offset, 160px) + 0.5rem)",
-                marginLeft: `${sidebarOffset / 2}px`,
-                marginRight: `${activityRailOffset / 2}px`,
               }}
-              className="fixed left-1/2 z-40 -translate-x-1/2 flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-medium text-white shadow-lg transition-all hover:bg-accent-hover hover:scale-105 animate-bounce-subtle"
+              className="pointer-events-none fixed z-40 flex justify-center"
             >
-              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 5v14M5 12l7 7 7-7" />
-              </svg>
-              <span>有新消息</span>
-            </button>
+              <button
+                onClick={scrollToBottom}
+                className="pointer-events-auto flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-medium text-white shadow-lg transition-all hover:bg-accent-hover hover:scale-105 animate-bounce-subtle"
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 5v14M5 12l7 7 7-7" />
+                </svg>
+                <span>有新消息</span>
+              </button>
+            </div>
           )}
         </main>
 
@@ -917,7 +968,7 @@ function App() {
         )}
         {!showSessionAnalysis && showActivityRail && (
           <aside
-            className={`fixed bottom-0 right-0 ${sidebarHeaderOffsetClass} z-40 min-w-[400px] overflow-hidden border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.94),rgba(240,244,248,0.98)_42%,rgba(234,239,245,0.99))] shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl ${workspaceView === "browser" ? "hidden xl:flex xl:flex-col" : "pointer-events-none hidden"}`}
+            className={`fixed bottom-0 right-0 ${sidebarHeaderOffsetClass} z-40 min-w-[400px] overflow-hidden border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.94),rgba(240,244,248,0.98)_42%,rgba(234,239,245,0.99))] shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl ${workspaceView === "browser" ? "hidden lg:flex lg:flex-col" : "pointer-events-none hidden"}`}
             style={{ width: activityRailWidth }}
           >
             <BrowserWorkbenchPage active={workspaceView === "browser"} />
@@ -952,6 +1003,7 @@ function App() {
           onClose={() => {
             setShowSettingsModal(false);
             setSettingsInitialPageId(null);
+            refreshBrowserWorkbenchPreference();
           }}
           initialPageId={settingsInitialPageId ?? undefined}
           onStartMaintenanceSession={startMaintenanceSession}

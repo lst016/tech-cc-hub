@@ -77,7 +77,14 @@ export type SkillSyncResponse = {
   results: SkillSyncResult[];
 };
 
-export type SettingsPageId = "profiles" | "routing" | "global-json" | "skills" | "system-maintenance";
+export type AgentRuleDocuments = {
+  systemDefaultMarkdown: string;
+  userClaudeRoot: string;
+  userAgentsPath: string;
+  userAgentsMarkdown: string;
+};
+
+export type SettingsPageId = "profiles" | "routing" | "global-json" | "skills" | "agent-rules" | "system-maintenance";
 
 export type RuntimeOverrides = {
   model?: string;

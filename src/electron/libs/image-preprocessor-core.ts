@@ -24,10 +24,11 @@ export async function preprocessImageAttachmentsCore(options: {
   imageModel?: string;
   selectedModel?: string;
   attachments: PromptAttachment[];
+  failOnSummaryError?: boolean;
   persistImageAttachmentReference: (attachment: PromptAttachment) => Promise<StoredImageAttachmentReference | null>;
   summarizeImageAttachment: (input: ImageAttachmentSummaryInput) => Promise<string | null>;
 }): Promise<ImagePreprocessResult> {
-  const { imageModel, selectedModel, attachments, persistImageAttachmentReference, summarizeImageAttachment } = options;
+  const { imageModel, selectedModel, attachments, failOnSummaryError, persistImageAttachmentReference, summarizeImageAttachment } = options;
   const imageAttachments = attachments.filter((attachment) => attachment.kind === "image");
 
   if (imageAttachments.length === 0) {
@@ -61,9 +62,26 @@ export async function preprocessImageAttachmentsCore(options: {
     }
 
     try {
-      summaryText = await summarizeImageAttachment({ attachment }) ?? summaryText;
+      const generatedSummary = await summarizeImageAttachment({ attachment });
+      if (!generatedSummary && failOnSummaryError) {
+        return {
+          success: false,
+          attachments,
+          usedImageModel: normalizedImageModel,
+          error: "图片模型没有返回可用摘要。",
+        };
+      }
+      summaryText = generatedSummary ?? summaryText;
     } catch (error) {
       preprocessError = error;
+      if (failOnSummaryError) {
+        return {
+          success: false,
+          attachments,
+          usedImageModel: normalizedImageModel,
+          error: error instanceof Error ? error.message : `图片预处理失败：${String(error || "未知错误")}`,
+        };
+      }
       summaryText = summaryText ?? buildImageSummaryFallback(attachment, error);
     }
 

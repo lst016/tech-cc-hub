@@ -18,6 +18,7 @@ import { isDev } from "./util.js";
 
 let sessions: SessionStore;
 const runnerHandles = new Map<string, RunnerHandle>();
+const serverEventListeners = new Set<(event: ServerEvent) => void>();
 
 function initializeSessions() {
   if (!sessions) {
@@ -37,6 +38,9 @@ function broadcast(event: ServerEvent) {
   for (const win of windows) {
     win.webContents.send("server-event", payload);
   }
+  for (const listener of serverEventListeners) {
+    listener(event);
+  }
 }
 
 function hasLiveSession(sessionId: string): boolean {
@@ -47,6 +51,32 @@ function hasLiveSession(sessionId: string): boolean {
 const MAX_REHYDRATED_IMAGE_ATTACHMENTS = 2;
 const VISUAL_REVIEW_REHYDRATE_PATTERN =
   /(ui|design|interface|screenshot|image|compare|diff|align|layout|spacing|pixel|visual|button|style|\u8bbe\u8ba1|\u754c\u9762|\u622a\u56fe|\u770b\u56fe|\u6bd4\u5bf9|\u5bf9\u6bd4|\u4e00\u81f4|\u50cf\u7d20|\u5e03\u5c40|\u95f4\u8ddd|\u8fd8\u539f|\u89c6\u89c9|\u6309\u94ae|\u6837\u5f0f|\u9884\u671f)/i;
+
+function isPlaceholderSessionTitle(title?: string): boolean {
+  const normalized = title?.trim();
+  return !normalized || normalized === "新聊天" || normalized === "New Session";
+}
+
+function buildTitleFromFirstPrompt(prompt: string, attachments?: PromptAttachment[]): string {
+  const withoutAnnotations = prompt.replace(/<browser_annotations>[\s\S]*?<\/browser_annotations>/g, "").trim();
+  const compact = withoutAnnotations
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ");
+
+  if (compact) {
+    return compact.length > 18 ? `${compact.slice(0, 18)}...` : compact;
+  }
+
+  const imageCount = attachments?.filter((attachment) => attachment.kind === "image").length ?? 0;
+  if (imageCount > 0) {
+    return imageCount === 1 ? "图片识别" : `${imageCount} 张图片识别`;
+  }
+
+  return "新会话";
+}
 
 function shouldRehydrateRecentImages(prompt: string, attachments?: PromptAttachment[]): boolean {
   if (attachments?.some((attachment) => attachment.kind === "image")) {
@@ -479,6 +509,10 @@ export async function handleClientEvent(event: ClientEvent) {
     const config = getCurrentApiConfig();
     const canUseRemoteResume = config ? supportsRemoteSessionResume(config) : true;
     const history = store.getSessionHistory(session.id);
+    const shouldRetitleFromFirstPrompt = isPlaceholderSessionTitle(session.title) && (history?.messages.length ?? 0) === 0;
+    const nextTitle = shouldRetitleFromFirstPrompt
+      ? buildTitleFromFirstPrompt(event.payload.prompt, event.payload.attachments)
+      : session.title;
     const selectedModel = event.payload.runtime?.model ?? config?.model;
     const modelConfig = config && selectedModel ? getModelConfig(config, selectedModel) : null;
     const continuationPayload = canUseRemoteResume
@@ -505,6 +539,7 @@ export async function handleClientEvent(event: ClientEvent) {
 
     store.updateSession(session.id, {
       status: "running",
+      title: nextTitle,
       runSurface: event.payload.runtime?.runSurface ?? session.runSurface ?? "development",
       agentId: event.payload.runtime?.agentId ?? session.agentId,
       lastPrompt: event.payload.prompt,
@@ -518,7 +553,7 @@ export async function handleClientEvent(event: ClientEvent) {
       payload: {
         sessionId: session.id,
         status: "running",
-        title: session.title,
+        title: nextTitle,
         cwd: session.cwd,
         slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
       },
@@ -625,6 +660,13 @@ export async function handleClientEvent(event: ClientEvent) {
       pending.resolve(event.payload.result);
     }
   }
+}
+
+export function addServerEventListener(listener: (event: ServerEvent) => void): () => void {
+  serverEventListeners.add(listener);
+  return () => {
+    serverEventListeners.delete(listener);
+  };
 }
 
 export function cleanupAllSessions(): void {

@@ -1,8 +1,11 @@
 import type { ApiConfigProfile, ApiModelConfigProfile } from "../../types";
 
+const DEFAULT_CONTEXT_WINDOW = 200_000;
+
 export function createModel(): ApiModelConfigProfile {
   return {
     name: "",
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
     compressionThresholdPercent: 70,
   };
 }
@@ -44,6 +47,22 @@ function normalizePercent(value: number | null | undefined): number | undefined 
   return normalized;
 }
 
+function normalizeBaseURL(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  try {
+    const url = new URL(trimmed);
+    const pathname = url.pathname.replace(/\/+$/, "");
+    if (!pathname || pathname === "/" || pathname.startsWith("/console")) {
+      url.pathname = "/v1";
+    }
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return trimmed;
+  }
+}
+
 function normalizeModel(model: ApiModelConfigProfile): ApiModelConfigProfile | null {
   const name = model.name.trim();
   if (!name) {
@@ -55,7 +74,7 @@ function normalizeModel(model: ApiModelConfigProfile): ApiModelConfigProfile | n
 
   return {
     name,
-    contextWindow,
+    contextWindow: contextWindow ?? DEFAULT_CONTEXT_WINDOW,
     compressionThresholdPercent,
   };
 }
@@ -107,7 +126,7 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
     ...profile,
     name: profile.name.trim() || "未命名配置",
     apiKey: profile.apiKey.trim(),
-    baseURL: profile.baseURL.trim(),
+    baseURL: normalizeBaseURL(profile.baseURL),
     model: selectedModel,
     expertModel: normalizeRoleModel(profile.expertModel, selectedModel),
     imageModel: imageModel && models.some((item) => item.name === imageModel) ? imageModel : undefined,
@@ -144,7 +163,8 @@ export function buildRoutingSummary(profile?: ApiConfigProfile): string {
   const mainModel = profile.model || "-";
   const expertModel = profile.expertModel || mainModel;
   const analysisModel = profile.analysisModel || mainModel;
-  return `主 ${mainModel} / 专家 ${expertModel} / 分析 ${analysisModel}`;
+  const imageModel = profile.imageModel || "未启用";
+  return `主 ${mainModel} / 专家 ${expertModel} / 分析 ${analysisModel} / 图片 ${imageModel}`;
 }
 
 export function validateProfiles(profiles: ApiConfigProfile[]): string | null {

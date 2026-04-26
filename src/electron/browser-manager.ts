@@ -36,6 +36,77 @@ export type BrowserWorkbenchDomHint = {
   boundingBox?: { x: number; y: number; width: number; height: number };
 };
 
+export type BrowserWorkbenchPageSnapshot = {
+  url: string;
+  title?: string;
+  description?: string;
+  canonicalUrl?: string;
+  selectedText?: string;
+  text: string;
+  headings: Array<{ level: number; text: string }>;
+  links: Array<{ text: string; href: string }>;
+  images: Array<{ src: string; alt?: string }>;
+};
+
+export type BrowserWorkbenchQueryStrategy = "selector" | "xpath";
+
+export type BrowserWorkbenchDomStats = {
+  url: string;
+  title?: string;
+  totalElements: number;
+  interactiveCounts: {
+    links: number;
+    buttons: number;
+    inputs: number;
+    selects: number;
+    textareas: number;
+    forms: number;
+    images: number;
+    scripts: number;
+    stylesheets: number;
+    iframes: number;
+  };
+  topTags: Array<{ tagName: string; count: number }>;
+};
+
+export type BrowserWorkbenchNodeSnapshot = {
+  index: number;
+  tagName: string;
+  id?: string;
+  className?: string;
+  text?: string;
+  selector?: string;
+  path?: string;
+  xpath?: string;
+  htmlSnippet?: string;
+  attributes: Record<string, string>;
+  boundingBox?: { x: number; y: number; width: number; height: number };
+  computedStyle?: Record<string, string>;
+};
+
+export type BrowserWorkbenchNodeQueryResult = {
+  url: string;
+  title?: string;
+  strategy: BrowserWorkbenchQueryStrategy;
+  query: string;
+  total: number;
+  returned: number;
+  matches: BrowserWorkbenchNodeSnapshot[];
+};
+
+export type BrowserWorkbenchStyleInspection = {
+  url: string;
+  title?: string;
+  strategy: BrowserWorkbenchQueryStrategy;
+  query: string;
+  index: number;
+  found: boolean;
+  node?: BrowserWorkbenchNodeSnapshot;
+  inlineStyle?: string;
+  computedStyle?: Record<string, string>;
+  cssVariables?: Record<string, string>;
+};
+
 export type BrowserWorkbenchAnnotation = {
   id: string;
   url: string;
@@ -99,6 +170,7 @@ export class BrowserWorkbenchManager {
   private bounds: BrowserWorkbenchBounds = { x: 0, y: 0, width: 0, height: 0 };
   private logs: BrowserWorkbenchConsoleLog[] = [];
   private annotationMode = false;
+  private listeners = new Set<(event: BrowserWorkbenchEvent) => void>();
 
   constructor(private readonly window: BrowserWindow) {}
 
@@ -165,6 +237,13 @@ export class BrowserWorkbenchManager {
     return this.logs.slice(-Math.min(Math.max(limit, 1), 300));
   }
 
+  addEventListener(listener: (event: BrowserWorkbenchEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
   async captureVisible(): Promise<{ success: boolean; dataUrl?: string; error?: string }> {
     if (!this.view) {
       return { success: false, error: "浏览器工作台尚未打开页面。" };
@@ -193,6 +272,81 @@ export class BrowserWorkbenchManager {
     }
     this.emitState();
     return this.getState();
+  }
+
+  async extractPageSnapshot(): Promise<{ success: boolean; snapshot?: BrowserWorkbenchPageSnapshot; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+
+    try {
+      const snapshot = await this.view.webContents.executeJavaScript(
+        `(${this.buildPageSnapshotScript()})()`,
+        true,
+      ) as BrowserWorkbenchPageSnapshot;
+      return { success: true, snapshot };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async getDomStats(): Promise<{ success: boolean; stats?: BrowserWorkbenchDomStats; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+
+    try {
+      const stats = await this.view.webContents.executeJavaScript(
+        `(${this.buildDomStatsScript()})()`,
+        true,
+      ) as BrowserWorkbenchDomStats;
+      return { success: true, stats };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async queryNodes(input: {
+    strategy?: BrowserWorkbenchQueryStrategy;
+    query: string;
+    maxResults?: number;
+    includeStyles?: boolean;
+    styleProps?: string[];
+  }): Promise<{ success: boolean; result?: BrowserWorkbenchNodeQueryResult; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+
+    try {
+      const result = await this.view.webContents.executeJavaScript(
+        `(${this.buildQueryNodesScript()})(${JSON.stringify(input)})`,
+        true,
+      ) as BrowserWorkbenchNodeQueryResult;
+      return { success: true, result };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async inspectStyles(input: {
+    strategy?: BrowserWorkbenchQueryStrategy;
+    query: string;
+    index?: number;
+    properties?: string[];
+  }): Promise<{ success: boolean; inspection?: BrowserWorkbenchStyleInspection; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+
+    try {
+      const inspection = await this.view.webContents.executeJavaScript(
+        `(${this.buildInspectStylesScript()})(${JSON.stringify(input)})`,
+        true,
+      ) as BrowserWorkbenchStyleInspection;
+      return { success: true, inspection };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   private ensureView(): BrowserView {
@@ -283,6 +437,9 @@ export class BrowserWorkbenchManager {
   private emit(event: BrowserWorkbenchEvent): void {
     if (this.window.isDestroyed()) return;
     this.window.webContents.send("browser-event", JSON.stringify(event));
+    for (const listener of this.listeners) {
+      listener(event);
+    }
   }
 
   private async installAnnotationScript(): Promise<void> {
@@ -296,6 +453,321 @@ export class BrowserWorkbenchManager {
       // Cross-origin frames or transient navigations can reject injection. The
       // next completed load will retry if annotation mode is still enabled.
     }
+  }
+
+  private buildDomStatsScript(): string {
+    return `function() {
+      const elements = Array.from(document.querySelectorAll("*"));
+      const tagCounts = new Map();
+      elements.forEach((element) => {
+        const tagName = (element.tagName || "").toLowerCase();
+        if (!tagName) return;
+        tagCounts.set(tagName, (tagCounts.get(tagName) || 0) + 1);
+      });
+
+      return {
+        url: location.href,
+        title: document.title,
+        totalElements: elements.length,
+        interactiveCounts: {
+          links: document.querySelectorAll("a[href]").length,
+          buttons: document.querySelectorAll("button").length,
+          inputs: document.querySelectorAll("input").length,
+          selects: document.querySelectorAll("select").length,
+          textareas: document.querySelectorAll("textarea").length,
+          forms: document.querySelectorAll("form").length,
+          images: document.querySelectorAll("img").length,
+          scripts: document.querySelectorAll("script").length,
+          stylesheets: document.querySelectorAll('link[rel~="stylesheet"],style').length,
+          iframes: document.querySelectorAll("iframe").length,
+        },
+        topTags: Array.from(tagCounts.entries())
+          .sort((left, right) => right[1] - left[1])
+          .slice(0, 24)
+          .map(([tagName, count]) => ({ tagName, count })),
+      };
+    }`;
+  }
+
+  private buildQueryNodesScript(): string {
+    return `function(input) {
+      const strategy = input && input.strategy === "xpath" ? "xpath" : "selector";
+      const query = typeof input.query === "string" ? input.query.trim() : "";
+      const maxResults = Math.max(1, Math.min(Number.isFinite(input.maxResults) ? Math.trunc(input.maxResults) : 8, 50));
+      const includeStyles = Boolean(input.includeStyles);
+      const styleProps = Array.isArray(input.styleProps) ? input.styleProps.filter((item) => typeof item === "string" && item.trim()).slice(0, 40) : [];
+
+      function buildPath(element) {
+        const parts = [];
+        let current = element;
+        while (current && current.nodeType === Node.ELEMENT_NODE) {
+          const parent = current.parentElement;
+          const tag = current.tagName.toLowerCase();
+          const index = parent ? Array.prototype.indexOf.call(parent.children, current) + 1 : 1;
+          parts.unshift(tag + ":nth-of-type(" + index + ")");
+          current = parent;
+        }
+        return parts.join(" > ");
+      }
+
+      function buildSelector(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE) return undefined;
+        if (element.id) return element.tagName.toLowerCase() + "#" + element.id;
+        const classList = Array.from(element.classList || []).slice(0, 3).join(".");
+        if (classList) return element.tagName.toLowerCase() + "." + classList;
+        return element.tagName.toLowerCase();
+      }
+
+      function buildXPath(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE) return undefined;
+        const parts = [];
+        let current = element;
+        while (current && current.nodeType === Node.ELEMENT_NODE) {
+          let index = 1;
+          let sibling = current.previousElementSibling;
+          while (sibling) {
+            if (sibling.tagName === current.tagName) index += 1;
+            sibling = sibling.previousElementSibling;
+          }
+          parts.unshift(current.tagName.toLowerCase() + "[" + index + "]");
+          current = current.parentElement;
+        }
+        return "/" + parts.join("/");
+      }
+
+      function getAttributes(element) {
+        return Array.from(element.attributes || []).slice(0, 24).reduce((accumulator, attribute) => {
+          accumulator[attribute.name] = attribute.value;
+          return accumulator;
+        }, {});
+      }
+
+      function getBoundingBox(element) {
+        const rect = element.getBoundingClientRect();
+        return {
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        };
+      }
+
+      function getComputedStyleSubset(element) {
+        if (!includeStyles) return undefined;
+        const computed = window.getComputedStyle(element);
+        const properties = styleProps.length > 0 ? styleProps : [
+          "display",
+          "position",
+          "width",
+          "height",
+          "color",
+          "background-color",
+          "font-size",
+          "font-weight",
+          "opacity",
+          "visibility",
+          "pointer-events",
+        ];
+        return properties.reduce((accumulator, property) => {
+          accumulator[property] = computed.getPropertyValue(property);
+          return accumulator;
+        }, {});
+      }
+
+      function toNodeSnapshot(element, index) {
+        return {
+          index,
+          tagName: element.tagName.toLowerCase(),
+          id: element.id || undefined,
+          className: typeof element.className === "string" ? element.className : undefined,
+          text: (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 240) || undefined,
+          selector: buildSelector(element),
+          path: buildPath(element),
+          xpath: buildXPath(element),
+          htmlSnippet: element.outerHTML ? element.outerHTML.slice(0, 400) : undefined,
+          attributes: getAttributes(element),
+          boundingBox: getBoundingBox(element),
+          computedStyle: getComputedStyleSubset(element),
+        };
+      }
+
+      function findNodes() {
+        if (!query) return [];
+        if (strategy === "xpath") {
+          const result = document.evaluate(query, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+          const matches = [];
+          for (let index = 0; index < result.snapshotLength; index += 1) {
+            const item = result.snapshotItem(index);
+            if (item && item.nodeType === Node.ELEMENT_NODE) {
+              matches.push(item);
+            }
+          }
+          return matches;
+        }
+        return Array.from(document.querySelectorAll(query));
+      }
+
+      const allMatches = findNodes();
+      const limitedMatches = allMatches.slice(0, maxResults).map((element, index) => toNodeSnapshot(element, index));
+
+      return {
+        url: location.href,
+        title: document.title,
+        strategy,
+        query,
+        total: allMatches.length,
+        returned: limitedMatches.length,
+        matches: limitedMatches,
+      };
+    }`;
+  }
+
+  private buildInspectStylesScript(): string {
+    return `function(input) {
+      const strategy = input && input.strategy === "xpath" ? "xpath" : "selector";
+      const query = typeof input.query === "string" ? input.query.trim() : "";
+      const index = Math.max(0, Number.isFinite(input.index) ? Math.trunc(input.index) : 0);
+      const properties = Array.isArray(input.properties) && input.properties.length > 0
+        ? input.properties.filter((item) => typeof item === "string" && item.trim()).slice(0, 60)
+        : [
+            "display",
+            "position",
+            "top",
+            "right",
+            "bottom",
+            "left",
+            "z-index",
+            "width",
+            "height",
+            "margin",
+            "padding",
+            "color",
+            "background-color",
+            "border",
+            "border-radius",
+            "font-size",
+            "font-weight",
+            "line-height",
+            "opacity",
+            "visibility",
+            "overflow",
+            "pointer-events",
+            "transform",
+          ];
+
+      function resolveNodes() {
+        if (!query) return [];
+        if (strategy === "xpath") {
+          const result = document.evaluate(query, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+          const matches = [];
+          for (let position = 0; position < result.snapshotLength; position += 1) {
+            const item = result.snapshotItem(position);
+            if (item && item.nodeType === Node.ELEMENT_NODE) {
+              matches.push(item);
+            }
+          }
+          return matches;
+        }
+        return Array.from(document.querySelectorAll(query));
+      }
+
+      function buildPath(element) {
+        const parts = [];
+        let current = element;
+        while (current && current.nodeType === Node.ELEMENT_NODE) {
+          const parent = current.parentElement;
+          const tag = current.tagName.toLowerCase();
+          const nth = parent ? Array.prototype.indexOf.call(parent.children, current) + 1 : 1;
+          parts.unshift(tag + ":nth-of-type(" + nth + ")");
+          current = parent;
+        }
+        return parts.join(" > ");
+      }
+
+      function buildXPath(element) {
+        const parts = [];
+        let current = element;
+        while (current && current.nodeType === Node.ELEMENT_NODE) {
+          let nth = 1;
+          let sibling = current.previousElementSibling;
+          while (sibling) {
+            if (sibling.tagName === current.tagName) nth += 1;
+            sibling = sibling.previousElementSibling;
+          }
+          parts.unshift(current.tagName.toLowerCase() + "[" + nth + "]");
+          current = current.parentElement;
+        }
+        return "/" + parts.join("/");
+      }
+
+      function getAttributes(element) {
+        return Array.from(element.attributes || []).slice(0, 24).reduce((accumulator, attribute) => {
+          accumulator[attribute.name] = attribute.value;
+          return accumulator;
+        }, {});
+      }
+
+      const nodes = resolveNodes();
+      const element = nodes[index];
+      if (!element) {
+        return {
+          url: location.href,
+          title: document.title,
+          strategy,
+          query,
+          index,
+          found: false,
+        };
+      }
+
+      const computed = window.getComputedStyle(element);
+      const computedStyle = properties.reduce((accumulator, property) => {
+        accumulator[property] = computed.getPropertyValue(property);
+        return accumulator;
+      }, {});
+
+      const cssVariables = Array.from(computed)
+        .filter((property) => property.startsWith("--"))
+        .slice(0, 40)
+        .reduce((accumulator, property) => {
+          const value = computed.getPropertyValue(property);
+          if (value) {
+            accumulator[property] = value;
+          }
+          return accumulator;
+        }, {});
+
+      const rect = element.getBoundingClientRect();
+      return {
+        url: location.href,
+        title: document.title,
+        strategy,
+        query,
+        index,
+        found: true,
+        node: {
+          index,
+          tagName: element.tagName.toLowerCase(),
+          id: element.id || undefined,
+          className: typeof element.className === "string" ? element.className : undefined,
+          text: (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 240) || undefined,
+          selector: element.id ? element.tagName.toLowerCase() + "#" + element.id : element.tagName.toLowerCase(),
+          path: buildPath(element),
+          xpath: buildXPath(element),
+          htmlSnippet: element.outerHTML ? element.outerHTML.slice(0, 400) : undefined,
+          attributes: getAttributes(element),
+          boundingBox: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          },
+        },
+        inlineStyle: element.getAttribute("style") || undefined,
+        computedStyle,
+        cssVariables,
+      };
+    }`;
   }
 
   private buildAnnotationScript(): string {
@@ -387,7 +859,7 @@ export class BrowserWorkbenchManager {
           timestamp: annotation.createdAt,
         };
         const text = JSON.stringify(payload, null, 2);
-        panel.querySelector(".__tech_cc_hub_background-title").textContent = `背景信息 #${annotation.id.slice(0, 8)}`;
+        panel.querySelector(".__tech_cc_hub_background-title").textContent = "背景信息 #" + annotation.id.slice(0, 8);
         pre.textContent = text;
         panel.hidden = false;
       }
@@ -596,6 +1068,51 @@ export class BrowserWorkbenchManager {
       document.addEventListener("mousemove", window.__techCcHubAnnotationHoverHandler, true);
       document.addEventListener("click", window.__techCcHubAnnotationHandler, true);
       return true;
+      }`;
+  }
+
+  private buildPageSnapshotScript(): string {
+    return `function() {
+      function cleanText(value) {
+        return String(value || "").replace(/\\s+/g, " ").trim();
+      }
+      function attr(node, name) {
+        return node && node.getAttribute ? cleanText(node.getAttribute(name)) : "";
+      }
+      const title = cleanText(document.title);
+      const description = attr(document.querySelector('meta[name="description"], meta[property="og:description"]'), "content");
+      const canonicalUrl = attr(document.querySelector('link[rel="canonical"]'), "href");
+      const selectedText = cleanText(window.getSelection && window.getSelection().toString());
+      const text = cleanText(document.body ? document.body.innerText : "");
+      const headings = Array.from(document.querySelectorAll("h1,h2,h3,h4,h5,h6")).slice(0, 80).map(function(node) {
+        return {
+          level: Number(node.tagName.slice(1)) || 0,
+          text: cleanText(node.textContent),
+        };
+      }).filter(function(item) { return item.text; });
+      const links = Array.from(document.querySelectorAll("a[href]")).slice(0, 160).map(function(node) {
+        return {
+          text: cleanText(node.textContent || node.getAttribute("aria-label") || node.getAttribute("title")),
+          href: node.href,
+        };
+      }).filter(function(item) { return item.href; });
+      const images = Array.from(document.querySelectorAll("img[src]")).slice(0, 80).map(function(node) {
+        return {
+          src: node.currentSrc || node.src,
+          alt: cleanText(node.alt || node.getAttribute("aria-label") || node.title),
+        };
+      }).filter(function(item) { return item.src; });
+      return {
+        url: location.href,
+        title: title,
+        description: description,
+        canonicalUrl: canonicalUrl,
+        selectedText: selectedText,
+        text: text.slice(0, 60000),
+        headings: headings,
+        links: links,
+        images: images,
+      };
     }`;
   }
 

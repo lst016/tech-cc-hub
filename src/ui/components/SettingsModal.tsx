@@ -1,14 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  DEV_BRIDGE_READY_EVENT,
+  getDevElectronRuntimeSource,
+  type DevElectronRuntimeSource,
+} from "../dev-electron-shim";
 
 import { useAppStore } from "../store/useAppStore";
 import type {
   ApiConfigProfile,
+  AgentRuleDocuments,
   SettingsPageId,
   SkillInventory,
   SkillSyncRequest,
   SkillSyncResult,
 } from "../types";
 import { ApiProfilesSettingsPage } from "./settings/ApiProfilesSettingsPage";
+import { AgentRulesSettingsPage } from "./settings/AgentRulesSettingsPage";
 import { GlobalJsonSettingsPage } from "./settings/GlobalJsonSettingsPage";
 import { ModelRoutingSettingsPage } from "./settings/ModelRoutingSettingsPage";
 import { SettingsSheet, type SettingsPageDefinition } from "./settings/SettingsSheet";
@@ -31,6 +38,22 @@ interface SettingsModalProps {
 type GlobalRuntimeConfig = Record<string, unknown>;
 
 const DEFAULT_SKILL_PATH = "~/.claude/skills";
+const DEFAULT_AGENT_RULE_DOCUMENTS: AgentRuleDocuments = {
+  systemDefaultMarkdown: [
+    "# tech-cc-hub 系统默认规则",
+    "",
+    "这部分由应用内置生成，只用于展示当前软件默认加载的系统级 Agent 规则，不会写入用户目录。",
+    "",
+    "## 内置浏览器默认规则",
+    "",
+    "默认要求：涉及网页查看、抓取、调试、标注、截图的场景，默认优先使用 Electron 内置浏览器工作台（BrowserView）。",
+    "",
+    "禁止默认走外部 browse skill。请优先用浏览器 MCP（browser_get_state / browser_extract_page / browser_capture_visible ...）。",
+  ].join("\n"),
+  userClaudeRoot: "~/.claude",
+  userAgentsPath: "~/.claude/AGENTS.md",
+  userAgentsMarkdown: "",
+};
 
 const SETTINGS_PAGES: SettingsPageDefinition[] = [
   {
@@ -66,6 +89,14 @@ const SETTINGS_PAGES: SettingsPageDefinition[] = [
     summary: "JSON 通用配置",
   },
   {
+    id: "agent-rules",
+    label: "默认规则",
+    eyebrow: "RULES",
+    title: "默认 Markdown",
+    description: "查看系统默认规则，并维护 Claude 全局目录的用户级规则。",
+    summary: "系统默认 / Claude 全局",
+  },
+  {
     id: "system-maintenance",
     label: "系统维护",
     eyebrow: "SYSTEM",
@@ -74,6 +105,10 @@ const SETTINGS_PAGES: SettingsPageDefinition[] = [
     summary: "内置维护 agent",
   },
 ];
+
+function getCloseSidebarOnBrowserOpen(config: GlobalRuntimeConfig): boolean {
+  return config.closeSidebarOnBrowserOpen !== false;
+}
 
 function validateGlobalConfigText(rawText: string): string | null {
   const trimmed = rawText.trim();
@@ -111,6 +146,9 @@ export function SettingsModal({
   const setApiConfigSettings = useAppStore((state) => state.setApiConfigSettings);
   const [profiles, setProfiles] = useState<ApiConfigProfile[]>([]);
   const [globalConfigText, setGlobalConfigText] = useState("{}");
+  const [agentRuleDocuments, setAgentRuleDocuments] = useState<AgentRuleDocuments | null>(null);
+  const [userAgentMarkdown, setUserAgentMarkdown] = useState("");
+  const [closeSidebarOnBrowserOpen, setCloseSidebarOnBrowserOpen] = useState(true);
   const [activePageId, setActivePageId] = useState<SettingsPageId>("profiles");
   const [skillInventory, setSkillInventory] = useState<SkillInventory>({
     rootPath: DEFAULT_SKILL_PATH,
@@ -120,12 +158,17 @@ export function SettingsModal({
   const [syncNotes, setSyncNotes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
   const [status, setStatus] = useState<{ tone: "error" | "success"; message: string } | null>(null);
   const [globalConfigParseError, setGlobalConfigParseError] = useState<string | null>(null);
   const [maintenancePrompt, setMaintenancePrompt] = useState(
     "请对当前软件执行一次系统维护巡检，重点检查三层 agent 解析、运行面隔离和 skills 治理入口，并输出结论与建议。",
   );
   const [launchingMaintenance, setLaunchingMaintenance] = useState(false);
+  const electronApi = window.electron as typeof window.electron & {
+    getAgentRuleDocuments?: () => Promise<AgentRuleDocuments>;
+    saveUserAgentRuleDocument?: (markdown: string) => Promise<{ success: boolean; error?: string }>;
+  };
 
   const skillCounts = useMemo(() => {
     const tracked = skillInventory.skills.filter((skill) => skill.sourceType === "git").length;
@@ -148,14 +191,20 @@ export function SettingsModal({
     setSkillInventory(inventory);
   }, []);
 
-  useEffect(() => {
+  const loadSettings = useCallback(() => {
     setLoading(true);
-    Promise.all([
+    void Promise.all([
       window.electron.getApiConfig(),
       window.electron.getGlobalConfig(),
       window.electron.getSkillInventory(),
+      typeof electronApi.getAgentRuleDocuments === "function"
+        ? electronApi.getAgentRuleDocuments()
+        : Promise.resolve(DEFAULT_AGENT_RULE_DOCUMENTS),
     ])
-      .then(([apiSettings, globalSettings, inventory]) => {
+      .then(([apiSettings, globalSettings, inventory, ruleDocuments]) => {
+        const normalizedGlobalSettings = typeof globalSettings === "object" && globalSettings !== null && !Array.isArray(globalSettings)
+          ? globalSettings as GlobalRuntimeConfig
+          : {};
         const normalizedProfiles = apiSettings.profiles.length > 0
           ? apiSettings.profiles.map((profile) => normalizeProfile(profile))
           : [createProfile()];
@@ -168,9 +217,14 @@ export function SettingsModal({
         setApiConfigSettings({ profiles: normalizedProfiles });
         setProfiles(normalizedProfiles);
         setActivePageId(initialPageId ?? (hasConfiguredProfile ? "routing" : "profiles"));
-        setGlobalConfigText(JSON.stringify(globalSettings, null, 2));
-        setGlobalConfigParseError(validateGlobalConfigText(JSON.stringify(globalSettings, null, 2)));
+        const globalConfigText = JSON.stringify(normalizedGlobalSettings, null, 2);
+        setGlobalConfigText(globalConfigText);
+        setGlobalConfigParseError(validateGlobalConfigText(globalConfigText));
+        setCloseSidebarOnBrowserOpen(getCloseSidebarOnBrowserOpen(normalizedGlobalSettings));
         setSkillInventory(inventory);
+        const normalizedRuleDocuments = ruleDocuments ?? DEFAULT_AGENT_RULE_DOCUMENTS;
+        setAgentRuleDocuments(normalizedRuleDocuments);
+        setUserAgentMarkdown(normalizedRuleDocuments.userAgentsMarkdown);
         setSyncNotes({});
       })
       .catch((error) => {
@@ -180,7 +234,21 @@ export function SettingsModal({
       .finally(() => {
         setLoading(false);
       });
-  }, [initialPageId, reloadSkillInventory, setApiConfigSettings]);
+  }, [electronApi, initialPageId, reloadSkillInventory, setApiConfigSettings]);
+
+  useEffect(() => {
+    loadSettings();
+  }, [loadSettings]);
+
+  useEffect(() => {
+    const handleDevBridgeReady = () => {
+      setRuntimeSource(getDevElectronRuntimeSource());
+      loadSettings();
+    };
+
+    window.addEventListener(DEV_BRIDGE_READY_EVENT, handleDevBridgeReady);
+    return () => window.removeEventListener(DEV_BRIDGE_READY_EVENT, handleDevBridgeReady);
+  }, [loadSettings]);
 
   const enabledProfile = useMemo(() => getEnabledProfile(profiles), [profiles]);
   const pages = useMemo(() => SETTINGS_PAGES.map((page) => {
@@ -213,8 +281,34 @@ export function SettingsModal({
   const handleGlobalConfigChange = (next: string) => {
     setStatus(null);
     setGlobalConfigText(next);
+    const parsed = parseGlobalConfig(next);
     setGlobalConfigParseError(validateGlobalConfigText(next));
+    if (parsed !== null) {
+      setCloseSidebarOnBrowserOpen(getCloseSidebarOnBrowserOpen(parsed));
+    }
   };
+
+  const handleUserAgentMarkdownChange = (next: string) => {
+    setStatus(null);
+    setUserAgentMarkdown(next);
+  };
+
+  const handleCloseSidebarOnBrowserOpenChange = useCallback((next: boolean) => {
+    const parseError = validateGlobalConfigText(globalConfigText);
+    if (parseError) {
+      setGlobalConfigParseError(parseError);
+      return;
+    }
+    const parsed = parseGlobalConfig(globalConfigText) ?? {};
+    const nextConfig = {
+      ...parsed,
+      closeSidebarOnBrowserOpen: next,
+    };
+    const nextText = JSON.stringify(nextConfig, null, 2);
+    setCloseSidebarOnBrowserOpen(next);
+    setGlobalConfigText(nextText);
+    setGlobalConfigParseError(null);
+  }, [globalConfigText]);
 
   const formatSyncMessage = useCallback((result: SkillSyncResult) => {
     const baseMessage = result.message?.trim() || "";
@@ -335,10 +429,13 @@ export function SettingsModal({
     setSaving(true);
 
     try {
-      const [apiResult, globalResult, skillResult] = await Promise.all([
+      const [apiResult, globalResult, skillResult, ruleResult] = await Promise.all([
         window.electron.saveApiConfig({ profiles: nextProfiles }),
         window.electron.saveGlobalConfig(normalizedGlobalConfig),
         window.electron.saveSkillInventory(skillInventory),
+        agentRuleDocuments && typeof electronApi.saveUserAgentRuleDocument === "function"
+          ? electronApi.saveUserAgentRuleDocument(userAgentMarkdown)
+          : Promise.resolve({ success: true } as { success: boolean; error?: string }),
       ]);
       const failures: string[] = [];
 
@@ -351,6 +448,9 @@ export function SettingsModal({
       if (!skillResult.success) {
         failures.push(skillResult.error || "保存 Skills 配置失败。");
       }
+      if (!ruleResult.success) {
+        failures.push(ruleResult.error || "保存 Claude 全局规则失败。");
+      }
 
       if (failures.length > 0) {
         setStatus({ tone: "error", message: failures.join("；") });
@@ -359,6 +459,10 @@ export function SettingsModal({
 
       setApiConfigSettings({ profiles: nextProfiles });
       setProfiles(nextProfiles);
+      setAgentRuleDocuments((current) => current ? {
+        ...current,
+        userAgentsMarkdown: userAgentMarkdown,
+      } : current);
       await reloadSkillInventory();
       setStatus({ tone: "success", message: "设置已保存。" });
     } catch (error) {
@@ -393,7 +497,7 @@ export function SettingsModal({
     })();
   }, [maintenancePrompt, onClose, onStartMaintenanceSession]);
 
-  let content = <ApiProfilesSettingsPage profiles={profiles} onChange={updateProfiles} />;
+  let content = <ApiProfilesSettingsPage profiles={profiles} runtimeSource={runtimeSource} onChange={updateProfiles} />;
   if (activePageId === "routing") {
     content = <ModelRoutingSettingsPage profiles={profiles} onChange={updateProfiles} />;
   }
@@ -404,6 +508,8 @@ export function SettingsModal({
         parseError={globalConfigParseError}
         onChange={handleGlobalConfigChange}
         onFormat={handleFormatGlobalConfig}
+        closeSidebarOnBrowserOpen={closeSidebarOnBrowserOpen}
+        onCloseSidebarOnBrowserOpenChange={handleCloseSidebarOnBrowserOpenChange}
       />
     );
   }
@@ -416,6 +522,15 @@ export function SettingsModal({
         syncNotes={syncNotes}
         onRefresh={() => { void reloadSkillInventory(); }}
         onSync={syncSkillSources}
+      />
+    );
+  }
+  if (activePageId === "agent-rules") {
+    content = (
+      <AgentRulesSettingsPage
+        documents={agentRuleDocuments}
+        userMarkdown={userAgentMarkdown}
+        onUserMarkdownChange={handleUserAgentMarkdownChange}
       />
     );
   }

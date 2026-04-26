@@ -7,6 +7,7 @@ type CodeEditorProps = {
   onChange: (next: string) => void;
   placeholder?: string;
   minHeight?: string;
+  readOnly?: boolean;
 };
 
 export function CodeEditor({
@@ -15,6 +16,7 @@ export function CodeEditor({
   onChange,
   placeholder,
   minHeight = "360px",
+  readOnly = false,
 }: CodeEditorProps) {
   const lineNumbersRef = useRef<HTMLDivElement>(null);
 
@@ -75,7 +77,7 @@ export function CodeEditor({
         </div>
         <textarea
           id={id}
-          className="h-full min-h-0 min-w-0 flex-1 resize-none border-0 bg-transparent p-3 font-mono text-xs leading-6 text-ink-800 outline-none ring-0 transition-all placeholder:text-muted focus:ring-0"
+          className={`h-full min-h-0 min-w-0 flex-1 resize-none border-0 bg-transparent p-3 font-mono text-xs leading-6 outline-none ring-0 transition-all placeholder:text-muted focus:ring-0 ${readOnly ? "text-ink-700" : "text-ink-800"}`}
           style={{ minHeight }}
           value={value}
           onChange={handleChange}
@@ -83,6 +85,7 @@ export function CodeEditor({
           onKeyDown={handleKeyDown}
           spellCheck={false}
           placeholder={placeholder}
+          readOnly={readOnly}
         />
       </div>
     </div>

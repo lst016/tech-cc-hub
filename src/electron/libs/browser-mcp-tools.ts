@@ -3,13 +3,19 @@ import {
   tool,
   type McpSdkServerConfigWithInstance,
 } from "@anthropic-ai/claude-agent-sdk";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import type {
   BrowserWorkbenchConsoleLog,
+  BrowserWorkbenchDomStats,
   BrowserWorkbenchDomHint,
+  BrowserWorkbenchNodeQueryResult,
   BrowserWorkbenchState,
   BrowserWorkbenchBounds,
+  BrowserWorkbenchPageSnapshot,
+  BrowserWorkbenchQueryStrategy,
+  BrowserWorkbenchStyleInspection,
 } from "../browser-manager.js";
 
 export const BROWSER_TOOL_NAMES = [
@@ -18,8 +24,12 @@ export const BROWSER_TOOL_NAMES = [
   "browser_get_state",
   "browser_navigate",
   "browser_reload",
+  "browser_extract_page",
   "browser_capture_visible",
   "browser_console_logs",
+  "browser_get_dom_stats",
+  "browser_query_nodes",
+  "browser_inspect_styles",
   "browser_inspect_at_point",
   "browser_set_annotation_mode",
 ] as const;
@@ -33,7 +43,22 @@ export type BrowserWorkbenchToolHost = {
   goForward: () => BrowserWorkbenchState;
   getState: () => BrowserWorkbenchState;
   getConsoleLogs: (limit?: number) => BrowserWorkbenchConsoleLog[];
+  extractPageSnapshot: () => Promise<{ success: boolean; snapshot?: BrowserWorkbenchPageSnapshot; error?: string }>;
   captureVisible: () => Promise<{ success: boolean; dataUrl?: string; error?: string }>;
+  getDomStats: () => Promise<{ success: boolean; stats?: BrowserWorkbenchDomStats; error?: string }>;
+  queryNodes: (input: {
+    strategy?: BrowserWorkbenchQueryStrategy;
+    query: string;
+    maxResults?: number;
+    includeStyles?: boolean;
+    styleProps?: string[];
+  }) => Promise<{ success: boolean; result?: BrowserWorkbenchNodeQueryResult; error?: string }>;
+  inspectStyles: (input: {
+    strategy?: BrowserWorkbenchQueryStrategy;
+    query: string;
+    index?: number;
+    properties?: string[];
+  }) => Promise<{ success: boolean; inspection?: BrowserWorkbenchStyleInspection; error?: string }>;
   inspectAtPoint: (point: { x: number; y: number }) => Promise<BrowserWorkbenchDomHint | null>;
   setAnnotationMode: (enabled: boolean) => Promise<BrowserWorkbenchState>;
 };
@@ -60,10 +85,10 @@ function getHost(): BrowserWorkbenchToolHost {
   return browserHost;
 }
 
-function toTextToolResult(payload: unknown, isError = false) {
+function toTextToolResult(payload: unknown, isError = false): CallToolResult {
   return {
     isError,
-    content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
   };
 }
 
@@ -95,7 +120,7 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     "browser_open_page",
     "打开/切换浏览器预览页的 URL。",
     { url: z.string().trim().min(1) },
-    async (input) => {
+    async (input, _extra) => {
       const host = getHost();
       const state = host.open(input.url);
       return toTextToolResult({ action: "browser_open_page", success: true, state });
@@ -106,7 +131,7 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     "browser_close_page",
     "关闭浏览器预览页面及标注会话。",
     {},
-    async () => {
+    async (_input, _extra) => {
       const host = getHost();
       const state = host.close();
       return toTextToolResult({ action: "browser_close_page", success: true, state });
@@ -117,7 +142,7 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     "browser_get_state",
     "获取当前浏览器预览页状态（URL、标题、加载/前进后退状态）。",
     {},
-    async () => {
+    async (_input, _extra) => {
       const host = getHost();
       const state = host.getState();
       return toTextToolResult({ action: "browser_get_state", success: true, state });
@@ -128,7 +153,7 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     "browser_navigate",
     "执行浏览器预览页导航，支持 back/forward。",
     { direction: z.enum(["back", "forward"]) },
-    async (input) => {
+    async (input, _extra) => {
       const host = getHost();
       const state = input.direction === "back" ? host.goBack() : host.goForward();
       return toTextToolResult({ action: "browser_navigate", direction: input.direction, success: true, state });
@@ -139,10 +164,28 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     "browser_reload",
     "重新加载当前浏览器预览页。",
     {},
-    async () => {
+    async (_input, _extra) => {
       const host = getHost();
       const state = host.reload();
       return toTextToolResult({ action: "browser_reload", success: true, state });
+    },
+  );
+
+  const extractPageTool = tool(
+    "browser_extract_page",
+    "提取当前浏览器页面的数据，包括 URL、标题、描述、正文文本、标题层级、链接和图片。用户要求读取/爬取当前内置浏览器页面时优先使用这个工具。",
+    {},
+    async (_input, _extra) => {
+      const host = getHost();
+      const result = await host.extractPageSnapshot();
+      if (!result.success) {
+        return toTextToolResult({ action: "browser_extract_page", success: false, error: result.error }, true);
+      }
+      return toTextToolResult({
+        action: "browser_extract_page",
+        success: true,
+        snapshot: result.snapshot,
+      });
     },
   );
 
@@ -150,7 +193,7 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     "browser_capture_visible",
     "截取当前浏览器页面可见区域。为避免上下文过大，返回的是文本摘要片段。",
     {},
-    async () => {
+    async (_input, _extra) => {
       const host = getHost();
       const capture = await host.captureVisible();
       if (!capture.success) {
@@ -172,7 +215,7 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     "browser_console_logs",
     "读取浏览器控制台最近日志。",
     { limit: z.number().int().min(1).max(300).optional() },
-    async (input) => {
+    async (input, _extra) => {
       const host = getHost();
       const logs = host.getConsoleLogs(input.limit);
       return toTextToolResult({
@@ -184,11 +227,87 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     },
   );
 
+  const domStatsTool = tool(
+    "browser_get_dom_stats",
+    "统计当前页面 DOM 规模和结构，返回节点总数、交互元素数量以及最常见标签，适合快速判断页面复杂度。",
+    {},
+    async (_input, _extra) => {
+      const host = getHost();
+      const result = await host.getDomStats();
+      if (!result.success) {
+        return toTextToolResult({ action: "browser_get_dom_stats", success: false, error: result.error }, true);
+      }
+      return toTextToolResult({
+        action: "browser_get_dom_stats",
+        success: true,
+        stats: result.stats,
+      });
+    },
+  );
+
+  const queryNodesTool = tool(
+    "browser_query_nodes",
+    "按 CSS selector 或 XPath 查询页面节点，返回匹配数量、节点路径、属性、文本和可选样式，适合定向定位组件或批量检查 DOM。",
+    {
+      query: z.string().trim().min(1),
+      strategy: z.enum(["selector", "xpath"]).optional(),
+      maxResults: z.number().int().min(1).max(50).optional(),
+      includeStyles: z.boolean().optional(),
+      styleProps: z.array(z.string()).max(40).optional(),
+    },
+    async (input, _extra) => {
+      const host = getHost();
+      const result = await host.queryNodes({
+        strategy: input.strategy,
+        query: input.query,
+        maxResults: clampInteger(input.maxResults, 8, 50),
+        includeStyles: input.includeStyles,
+        styleProps: input.styleProps,
+      });
+      if (!result.success) {
+        return toTextToolResult({ action: "browser_query_nodes", success: false, error: result.error }, true);
+      }
+      return toTextToolResult({
+        action: "browser_query_nodes",
+        success: true,
+        result: result.result,
+      });
+    },
+  );
+
+  const inspectStylesTool = tool(
+    "browser_inspect_styles",
+    "按 CSS selector 或 XPath 读取目标节点的计算样式、CSS 变量、内联样式和节点基础信息，适合诊断布局和样式问题。",
+    {
+      query: z.string().trim().min(1),
+      strategy: z.enum(["selector", "xpath"]).optional(),
+      index: z.number().int().min(0).max(200).optional(),
+      properties: z.array(z.string()).max(60).optional(),
+    },
+    async (input, _extra) => {
+      const host = getHost();
+      const result = await host.inspectStyles({
+        strategy: input.strategy,
+        query: input.query,
+        index: input.index,
+        properties: input.properties,
+      });
+      if (!result.success) {
+        return toTextToolResult({ action: "browser_inspect_styles", success: false, error: result.error }, true);
+      }
+      return toTextToolResult({
+        action: "browser_inspect_styles",
+        success: true,
+        inspection: result.inspection,
+      });
+    },
+  );
+
   const inspectPointTool = tool(
     "browser_inspect_at_point",
     "在浏览器预览页中根据坐标提取 DOM 线索（selector、文本、路径等）。",
     { x: z.number(), y: z.number() },
-    async (input) => {
+    async (input, _extra) => {
       const host = getHost();
       const domHint = await host.inspectAtPoint({ x: clampInteger(input.x, 0, Number.MAX_SAFE_INTEGER), y: clampInteger(input.y, 0, Number.MAX_SAFE_INTEGER) });
       return toTextToolResult({
@@ -203,7 +322,7 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     "browser_set_annotation_mode",
     "切换浏览器预览页标注模式（开启/关闭）。",
     { enabled: z.boolean() },
-    async (input) => {
+    async (input, _extra) => {
       const host = getHost();
       const state = await host.setAnnotationMode(input.enabled);
       return toTextToolResult({
@@ -224,8 +343,12 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
       getStateTool,
       navigateTool,
       reloadTool,
+      extractPageTool,
       captureTool,
       consoleLogsTool,
+      domStatsTool,
+      queryNodesTool,
+      inspectStylesTool,
       inspectPointTool,
       setAnnotationModeTool,
     ],

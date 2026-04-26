@@ -14,6 +14,7 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
         const mainModel = profile.model || availableModels[0] || "";
         const expertModel = profile.expertModel || mainModel;
         const analysisModel = profile.analysisModel || mainModel;
+        const imageModel = profile.imageModel || "";
 
         return (
           <div key={profile.id} className="rounded-[28px] border border-ink-900/10 bg-white/86 p-5 shadow-[0_18px_44px_rgba(24,32,46,0.06)]">
@@ -28,24 +29,41 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
                   )}
                 </div>
                 <p className="mt-2 text-sm leading-6 text-muted">
-                  当前把模型分工收敛到三层：主模型负责常规对话，专家模型负责复杂问题兜底，Prompt 分析模型负责复盘、诊断和改写建议。
+                  当前把模型分工收敛到四层：主模型负责常规对话，专家模型负责复杂问题兜底，Prompt 分析模型负责复盘诊断，图片预处理模型负责先读图再交给聊天。
                 </p>
               </div>
-              <button
-                type="button"
-                className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-xs text-ink-700 transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => onChange((current) => current.map((item) => (
-                  item.id === profile.id
-                    ? {
-                      ...item,
-                      expertModel: item.model,
-                    }
-                    : item
-                )))}
-                disabled={!mainModel}
-              >
-                专家模型同步主模型
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-xs text-ink-700 transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => onChange((current) => current.map((item) => (
+                    item.id === profile.id
+                      ? {
+                        ...item,
+                        expertModel: item.model,
+                      }
+                      : item
+                  )))}
+                  disabled={!mainModel}
+                >
+                  专家模型同步主模型
+                </button>
+                <button
+                  type="button"
+                  className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-xs text-ink-700 transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => onChange((current) => current.map((item) => (
+                    item.id === profile.id
+                      ? {
+                        ...item,
+                        imageModel: item.model,
+                      }
+                      : item
+                  )))}
+                  disabled={!mainModel}
+                >
+                  图片模型同步主模型
+                </button>
+              </div>
             </div>
 
             {availableModels.length === 0 ? (
@@ -55,8 +73,8 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
             ) : (
               <div className="mt-4 rounded-3xl border border-ink-900/8 bg-surface/80 p-4">
                 <div className="text-xs font-semibold tracking-[0.16em] text-muted">MODEL SLOTS</div>
-                <div className="mt-2 text-sm text-ink-800">主模型负责常规聊天，专家模型用于复杂问题，Prompt 分析模型用于执行复盘和上下文优化建议。</div>
-                <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                <div className="mt-2 text-sm text-ink-800">主模型负责常规聊天，图片预处理模型会在发送图片前提取 OCR、界面结构和关键视觉信息，再把摘要交给主 Agent。</div>
+                <div className="mt-4 grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
                   <label className="grid gap-1.5">
                     <span className="text-xs font-medium text-muted">默认主模型</span>
                     <select
@@ -104,6 +122,24 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
                     >
                       {availableModels.map((model) => (
                         <option key={model} value={model}>{model}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="grid gap-1.5">
+                    <span className="text-xs font-medium text-muted">图片预处理模型</span>
+                    <select
+                      className="rounded-xl border border-ink-900/10 bg-white px-4 py-2.5 text-sm text-ink-800 transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
+                      value={imageModel}
+                      onChange={(event) => onChange((current) => current.map((item) => (
+                        item.id === profile.id
+                          ? { ...item, imageModel: event.target.value || undefined }
+                          : item
+                      )))}
+                    >
+                      <option value="">不启用图片预处理</option>
+                      {availableModels.map((model) => (
+                        <option key={`image-${model}`} value={model}>{model}</option>
                       ))}
                     </select>
                   </label>

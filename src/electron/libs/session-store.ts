@@ -401,6 +401,7 @@ export class SessionStore {
     const values: Array<string | number | null> = [];
     const updatable = {
       claudeSessionId: "claude_session_id",
+      title: "title",
       status: "status",
       cwd: "cwd",
       runSurface: "run_surface",

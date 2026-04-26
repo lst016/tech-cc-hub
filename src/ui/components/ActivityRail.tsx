@@ -783,7 +783,7 @@ export function ActivityRail({
       )}
 
       <aside
-        className={`fixed bottom-0 right-0 ${sidebarHeaderOffsetClass} hidden min-w-[400px] overflow-y-auto border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(240,244,248,0.96)_36%,rgba(234,239,245,0.98))] px-4 pb-6 pt-4 shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl xl:flex xl:flex-col`}
+        className={`fixed bottom-0 right-0 ${sidebarHeaderOffsetClass} hidden min-w-[400px] overflow-y-auto border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(240,244,248,0.96)_36%,rgba(234,239,245,0.98))] px-4 pb-6 pt-4 shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl lg:flex lg:flex-col`}
         style={{ width }}
       >
 

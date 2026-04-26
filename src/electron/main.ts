@@ -31,13 +31,17 @@ import { startSkillSyncScheduler, stopSkillSyncScheduler, syncSkillSources } fro
 import { ensureSystemWorkspace } from "./libs/system-workspace.js";
 import { getCurrentApiConfig } from "./libs/claude-settings.js";
 import { preprocessImageAttachments } from "./libs/image-preprocessor.js";
-import type { ClientEvent, PromptAttachment } from "./types.js";
+import { loadAgentRuleDocuments, saveUserAgentRuleDocument } from "./libs/agent-rule-docs.js";
+import type { ClientEvent, PromptAttachment, ServerEvent } from "./types.js";
 import { BrowserWorkbenchManager, type BrowserWorkbenchBounds } from "./browser-manager.js";
+import { startDevBackendBridge, DEV_BACKEND_BRIDGE_PORT } from "./dev-backend-bridge.js";
 import "./libs/claude-settings.js";
+import { addServerEventListener } from "./ipc-handlers.js";
 
 let cleanupComplete = false;
 let mainWindow: BrowserWindow | null = null;
 let browserWorkbench: BrowserWorkbenchManager | null = null;
+let stopDevBackendBridge: (() => void) | null = null;
 
 function buildBrowserWorkbenchFallbackState(): {
   url: string;
@@ -175,14 +179,16 @@ function killViteDevServer(): void {
 }
 
 function cleanup(): void {
-    if (cleanupComplete) return;
-    cleanupComplete = true;
+  if (cleanupComplete) return;
+  cleanupComplete = true;
 
-    globalShortcut.unregisterAll();
-    stopPolling();
-    setBrowserToolHost(null);
-    browserWorkbench?.close();
-    browserWorkbench = null;
+  globalShortcut.unregisterAll();
+  stopPolling();
+  stopDevBackendBridge?.();
+  stopDevBackendBridge = null;
+  setBrowserToolHost(null);
+  browserWorkbench?.close();
+  browserWorkbench = null;
     cleanupAllSessions();
     stopSkillSyncScheduler();
     killViteDevServer();
@@ -232,6 +238,99 @@ function readPromptAttachmentPayload(attachments?: unknown[]): PromptAttachment[
     return Array.isArray(attachments) ? (attachments as PromptAttachment[]) : [];
 }
 
+function normalizeApiBaseURLForModels(value: string): string {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+
+    const url = new URL(trimmed);
+    const pathname = url.pathname.replace(/\/+$/, "");
+
+    if (!pathname || pathname === "/" || pathname.startsWith("/console")) {
+        url.pathname = "/v1";
+    } else if (pathname.endsWith("/models")) {
+        url.pathname = pathname.replace(/\/models$/, "");
+    }
+
+    return url.toString().replace(/\/$/, "");
+}
+
+function buildModelsEndpoint(baseURL: string): { endpoint: string; normalizedBaseURL: string } {
+    const normalizedBaseURL = normalizeApiBaseURLForModels(baseURL);
+    const url = new URL(normalizedBaseURL);
+    const pathname = url.pathname.replace(/\/+$/, "");
+    url.pathname = pathname.endsWith("/v1") ? `${pathname}/models` : `${pathname}/v1/models`;
+    return {
+        endpoint: url.toString(),
+        normalizedBaseURL,
+    };
+}
+
+function extractModelIds(payload: unknown): string[] {
+    if (!payload || typeof payload !== "object") {
+        return [];
+    }
+
+    const data = (payload as { data?: unknown }).data;
+    if (!Array.isArray(data)) {
+        return [];
+    }
+
+    return Array.from(new Set(data
+        .map((item) => {
+            if (typeof item === "string") return item;
+            if (item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string") {
+                return (item as { id: string }).id;
+            }
+            return "";
+        })
+        .map((item) => item.trim())
+        .filter(Boolean)));
+}
+
+async function fetchApiModels(payload: { baseURL?: string; apiKey?: string }): Promise<{ success: boolean; models?: string[]; baseURL?: string; error?: string }> {
+    const baseURL = payload?.baseURL?.trim() ?? "";
+    const apiKey = payload?.apiKey?.trim() ?? "";
+
+    if (!baseURL) {
+        return { success: false, error: "请先填写接口地址。" };
+    }
+    if (!apiKey) {
+        return { success: false, error: "请先填写 API 密钥。" };
+    }
+
+    try {
+        const { endpoint, normalizedBaseURL } = buildModelsEndpoint(baseURL);
+        const response = await fetch(endpoint, {
+            headers: {
+                authorization: `Bearer ${apiKey}`,
+                "x-api-key": apiKey,
+            },
+        });
+
+        if (!response.ok) {
+            const message = await response.text();
+            return { success: false, error: message || response.statusText };
+        }
+
+        const responsePayload = await response.json() as unknown;
+        const models = extractModelIds(responsePayload);
+        if (models.length === 0) {
+            return { success: false, error: "接口没有返回可用模型。" };
+        }
+
+        return {
+            success: true,
+            models,
+            baseURL: normalizedBaseURL,
+        };
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+        };
+    }
+}
+
 installStdIoGuards();
 
 // Initialize everything when app is ready
@@ -274,11 +373,35 @@ app.on("ready", async () => {
       goForward: () => browserWorkbench?.goForward() ?? buildBrowserWorkbenchFallbackState(),
       getState: () => browserWorkbench?.getState() ?? buildBrowserWorkbenchFallbackState(),
       getConsoleLogs: (limit) => browserWorkbench?.getConsoleLogs(limit) ?? [],
+      extractPageSnapshot: async () => {
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.extractPageSnapshot();
+      },
       captureVisible: async () => {
         if (!browserWorkbench) {
           return { success: false, error: "浏览器工作台尚未初始化。" };
         }
         return await browserWorkbench.captureVisible();
+      },
+      getDomStats: async () => {
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.getDomStats();
+      },
+      queryNodes: async (input) => {
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.queryNodes(input);
+      },
+      inspectStyles: async (input) => {
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.inspectStyles(input);
       },
       inspectAtPoint: async (point) => {
         if (!browserWorkbench) {
@@ -316,6 +439,96 @@ app.on("ready", async () => {
     pollResources(mainWindow);
     void scheduleDevAutostart();
     startSkillSyncScheduler();
+
+    if (isDev()) {
+      const bridge = startDevBackendBridge({
+        port: DEV_BACKEND_BRIDGE_PORT,
+        platform: process.platform,
+        handlers: {
+          getStaticData: () => getStaticData(),
+          sendClientEvent: async (event: ClientEvent) => {
+            const emittedEvents: ServerEvent[] = [];
+            const unsubscribe = addServerEventListener((nextEvent) => {
+              emittedEvents.push(nextEvent);
+            });
+            try {
+              await handleClientEvent(event);
+            } finally {
+              unsubscribe();
+            }
+            return { success: true, events: emittedEvents };
+          },
+          generateSessionTitle: async (userInput: string | null) => await generateSessionTitle(userInput),
+          getRecentCwds: (limit?: number) => {
+            const boundedLimit = limit ? Math.min(Math.max(limit, 1), 20) : 8;
+            return sessions.listRecentCwds(boundedLimit);
+          },
+          getSystemWorkspace: () => ensureSystemWorkspace(),
+          selectDirectory: async () => {
+            const result = await dialog.showOpenDialog(mainWindow!, {
+              properties: ["openDirectory"],
+            });
+            return result.canceled ? null : result.filePaths[0];
+          },
+          getApiConfig: () => loadApiConfigSettings(),
+          saveApiConfig: (config: unknown) => {
+            saveApiConfigSettings(config as ApiConfigSettings);
+            return { success: true };
+          },
+          fetchApiModels: async (payload: { baseURL?: string; apiKey?: string }) => await fetchApiModels(payload),
+          getGlobalConfig: () => loadGlobalRuntimeConfig(),
+          saveGlobalConfig: (config: unknown) => {
+            saveGlobalRuntimeConfig(config as Record<string, unknown>);
+            return { success: true };
+          },
+          getAgentRuleDocuments: () => loadAgentRuleDocuments(),
+          saveUserAgentRuleDocument: (markdown: unknown) => {
+            saveUserAgentRuleDocument(typeof markdown === "string" ? markdown : "");
+            return { success: true };
+          },
+          getSkillInventory: () => loadSkillInventory(),
+          saveSkillInventory: (inventory: unknown) => {
+            saveSkillInventory(inventory);
+            return { success: true };
+          },
+          syncSkillSources: async (request: SkillSyncRequest) => await syncSkillSources(request),
+          checkApiConfig: () => {
+            const config = getCurrentApiConfig();
+            return { hasConfig: config !== null, config };
+          },
+          debugSaveTraceSnapshot: (snapshot: unknown) => {
+            const debugDir = join(app.getPath("userData"), "debug-artifacts");
+            mkdirSync(debugDir, { recursive: true });
+            const filePath = join(debugDir, `trace-dom-snapshot-${Date.now()}.json`);
+            writeFileSync(filePath, JSON.stringify(snapshot, null, 2), "utf8");
+            return { success: true, path: filePath };
+          },
+          preprocessImageAttachments: async (payload: { prompt?: string; selectedModel?: string; attachments?: unknown[] }) => {
+            const attachments = readPromptAttachmentPayload(payload?.attachments);
+            return await preprocessImageAttachments({
+              config: getCurrentApiConfig(),
+              prompt: payload?.prompt ?? "",
+              selectedModel: payload?.selectedModel,
+              attachments,
+            });
+          },
+          openBrowserWorkbench: (url: string) => browserWorkbench!.open(url),
+          closeBrowserWorkbench: () => browserWorkbench!.close(),
+          setBrowserWorkbenchBounds: (bounds: BrowserWorkbenchBounds) => browserWorkbench!.setBounds(bounds),
+          reloadBrowserWorkbench: () => browserWorkbench!.reload(),
+          goBackBrowserWorkbench: () => browserWorkbench!.goBack(),
+          goForwardBrowserWorkbench: () => browserWorkbench!.goForward(),
+          getBrowserWorkbenchState: () => browserWorkbench!.getState(),
+          getBrowserWorkbenchConsoleLogs: (limit?: number) => browserWorkbench!.getConsoleLogs(limit),
+          captureBrowserWorkbenchVisible: async () => await browserWorkbench!.captureVisible(),
+          inspectBrowserWorkbenchAtPoint: async (point: { x: number; y: number }) => await browserWorkbench!.inspectAtPoint(point),
+          setBrowserWorkbenchAnnotationMode: async (enabled: boolean) => await browserWorkbench!.setAnnotationMode(enabled),
+        },
+        subscribeServerEvents: (listener) => addServerEventListener(listener as any),
+        subscribeBrowserEvents: (listener) => browserWorkbench!.addEventListener(listener as any),
+      });
+      stopDevBackendBridge = () => bridge.stop();
+    }
 
     ipcMainHandle("getStaticData", () => {
         return getStaticData();
@@ -376,6 +589,17 @@ app.on("ready", async () => {
         }
     });
 
+    ipcMainHandle("fetch-api-models", async (_: IpcMainInvokeEvent, payload: { baseURL?: string; apiKey?: string }) => {
+        try {
+            return await fetchApiModels(payload);
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : String(error),
+            };
+        }
+    });
+
     ipcMainHandle("get-global-config", () => {
         return loadGlobalRuntimeConfig();
     });
@@ -383,6 +607,22 @@ app.on("ready", async () => {
     ipcMainHandle("save-global-config", (_: IpcMainInvokeEvent, config: unknown) => {
         try {
             saveGlobalRuntimeConfig(config as Record<string, unknown>);
+            return { success: true };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : String(error),
+            };
+        }
+    });
+
+    ipcMainHandle("get-agent-rule-documents", () => {
+        return loadAgentRuleDocuments();
+    });
+
+    ipcMainHandle("save-user-agent-rule-document", (_: IpcMainInvokeEvent, markdown: unknown) => {
+        try {
+            saveUserAgentRuleDocument(typeof markdown === "string" ? markdown : "");
             return { success: true };
         } catch (error) {
             return {

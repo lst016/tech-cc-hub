@@ -301,55 +301,104 @@ const AttachmentChip = ({ attachment }: { attachment: PromptAttachment }) => (
   </div>
 );
 
-const UserMessageCard = ({ message, showIndicator = false }: { message: { type: "user_prompt"; prompt: string; attachments?: PromptAttachment[] }; showIndicator?: boolean }) => (
-  <div className="mt-5 flex flex-col items-end">
-    <div className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.16em] text-muted">
-      <StatusDot variant="success" isActive={showIndicator} isVisible={showIndicator} />
-      用户
-    </div>
-    {message.prompt.trim() ? (
-      <div className="mt-2 w-full max-w-[78%] rounded-[24px] border border-accent/18 bg-[linear-gradient(180deg,rgba(253,244,241,0.98),rgba(255,255,255,0.96))] px-5 py-4 text-ink-800 shadow-[0_16px_30px_rgba(210,106,61,0.08)]">
-        <MDContent text={message.prompt} />
-      </div>
-    ) : (
-      <div className="mt-2 w-full max-w-[78%] rounded-[24px] border border-black/6 bg-[#eef2f8] px-4 py-3 text-sm text-muted">
-        已发送附件
-      </div>
-    )}
-    {message.attachments && message.attachments.length > 0 && (
-      <div className="mt-3 grid w-full max-w-[78%] gap-3">
-        <div className="grid gap-2 sm:grid-cols-2">
-          {message.attachments.map((attachment) => (
-            <AttachmentChip key={attachment.id} attachment={attachment} />
-          ))}
-        </div>
-        {message.attachments.map((attachment) => {
-          if (attachment.kind === "image") {
-            const imageSrc = resolveImageAttachmentSrc(attachment);
-            return (
-              <div key={`${attachment.id}-preview`} className="overflow-hidden rounded-2xl border border-black/6 bg-[#eef2f8] p-2">
-                <img
-                  src={imageSrc}
-                  alt={attachment.name}
-                  className="max-h-64 w-full rounded-xl object-contain"
-                />
-              </div>
-            );
-          }
+type BrowserAnnotationsPayload = {
+  count?: number;
+  items?: unknown[];
+};
 
-          return (
-            <div key={`${attachment.id}-preview`} className="rounded-2xl border border-black/6 bg-[#eef2f8] p-3">
-              <div className="mb-2 text-xs font-medium text-muted">{attachment.name}</div>
-              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-sm text-ink-700">
-                {attachment.preview || attachment.data}
-              </pre>
-            </div>
-          );
-        })}
-      </div>
-    )}
+function extractBrowserAnnotationsPrompt(prompt: string): { visiblePrompt: string; annotationCount: number } {
+  const blocks = Array.from(prompt.matchAll(/<browser_annotations>\s*([\s\S]*?)\s*<\/browser_annotations>/g));
+  if (blocks.length === 0) {
+    return { visiblePrompt: prompt, annotationCount: 0 };
+  }
+
+  const annotationCount = blocks.reduce((sum, block) => {
+    try {
+      const payload = JSON.parse(block[1]) as BrowserAnnotationsPayload;
+      if (typeof payload.count === "number") return sum + payload.count;
+      if (Array.isArray(payload.items)) return sum + payload.items.length;
+    } catch {
+      return sum + 1;
+    }
+    return sum + 1;
+  }, 0);
+
+  return {
+    visiblePrompt: prompt.replace(/<browser_annotations>[\s\S]*?<\/browser_annotations>/g, "").trim(),
+    annotationCount,
+  };
+}
+
+const BrowserAnnotationChip = ({ count }: { count: number }) => (
+  <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-base font-semibold text-ink-800 shadow-[0_12px_28px_rgba(15,23,42,0.08)]">
+    <svg viewBox="0 0 24 24" className="h-5 w-5 text-muted" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M7 8h10M7 12h6" />
+      <path d="M5.5 4.5h13A2.5 2.5 0 0 1 21 7v8a2.5 2.5 0 0 1-2.5 2.5h-7L7 21v-3.5H5.5A2.5 2.5 0 0 1 3 15V7a2.5 2.5 0 0 1 2.5-2.5Z" />
+    </svg>
+    <span>{count} 条批注</span>
   </div>
 );
+
+const UserMessageCard = ({ message, showIndicator = false }: { message: { type: "user_prompt"; prompt: string; attachments?: PromptAttachment[] }; showIndicator?: boolean }) => {
+  const { visiblePrompt, annotationCount } = extractBrowserAnnotationsPrompt(message.prompt);
+  const hasVisiblePrompt = visiblePrompt.trim().length > 0;
+  const hasAttachments = Boolean(message.attachments?.length);
+
+  return (
+    <div className="mt-5 flex flex-col items-end">
+      <div className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.16em] text-muted">
+        <StatusDot variant="success" isActive={showIndicator} isVisible={showIndicator} />
+        用户
+      </div>
+      {hasVisiblePrompt ? (
+        <div className="mt-2 w-full max-w-[78%] rounded-[24px] border border-accent/18 bg-[linear-gradient(180deg,rgba(253,244,241,0.98),rgba(255,255,255,0.96))] px-5 py-4 text-ink-800 shadow-[0_16px_30px_rgba(210,106,61,0.08)]">
+          <MDContent text={visiblePrompt} />
+        </div>
+      ) : !hasAttachments && annotationCount === 0 ? (
+        <div className="mt-2 w-full max-w-[78%] rounded-[24px] border border-black/6 bg-[#eef2f8] px-4 py-3 text-sm text-muted">
+          已发送附件
+        </div>
+      ) : null}
+      {annotationCount > 0 && (
+        <div className="w-full max-w-[78%] text-right">
+          <BrowserAnnotationChip count={annotationCount} />
+        </div>
+      )}
+      {message.attachments && message.attachments.length > 0 && (
+        <div className="mt-3 grid w-full max-w-[78%] gap-3">
+          <div className="grid gap-2 sm:grid-cols-2">
+            {message.attachments.map((attachment) => (
+              <AttachmentChip key={attachment.id} attachment={attachment} />
+            ))}
+          </div>
+          {message.attachments.map((attachment) => {
+            if (attachment.kind === "image") {
+              const imageSrc = resolveImageAttachmentSrc(attachment);
+              return (
+                <div key={`${attachment.id}-preview`} className="overflow-hidden rounded-2xl border border-black/6 bg-[#eef2f8] p-2">
+                  <img
+                    src={imageSrc}
+                    alt={attachment.name}
+                    className="max-h-64 w-full rounded-xl object-contain"
+                  />
+                </div>
+              );
+            }
+
+            return (
+              <div key={`${attachment.id}-preview`} className="rounded-2xl border border-black/6 bg-[#eef2f8] p-3">
+                <div className="mb-2 text-xs font-medium text-muted">{attachment.name}</div>
+                <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-sm text-ink-700">
+                  {attachment.preview || attachment.data}
+                </pre>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export function MessageCard({
   message,

@@ -24,6 +24,8 @@ interface PromptInputProps {
 }
 
 const MAX_TEXT_ATTACHMENT_LENGTH = 20_000;
+const MAX_IMAGE_EDGE = 1600;
+const IMAGE_JPEG_QUALITY = 0.88;
 const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const TEXT_FILE_PATTERN = /\.(txt|md|markdown|json|ya?ml|xml|csv|tsv|log|js|jsx|ts|tsx|py|rb|java|go|rs|sh|css|html|sql|toml|ini|env)$/i;
 const REASONING_OPTIONS: Array<{ value: RuntimeReasoningMode; label: string }> = [
@@ -208,6 +210,58 @@ async function readFileAsText(file: Blob): Promise<string> {
   });
 }
 
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return await readFileAsDataUrl(blob);
+}
+
+async function downscaleImageFile(file: File): Promise<{ dataUrl: string; mimeType: string; size: number }> {
+  if (file.type === "image/gif") {
+    const dataUrl = await readFileAsDataUrl(file);
+    return { dataUrl, mimeType: file.type, size: file.size };
+  }
+
+  let bitmap: ImageBitmap | null = null;
+  try {
+    bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(bitmap.width, bitmap.height));
+
+    if (scale >= 1) {
+      const dataUrl = await readFileAsDataUrl(file);
+      return { dataUrl, mimeType: file.type, size: file.size };
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) {
+      const dataUrl = await readFileAsDataUrl(file);
+      return { dataUrl, mimeType: file.type, size: file.size };
+    }
+
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, "image/jpeg", IMAGE_JPEG_QUALITY);
+    });
+
+    if (!blob) {
+      const dataUrl = await readFileAsDataUrl(file);
+      return { dataUrl, mimeType: file.type, size: file.size };
+    }
+
+    return {
+      dataUrl: await blobToDataUrl(blob),
+      mimeType: "image/jpeg",
+      size: blob.size,
+    };
+  } finally {
+    bitmap?.close();
+  }
+}
+
 function isTextFile(file: File): boolean {
   return file.type.startsWith("text/") || TEXT_FILE_PATTERN.test(file.name);
 }
@@ -217,15 +271,15 @@ async function fileToAttachment(file: File): Promise<PromptAttachment> {
     if (!SUPPORTED_IMAGE_TYPES.has(file.type)) {
       throw new Error(`暂不支持 ${file.type} 图片格式，请优先使用 PNG、JPEG、GIF 或 WebP。`);
     }
-    const dataUrl = await readFileAsDataUrl(file);
+    const normalizedImage = await downscaleImageFile(file);
     return {
       id: crypto.randomUUID(),
       kind: "image",
       name: file.name || `图片-${Date.now()}.png`,
-      mimeType: file.type,
-      data: dataUrl,
-      preview: dataUrl,
-      size: file.size,
+      mimeType: normalizedImage.mimeType,
+      data: normalizedImage.dataUrl,
+      preview: normalizedImage.dataUrl,
+      size: normalizedImage.size,
     };
   }
 
@@ -315,8 +369,13 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
     const imageModel = activeProfile?.imageModel?.trim();
     const selectedModel = runtimeModel.trim();
 
-    if (!hasImageAttachments || !imageModel) {
+    if (!hasImageAttachments) {
       return attachments;
+    }
+
+    if (!imageModel) {
+      setGlobalError("当前配置没有图片预处理模型，不能可靠识别图片。请先在 设置 -> 接口配置 -> 图片预处理模型 选择支持图片的模型后再发送。");
+      return null;
     }
 
     const result = await window.electron.preprocessImageAttachments({
@@ -440,7 +499,7 @@ export function PromptInput({
   leftOffset = 320,
   rightOffset = 340,
 }: PromptInputProps) {
-  const { prompt, setPrompt, isRunning, handleSend, handleStop, slashCommands, activeSessionId, sendPromptDraft, validatePromptDraft } = usePromptActions(sendEvent);
+  const { prompt, setPrompt, isRunning, handleStop, slashCommands, activeSessionId, sendPromptDraft, validatePromptDraft } = usePromptActions(sendEvent);
   const browserAnnotations = useAppStore((state) => state.browserAnnotations);
   const clearBrowserAnnotations = useAppStore((state) => state.clearBrowserAnnotations);
   const apiConfigSettings = useAppStore((state) => state.apiConfigSettings);
@@ -460,6 +519,7 @@ export function PromptInput({
   const [showSlashBrowser, setShowSlashBrowser] = useState(false);
   const autoDispatchRef = useRef<string | null>(null);
   const submitInFlightRef = useRef(false);
+  const [submissionStatus, setSubmissionStatus] = useState<string | null>(null);
   const setGlobalError = useAppStore((state) => state.setGlobalError);
   const slashQuery = prompt.startsWith("/") ? prompt.trim().slice(1).split(/\s+/)[0] ?? "" : "";
   const activeQueue = useMemo(() => {
@@ -557,16 +617,32 @@ export function PromptInput({
         return queueCurrentDraft();
       }
 
-      const sent = await handleSend(attachments);
+      const promptSnapshot = prompt;
+      const attachmentsSnapshot = attachments;
+      const promptWithAnnotations = mergePromptWithBrowserAnnotations(promptSnapshot, browserAnnotations);
+      const hasImageAttachments = attachmentsSnapshot.some((attachment) => attachment.kind === "image");
+      const validationError = validatePromptDraft(promptWithAnnotations);
+      if (validationError) {
+        setGlobalError(validationError);
+        return false;
+      }
+
+      clearComposer();
+      setSubmissionStatus(hasImageAttachments ? "正在压缩并识别图片，本地视觉模型可能需要几十秒..." : "正在发送...");
+
+      const sent = await sendPromptDraft(promptWithAnnotations, attachmentsSnapshot, { clearPrompt: false });
       if (sent) {
-        clearComposer();
         onSendMessage?.();
+      } else {
+        setPrompt(promptSnapshot);
+        setAttachments(attachmentsSnapshot);
       }
       return sent;
     } finally {
+      setSubmissionStatus(null);
       submitInFlightRef.current = false;
     }
-  }, [attachments, clearComposer, handleSend, hasDraft, isRunning, onSendMessage, queueCurrentDraft]);
+  }, [attachments, browserAnnotations, clearComposer, hasDraft, isRunning, onSendMessage, prompt, queueCurrentDraft, sendPromptDraft, setGlobalError, setPrompt, validatePromptDraft]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (disabled) return;
@@ -714,6 +790,12 @@ export function PromptInput({
         marginRight: `${rightOffset}px`,
       }}
     >
+      {submissionStatus && (
+        <div className="mx-auto mb-3 flex w-fit max-w-[min(720px,calc(100vw-80px))] items-center gap-2 rounded-full border border-accent/20 bg-white/95 px-4 py-2 text-sm font-medium text-ink-800 shadow-[0_14px_36px_rgba(24,32,46,0.12)] backdrop-blur-xl">
+          <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-accent" />
+          <span>{submissionStatus}</span>
+        </div>
+      )}
       {showSlashPalette && (
         <div className="mx-auto mb-3 w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
           <div className="overflow-hidden rounded-[24px] border border-black/6 bg-white/94 shadow-[0_18px_50px_rgba(30,38,52,0.08)] backdrop-blur">
@@ -799,6 +881,30 @@ export function PromptInput({
           </div>
         )}
 
+        {browserAnnotations.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <div
+              className="inline-flex h-10 items-center gap-2 rounded-full border border-black/8 bg-white px-3 text-sm font-semibold text-ink-800 shadow-[0_10px_24px_rgba(15,18,24,0.08)]"
+              title="浏览器批注会以结构化 JSON 随消息一起发送"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4 text-ink-600" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                <path d="M5 6.5A3.5 3.5 0 0 1 8.5 3h7A3.5 3.5 0 0 1 19 6.5v4A3.5 3.5 0 0 1 15.5 14H11l-4.5 4v-4A3.5 3.5 0 0 1 3 10.5v-4Z" />
+              </svg>
+              <span>{browserAnnotations.length} 条批注</span>
+              <button
+                type="button"
+                className="ml-1 rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
+                onClick={clearBrowserAnnotations}
+                aria-label="移除浏览器批注"
+              >
+                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-end gap-3">
           {slashCommands.length > 0 && (
             <button
@@ -822,18 +928,6 @@ export function PromptInput({
               <path d="M21.44 11.05 12.25 20.24a6 6 0 1 1-8.49-8.49l9.2-9.19a4 4 0 1 1 5.65 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
             </svg>
           </button>
-          {browserAnnotations.length > 0 && (
-            <button
-              type="button"
-              className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full border border-black/8 bg-white px-3 text-sm font-semibold text-ink-800 shadow-[0_10px_24px_rgba(15,18,24,0.08)]"
-              title="浏览器批注会以结构化 JSON 随消息一起发送"
-            >
-              <svg viewBox="0 0 24 24" className="h-4 w-4 text-ink-600" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                <path d="M5 6.5A3.5 3.5 0 0 1 8.5 3h7A3.5 3.5 0 0 1 19 6.5v4A3.5 3.5 0 0 1 15.5 14H11l-4.5 4v-4A3.5 3.5 0 0 1 3 10.5v-4Z" />
-              </svg>
-              {browserAnnotations.length} 条批注
-            </button>
-          )}
           <textarea
             rows={1}
             className="flex-1 resize-none bg-transparent py-2 text-[15px] leading-7 text-ink-800 placeholder:text-muted focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"

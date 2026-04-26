@@ -316,6 +316,33 @@ function truncate(value: string, max = 160): string {
   return `${value.slice(0, max)}...`;
 }
 
+function summarizeBrowserAnnotations(prompt: string): { visiblePrompt: string; annotationCount: number } {
+  const blocks = Array.from(prompt.matchAll(/<browser_annotations>\s*([\s\S]*?)\s*<\/browser_annotations>/g));
+  if (blocks.length === 0) {
+    return { visiblePrompt: prompt, annotationCount: 0 };
+  }
+
+  const annotationCount = blocks.reduce((sum, block) => {
+    try {
+      const payload = JSON.parse(block[1]) as { count?: number; items?: unknown[] };
+      if (typeof payload.count === "number") return sum + payload.count;
+      if (Array.isArray(payload.items)) return sum + payload.items.length;
+    } catch {
+      return sum + 1;
+    }
+    return sum + 1;
+  }, 0);
+
+  const visiblePrompt = prompt.replace(/<browser_annotations>[\s\S]*?<\/browser_annotations>/g, "").trim();
+  return { visiblePrompt, annotationCount };
+}
+
+function formatPromptForDisplay(prompt: string): string {
+  const { visiblePrompt, annotationCount } = summarizeBrowserAnnotations(prompt);
+  const annotationLabel = annotationCount > 0 ? `${annotationCount} 条批注` : "";
+  return [visiblePrompt, annotationLabel].filter(Boolean).join("\n");
+}
+
 function stringifyUnknown(value: unknown): string {
   if (typeof value === "string") return value;
   if (value === null || value === undefined) return "";
@@ -2027,7 +2054,8 @@ export function buildActivityRailModel(
     if (message.type === "user_prompt") {
       round += 1;
       sequence += 1;
-      latestPrompt = message.prompt;
+      const displayPrompt = formatPromptForDisplay(message.prompt);
+      latestPrompt = displayPrompt || message.prompt;
       latestAttachments = message.attachments ?? [];
       previousToolKey = null;
       roundContextChars = message.prompt.length + getAttachmentContextChars(latestAttachments);
@@ -2038,7 +2066,7 @@ export function buildActivityRailModel(
         "user-prompt",
         "用户提示",
         "neutral",
-        message.prompt,
+        displayPrompt || message.prompt,
         undefined,
         promptTimelineId,
       );
@@ -2062,7 +2090,7 @@ export function buildActivityRailModel(
           tone: "neutral",
           nodeKind: "context",
           title: "发送用户输入",
-          detail: message.prompt || summarizeAttachments(latestAttachments),
+          detail: displayPrompt || summarizeAttachments(latestAttachments),
           round,
           sequence,
           statusLabel: latestAttachments.length > 0 ? "含附件" : "纯文本",

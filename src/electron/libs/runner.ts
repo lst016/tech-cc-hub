@@ -146,6 +146,11 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         agentContext.enforceAllowedTools,
       );
       const hooks = buildQualityHooks(resolvedCwd, { config, prompt });
+      const browserToolServer = getBrowserMcpServer();
+      const systemPromptAppend = combineSystemPromptAppend(
+        agentContext.systemPromptAppend,
+        buildBrowserWorkbenchPromptAppend(),
+      );
 
       const q = query({
         prompt: createPromptSource(prompt, attachments),
@@ -160,11 +165,14 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           pathToClaudeCodeExecutable: getClaudeCodePath(),
           permissionMode,
           settingSources: agentContext.settingSources,
-          systemPrompt: agentContext.systemPromptAppend
-            ? { type: "preset", preset: "claude_code", append: agentContext.systemPromptAppend }
+          systemPrompt: systemPromptAppend
+            ? { type: "preset", preset: "claude_code", append: systemPromptAppend }
             : undefined,
           includePartialMessages: true,
           includeHookEvents: true,
+          mcpServers: {
+            [browserToolServer.name]: browserToolServer,
+          },
           hooks,
           allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
           canUseTool: async (toolName, input, { signal }) => {
@@ -198,6 +206,13 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               });
             }
 
+            if (toolName === "Skill" && shouldDenyExternalBrowseSkill(input, prompt)) {
+              return {
+                behavior: "deny",
+                message: "当前任务是在测试 tech-cc-hub 的 Electron 内置浏览器工作台，请使用 mcp__tech-cc-hub-browser__browser_get_state / browser_extract_page 等 MCP 工具，不要使用外部 browse skill。",
+              };
+            }
+
             if (toolName === "Read" && isRecord(input)) {
               const filePath = typeof input.file_path === "string" ? input.file_path.trim() : "";
               if (!shouldPreprocessImageRead(config, filePath)) {
@@ -214,7 +229,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               }
             }
 
-            if (effectiveAllowedTools && !effectiveAllowedTools.has(toolName) && !ALWAYS_ALLOWED_TOOLS.has(toolName)) {
+            if (effectiveAllowedTools && !effectiveAllowedTools.has(toolName) && !isAlwaysAllowedTool(toolName)) {
               return {
                 behavior: "deny",
                 message: `当前运行面不允许使用工具：${toolName}`,
@@ -225,14 +240,6 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           },
         },
       });
-      const browserToolServer = getBrowserMcpServer();
-      try {
-        await q.setMcpServers({
-          [browserToolServer.name]: browserToolServer,
-        });
-      } catch {
-        // Browser tool registration is best-effort; keep execution running if it fails.
-      }
 
       for await (const message of q) {
         if (message.type === "system" && "subtype" in message && message.subtype === "init") {
@@ -326,6 +333,50 @@ function parseAllowedTools(value: string | undefined): Set<string> | null {
     .filter(Boolean);
 
   return parsed.length > 0 ? new Set(parsed) : null;
+}
+
+function isAlwaysAllowedTool(toolName: string): boolean {
+  if (ALWAYS_ALLOWED_TOOLS.has(toolName)) {
+    return true;
+  }
+
+  return BROWSER_TOOL_NAMES.some((browserToolName) => (
+    toolName.endsWith(`__${browserToolName}`) ||
+    toolName.endsWith(`:${browserToolName}`) ||
+    toolName.endsWith(`/${browserToolName}`)
+  ));
+}
+
+function combineSystemPromptAppend(...sections: Array<string | undefined>): string | undefined {
+  const joined = sections
+    .map((section) => section?.trim())
+    .filter((section): section is string => Boolean(section))
+    .join("\n\n");
+  return joined || undefined;
+}
+
+function buildBrowserWorkbenchPromptAppend(): string {
+  return [
+    "内置规则默认要求：涉及网页查看、抓取、调试、标注、截图的场景，默认优先使用 Electron 内置浏览器工作台（BrowserView）。",
+    "当前客户端提供 Electron 内置浏览器工作台工具。",
+    "当用户提到“内置浏览器”“当前页面”“这个网页”“爬取页面数据”“读取网页内容”时，优先使用浏览器 MCP 工具读取当前 BrowserView，不要回答自己无法访问浏览器。",
+    "不要为这些请求调用 Skill browse、ToolSearch 查找浏览器工具或 ~/.claude/skills/gstack/browse；那些连接的是外部浏览器会话，不是 tech-cc-hub 的右侧 BrowserView。",
+    "常用工具：browser_get_state 获取当前 URL/标题；browser_extract_page 提取当前页面正文、标题、链接和图片；browser_console_logs 读取控制台日志；browser_capture_visible 截取可见区域。",
+    "开发诊断工具：browser_get_dom_stats 统计 DOM 节点规模；browser_query_nodes 按 CSS selector 或 XPath 定向查节点；browser_inspect_styles 读取目标节点的计算样式、CSS 变量和内联样式。",
+  ].join("\n");
+}
+
+function shouldDenyExternalBrowseSkill(input: unknown, prompt: string): boolean {
+  if (!isRecord(input)) {
+    return false;
+  }
+
+  const requestedSkill = typeof input.skill === "string" ? input.skill.trim().toLowerCase() : "";
+  if (requestedSkill !== "browse") {
+    return false;
+  }
+
+  return /内置浏览器|浏览器工作台|当前页面|这个页面|这个网页|爬取|browserview|browser workbench|tech-cc-hub-browser/i.test(prompt);
 }
 
 function checkRasterImageRead(

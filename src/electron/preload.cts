@@ -36,10 +36,16 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("get-api-config"),
     saveApiConfig: (config: any) => 
         ipcInvoke("save-api-config", config),
+    fetchApiModels: (payload: any) =>
+        ipcInvoke("fetch-api-models", payload),
     getGlobalConfig: () =>
         ipcInvoke("get-global-config"),
     saveGlobalConfig: (config: any) =>
         ipcInvoke("save-global-config", config),
+    getAgentRuleDocuments: () =>
+        ipcInvoke("get-agent-rule-documents"),
+    saveUserAgentRuleDocument: (markdown: string) =>
+        ipcInvoke("save-user-agent-rule-document", markdown),
     getSkillInventory: () =>
         ipcInvoke("get-skill-inventory"),
     saveSkillInventory: (inventory: any) =>

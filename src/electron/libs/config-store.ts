@@ -114,8 +114,10 @@ export type GlobalRuntimeConfig = Record<string, unknown>;
 const DEFAULT_MODEL = "claude-sonnet-4-5";
 const DEFAULT_MODEL_CONFIG: ApiModelConfig = {
   name: DEFAULT_MODEL,
+  contextWindow: 200_000,
   compressionThresholdPercent: 70,
 };
+const DEFAULT_CONTEXT_WINDOW = 200_000;
 const CONFIG_FILE_NAME = "api-config.json";
 const GLOBAL_CONFIG_FILE_NAME = "agent-runtime.json";
 const SKILL_INVENTORY_FILE_NAME = "skill-inventory.json";
@@ -343,7 +345,7 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
     id: config.id?.trim() || crypto.randomUUID(),
     name: config.name.trim(),
     apiKey: config.apiKey.trim(),
-    baseURL: config.baseURL.trim(),
+    baseURL: normalizeBaseURL(config.baseURL),
     model: selectedModel,
     expertModel: normalizeRoleModel(config.expertModel, selectedModel),
     imageModel: normalizeOptionalModel(config.imageModel, dedupedModelNames),
@@ -352,6 +354,22 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
     enabled: Boolean(config.enabled),
     apiType: config.apiType ?? "anthropic",
   };
+}
+
+function normalizeBaseURL(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  try {
+    const url = new URL(trimmed);
+    const pathname = url.pathname.replace(/\/+$/, "");
+    if (!pathname || pathname === "/" || pathname.startsWith("/console")) {
+      url.pathname = "/v1";
+    }
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return trimmed;
+  }
 }
 
 function normalizeApiSettings(input: ApiConfig | ApiConfigSettings | null | undefined): ApiConfigSettings {
@@ -763,6 +781,7 @@ function normalizeModelConfig(input: string | ApiModelConfig | null | undefined)
     }
     return {
       name,
+      contextWindow: DEFAULT_CONTEXT_WINDOW,
       compressionThresholdPercent: 70,
     };
   }
@@ -778,7 +797,7 @@ function normalizeModelConfig(input: string | ApiModelConfig | null | undefined)
 
   return {
     name,
-    contextWindow: normalizePositiveInteger(input.contextWindow),
+    contextWindow: normalizePositiveInteger(input.contextWindow) ?? DEFAULT_CONTEXT_WINDOW,
     compressionThresholdPercent: normalizePercent(input.compressionThresholdPercent) ?? 70,
   };
 }
@@ -795,7 +814,7 @@ function dedupeModelConfigs(inputs: Array<string | ApiModelConfig | null | undef
     const previous = deduped.get(model.name);
     deduped.set(model.name, {
       name: model.name,
-      contextWindow: model.contextWindow ?? previous?.contextWindow,
+      contextWindow: model.contextWindow ?? previous?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       compressionThresholdPercent: model.compressionThresholdPercent ?? previous?.compressionThresholdPercent ?? 70,
     });
   }

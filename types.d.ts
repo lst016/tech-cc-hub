@@ -146,9 +146,23 @@ type SkillSyncResponse = {
 
 type GlobalRuntimeConfig = Record<string, unknown>;
 
+type AgentRuleDocuments = {
+    systemDefaultMarkdown: string;
+    userClaudeRoot: string;
+    userAgentsPath: string;
+    userAgentsMarkdown: string;
+}
+
 type RuntimeReasoningMode = "disabled" | "low" | "medium" | "high" | "xhigh";
 
 type UnsubscribeFunction = () => void;
+
+type ApiModelsFetchResult = {
+    success: boolean;
+    models?: string[];
+    baseURL?: string;
+    error?: string;
+};
 
 type EventPayloadMapping = {
     statistics: Statistics;
@@ -159,9 +173,12 @@ type EventPayloadMapping = {
     "select-directory": string | null;
         "get-api-config": ApiConfigSettings;
         "save-api-config": { success: boolean; error?: string };
+        "fetch-api-models": ApiModelsFetchResult;
         "check-api-config": { hasConfig: boolean; config: ApiConfig | null };
         "get-global-config": GlobalRuntimeConfig;
         "save-global-config": { success: boolean; error?: string };
+        "get-agent-rule-documents": AgentRuleDocuments;
+        "save-user-agent-rule-document": { success: boolean; error?: string };
         "get-skill-inventory": SkillInventory;
         "save-skill-inventory": { success: boolean; error?: string };
         "sync-skill-sources": SkillSyncResponse;
@@ -194,8 +211,11 @@ interface Window {
         selectDirectory: () => Promise<string | null>;
         getApiConfig: () => Promise<ApiConfigSettings>;
         saveApiConfig: (config: ApiConfigSettings) => Promise<{ success: boolean; error?: string }>;
+        fetchApiModels: (payload: { baseURL: string; apiKey: string }) => Promise<ApiModelsFetchResult>;
         getGlobalConfig: () => Promise<GlobalRuntimeConfig>;
         saveGlobalConfig: (config: GlobalRuntimeConfig) => Promise<{ success: boolean; error?: string }>;
+        getAgentRuleDocuments: () => Promise<AgentRuleDocuments>;
+        saveUserAgentRuleDocument: (markdown: string) => Promise<{ success: boolean; error?: string }>;
         getSkillInventory: () => Promise<SkillInventory>;
         saveSkillInventory: (config: SkillInventory) => Promise<{ success: boolean; error?: string }>;
         syncSkillSources: (request: SkillSyncRequest) => Promise<SkillSyncResponse>;

@@ -46,11 +46,12 @@ export function BrowserWorkbenchPage({ active = true, initialUrl = "http://local
   const [statusText, setStatusText] = useState("准备打开页面");
   const [isPreviewRuntime] = useState(isBrowserPreviewRuntime);
   const [hasBrowserRuntime] = useState(hasBrowserWorkbenchRuntime);
+  const canUseBrowserView = hasBrowserRuntime && !isPreviewRuntime;
   const setBrowserAnnotations = useAppStore((store) => store.setBrowserAnnotations);
   const browserActive = active && hasBrowserTab;
 
   const syncBounds = useCallback(() => {
-    if (!hasBrowserRuntime) return;
+    if (!canUseBrowserView) return;
     if (!browserActive) {
       void window.electron.setBrowserWorkbenchBounds({ x: 0, y: 0, width: 0, height: 0 });
       return;
@@ -64,18 +65,31 @@ export function BrowserWorkbenchPage({ active = true, initialUrl = "http://local
       width: rect.width,
       height: rect.height,
     });
-  }, [browserActive, hasBrowserRuntime]);
+  }, [browserActive, canUseBrowserView]);
 
   const openUrl = useCallback(async (nextUrl = url) => {
     if (!hasBrowserRuntime) {
       setStatusText("当前 Electron 主进程还是旧版本，请重启应用后再打开浏览器工作台");
       return;
     }
+    if (isPreviewRuntime) {
+      setState({
+        url: nextUrl,
+        title: "Codex 网页预览态",
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        annotationMode: false,
+      });
+      setUrl(nextUrl);
+      setStatusText("Codex 网页预览不挂载 Electron BrowserView，标注请在桌面端窗口使用");
+      return;
+    }
     syncBounds();
     const nextState = await window.electron.openBrowserWorkbench(nextUrl);
     setState(nextState);
     setUrl(nextState.url || nextUrl);
-    setStatusText(isPreviewRuntime && nextState.url ? "当前是 Codex 网页预览，真实页面请在 Electron 窗口打开" : nextState.url ? "页面已打开" : "准备打开页面");
+    setStatusText(nextState.url ? "页面已打开" : "准备打开页面");
   }, [hasBrowserRuntime, isPreviewRuntime, syncBounds, url]);
 
   useEffect(() => {
@@ -140,6 +154,13 @@ export function BrowserWorkbenchPage({ active = true, initialUrl = "http://local
 
   useEffect(() => {
     if (!hasBrowserRuntime) return;
+    if (isPreviewRuntime) {
+      if (browserActive && !hasOpenedRef.current) {
+        hasOpenedRef.current = true;
+        void openUrl(initialUrl);
+      }
+      return;
+    }
     if (!browserActive) {
       void window.electron.setBrowserWorkbenchBounds({ x: 0, y: 0, width: 0, height: 0 });
       return;
@@ -149,7 +170,7 @@ export function BrowserWorkbenchPage({ active = true, initialUrl = "http://local
       hasOpenedRef.current = true;
       void openUrl(initialUrl);
     }
-  }, [browserActive, hasBrowserRuntime, initialUrl, openUrl, syncBounds]);
+  }, [browserActive, hasBrowserRuntime, initialUrl, isPreviewRuntime, openUrl, syncBounds]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -157,19 +178,22 @@ export function BrowserWorkbenchPage({ active = true, initialUrl = "http://local
   };
 
   const handleReload = async () => {
-    if (!hasBrowserRuntime) return;
+    if (!canUseBrowserView) {
+      setStatusText(isPreviewRuntime ? "Codex 预览态不刷新 BrowserView，请在桌面端操作真实页面" : "浏览器工作台尚未就绪");
+      return;
+    }
     const nextState = await window.electron.reloadBrowserWorkbench();
     setState(nextState);
   };
 
   const handleBack = async () => {
-    if (!hasBrowserRuntime) return;
+    if (!canUseBrowserView) return;
     const nextState = await window.electron.goBackBrowserWorkbench();
     setState(nextState);
   };
 
   const handleForward = async () => {
-    if (!hasBrowserRuntime) return;
+    if (!canUseBrowserView) return;
     const nextState = await window.electron.goForwardBrowserWorkbench();
     setState(nextState);
   };
@@ -177,6 +201,10 @@ export function BrowserWorkbenchPage({ active = true, initialUrl = "http://local
   const handleCapture = async () => {
     if (!hasBrowserRuntime) {
       setStatusText("当前 Electron 主进程还是旧版本，请重启应用后再截图");
+      return;
+    }
+    if (isPreviewRuntime) {
+      setStatusText("Codex 内置浏览器不能截图 Electron BrowserView，请在桌面端截图");
       return;
     }
     const result = await window.electron.captureBrowserWorkbenchVisible();
@@ -190,6 +218,10 @@ export function BrowserWorkbenchPage({ active = true, initialUrl = "http://local
   const handleToggleAnnotation = async () => {
     if (!hasBrowserRuntime) {
       setStatusText("当前 Electron 主进程还是旧版本，请重启应用后再开启标注");
+      return;
+    }
+    if (isPreviewRuntime) {
+      setStatusText("Codex 内置浏览器不能嵌套 Electron BrowserView，标注请在桌面端窗口使用");
       return;
     }
     const nextState = await window.electron.setBrowserWorkbenchAnnotationMode(!state.annotationMode);
@@ -342,6 +374,7 @@ export function BrowserWorkbenchPage({ active = true, initialUrl = "http://local
           </button>
           </div>
         </form>
+        <div className="sr-only" aria-live="polite">{statusText}</div>
 
         <div className="min-h-0 flex-1 bg-[linear-gradient(180deg,rgba(244,247,251,0.8),rgba(235,240,247,0.84))]">
           <div className="relative h-full min-h-0">

@@ -15,6 +15,13 @@ export default defineConfig(() => {
 		server: {
 			port, // MUST BE LOWERCASE
 			strictPort: true,
+			proxy: {
+				"/__dev_bridge": {
+					target: "http://127.0.0.1:4317",
+					changeOrigin: true,
+					rewrite: (path) => path.replace(/^\/__dev_bridge/, ''),
+				},
+			},
 		},
 	};
 });
