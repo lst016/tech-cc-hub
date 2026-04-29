@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildOversizedTextToolOutputReplacement,
   extractInlineBase64ImageFromToolResponse,
   stripInlineBase64ImagesFromMessage,
 } from "./libs/tool-output-sanitizer.js";
@@ -58,4 +59,16 @@ test("stripInlineBase64ImagesFromMessage replaces tool-result images with text",
   assert.equal(typeof toolResult.content, "string");
   assert.match(toolResult.content, /replaced with text/i);
   assert.doesNotMatch(toolResult.content, /iVBORw0KGgoAAA/);
+});
+
+test("buildOversizedTextToolOutputReplacement truncates large text tool output", () => {
+  const output = buildOversizedTextToolOutputReplacement("Read", {
+    content: [{ type: "text", text: "A".repeat(30_000) }],
+  });
+
+  assert.ok(output);
+  assert.equal(output.originalChars, 30_000);
+  assert.match(output.replacementText, /returned 30000 characters/);
+  assert.match(output.replacementText, /characters omitted/);
+  assert.ok(output.replacementText.length < 18_000);
 });

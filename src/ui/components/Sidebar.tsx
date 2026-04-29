@@ -7,6 +7,9 @@ import type { SettingsPageId } from "../types";
 interface SidebarProps {
   connected: boolean;
   onNewSession: (cwd?: string) => void;
+  onArchiveSession: (sessionId: string) => void;
+  onUnarchiveSession: (sessionId: string) => void;
+  onRefreshArchivedSessions: () => void;
   onDeleteSession: (sessionId: string) => void;
   onDeleteWorkspace: (sessionIds: string[], workspaceName: string) => void;
   onOpenSettings?: (pageId?: SettingsPageId) => void;
@@ -16,6 +19,9 @@ interface SidebarProps {
 export function Sidebar({
   connected: _connected,
   onNewSession,
+  onArchiveSession,
+  onUnarchiveSession,
+  onRefreshArchivedSessions,
   onDeleteSession,
   onDeleteWorkspace,
   onOpenSettings,
@@ -23,8 +29,10 @@ export function Sidebar({
 }: SidebarProps) {
   const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-14" : "top-10";
   const sessions = useAppStore((state) => state.sessions);
+  const archivedSessions = useAppStore((state) => state.archivedSessions);
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const setActiveSessionId = useAppStore((state) => state.setActiveSessionId);
+  const [showArchived, setShowArchived] = useState(false);
   const [resumeSessionId, setResumeSessionId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
@@ -37,10 +45,16 @@ export function Sidebar({
   };
 
   const sessionList = useMemo(() => {
-    const list = Object.values(sessions);
+    const list = Object.values(showArchived ? archivedSessions : sessions);
     list.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
     return list;
-  }, [sessions]);
+  }, [archivedSessions, sessions, showArchived]);
+
+  useEffect(() => {
+    if (showArchived) {
+      onRefreshArchivedSessions();
+    }
+  }, [onRefreshArchivedSessions, showArchived]);
 
   const workspaceGroups = useMemo(() => {
     const groups = new Map<string, { cwd?: string; sessions: typeof sessionList }>();
@@ -130,6 +144,12 @@ export function Sidebar({
             onClick={() => onNewSession()}
           >
             + 新建会话
+          </button>
+          <button
+            className={`rounded-2xl border px-3 py-3 text-xs font-semibold shadow-[0_8px_24px_rgba(30,38,52,0.08)] transition-all hover:-translate-y-[1px] ${showArchived ? "border-accent/25 bg-accent-subtle text-accent" : "border-black/6 bg-white/82 text-ink-700 hover:bg-white"}`}
+            onClick={() => setShowArchived((current) => !current)}
+          >
+            归档
           </button>
         </div>
 
@@ -240,6 +260,19 @@ export function Sidebar({
                           </DropdownMenu.Trigger>
                           <DropdownMenu.Portal>
                             <DropdownMenu.Content className="z-50 min-w-[220px] rounded-xl border border-ink-900/10 bg-white p-1 shadow-lg" align="center" sideOffset={8}>
+                              <DropdownMenu.Item
+                                className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-700 outline-none hover:bg-ink-900/5"
+                                onSelect={() => showArchived ? onUnarchiveSession(session.id) : onArchiveSession(session.id)}
+                              >
+                                <svg viewBox="0 0 24 24" className="h-4 w-4 text-ink-500" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                  {showArchived ? (
+                                    <path d="M4 12a8 8 0 1 0 2.34-5.66M4 4v6h6" />
+                                  ) : (
+                                    <path d="M4 7h16M6 7l1.2 11.2A2 2 0 0 0 9.2 20h5.6a2 2 0 0 0 2-1.8L18 7M9 7V5h6v2" />
+                                  )}
+                                </svg>
+                                {showArchived ? "恢复这个会话" : "归档这个会话"}
+                              </DropdownMenu.Item>
                               <DropdownMenu.Item
                                 className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-700 outline-none hover:bg-ink-900/5"
                                 onSelect={() => onDeleteSession(session.id)}

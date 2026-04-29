@@ -217,10 +217,14 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
       error: "浏览器预览态暂不支持真实截图，请在 Electron 窗口使用。",
     }),
     inspectBrowserWorkbenchAtPoint: async () => null,
+    clearBrowserWorkbenchAnnotations: async () => browserState,
     setBrowserWorkbenchAnnotationMode: async (enabled: boolean) => {
       browserState = { ...browserState, annotationMode: enabled };
       return browserState;
     },
+    openBrowserWorkbenchDevTools: async () => ({ opened: false }),
+    closeBrowserWorkbenchDevTools: async () => ({ opened: false }),
+    isBrowserWorkbenchDevToolsOpen: async () => false,
     onBrowserWorkbenchEvent: () => () => {},
   };
 }
@@ -313,7 +317,11 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       getBrowserWorkbenchConsoleLogs: async (limit?: number) => await invokeBridge("getBrowserWorkbenchConsoleLogs", limit),
       captureBrowserWorkbenchVisible: async () => await invokeBridge("captureBrowserWorkbenchVisible"),
       inspectBrowserWorkbenchAtPoint: async (point) => await invokeBridge("inspectBrowserWorkbenchAtPoint", point),
+      clearBrowserWorkbenchAnnotations: async () => await invokeBridge("clearBrowserWorkbenchAnnotations"),
       setBrowserWorkbenchAnnotationMode: async (enabled: boolean) => await invokeBridge("setBrowserWorkbenchAnnotationMode", enabled),
+      openBrowserWorkbenchDevTools: async () => await invokeBridge("openBrowserWorkbenchDevTools"),
+      closeBrowserWorkbenchDevTools: async () => await invokeBridge("closeBrowserWorkbenchDevTools"),
+      isBrowserWorkbenchDevToolsOpen: async () => await invokeBridge("isBrowserWorkbenchDevToolsOpen"),
       onBrowserWorkbenchEvent: (callback: (event: any) => void) => {
         const source = new EventSource(`${DEV_BACKEND_BRIDGE_ORIGIN}/events/browser`);
         source.onmessage = (message) => {

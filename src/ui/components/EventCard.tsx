@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import type {
   PermissionResult,
   SDKAssistantMessage,
   SDKMessage,
   SDKResultMessage,
-  SDKUserMessage
+  SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { PromptAttachment, StreamMessage } from "../types";
 import type { PermissionRequest } from "../store/useAppStore";
+import { useAppStore } from "../store/useAppStore";
 import MDContent from "../render/markdown";
 import { DecisionPanel } from "./DecisionPanel";
 import { resolveImageAttachmentSrc } from "../../shared/attachments";
@@ -15,9 +16,6 @@ import { resolveImageAttachmentSrc } from "../../shared/attachments";
 type MessageContent = SDKAssistantMessage["message"]["content"][number];
 type ToolResultContent = SDKUserMessage["message"]["content"][number];
 type ToolStatus = "pending" | "success" | "error";
-const toolStatusMap = new Map<string, ToolStatus>();
-const toolStatusListeners = new Set<() => void>();
-const MAX_VISIBLE_LINES = 3;
 
 type SystemInitMessage = SDKMessage & {
   subtype?: string;
@@ -36,271 +34,6 @@ type AskUserQuestionInput = {
   }>;
 };
 
-const getAskUserQuestionSignature = (input?: AskUserQuestionInput | null) => {
-  if (!input?.questions?.length) return "";
-  return input.questions.map((question) => {
-    const options = (question.options ?? []).map((o) => `${o.label}|${o.description ?? ""}`).join(",");
-    return `${question.question}|${question.header ?? ""}|${question.multiSelect ? "1" : "0"}|${options}`;
-  }).join("||");
-};
-
-const setToolStatus = (toolUseId: string | undefined, status: ToolStatus) => {
-  if (!toolUseId) return;
-  toolStatusMap.set(toolUseId, status);
-  toolStatusListeners.forEach((listener) => listener());
-};
-
-const getRecordString = (input: Record<string, unknown>, key: string) => {
-  const value = input[key];
-  return typeof value === "string" ? value : null;
-};
-
-const InfoItem = ({ name, value }: { name: string; value: string }) => (
-  <div className="text-[14px]">
-    <span className="mr-4 font-normal">{name}</span>
-    <span className="font-light">{value}</span>
-  </div>
-);
-
-const useToolStatus = (toolUseId: string | undefined) => {
-  const [status, setStatus] = useState<ToolStatus | undefined>(() =>
-    toolUseId ? toolStatusMap.get(toolUseId) : undefined
-  );
-  useEffect(() => {
-    if (!toolUseId) return;
-    const handleUpdate = () => setStatus(toolStatusMap.get(toolUseId));
-    toolStatusListeners.add(handleUpdate);
-    return () => { toolStatusListeners.delete(handleUpdate); };
-  }, [toolUseId]);
-  return status;
-};
-
-const StatusDot = ({ variant = "accent", isActive = false, isVisible = true }: {
-  variant?: "accent" | "success" | "error"; isActive?: boolean; isVisible?: boolean;
-}) => {
-  if (!isVisible) return null;
-  const colorClass = variant === "success" ? "bg-success" : variant === "error" ? "bg-error" : "bg-accent";
-  return (
-    <span className="relative flex h-2 w-2">
-      {isActive && <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${colorClass} opacity-75`} />}
-      <span className={`relative inline-flex h-2 w-2 rounded-full ${colorClass}`} />
-    </span>
-  );
-};
-
-const SessionResult = ({ message }: { message: SDKResultMessage }) => {
-  const formatMinutes = (ms: number | undefined) => typeof ms !== "number" ? "-" : `${(ms / 60000).toFixed(2)} min`;
-  const formatUsd = (usd: number | undefined) => typeof usd !== "number" ? "-" : usd.toFixed(2);
-  const formatMillions = (tokens: number | undefined) => typeof tokens !== "number" ? "-" : `${(tokens / 1_000_000).toFixed(4)} M`;
-
-  return (
-    <div className="mt-5 flex flex-col gap-2">
-      <div className="text-[11px] font-semibold tracking-[0.16em] text-muted">会话结果</div>
-      <div className="flex flex-col rounded-[24px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(245,247,250,0.92))] px-4 py-4 shadow-[0_10px_26px_rgba(30,38,52,0.05)] space-y-2">
-        <div className="flex flex-wrap items-center gap-2 text-[14px]">
-          <span className="font-normal">总耗时</span>
-          <span className="inline-flex items-center rounded-full bg-[#eef2f8] px-2.5 py-0.5 text-ink-700 text-[13px]">{formatMinutes(message.duration_ms)}</span>
-          <span className="font-normal">API 耗时</span>
-          <span className="inline-flex items-center rounded-full bg-[#eef2f8] px-2.5 py-0.5 text-ink-700 text-[13px]">{formatMinutes(message.duration_api_ms)}</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-[14px]">
-          <span className="font-normal">用量</span>
-          <span className="inline-flex items-center rounded-full bg-accent/10 px-2.5 py-0.5 text-accent text-[13px]">费用 ${formatUsd(message.total_cost_usd)}</span>
-          <span className="inline-flex items-center rounded-full bg-[#eef2f8] px-2.5 py-0.5 text-ink-700 text-[13px]">输入 {formatMillions(message.usage?.input_tokens)}</span>
-          <span className="inline-flex items-center rounded-full bg-[#eef2f8] px-2.5 py-0.5 text-ink-700 text-[13px]">输出 {formatMillions(message.usage?.output_tokens)}</span>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-export function isMarkdown(text: string): boolean {
-  if (!text || typeof text !== "string") return false;
-  const patterns: RegExp[] = [/^#{1,6}\s+/m, /```[\s\S]*?```/];
-  return patterns.some((pattern) => pattern.test(text));
-}
-
-function extractTagContent(input: string, tag: string): string | null {
-  const match = input.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
-  return match ? match[1] : null;
-}
-
-const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) => {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const isToolResult = typeof messageContent !== "string" && messageContent.type === "tool_result";
-  const toolUseId = isToolResult ? messageContent.tool_use_id : undefined;
-  const status: ToolStatus = isToolResult && messageContent.is_error ? "error" : "success";
-  let lines: string[] = [];
-
-  useEffect(() => {
-    if (isToolResult) {
-      setToolStatus(toolUseId, status);
-    }
-  }, [isToolResult, status, toolUseId]);
-
-  if (!isToolResult) return null;
-
-  const isError = messageContent.is_error;
-
-  if (messageContent.is_error) {
-    lines = [extractTagContent(String(messageContent.content), "tool_use_error") || String(messageContent.content)];
-  } else {
-    try {
-      if (Array.isArray(messageContent.content)) {
-        lines = messageContent.content
-          .map((item) => typeof item === "string" ? item : ("text" in item ? item.text ?? "" : ""))
-          .join("\n")
-          .split("\n");
-      } else {
-        lines = String(messageContent.content).split("\n");
-      }
-    } catch { lines = [JSON.stringify(messageContent, null, 2)]; }
-  }
-
-  const isMarkdownContent = isMarkdown(lines.join("\n"));
-  const hasMoreLines = lines.length > MAX_VISIBLE_LINES;
-  const visibleContent = hasMoreLines && !isExpanded ? lines.slice(0, MAX_VISIBLE_LINES).join("\n") : lines.join("\n");
-
-  return (
-    <div className="mt-4 flex flex-col">
-      <div className="text-[11px] font-semibold tracking-[0.16em] text-muted">工具输出</div>
-      <div className="mt-2 rounded-[22px] border border-black/6 bg-[#f4f7fb] p-4">
-        <pre className={`text-sm whitespace-pre-wrap break-words font-mono ${isError ? "text-red-500" : "text-ink-700"}`}>
-          {isMarkdownContent ? <MDContent text={visibleContent} /> : visibleContent}
-        </pre>
-        {hasMoreLines && (
-          <button onClick={() => setIsExpanded(!isExpanded)} className="mt-2 text-sm text-accent hover:text-accent-hover transition-colors flex items-center gap-1">
-            <span>{isExpanded ? "▲" : "▼"}</span>
-            <span>{isExpanded ? "收起" : `展开剩余 ${lines.length - MAX_VISIBLE_LINES} 行`}</span>
-          </button>
-        )}
-      </div>
-    </div>
-  );
-};
-
-const AssistantBlockCard = ({ title, text, showIndicator = false }: { title: string; text: string; showIndicator?: boolean }) => (
-  <div className="mt-5 flex flex-col">
-    <div className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.16em] text-muted">
-      <StatusDot variant="success" isActive={showIndicator} isVisible={showIndicator} />
-      {title}
-    </div>
-    <div className="mt-2 rounded-[24px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 shadow-[0_10px_24px_rgba(30,38,52,0.05)]">
-      <MDContent text={text} />
-    </div>
-  </div>
-);
-
-const ToolUseCard = ({ messageContent, showIndicator = false }: { messageContent: MessageContent; showIndicator?: boolean }) => {
-  const isToolUse = messageContent.type === "tool_use";
-  const toolUseId = isToolUse ? messageContent.id : undefined;
-  const toolStatus = useToolStatus(toolUseId);
-  const statusVariant = toolStatus === "error" ? "error" : "success";
-  const isPending = !toolStatus || toolStatus === "pending";
-  const shouldShowDot = toolStatus === "success" || toolStatus === "error" || showIndicator;
-
-  useEffect(() => {
-    if (toolUseId && !toolStatusMap.has(toolUseId)) setToolStatus(toolUseId, "pending");
-  }, [toolUseId]);
-
-  if (!isToolUse) return null;
-
-  const getToolInfo = (): string | null => {
-    const input = messageContent.input as Record<string, unknown>;
-    switch (messageContent.name) {
-      case "Bash": return getRecordString(input, "command");
-      case "Read": case "Write": case "Edit": return getRecordString(input, "file_path");
-      case "Glob": case "Grep": return getRecordString(input, "pattern");
-      case "Task": return getRecordString(input, "description");
-      case "WebFetch": return getRecordString(input, "url");
-      default: return null;
-    }
-  };
-
-  return (
-    <div className="mt-4 flex flex-col gap-2 rounded-[20px] border border-black/6 bg-[#f4f7fb] px-3 py-3 overflow-hidden">
-      <div className="flex flex-row items-center gap-2 min-w-0">
-        <StatusDot variant={statusVariant} isActive={isPending && showIndicator} isVisible={shouldShowDot} />
-        <div className="flex flex-row items-center gap-2 tool-use-item min-w-0 flex-1">
-          <span className="inline-flex items-center rounded-md text-accent py-0.5 text-sm font-medium shrink-0">{messageContent.name}</span>
-          <span className="text-sm text-muted truncate">{getToolInfo()}</span>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const AskUserQuestionCard = ({
-  messageContent,
-  permissionRequest,
-  onPermissionResult
-}: {
-  messageContent: MessageContent;
-  permissionRequest?: PermissionRequest;
-  onPermissionResult?: (toolUseId: string, result: PermissionResult) => void;
-}) => {
-  if (messageContent.type !== "tool_use") return null;
-  
-  const input = messageContent.input as AskUserQuestionInput | null;
-  const questions = input?.questions ?? [];
-  const currentSignature = getAskUserQuestionSignature(input);
-  const requestSignature = getAskUserQuestionSignature(permissionRequest?.input as AskUserQuestionInput | undefined);
-  const isActiveRequest = permissionRequest && currentSignature === requestSignature;
-
-  if (isActiveRequest && onPermissionResult) {
-    return (
-      <div className="mt-4">
-        <DecisionPanel
-          request={permissionRequest}
-          onSubmit={(result) => onPermissionResult(permissionRequest.toolUseId, result)}
-        />
-      </div>
-    );
-  }
-
-  return (
-    <div className="mt-4 flex flex-col gap-2 rounded-[20px] border border-black/6 bg-[#f4f7fb] px-3 py-3">
-      <div className="flex flex-row items-center gap-2">
-        <StatusDot variant="success" isActive={false} isVisible={true} />
-        <span className="inline-flex items-center rounded-md text-accent py-0.5 text-sm font-medium">向你提问</span>
-      </div>
-      {questions.map((q, idx) => (
-        <div key={idx} className="text-sm text-ink-700 ml-4">{q.question}</div>
-      ))}
-    </div>
-  );
-};
-
-const SystemInfoCard = ({ message, showIndicator = false }: { message: SDKMessage; showIndicator?: boolean }) => {
-  if (message.type !== "system" || !("subtype" in message) || message.subtype !== "init") return null;
-  
-  const systemMsg = message as SystemInitMessage;
-  
-  return (
-    <div className="mt-4 flex flex-col gap-2">
-      <div className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.16em] text-muted">
-        <StatusDot variant="success" isActive={showIndicator} isVisible={showIndicator} />
-        系统初始化
-      </div>
-      <div className="flex flex-col rounded-[22px] border border-black/6 bg-[#f4f7fb] px-4 py-3 space-y-1">
-        <InfoItem name="会话编号" value={systemMsg.session_id || "-"} />
-        <InfoItem name="模型名称" value={systemMsg.model || "-"} />
-        <InfoItem name="权限模式" value={systemMsg.permissionMode || "-"} />
-        <InfoItem name="工作目录" value={systemMsg.cwd || "-"} />
-      </div>
-    </div>
-  );
-};
-
-const AttachmentChip = ({ attachment }: { attachment: PromptAttachment }) => (
-  <div className="rounded-2xl border border-black/6 bg-[#eef2f8] px-3 py-2">
-    <div className="text-xs font-medium text-ink-700">{attachment.name}</div>
-    <div className="mt-1 text-[11px] text-muted">
-      {attachment.kind === "image" ? "图片附件" : "文本附件"}
-    </div>
-  </div>
-);
-
 type BrowserAnnotationsPayload = {
   count?: number;
   items?: unknown[];
@@ -311,21 +44,216 @@ type BrowserAnnotationSummary = {
   label: string;
 };
 
-function getBrowserAnnotationSummaryLabel(item: unknown, index: number): string {
-  if (!item || typeof item !== "object") return `批注 ${index + 1}`;
+const toolStatusMap = new Map<string, ToolStatus>();
+const toolStatusListeners = new Set<() => void>();
+const MAX_VISIBLE_LINES = 8;
+const cx = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(" ");
+
+const setToolStatus = (toolUseId: string | undefined, status: ToolStatus) => {
+  if (!toolUseId) return;
+  toolStatusMap.set(toolUseId, status);
+  toolStatusListeners.forEach((listener) => listener());
+};
+
+const useToolStatus = (toolUseId: string | undefined) => {
+  const [status, setStatus] = useState<ToolStatus | undefined>(() =>
+    toolUseId ? toolStatusMap.get(toolUseId) : undefined,
+  );
+
+  useEffect(() => {
+    if (!toolUseId) return;
+    const handleUpdate = () => setStatus(toolStatusMap.get(toolUseId));
+    toolStatusListeners.add(handleUpdate);
+    return () => {
+      toolStatusListeners.delete(handleUpdate);
+    };
+  }, [toolUseId]);
+
+  return status;
+};
+
+const getRecordString = (input: Record<string, unknown>, key: string) => {
+  const value = input[key];
+  return typeof value === "string" ? value : null;
+};
+
+const formatTime = (value?: number) => {
+  if (!value) return "";
+  const date = new Date(value);
+  const now = new Date();
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  if (
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+  ) {
+    return `${hh}:${mm}`;
+  }
+  return `${date.getMonth() + 1}-${date.getDate()} ${hh}:${mm}`;
+};
+
+const formatMinutes = (ms: number | undefined) =>
+  typeof ms !== "number" ? "-" : `${(ms / 60000).toFixed(2)} min`;
+
+const formatUsd = (usd: number | undefined) =>
+  typeof usd !== "number" ? "-" : `$${usd.toFixed(2)}`;
+
+const formatTokens = (tokens: number | undefined) => {
+  if (typeof tokens !== "number") return "-";
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(4)} M`;
+  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)} k`;
+  return String(tokens);
+};
+
+const compactPreview = (text: string, limit = 160) => {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized.length > limit ? `${normalized.slice(0, limit)}...` : normalized;
+};
+
+const getSkillDisplayName = (input: Record<string, unknown>) => {
+  for (const key of ["skill", "skillName", "name", "id"]) {
+    const value = getRecordString(input, key)?.trim();
+    if (value) return value.replace(/^\/+/, "");
+  }
+
+  const pathValue =
+    getRecordString(input, "skill_path") ||
+    getRecordString(input, "skillPath") ||
+    getRecordString(input, "file_path") ||
+    getRecordString(input, "path");
+  if (pathValue) {
+    const normalized = pathValue.replace(/\\/g, "/");
+    const parts = normalized.split("/").filter(Boolean);
+    const last = parts[parts.length - 1];
+    const parent = parts[parts.length - 2];
+    if (last?.toLowerCase() === "skill.md" && parent) return parent;
+    if (last) return last.replace(/^\/+/, "");
+  }
+
+  const text = getRecordString(input, "description") || getRecordString(input, "prompt") || "";
+  const match = text.match(/\/([A-Za-z0-9_.-]+)\s+skill/i) || text.match(/skill[:\s`"']+\/?([A-Za-z0-9_.-]+)/i);
+  return match?.[1] || null;
+};
+
+const copyText = async (text: string) => {
+  try {
+    await navigator.clipboard?.writeText(text);
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
+  }
+};
+
+const appendTextToComposer = (text: string) => {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const { prompt, setPrompt } = useAppStore.getState();
+  setPrompt(prompt.trim() ? `${prompt.trim()}\n\n${trimmed}` : trimmed);
+};
+
+const StatusDot = ({
+  variant = "accent",
+  active = false,
+}: {
+  variant?: "accent" | "success" | "error" | "muted";
+  active?: boolean;
+}) => {
+  const colorClass =
+    variant === "success"
+      ? "bg-emerald-500"
+      : variant === "error"
+        ? "bg-red-500"
+        : variant === "muted"
+          ? "bg-slate-300"
+          : "bg-accent";
+
+  return (
+    <span className="relative inline-flex h-2.5 w-2.5 shrink-0">
+      {active && <span className={cx("absolute inline-flex h-full w-full animate-ping rounded-full opacity-70", colorClass)} />}
+      <span className={cx("relative inline-flex h-2.5 w-2.5 rounded-full", colorClass)} />
+    </span>
+  );
+};
+
+const SectionLabel = ({
+  children,
+  active = false,
+  variant = "muted",
+}: {
+  children: string;
+  active?: boolean;
+  variant?: "accent" | "success" | "error" | "muted";
+}) => (
+  <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
+    <StatusDot variant={variant} active={active} />
+    <span>{children}</span>
+  </div>
+);
+
+const IconButton = ({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}) => (
+  <button
+    type="button"
+    aria-label={label}
+    title={label}
+    onClick={onClick}
+    className="grid h-7 w-7 place-items-center rounded-full border border-black/8 bg-white/80 text-[13px] text-muted opacity-0 shadow-sm transition hover:border-accent/30 hover:text-accent group-hover:opacity-100"
+  >
+    {label === "复制" ? "⧉" : label === "引用" ? "↩" : "⋯"}
+  </button>
+);
+
+const getAskUserQuestionSignature = (input?: AskUserQuestionInput | null) => {
+  if (!input?.questions?.length) return "";
+  return input.questions
+    .map((question) => {
+      const options = (question.options ?? []).map((option) => `${option.label}|${option.description ?? ""}`).join(",");
+      return `${question.question}|${question.header ?? ""}|${question.multiSelect ? "1" : "0"}|${options}`;
+    })
+    .join("||");
+};
+
+export function isMarkdown(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  const patterns: RegExp[] = [/^#{1,6}\s+/m, /```[\s\S]*?```/, /^\s*[-*]\s+/m, /^\s*\d+\.\s+/m, /\|.+\|/];
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+function extractTagContent(input: string, tag: string): string | null {
+  const match = input.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+  return match ? match[1] : null;
+}
+
+const getBrowserAnnotationSummaryLabel = (item: unknown, index: number): string => {
+  if (!item || typeof item !== "object") return `标注 ${index + 1}`;
   const record = item as Record<string, unknown>;
   const comment = typeof record.comment === "string" ? record.comment.trim() : "";
   if (comment) return comment;
 
-  const target = record.target && typeof record.target === "object" ? record.target as Record<string, unknown> : null;
+  const target = record.target && typeof record.target === "object" ? (record.target as Record<string, unknown>) : null;
   if (target?.type === "text" && typeof target.value === "string" && target.value.trim()) return target.value.trim();
   if (target?.type === "image") return (typeof target.alt === "string" && target.alt.trim()) || "图片";
 
-  const dom = record.dom && typeof record.dom === "object" ? record.dom as Record<string, unknown> : null;
-  return (typeof dom?.selector === "string" && dom.selector) || `批注 ${index + 1}`;
-}
+  const dom = record.dom && typeof record.dom === "object" ? (record.dom as Record<string, unknown>) : null;
+  return (typeof dom?.selector === "string" && dom.selector) || `标注 ${index + 1}`;
+};
 
-function extractBrowserAnnotationsPrompt(prompt: string): { visiblePrompt: string; annotations: BrowserAnnotationSummary[] } {
+function extractBrowserAnnotationsPrompt(prompt: string): {
+  visiblePrompt: string;
+  annotations: BrowserAnnotationSummary[];
+} {
   const blocks = Array.from(prompt.matchAll(/<browser_annotations>\s*([\s\S]*?)\s*<\/browser_annotations>/g));
   if (blocks.length === 0) {
     return { visiblePrompt: prompt, annotations: [] };
@@ -345,15 +273,15 @@ function extractBrowserAnnotationsPrompt(prompt: string): { visiblePrompt: strin
       }
       if (typeof payload.count === "number") {
         for (let index = 0; index < payload.count; index += 1) {
-          items.push({ index: items.length + 1, label: `批注 ${items.length + 1}` });
+          items.push({ index: items.length + 1, label: `标注 ${items.length + 1}` });
         }
         return items;
       }
     } catch {
-      items.push({ index: items.length + 1, label: `批注 ${items.length + 1}` });
+      items.push({ index: items.length + 1, label: `标注 ${items.length + 1}` });
       return items;
     }
-    items.push({ index: items.length + 1, label: `批注 ${items.length + 1}` });
+    items.push({ index: items.length + 1, label: `标注 ${items.length + 1}` });
     return items;
   }, []);
 
@@ -364,7 +292,7 @@ function extractBrowserAnnotationsPrompt(prompt: string): { visiblePrompt: strin
 }
 
 const BrowserAnnotationChip = ({ annotation }: { annotation: BrowserAnnotationSummary }) => (
-  <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-ink-800 shadow-[0_12px_28px_rgba(15,23,42,0.08)]">
+  <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-accent/15 bg-white/90 px-3 py-2 text-sm font-semibold text-ink-800 shadow-[0_10px_24px_rgba(210,106,61,0.08)]">
     <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent text-[11px] font-bold text-white">
       {annotation.index}
     </span>
@@ -372,28 +300,81 @@ const BrowserAnnotationChip = ({ annotation }: { annotation: BrowserAnnotationSu
   </div>
 );
 
-const UserMessageCard = ({ message, showIndicator = false }: { message: { type: "user_prompt"; prompt: string; attachments?: PromptAttachment[] }; showIndicator?: boolean }) => {
-  const { visiblePrompt, annotations } = extractBrowserAnnotationsPrompt(message.prompt);
+const AttachmentChip = ({ attachment }: { attachment: PromptAttachment }) => (
+  <div className="rounded-2xl border border-black/6 bg-[#eef2f8] px-3 py-2">
+    <div className="truncate text-xs font-semibold text-ink-800">{attachment.name}</div>
+    <div className="mt-1 text-[11px] text-muted">{attachment.kind === "image" ? "图片附件" : "文本附件"}</div>
+  </div>
+);
+
+const CollapsibleText = ({
+  text,
+  className,
+  maxLines = MAX_VISIBLE_LINES,
+  renderMarkdown = false,
+}: {
+  text: string;
+  className?: string;
+  maxLines?: number;
+  renderMarkdown?: boolean;
+}) => {
+  const [expanded, setExpanded] = useState(false);
+  const lines = useMemo(() => text.split("\n"), [text]);
+  const hasMore = lines.length > maxLines || text.length > 1400;
+  const visibleText = hasMore && !expanded ? lines.slice(0, maxLines).join("\n") : text;
+
+  return (
+    <div className={className}>
+      {renderMarkdown ? (
+        <MDContent text={visibleText} />
+      ) : (
+        <pre className="m-0 whitespace-pre-wrap break-words font-mono text-[12px] leading-5">{visibleText}</pre>
+      )}
+      {hasMore && (
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="mt-3 inline-flex items-center gap-1 rounded-full border border-accent/20 bg-white/80 px-3 py-1 text-xs font-semibold text-accent transition hover:bg-accent/8"
+        >
+          <span>{expanded ? "收起" : `展开剩余 ${Math.max(lines.length - maxLines, 1)} 行`}</span>
+        </button>
+      )}
+    </div>
+  );
+};
+
+const UserMessageCard = ({
+  message,
+  showIndicator = false,
+}: {
+  message: { type: "user_prompt"; prompt: string; attachments?: PromptAttachment[]; capturedAt?: number };
+  showIndicator?: boolean;
+}) => {
+  const { visiblePrompt, annotations } = useMemo(() => extractBrowserAnnotationsPrompt(message.prompt), [message.prompt]);
   const hasVisiblePrompt = visiblePrompt.trim().length > 0;
   const hasAttachments = Boolean(message.attachments?.length);
 
   return (
-    <div className="mt-5 flex flex-col items-end">
-      <div className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.16em] text-muted">
-        <StatusDot variant="success" isActive={showIndicator} isVisible={showIndicator} />
-        用户
+    <div className="group mt-5 flex flex-col items-end">
+      <SectionLabel active={showIndicator} variant="accent">用户</SectionLabel>
+      <div className="flex w-full justify-end gap-2">
+        <IconButton label="引用" onClick={() => appendTextToComposer(visiblePrompt || message.prompt)} />
+        <IconButton label="复制" onClick={() => void copyText(visiblePrompt || message.prompt)} />
+        {hasVisiblePrompt ? (
+          <div className="max-w-[78%] rounded-[26px] rounded-tr-[8px] border border-accent/16 bg-[linear-gradient(180deg,rgba(253,244,241,0.98),rgba(255,255,255,0.96))] px-5 py-4 text-ink-800 shadow-[0_18px_34px_rgba(210,106,61,0.08)]">
+            <MDContent text={visiblePrompt} />
+          </div>
+        ) : !hasAttachments && annotations.length === 0 ? (
+          <div className="max-w-[78%] rounded-[22px] border border-black/6 bg-[#eef2f8] px-4 py-3 text-sm text-muted">
+            已发送附件
+          </div>
+        ) : null}
       </div>
-      {hasVisiblePrompt ? (
-        <div className="mt-2 w-full max-w-[78%] rounded-[24px] border border-accent/18 bg-[linear-gradient(180deg,rgba(253,244,241,0.98),rgba(255,255,255,0.96))] px-5 py-4 text-ink-800 shadow-[0_16px_30px_rgba(210,106,61,0.08)]">
-          <MDContent text={visiblePrompt} />
-        </div>
-      ) : !hasAttachments && annotations.length === 0 ? (
-        <div className="mt-2 w-full max-w-[78%] rounded-[24px] border border-black/6 bg-[#eef2f8] px-4 py-3 text-sm text-muted">
-          已发送附件
-        </div>
-      ) : null}
+      <div className="mt-1 h-5 text-[11px] text-muted opacity-0 transition group-hover:opacity-100">
+        {formatTime(message.capturedAt)}
+      </div>
       {annotations.length > 0 && (
-        <div className="mt-3 flex w-full max-w-[78%] flex-wrap justify-end gap-2">
+        <div className="mt-2 flex w-full max-w-[78%] flex-wrap justify-end gap-2">
           {annotations.map((annotation) => (
             <BrowserAnnotationChip key={annotation.index} annotation={annotation} />
           ))}
@@ -411,18 +392,14 @@ const UserMessageCard = ({ message, showIndicator = false }: { message: { type: 
               const imageSrc = resolveImageAttachmentSrc(attachment);
               return (
                 <div key={`${attachment.id}-preview`} className="overflow-hidden rounded-2xl border border-black/6 bg-[#eef2f8] p-2">
-                  <img
-                    src={imageSrc}
-                    alt={attachment.name}
-                    className="max-h-64 w-full rounded-xl object-contain"
-                  />
+                  <img src={imageSrc} alt={attachment.name} className="max-h-64 w-full rounded-xl object-contain" />
                 </div>
               );
             }
 
             return (
               <div key={`${attachment.id}-preview`} className="rounded-2xl border border-black/6 bg-[#eef2f8] p-3">
-                <div className="mb-2 text-xs font-medium text-muted">{attachment.name}</div>
+                <div className="mb-2 text-xs font-semibold text-muted">{attachment.name}</div>
                 <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-sm text-ink-700">
                   {attachment.preview || attachment.data}
                 </pre>
@@ -435,12 +412,339 @@ const UserMessageCard = ({ message, showIndicator = false }: { message: { type: 
   );
 };
 
-export function MessageCard({
+const AssistantTextCard = ({
+  title,
+  text,
+  showIndicator = false,
+  tone = "normal",
+}: {
+  title: string;
+  text: string;
+  showIndicator?: boolean;
+  tone?: "normal" | "thinking";
+}) => {
+  const [expanded, setExpanded] = useState(tone !== "thinking");
+
+  if (tone === "thinking") {
+    return (
+      <div className="group mt-5">
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="mb-2 flex w-full items-center gap-2 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted"
+        >
+          <StatusDot variant="success" active={showIndicator} />
+          <span>{title}</span>
+          <span className="ml-auto rounded-full border border-black/8 bg-white/70 px-2 py-0.5 text-[11px] normal-case tracking-normal">
+            {expanded ? "收起" : compactPreview(text, 48)}
+          </span>
+        </button>
+        {expanded && (
+          <div className="rounded-[22px] border border-black/6 bg-[#f4f7fb] px-4 py-3 text-sm text-ink-700">
+            <CollapsibleText text={text} renderMarkdown={isMarkdown(text)} />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="group mt-5">
+      <SectionLabel active={showIndicator} variant="success">{title}</SectionLabel>
+      <div className="flex gap-2">
+        <div className="min-w-0 flex-1 rounded-[26px] rounded-tl-[8px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 text-ink-800 shadow-[0_14px_30px_rgba(30,38,52,0.055)]">
+          <MDContent text={text} />
+        </div>
+        <IconButton label="引用" onClick={() => appendTextToComposer(text)} />
+        <IconButton label="复制" onClick={() => void copyText(text)} />
+      </div>
+    </div>
+  );
+};
+
+const getToolLabel = (name: string) => {
+  const map: Record<string, string> = {
+    Bash: "命令",
+    Read: "读取",
+    Write: "写入",
+    Edit: "编辑",
+    MultiEdit: "批量编辑",
+    Grep: "搜索",
+    Glob: "匹配",
+    WebFetch: "网页抓取",
+    WebSearch: "网页搜索",
+    Task: "子 Agent",
+    Agent: "子 Agent",
+    TodoWrite: "计划更新",
+    Browser: "浏览器",
+    AskUserQuestion: "向你提问",
+  };
+  return map[name] ?? name;
+};
+
+const getToolSummary = (messageContent: Extract<MessageContent, { type: "tool_use" }>) => {
+  const input = (messageContent.input ?? {}) as Record<string, unknown>;
+  switch (messageContent.name) {
+    case "Bash":
+      return getRecordString(input, "command");
+    case "Read":
+    case "Write":
+    case "Edit":
+    case "MultiEdit":
+      return getRecordString(input, "file_path") || getRecordString(input, "path");
+    case "Glob":
+    case "Grep":
+      return [getRecordString(input, "pattern"), getRecordString(input, "path")].filter(Boolean).join(" · ");
+    case "WebFetch":
+      return getRecordString(input, "url");
+    case "WebSearch":
+      return getRecordString(input, "query");
+    case "Skill":
+      return getSkillDisplayName(input);
+    case "Task":
+    case "Agent":
+      return getRecordString(input, "description") || getRecordString(input, "prompt");
+    default:
+      return getRecordString(input, "description") || getRecordString(input, "query") || getRecordString(input, "url");
+  }
+};
+
+const ToolUseCard = ({
+  messageContent,
+  showIndicator = false,
+}: {
+  messageContent: MessageContent;
+  showIndicator?: boolean;
+}) => {
+  const isToolUse = messageContent.type === "tool_use";
+  const toolUseId = isToolUse ? messageContent.id : undefined;
+  const toolStatus = useToolStatus(toolUseId);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (toolUseId && !toolStatusMap.has(toolUseId)) setToolStatus(toolUseId, "pending");
+  }, [toolUseId]);
+
+  if (!isToolUse) return null;
+
+  const status = toolStatus ?? "pending";
+  const summary = getToolSummary(messageContent);
+  const rawInput = JSON.stringify(messageContent.input ?? {}, null, 2);
+  const isAgentTool = messageContent.name === "Task" || messageContent.name === "Agent";
+  const isPending = status === "pending";
+  const statusText = status === "success" ? "完成" : status === "error" ? "失败" : "执行中";
+  const statusClass =
+    status === "success"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : status === "error"
+        ? "border-red-200 bg-red-50 text-red-700"
+        : "border-blue-200 bg-blue-50 text-blue-700";
+
+  return (
+    <div className={cx(
+      "mt-3 overflow-hidden rounded-[22px] border shadow-[0_10px_22px_rgba(30,38,52,0.035)]",
+      isAgentTool
+        ? "border-accent/18 bg-[linear-gradient(180deg,rgba(255,248,244,0.94),rgba(255,255,255,0.86))]"
+        : "border-black/6 bg-[#f4f7fb]",
+    )}>
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left"
+      >
+        <StatusDot variant={status === "error" ? "error" : status === "success" ? "success" : "accent"} active={isPending && showIndicator} />
+        <span className="shrink-0 rounded-lg bg-white/80 px-2.5 py-1 text-sm font-semibold text-accent">
+          {getToolLabel(messageContent.name)}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-sm text-ink-700">{summary || messageContent.name}</span>
+        <span className={cx("shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold", statusClass)}>
+          {statusText}
+        </span>
+      </button>
+      {isAgentTool && summary && (
+        <div className="border-t border-accent/10 px-4 pb-3 text-xs leading-5 text-muted">
+          子 Agent 会在后台执行这个子任务；需要看完整链路时，可以切到右侧「执行轨迹」。
+        </div>
+      )}
+      {expanded && (
+        <div className="border-t border-black/6 bg-white/52 px-4 py-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">输入参数</div>
+            <button
+              type="button"
+              className="rounded-full border border-black/8 bg-white px-2 py-0.5 text-[11px] font-semibold text-muted transition hover:border-accent/30 hover:text-accent"
+              onClick={() => void copyText(rawInput)}
+            >
+              复制 JSON
+            </button>
+          </div>
+          <CollapsibleText text={rawInput} maxLines={10} />
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) => {
+  const isToolResult = typeof messageContent !== "string" && messageContent.type === "tool_result";
+  const toolUseId = isToolResult ? messageContent.tool_use_id : undefined;
+  const status: ToolStatus = isToolResult && messageContent.is_error ? "error" : "success";
+
+  useEffect(() => {
+    if (isToolResult) {
+      setToolStatus(toolUseId, status);
+    }
+  }, [isToolResult, status, toolUseId]);
+
+  if (!isToolResult) return null;
+
+  const content = (() => {
+    if (messageContent.is_error) {
+      return extractTagContent(String(messageContent.content), "tool_use_error") || String(messageContent.content);
+    }
+    if (Array.isArray(messageContent.content)) {
+      return messageContent.content
+        .map((item) => (typeof item === "string" ? item : "text" in item ? item.text ?? "" : ""))
+        .join("\n");
+    }
+    return String(messageContent.content);
+  })();
+
+  const isError = Boolean(messageContent.is_error);
+
+  return (
+    <div className="mt-3 rounded-[22px] border border-black/6 bg-[#f4f7fb] px-4 py-3">
+      <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
+        <StatusDot variant={isError ? "error" : "success"} />
+        <span>工具输出</span>
+        <span className="ml-auto normal-case tracking-normal text-muted">{compactPreview(content, 64)}</span>
+      </div>
+      <CollapsibleText
+        text={content}
+        renderMarkdown={!isError && isMarkdown(content)}
+        className={isError ? "text-red-600" : "text-ink-700"}
+      />
+    </div>
+  );
+};
+
+const AskUserQuestionCard = ({
+  messageContent,
+  permissionRequest,
+  onPermissionResult,
+}: {
+  messageContent: MessageContent;
+  permissionRequest?: PermissionRequest;
+  onPermissionResult?: (toolUseId: string, result: PermissionResult) => void;
+}) => {
+  if (messageContent.type !== "tool_use") return null;
+
+  const input = messageContent.input as AskUserQuestionInput | null;
+  const questions = input?.questions ?? [];
+  const currentSignature = getAskUserQuestionSignature(input);
+  const requestSignature = getAskUserQuestionSignature(permissionRequest?.input as AskUserQuestionInput | undefined);
+  const isActiveRequest = permissionRequest && currentSignature === requestSignature;
+
+  if (isActiveRequest && onPermissionResult) {
+    return (
+      <div className="mt-4">
+        <DecisionPanel
+          request={permissionRequest}
+          onSubmit={(result) => onPermissionResult(permissionRequest.toolUseId, result)}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded-[22px] border border-accent/16 bg-accent/8 px-4 py-3">
+      <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-accent">
+        <StatusDot variant="accent" />
+        <span>向你提问</span>
+      </div>
+      {questions.map((question, index) => (
+        <div key={index} className="text-sm text-ink-700">
+          {question.question}
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const SystemInfoCard = ({ message, showIndicator = false }: { message: SDKMessage; showIndicator?: boolean }) => {
+  if (message.type !== "system" || !("subtype" in message) || message.subtype !== "init") return null;
+
+  const systemMsg = message as SystemInitMessage;
+
+  return (
+    <div className="mt-4 overflow-hidden rounded-[20px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(246,249,252,0.9))] px-4 py-3 shadow-[0_14px_34px_rgba(30,38,52,0.06)]">
+      <SectionLabel active={showIndicator} variant="success">系统初始化</SectionLabel>
+      <div className="grid gap-2 text-sm text-ink-700 sm:grid-cols-2">
+        <InfoItem name="会话 ID" value={systemMsg.session_id || "-"} />
+        <InfoItem name="模型" value={systemMsg.model || "-"} />
+        <InfoItem name="权限" value={systemMsg.permissionMode || "-"} />
+        <InfoItem name="目录" value={systemMsg.cwd || "-"} wide />
+      </div>
+    </div>
+  );
+};
+
+const InfoItem = ({ name, value, wide = false }: { name: string; value: string; wide?: boolean }) => (
+  <div
+    className={cx(
+      "min-w-0 rounded-xl border border-black/6 bg-white/72 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition hover:border-accent/18 hover:bg-white/88",
+      wide && "sm:col-span-2",
+    )}
+  >
+    <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">
+      <span className="h-1.5 w-1.5 rounded-full bg-accent/55" />
+      <span>{name}</span>
+    </div>
+    <div className="mt-1.5 truncate font-mono text-[13px] leading-5 text-ink-800" title={value}>{value}</div>
+  </div>
+);
+
+const SessionResult = ({ message }: { message: SDKResultMessage }) => {
+  const costTitle = `这是 SDK 返回的 total_cost_usd 字段，使用 SDK 内置价格表估算；自定义代理/new-api/折扣倍率/缓存计费可能与它不一致，真实扣费请以 new-api 后台为准。`;
+
+  return (
+    <div className="mt-5">
+      <SectionLabel variant="success">本轮结果</SectionLabel>
+      <div className="rounded-[26px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(245,247,250,0.92))] px-4 py-4 shadow-[0_12px_26px_rgba(30,38,52,0.05)]">
+        <div className="grid gap-2 sm:grid-cols-4">
+          <MetricPill label="总耗时" value={formatMinutes(message.duration_ms)} />
+          <MetricPill label="API 耗时" value={formatMinutes(message.duration_api_ms)} />
+          <MetricPill label="输入" value={formatTokens(message.usage?.input_tokens)} />
+          <MetricPill label="输出" value={formatTokens(message.usage?.output_tokens)} />
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold text-ink-800">用量</span>
+          <span
+            title={costTitle}
+            className="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-sm font-semibold text-amber-700"
+          >
+            SDK返回估值 {formatUsd(message.total_cost_usd)}
+          </span>
+          <span className="text-xs text-muted">非真实扣费，new-api 账单为准</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const MetricPill = ({ label, value }: { label: string; value: string }) => (
+  <div className="rounded-2xl bg-[#eef2f8] px-3 py-2">
+    <div className="text-[11px] font-semibold text-muted">{label}</div>
+    <div className="mt-1 text-sm font-semibold text-ink-800">{value}</div>
+  </div>
+);
+
+function MessageCardBase({
   message,
   isLast = false,
   isRunning = false,
   permissionRequest,
-  onPermissionResult
+  onPermissionResult,
 }: {
   message: StreamMessage;
   isLast?: boolean;
@@ -465,32 +769,51 @@ export function MessageCard({
       return <SessionResult message={sdkMessage} />;
     }
     return (
-      <div className="flex flex-col gap-2 mt-4">
-        <div className="header text-error">会话错误</div>
-        <div className="rounded-xl bg-error-light p-3">
-          <pre className="text-sm text-error whitespace-pre-wrap">{JSON.stringify(sdkMessage, null, 2)}</pre>
-        </div>
+      <div className="mt-4 rounded-[22px] border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+        <div className="mb-2 text-sm font-semibold">会话错误</div>
+        <pre className="whitespace-pre-wrap break-words text-sm">{JSON.stringify(sdkMessage, null, 2)}</pre>
       </div>
     );
   }
 
   if (sdkMessage.type === "assistant") {
-    const contents = sdkMessage.message.content;
     return (
       <>
-        {contents.map((content: MessageContent, idx: number) => {
-          const isLastContent = idx === contents.length - 1;
+        {sdkMessage.message.content.map((content: MessageContent, index: number) => {
+          const isLastContent = index === sdkMessage.message.content.length - 1;
           if (content.type === "thinking") {
-            return <AssistantBlockCard key={idx} title="思考" text={content.thinking} showIndicator={isLastContent && showIndicator} />;
+            return (
+              <AssistantTextCard
+                key={index}
+                title="思考"
+                text={content.thinking}
+                tone="thinking"
+                showIndicator={isLastContent && showIndicator}
+              />
+            );
           }
           if (content.type === "text") {
-            return <AssistantBlockCard key={idx} title="助手" text={content.text} showIndicator={isLastContent && showIndicator} />;
+            return (
+              <AssistantTextCard
+                key={index}
+                title="助手"
+                text={content.text}
+                showIndicator={isLastContent && showIndicator}
+              />
+            );
           }
           if (content.type === "tool_use") {
             if (content.name === "AskUserQuestion") {
-              return <AskUserQuestionCard key={idx} messageContent={content} permissionRequest={permissionRequest} onPermissionResult={onPermissionResult} />;
+              return (
+                <AskUserQuestionCard
+                  key={index}
+                  messageContent={content}
+                  permissionRequest={permissionRequest}
+                  onPermissionResult={onPermissionResult}
+                />
+              );
             }
-            return <ToolUseCard key={idx} messageContent={content} showIndicator={isLastContent && showIndicator} />;
+            return <ToolUseCard key={index} messageContent={content} showIndicator={isLastContent && showIndicator} />;
           }
           return null;
         })}
@@ -504,12 +827,9 @@ export function MessageCard({
       : [sdkMessage.message.content];
     return (
       <>
-        {contents.map((content: ToolResultContent, idx: number) => {
-          if (typeof content !== "string" && content.type === "tool_result") {
-            return <ToolResult key={idx} messageContent={content} />;
-          }
-          return null;
-        })}
+        {contents.map((content: ToolResultContent, index: number) => (
+          <ToolResult key={index} messageContent={content} />
+        ))}
       </>
     );
   }
@@ -517,4 +837,5 @@ export function MessageCard({
   return null;
 }
 
+export const MessageCard = memo(MessageCardBase);
 export { MessageCard as EventCard };

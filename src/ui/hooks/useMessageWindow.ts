@@ -1,5 +1,8 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { StreamMessage } from "../types";
+
+const INITIAL_VISIBLE_MESSAGE_LIMIT = 160;
+const LOAD_MORE_MESSAGE_STEP = 120;
 
 export interface IndexedMessage {
   originalIndex: number;
@@ -26,30 +29,42 @@ export function useMessageWindow(
     onLoadMore: () => void;
   }
 ): MessageWindowState {
-  const { hasMoreHistory, isLoadingHistory, onLoadMore } = options;
-  const visibleMessages = useMemo(
-    () =>
-      messages.map((message, index) => ({
-        originalIndex: index,
-        message,
-      })),
-    [messages],
-  );
+  const { hasMoreHistory: hasPersistedHistory, isLoadingHistory, onLoadMore } = options;
+  const [visibleLimit, setVisibleLimit] = useState(INITIAL_VISIBLE_MESSAGE_LIMIT);
+  const windowStart = Math.max(0, messages.length - visibleLimit);
+  const hasMoreLocalHistory = windowStart > 0;
+  const hasMoreHistory = hasMoreLocalHistory || hasPersistedHistory;
+  const visibleMessages = useMemo(() => {
+    return messages.slice(windowStart).map((message, offset) => ({
+      originalIndex: windowStart + offset,
+      message,
+    }));
+  }, [messages, windowStart]);
 
   const totalUserInputs = useMemo(
     () => messages.filter((message) => message.type === "user_prompt").length,
     [messages],
   );
+  const visibleUserInputs = useMemo(
+    () => visibleMessages.filter((item) => item.message.type === "user_prompt").length,
+    [visibleMessages],
+  );
 
   const loadMoreMessages = useCallback(() => {
-    if (!hasMoreHistory || isLoadingHistory) {
+    if (hasMoreLocalHistory) {
+      setVisibleLimit((current) => Math.min(messages.length, current + LOAD_MORE_MESSAGE_STEP));
+      return;
+    }
+    if (!hasPersistedHistory || isLoadingHistory) {
       return;
     }
 
     onLoadMore();
-  }, [hasMoreHistory, isLoadingHistory, onLoadMore]);
+  }, [hasMoreLocalHistory, hasPersistedHistory, isLoadingHistory, messages.length, onLoadMore]);
 
-  const resetToLatest = useCallback(() => {}, []);
+  const resetToLatest = useCallback(() => {
+    setVisibleLimit(INITIAL_VISIBLE_MESSAGE_LIMIT);
+  }, []);
 
   return {
     visibleMessages,
@@ -60,6 +75,6 @@ export function useMessageWindow(
     resetToLatest,
     totalMessages: messages.length,
     totalUserInputs,
-    visibleUserInputs: totalUserInputs,
+    visibleUserInputs,
   };
 }

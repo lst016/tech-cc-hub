@@ -1,3 +1,22 @@
+---
+doc_id: "SP-002"
+title: "Right Context Rail Workbench Implementation Plan"
+doc_type: "delivery"
+layer: "L3"
+status: "active"
+version: "1.0.0"
+last_updated: "2026-04-20"
+owners:
+  - "Engineering"
+tags:
+  - "claw"
+  - "docs"
+  - "superpowers"
+  - "plan"
+  - "activity-rail"
+  - "workbench"
+---
+
 # Right Context Rail Workbench Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run dev)",
+      "Bash(npm run dev:react)",
+      "Bash(npm run dev:electron)",
+      "Bash(npm run build)",
+      "Bash(npm run transpile:electron)",
+      "Bash(npm run rebuild)",
+      "Bash(npm run lint)",
+      "Bash(npm run preview)",
+      "Bash(npm install)",
+      "Bash(npx eslint*)",
+      "Bash(npx tsc*)",
+      "Bash(npx vite*)",
+      "Bash(npx electron-builder*)",
+      "Bash(node --test*)",
+      "Bash(node scripts/*)",
+      "Bash(bash scripts/qa/*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git branch*)",
+      "Bash(ls*)",
+      "Bash(find src/*)",
+      "Bash(cat*)",
+      "Bash(head*)",
+      "Bash(wc*)",
+      "Bash(npm run qa:*)"
+    ],
+    "deny": []
+  }
+}

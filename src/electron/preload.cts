@@ -78,8 +78,16 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("browser-capture-visible"),
     inspectBrowserWorkbenchAtPoint: (point: any) =>
         ipcInvoke("browser-inspect-at-point", point),
+    clearBrowserWorkbenchAnnotations: () =>
+        ipcInvoke("browser-clear-annotations"),
     setBrowserWorkbenchAnnotationMode: (enabled: boolean) =>
         ipcInvoke("browser-annotation-mode", enabled),
+    openBrowserWorkbenchDevTools: () =>
+        ipcInvoke("browser-open-devtools"),
+    closeBrowserWorkbenchDevTools: () =>
+        ipcInvoke("browser-close-devtools"),
+    isBrowserWorkbenchDevToolsOpen: () =>
+        ipcInvoke("browser-is-devtools-open"),
     onBrowserWorkbenchEvent: (callback: (event: any) => void) => {
         const cb = (_: Electron.IpcRendererEvent, payload: string) => {
             try {

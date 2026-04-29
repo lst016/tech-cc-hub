@@ -226,6 +226,7 @@ export type ActivityRailModel = {
     failureCount: number;
     alertCount: number;
     modelLabel: string;
+    costLabel: string;
   };
   filterCounts: Record<ActivityRailFilterKey, number>;
   timeline: ActivityTimelineItem[];
@@ -685,6 +686,12 @@ function formatCompactMetric(chars: number, tokens?: number): string {
     return `${formatNumber(tokens)} tok`;
   }
   return `${formatNumber(chars)} 字符`;
+}
+
+function formatCost(usd: number): string {
+  if (usd <= 0) return "-";
+  if (usd < 0.01) return "< $0.01";
+  return `$${usd.toFixed(2)}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1518,6 +1525,7 @@ export function buildActivityRailModel(
         failureCount: 0,
         alertCount: 0,
         modelLabel: "-",
+        costLabel: "-",
       },
       filterCounts: {
         all: 0,
@@ -1572,6 +1580,7 @@ export function buildActivityRailModel(
   let latestOutputTokens: number | undefined;
   let latestModel = "";
   let latestRemoteSessionId = "";
+  let latestCostUsd = 0;
   let toolErrorCount = 0;
   let fileOpCount = 0;
   let validationCount = 0;
@@ -1848,6 +1857,7 @@ export function buildActivityRailModel(
       latestDurationMs = result.duration_ms ?? latestDurationMs;
       latestInputTokens = result.usage?.input_tokens ?? latestInputTokens;
       latestOutputTokens = result.usage?.output_tokens ?? latestOutputTokens;
+      latestCostUsd = result.total_cost_usd ?? latestCostUsd;
       latestResultText = getResultText(result) || latestResultText;
       latestRemoteSessionId = result.session_id ?? latestRemoteSessionId;
       finalResultSuccess = result.subtype === "success";
@@ -2371,6 +2381,7 @@ export function buildActivityRailModel(
       failureCount: executionMetrics.failureCount,
       alertCount: filterCounts.attention,
       modelLabel: latestModel || "-",
+      costLabel: formatCost(latestCostUsd),
     },
     filterCounts,
     timeline,

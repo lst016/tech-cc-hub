@@ -52,6 +52,31 @@ const MAX_REHYDRATED_IMAGE_ATTACHMENTS = 2;
 const RECENT_IMAGE_REFERENCE_PATTERN =
   /(上一张|上张|上一轮|刚才那张|刚刚那张|之前那张|前面那张|之前的截图|前面的截图|之前的图片|前面的图片|previous (image|screenshot)|last (image|screenshot))/i;
 
+function resolveLatestMessageModel(messages: StreamMessage[] | undefined): string | null {
+  if (!messages || messages.length === 0) {
+    return null;
+  }
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || typeof message !== "object") {
+      continue;
+    }
+
+    const candidateModel = "model" in message ? (message as { model?: string }).model : undefined;
+    if (typeof candidateModel !== "string") {
+      continue;
+    }
+
+    const trimmed = candidateModel.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+
+  return null;
+}
+
 function isPlaceholderSessionTitle(title?: string): boolean {
   const normalized = title?.trim();
   return !normalized || normalized === "新聊天" || normalized === "New Session";
@@ -177,6 +202,7 @@ function buildImageAssetSummary(attachment: PromptAttachment): string {
   const parts = [
     `用户当前轮上传/粘贴的图片附件已作为本地资产保存，主上下文不包含 base64：${attachment.name || "未命名图片"}`,
     attachment.storagePath ? `本地路径：${attachment.storagePath}` : undefined,
+    attachment.storagePath ? `design_inspect_image 参数：{ "imagePath": "${attachment.storagePath.replace(/\\/g, "\\\\")}" }` : undefined,
     attachment.storageUri ? `文件 URI：${attachment.storageUri}` : undefined,
     typeof attachment.size === "number" ? `大小：${attachment.size} bytes` : undefined,
     "重要：不要用 Read 直接读取这个图片文件，图片会打爆主上下文。",
@@ -343,13 +369,52 @@ export async function handleClientEvent(event: ClientEvent) {
   const store = initializeSessions();
 
   if (event.type === "session.list") {
-    const sessionsWithSlashCommands = store.listSessions().map((session) => ({
+    const archived = Boolean(event.payload?.archived);
+    const sessionsWithSlashCommands = store.listSessions({ archived }).map((session) => ({
       ...session,
       slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
     }));
     emit({
       type: "session.list",
-      payload: { sessions: sessionsWithSlashCommands },
+      payload: { sessions: sessionsWithSlashCommands, archived },
+    });
+    return;
+  }
+
+  if (event.type === "session.archive") {
+    const session = store.archiveSession(event.payload.sessionId);
+    if (!session) {
+      emit({ type: "session.deleted", payload: { sessionId: event.payload.sessionId } });
+      return;
+    }
+    emit({
+      type: "session.archived",
+      payload: {
+        sessionId: session.id,
+        session: {
+          ...session,
+          slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
+        },
+      },
+    });
+    return;
+  }
+
+  if (event.type === "session.unarchive") {
+    const session = store.unarchiveSession(event.payload.sessionId);
+    if (!session) {
+      emit({ type: "session.deleted", payload: { sessionId: event.payload.sessionId } });
+      return;
+    }
+    emit({
+      type: "session.unarchived",
+      payload: {
+        sessionId: session.id,
+        session: {
+          ...session,
+          slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
+        },
+      },
     });
     return;
   }
@@ -512,11 +577,14 @@ export async function handleClientEvent(event: ClientEvent) {
 
   if (event.type === "session.start") {
     const { displayAttachments, agentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
+    const config = getCurrentApiConfig();
+    const selectedModel = event.payload.runtime?.model?.trim() || config?.model;
     const session = store.createSession({
       cwd: event.payload.cwd,
       title: event.payload.title,
       runSurface: event.payload.runtime?.runSurface ?? "development",
       agentId: event.payload.runtime?.agentId,
+      model: selectedModel,
       allowedTools: event.payload.allowedTools,
       prompt: event.payload.prompt,
     });
@@ -525,6 +593,7 @@ export async function handleClientEvent(event: ClientEvent) {
       status: "running",
       runSurface: event.payload.runtime?.runSurface ?? session.runSurface ?? "development",
       agentId: event.payload.runtime?.agentId ?? session.agentId,
+      model: selectedModel,
       lastPrompt: event.payload.prompt,
     });
 
@@ -535,11 +604,11 @@ export async function handleClientEvent(event: ClientEvent) {
         status: "running",
         title: session.title,
         cwd: session.cwd,
+        model: selectedModel,
         slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
       },
     });
 
-    const config = getCurrentApiConfig();
     emit({
       type: "stream.message",
       payload: {
@@ -549,7 +618,7 @@ export async function handleClientEvent(event: ClientEvent) {
           prompt: event.payload.prompt,
           attachments: agentAttachments,
           session,
-          model: event.payload.runtime?.model ?? config?.model,
+          model: selectedModel,
         }),
       },
     });
@@ -562,7 +631,10 @@ export async function handleClientEvent(event: ClientEvent) {
     runClaude({
       prompt: event.payload.prompt,
       attachments: agentAttachments,
-      runtime: event.payload.runtime,
+      runtime: {
+        ...(event.payload.runtime ?? {}),
+        model: selectedModel,
+      },
       session,
       resumeSessionId: session.claudeSessionId,
       onEvent: emit,
@@ -583,6 +655,7 @@ export async function handleClientEvent(event: ClientEvent) {
             status: "error",
             title: session.title,
             cwd: session.cwd,
+            model: session.model,
             error: String(error),
           },
         });
@@ -609,7 +682,11 @@ export async function handleClientEvent(event: ClientEvent) {
     const nextTitle = shouldRetitleFromFirstPrompt
       ? buildTitleFromFirstPrompt(event.payload.prompt, event.payload.attachments)
       : session.title;
-    const selectedModel = event.payload.runtime?.model ?? config?.model;
+    const selectedModel =
+      event.payload.runtime?.model?.trim()
+      || resolveLatestMessageModel(history?.messages)
+      || session.model
+      || config?.model;
     const modelConfig = config && selectedModel ? getModelConfig(config, selectedModel) : null;
     const { displayAttachments, agentAttachments: currentAgentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
     const continuationPayload = canUseRemoteResume
@@ -638,8 +715,9 @@ export async function handleClientEvent(event: ClientEvent) {
       title: nextTitle,
       runSurface: event.payload.runtime?.runSurface ?? session.runSurface ?? "development",
       agentId: event.payload.runtime?.agentId ?? session.agentId,
-      lastPrompt: event.payload.prompt,
-      continuationSummary: continuationPayload?.usedCompression ? continuationPayload.summaryText : undefined,
+        model: selectedModel,
+        lastPrompt: event.payload.prompt,
+        continuationSummary: continuationPayload?.usedCompression ? continuationPayload.summaryText : undefined,
       continuationSummaryMessageCount: continuationPayload?.usedCompression
         ? continuationPayload.summaryMessageCount
         : undefined,
@@ -651,6 +729,7 @@ export async function handleClientEvent(event: ClientEvent) {
         status: "running",
         title: nextTitle,
         cwd: session.cwd,
+        model: selectedModel,
         slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
       },
     });
@@ -679,7 +758,10 @@ export async function handleClientEvent(event: ClientEvent) {
     runClaude({
       prompt,
       attachments: attachmentsForRun,
-      runtime: event.payload.runtime,
+      runtime: {
+        ...(event.payload.runtime ?? {}),
+        model: selectedModel,
+      },
       session,
       resumeSessionId,
       onEvent: emit,
@@ -699,11 +781,58 @@ export async function handleClientEvent(event: ClientEvent) {
             status: "error",
             title: session.title,
             cwd: session.cwd,
+            model: session.model,
             error: String(error),
           },
         });
       });
 
+    return;
+  }
+
+  if (event.type === "session.append") {
+    const session = store.getSession(event.payload.sessionId);
+    if (!session) {
+      emit({ type: "session.deleted", payload: { sessionId: event.payload.sessionId } });
+      emit({
+        type: "runner.error",
+        payload: { sessionId: event.payload.sessionId, message: "Session no longer exists." },
+      });
+      return;
+    }
+
+    if (session.status !== "running") {
+      emit({
+        type: "runner.error",
+        payload: { sessionId: session.id, message: "当前会话没有正在执行的任务，不能插入补充指令。" },
+      });
+      return;
+    }
+
+    const handle = runnerHandles.get(session.id);
+    if (!handle) {
+      emit({
+        type: "runner.error",
+        payload: { sessionId: session.id, message: "当前执行器还未就绪，稍后再插入补充指令。" },
+      });
+      return;
+    }
+
+    const { displayAttachments, agentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
+    store.updateSession(session.id, { lastPrompt: event.payload.prompt });
+    emit({
+      type: "stream.user_prompt",
+      payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: displayAttachments },
+    });
+
+    try {
+      await handle.appendPrompt(event.payload.prompt, agentAttachments);
+    } catch (error) {
+      emit({
+        type: "runner.error",
+        payload: { sessionId: session.id, message: `插入补充指令失败：${String(error)}` },
+      });
+    }
     return;
   }
 
@@ -725,6 +854,7 @@ export async function handleClientEvent(event: ClientEvent) {
         status: "idle",
         title: session.title,
         cwd: session.cwd,
+        model: session.model,
         slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
       },
     });

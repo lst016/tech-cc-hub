@@ -1,4 +1,5 @@
 import { BrowserView, BrowserWindow } from "electron";
+import { buildBrowserWorkbenchWebPreferences } from "./libs/browser-workbench-session.js";
 
 export type BrowserWorkbenchBounds = {
   x: number;
@@ -31,9 +32,14 @@ export type BrowserWorkbenchDomHint = {
   ariaLabel?: string;
   selector?: string;
   path?: string;
+  xpath?: string;
   target?: { type: "text"; value: string } | { type: "image"; url: string; alt?: string };
   selectorCandidates: string[];
   boundingBox?: { x: number; y: number; width: number; height: number };
+  context?: {
+    ancestorChain?: string[];
+    nearbyText?: string;
+  };
 };
 
 export type BrowserWorkbenchPageSnapshot = {
@@ -205,6 +211,47 @@ export class BrowserWorkbenchManager {
     return this.getState();
   }
 
+  openDevTools(): { opened: boolean } {
+    if (!this.view) {
+      return { opened: false };
+    }
+    const contents = this.view.webContents;
+    if (contents.isDestroyed()) {
+      return { opened: false };
+    }
+    try {
+      contents.openDevTools({ mode: "right", activate: true });
+      return { opened: true };
+    } catch (error) {
+      console.error("[browser-workbench] openDevTools failed:", error);
+      return { opened: false };
+    }
+  }
+
+  closeDevTools(): { opened: boolean } {
+    if (!this.view) {
+      return { opened: false };
+    }
+    const contents = this.view.webContents;
+    if (contents.isDestroyed()) {
+      return { opened: false };
+    }
+    try {
+      contents.closeDevTools();
+      return { opened: false };
+    } catch (error) {
+      console.error("[browser-workbench] closeDevTools failed:", error);
+      return { opened: this.isDevToolsOpened() };
+    }
+  }
+
+  isDevToolsOpened(): boolean {
+    if (!this.view) return false;
+    const contents = this.view.webContents;
+    if (contents.isDestroyed()) return false;
+    return contents.isDevToolsOpened();
+  }
+
   goBack(): BrowserWorkbenchState {
     const contents = this.view?.webContents;
     if (contents?.canGoBack()) contents.goBack();
@@ -271,6 +318,20 @@ export class BrowserWorkbenchManager {
       await this.installAnnotationScript();
     }
     this.emitState();
+    return this.getState();
+  }
+
+  async clearAnnotations(): Promise<BrowserWorkbenchState> {
+    if (this.view && !this.view.webContents.isDestroyed()) {
+      try {
+        await this.view.webContents.executeJavaScript(`(${this.buildClearAnnotationsScript()})()`, true);
+      } catch {
+        // Ignore script cleanup errors so state can still be reset on the renderer side.
+      }
+      if (this.annotationMode) {
+        await this.installAnnotationScript();
+      }
+    }
     return this.getState();
   }
 
@@ -357,11 +418,7 @@ export class BrowserWorkbenchManager {
     }
 
     const view = new BrowserView({
-      webPreferences: {
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-      },
+      webPreferences: buildBrowserWorkbenchWebPreferences(),
     });
 
     this.view = view;
@@ -449,7 +506,11 @@ export class BrowserWorkbenchManager {
         `(${this.buildAnnotationScript()})(${JSON.stringify({ enabled: this.annotationMode, prefix: ANNOTATION_PREFIX })})`,
         true,
       );
-    } catch {
+    } catch (error) {
+      this.handleConsoleMessage(
+        "warn",
+        `[browser-workbench] annotation injection failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
       // Cross-origin frames or transient navigations can reject injection. The
       // next completed load will retry if annotation mode is still enabled.
     }
@@ -853,8 +914,10 @@ export class BrowserWorkbenchManager {
             selector: annotation.domHint.selector,
             selectorCandidates: annotation.domHint.selectorCandidates,
             path: annotation.domHint.path,
+            xpath: annotation.domHint.xpath,
             target: annotation.domHint.target,
             boundingBox: annotation.domHint.boundingBox,
+            context: annotation.domHint.context,
           } : undefined,
           timestamp: annotation.createdAt,
         };
@@ -877,8 +940,14 @@ export class BrowserWorkbenchManager {
       }
       function annotationKey(domHint, point) {
         const selector = domHint && domHint.selectorCandidates && domHint.selectorCandidates[0];
+        const xpath = domHint && domHint.xpath;
+        const path = domHint && domHint.path;
         const box = domHint && domHint.boundingBox;
-        if (selector) return "selector:" + selector;
+        if (selector && !/^(?:html|body|div|span|p|section|main|article|form|label|ul|li|svg|path)$/.test(selector) && !/^#(?:__nuxt|__next|app|root|main)$/i.test(selector)) {
+          return "selector:" + selector;
+        }
+        if (xpath) return "xpath:" + xpath;
+        if (path) return "path:" + path;
         if (box) return ["box", Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height)].join(":");
         return "point:" + Math.round(point.x) + ":" + Math.round(point.y);
       }
@@ -1122,20 +1191,113 @@ export class BrowserWorkbenchManager {
         if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(value);
         return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\\\$&");
       }
+      function cleanText(value) {
+        return String(value || "").replace(/\\s+/g, " ").trim();
+      }
       function textOf(element) {
-        return (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 160);
+        return cleanText(element.innerText || element.textContent || "").slice(0, 160);
+      }
+      function buildXPath(element) {
+        const parts = [];
+        let current = element;
+        while (current && current.nodeType === Node.ELEMENT_NODE) {
+          let nth = 1;
+          let sibling = current.previousElementSibling;
+          while (sibling) {
+            if (sibling.tagName === current.tagName) nth += 1;
+            sibling = sibling.previousElementSibling;
+          }
+          parts.unshift(current.tagName.toLowerCase() + "[" + nth + "]");
+          current = current.parentElement;
+        }
+        return "/" + parts.join("/");
+      }
+      function isActionableElement(element) {
+        if (!element || !element.matches) return false;
+        if (element.matches("button, a[href], input, select, textarea, summary, label")) return true;
+        if (element.matches("[role='button'], [role='link'], [role='tab'], [role='menuitem']")) return true;
+        if (element.matches("[data-testid], [data-test], [data-qa], [data-cy], [aria-controls], [onclick]")) return true;
+        return false;
+      }
+      function isGenericRootId(value) {
+        return /^(?:__nuxt|__next|app|root|main)$/i.test(cleanText(value));
+      }
+      function isReasonableHintElement(element) {
+        if (!element || !element.getBoundingClientRect) return false;
+        const rect = element.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return false;
+        const viewportWidth = Math.max(window.innerWidth || 0, document.documentElement.clientWidth || 0, 1);
+        const viewportHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0, 1);
+        const areaRatio = (rect.width * rect.height) / (viewportWidth * viewportHeight);
+        if (areaRatio >= 0.72) return false;
+        if (rect.width >= viewportWidth * 0.96 && rect.height >= viewportHeight * 0.72) return false;
+        if (rect.width >= viewportWidth * 0.82 && rect.height >= viewportHeight * 0.82) return false;
+        return true;
+      }
+      function hasStableHint(element) {
+        if (!element || !element.getAttribute) return false;
+        if (element.getAttribute("data-testid") || element.getAttribute("data-test")) return true;
+        if (element.getAttribute("data-qa") || element.getAttribute("data-cy")) return true;
+        if (cleanText(element.getAttribute("aria-label"))) return true;
+        const id = cleanText(element.id || "");
+        if (!id || isGenericRootId(id)) return false;
+        return isReasonableHintElement(element);
+      }
+      function findPreferredElement(element) {
+        if (!element) return element;
+        const actionable = element.closest && element.closest(
+          "button, a[href], input, select, textarea, summary, label, [role='button'], [role='link'], [role='tab'], [role='menuitem'], [data-testid], [data-test], [data-qa], [data-cy], [aria-controls], [onclick]",
+        );
+        if (actionable) {
+          return actionable;
+        }
+        let current = element;
+        while (current && current !== document.documentElement) {
+          if (hasStableHint(current)) {
+            return current;
+          }
+          current = current.parentElement;
+        }
+        if (isReasonableHintElement(element)) {
+          return element;
+        }
+        let fallback = element.parentElement;
+        while (fallback && fallback !== document.documentElement) {
+          if (isReasonableHintElement(fallback)) {
+            return fallback;
+          }
+          fallback = fallback.parentElement;
+        }
+        return element;
       }
       function selectorCandidates(element) {
         const candidates = [];
+        const tagName = element.tagName.toLowerCase();
         if (element.id) candidates.push("#" + cssEscape(element.id));
-        const testId = element.getAttribute("data-testid");
-        if (testId) candidates.push("[data-testid='" + String(testId).replace(/'/g, "\\\\'") + "']");
+        const dataAttributeNames = ["data-testid", "data-test", "data-qa", "data-cy"];
+        dataAttributeNames.forEach(function(attributeName) {
+          const attributeValue = element.getAttribute(attributeName);
+          if (attributeValue) {
+            candidates.push("[" + attributeName + "='" + String(attributeValue).replace(/'/g, "\\\\'") + "']");
+            candidates.push(tagName + "[" + attributeName + "='" + String(attributeValue).replace(/'/g, "\\\\'") + "']");
+          }
+        });
         const aria = element.getAttribute("aria-label");
-        if (aria) candidates.push(element.tagName.toLowerCase() + "[aria-label='" + String(aria).replace(/'/g, "\\\\'") + "']");
+        if (aria) candidates.push(tagName + "[aria-label='" + String(aria).replace(/'/g, "\\\\'") + "']");
+        const name = element.getAttribute("name");
+        if (name) candidates.push(tagName + "[name='" + String(name).replace(/'/g, "\\\\'") + "']");
+        const type = element.getAttribute("type");
+        if (type) candidates.push(tagName + "[type='" + String(type).replace(/'/g, "\\\\'") + "']");
         const classes = Array.from(element.classList || []).slice(0, 3).map(cssEscape);
-        if (classes.length) candidates.push(element.tagName.toLowerCase() + "." + classes.join("."));
-        candidates.push(element.tagName.toLowerCase());
-        return candidates;
+        if (classes.length) candidates.push(tagName + "." + classes.join("."));
+        if (isActionableElement(element)) {
+          const text = textOf(element);
+          if (text && text.length <= 60) {
+            candidates.push(tagName + "[title='" + text.replace(/'/g, "\\\\'") + "']");
+          }
+        }
+        candidates.push(tagName);
+        return Array.from(new Set(candidates.filter(Boolean))).slice(0, 8);
       }
       function pathOf(element) {
         const parts = [];
@@ -1167,8 +1329,42 @@ export class BrowserWorkbenchManager {
         if (text) return { type: "text", value: text };
         return undefined;
       }
-      const element = document.elementFromPoint(point.x, point.y);
-      if (!element) return null;
+      function compactElementLabel(element) {
+        const tag = element.tagName ? element.tagName.toLowerCase() : "";
+        const id = cleanText(element.id || "");
+        const classes = Array.from(element.classList || []).slice(0, 4).join(".");
+        const role = cleanText(element.getAttribute && element.getAttribute("role"));
+        const aria = cleanText(element.getAttribute && element.getAttribute("aria-label"));
+        const text = textOf(element).slice(0, 90);
+        return [
+          tag,
+          id ? "#" + id : "",
+          classes ? "." + classes : "",
+          role ? "[role=" + role + "]" : "",
+          aria ? "[aria=" + aria + "]" : "",
+          text ? "text=" + text : "",
+        ].filter(Boolean).join(" ");
+      }
+      function buildContext(element) {
+        const ancestorChain = [];
+        let current = element.parentElement;
+        while (current && current !== document.documentElement && ancestorChain.length < 6) {
+          if (isReasonableHintElement(current)) {
+            const label = compactElementLabel(current);
+            if (label) ancestorChain.push(label);
+          }
+          current = current.parentElement;
+        }
+        const container = element.closest && element.closest("section, main, article, form, table, [role='dialog'], .el-dialog, .el-card, .el-table, .el-form, .content, .main, .page");
+        const nearbyText = container ? textOf(container).slice(0, 360) : undefined;
+        return {
+          ancestorChain,
+          nearbyText,
+        };
+      }
+      const rawElement = document.elementFromPoint(point.x, point.y);
+      if (!rawElement) return null;
+      const element = findPreferredElement(rawElement);
       const rect = element.getBoundingClientRect();
       const candidates = selectorCandidates(element);
       return {
@@ -1178,6 +1374,7 @@ export class BrowserWorkbenchManager {
         ariaLabel: element.getAttribute("aria-label") || undefined,
         selector: candidates[0],
         path: pathOf(element),
+        xpath: buildXPath(element),
         target: targetOf(element),
         selectorCandidates: candidates,
         boundingBox: {
@@ -1186,7 +1383,26 @@ export class BrowserWorkbenchManager {
           width: rect.width,
           height: rect.height,
         },
+        context: buildContext(element),
       };
+    }`;
+  }
+
+  private buildClearAnnotationsScript(): string {
+    return `function() {
+      const layer = document.getElementById("__tech_cc_hub_annotation_layer__");
+      if (window.__techCcHubAnnotationHandler) {
+        document.removeEventListener("click", window.__techCcHubAnnotationHandler, true);
+        window.__techCcHubAnnotationHandler = null;
+      }
+      if (window.__techCcHubAnnotationHoverHandler) {
+        document.removeEventListener("mousemove", window.__techCcHubAnnotationHoverHandler, true);
+        window.__techCcHubAnnotationHoverHandler = null;
+      }
+      if (layer) layer.remove();
+      const style = document.getElementById("__tech_cc_hub_annotation_style__");
+      if (style) style.remove();
+      return true;
     }`;
   }
 }

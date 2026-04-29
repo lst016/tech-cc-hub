@@ -67,9 +67,14 @@ type BrowserWorkbenchDomHint = {
     ariaLabel?: string;
     selector?: string;
     path?: string;
+    xpath?: string;
     target?: { type: "text"; value: string } | { type: "image"; url: string; alt?: string };
     selectorCandidates: string[];
     boundingBox?: { x: number; y: number; width: number; height: number };
+    context?: {
+        ancestorChain?: string[];
+        nearbyText?: string;
+    };
 }
 
 type BrowserWorkbenchAnnotation = {
@@ -194,7 +199,11 @@ type EventPayloadMapping = {
         "browser-console-logs": BrowserWorkbenchConsoleLog[];
         "browser-capture-visible": BrowserWorkbenchCaptureResult;
         "browser-inspect-at-point": BrowserWorkbenchDomHint | null;
+        "browser-clear-annotations": BrowserWorkbenchState;
         "browser-annotation-mode": BrowserWorkbenchState;
+        "browser-open-devtools": { opened: boolean };
+        "browser-close-devtools": { opened: boolean };
+        "browser-is-devtools-open": boolean;
 }
 
 interface Window {
@@ -232,7 +241,11 @@ interface Window {
         getBrowserWorkbenchConsoleLogs: (limit?: number) => Promise<BrowserWorkbenchConsoleLog[]>;
         captureBrowserWorkbenchVisible: () => Promise<BrowserWorkbenchCaptureResult>;
         inspectBrowserWorkbenchAtPoint: (point: { x: number; y: number }) => Promise<BrowserWorkbenchDomHint | null>;
+        clearBrowserWorkbenchAnnotations: () => Promise<BrowserWorkbenchState>;
         setBrowserWorkbenchAnnotationMode: (enabled: boolean) => Promise<BrowserWorkbenchState>;
+        openBrowserWorkbenchDevTools: () => Promise<{ opened: boolean }>;
+        closeBrowserWorkbenchDevTools: () => Promise<{ opened: boolean }>;
+        isBrowserWorkbenchDevToolsOpen: () => Promise<boolean>;
         onBrowserWorkbenchEvent: (callback: (event: BrowserWorkbenchEvent) => void) => UnsubscribeFunction;
     }
 }

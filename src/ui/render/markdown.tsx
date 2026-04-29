@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { AnchorHTMLAttributes, MouseEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
@@ -49,7 +50,7 @@ function MarkdownLink({
   );
 }
 
-export default function MDContent({ text }: { text: string }) {
+function MDContent({ text }: { text: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -92,3 +93,5 @@ export default function MDContent({ text }: { text: string }) {
     </ReactMarkdown>
   )
 }
+
+export default memo(MDContent);

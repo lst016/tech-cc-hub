@@ -11,7 +11,7 @@ owners:
 tags:
   - "claw"
   - "docs"
- - "1.0.0"
+  - "1.0.0"
   - "readme"
 ---
 

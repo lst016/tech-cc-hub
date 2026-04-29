@@ -741,7 +741,23 @@ app.on("ready", async () => {
         return await browserWorkbench!.inspectAtPoint(point);
     });
 
+    ipcMainHandle("browser-clear-annotations", async () => {
+        return await browserWorkbench!.clearAnnotations();
+    });
+
     ipcMainHandle("browser-annotation-mode", async (_: IpcMainInvokeEvent, enabled: boolean) => {
         return await browserWorkbench!.setAnnotationMode(enabled);
+    });
+
+    ipcMainHandle("browser-open-devtools", () => {
+        return browserWorkbench!.openDevTools();
+    });
+
+    ipcMainHandle("browser-close-devtools", () => {
+        return browserWorkbench!.closeDevTools();
+    });
+
+    ipcMainHandle("browser-is-devtools-open", () => {
+        return browserWorkbench!.isDevToolsOpened();
     });
 })

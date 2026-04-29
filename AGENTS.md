@@ -249,3 +249,11 @@ npm run build
 - 当前 worktree 很脏，存在不少与本轮无关的修改和未跟踪文件，不要做清理式回滚。
 - 这个项目以 Electron 真窗口验收为准，右栏视觉问题不要只靠单测判断。
 - UI 文案默认继续保持简体中文。
+
+## Claude 项目 Memory 默认规则
+
+- 开发会话默认把当前工作区对应的 `~/.claude/projects/<project-slug>/memory/*.md` 作为项目级默认规则与经验参考加载。
+- Windows 工作区 slug 与 Claude Code 保持一致，例如 `D:\workspace\kefu\boke-kefu-vue` 对应 `D--workspace-kefu-boke-kefu-vue`。
+- 只加载 `memory` 目录下的 Markdown 文档；不要加载原始会话日志、图片、jsonl 或大体积文件进入主上下文。
+- 加载 memory 时必须保留来源目录提示，并设置字符预算；memory 用于减少重复探索，不应用作重新读取全项目文档的理由。
+- 如果 memory 与用户当前明确指令冲突，以当前用户指令为准。

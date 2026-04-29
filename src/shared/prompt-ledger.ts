@@ -103,6 +103,7 @@ type BucketDraft = Omit<PromptLedgerBucket, "ratio">;
 type SegmentDraft = Omit<PromptLedgerSegment, "ratio">;
 
 const HISTORY_TOOL_OUTPUT_LIMIT = 120;
+const SEGMENT_TEXT_STORAGE_LIMIT = 2_000;
 const SOURCE_ORDER: PromptLedgerSourceKind[] = [
   "system",
   "project",
@@ -242,6 +243,7 @@ function addSourceWithSegment(
   const text = source.text ?? "";
   const chars = Math.max(0, source.chars ?? text.length);
   const sample = source.sample ?? compressSample(text);
+  const storedText = text.length <= SEGMENT_TEXT_STORAGE_LIMIT ? text : undefined;
   if (chars <= 0 && !sample) return;
 
   const id = `${source.id}-segment-${segments.length + 1}`;
@@ -254,7 +256,7 @@ function addSourceWithSegment(
     chars,
     tokenEstimate: estimatePromptLedgerTokens(chars || sample),
     sample,
-    text,
+    text: storedText,
     sourcePath: source.sourcePath,
     risks: inferSegmentRisks(segmentKind, source.sourceKind, text || sample, chars),
     optimizationHint: inferOptimizationHint(segmentKind, source.sourceKind, chars),

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ApiConfigProfile,
   ClientEvent,
@@ -67,13 +67,22 @@ function buildBrowserAnnotationsPrompt(annotations: BrowserWorkbenchAnnotation[]
         selector: annotation.domHint.selector ?? annotation.domHint.selectorCandidates[0],
         selectorCandidates: annotation.domHint.selectorCandidates,
         path: annotation.domHint.path,
+        xpath: annotation.domHint.xpath,
         boundingBox: annotation.domHint.boundingBox,
+        context: annotation.domHint.context,
       } : undefined,
     })),
   };
 
   return [
     "<browser_annotations>",
+    "This browser annotation block is the CURRENT DOM-targeting source of truth for the latest user request.",
+    "Treat older screenshots, older browser annotations, and earlier modal/dialog work in resumed session history as stale unless the user explicitly asks to continue that same old target.",
+    "Treat browser annotations as the primary DOM-targeting context for this request.",
+    "Use page.url plus dom.selector/dom.xpath/dom.path before searching code by visible text.",
+    "If dom.context.ancestorChain or dom.context.nearbyText exists, use it to identify the page section before grepping generic button/link text.",
+    "If the selector looks too generic, inspect the same page location or use xpath/path to resolve the real interactive element first.",
+    "Only fall back to grep/searching for visible text when the DOM clues are clearly insufficient.",
     JSON.stringify(payload, null, 2),
     "</browser_annotations>",
   ].join("\n");
@@ -90,8 +99,8 @@ function getBrowserAnnotationLabel(annotation: BrowserWorkbenchAnnotation, index
   if (comment) return comment;
   const target = annotation.domHint?.target;
   if (target?.type === "text" && target.value.trim()) return target.value.trim();
-  if (target?.type === "image") return target.alt?.trim() || "图片";
-  return annotation.domHint?.text?.trim() || annotation.domHint?.selector || `批注 ${index + 1}`;
+  if (target?.type === "image") return target.alt?.trim() || "鍥剧墖";
+  return annotation.domHint?.text?.trim() || annotation.domHint?.selector || `鎵规敞 ${index + 1}`;
 }
 
 type InlineOption = {
@@ -117,7 +126,7 @@ function InlineDropdown({
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  const displayLabel = options.find((option) => option.value === value)?.label ?? (options[0]?.label ?? "请选择");
+  const displayLabel = options.find((option) => option.value === value)?.label ?? (options[0]?.label ?? "璇烽€夋嫨");
 
   useEffect(() => {
     if (!open) return;
@@ -193,6 +202,20 @@ type QueuedMessageDraft = {
   attachments: PromptAttachment[];
   createdAt: number;
 };
+
+function buildQueuedPrompt(queue: QueuedMessageDraft[]) {
+  if (queue.length === 1) return queue[0].prompt;
+  return queue
+    .map((item, index) => {
+      const content = item.prompt.trim() || "(no text, attachments only)";
+      return `Queued message ${index + 1}:\n${content}`;
+    })
+    .join("\n\n---\n\n");
+}
+
+function mergeQueuedAttachments(queue: QueuedMessageDraft[]) {
+  return queue.flatMap((item) => item.attachments);
+}
 
 function buildDraftTitle(prompt: string, attachments: PromptAttachment[]): string {
   const trimmed = prompt.trim();
@@ -284,7 +307,7 @@ async function fileToAttachment(file: File): Promise<PromptAttachment> {
     return {
       id: crypto.randomUUID(),
       kind: "image",
-      name: file.name || `图片-${Date.now()}.png`,
+      name: file.name || `鍥剧墖-${Date.now()}.png`,
       mimeType: normalizedImage.mimeType,
       data: normalizedImage.dataUrl,
       preview: normalizedImage.dataUrl,
@@ -295,12 +318,12 @@ async function fileToAttachment(file: File): Promise<PromptAttachment> {
   if (isTextFile(file)) {
     const text = await readFileAsText(file);
     const normalizedText = text.length > MAX_TEXT_ATTACHMENT_LENGTH
-      ? `${text.slice(0, MAX_TEXT_ATTACHMENT_LENGTH)}\n\n[已截断，原始长度 ${text.length} 字符]`
+      ? `${text.slice(0, MAX_TEXT_ATTACHMENT_LENGTH)}\n\n[宸叉埅鏂紝鍘熷闀垮害 ${text.length} 瀛楃]`
       : text;
     return {
       id: crypto.randomUUID(),
       kind: "text",
-      name: file.name || `文本-${Date.now()}.txt`,
+      name: file.name || `鏂囨湰-${Date.now()}.txt`,
       mimeType: file.type || "text/plain",
       data: normalizedText,
       preview: normalizedText,
@@ -320,7 +343,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   const reasoningMode = useAppStore((state) => state.reasoningMode);
   const permissionMode = useAppStore((state) => state.permissionMode);
   const activeSessionId = useAppStore((state) => state.activeSessionId);
-  const activeSession = useAppStore((state) => (state.activeSessionId ? state.sessions[state.activeSessionId] : undefined));
+  const activeSession = useAppStore((state) => (state.activeSessionId ? (state.sessions[state.activeSessionId] ?? state.archivedSessions[state.activeSessionId]) : undefined));
   const setPrompt = useAppStore((state) => state.setPrompt);
   const clearBrowserAnnotations = useAppStore((state) => state.clearBrowserAnnotations);
   const setPendingStart = useAppStore((state) => state.setPendingStart);
@@ -329,6 +352,22 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   const isRunning = activeSession?.status === "running";
   const slashCommands = useMemo(() => activeSession?.slashCommands ?? [], [activeSession?.slashCommands]);
   const activeProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
+  const activeSessionModel = activeSession?.model?.trim();
+  const resolveSessionRuntimeModel = useCallback((): string => {
+    if (activeSessionModel) return activeSessionModel;
+    const messages = activeSession?.messages ?? [];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const messageModel = "model" in messages[index] ? (messages[index] as { model?: string }).model : undefined;
+      if (typeof messageModel === "string") {
+        const trimmedMessageModel = messageModel.trim();
+        if (trimmedMessageModel) {
+          return trimmedMessageModel;
+        }
+      }
+    }
+
+    return "";
+  }, [activeSession?.messages, activeSessionModel]);
 
   const validatePromptDraft = useCallback((promptValue: string) => {
     if (promptValue.startsWith("/") && slashCommands.length > 0) {
@@ -343,7 +382,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   }, [slashCommands]);
 
   const buildRuntimeOverrides = useCallback((): RuntimeOverrides | null => {
-    const selectedModel = runtimeModel.trim();
+    const selectedModel = runtimeModel.trim() || resolveSessionRuntimeModel();
     if (!selectedModel) {
       setGlobalError("请先在设置里启用配置，并至少提供一个模型。");
       return null;
@@ -358,7 +397,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
         ).filter(Boolean)
       : [];
 
-    if (availableModels.length > 0 && !availableModels.includes(selectedModel)) {
+    if (availableModels.length > 0 && !availableModels.includes(selectedModel) && !activeSessionModel) {
       setGlobalError("当前选择的模型不在已启用配置的模型列表里，请重新选择。");
       return null;
     }
@@ -368,27 +407,27 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
       reasoningMode,
       permissionMode,
     };
-  }, [activeProfile, permissionMode, reasoningMode, runtimeModel, setGlobalError]);
+  }, [activeProfile, activeSessionModel, permissionMode, reasoningMode, resolveSessionRuntimeModel, runtimeModel, setGlobalError]);
 
   const prepareAttachmentsForDispatch = useCallback(async (
     promptValue: string,
     attachments: PromptAttachment[],
   ): Promise<PromptAttachment[] | null> => {
     void promptValue;
-    // 临时关闭图片预处理拦截：当前链路会影响聊天图片预览和真实附件传递。
-    // 先让图片按前端 downscale 后的 data URL 原样发送，保证核心聊天/截图参考功能可用。
+    // 涓存椂鍏抽棴鍥剧墖棰勫鐞嗘嫤鎴細褰撳墠閾捐矾浼氬奖鍝嶈亰澶╁浘鐗囬瑙堝拰鐪熷疄闄勪欢浼犻€掋€?
+    // 鍏堣鍥剧墖鎸夊墠绔?downscale 鍚庣殑 data URL 鍘熸牱鍙戦€侊紝淇濊瘉鏍稿績鑱婂ぉ/鎴浘鍙傝€冨姛鑳藉彲鐢ㄣ€?
     return attachments;
 
     const hasImageAttachments = attachments.some((attachment) => attachment.kind === "image");
     const imageModel = activeProfile?.imageModel?.trim();
-    const selectedModel = runtimeModel.trim();
+    const selectedModel = runtimeModel.trim() || resolveSessionRuntimeModel();
 
     if (!hasImageAttachments) {
       return attachments;
     }
 
     if (!imageModel) {
-      setGlobalError("当前配置没有图片预处理模型，不能可靠识别图片。请先在 设置 -> 接口配置 -> 图片预处理模型 选择支持图片的模型后再发送。");
+      setGlobalError("当前配置没有图片预处理模型，不能可靠识别图片。请先在设置 -> 接口配置里选择支持图片的模型后再发送。");
       return null;
     }
 
@@ -404,7 +443,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
     }
 
     return result.attachments;
-  }, [activeProfile?.imageModel, runtimeModel, setGlobalError]);
+  }, [activeProfile?.imageModel, activeSessionModel, resolveSessionRuntimeModel, runtimeModel, setGlobalError]);
 
   const sendPromptDraft = useCallback(async (
     promptValue: string,
@@ -482,8 +521,8 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
 
     setPendingStart(true);
     sendEvent({
-      type: "session.create",
-      payload: {
+        type: "session.create",
+        payload: {
         title: "新聊天",
         cwd: cwd.trim(),
         allowedTools: DEFAULT_ALLOWED_TOOLS,
@@ -576,6 +615,7 @@ export function PromptInput({
     setPrompt("");
     setAttachments([]);
     clearBrowserAnnotations();
+    void window.electron.clearBrowserWorkbenchAnnotations?.();
     setShowSlashBrowser(false);
   }, [clearBrowserAnnotations, setPrompt]);
 
@@ -594,6 +634,27 @@ export function PromptInput({
       };
     });
   }, [activeSessionId]);
+
+  const appendQueuedDraft = useCallback((queuedMessage: QueuedMessageDraft) => {
+    if (!activeSessionId) return;
+    sendEvent({
+      type: "session.append",
+      payload: {
+        sessionId: activeSessionId,
+        prompt: queuedMessage.prompt,
+        attachments: queuedMessage.attachments,
+      },
+    });
+    removeQueuedDraft(queuedMessage.id);
+    onSendMessage?.();
+  }, [activeSessionId, onSendMessage, removeQueuedDraft, sendEvent]);
+
+  const editQueuedDraft = useCallback((queuedMessage: QueuedMessageDraft) => {
+    setPrompt(queuedMessage.prompt);
+    setAttachments(queuedMessage.attachments);
+    removeQueuedDraft(queuedMessage.id);
+    window.setTimeout(() => promptRef.current?.focus(), 0);
+  }, [removeQueuedDraft, setPrompt]);
 
   const queueCurrentDraft = useCallback(() => {
     if (!activeSessionId) return false;
@@ -643,7 +704,7 @@ export function PromptInput({
       }
 
       clearComposer();
-      setSubmissionStatus(hasImageAttachments ? "正在压缩并识别图片，本地视觉模型可能需要几十秒..." : "正在发送...");
+      setSubmissionStatus(hasImageAttachments ? "姝ｅ湪鍘嬬缉骞惰瘑鍒浘鐗囷紝鏈湴瑙嗚妯″瀷鍙兘闇€瑕佸嚑鍗佺..." : "姝ｅ湪鍙戦€?..");
 
       const sent = await sendPromptDraft(promptWithAnnotations, attachmentsSnapshot, { clearPrompt: false });
       if (sent) {
@@ -744,8 +805,8 @@ export function PromptInput({
       return;
     }
 
-    const nextQueuedMessage = activeQueue[0];
-    const dispatchKey = `${activeSessionId}:${nextQueuedMessage.id}`;
+    const queuedSnapshot = activeQueue.slice();
+    const dispatchKey = `${activeSessionId}:${queuedSnapshot.map((item) => item.id).join(",")}`;
     if (autoDispatchRef.current === dispatchKey) {
       return;
     }
@@ -753,10 +814,11 @@ export function PromptInput({
     autoDispatchRef.current = dispatchKey;
 
     void (async () => {
-      const sent = await sendPromptDraft(nextQueuedMessage.prompt, nextQueuedMessage.attachments, { clearPrompt: false });
+      const queuedIds = new Set(queuedSnapshot.map((item) => item.id));
+      const sent = await sendPromptDraft(buildQueuedPrompt(queuedSnapshot), mergeQueuedAttachments(queuedSnapshot), { clearPrompt: false });
       if (sent) {
         setQueuedMessagesBySession((current) => {
-          const remainingQueue = (current[activeSessionId] ?? []).filter((item) => item.id !== nextQueuedMessage.id);
+          const remainingQueue = (current[activeSessionId] ?? []).filter((item) => !queuedIds.has(item.id));
           if (remainingQueue.length === 0) {
             const rest = { ...current };
             delete rest[activeSessionId];
@@ -815,7 +877,7 @@ export function PromptInput({
         <div className="mx-auto mb-3 w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
           <div className="overflow-hidden rounded-[24px] border border-black/6 bg-white/94 shadow-[0_18px_50px_rgba(30,38,52,0.08)] backdrop-blur">
             <div className="border-b border-black/6 px-4 py-2 text-xs font-medium text-muted">
-              可用 Slash 命令
+              鍙敤 Slash 鍛戒护
             </div>
             <div className="grid max-h-[min(42vh,320px)] gap-1 overflow-y-auto p-2">
               {filteredSlashCommands.map((command) => (
@@ -842,7 +904,7 @@ export function PromptInput({
           <div className="mb-3 rounded-2xl border border-black/6 bg-[#f6f8fb] px-3 py-3">
             <div className="mb-2 flex items-center justify-between gap-3">
               <div className="text-xs font-medium text-ink-700">待发送队列 · {activeQueue.length} 条</div>
-              <div className="text-[11px] text-muted">当前轮结束后会自动续发</div>
+              <div className="text-[11px] text-muted">运行中可点「插入」作为补充命令；空闲后会自动续发。</div>
             </div>
             <div className="grid gap-2">
               {activeQueue.map((queuedMessage, index) => {
@@ -851,11 +913,40 @@ export function PromptInput({
                     ? `附件：${queuedMessage.attachments[0].name}`
                     : `${queuedMessage.attachments.length} 个附件`);
                 return (
-                  <div key={queuedMessage.id} className="flex items-center gap-2 rounded-2xl border border-black/6 bg-white px-3 py-2 text-xs text-ink-700">
-                    <span className="shrink-0 rounded-full bg-accent/18 px-2 py-0.5 text-[11px] text-[#ffb290]">
+                  <div key={queuedMessage.id} className="group flex items-center gap-2 rounded-2xl border border-black/6 bg-white px-3 py-2 text-xs text-ink-700 transition hover:border-accent/18 hover:shadow-[0_10px_24px_rgba(30,38,52,0.06)]">
+                    <span className="shrink-0 rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-semibold text-accent">
                       {index === 0 ? "下一条" : `排队 ${index + 1}`}
                     </span>
-                    <span className="min-w-0 flex-1 truncate">{label}</span>
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 truncate text-left transition hover:text-accent"
+                      onClick={() => editQueuedDraft(queuedMessage)}
+                      title="点击编辑这条待发送消息"
+                    >
+                      {label}
+                    </button>
+                    {queuedMessage.attachments.length > 0 && (
+                      <span className="shrink-0 rounded-full bg-[#eef2f8] px-2 py-0.5 text-[11px] text-muted">
+                        附件 {queuedMessage.attachments.length}
+                      </span>
+                    )}
+                    {isRunning && (
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-full border border-accent/18 bg-accent/8 px-2.5 py-1 text-[11px] font-semibold text-accent transition hover:bg-accent/14"
+                        onClick={() => appendQueuedDraft(queuedMessage)}
+                        title="把这条消息作为补充命令插入当前执行"
+                      >
+                        插入
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-full border border-black/6 bg-white px-2.5 py-1 text-[11px] font-medium text-ink-700 shadow-sm transition-colors hover:border-accent/20 hover:bg-accent/8 hover:text-accent"
+                      onClick={() => editQueuedDraft(queuedMessage)}
+                    >
+                      编辑
+                    </button>
                     <button
                       type="button"
                       className="rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
@@ -872,20 +963,19 @@ export function PromptInput({
             </div>
           </div>
         )}
-
         {attachments.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">
             {attachments.map((attachment) => (
               <div key={attachment.id} className="flex max-w-full items-center gap-2 rounded-2xl border border-black/6 bg-white px-3 py-2 text-xs text-ink-700">
                 <span className="shrink-0 rounded-full bg-accent/18 px-2 py-0.5 text-[11px] text-[#ffb290]">
-                  {attachment.kind === "image" ? "图片" : "文本"}
+                  {attachment.kind === "image" ? "鍥剧墖" : "鏂囨湰"}
                 </span>
                 <span className="truncate max-w-[180px]">{attachment.name}</span>
                 <button
                   type="button"
                   className="rounded-full p-1 text-muted hover:bg-black/5 hover:text-ink-700"
                   onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
-                  aria-label={`移除附件 ${attachment.name}`}
+                  aria-label={`绉婚櫎闄勪欢 ${attachment.name}`}
                 >
                   <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M18 6 6 18M6 6l12 12" />
@@ -914,7 +1004,7 @@ export function PromptInput({
                     type="button"
                     className="ml-1 rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
                     onClick={() => setBrowserAnnotations(browserAnnotations.filter((item) => item.id !== annotation.id))}
-                    aria-label={`移除浏览器批注 ${index + 1}`}
+                    aria-label={`绉婚櫎娴忚鍣ㄦ壒娉?${index + 1}`}
                   >
                     <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M18 6 6 18M6 6l12 12" />
@@ -929,7 +1019,7 @@ export function PromptInput({
                 className="inline-flex h-10 items-center rounded-full border border-black/8 bg-white px-3 text-xs font-semibold text-muted transition hover:bg-black/5 hover:text-ink-700"
                 onClick={clearBrowserAnnotations}
               >
-                清空
+                娓呯┖
               </button>
             )}
           </div>
@@ -941,7 +1031,7 @@ export function PromptInput({
               type="button"
               className={`flex h-10 shrink-0 items-center justify-center rounded-2xl border px-3 text-sm transition-colors ${showSlashBrowser ? "border-accent/30 bg-accent-subtle text-accent" : "border-black/6 bg-white text-ink-700 hover:bg-surface-secondary"}`}
               onClick={() => setShowSlashBrowser((value) => !value)}
-              aria-label="打开 Slash 命令列表"
+              aria-label="鎵撳紑 Slash 鍛戒护鍒楄〃"
               disabled={disabled}
             >
               /
@@ -951,7 +1041,7 @@ export function PromptInput({
             type="button"
             className="flex h-10 shrink-0 items-center justify-center rounded-2xl border border-black/6 bg-white px-3 text-sm text-ink-700 transition-colors hover:bg-surface-secondary"
             onClick={() => fileInputRef.current?.click()}
-            aria-label="添加附件"
+            aria-label="娣诲姞闄勪欢"
             disabled={disabled}
           >
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -965,9 +1055,9 @@ export function PromptInput({
               disabled
                 ? "先创建或选择一个会话..."
                 : attachments.length > 0
-                    ? "可以继续补充文字说明，或直接发送附件…"
+                    ? "可以继续补充文字说明，或直接发送附件..."
                     : isRunning
-                      ? "当前仍在执行中，你可以继续输入，系统会自动排队续发…"
+                      ? "当前仍在执行中，你可以继续输入，系统会自动排队续发..."
                       : "直接描述你希望 Agent 处理的事情..."
             }
             value={prompt}

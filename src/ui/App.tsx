@@ -1,4 +1,4 @@
-import type { MouseEvent } from "react";
+﻿import type { MouseEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import { useIPC } from "./hooks/useIPC";
@@ -45,6 +45,13 @@ type StreamEventMessage = StreamMessage & {
 
 type WorkspaceView = "chat" | "browser";
 
+function getToolUseCount(message: StreamMessage): number {
+  if (message.type !== "assistant") return 0;
+  const content = (message as { message?: { content?: unknown[] } }).message?.content;
+  if (!Array.isArray(content)) return 0;
+  return content.filter((item) => item && typeof item === "object" && (item as { type?: string }).type === "tool_use").length;
+}
+
 const runtimeSourceMeta: Record<DevElectronRuntimeSource, { label: string; tooltip: string; className: string; dotClassName: string }> = {
   bridge: {
     label: "Dev Bridge",
@@ -66,6 +73,27 @@ const runtimeSourceMeta: Record<DevElectronRuntimeSource, { label: string; toolt
   },
 };
 
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) {
+    throw new Error("clipboard copy failed");
+  }
+}
+
 function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -82,11 +110,14 @@ function App() {
   const [closeSidebarOnBrowserOpen, setCloseSidebarOnBrowserOpen] = useState(true);
   const [showActivityRail, setShowActivityRail] = useState(true);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("chat");
-  const [browserWorkbenchUrl, setBrowserWorkbenchUrl] = useState("http://localhost:4173/");
+  const [activityRailTab, setActivityRailTab] = useState<"trace" | "usage">("trace");
+  const [browserWorkbenchUrl, setBrowserWorkbenchUrl] = useState("");
   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [activityRailWidth, setActivityRailWidth] = useState(420);
   const [resizingPane, setResizingPane] = useState<"sidebar" | "activityRail" | null>(null);
+  const [copiedSessionId, setCopiedSessionId] = useState(false);
+  const runtimeModelSessionSyncRef = useRef<string | null>(null);
   const prevMessagesLengthRef = useRef(0);
   const scrollHeightBeforeLoadRef = useRef(0);
   const shouldRestoreScrollRef = useRef(false);
@@ -111,9 +142,11 @@ function App() {
   }, []);
 
   const activeSessionId = useAppStore((s) => s.activeSessionId);
-  const activeSession = useAppStore((s) => (s.activeSessionId ? s.sessions[s.activeSessionId] : undefined));
-  const activeHistoryCursor = useAppStore((s) => (s.activeSessionId ? s.sessions[s.activeSessionId]?.historyCursor : undefined));
-  const activeSessionHydrated = useAppStore((s) => (s.activeSessionId ? s.sessions[s.activeSessionId]?.hydrated : undefined));
+  const sessions = useAppStore((s) => s.sessions);
+  const archivedSessions = useAppStore((s) => s.archivedSessions);
+  const activeSession = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId]) : undefined));
+  const activeHistoryCursor = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId])?.historyCursor : undefined));
+  const activeSessionHydrated = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId])?.hydrated : undefined));
   const showStartModal = useAppStore((s) => s.showStartModal);
   const setShowStartModal = useAppStore((s) => s.setShowStartModal);
   const showSettingsModal = useAppStore((s) => s.showSettingsModal);
@@ -127,7 +160,14 @@ function App() {
   const setPrompt = useAppStore((s) => s.setPrompt);
   const cwd = useAppStore((s) => s.cwd);
   const setCwd = useAppStore((s) => s.setCwd);
+  const apiConfigSettings = useAppStore((s) => s.apiConfigSettings);
+  const runtimeModel = useAppStore((s) => s.runtimeModel);
+  const setBrowserWorkbenchSessionUrl = useAppStore((s) => s.setBrowserWorkbenchUrl);
+  const browserWorkbenchBySessionId = useAppStore((s) => s.browserWorkbenchBySessionId);
+  const reasoningMode = useAppStore((s) => s.reasoningMode);
+  const permissionMode = useAppStore((s) => s.permissionMode);
   const setApiConfigSettings = useAppStore((s) => s.setApiConfigSettings);
+  const setRuntimeModel = useAppStore((s) => s.setRuntimeModel);
   const pendingStart = useAppStore((s) => s.pendingStart);
   const setPendingStart = useAppStore((s) => s.setPendingStart);
   const apiConfigChecked = useAppStore((s) => s.apiConfigChecked);
@@ -207,6 +247,37 @@ function App() {
   const messages = activeSession?.messages ?? EMPTY_MESSAGES;
   const permissionRequests = activeSession?.permissionRequests ?? EMPTY_PERMISSION_REQUESTS;
   const isRunning = activeSession?.status === "running";
+  const activeBrowserWorkbenchState = activeSessionId ? browserWorkbenchBySessionId[activeSessionId] : undefined;
+  const activeHasBrowserTab = activeBrowserWorkbenchState?.hasBrowserTab ?? Boolean(activeBrowserWorkbenchState?.url);
+  const selectedUsageModel =
+    activeSession?.model?.trim() ||
+    runtimeModel?.trim() ||
+    apiConfigSettings.profiles.find((profile) => profile.enabled)?.model ||
+    apiConfigSettings.profiles[0]?.model ||
+    "";
+  const selectedUsageModelConfig = useMemo(() => {
+    const modelName = selectedUsageModel.trim();
+    if (!modelName) return undefined;
+
+    const profiles = [
+      ...apiConfigSettings.profiles.filter((profile) => profile.enabled),
+      ...apiConfigSettings.profiles.filter((profile) => !profile.enabled),
+    ];
+
+    for (const profile of profiles) {
+      const candidates = [
+        ...(profile.models ?? []),
+        { name: profile.model, contextWindow: undefined, compressionThresholdPercent: undefined },
+        profile.expertModel ? { name: profile.expertModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
+        profile.imageModel ? { name: profile.imageModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
+        profile.analysisModel ? { name: profile.analysisModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
+      ].filter(Boolean);
+      const matched = candidates.find((model) => model?.name === modelName);
+      if (matched) return matched;
+    }
+
+    return undefined;
+  }, [apiConfigSettings.profiles, selectedUsageModel]);
   const hasPersistedHistory = activeSession?.hasMoreHistory ?? false;
   const requestOlderHistory = useCallback(() => {
     if (!activeSessionId || !connected || isLoadingHistory) {
@@ -292,7 +363,21 @@ function App() {
     return entries;
   }, [activeSessionId, displayMessages, messages]);
 
-  // 启动时检查 API 配置
+  const chatOverview = useMemo(() => {
+    const latestUserEntry = [...renderEntries].reverse().find((entry) => entry.type === "message" && entry.message.type === "user_prompt");
+    return {
+      rounds: renderEntries.filter((entry) => entry.type === "separator").length,
+      tools: displayMessages.reduce((total, item) => total + getToolUseCount(item.message), 0),
+      latestUserIndex: latestUserEntry?.type === "message" ? latestUserEntry.originalIndex : null,
+    };
+  }, [displayMessages, renderEntries]);
+
+  const scrollToMessageIndex = useCallback((index: number | null) => {
+    if (index === null) return;
+    document.getElementById(`chat-message-${index}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, []);
+
+  // 閸氼垰濮╅弮鑸殿梾閺?API 闁板秶鐤?
   useEffect(() => {
     if (!apiConfigChecked) {
       window.electron.checkApiConfig().then((result) => {
@@ -449,6 +534,28 @@ function App() {
   }, [showSessionAnalysis]);
 
   useEffect(() => {
+    if (!activeSessionId) {
+      runtimeModelSessionSyncRef.current = null;
+      return;
+    }
+
+    const nextSession = activeSession ?? archivedSessions[activeSessionId];
+    const fallbackProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
+    const selectedSessionModel = nextSession?.model?.trim();
+    const fallbackModel = fallbackProfile?.model?.trim();
+    const nextModel = selectedSessionModel || fallbackModel;
+    if (!nextModel) {
+      return;
+    }
+
+    const syncKey = `${activeSessionId}:${nextModel}`;
+    if (runtimeModelSessionSyncRef.current !== syncKey) {
+      runtimeModelSessionSyncRef.current = syncKey;
+      setRuntimeModel(nextModel);
+    }
+  }, [activeSessionId, activeSession?.model, archivedSessions, apiConfigSettings, setRuntimeModel]);
+
+  useEffect(() => {
     return () => {
       if (partialFlushFrameRef.current !== null) {
         window.cancelAnimationFrame(partialFlushFrameRef.current);
@@ -536,20 +643,6 @@ function App() {
     handleNewSession();
   }, [handleNewSession]);
 
-  const handleToggleBrowserWorkbench = useCallback((event: MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setShowSessionAnalysis(false);
-    setShowActivityRail(true);
-    setWorkspaceView((current) => {
-      const nextView = current === "browser" ? "chat" : "browser";
-      if (nextView === "browser" && closeSidebarOnBrowserOpen && showSidebar) {
-        setShowSidebar(false);
-      }
-      return nextView;
-    });
-  }, [closeSidebarOnBrowserOpen, showSidebar]);
-
   useEffect(() => {
     const handleOpenBrowserWorkbenchUrl = (event: Event) => {
       const url = (event as CustomEvent<OpenBrowserWorkbenchUrlDetail>).detail?.url?.trim();
@@ -558,6 +651,9 @@ function App() {
       setShowSessionAnalysis(false);
       setShowActivityRail(true);
       setBrowserWorkbenchUrl(url);
+      if (activeSessionId) {
+        setBrowserWorkbenchSessionUrl(activeSessionId, url);
+      }
       setWorkspaceView("browser");
       if (closeSidebarOnBrowserOpen && showSidebar) {
         setShowSidebar(false);
@@ -568,17 +664,29 @@ function App() {
     return () => {
       window.removeEventListener(OPEN_BROWSER_WORKBENCH_URL_EVENT, handleOpenBrowserWorkbenchUrl);
     };
-  }, [closeSidebarOnBrowserOpen, showSidebar]);
+  }, [activeSessionId, closeSidebarOnBrowserOpen, setBrowserWorkbenchSessionUrl, showSidebar]);
 
   const handleDeleteSession = useCallback((sessionId: string) => {
     sendEvent({ type: "session.delete", payload: { sessionId } });
+  }, [sendEvent]);
+
+  const handleArchiveSession = useCallback((sessionId: string) => {
+    sendEvent({ type: "session.archive", payload: { sessionId } });
+  }, [sendEvent]);
+
+  const handleUnarchiveSession = useCallback((sessionId: string) => {
+    sendEvent({ type: "session.unarchive", payload: { sessionId } });
+  }, [sendEvent]);
+
+  const handleRefreshArchivedSessions = useCallback(() => {
+    sendEvent({ type: "session.list", payload: { archived: true } });
   }, [sendEvent]);
 
   const handleDeleteWorkspace = useCallback((sessionIds: string[], workspaceName: string) => {
     if (sessionIds.length === 0) return;
 
     const shouldDelete = window.confirm(
-      `确认删除工作区“${workspaceName}”下的 ${sessionIds.length} 个会话吗？`
+      `确认删除工作区 "${workspaceName}" 下的 ${sessionIds.length} 个会话吗？`,
     );
     if (!shouldDelete) return;
 
@@ -598,6 +706,7 @@ function App() {
     setHasNewMessages(false);
     resetToLatest();
   }, [resetToLatest]);
+
 
   useEffect(() => {
     if (workspaceView !== "chat" || showSessionAnalysis) return;
@@ -685,6 +794,26 @@ function App() {
     });
   }, [sendEvent, setPendingStart]);
 
+  const resolveSessionRuntimeModel = useCallback((): string => {
+    const trimmedSessionModel = activeSession?.model?.trim();
+    if (trimmedSessionModel) {
+      return trimmedSessionModel;
+    }
+
+    const messages = activeSession?.messages ?? [];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const messageModel = "model" in messages[index] ? (messages[index] as { model?: string }).model : undefined;
+      if (typeof messageModel === "string") {
+        const trimmedMessageModel = messageModel.trim();
+        if (trimmedMessageModel) {
+          return trimmedMessageModel;
+        }
+      }
+    }
+
+    return "";
+  }, [activeSession?.messages, activeSession?.model]);
+
   const sendWorkflowOptimizationPrompt = useCallback((workflowPrompt: string) => {
     const trimmedPrompt = workflowPrompt.trim();
     if (!activeSessionId || !trimmedPrompt) {
@@ -696,24 +825,71 @@ function App() {
       return;
     }
 
+    const activeProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
+    const selectedModel = runtimeModel.trim() || resolveSessionRuntimeModel() || activeProfile?.model?.trim();
+    if (!selectedModel) {
+      setGlobalError("当前没有可用模型，请先在设置里启用配置。");
+      return;
+    }
+
     sendEvent({
       type: "session.continue",
       payload: {
         sessionId: activeSessionId,
         prompt: trimmedPrompt,
+        runtime: {
+          model: selectedModel,
+          reasoningMode,
+          permissionMode,
+        },
       },
     });
     setShowSessionAnalysis(false);
     setGlobalError(null);
-  }, [activeSession?.status, activeSessionId, sendEvent, setGlobalError]);
+  }, [
+    activeSession?.status,
+    activeSessionId,
+    apiConfigSettings,
+    permissionMode,
+    reasoningMode,
+    runtimeModel,
+    resolveSessionRuntimeModel,
+    sendEvent,
+    setGlobalError,
+  ]);
 
   const sidebarOffset = showSidebar ? sidebarWidth : 0;
   const activityRailOffset = !showSessionAnalysis && showActivityRail ? activityRailWidth : 0;
   const runtimeMeta = runtimeSourceMeta[runtimeSource];
+  const latestSessionId = useMemo(() => {
+    const latestSession = Object.values(sessions).sort((left, right) => {
+      const leftTime = left.updatedAt ?? left.createdAt ?? 0;
+      const rightTime = right.updatedAt ?? right.createdAt ?? 0;
+      return rightTime - leftTime;
+    })[0];
+    return latestSession?.id ?? activeSessionId ?? null;
+  }, [activeSessionId, sessions]);
+
+  const handleCopyLatestSessionId = useCallback(async () => {
+    if (!latestSessionId) return;
+    try {
+      await copyTextToClipboard(latestSessionId);
+      setCopiedSessionId(true);
+      window.setTimeout(() => setCopiedSessionId(false), 1400);
+    } catch {
+      setGlobalError("复制会话 ID 失败，请重试。");
+    }
+  }, [latestSessionId, setGlobalError]);
 
   useEffect(() => {
     refreshBrowserWorkbenchPreference();
   }, [refreshBrowserWorkbenchPreference]);
+
+  useEffect(() => {
+    if (!globalError) return;
+    const timer = window.setTimeout(() => setGlobalError(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [globalError, setGlobalError]);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.98),_rgba(243,246,250,0.97)_40%,_rgba(228,233,240,0.98)_100%)]">
@@ -763,22 +939,6 @@ function App() {
               <path d="m12.5 6.9 4.6 4.6" />
             </svg>
           </TooltipButton>
-          <TooltipButton
-            type="button"
-            tooltip={workspaceView === "browser" ? "回到聊天" : "打开浏览器工作台"}
-            onClick={handleToggleBrowserWorkbench}
-            onMouseDown={(event) => {
-              event.preventDefault();
-            }}
-            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-            className={`inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/10 text-ink-700 transition hover:bg-ink-900/5 ${workspaceView === "browser" ? "bg-ink-900 text-white hover:bg-ink-800" : "bg-white"}`}
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-              <rect x="3.5" y="5" width="17" height="14" rx="2.2" />
-              <path d="M3.5 9h17" />
-              <path d="M8 7h.01M11 7h.01" />
-            </svg>
-          </TooltipButton>
         </div>
         <div
           className="flex items-center justify-end gap-2"
@@ -798,6 +958,27 @@ function App() {
               <span>{runtimeMeta.label}</span>
             </TooltipButton>
           )}
+          <TooltipButton
+            type="button"
+            tooltip={latestSessionId ? `复制最新会话 ID：${latestSessionId}` : "暂无会话 ID"}
+            onClick={handleCopyLatestSessionId}
+            disabled={!latestSessionId}
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+            className={`inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-medium transition disabled:cursor-not-allowed disabled:opacity-45 ${
+              copiedSessionId
+                ? "border-emerald-500/24 bg-emerald-50 text-emerald-700"
+                : "border-black/10 bg-white text-ink-700 hover:bg-ink-900/5"
+            }`}
+          >
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <rect x="8" y="8" width="10" height="12" rx="2" />
+              <path d="M6 16H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
+            </svg>
+            <span>{copiedSessionId ? "已复制" : "会话 ID"}</span>
+          </TooltipButton>
           <TooltipButton
             type="button"
             tooltip="打开执行复盘"
@@ -835,6 +1016,9 @@ function App() {
           <Sidebar
             connected={connected}
             onNewSession={handleNewSession}
+            onArchiveSession={handleArchiveSession}
+            onUnarchiveSession={handleUnarchiveSession}
+            onRefreshArchivedSessions={handleRefreshArchivedSessions}
             onDeleteSession={handleDeleteSession}
             onDeleteWorkspace={handleDeleteWorkspace}
             onOpenSettings={openSettings}
@@ -881,6 +1065,28 @@ function App() {
                 >
                 <div className="chat-stream-content mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[34px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(248,250,252,0.82))] px-8 py-7 shadow-[0_24px_60px_rgba(30,38,52,0.08)] backdrop-blur-xl xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
                   <div ref={topSentinelRef} className="h-1" />
+                  {renderEntries.length > 0 && (
+                    <div className="sticky top-3 z-10 mb-5 flex justify-end">
+                      <div className="flex items-center gap-1 rounded-full border border-black/6 bg-white/88 px-2 py-1 text-[11px] text-muted shadow-[0_14px_34px_rgba(30,38,52,0.10)] backdrop-blur-xl">
+                        <span className="rounded-full bg-[#eef2f8] px-2 py-1">轮次 {chatOverview.rounds}</span>
+                        <span className="rounded-full bg-[#eef2f8] px-2 py-1">工具 {chatOverview.tools}</span>
+                        <button
+                          type="button"
+                          className="rounded-full px-2 py-1 font-semibold text-accent transition hover:bg-accent/10"
+                          onClick={() => scrollToMessageIndex(chatOverview.latestUserIndex)}
+                        >
+                          最新提问
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-full px-2 py-1 font-semibold text-accent transition hover:bg-accent/10"
+                          onClick={() => scrollChatToBottom("smooth")}
+                        >
+                          到底部
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {!hasMoreHistory && totalMessages > 0 && (
                     <div className="mb-4 flex items-center justify-center py-4">
@@ -927,14 +1133,15 @@ function App() {
 
                       const isLastMessage = idx === renderEntries.length - 1;
                       return (
-                        <MessageCard
-                          key={entry.key}
-                          message={entry.message}
-                          isLast={isLastMessage}
-                          isRunning={isRunning}
-                          permissionRequest={permissionRequests[0]}
-                          onPermissionResult={handlePermissionResult}
-                        />
+                        <div key={entry.key} id={`chat-message-${entry.originalIndex}`}>
+                          <MessageCard
+                            message={entry.message}
+                            isLast={isLastMessage}
+                            isRunning={isRunning}
+                            permissionRequest={permissionRequests[0]}
+                            onPermissionResult={handlePermissionResult}
+                          />
+                        </div>
                       );
                     })
                   )}
@@ -995,7 +1202,7 @@ function App() {
                 <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M12 5v14M5 12l7 7 7-7" />
                 </svg>
-                <span>有新消息</span>
+                    <span>有新消息</span>
               </button>
             </div>
           )}
@@ -1006,6 +1213,17 @@ function App() {
             session={activeSession}
             partialMessage={partialMessage}
             globalError={globalError}
+            activeTab={activityRailTab}
+            onActiveTabChange={setActivityRailTab}
+            onOpenBrowserWorkbench={() => {
+              setShowActivityRail(true);
+              setShowSessionAnalysis(false);
+              setWorkspaceView("browser");
+            }}
+            selectedModel={selectedUsageModel}
+            contextWindow={selectedUsageModelConfig?.contextWindow}
+            compressionThresholdPercent={selectedUsageModelConfig?.compressionThresholdPercent}
+            hasBrowserTab={activeHasBrowserTab}
             onOpenSessionAnalysis={() => setShowSessionAnalysis(true)}
             width={activityRailWidth}
           />
@@ -1015,7 +1233,21 @@ function App() {
             className={`fixed bottom-0 right-0 ${sidebarHeaderOffsetClass} z-40 min-w-[400px] overflow-hidden border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.94),rgba(240,244,248,0.98)_42%,rgba(234,239,245,0.99))] shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl ${workspaceView === "browser" ? "hidden lg:flex lg:flex-col" : "pointer-events-none hidden"}`}
             style={{ width: activityRailWidth }}
           >
-            <BrowserWorkbenchPage key={browserWorkbenchUrl} active={workspaceView === "browser"} initialUrl={browserWorkbenchUrl} />
+            <BrowserWorkbenchPage
+              key={activeSessionId ?? "browser-workbench"}
+              active={workspaceView === "browser"}
+              initialUrl={browserWorkbenchUrl}
+              occluded={showSettingsModal || showStartModal}
+              sessionId={activeSessionId}
+              onOpenTrace={() => {
+                setActivityRailTab("trace");
+                setWorkspaceView("chat");
+              }}
+              onOpenUsage={() => {
+                setActivityRailTab("usage");
+                setWorkspaceView("chat");
+              }}
+            />
           </aside>
         )}
         {!showSessionAnalysis && showActivityRail && (
@@ -1055,10 +1287,17 @@ function App() {
       )}
 
       {globalError && (
-        <div className="fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-error/20 bg-error-light px-4 py-3 shadow-lg">
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-error">{globalError}</span>
-            <button className="text-error hover:text-error/80" onClick={() => setGlobalError(null)}>
+        <div className="fixed bottom-28 left-1/2 z-50 w-[min(520px,calc(100vw-2rem))] -translate-x-1/2">
+          <div className="flex items-center gap-3 rounded-2xl border border-error/15 bg-white/92 px-3.5 py-3 text-ink-800 shadow-[0_18px_45px_rgba(15,23,42,0.16)] backdrop-blur-xl">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-error" />
+            <span className="min-w-0 flex-1 truncate text-sm" title={globalError}>{globalError}</span>
+            <button
+              type="button"
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-ink-400 transition hover:bg-error-light hover:text-error"
+              onClick={() => setGlobalError(null)}
+              aria-label="关闭提示"
+              title="关闭提示"
+            >
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
             </button>
           </div>

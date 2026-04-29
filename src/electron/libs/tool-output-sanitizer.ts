@@ -6,6 +6,15 @@ export type InlineBase64ToolImage = {
   textContext: string;
 };
 
+export type OversizedTextToolOutput = {
+  originalChars: number;
+  replacementText: string;
+};
+
+const DEFAULT_MAX_TEXT_TOOL_OUTPUT_CHARS = 18_000;
+const TEXT_TOOL_OUTPUT_HEAD_CHARS = 9_000;
+const TEXT_TOOL_OUTPUT_TAIL_CHARS = 4_000;
+
 export function extractInlineBase64ImageFromToolResponse(toolResponse: unknown): InlineBase64ToolImage | null {
   const contentBlocks = getContentBlocks(toolResponse);
   if (contentBlocks.length === 0) {
@@ -76,6 +85,35 @@ export function buildToolImageReplacementText(options: {
   return lines.join("\n\n");
 }
 
+export function buildOversizedTextToolOutputReplacement(
+  toolName: string,
+  toolResponse: unknown,
+  maxChars = DEFAULT_MAX_TEXT_TOOL_OUTPUT_CHARS,
+): OversizedTextToolOutput | null {
+  const text = extractTextToolResponse(toolResponse).trim();
+  if (text.length <= maxChars) {
+    return null;
+  }
+
+  const head = text.slice(0, TEXT_TOOL_OUTPUT_HEAD_CHARS).trimEnd();
+  const tail = text.slice(-TEXT_TOOL_OUTPUT_TAIL_CHARS).trimStart();
+  const omittedChars = Math.max(0, text.length - head.length - tail.length);
+
+  return {
+    originalChars: text.length,
+    replacementText: [
+      `Tool ${toolName} returned ${text.length} characters, which was truncated to avoid blowing the model context.`,
+      "Use a narrower search, smaller Read offset/limit, or inspect a specific symbol/range if more detail is needed.",
+      "",
+      `--- BEGIN TRUNCATED ${toolName} OUTPUT HEAD ---`,
+      head,
+      `--- ${omittedChars} characters omitted ---`,
+      tail,
+      `--- END TRUNCATED ${toolName} OUTPUT ---`,
+    ].join("\n"),
+  };
+}
+
 export function stripInlineBase64ImagesFromMessage(message: StreamMessage): StreamMessage {
   if (message.type !== "user" || !("message" in message) || !isRecord(message.message) || !Array.isArray(message.message.content)) {
     return message;
@@ -113,6 +151,36 @@ export function stripInlineBase64ImagesFromMessage(message: StreamMessage): Stre
       content: nextContent as typeof message.message.content,
     },
   };
+}
+
+function extractTextToolResponse(toolResponse: unknown): string {
+  if (typeof toolResponse === "string") {
+    return toolResponse;
+  }
+
+  const contentBlocks = getContentBlocks(toolResponse);
+  if (contentBlocks.length === 0) {
+    return "";
+  }
+
+  return contentBlocks
+    .map((block) => {
+      if (typeof block === "string") {
+        return block;
+      }
+      if (!isRecord(block)) {
+        return "";
+      }
+      if (block.type === "text" && typeof block.text === "string") {
+        return block.text;
+      }
+      if (typeof block.content === "string") {
+        return block.content;
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
 }
 
 function getContentBlocks(toolResponse: unknown): unknown[] {

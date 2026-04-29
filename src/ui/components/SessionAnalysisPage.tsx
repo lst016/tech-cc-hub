@@ -44,6 +44,7 @@ type PromptOptimizationAction = {
   segmentId: string;
   label: string;
   source: string;
+  destination: OptimizationDestination;
   score: number;
   actionLabel: string;
   round: number | null;
@@ -52,6 +53,8 @@ type PromptOptimizationAction = {
   recommendation: string;
   summary: string;
 };
+
+type OptimizationDestination = "rules" | "skills" | "memory" | "workflow" | "summary";
 
 type SegmentDiagnosis = {
   qualityScore: number;
@@ -411,6 +414,12 @@ function buildWorkflowOptimizationPrompt(
     "3. 如果适合沉淀成 skill 或项目规则，请给出具体文件、触发条件、输入输出格式和最小实现步骤。",
     "4. 后续处理类似任务时，优先按这些规则约束自己。",
     "",
+    "沉淀位置判断：",
+    "- 规则类内容走 Rules：稳定行为约束、默认策略、工具调用政策、项目约定、命名规范、验收口径都应写入系统/用户/项目规则，不要写入 Memory。",
+    "- 接力类内容走 Memory：Memory 只记录最近做了什么、当前状态、未完成事项、风险和接手线索，不承载长期规则。",
+    "- 可复用能力走 Skills：如果能抽成工具流程、模板、脚本、触发条件或输入输出协议，优先建议优化或新增 skill。",
+    "- 如果一条建议同时像 Rules 和 Memory，优先落到 Rules；如果同时像 Rules 和 Skills，写清 Rules 里的触发约束，并把执行细节放到 Skills。",
+    "",
     "内置工具调用模式：",
     "- 已知多个具体文件需要查看时，优先并发读取，不要串行一个个 Read。",
     "- 目标文件不明确时，先用一次只读 Bash 搜索/筛选收敛范围，例如 rg/find/sed/awk，再读取少量命中文件。",
@@ -435,7 +444,7 @@ function buildWorkflowOptimizationPrompt(
     "- 优先级排序的工作流问题清单",
     "- 每个问题的证据",
     "- 下一轮执行 SOP",
-    "- 应该新增或修改的 skill / 规则",
+    "- 应该新增或修改的 Rules / Skills / Memory，并明确为什么不放到其他位置",
     "- 可以立刻落地的代码或文档改动建议",
   ].join("\n");
 }
@@ -820,6 +829,16 @@ function segmentKindLabel(segment: PromptLedgerSegment): string {
 
 function inferReadableOptimization(segment: PromptLedgerSegment | null): string {
   if (!segment) return "选择片段后，这里会显示保留、压缩、移出或改写建议。";
+  if (segment.sourceKind === "memory") {
+    const destination = inferOptimizationDestination(segment);
+    if (destination === "rules") {
+      return "这段记忆更像稳定规则或行为约束，应沉淀到 Rules，不要继续放在 memory。";
+    }
+    if (destination === "skills") {
+      return "这段记忆更像可复用流程或工具方法，应提炼成 skill 的触发条件、步骤和输入输出。";
+    }
+    return "Memory 只保留最近做了什么、当前状态、未完成事项和接力线索，避免承载长期规则。";
+  }
   if (segment.risks.includes("missing_acceptance")) {
     return "补上可验证的完成标准，例如构建命令、视觉验收点或失败判定。";
   }
@@ -830,6 +849,38 @@ function inferReadableOptimization(segment: PromptLedgerSegment | null): string 
     return "这类上下文通常保留；如果过长，优先拆成更小的项目规则或 skill 摘要。";
   }
   return "当前片段没有强风险，建议保留为证据，必要时只做摘要展示。";
+}
+
+function hasRulesSignal(text: string): boolean {
+  return /(规则|规范|约束|默认|必须|不要|禁止|优先|始终|一律|边界|验收|命名|顺序|AGENTS|CLAUDE|rules?|must|never|always|should)/i.test(text);
+}
+
+function hasSkillSignal(text: string): boolean {
+  return /(skill|skills|技能|流程|SOP|步骤|模板|脚本|工具链|可复用|复用|触发条件|输入输出|workflow)/i.test(text);
+}
+
+function inferOptimizationDestination(segment: PromptLedgerSegment): OptimizationDestination {
+  const text = [segment.label, segment.sample, segment.text, segment.optimizationHint].filter(Boolean).join("\n");
+  if (segment.sourceKind === "skill" || hasSkillSignal(text)) return "skills";
+  if (segment.sourceKind === "workflow") return "workflow";
+  if (segment.sourceKind === "system" || segment.sourceKind === "project" || hasRulesSignal(text)) return "rules";
+  if (segment.sourceKind === "memory") return "memory";
+  return "summary";
+}
+
+function optimizationDestinationLabel(destination: OptimizationDestination): string {
+  switch (destination) {
+    case "rules":
+      return "Rules";
+    case "skills":
+      return "Skills";
+    case "memory":
+      return "Memory";
+    case "workflow":
+      return "Workflow";
+    default:
+      return "摘要";
+  }
 }
 
 function scorePromptSegment(segment: PromptLedgerSegment): number {
@@ -867,6 +918,7 @@ function buildOptimizationAction(
     segmentId: segment.id,
     label: segment.label,
     source: segmentKindLabel(segment),
+    destination: inferOptimizationDestination(segment),
     score: scorePromptSegment(segment),
     actionLabel: diagnosis.actionLabel,
     round: typeof segment.round === "number" ? segment.round : null,
@@ -884,6 +936,7 @@ function buildOptimizationPlan(actions: PromptOptimizationAction[]): string {
     "",
     ...actions.map((action, index) => [
       `${index + 1}. ${action.actionLabel}：${action.source} · ${action.label}`,
+      `   沉淀位置：${optimizationDestinationLabel(action.destination)}（规则类进 Rules；可复用流程进 Skills；Memory 只放最近状态和接力线索）`,
       `   优先级：${action.score} 分；轮次：${action.round ?? "-"}；体量：${action.tokenEstimate.toLocaleString("zh-CN")} tokens`,
       `   建议：${action.recommendation}`,
       `   证据：${action.summary}`,

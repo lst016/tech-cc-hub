@@ -28,6 +28,7 @@ export type SessionView = {
   id: string;
   title: string;
   status: SessionStatus;
+  model?: string;
   cwd?: string;
   slashCommands?: string[];
   messages: StreamMessage[];
@@ -40,6 +41,7 @@ export type SessionView = {
   workflowSpec?: WorkflowSpecDocument;
   workflowError?: string;
   workflowCatalog?: SessionWorkflowCatalog;
+  archivedAt?: number;
   createdAt?: number;
   updatedAt?: number;
   hydrated: boolean;
@@ -47,11 +49,19 @@ export type SessionView = {
   historyCursor?: SessionHistoryCursor;
 };
 
+export type BrowserWorkbenchSessionState = {
+  url?: string;
+  hasBrowserTab: boolean;
+  annotations: BrowserWorkbenchAnnotation[];
+};
+
 interface AppState {
   sessions: Record<string, SessionView>;
+  archivedSessions: Record<string, SessionView>;
   activeSessionId: string | null;
   prompt: string;
   browserAnnotations: BrowserWorkbenchAnnotation[];
+  browserWorkbenchBySessionId: Record<string, BrowserWorkbenchSessionState>;
   cwd: string;
   apiConfigSettings: ApiConfigSettings;
   runtimeModel: string;
@@ -68,6 +78,9 @@ interface AppState {
   setPrompt: (prompt: string) => void;
   setBrowserAnnotations: (annotations: BrowserWorkbenchAnnotation[]) => void;
   clearBrowserAnnotations: () => void;
+  setBrowserWorkbenchUrl: (sessionId: string, url: string) => void;
+  setBrowserWorkbenchHasTab: (sessionId: string, hasBrowserTab: boolean) => void;
+  setBrowserWorkbenchAnnotations: (sessionId: string, annotations: BrowserWorkbenchAnnotation[]) => void;
   setCwd: (cwd: string) => void;
   setApiConfigSettings: (settings: ApiConfigSettings) => void;
   setRuntimeModel: (model: string) => void;
@@ -127,6 +140,10 @@ function isTransientStreamEventMessage(message: StreamMessage): boolean {
 }
 
 const MAX_RENDERER_HISTORY_MESSAGES = 600;
+const STREAM_MESSAGE_BATCH_DELAY_MS = 32;
+
+let pendingStreamMessageTimer: ReturnType<typeof setTimeout> | null = null;
+const pendingStreamMessagesBySession = new Map<string, StreamMessage[]>();
 
 function getMessageCursor(message: StreamMessage | undefined): SessionHistoryCursor | undefined {
   if (!message?.historyId || typeof message.capturedAt !== "number") {
@@ -191,11 +208,36 @@ function trimMessagesToRecent(
   };
 }
 
+function appendMessagesToSession(
+  session: SessionView,
+  nextMessages: StreamMessage[],
+): SessionView {
+  let slashCommands = session.slashCommands;
+  for (const message of nextMessages) {
+    slashCommands = mergeSlashCommandLists(slashCommands, extractSlashCommands([message]));
+  }
+
+  const trimmed = trimMessagesToRecent(
+    [...session.messages, ...nextMessages],
+    session.historyCursor,
+  );
+
+  return {
+    ...session,
+    slashCommands: slashCommands ?? session.slashCommands,
+    messages: trimmed.messages,
+    hasMoreHistory: trimmed.trimmed ? true : session.hasMoreHistory,
+    historyCursor: trimmed.trimmed ? trimmed.historyCursor ?? session.historyCursor : session.historyCursor,
+  };
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   sessions: {},
+  archivedSessions: {},
   activeSessionId: null,
   prompt: "",
   browserAnnotations: [],
+  browserWorkbenchBySessionId: {},
   cwd: "",
   apiConfigSettings: { profiles: [] },
   runtimeModel: "",
@@ -212,6 +254,37 @@ export const useAppStore = create<AppState>((set, get) => ({
   setPrompt: (prompt) => set({ prompt }),
   setBrowserAnnotations: (browserAnnotations) => set({ browserAnnotations }),
   clearBrowserAnnotations: () => set({ browserAnnotations: [] }),
+  setBrowserWorkbenchUrl: (sessionId, url) => set((state) => ({
+    browserWorkbenchBySessionId: {
+      ...state.browserWorkbenchBySessionId,
+      [sessionId]: {
+        ...state.browserWorkbenchBySessionId[sessionId],
+        hasBrowserTab: state.browserWorkbenchBySessionId[sessionId]?.hasBrowserTab ?? true,
+        annotations: state.browserWorkbenchBySessionId[sessionId]?.annotations ?? [],
+        url,
+      },
+    },
+  })),
+  setBrowserWorkbenchHasTab: (sessionId, hasBrowserTab) => set((state) => ({
+    browserWorkbenchBySessionId: {
+      ...state.browserWorkbenchBySessionId,
+      [sessionId]: {
+        url: state.browserWorkbenchBySessionId[sessionId]?.url,
+        annotations: state.browserWorkbenchBySessionId[sessionId]?.annotations ?? [],
+        hasBrowserTab,
+      },
+    },
+  })),
+  setBrowserWorkbenchAnnotations: (sessionId, annotations) => set((state) => ({
+    browserWorkbenchBySessionId: {
+      ...state.browserWorkbenchBySessionId,
+      [sessionId]: {
+        ...state.browserWorkbenchBySessionId[sessionId],
+        hasBrowserTab: state.browserWorkbenchBySessionId[sessionId]?.hasBrowserTab ?? true,
+        annotations,
+      },
+    },
+  })),
   setCwd: (cwd) => set({ cwd }),
   setApiConfigSettings: (apiConfigSettings) => {
     set((state) => {
@@ -270,16 +343,76 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   handleServerEvent: (event) => {
     const state = get();
+    const enqueueStreamMessages = (sessionId: string, messages: StreamMessage[]) => {
+      const existing = pendingStreamMessagesBySession.get(sessionId) ?? [];
+      pendingStreamMessagesBySession.set(sessionId, [...existing, ...messages]);
+
+      if (pendingStreamMessageTimer !== null) {
+        return;
+      }
+
+      pendingStreamMessageTimer = setTimeout(() => {
+        pendingStreamMessageTimer = null;
+        const batches = Array.from(pendingStreamMessagesBySession.entries());
+        pendingStreamMessagesBySession.clear();
+
+        if (batches.length === 0) {
+          return;
+        }
+
+        set((currentState) => {
+          let nextSessions = currentState.sessions;
+          let nextArchivedSessions = currentState.archivedSessions;
+          let changedSessions = false;
+          let changedArchivedSessions = false;
+
+          for (const [sessionId, pendingMessages] of batches) {
+            if (pendingMessages.length === 0) {
+              continue;
+            }
+
+            const updateArchived = Boolean(nextArchivedSessions[sessionId]) && !nextSessions[sessionId];
+            const existingSession = (updateArchived ? nextArchivedSessions[sessionId] : nextSessions[sessionId]) ?? createSession(sessionId);
+            const nextSession = appendMessagesToSession(existingSession, pendingMessages);
+
+            if (updateArchived) {
+              if (!changedArchivedSessions) {
+                nextArchivedSessions = { ...nextArchivedSessions };
+                changedArchivedSessions = true;
+              }
+              nextArchivedSessions[sessionId] = nextSession;
+            } else {
+              if (!changedSessions) {
+                nextSessions = { ...nextSessions };
+                changedSessions = true;
+              }
+              nextSessions[sessionId] = nextSession;
+            }
+          }
+
+          if (!changedSessions && !changedArchivedSessions) {
+            return {};
+          }
+
+          return {
+            sessions: nextSessions,
+            archivedSessions: nextArchivedSessions,
+          };
+        });
+      }, STREAM_MESSAGE_BATCH_DELAY_MS);
+    };
 
     switch (event.type) {
       case "session.list": {
         const nextSessions: Record<string, SessionView> = {};
         for (const session of event.payload.sessions) {
-          const existing = state.sessions[session.id] ?? createSession(session.id);
+          const existing = (event.payload.archived ? state.archivedSessions[session.id] : state.sessions[session.id])
+            ?? createSession(session.id);
           nextSessions[session.id] = {
             ...existing,
             status: session.status,
             title: session.title,
+            model: session.model,
             cwd: session.cwd,
             slashCommands: session.slashCommands ?? existing.slashCommands,
             ...hydrateWorkflowView(
@@ -289,9 +422,15 @@ export const useAppStore = create<AppState>((set, get) => ({
               session.workflowSourcePath,
               session.workflowError,
             ),
+            archivedAt: session.archivedAt,
             createdAt: session.createdAt,
             updatedAt: session.updatedAt
           };
+        }
+
+        if (event.payload.archived) {
+          set({ archivedSessions: nextSessions, sessionsLoaded: true });
+          break;
         }
 
         set({ sessions: nextSessions, sessionsLoaded: true });
@@ -327,7 +466,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       case "session.history": {
         const { sessionId, messages, status, mode, hasMore, nextCursor } = event.payload;
         set((state) => {
-          const existing = state.sessions[sessionId] ?? createSession(sessionId);
+          const updateArchived = Boolean(state.archivedSessions[sessionId]) && !state.sessions[sessionId];
+          const existing = (updateArchived ? state.archivedSessions[sessionId] : state.sessions[sessionId]) ?? createSession(sessionId);
           const mergedMessages = mode === "prepend"
             ? mergeMessages(messages, existing.messages)
             : messages;
@@ -335,18 +475,27 @@ export const useAppStore = create<AppState>((set, get) => ({
             event.payload.slashCommands,
             extractSlashCommands(mergedMessages),
           );
+          const nextSession = {
+            ...existing,
+            status,
+            messages: mergedMessages,
+            slashCommands: slashCommands ?? existing.slashCommands,
+            hydrated: true,
+            hasMoreHistory: hasMore,
+            historyCursor: nextCursor,
+          };
+          if (updateArchived) {
+            return {
+              archivedSessions: {
+                ...state.archivedSessions,
+                [sessionId]: nextSession,
+              }
+            };
+          }
           return {
             sessions: {
               ...state.sessions,
-              [sessionId]: {
-                ...existing,
-                status,
-                messages: mergedMessages,
-                slashCommands: slashCommands ?? existing.slashCommands,
-                hydrated: true,
-                hasMoreHistory: hasMore,
-                historyCursor: nextCursor,
-              }
+              [sessionId]: nextSession,
             }
           };
         });
@@ -388,7 +537,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       case "session.status": {
-        const { sessionId, status, title, cwd, slashCommands } = event.payload;
+        const { sessionId, status, title, cwd, model, slashCommands } = event.payload;
         const isNewSession = !state.sessions[sessionId];
         set((state) => {
           const existing = state.sessions[sessionId] ?? createSession(sessionId);
@@ -400,6 +549,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                 status,
                 title: title ?? existing.title,
                 cwd: cwd ?? existing.cwd,
+                model: model ?? existing.model,
                 slashCommands: slashCommands ?? existing.slashCommands,
                 updatedAt: Date.now()
               }
@@ -425,12 +575,100 @@ export const useAppStore = create<AppState>((set, get) => ({
         break;
       }
 
+      case "session.archived": {
+        const { sessionId, session } = event.payload;
+        const previousState = get();
+        set((state) => {
+          const nextSessions = { ...state.sessions };
+          const existing = nextSessions[sessionId];
+          delete nextSessions[sessionId];
+
+          const archivedSession = session
+            ? {
+                ...(state.archivedSessions[sessionId] ?? existing ?? createSession(sessionId)),
+                status: session.status,
+                title: session.title,
+                cwd: session.cwd,
+                model: session.model ?? existing?.model,
+                slashCommands: session.slashCommands,
+                ...hydrateWorkflowView(
+                  session.workflowMarkdown,
+                  session.workflowState,
+                  session.workflowSourceLayer,
+                  session.workflowSourcePath,
+                  session.workflowError,
+                ),
+                archivedAt: session.archivedAt ?? Date.now(),
+                createdAt: session.createdAt,
+                updatedAt: session.updatedAt,
+              }
+            : existing
+              ? { ...existing, archivedAt: Date.now() }
+              : undefined;
+
+          return {
+            sessions: nextSessions,
+            archivedSessions: archivedSession
+              ? { ...state.archivedSessions, [sessionId]: archivedSession }
+              : state.archivedSessions,
+          };
+        });
+
+        if (previousState.activeSessionId === sessionId) {
+          const remaining = Object.values(get().sessions).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+          get().setActiveSessionId(remaining[0]?.id ?? null);
+        }
+        break;
+      }
+
+      case "session.unarchived": {
+        const { sessionId, session } = event.payload;
+        set((state) => {
+          const nextArchivedSessions = { ...state.archivedSessions };
+          const existing = nextArchivedSessions[sessionId];
+          delete nextArchivedSessions[sessionId];
+
+          const restoredSession = session
+            ? {
+                ...(state.sessions[sessionId] ?? existing ?? createSession(sessionId)),
+                status: session.status,
+                title: session.title,
+                cwd: session.cwd,
+                model: session.model ?? existing?.model,
+                slashCommands: session.slashCommands,
+                ...hydrateWorkflowView(
+                  session.workflowMarkdown,
+                  session.workflowState,
+                  session.workflowSourceLayer,
+                  session.workflowSourcePath,
+                  session.workflowError,
+                ),
+                archivedAt: undefined,
+                createdAt: session.createdAt,
+                updatedAt: session.updatedAt,
+              }
+            : existing
+              ? { ...existing, archivedAt: undefined }
+              : undefined;
+
+          return {
+            archivedSessions: nextArchivedSessions,
+            sessions: restoredSession
+              ? { ...state.sessions, [sessionId]: restoredSession }
+              : state.sessions,
+          };
+        });
+        break;
+      }
+
       case "session.deleted": {
         const { sessionId } = event.payload;
         const state = get();
 
         const nextSessions = { ...state.sessions };
         delete nextSessions[sessionId];
+        const nextArchivedSessions = { ...state.archivedSessions };
+        delete nextArchivedSessions[sessionId];
 
         const nextHistoryRequested = new Set(state.historyRequested);
         nextHistoryRequested.delete(sessionId);
@@ -439,7 +677,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
         set({
           sessions: nextSessions,
+          archivedSessions: nextArchivedSessions,
           historyRequested: nextHistoryRequested,
+          browserWorkbenchBySessionId: Object.fromEntries(
+            Object.entries(state.browserWorkbenchBySessionId).filter(([id]) => id !== sessionId),
+          ),
           showStartModal: !hasRemaining
         });
 
@@ -457,49 +699,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (isTransientStreamEventMessage(message)) {
           break;
         }
-        const slashCommands = mergeSlashCommandLists(extractSlashCommands([message]));
-        set((state) => {
-          const existing = state.sessions[sessionId] ?? createSession(sessionId);
-          const trimmed = trimMessagesToRecent(
-            [...existing.messages, message],
-            existing.historyCursor,
-          );
-          return {
-            sessions: {
-              ...state.sessions,
-              [sessionId]: {
-                ...existing,
-                slashCommands: slashCommands ?? existing.slashCommands,
-                messages: trimmed.messages,
-                hasMoreHistory: trimmed.trimmed ? true : existing.hasMoreHistory,
-                historyCursor: trimmed.trimmed ? trimmed.historyCursor ?? existing.historyCursor : existing.historyCursor,
-              }
-            }
-          };
-        });
+        enqueueStreamMessages(sessionId, [message]);
         break;
       }
 
       case "stream.user_prompt": {
         const { sessionId, prompt, attachments, capturedAt = Date.now(), historyId } = event.payload;
-        set((state) => {
-          const existing = state.sessions[sessionId] ?? createSession(sessionId);
-          const trimmed = trimMessagesToRecent(
-            [...existing.messages, { type: "user_prompt", prompt, attachments, capturedAt, historyId }],
-            existing.historyCursor,
-          );
-          return {
-            sessions: {
-              ...state.sessions,
-              [sessionId]: {
-                ...existing,
-                messages: trimmed.messages,
-                hasMoreHistory: trimmed.trimmed ? true : existing.hasMoreHistory,
-                historyCursor: trimmed.trimmed ? trimmed.historyCursor ?? existing.historyCursor : existing.historyCursor,
-              }
-            }
-          };
-        });
+        enqueueStreamMessages(sessionId, [{ type: "user_prompt", prompt, attachments, capturedAt, historyId }]);
         break;
       }
 

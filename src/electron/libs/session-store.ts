@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import type { AgentRunSurface, SessionHistoryCursor, SessionStatus, StreamMessage } from "../types.js";
 import { existsSync } from "fs";
-import { app } from "electron";
+import electron from "electron";
 import type { SessionWorkflowState, WorkflowScope } from "../../shared/workflow-markdown.js";
 import { stripInlineBase64ImagesFromMessage } from "./tool-output-sanitizer.js";
 
@@ -9,6 +9,8 @@ const LEGACY_CWD_SUFFIXES = [
   "/upstream/open-claude-cowork",
   "/Desktop/claw-open-cowork",
 ];
+
+const { app } = electron as unknown as { app?: { getAppPath?: () => string } };
 
 function parseWorkflowState(value: unknown): SessionWorkflowState | undefined {
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -34,6 +36,7 @@ export type Session = {
   title: string;
   claudeSessionId?: string;
   status: SessionStatus;
+  model?: string;
   cwd?: string;
   runSurface?: AgentRunSurface;
   agentId?: string;
@@ -46,6 +49,7 @@ export type Session = {
   workflowSourcePath?: string;
   workflowState?: SessionWorkflowState;
   workflowError?: string;
+  archivedAt?: number;
   pendingPermissions: Map<string, PendingPermission>;
   abortController?: AbortController;
 };
@@ -54,6 +58,7 @@ export type StoredSession = {
   id: string;
   title: string;
   status: SessionStatus;
+  model?: string;
   cwd?: string;
   runSurface?: AgentRunSurface;
   agentId?: string;
@@ -67,6 +72,7 @@ export type StoredSession = {
   workflowSourcePath?: string;
   workflowState?: SessionWorkflowState;
   workflowError?: string;
+  archivedAt?: number;
   createdAt: number;
   updatedAt: number;
 };
@@ -121,7 +127,8 @@ export class SessionStore {
       return cwd;
     }
 
-    const appPath = app.getAppPath();
+    const appPath = app?.getAppPath?.();
+    if (!appPath) return undefined;
     for (const suffix of LEGACY_CWD_SUFFIXES) {
       if (cwd.endsWith(suffix) && existsSync(appPath)) {
         return appPath;
@@ -145,6 +152,7 @@ export class SessionStore {
     cwd?: string;
     runSurface?: AgentRunSurface;
     agentId?: string;
+    model?: string;
     allowedTools?: string;
     prompt?: string;
     title: string;
@@ -155,6 +163,7 @@ export class SessionStore {
       id,
       title: options.title,
       status: "idle",
+      model: options.model?.trim() || undefined,
       cwd: options.cwd,
       runSurface: options.runSurface,
       agentId: options.agentId,
@@ -166,14 +175,15 @@ export class SessionStore {
     this.db
       .prepare(
         `insert into sessions
-          (id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` 
+          (id, title, claude_session_id, status, model, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, archived_at, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` 
       )
       .run(
         id,
         session.title,
         session.claudeSessionId ?? null,
         session.status,
+        session.model ?? null,
         session.cwd ?? null,
         session.runSurface ?? null,
         session.agentId ?? null,
@@ -186,6 +196,7 @@ export class SessionStore {
         session.workflowSourcePath ?? null,
         session.workflowState ? JSON.stringify(session.workflowState) : null,
         session.workflowError ?? null,
+        session.archivedAt ?? null,
         now,
         now
       );
@@ -196,11 +207,13 @@ export class SessionStore {
     return this.sessions.get(id);
   }
 
-  listSessions(): StoredSession[] {
+  listSessions(options?: { archived?: boolean }): StoredSession[] {
+    const archived = Boolean(options?.archived);
     const rows = this.db
       .prepare(
-        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, created_at, updated_at
+        `select id, title, claude_session_id, status, model, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, archived_at, created_at, updated_at
          from sessions
+         where archived_at is ${archived ? "not null" : "null"}
          order by updated_at desc`
       )
       .all() as Array<Record<string, unknown>>;
@@ -208,6 +221,7 @@ export class SessionStore {
       id: String(row.id),
       title: String(row.title),
       status: row.status as SessionStatus,
+      model: row.model ? String(row.model) : undefined,
       cwd: this.normalizeStoredCwd(String(row.id), row.cwd ? String(row.cwd) : undefined),
       runSurface: row.run_surface ? (String(row.run_surface) as AgentRunSurface) : undefined,
       agentId: row.agent_id ? String(row.agent_id) : undefined,
@@ -223,9 +237,38 @@ export class SessionStore {
       workflowSourcePath: row.workflow_source_path ? String(row.workflow_source_path) : undefined,
       workflowState: parseWorkflowState(row.workflow_state),
       workflowError: row.workflow_error ? String(row.workflow_error) : undefined,
+      archivedAt: typeof row.archived_at === "number" ? Number(row.archived_at) : undefined,
       createdAt: Number(row.created_at),
       updatedAt: Number(row.updated_at)
     }));
+  }
+
+  archiveSession(id: string): StoredSession | undefined {
+    const now = Date.now();
+    const session = this.sessions.get(id);
+    if (session) {
+      session.archivedAt = now;
+    }
+    const result = this.db
+      .prepare("update sessions set archived_at = ?, updated_at = ? where id = ?")
+      .run(now, now, id);
+    if (result.changes === 0 && !session) return undefined;
+    const row = this.getSessionRow(id);
+    return row ? this.mapSessionRow(row) : undefined;
+  }
+
+  unarchiveSession(id: string): StoredSession | undefined {
+    const now = Date.now();
+    const session = this.sessions.get(id);
+    if (session) {
+      session.archivedAt = undefined;
+    }
+    const result = this.db
+      .prepare("update sessions set archived_at = null, updated_at = ? where id = ?")
+      .run(now, id);
+    if (result.changes === 0 && !session) return undefined;
+    const row = this.getSessionRow(id);
+    return row ? this.mapSessionRow(row) : undefined;
   }
 
   listRecentCwds(limit = 8): string[] {
@@ -377,6 +420,9 @@ export class SessionStore {
       capturedAt,
       historyId: id,
     } satisfies StreamMessage;
+    if (isTransientStreamEventMessage(storedMessage)) {
+      return storedMessage;
+    }
     this.db
       .prepare(
         `insert or ignore into messages (id, session_id, data, created_at) values (?, ?, ?, ?)`
@@ -406,6 +452,7 @@ export class SessionStore {
       cwd: "cwd",
       runSurface: "run_surface",
       agentId: "agent_id",
+      model: "model",
       allowedTools: "allowed_tools",
       lastPrompt: "last_prompt",
       continuationSummary: "continuation_summary",
@@ -415,6 +462,7 @@ export class SessionStore {
       workflowSourcePath: "workflow_source_path",
       workflowState: "workflow_state",
       workflowError: "workflow_error",
+      archivedAt: "archived_at",
     } as const;
 
     for (const key of Object.keys(updates) as Array<keyof typeof updatable>) {
@@ -446,6 +494,7 @@ export class SessionStore {
         title text,
         claude_session_id text,
         status text not null,
+        model text,
         cwd text,
         run_surface text,
         agent_id text,
@@ -458,12 +507,14 @@ export class SessionStore {
         workflow_source_path text,
         workflow_state text,
         workflow_error text,
+        archived_at integer,
         created_at integer not null,
         updated_at integer not null
       )`
     );
     this.ensureSessionColumn("continuation_summary", "text");
     this.ensureSessionColumn("continuation_summary_message_count", "integer");
+    this.ensureSessionColumn("model", "text");
     this.ensureSessionColumn("run_surface", "text");
     this.ensureSessionColumn("agent_id", "text");
     this.ensureSessionColumn("workflow_markdown", "text");
@@ -471,6 +522,7 @@ export class SessionStore {
     this.ensureSessionColumn("workflow_source_path", "text");
     this.ensureSessionColumn("workflow_state", "text");
     this.ensureSessionColumn("workflow_error", "text");
+    this.ensureSessionColumn("archived_at", "integer");
     this.db.exec(
       `create table if not exists messages (
         id text primary key,
@@ -481,12 +533,16 @@ export class SessionStore {
       )`
     );
     this.db.exec(`create index if not exists messages_session_id on messages(session_id)`);
+    this.db.exec(`create index if not exists messages_session_created_id on messages(session_id, created_at, id)`);
+    this.db
+      .prepare("delete from messages where coalesce(json_extract(data, '$.type'), '') = 'stream_event'")
+      .run();
   }
 
   private loadSessions(): void {
     const rows = this.db
       .prepare(
-        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error
+        `select id, title, claude_session_id, status, model, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, archived_at
          from sessions`
       )
       .all();
@@ -496,6 +552,7 @@ export class SessionStore {
         title: String(row.title),
         claudeSessionId: row.claude_session_id ? String(row.claude_session_id) : undefined,
         status: row.status as SessionStatus,
+        model: row.model ? String(row.model) : undefined,
         cwd: this.normalizeStoredCwd(String(row.id), row.cwd ? String(row.cwd) : undefined),
         runSurface: row.run_surface ? (String(row.run_surface) as AgentRunSurface) : undefined,
         agentId: row.agent_id ? String(row.agent_id) : undefined,
@@ -510,6 +567,7 @@ export class SessionStore {
         workflowSourcePath: row.workflow_source_path ? String(row.workflow_source_path) : undefined,
         workflowState: parseWorkflowState(row.workflow_state),
         workflowError: row.workflow_error ? String(row.workflow_error) : undefined,
+        archivedAt: typeof row.archived_at === "number" ? Number(row.archived_at) : undefined,
         pendingPermissions: new Map()
       };
       this.sessions.set(session.id, session);
@@ -531,19 +589,20 @@ export class SessionStore {
   private getSessionRow(id: string): Record<string, unknown> | undefined {
     return this.db
       .prepare(
-        `select id, title, claude_session_id, status, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, created_at, updated_at
+        `select id, title, claude_session_id, status, model, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, archived_at, created_at, updated_at
          from sessions
-         where id = ?`
+          where id = ?`
       )
       .get(id) as Record<string, unknown> | undefined;
   }
 
   private mapSessionRow(sessionRow: Record<string, unknown>): StoredSession {
-    return {
-      id: String(sessionRow.id),
-      title: String(sessionRow.title),
-      status: sessionRow.status as SessionStatus,
-      cwd: this.normalizeStoredCwd(String(sessionRow.id), sessionRow.cwd ? String(sessionRow.cwd) : undefined),
+      return {
+        id: String(sessionRow.id),
+        title: String(sessionRow.title),
+        status: sessionRow.status as SessionStatus,
+        model: sessionRow.model ? String(sessionRow.model) : undefined,
+        cwd: this.normalizeStoredCwd(String(sessionRow.id), sessionRow.cwd ? String(sessionRow.cwd) : undefined),
       runSurface: sessionRow.run_surface ? (String(sessionRow.run_surface) as AgentRunSurface) : undefined,
       agentId: sessionRow.agent_id ? String(sessionRow.agent_id) : undefined,
       allowedTools: sessionRow.allowed_tools ? String(sessionRow.allowed_tools) : undefined,
@@ -558,6 +617,7 @@ export class SessionStore {
       workflowSourcePath: sessionRow.workflow_source_path ? String(sessionRow.workflow_source_path) : undefined,
       workflowState: parseWorkflowState(sessionRow.workflow_state),
       workflowError: sessionRow.workflow_error ? String(sessionRow.workflow_error) : undefined,
+      archivedAt: typeof sessionRow.archived_at === "number" ? Number(sessionRow.archived_at) : undefined,
       createdAt: Number(sessionRow.created_at),
       updatedAt: Number(sessionRow.updated_at)
     };

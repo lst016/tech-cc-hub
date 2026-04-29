@@ -1,3 +1,23 @@
+---
+doc_id: "PRD-100-70"
+title: "内置浏览器工作台开发计划"
+doc_type: "delivery"
+layer: "PM"
+status: "active"
+version: "1.0.0"
+last_updated: "2026-04-20"
+owners:
+  - "Product"
+  - "Engineering"
+tags:
+  - "claw"
+  - "docs"
+  - "1.0.0"
+  - "delivery"
+  - "browser"
+  - "workbench"
+---
+
 # 内置浏览器工作台开发计划
 
 ## 目标

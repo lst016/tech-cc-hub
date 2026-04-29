@@ -1,3 +1,22 @@
+---
+doc_id: "SP-003"
+title: "Right Context Rail Workbench Design"
+doc_type: "delivery"
+layer: "L3"
+status: "active"
+version: "1.0.0"
+last_updated: "2026-04-20"
+owners:
+  - "Engineering"
+tags:
+  - "claw"
+  - "docs"
+  - "superpowers"
+  - "spec"
+  - "activity-rail"
+  - "workbench"
+---
+
 # Right Context Rail Workbench Design
 
 **Date:** 2026-04-20

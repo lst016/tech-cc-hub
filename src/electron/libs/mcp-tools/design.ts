@@ -8,11 +8,13 @@ import {
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { app, nativeImage } from "electron";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "fs";
-import { basename, extname, join } from "path";
+import { join } from "path";
 import { z } from "zod";
 
 import type { BrowserWorkbenchState } from "../../browser-manager.js";
 import { getCurrentApiConfig } from "../claude-settings.js";
+import { buildDesignInspectionPrompt, parseDesignInspectionDsl } from "../design-inspection-dsl.js";
+import { resolveDesignImagePath } from "../design-image-path.js";
 import { summarizeLocalImageFile } from "../image-preprocessor.js";
 
 export const DESIGN_TOOL_NAMES = [
@@ -156,15 +158,7 @@ function clampThreshold(value: number | undefined): number {
 }
 
 function normalizeImagePath(path: string, label: string): string {
-  const normalized = path.trim();
-  if (!normalized) {
-    throw new Error(`${label} 不能为空。`);
-  }
-  const extension = extname(normalized).toLowerCase();
-  if (![".png", ".jpg", ".jpeg", ".webp"].includes(extension)) {
-    throw new Error(`${label} 格式暂不支持：${basename(normalized)}`);
-  }
-  return normalized;
+  return resolveDesignImagePath(path, label);
 }
 
 function isSameImagePath(leftPath: string, rightPath: string): boolean {
@@ -366,22 +360,25 @@ export function getDesignMcpServer(): McpSdkServerConfigWithInstance {
       try {
         const imagePath = normalizeImagePath(input.imagePath, "图片路径");
         const image = createImageFromPath(imagePath, "待分析图片");
-        const summary = await summarizeLocalImageFile({
+        const imageSize = image.getSize();
+        const inspectionText = await summarizeLocalImageFile({
           config: getCurrentApiConfig(),
-          prompt: input.prompt || "请分析这张 UI/产品截图，提取可供编码还原使用的结构化视觉信息。",
+          prompt: buildDesignInspectionPrompt(input.prompt),
           filePath: imagePath,
         });
-        if (!summary) {
+        if (!inspectionText) {
           throw new Error("未配置可用的图片理解模型。请在设置里配置 imageModel / 视觉模型后再分析截图。");
         }
+        const dsl = parseDesignInspectionDsl(inspectionText, imageSize);
         return toTextToolResult({
           action: "design_inspect_image",
           success: true,
           image: {
             path: imagePath,
-            size: image.getSize(),
+            size: imageSize,
           },
-          summary,
+          summary: dsl.summary,
+          dsl,
           note: "图片只在工具内部交给视觉模型处理，主 Agent 收到的是文本摘要，不包含 base64。",
         });
       } catch (error) {

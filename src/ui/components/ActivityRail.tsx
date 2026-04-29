@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import {
   buildActivityRailModel,
   type ActivityAnalysisCard,
@@ -10,6 +10,8 @@ import {
   type ActivityToolProvenance,
   type ContextDistributionBucket,
 } from "../../shared/activity-rail-model";
+import { useAppStore } from "../store/useAppStore";
+import { estimatePromptLedgerTokens } from "../../shared/prompt-ledger";
 import type { SessionView } from "../store/useAppStore";
 
 const NODE_KIND_LABELS: Record<ActivityTimelineItem["nodeKind"], string> = {
@@ -41,6 +43,8 @@ const PROVENANCE_LABELS: Record<ActivityToolProvenance, string> = {
   transfer_agent: "交接 Agent",
   unknown: "未归类",
 };
+
+type ActivityRailTab = "trace" | "usage";
 
 function toneClasses(tone: ActivityRailTone) {
   switch (tone) {
@@ -98,6 +102,134 @@ function formatMetricStatus(metrics: ActivityExecutionMetrics) {
   if (metrics.successCount > 0 && metrics.totalCount > 0) return "成功";
   if (metrics.totalCount > 0) return "进行中";
   return "无执行";
+}
+
+function formatTokenAmount(tokens: number) {
+  if (tokens >= 1000) return `${(tokens / 1000).toFixed(tokens >= 10000 ? 1 : 2)}k`;
+  return String(Math.max(0, Math.round(tokens)));
+}
+
+function formatUsagePercent(value: number) {
+  return `${Math.max(0, Math.min(100, value * 100)).toFixed(1)}%`;
+}
+
+function bucketTokensByKind(model: ReturnType<typeof buildActivityRailModel>, kinds: string[]) {
+  return model.promptAnalysis.buckets
+    .filter((bucket) => kinds.includes(bucket.sourceKind))
+    .reduce((sum, bucket) => sum + bucket.tokenEstimate, 0);
+}
+
+function buildUsageCells(usedRatio: number) {
+  return Array.from({ length: 40 }, (_, index) => {
+    const active = index / 40 < usedRatio;
+    if (!active) return { id: index, className: "border-black/6 bg-black/[0.05]" };
+    if (index / 40 > 0.78) return { id: index, className: "border-error/25 bg-error/60" };
+    if (index / 40 > 0.58) return { id: index, className: "border-accent/25 bg-accent/65" };
+    return { id: index, className: "border-info/25 bg-info/60" };
+  });
+}
+
+function ContextUsagePanel({
+  model,
+  selectedModel,
+  contextWindow,
+  compressionThresholdPercent,
+  partialMessage,
+}: {
+  model: ReturnType<typeof buildActivityRailModel>;
+  selectedModel?: string;
+  contextWindow?: number;
+  compressionThresholdPercent?: number;
+  partialMessage?: string;
+}) {
+  const currentPrompt = useAppStore((state) => state.prompt);
+  const deferredPrompt = useDeferredValue(currentPrompt);
+  const deferredPartialMessage = useDeferredValue(partialMessage ?? "");
+  const windowTokens = Math.max(1, contextWindow ?? 200_000);
+  const thresholdPercent = typeof compressionThresholdPercent === "number"
+    ? Math.max(1, Math.min(99, compressionThresholdPercent))
+    : 85;
+  const autoCompactTokens = Math.round(windowTokens * (1 - thresholdPercent / 100));
+  const draftTokens = deferredPrompt.trim() ? estimatePromptLedgerTokens(deferredPrompt) : 0;
+  const streamingTokens = deferredPartialMessage.trim() ? estimatePromptLedgerTokens(deferredPartialMessage) : 0;
+  const toolPayloadTokens = bucketTokensByKind(model, ["tool"]);
+  const uniqueToolNames = new Set(model.timeline.map((item) => item.toolName).filter(Boolean));
+  const toolDefinitionTokens = uniqueToolNames.size > 0 ? Math.round(uniqueToolNames.size * 260) : 0;
+  const categoryRows = [
+    { label: "系统提示", tokens: bucketTokensByKind(model, ["system", "project", "workflow"]), markerClass: "bg-ink-500" },
+    { label: "工具定义估算", tokens: toolDefinitionTokens, markerClass: "bg-ink-300", note: "按已出现工具种类估算" },
+    { label: "当前 Agent", tokens: 0, markerClass: "bg-info" },
+    { label: "Memory 文件", tokens: bucketTokensByKind(model, ["memory"]), markerClass: "bg-accent" },
+    { label: "Skills", tokens: bucketTokensByKind(model, ["skill"]), markerClass: "bg-success" },
+    { label: "工具输入/输出", tokens: toolPayloadTokens, markerClass: "bg-warning" },
+    { label: "消息内容", tokens: bucketTokensByKind(model, ["history", "current", "attachment"]) + draftTokens + streamingTokens, markerClass: "bg-info" },
+  ].filter((row) => row.tokens === null || row.tokens > 0 || row.label === "当前 Agent");
+  const usedTokens = categoryRows.reduce((sum, row) => sum + (row.tokens ?? 0), 0);
+  const usedRatio = Math.min(1, usedTokens / windowTokens);
+  const freeTokens = Math.max(0, windowTokens - usedTokens - autoCompactTokens);
+  const displayModel = selectedModel || model.contextSnapshot.model || model.promptAnalysis.ledgers.at(-1)?.model || "未选择模型";
+  const cells = buildUsageCells(usedRatio);
+
+  return (
+    <section className="rounded-[28px] border border-black/5 bg-white/72 p-4 font-mono text-ink-700 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-ink-400">Context Usage</div>
+          <div className="mt-2 text-[13px] font-semibold text-ink-900">{displayModel}</div>
+          <div className="mt-1 text-[12px] text-ink-500">
+            {formatTokenAmount(usedTokens)}/{formatTokenAmount(windowTokens)} tokens ({formatUsagePercent(usedRatio)})
+          </div>
+        </div>
+        <div className={`rounded-full border px-2.5 py-1 text-[10px] font-medium ${toneClasses(model.summary.statusTone)}`}>
+          {model.summary.statusLabel}
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-10 gap-1">
+        {cells.map((cell) => (
+          <span key={cell.id} className={`h-2 rounded-[2px] border ${cell.className}`} />
+        ))}
+      </div>
+
+      <div className="mt-4 text-[11px] italic text-ink-400">基于下一轮 prompt ledger 的上下文估算</div>
+      <div className="mt-2 space-y-1.5 text-[12px] leading-5">
+        {categoryRows.map((row) => {
+          const ratio = (row.tokens ?? 0) / windowTokens;
+          return (
+            <div key={row.label} className="flex items-center justify-between gap-3">
+              <span className="flex min-w-0 items-center gap-2">
+                <span className={`h-2 w-3 shrink-0 rounded-[2px] ${row.markerClass}`} />
+                <span className="truncate text-ink-700">{row.label}</span>
+              </span>
+              <span className="shrink-0 text-ink-500">
+                {row.tokens === null ? row.note : `${formatTokenAmount(row.tokens)} tokens (${formatUsagePercent(ratio)})`}
+              </span>
+            </div>
+          );
+        })}
+        <div className="flex items-center justify-between gap-3 text-ink-600">
+          <span className="flex items-center gap-2">
+            <span className="h-2 w-3 rounded-[2px] border border-dashed border-ink-400" />
+            Free space
+          </span>
+          <span>{formatTokenAmount(freeTokens)} ({formatUsagePercent(freeTokens / windowTokens)})</span>
+        </div>
+        <div className="flex items-center justify-between gap-3 text-ink-600">
+          <span className="flex items-center gap-2">
+            <span className="grid h-3 w-3 place-items-center border border-ink-400 text-[8px] leading-none">×</span>
+            压缩预留缓冲
+          </span>
+          <span>{formatTokenAmount(autoCompactTokens)} tokens ({formatUsagePercent(autoCompactTokens / windowTokens)})</span>
+        </div>
+        <div className="text-[10px] leading-4 text-ink-400">压缩预留缓冲不是已用 token，只是自动压缩阈值前保留的安全空间。</div>
+        {toolPayloadTokens > 0 && (
+          <div className="mt-3 rounded-2xl border border-black/5 bg-black/[0.03] px-3 py-2 text-[11px] leading-5 text-ink-500">
+            工具输入/输出约 {formatTokenAmount(toolPayloadTokens)} tokens，已计入当前估算；这是历史工具 payload 在下一轮 prompt ledger 里的占用。
+          </div>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function MetricsStrip({
@@ -440,19 +572,39 @@ export function ActivityRail({
   partialMessage,
   globalError,
   onOpenSessionAnalysis,
+  onOpenBrowserWorkbench,
+  activeTab,
+  onActiveTabChange,
+  selectedModel,
+  contextWindow,
+  compressionThresholdPercent,
+  hasBrowserTab = false,
   width = 420,
 }: {
   session: SessionView | undefined;
   partialMessage: string;
   globalError: string | null;
   onOpenSessionAnalysis?: () => void;
+  onOpenBrowserWorkbench?: () => void;
+  activeTab?: ActivityRailTab;
+  onActiveTabChange?: (tab: ActivityRailTab) => void;
+  selectedModel?: string;
+  contextWindow?: number;
+  compressionThresholdPercent?: number;
+  hasBrowserTab?: boolean;
   width?: number;
 }) {
   const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-14" : "top-10";
   const model = useMemo(
-    () => buildActivityRailModel(session, session?.permissionRequests ?? [], ""),
-    [session],
+    () => buildActivityRailModel(session, session?.permissionRequests ?? [], partialMessage),
+    [partialMessage, session],
   );
+  const [internalActiveTab, setInternalActiveTab] = useState<ActivityRailTab>("trace");
+  const selectedTab = activeTab ?? internalActiveTab;
+  const handleSelectTab = (tab: ActivityRailTab) => {
+    if (!activeTab) setInternalActiveTab(tab);
+    onActiveTabChange?.(tab);
+  };
   const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
   const [showContextModal, setShowContextModal] = useState(false);
 
@@ -507,11 +659,84 @@ export function ActivityRail({
       )}
 
       <aside
-        className={`fixed bottom-0 right-0 ${sidebarHeaderOffsetClass} hidden min-w-[400px] overflow-y-auto border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(240,244,248,0.96)_36%,rgba(234,239,245,0.98))] px-4 pb-6 pt-4 shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl lg:flex lg:flex-col`}
+        className={`fixed bottom-0 right-0 ${sidebarHeaderOffsetClass} hidden min-w-[400px] overflow-y-auto border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(240,244,248,0.96)_36%,rgba(234,239,245,0.98))] pb-6 shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl lg:flex lg:flex-col`}
         style={{ width }}
       >
 
-        <div className="space-y-4">
+        <div className="flex h-10 shrink-0 items-center justify-between border-b border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,251,253,0.92))] px-4 backdrop-blur-xl">
+          <div className="flex min-w-0 items-center gap-1.5">
+          {hasBrowserTab && (
+            <button
+              type="button"
+              onClick={onOpenBrowserWorkbench}
+              className="inline-flex h-8 items-center gap-2 rounded-xl px-3 text-[13px] font-medium text-muted transition hover:bg-ink-900/5 hover:text-ink-700"
+              title="浏览器"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                <circle cx="12" cy="12" r="8.5" />
+                <path d="M3.5 12h17M12 3.5c2.2 2.3 3.2 5.1 3.2 8.5s-1 6.2-3.2 8.5M12 3.5C9.8 5.8 8.8 8.6 8.8 12s1 6.2 3.2 8.5" />
+              </svg>
+              <span>浏览器</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => handleSelectTab("trace")}
+            className={`inline-flex h-8 items-center gap-2 rounded-xl px-3 text-[13px] font-medium transition ${
+              selectedTab === "trace"
+                ? "bg-ink-900/7 text-ink-900 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.05)]"
+                : "text-muted hover:bg-ink-900/5 hover:text-ink-700"
+            }`}
+            title="执行轨迹"
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <path d="M5 5h14M5 12h10M5 19h7" />
+            </svg>
+            <span>执行轨迹</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSelectTab("usage")}
+            className={`inline-flex h-8 items-center gap-2 rounded-xl px-3 text-[13px] font-medium transition ${
+              selectedTab === "usage"
+                ? "bg-ink-900/7 text-ink-900 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.05)]"
+                : "text-muted hover:bg-ink-900/5 hover:text-ink-700"
+            }`}
+            title="Usage"
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <path d="M4 18V6M9 18v-7M14 18V9M19 18V4" />
+            </svg>
+            <span>Usage</span>
+          </button>
+          {!hasBrowserTab && (
+            <button
+              type="button"
+              onClick={onOpenBrowserWorkbench}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-muted transition hover:bg-ink-900/5 hover:text-ink-700"
+              title="新建浏览器标签"
+              aria-label="新建浏览器标签"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            </button>
+          )}
+          </div>
+        </div>
+
+        {selectedTab === "usage" ? (
+          <div className="space-y-4 px-4 pt-4">
+            <ContextUsagePanel
+              model={model}
+              selectedModel={selectedModel}
+              contextWindow={contextWindow}
+              compressionThresholdPercent={compressionThresholdPercent}
+              partialMessage={partialMessage}
+            />
+          </div>
+        ) : (
+        <div className="space-y-4 px-4 pt-4">
           <section className="rounded-[28px] border border-black/5 bg-white/70 p-4 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -526,7 +751,7 @@ export function ActivityRail({
               </span>
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-2">
+            <div className="mt-4 grid grid-cols-3 gap-2">
               <div className="rounded-2xl border border-black/5 bg-black/[0.03] px-3 py-2">
                 <div className="text-[10px] uppercase tracking-[0.18em] text-ink-400">最新结果</div>
                 <div className="mt-1 text-sm font-semibold text-ink-900">{model.summary.latestResultLabel}</div>
@@ -536,6 +761,10 @@ export function ActivityRail({
                 <div className="mt-1 text-sm font-semibold text-ink-900">{model.summary.durationLabel}</div>
               </div>
               <div className="rounded-2xl border border-black/5 bg-black/[0.03] px-3 py-2">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-ink-400">模型</div>
+                <div className="mt-1 truncate text-sm font-semibold text-ink-900" title={model.summary.modelLabel}>{model.summary.modelLabel}</div>
+              </div>
+              <div className="rounded-2xl border border-black/5 bg-black/[0.03] px-3 py-2">
                 <div className="text-[10px] uppercase tracking-[0.18em] text-ink-400">输入</div>
                 <div className="mt-1 text-sm font-semibold text-ink-900">{model.summary.inputLabel}</div>
               </div>
@@ -543,13 +772,26 @@ export function ActivityRail({
                 <div className="text-[10px] uppercase tracking-[0.18em] text-ink-400">输出</div>
                 <div className="mt-1 text-sm font-semibold text-ink-900">{model.summary.outputLabel}</div>
               </div>
-              <div className="rounded-2xl border border-black/5 bg-black/[0.03] px-3 py-2">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-ink-400">成功</div>
-                <div className="mt-1 text-sm font-semibold text-ink-900">{model.summary.successCount}</div>
+              <div className="rounded-2xl border border-accent/15 bg-accent-subtle/40 px-3 py-2">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-ink-400">费用</div>
+                <div className="mt-1 flex items-baseline gap-1.5">
+                  <span className="text-sm font-semibold text-ink-900">{model.summary.costLabel}</span>
+                  {model.summary.costLabel !== "-" && (
+                    <span className="text-[9px] text-ink-400/70">非真实扣费</span>
+                  )}
+                </div>
               </div>
               <div className="rounded-2xl border border-black/5 bg-black/[0.03] px-3 py-2">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-ink-400">失败</div>
-                <div className="mt-1 text-sm font-semibold text-ink-900">{model.summary.failureCount}</div>
+                <div className="text-[10px] uppercase tracking-[0.18em] text-ink-400">成功 / 失败</div>
+                <div className="mt-1 text-sm font-semibold text-ink-900">{model.summary.successCount} / {model.summary.failureCount}</div>
+              </div>
+              <div className="rounded-2xl border border-black/5 bg-black/[0.03] px-3 py-2">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-ink-400">上下文</div>
+                <div className="mt-1 text-sm font-semibold text-ink-900">{model.summary.contextLabel}</div>
+              </div>
+              <div className="rounded-2xl border border-black/5 bg-black/[0.03] px-3 py-2">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-ink-400">告警</div>
+                <div className="mt-1 text-sm font-semibold text-ink-900">{model.summary.alertCount}</div>
               </div>
             </div>
             <div className="mt-4 flex gap-2">
@@ -605,6 +847,7 @@ export function ActivityRail({
             </div>
           </section>
         </div>
+        )}
       </aside>
     </>
   );

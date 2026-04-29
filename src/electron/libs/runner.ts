@@ -3,6 +3,7 @@ import {
   type EffortLevel,
   type HookCallbackMatcher,
   type PermissionResult,
+  type Query,
   type SDKMessage,
   type SDKUserMessage,
   type ThinkingConfig,
@@ -14,6 +15,7 @@ import { buildAnthropicPromptContentBlocks } from "../../shared/attachments.js";
 import type { PromptAttachment, RuntimeOverrides, ServerEvent } from "../types.js";
 import { resolveAgentRuntimeContext } from "./agent-resolver.js";
 import { buildEnvForConfig, getClaudeCodePath, getCurrentApiConfig, getGlobalRuntimeConfig } from "./claude-settings.js";
+import { buildClaudeProjectMemoryPromptAppend } from "./claude-project-memory.js";
 import { saveGlobalRuntimeConfig } from "./config-store.js";
 import { summarizeBase64Image, summarizeLocalImageFile } from "./image-preprocessor.js";
 import { ADMIN_TOOL_NAMES, getAdminMcpServer } from "./mcp-tools/admin.js";
@@ -21,7 +23,11 @@ import { BROWSER_TOOL_NAMES, getBrowserMcpServer } from "./mcp-tools/browser.js"
 import { DESIGN_TOOL_NAMES, getDesignMcpServer } from "./mcp-tools/design.js";
 import { normalizeRunnerError } from "./runner-error.js";
 import type { Session } from "./session-store.js";
-import { buildToolImageReplacementText, extractInlineBase64ImageFromToolResponse } from "./tool-output-sanitizer.js";
+import {
+  buildOversizedTextToolOutputReplacement,
+  buildToolImageReplacementText,
+  extractInlineBase64ImageFromToolResponse,
+} from "./tool-output-sanitizer.js";
 import { getEnhancedEnv } from "./util.js";
 
 export type RunnerOptions = {
@@ -36,6 +42,7 @@ export type RunnerOptions = {
 
 export type RunnerHandle = {
   abort: () => void;
+  appendPrompt: (prompt: string, attachments?: PromptAttachment[]) => Promise<void>;
 };
 
 const DEFAULT_CWD = process.cwd();
@@ -86,6 +93,8 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   const { prompt, attachments = [], runtime, session, resumeSessionId, onEvent, onSessionUpdate } = options;
   const abortController = new AbortController();
   const permissionMode = runtime?.permissionMode ?? "bypassPermissions";
+  const pendingAppends: Array<{ prompt: string; attachments: PromptAttachment[] }> = [];
+  let activeQuery: Query | null = null;
   let rasterImageReads = 0;
 
   const sendMessage = (message: SDKMessage) => {
@@ -175,6 +184,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         buildGlobalRuntimePromptAppend(syncedGlobalRuntimeConfig, mergedEnv),
         buildAdminConfigPromptAppend(),
         agentContext.systemPromptAppend,
+        buildClaudeProjectMemoryPromptAppend(projectCwd),
         buildToolCallOptimizationPromptAppend(),
         buildBrowserWorkbenchPromptAppend(),
         buildDesignParityPromptAppend(),
@@ -281,6 +291,11 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           },
         },
       });
+      activeQuery = q;
+
+      for (const pendingAppend of pendingAppends.splice(0)) {
+        await q.streamInput(createPromptSource(pendingAppend.prompt, pendingAppend.attachments));
+      }
 
       for await (const message of q) {
         if (message.type === "system" && "subtype" in message && message.subtype === "init") {
@@ -308,7 +323,9 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           payload: { sessionId: session.id, status: "completed", title: session.title },
         });
       }
+      activeQuery = null;
     } catch (error) {
+      activeQuery = null;
       if ((error as Error).name === "AbortError") {
         return;
       }
@@ -335,6 +352,13 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
 
   return {
     abort: () => abortController.abort(),
+    appendPrompt: async (nextPrompt: string, nextAttachments: PromptAttachment[] = []) => {
+      if (!activeQuery) {
+        pendingAppends.push({ prompt: nextPrompt, attachments: nextAttachments });
+        return;
+      }
+      await activeQuery.streamInput(createPromptSource(nextPrompt, nextAttachments));
+    },
   };
 }
 
@@ -690,6 +714,10 @@ function buildBrowserWorkbenchPromptAppend(): string {
     "不要为这些请求调用 Skill browse、ToolSearch 查找浏览器工具或 ~/.claude/skills/gstack/browse；那些连接的是外部浏览器会话，不是 tech-cc-hub 的右侧 BrowserView。",
     "常用工具：browser_get_state 获取当前 URL/标题；browser_extract_page 提取当前页面正文、标题、链接和图片；browser_console_logs 读取控制台日志；browser_capture_visible 截取可见区域。",
     "开发诊断工具：browser_get_dom_stats 统计 DOM 节点规模；browser_query_nodes 按 CSS selector 或 XPath 定向查节点；browser_inspect_styles 读取目标节点的计算样式、CSS 变量和内联样式。",
+    "If the current prompt contains <browser_annotations>, treat page.url, dom.selector, dom.xpath, and dom.path as the primary targeting hints before searching the codebase by visible text.",
+    "For a prompt with <browser_annotations>, the latest annotation supersedes older screenshots, older browser annotations, and earlier modal/dialog tasks from resumed session history unless the user explicitly says to keep working on that same old target.",
+    "If dom.context.ancestorChain or dom.context.nearbyText is present, use that section context before grepping generic button/link text.",
+    "If the annotation selector is too generic, recover the real interactive element from the same page location with xpath/path or browser inspection tools first, then locate the code.",
   ].join("\n");
 }
 
@@ -702,6 +730,10 @@ function buildAdminConfigPromptAppend(): string {
 
 function buildToolCallOptimizationPromptAppend(): string {
   return [
+    "Tool reliability rules: only call tools that are present in the current system tool list. Do not invent tools such as Explore; use Agent with an available subagent_type or inspect files directly.",
+    "Before using deferred or schema-sensitive tools such as WebSearch, WebFetch, TodoWrite, Agent, or Skill, make sure their schema is available in the current context; if not, call ToolSearch first with select:<ToolName>, then retry.",
+    "On Windows paths, prefer PowerShell-safe commands or quote paths carefully. Do not pass unquoted D:\\path values through bash-style commands because backslashes can be swallowed.",
+    "When parallel tool calls are optional, avoid grouping fragile probes together: one failed parallel call can cancel sibling calls. Split uncertain filesystem probes from required reads.",
     "工具调用优化规则：已知多个具体文件需要查看时，优先并发读取，不要串行一个个 Read。",
     "目标文件不明确时，先用一次只读 Bash 搜索/筛选收敛范围，例如 rg/find/sed/awk，再读取少量命中文件。",
     "避免碎片链路：ls -> cat -> grep -> cat。能用一次 rg 或一次批量只读命令得到结论时，不要拆成多次工具调用。",
@@ -1037,7 +1069,20 @@ function buildQualityHooks(
 
         const inlineImage = extractInlineBase64ImageFromToolResponse(input.tool_response);
         if (!inlineImage) {
-          return { continue: true };
+          const oversizedText = buildOversizedTextToolOutputReplacement(input.tool_name, input.tool_response);
+          if (!oversizedText) {
+            return { continue: true };
+          }
+
+          return {
+            continue: true,
+            hookSpecificOutput: {
+              hookEventName: "PostToolUse",
+              additionalContext:
+                `Truncated ${input.tool_name} output from ${oversizedText.originalChars} chars to prevent context overflow.`,
+              updatedMCPToolOutput: createImageSummaryToolOutput(oversizedText.replacementText),
+            },
+          };
         }
 
         const summarizedPrompt = [
@@ -1142,19 +1187,17 @@ function buildEffortLevel(reasoningMode?: RuntimeOverrides["reasoningMode"]): Ef
   return reasoningMode;
 }
 
-export function createPromptSource(prompt: string, attachments: PromptAttachment[]): string | AsyncIterable<SDKUserMessage> {
-  if (attachments.length === 0) {
-    return prompt;
-  }
-
+export function createPromptSource(prompt: string, attachments: PromptAttachment[]): AsyncIterable<SDKUserMessage> {
   return (async function* promptSource(): AsyncIterable<SDKUserMessage> {
-    const contentBlocks = buildAnthropicPromptContentBlocks(prompt, attachments);
+    const content = attachments.length > 0
+      ? buildAnthropicPromptContentBlocks(prompt, attachments) as unknown as SDKUserMessage["message"]["content"]
+      : prompt;
 
     yield {
       type: "user",
       message: {
         role: "user",
-        content: contentBlocks as unknown as SDKUserMessage["message"]["content"],
+        content,
       },
       parent_tool_use_id: null,
     };

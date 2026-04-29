@@ -14,7 +14,23 @@
   "include": [
     "../../src/shared/activity-rail-model.ts",
     "../../src/shared/attachments.ts",
+    "../../src/shared/prompt-ledger.ts",
+    "../../src/electron/libs/browser-workbench-session.ts",
+    "../../src/electron/libs/claude-project-memory.ts",
+    "../../src/electron/libs/design-inspection-dsl.ts",
+    "../../src/electron/libs/design-image-path.ts",
+    "../../src/electron/libs/session-store.ts",
+    "../../src/electron/libs/tool-output-sanitizer.ts",
+    "../../src/ui/utils/browser-workbench-visibility.ts",
     "./activity-rail-model.test.ts",
-    "./runner-attachments.test.ts"
+    "./browser-workbench-session.test.ts",
+    "./browser-workbench-visibility.test.ts",
+    "./claude-project-memory.test.ts",
+    "./design-inspection-dsl.test.ts",
+    "./design-image-path.test.ts",
+    "./prompt-ledger-storage.test.ts",
+    "./runner-attachments.test.ts",
+    "./session-archive.test.ts",
+    "../../src/electron/tool-output-sanitizer.test.ts"
   ]
 }

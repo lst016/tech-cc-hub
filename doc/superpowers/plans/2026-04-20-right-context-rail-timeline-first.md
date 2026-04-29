@@ -1,3 +1,22 @@
+---
+doc_id: "SP-001"
+title: "Right Context Rail Timeline-First Implementation Plan"
+doc_type: "delivery"
+layer: "L3"
+status: "active"
+version: "1.0.0"
+last_updated: "2026-04-20"
+owners:
+  - "Engineering"
+tags:
+  - "claw"
+  - "docs"
+  - "superpowers"
+  - "plan"
+  - "activity-rail"
+  - "timeline"
+---
+
 # Right Context Rail Timeline-First Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

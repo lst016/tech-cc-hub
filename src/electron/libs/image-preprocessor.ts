@@ -6,7 +6,7 @@ import type { ApiConfig } from "./config-store.js";
 import { persistImageAttachmentReference } from "./attachment-store.js";
 import { preprocessImageAttachmentsCore, type ImagePreprocessResult } from "./image-preprocessor-core.js";
 
-const IMAGE_SUMMARY_MAX_TOKENS = 900;
+const IMAGE_SUMMARY_MAX_TOKENS = 1600;
 const IMAGE_MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
