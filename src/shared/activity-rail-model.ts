@@ -31,7 +31,8 @@ export type ActivityNodeKind =
   | "lifecycle"
   | "permission"
   | "hook"
-  | "omitted";
+  | "omitted"
+  | "agent_progress";
 export type ActivityToolProvenance =
   | "local"
   | "mcp"
@@ -122,6 +123,8 @@ export type ActivityTimelineItem = {
   stageKind: ActivityStageKind;
   metrics: ActivityExecutionMetrics;
   detailSections: ActivityDetailSection[];
+  parentTaskId?: string;
+  agentDescription?: string;
 };
 
 export type ActivityPlanStep = {
@@ -1593,6 +1596,9 @@ export function buildActivityRailModel(
   let roundContextChars = 0;
   let latestPromptLedger: PromptLedgerMessage | null = null;
   const promptLedgers: PromptLedgerMessage[] = [];
+  const taskToolUseMap = new Map<string, string>();
+  const toolUseTaskMap = new Map<string, string>();
+  const activeTaskNodes = new Map<string, ActivityTimelineItem>();
 
   for (const message of session.messages) {
     if (message.type === "prompt_ledger") {
@@ -1623,10 +1629,61 @@ export function buildActivityRailModel(
       continue;
     }
 
+    if (message.type === "tool_progress") {
+      const toolProgress = message as Record<string, unknown>;
+      const toolUseId = typeof toolProgress.tool_use_id === "string" ? toolProgress.tool_use_id : "";
+      const toolName = typeof toolProgress.tool_name === "string" ? toolProgress.tool_name : "未知工具";
+      const elapsedSec = typeof toolProgress.elapsed_time_seconds === "number" ? toolProgress.elapsed_time_seconds : undefined;
+      const taskId = typeof toolProgress.task_id === "string" ? toolProgress.task_id : undefined;
+      const parentAgentId = typeof toolProgress.parent_tool_use_id === "string"
+        ? toolUseTaskMap.get(toolProgress.parent_tool_use_id)
+        : taskId;
+      const elapsedLabel = typeof elapsedSec === "number"
+        ? elapsedSec >= 60
+          ? `${(elapsedSec / 60).toFixed(1)} 分钟`
+          : `${elapsedSec.toFixed(0)} 秒`
+        : "";
+      const progressId = `tool-progress-${toolUseId}`;
+      const existing = timelineChronological.find((item) => item.id === progressId);
+      if (existing) {
+        existing.statusLabel = `进行中 · ${elapsedLabel}`;
+        continue;
+      }
+      sequence += 1;
+      timelineChronological.push(
+        createTimelineItem({
+          id: progressId,
+          filterKey: "tool",
+          layer: "工具",
+          tone: "info",
+          nodeKind: "tool_input",
+          title: `${toolName} 执行中`,
+          detail: `工具已运行 ${elapsedLabel}`,
+          round: Math.max(round, 1),
+          sequence,
+          statusLabel: `进行中 · ${elapsedLabel}`,
+          chips: [toolName],
+          attention: false,
+          toolName,
+          stageKind: "implement",
+          parentTaskId: parentAgentId,
+          metrics: createEmptyMetrics({
+            totalCount: 1,
+            status: "running",
+          }),
+        }),
+      );
+      continue;
+    }
+
     if (message.type === "assistant") {
       const assistant = message as SDKAssistantMessage;
       const assistantCapturedAt = getCapturedAt(message);
       latestModel = assistant.message.model || latestModel;
+      const parentAgentId =
+        assistant.parent_tool_use_id
+          ? toolUseTaskMap.get(assistant.parent_tool_use_id)
+          : undefined;
 
       for (const content of assistant.message.content) {
         if (content.type === "thinking") {
@@ -1728,6 +1785,7 @@ export function buildActivityRailModel(
               provenance,
               stageKind,
               detailSections: outputSection ? [inputSection, outputSection] : [inputSection],
+              parentTaskId: parentAgentId,
               metrics: createEmptyMetrics({
                 inputChars: detail.length,
                 contextChars: roundContextChars,
@@ -1776,6 +1834,7 @@ export function buildActivityRailModel(
                 chips: [`${explicitPlan.length} 步`],
                 attention: false,
                 stageKind: "plan",
+                parentTaskId: parentAgentId,
                 metrics: createEmptyMetrics({
                   contextChars: roundContextChars,
                   outputChars: planText.length,
@@ -1826,6 +1885,7 @@ export function buildActivityRailModel(
                 chips: [],
                 attention: false,
                 stageKind: "deliver",
+                parentTaskId: parentAgentId,
                 metrics: createEmptyMetrics({
                   contextChars: roundContextChars,
                   outputChars: text.length,
@@ -1937,6 +1997,149 @@ export function buildActivityRailModel(
             }),
           }),
         );
+        continue;
+      }
+
+      if (message.subtype === "task_started") {
+        const taskId = typeof systemMessage.task_id === "string" ? systemMessage.task_id : "";
+        const toolUseId = typeof systemMessage.tool_use_id === "string" ? systemMessage.tool_use_id : undefined;
+        const description = typeof systemMessage.description === "string" ? systemMessage.description : "";
+        const taskType = typeof systemMessage.task_type === "string" ? systemMessage.task_type : undefined;
+        const skipTranscript = systemMessage.skip_transcript === true;
+
+        if (toolUseId && taskId) {
+          taskToolUseMap.set(taskId, toolUseId);
+          toolUseTaskMap.set(toolUseId, taskId);
+        }
+
+        if (skipTranscript || !taskId) continue;
+
+        const agentLabel = taskType === "local_workflow"
+          ? (typeof systemMessage.workflow_name === "string" ? systemMessage.workflow_name : "本地工作流")
+          : taskType === "sub_agent" ? "子 Agent" : "后台任务";
+        sequence += 1;
+        const startedId = `task-started-${taskId}`;
+        timelineChronological.push(
+          createTimelineItem({
+            id: startedId,
+            filterKey: "flow",
+            layer: "流程",
+            tone: "info",
+            nodeKind: "agent_progress",
+            title: `启动${agentLabel}：${description || taskId.slice(0, 8)}`,
+            detail: typeof systemMessage.prompt === "string" ? systemMessage.prompt : description,
+            round: Math.max(round, 1),
+            sequence,
+            statusLabel: "运行中",
+            chips: [agentLabel],
+            attention: false,
+            stageKind: "plan",
+            parentTaskId: taskId,
+            agentDescription: description,
+            metrics: createEmptyMetrics({
+              totalCount: 1,
+              status: "running",
+            }),
+          }),
+        );
+        activeTaskNodes.set(taskId, timelineChronological[timelineChronological.length - 1]!);
+        continue;
+      }
+
+      if (message.subtype === "task_progress") {
+        const taskId = typeof systemMessage.task_id === "string" ? systemMessage.task_id : "";
+        const description = typeof systemMessage.description === "string" ? systemMessage.description : "";
+        const summary = typeof systemMessage.summary === "string" ? systemMessage.summary : undefined;
+        const usage = typeof systemMessage.usage === "object" && systemMessage.usage !== null
+          ? (systemMessage.usage as Record<string, unknown>)
+          : null;
+        const durationMs = typeof usage?.duration_ms === "number" ? usage?.duration_ms : undefined;
+        const totalTokens = typeof usage?.total_tokens === "number" ? usage?.total_tokens : undefined;
+
+        if (!taskId) continue;
+
+        const durationLabel = typeof durationMs === "number"
+          ? durationMs >= 60000
+            ? `${(durationMs / 60000).toFixed(1)} min`
+            : `${(durationMs / 1000).toFixed(0)} s`
+          : "";
+        const tokenLabel = typeof totalTokens === "number" ? formatNumber(totalTokens) : "";
+
+        const existing = activeTaskNodes.get(taskId);
+        if (existing) {
+          existing.statusLabel = "运行中";
+          if (durationLabel) existing.statusLabel += ` · ${durationLabel}`;
+          if (tokenLabel) existing.statusLabel += ` · ${tokenLabel} tok`;
+          if (summary) {
+            existing.detail = `${existing.detail}\n${summary}`;
+            existing.agentDescription = summary;
+          } else if (description) {
+            existing.agentDescription = description;
+          }
+          existing.metrics = mergeMetrics(existing.metrics, createEmptyMetrics({
+            durationMs,
+            outputTokens: totalTokens,
+            totalCount: 1,
+            status: "running",
+          }));
+          continue;
+        }
+
+        sequence += 1;
+        const progressId = `task-progress-${taskId}`;
+        const progressItem = createTimelineItem({
+          id: progressId,
+          filterKey: "flow",
+          layer: "流程",
+          tone: "info",
+          nodeKind: "agent_progress",
+          title: description || summary || "子任务进行中",
+          detail: summary || description,
+          round: Math.max(round, 1),
+          sequence,
+          statusLabel: [durationLabel, tokenLabel ? `${tokenLabel} tok` : ""].filter(Boolean).join(" · ") || "运行中",
+          chips: ["子任务"],
+          attention: false,
+          stageKind: "implement",
+          parentTaskId: taskId,
+          agentDescription: summary ?? description,
+          metrics: createEmptyMetrics({
+            durationMs,
+            outputTokens: totalTokens,
+            totalCount: 1,
+            status: "running",
+          }),
+        });
+        timelineChronological.push(progressItem);
+        activeTaskNodes.set(taskId, progressItem);
+        continue;
+      }
+
+      if (message.subtype === "task_updated") {
+        const taskId = typeof systemMessage.task_id === "string" ? systemMessage.task_id : "";
+        const patch = isRecord(systemMessage.patch) ? systemMessage.patch : {};
+        const newStatus = typeof patch.status === "string" ? patch.status : undefined;
+        const errorDetail = typeof patch.error === "string" ? patch.error : undefined;
+
+        if (!taskId) continue;
+
+        if (newStatus === "completed" || newStatus === "failed" || newStatus === "killed") {
+          const existing = activeTaskNodes.get(taskId);
+          if (existing) {
+            existing.statusLabel = newStatus === "completed" ? "已完成" : newStatus === "failed" ? "失败" : "终止";
+            existing.tone = newStatus === "completed" ? "success" : "error";
+            existing.metrics = mergeMetrics(existing.metrics, createEmptyMetrics({
+              successCount: newStatus === "completed" ? 1 : 0,
+              failureCount: newStatus === "failed" ? 1 : 0,
+              totalCount: 1,
+            }));
+            existing.metrics.status = newStatus === "completed" ? "success" : "failure";
+            if (errorDetail) {
+              existing.detail = `${existing.detail}\n错误：${errorDetail}`;
+            }
+            activeTaskNodes.delete(taskId);
+          }
+        }
         continue;
       }
 
@@ -2115,6 +2318,23 @@ export function buildActivityRailModel(
       );
       continue;
     }
+  }
+
+  if (session.status !== "running" || finalResultSuccess !== null) {
+    const staleStatus = finalResultSuccess === false || session.status === "error" ? "failure" : "success";
+    for (const activeNode of activeTaskNodes.values()) {
+      if (activeNode.metrics.status !== "running") continue;
+      activeNode.statusLabel = staleStatus === "failure" ? "已停止" : "已结束";
+      activeNode.tone = staleStatus === "failure" ? "error" : "success";
+      activeNode.attention = staleStatus === "failure";
+      activeNode.metrics = {
+        ...activeNode.metrics,
+        successCount: staleStatus === "success" ? Math.max(activeNode.metrics.successCount, 1) : activeNode.metrics.successCount,
+        failureCount: staleStatus === "failure" ? Math.max(activeNode.metrics.failureCount, 1) : activeNode.metrics.failureCount,
+        status: staleStatus,
+      };
+    }
+    activeTaskNodes.clear();
   }
 
   for (const request of permissionRequests) {

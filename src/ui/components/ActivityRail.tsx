@@ -33,6 +33,7 @@ const NODE_KIND_LABELS: Record<ActivityTimelineItem["nodeKind"], string> = {
   permission: "人工确认",
   hook: "Hook",
   omitted: "已省略",
+  agent_progress: "Agent 进度",
 };
 
 const PROVENANCE_LABELS: Record<ActivityToolProvenance, string> = {
@@ -470,6 +471,8 @@ function DetailDrawer({
     item.toolName ? { label: "工具名", value: item.toolName } : null,
     item.provenance ? { label: "调用来源", value: PROVENANCE_LABELS[item.provenance] } : null,
     item.nodeSubtype ? { label: "节点子类", value: item.nodeSubtype } : null,
+    item.agentDescription ? { label: "子 Agent 描述", value: item.agentDescription } : null,
+    item.parentTaskId ? { label: "父任务 ID", value: item.parentTaskId.slice(0, 12) } : null,
     { label: "执行轮次", value: `第 ${item.round} 轮` },
     { label: "关联步骤数", value: String(relatedSteps.length) },
   ].filter((row): row is { label: string; value: string } => Boolean(row));
@@ -627,6 +630,20 @@ export function ActivityRail({
       ...model.analysisCards,
     ];
   }, [globalError, model.analysisCards]);
+
+  const activeAgentNodes = useMemo(() => {
+    if (session?.status !== "running") return [];
+    const seen = new Set<string>();
+    return model.timeline.filter((item) => {
+      if (item.nodeKind !== "agent_progress" || item.metrics.status !== "running") {
+        return false;
+      }
+      const key = item.parentTaskId || item.agentDescription || item.title;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [model.timeline, session?.status]);
 
   const attachmentSummary = summarizeAttachments(
     model.contextSnapshot.latestAttachments.map((attachment) => attachment.name),
@@ -822,6 +839,41 @@ export function ActivityRail({
               )}
             </div>
           </section>
+
+          {activeAgentNodes.length > 0 && (
+            <section className="rounded-[28px] border border-info/15 bg-info-light/30 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-ink-900">运行中任务</h3>
+                  <p className="mt-1 text-[12px] text-ink-500">子 Agent 正在执行，下方为实时进度。</p>
+                </div>
+                <span className="rounded-full border border-info/20 bg-info-light/50 px-2.5 py-1 text-[10px] font-medium text-info">
+                  {activeAgentNodes.length} 个
+                </span>
+              </div>
+              <div className="mt-4 space-y-2">
+                {activeAgentNodes.map((node) => (
+                  <button
+                    key={node.id}
+                    type="button"
+                    className="w-full text-left rounded-2xl border border-info/10 bg-white/85 p-3 hover:border-info/25 transition"
+                    onClick={() => setSelectedTimelineId(node.id)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="relative flex h-2.5 w-2.5">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-info opacity-75" />
+                        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-info" />
+                      </span>
+                      <span className="text-[13px] font-semibold text-ink-900 truncate">
+                        {node.agentDescription || node.title}
+                      </span>
+                    </div>
+                    <p className="mt-1 ml-5 text-[11px] text-ink-500">{node.statusLabel}</p>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
 
           <section className="rounded-[28px] border border-black/5 bg-white/68 p-4 shadow-[0_16px_32px_rgba(15,23,42,0.05)]">
             <div className="flex items-center justify-between gap-3">

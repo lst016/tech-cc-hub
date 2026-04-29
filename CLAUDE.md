@@ -167,6 +167,19 @@ rm -rf node_modules package-lock.json
 npm install
 ```
 
+## Windows 环境工具约束
+
+- **禁止使用 `mcp__windows__Powershell-Tool`** 进行 git 操作或文件读写。该 MCP 工具在本项目 Windows 环境下已知不稳定，会导致调用超时和重复诊断损耗。
+- **Git 操作统一用 Bash（Git Bash）**。如果 Bash 不可用，回退到内置 `PowerShell` 工具，不走任何 MCP 封装。
+- **工具调用超时处理**：如果用户反馈"卡死"，立即终止当前工具链，不要等待超时。
+
+## 工具调用纪律
+
+- 已知多个文件路径时，**并发 Read**，禁止串行逐个读取。
+- 目标文件不明确时，先用 **Grep/Glob 收敛范围**，再并发读取命中文件。
+- **禁止 ls → cat → grep 碎片链路**。一次 Grep 能得出结论的，不拆成多次 Bash。
+- 只读操作可以批量并发；写入/删除/安装等副作用操作不混入批量调用。
+
 ## 文档索引
 
 - [产品文档](doc/40-product/1.0.0/00-版本总览.md)

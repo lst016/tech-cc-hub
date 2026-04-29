@@ -113,6 +113,7 @@ const NODE_KIND_META: Record<
   permission: { label: "人工确认", short: "HUM" },
   hook: { label: "Hook", short: "HOOK" },
   omitted: { label: "省略", short: "..." },
+  agent_progress: { label: "Agent 进度", short: "PROG" },
 };
 
 const STATUS_LABELS = {

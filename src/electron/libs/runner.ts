@@ -68,6 +68,10 @@ const SKILL_ENV_HINTS: Record<string, string[]> = {
 const RASTER_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
 const MAX_IMAGE_READS_PER_RUN = 1;
 const MAX_SINGLE_IMAGE_READ_BYTES = 400_000;
+const BLOCKED_SHELL_TOOL_NAMES = new Set(["mcp__windows__Powershell-Tool"]);
+const BLOCKED_SHELL_TOOL_MESSAGE =
+  "This Windows shell tool is disabled in tech-cc-hub because it can hang without returning a tool_result. Use Bash with cmd.exe instead, for example: cmd.exe /d /s /c \"<command>\".";
+const POWERSHELL_COMMAND_PATTERN = /(^|[^\w.-])(powershell(?:\.exe)?|pwsh(?:\.exe)?)(?=$|[^\w.-])/i;
 const LARGE_IMAGE_READ_GUIDANCE =
   "图片文件过大，不能用 Read 直接读入主上下文。请改用内置图片/设计工具：如果是两张截图对比，用 mcp__tech-cc-hub-design__design_compare_images；如果是当前浏览器页面与参考图对齐，用 mcp__tech-cc-hub-design__design_compare_current_view；如果只需要图片信息，请基于用户消息里的图片资产路径/缩略图路径调用专门视觉工具或让用户裁剪关键区域。";
 
@@ -208,6 +212,8 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             : undefined,
           includePartialMessages: true,
           includeHookEvents: true,
+          agentProgressSummaries: true,
+          forwardSubagentText: true,
           mcpServers: {
             [browserToolServer.name]: browserToolServer,
             [adminToolServer.name]: adminToolServer,
@@ -216,6 +222,21 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           hooks,
           allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
           canUseTool: async (toolName, input, { signal }) => {
+            if (isBlockedShellTool(toolName)) {
+              return {
+                behavior: "deny",
+                message: BLOCKED_SHELL_TOOL_MESSAGE,
+              };
+            }
+
+            if (shouldDenyPowerShellCommand(toolName, input)) {
+              return {
+                behavior: "deny",
+                message:
+                  "PowerShell is disabled by tech-cc-hub's Windows shell policy because it is unstable in this environment. Use cmd.exe instead, for example: cmd.exe /d /s /c \"<command>\".",
+              };
+            }
+
             if (permissionMode === "plan") {
               return {
                 behavior: "deny",
@@ -732,7 +753,9 @@ function buildToolCallOptimizationPromptAppend(): string {
   return [
     "Tool reliability rules: only call tools that are present in the current system tool list. Do not invent tools such as Explore; use Agent with an available subagent_type or inspect files directly.",
     "Before using deferred or schema-sensitive tools such as WebSearch, WebFetch, TodoWrite, Agent, or Skill, make sure their schema is available in the current context; if not, call ToolSearch first with select:<ToolName>, then retry.",
-    "On Windows paths, prefer PowerShell-safe commands or quote paths carefully. Do not pass unquoted D:\\path values through bash-style commands because backslashes can be swallowed.",
+    "Windows shell policy: do not use PowerShell, pwsh, or mcp__windows__Powershell-Tool. They are unstable in this environment and can hang without returning a tool_result.",
+    "On Windows, prefer Bash with cmd.exe /d /s /c \"<command>\". Quote paths carefully and do not pass unquoted D:\\path values through bash-style commands because backslashes can be swallowed.",
+    "Avoid interactive shell commands. If a command can wait for input, add a non-interactive flag or use a bounded command that exits on its own.",
     "When parallel tool calls are optional, avoid grouping fragile probes together: one failed parallel call can cancel sibling calls. Split uncertain filesystem probes from required reads.",
     "工具调用优化规则：已知多个具体文件需要查看时，优先并发读取，不要串行一个个 Read。",
     "目标文件不明确时，先用一次只读 Bash 搜索/筛选收敛范围，例如 rg/find/sed/awk，再读取少量命中文件。",
@@ -740,6 +763,22 @@ function buildToolCallOptimizationPromptAppend(): string {
     "只读批量操作可以合并；写入、删除、移动、安装、提交等有副作用操作不要混进批量 Bash。",
     "复盘时如果发现同目录串行多次 Read、重复 Bash、ls/cat/grep 链路，应优先建议改成并发读取或先搜索收敛。",
   ].join("\n");
+}
+
+function isBlockedShellTool(toolName: string): boolean {
+  return (
+    BLOCKED_SHELL_TOOL_NAMES.has(toolName) ||
+    /^mcp__windows__.*powershell/i.test(toolName)
+  );
+}
+
+function shouldDenyPowerShellCommand(toolName: string, input: unknown): boolean {
+  if (toolName !== "Bash" || !isRecord(input)) {
+    return false;
+  }
+
+  const command = typeof input.command === "string" ? input.command.trim() : "";
+  return Boolean(command && POWERSHELL_COMMAND_PATTERN.test(command));
 }
 
 function buildDesignParityPromptAppend(): string {
@@ -1040,7 +1079,7 @@ function buildQualityHooks(
             hookSpecificOutput: {
               hookEventName: "PostToolUse",
               additionalContext: `已将图片读取结果替换为 ${config.imageModel?.trim() || "图片模型"} 的中文摘要，避免原图进入上下文。`,
-              updatedMCPToolOutput: createImageSummaryToolOutput(summary),
+              updatedToolOutput: createImageSummaryToolOutput(summary),
             },
           };
         } catch (error) {
@@ -1057,7 +1096,7 @@ function buildQualityHooks(
             hookSpecificOutput: {
               hookEventName: "PostToolUse",
               additionalContext: fallback,
-              updatedMCPToolOutput: createImageSummaryToolOutput(fallback),
+              updatedToolOutput: createImageSummaryToolOutput(fallback),
             },
           };
         }
@@ -1080,7 +1119,7 @@ function buildQualityHooks(
               hookEventName: "PostToolUse",
               additionalContext:
                 `Truncated ${input.tool_name} output from ${oversizedText.originalChars} chars to prevent context overflow.`,
-              updatedMCPToolOutput: createImageSummaryToolOutput(oversizedText.replacementText),
+              updatedToolOutput: createImageSummaryToolOutput(oversizedText.replacementText),
             },
           };
         }
@@ -1109,7 +1148,7 @@ function buildQualityHooks(
             hookSpecificOutput: {
               hookEventName: "PostToolUse",
               additionalContext: `Replaced ${input.tool_name} image output with text to avoid context overflow.`,
-              updatedMCPToolOutput: createImageSummaryToolOutput(replacementText),
+              updatedToolOutput: createImageSummaryToolOutput(replacementText),
             },
           };
         } catch (error) {
@@ -1125,7 +1164,7 @@ function buildQualityHooks(
             hookSpecificOutput: {
               hookEventName: "PostToolUse",
               additionalContext: fallback,
-              updatedMCPToolOutput: createImageSummaryToolOutput(fallback),
+              updatedToolOutput: createImageSummaryToolOutput(fallback),
             },
           };
         }
