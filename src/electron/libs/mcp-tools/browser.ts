@@ -38,32 +38,32 @@ export const BROWSER_TOOL_NAMES = [
 
 // Host 是主进程注入的 BrowserView 适配层。MCP 工具只依赖这个接口，避免和窗口/UI 生命周期绑死。
 export type BrowserWorkbenchToolHost = {
-  open: (url: string) => BrowserWorkbenchState;
-  close: () => BrowserWorkbenchState;
-  setBounds: (bounds: BrowserWorkbenchBounds) => BrowserWorkbenchState;
-  reload: () => BrowserWorkbenchState;
-  goBack: () => BrowserWorkbenchState;
-  goForward: () => BrowserWorkbenchState;
-  getState: () => BrowserWorkbenchState;
-  getConsoleLogs: (limit?: number) => BrowserWorkbenchConsoleLog[];
-  extractPageSnapshot: () => Promise<{ success: boolean; snapshot?: BrowserWorkbenchPageSnapshot; error?: string }>;
-  captureVisible: () => Promise<{ success: boolean; dataUrl?: string; error?: string }>;
-  getDomStats: () => Promise<{ success: boolean; stats?: BrowserWorkbenchDomStats; error?: string }>;
-  queryNodes: (input: {
+  open: (sessionId: string, url: string) => BrowserWorkbenchState;
+  close: (sessionId: string) => BrowserWorkbenchState;
+  setBounds: (sessionId: string, bounds: BrowserWorkbenchBounds) => BrowserWorkbenchState;
+  reload: (sessionId: string) => BrowserWorkbenchState;
+  goBack: (sessionId: string) => BrowserWorkbenchState;
+  goForward: (sessionId: string) => BrowserWorkbenchState;
+  getState: (sessionId: string) => BrowserWorkbenchState;
+  getConsoleLogs: (sessionId: string, limit?: number) => BrowserWorkbenchConsoleLog[];
+  extractPageSnapshot: (sessionId: string) => Promise<{ success: boolean; snapshot?: BrowserWorkbenchPageSnapshot; error?: string }>;
+  captureVisible: (sessionId: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>;
+  getDomStats: (sessionId: string) => Promise<{ success: boolean; stats?: BrowserWorkbenchDomStats; error?: string }>;
+  queryNodes: (sessionId: string, input: {
     strategy?: BrowserWorkbenchQueryStrategy;
     query: string;
     maxResults?: number;
     includeStyles?: boolean;
     styleProps?: string[];
   }) => Promise<{ success: boolean; result?: BrowserWorkbenchNodeQueryResult; error?: string }>;
-  inspectStyles: (input: {
+  inspectStyles: (sessionId: string, input: {
     strategy?: BrowserWorkbenchQueryStrategy;
     query: string;
     index?: number;
     properties?: string[];
   }) => Promise<{ success: boolean; inspection?: BrowserWorkbenchStyleInspection; error?: string }>;
-  inspectAtPoint: (point: { x: number; y: number }) => Promise<BrowserWorkbenchDomHint | null>;
-  setAnnotationMode: (enabled: boolean) => Promise<BrowserWorkbenchState>;
+  inspectAtPoint: (sessionId: string, point: { x: number; y: number }) => Promise<BrowserWorkbenchDomHint | null>;
+  setAnnotationMode: (sessionId: string, enabled: boolean) => Promise<BrowserWorkbenchState>;
 };
 
 const BROWSER_TOOLS_SERVER_NAME = "tech-cc-hub-browser";
@@ -71,7 +71,7 @@ const BROWSER_MCP_SERVER_VERSION = "1.0.0";
 const MAX_CAPTURE_SNIPPET = 4096;
 
 let browserHost: BrowserWorkbenchToolHost | null = null;
-let browserMcpServer: McpSdkServerConfigWithInstance | null = null;
+const browserMcpServersBySessionId = new Map<string, McpSdkServerConfigWithInstance>();
 
 // main.ts 在 BrowserWorkbenchManager 创建后调用；cleanup 时会传 null，避免旧窗口残留。
 export function setBrowserToolHost(host: BrowserWorkbenchToolHost | null): void {
@@ -116,9 +116,11 @@ function getShortCaptureSnippet(dataUrl?: string): { dataUrl?: string; truncated
   };
 }
 
-export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
-  if (browserMcpServer) {
-    return browserMcpServer;
+export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWithInstance {
+  const resolvedSessionId = sessionId.trim() || "global";
+  const cachedServer = browserMcpServersBySessionId.get(resolvedSessionId);
+  if (cachedServer) {
+    return cachedServer;
   }
 
   const openPageTool = tool(
@@ -127,8 +129,8 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     { url: z.string().trim().min(1) },
     async (input, _extra) => {
       const host = getHost();
-      const state = host.open(input.url);
-      return toTextToolResult({ action: "browser_open_page", success: true, state });
+      const state = host.open(resolvedSessionId, input.url);
+      return toTextToolResult({ action: "browser_open_page", success: true, sessionId: resolvedSessionId, state });
     },
   );
 
@@ -138,8 +140,8 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     {},
     async (_input, _extra) => {
       const host = getHost();
-      const state = host.close();
-      return toTextToolResult({ action: "browser_close_page", success: true, state });
+      const state = host.close(resolvedSessionId);
+      return toTextToolResult({ action: "browser_close_page", success: true, sessionId: resolvedSessionId, state });
     },
   );
 
@@ -149,8 +151,8 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     {},
     async (_input, _extra) => {
       const host = getHost();
-      const state = host.getState();
-      return toTextToolResult({ action: "browser_get_state", success: true, state });
+      const state = host.getState(resolvedSessionId);
+      return toTextToolResult({ action: "browser_get_state", success: true, sessionId: resolvedSessionId, state });
     },
   );
 
@@ -160,8 +162,8 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     { direction: z.enum(["back", "forward"]) },
     async (input, _extra) => {
       const host = getHost();
-      const state = input.direction === "back" ? host.goBack() : host.goForward();
-      return toTextToolResult({ action: "browser_navigate", direction: input.direction, success: true, state });
+      const state = input.direction === "back" ? host.goBack(resolvedSessionId) : host.goForward(resolvedSessionId);
+      return toTextToolResult({ action: "browser_navigate", direction: input.direction, success: true, sessionId: resolvedSessionId, state });
     },
   );
 
@@ -171,8 +173,8 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     {},
     async (_input, _extra) => {
       const host = getHost();
-      const state = host.reload();
-      return toTextToolResult({ action: "browser_reload", success: true, state });
+      const state = host.reload(resolvedSessionId);
+      return toTextToolResult({ action: "browser_reload", success: true, sessionId: resolvedSessionId, state });
     },
   );
 
@@ -182,13 +184,14 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     {},
     async (_input, _extra) => {
       const host = getHost();
-      const result = await host.extractPageSnapshot();
+      const result = await host.extractPageSnapshot(resolvedSessionId);
       if (!result.success) {
         return toTextToolResult({ action: "browser_extract_page", success: false, error: result.error }, true);
       }
       return toTextToolResult({
         action: "browser_extract_page",
         success: true,
+        sessionId: resolvedSessionId,
         snapshot: result.snapshot,
       });
     },
@@ -200,7 +203,7 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     {},
     async (_input, _extra) => {
       const host = getHost();
-      const capture = await host.captureVisible();
+      const capture = await host.captureVisible(resolvedSessionId);
       if (!capture.success) {
         return toTextToolResult({ action: "browser_capture_visible", success: false, error: capture.error }, true);
       }
@@ -209,6 +212,7 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
       return toTextToolResult({
         action: "browser_capture_visible",
         success: true,
+        sessionId: resolvedSessionId,
         urlDataSnippet: snippet.dataUrl,
         truncated: snippet.truncated,
         totalLength: capture.dataUrl?.length,
@@ -222,10 +226,11 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     { limit: z.number().int().min(1).max(300).optional() },
     async (input, _extra) => {
       const host = getHost();
-      const logs = host.getConsoleLogs(input.limit);
+      const logs = host.getConsoleLogs(resolvedSessionId, input.limit);
       return toTextToolResult({
         action: "browser_console_logs",
         success: true,
+        sessionId: resolvedSessionId,
         limit: logs.length,
         logs,
       });
@@ -238,13 +243,14 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     {},
     async (_input, _extra) => {
       const host = getHost();
-      const result = await host.getDomStats();
+      const result = await host.getDomStats(resolvedSessionId);
       if (!result.success) {
         return toTextToolResult({ action: "browser_get_dom_stats", success: false, error: result.error }, true);
       }
       return toTextToolResult({
         action: "browser_get_dom_stats",
         success: true,
+        sessionId: resolvedSessionId,
         stats: result.stats,
       });
     },
@@ -262,7 +268,7 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     },
     async (input, _extra) => {
       const host = getHost();
-      const result = await host.queryNodes({
+      const result = await host.queryNodes(resolvedSessionId, {
         strategy: input.strategy,
         query: input.query,
         maxResults: clampInteger(input.maxResults, 8, 50),
@@ -275,6 +281,7 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
       return toTextToolResult({
         action: "browser_query_nodes",
         success: true,
+        sessionId: resolvedSessionId,
         result: result.result,
       });
     },
@@ -291,7 +298,7 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     },
     async (input, _extra) => {
       const host = getHost();
-      const result = await host.inspectStyles({
+      const result = await host.inspectStyles(resolvedSessionId, {
         strategy: input.strategy,
         query: input.query,
         index: input.index,
@@ -303,6 +310,7 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
       return toTextToolResult({
         action: "browser_inspect_styles",
         success: true,
+        sessionId: resolvedSessionId,
         inspection: result.inspection,
       });
     },
@@ -314,10 +322,11 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     { x: z.number(), y: z.number() },
     async (input, _extra) => {
       const host = getHost();
-      const domHint = await host.inspectAtPoint({ x: clampInteger(input.x, 0, Number.MAX_SAFE_INTEGER), y: clampInteger(input.y, 0, Number.MAX_SAFE_INTEGER) });
+      const domHint = await host.inspectAtPoint(resolvedSessionId, { x: clampInteger(input.x, 0, Number.MAX_SAFE_INTEGER), y: clampInteger(input.y, 0, Number.MAX_SAFE_INTEGER) });
       return toTextToolResult({
         action: "browser_inspect_at_point",
         success: true,
+        sessionId: resolvedSessionId,
         domHint,
       });
     },
@@ -329,17 +338,18 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     { enabled: z.boolean() },
     async (input, _extra) => {
       const host = getHost();
-      const state = await host.setAnnotationMode(input.enabled);
+      const state = await host.setAnnotationMode(resolvedSessionId, input.enabled);
       return toTextToolResult({
         action: "browser_set_annotation_mode",
         success: true,
+        sessionId: resolvedSessionId,
         enabled: input.enabled,
         state,
       });
     },
   );
 
-  browserMcpServer = createSdkMcpServer({
+  const browserMcpServer = createSdkMcpServer({
     name: BROWSER_TOOLS_SERVER_NAME,
     version: BROWSER_MCP_SERVER_VERSION,
     tools: [
@@ -359,5 +369,6 @@ export function getBrowserMcpServer(): McpSdkServerConfigWithInstance {
     ],
   });
 
+  browserMcpServersBySessionId.set(resolvedSessionId, browserMcpServer);
   return browserMcpServer;
 }

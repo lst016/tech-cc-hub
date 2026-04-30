@@ -1,4 +1,4 @@
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildActivityRailModel,
   type ActivityAnalysisCard,
@@ -11,7 +11,9 @@ import {
   type ContextDistributionBucket,
 } from "../../shared/activity-rail-model";
 import { useAppStore } from "../store/useAppStore";
-import { estimatePromptLedgerTokens } from "../../shared/prompt-ledger";
+import { estimatePromptLedgerTokens, type PromptLedgerSourceKind } from "../../shared/prompt-ledger";
+import { buildContextUsageBreakdown, type ContextUsageBreakdownCategory } from "../utils/context-usage-breakdown";
+import { buildSegmentedContextUsageCells, type ContextUsageCellSegment } from "../utils/context-usage-cells";
 import type { SessionView } from "../store/useAppStore";
 
 const NODE_KIND_LABELS: Record<ActivityTimelineItem["nodeKind"], string> = {
@@ -34,6 +36,29 @@ const NODE_KIND_LABELS: Record<ActivityTimelineItem["nodeKind"], string> = {
   hook: "Hook",
   omitted: "已省略",
   agent_progress: "Agent 进度",
+};
+
+const STAGE_ORDER = ["inspect", "implement", "verify", "deliver"] as const;
+const STAGE_LABELS: Record<string, string> = {
+  inspect: "检查与理解",
+  implement: "实施与修改",
+  verify: "验证与确认",
+  deliver: "整理与输出",
+  plan: "计划",
+  other: "其他",
+};
+
+const PROMPT_SOURCE_KIND_LABELS: Record<string, string> = {
+  system: "系统",
+  project: "项目",
+  skill: "Skill",
+  workflow: "Workflow",
+  current: "当前输入",
+  attachment: "附件",
+  memory: "Memory",
+  history: "历史消息",
+  tool: "工具",
+  other: "其他",
 };
 
 const PROVENANCE_LABELS: Record<ActivityToolProvenance, string> = {
@@ -81,10 +106,106 @@ function getNodeKindLabel(item: ActivityTimelineItem) {
   if (item.nodeKind === "terminal" && item.nodeSubtype === "validation") {
     return "终端校验";
   }
-
   return NODE_KIND_LABELS[item.nodeKind];
 }
 
+function TimelineItemRow({
+  item,
+  isSelected,
+  onSelect,
+}: {
+  item: ActivityTimelineItem;
+  isSelected: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const kindLabel = getNodeKindLabel(item);
+  return (
+    <button
+      type="button"
+      data-timeline-id={item.id}
+      className={`w-full text-left rounded-2xl border p-3 transition ${
+        isSelected
+          ? "border-info/30 bg-info-light/40"
+          : "border-black/5 bg-white/70 hover:border-black/10"
+      }`}
+      onClick={() => onSelect(item.id)}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className={`inline-block h-2 w-2 rounded-full ${toneAccentClasses(item.tone)}`} />
+            <span className="text-[13px] font-semibold text-ink-900 truncate">{item.title}</span>
+          </div>
+          <p className="mt-1 text-[11px] leading-4 text-ink-500 line-clamp-2">{item.preview}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {item.statusLabel && (
+            <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-medium ${toneClasses(item.tone)}`}>
+              {item.statusLabel}
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="mt-2 flex items-center gap-2 text-[10px] text-ink-400">
+        <span>{kindLabel}</span>
+        {item.toolName && <span>· {item.toolName}</span>}
+        <span>· 第 {item.round} 轮</span>
+        {item.parentTaskId && (
+          <span className="truncate">· 子任务 {item.parentTaskId.slice(0, 8)}</span>
+        )}
+      </div>
+    </button>
+  );
+}
+
+function renderTimelineWithStages(
+  timeline: ActivityTimelineItem[],
+  selectedId: string | null,
+  onSelect: (id: string) => void,
+) {
+  const stageGroups: Array<{ stage: string; items: ActivityTimelineItem[] }> = [];
+  let currentStage = "";
+  let currentGroup: ActivityTimelineItem[] = [];
+
+  for (const item of timeline) {
+    const stage = item.stageKind;
+    if (stage !== currentStage && currentGroup.length > 0) {
+      stageGroups.push({ stage: currentStage, items: currentGroup });
+      currentGroup = [];
+    }
+    currentStage = stage;
+    currentGroup.push(item);
+  }
+  if (currentGroup.length > 0) {
+    stageGroups.push({ stage: currentStage, items: currentGroup });
+  }
+
+  return stageGroups.map((group) => {
+    const label = STAGE_LABELS[group.stage] ?? group.stage;
+    const isMainStage = STAGE_ORDER.includes(group.stage as typeof STAGE_ORDER[number]);
+    return (
+      <div key={`stage-${group.stage}-${group.items[0]?.id}`}>
+        <div className={`flex items-center gap-2 mb-2 ${isMainStage ? "" : "opacity-60"}`}>
+          <span className={`text-[10px] font-bold uppercase tracking-[0.18em] ${isMainStage ? "text-ink-600" : "text-ink-400"}`}>
+            {label}
+          </span>
+          <span className="h-px flex-1 bg-black/5" />
+          <span className="text-[10px] text-ink-400">{group.items.length}</span>
+        </div>
+        <div className="space-y-1.5">
+          {group.items.map((item) => (
+            <TimelineItemRow
+              key={item.id}
+              item={item}
+              isSelected={item.id === selectedId}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  });
+}
 function summarizeAttachments(itemNames: string[]) {
   if (itemNames.length === 0) return "无附件";
   if (itemNames.length === 1) return itemNames[0];
@@ -120,14 +241,12 @@ function bucketTokensByKind(model: ReturnType<typeof buildActivityRailModel>, ki
     .reduce((sum, bucket) => sum + bucket.tokenEstimate, 0);
 }
 
-function buildUsageCells(usedRatio: number) {
-  return Array.from({ length: 40 }, (_, index) => {
-    const active = index / 40 < usedRatio;
-    if (!active) return { id: index, className: "border-black/6 bg-black/[0.05]" };
-    if (index / 40 > 0.78) return { id: index, className: "border-error/25 bg-error/60" };
-    if (index / 40 > 0.58) return { id: index, className: "border-accent/25 bg-accent/65" };
-    return { id: index, className: "border-info/25 bg-info/60" };
-  });
+function buildUsageCells(segments: ContextUsageCellSegment[], windowTokens: number) {
+  return buildSegmentedContextUsageCells(segments, windowTokens);
+}
+
+function promptSourceKinds(...kinds: PromptLedgerSourceKind[]): PromptLedgerSourceKind[] {
+  return kinds;
 }
 
 function ContextUsagePanel({
@@ -143,6 +262,7 @@ function ContextUsagePanel({
   compressionThresholdPercent?: number;
   partialMessage?: string;
 }) {
+  const [selectedBreakdownId, setSelectedBreakdownId] = useState<string | null>(null);
   const currentPrompt = useAppStore((state) => state.prompt);
   const deferredPrompt = useDeferredValue(currentPrompt);
   const deferredPartialMessage = useDeferredValue(partialMessage ?? "");
@@ -156,20 +276,83 @@ function ContextUsagePanel({
   const toolPayloadTokens = bucketTokensByKind(model, ["tool"]);
   const uniqueToolNames = new Set(model.timeline.map((item) => item.toolName).filter(Boolean));
   const toolDefinitionTokens = uniqueToolNames.size > 0 ? Math.round(uniqueToolNames.size * 260) : 0;
-  const categoryRows = [
-    { label: "系统提示", tokens: bucketTokensByKind(model, ["system", "project", "workflow"]), markerClass: "bg-ink-500" },
-    { label: "工具定义估算", tokens: toolDefinitionTokens, markerClass: "bg-ink-300", note: "按已出现工具种类估算" },
-    { label: "当前 Agent", tokens: 0, markerClass: "bg-info" },
-    { label: "Memory 文件", tokens: bucketTokensByKind(model, ["memory"]), markerClass: "bg-accent" },
-    { label: "Skills", tokens: bucketTokensByKind(model, ["skill"]), markerClass: "bg-success" },
-    { label: "工具输入/输出", tokens: toolPayloadTokens, markerClass: "bg-warning" },
-    { label: "消息内容", tokens: bucketTokensByKind(model, ["history", "current", "attachment"]) + draftTokens + streamingTokens, markerClass: "bg-info" },
-  ].filter((row) => row.tokens === null || row.tokens > 0 || row.label === "当前 Agent");
+  const categoryRows: Array<ContextUsageBreakdownCategory & {
+    markerClass: string;
+    cellClass: string;
+    note?: string;
+  }> = [
+    {
+      id: "system",
+      label: "系统提示",
+      tokens: bucketTokensByKind(model, ["system", "project", "workflow"]),
+      sourceKinds: promptSourceKinds("system", "project", "workflow"),
+      markerClass: "bg-slate-500",
+      cellClass: "border-slate-400/30 bg-slate-500/70",
+    },
+    {
+      id: "tool-definitions",
+      label: "工具定义估算",
+      tokens: toolDefinitionTokens,
+      markerClass: "bg-cyan-500",
+      cellClass: "border-cyan-400/30 bg-cyan-500/75",
+      note: "按已出现工具种类估算",
+      fallbackDetail: `按已出现的 ${uniqueToolNames.size} 种工具估算，每种约 260 tokens。`,
+    },
+    {
+      id: "agent",
+      label: "当前 Agent",
+      tokens: 0,
+      markerClass: "bg-indigo-500",
+      cellClass: "border-indigo-400/30 bg-indigo-500/70",
+    },
+    {
+      id: "memory",
+      label: "Memory 文件",
+      tokens: bucketTokensByKind(model, ["memory"]),
+      sourceKinds: promptSourceKinds("memory"),
+      markerClass: "bg-amber-500",
+      cellClass: "border-amber-400/30 bg-amber-500/75",
+    },
+    {
+      id: "skills",
+      label: "Skills",
+      tokens: bucketTokensByKind(model, ["skill"]),
+      sourceKinds: promptSourceKinds("skill"),
+      markerClass: "bg-emerald-500",
+      cellClass: "border-emerald-400/30 bg-emerald-500/75",
+    },
+    {
+      id: "tool-payload",
+      label: "工具输入/输出",
+      tokens: toolPayloadTokens,
+      sourceKinds: promptSourceKinds("tool"),
+      markerClass: "bg-orange-500",
+      cellClass: "border-orange-400/30 bg-orange-500/75",
+    },
+    {
+      id: "messages",
+      label: "消息内容",
+      tokens: bucketTokensByKind(model, ["history", "current", "attachment"]) + draftTokens + streamingTokens,
+      sourceKinds: promptSourceKinds("history", "current", "attachment"),
+      markerClass: "bg-blue-600",
+      cellClass: "border-blue-500/30 bg-blue-600/75",
+      fallbackDetail: "包含历史消息、当前输入、附件，以及当前输入框草稿/流式输出估算。",
+    },
+  ].filter((row) => row.tokens > 0 || row.label === "当前 Agent");
   const usedTokens = categoryRows.reduce((sum, row) => sum + (row.tokens ?? 0), 0);
   const usedRatio = Math.min(1, usedTokens / windowTokens);
   const freeTokens = Math.max(0, windowTokens - usedTokens - autoCompactTokens);
   const displayModel = selectedModel || model.contextSnapshot.model || model.promptAnalysis.ledgers.at(-1)?.model || "未选择模型";
-  const cells = buildUsageCells(usedRatio);
+  const selectedBreakdownCategory = categoryRows.find((row) => row.id === selectedBreakdownId) ?? null;
+  const breakdownItems = selectedBreakdownCategory
+    ? buildContextUsageBreakdown(model.promptAnalysis.segments, selectedBreakdownCategory)
+    : [];
+  const cells = buildUsageCells(categoryRows.map((row) => ({
+    id: row.id,
+    label: row.label,
+    tokens: row.tokens ?? 0,
+    className: row.cellClass,
+  })), windowTokens);
 
   return (
     <section className="rounded-[28px] border border-black/5 bg-white/72 p-4 font-mono text-ink-700 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
@@ -188,7 +371,7 @@ function ContextUsagePanel({
 
       <div className="mt-4 grid grid-cols-10 gap-1">
         {cells.map((cell) => (
-          <span key={cell.id} className={`h-2 rounded-[2px] border ${cell.className}`} />
+          <span key={cell.id} className={`h-2 rounded-[2px] border ${cell.className}`} title={cell.label} />
         ))}
       </div>
 
@@ -196,18 +379,78 @@ function ContextUsagePanel({
       <div className="mt-2 space-y-1.5 text-[12px] leading-5">
         {categoryRows.map((row) => {
           const ratio = (row.tokens ?? 0) / windowTokens;
+          const selected = selectedBreakdownId === row.id;
           return (
-            <div key={row.label} className="flex items-center justify-between gap-3">
+            <button
+              key={row.label}
+              type="button"
+              onClick={() => setSelectedBreakdownId(selected ? null : row.id)}
+              className={`flex w-full items-center justify-between gap-3 rounded-xl px-1.5 py-1 text-left transition ${
+                selected ? "bg-ink-900/7 text-ink-900" : "hover:bg-ink-900/5"
+              }`}
+              title={`查看${row.label}构成`}
+            >
               <span className="flex min-w-0 items-center gap-2">
                 <span className={`h-2 w-3 shrink-0 rounded-[2px] ${row.markerClass}`} />
                 <span className="truncate text-ink-700">{row.label}</span>
               </span>
               <span className="shrink-0 text-ink-500">
-                {row.tokens === null ? row.note : `${formatTokenAmount(row.tokens)} tokens (${formatUsagePercent(ratio)})`}
+                {`${formatTokenAmount(row.tokens)} tokens (${formatUsagePercent(ratio)})`}
               </span>
-            </div>
+            </button>
           );
         })}
+        {selectedBreakdownCategory && (
+          <div className="mt-3 rounded-2xl border border-black/6 bg-white/72 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-ink-400">Prompt 构成</div>
+                <div className="mt-1 text-[13px] font-semibold text-ink-900">{selectedBreakdownCategory.label}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedBreakdownId(null)}
+                className="rounded-full px-2 py-1 text-[11px] text-ink-400 hover:bg-ink-900/5 hover:text-ink-700"
+              >
+                关闭
+              </button>
+            </div>
+            <div className="mt-3 space-y-2">
+              {breakdownItems.length > 0 ? breakdownItems.map((item) => (
+                <div key={item.id} className="rounded-xl border border-black/5 bg-black/[0.025] px-3 py-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-[12px] font-semibold text-ink-800">{item.label}</div>
+                      <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] text-ink-400">
+                        {item.sourceKind && (
+                          <span className="rounded-full bg-white px-2 py-0.5">{PROMPT_SOURCE_KIND_LABELS[item.sourceKind] ?? item.sourceKind}</span>
+                        )}
+                        {item.sourcePath && (
+                          <span className="max-w-full truncate rounded-full bg-white px-2 py-0.5">{item.sourcePath}</span>
+                        )}
+                        {item.chars > 0 && (
+                          <span className="rounded-full bg-white px-2 py-0.5">{item.chars.toLocaleString("zh-CN")} 字符</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right text-[11px] font-semibold text-ink-500">
+                      {formatTokenAmount(item.tokenEstimate)}
+                    </div>
+                  </div>
+                  {item.sample && (
+                    <p className="mt-2 max-h-16 overflow-hidden text-[11px] leading-5 text-ink-500">
+                      {item.sample.length > 180 ? `${item.sample.slice(0, 180)}...` : item.sample}
+                    </p>
+                  )}
+                </div>
+              )) : (
+                <div className="rounded-xl border border-dashed border-black/10 px-3 py-4 text-center text-[11px] text-ink-400">
+                  这一类当前没有可展开的 prompt segment。
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         <div className="flex items-center justify-between gap-3 text-ink-600">
           <span className="flex items-center gap-2">
             <span className="h-2 w-3 rounded-[2px] border border-dashed border-ink-400" />
@@ -413,6 +656,27 @@ function ContextDistributionModal({
 }
 
 function DetailSectionCard({ section }: { section: ActivityDetailSection }) {
+  const isToolOutput = section.id === "tool-output";
+  const isBashOutput = isToolOutput && section.rawLabel === "展开原始返回";
+  const rawLen = section.raw?.length ?? 0;
+  const rawLines = section.raw?.split(/\r?\n/).length ?? 0;
+
+  const needsFold = isToolOutput && rawLen > 500;
+  const needsLineFold = isBashOutput && rawLines > 20;
+  const shouldFold = needsFold || needsLineFold;
+
+  const foldLabel = needsLineFold
+    ? `展开完整输出（共 ${rawLines} 行，${rawLen.toLocaleString("zh-CN")} 字符）`
+    : needsFold
+      ? `展开完整输出（${rawLen.toLocaleString("zh-CN")} 字符）`
+      : undefined;
+
+  const previewRaw = shouldFold && section.raw
+    ? needsLineFold
+      ? section.raw.split(/\r?\n/).slice(0, 20).join("\n") + `\n... 还有 ${rawLines - 20} 行`
+      : section.raw.slice(0, 500) + `...`
+    : section.raw;
+
   return (
     <section className="rounded-[24px] border border-black/5 bg-white/78 p-4">
       <div className="text-sm font-semibold text-ink-900">{section.title}</div>
@@ -436,12 +700,12 @@ function DetailSectionCard({ section }: { section: ActivityDetailSection }) {
         </div>
       )}
       {section.raw && section.raw !== section.summary && (
-        <details className="mt-3 rounded-2xl border border-black/5 bg-black/[0.02] p-3">
+        <details className="mt-3 rounded-2xl border border-black/5 bg-black/[0.02] p-3" open={!shouldFold}>
           <summary className="cursor-pointer text-[11px] font-medium text-ink-500">
-            {section.rawLabel ?? "展开原文"}
+            {shouldFold ? foldLabel : (section.rawLabel ?? "展开原文")}
           </summary>
           <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-all rounded-2xl border border-ink-900/10 bg-ink-900 px-3 py-3 text-[11px] leading-5 text-white shadow-[0_12px_24px_rgba(15,18,24,0.26)]">
-            {section.raw}
+            {previewRaw}
           </pre>
         </details>
       )}
@@ -610,6 +874,13 @@ export function ActivityRail({
   };
   const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
   const [showContextModal, setShowContextModal] = useState(false);
+  const timelineRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!selectedTimelineId) return;
+    const el = timelineRef.current?.querySelector(`[data-timeline-id="${selectedTimelineId}"]`);
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [selectedTimelineId]);
 
   const selectedItem =
     (selectedTimelineId ? model.timeline.find((item) => item.id === selectedTimelineId) : null) ??
@@ -658,7 +929,6 @@ export function ActivityRail({
           buckets={model.contextDistribution.buckets}
           onJumpToNode={(timelineId) => {
             setSelectedTimelineId(timelineId);
-            setShowContextModal(false);
           }}
           onClose={() => setShowContextModal(false)}
         />
@@ -898,6 +1168,23 @@ export function ActivityRail({
               ))}
             </div>
           </section>
+
+          {model.timeline.length > 0 && (
+            <section ref={timelineRef} className="rounded-[28px] border border-black/5 bg-white/68 p-4 shadow-[0_16px_32px_rgba(15,23,42,0.05)]">
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-ink-900">时间线</h3>
+                  <p className="mt-1 text-[12px] text-ink-500">按执行阶段分组，点击节点查看详情。</p>
+                </div>
+                <span className="rounded-full border border-black/5 bg-black/[0.03] px-2.5 py-1 text-[10px] text-ink-500">
+                  {model.timeline.length} 条
+                </span>
+              </div>
+              <div className="space-y-4">
+                {renderTimelineWithStages(model.timeline, selectedTimelineId, (id) => setSelectedTimelineId(id))}
+              </div>
+            </section>
+          )}
         </div>
         )}
       </aside>

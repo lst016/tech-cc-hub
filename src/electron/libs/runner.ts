@@ -75,6 +75,27 @@ const POWERSHELL_COMMAND_PATTERN = /(^|[^\w.-])(powershell(?:\.exe)?|pwsh(?:\.ex
 const LARGE_IMAGE_READ_GUIDANCE =
   "图片文件过大，不能用 Read 直接读入主上下文。请改用内置图片/设计工具：如果是两张截图对比，用 mcp__tech-cc-hub-design__design_compare_images；如果是当前浏览器页面与参考图对齐，用 mcp__tech-cc-hub-design__design_compare_current_view；如果只需要图片信息，请基于用户消息里的图片资产路径/缩略图路径调用专门视觉工具或让用户裁剪关键区域。";
 
+const PLAN_OUTPUT_FORMAT_SCHEMA = {
+  type: "object",
+  properties: {
+    steps: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          step: { type: "number" },
+          title: { type: "string" },
+          description: { type: "string" },
+        },
+        required: ["step", "title"],
+      },
+    },
+  },
+  required: ["steps"],
+};
+
+const STRUCTURED_OUTPUT_HINT_PATTERN = /请用\s*JSON|结构化输出|输出 JSON|output.*format.*json|json.*schema|structured.*output/i;
+
 function getRequestedModelName(configModel: string | undefined, runtimeModel: string | undefined): string | undefined {
   const normalizedRuntimeModel = runtimeModel?.trim();
   if (normalizedRuntimeModel) {
@@ -93,6 +114,22 @@ function getConfiguredModelNames(config: NonNullable<ReturnType<typeof getCurren
   ].map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
 }
 
+function resolveOutputFormat(
+  runtimeOutputFormat: string | undefined,
+  systemPromptAppend: string | undefined,
+  prompt: string,
+): { type: "json_schema"; schema: Record<string, unknown> } | undefined {
+  if (runtimeOutputFormat === "none") return undefined;
+  if (runtimeOutputFormat === "json") {
+    return { type: "json_schema", schema: PLAN_OUTPUT_FORMAT_SCHEMA };
+  }
+  const systemText = systemPromptAppend ?? "";
+  if (STRUCTURED_OUTPUT_HINT_PATTERN.test(systemText) || STRUCTURED_OUTPUT_HINT_PATTERN.test(prompt)) {
+    return { type: "json_schema", schema: PLAN_OUTPUT_FORMAT_SCHEMA };
+  }
+  return undefined;
+}
+
 export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   const { prompt, attachments = [], runtime, session, resumeSessionId, onEvent, onSessionUpdate } = options;
   const abortController = new AbortController();
@@ -100,6 +137,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   const pendingAppends: Array<{ prompt: string; attachments: PromptAttachment[] }> = [];
   let activeQuery: Query | null = null;
   let rasterImageReads = 0;
+  let requestedModelForError: string | undefined;
 
   const sendMessage = (message: SDKMessage) => {
     onEvent({
@@ -118,7 +156,6 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   void (async () => {
     try {
       const config = getCurrentApiConfig();
-      const requestedModel = getRequestedModelName(config?.model, runtime?.model);
 
       if (!config) {
         onEvent({
@@ -134,6 +171,8 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         return;
       }
 
+      const requestedModel = getRequestedModelName(config.model, runtime?.model);
+      requestedModelForError = requestedModel;
       const configuredModelNames = getConfiguredModelNames(config);
       if (requestedModel && configuredModelNames.length > 0 && !configuredModelNames.includes(requestedModel)) {
         const errorMessage = `请求模型「${requestedModel}」失败：它不在当前启用配置的模型列表里，请先在设置里切换到可用模型。`;
@@ -157,7 +196,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         return;
       }
 
-      const env = buildEnvForConfig(config, runtime?.model);
+      const env = buildEnvForConfig(config, requestedModel);
       const globalRuntimeConfig = getGlobalRuntimeConfig();
       const mergedEnv = {
         ...getEnhancedEnv(),
@@ -181,9 +220,9 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         agentContext.enforceAllowedTools,
       );
       const hooks = buildQualityHooks(resolvedCwd, { config, prompt });
-      const browserToolServer = getBrowserMcpServer();
+      const browserToolServer = getBrowserMcpServer(session.id);
       const adminToolServer = getAdminMcpServer();
-      const designToolServer = getDesignMcpServer();
+      const designToolServer = getDesignMcpServer(session.id);
       const systemPromptAppend = combineSystemPromptAppend(
         buildGlobalRuntimePromptAppend(syncedGlobalRuntimeConfig, mergedEnv),
         buildAdminConfigPromptAppend(),
@@ -193,11 +232,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         buildBrowserWorkbenchPromptAppend(),
         buildDesignParityPromptAppend(),
       );
+      const outputFormat = resolveOutputFormat(runtime?.outputFormat, systemPromptAppend, prompt);
 
       const q = query({
         prompt: createPromptSource(prompt, attachments),
         options: {
-          model: runtime?.model?.trim() || undefined,
+          model: requestedModel,
           cwd: resolvedCwd,
           resume: resumeSessionId,
           abortController,
@@ -214,6 +254,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           includeHookEvents: true,
           agentProgressSummaries: true,
           forwardSubagentText: true,
+          outputFormat,
           mcpServers: {
             [browserToolServer.name]: browserToolServer,
             [adminToolServer.name]: adminToolServer,
@@ -353,7 +394,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
 
       const errorMessage = normalizeRunnerError(
         error,
-        getRequestedModelName(getCurrentApiConfig()?.model, runtime?.model),
+        requestedModelForError ?? getRequestedModelName(getCurrentApiConfig()?.model, runtime?.model),
       );
 
       onEvent({

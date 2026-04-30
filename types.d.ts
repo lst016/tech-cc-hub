@@ -89,9 +89,9 @@ type BrowserWorkbenchAnnotation = {
 }
 
 type BrowserWorkbenchEvent =
-    | { type: "browser.state"; payload: BrowserWorkbenchState }
-    | { type: "browser.console"; payload: BrowserWorkbenchConsoleLog }
-    | { type: "browser.annotation"; payload: BrowserWorkbenchAnnotation };
+    | { type: "browser.state"; payload: BrowserWorkbenchState; sessionId?: string }
+    | { type: "browser.console"; payload: BrowserWorkbenchConsoleLog; sessionId?: string }
+    | { type: "browser.annotation"; payload: BrowserWorkbenchAnnotation; sessionId?: string };
 
 type BrowserWorkbenchCaptureResult = {
     success: boolean;
@@ -231,21 +231,21 @@ interface Window {
         checkApiConfig: () => Promise<{ hasConfig: boolean; config: ApiConfig | null }>;
         debugSaveTraceSnapshot: (snapshot: unknown) => Promise<{ success: boolean; path?: string; error?: string }>;
         preprocessImageAttachments: (payload: { prompt: string; selectedModel?: string; attachments: import("./src/ui/types").PromptAttachment[] }) => Promise<ImagePreprocessResult>;
-        openBrowserWorkbench: (url: string) => Promise<BrowserWorkbenchState>;
-        closeBrowserWorkbench: () => Promise<BrowserWorkbenchState>;
-        setBrowserWorkbenchBounds: (bounds: BrowserWorkbenchBounds) => Promise<BrowserWorkbenchState>;
-        reloadBrowserWorkbench: () => Promise<BrowserWorkbenchState>;
-        goBackBrowserWorkbench: () => Promise<BrowserWorkbenchState>;
-        goForwardBrowserWorkbench: () => Promise<BrowserWorkbenchState>;
-        getBrowserWorkbenchState: () => Promise<BrowserWorkbenchState>;
-        getBrowserWorkbenchConsoleLogs: (limit?: number) => Promise<BrowserWorkbenchConsoleLog[]>;
-        captureBrowserWorkbenchVisible: () => Promise<BrowserWorkbenchCaptureResult>;
-        inspectBrowserWorkbenchAtPoint: (point: { x: number; y: number }) => Promise<BrowserWorkbenchDomHint | null>;
-        clearBrowserWorkbenchAnnotations: () => Promise<BrowserWorkbenchState>;
-        setBrowserWorkbenchAnnotationMode: (enabled: boolean) => Promise<BrowserWorkbenchState>;
-        openBrowserWorkbenchDevTools: () => Promise<{ opened: boolean }>;
-        closeBrowserWorkbenchDevTools: () => Promise<{ opened: boolean }>;
-        isBrowserWorkbenchDevToolsOpen: () => Promise<boolean>;
+        openBrowserWorkbench: (url: string, sessionId?: string) => Promise<BrowserWorkbenchState>;
+        closeBrowserWorkbench: (sessionId?: string) => Promise<BrowserWorkbenchState>;
+        setBrowserWorkbenchBounds: (bounds: BrowserWorkbenchBounds, sessionId?: string) => Promise<BrowserWorkbenchState>;
+        reloadBrowserWorkbench: (sessionId?: string) => Promise<BrowserWorkbenchState>;
+        goBackBrowserWorkbench: (sessionId?: string) => Promise<BrowserWorkbenchState>;
+        goForwardBrowserWorkbench: (sessionId?: string) => Promise<BrowserWorkbenchState>;
+        getBrowserWorkbenchState: (sessionId?: string) => Promise<BrowserWorkbenchState>;
+        getBrowserWorkbenchConsoleLogs: (limit?: number, sessionId?: string) => Promise<BrowserWorkbenchConsoleLog[]>;
+        captureBrowserWorkbenchVisible: (sessionId?: string) => Promise<BrowserWorkbenchCaptureResult>;
+        inspectBrowserWorkbenchAtPoint: (point: { x: number; y: number }, sessionId?: string) => Promise<BrowserWorkbenchDomHint | null>;
+        clearBrowserWorkbenchAnnotations: (sessionId?: string) => Promise<BrowserWorkbenchState>;
+        setBrowserWorkbenchAnnotationMode: (enabled: boolean, sessionId?: string) => Promise<BrowserWorkbenchState>;
+        openBrowserWorkbenchDevTools: (sessionId?: string) => Promise<{ opened: boolean }>;
+        closeBrowserWorkbenchDevTools: (sessionId?: string) => Promise<{ opened: boolean }>;
+        isBrowserWorkbenchDevToolsOpen: (sessionId?: string) => Promise<boolean>;
         onBrowserWorkbenchEvent: (callback: (event: BrowserWorkbenchEvent) => void) => UnsubscribeFunction;
     }
 }

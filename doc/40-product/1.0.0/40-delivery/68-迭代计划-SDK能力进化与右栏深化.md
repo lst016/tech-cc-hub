@@ -3,9 +3,9 @@ doc_id: "PRD-100-68"
 title: "68-迭代计划-SDK能力进化与右栏深化"
 doc_type: "delivery"
 layer: "PM"
-status: "draft"
+status: "in-progress"
 version: "1.0.0"
-last_updated: "2026-04-29"
+last_updated: "2026-04-30"
 owners:
   - "Product"
   - "Engineering"
@@ -53,6 +53,18 @@ sources:
 4. 把已弃用的 `updatedMCPToolOutput` 迁移到 `updatedToolOutput`。
 
 ## 分相任务
+
+### 当前完成状态（截至 2026-04-30）
+
+| Phase | 状态 | commit |
+|-------|------|--------|
+| Phase 1: SDK 新能力接入 | **已完成** | `46cfae5` |
+| Phase 2: ActivityRail 中间过程可视化 | **已完成** | `46cfae5` |
+| Phase 3: 结构化输出替换正则解析 | 未开始 | — |
+| Phase 4: 体验打磨 | 未开始 | — |
+
+**已知 Bug 修复**（已完成，未 push）:
+- `task_updated` 节点状态未覆写导致"运行中任务"区块不消失。修复: `activity-rail-model.ts:2136` 直接覆写 `existing.metrics.status = "success"/"failure"`，不走 `mergeMetrics` 状态推断。
 
 ---
 

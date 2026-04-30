@@ -35,6 +35,7 @@ export type RuntimeOverrides = {
   permissionMode?: "default" | "bypassPermissions" | "plan";
   runSurface?: AgentRunSurface;
   agentId?: string;
+  outputFormat?: "json" | "none";
 };
 
 export type PromptAttachment = {
@@ -121,7 +122,8 @@ export type ServerEvent =
   | { type: "session.unarchived"; payload: { sessionId: string; session?: SessionInfo } }
   | { type: "session.deleted"; payload: { sessionId: string } }
   | { type: "permission.request"; payload: { sessionId: string; toolUseId: string; toolName: string; input: unknown } }
-  | { type: "runner.error"; payload: { sessionId?: string; message: string } };
+  | { type: "runner.error"; payload: { sessionId?: string; message: string } }
+  | { type: "agent.list"; payload: { agents: Array<{ id: string; name: string; description?: string; scope: string }> } };
 
 // Client -> Server events
 export type ClientEvent =
@@ -138,4 +140,5 @@ export type ClientEvent =
   | { type: "session.delete"; payload: { sessionId: string } }
   | { type: "session.list"; payload?: { archived?: boolean } }
   | { type: "session.history"; payload: { sessionId: string; before?: SessionHistoryCursor; limit?: number } }
-  | { type: "permission.response"; payload: { sessionId: string; toolUseId: string; result: PermissionResult } };
+  | { type: "permission.response"; payload: { sessionId: string; toolUseId: string; result: PermissionResult } }
+  | { type: "agent.list"; payload: { cwd?: string } };

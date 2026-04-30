@@ -34,14 +34,16 @@ import { getCurrentApiConfig } from "./libs/claude-settings.js";
 import { preprocessImageAttachments } from "./libs/image-preprocessor.js";
 import { loadAgentRuleDocuments, saveUserAgentRuleDocument } from "./libs/agent-rule-docs.js";
 import type { ClientEvent, PromptAttachment, ServerEvent } from "./types.js";
-import { BrowserWorkbenchManager, type BrowserWorkbenchBounds } from "./browser-manager.js";
+import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkbenchEvent } from "./browser-manager.js";
 import { startDevBackendBridge, DEV_BACKEND_BRIDGE_PORT } from "./dev-backend-bridge.js";
 import "./libs/claude-settings.js";
 import { addServerEventListener } from "./ipc-handlers.js";
 
 let cleanupComplete = false;
 let mainWindow: BrowserWindow | null = null;
-let browserWorkbench: BrowserWorkbenchManager | null = null;
+const DEFAULT_BROWSER_WORKBENCH_SESSION_ID = "global";
+const browserWorkbenches = new Map<string, BrowserWorkbenchManager>();
+const browserWorkbenchEventListeners = new Set<(event: BrowserWorkbenchEvent) => void>();
 let stopDevBackendBridge: (() => void) | null = null;
 
 function buildBrowserWorkbenchFallbackState(): {
@@ -60,6 +62,37 @@ function buildBrowserWorkbenchFallbackState(): {
     canGoForward: false,
     annotationMode: false,
   };
+}
+
+function resolveBrowserWorkbenchSessionId(sessionId?: unknown): string {
+  return typeof sessionId === "string" && sessionId.trim()
+    ? sessionId.trim()
+    : DEFAULT_BROWSER_WORKBENCH_SESSION_ID;
+}
+
+function getBrowserWorkbench(sessionId?: unknown): BrowserWorkbenchManager | null {
+  if (!mainWindow) return null;
+
+  const resolvedSessionId = resolveBrowserWorkbenchSessionId(sessionId);
+  const existing = browserWorkbenches.get(resolvedSessionId);
+  if (existing) return existing;
+
+  const manager = new BrowserWorkbenchManager(mainWindow, resolvedSessionId);
+  manager.addEventListener((event) => {
+    for (const listener of browserWorkbenchEventListeners) {
+      listener(event);
+    }
+  });
+  browserWorkbenches.set(resolvedSessionId, manager);
+  return manager;
+}
+
+function closeAllBrowserWorkbenches(): void {
+  for (const manager of browserWorkbenches.values()) {
+    manager.close();
+  }
+  browserWorkbenches.clear();
+  browserWorkbenchEventListeners.clear();
 }
 
 function isIgnorableStreamError(error: unknown): error is NodeJS.ErrnoException {
@@ -189,8 +222,7 @@ function cleanup(): void {
   stopDevBackendBridge = null;
   setBrowserToolHost(null);
   setDesignToolHost(null);
-  browserWorkbench?.close();
-  browserWorkbench = null;
+  closeAllBrowserWorkbenches();
     cleanupAllSessions();
     stopSkillSyncScheduler();
     killViteDevServer();
@@ -365,53 +397,59 @@ app.on("ready", async () => {
         backgroundColor: "#FAF9F6",
         trafficLightPosition: { x: 15, y: 18 }
     });
-    browserWorkbench = new BrowserWorkbenchManager(mainWindow);
     setBrowserToolHost({
-      open: (url) => browserWorkbench?.open(url) ?? buildBrowserWorkbenchFallbackState(),
-      close: () => browserWorkbench?.close() ?? buildBrowserWorkbenchFallbackState(),
-      setBounds: (bounds) => browserWorkbench?.setBounds(bounds) ?? buildBrowserWorkbenchFallbackState(),
-      reload: () => browserWorkbench?.reload() ?? buildBrowserWorkbenchFallbackState(),
-      goBack: () => browserWorkbench?.goBack() ?? buildBrowserWorkbenchFallbackState(),
-      goForward: () => browserWorkbench?.goForward() ?? buildBrowserWorkbenchFallbackState(),
-      getState: () => browserWorkbench?.getState() ?? buildBrowserWorkbenchFallbackState(),
-      getConsoleLogs: (limit) => browserWorkbench?.getConsoleLogs(limit) ?? [],
-      extractPageSnapshot: async () => {
+      open: (sessionId, url) => getBrowserWorkbench(sessionId)?.open(url) ?? buildBrowserWorkbenchFallbackState(),
+      close: (sessionId) => getBrowserWorkbench(sessionId)?.close() ?? buildBrowserWorkbenchFallbackState(),
+      setBounds: (sessionId, bounds) => getBrowserWorkbench(sessionId)?.setBounds(bounds) ?? buildBrowserWorkbenchFallbackState(),
+      reload: (sessionId) => getBrowserWorkbench(sessionId)?.reload() ?? buildBrowserWorkbenchFallbackState(),
+      goBack: (sessionId) => getBrowserWorkbench(sessionId)?.goBack() ?? buildBrowserWorkbenchFallbackState(),
+      goForward: (sessionId) => getBrowserWorkbench(sessionId)?.goForward() ?? buildBrowserWorkbenchFallbackState(),
+      getState: (sessionId) => getBrowserWorkbench(sessionId)?.getState() ?? buildBrowserWorkbenchFallbackState(),
+      getConsoleLogs: (sessionId, limit) => getBrowserWorkbench(sessionId)?.getConsoleLogs(limit) ?? [],
+      extractPageSnapshot: async (sessionId) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
         if (!browserWorkbench) {
           return { success: false, error: "浏览器工作台尚未初始化。" };
         }
         return await browserWorkbench.extractPageSnapshot();
       },
-      captureVisible: async () => {
+      captureVisible: async (sessionId) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
         if (!browserWorkbench) {
           return { success: false, error: "浏览器工作台尚未初始化。" };
         }
         return await browserWorkbench.captureVisible();
       },
-      getDomStats: async () => {
+      getDomStats: async (sessionId) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
         if (!browserWorkbench) {
           return { success: false, error: "浏览器工作台尚未初始化。" };
         }
         return await browserWorkbench.getDomStats();
       },
-      queryNodes: async (input) => {
+      queryNodes: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
         if (!browserWorkbench) {
           return { success: false, error: "浏览器工作台尚未初始化。" };
         }
         return await browserWorkbench.queryNodes(input);
       },
-      inspectStyles: async (input) => {
+      inspectStyles: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
         if (!browserWorkbench) {
           return { success: false, error: "浏览器工作台尚未初始化。" };
         }
         return await browserWorkbench.inspectStyles(input);
       },
-      inspectAtPoint: async (point) => {
+      inspectAtPoint: async (sessionId, point) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
         if (!browserWorkbench) {
           return null;
         }
         return await browserWorkbench.inspectAtPoint(point);
       },
-      setAnnotationMode: async (enabled) => {
+      setAnnotationMode: async (sessionId, enabled) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
         if (!browserWorkbench) {
           return buildBrowserWorkbenchFallbackState();
         }
@@ -419,8 +457,9 @@ app.on("ready", async () => {
       },
     });
     setDesignToolHost({
-      getState: () => browserWorkbench?.getState() ?? buildBrowserWorkbenchFallbackState(),
-      captureVisible: async () => {
+      getState: (sessionId) => getBrowserWorkbench(sessionId)?.getState() ?? buildBrowserWorkbenchFallbackState(),
+      captureVisible: async (sessionId) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
         if (!browserWorkbench) {
           return { success: false, error: "浏览器工作台尚未初始化。" };
         }
@@ -523,20 +562,24 @@ app.on("ready", async () => {
               attachments,
             });
           },
-          openBrowserWorkbench: (url: string) => browserWorkbench!.open(url),
-          closeBrowserWorkbench: () => browserWorkbench!.close(),
-          setBrowserWorkbenchBounds: (bounds: BrowserWorkbenchBounds) => browserWorkbench!.setBounds(bounds),
-          reloadBrowserWorkbench: () => browserWorkbench!.reload(),
-          goBackBrowserWorkbench: () => browserWorkbench!.goBack(),
-          goForwardBrowserWorkbench: () => browserWorkbench!.goForward(),
-          getBrowserWorkbenchState: () => browserWorkbench!.getState(),
-          getBrowserWorkbenchConsoleLogs: (limit?: number) => browserWorkbench!.getConsoleLogs(limit),
-          captureBrowserWorkbenchVisible: async () => await browserWorkbench!.captureVisible(),
-          inspectBrowserWorkbenchAtPoint: async (point: { x: number; y: number }) => await browserWorkbench!.inspectAtPoint(point),
-          setBrowserWorkbenchAnnotationMode: async (enabled: boolean) => await browserWorkbench!.setAnnotationMode(enabled),
+          openBrowserWorkbench: (url: string, sessionId?: string) => getBrowserWorkbench(sessionId)!.open(url),
+          closeBrowserWorkbench: (sessionId?: string) => getBrowserWorkbench(sessionId)!.close(),
+          setBrowserWorkbenchBounds: (bounds: BrowserWorkbenchBounds, sessionId?: string) => getBrowserWorkbench(sessionId)!.setBounds(bounds),
+          reloadBrowserWorkbench: (sessionId?: string) => getBrowserWorkbench(sessionId)!.reload(),
+          goBackBrowserWorkbench: (sessionId?: string) => getBrowserWorkbench(sessionId)!.goBack(),
+          goForwardBrowserWorkbench: (sessionId?: string) => getBrowserWorkbench(sessionId)!.goForward(),
+          getBrowserWorkbenchState: (sessionId?: string) => getBrowserWorkbench(sessionId)!.getState(),
+          getBrowserWorkbenchConsoleLogs: (limit?: number, sessionId?: string) => getBrowserWorkbench(sessionId)!.getConsoleLogs(limit),
+          captureBrowserWorkbenchVisible: async (sessionId?: string) => await getBrowserWorkbench(sessionId)!.captureVisible(),
+          inspectBrowserWorkbenchAtPoint: async (point: { x: number; y: number }, sessionId?: string) => await getBrowserWorkbench(sessionId)!.inspectAtPoint(point),
+          clearBrowserWorkbenchAnnotations: async (sessionId?: string) => await getBrowserWorkbench(sessionId)!.clearAnnotations(),
+          setBrowserWorkbenchAnnotationMode: async (enabled: boolean, sessionId?: string) => await getBrowserWorkbench(sessionId)!.setAnnotationMode(enabled),
         },
         subscribeServerEvents: (listener) => addServerEventListener(listener as any),
-        subscribeBrowserEvents: (listener) => browserWorkbench!.addEventListener(listener as any),
+        subscribeBrowserEvents: (listener) => {
+          browserWorkbenchEventListeners.add(listener as any);
+          return () => browserWorkbenchEventListeners.delete(listener as any);
+        },
       });
       stopDevBackendBridge = () => bridge.stop();
     }
@@ -701,63 +744,63 @@ app.on("ready", async () => {
         }
     });
 
-    ipcMainHandle("browser-open", (_: IpcMainInvokeEvent, url: string) => {
-        return browserWorkbench!.open(url);
+    ipcMainHandle("browser-open", (_: IpcMainInvokeEvent, url: string, sessionId?: string) => {
+        return getBrowserWorkbench(sessionId)!.open(url);
     });
 
-    ipcMainHandle("browser-close", () => {
-        return browserWorkbench!.close();
+    ipcMainHandle("browser-close", (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return getBrowserWorkbench(sessionId)!.close();
     });
 
-    ipcMainHandle("browser-set-bounds", (_: IpcMainInvokeEvent, bounds: BrowserWorkbenchBounds) => {
-        return browserWorkbench!.setBounds(bounds);
+    ipcMainHandle("browser-set-bounds", (_: IpcMainInvokeEvent, bounds: BrowserWorkbenchBounds, sessionId?: string) => {
+        return getBrowserWorkbench(sessionId)!.setBounds(bounds);
     });
 
-    ipcMainHandle("browser-reload", () => {
-        return browserWorkbench!.reload();
+    ipcMainHandle("browser-reload", (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return getBrowserWorkbench(sessionId)!.reload();
     });
 
-    ipcMainHandle("browser-back", () => {
-        return browserWorkbench!.goBack();
+    ipcMainHandle("browser-back", (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return getBrowserWorkbench(sessionId)!.goBack();
     });
 
-    ipcMainHandle("browser-forward", () => {
-        return browserWorkbench!.goForward();
+    ipcMainHandle("browser-forward", (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return getBrowserWorkbench(sessionId)!.goForward();
     });
 
-    ipcMainHandle("browser-state", () => {
-        return browserWorkbench!.getState();
+    ipcMainHandle("browser-state", (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return getBrowserWorkbench(sessionId)!.getState();
     });
 
-    ipcMainHandle("browser-console-logs", (_: IpcMainInvokeEvent, limit?: number) => {
-        return browserWorkbench!.getConsoleLogs(limit);
+    ipcMainHandle("browser-console-logs", (_: IpcMainInvokeEvent, limit?: number, sessionId?: string) => {
+        return getBrowserWorkbench(sessionId)!.getConsoleLogs(limit);
     });
 
-    ipcMainHandle("browser-capture-visible", async () => {
-        return await browserWorkbench!.captureVisible();
+    ipcMainHandle("browser-capture-visible", async (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return await getBrowserWorkbench(sessionId)!.captureVisible();
     });
 
-    ipcMainHandle("browser-inspect-at-point", async (_: IpcMainInvokeEvent, point: { x: number; y: number }) => {
-        return await browserWorkbench!.inspectAtPoint(point);
+    ipcMainHandle("browser-inspect-at-point", async (_: IpcMainInvokeEvent, point: { x: number; y: number }, sessionId?: string) => {
+        return await getBrowserWorkbench(sessionId)!.inspectAtPoint(point);
     });
 
-    ipcMainHandle("browser-clear-annotations", async () => {
-        return await browserWorkbench!.clearAnnotations();
+    ipcMainHandle("browser-clear-annotations", async (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return await getBrowserWorkbench(sessionId)!.clearAnnotations();
     });
 
-    ipcMainHandle("browser-annotation-mode", async (_: IpcMainInvokeEvent, enabled: boolean) => {
-        return await browserWorkbench!.setAnnotationMode(enabled);
+    ipcMainHandle("browser-annotation-mode", async (_: IpcMainInvokeEvent, enabled: boolean, sessionId?: string) => {
+        return await getBrowserWorkbench(sessionId)!.setAnnotationMode(enabled);
     });
 
-    ipcMainHandle("browser-open-devtools", () => {
-        return browserWorkbench!.openDevTools();
+    ipcMainHandle("browser-open-devtools", (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return getBrowserWorkbench(sessionId)!.openDevTools();
     });
 
-    ipcMainHandle("browser-close-devtools", () => {
-        return browserWorkbench!.closeDevTools();
+    ipcMainHandle("browser-close-devtools", (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return getBrowserWorkbench(sessionId)!.closeDevTools();
     });
 
-    ipcMainHandle("browser-is-devtools-open", () => {
-        return browserWorkbench!.isDevToolsOpened();
+    ipcMainHandle("browser-is-devtools-open", (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return getBrowserWorkbench(sessionId)!.isDevToolsOpened();
     });
 })

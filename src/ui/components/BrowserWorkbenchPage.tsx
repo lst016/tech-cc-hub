@@ -80,7 +80,7 @@ export function BrowserWorkbenchPage({
   const syncBounds = useCallback(() => {
     if (!canUseBrowserView) return;
     if (!browserActive) {
-      void window.electron.setBrowserWorkbenchBounds({ x: 0, y: 0, width: 0, height: 0 });
+      void window.electron.setBrowserWorkbenchBounds({ x: 0, y: 0, width: 0, height: 0 }, sessionId ?? undefined);
       return;
     }
     const element = surfaceRef.current;
@@ -91,8 +91,8 @@ export function BrowserWorkbenchPage({
       y: rect.y,
       width: rect.width,
       height: rect.height,
-    });
-  }, [browserActive, canUseBrowserView]);
+    }, sessionId ?? undefined);
+  }, [browserActive, canUseBrowserView, sessionId]);
 
   const openUrl = useCallback(async (nextUrl = url) => {
     const targetUrl = normalizeWorkbenchUrl(nextUrl) ?? nextUrl.trim();
@@ -124,14 +124,14 @@ export function BrowserWorkbenchPage({
     syncBounds();
     setUrl(targetUrl);
     persistUrl(targetUrl);
-    const nextState = await window.electron.openBrowserWorkbench(targetUrl);
+    const nextState = await window.electron.openBrowserWorkbench(targetUrl, sessionId ?? undefined);
     setState(nextState);
     const finalUrl = nextState.url || targetUrl;
     setUrl(finalUrl);
     persistUrl(finalUrl);
     setStatusText(nextState.url ? "页面已打开" : "准备打开页面");
     setIsDevToolsOpen(false);
-  }, [hasBrowserRuntime, isPreviewRuntime, persistUrl, syncBounds, url]);
+  }, [hasBrowserRuntime, isPreviewRuntime, persistUrl, sessionId, syncBounds, url]);
 
   useEffect(() => {
     const sessionChanged = sessionIdRef.current !== sessionId;
@@ -160,6 +160,7 @@ export function BrowserWorkbenchPage({
 
   useEffect(() => {
     const unsubscribe = window.electron.onBrowserWorkbenchEvent((event) => {
+      if (event.sessionId && sessionId && event.sessionId !== sessionId) return;
       if (event.type === "browser.state") {
         setState(event.payload);
         if (event.payload.url) {
@@ -196,7 +197,7 @@ export function BrowserWorkbenchPage({
     });
 
     return unsubscribe;
-  }, [persistAnnotations, persistUrl]);
+  }, [persistAnnotations, persistUrl, sessionId]);
 
   useEffect(() => {
     const element = surfaceRef.current;
@@ -229,7 +230,7 @@ export function BrowserWorkbenchPage({
       return;
     }
     if (!browserActive) {
-      void window.electron.setBrowserWorkbenchBounds({ x: 0, y: 0, width: 0, height: 0 });
+      void window.electron.setBrowserWorkbenchBounds({ x: 0, y: 0, width: 0, height: 0 }, sessionId ?? undefined);
       return;
     }
     syncBounds();
@@ -249,19 +250,19 @@ export function BrowserWorkbenchPage({
       setStatusText(isPreviewRuntime ? "预览态不刷新 BrowserView" : "浏览器工作台尚未就绪");
       return;
     }
-    const nextState = await window.electron.reloadBrowserWorkbench();
+    const nextState = await window.electron.reloadBrowserWorkbench(sessionId ?? undefined);
     setState(nextState);
   };
 
   const handleBack = async () => {
     if (!canUseBrowserView) return;
-    const nextState = await window.electron.goBackBrowserWorkbench();
+    const nextState = await window.electron.goBackBrowserWorkbench(sessionId ?? undefined);
     setState(nextState);
   };
 
   const handleForward = async () => {
     if (!canUseBrowserView) return;
-    const nextState = await window.electron.goForwardBrowserWorkbench();
+    const nextState = await window.electron.goForwardBrowserWorkbench(sessionId ?? undefined);
     setState(nextState);
   };
 
@@ -274,7 +275,7 @@ export function BrowserWorkbenchPage({
       setStatusText("Codex 内置浏览器不能截图 Electron BrowserView");
       return;
     }
-    const result = await window.electron.captureBrowserWorkbenchVisible();
+    const result = await window.electron.captureBrowserWorkbenchVisible(sessionId ?? undefined);
     setStatusText(result.success && result.dataUrl ? "截图已捕获" : result.error || "截图失败");
   };
 
@@ -288,8 +289,8 @@ export function BrowserWorkbenchPage({
       return;
     }
     const nextState = isDevToolsOpen
-      ? await window.electron.closeBrowserWorkbenchDevTools()
-      : await window.electron.openBrowserWorkbenchDevTools();
+      ? await window.electron.closeBrowserWorkbenchDevTools(sessionId ?? undefined)
+      : await window.electron.openBrowserWorkbenchDevTools(sessionId ?? undefined);
     setIsDevToolsOpen(nextState.opened);
     setStatusText(nextState.opened ? "检查器已打开" : "检查器已关闭");
   };
@@ -303,7 +304,7 @@ export function BrowserWorkbenchPage({
       setStatusText("Codex 内置浏览器不能嵌套 Electron BrowserView 标注");
       return;
     }
-    const nextState = await window.electron.setBrowserWorkbenchAnnotationMode(!state.annotationMode);
+    const nextState = await window.electron.setBrowserWorkbenchAnnotationMode(!state.annotationMode, sessionId ?? undefined);
     setState(nextState);
     setStatusText(nextState.annotationMode ? "标注模式已开启" : "标注模式已关闭");
   };
@@ -318,8 +319,8 @@ export function BrowserWorkbenchPage({
     setIsDevToolsOpen(false);
     setStatusText("浏览器标签已关闭");
     if (hasBrowserRuntime) {
-      await window.electron.closeBrowserWorkbenchDevTools();
-      await window.electron.closeBrowserWorkbench();
+      await window.electron.closeBrowserWorkbenchDevTools(sessionId ?? undefined);
+      await window.electron.closeBrowserWorkbench(sessionId ?? undefined);
     }
   };
 

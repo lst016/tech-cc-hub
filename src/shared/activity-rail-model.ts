@@ -944,6 +944,57 @@ const READABLE_PLAN_HINT_PATTERN =
 const READABLE_PLAN_ITEM_ACTION_PATTERN =
   /(实现|创建|编写|生成|搭建|重构|优化|检查|验证|更新|补齐|修复|确认|读取|写入|安装|执行|配置|迁移|部署|提交|清理|拆解|处理|开发|分析|梳理|排查|调研|设计|构建|运行|重试)/i;
 
+function parseStructuredPlan(text: string): Array<{ index: number; title: string; detail: string }> | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+    const jsonMatch = trimmed.match(/\{[\s\S]*"steps"[\s\S]*\}|\{[\s\S]*"plan"[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    return parsePlanJson(jsonMatch[0]);
+  }
+  return parsePlanJson(trimmed);
+}
+
+function parsePlanJson(jsonText: string): Array<{ index: number; title: string; detail: string }> | null {
+  try {
+    const parsed = JSON.parse(jsonText);
+    if (!parsed || typeof parsed !== "object") return null;
+
+    const steps: unknown[] =
+      Array.isArray(parsed)
+        ? parsed
+        : Array.isArray((parsed as Record<string, unknown>).steps)
+          ? (parsed as Record<string, unknown>).steps as unknown[]
+          : Array.isArray((parsed as Record<string, unknown>).plan)
+            ? (parsed as Record<string, unknown>).plan as unknown[]
+            : [];
+
+    if (steps.length < 2) return null;
+
+    const result: Array<{ index: number; title: string; detail: string }> = [];
+    for (let i = 0; i < steps.length; i++) {
+      const item = steps[i];
+      if (!item || typeof item !== "object") return null;
+
+      const record = item as Record<string, unknown>;
+      const title = typeof record.title === "string" ? record.title.trim() : "";
+      const description = typeof record.description === "string" ? record.description.trim() : "";
+      const step = typeof record.step === "number" ? record.step : i + 1;
+
+      if (!title) return null;
+
+      result.push({
+        index: step,
+        title,
+        detail: description || title,
+      });
+    }
+
+    return result.length >= 2 ? result : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseExplicitPlan(text: string): Array<{ index: number; title: string }> {
   const normalized = text.replace(/\r/g, "").replace(/\u5213n/g, "\n");
   type PlanCandidate = { index: number; title: string; start: number };
@@ -1805,7 +1856,8 @@ export function buildActivityRailModel(
           const text = content.text.trim();
           if (!text) continue;
           sequence += 1;
-          const explicitPlan = parseExplicitPlan(text);
+          const structuredPlan = parseStructuredPlan(text);
+          const explicitPlan = structuredPlan ?? parseExplicitPlan(text);
 
           if (explicitPlan.length >= 2) {
             const planTimelineId = `${assistant.uuid}-plan-${sequence}`;
@@ -1853,7 +1905,7 @@ export function buildActivityRailModel(
                 index: step.index,
                 indexLabel: `Step ${step.index}`,
                 title: step.title,
-                detail: step.title,
+                detail: "detail" in step ? String(step.detail) : step.title,
                 round: Math.max(round, 1),
                 kind: classifyStageKindFromText(step.title),
                 sourceTimelineId: planTimelineId,

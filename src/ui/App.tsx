@@ -541,9 +541,20 @@ function App() {
 
     const nextSession = activeSession ?? archivedSessions[activeSessionId];
     const fallbackProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
+    const availableModels = fallbackProfile
+      ? Array.from(
+          new Set([
+            fallbackProfile.model,
+            fallbackProfile.expertModel,
+            ...(fallbackProfile.models ?? []).map((item) => item.name),
+          ]),
+        ).map((model) => model?.trim() ?? "").filter(Boolean)
+      : [];
     const selectedSessionModel = nextSession?.model?.trim();
     const fallbackModel = fallbackProfile?.model?.trim();
-    const nextModel = selectedSessionModel || fallbackModel;
+    const nextModel = selectedSessionModel && availableModels.includes(selectedSessionModel)
+      ? selectedSessionModel
+      : fallbackModel;
     if (!nextModel) {
       return;
     }
@@ -826,7 +837,7 @@ function App() {
     }
 
     const activeProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
-    const selectedModel = runtimeModel.trim() || resolveSessionRuntimeModel() || activeProfile?.model?.trim();
+    const selectedModel = runtimeModel.trim() || activeProfile?.model?.trim() || resolveSessionRuntimeModel();
     if (!selectedModel) {
       setGlobalError("当前没有可用模型，请先在设置里启用配置。");
       return;

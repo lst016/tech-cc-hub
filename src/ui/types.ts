@@ -1,6 +1,6 @@
 import type { SDKMessage, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
-import type { PromptLedgerMessage } from "../shared/prompt-ledger";
-import type { SessionWorkflowState, WorkflowScope, WorkflowSpecDocument } from "../shared/workflow-markdown";
+import type { PromptLedgerMessage } from "../shared/prompt-ledger.js";
+import type { SessionWorkflowState, WorkflowScope, WorkflowSpecDocument } from "../shared/workflow-markdown.js";
 
 export type ApiModelConfigProfile = {
   name: string;
@@ -178,7 +178,8 @@ export type ServerEvent =
   | { type: "session.unarchived"; payload: { sessionId: string; session?: SessionInfo } }
   | { type: "session.deleted"; payload: { sessionId: string } }
   | { type: "permission.request"; payload: { sessionId: string; toolUseId: string; toolName: string; input: unknown } }
-  | { type: "runner.error"; payload: { sessionId?: string; message: string } };
+  | { type: "runner.error"; payload: { sessionId?: string; message: string } }
+  | { type: "agent.list"; payload: { agents: Array<{ id: string; name: string; description?: string; scope: string }> } };
 
 // Client -> Server events
 export type ClientEvent =
@@ -195,4 +196,5 @@ export type ClientEvent =
   | { type: "session.delete"; payload: { sessionId: string } }
   | { type: "session.list"; payload?: { archived?: boolean } }
   | { type: "session.history"; payload: { sessionId: string; before?: SessionHistoryCursor; limit?: number } }
-  | { type: "permission.response"; payload: { sessionId: string; toolUseId: string; result: PermissionResult } };
+  | { type: "permission.response"; payload: { sessionId: string; toolUseId: string; result: PermissionResult } }
+  | { type: "agent.list"; payload: { cwd?: string } };

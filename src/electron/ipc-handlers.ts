@@ -1,5 +1,7 @@
 import { app, BrowserWindow } from "electron";
-import { join } from "path";
+import { existsSync, readdirSync, readFileSync } from "fs";
+import { homedir } from "os";
+import { basename, dirname, extname, isAbsolute, join } from "path";
 
 import { createStoredUserPromptMessage, sanitizePromptAttachmentsForStorage } from "../shared/attachments.js";
 import { buildPromptLedgerMessage, type PromptLedgerMessage, type PromptLedgerSource } from "../shared/prompt-ledger.js";
@@ -743,7 +745,7 @@ export async function handleClientEvent(event: ClientEvent) {
           prompt,
           attachments: attachmentsForRun,
           session,
-          historyMessages: history?.messages ?? [],
+          historyMessages: canUseRemoteResume ? history?.messages ?? [] : [],
           model: selectedModel,
           continuationSummary: continuationPayload?.summaryText,
         }),
@@ -885,6 +887,38 @@ export async function handleClientEvent(event: ClientEvent) {
     if (pending) {
       pending.resolve(event.payload.result);
     }
+    return;
+  }
+
+  if (event.type === "agent.list") {
+    const agents: Array<{ id: string; name: string; description?: string; scope: string }> = [];
+    const cwd = event.payload.cwd?.trim();
+    const projectRoot = cwd ? join(cwd, ".claude", "agents") : undefined;
+
+    for (const [scope, root] of [["user", join(homedir(), ".claude", "agents")], ["project", projectRoot]] as const) {
+      if (!root) continue;
+      try {
+        const entries = readdirSync(root, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isFile()) continue;
+          const ext = extname(entry.name).toLowerCase();
+          const id = basename(entry.name, ext);
+          const name = id;
+          if (ext === ".json") {
+            try {
+              const parsed = JSON.parse(readFileSync(join(root, entry.name), "utf8")) as { name?: string; description?: string; enabled?: boolean };
+              if (parsed.enabled === false) continue;
+              agents.push({ id, name: parsed.name?.trim() || name, description: parsed.description?.trim(), scope });
+            } catch { /* skip invalid JSON */ }
+          } else if (ext === ".md") {
+            agents.push({ id, name, scope });
+          }
+        }
+      } catch { /* directory not found */ }
+    }
+
+    emit({ type: "agent.list", payload: { agents } });
+    return;
   }
 }
 

@@ -337,19 +337,25 @@ async function fileToAttachment(file: File): Promise<PromptAttachment> {
 export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   const prompt = useAppStore((state) => state.prompt);
   const browserAnnotations = useAppStore((state) => state.browserAnnotations);
+  const browserWorkbenchBySessionId = useAppStore((state) => state.browserWorkbenchBySessionId);
   const cwd = useAppStore((state) => state.cwd);
   const apiConfigSettings = useAppStore((state) => state.apiConfigSettings);
   const runtimeModel = useAppStore((state) => state.runtimeModel);
   const reasoningMode = useAppStore((state) => state.reasoningMode);
   const permissionMode = useAppStore((state) => state.permissionMode);
+  const selectedAgentId = useAppStore((state) => state.selectedAgentId);
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const activeSession = useAppStore((state) => (state.activeSessionId ? (state.sessions[state.activeSessionId] ?? state.archivedSessions[state.activeSessionId]) : undefined));
   const setPrompt = useAppStore((state) => state.setPrompt);
   const clearBrowserAnnotations = useAppStore((state) => state.clearBrowserAnnotations);
+  const setBrowserWorkbenchAnnotations = useAppStore((state) => state.setBrowserWorkbenchAnnotations);
   const setPendingStart = useAppStore((state) => state.setPendingStart);
   const setGlobalError = useAppStore((state) => state.setGlobalError);
 
   const isRunning = activeSession?.status === "running";
+  const activeBrowserAnnotations = activeSessionId
+    ? browserWorkbenchBySessionId[activeSessionId]?.annotations ?? browserAnnotations
+    : browserAnnotations;
   const slashCommands = useMemo(() => activeSession?.slashCommands ?? [], [activeSession?.slashCommands]);
   const activeProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
   const activeSessionModel = activeSession?.model?.trim();
@@ -382,7 +388,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   }, [slashCommands]);
 
   const buildRuntimeOverrides = useCallback((): RuntimeOverrides | null => {
-    const selectedModel = runtimeModel.trim() || resolveSessionRuntimeModel();
+    const selectedModel = runtimeModel.trim() || activeProfile?.model?.trim() || resolveSessionRuntimeModel();
     if (!selectedModel) {
       setGlobalError("请先在设置里启用配置，并至少提供一个模型。");
       return null;
@@ -397,7 +403,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
         ).filter(Boolean)
       : [];
 
-    if (availableModels.length > 0 && !availableModels.includes(selectedModel) && !activeSessionModel) {
+    if (availableModels.length > 0 && !availableModels.includes(selectedModel)) {
       setGlobalError("当前选择的模型不在已启用配置的模型列表里，请重新选择。");
       return null;
     }
@@ -406,8 +412,9 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
       model: selectedModel,
       reasoningMode,
       permissionMode,
+      agentId: selectedAgentId || undefined,
     };
-  }, [activeProfile, activeSessionModel, permissionMode, reasoningMode, resolveSessionRuntimeModel, runtimeModel, setGlobalError]);
+  }, [activeProfile, activeSessionModel, permissionMode, reasoningMode, resolveSessionRuntimeModel, runtimeModel, selectedAgentId, setGlobalError]);
 
   const prepareAttachmentsForDispatch = useCallback(async (
     promptValue: string,
@@ -420,7 +427,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
 
     const hasImageAttachments = attachments.some((attachment) => attachment.kind === "image");
     const imageModel = activeProfile?.imageModel?.trim();
-    const selectedModel = runtimeModel.trim() || resolveSessionRuntimeModel();
+    const selectedModel = runtimeModel.trim() || activeProfile?.model?.trim() || resolveSessionRuntimeModel();
 
     if (!hasImageAttachments) {
       return attachments;
@@ -443,7 +450,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
     }
 
     return result.attachments;
-  }, [activeProfile?.imageModel, activeSessionModel, resolveSessionRuntimeModel, runtimeModel, setGlobalError]);
+  }, [activeProfile?.imageModel, activeProfile?.model, activeSessionModel, resolveSessionRuntimeModel, runtimeModel, setGlobalError]);
 
   const sendPromptDraft = useCallback(async (
     promptValue: string,
@@ -493,12 +500,17 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   }, [activeSession, activeSessionId, buildRuntimeOverrides, cwd, prepareAttachmentsForDispatch, sendEvent, setGlobalError, setPendingStart, setPrompt, validatePromptDraft]);
 
   const handleSend = useCallback((attachments: PromptAttachment[] = []) => {
-    const promptWithAnnotations = mergePromptWithBrowserAnnotations(prompt, browserAnnotations);
+    const promptWithAnnotations = mergePromptWithBrowserAnnotations(prompt, activeBrowserAnnotations);
     return sendPromptDraft(promptWithAnnotations, attachments).then((sent) => {
-      if (sent) clearBrowserAnnotations();
+      if (sent) {
+        if (activeSessionId) {
+          setBrowserWorkbenchAnnotations(activeSessionId, []);
+        }
+        clearBrowserAnnotations();
+      }
       return sent;
     });
-  }, [browserAnnotations, clearBrowserAnnotations, prompt, sendPromptDraft]);
+  }, [activeBrowserAnnotations, activeSessionId, clearBrowserAnnotations, prompt, sendPromptDraft, setBrowserWorkbenchAnnotations]);
 
   const handleStop = useCallback(() => {
     if (!activeSessionId) return;
@@ -531,19 +543,20 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
     setGlobalError(null);
   }, [cwd, prompt, sendEvent, sendPromptDraft, setGlobalError, setPendingStart]);
 
-  return {
-    prompt,
-    setPrompt,
-    isRunning,
-    handleSend,
-    handleStop,
-    handleStartFromModal,
-    slashCommands,
-    activeSessionId,
-    sendPromptDraft,
-    validatePromptDraft,
-  };
-}
+    return {
+      prompt,
+      setPrompt,
+      isRunning,
+      handleSend,
+      handleStop,
+      handleStartFromModal,
+      slashCommands,
+      activeSessionId,
+      browserAnnotations: activeBrowserAnnotations,
+      sendPromptDraft,
+      validatePromptDraft,
+    };
+  }
 
 export function PromptInput({
   sendEvent,
@@ -552,15 +565,18 @@ export function PromptInput({
   leftOffset = 320,
   rightOffset = 340,
 }: PromptInputProps) {
-  const { prompt, setPrompt, isRunning, handleStop, slashCommands, activeSessionId, sendPromptDraft, validatePromptDraft } = usePromptActions(sendEvent);
-  const browserAnnotations = useAppStore((state) => state.browserAnnotations);
+  const { prompt, setPrompt, isRunning, handleStop, slashCommands, activeSessionId, browserAnnotations, sendPromptDraft, validatePromptDraft } = usePromptActions(sendEvent);
   const setBrowserAnnotations = useAppStore((state) => state.setBrowserAnnotations);
+  const setBrowserWorkbenchAnnotations = useAppStore((state) => state.setBrowserWorkbenchAnnotations);
   const clearBrowserAnnotations = useAppStore((state) => state.clearBrowserAnnotations);
   const apiConfigSettings = useAppStore((state) => state.apiConfigSettings);
   const runtimeModel = useAppStore((state) => state.runtimeModel);
   const setRuntimeModel = useAppStore((state) => state.setRuntimeModel);
   const reasoningMode = useAppStore((state) => state.reasoningMode);
   const setReasoningMode = useAppStore((state) => state.setReasoningMode);
+  const availableAgents = useAppStore((state) => state.availableAgents);
+  const selectedAgentId = useAppStore((state) => state.selectedAgentId);
+  const setSelectedAgentId = useAppStore((state) => state.setSelectedAgentId);
   const permissionMode = useAppStore((state) => state.permissionMode);
   const setPermissionMode = useAppStore((state) => state.setPermissionMode);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
@@ -614,10 +630,13 @@ export function PromptInput({
   const clearComposer = useCallback(() => {
     setPrompt("");
     setAttachments([]);
+    if (activeSessionId) {
+      setBrowserWorkbenchAnnotations(activeSessionId, []);
+    }
     clearBrowserAnnotations();
-    void window.electron.clearBrowserWorkbenchAnnotations?.();
+    void window.electron.clearBrowserWorkbenchAnnotations?.(activeSessionId ?? undefined);
     setShowSlashBrowser(false);
-  }, [clearBrowserAnnotations, setPrompt]);
+  }, [activeSessionId, clearBrowserAnnotations, setBrowserWorkbenchAnnotations, setPrompt]);
 
   const removeQueuedDraft = useCallback((queueId: string) => {
     if (!activeSessionId) return;
@@ -1003,7 +1022,14 @@ export function PromptInput({
                   <button
                     type="button"
                     className="ml-1 rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
-                    onClick={() => setBrowserAnnotations(browserAnnotations.filter((item) => item.id !== annotation.id))}
+                    onClick={() => {
+                      const nextAnnotations = browserAnnotations.filter((item) => item.id !== annotation.id);
+                      if (activeSessionId) {
+                        setBrowserWorkbenchAnnotations(activeSessionId, nextAnnotations);
+                      } else {
+                        setBrowserAnnotations(nextAnnotations);
+                      }
+                    }}
                     aria-label={`绉婚櫎娴忚鍣ㄦ壒娉?${index + 1}`}
                   >
                     <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1017,7 +1043,13 @@ export function PromptInput({
               <button
                 type="button"
                 className="inline-flex h-10 items-center rounded-full border border-black/8 bg-white px-3 text-xs font-semibold text-muted transition hover:bg-black/5 hover:text-ink-700"
-                onClick={clearBrowserAnnotations}
+                onClick={() => {
+                  if (activeSessionId) {
+                    setBrowserWorkbenchAnnotations(activeSessionId, []);
+                  } else {
+                    clearBrowserAnnotations();
+                  }
+                }}
               >
                 娓呯┖
               </button>
@@ -1089,6 +1121,18 @@ export function PromptInput({
           </button>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-black/6 pt-3">
+          <InlineDropdown
+            label="Agent"
+            value={selectedAgentId}
+            disabled={disabled || availableAgents.length === 0}
+            onChange={setSelectedAgentId}
+            minWidthClass="min-w-[180px]"
+            options={
+              availableAgents.length === 0
+                ? [{ value: "", label: "默认" }]
+                : [{ value: "", label: "默认" }, ...availableAgents.map((a) => ({ value: a.id, label: a.name }))]
+            }
+          />
           <InlineDropdown
             label="模型"
             value={runtimeModel}

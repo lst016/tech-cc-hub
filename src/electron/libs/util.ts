@@ -35,6 +35,11 @@ export const generateSessionTitle = async (userIntent: string | null) => {
   // Get the Claude Code path when needed, not at module load time
   const claudeCodePath = getClaudeCodePath();
   // Get fresh env each time to ensure latest API config is used
+  const apiConfig = getCurrentApiConfig();
+  if (!apiConfig?.model?.trim()) {
+    const words = trimmedIntent.split(/\s+/).slice(0, 5);
+    return words.join(" ").toUpperCase() + (trimmedIntent.split(/\s+/).length > 5 ? "..." : "");
+  }
   const currentEnv = getEnhancedEnv();
 
   try {
@@ -42,7 +47,7 @@ export const generateSessionTitle = async (userIntent: string | null) => {
       `please analynis the following user input to generate a short but clearly title to identify this conversation theme:
       ${trimmedIntent}
       directly output the title, do not include any other content`, {
-      model: getCurrentApiConfig()?.model || "claude-sonnet",
+      model: apiConfig.model,
       env: currentEnv,
       pathToClaudeCodeExecutable: claudeCodePath,
     });

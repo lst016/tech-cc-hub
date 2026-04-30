@@ -74,6 +74,8 @@ interface AppState {
   showSettingsModal: boolean;
   historyRequested: Set<string>;
   apiConfigChecked: boolean;
+  availableAgents: Array<{ id: string; name: string; description?: string; scope: string }>;
+  selectedAgentId: string;
 
   setPrompt: (prompt: string) => void;
   setBrowserAnnotations: (annotations: BrowserWorkbenchAnnotation[]) => void;
@@ -92,6 +94,7 @@ interface AppState {
   setShowSettingsModal: (show: boolean) => void;
   setActiveSessionId: (id: string | null) => void;
   setApiConfigChecked: (checked: boolean) => void;
+  setSelectedAgentId: (id: string) => void;
   markHistoryRequested: (sessionId: string) => void;
   resolvePermissionRequest: (sessionId: string, toolUseId: string) => void;
   handleServerEvent: (event: ServerEvent) => void;
@@ -250,6 +253,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   showSettingsModal: false,
   historyRequested: new Set(),
   apiConfigChecked: false,
+  availableAgents: [],
+  selectedAgentId: "",
 
   setPrompt: (prompt) => set({ prompt }),
   setBrowserAnnotations: (browserAnnotations) => set({ browserAnnotations }),
@@ -316,6 +321,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setShowSettingsModal: (showSettingsModal) => set({ showSettingsModal }),
   setActiveSessionId: (id) => set({ activeSessionId: id }),
   setApiConfigChecked: (apiConfigChecked) => set({ apiConfigChecked }),
+  setSelectedAgentId: (selectedAgentId) => set({ selectedAgentId }),
 
   markHistoryRequested: (sessionId) => {
     set((state) => {
@@ -728,6 +734,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       case "runner.error": {
         set({ globalError: event.payload.message });
+        break;
+      }
+
+      case "agent.list": {
+        set({ availableAgents: event.payload.agents });
         break;
       }
     }

@@ -25,8 +25,8 @@ export const DESIGN_TOOL_NAMES = [
 ] as const;
 
 export type DesignToolHost = {
-  captureVisible: () => Promise<{ success: boolean; dataUrl?: string; error?: string }>;
-  getState: () => BrowserWorkbenchState;
+  captureVisible: (sessionId: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>;
+  getState: (sessionId: string) => BrowserWorkbenchState;
 };
 
 type ImageSize = {
@@ -46,7 +46,7 @@ const DEFAULT_THRESHOLD = 24;
 const DEFAULT_LABEL = "capture";
 
 let designHost: DesignToolHost | null = null;
-let designMcpServer: McpSdkServerConfigWithInstance | null = null;
+const designMcpServersBySessionId = new Map<string, McpSdkServerConfigWithInstance>();
 
 // 设计工具复用 BrowserView 截图能力，但独立存储图片文件和 diff，避免把大图塞进模型上下文。
 export function setDesignToolHost(host: DesignToolHost | null): void {
@@ -131,9 +131,9 @@ function assertReasonableSize(size: ImageSize, label: string): void {
 }
 
 // 当前版本先支持“本地参考图路径”；后续接 Figma API 时，只需要把参考图导出到同一目录再复用 compareImages。
-async function captureCurrentView(label?: string): Promise<CapturedImage & { state: BrowserWorkbenchState }> {
+async function captureCurrentView(sessionId: string, label?: string): Promise<CapturedImage & { state: BrowserWorkbenchState }> {
   const host = getHost();
-  const capture = await host.captureVisible();
+  const capture = await host.captureVisible(sessionId);
   if (!capture.success || !capture.dataUrl) {
     throw new Error(capture.error || "当前 BrowserView 截图失败。");
   }
@@ -146,7 +146,7 @@ async function captureCurrentView(label?: string): Promise<CapturedImage & { sta
   return {
     path,
     size: image.getSize(),
-    state: host.getState(),
+    state: host.getState(sessionId),
   };
 }
 
@@ -320,9 +320,11 @@ function compareImages(input: {
   };
 }
 
-export function getDesignMcpServer(): McpSdkServerConfigWithInstance {
-  if (designMcpServer) {
-    return designMcpServer;
+export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWithInstance {
+  const resolvedSessionId = sessionId.trim() || "global";
+  const cachedServer = designMcpServersBySessionId.get(resolvedSessionId);
+  if (cachedServer) {
+    return cachedServer;
   }
 
   const captureTool = tool(
@@ -333,10 +335,11 @@ export function getDesignMcpServer(): McpSdkServerConfigWithInstance {
     },
     async (input, _extra) => {
       try {
-        const capture = await captureCurrentView(input.label);
+        const capture = await captureCurrentView(resolvedSessionId, input.label);
         return toTextToolResult({
           action: "design_capture_current_view",
           success: true,
+          sessionId: resolvedSessionId,
           capture,
         });
       } catch (error) {
@@ -402,7 +405,7 @@ export function getDesignMcpServer(): McpSdkServerConfigWithInstance {
     },
     async (input, _extra) => {
       try {
-        const capture = await captureCurrentView(input.label);
+        const capture = await captureCurrentView(resolvedSessionId, input.label);
         const comparison = compareImages({
           referenceImagePath: input.referenceImagePath,
           candidateImagePath: capture.path,
@@ -413,6 +416,7 @@ export function getDesignMcpServer(): McpSdkServerConfigWithInstance {
         return toTextToolResult({
           action: "design_compare_current_view",
           success: true,
+          sessionId: resolvedSessionId,
           state: capture.state,
           comparison,
         });
@@ -460,11 +464,12 @@ export function getDesignMcpServer(): McpSdkServerConfigWithInstance {
     },
   );
 
-  designMcpServer = createSdkMcpServer({
+  const designMcpServer = createSdkMcpServer({
     name: DESIGN_TOOLS_SERVER_NAME,
     version: DESIGN_MCP_SERVER_VERSION,
     tools: [captureTool, inspectImageTool, compareTool, compareImagesTool],
   });
 
+  designMcpServersBySessionId.set(resolvedSessionId, designMcpServer);
   return designMcpServer;
 }

@@ -781,8 +781,6 @@ function normalizeModelConfig(input: string | ApiModelConfig | null | undefined)
     }
     return {
       name,
-      contextWindow: DEFAULT_CONTEXT_WINDOW,
-      compressionThresholdPercent: 70,
     };
   }
 
@@ -797,8 +795,8 @@ function normalizeModelConfig(input: string | ApiModelConfig | null | undefined)
 
   return {
     name,
-    contextWindow: normalizePositiveInteger(input.contextWindow) ?? DEFAULT_CONTEXT_WINDOW,
-    compressionThresholdPercent: normalizePercent(input.compressionThresholdPercent) ?? 70,
+    contextWindow: normalizePositiveInteger(input.contextWindow),
+    compressionThresholdPercent: normalizePercent(input.compressionThresholdPercent),
   };
 }
 
@@ -814,12 +812,16 @@ function dedupeModelConfigs(inputs: Array<string | ApiModelConfig | null | undef
     const previous = deduped.get(model.name);
     deduped.set(model.name, {
       name: model.name,
-      contextWindow: model.contextWindow ?? previous?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
-      compressionThresholdPercent: model.compressionThresholdPercent ?? previous?.compressionThresholdPercent ?? 70,
+      contextWindow: model.contextWindow ?? previous?.contextWindow,
+      compressionThresholdPercent: model.compressionThresholdPercent ?? previous?.compressionThresholdPercent,
     });
   }
 
-  return Array.from(deduped.values());
+  return Array.from(deduped.values()).map((model) => ({
+    ...model,
+    contextWindow: model.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+    compressionThresholdPercent: model.compressionThresholdPercent ?? 70,
+  }));
 }
 
 function normalizePositiveInteger(value: number | null | undefined): number | undefined {

@@ -173,82 +173,62 @@ npm install
 - [架构文档](doc/10-architecture/10-系统上下文图.md)
 - [开发规范](doc/40-product/1.0.0/40-delivery/52-前端工程最佳实践.md)
 
-## 当前接力上下文（2026-04-20）
+## 当前接力上下文（2026-04-30）
 
 这个区块用于在新窗口里快速接手当前工作，优先看这里再开始改代码。
 
 ### 当前主线
 
-- 近期重点在做右侧“执行轨迹 / Agent 执行分析”体验，不是普通聊天区。
-- 目标是把右侧栏做成可复盘的 agent workbench：看任务级步骤、原子节点、指标、上下文分布、节点详情。
-- 用户对“默认卡片太大、信息不聚焦、详情展示不合理”非常敏感，偏好高密度、可分析、中文 UI。
+- 近期重点在做右侧”执行轨迹 / Agent 执行分析”体验。
+- 目标是把右侧栏做成可复盘的 agent workbench。
+- **主要迭代计划文档**: `doc/40-product/1.0.0/40-delivery/68-迭代计划-SDK能力进化与右栏深化.md`
 
-### 已完成的右栏改造
+### 迭代计划进度总览
 
-- 节点详情不再贴在底部，而是点节点后在右侧拉出二级详情抽屉。
-- 增加了任务级步骤视图，会从 AI 回复里的 `1/2/3/4 step` 之类计划抽任务步骤。
-- 增加了“上下文分布”弹窗，用来看 `用户提示 / AI 计划 / 工具输入 / 工具输出 / 最终结果 / 附件` 的占比。
-- 指标展示改成单行表格，字段为：`输入 | 上下文 | 输出 | 耗时 | 成败`。
-- 工具节点详情已从“直接糊 JSON”改成“工具输入 / 工具输出”结构化展示，优先显示摘要和字段表，再按需展开原始内容。
+- Phase 1 (SDK 新能力接入): **已完成** — `agentProgressSummaries`、`forwardSubagentText`、`updatedToolOutput` 迁移
+- Phase 2 (ActivityRail 中间过程可视化): **已完成** — 进度节点、进行中动画、子 Agent 父任务跟踪
+  - **最新 Bug 修复**: `task_updated` 完成后 `status` 未覆写导致”运行中任务”区块不消失。修复在 `activity-rail-model.ts:2136` 直接覆写 `existing.metrics.status`
+- Phase 3 (结构化输出替换正则解析): **未开始** — 2 个 task，预计 1-2 天
+- Phase 4 (体验打磨): **未开始** — 3 个 task，预计 2-3 天
+
+### 当前待办（新会话第一件事）
+
+1. **Push 代码**: commit `46cfae5` 已就绪但未推到远端，需要在 Git Bash 里 `git push origin main`
+2. **启动验证**: `npm run dev` 后确认 `task_updated` 状态修复生效（执行完后运行中任务区块消失）
+3. **Phase 3 开始**: 见迭代计划文档 Task 3.1 / 3.2
+
+### Git 状态
+
+- 当前分支: `main`
+- 最新 commit: `46cfae5` — feat: Phase 2 agent progress visualization + iteration plan doc
+- 未推送到远端
+- 未跟踪文件: `_push_temp.bat`、`skills/`
+- 工作区有 `patches/` 下的旧 patch 删除（未 commit）
 
 ### 最近主要修改文件
 
-- `src/ui/components/ActivityRail.tsx`
-- `src/shared/activity-rail-model.ts`
-- `src/electron/activity-rail-model.test.ts`
-- 与指标时间相关的配套改动还涉及：
-  - `src/electron/libs/session-store.ts`
-  - `src/electron/ipc-handlers.ts`
-  - `src/electron/types.ts`
-  - `src/ui/store/useAppStore.ts`
+- `src/shared/activity-rail-model.ts` — Phase 2 核心：`task_progress`/`task_updated` 节点类型、`mergeMetrics`、状态覆写
+- `src/electron/activity-rail-model.test.ts` — 7 个测试全部通过
+- `src/ui/components/ActivityRail.tsx` — 进行中脉冲动画、`activeAgentNodes` 过滤
+- `src/electron/libs/runner.ts` — Phase 1 新能力开关（`agentProgressSummaries`、`forwardSubagentText`）、`updatedToolOutput` 迁移
+- `doc/40-product/1.0.0/40-delivery/68-迭代计划-SDK能力进化与右栏深化.md`
 
-### 当前最新问题与判断
+### 新窗口接手建议
 
-- 用户反馈：节点详情里“展开原始输入 / 展开原始返回”看起来像空白。
-- 当前判断的根因是样式问题，不是数据没传到：
-  - 详情原始内容区域之前用了 `bg-ink-950`
-  - 项目主题里没有这个颜色类，导致背景没有生效
-  - 同时文字使用了浅色，视觉上接近“白字贴白底 / 透明底”
-- 已经把这块改成项目真实存在的深色背景 `bg-ink-900`，并补了边框与阴影，理论上应恢复可读性。
+1. 先用 Git Bash `git push origin main` 推送当前代码。
+2. 读 `doc/40-product/1.0.0/40-delivery/68-迭代计划-SDK能力进化与右栏深化.md` 了解全貌。
+3. 优先开始 Phase 3 Task 3.1：在 `src/electron/libs/runner.ts` 按场景启用 `outputFormat`。
+4. `npm run test:activity-rail-model` 始终是新改动后第一步验证。
 
-### 当前状态口径
-
-- 模型层和结构化详情测试是通过的。
-- `eslint` 和 `build` 是通过的。
-- 但“原始输入 / 原始返回”这块样式修复后，仍建议在 Electron 真窗口里重新展开一次确认视觉结果，不要只信构建结果。
-- 如果用户继续说“还是空的”，优先检查：
-  - 当前窗口是否拿到热更新
-  - `dist-react` 里的样式类是否已更新
-  - 详情抽屉中原始内容区的实际 DOM class 与计算样式
-
-### 最近验证命令
+### 验证命令
 
 ```bash
 npm run transpile:electron
 node --test dist-electron/electron/activity-rail-model.test.js
-npx eslint src/ui/components/ActivityRail.tsx src/shared/activity-rail-model.ts src/electron/activity-rail-model.test.ts
 npm run build
+npm run dev
 ```
 
-### 新窗口接手建议
-
-1. 先看 `src/ui/components/ActivityRail.tsx` 的详情抽屉和原始内容渲染。
-2. 再看 `src/shared/activity-rail-model.ts` 里 `detailSections`、`metrics`、`contextChars` 的生成逻辑。
-3. 启动真窗口后，重点人工验证：
-   - 节点指标是否是一行表格
-   - 详情是否在右侧抽屉，不在底部
-   - `工具输入 / 工具输出` 是否有结构化内容
-   - “展开原始输入 / 返回”是否真正可读
-4. 若继续优化，优先方向是：
-   - `Bash / Read / Edit` 做更人话的摘要
-   - 工具输出支持更好的折叠与截断
-   - 上下文分布与节点详情之间增加联动跳转
-
-### 注意事项
-
-- 当前 worktree 很脏，存在不少与本轮无关的修改和未跟踪文件，不要做清理式回滚。
-- 这个项目以 Electron 真窗口验收为准，右栏视觉问题不要只靠单测判断。
-- UI 文案默认继续保持简体中文。
 
 ## Claude 项目 Memory 默认规则
 

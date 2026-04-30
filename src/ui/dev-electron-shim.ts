@@ -34,13 +34,24 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
   let sessionStatus: "idle" | "running" | "completed" = "idle";
   let sessionTitle = "新聊天";
   let sessionMessages: StreamMessage[] = [];
-  let browserState: BrowserWorkbenchState = {
+  const browserStateBySessionId: Record<string, BrowserWorkbenchState> = {};
+  const createEmptyBrowserState = (): BrowserWorkbenchState => ({
     url: "",
     title: "浏览器预览",
     loading: false,
     canGoBack: false,
     canGoForward: false,
     annotationMode: false,
+  });
+  const getBrowserState = (sessionId?: string) => {
+    const resolvedSessionId = sessionId?.trim() || "global";
+    browserStateBySessionId[resolvedSessionId] ??= createEmptyBrowserState();
+    return browserStateBySessionId[resolvedSessionId];
+  };
+  const setBrowserState = (sessionId: string | undefined, nextState: BrowserWorkbenchState) => {
+    const resolvedSessionId = sessionId?.trim() || "global";
+    browserStateBySessionId[resolvedSessionId] = nextState;
+    return nextState;
   };
   const platform = "browser";
 
@@ -140,6 +151,9 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         ];
         syncSession();
       }
+      if (event.type === "agent.list") {
+        emit({ type: "agent.list", payload: { agents: [] } });
+      }
     },
     onServerEvent: (callback: (event: ServerEvent) => void) => {
       listeners.add(callback);
@@ -189,39 +203,38 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
       success: true,
       attachments: payload.attachments,
     }),
-    openBrowserWorkbench: async (url: string) => {
-      browserState = {
+    openBrowserWorkbench: async (url: string, sessionId?: string) => {
+      const browserState = getBrowserState(sessionId);
+      return setBrowserState(sessionId, {
         ...browserState,
         url,
         title: url ? `浏览器预览：${url}` : "浏览器预览",
-      };
-      return browserState;
+      });
     },
-    closeBrowserWorkbench: async () => {
-      browserState = {
+    closeBrowserWorkbench: async (sessionId?: string) => {
+      const browserState = getBrowserState(sessionId);
+      return setBrowserState(sessionId, {
         ...browserState,
         url: "",
         title: "浏览器预览",
         annotationMode: false,
-      };
-      return browserState;
+      });
     },
-    setBrowserWorkbenchBounds: async () => browserState,
-    reloadBrowserWorkbench: async () => browserState,
-    goBackBrowserWorkbench: async () => browserState,
-    goForwardBrowserWorkbench: async () => browserState,
-    getBrowserWorkbenchState: async () => browserState,
+    setBrowserWorkbenchBounds: async (_bounds: unknown, sessionId?: string) => getBrowserState(sessionId),
+    reloadBrowserWorkbench: async (sessionId?: string) => getBrowserState(sessionId),
+    goBackBrowserWorkbench: async (sessionId?: string) => getBrowserState(sessionId),
+    goForwardBrowserWorkbench: async (sessionId?: string) => getBrowserState(sessionId),
+    getBrowserWorkbenchState: async (sessionId?: string) => getBrowserState(sessionId),
     getBrowserWorkbenchConsoleLogs: async () => [],
     captureBrowserWorkbenchVisible: async () => ({
       success: false,
       error: "浏览器预览态暂不支持真实截图，请在 Electron 窗口使用。",
     }),
     inspectBrowserWorkbenchAtPoint: async () => null,
-    clearBrowserWorkbenchAnnotations: async () => browserState,
-    setBrowserWorkbenchAnnotationMode: async (enabled: boolean) => {
-      browserState = { ...browserState, annotationMode: enabled };
-      return browserState;
-    },
+    clearBrowserWorkbenchAnnotations: async (sessionId?: string) => getBrowserState(sessionId),
+    setBrowserWorkbenchAnnotationMode: async (enabled: boolean, sessionId?: string) => (
+      setBrowserState(sessionId, { ...getBrowserState(sessionId), annotationMode: enabled })
+    ),
     openBrowserWorkbenchDevTools: async () => ({ opened: false }),
     closeBrowserWorkbenchDevTools: async () => ({ opened: false }),
     isBrowserWorkbenchDevToolsOpen: async () => false,
@@ -307,21 +320,21 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       checkApiConfig: async () => await invokeBridge("checkApiConfig"),
       debugSaveTraceSnapshot: async (snapshot) => await invokeBridge("debugSaveTraceSnapshot", snapshot),
       preprocessImageAttachments: async (payload) => await invokeBridge("preprocessImageAttachments", payload),
-      openBrowserWorkbench: async (url) => await invokeBridge("openBrowserWorkbench", url),
-      closeBrowserWorkbench: async () => await invokeBridge("closeBrowserWorkbench"),
-      setBrowserWorkbenchBounds: async (bounds) => await invokeBridge("setBrowserWorkbenchBounds", bounds),
-      reloadBrowserWorkbench: async () => await invokeBridge("reloadBrowserWorkbench"),
-      goBackBrowserWorkbench: async () => await invokeBridge("goBackBrowserWorkbench"),
-      goForwardBrowserWorkbench: async () => await invokeBridge("goForwardBrowserWorkbench"),
-      getBrowserWorkbenchState: async () => await invokeBridge("getBrowserWorkbenchState"),
-      getBrowserWorkbenchConsoleLogs: async (limit?: number) => await invokeBridge("getBrowserWorkbenchConsoleLogs", limit),
-      captureBrowserWorkbenchVisible: async () => await invokeBridge("captureBrowserWorkbenchVisible"),
-      inspectBrowserWorkbenchAtPoint: async (point) => await invokeBridge("inspectBrowserWorkbenchAtPoint", point),
-      clearBrowserWorkbenchAnnotations: async () => await invokeBridge("clearBrowserWorkbenchAnnotations"),
-      setBrowserWorkbenchAnnotationMode: async (enabled: boolean) => await invokeBridge("setBrowserWorkbenchAnnotationMode", enabled),
-      openBrowserWorkbenchDevTools: async () => await invokeBridge("openBrowserWorkbenchDevTools"),
-      closeBrowserWorkbenchDevTools: async () => await invokeBridge("closeBrowserWorkbenchDevTools"),
-      isBrowserWorkbenchDevToolsOpen: async () => await invokeBridge("isBrowserWorkbenchDevToolsOpen"),
+      openBrowserWorkbench: async (url, sessionId?: string) => await invokeBridge("openBrowserWorkbench", url, sessionId),
+      closeBrowserWorkbench: async (sessionId?: string) => await invokeBridge("closeBrowserWorkbench", sessionId),
+      setBrowserWorkbenchBounds: async (bounds, sessionId?: string) => await invokeBridge("setBrowserWorkbenchBounds", bounds, sessionId),
+      reloadBrowserWorkbench: async (sessionId?: string) => await invokeBridge("reloadBrowserWorkbench", sessionId),
+      goBackBrowserWorkbench: async (sessionId?: string) => await invokeBridge("goBackBrowserWorkbench", sessionId),
+      goForwardBrowserWorkbench: async (sessionId?: string) => await invokeBridge("goForwardBrowserWorkbench", sessionId),
+      getBrowserWorkbenchState: async (sessionId?: string) => await invokeBridge("getBrowserWorkbenchState", sessionId),
+      getBrowserWorkbenchConsoleLogs: async (limit?: number, sessionId?: string) => await invokeBridge("getBrowserWorkbenchConsoleLogs", limit, sessionId),
+      captureBrowserWorkbenchVisible: async (sessionId?: string) => await invokeBridge("captureBrowserWorkbenchVisible", sessionId),
+      inspectBrowserWorkbenchAtPoint: async (point, sessionId?: string) => await invokeBridge("inspectBrowserWorkbenchAtPoint", point, sessionId),
+      clearBrowserWorkbenchAnnotations: async (sessionId?: string) => await invokeBridge("clearBrowserWorkbenchAnnotations", sessionId),
+      setBrowserWorkbenchAnnotationMode: async (enabled: boolean, sessionId?: string) => await invokeBridge("setBrowserWorkbenchAnnotationMode", enabled, sessionId),
+      openBrowserWorkbenchDevTools: async (sessionId?: string) => await invokeBridge("openBrowserWorkbenchDevTools", sessionId),
+      closeBrowserWorkbenchDevTools: async (sessionId?: string) => await invokeBridge("closeBrowserWorkbenchDevTools", sessionId),
+      isBrowserWorkbenchDevToolsOpen: async (sessionId?: string) => await invokeBridge("isBrowserWorkbenchDevToolsOpen", sessionId),
       onBrowserWorkbenchEvent: (callback: (event: any) => void) => {
         const source = new EventSource(`${DEV_BACKEND_BRIDGE_ORIGIN}/events/browser`);
         source.onmessage = (message) => {

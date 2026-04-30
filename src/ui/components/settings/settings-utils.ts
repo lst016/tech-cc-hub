@@ -1,4 +1,4 @@
-import type { ApiConfigProfile, ApiModelConfigProfile } from "../../types";
+import type { ApiConfigProfile, ApiModelConfigProfile } from "../../types.js";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 
@@ -70,11 +70,11 @@ function normalizeModel(model: ApiModelConfigProfile): ApiModelConfigProfile | n
   }
 
   const contextWindow = normalizePositiveInteger(model.contextWindow);
-  const compressionThresholdPercent = normalizePercent(model.compressionThresholdPercent) ?? 70;
+  const compressionThresholdPercent = normalizePercent(model.compressionThresholdPercent);
 
   return {
     name,
-    contextWindow: contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+    contextWindow,
     compressionThresholdPercent,
   };
 }
@@ -92,11 +92,15 @@ function dedupeModels(models: ApiModelConfigProfile[]): ApiModelConfigProfile[] 
     deduped.set(normalized.name, {
       name: normalized.name,
       contextWindow: normalized.contextWindow ?? previous?.contextWindow,
-      compressionThresholdPercent: normalized.compressionThresholdPercent ?? previous?.compressionThresholdPercent ?? 70,
+      compressionThresholdPercent: normalized.compressionThresholdPercent ?? previous?.compressionThresholdPercent,
     });
   }
 
-  return Array.from(deduped.values());
+  return Array.from(deduped.values()).map((model) => ({
+    ...model,
+    contextWindow: model.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+    compressionThresholdPercent: model.compressionThresholdPercent ?? 70,
+  }));
 }
 
 function normalizeRoleModel(value: string | undefined, fallbackModel: string): string {

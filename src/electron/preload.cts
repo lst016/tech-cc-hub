@@ -58,36 +58,36 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("debug-save-trace-snapshot", snapshot),
     preprocessImageAttachments: (payload: any) =>
         ipcInvoke("preprocess-image-attachments", payload),
-    openBrowserWorkbench: (url: string) =>
-        ipcInvoke("browser-open", url),
-    closeBrowserWorkbench: () =>
-        ipcInvoke("browser-close"),
-    setBrowserWorkbenchBounds: (bounds: any) =>
-        ipcInvoke("browser-set-bounds", bounds),
-    reloadBrowserWorkbench: () =>
-        ipcInvoke("browser-reload"),
-    goBackBrowserWorkbench: () =>
-        ipcInvoke("browser-back"),
-    goForwardBrowserWorkbench: () =>
-        ipcInvoke("browser-forward"),
-    getBrowserWorkbenchState: () =>
-        ipcInvoke("browser-state"),
-    getBrowserWorkbenchConsoleLogs: (limit?: number) =>
-        ipcInvoke("browser-console-logs", limit),
-    captureBrowserWorkbenchVisible: () =>
-        ipcInvoke("browser-capture-visible"),
-    inspectBrowserWorkbenchAtPoint: (point: any) =>
-        ipcInvoke("browser-inspect-at-point", point),
-    clearBrowserWorkbenchAnnotations: () =>
-        ipcInvoke("browser-clear-annotations"),
-    setBrowserWorkbenchAnnotationMode: (enabled: boolean) =>
-        ipcInvoke("browser-annotation-mode", enabled),
-    openBrowserWorkbenchDevTools: () =>
-        ipcInvoke("browser-open-devtools"),
-    closeBrowserWorkbenchDevTools: () =>
-        ipcInvoke("browser-close-devtools"),
-    isBrowserWorkbenchDevToolsOpen: () =>
-        ipcInvoke("browser-is-devtools-open"),
+    openBrowserWorkbench: (url: string, sessionId?: string) =>
+        ipcInvoke("browser-open", url, sessionId),
+    closeBrowserWorkbench: (sessionId?: string) =>
+        ipcInvoke("browser-close", sessionId),
+    setBrowserWorkbenchBounds: (bounds: any, sessionId?: string) =>
+        ipcInvoke("browser-set-bounds", bounds, sessionId),
+    reloadBrowserWorkbench: (sessionId?: string) =>
+        ipcInvoke("browser-reload", sessionId),
+    goBackBrowserWorkbench: (sessionId?: string) =>
+        ipcInvoke("browser-back", sessionId),
+    goForwardBrowserWorkbench: (sessionId?: string) =>
+        ipcInvoke("browser-forward", sessionId),
+    getBrowserWorkbenchState: (sessionId?: string) =>
+        ipcInvoke("browser-state", sessionId),
+    getBrowserWorkbenchConsoleLogs: (limit?: number, sessionId?: string) =>
+        ipcInvoke("browser-console-logs", limit, sessionId),
+    captureBrowserWorkbenchVisible: (sessionId?: string) =>
+        ipcInvoke("browser-capture-visible", sessionId),
+    inspectBrowserWorkbenchAtPoint: (point: any, sessionId?: string) =>
+        ipcInvoke("browser-inspect-at-point", point, sessionId),
+    clearBrowserWorkbenchAnnotations: (sessionId?: string) =>
+        ipcInvoke("browser-clear-annotations", sessionId),
+    setBrowserWorkbenchAnnotationMode: (enabled: boolean, sessionId?: string) =>
+        ipcInvoke("browser-annotation-mode", enabled, sessionId),
+    openBrowserWorkbenchDevTools: (sessionId?: string) =>
+        ipcInvoke("browser-open-devtools", sessionId),
+    closeBrowserWorkbenchDevTools: (sessionId?: string) =>
+        ipcInvoke("browser-close-devtools", sessionId),
+    isBrowserWorkbenchDevToolsOpen: (sessionId?: string) =>
+        ipcInvoke("browser-is-devtools-open", sessionId),
     onBrowserWorkbenchEvent: (callback: (event: any) => void) => {
         const cb = (_: Electron.IpcRendererEvent, payload: string) => {
             try {

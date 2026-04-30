@@ -125,9 +125,9 @@ export type BrowserWorkbenchAnnotation = {
 };
 
 export type BrowserWorkbenchEvent =
-  | { type: "browser.state"; payload: BrowserWorkbenchState }
-  | { type: "browser.console"; payload: BrowserWorkbenchConsoleLog }
-  | { type: "browser.annotation"; payload: BrowserWorkbenchAnnotation };
+  | { type: "browser.state"; payload: BrowserWorkbenchState; sessionId?: string }
+  | { type: "browser.console"; payload: BrowserWorkbenchConsoleLog; sessionId?: string }
+  | { type: "browser.annotation"; payload: BrowserWorkbenchAnnotation; sessionId?: string };
 
 const ANNOTATION_PREFIX = "__TECH_CC_HUB_ANNOTATION__";
 
@@ -178,7 +178,7 @@ export class BrowserWorkbenchManager {
   private annotationMode = false;
   private listeners = new Set<(event: BrowserWorkbenchEvent) => void>();
 
-  constructor(private readonly window: BrowserWindow) {}
+  constructor(private readonly window: BrowserWindow, private readonly sessionId?: string) {}
 
   open(url: string): BrowserWorkbenchState {
     const view = this.ensureView();
@@ -493,9 +493,10 @@ export class BrowserWorkbenchManager {
 
   private emit(event: BrowserWorkbenchEvent): void {
     if (this.window.isDestroyed()) return;
-    this.window.webContents.send("browser-event", JSON.stringify(event));
+    const scopedEvent = this.sessionId ? { ...event, sessionId: this.sessionId } : event;
+    this.window.webContents.send("browser-event", JSON.stringify(scopedEvent));
     for (const listener of this.listeners) {
-      listener(event);
+      listener(scopedEvent);
     }
   }
 
