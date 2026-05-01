@@ -1,3 +1,24 @@
+---
+doc_id: "DOC-ITERATION-CODEX-PLUSPLUS"
+title: "tech-cc-hub 迭代开发计划"
+doc_type: "iteration-plan"
+layer: "L9"
+status: "draft"
+version: "1.0.0"
+last_updated: "2026-05-01"
+owners:
+  - "Product"
+  - "Engineering"
+audience:
+  - "frontend"
+  - "electron"
+source_of_truth: false
+tags:
+  - "tech-cc-hub"
+  - "iteration-plan"
+  - "codex-plusplus"
+---
+
 # tech-cc-hub 迭代开发计划
 **基于 codex-plusplus 对比分析 — 2026-05-01**
 

@@ -29,6 +29,15 @@ import {
 import { setBrowserToolHost } from "./libs/mcp-tools/browser.js";
 import { setDesignToolHost } from "./libs/mcp-tools/design.js";
 import { startSkillSyncScheduler, stopSkillSyncScheduler, syncSkillSources } from "./libs/skill-registry-sync.js";
+import { appAutoUpdater, type AppUpdateStatus } from "./libs/auto-updater.js";
+import {
+  deleteSkill,
+  detectAndCountExternalSkills,
+  getSkillPaths,
+  importSkillWithSymlink,
+  listAvailableSkills,
+  listBuiltinAutoSkills,
+} from "./libs/skill-hub.js";
 import { ensureSystemWorkspace } from "./libs/system-workspace.js";
 import { getCurrentApiConfig } from "./libs/claude-settings.js";
 import { preprocessImageAttachments } from "./libs/image-preprocessor.js";
@@ -58,6 +67,13 @@ const PREVIEW_IMAGE_MIME_TYPES: Record<string, string> = {
 const browserWorkbenches = new Map<string, BrowserWorkbenchManager>();
 const browserWorkbenchEventListeners = new Set<(event: BrowserWorkbenchEvent) => void>();
 let stopDevBackendBridge: (() => void) | null = null;
+
+function broadcastAppUpdateStatus(status: AppUpdateStatus): void {
+  const payload = JSON.stringify(status);
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send("app-update-status", payload);
+  }
+}
 
 function detectPreviewLanguage(filePath: string): string | undefined {
   const extension = extname(filePath).toLowerCase();
@@ -797,6 +813,7 @@ app.on("ready", async () => {
         app.quit();
         return;
     }
+    appAutoUpdater.initialize(broadcastAppUpdateStatus);
 
     globalShortcut.register('CommandOrControl+Q', () => {
         cleanup();
@@ -860,6 +877,12 @@ app.on("ready", async () => {
             return { success: true };
           },
           syncSkillSources: async (request: SkillSyncRequest) => await syncSkillSources(request),
+          listAvailableSkills: () => listAvailableSkills(),
+          listBuiltinAutoSkills: () => listBuiltinAutoSkills(),
+          getSkillPaths: () => getSkillPaths(),
+          detectAndCountExternalSkills: () => detectAndCountExternalSkills(),
+          importSkillWithSymlink: (skillPath: unknown) => importSkillWithSymlink(typeof skillPath === "string" ? skillPath : ""),
+          deleteSkill: (skillName: unknown) => deleteSkill(typeof skillName === "string" ? skillName : ""),
           checkApiConfig: () => {
             const config = getCurrentApiConfig();
             return { hasConfig: config !== null, config };
@@ -880,6 +903,10 @@ app.on("ready", async () => {
               attachments,
             });
           },
+          getAppUpdateStatus: () => appAutoUpdater.getStatus(),
+          checkForAppUpdates: async () => await appAutoUpdater.checkForUpdates(),
+          downloadAppUpdate: async () => await appAutoUpdater.downloadUpdate(),
+          installAppUpdate: () => appAutoUpdater.quitAndInstall(),
           openBrowserWorkbench: (url: string, sessionId?: string) => getBrowserWorkbench(sessionId)!.open(url),
           closeBrowserWorkbench: (sessionId?: string) => getBrowserWorkbench(sessionId)!.close(),
           setBrowserWorkbenchBounds: (bounds: BrowserWorkbenchBounds, sessionId?: string) => getBrowserWorkbench(sessionId)!.setBounds(bounds),
@@ -972,6 +999,22 @@ app.on("ready", async () => {
         }
     });
 
+    ipcMainHandle("app-update-get-status", () => {
+        return appAutoUpdater.getStatus();
+    });
+
+    ipcMainHandle("app-update-check", async () => {
+        return await appAutoUpdater.checkForUpdates();
+    });
+
+    ipcMainHandle("app-update-download", async () => {
+        return await appAutoUpdater.downloadUpdate();
+    });
+
+    ipcMainHandle("app-update-install", () => {
+        return appAutoUpdater.quitAndInstall();
+    });
+
     ipcMainHandle("get-global-config", () => {
         return loadGlobalRuntimeConfig();
     });
@@ -1028,6 +1071,13 @@ app.on("ready", async () => {
             return { results: [] };
         }
     });
+
+    ipcMainHandle("list-available-skills", () => listAvailableSkills());
+    ipcMainHandle("list-builtin-auto-skills", () => listBuiltinAutoSkills());
+    ipcMainHandle("get-skill-paths", () => getSkillPaths());
+    ipcMainHandle("detect-and-count-external-skills", () => detectAndCountExternalSkills());
+    ipcMainHandle("import-skill-with-symlink", (_: IpcMainInvokeEvent, skillPath: string) => importSkillWithSymlink(skillPath));
+    ipcMainHandle("delete-skill", (_: IpcMainInvokeEvent, skillName: string) => deleteSkill(skillName));
 
     ipcMainHandle("debug-save-trace-snapshot", (_: IpcMainInvokeEvent, snapshot: unknown) => {
         try {

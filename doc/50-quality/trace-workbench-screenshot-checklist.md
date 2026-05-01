@@ -36,7 +36,7 @@ sources:
 ## Target Reference
 - [Langfuse Trace Detail](https://langfuse.com/images/docs/tracing-overview.png)
 - [MLflow Trace Debugging](https://mlflow.org/docs/latest/assets/images/genai-trace-debug-405f9c8b61d5f89fb1d3891242fcd265.png)
-- [18-PRD-Trace Workbench参考图拆解与页面重构.md](../10-requirements/18-PRD-Trace%20Workbench%E5%8F%82%E8%80%83%E5%9B%BE%E6%8B%86%E8%A7%A3%E4%B8%8E%E9%A1%B5%E9%9D%A2%E9%87%8D%E6%9E%84.md)
+- [18-PRD-Trace Workbench参考图拆解与页面重构.md](../40-product/1.0.0/10-requirements/18-PRD-Trace%20Workbench%E5%8F%82%E8%80%83%E5%9B%BE%E6%8B%86%E8%A7%A3%E4%B8%8E%E9%A1%B5%E9%9D%A2%E9%87%8D%E6%9E%84.md)
 
 ## Review Matrix
 

@@ -25,43 +25,6 @@
   text-align: center;
 }
 
-.aion-workbench__header {
-  display: flex;
-  min-height: 42px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--aion-line);
-  background: #ffffff;
-}
-
-.aion-workbench__eyebrow {
-  display: none;
-}
-
-.aion-workbench__title {
-  color: var(--aion-ink);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.aion-workbench__path {
-  max-width: 48%;
-  overflow: hidden;
-  border: 1px solid var(--aion-line);
-  border-radius: 6px;
-  background: #f6f8fa;
-  color: var(--aion-muted);
-  font-size: 10px;
-  font-weight: 600;
-  padding: 3px 7px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .aion-workbench__body {
   display: grid;
   min-height: 0;

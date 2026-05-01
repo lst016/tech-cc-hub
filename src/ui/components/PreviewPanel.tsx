@@ -136,6 +136,10 @@ export function PreviewPanel({ files, activeFileId, onClose, onSelectFile }: Pre
     );
   }
 
+  const activeContent = !activeTab?.loading && !activeTab?.error ? activeTab?.content : null;
+  const hasPreviewContent = activeContent != null;
+  const hasEmptyContent = !activeTab?.loading && !activeTab?.error && activeContent == null;
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-ink-950">
       {/* Tab bar */}
@@ -231,22 +235,22 @@ export function PreviewPanel({ files, activeFileId, onClose, onSelectFile }: Pre
         )}
 
         {/* Empty content */}
-        {!activeTab?.loading && !activeTab?.error && activeTab?.content == null && (
+        {hasEmptyContent && (
           <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted">
             暂无内容
           </div>
         )}
 
         {/* Image preview */}
-        {!activeTab?.loading && !activeTab?.error && activeTab?.content != null && isImage && (
+        {hasPreviewContent && isImage && (
           <div
             className={`flex flex-1 items-center justify-center p-4 ${imageZoom ? "cursor-zoom-out" : "cursor-zoom-in"}`}
             onClick={() => setImageZoom(!imageZoom)}
           >
             <img
               ref={imgRef}
-              src={activeTab.content}
-              alt={fileNameFromPath(activeTab.path)}
+              src={activeContent ?? ""}
+              alt={fileNameFromPath(activeTab?.path ?? "")}
               className={
                 imageZoom
                   ? "max-h-none max-w-none rounded-lg"
@@ -257,22 +261,22 @@ export function PreviewPanel({ files, activeFileId, onClose, onSelectFile }: Pre
         )}
 
         {/* Markdown preview */}
-        {!activeTab?.loading && !activeTab?.error && activeTab?.content != null && isMarkdown && (
+        {hasPreviewContent && isMarkdown && (
           <>
             {viewMode === "preview" ? (
               <div className="min-w-0 flex-1 overflow-auto px-4 py-3">
-                <MDContent text={activeTab.content} />
+                <MDContent text={activeContent ?? ""} />
               </div>
             ) : (
               <pre className="min-w-0 flex-1 overflow-auto p-4 font-mono text-[13px] leading-6 text-ink-200 whitespace-pre-wrap">
-                {activeTab.content}
+                {activeContent}
               </pre>
             )}
           </>
         )}
 
         {/* Code preview (non-markdown, non-image) */}
-        {!activeTab?.loading && !activeTab?.error && activeTab?.content != null && !isMarkdown && !isImage && highlightedCode && (
+        {hasPreviewContent && !isMarkdown && !isImage && highlightedCode && (
           <pre className="min-w-0 flex-1 overflow-auto p-4 font-mono text-[13px] leading-6 whitespace-pre-wrap">
             <code
               className={`language-${activeTab?.language ?? "text"}`}

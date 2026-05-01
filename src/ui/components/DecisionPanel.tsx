@@ -14,10 +14,12 @@ type AskUserQuestionInput = {
 
 export function DecisionPanel({
   request,
-  onSubmit
+  onSubmit,
+  compact = false,
 }: {
   request: PermissionRequest;
   onSubmit: (result: PermissionResult) => void;
+  compact?: boolean;
 }) {
   const input = request.input as AskUserQuestionInput | null;
   const questions = input?.questions ?? [];
@@ -68,49 +70,65 @@ export function DecisionPanel({
 
   if (request.toolName === "AskUserQuestion" && questions.length > 0) {
     return (
-      <div className="rounded-2xl border border-accent/20 bg-accent-subtle p-5">
-        <div className="text-xs font-semibold text-accent">Claude 正在向你确认</div>
-        {questions.map((q, qIndex) => (
-          <div key={qIndex} className="mt-4">
-            <p className="text-sm text-ink-700">{q.question}</p>
+      <div className={`rounded-[22px] border border-accent/18 bg-[rgba(253,244,241,0.88)] shadow-[0_18px_48px_rgba(30,38,52,0.08)] ${compact ? "p-3" : "p-5"}`}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-accent">需要你选择</div>
+            <div className="mt-1 text-sm font-semibold text-ink-800">Agent 正在等你的确认</div>
+          </div>
+          <span className="shrink-0 rounded-full border border-accent/18 bg-white/80 px-2.5 py-1 text-xs font-semibold text-accent">
+            Codex 式选择
+          </span>
+        </div>
+        {questions.map((q, qIndex) => {
+          const selected = selectedOptions[qIndex] ?? [];
+          const otherText = otherInputs[qIndex]?.trim() ?? "";
+          return (
+          <div key={qIndex} className={compact ? "mt-3" : "mt-4"}>
+            <p className="text-sm font-medium text-ink-800">{q.question}</p>
             {q.header && (
-              <span className="mt-2 inline-flex items-center rounded-full bg-surface px-2 py-0.5 text-xs text-muted">
+              <span className="mt-2 inline-flex items-center rounded-full border border-black/6 bg-white/80 px-2 py-0.5 text-xs text-muted">
                 {q.header}
               </span>
             )}
-            <div className="mt-3 grid gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
               {(q.options ?? []).map((option, optIndex) => {
-                const shouldAutoSubmit = questions.length === 1 && !q.multiSelect;
+                const isSelected = selected.includes(option.label);
                 return (
                   <button
                     key={optIndex}
-                    className={`rounded-xl border px-4 py-3 text-left text-sm text-ink-700 transition-colors ${
-                      (selectedOptions[qIndex] ?? []).includes(option.label)
-                        ? "border-info/50 bg-info/5"
-                        : "border-ink-900/10 bg-surface hover:border-info/40 hover:bg-surface-tertiary"
+                    type="button"
+                    className={`max-w-full rounded-full border px-3 py-2 text-left text-sm transition-colors ${
+                      isSelected
+                        ? "border-accent/40 bg-white text-accent shadow-[0_8px_20px_rgba(232,117,81,0.14)]"
+                        : "border-black/8 bg-white/65 text-ink-700 hover:border-accent/26 hover:bg-white"
                     }`}
                     onClick={() => {
-                      if (shouldAutoSubmit) {
-                        onSubmit({
-                          behavior: "allow",
-                          updatedInput: { ...(input as Record<string, unknown>), answers: { [q.question]: option.label } }
-                        });
-                        return;
-                      }
                       toggleOption(qIndex, option.label, q.multiSelect);
                     }}
+                    aria-pressed={isSelected}
                   >
-                    <div className="font-medium">{option.label}</div>
-                    {option.description && <div className="mt-1 text-xs text-muted">{option.description}</div>}
+                    <span className="font-semibold">{option.label}</span>
+                    {option.description && <span className="ml-2 text-xs text-muted">{option.description}</span>}
                   </button>
                 );
               })}
             </div>
+            {(selected.length > 0 || otherText) && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+                <span>当前选择</span>
+                {[...selected, otherText].filter(Boolean).map((label) => (
+                  <span key={label} className="rounded-full bg-white px-2 py-1 font-semibold text-accent shadow-[inset_0_0_0_1px_rgba(232,117,81,0.18)]">
+                    {label}
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="mt-3">
               <label className="block text-xs font-medium text-muted">其他回答</label>
               <input
                 type="text"
-                className="mt-1 w-full rounded-xl border border-ink-900/10 bg-surface px-3 py-2 text-sm text-ink-700 focus:border-info/50 focus:outline-none"
+                className="mt-1 w-full rounded-xl border border-black/8 bg-white/78 px-3 py-2 text-sm text-ink-700 outline-none transition focus:border-accent/45 focus:bg-white"
                 placeholder="输入你的回答..."
                 value={otherInputs[qIndex] ?? ""}
                 onChange={(e) => setOtherInputs((prev) => ({ ...prev, [qIndex]: e.target.value }))}
@@ -118,8 +136,8 @@ export function DecisionPanel({
             </div>
             {q.multiSelect && <div className="mt-2 text-xs text-muted">当前问题支持多选。</div>}
           </div>
-        ))}
-        <div className="mt-5 flex flex-wrap gap-3">
+        )})}
+        <div className={`${compact ? "mt-3" : "mt-5"} flex flex-wrap gap-3`}>
           <button
             className={`rounded-full px-5 py-2 text-sm font-medium text-white shadow-soft transition-colors ${
               canSubmit ? "bg-accent hover:bg-accent-hover" : "bg-ink-400/40 cursor-not-allowed"
@@ -130,7 +148,7 @@ export function DecisionPanel({
             }}
             disabled={!canSubmit}
           >
-            提交回答
+            用已选项继续
           </button>
           <button
             className="rounded-full border border-ink-900/10 bg-surface px-5 py-2 text-sm font-medium text-ink-700 hover:bg-surface-tertiary transition-colors"

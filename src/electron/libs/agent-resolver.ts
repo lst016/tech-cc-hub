@@ -6,6 +6,7 @@ import {
 import { homedir } from "os";
 import { basename, dirname, extname, isAbsolute, join } from "path";
 import type { PromptLedgerSource } from "../../shared/prompt-ledger.js";
+import { buildTechCCHubSystemPromptSources } from "./system-prompt-presets.js";
 
 export type AgentRunSurface = "development" | "maintenance";
 
@@ -168,7 +169,7 @@ function buildPromptLedgerSources(
     sourceKind: "system",
     chars: 0,
     sample: "SDK 内置系统提示，当前只能记录存在性，无法本地展开全文。",
-  }];
+  }, ...buildTechCCHubSystemPromptSources()];
 
   for (const doc of entryDocs) {
     sources.push({

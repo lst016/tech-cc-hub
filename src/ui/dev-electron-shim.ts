@@ -1,4 +1,5 @@
 import type { ClientEvent, PromptAttachment, ServerEvent, StreamMessage } from "./types";
+import type { AppUpdateActionResult, AppUpdateStatus } from "./types";
 
 const browserPreviewSessionId = "browser-preview-session";
 const browserPreviewCwd = "/Users/lst01/Desktop/学习/tech-cc-hub";
@@ -25,6 +26,19 @@ const unsupportedPreviewMutation = async () => ({
   success: false,
   error: "浏览器预览态暂不支持修改文件，请在 Electron 客户端里操作。",
 });
+
+const createPreviewUpdateStatus = (): AppUpdateStatus => ({
+  status: "disabled",
+  currentVersion: "0.1.1",
+  isPackaged: false,
+  provider: "github",
+  error: "浏览器预览态不会检查 GitHub Releases 更新，请在打包后的 Electron 客户端里使用。",
+});
+
+const createPreviewUpdateResult = async (): Promise<AppUpdateActionResult> => {
+  const status = createPreviewUpdateStatus();
+  return { success: false, status, error: status.error };
+};
 
 export function getDevElectronRuntimeSource(): DevElectronRuntimeSource {
   if (typeof window === "undefined" || !window.electron) {
@@ -184,6 +198,11 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     getApiConfig: async () => ({ profiles: [] }),
     saveApiConfig: async () => ({ success: true }),
     fetchApiModels: async () => ({ success: false, error: "当前没有连接 Electron 后端，无法拉取模型。" }),
+    getAppUpdateStatus: async () => createPreviewUpdateStatus(),
+    checkForAppUpdates: createPreviewUpdateResult,
+    downloadAppUpdate: createPreviewUpdateResult,
+    installAppUpdate: createPreviewUpdateResult,
+    onAppUpdateStatus: () => () => {},
     getGlobalConfig: async () => ({}),
     saveGlobalConfig: async () => ({ success: true }),
     getAgentRuleDocuments: async () => ({
@@ -212,6 +231,12 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     getSkillInventory: async () => ({ rootPath: "", skills: [] }),
     saveSkillInventory: async () => ({ success: true }),
     syncSkillSources: async () => ({ results: [] }),
+    listAvailableSkills: async () => [],
+    listBuiltinAutoSkills: async () => [],
+    getSkillPaths: async () => ({ userSkillsDir: "", builtinSkillsDir: "" }),
+    detectAndCountExternalSkills: async () => ({ success: true, data: [] }),
+    importSkillWithSymlink: async () => ({ success: false, msg: "浏览器预览态暂不支持导入 Skill，请在 Electron 客户端里操作。" }),
+    deleteSkill: async () => ({ success: false, msg: "浏览器预览态暂不支持删除 Skill，请在 Electron 客户端里操作。" }),
     checkApiConfig: async () => ({ hasConfig: true, config: null }),
     debugSaveTraceSnapshot: async () => ({ success: true }),
     preprocessImageAttachments: async (payload: { attachments: PromptAttachment[] }) => ({
@@ -335,6 +360,11 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       getApiConfig: async () => await invokeBridge("getApiConfig"),
       saveApiConfig: async (config) => await invokeBridge("saveApiConfig", config),
       fetchApiModels: async (payload) => await invokeBridge("fetchApiModels", payload),
+      getAppUpdateStatus: async () => await invokeBridge("getAppUpdateStatus"),
+      checkForAppUpdates: async () => await invokeBridge("checkForAppUpdates"),
+      downloadAppUpdate: async () => await invokeBridge("downloadAppUpdate"),
+      installAppUpdate: async () => await invokeBridge("installAppUpdate"),
+      onAppUpdateStatus: () => () => {},
       getGlobalConfig: async () => await invokeBridge("getGlobalConfig"),
       saveGlobalConfig: async (config) => await invokeBridge("saveGlobalConfig", config),
       getAgentRuleDocuments: async () => await invokeBridge("getAgentRuleDocuments"),
@@ -342,6 +372,12 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       getSkillInventory: async () => await invokeBridge("getSkillInventory"),
       saveSkillInventory: async (inventory) => await invokeBridge("saveSkillInventory", inventory),
       syncSkillSources: async (request) => await invokeBridge("syncSkillSources", request),
+      listAvailableSkills: async () => await invokeBridge("listAvailableSkills"),
+      listBuiltinAutoSkills: async () => await invokeBridge("listBuiltinAutoSkills"),
+      getSkillPaths: async () => await invokeBridge("getSkillPaths"),
+      detectAndCountExternalSkills: async () => await invokeBridge("detectAndCountExternalSkills"),
+      importSkillWithSymlink: async (skillPath) => await invokeBridge("importSkillWithSymlink", skillPath),
+      deleteSkill: async (skillName) => await invokeBridge("deleteSkill", skillName),
       checkApiConfig: async () => await invokeBridge("checkApiConfig"),
       debugSaveTraceSnapshot: async (snapshot) => await invokeBridge("debugSaveTraceSnapshot", snapshot),
       preprocessImageAttachments: async (payload) => await invokeBridge("preprocessImageAttachments", payload),

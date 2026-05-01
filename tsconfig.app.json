@@ -38,9 +38,13 @@
         ]
     },
     "include": [
-        "src"
+        "src/ui",
+        "src/shared",
+        "types.d.ts",
+        "types"
     ],
     "exclude": [
-        "src/electron"
+        "src/electron",
+        "src/renderer"
     ]
 }

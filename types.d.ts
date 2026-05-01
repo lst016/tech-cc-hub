@@ -149,6 +149,28 @@ type SkillSyncResponse = {
     results: SkillSyncResult[];
 };
 
+type SkillHubSkillInfo = {
+    name: string;
+    description: string;
+    location: string;
+    isCustom: boolean;
+    source: "builtin" | "custom" | "extension";
+};
+
+type SkillHubExternalSource = {
+    name: string;
+    path: string;
+    source: string;
+    skills: Array<{ name: string; description: string; path: string }>;
+};
+
+type SkillHubBridgeResponse<T = unknown> = {
+    success: boolean;
+    data?: T;
+    msg?: string;
+    error?: string;
+};
+
 type GlobalRuntimeConfig = Record<string, unknown>;
 
 type AgentRuleDocuments = {
@@ -169,6 +191,9 @@ type ApiModelsFetchResult = {
     error?: string;
 };
 
+type AppUpdateStatus = import("./src/ui/types").AppUpdateStatus;
+type AppUpdateActionResult = import("./src/ui/types").AppUpdateActionResult;
+
 type EventPayloadMapping = {
     statistics: Statistics;
     getStaticData: StaticData;
@@ -179,6 +204,10 @@ type EventPayloadMapping = {
         "get-api-config": ApiConfigSettings;
         "save-api-config": { success: boolean; error?: string };
         "fetch-api-models": ApiModelsFetchResult;
+        "app-update-get-status": AppUpdateStatus;
+        "app-update-check": AppUpdateActionResult;
+        "app-update-download": AppUpdateActionResult;
+        "app-update-install": AppUpdateActionResult;
         "check-api-config": { hasConfig: boolean; config: ApiConfig | null };
         "get-global-config": GlobalRuntimeConfig;
         "save-global-config": { success: boolean; error?: string };
@@ -187,6 +216,12 @@ type EventPayloadMapping = {
         "get-skill-inventory": SkillInventory;
         "save-skill-inventory": { success: boolean; error?: string };
         "sync-skill-sources": SkillSyncResponse;
+        "list-available-skills": SkillHubSkillInfo[];
+        "list-builtin-auto-skills": Array<{ name: string; description: string }>;
+        "get-skill-paths": { userSkillsDir: string; builtinSkillsDir: string };
+        "detect-and-count-external-skills": SkillHubBridgeResponse<SkillHubExternalSource[]>;
+        "import-skill-with-symlink": SkillHubBridgeResponse<{ skillName: string }>;
+        "delete-skill": SkillHubBridgeResponse;
         "debug-save-trace-snapshot": { success: boolean; path?: string; error?: string };
         "preprocess-image-attachments": ImagePreprocessResult;
         "browser-open": BrowserWorkbenchState;
@@ -221,6 +256,11 @@ interface Window {
         getApiConfig: () => Promise<ApiConfigSettings>;
         saveApiConfig: (config: ApiConfigSettings) => Promise<{ success: boolean; error?: string }>;
         fetchApiModels: (payload: { baseURL: string; apiKey: string }) => Promise<ApiModelsFetchResult>;
+        getAppUpdateStatus: () => Promise<AppUpdateStatus>;
+        checkForAppUpdates: () => Promise<AppUpdateActionResult>;
+        downloadAppUpdate: () => Promise<AppUpdateActionResult>;
+        installAppUpdate: () => Promise<AppUpdateActionResult>;
+        onAppUpdateStatus: (callback: (status: AppUpdateStatus) => void) => UnsubscribeFunction;
         getGlobalConfig: () => Promise<GlobalRuntimeConfig>;
         saveGlobalConfig: (config: GlobalRuntimeConfig) => Promise<{ success: boolean; error?: string }>;
         getAgentRuleDocuments: () => Promise<AgentRuleDocuments>;
@@ -228,6 +268,12 @@ interface Window {
         getSkillInventory: () => Promise<SkillInventory>;
         saveSkillInventory: (config: SkillInventory) => Promise<{ success: boolean; error?: string }>;
         syncSkillSources: (request: SkillSyncRequest) => Promise<SkillSyncResponse>;
+        listAvailableSkills: () => Promise<SkillHubSkillInfo[]>;
+        listBuiltinAutoSkills: () => Promise<Array<{ name: string; description: string }>>;
+        getSkillPaths: () => Promise<{ userSkillsDir: string; builtinSkillsDir: string }>;
+        detectAndCountExternalSkills: () => Promise<SkillHubBridgeResponse<SkillHubExternalSource[]>>;
+        importSkillWithSymlink: (skillPath: string) => Promise<SkillHubBridgeResponse<{ skillName: string }>>;
+        deleteSkill: (skillName: string) => Promise<SkillHubBridgeResponse>;
         checkApiConfig: () => Promise<{ hasConfig: boolean; config: ApiConfig | null }>;
         debugSaveTraceSnapshot: (snapshot: unknown) => Promise<{ success: boolean; path?: string; error?: string }>;
         preprocessImageAttachments: (payload: { prompt: string; selectedModel?: string; attachments: import("./src/ui/types").PromptAttachment[] }) => Promise<ImagePreprocessResult>;

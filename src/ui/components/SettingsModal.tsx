@@ -98,11 +98,11 @@ const SETTINGS_PAGES: SettingsPageDefinition[] = [
   },
   {
     id: "skills",
-    label: "Skills",
-    eyebrow: "SKILLS",
-    title: "已安装 Skills",
-    description: "扫描默认目录下已安装的 skills，并维护远程来源信息。",
-    summary: "已安装 skills",
+    label: "技能管理",
+    eyebrow: "技能",
+    title: "技能中心",
+    description: "扫描默认目录下已安装的技能，并维护远程来源信息。",
+    summary: "已安装技能",
   },
   {
     id: "global-json",
@@ -573,26 +573,9 @@ export function SettingsModal({
   }
 
   const footer = activePageId === "system-maintenance"
-    ? (
-      <div className="flex gap-3">
-        <button
-          type="button"
-          className="rounded-xl border border-ink-900/10 bg-white px-4 py-2.5 text-sm font-medium text-ink-700 transition-colors hover:bg-surface"
-          onClick={onClose}
-        >
-          关闭
-        </button>
-      </div>
-    )
+    ? null
     : (
       <div className="flex gap-3">
-        <button
-          type="button"
-          className="rounded-xl border border-ink-900/10 bg-white px-4 py-2.5 text-sm font-medium text-ink-700 transition-colors hover:bg-surface"
-          onClick={onClose}
-        >
-          关闭
-        </button>
         <button
           type="button"
           className="rounded-xl bg-accent px-4 py-2.5 text-sm font-medium text-white shadow-soft transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"

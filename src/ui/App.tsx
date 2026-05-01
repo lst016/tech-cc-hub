@@ -14,7 +14,9 @@ import { MessageCard } from "./components/EventCard";
 import { ActivityRail } from "./components/ActivityRail";
 import { SessionAnalysisPage } from "./components/SessionAnalysisPage";
 import { BrowserWorkbenchPage } from "./components/BrowserWorkbenchPage";
-import MDContent, { OPEN_BROWSER_WORKBENCH_URL_EVENT, type OpenBrowserWorkbenchUrlDetail } from "./render/markdown";
+import MDContent from "./render/markdown";
+import { OPEN_BROWSER_WORKBENCH_URL_EVENT, type OpenBrowserWorkbenchUrlDetail } from "./events";
+import { copyTextToClipboard } from "./utils/clipboard";
 import {
   DEV_BRIDGE_READY_EVENT,
   getDevElectronRuntimeSource,
@@ -44,6 +46,7 @@ type StreamEventMessage = StreamMessage & {
 };
 
 type WorkspaceView = "chat" | "browser";
+type ActivityRailTab = "trace" | "usage" | "preview";
 
 function getToolUseCount(message: StreamMessage): number {
   if (message.type !== "assistant") return 0;
@@ -73,27 +76,6 @@ const runtimeSourceMeta: Record<DevElectronRuntimeSource, { label: string; toolt
   },
 };
 
-async function copyTextToClipboard(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "true");
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  textarea.style.top = "0";
-  document.body.appendChild(textarea);
-  textarea.select();
-  const copied = document.execCommand("copy");
-  textarea.remove();
-  if (!copied) {
-    throw new Error("clipboard copy failed");
-  }
-}
-
 function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -109,9 +91,8 @@ function App() {
   const [showSidebar, setShowSidebar] = useState(true);
   const [closeSidebarOnBrowserOpen, setCloseSidebarOnBrowserOpen] = useState(true);
   const [showActivityRail, setShowActivityRail] = useState(true);
-  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("chat");
-  const [activityRailTab, setActivityRailTab] = useState<"trace" | "usage">("trace");
-  const [browserWorkbenchUrl, setBrowserWorkbenchUrl] = useState("");
+  const [workspaceViewBySessionId, setWorkspaceViewBySessionId] = useState<Record<string, WorkspaceView>>({});
+  const [activityRailTabBySessionId, setActivityRailTabBySessionId] = useState<Record<string, ActivityRailTab>>({});
   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [activityRailWidth, setActivityRailWidth] = useState(420);
@@ -142,6 +123,20 @@ function App() {
   }, []);
 
   const activeSessionId = useAppStore((s) => s.activeSessionId);
+  const workspaceView = activeSessionId ? (workspaceViewBySessionId[activeSessionId] ?? "chat") : "chat";
+  const activityRailTab = activeSessionId ? (activityRailTabBySessionId[activeSessionId] ?? "trace") : "trace";
+  const setActiveSessionWorkspaceView = useCallback((nextView: WorkspaceView) => {
+    if (!activeSessionId) return;
+    setWorkspaceViewBySessionId((current) => (
+      current[activeSessionId] === nextView ? current : { ...current, [activeSessionId]: nextView }
+    ));
+  }, [activeSessionId]);
+  const setActiveSessionActivityRailTab = useCallback((nextTab: ActivityRailTab) => {
+    if (!activeSessionId) return;
+    setActivityRailTabBySessionId((current) => (
+      current[activeSessionId] === nextTab ? current : { ...current, [activeSessionId]: nextTab }
+    ));
+  }, [activeSessionId]);
   const sessions = useAppStore((s) => s.sessions);
   const archivedSessions = useAppStore((s) => s.archivedSessions);
   const activeSession = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId]) : undefined));
@@ -661,11 +656,10 @@ function App() {
 
       setShowSessionAnalysis(false);
       setShowActivityRail(true);
-      setBrowserWorkbenchUrl(url);
       if (activeSessionId) {
         setBrowserWorkbenchSessionUrl(activeSessionId, url);
       }
-      setWorkspaceView("browser");
+      setActiveSessionWorkspaceView("browser");
       if (closeSidebarOnBrowserOpen && showSidebar) {
         setShowSidebar(false);
       }
@@ -675,7 +669,7 @@ function App() {
     return () => {
       window.removeEventListener(OPEN_BROWSER_WORKBENCH_URL_EVENT, handleOpenBrowserWorkbenchUrl);
     };
-  }, [activeSessionId, closeSidebarOnBrowserOpen, setBrowserWorkbenchSessionUrl, showSidebar]);
+  }, [activeSessionId, closeSidebarOnBrowserOpen, setActiveSessionWorkspaceView, setBrowserWorkbenchSessionUrl, showSidebar]);
 
   const handleDeleteSession = useCallback((sessionId: string) => {
     sendEvent({ type: "session.delete", payload: { sessionId } });
@@ -1149,7 +1143,7 @@ function App() {
                             message={entry.message}
                             isLast={isLastMessage}
                             isRunning={isRunning}
-                            permissionRequest={permissionRequests[0]}
+                            permissionRequest={permissionRequests[0]?.toolName === "AskUserQuestion" ? undefined : permissionRequests[0]}
                             onPermissionResult={handlePermissionResult}
                           />
                         </div>
@@ -1157,10 +1151,15 @@ function App() {
                     })
                   )}
 
-                  <div className="partial-message rounded-[26px] border border-black/5 bg-[linear-gradient(180deg,rgba(245,247,250,0.95),rgba(255,255,255,0.86))] px-6 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
-                    <MDContent text={partialMessage} />
-                    {showPartialMessage && (
-                      <div className="mt-3 flex flex-col gap-2 px-1">
+                  {(showPartialMessage || partialMessage.trim()) && (
+                    <div className="partial-message rounded-[26px] border border-black/5 bg-[linear-gradient(180deg,rgba(245,247,250,0.95),rgba(255,255,255,0.86))] px-6 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
+                      <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
+                        <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
+                        <span>正在生成</span>
+                      </div>
+                      {partialMessage.trim() && <MDContent text={partialMessage} />}
+                      {showPartialMessage && (
+                        <div className="mt-3 flex flex-col gap-2 px-1">
                         <div className="relative h-3 w-2/12 overflow-hidden rounded-full bg-ink-900/10">
                           <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-ink-900/30 to-transparent animate-shimmer" />
                         </div>
@@ -1176,9 +1175,10 @@ function App() {
                         <div className="relative h-3 w-4/12 overflow-hidden rounded-full bg-ink-900/10">
                           <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-ink-900/30 to-transparent animate-shimmer" />
                         </div>
-                      </div>
-                    )}
-                  </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <div ref={messagesEndRef} className="chat-bottom-anchor" />
                 </div>
@@ -1191,6 +1191,8 @@ function App() {
             <PromptInput
               sendEvent={sendEvent}
               onSendMessage={handleSendMessage}
+              permissionRequest={permissionRequests[0]}
+              onPermissionResult={handlePermissionResult}
               disabled={!connected}
               leftOffset={sidebarOffset}
               rightOffset={activityRailOffset}
@@ -1225,11 +1227,11 @@ function App() {
             partialMessage={partialMessage}
             globalError={globalError}
             activeTab={activityRailTab}
-            onActiveTabChange={setActivityRailTab}
+            onActiveTabChange={setActiveSessionActivityRailTab}
             onOpenBrowserWorkbench={() => {
               setShowActivityRail(true);
               setShowSessionAnalysis(false);
-              setWorkspaceView("browser");
+              setActiveSessionWorkspaceView("browser");
             }}
             selectedModel={selectedUsageModel}
             contextWindow={selectedUsageModelConfig?.contextWindow}
@@ -1247,16 +1249,16 @@ function App() {
             <BrowserWorkbenchPage
               key={activeSessionId ?? "browser-workbench"}
               active={workspaceView === "browser"}
-              initialUrl={browserWorkbenchUrl}
+              initialUrl={activeSessionId ? (activeBrowserWorkbenchState?.url ?? "") : ""}
               occluded={showSettingsModal || showStartModal}
               sessionId={activeSessionId}
               onOpenTrace={() => {
-                setActivityRailTab("trace");
-                setWorkspaceView("chat");
+                setActiveSessionActivityRailTab("trace");
+                setActiveSessionWorkspaceView("chat");
               }}
               onOpenUsage={() => {
-                setActivityRailTab("usage");
-                setWorkspaceView("chat");
+                setActiveSessionActivityRailTab("usage");
+                setActiveSessionWorkspaceView("chat");
               }}
             />
           </aside>

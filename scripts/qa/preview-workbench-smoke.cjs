@@ -43,7 +43,9 @@ async function main() {
 
   const bodyText = await page.locator('body').innerText({ timeout: 8000 });
   const textareaValues = await page.locator('textarea').evaluateAll((nodes) => nodes.map((node) => node.value));
-  if (!bodyText.includes('package.json:')) throw new Error('Code reference chip was not rendered in composer');
+  if (!bodyText.includes('package.json') || !bodyText.includes('代码')) {
+    throw new Error('Code reference chip was not rendered in composer');
+  }
   if (textareaValues.some((value) => value.includes('<code_references>'))) {
     throw new Error('Code reference block leaked into textarea instead of staying as UI chip');
   }

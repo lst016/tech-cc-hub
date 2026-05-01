@@ -13,6 +13,7 @@
 		"qa:slash": "bash scripts/qa/electron-autostart-smoke.sh \"/debug\"",
 		"qa:codex": "SMOKE_TIMEOUT_SECONDS=120 bash scripts/qa/electron-autostart-smoke.sh \"/codex consult 你好，只回复 CODEX_SMOKE_OK\"",
 		"qa:continue": "bash scripts/qa/electron-autostart-smoke.sh \"请只回复：SMOKE_ROUND_1\" \"请只回复：SMOKE_ROUND_2\"",
+		"qa:chat-ui": "node scripts/qa/chat-ui-smoke.cjs",
 		"qa:preview": "node scripts/qa/preview-workbench-smoke.cjs",
 		"qa:window:list": "bash scripts/qa/window-id-tools.sh list",
 		"qa:window:capture": "bash scripts/qa/window-id-tools.sh capture",
@@ -25,7 +26,11 @@
 		"dist:mac-x64": "bun run transpile:electron && bun run build && electron-builder --mac --x64",
 		"dist:win": "node scripts/package-win-safe.mjs",
 		"dist:win:stable": "node scripts/package-win-safe.mjs",
-		"dist:linux": "bun run transpile:electron && bun run build && electron-builder --linux --x64"
+		"dist:linux": "bun run transpile:electron && bun run build && electron-builder --linux --x64",
+		"release:mac-arm64": "npm run transpile:electron && npm run build && electron-builder --mac --arm64 --publish always",
+		"release:mac-x64": "npm run transpile:electron && npm run build && electron-builder --mac --x64 --publish always",
+		"release:win-x64": "npm run transpile:electron && npm run build && electron-builder --win --x64 --publish always --config.win.forceCodeSigning=false --config.win.signAndEditExecutable=false",
+		"release:github": "node scripts/github-release.mjs"
 	},
 	"dependencies": {
 		"@anthropic-ai/claude-agent-sdk": "^0.2.123",
@@ -50,6 +55,8 @@
 		"diff": "^9.0.0",
 		"diff2html": "^3.4.56",
 		"dotenv": "^17.2.3",
+		"electron-log": "^5.4.3",
+		"electron-updater": "^6.8.3",
 		"eventemitter3": "^5.0.4",
 		"highlight.js": "^11.11.1",
 		"i18next": "^26.0.8",

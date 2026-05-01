@@ -74,6 +74,26 @@ export type CodeReferenceDraft = {
   createdAt: number;
 };
 
+export type MessageReferenceDraft = {
+  id: string;
+  kind: "selection" | "message";
+  sourceRole: "user" | "assistant" | "tool" | "system";
+  sourceLabel: string;
+  text: string;
+  capturedAt?: number;
+  createdAt: number;
+};
+
+export type FileReferenceDraft = {
+  id: string;
+  kind: "file" | "directory";
+  path: string;
+  name: string;
+  label: string;
+  workspaceRoot: string;
+  createdAt: number;
+};
+
 interface AppState {
   sessions: Record<string, SessionView>;
   archivedSessions: Record<string, SessionView>;
@@ -82,6 +102,8 @@ interface AppState {
   browserAnnotations: BrowserWorkbenchAnnotation[];
   browserWorkbenchBySessionId: Record<string, BrowserWorkbenchSessionState>;
   codeReferencesBySessionId: Record<string, CodeReferenceDraft[]>;
+  messageReferencesBySessionId: Record<string, MessageReferenceDraft[]>;
+  fileReferencesBySessionId: Record<string, FileReferenceDraft[]>;
   cwd: string;
   apiConfigSettings: ApiConfigSettings;
   runtimeModel: string;
@@ -110,6 +132,18 @@ interface AppState {
   updateCodeReference: (sessionId: string | null | undefined, id: string, patch: Partial<Pick<CodeReferenceDraft, "comment" | "kind">>) => void;
   removeCodeReference: (sessionId: string | null | undefined, id: string) => void;
   clearCodeReferences: (sessionId?: string | null) => void;
+  addMessageReference: (
+    sessionId: string | null | undefined,
+    reference: Omit<MessageReferenceDraft, "id" | "createdAt"> & Partial<Pick<MessageReferenceDraft, "id" | "createdAt">>,
+  ) => MessageReferenceDraft;
+  removeMessageReference: (sessionId: string | null | undefined, id: string) => void;
+  clearMessageReferences: (sessionId?: string | null) => void;
+  addFileReference: (
+    sessionId: string | null | undefined,
+    reference: Omit<FileReferenceDraft, "id" | "createdAt"> & Partial<Pick<FileReferenceDraft, "id" | "createdAt">>,
+  ) => FileReferenceDraft;
+  removeFileReference: (sessionId: string | null | undefined, id: string) => void;
+  clearFileReferences: (sessionId?: string | null) => void;
   setCwd: (cwd: string) => void;
   setApiConfigSettings: (settings: ApiConfigSettings) => void;
   setRuntimeModel: (model: string) => void;
@@ -269,6 +303,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   browserAnnotations: [],
   browserWorkbenchBySessionId: {},
   codeReferencesBySessionId: {},
+  messageReferencesBySessionId: {},
+  fileReferencesBySessionId: {},
   cwd: "",
   apiConfigSettings: { profiles: [] },
   runtimeModel: "",
@@ -374,6 +410,92 @@ export const useAppStore = create<AppState>((set, get) => ({
       const nextBySession = { ...state.codeReferencesBySessionId };
       delete nextBySession[sessionKey];
       return { codeReferencesBySessionId: nextBySession };
+    });
+  },
+  addMessageReference: (sessionId, reference) => {
+    const sessionKey = getCodeReferenceSessionKey(sessionId);
+    const nextReference: MessageReferenceDraft = {
+      ...reference,
+      id: reference.id ?? crypto.randomUUID(),
+      createdAt: reference.createdAt ?? Date.now(),
+      text: reference.text.trim(),
+      sourceLabel: reference.sourceLabel.trim() || reference.sourceRole,
+    };
+
+    set((state) => ({
+      messageReferencesBySessionId: {
+        ...state.messageReferencesBySessionId,
+        [sessionKey]: [...(state.messageReferencesBySessionId[sessionKey] ?? []), nextReference],
+      },
+    }));
+
+    return nextReference;
+  },
+  removeMessageReference: (sessionId, id) => {
+    const sessionKey = getCodeReferenceSessionKey(sessionId);
+    set((state) => {
+      const nextReferences = (state.messageReferencesBySessionId[sessionKey] ?? []).filter((reference) => reference.id !== id);
+      const nextBySession = { ...state.messageReferencesBySessionId };
+      if (nextReferences.length === 0) {
+        delete nextBySession[sessionKey];
+      } else {
+        nextBySession[sessionKey] = nextReferences;
+      }
+      return { messageReferencesBySessionId: nextBySession };
+    });
+  },
+  clearMessageReferences: (sessionId) => {
+    const sessionKey = getCodeReferenceSessionKey(sessionId);
+    set((state) => {
+      if (!state.messageReferencesBySessionId[sessionKey]) return state;
+      const nextBySession = { ...state.messageReferencesBySessionId };
+      delete nextBySession[sessionKey];
+      return { messageReferencesBySessionId: nextBySession };
+    });
+  },
+  addFileReference: (sessionId, reference) => {
+    const sessionKey = getCodeReferenceSessionKey(sessionId);
+    const nextReference: FileReferenceDraft = {
+      ...reference,
+      id: reference.id ?? crypto.randomUUID(),
+      createdAt: reference.createdAt ?? Date.now(),
+      name: reference.name || reference.label.split(/[\\/]/).pop() || reference.label,
+      label: reference.label || reference.path,
+    };
+
+    set((state) => {
+      const existing = state.fileReferencesBySessionId[sessionKey] ?? [];
+      const withoutDuplicate = existing.filter((item) => item.path !== nextReference.path || item.kind !== nextReference.kind);
+      return {
+        fileReferencesBySessionId: {
+          ...state.fileReferencesBySessionId,
+          [sessionKey]: [...withoutDuplicate, nextReference],
+        },
+      };
+    });
+
+    return nextReference;
+  },
+  removeFileReference: (sessionId, id) => {
+    const sessionKey = getCodeReferenceSessionKey(sessionId);
+    set((state) => {
+      const nextReferences = (state.fileReferencesBySessionId[sessionKey] ?? []).filter((reference) => reference.id !== id);
+      const nextBySession = { ...state.fileReferencesBySessionId };
+      if (nextReferences.length === 0) {
+        delete nextBySession[sessionKey];
+      } else {
+        nextBySession[sessionKey] = nextReferences;
+      }
+      return { fileReferencesBySessionId: nextBySession };
+    });
+  },
+  clearFileReferences: (sessionId) => {
+    const sessionKey = getCodeReferenceSessionKey(sessionId);
+    set((state) => {
+      if (!state.fileReferencesBySessionId[sessionKey]) return state;
+      const nextBySession = { ...state.fileReferencesBySessionId };
+      delete nextBySession[sessionKey];
+      return { fileReferencesBySessionId: nextBySession };
     });
   },
   setCwd: (cwd) => set({ cwd }),
@@ -773,6 +895,15 @@ export const useAppStore = create<AppState>((set, get) => ({
           historyRequested: nextHistoryRequested,
           browserWorkbenchBySessionId: Object.fromEntries(
             Object.entries(state.browserWorkbenchBySessionId).filter(([id]) => id !== sessionId),
+          ),
+          codeReferencesBySessionId: Object.fromEntries(
+            Object.entries(state.codeReferencesBySessionId).filter(([id]) => id !== sessionId),
+          ),
+          messageReferencesBySessionId: Object.fromEntries(
+            Object.entries(state.messageReferencesBySessionId).filter(([id]) => id !== sessionId),
+          ),
+          fileReferencesBySessionId: Object.fromEntries(
+            Object.entries(state.fileReferencesBySessionId).filter(([id]) => id !== sessionId),
           ),
           showStartModal: !hasRemaining
         });

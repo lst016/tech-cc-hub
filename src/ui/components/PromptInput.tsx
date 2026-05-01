@@ -1,4 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import type {
   ApiConfigProfile,
   ClientEvent,
@@ -6,7 +7,18 @@ import type {
   RuntimeOverrides,
   RuntimeReasoningMode,
 } from "../types";
-import { getCodeReferenceSessionKey, useAppStore, type CodeReferenceDraft } from "../store/useAppStore";
+import {
+  getCodeReferenceSessionKey,
+  useAppStore,
+  type CodeReferenceDraft,
+  type FileReferenceDraft,
+  type MessageReferenceDraft,
+  type PermissionRequest,
+} from "../store/useAppStore";
+import { copyTextToClipboard as copyText } from "../utils/clipboard";
+import { OPEN_BROWSER_WORKBENCH_URL_EVENT, PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT } from "../events";
+import { ComposerContextCard } from "./ComposerContextCard";
+import { DecisionPanel } from "./DecisionPanel";
 
 const DEFAULT_ALLOWED_TOOLS = "Read,Edit,Bash";
 const MAX_ROWS = 12;
@@ -14,11 +26,60 @@ const LINE_HEIGHT = 21;
 const MAX_HEIGHT = MAX_ROWS * LINE_HEIGHT;
 const SLASH_PREVIEW_LIMIT = 8;
 const SLASH_QUERY_LIMIT = 16;
+const FILE_MENTION_PREVIEW_LIMIT = 10;
+const FILE_MENTION_SCAN_LIMIT = 260;
+const FILE_MENTION_SCAN_DEPTH = 4;
+const FILE_MENTION_IGNORED_DIRS = new Set([
+  ".git",
+  ".next",
+  ".turbo",
+  ".vite",
+  "coverage",
+  "dist",
+  "dist-electron",
+  "dist-react",
+  "dist-test",
+  "node_modules",
+]);
 const EMPTY_CODE_REFERENCES: CodeReferenceDraft[] = [];
+const EMPTY_FILE_REFERENCES: FileReferenceDraft[] = [];
+const EMPTY_MESSAGE_REFERENCES: MessageReferenceDraft[] = [];
+
+type FileMentionOption = {
+  path: string;
+  label: string;
+  name: string;
+  kind: "file" | "directory";
+};
+
+type FileMentionContext = {
+  start: number;
+  end: number;
+  query: string;
+};
+
+type PreviewDirectoryEntry = {
+  name?: string;
+  path?: string;
+  filePath?: string;
+  type?: string;
+  kind?: string;
+  isDirectory?: boolean;
+};
+
+type PreviewDirectoryResponse =
+  | PreviewDirectoryEntry[]
+  | {
+      success?: boolean;
+      entries?: PreviewDirectoryEntry[];
+      error?: string;
+    };
 
 interface PromptInputProps {
   sendEvent: (event: ClientEvent) => void;
   onSendMessage?: () => void;
+  permissionRequest?: PermissionRequest;
+  onPermissionResult?: (toolUseId: string, result: PermissionResult) => void;
   disabled?: boolean;
   leftOffset?: number;
   rightOffset?: number;
@@ -100,8 +161,8 @@ function getBrowserAnnotationLabel(annotation: BrowserWorkbenchAnnotation, index
   if (comment) return comment;
   const target = annotation.domHint?.target;
   if (target?.type === "text" && target.value.trim()) return target.value.trim();
-  if (target?.type === "image") return target.alt?.trim() || "鍥剧墖";
-  return annotation.domHint?.text?.trim() || annotation.domHint?.selector || `鎵规敞 ${index + 1}`;
+  if (target?.type === "image") return target.alt?.trim() || "图片";
+  return annotation.domHint?.text?.trim() || annotation.domHint?.selector || `批注 ${index + 1}`;
 }
 
 type InlineOption = {
@@ -262,6 +323,166 @@ function mergePromptWithCodeReferences(prompt: string, references: CodeReference
   return [prompt.trim(), referencePrompt].filter(Boolean).join("\n\n");
 }
 
+function getMessageReferenceLabel(reference: MessageReferenceDraft) {
+  return reference.kind === "selection" ? `${reference.sourceLabel} · 选区` : reference.sourceLabel;
+}
+
+function buildMessageReferencesPrompt(references: MessageReferenceDraft[]) {
+  if (references.length === 0) return "";
+
+  const payload = {
+    type: "message_references",
+    version: 1,
+    count: references.length,
+    items: references.map((reference, index) => {
+      const truncated = reference.text.length > 6000;
+      return {
+        type: reference.kind === "selection" ? "message_selection" : "message_reference",
+        index: index + 1,
+        id: reference.id,
+        source: {
+          role: reference.sourceRole,
+          label: reference.sourceLabel,
+          capturedAt: reference.capturedAt,
+        },
+        selection: {
+          text: truncated ? `${reference.text.slice(0, 6000)}\n...<message reference truncated>` : reference.text,
+          truncated,
+          originalLength: reference.text.length,
+        },
+      };
+    }),
+  };
+
+  return [
+    "<message_references>",
+    "This structured block contains user-selected chat message context. Treat it as current user intent attached to the latest prompt.",
+    JSON.stringify(payload, null, 2),
+    "</message_references>",
+  ].join("\n");
+}
+
+function mergePromptWithMessageReferences(prompt: string, references: MessageReferenceDraft[]) {
+  const referencePrompt = buildMessageReferencesPrompt(references);
+  if (!referencePrompt) return prompt;
+  return [prompt.trim(), referencePrompt].filter(Boolean).join("\n\n");
+}
+
+function buildFileReferencesPrompt(references: FileReferenceDraft[]) {
+  if (references.length === 0) return "";
+
+  const payload = {
+    type: "file_references",
+    version: 1,
+    count: references.length,
+    items: references.map((reference, index) => ({
+      type: reference.kind === "directory" ? "directory_reference" : "file_reference",
+      index: index + 1,
+      id: reference.id,
+      file: {
+        path: reference.path,
+        name: reference.name,
+        label: reference.label,
+        kind: reference.kind,
+        workspaceRoot: reference.workspaceRoot,
+      },
+    })),
+  };
+
+  return [
+    "<file_references>",
+    "This structured block contains explicit file or directory references selected through @ mention. Use paths before searching broadly.",
+    JSON.stringify(payload, null, 2),
+    "</file_references>",
+  ].join("\n");
+}
+
+function mergePromptWithFileReferences(prompt: string, references: FileReferenceDraft[]) {
+  const referencePrompt = buildFileReferencesPrompt(references);
+  if (!referencePrompt) return prompt;
+  return [prompt.trim(), referencePrompt].filter(Boolean).join("\n\n");
+}
+
+function normalizeMentionPath(path: string) {
+  return path.replace(/\\/g, "/").replace(/\/+/g, "/");
+}
+
+function getRelativeMentionPath(workspaceRoot: string, filePath: string) {
+  const normalizedRoot = normalizeMentionPath(workspaceRoot).replace(/\/$/, "");
+  const normalizedPath = normalizeMentionPath(filePath);
+  if (normalizedPath === normalizedRoot) return normalizedPath.split("/").pop() || normalizedPath;
+  if (normalizedPath.startsWith(`${normalizedRoot}/`)) {
+    return normalizedPath.slice(normalizedRoot.length + 1);
+  }
+  return normalizedPath;
+}
+
+function getFileMentionContext(promptValue: string, cursorIndex: number): FileMentionContext | null {
+  const safeCursor = Math.max(0, Math.min(cursorIndex, promptValue.length));
+  const beforeCursor = promptValue.slice(0, safeCursor);
+  const match = beforeCursor.match(/(^|[\s([{"'`，。；：！？])@([^\s@]*)$/u);
+  if (!match) return null;
+  const query = match[2] ?? "";
+  return {
+    start: safeCursor - query.length - 1,
+    end: safeCursor,
+    query,
+  };
+}
+
+async function collectFileMentionOptions(workspaceRoot: string): Promise<FileMentionOption[]> {
+  const root = workspaceRoot.trim();
+  if (!root || !window.electron?.listPreviewDirectory) return [];
+
+  const bridge = window.electron as typeof window.electron & {
+    listPreviewDirectory?: (input: { cwd: string; path: string }) => Promise<PreviewDirectoryResponse>;
+  };
+  const seen = new Set<string>();
+  const options: FileMentionOption[] = [];
+
+  const visit = async (directoryPath: string, depth: number): Promise<void> => {
+    if (depth > FILE_MENTION_SCAN_DEPTH || options.length >= FILE_MENTION_SCAN_LIMIT) return;
+    const response = await bridge.listPreviewDirectory?.({ cwd: root, path: directoryPath });
+    const entries = Array.isArray(response)
+      ? response
+      : response?.success === false
+        ? []
+        : response?.entries ?? [];
+
+    for (const entry of entries) {
+      if (options.length >= FILE_MENTION_SCAN_LIMIT) return;
+      const name = entry.name?.trim();
+      if (!name) continue;
+
+      const isDirectory = entry.isDirectory === true || entry.type === "directory" || entry.kind === "directory";
+      if (isDirectory && FILE_MENTION_IGNORED_DIRS.has(name)) continue;
+
+      const entryPath = entry.path || entry.filePath || `${directoryPath.replace(/\/$/, "")}/${name}`;
+      const normalizedPath = normalizeMentionPath(entryPath);
+      if (seen.has(normalizedPath)) continue;
+      seen.add(normalizedPath);
+
+      const label = getRelativeMentionPath(root, normalizedPath);
+      options.push({
+        path: normalizedPath,
+        label,
+        name,
+        kind: isDirectory ? "directory" : "file",
+      });
+
+      if (isDirectory) {
+        await visit(normalizedPath, depth + 1);
+      }
+    }
+  };
+
+  await visit(root, 0);
+  return options.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
+    return a.label.localeCompare(b.label, "zh-CN");
+  });
+}
+
 function buildQueuedPrompt(queue: QueuedMessageDraft[]) {
   if (queue.length === 1) return queue[0].prompt;
   return queue
@@ -270,6 +491,11 @@ function buildQueuedPrompt(queue: QueuedMessageDraft[]) {
       return `Queued message ${index + 1}:\n${content}`;
     })
     .join("\n\n---\n\n");
+}
+
+function countStructuredContextBlocks(prompt: string) {
+  const matches = prompt.match(/<(?:browser_annotations|code_references|message_references|file_references)>/g);
+  return matches?.length ?? 0;
 }
 
 function mergeQueuedAttachments(queue: QueuedMessageDraft[]) {
@@ -281,6 +507,18 @@ function buildDraftTitle(prompt: string, attachments: PromptAttachment[]): strin
   if (trimmed) return trimmed;
   if (attachments.length === 1) return `附件：${attachments[0].name}`;
   return `${attachments.length} 个附件`;
+}
+
+function formatShortTime(value?: number) {
+  if (!value) return "";
+  const date = new Date(value);
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function estimateTokensFromText(text: string) {
+  return Math.max(1, Math.ceil(text.length / 4));
 }
 
 async function readFileAsDataUrl(file: Blob): Promise<string> {
@@ -366,7 +604,7 @@ async function fileToAttachment(file: File): Promise<PromptAttachment> {
     return {
       id: crypto.randomUUID(),
       kind: "image",
-      name: file.name || `鍥剧墖-${Date.now()}.png`,
+      name: file.name || `图片-${Date.now()}.png`,
       mimeType: normalizedImage.mimeType,
       data: normalizedImage.dataUrl,
       preview: normalizedImage.dataUrl,
@@ -377,12 +615,12 @@ async function fileToAttachment(file: File): Promise<PromptAttachment> {
   if (isTextFile(file)) {
     const text = await readFileAsText(file);
     const normalizedText = text.length > MAX_TEXT_ATTACHMENT_LENGTH
-      ? `${text.slice(0, MAX_TEXT_ATTACHMENT_LENGTH)}\n\n[宸叉埅鏂紝鍘熷闀垮害 ${text.length} 瀛楃]`
+        ? `${text.slice(0, MAX_TEXT_ATTACHMENT_LENGTH)}\n\n[已截断，原始长度 ${text.length} 字符]`
       : text;
     return {
       id: crypto.randomUUID(),
       kind: "text",
-      name: file.name || `鏂囨湰-${Date.now()}.txt`,
+      name: file.name || `文本-${Date.now()}.txt`,
       mimeType: file.type || "text/plain",
       data: normalizedText,
       preview: normalizedText,
@@ -402,7 +640,6 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   const runtimeModel = useAppStore((state) => state.runtimeModel);
   const reasoningMode = useAppStore((state) => state.reasoningMode);
   const permissionMode = useAppStore((state) => state.permissionMode);
-  const selectedAgentId = useAppStore((state) => state.selectedAgentId);
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const activeSession = useAppStore((state) => (state.activeSessionId ? (state.sessions[state.activeSessionId] ?? state.archivedSessions[state.activeSessionId]) : undefined));
   const setPrompt = useAppStore((state) => state.setPrompt);
@@ -470,18 +707,17 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
     return {
       model: selectedModel,
       reasoningMode,
-      permissionMode,
-      agentId: selectedAgentId || undefined,
+      permissionMode: permissionMode === "plan" ? "bypassPermissions" : permissionMode,
     };
-  }, [activeProfile, activeSessionModel, permissionMode, reasoningMode, resolveSessionRuntimeModel, runtimeModel, selectedAgentId, setGlobalError]);
+  }, [activeProfile, activeSessionModel, permissionMode, reasoningMode, resolveSessionRuntimeModel, runtimeModel, setGlobalError]);
 
   const prepareAttachmentsForDispatch = useCallback(async (
     promptValue: string,
     attachments: PromptAttachment[],
   ): Promise<PromptAttachment[] | null> => {
     void promptValue;
-    // 涓存椂鍏抽棴鍥剧墖棰勫鐞嗘嫤鎴細褰撳墠閾捐矾浼氬奖鍝嶈亰澶╁浘鐗囬瑙堝拰鐪熷疄闄勪欢浼犻€掋€?
-    // 鍏堣鍥剧墖鎸夊墠绔?downscale 鍚庣殑 data URL 鍘熸牱鍙戦€侊紝淇濊瘉鏍稿績鑱婂ぉ/鎴浘鍙傝€冨姛鑳藉彲鐢ㄣ€?
+    // 临时关闭图片预处理拦截：当前链路会影响聊天图片预览和真实附件传递。
+    // 先让图片按前端 downscale 后的 data URL 原样发送，保证核心聊天/截图参考功能可用。
     return attachments;
 
     const hasImageAttachments = attachments.some((attachment) => attachment.kind === "image");
@@ -620,6 +856,8 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
 export function PromptInput({
   sendEvent,
   onSendMessage,
+  permissionRequest,
+  onPermissionResult,
   disabled = false,
   leftOffset = 320,
   rightOffset = 340,
@@ -633,34 +871,62 @@ export function PromptInput({
   const setRuntimeModel = useAppStore((state) => state.setRuntimeModel);
   const reasoningMode = useAppStore((state) => state.reasoningMode);
   const setReasoningMode = useAppStore((state) => state.setReasoningMode);
-  const availableAgents = useAppStore((state) => state.availableAgents);
-  const selectedAgentId = useAppStore((state) => state.selectedAgentId);
-  const setSelectedAgentId = useAppStore((state) => state.setSelectedAgentId);
-  const permissionMode = useAppStore((state) => state.permissionMode);
-  const setPermissionMode = useAppStore((state) => state.setPermissionMode);
+  const cwd = useAppStore((state) => state.cwd);
   const codeReferencesBySessionId = useAppStore((state) => state.codeReferencesBySessionId);
+  const messageReferencesBySessionId = useAppStore((state) => state.messageReferencesBySessionId);
+  const fileReferencesBySessionId = useAppStore((state) => state.fileReferencesBySessionId);
   const removeCodeReference = useAppStore((state) => state.removeCodeReference);
+  const updateCodeReference = useAppStore((state) => state.updateCodeReference);
   const clearCodeReferences = useAppStore((state) => state.clearCodeReferences);
+  const removeMessageReference = useAppStore((state) => state.removeMessageReference);
+  const clearMessageReferences = useAppStore((state) => state.clearMessageReferences);
+  const addFileReference = useAppStore((state) => state.addFileReference);
+  const removeFileReference = useAppStore((state) => state.removeFileReference);
+  const clearFileReferences = useAppStore((state) => state.clearFileReferences);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const fileMentionCacheRef = useRef<{ cwd: string; options: FileMentionOption[] } | null>(null);
   const isComposingRef = useRef(false);
   const compositionEndedAtRef = useRef(0);
   const [attachments, setAttachments] = useState<PromptAttachment[]>([]);
   const [queuedMessagesBySession, setQueuedMessagesBySession] = useState<Record<string, QueuedMessageDraft[]>>({});
   const [showSlashBrowser, setShowSlashBrowser] = useState(false);
+  const [slashActiveIndex, setSlashActiveIndex] = useState(0);
+  const [cursorIndex, setCursorIndex] = useState(0);
+  const [fileMentionOptions, setFileMentionOptions] = useState<FileMentionOption[]>([]);
+  const [fileMentionLoading, setFileMentionLoading] = useState(false);
+  const [fileMentionActiveIndex, setFileMentionActiveIndex] = useState(0);
+  const [editingCodeReferenceId, setEditingCodeReferenceId] = useState<string | null>(null);
+  const [editingCodeReferenceComment, setEditingCodeReferenceComment] = useState("");
   const autoDispatchRef = useRef<string | null>(null);
   const submitInFlightRef = useRef(false);
   const [submissionStatus, setSubmissionStatus] = useState<string | null>(null);
   const setGlobalError = useAppStore((state) => state.setGlobalError);
   const codeReferenceSessionKey = getCodeReferenceSessionKey(activeSessionId);
+  const activeSessionCwd = useAppStore((state) => {
+    if (!activeSessionId) return "";
+    return (state.sessions[activeSessionId] ?? state.archivedSessions[activeSessionId])?.cwd ?? "";
+  });
+  const effectiveCwd = cwd.trim() || activeSessionCwd.trim();
   const codeReferences = codeReferencesBySessionId[codeReferenceSessionKey] || EMPTY_CODE_REFERENCES;
+  const messageReferences = messageReferencesBySessionId[codeReferenceSessionKey] || EMPTY_MESSAGE_REFERENCES;
+  const fileReferences = fileReferencesBySessionId[codeReferenceSessionKey] || EMPTY_FILE_REFERENCES;
   const slashQuery = prompt.startsWith("/") ? prompt.trim().slice(1).split(/\s+/)[0] ?? "" : "";
+  const fileMentionContext = useMemo(
+    () => getFileMentionContext(prompt, cursorIndex || prompt.length),
+    [cursorIndex, prompt],
+  );
   const activeQueue = useMemo(() => {
     if (!activeSessionId) return [];
     return queuedMessagesBySession[activeSessionId] ?? [];
   }, [activeSessionId, queuedMessagesBySession]);
-  const hasDraft = prompt.trim().length > 0 || attachments.length > 0 || browserAnnotations.length > 0 || codeReferences.length > 0;
+  const hasDraft = prompt.trim().length > 0
+    || attachments.length > 0
+    || browserAnnotations.length > 0
+    || codeReferences.length > 0
+    || messageReferences.length > 0
+    || fileReferences.length > 0;
   const filteredSlashCommands = useMemo(() => {
     const matchedCommands = !slashQuery
       ? slashCommands
@@ -676,6 +942,31 @@ export function PromptInput({
     return matchedCommands.slice(0, SLASH_QUERY_LIMIT);
   }, [showSlashBrowser, slashCommands, slashQuery]);
   const showSlashPalette = (prompt.startsWith("/") || showSlashBrowser) && filteredSlashCommands.length > 0 && !disabled;
+  const filteredFileMentionOptions = useMemo(() => {
+    if (!fileMentionContext) return [];
+    const query = normalizeMentionPath(fileMentionContext.query.replace(/^["']|["']$/g, "")).toLowerCase();
+    const matched = !query
+      ? fileMentionOptions
+      : fileMentionOptions.filter((option) => {
+          const label = option.label.toLowerCase();
+          const name = option.name.toLowerCase();
+          return label.includes(query) || name.includes(query);
+        });
+    return matched
+      .slice()
+      .sort((a, b) => {
+        if (!query) return 0;
+        const aLabel = a.label.toLowerCase();
+        const bLabel = b.label.toLowerCase();
+        const aName = a.name.toLowerCase();
+        const bName = b.name.toLowerCase();
+        const aScore = (aLabel.startsWith(query) ? 0 : aName.startsWith(query) ? 1 : aLabel.includes(`/${query}`) ? 2 : 3) + (a.kind === "file" ? 0 : 0.2);
+        const bScore = (bLabel.startsWith(query) ? 0 : bName.startsWith(query) ? 1 : bLabel.includes(`/${query}`) ? 2 : 3) + (b.kind === "file" ? 0 : 0.2);
+        return aScore - bScore || a.label.localeCompare(b.label, "zh-CN");
+      })
+      .slice(0, FILE_MENTION_PREVIEW_LIMIT);
+  }, [fileMentionContext, fileMentionOptions]);
+  const showFileMentionPalette = Boolean(fileMentionContext) && !showSlashPalette && !disabled && (fileMentionLoading || filteredFileMentionOptions.length > 0);
   const activeProfile = useMemo<ApiConfigProfile | undefined>(() => {
     return apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
   }, [apiConfigSettings]);
@@ -694,14 +985,27 @@ export function PromptInput({
   const clearComposer = useCallback(() => {
     setPrompt("");
     setAttachments([]);
+    setFileMentionActiveIndex(0);
+    setSlashActiveIndex(0);
     clearCodeReferences(activeSessionId);
+    clearMessageReferences(activeSessionId);
+    clearFileReferences(activeSessionId);
     if (activeSessionId) {
       setBrowserWorkbenchAnnotations(activeSessionId, []);
     }
     clearBrowserAnnotations();
     void window.electron.clearBrowserWorkbenchAnnotations?.(activeSessionId ?? undefined);
     setShowSlashBrowser(false);
-  }, [activeSessionId, clearBrowserAnnotations, clearCodeReferences, setBrowserWorkbenchAnnotations, setPrompt]);
+  }, [activeSessionId, clearBrowserAnnotations, clearCodeReferences, clearFileReferences, clearMessageReferences, setBrowserWorkbenchAnnotations, setPrompt]);
+
+  const updateCursorFromTextarea = useCallback(() => {
+    const input = promptRef.current;
+    if (!input) {
+      setCursorIndex(prompt.length);
+      return;
+    }
+    setCursorIndex(input.selectionStart ?? prompt.length);
+  }, [prompt.length]);
 
   const removeQueuedDraft = useCallback((queueId: string) => {
     if (!activeSessionId) return;
@@ -745,7 +1049,9 @@ export function PromptInput({
     if (!hasDraft) return false;
 
     const promptWithCodeReferences = mergePromptWithCodeReferences(prompt, codeReferences);
-    const promptWithAnnotations = mergePromptWithBrowserAnnotations(promptWithCodeReferences, browserAnnotations);
+    const promptWithFileReferences = mergePromptWithFileReferences(promptWithCodeReferences, fileReferences);
+    const promptWithMessageReferences = mergePromptWithMessageReferences(promptWithFileReferences, messageReferences);
+    const promptWithAnnotations = mergePromptWithBrowserAnnotations(promptWithMessageReferences, browserAnnotations);
     const validationError = validatePromptDraft(promptWithAnnotations);
     if (validationError) {
       setGlobalError(validationError);
@@ -766,7 +1072,7 @@ export function PromptInput({
     clearComposer();
     setGlobalError(null);
     return true;
-  }, [activeSessionId, attachments, browserAnnotations, clearComposer, codeReferences, hasDraft, prompt, setGlobalError, validatePromptDraft]);
+  }, [activeSessionId, attachments, browserAnnotations, clearComposer, codeReferences, fileReferences, hasDraft, messageReferences, prompt, setGlobalError, validatePromptDraft]);
 
   const submitCurrentInput = useCallback(async () => {
     if (!hasDraft) return false;
@@ -781,7 +1087,9 @@ export function PromptInput({
       const promptSnapshot = prompt;
       const attachmentsSnapshot = attachments;
       const promptWithCodeReferences = mergePromptWithCodeReferences(promptSnapshot, codeReferences);
-      const promptWithAnnotations = mergePromptWithBrowserAnnotations(promptWithCodeReferences, browserAnnotations);
+      const promptWithFileReferences = mergePromptWithFileReferences(promptWithCodeReferences, fileReferences);
+      const promptWithMessageReferences = mergePromptWithMessageReferences(promptWithFileReferences, messageReferences);
+      const promptWithAnnotations = mergePromptWithBrowserAnnotations(promptWithMessageReferences, browserAnnotations);
       const hasImageAttachments = attachmentsSnapshot.some((attachment) => attachment.kind === "image");
       const validationError = validatePromptDraft(promptWithAnnotations);
       if (validationError) {
@@ -789,11 +1097,11 @@ export function PromptInput({
         return false;
       }
 
-      clearComposer();
-      setSubmissionStatus(hasImageAttachments ? "姝ｅ湪鍘嬬缉骞惰瘑鍒浘鐗囷紝鏈湴瑙嗚妯″瀷鍙兘闇€瑕佸嚑鍗佺..." : "姝ｅ湪鍙戦€?..");
+      setSubmissionStatus(hasImageAttachments ? "正在压缩并识别图片，本地视觉模型可能需要几十秒..." : "正在发送...");
 
       const sent = await sendPromptDraft(promptWithAnnotations, attachmentsSnapshot, { clearPrompt: false });
       if (sent) {
+        clearComposer();
         onSendMessage?.();
       } else {
         setPrompt(promptSnapshot);
@@ -804,10 +1112,94 @@ export function PromptInput({
       setSubmissionStatus(null);
       submitInFlightRef.current = false;
     }
-  }, [attachments, browserAnnotations, clearComposer, codeReferences, hasDraft, isRunning, onSendMessage, prompt, queueCurrentDraft, sendPromptDraft, setGlobalError, setPrompt, validatePromptDraft]);
+  }, [attachments, browserAnnotations, clearComposer, codeReferences, fileReferences, hasDraft, isRunning, messageReferences, onSendMessage, prompt, queueCurrentDraft, sendPromptDraft, setGlobalError, setPrompt, validatePromptDraft]);
+
+  const insertFileMention = useCallback((option: FileMentionOption) => {
+    if (!fileMentionContext) return;
+    const before = prompt.slice(0, fileMentionContext.start).replace(/[ \t]+$/g, "");
+    const after = prompt.slice(fileMentionContext.end).replace(/^[ \t]+/g, "");
+    const joiner = before && after ? " " : "";
+    const nextPrompt = `${before}${joiner}${after}`;
+    const nextCursor = before.length + joiner.length;
+
+    addFileReference(activeSessionId, {
+      kind: option.kind,
+      path: option.path,
+      name: option.name,
+      label: option.label,
+      workspaceRoot: effectiveCwd,
+    });
+    setPrompt(nextPrompt);
+    setFileMentionActiveIndex(0);
+    window.setTimeout(() => {
+      promptRef.current?.focus();
+      promptRef.current?.setSelectionRange(nextCursor, nextCursor);
+      setCursorIndex(nextCursor);
+    }, 0);
+  }, [activeSessionId, addFileReference, effectiveCwd, fileMentionContext, prompt, setPrompt]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (disabled) return;
+    if (showSlashPalette) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashActiveIndex((current) => {
+          const count = filteredSlashCommands.length;
+          if (count === 0) return 0;
+          return e.key === "ArrowDown"
+            ? (current + 1) % count
+            : (current - 1 + count) % count;
+        });
+        return;
+      }
+      if ((e.key === "Enter" || e.key === "Tab") && filteredSlashCommands.length > 0) {
+        e.preventDefault();
+        const command = filteredSlashCommands[slashActiveIndex] ?? filteredSlashCommands[0];
+        const suffix = prompt.includes(" ") ? prompt.slice(prompt.indexOf(" ")) : "";
+        setPrompt(`/${command.replace(/^\//, "")}${suffix}`);
+        setShowSlashBrowser(false);
+        window.setTimeout(() => promptRef.current?.focus(), 0);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setShowSlashBrowser(false);
+        return;
+      }
+    }
+    if (showFileMentionPalette) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setFileMentionActiveIndex((current) => {
+          const count = filteredFileMentionOptions.length;
+          if (count === 0) return 0;
+          return e.key === "ArrowDown"
+            ? (current + 1) % count
+            : (current - 1 + count) % count;
+        });
+        return;
+      }
+      if ((e.key === "Enter" || e.key === "Tab") && filteredFileMentionOptions.length > 0) {
+        e.preventDefault();
+        insertFileMention(filteredFileMentionOptions[fileMentionActiveIndex] ?? filteredFileMentionOptions[0]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setFileMentionOptions([]);
+        return;
+      }
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      promptRef.current?.focus();
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      void submitCurrentInput();
+      return;
+    }
     if (e.key !== "Enter" || e.shiftKey) return;
     const justEndedComposition = Date.now() - compositionEndedAtRef.current < 80;
     if (e.nativeEvent.isComposing || isComposingRef.current || justEndedComposition) return;
@@ -890,9 +1282,61 @@ export function PromptInput({
       window.setTimeout(() => promptRef.current?.focus(), 0);
     };
 
-    window.addEventListener("techcc:prompt-focus", handlePromptFocus);
-    return () => window.removeEventListener("techcc:prompt-focus", handlePromptFocus);
+    window.addEventListener(PROMPT_FOCUS_EVENT, handlePromptFocus);
+    return () => window.removeEventListener(PROMPT_FOCUS_EVENT, handlePromptFocus);
   }, []);
+
+  useEffect(() => {
+    setFileMentionActiveIndex(0);
+  }, [fileMentionContext?.query]);
+
+  useEffect(() => {
+    setSlashActiveIndex(0);
+  }, [showSlashBrowser, slashQuery]);
+
+  useEffect(() => {
+    const handleGlobalShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        promptRef.current?.focus();
+      }
+    };
+
+    window.addEventListener("keydown", handleGlobalShortcut);
+    return () => window.removeEventListener("keydown", handleGlobalShortcut);
+  }, []);
+
+  useEffect(() => {
+    if (!fileMentionContext || disabled) return;
+    const workspaceRoot = effectiveCwd;
+    if (!workspaceRoot) return;
+
+    const cached = fileMentionCacheRef.current;
+    if (cached?.cwd === workspaceRoot) {
+      setFileMentionOptions(cached.options);
+      return;
+    }
+
+    let cancelled = false;
+    setFileMentionLoading(true);
+    void collectFileMentionOptions(workspaceRoot)
+      .then((options) => {
+        if (cancelled) return;
+        fileMentionCacheRef.current = { cwd: workspaceRoot, options };
+        setFileMentionOptions(options);
+      })
+      .catch((error) => {
+        console.error(error);
+        if (!cancelled) setFileMentionOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setFileMentionLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [disabled, effectiveCwd, fileMentionContext]);
 
   useEffect(() => {
     if (!activeSessionId || disabled || isRunning || activeQueue.length === 0) {
@@ -956,7 +1400,7 @@ export function PromptInput({
   return (
     <section
       ref={composerRef}
-      className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[rgba(229,234,240,0.72)] via-[rgba(229,234,240,0.18)] to-transparent pb-6 px-3 pt-10 lg:pb-8"
+      className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[rgba(229,234,240,0.64)] via-[rgba(229,234,240,0.12)] to-transparent px-3 pb-3 pt-3 lg:pb-4"
       style={{
         marginLeft: `${leftOffset}px`,
         marginRight: `${rightOffset}px`,
@@ -972,14 +1416,14 @@ export function PromptInput({
         <div className="mx-auto mb-3 w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
           <div className="overflow-hidden rounded-[24px] border border-black/6 bg-white/94 shadow-[0_18px_50px_rgba(30,38,52,0.08)] backdrop-blur">
             <div className="border-b border-black/6 px-4 py-2 text-xs font-medium text-muted">
-              鍙敤 Slash 鍛戒护
+              可用 Slash 命令
             </div>
             <div className="grid max-h-[min(42vh,320px)] gap-1 overflow-y-auto p-2">
-              {filteredSlashCommands.map((command) => (
+              {filteredSlashCommands.map((command, index) => (
                 <button
                   key={command}
                   type="button"
-                  className="rounded-xl px-3 py-2 text-left text-sm text-ink-700 transition-colors hover:bg-surface-secondary"
+                  className={`rounded-xl px-3 py-2 text-left text-sm transition-colors ${index === slashActiveIndex ? "bg-accent/10 text-accent" : "text-ink-700 hover:bg-surface-secondary"}`}
                   onClick={() => {
                     const suffix = prompt.includes(" ") ? prompt.slice(prompt.indexOf(" ")) : "";
                     setPrompt(`/${command.replace(/^\//, "")}${suffix}`);
@@ -987,19 +1431,91 @@ export function PromptInput({
                     promptRef.current?.focus();
                   }}
                 >
-                  <span className="font-medium text-accent">/{command.replace(/^\//, "")}</span>
+                  <span className="font-medium">/{command.replace(/^\//, "")}</span>
+                  <span className="ml-2 text-xs font-normal text-muted">会话命令 · Enter/Tab 选择</span>
                 </button>
               ))}
             </div>
           </div>
         </div>
       )}
-      <div className="mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[30px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,247,251,0.94))] px-4 py-3 shadow-[0_24px_60px_rgba(30,38,52,0.08)] backdrop-blur-xl xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
+      {showFileMentionPalette && (
+        <div className="mx-auto mb-3 w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
+          <div className="overflow-hidden rounded-[22px] border border-[#d0d7de] bg-white/96 shadow-[0_18px_50px_rgba(30,38,52,0.10)] backdrop-blur">
+            <div className="flex items-center justify-between gap-3 border-b border-black/6 px-4 py-2 text-xs font-medium text-muted">
+              <span>@ 文件提及</span>
+              <div className="flex items-center gap-2">
+                <span>{fileMentionLoading ? "扫描工作区..." : `${filteredFileMentionOptions.length} 个候选`}</span>
+                <button
+                  type="button"
+                  className="rounded-full border border-black/8 bg-white px-2 py-0.5 text-[11px] font-semibold text-muted transition hover:text-accent"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    const workspaceRoot = effectiveCwd;
+                    if (!workspaceRoot) return;
+                    fileMentionCacheRef.current = null;
+                    setFileMentionLoading(true);
+                    void collectFileMentionOptions(workspaceRoot)
+                      .then((options) => {
+                        fileMentionCacheRef.current = { cwd: workspaceRoot, options };
+                        setFileMentionOptions(options);
+                      })
+                      .finally(() => setFileMentionLoading(false));
+                  }}
+                >
+                  刷新
+                </button>
+              </div>
+            </div>
+            <div className="grid max-h-[min(42vh,320px)] gap-1 overflow-y-auto p-2">
+              {filteredFileMentionOptions.map((option, index) => (
+                <button
+                  key={option.path}
+                  type="button"
+                  className={`flex items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors ${index === fileMentionActiveIndex ? "bg-[#ddf4ff] text-[#0969da]" : "text-ink-700 hover:bg-surface-secondary"}`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => insertFileMention(option)}
+                >
+                  <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-md border text-[12px] ${option.kind === "directory" ? "border-[#d0d7de] bg-[#f6f8fa] text-[#57606a]" : "border-[#bfd7ff] bg-[#ddf4ff] text-[#0969da]"}`}>
+                    {option.kind === "directory" ? "⌁" : "□"}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium">{option.label}</span>
+                  <span className="shrink-0 rounded-full border border-black/8 bg-white px-2 py-0.5 text-[11px] text-muted">
+                    {option.kind === "directory" ? "目录" : "文件"}
+                  </span>
+                </button>
+              ))}
+              {!fileMentionLoading && filteredFileMentionOptions.length === 0 && (
+                <div className="px-4 py-5 text-center text-sm text-muted">
+                  没找到匹配文件，试试缩短关键词。
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[26px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,247,251,0.94))] px-3 py-2.5 shadow-[0_18px_44px_rgba(30,38,52,0.08)] backdrop-blur-xl xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
         {activeQueue.length > 0 && (
           <div className="mb-3 rounded-2xl border border-black/6 bg-[#f6f8fb] px-3 py-3">
             <div className="mb-2 flex items-center justify-between gap-3">
               <div className="text-xs font-medium text-ink-700">待发送队列 · {activeQueue.length} 条</div>
-              <div className="text-[11px] text-muted">运行中可点「插入」作为补充命令；空闲后会自动续发。</div>
+              <div className="flex items-center gap-2 text-[11px] text-muted">
+                <span>运行中可点「插入」作为补充命令；空闲后会自动续发。</span>
+                <button
+                  type="button"
+                  className="rounded-full border border-black/8 bg-white px-2 py-0.5 font-semibold transition hover:text-accent"
+                  onClick={() => {
+                    if (!activeSessionId) return;
+                    setQueuedMessagesBySession((current) => {
+                      const next = { ...current };
+                      delete next[activeSessionId];
+                      return next;
+                    });
+                  }}
+                >
+                  清空队列
+                </button>
+              </div>
             </div>
             <div className="grid gap-2">
               {activeQueue.map((queuedMessage, index) => {
@@ -1007,6 +1523,7 @@ export function PromptInput({
                   || (queuedMessage.attachments.length === 1
                     ? `附件：${queuedMessage.attachments[0].name}`
                     : `${queuedMessage.attachments.length} 个附件`);
+                const contextCount = countStructuredContextBlocks(queuedMessage.prompt);
                 return (
                   <div key={queuedMessage.id} className="group flex items-center gap-2 rounded-2xl border border-black/6 bg-white px-3 py-2 text-xs text-ink-700 transition hover:border-accent/18 hover:shadow-[0_10px_24px_rgba(30,38,52,0.06)]">
                     <span className="shrink-0 rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-semibold text-accent">
@@ -1025,6 +1542,12 @@ export function PromptInput({
                         附件 {queuedMessage.attachments.length}
                       </span>
                     )}
+                    {contextCount > 0 && (
+                      <span className="shrink-0 rounded-full bg-accent/10 px-2 py-0.5 text-[11px] text-accent">
+                        上下文 {contextCount}
+                      </span>
+                    )}
+                    <span className="shrink-0 text-[11px] text-muted">{formatShortTime(queuedMessage.createdAt)}</span>
                     {isRunning && (
                       <button
                         type="button"
@@ -1058,19 +1581,28 @@ export function PromptInput({
             </div>
           </div>
         )}
+        {permissionRequest?.toolName === "AskUserQuestion" && onPermissionResult && (
+          <div className="mb-3">
+            <DecisionPanel
+              request={permissionRequest}
+              compact
+              onSubmit={(result) => onPermissionResult(permissionRequest.toolUseId, result)}
+            />
+          </div>
+        )}
         {attachments.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">
             {attachments.map((attachment) => (
               <div key={attachment.id} className="flex max-w-full items-center gap-2 rounded-2xl border border-black/6 bg-white px-3 py-2 text-xs text-ink-700">
                 <span className="shrink-0 rounded-full bg-accent/18 px-2 py-0.5 text-[11px] text-[#ffb290]">
-                  {attachment.kind === "image" ? "鍥剧墖" : "鏂囨湰"}
+                  {attachment.kind === "image" ? "图片" : "文本"}
                 </span>
                 <span className="truncate max-w-[180px]">{attachment.name}</span>
                 <button
                   type="button"
                   className="rounded-full p-1 text-muted hover:bg-black/5 hover:text-ink-700"
                   onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
-                  aria-label={`绉婚櫎闄勪欢 ${attachment.name}`}
+                  aria-label={`移除附件 ${attachment.name}`}
                 >
                   <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M18 6 6 18M6 6l12 12" />
@@ -1081,13 +1613,62 @@ export function PromptInput({
           </div>
         )}
 
+        {(messageReferences.length > 0 || fileReferences.length > 0) && (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            {messageReferences.map((reference, index) => (
+              <ComposerContextCard
+                key={reference.id}
+                index={index + 1}
+                tone="message"
+                label="消息"
+                title={getMessageReferenceLabel(reference)}
+                meta={`${estimateTokensFromText(reference.text)} tok`}
+                detail={`${reference.sourceRole}${reference.capturedAt ? ` · ${formatShortTime(reference.capturedAt)}` : ""}\n${reference.text}`}
+                onCopy={() => void copyText(reference.text)}
+                onRemove={() => removeMessageReference(activeSessionId, reference.id)}
+              />
+            ))}
+            {fileReferences.map((reference, index) => (
+              <ComposerContextCard
+                key={reference.id}
+                index={messageReferences.length + index + 1}
+                tone="file"
+                label={reference.kind === "directory" ? "目录" : "文件"}
+                title={reference.label}
+                meta="路径引用"
+                detail={`${reference.workspaceRoot}\n${reference.path}`}
+                onOpen={() => {
+                  if (reference.kind === "file") {
+                    window.dispatchEvent(new CustomEvent(PREVIEW_OPEN_FILE_EVENT, { detail: { filePath: reference.path } }));
+                  }
+                }}
+                onCopy={() => void copyText(reference.path)}
+                onRemove={() => removeFileReference(activeSessionId, reference.id)}
+              />
+            ))}
+            {(messageReferences.length > 1 || fileReferences.length > 1) && (
+              <button
+                type="button"
+                className="inline-flex h-9 items-center rounded-full border border-black/8 bg-white px-3 text-xs font-semibold text-muted transition hover:bg-black/5 hover:text-ink-700"
+                onClick={() => {
+                  clearMessageReferences(activeSessionId);
+                  clearFileReferences(activeSessionId);
+                }}
+              >
+                清空消息/文件引用
+              </button>
+            )}
+          </div>
+        )}
+
         {codeReferences.length > 0 && (
           <div className="mb-3 flex flex-wrap items-center gap-2">
             {codeReferences.map((reference, index) => {
+              const isEditing = editingCodeReferenceId === reference.id;
               return (
                 <div
                   key={reference.id}
-                  className="inline-flex h-9 max-w-[300px] items-center gap-1.5 rounded-full border border-[#d0d7de] bg-white px-2.5 text-xs font-semibold text-ink-800 shadow-[0_8px_18px_rgba(15,18,24,0.07)]"
+                  className={`inline-flex min-h-9 max-w-[360px] items-center gap-1.5 rounded-full border border-[#d0d7de] bg-white px-2.5 text-xs font-semibold text-ink-800 shadow-[0_8px_18px_rgba(15,18,24,0.07)] ${isEditing ? "py-1" : ""}`}
                   title={`页面地址：${reference.filePath}\n行号：L${getCodeReferenceLineLabel(reference)}\n${reference.comment ?? "代码引用会随消息一起发送"}`}
                 >
                   <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full text-[11px] font-bold text-white ${reference.kind === "comment" ? "bg-[#bf3989]" : "bg-[#0969da]"}`}>
@@ -1099,16 +1680,72 @@ export function PromptInput({
                   <button
                     type="button"
                     className="min-w-0 truncate text-left text-xs font-semibold text-[#0969da] hover:underline"
-                    onClick={() => window.dispatchEvent(new CustomEvent("techcc:preview-open-file", { detail: { filePath: reference.filePath, startLine: reference.startLine } }))}
+                    onClick={() => window.dispatchEvent(new CustomEvent(PREVIEW_OPEN_FILE_EVENT, { detail: { filePath: reference.filePath, startLine: reference.startLine } }))}
                     title={`跳回预览里的代码位置：${reference.filePath}:L${getCodeReferenceLineLabel(reference)}`}
                   >
                     {getCodeReferenceFileLabel(reference)} · L{getCodeReferenceLineLabel(reference)}
                   </button>
-                  {reference.comment && (
+                  {isEditing ? (
+                    <input
+                      value={editingCodeReferenceComment}
+                      onChange={(event) => setEditingCodeReferenceComment(event.target.value)}
+                      className="h-7 w-40 min-w-0 flex-1 rounded-full border border-black/10 bg-surface-secondary px-2 text-xs font-medium text-ink-800 outline-none focus:border-accent-500"
+                      placeholder="给这段代码补一句说明"
+                    />
+                  ) : reference.comment ? (
                     <span className="min-w-0 truncate text-left text-xs font-medium text-muted">
                       {reference.comment}
                     </span>
+                  ) : null}
+                  {isEditing ? (
+                    <>
+                      <button
+                        type="button"
+                        className="rounded-full px-2 py-1 text-[10px] font-semibold text-accent-700 transition-colors hover:bg-accent-50"
+                        onClick={() => {
+                          updateCodeReference(activeSessionId, reference.id, {
+                            comment: editingCodeReferenceComment.trim() || undefined,
+                          });
+                          setEditingCodeReferenceId(null);
+                          setEditingCodeReferenceComment("");
+                        }}
+                        aria-label={`保存代码引用 ${index + 1} 评论`}
+                      >
+                        保存
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-full px-2 py-1 text-[10px] font-semibold text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
+                        onClick={() => {
+                          setEditingCodeReferenceId(null);
+                          setEditingCodeReferenceComment("");
+                        }}
+                        aria-label={`取消编辑代码引用 ${index + 1} 评论`}
+                      >
+                        取消
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
+                      onClick={() => {
+                        setEditingCodeReferenceId(reference.id);
+                        setEditingCodeReferenceComment(reference.comment ?? "");
+                      }}
+                      aria-label={`编辑代码引用 ${index + 1} 评论`}
+                    >
+                      ✎
+                    </button>
                   )}
+                  <button
+                    type="button"
+                    className="rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
+                    onClick={() => void copyText(`${reference.filePath}:L${getCodeReferenceLineLabel(reference)}\n${reference.code}`)}
+                    aria-label={`复制代码引用 ${index + 1}`}
+                  >
+                    ⧉
+                  </button>
                   <button
                     type="button"
                     className="rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
@@ -1141,17 +1778,28 @@ export function PromptInput({
               return (
                 <div
                   key={annotation.id}
-                  className="inline-flex h-10 max-w-[240px] items-center gap-2 rounded-full border border-black/8 bg-white px-3 text-sm font-semibold text-ink-800 shadow-[0_10px_24px_rgba(15,18,24,0.08)]"
-                  title="浏览器批注会以结构化 JSON 随消息一起发送"
+                  role="button"
+                  tabIndex={0}
+                  className="inline-flex h-10 max-w-[280px] cursor-pointer items-center gap-2 rounded-full border border-black/8 bg-white px-3 text-sm font-semibold text-ink-800 shadow-[0_10px_24px_rgba(15,18,24,0.08)] transition hover:border-accent/20"
+                  title={`浏览器批注会以结构化 JSON 随消息一起发送\n${annotation.url}`}
+                  onClick={() => {
+                    if (annotation.url) {
+                      window.dispatchEvent(new CustomEvent(OPEN_BROWSER_WORKBENCH_URL_EVENT, { detail: { url: annotation.url } }));
+                    }
+                  }}
                 >
                   <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent text-[11px] font-bold text-white">
                     {index + 1}
                   </span>
                   <span className="min-w-0 truncate">{label}</span>
+                  <span className="hidden max-w-[90px] truncate text-[11px] font-medium text-muted sm:inline">
+                    {annotation.title || annotation.url}
+                  </span>
                   <button
                     type="button"
                     className="ml-1 rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
-                    onClick={() => {
+                    onClick={(event) => {
+                      event.stopPropagation();
                       const nextAnnotations = browserAnnotations.filter((item) => item.id !== annotation.id);
                       if (activeSessionId) {
                         setBrowserWorkbenchAnnotations(activeSessionId, nextAnnotations);
@@ -1159,7 +1807,7 @@ export function PromptInput({
                         setBrowserAnnotations(nextAnnotations);
                       }
                     }}
-                    aria-label={`绉婚櫎娴忚鍣ㄦ壒娉?${index + 1}`}
+                    aria-label={`移除浏览器批注 ${index + 1}`}
                   >
                     <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M18 6 6 18M6 6l12 12" />
@@ -1180,19 +1828,19 @@ export function PromptInput({
                   }
                 }}
               >
-                娓呯┖
+                清空
               </button>
             )}
           </div>
         )}
 
-        <div className="flex items-end gap-3">
+        <div className="flex items-end gap-2.5">
           {slashCommands.length > 0 && (
             <button
               type="button"
               className={`flex h-10 shrink-0 items-center justify-center rounded-2xl border px-3 text-sm transition-colors ${showSlashBrowser ? "border-accent/30 bg-accent-subtle text-accent" : "border-black/6 bg-white text-ink-700 hover:bg-surface-secondary"}`}
               onClick={() => setShowSlashBrowser((value) => !value)}
-              aria-label="鎵撳紑 Slash 鍛戒护鍒楄〃"
+              aria-label="打开 Slash 命令列表"
               disabled={disabled}
             >
               /
@@ -1202,7 +1850,7 @@ export function PromptInput({
             type="button"
             className="flex h-10 shrink-0 items-center justify-center rounded-2xl border border-black/6 bg-white px-3 text-sm text-ink-700 transition-colors hover:bg-surface-secondary"
             onClick={() => fileInputRef.current?.click()}
-            aria-label="娣诲姞闄勪欢"
+            aria-label="添加附件"
             disabled={disabled}
           >
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -1211,7 +1859,7 @@ export function PromptInput({
           </button>
           <textarea
             rows={1}
-            className="flex-1 resize-none bg-transparent py-2 text-[15px] leading-7 text-ink-800 placeholder:text-muted focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            className="max-h-[104px] min-h-10 flex-1 resize-none overflow-y-auto bg-transparent py-2 text-[15px] leading-6 text-ink-800 placeholder:text-muted focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
             placeholder={
               disabled
                 ? "先创建或选择一个会话..."
@@ -1222,7 +1870,13 @@ export function PromptInput({
                       : "直接描述你希望 Agent 处理的事情..."
             }
             value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
+            onChange={(e) => {
+              setPrompt(e.target.value);
+              setCursorIndex(e.target.selectionStart ?? e.target.value.length);
+            }}
+            onSelect={updateCursorFromTextarea}
+            onClick={updateCursorFromTextarea}
+            onKeyUp={updateCursorFromTextarea}
             onKeyDown={handleKeyDown}
             onCompositionStart={() => {
               isComposingRef.current = true;
@@ -1249,19 +1903,7 @@ export function PromptInput({
             )}
           </button>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-black/6 pt-3">
-          <InlineDropdown
-            label="Agent"
-            value={selectedAgentId}
-            disabled={disabled || availableAgents.length === 0}
-            onChange={setSelectedAgentId}
-            minWidthClass="min-w-[180px]"
-            options={
-              availableAgents.length === 0
-                ? [{ value: "", label: "默认" }]
-                : [{ value: "", label: "默认" }, ...availableAgents.map((a) => ({ value: a.id, label: a.name }))]
-            }
-          />
+        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-black/6 pt-2">
           <InlineDropdown
             label="模型"
             value={runtimeModel}
@@ -1282,23 +1924,6 @@ export function PromptInput({
             minWidthClass="min-w-[180px]"
             options={REASONING_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
           />
-          <label className="inline-flex min-w-[180px] cursor-pointer items-center justify-between gap-2 rounded-xl border border-black/10 bg-white/92 px-3 py-2 text-xs text-ink-700 shadow-[0_10px_28px_rgba(15,18,24,0.06)]">
-            <span className="text-muted">Plan 模式</span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={permissionMode === "plan"}
-              aria-label="切换 Plan 模式"
-              className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border transition ${permissionMode === "plan" ? "border-[#f59a55] bg-[#ffddb8]" : "border-black/20 bg-black/10"} disabled:opacity-60`}
-              onClick={() => setPermissionMode(permissionMode === "plan" ? "bypassPermissions" : "plan")}
-              disabled={disabled}
-            >
-              <span
-                aria-hidden="true"
-                className={`inline-block h-4 w-4 translate-y-[1px] rounded-full bg-white transition ${permissionMode === "plan" ? "translate-x-4" : "translate-x-0.5"} shadow`}
-              />
-            </button>
-          </label>
         </div>
         <input
           ref={fileInputRef}

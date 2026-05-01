@@ -53,6 +53,12 @@ language: zh-CN
 
 ## 近阶段更新（2026-05-01 / v0.1.1）
 
+- AionUi 聊天 UI 对齐增强：
+  - 消息文本支持选区引用，引用以 composer 卡片保留，发送时序列化为 `<message_references>`
+  - 输入框支持 `@` 文件/目录提及，候选可刷新，选中后生成文件引用卡，发送时序列化为 `<file_references>`
+  - Slash 菜单补键盘选择与中文文案，运行中队列显示上下文数量和创建时间
+  - Assistant 思考块折叠为 Thought 卡，工具调用增加工具摘要、专用 Bash/文件/Patch/Web 展示和长输出折叠
+  - Markdown 消息补代码块复制、表格滚动、任务列表、链接安全打开
 - 右侧 Preview 工作台升级：
   - 新增 VS Code light 风格的文件树与 Monaco 代码预览
   - 支持工作区文件树懒加载、全量展开、刷新、文件打开与错误态展示
@@ -68,11 +74,17 @@ language: zh-CN
   - Preview / Monaco / 文件树保留局部 VS Code light 蓝灰色，不反向污染主界面
 - 开发流程与 QA：
   - 新增 `.claude/skills/tech-cc-hub-dev-flow`，沉淀本项目自测和交付规则
+  - 新增 `npm run qa:chat-ui`，用于聊天输入区、上下文卡片和 slash/@ 菜单 smoke 测试
   - 新增 `npm run qa:preview`，用于 Preview 面板浏览器 smoke 测试
   - 测试代码集中迁移到 `test/electron`
 - 模型路由与运行时修正：
   - 修正开发环境下模型选择被本地 settings/env 覆盖的问题
   - 增加运行时模型路由日志，便于确认实际走的模型与网关
+- 自动更新与发布链路：
+  - 接入 `electron-updater + GitHub Releases`，不需要自建更新服务器
+  - GitHub Actions 在 macOS / Windows runner 上构建发布包，Release assets 作为更新源
+  - 新增 `npm run release:github -- patch|minor|major|vX.Y.Z` 一键打 tag 触发发布
+  - 新增 `.claude/skills/github-release-updater`，沉淀桌面端自动更新发布流程
 
 ## 近阶段更新（2026-04-26）
 
@@ -138,6 +150,38 @@ npm run dev
 npm run transpile:electron
 npm run build
 ```
+
+## 发布与自动更新
+
+当前桌面端更新链路使用 GitHub，不需要部署服务器。
+
+```text
+push tag vX.Y.Z
+        ↓
+GitHub Actions 构建 macOS / Windows 包
+        ↓
+上传到 GitHub Releases
+        ↓
+客户端 electron-updater 检查更新
+        ↓
+用户下载并重启安装
+```
+
+发布 patch 版本：
+
+```bash
+npm run release:github -- patch
+```
+
+指定版本：
+
+```bash
+npm run release:github -- v0.1.2
+```
+
+发布流程说明见：
+
+- [GitHub Releases 自动更新发布流程](/Users/lst01/Desktop/学习/tech-cc-hub/doc/40-product/1.0.0/40-delivery/72-GitHub-Releases-自动更新发布流程.md)
 
 ## QA 与调试
 

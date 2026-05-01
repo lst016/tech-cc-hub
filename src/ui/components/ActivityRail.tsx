@@ -530,10 +530,94 @@ function MetricsStrip({
 function AnalysisCard({
   card,
   onJump,
+  variant = "default",
 }: {
   card: ActivityAnalysisCard;
   onJump: (timelineId: string) => void;
+  variant?: "primary" | "compact" | "default";
 }) {
+  const toneLabel =
+    card.tone === "error"
+      ? "需要关注"
+      : card.tone === "warning"
+        ? "建议排查"
+        : card.tone === "success"
+          ? "状态正常"
+          : "参考信息";
+  const dotClass =
+    card.tone === "error"
+      ? "bg-danger"
+      : card.tone === "warning"
+        ? "bg-accent"
+        : card.tone === "success"
+          ? "bg-success"
+          : "bg-info";
+
+  if (variant === "primary") {
+    const body = (
+      <div className="rounded-[24px] border border-accent/15 bg-white/88 p-4 shadow-[0_14px_28px_rgba(15,23,42,0.045)] transition hover:border-accent/25 hover:bg-white">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-accent/18 bg-accent-subtle px-2.5 py-1 text-[10px] font-semibold text-accent">
+                优先诊断
+              </span>
+              <span className={`rounded-full border px-2.5 py-1 text-[10px] font-medium ${toneClasses(card.tone)}`}>
+                {toneLabel}
+              </span>
+            </div>
+            <h4 className="mt-3 text-[15px] font-semibold leading-6 text-ink-900">{card.title}</h4>
+            <p className="mt-2 whitespace-pre-wrap text-[12px] leading-5 text-ink-600">{card.detail}</p>
+          </div>
+          <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${dotClass}`} />
+        </div>
+        {card.supportingTimelineId && (
+          <div className="mt-3 inline-flex items-center rounded-full border border-black/5 bg-black/[0.025] px-3 py-1.5 text-[11px] font-medium text-ink-600">
+            查看对应证据
+          </div>
+        )}
+      </div>
+    );
+
+    return card.supportingTimelineId ? (
+      <button type="button" className="w-full text-left" onClick={() => onJump(card.supportingTimelineId!)}>
+        {body}
+      </button>
+    ) : (
+      body
+    );
+  }
+
+  if (variant === "compact") {
+    const body = (
+      <div className="rounded-2xl border border-black/5 bg-white/70 px-3 py-3 transition hover:border-black/10 hover:bg-white">
+        <div className="flex items-start gap-3">
+          <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${dotClass}`} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="truncate text-[12px] font-semibold text-ink-800">{card.title}</h4>
+              <span className="shrink-0 text-[10px] text-ink-400">{toneLabel}</span>
+            </div>
+            <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-ink-500">{card.detail}</p>
+          </div>
+          {card.supportingTimelineId && (
+            <span className="mt-0.5 shrink-0 rounded-full border border-black/5 bg-black/[0.025] px-2 py-0.5 text-[10px] text-ink-500">
+              证据
+            </span>
+          )}
+        </div>
+      </div>
+    );
+
+    return card.supportingTimelineId ? (
+      <button type="button" className="w-full text-left" onClick={() => onJump(card.supportingTimelineId!)}>
+        {body}
+      </button>
+    ) : (
+      body
+    );
+  }
+
   const body = (
     <div className={`rounded-2xl border p-4 ${toneClasses(card.tone)}`}>
       <div className="flex items-start justify-between gap-3">
@@ -902,6 +986,8 @@ export function ActivityRail({
       ...model.analysisCards,
     ];
   }, [globalError, model.analysisCards]);
+  const primaryAnalysisCard = analysisCards[0] ?? null;
+  const secondaryAnalysisCards = analysisCards.slice(1);
 
   const activeAgentNodes = useMemo(() => {
     if (session?.status !== "running") return [];
@@ -1175,24 +1261,49 @@ export function ActivityRail({
           <section className="rounded-[28px] border border-black/5 bg-white/68 p-4 shadow-[0_16px_32px_rgba(15,23,42,0.05)]">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-semibold text-ink-900">{model.analysisSectionTitle}</h3>
-                <p className="mt-1 text-[12px] text-ink-500">结论和证据入口并排放，方便你直接做优化判断。</p>
+                <h3 className="text-sm font-semibold text-ink-900">运行诊断</h3>
+                <p className="mt-1 text-[12px] text-ink-500">先给最值得处理的一条，再按需展开其他线索。</p>
               </div>
               <span className="rounded-full border border-black/5 bg-black/[0.03] px-2.5 py-1 text-[10px] text-ink-500">
                 {analysisCards.length} 条
               </span>
             </div>
 
-            <div className="mt-4 space-y-2">
-              {analysisCards.map((card) => (
+            <div className="mt-4 space-y-3">
+              {primaryAnalysisCard ? (
                 <AnalysisCard
-                  key={card.id}
-                  card={card}
+                  card={primaryAnalysisCard}
+                  variant="primary"
                   onJump={(timelineId) => {
                     setSelectedTimelineId(timelineId);
                   }}
                 />
-              ))}
+              ) : (
+                <div className="rounded-2xl border border-black/5 bg-white/70 p-4 text-[12px] text-ink-500">
+                  暂时没有明显风险，继续观察执行过程即可。
+                </div>
+              )}
+              {secondaryAnalysisCards.length > 0 && (
+                <details className="group rounded-2xl border border-black/5 bg-black/[0.018]">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-[12px] font-medium text-ink-600">
+                    <span>展开其余 {secondaryAnalysisCards.length} 条线索</span>
+                    <span className="text-[11px] text-ink-400 group-open:hidden">查看</span>
+                    <span className="hidden text-[11px] text-ink-400 group-open:inline">收起</span>
+                  </summary>
+                  <div className="space-y-2 border-t border-black/5 p-2.5">
+                    {secondaryAnalysisCards.map((card) => (
+                      <AnalysisCard
+                        key={card.id}
+                        card={card}
+                        variant="compact"
+                        onJump={(timelineId) => {
+                          setSelectedTimelineId(timelineId);
+                        }}
+                      />
+                    ))}
+                  </div>
+                </details>
+              )}
             </div>
           </section>
 

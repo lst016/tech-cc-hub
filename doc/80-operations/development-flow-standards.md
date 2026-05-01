@@ -77,8 +77,8 @@ tags:
 - 正确路径：
   - 以 `Electron` 真窗口为准，并优先按 `window id` 定位和截图。
 - 标准入口：
-  - [59-Electron客户端操作与QA规范.md](./59-Electron%E5%AE%A2%E6%88%B7%E7%AB%AF%E6%93%8D%E4%BD%9C%E4%B8%8EQA%E8%A7%84%E8%8C%83.md)
-  - 复盘记录：[62-操作复盘-Electron客户端验收面偏航.md](./62-%E6%93%8D%E4%BD%9C%E5%A4%8D%E7%9B%98-Electron%E5%AE%A2%E6%88%B7%E7%AB%AF%E9%AA%8C%E6%94%B6%E9%9D%A2%E5%81%8F%E8%88%AA.md)
+  - [electron-client-qa-runbook.md](./electron-client-qa-runbook.md)
+  - 复盘记录：[Electron客户端验收面偏航.md](../90-archive/postmortems/electron-qa-correction-retro.md)
 
 ## Interfaces / Types
 - 操作沉淀文档

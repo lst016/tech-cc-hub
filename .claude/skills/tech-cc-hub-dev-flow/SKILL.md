@@ -55,6 +55,15 @@ For code selection/comment workflows:
 - Confirm textarea is not polluted by raw `# Code selection`, `# Code comments`, or `<code_references>` text.
 - Confirm send serialization still includes the structured code reference payload.
 
+For chat composer / AionUi-aligned workflows:
+
+- Type `@src` in the composer and confirm the file mention menu opens.
+- Select a file or directory and confirm a composer reference card appears; the textarea must not contain `<file_references>`.
+- Select text inside a user or assistant message and confirm `引用选区` creates a message reference card; the textarea must not contain `<message_references>`.
+- Open `/` command suggestions and confirm keyboard `ArrowUp/ArrowDown`, `Enter/Tab`, and `Escape` work.
+- If the session is running, queue a second prompt and confirm the queue card shows attachments/context count and can be edited, inserted, deleted, or cleared.
+- Run `npm run qa:chat-ui` for browser-level smoke coverage before reporting the chat UI complete.
+
 ## Browser automation pattern
 
 If Browser Use tools are available, use them. If not available, use local browser automation with Playwright only after installing/using project dependencies as needed.

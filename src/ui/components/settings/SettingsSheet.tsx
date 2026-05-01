@@ -55,81 +55,83 @@ export function SettingsSheet({
   }, [onClose]);
 
   return (
-    <>
-      <div className="fixed inset-0 z-50 bg-ink-900/28 backdrop-blur-sm" onClick={onClose} />
-      <div className="fixed inset-x-0 bottom-0 z-50 px-4 pb-4 pt-14">
-        <div
-          className="mx-auto flex h-[88vh] w-full max-w-[1680px] flex-col overflow-hidden rounded-[32px] border border-ink-900/8 bg-[linear-gradient(180deg,rgba(252,253,255,0.98),rgba(244,247,251,0.98))] shadow-[0_-28px_80px_rgba(24,32,46,0.16)]"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <div className="flex justify-center pt-3">
-            <div className="h-1.5 w-14 rounded-full bg-ink-900/10" />
+    <div className="fixed inset-0 z-[40000] flex overflow-hidden bg-[#F5F6F8] text-[#1D2129]">
+      <aside className="flex w-[260px] shrink-0 flex-col border-r border-[#E5E6EB] bg-[#EEF0F3] px-5 py-7">
+        <div className="flex items-center gap-3">
+          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-[#111318] text-lg font-black text-white shadow-[0_14px_30px_rgba(17,19,24,0.16)]">
+            T
           </div>
-
-          <div className="flex items-start justify-between gap-4 border-b border-ink-900/8 px-6 pb-5 pt-4 sm:px-8">
-            <div className="min-w-0 flex-1">
-              <div className="text-[11px] font-semibold tracking-[0.18em] text-muted">SETTINGS</div>
-              <div className="mt-2">
-                <div className="text-xl font-semibold text-ink-900">{title}</div>
-                <p className="mt-1 text-sm leading-6 text-muted">{description}</p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              className="rounded-full p-2 text-muted transition-colors hover:bg-white hover:text-ink-700"
-              onClick={onClose}
-              aria-label="关闭设置"
-            >
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M18 6 6 18M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-
-          <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[220px_minmax(0,1fr)]">
-            <aside className="border-b border-ink-900/8 bg-white/58 px-3 py-4 lg:border-b-0 lg:border-r lg:px-4 lg:py-5">
-              <div className="flex gap-2 overflow-x-auto pb-1 lg:grid lg:gap-2 lg:overflow-visible lg:pb-0">
-                {pages.map((page) => {
-                  const active = page.id === activePageId;
-                  return (
-                    <button
-                      key={page.id}
-                      type="button"
-                      className={`min-w-[156px] rounded-2xl border px-3 py-2.5 text-left transition-all lg:min-w-0 ${active ? "border-accent/24 bg-[linear-gradient(180deg,rgba(255,244,239,0.92),rgba(255,255,255,0.98))] shadow-[0_16px_30px_rgba(210,106,61,0.10)]" : "border-ink-900/8 bg-white/76 hover:border-ink-900/14 hover:bg-white"}`}
-                      onClick={() => onPageChange(page.id)}
-                    >
-                      {page.eyebrow && (
-                        <div className="text-[10px] font-semibold tracking-[0.16em] text-muted">{page.eyebrow}</div>
-                      )}
-                      <div className="mt-1 text-[13px] font-semibold text-ink-900">{page.label}</div>
-                      {page.summary && (
-                        <div className="mt-1 text-[10px] leading-4 text-muted">{page.summary}</div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </aside>
-
-            <section className="min-h-0 overflow-y-auto px-6 py-5 sm:px-8">
-                {status && (
-                  <div className={`mb-4 rounded-2xl border px-4 py-3 text-sm ${toneClasses[status.tone]}`}>
-                    {status.message}
-                  </div>
-                )}
-                {children}
-            </section>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-ink-900/8 px-6 py-4 sm:px-8">
-            <div className="text-xs text-muted">
-              这是通用设置骨架。后续新增配置页时，只需要挂一个新页面定义和对应内容组件。
-            </div>
-            {footer}
+          <div>
+            <div className="text-xl font-bold tracking-tight text-[#1D2129]">tech-cc-hub</div>
+            <div className="mt-0.5 text-xs font-medium text-[#86909C]">Agent Workbench</div>
           </div>
         </div>
-      </div>
-    </>
+
+        <nav className="mt-10 min-h-0 flex-1 overflow-y-auto">
+          <div className="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-[#8A94A6]">设置</div>
+          <div className="space-y-1.5">
+            {pages.map((page) => {
+              const active = page.id === activePageId;
+              return (
+                <button
+                  key={page.id}
+                  type="button"
+                  className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-left transition ${active ? "bg-[#DDE0E7] text-[#1D2129] shadow-[inset_0_0_0_1px_rgba(29,33,41,0.04)]" : "text-[#4E5969] hover:bg-white/70 hover:text-[#1D2129]"}`}
+                  onClick={() => onPageChange(page.id)}
+                >
+                  <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg border text-xs font-bold ${active ? "border-[#C9CDD4] bg-white text-[#1D2129]" : "border-transparent bg-white/46 text-[#86909C]"}`}>
+                    {page.label.slice(0, 1).toUpperCase()}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-[15px] font-semibold">{page.label}</span>
+                    {page.summary && (
+                      <span className="mt-0.5 block truncate text-xs text-[#86909C]">{page.summary}</span>
+                    )}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+
+        <div className="mt-6">
+          <button
+            type="button"
+            className="flex w-full items-center gap-3 rounded-xl bg-[#DDE0E7] px-4 py-3 text-[15px] font-semibold text-[#1D2129] transition hover:bg-[#D3D7E0]"
+            onClick={onClose}
+          >
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M15 18 9 12l6-6" />
+              <path d="M20 12H9" />
+            </svg>
+            返回聊天
+          </button>
+        </div>
+      </aside>
+
+      <main className="min-w-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex min-h-full w-full max-w-[1360px] flex-col px-10 py-12">
+          <header className="border-b border-[#E5E6EB] pb-6">
+            <div className="text-[13px] font-semibold tracking-[0.16em] text-[#86909C]">SETTINGS</div>
+            <h1 className="mt-3 text-3xl font-bold tracking-tight text-[#1D2129]">{title}</h1>
+            <p className="mt-2 max-w-3xl text-base leading-7 text-[#6B778C]">{description}</p>
+          </header>
+
+          <section className="min-h-0 flex-1 py-7 pb-28">
+            {status && (
+              <div className={`mb-5 rounded-2xl border px-4 py-3 text-sm ${toneClasses[status.tone]}`}>
+                {status.message}
+              </div>
+            )}
+            {children}
+          </section>
+
+          <footer className="sticky bottom-0 -mx-10 flex flex-wrap items-center justify-between gap-3 border-t border-[#E5E6EB] bg-[#F5F6F8]/92 px-10 py-4 backdrop-blur">
+            <div className="text-xs text-[#86909C]">设置作为独立工作区展示，返回聊天后会保留当前会话上下文。</div>
+            {footer}
+          </footer>
+        </div>
+      </main>
+    </div>
   );
 }

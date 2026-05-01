@@ -38,6 +38,25 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("save-api-config", config),
     fetchApiModels: (payload: any) =>
         ipcInvoke("fetch-api-models", payload),
+    getAppUpdateStatus: () =>
+        ipcInvoke("app-update-get-status"),
+    checkForAppUpdates: () =>
+        ipcInvoke("app-update-check"),
+    downloadAppUpdate: () =>
+        ipcInvoke("app-update-download"),
+    installAppUpdate: () =>
+        ipcInvoke("app-update-install"),
+    onAppUpdateStatus: (callback: (status: any) => void) => {
+        const cb = (_: Electron.IpcRendererEvent, payload: string) => {
+            try {
+                callback(JSON.parse(payload));
+            } catch (error) {
+                console.error("Failed to parse app update status:", error);
+            }
+        };
+        electron.ipcRenderer.on("app-update-status", cb);
+        return () => electron.ipcRenderer.off("app-update-status", cb);
+    },
     getGlobalConfig: () =>
         ipcInvoke("get-global-config"),
     saveGlobalConfig: (config: any) =>
@@ -52,6 +71,18 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("save-skill-inventory", inventory),
     syncSkillSources: (request: any) =>
         ipcInvoke("sync-skill-sources", request),
+    listAvailableSkills: () =>
+        ipcInvoke("list-available-skills"),
+    listBuiltinAutoSkills: () =>
+        ipcInvoke("list-builtin-auto-skills"),
+    getSkillPaths: () =>
+        ipcInvoke("get-skill-paths"),
+    detectAndCountExternalSkills: () =>
+        ipcInvoke("detect-and-count-external-skills"),
+    importSkillWithSymlink: (skillPath: string) =>
+        ipcInvoke("import-skill-with-symlink", skillPath),
+    deleteSkill: (skillName: string) =>
+        ipcInvoke("delete-skill", skillName),
     checkApiConfig: () =>
         ipcInvoke("check-api-config"),
     debugSaveTraceSnapshot: (snapshot: any) =>

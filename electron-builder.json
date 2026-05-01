@@ -5,20 +5,30 @@
         "dist-electron",
         "dist-react",
         "node_modules/@anthropic-ai/claude-agent-sdk/**/*",
-        "node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/**/*",
-        "node_modules/@anthropic-ai/claude-agent-sdk-darwin-x64/**/*"
+        "node_modules/@anthropic-ai/claude-agent-sdk-*/*"
     ],
     "extraResources": [
         "dist-electron/preload.cjs"
     ],
+    "publish": [
+        {
+            "provider": "github",
+            "owner": "lst016",
+            "repo": "tech-cc-hub",
+            "releaseType": "release",
+            "publishAutoUpdate": true
+        }
+    ],
     "asarUnpack": [
         "node_modules/@anthropic-ai/claude-agent-sdk/**/*",
-        "node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/**/*",
-        "node_modules/@anthropic-ai/claude-agent-sdk-darwin-x64/**/*"
+        "node_modules/@anthropic-ai/claude-agent-sdk-*/*"
     ],
     "icon": "./claude-color.png",
     "mac": {
-        "target": "dmg"
+        "target": [
+            "dmg",
+            "zip"
+        ]
     },
     "linux": {
         "target": "AppImage",
@@ -26,7 +36,13 @@
     },
     "win": {
         "target": [
-            "portable"
+            "nsis"
         ]
+    },
+    "nsis": {
+        "oneClick": false,
+        "allowToChangeInstallationDirectory": true,
+        "createDesktopShortcut": true,
+        "createStartMenuShortcut": true
     }
 }

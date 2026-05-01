@@ -77,11 +77,69 @@ export type SkillSyncResponse = {
   results: SkillSyncResult[];
 };
 
+export type SkillHubSkillInfo = {
+  name: string;
+  description: string;
+  location: string;
+  isCustom: boolean;
+  source: "builtin" | "custom" | "extension";
+};
+
+export type SkillHubExternalSource = {
+  name: string;
+  path: string;
+  source: string;
+  skills: Array<{ name: string; description: string; path: string }>;
+};
+
+export type SkillHubBridgeResponse<T = unknown> = {
+  success: boolean;
+  data?: T;
+  msg?: string;
+  error?: string;
+};
+
 export type AgentRuleDocuments = {
   systemDefaultMarkdown: string;
   userClaudeRoot: string;
   userAgentsPath: string;
   userAgentsMarkdown: string;
+};
+
+export type AppUpdateState =
+  | "idle"
+  | "disabled"
+  | "checking"
+  | "available"
+  | "not-available"
+  | "downloading"
+  | "downloaded"
+  | "error";
+
+export type AppUpdateStatus = {
+  status: AppUpdateState;
+  currentVersion: string;
+  isPackaged: boolean;
+  provider: "github";
+  channel?: string;
+  version?: string;
+  releaseName?: string;
+  releaseDate?: string;
+  releaseNotes?: string;
+  checkedAt?: number;
+  progress?: {
+    bytesPerSecond: number;
+    percent: number;
+    transferred: number;
+    total: number;
+  };
+  error?: string;
+};
+
+export type AppUpdateActionResult = {
+  success: boolean;
+  status: AppUpdateStatus;
+  error?: string;
 };
 
 export type SettingsPageId = "profiles" | "routing" | "global-json" | "skills" | "agent-rules" | "system-maintenance";

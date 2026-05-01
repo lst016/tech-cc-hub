@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import Editor, { loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
+import { PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT } from '../events';
 import { getCodeReferenceSessionKey, useAppStore, type CodeReferenceDraft } from '../store/useAppStore';
+import { copyTextToClipboard } from '../utils/clipboard';
 import './AionWorkspacePreviewPane.css';
 
 if (!(self as any).MonacoEnvironment?.getWorker) {
@@ -434,7 +436,7 @@ function PreviewSurface({
       code: selectionInfo.text,
       comment: comment?.trim() || undefined,
     });
-    window.dispatchEvent(new CustomEvent('techcc:prompt-focus'));
+    window.dispatchEvent(new CustomEvent(PROMPT_FOCUS_EVENT));
   }, [addCodeReference, file, monacoLanguage, referenceSessionKey, selectionInfo]);
 
   const handleSubmitComment = useCallback(() => {
@@ -489,7 +491,7 @@ function PreviewSurface({
 
   const handleCopySelectionReference = useCallback(() => {
     if (!file || !selectionInfo) return;
-    void navigator.clipboard?.writeText(buildReferenceClipboardText(file, selectionInfo));
+    void copyTextToClipboard(buildReferenceClipboardText(file, selectionInfo));
   }, [file, selectionInfo]);
 
   if (!file) {
@@ -517,7 +519,7 @@ function PreviewSurface({
           )}
         </div>
         <div className="vscode-preview__title-actions">
-          <button type="button" onClick={() => void navigator.clipboard?.writeText(file.path)}>复制路径</button>
+          <button type="button" onClick={() => void copyTextToClipboard(file.path)}>复制路径</button>
           <button type="button" onClick={() => void window.electron.showPreviewItemInFolder?.({ path: file.path })}>定位</button>
           <button type="button" onClick={() => void window.electron.openPreviewFile?.({ path: file.path })}>打开</button>
         </div>
@@ -649,8 +651,8 @@ export function AionWorkspacePreviewPane({ workspace, conversationId, onClose }:
       void openFile(detail.filePath, { revealLine: detail.startLine });
     };
 
-    window.addEventListener('techcc:preview-open-file', handleOpenFromPrompt);
-    return () => window.removeEventListener('techcc:preview-open-file', handleOpenFromPrompt);
+    window.addEventListener(PREVIEW_OPEN_FILE_EVENT, handleOpenFromPrompt);
+    return () => window.removeEventListener(PREVIEW_OPEN_FILE_EVENT, handleOpenFromPrompt);
   }, [openFile]);
 
   if (!workspace) {
@@ -667,13 +669,6 @@ export function AionWorkspacePreviewPane({ workspace, conversationId, onClose }:
 
   return (
     <div className="aion-workbench">
-      <div className="aion-workbench__header">
-        <div>
-          <div className="aion-workbench__eyebrow">Workspace Preview</div>
-          <div className="aion-workbench__title">Explorer</div>
-        </div>
-        <div className="aion-workbench__path" title={workspace}>{getWorkspaceLabel(workspace)}</div>
-      </div>
       <div className="aion-workbench__body">
         <NativeExplorer workspace={workspace} activeFilePath={activeFile?.path} onOpenFile={openFile} />
         <PreviewSurface file={activeFile} referenceSessionKey={referenceSessionKey} />

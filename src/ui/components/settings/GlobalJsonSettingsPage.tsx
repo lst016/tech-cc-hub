@@ -18,8 +18,8 @@ export function GlobalJsonSettingsPage({
   onCloseSidebarOnBrowserOpenChange,
 }: GlobalJsonSettingsPageProps) {
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
-      <div className="flex min-h-0 flex-1 flex-col rounded-[28px] border border-ink-900/10 bg-white/86 p-5 shadow-[0_18px_44px_rgba(24,32,46,0.06)]">
+    <div className="flex min-h-0 flex-col gap-4">
+      <div className="flex min-h-0 flex-col rounded-[28px] border border-ink-900/10 bg-white/86 p-5 shadow-[0_18px_44px_rgba(24,32,46,0.06)]">
         <div className="shrink-0">
           <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -65,8 +65,8 @@ export function GlobalJsonSettingsPage({
           id="global-json"
           value={configText}
           onChange={onChange}
-          minHeight="0px"
-          className="mt-4 flex-1"
+          minHeight="260px"
+          className="mt-4 h-[36vh] max-h-[360px] flex-none"
           placeholder='{\n  "env": {\n    "GITHUB_TOKEN": "ghp_xxx",\n    "GROQ_API_KEY": "gsk_xxx"\n  },\n  "skillCredentials": {\n    "github": [\n      "GITHUB_TOKEN"\n    ],\n    "browser": {\n      "env": ["GROQ_API_KEY"]\n    }\n  }\n}'
         />
 

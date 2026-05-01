@@ -60,4 +60,4 @@ tags:
 
 ## Open Questions / ADR Links
 - 如后续需要自动化点击链，也应沿用本规范，以 `window id` 作为窗口定位基线。
-- 更通用的沉淀方法见 [60-开发流操作沉淀规范.md](./60-%E5%BC%80%E5%8F%91%E6%B5%81%E6%93%8D%E4%BD%9C%E6%B2%89%E6%B7%80%E8%A7%84%E8%8C%83.md)
+- 更通用的沉淀方法见 [development-flow-standards.md](./development-flow-standards.md)
