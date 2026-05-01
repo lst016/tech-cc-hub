@@ -678,7 +678,7 @@ export async function handleClientEvent(event: ClientEvent) {
     }
 
     const config = getCurrentApiConfig();
-    const canUseRemoteResume = config ? supportsRemoteSessionResume(config) : true;
+    const supportsResume = config ? supportsRemoteSessionResume(config) : true;
     const history = store.getSessionHistory(session.id);
     const shouldRetitleFromFirstPrompt = isPlaceholderSessionTitle(session.title) && (history?.messages.length ?? 0) === 0;
     const nextTitle = shouldRetitleFromFirstPrompt
@@ -689,6 +689,13 @@ export async function handleClientEvent(event: ClientEvent) {
       || resolveLatestMessageModel(history?.messages)
       || session.model
       || config?.model;
+    const previousModel = resolveLatestMessageModel(history?.messages) || session.model || config?.model;
+    const switchedModel = Boolean(
+      selectedModel
+      && previousModel
+      && selectedModel.trim() !== previousModel.trim(),
+    );
+    const canUseRemoteResume = supportsResume && !switchedModel;
     const modelConfig = config && selectedModel ? getModelConfig(config, selectedModel) : null;
     const { displayAttachments, agentAttachments: currentAgentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
     const continuationPayload = canUseRemoteResume

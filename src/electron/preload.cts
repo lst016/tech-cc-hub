@@ -24,8 +24,8 @@ electron.contextBridge.exposeInMainWorld("electron", {
         electron.ipcRenderer.on("server-event", cb);
         return () => electron.ipcRenderer.off("server-event", cb);
     },
-    generateSessionTitle: (userInput: string | null) => 
-        ipcInvoke("generate-session-title", userInput),
+    generateSessionTitle: (userInput: string | null, options?: { model?: string }) => 
+        ipcInvoke("generate-session-title", userInput, options),
     getRecentCwds: (limit?: number) => 
         ipcInvoke("get-recent-cwds", limit),
     getSystemWorkspace: () =>
@@ -58,6 +58,26 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("debug-save-trace-snapshot", snapshot),
     preprocessImageAttachments: (payload: any) =>
         ipcInvoke("preprocess-image-attachments", payload),
+    readPreviewFile: (payload: any) =>
+        electron.ipcRenderer.invoke("preview-read-file", payload),
+    listPreviewDirectory: (payload: any) =>
+        electron.ipcRenderer.invoke("preview-list-directory", payload),
+    getPreviewImageBase64: (payload: any) =>
+        electron.ipcRenderer.invoke("preview-get-image-base64", payload),
+    getPreviewFileMetadata: (payload: any) =>
+        electron.ipcRenderer.invoke("preview-get-file-metadata", payload),
+    writePreviewFile: (payload: any) =>
+        electron.ipcRenderer.invoke("preview-write-file", payload),
+    removePreviewEntry: (payload: any) =>
+        electron.ipcRenderer.invoke("preview-remove-entry", payload),
+    renamePreviewEntry: (payload: any) =>
+        electron.ipcRenderer.invoke("preview-rename-entry", payload),
+    openPreviewFile: (payload: any) =>
+        electron.ipcRenderer.invoke("preview-open-file", payload),
+    showPreviewItemInFolder: (payload: any) =>
+        electron.ipcRenderer.invoke("preview-show-item-in-folder", payload),
+    openPreviewDirectoryDialog: (payload: any) =>
+        electron.ipcRenderer.invoke("preview-open-dialog", payload),
     openBrowserWorkbench: (url: string, sessionId?: string) =>
         ipcInvoke("browser-open", url, sessionId),
     closeBrowserWorkbench: (sessionId?: string) =>

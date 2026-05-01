@@ -9,8 +9,8 @@ import {
     Menu,
 } from "electron"
 import { execSync } from "child_process";
-import { mkdirSync, writeFileSync } from "fs";
-import { join } from "path";
+import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
+import { extname, isAbsolute, join, relative } from "path";
 import { ipcMainHandle, isDev, DEV_PORT } from "./util.js";
 import { getPreloadPath, getUIPath, getIconPath } from "./pathResolver.js";
 import { getStaticData, pollResources, stopPolling } from "./test.js";
@@ -42,9 +42,327 @@ import { addServerEventListener } from "./ipc-handlers.js";
 let cleanupComplete = false;
 let mainWindow: BrowserWindow | null = null;
 const DEFAULT_BROWSER_WORKBENCH_SESSION_ID = "global";
+const MAX_PREVIEW_TEXT_BYTES = 512_000;
+const MAX_PREVIEW_IMAGE_BYTES = 2_000_000;
+const MAX_PREVIEW_DIRECTORY_ENTRIES = 300;
+const PREVIEW_IMAGE_MIME_TYPES: Record<string, string> = {
+  ".bmp": "image/bmp",
+  ".gif": "image/gif",
+  ".ico": "image/x-icon",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+};
 const browserWorkbenches = new Map<string, BrowserWorkbenchManager>();
 const browserWorkbenchEventListeners = new Set<(event: BrowserWorkbenchEvent) => void>();
 let stopDevBackendBridge: (() => void) | null = null;
+
+function detectPreviewLanguage(filePath: string): string | undefined {
+  const extension = extname(filePath).toLowerCase();
+  const languages: Record<string, string> = {
+    ".bash": "bash",
+    ".css": "css",
+    ".go": "go",
+    ".html": "html",
+    ".java": "java",
+    ".js": "javascript",
+    ".json": "json",
+    ".jsx": "javascript",
+    ".md": "markdown",
+    ".markdown": "markdown",
+    ".py": "python",
+    ".rb": "ruby",
+    ".rs": "rust",
+    ".sh": "bash",
+    ".sql": "sql",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".xml": "xml",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+  };
+  return languages[extension];
+}
+
+function isPathInsideRoot(rootPath: string, candidatePath: string): boolean {
+  const rel = relative(rootPath, candidatePath);
+  return Boolean(rel) && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+function isPathWithinOrEqualRoot(rootPath: string, candidatePath: string): boolean {
+  return rootPath === candidatePath || isPathInsideRoot(rootPath, candidatePath);
+}
+
+function isIgnoredPreviewDirectory(name: string): boolean {
+  return name === ".git" ||
+    name === "node_modules" ||
+    name === "dist-react" ||
+    name === "dist-electron" ||
+    name === ".vite" ||
+    name === ".turbo";
+}
+
+function listPreviewDirectoryForRenderer(request: unknown): {
+  success: boolean;
+  path?: string;
+  entries?: Array<{ name: string; path: string; relativePath: string; type: "file" | "directory"; size?: number }>;
+  error?: string;
+} {
+  try {
+    if (!request || typeof request !== "object") {
+      return { success: false, error: "缺少目录请求参数。" };
+    }
+
+    const payload = request as { cwd?: unknown; path?: unknown };
+    const rawCwd = typeof payload.cwd === "string" ? payload.cwd.trim() : "";
+    const rawPath = typeof payload.path === "string" ? payload.path.trim() : "";
+    if (!rawCwd) {
+      return { success: false, error: "缺少工作目录。" };
+    }
+
+    const rootPath = realpathSync(rawCwd);
+    const requestedPath = rawPath ? (isAbsolute(rawPath) ? rawPath : join(rootPath, rawPath)) : rootPath;
+    const realPath = realpathSync(requestedPath);
+    if (!isPathWithinOrEqualRoot(rootPath, realPath)) {
+      return { success: false, path: realPath, error: "只能浏览当前工作目录内的文件。" };
+    }
+
+    const stat = statSync(realPath);
+    if (!stat.isDirectory()) {
+      return { success: false, path: realPath, error: "只能浏览目录。" };
+    }
+
+    const entries = readdirSync(realPath, { withFileTypes: true })
+      .filter((entry) => !entry.name.startsWith(".") || entry.name === ".env")
+      .filter((entry) => !(entry.isDirectory() && isIgnoredPreviewDirectory(entry.name)))
+      .slice(0, MAX_PREVIEW_DIRECTORY_ENTRIES)
+      .map((entry) => {
+        const entryPath = join(realPath, entry.name);
+        const entryStat = statSync(entryPath);
+        return {
+          name: entry.name,
+          path: entryPath,
+          relativePath: relative(rootPath, entryPath) || entry.name,
+          type: entry.isDirectory() ? "directory" as const : "file" as const,
+          size: entry.isFile() ? entryStat.size : undefined,
+        };
+      })
+      .sort((left, right) => {
+        if (left.type !== right.type) {
+          return left.type === "directory" ? -1 : 1;
+        }
+        return left.name.localeCompare(right.name);
+      });
+
+    return { success: true, path: realPath, entries };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "读取目录失败。",
+    };
+  }
+}
+
+function readPreviewFileForRenderer(request: unknown): {
+  success: boolean;
+  path?: string;
+  content?: string;
+  language?: string;
+  error?: string;
+} {
+  try {
+    if (!request || typeof request !== "object") {
+      return { success: false, error: "缺少预览请求参数。" };
+    }
+
+    const payload = request as { cwd?: unknown; path?: unknown };
+    const rawCwd = typeof payload.cwd === "string" ? payload.cwd.trim() : "";
+    const rawPath = typeof payload.path === "string" ? payload.path.trim() : "";
+    if (!rawCwd || !rawPath) {
+      return { success: false, error: "缺少工作目录或文件路径。" };
+    }
+
+    const rootPath = realpathSync(rawCwd);
+    const requestedPath = isAbsolute(rawPath) ? rawPath : join(rootPath, rawPath);
+    const realPath = realpathSync(requestedPath);
+    if (!isPathInsideRoot(rootPath, realPath)) {
+      return { success: false, path: realPath, error: "只能预览当前工作目录内的文件。" };
+    }
+
+    const stat = statSync(realPath);
+    if (!stat.isFile()) {
+      return { success: false, path: realPath, error: "只能预览普通文件。" };
+    }
+
+    const extension = extname(realPath).toLowerCase();
+    const imageMime = PREVIEW_IMAGE_MIME_TYPES[extension];
+    if (imageMime) {
+      if (stat.size > MAX_PREVIEW_IMAGE_BYTES) {
+        return { success: false, path: realPath, error: "图片过大，暂不在侧栏预览。" };
+      }
+      const base64 = readFileSync(realPath).toString("base64");
+      return {
+        success: true,
+        path: realPath,
+        content: `data:${imageMime};base64,${base64}`,
+      };
+    }
+
+    if (stat.size > MAX_PREVIEW_TEXT_BYTES) {
+      return { success: false, path: realPath, error: "文件过大，暂不在侧栏预览。" };
+    }
+
+    return {
+      success: true,
+      path: realPath,
+      content: readFileSync(realPath, "utf8"),
+      language: detectPreviewLanguage(realPath),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "读取预览文件失败。",
+    };
+  }
+}
+
+ipcMain.handle("preview-list-directory", (_event, request: unknown) => listPreviewDirectoryForRenderer(request));
+ipcMain.handle("preview-read-file", (_event, request: unknown) => readPreviewFileForRenderer(request));
+ipcMain.handle("preview-get-image-base64", (_event, request: unknown) => readPreviewFileForRenderer(request));
+ipcMain.handle("preview-get-file-metadata", (_event, request: unknown) => {
+  try {
+    if (!request || typeof request !== "object") {
+      return null;
+    }
+    const payload = request as { cwd?: unknown; path?: unknown };
+    const rawCwd = typeof payload.cwd === "string" ? payload.cwd.trim() : "";
+    const rawPath = typeof payload.path === "string" ? payload.path.trim() : "";
+    if (!rawCwd || !rawPath) {
+      return null;
+    }
+    const rootPath = realpathSync(rawCwd);
+    const requestedPath = isAbsolute(rawPath) ? rawPath : join(rootPath, rawPath);
+    const realPath = realpathSync(requestedPath);
+    if (!isPathWithinOrEqualRoot(rootPath, realPath)) {
+      return null;
+    }
+    const stat = statSync(realPath);
+    return {
+      name: realPath.split(/[\\/]/).pop() ?? realPath,
+      path: realPath,
+      size: stat.size,
+      type: stat.isDirectory() ? "directory" : extname(realPath).slice(1),
+      lastModified: stat.mtimeMs,
+      isDirectory: stat.isDirectory(),
+    };
+  } catch {
+    return null;
+  }
+});
+ipcMain.handle("preview-write-file", (_event, request: unknown) => {
+  try {
+    if (!request || typeof request !== "object") {
+      return { success: false, error: "缺少写入请求参数。" };
+    }
+    const payload = request as { cwd?: unknown; path?: unknown; data?: unknown };
+    const rawCwd = typeof payload.cwd === "string" ? payload.cwd.trim() : "";
+    const rawPath = typeof payload.path === "string" ? payload.path.trim() : "";
+    if (!rawCwd || !rawPath || typeof payload.data !== "string") {
+      return { success: false, error: "缺少工作目录、文件路径或写入内容。" };
+    }
+    const rootPath = realpathSync(rawCwd);
+    const requestedPath = isAbsolute(rawPath) ? rawPath : join(rootPath, rawPath);
+    const realPath = realpathSync(requestedPath);
+    if (!isPathWithinOrEqualRoot(rootPath, realPath)) {
+      return { success: false, path: realPath, error: "只能写入当前工作目录内的文件。" };
+    }
+    if (!statSync(realPath).isFile()) {
+      return { success: false, path: realPath, error: "只能写入普通文件。" };
+    }
+    writeFileSync(realPath, payload.data, "utf8");
+    return { success: true, path: realPath };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "写入预览文件失败。" };
+  }
+});
+ipcMain.handle("preview-remove-entry", (_event, request: unknown) => {
+  try {
+    if (!request || typeof request !== "object") {
+      return { success: false, error: "缺少删除请求参数。" };
+    }
+    const payload = request as { cwd?: unknown; path?: unknown };
+    const rawCwd = typeof payload.cwd === "string" ? payload.cwd.trim() : "";
+    const rawPath = typeof payload.path === "string" ? payload.path.trim() : "";
+    if (!rawCwd || !rawPath) {
+      return { success: false, error: "缺少工作目录或路径。" };
+    }
+    const rootPath = realpathSync(rawCwd);
+    const requestedPath = isAbsolute(rawPath) ? rawPath : join(rootPath, rawPath);
+    const realPath = realpathSync(requestedPath);
+    if (!isPathWithinOrEqualRoot(rootPath, realPath) || rootPath === realPath) {
+      return { success: false, path: realPath, error: "只能删除当前工作目录内的子文件。" };
+    }
+    rmSync(realPath, { recursive: true, force: true });
+    return { success: true, path: realPath };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "删除文件失败。" };
+  }
+});
+ipcMain.handle("preview-rename-entry", (_event, request: unknown) => {
+  try {
+    if (!request || typeof request !== "object") {
+      return { success: false, error: "缺少重命名请求参数。" };
+    }
+    const payload = request as { cwd?: unknown; path?: unknown; newName?: unknown };
+    const rawCwd = typeof payload.cwd === "string" ? payload.cwd.trim() : "";
+    const rawPath = typeof payload.path === "string" ? payload.path.trim() : "";
+    const newName = typeof payload.newName === "string" ? payload.newName.trim() : "";
+    if (!rawCwd || !rawPath || !newName || /[\\/]/.test(newName)) {
+      return { success: false, error: "缺少工作目录、路径或合法新名称。" };
+    }
+    const rootPath = realpathSync(rawCwd);
+    const requestedPath = isAbsolute(rawPath) ? rawPath : join(rootPath, rawPath);
+    const realPath = realpathSync(requestedPath);
+    if (!isPathWithinOrEqualRoot(rootPath, realPath) || rootPath === realPath) {
+      return { success: false, path: realPath, error: "只能重命名当前工作目录内的子文件。" };
+    }
+    const newPath = join(realPath.split(/[\\/]/).slice(0, -1).join("/"), newName);
+    renameSync(realPath, newPath);
+    return { success: true, path: realPath, newPath };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "重命名文件失败。" };
+  }
+});
+ipcMain.handle("preview-open-file", async (_event, request: unknown) => {
+  const path = request && typeof request === "object" && typeof (request as { path?: unknown }).path === "string"
+    ? (request as { path: string }).path
+    : "";
+  if (!path) return { success: false, error: "缺少文件路径。" };
+  const { shell } = await import("electron");
+  const error = await shell.openPath(path);
+  return error ? { success: false, error } : { success: true };
+});
+ipcMain.handle("preview-show-item-in-folder", async (_event, request: unknown) => {
+  const path = request && typeof request === "object" && typeof (request as { path?: unknown }).path === "string"
+    ? (request as { path: string }).path
+    : "";
+  if (!path) return { success: false, error: "缺少文件路径。" };
+  const { shell } = await import("electron");
+  shell.showItemInFolder(path);
+  return { success: true };
+});
+ipcMain.handle("preview-open-dialog", async (_event, options: unknown) => {
+  const properties: Electron.OpenDialogOptions["properties"] = options && typeof options === "object" && Array.isArray((options as { properties?: unknown }).properties)
+    ? (options as { properties: Electron.OpenDialogOptions["properties"] }).properties
+    : ["openDirectory"];
+  const focusedWindow = BrowserWindow.getFocusedWindow();
+  const result = focusedWindow
+    ? await dialog.showOpenDialog(focusedWindow, { properties })
+    : await dialog.showOpenDialog({ properties });
+  return result.canceled ? [] : result.filePaths;
+});
 
 function buildBrowserWorkbenchFallbackState(): {
   url: string;
@@ -508,7 +826,7 @@ app.on("ready", async () => {
             }
             return { success: true, events: emittedEvents };
           },
-          generateSessionTitle: async (userInput: string | null) => await generateSessionTitle(userInput),
+          generateSessionTitle: async (userInput: string | null, options?: { model?: string }) => await generateSessionTitle(userInput, options),
           getRecentCwds: (limit?: number) => {
             const boundedLimit = limit ? Math.min(Math.max(limit, 1), 20) : 8;
             return sessions.listRecentCwds(boundedLimit);
@@ -594,8 +912,8 @@ app.on("ready", async () => {
     });
 
     // Handle session title generation
-    ipcMainHandle("generate-session-title", async (_: IpcMainInvokeEvent, userInput: string | null) => {
-        return await generateSessionTitle(userInput);
+    ipcMainHandle("generate-session-title", async (_: IpcMainInvokeEvent, userInput: string | null, options?: { model?: string }) => {
+        return await generateSessionTitle(userInput, options);
     });
 
     // Handle recent cwds request

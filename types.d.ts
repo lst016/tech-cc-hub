@@ -214,7 +214,7 @@ interface Window {
         // Claude Agent IPC APIs
         sendClientEvent: (event: import("./src/ui/types").ClientEvent) => void;
         onServerEvent: (callback: (event: import("./src/ui/types").ServerEvent) => void) => UnsubscribeFunction;
-        generateSessionTitle: (userInput: string | null) => Promise<string>;
+        generateSessionTitle: (userInput: string | null, options?: { model?: string }) => Promise<string>;
         getRecentCwds: (limit?: number) => Promise<string[]>;
         getSystemWorkspace: () => Promise<string>;
         selectDirectory: () => Promise<string | null>;
@@ -231,6 +231,16 @@ interface Window {
         checkApiConfig: () => Promise<{ hasConfig: boolean; config: ApiConfig | null }>;
         debugSaveTraceSnapshot: (snapshot: unknown) => Promise<{ success: boolean; path?: string; error?: string }>;
         preprocessImageAttachments: (payload: { prompt: string; selectedModel?: string; attachments: import("./src/ui/types").PromptAttachment[] }) => Promise<ImagePreprocessResult>;
+        readPreviewFile: (payload: { cwd: string; path: string }) => Promise<{ success: boolean; path?: string; content?: string; language?: string; error?: string }>;
+        listPreviewDirectory: (payload: { cwd: string; path?: string }) => Promise<{ success: boolean; path?: string; entries?: Array<{ name: string; path: string; relativePath: string; type: "directory" | "file"; size?: number }>; error?: string }>;
+        getPreviewImageBase64: (payload: { cwd: string; path: string }) => Promise<{ success: boolean; path?: string; content?: string; error?: string }>;
+        getPreviewFileMetadata: (payload: { cwd: string; path: string }) => Promise<{ name: string; path: string; size: number; type: string; lastModified: number; isDirectory?: boolean } | null>;
+        writePreviewFile: (payload: { cwd: string; path: string; data: string }) => Promise<{ success: boolean; path?: string; error?: string }>;
+        removePreviewEntry: (payload: { cwd: string; path: string }) => Promise<{ success: boolean; path?: string; error?: string }>;
+        renamePreviewEntry: (payload: { cwd: string; path: string; newName: string }) => Promise<{ success: boolean; path?: string; newPath?: string; error?: string }>;
+        openPreviewFile: (payload: { path: string }) => Promise<{ success: boolean; error?: string }>;
+        showPreviewItemInFolder: (payload: { path: string }) => Promise<{ success: boolean; error?: string }>;
+        openPreviewDirectoryDialog: (payload: { properties?: string[] }) => Promise<string[]>;
         openBrowserWorkbench: (url: string, sessionId?: string) => Promise<BrowserWorkbenchState>;
         closeBrowserWorkbench: (sessionId?: string) => Promise<BrowserWorkbenchState>;
         setBrowserWorkbenchBounds: (bounds: BrowserWorkbenchBounds, sessionId?: string) => Promise<BrowserWorkbenchState>;

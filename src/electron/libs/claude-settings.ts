@@ -169,7 +169,7 @@ export function buildEnvForConfig(config: ApiConfig, modelOverride?: string): Re
   const baseEnv = { ...process.env } as Record<string, string>;
 
   baseEnv.ANTHROPIC_AUTH_TOKEN = config.apiKey;
-  baseEnv.ANTHROPIC_BASE_URL = config.baseURL;
+  baseEnv.ANTHROPIC_BASE_URL = normalizeAnthropicBaseUrlForClaudeCode(config.baseURL);
   baseEnv.ANTHROPIC_MODEL = modelOverride ?? config.model;
 
   const runtimeEnv = buildGlobalRuntimeEnvConfig();
@@ -177,6 +177,32 @@ export function buildEnvForConfig(config: ApiConfig, modelOverride?: string): Re
     ...baseEnv,
     ...runtimeEnv,
   };
+}
+
+export function getClaudeCodeModelOption(config: ApiConfig, modelName: string | undefined): string | undefined {
+  const normalizedModel = modelName?.trim();
+  if (!normalizedModel) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(config.baseURL);
+    if (url.hostname === "api.anthropic.com") {
+      return normalizedModel;
+    }
+  } catch {
+    // Invalid URLs are handled later by the SDK/network path.
+  }
+
+  // For custom Anthropic-compatible gateways, let ANTHROPIC_MODEL carry the
+  // provider-specific model name. Passing it as --model makes Claude Code apply
+  // its own model availability validation before the request reaches the gateway.
+  return undefined;
+}
+
+export function normalizeAnthropicBaseUrlForClaudeCode(baseURL: string): string {
+  const trimmed = baseURL.trim().replace(/\/+$/, "");
+  return trimmed.replace(/\/v1$/i, "");
 }
 
 export function getGlobalRuntimeEnvConfig(): Record<string, string> {

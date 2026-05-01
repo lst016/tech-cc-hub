@@ -1,0 +1,4 @@
+interface:
+  display_name: "tech-cc-hub 开发流程"
+  short_description: "tech-cc-hub 开发、UI、自测和移植流程守则"
+  default_prompt: "使用 tech-cc-hub-dev-flow 技能，按项目流程完成开发并自测后再回复。"

@@ -14,7 +14,7 @@ import { extname } from "path";
 import { buildAnthropicPromptContentBlocks } from "../../shared/attachments.js";
 import type { PromptAttachment, RuntimeOverrides, ServerEvent } from "../types.js";
 import { resolveAgentRuntimeContext } from "./agent-resolver.js";
-import { buildEnvForConfig, getClaudeCodePath, getCurrentApiConfig, getGlobalRuntimeConfig } from "./claude-settings.js";
+import { buildEnvForConfig, getClaudeCodeModelOption, getClaudeCodePath, getCurrentApiConfig, getGlobalRuntimeConfig } from "./claude-settings.js";
 import { buildClaudeProjectMemoryPromptAppend } from "./claude-project-memory.js";
 import { saveGlobalRuntimeConfig } from "./config-store.js";
 import { summarizeBase64Image, summarizeLocalImageFile } from "./image-preprocessor.js";
@@ -233,11 +233,20 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         buildDesignParityPromptAppend(),
       );
       const outputFormat = resolveOutputFormat(runtime?.outputFormat, systemPromptAppend, prompt);
+      const sdkModelOption = getClaudeCodeModelOption(config, requestedModel);
+      console.info("[runner][route]", {
+        configuredBaseURL: config.baseURL,
+        anthropicBaseURL: mergedEnv.ANTHROPIC_BASE_URL,
+        model: requestedModel,
+        sdkModelOption,
+        settingSources: agentContext.settingSources,
+        claudePath: getClaudeCodePath(),
+      });
 
       const q = query({
         prompt: createPromptSource(prompt, attachments),
         options: {
-          model: requestedModel,
+          model: sdkModelOption,
           cwd: resolvedCwd,
           resume: resumeSessionId,
           abortController,

@@ -114,6 +114,9 @@ npm run qa:slash           # slash 命令回归测试
 - Tailwind CSS v4 原子类
 - 自定义 CSS 放在 `App.css` / `index.css`
 - 颜色使用语义化命名 (`ink-`, `accent-`, `muted`)
+- 做任何 UI / 视觉 / 色彩相关改动前必须先读根目录 `DESIGN.md`
+- 主产品 UI 使用 `DESIGN.md` 定义的暖灰 + clay accent 色系；不要新增随机蓝色、紫色或 raw hex
+- 代码预览、文件树、Monaco 这类 workbench 区域可以使用 `DESIGN.md` 的 VS Code light 工作台色，但必须局部作用域隔离
 
 ### 文件命名
 

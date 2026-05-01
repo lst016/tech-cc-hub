@@ -135,7 +135,7 @@ test("buildActivityRailModel exposes labels for plan and execution sections", ()
     "",
   );
 
-  assert.equal(model.planSectionTitle, "\u0041\u0049 \u8ba1\u5212\u6b65\u9aa4");
+  assert.equal(model.taskSectionTitle, "\u0041\u0049 \u8ba1\u5212\u6b65\u9aa4");
   assert.equal(model.executionSectionTitle, "\u5b9e\u9645\u6267\u884c\u6b65\u9aa4");
 });
 

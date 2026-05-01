@@ -55,6 +55,25 @@ export type BrowserWorkbenchSessionState = {
   annotations: BrowserWorkbenchAnnotation[];
 };
 
+export const CODE_REFERENCE_DRAFT_SESSION_ID = "__draft__";
+
+export function getCodeReferenceSessionKey(sessionId?: string | null) {
+  return sessionId || CODE_REFERENCE_DRAFT_SESSION_ID;
+}
+
+export type CodeReferenceDraft = {
+  id: string;
+  kind: "selection" | "comment";
+  filePath: string;
+  fileName: string;
+  language?: string;
+  startLine: number;
+  endLine: number;
+  code: string;
+  comment?: string;
+  createdAt: number;
+};
+
 interface AppState {
   sessions: Record<string, SessionView>;
   archivedSessions: Record<string, SessionView>;
@@ -62,6 +81,7 @@ interface AppState {
   prompt: string;
   browserAnnotations: BrowserWorkbenchAnnotation[];
   browserWorkbenchBySessionId: Record<string, BrowserWorkbenchSessionState>;
+  codeReferencesBySessionId: Record<string, CodeReferenceDraft[]>;
   cwd: string;
   apiConfigSettings: ApiConfigSettings;
   runtimeModel: string;
@@ -83,6 +103,13 @@ interface AppState {
   setBrowserWorkbenchUrl: (sessionId: string, url: string) => void;
   setBrowserWorkbenchHasTab: (sessionId: string, hasBrowserTab: boolean) => void;
   setBrowserWorkbenchAnnotations: (sessionId: string, annotations: BrowserWorkbenchAnnotation[]) => void;
+  addCodeReference: (
+    sessionId: string | null | undefined,
+    reference: Omit<CodeReferenceDraft, "id" | "createdAt"> & Partial<Pick<CodeReferenceDraft, "id" | "createdAt">>,
+  ) => CodeReferenceDraft;
+  updateCodeReference: (sessionId: string | null | undefined, id: string, patch: Partial<Pick<CodeReferenceDraft, "comment" | "kind">>) => void;
+  removeCodeReference: (sessionId: string | null | undefined, id: string) => void;
+  clearCodeReferences: (sessionId?: string | null) => void;
   setCwd: (cwd: string) => void;
   setApiConfigSettings: (settings: ApiConfigSettings) => void;
   setRuntimeModel: (model: string) => void;
@@ -241,6 +268,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   prompt: "",
   browserAnnotations: [],
   browserWorkbenchBySessionId: {},
+  codeReferencesBySessionId: {},
   cwd: "",
   apiConfigSettings: { profiles: [] },
   runtimeModel: "",
@@ -290,6 +318,64 @@ export const useAppStore = create<AppState>((set, get) => ({
       },
     },
   })),
+  addCodeReference: (sessionId, reference) => {
+    const sessionKey = getCodeReferenceSessionKey(sessionId);
+    const nextReference: CodeReferenceDraft = {
+      ...reference,
+      id: reference.id ?? crypto.randomUUID(),
+      createdAt: reference.createdAt ?? Date.now(),
+      fileName: reference.fileName || reference.filePath.split(/[\\/]/).pop() || reference.filePath,
+      comment: reference.comment?.trim() || undefined,
+    };
+
+    set((state) => ({
+      codeReferencesBySessionId: {
+        ...state.codeReferencesBySessionId,
+        [sessionKey]: [...(state.codeReferencesBySessionId[sessionKey] ?? []), nextReference],
+      },
+    }));
+
+    return nextReference;
+  },
+  updateCodeReference: (sessionId, id, patch) => {
+    const sessionKey = getCodeReferenceSessionKey(sessionId);
+    set((state) => ({
+      codeReferencesBySessionId: {
+        ...state.codeReferencesBySessionId,
+        [sessionKey]: (state.codeReferencesBySessionId[sessionKey] ?? []).map((reference) => (
+          reference.id === id
+            ? {
+                ...reference,
+                ...patch,
+                comment: patch.comment !== undefined ? patch.comment.trim() || undefined : reference.comment,
+              }
+            : reference
+        )),
+      },
+    }));
+  },
+  removeCodeReference: (sessionId, id) => {
+    const sessionKey = getCodeReferenceSessionKey(sessionId);
+    set((state) => {
+      const nextReferences = (state.codeReferencesBySessionId[sessionKey] ?? []).filter((reference) => reference.id !== id);
+      const nextBySession = { ...state.codeReferencesBySessionId };
+      if (nextReferences.length === 0) {
+        delete nextBySession[sessionKey];
+      } else {
+        nextBySession[sessionKey] = nextReferences;
+      }
+      return { codeReferencesBySessionId: nextBySession };
+    });
+  },
+  clearCodeReferences: (sessionId) => {
+    const sessionKey = getCodeReferenceSessionKey(sessionId);
+    set((state) => {
+      if (!state.codeReferencesBySessionId[sessionKey]) return state;
+      const nextBySession = { ...state.codeReferencesBySessionId };
+      delete nextBySession[sessionKey];
+      return { codeReferencesBySessionId: nextBySession };
+    });
+  },
   setCwd: (cwd) => set({ cwd }),
   setApiConfigSettings: (apiConfigSettings) => {
     set((state) => {

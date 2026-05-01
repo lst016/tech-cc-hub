@@ -14,6 +14,7 @@ import { useAppStore } from "../store/useAppStore";
 import { estimatePromptLedgerTokens, type PromptLedgerSourceKind } from "../../shared/prompt-ledger";
 import { buildContextUsageBreakdown, type ContextUsageBreakdownCategory } from "../utils/context-usage-breakdown";
 import { buildSegmentedContextUsageCells, type ContextUsageCellSegment } from "../utils/context-usage-cells";
+import { AionWorkspacePreviewPane } from "./AionWorkspacePreviewPane";
 import type { SessionView } from "../store/useAppStore";
 
 const NODE_KIND_LABELS: Record<ActivityTimelineItem["nodeKind"], string> = {
@@ -70,7 +71,7 @@ const PROVENANCE_LABELS: Record<ActivityToolProvenance, string> = {
   unknown: "未归类",
 };
 
-type ActivityRailTab = "trace" | "usage";
+type ActivityRailTab = "trace" | "usage" | "preview";
 
 function toneClasses(tone: ActivityRailTone) {
   switch (tone) {
@@ -996,6 +997,22 @@ export function ActivityRail({
             </svg>
             <span>Usage</span>
           </button>
+          <button
+            type="button"
+            onClick={() => handleSelectTab("preview")}
+            className={`inline-flex h-8 items-center gap-2 rounded-xl px-3 text-[13px] font-medium transition ${
+              selectedTab === "preview"
+                ? "bg-ink-900/7 text-ink-900 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.05)]"
+                : "text-muted hover:bg-ink-900/5 hover:text-ink-700"
+            }`}
+            title="文件预览"
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <path d="M7 3.5h7l3 3V20.5H7z" />
+              <path d="M14 3.5V7h3M9.5 12h5M9.5 15.5h5" />
+            </svg>
+            <span>预览</span>
+          </button>
           {!hasBrowserTab && (
             <button
               type="button"
@@ -1021,6 +1038,16 @@ export function ActivityRail({
               compressionThresholdPercent={compressionThresholdPercent}
               partialMessage={partialMessage}
             />
+          </div>
+        ) : selectedTab === "preview" ? (
+          <div className="min-h-0 flex-1">
+            <div className="h-full overflow-hidden border-t border-[#d0d7de] bg-white shadow-none">
+              <AionWorkspacePreviewPane
+                workspace={session?.cwd}
+                conversationId={session?.id}
+                onClose={() => handleSelectTab("trace")}
+              />
+            </div>
           </div>
         ) : (
         <div className="space-y-4 px-4 pt-4">

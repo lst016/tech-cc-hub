@@ -6,7 +6,7 @@ import type {
   RuntimeOverrides,
   RuntimeReasoningMode,
 } from "../types";
-import { useAppStore } from "../store/useAppStore";
+import { getCodeReferenceSessionKey, useAppStore, type CodeReferenceDraft } from "../store/useAppStore";
 
 const DEFAULT_ALLOWED_TOOLS = "Read,Edit,Bash";
 const MAX_ROWS = 12;
@@ -14,6 +14,7 @@ const LINE_HEIGHT = 21;
 const MAX_HEIGHT = MAX_ROWS * LINE_HEIGHT;
 const SLASH_PREVIEW_LIMIT = 8;
 const SLASH_QUERY_LIMIT = 16;
+const EMPTY_CODE_REFERENCES: CodeReferenceDraft[] = [];
 
 interface PromptInputProps {
   sendEvent: (event: ClientEvent) => void;
@@ -202,6 +203,64 @@ type QueuedMessageDraft = {
   attachments: PromptAttachment[];
   createdAt: number;
 };
+
+function getCodeReferenceLineLabel(reference: CodeReferenceDraft) {
+  return reference.startLine === reference.endLine
+    ? `${reference.startLine}`
+    : `${reference.startLine}-${reference.endLine}`;
+}
+
+function getCodeReferenceFileLabel(reference: CodeReferenceDraft) {
+  return reference.fileName || reference.filePath.split(/[\\/]/).pop() || reference.filePath;
+}
+
+function buildCodeReferencesPrompt(references: CodeReferenceDraft[]) {
+  if (references.length === 0) return "";
+
+  const payload = {
+    type: "code_references",
+    version: 2,
+    count: references.length,
+    items: references.map((reference, index) => {
+      const truncated = reference.code.length > 8000;
+      return {
+        type: reference.kind === "comment" ? "code_comment" : "code_selection",
+        index: index + 1,
+        id: reference.id,
+        file: {
+          path: reference.filePath,
+          name: getCodeReferenceFileLabel(reference),
+          language: reference.language || "plaintext",
+        },
+        range: {
+          startLine: reference.startLine,
+          endLine: reference.endLine,
+          label: getCodeReferenceLineLabel(reference),
+        },
+        comment: reference.comment?.trim() || undefined,
+        selection: {
+          text: truncated ? `${reference.code.slice(0, 8000)}\n...<selection truncated>` : reference.code,
+          truncated,
+          originalLength: reference.code.length,
+        },
+      };
+    }),
+  };
+
+  return [
+    "<code_references>",
+    "This structured block is the CURRENT code-selection source of truth from the Workspace Preview pane.",
+    "Use file.path and range before searching broadly. Treat comments as user intent attached to that exact range.",
+    JSON.stringify(payload, null, 2),
+    "</code_references>",
+  ].join("\n");
+}
+
+function mergePromptWithCodeReferences(prompt: string, references: CodeReferenceDraft[]) {
+  const referencePrompt = buildCodeReferencesPrompt(references);
+  if (!referencePrompt) return prompt;
+  return [prompt.trim(), referencePrompt].filter(Boolean).join("\n\n");
+}
 
 function buildQueuedPrompt(queue: QueuedMessageDraft[]) {
   if (queue.length === 1) return queue[0].prompt;
@@ -469,7 +528,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
       try {
         setPendingStart(true);
         const titleSeed = buildDraftTitle(promptValue, attachments);
-        title = promptValue.trim() ? await window.electron.generateSessionTitle(titleSeed) : titleSeed;
+        title = promptValue.trim() ? await window.electron.generateSessionTitle(titleSeed, { model: runtime.model }) : titleSeed;
       } catch (error) {
         console.error(error);
         setPendingStart(false);
@@ -579,6 +638,9 @@ export function PromptInput({
   const setSelectedAgentId = useAppStore((state) => state.setSelectedAgentId);
   const permissionMode = useAppStore((state) => state.permissionMode);
   const setPermissionMode = useAppStore((state) => state.setPermissionMode);
+  const codeReferencesBySessionId = useAppStore((state) => state.codeReferencesBySessionId);
+  const removeCodeReference = useAppStore((state) => state.removeCodeReference);
+  const clearCodeReferences = useAppStore((state) => state.clearCodeReferences);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -591,12 +653,14 @@ export function PromptInput({
   const submitInFlightRef = useRef(false);
   const [submissionStatus, setSubmissionStatus] = useState<string | null>(null);
   const setGlobalError = useAppStore((state) => state.setGlobalError);
+  const codeReferenceSessionKey = getCodeReferenceSessionKey(activeSessionId);
+  const codeReferences = codeReferencesBySessionId[codeReferenceSessionKey] || EMPTY_CODE_REFERENCES;
   const slashQuery = prompt.startsWith("/") ? prompt.trim().slice(1).split(/\s+/)[0] ?? "" : "";
   const activeQueue = useMemo(() => {
     if (!activeSessionId) return [];
     return queuedMessagesBySession[activeSessionId] ?? [];
   }, [activeSessionId, queuedMessagesBySession]);
-  const hasDraft = prompt.trim().length > 0 || attachments.length > 0 || browserAnnotations.length > 0;
+  const hasDraft = prompt.trim().length > 0 || attachments.length > 0 || browserAnnotations.length > 0 || codeReferences.length > 0;
   const filteredSlashCommands = useMemo(() => {
     const matchedCommands = !slashQuery
       ? slashCommands
@@ -630,13 +694,14 @@ export function PromptInput({
   const clearComposer = useCallback(() => {
     setPrompt("");
     setAttachments([]);
+    clearCodeReferences(activeSessionId);
     if (activeSessionId) {
       setBrowserWorkbenchAnnotations(activeSessionId, []);
     }
     clearBrowserAnnotations();
     void window.electron.clearBrowserWorkbenchAnnotations?.(activeSessionId ?? undefined);
     setShowSlashBrowser(false);
-  }, [activeSessionId, clearBrowserAnnotations, setBrowserWorkbenchAnnotations, setPrompt]);
+  }, [activeSessionId, clearBrowserAnnotations, clearCodeReferences, setBrowserWorkbenchAnnotations, setPrompt]);
 
   const removeQueuedDraft = useCallback((queueId: string) => {
     if (!activeSessionId) return;
@@ -679,7 +744,8 @@ export function PromptInput({
     if (!activeSessionId) return false;
     if (!hasDraft) return false;
 
-    const promptWithAnnotations = mergePromptWithBrowserAnnotations(prompt, browserAnnotations);
+    const promptWithCodeReferences = mergePromptWithCodeReferences(prompt, codeReferences);
+    const promptWithAnnotations = mergePromptWithBrowserAnnotations(promptWithCodeReferences, browserAnnotations);
     const validationError = validatePromptDraft(promptWithAnnotations);
     if (validationError) {
       setGlobalError(validationError);
@@ -700,7 +766,7 @@ export function PromptInput({
     clearComposer();
     setGlobalError(null);
     return true;
-  }, [activeSessionId, attachments, browserAnnotations, clearComposer, hasDraft, prompt, setGlobalError, validatePromptDraft]);
+  }, [activeSessionId, attachments, browserAnnotations, clearComposer, codeReferences, hasDraft, prompt, setGlobalError, validatePromptDraft]);
 
   const submitCurrentInput = useCallback(async () => {
     if (!hasDraft) return false;
@@ -714,7 +780,8 @@ export function PromptInput({
 
       const promptSnapshot = prompt;
       const attachmentsSnapshot = attachments;
-      const promptWithAnnotations = mergePromptWithBrowserAnnotations(promptSnapshot, browserAnnotations);
+      const promptWithCodeReferences = mergePromptWithCodeReferences(promptSnapshot, codeReferences);
+      const promptWithAnnotations = mergePromptWithBrowserAnnotations(promptWithCodeReferences, browserAnnotations);
       const hasImageAttachments = attachmentsSnapshot.some((attachment) => attachment.kind === "image");
       const validationError = validatePromptDraft(promptWithAnnotations);
       if (validationError) {
@@ -737,7 +804,7 @@ export function PromptInput({
       setSubmissionStatus(null);
       submitInFlightRef.current = false;
     }
-  }, [attachments, browserAnnotations, clearComposer, hasDraft, isRunning, onSendMessage, prompt, queueCurrentDraft, sendPromptDraft, setGlobalError, setPrompt, validatePromptDraft]);
+  }, [attachments, browserAnnotations, clearComposer, codeReferences, hasDraft, isRunning, onSendMessage, prompt, queueCurrentDraft, sendPromptDraft, setGlobalError, setPrompt, validatePromptDraft]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (disabled) return;
@@ -817,6 +884,15 @@ export function PromptInput({
       promptRef.current.style.overflowY = "hidden";
     }
   }, [prompt]);
+
+  useEffect(() => {
+    const handlePromptFocus = () => {
+      window.setTimeout(() => promptRef.current?.focus(), 0);
+    };
+
+    window.addEventListener("techcc:prompt-focus", handlePromptFocus);
+    return () => window.removeEventListener("techcc:prompt-focus", handlePromptFocus);
+  }, []);
 
   useEffect(() => {
     if (!activeSessionId || disabled || isRunning || activeQueue.length === 0) {
@@ -1002,6 +1078,59 @@ export function PromptInput({
                 </button>
               </div>
             ))}
+          </div>
+        )}
+
+        {codeReferences.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            {codeReferences.map((reference, index) => {
+              return (
+                <div
+                  key={reference.id}
+                  className="inline-flex h-9 max-w-[300px] items-center gap-1.5 rounded-full border border-[#d0d7de] bg-white px-2.5 text-xs font-semibold text-ink-800 shadow-[0_8px_18px_rgba(15,18,24,0.07)]"
+                  title={`页面地址：${reference.filePath}\n行号：L${getCodeReferenceLineLabel(reference)}\n${reference.comment ?? "代码引用会随消息一起发送"}`}
+                >
+                  <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full text-[11px] font-bold text-white ${reference.kind === "comment" ? "bg-[#bf3989]" : "bg-[#0969da]"}`}>
+                    {index + 1}
+                  </span>
+                  <span className="shrink-0 rounded-md bg-[#f6f8fa] px-1.5 py-0.5 text-[10px] text-[#57606a]">
+                    {reference.kind === "comment" ? "评论" : "代码"}
+                  </span>
+                  <button
+                    type="button"
+                    className="min-w-0 truncate text-left text-xs font-semibold text-[#0969da] hover:underline"
+                    onClick={() => window.dispatchEvent(new CustomEvent("techcc:preview-open-file", { detail: { filePath: reference.filePath, startLine: reference.startLine } }))}
+                    title={`跳回预览里的代码位置：${reference.filePath}:L${getCodeReferenceLineLabel(reference)}`}
+                  >
+                    {getCodeReferenceFileLabel(reference)} · L{getCodeReferenceLineLabel(reference)}
+                  </button>
+                  {reference.comment && (
+                    <span className="min-w-0 truncate text-left text-xs font-medium text-muted">
+                      {reference.comment}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
+                    onClick={() => removeCodeReference(activeSessionId, reference.id)}
+                    aria-label={`移除代码引用 ${index + 1}`}
+                  >
+                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M18 6 6 18M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              );
+            })}
+            {codeReferences.length > 1 && (
+              <button
+                type="button"
+                className="inline-flex h-10 items-center rounded-full border border-black/8 bg-white px-3 text-xs font-semibold text-muted transition hover:bg-black/5 hover:text-ink-700"
+                onClick={() => clearCodeReferences(activeSessionId)}
+              >
+                清空代码引用
+              </button>
+            )}
           </div>
         )}
 

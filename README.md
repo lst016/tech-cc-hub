@@ -51,6 +51,29 @@ language: zh-CN
 - Token、时长、TTFT、费用、上下文快照、原子步骤轨迹
 - Electron 客户端窗口级 QA 工具
 
+## 近阶段更新（2026-05-01 / v0.1.1）
+
+- 右侧 Preview 工作台升级：
+  - 新增 VS Code light 风格的文件树与 Monaco 代码预览
+  - 支持工作区文件树懒加载、全量展开、刷新、文件打开与错误态展示
+  - 支持代码选区粘贴到输入框、Codex 风格评论、行号引用与跳回预览位置
+  - `index.html` 这类 Vite/React 入口文件自动切换源码预览，避免 iframe 白屏
+- 输入框与引用体验优化：
+  - 代码引用以 compact chip 展示，包含文件名与 `Lx-Ly` 行号
+  - 代码引用随消息以结构化 `<code_references>` JSON 发送，避免污染输入框正文
+  - 浏览器标注与代码引用可以一起发送给 Agent
+- 设计系统收口：
+  - 新增根目录 `DESIGN.md` 作为产品视觉源头
+  - 主产品色系统一为暖灰 + clay accent
+  - Preview / Monaco / 文件树保留局部 VS Code light 蓝灰色，不反向污染主界面
+- 开发流程与 QA：
+  - 新增 `.claude/skills/tech-cc-hub-dev-flow`，沉淀本项目自测和交付规则
+  - 新增 `npm run qa:preview`，用于 Preview 面板浏览器 smoke 测试
+  - 测试代码集中迁移到 `test/electron`
+- 模型路由与运行时修正：
+  - 修正开发环境下模型选择被本地 settings/env 覆盖的问题
+  - 增加运行时模型路由日志，便于确认实际走的模型与网关
+
 ## 近阶段更新（2026-04-26）
 
 - 完成内置浏览器/工作台能力打通：
@@ -176,6 +199,7 @@ npm run qa:slash
 
 如果你从文档入口开始看，建议先看：
 
+- [DESIGN.md](/Users/lst01/Desktop/学习/tech-cc-hub/DESIGN.md)
 - [doc/README.md](/Users/lst01/Desktop/学习/tech-cc-hub/doc/README.md)
 - [doc/00-overview/03-文档索引.md](/Users/lst01/Desktop/学习/tech-cc-hub/doc/00-overview/03-文档索引.md)
 - [doc/40-product/40-产品开发文档索引.md](/Users/lst01/Desktop/学习/tech-cc-hub/doc/40-product/40-产品开发文档索引.md)

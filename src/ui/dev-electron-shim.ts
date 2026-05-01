@@ -11,6 +11,21 @@ const DEV_SHIM_MARKER = "__techCCHubDevShim";
 
 export type DevElectronRuntimeSource = "bridge" | "fallback" | "electron";
 
+async function invokePreviewFs<T>(endpoint: "list" | "read", payload: { cwd: string; path?: string }): Promise<T> {
+  const url = new URL(`/__tech_preview/${endpoint}`, window.location.origin);
+  url.searchParams.set("cwd", payload.cwd);
+  if (payload.path) {
+    url.searchParams.set("path", payload.path);
+  }
+  const response = await fetch(url, { cache: "no-store" });
+  return await response.json() as T;
+}
+
+const unsupportedPreviewMutation = async () => ({
+  success: false,
+  error: "浏览器预览态暂不支持修改文件，请在 Electron 客户端里操作。",
+});
+
 export function getDevElectronRuntimeSource(): DevElectronRuntimeSource {
   if (typeof window === "undefined" || !window.electron) {
     return "fallback";
@@ -162,7 +177,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         listeners.delete(callback);
       };
     },
-    generateSessionTitle: async (userInput: string | null) => userInput?.slice(0, 24) || "新聊天",
+    generateSessionTitle: async (userInput: string | null, _options?: { model?: string }) => userInput?.slice(0, 24) || "新聊天",
     getRecentCwds: async () => ["/Users/lst01/Desktop/学习/tech-cc-hub"],
     getSystemWorkspace: async () => "/Users/lst01/Desktop/学习/tech-cc-hub",
     selectDirectory: async () => "/Users/lst01/Desktop/学习/tech-cc-hub",
@@ -203,6 +218,16 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
       success: true,
       attachments: payload.attachments,
     }),
+    readPreviewFile: async (payload) => await invokePreviewFs("read", payload),
+    listPreviewDirectory: async (payload) => await invokePreviewFs("list", payload),
+    getPreviewImageBase64: async (payload) => await invokePreviewFs("read", payload),
+    getPreviewFileMetadata: async () => null,
+    writePreviewFile: unsupportedPreviewMutation,
+    removePreviewEntry: unsupportedPreviewMutation,
+    renamePreviewEntry: unsupportedPreviewMutation,
+    openPreviewFile: async () => ({ success: false, error: "浏览器预览态暂不支持用系统应用打开文件。" }),
+    showPreviewItemInFolder: async () => ({ success: false, error: "浏览器预览态暂不支持在 Finder 中定位。" }),
+    openPreviewDirectoryDialog: async () => [],
     openBrowserWorkbench: async (url: string, sessionId?: string) => {
       const browserState = getBrowserState(sessionId);
       return setBrowserState(sessionId, {
@@ -303,7 +328,7 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
           source.close();
         };
       },
-      generateSessionTitle: async (userInput: string | null) => await invokeBridge("generateSessionTitle", userInput),
+      generateSessionTitle: async (userInput: string | null, options?: { model?: string }) => await invokeBridge("generateSessionTitle", userInput, options),
       getRecentCwds: async (limit?: number) => await invokeBridge("getRecentCwds", limit),
       getSystemWorkspace: async () => await invokeBridge("getSystemWorkspace"),
       selectDirectory: async () => await invokeBridge("selectDirectory"),
@@ -320,6 +345,16 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       checkApiConfig: async () => await invokeBridge("checkApiConfig"),
       debugSaveTraceSnapshot: async (snapshot) => await invokeBridge("debugSaveTraceSnapshot", snapshot),
       preprocessImageAttachments: async (payload) => await invokeBridge("preprocessImageAttachments", payload),
+      readPreviewFile: async (payload) => await invokePreviewFs("read", payload),
+      listPreviewDirectory: async (payload) => await invokePreviewFs("list", payload),
+      getPreviewImageBase64: async (payload) => await invokePreviewFs("read", payload),
+      getPreviewFileMetadata: async () => null,
+      writePreviewFile: unsupportedPreviewMutation,
+      removePreviewEntry: unsupportedPreviewMutation,
+      renamePreviewEntry: unsupportedPreviewMutation,
+      openPreviewFile: async () => ({ success: false, error: "浏览器预览态暂不支持用系统应用打开文件。" }),
+      showPreviewItemInFolder: async () => ({ success: false, error: "浏览器预览态暂不支持在 Finder 中定位。" }),
+      openPreviewDirectoryDialog: async () => [],
       openBrowserWorkbench: async (url, sessionId?: string) => await invokeBridge("openBrowserWorkbench", url, sessionId),
       closeBrowserWorkbench: async (sessionId?: string) => await invokeBridge("closeBrowserWorkbench", sessionId),
       setBrowserWorkbenchBounds: async (bounds, sessionId?: string) => await invokeBridge("setBrowserWorkbenchBounds", bounds, sessionId),

@@ -140,7 +140,11 @@ export function resolveAgentRuntimeContext(options: {
   return {
     surface,
     selectedAgentId: requestedAgentId,
-    settingSources: projectRoot ? ["user", "project"] : ["user"],
+    // API routing is owned by tech-cc-hub settings. We already inject user/project
+    // AGENTS/CLAUDE docs into systemPromptAppend below, so do not let Claude Code
+    // load user/project settings.json here; those files can override ANTHROPIC_*
+    // env and silently route a run to a different provider.
+    settingSources: [],
     systemPromptAppend: buildPromptAppend(
       entryDocs,
       appliedProfiles,

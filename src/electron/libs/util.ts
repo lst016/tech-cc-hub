@@ -1,6 +1,6 @@
 import { unstable_v2_prompt } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
-import { getCurrentApiConfig, buildEnvForConfig, getClaudeCodePath} from "./claude-settings.js";
+import { getCurrentApiConfig, buildEnvForConfig, getClaudeCodeModelOption, getClaudeCodePath} from "./claude-settings.js";
 import { app } from "electron";
 
 // Build enhanced PATH for packaged environment
@@ -20,7 +20,7 @@ export function getEnhancedEnv(): Record<string, string | undefined> {
   };
 }
 
-export const generateSessionTitle = async (userIntent: string | null) => {
+export const generateSessionTitle = async (userIntent: string | null, options: { model?: string } = {}) => {
   if (!userIntent) return "New Session";
   const trimmedIntent = userIntent.trim();
 
@@ -40,17 +40,22 @@ export const generateSessionTitle = async (userIntent: string | null) => {
     const words = trimmedIntent.split(/\s+/).slice(0, 5);
     return words.join(" ").toUpperCase() + (trimmedIntent.split(/\s+/).length > 5 ? "..." : "");
   }
-  const currentEnv = getEnhancedEnv();
+  const requestedModel = options.model?.trim() || apiConfig.model;
+  const currentEnv = {
+    ...process.env,
+    ...buildEnvForConfig(apiConfig, requestedModel),
+  };
 
   try {
+    const claudeCodeModelOption = getClaudeCodeModelOption(apiConfig, requestedModel);
     const result: SDKResultMessage = await unstable_v2_prompt(
       `please analynis the following user input to generate a short but clearly title to identify this conversation theme:
       ${trimmedIntent}
       directly output the title, do not include any other content`, {
-      model: apiConfig.model,
+      ...(claudeCodeModelOption ? { model: claudeCodeModelOption } : {}),
       env: currentEnv,
       pathToClaudeCodeExecutable: claudeCodePath,
-    });
+    } as Parameters<typeof unstable_v2_prompt>[1]);
 
     if (result.subtype === "success") {
       return result.result;

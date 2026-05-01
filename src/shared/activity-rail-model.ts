@@ -1633,6 +1633,7 @@ export function buildActivityRailModel(
   let latestInputTokens: number | undefined;
   let latestOutputTokens: number | undefined;
   let latestModel = "";
+  let latestRuntimeModel = "";
   let latestRemoteSessionId = "";
   let latestCostUsd = 0;
   let toolErrorCount = 0;
@@ -1655,6 +1656,7 @@ export function buildActivityRailModel(
     if (message.type === "prompt_ledger") {
       latestPromptLedger = message;
       promptLedgers.push(message);
+      latestRuntimeModel = message.model?.trim() || latestRuntimeModel;
       sequence += 1;
       timelineChronological.push(
         createTimelineItem({
@@ -2028,6 +2030,9 @@ export function buildActivityRailModel(
           typeof systemMessage.model === "string" && systemMessage.model.length > 0
             ? systemMessage.model
             : latestModel || "-";
+        if (modelLabel !== "-") {
+          latestRuntimeModel = modelLabel;
+        }
         sequence += 1;
         timelineChronological.push(
           createTimelineItem({
@@ -2475,6 +2480,7 @@ export function buildActivityRailModel(
   const largestContextBucket = contextDistribution.buckets
     .slice()
     .sort((left, right) => right.chars - left.chars)[0];
+  const displayModel = latestRuntimeModel || latestPromptLedger?.model || latestModel || "-";
   const largestPromptBucket = promptAnalysis.buckets
     .slice()
     .sort((left, right) => right.chars - left.chars)[0];
@@ -2652,7 +2658,7 @@ export function buildActivityRailModel(
       successCount: executionMetrics.successCount,
       failureCount: executionMetrics.failureCount,
       alertCount: filterCounts.attention,
-      modelLabel: latestModel || "-",
+      modelLabel: displayModel,
       costLabel: formatCost(latestCostUsd),
     },
     filterCounts,
@@ -2666,7 +2672,7 @@ export function buildActivityRailModel(
       latestAttachments,
       partialMessage,
       cwd: session.cwd || "-",
-      model: latestModel || "-",
+      model: displayModel,
       remoteSessionId: latestRemoteSessionId || "-",
       slashCommandCount: session.slashCommands?.length ?? 0,
       latestResultText,
