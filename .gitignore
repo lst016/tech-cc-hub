@@ -28,3 +28,4 @@ dist-test
 .env
 .context
 .worktrees/
+doc/00-research/AionUi/
