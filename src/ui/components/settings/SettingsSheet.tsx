@@ -39,15 +39,6 @@ const PAGE_ICONS: Record<string, ReactNode> = {
       <circle cx="6" cy="18" r="1" fill="currentColor" />
     </svg>
   ),
-  routing: (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <circle cx="12" cy="5" r="2" />
-      <path d="M12 7v4" />
-      <path d="M7 13l5 5 5-5" />
-      <circle cx="5" cy="19" r="2" />
-      <circle cx="19" cy="19" r="2" />
-    </svg>
-  ),
   channels: (
     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
       <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />

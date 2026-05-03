@@ -68,7 +68,7 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
 
             {availableModels.length === 0 ? (
               <div className="mt-4 rounded-2xl border border-ink-900/8 bg-surface px-4 py-3 text-sm leading-6 text-muted">
-                这个配置还没有可用模型，请先去“接口配置”里补齐模型列表。
+                这个配置还没有可用模型，请先去”AI接口”里补齐模型列表。
               </div>
             ) : (
               <div className="mt-4 rounded-3xl border border-ink-900/8 bg-surface/80 p-4">

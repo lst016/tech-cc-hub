@@ -32,7 +32,7 @@ export function OverviewSettingsPage({ profiles, enabledProfile }: OverviewSetti
       <div className="grid gap-4">
         <OverviewCard
           eyebrow="API"
-          title="接口配置"
+          title="AI接口"
           description="把网关、密钥和模型池放在一个独立页面里管理，后面继续扩展鉴权、限流、供应商配置也可以直接沿这一页加。"
           meta={`共 ${profiles.length} 个配置，当前启用：${enabledProfile?.name || "未命名配置"}`}
         />

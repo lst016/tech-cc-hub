@@ -92,19 +92,11 @@ const DEFAULT_AGENT_RULE_DOCUMENTS: AgentRuleDocuments = {
 const SETTINGS_PAGES: SettingsPageDefinition[] = [
   {
     id: "profiles",
-    label: "接口配置",
+    label: "AI接口",
     eyebrow: "API",
-    title: "接口配置",
-    description: "维护 API 网关、密钥和模型池。",
+    title: "AI接口",
+    description: "维护 API 网关、密钥、模型池，并定义默认主模型和角色模型的分工方式。",
     summary: "网关、密钥、模型池",
-  },
-  {
-    id: "routing",
-    label: "模型分工",
-    eyebrow: "ROLES",
-    title: "模型分工",
-    description: "定义默认主模型和角色模型的分工方式。",
-    summary: "主模型与角色路由",
   },
   {
     id: "channels",
@@ -232,15 +224,10 @@ export function SettingsModal({
         const normalizedProfiles = apiSettings.profiles.length > 0
           ? apiSettings.profiles.map((profile) => normalizeProfile(profile))
           : [createProfile()];
-        const hasConfiguredProfile = normalizedProfiles.some((profile) => (
-          profile.apiKey.trim().length > 0
-          && profile.baseURL.trim().length > 0
-          && profile.model.trim().length > 0
-        ));
 
         setApiConfigSettings({ profiles: normalizedProfiles });
         setProfiles(normalizedProfiles);
-        setActivePageId(initialPageId ?? (hasConfiguredProfile ? "routing" : "profiles"));
+        setActivePageId(initialPageId ?? "profiles");
         const globalConfigText = JSON.stringify(normalizedGlobalSettings, null, 2);
         setGlobalConfigText(globalConfigText);
         setGlobalConfigParseError(validateGlobalConfigText(globalConfigText));
@@ -277,13 +264,7 @@ export function SettingsModal({
     if (page.id === "profiles") {
       return {
         ...page,
-        summary: `共 ${profiles.length} 个配置`,
-      };
-    }
-    if (page.id === "routing") {
-      return {
-        ...page,
-        summary: buildRoutingSummary(enabledProfile),
+        summary: `共 ${profiles.length} 个配置 · ${buildRoutingSummary(enabledProfile)}`,
       };
     }
     if (page.id === "skills") {
@@ -424,10 +405,14 @@ export function SettingsModal({
     }
   };
 
-  let content = <ApiProfilesSettingsPage profiles={profiles} runtimeSource={runtimeSource} onChange={updateProfiles} />;
-  if (activePageId === "routing") {
-    content = <ModelRoutingSettingsPage profiles={profiles} onChange={updateProfiles} />;
-  }
+  let content = (
+    <>
+      <ModelRoutingSettingsPage profiles={profiles} onChange={updateProfiles} />
+      <div className="mt-6">
+        <ApiProfilesSettingsPage profiles={profiles} runtimeSource={runtimeSource} onChange={updateProfiles} />
+      </div>
+    </>
+  );
   if (activePageId === "global-json") {
     content = (
       <GlobalJsonSettingsPage

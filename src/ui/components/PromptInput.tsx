@@ -826,7 +826,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
     }
 
     if (!imageModel) {
-      setGlobalError("当前配置没有图片预处理模型，不能可靠识别图片。请先在设置 -> 接口配置里选择支持图片的模型后再发送。");
+      setGlobalError("当前配置没有图片预处理模型，不能可靠识别图片。请先在设置 -> AI接口里选择支持图片的模型后再发送。");
       return null;
     }
 
