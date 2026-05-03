@@ -13,6 +13,7 @@ interface SidebarProps {
   onDeleteSession: (sessionId: string) => void;
   onDeleteWorkspace: (sessionIds: string[], workspaceName: string) => void;
   onOpenSettings?: (pageId?: SettingsPageId) => void;
+  onOpenCronPage?: () => void;
   width?: number;
 }
 
@@ -25,6 +26,7 @@ export function Sidebar({
   onDeleteSession,
   onDeleteWorkspace,
   onOpenSettings,
+  onOpenCronPage,
   width = 320,
 }: SidebarProps) {
   const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-14" : "top-10";
@@ -162,8 +164,6 @@ export function Sidebar({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-          <div className="mb-3 px-1 text-[11px] font-semibold tracking-[0.22em] text-muted">工作区</div>
-
           {workspaceGroups.length === 0 && (
             <div className="rounded-3xl border border-black/6 bg-white/72 px-4 py-5 text-center text-xs leading-6 text-muted shadow-[0_14px_34px_rgba(30,38,52,0.06)]">
               还没有会话。直接在底部输入框开始聊天，系统会按工作区自动归档到左侧。
@@ -236,7 +236,7 @@ export function Sidebar({
                   {group.sessions.map((session) => (
                     <div
                       key={session.id}
-                      className={`cursor-pointer rounded-[20px] border px-3 py-2 text-left transition-all ${activeSessionId === session.id ? "border-accent/28 bg-[linear-gradient(180deg,rgba(253,244,241,1),rgba(255,255,255,0.92))] shadow-[0_8px_20px_rgba(210,106,61,0.10)]" : "border-black/6 bg-[#f7f9fc] hover:-translate-y-[1px] hover:bg-white"}`}
+                      className={`cursor-pointer rounded-xl border px-2.5 py-1.5 text-left transition-all ${activeSessionId === session.id ? "border-accent/28 bg-[linear-gradient(180deg,rgba(253,244,241,1),rgba(255,255,255,0.92))] shadow-[0_8px_20px_rgba(210,106,61,0.10)]" : "border-black/6 bg-[#f7f9fc] hover:-translate-y-[1px] hover:bg-white"}`}
                       onClick={() => setActiveSessionId(session.id)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
@@ -316,6 +316,17 @@ export function Sidebar({
         </div>
 
         <div className="mt-auto space-y-2">
+          <button
+            className="flex w-full items-center justify-between rounded-2xl border border-black/6 bg-white/82 px-4 py-3 text-sm font-medium text-ink-800 shadow-[0_10px_28px_rgba(30,38,52,0.06)] transition-all hover:-translate-y-[1px] hover:border-black/10 hover:bg-white"
+            onClick={() => onOpenCronPage?.()}
+            aria-label="定时任务"
+          >
+            <span>定时任务</span>
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 6v6l4 2" />
+            </svg>
+          </button>
           <button
             className="flex w-full items-center justify-between rounded-2xl border border-black/6 bg-white/82 px-4 py-3 text-sm font-medium text-ink-800 shadow-[0_10px_28px_rgba(30,38,52,0.06)] transition-all hover:-translate-y-[1px] hover:border-black/10 hover:bg-white"
             onClick={() => openSettings()}

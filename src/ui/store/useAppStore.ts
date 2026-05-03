@@ -654,25 +654,20 @@ export const useAppStore = create<AppState>((set, get) => ({
 
         if (!hasSessions) {
           get().setActiveSessionId(null);
+          break;
         }
 
-        if (!state.activeSessionId && event.payload.sessions.length > 0) {
-          const sorted = [...event.payload.sessions].sort((a, b) => {
-            const aTime = a.updatedAt ?? a.createdAt ?? 0;
-            const bTime = b.updatedAt ?? b.createdAt ?? 0;
-            return aTime - bTime;
-          });
-          const latestSession = sorted[sorted.length - 1];
-          if (latestSession) {
-            get().setActiveSessionId(latestSession.id);
-          }
-        } else if (state.activeSessionId) {
-          const stillExists = event.payload.sessions.some(
-            (session) => session.id === state.activeSessionId
-          );
-          if (!stillExists) {
-            get().setActiveSessionId(null);
-          }
+        const activeStillExists = Boolean(state.activeSessionId)
+          && event.payload.sessions.some((session) => session.id === state.activeSessionId);
+        if (!activeStillExists) {
+          const latestSession = [...event.payload.sessions]
+            .sort((a, b) => {
+              const aTime = a.updatedAt ?? a.createdAt ?? 0;
+              const bTime = b.updatedAt ?? b.createdAt ?? 0;
+              return aTime - bTime;
+            })
+            .at(-1);
+          get().setActiveSessionId(latestSession?.id ?? null);
         }
         break;
       }

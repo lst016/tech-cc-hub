@@ -947,6 +947,7 @@ export function ActivityRail({
   width?: number;
 }) {
   const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-14" : "top-10";
+  const showLabels = width >= 300;
   const model = useMemo(
     () => buildActivityRailModel(session, session?.permissionRequests ?? [], partialMessage),
     [partialMessage, session],
@@ -1050,7 +1051,7 @@ export function ActivityRail({
                 <circle cx="12" cy="12" r="8.5" />
                 <path d="M3.5 12h17M12 3.5c2.2 2.3 3.2 5.1 3.2 8.5s-1 6.2-3.2 8.5M12 3.5C9.8 5.8 8.8 8.6 8.8 12s1 6.2 3.2 8.5" />
               </svg>
-              <span>浏览器</span>
+              <span className={showLabels ? undefined : "hidden"}>浏览器</span>
             </button>
           )}
           <button
@@ -1066,7 +1067,7 @@ export function ActivityRail({
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
               <path d="M5 5h14M5 12h10M5 19h7" />
             </svg>
-            <span>执行轨迹</span>
+            <span className={showLabels ? undefined : "hidden"}>执行轨迹</span>
           </button>
           <button
             type="button"
@@ -1081,7 +1082,7 @@ export function ActivityRail({
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
               <path d="M4 18V6M9 18v-7M14 18V9M19 18V4" />
             </svg>
-            <span>Usage</span>
+            <span className={showLabels ? undefined : "hidden"}>Usage</span>
           </button>
           <button
             type="button"
@@ -1097,7 +1098,7 @@ export function ActivityRail({
               <path d="M7 3.5h7l3 3V20.5H7z" />
               <path d="M14 3.5V7h3M9.5 12h5M9.5 15.5h5" />
             </svg>
-            <span>预览</span>
+            <span className={showLabels ? undefined : "hidden"}>预览</span>
           </button>
           {!hasBrowserTab && (
             <button

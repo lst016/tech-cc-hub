@@ -12,7 +12,6 @@ export type SettingsPageDefinition = {
 };
 
 type SettingsSheetProps = {
-  title: string;
   pages: SettingsPageDefinition[];
   activePageId: string;
   onPageChange: (pageId: string) => void;
@@ -55,6 +54,16 @@ const PAGE_ICONS: Record<string, ReactNode> = {
       <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
     </svg>
   ),
+  plugins: (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M8 3h8v5H8z" />
+      <path d="M10 8v3" />
+      <path d="M14 8v3" />
+      <rect x="5" y="11" width="14" height="10" rx="2" />
+      <path d="M9 15h6" />
+      <path d="M9 18h3" />
+    </svg>
+  ),
   skills: (
     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
       <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
@@ -90,7 +99,6 @@ const PAGE_ICONS: Record<string, ReactNode> = {
 };
 
 export function SettingsSheet({
-  title,
   pages,
   activePageId,
   onPageChange,
@@ -166,12 +174,8 @@ export function SettingsSheet({
       </aside>
 
       <main className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex min-h-full w-full max-w-[1360px] flex-col px-10 py-12">
-          <header className="border-b border-[#E5E6EB] pb-6">
-            <h1 className="text-3xl font-bold tracking-tight text-[#1D2129]">{title}</h1>
-          </header>
-
-          <section className="min-h-0 flex-1 py-7 pb-28">
+        <div className="mx-auto flex min-h-full w-full max-w-[1360px] flex-col px-10 pt-8">
+          <section className="min-h-0 flex-1 pb-28">
             {status && (
               <div className={`mb-5 rounded-2xl border px-4 py-3 text-sm ${toneClasses[status.tone]}`}>
                 {status.message}

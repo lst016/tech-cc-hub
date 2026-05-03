@@ -16,6 +16,7 @@ import { ActivityRail } from "./components/ActivityRail";
 import { SessionAnalysisPage } from "./components/SessionAnalysisPage";
 import { BrowserWorkbenchPage } from "./components/BrowserWorkbenchPage";
 import MDContent from "./render/markdown";
+import ScheduledTasksPage from "./components/cron/ScheduledTasksPage";
 import { OPEN_BROWSER_WORKBENCH_URL_EVENT, type OpenBrowserWorkbenchUrlDetail } from "./events";
 import { copyTextToClipboard } from "./utils/clipboard";
 import {
@@ -81,13 +82,18 @@ function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
-  const partialMessageRef = useRef("");
+  const partialMessagesRef = useRef<Record<string, string>>({});
+  const partialVisibilityRef = useRef<Record<string, boolean>>({});
+  const partialDirtySessionIdsRef = useRef<Set<string>>(new Set());
+  const activeSessionIdRef = useRef<string | null>(null);
   const partialFlushFrameRef = useRef<number | null>(null);
-  const [partialMessage, setPartialMessage] = useState("");
-  const [showPartialMessage, setShowPartialMessage] = useState(false);
+  const historyRetryTimerRef = useRef<number | null>(null);
+  const [partialMessagesBySessionId, setPartialMessagesBySessionId] = useState<Record<string, string>>({});
+  const [partialVisibilityBySessionId, setPartialVisibilityBySessionId] = useState<Record<string, boolean>>({});
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const [hasNewMessages, setHasNewMessages] = useState(false);
   const [showSessionAnalysis, setShowSessionAnalysis] = useState(false);
+  const [showCronPage, setShowCronPage] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
   const [closeSidebarOnBrowserOpen, setCloseSidebarOnBrowserOpen] = useState(true);
@@ -97,6 +103,14 @@ function App() {
   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [activityRailWidth, setActivityRailWidth] = useState(420);
+  const sidebarWidthRef = useRef(sidebarWidth);
+  const activityRailWidthRef = useRef(activityRailWidth);
+  sidebarWidthRef.current = sidebarWidth;
+  activityRailWidthRef.current = activityRailWidth;
+  const showSidebarRef = useRef(showSidebar);
+  const showActivityRailRef = useRef(showActivityRail);
+  showSidebarRef.current = showSidebar;
+  showActivityRailRef.current = showActivityRail;
   const [resizingPane, setResizingPane] = useState<"sidebar" | "activityRail" | null>(null);
   const [copiedSessionId, setCopiedSessionId] = useState(false);
   const runtimeModelSessionSyncRef = useRef<string | null>(null);
@@ -124,6 +138,9 @@ function App() {
   }, []);
 
   const activeSessionId = useAppStore((s) => s.activeSessionId);
+  activeSessionIdRef.current = activeSessionId;
+  const partialMessage = activeSessionId ? (partialMessagesBySessionId[activeSessionId] ?? "") : "";
+  const showPartialMessage = activeSessionId ? (partialVisibilityBySessionId[activeSessionId] ?? false) : false;
   const workspaceView = activeSessionId ? (workspaceViewBySessionId[activeSessionId] ?? "chat") : "chat";
   const activityRailTab = activeSessionId ? (activityRailTabBySessionId[activeSessionId] ?? "trace") : "trace";
   const setActiveSessionWorkspaceView = useCallback((nextView: WorkspaceView) => {
@@ -138,7 +155,6 @@ function App() {
       current[activeSessionId] === nextTab ? current : { ...current, [activeSessionId]: nextTab }
     ));
   }, [activeSessionId]);
-  const sessions = useAppStore((s) => s.sessions);
   const archivedSessions = useAppStore((s) => s.archivedSessions);
   const activeSession = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId]) : undefined));
   const activeHistoryCursor = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId])?.historyCursor : undefined));
@@ -184,8 +200,16 @@ function App() {
 
   // Handle partial messages from stream events
   const flushPartialMessage = useCallback(() => {
+    const dirtyActiveSession = activeSessionIdRef.current
+      ? partialDirtySessionIdsRef.current.has(activeSessionIdRef.current)
+      : false;
     partialFlushFrameRef.current = null;
-    setPartialMessage(partialMessageRef.current);
+    partialDirtySessionIdsRef.current.clear();
+    setPartialMessagesBySessionId({ ...partialMessagesRef.current });
+    setPartialVisibilityBySessionId({ ...partialVisibilityRef.current });
+    if (!dirtyActiveSession) {
+      return;
+    }
     if (shouldAutoScroll) {
       scrollChatToBottom("auto");
     } else {
@@ -193,25 +217,26 @@ function App() {
     }
   }, [scrollChatToBottom, shouldAutoScroll]);
 
-  const schedulePartialFlush = useCallback(() => {
+  const schedulePartialFlush = useCallback((sessionId: string) => {
+    partialDirtySessionIdsRef.current.add(sessionId);
     if (partialFlushFrameRef.current !== null) return;
     partialFlushFrameRef.current = window.requestAnimationFrame(flushPartialMessage);
   }, [flushPartialMessage]);
 
   const handlePartialMessages = useCallback((partialEvent: ServerEvent) => {
     if (partialEvent.type !== "stream.message" || partialEvent.payload.message.type !== "stream_event") return;
-    if (partialEvent.payload.sessionId !== activeSessionId) return;
 
+    const { sessionId } = partialEvent.payload;
     const message = partialEvent.payload.message as StreamEventMessage;
     if (message.event?.type === "content_block_start") {
-      partialMessageRef.current = "";
-      setPartialMessage(partialMessageRef.current);
-      setShowPartialMessage(true);
+      partialMessagesRef.current[sessionId] = "";
+      partialVisibilityRef.current[sessionId] = true;
+      schedulePartialFlush(sessionId);
     }
 
     if (message.event?.type === "content_block_delta") {
-      partialMessageRef.current += getPartialMessageContent(message.event) || "";
-      schedulePartialFlush();
+      partialMessagesRef.current[sessionId] = `${partialMessagesRef.current[sessionId] ?? ""}${getPartialMessageContent(message.event) || ""}`;
+      schedulePartialFlush(sessionId);
     }
 
     if (message.event?.type === "content_block_stop") {
@@ -219,14 +244,21 @@ function App() {
         window.cancelAnimationFrame(partialFlushFrameRef.current);
         partialFlushFrameRef.current = null;
       }
-      setPartialMessage(partialMessageRef.current);
-      setShowPartialMessage(false);
+      partialDirtySessionIdsRef.current.add(sessionId);
+      partialVisibilityRef.current[sessionId] = false;
+      const completedMessage = partialMessagesRef.current[sessionId] ?? "";
+      flushPartialMessage();
       setTimeout(() => {
-        partialMessageRef.current = "";
-        setPartialMessage(partialMessageRef.current);
+        if (partialVisibilityRef.current[sessionId] || partialMessagesRef.current[sessionId] !== completedMessage) {
+          return;
+        }
+        delete partialMessagesRef.current[sessionId];
+        delete partialVisibilityRef.current[sessionId];
+        partialDirtySessionIdsRef.current.add(sessionId);
+        flushPartialMessage();
       }, 500);
     }
-  }, [activeSessionId, schedulePartialFlush]);
+  }, [flushPartialMessage, schedulePartialFlush]);
 
   // Combined event handler
   const onEvent = useCallback((event: ServerEvent) => {
@@ -400,12 +432,46 @@ function App() {
   }, [setApiConfigSettings]);
 
   useEffect(() => {
-    if (connected) sendEvent({ type: "session.list" });
-  }, [connected, sendEvent]);
+    if (!connected) return;
+    let cancelled = false;
+
+    const loadSessionsDirectly = () => {
+      void (window.electron as typeof window.electron & {
+        invoke: (channel: string, ...args: unknown[]) => Promise<{ sessions: unknown[]; archived: boolean }>;
+      }).invoke("sessions:list")
+        .then((payload) => {
+          if (cancelled) return;
+          handleServerEvent({
+            type: "session.list",
+            payload,
+          } as ServerEvent);
+        })
+        .catch((error) => {
+          console.error("Failed to invoke session list:", error);
+        });
+    };
+
+    loadSessionsDirectly();
+    sendEvent({ type: "session.list" });
+    const retryTimers = [
+      window.setTimeout(loadSessionsDirectly, 350),
+      window.setTimeout(() => sendEvent({ type: "session.list" }), 350),
+      window.setTimeout(loadSessionsDirectly, 1200),
+      window.setTimeout(() => sendEvent({ type: "session.list" }), 1200),
+    ];
+    window.addEventListener(DEV_BRIDGE_READY_EVENT, loadSessionsDirectly);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(DEV_BRIDGE_READY_EVENT, loadSessionsDirectly);
+      retryTimers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [connected, handleServerEvent, sendEvent]);
 
   useEffect(() => {
     if (!activeSessionId || !connected) return;
-    if (activeSession && !activeSessionHydrated && !historyRequested.has(activeSessionId)) {
+    if (!activeSession || activeSessionHydrated) return;
+
+    const requestHistory = () => {
       markHistoryRequested(activeSessionId);
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsLoadingHistory(true);
@@ -413,7 +479,26 @@ function App() {
         type: "session.history",
         payload: { sessionId: activeSessionId, limit: INITIAL_HISTORY_LIMIT },
       });
+    };
+
+    if (!historyRequested.has(activeSessionId)) {
+      requestHistory();
+      return;
     }
+
+    if (activeSession.messages.length === 0 && historyRetryTimerRef.current === null) {
+      historyRetryTimerRef.current = window.setTimeout(() => {
+        historyRetryTimerRef.current = null;
+        requestHistory();
+      }, 700);
+    }
+
+    return () => {
+      if (historyRetryTimerRef.current !== null) {
+        window.clearTimeout(historyRetryTimerRef.current);
+        historyRetryTimerRef.current = null;
+      }
+    };
   }, [activeSession, activeSessionHydrated, activeSessionId, connected, historyRequested, markHistoryRequested, sendEvent]);
 
   const handleScroll = useCallback(() => {
@@ -580,7 +665,7 @@ function App() {
       if (resizingPane === "sidebar") {
         const maxSidebarWidth = Math.max(
           MIN_SIDEBAR_WIDTH,
-          viewportWidth - (showActivityRail ? activityRailWidth : 0) - MIN_CENTER_WIDTH,
+          viewportWidth - (showActivityRailRef.current ? activityRailWidthRef.current : 0) - MIN_CENTER_WIDTH,
         );
         const nextWidth = Math.min(Math.max(event.clientX, MIN_SIDEBAR_WIDTH), maxSidebarWidth);
         setSidebarWidth(nextWidth);
@@ -590,7 +675,7 @@ function App() {
       const proposedWidth = viewportWidth - event.clientX;
       const maxRailWidth = Math.max(
         MIN_ACTIVITY_RAIL_WIDTH,
-        viewportWidth - (showSidebar ? sidebarWidth : 0) - MIN_CENTER_WIDTH,
+        viewportWidth - (showSidebarRef.current ? sidebarWidthRef.current : 0) - MIN_CENTER_WIDTH,
       );
       const nextWidth = Math.min(Math.max(proposedWidth, MIN_ACTIVITY_RAIL_WIDTH), maxRailWidth);
       setActivityRailWidth(nextWidth);
@@ -613,7 +698,7 @@ function App() {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [activityRailWidth, resizingPane, showActivityRail, showSidebar, sidebarWidth]);
+  }, [resizingPane]);
 
   const scrollToBottom = useCallback(() => {
     setShouldAutoScroll(true);
@@ -1021,6 +1106,7 @@ function App() {
             onDeleteSession={handleDeleteSession}
             onDeleteWorkspace={handleDeleteWorkspace}
             onOpenSettings={openSettings}
+            onOpenCronPage={() => setShowCronPage(true)}
             width={sidebarWidth}
           />
         )}
@@ -1045,7 +1131,11 @@ function App() {
           }}
         >
 
-          {showSessionAnalysis ? (
+          {showCronPage ? (
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <ScheduledTasksPage onBack={() => setShowCronPage(false)} />
+            </div>
+          ) : showSessionAnalysis ? (
             <div className="flex-1 min-h-0 overflow-hidden">
               <SessionAnalysisPage
                 session={activeSession}

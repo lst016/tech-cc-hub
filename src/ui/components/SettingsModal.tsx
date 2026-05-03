@@ -18,6 +18,7 @@ import { GlobalJsonSettingsPage } from "./settings/GlobalJsonSettingsPage";
 import { ModelRoutingSettingsPage } from "./settings/ModelRoutingSettingsPage";
 import { SettingsSheet, type SettingsPageDefinition } from "./settings/SettingsSheet";
 import { SkillsManagementPage } from "./settings/SkillsManagementPage";
+import { PluginsSettingsPage } from "./settings/PluginsSettingsPage";
 import { AboutPage } from "./settings/AboutPage";
 import {
   buildRoutingSummary,
@@ -112,6 +113,14 @@ const SETTINGS_PAGES: SettingsPageDefinition[] = [
     title: "渠道连接",
     description: "配置 Telegram、飞书/Lark 和其他远程聊天入口。",
     summary: "Telegram / 飞书",
+  },
+  {
+    id: "plugins",
+    label: "插件系统",
+    eyebrow: "PLUGINS",
+    title: "插件系统",
+    description: "管理默认插件、MCP 能力、权限和扩展来源。",
+    summary: "Open Computer Use",
   },
   {
     id: "skills",
@@ -283,6 +292,12 @@ export function SettingsModal({
         summary: "技能与场景管理",
       };
     }
+    if (page.id === "plugins") {
+      return {
+        ...page,
+        summary: "默认插件与 MCP",
+      };
+    }
     if (page.id === "channels") {
       return {
         ...page,
@@ -437,6 +452,9 @@ export function SettingsModal({
   if (activePageId === "skills") {
     content = <SkillsManagementPage />;
   }
+  if (activePageId === "plugins") {
+    content = <PluginsSettingsPage />;
+  }
   if (activePageId === "agent-rules") {
     content = (
       <AgentRulesSettingsPage
@@ -450,7 +468,7 @@ export function SettingsModal({
     content = <AboutPage onStartMaintenanceSession={onStartMaintenanceSession} onClose={onClose} />;
   }
 
-  const footer = activePageId === "about" || activePageId === "skills"
+  const footer = activePageId === "about" || activePageId === "skills" || activePageId === "plugins"
     ? null
     : (
       <div className="flex gap-3">
@@ -472,7 +490,6 @@ export function SettingsModal({
 
   return (
     <SettingsSheet
-      title="设置"
       pages={pages}
       activePageId={activePageId}
       onPageChange={(pageId) => {
