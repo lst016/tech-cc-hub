@@ -291,7 +291,25 @@ const getBrowserAnnotationSummaryLabel = (item: unknown, index: number): string 
   if (target?.type === "image") return (typeof target.alt === "string" && target.alt.trim()) || "图片";
 
   const dom = record.dom && typeof record.dom === "object" ? (record.dom as Record<string, unknown>) : null;
-  return (typeof dom?.selector === "string" && dom.selector) || `标注 ${index + 1}`;
+  const domContext = dom?.context && typeof dom.context === "object" ? (dom.context as Record<string, unknown>) : null;
+  const nearbyText = typeof domContext?.nearbyText === "string" ? domContext.nearbyText.trim() : "";
+  if (nearbyText) return nearbyText.slice(0, 60);
+
+  const page = record.page && typeof record.page === "object" ? (record.page as Record<string, unknown>) : null;
+  const pageTitle = typeof page?.title === "string" ? page.title.trim() : "";
+  if (pageTitle) return pageTitle;
+
+  const pageUrl = typeof page?.url === "string" ? page.url.trim() : "";
+  if (pageUrl) {
+    try {
+      const hostname = new URL(pageUrl).hostname;
+      return hostname;
+    } catch {
+      return pageUrl.slice(0, 50);
+    }
+  }
+
+  return typeof dom?.selector === "string" && dom.selector ? dom.selector : `标注 ${index + 1}`;
 };
 
 function extractBrowserAnnotationsPrompt(prompt: string): {

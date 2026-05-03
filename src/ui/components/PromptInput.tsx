@@ -45,6 +45,29 @@ const EMPTY_CODE_REFERENCES: CodeReferenceDraft[] = [];
 const EMPTY_FILE_REFERENCES: FileReferenceDraft[] = [];
 const EMPTY_MESSAGE_REFERENCES: MessageReferenceDraft[] = [];
 
+type SlashCommandOption = {
+  name: string;
+  description?: string;
+};
+
+type SlashCommandPayloadItem = string | SlashCommandOption;
+
+function normalizeSlashCommandList(commands?: SlashCommandPayloadItem[]): SlashCommandOption[] {
+  const normalized = new Map<string, SlashCommandOption>();
+  for (const command of commands ?? []) {
+    const name = (typeof command === "string" ? command : command.name).replace(/^\//, "").trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    const existing = normalized.get(key);
+    const description = typeof command === "string" ? undefined : command.description?.trim();
+    normalized.set(key, {
+      name: existing?.name ?? name,
+      description: existing?.description || description || undefined,
+    });
+  }
+  return Array.from(normalized.values());
+}
+
 type FileMentionOption = {
   path: string;
   label: string;
@@ -162,6 +185,17 @@ function getBrowserAnnotationLabel(annotation: BrowserWorkbenchAnnotation, index
   const target = annotation.domHint?.target;
   if (target?.type === "text" && target.value.trim()) return target.value.trim();
   if (target?.type === "image") return target.alt?.trim() || "图片";
+  const nearbyText = annotation.domHint?.context?.nearbyText?.trim();
+  if (nearbyText) return nearbyText.slice(0, 60);
+  const pageTitle = annotation.title?.trim();
+  if (pageTitle) return pageTitle;
+  if (annotation.url) {
+    try {
+      return new URL(annotation.url).hostname;
+    } catch {
+      return annotation.url.slice(0, 50);
+    }
+  }
   return annotation.domHint?.text?.trim() || annotation.domHint?.selector || `批注 ${index + 1}`;
 }
 
@@ -214,12 +248,12 @@ function InlineDropdown({
   return (
     <div
       ref={containerRef}
-      className={`relative inline-flex h-9 ${minWidthClass} items-center justify-between gap-2 rounded-xl border border-black/10 bg-white/92 px-3 text-xs text-ink-700 shadow-[0_10px_28px_rgba(15,18,24,0.06)]`}
+      className={`relative inline-flex h-9 ${minWidthClass} items-center justify-between gap-2 rounded-xl bg-white px-3 text-xs text-ink-700`}
     >
       <span className="text-muted">{label}</span>
       <button
         type="button"
-        className={`inline-flex h-8 min-w-[96px] items-center justify-between gap-2 rounded-lg border border-black/12 px-3 text-[13px] text-ink-800 transition ${disabled ? "cursor-not-allowed bg-black/5 opacity-60" : "cursor-pointer bg-white hover:bg-surface-secondary"}`}
+        className={`inline-flex h-8 min-w-[96px] items-center justify-between gap-2 rounded-lg bg-white px-3 text-[13px] text-ink-800 transition ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-surface-secondary"}`}
         onClick={() => setOpen((current) => !current)}
         disabled={disabled}
       >
@@ -258,12 +292,41 @@ function InlineDropdown({
   );
 }
 
+const PROMPT_QUEUE_STORAGE_KEY = "tech-cc-hub:prompt-queue";
+
 type QueuedMessageDraft = {
   id: string;
   prompt: string;
   attachments: PromptAttachment[];
   createdAt: number;
 };
+
+function readQueuedMessagesFromStorage(): Record<string, QueuedMessageDraft[]> {
+  try {
+    const stored = localStorage.getItem(PROMPT_QUEUE_STORAGE_KEY);
+    if (!stored) return {};
+    const parsed = JSON.parse(stored) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, QueuedMessageDraft[]>;
+  } catch {
+    return {};
+  }
+}
+
+function writeQueuedMessagesToStorage(queueBySession: Record<string, QueuedMessageDraft[]>) {
+  try {
+    const allEmpty = Object.keys(queueBySession).every(
+      (sessionId) => (queueBySession[sessionId] ?? []).length === 0,
+    );
+    if (allEmpty) {
+      localStorage.removeItem(PROMPT_QUEUE_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(PROMPT_QUEUE_STORAGE_KEY, JSON.stringify(queueBySession));
+  } catch (error) {
+    console.warn("Failed to persist prompt queue:", error);
+  }
+}
 
 function getCodeReferenceLineLabel(reference: CodeReferenceDraft) {
   return reference.startLine === reference.endLine
@@ -652,7 +715,41 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   const activeBrowserAnnotations = activeSessionId
     ? browserWorkbenchBySessionId[activeSessionId]?.annotations ?? browserAnnotations
     : browserAnnotations;
-  const slashCommands = useMemo(() => activeSession?.slashCommands ?? [], [activeSession?.slashCommands]);
+  const slashCommandCwd = activeSession?.cwd?.trim() || cwd.trim();
+  const [workspaceSlashCommands, setWorkspaceSlashCommands] = useState<SlashCommandOption[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const electronApi = window.electron as typeof window.electron & {
+      invoke?: <T>(channel: string, ...args: unknown[]) => Promise<T>;
+    };
+    if (!electronApi.invoke) {
+      setWorkspaceSlashCommands([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+    void electronApi.invoke<{ commands?: SlashCommandPayloadItem[] }>("slash-commands:list", { cwd: slashCommandCwd || undefined })
+      .then((payload) => {
+        if (!cancelled) {
+          setWorkspaceSlashCommands(normalizeSlashCommandList(payload?.commands));
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.error("Failed to load slash commands:", error);
+          setWorkspaceSlashCommands([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [slashCommandCwd]);
+  const slashCommands = useMemo(() => {
+    return normalizeSlashCommandList([
+      ...workspaceSlashCommands,
+      ...(activeSession?.slashCommands ?? []),
+    ]);
+  }, [activeSession?.slashCommands, workspaceSlashCommands]);
   const activeProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
   const activeSessionModel = activeSession?.model?.trim();
   const resolveSessionRuntimeModel = useCallback((): string => {
@@ -674,7 +771,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   const validatePromptDraft = useCallback((promptValue: string) => {
     if (promptValue.startsWith("/") && slashCommands.length > 0) {
       const slashName = promptValue.trim().slice(1).split(/\s+/)[0];
-      const normalized = slashCommands.map((command) => command.replace(/^\//, ""));
+      const normalized = slashCommands.map((command) => command.name);
       if (slashName && !normalized.includes(slashName)) {
         return `当前会话不支持 /${slashName}。可用命令请从下方联想列表中选择。`;
       }
@@ -890,7 +987,7 @@ export function PromptInput({
   const isComposingRef = useRef(false);
   const compositionEndedAtRef = useRef(0);
   const [attachments, setAttachments] = useState<PromptAttachment[]>([]);
-  const [queuedMessagesBySession, setQueuedMessagesBySession] = useState<Record<string, QueuedMessageDraft[]>>({});
+  const [queuedMessagesBySession, setQueuedMessagesBySession] = useState<Record<string, QueuedMessageDraft[]>>(readQueuedMessagesFromStorage);
   const [showSlashBrowser, setShowSlashBrowser] = useState(false);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [cursorIndex, setCursorIndex] = useState(0);
@@ -917,7 +1014,17 @@ export function PromptInput({
     () => getFileMentionContext(prompt, cursorIndex || prompt.length),
     [cursorIndex, prompt],
   );
+  const queueSessionId = useMemo(() => {
+    if (activeSessionId && (queuedMessagesBySession[activeSessionId] ?? []).length > 0) {
+      return activeSessionId;
+    }
+    return Object.keys(queuedMessagesBySession).find((sessionId) => (queuedMessagesBySession[sessionId] ?? []).length > 0) ?? null;
+  }, [activeSessionId, queuedMessagesBySession]);
   const activeQueue = useMemo(() => {
+    if (!queueSessionId) return [];
+    return queuedMessagesBySession[queueSessionId] ?? [];
+  }, [queueSessionId, queuedMessagesBySession]);
+  const currentSessionQueue = useMemo(() => {
     if (!activeSessionId) return [];
     return queuedMessagesBySession[activeSessionId] ?? [];
   }, [activeSessionId, queuedMessagesBySession]);
@@ -928,9 +1035,14 @@ export function PromptInput({
     || messageReferences.length > 0
     || fileReferences.length > 0;
   const filteredSlashCommands = useMemo(() => {
+    const normalizedSlashQuery = slashQuery.toLowerCase();
     const matchedCommands = !slashQuery
       ? slashCommands
-      : slashCommands.filter((command) => command.replace(/^\//, "").includes(slashQuery));
+      : slashCommands.filter((command) => {
+          const name = command.name.toLowerCase();
+          const description = command.description?.toLowerCase() ?? "";
+          return name.includes(normalizedSlashQuery) || description.includes(normalizedSlashQuery);
+        });
 
     if (showSlashBrowser) {
       return matchedCommands;
@@ -1007,21 +1119,21 @@ export function PromptInput({
     setCursorIndex(input.selectionStart ?? prompt.length);
   }, [prompt.length]);
 
-  const removeQueuedDraft = useCallback((queueId: string) => {
-    if (!activeSessionId) return;
+  const removeQueuedDraft = useCallback((queueId: string, sessionId = queueSessionId) => {
+    if (!sessionId) return;
     setQueuedMessagesBySession((current) => {
-      const nextQueue = (current[activeSessionId] ?? []).filter((item) => item.id !== queueId);
+      const nextQueue = (current[sessionId] ?? []).filter((item) => item.id !== queueId);
       if (nextQueue.length === 0) {
         const rest = { ...current };
-        delete rest[activeSessionId];
+        delete rest[sessionId];
         return rest;
       }
       return {
         ...current,
-        [activeSessionId]: nextQueue,
+        [sessionId]: nextQueue,
       };
     });
-  }, [activeSessionId]);
+  }, [queueSessionId]);
 
   const appendQueuedDraft = useCallback((queuedMessage: QueuedMessageDraft) => {
     if (!activeSessionId) return;
@@ -1033,7 +1145,7 @@ export function PromptInput({
         attachments: queuedMessage.attachments,
       },
     });
-    removeQueuedDraft(queuedMessage.id);
+    removeQueuedDraft(queuedMessage.id, activeSessionId);
     onSendMessage?.();
   }, [activeSessionId, onSendMessage, removeQueuedDraft, sendEvent]);
 
@@ -1156,7 +1268,7 @@ export function PromptInput({
         e.preventDefault();
         const command = filteredSlashCommands[slashActiveIndex] ?? filteredSlashCommands[0];
         const suffix = prompt.includes(" ") ? prompt.slice(prompt.indexOf(" ")) : "";
-        setPrompt(`/${command.replace(/^\//, "")}${suffix}`);
+        setPrompt(`/${command.name}${suffix}`);
         setShowSlashBrowser(false);
         window.setTimeout(() => promptRef.current?.focus(), 0);
         return;
@@ -1339,12 +1451,12 @@ export function PromptInput({
   }, [disabled, effectiveCwd, fileMentionContext]);
 
   useEffect(() => {
-    if (!activeSessionId || disabled || isRunning || activeQueue.length === 0) {
+    if (!activeSessionId || disabled || isRunning || currentSessionQueue.length === 0) {
       autoDispatchRef.current = null;
       return;
     }
 
-    const queuedSnapshot = activeQueue.slice();
+    const queuedSnapshot = currentSessionQueue.slice();
     const dispatchKey = `${activeSessionId}:${queuedSnapshot.map((item) => item.id).join(",")}`;
     if (autoDispatchRef.current === dispatchKey) {
       return;
@@ -1373,7 +1485,11 @@ export function PromptInput({
 
       autoDispatchRef.current = null;
     })();
-  }, [activeQueue, activeSessionId, disabled, isRunning, onSendMessage, sendPromptDraft]);
+  }, [activeSessionId, currentSessionQueue, disabled, isRunning, onSendMessage, sendPromptDraft]);
+
+  useEffect(() => {
+    writeQueuedMessagesToStorage(queuedMessagesBySession);
+  }, [queuedMessagesBySession]);
 
   useEffect(() => {
     const composerElement = composerRef.current;
@@ -1421,18 +1537,22 @@ export function PromptInput({
             <div className="grid max-h-[min(42vh,320px)] gap-1 overflow-y-auto p-2">
               {filteredSlashCommands.map((command, index) => (
                 <button
-                  key={command}
+                  key={command.name}
                   type="button"
                   className={`rounded-xl px-3 py-2 text-left text-sm transition-colors ${index === slashActiveIndex ? "bg-accent/10 text-accent" : "text-ink-700 hover:bg-surface-secondary"}`}
                   onClick={() => {
                     const suffix = prompt.includes(" ") ? prompt.slice(prompt.indexOf(" ")) : "";
-                    setPrompt(`/${command.replace(/^\//, "")}${suffix}`);
+                    setPrompt(`/${command.name}${suffix}`);
                     setShowSlashBrowser(false);
                     promptRef.current?.focus();
                   }}
                 >
-                  <span className="font-medium">/{command.replace(/^\//, "")}</span>
-                  <span className="ml-2 text-xs font-normal text-muted">会话命令 · Enter/Tab 选择</span>
+                  <span className="flex min-w-0 items-baseline gap-2">
+                    <span className="shrink-0 font-medium">/{command.name}</span>
+                    <span className="truncate text-xs font-normal text-muted" title={command.description || "Enter/Tab 选择"}>
+                      {command.description || "Enter/Tab 选择"}
+                    </span>
+                  </span>
                 </button>
               ))}
             </div>
@@ -1500,15 +1620,15 @@ export function PromptInput({
             <div className="mb-2 flex items-center justify-between gap-3">
               <div className="text-xs font-medium text-ink-700">待发送队列 · {activeQueue.length} 条</div>
               <div className="flex items-center gap-2 text-[11px] text-muted">
-                <span>运行中可点「插入」作为补充命令；空闲后会自动续发。</span>
+                    <span>运行中可点「插入」作为补充命令；空闲后会自动续发。</span>
                 <button
                   type="button"
                   className="rounded-full border border-black/8 bg-white px-2 py-0.5 font-semibold transition hover:text-accent"
                   onClick={() => {
-                    if (!activeSessionId) return;
+                    if (!queueSessionId) return;
                     setQueuedMessagesBySession((current) => {
                       const next = { ...current };
-                      delete next[activeSessionId];
+                      delete next[queueSessionId];
                       return next;
                     });
                   }}
@@ -1525,7 +1645,7 @@ export function PromptInput({
                     : `${queuedMessage.attachments.length} 个附件`);
                 const contextCount = countStructuredContextBlocks(queuedMessage.prompt);
                 return (
-                  <div key={queuedMessage.id} className="group flex items-center gap-2 rounded-2xl border border-black/6 bg-white px-3 py-2 text-xs text-ink-700 transition hover:border-accent/18 hover:shadow-[0_10px_24px_rgba(30,38,52,0.06)]">
+                  <div key={queuedMessage.id} className="group flex flex-wrap items-center gap-x-2 gap-y-1 rounded-2xl border border-black/6 bg-white px-3 py-2 text-xs text-ink-700 transition hover:border-accent/18 hover:shadow-[0_10px_24px_rgba(30,38,52,0.06)]">
                     <span className="shrink-0 rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-semibold text-accent">
                       {index === 0 ? "下一条" : `排队 ${index + 1}`}
                     </span>
@@ -1903,7 +2023,7 @@ export function PromptInput({
             )}
           </button>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-black/6 pt-2">
+        <div className="mt-2 flex flex-wrap items-center gap-2 pt-2">
           <InlineDropdown
             label="模型"
             value={runtimeModel}
