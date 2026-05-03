@@ -21,6 +21,7 @@ import { summarizeBase64Image, summarizeLocalImageFile } from "./image-preproces
 import { ADMIN_TOOL_NAMES, getAdminMcpServer } from "./mcp-tools/admin.js";
 import { BROWSER_TOOL_NAMES, getBrowserMcpServer } from "./mcp-tools/browser.js";
 import { DESIGN_TOOL_NAMES, getDesignMcpServer } from "./mcp-tools/design.js";
+import { CRON_TOOL_NAMES, getCronMcpServer } from "./mcp-tools/cron.js";
 import { normalizeRunnerError } from "./runner-error.js";
 import type { Session } from "./session-store.js";
 import {
@@ -35,6 +36,13 @@ import {
   extractInlineBase64ImageFromToolResponse,
 } from "./tool-output-sanitizer.js";
 import { getEnhancedEnv } from "./util.js";
+
+type ExternalMcpServer = {
+  type?: "stdio";
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+};
 
 export type RunnerOptions = {
   prompt: string;
@@ -57,6 +65,7 @@ const ALWAYS_ALLOWED_TOOLS = new Set([
   ...BROWSER_TOOL_NAMES,
   ...ADMIN_TOOL_NAMES,
   ...DESIGN_TOOL_NAMES,
+  ...CRON_TOOL_NAMES,
 ]);
 const SKILL_ENV_HINTS: Record<string, string[]> = {
   feishu: ["FEISHU", "LARK"],
@@ -72,6 +81,34 @@ const SKILL_ENV_HINTS: Record<string, string[]> = {
   github: ["GITHUB", "GH_"],
   gitlab: ["GITLAB"],
 };
+
+function getExternalMcpServers(): Record<string, ExternalMcpServer> {
+  const config = getGlobalRuntimeConfig();
+  const rawServers = config.mcpServers;
+  if (typeof rawServers !== "object" || rawServers === null || Array.isArray(rawServers)) {
+    return {};
+  }
+  const servers: Record<string, ExternalMcpServer> = {};
+  for (const [name, value] of Object.entries(rawServers)) {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      continue;
+    }
+    const server = value as Record<string, unknown>;
+    const command = typeof server.command === "string" ? server.command : "";
+    if (!command) {
+      continue;
+    }
+    servers[name] = {
+      type: "stdio",
+      command,
+      args: Array.isArray(server.args) ? server.args.filter((arg): arg is string => typeof arg === "string") : [],
+      env: typeof server.env === "object" && server.env !== null && !Array.isArray(server.env)
+        ? Object.fromEntries(Object.entries(server.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
+        : undefined,
+    };
+  }
+  return servers;
+}
 const RASTER_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
 const MAX_IMAGE_READS_PER_RUN = 1;
 const MAX_SINGLE_IMAGE_READ_BYTES = 400_000;
@@ -230,6 +267,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       const browserToolServer = getBrowserMcpServer(session.id);
       const adminToolServer = getAdminMcpServer();
       const designToolServer = getDesignMcpServer(session.id);
+      const cronToolServer = getCronMcpServer();
       const systemPromptAppend = combineSystemPromptAppend(
         buildGlobalRuntimePromptAppend(syncedGlobalRuntimeConfig, mergedEnv),
         buildAdminConfigPromptAppend(),
@@ -272,9 +310,11 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           forwardSubagentText: true,
           outputFormat,
           mcpServers: {
+            ...getExternalMcpServers(),
             [browserToolServer.name]: browserToolServer,
             [adminToolServer.name]: adminToolServer,
             [designToolServer.name]: designToolServer,
+            [cronToolServer.name]: cronToolServer,
           },
           hooks,
           allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",

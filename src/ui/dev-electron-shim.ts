@@ -3,12 +3,18 @@ import type { AppUpdateActionResult, AppUpdateStatus } from "./types";
 
 const browserPreviewSessionId = "browser-preview-session";
 const browserPreviewCwd = "/Users/lst01/Desktop/学习/tech-cc-hub";
-const browserPreviewSlashCommands = ["codex", "review", "plan"];
+const browserPreviewSlashCommands = [
+  { name: "codex", description: "Codex 会话命令" },
+  { name: "review", description: "进入代码审查模式" },
+  { name: "plan", description: "生成计划，不直接执行" },
+];
+const browserPreviewSlashCommandNames = browserPreviewSlashCommands.map((command) => command.name);
 const DEV_BACKEND_BRIDGE_ORIGIN = "/__dev_bridge";
 const BRIDGE_BOOT_RETRY_COUNT = 20;
 const BRIDGE_BOOT_RETRY_DELAY_MS = 250;
 const BRIDGE_HEALTH_TIMEOUT_MS = 500;
 export const DEV_BRIDGE_READY_EVENT = "tech-cc-hub:dev-bridge-ready";
+export const DEV_BROWSER_PREVIEW_FLAG = "__tech_cc_hub_browser_preview";
 const DEV_SHIM_MARKER = "__techCCHubDevShim";
 
 export type DevElectronRuntimeSource = "bridge" | "fallback" | "electron";
@@ -95,7 +101,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
           status: sessionStatus,
           cwd: browserPreviewCwd,
           runSurface: "development",
-          slashCommands: browserPreviewSlashCommands,
+          slashCommands: browserPreviewSlashCommandNames,
           createdAt: sessionCreatedAt,
           updatedAt: sessionUpdatedAt,
         },
@@ -110,7 +116,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
       status: sessionStatus,
       mode: "replace",
       hasMore: false,
-      slashCommands: browserPreviewSlashCommands,
+      slashCommands: browserPreviewSlashCommandNames,
       messages: sessionMessages,
     },
   });
@@ -257,7 +263,14 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
       ].join("\n"),
     }),
     saveUserAgentRuleDocument: async () => ({ success: true }),
-    invoke: async <T,>(_channel: string, ..._args: unknown[]): Promise<T> => {
+    invoke: async <T,>(channel: string, ...args: unknown[]): Promise<T> => {
+      if (channel === "slash-commands:list") {
+        try {
+          return await invokeBridge("listSlashCommands", args[0]) as T;
+        } catch {
+          return { commands: browserPreviewSlashCommands } as T;
+        }
+      }
       throw new Error("浏览器预览态不支持 IPC invoke，请在 Electron 客户端里操作。");
     },
     checkApiConfig: async () => ({ hasConfig: true, config: null }),
@@ -312,6 +325,10 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     closeBrowserWorkbenchDevTools: async () => ({ opened: false }),
     isBrowserWorkbenchDevToolsOpen: async () => false,
     onBrowserWorkbenchEvent: () => () => {},
+    onCronJobCreated: () => () => {},
+    onCronJobUpdated: () => () => {},
+    onCronJobRemoved: () => () => {},
+    onCronJobExecuted: () => () => {},
   };
 }
 
@@ -395,7 +412,15 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       saveGlobalConfig: async (config) => await invokeBridge("saveGlobalConfig", config),
       getAgentRuleDocuments: async () => await invokeBridge("getAgentRuleDocuments"),
       saveUserAgentRuleDocument: async (markdown: string) => await invokeBridge("saveUserAgentRuleDocument", markdown),
-      invoke: async <T,>(channel: string, ...args: unknown[]): Promise<T> => await invokeBridge("invoke", channel, ...args),
+      invoke: async <T,>(channel: string, ...args: unknown[]): Promise<T> => {
+        if (channel === "sessions:list") {
+          return await invokeBridge("listSessions", args[0]) as T;
+        }
+        if (channel === "slash-commands:list") {
+          return await invokeBridge("listSlashCommands", args[0]) as T;
+        }
+        return await invokeBridge("invoke", channel, ...args);
+      },
       checkApiConfig: async () => await invokeBridge("checkApiConfig"),
       debugSaveTraceSnapshot: async (snapshot) => await invokeBridge("debugSaveTraceSnapshot", snapshot),
       preprocessImageAttachments: async (payload) => await invokeBridge("preprocessImageAttachments", payload),
@@ -431,6 +456,10 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
         };
         return () => source.close();
       },
+      onCronJobCreated: () => () => {},
+      onCronJobUpdated: () => () => {},
+      onCronJobRemoved: () => () => {},
+      onCronJobExecuted: () => () => {},
     };
   } catch {
     return null;
@@ -470,6 +499,11 @@ export const installDevElectronShim = async () => {
   });
 
   window.electron = electronProxy;
+
+  const currentUrl = new URL(window.location.href);
+  if (currentUrl.searchParams.has(DEV_BROWSER_PREVIEW_FLAG) || currentUrl.hash.includes(DEV_BROWSER_PREVIEW_FLAG)) {
+    return;
+  }
 
   void (async () => {
     const nextBridgeElectron = await waitForBridgeElectron();

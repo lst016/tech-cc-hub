@@ -130,6 +130,12 @@ npm run qa:slash           # slash 命令回归测试
 - 主产品 UI 使用 `DESIGN.md` 定义的暖灰 + clay accent 色系；不要新增随机蓝色、紫色或 raw hex
 - 代码预览、文件树、Monaco 这类 workbench 区域可以使用 `DESIGN.md` 的 VS Code light 工作台色，但必须局部作用域隔离
 
+### Git 提交规范
+
+- **默认使用中文** — 提交信息、PR 标题和描述默认使用简体中文撰写。
+- **示例** — `feat: 文件预览面板支持多Tab与编辑器可编辑` 而非 `feat: add multi-tab support to file preview panel`
+- 分类前缀可用英文（feat/fix/chore/docs/refactor），但描述必须用中文。
+
 ### 文件命名
 
 - kebab-case: 组件文件 (`PromptInput.tsx`)

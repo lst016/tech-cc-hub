@@ -196,7 +196,7 @@ export type ChannelRuntimeConfig = {
   items: Partial<Record<ChannelProviderId, ChannelConnectionConfig>>;
 };
 
-export type SettingsPageId = "profiles" | "routing" | "channels" | "global-json" | "skills" | "agent-rules" | "system-maintenance" | "about";
+export type SettingsPageId = "profiles" | "routing" | "channels" | "plugins" | "global-json" | "skills" | "agent-rules" | "system-maintenance" | "about";
 
 export type RuntimeOverrides = {
   model?: string;

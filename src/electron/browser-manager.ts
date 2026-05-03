@@ -181,8 +181,24 @@ export class BrowserWorkbenchManager {
   constructor(private readonly window: BrowserWindow, private readonly sessionId?: string) {}
 
   open(url: string): BrowserWorkbenchState {
+    const targetUrl = normalizeUrl(url);
     const view = this.ensureView();
-    void view.webContents.loadURL(normalizeUrl(url));
+    // Reattach the existing view without reloading when the URL is unchanged.
+    const currentUrl = view.webContents.getURL();
+    if (currentUrl && !view.webContents.isLoading()) {
+      try {
+        const currentParsed = new URL(currentUrl);
+        const targetParsed = new URL(targetUrl);
+        if (currentParsed.href === targetParsed.href) {
+          view.setBounds(this.bounds);
+          this.emitState();
+          return this.getState();
+        }
+      } catch {
+        // URL parse failed; fall through to loadURL.
+      }
+    }
+    void view.webContents.loadURL(targetUrl);
     this.emitState();
     return this.getState();
   }
@@ -201,6 +217,11 @@ export class BrowserWorkbenchManager {
   setBounds(bounds: BrowserWorkbenchBounds): BrowserWorkbenchState {
     this.bounds = sanitizeBounds(bounds);
     if (this.view) {
+      if (this.bounds.width <= 0 || this.bounds.height <= 0) {
+        this.window.removeBrowserView(this.view);
+        return this.getState();
+      }
+      this.window.setBrowserView(this.view);
       this.view.setBounds(this.bounds);
     }
     return this.getState();

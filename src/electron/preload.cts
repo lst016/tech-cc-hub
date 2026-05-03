@@ -134,6 +134,26 @@ electron.contextBridge.exposeInMainWorld("electron", {
         electron.ipcRenderer.on("browser-event", cb);
         return () => electron.ipcRenderer.off("browser-event", cb);
     },
+    onCronJobCreated: (callback: (job: any) => void) => {
+        const cb = (_: Electron.IpcRendererEvent, job: any) => callback(job);
+        electron.ipcRenderer.on("cron:job-created", cb);
+        return () => electron.ipcRenderer.off("cron:job-created", cb);
+    },
+    onCronJobUpdated: (callback: (job: any) => void) => {
+        const cb = (_: Electron.IpcRendererEvent, job: any) => callback(job);
+        electron.ipcRenderer.on("cron:job-updated", cb);
+        return () => electron.ipcRenderer.off("cron:job-updated", cb);
+    },
+    onCronJobRemoved: (callback: (data: any) => void) => {
+        const cb = (_: Electron.IpcRendererEvent, data: any) => callback(data);
+        electron.ipcRenderer.on("cron:job-removed", cb);
+        return () => electron.ipcRenderer.off("cron:job-removed", cb);
+    },
+    onCronJobExecuted: (callback: (data: any) => void) => {
+        const cb = (_: Electron.IpcRendererEvent, data: any) => callback(data);
+        electron.ipcRenderer.on("cron:job-executed", cb);
+        return () => electron.ipcRenderer.off("cron:job-executed", cb);
+    },
 } satisfies Window['electron'])
 
 function ipcInvoke<Key extends keyof EventPayloadMapping>(key: Key, ...args: any[]): Promise<EventPayloadMapping[Key]> {

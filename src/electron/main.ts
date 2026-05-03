@@ -9,13 +9,13 @@ import {
     Menu,
     nativeImage,
 } from "electron"
-import { execSync } from "child_process";
+import { execFile, execSync } from "child_process";
 import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { extname, isAbsolute, join, relative } from "path";
 import { ipcMainHandle, isDev, DEV_PORT } from "./util.js";
 import { getPreloadPath, getUIPath, getIconPath } from "./pathResolver.js";
 import { getStaticData, pollResources, stopPolling } from "./test.js";
-import { handleClientEvent, sessions, cleanupAllSessions, setChannelReplySender } from "./ipc-handlers.js";
+import { handleClientEvent, sessions, cleanupAllSessions, setChannelReplySender, listStoredSessionsForRenderer } from "./ipc-handlers.js";
 import { generateSessionTitle } from "./libs/util.js";
 import {
   loadApiConfigSettings,
@@ -33,9 +33,15 @@ import { getCurrentApiConfig } from "./libs/claude-settings.js";
 import { preprocessImageAttachments } from "./libs/image-preprocessor.js";
 import { loadAgentRuleDocuments, saveUserAgentRuleDocument } from "./libs/agent-rule-docs.js";
 import { registerSkillManagerHandlers } from "./libs/skill-manager/ipc-handlers.js";
+import { registerCronIpcHandlers, IpcCronEventEmitter } from "./libs/cron-ipc-handlers.js";
+import { CronService } from "./libs/cron-service.js";
+import { CronRepository } from "./libs/cron-repository.js";
+import { CronJobExecutor, CronBusyGuard } from "./libs/cron-executor.js";
+import { setCronService } from "./libs/mcp-tools/cron.js";
 import type { ClientEvent, PromptAttachment, ServerEvent } from "./types.js";
 import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkbenchEvent } from "./browser-manager.js";
 import { startDevBackendBridge, DEV_BACKEND_BRIDGE_PORT } from "./dev-backend-bridge.js";
+import { buildSessionSlashCommandItems, buildSessionSlashCommands } from "./libs/slash-command-catalog.js";
 import "./libs/claude-settings.js";
 import { addServerEventListener } from "./ipc-handlers.js";
 
@@ -59,6 +65,117 @@ const browserWorkbenches = new Map<string, BrowserWorkbenchManager>();
 const browserWorkbenchEventListeners = new Set<(event: BrowserWorkbenchEvent) => void>();
 let stopDevBackendBridge: (() => void) | null = null;
 let channelBridgeController: ChannelBridgeController | null = null;
+
+function execFileText(command: string, args: string[], timeout = 120_000): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { timeout, env: process.env }, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve({ stdout: String(stdout), stderr: String(stderr) });
+    });
+  });
+}
+
+async function getOpenComputerUseVersion(): Promise<string | null> {
+  try {
+    const result = await execFileText("open-computer-use", ["--version"], 15_000);
+    const version = result.stdout.trim() || result.stderr.trim();
+    return version || "installed";
+  } catch {
+    return null;
+  }
+}
+
+async function installOpenComputerUsePlugin(): Promise<{ success: boolean; installed: boolean; connected: boolean; version?: string; message: string; error?: string }> {
+  const existingVersion = await getOpenComputerUseVersion();
+  if (existingVersion) {
+    connectOpenComputerUsePlugin(existingVersion);
+    return {
+      success: true,
+      installed: true,
+      connected: true,
+      version: existingVersion,
+      message: "Open Computer Use 已安装并接入。",
+    };
+  }
+
+  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+  try {
+    await execFileText(npmCommand, ["install", "-g", "open-computer-use"], 300_000);
+    const version = await getOpenComputerUseVersion();
+    connectOpenComputerUsePlugin(version ?? "installed");
+    return {
+      success: true,
+      installed: true,
+      connected: true,
+      version: version ?? undefined,
+      message: "Open Computer Use 安装完成并接入。",
+    };
+  } catch (error) {
+    return {
+      success: false,
+      installed: false,
+      connected: false,
+      message: "Open Computer Use 安装或接入失败。",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function getOpenComputerUsePluginStatus(): Promise<{ installed: boolean; connected: boolean; version?: string }> {
+  const version = await getOpenComputerUseVersion();
+  const config = loadGlobalRuntimeConfig();
+  const plugins = isPlainObject(config.plugins) ? config.plugins : {};
+  const mcpServers = isPlainObject(config.mcpServers) ? config.mcpServers : {};
+  const pluginConfig = isPlainObject(plugins["open-computer-use"]) ? plugins["open-computer-use"] : {};
+  const mcpConfig = isPlainObject(mcpServers["open-computer-use"]) ? mcpServers["open-computer-use"] : {};
+  return {
+    installed: Boolean(version),
+    connected: pluginConfig.enabled === true && pluginConfig.connected === true && mcpConfig.command === "open-computer-use",
+    version: version ?? undefined,
+  };
+}
+
+function connectOpenComputerUsePlugin(version: string): void {
+  const current = loadGlobalRuntimeConfig();
+  const currentPlugins = isPlainObject(current.plugins) ? current.plugins : {};
+  const currentMcpServers = isPlainObject(current.mcpServers) ? current.mcpServers : {};
+  saveGlobalRuntimeConfig({
+    ...current,
+    plugins: {
+      ...currentPlugins,
+      "open-computer-use": {
+        id: "open-computer-use",
+        name: "Open Computer Use",
+        kind: "mcp-plugin",
+        source: {
+          type: "github",
+          repo: "iFurySt/open-codex-computer-use",
+          path: "plugins/open-computer-use",
+        },
+        enabled: true,
+        installed: true,
+        connected: true,
+        version,
+        updatedAt: Date.now(),
+      },
+    },
+    mcpServers: {
+      ...currentMcpServers,
+      "open-computer-use": {
+        type: "stdio",
+        command: "open-computer-use",
+        args: ["mcp"],
+      },
+    },
+  });
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 function broadcastAppUpdateStatus(status: AppUpdateStatus): void {
   const payload = JSON.stringify(status);
@@ -237,6 +354,15 @@ function readPreviewFileForRenderer(request: unknown): {
 }
 
 ipcMain.handle("preview-list-directory", (_event, request: unknown) => listPreviewDirectoryForRenderer(request));
+ipcMain.handle("sessions:list", (_event, payload?: { archived?: boolean }) => ({
+  sessions: listStoredSessionsForRenderer(Boolean(payload?.archived)),
+  archived: Boolean(payload?.archived),
+}));
+ipcMain.handle("slash-commands:list", (_event, payload?: { cwd?: string }) => ({
+  commands: buildSessionSlashCommandItems({ cwd: payload?.cwd }) ?? [],
+}));
+ipcMain.handle("plugins:getOpenComputerUseStatus", () => getOpenComputerUsePluginStatus());
+ipcMain.handle("plugins:installOpenComputerUse", () => installOpenComputerUsePlugin());
 ipcMain.handle("preview-read-file", (_event, request: unknown) => readPreviewFileForRenderer(request));
 ipcMain.handle("preview-get-image-base64", (_event, request: unknown) => readPreviewFileForRenderer(request));
 ipcMain.handle("preview-get-file-metadata", (_event, request: unknown) => {
@@ -700,6 +826,8 @@ app.on("ready", async () => {
     Menu.setApplicationMenu(null);
     const appIconPath = getIconPath();
     if (process.platform === "darwin" && app.dock) {
+        app.setActivationPolicy("regular");
+        await app.dock.show();
         const dockIcon = nativeImage.createFromPath(appIconPath);
         if (!dockIcon.isEmpty()) {
             app.dock.setIcon(dockIcon);
@@ -804,6 +932,11 @@ app.on("ready", async () => {
 
     try {
         await loadRenderer(mainWindow);
+        mainWindow.show();
+        mainWindow.focus();
+        if (process.platform === "darwin") {
+            app.focus({ steal: true });
+        }
     } catch (error) {
         console.error("[main] Failed to load renderer:", error);
         dialog.showErrorBox(
@@ -825,6 +958,65 @@ app.on("ready", async () => {
     pollResources(mainWindow);
     void scheduleDevAutostart();
     registerSkillManagerHandlers();
+    const cronBusyGuard = new CronBusyGuard();
+    const systemWorkspacePath = ensureSystemWorkspace();
+
+    const sendCronMessage = async (conversationId: string, text: string, executionMode?: string) => {
+      const store = sessions;
+      if (!store) {
+        console.error("[CronExecutor] SessionStore 未初始化");
+        return;
+      }
+
+      // new_conversation mode: always create a fresh session
+      if (executionMode === "new_conversation") {
+        const cwd =
+          conversationId === "__system__"
+            ? systemWorkspacePath
+            : (store.getSession(conversationId)?.cwd ?? systemWorkspacePath);
+        await handleClientEvent({
+          type: "session.start",
+          payload: { title: "定时任务", cwd, prompt: text },
+        });
+        return;
+      }
+
+      // System workspace tasks: find or create a system session
+      if (conversationId === "__system__") {
+        const allSessions = store.listSessions();
+        const systemSession = allSessions.find((s) => s.cwd === systemWorkspacePath);
+
+        if (systemSession) {
+          await handleClientEvent({
+            type: "session.continue",
+            payload: { sessionId: systemSession.id, prompt: text },
+          });
+        } else {
+          await handleClientEvent({
+            type: "session.start",
+            payload: {
+              title: "系统工作区",
+              cwd: systemWorkspacePath,
+              prompt: text,
+            },
+          });
+        }
+      } else {
+        // Normal session task
+        await handleClientEvent({
+          type: "session.continue",
+          payload: { sessionId: conversationId, prompt: text },
+        });
+      }
+    };
+
+    const cronExecutor = new CronJobExecutor(cronBusyGuard, sendCronMessage);
+    const cronEventEmitter = new IpcCronEventEmitter();
+    const cronRepo = new CronRepository();
+    const cronService = new CronService(cronRepo, cronEventEmitter, cronExecutor);
+    setCronService(cronService);
+    registerCronIpcHandlers(cronService);
+    cronService.init().catch((err) => console.error("[main] CronService 初始化失败:", err));
     channelBridgeController = startChannelBridge(async (message) => {
       await handleClientEvent({
         type: "channel.message.receive",
@@ -851,6 +1043,13 @@ app.on("ready", async () => {
             }
             return { success: true, events: emittedEvents };
           },
+          listSessions: (payload?: { archived?: boolean }) => ({
+            sessions: listStoredSessionsForRenderer(Boolean(payload?.archived)),
+            archived: Boolean(payload?.archived),
+          }),
+          listSlashCommands: (payload?: { cwd?: string }) => ({
+            commands: buildSessionSlashCommandItems({ cwd: payload?.cwd }) ?? [],
+          }),
           generateSessionTitle: async (userInput: string | null, options?: { model?: string }) => await generateSessionTitle(userInput, options),
           getRecentCwds: (limit?: number) => {
             const boundedLimit = limit ? Math.min(Math.max(limit, 1), 20) : 8;
@@ -878,6 +1077,26 @@ app.on("ready", async () => {
           saveUserAgentRuleDocument: (markdown: unknown) => {
             saveUserAgentRuleDocument(typeof markdown === "string" ? markdown : "");
             return { success: true };
+          },
+          invoke: async (channel: string, ...args: unknown[]) => {
+            if (channel === "sessions:list") {
+              const payload = args[0] as { archived?: boolean } | undefined;
+              return {
+                sessions: listStoredSessionsForRenderer(Boolean(payload?.archived)),
+                archived: Boolean(payload?.archived),
+              };
+            }
+            if (channel === "slash-commands:list") {
+              const payload = args[0] as { cwd?: string } | undefined;
+              return { commands: buildSessionSlashCommandItems({ cwd: payload?.cwd }) ?? [] };
+            }
+            if (channel === "plugins:getOpenComputerUseStatus") {
+              return await getOpenComputerUsePluginStatus();
+            }
+            if (channel === "plugins:installOpenComputerUse") {
+              return await installOpenComputerUsePlugin();
+            }
+            throw new Error(`Unsupported dev bridge invoke channel: ${channel}`);
           },
           checkApiConfig: () => {
             const config = getCurrentApiConfig();

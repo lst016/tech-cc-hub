@@ -47,6 +47,14 @@ function initializeSessions() {
   return sessions;
 }
 
+export function listStoredSessionsForRenderer(archived = false) {
+  const store = initializeSessions();
+  return store.listSessions({ archived }).map((session) => ({
+    ...session,
+    slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
+  }));
+}
+
 function broadcast(event: ServerEvent) {
   const payload = JSON.stringify(event);
   if (isDev()) {
@@ -539,13 +547,9 @@ export async function handleClientEvent(event: ClientEvent) {
 
   if (event.type === "session.list") {
     const archived = Boolean(event.payload?.archived);
-    const sessionsWithSlashCommands = store.listSessions({ archived }).map((session) => ({
-      ...session,
-      slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
-    }));
     emit({
       type: "session.list",
-      payload: { sessions: sessionsWithSlashCommands, archived },
+      payload: { sessions: listStoredSessionsForRenderer(archived), archived },
     });
     return;
   }

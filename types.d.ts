@@ -218,5 +218,9 @@ interface Window {
         closeBrowserWorkbenchDevTools: (sessionId?: string) => Promise<{ opened: boolean }>;
         isBrowserWorkbenchDevToolsOpen: (sessionId?: string) => Promise<boolean>;
         onBrowserWorkbenchEvent: (callback: (event: BrowserWorkbenchEvent) => void) => UnsubscribeFunction;
+        onCronJobCreated: (callback: (job: import("./src/types/cron").CronJob) => void) => UnsubscribeFunction;
+        onCronJobUpdated: (callback: (job: import("./src/types/cron").CronJob) => void) => UnsubscribeFunction;
+        onCronJobRemoved: (callback: (data: { jobId: string }) => void) => UnsubscribeFunction;
+        onCronJobExecuted: (callback: (data: { jobId: string; status: "ok" | "error" | "skipped" | "missed"; error?: string }) => void) => UnsubscribeFunction;
     }
 }
