@@ -103,74 +103,6 @@ type ApiConfigSettings = {
     profiles: ApiConfig[];
 }
 
-type SkillSourceType = "manual" | "git";
-
-type SkillKind = "single" | "bundle";
-
-type InstalledSkillRecord = {
-    id: string;
-    name: string;
-    kind: SkillKind;
-    path: string;
-    sourceType: SkillSourceType;
-    installedAt?: number;
-    syncEnabled?: boolean;
-    remoteUrl?: string;
-    remoteSubpath?: string;
-    branch?: string;
-    lastPulledAt?: number;
-    lastCheckedAt?: number;
-    checkEveryHours?: number;
-    lastKnownCommit?: string;
-    lastError?: string;
-};
-
-type SkillInventory = {
-    rootPath: string;
-    skills: InstalledSkillRecord[];
-};
-
-type SkillSyncRequest = {
-    skillIds?: string[];
-    force?: boolean;
-};
-
-type SkillSyncResult = {
-    skillId: string;
-    skillName: string;
-    status: "updated" | "checked" | "skipped" | "error";
-    message?: string;
-    previousCommit?: string;
-    latestCommit?: string;
-    checkedAt: number;
-};
-
-type SkillSyncResponse = {
-    results: SkillSyncResult[];
-};
-
-type SkillHubSkillInfo = {
-    name: string;
-    description: string;
-    location: string;
-    isCustom: boolean;
-    source: "builtin" | "custom" | "extension";
-};
-
-type SkillHubExternalSource = {
-    name: string;
-    path: string;
-    source: string;
-    skills: Array<{ name: string; description: string; path: string }>;
-};
-
-type SkillHubBridgeResponse<T = unknown> = {
-    success: boolean;
-    data?: T;
-    msg?: string;
-    error?: string;
-};
-
 type GlobalRuntimeConfig = Record<string, unknown>;
 
 type AgentRuleDocuments = {
@@ -213,15 +145,6 @@ type EventPayloadMapping = {
         "save-global-config": { success: boolean; error?: string };
         "get-agent-rule-documents": AgentRuleDocuments;
         "save-user-agent-rule-document": { success: boolean; error?: string };
-        "get-skill-inventory": SkillInventory;
-        "save-skill-inventory": { success: boolean; error?: string };
-        "sync-skill-sources": SkillSyncResponse;
-        "list-available-skills": SkillHubSkillInfo[];
-        "list-builtin-auto-skills": Array<{ name: string; description: string }>;
-        "get-skill-paths": { userSkillsDir: string; builtinSkillsDir: string };
-        "detect-and-count-external-skills": SkillHubBridgeResponse<SkillHubExternalSource[]>;
-        "import-skill-with-symlink": SkillHubBridgeResponse<{ skillName: string }>;
-        "delete-skill": SkillHubBridgeResponse;
         "debug-save-trace-snapshot": { success: boolean; path?: string; error?: string };
         "preprocess-image-attachments": ImagePreprocessResult;
         "browser-open": BrowserWorkbenchState;
@@ -265,15 +188,7 @@ interface Window {
         saveGlobalConfig: (config: GlobalRuntimeConfig) => Promise<{ success: boolean; error?: string }>;
         getAgentRuleDocuments: () => Promise<AgentRuleDocuments>;
         saveUserAgentRuleDocument: (markdown: string) => Promise<{ success: boolean; error?: string }>;
-        getSkillInventory: () => Promise<SkillInventory>;
-        saveSkillInventory: (config: SkillInventory) => Promise<{ success: boolean; error?: string }>;
-        syncSkillSources: (request: SkillSyncRequest) => Promise<SkillSyncResponse>;
-        listAvailableSkills: () => Promise<SkillHubSkillInfo[]>;
-        listBuiltinAutoSkills: () => Promise<Array<{ name: string; description: string }>>;
-        getSkillPaths: () => Promise<{ userSkillsDir: string; builtinSkillsDir: string }>;
-        detectAndCountExternalSkills: () => Promise<SkillHubBridgeResponse<SkillHubExternalSource[]>>;
-        importSkillWithSymlink: (skillPath: string) => Promise<SkillHubBridgeResponse<{ skillName: string }>>;
-        deleteSkill: (skillName: string) => Promise<SkillHubBridgeResponse>;
+        invoke: <T = unknown>(channel: string, ...args: unknown[]) => Promise<T>;
         checkApiConfig: () => Promise<{ hasConfig: boolean; config: ApiConfig | null }>;
         debugSaveTraceSnapshot: (snapshot: unknown) => Promise<{ success: boolean; path?: string; error?: string }>;
         preprocessImageAttachments: (payload: { prompt: string; selectedModel?: string; attachments: import("./src/ui/types").PromptAttachment[] }) => Promise<ImagePreprocessResult>;

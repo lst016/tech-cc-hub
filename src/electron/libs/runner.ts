@@ -63,6 +63,7 @@ const SKILL_ENV_HINTS: Record<string, string[]> = {
   飞书: ["FEISHU", "LARK"],
   "figma官方": ["FIGMA"],
   lark: ["LARK", "FEISHU"],
+  telegram: ["TELEGRAM"],
   figma: ["FIGMA"],
   notion: ["NOTION"],
   jira: ["JIRA"],

@@ -15,7 +15,7 @@ import { extname, isAbsolute, join, relative } from "path";
 import { ipcMainHandle, isDev, DEV_PORT } from "./util.js";
 import { getPreloadPath, getUIPath, getIconPath } from "./pathResolver.js";
 import { getStaticData, pollResources, stopPolling } from "./test.js";
-import { handleClientEvent, sessions, cleanupAllSessions } from "./ipc-handlers.js";
+import { handleClientEvent, sessions, cleanupAllSessions, setChannelReplySender } from "./ipc-handlers.js";
 import { generateSessionTitle } from "./libs/util.js";
 import {
   loadApiConfigSettings,
@@ -23,26 +23,16 @@ import {
   saveApiConfigSettings,
   loadGlobalRuntimeConfig,
   saveGlobalRuntimeConfig,
-  loadSkillInventory,
-  saveSkillInventory,
-  type SkillSyncRequest,
 } from "./libs/config-store.js";
 import { setBrowserToolHost } from "./libs/mcp-tools/browser.js";
 import { setDesignToolHost } from "./libs/mcp-tools/design.js";
-import { startSkillSyncScheduler, stopSkillSyncScheduler, syncSkillSources } from "./libs/skill-registry-sync.js";
 import { appAutoUpdater, type AppUpdateStatus } from "./libs/auto-updater.js";
-import {
-  deleteSkill,
-  detectAndCountExternalSkills,
-  getSkillPaths,
-  importSkillWithSymlink,
-  listAvailableSkills,
-  listBuiltinAutoSkills,
-} from "./libs/skill-hub.js";
+import { startChannelBridge, type ChannelBridgeController } from "./libs/channel-bridge.js";
 import { ensureSystemWorkspace } from "./libs/system-workspace.js";
 import { getCurrentApiConfig } from "./libs/claude-settings.js";
 import { preprocessImageAttachments } from "./libs/image-preprocessor.js";
 import { loadAgentRuleDocuments, saveUserAgentRuleDocument } from "./libs/agent-rule-docs.js";
+import { registerSkillManagerHandlers } from "./libs/skill-manager/ipc-handlers.js";
 import type { ClientEvent, PromptAttachment, ServerEvent } from "./types.js";
 import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkbenchEvent } from "./browser-manager.js";
 import { startDevBackendBridge, DEV_BACKEND_BRIDGE_PORT } from "./dev-backend-bridge.js";
@@ -68,6 +58,7 @@ const PREVIEW_IMAGE_MIME_TYPES: Record<string, string> = {
 const browserWorkbenches = new Map<string, BrowserWorkbenchManager>();
 const browserWorkbenchEventListeners = new Set<(event: BrowserWorkbenchEvent) => void>();
 let stopDevBackendBridge: (() => void) | null = null;
+let channelBridgeController: ChannelBridgeController | null = null;
 
 function broadcastAppUpdateStatus(status: AppUpdateStatus): void {
   const payload = JSON.stringify(status);
@@ -555,11 +546,13 @@ function cleanup(): void {
   stopPolling();
   stopDevBackendBridge?.();
   stopDevBackendBridge = null;
+  channelBridgeController?.stop();
+  channelBridgeController = null;
+  setChannelReplySender(null);
   setBrowserToolHost(null);
   setDesignToolHost(null);
   closeAllBrowserWorkbenches();
     cleanupAllSessions();
-    stopSkillSyncScheduler();
     killViteDevServer();
 }
 
@@ -831,7 +824,14 @@ app.on("ready", async () => {
 
     pollResources(mainWindow);
     void scheduleDevAutostart();
-    startSkillSyncScheduler();
+    registerSkillManagerHandlers();
+    channelBridgeController = startChannelBridge(async (message) => {
+      await handleClientEvent({
+        type: "channel.message.receive",
+        payload: message,
+      });
+    });
+    setChannelReplySender(channelBridgeController.sendText);
 
     if (isDev()) {
       const bridge = startDevBackendBridge({
@@ -879,18 +879,6 @@ app.on("ready", async () => {
             saveUserAgentRuleDocument(typeof markdown === "string" ? markdown : "");
             return { success: true };
           },
-          getSkillInventory: () => loadSkillInventory(),
-          saveSkillInventory: (inventory: unknown) => {
-            saveSkillInventory(inventory);
-            return { success: true };
-          },
-          syncSkillSources: async (request: SkillSyncRequest) => await syncSkillSources(request),
-          listAvailableSkills: () => listAvailableSkills(),
-          listBuiltinAutoSkills: () => listBuiltinAutoSkills(),
-          getSkillPaths: () => getSkillPaths(),
-          detectAndCountExternalSkills: () => detectAndCountExternalSkills(),
-          importSkillWithSymlink: (skillPath: unknown) => importSkillWithSymlink(typeof skillPath === "string" ? skillPath : ""),
-          deleteSkill: (skillName: unknown) => deleteSkill(typeof skillName === "string" ? skillName : ""),
           checkApiConfig: () => {
             const config = getCurrentApiConfig();
             return { hasConfig: config !== null, config };
@@ -1054,38 +1042,6 @@ app.on("ready", async () => {
             };
         }
     });
-
-    ipcMainHandle("get-skill-inventory", () => {
-        return loadSkillInventory();
-    });
-
-    ipcMainHandle("save-skill-inventory", (_: IpcMainInvokeEvent, inventory: unknown) => {
-        try {
-            saveSkillInventory(inventory);
-            return { success: true };
-        } catch (error) {
-            return {
-                success: false,
-                error: error instanceof Error ? error.message : String(error),
-            };
-        }
-    });
-
-    ipcMainHandle("sync-skill-sources", async (_: IpcMainInvokeEvent, request: SkillSyncRequest) => {
-        try {
-            return await syncSkillSources(request);
-        } catch (error) {
-            console.error("[main] Skill sync failed:", error);
-            return { results: [] };
-        }
-    });
-
-    ipcMainHandle("list-available-skills", () => listAvailableSkills());
-    ipcMainHandle("list-builtin-auto-skills", () => listBuiltinAutoSkills());
-    ipcMainHandle("get-skill-paths", () => getSkillPaths());
-    ipcMainHandle("detect-and-count-external-skills", () => detectAndCountExternalSkills());
-    ipcMainHandle("import-skill-with-symlink", (_: IpcMainInvokeEvent, skillPath: string) => importSkillWithSymlink(skillPath));
-    ipcMainHandle("delete-skill", (_: IpcMainInvokeEvent, skillName: string) => deleteSkill(skillName));
 
     ipcMainHandle("debug-save-trace-snapshot", (_: IpcMainInvokeEvent, snapshot: unknown) => {
         try {

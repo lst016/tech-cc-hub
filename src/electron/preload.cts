@@ -65,24 +65,8 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("get-agent-rule-documents"),
     saveUserAgentRuleDocument: (markdown: string) =>
         ipcInvoke("save-user-agent-rule-document", markdown),
-    getSkillInventory: () =>
-        ipcInvoke("get-skill-inventory"),
-    saveSkillInventory: (inventory: any) =>
-        ipcInvoke("save-skill-inventory", inventory),
-    syncSkillSources: (request: any) =>
-        ipcInvoke("sync-skill-sources", request),
-    listAvailableSkills: () =>
-        ipcInvoke("list-available-skills"),
-    listBuiltinAutoSkills: () =>
-        ipcInvoke("list-builtin-auto-skills"),
-    getSkillPaths: () =>
-        ipcInvoke("get-skill-paths"),
-    detectAndCountExternalSkills: () =>
-        ipcInvoke("detect-and-count-external-skills"),
-    importSkillWithSymlink: (skillPath: string) =>
-        ipcInvoke("import-skill-with-symlink", skillPath),
-    deleteSkill: (skillName: string) =>
-        ipcInvoke("delete-skill", skillName),
+    invoke: (channel: string, ...args: any[]) =>
+        electron.ipcRenderer.invoke(channel, ...args),
     checkApiConfig: () =>
         ipcInvoke("check-api-config"),
     debugSaveTraceSnapshot: (snapshot: any) =>

@@ -9,6 +9,7 @@ import { Sidebar } from "./components/Sidebar";
 import { StartSessionModal } from "./components/StartSessionModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { TooltipButton } from "./components/TooltipButton";
+import { UpdateToast } from "./components/UpdateToast";
 import { PromptInput, usePromptActions } from "./components/PromptInput";
 import { MessageCard } from "./components/EventCard";
 import { ActivityRail } from "./components/ActivityRail";
@@ -645,9 +646,9 @@ function App() {
   const handleNewSessionClick = useCallback((event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    setWorkspaceView("chat");
+    setActiveSessionWorkspaceView("chat");
     handleNewSession();
-  }, [handleNewSession]);
+  }, [handleNewSession, setActiveSessionWorkspaceView]);
 
   useEffect(() => {
     const handleOpenBrowserWorkbenchUrl = (event: Event) => {
@@ -866,25 +867,18 @@ function App() {
   const sidebarOffset = showSidebar ? sidebarWidth : 0;
   const activityRailOffset = !showSessionAnalysis && showActivityRail ? activityRailWidth : 0;
   const runtimeMeta = runtimeSourceMeta[runtimeSource];
-  const latestSessionId = useMemo(() => {
-    const latestSession = Object.values(sessions).sort((left, right) => {
-      const leftTime = left.updatedAt ?? left.createdAt ?? 0;
-      const rightTime = right.updatedAt ?? right.createdAt ?? 0;
-      return rightTime - leftTime;
-    })[0];
-    return latestSession?.id ?? activeSessionId ?? null;
-  }, [activeSessionId, sessions]);
+  const currentSessionId = activeSessionId ?? null;
 
-  const handleCopyLatestSessionId = useCallback(async () => {
-    if (!latestSessionId) return;
+  const handleCopyCurrentSessionId = useCallback(async () => {
+    if (!currentSessionId) return;
     try {
-      await copyTextToClipboard(latestSessionId);
+      await copyTextToClipboard(currentSessionId);
       setCopiedSessionId(true);
       window.setTimeout(() => setCopiedSessionId(false), 1400);
     } catch {
       setGlobalError("复制会话 ID 失败，请重试。");
     }
-  }, [latestSessionId, setGlobalError]);
+  }, [currentSessionId, setGlobalError]);
 
   useEffect(() => {
     refreshBrowserWorkbenchPreference();
@@ -965,9 +959,9 @@ function App() {
           )}
           <TooltipButton
             type="button"
-            tooltip={latestSessionId ? `复制最新会话 ID：${latestSessionId}` : "暂无会话 ID"}
-            onClick={handleCopyLatestSessionId}
-            disabled={!latestSessionId}
+            tooltip={currentSessionId ? `复制当前会话 ID：${currentSessionId}` : "暂无会话 ID"}
+            onClick={handleCopyCurrentSessionId}
+            disabled={!currentSessionId}
             onMouseDown={(event) => {
               event.preventDefault();
             }}
@@ -1298,6 +1292,8 @@ function App() {
           onStartMaintenanceSession={startMaintenanceSession}
         />
       )}
+
+      <UpdateToast />
 
       {globalError && (
         <div className="fixed bottom-28 left-1/2 z-50 w-[min(520px,calc(100vw-2rem))] -translate-x-1/2">

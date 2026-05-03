@@ -10,17 +10,15 @@ import type {
   ApiConfigProfile,
   AgentRuleDocuments,
   SettingsPageId,
-  SkillInventory,
-  SkillSyncRequest,
-  SkillSyncResult,
 } from "../types";
 import { ApiProfilesSettingsPage } from "./settings/ApiProfilesSettingsPage";
 import { AgentRulesSettingsPage } from "./settings/AgentRulesSettingsPage";
+import { ChannelsSettingsPage, getChannelSettingsSummary } from "./settings/ChannelsSettingsPage";
 import { GlobalJsonSettingsPage } from "./settings/GlobalJsonSettingsPage";
 import { ModelRoutingSettingsPage } from "./settings/ModelRoutingSettingsPage";
 import { SettingsSheet, type SettingsPageDefinition } from "./settings/SettingsSheet";
 import { SkillsManagementPage } from "./settings/SkillsManagementPage";
-import { SystemMaintenancePage } from "./settings/SystemMaintenancePage";
+import { AboutPage } from "./settings/AboutPage";
 import {
   buildRoutingSummary,
   createProfile,
@@ -37,7 +35,6 @@ interface SettingsModalProps {
 
 type GlobalRuntimeConfig = Record<string, unknown>;
 
-const DEFAULT_SKILL_PATH = "~/.claude/skills";
 const DEFAULT_AGENT_RULE_DOCUMENTS: AgentRuleDocuments = {
   systemDefaultMarkdown: [
     "# tech-cc-hub 系统默认规则",
@@ -73,9 +70,21 @@ const DEFAULT_AGENT_RULE_DOCUMENTS: AgentRuleDocuments = {
     "只读批量操作可以合并；写入、删除、移动、安装、提交等有副作用操作不要混进批量 Bash。",
     "",
     "复盘时如果发现同目录串行多次 Read、重复 Bash、ls/cat/grep 链路，应优先建议改成并发读取或先搜索收敛。",
+    "",
+    "## Karpathy Coding Guardrails 默认规则",
+    "",
+    "来源：https://github.com/forrestchang/andrej-karpathy-skills/blob/main/CLAUDE.md",
+    "",
+    "编码前先澄清假设、歧义和取舍；不确定时要显式说明，不要假装已经理解。",
+    "",
+    "优先选择能解决问题的最小实现；不要增加用户没有要求的功能、抽象、配置项或防御性复杂度。",
+    "",
+    "修改必须外科手术式收敛；只触碰完成本次请求必需的代码，匹配现有风格，不顺手重构无关区域。",
+    "",
+    "多步骤任务需要先定义可验证的成功标准；修 bug 和重构应优先有复现/验收路径，再进入实现闭环。",
   ].join("\n"),
   userClaudeRoot: "~/.claude",
-  userAgentsPath: "~/.claude/AGENTS.md",
+  userAgentsPath: "~/.claude/CLAUDE.md",
   userAgentsMarkdown: "",
 };
 
@@ -97,12 +106,20 @@ const SETTINGS_PAGES: SettingsPageDefinition[] = [
     summary: "主模型与角色路由",
   },
   {
+    id: "channels",
+    label: "渠道连接",
+    eyebrow: "CHANNELS",
+    title: "渠道连接",
+    description: "配置 Telegram、飞书/Lark 和其他远程聊天入口。",
+    summary: "Telegram / 飞书",
+  },
+  {
     id: "skills",
     label: "技能管理",
-    eyebrow: "技能",
+    eyebrow: "SKILLS",
     title: "技能中心",
-    description: "扫描默认目录下已安装的技能，并维护远程来源信息。",
-    summary: "已安装技能",
+    description: "发现、安装和管理技能，配置场景与工具同步。",
+    summary: "技能与场景",
   },
   {
     id: "global-json",
@@ -121,12 +138,12 @@ const SETTINGS_PAGES: SettingsPageDefinition[] = [
     summary: "系统默认 / Claude 全局",
   },
   {
-    id: "system-maintenance",
-    label: "系统维护",
-    eyebrow: "SYSTEM",
-    title: "系统维护",
-    description: "启动软件内置维护 Agent，只用于软件自身巡检、治理和版本维护。",
-    summary: "内置维护 agent",
+    id: "about",
+    label: "关于",
+    eyebrow: "ABOUT",
+    title: "关于",
+    description: "查看版本、检查更新、系统维护和获取支持资源。",
+    summary: "版本、更新与维护",
   },
 ];
 
@@ -174,35 +191,15 @@ export function SettingsModal({
   const [userAgentMarkdown, setUserAgentMarkdown] = useState("");
   const [closeSidebarOnBrowserOpen, setCloseSidebarOnBrowserOpen] = useState(true);
   const [activePageId, setActivePageId] = useState<SettingsPageId>("profiles");
-  const [skillInventory, setSkillInventory] = useState<SkillInventory>({
-    rootPath: DEFAULT_SKILL_PATH,
-    skills: [],
-  });
-  const [syncingSkillIds, setSyncingSkillIds] = useState<Set<string>>(new Set());
-  const [syncNotes, setSyncNotes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
   const [status, setStatus] = useState<{ tone: "error" | "success"; message: string } | null>(null);
   const [globalConfigParseError, setGlobalConfigParseError] = useState<string | null>(null);
-  const [maintenancePrompt, setMaintenancePrompt] = useState(
-    "请对当前软件执行一次系统维护巡检，重点检查三层 agent 解析、运行面隔离和 skills 治理入口，并输出结论与建议。",
-  );
-  const [launchingMaintenance, setLaunchingMaintenance] = useState(false);
   const electronApi = window.electron as typeof window.electron & {
     getAgentRuleDocuments?: () => Promise<AgentRuleDocuments>;
     saveUserAgentRuleDocument?: (markdown: string) => Promise<{ success: boolean; error?: string }>;
   };
-
-  const skillCounts = useMemo(() => {
-    const tracked = skillInventory.skills.filter((skill) => skill.sourceType === "git").length;
-    const bundles = skillInventory.skills.filter((skill) => skill.kind === "bundle").length;
-    return {
-      total: skillInventory.skills.length,
-      tracked,
-      bundles,
-    };
-  }, [skillInventory.skills]);
 
   useEffect(() => {
     if (initialPageId) {
@@ -210,22 +207,16 @@ export function SettingsModal({
     }
   }, [initialPageId]);
 
-  const reloadSkillInventory = useCallback(async () => {
-    const inventory = await window.electron.getSkillInventory();
-    setSkillInventory(inventory);
-  }, []);
-
   const loadSettings = useCallback(() => {
     setLoading(true);
     void Promise.all([
       window.electron.getApiConfig(),
       window.electron.getGlobalConfig(),
-      window.electron.getSkillInventory(),
       typeof electronApi.getAgentRuleDocuments === "function"
         ? electronApi.getAgentRuleDocuments()
         : Promise.resolve(DEFAULT_AGENT_RULE_DOCUMENTS),
     ])
-      .then(([apiSettings, globalSettings, inventory, ruleDocuments]) => {
+      .then(([apiSettings, globalSettings, ruleDocuments]) => {
         const normalizedGlobalSettings = typeof globalSettings === "object" && globalSettings !== null && !Array.isArray(globalSettings)
           ? globalSettings as GlobalRuntimeConfig
           : {};
@@ -245,11 +236,9 @@ export function SettingsModal({
         setGlobalConfigText(globalConfigText);
         setGlobalConfigParseError(validateGlobalConfigText(globalConfigText));
         setCloseSidebarOnBrowserOpen(getCloseSidebarOnBrowserOpen(normalizedGlobalSettings));
-        setSkillInventory(inventory);
         const normalizedRuleDocuments = ruleDocuments ?? DEFAULT_AGENT_RULE_DOCUMENTS;
         setAgentRuleDocuments(normalizedRuleDocuments);
         setUserAgentMarkdown(normalizedRuleDocuments.userAgentsMarkdown);
-        setSyncNotes({});
       })
       .catch((error) => {
         console.error("Failed to load settings:", error);
@@ -258,7 +247,7 @@ export function SettingsModal({
       .finally(() => {
         setLoading(false);
       });
-  }, [electronApi, initialPageId, reloadSkillInventory, setApiConfigSettings]);
+  }, [electronApi, initialPageId, setApiConfigSettings]);
 
   useEffect(() => {
     loadSettings();
@@ -291,11 +280,17 @@ export function SettingsModal({
     if (page.id === "skills") {
       return {
         ...page,
-        summary: `${skillCounts.total} 已安装 / ${skillCounts.tracked} Git 跟踪`,
+        summary: "技能与场景管理",
+      };
+    }
+    if (page.id === "channels") {
+      return {
+        ...page,
+        summary: getChannelSettingsSummary(globalConfigText),
       };
     }
     return page;
-  }), [enabledProfile, profiles.length, skillCounts.total, skillCounts.tracked]);
+  }), [enabledProfile, globalConfigText, profiles.length]);
 
   const updateProfiles = (updater: (current: ApiConfigProfile[]) => ApiConfigProfile[]) => {
     setStatus(null);
@@ -334,79 +329,6 @@ export function SettingsModal({
     setGlobalConfigParseError(null);
   }, [globalConfigText]);
 
-  const formatSyncMessage = useCallback((result: SkillSyncResult) => {
-    const baseMessage = result.message?.trim() || "";
-    if (result.status === "updated" && result.previousCommit && result.latestCommit) {
-      return `${result.previousCommit.slice(0, 7)} -> ${result.latestCommit.slice(0, 7)} ${baseMessage}`.trim();
-    }
-    return baseMessage || "无变化";
-  }, []);
-
-  const syncSkillSources = useCallback(async (request: SkillSyncRequest) => {
-    const targetIds = request.skillIds ?? skillInventory.skills
-      .filter((skill) => skill.sourceType === "git")
-      .map((skill) => skill.id);
-
-    setSyncingSkillIds(new Set(targetIds));
-    setStatus(null);
-    setSyncNotes((current) => {
-      const next = { ...current };
-      for (const skillId of targetIds) {
-        delete next[skillId];
-      }
-      return next;
-    });
-
-    try {
-      const response = await window.electron.syncSkillSources({
-        ...request,
-        skillIds: targetIds,
-      });
-      const nextNotes: Record<string, string> = {};
-      for (const result of response.results) {
-        nextNotes[result.skillId] = formatSyncMessage(result);
-      }
-      if (response.results.length > 0) {
-        setSyncNotes((current) => ({ ...current, ...nextNotes }));
-      }
-
-      await reloadSkillInventory();
-
-      if (response.results.some((item) => item.status === "error")) {
-        const failCount = response.results.filter((item) => item.status === "error").length;
-        setStatus({
-          tone: "error",
-          message: `Skills 同步完成，但有 ${failCount} 条记录失败，请检查对应行。`,
-        });
-      }
-    } catch (error) {
-      console.error("Failed to sync skills:", error);
-      setStatus({
-        tone: "error",
-        message: error instanceof Error ? error.message : "同步 Skills 失败。",
-      });
-    } finally {
-      setSyncingSkillIds(new Set());
-    }
-  }, [formatSyncMessage, reloadSkillInventory, skillInventory.skills]);
-
-  const validateSkillInventory = useCallback((inventory: SkillInventory) => {
-    if (!inventory.rootPath.trim()) {
-      return "默认 Skill 目录不能为空。";
-    }
-
-    for (const skill of inventory.skills) {
-      if (!skill.path.trim()) {
-        return `Skill ${skill.name || skill.id} 缺少本地路径。`;
-      }
-      if (skill.sourceType === "git" && !skill.remoteUrl?.trim()) {
-        return `Skill ${skill.name || skill.id} 缺少远程 Git 地址。`;
-      }
-    }
-
-    return null;
-  }, []);
-
   const handleFormatGlobalConfig = () => {
     setStatus(null);
     const parsed = parseGlobalConfig(globalConfigText);
@@ -423,7 +345,6 @@ export function SettingsModal({
     const normalizedGlobalConfig = parseGlobalConfig(globalConfigText);
     const globalError = validateGlobalConfigText(globalConfigText);
     const profileError = validateProfiles(normalizedProfiles);
-    const skillError = validateSkillInventory(skillInventory);
 
     if (profileError) {
       setStatus({ tone: "error", message: profileError });
@@ -432,10 +353,6 @@ export function SettingsModal({
     if (globalError) {
       setGlobalConfigParseError(globalError);
       setStatus({ tone: "error", message: "全局配置 JSON 不合法，请先修正后再保存。" });
-      return;
-    }
-    if (skillError) {
-      setStatus({ tone: "error", message: skillError });
       return;
     }
     if (normalizedGlobalConfig === null) {
@@ -453,10 +370,9 @@ export function SettingsModal({
     setSaving(true);
 
     try {
-      const [apiResult, globalResult, skillResult, ruleResult] = await Promise.all([
+      const [apiResult, globalResult, ruleResult] = await Promise.all([
         window.electron.saveApiConfig({ profiles: nextProfiles }),
         window.electron.saveGlobalConfig(normalizedGlobalConfig),
-        window.electron.saveSkillInventory(skillInventory),
         agentRuleDocuments && typeof electronApi.saveUserAgentRuleDocument === "function"
           ? electronApi.saveUserAgentRuleDocument(userAgentMarkdown)
           : Promise.resolve({ success: true } as { success: boolean; error?: string }),
@@ -468,9 +384,6 @@ export function SettingsModal({
       }
       if (!globalResult.success) {
         failures.push(globalResult.error || "保存全局配置失败。");
-      }
-      if (!skillResult.success) {
-        failures.push(skillResult.error || "保存 Skills 配置失败。");
       }
       if (!ruleResult.success) {
         failures.push(ruleResult.error || "保存 Claude 全局规则失败。");
@@ -487,7 +400,6 @@ export function SettingsModal({
         ...current,
         userAgentsMarkdown: userAgentMarkdown,
       } : current);
-      await reloadSkillInventory();
       setStatus({ tone: "success", message: "设置已保存。" });
     } catch (error) {
       console.error("Failed to save settings:", error);
@@ -496,30 +408,6 @@ export function SettingsModal({
       setSaving(false);
     }
   };
-
-  const handleLaunchMaintenance = useCallback(() => {
-    void (async () => {
-      if (!maintenancePrompt.trim()) {
-        setStatus({ tone: "error", message: "请先填写维护指令。" });
-        return;
-      }
-
-      setLaunchingMaintenance(true);
-      setStatus(null);
-      try {
-        await onStartMaintenanceSession(maintenancePrompt.trim());
-        onClose();
-      } catch (error) {
-        console.error("Failed to launch maintenance session:", error);
-        setStatus({
-          tone: "error",
-          message: error instanceof Error ? error.message : "启动维护会话失败。",
-        });
-      } finally {
-        setLaunchingMaintenance(false);
-      }
-    })();
-  }, [maintenancePrompt, onClose, onStartMaintenanceSession]);
 
   let content = <ApiProfilesSettingsPage profiles={profiles} runtimeSource={runtimeSource} onChange={updateProfiles} />;
   if (activePageId === "routing") {
@@ -537,17 +425,17 @@ export function SettingsModal({
       />
     );
   }
-  if (activePageId === "skills") {
+  if (activePageId === "channels") {
     content = (
-      <SkillsManagementPage
-        inventory={skillInventory}
-        onInventoryChange={setSkillInventory}
-        syncingSkillIds={syncingSkillIds}
-        syncNotes={syncNotes}
-        onRefresh={() => { void reloadSkillInventory(); }}
-        onSync={syncSkillSources}
+      <ChannelsSettingsPage
+        configText={globalConfigText}
+        parseError={globalConfigParseError}
+        onChange={handleGlobalConfigChange}
       />
     );
+  }
+  if (activePageId === "skills") {
+    content = <SkillsManagementPage />;
   }
   if (activePageId === "agent-rules") {
     content = (
@@ -558,21 +446,11 @@ export function SettingsModal({
       />
     );
   }
-  if (activePageId === "system-maintenance") {
-    content = (
-      <SystemMaintenancePage
-        prompt={maintenancePrompt}
-        launching={launchingMaintenance}
-        onPromptChange={(value) => {
-          setStatus(null);
-          setMaintenancePrompt(value);
-        }}
-        onLaunch={handleLaunchMaintenance}
-      />
-    );
+  if (activePageId === "about") {
+    content = <AboutPage onStartMaintenanceSession={onStartMaintenanceSession} onClose={onClose} />;
   }
 
-  const footer = activePageId === "system-maintenance"
+  const footer = activePageId === "about" || activePageId === "skills"
     ? null
     : (
       <div className="flex gap-3">
@@ -595,7 +473,6 @@ export function SettingsModal({
   return (
     <SettingsSheet
       title="设置"
-      description="统一管理接口、运行时、skills 和系统维护入口。"
       pages={pages}
       activePageId={activePageId}
       onPageChange={(pageId) => {

@@ -7,6 +7,7 @@ const browserPreviewSlashCommands = ["codex", "review", "plan"];
 const DEV_BACKEND_BRIDGE_ORIGIN = "/__dev_bridge";
 const BRIDGE_BOOT_RETRY_COUNT = 20;
 const BRIDGE_BOOT_RETRY_DELAY_MS = 250;
+const BRIDGE_HEALTH_TIMEOUT_MS = 500;
 export const DEV_BRIDGE_READY_EVENT = "tech-cc-hub:dev-bridge-ready";
 const DEV_SHIM_MARKER = "__techCCHubDevShim";
 
@@ -166,6 +167,22 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         ];
         syncSession();
       }
+      if (event.type === "channel.message.receive") {
+        sessionUpdatedAt = Date.now();
+        sessionStatus = "completed";
+        sessionTitle = event.payload.title?.trim()
+          || `${event.payload.provider} · ${event.payload.channelName || event.payload.senderName || event.payload.externalConversationId || "default"}`;
+        sessionMessages = [
+          ...sessionMessages,
+          {
+            type: "user_prompt",
+            prompt: event.payload.text,
+            attachments: event.payload.attachments,
+            capturedAt: sessionUpdatedAt,
+          },
+        ];
+        syncSession();
+      }
       if (event.type === "session.continue") {
         sessionUpdatedAt = Date.now();
         sessionStatus = "completed";
@@ -218,25 +235,31 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         "禁止默认走外部 browse skill。请优先用浏览器 MCP（browser_get_state / browser_extract_page / browser_capture_visible ...）。",
         "",
         "设计还原默认规则：只要用户提供截图、Figma 图、页面参考图，并要求生成或修改 UI/前端代码，请优先使用设计 MCP。单张参考图先用 design_inspect_image 生成结构化视觉摘要；已有页面后再用 design_capture_current_view / design_compare_current_view / design_compare_images 生成当前截图、三栏比照图和差异图，再按差异修 UI。",
+        "",
+        "## Karpathy Coding Guardrails 默认规则",
+        "",
+        "来源：https://github.com/forrestchang/andrej-karpathy-skills/blob/main/CLAUDE.md",
+        "",
+        "编码前先澄清假设、歧义和取舍；不确定时要显式说明，不要假装已经理解。",
+        "",
+        "优先选择能解决问题的最小实现；不要增加用户没有要求的功能、抽象、配置项或防御性复杂度。",
+        "",
+        "修改必须外科手术式收敛；只触碰完成本次请求必需的代码，匹配现有风格，不顺手重构无关区域。",
+        "",
+        "多步骤任务需要先定义可验证的成功标准；修 bug 和重构应优先有复现/验收路径，再进入实现闭环。",
       ].join("\n"),
       userClaudeRoot: "/Users/lst01/.claude",
-      userAgentsPath: "/Users/lst01/.claude/AGENTS.md",
+      userAgentsPath: "/Users/lst01/.claude/CLAUDE.md",
       userAgentsMarkdown: [
         "# 用户级 Agent 规则",
         "",
-        "在这里写的内容会保存到 `~/.claude/AGENTS.md`。",
+        "在这里写的内容会保存到 `~/.claude/CLAUDE.md`。",
       ].join("\n"),
     }),
     saveUserAgentRuleDocument: async () => ({ success: true }),
-    getSkillInventory: async () => ({ rootPath: "", skills: [] }),
-    saveSkillInventory: async () => ({ success: true }),
-    syncSkillSources: async () => ({ results: [] }),
-    listAvailableSkills: async () => [],
-    listBuiltinAutoSkills: async () => [],
-    getSkillPaths: async () => ({ userSkillsDir: "", builtinSkillsDir: "" }),
-    detectAndCountExternalSkills: async () => ({ success: true, data: [] }),
-    importSkillWithSymlink: async () => ({ success: false, msg: "浏览器预览态暂不支持导入 Skill，请在 Electron 客户端里操作。" }),
-    deleteSkill: async () => ({ success: false, msg: "浏览器预览态暂不支持删除 Skill，请在 Electron 客户端里操作。" }),
+    invoke: async <T,>(_channel: string, ..._args: unknown[]): Promise<T> => {
+      throw new Error("浏览器预览态不支持 IPC invoke，请在 Electron 客户端里操作。");
+    },
     checkApiConfig: async () => ({ hasConfig: true, config: null }),
     debugSaveTraceSnapshot: async () => ({ success: true }),
     preprocessImageAttachments: async (payload: { attachments: PromptAttachment[] }) => ({
@@ -308,9 +331,12 @@ async function invokeBridge<T>(method: string, ...args: unknown[]): Promise<T> {
 }
 
 async function createBridgeElectron(): Promise<(typeof window.electron & Record<string, unknown>) | null> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), BRIDGE_HEALTH_TIMEOUT_MS);
   try {
     const response = await fetch(`${DEV_BACKEND_BRIDGE_ORIGIN}/health`, {
       cache: "no-store",
+      signal: controller.signal,
     });
     if (!response.ok) {
       return null;
@@ -369,15 +395,7 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       saveGlobalConfig: async (config) => await invokeBridge("saveGlobalConfig", config),
       getAgentRuleDocuments: async () => await invokeBridge("getAgentRuleDocuments"),
       saveUserAgentRuleDocument: async (markdown: string) => await invokeBridge("saveUserAgentRuleDocument", markdown),
-      getSkillInventory: async () => await invokeBridge("getSkillInventory"),
-      saveSkillInventory: async (inventory) => await invokeBridge("saveSkillInventory", inventory),
-      syncSkillSources: async (request) => await invokeBridge("syncSkillSources", request),
-      listAvailableSkills: async () => await invokeBridge("listAvailableSkills"),
-      listBuiltinAutoSkills: async () => await invokeBridge("listBuiltinAutoSkills"),
-      getSkillPaths: async () => await invokeBridge("getSkillPaths"),
-      detectAndCountExternalSkills: async () => await invokeBridge("detectAndCountExternalSkills"),
-      importSkillWithSymlink: async (skillPath) => await invokeBridge("importSkillWithSymlink", skillPath),
-      deleteSkill: async (skillName) => await invokeBridge("deleteSkill", skillName),
+      invoke: async <T,>(channel: string, ...args: unknown[]): Promise<T> => await invokeBridge("invoke", channel, ...args),
       checkApiConfig: async () => await invokeBridge("checkApiConfig"),
       debugSaveTraceSnapshot: async (snapshot) => await invokeBridge("debugSaveTraceSnapshot", snapshot),
       preprocessImageAttachments: async (payload) => await invokeBridge("preprocessImageAttachments", payload),
@@ -416,6 +434,8 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
     };
   } catch {
     return null;
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
 
@@ -438,12 +458,6 @@ export const installDevElectronShim = async () => {
   if (typeof window === "undefined") return;
   const existingElectron = window.electron as (typeof window.electron & Record<string, unknown>) | undefined;
   if (existingElectron && existingElectron[DEV_SHIM_MARKER] !== "fallback" && existingElectron[DEV_SHIM_MARKER] !== "bridge") {
-    return;
-  }
-  const bridgeElectron = await waitForBridgeElectron();
-  if (bridgeElectron) {
-    window.electron = bridgeElectron;
-    window.dispatchEvent(new CustomEvent(DEV_BRIDGE_READY_EVENT));
     return;
   }
 

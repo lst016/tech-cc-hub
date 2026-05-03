@@ -1,7 +1,10 @@
 import { app } from "electron";
 import log from "electron-log";
-import { autoUpdater } from "electron-updater";
+import { createRequire } from "node:module";
 import type { ProgressInfo, UpdateInfo } from "electron-updater";
+
+const require = createRequire(import.meta.url);
+const { autoUpdater } = require("electron-updater") as typeof import("electron-updater");
 
 export type AppUpdateState =
   | "idle"
@@ -229,8 +232,8 @@ class AppAutoUpdater {
       this.setStatus({
         status: "available",
         version: info.version,
-        releaseName: info.releaseName,
-        releaseDate: info.releaseDate,
+        releaseName: info.releaseName ?? undefined,
+        releaseDate: info.releaseDate ?? undefined,
         releaseNotes: normalizeReleaseNotes(info.releaseNotes),
         checkedAt: Date.now(),
         error: undefined,
@@ -241,7 +244,7 @@ class AppAutoUpdater {
       this.setStatus({
         status: "not-available",
         version: info.version,
-        releaseDate: info.releaseDate,
+        releaseDate: info.releaseDate ?? undefined,
         checkedAt: Date.now(),
         error: undefined,
       });
@@ -264,8 +267,8 @@ class AppAutoUpdater {
       this.setStatus({
         status: "downloaded",
         version: info.version,
-        releaseName: info.releaseName,
-        releaseDate: info.releaseDate,
+        releaseName: info.releaseName ?? undefined,
+        releaseDate: info.releaseDate ?? undefined,
         releaseNotes: normalizeReleaseNotes(info.releaseNotes),
         progress: undefined,
         error: undefined,

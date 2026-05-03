@@ -29,9 +29,6 @@
             "@renderer/*": [
                 "./src/renderer/*"
             ],
-            "@office-ai/platform": [
-                "./src/office-ai/platform.ts"
-            ]
         },
         "types": [
             "./types"

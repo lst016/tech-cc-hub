@@ -38,6 +38,15 @@ export type RuntimeOverrides = {
   outputFormat?: "json" | "none";
 };
 
+export type ChannelProviderId =
+  | "telegram"
+  | "lark"
+  | "dingtalk"
+  | "wechat"
+  | "wecom"
+  | "slack"
+  | "discord";
+
 export type PromptAttachment = {
   id: string;
   kind: "image" | "text";
@@ -131,6 +140,7 @@ export type ClientEvent =
   | { type: "session.start"; payload: { title: string; prompt: string; cwd?: string; allowedTools?: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides } }
   | { type: "session.continue"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides } }
   | { type: "session.append"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[] } }
+  | { type: "channel.message.receive"; payload: { provider: ChannelProviderId; text: string; externalConversationId?: string; externalMessageId?: string; senderId?: string; senderName?: string; channelName?: string; title?: string; allowedTools?: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides; receivedAt?: number } }
   | { type: "session.workflow.catalog.list"; payload: { sessionId: string } }
   | { type: "session.workflow.set"; payload: { sessionId: string; markdown: string; sourceLayer: WorkflowScope; sourcePath?: string } }
   | { type: "session.workflow.clear"; payload: { sessionId: string } }

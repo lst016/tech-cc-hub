@@ -31,72 +31,95 @@ export type RuntimeReasoningMode = "disabled" | "low" | "medium" | "high" | "xhi
 export type RuntimePermissionMode = "default" | "bypassPermissions" | "plan";
 export type AgentRunSurface = "development" | "maintenance";
 
-export type SkillSourceType = "manual" | "git";
-
-export type SkillKind = "single" | "bundle";
-
-export type InstalledSkillRecord = {
+// Source: skill-manager types (src/electron/libs/skill-manager/types.ts)
+export type ManagedSkill = {
   id: string;
   name: string;
-  kind: SkillKind;
-  path: string;
-  sourceType: SkillSourceType;
-  installedAt?: number;
-  syncEnabled?: boolean;
-  remoteUrl?: string;
-  remoteSubpath?: string;
-  branch?: string;
-  lastPulledAt?: number;
-  lastCheckedAt?: number;
-  checkEveryHours?: number;
-  lastKnownCommit?: string;
-  lastError?: string;
+  description: string | null;
+  source_type: string;
+  source_ref: string | null;
+  source_ref_resolved: string | null;
+  source_subpath: string | null;
+  source_branch: string | null;
+  source_revision: string | null;
+  remote_revision: string | null;
+  central_path: string;
+  content_hash: string | null;
+  enabled: boolean;
+  created_at: number;
+  updated_at: number;
+  status: string;
+  update_status: string;
+  last_checked_at: number | null;
+  last_check_error: string | null;
+  targets: SkillTarget[];
+  scenario_ids: string[];
+  tags: string[];
 };
 
-export type SkillInventory = {
-  rootPath: string;
-  skills: InstalledSkillRecord[];
+export type SkillTarget = {
+  id: string;
+  skill_id: string;
+  tool: string;
+  target_path: string;
+  mode: string;
+  status: string;
+  synced_at: number | null;
 };
 
-export type SkillSyncRequest = {
-  skillIds?: string[];
-  force?: boolean;
+export type SkillToolToggle = {
+  tool: string;
+  display_name: string;
+  installed: boolean;
+  globally_enabled: boolean;
+  enabled: boolean;
 };
 
-export type SkillSyncResult = {
-  skillId: string;
-  skillName: string;
-  status: "updated" | "checked" | "skipped" | "error";
-  message?: string;
-  previousCommit?: string;
-  latestCommit?: string;
-  checkedAt: number;
+export type ToolInfo = {
+  key: string;
+  display_name: string;
+  installed: boolean;
+  skills_dir: string;
+  enabled: boolean;
+  is_custom: boolean;
+  has_path_override: boolean;
+  project_relative_skills_dir: string | null;
 };
 
-export type SkillSyncResponse = {
-  results: SkillSyncResult[];
-};
-
-export type SkillHubSkillInfo = {
+export type Scenario = {
+  id: string;
   name: string;
-  description: string;
-  location: string;
-  isCustom: boolean;
-  source: "builtin" | "custom" | "extension";
+  description: string | null;
+  icon: string | null;
+  sort_order: number;
+  skill_count: number;
+  created_at: number;
+  updated_at: number;
 };
 
-export type SkillHubExternalSource = {
+export type DiscoveredGroup = {
   name: string;
-  path: string;
-  source: string;
-  skills: Array<{ name: string; description: string; path: string }>;
+  fingerprint: string | null;
+  locations: Array<{ id: string; tool: string; found_path: string }>;
+  imported: boolean;
+  found_at: number;
 };
 
-export type SkillHubBridgeResponse<T = unknown> = {
-  success: boolean;
-  data?: T;
-  msg?: string;
-  error?: string;
+export type ScanResult = {
+  tools_scanned: number;
+  skills_found: number;
+  groups: DiscoveredGroup[];
+};
+
+export type BatchImportResult = {
+  imported: number;
+  skipped: number;
+  errors: string[];
+};
+
+export type BatchDeleteSkillsResult = {
+  deleted: number;
+  failed: string[];
 };
 
 export type AgentRuleDocuments = {
@@ -142,7 +165,38 @@ export type AppUpdateActionResult = {
   error?: string;
 };
 
-export type SettingsPageId = "profiles" | "routing" | "global-json" | "skills" | "agent-rules" | "system-maintenance";
+export type ChannelProviderId =
+  | "telegram"
+  | "lark"
+  | "wechat";
+
+export type ChannelTransportMode = "bot-api" | "lark-cli" | "lark-open-platform" | "weixin-native" | "weixin-openclaw";
+
+export type ChannelConnectionConfig = {
+  provider: ChannelProviderId;
+  enabled: boolean;
+  transport: ChannelTransportMode;
+  displayName?: string;
+  botTokenEnv?: string;
+  chatIdEnv?: string;
+  webhookUrlEnv?: string;
+  appIdEnv?: string;
+  appSecretEnv?: string;
+  tenantKeyEnv?: string;
+  cliCommand?: string;
+  cliProfile?: string;
+  cliSendArgsTemplate?: string;
+  cliReceiveArgsTemplate?: string;
+  notes?: string;
+};
+
+export type ChannelRuntimeConfig = {
+  version: 1;
+  defaultChannel?: ChannelProviderId;
+  items: Partial<Record<ChannelProviderId, ChannelConnectionConfig>>;
+};
+
+export type SettingsPageId = "profiles" | "routing" | "channels" | "global-json" | "skills" | "agent-rules" | "system-maintenance" | "about";
 
 export type RuntimeOverrides = {
   model?: string;
@@ -245,6 +299,7 @@ export type ClientEvent =
   | { type: "session.start"; payload: { title: string; prompt: string; cwd?: string; allowedTools?: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides } }
   | { type: "session.continue"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides } }
   | { type: "session.append"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[] } }
+  | { type: "channel.message.receive"; payload: { provider: ChannelProviderId; text: string; externalConversationId?: string; externalMessageId?: string; senderId?: string; senderName?: string; channelName?: string; title?: string; allowedTools?: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides; receivedAt?: number } }
   | { type: "session.workflow.catalog.list"; payload: { sessionId: string } }
   | { type: "session.workflow.set"; payload: { sessionId: string; markdown: string; sourceLayer: WorkflowScope; sourcePath?: string } }
   | { type: "session.workflow.clear"; payload: { sessionId: string } }

@@ -79,11 +79,6 @@ function basename(path: string) {
   return path.split(/[\\/]/).filter(Boolean).pop() || path;
 }
 
-function getWorkspaceLabel(workspace: string) {
-  const parts = workspace.split(/[\\/]/).filter(Boolean);
-  return parts.slice(-2).join('/') || workspace;
-}
-
 function getRelativePath(workspace: string, filePath: string) {
   if (filePath === workspace) return basename(workspace);
   if (filePath.startsWith(`${workspace}/`)) return filePath.slice(workspace.length + 1);

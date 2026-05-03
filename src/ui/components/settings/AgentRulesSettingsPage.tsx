@@ -15,7 +15,7 @@ export function AgentRulesSettingsPage({
 }: AgentRulesSettingsPageProps) {
   const [activeTab, setActiveTab] = useState<"system" | "user">("system");
   const systemMarkdown = documents?.systemDefaultMarkdown ?? "";
-  const userAgentsPath = documents?.userAgentsPath ?? "~/.claude/AGENTS.md";
+  const userAgentsPath = documents?.userAgentsPath ?? "~/.claude/CLAUDE.md";
   const userClaudeRoot = documents?.userClaudeRoot ?? "~/.claude";
 
   return (
@@ -68,7 +68,7 @@ export function AgentRulesSettingsPage({
           <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="text-xs font-medium text-muted">Claude 全局目录 Markdown</div>
-            <h3 className="mt-1 text-base font-semibold text-ink-900">用户级 AGENTS.md</h3>
+            <h3 className="mt-1 text-base font-semibold text-ink-900">用户级 CLAUDE.md</h3>
             <p className="mt-2 text-sm leading-6 text-muted">
               保存后会写入 Claude 全局目录，普通开发会话会按现有三层规则解析加载这份用户级入口文档。
             </p>
@@ -87,7 +87,7 @@ export function AgentRulesSettingsPage({
               id="user-claude-agent-rules"
               value={userMarkdown}
               onChange={onUserMarkdownChange}
-              placeholder="# 用户级 Agent 规则\n\n写在这里的内容会保存到 ~/.claude/AGENTS.md"
+              placeholder="# 用户级 Agent 规则\n\n写在这里的内容会保存到 ~/.claude/CLAUDE.md"
               minHeight="300px"
               className="mt-2 h-[48vh] max-h-[560px] flex-none"
             />

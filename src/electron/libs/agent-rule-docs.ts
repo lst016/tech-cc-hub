@@ -9,7 +9,7 @@ export type AgentRuleDocuments = {
   userAgentsMarkdown: string;
 };
 
-const USER_AGENTS_FILE = "AGENTS.md";
+const USER_AGENTS_FILE = "CLAUDE.md";
 
 function safeReadText(path: string): string {
   try {
@@ -51,6 +51,18 @@ function buildSystemDefaultMarkdown(): string {
     "只读批量操作可以合并；写入、删除、移动、安装、提交等有副作用操作不要混进批量 Bash。",
     "",
     "复盘时如果发现同目录串行多次 Read、重复 Bash、ls/cat/grep 链路，应优先建议改成并发读取或先搜索收敛。",
+    "",
+    "## Karpathy Coding Guardrails 默认规则",
+    "",
+    "来源：https://github.com/forrestchang/andrej-karpathy-skills/blob/main/CLAUDE.md",
+    "",
+    "编码前先澄清假设、歧义和取舍；不确定时要显式说明，不要假装已经理解。",
+    "",
+    "优先选择能解决问题的最小实现；不要增加用户没有要求的功能、抽象、配置项或防御性复杂度。",
+    "",
+    "修改必须外科手术式收敛；只触碰完成本次请求必需的代码，匹配现有风格，不顺手重构无关区域。",
+    "",
+    "多步骤任务需要先定义可验证的成功标准；修 bug 和重构应优先有复现/验收路径，再进入实现闭环。",
     "",
   ].join("\n");
 

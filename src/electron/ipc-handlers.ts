@@ -17,10 +17,26 @@ import { buildSessionWorkflowCatalog } from "./libs/workflow-catalog.js";
 import { buildStatelessContinuationPayload } from "./stateless-continuation.js";
 import type { ClientEvent, PromptAttachment, ServerEvent, StreamMessage } from "./types.js";
 import { isDev } from "./util.js";
+import {
+  buildChannelSessionTitle,
+  buildChannelReplyTarget,
+  ensureChannelWorkspace,
+  recordChannelOutboundMessage,
+  recordChannelInboundMessage,
+  type ChannelReplyTarget,
+} from "./libs/channel-workspace.js";
 
 let sessions: SessionStore;
 const runnerHandles = new Map<string, RunnerHandle>();
 const serverEventListeners = new Set<(event: ServerEvent) => void>();
+const channelReplyTargets = new Map<string, ChannelReplyTarget>();
+const channelLatestAssistantText = new Map<string, string>();
+const channelLastSentAssistantText = new Map<string, string>();
+let channelReplySender: ((target: ChannelReplyTarget, text: string) => Promise<void> | void) | null = null;
+
+export function setChannelReplySender(sender: ((target: ChannelReplyTarget, text: string) => Promise<void> | void) | null) {
+  channelReplySender = sender;
+}
 
 function initializeSessions() {
   if (!sessions) {
@@ -343,6 +359,10 @@ function emit(event: ServerEvent) {
         message,
       },
     };
+    const assistantText = extractAssistantText(message);
+    if (assistantText && channelReplyTargets.has(nextEvent.payload.sessionId)) {
+      channelLatestAssistantText.set(nextEvent.payload.sessionId, assistantText);
+    }
   }
   if (nextEvent.type === "stream.user_prompt") {
     const sanitizedAttachments = sanitizePromptAttachmentsForStorage(nextEvent.payload.attachments);
@@ -364,11 +384,158 @@ function emit(event: ServerEvent) {
     };
   }
 
+  if (nextEvent.type === "session.status" && nextEvent.payload.status === "completed") {
+    maybeSendChannelReply(nextEvent.payload.sessionId);
+  }
+
   broadcast(nextEvent);
+}
+
+function extractAssistantText(message: StreamMessage): string | null {
+  if (message.type !== "assistant") return null;
+  const sdkMessage = "message" in message && typeof message.message === "object" && message.message !== null
+    ? message.message as { content?: unknown }
+    : null;
+  const content = Array.isArray(sdkMessage?.content) ? sdkMessage.content : [];
+  const text = content
+    .map((item) => {
+      if (!item || typeof item !== "object") return "";
+      const block = item as { type?: unknown; text?: unknown };
+      return block.type === "text" && typeof block.text === "string" ? block.text.trim() : "";
+    })
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+
+  return text || null;
+}
+
+function maybeSendChannelReply(sessionId: string) {
+  const target = channelReplyTargets.get(sessionId);
+  const text = channelLatestAssistantText.get(sessionId)?.trim();
+  if (!target || !text || !channelReplySender) return;
+  if (channelLastSentAssistantText.get(sessionId) === text) return;
+
+  channelLastSentAssistantText.set(sessionId, text);
+  void Promise.resolve(channelReplySender(target, text))
+    .then(() => {
+      recordChannelOutboundMessage(target.workspaceRoot, target, text);
+    })
+    .catch((error) => {
+      console.warn("[channel] Failed to send channel reply:", error);
+    });
+}
+
+function registerChannelSession(sessionId: string, target: ChannelReplyTarget) {
+  channelReplyTargets.set(sessionId, target);
+}
+
+async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "channel.message.receive" }>) {
+  const store = initializeSessions();
+  const text = event.payload.text.trim();
+  if (!text) {
+    emit({
+      type: "runner.error",
+      payload: { message: "渠道消息为空，已忽略。" },
+    });
+    return;
+  }
+
+  const workspace = ensureChannelWorkspace({
+    provider: event.payload.provider,
+    text,
+    externalConversationId: event.payload.externalConversationId,
+    externalMessageId: event.payload.externalMessageId,
+    senderId: event.payload.senderId,
+    senderName: event.payload.senderName,
+    channelName: event.payload.channelName,
+    title: event.payload.title,
+    receivedAt: event.payload.receivedAt,
+  });
+  recordChannelInboundMessage(workspace, {
+    provider: event.payload.provider,
+    text,
+    externalConversationId: event.payload.externalConversationId,
+    externalMessageId: event.payload.externalMessageId,
+    senderId: event.payload.senderId,
+    senderName: event.payload.senderName,
+    channelName: event.payload.channelName,
+    title: event.payload.title,
+    receivedAt: event.payload.receivedAt,
+  });
+  const replyTarget = buildChannelReplyTarget({
+    provider: event.payload.provider,
+    text,
+    externalConversationId: event.payload.externalConversationId,
+    senderId: event.payload.senderId,
+    senderName: event.payload.senderName,
+    channelName: event.payload.channelName,
+  }, workspace);
+
+  const existingSession = store
+    .listSessions({ archived: false })
+    .find((session) => session.cwd === workspace.root);
+
+  if (!existingSession) {
+    await handleClientEvent({
+      type: "session.start",
+      payload: {
+        title: buildChannelSessionTitle({
+          provider: event.payload.provider,
+          text,
+          externalConversationId: event.payload.externalConversationId,
+          senderName: event.payload.senderName,
+          channelName: event.payload.channelName,
+          title: event.payload.title,
+        }, workspace),
+        prompt: text,
+        cwd: workspace.root,
+        allowedTools: event.payload.allowedTools,
+        attachments: event.payload.attachments,
+        runtime: event.payload.runtime,
+      },
+    });
+    const createdSession = store
+      .listSessions({ archived: false })
+      .find((session) => session.cwd === workspace.root);
+    if (createdSession) {
+      registerChannelSession(createdSession.id, replyTarget);
+    }
+    return;
+  }
+
+  registerChannelSession(existingSession.id, replyTarget);
+
+  if (existingSession.status === "running") {
+    await handleClientEvent({
+      type: "session.append",
+      payload: {
+        sessionId: existingSession.id,
+        prompt: text,
+        attachments: event.payload.attachments,
+      },
+    });
+    return;
+  }
+
+  await handleClientEvent({
+    type: "session.continue",
+    payload: {
+      sessionId: existingSession.id,
+      prompt: text,
+      attachments: event.payload.attachments,
+      runtime: event.payload.runtime,
+    },
+  });
 }
 
 export async function handleClientEvent(event: ClientEvent) {
   const store = initializeSessions();
+
+  if (event.type === "channel.message.receive") {
+    await handleChannelMessageEvent(event);
+    return;
+  }
 
   if (event.type === "session.list") {
     const archived = Boolean(event.payload?.archived);
