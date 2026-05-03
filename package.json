@@ -1,7 +1,7 @@
 {
 	"name": "tech-cc-hub",
 	"private": true,
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"type": "module",
 	"main": "dist-electron/electron/main.js",
 	"scripts": {
@@ -90,6 +90,7 @@
 		"swr": "^2.4.1",
 		"tailwindcss": "^4.1.18",
 		"vite-tsconfig-paths": "^6.0.3",
+		"zod": "^4.4.2",
 		"zustand": "^5.0.10"
 	},
 	"devDependencies": {
