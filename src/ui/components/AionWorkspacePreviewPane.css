@@ -265,6 +265,112 @@
   background: #f6f8fa;
 }
 
+.vscode-preview__tabs {
+  display: flex;
+  min-height: 35px;
+  align-items: stretch;
+  overflow-x: auto;
+  border-bottom: 1px solid #e5e5e5;
+  background: #f3f3f3;
+}
+
+.vscode-preview__tabs::-webkit-scrollbar {
+  height: 3px;
+}
+
+.vscode-preview__tabs::-webkit-scrollbar-thumb {
+  background: #d0d7de;
+  border-radius: 3px;
+}
+
+.vscode-preview__tab {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  border-right: 1px solid #e5e5e5;
+  background: #ececec;
+  color: #57606a;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 10px;
+  user-select: none;
+}
+
+.vscode-preview__tab--active {
+  background: #ffffff;
+  color: #24292f;
+  border-bottom: 1px solid #ffffff;
+  margin-bottom: -1px;
+}
+
+.vscode-preview__tab:hover:not(.vscode-preview__tab--active) {
+  background: #e8e8e8;
+}
+
+.vscode-preview__tab-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 2px;
+  background: #0969da;
+  opacity: 0;
+}
+
+.vscode-preview__tab--active .vscode-preview__tab-dot {
+  opacity: 1;
+}
+
+.vscode-preview__tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vscode-preview__tab-close {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: #57606a;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  position: relative;
+}
+
+.vscode-preview__tab-close::before,
+.vscode-preview__tab-close::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 1px;
+  background: #57606a;
+}
+
+.vscode-preview__tab-close::before {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.vscode-preview__tab-close::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.vscode-preview__tab:hover .vscode-preview__tab-close,
+.vscode-preview__tab--active .vscode-preview__tab-close {
+  opacity: 1;
+}
+
+.vscode-preview__tab-close:hover {
+  background: #d0d7de;
+}
+
 .vscode-preview__file {
   display: flex;
   min-width: 0;
@@ -336,6 +442,10 @@
 }
 
 .vscode-preview__path {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   overflow: hidden;
   border-bottom: 1px solid #eaeef2;
   background: #ffffff;
@@ -344,8 +454,33 @@
   font-size: 10px;
   line-height: 27px;
   padding: 0 12px;
+}
+
+.vscode-preview__path-text {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.vscode-preview__path button {
+  height: 22px;
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #57606a;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+.vscode-preview__path button:hover {
+  border-color: var(--aion-line);
+  background: #ffffff;
+  color: var(--aion-accent);
 }
 
 .vscode-preview__content {

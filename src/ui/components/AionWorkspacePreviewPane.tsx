@@ -28,7 +28,6 @@ if (!(self as any).MonacoEnvironment?.getWorker) {
 
 loader.config({ monaco });
 
-const MAX_EXPAND_ALL_ENTRIES = 2200;
 const ROOT_DEPTH = 0;
 const EMPTY_CODE_REFERENCES: CodeReferenceDraft[] = [];
 
@@ -161,8 +160,6 @@ function NativeExplorer({
   const directoryCacheRef = useRef(directoryCache);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set([workspace]));
   const [searchQuery, setSearchQuery] = useState('');
-  const [bulkLoading, setBulkLoading] = useState(false);
-
   useEffect(() => {
     directoryCacheRef.current = directoryCache;
   }, [directoryCache]);
@@ -226,30 +223,6 @@ function NativeExplorer({
   const handleRefresh = useCallback(() => {
     void loadDirectory(workspace, true);
   }, [loadDirectory, workspace]);
-
-  const handleExpandAll = useCallback(async () => {
-    setBulkLoading(true);
-    try {
-      const queue = [workspace];
-      const nextExpanded = new Set(expandedPaths);
-      let scannedEntries = 0;
-
-      while (queue.length > 0 && scannedEntries < MAX_EXPAND_ALL_ENTRIES) {
-        const path = queue.shift();
-        if (!path) continue;
-        nextExpanded.add(path);
-        const entries = await loadDirectory(path);
-        scannedEntries += entries.length;
-        for (const entry of entries) {
-          if (entry.type === 'directory') queue.push(entry.path);
-        }
-      }
-
-      setExpandedPaths(nextExpanded);
-    } finally {
-      setBulkLoading(false);
-    }
-  }, [expandedPaths, loadDirectory, workspace]);
 
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
 
@@ -326,9 +299,6 @@ function NativeExplorer({
       <div className="native-explorer__toolbar">
         <div className="native-explorer__title">EXPLORER</div>
         <div className="native-explorer__actions">
-          <button type="button" onClick={() => void handleExpandAll()} disabled={bulkLoading} title="递归展开已过滤后的工作区文件树">
-            {bulkLoading ? '...' : '全量'}
-          </button>
           <button type="button" onClick={handleRefresh} title="刷新根目录">刷新</button>
         </div>
       </div>
@@ -359,9 +329,17 @@ function NativeExplorer({
 function PreviewSurface({
   file,
   referenceSessionKey,
+  openTabs,
+  activeTabPath,
+  onSwitchTab,
+  onCloseTab,
 }: {
   file: ActivePreviewFile | null;
   referenceSessionKey: string;
+  openTabs: ActivePreviewFile[];
+  activeTabPath: string | null;
+  onSwitchTab: (path: string) => void;
+  onCloseTab: (path: string) => void;
 }) {
   const addCodeReference = useAppStore((state) => state.addCodeReference);
   const codeReferences = useAppStore((state) => state.codeReferencesBySessionId[referenceSessionKey] || EMPTY_CODE_REFERENCES);
@@ -501,6 +479,30 @@ function PreviewSurface({
 
   return (
     <section className="vscode-preview">
+      {openTabs.length > 0 && (
+        <div className="vscode-preview__tabs">
+          {openTabs.map((tab) => {
+            const isActive = tab.path === activeTabPath;
+            return (
+              <div
+                key={tab.path}
+                className={`vscode-preview__tab ${isActive ? 'vscode-preview__tab--active' : ''}`}
+                title={tab.relativePath}
+                onClick={() => onSwitchTab(tab.path)}
+              >
+                <span className="vscode-preview__tab-dot" />
+                <span className="vscode-preview__tab-name">{tab.fileName}</span>
+                <button
+                  type="button"
+                  className="vscode-preview__tab-close"
+                  onClick={(e) => { e.stopPropagation(); onCloseTab(tab.path); }}
+                  title="关闭"
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
       <div className="vscode-preview__titlebar">
         <div className="vscode-preview__file">
           <span className="vscode-preview__dot" />
@@ -513,13 +515,11 @@ function PreviewSurface({
             </span>
           )}
         </div>
-        <div className="vscode-preview__title-actions">
-          <button type="button" onClick={() => void copyTextToClipboard(file.path)}>复制路径</button>
-          <button type="button" onClick={() => void window.electron.showPreviewItemInFolder?.({ path: file.path })}>定位</button>
-          <button type="button" onClick={() => void window.electron.openPreviewFile?.({ path: file.path })}>打开</button>
-        </div>
       </div>
-      <div className="vscode-preview__path" title={file.path}>{file.relativePath}</div>
+      <div className="vscode-preview__path" title={file.path}>
+        <span className="vscode-preview__path-text">{file.relativePath}</span>
+        <button type="button" onClick={() => void copyTextToClipboard(file.path)}>复制路径</button>
+      </div>
       <div className="vscode-preview__content">
         {file.loading ? (
           <div className="vscode-preview__state">Loading...</div>
@@ -543,7 +543,7 @@ function PreviewSurface({
             value={file.content}
             onMount={handleEditorMount}
             options={{
-              readOnly: true,
+              readOnly: false,
               minimap: { enabled: false },
               fontSize: 12,
               lineHeight: 20,
@@ -597,14 +597,26 @@ function PreviewSurface({
 }
 
 export function AionWorkspacePreviewPane({ workspace, conversationId, onClose }: AionWorkspacePreviewPaneProps) {
-  const [activeFile, setActiveFile] = useState<ActivePreviewFile | null>(null);
+  const [openTabs, setOpenTabs] = useState<ActivePreviewFile[]>([]);
+  const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
+  const openTabsRef = useRef(openTabs);
+  openTabsRef.current = openTabs;
   const referenceSessionKey = getCodeReferenceSessionKey(conversationId);
+
+  const activeFile = openTabs.find((t) => t.path === activeTabPath) ?? null;
 
   const openFile = useCallback(async (path: string, options: { revealLine?: number } = {}) => {
     if (!workspace) return;
+
+    // If already open, just switch to it
+    if (openTabsRef.current.some((t) => t.path === path)) {
+      setActiveTabPath(path);
+      return;
+    }
+
     const fileName = basename(path);
     const relativePath = getRelativePath(workspace, path);
-    setActiveFile({
+    const loadingTab: ActivePreviewFile = {
       path,
       fileName,
       relativePath,
@@ -612,32 +624,47 @@ export function AionWorkspacePreviewPane({ workspace, conversationId, onClose }:
       contentType: 'code',
       loading: true,
       revealLine: options.revealLine,
-    });
+    };
+    setOpenTabs((prev) => [...prev, loadingTab]);
+    setActiveTabPath(path);
 
     const result = await window.electron.readPreviewFile({ cwd: workspace, path });
-    if (!result.success || result.content === undefined) {
-      setActiveFile({
-        path,
-        fileName,
-        relativePath,
-        content: '',
-        contentType: 'code',
-        error: result.error || '文件读取失败。',
-        revealLine: options.revealLine,
-      });
-      return;
-    }
+    const resolved: ActivePreviewFile = result.success && result.content !== undefined
+      ? {
+          path: result.path || path,
+          fileName: basename(result.path || path),
+          relativePath: getRelativePath(workspace, result.path || path),
+          content: result.content,
+          contentType: inferContentType(result.path || path, result.content),
+          language: result.language,
+          revealLine: options.revealLine,
+        }
+      : {
+          path,
+          fileName,
+          relativePath,
+          content: '',
+          contentType: 'code',
+          error: result.error || '文件读取失败。',
+          revealLine: options.revealLine,
+        };
 
-    setActiveFile({
-      path: result.path || path,
-      fileName: basename(result.path || path),
-      relativePath: getRelativePath(workspace, result.path || path),
-      content: result.content,
-      contentType: inferContentType(result.path || path, result.content),
-      language: result.language,
-      revealLine: options.revealLine,
-    });
+    setOpenTabs((prev) => prev.map((t) => (t.path === path ? resolved : t)));
   }, [workspace]);
+
+  const closeTab = useCallback((path: string) => {
+    setOpenTabs((prev) => {
+      const idx = prev.findIndex((t) => t.path === path);
+      const next = prev.filter((t) => t.path !== path);
+
+      if (path === activeTabPath) {
+        // Activate nearest tab: prefer right neighbor, then left
+        const newActive = next[Math.min(idx, next.length - 1)] ?? null;
+        setActiveTabPath(newActive?.path ?? null);
+      }
+      return next;
+    });
+  }, [activeTabPath]);
 
   useEffect(() => {
     const handleOpenFromPrompt = (event: Event) => {
@@ -666,7 +693,14 @@ export function AionWorkspacePreviewPane({ workspace, conversationId, onClose }:
     <div className="aion-workbench">
       <div className="aion-workbench__body">
         <NativeExplorer workspace={workspace} activeFilePath={activeFile?.path} onOpenFile={openFile} />
-        <PreviewSurface file={activeFile} referenceSessionKey={referenceSessionKey} />
+        <PreviewSurface
+          file={activeFile}
+          referenceSessionKey={referenceSessionKey}
+          openTabs={openTabs}
+          activeTabPath={activeTabPath}
+          onSwitchTab={setActiveTabPath}
+          onCloseTab={closeTab}
+        />
       </div>
     </div>
   );
