@@ -7,6 +7,7 @@ import {
     IpcMainInvokeEvent,
     ipcMain,
     Menu,
+    nativeImage,
 } from "electron"
 import { execSync } from "child_process";
 import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
@@ -704,6 +705,13 @@ installStdIoGuards();
 // Initialize everything when app is ready
 app.on("ready", async () => {
     Menu.setApplicationMenu(null);
+    const appIconPath = getIconPath();
+    if (process.platform === "darwin" && app.dock) {
+        const dockIcon = nativeImage.createFromPath(appIconPath);
+        if (!dockIcon.isEmpty()) {
+            app.dock.setIcon(dockIcon);
+        }
+    }
     // Setup event handlers
     app.on("before-quit", cleanup);
     app.on("will-quit", cleanup);
@@ -726,7 +734,7 @@ app.on("ready", async () => {
         webPreferences: {
             preload: getPreloadPath(),
         },
-        icon: getIconPath(),
+        icon: appIconPath,
         titleBarStyle: "hiddenInset",
         backgroundColor: "#FAF9F6",
         trafficLightPosition: { x: 15, y: 18 }
