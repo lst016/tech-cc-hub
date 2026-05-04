@@ -1,6 +1,6 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import type { TaskProvider, ExternalTask, ExternalTaskStatus } from "../types.js";
+import type { TaskProvider, ExternalTask, ExternalTaskStatus, TaskProviderCapability } from "../types.js";
 import { getGlobalRuntimeEnvConfig } from "../../claude-settings.js";
 import { loadGlobalRuntimeConfig } from "../../config-store.js";
 
@@ -177,6 +177,15 @@ export class LarkTaskProvider implements TaskProvider {
     return this.getConfig().cliCommand?.trim() || DEFAULT_CONFIG.cliCommand!;
   }
 
+  isEnabled(): boolean {
+    return true;
+  }
+
+  getCapabilities() {
+    const capabilities: TaskProviderCapability[] = ["fetch", "status-writeback", "comment-writeback", "delete", "cli-configurable"];
+    return capabilities;
+  }
+
   private async runCli(args: string[], timeout = 30000): Promise<{ stdout: string; stderr: string }> {
     const { stdout, stderr } = await execFileAsync(this.getCliCommand(), args, {
       timeout,
@@ -263,6 +272,23 @@ export class LarkTaskProvider implements TaskProvider {
       `/open-apis/task/v2/tasks/${externalId}`,
       "--data",
       JSON.stringify({ status: larkStatus }),
+      "--as",
+      "user",
+      "--format",
+      "json",
+    ];
+    const { stdout, stderr } = await this.runCli(args, 15000);
+    const parsed = JSON.parse(stdout.trim()) as LarkCliPayload;
+    if (parsed.ok === false) throw new Error(formatCliError(parsed, stderr));
+  }
+
+  async appendTaskComment(externalId: string, text: string): Promise<void> {
+    const args = [
+      "api",
+      "POST",
+      `/open-apis/task/v2/tasks/${externalId}/comments`,
+      "--data",
+      JSON.stringify({ content: text }),
       "--as",
       "user",
       "--format",

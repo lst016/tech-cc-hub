@@ -1,4 +1,4 @@
-import type { TaskProvider, TaskProviderId, ExternalTask, ExternalTaskStatus } from "./types.js";
+import type { TaskProvider, TaskProviderId, ExternalTask, ExternalTaskStatus, TaskProviderState } from "./types.js";
 
 const registry = new Map<TaskProviderId, TaskProvider>();
 
@@ -12,6 +12,20 @@ export function getTaskProvider(id: TaskProviderId): TaskProvider | undefined {
 
 export function listTaskProviders(): TaskProvider[] {
   return Array.from(registry.values());
+}
+
+export async function listTaskProviderStates(): Promise<TaskProviderState[]> {
+  return Promise.all(Array.from(registry.values()).map(async (provider) => {
+    const validation = await provider.validateConfig();
+    return {
+      id: provider.id,
+      name: provider.name,
+      enabled: provider.isEnabled?.() ?? true,
+      valid: validation.valid,
+      error: validation.error,
+      capabilities: provider.getCapabilities?.() ?? ["fetch", "status-writeback"],
+    };
+  }));
 }
 
 // Default no-op provider for providers that aren't configured
@@ -38,6 +52,14 @@ class NoopProvider implements TaskProvider {
 
   async validateConfig(): Promise<{ valid: boolean; error?: string }> {
     return { valid: false, error: `${this.id} provider not configured` };
+  }
+
+  isEnabled(): boolean {
+    return false;
+  }
+
+  getCapabilities() {
+    return [] as TaskProviderState["capabilities"];
   }
 }
 

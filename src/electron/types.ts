@@ -141,10 +141,13 @@ export type ServerEvent =
   | { type: "task.execution.started"; payload: { execution: Record<string, unknown> } }
   | { type: "task.execution.completed"; payload: { execution: Record<string, unknown> } }
   | { type: "task.execution.log"; payload: { log: unknown } }
+  | { type: "task.execution.bundle"; payload: Record<string, unknown> }
+  | { type: "task.settings"; payload: { settings: Record<string, unknown> } }
+  | { type: "task.providers"; payload: { providers: Array<Record<string, unknown>> } }
   | { type: "task.stats"; payload: { stats: Record<string, unknown> } }
   | { type: "task.sync.completed"; payload: { provider: string; count: number } }
   | { type: "task.error"; payload: { message: string } }
-  | { type: "task.execution.list"; payload: { taskId: string; executions: Array<Record<string, unknown>>; logs: Array<Record<string, unknown>> } }
+  | { type: "task.execution.list"; payload: { taskId: string; executions: Array<Record<string, unknown>>; logs: Array<Record<string, unknown>>; subtasks?: Array<Record<string, unknown>>; artifacts?: Array<Record<string, unknown>> } }
   // Note CRUD events
   | { type: "note.list"; payload: { notes: Note[] } }
   | { type: "note.created"; payload: { note: Note } }
@@ -173,9 +176,13 @@ export type ClientEvent =
   // Task system client events
   | { type: "task.list"; payload?: { filter?: Record<string, unknown> } }
   | { type: "task.sync"; payload: { provider: string } }
-  | { type: "task.execute"; payload: { taskId: string } }
+  | { type: "task.execute"; payload: { taskId: string; options?: Record<string, unknown> } }
+  | { type: "task.control"; payload: { taskId: string; action: "pause" | "resume" | "cancel" | "cancel-retry" } }
   | { type: "task.delete"; payload: { taskId: string } }
   | { type: "task.markStatus"; payload: { taskId: string; status: string } }
+  | { type: "task.settings.get"; payload?: Record<string, unknown> }
+  | { type: "task.settings.update"; payload: { settings: Record<string, unknown> } }
+  | { type: "task.providers"; payload?: Record<string, unknown> }
   | { type: "task.stats"; payload?: Record<string, unknown> }
   | { type: "task.execution.logs"; payload: { taskId: string } }
   // Note CRUD client events

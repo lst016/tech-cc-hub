@@ -299,10 +299,13 @@ export type ServerEvent =
   | { type: "task.execution.started"; payload: { execution: UiTaskExecution } }
   | { type: "task.execution.completed"; payload: { execution: UiTaskExecution } }
   | { type: "task.execution.log"; payload: { log: UiTaskExecutionLog } }
+  | { type: "task.execution.bundle"; payload: UiTaskExecutionBundle }
+  | { type: "task.settings"; payload: { settings: UiTaskWorkflowSettings } }
+  | { type: "task.providers"; payload: { providers: UiTaskProviderState[] } }
   | { type: "task.stats"; payload: { stats: UiTaskStats } }
   | { type: "task.sync.completed"; payload: { provider: string; count: number } }
   | { type: "task.error"; payload: { message: string } }
-  | { type: "task.execution.list"; payload: { taskId: string; executions: UiTaskExecution[]; logs: UiTaskExecutionLog[] } }
+  | { type: "task.execution.list"; payload: UiTaskExecutionBundle }
   // Note CRUD events
   | { type: "note.list"; payload: { notes: UiNote[] } }
   | { type: "note.created"; payload: { note: UiNote } }
@@ -331,9 +334,13 @@ export type ClientEvent =
   // Task system client events
   | { type: "task.list"; payload?: { filter?: UiTaskFilter } }
   | { type: "task.sync"; payload: { provider: string } }
-  | { type: "task.execute"; payload: { taskId: string } }
+  | { type: "task.execute"; payload: { taskId: string; options?: UiTaskExecutionOptions } }
+  | { type: "task.control"; payload: { taskId: string; action: "pause" | "resume" | "cancel" | "cancel-retry" } }
   | { type: "task.delete"; payload: { taskId: string } }
   | { type: "task.markStatus"; payload: { taskId: string; status: string } }
+  | { type: "task.settings.get"; payload?: {} }
+  | { type: "task.settings.update"; payload: { settings: Partial<UiTaskWorkflowSettings> } }
+  | { type: "task.providers"; payload?: {} }
   | { type: "task.stats"; payload?: {} }
   | { type: "task.execution.logs"; payload: { taskId: string } }
   // Note CRUD client events
@@ -346,9 +353,9 @@ export type ClientEvent =
 // Task system UI types
 export type UiTaskProviderId = "lark" | "tb";
 
-export type UiTaskStatus = "pending" | "in_progress" | "done" | "cancelled" | "executing" | "retrying" | "completed" | "failed";
+export type UiTaskStatus = "pending" | "in_progress" | "done" | "cancelled" | "queued" | "executing" | "retrying" | "paused" | "completed" | "failed";
 
-export type UiTaskClaimState = "unclaimed" | "claimed" | "running" | "retrying" | "released";
+export type UiTaskClaimState = "unclaimed" | "claimed" | "queued" | "running" | "retrying" | "released";
 
 export type UiTaskPriority = "low" | "medium" | "high" | "urgent";
 
@@ -369,6 +376,15 @@ export type UiTask = {
   retryDueAt?: number;
   lastError?: string;
   workspacePath?: string;
+  driverId?: "claude" | "codex-app-server";
+  model?: string;
+  reasoningMode?: "disabled" | "low" | "medium" | "high" | "xhigh";
+  maxCostUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  estimatedCostUsd?: number;
+  cancelRequestedAt?: number;
+  pausedAt?: number;
   lastSyncedAt: number;
   lastExecutedAt?: number;
   executionSessionId?: string;
@@ -380,8 +396,15 @@ export type UiTaskExecution = {
   id: string;
   taskId: string;
   sessionId: string;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "cancelled";
   attempt?: number;
+  driverId?: "claude" | "codex-app-server";
+  model?: string;
+  reasoningMode?: "disabled" | "low" | "medium" | "high" | "xhigh";
+  maxCostUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  estimatedCostUsd?: number;
   startedAt: number;
   completedAt?: number;
   lastEventAt?: number;
@@ -409,11 +432,81 @@ export type UiTaskFilter = {
 export type UiTaskStats = {
   total: number;
   pending: number;
+  queued: number;
   executing: number;
   retrying: number;
+  paused: number;
   completed: number;
   failed: number;
+  cancelled: number;
+  estimatedCostUsd: number;
   byProvider: Record<string, number>;
+};
+
+export type UiTaskExecutionOptions = {
+  model?: string;
+  reasoningMode?: "disabled" | "low" | "medium" | "high" | "xhigh";
+  workspacePath?: string;
+  driverId?: "claude" | "codex-app-server";
+  maxCostUsd?: number;
+  promptTemplate?: string;
+};
+
+export type UiTaskSubtask = {
+  id: string;
+  taskId: string;
+  executionId?: string;
+  title: string;
+  detail?: string;
+  status: "pending" | "in_progress" | "done" | "blocked";
+  sortOrder: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type UiTaskArtifact = {
+  id: string;
+  taskId: string;
+  executionId?: string;
+  path: string;
+  kind: "file" | "directory" | "summary";
+  summary?: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type UiTaskExecutionBundle = {
+  taskId: string;
+  executions: UiTaskExecution[];
+  logs: UiTaskExecutionLog[];
+  subtasks: UiTaskSubtask[];
+  artifacts: UiTaskArtifact[];
+};
+
+export type UiTaskProviderState = {
+  id: UiTaskProviderId;
+  name: string;
+  enabled: boolean;
+  valid: boolean;
+  error?: string;
+  capabilities: string[];
+};
+
+export type UiTaskWorkflowSettings = {
+  pollingIntervalMs: number;
+  maxConcurrentAgents: number;
+  maxAutoRetries: number;
+  maxRetryBackoffMs: number;
+  stallTimeoutMs: number;
+  defaultDriverId: "claude" | "codex-app-server";
+  defaultReasoningMode: "disabled" | "low" | "medium" | "high" | "xhigh";
+  maxCostUsd?: number;
+  writeBackEnabled: boolean;
+  promptTemplate?: string;
+  tbCliCommand?: string;
+  tbFetchArgsTemplate?: string;
+  tbUpdateArgsTemplate?: string;
+  tbCommentArgsTemplate?: string;
 };
 
 // Note CRUD UI types

@@ -7,17 +7,41 @@ import {
   ChevronRight,
   Circle,
   Clock3,
+  DollarSign,
+  ExternalLink,
   FileText,
   Filter,
+  FolderOpen,
   Loader2,
+  Pause,
   Play,
   RefreshCw,
+  RotateCcw,
+  Save,
   Search,
+  Settings2,
+  Square,
   Trash2,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useTaskStore } from "../store/taskStore";
-import type { ClientEvent, ServerEvent, UiTask, UiTaskExecution, UiTaskExecutionLog, UiTaskStats, UiTaskStatus } from "../types";
+import { useAppStore } from "../store/useAppStore";
+import type {
+  ClientEvent,
+  ServerEvent,
+  UiTask,
+  UiTaskArtifact,
+  UiTaskExecution,
+  UiTaskExecutionBundle,
+  UiTaskExecutionLog,
+  UiTaskExecutionOptions,
+  UiTaskStats,
+  UiTaskStatus,
+  UiTaskSubtask,
+  UiTaskProviderState,
+  UiTaskWorkflowSettings,
+} from "../types";
 
 type Props = {
   connected: boolean;
@@ -30,8 +54,10 @@ const STATUS_LABELS: Record<UiTaskStatus, string> = {
   in_progress: "进行中",
   done: "外部完成",
   cancelled: "已取消",
+  queued: "排队中",
   executing: "AI 执行中",
   retrying: "自动重试",
+  paused: "已暂停",
   completed: "AI 已完成",
   failed: "执行失败",
 };
@@ -41,8 +67,10 @@ const STATUS_TONES: Record<UiTaskStatus, { badge: string; dot: string; icon: typ
   in_progress: { badge: "border-sky-200 bg-sky-50 text-sky-700", dot: "bg-sky-500", icon: Clock3 },
   done: { badge: "border-emerald-200 bg-emerald-50 text-emerald-700", dot: "bg-emerald-500", icon: CheckCircle2 },
   cancelled: { badge: "border-slate-200 bg-slate-100 text-slate-500", dot: "bg-slate-300", icon: Circle },
+  queued: { badge: "border-indigo-200 bg-indigo-50 text-indigo-700", dot: "bg-indigo-500", icon: Clock3 },
   executing: { badge: "border-amber-200 bg-amber-50 text-amber-700", dot: "bg-amber-500", icon: Loader2 },
   retrying: { badge: "border-blue-200 bg-blue-50 text-blue-700", dot: "bg-blue-500", icon: RefreshCw },
+  paused: { badge: "border-slate-200 bg-slate-50 text-slate-600", dot: "bg-slate-400", icon: Pause },
   completed: { badge: "border-emerald-200 bg-emerald-50 text-emerald-700", dot: "bg-emerald-500", icon: CheckCircle2 },
   failed: { badge: "border-red-200 bg-red-50 text-red-700", dot: "bg-red-500", icon: AlertCircle },
 };
@@ -63,8 +91,10 @@ const PRIORITY_TONES: Record<string, string> = {
 
 const STATUS_FILTERS: Array<{ value: string; label: string }> = [
   { value: "pending", label: "待处理" },
+  { value: "queued", label: "排队中" },
   { value: "executing", label: "执行中" },
   { value: "retrying", label: "重试中" },
+  { value: "paused", label: "已暂停" },
   { value: "completed", label: "AI 已完成" },
   { value: "failed", label: "失败" },
   { value: "done", label: "外部完成" },
@@ -111,8 +141,25 @@ function formatDateTime(value?: number): string | null {
   return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+function formatCost(value?: number): string {
+  if (!value || !Number.isFinite(value)) return "$0.00";
+  return `$${value.toFixed(value < 1 ? 4 : 2)}`;
+}
+
+function formatTokens(value?: number): string {
+  const normalized = Number(value ?? 0);
+  if (normalized >= 1000) return `${Math.round(normalized / 1000)}k`;
+  return String(normalized);
+}
+
 function cx(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");
+}
+
+function getElectronInvoke<T = unknown>(channel: string, ...args: unknown[]): Promise<T> {
+  const electronApi = window.electron as typeof window.electron & { invoke?: (c: string, ...a: unknown[]) => Promise<T> };
+  if (electronApi.invoke) return electronApi.invoke(channel, ...args);
+  return Promise.reject(new Error("Electron invoke bridge unavailable"));
 }
 
 function StatusBadge({ status, compact = false }: { status: UiTaskStatus; compact?: boolean }) {
@@ -152,26 +199,38 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
   const stats = useTaskStore((s) => s.stats);
   const executions = useTaskStore((s) => s.executions);
   const executionLogs = useTaskStore((s) => s.executionLogs);
+  const subtasks = useTaskStore((s) => s.subtasks);
+  const artifacts = useTaskStore((s) => s.artifacts);
   const selectedTaskId = useTaskStore((s) => s.selectedTaskId);
   const syncing = useTaskStore((s) => s.syncing);
+  const settings = useTaskStore((s) => s.settings);
+  const providers = useTaskStore((s) => s.providers);
   const setTasks = useTaskStore((s) => s.setTasks);
   const upsertTask = useTaskStore((s) => s.upsertTask);
   const setStats = useTaskStore((s) => s.setStats);
   const setExecutionData = useTaskStore((s) => s.setExecutionData);
+  const setTaskSettings = useTaskStore((s) => s.setTaskSettings);
+  const setProviders = useTaskStore((s) => s.setProviders);
   const addExecutionLog = useTaskStore((s) => s.addExecutionLog);
   const removeTask = useTaskStore((s) => s.removeTask);
   const setSelectedTaskId = useTaskStore((s) => s.setSelectedTaskId);
   const setSyncing = useTaskStore((s) => s.setSyncing);
+  const setActiveSessionId = useAppStore((s) => s.setActiveSessionId);
 
   const [statusFilter, setStatusFilter] = useState<string>("pending");
   const [providerFilter, setProviderFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [draftSettings, setDraftSettings] = useState<UiTaskWorkflowSettings | null>(null);
+  const [executeOptions, setExecuteOptions] = useState<UiTaskExecutionOptions>({});
 
   useEffect(() => {
     if (!connected) return;
     sendEvent({ type: "task.list" });
     sendEvent({ type: "task.stats" });
+    sendEvent({ type: "task.settings.get" });
+    sendEvent({ type: "task.providers" });
   }, [connected, sendEvent]);
 
   useEffect(() => {
@@ -196,10 +255,24 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
           setStats((e.payload as { stats: UiTaskStats }).stats);
           break;
         case "task.execution.list": {
-          const p = e.payload as { taskId: string; executions: UiTaskExecution[]; logs: UiTaskExecutionLog[] };
-          setExecutionData(p.taskId, p.executions, p.logs);
+          const p = e.payload as UiTaskExecutionBundle;
+          setExecutionData(p.taskId, p.executions, p.logs, p.subtasks, p.artifacts);
           break;
         }
+        case "task.execution.bundle": {
+          const p = e.payload as UiTaskExecutionBundle;
+          setExecutionData(p.taskId, p.executions, p.logs, p.subtasks, p.artifacts);
+          break;
+        }
+        case "task.settings": {
+          const next = (e.payload as { settings: UiTaskWorkflowSettings }).settings;
+          setTaskSettings(next);
+          setDraftSettings(next);
+          break;
+        }
+        case "task.providers":
+          setProviders((e.payload as { providers: UiTaskProviderState[] }).providers);
+          break;
         case "task.execution.started":
           sendEvent({ type: "task.execution.logs", payload: { taskId: (e.payload as { execution: UiTaskExecution }).execution.taskId } });
           break;
@@ -237,7 +310,7 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
     return () => {
       unsubscribeCallbacks.forEach((fn) => fn());
     };
-  }, [connected, sendEvent, setTasks, upsertTask, removeTask, setStats, setSyncing, setExecutionData, addExecutionLog]);
+  }, [connected, sendEvent, setTasks, upsertTask, removeTask, setStats, setSyncing, setExecutionData, setTaskSettings, setProviders, addExecutionLog]);
 
   const selectedTask = useMemo(
     () => tasks.find((t) => t.id === selectedTaskId) ?? null,
@@ -253,6 +326,27 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
     () => (selectedTaskId ? executionLogs[selectedTaskId] ?? [] : []),
     [executionLogs, selectedTaskId],
   );
+
+  const taskSubtasks = useMemo(
+    () => (selectedTaskId ? subtasks[selectedTaskId] ?? [] : []),
+    [subtasks, selectedTaskId],
+  );
+
+  const taskArtifacts = useMemo(
+    () => (selectedTaskId ? artifacts[selectedTaskId] ?? [] : []),
+    [artifacts, selectedTaskId],
+  );
+
+  useEffect(() => {
+    if (!selectedTask && !settings) return;
+    setExecuteOptions({
+      driverId: selectedTask?.driverId ?? settings?.defaultDriverId ?? "claude",
+      reasoningMode: selectedTask?.reasoningMode ?? settings?.defaultReasoningMode ?? "high",
+      model: selectedTask?.model ?? "",
+      workspacePath: selectedTask?.workspacePath ?? "",
+      maxCostUsd: selectedTask?.maxCostUsd ?? settings?.maxCostUsd,
+    });
+  }, [selectedTask?.id, settings?.defaultDriverId, settings?.defaultReasoningMode, settings?.maxCostUsd]);
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { all: tasks.length };
@@ -298,7 +392,20 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
 
   const handleExecute = useCallback(
     (taskId: string) => {
-      sendEvent({ type: "task.execute", payload: { taskId } });
+      const options: UiTaskExecutionOptions = {
+        ...executeOptions,
+        model: executeOptions.model?.trim() || undefined,
+        workspacePath: executeOptions.workspacePath?.trim() || undefined,
+        promptTemplate: executeOptions.promptTemplate?.trim() || undefined,
+      };
+      sendEvent({ type: "task.execute", payload: { taskId, options } });
+    },
+    [executeOptions, sendEvent],
+  );
+
+  const handleControl = useCallback(
+    (taskId: string, action: "pause" | "resume" | "cancel" | "cancel-retry") => {
+      sendEvent({ type: "task.control", payload: { taskId, action } });
     },
     [sendEvent],
   );
@@ -320,12 +427,38 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
     [sendEvent, setSelectedTaskId],
   );
 
+  const handleSaveSettings = useCallback(() => {
+    if (!draftSettings) return;
+    sendEvent({ type: "task.settings.update", payload: { settings: draftSettings } });
+    sendEvent({ type: "task.providers" });
+    toast.success("任务系统配置已保存");
+  }, [draftSettings, sendEvent]);
+
+  const handleOpenWorkspace = useCallback(async (path?: string) => {
+    if (!path) return;
+    try {
+      await getElectronInvoke("preview-show-item-in-folder", { path });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "打开工作区失败");
+    }
+  }, []);
+
+  const handleOpenSession = useCallback((sessionId?: string) => {
+    if (!sessionId) return;
+    setActiveSessionId(sessionId);
+    sendEvent({ type: "session.history", payload: { sessionId } });
+    onBack();
+  }, [onBack, sendEvent, setActiveSessionId]);
+
   const statTiles = [
     { label: "总任务", value: stats?.total ?? tasks.length, className: "text-slate-900", icon: FileText },
+    { label: "排队", value: stats?.queued ?? 0, className: "text-indigo-700", icon: Clock3 },
     { label: "执行中", value: stats?.executing ?? 0, className: "text-amber-700", icon: Loader2 },
     { label: "待重试", value: stats?.retrying ?? 0, className: "text-blue-700", icon: RefreshCw },
+    { label: "暂停", value: stats?.paused ?? 0, className: "text-slate-600", icon: Pause },
     { label: "AI 完成", value: stats?.completed ?? 0, className: "text-emerald-700", icon: CheckCircle2 },
     { label: "失败", value: stats?.failed ?? 0, className: "text-red-700", icon: AlertCircle },
+    { label: "费用", value: formatCost(stats?.estimatedCostUsd), className: "text-slate-700", icon: DollarSign },
   ];
 
   return (
@@ -355,6 +488,17 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
           <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
+              onClick={() => setShowSettings((value) => !value)}
+              className={cx(
+                "inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition",
+                showSettings ? "border-orange-200 bg-orange-50 text-orange-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+              )}
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+              配置
+            </button>
+            <button
+              type="button"
               onClick={() => handleSync("lark")}
               disabled={syncing || !connected}
               className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -364,16 +508,17 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
             </button>
             <button
               type="button"
-              disabled
-              title="TB Provider 未注册"
-              className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-400"
+              onClick={() => handleSync("tb")}
+              disabled={syncing || !connected || providers.find((item) => item.id === "tb")?.enabled === false}
+              title={providers.find((item) => item.id === "tb")?.error ?? "同步 TB"}
+              className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
             >
               同步 TB
             </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-5 gap-px border-t border-slate-100 bg-slate-100">
+        <div className="grid grid-cols-8 gap-px border-t border-slate-100 bg-slate-100">
           {statTiles.map((tile) => {
             const Icon = tile.icon;
             return (
@@ -387,6 +532,112 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
             );
           })}
         </div>
+
+        {showSettings && draftSettings && (
+          <div className="border-t border-slate-200 bg-slate-50 px-5 py-3">
+            <div className="grid grid-cols-[1.2fr_1fr_1fr] gap-3">
+              <section className="rounded-lg border border-slate-200 bg-white p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <h3 className="text-xs font-semibold text-slate-900">调度策略</h3>
+                  <button
+                    type="button"
+                    onClick={handleSaveSettings}
+                    className="inline-flex h-7 items-center gap-1.5 rounded-md bg-slate-950 px-2.5 text-[11px] font-semibold text-white"
+                  >
+                    <Save className="h-3 w-3" />
+                    保存
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <label className="text-[11px] font-medium text-slate-500">
+                    并发数
+                    <input
+                      type="number"
+                      min={1}
+                      value={draftSettings.maxConcurrentAgents}
+                      onChange={(e) => setDraftSettings({ ...draftSettings, maxConcurrentAgents: Number(e.target.value) })}
+                      className="mt-1 h-8 w-full rounded-md border border-slate-200 px-2 text-xs text-slate-800 outline-none"
+                    />
+                  </label>
+                  <label className="text-[11px] font-medium text-slate-500">
+                    自动重试
+                    <input
+                      type="number"
+                      min={0}
+                      value={draftSettings.maxAutoRetries}
+                      onChange={(e) => setDraftSettings({ ...draftSettings, maxAutoRetries: Number(e.target.value) })}
+                      className="mt-1 h-8 w-full rounded-md border border-slate-200 px-2 text-xs text-slate-800 outline-none"
+                    />
+                  </label>
+                  <label className="text-[11px] font-medium text-slate-500">
+                    卡住判定秒
+                    <input
+                      type="number"
+                      min={30}
+                      value={Math.round(draftSettings.stallTimeoutMs / 1000)}
+                      onChange={(e) => setDraftSettings({ ...draftSettings, stallTimeoutMs: Number(e.target.value) * 1000 })}
+                      className="mt-1 h-8 w-full rounded-md border border-slate-200 px-2 text-xs text-slate-800 outline-none"
+                    />
+                  </label>
+                </div>
+              </section>
+
+              <section className="rounded-lg border border-slate-200 bg-white p-3">
+                <h3 className="mb-2 text-xs font-semibold text-slate-900">默认执行</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="text-[11px] font-medium text-slate-500">
+                    Driver
+                    <select
+                      value={draftSettings.defaultDriverId}
+                      onChange={(e) => setDraftSettings({ ...draftSettings, defaultDriverId: e.target.value as UiTaskWorkflowSettings["defaultDriverId"] })}
+                      className="mt-1 h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-800 outline-none"
+                    >
+                      <option value="claude">Claude 主运行器</option>
+                      <option value="codex-app-server">Codex app-server</option>
+                    </select>
+                  </label>
+                  <label className="text-[11px] font-medium text-slate-500">
+                    预算 $
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={draftSettings.maxCostUsd ?? ""}
+                      onChange={(e) => setDraftSettings({ ...draftSettings, maxCostUsd: e.target.value ? Number(e.target.value) : undefined })}
+                      className="mt-1 h-8 w-full rounded-md border border-slate-200 px-2 text-xs text-slate-800 outline-none"
+                    />
+                  </label>
+                </div>
+                <label className="mt-2 flex items-center gap-2 text-[11px] font-semibold text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={draftSettings.writeBackEnabled}
+                    onChange={(e) => setDraftSettings({ ...draftSettings, writeBackEnabled: e.target.checked })}
+                  />
+                  执行结果回写到来源任务
+                </label>
+              </section>
+
+              <section className="rounded-lg border border-slate-200 bg-white p-3">
+                <h3 className="mb-2 text-xs font-semibold text-slate-900">TB Provider</h3>
+                <div className="grid gap-2">
+                  <input
+                    value={draftSettings.tbCliCommand ?? ""}
+                    onChange={(e) => setDraftSettings({ ...draftSettings, tbCliCommand: e.target.value })}
+                    placeholder="CLI 命令"
+                    className="h-8 rounded-md border border-slate-200 px-2 text-xs text-slate-800 outline-none"
+                  />
+                  <input
+                    value={draftSettings.tbFetchArgsTemplate ?? ""}
+                    onChange={(e) => setDraftSettings({ ...draftSettings, tbFetchArgsTemplate: e.target.value })}
+                    placeholder="拉取参数模板，输出 JSON items"
+                    className="h-8 rounded-md border border-slate-200 px-2 text-xs text-slate-800 outline-none"
+                  />
+                </div>
+              </section>
+            </div>
+          </div>
+        )}
 
       </header>
 
@@ -532,6 +783,65 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                   <div className="flex shrink-0 items-center gap-2">
                     <button
                       type="button"
+                      onClick={() => handleOpenWorkspace(selectedTask.workspacePath)}
+                      disabled={!selectedTask.workspacePath}
+                      title="在 Finder 中打开任务工作区"
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <FolderOpen className="h-3.5 w-3.5" />
+                      工作区
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenSession(selectedTask.executionSessionId)}
+                      disabled={!selectedTask.executionSessionId}
+                      title="打开本任务对应会话"
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      会话
+                    </button>
+                    {selectedTask.localStatus === "executing" ? (
+                      <button
+                        type="button"
+                        onClick={() => handleControl(selectedTask.id, "pause")}
+                        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                      >
+                        <Pause className="h-3.5 w-3.5" />
+                        暂停
+                      </button>
+                    ) : selectedTask.localStatus === "paused" ? (
+                      <button
+                        type="button"
+                        onClick={() => handleControl(selectedTask.id, "resume")}
+                        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-100"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        恢复
+                      </button>
+                    ) : null}
+                    {(selectedTask.localStatus === "retrying" || selectedTask.localStatus === "queued") && (
+                      <button
+                        type="button"
+                        onClick={() => handleControl(selectedTask.id, "cancel-retry")}
+                        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-700 transition hover:bg-blue-100"
+                      >
+                        <XCircle className="h-3.5 w-3.5" />
+                        取消重试
+                      </button>
+                    )}
+                    {selectedTask.localStatus !== "completed" && selectedTask.localStatus !== "cancelled" && (
+                      <button
+                        type="button"
+                        onClick={() => handleControl(selectedTask.id, "cancel")}
+                        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-100 bg-red-50 px-3 text-xs font-semibold text-red-700 transition hover:bg-red-100"
+                      >
+                        <Square className="h-3.5 w-3.5" />
+                        取消
+                      </button>
+                    )}
+                    <button
+                      type="button"
                       onClick={() => handleDelete(selectedTask)}
                       disabled={selectedTask.localStatus === "executing" || !connected}
                       title="只从任务面板删除，不删除飞书任务"
@@ -560,6 +870,55 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+                <section className="mb-4 rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <h3 className="text-sm font-semibold text-slate-900">手动执行参数</h3>
+                    <span className="text-[11px] text-slate-400">重跑时覆盖默认模型、强度、工作区与预算</span>
+                  </div>
+                  <div className="grid grid-cols-[1fr_150px_150px_120px] gap-2">
+                    <input
+                      value={executeOptions.model ?? ""}
+                      onChange={(e) => setExecuteOptions((current) => ({ ...current, model: e.target.value }))}
+                      placeholder="模型名，留空使用当前主模型"
+                      className="h-9 rounded-lg border border-slate-200 px-3 text-xs text-slate-800 outline-none"
+                    />
+                    <select
+                      value={executeOptions.reasoningMode ?? settings?.defaultReasoningMode ?? "high"}
+                      onChange={(e) => setExecuteOptions((current) => ({ ...current, reasoningMode: e.target.value as UiTaskExecutionOptions["reasoningMode"] }))}
+                      className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-800 outline-none"
+                    >
+                      <option value="disabled">不思考</option>
+                      <option value="low">低</option>
+                      <option value="medium">中</option>
+                      <option value="high">高</option>
+                      <option value="xhigh">超高</option>
+                    </select>
+                    <select
+                      value={executeOptions.driverId ?? settings?.defaultDriverId ?? "claude"}
+                      onChange={(e) => setExecuteOptions((current) => ({ ...current, driverId: e.target.value as UiTaskExecutionOptions["driverId"] }))}
+                      className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-800 outline-none"
+                    >
+                      <option value="claude">主运行器</option>
+                      <option value="codex-app-server">app-server</option>
+                    </select>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={executeOptions.maxCostUsd ?? ""}
+                      onChange={(e) => setExecuteOptions((current) => ({ ...current, maxCostUsd: e.target.value ? Number(e.target.value) : undefined }))}
+                      placeholder="预算 $"
+                      className="h-9 rounded-lg border border-slate-200 px-3 text-xs text-slate-800 outline-none"
+                    />
+                  </div>
+                  <input
+                    value={executeOptions.workspacePath ?? ""}
+                    onChange={(e) => setExecuteOptions((current) => ({ ...current, workspacePath: e.target.value }))}
+                    placeholder="自定义 workspace 路径，留空自动创建任务工作区"
+                    className="mt-2 h-9 w-full rounded-lg border border-slate-200 px-3 font-mono text-xs text-slate-800 outline-none"
+                  />
+                </section>
+
                 <div className="grid grid-cols-4 gap-3">
                   <div className="rounded-lg border border-slate-200 bg-white p-3">
                     <p className="text-[11px] font-medium text-slate-500">外部 ID</p>
@@ -602,6 +961,18 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                       <span className="min-w-0 truncate font-mono text-slate-800" title={selectedTask.workspacePath ?? "-"}>{selectedTask.workspacePath ?? "-"}</span>
                     </div>
                     <div className="flex items-start justify-between gap-4">
+                      <span className="shrink-0 font-medium text-slate-500">模型</span>
+                      <span className="min-w-0 truncate font-mono text-slate-800" title={selectedTask.model ?? "-"}>{selectedTask.model ?? "-"}</span>
+                    </div>
+                    <div className="flex items-start justify-between gap-4">
+                      <span className="shrink-0 font-medium text-slate-500">Driver / 强度</span>
+                      <span className="text-slate-800">{selectedTask.driverId ?? settings?.defaultDriverId ?? "-"} · {selectedTask.reasoningMode ?? settings?.defaultReasoningMode ?? "-"}</span>
+                    </div>
+                    <div className="flex items-start justify-between gap-4">
+                      <span className="shrink-0 font-medium text-slate-500">用量 / 费用</span>
+                      <span className="text-slate-800">{formatTokens(selectedTask.inputTokens)} in · {formatTokens(selectedTask.outputTokens)} out · {formatCost(selectedTask.estimatedCostUsd)}</span>
+                    </div>
+                    <div className="flex items-start justify-between gap-4">
                       <span className="shrink-0 font-medium text-slate-500">重试</span>
                       <span className="text-slate-800">
                         第 {selectedTask.retryAttempt ?? 0} 次{selectedTask.retryDueAt ? ` · ${formatDateTime(selectedTask.retryDueAt)} 触发` : ""}
@@ -611,6 +982,55 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                       <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-red-700">
                         {selectedTask.lastError}
                       </div>
+                    )}
+                  </div>
+                </section>
+
+                <section className="mt-4 rounded-lg border border-slate-200 bg-white">
+                  <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                    <h3 className="text-sm font-semibold text-slate-900">子任务拆解</h3>
+                    <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">{taskSubtasks.length}</span>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {taskSubtasks.length === 0 ? (
+                      <div className="px-4 py-5 text-sm text-slate-400">执行后会从 Agent 输出中提取子任务。</div>
+                    ) : (
+                      taskSubtasks.map((item: UiTaskSubtask) => (
+                        <div key={item.id} className="flex items-start gap-3 px-4 py-3">
+                          <span className={cx("mt-1 h-2.5 w-2.5 rounded-full", item.status === "done" ? "bg-emerald-500" : item.status === "blocked" ? "bg-red-500" : "bg-slate-300")} />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-semibold text-slate-800">{item.title}</p>
+                            {item.detail && <p className="mt-1 text-xs text-slate-500">{item.detail}</p>}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
+
+                <section className="mt-4 rounded-lg border border-slate-200 bg-white">
+                  <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                    <h3 className="text-sm font-semibold text-slate-900">执行产物</h3>
+                    <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">{taskArtifacts.length}</span>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {taskArtifacts.length === 0 ? (
+                      <div className="px-4 py-5 text-sm text-slate-400">暂无文件变更记录。</div>
+                    ) : (
+                      taskArtifacts.map((item: UiTaskArtifact) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => handleOpenWorkspace(item.path)}
+                          className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-slate-50"
+                        >
+                          <FileText className="h-4 w-4 shrink-0 text-slate-400" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-mono text-xs font-semibold text-slate-800" title={item.path}>{item.path}</p>
+                            <p className="mt-0.5 text-[11px] text-slate-400">{item.summary ?? item.kind}</p>
+                          </div>
+                        </button>
+                      ))
                     )}
                   </div>
                 </section>

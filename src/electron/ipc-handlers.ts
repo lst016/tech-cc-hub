@@ -22,8 +22,10 @@ import {
   TaskExecutor,
   TaskRepository,
   LarkTaskProvider,
+  TbTaskProvider,
   registerTaskProvider,
   type TaskFilter,
+  type TaskExecutionOptions,
   type TaskProviderId,
 } from "./libs/task/index.js";
 import { NoteRepository } from "./libs/note-repository.js";
@@ -60,6 +62,7 @@ export function initializeTaskExecutor(dbPath: string): TaskExecutor {
   const sessionStore = initializeSessions();
 
   registerTaskProvider(new LarkTaskProvider());
+  registerTaskProvider(new TbTaskProvider());
 
   const executor = new TaskExecutor(taskRepo, {
     onTaskUpdated: (task) => {
@@ -1221,7 +1224,12 @@ export async function handleClientEvent(event: ClientEvent) {
   }
 
   if (event.type === "task.execute") {
-    void taskExecutor?.triggerExecution(event.payload.taskId);
+    void taskExecutor?.triggerExecution(event.payload.taskId, event.payload.options as TaskExecutionOptions | undefined);
+    return;
+  }
+
+  if (event.type === "task.control") {
+    taskExecutor?.controlTask(event.payload.taskId, event.payload.action);
     return;
   }
 
@@ -1232,6 +1240,38 @@ export async function handleClientEvent(event: ClientEvent) {
 
   if (event.type === "task.markStatus") {
     void taskExecutor?.markTaskStatus(event.payload.taskId, event.payload.status as "pending" | "in_progress" | "done" | "cancelled");
+    return;
+  }
+
+  if (event.type === "task.settings.get") {
+    const settings = taskExecutor?.getSettings();
+    if (settings) {
+      emit({
+        type: "task.settings",
+        payload: { settings },
+      } as ServerEvent);
+    }
+    return;
+  }
+
+  if (event.type === "task.settings.update") {
+    const settings = taskExecutor?.updateSettings(event.payload.settings);
+    if (settings) {
+      emit({
+        type: "task.settings",
+        payload: { settings },
+      } as ServerEvent);
+    }
+    return;
+  }
+
+  if (event.type === "task.providers") {
+    void taskExecutor?.getProviderStates().then((providers) => {
+      emit({
+        type: "task.providers",
+        payload: { providers },
+      } as ServerEvent);
+    });
     return;
   }
 
@@ -1248,11 +1288,16 @@ export async function handleClientEvent(event: ClientEvent) {
 
   if (event.type === "task.execution.logs") {
     const executionTaskId = event.payload.taskId;
-    const executions = taskExecutor?.getExecutions(executionTaskId) ?? [];
-    const logs = taskExecutor?.getExecutionLogs(executionTaskId) ?? [];
+    const bundle = taskExecutor?.getExecutionBundle(executionTaskId) ?? {
+      taskId: executionTaskId,
+      executions: [],
+      logs: [],
+      subtasks: [],
+      artifacts: [],
+    };
     emit({
       type: "task.execution.list",
-      payload: { taskId: executionTaskId, executions, logs },
+      payload: bundle,
     } as ServerEvent);
     return;
   }
