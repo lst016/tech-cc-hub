@@ -346,7 +346,9 @@ export type ClientEvent =
 // Task system UI types
 export type UiTaskProviderId = "lark" | "tb";
 
-export type UiTaskStatus = "pending" | "in_progress" | "done" | "cancelled" | "executing" | "completed" | "failed";
+export type UiTaskStatus = "pending" | "in_progress" | "done" | "cancelled" | "executing" | "retrying" | "completed" | "failed";
+
+export type UiTaskClaimState = "unclaimed" | "claimed" | "running" | "retrying" | "released";
 
 export type UiTaskPriority = "low" | "medium" | "high" | "urgent";
 
@@ -362,6 +364,11 @@ export type UiTask = {
   dueDate?: number;
   sourceData: Record<string, unknown>;
   localStatus: UiTaskStatus;
+  claimState: UiTaskClaimState;
+  retryAttempt: number;
+  retryDueAt?: number;
+  lastError?: string;
+  workspacePath?: string;
   lastSyncedAt: number;
   lastExecutedAt?: number;
   executionSessionId?: string;
@@ -374,8 +381,11 @@ export type UiTaskExecution = {
   taskId: string;
   sessionId: string;
   status: "running" | "completed" | "failed";
+  attempt?: number;
   startedAt: number;
   completedAt?: number;
+  lastEventAt?: number;
+  terminalReason?: string;
   result?: string;
   error?: string;
 };
@@ -400,6 +410,7 @@ export type UiTaskStats = {
   total: number;
   pending: number;
   executing: number;
+  retrying: number;
   completed: number;
   failed: number;
   byProvider: Record<string, number>;

@@ -8,6 +8,7 @@ import type {
   TaskStats,
   LocalTaskStatus,
   TaskProviderId,
+  TaskClaimState,
 } from "./task-types.js";
 
 export class TaskRepository {
@@ -19,6 +20,7 @@ export class TaskRepository {
   }
 
   private initialize(): void {
+    this.resetTaskTablesIfOutdated();
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
@@ -32,6 +34,11 @@ export class TaskRepository {
         due_date INTEGER,
         source_data TEXT NOT NULL DEFAULT '{}',
         local_status TEXT NOT NULL DEFAULT 'pending',
+        claim_state TEXT NOT NULL DEFAULT 'unclaimed',
+        retry_attempt INTEGER NOT NULL DEFAULT 0,
+        retry_due_at INTEGER,
+        last_error TEXT,
+        workspace_path TEXT,
         last_synced_at INTEGER NOT NULL,
         last_executed_at INTEGER,
         execution_session_id TEXT,
@@ -45,8 +52,11 @@ export class TaskRepository {
         task_id TEXT NOT NULL REFERENCES tasks(id),
         session_id TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'running',
+        attempt INTEGER NOT NULL DEFAULT 0,
         started_at INTEGER NOT NULL,
         completed_at INTEGER,
+        last_event_at INTEGER,
+        terminal_reason TEXT,
         result TEXT,
         error TEXT
       );
@@ -73,21 +83,61 @@ export class TaskRepository {
       CREATE INDEX IF NOT EXISTS idx_task_executions_task ON task_executions(task_id);
       CREATE INDEX IF NOT EXISTS idx_task_execution_logs_exec ON task_execution_logs(execution_id);
     `);
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_retry_due ON tasks(local_status, retry_due_at)");
+  }
+
+  private resetTaskTablesIfOutdated(): void {
+    const tasksTable = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tasks'")
+      .get() as { name?: string } | undefined;
+    if (!tasksTable) return;
+
+    const hasTasksColumns = this.hasColumns("tasks", [
+      "claim_state",
+      "retry_attempt",
+      "retry_due_at",
+      "last_error",
+      "workspace_path",
+    ]);
+    const hasExecutionColumns = this.hasColumns("task_executions", [
+      "attempt",
+      "last_event_at",
+      "terminal_reason",
+    ]);
+    if (hasTasksColumns && hasExecutionColumns) return;
+
+    this.db.exec(`
+      DROP TABLE IF EXISTS task_execution_logs;
+      DROP TABLE IF EXISTS task_executions;
+      DROP TABLE IF EXISTS task_dismissals;
+      DROP TABLE IF EXISTS tasks;
+    `);
+  }
+
+  private hasColumns(table: string, columns: string[]): boolean {
+    const exists = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(table) as { name?: string } | undefined;
+    if (!exists) return false;
+
+    const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    const present = new Set(rows.map((row) => row.name));
+    return columns.every((column) => present.has(column));
   }
 
   upsertTask(external: ExternalTask): StoredTask {
     const now = Date.now();
     const existing = this.db
-      .prepare("SELECT id, status, local_status, last_executed_at, execution_session_id FROM tasks WHERE external_id = ? AND provider = ?")
+      .prepare("SELECT * FROM tasks WHERE external_id = ? AND provider = ?")
       .get(external.externalId, external.provider) as
-        | { id: string; status: string; local_status: string; last_executed_at: number | null; execution_session_id: string | null }
+        | Record<string, unknown>
         | undefined;
 
     if (existing) {
       const nextLocalStatus =
         existing.local_status === "pending" && (external.status === "done" || external.status === "cancelled")
           ? external.status
-          : existing.local_status;
+          : String(existing.local_status);
       this.db
         .prepare(
           `UPDATE tasks SET
@@ -112,9 +162,14 @@ export class TaskRepository {
       return {
         ...external,
         localStatus: nextLocalStatus as LocalTaskStatus,
+        claimState: existing.claim_state as TaskClaimState,
+        retryAttempt: Number(existing.retry_attempt ?? 0),
+        retryDueAt: existing.retry_due_at as number | undefined,
+        lastError: existing.last_error as string | undefined,
+        workspacePath: existing.workspace_path as string | undefined,
         lastSyncedAt: now,
-        lastExecutedAt: existing.last_executed_at ?? undefined,
-        executionSessionId: existing.execution_session_id ?? undefined,
+        lastExecutedAt: existing.last_executed_at as number | undefined,
+        executionSessionId: existing.execution_session_id as string | undefined,
       };
     }
 
@@ -145,6 +200,8 @@ export class TaskRepository {
     return {
       ...external,
       localStatus: external.status,
+      claimState: "unclaimed",
+      retryAttempt: 0,
       lastSyncedAt: now,
     };
   }
@@ -237,9 +294,42 @@ export class TaskRepository {
   }
 
   updateLocalStatus(id: string, localStatus: LocalTaskStatus): void {
+    const claimState: TaskClaimState =
+      localStatus === "executing"
+        ? "running"
+        : localStatus === "retrying"
+          ? "retrying"
+          : localStatus === "failed" || localStatus === "completed"
+            ? "released"
+            : "unclaimed";
     this.db
-      .prepare("UPDATE tasks SET local_status = ?, updated_at = ? WHERE id = ?")
-      .run(localStatus, Date.now(), id);
+      .prepare(
+        `UPDATE tasks SET
+          local_status = ?,
+          claim_state = ?,
+          execution_session_id = CASE WHEN ? = 'executing' THEN execution_session_id ELSE NULL END,
+          retry_due_at = CASE WHEN ? = 'retrying' THEN retry_due_at ELSE NULL END,
+          last_error = CASE WHEN ? IN ('failed', 'retrying') THEN last_error ELSE NULL END,
+          updated_at = ?
+         WHERE id = ?`
+      )
+      .run(localStatus, claimState, localStatus, localStatus, localStatus, Date.now(), id);
+  }
+
+  markFailed(id: string, error: string): StoredTask | undefined {
+    this.db
+      .prepare(
+        `UPDATE tasks SET
+          local_status = 'failed',
+          claim_state = 'released',
+          execution_session_id = NULL,
+          retry_due_at = NULL,
+          last_error = ?,
+          updated_at = ?
+         WHERE id = ?`
+      )
+      .run(error, Date.now(), id);
+    return this.getTask(id);
   }
 
   recoverInterruptedExecutions(error: string, options: { activeTaskIds?: Iterable<string> } = {}): Array<{
@@ -278,11 +368,11 @@ export class TaskRepository {
     const recover = this.db.transaction((executionRows: Record<string, unknown>[]) => {
       for (const row of executionRows) {
         this.db
-          .prepare("UPDATE task_executions SET status = 'failed', completed_at = ?, error = ? WHERE id = ? AND status = 'running'")
-          .run(now, error, row.id);
+          .prepare("UPDATE task_executions SET status = 'failed', completed_at = ?, error = ?, terminal_reason = ? WHERE id = ? AND status = 'running'")
+          .run(now, error, "interrupted", row.id);
         this.db
-          .prepare("UPDATE tasks SET local_status = 'failed', execution_session_id = NULL, updated_at = ? WHERE id = ? AND local_status = 'executing'")
-          .run(now, row.task_id);
+          .prepare("UPDATE tasks SET local_status = 'failed', claim_state = 'released', execution_session_id = NULL, last_error = ?, updated_at = ? WHERE id = ? AND local_status = 'executing'")
+          .run(error, now, row.task_id);
       }
     });
     recover(rows);
@@ -331,13 +421,61 @@ export class TaskRepository {
     return task;
   }
 
-  setExecuting(id: string, sessionId: string): void {
+  setExecuting(id: string, sessionId: string, options: { attempt?: number; workspacePath?: string } = {}): void {
     const now = Date.now();
     this.db
       .prepare(
-        "UPDATE tasks SET local_status = 'executing', execution_session_id = ?, last_executed_at = ?, updated_at = ? WHERE id = ?"
+        `UPDATE tasks SET
+          local_status = 'executing',
+          claim_state = 'running',
+          execution_session_id = ?,
+          retry_attempt = ?,
+          retry_due_at = NULL,
+          last_error = NULL,
+          workspace_path = COALESCE(?, workspace_path),
+          last_executed_at = ?,
+          updated_at = ?
+         WHERE id = ?`
       )
-      .run(sessionId, now, now, id);
+      .run(sessionId, options.attempt ?? 0, options.workspacePath ?? null, now, now, id);
+  }
+
+  scheduleRetry(id: string, attempt: number, dueAt: number, error: string): StoredTask | undefined {
+    const now = Date.now();
+    this.db
+      .prepare(
+        `UPDATE tasks SET
+          local_status = 'retrying',
+          claim_state = 'retrying',
+          execution_session_id = NULL,
+          retry_attempt = ?,
+          retry_due_at = ?,
+          last_error = ?,
+          updated_at = ?
+         WHERE id = ?`
+      )
+      .run(attempt, dueAt, error, now, id);
+    return this.getTask(id);
+  }
+
+  clearRetry(id: string): void {
+    this.db
+      .prepare("UPDATE tasks SET retry_due_at = NULL, last_error = NULL WHERE id = ?")
+      .run(id);
+  }
+
+  listDueRetryTasks(now: number, limit: number): StoredTask[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM tasks
+         WHERE local_status = 'retrying'
+           AND retry_due_at IS NOT NULL
+           AND retry_due_at <= ?
+         ORDER BY retry_due_at ASC, updated_at ASC
+         LIMIT ?`
+      )
+      .all(now, limit)
+      .map((row) => this.rowToTask(row as Record<string, unknown>));
   }
 
   getStats(): TaskStats {
@@ -353,6 +491,7 @@ export class TaskRepository {
       total: 0,
       pending: 0,
       executing: 0,
+      retrying: 0,
       completed: 0,
       failed: 0,
       byProvider: {} as Record<TaskProviderId, number>,
@@ -368,6 +507,9 @@ export class TaskRepository {
           break;
         case "executing":
           stats.executing += row.cnt;
+          break;
+        case "retrying":
+          stats.retrying += row.cnt;
           break;
         case "completed":
           stats.completed += row.cnt;
@@ -390,21 +532,26 @@ export class TaskRepository {
   // Execution records
   createExecution(execution: Omit<TaskExecution, "id">): TaskExecution {
     const id = crypto.randomUUID();
+    const lastEventAt = execution.lastEventAt ?? execution.startedAt;
     this.db
       .prepare(
-        "INSERT INTO task_executions (id, task_id, session_id, status, started_at) VALUES (?, ?, ?, ?, ?)"
+        "INSERT INTO task_executions (id, task_id, session_id, status, attempt, started_at, last_event_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
       )
-      .run(id, execution.taskId, execution.sessionId, execution.status, execution.startedAt);
-    return { ...execution, id };
+      .run(id, execution.taskId, execution.sessionId, execution.status, execution.attempt ?? 0, execution.startedAt, lastEventAt);
+    return { ...execution, id, lastEventAt };
   }
 
-  completeExecution(id: string, result?: string, error?: string): void {
+  touchExecution(id: string, timestamp = Date.now()): void {
+    this.db.prepare("UPDATE task_executions SET last_event_at = ? WHERE id = ? AND status = 'running'").run(timestamp, id);
+  }
+
+  completeExecution(id: string, result?: string, error?: string, terminalReason?: string): void {
     const status = error ? "failed" : "completed";
     this.db
       .prepare(
-        "UPDATE task_executions SET status = ?, completed_at = ?, result = ?, error = ? WHERE id = ?"
+        "UPDATE task_executions SET status = ?, completed_at = ?, result = ?, error = ?, terminal_reason = ? WHERE id = ?"
       )
-      .run(status, Date.now(), result ?? null, error ?? null, id);
+      .run(status, Date.now(), result ?? null, error ?? null, terminalReason ?? (error ? "error" : "completed"), id);
   }
 
   getExecutions(taskId: string): TaskExecution[] {
@@ -435,7 +582,8 @@ export class TaskRepository {
   getExecutionLogs(taskId: string): TaskExecutionLog[] {
     return this.db
       .prepare("SELECT * FROM task_execution_logs WHERE task_id = ? ORDER BY timestamp ASC")
-      .all(taskId) as TaskExecutionLog[];
+      .all(taskId)
+      .map((row) => this.rowToLog(row as Record<string, unknown>));
   }
 
   // Reaper: clean completed tasks older than N days
@@ -460,6 +608,11 @@ export class TaskRepository {
       dueDate: row.due_date as number | undefined,
       sourceData: JSON.parse((row.source_data as string) || "{}"),
       localStatus: row.local_status as LocalTaskStatus,
+      claimState: (row.claim_state as TaskClaimState | undefined) ?? "unclaimed",
+      retryAttempt: Number(row.retry_attempt ?? 0),
+      retryDueAt: row.retry_due_at as number | undefined,
+      lastError: row.last_error as string | undefined,
+      workspacePath: row.workspace_path as string | undefined,
       lastSyncedAt: row.last_synced_at as number,
       lastExecutedAt: row.last_executed_at as number | undefined,
       executionSessionId: row.execution_session_id as string | undefined,
@@ -474,10 +627,24 @@ export class TaskRepository {
       taskId: row.task_id as string,
       sessionId: row.session_id as string,
       status: row.status as TaskExecution["status"],
+      attempt: Number(row.attempt ?? 0),
       startedAt: row.started_at as number,
       completedAt: row.completed_at as number | undefined,
+      lastEventAt: row.last_event_at as number | undefined,
+      terminalReason: row.terminal_reason as string | undefined,
       result: row.result as string | undefined,
       error: row.error as string | undefined,
+    };
+  }
+
+  private rowToLog(row: Record<string, unknown>): TaskExecutionLog {
+    return {
+      id: row.id as string,
+      executionId: row.execution_id as string,
+      taskId: row.task_id as string,
+      level: row.level as TaskExecutionLog["level"],
+      message: row.message as string,
+      timestamp: row.timestamp as number,
     };
   }
 }

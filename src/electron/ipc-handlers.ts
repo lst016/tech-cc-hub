@@ -110,6 +110,8 @@ export function initializeTaskExecutor(dbPath: string): TaskExecutor {
   }, {
     sessionStore,
     emitServerEvent: emit,
+    userDataPath: app.getPath("userData"),
+    cwd: app.getAppPath(),
   });
 
   executor.startPolling(30000);

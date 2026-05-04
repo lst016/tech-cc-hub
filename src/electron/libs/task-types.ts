@@ -12,10 +12,18 @@ export type ExternalTaskStatus =
 export type LocalTaskStatus =
   | ExternalTaskStatus
   | "executing"    // AI has picked up and is running
+  | "retrying"     // execution failed but is queued for retry
   | "completed"    // AI execution completed successfully
   | "failed";      // AI execution failed
 
 export type TaskPriority = "low" | "medium" | "high" | "urgent";
+
+export type TaskClaimState =
+  | "unclaimed"
+  | "claimed"
+  | "running"
+  | "retrying"
+  | "released";
 
 export type ExternalTask = {
   id: string;
@@ -34,6 +42,11 @@ export type ExternalTask = {
 
 export type StoredTask = ExternalTask & {
   localStatus: LocalTaskStatus;
+  claimState: TaskClaimState;
+  retryAttempt: number;
+  retryDueAt?: number;
+  lastError?: string;
+  workspacePath?: string;
   lastSyncedAt: number;
   lastExecutedAt?: number;
   executionSessionId?: string;
@@ -44,8 +57,11 @@ export type TaskExecution = {
   taskId: string;
   sessionId: string;
   status: "running" | "completed" | "failed";
+  attempt?: number;
   startedAt: number;
   completedAt?: number;
+  lastEventAt?: number;
+  terminalReason?: string;
   result?: string;
   error?: string;
 };
@@ -70,6 +86,7 @@ export type TaskStats = {
   total: number;
   pending: number;
   executing: number;
+  retrying: number;
   completed: number;
   failed: number;
   byProvider: Record<TaskProviderId, number>;

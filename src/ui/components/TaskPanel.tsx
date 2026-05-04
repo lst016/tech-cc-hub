@@ -31,6 +31,7 @@ const STATUS_LABELS: Record<UiTaskStatus, string> = {
   done: "外部完成",
   cancelled: "已取消",
   executing: "AI 执行中",
+  retrying: "自动重试",
   completed: "AI 已完成",
   failed: "执行失败",
 };
@@ -41,6 +42,7 @@ const STATUS_TONES: Record<UiTaskStatus, { badge: string; dot: string; icon: typ
   done: { badge: "border-emerald-200 bg-emerald-50 text-emerald-700", dot: "bg-emerald-500", icon: CheckCircle2 },
   cancelled: { badge: "border-slate-200 bg-slate-100 text-slate-500", dot: "bg-slate-300", icon: Circle },
   executing: { badge: "border-amber-200 bg-amber-50 text-amber-700", dot: "bg-amber-500", icon: Loader2 },
+  retrying: { badge: "border-blue-200 bg-blue-50 text-blue-700", dot: "bg-blue-500", icon: RefreshCw },
   completed: { badge: "border-emerald-200 bg-emerald-50 text-emerald-700", dot: "bg-emerald-500", icon: CheckCircle2 },
   failed: { badge: "border-red-200 bg-red-50 text-red-700", dot: "bg-red-500", icon: AlertCircle },
 };
@@ -62,6 +64,7 @@ const PRIORITY_TONES: Record<string, string> = {
 const STATUS_FILTERS: Array<{ value: string; label: string }> = [
   { value: "pending", label: "待处理" },
   { value: "executing", label: "执行中" },
+  { value: "retrying", label: "重试中" },
   { value: "completed", label: "AI 已完成" },
   { value: "failed", label: "失败" },
   { value: "done", label: "外部完成" },
@@ -101,6 +104,13 @@ function formatTime(value: number): string {
   return new Date(value).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 }
 
+function formatDateTime(value?: number): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
 function cx(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");
 }
@@ -110,7 +120,7 @@ function StatusBadge({ status, compact = false }: { status: UiTaskStatus; compac
   const Icon = tone.icon;
   return (
     <span className={cx("inline-flex items-center gap-1.5 rounded-md border font-medium", tone.badge, compact ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-1 text-xs")}>
-      <Icon className={cx("h-3 w-3", status === "executing" && "animate-spin")} />
+      <Icon className={cx("h-3 w-3", (status === "executing" || status === "retrying") && "animate-spin")} />
       {STATUS_LABELS[status] ?? status}
     </span>
   );
@@ -313,6 +323,7 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
   const statTiles = [
     { label: "总任务", value: stats?.total ?? tasks.length, className: "text-slate-900", icon: FileText },
     { label: "执行中", value: stats?.executing ?? 0, className: "text-amber-700", icon: Loader2 },
+    { label: "待重试", value: stats?.retrying ?? 0, className: "text-blue-700", icon: RefreshCw },
     { label: "AI 完成", value: stats?.completed ?? 0, className: "text-emerald-700", icon: CheckCircle2 },
     { label: "失败", value: stats?.failed ?? 0, className: "text-red-700", icon: AlertCircle },
   ];
@@ -362,12 +373,12 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
           </div>
         </div>
 
-        <div className="grid grid-cols-4 gap-px border-t border-slate-100 bg-slate-100">
+        <div className="grid grid-cols-5 gap-px border-t border-slate-100 bg-slate-100">
           {statTiles.map((tile) => {
             const Icon = tile.icon;
             return (
               <div key={tile.label} className="flex items-center gap-2 bg-white px-5 py-2.5">
-                <Icon className={cx("h-4 w-4", tile.className, tile.label === "执行中" && syncing && "animate-spin")} />
+                <Icon className={cx("h-4 w-4", tile.className, ((tile.label === "执行中" && syncing) || (tile.label === "待重试" && Number(tile.value) > 0)) && "animate-spin")} />
                 <div>
                   <p className="text-[11px] font-medium text-slate-500">{tile.label}</p>
                   <p className={cx("text-sm font-semibold", tile.className)}>{tile.value}</p>
@@ -535,8 +546,14 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                       disabled={selectedTask.localStatus === "executing" || !connected}
                       className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-slate-950 px-3 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {selectedTask.localStatus === "executing" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                      {selectedTask.localStatus === "executing" ? "执行中" : "AI 执行"}
+                      {selectedTask.localStatus === "executing" ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : selectedTask.localStatus === "retrying" ? (
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      ) : (
+                        <Play className="h-3.5 w-3.5" />
+                      )}
+                      {selectedTask.localStatus === "executing" ? "执行中" : selectedTask.localStatus === "retrying" ? "立即重试" : "AI 执行"}
                     </button>
                   </div>
                 </div>
@@ -576,6 +593,29 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                 </section>
 
                 <section className="mt-4 rounded-lg border border-slate-200 bg-white">
+                  <div className="border-b border-slate-100 px-4 py-3">
+                    <h3 className="text-sm font-semibold text-slate-900">调度信息</h3>
+                  </div>
+                  <div className="grid gap-3 px-4 py-4 text-xs text-slate-600">
+                    <div className="flex items-start justify-between gap-4">
+                      <span className="shrink-0 font-medium text-slate-500">工作区</span>
+                      <span className="min-w-0 truncate font-mono text-slate-800" title={selectedTask.workspacePath ?? "-"}>{selectedTask.workspacePath ?? "-"}</span>
+                    </div>
+                    <div className="flex items-start justify-between gap-4">
+                      <span className="shrink-0 font-medium text-slate-500">重试</span>
+                      <span className="text-slate-800">
+                        第 {selectedTask.retryAttempt ?? 0} 次{selectedTask.retryDueAt ? ` · ${formatDateTime(selectedTask.retryDueAt)} 触发` : ""}
+                      </span>
+                    </div>
+                    {selectedTask.lastError && (
+                      <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-red-700">
+                        {selectedTask.lastError}
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                <section className="mt-4 rounded-lg border border-slate-200 bg-white">
                   <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
                     <h3 className="text-sm font-semibold text-slate-900">执行记录</h3>
                     <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">{taskExecutions.length}</span>
@@ -595,6 +635,9 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                           <div className="min-w-0 flex-1">
                             <p className="text-xs font-semibold text-slate-800">
                               {exec.status === "completed" ? "执行完成" : exec.status === "failed" ? "执行失败" : "正在执行"}
+                            </p>
+                            <p className="mt-0.5 text-[11px] text-slate-400">
+                              Attempt {exec.attempt ?? 0}{exec.terminalReason ? ` · ${exec.terminalReason}` : ""}
                             </p>
                             {exec.result && <p className="mt-0.5 truncate text-xs text-slate-500">{exec.result}</p>}
                             {exec.error && <p className="mt-0.5 truncate text-xs text-red-600">{exec.error}</p>}
