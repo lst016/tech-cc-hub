@@ -114,11 +114,11 @@ export function SettingsSheet({
       <aside className="flex w-[260px] shrink-0 flex-col border-r border-[#E5E6EB] bg-[#EEF0F3] px-5 py-7">
         <div className="flex items-center gap-3">
           <div className="grid h-12 w-12 place-items-center rounded-2xl bg-[#111318] shadow-[0_14px_30px_rgba(17,19,24,0.16)] overflow-hidden">
-            <img src={new URL("../../assets/icon.png", import.meta.url).href} alt="tech-cc-hub" className="h-8 w-8 object-contain" />
+            <img src={new URL("../../assets/icon.png", import.meta.url).href} alt="tech-cc-hub" className="h-full w-full object-cover" />
           </div>
           <div>
             <div className="text-xl font-bold tracking-tight text-[#1D2129]">tech-cc-hub</div>
-            <div className="mt-0.5 text-xs font-medium text-[#86909C]">Agent Workbench</div>
+            <div className="mt-0.5 text-xs font-medium text-[#86909C]">AI 工作台</div>
           </div>
         </div>
 
@@ -175,8 +175,7 @@ export function SettingsSheet({
             {children}
           </section>
 
-          <footer className="sticky bottom-0 -mx-10 flex flex-wrap items-center justify-between gap-3 border-t border-[#E5E6EB] bg-[#F5F6F8]/92 px-10 py-4 backdrop-blur">
-            <div className="text-xs text-[#86909C]">设置作为独立工作区展示，返回聊天后会保留当前会话上下文。</div>
+          <footer className="sticky bottom-0 -mx-10 flex flex-wrap items-center justify-end gap-3 border-t border-[#E5E6EB] bg-[#F5F6F8]/92 px-10 py-4 backdrop-blur">
             {footer}
           </footer>
         </div>

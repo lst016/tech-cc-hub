@@ -60,6 +60,8 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [providerFilter, setProviderFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   // Request task data on mount
   useEffect(() => {
@@ -107,8 +109,15 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
         }
         case "task.sync.completed":
           setSyncing(false);
+          setSyncError(null);
+          setSyncNotice(`飞书同步完成，拉取 ${(e.payload as { count?: number }).count ?? 0} 条任务`);
           sendEvent({ type: "task.list" });
           sendEvent({ type: "task.stats" });
+          break;
+        case "task.error":
+          setSyncing(false);
+          setSyncNotice(null);
+          setSyncError((e.payload as { message?: string }).message ?? "任务同步失败");
           break;
       }
     });
@@ -157,6 +166,8 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
   const handleSync = useCallback(
     (provider: string) => {
       setSyncing(true);
+      setSyncNotice(null);
+      setSyncError(null);
       sendEvent({ type: "task.sync", payload: { provider } });
     },
     [sendEvent, setSyncing]
@@ -262,6 +273,18 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
         />
       </div>
 
+      {(syncError || syncNotice) && (
+        <div
+          className={`shrink-0 border-b px-5 py-2 text-xs ${
+            syncError
+              ? "border-red-200 bg-red-50 text-red-700"
+              : "border-emerald-200 bg-emerald-50 text-emerald-700"
+          }`}
+        >
+          {syncError ?? syncNotice}
+        </div>
+      )}
+
       {/* Main content: 3-column layout */}
       <div className="flex min-h-0 flex-1">
         {/* Left: Task list */}
@@ -272,6 +295,9 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                 暂无任务
               </div>
               <p className="mt-3 text-sm text-muted">点击上方"同步"按钮拉取任务</p>
+              {syncError && (
+                <p className="mt-2 max-w-[260px] text-xs leading-relaxed text-red-600">{syncError}</p>
+              )}
             </div>
           ) : (
             filteredTasks.map((task) => (

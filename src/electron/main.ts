@@ -643,6 +643,13 @@ function closeAllBrowserWorkbenches(): void {
   }
   browserWorkbenches.clear();
   browserWorkbenchEventListeners.clear();
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  for (const view of mainWindow.getBrowserViews()) {
+    mainWindow.removeBrowserView(view);
+    if (!view.webContents.isDestroyed()) {
+      view.webContents.close({ waitForBeforeUnload: false });
+    }
+  }
 }
 
 function isIgnorableStreamError(error: unknown): error is NodeJS.ErrnoException {
@@ -792,12 +799,14 @@ function registerReloadShortcuts(): void {
 
     const reloadWindow = () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
+            closeAllBrowserWorkbenches();
             mainWindow.webContents.reload();
         }
     };
 
     const reloadWindowIgnoringCache = () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
+            closeAllBrowserWorkbenches();
             mainWindow.webContents.reloadIgnoringCache();
         }
     };
@@ -957,6 +966,38 @@ app.on("ready", async () => {
         titleBarStyle: "hiddenInset",
         backgroundColor: "#FAF9F6",
         trafficLightPosition: { x: 15, y: 18 }
+    });
+    mainWindow.webContents.on("will-navigate", () => {
+        closeAllBrowserWorkbenches();
+    });
+    mainWindow.webContents.on("did-start-loading", () => {
+        closeAllBrowserWorkbenches();
+    });
+    mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+        if (isMainFrame && !isInPlace) {
+            closeAllBrowserWorkbenches();
+        }
+    });
+    mainWindow.webContents.on("before-input-event", (event, input) => {
+        const isReloadShortcut =
+            input.key.toLowerCase() === "r" &&
+            (input.meta || input.control);
+        if (!isReloadShortcut) return;
+        closeAllBrowserWorkbenches();
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        event.preventDefault();
+        if (input.shift) {
+            mainWindow.webContents.reloadIgnoringCache();
+            return;
+        }
+        mainWindow.webContents.reload();
+    });
+    mainWindow.webContents.on("render-process-gone", () => {
+        closeAllBrowserWorkbenches();
+    });
+    mainWindow.on("closed", () => {
+        closeAllBrowserWorkbenches();
+        mainWindow = null;
     });
     setBrowserToolHost({
       open: (sessionId, url) => getBrowserWorkbench(sessionId)?.open(url) ?? buildBrowserWorkbenchFallbackState(),

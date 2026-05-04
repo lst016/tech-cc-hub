@@ -205,8 +205,12 @@ export class BrowserWorkbenchManager {
 
   close(): BrowserWorkbenchState {
     if (this.view) {
-      this.window.removeBrowserView(this.view);
+      const closingView = this.view;
+      this.window.removeBrowserView(closingView);
       this.view = null;
+      if (!closingView.webContents.isDestroyed()) {
+        closingView.webContents.close({ waitForBeforeUnload: false });
+      }
     }
     this.logs = [];
     this.annotationMode = false;
@@ -218,8 +222,7 @@ export class BrowserWorkbenchManager {
     this.bounds = sanitizeBounds(bounds);
     if (this.view) {
       if (this.bounds.width <= 0 || this.bounds.height <= 0) {
-        this.window.removeBrowserView(this.view);
-        return this.getState();
+        return this.close();
       }
       this.window.setBrowserView(this.view);
       this.view.setBounds(this.bounds);

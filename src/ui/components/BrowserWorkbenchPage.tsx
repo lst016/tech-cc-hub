@@ -13,6 +13,8 @@ type BrowserWorkbenchPageProps = {
   onOpenUsage?: () => void;
 };
 
+type AnnotationTool = "screenshot" | "page";
+
 const defaultBrowserState: BrowserWorkbenchState = {
   url: "",
   title: "",
@@ -133,6 +135,7 @@ export function BrowserWorkbenchPage({
   const [localTargetStatus, setLocalTargetStatus] = useState<Record<string, LocalTargetStatus>>({});
   const canUseBrowserView = hasBrowserRuntime && !isPreviewRuntime;
   const [isDevToolsOpen, setIsDevToolsOpen] = useState(false);
+  const [annotationTool, setAnnotationTool] = useState<AnnotationTool | null>(null);
   const showBrowserChrome = hasBrowserTab || active;
   const currentBrowserUrl = state.url || url;
   const hasCurrentUrl = Boolean(currentBrowserUrl.trim());
@@ -140,6 +143,7 @@ export function BrowserWorkbenchPage({
   const browserActive = shouldAttachBrowserWorkbench({ active, hasBrowserTab: hasBrowserTab && hasExternalBrowserUrl, occluded });
   const showLocalLauncher = showBrowserChrome && !hasExternalBrowserUrl;
   const previewUrl = isPreviewRuntime ? (state.url || url) : "";
+  const canUsePageAnnotation = canUseBrowserView && hasExternalBrowserUrl;
 
   const persistUrl = useCallback((nextUrl: string) => {
     if (sessionId) setSessionBrowserUrl(sessionId, nextUrl);
@@ -233,6 +237,7 @@ export function BrowserWorkbenchPage({
       setState(defaultBrowserState);
       setUrl(nextUrl);
       hasOpenedRef.current = false;
+      setAnnotationTool(null);
     }
   }, [initialUrl, sessionBrowserState?.annotations, sessionBrowserState?.hasBrowserTab, sessionId]);
 
@@ -253,6 +258,9 @@ export function BrowserWorkbenchPage({
       if (event.sessionId && sessionId && event.sessionId !== sessionId) return;
       if (event.type === "browser.state") {
         setState(event.payload);
+        if (!event.payload.annotationMode) {
+          setAnnotationTool(null);
+        }
         if (event.payload.url) {
           setUrl(event.payload.url);
           persistUrl(event.payload.url);
@@ -394,13 +402,19 @@ export function BrowserWorkbenchPage({
       setStatusText("Codex 内置浏览器不能截图 Electron BrowserView");
       return;
     }
+    if (state.annotationMode && annotationTool === "screenshot") {
+      const nextState = await window.electron.setBrowserWorkbenchAnnotationMode(false, sessionId ?? undefined);
+      setState(nextState);
+      setAnnotationTool(null);
+      setStatusText("截图标注模式已关闭");
+      return;
+    }
     const result = await window.electron.captureBrowserWorkbenchVisible(sessionId ?? undefined);
     if (result.success && result.dataUrl) {
-      setStatusText("截图已捕获，可进行标注");
-      if (!state.annotationMode) {
-        const nextState = await window.electron.setBrowserWorkbenchAnnotationMode(true, sessionId ?? undefined);
-        setState(nextState);
-      }
+      const nextState = await window.electron.setBrowserWorkbenchAnnotationMode(true, sessionId ?? undefined);
+      setState(nextState);
+      setAnnotationTool("screenshot");
+      setStatusText("截图标注模式已开启，点击页面位置添加批注");
     } else {
       setStatusText(result.error || "截图标注失败");
     }
@@ -415,9 +429,11 @@ export function BrowserWorkbenchPage({
       setStatusText("Codex 内置浏览器不能嵌套 Electron BrowserView 标注");
       return;
     }
-    const nextState = await window.electron.setBrowserWorkbenchAnnotationMode(!state.annotationMode, sessionId ?? undefined);
+    const nextEnabled = !(state.annotationMode && annotationTool === "page");
+    const nextState = await window.electron.setBrowserWorkbenchAnnotationMode(nextEnabled, sessionId ?? undefined);
     setState(nextState);
-    setStatusText(nextState.annotationMode ? "标注模式已开启" : "标注模式已关闭");
+    setAnnotationTool(nextEnabled ? "page" : null);
+    setStatusText(nextEnabled ? "标注模式已开启" : "标注模式已关闭");
   };
 
   const handleCloseBrowserTab = async () => {
@@ -430,6 +446,7 @@ export function BrowserWorkbenchPage({
     setAnnotations([]);
     persistAnnotations([]);
     setIsDevToolsOpen(false);
+    setAnnotationTool(null);
     setStatusText("浏览器标签已关闭");
     if (hasBrowserRuntime) {
       await window.electron.closeBrowserWorkbenchDevTools(sessionId ?? undefined);
@@ -447,6 +464,7 @@ export function BrowserWorkbenchPage({
     setAnnotations([]);
     persistAnnotations([]);
     setIsDevToolsOpen(false);
+    setAnnotationTool(null);
     setStatusText("已打开本地启动页");
     if (hasBrowserRuntime) {
       await window.electron.closeBrowserWorkbenchDevTools(sessionId ?? undefined);
@@ -598,14 +616,28 @@ export function BrowserWorkbenchPage({
                 <circle cx="12" cy="12.5" r="3" />
               </svg>
             </button>
-            <button type="button" onClick={handleScreenshotAnnotate} disabled={!canUseBrowserView || !hasExternalBrowserUrl} className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-black/10 bg-white text-ink-700 transition hover:bg-ink-900/5 disabled:opacity-50" title="截图标注" aria-label="截图标注">
+            <button
+              type="button"
+              onClick={handleScreenshotAnnotate}
+              disabled={!canUsePageAnnotation}
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${state.annotationMode && annotationTool === "screenshot" ? "border-accent/30 bg-accent-subtle text-accent" : "border-black/10 bg-white text-ink-700 hover:bg-ink-900/5"}`}
+              title={state.annotationMode && annotationTool === "screenshot" ? "关闭截图标注" : "开启截图标注"}
+              aria-label={state.annotationMode && annotationTool === "screenshot" ? "关闭截图标注" : "开启截图标注"}
+            >
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
                 <path d="M4 5h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" />
                 <circle cx="8" cy="10" r="1.5" fill="currentColor" stroke="none" />
                 <path d="M10 10h6" strokeWidth="2" strokeLinecap="round" />
               </svg>
             </button>
-            <button type="button" onClick={handleToggleAnnotation} className={`relative inline-flex h-8 w-8 items-center justify-center rounded-full border transition ${state.annotationMode ? "border-accent/30 bg-accent-subtle text-accent" : "border-black/10 bg-white text-ink-700 hover:bg-ink-900/5"}`} title={state.annotationMode ? "关闭标注" : "开启标注"} aria-label={state.annotationMode ? "关闭标注" : "开启标注"}>
+            <button
+              type="button"
+              onClick={handleToggleAnnotation}
+              disabled={!canUsePageAnnotation}
+              className={`relative inline-flex h-8 w-8 items-center justify-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${state.annotationMode && annotationTool === "page" ? "border-accent/30 bg-accent-subtle text-accent" : "border-black/10 bg-white text-ink-700 hover:bg-ink-900/5"}`}
+              title={state.annotationMode && annotationTool === "page" ? "关闭标注" : "开启标注"}
+              aria-label={state.annotationMode && annotationTool === "page" ? "关闭标注" : "开启标注"}
+            >
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                 <line x1="12" y1="8" x2="12" y2="14" />

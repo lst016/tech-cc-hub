@@ -144,6 +144,7 @@ function App() {
   const partialMessage = activeSessionId ? (partialMessagesBySessionId[activeSessionId] ?? "") : "";
   const showPartialMessage = activeSessionId ? (partialVisibilityBySessionId[activeSessionId] ?? false) : false;
   const workspaceView = activeSessionId ? (workspaceViewBySessionId[activeSessionId] ?? "chat") : "chat";
+  const isUtilityWorkspace = showTaskPanel || showCronPage;
   const activityRailTab = activeSessionId ? (activityRailTabBySessionId[activeSessionId] ?? "trace") : "trace";
   const setActiveSessionWorkspaceView = useCallback((nextView: WorkspaceView) => {
     if (!activeSessionId) return;
@@ -422,6 +423,12 @@ function App() {
       });
     }
   }, [apiConfigChecked, setApiConfigChecked, setShowSettingsModal]);
+
+  // Temporary: auto-open settings for Computer Use demo
+  useEffect(() => {
+    setShowSettingsModal(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     window.electron.getApiConfig()
@@ -759,6 +766,14 @@ function App() {
     };
   }, [activeSessionId, closeSidebarOnBrowserOpen, setActiveSessionWorkspaceView, setBrowserWorkbenchSessionUrl, showSidebar]);
 
+  useEffect(() => {
+    if (workspaceView === "browser" && !showSessionAnalysis && !isUtilityWorkspace) return;
+    void window.electron.closeBrowserWorkbench(activeSessionId ?? undefined);
+    if (activeSessionId) {
+      void window.electron.closeBrowserWorkbench(undefined);
+    }
+  }, [activeSessionId, isUtilityWorkspace, showSessionAnalysis, workspaceView]);
+
   const handleDeleteSession = useCallback((sessionId: string) => {
     sendEvent({ type: "session.delete", payload: { sessionId } });
   }, [sendEvent]);
@@ -848,7 +863,14 @@ function App() {
     return () => window.removeEventListener(DEV_BRIDGE_READY_EVENT, handleDevBridgeReady);
   }, [refreshBrowserWorkbenchPreference, setApiConfigSettings]);
 
-  const startMaintenanceSession = useCallback(async (maintenancePrompt: string) => {
+  const startMaintenanceSession = useCallback(async (
+    maintenancePrompt: string,
+    options?: {
+      titleHint?: string;
+      agentId?: string;
+      allowedTools?: string;
+    },
+  ) => {
     const trimmedPrompt = maintenancePrompt.trim();
     if (!trimmedPrompt) {
       throw new Error("维护指令不能为空。");
@@ -862,10 +884,11 @@ function App() {
     }
 
     const systemWorkspace = await getSystemWorkspace();
-    let title = "系统维护";
+    const titleHint = options?.titleHint?.trim() || "系统维护";
+    let title = titleHint;
     try {
       setPendingStart(true);
-      title = await window.electron.generateSessionTitle("系统维护");
+      title = await window.electron.generateSessionTitle(titleHint);
     } catch (error) {
       setPendingStart(false);
       console.error("Failed to generate maintenance title:", error);
@@ -878,10 +901,10 @@ function App() {
         title,
         prompt: trimmedPrompt,
         cwd: systemWorkspace,
-        allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,TodoWrite",
+        allowedTools: options?.allowedTools ?? "Read,Edit,MultiEdit,Write,Bash,Glob,Search,TodoWrite",
         runtime: {
           runSurface: "maintenance",
-          agentId: "system-maintenance",
+          agentId: options?.agentId ?? "system-maintenance",
         },
       },
     });
@@ -952,7 +975,7 @@ function App() {
   ]);
 
   const sidebarOffset = showSidebar ? sidebarWidth : 0;
-  const activityRailOffset = !showSessionAnalysis && showActivityRail ? activityRailWidth : 0;
+  const activityRailOffset = !showSessionAnalysis && !isUtilityWorkspace && showActivityRail ? activityRailWidth : 0;
   const runtimeMeta = runtimeSourceMeta[runtimeSource];
   const currentSessionId = activeSessionId ?? null;
 
@@ -1282,7 +1305,7 @@ function App() {
             </>
           )}
 
-          {!showSessionAnalysis && (
+          {!showSessionAnalysis && !isUtilityWorkspace && (
             <PromptInput
               sendEvent={sendEvent}
               onSendMessage={handleSendMessage}
@@ -1316,7 +1339,7 @@ function App() {
           )}
         </main>
 
-        {!showSessionAnalysis && showActivityRail && workspaceView !== "browser" && (
+        {!showSessionAnalysis && !isUtilityWorkspace && showActivityRail && workspaceView !== "browser" && (
           <ActivityRail
             session={activeSession}
             partialMessage={partialMessage}
@@ -1336,7 +1359,7 @@ function App() {
             width={activityRailWidth}
           />
         )}
-        {!showSessionAnalysis && showActivityRail && (
+        {!showSessionAnalysis && !isUtilityWorkspace && showActivityRail && (
           <aside
             className={`fixed bottom-0 right-0 ${sidebarHeaderOffsetClass} z-40 min-w-[400px] overflow-hidden border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.94),rgba(240,244,248,0.98)_42%,rgba(234,239,245,0.99))] shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl ${workspaceView === "browser" ? "hidden lg:flex lg:flex-col" : "pointer-events-none hidden"}`}
             style={{ width: activityRailWidth }}
@@ -1358,7 +1381,7 @@ function App() {
             />
           </aside>
         )}
-        {!showSessionAnalysis && showActivityRail && (
+        {!showSessionAnalysis && !isUtilityWorkspace && showActivityRail && (
           <div
             className={`fixed bottom-0 ${sidebarHeaderOffsetClass} z-30 w-3 translate-x-1/2 cursor-col-resize`}
             style={{ right: activityRailWidth }}

@@ -13,7 +13,11 @@ import type {
 } from "../types";
 import { ApiProfilesSettingsPage } from "./settings/ApiProfilesSettingsPage";
 import { AgentRulesSettingsPage } from "./settings/AgentRulesSettingsPage";
-import { ChannelsSettingsPage, getChannelSettingsSummary } from "./settings/ChannelsSettingsPage";
+import {
+  ChannelsSettingsPage,
+  getChannelSettingsSummary,
+  type ChannelGuideSessionRequest,
+} from "./settings/ChannelsSettingsPage";
 import { GlobalJsonSettingsPage } from "./settings/GlobalJsonSettingsPage";
 import { ModelRoutingSettingsPage } from "./settings/ModelRoutingSettingsPage";
 import { SettingsSheet, type SettingsPageDefinition } from "./settings/SettingsSheet";
@@ -31,10 +35,16 @@ import {
 interface SettingsModalProps {
   onClose: () => void;
   initialPageId?: SettingsPageId;
-  onStartMaintenanceSession: (prompt: string) => Promise<void>;
+  onStartMaintenanceSession: (prompt: string, options?: SystemSessionLaunchOptions) => Promise<void>;
 }
 
 type GlobalRuntimeConfig = Record<string, unknown>;
+
+type SystemSessionLaunchOptions = {
+  titleHint?: string;
+  agentId?: string;
+  allowedTools?: string;
+};
 
 const DEFAULT_AGENT_RULE_DOCUMENTS: AgentRuleDocuments = {
   systemDefaultMarkdown: [
@@ -325,6 +335,25 @@ export function SettingsModal({
     setGlobalConfigParseError(null);
   }, [globalConfigText]);
 
+  const handleStartGuideSession = useCallback(async (request: ChannelGuideSessionRequest) => {
+    setStatus(null);
+    try {
+      await onStartMaintenanceSession(request.prompt, {
+        titleHint: request.title,
+        agentId: request.agentId,
+        allowedTools: request.allowedTools,
+      });
+      onClose();
+    } catch (error) {
+      console.error("Failed to launch guide session:", error);
+      setStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "启动引导会话失败。",
+      });
+      throw error;
+    }
+  }, [onClose, onStartMaintenanceSession]);
+
   const handleFormatGlobalConfig = () => {
     setStatus(null);
     const parsed = parseGlobalConfig(globalConfigText);
@@ -431,6 +460,7 @@ export function SettingsModal({
         configText={globalConfigText}
         parseError={globalConfigParseError}
         onChange={handleGlobalConfigChange}
+        onStartGuideSession={handleStartGuideSession}
       />
     );
   }

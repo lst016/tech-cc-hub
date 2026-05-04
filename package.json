@@ -36,7 +36,7 @@
 		"release:github": "node scripts/github-release.mjs"
 	},
 	"dependencies": {
-		"@anthropic-ai/claude-agent-sdk": "^0.2.123",
+		"@anthropic-ai/claude-agent-sdk": "^0.2.126",
 		"@arco-design/web-react": "^2.66.14",
 		"@codemirror/commands": "^6.10.3",
 		"@codemirror/lang-html": "^6.4.11",

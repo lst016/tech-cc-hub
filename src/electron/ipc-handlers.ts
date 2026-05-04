@@ -460,6 +460,11 @@ function emit(event: ServerEvent) {
     maybeSendChannelReply(nextEvent.payload.sessionId);
   }
 
+  // 清理 runner handle，避免 appendPrompt 将消息写入已完成的 runner 内部 dead array
+  if (nextEvent.type === "session.status" && (nextEvent.payload.status === "completed" || nextEvent.payload.status === "error")) {
+    runnerHandles.delete(nextEvent.payload.sessionId);
+  }
+
   broadcast(nextEvent);
 }
 

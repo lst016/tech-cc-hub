@@ -44,6 +44,14 @@ type BrowserAnnotationsPayload = {
 type BrowserAnnotationSummary = {
   index: number;
   label: string;
+  comment?: string;
+  pageTitle?: string;
+  pageUrl?: string;
+  target?: string;
+  selector?: string;
+  xpath?: string;
+  path?: string;
+  position?: { x: number; y: number };
 };
 
 const toolStatusMap = new Map<string, ToolStatus>();
@@ -280,36 +288,75 @@ function extractThoughtBlocks(input: string): { visibleText: string; thoughts: T
   };
 }
 
-const getBrowserAnnotationSummaryLabel = (item: unknown, index: number): string => {
-  if (!item || typeof item !== "object") return `标注 ${index + 1}`;
-  const record = item as Record<string, unknown>;
-  const comment = typeof record.comment === "string" ? record.comment.trim() : "";
-  if (comment) return comment;
+const getStringRecord = (value: unknown): Record<string, unknown> | null => (
+  value && typeof value === "object" ? value as Record<string, unknown> : null
+);
 
-  const target = record.target && typeof record.target === "object" ? (record.target as Record<string, unknown>) : null;
-  if (target?.type === "text" && typeof target.value === "string" && target.value.trim()) return target.value.trim();
-  if (target?.type === "image") return (typeof target.alt === "string" && target.alt.trim()) || "图片";
+const getTextSnippet = (value: unknown, maxLength = 90): string | undefined => {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return undefined;
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+};
 
-  const dom = record.dom && typeof record.dom === "object" ? (record.dom as Record<string, unknown>) : null;
-  const domContext = dom?.context && typeof dom.context === "object" ? (dom.context as Record<string, unknown>) : null;
-  const nearbyText = typeof domContext?.nearbyText === "string" ? domContext.nearbyText.trim() : "";
-  if (nearbyText) return nearbyText.slice(0, 60);
-
-  const page = record.page && typeof record.page === "object" ? (record.page as Record<string, unknown>) : null;
-  const pageTitle = typeof page?.title === "string" ? page.title.trim() : "";
-  if (pageTitle) return pageTitle;
-
-  const pageUrl = typeof page?.url === "string" ? page.url.trim() : "";
-  if (pageUrl) {
-    try {
-      const hostname = new URL(pageUrl).hostname;
-      return hostname;
-    } catch {
-      return pageUrl.slice(0, 50);
-    }
+const formatBrowserAnnotationUrl = (url?: string) => {
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    return `${parsed.host}${parsed.pathname === "/" ? "" : parsed.pathname}`;
+  } catch {
+    return url;
   }
+};
 
-  return typeof dom?.selector === "string" && dom.selector ? dom.selector : `标注 ${index + 1}`;
+const getBrowserAnnotationSummary = (item: unknown, index: number): BrowserAnnotationSummary => {
+  if (!item || typeof item !== "object") return { index: index + 1, label: `标注 ${index + 1}` };
+  const record = item as Record<string, unknown>;
+  const comment = getTextSnippet(record.comment);
+
+  const target = getStringRecord(record.target);
+  const targetText = target?.type === "text"
+    ? getTextSnippet(target.value)
+    : target?.type === "image"
+      ? getTextSnippet(target.alt) || "图片"
+      : undefined;
+
+  const dom = getStringRecord(record.dom);
+  const domContext = getStringRecord(dom?.context);
+  const nearbyText = getTextSnippet(domContext?.nearbyText, 90);
+
+  const page = getStringRecord(record.page);
+  const pageTitle = getTextSnippet(page?.title, 70);
+  const pageUrl = getTextSnippet(page?.url, 140);
+  const selector = getTextSnippet(dom?.selector, 120);
+  const xpath = getTextSnippet(dom?.xpath, 120);
+  const path = getTextSnippet(dom?.path, 120);
+
+  const nodePosition = getStringRecord(record.nodePosition);
+  const x = typeof nodePosition?.x === "number" ? nodePosition.x : undefined;
+  const y = typeof nodePosition?.y === "number" ? nodePosition.y : undefined;
+  const position = typeof x === "number" && typeof y === "number" ? { x, y } : undefined;
+
+  const label = comment
+    || targetText
+    || nearbyText
+    || pageTitle
+    || formatBrowserAnnotationUrl(pageUrl)
+    || selector
+    || `标注 ${index + 1}`;
+
+  return {
+    index: index + 1,
+    label,
+    comment,
+    pageTitle,
+    pageUrl,
+    target: targetText || nearbyText,
+    selector,
+    xpath,
+    path,
+    position,
+  };
 };
 
 function extractBrowserAnnotationsPrompt(prompt: string): {
@@ -326,10 +373,7 @@ function extractBrowserAnnotationsPrompt(prompt: string): {
       const payload = JSON.parse(block[1]) as BrowserAnnotationsPayload;
       if (Array.isArray(payload.items)) {
         payload.items.forEach((item) => {
-          items.push({
-            index: items.length + 1,
-            label: getBrowserAnnotationSummaryLabel(item, items.length),
-          });
+          items.push(getBrowserAnnotationSummary(item, items.length));
         });
         return items;
       }
@@ -354,11 +398,57 @@ function extractBrowserAnnotationsPrompt(prompt: string): {
 }
 
 const BrowserAnnotationChip = ({ annotation }: { annotation: BrowserAnnotationSummary }) => (
-  <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-accent/15 bg-white/90 px-3 py-2 text-sm font-semibold text-ink-800 shadow-[0_10px_24px_rgba(210,106,61,0.08)]">
-    <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent text-[11px] font-bold text-white">
-      {annotation.index}
-    </span>
-    <span className="truncate">{annotation.label}</span>
+  <div className="max-w-full rounded-2xl border border-accent/15 bg-white/94 px-3 py-3 text-left text-xs text-ink-800 shadow-[0_10px_24px_rgba(210,106,61,0.08)]">
+    <div className="flex items-center gap-2 text-sm font-semibold">
+      <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent text-[11px] font-bold text-white">
+        {annotation.index}
+      </span>
+      <span className="min-w-0 truncate">{annotation.label}</span>
+    </div>
+    <div className="mt-2 grid gap-1.5 text-[11px] leading-5 text-muted">
+      {annotation.pageUrl && (
+        <div className="min-w-0">
+          <span className="font-semibold text-ink-700">页面 </span>
+          <span className="break-all">{annotation.pageTitle ? `${annotation.pageTitle} · ` : ""}{annotation.pageUrl}</span>
+        </div>
+      )}
+      {annotation.target && (
+        <div className="min-w-0">
+          <span className="font-semibold text-ink-700">目标 </span>
+          <span className="break-words">{annotation.target}</span>
+        </div>
+      )}
+      {annotation.selector && (
+        <div className="min-w-0">
+          <span className="font-semibold text-ink-700">Selector </span>
+          <code className="break-all rounded bg-ink-900/5 px-1 py-0.5 text-[10px] text-ink-700">{annotation.selector}</code>
+        </div>
+      )}
+      {annotation.xpath && (
+        <div className="min-w-0">
+          <span className="font-semibold text-ink-700">XPath </span>
+          <code className="break-all rounded bg-ink-900/5 px-1 py-0.5 text-[10px] text-ink-700">{annotation.xpath}</code>
+        </div>
+      )}
+      {!annotation.selector && annotation.path && (
+        <div className="min-w-0">
+          <span className="font-semibold text-ink-700">Path </span>
+          <code className="break-all rounded bg-ink-900/5 px-1 py-0.5 text-[10px] text-ink-700">{annotation.path}</code>
+        </div>
+      )}
+      {annotation.position && (
+        <div>
+          <span className="font-semibold text-ink-700">坐标 </span>
+          x {annotation.position.x}, y {annotation.position.y}
+        </div>
+      )}
+      {annotation.comment && annotation.comment !== annotation.label && (
+        <div className="min-w-0">
+          <span className="font-semibold text-ink-700">备注 </span>
+          <span className="break-words">{annotation.comment}</span>
+        </div>
+      )}
+    </div>
   </div>
 );
 
@@ -580,7 +670,7 @@ const UserMessageCard = ({
         {formatTime(message.capturedAt)}
       </div>
       {annotations.length > 0 && (
-        <div className="mt-2 flex w-full max-w-[78%] flex-wrap justify-end gap-2">
+        <div className="mt-2 grid w-full max-w-[78%] gap-2">
           {annotations.map((annotation) => (
             <BrowserAnnotationChip key={annotation.index} annotation={annotation} />
           ))}

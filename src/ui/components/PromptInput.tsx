@@ -1014,16 +1014,6 @@ export function PromptInput({
     () => getFileMentionContext(prompt, cursorIndex || prompt.length),
     [cursorIndex, prompt],
   );
-  const queueSessionId = useMemo(() => {
-    if (activeSessionId && (queuedMessagesBySession[activeSessionId] ?? []).length > 0) {
-      return activeSessionId;
-    }
-    return Object.keys(queuedMessagesBySession).find((sessionId) => (queuedMessagesBySession[sessionId] ?? []).length > 0) ?? null;
-  }, [activeSessionId, queuedMessagesBySession]);
-  const activeQueue = useMemo(() => {
-    if (!queueSessionId) return [];
-    return queuedMessagesBySession[queueSessionId] ?? [];
-  }, [queueSessionId, queuedMessagesBySession]);
   const currentSessionQueue = useMemo(() => {
     if (!activeSessionId) return [];
     return queuedMessagesBySession[activeSessionId] ?? [];
@@ -1119,7 +1109,7 @@ export function PromptInput({
     setCursorIndex(input.selectionStart ?? prompt.length);
   }, [prompt.length]);
 
-  const removeQueuedDraft = useCallback((queueId: string, sessionId = queueSessionId) => {
+  const removeQueuedDraft = useCallback((queueId: string, sessionId = activeSessionId) => {
     if (!sessionId) return;
     setQueuedMessagesBySession((current) => {
       const nextQueue = (current[sessionId] ?? []).filter((item) => item.id !== queueId);
@@ -1133,7 +1123,7 @@ export function PromptInput({
         [sessionId]: nextQueue,
       };
     });
-  }, [queueSessionId]);
+  }, [activeSessionId]);
 
   const appendQueuedDraft = useCallback((queuedMessage: QueuedMessageDraft) => {
     if (!activeSessionId) return;
@@ -1152,9 +1142,9 @@ export function PromptInput({
   const editQueuedDraft = useCallback((queuedMessage: QueuedMessageDraft) => {
     setPrompt(queuedMessage.prompt);
     setAttachments(queuedMessage.attachments);
-    removeQueuedDraft(queuedMessage.id);
+    removeQueuedDraft(queuedMessage.id, activeSessionId);
     window.setTimeout(() => promptRef.current?.focus(), 0);
-  }, [removeQueuedDraft, setPrompt]);
+  }, [activeSessionId, removeQueuedDraft, setPrompt]);
 
   const queueCurrentDraft = useCallback(() => {
     if (!activeSessionId) return false;
@@ -1615,20 +1605,20 @@ export function PromptInput({
         </div>
       )}
       <div className="mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[26px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,247,251,0.94))] px-3 py-2.5 shadow-[0_18px_44px_rgba(30,38,52,0.08)] backdrop-blur-xl xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
-        {activeQueue.length > 0 && (
+        {currentSessionQueue.length > 0 && (
           <div className="mb-3 rounded-2xl border border-black/6 bg-[#f6f8fb] px-3 py-3">
             <div className="mb-2 flex items-center justify-between gap-3">
-              <div className="text-xs font-medium text-ink-700">待发送队列 · {activeQueue.length} 条</div>
+              <div className="text-xs font-medium text-ink-700">待发送队列 · {currentSessionQueue.length} 条</div>
               <div className="flex items-center gap-2 text-[11px] text-muted">
                     <span>运行中可点「插入」作为补充命令；空闲后会自动续发。</span>
                 <button
                   type="button"
                   className="rounded-full border border-black/8 bg-white px-2 py-0.5 font-semibold transition hover:text-accent"
                   onClick={() => {
-                    if (!queueSessionId) return;
+                    if (!activeSessionId) return;
                     setQueuedMessagesBySession((current) => {
                       const next = { ...current };
-                      delete next[queueSessionId];
+                      delete next[activeSessionId];
                       return next;
                     });
                   }}
@@ -1638,7 +1628,7 @@ export function PromptInput({
               </div>
             </div>
             <div className="grid gap-2">
-              {activeQueue.map((queuedMessage, index) => {
+              {currentSessionQueue.map((queuedMessage, index) => {
                 const label = queuedMessage.prompt.trim()
                   || (queuedMessage.attachments.length === 1
                     ? `附件：${queuedMessage.attachments[0].name}`

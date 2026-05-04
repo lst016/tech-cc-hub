@@ -37,10 +37,12 @@ export class TaskExecutor {
 
   // ---- Sync ----
 
-  async syncProvider(providerId: TaskProviderId): Promise<number> {
+  async syncProvider(providerId: TaskProviderId, options: { silentErrors?: boolean } = {}): Promise<number> {
     const provider = getTaskProvider(providerId);
     if (!provider) {
-      this.events.onError?.(`Provider ${providerId} not registered`);
+      if (!options.silentErrors) {
+        this.events.onError?.(`Provider ${providerId} not registered`);
+      }
       return 0;
     }
 
@@ -50,19 +52,24 @@ export class TaskExecutor {
         const stored = this.repo.upsertTask(task);
         this.detectStatusTransition(stored);
       }
+      for (const staleTask of this.repo.markProviderTasksMissing(providerId, tasks.map((task) => task.externalId))) {
+        this.events.onTaskUpdated?.(staleTask);
+      }
       this.events.onSyncCompleted?.(providerId, tasks.length);
       return tasks.length;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.events.onError?.(`Sync ${providerId} failed: ${message}`);
+      if (!options.silentErrors) {
+        this.events.onError?.(`Sync ${providerId} failed: ${message}`);
+      }
       return 0;
     }
   }
 
-  async syncAll(): Promise<void> {
+  async syncAll(options: { silentErrors?: boolean } = {}): Promise<void> {
     const { listTaskProviders } = await import("./task-provider.js");
     for (const provider of listTaskProviders()) {
-      await this.syncProvider(provider.id);
+      await this.syncProvider(provider.id, options);
     }
   }
 
@@ -72,11 +79,11 @@ export class TaskExecutor {
     if (this.pollTimer) return;
 
     // Initial sync
-    void this.syncAll();
+    void this.syncAll({ silentErrors: true });
 
     this.pollTimer = setInterval(() => {
       if (this.polling) return;
-      void this.syncAll();
+      void this.syncAll({ silentErrors: true });
 
       // Reap completed tasks older than 30 days every ~24 cycles (≈12h at 30s interval)
       this.reapCounter++;

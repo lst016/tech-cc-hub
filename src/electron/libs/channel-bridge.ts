@@ -37,7 +37,6 @@ export type ChannelBridgeController = {
 };
 
 const POLL_INTERVAL_MS = 2500;
-const LARK_CLI_POLL_INTERVAL_MS = 5000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -85,40 +84,6 @@ function runCli(command: string, args: string[], timeout = 15_000, cwd?: string)
     });
     child.stdin?.end();
   });
-}
-
-function parseCliMessages(stdout: string, provider: ChannelProviderId): ChannelInboundMessage[] {
-  return stdout
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line): ChannelInboundMessage | null => {
-      try {
-        const parsed = JSON.parse(line) as unknown;
-        if (!isRecord(parsed)) return null;
-        const text = String(parsed.text ?? parsed.content ?? parsed.message ?? "").trim();
-        if (!text) return null;
-        return {
-          provider,
-          text,
-          externalConversationId: String(parsed.chatId ?? parsed.chat_id ?? parsed.open_chat_id ?? parsed.conversationId ?? parsed.conversation_id ?? "default"),
-          externalMessageId: String(parsed.messageId ?? parsed.message_id ?? parsed.id ?? `${Date.now()}`),
-          senderId: parsed.senderId ? String(parsed.senderId) : parsed.sender_id ? String(parsed.sender_id) : undefined,
-          senderName: parsed.senderName ? String(parsed.senderName) : parsed.sender_name ? String(parsed.sender_name) : undefined,
-          channelName: parsed.channelName ? String(parsed.channelName) : parsed.channel_name ? String(parsed.channel_name) : undefined,
-          receivedAt: Date.now(),
-        };
-      } catch {
-        return {
-          provider,
-          text: line,
-          externalConversationId: "default",
-          externalMessageId: `${Date.now()}-${line.slice(0, 12)}`,
-          receivedAt: Date.now(),
-        };
-      }
-    })
-    .filter((message): message is ChannelInboundMessage => Boolean(message));
 }
 
 function extractTelegramMessage(update: Record<string, unknown>): ChannelInboundMessage | null {
@@ -176,32 +141,64 @@ async function pollTelegram(signal: AbortSignal, dispatch: ChannelBridgeDispatch
   }
 }
 
-async function pollLarkCli(signal: AbortSignal, dispatch: ChannelBridgeDispatch) {
-  const seenMessages = new Set<string>();
-  while (!signal.aborted) {
-    const config = getChannelConfig("lark");
-    const command = config?.enabled && config.transport === "lark-cli" ? config.cliCommand?.trim() : "";
-    const template = config?.cliReceiveArgsTemplate?.trim();
-    if (!command || !template) {
-      await delay(LARK_CLI_POLL_INTERVAL_MS, undefined, { signal }).catch(() => undefined);
-      continue;
-    }
+function startLarkEventBridge(dispatch: ChannelBridgeDispatch): ChildProcessWithoutNullStreams | null {
+  const config = getChannelConfig("lark");
+  if (!config?.enabled || config.transport !== "lark-cli") return null;
 
-    try {
-      const args = splitCommandTemplate(template, { profile: config?.cliProfile?.trim() || "default" });
-      const { stdout } = await runCli(command, args);
-      for (const message of parseCliMessages(stdout, "lark")) {
-        const key = message.externalMessageId || `${message.externalConversationId}:${message.text}`;
-        if (seenMessages.has(key)) continue;
-        seenMessages.add(key);
-        await dispatch(message);
+  const command = config.cliCommand?.trim() || "lark-cli";
+  const profile = config.cliProfile?.trim() || "default";
+
+  const args = profile && profile !== "default"
+    ? ["--profile", profile, "event", "consume", "im.message.receive_v1", "--as", "bot"]
+    : ["event", "consume", "im.message.receive_v1", "--as", "bot"];
+
+  const child = spawn(command, args, {
+    env: { ...process.env, ...getGlobalRuntimeEnvConfig() },
+  });
+
+  let stdoutBuffer = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    stdoutBuffer += String(chunk);
+    const lines = stdoutBuffer.split(/\r?\n/);
+    stdoutBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (!isRecord(parsed)) continue;
+        const text = String(parsed.content ?? "").trim();
+        if (!text) continue;
+        void Promise.resolve(dispatch({
+          provider: "lark",
+          text,
+          externalConversationId: asOptionalString(parsed.chat_id),
+          externalMessageId: asOptionalString(parsed.message_id) ?? `${Date.now()}`,
+          senderId: asOptionalString(parsed.sender_id),
+          receivedAt: typeof parsed.timestamp === "string" ? Number(parsed.timestamp) : Date.now(),
+        })).catch((error) => {
+          console.warn("[channel-bridge] lark event dispatch failed:", error);
+        });
+      } catch (error) {
+        console.warn("[channel-bridge] lark event stdout parse failed:", error);
       }
-    } catch (error) {
-      if (!signal.aborted) console.warn("[channel-bridge] lark-cli polling failed:", error);
     }
+  });
 
-    await delay(LARK_CLI_POLL_INTERVAL_MS, undefined, { signal }).catch(() => undefined);
-  }
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    const text = String(chunk).trim();
+    if (text) console.warn("[channel-bridge] lark event:", text);
+  });
+
+  child.on("exit", (code, signal) => {
+    if (code !== 0 && signal !== "SIGTERM") {
+      console.warn(`[channel-bridge] lark event bridge exited: code=${code} signal=${signal}`);
+    }
+  });
+
+  return child;
 }
 
 function startHermesWeixinInboundBridge(dispatch: ChannelBridgeDispatch): ChildProcessWithoutNullStreams | null {
@@ -347,10 +344,15 @@ async function sendLarkCliText(target: ChannelReplyTarget, text: string): Promis
   const config = getChannelConfig("lark");
   const command = config?.enabled && config.transport === "lark-cli" ? config.cliCommand?.trim() : "";
   const template = config?.cliSendArgsTemplate?.trim();
-  if (!command || !template) return;
+  if (!command || !template) {
+    console.warn("[channel-bridge] lark send skipped: command or cliSendArgsTemplate not configured");
+    return;
+  }
+  const rawConversationId = target.rawConversationId || target.conversationId;
   const args = splitCommandTemplate(template, {
     profile: config?.cliProfile?.trim() || "default",
-    conversation: target.rawConversationId,
+    conversation: rawConversationId,
+    "chat-id": rawConversationId,
     text,
   });
   await runCli(command, args);
@@ -433,13 +435,14 @@ asyncio.run(main())
 export function startChannelBridge(dispatch: ChannelBridgeDispatch): ChannelBridgeController {
   const controller = new AbortController();
   const weixinBridge = startHermesWeixinInboundBridge(dispatch);
+  const larkBridge = startLarkEventBridge(dispatch);
   void pollTelegram(controller.signal, dispatch);
-  void pollLarkCli(controller.signal, dispatch);
 
   return {
     stop: () => {
       controller.abort();
       weixinBridge?.kill("SIGTERM");
+      larkBridge?.kill("SIGTERM");
     },
     sendText: async (target, text) => {
       if (target.provider === "telegram") {

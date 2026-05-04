@@ -71,17 +71,21 @@ export class TaskRepository {
   upsertTask(external: ExternalTask): StoredTask {
     const now = Date.now();
     const existing = this.db
-      .prepare("SELECT id, local_status, last_executed_at, execution_session_id FROM tasks WHERE external_id = ? AND provider = ?")
+      .prepare("SELECT id, status, local_status, last_executed_at, execution_session_id FROM tasks WHERE external_id = ? AND provider = ?")
       .get(external.externalId, external.provider) as
-        | { id: string; local_status: string; last_executed_at: number | null; execution_session_id: string | null }
+        | { id: string; status: string; local_status: string; last_executed_at: number | null; execution_session_id: string | null }
         | undefined;
 
     if (existing) {
+      const nextLocalStatus =
+        existing.local_status === "pending" && (external.status === "done" || external.status === "cancelled")
+          ? external.status
+          : existing.local_status;
       this.db
         .prepare(
           `UPDATE tasks SET
             title = ?, description = ?, status = ?, assignee = ?, priority = ?,
-            due_date = ?, source_data = ?, last_synced_at = ?, updated_at = ?
+            due_date = ?, source_data = ?, local_status = ?, last_synced_at = ?, updated_at = ?
            WHERE id = ?`
         )
         .run(
@@ -92,6 +96,7 @@ export class TaskRepository {
           external.priority,
           external.dueDate ?? null,
           JSON.stringify(external.sourceData),
+          nextLocalStatus,
           now,
           now,
           existing.id
@@ -99,7 +104,7 @@ export class TaskRepository {
 
       return {
         ...external,
-        localStatus: existing.local_status as LocalTaskStatus,
+        localStatus: nextLocalStatus as LocalTaskStatus,
         lastSyncedAt: now,
         lastExecutedAt: existing.last_executed_at ?? undefined,
         executionSessionId: existing.execution_session_id ?? undefined,
@@ -111,7 +116,7 @@ export class TaskRepository {
       .prepare(
         `INSERT INTO tasks
           (id, external_id, provider, title, description, status, assignee, priority, due_date, source_data, local_status, last_synced_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -124,6 +129,7 @@ export class TaskRepository {
         external.priority,
         external.dueDate ?? null,
         JSON.stringify(external.sourceData),
+        external.status,
         now,
         now,
         now
@@ -131,9 +137,53 @@ export class TaskRepository {
 
     return {
       ...external,
-      localStatus: "pending",
+      localStatus: external.status,
       lastSyncedAt: now,
     };
+  }
+
+  markProviderTasksMissing(provider: TaskProviderId, activeExternalIds: string[]): StoredTask[] {
+    const now = Date.now();
+    const active = new Set(activeExternalIds);
+    const rows = this.db
+      .prepare("SELECT * FROM tasks WHERE provider = ? AND local_status IN ('pending', 'in_progress', 'done')")
+      .all(provider) as Record<string, unknown>[];
+    const staleRows = rows.filter((row) => !active.has(String(row.external_id)));
+
+    const update = this.db.prepare(
+      "UPDATE tasks SET status = 'done', local_status = 'done', last_synced_at = ?, updated_at = ? WHERE id = ?"
+    );
+    for (const row of staleRows) {
+      const sourceUpdatedAt = this.getSourceUpdatedAt(row.source_data);
+      update.run(now, sourceUpdatedAt ?? row.updated_at ?? now, row.id);
+    }
+
+    return staleRows.map((row) => {
+      const sourceUpdatedAt = this.getSourceUpdatedAt(row.source_data);
+      return this.rowToTask({
+        ...row,
+        status: "done",
+        local_status: "done",
+        last_synced_at: now,
+        updated_at: sourceUpdatedAt ?? row.updated_at ?? now,
+      });
+    });
+  }
+
+  private getSourceUpdatedAt(sourceData: unknown): number | undefined {
+    if (typeof sourceData !== "string" || !sourceData.trim()) return undefined;
+    try {
+      const parsed = JSON.parse(sourceData) as { updated_at?: unknown };
+      const raw = parsed.updated_at;
+      if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+      if (typeof raw === "string" && raw.trim()) {
+        const value = Number(raw);
+        return Number.isFinite(value) ? value : undefined;
+      }
+    } catch {
+      return undefined;
+    }
+    return undefined;
   }
 
   getTask(id: string): StoredTask | undefined {

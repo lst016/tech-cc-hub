@@ -17,7 +17,7 @@
  * - Persist through tech-cc-hub global JSON until the AionUi process ChannelManager is copied in.
  */
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   ChannelConnectionConfig,
   ChannelProviderId,
@@ -29,7 +29,17 @@ type ChannelsSettingsPageProps = {
   configText: string;
   parseError: string | null;
   onChange: (next: string) => void;
+  onStartGuideSession?: (request: ChannelGuideSessionRequest) => Promise<void> | void;
 };
+
+export type ChannelGuideSessionRequest = {
+  title: string;
+  prompt: string;
+  agentId?: string;
+  allowedTools?: string;
+};
+
+const LARK_CLI_REPO_URL = "https://github.com/larksuite/cli";
 
 type ChannelStatus = "stopped" | "running" | "error";
 
@@ -265,6 +275,40 @@ function SectionHeader({ title, action }: { title: string; action?: ReactNode })
   );
 }
 
+function buildLarkCliGuidePrompt(channel: ChannelConnectionConfig): string {
+  const currentConfig = {
+    enabled: channel.enabled,
+    transport: channel.transport,
+    displayName: channel.displayName,
+    cliCommand: channel.cliCommand,
+    cliProfile: channel.cliProfile,
+    cliSendArgsTemplate: channel.cliSendArgsTemplate,
+    cliReceiveArgsTemplate: channel.cliReceiveArgsTemplate,
+    appIdEnv: channel.appIdEnv,
+    appSecretEnv: channel.appSecretEnv,
+    tenantKeyEnv: channel.tenantKeyEnv,
+  };
+
+  return [
+    "你在 tech-cc-hub 的系统工作区里，目标是把飞书 / Lark 的 lark-cli 通道配置到可用，不要让用户手工填写整段 JSON。",
+    `默认官方 CLI 仓库是 ${LARK_CLI_REPO_URL}。如果本机没有安装 lark-cli / lark 命令，直接基于这个仓库的官方说明安装或给出最短安装命令，不要再让用户自己找链接。`,
+    "",
+    "请按这个顺序处理：",
+    "1. 检查本机是否存在 lark 或 lark-cli 命令，查看 version/help/profile 相关命令，确认真实 CLI 调用方式。",
+    "2. 如果 CLI 未安装，使用上面的官方仓库作为默认来源完成安装检查或生成安装指令；安装后继续检查命令和 profile。",
+    "3. 检查当前 profile 是否存在；如果需要登录、创建 profile 或缺少凭证，只问用户一个最短的问题。",
+    "4. 验证发送参数模板和接收输出格式。优先使用 help、dry-run、只读或安全测试命令；不要主动给真实群聊发无意义消息。",
+    "5. 如果能确认正确配置，请把全局运行时配置里的 channels.items.lark 更新为可用配置，并补齐 skillCredentials 里用到的 env 名称。",
+    "6. 如果当前运行时提供 mcp__tech-cc-hub-admin__set_global_runtime_config，优先用它持久化；否则再直接编辑系统工作区里的配置文件。",
+    "7. 完成后给出：实际 CLI 命令、profile、发送模板、接收模板、还缺什么，以及一条最小可复测命令。",
+    "",
+    "当前 UI 里的 Lark 配置快照：",
+    "```json",
+    JSON.stringify(currentConfig, null, 2),
+    "```",
+  ].join("\n");
+}
+
 function ChannelHeader({
   definition,
   channel,
@@ -313,14 +357,59 @@ function ChannelHeader({
 function TelegramConfigForm({
   channel,
   onPatch,
+  onStartGuideSession,
 }: {
   channel: ChannelConnectionConfig;
   onPatch: (patch: Partial<ChannelConnectionConfig>) => void;
+  onStartGuideSession?: (request: ChannelGuideSessionRequest) => Promise<void> | void;
 }) {
+  const [launchingGuide, setLaunchingGuide] = useState(false);
+  const guideLaunchInFlightRef = useRef(false);
+  const handleStartGuideSession = () => {
+    if (!onStartGuideSession || guideLaunchInFlightRef.current) return;
+    guideLaunchInFlightRef.current = true;
+    setLaunchingGuide(true);
+    const prompt = [
+      "你在 tech-cc-hub 的系统工作区里，目标是把 Telegram Bot 通道配置到可用。",
+      "",
+      "请按这个顺序处理：",
+      "1. 在 Telegram 中找 @BotFather，发送 /newbot 按提示创建 Bot，记录返回的 Bot Token。",
+      "2. 把 Bot Token 填入全局配置 channels.items.telegram.botTokenEnv（默认 TELEGRAM_BOT_TOKEN）。",
+      "3. 找 @userinfobot 或发送 /start 给你的 Bot，获取你的 Chat ID，填入 chatIdEnv（默认 TELEGRAM_CHAT_ID）。",
+      "4. 如果需要，先给 Bot 发一条消息再获取 Chat ID。",
+      "5. 使用 mcp__tech-cc-hub-admin__set_global_runtime_config 持久化配置，或直接编辑系统工作区配置文件。",
+      "6. 完成后给出：Token 环境变量名、Chat ID 环境变量名、验证命令、还缺什么。",
+      "",
+      "当前 UI 配置快照：",
+      JSON.stringify({ enabled: channel.enabled, botTokenEnv: channel.botTokenEnv, chatIdEnv: channel.chatIdEnv }, null, 2),
+    ].join("\n");
+    void Promise.resolve(onStartGuideSession({
+      title: "Telegram Bot 引导配置",
+      prompt,
+      agentId: "telegram-guide",
+      allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,TodoWrite",
+    })).catch(() => {
+      guideLaunchInFlightRef.current = false;
+      setLaunchingGuide(false);
+    });
+  };
+
   return (
     <div className="space-y-5">
       <div>
-        <SectionHeader title="Bot 配置" />
+        <SectionHeader
+          title="Bot 配置"
+          action={onStartGuideSession ? (
+            <button
+              type="button"
+              disabled={launchingGuide}
+              onClick={(e) => { e.stopPropagation(); handleStartGuideSession(); }}
+              className="inline-flex h-8 items-center rounded-full border border-[#F0C7B4] bg-[#FFF4EF] px-3 text-xs font-semibold text-[#C9572C] transition hover:border-[#D96B3A] hover:bg-[#FFEADF] disabled:cursor-not-allowed disabled:border-[#E5E6EB] disabled:bg-[#F7F8FA] disabled:text-[#86909C]"
+            >
+              {launchingGuide ? "正在启动..." : "Agent 引导配置"}
+            </button>
+          ) : null}
+        />
         <div className="rounded-2xl border border-[#E5E6EB] bg-white px-4">
           <PreferenceRow label="Bot Token Env" description="Telegram Bot 的 token 环境变量名。">
             <Field label="" value={channel.botTokenEnv} placeholder="TELEGRAM_BOT_TOKEN" onChange={(botTokenEnv) => onPatch({ botTokenEnv })} />
@@ -337,11 +426,34 @@ function TelegramConfigForm({
 function LarkConfigForm({
   channel,
   onPatch,
+  onStartGuideSession,
 }: {
   channel: ChannelConnectionConfig;
   onPatch: (patch: Partial<ChannelConnectionConfig>) => void;
+  onStartGuideSession?: (request: ChannelGuideSessionRequest) => Promise<void> | void;
 }) {
   const mode = channel.transport === "lark-open-platform" ? "lark-open-platform" : "lark-cli";
+  const [launchingGuide, setLaunchingGuide] = useState(false);
+  const guideLaunchInFlightRef = useRef(false);
+  const handleStartGuideSession = () => {
+    if (!onStartGuideSession || guideLaunchInFlightRef.current) {
+      return;
+    }
+
+    guideLaunchInFlightRef.current = true;
+    setLaunchingGuide(true);
+
+    void Promise.resolve(onStartGuideSession({
+      title: "飞书 lark-cli 引导配置",
+      prompt: buildLarkCliGuidePrompt(channel),
+      agentId: "lark-cli-guide",
+      allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,TodoWrite",
+    })).catch(() => {
+      guideLaunchInFlightRef.current = false;
+      setLaunchingGuide(false);
+    });
+  };
+
   return (
     <div className="space-y-5">
       <div>
@@ -368,7 +480,19 @@ function LarkConfigForm({
 
       {mode === "lark-cli" ? (
         <div>
-          <SectionHeader title="lark-cli 配置" />
+          <SectionHeader
+            title="lark-cli 配置"
+            action={onStartGuideSession ? (
+              <button
+                type="button"
+                disabled={launchingGuide}
+                onClick={handleStartGuideSession}
+                className="inline-flex h-8 items-center rounded-full border border-[#F0C7B4] bg-[#FFF4EF] px-3 text-xs font-semibold text-[#C9572C] transition hover:border-[#D96B3A] hover:bg-[#FFEADF] disabled:cursor-not-allowed disabled:border-[#E5E6EB] disabled:bg-[#F7F8FA] disabled:text-[#86909C]"
+              >
+                {launchingGuide ? "正在启动..." : "Agent 聊天引导配置"}
+              </button>
+            ) : null}
+          />
           <div className="rounded-2xl border border-[#E5E6EB] bg-white px-4">
             <PreferenceRow label="CLI 命令">
               <Field label="" value={channel.cliCommand} placeholder="lark" onChange={(cliCommand) => onPatch({ cliCommand })} />
@@ -475,6 +599,7 @@ function ChannelItem({
   collapsed,
   onToggleCollapse,
   onPatch,
+  onStartGuideSession,
 }: {
   definition: ChannelDefinition;
   channel: ChannelConnectionConfig;
@@ -482,6 +607,7 @@ function ChannelItem({
   collapsed: boolean;
   onToggleCollapse: () => void;
   onPatch: (patch: Partial<ChannelConnectionConfig>) => void;
+  onStartGuideSession?: (request: ChannelGuideSessionRequest) => Promise<void> | void;
 }) {
   return (
     <section data-channel-id={definition.id} className="rounded-2xl border border-[#E5E6EB] bg-white shadow-[0_10px_30px_rgba(24,32,46,0.04)]">
@@ -490,8 +616,10 @@ function ChannelItem({
       </button>
       {!collapsed && (
         <div className="border-t border-[#F2F3F5] px-4 py-4">
-          {definition.id === "telegram" && <TelegramConfigForm channel={channel} onPatch={onPatch} />}
-          {definition.id === "lark" && <LarkConfigForm channel={channel} onPatch={onPatch} />}
+          {definition.id === "telegram" && <TelegramConfigForm channel={channel} onPatch={onPatch} onStartGuideSession={onStartGuideSession} />}
+          {definition.id === "lark" && (
+            <LarkConfigForm channel={channel} onPatch={onPatch} onStartGuideSession={onStartGuideSession} />
+          )}
           {definition.id === "wechat" && <WeixinConfigForm channel={channel} onPatch={onPatch} />}
         </div>
       )}
@@ -499,7 +627,7 @@ function ChannelItem({
   );
 }
 
-export function ChannelsSettingsPage({ configText, parseError, onChange }: ChannelsSettingsPageProps) {
+export function ChannelsSettingsPage({ configText, parseError, onChange, onStartGuideSession }: ChannelsSettingsPageProps) {
   const rootConfig = useMemo(() => parseJsonObject(configText), [configText]);
   const runtimeConfig = useMemo(() => readChannelRuntimeConfig(rootConfig), [rootConfig]);
   const enabledCount = Object.values(runtimeConfig.items).filter((item) => item?.enabled).length;
@@ -559,6 +687,7 @@ export function ChannelsSettingsPage({ configText, parseError, onChange }: Chann
               collapsed={collapseKeys[definition.id]}
               onToggleCollapse={() => setCollapseKeys((current) => ({ ...current, [definition.id]: !current[definition.id] }))}
               onPatch={(patch) => updateChannel(definition.id, patch)}
+              onStartGuideSession={onStartGuideSession}
             />
           );
         })}
