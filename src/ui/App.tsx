@@ -17,6 +17,7 @@ import { SessionAnalysisPage } from "./components/SessionAnalysisPage";
 import { BrowserWorkbenchPage } from "./components/BrowserWorkbenchPage";
 import MDContent from "./render/markdown";
 import ScheduledTasksPage from "./components/cron/ScheduledTasksPage";
+import { TaskPanel } from "./components/TaskPanel";
 import { OPEN_BROWSER_WORKBENCH_URL_EVENT, type OpenBrowserWorkbenchUrlDetail } from "./events";
 import { copyTextToClipboard } from "./utils/clipboard";
 import {
@@ -94,6 +95,7 @@ function App() {
   const [hasNewMessages, setHasNewMessages] = useState(false);
   const [showSessionAnalysis, setShowSessionAnalysis] = useState(false);
   const [showCronPage, setShowCronPage] = useState(false);
+  const [showTaskPanel, setShowTaskPanel] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
   const [closeSidebarOnBrowserOpen, setCloseSidebarOnBrowserOpen] = useState(true);
@@ -718,7 +720,7 @@ function App() {
         payload: {
           title: "新聊天",
           cwd: nextCwd,
-          allowedTools: "Read,Edit,Bash",
+          allowedTools: "*",
         },
       });
       return;
@@ -1106,7 +1108,8 @@ function App() {
             onDeleteSession={handleDeleteSession}
             onDeleteWorkspace={handleDeleteWorkspace}
             onOpenSettings={openSettings}
-            onOpenCronPage={() => setShowCronPage(true)}
+            onOpenCronPage={() => { setShowCronPage(true); setShowTaskPanel(false); }}
+            onOpenTaskPanel={() => { setShowTaskPanel(true); setShowCronPage(false); }}
             width={sidebarWidth}
           />
         )}
@@ -1134,6 +1137,14 @@ function App() {
           {showCronPage ? (
             <div className="flex-1 min-h-0 overflow-hidden">
               <ScheduledTasksPage onBack={() => setShowCronPage(false)} />
+            </div>
+          ) : showTaskPanel ? (
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <TaskPanel
+                connected={connected}
+                sendEvent={sendEvent}
+                onBack={() => setShowTaskPanel(false)}
+              />
             </div>
           ) : showSessionAnalysis ? (
             <div className="flex-1 min-h-0 overflow-hidden">

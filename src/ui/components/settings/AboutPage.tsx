@@ -134,8 +134,8 @@ export function AboutPage({ onStartMaintenanceSession, onClose }: AboutPageProps
     <section className="grid gap-6">
       {/* Header */}
       <div className="flex flex-col items-center text-center">
-        <div className="grid h-16 w-16 place-items-center rounded-2xl bg-[#111318] text-xl font-black text-white shadow-[0_14px_30px_rgba(17,19,24,0.16)]">
-          T
+        <div className="grid h-16 w-16 place-items-center rounded-2xl bg-[#111318] shadow-[0_14px_30px_rgba(17,19,24,0.16)] overflow-hidden">
+          <img src={new URL("../../assets/icon.png", import.meta.url).href} alt="tech-cc-hub" className="h-12 w-12 object-contain" />
         </div>
         <h2 className="mt-4 text-2xl font-bold tracking-tight text-ink-900">tech-cc-hub</h2>
         <p className="mt-2 max-w-md text-sm leading-6 text-[#6B778C]">

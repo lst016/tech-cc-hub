@@ -486,19 +486,19 @@ function buildEffectiveAllowedToolSet(
   enforceAgentPolicy: boolean,
 ): Set<string> | null {
   const parsedSessionTools = parseAllowedTools(sessionAllowedTools);
-  const parsedAgentTools = new Set((agentAllowedTools ?? []).map((tool) => tool.trim()).filter(Boolean));
+  const parsedAgentTools = parseAllowedToolList(agentAllowedTools);
 
   if (enforceAgentPolicy) {
-    if (parsedSessionTools && parsedSessionTools.size > 0 && parsedAgentTools.size > 0) {
+    if (parsedSessionTools && parsedSessionTools.size > 0 && parsedAgentTools && parsedAgentTools.size > 0) {
       return new Set(Array.from(parsedSessionTools).filter((tool) => parsedAgentTools.has(tool)));
     }
-    if (parsedAgentTools.size > 0) {
+    if (parsedAgentTools && parsedAgentTools.size > 0) {
       return parsedAgentTools;
     }
     return parsedSessionTools;
   }
 
-  if (parsedAgentTools.size > 0) {
+  if (parsedAgentTools && parsedAgentTools.size > 0) {
     return parsedAgentTools;
   }
 
@@ -510,16 +510,27 @@ function parseAllowedTools(value: string | undefined): Set<string> | null {
     return null;
   }
 
-  const parsed = value
-    .split(",")
+  return parseAllowedToolList(value.split(","));
+}
+
+function parseAllowedToolList(value: string[] | undefined): Set<string> | null {
+  const parsed = (value ?? [])
     .map((tool) => tool.trim())
     .filter(Boolean);
+
+  if (parsed.includes("*")) {
+    return null;
+  }
 
   return parsed.length > 0 ? new Set(parsed) : null;
 }
 
 function isAlwaysAllowedTool(toolName: string): boolean {
   if (ALWAYS_ALLOWED_TOOLS.has(toolName)) {
+    return true;
+  }
+
+  if (isConfiguredExternalMcpTool(toolName)) {
     return true;
   }
 
@@ -533,6 +544,20 @@ function isAlwaysAllowedTool(toolName: string): boolean {
     toolName.endsWith(`__${allowedToolName}`) ||
     toolName.endsWith(`:${allowedToolName}`) ||
     toolName.endsWith(`/${allowedToolName}`)
+  ));
+}
+
+function isConfiguredExternalMcpTool(toolName: string): boolean {
+  const serverNames = Object.keys(getExternalMcpServers());
+  if (serverNames.length === 0) {
+    return false;
+  }
+
+  return serverNames.some((serverName) => (
+    toolName.startsWith(`mcp__${serverName}__`) ||
+    toolName.startsWith(`${serverName}__`) ||
+    toolName.startsWith(`${serverName}:`) ||
+    toolName.startsWith(`${serverName}/`)
   ));
 }
 

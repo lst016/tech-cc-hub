@@ -17,6 +17,12 @@ import { buildSessionWorkflowCatalog } from "./libs/workflow-catalog.js";
 import { buildStatelessContinuationPayload } from "./stateless-continuation.js";
 import type { ClientEvent, PromptAttachment, ServerEvent, StreamMessage } from "./types.js";
 import { isDev } from "./util.js";
+import Database from "better-sqlite3";
+import { TaskRepository } from "./libs/task-repository.js";
+import { TaskExecutor } from "./libs/task-executor.js";
+import { registerTaskProvider } from "./libs/task-provider.js";
+import { LarkTaskProvider } from "./libs/task-providers/lark-provider.js";
+import type { TaskFilter, TaskProviderId } from "./libs/task-types.js";
 import {
   buildChannelSessionTitle,
   buildChannelReplyTarget,
@@ -33,6 +39,64 @@ const channelReplyTargets = new Map<string, ChannelReplyTarget>();
 const channelLatestAssistantText = new Map<string, string>();
 const channelLastSentAssistantText = new Map<string, string>();
 let channelReplySender: ((target: ChannelReplyTarget, text: string) => Promise<void> | void) | null = null;
+
+let taskExecutor: TaskExecutor | null = null;
+
+export function initializeTaskExecutor(dbPath: string): TaskExecutor {
+  const taskDb = new Database(dbPath);
+  const taskRepo = new TaskRepository(taskDb);
+
+  registerTaskProvider(new LarkTaskProvider());
+
+  const executor = new TaskExecutor(taskRepo, {
+    onTaskUpdated: (task) => {
+      broadcast({
+        type: "task.updated",
+        payload: { task },
+      } as ServerEvent);
+    },
+    onExecutionStarted: (execution) => {
+      broadcast({
+        type: "task.execution.started",
+        payload: { execution },
+      } as ServerEvent);
+    },
+    onExecutionCompleted: (execution) => {
+      broadcast({
+        type: "task.execution.completed",
+        payload: { execution },
+      } as ServerEvent);
+    },
+    onExecutionLog: (log) => {
+      broadcast({
+        type: "task.execution.log",
+        payload: { log },
+      } as ServerEvent);
+    },
+    onStatsChanged: (stats) => {
+      broadcast({
+        type: "task.stats",
+        payload: { stats },
+      } as ServerEvent);
+    },
+    onSyncCompleted: (provider, count) => {
+      broadcast({
+        type: "task.sync.completed",
+        payload: { provider, count },
+      } as ServerEvent);
+    },
+    onError: (message) => {
+      broadcast({
+        type: "task.error",
+        payload: { message },
+      } as ServerEvent);
+    },
+  });
+
+  executor.startPolling(30000);
+  taskExecutor = executor;
+  return executor;
+}
 
 export function setChannelReplySender(sender: ((target: ChannelReplyTarget, text: string) => Promise<void> | void) | null) {
   channelReplySender = sender;
@@ -857,8 +921,8 @@ export async function handleClientEvent(event: ClientEvent) {
       : session.title;
     const selectedModel =
       event.payload.runtime?.model?.trim()
-      || resolveLatestMessageModel(history?.messages)
       || session.model
+      || resolveLatestMessageModel(history?.messages)
       || config?.model;
     const previousModel = resolveLatestMessageModel(history?.messages) || session.model || config?.model;
     const switchedModel = Boolean(
@@ -1098,6 +1162,54 @@ export async function handleClientEvent(event: ClientEvent) {
     emit({ type: "agent.list", payload: { agents } });
     return;
   }
+
+  // Task system handlers
+  if (event.type === "task.list") {
+    const filter = event.payload?.filter as TaskFilter | undefined;
+    const tasks = taskExecutor?.listTasks(filter) ?? [];
+    emit({
+      type: "task.list",
+      payload: { tasks },
+    } as ServerEvent);
+    return;
+  }
+
+  if (event.type === "task.sync") {
+    void taskExecutor?.syncProvider(event.payload.provider as TaskProviderId);
+    return;
+  }
+
+  if (event.type === "task.execute") {
+    void taskExecutor?.triggerExecution(event.payload.taskId);
+    return;
+  }
+
+  if (event.type === "task.markStatus") {
+    void taskExecutor?.markTaskStatus(event.payload.taskId, event.payload.status as "pending" | "in_progress" | "done" | "cancelled");
+    return;
+  }
+
+  if (event.type === "task.stats") {
+    const stats = taskExecutor?.getStats();
+    if (stats) {
+      emit({
+        type: "task.stats",
+        payload: { stats },
+      } as ServerEvent);
+    }
+    return;
+  }
+
+  if (event.type === "task.execution.logs") {
+    const executionTaskId = event.payload.taskId;
+    const executions = taskExecutor?.getExecutions(executionTaskId) ?? [];
+    const logs = taskExecutor?.getExecutionLogs(executionTaskId) ?? [];
+    emit({
+      type: "task.execution.list",
+      payload: { taskId: executionTaskId, executions, logs },
+    } as ServerEvent);
+    return;
+  }
 }
 
 export function addServerEventListener(listener: (event: ServerEvent) => void): () => void {
@@ -1112,6 +1224,8 @@ export function cleanupAllSessions(): void {
     handle.abort();
   }
   runnerHandles.clear();
+  taskExecutor?.stopPolling();
+  taskExecutor = null;
   if (sessions) {
     sessions.recoverInterruptedSessions();
     sessions.close();

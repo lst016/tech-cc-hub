@@ -1109,7 +1109,7 @@ const SessionResult = ({ message }: { message: SDKResultMessage }) => {
           >
             SDK返回估值 {formatUsd(message.total_cost_usd)}
           </span>
-          <span className="text-xs text-muted">非真实扣费，new-api 账单为准</span>
+          <span className="text-xs text-muted">非真实扣费</span>
         </div>
       </div>
     </div>

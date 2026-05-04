@@ -385,6 +385,27 @@ export function BrowserWorkbenchPage({
     setStatusText(nextState.opened ? "检查器已打开" : "检查器已关闭");
   };
 
+  const handleScreenshotAnnotate = async () => {
+    if (!hasBrowserRuntime) {
+      setStatusText("当前 Electron 主进程还没有截图标注能力，请重启应用后再试");
+      return;
+    }
+    if (isPreviewRuntime) {
+      setStatusText("Codex 内置浏览器不能截图 Electron BrowserView");
+      return;
+    }
+    const result = await window.electron.captureBrowserWorkbenchVisible(sessionId ?? undefined);
+    if (result.success && result.dataUrl) {
+      setStatusText("截图已捕获，可进行标注");
+      if (!state.annotationMode) {
+        const nextState = await window.electron.setBrowserWorkbenchAnnotationMode(true, sessionId ?? undefined);
+        setState(nextState);
+      }
+    } else {
+      setStatusText(result.error || "截图标注失败");
+    }
+  };
+
   const handleToggleAnnotation = async () => {
     if (!hasBrowserRuntime) {
       setStatusText("当前 Electron 主进程还没有标注能力，请重启应用后再试");
@@ -575,6 +596,13 @@ export function BrowserWorkbenchPage({
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
                 <path d="M4 8a2 2 0 0 1 2-2h2l1.4-1.8A2 2 0 0 1 11 3.5h2a2 2 0 0 1 1.6.7L16 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z" />
                 <circle cx="12" cy="12.5" r="3" />
+              </svg>
+            </button>
+            <button type="button" onClick={handleScreenshotAnnotate} disabled={!canUseBrowserView || !hasExternalBrowserUrl} className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-black/10 bg-white text-ink-700 transition hover:bg-ink-900/5 disabled:opacity-50" title="截图标注" aria-label="截图标注">
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                <path d="M4 5h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" />
+                <circle cx="8" cy="10" r="1.5" fill="currentColor" stroke="none" />
+                <path d="M10 10h6" strokeWidth="2" strokeLinecap="round" />
               </svg>
             </button>
             <button type="button" onClick={handleToggleAnnotation} className={`relative inline-flex h-8 w-8 items-center justify-center rounded-full border transition ${state.annotationMode ? "border-accent/30 bg-accent-subtle text-accent" : "border-black/10 bg-white text-ink-700 hover:bg-ink-900/5"}`} title={state.annotationMode ? "关闭标注" : "开启标注"} aria-label={state.annotationMode ? "关闭标注" : "开启标注"}>

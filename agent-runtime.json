@@ -1,0 +1,23 @@
+{
+  "systemPromptExt": [
+    "## 工具调用纪律",
+    "- 已知多个文件路径时，并发 Read，禁止串行逐个读取。",
+    "- 目标文件不明确时，先用 Grep/Glob 收敛范围，再并发读取命中文件。",
+    "- 禁止 ls → cat → grep 碎片链路。一次 Grep 能得出结论的，不拆成多次 Bash。",
+    "- 只读操作可以批量并发；写入/删除/安装等副作用操作不混入批量调用。",
+    "- 标注定位后直接并发 Read：从 browser_annotations 的 ancestorChain 定位到组件名后，立即并发读取所有候选文件，不要逐个 Read 试探。",
+    "",
+    "## 附件处理策略",
+    "- 用户上传图片/截图 → 第一步用 design_inspect_image 获取结构化摘要，禁止用 Read 读取图片文件。",
+    "- 需要像素级比照时 → 用 design_compare_current_view 或 design_compare_images。",
+    "- 用户上传非图片文件 → 正常 Read。",
+    "",
+    "## 标注驱动 UI 修改 SOP",
+    "当用户通过 browser_annotations 标注 UI 元素并要求修改时，执行以下流程：",
+    "1. 定位 — 从 annotation 的 dom.path / dom.selector / context.ancestorChain 定位涉及的组件文件。",
+    "2. 并发读取 — 定位到 ≤3 个候选文件后，一次并发 Read 全部，不逐个试探。",
+    "3. 批量编辑 — 单轮完成所有 Edit，不跨轮拆分同一功能点。",
+    "4. 类型验证 — 编辑完成后跑 npx tsc --noEmit 作为类型关门验证。",
+    "5. 视觉比照 — 对于视觉修改，用 design_compare_current_view 对比参考图确认还原度。"
+  ]
+}

@@ -22,12 +22,23 @@ type PluginInstallResult = {
   version?: string;
   message: string;
   error?: string;
+  permissions?: OpenComputerUsePermissionStatus;
+};
+
+type OpenComputerUsePermissionStatus = {
+  platform: string;
+  required: boolean;
+  accessibility: "granted" | "missing" | "not-required" | "unknown";
+  screenRecording: "granted" | "missing" | "not-required" | "unknown";
+  needsUserAction: boolean;
+  openedSystemSettings: boolean;
 };
 
 type PluginRuntimeStatus = {
   installed: boolean;
   connected: boolean;
   version?: string;
+  permissions?: OpenComputerUsePermissionStatus;
 };
 
 const DEFAULT_PLUGINS: DefaultPlugin[] = [
@@ -97,6 +108,7 @@ export function PluginsSettingsPage() {
           installed: result.installed,
           connected: result.connected,
           version: result.version,
+          permissions: result.permissions,
         });
       } catch (error) {
         setInstallResult({
@@ -143,9 +155,26 @@ export function PluginsSettingsPage() {
         </div>
 
         {DEFAULT_PLUGINS.map((plugin) => {
-          const status = statusMeta[plugin.status];
           const connected = runtimeStatus?.connected === true || (installResult?.success && installResult.connected);
           const installed = runtimeStatus?.installed === true || installResult?.installed === true;
+          const permissions = installResult?.permissions ?? runtimeStatus?.permissions;
+          const needsPermission = Boolean(permissions?.required && permissions.needsUserAction);
+          const status = connected
+            ? statusMeta.ready
+            : needsPermission
+              ? statusMeta["needs-permission"]
+              : installed
+                ? statusMeta.planned
+                : statusMeta["not-installed"];
+          const actionLabel = installingPluginId === plugin.id
+            ? "处理中..."
+            : connected
+              ? "重新检测"
+              : needsPermission
+                ? "授权"
+                : installed
+                  ? "接入"
+                  : "安装";
           return (
             <article
               key={plugin.id}
@@ -175,8 +204,8 @@ export function PluginsSettingsPage() {
                 {plugin.kind}
               </span>
 
-              <span className={`mt-1 w-fit rounded-full border px-2.5 py-1 text-xs font-semibold ${connected ? statusMeta.ready.className : status.className}`}>
-                {connected ? "已接入" : status.label}
+              <span className={`mt-1 w-fit rounded-full border px-2.5 py-1 text-xs font-semibold ${status.className}`}>
+                {status.label}
               </span>
 
               <div className="min-w-0 text-sm leading-5 text-[#6B778C]">
@@ -186,15 +215,20 @@ export function PluginsSettingsPage() {
                   <ShieldCheck className="h-3.5 w-3.5" />
                   {plugin.permissions.length} 权限
                 </div>
+                {needsPermission && (
+                  <div className="mt-1 text-xs font-medium text-orange-700">
+                    macOS 需授权 Accessibility / Screen Recording
+                  </div>
+                )}
               </div>
 
               <button
                 type="button"
                 className="mt-0.5 rounded-lg bg-[#1D2129] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#2B303B] disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={() => handleInstall(plugin)}
-                disabled={installingPluginId === plugin.id || connected}
+                disabled={installingPluginId === plugin.id}
               >
-                {installingPluginId === plugin.id ? "安装中..." : connected ? "已接入" : installed ? "接入" : "安装"}
+                {actionLabel}
               </button>
             </article>
           );

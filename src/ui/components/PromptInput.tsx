@@ -20,7 +20,7 @@ import { OPEN_BROWSER_WORKBENCH_URL_EVENT, PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS
 import { ComposerContextCard } from "./ComposerContextCard";
 import { DecisionPanel } from "./DecisionPanel";
 
-const DEFAULT_ALLOWED_TOOLS = "Read,Edit,Bash";
+const DEFAULT_ALLOWED_TOOLS = "*";
 const MAX_ROWS = 12;
 const LINE_HEIGHT = 21;
 const MAX_HEIGHT = MAX_ROWS * LINE_HEIGHT;

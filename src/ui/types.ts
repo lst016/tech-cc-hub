@@ -291,7 +291,17 @@ export type ServerEvent =
   | { type: "session.deleted"; payload: { sessionId: string } }
   | { type: "permission.request"; payload: { sessionId: string; toolUseId: string; toolName: string; input: unknown } }
   | { type: "runner.error"; payload: { sessionId?: string; message: string } }
-  | { type: "agent.list"; payload: { agents: Array<{ id: string; name: string; description?: string; scope: string }> } };
+  | { type: "agent.list"; payload: { agents: Array<{ id: string; name: string; description?: string; scope: string }> } }
+  // Task system events
+  | { type: "task.list"; payload: { tasks: UiTask[] } }
+  | { type: "task.updated"; payload: { task: UiTask } }
+  | { type: "task.execution.started"; payload: { execution: UiTaskExecution } }
+  | { type: "task.execution.completed"; payload: { execution: UiTaskExecution } }
+  | { type: "task.execution.log"; payload: { log: UiTaskExecutionLog } }
+  | { type: "task.stats"; payload: { stats: UiTaskStats } }
+  | { type: "task.sync.completed"; payload: { provider: string; count: number } }
+  | { type: "task.error"; payload: { message: string } }
+  | { type: "task.execution.list"; payload: { taskId: string; executions: UiTaskExecution[]; logs: UiTaskExecutionLog[] } };
 
 // Client -> Server events
 export type ClientEvent =
@@ -310,4 +320,73 @@ export type ClientEvent =
   | { type: "session.list"; payload?: { archived?: boolean } }
   | { type: "session.history"; payload: { sessionId: string; before?: SessionHistoryCursor; limit?: number } }
   | { type: "permission.response"; payload: { sessionId: string; toolUseId: string; result: PermissionResult } }
-  | { type: "agent.list"; payload: { cwd?: string } };
+  | { type: "agent.list"; payload: { cwd?: string } }
+  // Task system client events
+  | { type: "task.list"; payload?: { filter?: UiTaskFilter } }
+  | { type: "task.sync"; payload: { provider: string } }
+  | { type: "task.execute"; payload: { taskId: string } }
+  | { type: "task.markStatus"; payload: { taskId: string; status: string } }
+  | { type: "task.stats"; payload?: {} }
+  | { type: "task.execution.logs"; payload: { taskId: string } };
+
+// Task system UI types
+export type UiTaskProviderId = "lark" | "tb";
+
+export type UiTaskStatus = "pending" | "in_progress" | "done" | "cancelled" | "executing" | "completed" | "failed";
+
+export type UiTaskPriority = "low" | "medium" | "high" | "urgent";
+
+export type UiTask = {
+  id: string;
+  externalId: string;
+  provider: UiTaskProviderId;
+  title: string;
+  description?: string;
+  status: string;
+  assignee?: string;
+  priority: UiTaskPriority;
+  dueDate?: number;
+  sourceData: Record<string, unknown>;
+  localStatus: UiTaskStatus;
+  lastSyncedAt: number;
+  lastExecutedAt?: number;
+  executionSessionId?: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type UiTaskExecution = {
+  id: string;
+  taskId: string;
+  sessionId: string;
+  status: "running" | "completed" | "failed";
+  startedAt: number;
+  completedAt?: number;
+  result?: string;
+  error?: string;
+};
+
+export type UiTaskExecutionLog = {
+  id: string;
+  executionId: string;
+  taskId: string;
+  level: "info" | "warn" | "error";
+  message: string;
+  timestamp: number;
+};
+
+export type UiTaskFilter = {
+  provider?: string;
+  status?: string;
+  priority?: string;
+  query?: string;
+};
+
+export type UiTaskStats = {
+  total: number;
+  pending: number;
+  executing: number;
+  completed: number;
+  failed: number;
+  byProvider: Record<string, number>;
+};

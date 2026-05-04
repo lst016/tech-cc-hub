@@ -167,15 +167,21 @@ export function getGlobalRuntimeConfig(): GlobalRuntimeConfig {
 
 export function buildEnvForConfig(config: ApiConfig, modelOverride?: string): Record<string, string> {
   const baseEnv = { ...process.env } as Record<string, string>;
+  const selectedModel = modelOverride ?? config.model;
 
   baseEnv.ANTHROPIC_AUTH_TOKEN = config.apiKey;
   baseEnv.ANTHROPIC_BASE_URL = normalizeAnthropicBaseUrlForClaudeCode(config.baseURL);
-  baseEnv.ANTHROPIC_MODEL = modelOverride ?? config.model;
+  baseEnv.ANTHROPIC_MODEL = selectedModel;
+  baseEnv.CLAUDE_CODE_SUBAGENT_MODEL = selectedModel;
 
   const runtimeEnv = buildGlobalRuntimeEnvConfig();
   return {
     ...baseEnv,
     ...runtimeEnv,
+    ANTHROPIC_AUTH_TOKEN: config.apiKey,
+    ANTHROPIC_BASE_URL: normalizeAnthropicBaseUrlForClaudeCode(config.baseURL),
+    ANTHROPIC_MODEL: selectedModel,
+    CLAUDE_CODE_SUBAGENT_MODEL: selectedModel,
   };
 }
 

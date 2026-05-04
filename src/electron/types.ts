@@ -132,7 +132,17 @@ export type ServerEvent =
   | { type: "session.deleted"; payload: { sessionId: string } }
   | { type: "permission.request"; payload: { sessionId: string; toolUseId: string; toolName: string; input: unknown } }
   | { type: "runner.error"; payload: { sessionId?: string; message: string } }
-  | { type: "agent.list"; payload: { agents: Array<{ id: string; name: string; description?: string; scope: string }> } };
+  | { type: "agent.list"; payload: { agents: Array<{ id: string; name: string; description?: string; scope: string }> } }
+  // Task system events
+  | { type: "task.list"; payload: { tasks: Array<Record<string, unknown>> } }
+  | { type: "task.updated"; payload: { task: Record<string, unknown> } }
+  | { type: "task.execution.started"; payload: { execution: Record<string, unknown> } }
+  | { type: "task.execution.completed"; payload: { execution: Record<string, unknown> } }
+  | { type: "task.execution.log"; payload: { log: unknown } }
+  | { type: "task.stats"; payload: { stats: Record<string, unknown> } }
+  | { type: "task.sync.completed"; payload: { provider: string; count: number } }
+  | { type: "task.error"; payload: { message: string } }
+  | { type: "task.execution.list"; payload: { taskId: string; executions: Array<Record<string, unknown>>; logs: Array<Record<string, unknown>> } };
 
 // Client -> Server events
 export type ClientEvent =
@@ -151,4 +161,11 @@ export type ClientEvent =
   | { type: "session.list"; payload?: { archived?: boolean } }
   | { type: "session.history"; payload: { sessionId: string; before?: SessionHistoryCursor; limit?: number } }
   | { type: "permission.response"; payload: { sessionId: string; toolUseId: string; result: PermissionResult } }
-  | { type: "agent.list"; payload: { cwd?: string } };
+  | { type: "agent.list"; payload: { cwd?: string } }
+  // Task system client events
+  | { type: "task.list"; payload?: { filter?: Record<string, unknown> } }
+  | { type: "task.sync"; payload: { provider: string } }
+  | { type: "task.execute"; payload: { taskId: string } }
+  | { type: "task.markStatus"; payload: { taskId: string; status: string } }
+  | { type: "task.stats"; payload?: Record<string, unknown> }
+  | { type: "task.execution.logs"; payload: { taskId: string } };

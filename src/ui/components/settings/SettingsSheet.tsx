@@ -113,8 +113,8 @@ export function SettingsSheet({
     <div className="fixed inset-0 z-[40000] flex overflow-hidden bg-[#F5F6F8] text-[#1D2129]">
       <aside className="flex w-[260px] shrink-0 flex-col border-r border-[#E5E6EB] bg-[#EEF0F3] px-5 py-7">
         <div className="flex items-center gap-3">
-          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-[#111318] text-lg font-black text-white shadow-[0_14px_30px_rgba(17,19,24,0.16)]">
-            T
+          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-[#111318] shadow-[0_14px_30px_rgba(17,19,24,0.16)] overflow-hidden">
+            <img src={new URL("../../assets/icon.png", import.meta.url).href} alt="tech-cc-hub" className="h-8 w-8 object-contain" />
           </div>
           <div>
             <div className="text-xl font-bold tracking-tight text-[#1D2129]">tech-cc-hub</div>

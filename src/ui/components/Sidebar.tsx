@@ -14,6 +14,7 @@ interface SidebarProps {
   onDeleteWorkspace: (sessionIds: string[], workspaceName: string) => void;
   onOpenSettings?: (pageId?: SettingsPageId) => void;
   onOpenCronPage?: () => void;
+  onOpenTaskPanel?: () => void;
   width?: number;
 }
 
@@ -27,6 +28,7 @@ export function Sidebar({
   onDeleteWorkspace,
   onOpenSettings,
   onOpenCronPage,
+  onOpenTaskPanel,
   width = 320,
 }: SidebarProps) {
   const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-14" : "top-10";
@@ -316,6 +318,21 @@ export function Sidebar({
         </div>
 
         <div className="mt-auto space-y-2">
+          <button
+            className="flex w-full items-center justify-between rounded-2xl border border-black/6 bg-white/82 px-4 py-3 text-sm font-medium text-ink-800 shadow-[0_10px_28px_rgba(30,38,52,0.06)] transition-all hover:-translate-y-[1px] hover:border-black/10 hover:bg-white"
+            onClick={() => onOpenTaskPanel?.()}
+            aria-label="任务面板"
+          >
+            <span>任务面板</span>
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <rect x="3" y="3" width="18" height="18" rx="3" />
+              <path d="M9 3v18" />
+              <path d="M3 9h6" />
+              <path d="M3 15h6" />
+              <path d="M15 8l3 3-3 3" />
+              <path d="M12 11h6" />
+            </svg>
+          </button>
           <button
             className="flex w-full items-center justify-between rounded-2xl border border-black/6 bg-white/82 px-4 py-3 text-sm font-medium text-ink-800 shadow-[0_10px_28px_rgba(30,38,52,0.06)] transition-all hover:-translate-y-[1px] hover:border-black/10 hover:bg-white"
             onClick={() => onOpenCronPage?.()}

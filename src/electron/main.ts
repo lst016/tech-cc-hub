@@ -8,6 +8,9 @@ import {
     ipcMain,
     Menu,
     nativeImage,
+    shell,
+    systemPreferences,
+    desktopCapturer,
 } from "electron"
 import { execFile, execSync } from "child_process";
 import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
@@ -15,7 +18,7 @@ import { extname, isAbsolute, join, relative } from "path";
 import { ipcMainHandle, isDev, DEV_PORT } from "./util.js";
 import { getPreloadPath, getUIPath, getIconPath } from "./pathResolver.js";
 import { getStaticData, pollResources, stopPolling } from "./test.js";
-import { handleClientEvent, sessions, cleanupAllSessions, setChannelReplySender, listStoredSessionsForRenderer } from "./ipc-handlers.js";
+import { handleClientEvent, sessions, cleanupAllSessions, setChannelReplySender, listStoredSessionsForRenderer, initializeTaskExecutor } from "./ipc-handlers.js";
 import { generateSessionTitle } from "./libs/util.js";
 import {
   loadApiConfigSettings,
@@ -88,16 +91,100 @@ async function getOpenComputerUseVersion(): Promise<string | null> {
   }
 }
 
-async function installOpenComputerUsePlugin(): Promise<{ success: boolean; installed: boolean; connected: boolean; version?: string; message: string; error?: string }> {
+type OpenComputerUsePermissionStatus = {
+  platform: NodeJS.Platform;
+  required: boolean;
+  accessibility: "granted" | "missing" | "not-required" | "unknown";
+  screenRecording: "granted" | "missing" | "not-required" | "unknown";
+  needsUserAction: boolean;
+  openedSystemSettings: boolean;
+};
+
+function macPrivacyPaneUrl(kind: "accessibility" | "screen-recording"): string {
+  return kind === "accessibility"
+    ? "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+    : "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+}
+
+async function prepareOpenComputerUsePermissions(options: { prompt?: boolean; openSettings?: boolean } = {}): Promise<OpenComputerUsePermissionStatus> {
+  if (process.platform !== "darwin") {
+    return {
+      platform: process.platform,
+      required: false,
+      accessibility: "not-required",
+      screenRecording: "not-required",
+      needsUserAction: false,
+      openedSystemSettings: false,
+    };
+  }
+
+  let accessibility: OpenComputerUsePermissionStatus["accessibility"] = "unknown";
+  let screenRecording: OpenComputerUsePermissionStatus["screenRecording"] = "unknown";
+  let openedSystemSettings = false;
+
+  try {
+    accessibility = systemPreferences.isTrustedAccessibilityClient(Boolean(options.prompt)) ? "granted" : "missing";
+  } catch {
+    accessibility = "unknown";
+  }
+
+  try {
+    const screenStatus = systemPreferences.getMediaAccessStatus("screen");
+    screenRecording = screenStatus === "granted" ? "granted" : "missing";
+  } catch {
+    screenRecording = "unknown";
+  }
+
+  if (options.prompt && screenRecording !== "granted") {
+    try {
+      await desktopCapturer.getSources({
+        types: ["screen"],
+        thumbnailSize: { width: 1, height: 1 },
+      });
+      const refreshedScreenStatus = systemPreferences.getMediaAccessStatus("screen");
+      screenRecording = refreshedScreenStatus === "granted" ? "granted" : "missing";
+    } catch {
+      screenRecording = "missing";
+    }
+  }
+
+  if (options.openSettings) {
+    if (accessibility !== "granted") {
+      await shell.openExternal(macPrivacyPaneUrl("accessibility"));
+      openedSystemSettings = true;
+    }
+    if (screenRecording !== "granted") {
+      setTimeout(() => {
+        void shell.openExternal(macPrivacyPaneUrl("screen-recording"));
+      }, accessibility !== "granted" ? 900 : 0);
+      openedSystemSettings = true;
+    }
+  }
+
+  return {
+    platform: process.platform,
+    required: true,
+    accessibility,
+    screenRecording,
+    needsUserAction: accessibility !== "granted" || screenRecording !== "granted",
+    openedSystemSettings,
+  };
+}
+
+async function installOpenComputerUsePlugin(): Promise<{ success: boolean; installed: boolean; connected: boolean; version?: string; message: string; error?: string; permissions: OpenComputerUsePermissionStatus }> {
   const existingVersion = await getOpenComputerUseVersion();
   if (existingVersion) {
-    connectOpenComputerUsePlugin(existingVersion);
+    const permissions = await prepareOpenComputerUsePermissions({ prompt: true, openSettings: true });
+    connectOpenComputerUsePlugin(existingVersion, permissions);
     return {
       success: true,
       installed: true,
-      connected: true,
+      connected: !permissions.needsUserAction,
       version: existingVersion,
-      message: "Open Computer Use 已安装并接入。",
+      permissions,
+      message: permissions.needsUserAction
+        ? "Open Computer Use 已安装，已写入 MCP；macOS 还需要授权 Accessibility 和 Screen Recording。"
+        : "Open Computer Use 已安装并接入。",
     };
   }
 
@@ -105,43 +192,53 @@ async function installOpenComputerUsePlugin(): Promise<{ success: boolean; insta
   try {
     await execFileText(npmCommand, ["install", "-g", "open-computer-use"], 300_000);
     const version = await getOpenComputerUseVersion();
-    connectOpenComputerUsePlugin(version ?? "installed");
+    const permissions = await prepareOpenComputerUsePermissions({ prompt: true, openSettings: true });
+    connectOpenComputerUsePlugin(version ?? "installed", permissions);
     return {
       success: true,
       installed: true,
-      connected: true,
+      connected: !permissions.needsUserAction,
       version: version ?? undefined,
-      message: "Open Computer Use 安装完成并接入。",
+      permissions,
+      message: permissions.needsUserAction
+        ? "Open Computer Use 安装完成，已写入 MCP；macOS 还需要授权 Accessibility 和 Screen Recording。"
+        : "Open Computer Use 安装完成并接入。",
     };
   } catch (error) {
+    const permissions = await prepareOpenComputerUsePermissions();
     return {
       success: false,
       installed: false,
       connected: false,
       message: "Open Computer Use 安装或接入失败。",
+      permissions,
       error: error instanceof Error ? error.message : String(error),
     };
   }
 }
 
-async function getOpenComputerUsePluginStatus(): Promise<{ installed: boolean; connected: boolean; version?: string }> {
+async function getOpenComputerUsePluginStatus(): Promise<{ installed: boolean; connected: boolean; version?: string; permissions: OpenComputerUsePermissionStatus }> {
   const version = await getOpenComputerUseVersion();
+  const permissions = await prepareOpenComputerUsePermissions();
   const config = loadGlobalRuntimeConfig();
   const plugins = isPlainObject(config.plugins) ? config.plugins : {};
   const mcpServers = isPlainObject(config.mcpServers) ? config.mcpServers : {};
   const pluginConfig = isPlainObject(plugins["open-computer-use"]) ? plugins["open-computer-use"] : {};
   const mcpConfig = isPlainObject(mcpServers["open-computer-use"]) ? mcpServers["open-computer-use"] : {};
+  const hasMcpConfig = pluginConfig.enabled === true && mcpConfig.command === "open-computer-use";
   return {
     installed: Boolean(version),
-    connected: pluginConfig.enabled === true && pluginConfig.connected === true && mcpConfig.command === "open-computer-use",
+    connected: Boolean(version) && hasMcpConfig && !permissions.needsUserAction,
     version: version ?? undefined,
+    permissions,
   };
 }
 
-function connectOpenComputerUsePlugin(version: string): void {
+function connectOpenComputerUsePlugin(version: string, permissions: OpenComputerUsePermissionStatus): void {
   const current = loadGlobalRuntimeConfig();
   const currentPlugins = isPlainObject(current.plugins) ? current.plugins : {};
   const currentMcpServers = isPlainObject(current.mcpServers) ? current.mcpServers : {};
+  const permissionsReady = !permissions.needsUserAction;
   saveGlobalRuntimeConfig({
     ...current,
     plugins: {
@@ -157,7 +254,8 @@ function connectOpenComputerUsePlugin(version: string): void {
         },
         enabled: true,
         installed: true,
-        connected: true,
+        connected: permissionsReady,
+        permissionStatus: permissions,
         version,
         updatedAt: Date.now(),
       },
@@ -617,7 +715,7 @@ async function scheduleDevAutostart(): Promise<void> {
             const title = await generateSessionTitle(prompt);
             void handleClientEvent({
                 type: "session.start",
-                payload: { title, prompt, cwd, allowedTools: "Read,Edit,Bash" }
+                payload: { title, prompt, cwd, allowedTools: "*" }
             });
 
             if (!continuePrompt) return;
@@ -1017,6 +1115,10 @@ app.on("ready", async () => {
     setCronService(cronService);
     registerCronIpcHandlers(cronService);
     cronService.init().catch((err) => console.error("[main] CronService 初始化失败:", err));
+    // Initialize task system
+    const taskDbPath = join(app.getPath("userData"), "tasks.db");
+    initializeTaskExecutor(taskDbPath);
+    console.log("[main] Task executor initialized");
     channelBridgeController = startChannelBridge(async (message) => {
       await handleClientEvent({
         type: "channel.message.receive",
