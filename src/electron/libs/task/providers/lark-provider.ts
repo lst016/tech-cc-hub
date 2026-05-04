@@ -1,8 +1,8 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import type { TaskProvider, ExternalTask, ExternalTaskStatus } from "../task-types.js";
-import { getGlobalRuntimeEnvConfig } from "../claude-settings.js";
-import { loadGlobalRuntimeConfig } from "../config-store.js";
+import type { TaskProvider, ExternalTask, ExternalTaskStatus } from "../types.js";
+import { getGlobalRuntimeEnvConfig } from "../../claude-settings.js";
+import { loadGlobalRuntimeConfig } from "../../config-store.js";
 
 const execFileAsync = promisify(execFile);
 

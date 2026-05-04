@@ -18,11 +18,14 @@ import { buildStatelessContinuationPayload } from "./stateless-continuation.js";
 import type { ClientEvent, PromptAttachment, ServerEvent, StreamMessage } from "./types.js";
 import { isDev } from "./util.js";
 import Database from "better-sqlite3";
-import { TaskRepository } from "./libs/task-repository.js";
-import { TaskExecutor } from "./libs/task-executor.js";
-import { registerTaskProvider } from "./libs/task-provider.js";
-import { LarkTaskProvider } from "./libs/task-providers/lark-provider.js";
-import type { TaskFilter, TaskProviderId } from "./libs/task-types.js";
+import {
+  TaskExecutor,
+  TaskRepository,
+  LarkTaskProvider,
+  registerTaskProvider,
+  type TaskFilter,
+  type TaskProviderId,
+} from "./libs/task/index.js";
 import { NoteRepository } from "./libs/note-repository.js";
 import {
   buildChannelSessionTitle,

@@ -1,5 +1,5 @@
-import { TaskRepository } from "./task-repository.js";
-import { getTaskProvider, ensureProvider } from "./task-provider.js";
+import { TaskRepository } from "./repository.js";
+import { getTaskProvider, ensureProvider } from "./provider-registry.js";
 import type {
   StoredTask,
   TaskExecution,
@@ -8,13 +8,13 @@ import type {
   TaskStats,
   TaskFilter,
   ExternalTaskStatus,
-} from "./task-types.js";
-import { runClaude, type RunnerHandle } from "./runner.js";
-import { getCurrentApiConfig } from "./claude-settings.js";
-import { computeRetryDueAt, loadTaskWorkflowConfig, type TaskWorkflowConfig } from "./task-workflow.js";
-import { ensureTaskWorkspace } from "./task-workspace.js";
-import type { ServerEvent } from "../types.js";
-import type { Session, SessionStore } from "./session-store.js";
+} from "./types.js";
+import { runClaude, type RunnerHandle } from "../runner.js";
+import { getCurrentApiConfig } from "../claude-settings.js";
+import { computeRetryDueAt, loadTaskWorkflowConfig, type TaskWorkflowConfig } from "./workflow.js";
+import { ensureTaskWorkspace } from "./workspace.js";
+import type { ServerEvent } from "../../types.js";
+import type { Session, SessionStore } from "../session-store.js";
 
 export type TaskExecutorEvents = {
   onTaskUpdated?: (task: StoredTask) => void;
@@ -114,7 +114,7 @@ export class TaskExecutor {
   }
 
   async syncAll(options: { silentErrors?: boolean } = {}): Promise<void> {
-    const { listTaskProviders } = await import("./task-provider.js");
+    const { listTaskProviders } = await import("./provider-registry.js");
     for (const provider of listTaskProviders()) {
       await this.syncProvider(provider.id, options);
     }

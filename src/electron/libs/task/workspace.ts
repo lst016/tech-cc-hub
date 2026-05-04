@@ -1,8 +1,8 @@
 import { mkdirSync } from "fs";
 import { isAbsolute, relative, resolve } from "path";
 
-import type { StoredTask } from "./task-types.js";
-import type { TaskWorkflowConfig } from "./task-workflow.js";
+import type { StoredTask } from "./types.js";
+import type { TaskWorkflowConfig } from "./workflow.js";
 
 export function ensureTaskWorkspace(task: StoredTask, config: TaskWorkflowConfig): string {
   const root = resolve(config.workspace.root);

@@ -9,7 +9,7 @@ import type {
   LocalTaskStatus,
   TaskProviderId,
   TaskClaimState,
-} from "./task-types.js";
+} from "./types.js";
 
 export class TaskRepository {
   private db: Database.Database;

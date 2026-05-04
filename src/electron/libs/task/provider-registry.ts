@@ -1,4 +1,4 @@
-import type { TaskProvider, TaskProviderId, ExternalTask, ExternalTaskStatus } from "./task-types.js";
+import type { TaskProvider, TaskProviderId, ExternalTask, ExternalTaskStatus } from "./types.js";
 
 const registry = new Map<TaskProviderId, TaskProvider>();
 
