@@ -295,13 +295,20 @@ export type ServerEvent =
   // Task system events
   | { type: "task.list"; payload: { tasks: UiTask[] } }
   | { type: "task.updated"; payload: { task: UiTask } }
+  | { type: "task.deleted"; payload: { taskId: string } }
   | { type: "task.execution.started"; payload: { execution: UiTaskExecution } }
   | { type: "task.execution.completed"; payload: { execution: UiTaskExecution } }
   | { type: "task.execution.log"; payload: { log: UiTaskExecutionLog } }
   | { type: "task.stats"; payload: { stats: UiTaskStats } }
   | { type: "task.sync.completed"; payload: { provider: string; count: number } }
   | { type: "task.error"; payload: { message: string } }
-  | { type: "task.execution.list"; payload: { taskId: string; executions: UiTaskExecution[]; logs: UiTaskExecutionLog[] } };
+  | { type: "task.execution.list"; payload: { taskId: string; executions: UiTaskExecution[]; logs: UiTaskExecutionLog[] } }
+  // Note CRUD events
+  | { type: "note.list"; payload: { notes: UiNote[] } }
+  | { type: "note.created"; payload: { note: UiNote } }
+  | { type: "note.updated"; payload: { note: UiNote } }
+  | { type: "note.deleted"; payload: { noteId: string } }
+  | { type: "note.error"; payload: { message: string } };
 
 // Client -> Server events
 export type ClientEvent =
@@ -325,9 +332,16 @@ export type ClientEvent =
   | { type: "task.list"; payload?: { filter?: UiTaskFilter } }
   | { type: "task.sync"; payload: { provider: string } }
   | { type: "task.execute"; payload: { taskId: string } }
+  | { type: "task.delete"; payload: { taskId: string } }
   | { type: "task.markStatus"; payload: { taskId: string; status: string } }
   | { type: "task.stats"; payload?: {} }
-  | { type: "task.execution.logs"; payload: { taskId: string } };
+  | { type: "task.execution.logs"; payload: { taskId: string } }
+  // Note CRUD client events
+  | { type: "note.list" }
+  | { type: "note.create"; payload: { title: string; content: string } }
+  | { type: "note.get"; payload: { noteId: string } }
+  | { type: "note.update"; payload: { noteId: string; input: { title?: string; content?: string } } }
+  | { type: "note.delete"; payload: { noteId: string } };
 
 // Task system UI types
 export type UiTaskProviderId = "lark" | "tb";
@@ -389,4 +403,13 @@ export type UiTaskStats = {
   completed: number;
   failed: number;
   byProvider: Record<string, number>;
+};
+
+// Note CRUD UI types
+export type UiNote = {
+  id: string;
+  title: string;
+  content: string;
+  createdAt: number;
+  updatedAt: number;
 };

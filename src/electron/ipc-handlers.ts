@@ -23,6 +23,7 @@ import { TaskExecutor } from "./libs/task-executor.js";
 import { registerTaskProvider } from "./libs/task-provider.js";
 import { LarkTaskProvider } from "./libs/task-providers/lark-provider.js";
 import type { TaskFilter, TaskProviderId } from "./libs/task-types.js";
+import { NoteRepository } from "./libs/note-repository.js";
 import {
   buildChannelSessionTitle,
   buildChannelReplyTarget,
@@ -42,9 +43,18 @@ let channelReplySender: ((target: ChannelReplyTarget, text: string) => Promise<v
 
 let taskExecutor: TaskExecutor | null = null;
 
+let noteRepo: NoteRepository | null = null;
+
+export function initializeNoteRepository(dbPath: string): NoteRepository {
+  const noteDb = new Database(dbPath);
+  noteRepo = new NoteRepository(noteDb);
+  return noteRepo;
+}
+
 export function initializeTaskExecutor(dbPath: string): TaskExecutor {
   const taskDb = new Database(dbPath);
   const taskRepo = new TaskRepository(taskDb);
+  const sessionStore = initializeSessions();
 
   registerTaskProvider(new LarkTaskProvider());
 
@@ -53,6 +63,12 @@ export function initializeTaskExecutor(dbPath: string): TaskExecutor {
       broadcast({
         type: "task.updated",
         payload: { task },
+      } as ServerEvent);
+    },
+    onTaskDeleted: (taskId) => {
+      broadcast({
+        type: "task.deleted",
+        payload: { taskId },
       } as ServerEvent);
     },
     onExecutionStarted: (execution) => {
@@ -91,6 +107,9 @@ export function initializeTaskExecutor(dbPath: string): TaskExecutor {
         payload: { message },
       } as ServerEvent);
     },
+  }, {
+    sessionStore,
+    emitServerEvent: emit,
   });
 
   executor.startPolling(30000);
@@ -549,11 +568,23 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
     channelName: event.payload.channelName,
   }, workspace);
 
+  const CHANNEL_SESSION_IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 1 小时
+
   const existingSession = store
     .listSessions({ archived: false })
     .find((session) => session.cwd === workspace.root);
 
-  if (!existingSession) {
+  const sessionExpired = existingSession
+    ? Date.now() - existingSession.updatedAt > CHANNEL_SESSION_IDLE_TIMEOUT_MS
+    : false;
+
+  if (existingSession && sessionExpired) {
+    console.log(
+      `[channel] Session ${existingSession.id} idle >1h, opening new session for conversation ${workspace.conversationId}`
+    );
+  }
+
+  if (!existingSession || sessionExpired) {
     await handleClientEvent({
       type: "session.start",
       payload: {
@@ -1189,6 +1220,11 @@ export async function handleClientEvent(event: ClientEvent) {
     return;
   }
 
+  if (event.type === "task.delete") {
+    taskExecutor?.deleteTask(event.payload.taskId);
+    return;
+  }
+
   if (event.type === "task.markStatus") {
     void taskExecutor?.markTaskStatus(event.payload.taskId, event.payload.status as "pending" | "in_progress" | "done" | "cancelled");
     return;
@@ -1213,6 +1249,57 @@ export async function handleClientEvent(event: ClientEvent) {
       type: "task.execution.list",
       payload: { taskId: executionTaskId, executions, logs },
     } as ServerEvent);
+    return;
+  }
+
+  // Note CRUD handlers
+  if (event.type === "note.list") {
+    const notes = noteRepo?.list() ?? [];
+    emit({ type: "note.list", payload: { notes } } as ServerEvent);
+    return;
+  }
+
+  if (event.type === "note.create") {
+    if (!noteRepo) {
+      emit({ type: "note.error", payload: { message: "Note repository not initialized" } } as ServerEvent);
+      return;
+    }
+    const note = noteRepo.create(event.payload);
+    emit({ type: "note.created", payload: { note } } as ServerEvent);
+    return;
+  }
+
+  if (event.type === "note.get") {
+    const note = noteRepo?.get(event.payload.noteId);
+    if (note) {
+      emit({ type: "note.list", payload: { notes: [note] } } as ServerEvent);
+    } else {
+      emit({ type: "note.error", payload: { message: `Note ${event.payload.noteId} not found` } } as ServerEvent);
+    }
+    return;
+  }
+
+  if (event.type === "note.update") {
+    if (!noteRepo) {
+      emit({ type: "note.error", payload: { message: "Note repository not initialized" } } as ServerEvent);
+      return;
+    }
+    const updated = noteRepo.update(event.payload.noteId, event.payload.input);
+    if (updated) {
+      emit({ type: "note.updated", payload: { note: updated } } as ServerEvent);
+    } else {
+      emit({ type: "note.error", payload: { message: `Note ${event.payload.noteId} not found` } } as ServerEvent);
+    }
+    return;
+  }
+
+  if (event.type === "note.delete") {
+    const deleted = noteRepo?.delete(event.payload.noteId);
+    if (deleted) {
+      emit({ type: "note.deleted", payload: { noteId: event.payload.noteId } } as ServerEvent);
+    } else {
+      emit({ type: "note.error", payload: { message: `Note ${event.payload.noteId} not found` } } as ServerEvent);
+    }
     return;
   }
 }

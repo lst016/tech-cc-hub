@@ -79,6 +79,7 @@ export type TaskStats = {
 export type TaskServerEvent =
   | { type: "task.list"; payload: { tasks: StoredTask[] } }
   | { type: "task.updated"; payload: { task: StoredTask } }
+  | { type: "task.deleted"; payload: { taskId: string } }
   | { type: "task.execution.started"; payload: { execution: TaskExecution } }
   | { type: "task.execution.completed"; payload: { execution: TaskExecution } }
   | { type: "task.execution.log"; payload: { log: TaskExecutionLog } }
@@ -90,6 +91,7 @@ export type TaskClientEvent =
   | { type: "task.list"; payload?: { filter?: TaskFilter } }
   | { type: "task.sync"; payload: { provider: TaskProviderId } }
   | { type: "task.execute"; payload: { taskId: string } }
+  | { type: "task.delete"; payload: { taskId: string } }
   | { type: "task.markStatus"; payload: { taskId: string; status: ExternalTaskStatus } }
   | { type: "task.stats"; payload?: {} }
   | { type: "task.execution.logs"; payload: { taskId: string } };

@@ -60,6 +60,13 @@ export class TaskRepository {
         timestamp INTEGER NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS task_dismissals (
+        provider TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        deleted_at INTEGER NOT NULL,
+        PRIMARY KEY(provider, external_id)
+      );
+
       CREATE INDEX IF NOT EXISTS idx_tasks_provider ON tasks(provider);
       CREATE INDEX IF NOT EXISTS idx_tasks_local_status ON tasks(local_status);
       CREATE INDEX IF NOT EXISTS idx_tasks_external_id ON tasks(external_id, provider);
@@ -224,10 +231,104 @@ export class TaskRepository {
     return rows.map((row) => this.rowToTask(row));
   }
 
+  filterDismissedExternalTasks(tasks: ExternalTask[]): ExternalTask[] {
+    const dismissed = this.db.prepare("SELECT 1 FROM task_dismissals WHERE provider = ? AND external_id = ? LIMIT 1");
+    return tasks.filter((task) => !dismissed.get(task.provider, task.externalId));
+  }
+
   updateLocalStatus(id: string, localStatus: LocalTaskStatus): void {
     this.db
       .prepare("UPDATE tasks SET local_status = ?, updated_at = ? WHERE id = ?")
       .run(localStatus, Date.now(), id);
+  }
+
+  recoverInterruptedExecutions(error: string, options: { activeTaskIds?: Iterable<string> } = {}): Array<{
+    task: StoredTask;
+    execution: TaskExecution;
+    interruptionCount: number;
+  }> {
+    const now = Date.now();
+    let rows = this.db
+      .prepare(
+        `SELECT e.*
+         FROM task_executions e
+         INNER JOIN tasks t ON t.id = e.task_id
+         WHERE e.status = 'running'
+            OR (
+              t.local_status = 'executing'
+              AND e.id = (
+                SELECT latest.id
+                FROM task_executions latest
+                WHERE latest.task_id = t.id
+                ORDER BY latest.started_at DESC
+                LIMIT 1
+              )
+            )
+         ORDER BY e.started_at ASC`
+      )
+      .all() as Record<string, unknown>[];
+
+    if (options.activeTaskIds) {
+      const activeTaskIds = new Set(Array.from(options.activeTaskIds, String));
+      rows = rows.filter((row) => !activeTaskIds.has(String(row.task_id)));
+    }
+
+    if (rows.length === 0) return [];
+
+    const recover = this.db.transaction((executionRows: Record<string, unknown>[]) => {
+      for (const row of executionRows) {
+        this.db
+          .prepare("UPDATE task_executions SET status = 'failed', completed_at = ?, error = ? WHERE id = ? AND status = 'running'")
+          .run(now, error, row.id);
+        this.db
+          .prepare("UPDATE tasks SET local_status = 'failed', execution_session_id = NULL, updated_at = ? WHERE id = ? AND local_status = 'executing'")
+          .run(now, row.task_id);
+      }
+    });
+    recover(rows);
+
+    const recovered: Array<{ task: StoredTask; execution: TaskExecution; interruptionCount: number }> = [];
+    for (const row of rows) {
+      const task = this.getTask(String(row.task_id));
+      if (!task) continue;
+      const interruptionCount = this.countExecutionErrors(task.id, error);
+      recovered.push({
+        task,
+        interruptionCount,
+        execution: {
+          ...this.rowToExecution(row),
+          status: "failed",
+          completedAt: now,
+          error,
+        },
+      });
+    }
+
+    return recovered;
+  }
+
+  private countExecutionErrors(taskId: string, error: string): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS cnt FROM task_executions WHERE task_id = ? AND error = ?")
+      .get(taskId, error) as { cnt?: number } | undefined;
+    return Number(row?.cnt ?? 0);
+  }
+
+  deleteTask(id: string): StoredTask | undefined {
+    const task = this.getTask(id);
+    if (!task) return undefined;
+
+    const remove = this.db.transaction((taskId: string) => {
+      this.db
+        .prepare("INSERT OR REPLACE INTO task_dismissals (provider, external_id, deleted_at) VALUES (?, ?, ?)")
+        .run(task.provider, task.externalId, Date.now());
+      this.db.prepare("DELETE FROM task_execution_logs WHERE task_id = ?").run(taskId);
+      this.db.prepare("DELETE FROM task_executions WHERE task_id = ?").run(taskId);
+      this.db.prepare("DELETE FROM tasks WHERE id = ?").run(taskId);
+    });
+
+    remove(id);
+    return task;
   }
 
   setExecuting(id: string, sessionId: string): void {
@@ -309,13 +410,15 @@ export class TaskRepository {
   getExecutions(taskId: string): TaskExecution[] {
     return this.db
       .prepare("SELECT * FROM task_executions WHERE task_id = ? ORDER BY started_at DESC")
-      .all(taskId) as TaskExecution[];
+      .all(taskId)
+      .map((row) => this.rowToExecution(row as Record<string, unknown>));
   }
 
   getLatestExecution(taskId: string): TaskExecution | undefined {
-    return this.db
+    const row = this.db
       .prepare("SELECT * FROM task_executions WHERE task_id = ? ORDER BY started_at DESC LIMIT 1")
-      .get(taskId) as TaskExecution | undefined;
+      .get(taskId) as Record<string, unknown> | undefined;
+    return row ? this.rowToExecution(row) : undefined;
   }
 
   // Execution logs
@@ -362,6 +465,19 @@ export class TaskRepository {
       executionSessionId: row.execution_session_id as string | undefined,
       createdAt: row.created_at as number,
       updatedAt: row.updated_at as number,
+    };
+  }
+
+  private rowToExecution(row: Record<string, unknown>): TaskExecution {
+    return {
+      id: row.id as string,
+      taskId: row.task_id as string,
+      sessionId: row.session_id as string,
+      status: row.status as TaskExecution["status"],
+      startedAt: row.started_at as number,
+      completedAt: row.completed_at as number | undefined,
+      result: row.result as string | undefined,
+      error: row.error as string | undefined,
     };
   }
 }

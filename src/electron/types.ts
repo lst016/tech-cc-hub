@@ -1,6 +1,7 @@
 import type { SDKMessage, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import type { PromptLedgerMessage } from "../shared/prompt-ledger.js";
 import type { SessionWorkflowState, WorkflowScope, WorkflowSpecDocument } from "../shared/workflow-markdown.js";
+import type { Note, NoteCreateInput, NoteUpdateInput } from "./libs/note-types.js";
 
 export type RuntimeReasoningMode = "disabled" | "low" | "medium" | "high" | "xhigh";
 export type AgentRunSurface = "development" | "maintenance";
@@ -136,13 +137,20 @@ export type ServerEvent =
   // Task system events
   | { type: "task.list"; payload: { tasks: Array<Record<string, unknown>> } }
   | { type: "task.updated"; payload: { task: Record<string, unknown> } }
+  | { type: "task.deleted"; payload: { taskId: string } }
   | { type: "task.execution.started"; payload: { execution: Record<string, unknown> } }
   | { type: "task.execution.completed"; payload: { execution: Record<string, unknown> } }
   | { type: "task.execution.log"; payload: { log: unknown } }
   | { type: "task.stats"; payload: { stats: Record<string, unknown> } }
   | { type: "task.sync.completed"; payload: { provider: string; count: number } }
   | { type: "task.error"; payload: { message: string } }
-  | { type: "task.execution.list"; payload: { taskId: string; executions: Array<Record<string, unknown>>; logs: Array<Record<string, unknown>> } };
+  | { type: "task.execution.list"; payload: { taskId: string; executions: Array<Record<string, unknown>>; logs: Array<Record<string, unknown>> } }
+  // Note CRUD events
+  | { type: "note.list"; payload: { notes: Note[] } }
+  | { type: "note.created"; payload: { note: Note } }
+  | { type: "note.updated"; payload: { note: Note } }
+  | { type: "note.deleted"; payload: { noteId: string } }
+  | { type: "note.error"; payload: { message: string } };
 
 // Client -> Server events
 export type ClientEvent =
@@ -166,6 +174,13 @@ export type ClientEvent =
   | { type: "task.list"; payload?: { filter?: Record<string, unknown> } }
   | { type: "task.sync"; payload: { provider: string } }
   | { type: "task.execute"; payload: { taskId: string } }
+  | { type: "task.delete"; payload: { taskId: string } }
   | { type: "task.markStatus"; payload: { taskId: string; status: string } }
   | { type: "task.stats"; payload?: Record<string, unknown> }
-  | { type: "task.execution.logs"; payload: { taskId: string } };
+  | { type: "task.execution.logs"; payload: { taskId: string } }
+  // Note CRUD client events
+  | { type: "note.list" }
+  | { type: "note.create"; payload: NoteCreateInput }
+  | { type: "note.get"; payload: { noteId: string } }
+  | { type: "note.update"; payload: { noteId: string; input: NoteUpdateInput } }
+  | { type: "note.delete"; payload: { noteId: string } };

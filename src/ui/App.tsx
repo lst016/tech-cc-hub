@@ -1,10 +1,12 @@
 ﻿import type { MouseEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import { Download, Loader2, PackageCheck } from "lucide-react";
+import { Toaster } from "sonner";
 import { useIPC } from "./hooks/useIPC";
 import { useMessageWindow } from "./hooks/useMessageWindow";
 import { useAppStore } from "./store/useAppStore";
-import type { ServerEvent, SettingsPageId, StreamMessage } from "./types";
+import type { AppUpdateStatus, ServerEvent, SettingsPageId, StreamMessage } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { StartSessionModal } from "./components/StartSessionModal";
 import { SettingsModal } from "./components/SettingsModal";
@@ -103,6 +105,8 @@ function App() {
   const [workspaceViewBySessionId, setWorkspaceViewBySessionId] = useState<Record<string, WorkspaceView>>({});
   const [activityRailTabBySessionId, setActivityRailTabBySessionId] = useState<Record<string, ActivityRailTab>>({});
   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
+  const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | null>(null);
+  const [appUpdateActionBusy, setAppUpdateActionBusy] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [activityRailWidth, setActivityRailWidth] = useState(420);
   const sidebarWidthRef = useRef(sidebarWidth);
@@ -423,12 +427,6 @@ function App() {
       });
     }
   }, [apiConfigChecked, setApiConfigChecked, setShowSettingsModal]);
-
-  // Temporary: auto-open settings for Computer Use demo
-  useEffect(() => {
-    setShowSettingsModal(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     window.electron.getApiConfig()
@@ -978,6 +976,41 @@ function App() {
   const activityRailOffset = !showSessionAnalysis && !isUtilityWorkspace && showActivityRail ? activityRailWidth : 0;
   const runtimeMeta = runtimeSourceMeta[runtimeSource];
   const currentSessionId = activeSessionId ?? null;
+  const headerUpdateStatus = appUpdateStatus;
+  const showHeaderUpdateButton = headerUpdateStatus?.status === "available" ||
+    headerUpdateStatus?.status === "downloading" ||
+    headerUpdateStatus?.status === "downloaded";
+  const appUpdateProgress = Math.round(headerUpdateStatus?.progress?.percent ?? 0);
+  const appUpdateButtonLabel = headerUpdateStatus?.status === "downloaded"
+    ? "重启安装"
+    : headerUpdateStatus?.status === "downloading"
+      ? `下载中 ${appUpdateProgress}%`
+      : `下载 ${headerUpdateStatus?.version ? `v${headerUpdateStatus.version}` : "更新"}`;
+  const appUpdateButtonTooltip = headerUpdateStatus?.status === "downloaded"
+    ? "新版本已下载完成，点击重启安装"
+    : headerUpdateStatus?.status === "downloading"
+      ? "正在下载新版本"
+      : headerUpdateStatus?.version
+        ? `发现新版本 v${headerUpdateStatus.version}，点击下载`
+        : "发现新版本，点击下载";
+
+  const handleHeaderUpdateAction = useCallback(async () => {
+    if (!headerUpdateStatus || headerUpdateStatus.status === "downloading") return;
+    setAppUpdateActionBusy(true);
+    try {
+      const result = headerUpdateStatus.status === "downloaded"
+        ? await window.electron.installAppUpdate()
+        : await window.electron.downloadAppUpdate();
+      setAppUpdateStatus(result.status);
+      if (!result.success && result.error) {
+        setGlobalError(result.error);
+      }
+    } catch (error) {
+      setGlobalError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAppUpdateActionBusy(false);
+    }
+  }, [headerUpdateStatus, setGlobalError]);
 
   const handleCopyCurrentSessionId = useCallback(async () => {
     if (!currentSessionId) return;
@@ -993,6 +1026,24 @@ function App() {
   useEffect(() => {
     refreshBrowserWorkbenchPreference();
   }, [refreshBrowserWorkbenchPreference]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.electron.getAppUpdateStatus()
+      .then((status) => {
+        if (!cancelled) setAppUpdateStatus(status);
+      })
+      .catch(() => {
+        // Update status is non-critical in dev/fallback runtimes.
+      });
+    const unsubscribe = window.electron.onAppUpdateStatus((status) => {
+      setAppUpdateStatus(status);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, []);
 
   useEffect(() => {
     if (!globalError) return;
@@ -1048,6 +1099,34 @@ function App() {
               <path d="m12.5 6.9 4.6 4.6" />
             </svg>
           </TooltipButton>
+          {showHeaderUpdateButton && (
+            <TooltipButton
+              type="button"
+              tooltip={appUpdateButtonTooltip}
+              onClick={handleHeaderUpdateAction}
+              disabled={appUpdateActionBusy || headerUpdateStatus?.status === "downloading"}
+              onMouseDown={(event) => {
+                event.preventDefault();
+              }}
+              style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+              className={`inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-65 ${
+                headerUpdateStatus?.status === "downloaded"
+                  ? "border-emerald-500/24 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                  : headerUpdateStatus?.status === "downloading"
+                    ? "border-accent/20 bg-accent/10 text-accent"
+                    : "border-accent/24 bg-accent/10 text-accent hover:bg-accent/15"
+              }`}
+            >
+              {headerUpdateStatus?.status === "downloading" || appUpdateActionBusy ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              ) : headerUpdateStatus?.status === "downloaded" ? (
+                <PackageCheck className="h-3.5 w-3.5" aria-hidden="true" />
+              ) : (
+                <Download className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              <span>{appUpdateButtonLabel}</span>
+            </TooltipButton>
+          )}
         </div>
         <div
           className="flex items-center justify-end gap-2"
@@ -1418,6 +1497,7 @@ function App() {
       )}
 
       <UpdateToast />
+      <Toaster position="top-right" richColors closeButton />
 
       {globalError && (
         <div className="fixed bottom-28 left-1/2 z-50 w-[min(520px,calc(100vw-2rem))] -translate-x-1/2">

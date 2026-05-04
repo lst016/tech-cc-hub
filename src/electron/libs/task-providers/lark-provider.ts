@@ -76,6 +76,10 @@ const DEFAULT_CONFIG: LarkProviderConfig = {
   cliCommand: "lark-cli",
 };
 
+const LARK_TASK_PAGE_SIZE = 100;
+const RECENT_SYNC_WINDOW_DAYS = 30;
+const RECENT_SYNC_WINDOW_MS = RECENT_SYNC_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -96,6 +100,16 @@ function asNumber(value: unknown): number | undefined {
 function isTruthyCompletion(value: unknown): boolean {
   const completedAt = asNumber(value);
   return typeof completedAt === "number" && completedAt > 0;
+}
+
+function toEpochMs(value: unknown): number | undefined {
+  const parsed = asNumber(value);
+  if (typeof parsed !== "number") return undefined;
+  return parsed < 10_000_000_000 ? parsed * 1000 : parsed;
+}
+
+function getTaskActivityTime(item: LarkTaskItem): number | undefined {
+  return toEpochMs(item.updated_at) ?? toEpochMs(item.completed_at) ?? toEpochMs(item.created_at);
 }
 
 function resolveLarkChannelConfig(): LarkProviderConfig {
@@ -171,38 +185,51 @@ export class LarkTaskProvider implements TaskProvider {
     return { stdout: String(stdout ?? ""), stderr: String(stderr ?? "") };
   }
 
+  private async fetchTaskItems(completed: boolean): Promise<LarkTaskItem[]> {
+    const args = [
+      "api",
+      "GET",
+      "/open-apis/task/v2/tasks",
+      "--params",
+      JSON.stringify({ type: "my_tasks", completed, page_size: LARK_TASK_PAGE_SIZE, user_id_type: "open_id" }),
+      "--as",
+      "user",
+      "--page-all",
+      "--format",
+      "json",
+    ];
+
+    const { stdout, stderr } = await this.runCli(args);
+    const raw = stdout.trim();
+    let parsed: LarkCliPayload;
+    try {
+      parsed = JSON.parse(raw) as LarkCliPayload;
+    } catch (parseError) {
+      console.warn("[task-provider:lark] JSON parse failed, stdout:", raw.slice(0, 200), "stderr:", stderr.slice(0, 200));
+      throw parseError;
+    }
+    if (parsed.ok === false) {
+      throw new Error(formatCliError(parsed, stderr));
+    }
+    return getNestedItems(parsed);
+  }
+
   async fetchTasks(): Promise<ExternalTask[]> {
     try {
-      const args = [
-        "api",
-        "GET",
-        "/open-apis/task/v2/tasks",
-        "--params",
-        JSON.stringify({ type: "my_tasks", completed: false, page_size: 100, user_id_type: "open_id" }),
-        "--as",
-        "user",
-        "--page-all",
-        "--format",
-        "json",
-      ];
-
-      const { stdout, stderr } = await this.runCli(args);
-
-      const raw = stdout.trim();
-      let items: LarkTaskItem[];
-      let parsed: LarkCliPayload;
-      try {
-        parsed = JSON.parse(raw) as LarkCliPayload;
-      } catch (parseError) {
-        console.warn("[task-provider:lark] JSON parse failed, stdout:", raw.slice(0, 200), "stderr:", stderr.slice(0, 200));
-        throw parseError;
+      const activeItems = await this.fetchTaskItems(false);
+      const cutoff = Date.now() - RECENT_SYNC_WINDOW_MS;
+      const recentCompletedItems = (await this.fetchTaskItems(true)).filter((item) => {
+        const activityTime = getTaskActivityTime(item);
+        return typeof activityTime !== "number" || activityTime >= cutoff;
+      });
+      const byExternalId = new Map<string, ExternalTask>();
+      for (const item of [...activeItems, ...recentCompletedItems]) {
+        const task = this.mapToExternalTask(item);
+        if (task.externalId) {
+          byExternalId.set(task.externalId, task);
+        }
       }
-      if (parsed.ok === false) {
-        throw new Error(formatCliError(parsed, stderr));
-      }
-      items = getNestedItems(parsed);
-
-      return items.map((item) => this.mapToExternalTask(item)).filter((task) => task.externalId);
+      return [...byExternalId.values()];
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn("[task-provider:lark] Failed to fetch tasks:", message);
@@ -258,7 +285,7 @@ export class LarkTaskProvider implements TaskProvider {
   }
 
   private mapToExternalTask(item: LarkTaskItem): ExternalTask {
-    const due = isRecord(item.due) ? asNumber(item.due.timestamp) : undefined;
+    const due = isRecord(item.due) ? toEpochMs(item.due.timestamp) : undefined;
     const memberNames = Array.isArray(item.members)
       ? item.members
           .filter(isRecord)
@@ -282,10 +309,10 @@ export class LarkTaskProvider implements TaskProvider {
       status,
       assignee: asText(item.assignee) ?? (memberNames.join("、") || undefined),
       priority: mapLarkPriority(item.priority),
-      dueDate: due ?? item.due_date,
+      dueDate: due ?? toEpochMs(item.due_date),
       sourceData: item,
-      createdAt: asNumber(item.created_at) ?? Date.now(),
-      updatedAt: asNumber(item.updated_at) ?? Date.now(),
+      createdAt: toEpochMs(item.created_at) ?? Date.now(),
+      updatedAt: toEpochMs(item.updated_at) ?? Date.now(),
     };
   }
 }

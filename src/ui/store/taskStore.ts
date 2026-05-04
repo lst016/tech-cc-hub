@@ -13,6 +13,7 @@ type TaskState = {
   // Actions
   setTasks: (tasks: UiTask[]) => void;
   upsertTask: (task: UiTask) => void;
+  removeTask: (taskId: string) => void;
   setStats: (stats: UiTaskStats) => void;
   setExecutions: (taskId: string, executions: UiTaskExecution[]) => void;
   setExecutionLogs: (taskId: string, logs: UiTaskExecutionLog[]) => void;
@@ -42,6 +43,17 @@ export const useTaskStore = create<TaskState>((set) => ({
         return { tasks: next };
       }
       return { tasks: [task, ...state.tasks] };
+    }),
+  removeTask: (taskId) =>
+    set((state) => {
+      const { [taskId]: _executions, ...executions } = state.executions;
+      const { [taskId]: _logs, ...executionLogs } = state.executionLogs;
+      return {
+        tasks: state.tasks.filter((task) => task.id !== taskId),
+        selectedTaskId: state.selectedTaskId === taskId ? null : state.selectedTaskId,
+        executions,
+        executionLogs,
+      };
     }),
   setStats: (stats) => set({ stats }),
   setExecutions: (taskId, executions) =>

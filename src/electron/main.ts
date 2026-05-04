@@ -18,7 +18,7 @@ import { extname, isAbsolute, join, relative } from "path";
 import { ipcMainHandle, isDev, DEV_PORT } from "./util.js";
 import { getPreloadPath, getUIPath, getIconPath } from "./pathResolver.js";
 import { getStaticData, pollResources, stopPolling } from "./test.js";
-import { handleClientEvent, sessions, cleanupAllSessions, setChannelReplySender, listStoredSessionsForRenderer, initializeTaskExecutor } from "./ipc-handlers.js";
+import { handleClientEvent, sessions, cleanupAllSessions, setChannelReplySender, listStoredSessionsForRenderer, initializeTaskExecutor, initializeNoteRepository } from "./ipc-handlers.js";
 import { generateSessionTitle } from "./libs/util.js";
 import {
   loadApiConfigSettings,
@@ -1160,6 +1160,11 @@ app.on("ready", async () => {
     const taskDbPath = join(app.getPath("userData"), "tasks.db");
     initializeTaskExecutor(taskDbPath);
     console.log("[main] Task executor initialized");
+
+    // Initialize note CRUD
+    const noteDbPath = join(app.getPath("userData"), "notes.db");
+    initializeNoteRepository(noteDbPath);
+    console.log("[main] Note repository initialized");
     channelBridgeController = startChannelBridge(async (message) => {
       await handleClientEvent({
         type: "channel.message.receive",
