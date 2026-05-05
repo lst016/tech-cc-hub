@@ -358,12 +358,12 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
   useEffect(() => {
     if (!selectedTask && !settings) return;
     setExecuteOptions({
-      driverId: selectedTask?.driverId ?? settings?.defaultDriverId ?? "claude",
+      driverId: "claude",
       reasoningMode: selectedTask?.reasoningMode ?? settings?.defaultReasoningMode ?? "high",
       model: selectedTask?.model ?? "",
       workspacePath: selectedTask?.workspacePath ?? "",
     });
-  }, [selectedTask?.id, settings?.defaultDriverId, settings?.defaultReasoningMode]);
+  }, [selectedTask?.id, settings?.defaultReasoningMode]);
 
   const modelOptions = useMemo(() => {
     const enabledProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
@@ -442,6 +442,7 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
     (taskId: string) => {
       const options: UiTaskExecutionOptions = {
         ...executeOptions,
+        driverId: "claude",
         model: executeOptions.model?.trim() || undefined,
         workspacePath: executeOptions.workspacePath?.trim() || undefined,
         promptTemplate: executeOptions.promptTemplate?.trim() || undefined,
@@ -477,7 +478,7 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
 
   const handleSaveSettings = useCallback(() => {
     if (!draftSettings) return;
-    sendEvent({ type: "task.settings.update", payload: { settings: draftSettings } });
+    sendEvent({ type: "task.settings.update", payload: { settings: { ...draftSettings, defaultDriverId: "claude" } } });
     sendEvent({ type: "task.providers" });
     toast.success("任务系统配置已保存");
   }, [draftSettings, sendEvent]);
@@ -634,15 +635,10 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                 <h3 className="mb-2 text-xs font-semibold text-slate-900">默认执行</h3>
                 <div className="grid grid-cols-2 gap-2">
                   <label className="text-[11px] font-medium text-slate-500">
-                    Driver
-                    <select
-                      value={draftSettings.defaultDriverId}
-                      onChange={(e) => setDraftSettings({ ...draftSettings, defaultDriverId: e.target.value as UiTaskWorkflowSettings["defaultDriverId"] })}
-                      className="mt-1 h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-800 outline-none"
-                    >
-                      <option value="claude">Claude 主运行器</option>
-                      <option value="codex-app-server">Codex app-server</option>
-                    </select>
+                    运行器
+                    <div className="mt-1 flex h-8 w-full items-center rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-semibold text-slate-700">
+                      主运行器
+                    </div>
                   </label>
                   <label className="text-[11px] font-medium text-slate-500">
                     默认强度
@@ -926,7 +922,7 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                     <h3 className="text-sm font-semibold text-slate-900">手动执行参数</h3>
                     <span className="text-[11px] text-slate-400">重跑时覆盖默认模型、强度与工作区</span>
                   </div>
-                  <div className="grid grid-cols-[minmax(0,1fr)_150px_150px] gap-2">
+                  <div className="grid grid-cols-[minmax(0,1fr)_150px] gap-2">
                     <select
                       value={executeOptions.model ?? ""}
                       onChange={(e) => setExecuteOptions((current) => ({ ...current, model: e.target.value }))}
@@ -949,14 +945,6 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                       <option value="medium">中</option>
                       <option value="high">高</option>
                       <option value="xhigh">超高</option>
-                    </select>
-                    <select
-                      value={executeOptions.driverId ?? settings?.defaultDriverId ?? "claude"}
-                      onChange={(e) => setExecuteOptions((current) => ({ ...current, driverId: e.target.value as UiTaskExecutionOptions["driverId"] }))}
-                      className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-800 outline-none"
-                    >
-                      <option value="claude">主运行器</option>
-                      <option value="codex-app-server">app-server</option>
                     </select>
                   </div>
                   <select
@@ -1017,8 +1005,8 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                       <span className="min-w-0 truncate font-mono text-slate-800" title={selectedTask.model ?? "-"}>{selectedTask.model ?? "-"}</span>
                     </div>
                     <div className="flex items-start justify-between gap-4">
-                      <span className="shrink-0 font-medium text-slate-500">Driver / 强度</span>
-                      <span className="text-slate-800">{selectedTask.driverId ?? settings?.defaultDriverId ?? "-"} · {selectedTask.reasoningMode ?? settings?.defaultReasoningMode ?? "-"}</span>
+                      <span className="shrink-0 font-medium text-slate-500">运行器 / 强度</span>
+                      <span className="text-slate-800">主运行器 · {selectedTask.reasoningMode ?? settings?.defaultReasoningMode ?? "-"}</span>
                     </div>
                     <div className="flex items-start justify-between gap-4">
                       <span className="shrink-0 font-medium text-slate-500">用量 / 费用</span>

@@ -67,9 +67,9 @@ function normalizeTaskSettings(raw: unknown, defaults: TaskWorkflowSettings): Ta
     maxAutoRetries: intValue(value.maxAutoRetries, defaults.maxAutoRetries, 0),
     maxRetryBackoffMs: intValue(value.maxRetryBackoffMs, defaults.maxRetryBackoffMs, 1000),
     stallTimeoutMs: intValue(value.stallTimeoutMs, defaults.stallTimeoutMs, 30000),
-    defaultDriverId: value.defaultDriverId === "codex-app-server" ? "codex-app-server" : "claude",
+    defaultDriverId: "claude",
     defaultReasoningMode: isReasoningMode(value.defaultReasoningMode) ? value.defaultReasoningMode : defaults.defaultReasoningMode,
-    maxCostUsd: optionalNumber(value.maxCostUsd),
+    maxCostUsd: undefined,
     writeBackEnabled: typeof value.writeBackEnabled === "boolean" ? value.writeBackEnabled : defaults.writeBackEnabled,
     promptTemplate: textValue(value.promptTemplate) ?? defaults.promptTemplate,
     tbCliCommand: textValue(value.tbCliCommand) ?? defaults.tbCliCommand,
@@ -82,11 +82,6 @@ function normalizeTaskSettings(raw: unknown, defaults: TaskWorkflowSettings): Ta
 function intValue(value: unknown, fallback: number, min: number): number {
   const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
   return Number.isFinite(parsed) && parsed >= min ? Math.floor(parsed) : fallback;
-}
-
-function optionalNumber(value: unknown): number | undefined {
-  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function textValue(value: unknown): string | undefined {

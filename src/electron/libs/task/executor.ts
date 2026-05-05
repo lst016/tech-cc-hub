@@ -337,10 +337,9 @@ export class TaskExecutor {
     this.executingTasks.add(task.id);
 
     const attempt = options.attempt ?? task.retryAttempt ?? 0;
-    const driverId = options.driverId ?? task.driverId ?? this.settings.defaultDriverId;
+    const driverId: TaskAgentDriverId = "claude";
     const model = options.model?.trim() || task.model || config.model;
     const reasoningMode = options.reasoningMode ?? task.reasoningMode ?? this.settings.defaultReasoningMode;
-    const maxCostUsd = options.maxCostUsd ?? task.maxCostUsd ?? this.settings.maxCostUsd;
     const workspacePath = options.workspacePath?.trim() || ensureTaskWorkspace(task, this.workflow);
     const prompt = this.buildExecutionPrompt(task, workspacePath, options.promptTemplate);
     const baselineFiles = snapshotWorkspace(workspacePath);
@@ -355,19 +354,17 @@ export class TaskExecutor {
       driverId,
       model,
       reasoningMode,
-      maxCostUsd,
       startedAt,
       lastEventAt: startedAt,
     });
 
-    this.repo.setExecuting(task.id, session.id, { attempt, workspacePath, driverId, model, reasoningMode, maxCostUsd });
+    this.repo.setExecuting(task.id, session.id, { attempt, workspacePath, driverId, model, reasoningMode });
     this.publishTaskAndStats(task.id);
     this.events.onExecutionStarted?.(execution);
     this.emitLog(execution.id, task.id, "info", `开始执行任务: ${task.title}`);
-    this.emitLog(execution.id, task.id, "info", `执行 Driver: ${driverId}`);
+    this.emitLog(execution.id, task.id, "info", "执行运行器: 主运行器");
     this.emitLog(execution.id, task.id, "info", `模型: ${model || "-"} · 思考强度: ${reasoningMode}`);
     this.emitLog(execution.id, task.id, "info", `工作区: ${workspacePath}`);
-    if (maxCostUsd) this.emitLog(execution.id, task.id, "info", `预算闸门: $${maxCostUsd.toFixed(2)}`);
     this.emitSessionStatus(session, "running", model);
     this.emitServerEvent?.({ type: "stream.user_prompt", payload: { sessionId: session.id, prompt } });
 
@@ -375,10 +372,6 @@ export class TaskExecutor {
     this.runningExecutions.set(task.id, completion.running);
 
     try {
-      if (driverId === "codex-app-server") {
-        this.emitLog(execution.id, task.id, "info", "已选择 Codex app-server Driver；当前通过主运行器桥接执行，后续可替换为原生 Symphony JSON-RPC。");
-      }
-
       const handle = await runClaude({
         prompt,
         runtime: { model, reasoningMode },
@@ -404,12 +397,6 @@ export class TaskExecutor {
             if (usage) {
               completion.running.usage = usage;
               this.repo.recordUsage(task.id, execution.id, usage);
-              if (maxCostUsd && usage.estimatedCostUsd > maxCostUsd) {
-                const budgetMessage = `执行费用 $${usage.estimatedCostUsd.toFixed(4)} 已超过预算 $${maxCostUsd.toFixed(4)}，已中止。`;
-                this.emitLog(execution.id, task.id, "warn", budgetMessage);
-                completion.running.handle?.abort();
-                completion.finish({ success: false, error: budgetMessage, terminalReason: "budget-exceeded" });
-              }
             }
 
             const text = this.extractMessageText(message);
