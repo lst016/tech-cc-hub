@@ -769,7 +769,7 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
           ) : (
             <>
               <div className="border-b border-slate-200 bg-white px-6 py-4">
-                <div className="flex items-start justify-between gap-4">
+                <div className="space-y-3">
                   <div className="min-w-0">
                     <div className="mb-2 flex flex-wrap items-center gap-2">
                       <StatusBadge status={selectedTask.localStatus} />
@@ -778,9 +778,9 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                         {getProviderLabel(selectedTask)}
                       </span>
                     </div>
-                    <h2 className="text-xl font-semibold leading-snug text-slate-950">{selectedTask.title}</h2>
+                    <h2 className="break-words text-xl font-semibold leading-snug text-slate-950">{selectedTask.title}</h2>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => handleOpenWorkspace(selectedTask.workspacePath)}
