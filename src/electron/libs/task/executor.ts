@@ -399,6 +399,13 @@ export class TaskExecutor {
               this.repo.recordUsage(task.id, execution.id, usage);
             }
 
+            const apiError = this.extractApiErrorMessage(message);
+            if (apiError) {
+              this.emitLog(execution.id, task.id, "error", apiError);
+              completion.finish({ success: false, error: apiError, terminalReason: "api-error" });
+              return;
+            }
+
             const text = this.extractMessageText(message);
             if (text) {
               completion.running.assistantText.push(text);
@@ -407,7 +414,9 @@ export class TaskExecutor {
           }
 
           if (event.type === "runner.error") {
-            this.emitLog(execution.id, task.id, "error", event.payload.message);
+            const message = event.payload.message;
+            this.emitLog(execution.id, task.id, "error", message);
+            completion.finish({ success: false, error: message, terminalReason: "runner-error" });
           }
         },
         onSessionUpdate: (updates) => {
@@ -750,6 +759,14 @@ export class TaskExecutor {
       .map((item) => item.text!)
       .join("\n")
       .trim() || null;
+  }
+
+  private extractApiErrorMessage(message: unknown): string | null {
+    if (!message || typeof message !== "object") return null;
+    const record = message as Record<string, unknown>;
+    if (record.isApiErrorMessage !== true) return null;
+    const text = this.extractMessageText(message);
+    return text || "API Error";
   }
 
   private extractUsage(message: unknown): UsageSnapshot | null {
