@@ -210,7 +210,6 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
   const selectedTaskId = useTaskStore((s) => s.selectedTaskId);
   const syncing = useTaskStore((s) => s.syncing);
   const settings = useTaskStore((s) => s.settings);
-  const providers = useTaskStore((s) => s.providers);
   const sessions = useAppStore((s) => s.sessions);
   const archivedSessions = useAppStore((s) => s.archivedSessions);
   const cwd = useAppStore((s) => s.cwd);
@@ -555,15 +554,6 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
               <RefreshCw className={cx("h-3.5 w-3.5", syncing && "animate-spin")} />
               {syncing ? "同步中" : "同步飞书"}
             </button>
-            <button
-              type="button"
-              onClick={() => handleSync("tb")}
-              disabled={syncing || !connected || providers.find((item) => item.id === "tb")?.enabled === false}
-              title={providers.find((item) => item.id === "tb")?.error ?? "同步 TB"}
-              className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-            >
-              同步 TB
-            </button>
           </div>
         </div>
 
@@ -584,7 +574,7 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
 
         {showSettings && draftSettings && (
           <div className="border-t border-slate-200 bg-slate-50 px-5 py-3">
-            <div className="grid grid-cols-[1.2fr_1fr_1fr] gap-3">
+            <div className="grid grid-cols-[1.2fr_1fr] gap-3">
               <section className="rounded-lg border border-slate-200 bg-white p-3">
                 <div className="mb-2 flex items-center justify-between">
                   <h3 className="text-xs font-semibold text-slate-900">调度策略</h3>
@@ -665,23 +655,6 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                 </label>
               </section>
 
-              <section className="rounded-lg border border-slate-200 bg-white p-3">
-                <h3 className="mb-2 text-xs font-semibold text-slate-900">TB Provider</h3>
-                <div className="grid gap-2">
-                  <input
-                    value={draftSettings.tbCliCommand ?? ""}
-                    onChange={(e) => setDraftSettings({ ...draftSettings, tbCliCommand: e.target.value })}
-                    placeholder="CLI 命令"
-                    className="h-8 rounded-md border border-slate-200 px-2 text-xs text-slate-800 outline-none"
-                  />
-                  <input
-                    value={draftSettings.tbFetchArgsTemplate ?? ""}
-                    onChange={(e) => setDraftSettings({ ...draftSettings, tbFetchArgsTemplate: e.target.value })}
-                    placeholder="拉取参数模板，输出 JSON items"
-                    className="h-8 rounded-md border border-slate-200 px-2 text-xs text-slate-800 outline-none"
-                  />
-                </div>
-              </section>
             </div>
           </div>
         )}
@@ -722,7 +695,6 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                 >
                   <option value="all">全部来源</option>
                   <option value="lark">飞书</option>
-                  <option value="tb">TB</option>
                 </select>
               </div>
             </div>
