@@ -1,4 +1,4 @@
-import { ExternalLink, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 
 type PluginStatus = "planned" | "not-installed" | "needs-permission" | "ready";
@@ -9,7 +9,6 @@ type DefaultPlugin = {
   kind: string;
   version: string;
   description: string;
-  repository: string;
   sourcePath: string;
   status: PluginStatus;
   permissions: string[];
@@ -48,7 +47,6 @@ const DEFAULT_PLUGINS: DefaultPlugin[] = [
     kind: "mcp-plugin",
     version: "0.1.36",
     description: "本机桌面控制 MCP 插件，作为插件体系的第一颗默认插件。",
-    repository: "https://github.com/iFurySt/open-codex-computer-use",
     sourcePath: "plugins/open-computer-use",
     status: "planned",
     permissions: ["mcp.server", "desktop.read", "desktop.write", "accessibility", "screen-recording"],
@@ -131,18 +129,9 @@ export function PluginsSettingsPage() {
           <div className="text-xs font-bold uppercase tracking-[0.16em] text-[#8A94A6]">PLUGIN RUNTIME</div>
           <h2 className="mt-2 text-xl font-bold tracking-tight text-[#1D2129]">插件系统</h2>
           <p className="mt-1.5 max-w-3xl text-sm leading-6 text-[#6B778C]">
-            管理默认插件、MCP 能力、权限和扩展来源。
+            管理默认插件、MCP 能力和本机权限状态。
           </p>
         </div>
-        <a
-          href="https://github.com/iFurySt/open-codex-computer-use"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-2 rounded-lg border border-[#DADDE5] bg-white px-3 py-2 text-sm font-semibold text-[#1D2129] transition hover:border-[#C9CDD4] hover:bg-[#F7F8FA]"
-        >
-          <ExternalLink className="h-4 w-4" />
-          默认插件仓库
-        </a>
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-[#E5E6EB] bg-white shadow-[0_12px_28px_rgba(24,32,46,0.04)]">

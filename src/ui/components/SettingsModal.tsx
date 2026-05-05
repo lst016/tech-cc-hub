@@ -121,7 +121,7 @@ const SETTINGS_PAGES: SettingsPageDefinition[] = [
     label: "插件系统",
     eyebrow: "PLUGINS",
     title: "插件系统",
-    description: "管理默认插件、MCP 能力、权限和扩展来源。",
+    description: "管理默认插件、MCP 能力和本机权限状态。",
     summary: "Open Computer Use",
   },
   {

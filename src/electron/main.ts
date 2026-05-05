@@ -927,6 +927,7 @@ async function fetchApiModels(payload: { baseURL?: string; apiKey?: string }): P
 }
 
 installStdIoGuards();
+app.setName("tech-cc-hub");
 
 // Initialize everything when app is ready
 app.on("ready", async () => {
