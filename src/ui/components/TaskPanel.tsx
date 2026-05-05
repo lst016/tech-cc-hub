@@ -152,6 +152,12 @@ function formatTokens(value?: number): string {
   return String(normalized);
 }
 
+function formatWorkspaceName(path?: string): string {
+  if (!path) return "未绑定工作区";
+  const parts = path.split(/[\\/]+/).filter(Boolean);
+  return parts.at(-1) || path;
+}
+
 function cx(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");
 }
@@ -205,6 +211,11 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
   const syncing = useTaskStore((s) => s.syncing);
   const settings = useTaskStore((s) => s.settings);
   const providers = useTaskStore((s) => s.providers);
+  const sessions = useAppStore((s) => s.sessions);
+  const archivedSessions = useAppStore((s) => s.archivedSessions);
+  const cwd = useAppStore((s) => s.cwd);
+  const apiConfigSettings = useAppStore((s) => s.apiConfigSettings);
+  const runtimeModel = useAppStore((s) => s.runtimeModel);
   const setTasks = useTaskStore((s) => s.setTasks);
   const upsertTask = useTaskStore((s) => s.upsertTask);
   const setStats = useTaskStore((s) => s.setStats);
@@ -224,6 +235,7 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [draftSettings, setDraftSettings] = useState<UiTaskWorkflowSettings | null>(null);
   const [executeOptions, setExecuteOptions] = useState<UiTaskExecutionOptions>({});
+  const [recentCwds, setRecentCwds] = useState<string[]>([]);
 
   useEffect(() => {
     if (!connected) return;
@@ -232,6 +244,12 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
     sendEvent({ type: "task.settings.get" });
     sendEvent({ type: "task.providers" });
   }, [connected, sendEvent]);
+
+  useEffect(() => {
+    window.electron.getRecentCwds?.(20)
+      .then((items) => setRecentCwds(Array.isArray(items) ? items.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : []))
+      .catch(() => setRecentCwds([]));
+  }, []);
 
   useEffect(() => {
     if (!connected) return;
@@ -347,6 +365,37 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
       maxCostUsd: selectedTask?.maxCostUsd ?? settings?.maxCostUsd,
     });
   }, [selectedTask?.id, settings?.defaultDriverId, settings?.defaultReasoningMode, settings?.maxCostUsd]);
+
+  const modelOptions = useMemo(() => {
+    const enabledProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
+    const values = new Set<string>();
+    if (runtimeModel.trim()) values.add(runtimeModel.trim());
+    if (enabledProfile?.model?.trim()) values.add(enabledProfile.model.trim());
+    for (const model of enabledProfile?.models ?? []) {
+      if (model.name?.trim()) values.add(model.name.trim());
+    }
+    if (selectedTask?.model?.trim()) values.add(selectedTask.model.trim());
+    if (executeOptions.model?.trim()) values.add(executeOptions.model.trim());
+    return Array.from(values);
+  }, [apiConfigSettings.profiles, executeOptions.model, runtimeModel, selectedTask?.model]);
+
+  const workspaceOptions = useMemo(() => {
+    const values = new Set<string>();
+    const add = (path?: string) => {
+      const trimmed = path?.trim();
+      if (trimmed) values.add(trimmed);
+    };
+    add(cwd);
+    add(selectedTask?.workspacePath);
+    add(executeOptions.workspacePath);
+    for (const session of Object.values(sessions)) add(session.cwd);
+    for (const session of Object.values(archivedSessions)) add(session.cwd);
+    for (const path of recentCwds) add(path);
+    return Array.from(values).map((path) => ({
+      value: path,
+      label: `${formatWorkspaceName(path)} · ${path}`,
+    }));
+  }, [archivedSessions, cwd, executeOptions.workspacePath, recentCwds, selectedTask?.workspacePath, sessions]);
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { all: tasks.length };
@@ -876,12 +925,18 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                     <span className="text-[11px] text-slate-400">重跑时覆盖默认模型、强度、工作区与预算</span>
                   </div>
                   <div className="grid grid-cols-[1fr_150px_150px_120px] gap-2">
-                    <input
+                    <select
                       value={executeOptions.model ?? ""}
                       onChange={(e) => setExecuteOptions((current) => ({ ...current, model: e.target.value }))}
-                      placeholder="模型名，留空使用当前主模型"
-                      className="h-9 rounded-lg border border-slate-200 px-3 text-xs text-slate-800 outline-none"
-                    />
+                      className="h-9 min-w-0 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-800 outline-none"
+                    >
+                      <option value="">
+                        {runtimeModel.trim() ? `使用当前主模型：${runtimeModel.trim()}` : "使用当前主模型"}
+                      </option>
+                      {modelOptions.map((model) => (
+                        <option key={model} value={model}>{model}</option>
+                      ))}
+                    </select>
                     <select
                       value={executeOptions.reasoningMode ?? settings?.defaultReasoningMode ?? "high"}
                       onChange={(e) => setExecuteOptions((current) => ({ ...current, reasoningMode: e.target.value as UiTaskExecutionOptions["reasoningMode"] }))}
@@ -911,12 +966,16 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                       className="h-9 rounded-lg border border-slate-200 px-3 text-xs text-slate-800 outline-none"
                     />
                   </div>
-                  <input
+                  <select
                     value={executeOptions.workspacePath ?? ""}
                     onChange={(e) => setExecuteOptions((current) => ({ ...current, workspacePath: e.target.value }))}
-                    placeholder="自定义 workspace 路径，留空自动创建任务工作区"
-                    className="mt-2 h-9 w-full rounded-lg border border-slate-200 px-3 font-mono text-xs text-slate-800 outline-none"
-                  />
+                    className="mt-2 h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-800 outline-none"
+                  >
+                    <option value="">自动创建任务工作区</option>
+                    {workspaceOptions.map((item) => (
+                      <option key={item.value} value={item.value}>{item.label}</option>
+                    ))}
+                  </select>
                 </section>
 
                 <div className="grid grid-cols-4 gap-3">
