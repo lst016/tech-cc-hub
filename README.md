@@ -1,258 +1,196 @@
 ---
 title: tech-cc-hub
-version: 1.0.0
+version: 0.1.2
 status: active
 language: zh-CN
+last_updated: 2026-05-05
 ---
 
 # tech-cc-hub
 
-`tech-cc-hub` 是一个基于 `Electron + React + Claude Agent SDK` 的桌面端 Agent 协作客户端。  
-当前方向不是重做底层 AgentOS，而是在 `Claude Code / Claude-compatible provider` 之上补齐：
+tech-cc-hub 是一个桌面端 Agent 工作台，把会话、任务、浏览器、模型路由、执行轨迹和复盘诊断收在同一个 Electron 应用里。它的目标不是再做一个普通聊天框，而是让本地 Agent 能接任务、看网页、调用工具、写代码、留下日志，并把结果回写到来源系统。
 
-- 聊天优先的桌面工作台
-- 工作区内会话管理
-- 执行链路观测与复盘
-- 模型 / 思考强度的运行时切换
-- 附件输入、slash 命令、继续会话与治理能力
+![tech-cc-hub 主工作台](doc/assets/readme/app-workbench.png)
 
-这个仓库现在是在上游 `agent-cowork` 基础上持续改造，远端关系为：
+## 适合谁用
 
-- `origin`: [lst016/tech-cc-hub](https://github.com/lst016/tech-cc-hub)
-- `upstream`: [DevAgentForge/agent-cowork](https://github.com/DevAgentForge/agent-cowork)
+- 想把 Claude Code / 兼容 OpenAI 网关 / 本地模型统一接到一个桌面工作台里。
+- 想让 Agent 直接处理飞书任务、拆子任务、开独立 workspace、执行并回写状态。
+- 想看清楚每轮执行用了什么模型、多少上下文、哪些工具、哪里失败。
+- 想用内置浏览器做截图标注、页面检查、设计对比和前端调试。
 
-## 当前产品口径
+## 界面速览
 
-当前客户端的默认设计原则：
+| 区域 | 用来做什么 |
+| --- | --- |
+| 主工作台 | 日常聊天、附件、Slash 命令、模型切换、右侧执行轨迹和 Usage 观察。 |
+| 任务面板 | 同步最近 30 天飞书任务，按状态筛选，选择模型和工作区后交给 Agent 执行。 |
+| 设置页 | 配置兼容网关、主模型、专家模型、小模型、Prompt 分析模型和图片预处理模型。 |
 
-- `chat-first`
-  主界面优先是正常聊天，不要求手工建 task。
-- `workspace-first sidebar`
-  左侧按工作区组织会话，设置固定在底部。
-- `execution observability`
-  右侧默认展示执行指标，详细 prompt / 上下文 / 原子步骤按需展开。
-- `Electron-first QA`
-  验收以 Electron 真窗口为准，不以 `localhost` 页面替代客户端结论。
-- `中文 UI`
-  界面文案默认使用简体中文；品牌名、模型名、协议字段除外。
+![任务面板](doc/assets/readme/app-task-panel.png)
 
-## 已实现能力
+![模型与接口设置](doc/assets/readme/app-settings.png)
 
-- 工作区分组与会话列表
-- 已有工作区内一键新建会话
-- 设置页多配置管理
-- 模型列表动态切换
-- 思考强度动态切换
-- `Enter` 发送，`Shift + Enter` 换行
-- 发送后输入框清空，并有短暂冷却
-- 图片与文本文件附件
-- slash 命令浏览与发送
-- 执行中会话的右侧执行观测
-- Token、时长、TTFT、费用、上下文快照、原子步骤轨迹
-- Electron 客户端窗口级 QA 工具
+## 快速启动
 
-## 近阶段更新（2026-05-01 / v0.1.1）
+环境建议：
 
-- AionUi 聊天 UI 对齐增强：
-  - 消息文本支持选区引用，引用以 composer 卡片保留，发送时序列化为 `<message_references>`
-  - 输入框支持 `@` 文件/目录提及，候选可刷新，选中后生成文件引用卡，发送时序列化为 `<file_references>`
-  - Slash 菜单补键盘选择与中文文案，运行中队列显示上下文数量和创建时间
-  - Assistant 思考块折叠为 Thought 卡，工具调用增加工具摘要、专用 Bash/文件/Patch/Web 展示和长输出折叠
-  - Markdown 消息补代码块复制、表格滚动、任务列表、链接安全打开
-- 右侧 Preview 工作台升级：
-  - 新增 VS Code light 风格的文件树与 Monaco 代码预览
-  - 支持工作区文件树懒加载、全量展开、刷新、文件打开与错误态展示
-  - 支持代码选区粘贴到输入框、Codex 风格评论、行号引用与跳回预览位置
-  - `index.html` 这类 Vite/React 入口文件自动切换源码预览，避免 iframe 白屏
-- 输入框与引用体验优化：
-  - 代码引用以 compact chip 展示，包含文件名与 `Lx-Ly` 行号
-  - 代码引用随消息以结构化 `<code_references>` JSON 发送，避免污染输入框正文
-  - 浏览器标注与代码引用可以一起发送给 Agent
-- 设计系统收口：
-  - 新增根目录 `DESIGN.md` 作为产品视觉源头
-  - 主产品色系统一为暖灰 + clay accent
-  - Preview / Monaco / 文件树保留局部 VS Code light 蓝灰色，不反向污染主界面
-- 开发流程与 QA：
-  - 新增 `.claude/skills/tech-cc-hub-dev-flow`，沉淀本项目自测和交付规则
-  - 新增 `npm run qa:chat-ui`，用于聊天输入区、上下文卡片和 slash/@ 菜单 smoke 测试
-  - 新增 `npm run qa:preview`，用于 Preview 面板浏览器 smoke 测试
-  - 测试代码集中迁移到 `test/electron`
-- 模型路由与运行时修正：
-  - 修正开发环境下模型选择被本地 settings/env 覆盖的问题
-  - 增加运行时模型路由日志，便于确认实际走的模型与网关
-- 自动更新与发布链路：
-  - 接入 `electron-updater + GitHub Releases`，不需要自建更新服务器
-  - GitHub Actions 在 macOS / Windows runner 上构建发布包，Release assets 作为更新源
-  - 新增 `npm run release:github -- patch|minor|major|vX.Y.Z` 一键打 tag 触发发布
-  - 新增 `.claude/skills/github-release-updater`，沉淀桌面端自动更新发布流程
+- Node.js 20+。
+- npm 可用；部分打包脚本会调用 Bun，做正式包前建议也安装 Bun。
+- 本地或远程有一个 OpenAI-compatible / Anthropic-compatible 网关，例如 `new-api`。
 
-## 近阶段更新（2026-04-26）
-
-- 完成内置浏览器/工作台能力打通：
-  - 支持内置浏览器状态、导航、截图、DOM 检索、日志读取及多工具接口
-  - 标注支持左侧高亮选取、JSON 标注内容展示、与 Codex 风格一致的路径信息
-  - 标注条与消息流定位优化（避免遮挡输入区）
-  - 浏览器工作台集成为主界面右侧面板，并兼顾侧栏拖拽/宽度约束
-- 会话与导航交互修正：
-  - 新会话标题与首条内容联动，避免始终显示默认标题
-  - 左右侧栏折叠/展开与按钮提示（tooltip）兼容主界面
-  - 顶栏按钮与执行轨迹/会话列表布局统一化，兼容 macOS/Windows 场景
-- 模型与图片处理链路升级：
-  - API 模型列表由 Bridge 拉取并本地化处理，兼容 new-api 路径与控制台风格 Base URL
-  - 图片输入降采样与压缩，加入图片处理中提示与失败闭环
-  - 非视觉模型/不支持图片模型禁用图片预处理，失败不再继续伪造返回
-- 右侧执行轨道（Activity Rail）与设置页体验补齐：
-  - 细化执行细节抽屉/原始内容展示样式
-  - 新增 Agent 规则设置页与浏览器工作台相关配置入口
-  - 优化会话列表、设置与执行态交互的边界样式和可用性
-
-## 技术栈
-
-- `Electron`
-- `React 19`
-- `TypeScript`
-- `Tailwind CSS v4`
-- `Zustand`
-- `better-sqlite3`
-- `@anthropic-ai/claude-agent-sdk`
-
-## 目录结构
-
-```text
-tech-cc-hub/
-├── doc/                  # 产品、架构、PRD、开发规范
-├── scripts/qa/           # Electron 窗口级 QA 脚本
-├── src/
-│   ├── electron/         # 主进程、IPC、运行时、会话存储
-│   └── ui/               # React 客户端、侧栏、输入区、执行观测
-├── patches/              # SDK 补丁
-├── dist-electron/        # Electron 编译产物
-└── dist-react/           # 前端构建产物
-```
-
-## 开发启动
-
-先安装依赖：
+安装依赖：
 
 ```bash
 npm install
 ```
 
-启动桌面端开发：
+开发启动：
 
 ```bash
 npm run dev
 ```
 
-常用构建命令：
+构建前端与类型：
 
 ```bash
-npm run transpile:electron
 npm run build
 ```
 
-## 发布与自动更新
+如果 Electron 原生依赖异常，先重建：
 
-当前桌面端更新链路使用 GitHub，不需要部署服务器。
+```bash
+npm run rebuild
+```
+
+## 第一次使用
+
+1. 打开 `设置 -> AI接口`，新增或启用一个兼容网关。
+2. 填写接口地址，例如 `http://localhost:5337/v1`，API Key 使用你自己的网关密钥。
+3. 点击“从接口拉取模型”，或手动添加模型名。
+4. 在 `MODEL SLOTS` 里设置五类模型：
+   - 默认主模型：普通聊天和任务执行默认使用。
+   - 专家模型：复杂问题兜底。
+   - 小模型 / 后台模型：标题、摘要、Haiku / small-fast 这类后台调用优先走它。
+   - Prompt 分析模型：执行复盘、上下文诊断。
+   - 图片预处理模型：读图、OCR、截图语义分析。
+5. 回到聊天页，新建会话后直接输入任务，或用附件、Slash 命令、右侧浏览器辅助处理。
+6. 进入任务面板后，可以同步飞书任务，选中任务并点击 `AI 执行`。
+
+## 核心能力
+
+| 能力 | 说明 |
+| --- | --- |
+| 会话与工作区 | 左侧按 workspace 管理会话；任务执行可绑定独立 workspace，避免污染当前聊天上下文。 |
+| 模型路由 | 支持主模型、专家模型、小模型、Prompt 分析模型、图片模型分层配置，解决后台小模型误打到不可用渠道的问题。 |
+| 内置浏览器 | 右侧 BrowserView 支持打开页面、截图、DOM 摘要、样式检查、带图/不带图标注模式。 |
+| 执行轨迹 | 聊天右侧展示实时统计、诊断和时间线；完整链路可进入 Trace Viewer。 |
+| 任务系统 | 同步飞书任务，本地持久化队列，支持重试、暂停、删除、执行记录、产物列表和状态回写。 |
+| 插件与 MCP | 内置浏览器、设计检查、受控配置写入等 MCP 工具，供 Agent 在执行中调用。 |
+| 设计检查 | 支持截图语义分析、BrowserView 截图落盘、两图对比、diff 和 comparison 图生成。 |
+
+## 任务系统原理
+
+任务模块集中在 `src/electron/libs/task/`。外部任务源只负责映射数据，本地 Repository 负责持久化，Executor 是唯一调度入口。
+
+```mermaid
+flowchart LR
+  A["飞书 / 外部任务源"] --> B["Provider Registry"]
+  B --> C["本地 SQLite Repository"]
+  C --> D["任务队列"]
+  D --> E["Executor 调度"]
+  E --> F["独立 Workspace"]
+  E --> G["Agent Runner"]
+  G --> H["执行日志 / 产物 / 用量"]
+  H --> C
+  H --> I["回写来源任务"]
+```
+
+默认行为：
+
+- `同步飞书` 拉取最近 30 天任务，状态变化会合并到本地队列。
+- 任务可以手动执行，也可以在配置允许时自动执行。
+- 每个任务拥有独立 workspace，可以覆盖模型、强度、运行器和工作区。
+- App 重启后，Executor 会恢复本地任务状态，对卡住的执行做恢复或重试判定。
+- 删除按钮只删除本地任务面板记录，不删除飞书原始任务。
+
+## 配置参考
+
+本地 `new-api` 常见配置：
 
 ```text
-push tag vX.Y.Z
-        ↓
-GitHub Actions 构建 macOS / Windows 包
-        ↓
-上传到 GitHub Releases
-        ↓
-客户端 electron-updater 检查更新
-        ↓
-用户下载并重启安装
+Base URL: http://localhost:5337/v1
+API Key: sk-你的本地网关密钥
+默认主模型: deepseek-v4-pro
+小模型 / 后台模型: MiniMax-M2.7
+图片预处理模型: qwen3.6-27b
 ```
 
-发布 patch 版本：
+如果你看到类似下面的报错：
 
-```bash
-npm run release:github -- patch
+```text
+503 No available channel for model claude-haiku-4-5-20251001
 ```
 
-指定版本：
+优先检查 `小模型 / 后台模型` 是否配置成当前网关里真实可用的模型。这个槽位会覆盖 Claude Code 内部的小模型请求，避免请求落到未配置的官方模型名。
 
-```bash
-npm run release:github -- v0.1.2
+## 常用命令
+
+| 命令 | 作用 |
+| --- | --- |
+| `npm run dev` | 同时启动 Vite 和 Electron 开发环境。 |
+| `npm run dev:react` | 只启动前端 Vite。 |
+| `npm run dev:electron` | 转译 Electron 主进程并启动桌面端。 |
+| `npm run build` | TypeScript project build + Vite build。 |
+| `npm run lint` | ESLint 检查。 |
+| `npm run transpile:electron` | 只编译 Electron 主进程代码。 |
+| `npm run qa:smoke` | 启动 Electron 并跑最小聊天冒烟。 |
+| `npm run qa:chat-ui` | 聊天 UI 冒烟测试。 |
+| `npm run qa:preview` | 预览工作台冒烟测试。 |
+| `npm run qa:window:list` | 列出可截图窗口 ID。 |
+| `npm run qa:window:capture -- <windowId> <output.png>` | 捕获真实应用窗口截图。 |
+| `npm run package:mac` | 打 macOS zip 包。 |
+| `npm run package:win` | 通过安全脚本打 Windows 包。 |
+| `npm run dist:linux` | 打 Linux 包。 |
+
+## 目录结构
+
+```text
+.
+├── src/
+│   ├── electron/
+│   │   ├── main.ts                # Electron 主进程入口
+│   │   ├── preload.ts             # preload IPC 桥
+│   │   └── libs/
+│   │       ├── task/              # 任务系统：provider、repository、workflow、executor
+│   │       └── mcp-tools/         # 内置 MCP 工具：browser、design、admin
+│   └── ui/                        # React 前端
+├── scripts/
+│   ├── dev.mjs                    # 开发启动编排
+│   └── qa/                        # Electron / UI 冒烟和窗口截图工具
+├── doc/                           # 设计、研发、运维文档
+├── doc/assets/readme/             # README 使用的真实应用截图
+├── electron-builder.json          # 桌面端打包配置
+└── package.json
 ```
 
-发布流程说明见：
+## 排障速查
 
-- [GitHub Releases 自动更新发布流程](/Users/lst01/Desktop/学习/tech-cc-hub/doc/40-product/1.0.0/40-delivery/72-GitHub-Releases-自动更新发布流程.md)
+| 现象 | 优先检查 |
+| --- | --- |
+| `API Error: Unable to connect to API (ConnectionRefused)` | 网关或本地模型桥是否在监听；Docker 内访问宿主机时通常用 `host.docker.internal`。 |
+| `No available channel for model claude-haiku...` | 设置页的小模型 / 后台模型是否填了当前网关真实可用模型。 |
+| 图片工具返回 `图片预处理失败` | 图片预处理模型是否是可读图模型；本地 VLM bridge 和 `new-api` channel 是否健康。 |
+| 飞书任务同步不到 | Lark CLI 是否已登录；应用权限是否包含 `task:task:read`、`task:task:write`、`task:tasklist:read`。 |
+| 任务一直执行中 | 查看任务详情右侧时间线；重启后 Executor 会按 workflow 配置恢复或重试卡住执行。 |
+| 右侧浏览器浮在主界面 | 优先检查 BrowserView 销毁和当前页面路由，不要简单禁用右侧浏览器入口。 |
 
-## QA 与调试
+## 文档入口
 
-当前项目内置了 Electron 客户端级 QA 命令。
-
-列出窗口：
-
-```bash
-npm run qa:window:list
-```
-
-抓取指定窗口截图：
-
-```bash
-npm run qa:window:capture -- <window_id> [output_path]
-```
-
-最小 smoke：
-
-```bash
-npm run qa:smoke
-```
-
-续聊回归：
-
-```bash
-npm run qa:continue
-```
-
-slash 回归：
-
-```bash
-npm run qa:slash
-```
-
-## 配置说明
-
-当前运行配置由客户端设置页管理，支持：
-
-- 多配置卡片
-- 启用中的唯一配置
-- base URL
-- API Key
-- 模型列表
-- 默认模型
-
-发送时会把当前选中的：
-
-- `模型`
-- `思考强度`
-
-一起传到底层运行时。
-
-## 文档
-
-完整产品和开发文档在：
-
-- [doc](/Users/lst01/Desktop/学习/tech-cc-hub/doc)
-
-如果你从文档入口开始看，建议先看：
-
-- [DESIGN.md](/Users/lst01/Desktop/学习/tech-cc-hub/DESIGN.md)
-- [doc/README.md](/Users/lst01/Desktop/学习/tech-cc-hub/doc/README.md)
-- [doc/00-overview/03-文档索引.md](/Users/lst01/Desktop/学习/tech-cc-hub/doc/00-overview/03-文档索引.md)
-- [doc/40-product/40-产品开发文档索引.md](/Users/lst01/Desktop/学习/tech-cc-hub/doc/40-product/40-产品开发文档索引.md)
-
-## 当前注意事项
-
-- 客户端验收默认走 Electron 真窗口，不走浏览器页面。
-- 右侧执行链路还会继续迭代，但当前已经具备基础观测口径。
-- 仓库当前仍保留上游的一些工程结构和依赖命名，例如包名 `agent-cowork`，后续可再统一收口。
+- [doc/README.md](doc/README.md)：文档总索引。
+- [DESIGN.md](DESIGN.md)：产品结构与设计说明。
+- [src/electron/libs/task/README.md](src/electron/libs/task/README.md)：任务系统主进程边界。
+- [src/electron/libs/mcp-tools/README.md](src/electron/libs/mcp-tools/README.md)：内置 MCP 工具边界。
 
 ## License
 
