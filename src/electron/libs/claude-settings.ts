@@ -140,6 +140,7 @@ export function getCurrentApiConfig(): ApiConfig | null {
           baseURL: String(baseURL),
           model: String(model),
           expertModel: String(model),
+          smallModel: String(model),
           analysisModel: String(model),
           models: [{ name: String(model), compressionThresholdPercent: 70 }],
           enabled: true,
@@ -168,11 +169,12 @@ export function getGlobalRuntimeConfig(): GlobalRuntimeConfig {
 export function buildEnvForConfig(config: ApiConfig, modelOverride?: string): Record<string, string> {
   const baseEnv = { ...process.env } as Record<string, string>;
   const selectedModel = modelOverride ?? config.model;
+  const smallModel = config.smallModel?.trim() || config.analysisModel?.trim() || selectedModel;
+  const modelEnv = buildClaudeCodeModelEnv(selectedModel, smallModel);
 
   baseEnv.ANTHROPIC_AUTH_TOKEN = config.apiKey;
   baseEnv.ANTHROPIC_BASE_URL = normalizeAnthropicBaseUrlForClaudeCode(config.baseURL);
-  baseEnv.ANTHROPIC_MODEL = selectedModel;
-  baseEnv.CLAUDE_CODE_SUBAGENT_MODEL = selectedModel;
+  Object.assign(baseEnv, modelEnv);
 
   const runtimeEnv = buildGlobalRuntimeEnvConfig();
   return {
@@ -180,8 +182,21 @@ export function buildEnvForConfig(config: ApiConfig, modelOverride?: string): Re
     ...runtimeEnv,
     ANTHROPIC_AUTH_TOKEN: config.apiKey,
     ANTHROPIC_BASE_URL: normalizeAnthropicBaseUrlForClaudeCode(config.baseURL),
-    ANTHROPIC_MODEL: selectedModel,
-    CLAUDE_CODE_SUBAGENT_MODEL: selectedModel,
+    ...modelEnv,
+  };
+}
+
+function buildClaudeCodeModelEnv(mainModel: string, smallModel: string): Record<string, string> {
+  return {
+    ANTHROPIC_MODEL: mainModel,
+    ANTHROPIC_DEFAULT_MODEL: mainModel,
+    ANTHROPIC_DEFAULT_SONNET_MODEL: mainModel,
+    ANTHROPIC_DEFAULT_OPUS_MODEL: mainModel,
+    ANTHROPIC_REASONING_MODEL: mainModel,
+    CLAUDE_CODE_SUBAGENT_MODEL: mainModel,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: smallModel,
+    ANTHROPIC_SMALL_FAST_MODEL: smallModel,
+    CLAUDE_CODE_SMALL_FAST_MODEL: smallModel,
   };
 }
 

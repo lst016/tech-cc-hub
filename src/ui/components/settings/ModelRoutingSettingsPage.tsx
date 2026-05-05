@@ -13,6 +13,7 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
         const availableModels = getAvailableModels(profile);
         const mainModel = profile.model || availableModels[0] || "";
         const expertModel = profile.expertModel || mainModel;
+        const smallModel = profile.smallModel || mainModel;
         const analysisModel = profile.analysisModel || mainModel;
         const imageModel = profile.imageModel || "";
 
@@ -29,7 +30,7 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
                   )}
                 </div>
                 <p className="mt-2 text-sm leading-6 text-muted">
-                  当前把模型分工收敛到四层：主模型负责常规对话，专家模型负责复杂问题兜底，Prompt 分析模型负责复盘诊断，图片预处理模型负责先读图再交给聊天。
+                  当前把模型分工收敛到五层：主模型负责常规对话，专家模型负责复杂问题兜底，小模型负责标题、Haiku 和 small-fast 后台调用，Prompt 分析模型负责复盘诊断，图片预处理模型负责先读图再交给聊天。
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -47,6 +48,21 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
                   disabled={!mainModel}
                 >
                   专家模型同步主模型
+                </button>
+                <button
+                  type="button"
+                  className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-xs text-ink-700 transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => onChange((current) => current.map((item) => (
+                    item.id === profile.id
+                      ? {
+                        ...item,
+                        smallModel: item.model,
+                      }
+                      : item
+                  )))}
+                  disabled={!mainModel}
+                >
+                  小模型同步主模型
                 </button>
                 <button
                   type="button"
@@ -73,8 +89,8 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
             ) : (
               <div className="mt-4 rounded-3xl border border-ink-900/8 bg-surface/80 p-4">
                 <div className="text-xs font-semibold tracking-[0.16em] text-muted">MODEL SLOTS</div>
-                <div className="mt-2 text-sm text-ink-800">主模型负责常规聊天，图片预处理模型会在发送图片前提取 OCR、界面结构和关键视觉信息，再把摘要交给主 Agent。</div>
-                <div className="mt-4 grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
+                <div className="mt-2 text-sm text-ink-800">主模型负责常规聊天；小模型会覆盖 Claude Code 的 Haiku / small-fast 内部请求，避免网关随机打到未配置的官方模型名。</div>
+                <div className="mt-4 grid gap-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
                   <label className="grid gap-1.5">
                     <span className="text-xs font-medium text-muted">默认主模型</span>
                     <select
@@ -105,6 +121,23 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
                     >
                       {availableModels.map((model) => (
                         <option key={model} value={model}>{model}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="grid gap-1.5">
+                    <span className="text-xs font-medium text-muted">小模型 / 后台模型</span>
+                    <select
+                      className="rounded-xl border border-ink-900/10 bg-white px-4 py-2.5 text-sm text-ink-800 transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
+                      value={smallModel}
+                      onChange={(event) => onChange((current) => current.map((item) => (
+                        item.id === profile.id
+                          ? { ...item, smallModel: event.target.value }
+                          : item
+                      )))}
+                    >
+                      {availableModels.map((model) => (
+                        <option key={`small-${model}`} value={model}>{model}</option>
                       ))}
                     </select>
                   </label>

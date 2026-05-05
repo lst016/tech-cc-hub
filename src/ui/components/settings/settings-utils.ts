@@ -18,6 +18,7 @@ export function createProfile(): ApiConfigProfile {
     baseURL: "",
     model: "",
     expertModel: "",
+    smallModel: "",
     imageModel: undefined,
     analysisModel: "",
     models: [createModel()],
@@ -113,6 +114,7 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
     ...(profile.models ?? []),
     { name: profile.model },
     { name: profile.expertModel ?? "" },
+    { name: profile.smallModel ?? "" },
     { name: profile.imageModel ?? "" },
     { name: profile.analysisModel ?? "" },
   ]);
@@ -133,6 +135,7 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
     baseURL: normalizeBaseURL(profile.baseURL),
     model: selectedModel,
     expertModel: normalizeRoleModel(profile.expertModel, selectedModel),
+    smallModel: normalizeRoleModel(profile.smallModel, normalizeRoleModel(profile.analysisModel, selectedModel)),
     imageModel: imageModel && models.some((item) => item.name === imageModel) ? imageModel : undefined,
     analysisModel: normalizeRoleModel(profile.analysisModel, selectedModel),
     models,
@@ -150,6 +153,7 @@ export function getAvailableModels(profile: ApiConfigProfile): string[] {
     new Set([
       profile.model,
       profile.expertModel,
+      profile.smallModel,
       profile.imageModel,
       profile.analysisModel,
       ...(profile.models ?? []).map((item) => item.name),
@@ -166,9 +170,10 @@ export function buildRoutingSummary(profile?: ApiConfigProfile): string {
 
   const mainModel = profile.model || "-";
   const expertModel = profile.expertModel || mainModel;
+  const smallModel = profile.smallModel || mainModel;
   const analysisModel = profile.analysisModel || mainModel;
   const imageModel = profile.imageModel || "未启用";
-  return `主 ${mainModel} / 专家 ${expertModel} / 分析 ${analysisModel} / 图片 ${imageModel}`;
+  return `主 ${mainModel} / 专家 ${expertModel} / 小模型 ${smallModel} / 分析 ${analysisModel} / 图片 ${imageModel}`;
 }
 
 export function validateProfiles(profiles: ApiConfigProfile[]): string | null {
@@ -205,6 +210,9 @@ export function validateProfiles(profiles: ApiConfigProfile[]): string | null {
 
     if (profile.imageModel && !profile.models?.some((item) => item.name === profile.imageModel)) {
       return `配置“${profile.name}”的图片预处理模型必须在模型列表中。`;
+    }
+    if (profile.smallModel && !profile.models?.some((item) => item.name === profile.smallModel)) {
+      return `配置“${profile.name}”的小模型必须在模型列表中。`;
     }
     if (profile.analysisModel && !profile.models?.some((item) => item.name === profile.analysisModel)) {
       return `配置“${profile.name}”的 Prompt 分析模型必须在模型列表中。`;

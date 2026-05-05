@@ -154,6 +154,7 @@ function getConfiguredModelNames(config: NonNullable<ReturnType<typeof getCurren
   return Array.from(new Set([
     config.model,
     config.expertModel,
+    config.smallModel,
     ...(config.models ?? []).map((item) => item.name),
   ].map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
 }

@@ -861,7 +861,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
       try {
         setPendingStart(true);
         const titleSeed = buildDraftTitle(promptValue, attachments);
-        title = promptValue.trim() ? await window.electron.generateSessionTitle(titleSeed, { model: runtime.model }) : titleSeed;
+        title = promptValue.trim() ? await window.electron.generateSessionTitle(titleSeed) : titleSeed;
       } catch (error) {
         console.error(error);
         setPendingStart(false);
@@ -1078,6 +1078,7 @@ export function PromptInput({
       new Set([
         activeProfile.model,
         activeProfile.expertModel,
+        activeProfile.smallModel,
         ...(activeProfile.models ?? []).map((item) => item.name),
       ]),
     )

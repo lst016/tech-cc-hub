@@ -40,7 +40,7 @@ export const generateSessionTitle = async (userIntent: string | null, options: {
     const words = trimmedIntent.split(/\s+/).slice(0, 5);
     return words.join(" ").toUpperCase() + (trimmedIntent.split(/\s+/).length > 5 ? "..." : "");
   }
-  const requestedModel = options.model?.trim() || apiConfig.model;
+  const requestedModel = options.model?.trim() || apiConfig.smallModel?.trim() || apiConfig.analysisModel?.trim() || apiConfig.model;
   const currentEnv = {
     ...process.env,
     ...buildEnvForConfig(apiConfig, requestedModel),

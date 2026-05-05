@@ -15,6 +15,7 @@ export type ApiConfigProfile = {
   baseURL: string;
   model: string;
   expertModel?: string;
+  smallModel?: string;
   imageModel?: string;
   analysisModel?: string;
   models?: ApiModelConfigProfile[];

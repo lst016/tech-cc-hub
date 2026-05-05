@@ -506,6 +506,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? Array.from(
             new Set([
               enabledProfile.model,
+              enabledProfile.smallModel,
               ...(enabledProfile.models ?? []).map((item) => item.name),
             ]),
           ).filter(Boolean)

@@ -163,6 +163,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
         const fallbackModel = item.model && modelIds.includes(item.model) ? item.model : modelIds[0];
         const fallbackAnalysisModel = item.analysisModel && modelIds.includes(item.analysisModel) ? item.analysisModel : fallbackModel;
         const fallbackExpertModel = item.expertModel && modelIds.includes(item.expertModel) ? item.expertModel : fallbackModel;
+        const fallbackSmallModel = item.smallModel && modelIds.includes(item.smallModel) ? item.smallModel : fallbackAnalysisModel;
         const fallbackImageModel = item.imageModel && modelIds.includes(item.imageModel) && isLikelyVisionUnderstandingModel(item.imageModel)
           ? item.imageModel
           : modelIds.find(isLikelyVisionUnderstandingModel);
@@ -173,6 +174,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
           models: nextModels,
           model: fallbackModel,
           expertModel: fallbackExpertModel,
+          smallModel: fallbackSmallModel,
           imageModel: fallbackImageModel && modelIds.includes(fallbackImageModel) ? fallbackImageModel : undefined,
           analysisModel: fallbackAnalysisModel,
         };
@@ -355,6 +357,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                                   models,
                                   model: item.model === previousName ? event.target.value : item.model,
                                   expertModel: item.expertModel === previousName ? event.target.value : item.expertModel,
+                                  smallModel: item.smallModel === previousName ? event.target.value : item.smallModel,
                                   imageModel: item.imageModel === previousName ? event.target.value : item.imageModel,
                                   analysisModel: item.analysisModel === previousName ? event.target.value : item.analysisModel,
                                 };
@@ -420,6 +423,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                                 models,
                                 model: item.model === deletedName ? fallbackModel : item.model,
                                 expertModel: item.expertModel === deletedName ? fallbackModel : item.expertModel,
+                                smallModel: item.smallModel === deletedName ? fallbackModel : item.smallModel,
                                 imageModel: item.imageModel === deletedName ? undefined : item.imageModel,
                                 analysisModel: item.analysisModel === deletedName ? fallbackModel : item.analysisModel,
                               };
@@ -452,6 +456,26 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                     <option key={item} value={item}>{item}</option>
                   ))}
                 </select>
+              </label>
+
+              <label className="grid gap-1.5">
+                <span className="text-xs font-medium text-muted">小模型 / 后台模型</span>
+                <select
+                  className="rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
+                  value={profile.smallModel ?? profile.model}
+                  onChange={(event) => onChange((current) => current.map((item) => (
+                    item.id === profile.id
+                      ? { ...item, smallModel: event.target.value }
+                      : item
+                  )))}
+                >
+                  {getAvailableModels(profile).map((item) => (
+                    <option key={`small-${item}`} value={item}>{item}</option>
+                  ))}
+                </select>
+                <span className="text-[11px] text-muted">
+                  用于标题生成、Haiku / small-fast 后台调用，避免 Claude Code 请求网关没有的官方小模型。
+                </span>
               </label>
 
               <label className="grid gap-1.5">

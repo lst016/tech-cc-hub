@@ -304,6 +304,7 @@ function App() {
         ...(profile.models ?? []),
         { name: profile.model, contextWindow: undefined, compressionThresholdPercent: undefined },
         profile.expertModel ? { name: profile.expertModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
+        profile.smallModel ? { name: profile.smallModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
         profile.imageModel ? { name: profile.imageModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
         profile.analysisModel ? { name: profile.analysisModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
       ].filter(Boolean);
@@ -634,6 +635,7 @@ function App() {
           new Set([
             fallbackProfile.model,
             fallbackProfile.expertModel,
+            fallbackProfile.smallModel,
             ...(fallbackProfile.models ?? []).map((item) => item.name),
           ]),
         ).map((model) => model?.trim() ?? "").filter(Boolean)

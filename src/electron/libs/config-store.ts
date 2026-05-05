@@ -23,6 +23,7 @@ export type ApiConfig = {
   baseURL: string;
   model: string;
   expertModel?: string;
+  smallModel?: string;
   imageModel?: string;
   analysisModel?: string;
   models?: ApiModelConfig[];
@@ -66,6 +67,7 @@ function createDefaultSettings(): ApiConfigSettings {
         baseURL: "https://api.anthropic.com",
         model: DEFAULT_MODEL,
         expertModel: DEFAULT_MODEL,
+        smallModel: DEFAULT_MODEL,
         imageModel: undefined,
         analysisModel: DEFAULT_MODEL,
         models: [DEFAULT_MODEL_CONFIG],
@@ -180,6 +182,7 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
   const dedupedModels = dedupeModelConfigs([
     config.model,
     config.expertModel,
+    config.smallModel,
     config.imageModel,
     config.analysisModel,
     ...(config.models ?? []),
@@ -204,6 +207,7 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
     baseURL: normalizeBaseURL(config.baseURL),
     model: selectedModel,
     expertModel: normalizeRoleModel(config.expertModel, selectedModel),
+    smallModel: normalizeRoleModel(config.smallModel, normalizeRoleModel(config.analysisModel, selectedModel)),
     imageModel: normalizeOptionalModel(config.imageModel, dedupedModelNames),
     analysisModel: normalizeRoleModel(config.analysisModel, selectedModel),
     models: dedupedModels,
