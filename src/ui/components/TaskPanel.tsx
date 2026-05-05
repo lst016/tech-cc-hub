@@ -362,9 +362,8 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
       reasoningMode: selectedTask?.reasoningMode ?? settings?.defaultReasoningMode ?? "high",
       model: selectedTask?.model ?? "",
       workspacePath: selectedTask?.workspacePath ?? "",
-      maxCostUsd: selectedTask?.maxCostUsd ?? settings?.maxCostUsd,
     });
-  }, [selectedTask?.id, settings?.defaultDriverId, settings?.defaultReasoningMode, settings?.maxCostUsd]);
+  }, [selectedTask?.id, settings?.defaultDriverId, settings?.defaultReasoningMode]);
 
   const modelOptions = useMemo(() => {
     const enabledProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
@@ -646,15 +645,18 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                     </select>
                   </label>
                   <label className="text-[11px] font-medium text-slate-500">
-                    预算 $
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={draftSettings.maxCostUsd ?? ""}
-                      onChange={(e) => setDraftSettings({ ...draftSettings, maxCostUsd: e.target.value ? Number(e.target.value) : undefined })}
-                      className="mt-1 h-8 w-full rounded-md border border-slate-200 px-2 text-xs text-slate-800 outline-none"
-                    />
+                    默认强度
+                    <select
+                      value={draftSettings.defaultReasoningMode}
+                      onChange={(e) => setDraftSettings({ ...draftSettings, defaultReasoningMode: e.target.value as UiTaskWorkflowSettings["defaultReasoningMode"] })}
+                      className="mt-1 h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-800 outline-none"
+                    >
+                      <option value="disabled">不思考</option>
+                      <option value="low">低</option>
+                      <option value="medium">中</option>
+                      <option value="high">高</option>
+                      <option value="xhigh">超高</option>
+                    </select>
                   </label>
                 </div>
                 <label className="mt-2 flex items-center gap-2 text-[11px] font-semibold text-slate-600">
@@ -922,9 +924,9 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                 <section className="mb-4 rounded-lg border border-slate-200 bg-white p-3">
                   <div className="mb-2 flex items-center justify-between gap-3">
                     <h3 className="text-sm font-semibold text-slate-900">手动执行参数</h3>
-                    <span className="text-[11px] text-slate-400">重跑时覆盖默认模型、强度、工作区与预算</span>
+                    <span className="text-[11px] text-slate-400">重跑时覆盖默认模型、强度与工作区</span>
                   </div>
-                  <div className="grid grid-cols-[1fr_150px_150px_120px] gap-2">
+                  <div className="grid grid-cols-[minmax(0,1fr)_150px_150px] gap-2">
                     <select
                       value={executeOptions.model ?? ""}
                       onChange={(e) => setExecuteOptions((current) => ({ ...current, model: e.target.value }))}
@@ -956,15 +958,6 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                       <option value="claude">主运行器</option>
                       <option value="codex-app-server">app-server</option>
                     </select>
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={executeOptions.maxCostUsd ?? ""}
-                      onChange={(e) => setExecuteOptions((current) => ({ ...current, maxCostUsd: e.target.value ? Number(e.target.value) : undefined }))}
-                      placeholder="预算 $"
-                      className="h-9 rounded-lg border border-slate-200 px-3 text-xs text-slate-800 outline-none"
-                    />
                   </div>
                   <select
                     value={executeOptions.workspacePath ?? ""}
