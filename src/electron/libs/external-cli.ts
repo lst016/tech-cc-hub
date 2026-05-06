@@ -15,6 +15,7 @@ type PreparedExternalCliCommand = {
   command: string;
   args: string[];
   env: NodeJS.ProcessEnv;
+  windowsVerbatimArguments?: boolean;
 };
 
 const WINDOWS_COMMAND_EXTENSIONS = [".cmd", ".exe", ".bat", ".com", ".ps1", ""];
@@ -100,6 +101,22 @@ function resolveFromDirectory(dir: string, command: string): string | null {
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
+function quoteWindowsCmdArgument(value: string): string {
+  if (value.length === 0) return "\"\"";
+  const escaped = value
+    .replace(/(\\*)"/g, '$1$1\\"')
+    .replace(/\\+$/g, "$&$&");
+  return `"${escaped}"`;
+}
+
+function buildWindowsCmdLine(command: string, args: string[]): string {
+  return [command, ...args].map(quoteWindowsCmdArgument).join(" ");
+}
+
+function wrapWindowsCmdLineForSlashS(commandLine: string): string {
+  return `"${commandLine}"`;
+}
+
 export function resolveExternalCliCommand(command: string, env: CliEnv = process.env): string {
   if (process.platform !== "win32") {
     return command;
@@ -133,8 +150,9 @@ export function prepareExternalCliCommand(command: string, args: string[], env: 
   if (/\.(cmd|bat)$/i.test(resolvedCommand)) {
     return {
       command: process.env.COMSPEC || "cmd.exe",
-      args: ["/d", "/s", "/c", resolvedCommand, ...args],
+      args: ["/d", "/s", "/c", wrapWindowsCmdLineForSlashS(buildWindowsCmdLine(resolvedCommand, args))],
       env: mergedEnv,
+      windowsVerbatimArguments: true,
     };
   }
 
@@ -156,6 +174,7 @@ export function runExternalCli(command: string, args: string[], options: RunExte
       timeout: options.timeout,
       cwd: options.cwd,
       env: prepared.env,
+      windowsVerbatimArguments: prepared.windowsVerbatimArguments,
       windowsHide: true,
     }, (error, stdout, stderr) => {
       if (error) {
