@@ -7,6 +7,7 @@ test("settings modal and shared types expose per-model context compression field
   const apiProfilesSettingsSource = readFileSync("src/ui/components/settings/ApiProfilesSettingsPage.tsx", "utf8");
   const uiTypesSource = readFileSync("src/ui/types.ts", "utf8");
   const configStoreSource = readFileSync("src/electron/libs/config-store.ts", "utf8");
+  const claudeSettingsSource = readFileSync("src/electron/libs/claude-settings.ts", "utf8");
 
   assert.match(apiProfilesSettingsSource, /contextWindow/);
   assert.match(apiProfilesSettingsSource, /compressionThresholdPercent/);
@@ -16,6 +17,8 @@ test("settings modal and shared types expose per-model context compression field
   assert.match(configStoreSource, /compressionThresholdPercent/);
   assert.match(uiTypesSource, /analysisModel/);
   assert.match(configStoreSource, /analysisModel/);
+  assert.match(claudeSettingsSource, /CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC/);
+  assert.match(claudeSettingsSource, /DISABLE_TELEMETRY/);
   assert.match(apiProfilesSettingsSource, /Prompt 分析模型/);
 });
 

@@ -2,6 +2,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import Editor, { loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import { PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT } from '../events';
+import {
+  filterPreviewQuickOpenEntries,
+  type PreviewQuickOpenEntry,
+} from '../../shared/preview-quick-open';
 import { getCodeReferenceSessionKey, useAppStore, type CodeReferenceDraft } from '../store/useAppStore';
 import { copyTextToClipboard } from '../utils/clipboard';
 import {
@@ -56,6 +60,13 @@ type PreviewEntry = {
   relativePath: string;
   type: 'directory' | 'file';
   size?: number;
+};
+
+type PreviewQuickOpenResponse = {
+  success: boolean;
+  entries?: PreviewQuickOpenEntry[];
+  truncated?: boolean;
+  error?: string;
 };
 
 type DirectoryState = {
@@ -341,6 +352,105 @@ function NativeExplorer({
   );
 }
 
+function QuickOpenPalette({
+  query,
+  entries,
+  loading,
+  error,
+  truncated,
+  selectedIndex,
+  onQueryChange,
+  onSelectedIndexChange,
+  onOpen,
+  onClose,
+}: {
+  query: string;
+  entries: PreviewQuickOpenEntry[];
+  loading: boolean;
+  error?: string;
+  truncated: boolean;
+  selectedIndex: number;
+  onQueryChange: (query: string) => void;
+  onSelectedIndexChange: (index: number) => void;
+  onOpen: (entry: PreviewQuickOpenEntry) => void;
+  onClose: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const matches = useMemo(() => filterPreviewQuickOpenEntries(entries, query, 50), [entries, query]);
+  const clampedSelectedIndex = Math.min(Math.max(selectedIndex, 0), Math.max(matches.length - 1, 0));
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  useEffect(() => {
+    onSelectedIndexChange(0);
+  }, [onSelectedIndexChange, query]);
+
+  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      onSelectedIndexChange(matches.length ? (clampedSelectedIndex + 1) % matches.length : 0);
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      onSelectedIndexChange(matches.length ? (clampedSelectedIndex - 1 + matches.length) % matches.length : 0);
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      const match = matches[clampedSelectedIndex];
+      if (match) onOpen(match);
+    }
+  }, [clampedSelectedIndex, matches, onClose, onOpen, onSelectedIndexChange]);
+
+  return (
+    <div className="quick-open" role="dialog" aria-modal="true" aria-label="快速打开文件">
+      <div className="quick-open__panel">
+        <div className="quick-open__input-wrap">
+          <span>⌕</span>
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="输入文件名或路径，Enter 打开"
+          />
+          <kbd>Ctrl P</kbd>
+        </div>
+        <div className="quick-open__meta">
+          {loading ? '正在索引工作区文件...' : error ? error : `${matches.length} / ${entries.length} 个匹配文件${truncated ? '，结果已截断' : ''}`}
+        </div>
+        <div className="quick-open__list">
+          {!loading && !error && matches.length === 0 && (
+            <div className="quick-open__empty">没有匹配文件</div>
+          )}
+          {matches.map((entry, index) => (
+            <button
+              key={entry.path}
+              type="button"
+              className={`quick-open__item ${index === clampedSelectedIndex ? 'quick-open__item--selected' : ''}`}
+              onMouseEnter={() => onSelectedIndexChange(index)}
+              onClick={() => onOpen(entry)}
+              title={entry.path}
+            >
+              <span className="quick-open__item-name">{entry.name}</span>
+              <span className="quick-open__item-path">{entry.relativePath}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PreviewSurface({
   file,
   referenceSessionKey,
@@ -616,13 +726,25 @@ function PreviewSurface({
 export function AionWorkspacePreviewPane({ workspace, conversationId, messages = [], onClose }: AionWorkspacePreviewPaneProps) {
   const [openTabs, setOpenTabs] = useState<ActivePreviewFile[]>([]);
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
+  const [quickOpenVisible, setQuickOpenVisible] = useState(false);
+  const [quickOpenQuery, setQuickOpenQuery] = useState('');
+  const [quickOpenEntries, setQuickOpenEntries] = useState<PreviewQuickOpenEntry[]>([]);
+  const [quickOpenLoading, setQuickOpenLoading] = useState(false);
+  const [quickOpenError, setQuickOpenError] = useState<string | undefined>();
+  const [quickOpenTruncated, setQuickOpenTruncated] = useState(false);
+  const [quickOpenSelectedIndex, setQuickOpenSelectedIndex] = useState(0);
   const openTabsRef = useRef(openTabs);
+  const quickOpenEntriesRef = useRef<PreviewQuickOpenEntry[]>([]);
   const refreshedOperationIdsRef = useRef(new Set<string>());
   const referenceSessionKey = getCodeReferenceSessionKey(conversationId);
 
   useLayoutEffect(() => {
     openTabsRef.current = openTabs;
   }, [openTabs]);
+
+  useLayoutEffect(() => {
+    quickOpenEntriesRef.current = quickOpenEntries;
+  }, [quickOpenEntries]);
 
   const activeFile = openTabs.find((t) => t.path === activeTabPath) ?? null;
 
@@ -709,6 +831,55 @@ export function AionWorkspacePreviewPane({ workspace, conversationId, messages =
     });
   }, [activeTabPath]);
 
+  const loadQuickOpenEntries = useCallback(async (force = false) => {
+    if (!workspace || (!force && quickOpenEntriesRef.current.length > 0)) return;
+    setQuickOpenLoading(true);
+    setQuickOpenError(undefined);
+    try {
+      const result: PreviewQuickOpenResponse = await window.electron.listPreviewFiles({ cwd: workspace, limit: 4_000 });
+      if (!result.success) {
+        setQuickOpenEntries([]);
+        setQuickOpenError(result.error || '文件索引失败。');
+        setQuickOpenTruncated(false);
+        return;
+      }
+      setQuickOpenEntries(result.entries ?? []);
+      setQuickOpenTruncated(Boolean(result.truncated));
+    } catch (error) {
+      setQuickOpenEntries([]);
+      setQuickOpenError(error instanceof Error ? error.message : '文件索引失败。');
+      setQuickOpenTruncated(false);
+    } finally {
+      setQuickOpenLoading(false);
+    }
+  }, [workspace]);
+
+  const openQuickOpen = useCallback(() => {
+    setQuickOpenVisible(true);
+    setQuickOpenQuery('');
+    setQuickOpenSelectedIndex(0);
+    void loadQuickOpenEntries();
+  }, [loadQuickOpenEntries]);
+
+  const handleQuickOpenEntry = useCallback((entry: PreviewQuickOpenEntry) => {
+    setQuickOpenVisible(false);
+    setQuickOpenQuery('');
+    void openFile(entry.path);
+  }, [openFile]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (key !== 'p' || event.altKey || event.shiftKey || (!event.ctrlKey && !event.metaKey)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openQuickOpen();
+    };
+
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
+  }, [openQuickOpen]);
+
   useEffect(() => {
     const handleOpenFromPrompt = (event: Event) => {
       const detail = (event as CustomEvent<{ filePath?: string; startLine?: number }>).detail;
@@ -761,6 +932,20 @@ export function AionWorkspacePreviewPane({ workspace, conversationId, messages =
           onCloseTab={closeTab}
         />
       </div>
+      {quickOpenVisible && (
+        <QuickOpenPalette
+          query={quickOpenQuery}
+          entries={quickOpenEntries}
+          loading={quickOpenLoading}
+          error={quickOpenError}
+          truncated={quickOpenTruncated}
+          selectedIndex={quickOpenSelectedIndex}
+          onQueryChange={setQuickOpenQuery}
+          onSelectedIndexChange={setQuickOpenSelectedIndex}
+          onOpen={handleQuickOpenEntry}
+          onClose={() => setQuickOpenVisible(false)}
+        />
+      )}
     </div>
   );
 }

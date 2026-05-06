@@ -19,6 +19,7 @@ const previewImageMimeTypes: Record<string, string> = {
 const ignoredPreviewDirectories = new Set(['node_modules', '.git', 'dist-react', 'dist-electron']);
 const maxPreviewTextBytes = 512 * 1024;
 const maxPreviewImageBytes = 2 * 1024 * 1024;
+const maxPreviewQuickOpenEntries = 2_000;
 
 function isPathWithinRoot(rootPath: string, targetPath: string) {
 	const rel = relative(rootPath, targetPath);
@@ -71,6 +72,58 @@ function previewFsPlugin(): Plugin {
 					return sendJson(res, { success: true, path: resolved.realPath, entries });
 				} catch (error) {
 					return sendJson(res, { success: false, error: error instanceof Error ? error.message : '读取目录失败。' }, 500);
+				}
+			});
+			server.middlewares.use('/__tech_preview/files', (req, res) => {
+				try {
+					const requestUrl = new URL(req.url || '', 'http://localhost');
+					const resolved = resolvePreviewRequest(requestUrl);
+					if ('error' in resolved) return sendJson(res, { success: false, error: resolved.error }, 400);
+					const limitParam = Number(requestUrl.searchParams.get('limit') || maxPreviewQuickOpenEntries);
+					const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(Math.floor(limitParam), 10_000)) : maxPreviewQuickOpenEntries;
+					const stat = statSync(resolved.realPath);
+					if (!stat.isDirectory()) return sendJson(res, { success: false, error: '只能索引目录。' }, 400);
+
+					const entries: Array<{ name: string; path: string; relativePath: string; type: 'file'; size?: number }> = [];
+					const pending = [resolved.realPath];
+					let truncated = false;
+
+					while (pending.length > 0) {
+						const currentPath = pending.pop()!;
+						const children = readdirSync(currentPath, { withFileTypes: true })
+							.filter((entry) => !entry.name.startsWith('.') || entry.name === '.env')
+							.sort((left, right) => left.name.localeCompare(right.name));
+
+						for (const child of children) {
+							const childPath = join(currentPath, child.name);
+							if (child.isDirectory()) {
+								if (!ignoredPreviewDirectories.has(child.name)) pending.push(childPath);
+								continue;
+							}
+							if (!child.isFile()) continue;
+							const childStat = statSync(childPath);
+							entries.push({
+								name: child.name,
+								path: childPath,
+								relativePath: relative(resolved.rootPath, childPath) || child.name,
+								type: 'file',
+								size: childStat.size,
+							});
+							if (entries.length >= limit) {
+								truncated = pending.length > 0;
+								break;
+							}
+						}
+						if (entries.length >= limit) {
+							truncated = truncated || pending.length > 0;
+							break;
+						}
+					}
+
+					entries.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+					return sendJson(res, { success: true, entries, truncated });
+				} catch (error) {
+					return sendJson(res, { success: false, error: error instanceof Error ? error.message : '索引文件失败。' }, 500);
 				}
 			});
 			server.middlewares.use('/__tech_preview/read', (req, res) => {

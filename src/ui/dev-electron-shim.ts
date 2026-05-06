@@ -19,11 +19,14 @@ const DEV_SHIM_MARKER = "__techCCHubDevShim";
 
 export type DevElectronRuntimeSource = "bridge" | "fallback" | "electron";
 
-async function invokePreviewFs<T>(endpoint: "list" | "read", payload: { cwd: string; path?: string }): Promise<T> {
+async function invokePreviewFs<T>(endpoint: "list" | "files" | "read", payload: { cwd: string; path?: string; limit?: number }): Promise<T> {
   const url = new URL(`/__tech_preview/${endpoint}`, window.location.origin);
   url.searchParams.set("cwd", payload.cwd);
   if (payload.path) {
     url.searchParams.set("path", payload.path);
+  }
+  if (payload.limit) {
+    url.searchParams.set("limit", String(payload.limit));
   }
   const response = await fetch(url, { cache: "no-store" });
   return await response.json() as T;
@@ -214,7 +217,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         listeners.delete(callback);
       };
     },
-    generateSessionTitle: async (userInput: string | null, _options?: { model?: string }) => userInput?.slice(0, 24) || "新聊天",
+    generateSessionTitle: async (userInput: string | null) => userInput?.slice(0, 24) || "新聊天",
     getRecentCwds: async () => ["/Users/lst01/Desktop/学习/tech-cc-hub"],
     getSystemWorkspace: async () => "/Users/lst01/Desktop/学习/tech-cc-hub",
     selectDirectory: async () => "/Users/lst01/Desktop/学习/tech-cc-hub",
@@ -281,6 +284,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     }),
     readPreviewFile: async (payload) => await invokePreviewFs("read", payload),
     listPreviewDirectory: async (payload) => await invokePreviewFs("list", payload),
+    listPreviewFiles: async (payload) => await invokePreviewFs("files", payload),
     getPreviewImageBase64: async (payload) => await invokePreviewFs("read", payload),
     getPreviewFileMetadata: async () => null,
     writePreviewFile: unsupportedPreviewMutation,
@@ -426,6 +430,7 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       preprocessImageAttachments: async (payload) => await invokeBridge("preprocessImageAttachments", payload),
       readPreviewFile: async (payload) => await invokePreviewFs("read", payload),
       listPreviewDirectory: async (payload) => await invokePreviewFs("list", payload),
+      listPreviewFiles: async (payload) => await invokePreviewFs("files", payload),
       getPreviewImageBase64: async (payload) => await invokePreviewFs("read", payload),
       getPreviewFileMetadata: async () => null,
       writePreviewFile: unsupportedPreviewMutation,
@@ -449,10 +454,10 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       openBrowserWorkbenchDevTools: async (sessionId?: string) => await invokeBridge("openBrowserWorkbenchDevTools", sessionId),
       closeBrowserWorkbenchDevTools: async (sessionId?: string) => await invokeBridge("closeBrowserWorkbenchDevTools", sessionId),
       isBrowserWorkbenchDevToolsOpen: async (sessionId?: string) => await invokeBridge("isBrowserWorkbenchDevToolsOpen", sessionId),
-      onBrowserWorkbenchEvent: (callback: (event: any) => void) => {
+      onBrowserWorkbenchEvent: (callback: (event: BrowserWorkbenchEvent) => void) => {
         const source = new EventSource(`${DEV_BACKEND_BRIDGE_ORIGIN}/events/browser`);
         source.onmessage = (message) => {
-          callback(JSON.parse(message.data));
+          callback(JSON.parse(message.data) as BrowserWorkbenchEvent);
         };
         return () => source.close();
       },
@@ -493,7 +498,7 @@ export const installDevElectronShim = async () => {
   let currentElectron: typeof window.electron & Record<string, unknown> = createFallbackElectron();
   const electronProxy = new Proxy({} as typeof window.electron, {
     get(_target, property) {
-      const value = (currentElectron as any)[property];
+      const value = (currentElectron as Record<PropertyKey, unknown>)[property];
       return typeof value === "function" ? value.bind(currentElectron) : value;
     },
   });

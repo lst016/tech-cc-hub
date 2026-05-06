@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import type { AgentRunSurface, SessionHistoryCursor, SessionStatus, StreamMessage } from "../types.js";
 import { existsSync } from "fs";
 import electron from "electron";
+import { isSuccessfulRunnerResult } from "../../shared/runner-status.js";
 import type { SessionWorkflowState, WorkflowScope } from "../../shared/workflow-markdown.js";
 import { stripInlineBase64ImagesFromMessage } from "./tool-output-sanitizer.js";
 
@@ -118,6 +119,7 @@ export class SessionStore {
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
     this.initialize();
+    this.recoverSuccessfulErrorSessions();
     this.loadSessions();
   }
 
@@ -571,6 +573,38 @@ export class SessionStore {
         pendingPermissions: new Map()
       };
       this.sessions.set(session.id, session);
+    }
+  }
+
+  private recoverSuccessfulErrorSessions(): void {
+    const rows = this.db
+      .prepare("select id from sessions where status = ?")
+      .all("error") as Array<Record<string, unknown>>;
+
+    for (const row of rows) {
+      const id = String(row.id);
+      const latestResult = this.db
+        .prepare(
+          `select data
+           from messages
+           where session_id = ?
+             and json_extract(data, '$.type') = 'result'
+           order by created_at desc, id desc
+           limit 1`
+        )
+        .get(id) as Record<string, unknown> | undefined;
+
+      if (!latestResult || typeof latestResult.data !== "string") {
+        continue;
+      }
+
+      try {
+        if (isSuccessfulRunnerResult(JSON.parse(latestResult.data) as { type?: unknown; subtype?: unknown })) {
+          this.db.prepare("update sessions set status = ? where id = ?").run("completed", id);
+        }
+      } catch {
+        // Leave malformed legacy rows untouched.
+      }
     }
   }
 

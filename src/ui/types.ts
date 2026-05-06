@@ -178,6 +178,7 @@ export type ChannelTransportMode = "bot-api" | "lark-cli" | "lark-open-platform"
 export type ChannelConnectionConfig = {
   provider: ChannelProviderId;
   enabled: boolean;
+  chatEnabled?: boolean;
   transport: ChannelTransportMode;
   displayName?: string;
   botTokenEnv?: string;
@@ -341,10 +342,10 @@ export type ClientEvent =
   | { type: "task.control"; payload: { taskId: string; action: "pause" | "resume" | "cancel" | "cancel-retry" } }
   | { type: "task.delete"; payload: { taskId: string } }
   | { type: "task.markStatus"; payload: { taskId: string; status: string } }
-  | { type: "task.settings.get"; payload?: {} }
+  | { type: "task.settings.get"; payload?: Record<string, never> }
   | { type: "task.settings.update"; payload: { settings: Partial<UiTaskWorkflowSettings> } }
-  | { type: "task.providers"; payload?: {} }
-  | { type: "task.stats"; payload?: {} }
+  | { type: "task.providers"; payload?: Record<string, never> }
+  | { type: "task.stats"; payload?: Record<string, never> }
   | { type: "task.execution.logs"; payload: { taskId: string } }
   // Note CRUD client events
   | { type: "note.list" }

@@ -4,7 +4,11 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
-import { discoverSlashCommandsInRoots } from "../../src/electron/libs/slash-command-discovery.js";
+import {
+  clearSlashCommandDiscoveryCache,
+  discoverSlashCommandItemsInRoots,
+  discoverSlashCommandsInRoots,
+} from "../../src/electron/libs/slash-command-discovery.js";
 import { extractSlashCommandsFromMessages, mergeSlashCommandLists } from "../../src/shared/slash-commands.js";
 
 test("discoverSlashCommandsInRoots collects project and user markdown command files", () => {
@@ -54,6 +58,28 @@ test("slash command sources merge local commands with runtime init commands", ()
 
     assert.deepEqual(commands, ["debug", "speckit.specify"]);
   } finally {
+    rmSync(sandboxRoot, { recursive: true, force: true });
+  }
+});
+
+test("slash command discovery returns cloned cached results", () => {
+  const sandboxRoot = mkdtempSync(join(tmpdir(), "slash-commands-"));
+
+  try {
+    const projectRoot = join(sandboxRoot, "project");
+    mkdirSync(join(projectRoot, "commands"), { recursive: true });
+    writeFileSync(join(projectRoot, "commands", "review.md"), "# /review\n", "utf8");
+
+    clearSlashCommandDiscoveryCache();
+    const first = discoverSlashCommandItemsInRoots({ project: projectRoot });
+    assert.equal(first?.[0]?.name, "review");
+
+    first?.push({ name: "mutated" });
+    const second = discoverSlashCommandItemsInRoots({ project: projectRoot });
+
+    assert.deepEqual(second?.map((item) => item.name), ["review"]);
+  } finally {
+    clearSlashCommandDiscoveryCache();
     rmSync(sandboxRoot, { recursive: true, force: true });
   }
 });

@@ -77,6 +77,8 @@ electron.contextBridge.exposeInMainWorld("electron", {
         electron.ipcRenderer.invoke("preview-read-file", payload),
     listPreviewDirectory: (payload: any) =>
         electron.ipcRenderer.invoke("preview-list-directory", payload),
+    listPreviewFiles: (payload: any) =>
+        electron.ipcRenderer.invoke("preview-list-files", payload),
     getPreviewImageBase64: (payload: any) =>
         electron.ipcRenderer.invoke("preview-get-image-base64", payload),
     getPreviewFileMetadata: (payload: any) =>

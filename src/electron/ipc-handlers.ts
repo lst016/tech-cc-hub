@@ -1,7 +1,7 @@
 import { app, BrowserWindow } from "electron";
-import { existsSync, readdirSync, readFileSync } from "fs";
+import { readdirSync, readFileSync } from "fs";
 import { homedir } from "os";
-import { basename, dirname, extname, isAbsolute, join } from "path";
+import { basename, extname, join } from "path";
 
 import { createStoredUserPromptMessage, sanitizePromptAttachmentsForStorage } from "../shared/attachments.js";
 import { buildPromptLedgerMessage, type PromptLedgerMessage, type PromptLedgerSource } from "../shared/prompt-ledger.js";
@@ -140,10 +140,7 @@ function initializeSessions() {
 
 export function listStoredSessionsForRenderer(archived = false) {
   const store = initializeSessions();
-  return store.listSessions({ archived }).map((session) => ({
-    ...session,
-    slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
-  }));
+  return store.listSessions({ archived });
 }
 
 function broadcast(event: ServerEvent) {

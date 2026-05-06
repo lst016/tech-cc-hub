@@ -12,7 +12,7 @@ import {
     systemPreferences,
     desktopCapturer,
 } from "electron"
-import { execFile, execSync, spawn } from "child_process";
+import { execSync } from "child_process";
 import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { extname, isAbsolute, join, relative } from "path";
 import { ipcMainHandle, isDev, DEV_PORT } from "./util.js";
@@ -44,7 +44,8 @@ import { setCronService } from "./libs/mcp-tools/cron.js";
 import type { ClientEvent, PromptAttachment, ServerEvent } from "./types.js";
 import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkbenchEvent } from "./browser-manager.js";
 import { startDevBackendBridge, DEV_BACKEND_BRIDGE_PORT } from "./dev-backend-bridge.js";
-import { buildSessionSlashCommandItems, buildSessionSlashCommands } from "./libs/slash-command-catalog.js";
+import { buildSessionSlashCommandItems } from "./libs/slash-command-catalog.js";
+import { runExternalCli } from "./libs/external-cli.js";
 import "./libs/claude-settings.js";
 import { addServerEventListener } from "./ipc-handlers.js";
 
@@ -54,6 +55,7 @@ const DEFAULT_BROWSER_WORKBENCH_SESSION_ID = "global";
 const MAX_PREVIEW_TEXT_BYTES = 512_000;
 const MAX_PREVIEW_IMAGE_BYTES = 2_000_000;
 const MAX_PREVIEW_DIRECTORY_ENTRIES = 300;
+const MAX_PREVIEW_QUICK_OPEN_ENTRIES = 2_000;
 const PREVIEW_IMAGE_MIME_TYPES: Record<string, string> = {
   ".bmp": "image/bmp",
   ".gif": "image/gif",
@@ -69,42 +71,9 @@ const browserWorkbenchEventListeners = new Set<(event: BrowserWorkbenchEvent) =>
 let stopDevBackendBridge: (() => void) | null = null;
 let channelBridgeController: ChannelBridgeController | null = null;
 
-function execFileText(command: string, args: string[], timeout = 120_000): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const isCmdOrBat = process.platform === "win32" && /\\.(cmd|bat)$/i.test(command);
-    if (isCmdOrBat) {
-      const child = spawn(process.env.COMSPEC || "cmd.exe", ["/c", command, ...args], {
-        timeout,
-        env: process.env,
-        windowsHide: true,
-      });
-      let stdout = "";
-      let stderr = "";
-      child.stdout.on("data", (chunk: Buffer) => { stdout += String(chunk); });
-      child.stderr.on("data", (chunk: Buffer) => { stderr += String(chunk); });
-      child.on("error", (err: Error) => { reject(err); });
-      child.on("close", (code: number | null) => {
-        if (code !== 0) {
-          reject(new Error(`Command failed with code ${code}: ${command} ${args.join(" ")}\\n${stderr || stdout}`));
-          return;
-        }
-        resolve({ stdout, stderr });
-      });
-      return;
-    }
-    execFile(command, args, { timeout, env: process.env }, (error, stdout, stderr) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve({ stdout: String(stdout), stderr: String(stderr) });
-    });
-  });
-}
-
 async function getOpenComputerUseVersion(): Promise<string | null> {
   try {
-    const result = await execFileText("open-computer-use", ["--version"], 15_000);
+    const result = await runExternalCli("open-computer-use", ["--version"], { timeout: 15_000 });
     const version = result.stdout.trim() || result.stderr.trim();
     return version || "installed";
   } catch {
@@ -211,7 +180,7 @@ async function installOpenComputerUsePlugin(): Promise<{ success: boolean; insta
 
   const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
   try {
-    await execFileText(npmCommand, ["install", "-g", "open-computer-use"], 300_000);
+    await runExternalCli(npmCommand, ["install", "-g", "open-computer-use"], { timeout: 300_000 });
     const version = await getOpenComputerUseVersion();
     const permissions = await prepareOpenComputerUsePermissions({ prompt: true, openSettings: true });
     connectOpenComputerUsePlugin(version ?? "installed", permissions);
@@ -409,6 +378,82 @@ function listPreviewDirectoryForRenderer(request: unknown): {
   }
 }
 
+function listPreviewFilesForRenderer(request: unknown): {
+  success: boolean;
+  entries?: Array<{ name: string; path: string; relativePath: string; type: "file"; size?: number }>;
+  truncated?: boolean;
+  error?: string;
+} {
+  try {
+    if (!request || typeof request !== "object") {
+      return { success: false, error: "缺少文件索引请求参数。" };
+    }
+
+    const payload = request as { cwd?: unknown; limit?: unknown };
+    const rawCwd = typeof payload.cwd === "string" ? payload.cwd.trim() : "";
+    const limit = typeof payload.limit === "number" && Number.isFinite(payload.limit)
+      ? Math.max(1, Math.min(Math.floor(payload.limit), 10_000))
+      : MAX_PREVIEW_QUICK_OPEN_ENTRIES;
+    if (!rawCwd) {
+      return { success: false, error: "缺少工作目录。" };
+    }
+
+    const rootPath = realpathSync(rawCwd);
+    const rootStat = statSync(rootPath);
+    if (!rootStat.isDirectory()) {
+      return { success: false, error: "只能索引目录。" };
+    }
+
+    const entries: Array<{ name: string; path: string; relativePath: string; type: "file"; size?: number }> = [];
+    const pending = [rootPath];
+    let truncated = false;
+
+    while (pending.length > 0) {
+      const currentPath = pending.pop()!;
+      const children = readdirSync(currentPath, { withFileTypes: true })
+        .filter((entry) => !entry.name.startsWith(".") || entry.name === ".env")
+        .sort((left, right) => left.name.localeCompare(right.name));
+
+      for (const child of children) {
+        const childPath = join(currentPath, child.name);
+        if (child.isDirectory()) {
+          if (!isIgnoredPreviewDirectory(child.name)) {
+            pending.push(childPath);
+          }
+          continue;
+        }
+        if (!child.isFile()) continue;
+
+        const childStat = statSync(childPath);
+        entries.push({
+          name: child.name,
+          path: childPath,
+          relativePath: relative(rootPath, childPath) || child.name,
+          type: "file",
+          size: childStat.size,
+        });
+        if (entries.length >= limit) {
+          truncated = pending.length > 0;
+          break;
+        }
+      }
+
+      if (entries.length >= limit) {
+        truncated = truncated || pending.length > 0;
+        break;
+      }
+    }
+
+    entries.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+    return { success: true, entries, truncated };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "索引文件失败。",
+    };
+  }
+}
+
 function readPreviewFileForRenderer(request: unknown): {
   success: boolean;
   path?: string;
@@ -473,6 +518,7 @@ function readPreviewFileForRenderer(request: unknown): {
 }
 
 ipcMain.handle("preview-list-directory", (_event, request: unknown) => listPreviewDirectoryForRenderer(request));
+ipcMain.handle("preview-list-files", (_event, request: unknown) => listPreviewFilesForRenderer(request));
 ipcMain.handle("sessions:list", (_event, payload?: { archived?: boolean }) => ({
   sessions: listStoredSessionsForRenderer(Boolean(payload?.archived)),
   archived: Boolean(payload?.archived),
@@ -1305,10 +1351,11 @@ app.on("ready", async () => {
           clearBrowserWorkbenchAnnotations: async (sessionId?: string) => await getBrowserWorkbench(sessionId)!.clearAnnotations(),
           setBrowserWorkbenchAnnotationMode: async (enabled: boolean, sessionId?: string) => await getBrowserWorkbench(sessionId)!.setAnnotationMode(enabled),
         },
-        subscribeServerEvents: (listener) => addServerEventListener(listener as any),
+        subscribeServerEvents: (listener) => addServerEventListener(listener as (event: ServerEvent) => void),
         subscribeBrowserEvents: (listener) => {
-          browserWorkbenchEventListeners.add(listener as any);
-          return () => browserWorkbenchEventListeners.delete(listener as any);
+          const browserListener = listener as (event: BrowserWorkbenchEvent) => void;
+          browserWorkbenchEventListeners.add(browserListener);
+          return () => browserWorkbenchEventListeners.delete(browserListener);
         },
       });
       stopDevBackendBridge = () => bridge.stop();

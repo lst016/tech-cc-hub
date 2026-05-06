@@ -29,6 +29,7 @@ export function buildToolCallOptimizationPromptAppend(): string {
     "Windows shell policy: do not use PowerShell, pwsh, or mcp__windows__Powershell-Tool. They are unstable in this environment and can hang without returning a tool_result.",
     "On Windows, prefer Bash with cmd.exe /d /s /c \"<command>\". Quote paths carefully and do not pass unquoted D:\\path values through bash-style commands because backslashes can be swallowed.",
     "Avoid interactive shell commands. If a command can wait for input, add a non-interactive flag or use a bounded command that exits on its own.",
+    "Open Computer Use rule: before targeting a desktop app, call list-apps/snapshot with an exact app id from the current app list. Do not guess product labels such as Edge; on this Windows host the browser may appear as chrome, electron, or tech-cc-hub.",
     "When parallel tool calls are optional, avoid grouping fragile probes together: one failed parallel call can cancel sibling calls. Split uncertain filesystem probes from required reads.",
     "工具调用优化规则：已知多个具体文件需要查看时，优先并发读取，不要串行一个个 Read。",
     "目标文件不明确时，先用一次只读 Bash 搜索/筛选收敛范围，例如 rg/find/sed/awk，再读取少量命中文件。",

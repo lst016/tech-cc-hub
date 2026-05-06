@@ -4,6 +4,7 @@ import { homedir } from "os";
 import { join } from "path";
 import { setTimeout as delay } from "timers/promises";
 
+import { isChannelChatEnabled } from "../../shared/channel-config.js";
 import { getGlobalRuntimeEnvConfig } from "./claude-settings.js";
 import { loadGlobalRuntimeConfig } from "./config-store.js";
 import { prepareExternalCliCommand, runExternalCli } from "./external-cli.js";
@@ -14,6 +15,7 @@ type ChannelTransportMode = "bot-api" | "webhook" | "lark-cli" | "lark-open-plat
 type ChannelConnectionConfig = {
   provider?: ChannelProviderId;
   enabled?: boolean;
+  chatEnabled?: boolean;
   transport?: ChannelTransportMode;
   botTokenEnv?: string;
   webhookUrlEnv?: string;
@@ -139,7 +141,7 @@ async function pollTelegram(signal: AbortSignal, dispatch: ChannelBridgeDispatch
 
 function startLarkEventBridge(dispatch: ChannelBridgeDispatch): ChildProcessWithoutNullStreams | null {
   const config = getChannelConfig("lark");
-  if (!config?.enabled || config.transport !== "lark-cli") return null;
+  if (!isChannelChatEnabled(config) || config?.transport !== "lark-cli") return null;
 
   const command = config.cliCommand?.trim() || "lark-cli";
   const profile = config.cliProfile?.trim() || "default";

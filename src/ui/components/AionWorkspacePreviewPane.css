@@ -12,9 +12,137 @@
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
   color: var(--aion-ink);
   background: #ffffff;
   font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.quick-open {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 46px;
+  background: rgba(246, 248, 250, 0.34);
+}
+
+.quick-open__panel {
+  width: min(680px, calc(100% - 48px));
+  max-height: min(520px, calc(100% - 80px));
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #c8d1dc;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 48px rgba(31, 35, 40, 0.22);
+}
+
+.quick-open__input-wrap {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid #d8dee4;
+  padding: 0 12px;
+  color: var(--aion-accent);
+}
+
+.quick-open__input-wrap input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: #1f2328;
+  font-size: 14px;
+  outline: none;
+}
+
+.quick-open__input-wrap input::placeholder {
+  color: #8c959f;
+}
+
+.quick-open__input-wrap kbd {
+  min-width: 48px;
+  border: 1px solid #d8dee4;
+  border-radius: 4px;
+  background: #f6f8fa;
+  color: #57606a;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+
+.quick-open__meta {
+  min-height: 28px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #eaeef2;
+  color: #6e7781;
+  font-size: 11px;
+}
+
+.quick-open__list {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 4px;
+}
+
+.quick-open__empty {
+  padding: 18px 12px;
+  color: #6e7781;
+  font-size: 12px;
+  text-align: center;
+}
+
+.quick-open__item {
+  display: grid;
+  width: 100%;
+  min-height: 42px;
+  grid-template-columns: minmax(120px, 0.42fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #24292f;
+  cursor: pointer;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.quick-open__item:hover,
+.quick-open__item--selected {
+  background: #0969da;
+  color: #ffffff;
+}
+
+.quick-open__item-name,
+.quick-open__item-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-open__item-name {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.quick-open__item-path {
+  color: #6e7781;
+  font-size: 12px;
+}
+
+.quick-open__item:hover .quick-open__item-path,
+.quick-open__item--selected .quick-open__item-path {
+  color: rgba(255, 255, 255, 0.78);
 }
 
 .aion-workbench--empty {

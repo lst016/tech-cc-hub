@@ -171,6 +171,7 @@ export function buildEnvForConfig(config: ApiConfig, modelOverride?: string): Re
   const selectedModel = modelOverride ?? config.model;
   const smallModel = config.smallModel?.trim() || config.analysisModel?.trim() || selectedModel;
   const modelEnv = buildClaudeCodeModelEnv(selectedModel, smallModel);
+  const nonEssentialTrafficEnv = buildClaudeCodeNonEssentialTrafficEnv();
 
   baseEnv.ANTHROPIC_AUTH_TOKEN = config.apiKey;
   baseEnv.ANTHROPIC_BASE_URL = normalizeAnthropicBaseUrlForClaudeCode(config.baseURL);
@@ -183,6 +184,17 @@ export function buildEnvForConfig(config: ApiConfig, modelOverride?: string): Re
     ANTHROPIC_AUTH_TOKEN: config.apiKey,
     ANTHROPIC_BASE_URL: normalizeAnthropicBaseUrlForClaudeCode(config.baseURL),
     ...modelEnv,
+    ...nonEssentialTrafficEnv,
+  };
+}
+
+function buildClaudeCodeNonEssentialTrafficEnv(): Record<string, string> {
+  return {
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    DISABLE_AUTOUPDATER: "1",
+    DISABLE_BUG_COMMAND: "1",
+    DISABLE_ERROR_REPORTING: "1",
+    DISABLE_TELEMETRY: "1",
   };
 }
 

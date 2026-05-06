@@ -18,6 +18,7 @@
  */
 
 import { useMemo, useRef, useState, type ReactNode } from "react";
+import { isChannelChatEnabled } from "../../../shared/channel-config";
 import type {
   ChannelConnectionConfig,
   ChannelProviderId,
@@ -78,6 +79,7 @@ const CHANNEL_DEFINITIONS: ChannelDefinition[] = [
     defaultTransport: "lark-cli",
     defaults: {
       enabled: false,
+      chatEnabled: false,
       transport: "lark-cli",
       displayName: "飞书 / Lark",
       appIdEnv: "LARK_APP_ID",
@@ -147,10 +149,16 @@ function readChannelRuntimeConfig(rootConfig: Record<string, unknown> | null): C
   for (const definition of CHANNEL_DEFINITIONS) {
     const maybeRawItem = rawItems[definition.id];
     const rawItem = isRecord(maybeRawItem) ? maybeRawItem : {};
+    const enabled = typeof rawItem.enabled === "boolean" ? rawItem.enabled : definition.defaults.enabled;
     items[definition.id] = {
       provider: definition.id,
       ...definition.defaults,
-      enabled: typeof rawItem.enabled === "boolean" ? rawItem.enabled : definition.defaults.enabled,
+      enabled,
+      chatEnabled: typeof rawItem.chatEnabled === "boolean"
+        ? rawItem.chatEnabled
+        : definition.id === "lark"
+          ? enabled
+          : definition.defaults.chatEnabled,
       transport: asTransport(rawItem.transport, definition.defaultTransport),
       displayName: asText(rawItem.displayName) ?? definition.defaults.displayName,
       botTokenEnv: asText(rawItem.botTokenEnv) ?? definition.defaults.botTokenEnv,
@@ -278,6 +286,7 @@ function SectionHeader({ title, action }: { title: string; action?: ReactNode })
 function buildLarkCliGuidePrompt(channel: ChannelConnectionConfig): string {
   const currentConfig = {
     enabled: channel.enabled,
+    chatEnabled: channel.chatEnabled,
     transport: channel.transport,
     displayName: channel.displayName,
     cliCommand: channel.cliCommand,
@@ -351,6 +360,34 @@ function ChannelHeader({
         启用
       </label>
     </div>
+  );
+}
+
+function LarkImToggleButton({
+  channel,
+  onPatch,
+}: {
+  channel: ChannelConnectionConfig;
+  onPatch: (patch: Partial<ChannelConnectionConfig>) => void;
+}) {
+  const imEnabled = isChannelChatEnabled(channel);
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={imEnabled}
+      disabled={!channel.enabled}
+      onClick={() => onPatch({ chatEnabled: !imEnabled })}
+      className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-full border px-3 text-sm font-semibold transition ${
+        imEnabled
+          ? "border-[#B7E4CF] bg-[#E8F7F1] text-[#0B8F61]"
+          : "border-[#E5E6EB] bg-white text-[#4E5969] hover:border-[#D96B3A] hover:text-[#C9572C]"
+      } disabled:cursor-not-allowed disabled:border-[#E5E6EB] disabled:bg-[#F7F8FA] disabled:text-[#86909C]`}
+      title={!channel.enabled ? "先启用飞书 / Lark 渠道后才能接管 IM" : "控制 tech-cc-hub 是否启动飞书 IM 事件消费"}
+    >
+      <span className={`h-2 w-2 rounded-full ${imEnabled ? "bg-[#0B8F61]" : "bg-[#C9CDD4]"}`} />
+      {imEnabled ? "IM 已启用" : "启用 IM"}
+    </button>
   );
 }
 
@@ -458,23 +495,31 @@ function LarkConfigForm({
     <div className="space-y-5">
       <div>
         <SectionHeader title="连接方式" />
-        <div className="flex flex-wrap gap-2 rounded-2xl border border-[#E5E6EB] bg-[#FAFAFB] p-3">
-          <button
-            type="button"
-            onClick={() => onPatch({ transport: "lark-cli" })}
-            className={`rounded-xl border px-3 py-2 text-left text-xs transition ${mode === "lark-cli" ? "border-[#D96B3A] bg-[#FFF4EF] text-[#C9572C]" : "border-[#E5E6EB] bg-white text-[#4E5969]"}`}
-          >
-            <span className="block font-semibold">lark-cli（官方）</span>
-            <span className="mt-1 block opacity-80">本机官方 CLI 链路。</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onPatch({ transport: "lark-open-platform" })}
-            className={`rounded-xl border px-3 py-2 text-left text-xs transition ${mode === "lark-open-platform" ? "border-[#D96B3A] bg-[#FFF4EF] text-[#C9572C]" : "border-[#E5E6EB] bg-white text-[#4E5969]"}`}
-          >
-            <span className="block font-semibold">开放平台 SDK</span>
-            <span className="mt-1 block opacity-80">Lark 开放平台 SDK 链路。</span>
-          </button>
+        <div className="space-y-3 rounded-2xl border border-[#E5E6EB] bg-[#FAFAFB] p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => onPatch({ transport: "lark-cli" })}
+                className={`rounded-xl border px-3 py-2 text-left text-xs transition ${mode === "lark-cli" ? "border-[#D96B3A] bg-[#FFF4EF] text-[#C9572C]" : "border-[#E5E6EB] bg-white text-[#4E5969]"}`}
+              >
+                <span className="block font-semibold">lark-cli（官方）</span>
+                <span className="mt-1 block opacity-80">本机官方 CLI 链路。</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onPatch({ transport: "lark-open-platform" })}
+                className={`rounded-xl border px-3 py-2 text-left text-xs transition ${mode === "lark-open-platform" ? "border-[#D96B3A] bg-[#FFF4EF] text-[#C9572C]" : "border-[#E5E6EB] bg-white text-[#4E5969]"}`}
+              >
+                <span className="block font-semibold">开放平台 SDK</span>
+                <span className="mt-1 block opacity-80">Lark 开放平台 SDK 链路。</span>
+              </button>
+            </div>
+            <LarkImToggleButton channel={channel} onPatch={onPatch} />
+          </div>
+          <div className="rounded-xl border border-[#E5E6EB] bg-white px-3 py-2 text-xs leading-5 text-[#86909C]">
+            IM 开启后 tech-cc-hub 会启动飞书消息事件消费；关闭后保留凭证、配置和发送能力，避免和其他客户端来回抢消息。
+          </div>
         </div>
       </div>
 

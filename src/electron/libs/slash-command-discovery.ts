@@ -14,12 +14,26 @@ export type SlashCommandItem = {
 };
 
 const IGNORED_SCAN_DIRS = new Set([".git", "node_modules"]);
+const DISCOVERY_CACHE_TTL_MS = 10_000;
+
+type DiscoveryCacheEntry = {
+  items: SlashCommandItem[] | undefined;
+  expiresAt: number;
+};
+
+const discoveryCache = new Map<string, DiscoveryCacheEntry>();
 
 export function discoverSlashCommandsInRoots(roots: SlashCommandRoots): string[] | undefined {
   return mergeSlashCommandLists(discoverSlashCommandItemsInRoots(roots)?.map((command) => command.name));
 }
 
 export function discoverSlashCommandItemsInRoots(roots: SlashCommandRoots): SlashCommandItem[] | undefined {
+  const cacheKey = getDiscoveryCacheKey(roots);
+  const cached = discoveryCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cloneSlashCommandItems(cached.items);
+  }
+
   const discoveredCommands: string[] = [];
   const discoveredItems: SlashCommandItem[] = [];
 
@@ -72,7 +86,30 @@ export function discoverSlashCommandItemsInRoots(roots: SlashCommandRoots): Slas
     }
   }
 
-  return mergeSlashCommandItems(discoveredCommands, discoveredItems);
+  const merged = mergeSlashCommandItems(discoveredCommands, discoveredItems);
+  discoveryCache.set(cacheKey, {
+    items: cloneSlashCommandItems(merged),
+    expiresAt: Date.now() + DISCOVERY_CACHE_TTL_MS,
+  });
+  return merged;
+}
+
+export function clearSlashCommandDiscoveryCache(): void {
+  discoveryCache.clear();
+}
+
+function cloneSlashCommandItems(items: SlashCommandItem[] | undefined): SlashCommandItem[] | undefined {
+  return items?.map((item) => ({ ...item }));
+}
+
+function getDiscoveryCacheKey(roots: SlashCommandRoots): string {
+  return JSON.stringify({
+    project: roots.project ?? "",
+    skillRootContainers: [...(roots.skillRootContainers ?? [])].sort(),
+    skillRoots: [...(roots.skillRoots ?? [])].sort(),
+    system: roots.system ?? "",
+    user: roots.user ?? "",
+  });
 }
 
 function mergeSlashCommandItems(commandNames: string[], commandItems: SlashCommandItem[]): SlashCommandItem[] | undefined {

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { buildRunnerPromptContentBlocks } from "../../src/shared/runner-prompt.js";
 import { buildAnthropicPromptContentBlocks } from "../../src/shared/attachments.js";
 
 test("buildAnthropicPromptContentBlocks only emits image blocks from explicit runtimeData", () => {
@@ -51,6 +52,15 @@ test("buildAnthropicPromptContentBlocks does not leak preview base64 into the ma
     {
       type: "text",
       text: "图片资产：/tmp/image.png",
+    },
+  ]);
+});
+
+test("buildRunnerPromptContentBlocks always returns array content blocks", () => {
+  assert.deepEqual(buildRunnerPromptContentBlocks("plain prompt", []), [
+    {
+      type: "text",
+      text: "plain prompt",
     },
   ]);
 });

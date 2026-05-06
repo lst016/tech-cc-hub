@@ -11,7 +11,8 @@ import {
 import { existsSync, statSync } from "fs";
 import { extname } from "path";
 
-import { buildAnthropicPromptContentBlocks } from "../../shared/attachments.js";
+import { buildRunnerPromptContentBlocks } from "../../shared/runner-prompt.js";
+import { isSuccessfulRunnerResult, shouldSuppressRunnerErrorAfterSuccessfulResult } from "../../shared/runner-status.js";
 import type { PromptAttachment, RuntimeOverrides, ServerEvent } from "../types.js";
 import { resolveAgentRuntimeContext } from "./agent-resolver.js";
 import { buildEnvForConfig, getClaudeCodeModelOption, getClaudeCodePath, getCurrentApiConfig, getGlobalRuntimeConfig } from "./claude-settings.js";
@@ -183,6 +184,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   let activeQuery: Query | null = null;
   let rasterImageReads = 0;
   let requestedModelForError: string | undefined;
+  let emittedSuccessfulResult = false;
 
   const sendMessage = (message: SDKMessage) => {
     onEvent({
@@ -433,6 +435,9 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             type: "session.status",
             payload: { sessionId: session.id, status, title: session.title },
           });
+          if (isSuccessfulRunnerResult(message)) {
+            emittedSuccessfulResult = true;
+          }
         }
       }
 
@@ -453,6 +458,15 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         error,
         requestedModelForError ?? getRequestedModelName(getCurrentApiConfig()?.model, runtime?.model),
       );
+
+      if (shouldSuppressRunnerErrorAfterSuccessfulResult(emittedSuccessfulResult)) {
+        console.warn("[runner] Ignoring late runner error after successful result:", errorMessage);
+        onEvent({
+          type: "session.status",
+          payload: { sessionId: session.id, status: "completed", title: session.title },
+        });
+        return;
+      }
 
       onEvent({
         type: "runner.error",
@@ -928,10 +942,6 @@ function checkRasterImageRead(
   return { countRead: true };
 }
 
-function isRasterImagePath(filePath: string): boolean {
-  return RASTER_IMAGE_EXTENSIONS.has(extname(filePath).toLowerCase());
-}
-
 function shouldPreprocessImageRead(
   config: NonNullable<ReturnType<typeof getCurrentApiConfig>> | null,
   filePath: string,
@@ -1304,9 +1314,7 @@ function buildEffortLevel(reasoningMode?: RuntimeOverrides["reasoningMode"]): Ef
 
 export function createPromptSource(prompt: string, attachments: PromptAttachment[]): AsyncIterable<SDKUserMessage> {
   return (async function* promptSource(): AsyncIterable<SDKUserMessage> {
-    const content = attachments.length > 0
-      ? buildAnthropicPromptContentBlocks(prompt, attachments) as unknown as SDKUserMessage["message"]["content"]
-      : prompt;
+    const content = buildRunnerPromptContentBlocks(prompt, attachments) as unknown as SDKUserMessage["message"]["content"];
 
     yield {
       type: "user",
