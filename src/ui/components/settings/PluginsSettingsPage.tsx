@@ -1,7 +1,7 @@
 import { ShieldCheck } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-type PluginStatus = "planned" | "not-installed" | "needs-permission" | "ready";
+type PluginStatus = "not-installed" | "needs-permission" | "needs-connect" | "ready";
 
 type DefaultPlugin = {
   id: string;
@@ -10,8 +10,16 @@ type DefaultPlugin = {
   version: string;
   description: string;
   sourcePath: string;
-  status: PluginStatus;
   permissions: string[];
+};
+
+type OpenComputerUsePermissionStatus = {
+  platform: string;
+  required: boolean;
+  accessibility: "granted" | "missing" | "not-required" | "unknown";
+  screenRecording: "granted" | "missing" | "not-required" | "unknown";
+  needsUserAction: boolean;
+  openedSystemSettings: boolean;
 };
 
 type PluginInstallResult = {
@@ -24,20 +32,22 @@ type PluginInstallResult = {
   permissions?: OpenComputerUsePermissionStatus;
 };
 
-type OpenComputerUsePermissionStatus = {
-  platform: string;
-  required: boolean;
-  accessibility: "granted" | "missing" | "not-required" | "unknown";
-  screenRecording: "granted" | "missing" | "not-required" | "unknown";
-  needsUserAction: boolean;
-  openedSystemSettings: boolean;
-};
-
 type PluginRuntimeStatus = {
   installed: boolean;
   connected: boolean;
   version?: string;
   permissions?: OpenComputerUsePermissionStatus;
+};
+
+type PluginGuideSessionRequest = {
+  title: string;
+  prompt: string;
+  agentId?: string;
+  allowedTools?: string;
+};
+
+type PluginsSettingsPageProps = {
+  onStartGuideSession?: (request: PluginGuideSessionRequest) => Promise<void> | void;
 };
 
 const DEFAULT_PLUGINS: DefaultPlugin[] = [
@@ -48,16 +58,11 @@ const DEFAULT_PLUGINS: DefaultPlugin[] = [
     version: "0.1.36",
     description: "本机桌面控制 MCP 插件，作为插件体系的第一颗默认插件。",
     sourcePath: "plugins/open-computer-use",
-    status: "planned",
     permissions: ["mcp.server", "desktop.read", "desktop.write", "accessibility", "screen-recording"],
   },
 ];
 
 const statusMeta: Record<PluginStatus, { label: string; className: string }> = {
-  planned: {
-    label: "未接入",
-    className: "border-blue-500/20 bg-blue-50 text-blue-700",
-  },
   "not-installed": {
     label: "未安装",
     className: "border-amber-500/20 bg-amber-50 text-amber-800",
@@ -66,16 +71,48 @@ const statusMeta: Record<PluginStatus, { label: string; className: string }> = {
     label: "待授权",
     className: "border-orange-500/20 bg-orange-50 text-orange-800",
   },
+  "needs-connect": {
+    label: "待接入",
+    className: "border-blue-500/20 bg-blue-50 text-blue-700",
+  },
   ready: {
     label: "可用",
     className: "border-emerald-500/20 bg-emerald-50 text-emerald-700",
   },
 };
 
-export function PluginsSettingsPage() {
+function getPermissionHint(permissions?: OpenComputerUsePermissionStatus): string | null {
+  if (!permissions?.required) return null;
+  if (!permissions.needsUserAction) return "macOS 权限已就绪。";
+  return "macOS 还需要授权 Accessibility / Screen Recording。";
+}
+
+function buildOpenComputerUseGuidePrompt(status: PluginRuntimeStatus | null): string {
+  return [
+    "你在 tech-cc-hub 的系统工作区里，目标是把 Open Computer Use 安装并接入到可用状态。",
+    "",
+    "请按这个顺序处理，不能只安装 npm 包就结束：",
+    "1. 检查本机是否存在 open-computer-use 命令，先运行 open-computer-use --version。",
+    "2. 如果未安装，在 Windows 使用 npm.cmd install -g open-computer-use；其他平台使用 npm install -g open-computer-use。安装后再次验证 --version。",
+    "3. 检查 open-computer-use mcp 是否可用，至少运行 open-computer-use mcp --help 或等价安全检查，不要执行真实桌面操作测试。",
+    "4. 确认 tech-cc-hub 全局运行时配置写入 plugins.open-computer-use 和 mcpServers.open-computer-use：mcpServers.open-computer-use 应为 type=stdio，command=open-computer-use，args=[\"mcp\"]。",
+    "5. 如果当前运行时提供 plugins:installOpenComputerUse 或等价 IPC/MCP 管理入口，优先使用内置入口完成安装和写 MCP；否则再按代码里的 connectOpenComputerUsePlugin 结构编辑配置。",
+    "6. 权限检查：Windows/Linux 不需要 macOS Accessibility / Screen Recording；macOS 必须提示并引导授权这两项，授权未完成时不能报告为可用。",
+    "7. 完成后给出：open-computer-use 版本、MCP 配置是否写入、权限状态、是否还需要重启应用/刷新 MCP，以及最小复测命令。",
+    "",
+    "当前 UI 看到的 Open Computer Use 状态快照：",
+    "```json",
+    JSON.stringify(status ?? { installed: false, connected: false }, null, 2),
+    "```",
+  ].join("\n");
+}
+
+export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPageProps) {
   const [installingPluginId, setInstallingPluginId] = useState<string | null>(null);
+  const [launchingGuidePluginId, setLaunchingGuidePluginId] = useState<string | null>(null);
   const [installResult, setInstallResult] = useState<PluginInstallResult | null>(null);
   const [runtimeStatus, setRuntimeStatus] = useState<PluginRuntimeStatus | null>(null);
+  const guideLaunchInFlightRef = useRef(false);
 
   useEffect(() => {
     let mounted = true;
@@ -122,6 +159,21 @@ export function PluginsSettingsPage() {
     })();
   };
 
+  const handleStartGuideSession = (plugin: DefaultPlugin) => {
+    if (!onStartGuideSession || guideLaunchInFlightRef.current) return;
+    guideLaunchInFlightRef.current = true;
+    setLaunchingGuidePluginId(plugin.id);
+    void Promise.resolve(onStartGuideSession({
+      title: "Open Computer Use 引导安装",
+      prompt: buildOpenComputerUseGuidePrompt(runtimeStatus),
+      agentId: "open-computer-use-guide",
+      allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,TodoWrite",
+    })).catch(() => {
+      guideLaunchInFlightRef.current = false;
+      setLaunchingGuidePluginId(null);
+    });
+  };
+
   return (
     <section className="grid gap-5">
       <div className="flex flex-wrap items-start justify-between gap-4 border-b border-[#E5E6EB] pb-5">
@@ -153,17 +205,20 @@ export function PluginsSettingsPage() {
             : needsPermission
               ? statusMeta["needs-permission"]
               : installed
-                ? statusMeta.planned
+                ? statusMeta["needs-connect"]
                 : statusMeta["not-installed"];
           const actionLabel = installingPluginId === plugin.id
             ? "处理中..."
             : connected
-              ? "重新检测"
+              ? "重新检查"
               : needsPermission
                 ? "授权"
                 : installed
                   ? "接入"
                   : "安装";
+          const guideLabel = launchingGuidePluginId === plugin.id ? "启动中..." : "Agent 引导安装";
+          const permissionHint = getPermissionHint(permissions);
+
           return (
             <article
               key={plugin.id}
@@ -171,9 +226,9 @@ export function PluginsSettingsPage() {
             >
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-base font-bold text-[#1D2129]">{plugin.name}</h3>
-                    <span className="rounded-full border border-[#E5E6EB] bg-[#F7F8FA] px-2 py-0.5 text-xs font-semibold text-[#4E5969]">
-                      v{runtimeStatus?.version ?? plugin.version}
+                  <h3 className="text-base font-bold text-[#1D2129]">{plugin.name}</h3>
+                  <span className="rounded-full border border-[#E5E6EB] bg-[#F7F8FA] px-2 py-0.5 text-xs font-semibold text-[#4E5969]">
+                    v{runtimeStatus?.version ?? plugin.version}
                   </span>
                 </div>
                 <p className="mt-1 text-sm leading-5 text-[#6B778C]">{plugin.description}</p>
@@ -202,23 +257,35 @@ export function PluginsSettingsPage() {
                 <div className="mt-1 truncate text-xs">{plugin.sourcePath}</div>
                 <div className="mt-2 flex items-center gap-2 text-xs font-semibold text-[#0E7490]">
                   <ShieldCheck className="h-3.5 w-3.5" />
-                  {plugin.permissions.length} 权限
+                  {plugin.permissions.length} 项权限
                 </div>
-                {needsPermission && (
-                  <div className="mt-1 text-xs font-medium text-orange-700">
-                    macOS 需授权 Accessibility / Screen Recording
+                {permissionHint && (
+                  <div className={`mt-1 text-xs font-medium ${needsPermission ? "text-orange-700" : "text-emerald-700"}`}>
+                    {permissionHint}
                   </div>
                 )}
               </div>
 
-              <button
-                type="button"
-                className="mt-0.5 rounded-lg bg-[#1D2129] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#2B303B] disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={() => handleInstall(plugin)}
-                disabled={installingPluginId === plugin.id}
-              >
-                {actionLabel}
-              </button>
+              <div className="mt-0.5 grid gap-2">
+                <button
+                  type="button"
+                  className="rounded-lg bg-[#1D2129] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#2B303B] disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => handleInstall(plugin)}
+                  disabled={installingPluginId === plugin.id}
+                >
+                  {actionLabel}
+                </button>
+                {onStartGuideSession && (
+                  <button
+                    type="button"
+                    className="rounded-lg border border-[#F0C7B4] bg-[#FFF4EF] px-3 py-2 text-xs font-semibold text-[#C9572C] transition hover:border-[#D96B3A] hover:bg-[#FFEADF] disabled:cursor-not-allowed disabled:border-[#E5E6EB] disabled:bg-[#F7F8FA] disabled:text-[#86909C]"
+                    onClick={() => handleStartGuideSession(plugin)}
+                    disabled={launchingGuidePluginId === plugin.id}
+                  >
+                    {guideLabel}
+                  </button>
+                )}
+              </div>
             </article>
           );
         })}

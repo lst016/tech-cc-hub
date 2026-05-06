@@ -1,4 +1,4 @@
-﻿import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { DEV_BROWSER_PREVIEW_FLAG, getDevElectronRuntimeSource } from "../dev-electron-shim";
 import { useAppStore } from "../store/useAppStore";
 import { shouldAttachBrowserWorkbench } from "../utils/browser-workbench-visibility";
@@ -40,15 +40,13 @@ type LocalBrowserTarget = {
   title: string;
   host: string;
   url: string;
+  current?: boolean;
+  recent?: boolean;
 };
 
-const LOCAL_BROWSER_TARGETS: LocalBrowserTarget[] = [
-  { id: "tech-cc-hub", title: "tech-cc-hub", host: "localhost:4173", url: "http://localhost:4173/" },
-  { id: "new-api", title: "New API", host: "localhost:5337", url: "http://localhost:5337/" },
-  { id: "litellm", title: "LiteLLM API - Swagger UI", host: "localhost:4000", url: "http://localhost:4000/" },
-  { id: "localhost-8000", title: "localhost:8000", host: "localhost:8000", url: "http://localhost:8000/" },
-  { id: "localhost-8001", title: "localhost:8001", host: "localhost:8001", url: "http://localhost:8001/" },
-];
+const RECENT_LOCAL_BROWSER_TARGETS_KEY = "tech-cc-hub:browser-workbench:recent-local-targets";
+const COMMON_LOCAL_BROWSER_PORTS = [3000, 4173, 5173, 8000, 8001, 8080];
+const MAX_RECENT_LOCAL_BROWSER_TARGETS = 6;
 
 type LocalTargetStatus = "checking" | "online" | "offline";
 
@@ -98,6 +96,94 @@ function isCurrentAppUrl(value: string) {
   }
 }
 
+function isLoopbackHost(hostname: string) {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+}
+
+function formatLocalBrowserTargetTitle(url: URL, current = false) {
+  if (current) return "当前应用";
+  const path = url.pathname && url.pathname !== "/" ? url.pathname.replace(/\/$/, "") : "";
+  return path ? `${url.host}${path}` : url.host;
+}
+
+function getWorkspaceRecentStorageKey(workspaceKey: string) {
+  return `${RECENT_LOCAL_BROWSER_TARGETS_KEY}:${encodeURIComponent(workspaceKey || "__global__")}`;
+}
+
+function toBrowserPageTarget(value: string, options: { idPrefix?: string; current?: boolean; recent?: boolean; localOnly?: boolean } = {}): LocalBrowserTarget | null {
+  const normalized = normalizeWorkbenchUrl(value) ?? value.trim();
+  if (!normalized || typeof window === "undefined") return null;
+  try {
+    const url = new URL(normalized, window.location.href);
+    if (url.protocol !== "http:" && url.protocol !== "https:" && url.protocol !== "file:") return null;
+    if (options.localOnly && url.protocol !== "file:" && !isLoopbackHost(url.hostname)) return null;
+    const targetUrl = url.protocol === "file:"
+      ? url.href
+      : `${url.origin}${url.pathname || "/"}${url.search}${url.hash}`;
+    return {
+      id: `${options.idPrefix ?? "local"}-${encodeURIComponent(targetUrl)}`,
+      title: formatLocalBrowserTargetTitle(url, options.current),
+      host: url.host,
+      url: targetUrl,
+      current: options.current,
+      recent: options.recent,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readRecentLocalBrowserTargets(workspaceKey: string): LocalBrowserTarget[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(getWorkspaceRecentStorageKey(workspaceKey));
+    const values = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(values)) return [];
+    return values
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => toBrowserPageTarget(value, { idPrefix: "recent", recent: true }))
+      .filter((target): target is LocalBrowserTarget => Boolean(target));
+  } catch {
+    return [];
+  }
+}
+
+function rememberRecentLocalBrowserTarget(workspaceKey: string, value: string) {
+  const target = toBrowserPageTarget(value, { idPrefix: "recent", recent: true });
+  if (!target || typeof window === "undefined") return;
+  try {
+    const existing = readRecentLocalBrowserTargets(workspaceKey)
+      .map((item) => item.url)
+      .filter((url) => url !== target.url);
+    const next = [target.url, ...existing].slice(0, MAX_RECENT_LOCAL_BROWSER_TARGETS);
+    window.localStorage.setItem(getWorkspaceRecentStorageKey(workspaceKey), JSON.stringify(next));
+  } catch {
+    // localStorage may be disabled in some embedded/runtime contexts.
+  }
+}
+
+function buildLocalBrowserTargets(workspaceKey: string): LocalBrowserTarget[] {
+  const targets = new Map<string, LocalBrowserTarget>();
+  const addTarget = (target: LocalBrowserTarget | null) => {
+    if (!target) return;
+    if (!targets.has(target.url)) targets.set(target.url, target);
+  };
+
+  if (typeof window !== "undefined") {
+    addTarget(toBrowserPageTarget(window.location.href, { idPrefix: "current", current: true, localOnly: true }));
+  }
+
+  for (const target of readRecentLocalBrowserTargets(workspaceKey)) {
+    addTarget(target);
+  }
+
+  for (const port of COMMON_LOCAL_BROWSER_PORTS) {
+    addTarget(toBrowserPageTarget(`http://localhost:${port}/`, { idPrefix: "default", localOnly: true }));
+  }
+
+  return Array.from(targets.values());
+}
+
 function toBrowserWorkbenchUrl(value: string) {
   if (!isCurrentAppUrl(value)) return value;
   try {
@@ -122,6 +208,10 @@ export function BrowserWorkbenchPage({
   const initialUrlRef = useRef(initialUrl);
   const sessionIdRef = useRef(sessionId);
   const sessionBrowserState = useAppStore((store) => (sessionId ? store.browserWorkbenchBySessionId[sessionId] : undefined));
+  const workspaceKey = useAppStore((store) => {
+    const session = sessionId ? (store.sessions[sessionId] ?? store.archivedSessions[sessionId]) : undefined;
+    return session?.cwd?.trim() || store.cwd.trim() || sessionId || "__global__";
+  });
   const setSessionBrowserUrl = useAppStore((store) => store.setBrowserWorkbenchUrl);
   const setSessionBrowserHasTab = useAppStore((store) => store.setBrowserWorkbenchHasTab);
   const setSessionBrowserAnnotations = useAppStore((store) => store.setBrowserWorkbenchAnnotations);
@@ -144,6 +234,7 @@ export function BrowserWorkbenchPage({
   const showLocalLauncher = showBrowserChrome && !hasExternalBrowserUrl;
   const previewUrl = isPreviewRuntime ? (state.url || url) : "";
   const canUsePageAnnotation = canUseBrowserView && hasExternalBrowserUrl;
+  const [localTargets, setLocalTargets] = useState<LocalBrowserTarget[]>(() => buildLocalBrowserTargets(workspaceKey));
 
   const persistUrl = useCallback((nextUrl: string) => {
     if (sessionId) setSessionBrowserUrl(sessionId, nextUrl);
@@ -152,6 +243,11 @@ export function BrowserWorkbenchPage({
   const persistAnnotations = useCallback((nextAnnotations: BrowserWorkbenchAnnotation[]) => {
     if (sessionId) setSessionBrowserAnnotations(sessionId, nextAnnotations);
   }, [sessionId, setSessionBrowserAnnotations]);
+
+  const rememberLocalTarget = useCallback((targetUrl: string) => {
+    rememberRecentLocalBrowserTarget(workspaceKey, targetUrl);
+    setLocalTargets(buildLocalBrowserTargets(workspaceKey));
+  }, [workspaceKey]);
 
   const syncBounds = useCallback(() => {
     if (!canUseBrowserView) return;
@@ -223,9 +319,10 @@ export function BrowserWorkbenchPage({
     const finalUrl = nextState.url || targetUrl;
     setUrl(finalUrl);
     persistUrl(finalUrl);
+    rememberLocalTarget(finalUrl);
     setStatusText(nextState.url ? "页面已打开" : "准备打开页面");
     setIsDevToolsOpen(false);
-  }, [hasBrowserRuntime, isPreviewRuntime, persistUrl, sessionId, syncBounds, url]);
+  }, [hasBrowserRuntime, isPreviewRuntime, persistUrl, rememberLocalTarget, sessionId, syncBounds, url]);
 
   useEffect(() => {
     const sessionChanged = sessionIdRef.current !== sessionId;
@@ -477,29 +574,21 @@ export function BrowserWorkbenchPage({
     if (sessionId) setSessionBrowserHasTab(sessionId, true);
     setUrl(browserTargetUrl);
     persistUrl(browserTargetUrl);
+    rememberLocalTarget(browserTargetUrl);
     hasOpenedRef.current = false;
     setStatusText("正在打开本地页面");
-  }, [persistUrl, sessionId, setSessionBrowserHasTab]);
-  const localTargets = useMemo(() => {
-    if (typeof window === "undefined") return LOCAL_BROWSER_TARGETS;
-    let currentHost = "";
-    try {
-      currentHost = new URL(window.location.href).host;
-    } catch {
-      currentHost = "";
-    }
-    return LOCAL_BROWSER_TARGETS.map((target) => ({
-      ...target,
-      current: target.host === currentHost,
-    }));
-  }, []);
+  }, [persistUrl, rememberLocalTarget, sessionId, setSessionBrowserHasTab]);
   const showBrowserSurface = showBrowserChrome;
 
   useEffect(() => {
+    setLocalTargets(buildLocalBrowserTargets(workspaceKey));
+  }, [workspaceKey]);
+
+  useEffect(() => {
     let cancelled = false;
-    setLocalTargetStatus(Object.fromEntries(LOCAL_BROWSER_TARGETS.map((target) => [target.id, "checking" as const])));
+    setLocalTargetStatus(Object.fromEntries(localTargets.map((target) => [target.id, "checking" as const])));
     void Promise.all(
-      LOCAL_BROWSER_TARGETS.map(async (target) => {
+      localTargets.map(async (target) => {
         const status = await probeLocalTarget(target.url);
         if (cancelled) return;
         setLocalTargetStatus((current) => ({ ...current, [target.id]: status }));
@@ -508,7 +597,7 @@ export function BrowserWorkbenchPage({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [localTargets]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-white/82">
@@ -662,7 +751,7 @@ export function BrowserWorkbenchPage({
             {!hasBrowserTab ? (
               <div className="flex h-full justify-center overflow-y-auto px-6 py-2">
                 <div className="w-full max-w-[620px]">
-                  <div className="mb-2 text-[15px] font-medium text-muted">本地</div>
+                  <div className="mb-2 text-[15px] font-medium text-muted">最近 / 本地</div>
                   <div className="grid gap-3">
                     {localTargets.map((target) => {
                       const status = localTargetStatus[target.id] ?? "checking";
@@ -677,7 +766,12 @@ export function BrowserWorkbenchPage({
                           <LocalTargetPreview target={target} />
                           <div className="min-w-0">
                             <div className="truncate text-[18px] font-semibold text-ink-900">{target.title}</div>
-                            <div className="mt-1 truncate text-[17px] text-muted">{target.host}</div>
+                            <div className="mt-1 truncate text-[17px] text-muted">{target.host || target.url}</div>
+                            {(target.current || target.recent) && (
+                              <div className="mt-2 inline-flex rounded-md border border-black/8 bg-surface px-2 py-0.5 text-[11px] font-medium text-muted">
+                                {target.current ? "当前" : "最近"}
+                              </div>
+                            )}
                           </div>
                           <div className="flex h-full flex-col items-end justify-center gap-4">
                             <span className={`h-2.5 w-2.5 rounded-full ${status === "online" ? "bg-[#00a63e]" : status === "offline" ? "bg-ink-900/18" : "animate-pulse bg-amber-500"}`} />
@@ -709,7 +803,7 @@ export function BrowserWorkbenchPage({
             ) : showLocalLauncher && (
               <div className="flex h-full justify-center overflow-y-auto px-6 py-2">
                 <div className="w-full max-w-[620px]">
-                  <div className="mb-2 text-[15px] font-medium text-muted">本地</div>
+                  <div className="mb-2 text-[15px] font-medium text-muted">最近 / 本地</div>
                   <div className="grid gap-3">
                     {localTargets.map((target) => {
                       const status = localTargetStatus[target.id] ?? "checking";
@@ -724,7 +818,12 @@ export function BrowserWorkbenchPage({
                           <LocalTargetPreview target={target} />
                           <div className="min-w-0">
                             <div className="truncate text-[18px] font-semibold text-ink-900">{target.title}</div>
-                            <div className="mt-1 truncate text-[17px] text-muted">{target.host}</div>
+                            <div className="mt-1 truncate text-[17px] text-muted">{target.host || target.url}</div>
+                            {(target.current || target.recent) && (
+                              <div className="mt-2 inline-flex rounded-md border border-black/8 bg-surface px-2 py-0.5 text-[11px] font-medium text-muted">
+                                {target.current ? "当前" : "最近"}
+                              </div>
+                            )}
                           </div>
                           <div className="flex h-full flex-col items-end justify-center gap-4">
                             <span className={`h-2.5 w-2.5 rounded-full ${status === "online" ? "bg-[#00a63e]" : status === "offline" ? "bg-ink-900/18" : "animate-pulse bg-amber-500"}`} />

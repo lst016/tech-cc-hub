@@ -85,10 +85,12 @@ const CHANNEL_DEFINITIONS: ChannelDefinition[] = [
       appIdEnv: "LARK_APP_ID",
       appSecretEnv: "LARK_APP_SECRET",
       tenantKeyEnv: "LARK_TENANT_KEY",
-      cliCommand: "lark",
+      cliCommand: "lark-cli",
       cliProfile: "default",
-      cliSendArgsTemplate: "message send --profile {profile} --text {text}",
+      cliSendArgsTemplate: "",
       cliReceiveArgsTemplate: "",
+      allowedSenderIds: "",
+      allowedConversationIds: "",
     },
   },
   {
@@ -171,6 +173,8 @@ function readChannelRuntimeConfig(rootConfig: Record<string, unknown> | null): C
       cliProfile: asText(rawItem.cliProfile) ?? definition.defaults.cliProfile,
       cliSendArgsTemplate: asText(rawItem.cliSendArgsTemplate) ?? definition.defaults.cliSendArgsTemplate,
       cliReceiveArgsTemplate: asText(rawItem.cliReceiveArgsTemplate) ?? definition.defaults.cliReceiveArgsTemplate,
+      allowedSenderIds: asText(rawItem.allowedSenderIds) ?? definition.defaults.allowedSenderIds,
+      allowedConversationIds: asText(rawItem.allowedConversationIds) ?? definition.defaults.allowedConversationIds,
       notes: asText(rawItem.notes) ?? definition.defaults.notes,
     };
   }
@@ -293,6 +297,8 @@ function buildLarkCliGuidePrompt(channel: ChannelConnectionConfig): string {
     cliProfile: channel.cliProfile,
     cliSendArgsTemplate: channel.cliSendArgsTemplate,
     cliReceiveArgsTemplate: channel.cliReceiveArgsTemplate,
+    allowedSenderIds: channel.allowedSenderIds,
+    allowedConversationIds: channel.allowedConversationIds,
     appIdEnv: channel.appIdEnv,
     appSecretEnv: channel.appSecretEnv,
     tenantKeyEnv: channel.tenantKeyEnv,
@@ -302,14 +308,17 @@ function buildLarkCliGuidePrompt(channel: ChannelConnectionConfig): string {
     "你在 tech-cc-hub 的系统工作区里，目标是把飞书 / Lark 的 lark-cli 通道配置到可用，不要让用户手工填写整段 JSON。",
     `默认官方 CLI 仓库是 ${LARK_CLI_REPO_URL}。如果本机没有安装 lark-cli / lark 命令，直接基于这个仓库的官方说明安装或给出最短安装命令，不要再让用户自己找链接。`,
     "",
-    "请按这个顺序处理：",
-    "1. 检查本机是否存在 lark 或 lark-cli 命令，查看 version/help/profile 相关命令，确认真实 CLI 调用方式。",
-    "2. 如果 CLI 未安装，使用上面的官方仓库作为默认来源完成安装检查或生成安装指令；安装后继续检查命令和 profile。",
-    "3. 检查当前 profile 是否存在；如果需要登录、创建 profile 或缺少凭证，只问用户一个最短的问题。",
-    "4. 验证发送参数模板和接收输出格式。优先使用 help、dry-run、只读或安全测试命令；不要主动给真实群聊发无意义消息。",
-    "5. 如果能确认正确配置，请把全局运行时配置里的 channels.items.lark 更新为可用配置，并补齐 skillCredentials 里用到的 env 名称。",
-    "6. 如果当前运行时提供 mcp__tech-cc-hub-admin__set_global_runtime_config，优先用它持久化；否则再直接编辑系统工作区里的配置文件。",
-    "7. 完成后给出：实际 CLI 命令、profile、发送模板、接收模板、还缺什么，以及一条最小可复测命令。",
+    "请按这个顺序处理，不能只配应用就结束：",
+    "1. 检查本机是否存在 lark-cli 命令，查看 version/help/profile 相关命令，确认真实 CLI 调用方式。",
+    "2. 检查当前 profile 的应用配置是否存在；如缺 appId/appSecret，先用 lark-cli config init 或等价命令完成应用配置。",
+    "3. 检查当前 profile 的用户登录状态：运行 lark-cli auth status。必须看到 tokenStatus=valid 且 userOpenId=ou_...，否则 IM 不算可用。",
+    "4. 如果未登录或缺少 userOpenId，发起用户授权登录：优先使用 lark-cli auth login --scope \"auth:user.id:read\"；如 IM 读写测试提示缺 scope，再按错误提示增量补 scope。不要对 bot 身份做 auth login。",
+    "5. 说明 tech-cc-hub 会自动使用 auth status 返回的 userOpenId 作为本机 Lark IM 的目标人过滤条件；不要把个人 open_id 写进默认打包配置，除非用户明确要高级覆盖。",
+    "6. 验证事件链路：查看 lark-cli event consume/status 相关 help，确认同一个 Lark App 同时只能有一个事件消费者；如被另一台机器占用，要提示停止另一端或改用中心路由。",
+    "7. 验证回复链路：优先使用 message_id 回复，即 lark-cli im +messages-reply --message-id om_xxx --text ... --as bot；不要再用旧的 chat_id 发送模板作为已有消息的默认回复路径。",
+    "8. 如果能确认正确配置，请把全局运行时配置里的 channels.items.lark 更新为可用配置：cliCommand/profile 要正确，cliSendArgsTemplate 默认留空，allowedSenderIds 默认留空让运行时自动从 auth status 获取。",
+    "9. 如果当前运行时提供 mcp__tech-cc-hub-admin__set_global_runtime_config，优先用它持久化；否则再直接编辑系统工作区里的配置文件。",
+    "10. 完成后给出：实际 CLI 命令、profile、auth status 中的 tokenStatus/userOpenId 是否有效、是否存在事件消费者冲突、还缺什么，以及一条最小可复测命令。",
     "",
     "当前 UI 里的 Lark 配置快照：",
     "```json",
@@ -371,13 +380,16 @@ function LarkImToggleButton({
   onPatch: (patch: Partial<ChannelConnectionConfig>) => void;
 }) {
   const imEnabled = isChannelChatEnabled(channel);
+  const disabled = !channel.enabled;
   return (
     <button
       type="button"
       role="switch"
       aria-checked={imEnabled}
-      disabled={!channel.enabled}
-      onClick={() => onPatch({ chatEnabled: !imEnabled })}
+      disabled={disabled}
+      onClick={() => {
+        onPatch({ chatEnabled: !imEnabled });
+      }}
       className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-full border px-3 text-sm font-semibold transition ${
         imEnabled
           ? "border-[#B7E4CF] bg-[#E8F7F1] text-[#0B8F61]"
@@ -544,6 +556,22 @@ function LarkConfigForm({
             </PreferenceRow>
             <PreferenceRow label="CLI Profile">
               <Field label="" value={channel.cliProfile} placeholder="default" onChange={(cliProfile) => onPatch({ cliProfile })} />
+            </PreferenceRow>
+            <PreferenceRow label="目标用户覆盖" description="可选。留空时自动使用当前 lark-cli profile 的 auth status userOpenId。">
+              <Field
+                label=""
+                value={channel.allowedSenderIds}
+                placeholder="自动读取 lark-cli auth status"
+                onChange={(allowedSenderIds) => onPatch({ allowedSenderIds })}
+              />
+            </PreferenceRow>
+            <PreferenceRow label="目标 chat_id" description="可选。用于进一步锁定应用和这个人的聊天，例如 oc_xxx；留空则只按用户过滤。">
+              <Field
+                label=""
+                value={channel.allowedConversationIds}
+                placeholder="oc_xxx"
+                onChange={(allowedConversationIds) => onPatch({ allowedConversationIds })}
+              />
             </PreferenceRow>
             <PreferenceRow label="发送参数模板">
               <Field

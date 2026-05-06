@@ -468,7 +468,7 @@ export function SettingsModal({
     content = <SkillsManagementPage />;
   }
   if (activePageId === "plugins") {
-    content = <PluginsSettingsPage />;
+    content = <PluginsSettingsPage onStartGuideSession={handleStartGuideSession} />;
   }
   if (activePageId === "agent-rules") {
     content = (

@@ -34,6 +34,7 @@ export type ChannelReplyTarget = {
   provider: ChannelProviderId;
   conversationId: string;
   rawConversationId: string;
+  externalMessageId?: string;
   senderId?: string;
   senderName?: string;
   channelName?: string;
@@ -128,6 +129,7 @@ export function recordChannelOutboundMessage(workspaceRoot: string, target: Chan
     provider: target.provider,
     conversationId: target.conversationId,
     rawConversationId: target.rawConversationId,
+    externalMessageId: target.externalMessageId,
     text,
     sentAt: Date.now(),
   };
@@ -150,6 +152,7 @@ export function buildChannelReplyTarget(message: ChannelInboundMessage, workspac
     provider: workspace.provider,
     conversationId: workspace.conversationId,
     rawConversationId: message.externalConversationId?.trim() || message.channelName?.trim() || message.senderId?.trim() || workspace.conversationId,
+    externalMessageId: message.externalMessageId,
     senderId: message.senderId,
     senderName: message.senderName,
     channelName: message.channelName,

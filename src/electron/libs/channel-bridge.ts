@@ -1,10 +1,11 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "child_process";
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { setTimeout as delay } from "timers/promises";
 
 import { isChannelChatEnabled } from "../../shared/channel-config.js";
+import { buildLarkCliSendArgs, hasRequiredLarkSenderFilter, parseLarkAuthUserOpenId, shouldAcceptLarkEvent } from "../../shared/lark-channel.js";
 import { getGlobalRuntimeEnvConfig } from "./claude-settings.js";
 import { loadGlobalRuntimeConfig } from "./config-store.js";
 import { prepareExternalCliCommand, runExternalCli } from "./external-cli.js";
@@ -26,6 +27,8 @@ type ChannelConnectionConfig = {
   cliProfile?: string;
   cliSendArgsTemplate?: string;
   cliReceiveArgsTemplate?: string;
+  allowedSenderIds?: string;
+  allowedConversationIds?: string;
 };
 
 type ChannelRuntimeConfig = {
@@ -63,25 +66,41 @@ function resolveConfiguredEnvValue(envName?: string): string | undefined {
   return runtimeEnv[normalized] || process.env[normalized];
 }
 
-function splitCommandTemplate(template: string, values: Record<string, string>): string[] {
-  const rendered = Object.entries(values).reduce(
-    (current, [key, value]) => current.replaceAll(`{${key}}`, value),
-    template,
-  );
-  return rendered.match(/"[^"]*"|'[^']*'|\S+/g)?.map((part) => {
-    if ((part.startsWith('"') && part.endsWith('"')) || (part.startsWith("'") && part.endsWith("'"))) {
-      return part.slice(1, -1);
-    }
-    return part;
-  }) ?? [];
-}
-
 function runCli(command: string, args: string[], timeout = 15_000, cwd?: string): Promise<{ stdout: string; stderr: string }> {
   return runExternalCli(command, args, {
     timeout,
     cwd,
     env: { ...process.env, ...getGlobalRuntimeEnvConfig() },
   });
+}
+
+function getLarkProfileArgs(profile: string): string[] {
+  return profile && profile !== "default" ? ["--profile", profile] : [];
+}
+
+function resolveLarkAllowedSenderIds(config: ChannelConnectionConfig, command: string, profile: string): string | undefined {
+  if (hasRequiredLarkSenderFilter(config)) return config.allowedSenderIds?.trim();
+
+  const prepared = prepareExternalCliCommand(
+    command,
+    [...getLarkProfileArgs(profile), "auth", "status"],
+    { ...process.env, ...getGlobalRuntimeEnvConfig() },
+  );
+  const result = spawnSync(prepared.command, prepared.args, {
+    env: prepared.env,
+    encoding: "utf8",
+    timeout: 10_000,
+    windowsHide: true,
+  });
+  if (result.error) {
+    console.warn("[channel-bridge] lark auth status failed:", result.error.message);
+    return undefined;
+  }
+  if (typeof result.status === "number" && result.status !== 0) {
+    console.warn("[channel-bridge] lark auth status failed:", String(result.stderr ?? "").trim());
+    return undefined;
+  }
+  return parseLarkAuthUserOpenId(String(result.stdout ?? ""));
 }
 
 function extractTelegramMessage(update: Record<string, unknown>): ChannelInboundMessage | null {
@@ -145,10 +164,21 @@ function startLarkEventBridge(dispatch: ChannelBridgeDispatch): ChildProcessWith
 
   const command = config.cliCommand?.trim() || "lark-cli";
   const profile = config.cliProfile?.trim() || "default";
+  const allowedSenderIds = resolveLarkAllowedSenderIds(config, command, profile);
+  if (!allowedSenderIds) {
+    console.warn("[channel-bridge] lark IM disabled: lark-cli auth status did not return userOpenId; run lark-cli auth login for this profile");
+    return null;
+  }
+  const runtimeConfig = { ...config, allowedSenderIds };
 
-  const args = profile && profile !== "default"
-    ? ["--profile", profile, "event", "consume", "im.message.receive_v1", "--as", "bot"]
-    : ["event", "consume", "im.message.receive_v1", "--as", "bot"];
+  const args = [
+    ...getLarkProfileArgs(profile),
+    "event",
+    "consume",
+    "im.message.receive_v1",
+    "--as",
+    "bot",
+  ];
 
   const prepared = prepareExternalCliCommand(command, args, { ...process.env, ...getGlobalRuntimeEnvConfig() });
   const child = spawn(prepared.command, prepared.args, {
@@ -170,12 +200,21 @@ function startLarkEventBridge(dispatch: ChannelBridgeDispatch): ChildProcessWith
         if (!isRecord(parsed)) continue;
         const text = String(parsed.content ?? "").trim();
         if (!text) continue;
+        const conversationId = asOptionalString(parsed.chat_id);
+        const senderId = asOptionalString(parsed.sender_id);
+        if (!shouldAcceptLarkEvent(runtimeConfig, { conversationId, senderId })) {
+          console.info("[channel-bridge] lark event ignored by allow-list:", {
+            chatId: conversationId,
+            senderId,
+          });
+          continue;
+        }
         void Promise.resolve(dispatch({
           provider: "lark",
           text,
-          externalConversationId: asOptionalString(parsed.chat_id),
+          externalConversationId: conversationId,
           externalMessageId: asOptionalString(parsed.message_id) ?? `${Date.now()}`,
-          senderId: asOptionalString(parsed.sender_id),
+          senderId,
           receivedAt: typeof parsed.timestamp === "string" ? Number(parsed.timestamp) : Date.now(),
         })).catch((error) => {
           console.warn("[channel-bridge] lark event dispatch failed:", error);
@@ -350,18 +389,11 @@ async function sendTelegramText(target: ChannelReplyTarget, text: string): Promi
 async function sendLarkCliText(target: ChannelReplyTarget, text: string): Promise<void> {
   const config = getChannelConfig("lark");
   const command = config?.enabled && config.transport === "lark-cli" ? config.cliCommand?.trim() : "";
-  const template = config?.cliSendArgsTemplate?.trim();
-  if (!command || !template) {
-    console.warn("[channel-bridge] lark send skipped: command or cliSendArgsTemplate not configured");
+  if (!command || !config) {
+    console.warn("[channel-bridge] lark send skipped: command not configured");
     return;
   }
-  const rawConversationId = target.rawConversationId || target.conversationId;
-  const args = splitCommandTemplate(template, {
-    profile: config?.cliProfile?.trim() || "default",
-    conversation: rawConversationId,
-    "chat-id": rawConversationId,
-    text,
-  });
+  const args = buildLarkCliSendArgs(config, target, text);
   await runCli(command, args);
 }
 

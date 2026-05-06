@@ -191,6 +191,8 @@ export type ChannelConnectionConfig = {
   cliProfile?: string;
   cliSendArgsTemplate?: string;
   cliReceiveArgsTemplate?: string;
+  allowedSenderIds?: string;
+  allowedConversationIds?: string;
   notes?: string;
 };
 
