@@ -14,6 +14,7 @@ import { DecisionPanel } from "./DecisionPanel";
 import { resolveImageAttachmentSrc } from "../../shared/attachments";
 import { copyTextToClipboard as copyText } from "../utils/clipboard";
 import { PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT } from "../events";
+import { extractCodeReferencesPrompt, type CodeReferencePromptSummary } from "../utils/code-reference-prompt";
 
 type MessageContent = SDKAssistantMessage["message"]["content"][number];
 type ToolResultContent = SDKUserMessage["message"]["content"][number];
@@ -452,6 +453,64 @@ const BrowserAnnotationChip = ({ annotation }: { annotation: BrowserAnnotationSu
   </div>
 );
 
+const getCodeReferenceLineLabel = (reference: CodeReferencePromptSummary) => {
+  if (reference.rangeLabel) return reference.rangeLabel;
+  if (typeof reference.startLine !== "number") return "";
+  return reference.startLine === reference.endLine || typeof reference.endLine !== "number"
+    ? `${reference.startLine}`
+    : `${reference.startLine}-${reference.endLine}`;
+};
+
+const CodeReferenceChip = ({ reference }: { reference: CodeReferencePromptSummary }) => {
+  const lineLabel = getCodeReferenceLineLabel(reference);
+  const title = [
+    reference.filePath,
+    lineLabel ? `L${lineLabel}` : null,
+    reference.comment,
+  ].filter(Boolean).join("\n");
+
+  return (
+    <div className="max-w-full rounded-2xl border border-[#0969da]/15 bg-white/94 px-3 py-3 text-left text-xs text-ink-800 shadow-[0_10px_24px_rgba(9,105,218,0.08)]" title={title}>
+      <div className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+        <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full text-[11px] font-bold text-white ${reference.kind === "comment" ? "bg-[#bf3989]" : "bg-[#0969da]"}`}>
+          {reference.index}
+        </span>
+        <span className="shrink-0 rounded-md bg-[#f6f8fa] px-1.5 py-0.5 text-[10px] text-[#57606a]">
+          {reference.kind === "comment" ? "评论" : "代码"}
+        </span>
+        {reference.filePath ? (
+          <button
+            type="button"
+            className="min-w-0 truncate text-left text-[#0969da] transition hover:underline"
+            onClick={() => window.dispatchEvent(new CustomEvent(PREVIEW_OPEN_FILE_EVENT, {
+              detail: { filePath: reference.filePath, startLine: reference.startLine },
+            }))}
+          >
+            {reference.fileName || reference.filePath}{lineLabel ? ` · L${lineLabel}` : ""}
+          </button>
+        ) : (
+          <span className="min-w-0 truncate">{lineLabel ? `L${lineLabel}` : `代码引用 ${reference.index}`}</span>
+        )}
+      </div>
+      {(reference.comment || reference.selectionPreview) && (
+        <div className="mt-2 grid gap-1.5 text-[11px] leading-5 text-muted">
+          {reference.comment && (
+            <div className="min-w-0">
+              <span className="font-semibold text-ink-700">说明 </span>
+              <span className="break-words">{reference.comment}</span>
+            </div>
+          )}
+          {reference.selectionPreview && (
+            <code className="block max-h-20 overflow-hidden whitespace-pre-wrap break-words rounded-xl bg-[#f6f8fa] px-2.5 py-2 text-[10px] leading-4 text-[#57606a]">
+              {compactPreview(reference.selectionPreview, 180)}
+            </code>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const AttachmentChip = ({ attachment }: { attachment: PromptAttachment }) => (
   <div className="rounded-2xl border border-black/6 bg-[#eef2f8] px-3 py-2">
     <div className="truncate text-xs font-semibold text-ink-800">{attachment.name}</div>
@@ -635,7 +694,15 @@ const UserMessageCard = ({
   message: { type: "user_prompt"; prompt: string; attachments?: PromptAttachment[]; capturedAt?: number };
   showIndicator?: boolean;
 }) => {
-  const { visiblePrompt, annotations } = useMemo(() => extractBrowserAnnotationsPrompt(message.prompt), [message.prompt]);
+  const { visiblePrompt, annotations, codeReferences } = useMemo(() => {
+    const browserResult = extractBrowserAnnotationsPrompt(message.prompt);
+    const codeResult = extractCodeReferencesPrompt(browserResult.visiblePrompt);
+    return {
+      visiblePrompt: codeResult.visiblePrompt,
+      annotations: browserResult.annotations,
+      codeReferences: codeResult.codeReferences,
+    };
+  }, [message.prompt]);
   const hasVisiblePrompt = visiblePrompt.trim().length > 0;
   const hasAttachments = Boolean(message.attachments?.length);
   const [lightboxImage, setLightboxImage] = useState<{ src: string; name: string } | null>(null);
@@ -660,7 +727,7 @@ const UserMessageCard = ({
               referenceCapturedAt={message.capturedAt}
             />
           </div>
-        ) : !hasAttachments && annotations.length === 0 ? (
+        ) : !hasAttachments && annotations.length === 0 && codeReferences.length === 0 ? (
           <div className="max-w-[78%] rounded-[22px] border border-black/6 bg-[#eef2f8] px-4 py-3 text-sm text-muted">
             已发送附件
           </div>
@@ -673,6 +740,13 @@ const UserMessageCard = ({
         <div className="mt-2 grid w-full max-w-[78%] gap-2">
           {annotations.map((annotation) => (
             <BrowserAnnotationChip key={annotation.index} annotation={annotation} />
+          ))}
+        </div>
+      )}
+      {codeReferences.length > 0 && (
+        <div className="mt-2 grid w-full max-w-[78%] gap-2">
+          {codeReferences.map((reference) => (
+            <CodeReferenceChip key={`${reference.index}:${reference.filePath ?? "unknown"}:${reference.rangeLabel ?? ""}`} reference={reference} />
           ))}
         </div>
       )}

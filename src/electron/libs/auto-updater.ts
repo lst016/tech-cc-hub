@@ -2,9 +2,17 @@ import { app } from "electron";
 import log from "electron-log";
 import { createRequire } from "node:module";
 import type { ProgressInfo, UpdateInfo } from "electron-updater";
+import {
+  compareAppVersions,
+  isMissingPlatformUpdateMetadataError,
+  summarizeGitHubReleaseForUpdates,
+  type GitHubReleaseLike,
+} from "./auto-updater-fallback.js";
 
 const require = createRequire(import.meta.url);
 const { autoUpdater } = require("electron-updater") as typeof import("electron-updater");
+const UPDATE_OWNER = "lst016";
+const UPDATE_REPO = "tech-cc-hub";
 
 export type AppUpdateState =
   | "idle"
@@ -14,6 +22,7 @@ export type AppUpdateState =
   | "not-available"
   | "downloading"
   | "downloaded"
+  | "unsupported"
   | "error";
 
 export type AppUpdateStatus = {
@@ -26,6 +35,7 @@ export type AppUpdateStatus = {
   releaseName?: string;
   releaseDate?: string;
   releaseNotes?: string;
+  releaseUrl?: string;
   checkedAt?: number;
   progress?: {
     bytesPerSecond: number;
@@ -48,9 +58,6 @@ function getUpdateChannel(): string | undefined {
   const { platform, arch } = process;
   if (platform === "win32" && arch === "arm64") {
     return "latest-win-arm64";
-  }
-  if (platform === "darwin" && arch === "arm64") {
-    return "latest-arm64";
   }
   return undefined;
 }
@@ -82,6 +89,10 @@ function isAutoUpdateDisabled(): boolean {
     process.env.CI === "true" ||
     process.env.CI === "1" ||
     process.env.GITHUB_ACTIONS === "true";
+}
+
+function getReleaseApiUrl(): string {
+  return `https://api.github.com/repos/${UPDATE_OWNER}/${UPDATE_REPO}/releases/latest`;
 }
 
 class AppAutoUpdater {
@@ -174,12 +185,79 @@ class AppAutoUpdater {
       return { success: true, status: this.status };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const fallbackStatus = isMissingPlatformUpdateMetadataError(error)
+        ? await this.checkReleaseFallback(message)
+        : null;
+      if (fallbackStatus) {
+        return {
+          success: fallbackStatus.status !== "error",
+          status: fallbackStatus,
+          error: fallbackStatus.status === "error" ? fallbackStatus.error : undefined,
+        };
+      }
       const status = this.setStatus({
         status: "error",
         error: message,
         checkedAt: Date.now(),
       });
       return { success: false, status, error: message };
+    }
+  }
+
+  private async checkReleaseFallback(originalError: string): Promise<AppUpdateStatus | null> {
+    try {
+      const response = await fetch(getReleaseApiUrl(), {
+        headers: {
+          "Accept": "application/vnd.github+json",
+          "User-Agent": "tech-cc-hub-updater",
+        },
+      });
+      if (!response.ok) return null;
+
+      const release = await response.json() as GitHubReleaseLike;
+      const fallback = summarizeGitHubReleaseForUpdates(release, process.platform, process.arch);
+      const currentVersion = app.getVersion();
+      const latestVersion = fallback.version;
+      const latestIsNewer = compareAppVersions(latestVersion, currentVersion) > 0;
+
+      if (!latestIsNewer) {
+        return this.setStatus({
+          status: "not-available",
+          version: latestVersion,
+          releaseName: fallback.releaseName,
+          releaseDate: fallback.releaseDate,
+          releaseNotes: fallback.releaseNotes,
+          releaseUrl: fallback.releaseUrl,
+          checkedAt: Date.now(),
+          error: undefined,
+        });
+      }
+
+      if (!fallback.hasCompatibleUpdateMetadata) {
+        return this.setStatus({
+          status: "unsupported",
+          version: latestVersion,
+          releaseName: fallback.releaseName,
+          releaseDate: fallback.releaseDate,
+          releaseNotes: fallback.releaseNotes,
+          releaseUrl: fallback.releaseUrl,
+          checkedAt: Date.now(),
+          error: `发现 v${latestVersion}，但该 Release 没有当前平台 (${process.platform}/${process.arch}) 的自动更新元数据。请等待对应安装包发布或到 GitHub Releases 手动查看。`,
+        });
+      }
+
+      return this.setStatus({
+        status: "error",
+        version: latestVersion,
+        releaseName: fallback.releaseName,
+        releaseDate: fallback.releaseDate,
+        releaseNotes: fallback.releaseNotes,
+        releaseUrl: fallback.releaseUrl,
+        checkedAt: Date.now(),
+        error: originalError,
+      });
+    } catch {
+      return null;
     }
   }
 
@@ -294,6 +372,7 @@ class AppAutoUpdater {
       releaseName: partial.releaseName ?? this.status?.releaseName,
       releaseDate: partial.releaseDate ?? this.status?.releaseDate,
       releaseNotes: partial.releaseNotes ?? this.status?.releaseNotes,
+      releaseUrl: partial.releaseUrl ?? this.status?.releaseUrl,
       checkedAt: partial.checkedAt ?? this.status?.checkedAt,
       progress: partial.progress ?? this.status?.progress,
       error: partial.error,

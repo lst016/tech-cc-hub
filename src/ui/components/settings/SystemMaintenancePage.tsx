@@ -55,6 +55,11 @@ const UPDATE_STATE_META: Record<AppUpdateState, { label: string; tone: string; d
     tone: "border-emerald-500/20 bg-emerald-50 text-emerald-700",
     description: "更新已下载完成，重启应用后安装。",
   },
+  unsupported: {
+    label: "暂无安装包",
+    tone: "border-amber-500/20 bg-amber-50 text-amber-800",
+    description: "已发现新版本，但当前平台缺少自动更新元数据，请到 GitHub Releases 手动查看。",
+  },
   error: {
     label: "检查失败",
     tone: "border-red-500/20 bg-red-50 text-red-700",

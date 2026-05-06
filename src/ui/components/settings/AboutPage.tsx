@@ -27,6 +27,7 @@ const UPDATE_STATE_META: Record<AppUpdateState, { label: string; tone: string }>
   "not-available": { label: "已是最新", tone: "border-emerald-500/20 bg-emerald-50 text-emerald-700" },
   downloading: { label: "下载中", tone: "border-blue-500/20 bg-blue-50 text-blue-700" },
   downloaded: { label: "待安装", tone: "border-emerald-500/20 bg-emerald-50 text-emerald-700" },
+  unsupported: { label: "暂无安装包", tone: "border-amber-500/20 bg-amber-50 text-amber-800" },
   error: { label: "检查失败", tone: "border-red-500/20 bg-red-50 text-red-700" },
 };
 
@@ -209,6 +210,16 @@ export function AboutPage({ onStartMaintenanceSession, onClose }: AboutPageProps
                 style={{ width: `${Math.min(Math.max(downloadPercent, 0), 100)}%` }}
               />
             </div>
+          </div>
+        )}
+
+        {(updateStatus?.error || updateStatus?.status === "unsupported") && (
+          <div className={`mt-4 rounded-2xl border px-4 py-3 text-sm leading-6 ${
+            updateStatus.status === "error"
+              ? "border-red-500/20 bg-red-50 text-red-700"
+              : "border-amber-500/20 bg-amber-50 text-amber-800"
+          }`}>
+            {updateStatus.error || "当前 Release 暂无本平台自动更新包。"}
           </div>
         )}
 

@@ -138,6 +138,7 @@ export type AppUpdateState =
   | "not-available"
   | "downloading"
   | "downloaded"
+  | "unsupported"
   | "error";
 
 export type AppUpdateStatus = {
@@ -150,6 +151,7 @@ export type AppUpdateStatus = {
   releaseName?: string;
   releaseDate?: string;
   releaseNotes?: string;
+  releaseUrl?: string;
   checkedAt?: number;
   progress?: {
     bytesPerSecond: number;

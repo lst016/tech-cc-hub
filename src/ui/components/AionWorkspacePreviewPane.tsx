@@ -1,13 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import Editor, { loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import { PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT } from '../events';
 import { getCodeReferenceSessionKey, useAppStore, type CodeReferenceDraft } from '../store/useAppStore';
 import { copyTextToClipboard } from '../utils/clipboard';
+import {
+  collectCompletedPreviewFileChanges,
+  normalizePreviewFilePath,
+} from '../utils/preview-file-refresh';
 import './AionWorkspacePreviewPane.css';
 
-if (!(self as any).MonacoEnvironment?.getWorker) {
-  (self as any).MonacoEnvironment = {
+type MonacoWorkerEnvironment = typeof self & {
+  MonacoEnvironment?: {
+    getWorker?: (_: string, label: string) => Worker;
+  };
+};
+
+const monacoGlobal = self as MonacoWorkerEnvironment;
+
+if (!monacoGlobal.MonacoEnvironment?.getWorker) {
+  monacoGlobal.MonacoEnvironment = {
     getWorker(_: string, label: string) {
       if (label === 'json') {
         return new Worker(new URL('monaco-editor/esm/vs/language/json/json.worker.js', import.meta.url), { type: 'module' });
@@ -34,6 +46,7 @@ const EMPTY_CODE_REFERENCES: CodeReferenceDraft[] = [];
 type AionWorkspacePreviewPaneProps = {
   workspace?: string;
   conversationId?: string;
+  messages?: readonly unknown[];
   onClose?: () => void;
 };
 
@@ -202,9 +215,11 @@ function NativeExplorer({
   }, [workspace]);
 
   useEffect(() => {
-    setDirectoryCache({});
-    setExpandedPaths(new Set([workspace]));
-    void loadDirectory(workspace, true);
+    queueMicrotask(() => {
+      setDirectoryCache({});
+      setExpandedPaths(new Set([workspace]));
+      void loadDirectory(workspace, true);
+    });
   }, [loadDirectory, workspace]);
 
   const handleToggleDirectory = useCallback((path: string) => {
@@ -373,9 +388,11 @@ function PreviewSurface({
   }, [file, fileReferences]);
 
   useEffect(() => {
-    setSelectionInfo(null);
-    setCommentOpen(false);
-    setCommentText('');
+    queueMicrotask(() => {
+      setSelectionInfo(null);
+      setCommentOpen(false);
+      setCommentText('');
+    });
   }, [file?.path]);
 
   useEffect(() => {
@@ -391,7 +408,7 @@ function PreviewSurface({
     editorRef.current.revealLineInCenter(file.revealLine);
     editorRef.current.setPosition({ lineNumber: file.revealLine, column: 1 });
     editorRef.current.focus();
-  }, [file?.revealLine]);
+  }, [file]);
 
   useEffect(() => {
     revealLine();
@@ -596,21 +613,47 @@ function PreviewSurface({
   );
 }
 
-export function AionWorkspacePreviewPane({ workspace, conversationId, onClose }: AionWorkspacePreviewPaneProps) {
+export function AionWorkspacePreviewPane({ workspace, conversationId, messages = [], onClose }: AionWorkspacePreviewPaneProps) {
   const [openTabs, setOpenTabs] = useState<ActivePreviewFile[]>([]);
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
   const openTabsRef = useRef(openTabs);
-  openTabsRef.current = openTabs;
+  const refreshedOperationIdsRef = useRef(new Set<string>());
   const referenceSessionKey = getCodeReferenceSessionKey(conversationId);
+
+  useLayoutEffect(() => {
+    openTabsRef.current = openTabs;
+  }, [openTabs]);
 
   const activeFile = openTabs.find((t) => t.path === activeTabPath) ?? null;
 
   const openFile = useCallback(async (path: string, options: { revealLine?: number } = {}) => {
     if (!workspace) return;
 
-    // If already open, just switch to it
-    if (openTabsRef.current.some((t) => t.path === path)) {
-      setActiveTabPath(path);
+    // If already open, switch to it and reread disk so the preview cannot stay stale.
+    const existing = openTabsRef.current.find((t) => normalizePreviewFilePath(t.path) === normalizePreviewFilePath(path));
+    if (existing) {
+      setActiveTabPath(existing.path);
+      const result = await window.electron.readPreviewFile({ cwd: workspace, path: existing.path });
+      const next: ActivePreviewFile = result.success && result.content !== undefined
+        ? {
+            ...existing,
+            path: result.path || existing.path,
+            fileName: basename(result.path || existing.path),
+            relativePath: getRelativePath(workspace, result.path || existing.path),
+            content: result.content,
+            contentType: inferContentType(result.path || existing.path, result.content),
+            language: result.language,
+            loading: false,
+            error: undefined,
+            revealLine: options.revealLine ?? existing.revealLine,
+          }
+        : {
+            ...existing,
+            loading: false,
+            error: result.error || '文件读取失败。',
+            revealLine: options.revealLine ?? existing.revealLine,
+          };
+      setOpenTabs((prev) => prev.map((t) => (t.path === existing.path ? next : t)));
       return;
     }
 
@@ -676,6 +719,22 @@ export function AionWorkspacePreviewPane({ workspace, conversationId, onClose }:
     window.addEventListener(PREVIEW_OPEN_FILE_EVENT, handleOpenFromPrompt);
     return () => window.removeEventListener(PREVIEW_OPEN_FILE_EVENT, handleOpenFromPrompt);
   }, [openFile]);
+
+  useEffect(() => {
+    if (!openTabsRef.current.length) return;
+
+    const openTabPaths = new Set(openTabsRef.current.map((tab) => normalizePreviewFilePath(tab.path)));
+    const changes = collectCompletedPreviewFileChanges(messages)
+      .filter((change) => !refreshedOperationIdsRef.current.has(change.operationId))
+      .filter((change) => openTabPaths.has(normalizePreviewFilePath(change.path)));
+
+    if (!changes.length) return;
+
+    for (const change of changes) {
+      refreshedOperationIdsRef.current.add(change.operationId);
+      void openFile(change.path);
+    }
+  }, [messages, openFile]);
 
   if (!workspace) {
     return (

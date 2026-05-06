@@ -1132,6 +1132,7 @@ export function ActivityRail({
               <AionWorkspacePreviewPane
                 workspace={session?.cwd}
                 conversationId={session?.id}
+                messages={session?.messages}
                 onClose={() => handleSelectTab("trace")}
               />
             </div>

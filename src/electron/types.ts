@@ -78,6 +78,44 @@ export type StreamMessage = (SDKMessage | UserPromptMessage | PromptLedgerMessag
 
 export type SessionStatus = "idle" | "running" | "completed" | "error";
 
+export type AppUpdateState =
+  | "idle"
+  | "disabled"
+  | "checking"
+  | "available"
+  | "not-available"
+  | "downloading"
+  | "downloaded"
+  | "unsupported"
+  | "error";
+
+export type AppUpdateStatus = {
+  status: AppUpdateState;
+  currentVersion: string;
+  isPackaged: boolean;
+  provider: "github";
+  channel?: string;
+  version?: string;
+  releaseName?: string;
+  releaseDate?: string;
+  releaseNotes?: string;
+  releaseUrl?: string;
+  checkedAt?: number;
+  progress?: {
+    bytesPerSecond: number;
+    percent: number;
+    transferred: number;
+    total: number;
+  };
+  error?: string;
+};
+
+export type AppUpdateActionResult = {
+  success: boolean;
+  status: AppUpdateStatus;
+  error?: string;
+};
+
 export type SessionInfo = {
   id: string;
   title: string;
