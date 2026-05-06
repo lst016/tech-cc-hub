@@ -1,10 +1,7 @@
-import { execFile } from "child_process";
-import { promisify } from "util";
 import type { TaskProvider, ExternalTask, ExternalTaskStatus, TaskProviderCapability } from "../types.js";
 import { getGlobalRuntimeEnvConfig } from "../../claude-settings.js";
 import { loadGlobalRuntimeConfig } from "../../config-store.js";
-
-const execFileAsync = promisify(execFile);
+import { runExternalCli } from "../../external-cli.js";
 
 type LarkTaskItem = {
   id?: string;
@@ -187,7 +184,7 @@ export class LarkTaskProvider implements TaskProvider {
   }
 
   private async runCli(args: string[], timeout = 30000): Promise<{ stdout: string; stderr: string }> {
-    const { stdout, stderr } = await execFileAsync(this.getCliCommand(), args, {
+    const { stdout, stderr } = await runExternalCli(this.getCliCommand(), args, {
       timeout,
       env: { ...process.env, ...getGlobalRuntimeEnvConfig() },
     });

@@ -1,7 +1,7 @@
 {
 	"name": "tech-cc-hub",
 	"private": true,
-	"version": "0.1.4",
+	"version": "0.1.5",
 	"type": "module",
 	"main": "dist-electron/electron/main.js",
 	"scripts": {
@@ -73,7 +73,6 @@
 		"mitt": "^3.0.1",
 		"monaco-editor": "^0.55.1",
 		"os-utils": "^0.0.14",
-		"qc_v5": "file:../../workspace/kefu/boke-kefu-vue",
 		"react": "^19.2.3",
 		"react-dom": "^19.2.3",
 		"react-i18next": "^17.0.6",

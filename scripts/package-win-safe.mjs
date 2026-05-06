@@ -41,6 +41,13 @@ function cleanOldArtifacts() {
           log(`warn: failed to remove win-unpacked, keeping it for fallback: ${String(error?.message ?? error)}`);
         }
       }
+      if (file === ".icon-ico" && existsSync(path.join(distDir, file))) {
+        try {
+          rmSync(path.join(distDir, file), { recursive: true, force: true });
+        } catch (error) {
+          log(`warn: failed to remove cached Windows icons, keeping existing cache: ${String(error?.message ?? error)}`);
+        }
+      }
       if (
         /^tech-cc-hub(?!-ui\b)/i.test(file) &&
         (file.endsWith(".exe") || file.endsWith(".zip"))

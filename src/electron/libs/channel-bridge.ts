@@ -1,4 +1,4 @@
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from "child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -6,6 +6,7 @@ import { setTimeout as delay } from "timers/promises";
 
 import { getGlobalRuntimeEnvConfig } from "./claude-settings.js";
 import { loadGlobalRuntimeConfig } from "./config-store.js";
+import { prepareExternalCliCommand, runExternalCli } from "./external-cli.js";
 import type { ChannelInboundMessage, ChannelProviderId, ChannelReplyTarget } from "./channel-workspace.js";
 
 type ChannelTransportMode = "bot-api" | "webhook" | "lark-cli" | "lark-open-platform" | "weixin-native" | "weixin-openclaw";
@@ -74,37 +75,10 @@ function splitCommandTemplate(template: string, values: Record<string, string>):
 }
 
 function runCli(command: string, args: string[], timeout = 15_000, cwd?: string): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const isCmdOrBat = process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
-    if (isCmdOrBat) {
-      const child = spawn(process.env.COMSPEC || "cmd.exe", ["/c", command, ...args], {
-        timeout,
-        cwd,
-        env: { ...process.env, ...getGlobalRuntimeEnvConfig() },
-        windowsHide: true,
-      });
-      let stdout = "";
-      let stderr = "";
-      child.stdout.on("data", (chunk: Buffer) => { stdout += String(chunk); });
-      child.stderr.on("data", (chunk: Buffer) => { stderr += String(chunk); });
-      child.on("error", (err: Error) => { reject(err); });
-      child.on("close", (code: number | null) => {
-        if (code !== 0) {
-          reject(new Error(`Command failed with code ${code}: ${command} ${args.join(" ")}\n${stderr || stdout}`));
-          return;
-        }
-        resolve({ stdout, stderr });
-      });
-      return;
-    }
-    const child = execFile(command, args, { timeout, cwd, env: { ...process.env, ...getGlobalRuntimeEnvConfig() } }, (error, stdout, stderr) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve({ stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
-    });
-    child.stdin?.end();
+  return runExternalCli(command, args, {
+    timeout,
+    cwd,
+    env: { ...process.env, ...getGlobalRuntimeEnvConfig() },
   });
 }
 
@@ -174,9 +148,10 @@ function startLarkEventBridge(dispatch: ChannelBridgeDispatch): ChildProcessWith
     ? ["--profile", profile, "event", "consume", "im.message.receive_v1", "--as", "bot"]
     : ["event", "consume", "im.message.receive_v1", "--as", "bot"];
 
-  const child = spawn(command, args, {
-    env: { ...process.env, ...getGlobalRuntimeEnvConfig() },
-    shell: process.platform === "win32",
+  const prepared = prepareExternalCliCommand(command, args, { ...process.env, ...getGlobalRuntimeEnvConfig() });
+  const child = spawn(prepared.command, prepared.args, {
+    env: prepared.env,
+    windowsHide: true,
   });
 
   let stdoutBuffer = "";
