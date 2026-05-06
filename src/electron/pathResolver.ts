@@ -12,5 +12,5 @@ export function getUIPath() {
 }
 
 export function getIconPath() {
-    return resolveAppAssetPath(app.getAppPath(), "public/app-icon.png")
+    return resolveAppAssetPath(app.getAppPath(), "build/icon.png")
 }

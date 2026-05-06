@@ -4,6 +4,7 @@
     "files": [
         "dist-electron",
         "dist-react",
+        "build/icon.png",
         "node_modules/@anthropic-ai/claude-agent-sdk/**/*",
         "node_modules/@anthropic-ai/claude-agent-sdk-*/*"
     ],

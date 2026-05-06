@@ -75,6 +75,28 @@ function splitCommandTemplate(template: string, values: Record<string, string>):
 
 function runCli(command: string, args: string[], timeout = 15_000, cwd?: string): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
+    const isCmdOrBat = process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
+    if (isCmdOrBat) {
+      const child = spawn(process.env.COMSPEC || "cmd.exe", ["/c", command, ...args], {
+        timeout,
+        cwd,
+        env: { ...process.env, ...getGlobalRuntimeEnvConfig() },
+        windowsHide: true,
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk: Buffer) => { stdout += String(chunk); });
+      child.stderr.on("data", (chunk: Buffer) => { stderr += String(chunk); });
+      child.on("error", (err: Error) => { reject(err); });
+      child.on("close", (code: number | null) => {
+        if (code !== 0) {
+          reject(new Error(`Command failed with code ${code}: ${command} ${args.join(" ")}\n${stderr || stdout}`));
+          return;
+        }
+        resolve({ stdout, stderr });
+      });
+      return;
+    }
     const child = execFile(command, args, { timeout, cwd, env: { ...process.env, ...getGlobalRuntimeEnvConfig() } }, (error, stdout, stderr) => {
       if (error) {
         reject(error);
@@ -154,6 +176,7 @@ function startLarkEventBridge(dispatch: ChannelBridgeDispatch): ChildProcessWith
 
   const child = spawn(command, args, {
     env: { ...process.env, ...getGlobalRuntimeEnvConfig() },
+    shell: process.platform === "win32",
   });
 
   let stdoutBuffer = "";
@@ -190,6 +213,10 @@ function startLarkEventBridge(dispatch: ChannelBridgeDispatch): ChildProcessWith
   child.stderr.on("data", (chunk) => {
     const text = String(chunk).trim();
     if (text) console.warn("[channel-bridge] lark event:", text);
+  });
+
+  child.on("error", (error) => {
+    console.warn(`[channel-bridge] lark event bridge unavailable: ${error.message}`);
   });
 
   child.on("exit", (code, signal) => {
@@ -309,6 +336,9 @@ raise SystemExit(asyncio.run(main()))
   child.stderr.on("data", (chunk) => {
     const text = String(chunk).trim();
     if (text) console.warn("[channel-bridge] Hermes Weixin:", text);
+  });
+  child.on("error", (error) => {
+    console.warn(`[channel-bridge] Hermes Weixin bridge unavailable: ${error.message}`);
   });
   child.on("exit", (code, signal) => {
     if (code !== 0 && signal !== "SIGTERM") {

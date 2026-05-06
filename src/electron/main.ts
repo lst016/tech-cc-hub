@@ -12,7 +12,7 @@ import {
     systemPreferences,
     desktopCapturer,
 } from "electron"
-import { execFile, execSync } from "child_process";
+import { execFile, execSync, spawn } from "child_process";
 import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { extname, isAbsolute, join, relative } from "path";
 import { ipcMainHandle, isDev, DEV_PORT } from "./util.js";
@@ -71,6 +71,27 @@ let channelBridgeController: ChannelBridgeController | null = null;
 
 function execFileText(command: string, args: string[], timeout = 120_000): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
+    const isCmdOrBat = process.platform === "win32" && /\\.(cmd|bat)$/i.test(command);
+    if (isCmdOrBat) {
+      const child = spawn(process.env.COMSPEC || "cmd.exe", ["/c", command, ...args], {
+        timeout,
+        env: process.env,
+        windowsHide: true,
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk: Buffer) => { stdout += String(chunk); });
+      child.stderr.on("data", (chunk: Buffer) => { stderr += String(chunk); });
+      child.on("error", (err: Error) => { reject(err); });
+      child.on("close", (code: number | null) => {
+        if (code !== 0) {
+          reject(new Error(`Command failed with code ${code}: ${command} ${args.join(" ")}\\n${stderr || stdout}`));
+          return;
+        }
+        resolve({ stdout, stderr });
+      });
+      return;
+    }
     execFile(command, args, { timeout, env: process.env }, (error, stdout, stderr) => {
       if (error) {
         reject(error);
