@@ -28,4 +28,6 @@ dist-test
 .env
 .context
 .worktrees/
+.tmp/
+.omx/
 doc/00-research/AionUi/

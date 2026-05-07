@@ -108,7 +108,7 @@ export function getCronMcpServer(): McpSdkServerConfigWithInstance {
 
   const createHandler = tool(
     "create_scheduled_task",
-    "创建定时任务。支持三种调度类型：cron（标准 cron 表达式）、every（每隔 N 秒执行）、at（一次性定时触发）。默认写入系统工作区（__system__），每次执行创建新会话发消息。",
+    "创建持久化定时任务。支持三种调度类型：cron（标准 cron 表达式，支持时区）、every（每隔 N 秒循环执行，最小 60s）、at（一次性定时触发）。任务数据持久化到 SQLite 数据库，支持执行历史记录、自动重试（会话忙时最多 3 次，间隔 30s）、执行状态追踪。每次执行可通过 new_conversation 创建新会话或 existing 追加到已有会话。默认写入系统工作区（__system__），默认每次执行创建新会话。",
     CREATE_SCHEMA,
     async (input) => {
       try {

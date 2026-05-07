@@ -1,7 +1,7 @@
 // Task system types
 // Source: Symphony-inspired task management model, adapted for tech-cc-hub
 
-export type TaskProviderId = "lark" | "tb";
+export type TaskProviderId = "lark" | "tb" | "feishu-project";
 
 export type ExternalTaskStatus =
   | "pending"

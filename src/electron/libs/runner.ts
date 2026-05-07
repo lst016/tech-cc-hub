@@ -116,6 +116,15 @@ const MAX_SINGLE_IMAGE_READ_BYTES = 400_000;
 const BLOCKED_SHELL_TOOL_NAMES = new Set(["mcp__windows__Powershell-Tool"]);
 const BLOCKED_SHELL_TOOL_MESSAGE =
   "This Windows shell tool is disabled in tech-cc-hub because it can hang without returning a tool_result. Use Bash with cmd.exe instead, for example: cmd.exe /d /s /c \"<command>\".";
+
+// SDK built-in cron tools are blocked in favor of tech-cc-hub MCP cron tools
+// which provide persistent storage, execution history, and retry mechanism.
+const SDK_BUILTIN_CRON_TOOLS = new Set(["CronCreate", "CronDelete", "CronList"]);
+
+function isSdkBuiltinCronTool(toolName: string): boolean {
+  return SDK_BUILTIN_CRON_TOOLS.has(toolName);
+}
+
 const POWERSHELL_COMMAND_PATTERN = /(^|[^\w.-])(powershell(?:\.exe)?|pwsh(?:\.exe)?)(?=$|[^\w.-])/i;
 const LARGE_IMAGE_READ_GUIDANCE =
   "图片文件过大，不能用 Read 直接读入主上下文。请改用内置图片/设计工具：如果是两张截图对比，用 mcp__tech-cc-hub-design__design_compare_images；如果是当前浏览器页面与参考图对齐，用 mcp__tech-cc-hub-design__design_compare_current_view；如果只需要图片信息，请基于用户消息里的图片资产路径/缩略图路径调用专门视觉工具或让用户裁剪关键区域。";
@@ -337,6 +346,14 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               };
             }
 
+            if (isSdkBuiltinCronTool(toolName)) {
+              return {
+                behavior: "deny",
+                message:
+                  "SDK 内置的 CronCreate/CronDelete/CronList 已禁用，请使用 mcp__tech-cc-hub-cron 插件（create_scheduled_task / list_scheduled_tasks / delete_scheduled_task）。MCP 插件提供持久化存储、执行历史、重试机制和会话管理能力，内置工具创建的调度不会写入项目数据库。",
+              };
+            }
+
             if (permissionMode === "plan") {
               return {
                 behavior: "deny",
@@ -553,6 +570,7 @@ function isAlwaysAllowedTool(toolName: string): boolean {
     ...BROWSER_TOOL_NAMES,
     ...ADMIN_TOOL_NAMES,
     ...DESIGN_TOOL_NAMES,
+    ...CRON_TOOL_NAMES,
   ];
 
   return alwaysAllowedMcpTools.some((allowedToolName) => (

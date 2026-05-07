@@ -158,6 +158,15 @@ export type SessionHistoryCursor = {
   beforeId: string;
 };
 
+export type McpServerInfo = {
+  name: string;
+  type: "builtin" | "external";
+  command: string;
+  args: string[];
+  envKeys: string[];
+  enabled: boolean;
+};
+
 // Server -> Client events
 export type ServerEvent =
   | { type: "stream.message"; payload: { sessionId: string; message: StreamMessage } }
@@ -173,6 +182,8 @@ export type ServerEvent =
   | { type: "permission.request"; payload: { sessionId: string; toolUseId: string; toolName: string; input: unknown } }
   | { type: "runner.error"; payload: { sessionId?: string; message: string } }
   | { type: "agent.list"; payload: { agents: Array<{ id: string; name: string; description?: string; scope: string }> } }
+  // MCP server events
+  | { type: "mcp.list"; payload: { builtin: McpServerInfo[]; external: McpServerInfo[] } }
   // Task system events
   | { type: "task.list"; payload: { tasks: Array<Record<string, unknown>> } }
   | { type: "task.updated"; payload: { task: Record<string, unknown> } }
@@ -212,6 +223,8 @@ export type ClientEvent =
   | { type: "session.history"; payload: { sessionId: string; before?: SessionHistoryCursor; limit?: number } }
   | { type: "permission.response"; payload: { sessionId: string; toolUseId: string; result: PermissionResult } }
   | { type: "agent.list"; payload: { cwd?: string } }
+  // MCP client events
+  | { type: "mcp.list" }
   // Task system client events
   | { type: "task.list"; payload?: { filter?: Record<string, unknown> } }
   | { type: "task.sync"; payload: { provider: string } }

@@ -202,7 +202,7 @@ export type ChannelRuntimeConfig = {
   items: Partial<Record<ChannelProviderId, ChannelConnectionConfig>>;
 };
 
-export type SettingsPageId = "profiles" | "channels" | "plugins" | "global-json" | "skills" | "agent-rules" | "system-maintenance" | "about";
+export type SettingsPageId = "profiles" | "channels" | "plugins" | "mcp" | "global-json" | "skills" | "agent-rules" | "system-maintenance" | "about";
 
 export type RuntimeOverrides = {
   model?: string;
@@ -312,6 +312,8 @@ export type ServerEvent =
   | { type: "task.sync.completed"; payload: { provider: string; count: number } }
   | { type: "task.error"; payload: { message: string } }
   | { type: "task.execution.list"; payload: UiTaskExecutionBundle }
+  // MCP events
+  | { type: "mcp.list"; payload: { builtin: McpServerInfo[]; external: McpServerInfo[] } }
   // Note CRUD events
   | { type: "note.list"; payload: { notes: UiNote[] } }
   | { type: "note.created"; payload: { note: UiNote } }
@@ -349,6 +351,8 @@ export type ClientEvent =
   | { type: "task.providers"; payload?: Record<string, never> }
   | { type: "task.stats"; payload?: Record<string, never> }
   | { type: "task.execution.logs"; payload: { taskId: string } }
+  // MCP client events
+  | { type: "mcp.list" }
   // Note CRUD client events
   | { type: "note.list" }
   | { type: "note.create"; payload: { title: string; content: string } }
@@ -357,7 +361,7 @@ export type ClientEvent =
   | { type: "note.delete"; payload: { noteId: string } };
 
 // Task system UI types
-export type UiTaskProviderId = "lark" | "tb";
+export type UiTaskProviderId = "lark" | "tb" | "feishu-project";
 
 export type UiTaskStatus = "pending" | "in_progress" | "done" | "cancelled" | "queued" | "executing" | "retrying" | "paused" | "completed" | "failed";
 
@@ -513,6 +517,15 @@ export type UiTaskWorkflowSettings = {
   tbFetchArgsTemplate?: string;
   tbUpdateArgsTemplate?: string;
   tbCommentArgsTemplate?: string;
+};
+
+export type McpServerInfo = {
+  name: string;
+  type: "builtin" | "external";
+  command: string;
+  args: string[];
+  envKeys: string[];
+  enabled: boolean;
 };
 
 // Note CRUD UI types

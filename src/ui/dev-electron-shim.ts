@@ -209,6 +209,20 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
       if (event.type === "agent.list") {
         emit({ type: "agent.list", payload: { agents: [] } });
       }
+      if (event.type === "mcp.list") {
+        emit({
+          type: "mcp.list",
+          payload: {
+            builtin: [
+              { name: "tech-cc-hub-browser", type: "builtin", command: "builtin", args: [], envKeys: [], enabled: true },
+              { name: "tech-cc-hub-admin", type: "builtin", command: "builtin", args: [], envKeys: [], enabled: true },
+              { name: "tech-cc-hub-design", type: "builtin", command: "builtin", args: [], envKeys: [], enabled: true },
+              { name: "tech-cc-hub-cron", type: "builtin", command: "builtin", args: [], envKeys: [], enabled: true },
+            ],
+            external: [],
+          },
+        });
+      }
     },
     onServerEvent: (callback: (event: ServerEvent) => void) => {
       listeners.add(callback);
@@ -368,6 +382,7 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       "session.list",
       "session.history",
       "session.workflow.catalog.list",
+      "mcp.list",
     ]);
 
     return {

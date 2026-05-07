@@ -7,6 +7,7 @@ export { loadTaskSettings, saveTaskSettings, createDefaultTaskSettings, applyTas
 export { ensureTaskWorkspace } from "./workspace.js";
 export { LarkTaskProvider } from "./providers/lark-provider.js";
 export { TbTaskProvider } from "./providers/tb-provider.js";
+export { FeishuProjectTaskProvider } from "./providers/feishu-project-provider.js";
 export type {
   ExternalTask,
   ExternalTaskStatus,

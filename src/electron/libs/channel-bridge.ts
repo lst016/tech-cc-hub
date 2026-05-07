@@ -1,14 +1,12 @@
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { setTimeout as delay } from "timers/promises";
 
-import { isChannelChatEnabled } from "../../shared/channel-config.js";
-import { buildLarkCliSendArgs, hasRequiredLarkSenderFilter, parseLarkAuthUserOpenId, shouldAcceptLarkEvent } from "../../shared/lark-channel.js";
 import { getGlobalRuntimeEnvConfig } from "./claude-settings.js";
 import { loadGlobalRuntimeConfig } from "./config-store.js";
-import { prepareExternalCliCommand, runExternalCli } from "./external-cli.js";
+import { runExternalCli } from "./external-cli.js";
 import type { ChannelInboundMessage, ChannelProviderId, ChannelReplyTarget } from "./channel-workspace.js";
 
 type ChannelTransportMode = "bot-api" | "webhook" | "lark-cli" | "lark-open-platform" | "weixin-native" | "weixin-openclaw";
@@ -74,35 +72,6 @@ function runCli(command: string, args: string[], timeout = 15_000, cwd?: string)
   });
 }
 
-function getLarkProfileArgs(profile: string): string[] {
-  return profile && profile !== "default" ? ["--profile", profile] : [];
-}
-
-function resolveLarkAllowedSenderIds(config: ChannelConnectionConfig, command: string, profile: string): string | undefined {
-  if (hasRequiredLarkSenderFilter(config)) return config.allowedSenderIds?.trim();
-
-  const prepared = prepareExternalCliCommand(
-    command,
-    [...getLarkProfileArgs(profile), "auth", "status"],
-    { ...process.env, ...getGlobalRuntimeEnvConfig() },
-  );
-  const result = spawnSync(prepared.command, prepared.args, {
-    env: prepared.env,
-    encoding: "utf8",
-    timeout: 10_000,
-    windowsHide: true,
-  });
-  if (result.error) {
-    console.warn("[channel-bridge] lark auth status failed:", result.error.message);
-    return undefined;
-  }
-  if (typeof result.status === "number" && result.status !== 0) {
-    console.warn("[channel-bridge] lark auth status failed:", String(result.stderr ?? "").trim());
-    return undefined;
-  }
-  return parseLarkAuthUserOpenId(String(result.stdout ?? ""));
-}
-
 function extractTelegramMessage(update: Record<string, unknown>): ChannelInboundMessage | null {
   const message = isRecord(update.message) ? update.message : isRecord(update.edited_message) ? update.edited_message : null;
   if (!message) return null;
@@ -156,92 +125,6 @@ async function pollTelegram(signal: AbortSignal, dispatch: ChannelBridgeDispatch
       await delay(POLL_INTERVAL_MS, undefined, { signal }).catch(() => undefined);
     }
   }
-}
-
-function startLarkEventBridge(dispatch: ChannelBridgeDispatch): ChildProcessWithoutNullStreams | null {
-  const config = getChannelConfig("lark");
-  if (!isChannelChatEnabled(config) || config?.transport !== "lark-cli") return null;
-
-  const command = config.cliCommand?.trim() || "lark-cli";
-  const profile = config.cliProfile?.trim() || "default";
-  const allowedSenderIds = resolveLarkAllowedSenderIds(config, command, profile);
-  if (!allowedSenderIds) {
-    console.warn("[channel-bridge] lark IM disabled: lark-cli auth status did not return userOpenId; run lark-cli auth login for this profile");
-    return null;
-  }
-  const runtimeConfig = { ...config, allowedSenderIds };
-
-  const args = [
-    ...getLarkProfileArgs(profile),
-    "event",
-    "consume",
-    "im.message.receive_v1",
-    "--as",
-    "bot",
-  ];
-
-  const prepared = prepareExternalCliCommand(command, args, { ...process.env, ...getGlobalRuntimeEnvConfig() });
-  const child = spawn(prepared.command, prepared.args, {
-    env: prepared.env,
-    windowsHide: true,
-  });
-
-  let stdoutBuffer = "";
-  child.stdout.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => {
-    stdoutBuffer += String(chunk);
-    const lines = stdoutBuffer.split(/\r?\n/);
-    stdoutBuffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const parsed = JSON.parse(trimmed) as unknown;
-        if (!isRecord(parsed)) continue;
-        const text = String(parsed.content ?? "").trim();
-        if (!text) continue;
-        const conversationId = asOptionalString(parsed.chat_id);
-        const senderId = asOptionalString(parsed.sender_id);
-        if (!shouldAcceptLarkEvent(runtimeConfig, { conversationId, senderId })) {
-          console.info("[channel-bridge] lark event ignored by allow-list:", {
-            chatId: conversationId,
-            senderId,
-          });
-          continue;
-        }
-        void Promise.resolve(dispatch({
-          provider: "lark",
-          text,
-          externalConversationId: conversationId,
-          externalMessageId: asOptionalString(parsed.message_id) ?? `${Date.now()}`,
-          senderId,
-          receivedAt: typeof parsed.timestamp === "string" ? Number(parsed.timestamp) : Date.now(),
-        })).catch((error) => {
-          console.warn("[channel-bridge] lark event dispatch failed:", error);
-        });
-      } catch (error) {
-        console.warn("[channel-bridge] lark event stdout parse failed:", error);
-      }
-    }
-  });
-
-  child.stderr.setEncoding("utf8");
-  child.stderr.on("data", (chunk) => {
-    const text = String(chunk).trim();
-    if (text) console.warn("[channel-bridge] lark event:", text);
-  });
-
-  child.on("error", (error) => {
-    console.warn(`[channel-bridge] lark event bridge unavailable: ${error.message}`);
-  });
-
-  child.on("exit", (code, signal) => {
-    if (code !== 0 && signal !== "SIGTERM") {
-      console.warn(`[channel-bridge] lark event bridge exited: code=${code} signal=${signal}`);
-    }
-  });
-
-  return child;
 }
 
 function startHermesWeixinInboundBridge(dispatch: ChannelBridgeDispatch): ChildProcessWithoutNullStreams | null {
@@ -386,17 +269,6 @@ async function sendTelegramText(target: ChannelReplyTarget, text: string): Promi
   }
 }
 
-async function sendLarkCliText(target: ChannelReplyTarget, text: string): Promise<void> {
-  const config = getChannelConfig("lark");
-  const command = config?.enabled && config.transport === "lark-cli" ? config.cliCommand?.trim() : "";
-  if (!command || !config) {
-    console.warn("[channel-bridge] lark send skipped: command not configured");
-    return;
-  }
-  const args = buildLarkCliSendArgs(config, target, text);
-  await runCli(command, args);
-}
-
 async function sendWebhookText(target: ChannelReplyTarget, text: string): Promise<void> {
   const config = getChannelConfig(target.provider);
   const url = config?.enabled ? resolveConfiguredEnvValue(config.webhookUrlEnv) : undefined;
@@ -474,26 +346,17 @@ asyncio.run(main())
 export function startChannelBridge(dispatch: ChannelBridgeDispatch): ChannelBridgeController {
   const controller = new AbortController();
   const weixinBridge = startHermesWeixinInboundBridge(dispatch);
-  const larkBridge = startLarkEventBridge(dispatch);
   void pollTelegram(controller.signal, dispatch);
 
   return {
     stop: () => {
       controller.abort();
       weixinBridge?.kill("SIGTERM");
-      larkBridge?.kill("SIGTERM");
     },
     sendText: async (target, text) => {
       if (target.provider === "telegram") {
         await sendTelegramText(target, text);
         return;
-      }
-      if (target.provider === "lark") {
-        const config = getChannelConfig("lark");
-        if (config?.transport === "lark-cli") {
-          await sendLarkCliText(target, text);
-          return;
-        }
       }
       if (target.provider === "wechat") {
         const config = getChannelConfig("wechat");

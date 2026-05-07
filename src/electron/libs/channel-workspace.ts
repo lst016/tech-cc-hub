@@ -83,7 +83,7 @@ function buildReadme(workspace: ChannelWorkspace): string {
     `- Conversation：${workspace.conversationId}`,
     "- 原始消息日志：`.channel/messages.jsonl`",
     "",
-    "通过 Telegram、飞书/Lark、lark-cli 或其他渠道进入的聊天会使用这里作为 cwd，因此左侧工作区和右侧预览都能看到同一份记录。",
+    "通过 Telegram、微信或其他渠道进入的聊天会使用这里作为 cwd，因此左侧工作区和右侧预览都能看到同一份记录。",
   ].join("\n");
 }
 

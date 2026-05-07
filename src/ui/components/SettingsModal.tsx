@@ -23,6 +23,7 @@ import { ModelRoutingSettingsPage } from "./settings/ModelRoutingSettingsPage";
 import { SettingsSheet, type SettingsPageDefinition } from "./settings/SettingsSheet";
 import { SkillsManagementPage } from "./settings/SkillsManagementPage";
 import { PluginsSettingsPage } from "./settings/PluginsSettingsPage";
+import { McpSettingsPage } from "./settings/McpSettingsPage";
 import { AboutPage } from "./settings/AboutPage";
 import {
   buildRoutingSummary,
@@ -123,6 +124,14 @@ const SETTINGS_PAGES: SettingsPageDefinition[] = [
     title: "插件系统",
     description: "管理默认插件、MCP 能力和本机权限状态。",
     summary: "Open Computer Use",
+  },
+  {
+    id: "mcp",
+    label: "MCP 服务器",
+    eyebrow: "MCP",
+    title: "MCP 服务器",
+    description: "查看和配置内置及外部 MCP 服务器。",
+    summary: "内置 / 外部 MCP",
   },
   {
     id: "skills",
@@ -470,6 +479,9 @@ export function SettingsModal({
   if (activePageId === "plugins") {
     content = <PluginsSettingsPage onStartGuideSession={handleStartGuideSession} />;
   }
+  if (activePageId === "mcp") {
+    content = <McpSettingsPage />;
+  }
   if (activePageId === "agent-rules") {
     content = (
       <AgentRulesSettingsPage
@@ -483,7 +495,7 @@ export function SettingsModal({
     content = <AboutPage onStartMaintenanceSession={onStartMaintenanceSession} onClose={onClose} />;
   }
 
-  const footer = activePageId === "about" || activePageId === "skills" || activePageId === "plugins"
+  const footer = activePageId === "about" || activePageId === "skills" || activePageId === "plugins" || activePageId === "mcp"
     ? null
     : (
       <div className="flex gap-3">

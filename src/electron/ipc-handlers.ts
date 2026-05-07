@@ -10,6 +10,7 @@ import { runClaude, type RunnerHandle } from "./libs/runner.js";
 import { persistImageAttachmentReference, rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
 import { resolveAgentRuntimeContext } from "./libs/agent-resolver.js";
 import { getCurrentApiConfig, getModelConfig, supportsRemoteSessionResume } from "./libs/claude-settings.js";
+import { loadGlobalRuntimeConfig, saveGlobalRuntimeConfig } from "./libs/config-store.js";
 import { SessionStore } from "./libs/session-store.js";
 import { buildSessionSlashCommands } from "./libs/slash-command-catalog.js";
 import { stripInlineBase64ImagesFromMessage } from "./libs/tool-output-sanitizer.js";
@@ -23,6 +24,7 @@ import {
   TaskRepository,
   LarkTaskProvider,
   TbTaskProvider,
+  FeishuProjectTaskProvider,
   registerTaskProvider,
   type TaskFilter,
   type TaskExecutionOptions,
@@ -63,6 +65,7 @@ export function initializeTaskExecutor(dbPath: string): TaskExecutor {
 
   registerTaskProvider(new LarkTaskProvider());
   registerTaskProvider(new TbTaskProvider());
+  registerTaskProvider(new FeishuProjectTaskProvider());
 
   const executor = new TaskExecutor(taskRepo, {
     onTaskUpdated: (task) => {
@@ -1204,6 +1207,34 @@ export async function handleClientEvent(event: ClientEvent) {
     return;
   }
 
+  // MCP server list
+  if (event.type === "mcp.list") {
+    const config = loadGlobalRuntimeConfig();
+    const rawServers = isRecord(config.mcpServers) ? config.mcpServers : {};
+
+    const builtin: Array<{ name: string; type: "builtin"; command: string; args: string[]; envKeys: string[]; enabled: boolean }> = [
+      { name: "tech-cc-hub-browser", type: "builtin", command: "builtin", args: [], envKeys: [], enabled: true },
+      { name: "tech-cc-hub-admin", type: "builtin", command: "builtin", args: [], envKeys: [], enabled: true },
+      { name: "tech-cc-hub-design", type: "builtin", command: "builtin", args: [], envKeys: [], enabled: true },
+      { name: "tech-cc-hub-cron", type: "builtin", command: "builtin", args: [], envKeys: [], enabled: true },
+    ];
+
+    const external: Array<{ name: string; type: "external"; command: string; args: string[]; envKeys: string[]; enabled: boolean }> = [];
+    for (const [name, value] of Object.entries(rawServers)) {
+      if (!isRecord(value)) continue;
+      const command = typeof value.command === "string" ? value.command : "";
+      if (!command) continue;
+      const args = Array.isArray(value.args) ? value.args.filter((a): a is string => typeof a === "string") : [];
+      const env = isRecord(value.env) ? value.env : {};
+      const envKeys = Object.keys(env).filter((k): k is string => typeof k === "string");
+      const enabled = value.enabled !== false;
+      external.push({ name, type: "external", command, args, envKeys, enabled });
+    }
+
+    emit({ type: "mcp.list", payload: { builtin, external } });
+    return;
+  }
+
   // Task system handlers
   if (event.type === "task.list") {
     const filter = event.payload?.filter as TaskFilter | undefined;
@@ -1369,6 +1400,10 @@ export function cleanupAllSessions(): void {
     sessions.recoverInterruptedSessions();
     sessions.close();
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export { sessions };

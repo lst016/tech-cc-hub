@@ -18,7 +18,6 @@
  */
 
 import { useMemo, useRef, useState, type ReactNode } from "react";
-import { isChannelChatEnabled } from "../../../shared/channel-config";
 import type {
   ChannelConnectionConfig,
   ChannelProviderId,
@@ -39,8 +38,6 @@ export type ChannelGuideSessionRequest = {
   agentId?: string;
   allowedTools?: string;
 };
-
-const LARK_CLI_REPO_URL = "https://github.com/larksuite/cli";
 
 type ChannelStatus = "stopped" | "running" | "error";
 
@@ -73,24 +70,22 @@ const CHANNEL_DEFINITIONS: ChannelDefinition[] = [
   {
     id: "lark",
     title: "飞书 / Lark",
-    description: "飞书 / Lark 通道，支持官方 lark-cli 链路。",
+    description: "飞书 / Lark 通道。IM 消息通过飞书开放平台应用接入，CLI 模式保留用于非 IM 场景。",
     badge: "Lark",
-    source: "LarkPlugin + lark-cli adapter",
-    defaultTransport: "lark-cli",
+    source: "Feishu Open Platform + Lark CLI",
+    defaultTransport: "lark-open-platform",
     defaults: {
       enabled: false,
-      chatEnabled: false,
-      transport: "lark-cli",
+      transport: "lark-open-platform",
       displayName: "飞书 / Lark",
       appIdEnv: "LARK_APP_ID",
       appSecretEnv: "LARK_APP_SECRET",
       tenantKeyEnv: "LARK_TENANT_KEY",
       cliCommand: "lark-cli",
       cliProfile: "default",
-      cliSendArgsTemplate: "",
-      cliReceiveArgsTemplate: "",
-      allowedSenderIds: "",
-      allowedConversationIds: "",
+      cliSendArgsTemplate: "event send --profile {{profile}} --type message --content \"{{text}}\"",
+      cliReceiveArgsTemplate: "event receive --profile {{profile}}",
+      notes: "",
     },
   },
   {
@@ -158,9 +153,7 @@ function readChannelRuntimeConfig(rootConfig: Record<string, unknown> | null): C
       enabled,
       chatEnabled: typeof rawItem.chatEnabled === "boolean"
         ? rawItem.chatEnabled
-        : definition.id === "lark"
-          ? enabled
-          : definition.defaults.chatEnabled,
+        : definition.defaults.chatEnabled,
       transport: asTransport(rawItem.transport, definition.defaultTransport),
       displayName: asText(rawItem.displayName) ?? definition.defaults.displayName,
       botTokenEnv: asText(rawItem.botTokenEnv) ?? definition.defaults.botTokenEnv,
@@ -287,43 +280,36 @@ function SectionHeader({ title, action }: { title: string; action?: ReactNode })
   );
 }
 
-function buildLarkCliGuidePrompt(channel: ChannelConnectionConfig): string {
-  const currentConfig = {
-    enabled: channel.enabled,
-    chatEnabled: channel.chatEnabled,
-    transport: channel.transport,
-    displayName: channel.displayName,
-    cliCommand: channel.cliCommand,
-    cliProfile: channel.cliProfile,
-    cliSendArgsTemplate: channel.cliSendArgsTemplate,
-    cliReceiveArgsTemplate: channel.cliReceiveArgsTemplate,
-    allowedSenderIds: channel.allowedSenderIds,
-    allowedConversationIds: channel.allowedConversationIds,
-    appIdEnv: channel.appIdEnv,
-    appSecretEnv: channel.appSecretEnv,
-    tenantKeyEnv: channel.tenantKeyEnv,
-  };
-
+function buildFeishuAppGuidePrompt(channel: ChannelConnectionConfig): string {
   return [
-    "你在 tech-cc-hub 的系统工作区里，目标是把飞书 / Lark 的 lark-cli 通道配置到可用，不要让用户手工填写整段 JSON。",
-    `默认官方 CLI 仓库是 ${LARK_CLI_REPO_URL}。如果本机没有安装 lark-cli / lark 命令，直接基于这个仓库的官方说明安装或给出最短安装命令，不要再让用户自己找链接。`,
+    "你在 tech-cc-hub 的系统工作区里，目标是引导用户完成飞书开放平台应用的申请到接入全流程。",
     "",
-    "请按这个顺序处理，不能只配应用就结束：",
-    "1. 检查本机是否存在 lark-cli 命令，查看 version/help/profile 相关命令，确认真实 CLI 调用方式。",
-    "2. 检查当前 profile 的应用配置是否存在；如缺 appId/appSecret，先用 lark-cli config init 或等价命令完成应用配置。",
-    "3. 检查当前 profile 的用户登录状态：运行 lark-cli auth status。必须看到 tokenStatus=valid 且 userOpenId=ou_...，否则 IM 不算可用。",
-    "4. 如果未登录或缺少 userOpenId，发起用户授权登录：优先使用 lark-cli auth login --scope \"auth:user.id:read\"；如 IM 读写测试提示缺 scope，再按错误提示增量补 scope。不要对 bot 身份做 auth login。",
-    "5. 说明 tech-cc-hub 会自动使用 auth status 返回的 userOpenId 作为本机 Lark IM 的目标人过滤条件；不要把个人 open_id 写进默认打包配置，除非用户明确要高级覆盖。",
-    "6. 验证事件链路：查看 lark-cli event consume/status 相关 help，确认同一个 Lark App 同时只能有一个事件消费者；如被另一台机器占用，要提示停止另一端或改用中心路由。",
-    "7. 验证回复链路：优先使用 message_id 回复，即 lark-cli im +messages-reply --message-id om_xxx --text ... --as bot；不要再用旧的 chat_id 发送模板作为已有消息的默认回复路径。",
-    "8. 如果能确认正确配置，请把全局运行时配置里的 channels.items.lark 更新为可用配置：cliCommand/profile 要正确，cliSendArgsTemplate 默认留空，allowedSenderIds 默认留空让运行时自动从 auth status 获取。",
-    "9. 如果当前运行时提供 mcp__tech-cc-hub-admin__set_global_runtime_config，优先用它持久化；否则再直接编辑系统工作区里的配置文件。",
-    "10. 完成后给出：实际 CLI 命令、profile、auth status 中的 tokenStatus/userOpenId 是否有效、是否存在事件消费者冲突、还缺什么，以及一条最小可复测命令。",
+    "请按这个顺序引导用户操作：",
+    "1. 打开 https://open.feishu.cn/，登录飞书企业管理员账号。",
+    "2. 进入「开发者后台」→「创建企业自建应用」，填写应用名称和描述。",
+    "3. 创建完成后，进入「凭证与基础信息」，复制 App ID 和 App Secret。",
+    "4. 进入「权限管理」，添加以下权限（按需）：",
+    "   - im:message（发送消息）",
+    "   - im:message:read（读取消息）",
+    "   - im:resource（获取消息中的图片/文件）",
+    "   - contact:user.base:read（读取用户基础信息）",
+    "5. 进入「事件订阅」，添加回调：",
+    "   - im.message.receive_v1（接收消息事件）",
+    "6. 配置订阅方式为「Webhook」，填写 tech-cc-hub 提供的 Webhook URL（如果可用）。",
+    "7. 进入「安全设置」，配置服务器 IP 白名单（如果适用）。",
+    "8. 发布应用：进入「版本管理与发布」，创建版本并提交发布。",
+    "9. 发布成功后，将 App ID/App Secret 配置到 tech-cc-hub 的 Lark 渠道设置中。",
+    "10. 使用 mcp__tech-cc-hub-admin__set_global_runtime_config 持久化凭证配置。",
     "",
-    "当前 UI 里的 Lark 配置快照：",
-    "```json",
-    JSON.stringify(currentConfig, null, 2),
-    "```",
+    "注意：IM 消息收发请使用飞书开放平台模式。Lark CLI 模式保留用于其他非 IM 场景。",
+    "",
+    "当前 UI 配置快照：",
+    JSON.stringify({
+      enabled: channel.enabled,
+      appIdEnv: channel.appIdEnv,
+      appSecretEnv: channel.appSecretEnv,
+      tenantKeyEnv: channel.tenantKeyEnv,
+    }, null, 2),
   ].join("\n");
 }
 
@@ -369,37 +355,6 @@ function ChannelHeader({
         启用
       </label>
     </div>
-  );
-}
-
-function LarkImToggleButton({
-  channel,
-  onPatch,
-}: {
-  channel: ChannelConnectionConfig;
-  onPatch: (patch: Partial<ChannelConnectionConfig>) => void;
-}) {
-  const imEnabled = isChannelChatEnabled(channel);
-  const disabled = !channel.enabled;
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={imEnabled}
-      disabled={disabled}
-      onClick={() => {
-        onPatch({ chatEnabled: !imEnabled });
-      }}
-      className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-full border px-3 text-sm font-semibold transition ${
-        imEnabled
-          ? "border-[#B7E4CF] bg-[#E8F7F1] text-[#0B8F61]"
-          : "border-[#E5E6EB] bg-white text-[#4E5969] hover:border-[#D96B3A] hover:text-[#C9572C]"
-      } disabled:cursor-not-allowed disabled:border-[#E5E6EB] disabled:bg-[#F7F8FA] disabled:text-[#86909C]`}
-      title={!channel.enabled ? "先启用飞书 / Lark 渠道后才能接管 IM" : "控制 tech-cc-hub 是否启动飞书 IM 事件消费"}
-    >
-      <span className={`h-2 w-2 rounded-full ${imEnabled ? "bg-[#0B8F61]" : "bg-[#C9CDD4]"}`} />
-      {imEnabled ? "IM 已启用" : "启用 IM"}
-    </button>
   );
 }
 
@@ -481,9 +436,11 @@ function LarkConfigForm({
   onPatch: (patch: Partial<ChannelConnectionConfig>) => void;
   onStartGuideSession?: (request: ChannelGuideSessionRequest) => Promise<void> | void;
 }) {
-  const mode = channel.transport === "lark-open-platform" ? "lark-open-platform" : "lark-cli";
   const [launchingGuide, setLaunchingGuide] = useState(false);
   const guideLaunchInFlightRef = useRef(false);
+  const mode = channel.transport === "lark-cli" ? "lark-cli" : "lark-open-platform";
+  const isOpenPlatform = mode === "lark-open-platform";
+
   const handleStartGuideSession = () => {
     if (!onStartGuideSession || guideLaunchInFlightRef.current) {
       return;
@@ -493,9 +450,9 @@ function LarkConfigForm({
     setLaunchingGuide(true);
 
     void Promise.resolve(onStartGuideSession({
-      title: "飞书 lark-cli 引导配置",
-      prompt: buildLarkCliGuidePrompt(channel),
-      agentId: "lark-cli-guide",
+      title: "飞书应用引导配置",
+      prompt: buildFeishuAppGuidePrompt(channel),
+      agentId: "lark-guide",
       allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,TodoWrite",
     })).catch(() => {
       guideLaunchInFlightRef.current = false;
@@ -507,38 +464,30 @@ function LarkConfigForm({
     <div className="space-y-5">
       <div>
         <SectionHeader title="连接方式" />
-        <div className="space-y-3 rounded-2xl border border-[#E5E6EB] bg-[#FAFAFB] p-3">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => onPatch({ transport: "lark-cli" })}
-                className={`rounded-xl border px-3 py-2 text-left text-xs transition ${mode === "lark-cli" ? "border-[#D96B3A] bg-[#FFF4EF] text-[#C9572C]" : "border-[#E5E6EB] bg-white text-[#4E5969]"}`}
-              >
-                <span className="block font-semibold">lark-cli（官方）</span>
-                <span className="mt-1 block opacity-80">本机官方 CLI 链路。</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => onPatch({ transport: "lark-open-platform" })}
-                className={`rounded-xl border px-3 py-2 text-left text-xs transition ${mode === "lark-open-platform" ? "border-[#D96B3A] bg-[#FFF4EF] text-[#C9572C]" : "border-[#E5E6EB] bg-white text-[#4E5969]"}`}
-              >
-                <span className="block font-semibold">开放平台 SDK</span>
-                <span className="mt-1 block opacity-80">Lark 开放平台 SDK 链路。</span>
-              </button>
-            </div>
-            <LarkImToggleButton channel={channel} onPatch={onPatch} />
-          </div>
-          <div className="rounded-xl border border-[#E5E6EB] bg-white px-3 py-2 text-xs leading-5 text-[#86909C]">
-            IM 开启后 tech-cc-hub 会启动飞书消息事件消费；关闭后保留凭证、配置和发送能力，避免和其他客户端来回抢消息。
-          </div>
+        <div className="flex flex-wrap gap-2 rounded-2xl border border-[#E5E6EB] bg-[#FAFAFB] p-3">
+          <button
+            type="button"
+            onClick={() => onPatch({ transport: "lark-open-platform" })}
+            className={`rounded-xl border px-3 py-2 text-left text-xs transition ${isOpenPlatform ? "border-[#D96B3A] bg-[#FFF4EF] text-[#C9572C]" : "border-[#E5E6EB] bg-white text-[#4E5969]"}`}
+          >
+            <span className="block font-semibold">飞书开放平台</span>
+            <span className="mt-1 block opacity-80">IM 消息通过飞书应用接入。</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onPatch({ transport: "lark-cli" })}
+            className={`rounded-xl border px-3 py-2 text-left text-xs transition ${mode === "lark-cli" ? "border-[#D96B3A] bg-[#FFF4EF] text-[#C9572C]" : "border-[#E5E6EB] bg-white text-[#4E5969]"}`}
+          >
+            <span className="block font-semibold">Lark CLI</span>
+            <span className="mt-1 block opacity-80">CLI 模式，用于非 IM 场景。</span>
+          </button>
         </div>
       </div>
 
-      {mode === "lark-cli" ? (
+      {isOpenPlatform ? (
         <div>
           <SectionHeader
-            title="lark-cli 配置"
+            title="飞书开放平台凭证"
             action={onStartGuideSession ? (
               <button
                 type="button"
@@ -546,63 +495,43 @@ function LarkConfigForm({
                 onClick={handleStartGuideSession}
                 className="inline-flex h-8 items-center rounded-full border border-[#F0C7B4] bg-[#FFF4EF] px-3 text-xs font-semibold text-[#C9572C] transition hover:border-[#D96B3A] hover:bg-[#FFEADF] disabled:cursor-not-allowed disabled:border-[#E5E6EB] disabled:bg-[#F7F8FA] disabled:text-[#86909C]"
               >
-                {launchingGuide ? "正在启动..." : "Agent 聊天引导配置"}
+                {launchingGuide ? "正在启动..." : "Agent 引导配置"}
               </button>
             ) : null}
           />
-          <div className="rounded-2xl border border-[#E5E6EB] bg-white px-4">
-            <PreferenceRow label="CLI 命令">
-              <Field label="" value={channel.cliCommand} placeholder="lark" onChange={(cliCommand) => onPatch({ cliCommand })} />
+          <div className="rounded-2xl border border-[#E5E6EB] bg-white px-4 pt-1">
+            <PreferenceRow label="App ID Env" description="飞书应用的 App ID 环境变量名。">
+              <Field label="" value={channel.appIdEnv} placeholder="LARK_APP_ID" onChange={(appIdEnv) => onPatch({ appIdEnv })} />
             </PreferenceRow>
-            <PreferenceRow label="CLI Profile">
-              <Field label="" value={channel.cliProfile} placeholder="default" onChange={(cliProfile) => onPatch({ cliProfile })} />
+            <PreferenceRow label="App Secret Env" description="飞书应用的 App Secret 环境变量名。">
+              <Field label="" value={channel.appSecretEnv} placeholder="LARK_APP_SECRET" onChange={(appSecretEnv) => onPatch({ appSecretEnv })} />
             </PreferenceRow>
-            <PreferenceRow label="目标用户覆盖" description="可选。留空时自动使用当前 lark-cli profile 的 auth status userOpenId。">
-              <Field
-                label=""
-                value={channel.allowedSenderIds}
-                placeholder="自动读取 lark-cli auth status"
-                onChange={(allowedSenderIds) => onPatch({ allowedSenderIds })}
-              />
-            </PreferenceRow>
-            <PreferenceRow label="目标 chat_id" description="可选。用于进一步锁定应用和这个人的聊天，例如 oc_xxx；留空则只按用户过滤。">
-              <Field
-                label=""
-                value={channel.allowedConversationIds}
-                placeholder="oc_xxx"
-                onChange={(allowedConversationIds) => onPatch({ allowedConversationIds })}
-              />
-            </PreferenceRow>
-            <PreferenceRow label="发送参数模板">
-              <Field
-                label=""
-                value={channel.cliSendArgsTemplate}
-                placeholder="message send --profile {profile} --text {text}"
-                onChange={(cliSendArgsTemplate) => onPatch({ cliSendArgsTemplate })}
-              />
-            </PreferenceRow>
-            <PreferenceRow label="接收参数模板">
-              <Field
-                label=""
-                value={channel.cliReceiveArgsTemplate}
-                placeholder='stdout JSONL: {"text":"...","chatId":"...","messageId":"..."}'
-                onChange={(cliReceiveArgsTemplate) => onPatch({ cliReceiveArgsTemplate })}
-              />
+            <PreferenceRow label="Tenant Key Env" description="飞书企业自建应用的 Tenant Key 环境变量名。">
+              <Field label="" value={channel.tenantKeyEnv} placeholder="LARK_TENANT_KEY" onChange={(tenantKeyEnv) => onPatch({ tenantKeyEnv })} />
             </PreferenceRow>
           </div>
         </div>
       ) : (
         <div>
-          <SectionHeader title="开放平台凭证" />
-          <div className="rounded-2xl border border-[#E5E6EB] bg-white px-4">
-            <PreferenceRow label="App ID Env" description="Lark 应用的 App ID 环境变量名。">
-              <Field label="" value={channel.appIdEnv} placeholder="LARK_APP_ID" onChange={(appIdEnv) => onPatch({ appIdEnv })} />
+          <SectionHeader title="CLI 配置" />
+          <div className="rounded-2xl border border-[#E5E6EB] bg-white px-4 pt-1">
+            <PreferenceRow label="CLI 命令" description="lark-cli 的可执行路径或命令名。">
+              <Field label="" value={channel.cliCommand} placeholder="lark-cli" onChange={(cliCommand) => onPatch({ cliCommand })} />
             </PreferenceRow>
-            <PreferenceRow label="App Secret Env" description="Lark 应用的 App Secret 环境变量名。">
-              <Field label="" value={channel.appSecretEnv} placeholder="LARK_APP_SECRET" onChange={(appSecretEnv) => onPatch({ appSecretEnv })} />
+            <PreferenceRow label="CLI Profile" description="lark-cli 使用的 profile 名称。">
+              <Field label="" value={channel.cliProfile} placeholder="default" onChange={(cliProfile) => onPatch({ cliProfile })} />
             </PreferenceRow>
-            <PreferenceRow label="Tenant Key Env">
-              <Field label="" value={channel.tenantKeyEnv} placeholder="LARK_TENANT_KEY" onChange={(tenantKeyEnv) => onPatch({ tenantKeyEnv })} />
+            <PreferenceRow label="发送参数模板" description="event send 命令的参数模板，支持 {{profile}} {{text}} 占位。">
+              <Field label="" value={channel.cliSendArgsTemplate} placeholder='event send --profile {{profile}} --type message --content "{{text}}"' onChange={(cliSendArgsTemplate) => onPatch({ cliSendArgsTemplate })} />
+            </PreferenceRow>
+            <PreferenceRow label="接收参数模板" description="event receive 命令的参数模板，支持 {{profile}} 占位。">
+              <Field label="" value={channel.cliReceiveArgsTemplate} placeholder="event receive --profile {{profile}}" onChange={(cliReceiveArgsTemplate) => onPatch({ cliReceiveArgsTemplate })} />
+            </PreferenceRow>
+            <PreferenceRow label="允许的发送者 ID" description="逗号分隔的飞书用户 ID 白名单，留空表示不限制。">
+              <Field label="" value={channel.allowedSenderIds} placeholder="" onChange={(allowedSenderIds) => onPatch({ allowedSenderIds })} />
+            </PreferenceRow>
+            <PreferenceRow label="允许的会话 ID" description="逗号分隔的飞书会话 ID 白名单，留空表示不限制。">
+              <Field label="" value={channel.allowedConversationIds} placeholder="" onChange={(allowedConversationIds) => onPatch({ allowedConversationIds })} />
             </PreferenceRow>
           </div>
         </div>
