@@ -6,10 +6,14 @@ export function buildBrowserWorkbenchPromptAppend(): string {
     "当前客户端提供 Electron 内置浏览器工作台工具。",
     "当用户提到“内置浏览器”“当前页面”“这个网页”“爬取页面数据”“读取网页内容”时，优先使用浏览器 MCP 工具读取当前 BrowserView，不要回答自己无法访问浏览器。",
     "不要为这些请求调用 Skill browse、ToolSearch 查找浏览器工具或 ~/.claude/skills/gstack/browse；那些连接的是外部浏览器会话，不是 tech-cc-hub 的右侧 BrowserView。",
-    "常用工具：browser_get_state 获取当前 URL/标题；browser_extract_page 提取当前页面正文、标题、链接和图片；browser_console_logs 读取控制台日志；browser_capture_visible 截取可见区域。",
-    "开发诊断工具：browser_get_dom_stats 统计 DOM 节点规模；browser_query_nodes 按 CSS selector 或 XPath 定向查节点；browser_inspect_styles 读取目标节点的计算样式、CSS 变量和内联样式。",
+    "常用工具：http_ping 轻量检测 URL 存活；diagnose_port 一次返回端口监听 PID/进程名/启动时间/建议操作；bash_batch 顺序执行多条短 shell 命令并返回逐条结果；browser_get_state 获取当前 URL/标题；browser_extract_page 提取当前页面正文、标题、链接和图片；browser_console_logs 读取控制台日志，支持 waitFor 等待 HMR/构建日志；browser_capture_visible 截取可见区域；browser_save_screenshot / browser_save_pdf 保存截图或 PDF；browser_cookies / browser_storage 管理页面会话数据。",
+    "交互工具：browser_snapshot_interactive 生成 @e1 这类可交互元素 ref；browser_click_element / browser_dblclick_element / browser_focus_element / browser_hover_element / browser_type_element / browser_fill_element / browser_select_element / browser_check_element / browser_uncheck_element / browser_scroll_into_view 可按 ref、CSS selector 或 XPath 操作元素。",
+    "读取与底层输入工具：browser_get_element 读取 text/html/value/attr/title/url/count/box/styles；browser_eval 执行页面脚本；browser_press_key / browser_key_down / browser_key_up / browser_keyboard_type / browser_keyboard_insert_text / browser_mouse / browser_scroll_page / browser_wait_for 用于键盘、鼠标、滚动和等待。",
+    "开发诊断工具：browser_get_dom_stats 统计 DOM 节点规模；browser_query_nodes 按 CSS selector 或 XPath 定向查节点；browser_inspect_styles 读取目标节点的计算样式、CSS 变量和内联样式；browser_apply_styles 可在当前 BrowserView 临时注入 inline style 预览 CSS 效果，确认后再改源码。",
     "If the current prompt contains <browser_annotations>, treat page.url, dom.selector, dom.xpath, and dom.path as the primary targeting hints before searching the codebase by visible text.",
     "For a prompt with <browser_annotations>, the latest annotation supersedes older screenshots, older browser annotations, and earlier modal/dialog tasks from resumed session history unless the user explicitly says to keep working on that same old target.",
+    "If a browser annotation has expectation, treat comment as the observed problem and expectation as the desired state.",
+    "If dom.sourceCandidates is present, use high-confidence file/line candidates first; fall back to dom.componentStack names before broader text search.",
     "If dom.context.ancestorChain or dom.context.nearbyText is present, use that section context before grepping generic button/link text.",
     "If the annotation selector is too generic, recover the real interactive element from the same page location with xpath/path or browser inspection tools first, then locate the code.",
   ].join("\n");
@@ -36,6 +40,9 @@ export function buildToolCallOptimizationPromptAppend(): string {
     "避免碎片链路：ls -> cat -> grep -> cat。能用一次 rg 或一次批量只读命令得到结论时，不要拆成多次工具调用。",
     "只读批量操作可以合并；写入、删除、移动、安装、提交等有副作用操作不要混进批量 Bash。",
     "复盘时如果发现同目录串行多次 Read、重复 Bash、ls/cat/grep 链路，应优先建议改成并发读取或先搜索收敛。",
+    "",
+    "## 定时任务工具偏好",
+    "创建/管理定时任务必须使用 mcp__tech-cc-hub-cron 插件（create_scheduled_task / list_scheduled_tasks / delete_scheduled_task），它有完整的持久化存储、执行历史、重试机制和会话管理能力。禁止使用 SDK 内置的 CronCreate/CronDelete/CronList，那些工具创建的调度不会持久化到项目数据库。",
   ].join("\n");
 }
 

@@ -42,16 +42,30 @@ type BrowserAnnotationsPayload = {
   items?: unknown[];
 };
 
+type BrowserAnnotationSourceCandidate = {
+  component?: string;
+  file?: string;
+  line?: number;
+  column?: number;
+  framework?: string;
+  source?: string;
+  confidence?: string;
+};
+
 type BrowserAnnotationSummary = {
   index: number;
   label: string;
   comment?: string;
+  expectation?: string;
   pageTitle?: string;
   pageUrl?: string;
   target?: string;
   selector?: string;
   xpath?: string;
   path?: string;
+  componentStack?: string[];
+  sourceCandidates?: BrowserAnnotationSourceCandidate[];
+  componentStackConfidence?: string;
   position?: { x: number; y: number };
 };
 
@@ -310,10 +324,26 @@ const formatBrowserAnnotationUrl = (url?: string) => {
   }
 };
 
+const formatBrowserAnnotationSource = (candidate: BrowserAnnotationSourceCandidate) => {
+  const fileLine = [
+    candidate.file,
+    typeof candidate.line === "number" ? `:${candidate.line}` : "",
+    typeof candidate.column === "number" ? `:${candidate.column}` : "",
+  ].filter(Boolean).join("");
+  const label = fileLine || candidate.component || candidate.source || "";
+  const meta = [
+    candidate.component && fileLine ? candidate.component : null,
+    candidate.framework,
+    candidate.confidence,
+  ].filter(Boolean).join(" ");
+  return meta ? `${label} (${meta})` : label;
+};
+
 const getBrowserAnnotationSummary = (item: unknown, index: number): BrowserAnnotationSummary => {
   if (!item || typeof item !== "object") return { index: index + 1, label: `标注 ${index + 1}` };
   const record = item as Record<string, unknown>;
   const comment = getTextSnippet(record.comment);
+  const expectation = getTextSnippet(record.expectation, 160);
 
   const target = getStringRecord(record.target);
   const targetText = target?.type === "text"
@@ -332,6 +362,32 @@ const getBrowserAnnotationSummary = (item: unknown, index: number): BrowserAnnot
   const selector = getTextSnippet(dom?.selector, 120);
   const xpath = getTextSnippet(dom?.xpath, 120);
   const path = getTextSnippet(dom?.path, 120);
+  const componentStack = Array.isArray(dom?.componentStack)
+    ? dom.componentStack
+      .map((name) => getTextSnippet(name, 60))
+      .filter((name): name is string => Boolean(name))
+      .slice(0, 8)
+    : undefined;
+  const sourceCandidates = Array.isArray(dom?.sourceCandidates)
+    ? dom.sourceCandidates
+      .map((candidate) => {
+        const item = getStringRecord(candidate);
+        if (!item) return null;
+        const sourceCandidate: BrowserAnnotationSourceCandidate = {
+          component: getTextSnippet(item.component, 80),
+          file: getTextSnippet(item.file, 140),
+          line: typeof item.line === "number" ? item.line : undefined,
+          column: typeof item.column === "number" ? item.column : undefined,
+          framework: getTextSnippet(item.framework, 20),
+          source: getTextSnippet(item.source, 40),
+          confidence: getTextSnippet(item.confidence, 20),
+        };
+        return sourceCandidate.component || sourceCandidate.file ? sourceCandidate : null;
+      })
+      .filter((candidate): candidate is BrowserAnnotationSourceCandidate => Boolean(candidate))
+      .slice(0, 3)
+    : undefined;
+  const componentStackConfidence = getTextSnippet(dom?.componentStackConfidence, 20);
 
   const nodePosition = getStringRecord(record.nodePosition);
   const x = typeof nodePosition?.x === "number" ? nodePosition.x : undefined;
@@ -350,12 +406,16 @@ const getBrowserAnnotationSummary = (item: unknown, index: number): BrowserAnnot
     index: index + 1,
     label,
     comment,
+    expectation,
     pageTitle,
     pageUrl,
     target: targetText || nearbyText,
     selector,
     xpath,
     path,
+    componentStack,
+    sourceCandidates,
+    componentStackConfidence,
     position,
   };
 };
@@ -417,6 +477,27 @@ const BrowserAnnotationChip = ({ annotation }: { annotation: BrowserAnnotationSu
         <div className="min-w-0">
           <span className="font-semibold text-ink-700">目标 </span>
           <span className="break-words">{annotation.target}</span>
+        </div>
+      )}
+      {annotation.expectation && (
+        <div className="min-w-0">
+          <span className="font-semibold text-ink-700">预期 </span>
+          <span className="break-words">{annotation.expectation}</span>
+        </div>
+      )}
+      {annotation.componentStack && annotation.componentStack.length > 0 && (
+        <div className="min-w-0">
+          <span className="font-semibold text-ink-700">Components </span>
+          <span className="break-words">
+            {annotation.componentStack.join(" > ")}
+            {annotation.componentStackConfidence ? ` (${annotation.componentStackConfidence})` : ""}
+          </span>
+        </div>
+      )}
+      {annotation.sourceCandidates && annotation.sourceCandidates.length > 0 && (
+        <div className="min-w-0">
+          <span className="font-semibold text-ink-700">Sources </span>
+          <span className="break-words">{annotation.sourceCandidates.map(formatBrowserAnnotationSource).join(" | ")}</span>
         </div>
       )}
       {annotation.selector && (

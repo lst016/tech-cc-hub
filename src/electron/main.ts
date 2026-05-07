@@ -1090,12 +1090,124 @@ app.on("ready", async () => {
         }
         return await browserWorkbench.captureVisible();
       },
+      saveScreenshot: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.saveScreenshot(input);
+      },
+      savePdf: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.savePdf(input);
+      },
+      manageCookies: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.manageCookies(input);
+      },
+      manageStorage: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.manageStorage(input);
+      },
       getDomStats: async (sessionId) => {
         const browserWorkbench = getBrowserWorkbench(sessionId);
         if (!browserWorkbench) {
           return { success: false, error: "浏览器工作台尚未初始化。" };
         }
         return await browserWorkbench.getDomStats();
+      },
+      getInteractiveSnapshot: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.getInteractiveSnapshot(input);
+      },
+      clickElement: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.clickElement(input);
+      },
+      runElementAction: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.runElementAction(input);
+      },
+      fillElement: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.fillElement(input);
+      },
+      getElementInfo: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.getElementInfo(input);
+      },
+      pressKey: (sessionId, key) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, key, state: buildBrowserWorkbenchFallbackState(), error: "浏览器工作台尚未初始化。" };
+        }
+        return browserWorkbench.pressKey(key);
+      },
+      sendKeyEvent: (sessionId, action, key) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, action, key, state: buildBrowserWorkbenchFallbackState(), error: "浏览器工作台尚未初始化。" };
+        }
+        return browserWorkbench.sendKeyEvent(action, key);
+      },
+      sendKeyboardText: (sessionId, action, text) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, action, textLength: text.length, state: buildBrowserWorkbenchFallbackState(), error: "浏览器工作台尚未初始化。" };
+        }
+        return browserWorkbench.sendKeyboardText(action, text);
+      },
+      sendMouseEvent: (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, action: input.action, state: buildBrowserWorkbenchFallbackState(), error: "浏览器工作台尚未初始化。" };
+        }
+        return browserWorkbench.sendMouseEvent(input);
+      },
+      evaluateJavaScript: async (sessionId, expression) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.evaluateJavaScript(expression);
+      },
+      scrollPage: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.scrollPage(input);
+      },
+      waitFor: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.waitFor(input);
       },
       queryNodes: async (sessionId, input) => {
         const browserWorkbench = getBrowserWorkbench(sessionId);
@@ -1110,6 +1222,13 @@ app.on("ready", async () => {
           return { success: false, error: "浏览器工作台尚未初始化。" };
         }
         return await browserWorkbench.inspectStyles(input);
+      },
+      applyStyles: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.applyStyles(input);
       },
       inspectAtPoint: async (sessionId, point) => {
         const browserWorkbench = getBrowserWorkbench(sessionId);

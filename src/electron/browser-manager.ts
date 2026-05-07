@@ -1,4 +1,7 @@
 import { BrowserView, BrowserWindow } from "electron";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { buildBrowserWorkbenchWebPreferences } from "./libs/browser-workbench-session.js";
 
 export type BrowserWorkbenchBounds = {
@@ -25,6 +28,16 @@ export type BrowserWorkbenchConsoleLog = {
   line?: number;
 };
 
+export type BrowserWorkbenchSourceCandidate = {
+  component?: string;
+  file?: string;
+  line?: number;
+  column?: number;
+  framework?: "react" | "vue" | "class";
+  source: "react-debug-source" | "vue-file" | "component-stack" | "class-name";
+  confidence: "high" | "medium" | "low";
+};
+
 export type BrowserWorkbenchDomHint = {
   tagName: string;
   role?: string;
@@ -36,6 +49,10 @@ export type BrowserWorkbenchDomHint = {
   target?: { type: "text"; value: string } | { type: "image"; url: string; alt?: string };
   selectorCandidates: string[];
   boundingBox?: { x: number; y: number; width: number; height: number };
+  componentStack?: string[];
+  sourceCandidates?: BrowserWorkbenchSourceCandidate[];
+  componentStackSource?: string;
+  componentStackConfidence?: "high" | "medium" | "low";
   context?: {
     ancestorChain?: string[];
     nearbyText?: string;
@@ -113,11 +130,236 @@ export type BrowserWorkbenchStyleInspection = {
   cssVariables?: Record<string, string>;
 };
 
+export type BrowserWorkbenchStyleApplyInput = {
+  strategy?: BrowserWorkbenchQueryStrategy;
+  query: string;
+  index?: number;
+  styles: Record<string, string | number>;
+  persist?: boolean;
+};
+
+export type BrowserWorkbenchStyleApplyResult = {
+  url: string;
+  title?: string;
+  strategy: BrowserWorkbenchQueryStrategy;
+  query: string;
+  index: number;
+  found: boolean;
+  applied: Record<string, string>;
+  previousInlineStyle?: string;
+  nextInlineStyle?: string;
+  before?: Record<string, string>;
+  after?: Record<string, string>;
+  persist: boolean;
+  node?: BrowserWorkbenchNodeSnapshot;
+  error?: string;
+};
+
+export type BrowserWorkbenchInteractiveElement = {
+  ref: string;
+  tagName: string;
+  role?: string;
+  name?: string;
+  type?: string;
+  text?: string;
+  value?: string;
+  href?: string;
+  selector?: string;
+  xpath?: string;
+  disabled: boolean;
+  boundingBox?: { x: number; y: number; width: number; height: number };
+};
+
+export type BrowserWorkbenchInteractiveSnapshot = {
+  url: string;
+  title?: string;
+  total: number;
+  returned: number;
+  elements: BrowserWorkbenchInteractiveElement[];
+};
+
+export type BrowserWorkbenchElementTarget = {
+  target: string;
+  strategy?: "auto" | "ref" | "selector" | "xpath";
+  index?: number;
+};
+
+export type BrowserWorkbenchElementActionName =
+  | "click"
+  | "dblclick"
+  | "focus"
+  | "hover"
+  | "type"
+  | "fill"
+  | "select"
+  | "check"
+  | "uncheck"
+  | "scrollIntoView";
+
+export type BrowserWorkbenchElementActionResult = {
+  url: string;
+  title?: string;
+  action: BrowserWorkbenchElementActionName;
+  target: string;
+  strategy: "ref" | "selector" | "xpath";
+  found: boolean;
+  value?: string;
+  error?: string;
+  node?: BrowserWorkbenchInteractiveElement;
+};
+
+export type BrowserWorkbenchElementInfoKind =
+  | "text"
+  | "html"
+  | "value"
+  | "attr"
+  | "title"
+  | "url"
+  | "count"
+  | "box"
+  | "styles";
+
+export type BrowserWorkbenchElementInfoInput = BrowserWorkbenchElementTarget & {
+  kind: BrowserWorkbenchElementInfoKind;
+  attribute?: string;
+  properties?: string[];
+};
+
+export type BrowserWorkbenchElementInfoResult = {
+  url: string;
+  title?: string;
+  kind: BrowserWorkbenchElementInfoKind;
+  target?: string;
+  strategy?: "ref" | "selector" | "xpath";
+  found: boolean;
+  count?: number;
+  value?: string | number | boolean | null | Record<string, string> | { x: number; y: number; width: number; height: number };
+  node?: BrowserWorkbenchInteractiveElement;
+  error?: string;
+};
+
+export type BrowserWorkbenchScrollInput = {
+  direction?: "up" | "down" | "left" | "right";
+  amount?: number;
+  target?: string;
+  strategy?: "auto" | "ref" | "selector" | "xpath";
+};
+
+export type BrowserWorkbenchScrollResult = {
+  url: string;
+  title?: string;
+  success: boolean;
+  target?: string;
+  scrollX: number;
+  scrollY: number;
+  error?: string;
+};
+
+export type BrowserWorkbenchWaitInput = {
+  condition: "load" | "selector" | "text" | "url" | "time" | "function";
+  value?: string;
+  strategy?: "selector" | "xpath";
+  state?: "visible" | "hidden" | "attached";
+  timeoutMs?: number;
+};
+
+export type BrowserWorkbenchWaitResult = {
+  url: string;
+  title?: string;
+  condition: BrowserWorkbenchWaitInput["condition"];
+  success: boolean;
+  timedOut: boolean;
+  elapsedMs: number;
+};
+
+export type BrowserWorkbenchEvalResult = {
+  url: string;
+  title?: string;
+  success: boolean;
+  value?: unknown;
+  error?: string;
+};
+
+export type BrowserWorkbenchKeyboardResult = {
+  success: boolean;
+  action: "press" | "down" | "up" | "type" | "insertText";
+  key?: string;
+  textLength?: number;
+  state: BrowserWorkbenchState;
+  error?: string;
+};
+
+export type BrowserWorkbenchMouseInput = {
+  action: "move" | "down" | "up" | "wheel";
+  x?: number;
+  y?: number;
+  button?: "left" | "right" | "middle";
+  deltaX?: number;
+  deltaY?: number;
+};
+
+export type BrowserWorkbenchMouseResult = {
+  success: boolean;
+  action: BrowserWorkbenchMouseInput["action"];
+  state: BrowserWorkbenchState;
+  error?: string;
+};
+
+export type BrowserWorkbenchSavedFileResult = {
+  url: string;
+  title?: string;
+  success: boolean;
+  path: string;
+  bytes?: number;
+  format?: "png" | "jpeg" | "pdf";
+  error?: string;
+};
+
+export type BrowserWorkbenchCookieInput = {
+  action: "list" | "set" | "remove" | "flush";
+  url?: string;
+  name?: string;
+  value?: string;
+  domain?: string;
+  path?: string;
+  secure?: boolean;
+  httpOnly?: boolean;
+  expirationDate?: number;
+};
+
+export type BrowserWorkbenchCookieResult = {
+  url: string;
+  title?: string;
+  action: BrowserWorkbenchCookieInput["action"];
+  success: boolean;
+  cookies?: Electron.Cookie[];
+  count?: number;
+  error?: string;
+};
+
+export type BrowserWorkbenchStorageInput = {
+  action: "get" | "set" | "remove" | "clear";
+  area?: "localStorage" | "sessionStorage";
+  key?: string;
+  value?: string;
+};
+
+export type BrowserWorkbenchStorageResult = {
+  url: string;
+  title?: string;
+  action: BrowserWorkbenchStorageInput["action"];
+  area: "localStorage" | "sessionStorage";
+  success: boolean;
+  value?: string | Record<string, string> | null;
+  error?: string;
+};
+
 export type BrowserWorkbenchAnnotation = {
   id: string;
   url: string;
   title?: string;
   comment?: string;
+  expectation?: string;
   removed?: boolean;
   createdAt: number;
   point: { x: number; y: number };
@@ -328,6 +570,77 @@ export class BrowserWorkbenchManager {
     }
   }
 
+  async saveScreenshot(input: { path?: string; format?: "png" | "jpeg"; quality?: number }): Promise<{ success: boolean; result?: BrowserWorkbenchSavedFileResult; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+
+    const format = input.format === "jpeg" ? "jpeg" : "png";
+    const filePath = input.path?.trim() || join(tmpdir(), `tech-cc-hub-browser-${Date.now()}.${format === "jpeg" ? "jpg" : "png"}`);
+    try {
+      const image = await this.view.webContents.capturePage();
+      const buffer = format === "jpeg"
+        ? image.toJPEG(Math.max(1, Math.min(Math.trunc(input.quality ?? 90), 100)))
+        : image.toPNG();
+      mkdirSync(dirname(filePath), { recursive: true });
+      writeFileSync(filePath, buffer);
+      const result: BrowserWorkbenchSavedFileResult = {
+        url: this.view.webContents.getURL(),
+        title: this.view.webContents.getTitle(),
+        success: true,
+        path: filePath,
+        bytes: buffer.length,
+        format,
+      };
+      return { success: true, result };
+    } catch (error) {
+      const result: BrowserWorkbenchSavedFileResult = {
+        url: this.view.webContents.getURL(),
+        title: this.view.webContents.getTitle(),
+        success: false,
+        path: filePath,
+        format,
+        error: error instanceof Error ? error.message : String(error),
+      };
+      return { success: false, result, error: result.error };
+    }
+  }
+
+  async savePdf(input: { path?: string; landscape?: boolean; printBackground?: boolean }): Promise<{ success: boolean; result?: BrowserWorkbenchSavedFileResult; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+
+    const filePath = input.path?.trim() || join(tmpdir(), `tech-cc-hub-browser-${Date.now()}.pdf`);
+    try {
+      const buffer = await this.view.webContents.printToPDF({
+        landscape: Boolean(input.landscape),
+        printBackground: input.printBackground ?? true,
+      });
+      mkdirSync(dirname(filePath), { recursive: true });
+      writeFileSync(filePath, buffer);
+      const result: BrowserWorkbenchSavedFileResult = {
+        url: this.view.webContents.getURL(),
+        title: this.view.webContents.getTitle(),
+        success: true,
+        path: filePath,
+        bytes: buffer.length,
+        format: "pdf",
+      };
+      return { success: true, result };
+    } catch (error) {
+      const result: BrowserWorkbenchSavedFileResult = {
+        url: this.view.webContents.getURL(),
+        title: this.view.webContents.getTitle(),
+        success: false,
+        path: filePath,
+        format: "pdf",
+        error: error instanceof Error ? error.message : String(error),
+      };
+      return { success: false, result, error: result.error };
+    }
+  }
+
   async inspectAtPoint(point: { x: number; y: number }): Promise<BrowserWorkbenchDomHint | null> {
     if (!this.view) return null;
     return await this.view.webContents.executeJavaScript(
@@ -391,6 +704,291 @@ export class BrowserWorkbenchManager {
     }
   }
 
+  async getInteractiveSnapshot(input: { maxResults?: number; visibleOnly?: boolean } = {}): Promise<{ success: boolean; snapshot?: BrowserWorkbenchInteractiveSnapshot; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+
+    try {
+      const snapshot = await this.view.webContents.executeJavaScript(
+        `(${this.buildInteractiveSnapshotScript()})(${JSON.stringify(input)})`,
+        true,
+      ) as BrowserWorkbenchInteractiveSnapshot;
+      return { success: true, snapshot };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async clickElement(input: BrowserWorkbenchElementTarget): Promise<{ success: boolean; result?: BrowserWorkbenchElementActionResult; error?: string }> {
+    return await this.runElementAction({ ...input, action: "click" });
+  }
+
+  async fillElement(input: BrowserWorkbenchElementTarget & { value: string }): Promise<{ success: boolean; result?: BrowserWorkbenchElementActionResult; error?: string }> {
+    return await this.runElementAction({ ...input, action: "fill" });
+  }
+
+  async runElementAction(input: BrowserWorkbenchElementTarget & { action: BrowserWorkbenchElementActionName; value?: string }): Promise<{ success: boolean; result?: BrowserWorkbenchElementActionResult; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+
+    try {
+      const result = await this.view.webContents.executeJavaScript(
+        `(${this.buildElementActionScript()})(${JSON.stringify(input)})`,
+        true,
+      ) as BrowserWorkbenchElementActionResult;
+      return { success: result.found && !result.error, result, error: result.error };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async getElementInfo(input: BrowserWorkbenchElementInfoInput): Promise<{ success: boolean; result?: BrowserWorkbenchElementInfoResult; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+
+    try {
+      const result = await this.view.webContents.executeJavaScript(
+        `(${this.buildElementInfoScript()})(${JSON.stringify(input)})`,
+        true,
+      ) as BrowserWorkbenchElementInfoResult;
+      return { success: result.found && !result.error, result, error: result.error };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  pressKey(key: string): { success: boolean; key: string; state: BrowserWorkbenchState; error?: string } {
+    const result = this.sendKeyEvent("press", key);
+    return {
+      success: result.success,
+      key: result.key ?? key,
+      state: result.state,
+      error: result.error,
+    };
+  }
+
+  sendKeyEvent(action: "press" | "down" | "up", key: string): BrowserWorkbenchKeyboardResult {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, action, key, state: this.getState(), error: "浏览器工作台尚未打开页面。" };
+    }
+
+    const normalizedKey = key.trim();
+    if (!normalizedKey || normalizedKey.length > 64) {
+      return { success: false, action, key, state: this.getState(), error: "按键名称不能为空或过长。" };
+    }
+
+    try {
+      this.view.webContents.focus();
+      if (action === "press" || action === "down") {
+        this.view.webContents.sendInputEvent({ type: "keyDown", keyCode: normalizedKey });
+      }
+      if (action === "press" || action === "up") {
+        this.view.webContents.sendInputEvent({ type: "keyUp", keyCode: normalizedKey });
+      }
+      return { success: true, action, key: normalizedKey, state: this.getState() };
+    } catch (error) {
+      return { success: false, action, key: normalizedKey, state: this.getState(), error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  sendKeyboardText(action: "type" | "insertText", text: string): BrowserWorkbenchKeyboardResult {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, action, textLength: text.length, state: this.getState(), error: "浏览器工作台尚未打开页面。" };
+    }
+
+    try {
+      this.view.webContents.focus();
+      if (action === "insertText") {
+        this.view.webContents.insertText(text);
+      } else {
+        for (const char of text) {
+          this.view.webContents.sendInputEvent({ type: "char", keyCode: char });
+        }
+      }
+      return { success: true, action, textLength: text.length, state: this.getState() };
+    } catch (error) {
+      return { success: false, action, textLength: text.length, state: this.getState(), error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  sendMouseEvent(input: BrowserWorkbenchMouseInput): BrowserWorkbenchMouseResult {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, action: input.action, state: this.getState(), error: "浏览器工作台尚未打开页面。" };
+    }
+
+    try {
+      this.view.webContents.focus();
+      if (input.action === "wheel") {
+        this.view.webContents.sendInputEvent({
+          type: "mouseWheel",
+          x: Math.max(0, Math.trunc(input.x ?? 0)),
+          y: Math.max(0, Math.trunc(input.y ?? 0)),
+          deltaX: Math.trunc(input.deltaX ?? 0),
+          deltaY: Math.trunc(input.deltaY ?? 0),
+        });
+      } else {
+        this.view.webContents.sendInputEvent({
+          type: input.action === "move" ? "mouseMove" : input.action === "down" ? "mouseDown" : "mouseUp",
+          x: Math.max(0, Math.trunc(input.x ?? 0)),
+          y: Math.max(0, Math.trunc(input.y ?? 0)),
+          button: input.button ?? "left",
+          clickCount: 1,
+        });
+      }
+      return { success: true, action: input.action, state: this.getState() };
+    } catch (error) {
+      return { success: false, action: input.action, state: this.getState(), error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async evaluateJavaScript(expression: string): Promise<{ success: boolean; result?: BrowserWorkbenchEvalResult; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+
+    try {
+      const value = await this.view.webContents.executeJavaScript(expression, true) as unknown;
+      const result: BrowserWorkbenchEvalResult = {
+        url: this.view.webContents.getURL(),
+        title: this.view.webContents.getTitle(),
+        success: true,
+        value,
+      };
+      return { success: true, result };
+    } catch (error) {
+      const result: BrowserWorkbenchEvalResult = {
+        url: this.view.webContents.getURL(),
+        title: this.view.webContents.getTitle(),
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+      return { success: false, result, error: result.error };
+    }
+  }
+
+  async manageCookies(input: BrowserWorkbenchCookieInput): Promise<{ success: boolean; result?: BrowserWorkbenchCookieResult; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+
+    const currentUrl = this.view.webContents.getURL();
+    const url = input.url?.trim() || currentUrl;
+    try {
+      if (input.action === "list") {
+        const cookies = await this.view.webContents.session.cookies.get({ url });
+        const result: BrowserWorkbenchCookieResult = {
+          url: currentUrl,
+          title: this.view.webContents.getTitle(),
+          action: input.action,
+          success: true,
+          cookies,
+          count: cookies.length,
+        };
+        return { success: true, result };
+      }
+      if (input.action === "flush") {
+        await this.view.webContents.session.cookies.flushStore();
+        const result: BrowserWorkbenchCookieResult = {
+          url: currentUrl,
+          title: this.view.webContents.getTitle(),
+          action: input.action,
+          success: true,
+        };
+        return { success: true, result };
+      }
+      if (!input.name) {
+        throw new Error("Cookie name is required.");
+      }
+      if (input.action === "remove") {
+        await this.view.webContents.session.cookies.remove(url, input.name);
+        const result: BrowserWorkbenchCookieResult = {
+          url: currentUrl,
+          title: this.view.webContents.getTitle(),
+          action: input.action,
+          success: true,
+        };
+        return { success: true, result };
+      }
+      await this.view.webContents.session.cookies.set({
+        url,
+        name: input.name,
+        value: input.value ?? "",
+        domain: input.domain,
+        path: input.path,
+        secure: input.secure,
+        httpOnly: input.httpOnly,
+        expirationDate: input.expirationDate,
+      });
+      const result: BrowserWorkbenchCookieResult = {
+        url: currentUrl,
+        title: this.view.webContents.getTitle(),
+        action: input.action,
+        success: true,
+      };
+      return { success: true, result };
+    } catch (error) {
+      const result: BrowserWorkbenchCookieResult = {
+        url: currentUrl,
+        title: this.view.webContents.getTitle(),
+        action: input.action,
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+      return { success: false, result, error: result.error };
+    }
+  }
+
+  async manageStorage(input: BrowserWorkbenchStorageInput): Promise<{ success: boolean; result?: BrowserWorkbenchStorageResult; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+
+    try {
+      const result = await this.view.webContents.executeJavaScript(
+        `(${this.buildStorageScript()})(${JSON.stringify(input)})`,
+        true,
+      ) as BrowserWorkbenchStorageResult;
+      return { success: result.success, result, error: result.error };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async scrollPage(input: BrowserWorkbenchScrollInput): Promise<{ success: boolean; result?: BrowserWorkbenchScrollResult; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+
+    try {
+      const result = await this.view.webContents.executeJavaScript(
+        `(${this.buildScrollScript()})(${JSON.stringify(input)})`,
+        true,
+      ) as BrowserWorkbenchScrollResult;
+      return { success: result.success, result, error: result.error };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async waitFor(input: BrowserWorkbenchWaitInput): Promise<{ success: boolean; result?: BrowserWorkbenchWaitResult; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+
+    try {
+      const result = await this.view.webContents.executeJavaScript(
+        `(${this.buildWaitScript()})(${JSON.stringify(input)})`,
+        true,
+      ) as BrowserWorkbenchWaitResult;
+      return { success: result.success, result, error: result.timedOut ? "等待超时。" : undefined };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   async queryNodes(input: {
     strategy?: BrowserWorkbenchQueryStrategy;
     query: string;
@@ -429,6 +1027,22 @@ export class BrowserWorkbenchManager {
         true,
       ) as BrowserWorkbenchStyleInspection;
       return { success: true, inspection };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async applyStyles(input: BrowserWorkbenchStyleApplyInput): Promise<{ success: boolean; result?: BrowserWorkbenchStyleApplyResult; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "Browser workbench is not open." };
+    }
+
+    try {
+      const result = await this.view.webContents.executeJavaScript(
+        `(${this.buildApplyStylesScript()})(${JSON.stringify(input)})`,
+        true,
+      ) as BrowserWorkbenchStyleApplyResult;
+      return { success: result.found && !result.error, result, error: result.error };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
@@ -708,6 +1322,608 @@ export class BrowserWorkbenchManager {
     }`;
   }
 
+  private buildInteractiveSnapshotScript(): string {
+    return `function(input) {
+      const maxResults = Math.max(1, Math.min(Number.isFinite(input && input.maxResults) ? Math.trunc(input.maxResults) : 80, 200));
+      const visibleOnly = input && Object.prototype.hasOwnProperty.call(input, "visibleOnly") ? Boolean(input.visibleOnly) : true;
+      const selector = [
+        "a[href]",
+        "button",
+        "input",
+        "textarea",
+        "select",
+        "summary",
+        "[role='button']",
+        "[role='link']",
+        "[role='checkbox']",
+        "[role='menuitem']",
+        "[role='option']",
+        "[role='tab']",
+        "[role='textbox']",
+        "[contenteditable='true']",
+        "[tabindex]:not([tabindex='-1'])",
+      ].join(",");
+
+      function isVisible(element) {
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity || "1") > 0;
+      }
+
+      function buildPath(element) {
+        const parts = [];
+        let current = element;
+        while (current && current.nodeType === Node.ELEMENT_NODE) {
+          const parent = current.parentElement;
+          const tag = current.tagName.toLowerCase();
+          const nth = parent ? Array.prototype.indexOf.call(parent.children, current) + 1 : 1;
+          parts.unshift(tag + ":nth-of-type(" + nth + ")");
+          current = parent;
+        }
+        return parts.join(" > ");
+      }
+
+      function buildSelector(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE) return undefined;
+        if (element.id) return element.tagName.toLowerCase() + "#" + CSS.escape(element.id);
+        const dataTestId = element.getAttribute("data-testid") || element.getAttribute("data-test");
+        if (dataTestId) return element.tagName.toLowerCase() + "[data-testid='" + CSS.escape(dataTestId) + "']";
+        return buildPath(element);
+      }
+
+      function buildXPath(element) {
+        const parts = [];
+        let current = element;
+        while (current && current.nodeType === Node.ELEMENT_NODE) {
+          let nth = 1;
+          let sibling = current.previousElementSibling;
+          while (sibling) {
+            if (sibling.tagName === current.tagName) nth += 1;
+            sibling = sibling.previousElementSibling;
+          }
+          parts.unshift(current.tagName.toLowerCase() + "[" + nth + "]");
+          current = current.parentElement;
+        }
+        return "/" + parts.join("/");
+      }
+
+      function getName(element) {
+        return (
+          element.getAttribute("aria-label") ||
+          element.getAttribute("alt") ||
+          element.getAttribute("title") ||
+          element.getAttribute("placeholder") ||
+          element.value ||
+          element.innerText ||
+          element.textContent ||
+          element.getAttribute("href") ||
+          ""
+        ).replace(/\\s+/g, " ").trim().slice(0, 160) || undefined;
+      }
+
+      function toElement(element, index) {
+        const rect = element.getBoundingClientRect();
+        const ref = "e" + (index + 1);
+        const item = {
+          ref,
+          tagName: element.tagName.toLowerCase(),
+          role: element.getAttribute("role") || undefined,
+          name: getName(element),
+          type: element.getAttribute("type") || undefined,
+          text: (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 160) || undefined,
+          value: typeof element.value === "string" ? element.value.slice(0, 160) : undefined,
+          href: element.href || element.getAttribute("href") || undefined,
+          selector: buildSelector(element),
+          xpath: buildXPath(element),
+          disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
+          boundingBox: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          },
+        };
+        return item;
+      }
+
+      const all = Array.from(document.querySelectorAll(selector))
+        .filter((element) => element instanceof HTMLElement || element instanceof SVGElement)
+        .filter((element) => !visibleOnly || isVisible(element));
+      const elements = all.slice(0, maxResults).map(toElement);
+      window.__techCcHubBrowserRefs = elements.reduce((accumulator, element) => {
+        accumulator[element.ref] = { selector: element.selector, xpath: element.xpath };
+        return accumulator;
+      }, {});
+      return {
+        url: location.href,
+        title: document.title,
+        total: all.length,
+        returned: elements.length,
+        elements,
+      };
+    }`;
+  }
+
+  private buildElementActionScript(): string {
+    return `function(input) {
+      const action = input && ["click", "dblclick", "focus", "hover", "type", "fill", "select", "check", "uncheck", "scrollIntoView"].includes(input.action) ? input.action : "click";
+      const rawTarget = typeof input.target === "string" ? input.target.trim() : "";
+      const index = Math.max(0, Number.isFinite(input.index) ? Math.trunc(input.index) : 0);
+      const requestedStrategy = input.strategy === "ref" || input.strategy === "selector" || input.strategy === "xpath" ? input.strategy : "auto";
+
+      function resolveXPath(xpath) {
+        const result = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+        return result.snapshotItem(index);
+      }
+
+      function resolveTarget() {
+        if (!rawTarget) return { strategy: "selector", element: null, error: "target 不能为空。" };
+        const refName = rawTarget.startsWith("@") ? rawTarget.slice(1) : rawTarget;
+        if ((requestedStrategy === "ref" || requestedStrategy === "auto") && /^e\\d+$/.test(refName)) {
+          const refs = window.__techCcHubBrowserRefs || {};
+          const cached = refs[refName];
+          if (!cached) return { strategy: "ref", element: null, error: "未找到 ref，请先调用 browser_snapshot_interactive 刷新快照。" };
+          const byXPath = cached.xpath ? resolveXPath(cached.xpath) : null;
+          const bySelector = !byXPath && cached.selector ? document.querySelector(cached.selector) : null;
+          return { strategy: "ref", element: byXPath || bySelector, error: byXPath || bySelector ? undefined : "ref 指向的元素已不存在。" };
+        }
+        if (requestedStrategy === "xpath" || (requestedStrategy === "auto" && rawTarget.startsWith("/"))) {
+          return { strategy: "xpath", element: resolveXPath(rawTarget) };
+        }
+        try {
+          return { strategy: "selector", element: document.querySelectorAll(rawTarget)[index] || null };
+        } catch (error) {
+          return { strategy: "selector", element: null, error: error instanceof Error ? error.message : String(error) };
+        }
+      }
+
+      function buildXPath(element) {
+        const parts = [];
+        let current = element;
+        while (current && current.nodeType === Node.ELEMENT_NODE) {
+          let nth = 1;
+          let sibling = current.previousElementSibling;
+          while (sibling) {
+            if (sibling.tagName === current.tagName) nth += 1;
+            sibling = sibling.previousElementSibling;
+          }
+          parts.unshift(current.tagName.toLowerCase() + "[" + nth + "]");
+          current = current.parentElement;
+        }
+        return "/" + parts.join("/");
+      }
+
+      function buildPath(element) {
+        const parts = [];
+        let current = element;
+        while (current && current.nodeType === Node.ELEMENT_NODE) {
+          const parent = current.parentElement;
+          const tag = current.tagName.toLowerCase();
+          const nth = parent ? Array.prototype.indexOf.call(parent.children, current) + 1 : 1;
+          parts.unshift(tag + ":nth-of-type(" + nth + ")");
+          current = parent;
+        }
+        return parts.join(" > ");
+      }
+
+      function nodeSnapshot(element) {
+        const rect = element.getBoundingClientRect();
+        return {
+          ref: "",
+          tagName: element.tagName.toLowerCase(),
+          role: element.getAttribute("role") || undefined,
+          name: (element.getAttribute("aria-label") || element.getAttribute("placeholder") || element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 160) || undefined,
+          type: element.getAttribute("type") || undefined,
+          text: (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 160) || undefined,
+          value: typeof element.value === "string" ? element.value.slice(0, 160) : undefined,
+          href: element.href || element.getAttribute("href") || undefined,
+          selector: element.id ? element.tagName.toLowerCase() + "#" + CSS.escape(element.id) : buildPath(element),
+          xpath: buildXPath(element),
+          disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
+          boundingBox: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          },
+        };
+      }
+
+      const resolved = resolveTarget();
+      if (!resolved.element || resolved.element.nodeType !== Node.ELEMENT_NODE) {
+        return {
+          url: location.href,
+          title: document.title,
+          action,
+          target: rawTarget,
+          strategy: resolved.strategy,
+          found: false,
+          error: resolved.error || "未找到目标元素。",
+        };
+      }
+
+      const element = resolved.element;
+      element.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+      if (typeof element.focus === "function") element.focus({ preventScroll: true });
+      if (action === "fill" || action === "type") {
+        const value = typeof input.value === "string" ? input.value : "";
+        if ("value" in element) {
+          element.value = action === "type" ? String(element.value || "") + value : value;
+          element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+          element.dispatchEvent(new Event("change", { bubbles: true }));
+        } else if (element.isContentEditable) {
+          element.textContent = action === "type" ? (element.textContent || "") + value : value;
+          element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+        } else {
+          return {
+            url: location.href,
+            title: document.title,
+            action,
+            target: rawTarget,
+            strategy: resolved.strategy,
+            found: true,
+            error: "目标元素不可填写或输入。",
+            node: nodeSnapshot(element),
+          };
+        }
+      } else if (action === "select") {
+        const value = typeof input.value === "string" ? input.value : "";
+        if (element.tagName.toLowerCase() !== "select") {
+          return {
+            url: location.href,
+            title: document.title,
+            action,
+            target: rawTarget,
+            strategy: resolved.strategy,
+            found: true,
+            error: "目标元素不是 select。",
+            node: nodeSnapshot(element),
+          };
+        }
+        element.value = value;
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+      } else if (action === "check" || action === "uncheck") {
+        const shouldCheck = action === "check";
+        const isCheckable = element instanceof HTMLInputElement && ["checkbox", "radio"].includes(element.type);
+        if (isCheckable) {
+          if (element.checked !== shouldCheck) element.click();
+        } else if (element.getAttribute("role") === "checkbox") {
+          const checked = element.getAttribute("aria-checked") === "true";
+          if (checked !== shouldCheck) element.click();
+        } else {
+          return {
+            url: location.href,
+            title: document.title,
+            action,
+            target: rawTarget,
+            strategy: resolved.strategy,
+            found: true,
+            error: "目标元素不是 checkbox/radio/role=checkbox。",
+            node: nodeSnapshot(element),
+          };
+        }
+      } else if (action === "focus") {
+        if (typeof element.focus === "function") element.focus({ preventScroll: true });
+      } else if (action === "hover") {
+        const rect = element.getBoundingClientRect();
+        const eventInit = { bubbles: true, cancelable: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+        element.dispatchEvent(new MouseEvent("mouseover", eventInit));
+        element.dispatchEvent(new MouseEvent("mouseenter", eventInit));
+        element.dispatchEvent(new MouseEvent("mousemove", eventInit));
+      } else if (action === "dblclick") {
+        element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));
+      } else if (action === "scrollIntoView") {
+        element.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+      } else {
+        element.click();
+      }
+
+      return {
+        url: location.href,
+        title: document.title,
+        action,
+        target: rawTarget,
+        strategy: resolved.strategy,
+        found: true,
+        value: typeof input.value === "string" ? input.value : undefined,
+        node: nodeSnapshot(element),
+      };
+    }`;
+  }
+
+  private buildElementInfoScript(): string {
+    return `function(input) {
+      const kind = input && ["text", "html", "value", "attr", "title", "url", "count", "box", "styles"].includes(input.kind) ? input.kind : "text";
+      const rawTarget = typeof input.target === "string" ? input.target.trim() : "";
+      const index = Math.max(0, Number.isFinite(input.index) ? Math.trunc(input.index) : 0);
+      const requestedStrategy = input.strategy === "ref" || input.strategy === "selector" || input.strategy === "xpath" ? input.strategy : "auto";
+
+      function resolveXPath(xpath, countOnly) {
+        const resultType = countOnly ? XPathResult.ORDERED_NODE_SNAPSHOT_TYPE : XPathResult.ORDERED_NODE_SNAPSHOT_TYPE;
+        const result = document.evaluate(xpath, document, null, resultType, null);
+        return countOnly ? result.snapshotLength : result.snapshotItem(index);
+      }
+
+      function resolveTarget(countOnly) {
+        if (kind === "title" || kind === "url") return { strategy: "selector", element: document.documentElement, count: 1 };
+        if (!rawTarget) return { strategy: "selector", element: null, count: 0, error: "target 不能为空。" };
+        const refName = rawTarget.startsWith("@") ? rawTarget.slice(1) : rawTarget;
+        if ((requestedStrategy === "ref" || requestedStrategy === "auto") && /^e\\d+$/.test(refName)) {
+          const refs = window.__techCcHubBrowserRefs || {};
+          const cached = refs[refName];
+          if (!cached) return { strategy: "ref", element: null, count: 0, error: "未找到 ref，请先调用 browser_snapshot_interactive 刷新快照。" };
+          const element = cached.xpath ? resolveXPath(cached.xpath, false) : document.querySelector(cached.selector);
+          return { strategy: "ref", element, count: element ? 1 : 0, error: element ? undefined : "ref 指向的元素已不存在。" };
+        }
+        if (requestedStrategy === "xpath" || (requestedStrategy === "auto" && rawTarget.startsWith("/"))) {
+          return { strategy: "xpath", element: countOnly ? null : resolveXPath(rawTarget, false), count: resolveXPath(rawTarget, true) };
+        }
+        try {
+          const nodes = document.querySelectorAll(rawTarget);
+          return { strategy: "selector", element: nodes[index] || null, count: nodes.length };
+        } catch (error) {
+          return { strategy: "selector", element: null, count: 0, error: error instanceof Error ? error.message : String(error) };
+        }
+      }
+
+      function buildXPath(element) {
+        const parts = [];
+        let current = element;
+        while (current && current.nodeType === Node.ELEMENT_NODE) {
+          let nth = 1;
+          let sibling = current.previousElementSibling;
+          while (sibling) {
+            if (sibling.tagName === current.tagName) nth += 1;
+            sibling = sibling.previousElementSibling;
+          }
+          parts.unshift(current.tagName.toLowerCase() + "[" + nth + "]");
+          current = current.parentElement;
+        }
+        return "/" + parts.join("/");
+      }
+
+      function buildPath(element) {
+        const parts = [];
+        let current = element;
+        while (current && current.nodeType === Node.ELEMENT_NODE) {
+          const parent = current.parentElement;
+          const tag = current.tagName.toLowerCase();
+          const nth = parent ? Array.prototype.indexOf.call(parent.children, current) + 1 : 1;
+          parts.unshift(tag + ":nth-of-type(" + nth + ")");
+          current = parent;
+        }
+        return parts.join(" > ");
+      }
+
+      function nodeSnapshot(element) {
+        const rect = element.getBoundingClientRect();
+        return {
+          ref: "",
+          tagName: element.tagName.toLowerCase(),
+          role: element.getAttribute("role") || undefined,
+          name: (element.getAttribute("aria-label") || element.getAttribute("placeholder") || element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 160) || undefined,
+          type: element.getAttribute("type") || undefined,
+          text: (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 160) || undefined,
+          value: typeof element.value === "string" ? element.value.slice(0, 160) : undefined,
+          href: element.href || element.getAttribute("href") || undefined,
+          selector: element.id ? element.tagName.toLowerCase() + "#" + CSS.escape(element.id) : buildPath(element),
+          xpath: buildXPath(element),
+          disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
+          boundingBox: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          },
+        };
+      }
+
+      if (kind === "title") {
+        return { url: location.href, title: document.title, kind, found: true, value: document.title };
+      }
+      if (kind === "url") {
+        return { url: location.href, title: document.title, kind, found: true, value: location.href };
+      }
+
+      const resolved = resolveTarget(kind === "count");
+      if (kind === "count") {
+        return { url: location.href, title: document.title, kind, target: rawTarget, strategy: resolved.strategy, found: true, count: resolved.count, value: resolved.count };
+      }
+      if (!resolved.element || resolved.element.nodeType !== Node.ELEMENT_NODE) {
+        return { url: location.href, title: document.title, kind, target: rawTarget, strategy: resolved.strategy, found: false, error: resolved.error || "未找到目标元素。" };
+      }
+
+      const element = resolved.element;
+      const rect = element.getBoundingClientRect();
+      let value = null;
+      if (kind === "text") value = (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim();
+      if (kind === "html") value = element.innerHTML;
+      if (kind === "value") value = "value" in element ? element.value : element.getAttribute("value");
+      if (kind === "attr") value = input.attribute ? element.getAttribute(input.attribute) : null;
+      if (kind === "box") value = { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) };
+      if (kind === "styles") {
+        const computed = window.getComputedStyle(element);
+        const props = Array.isArray(input.properties) && input.properties.length > 0 ? input.properties.slice(0, 80) : ["display", "position", "width", "height", "color", "background-color", "font-size", "font-weight", "opacity", "visibility", "pointer-events"];
+        value = props.reduce((accumulator, property) => {
+          accumulator[property] = computed.getPropertyValue(property);
+          return accumulator;
+        }, {});
+      }
+
+      return {
+        url: location.href,
+        title: document.title,
+        kind,
+        target: rawTarget,
+        strategy: resolved.strategy,
+        found: true,
+        count: resolved.count,
+        value,
+        node: nodeSnapshot(element),
+      };
+    }`;
+  }
+
+  private buildStorageScript(): string {
+    return `function(input) {
+      const action = input && ["get", "set", "remove", "clear"].includes(input.action) ? input.action : "get";
+      const area = input && input.area === "sessionStorage" ? "sessionStorage" : "localStorage";
+      const storage = window[area];
+      const key = typeof input.key === "string" ? input.key : "";
+      try {
+        let value = null;
+        if (action === "get") {
+          if (key) {
+            value = storage.getItem(key);
+          } else {
+            value = {};
+            for (let index = 0; index < storage.length; index += 1) {
+              const itemKey = storage.key(index);
+              if (itemKey) value[itemKey] = storage.getItem(itemKey);
+            }
+          }
+        } else if (action === "set") {
+          if (!key) throw new Error("key is required for storage set.");
+          storage.setItem(key, typeof input.value === "string" ? input.value : "");
+          value = storage.getItem(key);
+        } else if (action === "remove") {
+          if (!key) throw new Error("key is required for storage remove.");
+          storage.removeItem(key);
+        } else if (action === "clear") {
+          storage.clear();
+        }
+        return {
+          url: location.href,
+          title: document.title,
+          action,
+          area,
+          success: true,
+          value,
+        };
+      } catch (error) {
+        return {
+          url: location.href,
+          title: document.title,
+          action,
+          area,
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }`;
+  }
+
+  private buildScrollScript(): string {
+    return `function(input) {
+      const amount = Math.max(1, Math.min(Number.isFinite(input && input.amount) ? Math.trunc(input.amount) : 720, 4000));
+      const direction = input && ["up", "down", "left", "right"].includes(input.direction) ? input.direction : "down";
+      const target = typeof (input && input.target) === "string" ? input.target.trim() : "";
+      const strategy = input && (input.strategy === "ref" || input.strategy === "selector" || input.strategy === "xpath") ? input.strategy : "auto";
+      const delta = {
+        x: direction === "left" ? -amount : direction === "right" ? amount : 0,
+        y: direction === "up" ? -amount : direction === "down" ? amount : 0,
+      };
+
+      function resolveXPath(xpath) {
+        const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+        return result.singleNodeValue;
+      }
+
+      function resolveTarget() {
+        if (!target) return { element: window, error: undefined };
+        const refName = target.startsWith("@") ? target.slice(1) : target;
+        if ((strategy === "ref" || strategy === "auto") && /^e\\d+$/.test(refName)) {
+          const cached = (window.__techCcHubBrowserRefs || {})[refName];
+          if (!cached) return { element: null, error: "未找到 ref，请先调用 browser_snapshot_interactive 刷新快照。" };
+          return { element: cached.xpath ? resolveXPath(cached.xpath) : document.querySelector(cached.selector), error: undefined };
+        }
+        if (strategy === "xpath" || (strategy === "auto" && target.startsWith("/"))) {
+          return { element: resolveXPath(target), error: undefined };
+        }
+        try {
+          return { element: document.querySelector(target), error: undefined };
+        } catch (error) {
+          return { element: null, error: error instanceof Error ? error.message : String(error) };
+        }
+      }
+
+      const resolved = resolveTarget();
+      if (!resolved.element) {
+        return { url: location.href, title: document.title, success: false, target, scrollX: window.scrollX, scrollY: window.scrollY, error: resolved.error || "未找到滚动目标。" };
+      }
+      if (resolved.element === window) {
+        window.scrollBy(delta.x, delta.y);
+      } else {
+        resolved.element.scrollBy(delta.x, delta.y);
+      }
+      return { url: location.href, title: document.title, success: true, target: target || undefined, scrollX: window.scrollX, scrollY: window.scrollY };
+    }`;
+  }
+
+  private buildWaitScript(): string {
+    return `function(input) {
+      const start = Date.now();
+      const condition = input && ["load", "selector", "text", "url", "time", "function"].includes(input.condition) ? input.condition : "load";
+      const value = typeof (input && input.value) === "string" ? input.value : "";
+      const strategy = input && input.strategy === "xpath" ? "xpath" : "selector";
+      const state = input && ["hidden", "attached"].includes(input.state) ? input.state : "visible";
+      const timeoutMs = Math.max(100, Math.min(Number.isFinite(input && input.timeoutMs) ? Math.trunc(input.timeoutMs) : 5000, 30000));
+
+      function byXPath(xpath) {
+        const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+        return result.singleNodeValue;
+      }
+
+      function isVisible(element) {
+        if (!element) return false;
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+      }
+
+      function check() {
+        if (condition === "time") return Date.now() - start >= timeoutMs;
+        if (condition === "load") return document.readyState === "complete";
+        if (condition === "url") return value ? location.href.includes(value) : true;
+        if (condition === "text") return value ? document.body.innerText.includes(value) : true;
+        if (condition === "function") {
+          if (!value) return true;
+          return Boolean(Function('"use strict"; return (' + value + ')')());
+        }
+        const element = strategy === "xpath" ? byXPath(value) : document.querySelector(value);
+        if (state === "attached") return Boolean(element);
+        if (state === "hidden") return !element || !isVisible(element);
+        return isVisible(element);
+      }
+
+      return new Promise((resolve) => {
+        function tick() {
+          let success = false;
+          try {
+            success = check();
+          } catch {
+            success = false;
+          }
+          const elapsedMs = Date.now() - start;
+          if (success || elapsedMs >= timeoutMs) {
+            resolve({
+              url: location.href,
+              title: document.title,
+              condition,
+              success,
+              timedOut: !success,
+              elapsedMs,
+            });
+            return;
+          }
+          window.setTimeout(tick, 100);
+        }
+        tick();
+      });
+    }`;
+  }
+
   private buildInspectStylesScript(): string {
     return `function(input) {
       const strategy = input && input.strategy === "xpath" ? "xpath" : "selector";
@@ -856,6 +2072,151 @@ export class BrowserWorkbenchManager {
     }`;
   }
 
+  private buildApplyStylesScript(): string {
+    return `function(input) {
+      const strategy = input && input.strategy === "xpath" ? "xpath" : "selector";
+      const query = typeof input.query === "string" ? input.query.trim() : "";
+      const index = Math.max(0, Number.isFinite(input.index) ? Math.trunc(input.index) : 0);
+      const persist = Boolean(input && input.persist);
+      const rawStyles = input && input.styles && typeof input.styles === "object" && !Array.isArray(input.styles) ? input.styles : {};
+
+      function resolveNodes() {
+        if (!query) return [];
+        if (strategy === "xpath") {
+          const result = document.evaluate(query, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+          const matches = [];
+          for (let position = 0; position < result.snapshotLength; position += 1) {
+            const item = result.snapshotItem(position);
+            if (item && item.nodeType === Node.ELEMENT_NODE) {
+              matches.push(item);
+            }
+          }
+          return matches;
+        }
+        return Array.from(document.querySelectorAll(query));
+      }
+
+      function buildPath(element) {
+        const parts = [];
+        let current = element;
+        while (current && current.nodeType === Node.ELEMENT_NODE) {
+          const parent = current.parentElement;
+          const tag = current.tagName.toLowerCase();
+          const nth = parent ? Array.prototype.indexOf.call(parent.children, current) + 1 : 1;
+          parts.unshift(tag + ":nth-of-type(" + nth + ")");
+          current = parent;
+        }
+        return parts.join(" > ");
+      }
+
+      function buildXPath(element) {
+        const parts = [];
+        let current = element;
+        while (current && current.nodeType === Node.ELEMENT_NODE) {
+          let nth = 1;
+          let sibling = current.previousElementSibling;
+          while (sibling) {
+            if (sibling.tagName === current.tagName) nth += 1;
+            sibling = sibling.previousElementSibling;
+          }
+          parts.unshift(current.tagName.toLowerCase() + "[" + nth + "]");
+          current = current.parentElement;
+        }
+        return "/" + parts.join("/");
+      }
+
+      function getAttributes(element) {
+        return Array.from(element.attributes || []).slice(0, 24).reduce((accumulator, attribute) => {
+          accumulator[attribute.name] = attribute.value;
+          return accumulator;
+        }, {});
+      }
+
+      function snapshot(element) {
+        const rect = element.getBoundingClientRect();
+        return {
+          index,
+          tagName: element.tagName.toLowerCase(),
+          id: element.id || undefined,
+          className: typeof element.className === "string" ? element.className : undefined,
+          text: (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 240) || undefined,
+          selector: element.id ? element.tagName.toLowerCase() + "#" + element.id : element.tagName.toLowerCase(),
+          path: buildPath(element),
+          xpath: buildXPath(element),
+          htmlSnippet: element.outerHTML ? element.outerHTML.slice(0, 400) : undefined,
+          attributes: getAttributes(element),
+          boundingBox: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          },
+        };
+      }
+
+      function normalizeStyles(styles) {
+        return Object.entries(styles).slice(0, 80).reduce((accumulator, entry) => {
+          const property = String(entry[0] || "").trim();
+          const value = entry[1];
+          if (!property || property.length > 120) return accumulator;
+          if (typeof value !== "string" && typeof value !== "number") return accumulator;
+          accumulator[property] = String(value);
+          return accumulator;
+        }, {});
+      }
+
+      const element = resolveNodes()[index];
+      const applied = normalizeStyles(rawStyles);
+      if (!element) {
+        return {
+          url: location.href,
+          title: document.title,
+          strategy,
+          query,
+          index,
+          found: false,
+          applied,
+          persist,
+          error: "Target element was not found.",
+        };
+      }
+
+      const properties = Object.keys(applied);
+      const computedBefore = window.getComputedStyle(element);
+      const before = properties.reduce((accumulator, property) => {
+        accumulator[property] = computedBefore.getPropertyValue(property);
+        return accumulator;
+      }, {});
+      const previousInlineStyle = element.getAttribute("style") || undefined;
+
+      properties.forEach((property) => {
+        element.style.setProperty(property, applied[property]);
+      });
+
+      const computedAfter = window.getComputedStyle(element);
+      const after = properties.reduce((accumulator, property) => {
+        accumulator[property] = computedAfter.getPropertyValue(property);
+        return accumulator;
+      }, {});
+
+      return {
+        url: location.href,
+        title: document.title,
+        strategy,
+        query,
+        index,
+        found: true,
+        applied,
+        previousInlineStyle,
+        nextInlineStyle: element.getAttribute("style") || undefined,
+        before,
+        after,
+        persist,
+        node: snapshot(element),
+      };
+    }`;
+  }
+
   private buildAnnotationScript(): string {
       return `function(options) {
       const inspectAt = ${this.buildInspectScript()};
@@ -869,11 +2230,13 @@ export class BrowserWorkbenchManager {
           ".__tech_cc_hub_hover{position:fixed;border:2px solid #1683ff;background:rgba(22,131,255,.06);box-sizing:border-box;pointer-events:none}",
           ".__tech_cc_hub_marker{position:fixed;width:28px;height:28px;border-radius:999px;background:#1683ff;color:white;display:grid;place-items:center;font-size:13px;font-weight:800;box-shadow:0 0 0 3px white,0 8px 24px rgba(22,131,255,.36);pointer-events:auto;cursor:pointer}",
           ".__tech_cc_hub_outline{position:fixed;border:2px solid #1683ff;background:rgba(22,131,255,.08);box-sizing:border-box;pointer-events:none}",
-          ".__tech_cc_hub_comment{position:fixed;display:flex;align-items:center;gap:10px;width:min(420px,calc(100vw - 32px));height:54px;border:1px solid rgba(15,23,42,.1);border-radius:999px;background:rgba(255,255,255,.96);box-shadow:0 12px 34px rgba(15,23,42,.16);padding:0 12px 0 42px;pointer-events:auto}",
+          ".__tech_cc_hub_comment{position:fixed;display:grid;grid-template-columns:minmax(0,1fr) 34px;grid-template-rows:1fr 1fr;align-items:center;gap:6px 10px;width:min(440px,calc(100vw - 32px));height:92px;border:1px solid rgba(15,23,42,.1);border-radius:18px;background:rgba(255,255,255,.96);box-shadow:0 12px 34px rgba(15,23,42,.16);padding:10px 12px 10px 42px;pointer-events:auto}",
           ".__tech_cc_hub_comment[hidden]{display:none}",
           ".__tech_cc_hub_comment input{min-width:0;flex:1;border:0;outline:0;background:transparent;font-size:16px;color:#1f2937}",
           ".__tech_cc_hub_comment input::placeholder{color:#b9c0ca}",
-          ".__tech_cc_hub_submit{display:grid;place-items:center;width:34px;height:34px;border:0;border-radius:999px;background:#1683ff;color:white;font-size:18px;font-weight:800;cursor:pointer;box-shadow:0 8px 18px rgba(22,131,255,.24)}",
+          ".__tech_cc_hub_problem{grid-column:1;grid-row:1;border-bottom:1px solid rgba(15,23,42,.08)!important}",
+          ".__tech_cc_hub_expectation{grid-column:1;grid-row:2;font-size:14px!important}",
+          ".__tech_cc_hub_submit{grid-column:2;grid-row:1/3;display:grid;place-items:center;width:34px;height:34px;border:0;border-radius:999px;background:#1683ff;color:white;font-size:18px;font-weight:800;cursor:pointer;box-shadow:0 8px 18px rgba(22,131,255,.24)}",
           ".__tech_cc_hub_submit:disabled{background:#cbd5e1;box-shadow:none;cursor:default}",
           ".__tech_cc_hub_background{position:fixed;right:14px;top:14px;max-width:min(420px, calc(100vw - 40px));max-height:min(360px, calc(100vh - 28px));padding:10px 12px;border:1px solid #cbd5e1;background:rgba(255,255,255,0.98);border-radius:16px;box-shadow:0 16px 38px rgba(15,23,42,0.22);font-size:12px;line-height:1.45;color:#1f2937;overflow:hidden;display:none;pointer-events:auto;backdrop-filter:blur(6px)}",
           ".__tech_cc_hub_background[hidden]{display:none}",
@@ -930,6 +2293,7 @@ export class BrowserWorkbenchManager {
           url: annotation.url,
           title: annotation.title,
           comment: annotation.comment || "",
+          expectation: annotation.expectation || "",
           nodePosition: annotation.point,
           dom: annotation.domHint ? {
             tagName: annotation.domHint.tagName,
@@ -942,6 +2306,10 @@ export class BrowserWorkbenchManager {
             xpath: annotation.domHint.xpath,
             target: annotation.domHint.target,
             boundingBox: annotation.domHint.boundingBox,
+            componentStack: annotation.domHint.componentStack,
+            sourceCandidates: annotation.domHint.sourceCandidates,
+            componentStackSource: annotation.domHint.componentStackSource,
+            componentStackConfidence: annotation.domHint.componentStackConfidence,
             context: annotation.domHint.context,
           } : undefined,
           timestamp: annotation.createdAt,
@@ -1040,15 +2408,21 @@ export class BrowserWorkbenchManager {
         comment.className = "__tech_cc_hub_comment";
         const preferredLeft = box ? box.x + Math.min(96, Math.max(24, box.width * 0.2)) : annotation.point.x + 18;
         const preferredTop = box ? box.y + Math.min(14, Math.max(0, box.height - 10)) : annotation.point.y + 18;
-        const placement = placeWithinViewport(preferredLeft, preferredTop, Math.min(420, window.innerWidth - 32), 54);
+        const placement = placeWithinViewport(preferredLeft, preferredTop, Math.min(440, window.innerWidth - 32), 92);
         comment.style.left = placement.left + "px";
         comment.style.top = placement.top + "px";
         comment.dataset.annotationId = annotation.id;
         comment.dataset.annotationKey = annotation.key;
         const input = document.createElement("input");
-        input.placeholder = "添加评论...";
+        input.className = "__tech_cc_hub_problem";
+        input.placeholder = "问题描述...";
         input.value = annotation.comment || "";
         comment.appendChild(input);
+        const expectationInput = document.createElement("input");
+        expectationInput.className = "__tech_cc_hub_expectation";
+        expectationInput.placeholder = "预期状态（可选）...";
+        expectationInput.value = annotation.expectation || "";
+        comment.appendChild(expectationInput);
         const submit = document.createElement("button");
         submit.type = "button";
         submit.className = "__tech_cc_hub_submit";
@@ -1057,8 +2431,15 @@ export class BrowserWorkbenchManager {
         comment.appendChild(submit);
         function submitComment() {
           annotation.comment = input.value.trim();
+          annotation.expectation = expectationInput.value.trim();
           emitAnnotation(annotation);
           comment.hidden = true;
+        }
+        function updateSubmitState() {
+          annotation.comment = input.value;
+          annotation.expectation = expectationInput.value;
+          showBackgroundInfo(annotation);
+          submit.disabled = !input.value.trim() && !expectationInput.value.trim();
         }
         marker.addEventListener("click", function(event) {
           event.preventDefault();
@@ -1067,6 +2448,7 @@ export class BrowserWorkbenchManager {
           comment.hidden = !comment.hidden;
           if (!comment.hidden) {
             input.value = annotation.comment || input.value;
+            expectationInput.value = annotation.expectation || expectationInput.value;
             requestAnimationFrame(function() {
               input.focus();
               input.setSelectionRange(input.value.length, input.value.length);
@@ -1087,11 +2469,8 @@ export class BrowserWorkbenchManager {
         input.addEventListener("focus", function() {
           comment.hidden = false;
         });
-        input.addEventListener("input", function() {
-          annotation.comment = input.value;
-          showBackgroundInfo(annotation);
-          submit.disabled = !input.value.trim();
-        });
+        input.addEventListener("input", updateSubmitState);
+        expectationInput.addEventListener("input", updateSubmitState);
         input.addEventListener("keydown", function(event) {
           if (event.key === "Enter") {
             event.preventDefault();
@@ -1099,7 +2478,14 @@ export class BrowserWorkbenchManager {
           }
           if (event.key === "Escape") comment.hidden = true;
         });
-        submit.disabled = !input.value.trim();
+        expectationInput.addEventListener("keydown", function(event) {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            submitComment();
+          }
+          if (event.key === "Escape") comment.hidden = true;
+        });
+        submit.disabled = !input.value.trim() && !expectationInput.value.trim();
         layer.appendChild(marker);
         layer.appendChild(comment);
         requestAnimationFrame(function() { input.focus(); });
@@ -1354,6 +2740,152 @@ export class BrowserWorkbenchManager {
         if (text) return { type: "text", value: text };
         return undefined;
       }
+      function pushUnique(list, value) {
+        const normalized = cleanText(value);
+        if (!normalized || list.includes(normalized)) return;
+        list.push(normalized);
+      }
+      function componentNameFromReactFiber(fiber) {
+        if (!fiber) return "";
+        const type = fiber.elementType || fiber.type;
+        if (typeof type === "function") return type.displayName || type.name || "";
+        if (type && typeof type === "object") return type.displayName || type.name || "";
+        if (typeof type === "string") return "";
+        return fiber._debugOwner && componentNameFromReactFiber(fiber._debugOwner);
+      }
+      function reactFiberFromElement(element) {
+        if (!element) return null;
+        const key = Object.keys(element).find(function(item) {
+          return item.startsWith("__reactFiber$") || item.startsWith("__reactInternalInstance$");
+        });
+        return key ? element[key] : null;
+      }
+      function toNumber(value) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : undefined;
+      }
+      function cleanCandidate(candidate) {
+        if (!candidate) return null;
+        const component = cleanText(candidate.component || "");
+        const file = cleanText(candidate.file || "");
+        if (!component && !file) return null;
+        return {
+          component: component || undefined,
+          file: file || undefined,
+          line: toNumber(candidate.line),
+          column: toNumber(candidate.column),
+          framework: candidate.framework,
+          source: candidate.source,
+          confidence: candidate.confidence,
+        };
+      }
+      function pushCandidate(list, seen, candidate) {
+        const normalized = cleanCandidate(candidate);
+        if (!normalized) return;
+        const key = [
+          normalized.component || "",
+          normalized.file || "",
+          normalized.line || "",
+          normalized.column || "",
+          normalized.source || "",
+        ].join("|");
+        if (seen.has(key)) return;
+        seen.add(key);
+        list.push(normalized);
+      }
+      function reactSourceFromFiber(fiber) {
+        const source = fiber && (fiber._debugSource || fiber._debugOwner && fiber._debugOwner._debugSource);
+        if (!source) return null;
+        return {
+          file: source.fileName || source.file,
+          line: source.lineNumber || source.line,
+          column: source.columnNumber || source.column,
+        };
+      }
+      function collectReactBridge(element, stack, candidates, seen) {
+        let currentElement = element;
+        while (currentElement && stack.length < 12 && candidates.length < 12) {
+          let fiber = reactFiberFromElement(currentElement);
+          while (fiber && stack.length < 12 && candidates.length < 12) {
+            const component = componentNameFromReactFiber(fiber);
+            const source = reactSourceFromFiber(fiber);
+            pushUnique(stack, component);
+            if (component || source) {
+              pushCandidate(candidates, seen, {
+                component,
+                file: source && source.file,
+                line: source && source.line,
+                column: source && source.column,
+                framework: "react",
+                source: source && source.file ? "react-debug-source" : "component-stack",
+                confidence: source && source.file ? "high" : "medium",
+              });
+            }
+            fiber = fiber.return;
+          }
+          currentElement = currentElement.parentElement;
+        }
+      }
+      function collectVueBridge(element, stack, candidates, seen) {
+        let currentElement = element;
+        while (currentElement && stack.length < 12 && candidates.length < 12) {
+          let component = currentElement.__vueParentComponent || currentElement.__vue__;
+          while (component && stack.length < 12 && candidates.length < 12) {
+            const type = component.type || component.$options || {};
+            const name = type.name || type.__name || type.displayName;
+            const file = type.__file || type.__hmrId || component.__file;
+            pushUnique(stack, name);
+            if (name || file) {
+              pushCandidate(candidates, seen, {
+                component: name,
+                file,
+                framework: "vue",
+                source: file ? "vue-file" : "component-stack",
+                confidence: file ? "high" : "medium",
+              });
+            }
+            component = component.parent || component.$parent;
+          }
+          currentElement = currentElement.parentElement;
+        }
+      }
+      function collectClassComponentHints(element, stack, candidates, seen) {
+        let current = element;
+        while (current && current !== document.documentElement && stack.length < 12 && candidates.length < 12) {
+          const classes = Array.from(current.classList || []);
+          classes.forEach(function(className) {
+            if (/^el-[a-z0-9-]+$/i.test(className)) {
+              const name = className.split("-").filter(Boolean).map(function(part) {
+                return part.charAt(0).toUpperCase() + part.slice(1);
+              }).join("");
+              pushUnique(stack, name);
+              pushCandidate(candidates, seen, {
+                component: name,
+                framework: "class",
+                source: "class-name",
+                confidence: "low",
+              });
+            }
+          });
+          current = current.parentElement;
+        }
+      }
+      function buildComponentBridge(element) {
+        const stack = [];
+        const sourceCandidates = [];
+        const seenCandidates = new Set();
+        collectReactBridge(element, stack, sourceCandidates, seenCandidates);
+        collectVueBridge(element, stack, sourceCandidates, seenCandidates);
+        collectClassComponentHints(element, stack, sourceCandidates, seenCandidates);
+        const hasHigh = sourceCandidates.some(function(candidate) { return candidate.confidence === "high"; });
+        const hasMedium = sourceCandidates.some(function(candidate) { return candidate.confidence === "medium"; });
+        return {
+          componentStack: stack.slice(0, 12),
+          sourceCandidates: sourceCandidates.slice(0, 12),
+          componentStackSource: hasHigh ? "devtools-runtime-source" : hasMedium ? "framework-runtime" : stack.length ? "dom-class-hints" : undefined,
+          componentStackConfidence: hasHigh ? "high" : hasMedium ? "medium" : stack.length ? "low" : undefined,
+        };
+      }
       function compactElementLabel(element) {
         const tag = element.tagName ? element.tagName.toLowerCase() : "";
         const id = cleanText(element.id || "");
@@ -1392,6 +2924,7 @@ export class BrowserWorkbenchManager {
       const element = findPreferredElement(rawElement);
       const rect = element.getBoundingClientRect();
       const candidates = selectorCandidates(element);
+      const componentBridge = buildComponentBridge(element);
       return {
         tagName: element.tagName.toLowerCase(),
         role: element.getAttribute("role") || undefined,
@@ -1402,6 +2935,10 @@ export class BrowserWorkbenchManager {
         xpath: buildXPath(element),
         target: targetOf(element),
         selectorCandidates: candidates,
+        componentStack: componentBridge.componentStack,
+        sourceCandidates: componentBridge.sourceCandidates,
+        componentStackSource: componentBridge.componentStackSource,
+        componentStackConfidence: componentBridge.componentStackConfidence,
         boundingBox: {
           x: rect.x,
           y: rect.y,

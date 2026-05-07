@@ -60,6 +60,16 @@ type BrowserWorkbenchConsoleLog = {
     line?: number;
 }
 
+type BrowserWorkbenchSourceCandidate = {
+    component?: string;
+    file?: string;
+    line?: number;
+    column?: number;
+    framework?: "react" | "vue" | "class";
+    source: "react-debug-source" | "vue-file" | "component-stack" | "class-name";
+    confidence: "high" | "medium" | "low";
+}
+
 type BrowserWorkbenchDomHint = {
     tagName: string;
     role?: string;
@@ -71,6 +81,10 @@ type BrowserWorkbenchDomHint = {
     target?: { type: "text"; value: string } | { type: "image"; url: string; alt?: string };
     selectorCandidates: string[];
     boundingBox?: { x: number; y: number; width: number; height: number };
+    componentStack?: string[];
+    sourceCandidates?: BrowserWorkbenchSourceCandidate[];
+    componentStackSource?: string;
+    componentStackConfidence?: "high" | "medium" | "low";
     context?: {
         ancestorChain?: string[];
         nearbyText?: string;
@@ -82,6 +96,7 @@ type BrowserWorkbenchAnnotation = {
     url: string;
     title?: string;
     comment?: string;
+    expectation?: string;
     removed?: boolean;
     createdAt: number;
     point: { x: number; y: number };
