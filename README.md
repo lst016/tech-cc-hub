@@ -87,7 +87,7 @@ npm run rebuild
 | 执行轨迹 | 聊天右侧展示实时统计、诊断和时间线；完整链路可进入 Trace Viewer。 |
 | 任务系统 | 同步飞书任务，本地持久化队列，支持重试、暂停、删除、执行记录、产物列表和状态回写。 |
 | 插件与 MCP | 内置浏览器、设计检查、受控配置写入等 MCP 工具，供 Agent 在执行中调用。 |
-| 设计检查 | 支持截图语义分析、BrowserView 截图落盘、两图对比、diff 和 comparison 图生成。 |
+| 设计检查 | 支持截图语义分析、BrowserView 截图落盘、两图对比、diff / comparison 图、热点区域、JSON report 生成、历史 report 读取和产物列表回看。 |
 
 ## 任务系统原理
 

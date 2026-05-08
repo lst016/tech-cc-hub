@@ -205,6 +205,160 @@ function toTextToolResult(payload: unknown, isError = false): CallToolResult {
   };
 }
 
+type JsonRecord = Record<string, unknown>;
+
+const FIELD_ALIASES: Record<string, string> = {
+  box: "boundingBox",
+  bounds: "boundingBox",
+  computed: "computedStyle",
+  css: "computedStyle",
+  styles: "computedStyle",
+  style: "computedStyle",
+  vars: "cssVariables",
+  variables: "cssVariables",
+};
+
+const QUERY_RESULT_BASE_FIELDS = ["url", "title", "strategy", "query", "total", "returned"] as const;
+const QUERY_RESULT_TOP_FIELDS = new Set<string>([...QUERY_RESULT_BASE_FIELDS, "matches"]);
+const STYLE_INSPECTION_BASE_FIELDS = ["url", "title", "strategy", "query", "index", "found"] as const;
+const STYLE_INSPECTION_TOP_FIELDS = new Set<string>([
+  ...STYLE_INSPECTION_BASE_FIELDS,
+  "node",
+  "inlineStyle",
+  "computedStyle",
+  "cssVariables",
+]);
+
+function normalizeFieldParts(field: string, removablePrefixes: string[] = []): string[] {
+  const parts = field
+    .split(".")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length > 0 && removablePrefixes.includes(parts[0])) {
+    parts.shift();
+  }
+  return parts.map((part) => FIELD_ALIASES[part] ?? part);
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getPathValue(source: unknown, parts: string[]): unknown {
+  if (parts.length === 0) {
+    return source;
+  }
+  if (Array.isArray(source)) {
+    return source.map((item) => getPathValue(item, parts)).filter((value) => value !== undefined);
+  }
+  if (!isRecord(source)) {
+    return undefined;
+  }
+  const [head, ...tail] = parts;
+  return getPathValue(source[head], tail);
+}
+
+function setPathValue(target: JsonRecord, parts: string[], value: unknown): void {
+  if (parts.length === 0 || value === undefined) {
+    return;
+  }
+  const [head, ...tail] = parts;
+  if (tail.length === 0) {
+    target[head] = value;
+    return;
+  }
+  if (!isRecord(target[head])) {
+    target[head] = {};
+  }
+  setPathValue(target[head] as JsonRecord, tail, value);
+}
+
+function normalizeFields(fields: string[] | undefined): string[] {
+  return Array.from(new Set((fields ?? []).map((field) => field.trim()).filter(Boolean)));
+}
+
+function filterNodeQueryResult(
+  result: BrowserWorkbenchNodeQueryResult,
+  fields: string[] | undefined,
+): BrowserWorkbenchNodeQueryResult | JsonRecord {
+  const selectedFields = normalizeFields(fields);
+  if (selectedFields.length === 0) {
+    return result;
+  }
+
+  const filtered: JsonRecord = {};
+  for (const field of QUERY_RESULT_BASE_FIELDS) {
+    const value = result[field];
+    if (value !== undefined) {
+      filtered[field] = value;
+    }
+  }
+
+  const wantsFullMatches = selectedFields.some((field) => {
+    const parts = normalizeFieldParts(field, ["result"]);
+    return parts.length === 1 && parts[0] === "matches";
+  });
+  const matchFields = selectedFields.filter((field) => {
+    const parts = normalizeFieldParts(field, ["result", "matches", "match", "node"]);
+    return parts.length > 0 && !QUERY_RESULT_TOP_FIELDS.has(parts[0]);
+  });
+  if (wantsFullMatches) {
+    filtered.matches = result.matches;
+  } else if (matchFields.length > 0 || selectedFields.some((field) => normalizeFieldParts(field, ["result"])[0] === "matches")) {
+    filtered.matches = result.matches.map((match) => {
+      const item: JsonRecord = { index: match.index };
+      for (const field of matchFields) {
+        const parts = normalizeFieldParts(field, ["result", "matches", "match", "node"]);
+        setPathValue(item, parts, getPathValue(match, parts));
+      }
+      return item;
+    });
+  }
+
+  for (const field of selectedFields) {
+    const parts = normalizeFieldParts(field, ["result"]);
+    if (parts.length > 0 && QUERY_RESULT_TOP_FIELDS.has(parts[0]) && parts[0] !== "matches") {
+      setPathValue(filtered, parts, getPathValue(result, parts));
+    }
+  }
+
+  return filtered;
+}
+
+function filterStyleInspection(
+  inspection: BrowserWorkbenchStyleInspection,
+  fields: string[] | undefined,
+): BrowserWorkbenchStyleInspection | JsonRecord {
+  const selectedFields = normalizeFields(fields);
+  if (selectedFields.length === 0) {
+    return inspection;
+  }
+
+  const filtered: JsonRecord = {};
+  for (const field of STYLE_INSPECTION_BASE_FIELDS) {
+    const value = inspection[field];
+    if (value !== undefined) {
+      filtered[field] = value;
+    }
+  }
+
+  for (const field of selectedFields) {
+    const parts = normalizeFieldParts(field, ["inspection"]);
+    if (parts.length === 0) {
+      continue;
+    }
+    if (STYLE_INSPECTION_TOP_FIELDS.has(parts[0])) {
+      setPathValue(filtered, parts, getPathValue(inspection, parts));
+      continue;
+    }
+    if (inspection.node) {
+      setPathValue(filtered, ["node", ...parts], getPathValue(inspection.node, parts));
+    }
+  }
+
+  return filtered;
+}
+
 function clampInteger(value: unknown, fallback = 80, max = 300): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -1164,13 +1318,14 @@ export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWit
 
   const queryNodesTool = tool(
     "browser_query_nodes",
-    "按 CSS selector 或 XPath 查询页面节点，返回匹配数量、节点路径、属性、文本和可选样式，适合定向定位组件或批量检查 DOM。",
+    "按 CSS selector 或 XPath 查询页面节点，返回匹配数量、节点路径、属性、文本和可选样式，适合定向定位组件或批量检查 DOM。可用 fields 只返回需要的字段，例如 [\"text\", \"selector\", \"box\", \"computed.color\"]。",
     {
       query: z.string().trim().min(1),
       strategy: z.enum(["selector", "xpath"]).optional(),
       maxResults: z.number().int().min(1).max(50).optional(),
       includeStyles: z.boolean().optional(),
       styleProps: z.array(z.string()).max(40).optional(),
+      fields: z.array(z.string().trim().min(1)).max(80).optional(),
     },
     async (input) => {
       const host = getHost();
@@ -1188,19 +1343,20 @@ export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWit
         action: "browser_query_nodes",
         success: true,
         sessionId: resolvedSessionId,
-        result: result.result,
+        result: result.result ? filterNodeQueryResult(result.result, input.fields) : result.result,
       });
     },
   );
 
   const inspectStylesTool = tool(
     "browser_inspect_styles",
-    "按 CSS selector 或 XPath 读取目标节点的计算样式、CSS 变量、内联样式和节点基础信息，适合诊断布局和样式问题。",
+    "按 CSS selector 或 XPath 读取目标节点的计算样式、CSS 变量、内联样式和节点基础信息，适合诊断布局和样式问题。可用 fields 只返回需要的字段，例如 [\"inlineStyle\", \"computed.color\", \"node.text\", \"box\"]。",
     {
       query: z.string().trim().min(1),
       strategy: z.enum(["selector", "xpath"]).optional(),
       index: z.number().int().min(0).max(200).optional(),
       properties: z.array(z.string()).max(60).optional(),
+      fields: z.array(z.string().trim().min(1)).max(80).optional(),
     },
     async (input) => {
       const host = getHost();
@@ -1217,7 +1373,7 @@ export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWit
         action: "browser_inspect_styles",
         success: true,
         sessionId: resolvedSessionId,
-        inspection: result.inspection,
+        inspection: result.inspection ? filterStyleInspection(result.inspection, input.fields) : result.inspection,
       });
     },
   );

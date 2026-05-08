@@ -1,3 +1,18 @@
+import {
+  Activity,
+  Camera,
+  CheckCircle2,
+  ChevronDown,
+  GitCompare,
+  Image,
+  ScanSearch,
+  ServerCog,
+  Settings,
+  Timer,
+  WandSparkles,
+  Wrench,
+  type LucideIcon,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import type { McpServerInfo } from "../../types";
 
@@ -8,14 +23,29 @@ type McpServerEntry = McpServerInfo & {
 type BuiltinToolInfo = {
   name: string;
   description: string;
+  icon?: LucideIcon;
+  tag?: string;
+  intent?: string;
 };
 
 type BuiltinToolGroup = {
   title: string;
+  summary?: string;
   tools: BuiltinToolInfo[];
 };
 
 type McpTab = "builtin" | "external";
+
+type BuiltinServerMeta = {
+  icon: LucideIcon;
+  description: string;
+  iconClassName: string;
+  highlights: string[];
+  workflow?: Array<{
+    label: string;
+    description: string;
+  }>;
+};
 
 const BUILTIN_TOOL_GROUPS: Record<string, BuiltinToolGroup[]> = {
   "tech-cc-hub-browser": [
@@ -102,11 +132,64 @@ const BUILTIN_TOOL_GROUPS: Record<string, BuiltinToolGroup[]> = {
   "tech-cc-hub-design": [
     {
       title: "视觉还原",
+      summary: "参考图理解、BrowserView 截图采集、像素 diff、热点报告和批量回归都在这里集中呈现。",
       tools: [
-        { name: "design_capture_current_view", description: "保存当前 BrowserView 截图作为设计候选图" },
-        { name: "design_inspect_image", description: "读取本地参考图的结构化视觉摘要" },
-        { name: "design_compare_current_view", description: "当前 BrowserView 与参考图做截图 diff" },
-        { name: "design_compare_images", description: "比较两张本地图片并输出 diff 产物" },
+        {
+          name: "design_inspect_image",
+          description: "读取本地参考图的结构化视觉摘要",
+          icon: ScanSearch,
+          tag: "读图",
+          intent: "先理解参考图",
+        },
+        {
+          name: "design_capture_current_view",
+          description: "保存当前 BrowserView 截图作为设计候选图",
+          icon: Camera,
+          tag: "采集",
+          intent: "保存当前页面",
+        },
+        {
+          name: "design_compare_current_view",
+          description: "当前 BrowserView 与参考图做截图 diff，输出热点区域和 report",
+          icon: GitCompare,
+          tag: "比对",
+          intent: "页面对齐参考图",
+        },
+        {
+          name: "design_compare_images",
+          description: "比较两张本地图片并输出 diff、热点区域和 report",
+          icon: Image,
+          tag: "离线",
+          intent: "两张截图互比",
+        },
+        {
+          name: "design_compare_current_view_batch",
+          description: "当前 BrowserView 一次性对比多张本地参考图，复用增强 diff 参数",
+          icon: GitCompare,
+          tag: "批量",
+          intent: "多参考图回归",
+        },
+        {
+          name: "design_compare_images_batch",
+          description: "批量比较多组本地参考图和候选图，支持独立阈值和忽略区域",
+          icon: Image,
+          tag: "批量",
+          intent: "多截图回归",
+        },
+        {
+          name: "design_read_comparison_report",
+          description: "读取历史 JSON report，恢复差异比例、热点区域和验收结论",
+          icon: ScanSearch,
+          tag: "报告",
+          intent: "复查比对结果",
+        },
+        {
+          name: "design_list_artifacts",
+          description: "列出最近 current、diff、comparison 和 report 视觉产物",
+          icon: Image,
+          tag: "历史",
+          intent: "找最近产物",
+        },
       ],
     },
   ],
@@ -120,6 +203,39 @@ const BUILTIN_TOOL_GROUPS: Record<string, BuiltinToolGroup[]> = {
       ],
     },
   ],
+};
+
+const BUILTIN_SERVER_META: Record<string, BuiltinServerMeta> = {
+  "tech-cc-hub-browser": {
+    icon: Activity,
+    description: "内置 BrowserView 自动化能力，覆盖导航、读取、交互、截图和诊断。",
+    iconClassName: "border-blue-500/15 bg-blue-50 text-blue-700",
+    highlights: ["BrowserView", "DOM 读取", "键鼠交互"],
+  },
+  "tech-cc-hub-admin": {
+    icon: Settings,
+    description: "应用运行配置管理能力，用于受控调整全局运行时设置。",
+    iconClassName: "border-slate-500/15 bg-slate-50 text-slate-700",
+    highlights: ["配置", "环境变量", "凭证引用"],
+  },
+  "tech-cc-hub-design": {
+    icon: WandSparkles,
+    description: "视觉还原工具链，帮助 Agent 少读大图、先摘要、再截图比照、看热点报告并迭代修 UI。",
+    iconClassName: "border-accent/20 bg-accent/8 text-accent",
+    highlights: ["结构化摘要", "BrowserView 截图", "Report 回看"],
+    workflow: [
+      { label: "读参考图", description: "inspect" },
+      { label: "截当前页", description: "capture" },
+      { label: "做 diff", description: "compare" },
+      { label: "看报告", description: "report" },
+    ],
+  },
+  "tech-cc-hub-cron": {
+    icon: Timer,
+    description: "持久化定时任务能力，用于创建、查看和删除后台计划任务。",
+    iconClassName: "border-amber-500/15 bg-amber-50 text-amber-700",
+    highlights: ["创建", "列表", "删除"],
+  },
 };
 
 type ElectronClient = {
@@ -178,7 +294,7 @@ export function McpSettingsPage() {
     <div>
       <div className="mb-6">
         <p className="text-sm text-ink-600">
-          查看当前已加载的 MCP 服务器。内置 MCP 由应用自动提供，外部 MCP 在全局配置的 <code className="rounded bg-ink-100 px-1 py-0.5 text-xs">mcpServers</code> 中定义。
+          查看当前已加载的 MCP 服务器。内置 MCP 由应用自动提供，外部 MCP 在全局配置的 <code className="rounded bg-surface-secondary px-1 py-0.5 text-xs">mcpServers</code> 中定义。
         </p>
       </div>
 
@@ -193,7 +309,7 @@ export function McpSettingsPage() {
         <div className="rounded-2xl border border-error/20 bg-error-light px-4 py-3 text-sm text-error">{error}</div>
       ) : (
         <div className="space-y-4">
-          <div className="inline-flex rounded-lg bg-ink-100 p-1" role="tablist" aria-label="MCP 服务器类型">
+          <div className="inline-flex rounded-lg bg-surface-secondary p-1" role="tablist" aria-label="MCP 服务器类型">
             <McpTabButton
               active={activeTab === "builtin"}
               count={builtin.length}
@@ -226,9 +342,9 @@ export function McpSettingsPage() {
             ) : (
               <div className="space-y-2">
                 {external.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-ink-200 px-5 py-8 text-center">
+                  <div className="rounded-2xl border border-dashed border-ink-900/10 px-5 py-8 text-center">
                     <p className="text-sm text-ink-400">暂无已配置的外部 MCP 服务器</p>
-                    <p className="mt-1 text-xs text-ink-300">在「全局配置」页面的 <code className="rounded bg-ink-100 px-1">mcpServers</code> 中添加</p>
+                    <p className="mt-1 text-xs text-muted">在「全局配置」页面的 <code className="rounded bg-surface-secondary px-1">mcpServers</code> 中添加</p>
                   </div>
                 ) : (
                   external.map((server, index) => (
@@ -266,36 +382,46 @@ function McpTabButton({ active, count, label, onClick }: { active: boolean; coun
 function ServerCard({ server, onToggle }: { server: McpServerEntry; onToggle: () => void }) {
   const toolGroups = server.type === "builtin" ? BUILTIN_TOOL_GROUPS[server.name] ?? [] : [];
   const toolCount = toolGroups.reduce((count, group) => count + group.tools.length, 0);
+  const serverMeta = server.type === "builtin" ? BUILTIN_SERVER_META[server.name] : undefined;
+  const ServerIcon = serverMeta?.icon ?? ServerCog;
 
   return (
-    <div className="rounded-2xl border border-ink-200 bg-white shadow-soft transition-colors hover:border-ink-300">
+    <div className="overflow-hidden rounded-2xl border border-ink-900/10 bg-white shadow-soft transition-colors hover:border-ink-900/15">
       <button
         type="button"
-        className="flex w-full items-center gap-3 px-4 py-3 text-left"
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-bg-100/70"
         onClick={onToggle}
       >
-        <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg border text-xs font-bold ${server.type === "builtin" ? "border-accent/20 bg-accent/8 text-accent" : "border-ink-200 bg-ink-50 text-ink-500"}`}>
-          {server.type === "builtin" ? "B" : "E"}
+        <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border ${serverMeta?.iconClassName ?? "border-ink-900/10 bg-surface-secondary text-ink-500"}`}>
+          <ServerIcon className="h-4 w-4" />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block text-sm font-semibold text-ink-800">{server.name}</span>
-          <span className="mt-0.5 block truncate text-xs text-ink-400">
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="block truncate text-sm font-semibold text-ink-800">{server.name}</span>
+            {serverMeta?.highlights.map((highlight) => (
+              <span key={highlight} className="rounded-full bg-bg-100 px-2 py-0.5 text-[11px] font-medium text-muted">
+                {highlight}
+              </span>
+            ))}
+          </span>
+          <span className="mt-1 block text-xs leading-5 text-ink-400">
             {server.type === "builtin" ? `内置 · 由应用自动提供${toolCount ? ` · ${toolCount} 个工具` : ""}` : server.command}
           </span>
+          {serverMeta?.description && (
+            <span className="mt-1 block text-xs leading-5 text-muted">
+              {serverMeta.description}
+            </span>
+          )}
         </span>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${server.enabled ? "bg-success/10 text-success" : "bg-ink-100 text-ink-400"}`}>
+        <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium ${server.enabled ? "bg-success/10 text-success" : "bg-surface-secondary text-ink-400"}`}>
+          {server.enabled && <CheckCircle2 className="h-3 w-3" />}
           {server.enabled ? "启用" : "禁用"}
         </span>
-        <svg
-          className={`h-4 w-4 shrink-0 text-ink-400 transition-transform ${server.expanded ? "rotate-180" : ""}`}
-          viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-        >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-ink-400 transition-transform ${server.expanded ? "rotate-180" : ""}`} />
       </button>
 
       {server.expanded && (
-        <div className="border-t border-ink-100 px-4 py-3">
+        <div className="border-t border-ink-900/8 px-4 py-3">
           {server.type === "external" && (
             <div className="space-y-2">
               <DetailRow label="命令" value={server.command} mono />
@@ -307,7 +433,7 @@ function ServerCard({ server, onToggle }: { server: McpServerEntry; onToggle: ()
                   <span className="text-xs font-medium text-ink-500">环境变量</span>
                   <div className="mt-1 flex flex-wrap gap-1.5">
                     {server.envKeys.map((key) => (
-                      <code key={key} className="rounded-md bg-ink-50 px-2 py-0.5 text-xs text-ink-600">{key}=***</code>
+                      <code key={key} className="rounded-md bg-surface-secondary px-2 py-0.5 text-xs text-ink-600">{key}=***</code>
                     ))}
                   </div>
                 </div>
@@ -325,6 +451,7 @@ function ServerCard({ server, onToggle }: { server: McpServerEntry; onToggle: ()
 
 function BuiltinToolsPanel({ serverName, groups }: { serverName: string; groups: BuiltinToolGroup[] }) {
   const toolCount = groups.reduce((count, group) => count + group.tools.length, 0);
+  const serverMeta = BUILTIN_SERVER_META[serverName];
 
   if (groups.length === 0) {
     return (
@@ -335,29 +462,70 @@ function BuiltinToolsPanel({ serverName, groups }: { serverName: string; groups:
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-ink-400">
-          内置 MCP 服务器由应用自动管理，在 Agent 运行时始终可用。
-        </p>
-        <span className="rounded-full bg-ink-50 px-2.5 py-1 text-[11px] font-medium text-ink-500">
-          {toolCount} tools
-        </span>
+    <div className="space-y-4">
+      <div className="rounded-xl border border-ink-900/8 bg-bg-100 px-3.5 py-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-ink-700">内置运行时能力</p>
+            <p className="mt-1 text-xs leading-5 text-muted">
+              内置 MCP 服务器由应用自动管理，在 Agent 运行时始终可用。
+            </p>
+          </div>
+          <span className="rounded-full border border-ink-900/8 bg-white px-2.5 py-1 text-[11px] font-semibold text-ink-500">
+            {toolCount} tools
+          </span>
+        </div>
+        {serverMeta?.workflow && (
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {serverMeta.workflow.map((step, index) => (
+              <div key={step.label} className="flex min-w-0 items-center gap-2 rounded-lg border border-ink-900/8 bg-white px-2.5 py-2">
+                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-accent/8 text-[11px] font-bold text-accent">
+                  {index + 1}
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-semibold text-ink-700">{step.label}</span>
+                  <span className="block truncate text-[11px] text-muted">{step.description}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       <div className="space-y-3">
         {groups.map((group) => (
-          <div key={`${serverName}-${group.title}`} className="border-t border-ink-100 pt-3 first:border-t-0 first:pt-0">
-            <div className="mb-2 flex items-center gap-2">
+          <div key={`${serverName}-${group.title}`} className="border-t border-ink-900/8 pt-3 first:border-t-0 first:pt-0">
+            <div className="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
               <span className="text-xs font-semibold text-ink-700">{group.title}</span>
-              <span className="text-[11px] text-ink-300">{group.tools.length}</span>
+              <span className="text-[11px] text-muted">{group.tools.length}</span>
+              {group.summary && (
+                <span className="text-[11px] leading-5 text-muted">{group.summary}</span>
+              )}
             </div>
-            <div className="grid gap-2 md:grid-cols-2">
-              {group.tools.map((tool) => (
-                <div key={tool.name} className="min-w-0 rounded-lg bg-ink-50 px-3 py-2">
-                  <code className="block truncate text-[11px] font-semibold text-ink-700">{tool.name}</code>
-                  <p className="mt-1 text-xs leading-5 text-ink-500">{tool.description}</p>
-                </div>
-              ))}
+            <div className="grid gap-2 lg:grid-cols-2 xl:grid-cols-3">
+              {group.tools.map((tool) => {
+                const ToolIcon = tool.icon ?? Wrench;
+                return (
+                  <div key={tool.name} className="min-w-0 rounded-xl border border-ink-900/8 bg-white px-3 py-2.5 transition-colors hover:border-accent/20 hover:bg-accent-subtle">
+                    <div className="flex items-start gap-2.5">
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-surface-secondary text-ink-500">
+                        <ToolIcon className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+                          <code className="break-all text-[11px] font-semibold leading-4 text-ink-800">{tool.name}</code>
+                          {tool.tag && (
+                            <span className="rounded-full bg-accent/8 px-1.5 py-0.5 text-[10px] font-semibold text-accent">{tool.tag}</span>
+                          )}
+                        </span>
+                        {tool.intent && (
+                          <span className="mt-1 block text-[11px] font-medium text-ink-600">{tool.intent}</span>
+                        )}
+                        <span className="mt-1 block text-xs leading-5 text-ink-500">{tool.description}</span>
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         ))}
@@ -371,7 +539,7 @@ function DetailRow({ label, value, mono }: { label: string; value: string; mono?
     <div className="flex items-start gap-3">
       <span className="shrink-0 text-xs font-medium text-ink-500 w-14">{label}</span>
       {mono ? (
-        <code className="min-w-0 break-all rounded-md bg-ink-50 px-2 py-0.5 text-xs text-ink-700">{value}</code>
+        <code className="min-w-0 break-all rounded-md bg-surface-secondary px-2 py-0.5 text-xs text-ink-700">{value}</code>
       ) : (
         <span className="text-xs text-ink-700">{value}</span>
       )}

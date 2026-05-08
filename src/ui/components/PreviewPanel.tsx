@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import hljs from "highlight.js";
 import MDContent from "../render/markdown";
 
@@ -54,79 +54,60 @@ function highlightCode(code: string, language?: string): string {
 }
 
 export function PreviewPanel({ files, activeFileId, onClose, onSelectFile }: PreviewPanelProps) {
-  const [tabs, setTabs] = useState<PreviewTab[]>([]);
+  const [closedTabIds, setClosedTabIds] = useState<Set<string>>(() => new Set());
   const [activeTabId, setActiveTabId] = useState<string>("");
   const [viewMode, setViewMode] = useState<"preview" | "source">("preview");
-  const [imageZoom, setImageZoom] = useState(false);
+  const [zoomedImageTabId, setZoomedImageTabId] = useState<string | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
 
-  useEffect(() => {
-    setTabs((current) => {
-      const next: PreviewTab[] = [];
-      const existingMap = new Map(current.map((t) => [t.path, t]));
-
-      for (const file of files) {
-        const existing = existingMap.get(file.path);
-        if (existing) {
-          next.push({
-            ...existing,
-            ...file,
-            loading: false,
-            language: file.language ?? existing.language ?? detectLanguage(file.path),
-          });
-          continue;
-        }
-        const tab: PreviewTab = {
+  const tabs = useMemo<PreviewTab[]>(
+    () =>
+      files
+        .filter((file) => !closedTabIds.has(file.path))
+        .map((file) => ({
           ...file,
           id: file.path,
           loading: false,
           language: file.language ?? detectLanguage(file.path),
-        };
-        next.push(tab);
-      }
+        })),
+    [closedTabIds, files],
+  );
 
-      return next;
-    });
-  }, [files]);
-
-  useEffect(() => {
-    const targetId = activeFileId ?? tabs[0]?.id;
-    if (targetId && targetId !== activeTabId) {
-      setActiveTabId(targetId);
-    }
-  }, [activeFileId, tabs, activeTabId]);
-
-  useEffect(() => {
-    setImageZoom(false);
-  }, [activeTabId]);
-
-  const activeTab = tabs.find((t) => t.id === activeTabId);
+  const resolvedActiveTabId =
+    (activeFileId && tabs.some((tab) => tab.id === activeFileId) ? activeFileId : undefined) ??
+    (activeTabId && tabs.some((tab) => tab.id === activeTabId) ? activeTabId : undefined) ??
+    tabs[0]?.id ??
+    "";
+  const activeTab = tabs.find((t) => t.id === resolvedActiveTabId);
   const isMarkdown = activeTab?.language === "markdown";
   const isImage = activeTab ? isImageFile(activeTab.path) : false;
+  const imageZoom = Boolean(resolvedActiveTabId && zoomedImageTabId === resolvedActiveTabId);
 
   const handleCloseTab = useCallback(
     (tabId: string) => {
-      setTabs((current) => {
-        const next = current.filter((t) => t.id !== tabId);
-        if (tabId === activeTabId && next.length > 0) {
-          const removedIndex = current.findIndex((t) => t.id === tabId);
-          const nextActive = next[Math.min(removedIndex, next.length - 1)];
-          setActiveTabId(nextActive.id);
-          onSelectFile?.(nextActive.id);
-        }
-        if (next.length === 0) {
-          onClose?.();
-        }
-        return next;
+      const removedIndex = tabs.findIndex((t) => t.id === tabId);
+      const next = tabs.filter((t) => t.id !== tabId);
+      setClosedTabIds((current) => {
+        const updated = new Set(current);
+        updated.add(tabId);
+        return updated;
       });
+      if (zoomedImageTabId === tabId) {
+        setZoomedImageTabId(null);
+      }
+      if (next.length === 0) {
+        setActiveTabId("");
+        onClose?.();
+        return;
+      }
+      if (tabId === resolvedActiveTabId) {
+        const nextActive = next[Math.min(Math.max(removedIndex, 0), next.length - 1)];
+        setActiveTabId(nextActive.id);
+        onSelectFile?.(nextActive.id);
+      }
     },
-    [activeTabId, onClose, onSelectFile],
+    [onClose, onSelectFile, resolvedActiveTabId, tabs, zoomedImageTabId],
   );
-
-  const highlightedCode = useMemo(() => {
-    if (isMarkdown || isImage || !activeTab?.content) return null;
-    return highlightCode(activeTab.content, activeTab.language);
-  }, [activeTab?.content, activeTab?.language, isMarkdown, isImage]);
 
   if (tabs.length === 0) {
     return (
@@ -139,9 +120,11 @@ export function PreviewPanel({ files, activeFileId, onClose, onSelectFile }: Pre
   const activeContent = !activeTab?.loading && !activeTab?.error ? activeTab?.content : null;
   const hasPreviewContent = activeContent != null;
   const hasEmptyContent = !activeTab?.loading && !activeTab?.error && activeContent == null;
+  const highlightedCode =
+    hasPreviewContent && !isMarkdown && !isImage ? highlightCode(activeContent, activeTab?.language) : null;
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-ink-950">
+    <div className="flex h-full min-h-0 flex-col bg-[#0D0F12]">
       {/* Tab bar */}
       <div className="flex shrink-0 items-center border-b border-white/[0.06]">
         <div className="flex min-w-0 flex-1 overflow-x-auto">
@@ -151,12 +134,13 @@ export function PreviewPanel({ files, activeFileId, onClose, onSelectFile }: Pre
               type="button"
               onClick={() => {
                 setActiveTabId(tab.id);
+                setZoomedImageTabId(null);
                 onSelectFile?.(tab.id);
               }}
               className={`group flex shrink-0 items-center gap-2 border-r border-white/[0.06] px-3 py-2.5 text-left text-xs transition ${
-                tab.id === activeTabId
-                  ? "bg-white/[0.06] text-ink-100"
-                  : "text-ink-500 hover:bg-white/[0.03] hover:text-ink-300"
+                tab.id === resolvedActiveTabId
+                  ? "bg-white/[0.06] text-white/70"
+                  : "text-ink-500 hover:bg-white/[0.03] hover:text-white/90"
               }`}
             >
               <span className="max-w-[160px] truncate font-medium">
@@ -167,7 +151,7 @@ export function PreviewPanel({ files, activeFileId, onClose, onSelectFile }: Pre
               )}
               <button
                 type="button"
-                className="ml-1 rounded p-0.5 text-muted opacity-0 transition hover:bg-white/[0.08] hover:text-ink-300 group-hover:opacity-100"
+                className="ml-1 rounded p-0.5 text-muted opacity-0 transition hover:bg-white/[0.08] hover:text-white/70 group-hover:opacity-100"
                 onClick={(e) => {
                   e.stopPropagation();
                   handleCloseTab(tab.id);
@@ -184,7 +168,7 @@ export function PreviewPanel({ files, activeFileId, onClose, onSelectFile }: Pre
         {onClose && (
           <button
             type="button"
-            className="shrink-0 px-3 py-2.5 text-muted transition hover:bg-white/[0.06] hover:text-ink-300"
+            className="shrink-0 px-3 py-2.5 text-muted transition hover:bg-white/[0.06] hover:text-white/70"
             onClick={onClose}
             aria-label="关闭预览面板"
           >
@@ -206,7 +190,7 @@ export function PreviewPanel({ files, activeFileId, onClose, onSelectFile }: Pre
                 type="button"
                 onClick={() => setViewMode(mode)}
                 className={`rounded px-2 py-0.5 text-[11px] transition ${
-                  viewMode === mode ? "bg-white/[0.08] text-ink-200" : "text-muted hover:text-ink-400"
+                  viewMode === mode ? "bg-white/[0.08] text-white/80" : "text-muted hover:text-ink-400"
                 }`}
               >
                 {mode === "preview" ? "预览" : "源码"}
@@ -245,7 +229,7 @@ export function PreviewPanel({ files, activeFileId, onClose, onSelectFile }: Pre
         {hasPreviewContent && isImage && (
           <div
             className={`flex flex-1 items-center justify-center p-4 ${imageZoom ? "cursor-zoom-out" : "cursor-zoom-in"}`}
-            onClick={() => setImageZoom(!imageZoom)}
+            onClick={() => setZoomedImageTabId(imageZoom ? null : resolvedActiveTabId)}
           >
             <img
               ref={imgRef}
@@ -268,7 +252,7 @@ export function PreviewPanel({ files, activeFileId, onClose, onSelectFile }: Pre
                 <MDContent text={activeContent ?? ""} />
               </div>
             ) : (
-              <pre className="min-w-0 flex-1 overflow-auto p-4 font-mono text-[13px] leading-6 text-ink-200 whitespace-pre-wrap">
+              <pre className="min-w-0 flex-1 overflow-auto p-4 font-mono text-[13px] leading-6 text-white/80 whitespace-pre-wrap">
                 {activeContent}
               </pre>
             )}

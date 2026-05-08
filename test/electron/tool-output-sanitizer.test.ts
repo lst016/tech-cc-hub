@@ -3,9 +3,16 @@ import assert from "node:assert/strict";
 
 import {
   buildOversizedTextToolOutputReplacement,
+  createTextToolOutputBlocks,
   extractInlineBase64ImageFromToolResponse,
   stripInlineBase64ImagesFromMessage,
 } from "../../src/electron/libs/tool-output-sanitizer.js";
+
+test("createTextToolOutputBlocks returns raw content blocks for updatedToolOutput", () => {
+  assert.deepEqual(createTextToolOutputBlocks("summary"), [
+    { type: "text", text: "summary" },
+  ]);
+});
 
 test("extractInlineBase64ImageFromToolResponse captures screenshot image blocks", () => {
   const image = extractInlineBase64ImageFromToolResponse({

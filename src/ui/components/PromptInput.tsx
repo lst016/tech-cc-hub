@@ -16,7 +16,13 @@ import {
   type PermissionRequest,
 } from "../store/useAppStore";
 import { copyTextToClipboard as copyText } from "../utils/clipboard";
-import { OPEN_BROWSER_WORKBENCH_URL_EVENT, PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT } from "../events";
+import {
+  ADD_PROMPT_ATTACHMENT_EVENT,
+  OPEN_BROWSER_WORKBENCH_URL_EVENT,
+  PREVIEW_OPEN_FILE_EVENT,
+  PROMPT_FOCUS_EVENT,
+  type AddPromptAttachmentDetail,
+} from "../events";
 import { ComposerContextCard } from "./ComposerContextCard";
 import { DecisionPanel } from "./DecisionPanel";
 
@@ -68,6 +74,10 @@ function normalizeSlashCommandList(commands?: SlashCommandPayloadItem[]): SlashC
   return Array.from(normalized.values());
 }
 
+function hasDraggedFiles(dataTransfer: DataTransfer | null): boolean {
+  return Boolean(dataTransfer && Array.from(dataTransfer.types).includes("Files"));
+}
+
 type FileMentionOption = {
   path: string;
   label: string;
@@ -112,7 +122,8 @@ const MAX_TEXT_ATTACHMENT_LENGTH = 20_000;
 const MAX_IMAGE_EDGE = 1600;
 const IMAGE_JPEG_QUALITY = 0.88;
 const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-const TEXT_FILE_PATTERN = /\.(txt|md|markdown|json|ya?ml|xml|csv|tsv|log|js|jsx|ts|tsx|py|rb|java|go|rs|sh|css|html|sql|toml|ini|env)$/i;
+const TEXT_FILE_PATTERN = /\.(txt|md|markdown|json|ya?ml|xml|svg|csv|tsv|log|js|jsx|ts|tsx|py|rb|java|go|rs|sh|css|html|sql|toml|ini|env)$/i;
+const SVG_MIME_TYPE = "image/svg+xml";
 const REASONING_OPTIONS: Array<{ value: RuntimeReasoningMode; label: string }> = [
   { value: "disabled", label: "关闭思考" },
   { value: "low", label: "低" },
@@ -569,6 +580,15 @@ function countStructuredContextBlocks(prompt: string) {
   return matches?.length ?? 0;
 }
 
+function getQueuedPromptPreview(prompt: string, contextCount: number) {
+  const visiblePrompt = prompt
+    .replace(/<(browser_annotations|code_references|message_references|file_references)>[\s\S]*?<\/\1>/g, "")
+    .trim();
+  if (visiblePrompt) return visiblePrompt;
+  if (contextCount > 0) return `${contextCount} 个结构化上下文`;
+  return prompt.trim();
+}
+
 function mergeQueuedAttachments(queue: QueuedMessageDraft[]) {
   return queue.flatMap((item) => item.attachments);
 }
@@ -667,6 +687,22 @@ function isTextFile(file: File): boolean {
 }
 
 async function fileToAttachment(file: File): Promise<PromptAttachment> {
+  if (file.type === SVG_MIME_TYPE || /\.svg$/i.test(file.name)) {
+    const text = await readFileAsText(file);
+    const normalizedText = text.length > MAX_TEXT_ATTACHMENT_LENGTH
+      ? `${text.slice(0, MAX_TEXT_ATTACHMENT_LENGTH)}\n\n[已截断：原文件约 ${text.length} 字符]`
+      : text;
+    return {
+      id: crypto.randomUUID(),
+      kind: "text",
+      name: file.name || `矢量图-${Date.now()}.svg`,
+      mimeType: file.type || SVG_MIME_TYPE,
+      data: normalizedText,
+      preview: normalizedText,
+      size: file.size,
+    };
+  }
+
   if (file.type.startsWith("image/")) {
     if (!SUPPORTED_IMAGE_TYPES.has(file.type)) {
       throw new Error(`暂不支持 ${file.type} 图片格式，请优先使用 PNG、JPEG、GIF 或 WebP。`);
@@ -995,6 +1031,7 @@ export function PromptInput({
   const isComposingRef = useRef(false);
   const compositionEndedAtRef = useRef(0);
   const [attachments, setAttachments] = useState<PromptAttachment[]>([]);
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [queuedMessagesBySession, setQueuedMessagesBySession] = useState<Record<string, QueuedMessageDraft[]>>(readQueuedMessagesFromStorage);
   const [showSlashBrowser, setShowSlashBrowser] = useState(false);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
@@ -1362,6 +1399,40 @@ export function PromptInput({
     event.target.value = "";
   }, [addFiles]);
 
+  const handleComposerDragEnter = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (disabled || !hasDraggedFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDraggingFiles(true);
+  }, [disabled]);
+
+  const handleComposerDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (disabled || !hasDraggedFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+    setIsDraggingFiles(true);
+  }, [disabled]);
+
+  const handleComposerDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (!hasDraggedFiles(event.dataTransfer)) return;
+    const nextTarget = event.relatedTarget as Node | null;
+    if (nextTarget && event.currentTarget.contains(nextTarget)) return;
+    setIsDraggingFiles(false);
+  }, []);
+
+  const handleComposerDrop = useCallback(async (event: React.DragEvent<HTMLDivElement>) => {
+    if (disabled || !hasDraggedFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDraggingFiles(false);
+
+    if (event.dataTransfer.files.length > 0) {
+      await addFiles(event.dataTransfer.files);
+      window.setTimeout(() => promptRef.current?.focus(), 0);
+    }
+  }, [addFiles, disabled]);
+
   const handleInput = (e: React.FormEvent<HTMLTextAreaElement>) => {
     const target = e.currentTarget;
     target.style.height = "auto";
@@ -1396,6 +1467,29 @@ export function PromptInput({
     window.addEventListener(PROMPT_FOCUS_EVENT, handlePromptFocus);
     return () => window.removeEventListener(PROMPT_FOCUS_EVENT, handlePromptFocus);
   }, []);
+
+  useEffect(() => {
+    const handleAddPromptAttachment = (event: Event) => {
+      const detail = (event as CustomEvent<AddPromptAttachmentDetail>).detail;
+      if (!detail || detail.kind !== "image" || !detail.data) return;
+      setAttachments((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          kind: "image",
+          name: detail.name || `browser-screenshot-${Date.now()}.png`,
+          mimeType: detail.mimeType || "image/png",
+          data: detail.data,
+          preview: detail.preview || detail.data,
+          size: detail.size,
+        },
+      ]);
+      setGlobalError(null);
+    };
+
+    window.addEventListener(ADD_PROMPT_ATTACHMENT_EVENT, handleAddPromptAttachment);
+    return () => window.removeEventListener(ADD_PROMPT_ATTACHMENT_EVENT, handleAddPromptAttachment);
+  }, [setGlobalError]);
 
   useEffect(() => {
     setFileMentionActiveIndex(0);
@@ -1613,16 +1707,27 @@ export function PromptInput({
           </div>
         </div>
       )}
-      <div className="mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[26px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,247,251,0.94))] px-3 py-2.5 shadow-[0_18px_44px_rgba(30,38,52,0.08)] backdrop-blur-xl xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
+      <div
+        className={`relative mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[26px] border bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,247,251,0.94))] px-3 py-2.5 shadow-[0_18px_44px_rgba(30,38,52,0.08)] backdrop-blur-xl transition-colors xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)] ${isDraggingFiles ? "border-accent/45 bg-accent/8 shadow-[0_20px_50px_rgba(255,122,64,0.18)]" : "border-black/6"}`}
+        onDragEnter={handleComposerDragEnter}
+        onDragOver={handleComposerDragOver}
+        onDragLeave={handleComposerDragLeave}
+        onDrop={(event) => { void handleComposerDrop(event); }}
+      >
+        {isDraggingFiles && (
+          <div className="pointer-events-none absolute inset-2 z-10 grid place-items-center rounded-[22px] border border-dashed border-accent/45 bg-white/75 text-sm font-semibold text-accent shadow-inner backdrop-blur-sm">
+            松开添加附件
+          </div>
+        )}
         {currentSessionQueue.length > 0 && (
-          <div className="mb-3 rounded-2xl border border-black/6 bg-[#f6f8fb] px-3 py-3">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <div className="text-xs font-medium text-ink-700">待发送队列 · {currentSessionQueue.length} 条</div>
-              <div className="flex items-center gap-2 text-[11px] text-muted">
-                    <span>运行中可点「插入」作为补充命令；空闲后会自动续发。</span>
+          <div className="mb-3 min-w-0 overflow-hidden rounded-2xl border border-black/6 bg-[#f6f8fb] px-3 py-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="shrink-0 text-xs font-medium text-ink-700">待发送队列 · {currentSessionQueue.length} 条</div>
+              <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 text-[11px] text-muted">
+                <span className="min-w-0">运行中可点「插入」作为补充命令；空闲后会自动续发。</span>
                 <button
                   type="button"
-                  className="rounded-full border border-black/8 bg-white px-2 py-0.5 font-semibold transition hover:text-accent"
+                  className="shrink-0 rounded-full border border-black/8 bg-white px-2 py-0.5 font-semibold transition hover:text-accent"
                   onClick={() => {
                     if (!activeSessionId) return;
                     setQueuedMessagesBySession((current) => {
@@ -1638,62 +1743,65 @@ export function PromptInput({
             </div>
             <div className="grid gap-2">
               {currentSessionQueue.map((queuedMessage, index) => {
-                const label = queuedMessage.prompt.trim()
+                const contextCount = countStructuredContextBlocks(queuedMessage.prompt);
+                const promptPreview = getQueuedPromptPreview(queuedMessage.prompt, contextCount);
+                const label = promptPreview
                   || (queuedMessage.attachments.length === 1
                     ? `附件：${queuedMessage.attachments[0].name}`
                     : `${queuedMessage.attachments.length} 个附件`);
-                const contextCount = countStructuredContextBlocks(queuedMessage.prompt);
                 return (
-                  <div key={queuedMessage.id} className="group flex flex-wrap items-center gap-x-2 gap-y-1 rounded-2xl border border-black/6 bg-white px-3 py-2 text-xs text-ink-700 transition hover:border-accent/18 hover:shadow-[0_10px_24px_rgba(30,38,52,0.06)]">
-                    <span className="shrink-0 rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-semibold text-accent">
+                  <div key={queuedMessage.id} className="group grid min-w-0 grid-cols-[auto,minmax(0,1fr)] items-start gap-x-2 gap-y-2 overflow-hidden rounded-2xl border border-black/6 bg-white px-3 py-2 text-xs text-ink-700 transition hover:border-accent/18 hover:shadow-[0_10px_24px_rgba(30,38,52,0.06)] sm:grid-cols-[auto,minmax(0,1fr),auto]">
+                    <span className="mt-0.5 shrink-0 rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-semibold text-accent">
                       {index === 0 ? "下一条" : `排队 ${index + 1}`}
                     </span>
                     <button
                       type="button"
-                      className="min-w-0 flex-1 truncate text-left transition hover:text-accent"
+                      className="min-w-0 overflow-hidden text-left leading-5 transition hover:text-accent [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] [overflow-wrap:anywhere]"
                       onClick={() => editQueuedDraft(queuedMessage)}
-                      title="点击编辑这条待发送消息"
+                      title={label}
                     >
                       {label}
                     </button>
-                    {queuedMessage.attachments.length > 0 && (
-                      <span className="shrink-0 rounded-full bg-[#eef2f8] px-2 py-0.5 text-[11px] text-muted">
-                        附件 {queuedMessage.attachments.length}
-                      </span>
-                    )}
-                    {contextCount > 0 && (
-                      <span className="shrink-0 rounded-full bg-accent/10 px-2 py-0.5 text-[11px] text-accent">
-                        上下文 {contextCount}
-                      </span>
-                    )}
-                    <span className="shrink-0 text-[11px] text-muted">{formatShortTime(queuedMessage.createdAt)}</span>
-                    {isRunning && (
+                    <div className="col-span-2 flex min-w-0 flex-wrap items-center gap-1.5 sm:col-span-1 sm:justify-end">
+                      {queuedMessage.attachments.length > 0 && (
+                        <span className="shrink-0 rounded-full bg-[#eef2f8] px-2 py-0.5 text-[11px] text-muted">
+                          附件 {queuedMessage.attachments.length}
+                        </span>
+                      )}
+                      {contextCount > 0 && (
+                        <span className="shrink-0 rounded-full bg-accent/10 px-2 py-0.5 text-[11px] text-accent">
+                          上下文 {contextCount}
+                        </span>
+                      )}
+                      <span className="shrink-0 text-[11px] text-muted">{formatShortTime(queuedMessage.createdAt)}</span>
+                      {isRunning && (
+                        <button
+                          type="button"
+                          className="shrink-0 rounded-full border border-accent/18 bg-accent/8 px-2.5 py-1 text-[11px] font-semibold text-accent transition hover:bg-accent/14"
+                          onClick={() => appendQueuedDraft(queuedMessage)}
+                          title="把这条消息作为补充命令插入当前执行"
+                        >
+                          插入
+                        </button>
+                      )}
                       <button
                         type="button"
-                        className="shrink-0 rounded-full border border-accent/18 bg-accent/8 px-2.5 py-1 text-[11px] font-semibold text-accent transition hover:bg-accent/14"
-                        onClick={() => appendQueuedDraft(queuedMessage)}
-                        title="把这条消息作为补充命令插入当前执行"
+                        className="shrink-0 rounded-full border border-black/6 bg-white px-2.5 py-1 text-[11px] font-medium text-ink-700 shadow-sm transition-colors hover:border-accent/20 hover:bg-accent/8 hover:text-accent"
+                        onClick={() => editQueuedDraft(queuedMessage)}
                       >
-                        插入
+                        编辑
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      className="shrink-0 rounded-full border border-black/6 bg-white px-2.5 py-1 text-[11px] font-medium text-ink-700 shadow-sm transition-colors hover:border-accent/20 hover:bg-accent/8 hover:text-accent"
-                      onClick={() => editQueuedDraft(queuedMessage)}
-                    >
-                      编辑
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
-                      onClick={() => removeQueuedDraft(queuedMessage.id)}
-                      aria-label="移除待发送消息"
-                    >
-                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M18 6 6 18M6 6l12 12" />
-                      </svg>
-                    </button>
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
+                        onClick={() => removeQueuedDraft(queuedMessage.id)}
+                        aria-label="移除待发送消息"
+                      >
+                        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M18 6 6 18M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -1808,7 +1916,7 @@ export function PromptInput({
                     <input
                       value={editingCodeReferenceComment}
                       onChange={(event) => setEditingCodeReferenceComment(event.target.value)}
-                      className="h-7 w-40 min-w-0 flex-1 rounded-full border border-black/10 bg-surface-secondary px-2 text-xs font-medium text-ink-800 outline-none focus:border-accent-500"
+                      className="h-7 w-40 min-w-0 flex-1 rounded-full border border-black/10 bg-surface-secondary px-2 text-xs font-medium text-ink-800 outline-none focus:border-accent"
                       placeholder="给这段代码补一句说明"
                     />
                   ) : reference.comment ? (
@@ -1820,7 +1928,7 @@ export function PromptInput({
                     <>
                       <button
                         type="button"
-                        className="rounded-full px-2 py-1 text-[10px] font-semibold text-accent-700 transition-colors hover:bg-accent-50"
+                        className="rounded-full px-2 py-1 text-[10px] font-semibold text-accent transition-colors hover:bg-accent/10"
                         onClick={() => {
                           updateCodeReference(activeSessionId, reference.id, {
                             comment: editingCodeReferenceComment.trim() || undefined,
@@ -2049,7 +2157,7 @@ export function PromptInput({
           type="file"
           multiple
           className="hidden"
-          accept="image/png,image/jpeg,image/gif,image/webp,.txt,.md,.markdown,.json,.yaml,.yml,.xml,.csv,.tsv,.log,.js,.jsx,.ts,.tsx,.py,.rb,.java,.go,.rs,.sh,.css,.html,.sql,.toml,.ini,.env"
+          accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,.txt,.md,.markdown,.json,.yaml,.yml,.xml,.svg,.csv,.tsv,.log,.js,.jsx,.ts,.tsx,.py,.rb,.java,.go,.rs,.sh,.css,.html,.sql,.toml,.ini,.env"
           onChange={(event) => { void handleFileInputChange(event); }}
         />
       </div>

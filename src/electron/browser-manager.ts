@@ -2222,7 +2222,10 @@ export class BrowserWorkbenchManager {
       const inspectAt = ${this.buildInspectScript()};
       function ensureLayer() {
         let layer = document.getElementById("__tech_cc_hub_annotation_layer__");
-        if (layer) return layer;
+        if (layer) {
+          layer.hidden = false;
+          return layer;
+        }
         const style = document.createElement("style");
         style.id = "__tech_cc_hub_annotation_style__";
         style.textContent = [
@@ -2498,7 +2501,13 @@ export class BrowserWorkbenchManager {
         document.removeEventListener("mousemove", window.__techCcHubAnnotationHoverHandler, true);
         window.__techCcHubAnnotationHoverHandler = null;
       }
-      if (!options.enabled) return true;
+      if (!options.enabled) {
+        const layer = document.getElementById("__tech_cc_hub_annotation_layer__");
+        const hover = layer && layer.querySelector(".__tech_cc_hub_hover");
+        if (hover) hover.remove();
+        if (layer) layer.hidden = true;
+        return true;
+      }
       window.__techCcHubAnnotationHoverHandler = function(event) {
         if (event.target && event.target.closest && event.target.closest("#__tech_cc_hub_annotation_layer__")) {
           return;

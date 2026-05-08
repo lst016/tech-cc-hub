@@ -1,5 +1,6 @@
 ﻿import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { DEV_BROWSER_PREVIEW_FLAG, getDevElectronRuntimeSource } from "../dev-electron-shim";
+import { ADD_PROMPT_ATTACHMENT_EVENT, PROMPT_FOCUS_EVENT, type AddPromptAttachmentDetail } from "../events";
 import { useAppStore } from "../store/useAppStore";
 import { shouldAttachBrowserWorkbench } from "../utils/browser-workbench-visibility";
 import { normalizeWorkbenchUrl } from "../utils/workbench-url";
@@ -110,6 +111,97 @@ function getWorkspaceRecentStorageKey(workspaceKey: string) {
   return `${RECENT_LOCAL_BROWSER_TARGETS_KEY}:${encodeURIComponent(workspaceKey || "__global__")}`;
 }
 
+function estimateDataUrlBytes(dataUrl: string): number | undefined {
+  const base64 = dataUrl.split(",", 2)[1];
+  if (!base64) return undefined;
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor(base64.length * 0.75) - padding);
+}
+
+function mimeTypeFromDataUrl(dataUrl: string): string {
+  const match = dataUrl.match(/^data:([^;,]+)[;,]/);
+  return match?.[1] || "image/png";
+}
+
+function browserScreenshotAttachmentName(): string {
+  const now = new Date();
+  const stamp = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+    String(now.getHours()).padStart(2, "0"),
+    String(now.getMinutes()).padStart(2, "0"),
+    String(now.getSeconds()).padStart(2, "0"),
+  ].join("");
+  return `browser-screenshot-${stamp}.png`;
+}
+
+function readAccessibleStyles(documentRef: Document): string {
+  return Array.from(documentRef.styleSheets)
+    .map((sheet) => {
+      try {
+        return Array.from(sheet.cssRules).map((rule) => rule.cssText).join("\n");
+      } catch {
+        return "";
+      }
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function capturePreviewFrameVisible(frame: HTMLIFrameElement): Promise<string | null> {
+  const documentRef = frame.contentDocument;
+  const sourceHtml = documentRef?.documentElement;
+  if (!documentRef || !sourceHtml) return null;
+
+  const width = Math.max(1, Math.round(frame.clientWidth || documentRef.documentElement.clientWidth || window.innerWidth));
+  const height = Math.max(1, Math.round(frame.clientHeight || documentRef.documentElement.clientHeight || window.innerHeight));
+  const clone = sourceHtml.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll("script").forEach((script) => script.remove());
+
+  const head = clone.querySelector("head") || clone.insertBefore(documentRef.createElement("head"), clone.firstChild);
+  const base = documentRef.createElement("base");
+  base.href = documentRef.location.href;
+  head.prepend(base);
+
+  const style = documentRef.createElement("style");
+  const scrollX = documentRef.defaultView?.scrollX ?? 0;
+  const scrollY = documentRef.defaultView?.scrollY ?? 0;
+  style.textContent = `
+    ${readAccessibleStyles(documentRef)}
+    html, body { margin: 0 !important; width: ${width}px !important; min-height: ${height}px !important; overflow: hidden !important; }
+    body { transform: translate(${-scrollX}px, ${-scrollY}px); transform-origin: 0 0; }
+  `;
+  head.append(style);
+
+  const serialized = new XMLSerializer().serializeToString(clone);
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      <foreignObject width="100%" height="100%">${serialized}</foreignObject>
+    </svg>
+  `;
+  const svgUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const nextImage = new Image();
+      nextImage.onload = () => resolve(nextImage);
+      nextImage.onerror = () => reject(new Error("preview screenshot render failed"));
+      nextImage.src = svgUrl;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, width, height);
+    context.drawImage(image, 0, 0);
+    return canvas.toDataURL("image/png");
+  } finally {
+    URL.revokeObjectURL(svgUrl);
+  }
+}
+
 function toBrowserPageTarget(value: string, options: { idPrefix?: string; current?: boolean; recent?: boolean; localOnly?: boolean } = {}): LocalBrowserTarget | null {
   const normalized = normalizeWorkbenchUrl(value) ?? value.trim();
   if (!normalized || typeof window === "undefined") return null;
@@ -204,6 +296,7 @@ export function BrowserWorkbenchPage({
   onOpenUsage,
 }: BrowserWorkbenchPageProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const previewFrameRef = useRef<HTMLIFrameElement | null>(null);
   const hasOpenedRef = useRef(false);
   const initialUrlRef = useRef(initialUrl);
   const sessionIdRef = useRef(sessionId);
@@ -466,12 +559,30 @@ export function BrowserWorkbenchPage({
       setStatusText("当前 Electron 主进程还没有截图能力，请重启应用后再试");
       return;
     }
-    if (isPreviewRuntime) {
-      setStatusText("Codex 内置浏览器不能截图 Electron BrowserView");
+    const result = await window.electron.captureBrowserWorkbenchVisible(sessionId ?? undefined);
+    let dataUrl = result.success ? result.dataUrl : undefined;
+    if (!dataUrl && isPreviewRuntime && previewFrameRef.current) {
+      try {
+        dataUrl = await capturePreviewFrameVisible(previewFrameRef.current) ?? undefined;
+      } catch {
+        dataUrl = undefined;
+      }
+    }
+    if (dataUrl) {
+      const detail: AddPromptAttachmentDetail = {
+        kind: "image",
+        name: browserScreenshotAttachmentName(),
+        mimeType: mimeTypeFromDataUrl(dataUrl),
+        data: dataUrl,
+        preview: dataUrl,
+        size: estimateDataUrlBytes(dataUrl),
+      };
+      window.dispatchEvent(new CustomEvent<AddPromptAttachmentDetail>(ADD_PROMPT_ATTACHMENT_EVENT, { detail }));
+      window.dispatchEvent(new CustomEvent(PROMPT_FOCUS_EVENT));
+      setStatusText("截图已加入输入框");
       return;
     }
-    const result = await window.electron.captureBrowserWorkbenchVisible(sessionId ?? undefined);
-    setStatusText(result.success && result.dataUrl ? "截图已捕获" : result.error || "截图失败");
+    setStatusText(result.error || "截图失败；预览态只能截取同源页面");
   };
 
   const handleToggleDevTools = async () => {
@@ -693,6 +804,11 @@ export function BrowserWorkbenchPage({
             <input value={url} onChange={(event) => setUrl(event.target.value)} className="min-w-0 flex-1 bg-transparent text-[12px] text-ink-700 outline-none placeholder:text-muted" placeholder="输入 URL" />
           </div>
           <div className="flex items-center justify-end gap-2">
+            {statusText && statusText !== "准备打开页面" && (
+              <span className="hidden max-w-[180px] truncate rounded-full bg-white/90 px-2.5 py-1 text-[11px] font-medium text-muted shadow-sm lg:inline">
+                {statusText}
+              </span>
+            )}
             <button type="button" onClick={handleToggleDevTools} disabled={!canUseBrowserView} className={`inline-flex h-8 w-8 items-center justify-center rounded-full border text-ink-700 transition disabled:opacity-50 ${isDevToolsOpen ? "border-accent/40 bg-accent-subtle text-accent" : "border-black/10 bg-white hover:bg-ink-900/5"}`} title={isDevToolsOpen ? "关闭检查器" : "打开检查器"} aria-label={isDevToolsOpen ? "关闭检查器" : "打开检查器"}>
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
                 <path d="M4 5.5h16v10H4z" />
@@ -787,6 +903,7 @@ export function BrowserWorkbenchPage({
               </div>
             ) : isPreviewRuntime && previewUrl ? (
               <iframe
+                ref={previewFrameRef}
                 src={previewUrl}
                 title={state.title || "浏览器预览"}
                 className="h-full w-full border-0 bg-white"

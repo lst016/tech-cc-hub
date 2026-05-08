@@ -99,7 +99,7 @@ function toneAccentClasses(tone: ActivityRailTone) {
     case "error":
       return "bg-error";
     default:
-      return "bg-ink-300";
+      return "bg-ink-500";
   }
 }
 

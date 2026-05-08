@@ -160,10 +160,12 @@ Agent Cowork **与 Claude Code 共享配置**。
 内置 MCP 工具支持 AI 在开发时做视觉对齐：
 
 - `design_capture_current_view`：截取当前内置浏览器 BrowserView，并保存为 PNG 文件。
-- `design_compare_current_view`：将当前 BrowserView 截图与 Figma 导出的参考图做截图比照，生成当前截图、diff 图、三栏 comparison 图、差异比例和尺寸信息。
-- `design_compare_images`：直接比照两张本地截图，适合比较 Figma 导出图、页面截图和回归截图。
+- `design_compare_current_view`：将当前 BrowserView 截图与 Figma 导出的参考图做截图比照，生成当前截图、diff 图、三栏 comparison 图、JSON report、差异比例、差异边界和热点区域。
+- `design_compare_images`：直接比照两张本地截图，适合比较 Figma 导出图、页面截图和回归截图；支持忽略动态区域、验收阈值、方向 diff 和热力 diff。
+- `design_list_artifacts`：列出最近生成的 current、diff、comparison 和 JSON report 视觉产物，便于后续轮次恢复上下文。
+- `design_read_comparison_report`：读取历史 JSON report，返回差异比例、差异边界、热点区域、验收结论和关联图片路径。
 
-这组工具用于把“看着不像”转成可执行的 UI 修正依据。comparison 图固定为「参考截图 / 当前截图 / 差异截图」三栏，AI 应先根据 diff 调整布局尺寸、间距和信息密度，再调整颜色、字体、阴影和图标细节。
+这组工具用于把“看着不像”转成可执行的 UI 修正依据。comparison 图固定为「参考截图 / 当前截图 / 差异截图」三栏，JSON report 会返回 `differenceRatio`、`diffBoundingBox`、`topDiffRegions` 和 `verdict`。AI 应先根据热点区域调整布局尺寸、间距和信息密度，再调整颜色、字体、阴影和图标细节；后续轮次应先用产物列表和 report 读取工具恢复证据。
 
 默认触发条件：
 

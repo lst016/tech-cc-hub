@@ -33,6 +33,7 @@ import {
 } from "./system-prompt-presets.js";
 import {
   buildOversizedTextToolOutputReplacement,
+  createTextToolOutputBlocks,
   buildToolImageReplacementText,
   extractInlineBase64ImageFromToolResponse,
 } from "./tool-output-sanitizer.js";
@@ -970,10 +971,8 @@ function shouldPreprocessImageRead(
   return false;
 }
 
-function createImageSummaryToolOutput(summary: string): { content: Array<{ type: "text"; text: string }> } {
-  return {
-    content: [{ type: "text", text: summary }],
-  };
+function createImageSummaryToolOutput(summary: string): Array<{ type: "text"; text: string }> {
+  return createTextToolOutputBlocks(summary);
 }
 
 function buildQualityHooks(

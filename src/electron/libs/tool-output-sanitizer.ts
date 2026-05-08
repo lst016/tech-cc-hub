@@ -11,9 +11,18 @@ export type OversizedTextToolOutput = {
   replacementText: string;
 };
 
+export type TextToolOutputBlock = {
+  type: "text";
+  text: string;
+};
+
 const DEFAULT_MAX_TEXT_TOOL_OUTPUT_CHARS = 18_000;
 const TEXT_TOOL_OUTPUT_HEAD_CHARS = 9_000;
 const TEXT_TOOL_OUTPUT_TAIL_CHARS = 4_000;
+
+export function createTextToolOutputBlocks(text: string): TextToolOutputBlock[] {
+  return [{ type: "text", text }];
+}
 
 export function extractInlineBase64ImageFromToolResponse(toolResponse: unknown): InlineBase64ToolImage | null {
   const contentBlocks = getContentBlocks(toolResponse);

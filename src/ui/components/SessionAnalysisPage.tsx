@@ -398,6 +398,7 @@ function buildWorkflowOptimizationPrompt(
   cards: WorkflowOptimizationCard[],
   diagnosticReport: string,
   model: ActivityRailModel,
+  session: SessionView | null,
 ) {
   const cardSummary = cards.map((card, index) => [
     `${index + 1}. ${card.title}：${card.metric}`,
@@ -405,9 +406,45 @@ function buildWorkflowOptimizationPrompt(
     `   证据：${card.evidence}`,
     `   下一步：${card.action}`,
   ].join("\n")).join("\n\n");
+  const toolItems = model.timeline.filter((item) => TOOL_LIKE_NODE_KINDS.has(item.nodeKind));
+  const readItems = model.timeline.filter((item) => item.nodeKind === "file_read");
+  const searchItems = model.timeline.filter((item) => item.nodeKind === "retrieval");
+  const writeItems = model.timeline.filter((item) => item.nodeKind === "file_write");
+  const validationItems = model.timeline.filter((item) => (
+    item.nodeKind === "evaluation" ||
+    item.nodeSubtype === "validation" ||
+    /校验|验证|测试|test|build|lint|typecheck|tsc/i.test(`${item.title} ${item.detail} ${item.toolName ?? ""}`)
+  ));
+  const toolCounts = new Map<string, number>();
+  toolItems.forEach((item) => {
+    const key = item.toolName || getNodeKindMeta(item).label;
+    toolCounts.set(key, (toolCounts.get(key) ?? 0) + 1);
+  });
+  const topTools = [...toolCounts.entries()]
+    .sort(([, left], [, right]) => right - left)
+    .slice(0, 8)
+    .map(([name, count]) => `${name}=${count}`)
+    .join(", ");
+  const sessionDataPointer = [
+    `- tech-cc-hub session id：${session?.id ?? "-"}`,
+    `- Claude/remote session id：${model.contextSnapshot.remoteSessionId || "-"}`,
+    `- cwd：${model.contextSnapshot.cwd || session?.cwd || "-"}`,
+    "- 本地会话库：%APPDATA%/tech-cc-hub/sessions.db；messages.data 内含 user_prompt、prompt_ledger、assistant tool_use、tool_result、result。",
+  ].join("\n");
+  const traceEvidenceSummary = [
+    `- Trace 节点：${model.timeline.length}；轮次：${model.promptAnalysis.ledgers?.length ?? "-"}；Prompt 估算：${model.promptAnalysis.totalTokenEstimate.toLocaleString("zh-CN")} tok。`,
+    `- 工具节点：${toolItems.length}；读文件：${readItems.length}；检索：${searchItems.length}；写入：${writeItems.length}；验证：${validationItems.length}。`,
+    `- 高频工具：${topTools || "无"}`,
+  ].join("\n");
 
   return [
-    "请基于本轮 Trace 诊断，优化你后续执行这类任务的工作流和 skill 使用方式。",
+    "请基于本轮 Trace 诊断和真实会话数据，优化你后续执行这类任务的工作流、项目规则和 skill 使用方式。",
+    "",
+    "执行前硬要求：",
+    "1. 不要只根据下方诊断报告泛泛总结；先读取或利用真实会话数据，至少核对 user_prompt、prompt_ledger、tool_use/tool_result、result 四类证据。",
+    "2. 优先围绕当前会话对应的项目、规则和工作流给出建议；不要默认把问题归因到系统 prompt。",
+    "3. 先区分产品修复、Rules、Skills、Memory 四类落点；只有当用户明确要求优化承载该会话的应用/工具本身时，才给出产品代码文件和最小补丁方案。",
+    "4. 输出前必须说明哪些结论来自会话数据，哪些只是从 Trace 卡片推断。",
     "",
     "目标：",
     "1. 找出本轮最浪费时间、上下文和工具调用的环节。",
@@ -428,6 +465,12 @@ function buildWorkflowOptimizationPrompt(
     "- 只读批量操作可以合并；写入、删除、移动、安装、提交等有副作用操作不要混进批量 Bash。",
     "- 复盘时如果发现同目录串行多次 Read、重复 Bash、ls/cat/grep 链路，应优先建议改成并发读取或先搜索收敛。",
     "",
+    "会话数据指针：",
+    sessionDataPointer,
+    "",
+    "Trace 证据摘要：",
+    traceEvidenceSummary,
+    "",
     "本轮概览：",
     `- 状态：${model.summary.statusLabel}`,
     `- 节点数：${model.timeline.length}`,
@@ -442,6 +485,7 @@ function buildWorkflowOptimizationPrompt(
     diagnosticReport,
     "",
     "请输出：",
+    "- 已读取/核对的会话数据来源",
     "- 优先级排序的工作流问题清单",
     "- 每个问题的证据",
     "- 下一轮执行 SOP",
@@ -2744,7 +2788,7 @@ export function SessionAnalysisPage({
                       </div>
                       <button
                         type="button"
-                        onClick={() => onSendWorkflowOptimizationPrompt(buildWorkflowOptimizationPrompt(workflowOptimizationCards, diagnosticReport, model))}
+                        onClick={() => onSendWorkflowOptimizationPrompt(buildWorkflowOptimizationPrompt(workflowOptimizationCards, diagnosticReport, model, session ?? null))}
                         disabled={!session?.id || session.status === "running"}
                         className="shrink-0 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] font-bold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
                       >
