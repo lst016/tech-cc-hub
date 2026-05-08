@@ -20,6 +20,10 @@ function isUsableConfig(config: ApiConfig | null | undefined): config is ApiConf
   );
 }
 
+function getEnabledUsableApiConfigs(): ApiConfig[] {
+  return loadApiConfigSettings().profiles.filter((profile) => profile.enabled && isUsableConfig(profile));
+}
+
 function resolveSystemClaudePath(): string | null {
   const candidates = [
     process.env.CLAUDE_CODE_PATH,
@@ -117,11 +121,45 @@ export function getClaudeCodePath(): string | undefined {
 
 // 获取当前有效的配置（优先界面配置，回退到文件配置）
 export function getCurrentApiConfig(): ApiConfig | null {
-  const uiConfig = loadApiConfigSettings().profiles.find((profile) => profile.enabled) ?? null;
+  const uiConfig = getEnabledUsableApiConfigs()[0] ?? null;
   if (isUsableConfig(uiConfig)) {
     return uiConfig;
   }
 
+  return getFallbackClaudeSettingsConfig();
+}
+
+export function getConfiguredModelNames(config: ApiConfig): string[] {
+  return Array.from(new Set([
+    config.model,
+    config.expertModel,
+    config.smallModel,
+    config.imageModel,
+    config.analysisModel,
+    ...(config.models ?? []).map((item) => item.name),
+  ].map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
+}
+
+export function getApiConfigForModel(modelName?: string): ApiConfig | null {
+  const normalizedModel = modelName?.trim();
+  const enabledConfigs = getEnabledUsableApiConfigs();
+
+  if (!normalizedModel) {
+    return enabledConfigs[0] ?? getFallbackClaudeSettingsConfig();
+  }
+
+  const matchedConfig = enabledConfigs.find((config) => getConfiguredModelNames(config).includes(normalizedModel));
+  if (matchedConfig) {
+    return matchedConfig;
+  }
+
+  const fallbackConfig = getFallbackClaudeSettingsConfig();
+  return fallbackConfig && getConfiguredModelNames(fallbackConfig).includes(normalizedModel)
+    ? fallbackConfig
+    : null;
+}
+
+function getFallbackClaudeSettingsConfig(): ApiConfig | null {
   // 回退到 ~/.claude/settings.json
   try {
     const settingsPath = join(homedir(), ".claude", "settings.json");
@@ -144,6 +182,7 @@ export function getCurrentApiConfig(): ApiConfig | null {
           analysisModel: String(model),
           models: [{ name: String(model), compressionThresholdPercent: 70 }],
           enabled: true,
+          provider: "custom",
           apiType: "anthropic"
         };
         // 持久化到 api-config.json

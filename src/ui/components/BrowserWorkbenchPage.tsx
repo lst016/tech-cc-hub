@@ -2,8 +2,10 @@
 import { DEV_BROWSER_PREVIEW_FLAG, getDevElectronRuntimeSource } from "../dev-electron-shim";
 import { ADD_PROMPT_ATTACHMENT_EVENT, PROMPT_FOCUS_EVENT, type AddPromptAttachmentDetail } from "../events";
 import { useAppStore } from "../store/useAppStore";
-import { shouldAttachBrowserWorkbench } from "../utils/browser-workbench-visibility";
+import { hasRenderableBrowserWorkbenchBounds, shouldAttachBrowserWorkbench } from "../utils/browser-workbench-visibility";
 import { normalizeWorkbenchUrl } from "../utils/workbench-url";
+import { ActivityWorkspaceTabs } from "./ActivityWorkspaceTabs";
+import type { ActivityWorkspaceTab } from "../utils/activity-workspace-tabs";
 
 type BrowserWorkbenchPageProps = {
   active?: boolean;
@@ -12,6 +14,7 @@ type BrowserWorkbenchPageProps = {
   sessionId?: string | null;
   onOpenTrace?: () => void;
   onOpenUsage?: () => void;
+  onOpenPreview?: () => void;
 };
 
 type AnnotationTool = "screenshot" | "page";
@@ -294,6 +297,7 @@ export function BrowserWorkbenchPage({
   sessionId = null,
   onOpenTrace,
   onOpenUsage,
+  onOpenPreview,
 }: BrowserWorkbenchPageProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const previewFrameRef = useRef<HTMLIFrameElement | null>(null);
@@ -345,12 +349,14 @@ export function BrowserWorkbenchPage({
   const syncBounds = useCallback(() => {
     if (!canUseBrowserView) return;
     if (!browserActive) {
+      hasOpenedRef.current = false;
       void window.electron.setBrowserWorkbenchBounds({ x: 0, y: 0, width: 0, height: 0 }, sessionId ?? undefined);
       return;
     }
     const element = surfaceRef.current;
     if (!element) return;
     const rect = element.getBoundingClientRect();
+    if (!hasRenderableBrowserWorkbenchBounds(rect)) return;
     void window.electron.setBrowserWorkbenchBounds({
       x: rect.x,
       y: rect.y,
@@ -417,6 +423,16 @@ export function BrowserWorkbenchPage({
     setIsDevToolsOpen(false);
   }, [hasBrowserRuntime, isPreviewRuntime, persistUrl, rememberLocalTarget, sessionId, syncBounds, url]);
 
+  const autoOpenUrl = useCallback((nextUrl: string) => {
+    if (hasOpenedRef.current) return;
+    hasOpenedRef.current = true;
+    void openUrl(nextUrl).catch((error) => {
+      hasOpenedRef.current = false;
+      console.warn("Failed to auto-open browser workbench:", error);
+      setStatusText(`页面自动打开失败：${error instanceof Error ? error.message : String(error)}`);
+    });
+  }, [openUrl]);
+
   useEffect(() => {
     const sessionChanged = sessionIdRef.current !== sessionId;
     sessionIdRef.current = sessionId;
@@ -439,9 +455,9 @@ export function BrowserWorkbenchPage({
     persistUrl(nextUrl);
     if (active && hasBrowserTab && nextUrl) {
       hasOpenedRef.current = false;
-      void openUrl(nextUrl);
+      autoOpenUrl(nextUrl);
     }
-  }, [active, hasBrowserTab, initialUrl, openUrl, persistUrl]);
+  }, [active, autoOpenUrl, hasBrowserTab, initialUrl, persistUrl]);
 
   useEffect(() => {
     const unsubscribe = window.electron.onBrowserWorkbenchEvent((event) => {
@@ -494,8 +510,7 @@ export function BrowserWorkbenchPage({
     const observer = new ResizeObserver(() => {
       syncBounds();
       if (browserActive && !hasOpenedRef.current && (url || initialUrl)) {
-        hasOpenedRef.current = true;
-        void openUrl(url || initialUrl);
+        autoOpenUrl(url || initialUrl);
       }
     });
 
@@ -506,14 +521,13 @@ export function BrowserWorkbenchPage({
       observer.disconnect();
       window.removeEventListener("resize", syncBounds);
     };
-  }, [browserActive, initialUrl, openUrl, syncBounds, url]);
+  }, [autoOpenUrl, browserActive, initialUrl, syncBounds, url]);
 
   useEffect(() => {
     if (!hasBrowserRuntime) return;
     if (isPreviewRuntime) {
       if (browserActive && !hasOpenedRef.current && (url || initialUrl)) {
-        hasOpenedRef.current = true;
-        void openUrl(url || initialUrl);
+        autoOpenUrl(url || initialUrl);
       }
       return;
     }
@@ -523,10 +537,9 @@ export function BrowserWorkbenchPage({
     }
     syncBounds();
     if (!hasOpenedRef.current && (url || initialUrl)) {
-      hasOpenedRef.current = true;
-      void openUrl(url || initialUrl);
+      autoOpenUrl(url || initialUrl);
     }
-  }, [browserActive, hasBrowserRuntime, initialUrl, isPreviewRuntime, openUrl, syncBounds, url]);
+  }, [autoOpenUrl, browserActive, hasBrowserRuntime, initialUrl, isPreviewRuntime, syncBounds, url]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -690,6 +703,19 @@ export function BrowserWorkbenchPage({
     setStatusText("正在打开本地页面");
   }, [persistUrl, rememberLocalTarget, sessionId, setSessionBrowserHasTab]);
   const showBrowserSurface = showBrowserChrome;
+  const handleSelectWorkspaceTab = (tab: ActivityWorkspaceTab) => {
+    if (tab === "trace") {
+      onOpenTrace?.();
+      return;
+    }
+    if (tab === "usage") {
+      onOpenUsage?.();
+      return;
+    }
+    if (tab === "preview") {
+      onOpenPreview?.();
+    }
+  };
 
   useEffect(() => {
     setLocalTargets(buildLocalBrowserTargets(workspaceKey));
@@ -713,76 +739,15 @@ export function BrowserWorkbenchPage({
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-white/82">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,251,253,0.92))] px-4 backdrop-blur-xl">
-        <div className="flex min-w-0 items-center gap-1.5">
-          {showBrowserChrome && (
-            <button
-              type="button"
-              className="group inline-flex h-8 items-center gap-2 rounded-xl bg-ink-900/7 px-3 text-[13px] font-medium text-ink-900 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.05)] transition"
-              title="浏览器"
-            >
-              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                <circle cx="12" cy="12" r="8.5" />
-                <path d="M3.5 12h17M12 3.5c2.2 2.3 3.2 5.1 3.2 8.5s-1 6.2-3.2 8.5M12 3.5C9.8 5.8 8.8 8.6 8.8 12s1 6.2 3.2 8.5" />
-              </svg>
-              <span className="max-w-[120px] truncate">{state.title || "浏览器"}</span>
-              {hasBrowserTab && (
-                <span
-                  role="button"
-                  tabIndex={0}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    void handleCloseBrowserTab();
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" && event.key !== " ") return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    void handleCloseBrowserTab();
-                  }}
-                  className="ml-1 hidden h-4 w-4 items-center justify-center rounded-full text-ink-500 transition hover:bg-ink-900/10 hover:text-ink-900 group-hover:inline-flex"
-                  title="关闭浏览器标签"
-                  aria-label="关闭浏览器标签"
-                >
-                  x
-                </span>
-              )}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={onOpenTrace}
-            className="inline-flex h-8 items-center gap-2 rounded-xl px-3 text-[13px] font-medium text-muted transition hover:bg-ink-900/5 hover:text-ink-700"
-            title="执行轨迹"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-              <path d="M5 5h14M5 12h10M5 19h7" />
-            </svg>
-            <span className="max-w-[160px] truncate">执行轨迹</span>
-          </button>
-          <button
-            type="button"
-            onClick={onOpenUsage}
-            className="inline-flex h-8 items-center gap-2 rounded-xl px-3 text-[13px] font-medium text-muted transition hover:bg-ink-900/5 hover:text-ink-700"
-            title="Usage"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-              <path d="M4 18V6M9 18v-7M14 18V9M19 18V4" />
-            </svg>
-            <span className="max-w-[160px] truncate">Usage</span>
-          </button>
-          <button
-            type="button"
-            onClick={handleCreateBrowserTab}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-muted transition hover:bg-ink-900/5 hover:text-ink-700"
-            title="新建本地浏览器页"
-            aria-label="新建本地浏览器页"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-          </button>
-        </div>
+        <ActivityWorkspaceTabs
+          activeTab="browser"
+          showBrowserTab={showBrowserChrome}
+          browserLabel={state.title || "浏览器"}
+          showCreateBrowserTab
+          onSelectTab={handleSelectWorkspaceTab}
+          onCloseBrowserTab={hasBrowserTab ? () => { void handleCloseBrowserTab(); } : undefined}
+          onCreateBrowserTab={() => { void handleCreateBrowserTab(); }}
+        />
       </div>
 
       {showBrowserSurface ? (

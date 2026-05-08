@@ -38,6 +38,8 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("save-api-config", config),
     fetchApiModels: (payload: any) =>
         ipcInvoke("fetch-api-models", payload),
+    testApiConfig: (payload: any) =>
+        ipcInvoke("test-api-config", payload),
     getAppUpdateStatus: () =>
         ipcInvoke("app-update-get-status"),
     checkForAppUpdates: () =>

@@ -15,7 +15,14 @@ import { buildRunnerPromptContentBlocks } from "../../shared/runner-prompt.js";
 import { isSuccessfulRunnerResult, shouldSuppressRunnerErrorAfterSuccessfulResult } from "../../shared/runner-status.js";
 import type { PromptAttachment, RuntimeOverrides, ServerEvent } from "../types.js";
 import { resolveAgentRuntimeContext } from "./agent-resolver.js";
-import { buildEnvForConfig, getClaudeCodeModelOption, getClaudeCodePath, getCurrentApiConfig, getGlobalRuntimeConfig } from "./claude-settings.js";
+import {
+  buildEnvForConfig,
+  getApiConfigForModel,
+  getClaudeCodeModelOption,
+  getClaudeCodePath,
+  getCurrentApiConfig,
+  getGlobalRuntimeConfig,
+} from "./claude-settings.js";
 import { buildClaudeProjectMemoryPromptAppend } from "./claude-project-memory.js";
 import { saveGlobalRuntimeConfig } from "./config-store.js";
 import { summarizeBase64Image, summarizeLocalImageFile } from "./image-preprocessor.js";
@@ -161,15 +168,6 @@ function getRequestedModelName(configModel: string | undefined, runtimeModel: st
   return normalizedConfigModel || undefined;
 }
 
-function getConfiguredModelNames(config: NonNullable<ReturnType<typeof getCurrentApiConfig>>): string[] {
-  return Array.from(new Set([
-    config.model,
-    config.expertModel,
-    config.smallModel,
-    ...(config.models ?? []).map((item) => item.name),
-  ].map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
-}
-
 function resolveOutputFormat(
   runtimeOutputFormat: string | undefined,
   systemPromptAppend: string | undefined,
@@ -212,9 +210,9 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
 
   void (async () => {
     try {
-      const config = getCurrentApiConfig();
+      const defaultConfig = getCurrentApiConfig();
 
-      if (!config) {
+      if (!defaultConfig) {
         onEvent({
           type: "session.status",
           payload: {
@@ -228,11 +226,11 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         return;
       }
 
-      const requestedModel = getRequestedModelName(config.model, runtime?.model);
+      const requestedModel = getRequestedModelName(defaultConfig.model, runtime?.model);
       requestedModelForError = requestedModel;
-      const configuredModelNames = getConfiguredModelNames(config);
-      if (requestedModel && configuredModelNames.length > 0 && !configuredModelNames.includes(requestedModel)) {
-        const errorMessage = `请求模型「${requestedModel}」失败：它不在当前启用配置的模型列表里，请先在设置里切换到可用模型。`;
+      const config = getApiConfigForModel(requestedModel);
+      if (!config) {
+        const errorMessage = `请求模型「${requestedModel ?? ""}」失败：它不在已启用配置池的模型列表里，请先在设置里启用包含该模型的配置。`;
         onEvent({
           type: "runner.error",
           payload: {

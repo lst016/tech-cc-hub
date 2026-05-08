@@ -16,6 +16,8 @@ type ApiModelConfig = {
     compressionThresholdPercent?: number;
 }
 
+type ApiProviderMode = "custom" | "deepseek";
+
 type ApiConfig = {
     id: string;
     name: string;
@@ -24,8 +26,11 @@ type ApiConfig = {
     model: string;
     expertModel?: string;
     imageModel?: string;
+    smallModel?: string;
+    analysisModel?: string;
     models?: ApiModelConfig[];
     enabled: boolean;
+    provider?: ApiProviderMode;
     apiType?: "anthropic";
 }
 
@@ -138,6 +143,14 @@ type ApiModelsFetchResult = {
     error?: string;
 };
 
+type ApiConfigTestResult = {
+    success: boolean;
+    message?: string;
+    endpoint?: string;
+    model?: string;
+    error?: string;
+};
+
 type AppUpdateStatus = import("./src/ui/types").AppUpdateStatus;
 type AppUpdateActionResult = import("./src/ui/types").AppUpdateActionResult;
 
@@ -151,6 +164,7 @@ type EventPayloadMapping = {
         "get-api-config": ApiConfigSettings;
         "save-api-config": { success: boolean; error?: string };
         "fetch-api-models": ApiModelsFetchResult;
+        "test-api-config": ApiConfigTestResult;
         "app-update-get-status": AppUpdateStatus;
         "app-update-check": AppUpdateActionResult;
         "app-update-download": AppUpdateActionResult;
@@ -193,7 +207,8 @@ interface Window {
         selectDirectory: () => Promise<string | null>;
         getApiConfig: () => Promise<ApiConfigSettings>;
         saveApiConfig: (config: ApiConfigSettings) => Promise<{ success: boolean; error?: string }>;
-        fetchApiModels: (payload: { baseURL: string; apiKey: string }) => Promise<ApiModelsFetchResult>;
+        fetchApiModels: (payload: { baseURL: string; apiKey: string; provider?: ApiProviderMode }) => Promise<ApiModelsFetchResult>;
+        testApiConfig: (payload: { baseURL: string; apiKey: string; model: string; provider?: ApiProviderMode }) => Promise<ApiConfigTestResult>;
         getAppUpdateStatus: () => Promise<AppUpdateStatus>;
         checkForAppUpdates: () => Promise<AppUpdateActionResult>;
         downloadAppUpdate: () => Promise<AppUpdateActionResult>;

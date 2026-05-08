@@ -15,7 +15,9 @@ import { estimatePromptLedgerTokens, type PromptLedgerSourceKind } from "../../s
 import { buildContextUsageBreakdown, type ContextUsageBreakdownCategory } from "../utils/context-usage-breakdown";
 import { buildSegmentedContextUsageCells, type ContextUsageCellSegment } from "../utils/context-usage-cells";
 import { AionWorkspacePreviewPane } from "./AionWorkspacePreviewPane";
+import { ActivityWorkspaceTabs } from "./ActivityWorkspaceTabs";
 import type { SessionView } from "../store/useAppStore";
+import type { ActivityRailTab, ActivityWorkspaceTab } from "../utils/activity-workspace-tabs";
 
 const NODE_KIND_LABELS: Record<ActivityTimelineItem["nodeKind"], string> = {
   context: "上下文",
@@ -70,8 +72,6 @@ const PROVENANCE_LABELS: Record<ActivityToolProvenance, string> = {
   transfer_agent: "交接 Agent",
   unknown: "未归类",
 };
-
-type ActivityRailTab = "trace" | "usage" | "preview";
 
 function toneClasses(tone: ActivityRailTone) {
   switch (tone) {
@@ -952,11 +952,18 @@ export function ActivityRail({
     () => buildActivityRailModel(session, session?.permissionRequests ?? [], partialMessage),
     [partialMessage, session],
   );
-  const [internalActiveTab, setInternalActiveTab] = useState<ActivityRailTab>("trace");
+  const [internalActiveTab, setInternalActiveTab] = useState<ActivityRailTab>("preview");
   const selectedTab = activeTab ?? internalActiveTab;
   const handleSelectTab = (tab: ActivityRailTab) => {
     if (!activeTab) setInternalActiveTab(tab);
     onActiveTabChange?.(tab);
+  };
+  const handleSelectWorkspaceTab = (tab: ActivityWorkspaceTab) => {
+    if (tab === "browser") {
+      onOpenBrowserWorkbench?.();
+      return;
+    }
+    handleSelectTab(tab);
   };
   const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
   const [showContextModal, setShowContextModal] = useState(false);
@@ -1039,81 +1046,14 @@ export function ActivityRail({
       >
 
         <div className="flex h-10 shrink-0 items-center justify-between border-b border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,251,253,0.92))] px-4 backdrop-blur-xl">
-          <div className="flex min-w-0 items-center gap-1.5">
-          {hasBrowserTab && (
-            <button
-              type="button"
-              onClick={onOpenBrowserWorkbench}
-              className="inline-flex h-8 items-center gap-2 rounded-xl px-3 text-[13px] font-medium text-muted transition hover:bg-ink-900/5 hover:text-ink-700"
-              title="浏览器"
-            >
-              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                <circle cx="12" cy="12" r="8.5" />
-                <path d="M3.5 12h17M12 3.5c2.2 2.3 3.2 5.1 3.2 8.5s-1 6.2-3.2 8.5M12 3.5C9.8 5.8 8.8 8.6 8.8 12s1 6.2 3.2 8.5" />
-              </svg>
-              <span className={showLabels ? undefined : "hidden"}>浏览器</span>
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => handleSelectTab("trace")}
-            className={`inline-flex h-8 items-center gap-2 rounded-xl px-3 text-[13px] font-medium transition ${
-              selectedTab === "trace"
-                ? "bg-ink-900/7 text-ink-900 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.05)]"
-                : "text-muted hover:bg-ink-900/5 hover:text-ink-700"
-            }`}
-            title="执行轨迹"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-              <path d="M5 5h14M5 12h10M5 19h7" />
-            </svg>
-            <span className={showLabels ? undefined : "hidden"}>执行轨迹</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleSelectTab("usage")}
-            className={`inline-flex h-8 items-center gap-2 rounded-xl px-3 text-[13px] font-medium transition ${
-              selectedTab === "usage"
-                ? "bg-ink-900/7 text-ink-900 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.05)]"
-                : "text-muted hover:bg-ink-900/5 hover:text-ink-700"
-            }`}
-            title="Usage"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-              <path d="M4 18V6M9 18v-7M14 18V9M19 18V4" />
-            </svg>
-            <span className={showLabels ? undefined : "hidden"}>Usage</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleSelectTab("preview")}
-            className={`inline-flex h-8 items-center gap-2 rounded-xl px-3 text-[13px] font-medium transition ${
-              selectedTab === "preview"
-                ? "bg-ink-900/7 text-ink-900 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.05)]"
-                : "text-muted hover:bg-ink-900/5 hover:text-ink-700"
-            }`}
-            title="文件预览"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-              <path d="M7 3.5h7l3 3V20.5H7z" />
-              <path d="M14 3.5V7h3M9.5 12h5M9.5 15.5h5" />
-            </svg>
-            <span className={showLabels ? undefined : "hidden"}>预览</span>
-          </button>
-          {!hasBrowserTab && (
-            <button
-              type="button"
-              onClick={onOpenBrowserWorkbench}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-muted transition hover:bg-ink-900/5 hover:text-ink-700"
-              title="新建浏览器标签"
-              aria-label="新建浏览器标签"
-            >
-              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-            </button>
-          )}
-          </div>
+          <ActivityWorkspaceTabs
+            activeTab={selectedTab}
+            showBrowserTab={hasBrowserTab}
+            showLabels={showLabels}
+            showCreateBrowserTab={!hasBrowserTab}
+            onSelectTab={handleSelectWorkspaceTab}
+            onCreateBrowserTab={onOpenBrowserWorkbench}
+          />
         </div>
 
         {selectedTab === "usage" ? (

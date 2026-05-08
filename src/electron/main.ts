@@ -46,6 +46,7 @@ import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkb
 import { startDevBackendBridge, DEV_BACKEND_BRIDGE_PORT } from "./dev-backend-bridge.js";
 import { buildSessionSlashCommandItems } from "./libs/slash-command-catalog.js";
 import { runExternalCli } from "./libs/external-cli.js";
+import { normalizePluginVersion, summarizePluginUpdate, type PluginUpdateSummary } from "./libs/plugin-updates.js";
 import "./libs/claude-settings.js";
 import { addServerEventListener } from "./ipc-handlers.js";
 
@@ -74,11 +75,28 @@ let channelBridgeController: ChannelBridgeController | null = null;
 async function getOpenComputerUseVersion(): Promise<string | null> {
   try {
     const result = await runExternalCli("open-computer-use", ["--version"], { timeout: 15_000 });
-    const version = result.stdout.trim() || result.stderr.trim();
-    return version || "installed";
+    const rawVersion = result.stdout.trim() || result.stderr.trim();
+    return normalizePluginVersion(rawVersion) ?? (rawVersion ? "installed" : null);
   } catch {
     return null;
   }
+}
+
+function getNpmCommand(): string {
+  return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function getOpenComputerUseLatestVersion(): Promise<string> {
+  const result = await runExternalCli(getNpmCommand(), ["view", "open-computer-use", "version"], { timeout: 60_000 });
+  const latestVersion = normalizePluginVersion(result.stdout.trim() || result.stderr.trim());
+  if (!latestVersion) {
+    throw new Error("npm registry did not return an open-computer-use version.");
+  }
+  return latestVersion;
 }
 
 type OpenComputerUsePermissionStatus = {
@@ -88,6 +106,19 @@ type OpenComputerUsePermissionStatus = {
   screenRecording: "granted" | "missing" | "not-required" | "unknown";
   needsUserAction: boolean;
   openedSystemSettings: boolean;
+};
+
+type OpenComputerUsePluginStatus = PluginUpdateSummary & {
+  installed: boolean;
+  connected: boolean;
+  version?: string;
+  permissions: OpenComputerUsePermissionStatus;
+};
+
+type OpenComputerUsePluginActionResult = OpenComputerUsePluginStatus & {
+  success: boolean;
+  message: string;
+  error?: string;
 };
 
 function macPrivacyPaneUrl(kind: "accessibility" | "screen-recording"): string {
@@ -207,7 +238,7 @@ async function installOpenComputerUsePlugin(): Promise<{ success: boolean; insta
   }
 }
 
-async function getOpenComputerUsePluginStatus(): Promise<{ installed: boolean; connected: boolean; version?: string; permissions: OpenComputerUsePermissionStatus }> {
+async function getOpenComputerUsePluginStatus(): Promise<OpenComputerUsePluginStatus> {
   const version = await getOpenComputerUseVersion();
   const permissions = await prepareOpenComputerUsePermissions();
   const config = loadGlobalRuntimeConfig();
@@ -221,7 +252,101 @@ async function getOpenComputerUsePluginStatus(): Promise<{ installed: boolean; c
     connected: Boolean(version) && hasMcpConfig && !permissions.needsUserAction,
     version: version ?? undefined,
     permissions,
+    ...summarizePluginUpdate({ currentVersion: version }),
   };
+}
+
+async function checkOpenComputerUsePluginUpdate(): Promise<OpenComputerUsePluginStatus> {
+  const status = await getOpenComputerUsePluginStatus();
+  const updateCheckedAt = Date.now();
+  try {
+    const latestVersion = await getOpenComputerUseLatestVersion();
+    return {
+      ...status,
+      ...summarizePluginUpdate({
+        currentVersion: status.version,
+        latestVersion,
+        updateCheckedAt,
+      }),
+    };
+  } catch (error) {
+    return {
+      ...status,
+      ...summarizePluginUpdate({
+        currentVersion: status.version,
+        updateError: getErrorMessage(error),
+        updateCheckedAt,
+      }),
+    };
+  }
+}
+
+async function updateOpenComputerUsePlugin(): Promise<OpenComputerUsePluginActionResult> {
+  const beforeVersion = await getOpenComputerUseVersion();
+  if (!beforeVersion) {
+    const installResult = await installOpenComputerUsePlugin();
+    const updateCheckedAt = Date.now();
+    try {
+      const latestVersion = await getOpenComputerUseLatestVersion();
+      return {
+        ...installResult,
+        ...summarizePluginUpdate({
+          currentVersion: installResult.version,
+          latestVersion,
+          updateCheckedAt,
+        }),
+      };
+    } catch (error) {
+      return {
+        ...installResult,
+        ...summarizePluginUpdate({
+          currentVersion: installResult.version,
+          updateError: getErrorMessage(error),
+          updateCheckedAt,
+        }),
+      };
+    }
+  }
+
+  try {
+    await runExternalCli(getNpmCommand(), ["install", "-g", "open-computer-use@latest"], { timeout: 300_000 });
+    const version = await getOpenComputerUseVersion();
+    const permissions = await prepareOpenComputerUsePermissions({ prompt: true, openSettings: true });
+    connectOpenComputerUsePlugin(version ?? "installed", permissions);
+    const updateCheckedAt = Date.now();
+    const latestVersion = await getOpenComputerUseLatestVersion().catch(() => version ?? undefined);
+    return {
+      success: true,
+      installed: true,
+      connected: !permissions.needsUserAction,
+      version: version ?? undefined,
+      permissions,
+      ...summarizePluginUpdate({
+        currentVersion: version,
+        latestVersion,
+        updateCheckedAt,
+      }),
+      message: permissions.needsUserAction
+        ? "Open Computer Use 已更新并写入 MCP，macOS 还需要授权 Accessibility 和 Screen Recording。"
+        : "Open Computer Use 已更新到最新版本并接入。",
+    };
+  } catch (error) {
+    const permissions = await prepareOpenComputerUsePermissions();
+    return {
+      success: false,
+      installed: true,
+      connected: false,
+      version: beforeVersion,
+      permissions,
+      ...summarizePluginUpdate({
+        currentVersion: beforeVersion,
+        updateError: getErrorMessage(error),
+        updateCheckedAt: Date.now(),
+      }),
+      message: "Open Computer Use 更新失败。",
+      error: getErrorMessage(error),
+    };
+  }
 }
 
 function connectOpenComputerUsePlugin(version: string, permissions: OpenComputerUsePermissionStatus): void {
@@ -527,7 +652,9 @@ ipcMain.handle("slash-commands:list", (_event, payload?: { cwd?: string }) => ({
   commands: buildSessionSlashCommandItems({ cwd: payload?.cwd }) ?? [],
 }));
 ipcMain.handle("plugins:getOpenComputerUseStatus", () => getOpenComputerUsePluginStatus());
+ipcMain.handle("plugins:checkOpenComputerUseUpdate", () => checkOpenComputerUsePluginUpdate());
 ipcMain.handle("plugins:installOpenComputerUse", () => installOpenComputerUsePlugin());
+ipcMain.handle("plugins:updateOpenComputerUse", () => updateOpenComputerUsePlugin());
 ipcMain.handle("preview-read-file", (_event, request: unknown) => readPreviewFileForRenderer(request));
 ipcMain.handle("preview-get-image-base64", (_event, request: unknown) => readPreviewFileForRenderer(request));
 ipcMain.handle("preview-get-file-metadata", (_event, request: unknown) => {
@@ -900,7 +1027,33 @@ function readPromptAttachmentPayload(attachments?: unknown[]): PromptAttachment[
     return Array.isArray(attachments) ? (attachments as PromptAttachment[]) : [];
 }
 
-function normalizeApiBaseURLForModels(value: string): string {
+type ApiModelsProvider = "custom" | "deepseek";
+
+const DEEPSEEK_OPENAI_BASE_URL = "https://api.deepseek.com";
+const DEEPSEEK_ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic";
+
+function resolveApiModelsProvider(provider: unknown, baseURL: string): ApiModelsProvider {
+    if (provider === "deepseek") {
+        return "deepseek";
+    }
+
+    try {
+        const url = new URL(baseURL);
+        if (url.hostname === "api.deepseek.com") {
+            return "deepseek";
+        }
+    } catch {
+        // Invalid URLs are handled by the generic path below.
+    }
+
+    return "custom";
+}
+
+function normalizeApiBaseURLForModels(value: string, provider: ApiModelsProvider): string {
+    if (provider === "deepseek") {
+        return DEEPSEEK_ANTHROPIC_BASE_URL;
+    }
+
     const trimmed = value.trim();
     if (!trimmed) return "";
 
@@ -916,8 +1069,15 @@ function normalizeApiBaseURLForModels(value: string): string {
     return url.toString().replace(/\/$/, "");
 }
 
-function buildModelsEndpoint(baseURL: string): { endpoint: string; normalizedBaseURL: string } {
-    const normalizedBaseURL = normalizeApiBaseURLForModels(baseURL);
+function buildModelsEndpoint(baseURL: string, provider: ApiModelsProvider): { endpoint: string; normalizedBaseURL: string } {
+    if (provider === "deepseek") {
+        return {
+            endpoint: `${DEEPSEEK_OPENAI_BASE_URL}/models`,
+            normalizedBaseURL: DEEPSEEK_ANTHROPIC_BASE_URL,
+        };
+    }
+
+    const normalizedBaseURL = normalizeApiBaseURLForModels(baseURL, provider);
     const url = new URL(normalizedBaseURL);
     const pathname = url.pathname.replace(/\/+$/, "");
     url.pathname = pathname.endsWith("/v1") ? `${pathname}/models` : `${pathname}/v1/models`;
@@ -949,9 +1109,11 @@ function extractModelIds(payload: unknown): string[] {
         .filter(Boolean)));
 }
 
-async function fetchApiModels(payload: { baseURL?: string; apiKey?: string }): Promise<{ success: boolean; models?: string[]; baseURL?: string; error?: string }> {
-    const baseURL = payload?.baseURL?.trim() ?? "";
+async function fetchApiModels(payload: { baseURL?: string; apiKey?: string; provider?: ApiModelsProvider }): Promise<{ success: boolean; models?: string[]; baseURL?: string; error?: string }> {
+    const rawBaseURL = payload?.baseURL?.trim() ?? "";
     const apiKey = payload?.apiKey?.trim() ?? "";
+    const provider = resolveApiModelsProvider(payload?.provider, rawBaseURL);
+    const baseURL = rawBaseURL || (provider === "deepseek" ? DEEPSEEK_ANTHROPIC_BASE_URL : "");
 
     if (!baseURL) {
         return { success: false, error: "请先填写接口地址。" };
@@ -961,7 +1123,7 @@ async function fetchApiModels(payload: { baseURL?: string; apiKey?: string }): P
     }
 
     try {
-        const { endpoint, normalizedBaseURL } = buildModelsEndpoint(baseURL);
+        const { endpoint, normalizedBaseURL } = buildModelsEndpoint(baseURL, provider);
         const response = await fetch(endpoint, {
             headers: {
                 authorization: `Bearer ${apiKey}`,
@@ -988,6 +1150,96 @@ async function fetchApiModels(payload: { baseURL?: string; apiKey?: string }): P
     } catch (error) {
         return {
             success: false,
+            error: error instanceof Error ? error.message : String(error),
+        };
+    }
+}
+
+function buildMessagesEndpoint(baseURL: string, provider: ApiModelsProvider): { endpoint: string; normalizedBaseURL: string } {
+    if (provider === "deepseek") {
+        return {
+            endpoint: `${DEEPSEEK_ANTHROPIC_BASE_URL}/v1/messages`,
+            normalizedBaseURL: DEEPSEEK_ANTHROPIC_BASE_URL,
+        };
+    }
+
+    const normalizedBaseURL = normalizeApiBaseURLForModels(baseURL, provider);
+    const url = new URL(normalizedBaseURL);
+    const pathname = url.pathname.replace(/\/+$/, "");
+    url.pathname = pathname.endsWith("/v1") ? `${pathname}/messages` : `${pathname}/v1/messages`;
+    return {
+        endpoint: url.toString(),
+        normalizedBaseURL,
+    };
+}
+
+function extractApiErrorText(payload: string): string {
+    const trimmed = payload.trim();
+    if (!trimmed) {
+        return "";
+    }
+
+    try {
+        const parsed = JSON.parse(trimmed) as { error?: { message?: unknown }; message?: unknown };
+        const message = parsed.error?.message ?? parsed.message;
+        return typeof message === "string" && message.trim() ? message.trim() : trimmed;
+    } catch {
+        return trimmed;
+    }
+}
+
+async function testApiConfig(payload: { baseURL?: string; apiKey?: string; model?: string; provider?: ApiModelsProvider }): Promise<{ success: boolean; message?: string; endpoint?: string; model?: string; error?: string }> {
+    const rawBaseURL = payload?.baseURL?.trim() ?? "";
+    const apiKey = payload?.apiKey?.trim() ?? "";
+    const model = payload?.model?.trim() ?? "";
+    const provider = resolveApiModelsProvider(payload?.provider, rawBaseURL);
+    const baseURL = rawBaseURL || (provider === "deepseek" ? DEEPSEEK_ANTHROPIC_BASE_URL : "");
+
+    if (!baseURL || !apiKey || !model) {
+        return { success: false, error: "请先填写接口地址、API Key 和默认主模型。" };
+    }
+
+    try {
+        const { endpoint } = buildMessagesEndpoint(baseURL, provider);
+        const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+                "content-type": "application/json",
+                "anthropic-version": "2023-06-01",
+                authorization: `Bearer ${apiKey}`,
+                "x-api-key": apiKey,
+            },
+            body: JSON.stringify({
+                model,
+                max_tokens: 8,
+                messages: [
+                    {
+                        role: "user",
+                        content: "ping",
+                    },
+                ],
+            }),
+        });
+        const responseText = await response.text();
+        if (!response.ok) {
+            return {
+                success: false,
+                endpoint,
+                model,
+                error: extractApiErrorText(responseText) || response.statusText,
+            };
+        }
+
+        return {
+            success: true,
+            endpoint,
+            model,
+            message: `测试通过：${model} 已响应。`,
+        };
+    } catch (error) {
+        return {
+            success: false,
+            model,
             error: error instanceof Error ? error.message : String(error),
         };
     }
@@ -1402,7 +1654,8 @@ app.on("ready", async () => {
             saveApiConfigSettings(config as ApiConfigSettings);
             return { success: true };
           },
-          fetchApiModels: async (payload: { baseURL?: string; apiKey?: string }) => await fetchApiModels(payload),
+          fetchApiModels: async (payload: { baseURL?: string; apiKey?: string; provider?: ApiModelsProvider }) => await fetchApiModels(payload),
+          testApiConfig: async (payload: { baseURL?: string; apiKey?: string; model?: string; provider?: ApiModelsProvider }) => await testApiConfig(payload),
           getGlobalConfig: () => loadGlobalRuntimeConfig(),
           saveGlobalConfig: (config: unknown) => {
             saveGlobalRuntimeConfig(config as Record<string, unknown>);
@@ -1428,8 +1681,14 @@ app.on("ready", async () => {
             if (channel === "plugins:getOpenComputerUseStatus") {
               return await getOpenComputerUsePluginStatus();
             }
+            if (channel === "plugins:checkOpenComputerUseUpdate") {
+              return await checkOpenComputerUsePluginUpdate();
+            }
             if (channel === "plugins:installOpenComputerUse") {
               return await installOpenComputerUsePlugin();
+            }
+            if (channel === "plugins:updateOpenComputerUse") {
+              return await updateOpenComputerUsePlugin();
             }
             throw new Error(`Unsupported dev bridge invoke channel: ${channel}`);
           },
@@ -1539,9 +1798,20 @@ app.on("ready", async () => {
         }
     });
 
-    ipcMainHandle("fetch-api-models", async (_: IpcMainInvokeEvent, payload: { baseURL?: string; apiKey?: string }) => {
+    ipcMainHandle("fetch-api-models", async (_: IpcMainInvokeEvent, payload: { baseURL?: string; apiKey?: string; provider?: ApiModelsProvider }) => {
         try {
             return await fetchApiModels(payload);
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : String(error),
+            };
+        }
+    });
+
+    ipcMainHandle("test-api-config", async (_: IpcMainInvokeEvent, payload: { baseURL?: string; apiKey?: string; model?: string; provider?: ApiModelsProvider }) => {
+        try {
+            return await testApiConfig(payload);
         } catch (error) {
             return {
                 success: false,

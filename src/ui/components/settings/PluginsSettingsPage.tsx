@@ -1,7 +1,8 @@
-import { ShieldCheck } from "lucide-react";
+import { RefreshCw, ShieldCheck } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-type PluginStatus = "not-installed" | "needs-permission" | "needs-connect" | "ready";
+type PluginStatus = "not-installed" | "needs-permission" | "needs-connect" | "ready" | "update-available";
+type PluginUpdateStatus = "unknown" | "up-to-date" | "update-available" | "error";
 
 type DefaultPlugin = {
   id: string;
@@ -27,6 +28,11 @@ type PluginInstallResult = {
   installed: boolean;
   connected: boolean;
   version?: string;
+  latestVersion?: string;
+  updateAvailable?: boolean;
+  updateStatus?: PluginUpdateStatus;
+  updateError?: string;
+  updateCheckedAt?: number;
   message: string;
   error?: string;
   permissions?: OpenComputerUsePermissionStatus;
@@ -36,6 +42,11 @@ type PluginRuntimeStatus = {
   installed: boolean;
   connected: boolean;
   version?: string;
+  latestVersion?: string;
+  updateAvailable?: boolean;
+  updateStatus?: PluginUpdateStatus;
+  updateError?: string;
+  updateCheckedAt?: number;
   permissions?: OpenComputerUsePermissionStatus;
 };
 
@@ -79,6 +90,10 @@ const statusMeta: Record<PluginStatus, { label: string; className: string }> = {
     label: "可用",
     className: "border-emerald-500/20 bg-emerald-50 text-emerald-700",
   },
+  "update-available": {
+    label: "可更新",
+    className: "border-amber-500/20 bg-amber-50 text-amber-800",
+  },
 };
 
 function getPermissionHint(permissions?: OpenComputerUsePermissionStatus): string | null {
@@ -109,6 +124,8 @@ function buildOpenComputerUseGuidePrompt(status: PluginRuntimeStatus | null): st
 
 export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPageProps) {
   const [installingPluginId, setInstallingPluginId] = useState<string | null>(null);
+  const [checkingUpdatePluginId, setCheckingUpdatePluginId] = useState<string | null>(null);
+  const [updatingPluginId, setUpdatingPluginId] = useState<string | null>(null);
   const [launchingGuidePluginId, setLaunchingGuidePluginId] = useState<string | null>(null);
   const [installResult, setInstallResult] = useState<PluginInstallResult | null>(null);
   const [runtimeStatus, setRuntimeStatus] = useState<PluginRuntimeStatus | null>(null);
@@ -116,14 +133,38 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
 
   useEffect(() => {
     let mounted = true;
-    void (window.electron as typeof window.electron & {
+    let statusLoaded = false;
+    let lastStatus: PluginRuntimeStatus | null = null;
+    const electron = window.electron as typeof window.electron & {
       invoke: (channel: string, ...args: unknown[]) => Promise<PluginRuntimeStatus>;
-    }).invoke("plugins:getOpenComputerUseStatus")
+    };
+    void electron.invoke("plugins:getOpenComputerUseStatus")
+      .then((status) => {
+        statusLoaded = true;
+        lastStatus = status as PluginRuntimeStatus;
+        if (mounted) setRuntimeStatus(status as PluginRuntimeStatus);
+        return electron.invoke("plugins:checkOpenComputerUseUpdate");
+      })
       .then((status) => {
         if (mounted) setRuntimeStatus(status as PluginRuntimeStatus);
       })
-      .catch(() => {
-        if (mounted) setRuntimeStatus({ installed: false, connected: false });
+      .catch((error) => {
+        if (!mounted) return;
+        if (!statusLoaded) {
+          setRuntimeStatus({ installed: false, connected: false });
+          return;
+        }
+        setRuntimeStatus({
+          installed: lastStatus?.installed ?? false,
+          connected: lastStatus?.connected ?? false,
+          version: lastStatus?.version,
+          latestVersion: lastStatus?.latestVersion,
+          updateAvailable: false,
+          updateStatus: "error",
+          updateError: error instanceof Error ? error.message : String(error),
+          updateCheckedAt: Date.now(),
+          permissions: lastStatus?.permissions,
+        });
       });
     return () => {
       mounted = false;
@@ -143,6 +184,11 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
           installed: result.installed,
           connected: result.connected,
           version: result.version,
+          latestVersion: result.latestVersion,
+          updateAvailable: result.updateAvailable,
+          updateStatus: result.updateStatus,
+          updateError: result.updateError,
+          updateCheckedAt: result.updateCheckedAt,
           permissions: result.permissions,
         });
       } catch (error) {
@@ -155,6 +201,72 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
         });
       } finally {
         setInstallingPluginId(null);
+      }
+    })();
+  };
+
+  const handleCheckUpdate = (plugin: DefaultPlugin) => {
+    void (async () => {
+      setCheckingUpdatePluginId(plugin.id);
+      try {
+        const status = await (window.electron as typeof window.electron & {
+          invoke: (channel: string, ...args: unknown[]) => Promise<PluginRuntimeStatus>;
+        }).invoke("plugins:checkOpenComputerUseUpdate") as PluginRuntimeStatus;
+        setRuntimeStatus(status);
+      } catch (error) {
+        setRuntimeStatus((current) => ({
+          installed: current?.installed ?? false,
+          connected: current?.connected ?? false,
+          version: current?.version,
+          latestVersion: current?.latestVersion,
+          updateAvailable: false,
+          updateStatus: "error",
+          updateError: error instanceof Error ? error.message : String(error),
+          updateCheckedAt: Date.now(),
+          permissions: current?.permissions,
+        }));
+      } finally {
+        setCheckingUpdatePluginId(null);
+      }
+    })();
+  };
+
+  const handleUpdate = (plugin: DefaultPlugin) => {
+    void (async () => {
+      setUpdatingPluginId(plugin.id);
+      setInstallResult(null);
+      try {
+        const result = await (window.electron as typeof window.electron & {
+          invoke: (channel: string, ...args: unknown[]) => Promise<PluginInstallResult>;
+        }).invoke("plugins:updateOpenComputerUse") as PluginInstallResult;
+        setInstallResult(result);
+        setRuntimeStatus({
+          installed: result.installed,
+          connected: result.connected,
+          version: result.version,
+          latestVersion: result.latestVersion,
+          updateAvailable: result.updateAvailable,
+          updateStatus: result.updateStatus,
+          updateError: result.updateError,
+          updateCheckedAt: result.updateCheckedAt,
+          permissions: result.permissions,
+        });
+      } catch (error) {
+        setInstallResult({
+          success: false,
+          installed: runtimeStatus?.installed ?? true,
+          connected: runtimeStatus?.connected ?? false,
+          version: runtimeStatus?.version,
+          latestVersion: runtimeStatus?.latestVersion,
+          updateAvailable: false,
+          updateStatus: "error",
+          updateError: error instanceof Error ? error.message : String(error),
+          updateCheckedAt: Date.now(),
+          message: "插件更新请求失败。",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        setUpdatingPluginId(null);
       }
     })();
   };
@@ -187,7 +299,7 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-[#E5E6EB] bg-white shadow-[0_12px_28px_rgba(24,32,46,0.04)]">
-        <div className="grid min-w-[1040px] grid-cols-[minmax(320px,1fr)_140px_130px_190px_130px] border-b border-[#E5E6EB] bg-[#F7F8FA] px-4 py-3 text-xs font-bold uppercase tracking-[0.08em] text-[#8A94A6]">
+        <div className="grid min-w-[1120px] grid-cols-[minmax(320px,1fr)_140px_130px_220px_170px] border-b border-[#E5E6EB] bg-[#F7F8FA] px-4 py-3 text-xs font-bold uppercase tracking-[0.08em] text-[#8A94A6]">
           <span>插件</span>
           <span>类型</span>
           <span>状态</span>
@@ -200,29 +312,48 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
           const installed = runtimeStatus?.installed === true || installResult?.installed === true;
           const permissions = installResult?.permissions ?? runtimeStatus?.permissions;
           const needsPermission = Boolean(permissions?.required && permissions.needsUserAction);
-          const status = connected
+          const updateAvailable = Boolean(runtimeStatus?.updateAvailable || installResult?.updateAvailable);
+          const latestVersion = runtimeStatus?.latestVersion ?? installResult?.latestVersion;
+          const updateStatus = runtimeStatus?.updateStatus ?? installResult?.updateStatus;
+          const updateError = runtimeStatus?.updateError ?? installResult?.updateError;
+          const status = updateAvailable && installed
+            ? statusMeta["update-available"]
+            : connected
             ? statusMeta.ready
             : needsPermission
               ? statusMeta["needs-permission"]
               : installed
                 ? statusMeta["needs-connect"]
                 : statusMeta["not-installed"];
-          const actionLabel = installingPluginId === plugin.id
-            ? "处理中..."
-            : connected
+          const actionLabel = updatingPluginId === plugin.id
+            ? "更新中..."
+            : installingPluginId === plugin.id
+              ? "处理中..."
+              : updateAvailable && installed
+                ? "更新"
+                : connected
               ? "重新检查"
               : needsPermission
                 ? "授权"
                 : installed
                   ? "接入"
                   : "安装";
+          const updateHint = updateAvailable && latestVersion
+            ? `发现新版本 v${latestVersion}`
+            : updateStatus === "up-to-date" && latestVersion
+              ? `已是最新 v${latestVersion}`
+              : updateStatus === "error"
+                ? `扫描失败：${updateError ?? "未知错误"}`
+                : latestVersion
+                  ? `最新 v${latestVersion}`
+                  : "未扫描更新";
           const guideLabel = launchingGuidePluginId === plugin.id ? "启动中..." : "Agent 引导安装";
           const permissionHint = getPermissionHint(permissions);
 
           return (
             <article
               key={plugin.id}
-              className="grid min-w-[1040px] grid-cols-[minmax(320px,1fr)_140px_130px_190px_130px] items-start gap-4 px-4 py-4"
+              className="grid min-w-[1120px] grid-cols-[minmax(320px,1fr)_140px_130px_220px_170px] items-start gap-4 px-4 py-4"
             >
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
@@ -230,6 +361,15 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
                   <span className="rounded-full border border-[#E5E6EB] bg-[#F7F8FA] px-2 py-0.5 text-xs font-semibold text-[#4E5969]">
                     v{runtimeStatus?.version ?? plugin.version}
                   </span>
+                </div>
+                <div className={`mt-1 text-xs font-semibold ${
+                  updateAvailable
+                    ? "text-amber-700"
+                    : updateStatus === "error"
+                      ? "text-red-600"
+                      : "text-[#86909C]"
+                }`}>
+                  {updateHint}
                 </div>
                 <p className="mt-1 text-sm leading-5 text-[#6B778C]">{plugin.description}</p>
                 <div className="mt-2 flex flex-wrap gap-1.5">
@@ -270,10 +410,25 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
                 <button
                   type="button"
                   className="rounded-lg bg-[#1D2129] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#2B303B] disabled:cursor-not-allowed disabled:opacity-60"
-                  onClick={() => handleInstall(plugin)}
-                  disabled={installingPluginId === plugin.id}
+                  onClick={() => {
+                    if (updateAvailable && installed) {
+                      handleUpdate(plugin);
+                      return;
+                    }
+                    handleInstall(plugin);
+                  }}
+                  disabled={installingPluginId === plugin.id || updatingPluginId === plugin.id}
                 >
                   {actionLabel}
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#DADDE5] bg-white px-3 py-2 text-xs font-semibold text-[#4E5969] transition hover:border-[#C9CDD4] hover:bg-[#F7F8FA] disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => handleCheckUpdate(plugin)}
+                  disabled={checkingUpdatePluginId === plugin.id || installingPluginId === plugin.id || updatingPluginId === plugin.id}
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${checkingUpdatePluginId === plugin.id ? "animate-spin" : ""}`} />
+                  {checkingUpdatePluginId === plugin.id ? "扫描中..." : "扫描更新"}
                 </button>
                 {onStartGuideSession && (
                   <button
@@ -298,6 +453,7 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
         }`}>
           {installResult.message}
           {installResult.version ? ` 当前版本：${installResult.version}` : ""}
+          {installResult.latestVersion ? ` 最新版本：${installResult.latestVersion}` : ""}
           {installResult.error ? ` ${installResult.error}` : ""}
         </div>
       )}

@@ -3,6 +3,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildBrowserWorkbenchWebPreferences } from "./libs/browser-workbench-session.js";
+import {
+  sanitizeBrowserWorkbenchBounds,
+  shouldDetachBrowserWorkbenchForBounds,
+} from "./libs/browser-workbench-bounds.js";
 
 export type BrowserWorkbenchBounds = {
   x: number;
@@ -404,15 +408,6 @@ function toLogLevel(level: unknown): BrowserWorkbenchConsoleLog["level"] {
   return "log";
 }
 
-function sanitizeBounds(bounds: BrowserWorkbenchBounds): BrowserWorkbenchBounds {
-  return {
-    x: Math.max(0, Math.round(bounds.x)),
-    y: Math.max(0, Math.round(bounds.y)),
-    width: Math.max(0, Math.round(bounds.width)),
-    height: Math.max(0, Math.round(bounds.height)),
-  };
-}
-
 export class BrowserWorkbenchManager {
   private view: BrowserView | null = null;
   private bounds: BrowserWorkbenchBounds = { x: 0, y: 0, width: 0, height: 0 };
@@ -461,15 +456,26 @@ export class BrowserWorkbenchManager {
   }
 
   setBounds(bounds: BrowserWorkbenchBounds): BrowserWorkbenchState {
-    this.bounds = sanitizeBounds(bounds);
+    this.bounds = sanitizeBrowserWorkbenchBounds(bounds);
     if (this.view) {
-      if (this.bounds.width <= 0 || this.bounds.height <= 0) {
-        return this.close();
+      if (shouldDetachBrowserWorkbenchForBounds(this.bounds)) {
+        this.detachView();
+        return this.getState();
       }
       this.window.setBrowserView(this.view);
       this.view.setBounds(this.bounds);
     }
     return this.getState();
+  }
+
+  private detachView(): void {
+    if (!this.view) return;
+    try {
+      this.window.removeBrowserView(this.view);
+    } catch {
+      // The view may already be detached by another active browser surface.
+    }
+    this.view.setBounds(this.bounds);
   }
 
   reload(): BrowserWorkbenchState {

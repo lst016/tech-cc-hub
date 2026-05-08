@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import {
   DEV_BRIDGE_READY_EVENT,
   getDevElectronRuntimeSource,
@@ -394,11 +395,7 @@ export function SettingsModal({
       return;
     }
 
-    const enabledIndex = normalizedProfiles.findIndex((profile) => profile.enabled);
-    const nextProfiles = normalizedProfiles.map((profile, index) => ({
-      ...profile,
-      enabled: index === enabledIndex,
-    }));
+    const nextProfiles = normalizedProfiles;
 
     setStatus(null);
     setSaving(true);
@@ -424,7 +421,7 @@ export function SettingsModal({
       }
 
       if (failures.length > 0) {
-        setStatus({ tone: "error", message: failures.join("；") });
+        toast.error(failures.join("；"));
         return;
       }
 
@@ -434,10 +431,10 @@ export function SettingsModal({
         ...current,
         userAgentsMarkdown: userAgentMarkdown,
       } : current);
-      setStatus({ tone: "success", message: "设置已保存。" });
+      toast.success("设置已保存。");
     } catch (error) {
       console.error("Failed to save settings:", error);
-      setStatus({ tone: "error", message: "保存设置失败。" });
+      toast.error("保存设置失败。");
     } finally {
       setSaving(false);
     }

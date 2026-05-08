@@ -27,6 +27,7 @@ import {
 import { toast } from "sonner";
 import { useTaskStore } from "../store/taskStore";
 import { useAppStore } from "../store/useAppStore";
+import { getAvailableModelsForProfiles, getEnabledProfiles } from "./settings/settings-utils";
 import type {
   ClientEvent,
   ServerEvent,
@@ -356,26 +357,28 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
 
   useEffect(() => {
     if (!selectedTask && !settings) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setExecuteOptions({
       driverId: "claude",
       reasoningMode: selectedTask?.reasoningMode ?? settings?.defaultReasoningMode ?? "high",
       model: selectedTask?.model ?? "",
       workspacePath: selectedTask?.workspacePath ?? "",
     });
-  }, [selectedTask?.id, settings?.defaultReasoningMode]);
+  }, [selectedTask, settings]);
 
   const modelOptions = useMemo(() => {
-    const enabledProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
+    const enabledProfiles = getEnabledProfiles(apiConfigSettings.profiles);
+    const enabledProfile = enabledProfiles[0];
     const values = new Set<string>();
     if (runtimeModel.trim()) values.add(runtimeModel.trim());
     if (enabledProfile?.model?.trim()) values.add(enabledProfile.model.trim());
-    for (const model of enabledProfile?.models ?? []) {
-      if (model.name?.trim()) values.add(model.name.trim());
+    for (const modelName of getAvailableModelsForProfiles(enabledProfiles)) {
+      values.add(modelName);
     }
     if (selectedTask?.model?.trim()) values.add(selectedTask.model.trim());
     if (executeOptions.model?.trim()) values.add(executeOptions.model.trim());
     return Array.from(values);
-  }, [apiConfigSettings.profiles, executeOptions.model, runtimeModel, selectedTask?.model]);
+  }, [apiConfigSettings.profiles, executeOptions.model, runtimeModel, selectedTask]);
 
   const workspaceOptions = useMemo(() => {
     const values = new Set<string>();

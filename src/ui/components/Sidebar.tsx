@@ -19,7 +19,6 @@ interface SidebarProps {
 }
 
 export function Sidebar({
-  connected: _connected,
   onNewSession,
   onArchiveSession,
   onUnarchiveSession,
@@ -93,17 +92,6 @@ export function Sidebar({
   }, [sessionList]);
 
   useEffect(() => {
-    setExpandedGroups((current) => {
-      const next: Record<string, boolean> = {};
-      for (const group of workspaceGroups) {
-        next[group.key] = current[group.key] ?? true;
-      }
-      return next;
-    });
-  }, [workspaceGroups]);
-
-  useEffect(() => {
-    setCopied(false);
     if (closeTimerRef.current) {
       window.clearTimeout(closeTimerRef.current);
       closeTimerRef.current = null;
@@ -296,7 +284,10 @@ export function Sidebar({
                               </DropdownMenu.Item>
                               <DropdownMenu.Item
                                 className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-700 outline-none hover:bg-ink-900/5"
-                                onSelect={() => setResumeSessionId(session.id)}
+                                onSelect={() => {
+                                  setCopied(false);
+                                  setResumeSessionId(session.id);
+                                }}
                               >
                                 <svg viewBox="0 0 24 24" className="h-4 w-4 text-ink-500" fill="none" stroke="currentColor" strokeWidth="1.8">
                                   <path d="M4 5h16v14H4z" />
@@ -360,7 +351,15 @@ export function Sidebar({
           </button>
         </div>
       </div>
-      <Dialog.Root open={!!resumeSessionId} onOpenChange={(open) => !open && setResumeSessionId(null)}>
+      <Dialog.Root
+        open={!!resumeSessionId}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCopied(false);
+            setResumeSessionId(null);
+          }
+        }}
+      >
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 bg-ink-900/40 backdrop-blur-sm" />
           <Dialog.Content className="fixed left-1/2 top-1/2 w-full max-w-xl -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-6 shadow-xl">

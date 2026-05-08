@@ -221,7 +221,11 @@
 }
 
 .native-explorer__actions button {
+  display: inline-flex;
   height: 22px;
+  width: 24px;
+  align-items: center;
+  justify-content: center;
   border: 1px solid transparent;
   border-radius: 4px;
   background: transparent;
@@ -229,7 +233,11 @@
   cursor: pointer;
   font-size: 10px;
   font-weight: 600;
-  padding: 0 6px;
+  padding: 0;
+}
+
+.native-explorer__actions button svg {
+  display: block;
 }
 
 .native-explorer__actions button:hover:not(:disabled) {

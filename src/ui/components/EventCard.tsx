@@ -676,7 +676,7 @@ const CollapsibleText = ({
   return (
     <div
       ref={containerRef}
-      className={className}
+      className={cx("min-w-0 max-w-full [overflow-wrap:anywhere]", className)}
       onMouseUp={handleSelectionCapture}
       onKeyUp={handleSelectionCapture}
     >
@@ -705,7 +705,7 @@ const CollapsibleText = ({
       {renderMarkdown ? (
         <MDContent text={visibleText} />
       ) : (
-        <pre className="m-0 whitespace-pre-wrap break-words font-mono text-[12px] leading-5">{visibleText}</pre>
+        <pre className="m-0 max-w-full whitespace-pre-wrap break-words font-mono text-[12px] leading-5 [overflow-wrap:anywhere]">{visibleText}</pre>
       )}
       {hasMore && (
         <button

@@ -9,8 +9,8 @@ import { createInitialSessionWorkflowState, parseWorkflowMarkdown } from "../sha
 import { runClaude, type RunnerHandle } from "./libs/runner.js";
 import { persistImageAttachmentReference, rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
 import { resolveAgentRuntimeContext } from "./libs/agent-resolver.js";
-import { getCurrentApiConfig, getModelConfig, supportsRemoteSessionResume } from "./libs/claude-settings.js";
-import { loadGlobalRuntimeConfig, saveGlobalRuntimeConfig } from "./libs/config-store.js";
+import { getApiConfigForModel, getCurrentApiConfig, getModelConfig, supportsRemoteSessionResume } from "./libs/claude-settings.js";
+import { loadGlobalRuntimeConfig } from "./libs/config-store.js";
 import { SessionStore } from "./libs/session-store.js";
 import { buildSessionSlashCommands } from "./libs/slash-command-catalog.js";
 import { stripInlineBase64ImagesFromMessage } from "./libs/tool-output-sanitizer.js";
@@ -956,8 +956,7 @@ export async function handleClientEvent(event: ClientEvent) {
       return;
     }
 
-    const config = getCurrentApiConfig();
-    const supportsResume = config ? supportsRemoteSessionResume(config) : true;
+    const defaultConfig = getCurrentApiConfig();
     const history = store.getSessionHistory(session.id);
     const shouldRetitleFromFirstPrompt = isPlaceholderSessionTitle(session.title) && (history?.messages.length ?? 0) === 0;
     const nextTitle = shouldRetitleFromFirstPrompt
@@ -967,8 +966,10 @@ export async function handleClientEvent(event: ClientEvent) {
       event.payload.runtime?.model?.trim()
       || session.model
       || resolveLatestMessageModel(history?.messages)
-      || config?.model;
-    const previousModel = resolveLatestMessageModel(history?.messages) || session.model || config?.model;
+      || defaultConfig?.model;
+    const previousModel = resolveLatestMessageModel(history?.messages) || session.model || defaultConfig?.model;
+    const config = selectedModel ? getApiConfigForModel(selectedModel) ?? defaultConfig : defaultConfig;
+    const supportsResume = config ? supportsRemoteSessionResume(config) : true;
     const switchedModel = Boolean(
       selectedModel
       && previousModel

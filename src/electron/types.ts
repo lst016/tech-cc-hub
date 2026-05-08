@@ -12,6 +12,8 @@ export type ApiModelConfig = {
   compressionThresholdPercent?: number;
 };
 
+export type ApiProviderMode = "custom" | "deepseek";
+
 export type ApiConfig = {
   id: string;
   name: string;
@@ -24,6 +26,7 @@ export type ApiConfig = {
   analysisModel?: string;
   models?: ApiModelConfig[];
   enabled: boolean;
+  provider?: ApiProviderMode;
   apiType?: "anthropic";
 };
 

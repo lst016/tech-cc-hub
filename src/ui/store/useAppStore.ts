@@ -191,8 +191,27 @@ function hydrateWorkflowView(
   };
 }
 
-function getEnabledProfile(settings: ApiConfigSettings): ApiConfigProfile | undefined {
-  return settings.profiles.find((profile) => profile.enabled) ?? settings.profiles[0];
+function getEnabledProfiles(settings: ApiConfigSettings): ApiConfigProfile[] {
+  const enabledProfiles = settings.profiles.filter((profile) => profile.enabled);
+  if (enabledProfiles.length > 0) {
+    return enabledProfiles;
+  }
+  return settings.profiles[0] ? [settings.profiles[0]] : [];
+}
+
+function getAvailableModelsForProfiles(profiles: ApiConfigProfile[]): string[] {
+  return Array.from(
+    new Set(profiles.flatMap((profile) => [
+      profile.model,
+      profile.expertModel,
+      profile.smallModel,
+      profile.imageModel,
+      profile.analysisModel,
+      ...(profile.models ?? []).map((item) => item.name),
+    ])),
+  )
+    .map((item) => item?.trim() ?? "")
+    .filter(Boolean);
 }
 
 function extractSlashCommands(messages: StreamMessage[]): string[] | undefined {
@@ -501,16 +520,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   setCwd: (cwd) => set({ cwd }),
   setApiConfigSettings: (apiConfigSettings) => {
     set((state) => {
-      const enabledProfile = getEnabledProfile(apiConfigSettings);
-      const availableModels = enabledProfile
-        ? Array.from(
-            new Set([
-              enabledProfile.model,
-              enabledProfile.smallModel,
-              ...(enabledProfile.models ?? []).map((item) => item.name),
-            ]),
-          ).filter(Boolean)
-        : [];
+      const enabledProfiles = getEnabledProfiles(apiConfigSettings);
+      const enabledProfile = enabledProfiles[0];
+      const availableModels = getAvailableModelsForProfiles(enabledProfiles);
       const runtimeModel = availableModels.includes(state.runtimeModel)
         ? state.runtimeModel
         : (enabledProfile?.model || availableModels[0] || "");

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import Editor, { loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
-import { PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT } from '../events';
+import { LocateFixed, RefreshCw } from 'lucide-react';
+import { PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT, PROMPT_SENT_EVENT, PROMPT_SUBMIT_EVENT } from '../events';
 import {
   filterPreviewQuickOpenEntries,
   type PreviewQuickOpenEntry,
@@ -12,6 +13,14 @@ import {
   collectCompletedPreviewFileChanges,
   normalizePreviewFilePath,
 } from '../utils/preview-file-refresh';
+import {
+  buildPreviewMonacoModelPath,
+  getFileExtension,
+  normalizeMonacoLanguage,
+} from '../utils/preview-language';
+import {
+  getPreviewFileAncestorDirectories,
+} from '../utils/preview-file-locator';
 import './AionWorkspacePreviewPane.css';
 
 type MonacoWorkerEnvironment = typeof self & {
@@ -20,7 +29,22 @@ type MonacoWorkerEnvironment = typeof self & {
   };
 };
 
+type MonacoTypeScriptDefaults = {
+  setCompilerOptions: (options: Record<string, unknown>) => void;
+  setDiagnosticsOptions: (options: Record<string, unknown>) => void;
+};
+
+type MonacoTypeScriptRuntime = {
+  JsxEmit?: { Preserve?: number };
+  ModuleKind?: { ESNext?: number };
+  ModuleResolutionKind?: { NodeJs?: number };
+  ScriptTarget?: { ESNext?: number };
+  typescriptDefaults?: MonacoTypeScriptDefaults;
+  javascriptDefaults?: MonacoTypeScriptDefaults;
+};
+
 const monacoGlobal = self as MonacoWorkerEnvironment;
+let previewMonacoDefaultsConfigured = false;
 
 if (!monacoGlobal.MonacoEnvironment?.getWorker) {
   monacoGlobal.MonacoEnvironment = {
@@ -108,34 +132,6 @@ function getRelativePath(workspace: string, filePath: string) {
   return filePath;
 }
 
-function getFileExtension(fileName: string) {
-  const index = fileName.lastIndexOf('.');
-  return index >= 0 ? fileName.slice(index + 1).toLowerCase() : '';
-}
-
-function normalizeMonacoLanguage(language?: string, fileName?: string) {
-  const raw = (language || getFileExtension(fileName || '') || 'plaintext').toLowerCase();
-  const map: Record<string, string> = {
-    bash: 'shell',
-    cjs: 'javascript',
-    conf: 'ini',
-    env: 'ini',
-    htm: 'html',
-    js: 'javascript',
-    jsx: 'javascript',
-    md: 'markdown',
-    mjs: 'javascript',
-    py: 'python',
-    rb: 'ruby',
-    sh: 'shell',
-    ts: 'typescript',
-    tsx: 'typescript',
-    yml: 'yaml',
-    zsh: 'shell',
-  };
-  return map[raw] || raw || 'plaintext';
-}
-
 function inferContentType(filePath: string, content?: string): PreviewContentType {
   if (content?.startsWith('data:image/')) return 'image';
   const extension = getFileExtension(filePath);
@@ -184,9 +180,35 @@ function NativeExplorer({
   const directoryCacheRef = useRef(directoryCache);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set([workspace]));
   const [searchQuery, setSearchQuery] = useState('');
+  const [locatingActiveFile, setLocatingActiveFile] = useState(false);
+  const rowRefs = useRef(new Map<string, HTMLButtonElement>());
   useEffect(() => {
     directoryCacheRef.current = directoryCache;
   }, [directoryCache]);
+
+  const registerRowRef = useCallback((path: string) => (node: HTMLButtonElement | null) => {
+    if (node) {
+      rowRefs.current.set(path, node);
+      return;
+    }
+    rowRefs.current.delete(path);
+  }, []);
+
+  const scrollRowIntoView = useCallback((path: string) => {
+    const scroll = () => {
+      const row = rowRefs.current.get(path);
+      if (!row) return false;
+      row.scrollIntoView({ block: 'center', inline: 'nearest' });
+      row.focus({ preventScroll: true });
+      return true;
+    };
+
+    requestAnimationFrame(() => {
+      if (!scroll()) {
+        requestAnimationFrame(scroll);
+      }
+    });
+  }, []);
 
   const loadDirectory = useCallback(async (path: string, force = false) => {
     const cached = directoryCacheRef.current[path];
@@ -250,6 +272,34 @@ function NativeExplorer({
     void loadDirectory(workspace, true);
   }, [loadDirectory, workspace]);
 
+  const activeFileAncestorDirectories = useMemo(
+    () => (activeFilePath ? getPreviewFileAncestorDirectories(workspace, activeFilePath) : []),
+    [activeFilePath, workspace],
+  );
+  const canLocateActiveFile = Boolean(activeFilePath && activeFileAncestorDirectories.length > 0);
+
+  const handleLocateActiveFile = useCallback(async () => {
+    if (!activeFilePath || activeFileAncestorDirectories.length === 0) return;
+
+    setLocatingActiveFile(true);
+    setSearchQuery('');
+    try {
+      for (const directoryPath of activeFileAncestorDirectories) {
+        await loadDirectory(directoryPath, true);
+      }
+      setExpandedPaths((current) => {
+        const next = new Set(current);
+        for (const directoryPath of activeFileAncestorDirectories) {
+          next.add(directoryPath);
+        }
+        return next;
+      });
+      scrollRowIntoView(activeFilePath);
+    } finally {
+      setLocatingActiveFile(false);
+    }
+  }, [activeFileAncestorDirectories, activeFilePath, loadDirectory, scrollRowIntoView]);
+
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
 
   const renderDirectory = (path: string, depth = ROOT_DEPTH): ReactElement[] => {
@@ -287,6 +337,7 @@ function NativeExplorer({
         rows.push(
           <div key={entry.path}>
             <button
+              ref={registerRowRef(entry.path)}
               type="button"
               className="native-explorer__row native-explorer__row--directory"
               style={{ paddingLeft: 10 + depth * 16 }}
@@ -304,6 +355,7 @@ function NativeExplorer({
 
       rows.push(
         <button
+          ref={registerRowRef(entry.path)}
           key={entry.path}
           type="button"
           className={`native-explorer__row native-explorer__row--file ${selected ? 'native-explorer__row--selected' : ''}`}
@@ -325,7 +377,25 @@ function NativeExplorer({
       <div className="native-explorer__toolbar">
         <div className="native-explorer__title">EXPLORER</div>
         <div className="native-explorer__actions">
-          <button type="button" onClick={handleRefresh} title="刷新根目录">刷新</button>
+          <button
+            type="button"
+            className="native-explorer__icon-button"
+            onClick={handleLocateActiveFile}
+            title={canLocateActiveFile ? '定位当前文件' : '先打开一个文件'}
+            aria-label="定位当前文件"
+            disabled={!canLocateActiveFile || locatingActiveFile}
+          >
+            <LocateFixed size={13} strokeWidth={2} />
+          </button>
+          <button
+            type="button"
+            className="native-explorer__icon-button"
+            onClick={handleRefresh}
+            title="刷新根目录"
+            aria-label="刷新根目录"
+          >
+            <RefreshCw size={13} strokeWidth={2} />
+          </button>
         </div>
       </div>
       <label className="native-explorer__search">
@@ -338,6 +408,7 @@ function NativeExplorer({
       </label>
       <div className="native-explorer__tree">
         <button
+          ref={registerRowRef(workspace)}
           type="button"
           className="native-explorer__row native-explorer__row--root"
           onClick={() => handleToggleDirectory(workspace)}
@@ -350,6 +421,37 @@ function NativeExplorer({
       </div>
     </aside>
   );
+}
+
+function configurePreviewMonacoDefaults(monacoApi: typeof monaco) {
+  if (previewMonacoDefaultsConfigured) return;
+
+  const typescript = (monacoApi.languages as unknown as { typescript?: MonacoTypeScriptRuntime }).typescript;
+  if (!typescript?.typescriptDefaults || !typescript.javascriptDefaults) return;
+
+  const compilerOptions: Record<string, unknown> = {
+    allowJs: true,
+    allowNonTsExtensions: true,
+    allowSyntheticDefaultImports: true,
+    esModuleInterop: true,
+    jsx: typescript.JsxEmit?.Preserve ?? 1,
+    module: typescript.ModuleKind?.ESNext ?? 99,
+    moduleResolution: typescript.ModuleResolutionKind?.NodeJs ?? 2,
+    target: typescript.ScriptTarget?.ESNext ?? 99,
+  };
+  const diagnosticsOptions: Record<string, unknown> = {
+    noSemanticValidation: true,
+    noSuggestionDiagnostics: true,
+  };
+
+  typescript.typescriptDefaults.setCompilerOptions(compilerOptions);
+  typescript.javascriptDefaults.setCompilerOptions({
+    ...compilerOptions,
+    checkJs: false,
+  });
+  typescript.typescriptDefaults.setDiagnosticsOptions(diagnosticsOptions);
+  typescript.javascriptDefaults.setDiagnosticsOptions(diagnosticsOptions);
+  previewMonacoDefaultsConfigured = true;
 }
 
 function QuickOpenPalette({
@@ -481,6 +583,7 @@ function PreviewSurface({
   }, [codeReferences, file]);
 
   const monacoLanguage = normalizeMonacoLanguage(file?.language, file?.fileName);
+  const monacoModelPath = buildPreviewMonacoModelPath(file?.path, file?.fileName);
 
   const updateReferenceDecorations = useCallback(() => {
     if (!decorationsRef.current || !file) return;
@@ -524,9 +627,15 @@ function PreviewSurface({
     revealLine();
   }, [revealLine]);
 
+  const clearSelectionOverlay = useCallback(() => {
+    setSelectionInfo(null);
+    setCommentOpen(false);
+    setCommentText('');
+  }, []);
+
   const addSelectionReference = useCallback((kind: 'selection' | 'comment', comment?: string) => {
-    if (!file || !selectionInfo) return;
-    addCodeReference(referenceSessionKey, {
+    if (!file || !selectionInfo) return null;
+    const reference = addCodeReference(referenceSessionKey, {
       kind,
       filePath: file.path,
       fileName: file.fileName,
@@ -537,13 +646,32 @@ function PreviewSurface({
       comment: comment?.trim() || undefined,
     });
     window.dispatchEvent(new CustomEvent(PROMPT_FOCUS_EVENT));
+    return reference;
   }, [addCodeReference, file, monacoLanguage, referenceSessionKey, selectionInfo]);
 
   const handleSubmitComment = useCallback(() => {
-    addSelectionReference('comment', commentText);
+    if (!addSelectionReference('comment', commentText)) return;
     setCommentOpen(false);
     setCommentText('');
   }, [addSelectionReference, commentText]);
+
+  const handleSendComment = useCallback(() => {
+    if (!addSelectionReference('comment', commentText)) return;
+    clearSelectionOverlay();
+    window.setTimeout(() => {
+      const submit = () => window.dispatchEvent(new CustomEvent(PROMPT_SUBMIT_EVENT));
+      if (typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(submit);
+        return;
+      }
+      submit();
+    }, 0);
+  }, [addSelectionReference, clearSelectionOverlay, commentText]);
+
+  useEffect(() => {
+    window.addEventListener(PROMPT_SENT_EVENT, clearSelectionOverlay);
+    return () => window.removeEventListener(PROMPT_SENT_EVENT, clearSelectionOverlay);
+  }, [clearSelectionOverlay]);
 
   const calculateSelectionPosition = useCallback((editor: monaco.editor.IStandaloneCodeEditor, selection: monaco.Selection) => {
     const layout = editor.getLayoutInfo();
@@ -666,8 +794,10 @@ function PreviewSurface({
             key={file.path}
             height="100%"
             language={monacoLanguage}
+            path={monacoModelPath}
             theme="vs"
             value={file.content}
+            beforeMount={configurePreviewMonacoDefaults}
             onMount={handleEditorMount}
             options={{
               readOnly: false,
@@ -715,6 +845,7 @@ function PreviewSurface({
             <div className="vscode-preview__comment-actions">
               <button type="button" onClick={() => setCommentOpen(false)}>取消</button>
               <button type="button" onClick={handleSubmitComment}>加入评论</button>
+              <button type="button" onClick={handleSendComment}>直接发送</button>
             </div>
           </div>
         )}

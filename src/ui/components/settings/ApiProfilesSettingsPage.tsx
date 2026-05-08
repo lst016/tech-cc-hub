@@ -1,6 +1,14 @@
 import type { ApiConfigProfile } from "../../types";
 import type { DevElectronRuntimeSource } from "../../dev-electron-shim";
-import { createModel, createProfile, getAvailableModels } from "./settings-utils";
+import { ChevronDown, Plus } from "lucide-react";
+import {
+  createDeepSeekOfficialProfile,
+  createModel,
+  createProfile,
+  DEEPSEEK_OFFICIAL_BASE_URL,
+  DEEPSEEK_OFFICIAL_MODELS,
+  getAvailableModels,
+} from "./settings-utils";
 import { useState } from "react";
 
 type ApiProfilesSettingsPageProps = {
@@ -28,6 +36,8 @@ const runtimeSourceMeta: Record<DevElectronRuntimeSource, { label: string; descr
 };
 
 const DEFAULT_IMPORTED_CONTEXT_WINDOW = 200_000;
+const DEEPSEEK_CONTEXT_WINDOW = 1_000_000;
+const DEEPSEEK_MODELS_ENDPOINT = "https://api.deepseek.com/models";
 
 type ModelImportStatus = {
   profileId: string;
@@ -35,7 +45,84 @@ type ModelImportStatus = {
   message: string;
 } | null;
 
-function buildModelsEndpoint(baseURL: string): string {
+type ApiProviderMode = NonNullable<ApiConfigProfile["provider"]>;
+
+type CreateProfileOption = {
+  id: string;
+  label: string;
+  description: string;
+  create: () => ApiConfigProfile;
+};
+
+const createProfileOptions: CreateProfileOption[] = [
+  {
+    id: "custom",
+    label: "自定义",
+    description: "手动填写兼容 Anthropic 的接口地址、密钥和模型。",
+    create: createProfile,
+  },
+  {
+    id: "deepseek",
+    label: "DeepSeek 官方",
+    description: "只填 SK，自动使用 DeepSeek 官方 Anthropic 接口。",
+    create: createDeepSeekOfficialProfile,
+  },
+];
+
+type ApiProfileTestResult = {
+  success: boolean;
+  message?: string;
+  endpoint?: string;
+  model?: string;
+  error?: string;
+};
+
+function isDeepSeekBaseURL(baseURL: string | undefined): boolean {
+  try {
+    return new URL(baseURL?.trim() || "").hostname === "api.deepseek.com";
+  } catch {
+    return false;
+  }
+}
+
+function getProviderMode(profile: ApiConfigProfile): ApiProviderMode {
+  return profile.provider === "deepseek" || isDeepSeekBaseURL(profile.baseURL) ? "deepseek" : "custom";
+}
+
+function isDeepSeekModel(modelName: string | undefined): boolean {
+  return Boolean(modelName && DEEPSEEK_OFFICIAL_MODELS.includes(modelName as typeof DEEPSEEK_OFFICIAL_MODELS[number]));
+}
+
+function applyProviderMode(profile: ApiConfigProfile, provider: ApiProviderMode): ApiConfigProfile {
+  if (provider === "custom") {
+    return { ...profile, provider: "custom" };
+  }
+
+  const preset = createDeepSeekOfficialProfile();
+  const nextModels = (profile.models ?? []).some((model) => isDeepSeekModel(model.name))
+    ? profile.models
+    : preset.models;
+
+  return {
+    ...profile,
+    name: profile.name?.trim() && profile.name !== "新配置" ? profile.name : preset.name,
+    baseURL: DEEPSEEK_OFFICIAL_BASE_URL,
+    model: isDeepSeekModel(profile.model) ? profile.model : preset.model,
+    expertModel: isDeepSeekModel(profile.expertModel) ? profile.expertModel : preset.expertModel,
+    smallModel: isDeepSeekModel(profile.smallModel) ? profile.smallModel : preset.smallModel,
+    imageModel: undefined,
+    analysisModel: isDeepSeekModel(profile.analysisModel) ? profile.analysisModel : preset.analysisModel,
+    models: nextModels,
+    provider: "deepseek",
+    apiType: "anthropic",
+  };
+}
+
+function buildModelsEndpoint(baseURL: string, provider: ApiProviderMode = "custom"): string {
+  if (provider === "deepseek") {
+    return DEEPSEEK_MODELS_ENDPOINT;
+  }
+
   const url = new URL(baseURL.trim());
   const trimmedPath = url.pathname.replace(/\/+$/, "");
 
@@ -48,7 +135,11 @@ function buildModelsEndpoint(baseURL: string): string {
   return url.toString();
 }
 
-function normalizeApiBaseURL(baseURL: string): string {
+function normalizeApiBaseURL(baseURL: string, provider: ApiProviderMode = "custom"): string {
+  if (provider === "deepseek") {
+    return DEEPSEEK_OFFICIAL_BASE_URL;
+  }
+
   const url = new URL(baseURL.trim());
   const trimmedPath = url.pathname.replace(/\/+$/, "");
 
@@ -87,9 +178,9 @@ function isLikelyVisionUnderstandingModel(modelName: string): boolean {
     && !/image-?0?1|speech|music|hailuo/i.test(modelName);
 }
 
-async function fetchModelsInBrowser(baseURL: string, apiKey: string): Promise<{ success: boolean; models?: string[]; baseURL?: string; error?: string }> {
+async function fetchModelsInBrowser(baseURL: string, apiKey: string, provider: ApiProviderMode = "custom"): Promise<{ success: boolean; models?: string[]; baseURL?: string; error?: string }> {
   try {
-    const endpoint = buildModelsEndpoint(baseURL);
+    const endpoint = buildModelsEndpoint(baseURL, provider);
     const response = await fetch(endpoint, {
       headers: {
         authorization: `Bearer ${apiKey}`,
@@ -106,7 +197,7 @@ async function fetchModelsInBrowser(baseURL: string, apiKey: string): Promise<{ 
     return {
       success: true,
       models: getModelIds(payload),
-      baseURL: normalizeApiBaseURL(baseURL),
+      baseURL: normalizeApiBaseURL(baseURL, provider),
     };
   } catch (error) {
     return {
@@ -116,15 +207,69 @@ async function fetchModelsInBrowser(baseURL: string, apiKey: string): Promise<{ 
   }
 }
 
+function normalizeMessagesBaseURL(baseURL: string, provider: ApiProviderMode): string {
+  if (provider === "deepseek") {
+    return `${DEEPSEEK_OFFICIAL_BASE_URL}/v1`;
+  }
+
+  const url = new URL(baseURL.trim());
+  const trimmedPath = url.pathname.replace(/\/+$/, "");
+  url.pathname = trimmedPath.endsWith("/v1") ? trimmedPath : `${trimmedPath || ""}/v1`;
+  return url.toString().replace(/\/$/, "");
+}
+
+async function testApiConfigInBrowser(profile: ApiConfigProfile, provider: ApiProviderMode): Promise<ApiProfileTestResult> {
+  const baseURL = provider === "deepseek" ? DEEPSEEK_OFFICIAL_BASE_URL : profile.baseURL.trim();
+  const model = profile.model?.trim() || profile.models?.find((item) => item.name.trim())?.name.trim() || "";
+  if (!baseURL || !profile.apiKey.trim() || !model) {
+    return { success: false, error: "请先填写接口地址、API Key 和默认主模型。" };
+  }
+
+  try {
+    const endpoint = `${normalizeMessagesBaseURL(baseURL, provider)}/messages`;
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "anthropic-version": "2023-06-01",
+        authorization: `Bearer ${profile.apiKey}`,
+        "x-api-key": profile.apiKey,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 8,
+        messages: [{ role: "user", content: "ping" }],
+      }),
+    });
+
+    const text = await response.text();
+    if (!response.ok) {
+      return { success: false, endpoint, model, error: text || response.statusText };
+    }
+
+    return { success: true, endpoint, model, message: "连接成功，模型可以响应。" };
+  } catch (error) {
+    return {
+      success: false,
+      model,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: ApiProfilesSettingsPageProps) {
   const sourceMeta = runtimeSourceMeta[runtimeSource];
   const [importingProfileId, setImportingProfileId] = useState<string | null>(null);
+  const [testingProfileId, setTestingProfileId] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<ModelImportStatus>(null);
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
 
   const handleImportModels = async (profile: ApiConfigProfile) => {
     setImportStatus(null);
+    const provider = getProviderMode(profile);
+    const baseURL = provider === "deepseek" ? DEEPSEEK_OFFICIAL_BASE_URL : profile.baseURL.trim();
 
-    if (!profile.baseURL.trim()) {
+    if (!baseURL) {
       setImportStatus({ profileId: profile.id, tone: "error", message: "请先填写接口地址。" });
       return;
     }
@@ -136,13 +281,43 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
     setImportingProfileId(profile.id);
     try {
       const electronApi = window.electron as typeof window.electron & {
-        fetchApiModels?: (payload: { baseURL: string; apiKey: string }) => Promise<{ success: boolean; models?: string[]; baseURL?: string; error?: string }>;
+        fetchApiModels?: (payload: { baseURL: string; apiKey: string; provider?: ApiProviderMode }) => Promise<{ success: boolean; models?: string[]; baseURL?: string; error?: string }>;
       };
       const result = typeof electronApi.fetchApiModels === "function"
-        ? await electronApi.fetchApiModels({ baseURL: profile.baseURL, apiKey: profile.apiKey })
-        : await fetchModelsInBrowser(profile.baseURL, profile.apiKey);
+        ? await electronApi.fetchApiModels({ baseURL, apiKey: profile.apiKey, provider })
+        : await fetchModelsInBrowser(baseURL, profile.apiKey, provider);
 
       if (!result.success) {
+        if (provider === "deepseek") {
+          const modelIds = [...DEEPSEEK_OFFICIAL_MODELS];
+          onChange((current) => current.map((item) => {
+            if (item.id !== profile.id) return item;
+            const existingModels = new Map((item.models ?? []).map((model) => [model.name, model]));
+            const nextModels = modelIds.map((name) => ({
+              name,
+              contextWindow: existingModels.get(name)?.contextWindow ?? DEEPSEEK_CONTEXT_WINDOW,
+              compressionThresholdPercent: existingModels.get(name)?.compressionThresholdPercent ?? 70,
+            }));
+            const fallbackModel = item.model && modelIds.includes(item.model as typeof DEEPSEEK_OFFICIAL_MODELS[number]) ? item.model : modelIds[0];
+            return {
+              ...item,
+              baseURL: DEEPSEEK_OFFICIAL_BASE_URL,
+              models: nextModels,
+              model: fallbackModel,
+              expertModel: item.expertModel && modelIds.includes(item.expertModel as typeof DEEPSEEK_OFFICIAL_MODELS[number]) ? item.expertModel : "deepseek-v4-pro",
+              smallModel: item.smallModel && modelIds.includes(item.smallModel as typeof DEEPSEEK_OFFICIAL_MODELS[number]) ? item.smallModel : "deepseek-v4-flash",
+              imageModel: undefined,
+              analysisModel: item.analysisModel && modelIds.includes(item.analysisModel as typeof DEEPSEEK_OFFICIAL_MODELS[number]) ? item.analysisModel : fallbackModel,
+              provider: "deepseek",
+            };
+          }));
+          setImportStatus({
+            profileId: profile.id,
+            tone: "success",
+            message: `官方模型接口暂时没拉到，已使用内置 DeepSeek 模型列表；原始错误：${result.error || "未知错误"}`,
+          });
+          return;
+        }
         throw new Error(result.error || "拉取模型失败。");
       }
 
@@ -151,13 +326,13 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
         throw new Error("接口没有返回可用模型。");
       }
 
-      const normalizedBaseURL = result.baseURL ?? normalizeApiBaseURL(profile.baseURL);
+      const normalizedBaseURL = result.baseURL ?? normalizeApiBaseURL(baseURL, provider);
       onChange((current) => current.map((item) => {
         if (item.id !== profile.id) return item;
         const existingModels = new Map((item.models ?? []).map((model) => [model.name, model]));
         const nextModels = modelIds.map((name) => ({
           name,
-          contextWindow: existingModels.get(name)?.contextWindow ?? DEFAULT_IMPORTED_CONTEXT_WINDOW,
+          contextWindow: existingModels.get(name)?.contextWindow ?? (provider === "deepseek" ? DEEPSEEK_CONTEXT_WINDOW : DEFAULT_IMPORTED_CONTEXT_WINDOW),
           compressionThresholdPercent: existingModels.get(name)?.compressionThresholdPercent ?? 70,
         }));
         const fallbackModel = item.model && modelIds.includes(item.model) ? item.model : modelIds[0];
@@ -177,6 +352,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
           smallModel: fallbackSmallModel,
           imageModel: fallbackImageModel && modelIds.includes(fallbackImageModel) ? fallbackImageModel : undefined,
           analysisModel: fallbackAnalysisModel,
+          provider,
         };
       }));
       setImportStatus({ profileId: profile.id, tone: "success", message: `已拉取 ${modelIds.length} 个模型，接口地址已规范为 ${normalizedBaseURL}` });
@@ -191,6 +367,49 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
     }
   };
 
+  const handleTestConnection = async (profile: ApiConfigProfile) => {
+    setImportStatus(null);
+    const provider = getProviderMode(profile);
+    const baseURL = provider === "deepseek" ? DEEPSEEK_OFFICIAL_BASE_URL : profile.baseURL.trim();
+    const model = profile.model?.trim() || profile.models?.find((item) => item.name.trim())?.name.trim() || "";
+
+    if (!baseURL || !profile.apiKey.trim() || !model) {
+      setImportStatus({ profileId: profile.id, tone: "error", message: "请先填写接口地址、API Key 和默认主模型。" });
+      return;
+    }
+
+    setTestingProfileId(profile.id);
+    try {
+      const electronApi = window.electron as typeof window.electron & {
+        testApiConfig?: (payload: { baseURL: string; apiKey: string; model: string; provider?: ApiProviderMode }) => Promise<ApiProfileTestResult>;
+      };
+      const result = typeof electronApi.testApiConfig === "function"
+        ? await electronApi.testApiConfig({ baseURL, apiKey: profile.apiKey, model, provider })
+        : await testApiConfigInBrowser({ ...profile, baseURL, model }, provider);
+
+      setImportStatus({
+        profileId: profile.id,
+        tone: result.success ? "success" : "error",
+        message: result.success
+          ? result.message || `测试通过：${result.model || model}`
+          : result.error || "测试连接失败。",
+      });
+    } catch (error) {
+      setImportStatus({
+        profileId: profile.id,
+        tone: "error",
+        message: error instanceof Error ? error.message : "测试连接失败。",
+      });
+    } finally {
+      setTestingProfileId(null);
+    }
+  };
+
+  const handleCreateProfile = (create: () => ApiConfigProfile) => {
+    setCreateMenuOpen(false);
+    onChange((current) => [create(), ...current]);
+  };
+
   return (
     <div className="grid gap-4">
       <div className="flex items-center justify-between">
@@ -203,20 +422,56 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
             <span className="text-[11px] text-muted">{sourceMeta.description}</span>
           </div>
         </div>
-        <button
-          type="button"
-          className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-sm text-ink-700 transition-colors hover:bg-surface"
-          onClick={() => onChange((current) => [
-            ...current.map((profile) => ({ ...profile, enabled: false })),
-            createProfile(),
-          ])}
+        <div
+          className="relative"
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              setCreateMenuOpen(false);
+            }
+          }}
         >
-          + 新增配置
-        </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 rounded-xl border border-accent/20 bg-accent/8 px-3 py-2 text-sm font-medium text-accent transition-colors hover:bg-accent/12"
+            aria-haspopup="menu"
+            aria-expanded={createMenuOpen}
+            onClick={() => setCreateMenuOpen((open) => !open)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setCreateMenuOpen(false);
+              }
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            <span>新增配置</span>
+            <ChevronDown className={`h-4 w-4 text-accent/70 transition-transform ${createMenuOpen ? "rotate-180" : ""}`} />
+          </button>
+          {createMenuOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 top-[calc(100%+8px)] z-[80] w-[260px] rounded-xl border border-ink-900/10 bg-white p-1.5 shadow-[0_18px_44px_rgba(24,32,46,0.16)]"
+            >
+              {createProfileOptions.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="menuitem"
+                  className="grid w-full cursor-pointer gap-0.5 rounded-lg px-3 py-2.5 text-left outline-none transition-colors hover:bg-ink-900/5 focus:bg-ink-900/5"
+                  onClick={() => handleCreateProfile(option.create)}
+                >
+                  <span className="text-sm font-semibold text-ink-900">{option.label}</span>
+                  <span className="text-xs leading-5 text-muted">{option.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-4">
-        {profiles.map((profile) => (
+        {profiles.map((profile) => {
+          const providerMode = getProviderMode(profile);
+          return (
           <div key={profile.id} className="rounded-[28px] border border-ink-900/10 bg-white/86 p-5 shadow-[0_18px_44px_rgba(24,32,46,0.06)]">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0 flex-1">
@@ -227,10 +482,12 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                 <button
                   type="button"
                   className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${profile.enabled ? "bg-accent text-white" : "border border-ink-900/10 bg-white text-ink-700 hover:bg-surface"}`}
-                  onClick={() => onChange((current) => current.map((item) => ({
-                    ...item,
-                    enabled: item.id === profile.id,
-                  })))}
+                  onClick={() => onChange((current) => {
+                    const enabledCount = current.filter((item) => item.enabled).length;
+                    return current.map((item) => item.id === profile.id
+                      ? { ...item, enabled: item.enabled ? enabledCount <= 1 : true }
+                      : item);
+                  })}
                 >
                   {profile.enabled ? "启用中" : "启用"}
                 </button>
@@ -271,13 +528,41 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                 />
               </label>
 
+              <div className="grid gap-1.5">
+                <span className="text-xs font-medium text-muted">接入模式</span>
+                <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-ink-900/10 bg-surface p-1">
+                  {(["custom", "deepseek"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                        providerMode === mode
+                          ? "bg-white text-ink-900 shadow-sm"
+                          : "text-muted hover:bg-white/72 hover:text-ink-800"
+                      }`}
+                      onClick={() => onChange((current) => current.map((item) => (
+                        item.id === profile.id ? applyProviderMode(item, mode) : item
+                      )))}
+                    >
+                      {mode === "deepseek" ? "DeepSeek 官方" : "自定义"}
+                    </button>
+                  ))}
+                </div>
+                {providerMode === "deepseek" && (
+                  <span className="text-[11px] text-muted">
+                    只需要填写 DeepSeek API Key；运行接口固定为 {DEEPSEEK_OFFICIAL_BASE_URL}，模型列表从官方 /models 拉取，失败时仍可手动添加。
+                  </span>
+                )}
+              </div>
+
               <label className="grid gap-1.5">
                 <span className="text-xs font-medium text-muted">接口地址</span>
                 <input
                   type="url"
-                  className="rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
+                  className={`rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20 ${providerMode === "deepseek" ? "cursor-not-allowed text-muted" : ""}`}
                   placeholder="https://..."
-                  value={profile.baseURL}
+                  value={providerMode === "deepseek" ? DEEPSEEK_OFFICIAL_BASE_URL : profile.baseURL}
+                  readOnly={providerMode === "deepseek"}
                   onChange={(event) => onChange((current) => current.map((item) => (
                     item.id === profile.id
                       ? { ...item, baseURL: event.target.value }
@@ -307,11 +592,19 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <button
                       type="button"
+                      className="rounded-xl border border-emerald-500/20 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => void handleTestConnection(profile)}
+                      disabled={testingProfileId === profile.id}
+                    >
+                      {testingProfileId === profile.id ? "测试中..." : "测试连接"}
+                    </button>
+                    <button
+                      type="button"
                       className="rounded-xl border border-accent/20 bg-accent/8 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/12 disabled:cursor-not-allowed disabled:opacity-60"
                       onClick={() => void handleImportModels(profile)}
                       disabled={importingProfileId === profile.id}
                     >
-                      {importingProfileId === profile.id ? "拉取中..." : "从接口拉取模型"}
+                      {importingProfileId === profile.id ? "拉取中..." : providerMode === "deepseek" ? "从 DeepSeek 拉取模型" : "从接口拉取模型"}
                     </button>
                     <button
                       type="button"
@@ -520,7 +813,8 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
               </label>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

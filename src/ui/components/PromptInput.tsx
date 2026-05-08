@@ -16,15 +16,19 @@ import {
   type PermissionRequest,
 } from "../store/useAppStore";
 import { copyTextToClipboard as copyText } from "../utils/clipboard";
+import { resetBrowserWorkbenchAnnotationState } from "../utils/browser-annotation-reset";
 import {
   ADD_PROMPT_ATTACHMENT_EVENT,
   OPEN_BROWSER_WORKBENCH_URL_EVENT,
   PREVIEW_OPEN_FILE_EVENT,
   PROMPT_FOCUS_EVENT,
+  PROMPT_SENT_EVENT,
+  PROMPT_SUBMIT_EVENT,
   type AddPromptAttachmentDetail,
 } from "../events";
 import { ComposerContextCard } from "./ComposerContextCard";
 import { DecisionPanel } from "./DecisionPanel";
+import { getAvailableModelsForProfiles, getEnabledProfiles } from "./settings/settings-utils";
 
 const DEFAULT_ALLOWED_TOOLS = "*";
 const MAX_ROWS = 12;
@@ -794,7 +798,9 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
       ...(activeSession?.slashCommands ?? []),
     ]);
   }, [activeSession?.slashCommands, workspaceSlashCommands]);
-  const activeProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
+  const enabledProfiles = useMemo(() => getEnabledProfiles(apiConfigSettings.profiles), [apiConfigSettings.profiles]);
+  const activeProfile = enabledProfiles[0];
+  const availableModels = useMemo(() => getAvailableModelsForProfiles(enabledProfiles), [enabledProfiles]);
   const activeSessionModel = activeSession?.model?.trim();
   const resolveSessionRuntimeModel = useCallback((): string => {
     if (activeSessionModel) return activeSessionModel;
@@ -831,15 +837,6 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
       return null;
     }
 
-    const availableModels = activeProfile
-      ? Array.from(
-          new Set([
-            activeProfile.model,
-            ...(activeProfile.models ?? []).map((item) => item.name),
-          ]),
-        ).filter(Boolean)
-      : [];
-
     if (availableModels.length > 0 && !availableModels.includes(selectedModel)) {
       setGlobalError("当前选择的模型不在已启用配置的模型列表里，请重新选择。");
       return null;
@@ -850,7 +847,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
       reasoningMode,
       permissionMode: permissionMode === "plan" ? "bypassPermissions" : permissionMode,
     };
-  }, [activeProfile, activeSessionModel, permissionMode, reasoningMode, resolveSessionRuntimeModel, runtimeModel, setGlobalError]);
+  }, [activeProfile, availableModels, permissionMode, reasoningMode, resolveSessionRuntimeModel, runtimeModel, setGlobalError]);
 
   const prepareAttachmentsForDispatch = useCallback(async (
     promptValue: string,
@@ -886,7 +883,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
     }
 
     return result.attachments;
-  }, [activeProfile?.imageModel, activeProfile?.model, activeSessionModel, resolveSessionRuntimeModel, runtimeModel, setGlobalError]);
+  }, [activeProfile?.imageModel, activeProfile?.model, resolveSessionRuntimeModel, runtimeModel, setGlobalError]);
 
   const sendPromptDraft = useCallback(async (
     promptValue: string,
@@ -1114,22 +1111,10 @@ export function PromptInput({
       .slice(0, FILE_MENTION_PREVIEW_LIMIT);
   }, [fileMentionContext, fileMentionOptions]);
   const showFileMentionPalette = Boolean(fileMentionContext) && !showSlashPalette && !disabled && (fileMentionLoading || filteredFileMentionOptions.length > 0);
-  const activeProfile = useMemo<ApiConfigProfile | undefined>(() => {
-    return apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
-  }, [apiConfigSettings]);
+  const enabledProfiles = useMemo<ApiConfigProfile[]>(() => getEnabledProfiles(apiConfigSettings.profiles), [apiConfigSettings.profiles]);
   const availableModels = useMemo(() => {
-    if (!activeProfile) return [];
-    return Array.from(
-      new Set([
-        activeProfile.model,
-        activeProfile.expertModel,
-        activeProfile.smallModel,
-        ...(activeProfile.models ?? []).map((item) => item.name),
-      ]),
-    )
-      .map((item) => item?.trim() ?? "")
-      .filter(Boolean);
-  }, [activeProfile]);
+    return getAvailableModelsForProfiles(enabledProfiles);
+  }, [enabledProfiles]);
   const clearComposer = useCallback(() => {
     setPrompt("");
     setAttachments([]);
@@ -1142,7 +1127,8 @@ export function PromptInput({
       setBrowserWorkbenchAnnotations(activeSessionId, []);
     }
     clearBrowserAnnotations();
-    void window.electron.clearBrowserWorkbenchAnnotations?.(activeSessionId ?? undefined);
+    void resetBrowserWorkbenchAnnotationState(window.electron, activeSessionId ?? undefined)
+      .catch((error) => console.warn("Failed to reset browser annotation state:", error));
     setShowSlashBrowser(false);
   }, [activeSessionId, clearBrowserAnnotations, clearCodeReferences, clearFileReferences, clearMessageReferences, setBrowserWorkbenchAnnotations, setPrompt]);
 
@@ -1183,6 +1169,7 @@ export function PromptInput({
     });
     removeQueuedDraft(queuedMessage.id, activeSessionId);
     onSendMessage?.();
+    window.dispatchEvent(new CustomEvent(PROMPT_SENT_EVENT));
   }, [activeSessionId, onSendMessage, removeQueuedDraft, sendEvent]);
 
   const editQueuedDraft = useCallback((queuedMessage: QueuedMessageDraft) => {
@@ -1219,6 +1206,7 @@ export function PromptInput({
     }));
     clearComposer();
     setGlobalError(null);
+    window.dispatchEvent(new CustomEvent(PROMPT_SENT_EVENT));
     return true;
   }, [activeSessionId, attachments, browserAnnotations, clearComposer, codeReferences, fileReferences, hasDraft, messageReferences, prompt, setGlobalError, validatePromptDraft]);
 
@@ -1251,6 +1239,7 @@ export function PromptInput({
       if (sent) {
         clearComposer();
         onSendMessage?.();
+        window.dispatchEvent(new CustomEvent(PROMPT_SENT_EVENT));
       } else {
         setPrompt(promptSnapshot);
         setAttachments(attachmentsSnapshot);
@@ -1261,6 +1250,16 @@ export function PromptInput({
       submitInFlightRef.current = false;
     }
   }, [attachments, browserAnnotations, clearComposer, codeReferences, fileReferences, hasDraft, isRunning, messageReferences, onSendMessage, prompt, queueCurrentDraft, sendPromptDraft, setGlobalError, setPrompt, validatePromptDraft]);
+
+  useEffect(() => {
+    const handlePromptSubmit = () => {
+      if (disabled) return;
+      void submitCurrentInput();
+    };
+
+    window.addEventListener(PROMPT_SUBMIT_EVENT, handlePromptSubmit);
+    return () => window.removeEventListener(PROMPT_SUBMIT_EVENT, handlePromptSubmit);
+  }, [disabled, submitCurrentInput]);
 
   const insertFileMention = useCallback((option: FileMentionOption) => {
     if (!fileMentionContext) return;
@@ -1574,6 +1573,7 @@ export function PromptInput({
           };
         });
         onSendMessage?.();
+        window.dispatchEvent(new CustomEvent(PROMPT_SENT_EVENT));
       }
 
       autoDispatchRef.current = null;

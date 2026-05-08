@@ -1,6 +1,9 @@
 import type { ApiConfigProfile, ApiModelConfigProfile } from "../../types.js";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
+const DEEPSEEK_CONTEXT_WINDOW = 1_000_000;
+export const DEEPSEEK_OFFICIAL_BASE_URL = "https://api.deepseek.com/anthropic";
+export const DEEPSEEK_OFFICIAL_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro"] as const;
 
 export function createModel(): ApiModelConfigProfile {
   return {
@@ -23,6 +26,31 @@ export function createProfile(): ApiConfigProfile {
     analysisModel: "",
     models: [createModel()],
     enabled: true,
+    provider: "custom",
+    apiType: "anthropic",
+  };
+}
+
+export function createDeepSeekOfficialProfile(): ApiConfigProfile {
+  const models = DEEPSEEK_OFFICIAL_MODELS.map((name) => ({
+    name,
+    contextWindow: DEEPSEEK_CONTEXT_WINDOW,
+    compressionThresholdPercent: 70,
+  }));
+
+  return {
+    id: crypto.randomUUID(),
+    name: "DeepSeek 官方",
+    apiKey: "",
+    baseURL: DEEPSEEK_OFFICIAL_BASE_URL,
+    model: "deepseek-v4-flash",
+    expertModel: "deepseek-v4-pro",
+    smallModel: "deepseek-v4-flash",
+    imageModel: undefined,
+    analysisModel: "deepseek-v4-flash",
+    models,
+    enabled: true,
+    provider: "deepseek",
     apiType: "anthropic",
   };
 }
@@ -48,7 +76,23 @@ function normalizePercent(value: number | null | undefined): number | undefined 
   return normalized;
 }
 
-function normalizeBaseURL(value: string): string {
+function normalizeProvider(value: unknown, baseURL: string): "custom" | "deepseek" {
+  if (value === "deepseek") {
+    return "deepseek";
+  }
+
+  try {
+    return new URL(baseURL.trim()).hostname === "api.deepseek.com" ? "deepseek" : "custom";
+  } catch {
+    return "custom";
+  }
+}
+
+function normalizeBaseURL(value: string, provider: "custom" | "deepseek"): string {
+  if (provider === "deepseek") {
+    return DEEPSEEK_OFFICIAL_BASE_URL;
+  }
+
   const trimmed = value.trim();
   if (!trimmed) return "";
 
@@ -110,6 +154,7 @@ function normalizeRoleModel(value: string | undefined, fallbackModel: string): s
 }
 
 export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
+  const provider = normalizeProvider(profile.provider, profile.baseURL);
   const models = dedupeModels([
     ...(profile.models ?? []),
     { name: profile.model },
@@ -132,7 +177,7 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
     ...profile,
     name: profile.name.trim() || "未命名配置",
     apiKey: profile.apiKey.trim(),
-    baseURL: normalizeBaseURL(profile.baseURL),
+    baseURL: normalizeBaseURL(profile.baseURL, provider),
     model: selectedModel,
     expertModel: normalizeRoleModel(profile.expertModel, selectedModel),
     smallModel: normalizeRoleModel(profile.smallModel, normalizeRoleModel(profile.analysisModel, selectedModel)),
@@ -140,12 +185,21 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
     analysisModel: normalizeRoleModel(profile.analysisModel, selectedModel),
     models,
     enabled: Boolean(profile.enabled),
+    provider,
     apiType: "anthropic",
   };
 }
 
 export function getEnabledProfile(profiles: ApiConfigProfile[]): ApiConfigProfile | undefined {
   return profiles.find((profile) => profile.enabled) ?? profiles[0];
+}
+
+export function getEnabledProfiles(profiles: ApiConfigProfile[]): ApiConfigProfile[] {
+  const enabledProfiles = profiles.filter((profile) => profile.enabled);
+  if (enabledProfiles.length > 0) {
+    return enabledProfiles;
+  }
+  return profiles[0] ? [profiles[0]] : [];
 }
 
 export function getAvailableModels(profile: ApiConfigProfile): string[] {
@@ -161,6 +215,12 @@ export function getAvailableModels(profile: ApiConfigProfile): string[] {
   )
     .map((item) => item?.trim() ?? "")
     .filter(Boolean);
+}
+
+export function getAvailableModelsForProfiles(profiles: ApiConfigProfile[]): string[] {
+  return Array.from(
+    new Set(profiles.flatMap((profile) => getAvailableModels(profile))),
+  );
 }
 
 export function buildRoutingSummary(profile?: ApiConfigProfile): string {

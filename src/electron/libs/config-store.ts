@@ -9,6 +9,7 @@ import {
 import { join } from "path";
 
 export type ApiType = "anthropic";
+export type ApiProviderMode = "custom" | "deepseek";
 
 export type ApiModelConfig = {
   name: string;
@@ -28,6 +29,7 @@ export type ApiConfig = {
   analysisModel?: string;
   models?: ApiModelConfig[];
   enabled: boolean;
+  provider?: ApiProviderMode;
   apiType?: ApiType;
 };
 
@@ -44,6 +46,7 @@ const DEFAULT_MODEL_CONFIG: ApiModelConfig = {
   compressionThresholdPercent: 70,
 };
 const DEFAULT_CONTEXT_WINDOW = 200_000;
+const DEEPSEEK_OFFICIAL_BASE_URL = "https://api.deepseek.com/anthropic";
 const CONFIG_FILE_NAME = "api-config.json";
 const GLOBAL_CONFIG_FILE_NAME = "agent-runtime.json";
 
@@ -72,6 +75,7 @@ function createDefaultSettings(): ApiConfigSettings {
         analysisModel: DEFAULT_MODEL,
         models: [DEFAULT_MODEL_CONFIG],
         enabled: true,
+        provider: "custom",
         apiType: "anthropic",
       },
     ],
@@ -175,7 +179,13 @@ export function saveGlobalRuntimeConfig(config: GlobalRuntimeConfig): void {
 }
 
 function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | null {
-  if (!config?.baseURL || !config.name) {
+  if (!config?.name) {
+    return null;
+  }
+
+  const provider = normalizeProvider(config.provider, config.baseURL);
+  const baseURL = normalizeBaseURL(config.baseURL, provider);
+  if (!baseURL) {
     return null;
   }
 
@@ -204,7 +214,7 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
     id: config.id?.trim() || crypto.randomUUID(),
     name: config.name.trim(),
     apiKey: config.apiKey.trim(),
-    baseURL: normalizeBaseURL(config.baseURL),
+    baseURL,
     model: selectedModel,
     expertModel: normalizeRoleModel(config.expertModel, selectedModel),
     smallModel: normalizeRoleModel(config.smallModel, normalizeRoleModel(config.analysisModel, selectedModel)),
@@ -212,11 +222,28 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
     analysisModel: normalizeRoleModel(config.analysisModel, selectedModel),
     models: dedupedModels,
     enabled: Boolean(config.enabled),
+    provider,
     apiType: config.apiType ?? "anthropic",
   };
 }
 
-function normalizeBaseURL(value: string): string {
+function normalizeProvider(value: unknown, baseURL: string): ApiProviderMode {
+  if (value === "deepseek") {
+    return "deepseek";
+  }
+
+  try {
+    return new URL(baseURL.trim()).hostname === "api.deepseek.com" ? "deepseek" : "custom";
+  } catch {
+    return "custom";
+  }
+}
+
+function normalizeBaseURL(value: string, provider: ApiProviderMode): string {
+  if (provider === "deepseek") {
+    return DEEPSEEK_OFFICIAL_BASE_URL;
+  }
+
   const trimmed = value.trim();
   if (!trimmed) return "";
 
@@ -247,16 +274,12 @@ function normalizeApiSettings(input: ApiConfig | ApiConfigSettings | null | unde
     return { profiles: [] };
   }
 
-  let hasEnabled = false;
-  const normalizedProfiles = profiles.map((profile) => {
-    if (profile.enabled && !hasEnabled) {
-      hasEnabled = true;
-      return profile;
-    }
-    return { ...profile, enabled: false };
-  });
+  const normalizedProfiles = profiles.map((profile) => ({
+    ...profile,
+    enabled: Boolean(profile.enabled),
+  }));
 
-  if (!hasEnabled) {
+  if (normalizedProfiles.every((profile) => !profile.enabled)) {
     normalizedProfiles[0] = { ...normalizedProfiles[0], enabled: true };
   }
 

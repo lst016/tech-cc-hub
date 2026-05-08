@@ -22,6 +22,8 @@ import ScheduledTasksPage from "./components/cron/ScheduledTasksPage";
 import { TaskPanel } from "./components/TaskPanel";
 import { OPEN_BROWSER_WORKBENCH_URL_EVENT, type OpenBrowserWorkbenchUrlDetail } from "./events";
 import { copyTextToClipboard } from "./utils/clipboard";
+import type { ActivityRailTab } from "./utils/activity-workspace-tabs";
+import { getAvailableModelsForProfiles, getEnabledProfiles } from "./components/settings/settings-utils";
 import {
   DEV_BRIDGE_READY_EVENT,
   getDevElectronRuntimeSource,
@@ -51,7 +53,6 @@ type StreamEventMessage = StreamMessage & {
 };
 
 type WorkspaceView = "chat" | "browser";
-type ActivityRailTab = "trace" | "usage" | "preview";
 
 function getToolUseCount(message: StreamMessage): number {
   if (message.type !== "assistant") return 0;
@@ -149,7 +150,7 @@ function App() {
   const showPartialMessage = activeSessionId ? (partialVisibilityBySessionId[activeSessionId] ?? false) : false;
   const workspaceView = activeSessionId ? (workspaceViewBySessionId[activeSessionId] ?? "chat") : "chat";
   const isUtilityWorkspace = showTaskPanel || showCronPage;
-  const activityRailTab = activeSessionId ? (activityRailTabBySessionId[activeSessionId] ?? "trace") : "trace";
+  const activityRailTab = activeSessionId ? (activityRailTabBySessionId[activeSessionId] ?? "preview") : "preview";
   const setActiveSessionWorkspaceView = useCallback((nextView: WorkspaceView) => {
     if (!activeSessionId) return;
     setWorkspaceViewBySessionId((current) => (
@@ -629,17 +630,9 @@ function App() {
     }
 
     const nextSession = activeSession ?? archivedSessions[activeSessionId];
-    const fallbackProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
-    const availableModels = fallbackProfile
-      ? Array.from(
-          new Set([
-            fallbackProfile.model,
-            fallbackProfile.expertModel,
-            fallbackProfile.smallModel,
-            ...(fallbackProfile.models ?? []).map((item) => item.name),
-          ]),
-        ).map((model) => model?.trim() ?? "").filter(Boolean)
-      : [];
+    const enabledProfiles = getEnabledProfiles(apiConfigSettings.profiles);
+    const fallbackProfile = enabledProfiles[0];
+    const availableModels = getAvailableModelsForProfiles(enabledProfiles);
     const selectedSessionModel = nextSession?.model?.trim();
     const fallbackModel = fallbackProfile?.model?.trim();
     const nextModel = selectedSessionModel && availableModels.includes(selectedSessionModel)
@@ -654,7 +647,7 @@ function App() {
       runtimeModelSessionSyncRef.current = syncKey;
       setRuntimeModel(nextModel);
     }
-  }, [activeSessionId, activeSession?.model, archivedSessions, apiConfigSettings, setRuntimeModel]);
+  }, [activeSessionId, activeSession, archivedSessions, apiConfigSettings, setRuntimeModel]);
 
   useEffect(() => {
     return () => {
@@ -1457,6 +1450,10 @@ function App() {
               }}
               onOpenUsage={() => {
                 setActiveSessionActivityRailTab("usage");
+                setActiveSessionWorkspaceView("chat");
+              }}
+              onOpenPreview={() => {
+                setActiveSessionActivityRailTab("preview");
                 setActiveSessionWorkspaceView("chat");
               }}
             />
