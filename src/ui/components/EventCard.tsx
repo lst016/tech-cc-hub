@@ -13,7 +13,7 @@ import MDContent from "../render/markdown";
 import { DecisionPanel } from "./DecisionPanel";
 import { resolveImageAttachmentSrc } from "../../shared/attachments";
 import { copyTextToClipboard as copyText } from "../utils/clipboard";
-import { PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT } from "../events";
+import { OPEN_BROWSER_WORKBENCH_URL_EVENT, PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT } from "../events";
 import { extractCodeReferencesPrompt, type CodeReferencePromptSummary } from "../utils/code-reference-prompt";
 
 type MessageContent = SDKAssistantMessage["message"]["content"][number];
@@ -458,81 +458,125 @@ function extractBrowserAnnotationsPrompt(prompt: string): {
   };
 }
 
-const BrowserAnnotationChip = ({ annotation }: { annotation: BrowserAnnotationSummary }) => (
-  <div className="max-w-full rounded-2xl border border-accent/15 bg-white/94 px-3 py-3 text-left text-xs text-ink-800 shadow-[0_10px_24px_rgba(210,106,61,0.08)]">
-    <div className="flex items-center gap-2 text-sm font-semibold">
-      <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent text-[11px] font-bold text-white">
-        {annotation.index}
-      </span>
-      <span className="min-w-0 truncate">{annotation.label}</span>
+const getBrowserAnnotationSourceTitle = (candidate?: BrowserAnnotationSourceCandidate) => {
+  if (!candidate) return undefined;
+  const fileName = candidate.file?.split(/[\\/]/).filter(Boolean).pop();
+  if (fileName) {
+    const lineLabel = typeof candidate.line === "number"
+      ? ` · L${candidate.line}${typeof candidate.column === "number" ? `:${candidate.column}` : ""}`
+      : "";
+    return `${fileName}${lineLabel}`;
+  }
+  return candidate.component || candidate.source;
+};
+
+const openBrowserAnnotationPage = (url?: string) => {
+  if (!url) return;
+  window.dispatchEvent(new CustomEvent(OPEN_BROWSER_WORKBENCH_URL_EVENT, { detail: { url } }));
+};
+
+const openBrowserAnnotationSource = (candidate?: BrowserAnnotationSourceCandidate) => {
+  if (!candidate?.file) return false;
+  window.dispatchEvent(new CustomEvent(PREVIEW_OPEN_FILE_EVENT, {
+    detail: { filePath: candidate.file, startLine: candidate.line },
+  }));
+  return true;
+};
+
+const BrowserAnnotationChip = ({ annotation }: { annotation: BrowserAnnotationSummary }) => {
+  const source = annotation.sourceCandidates?.[0];
+  const sourceTitle = getBrowserAnnotationSourceTitle(source);
+  const pageLabel = formatBrowserAnnotationUrl(annotation.pageUrl);
+  const headerLabel = sourceTitle || annotation.pageTitle || pageLabel || annotation.label || `浏览器标注 ${annotation.index}`;
+  const locatorPreview = annotation.target || annotation.selector || annotation.xpath || annotation.path;
+  const pageText = annotation.pageUrl
+    ? `${annotation.pageTitle ? `${annotation.pageTitle} · ` : ""}${pageLabel || annotation.pageUrl}`
+    : undefined;
+  const title = [
+    annotation.comment,
+    source ? formatBrowserAnnotationSource(source) : null,
+    annotation.pageUrl,
+    annotation.selector,
+  ].filter(Boolean).join("\n");
+  const hasDetail = Boolean(
+    annotation.comment
+    || annotation.expectation
+    || locatorPreview
+    || (pageText && sourceTitle)
+    || annotation.position
+  );
+
+  return (
+    <div className="max-w-full rounded-2xl border border-accent/15 bg-white/94 px-3 py-3 text-left text-xs text-ink-800 shadow-[0_10px_24px_rgba(210,106,61,0.08)]" title={title}>
+      <div className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+        <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent text-[11px] font-bold text-white">
+          {annotation.index}
+        </span>
+        <span className="shrink-0 rounded-md bg-[#fff7ed] px-1.5 py-0.5 text-[10px] text-[#9a3412]">
+          标注
+        </span>
+        {source?.file || annotation.pageUrl ? (
+          <button
+            type="button"
+            className="min-w-0 truncate text-left text-accent transition hover:underline"
+            onClick={() => {
+              if (!openBrowserAnnotationSource(source)) {
+                openBrowserAnnotationPage(annotation.pageUrl);
+              }
+            }}
+          >
+            {headerLabel}
+          </button>
+        ) : (
+          <span className="min-w-0 truncate">{headerLabel}</span>
+        )}
+      </div>
+      <div className="mt-2 grid gap-1.5 text-[11px] leading-5 text-muted">
+        {annotation.comment && (
+          <div className="min-w-0">
+            <span className="font-semibold text-ink-700">说明 </span>
+            <span className="break-words">{annotation.comment}</span>
+          </div>
+        )}
+        {annotation.expectation && (
+          <div className="min-w-0">
+            <span className="font-semibold text-ink-700">期望 </span>
+            <span className="break-words">{annotation.expectation}</span>
+          </div>
+        )}
+        {locatorPreview && (
+          <code className="block max-h-20 overflow-hidden whitespace-pre-wrap break-words rounded-xl bg-[#fff7ed] px-2.5 py-2 text-[10px] leading-4 text-[#7c2d12]">
+            {compactPreview(locatorPreview, 180)}
+          </code>
+        )}
+        {pageText && sourceTitle && (
+          <div className="min-w-0">
+            <span className="font-semibold text-ink-700">页面 </span>
+            <button
+              type="button"
+              className="break-all text-left text-accent transition hover:underline"
+              onClick={() => openBrowserAnnotationPage(annotation.pageUrl)}
+            >
+              {pageText}
+            </button>
+          </div>
+        )}
+        {annotation.position && (
+          <div>
+            <span className="font-semibold text-ink-700">坐标 </span>
+            x {annotation.position.x}, y {annotation.position.y}
+          </div>
+        )}
+        {!hasDetail && (
+          <div className="min-w-0">
+            <span className="font-semibold text-ink-700">说明 </span>
+            <span className="break-words">这条浏览器标注没有保存具体说明，可根据标记编号回到页面定位。</span>
+          </div>
+        )}
+      </div>
     </div>
-    <div className="mt-2 grid gap-1.5 text-[11px] leading-5 text-muted">
-      {annotation.pageUrl && (
-        <div className="min-w-0">
-          <span className="font-semibold text-ink-700">页面 </span>
-          <span className="break-all">{annotation.pageTitle ? `${annotation.pageTitle} · ` : ""}{annotation.pageUrl}</span>
-        </div>
-      )}
-      {annotation.target && (
-        <div className="min-w-0">
-          <span className="font-semibold text-ink-700">目标 </span>
-          <span className="break-words">{annotation.target}</span>
-        </div>
-      )}
-      {annotation.expectation && (
-        <div className="min-w-0">
-          <span className="font-semibold text-ink-700">预期 </span>
-          <span className="break-words">{annotation.expectation}</span>
-        </div>
-      )}
-      {annotation.componentStack && annotation.componentStack.length > 0 && (
-        <div className="min-w-0">
-          <span className="font-semibold text-ink-700">Components </span>
-          <span className="break-words">
-            {annotation.componentStack.join(" > ")}
-            {annotation.componentStackConfidence ? ` (${annotation.componentStackConfidence})` : ""}
-          </span>
-        </div>
-      )}
-      {annotation.sourceCandidates && annotation.sourceCandidates.length > 0 && (
-        <div className="min-w-0">
-          <span className="font-semibold text-ink-700">Sources </span>
-          <span className="break-words">{annotation.sourceCandidates.map(formatBrowserAnnotationSource).join(" | ")}</span>
-        </div>
-      )}
-      {annotation.selector && (
-        <div className="min-w-0">
-          <span className="font-semibold text-ink-700">Selector </span>
-          <code className="break-all rounded bg-ink-900/5 px-1 py-0.5 text-[10px] text-ink-700">{annotation.selector}</code>
-        </div>
-      )}
-      {annotation.xpath && (
-        <div className="min-w-0">
-          <span className="font-semibold text-ink-700">XPath </span>
-          <code className="break-all rounded bg-ink-900/5 px-1 py-0.5 text-[10px] text-ink-700">{annotation.xpath}</code>
-        </div>
-      )}
-      {!annotation.selector && annotation.path && (
-        <div className="min-w-0">
-          <span className="font-semibold text-ink-700">Path </span>
-          <code className="break-all rounded bg-ink-900/5 px-1 py-0.5 text-[10px] text-ink-700">{annotation.path}</code>
-        </div>
-      )}
-      {annotation.position && (
-        <div>
-          <span className="font-semibold text-ink-700">坐标 </span>
-          x {annotation.position.x}, y {annotation.position.y}
-        </div>
-      )}
-      {annotation.comment && annotation.comment !== annotation.label && (
-        <div className="min-w-0">
-          <span className="font-semibold text-ink-700">备注 </span>
-          <span className="break-words">{annotation.comment}</span>
-        </div>
-      )}
-    </div>
-  </div>
-);
+  );
+};
 
 const getCodeReferenceLineLabel = (reference: CodeReferencePromptSummary) => {
   if (reference.rangeLabel) return reference.rangeLabel;
