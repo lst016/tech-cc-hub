@@ -759,14 +759,6 @@ function App() {
     };
   }, [activeSessionId, closeSidebarOnBrowserOpen, setActiveSessionWorkspaceView, setBrowserWorkbenchSessionUrl, showSidebar]);
 
-  useEffect(() => {
-    if (workspaceView === "browser" && !showSessionAnalysis && !isUtilityWorkspace) return;
-    void window.electron.closeBrowserWorkbench(activeSessionId ?? undefined);
-    if (activeSessionId) {
-      void window.electron.closeBrowserWorkbench(undefined);
-    }
-  }, [activeSessionId, isUtilityWorkspace, showSessionAnalysis, workspaceView]);
-
   const handleDeleteSession = useCallback((sessionId: string) => {
     sendEvent({ type: "session.delete", payload: { sessionId } });
   }, [sendEvent]);
@@ -1413,25 +1405,30 @@ function App() {
           )}
         </main>
 
-        {!showSessionAnalysis && !isUtilityWorkspace && showActivityRail && workspaceView !== "browser" && (
-          <ActivityRail
-            session={activeSession}
-            partialMessage={partialMessage}
-            globalError={globalError}
-            activeTab={activityRailTab}
-            onActiveTabChange={setActiveSessionActivityRailTab}
-            onOpenBrowserWorkbench={() => {
-              setShowActivityRail(true);
-              setShowSessionAnalysis(false);
-              setActiveSessionWorkspaceView("browser");
-            }}
-            selectedModel={selectedUsageModel}
-            contextWindow={selectedUsageModelConfig?.contextWindow}
-            compressionThresholdPercent={selectedUsageModelConfig?.compressionThresholdPercent}
-            hasBrowserTab={activeHasBrowserTab}
-            onOpenSessionAnalysis={() => setShowSessionAnalysis(true)}
-            width={activityRailWidth}
-          />
+        {!showSessionAnalysis && !isUtilityWorkspace && showActivityRail && (
+          <div
+            className={workspaceView === "browser" ? "hidden" : "contents"}
+            aria-hidden={workspaceView === "browser"}
+          >
+            <ActivityRail
+              session={activeSession}
+              partialMessage={partialMessage}
+              globalError={globalError}
+              activeTab={activityRailTab}
+              onActiveTabChange={setActiveSessionActivityRailTab}
+              onOpenBrowserWorkbench={() => {
+                setShowActivityRail(true);
+                setShowSessionAnalysis(false);
+                setActiveSessionWorkspaceView("browser");
+              }}
+              selectedModel={selectedUsageModel}
+              contextWindow={selectedUsageModelConfig?.contextWindow}
+              compressionThresholdPercent={selectedUsageModelConfig?.compressionThresholdPercent}
+              hasBrowserTab={activeHasBrowserTab}
+              onOpenSessionAnalysis={() => setShowSessionAnalysis(true)}
+              width={activityRailWidth}
+            />
+          </div>
         )}
         {!showSessionAnalysis && !isUtilityWorkspace && showActivityRail && (
           <aside

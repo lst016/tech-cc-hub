@@ -1207,18 +1207,34 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
   })();
 
   const isError = Boolean(messageContent.is_error);
-  const isLong = content.length > 2400 || content.split("\n").length > 40;
-  const visibleContent = isLong && !expanded ? `${content.slice(0, 2400)}\n\n...已截断，展开查看完整工具输出` : content;
+  const preview = compactPreview(content, 100);
 
   return (
     <div className="mt-3 rounded-[22px] border border-black/6 bg-[#f4f7fb] px-4 py-3">
-      <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
+      <div className="flex items-center gap-2">
         <StatusDot variant={isError ? "error" : "success"} />
-        <span>工具输出</span>
-        <span className="ml-auto normal-case tracking-normal text-muted">{compactPreview(content, 64)}</span>
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">工具输出</span>
+        <span className="min-w-0 flex-1 truncate text-[11px] normal-case tracking-normal text-muted">{preview}</span>
+        <button
+          type="button"
+          className="shrink-0 grid h-5 w-5 place-items-center rounded-full border border-black/8 bg-white text-muted transition hover:border-accent/30 hover:text-accent"
+          onClick={() => setExpanded((value) => !value)}
+        >
+          <svg
+            className={cx("h-3 w-3 transition-transform", expanded && "rotate-180")}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
       </div>
       {isError && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
           <span className="font-semibold">工具失败</span>
           <span className="min-w-0 flex-1">优先看失败步骤的上下文和错误正文，再决定是否让 Agent 修复。</span>
           <button
@@ -1237,21 +1253,16 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
           </button>
         </div>
       )}
-      <CollapsibleText
-        text={visibleContent}
-        renderMarkdown={!isError && isMarkdown(content)}
-        className={isError ? "text-red-600" : "text-ink-700"}
-        referenceSourceRole="tool"
-        referenceSourceLabel="工具输出"
-      />
-      {isLong && (
-        <button
-          type="button"
-          className="mt-3 rounded-full border border-black/8 bg-white px-3 py-1 text-xs font-semibold text-muted transition hover:text-accent"
-          onClick={() => setExpanded((value) => !value)}
-        >
-          {expanded ? "收起长输出" : "展开完整输出"}
-        </button>
+      {expanded && (
+        <div className="mt-3 border-t border-black/6 pt-3">
+          <CollapsibleText
+            text={content}
+            renderMarkdown={!isError && isMarkdown(content)}
+            className={isError ? "text-red-600" : "text-ink-700"}
+            referenceSourceRole="tool"
+            referenceSourceLabel="工具输出"
+          />
+        </div>
       )}
     </div>
   );

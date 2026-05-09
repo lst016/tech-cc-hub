@@ -37,4 +37,12 @@ describe("activity workspace tabs", () => {
     assert.match(appSource, /activityRailTabBySessionId\[activeSessionId\] \?\? "preview"/);
     assert.match(railSource, /useState<ActivityRailTab>\("preview"\)/);
   });
+
+  it("preserves preview and browser runtime state while switching workspace tabs", () => {
+    const appSource = readFileSync("src/ui/App.tsx", "utf8");
+
+    assert.doesNotMatch(appSource, /showActivityRail && workspaceView !== "browser" && \(\s*<ActivityRail/);
+    assert.match(appSource, /className=\{workspaceView === "browser" \? "hidden" : "contents"\}/);
+    assert.doesNotMatch(appSource, /workspaceView[\s\S]{0,180}closeBrowserWorkbench/);
+  });
 });

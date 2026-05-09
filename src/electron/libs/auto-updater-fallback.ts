@@ -12,12 +12,21 @@ export type GitHubReleaseLike = {
 };
 
 export type ReleaseFallbackInfo = {
+  tagName?: string;
   version?: string;
   releaseName?: string;
   releaseDate?: string;
   releaseNotes?: string;
   releaseUrl?: string;
+  metadataFile?: string;
   hasCompatibleUpdateMetadata: boolean;
+};
+
+export type ReleaseUpdatePlan = {
+  selectedRelease: ReleaseFallbackInfo | null;
+  currentRelease: ReleaseFallbackInfo | null;
+  isMultiReleaseUpdate: boolean;
+  previousBlockmapBaseUrl?: string;
 };
 
 export function isMissingPlatformUpdateMetadataError(error: unknown): boolean {
@@ -70,13 +79,68 @@ export function summarizeGitHubReleaseForUpdates(
       .filter(Boolean),
   );
   const metadataCandidates = getPlatformUpdateMetadataCandidates(platform, arch);
+  const metadataFile = metadataCandidates.find((candidate) => assetNames.has(candidate));
 
   return {
+    tagName: typeof release.tag_name === 'string' ? release.tag_name : undefined,
     version: typeof release.tag_name === 'string' ? normalizeAppVersion(release.tag_name) : undefined,
     releaseName: typeof release.name === 'string' ? release.name : undefined,
     releaseDate: typeof release.published_at === 'string' ? release.published_at : undefined,
     releaseNotes: typeof release.body === 'string' ? release.body : undefined,
     releaseUrl: typeof release.html_url === 'string' ? release.html_url : undefined,
-    hasCompatibleUpdateMetadata: metadataCandidates.some((candidate) => assetNames.has(candidate)),
+    metadataFile,
+    hasCompatibleUpdateMetadata: Boolean(metadataFile),
+  };
+}
+
+export function selectBestReleaseForUpdate(
+  releases: GitHubReleaseLike[],
+  currentVersion: string | undefined,
+  platform: NodeJS.Platform,
+  arch: string,
+): ReleaseFallbackInfo | null {
+  const newerReleases = releases
+    .map((release) => summarizeGitHubReleaseForUpdates(release, platform, arch))
+    .filter((release) => release.version && compareAppVersions(release.version, currentVersion) > 0)
+    .sort((left, right) => compareAppVersions(right.version, left.version));
+
+  return newerReleases.find((release) => release.hasCompatibleUpdateMetadata) ?? newerReleases[0] ?? null;
+}
+
+export function buildGitHubReleaseDownloadFeedUrl(owner: string, repo: string, tagName: string): string {
+  const safeOwner = owner.trim().replace(/^\/+|\/+$/g, '');
+  const safeRepo = repo.trim().replace(/^\/+|\/+$/g, '');
+  return `https://github.com/${safeOwner}/${safeRepo}/releases/download/${encodeURIComponent(tagName)}/`;
+}
+
+export function createReleaseUpdatePlan(
+  releases: GitHubReleaseLike[],
+  currentVersion: string | undefined,
+  platform: NodeJS.Platform,
+  arch: string,
+  owner: string,
+  repo: string,
+): ReleaseUpdatePlan {
+  const summaries = releases.map((release) => summarizeGitHubReleaseForUpdates(release, platform, arch));
+  const selectedRelease = selectBestReleaseForUpdate(releases, currentVersion, platform, arch);
+  const currentRelease = summaries.find((release) => compareAppVersions(release.version, currentVersion) === 0) ?? null;
+  const newerReleases = summaries
+    .filter((release) => release.version && compareAppVersions(release.version, currentVersion) > 0)
+    .sort((left, right) => compareAppVersions(left.version, right.version));
+  const firstNewerRelease = newerReleases[0] ?? null;
+  const isMultiReleaseUpdate = Boolean(
+    selectedRelease?.version &&
+    firstNewerRelease?.version &&
+    compareAppVersions(selectedRelease.version, firstNewerRelease.version) > 0,
+  );
+  const previousBlockmapBaseUrl = !isMultiReleaseUpdate && currentRelease?.tagName
+    ? buildGitHubReleaseDownloadFeedUrl(owner, repo, currentRelease.tagName)
+    : undefined;
+
+  return {
+    selectedRelease,
+    currentRelease,
+    isMultiReleaseUpdate,
+    previousBlockmapBaseUrl,
   };
 }

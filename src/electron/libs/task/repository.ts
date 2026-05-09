@@ -685,7 +685,7 @@ export class TaskRepository {
     }
 
     for (const row of countByProvider) {
-      if (row.provider === "lark" || row.provider === "tb") {
+      if (row.provider === "lark" || row.provider === "tb" || row.provider === "feishu-project") {
         stats.byProvider[row.provider] = row.cnt;
       }
     }

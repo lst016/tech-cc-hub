@@ -19,8 +19,8 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
 
         return (
           <div key={profile.id} className="rounded-[28px] border border-ink-900/10 bg-white/86 p-5 shadow-[0_18px_44px_rgba(24,32,46,0.06)]">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
+            <div className="grid gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <div className="truncate text-sm font-semibold text-ink-900">{profile.name || "未命名配置"}</div>
                   {profile.enabled && (
@@ -29,57 +29,57 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
                     </span>
                   )}
                 </div>
-                <p className="mt-2 text-sm leading-6 text-muted">
-                  当前把模型分工收敛到五层：主模型负责常规对话，专家模型负责复杂问题兜底，小模型负责标题、Haiku 和 small-fast 后台调用，Prompt 分析模型负责复盘诊断，图片预处理模型负责先读图再交给聊天。
-                </p>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button
+                    type="button"
+                    className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-xs text-ink-700 transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={() => onChange((current) => current.map((item) => (
+                      item.id === profile.id
+                        ? {
+                          ...item,
+                          expertModel: item.model,
+                        }
+                        : item
+                    )))}
+                    disabled={!mainModel}
+                  >
+                    专家模型同步主模型
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-xs text-ink-700 transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={() => onChange((current) => current.map((item) => (
+                      item.id === profile.id
+                        ? {
+                          ...item,
+                          smallModel: item.model,
+                        }
+                        : item
+                    )))}
+                    disabled={!mainModel}
+                  >
+                    小模型同步主模型
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-xs text-ink-700 transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={() => onChange((current) => current.map((item) => (
+                      item.id === profile.id
+                        ? {
+                          ...item,
+                          imageModel: item.model,
+                        }
+                        : item
+                    )))}
+                    disabled={!mainModel}
+                  >
+                    图片模型同步主模型
+                  </button>
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-xs text-ink-700 transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
-                  onClick={() => onChange((current) => current.map((item) => (
-                    item.id === profile.id
-                      ? {
-                        ...item,
-                        expertModel: item.model,
-                      }
-                      : item
-                  )))}
-                  disabled={!mainModel}
-                >
-                  专家模型同步主模型
-                </button>
-                <button
-                  type="button"
-                  className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-xs text-ink-700 transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
-                  onClick={() => onChange((current) => current.map((item) => (
-                    item.id === profile.id
-                      ? {
-                        ...item,
-                        smallModel: item.model,
-                      }
-                      : item
-                  )))}
-                  disabled={!mainModel}
-                >
-                  小模型同步主模型
-                </button>
-                <button
-                  type="button"
-                  className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-xs text-ink-700 transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
-                  onClick={() => onChange((current) => current.map((item) => (
-                    item.id === profile.id
-                      ? {
-                        ...item,
-                        imageModel: item.model,
-                      }
-                      : item
-                  )))}
-                  disabled={!mainModel}
-                >
-                  图片模型同步主模型
-                </button>
-              </div>
+              <p className="text-sm leading-6 text-muted">
+                五层模型分工：主模型对话，专家兜底，小模型处理后台调用，Prompt 分析复盘，图片模型先读图。
+              </p>
             </div>
 
             {availableModels.length === 0 ? (

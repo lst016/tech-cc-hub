@@ -125,7 +125,7 @@ test("deepseek official profile only requires the key while preserving official 
   assert.equal(normalized.models?.find((model) => model.name === "deepseek-v4-flash")?.contextWindow, 1_000_000);
 });
 
-test("deepseek host is normalized as official provider even when saved as custom", () => {
+test("explicit custom provider is preserved even with a deepseek host", () => {
   const normalized = normalizeProfile({
     id: "profile-2",
     name: "DeepSeek",
@@ -148,6 +148,30 @@ test("deepseek host is normalized as official provider even when saved as custom
     ],
     enabled: true,
     provider: "custom",
+    apiType: "anthropic",
+  });
+
+  assert.equal(normalized.provider, "custom");
+  assert.equal(normalized.baseURL, "https://api.deepseek.com/anthropic");
+});
+
+test("legacy deepseek host without provider is still normalized as official provider", () => {
+  const normalized = normalizeProfile({
+    id: "profile-3",
+    name: "DeepSeek",
+    apiKey: "sk-test",
+    baseURL: "https://api.deepseek.com/anthropic",
+    model: "deepseek-v4-flash",
+    expertModel: "deepseek-v4-pro",
+    analysisModel: "deepseek-v4-flash",
+    models: [
+      {
+        name: "deepseek-v4-flash",
+        contextWindow: 1_000_000,
+        compressionThresholdPercent: 70,
+      },
+    ],
+    enabled: true,
     apiType: "anthropic",
   });
 

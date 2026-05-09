@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildGitHubReleaseDownloadFeedUrl,
   compareAppVersions,
+  createReleaseUpdatePlan,
   getPlatformUpdateMetadataCandidates,
   isMissingPlatformUpdateMetadataError,
+  selectBestReleaseForUpdate,
   summarizeGitHubReleaseForUpdates,
 } from '../../src/electron/libs/auto-updater-fallback.js';
 
@@ -41,4 +44,87 @@ test('uses electron-updater default metadata names per platform', () => {
   assert.deepEqual(getPlatformUpdateMetadataCandidates('darwin', 'arm64'), ['latest-mac.yml']);
   assert.deepEqual(getPlatformUpdateMetadataCandidates('win32', 'x64'), ['latest.yml']);
   assert.deepEqual(getPlatformUpdateMetadataCandidates('linux', 'x64'), ['latest-linux.yml']);
+});
+
+test('selects the newest compatible release above the current version', () => {
+  const release = selectBestReleaseForUpdate([
+    {
+      tag_name: 'v0.1.13',
+      name: '0.1.13',
+      assets: [{ name: 'latest-mac.yml' }],
+    },
+    {
+      tag_name: 'v0.1.12',
+      name: '0.1.12',
+      assets: [{ name: 'latest.yml' }, { name: 'tech-cc-hub-Setup-0.1.12.exe' }],
+    },
+    {
+      tag_name: 'v0.1.11',
+      name: '0.1.11',
+      assets: [{ name: 'latest.yml' }, { name: 'tech-cc-hub-Setup-0.1.11.exe' }],
+    },
+    {
+      tag_name: 'v0.1.10',
+      name: '0.1.10',
+      assets: [{ name: 'latest.yml' }, { name: 'tech-cc-hub-Setup-0.1.10.exe' }],
+    },
+  ], '0.1.10', 'win32', 'x64');
+
+  assert.equal(release?.version, '0.1.12');
+  assert.equal(release?.tagName, 'v0.1.12');
+  assert.equal(release?.metadataFile, 'latest.yml');
+  assert.equal(release?.hasCompatibleUpdateMetadata, true);
+});
+
+test('builds a release-specific generic updater feed url', () => {
+  assert.equal(
+    buildGitHubReleaseDownloadFeedUrl('lst016', 'tech-cc-hub', 'v0.1.12'),
+    'https://github.com/lst016/tech-cc-hub/releases/download/v0.1.12/',
+  );
+});
+
+test('keeps differential updates for adjacent compatible releases', () => {
+  const plan = createReleaseUpdatePlan([
+    {
+      tag_name: 'v0.1.12',
+      name: '0.1.12',
+      assets: [{ name: 'latest.yml' }, { name: 'tech-cc-hub-Setup-0.1.12.exe' }],
+    },
+    {
+      tag_name: 'v0.1.11',
+      name: '0.1.11',
+      assets: [{ name: 'latest.yml' }, { name: 'tech-cc-hub-Setup-0.1.11.exe' }],
+    },
+  ], '0.1.11', 'win32', 'x64', 'lst016', 'tech-cc-hub');
+
+  assert.equal(plan.selectedRelease?.tagName, 'v0.1.12');
+  assert.equal(plan.isMultiReleaseUpdate, false);
+  assert.equal(
+    plan.previousBlockmapBaseUrl,
+    'https://github.com/lst016/tech-cc-hub/releases/download/v0.1.11/',
+  );
+});
+
+test('uses a full download plan when the newest compatible release skips releases', () => {
+  const plan = createReleaseUpdatePlan([
+    {
+      tag_name: 'v0.1.12',
+      name: '0.1.12',
+      assets: [{ name: 'latest.yml' }, { name: 'tech-cc-hub-Setup-0.1.12.exe' }],
+    },
+    {
+      tag_name: 'v0.1.11',
+      name: '0.1.11',
+      assets: [{ name: 'latest-mac.yml' }],
+    },
+    {
+      tag_name: 'v0.1.10',
+      name: '0.1.10',
+      assets: [{ name: 'latest.yml' }, { name: 'tech-cc-hub-Setup-0.1.10.exe' }],
+    },
+  ], '0.1.10', 'win32', 'x64', 'lst016', 'tech-cc-hub');
+
+  assert.equal(plan.selectedRelease?.tagName, 'v0.1.12');
+  assert.equal(plan.isMultiReleaseUpdate, true);
+  assert.equal(plan.previousBlockmapBaseUrl, undefined);
 });

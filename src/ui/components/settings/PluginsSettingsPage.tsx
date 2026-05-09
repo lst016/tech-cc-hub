@@ -1,5 +1,7 @@
 import { RefreshCw, ShieldCheck } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { buildPluginActionToastMessage } from "./plugin-toast-messages";
 
 type PluginStatus = "not-installed" | "needs-permission" | "needs-connect" | "ready" | "update-available";
 type PluginUpdateStatus = "unknown" | "up-to-date" | "update-available" | "error";
@@ -66,7 +68,7 @@ const DEFAULT_PLUGINS: DefaultPlugin[] = [
     id: "open-computer-use",
     name: "Open Computer Use",
     kind: "mcp-plugin",
-    version: "0.1.36",
+    version: "0.1.48",
     description: "本机桌面控制 MCP 插件，作为插件体系的第一颗默认插件。",
     sourcePath: "plugins/open-computer-use",
     permissions: ["mcp.server", "desktop.read", "desktop.write", "accessibility", "screen-recording"],
@@ -120,6 +122,16 @@ function buildOpenComputerUseGuidePrompt(status: PluginRuntimeStatus | null): st
     JSON.stringify(status ?? { installed: false, connected: false }, null, 2),
     "```",
   ].join("\n");
+}
+
+function showPluginActionToast(result: PluginInstallResult): void {
+  const message = buildPluginActionToastMessage(result);
+  const options = message.description ? { description: message.description } : undefined;
+  if (message.kind === "success") {
+    toast.success(message.title, options);
+    return;
+  }
+  toast.error(message.title, options);
 }
 
 export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPageProps) {
@@ -180,6 +192,7 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
           invoke: (channel: string, ...args: unknown[]) => Promise<PluginInstallResult>;
         }).invoke("plugins:installOpenComputerUse") as PluginInstallResult;
         setInstallResult(result);
+        showPluginActionToast(result);
         setRuntimeStatus({
           installed: result.installed,
           connected: result.connected,
@@ -192,13 +205,15 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
           permissions: result.permissions,
         });
       } catch (error) {
-        setInstallResult({
+        const result: PluginInstallResult = {
           success: false,
           installed: false,
           connected: false,
           message: "插件安装请求失败。",
           error: error instanceof Error ? error.message : String(error),
-        });
+        };
+        setInstallResult(result);
+        showPluginActionToast(result);
       } finally {
         setInstallingPluginId(null);
       }
@@ -240,6 +255,7 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
           invoke: (channel: string, ...args: unknown[]) => Promise<PluginInstallResult>;
         }).invoke("plugins:updateOpenComputerUse") as PluginInstallResult;
         setInstallResult(result);
+        showPluginActionToast(result);
         setRuntimeStatus({
           installed: result.installed,
           connected: result.connected,
@@ -252,7 +268,7 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
           permissions: result.permissions,
         });
       } catch (error) {
-        setInstallResult({
+        const result: PluginInstallResult = {
           success: false,
           installed: runtimeStatus?.installed ?? true,
           connected: runtimeStatus?.connected ?? false,
@@ -264,7 +280,9 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
           updateCheckedAt: Date.now(),
           message: "插件更新请求失败。",
           error: error instanceof Error ? error.message : String(error),
-        });
+        };
+        setInstallResult(result);
+        showPluginActionToast(result);
       } finally {
         setUpdatingPluginId(null);
       }
@@ -445,18 +463,6 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
           );
         })}
       </div>
-      {installResult && (
-        <div className={`rounded-xl border px-4 py-3 text-sm ${
-          installResult.success
-            ? "border-emerald-500/20 bg-emerald-50 text-emerald-700"
-            : "border-red-500/20 bg-red-50 text-red-700"
-        }`}>
-          {installResult.message}
-          {installResult.version ? ` 当前版本：${installResult.version}` : ""}
-          {installResult.latestVersion ? ` 最新版本：${installResult.latestVersion}` : ""}
-          {installResult.error ? ` ${installResult.error}` : ""}
-        </div>
-      )}
     </section>
   );
 }

@@ -401,35 +401,73 @@
   background: #f6f8fa;
 }
 
-.vscode-preview__tabs {
+.vscode-preview__tabbar {
   display: flex;
   min-height: 35px;
   align-items: stretch;
-  overflow-x: auto;
   border-bottom: 1px solid #e5e5e5;
   background: #f3f3f3;
 }
 
-.vscode-preview__tabs::-webkit-scrollbar {
-  height: 3px;
+.vscode-preview__tabs {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
 
-.vscode-preview__tabs::-webkit-scrollbar-thumb {
-  background: #d0d7de;
-  border-radius: 3px;
+.vscode-preview__tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.vscode-preview__tab-scroll {
+  width: 26px;
+  flex: 0 0 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-right: 1px solid #e5e5e5;
+  background: #f3f3f3;
+  color: #57606a;
+  cursor: pointer;
+}
+
+.vscode-preview__tab-scroll:last-of-type {
+  border-right: 0;
+  border-left: 1px solid #e5e5e5;
+}
+
+.vscode-preview__tab-scroll:hover:not(:disabled) {
+  background: #e8e8e8;
+  color: #24292f;
+}
+
+.vscode-preview__tab-scroll:disabled {
+  cursor: default;
+  color: #c9d1d9;
+}
+
+.vscode-preview__tab-scroll svg {
+  width: 14px;
+  height: 14px;
 }
 
 .vscode-preview__tab {
   display: flex;
-  min-width: 0;
+  min-width: 92px;
+  max-width: 136px;
+  flex: 0 0 104px;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   border-right: 1px solid #e5e5e5;
   background: #ececec;
   color: #57606a;
   cursor: pointer;
   font-size: 12px;
-  padding: 0 10px;
+  padding: 0 6px;
   user-select: none;
 }
 
@@ -465,8 +503,8 @@
 }
 
 .vscode-preview__tab-close {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   flex: 0 0 auto;
   border: 0;
   border-radius: 3px;
@@ -505,6 +543,42 @@
 
 .vscode-preview__tab-close:hover {
   background: #d0d7de;
+}
+
+.vscode-preview__tab-menu {
+  position: fixed;
+  z-index: 45;
+  width: 176px;
+  overflow: hidden;
+  border: 1px solid #d8dee4;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 14px 34px rgba(31, 35, 40, 0.18);
+  padding: 4px;
+}
+
+.vscode-preview__tab-menu button {
+  width: 100%;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #24292f;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 6px;
+  text-align: left;
+}
+
+.vscode-preview__tab-menu button:hover:not(:disabled) {
+  background: #f6f8fa;
+}
+
+.vscode-preview__tab-menu button:disabled {
+  cursor: default;
+  color: #8c959f;
 }
 
 .vscode-preview__file {
@@ -575,6 +649,12 @@
   border-color: var(--aion-line);
   background: #ffffff;
   color: var(--aion-accent);
+}
+
+.vscode-preview__title-actions .vscode-preview__title-action--active {
+  border-color: #b6d7ff;
+  background: #ddf4ff;
+  color: #0550ae;
 }
 
 .vscode-preview__path {
@@ -682,6 +762,17 @@
   height: 100%;
   border: 0;
   background: #ffffff;
+}
+
+.vscode-preview__markdown {
+  height: 100%;
+  overflow: auto;
+  padding: 18px 22px 36px;
+  background: #ffffff;
+}
+
+.vscode-preview__markdown > *:first-child {
+  margin-top: 0;
 }
 
 .vscode-preview__state,

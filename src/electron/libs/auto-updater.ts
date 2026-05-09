@@ -3,16 +3,20 @@ import log from "electron-log";
 import { createRequire } from "node:module";
 import type { ProgressInfo, UpdateInfo } from "electron-updater";
 import {
-  compareAppVersions,
+  buildGitHubReleaseDownloadFeedUrl,
+  createReleaseUpdatePlan,
   isMissingPlatformUpdateMetadataError,
-  summarizeGitHubReleaseForUpdates,
+  selectBestReleaseForUpdate,
   type GitHubReleaseLike,
+  type ReleaseFallbackInfo,
+  type ReleaseUpdatePlan,
 } from "./auto-updater-fallback.js";
 
 const require = createRequire(import.meta.url);
 const { autoUpdater } = require("electron-updater") as typeof import("electron-updater");
 const UPDATE_OWNER = "lst016";
 const UPDATE_REPO = "tech-cc-hub";
+const RELEASE_LOOKUP_LIMIT = 30;
 
 export type AppUpdateState =
   | "idle"
@@ -91,8 +95,15 @@ function isAutoUpdateDisabled(): boolean {
     process.env.GITHUB_ACTIONS === "true";
 }
 
-function getReleaseApiUrl(): string {
-  return `https://api.github.com/repos/${UPDATE_OWNER}/${UPDATE_REPO}/releases/latest`;
+function getReleaseListApiUrl(): string {
+  return `https://api.github.com/repos/${UPDATE_OWNER}/${UPDATE_REPO}/releases?per_page=${RELEASE_LOOKUP_LIMIT}`;
+}
+
+function getGitHubRequestHeaders(): Record<string, string> {
+  return {
+    "Accept": "application/vnd.github+json",
+    "User-Agent": "tech-cc-hub-updater",
+  };
 }
 
 class AppAutoUpdater {
@@ -108,6 +119,9 @@ class AppAutoUpdater {
     log.transports.file.level = "info";
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.disableDifferentialDownload = false;
+    autoUpdater.disableWebInstaller = true;
+    autoUpdater.fullChangelog = true;
     if (channel) {
       autoUpdater.channel = channel;
     }
@@ -174,6 +188,7 @@ class AppAutoUpdater {
         error: undefined,
         checkedAt: Date.now(),
       });
+      await this.prepareCrossReleaseFeed();
       const result = await autoUpdater.checkForUpdates();
       if (!result) {
         const status = this.setStatus({
@@ -204,34 +219,99 @@ class AppAutoUpdater {
     }
   }
 
+  private useDefaultGitHubFeed(): void {
+    autoUpdater.disableDifferentialDownload = false;
+    autoUpdater.previousBlockmapBaseUrlOverride = null;
+    autoUpdater.setFeedURL({
+      provider: "github",
+      owner: UPDATE_OWNER,
+      repo: UPDATE_REPO,
+      releaseType: "release",
+    });
+    const channel = getUpdateChannel();
+    if (channel) {
+      autoUpdater.channel = channel;
+    }
+  }
+
+  private useReleaseDownloadFeed(plan: ReleaseUpdatePlan): void {
+    const release = plan.selectedRelease;
+    if (!release?.tagName) return;
+
+    const canUseDifferentialDownload = !plan.isMultiReleaseUpdate && Boolean(plan.previousBlockmapBaseUrl);
+    autoUpdater.setFeedURL(buildGitHubReleaseDownloadFeedUrl(UPDATE_OWNER, UPDATE_REPO, release.tagName));
+    autoUpdater.disableDifferentialDownload = !canUseDifferentialDownload;
+    autoUpdater.previousBlockmapBaseUrlOverride = canUseDifferentialDownload
+      ? plan.previousBlockmapBaseUrl ?? null
+      : null;
+    if (getUpdateChannel() && release.metadataFile === "latest.yml") {
+      autoUpdater.channel = null;
+    }
+  }
+
+  private async fetchRecentReleases(): Promise<GitHubReleaseLike[] | null> {
+    const response = await fetch(getReleaseListApiUrl(), {
+      headers: getGitHubRequestHeaders(),
+    });
+    if (!response.ok) return null;
+
+    const releases = await response.json();
+    return Array.isArray(releases) ? releases as GitHubReleaseLike[] : null;
+  }
+
+  private async prepareCrossReleaseFeed(): Promise<ReleaseFallbackInfo | null> {
+    this.useDefaultGitHubFeed();
+
+    try {
+      const releases = await this.fetchRecentReleases();
+      if (!releases) return null;
+
+      const plan = createReleaseUpdatePlan(
+        releases,
+        app.getVersion(),
+        process.platform,
+        process.arch,
+        UPDATE_OWNER,
+        UPDATE_REPO,
+      );
+      const release = plan.selectedRelease;
+      if (!release?.tagName || !release.hasCompatibleUpdateMetadata) return release;
+
+      this.useReleaseDownloadFeed(plan);
+      const canUseDifferentialDownload = !plan.isMultiReleaseUpdate && Boolean(plan.previousBlockmapBaseUrl);
+      let updateStrategy = "differential download remains enabled";
+      if (!canUseDifferentialDownload) {
+        updateStrategy = plan.isMultiReleaseUpdate
+          ? "using full download for cross-release update"
+          : "using full download because the current release blockmap location is unknown";
+      }
+      log.info(
+        `Selected app update release ${release.tagName} for ${process.platform}/${process.arch}; ${updateStrategy}`,
+      );
+      return release;
+    } catch (error) {
+      log.warn(`Unable to preselect app update release: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
   private async checkReleaseFallback(originalError: string): Promise<AppUpdateStatus | null> {
     try {
-      const response = await fetch(getReleaseApiUrl(), {
-        headers: {
-          "Accept": "application/vnd.github+json",
-          "User-Agent": "tech-cc-hub-updater",
-        },
-      });
-      if (!response.ok) return null;
-
-      const release = await response.json() as GitHubReleaseLike;
-      const fallback = summarizeGitHubReleaseForUpdates(release, process.platform, process.arch);
       const currentVersion = app.getVersion();
-      const latestVersion = fallback.version;
-      const latestIsNewer = compareAppVersions(latestVersion, currentVersion) > 0;
+      const releases = await this.fetchRecentReleases();
+      const fallback = releases
+        ? selectBestReleaseForUpdate(releases, currentVersion, process.platform, process.arch)
+        : null;
 
-      if (!latestIsNewer) {
+      if (!fallback) {
         return this.setStatus({
           status: "not-available",
-          version: latestVersion,
-          releaseName: fallback.releaseName,
-          releaseDate: fallback.releaseDate,
-          releaseNotes: fallback.releaseNotes,
-          releaseUrl: fallback.releaseUrl,
           checkedAt: Date.now(),
           error: undefined,
         });
       }
+
+      const latestVersion = fallback.version;
 
       if (!fallback.hasCompatibleUpdateMetadata) {
         return this.setStatus({

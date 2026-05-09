@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactElement } from 'react';
 import Editor, { loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
-import { LocateFixed, RefreshCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, LocateFixed, RefreshCw } from 'lucide-react';
 import { PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT, PROMPT_SENT_EVENT, PROMPT_SUBMIT_EVENT } from '../events';
 import {
   filterPreviewQuickOpenEntries,
@@ -21,6 +21,7 @@ import {
 import {
   getPreviewFileAncestorDirectories,
 } from '../utils/preview-file-locator';
+import MDContent from '../render/markdown';
 import './AionWorkspacePreviewPane.css';
 
 type MonacoWorkerEnvironment = typeof self & {
@@ -112,6 +113,12 @@ type ActivePreviewFile = {
   loading?: boolean;
   error?: string;
   revealLine?: number;
+};
+
+type TabContextMenuState = {
+  path: string;
+  x: number;
+  y: number;
 };
 
 type CodeSelectionInfo = {
@@ -560,6 +567,9 @@ function PreviewSurface({
   activeTabPath,
   onSwitchTab,
   onCloseTab,
+  onCloseOtherTabs,
+  onCloseTabsToRight,
+  onCloseAllTabs,
 }: {
   file: ActivePreviewFile | null;
   referenceSessionKey: string;
@@ -567,12 +577,19 @@ function PreviewSurface({
   activeTabPath: string | null;
   onSwitchTab: (path: string) => void;
   onCloseTab: (path: string) => void;
+  onCloseOtherTabs: (path: string) => void;
+  onCloseTabsToRight: (path: string) => void;
+  onCloseAllTabs: () => void;
 }) {
   const addCodeReference = useAppStore((state) => state.addCodeReference);
   const codeReferences = useAppStore((state) => state.codeReferencesBySessionId[referenceSessionKey] || EMPTY_CODE_REFERENCES);
+  const tabScrollerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const selectionListenerRef = useRef<{ dispose: () => void } | null>(null);
   const decorationsRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+  const [tabScrollState, setTabScrollState] = useState({ canScrollLeft: false, canScrollRight: false });
+  const [tabMenu, setTabMenu] = useState<TabContextMenuState | null>(null);
+  const [markdownViewMode, setMarkdownViewMode] = useState<'source' | 'preview'>('source');
   const [selectionInfo, setSelectionInfo] = useState<CodeSelectionInfo | null>(null);
   const [commentOpen, setCommentOpen] = useState(false);
   const [commentText, setCommentText] = useState('');
@@ -584,6 +601,118 @@ function PreviewSurface({
 
   const monacoLanguage = normalizeMonacoLanguage(file?.language, file?.fileName);
   const monacoModelPath = buildPreviewMonacoModelPath(file?.path, file?.fileName);
+  const isMarkdownFile = file?.contentType === 'code' && monacoLanguage === 'markdown';
+
+  const updateTabScrollState = useCallback(() => {
+    const scroller = tabScrollerRef.current;
+    if (!scroller) {
+      setTabScrollState({ canScrollLeft: false, canScrollRight: false });
+      return;
+    }
+
+    const maxScrollLeft = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+    const nextState = {
+      canScrollLeft: scroller.scrollLeft > 1,
+      canScrollRight: maxScrollLeft - scroller.scrollLeft > 1,
+    };
+
+    setTabScrollState((current) => (
+      current.canScrollLeft === nextState.canScrollLeft && current.canScrollRight === nextState.canScrollRight
+        ? current
+        : nextState
+    ));
+  }, []);
+
+  useLayoutEffect(() => {
+    const scroller = tabScrollerRef.current;
+    if (!scroller) return;
+
+    const frameId = window.requestAnimationFrame(updateTabScrollState);
+    scroller.addEventListener('scroll', updateTabScrollState, { passive: true });
+    window.addEventListener('resize', updateTabScrollState);
+
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateTabScrollState);
+    observer?.observe(scroller);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      scroller.removeEventListener('scroll', updateTabScrollState);
+      window.removeEventListener('resize', updateTabScrollState);
+      observer?.disconnect();
+    };
+  }, [openTabs.length, updateTabScrollState]);
+
+  useLayoutEffect(() => {
+    const frameId = window.requestAnimationFrame(() => {
+      tabScrollerRef.current
+        ?.querySelector<HTMLElement>('.vscode-preview__tab--active')
+        ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      updateTabScrollState();
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [activeTabPath, updateTabScrollState]);
+
+  useEffect(() => {
+    if (!tabMenu) return;
+
+    const closeMenu = () => setTabMenu(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setTabMenu(null);
+    };
+
+    window.addEventListener('click', closeMenu);
+    window.addEventListener('resize', closeMenu);
+    window.addEventListener('scroll', closeMenu, true);
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('click', closeMenu);
+      window.removeEventListener('resize', closeMenu);
+      window.removeEventListener('scroll', closeMenu, true);
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [tabMenu]);
+
+  const scrollTabs = useCallback((direction: -1 | 1) => {
+    const scroller = tabScrollerRef.current;
+    if (!scroller) return;
+    const distance = Math.max(180, Math.round(scroller.clientWidth * 0.72));
+    scroller.scrollBy({ left: direction * distance, behavior: 'smooth' });
+    window.setTimeout(updateTabScrollState, 260);
+  }, [updateTabScrollState]);
+
+  const handleTabContextMenu = useCallback((event: ReactMouseEvent<HTMLDivElement>, tabPath: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onSwitchTab(tabPath);
+    setTabMenu({
+      path: tabPath,
+      x: Math.min(event.clientX, Math.max(12, window.innerWidth - 190)),
+      y: Math.min(event.clientY, Math.max(12, window.innerHeight - 178)),
+    });
+  }, [onSwitchTab]);
+
+  const tabMenuIndex = tabMenu ? openTabs.findIndex((tab) => tab.path === tabMenu.path) : -1;
+  const hasTabsToRight = tabMenuIndex >= 0 && tabMenuIndex < openTabs.length - 1;
+
+  const runTabMenuAction = useCallback((action: 'close' | 'close-others' | 'close-right' | 'close-all') => {
+    if (!tabMenu) return;
+    const tabPath = tabMenu.path;
+    setTabMenu(null);
+    if (action === 'close') {
+      onCloseTab(tabPath);
+      return;
+    }
+    if (action === 'close-others') {
+      onCloseOtherTabs(tabPath);
+      return;
+    }
+    if (action === 'close-right') {
+      onCloseTabsToRight(tabPath);
+      return;
+    }
+    onCloseAllTabs();
+  }, [onCloseAllTabs, onCloseOtherTabs, onCloseTab, onCloseTabsToRight, tabMenu]);
 
   const updateReferenceDecorations = useCallback(() => {
     if (!decorationsRef.current || !file) return;
@@ -735,7 +864,18 @@ function PreviewSurface({
   return (
     <section className="vscode-preview">
       {openTabs.length > 0 && (
-        <div className="vscode-preview__tabs">
+        <div className="vscode-preview__tabbar">
+          <button
+            type="button"
+            className="vscode-preview__tab-scroll"
+            onClick={() => scrollTabs(-1)}
+            disabled={!tabScrollState.canScrollLeft}
+            title="向左滚动标签"
+            aria-label="向左滚动标签"
+          >
+            <ChevronLeft />
+          </button>
+          <div ref={tabScrollerRef} className="vscode-preview__tabs">
           {openTabs.map((tab) => {
             const isActive = tab.path === activeTabPath;
             return (
@@ -744,6 +884,7 @@ function PreviewSurface({
                 className={`vscode-preview__tab ${isActive ? 'vscode-preview__tab--active' : ''}`}
                 title={tab.relativePath}
                 onClick={() => onSwitchTab(tab.path)}
+                onContextMenu={(event) => handleTabContextMenu(event, tab.path)}
               >
                 <span className="vscode-preview__tab-dot" />
                 <span className="vscode-preview__tab-name">{tab.fileName}</span>
@@ -751,11 +892,36 @@ function PreviewSurface({
                   type="button"
                   className="vscode-preview__tab-close"
                   onClick={(e) => { e.stopPropagation(); onCloseTab(tab.path); }}
+                  aria-label={`关闭 ${tab.fileName}`}
                   title="关闭"
                 />
               </div>
             );
           })}
+          </div>
+          <button
+            type="button"
+            className="vscode-preview__tab-scroll"
+            onClick={() => scrollTabs(1)}
+            disabled={!tabScrollState.canScrollRight}
+            title="向右滚动标签"
+            aria-label="向右滚动标签"
+          >
+            <ChevronRight />
+          </button>
+          {tabMenu && (
+            <div
+              className="vscode-preview__tab-menu"
+              style={{ left: tabMenu.x, top: tabMenu.y }}
+              role="menu"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button type="button" role="menuitem" onClick={() => runTabMenuAction('close')}>关闭</button>
+              <button type="button" role="menuitem" onClick={() => runTabMenuAction('close-others')} disabled={openTabs.length <= 1}>关闭其他</button>
+              <button type="button" role="menuitem" onClick={() => runTabMenuAction('close-right')} disabled={!hasTabsToRight}>关闭右侧</button>
+              <button type="button" role="menuitem" onClick={() => runTabMenuAction('close-all')}>关闭全部</button>
+            </div>
+          )}
         </div>
       )}
       <div className="vscode-preview__titlebar">
@@ -770,6 +936,24 @@ function PreviewSurface({
             </span>
           )}
         </div>
+        {isMarkdownFile && (
+          <div className="vscode-preview__title-actions" aria-label="Markdown 视图模式">
+            <button
+              type="button"
+              className={markdownViewMode === 'preview' ? 'vscode-preview__title-action--active' : ''}
+              onClick={() => setMarkdownViewMode('preview')}
+            >
+              预览
+            </button>
+            <button
+              type="button"
+              className={markdownViewMode === 'source' ? 'vscode-preview__title-action--active' : ''}
+              onClick={() => setMarkdownViewMode('source')}
+            >
+              源码
+            </button>
+          </div>
+        )}
       </div>
       <div className="vscode-preview__path" title={file.path}>
         <span className="vscode-preview__path-text">{file.relativePath}</span>
@@ -789,6 +973,10 @@ function PreviewSurface({
           </div>
         ) : file.contentType === 'html' ? (
           <iframe className="vscode-preview__iframe" title={file.fileName} srcDoc={file.content} />
+        ) : isMarkdownFile && markdownViewMode === 'preview' ? (
+          <div className="vscode-preview__markdown">
+            <MDContent text={file.content} />
+          </div>
         ) : (
           <Editor
             key={file.path}
@@ -962,6 +1150,31 @@ export function AionWorkspacePreviewPane({ workspace, conversationId, messages =
     });
   }, [activeTabPath]);
 
+  const closeOtherTabs = useCallback((path: string) => {
+    setOpenTabs((prev) => {
+      const next = prev.filter((tab) => tab.path === path);
+      setActiveTabPath(next[0]?.path ?? null);
+      return next;
+    });
+  }, []);
+
+  const closeTabsToRight = useCallback((path: string) => {
+    setOpenTabs((prev) => {
+      const idx = prev.findIndex((tab) => tab.path === path);
+      if (idx < 0) return prev;
+      const next = prev.slice(0, idx + 1);
+      if (!next.some((tab) => tab.path === activeTabPath)) {
+        setActiveTabPath(path);
+      }
+      return next;
+    });
+  }, [activeTabPath]);
+
+  const closeAllTabs = useCallback(() => {
+    setOpenTabs([]);
+    setActiveTabPath(null);
+  }, []);
+
   const loadQuickOpenEntries = useCallback(async (force = false) => {
     if (!workspace || (!force && quickOpenEntriesRef.current.length > 0)) return;
     setQuickOpenLoading(true);
@@ -1061,6 +1274,9 @@ export function AionWorkspacePreviewPane({ workspace, conversationId, messages =
           activeTabPath={activeTabPath}
           onSwitchTab={setActiveTabPath}
           onCloseTab={closeTab}
+          onCloseOtherTabs={closeOtherTabs}
+          onCloseTabsToRight={closeTabsToRight}
+          onCloseAllTabs={closeAllTabs}
         />
       </div>
       {quickOpenVisible && (

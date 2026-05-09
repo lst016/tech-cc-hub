@@ -77,8 +77,8 @@ function normalizePercent(value: number | null | undefined): number | undefined 
 }
 
 function normalizeProvider(value: unknown, baseURL: string): "custom" | "deepseek" {
-  if (value === "deepseek") {
-    return "deepseek";
+  if (value === "custom" || value === "deepseek") {
+    return value;
   }
 
   try {
