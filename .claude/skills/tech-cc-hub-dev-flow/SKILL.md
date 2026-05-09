@@ -91,9 +91,9 @@ After interaction, inspect `logs` for `pageerror`, Vite transform errors, Monaco
 - React hook order errors: do not return before all hooks have run. Move conditional rendering after hooks.
 - UI cards becoming raw text: keep user-facing context as composer cards; serialize to prompt only on send.
 
-## AionUi full-copy integration rules
+## Upstream UI integration rules
 
-- Copy original AionUi modules into `src/ui/` alias-compatible paths when the user wants full CV; keep not-yet-integrated full copies under `src/ui/aionui/` and do not recreate `src/renderer/`.
+- Copy only adapted upstream modules into `src/ui/` alias-compatible paths; do not keep unintegrated full-copy source trees under `src/ui/`, and do not recreate `src/renderer/`.
 - Preserve module boundaries where possible: `Preview`, `Workspace`, `hooks/file`, `utils/file`.
 - Add adapter/shim layers for `@/common`, IPC bridge, layout/theme/conversation contexts, and platform services.
 - Do not expose AionUi raw UI if it clashes with tech-cc-hub. Wrap or restyle it to the current product visual language.

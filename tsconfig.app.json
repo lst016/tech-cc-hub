@@ -38,7 +38,6 @@
         "types"
     ],
     "exclude": [
-        "src/electron",
-        "src/ui/aionui"
+        "src/electron"
     ]
 }

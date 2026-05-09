@@ -164,7 +164,7 @@ API Key: sk-你的本地网关密钥
 │   │   └── libs/
 │   │       ├── task/              # 任务系统：provider、repository、workflow、executor
 │   │       └── mcp-tools/         # 内置 MCP 工具：browser、design、admin
-│   └── ui/                        # React 前端（含 aionui/ 上游移植素材与 Cron UI 适配模块）
+│   └── ui/                        # React 前端（含 Cron UI 适配模块）
 ├── scripts/
 │   ├── dev.mjs                    # 开发启动编排
 │   └── qa/                        # Electron / UI 冒烟和窗口截图工具

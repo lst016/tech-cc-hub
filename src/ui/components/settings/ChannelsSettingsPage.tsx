@@ -4,12 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Source copy/adaptation:
- * - doc/00-research/AionUi/src/renderer/components/settings/SettingsModal/contents/channels/ChannelModalContent.tsx
- * - doc/00-research/AionUi/src/renderer/components/settings/SettingsModal/contents/channels/ChannelItem.tsx
- * - doc/00-research/AionUi/src/renderer/components/settings/SettingsModal/contents/channels/ChannelHeader.tsx
- * - doc/00-research/AionUi/src/renderer/components/settings/SettingsModal/contents/channels/TelegramConfigForm.tsx
- * - doc/00-research/AionUi/src/renderer/components/settings/SettingsModal/contents/channels/LarkConfigForm.tsx
- * - doc/00-research/AionUi/src/renderer/components/settings/SettingsModal/contents/channels/WeixinConfigForm.tsx
+ * - AionUi SettingsModal channel modules under doc/00-research/AionUi.
  *
  * tech-cc-hub adapter notes:
  * - Keep only Telegram, Lark/Feishu and Weixin, as requested.
