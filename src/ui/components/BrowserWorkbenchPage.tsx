@@ -50,7 +50,8 @@ type LocalBrowserTarget = {
 
 const RECENT_LOCAL_BROWSER_TARGETS_KEY = "tech-cc-hub:browser-workbench:recent-local-targets";
 const COMMON_LOCAL_BROWSER_PORTS = [3000, 4173, 5173, 8000, 8001, 8080];
-const MAX_RECENT_LOCAL_BROWSER_TARGETS = 6;
+const MAX_LOCAL_BROWSER_TARGETS = 5;
+const MAX_RECENT_LOCAL_BROWSER_TARGETS = 5;
 
 type LocalTargetStatus = "checking" | "online" | "offline";
 
@@ -104,10 +105,8 @@ function isLoopbackHost(hostname: string) {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
 }
 
-function formatLocalBrowserTargetTitle(url: URL, current = false) {
-  if (current) return "当前应用";
-  const path = url.pathname && url.pathname !== "/" ? url.pathname.replace(/\/$/, "") : "";
-  return path ? `${url.host}${path}` : url.host;
+function formatLocalBrowserTargetTitle(url: URL) {
+  return url.host || url.hostname || url.href;
 }
 
 function getWorkspaceRecentStorageKey(workspaceKey: string) {
@@ -210,15 +209,14 @@ function toBrowserPageTarget(value: string, options: { idPrefix?: string; curren
   if (!normalized || typeof window === "undefined") return null;
   try {
     const url = new URL(normalized, window.location.href);
-    if (url.protocol !== "http:" && url.protocol !== "https:" && url.protocol !== "file:") return null;
-    if (options.localOnly && url.protocol !== "file:" && !isLoopbackHost(url.hostname)) return null;
-    const targetUrl = url.protocol === "file:"
-      ? url.href
-      : `${url.origin}${url.pathname || "/"}${url.search}${url.hash}`;
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (options.localOnly && !isLoopbackHost(url.hostname)) return null;
+    const targetUrl = `${url.origin}/`;
+    const host = url.host || url.hostname;
     return {
       id: `${options.idPrefix ?? "local"}-${encodeURIComponent(targetUrl)}`,
-      title: formatLocalBrowserTargetTitle(url, options.current),
-      host: url.host,
+      title: formatLocalBrowserTargetTitle(url),
+      host,
       url: targetUrl,
       current: options.current,
       recent: options.recent,
@@ -231,11 +229,19 @@ function toBrowserPageTarget(value: string, options: { idPrefix?: string; curren
 function readRecentLocalBrowserTargets(workspaceKey: string): LocalBrowserTarget[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(getWorkspaceRecentStorageKey(workspaceKey));
+    const storageKey = getWorkspaceRecentStorageKey(workspaceKey);
+    const raw = window.localStorage.getItem(storageKey);
     const values = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(values)) return [];
-    return values
+    const targets = values
       .filter((value): value is string => typeof value === "string")
+      .map((value) => toBrowserPageTarget(value, { idPrefix: "recent", recent: true }))
+      .filter((target): target is LocalBrowserTarget => Boolean(target));
+    const normalizedUrls = Array.from(new Set(targets.map((target) => target.url))).slice(0, MAX_RECENT_LOCAL_BROWSER_TARGETS);
+    if (JSON.stringify(values) !== JSON.stringify(normalizedUrls)) {
+      window.localStorage.setItem(storageKey, JSON.stringify(normalizedUrls));
+    }
+    return normalizedUrls
       .map((value) => toBrowserPageTarget(value, { idPrefix: "recent", recent: true }))
       .filter((target): target is LocalBrowserTarget => Boolean(target));
   } catch {
@@ -276,7 +282,7 @@ function buildLocalBrowserTargets(workspaceKey: string): LocalBrowserTarget[] {
     addTarget(toBrowserPageTarget(`http://localhost:${port}/`, { idPrefix: "default", localOnly: true }));
   }
 
-  return Array.from(targets.values());
+  return Array.from(targets.values()).slice(0, MAX_LOCAL_BROWSER_TARGETS);
 }
 
 function toBrowserWorkbenchUrl(value: string) {
@@ -290,6 +296,26 @@ function toBrowserWorkbenchUrl(value: string) {
   }
 }
 
+function toComparableWorkbenchUrl(value: string) {
+  const normalized = normalizeWorkbenchUrl(value) ?? value.trim();
+  if (!normalized) return null;
+  if (typeof window === "undefined") return normalized;
+  try {
+    return new URL(normalized, window.location.href).href;
+  } catch {
+    return normalized;
+  }
+}
+
+function isSameWorkbenchUrl(left: string | null, right: string | null) {
+  return Boolean(left && right && left === right);
+}
+
+type PendingNavigation = {
+  targetUrl: string | null;
+  staleUrl: string | null;
+};
+
 export function BrowserWorkbenchPage({
   active = true,
   initialUrl = "",
@@ -302,6 +328,9 @@ export function BrowserWorkbenchPage({
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const previewFrameRef = useRef<HTMLIFrameElement | null>(null);
   const hasOpenedRef = useRef(false);
+  const isEditingUrlRef = useRef(false);
+  const internalUrlUpdateRef = useRef<string | null>(null);
+  const pendingNavigationRef = useRef<PendingNavigation | null>(null);
   const initialUrlRef = useRef(initialUrl);
   const sessionIdRef = useRef(sessionId);
   const sessionBrowserState = useAppStore((store) => (sessionId ? store.browserWorkbenchBySessionId[sessionId] : undefined));
@@ -320,6 +349,7 @@ export function BrowserWorkbenchPage({
   const [isPreviewRuntime] = useState(isBrowserPreviewRuntime);
   const [hasBrowserRuntime] = useState(hasBrowserWorkbenchRuntime);
   const [localTargetStatus, setLocalTargetStatus] = useState<Record<string, LocalTargetStatus>>({});
+  const [isEditingUrl, setIsEditingUrl] = useState(false);
   const canUseBrowserView = hasBrowserRuntime && !isPreviewRuntime;
   const [isDevToolsOpen, setIsDevToolsOpen] = useState(false);
   const [annotationTool, setAnnotationTool] = useState<AnnotationTool | null>(null);
@@ -333,8 +363,15 @@ export function BrowserWorkbenchPage({
   const canUsePageAnnotation = canUseBrowserView && hasExternalBrowserUrl;
   const [localTargets, setLocalTargets] = useState<LocalBrowserTarget[]>(() => buildLocalBrowserTargets(workspaceKey));
 
+  const setUrlEditing = useCallback((nextEditing: boolean) => {
+    isEditingUrlRef.current = nextEditing;
+    setIsEditingUrl(nextEditing);
+  }, []);
+
   const persistUrl = useCallback((nextUrl: string) => {
-    if (sessionId) setSessionBrowserUrl(sessionId, nextUrl);
+    if (!sessionId) return;
+    internalUrlUpdateRef.current = toComparableWorkbenchUrl(nextUrl);
+    setSessionBrowserUrl(sessionId, nextUrl);
   }, [sessionId, setSessionBrowserUrl]);
 
   const persistAnnotations = useCallback((nextAnnotations: BrowserWorkbenchAnnotation[]) => {
@@ -379,7 +416,10 @@ export function BrowserWorkbenchPage({
   const openUrl = useCallback(async (nextUrl = url) => {
     const rawTargetUrl = normalizeWorkbenchUrl(nextUrl) ?? nextUrl.trim();
     const targetUrl = toBrowserWorkbenchUrl(rawTargetUrl);
+    const targetComparableUrl = toComparableWorkbenchUrl(targetUrl);
+    setUrlEditing(false);
     if (!targetUrl) {
+      pendingNavigationRef.current = null;
       setHasBrowserTab(true);
       if (sessionId) setSessionBrowserHasTab(sessionId, true);
       setState(defaultBrowserState);
@@ -393,6 +433,7 @@ export function BrowserWorkbenchPage({
       return;
     }
     if (isPreviewRuntime) {
+      pendingNavigationRef.current = null;
       setState({
         url: targetUrl,
         title: "Codex 网页预览态",
@@ -411,17 +452,31 @@ export function BrowserWorkbenchPage({
       return;
     }
     syncBounds();
+    const staleComparableUrl = toComparableWorkbenchUrl(state.url);
+    pendingNavigationRef.current = {
+      targetUrl: targetComparableUrl,
+      staleUrl: staleComparableUrl && !isSameWorkbenchUrl(staleComparableUrl, targetComparableUrl) ? staleComparableUrl : null,
+    };
     setUrl(targetUrl);
     persistUrl(targetUrl);
     const nextState = await window.electron.openBrowserWorkbench(targetUrl, sessionId ?? undefined);
-    setState(nextState);
-    const finalUrl = nextState.url || targetUrl;
-    setUrl(finalUrl);
-    persistUrl(finalUrl);
-    rememberLocalTarget(finalUrl);
-    setStatusText(nextState.url ? "页面已打开" : "准备打开页面");
+    const returnedComparableUrl = toComparableWorkbenchUrl(nextState.url);
+    const openedTarget = isSameWorkbenchUrl(returnedComparableUrl, targetComparableUrl);
+    const isStaleReturn = Boolean(pendingNavigationRef.current?.staleUrl && isSameWorkbenchUrl(returnedComparableUrl, pendingNavigationRef.current.staleUrl));
+    if (returnedComparableUrl && !openedTarget && !isStaleReturn) {
+      pendingNavigationRef.current = null;
+    }
+    setState(isStaleReturn ? { ...nextState, url: targetUrl, loading: true } : nextState);
+    const returnedTargetUrl = returnedComparableUrl && !isStaleReturn ? nextState.url : targetUrl;
+    if (openedTarget) {
+      pendingNavigationRef.current = null;
+    }
+    setUrl(returnedTargetUrl);
+    persistUrl(returnedTargetUrl);
+    rememberLocalTarget(returnedTargetUrl);
+    setStatusText("正在打开页面");
     setIsDevToolsOpen(false);
-  }, [hasBrowserRuntime, isPreviewRuntime, persistUrl, rememberLocalTarget, sessionId, syncBounds, url]);
+  }, [hasBrowserRuntime, isPreviewRuntime, persistUrl, rememberLocalTarget, sessionId, setSessionBrowserHasTab, setUrlEditing, state.url, syncBounds, url]);
 
   const autoOpenUrl = useCallback((nextUrl: string) => {
     if (hasOpenedRef.current) return;
@@ -441,35 +496,61 @@ export function BrowserWorkbenchPage({
     if (sessionChanged) {
       const nextUrl = normalizeWorkbenchUrl(sessionBrowserState?.url || initialUrl) ?? sessionBrowserState?.url ?? initialUrl;
       setState(defaultBrowserState);
+      setUrlEditing(false);
       setUrl(nextUrl);
       hasOpenedRef.current = false;
       setAnnotationTool(null);
     }
-  }, [initialUrl, sessionBrowserState?.annotations, sessionBrowserState?.hasBrowserTab, sessionId]);
+  }, [initialUrl, sessionBrowserState?.annotations, sessionBrowserState?.hasBrowserTab, sessionBrowserState?.url, sessionId, setUrlEditing]);
 
   useEffect(() => {
     if (initialUrlRef.current === initialUrl) return;
     initialUrlRef.current = initialUrl;
     const nextUrl = normalizeWorkbenchUrl(initialUrl) ?? initialUrl;
+    const nextComparableUrl = toComparableWorkbenchUrl(nextUrl);
+    if (internalUrlUpdateRef.current) {
+      if (isSameWorkbenchUrl(nextComparableUrl, internalUrlUpdateRef.current)) {
+        internalUrlUpdateRef.current = null;
+        return;
+      }
+      internalUrlUpdateRef.current = null;
+    }
+    const pendingNavigation = pendingNavigationRef.current;
+    if (isEditingUrlRef.current || (pendingNavigation?.staleUrl && isSameWorkbenchUrl(nextComparableUrl, pendingNavigation.staleUrl))) {
+      return;
+    }
+    setUrlEditing(false);
     setUrl(nextUrl);
     persistUrl(nextUrl);
     if (active && hasBrowserTab && nextUrl) {
       hasOpenedRef.current = false;
       autoOpenUrl(nextUrl);
     }
-  }, [active, autoOpenUrl, hasBrowserTab, initialUrl, persistUrl]);
+  }, [active, autoOpenUrl, hasBrowserTab, initialUrl, persistUrl, setUrlEditing]);
 
   useEffect(() => {
     const unsubscribe = window.electron.onBrowserWorkbenchEvent((event) => {
       if (event.sessionId && sessionId && event.sessionId !== sessionId) return;
       if (event.type === "browser.state") {
-        setState(event.payload);
+        const pendingNavigation = pendingNavigationRef.current;
+        const payloadUrl = toComparableWorkbenchUrl(event.payload.url);
+        const isPendingTarget = isSameWorkbenchUrl(payloadUrl, pendingNavigation?.targetUrl ?? null);
+        const isStaleUrl = Boolean(pendingNavigation?.staleUrl && isSameWorkbenchUrl(payloadUrl, pendingNavigation.staleUrl));
+        if (pendingNavigation && payloadUrl && !isStaleUrl) {
+          pendingNavigationRef.current = null;
+        }
+        setState(isStaleUrl ? { ...event.payload, url: pendingNavigation?.targetUrl ?? event.payload.url } : event.payload);
         if (!event.payload.annotationMode) {
           setAnnotationTool(null);
         }
         if (event.payload.url) {
-          setUrl(event.payload.url);
-          persistUrl(event.payload.url);
+          if (isPendingTarget) {
+            pendingNavigationRef.current = null;
+          }
+          if (!isEditingUrlRef.current && !isStaleUrl) {
+            setUrl(event.payload.url);
+            persistUrl(event.payload.url);
+          }
         }
         return;
       }
@@ -509,7 +590,7 @@ export function BrowserWorkbenchPage({
 
     const observer = new ResizeObserver(() => {
       syncBounds();
-      if (browserActive && !hasOpenedRef.current && (url || initialUrl)) {
+      if (!isEditingUrl && browserActive && !hasOpenedRef.current && (url || initialUrl)) {
         autoOpenUrl(url || initialUrl);
       }
     });
@@ -521,12 +602,12 @@ export function BrowserWorkbenchPage({
       observer.disconnect();
       window.removeEventListener("resize", syncBounds);
     };
-  }, [autoOpenUrl, browserActive, initialUrl, syncBounds, url]);
+  }, [autoOpenUrl, browserActive, initialUrl, isEditingUrl, syncBounds, url]);
 
   useEffect(() => {
     if (!hasBrowserRuntime) return;
     if (isPreviewRuntime) {
-      if (browserActive && !hasOpenedRef.current && (url || initialUrl)) {
+      if (!isEditingUrl && browserActive && !hasOpenedRef.current && (url || initialUrl)) {
         autoOpenUrl(url || initialUrl);
       }
       return;
@@ -536,10 +617,10 @@ export function BrowserWorkbenchPage({
       return;
     }
     syncBounds();
-    if (!hasOpenedRef.current && (url || initialUrl)) {
+    if (!isEditingUrl && !hasOpenedRef.current && (url || initialUrl)) {
       autoOpenUrl(url || initialUrl);
     }
-  }, [autoOpenUrl, browserActive, hasBrowserRuntime, initialUrl, isPreviewRuntime, syncBounds, url]);
+  }, [autoOpenUrl, browserActive, hasBrowserRuntime, initialUrl, isEditingUrl, isPreviewRuntime, sessionId, syncBounds, url]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -547,6 +628,12 @@ export function BrowserWorkbenchPage({
   };
 
   const handleReload = async () => {
+    const typedUrl = toComparableWorkbenchUrl(url);
+    const loadedUrl = toComparableWorkbenchUrl(state.url);
+    if (typedUrl && typedUrl !== loadedUrl) {
+      await openUrl(url);
+      return;
+    }
     if (!canUseBrowserView) {
       setStatusText(isPreviewRuntime ? "预览态不刷新 BrowserView" : "浏览器工作台尚未就绪");
       return;
@@ -661,7 +748,9 @@ export function BrowserWorkbenchPage({
     setHasBrowserTab(false);
     if (sessionId) setSessionBrowserHasTab(sessionId, false);
     hasOpenedRef.current = false;
+    pendingNavigationRef.current = null;
     setState(defaultBrowserState);
+    setUrlEditing(false);
     setUrl("");
     persistUrl("");
     setAnnotations([]);
@@ -679,7 +768,9 @@ export function BrowserWorkbenchPage({
     setHasBrowserTab(true);
     if (sessionId) setSessionBrowserHasTab(sessionId, true);
     hasOpenedRef.current = false;
+    pendingNavigationRef.current = null;
     setState(defaultBrowserState);
+    setUrlEditing(false);
     setUrl("");
     persistUrl("");
     setAnnotations([]);
@@ -696,12 +787,19 @@ export function BrowserWorkbenchPage({
     const browserTargetUrl = toBrowserWorkbenchUrl(targetUrl);
     setHasBrowserTab(true);
     if (sessionId) setSessionBrowserHasTab(sessionId, true);
+    setUrlEditing(false);
     setUrl(browserTargetUrl);
     persistUrl(browserTargetUrl);
     rememberLocalTarget(browserTargetUrl);
     hasOpenedRef.current = false;
+    const staleComparableUrl = toComparableWorkbenchUrl(state.url);
+    const targetComparableUrl = toComparableWorkbenchUrl(browserTargetUrl);
+    pendingNavigationRef.current = {
+      targetUrl: targetComparableUrl,
+      staleUrl: staleComparableUrl && !isSameWorkbenchUrl(staleComparableUrl, targetComparableUrl) ? staleComparableUrl : null,
+    };
     setStatusText("正在打开本地页面");
-  }, [persistUrl, rememberLocalTarget, sessionId, setSessionBrowserHasTab]);
+  }, [persistUrl, rememberLocalTarget, sessionId, setSessionBrowserHasTab, setUrlEditing, state.url]);
   const showBrowserSurface = showBrowserChrome;
   const handleSelectWorkspaceTab = (tab: ActivityWorkspaceTab) => {
     if (tab === "trace") {
@@ -766,7 +864,16 @@ export function BrowserWorkbenchPage({
           </div>
           <div className="mx-auto flex h-8 min-w-0 w-full items-center justify-center gap-2 rounded-full border border-black/10 bg-white/92 px-3 text-xs text-ink-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
             <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${state.loading ? "bg-amber-500" : "bg-accent"}`} />
-            <input value={url} onChange={(event) => setUrl(event.target.value)} className="min-w-0 flex-1 bg-transparent text-[12px] text-ink-700 outline-none placeholder:text-muted" placeholder="输入 URL" />
+            <input
+              value={url}
+              onChange={(event) => {
+                setUrlEditing(true);
+                setUrl(event.target.value);
+              }}
+              spellCheck={false}
+              className="min-w-0 flex-1 bg-transparent text-[12px] text-ink-700 outline-none placeholder:text-muted"
+              placeholder="输入 URL"
+            />
           </div>
           <div className="flex items-center justify-end gap-2">
             {statusText && statusText !== "准备打开页面" && (
@@ -834,7 +941,7 @@ export function BrowserWorkbenchPage({
                 <div className="w-full max-w-[620px]">
                   <div className="mb-2 text-[15px] font-medium text-muted">最近 / 本地</div>
                   <div className="grid gap-3">
-                    {localTargets.map((target) => {
+                    {localTargets.slice(0, MAX_LOCAL_BROWSER_TARGETS).map((target) => {
                       const status = localTargetStatus[target.id] ?? "checking";
                       return (
                         <button
@@ -887,7 +994,7 @@ export function BrowserWorkbenchPage({
                 <div className="w-full max-w-[620px]">
                   <div className="mb-2 text-[15px] font-medium text-muted">最近 / 本地</div>
                   <div className="grid gap-3">
-                    {localTargets.map((target) => {
+                    {localTargets.slice(0, MAX_LOCAL_BROWSER_TARGETS).map((target) => {
                       const status = localTargetStatus[target.id] ?? "checking";
                       return (
                         <button

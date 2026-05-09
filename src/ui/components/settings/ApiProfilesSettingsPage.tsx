@@ -86,36 +86,11 @@ function isDeepSeekBaseURL(baseURL: string | undefined): boolean {
 }
 
 function getProviderMode(profile: ApiConfigProfile): ApiProviderMode {
-  return profile.provider === "deepseek" || isDeepSeekBaseURL(profile.baseURL) ? "deepseek" : "custom";
-}
-
-function isDeepSeekModel(modelName: string | undefined): boolean {
-  return Boolean(modelName && DEEPSEEK_OFFICIAL_MODELS.includes(modelName as typeof DEEPSEEK_OFFICIAL_MODELS[number]));
-}
-
-function applyProviderMode(profile: ApiConfigProfile, provider: ApiProviderMode): ApiConfigProfile {
-  if (provider === "custom") {
-    return { ...profile, provider: "custom" };
+  if (profile.provider === "custom" || profile.provider === "deepseek") {
+    return profile.provider;
   }
 
-  const preset = createDeepSeekOfficialProfile();
-  const nextModels = (profile.models ?? []).some((model) => isDeepSeekModel(model.name))
-    ? profile.models
-    : preset.models;
-
-  return {
-    ...profile,
-    name: profile.name?.trim() && profile.name !== "新配置" ? profile.name : preset.name,
-    baseURL: DEEPSEEK_OFFICIAL_BASE_URL,
-    model: isDeepSeekModel(profile.model) ? profile.model : preset.model,
-    expertModel: isDeepSeekModel(profile.expertModel) ? profile.expertModel : preset.expertModel,
-    smallModel: isDeepSeekModel(profile.smallModel) ? profile.smallModel : preset.smallModel,
-    imageModel: undefined,
-    analysisModel: isDeepSeekModel(profile.analysisModel) ? profile.analysisModel : preset.analysisModel,
-    models: nextModels,
-    provider: "deepseek",
-    apiType: "anthropic",
-  };
+  return isDeepSeekBaseURL(profile.baseURL) ? "deepseek" : "custom";
 }
 
 function buildModelsEndpoint(baseURL: string, provider: ApiProviderMode = "custom"): string {
@@ -527,33 +502,6 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                   )))}
                 />
               </label>
-
-              <div className="grid gap-1.5">
-                <span className="text-xs font-medium text-muted">接入模式</span>
-                <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-ink-900/10 bg-surface p-1">
-                  {(["custom", "deepseek"] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                        providerMode === mode
-                          ? "bg-white text-ink-900 shadow-sm"
-                          : "text-muted hover:bg-white/72 hover:text-ink-800"
-                      }`}
-                      onClick={() => onChange((current) => current.map((item) => (
-                        item.id === profile.id ? applyProviderMode(item, mode) : item
-                      )))}
-                    >
-                      {mode === "deepseek" ? "DeepSeek 官方" : "自定义"}
-                    </button>
-                  ))}
-                </div>
-                {providerMode === "deepseek" && (
-                  <span className="text-[11px] text-muted">
-                    只需要填写 DeepSeek API Key；运行接口固定为 {DEEPSEEK_OFFICIAL_BASE_URL}，模型列表从官方 /models 拉取，失败时仍可手动添加。
-                  </span>
-                )}
-              </div>
 
               <label className="grid gap-1.5">
                 <span className="text-xs font-medium text-muted">接口地址</span>
