@@ -1,0 +1,3 @@
+interface:
+  display_name: "tech-cc-hub release deploy"
+  short_description: "Commit, push, retag, package, and update GitHub releases for tech-cc-hub."

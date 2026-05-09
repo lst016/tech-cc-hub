@@ -3,6 +3,7 @@ import {
   Camera,
   CheckCircle2,
   ChevronDown,
+  Code2,
   GitCompare,
   Image,
   ScanSearch,
@@ -14,6 +15,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import {
+  getBuiltinMcpServerDefinition,
+  type BuiltinMcpIconKey,
+  type BuiltinMcpServerDefinition,
+} from "../../../shared/builtin-mcp-registry";
 import type { McpServerInfo } from "../../types";
 
 type McpServerEntry = McpServerInfo & {
@@ -45,6 +51,14 @@ type BuiltinServerMeta = {
     label: string;
     description: string;
   }>;
+};
+
+const BUILTIN_ICON_MAP: Record<BuiltinMcpIconKey, LucideIcon> = {
+  activity: Activity,
+  settings: Settings,
+  sparkles: WandSparkles,
+  timer: Timer,
+  code: Code2,
 };
 
 const BUILTIN_TOOL_GROUPS: Record<string, BuiltinToolGroup[]> = {
@@ -203,6 +217,18 @@ const BUILTIN_TOOL_GROUPS: Record<string, BuiltinToolGroup[]> = {
       ],
     },
   ],
+  "tech-cc-hub-idea": [
+    {
+      title: "IDEA 启动与复用",
+      summary: "Java/Spring 本地验证时复用用户已运行的 IntelliJ IDEA，避免重复启动 jar 或 bootRun 进程。",
+      tools: [
+        { name: "idea_status", description: "检测已安装的 IDEA 启动器和正在运行的 IDEA 进程。" },
+        { name: "idea_open", description: "通过 Toolbox 脚本或最新 IDEA 启动器打开项目/文件；可用时优先复用已运行 IDEA。" },
+        { name: "idea_focus", description: "把已运行的 IDEA 窗口拉到前台，不启动新的 IDE。" },
+        { name: "idea_wait_ready", description: "在启动或复用请求后等待 IDEA 进入运行状态。" },
+      ],
+    },
+  ],
 };
 
 const BUILTIN_SERVER_META: Record<string, BuiltinServerMeta> = {
@@ -235,6 +261,18 @@ const BUILTIN_SERVER_META: Record<string, BuiltinServerMeta> = {
     description: "持久化定时任务能力，用于创建、查看和删除后台计划任务。",
     iconClassName: "border-amber-500/15 bg-amber-50 text-amber-700",
     highlights: ["创建", "列表", "删除"],
+  },
+  "tech-cc-hub-idea": {
+    icon: Code2,
+    description: "IntelliJ IDEA 2021-2026 启动与复用能力。优先使用 JetBrains Toolbox 脚本适配热更新启动，再回退到最新安装的 IDEA 启动器。",
+    iconClassName: "border-sky-500/15 bg-sky-50 text-sky-700",
+    highlights: ["IDEA 2021-2026", "复用已运行 IDE", "前台/就绪检查"],
+    workflow: [
+      { label: "状态", description: "检测" },
+      { label: "解析", description: "启动器" },
+      { label: "打开", description: "复用" },
+      { label: "就绪", description: "等待/前台" },
+    ],
   },
 };
 
@@ -379,10 +417,29 @@ function McpTabButton({ active, count, label, onClick }: { active: boolean; coun
   );
 }
 
+function getBuiltinToolGroups(serverName: string): BuiltinToolGroup[] {
+  return BUILTIN_TOOL_GROUPS[serverName] ?? getBuiltinMcpServerDefinition(serverName)?.toolGroups ?? [];
+}
+
+function getBuiltinServerMeta(serverName: string): BuiltinServerMeta | undefined {
+  return BUILTIN_SERVER_META[serverName] ?? toBuiltinServerMeta(getBuiltinMcpServerDefinition(serverName));
+}
+
+function toBuiltinServerMeta(definition: BuiltinMcpServerDefinition | undefined): BuiltinServerMeta | undefined {
+  if (!definition) return undefined;
+  return {
+    icon: BUILTIN_ICON_MAP[definition.iconKey],
+    description: definition.description,
+    iconClassName: definition.iconClassName,
+    highlights: definition.highlights,
+    workflow: definition.workflow,
+  };
+}
+
 function ServerCard({ server, onToggle }: { server: McpServerEntry; onToggle: () => void }) {
-  const toolGroups = server.type === "builtin" ? BUILTIN_TOOL_GROUPS[server.name] ?? [] : [];
+  const toolGroups = server.type === "builtin" ? getBuiltinToolGroups(server.name) : [];
   const toolCount = toolGroups.reduce((count, group) => count + group.tools.length, 0);
-  const serverMeta = server.type === "builtin" ? BUILTIN_SERVER_META[server.name] : undefined;
+  const serverMeta = server.type === "builtin" ? getBuiltinServerMeta(server.name) : undefined;
   const ServerIcon = serverMeta?.icon ?? ServerCog;
 
   return (
@@ -451,7 +508,7 @@ function ServerCard({ server, onToggle }: { server: McpServerEntry; onToggle: ()
 
 function BuiltinToolsPanel({ serverName, groups }: { serverName: string; groups: BuiltinToolGroup[] }) {
   const toolCount = groups.reduce((count, group) => count + group.tools.length, 0);
-  const serverMeta = BUILTIN_SERVER_META[serverName];
+  const serverMeta = getBuiltinServerMeta(serverName);
 
   if (groups.length === 0) {
     return (

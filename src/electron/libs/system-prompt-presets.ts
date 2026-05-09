@@ -1,4 +1,5 @@
 import type { PromptLedgerSource } from "../../shared/prompt-ledger.js";
+import { buildBuiltinMcpPromptHints } from "../../shared/builtin-mcp-registry.js";
 
 export function buildBrowserWorkbenchPromptAppend(): string {
   return [
@@ -25,6 +26,10 @@ export function buildToolCallOptimizationPromptAppend(): string {
     "Use bounded non-interactive shell commands; on Windows avoid unstable PowerShell surfaces and quote paths carefully.",
     "For scheduled tasks use the persistent tech-cc-hub cron MCP tools, not SDK CronCreate/CronDelete/CronList.",
   ].join("\n");
+}
+
+export function buildBuiltinMcpRegistryPromptAppend(): string {
+  return buildBuiltinMcpPromptHints();
 }
 
 export function buildDesignParityPromptAppend(): string {
@@ -63,6 +68,12 @@ export function buildTechCCHubSystemPromptSources(): PromptLedgerSource[] {
       label: "tech-cc-hub 设计还原预设",
       sourceKind: "system",
       text: buildDesignParityPromptAppend(),
+    },
+    {
+      id: "tech-cc-hub-builtin-mcp-registry-preset",
+      label: "tech-cc-hub built-in MCP registry preset",
+      sourceKind: "system",
+      text: buildBuiltinMcpRegistryPromptAppend(),
     },
   ];
 }

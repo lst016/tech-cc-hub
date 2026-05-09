@@ -26,16 +26,17 @@ import {
 import { buildClaudeProjectMemoryPromptAppend } from "./claude-project-memory.js";
 import { saveGlobalRuntimeConfig } from "./config-store.js";
 import { summarizeBase64Image, summarizeLocalImageFile } from "./image-preprocessor.js";
-import { ADMIN_TOOL_NAMES, getAdminMcpServer } from "./mcp-tools/admin.js";
-import { BROWSER_TOOL_NAMES, getBrowserMcpServer } from "./mcp-tools/browser.js";
-import { DESIGN_TOOL_NAMES, getDesignMcpServer } from "./mcp-tools/design.js";
-import { CRON_TOOL_NAMES, getCronMcpServer } from "./mcp-tools/cron.js";
+import {
+  getBuiltinMcpServers,
+  listBuiltinMcpToolNames,
+} from "./builtin-mcp-servers.js";
 import { normalizeRunnerError } from "./runner-error.js";
 import type { Session } from "./session-store.js";
 import {
   buildAdminConfigPromptAppend,
   buildBrowserWorkbenchPromptAppend,
   buildDesignParityPromptAppend,
+  buildBuiltinMcpRegistryPromptAppend,
   buildToolCallOptimizationPromptAppend,
 } from "./system-prompt-presets.js";
 import {
@@ -69,12 +70,10 @@ export type RunnerHandle = {
 };
 
 const DEFAULT_CWD = process.cwd();
+const BUILTIN_MCP_TOOL_NAMES = listBuiltinMcpToolNames();
 const ALWAYS_ALLOWED_TOOLS = new Set([
   "AskUserQuestion",
-  ...BROWSER_TOOL_NAMES,
-  ...ADMIN_TOOL_NAMES,
-  ...DESIGN_TOOL_NAMES,
-  ...CRON_TOOL_NAMES,
+  ...BUILTIN_MCP_TOOL_NAMES,
 ]);
 const SKILL_ENV_HINTS: Record<string, string[]> = {
   feishu: ["FEISHU", "LARK"],
@@ -275,10 +274,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         agentContext.enforceAllowedTools,
       );
       const hooks = buildQualityHooks(resolvedCwd, { config, prompt });
-      const browserToolServer = getBrowserMcpServer(session.id);
-      const adminToolServer = getAdminMcpServer();
-      const designToolServer = getDesignMcpServer(session.id);
-      const cronToolServer = getCronMcpServer();
+      const builtinMcpServers = getBuiltinMcpServers(session.id);
       const systemPromptAppend = combineSystemPromptAppend(
         buildGlobalRuntimePromptAppend(syncedGlobalRuntimeConfig, mergedEnv),
         buildAdminConfigPromptAppend(),
@@ -287,6 +283,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         buildToolCallOptimizationPromptAppend(),
         buildBrowserWorkbenchPromptAppend(),
         buildDesignParityPromptAppend(),
+        buildBuiltinMcpRegistryPromptAppend(),
       );
       const outputFormat = resolveOutputFormat(runtime?.outputFormat, systemPromptAppend, prompt);
       const sdkModelOption = getClaudeCodeModelOption(config, requestedModel);
@@ -322,10 +319,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           outputFormat,
           mcpServers: {
             ...getExternalMcpServers(),
-            [browserToolServer.name]: browserToolServer,
-            [adminToolServer.name]: adminToolServer,
-            [designToolServer.name]: designToolServer,
-            [cronToolServer.name]: cronToolServer,
+            ...builtinMcpServers,
           },
           hooks,
           allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
@@ -565,14 +559,7 @@ function isAlwaysAllowedTool(toolName: string): boolean {
     return true;
   }
 
-  const alwaysAllowedMcpTools = [
-    ...BROWSER_TOOL_NAMES,
-    ...ADMIN_TOOL_NAMES,
-    ...DESIGN_TOOL_NAMES,
-    ...CRON_TOOL_NAMES,
-  ];
-
-  return alwaysAllowedMcpTools.some((allowedToolName) => (
+  return BUILTIN_MCP_TOOL_NAMES.some((allowedToolName) => (
     toolName.endsWith(`__${allowedToolName}`) ||
     toolName.endsWith(`:${allowedToolName}`) ||
     toolName.endsWith(`/${allowedToolName}`)

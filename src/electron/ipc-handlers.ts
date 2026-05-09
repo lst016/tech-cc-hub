@@ -6,6 +6,7 @@ import { basename, extname, join } from "path";
 import { createStoredUserPromptMessage, sanitizePromptAttachmentsForStorage } from "../shared/attachments.js";
 import { buildPromptLedgerMessage, type PromptLedgerMessage, type PromptLedgerSource } from "../shared/prompt-ledger.js";
 import { createInitialSessionWorkflowState, parseWorkflowMarkdown } from "../shared/workflow-markdown.js";
+import { listBuiltinMcpServerInfos } from "../shared/builtin-mcp-registry.js";
 import { runClaude, type RunnerHandle } from "./libs/runner.js";
 import { persistImageAttachmentReference, rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
 import { resolveAgentRuntimeContext } from "./libs/agent-resolver.js";
@@ -1213,12 +1214,7 @@ export async function handleClientEvent(event: ClientEvent) {
     const config = loadGlobalRuntimeConfig();
     const rawServers = isRecord(config.mcpServers) ? config.mcpServers : {};
 
-    const builtin: Array<{ name: string; type: "builtin"; command: string; args: string[]; envKeys: string[]; enabled: boolean }> = [
-      { name: "tech-cc-hub-browser", type: "builtin", command: "builtin", args: [], envKeys: [], enabled: true },
-      { name: "tech-cc-hub-admin", type: "builtin", command: "builtin", args: [], envKeys: [], enabled: true },
-      { name: "tech-cc-hub-design", type: "builtin", command: "builtin", args: [], envKeys: [], enabled: true },
-      { name: "tech-cc-hub-cron", type: "builtin", command: "builtin", args: [], envKeys: [], enabled: true },
-    ];
+    const builtin = listBuiltinMcpServerInfos();
 
     const external: Array<{ name: string; type: "external"; command: string; args: string[]; envKeys: string[]; enabled: boolean }> = [];
     for (const [name, value] of Object.entries(rawServers)) {
