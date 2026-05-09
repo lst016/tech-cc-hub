@@ -1,63 +1,63 @@
 ---
 name: tech-cc-hub-release-deploy
-description: Use when committing, pushing, packaging, or publishing tech-cc-hub releases from this Windows repo, especially when Git push is flaky, a version tag must be moved, or GitHub Release notes/assets must be updated.
+description: 用于在 tech-cc-hub Windows 仓库里提交、推送、打包、发布、移动版本 tag、补 GitHub Release 更新内容，尤其适合 git push 抽风或需要重发 release 的场景。
 ---
 
-# tech-cc-hub Release Deploy
+# tech-cc-hub 发布部署
 
-Use this skill from `D:\tool\tech-cc-hub` when the user asks to commit, push, deploy, tag, release, retag, or "打个 release".
+在 `D:\tool\tech-cc-hub` 里，用户要求提交、推送、部署、打 tag、打 release、移动 tag、补发布说明时使用本 skill。
 
-## Default Flow
+## 默认流程
 
-1. Inspect scope first:
+1. 先确认范围：
    - `git status --short --branch`
    - `git diff --stat`
    - `git log --oneline --decorate --max-count=8`
-2. Decide whether the user wants a narrow release or all dirty files. If they say "都要提交", use `git add -A`.
-3. Verify before committing:
-   - For UI/electron changes, run targeted `npx eslint ...`.
-   - For release builds, run `npm run package:win`; it includes `transpile:electron` and `build`.
-4. Commit with the repo Lore trailer style from `AGENTS.md`.
-5. Publish with the script in this skill when normal `git push` fails or when a tag needs to be moved:
+2. 判断用户要窄范围提交还是全量提交。用户说“都要提交”时，用 `git add -A`。
+3. 提交前先验证：
+   - UI / Electron 改动跑定向 `npx eslint ...`。
+   - 发布构建跑 `npm run package:win`；它会包含 `transpile:electron` 和 `build`。
+4. commit message 按 `AGENTS.md` 的 Lore trailer 风格写。
+5. 普通 `git push` 失败或需要移动 tag 时，用本 skill 的脚本发布：
    - `node skills/tech-cc-hub-release-deploy/scripts/publish-release.mjs --tag vX.Y.Z --retag --delete-release`
-6. Poll the `Release` workflow, not the older `Build and Release` workflow:
+6. 轮询新的 `Release` workflow，不要以旧的 `Build and Release` workflow 为准：
    - `https://api.github.com/repos/lst016/tech-cc-hub/actions/runs?per_page=10&event=push`
-7. Confirm the GitHub Release has `latest.yml` and the Windows installer asset.
-8. Update Release notes with `--notes-only` if the body is empty or stale.
+7. 确认 GitHub Release 里有 `latest.yml` 和 Windows 安装包。
+8. 如果发布说明为空或过旧，用 `--notes-only` 补更新内容。
 
-## Commands
+## 常用命令
 
-Publish current `HEAD` and move a release tag:
+发布当前 `HEAD` 并移动 release tag：
 
 ```powershell
 node skills/tech-cc-hub-release-deploy/scripts/publish-release.mjs --tag v0.1.13 --retag --delete-release
 ```
 
-Update only release notes:
+只更新发布说明：
 
 ```powershell
 node skills/tech-cc-hub-release-deploy/scripts/publish-release.mjs --tag v0.1.13 --notes .tmp/release-notes-v0.1.13.md --notes-only
 ```
 
-Use `--api-only` when `git push` is known to fail with:
+已知 `git push` 会出现下面错误时，加 `--api-only`：
 
 ```text
 fatal: not a git repository (or any of the parent directories): .git
 ```
 
-## Script Behavior
+## 脚本行为
 
-`scripts/publish-release.mjs` first tries normal `git push` unless `--api-only` is passed. If push fails, it uses the GitHub Git Data API with the machine's saved GitHub credential:
+除非传入 `--api-only`，`scripts/publish-release.mjs` 会先尝试普通 `git push`。如果 push 失败，就使用当前机器保存的 GitHub credential 调 GitHub Git Data API：
 
-- reads token from `GH_TOKEN`, `GITHUB_TOKEN`, or `git credential fill`
-- mirrors the diff from remote `main` to local `HEAD` into a new remote commit
-- updates `refs/heads/main`
-- creates a new annotated tag object when `--tag` is provided
-- force-updates the tag only when `--retag` is provided
-- deletes the existing GitHub Release first only when `--delete-release` is provided
-- patches the GitHub Release body when `--notes` is provided
+- 从 `GH_TOKEN`、`GITHUB_TOKEN` 或 `git credential fill` 读取 token。
+- 把远端 `main` 到本地 `HEAD` 的差异重建成一个远端 commit。
+- 更新 `refs/heads/main`。
+- 传入 `--tag` 时创建 annotated tag object。
+- 只有传入 `--retag` 时才强制移动 tag。
+- 只有传入 `--delete-release` 时才先删除已有 GitHub Release。
+- 传入 `--notes` 时更新 GitHub Release body。
 
-The API fallback may create a different commit SHA than local `HEAD`, but the tree must match. After an API fallback, run:
+API fallback 生成的远端 commit SHA 可能和本地 `HEAD` 不同，但 tree 必须一致。API fallback 后运行：
 
 ```powershell
 git fetch origin main
@@ -65,23 +65,28 @@ git rev-parse "HEAD^{tree}"
 git rev-parse "origin/main^{tree}"
 ```
 
-If the tree SHAs match, align local `main` without touching files:
+如果 tree SHA 一致，用下面命令对齐本地 `main`，不会改工作区文件：
 
 ```powershell
 git reset --soft origin/main
 ```
 
-## Release Notes Shape
+## 发布说明格式
 
-Keep notes short and concrete:
+发布说明默认写中文。需要照顾外部用户时，用“中文在前，英文可选”的中英双语；不要只写英文。
+
+保持简短、具体：
 
 ```markdown
-## Updates
-- Browser: ...
-- Settings: ...
-- Updater: ...
+## 更新内容
+- 浏览器工作台：...
+- 设置页：...
+- 更新器：...
 
-## Verification
-- npm run package:win
-- GitHub Release workflow: success
+## 验证
+- `npm run package:win`
+- GitHub `Release` workflow：成功
+
+## English Notes (optional)
+- Browser workbench: ...
 ```
