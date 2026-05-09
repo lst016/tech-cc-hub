@@ -52,10 +52,24 @@ function gitBuffer(argsForGit) {
 
 function runGit(argsForGit) {
   const result = spawnSync("git", argsForGit, {
-    stdio: "inherit",
+    encoding: "utf8",
     shell: false,
   });
-  return result.status === 0;
+  return {
+    ok: result.status === 0,
+    status: result.status,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+  };
+}
+
+function writeGitOutput(result) {
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+}
+
+function isGitDiscoveryFailure(result) {
+  return result.stderr.includes("not a git repository");
 }
 
 function getCredentialToken() {
@@ -129,6 +143,59 @@ function readTreeMode(ref, filePath) {
   return match[1];
 }
 
+function readCommitMessage(ref) {
+  const raw = gitBuffer(["cat-file", "commit", ref]);
+  const separator = raw.indexOf(Buffer.from("\n\n"));
+  if (separator < 0) fail(`Cannot read commit message for ${ref}`);
+  return raw.subarray(separator + 2).toString("utf8");
+}
+
+function readCommitIdentity(ref) {
+  const fields = git([
+    "show",
+    "-s",
+    "--format=%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI",
+    ref,
+  ]).split("\0");
+  if (fields.length !== 6) fail(`Cannot read commit identity for ${ref}`);
+  return {
+    author: {
+      name: fields[0],
+      email: fields[1],
+      date: fields[2],
+    },
+    committer: {
+      name: fields[3],
+      email: fields[4],
+      date: fields[5],
+    },
+  };
+}
+
+function readSingleParent(ref) {
+  const parts = git(["rev-list", "--parents", "-n", "1", ref]).trim().split(/\s+/);
+  if (parts.length !== 2) {
+    fail(`API fallback only supports a linear commit range; ${ref} has ${parts.length - 1} parents`);
+  }
+  return parts[1];
+}
+
+function readCommitTree(ref) {
+  return git(["rev-parse", `${ref}^{tree}`]).trim();
+}
+
+function assertCleanApiTree(remoteTree, localRef) {
+  const localTree = readCommitTree(localRef);
+  if (remoteTree !== localTree) {
+    fail(`GitHub API tree mismatch for ${localRef}: remote=${remoteTree}, local=${localTree}`);
+  }
+}
+
+function syncOriginMain(sha) {
+  git(["update-ref", `refs/remotes/origin/${DEFAULT_BRANCH}`, sha]);
+  log(`synced local origin/${DEFAULT_BRANCH} -> ${sha}`);
+}
+
 async function updateReleaseNotes(token) {
   if (!tag || !notesPath) fail("--notes-only requires --tag and --notes");
   const absoluteNotesPath = path.resolve(notesPath);
@@ -143,39 +210,30 @@ async function updateReleaseNotes(token) {
   log(`updated release notes for ${tag}`);
 }
 
-async function publishViaApi(token) {
-  const localHead = git(["rev-parse", "HEAD"]).trim();
-  const remoteLine = git(["ls-remote", "origin", `refs/heads/${DEFAULT_BRANCH}`]).trim();
-  const remoteHead = remoteLine.split(/\s+/)[0];
-  if (!remoteHead) fail(`Cannot resolve origin/${DEFAULT_BRANCH}`);
-
-  const remoteCommit = await request("GET", `/repos/${OWNER}/${REPO}/git/commits/${remoteHead}`, undefined, token);
-  const rawStatus = git(["diff", "--name-status", "-z", remoteHead, localHead]);
+async function createApiTreeForCommit(token, baseTreeSha, parentRef, commitRef) {
+  const rawStatus = git(["diff", "--name-status", "-z", parentRef, commitRef]);
   const changes = parseNameStatus(rawStatus);
-  if (changes.length === 0) {
-    log("remote main already has the same tree as HEAD or no diff was detected");
-  }
-
   const tree = [];
   let blobCount = 0;
+
   for (const change of changes) {
     if (change.status === "D") {
       tree.push({
         path: change.filePath,
-        mode: readTreeMode(remoteHead, change.filePath),
+        mode: readTreeMode(parentRef, change.filePath),
         type: "blob",
         sha: null,
       });
       continue;
     }
-    const content = gitBuffer(["show", `${localHead}:${change.filePath}`]).toString("base64");
+    const content = gitBuffer(["cat-file", "blob", `${commitRef}:${change.filePath}`]).toString("base64");
     const blob = await request("POST", `/repos/${OWNER}/${REPO}/git/blobs`, {
       content,
       encoding: "base64",
     }, token);
     tree.push({
       path: change.filePath,
-      mode: readTreeMode(localHead, change.filePath),
+      mode: readTreeMode(commitRef, change.filePath),
       type: "blob",
       sha: blob.sha,
     });
@@ -183,15 +241,70 @@ async function publishViaApi(token) {
   }
 
   const nextTree = await request("POST", `/repos/${OWNER}/${REPO}/git/trees`, {
-    base_tree: remoteCommit.tree.sha,
+    base_tree: baseTreeSha,
     tree,
   }, token);
-  const message = git(["log", "-1", "--format=%B"]);
-  const nextCommit = await request("POST", `/repos/${OWNER}/${REPO}/git/commits`, {
-    message,
-    tree: nextTree.sha,
-    parents: [remoteHead],
-  }, token);
+  assertCleanApiTree(nextTree.sha, commitRef);
+  return { sha: nextTree.sha, entryCount: tree.length, blobCount };
+}
+
+async function publishViaApi(token) {
+  const localHead = git(["rev-parse", "HEAD"]).trim();
+  const remoteLine = git(["ls-remote", "origin", `refs/heads/${DEFAULT_BRANCH}`]).trim();
+  const remoteHead = remoteLine.split(/\s+/)[0];
+  if (!remoteHead) fail(`Cannot resolve origin/${DEFAULT_BRANCH}`);
+
+  const remoteCommit = await request("GET", `/repos/${OWNER}/${REPO}/git/commits/${remoteHead}`, undefined, token);
+
+  let nextHead = remoteHead;
+  let nextTreeSha = remoteCommit.tree.sha;
+  let totalEntries = 0;
+  let totalBlobs = 0;
+
+  if (remoteHead === localHead) {
+    log(`origin/${DEFAULT_BRANCH} already points at local HEAD ${localHead}`);
+  } else {
+    const mergeBase = git(["merge-base", remoteHead, localHead]).trim();
+    if (mergeBase !== remoteHead) {
+      fail(`origin/${DEFAULT_BRANCH} is not an ancestor of HEAD; fetch/rebase before API fallback. merge-base=${mergeBase}`);
+    }
+
+    const commits = git(["rev-list", "--reverse", `${remoteHead}..${localHead}`])
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (commits.length === 0) fail(`No commits found between ${remoteHead} and ${localHead}`);
+
+    let localParent = remoteHead;
+    for (const commit of commits) {
+      const parent = readSingleParent(commit);
+      if (parent !== localParent) {
+        fail(`Non-linear API fallback range at ${commit}: expected parent ${localParent}, got ${parent}`);
+      }
+
+      const treeResult = await createApiTreeForCommit(token, nextTreeSha, localParent, commit);
+      const identity = readCommitIdentity(commit);
+      const message = readCommitMessage(commit);
+      const nextCommit = await request("POST", `/repos/${OWNER}/${REPO}/git/commits`, {
+        message,
+        tree: treeResult.sha,
+        parents: [nextHead],
+        author: identity.author,
+        committer: identity.committer,
+      }, token);
+
+      if (nextCommit.sha !== commit) {
+        fail(`GitHub API commit mismatch: remote=${nextCommit.sha}, local=${commit}`);
+      }
+
+      nextHead = nextCommit.sha;
+      nextTreeSha = treeResult.sha;
+      localParent = commit;
+      totalEntries += treeResult.entryCount;
+      totalBlobs += treeResult.blobCount;
+      log(`prepared commit ${commit}`);
+    }
+  }
 
   if (deleteRelease && tag) {
     const release = await request("GET", `/repos/${OWNER}/${REPO}/releases/tags/${encodeURIComponent(tag)}`, undefined, token);
@@ -202,9 +315,10 @@ async function publishViaApi(token) {
   }
 
   await request("PATCH", `/repos/${OWNER}/${REPO}/git/refs/heads/${DEFAULT_BRANCH}`, {
-    sha: nextCommit.sha,
+    sha: nextHead,
     force: false,
   }, token);
+  syncOriginMain(nextHead);
 
   if (tag) {
     if (!retag) {
@@ -214,7 +328,7 @@ async function publishViaApi(token) {
     const tagObject = await request("POST", `/repos/${OWNER}/${REPO}/git/tags`, {
       tag,
       message: tag,
-      object: nextCommit.sha,
+      object: nextHead,
       type: "commit",
     }, token);
     const refPath = `/repos/${OWNER}/${REPO}/git/refs/tags/${encodeURIComponent(tag)}`;
@@ -233,8 +347,8 @@ async function publishViaApi(token) {
     log(`updated ${tag} -> ${tagObject.sha}`);
   }
 
-  log(`remote ${DEFAULT_BRANCH}: ${remoteHead} -> ${nextCommit.sha}`);
-  log(`uploaded blobs=${blobCount}, tree entries=${tree.length}`);
+  log(`remote ${DEFAULT_BRANCH}: ${remoteHead} -> ${nextHead}`);
+  log(`uploaded blobs=${totalBlobs}, tree entries=${totalEntries}`);
 }
 
 async function main() {
@@ -249,11 +363,21 @@ async function main() {
 
   if (!apiOnly) {
     const pushedMain = runGit(["push", "origin", DEFAULT_BRANCH]);
-    const pushedTag = tag ? runGit(["push", "origin", retag ? `+refs/tags/${tag}` : `refs/tags/${tag}`]) : true;
-    if (pushedMain && pushedTag) {
+    const pushedTag = pushedMain.ok && tag
+      ? runGit(["push", "origin", retag ? `+refs/tags/${tag}` : `refs/tags/${tag}`])
+      : { ok: true };
+    if (pushedMain.ok && pushedTag.ok) {
+      writeGitOutput(pushedMain);
+      writeGitOutput(pushedTag);
       log("published with normal git push");
       if (notesPath) await updateReleaseNotes(token);
       return;
+    }
+    if (isGitDiscoveryFailure(pushedMain)) {
+      log("detected Windows git push .git discovery failure; using GitHub API fallback");
+    } else {
+      writeGitOutput(pushedMain);
+      if (!pushedTag.ok) writeGitOutput(pushedTag);
     }
     log("normal git push failed; falling back to GitHub API");
   }
