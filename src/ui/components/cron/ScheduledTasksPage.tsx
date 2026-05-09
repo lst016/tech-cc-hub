@@ -3,8 +3,8 @@
 // removed i18n, router, agent logos, keepAwake toggle, mobile layout, classnames
 
 import React, { useCallback, useMemo, useState } from "react";
-import { useAllCronJobs } from "../../../renderer/pages/cron/useCronJobs.js";
-import { formatSchedule, formatNextRun } from "../../../renderer/pages/cron/cronUtils.js";
+import { useAllCronJobs } from "../../pages/cron/useCronJobs.js";
+import { formatSchedule, formatNextRun } from "../../pages/cron/cronUtils.js";
 import type { CronJob } from "../../../types/cron.js";
 import { useAppStore } from "../../store/useAppStore.js";
 import CronStatusTag from "./CronStatusTag.js";

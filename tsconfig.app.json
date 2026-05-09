@@ -25,10 +25,7 @@
         "paths": {
             "@/*": [
                 "./src/*"
-            ],
-            "@renderer/*": [
-                "./src/renderer/*"
-            ],
+            ]
         },
         "types": [
             "./types"
@@ -42,6 +39,6 @@
     ],
     "exclude": [
         "src/electron",
-        "src/renderer"
+        "src/ui/aionui"
     ]
 }

@@ -93,7 +93,7 @@ After interaction, inspect `logs` for `pageerror`, Vite transform errors, Monaco
 
 ## AionUi full-copy integration rules
 
-- Copy original AionUi modules into alias-compatible paths when the user wants full CV.
+- Copy original AionUi modules into `src/ui/` alias-compatible paths when the user wants full CV; keep not-yet-integrated full copies under `src/ui/aionui/` and do not recreate `src/renderer/`.
 - Preserve module boundaries where possible: `Preview`, `Workspace`, `hooks/file`, `utils/file`.
 - Add adapter/shim layers for `@/common`, IPC bridge, layout/theme/conversation contexts, and platform services.
 - Do not expose AionUi raw UI if it clashes with tech-cc-hub. Wrap or restyle it to the current product visual language.
