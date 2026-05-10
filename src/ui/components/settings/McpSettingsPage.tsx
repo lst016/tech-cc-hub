@@ -436,6 +436,13 @@ function toBuiltinServerMeta(definition: BuiltinMcpServerDefinition | undefined)
   };
 }
 
+function formatExternalServerSummary(server: McpServerInfo): string {
+  if (server.transport === "http") {
+    return `HTTP · ${server.url ?? "未配置 URL"}`;
+  }
+  return server.command;
+}
+
 function ServerCard({ server, onToggle }: { server: McpServerEntry; onToggle: () => void }) {
   const toolGroups = server.type === "builtin" ? getBuiltinToolGroups(server.name) : [];
   const toolCount = toolGroups.reduce((count, group) => count + group.tools.length, 0);
@@ -462,7 +469,7 @@ function ServerCard({ server, onToggle }: { server: McpServerEntry; onToggle: ()
             ))}
           </span>
           <span className="mt-1 block text-xs leading-5 text-ink-400">
-            {server.type === "builtin" ? `内置 · 由应用自动提供${toolCount ? ` · ${toolCount} 个工具` : ""}` : server.command}
+            {server.type === "builtin" ? `内置 · 由应用自动提供${toolCount ? ` · ${toolCount} 个工具` : ""}` : formatExternalServerSummary(server)}
           </span>
           {serverMeta?.description && (
             <span className="mt-1 block text-xs leading-5 text-muted">
@@ -481,19 +488,28 @@ function ServerCard({ server, onToggle }: { server: McpServerEntry; onToggle: ()
         <div className="border-t border-ink-900/8 px-4 py-3">
           {server.type === "external" && (
             <div className="space-y-2">
-              <DetailRow label="命令" value={server.command} mono />
-              {server.args.length > 0 && (
-                <DetailRow label="参数" value={server.args.join(" ")} mono />
-              )}
-              {server.envKeys.length > 0 && (
-                <div>
-                  <span className="text-xs font-medium text-ink-500">环境变量</span>
-                  <div className="mt-1 flex flex-wrap gap-1.5">
-                    {server.envKeys.map((key) => (
-                      <code key={key} className="rounded-md bg-surface-secondary px-2 py-0.5 text-xs text-ink-600">{key}=***</code>
-                    ))}
-                  </div>
-                </div>
+              {server.transport === "http" ? (
+                <>
+                  <DetailRow label="类型" value="http" mono />
+                  {server.url && <DetailRow label="URL" value={server.url} mono />}
+                </>
+              ) : (
+                <>
+                  <DetailRow label="命令" value={server.command} mono />
+                  {server.args.length > 0 && (
+                    <DetailRow label="参数" value={server.args.join(" ")} mono />
+                  )}
+                  {server.envKeys.length > 0 && (
+                    <div>
+                      <span className="text-xs font-medium text-ink-500">环境变量</span>
+                      <div className="mt-1 flex flex-wrap gap-1.5">
+                        {server.envKeys.map((key) => (
+                          <code key={key} className="rounded-md bg-surface-secondary px-2 py-0.5 text-xs text-ink-600">{key}=***</code>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}

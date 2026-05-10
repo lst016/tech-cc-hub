@@ -12,6 +12,7 @@ import { persistImageAttachmentReference, rehydrateStoredImageAttachment } from 
 import { resolveAgentRuntimeContext } from "./libs/agent-resolver.js";
 import { getApiConfigForModel, getCurrentApiConfig, getModelConfig, supportsRemoteSessionResume } from "./libs/claude-settings.js";
 import { loadGlobalRuntimeConfig } from "./libs/config-store.js";
+import { listExternalMcpServerInfos } from "./libs/external-mcp-servers.js";
 import { SessionStore } from "./libs/session-store.js";
 import { buildSessionSlashCommands } from "./libs/slash-command-catalog.js";
 import { stripInlineBase64ImagesFromMessage } from "./libs/tool-output-sanitizer.js";
@@ -1212,21 +1213,9 @@ export async function handleClientEvent(event: ClientEvent) {
   // MCP server list
   if (event.type === "mcp.list") {
     const config = loadGlobalRuntimeConfig();
-    const rawServers = isRecord(config.mcpServers) ? config.mcpServers : {};
 
     const builtin = listBuiltinMcpServerInfos();
-
-    const external: Array<{ name: string; type: "external"; command: string; args: string[]; envKeys: string[]; enabled: boolean }> = [];
-    for (const [name, value] of Object.entries(rawServers)) {
-      if (!isRecord(value)) continue;
-      const command = typeof value.command === "string" ? value.command : "";
-      if (!command) continue;
-      const args = Array.isArray(value.args) ? value.args.filter((a): a is string => typeof a === "string") : [];
-      const env = isRecord(value.env) ? value.env : {};
-      const envKeys = Object.keys(env).filter((k): k is string => typeof k === "string");
-      const enabled = value.enabled !== false;
-      external.push({ name, type: "external", command, args, envKeys, enabled });
-    }
+    const external = listExternalMcpServerInfos(config);
 
     emit({ type: "mcp.list", payload: { builtin, external } });
     return;

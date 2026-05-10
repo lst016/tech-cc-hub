@@ -25,6 +25,10 @@ import {
 } from "./claude-settings.js";
 import { buildClaudeProjectMemoryPromptAppend } from "./claude-project-memory.js";
 import { saveGlobalRuntimeConfig } from "./config-store.js";
+import {
+  getExternalMcpServers,
+  isConfiguredExternalMcpTool,
+} from "./external-mcp-servers.js";
 import { summarizeBase64Image, summarizeLocalImageFile } from "./image-preprocessor.js";
 import {
   getBuiltinMcpServers,
@@ -46,13 +50,6 @@ import {
   extractInlineBase64ImageFromToolResponse,
 } from "./tool-output-sanitizer.js";
 import { getEnhancedEnv } from "./util.js";
-
-type ExternalMcpServer = {
-  type?: "stdio";
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
-};
 
 export type RunnerOptions = {
   prompt: string;
@@ -90,33 +87,6 @@ const SKILL_ENV_HINTS: Record<string, string[]> = {
   gitlab: ["GITLAB"],
 };
 
-function getExternalMcpServers(): Record<string, ExternalMcpServer> {
-  const config = getGlobalRuntimeConfig();
-  const rawServers = config.mcpServers;
-  if (typeof rawServers !== "object" || rawServers === null || Array.isArray(rawServers)) {
-    return {};
-  }
-  const servers: Record<string, ExternalMcpServer> = {};
-  for (const [name, value] of Object.entries(rawServers)) {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
-      continue;
-    }
-    const server = value as Record<string, unknown>;
-    const command = typeof server.command === "string" ? server.command : "";
-    if (!command) {
-      continue;
-    }
-    servers[name] = {
-      type: "stdio",
-      command,
-      args: Array.isArray(server.args) ? server.args.filter((arg): arg is string => typeof arg === "string") : [],
-      env: typeof server.env === "object" && server.env !== null && !Array.isArray(server.env)
-        ? Object.fromEntries(Object.entries(server.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
-        : undefined,
-    };
-  }
-  return servers;
-}
 const RASTER_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
 const MAX_IMAGE_READS_PER_RUN = 1;
 const MAX_SINGLE_IMAGE_READ_BYTES = 400_000;
@@ -318,7 +288,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           forwardSubagentText: true,
           outputFormat,
           mcpServers: {
-            ...getExternalMcpServers(),
+            ...getExternalMcpServers(syncedGlobalRuntimeConfig),
             ...builtinMcpServers,
           },
           hooks,
@@ -411,7 +381,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               }
             }
 
-            if (effectiveAllowedTools && !effectiveAllowedTools.has(toolName) && !isAlwaysAllowedTool(toolName)) {
+            if (effectiveAllowedTools && !effectiveAllowedTools.has(toolName) && !isAlwaysAllowedTool(toolName, syncedGlobalRuntimeConfig)) {
               return {
                 behavior: "deny",
                 message: `当前运行面不允许使用工具：${toolName}`,
@@ -550,12 +520,12 @@ function parseAllowedToolList(value: string[] | undefined): Set<string> | null {
   return parsed.length > 0 ? new Set(parsed) : null;
 }
 
-function isAlwaysAllowedTool(toolName: string): boolean {
+function isAlwaysAllowedTool(toolName: string, globalRuntimeConfig: unknown): boolean {
   if (ALWAYS_ALLOWED_TOOLS.has(toolName)) {
     return true;
   }
 
-  if (isConfiguredExternalMcpTool(toolName)) {
+  if (isConfiguredExternalMcpTool(toolName, globalRuntimeConfig)) {
     return true;
   }
 
@@ -563,20 +533,6 @@ function isAlwaysAllowedTool(toolName: string): boolean {
     toolName.endsWith(`__${allowedToolName}`) ||
     toolName.endsWith(`:${allowedToolName}`) ||
     toolName.endsWith(`/${allowedToolName}`)
-  ));
-}
-
-function isConfiguredExternalMcpTool(toolName: string): boolean {
-  const serverNames = Object.keys(getExternalMcpServers());
-  if (serverNames.length === 0) {
-    return false;
-  }
-
-  return serverNames.some((serverName) => (
-    toolName.startsWith(`mcp__${serverName}__`) ||
-    toolName.startsWith(`${serverName}__`) ||
-    toolName.startsWith(`${serverName}:`) ||
-    toolName.startsWith(`${serverName}/`)
   ));
 }
 

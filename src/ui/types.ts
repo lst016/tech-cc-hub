@@ -525,8 +525,10 @@ export type UiTaskWorkflowSettings = {
 export type McpServerInfo = {
   name: string;
   type: "builtin" | "external";
+  transport?: "stdio" | "http";
   command: string;
   args: string[];
+  url?: string;
   envKeys: string[];
   enabled: boolean;
 };
