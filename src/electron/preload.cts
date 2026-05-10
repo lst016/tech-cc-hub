@@ -75,6 +75,28 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("debug-save-trace-snapshot", snapshot),
     preprocessImageAttachments: (payload: any) =>
         ipcInvoke("preprocess-image-attachments", payload),
+    getGitSnapshot: (payload: any) =>
+        ipcInvoke("git:snapshot", payload),
+    getGitDiff: (payload: any) =>
+        ipcInvoke("git:diff", payload),
+    gitStageFiles: (payload: any) =>
+        ipcInvoke("git:stage", payload),
+    gitUnstageFiles: (payload: any) =>
+        ipcInvoke("git:unstage", payload),
+    gitCommit: (payload: any) =>
+        ipcInvoke("git:commit", payload),
+    gitPush: (payload: any) =>
+        ipcInvoke("git:push", payload),
+    gitCreateBranch: (payload: any) =>
+        ipcInvoke("git:createBranch", payload),
+    gitCheckoutBranch: (payload: any) =>
+        ipcInvoke("git:checkoutBranch", payload),
+    gitStashSave: (payload: any) =>
+        ipcInvoke("git:stashSave", payload),
+    gitStashApply: (payload: any) =>
+        ipcInvoke("git:stashApply", payload),
+    gitStashDrop: (payload: any) =>
+        ipcInvoke("git:stashDrop", payload),
     readPreviewFile: (payload: any) =>
         electron.ipcRenderer.invoke("preview-read-file", payload),
     listPreviewDirectory: (payload: any) =>

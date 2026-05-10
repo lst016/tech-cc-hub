@@ -1,4 +1,4 @@
-import type { ClientEvent, PromptAttachment, ServerEvent, StreamMessage } from "./types";
+import type { ClientEvent, PromptAttachment, ServerEvent, StreamMessage, UiGitDiffResult, UiGitResult, UiGitWorkbenchSnapshot } from "./types";
 import type { AppUpdateActionResult, AppUpdateStatus } from "./types";
 
 const browserPreviewSessionId = "browser-preview-session";
@@ -35,6 +35,14 @@ async function invokePreviewFs<T>(endpoint: "list" | "files" | "read", payload: 
 const unsupportedPreviewMutation = async () => ({
   success: false,
   error: "浏览器预览态暂不支持修改文件，请在 Electron 客户端里操作。",
+});
+
+const createPreviewGitResult = <T,>(): UiGitResult<T> => ({
+  success: false,
+  error: {
+    code: "not_a_repo",
+    message: "浏览器预览态没有可操作的 Git 仓库，请在 Electron 客户端里使用 Git 工作台。",
+  },
 });
 
 const createPreviewUpdateStatus = (): AppUpdateStatus => ({
@@ -297,6 +305,17 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
       success: true,
       attachments: payload.attachments,
     }),
+    getGitSnapshot: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
+    getGitDiff: async () => createPreviewGitResult<UiGitDiffResult>(),
+    gitStageFiles: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
+    gitUnstageFiles: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
+    gitCommit: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
+    gitPush: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
+    gitCreateBranch: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
+    gitCheckoutBranch: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
+    gitStashSave: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
+    gitStashApply: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
+    gitStashDrop: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
     readPreviewFile: async (payload) => await invokePreviewFs("read", payload),
     listPreviewDirectory: async (payload) => await invokePreviewFs("list", payload),
     listPreviewFiles: async (payload) => await invokePreviewFs("files", payload),
@@ -445,6 +464,17 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       checkApiConfig: async () => await invokeBridge("checkApiConfig"),
       debugSaveTraceSnapshot: async (snapshot) => await invokeBridge("debugSaveTraceSnapshot", snapshot),
       preprocessImageAttachments: async (payload) => await invokeBridge("preprocessImageAttachments", payload),
+      getGitSnapshot: async (payload) => await invokeBridge("invoke", "git:snapshot", payload),
+      getGitDiff: async (payload) => await invokeBridge("invoke", "git:diff", payload),
+      gitStageFiles: async (payload) => await invokeBridge("invoke", "git:stage", payload),
+      gitUnstageFiles: async (payload) => await invokeBridge("invoke", "git:unstage", payload),
+      gitCommit: async (payload) => await invokeBridge("invoke", "git:commit", payload),
+      gitPush: async (payload) => await invokeBridge("invoke", "git:push", payload),
+      gitCreateBranch: async (payload) => await invokeBridge("invoke", "git:createBranch", payload),
+      gitCheckoutBranch: async (payload) => await invokeBridge("invoke", "git:checkoutBranch", payload),
+      gitStashSave: async (payload) => await invokeBridge("invoke", "git:stashSave", payload),
+      gitStashApply: async (payload) => await invokeBridge("invoke", "git:stashApply", payload),
+      gitStashDrop: async (payload) => await invokeBridge("invoke", "git:stashDrop", payload),
       readPreviewFile: async (payload) => await invokePreviewFs("read", payload),
       listPreviewDirectory: async (payload) => await invokePreviewFs("list", payload),
       listPreviewFiles: async (payload) => await invokePreviewFs("files", payload),
