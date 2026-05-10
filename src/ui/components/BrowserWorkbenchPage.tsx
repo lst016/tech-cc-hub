@@ -15,6 +15,7 @@ type BrowserWorkbenchPageProps = {
   onOpenTrace?: () => void;
   onOpenUsage?: () => void;
   onOpenPreview?: () => void;
+  onOpenGit?: () => void;
 };
 
 type AnnotationTool = "screenshot" | "page";
@@ -324,6 +325,7 @@ export function BrowserWorkbenchPage({
   onOpenTrace,
   onOpenUsage,
   onOpenPreview,
+  onOpenGit,
 }: BrowserWorkbenchPageProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const previewFrameRef = useRef<HTMLIFrameElement | null>(null);
@@ -812,6 +814,10 @@ export function BrowserWorkbenchPage({
     }
     if (tab === "preview") {
       onOpenPreview?.();
+      return;
+    }
+    if (tab === "git") {
+      onOpenGit?.();
     }
   };
 

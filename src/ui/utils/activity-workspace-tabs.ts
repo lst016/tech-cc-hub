@@ -1,4 +1,4 @@
-export type ActivityRailTab = "trace" | "usage" | "preview";
+export type ActivityRailTab = "trace" | "usage" | "preview" | "git";
 export type ActivityWorkspaceTab = "browser" | ActivityRailTab;
 
 export type ActivityWorkspaceTabItem = {
@@ -34,6 +34,13 @@ export function buildActivityWorkspaceTabs(input: {
       title: "Usage",
       visible: true,
       active: input.activeTab === "usage",
+    },
+    {
+      id: "git",
+      label: "Git",
+      title: "Git 工作台",
+      visible: true,
+      active: input.activeTab === "git",
     },
     {
       id: "browser",

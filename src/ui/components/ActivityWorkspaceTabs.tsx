@@ -41,6 +41,17 @@ function iconForTab(tab: ActivityWorkspaceTab) {
     );
   }
 
+  if (tab === "git") {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+        <circle cx="6" cy="6" r="2.25" />
+        <circle cx="18" cy="18" r="2.25" />
+        <circle cx="18" cy="6" r="2.25" />
+        <path d="M8 6h8M8 7.4c4.4 1.6 7 4.1 8.5 8.3" />
+      </svg>
+    );
+  }
+
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
       <path d="M7 3.5h7l3 3V20.5H7z" />

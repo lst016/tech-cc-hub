@@ -1453,6 +1453,10 @@ function App() {
                 setActiveSessionActivityRailTab("preview");
                 setActiveSessionWorkspaceView("chat");
               }}
+              onOpenGit={() => {
+                setActiveSessionActivityRailTab("git");
+                setActiveSessionWorkspaceView("chat");
+              }}
             />
           </aside>
         )}
