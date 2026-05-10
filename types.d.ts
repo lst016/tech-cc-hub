@@ -153,6 +153,9 @@ type ApiConfigTestResult = {
 
 type AppUpdateStatus = import("./src/ui/types").AppUpdateStatus;
 type AppUpdateActionResult = import("./src/ui/types").AppUpdateActionResult;
+type UiGitResult<T> = import("./src/ui/types").UiGitResult<T>;
+type UiGitWorkbenchSnapshot = import("./src/ui/types").UiGitWorkbenchSnapshot;
+type UiGitDiffResult = import("./src/ui/types").UiGitDiffResult;
 
 type EventPayloadMapping = {
     statistics: Statistics;
@@ -191,6 +194,17 @@ type EventPayloadMapping = {
         "browser-open-devtools": { opened: boolean };
         "browser-close-devtools": { opened: boolean };
         "browser-is-devtools-open": boolean;
+        "git:snapshot": UiGitResult<UiGitWorkbenchSnapshot>;
+        "git:diff": UiGitResult<UiGitDiffResult>;
+        "git:stage": UiGitResult<UiGitWorkbenchSnapshot>;
+        "git:unstage": UiGitResult<UiGitWorkbenchSnapshot>;
+        "git:commit": UiGitResult<UiGitWorkbenchSnapshot>;
+        "git:push": UiGitResult<UiGitWorkbenchSnapshot>;
+        "git:createBranch": UiGitResult<UiGitWorkbenchSnapshot>;
+        "git:checkoutBranch": UiGitResult<UiGitWorkbenchSnapshot>;
+        "git:stashSave": UiGitResult<UiGitWorkbenchSnapshot>;
+        "git:stashApply": UiGitResult<UiGitWorkbenchSnapshot>;
+        "git:stashDrop": UiGitResult<UiGitWorkbenchSnapshot>;
 }
 
 interface Window {
@@ -222,6 +236,17 @@ interface Window {
         checkApiConfig: () => Promise<{ hasConfig: boolean; config: ApiConfig | null }>;
         debugSaveTraceSnapshot: (snapshot: unknown) => Promise<{ success: boolean; path?: string; error?: string }>;
         preprocessImageAttachments: (payload: { prompt: string; selectedModel?: string; attachments: import("./src/ui/types").PromptAttachment[] }) => Promise<ImagePreprocessResult>;
+        getGitSnapshot: (payload: { cwd: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
+        getGitDiff: (payload: { cwd: string; path: string; staged?: boolean }) => Promise<UiGitResult<UiGitDiffResult>>;
+        gitStageFiles: (payload: { cwd: string; paths: string[] }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
+        gitUnstageFiles: (payload: { cwd: string; paths: string[] }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
+        gitCommit: (payload: { cwd: string; message: string; body?: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
+        gitPush: (payload: { cwd: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
+        gitCreateBranch: (payload: { cwd: string; name: string; checkout?: boolean }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
+        gitCheckoutBranch: (payload: { cwd: string; name: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
+        gitStashSave: (payload: { cwd: string; message?: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
+        gitStashApply: (payload: { cwd: string; ref: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
+        gitStashDrop: (payload: { cwd: string; ref: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
         readPreviewFile: (payload: { cwd: string; path: string }) => Promise<{ success: boolean; path?: string; content?: string; language?: string; error?: string }>;
         listPreviewDirectory: (payload: { cwd: string; path?: string }) => Promise<{ success: boolean; path?: string; entries?: Array<{ name: string; path: string; relativePath: string; type: "directory" | "file"; size?: number }>; error?: string }>;
         listPreviewFiles: (payload: { cwd: string; limit?: number }) => Promise<{ success: boolean; entries?: Array<{ name: string; path: string; relativePath: string; type: "file"; size?: number }>; truncated?: boolean; error?: string }>;

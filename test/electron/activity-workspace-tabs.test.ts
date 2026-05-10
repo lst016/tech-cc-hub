@@ -14,7 +14,7 @@ describe("activity workspace tabs", () => {
       showBrowserTab: false,
     }).filter((tab) => tab.visible);
 
-    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "trace", "usage"]);
+    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git"]);
     assert.equal(shouldShowCreateBrowserTab(false), true);
   });
 
@@ -24,7 +24,7 @@ describe("activity workspace tabs", () => {
       showBrowserTab: true,
     }).filter((tab) => tab.visible);
 
-    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "trace", "usage", "browser"]);
+    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git", "browser"]);
     assert.equal(visibleTabs.find((tab) => tab.id === "browser")?.active, true);
     assert.equal(visibleTabs.find((tab) => tab.id === "preview")?.title, "文件预览");
     assert.equal(shouldShowCreateBrowserTab(true), false);

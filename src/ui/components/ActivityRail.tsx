@@ -16,6 +16,7 @@ import { buildContextUsageBreakdown, type ContextUsageBreakdownCategory } from "
 import { buildSegmentedContextUsageCells, type ContextUsageCellSegment } from "../utils/context-usage-cells";
 import { AionWorkspacePreviewPane } from "./AionWorkspacePreviewPane";
 import { ActivityWorkspaceTabs } from "./ActivityWorkspaceTabs";
+import { GitWorkbenchPanel } from "./git";
 import type { SessionView } from "../store/useAppStore";
 import type { ActivityRailTab, ActivityWorkspaceTab } from "../utils/activity-workspace-tabs";
 
@@ -1076,6 +1077,10 @@ export function ActivityRail({
                 onClose={() => handleSelectTab("trace")}
               />
             </div>
+          </div>
+        ) : selectedTab === "git" ? (
+          <div className="min-h-0 flex-1">
+            <GitWorkbenchPanel cwd={session?.cwd} />
           </div>
         ) : (
         <div className="space-y-4 px-4 pt-4">

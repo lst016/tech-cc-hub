@@ -1,6 +1,18 @@
 import type { SDKMessage, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import type { PromptLedgerMessage } from "../shared/prompt-ledger.js";
 import type { SessionWorkflowState, WorkflowScope, WorkflowSpecDocument } from "../shared/workflow-markdown.js";
+import type {
+  GitBranch,
+  GitChangedFile,
+  GitCommitNode,
+  GitDiffRequest,
+  GitDiffResult,
+  GitOperationLogEntry,
+  GitRepoStatus,
+  GitResult,
+  GitStashEntry,
+  GitWorkbenchSnapshot,
+} from "../electron/libs/git/types.js";
 
 export type ApiModelConfigProfile = {
   name: string;
@@ -170,6 +182,17 @@ export type AppUpdateActionResult = {
   status: AppUpdateStatus;
   error?: string;
 };
+
+export type UiGitResult<T> = GitResult<T>;
+export type UiGitRepoStatus = GitRepoStatus;
+export type UiGitChangedFile = GitChangedFile;
+export type UiGitBranch = GitBranch;
+export type UiGitStashEntry = GitStashEntry;
+export type UiGitCommitNode = GitCommitNode;
+export type UiGitOperationLogEntry = GitOperationLogEntry;
+export type UiGitWorkbenchSnapshot = GitWorkbenchSnapshot;
+export type UiGitDiffRequest = GitDiffRequest;
+export type UiGitDiffResult = GitDiffResult;
 
 export type ChannelProviderId =
   | "telegram"

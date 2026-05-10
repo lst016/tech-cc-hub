@@ -37,6 +37,7 @@ import { preprocessImageAttachments } from "./libs/image-preprocessor.js";
 import { loadAgentRuleDocuments, saveUserAgentRuleDocument } from "./libs/agent-rule-docs.js";
 import { registerSkillManagerHandlers } from "./libs/skill-manager/ipc-handlers.js";
 import { registerCronIpcHandlers, IpcCronEventEmitter } from "./libs/cron-ipc-handlers.js";
+import { handleGitWorkbenchInvoke, registerGitWorkbenchIpcHandlers } from "./libs/git/index.js";
 import { CronService } from "./libs/cron-service.js";
 import { CronRepository } from "./libs/cron-repository.js";
 import { CronJobExecutor, CronBusyGuard } from "./libs/cron-executor.js";
@@ -1553,6 +1554,7 @@ app.on("ready", async () => {
     pollResources(mainWindow);
     void scheduleDevAutostart();
     registerSkillManagerHandlers();
+    registerGitWorkbenchIpcHandlers();
     const cronBusyGuard = new CronBusyGuard();
     const systemWorkspacePath = ensureSystemWorkspace();
 
@@ -1712,6 +1714,9 @@ app.on("ready", async () => {
             }
             if (channel === "plugins:installFigmaOfficial") {
               return installFigmaOfficialPlugin();
+            }
+            if (channel.startsWith("git:")) {
+              return await handleGitWorkbenchInvoke(channel, ...args);
             }
             throw new Error(`Unsupported dev bridge invoke channel: ${channel}`);
           },

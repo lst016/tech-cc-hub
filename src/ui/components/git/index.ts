@@ -1,0 +1,1 @@
+export { GitWorkbenchPanel } from "./GitWorkbenchPanel";
