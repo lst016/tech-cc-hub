@@ -18,3 +18,13 @@ test("normalizeRunnerError keeps generic runtime errors readable", () => {
 
   assert.equal(message, "socket hang up");
 });
+
+test("normalizeRunnerError adds Figma reauthorization guidance for auth failures", () => {
+  const message = normalizeRunnerError(
+    new Error("mcp__figma__get_code failed: 401 unauthorized token expired"),
+    "claude-sonnet-4-5",
+  );
+
+  assert.match(message, /Figma 授权可能已过期/);
+  assert.match(message, /重新授权/);
+});

@@ -35,5 +35,14 @@ export function normalizeRunnerError(error: unknown, requestedModel?: string): s
     return `请求模型${quotedRequestedModel}失败：服务端没有找到对应模型，请检查模型名称或切换到可用模型。`;
   }
 
+  if (isLikelyFigmaAuthError(raw)) {
+    const guidance = "Figma 授权可能已过期，请通过 Figma MCP 的 OAuth 流程重新授权。";
+    return raw ? `${raw}\n\n${guidance}` : guidance;
+  }
+
   return raw || "运行失败，请稍后重试。";
+}
+
+function isLikelyFigmaAuthError(message: string): boolean {
+  return /figma[\s\S]*(401|403|auth|authorize|unauthorized|expired|token|oauth|permission)/i.test(message);
 }
