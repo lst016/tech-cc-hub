@@ -1,13 +1,15 @@
 import { ipcMain } from "electron";
 import { GitWorkbenchService } from "./service.js";
-import type { GitDiffRequest, GitResult, GitWorkbenchSnapshot } from "./types.js";
+import type { GitCommitDetailRequest, GitDiffRequest, GitResult, GitWorkbenchSnapshot } from "./types.js";
 
 export type GitWorkbenchIpcChannel =
   | "git:snapshot"
   | "git:diff"
+  | "git:commitDetail"
   | "git:stage"
   | "git:unstage"
   | "git:commit"
+  | "git:pull"
   | "git:push"
   | "git:createBranch"
   | "git:checkoutBranch"
@@ -18,9 +20,11 @@ export type GitWorkbenchIpcChannel =
 const CHANNELS: GitWorkbenchIpcChannel[] = [
   "git:snapshot",
   "git:diff",
+  "git:commitDetail",
   "git:stage",
   "git:unstage",
   "git:commit",
+  "git:pull",
   "git:push",
   "git:createBranch",
   "git:checkoutBranch",
@@ -60,6 +64,11 @@ export async function handleGitWorkbenchInvoke(channel: string, ...args: unknown
           path: readRequiredString(payload, "path"),
           staged: Boolean(payload.staged),
         } satisfies GitDiffRequest);
+      case "git:commitDetail":
+        return service.getCommitDetail({
+          cwd: readRequiredString(payload, "cwd"),
+          hash: readRequiredString(payload, "hash"),
+        } satisfies GitCommitDetailRequest);
       case "git:stage":
         return service.stageFiles(readRequiredString(payload, "cwd"), readStringArray(payload, "paths"));
       case "git:unstage":
@@ -69,6 +78,8 @@ export async function handleGitWorkbenchInvoke(channel: string, ...args: unknown
           message: readRequiredString(payload, "message"),
           body: readOptionalString(payload, "body"),
         });
+      case "git:pull":
+        return service.pull(readRequiredString(payload, "cwd"));
       case "git:push":
         return service.push(readRequiredString(payload, "cwd"));
       case "git:createBranch":

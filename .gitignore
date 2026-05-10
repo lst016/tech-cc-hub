@@ -13,6 +13,7 @@ dist-react
 dist-electron
 dist-test
 *.local
+*.db
 
 # Editor directories and files
 .vscode/*
@@ -28,6 +29,8 @@ dist-test
 .env
 .context
 .worktrees/
+.claude/worktrees/
+.superpowers/
 .tmp/
 .omx/
 doc/00-research/AionUi/

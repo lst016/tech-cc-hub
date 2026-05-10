@@ -156,6 +156,7 @@ type AppUpdateActionResult = import("./src/ui/types").AppUpdateActionResult;
 type UiGitResult<T> = import("./src/ui/types").UiGitResult<T>;
 type UiGitWorkbenchSnapshot = import("./src/ui/types").UiGitWorkbenchSnapshot;
 type UiGitDiffResult = import("./src/ui/types").UiGitDiffResult;
+type UiGitCommitDetail = import("./src/ui/types").UiGitCommitDetail;
 
 type EventPayloadMapping = {
     statistics: Statistics;
@@ -196,9 +197,11 @@ type EventPayloadMapping = {
         "browser-is-devtools-open": boolean;
         "git:snapshot": UiGitResult<UiGitWorkbenchSnapshot>;
         "git:diff": UiGitResult<UiGitDiffResult>;
+        "git:commitDetail": UiGitResult<UiGitCommitDetail>;
         "git:stage": UiGitResult<UiGitWorkbenchSnapshot>;
         "git:unstage": UiGitResult<UiGitWorkbenchSnapshot>;
         "git:commit": UiGitResult<UiGitWorkbenchSnapshot>;
+        "git:pull": UiGitResult<UiGitWorkbenchSnapshot>;
         "git:push": UiGitResult<UiGitWorkbenchSnapshot>;
         "git:createBranch": UiGitResult<UiGitWorkbenchSnapshot>;
         "git:checkoutBranch": UiGitResult<UiGitWorkbenchSnapshot>;
@@ -238,9 +241,11 @@ interface Window {
         preprocessImageAttachments: (payload: { prompt: string; selectedModel?: string; attachments: import("./src/ui/types").PromptAttachment[] }) => Promise<ImagePreprocessResult>;
         getGitSnapshot: (payload: { cwd: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
         getGitDiff: (payload: { cwd: string; path: string; staged?: boolean }) => Promise<UiGitResult<UiGitDiffResult>>;
+        getGitCommitDetail: (payload: { cwd: string; hash: string }) => Promise<UiGitResult<UiGitCommitDetail>>;
         gitStageFiles: (payload: { cwd: string; paths: string[] }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
         gitUnstageFiles: (payload: { cwd: string; paths: string[] }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
         gitCommit: (payload: { cwd: string; message: string; body?: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
+        gitPull: (payload: { cwd: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
         gitPush: (payload: { cwd: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
         gitCreateBranch: (payload: { cwd: string; name: string; checkout?: boolean }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
         gitCheckoutBranch: (payload: { cwd: string; name: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;

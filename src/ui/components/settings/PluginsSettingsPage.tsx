@@ -31,8 +31,12 @@ type FigmaOfficialStatusKind =
   | "configured"
   | "needs-auth"
   | "auth-expired"
+  | "desktop-unavailable"
   | "misconfigured"
   | "ready";
+
+type FigmaOfficialMode = "remote" | "desktop";
+type FigmaOfficialAuthProvider = "direct" | "codex";
 
 type PluginInstallResult = {
   success: boolean;
@@ -50,7 +54,13 @@ type PluginInstallResult = {
   status?: FigmaOfficialStatusKind;
   authHint?: string;
   url?: string;
+  desktopUrl?: string;
+  mode?: FigmaOfficialMode;
+  authProvider?: FigmaOfficialAuthProvider;
   capabilities?: string[];
+  tools?: string[];
+  toolCount?: number;
+  lastToolCheckedAt?: number;
 };
 
 type PluginRuntimeStatus = {
@@ -67,7 +77,13 @@ type PluginRuntimeStatus = {
   message?: string;
   authHint?: string;
   url?: string;
+  desktopUrl?: string;
+  mode?: FigmaOfficialMode;
+  authProvider?: FigmaOfficialAuthProvider;
   capabilities?: string[];
+  tools?: string[];
+  toolCount?: number;
+  lastToolCheckedAt?: number;
 };
 
 type PluginGuideSessionRequest = {
@@ -84,6 +100,9 @@ type PluginsSettingsPageProps = {
 const OPEN_COMPUTER_USE_ID = "open-computer-use";
 const FIGMA_OFFICIAL_ID = "figma-official";
 const FIGMA_MCP_URL = "https://mcp.figma.com/mcp";
+const FIGMA_DESKTOP_MCP_URL = "http://127.0.0.1:3845/mcp";
+// The Electron runner injects enabled Claude Code plugins into Agent SDK sessions.
+const FIGMA_AGENT_GUIDE_ENABLED = true;
 
 const DEFAULT_PLUGINS: DefaultPlugin[] = [
   {
@@ -136,12 +155,19 @@ const figmaStatusMeta: Record<FigmaOfficialStatusKind, { label: string; classNam
   configured: statusMeta["needs-connect"],
   "needs-auth": statusMeta["needs-permission"],
   "auth-expired": statusMeta["needs-permission"],
+  "desktop-unavailable": statusMeta["needs-permission"],
   misconfigured: statusMeta["needs-connect"],
   ready: statusMeta.ready,
 };
 
 function getPermissionHint(plugin: DefaultPlugin, status?: PluginRuntimeStatus): string | null {
   if (plugin.id === FIGMA_OFFICIAL_ID) {
+    if (status?.status === "desktop-unavailable") {
+      return "未检测到 Figma Desktop 本地 MCP，请打开 Figma 桌面版并启用 Dev Mode MCP Server。";
+    }
+    if (status?.authProvider === "codex") {
+      return "Figma 授权有时效，失效后请点击 Codex 官方授权刷新。";
+    }
     return status?.authHint ?? "Figma 授权有时效，失效后需要重新授权。";
   }
   const permissions = status?.permissions;
@@ -176,8 +202,19 @@ function buildFigmaOfficialGuidePrompt(status: PluginRuntimeStatus | null): stri
     "",
     "第一版只聚焦 Figma 链接/Frame/图层到 UI 实现，不要宣称 write-to-canvas 或 live UI capture 已完成。",
     `官方 MCP URL: ${FIGMA_MCP_URL}`,
+    `官方 Desktop MCP URL: ${FIGMA_DESKTOP_MCP_URL}`,
     "预期 server name: figma",
     "如果出现 401/403/auth/token/expired/oauth/unauthorized，请判断为 Figma 授权缺失或过期，引导用户重新授权，不要重装插件。",
+    "当前 tech-cc-hub 会把本机已安装的 Claude Code 官方 Figma plugin 作为 Agent SDK local plugin 注入会话；优先使用该插件提供的 Figma MCP 和 Skills。",
+    "如果需要授权，优先走 Figma MCP 的 OAuth 流程，不要切到 Codex OAuth；如果远程 OAuth 反复失败，再引导用户在插件卡片点击「使用桌面 MCP」。",
+    "",
+    "Agent 引导 OAuth 规则：",
+    "1. 先检查 Figma MCP 工具是否可用；如果工具提示需要 OAuth，触发 MCP 授权流程。",
+    "2. 拿到授权 URL 后，系统会自动打开外部浏览器并复制链接；你仍必须调用 `AskUserQuestion` 等待用户确认，不能只用普通文本回复后结束本回合。",
+    "3. `AskUserQuestion` 里必须提供两个选项：`授权已完成（localhost 页面正常加载）` 和 `localhost 页面打不开，改用 Figma Desktop MCP`。",
+    "4. 如果用户选择授权已完成，继续检查 Figma 工具是否已经可用，或让用户提供 Figma 链接/Frame。",
+    "5. 不要要求用户粘贴 callback URL，除非客户端明确要求提交 callback URL；优先让 Claude/Figma MCP 自己完成 OAuth 状态恢复。",
+    "6. 如果用户说 localhost 页面打不开，停止远程 OAuth 重试，引导用户打开 Figma 桌面版，在设计文件 Dev Mode 中启用 Desktop MCP Server，然后回到插件卡片点「使用桌面 MCP」。",
     "",
     "当前 Figma 插件状态快照：",
     "```json",
@@ -212,6 +249,12 @@ function toRuntimeStatus(result: PluginInstallResult): PluginRuntimeStatus {
     authHint: result.authHint,
     url: result.url,
     capabilities: result.capabilities,
+    desktopUrl: result.desktopUrl,
+    mode: result.mode,
+    authProvider: result.authProvider,
+    tools: result.tools,
+    toolCount: result.toolCount,
+    lastToolCheckedAt: result.lastToolCheckedAt,
   };
 }
 
@@ -238,11 +281,13 @@ function getPrimaryActionLabel(plugin: DefaultPlugin, status?: PluginRuntimeStat
 
   if (plugin.id === FIGMA_OFFICIAL_ID) {
     const kind = status?.status ?? result?.status ?? "not-configured";
-    if (kind === "misconfigured") return "修复 Figma MCP 配置";
-    if (kind === "auth-expired") return "重新授权";
-    if (kind === "ready") return "重新写入配置";
-    if (kind === "not-configured") return "接入 Figma 官方 MCP";
-    return "重新写入配置";
+    const mode = status?.mode ?? result?.mode;
+    if (mode === "desktop") return kind === "desktop-unavailable" ? "切回 Codex 授权" : "刷新 Codex 授权";
+    if (kind === "misconfigured") return "修复并授权";
+    if (kind === "auth-expired") return "Codex 重新授权";
+    if (kind === "ready") return "刷新 Codex 授权";
+    if (kind === "not-configured") return "Codex 授权接入";
+    return "Codex 授权 Figma";
   }
 
   const connected = status?.connected === true || (result?.success && result.connected);
@@ -258,7 +303,15 @@ function getPrimaryActionLabel(plugin: DefaultPlugin, status?: PluginRuntimeStat
 function getUpdateHint(plugin: DefaultPlugin, status?: PluginRuntimeStatus, result?: PluginInstallResult): string {
   if (plugin.id === FIGMA_OFFICIAL_ID) {
     const capabilities = status?.capabilities ?? result?.capabilities ?? ["design-context"];
-    return `能力：${capabilities.join("、")} · 授权过期后需重新授权`;
+    const mode = status?.mode ?? result?.mode ?? "remote";
+    const authProvider = status?.authProvider ?? result?.authProvider;
+    const toolCount = status?.toolCount ?? result?.toolCount;
+    const toolHint = typeof toolCount === "number" && toolCount > 0
+      ? ` · 已检测 ${toolCount} 个 MCP 工具`
+      : "";
+    return mode === "desktop"
+      ? `能力：${formatFigmaCapabilities(capabilities)} · Desktop MCP ${status?.desktopUrl ?? result?.desktopUrl ?? FIGMA_DESKTOP_MCP_URL}`
+      : `能力：${formatFigmaCapabilities(capabilities)}${toolHint} · ${authProvider === "codex" ? "Codex 官方 OAuth" : "授权过期后需重新授权"}`;
   }
 
   const latestVersion = status?.latestVersion ?? result?.latestVersion;
@@ -269,6 +322,14 @@ function getUpdateHint(plugin: DefaultPlugin, status?: PluginRuntimeStatus, resu
   if (updateStatus === "error") return `扫描失败：${updateError ?? "未知错误"}`;
   if (latestVersion) return `最新 v${latestVersion}`;
   return "未扫描更新";
+}
+
+function formatFigmaCapabilities(capabilities: string[]): string {
+  const labels: Record<string, string> = {
+    "design-context": "设计上下文",
+    "selection-context": "选区上下文",
+  };
+  return capabilities.map((capability) => labels[capability] ?? capability).join("、");
 }
 
 export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPageProps) {
@@ -330,7 +391,9 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
     void (async () => {
       setInstallingPluginId(plugin.id);
       try {
-        const channel = plugin.id === FIGMA_OFFICIAL_ID ? "plugins:installFigmaOfficial" : "plugins:installOpenComputerUse";
+        const channel = plugin.id === FIGMA_OFFICIAL_ID
+          ? "plugins:connectFigmaCodexOfficial"
+          : "plugins:installOpenComputerUse";
         const result = await (window.electron as typeof window.electron & {
           invoke: (channel: string, ...args: unknown[]) => Promise<PluginInstallResult>;
         }).invoke(channel) as PluginInstallResult;
@@ -342,6 +405,33 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
           installed: runtimeStatuses[plugin.id]?.installed ?? false,
           connected: runtimeStatuses[plugin.id]?.connected ?? false,
           message: "插件请求失败。",
+          error: error instanceof Error ? error.message : String(error),
+        };
+        setPluginResult(plugin.id, result);
+        showPluginActionToast(result);
+      } finally {
+        setInstallingPluginId(null);
+      }
+    })();
+  };
+
+  const handleFigmaDesktopConnect = (plugin: DefaultPlugin) => {
+    void (async () => {
+      setInstallingPluginId(plugin.id);
+      try {
+        const result = await (window.electron as typeof window.electron & {
+          invoke: (channel: string, ...args: unknown[]) => Promise<PluginInstallResult>;
+        }).invoke("plugins:connectFigmaDesktopOfficial") as PluginInstallResult;
+        setPluginResult(plugin.id, result);
+        showPluginActionToast(result);
+      } catch (error) {
+        const current = runtimeStatuses[plugin.id];
+        const result: PluginInstallResult = {
+          success: false,
+          installed: current?.installed ?? true,
+          connected: current?.connected ?? false,
+          status: "desktop-unavailable",
+          message: "Figma Desktop MCP 检查失败。",
           error: error instanceof Error ? error.message : String(error),
         };
         setPluginResult(plugin.id, result);
@@ -428,10 +518,16 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
 
   const handleStartGuideSession = (plugin: DefaultPlugin) => {
     if (!onStartGuideSession || guideLaunchInFlightRef.current) return;
+    const isFigma = plugin.id === FIGMA_OFFICIAL_ID;
+    if (isFigma && !FIGMA_AGENT_GUIDE_ENABLED) {
+      toast.info("Figma Agent 引导授权已暂停", {
+        description: "请使用 Codex 授权接入，或切换到 Figma Desktop MCP。",
+      });
+      return;
+    }
     guideLaunchInFlightRef.current = true;
     setLaunchingGuidePluginId(plugin.id);
     const status = runtimeStatuses[plugin.id] ?? null;
-    const isFigma = plugin.id === FIGMA_OFFICIAL_ID;
     void Promise.resolve(onStartGuideSession({
       title: isFigma ? "Figma 官方 MCP 引导接入" : "Open Computer Use 引导安装",
       prompt: isFigma ? buildFigmaOfficialGuidePrompt(status) : buildOpenComputerUseGuidePrompt(status),
@@ -474,6 +570,7 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
           const installed = runtimeStatus?.installed === true || installResult?.installed === true;
           const isBusy = installingPluginId === plugin.id || updatingPluginId === plugin.id;
           const actionLabel = getPrimaryActionLabel(plugin, runtimeStatus, installResult, isBusy);
+          const showGuideButton = Boolean(onStartGuideSession) && (plugin.id !== FIGMA_OFFICIAL_ID || FIGMA_AGENT_GUIDE_ENABLED);
           const guideLabel = launchingGuidePluginId === plugin.id ? "启动中..." : plugin.id === FIGMA_OFFICIAL_ID ? "Agent 引导接入" : "Agent 引导安装";
           const needsPermission = Boolean(runtimeStatus?.permissions?.required && runtimeStatus.permissions.needsUserAction) || runtimeStatus?.status === "auth-expired" || runtimeStatus?.status === "needs-auth";
 
@@ -524,7 +621,7 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
                 <div className="mt-1 truncate text-xs">{runtimeStatus?.url ?? plugin.sourcePath}</div>
                 <div className="mt-2 flex items-center gap-2 text-xs font-semibold text-[#0E7490]">
                   <ShieldCheck className="h-3.5 w-3.5" />
-                  {plugin.permissions.length} 项权限
+                  {plugin.id === FIGMA_OFFICIAL_ID ? `权限标签 ${plugin.permissions.length} 个` : `${plugin.permissions.length} 项权限`}
                 </div>
                 {permissionHint && (
                   <div className={`mt-1 text-xs font-medium ${needsPermission ? "text-orange-700" : "text-emerald-700"}`}>
@@ -557,7 +654,17 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
                   <RefreshCw className={`h-3.5 w-3.5 ${checkingUpdatePluginId === plugin.id ? "animate-spin" : ""}`} />
                   {checkingUpdatePluginId === plugin.id ? "扫描中..." : plugin.id === FIGMA_OFFICIAL_ID ? "刷新状态" : "扫描更新"}
                 </button>
-                {onStartGuideSession && (
+                {plugin.id === FIGMA_OFFICIAL_ID && (
+                  <button
+                    type="button"
+                    className="rounded-lg border border-[#BFD7EA] bg-[#F1F8FF] px-3 py-2 text-xs font-semibold text-[#2563A8] transition hover:border-[#8CBCE5] hover:bg-[#E5F2FF] disabled:cursor-not-allowed disabled:border-[#E5E6EB] disabled:bg-[#F7F8FA] disabled:text-[#86909C]"
+                    onClick={() => handleFigmaDesktopConnect(plugin)}
+                    disabled={isBusy}
+                  >
+                    {runtimeStatus?.mode === "desktop" ? "检查桌面 MCP" : "使用桌面 MCP"}
+                  </button>
+                )}
+                {showGuideButton && (
                   <button
                     type="button"
                     className="rounded-lg border border-[#F0C7B4] bg-[#FFF4EF] px-3 py-2 text-xs font-semibold text-[#C9572C] transition hover:border-[#D96B3A] hover:bg-[#FFEADF] disabled:cursor-not-allowed disabled:border-[#E5E6EB] disabled:bg-[#F7F8FA] disabled:text-[#86909C]"

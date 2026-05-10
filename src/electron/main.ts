@@ -1,6 +1,7 @@
 import {
     app,
     BrowserWindow,
+    clipboard,
     dialog,
     globalShortcut,
     IpcMainEvent,
@@ -11,10 +12,18 @@ import {
     shell,
     systemPreferences,
     desktopCapturer,
+    type MessageBoxOptions,
 } from "electron"
-import { execSync } from "child_process";
-import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
+import { execSync, spawn } from "child_process";
+import { randomUUID } from "crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
+import { createServer, type Server } from "http";
+import { homedir } from "os";
 import { extname, isAbsolute, join, relative } from "path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { UnauthorizedError, type OAuthClientProvider, type OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { ipcMainHandle, isDev, DEV_PORT } from "./util.js";
 import { getPreloadPath, getUIPath, getIconPath } from "./pathResolver.js";
 import { getStaticData, pollResources, stopPolling } from "./test.js";
@@ -46,11 +55,19 @@ import type { ClientEvent, PromptAttachment, ServerEvent } from "./types.js";
 import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkbenchEvent } from "./browser-manager.js";
 import { startDevBackendBridge, DEV_BACKEND_BRIDGE_PORT } from "./dev-backend-bridge.js";
 import { buildSessionSlashCommandItems } from "./libs/slash-command-catalog.js";
-import { runExternalCli } from "./libs/external-cli.js";
+import { prepareExternalCliCommand, runExternalCli } from "./libs/external-cli.js";
 import {
   buildFigmaOfficialActionResult,
+  buildNextFigmaOfficialCodexAuthRuntimeConfig,
+  buildNextFigmaOfficialDesktopRuntimeConfig,
+  buildNextFigmaOfficialAuthStateRuntimeConfig,
   buildNextFigmaOfficialRuntimeConfig,
+  FIGMA_DESKTOP_MCP_URL,
+  FIGMA_MCP_URL,
+  type FigmaOfficialOAuthTokens,
   getFigmaOfficialPluginStatusFromConfig,
+  parseFigmaCodexOAuthCredentialStore,
+  shouldPreserveReadyFigmaOfficialConfigAfterCodexError,
 } from "./libs/figma-official-plugin.js";
 import { normalizePluginVersion, summarizePluginUpdate, type PluginUpdateSummary } from "./libs/plugin-updates.js";
 import "./libs/claude-settings.js";
@@ -392,14 +409,567 @@ function connectOpenComputerUsePlugin(version: string, permissions: OpenComputer
   });
 }
 
-function getFigmaOfficialPluginStatus() {
-  return getFigmaOfficialPluginStatusFromConfig(loadGlobalRuntimeConfig());
+async function getFigmaOfficialPluginStatus() {
+  const config = loadGlobalRuntimeConfig();
+  const status = getFigmaOfficialPluginStatusFromConfig(config);
+  if (status.mode !== "desktop") {
+    return status;
+  }
+
+  const available = await isFigmaDesktopMcpAvailable();
+  if (available === status.connected) {
+    return status;
+  }
+
+  const nextConfig = buildNextFigmaOfficialDesktopRuntimeConfig(config, {
+    available,
+    error: available ? null : buildFigmaDesktopUnavailableMessage(),
+  });
+  saveGlobalRuntimeConfig(nextConfig);
+  return getFigmaOfficialPluginStatusFromConfig(nextConfig);
 }
 
 function installFigmaOfficialPlugin() {
   const nextConfig = buildNextFigmaOfficialRuntimeConfig(loadGlobalRuntimeConfig());
   saveGlobalRuntimeConfig(nextConfig);
   return buildFigmaOfficialActionResult(nextConfig);
+}
+
+async function connectFigmaDesktopOfficialPlugin() {
+  const available = await isFigmaDesktopMcpAvailable();
+  const error = available ? null : buildFigmaDesktopUnavailableMessage();
+  const nextConfig = buildNextFigmaOfficialDesktopRuntimeConfig(loadGlobalRuntimeConfig(), { available, error });
+  saveGlobalRuntimeConfig(nextConfig);
+  return {
+    ...getFigmaOfficialPluginStatusFromConfig(nextConfig),
+    success: available,
+    message: available
+      ? "已切换到 Figma Desktop MCP。Codex 官方授权仍保留，后续可继续接官方远程 OAuth/skills。"
+      : error,
+  };
+}
+
+async function isFigmaDesktopMcpAvailable(timeoutMs = 900): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    await fetch(FIGMA_DESKTOP_MCP_URL, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function buildFigmaDesktopUnavailableMessage() {
+  return [
+    "未检测到 Figma Desktop MCP。",
+    "请安装/打开 Figma 桌面版，打开一个设计文件，切到 Dev Mode，然后启用 Desktop MCP Server。",
+    `启用后本地服务应监听 ${FIGMA_DESKTOP_MCP_URL}。`,
+  ].join(" ");
+}
+
+const CODEX_MCP_FILE_CREDENTIAL_STORE_CONFIG = "mcp_oauth_credentials_store=\"file\"";
+const CODEX_FIGMA_LOGIN_TIMEOUT_MS = 5 * 60_000;
+
+function getCodexCommand(): string {
+  const explicit = process.env.CODEX_CLI_PATH?.trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  const candidates = [
+    join(homedir(), "bin", "codex"),
+    "/Applications/Codex.app/Contents/Resources/codex",
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? "codex";
+}
+
+function getCodexHomePath(): string {
+  return process.env.CODEX_HOME?.trim() || join(homedir(), ".codex");
+}
+
+function getCodexMcpCredentialsPath(): string {
+  return join(getCodexHomePath(), ".credentials.json");
+}
+
+function readCodexFigmaOAuthCredentials(): FigmaOfficialOAuthTokens | null {
+  const credentialsPath = getCodexMcpCredentialsPath();
+  if (!existsSync(credentialsPath)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(credentialsPath, "utf8")) as unknown;
+    return parseFigmaCodexOAuthCredentialStore(parsed);
+  } catch (error) {
+    console.error("[figma-official] failed to read Codex MCP credentials:", error);
+    return null;
+  }
+}
+
+function isUsableFigmaOAuth(oauth: FigmaOfficialOAuthTokens | null): oauth is FigmaOfficialOAuthTokens {
+  if (!oauth?.access_token) {
+    return false;
+  }
+  return typeof oauth.expiresAt !== "number" || oauth.expiresAt > Date.now() + 60_000;
+}
+
+async function hasCodexFigmaMcpServer(): Promise<boolean> {
+  try {
+    await runExternalCli(getCodexCommand(), ["mcp", "get", "figma"], { timeout: 15_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function listFigmaRemoteToolsWithAccessToken(accessToken: string) {
+  const client = new Client({ name: "tech-cc-hub", version: app.getVersion() }, { capabilities: {} });
+  const transport = new StreamableHTTPClientTransport(new URL(FIGMA_MCP_URL), {
+    requestInit: {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  });
+  try {
+    await client.connect(transport);
+    const tools = await client.listTools();
+    return tools.tools;
+  } finally {
+    await transport.close().catch(() => undefined);
+  }
+}
+
+function extractFigmaMcpToolNames(tools: unknown): string[] {
+  if (!Array.isArray(tools)) {
+    return [];
+  }
+
+  return Array.from(new Set(
+    tools
+      .map((tool) => isPlainObject(tool) && typeof tool.name === "string" ? tool.name.trim() : "")
+      .filter(Boolean),
+  ));
+}
+
+function extractFigmaMcpAuthorizationUrl(text: string): string | null {
+  const match = text.match(/https:\/\/www\.figma\.com\/oauth\/mcp\?[^\s"'<>]+/i);
+  return match?.[0] ?? null;
+}
+
+async function openFigmaAuthorizationUrlInChrome(authUrl: string): Promise<void> {
+  clipboard.writeText(authUrl);
+  if (process.platform === "darwin") {
+    try {
+      await runExternalCli("open", ["-a", "Google Chrome", authUrl], { timeout: 5_000 });
+      return;
+    } catch (error) {
+      console.warn("[figma-official] failed to open Google Chrome, falling back to default browser:", error);
+    }
+  }
+  await shell.openExternal(authUrl);
+}
+
+function presentCodexFigmaAuthorizationUrl(authUrl: string): void {
+  void openFigmaAuthorizationUrlInChrome(authUrl);
+  const messageBoxOptions: MessageBoxOptions = {
+    type: "info",
+    buttons: ["知道了"],
+    defaultId: 0,
+    title: "Figma Codex 授权链接已打开",
+    message: "已用 Chrome 打开 Figma 官方 OAuth 授权链接",
+    detail: [
+      "链接也已复制到剪贴板。",
+      "请在 Chrome 中点击 Agree & Allow Access；授权完成后 tech-cc-hub 会继续接入远程 MCP。",
+      "",
+      authUrl,
+    ].join("\n"),
+  };
+  void (mainWindow
+    ? dialog.showMessageBox(mainWindow, messageBoxOptions)
+    : dialog.showMessageBox(messageBoxOptions));
+}
+
+function runCodexFigmaOAuthLoginWithFileCredentials(needsAdd: boolean): Promise<string> {
+  const args = needsAdd
+    ? ["mcp", "add", "-c", CODEX_MCP_FILE_CREDENTIAL_STORE_CONFIG, "figma", "--url", FIGMA_MCP_URL]
+    : ["mcp", "login", "figma", "-c", CODEX_MCP_FILE_CREDENTIAL_STORE_CONFIG];
+  const prepared = prepareExternalCliCommand(getCodexCommand(), args);
+
+  return new Promise((resolve, reject) => {
+    let output = "";
+    let openedAuthUrl = false;
+    let settled = false;
+    const child = spawn(prepared.command, prepared.args, {
+      cwd: homedir(),
+      env: prepared.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      windowsVerbatimArguments: prepared.windowsVerbatimArguments,
+    });
+
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      reject(new Error("Codex Figma OAuth timed out. 请重新点击 Codex 授权接入。"));
+    }, CODEX_FIGMA_LOGIN_TIMEOUT_MS);
+
+    const onData = (data: Buffer) => {
+      const chunk = data.toString("utf8");
+      output += chunk;
+      const authUrl = openedAuthUrl ? null : extractFigmaMcpAuthorizationUrl(output);
+      if (authUrl) {
+        openedAuthUrl = true;
+        presentCodexFigmaAuthorizationUrl(authUrl);
+      }
+    };
+
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onData);
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (code === 0) {
+        resolve(output);
+        return;
+      }
+      reject(new Error(`Codex Figma OAuth failed with exit code ${code ?? "unknown"}: ${output.trim()}`));
+    });
+  });
+}
+
+async function connectFigmaCodexOfficialPlugin() {
+  try {
+    const initialConfig = loadGlobalRuntimeConfig();
+    const initialStatus = getFigmaOfficialPluginStatusFromConfig(initialConfig);
+    if (initialStatus.status !== "ready" || initialStatus.mode !== "remote") {
+      const baseConfig = buildNextFigmaOfficialRuntimeConfig(initialConfig);
+      saveGlobalRuntimeConfig(baseConfig);
+    }
+
+    let oauth = readCodexFigmaOAuthCredentials();
+    if (!isUsableFigmaOAuth(oauth)) {
+      const hasServer = await hasCodexFigmaMcpServer();
+      await runCodexFigmaOAuthLoginWithFileCredentials(!hasServer);
+      oauth = readCodexFigmaOAuthCredentials();
+    }
+
+    if (!isUsableFigmaOAuth(oauth)) {
+      throw new Error("未找到可用的 Codex file-store Figma OAuth 凭据，请重新完成 Figma 授权。");
+    }
+
+    const tools = await listFigmaRemoteToolsWithAccessToken(oauth.access_token);
+    const toolNames = extractFigmaMcpToolNames(tools);
+    const nextConfig = buildNextFigmaOfficialCodexAuthRuntimeConfig(loadGlobalRuntimeConfig(), oauth, Date.now(), toolNames);
+    saveGlobalRuntimeConfig(nextConfig);
+    return {
+      ...getFigmaOfficialPluginStatusFromConfig(nextConfig),
+      success: true,
+      message: `已通过 Codex 官方 OAuth 接入 Figma 远程 MCP，并检测到 ${toolNames.length} 个工具。`,
+    };
+  } catch (error) {
+    const message = getErrorMessage(error);
+    const currentConfig = loadGlobalRuntimeConfig();
+    const currentStatus = getFigmaOfficialPluginStatusFromConfig(currentConfig);
+    if (shouldPreserveReadyFigmaOfficialConfigAfterCodexError(currentConfig, message)) {
+      return {
+        ...currentStatus,
+        success: false,
+        message,
+        error: message,
+      };
+    }
+
+    const state = /expired|过期/i.test(message) ? "auth-expired" : "needs-auth";
+    const nextConfig = buildNextFigmaOfficialAuthStateRuntimeConfig(currentConfig, state, {
+      error: message,
+      oauth: null,
+    });
+    saveGlobalRuntimeConfig(nextConfig);
+    return {
+      ...getFigmaOfficialPluginStatusFromConfig(nextConfig),
+      success: false,
+      message,
+      error: message,
+    };
+  }
+}
+
+type FigmaOAuthCallbackWaiter = {
+  redirectUrl: string;
+  waitForCode: Promise<string>;
+  close: () => Promise<void>;
+};
+
+class FigmaRuntimeOAuthProvider implements OAuthClientProvider {
+  private clientInfo?: OAuthClientInformationMixed;
+  private currentTokens?: OAuthTokens;
+  private codeVerifierValue?: string;
+  private discovery?: OAuthDiscoveryState;
+  private tokensSavedAt = Date.now();
+
+  constructor(
+    private readonly callbackUrl: string,
+    private readonly oauthState: string,
+    private readonly openAuthorizationUrl: (url: URL) => Promise<void>,
+  ) {}
+
+  get redirectUrl() {
+    return this.callbackUrl;
+  }
+
+  get clientMetadata(): OAuthClientMetadata {
+    return {
+      client_name: "tech-cc-hub",
+      redirect_uris: [this.callbackUrl],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "client_secret_post",
+    };
+  }
+
+  state() {
+    return this.oauthState;
+  }
+
+  clientInformation() {
+    return this.clientInfo;
+  }
+
+  saveClientInformation(clientInformation: OAuthClientInformationMixed) {
+    this.clientInfo = clientInformation;
+  }
+
+  tokens() {
+    return this.currentTokens;
+  }
+
+  saveTokens(tokens: OAuthTokens) {
+    this.currentTokens = tokens;
+    this.tokensSavedAt = Date.now();
+  }
+
+  async redirectToAuthorization(authorizationUrl: URL) {
+    await this.openAuthorizationUrl(authorizationUrl);
+  }
+
+  saveCodeVerifier(codeVerifier: string) {
+    this.codeVerifierValue = codeVerifier;
+  }
+
+  codeVerifier() {
+    if (!this.codeVerifierValue) {
+      throw new Error("Figma OAuth code verifier is missing.");
+    }
+    return this.codeVerifierValue;
+  }
+
+  saveDiscoveryState(state: OAuthDiscoveryState) {
+    this.discovery = state;
+  }
+
+  discoveryState() {
+    return this.discovery;
+  }
+
+  toRuntimeTokens(): FigmaOfficialOAuthTokens | null {
+    if (!this.currentTokens?.access_token) {
+      return null;
+    }
+    const expiresAt = typeof this.currentTokens.expires_in === "number"
+      ? this.tokensSavedAt + (this.currentTokens.expires_in * 1000)
+      : undefined;
+    return {
+      access_token: this.currentTokens.access_token,
+      token_type: this.currentTokens.token_type,
+      expires_in: this.currentTokens.expires_in,
+      refresh_token: this.currentTokens.refresh_token,
+      scope: this.currentTokens.scope,
+      id_token: this.currentTokens.id_token,
+      expiresAt,
+    };
+  }
+}
+
+async function createFigmaOAuthCallbackWaiter(expectedState: string, timeoutMs = 5 * 60_000): Promise<FigmaOAuthCallbackWaiter> {
+  let server: Server | null = null;
+  let settled = false;
+  let timeout: NodeJS.Timeout | null = null;
+
+  const waitForCode = new Promise<string>((resolve, reject) => {
+    server = createServer((request, response) => {
+      const requestUrl = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+      if (requestUrl.pathname !== "/callback") {
+        response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+        response.end("Not found");
+        return;
+      }
+
+      const error = requestUrl.searchParams.get("error");
+      const code = requestUrl.searchParams.get("code");
+      const state = requestUrl.searchParams.get("state");
+      if (error) {
+        settled = true;
+        response.writeHead(400, { "content-type": "text/html; charset=utf-8" });
+        response.end("<h1>Figma 授权失败</h1><p>可以关闭这个窗口，回到 tech-cc-hub 重新授权。</p>");
+        reject(new Error(`Figma OAuth failed: ${error}`));
+        return;
+      }
+      if (!code || state !== expectedState) {
+        settled = true;
+        response.writeHead(400, { "content-type": "text/html; charset=utf-8" });
+        response.end("<h1>Figma 授权回调无效</h1><p>可以关闭这个窗口，回到 tech-cc-hub 重新授权。</p>");
+        reject(new Error("Figma OAuth callback is missing code or has mismatched state."));
+        return;
+      }
+
+      settled = true;
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end("<h1>Figma 授权完成</h1><p>可以关闭这个窗口，回到 tech-cc-hub 继续使用。</p>");
+      resolve(code);
+    });
+
+    timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("Figma OAuth timed out; please try authorizing again."));
+    }, timeoutMs);
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server!.once("error", reject);
+    server!.listen(0, "localhost", () => resolve());
+  });
+
+  const callbackServer = server!;
+  const address = callbackServer.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Failed to start Figma OAuth callback server.");
+  }
+
+  return {
+    redirectUrl: `http://localhost:${address.port}/callback`,
+    waitForCode,
+    close: () => new Promise<void>((resolve) => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      if (!callbackServer.listening) {
+        resolve();
+        return;
+      }
+      callbackServer.close(() => resolve());
+    }),
+  };
+}
+
+async function connectFigmaOfficialPlugin() {
+  let callbackWaiter: FigmaOAuthCallbackWaiter | null = null;
+  try {
+    const baseConfig = buildNextFigmaOfficialRuntimeConfig(loadGlobalRuntimeConfig());
+    saveGlobalRuntimeConfig(baseConfig);
+
+    const expectedState = randomUUID();
+    callbackWaiter = await createFigmaOAuthCallbackWaiter(expectedState);
+    const provider = new FigmaRuntimeOAuthProvider(callbackWaiter.redirectUrl, expectedState, async (url) => {
+      const authorizationUrl = url.toString();
+      clipboard.writeText(authorizationUrl);
+      shell.openExternal(authorizationUrl).catch((error) => {
+        console.error("[figma-official] failed to open external browser:", error);
+      });
+      const messageBoxOptions: MessageBoxOptions = {
+        type: "info",
+        buttons: ["知道了"],
+        defaultId: 0,
+        title: "Figma 授权链接已复制",
+        message: "Figma 授权链接已复制到剪贴板",
+        detail: [
+          "如果外部浏览器没有自动打开，请直接到你已登录 Figma 的外部浏览器粘贴打开。",
+          "",
+          authorizationUrl,
+        ].join("\n"),
+      };
+      void (mainWindow
+        ? dialog.showMessageBox(mainWindow, messageBoxOptions)
+        : dialog.showMessageBox(messageBoxOptions));
+    });
+
+    const client = new Client({ name: "tech-cc-hub", version: app.getVersion() }, { capabilities: {} });
+    const connectWithOAuth = async (): Promise<StreamableHTTPClientTransport> => {
+      const transport = new StreamableHTTPClientTransport(new URL(FIGMA_MCP_URL), { authProvider: provider });
+      try {
+        await client.connect(transport);
+        return transport;
+      } catch (error) {
+        if (!(error instanceof UnauthorizedError)) {
+          throw error;
+        }
+        const authorizationCode = await callbackWaiter!.waitForCode;
+        await transport.finishAuth(authorizationCode);
+        return await connectWithOAuth();
+      }
+    };
+
+    const transport = await connectWithOAuth();
+    const tools = await client.listTools().catch(() => ({ tools: [] }));
+    const toolNames = extractFigmaMcpToolNames(tools.tools);
+    await transport.close().catch(() => undefined);
+
+    const oauth = provider.toRuntimeTokens();
+    if (!oauth?.access_token) {
+      throw new Error("Figma OAuth did not return an access token.");
+    }
+
+    const nextConfig = buildNextFigmaOfficialAuthStateRuntimeConfig(loadGlobalRuntimeConfig(), "ready", {
+      oauth,
+      tools: toolNames,
+      toolCount: toolNames.length,
+      lastToolCheckedAt: Date.now(),
+    });
+    saveGlobalRuntimeConfig(nextConfig);
+    return {
+      ...getFigmaOfficialPluginStatusFromConfig(nextConfig),
+      success: true,
+      message: `Figma 授权完成，已写入官方 MCP 配置。已检测到 ${toolNames.length} 个工具。`,
+    };
+  } catch (error) {
+    const rawMessage = getErrorMessage(error);
+    const message = isLikelyFigmaRemoteClientRestriction(rawMessage)
+      ? [
+        "Figma 远程 MCP 拒绝了当前客户端的 OAuth 初始化。",
+        "官方远程 MCP 目前只允许 MCP Catalog 中的受支持客户端直接连接；请使用 Codex 官方授权，或切换到 Figma Desktop MCP。",
+        `原始错误：${rawMessage}`,
+      ].join(" ")
+      : rawMessage;
+    const nextConfig = buildNextFigmaOfficialAuthStateRuntimeConfig(loadGlobalRuntimeConfig(), "needs-auth", { error: message, oauth: null });
+    saveGlobalRuntimeConfig(nextConfig);
+    return {
+      ...getFigmaOfficialPluginStatusFromConfig(nextConfig),
+      success: false,
+      message,
+      error: message,
+    };
+  } finally {
+    await callbackWaiter?.close();
+  }
+}
+
+function isLikelyFigmaRemoteClientRestriction(message: string) {
+  return /403|forbidden|mcp:connect|invalid oauth error response/i.test(message);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -673,6 +1243,16 @@ ipcMain.handle("plugins:installOpenComputerUse", () => installOpenComputerUsePlu
 ipcMain.handle("plugins:updateOpenComputerUse", () => updateOpenComputerUsePlugin());
 ipcMain.handle("plugins:getFigmaOfficialStatus", () => getFigmaOfficialPluginStatus());
 ipcMain.handle("plugins:installFigmaOfficial", () => installFigmaOfficialPlugin());
+ipcMain.handle("plugins:connectFigmaOfficial", () => connectFigmaOfficialPlugin());
+ipcMain.handle("plugins:connectFigmaCodexOfficial", () => connectFigmaCodexOfficialPlugin());
+ipcMain.handle("plugins:connectFigmaDesktopOfficial", () => connectFigmaDesktopOfficialPlugin());
+ipcMain.handle("shell:openExternal", async (_event, url: unknown) => {
+  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+    return { success: false, error: "Invalid external URL." };
+  }
+  await shell.openExternal(url);
+  return { success: true };
+});
 ipcMain.handle("preview-read-file", (_event, request: unknown) => readPreviewFileForRenderer(request));
 ipcMain.handle("preview-get-image-base64", (_event, request: unknown) => readPreviewFileForRenderer(request));
 ipcMain.handle("preview-get-file-metadata", (_event, request: unknown) => {
@@ -1710,10 +2290,27 @@ app.on("ready", async () => {
               return await updateOpenComputerUsePlugin();
             }
             if (channel === "plugins:getFigmaOfficialStatus") {
-              return getFigmaOfficialPluginStatus();
+              return await getFigmaOfficialPluginStatus();
             }
             if (channel === "plugins:installFigmaOfficial") {
               return installFigmaOfficialPlugin();
+            }
+            if (channel === "plugins:connectFigmaOfficial") {
+              return await connectFigmaOfficialPlugin();
+            }
+            if (channel === "plugins:connectFigmaCodexOfficial") {
+              return await connectFigmaCodexOfficialPlugin();
+            }
+            if (channel === "plugins:connectFigmaDesktopOfficial") {
+              return await connectFigmaDesktopOfficialPlugin();
+            }
+            if (channel === "shell:openExternal") {
+              const url = args[0];
+              if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+                return { success: false, error: "Invalid external URL." };
+              }
+              await shell.openExternal(url);
+              return { success: true };
             }
             if (channel.startsWith("git:")) {
               return await handleGitWorkbenchInvoke(channel, ...args);

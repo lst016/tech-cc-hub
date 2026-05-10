@@ -1,4 +1,4 @@
-import type { ClientEvent, PromptAttachment, ServerEvent, StreamMessage, UiGitDiffResult, UiGitResult, UiGitWorkbenchSnapshot } from "./types";
+import type { ClientEvent, PromptAttachment, ServerEvent, StreamMessage, UiGitCommitDetail, UiGitDiffResult, UiGitResult, UiGitWorkbenchSnapshot } from "./types";
 import type { AppUpdateActionResult, AppUpdateStatus } from "./types";
 
 const browserPreviewSessionId = "browser-preview-session";
@@ -307,9 +307,11 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     }),
     getGitSnapshot: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
     getGitDiff: async () => createPreviewGitResult<UiGitDiffResult>(),
+    getGitCommitDetail: async () => createPreviewGitResult<UiGitCommitDetail>(),
     gitStageFiles: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
     gitUnstageFiles: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
     gitCommit: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
+    gitPull: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
     gitPush: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
     gitCreateBranch: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
     gitCheckoutBranch: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
@@ -466,9 +468,11 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       preprocessImageAttachments: async (payload) => await invokeBridge("preprocessImageAttachments", payload),
       getGitSnapshot: async (payload) => await invokeBridge("invoke", "git:snapshot", payload),
       getGitDiff: async (payload) => await invokeBridge("invoke", "git:diff", payload),
+      getGitCommitDetail: async (payload) => await invokeBridge("invoke", "git:commitDetail", payload),
       gitStageFiles: async (payload) => await invokeBridge("invoke", "git:stage", payload),
       gitUnstageFiles: async (payload) => await invokeBridge("invoke", "git:unstage", payload),
       gitCommit: async (payload) => await invokeBridge("invoke", "git:commit", payload),
+      gitPull: async (payload) => await invokeBridge("invoke", "git:pull", payload),
       gitPush: async (payload) => await invokeBridge("invoke", "git:push", payload),
       gitCreateBranch: async (payload) => await invokeBridge("invoke", "git:createBranch", payload),
       gitCheckoutBranch: async (payload) => await invokeBridge("invoke", "git:checkoutBranch", payload),

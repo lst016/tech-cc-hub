@@ -110,6 +110,9 @@ function App() {
   const [appUpdateActionBusy, setAppUpdateActionBusy] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [activityRailWidth, setActivityRailWidth] = useState(420);
+  const [viewportWidth, setViewportWidth] = useState(() => (
+    typeof window === "undefined" ? 1440 : window.innerWidth
+  ));
   const sidebarWidthRef = useRef(sidebarWidth);
   const activityRailWidthRef = useRef(activityRailWidth);
   sidebarWidthRef.current = sidebarWidth;
@@ -658,6 +661,13 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const updateViewportWidth = () => setViewportWidth(window.innerWidth);
+    updateViewportWidth();
+    window.addEventListener("resize", updateViewportWidth);
+    return () => window.removeEventListener("resize", updateViewportWidth);
+  }, []);
+
+  useEffect(() => {
     if (!resizingPane) {
       return;
     }
@@ -960,7 +970,16 @@ function App() {
   ]);
 
   const sidebarOffset = showSidebar ? sidebarWidth : 0;
-  const activityRailOffset = !showSessionAnalysis && !isUtilityWorkspace && showActivityRail ? activityRailWidth : 0;
+  const gitWorkspaceActive =
+    !showSessionAnalysis &&
+    !isUtilityWorkspace &&
+    showActivityRail &&
+    workspaceView !== "browser" &&
+    activityRailTab === "git";
+  const effectiveActivityRailWidth = gitWorkspaceActive
+    ? Math.max(MIN_ACTIVITY_RAIL_WIDTH, viewportWidth - sidebarOffset)
+    : activityRailWidth;
+  const activityRailOffset = !showSessionAnalysis && !isUtilityWorkspace && showActivityRail ? effectiveActivityRailWidth : 0;
   const runtimeMeta = runtimeSourceMeta[runtimeSource];
   const currentSessionId = activeSessionId ?? null;
   const headerUpdateStatus = appUpdateStatus;
@@ -1426,7 +1445,7 @@ function App() {
               compressionThresholdPercent={selectedUsageModelConfig?.compressionThresholdPercent}
               hasBrowserTab={activeHasBrowserTab}
               onOpenSessionAnalysis={() => setShowSessionAnalysis(true)}
-              width={activityRailWidth}
+              width={effectiveActivityRailWidth}
             />
           </div>
         )}
@@ -1460,7 +1479,7 @@ function App() {
             />
           </aside>
         )}
-        {!showSessionAnalysis && !isUtilityWorkspace && showActivityRail && (
+        {!showSessionAnalysis && !isUtilityWorkspace && showActivityRail && !gitWorkspaceActive && (
           <div
             className={`fixed bottom-0 ${sidebarHeaderOffsetClass} z-30 w-3 translate-x-1/2 cursor-col-resize`}
             style={{ right: activityRailWidth }}

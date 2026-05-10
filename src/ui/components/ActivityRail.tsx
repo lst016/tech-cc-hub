@@ -12,6 +12,7 @@ import {
 } from "../../shared/activity-rail-model";
 import { useAppStore } from "../store/useAppStore";
 import { estimatePromptLedgerTokens, type PromptLedgerSourceKind } from "../../shared/prompt-ledger";
+import type { PlanStepStatus, SessionPlanSnapshot } from "../../shared/plan-progress";
 import { buildContextUsageBreakdown, type ContextUsageBreakdownCategory } from "../utils/context-usage-breakdown";
 import { buildSegmentedContextUsageCells, type ContextUsageCellSegment } from "../utils/context-usage-cells";
 import { AionWorkspacePreviewPane } from "./AionWorkspacePreviewPane";
@@ -474,6 +475,101 @@ function ContextUsagePanel({
           </div>
         )}
       </div>
+    </section>
+  );
+}
+
+function planStatusClasses(status: PlanStepStatus) {
+  switch (status) {
+    case "completed":
+      return {
+        marker: "border-zinc-400 bg-zinc-500 text-white",
+        row: "text-ink-500",
+        label: "已完成",
+      };
+    case "in_progress":
+      return {
+        marker: "border-blue-500 bg-blue-600 text-white",
+        row: "text-ink-900",
+        label: "进行中",
+      };
+    case "pending":
+    default:
+      return {
+        marker: "border-slate-200 bg-slate-100 text-slate-500",
+        row: "text-ink-500",
+        label: "待执行",
+      };
+  }
+}
+
+function PlanProgressPanel({ snapshot }: { snapshot?: SessionPlanSnapshot }) {
+  const plan = snapshot?.plan ?? [];
+  const total = plan.length;
+  const completed = plan.filter((item) => item.status === "completed").length;
+  const running = plan.some((item) => item.status === "in_progress");
+  const statusLabel = total === 0
+    ? "等待计划"
+    : completed === total
+      ? "已完成"
+      : running
+        ? "运行中"
+        : "待执行";
+  const statusClass = total === 0
+    ? "border-slate-200 bg-slate-50 text-slate-500"
+    : completed === total
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : running
+        ? "border-blue-200 bg-blue-50 text-blue-700"
+        : "border-slate-200 bg-slate-50 text-slate-600";
+  const sourceLabel = snapshot?.source === "todo_write" ? "TodoWrite 兼容" : "update_plan";
+
+  return (
+    <section className="rounded-[28px] border border-black/5 bg-white/72 p-4 text-ink-700 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-ink-400">Progress</div>
+          <div className="mt-2 text-[13px] font-semibold text-ink-900">执行计划</div>
+          <div className="mt-1 text-[12px] text-ink-500">
+            {total > 0 ? `${completed}/${total} 完成 · ${sourceLabel}` : "等待 Agent 调用 update_plan"}
+          </div>
+        </div>
+        <div className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-medium ${statusClass}`}>
+          {statusLabel}
+        </div>
+      </div>
+
+      {snapshot?.explanation && (
+        <div className="mt-3 rounded-2xl border border-black/5 bg-black/[0.025] px-3 py-2 text-[12px] leading-5 text-ink-500">
+          {snapshot.explanation}
+        </div>
+      )}
+
+      {total > 0 ? (
+        <div className="mt-4 grid gap-3">
+          {plan.map((item, index) => {
+            const classes = planStatusClasses(item.status);
+            const markerLabel = item.status === "completed" ? "✓" : item.status === "in_progress" ? "…" : String(index + 1);
+            return (
+              <div key={`${item.step}-${index}`} className="grid grid-cols-[24px_minmax(0,1fr)] items-start gap-3">
+                <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border text-[12px] font-bold ${classes.marker}`}>
+                  {markerLabel}
+                </span>
+                <div className="min-w-0 pt-0.5">
+                  <div className={`truncate text-[13px] font-semibold ${classes.row}`} title={item.step}>
+                    {item.step}
+                  </div>
+                  <div className="mt-1 text-[11px] text-ink-400">{classes.label}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="mt-4 rounded-2xl border border-dashed border-black/10 bg-black/[0.015] px-3 py-5 text-center text-[12px] leading-5 text-ink-400">
+          多步骤任务开始后，这里会显示 Codex-compatible update_plan 清单。
+        </div>
+      )}
     </section>
   );
 }
@@ -1066,6 +1162,7 @@ export function ActivityRail({
               compressionThresholdPercent={compressionThresholdPercent}
               partialMessage={partialMessage}
             />
+            <PlanProgressPanel snapshot={session?.latestPlan} />
           </div>
         ) : selectedTab === "preview" ? (
           <div className="min-h-0 flex-1">

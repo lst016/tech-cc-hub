@@ -79,12 +79,16 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("git:snapshot", payload),
     getGitDiff: (payload: any) =>
         ipcInvoke("git:diff", payload),
+    getGitCommitDetail: (payload: any) =>
+        ipcInvoke("git:commitDetail", payload),
     gitStageFiles: (payload: any) =>
         ipcInvoke("git:stage", payload),
     gitUnstageFiles: (payload: any) =>
         ipcInvoke("git:unstage", payload),
     gitCommit: (payload: any) =>
         ipcInvoke("git:commit", payload),
+    gitPull: (payload: any) =>
+        ipcInvoke("git:pull", payload),
     gitPush: (payload: any) =>
         ipcInvoke("git:push", payload),
     gitCreateBranch: (payload: any) =>

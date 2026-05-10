@@ -19,7 +19,10 @@ describe("git workbench UI source wiring", () => {
 
     assert.match(preloadSource, /getGitSnapshot/);
     assert.match(preloadSource, /gitCommit/);
+    assert.match(preloadSource, /getGitCommitDetail/);
+    assert.match(preloadSource, /gitPull/);
     assert.match(panelSource, /window\.electron\.gitCommit/);
+    assert.match(panelSource, /window\.electron\.getGitCommitDetail/);
     assert.doesNotMatch(panelSource, /child_process|simple-git|execFile|spawn/);
   });
 
@@ -32,5 +35,30 @@ describe("git workbench UI source wiring", () => {
 
     assert.doesNotMatch(gitSource, /reset|rebase|cherry-pick|force push|amend/i);
     assert.match(gitSource, /GitConfirmDialog/);
+  });
+
+  it("keeps the Git rail layout tabbed and renders a filtered version graph", () => {
+    const panelSource = readFileSync("src/ui/components/git/GitWorkbenchPanel.tsx", "utf8");
+    const historySource = readFileSync("src/ui/components/git/GitHistoryPanel.tsx", "utf8");
+
+    assert.doesNotMatch(panelSource, /xl:grid-cols/);
+    assert.match(panelSource, /type GitWorkbenchTab/);
+    assert.match(panelSource, /setActiveTab/);
+    assert.match(panelSource, /GitCommitDetailPanel/);
+    assert.match(historySource, /@gitgraph\/react/);
+    assert.match(historySource, /分支筛选/);
+    assert.match(historySource, /branchFilter/);
+    assert.match(historySource, /gitgraph\.import/);
+    assert.match(historySource, /renderMessage/);
+  });
+
+  it("does not nest interactive file actions inside another button", () => {
+    const changesSource = readFileSync("src/ui/components/git/GitChangesList.tsx", "utf8");
+
+    assert.doesNotMatch(changesSource, /role="button"/);
+    assert.match(changesSource, /buildFileTree/);
+    assert.match(changesSource, /未暂存/);
+    assert.match(changesSource, /已暂存/);
+    assert.match(changesSource, /aria-label=\{options\.actionLabel\}/);
   });
 });

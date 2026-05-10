@@ -79,14 +79,23 @@ export type GitCommitNode = {
   message: string;
   committedAt: string;
   refs: string[];
+  branches: string[];
   graphLane: number;
+};
+
+export type GitCommitChangedFile = GitChangedFile;
+
+export type GitCommitDetail = GitCommitNode & {
+  body: string;
+  files: GitCommitChangedFile[];
+  diff: string;
 };
 
 export type GitOperationLogEntry = {
   id: string;
   repoRoot: string;
   branch: string | null;
-  operation: "push" | "checkout" | "stash-save" | "stash-apply" | "stash-drop" | "commit";
+  operation: "pull" | "push" | "checkout" | "stash-save" | "stash-apply" | "stash-drop" | "commit";
   summary: string;
   success: boolean;
   errorCode?: GitWorkbenchErrorCode;
@@ -106,6 +115,11 @@ export type GitDiffRequest = {
   cwd: string;
   path: string;
   staged?: boolean;
+};
+
+export type GitCommitDetailRequest = {
+  cwd: string;
+  hash: string;
 };
 
 export type GitDiffResult = {

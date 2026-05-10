@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import type { PermissionRequest } from "../store/useAppStore";
+import { copyTextToClipboard } from "../utils/clipboard";
 
 type AskUserQuestionInput = {
   questions?: Array<{
@@ -10,6 +11,7 @@ type AskUserQuestionInput = {
     multiSelect?: boolean;
   }>;
   answers?: Record<string, string>;
+  figmaAuthUrl?: string;
 };
 
 export function DecisionPanel({
@@ -23,12 +25,16 @@ export function DecisionPanel({
 }) {
   const input = request.input as AskUserQuestionInput | null;
   const questions = input?.questions ?? [];
+  const figmaAuthUrl = typeof input?.figmaAuthUrl === "string" ? input.figmaAuthUrl : "";
+  const allowFreeformAnswer = !figmaAuthUrl;
   const [selectedOptions, setSelectedOptions] = useState<Record<number, string[]>>({});
   const [otherInputs, setOtherInputs] = useState<Record<number, string>>({});
+  const [copiedAuthUrl, setCopiedAuthUrl] = useState(false);
 
   useEffect(() => {
     setSelectedOptions({});
     setOtherInputs({});
+    setCopiedAuthUrl(false);
   }, [request.toolUseId]);
 
   const toggleOption = (qIndex: number, optionLabel: string, multiSelect?: boolean) => {
@@ -48,7 +54,7 @@ export function DecisionPanel({
     const answers: Record<string, string> = {};
     questions.forEach((q, qIndex) => {
       const selected = selectedOptions[qIndex] ?? [];
-      const otherText = otherInputs[qIndex]?.trim() ?? "";
+      const otherText = allowFreeformAnswer ? otherInputs[qIndex]?.trim() ?? "" : "";
       let value = "";
       if (q.multiSelect) {
         const combined = [...selected];
@@ -64,7 +70,7 @@ export function DecisionPanel({
 
   const canSubmit = questions.every((_, qIndex) => {
     const selected = selectedOptions[qIndex] ?? [];
-    const otherText = otherInputs[qIndex]?.trim() ?? "";
+    const otherText = allowFreeformAnswer ? otherInputs[qIndex]?.trim() ?? "" : "";
     return selected.length > 0 || otherText.length > 0;
   });
 
@@ -124,19 +130,56 @@ export function DecisionPanel({
                 ))}
               </div>
             )}
-            <div className="mt-3">
-              <label className="block text-xs font-medium text-muted">其他回答</label>
-              <input
-                type="text"
-                className="mt-1 w-full rounded-xl border border-black/8 bg-white/78 px-3 py-2 text-sm text-ink-700 outline-none transition focus:border-accent/45 focus:bg-white"
-                placeholder="输入你的回答..."
-                value={otherInputs[qIndex] ?? ""}
-                onChange={(e) => setOtherInputs((prev) => ({ ...prev, [qIndex]: e.target.value }))}
-              />
-            </div>
+            {allowFreeformAnswer ? (
+              <div className="mt-3">
+                <label className="block text-xs font-medium text-muted">其他回答</label>
+                <input
+                  type="text"
+                  className="mt-1 w-full rounded-xl border border-black/8 bg-white/78 px-3 py-2 text-sm text-ink-700 outline-none transition focus:border-accent/45 focus:bg-white"
+                  placeholder="输入你的回答..."
+                  value={otherInputs[qIndex] ?? ""}
+                  onChange={(e) => setOtherInputs((prev) => ({ ...prev, [qIndex]: e.target.value }))}
+                />
+              </div>
+            ) : (
+              <div className="mt-3 rounded-xl border border-accent/12 bg-white/62 px-3 py-2 text-xs leading-5 text-muted">
+                这一步不要粘贴 localhost callback URL。请直接选择上面的状态；如果 localhost 页面打不开，改用 Figma Desktop MCP。
+              </div>
+            )}
             {q.multiSelect && <div className="mt-2 text-xs text-muted">当前问题支持多选。</div>}
           </div>
         )})}
+        {figmaAuthUrl && (
+          <div className={`${compact ? "mt-3" : "mt-4"} rounded-2xl border border-accent/18 bg-white/72 p-3`}>
+            <div className="text-xs font-bold uppercase tracking-[0.14em] text-accent">Figma OAuth</div>
+            <div className="mt-1 break-all text-xs text-muted">{figmaAuthUrl}</div>
+            <div className="mt-2 text-xs leading-5 text-ink-700">
+              请用外部浏览器打开授权链接。授权后如果 localhost 页面正常显示完成，就点「授权已完成」；不要把 callback 地址粘回这里。
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-white shadow-soft transition-colors hover:bg-accent-hover"
+                onClick={() => {
+                  void (window.electron as typeof window.electron & { invoke?: (channel: string, ...args: unknown[]) => Promise<unknown> })
+                    .invoke?.("shell:openExternal", figmaAuthUrl)
+                    .catch(() => window.open(figmaAuthUrl, "_blank", "noopener,noreferrer"));
+                }}
+              >
+                打开授权链接
+              </button>
+              <button
+                type="button"
+                className="rounded-full border border-ink-900/10 bg-surface px-4 py-2 text-sm font-semibold text-ink-700 transition-colors hover:bg-surface-tertiary"
+                onClick={() => {
+                  void copyTextToClipboard(figmaAuthUrl).then(() => setCopiedAuthUrl(true));
+                }}
+              >
+                {copiedAuthUrl ? "已复制" : "复制授权链接"}
+              </button>
+            </div>
+          </div>
+        )}
         <div className={`${compact ? "mt-3" : "mt-5"} flex flex-wrap gap-3`}>
           <button
             className={`rounded-full px-5 py-2 text-sm font-medium text-white shadow-soft transition-colors ${

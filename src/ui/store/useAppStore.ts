@@ -17,6 +17,11 @@ import {
   type WorkflowSpecDocument,
 } from "../../shared/workflow-markdown";
 import { extractSlashCommandsFromMessages, mergeSlashCommandLists } from "../../shared/slash-commands";
+import {
+  normalizeTodoWriteArgs,
+  normalizeUpdatePlanArgs,
+  type SessionPlanSnapshot,
+} from "../../shared/plan-progress";
 
 export type PermissionRequest = {
   toolUseId: string;
@@ -41,6 +46,7 @@ export type SessionView = {
   workflowSpec?: WorkflowSpecDocument;
   workflowError?: string;
   workflowCatalog?: SessionWorkflowCatalog;
+  latestPlan?: SessionPlanSnapshot;
   archivedAt?: number;
   createdAt?: number;
   updatedAt?: number;
@@ -271,6 +277,69 @@ function mergeMessages(olderMessages: StreamMessage[], newerMessages: StreamMess
   return merged;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function extractPlanSnapshotFromMessage(sessionId: string, message: StreamMessage): SessionPlanSnapshot | null {
+  if (message.type !== "assistant") return null;
+  const content = (message as { message?: { content?: unknown[] }; uuid?: string }).message?.content;
+  if (!Array.isArray(content)) return null;
+
+  let snapshot: SessionPlanSnapshot | null = null;
+  for (const item of content) {
+    if (!isRecord(item) || item.type !== "tool_use") continue;
+    const toolName = typeof item.name === "string" ? item.name : "";
+    const toolUseId = typeof item.id === "string" ? item.id : undefined;
+    const turnId = typeof (message as { uuid?: unknown }).uuid === "string"
+      ? (message as { uuid: string }).uuid
+      : undefined;
+
+    if (toolName === "update_plan" || toolName.endsWith("__update_plan") || toolName.endsWith(":update_plan") || toolName.endsWith("/update_plan")) {
+      const args = normalizeUpdatePlanArgs(item.input);
+      if (args) {
+        snapshot = {
+          sessionId,
+          turnId,
+          updatedAt: message.capturedAt ?? Date.now(),
+          source: "update_plan",
+          toolName,
+          toolUseId,
+          ...args,
+        };
+      }
+      continue;
+    }
+
+    if (toolName === "TodoWrite") {
+      const args = normalizeTodoWriteArgs(item.input);
+      if (args) {
+        snapshot = {
+          sessionId,
+          turnId,
+          updatedAt: message.capturedAt ?? Date.now(),
+          source: "todo_write",
+          toolName,
+          toolUseId,
+          ...args,
+        };
+      }
+    }
+  }
+
+  return snapshot;
+}
+
+function deriveLatestPlanSnapshot(
+  sessionId: string,
+  messages: StreamMessage[],
+  fallback?: SessionPlanSnapshot,
+): SessionPlanSnapshot | undefined {
+  return messages.reduce<SessionPlanSnapshot | undefined>((latest, message) => (
+    extractPlanSnapshotFromMessage(sessionId, message) ?? latest
+  ), fallback);
+}
+
 function trimMessagesToRecent(
   messages: StreamMessage[],
   fallbackCursor?: SessionHistoryCursor,
@@ -309,6 +378,7 @@ function appendMessagesToSession(
     ...session,
     slashCommands: slashCommands ?? session.slashCommands,
     messages: trimmed.messages,
+    latestPlan: deriveLatestPlanSnapshot(session.id, nextMessages, session.latestPlan),
     hasMoreHistory: trimmed.trimmed ? true : session.hasMoreHistory,
     historyCursor: trimmed.trimmed ? trimmed.historyCursor ?? session.historyCursor : session.historyCursor,
   };
@@ -702,6 +772,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             status,
             messages: mergedMessages,
             slashCommands: slashCommands ?? existing.slashCommands,
+            latestPlan: deriveLatestPlanSnapshot(sessionId, mergedMessages, existing.latestPlan),
             hydrated: true,
             hasMoreHistory: hasMore,
             historyCursor: nextCursor,
@@ -794,6 +865,37 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (status === "completed") {
           set({ globalError: null });
         }
+        break;
+      }
+
+      case "session.plan.updated": {
+        const snapshot = event.payload;
+        set((state) => {
+          const updateArchived = Boolean(state.archivedSessions[snapshot.sessionId]) && !state.sessions[snapshot.sessionId];
+          const existing = (updateArchived ? state.archivedSessions[snapshot.sessionId] : state.sessions[snapshot.sessionId])
+            ?? createSession(snapshot.sessionId);
+          const nextSession: SessionView = {
+            ...existing,
+            latestPlan: snapshot,
+            updatedAt: snapshot.updatedAt,
+          };
+
+          if (updateArchived) {
+            return {
+              archivedSessions: {
+                ...state.archivedSessions,
+                [snapshot.sessionId]: nextSession,
+              },
+            };
+          }
+
+          return {
+            sessions: {
+              ...state.sessions,
+              [snapshot.sessionId]: nextSession,
+            },
+          };
+        });
         break;
       }
 

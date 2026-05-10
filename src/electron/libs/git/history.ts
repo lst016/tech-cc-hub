@@ -31,6 +31,7 @@ export function parseGitLog(raw: string): GitCommitNode[] {
         authorEmail,
         committedAt,
         refs: refsRaw ? refsRaw.split(",").map((ref) => ref.trim()).filter(Boolean) : [],
+        branches: [],
         message,
         graphLane: 0,
       } satisfies GitCommitNode;

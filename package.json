@@ -46,6 +46,7 @@
 		"@dnd-kit/sortable": "^10.0.0",
 		"@dnd-kit/utilities": "^3.2.2",
 		"@floating-ui/react": "^0.27.19",
+		"@gitgraph/react": "^1.6.0",
 		"@icon-park/react": "^1.4.2",
 		"@monaco-editor/react": "^4.7.0",
 		"@radix-ui/react-dialog": "^1.1.15",

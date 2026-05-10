@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { UiGitChangedFile, UiGitDiffResult, UiGitResult, UiGitWorkbenchSnapshot } from "../types";
+import type { UiGitChangedFile, UiGitCommitDetail, UiGitDiffResult, UiGitResult, UiGitWorkbenchSnapshot } from "../types";
 
 export type SelectedGitFile = {
   path: string;
@@ -9,9 +9,12 @@ export type SelectedGitFile = {
 export function useGitWorkbench(cwd?: string) {
   const [snapshot, setSnapshot] = useState<UiGitWorkbenchSnapshot | null>(null);
   const [selectedFile, setSelectedFile] = useState<SelectedGitFile | null>(null);
+  const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(null);
   const [diffResult, setDiffResult] = useState<UiGitDiffResult | null>(null);
+  const [commitDetail, setCommitDetail] = useState<UiGitCommitDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [diffLoading, setDiffLoading] = useState(false);
+  const [commitDetailLoading, setCommitDetailLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,6 +67,20 @@ export function useGitWorkbench(cwd?: string) {
   }, [selectedFile, snapshot]);
 
   useEffect(() => {
+    if (!snapshot?.history.length) {
+      setSelectedCommitHash(null);
+      return;
+    }
+
+    const stillExists = selectedCommitHash
+      ? snapshot.history.some((commit) => commit.hash === selectedCommitHash)
+      : false;
+    if (!stillExists) {
+      setSelectedCommitHash(snapshot.history[0]?.hash ?? null);
+    }
+  }, [selectedCommitHash, snapshot]);
+
+  useEffect(() => {
     const workspace = cwd?.trim();
     if (!workspace || !selectedFile) {
       setDiffResult(null);
@@ -97,6 +114,39 @@ export function useGitWorkbench(cwd?: string) {
       cancelled = true;
     };
   }, [cwd, fileKey, selectedFile]);
+
+  useEffect(() => {
+    const workspace = cwd?.trim();
+    if (!workspace || !selectedCommitHash) {
+      setCommitDetail(null);
+      return;
+    }
+
+    let cancelled = false;
+    setCommitDetailLoading(true);
+    void window.electron.getGitCommitDetail({ cwd: workspace, hash: selectedCommitHash })
+      .then((result) => {
+        if (cancelled) return;
+        if (result.success) {
+          setCommitDetail(result.data);
+        } else {
+          setCommitDetail(null);
+          setError(result.error.message);
+        }
+      })
+      .catch((nextError) => {
+        if (cancelled) return;
+        setCommitDetail(null);
+        setError(nextError instanceof Error ? nextError.message : String(nextError));
+      })
+      .finally(() => {
+        if (!cancelled) setCommitDetailLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, selectedCommitHash]);
 
   const selectedChangedFile = useMemo(() => {
     if (!snapshot || !selectedFile) return null;
@@ -144,6 +194,11 @@ export function useGitWorkbench(cwd?: string) {
     return runMutation("commit", () => window.electron.gitCommit({ cwd, message, body }));
   }, [cwd, runMutation]);
 
+  const pull = useCallback(() => {
+    if (!cwd) return Promise.resolve();
+    return runMutation("pull", () => window.electron.gitPull({ cwd }));
+  }, [cwd, runMutation]);
+
   const push = useCallback(() => {
     if (!cwd) return Promise.resolve();
     return runMutation("push", () => window.electron.gitPush({ cwd }));
@@ -178,20 +233,29 @@ export function useGitWorkbench(cwd?: string) {
     setSelectedFile({ path: file.path, staged: file.staged });
   }, []);
 
+  const selectCommit = useCallback((hash: string) => {
+    setSelectedCommitHash(hash);
+  }, []);
+
   return {
     snapshot,
     selectedFile,
+    selectedCommitHash,
     selectedChangedFile,
     diffResult,
+    commitDetail,
     loading,
     diffLoading,
+    commitDetailLoading,
     actionBusy,
     error,
     refresh,
     selectFile,
+    selectCommit,
     stageFiles,
     unstageFiles,
     commit,
+    pull,
     push,
     createBranch,
     checkoutBranch,

@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, clipboard, dialog, shell, type MessageBoxOptions } from "electron";
 import { readdirSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { basename, extname, join } from "path";
@@ -11,8 +11,9 @@ import { runClaude, type RunnerHandle } from "./libs/runner.js";
 import { persistImageAttachmentReference, rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
 import { resolveAgentRuntimeContext } from "./libs/agent-resolver.js";
 import { getApiConfigForModel, getCurrentApiConfig, getModelConfig, supportsRemoteSessionResume } from "./libs/claude-settings.js";
-import { loadGlobalRuntimeConfig } from "./libs/config-store.js";
+import { loadGlobalRuntimeConfig, saveGlobalRuntimeConfig } from "./libs/config-store.js";
 import { listExternalMcpServerInfos } from "./libs/external-mcp-servers.js";
+import { buildNextFigmaOfficialAuthStateRuntimeConfig, isFigmaMcpOAuthCallbackPrompt, redactFigmaMcpOAuthCallbackPrompt, type FigmaOfficialAuthState } from "./libs/figma-official-plugin.js";
 import { SessionStore } from "./libs/session-store.js";
 import { buildSessionSlashCommands } from "./libs/slash-command-catalog.js";
 import { stripInlineBase64ImagesFromMessage } from "./libs/tool-output-sanitizer.js";
@@ -48,6 +49,10 @@ const serverEventListeners = new Set<(event: ServerEvent) => void>();
 const channelReplyTargets = new Map<string, ChannelReplyTarget>();
 const channelLatestAssistantText = new Map<string, string>();
 const channelLastSentAssistantText = new Map<string, string>();
+// Temporarily disable the embedded Figma Agent OAuth bridge; Codex OAuth remains the supported path.
+const FIGMA_AGENT_OAUTH_BRIDGE_ENABLED = false;
+const figmaAuthToolUses = new Map<string, "authenticate" | "complete_authentication">();
+const figmaAuthUrlsBySession = new Map<string, string>();
 let channelReplySender: ((target: ChannelReplyTarget, text: string) => Promise<void> | void) | null = null;
 
 let taskExecutor: TaskExecutor | null = null;
@@ -449,6 +454,7 @@ function emit(event: ServerEvent) {
       typeof nextEvent.payload.message.capturedAt === "number"
         ? nextEvent.payload.message
         : { ...nextEvent.payload.message, capturedAt: Date.now() };
+    trackFigmaAuthToolState(nextEvent.payload.sessionId, normalizedMessage);
     const message = sessions.recordMessage(
       nextEvent.payload.sessionId,
       stripInlineBase64ImagesFromMessage(normalizedMessage),
@@ -484,6 +490,9 @@ function emit(event: ServerEvent) {
       },
     };
   }
+  if (nextEvent.type === "permission.request") {
+    nextEvent = withFigmaAuthUrlPermissionInput(nextEvent);
+  }
 
   if (nextEvent.type === "session.status" && nextEvent.payload.status === "completed") {
     maybeSendChannelReply(nextEvent.payload.sessionId);
@@ -495,6 +504,143 @@ function emit(event: ServerEvent) {
   }
 
   broadcast(nextEvent);
+}
+
+function trackFigmaAuthToolState(sessionId: string, message: StreamMessage): void {
+  if (!FIGMA_AGENT_OAUTH_BRIDGE_ENABLED) {
+    return;
+  }
+  const record: Record<string, unknown> = isRecord(message) ? message : {};
+  const sdkMessage = isRecord(record.message) ? record.message : record;
+  const content = Array.isArray(sdkMessage.content) ? sdkMessage.content : [];
+
+  for (const item of content) {
+    if (!isRecord(item) || item.type !== "tool_use") continue;
+    const id = typeof item.id === "string" ? item.id : "";
+    if (!id) continue;
+    if (item.name === "mcp__figma__authenticate") {
+      figmaAuthToolUses.set(id, "authenticate");
+    }
+    if (item.name === "mcp__figma__complete_authentication") {
+      figmaAuthToolUses.set(id, "complete_authentication");
+    }
+  }
+
+  for (const item of content) {
+    if (!isRecord(item) || item.type !== "tool_result") continue;
+    const toolUseId = typeof item.tool_use_id === "string" ? item.tool_use_id : "";
+    const toolKind = figmaAuthToolUses.get(toolUseId);
+    if (!toolKind) continue;
+
+    const result = isRecord(record.tool_use_result) ? record.tool_use_result : {};
+    const status = typeof result.status === "string" ? result.status : "";
+    const text = [
+      typeof item.content === "string" ? item.content : "",
+      typeof result.message === "string" ? result.message : "",
+      typeof result.error === "string" ? result.error : "",
+    ].filter(Boolean).join("\n");
+
+    if (toolKind === "authenticate" && status === "auth_url") {
+      const authUrl = extractFigmaAuthUrl(text);
+      if (authUrl) {
+        const previousAuthUrl = figmaAuthUrlsBySession.get(sessionId);
+        figmaAuthUrlsBySession.set(sessionId, authUrl);
+        if (previousAuthUrl !== authUrl) {
+          presentFigmaAuthUrl(authUrl);
+        }
+      }
+      updateFigmaPluginAuthState("needs-auth");
+      continue;
+    }
+
+    if (toolKind === "complete_authentication" && isSuccessfulFigmaAuthText(status, text)) {
+      updateFigmaPluginAuthState("ready");
+      figmaAuthUrlsBySession.delete(sessionId);
+      figmaAuthToolUses.delete(toolUseId);
+      continue;
+    }
+
+    if (isFigmaAuthFailureText(status, text)) {
+      updateFigmaPluginAuthState("auth-expired", text.slice(0, 500));
+    }
+  }
+}
+
+function withFigmaAuthUrlPermissionInput(event: Extract<ServerEvent, { type: "permission.request" }>): ServerEvent {
+  if (!FIGMA_AGENT_OAUTH_BRIDGE_ENABLED) {
+    return event;
+  }
+  if (event.payload.toolName !== "AskUserQuestion") {
+    return event;
+  }
+  const authUrl = figmaAuthUrlsBySession.get(event.payload.sessionId);
+  if (!authUrl) {
+    return event;
+  }
+  const input = isRecord(event.payload.input) ? event.payload.input : {};
+  return {
+    ...event,
+    payload: {
+      ...event.payload,
+      input: {
+        ...input,
+        figmaAuthUrl: authUrl,
+      },
+    },
+  };
+}
+
+function extractFigmaAuthUrl(text: string): string | null {
+  const match = text.match(/https:\/\/www\.figma\.com\/oauth\/mcp\?[^\s"'<>）)]+/i);
+  return match?.[0] ?? null;
+}
+
+function presentFigmaAuthUrl(authUrl: string): void {
+  clipboard.writeText(authUrl);
+  shell.openExternal(authUrl).catch((error) => {
+    console.error("[figma-official] failed to open Agent auth URL:", error);
+  });
+  const options: MessageBoxOptions = {
+    type: "info",
+    buttons: ["知道了"],
+    defaultId: 0,
+    title: "Figma 授权链接已打开",
+    message: "Figma 授权链接已打开并复制到剪贴板",
+    detail: [
+      "如果外部浏览器没有自动打开，请到你已登录 Figma 的浏览器粘贴打开。",
+      "授权完成后，如果 localhost 页面正常加载，在 Agent 询问面板里选择「授权已完成」。",
+      "不要把 localhost callback URL 粘贴回 Agent；当前嵌入式 OAuth 流里这条路径容易丢失临时授权状态。",
+      "如果 localhost 页面打不开，请回到插件卡片改用 Figma Desktop MCP。",
+      "",
+      authUrl,
+    ].join("\n"),
+  };
+  const focusedWindow = BrowserWindow.getFocusedWindow();
+  void (focusedWindow ? dialog.showMessageBox(focusedWindow, options) : dialog.showMessageBox(options));
+}
+
+function updateFigmaPluginAuthState(state: FigmaOfficialAuthState, error?: string): void {
+  try {
+    saveGlobalRuntimeConfig(
+      buildNextFigmaOfficialAuthStateRuntimeConfig(loadGlobalRuntimeConfig(), state, { error }),
+    );
+  } catch (cause) {
+    console.error("[figma-official] failed to persist auth state:", cause);
+  }
+}
+
+function isSuccessfulFigmaAuthText(status: string, text: string): boolean {
+  return /^(success|ok|ready|authenticated)$/i.test(status)
+    || /authentication complete|authenticated|authorization complete|successfully authorized|授权.*完成|授权.*成功/i.test(text);
+}
+
+function isFigmaAuthFailureText(status: string, text: string): boolean {
+  return /^error$/i.test(status)
+    || /no oauth flow is in progress|401|403|unauthorized|expired|token|oauth.*error|authorization.*failed|auth.*failed/i.test(text);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function extractAssistantText(message: StreamMessage): string | null {
@@ -960,9 +1106,11 @@ export async function handleClientEvent(event: ClientEvent) {
 
     const defaultConfig = getCurrentApiConfig();
     const history = store.getSessionHistory(session.id);
+    const storagePrompt = redactFigmaMcpOAuthCallbackPrompt(event.payload.prompt);
+    const isFigmaOAuthCallback = isFigmaMcpOAuthCallbackPrompt(event.payload.prompt);
     const shouldRetitleFromFirstPrompt = isPlaceholderSessionTitle(session.title) && (history?.messages.length ?? 0) === 0;
     const nextTitle = shouldRetitleFromFirstPrompt
-      ? buildTitleFromFirstPrompt(event.payload.prompt, event.payload.attachments)
+      ? buildTitleFromFirstPrompt(storagePrompt, event.payload.attachments)
       : session.title;
     const selectedModel =
       event.payload.runtime?.model?.trim()
@@ -972,19 +1120,20 @@ export async function handleClientEvent(event: ClientEvent) {
     const previousModel = resolveLatestMessageModel(history?.messages) || session.model || defaultConfig?.model;
     const config = selectedModel ? getApiConfigForModel(selectedModel) ?? defaultConfig : defaultConfig;
     const supportsResume = config ? supportsRemoteSessionResume(config) : true;
+    const canUseFigmaOAuthCallbackResume = FIGMA_AGENT_OAUTH_BRIDGE_ENABLED && isFigmaOAuthCallback && Boolean(session.claudeSessionId);
     const switchedModel = Boolean(
       selectedModel
       && previousModel
       && selectedModel.trim() !== previousModel.trim(),
     );
-    const canUseRemoteResume = supportsResume && !switchedModel;
+    const canUseRemoteResume = (supportsResume || canUseFigmaOAuthCallbackResume) && !switchedModel;
     const modelConfig = config && selectedModel ? getModelConfig(config, selectedModel) : null;
     const { displayAttachments, agentAttachments: currentAgentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
     const continuationPayload = canUseRemoteResume
       ? null
       : buildStatelessContinuationPayload(
           history?.messages ?? [],
-          event.payload.prompt,
+          isFigmaOAuthCallback ? storagePrompt : event.payload.prompt,
           currentAgentAttachments,
           {
             contextWindow: modelConfig?.contextWindow,
@@ -1007,7 +1156,7 @@ export async function handleClientEvent(event: ClientEvent) {
       runSurface: event.payload.runtime?.runSurface ?? session.runSurface ?? "development",
       agentId: event.payload.runtime?.agentId ?? session.agentId,
         model: selectedModel,
-        lastPrompt: event.payload.prompt,
+        lastPrompt: storagePrompt,
         continuationSummary: continuationPayload?.usedCompression ? continuationPayload.summaryText : undefined,
       continuationSummaryMessageCount: continuationPayload?.usedCompression
         ? continuationPayload.summaryMessageCount
@@ -1031,7 +1180,7 @@ export async function handleClientEvent(event: ClientEvent) {
         sessionId: session.id,
         message: buildPromptLedgerForRun({
           phase: "continue",
-          prompt,
+          prompt: canUseRemoteResume ? storagePrompt : continuationPayload?.prompt ?? storagePrompt,
           attachments: attachmentsForRun,
           session,
           historyMessages: canUseRemoteResume ? history?.messages ?? [] : [],
@@ -1043,7 +1192,7 @@ export async function handleClientEvent(event: ClientEvent) {
 
     emit({
       type: "stream.user_prompt",
-      payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: displayAttachments },
+      payload: { sessionId: session.id, prompt: storagePrompt, attachments: displayAttachments },
     });
 
     runClaude({

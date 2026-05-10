@@ -13,6 +13,12 @@ import { extname } from "path";
 
 import { buildRunnerPromptContentBlocks } from "../../shared/runner-prompt.js";
 import { isSuccessfulRunnerResult, shouldSuppressRunnerErrorAfterSuccessfulResult } from "../../shared/runner-status.js";
+import {
+  normalizeTodoWriteArgs,
+  normalizeUpdatePlanArgs,
+  type SessionPlanSource,
+  type UpdatePlanArgs,
+} from "../../shared/plan-progress.js";
 import type { PromptAttachment, RuntimeOverrides, ServerEvent } from "../types.js";
 import { resolveAgentRuntimeContext } from "./agent-resolver.js";
 import {
@@ -29,6 +35,11 @@ import {
   getExternalMcpServers,
   isConfiguredExternalMcpTool,
 } from "./external-mcp-servers.js";
+import {
+  isClaudeCodePluginMcpTool,
+  listClaudeCodePluginMcpServerNames,
+  resolveEnabledClaudeCodeSdkPlugins,
+} from "./claude-code-plugins.js";
 import { summarizeBase64Image, summarizeLocalImageFile } from "./image-preprocessor.js";
 import {
   getBuiltinMcpServers,
@@ -66,6 +77,10 @@ export type RunnerHandle = {
   appendPrompt: (prompt: string, attachments?: PromptAttachment[]) => Promise<void>;
 };
 
+type QueryWithMcpOAuth = Query & {
+  mcpAuthenticate: (serverName: string, redirectUri?: string) => Promise<unknown>;
+};
+
 const DEFAULT_CWD = process.cwd();
 const BUILTIN_MCP_TOOL_NAMES = listBuiltinMcpToolNames();
 const ALWAYS_ALLOWED_TOOLS = new Set([
@@ -93,6 +108,7 @@ const MAX_SINGLE_IMAGE_READ_BYTES = 400_000;
 const BLOCKED_SHELL_TOOL_NAMES = new Set(["mcp__windows__Powershell-Tool"]);
 const BLOCKED_SHELL_TOOL_MESSAGE =
   "This Windows shell tool is disabled in tech-cc-hub because it can hang without returning a tool_result. Use Bash with cmd.exe instead, for example: cmd.exe /d /s /c \"<command>\".";
+const FIGMA_GUIDE_AGENT_ID = "figma-official-mcp-guide";
 
 // SDK built-in cron tools are blocked in favor of tech-cc-hub MCP cron tools
 // which provide persistent storage, execution history, and retry mechanism.
@@ -177,6 +193,76 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
     });
   };
 
+  const requestPermissionDecision = (toolName: string, input: unknown, signal?: AbortSignal) => {
+    const toolUseId = crypto.randomUUID();
+
+    sendPermissionRequest(toolUseId, toolName, input);
+
+    return new Promise<PermissionResult>((resolve) => {
+      session.pendingPermissions.set(toolUseId, {
+        toolUseId,
+        toolName,
+        input,
+        resolve: (result) => {
+          session.pendingPermissions.delete(toolUseId);
+          resolve(result as PermissionResult);
+        },
+      });
+
+      signal?.addEventListener("abort", () => {
+        session.pendingPermissions.delete(toolUseId);
+        resolve({ behavior: "deny", message: "Session aborted" });
+      }, { once: true });
+    });
+  };
+
+  const sendPlanUpdate = (
+    args: UpdatePlanArgs,
+    source: SessionPlanSource,
+    toolName?: string,
+    toolUseId?: string,
+    turnId?: string,
+  ) => {
+    onEvent({
+      type: "session.plan.updated",
+      payload: {
+        sessionId: session.id,
+        turnId,
+        updatedAt: Date.now(),
+        source,
+        toolName,
+        toolUseId,
+        ...args,
+      },
+    });
+  };
+
+  const extractPlanUpdateFromMessage = (message: SDKMessage) => {
+    if (message.type !== "assistant") return;
+    const content = (message as { message?: { content?: unknown[] }; uuid?: string }).message?.content;
+    if (!Array.isArray(content)) return;
+
+    for (const item of content) {
+      if (!isRecord(item) || item.type !== "tool_use") continue;
+      const toolName = typeof item.name === "string" ? item.name : "";
+      const toolUseId = typeof item.id === "string" ? item.id : undefined;
+      const turnId = typeof (message as { uuid?: unknown }).uuid === "string"
+        ? (message as { uuid: string }).uuid
+        : undefined;
+
+      if (toolName === "update_plan" || toolName.endsWith("__update_plan") || toolName.endsWith(":update_plan") || toolName.endsWith("/update_plan")) {
+        const args = normalizeUpdatePlanArgs(item.input);
+        if (args) sendPlanUpdate(args, "update_plan", toolName, toolUseId, turnId);
+        continue;
+      }
+
+      if (toolName === "TodoWrite") {
+        const args = normalizeTodoWriteArgs(item.input);
+        if (args) sendPlanUpdate(args, "todo_write", toolName, toolUseId, turnId);
+      }
+    }
+  };
+
   void (async () => {
     try {
       const defaultConfig = getCurrentApiConfig();
@@ -245,6 +331,8 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       );
       const hooks = buildQualityHooks(resolvedCwd, { config, prompt });
       const builtinMcpServers = getBuiltinMcpServers(session.id);
+      const sdkPlugins = resolveEnabledClaudeCodeSdkPlugins();
+      const sdkPluginMcpServerNames = listClaudeCodePluginMcpServerNames(sdkPlugins);
       const systemPromptAppend = combineSystemPromptAppend(
         buildGlobalRuntimePromptAppend(syncedGlobalRuntimeConfig, mergedEnv),
         buildAdminConfigPromptAppend(),
@@ -264,6 +352,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         sdkModelOption,
         settingSources: agentContext.settingSources,
         claudePath: getClaudeCodePath(),
+        sdkPlugins: sdkPlugins.map((plugin) => plugin.path),
       });
 
       const q = query({
@@ -287,6 +376,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           agentProgressSummaries: true,
           forwardSubagentText: true,
           outputFormat,
+          plugins: sdkPlugins.length > 0 ? sdkPlugins : undefined,
           mcpServers: {
             ...getExternalMcpServers(syncedGlobalRuntimeConfig),
             ...builtinMcpServers,
@@ -325,26 +415,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             }
 
             if (toolName === "AskUserQuestion") {
-              const toolUseId = crypto.randomUUID();
-
-              sendPermissionRequest(toolUseId, toolName, input);
-
-              return new Promise<PermissionResult>((resolve) => {
-                session.pendingPermissions.set(toolUseId, {
-                  toolUseId,
-                  toolName,
-                  input,
-                  resolve: (result) => {
-                    session.pendingPermissions.delete(toolUseId);
-                    resolve(result as PermissionResult);
-                  },
-                });
-
-                signal.addEventListener("abort", () => {
-                  session.pendingPermissions.delete(toolUseId);
-                  resolve({ behavior: "deny", message: "Session aborted" });
-                });
-              });
+              return requestPermissionDecision(toolName, input, signal);
             }
 
             if (toolName === "Skill" && shouldDenyExternalBrowseSkill(input, prompt)) {
@@ -381,7 +452,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               }
             }
 
-            if (effectiveAllowedTools && !effectiveAllowedTools.has(toolName) && !isAlwaysAllowedTool(toolName, syncedGlobalRuntimeConfig)) {
+            if (
+              effectiveAllowedTools &&
+              !effectiveAllowedTools.has(toolName) &&
+              !isAlwaysAllowedTool(toolName, syncedGlobalRuntimeConfig) &&
+              !isClaudeCodePluginMcpTool(toolName, sdkPluginMcpServerNames)
+            ) {
               return {
                 behavior: "deny",
                 message: `当前运行面不允许使用工具：${toolName}`,
@@ -393,6 +469,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         },
       });
       activeQuery = q;
+
+      await maybeRunFigmaGuideOAuth(q, {
+        agentId,
+        abortSignal: abortController.signal,
+        requestPermissionDecision,
+      });
 
       for (const pendingAppend of pendingAppends.splice(0)) {
         await q.streamInput(createPromptSource(pendingAppend.prompt, pendingAppend.attachments));
@@ -408,6 +490,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         }
 
         sendMessage(message);
+        extractPlanUpdateFromMessage(message);
 
         if (message.type === "result") {
           const status = message.subtype === "success" ? "completed" : "error";
@@ -473,6 +556,104 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       await activeQuery.streamInput(createPromptSource(nextPrompt, nextAttachments));
     },
   };
+}
+
+async function maybeRunFigmaGuideOAuth(
+  q: Query,
+  options: {
+    agentId?: string;
+    abortSignal: AbortSignal;
+    requestPermissionDecision: (toolName: string, input: unknown, signal?: AbortSignal) => Promise<PermissionResult>;
+  },
+): Promise<void> {
+  if (options.agentId !== FIGMA_GUIDE_AGENT_ID) {
+    return;
+  }
+
+  try {
+    await q.initializationResult();
+    const figmaServer = (await q.mcpServerStatus()).find(isFigmaMcpServerStatus);
+    if (!figmaServer || figmaServer.status !== "needs-auth") {
+      return;
+    }
+
+    const auth = await (q as QueryWithMcpOAuth).mcpAuthenticate(figmaServer.name);
+    const authUrl = isRecord(auth) && typeof auth.authUrl === "string" ? auth.authUrl : "";
+    if (!authUrl) {
+      return;
+    }
+
+    const decision = await options.requestPermissionDecision(
+      "AskUserQuestion",
+      buildFigmaOAuthQuestionInput(authUrl),
+      options.abortSignal,
+    );
+    if (decision.behavior !== "allow") {
+      return;
+    }
+
+    const answerText = extractPermissionAnswerText(decision);
+    if (/desktop|桌面|打不开/i.test(answerText)) {
+      return;
+    }
+
+    await delay(600);
+    await q.reconnectMcpServer(figmaServer.name).catch((error) => {
+      console.warn("[runner] Figma MCP reconnect after OAuth did not complete:", error);
+    });
+  } catch (error) {
+    console.warn("[runner] Failed to start Figma MCP OAuth guide:", error);
+  }
+}
+
+function isFigmaMcpServerStatus(status: unknown): status is { name: string; status: string } {
+  if (!isRecord(status) || typeof status.name !== "string" || typeof status.status !== "string") {
+    return false;
+  }
+
+  const config = isRecord(status.config) ? status.config : {};
+  return (
+    status.name === "figma" ||
+    status.name.endsWith(":figma") ||
+    (typeof config.url === "string" && config.url === "https://mcp.figma.com/mcp")
+  );
+}
+
+function buildFigmaOAuthQuestionInput(authUrl: string): Record<string, unknown> {
+  return {
+    figmaAuthUrl: authUrl,
+    questions: [{
+      question: "请完成 Figma OAuth 授权后选择结果。",
+      header: "Figma OAuth",
+      options: [
+        {
+          label: "授权已完成（localhost 页面正常加载）",
+          description: "已在外部浏览器允许 Figma 访问，并看到 localhost 完成页。",
+        },
+        {
+          label: "localhost 页面打不开，改用 Figma Desktop MCP",
+          description: "授权回调没有成功，停止远程 OAuth 重试。",
+        },
+      ],
+    }],
+  };
+}
+
+function extractPermissionAnswerText(result: PermissionResult): string {
+  if (result.behavior !== "allow") {
+    return "";
+  }
+
+  const candidate = (result as { updatedInput?: unknown }).updatedInput;
+  const updatedInput = isRecord(candidate) ? candidate : {};
+  const answers = isRecord(updatedInput.answers) ? updatedInput.answers : {};
+  return Object.values(answers)
+    .filter((value): value is string => typeof value === "string")
+    .join("\n");
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function buildEffectiveAllowedToolSet(

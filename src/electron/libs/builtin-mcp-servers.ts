@@ -9,6 +9,7 @@ import { BROWSER_TOOL_NAMES, getBrowserMcpServer } from "./mcp-tools/browser.js"
 import { DESIGN_TOOL_NAMES, getDesignMcpServer } from "./mcp-tools/design.js";
 import { CRON_TOOL_NAMES, getCronMcpServer } from "./mcp-tools/cron.js";
 import { IDEA_TOOL_NAMES, getIdeaMcpServer } from "./mcp-tools/idea.js";
+import { PLAN_TOOL_NAMES, getPlanMcpServer } from "./mcp-tools/plan.js";
 
 type BuiltinMcpFactoryContext = {
   sessionId: string;
@@ -22,6 +23,7 @@ export const BUILTIN_MCP_SERVER_FACTORIES: Record<BuiltinMcpServerName, BuiltinM
   "tech-cc-hub-design": ({ sessionId }) => getDesignMcpServer(sessionId),
   "tech-cc-hub-cron": () => getCronMcpServer(),
   "tech-cc-hub-idea": () => getIdeaMcpServer(),
+  "tech-cc-hub-plan": () => getPlanMcpServer(),
 };
 
 export const BUILTIN_MCP_TOOL_NAMES: Record<BuiltinMcpServerName, readonly string[]> = {
@@ -30,6 +32,7 @@ export const BUILTIN_MCP_TOOL_NAMES: Record<BuiltinMcpServerName, readonly strin
   "tech-cc-hub-design": DESIGN_TOOL_NAMES,
   "tech-cc-hub-cron": CRON_TOOL_NAMES,
   "tech-cc-hub-idea": IDEA_TOOL_NAMES,
+  "tech-cc-hub-plan": PLAN_TOOL_NAMES,
 };
 
 export function getBuiltinMcpServers(sessionId: string): Record<string, McpSdkServerConfigWithInstance> {

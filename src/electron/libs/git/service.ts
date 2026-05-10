@@ -1,4 +1,5 @@
-import { resolve } from "path";
+import { readFile } from "fs/promises";
+import { relative, resolve, sep } from "path";
 import { simpleGit, type SimpleGit, type StatusResult } from "simple-git";
 import { normalizeGitError } from "./errors.js";
 import { GIT_LOG_FORMAT, parseGitLog } from "./history.js";
@@ -6,6 +7,9 @@ import { GitOperationLog } from "./operation-log.js";
 import type {
   GitBranch,
   GitChangedFile,
+  GitCommitDetail,
+  GitCommitDetailRequest,
+  GitCommitNode,
   GitDiffRequest,
   GitDiffResult,
   GitResult,
@@ -21,8 +25,10 @@ export class GitWorkbenchService {
       const repoRoot = (await git.revparse(["--show-toplevel"])).trim();
       const status = await git.status();
       const stashRaw = await git.raw(["stash", "list", "--format=%gd%x1f%H%x1f%gs"]);
-      const logRaw = await git.raw(["log", "--date=iso-strict", `--pretty=format:${GIT_LOG_FORMAT}`, "--max-count=80", "--decorate=short"]);
+      const logRaw = await git.raw(["log", "--all", "--date=iso-strict", `--pretty=format:${GIT_LOG_FORMAT}`, "--max-count=120", "--decorate=short"]);
       const branches = await this.listBranches(git);
+      const files = this.mapChangedFiles(status);
+      const history = await this.decorateHistoryBranches(git, parseGitLog(logRaw), branches);
       const stashes = stashRaw
         .split("\n")
         .map((line) => line.trim())
@@ -42,17 +48,17 @@ export class GitWorkbenchService {
             upstream: status.tracking || null,
             ahead: status.ahead,
             behind: status.behind,
-            changedCount: status.files.length,
-            stagedCount: status.files.filter((file) => file.index !== " " && file.index !== "?").length,
-            unstagedCount: status.files.filter((file) => file.working_dir !== " ").length,
+            changedCount: files.length,
+            stagedCount: files.filter((file) => file.staged).length,
+            unstagedCount: files.filter((file) => !file.staged).length,
             untrackedCount: status.not_added.length,
             stashCount: stashes.length,
             hasGit: true,
           },
-          files: this.mapChangedFiles(status),
+          files,
           branches,
           stashes,
-          history: parseGitLog(logRaw),
+          history,
           operationLog: this.operationLog.list(repoRoot),
         },
       };
@@ -64,9 +70,49 @@ export class GitWorkbenchService {
   async getDiff(request: GitDiffRequest): Promise<GitResult<GitDiffResult>> {
     try {
       const git = this.git(request.cwd);
+      if (!request.staged) {
+        const status = await git.status();
+        const untracked = status.files.some((file) => file.path === request.path && file.index === "?" && file.working_dir === "?");
+        if (untracked) {
+          const repoRoot = (await git.revparse(["--show-toplevel"])).trim();
+          const diff = await buildUntrackedFileDiff(repoRoot, request.path);
+          return { success: true, data: { path: request.path, staged: false, diff } };
+        }
+      }
+
       const args = request.staged ? ["--cached", "--", request.path] : ["--", request.path];
       const diff = await git.diff(args);
       return { success: true, data: { path: request.path, staged: Boolean(request.staged), diff } };
+    } catch (error) {
+      return { success: false, error: normalizeGitError(error) };
+    }
+  }
+
+  async getCommitDetail(request: GitCommitDetailRequest): Promise<GitResult<GitCommitDetail>> {
+    try {
+      const git = this.git(request.cwd);
+      const hash = request.hash.trim();
+      const metaRaw = await git.raw(["show", "--quiet", "--date=iso-strict", `--pretty=format:${GIT_LOG_FORMAT}`, hash]);
+      const [commit] = parseGitLog(metaRaw);
+      if (!commit) {
+        return { success: false, error: { code: "operation_failed", message: "没有找到这次提交。" } };
+      }
+
+      const [body, nameStatusRaw, diff] = await Promise.all([
+        git.raw(["show", "--quiet", "--pretty=format:%B", hash]),
+        git.raw(["diff-tree", "--no-commit-id", "--name-status", "-r", "--find-renames", hash]),
+        git.raw(["show", "--format=", "--patch", "--find-renames", "--no-ext-diff", hash]),
+      ]);
+
+      return {
+        success: true,
+        data: {
+          ...commit,
+          body: body.trim(),
+          files: parseNameStatusFiles(nameStatusRaw),
+          diff,
+        },
+      };
     } catch (error) {
       return { success: false, error: normalizeGitError(error) };
     }
@@ -107,6 +153,17 @@ export class GitWorkbenchService {
       },
       "push",
       "push current branch",
+    );
+  }
+
+  async pull(cwd: string): Promise<GitResult<GitWorkbenchSnapshot>> {
+    return this.mutate(
+      cwd,
+      async (git) => {
+        await git.pull();
+      },
+      "pull",
+      "pull current branch",
     );
   }
 
@@ -223,22 +280,138 @@ export class GitWorkbenchService {
     });
   }
 
-  private mapChangedFiles(status: StatusResult): GitChangedFile[] {
-    return status.files.map((file) => ({
-      path: file.path,
-      oldPath: file.from,
-      status: mapStatus(file.index, file.working_dir),
-      staged: file.index !== " " && file.index !== "?",
+  private async decorateHistoryBranches(git: SimpleGit, history: GitCommitNode[], branches: GitBranch[]): Promise<GitCommitNode[]> {
+    if (history.length === 0 || branches.length === 0) return history;
+
+    const visibleHashes = new Set(history.map((commit) => commit.hash));
+    const memberships = new Map<string, Set<string>>();
+    const branchNames = Array.from(new Set(branches.map((branch) => branch.name).filter((name) => name !== "origin/HEAD"))).slice(0, 60);
+
+    await Promise.all(branchNames.map(async (branchName) => {
+      try {
+        const raw = await git.raw(["log", branchName, "--pretty=format:%H", "--max-count=300"]);
+        raw
+          .split("\n")
+          .map((hash) => hash.trim())
+          .filter((hash) => visibleHashes.has(hash))
+          .forEach((hash) => {
+            const set = memberships.get(hash) ?? new Set<string>();
+            set.add(branchName);
+            memberships.set(hash, set);
+          });
+      } catch {
+        // Ignore branches that disappear during refresh or cannot be resolved locally.
+      }
     }));
+
+    return history.map((commit) => ({
+      ...commit,
+      branches: Array.from(memberships.get(commit.hash) ?? []),
+    }));
+  }
+
+  private mapChangedFiles(status: StatusResult): GitChangedFile[] {
+    return status.files.flatMap((file) => {
+      const entries: GitChangedFile[] = [];
+      if (file.index !== " " && file.index !== "?") {
+        entries.push({
+          path: file.path,
+          oldPath: file.from,
+          status: mapStatusCode(file.index),
+          staged: true,
+        });
+      }
+
+      if (file.working_dir !== " " || file.index === "?") {
+        entries.push({
+          path: file.path,
+          oldPath: file.from,
+          status: mapStatusCode(file.working_dir !== " " ? file.working_dir : file.index),
+          staged: false,
+        });
+      }
+
+      return entries;
+    });
   }
 }
 
-function mapStatus(index: string, working: string): GitChangedFile["status"] {
-  if (index === "U" || working === "U") return "conflicted";
-  const code = index !== " " ? index : working;
-  if (code === "A" || code === "?") return "added";
+function mapStatusCode(code: string): GitChangedFile["status"] {
+  if (code === "U") return "conflicted";
+  if (code === "?") return "untracked";
+  if (code === "A") return "added";
   if (code === "D") return "deleted";
   if (code === "R") return "renamed";
   if (code === "C") return "copied";
   return "modified";
+}
+
+function parseNameStatusFiles(raw: string): GitChangedFile[] {
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split("\t");
+      const code = parts[0] ?? "M";
+      const status = mapStatusCode(code[0] ?? "M");
+      if ((code.startsWith("R") || code.startsWith("C")) && parts.length >= 3) {
+        return {
+          oldPath: parts[1],
+          path: parts[2] ?? parts[1] ?? "",
+          status,
+          staged: false,
+        };
+      }
+      return {
+        path: parts[1] ?? "",
+        status,
+        staged: false,
+      };
+    })
+    .filter((file) => file.path.length > 0);
+}
+
+async function buildUntrackedFileDiff(repoRoot: string, filePath: string): Promise<string> {
+  const root = resolve(repoRoot);
+  const absolutePath = resolve(root, filePath);
+  const rel = relative(root, absolutePath);
+  if (rel.startsWith("..") || rel === "" || rel.split(sep).includes("..")) {
+    throw new Error("Git diff path must stay inside the repository.");
+  }
+
+  const buffer = await readFile(absolutePath);
+  const header = [
+    `diff --git a/${filePath} b/${filePath}`,
+    "new file mode 100644",
+    "index 0000000..0000000",
+  ];
+
+  if (buffer.includes(0)) {
+    return [
+      ...header,
+      `Binary files /dev/null and b/${filePath} differ`,
+      "",
+    ].join("\n");
+  }
+
+  const text = buffer.toString("utf8");
+  const hasTrailingNewline = text.endsWith("\n");
+  const lines = hasTrailingNewline ? text.slice(0, -1).split("\n") : text.split("\n");
+  const contentLines = text.length === 0 ? [] : lines;
+  const hunk = contentLines.length > 0
+    ? [
+      `@@ -0,0 +1,${contentLines.length} @@`,
+      ...contentLines.map((line) => `+${line}`),
+      ...(hasTrailingNewline ? [] : ["\\ No newline at end of file"]),
+    ]
+    : [];
+
+  return [
+    ...header,
+    "--- /dev/null",
+    `+++ b/${filePath}`,
+    ...hunk,
+    "",
+  ].join("\n");
 }

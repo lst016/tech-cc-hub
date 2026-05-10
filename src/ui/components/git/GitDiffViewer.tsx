@@ -26,23 +26,22 @@ export function GitDiffViewer({
   }, [diffResult?.diff]);
 
   return (
-    <section className="min-h-[300px] border-b border-slate-200 bg-white">
-      <div className="flex h-12 items-center justify-between gap-3 border-b border-slate-100 px-4">
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
+      <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-3">
         <div className="min-w-0">
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Diff</p>
-          <h3 className="truncate text-sm font-semibold text-slate-950" title={file?.path ?? ""}>
+          <h3 className="truncate text-xs font-semibold text-slate-950" title={file?.path ?? ""}>
             {file ? shortenPath(file.path, 64) : "选择文件查看 diff"}
           </h3>
         </div>
         {loading && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-slate-400" />}
       </div>
-      <div className="max-h-[50vh] min-h-[248px] overflow-auto bg-[#fbfcfe]">
+      <div className="min-h-0 flex-1 overflow-auto bg-[#fbfcfe]">
         {!file ? (
           <EmptyDiff title="没有选中文件" description="从左侧改动列表选择一个文件。" />
         ) : diffResult?.diff?.startsWith("# ") ? (
           <EmptyDiff title="Diff 读取失败" description={diffResult.diff.replace(/^#\s*/, "")} />
         ) : diffHtml ? (
-          <div className="git-diff-viewer min-w-[640px] text-[11px]" dangerouslySetInnerHTML={{ __html: diffHtml }} />
+          <div className="git-diff-viewer min-w-[560px] text-[11px]" dangerouslySetInnerHTML={{ __html: diffHtml }} />
         ) : (
           <EmptyDiff title="没有文本 diff" description="可能是二进制文件，或文件内容暂无差异。" />
         )}

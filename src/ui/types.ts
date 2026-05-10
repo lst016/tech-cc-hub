@@ -1,9 +1,12 @@
 import type { SDKMessage, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import type { SessionPlanSnapshot } from "../shared/plan-progress.js";
 import type { PromptLedgerMessage } from "../shared/prompt-ledger.js";
 import type { SessionWorkflowState, WorkflowScope, WorkflowSpecDocument } from "../shared/workflow-markdown.js";
 import type {
   GitBranch,
   GitChangedFile,
+  GitCommitDetail,
+  GitCommitDetailRequest,
   GitCommitNode,
   GitDiffRequest,
   GitDiffResult,
@@ -189,6 +192,8 @@ export type UiGitChangedFile = GitChangedFile;
 export type UiGitBranch = GitBranch;
 export type UiGitStashEntry = GitStashEntry;
 export type UiGitCommitNode = GitCommitNode;
+export type UiGitCommitDetail = GitCommitDetail;
+export type UiGitCommitDetailRequest = GitCommitDetailRequest;
 export type UiGitOperationLogEntry = GitOperationLogEntry;
 export type UiGitWorkbenchSnapshot = GitWorkbenchSnapshot;
 export type UiGitDiffRequest = GitDiffRequest;
@@ -314,6 +319,7 @@ export type ServerEvent =
   | { type: "stream.message"; payload: { sessionId: string; message: StreamMessage } }
   | { type: "stream.user_prompt"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[]; capturedAt?: number; historyId?: string } }
   | { type: "session.status"; payload: { sessionId: string; status: SessionStatus; title?: string; cwd?: string; model?: string; error?: string; slashCommands?: string[] } }
+  | { type: "session.plan.updated"; payload: SessionPlanSnapshot }
   | { type: "session.workflow"; payload: { sessionId: string; markdown?: string; sourceLayer?: WorkflowScope; sourcePath?: string; state?: SessionWorkflowState; error?: string } }
   | { type: "session.workflow.catalog"; payload: SessionWorkflowCatalog }
   | { type: "session.list"; payload: { sessions: SessionInfo[]; archived?: boolean } }

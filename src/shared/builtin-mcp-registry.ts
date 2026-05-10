@@ -3,14 +3,16 @@ export type BuiltinMcpServerName =
   | "tech-cc-hub-admin"
   | "tech-cc-hub-design"
   | "tech-cc-hub-cron"
-  | "tech-cc-hub-idea";
+  | "tech-cc-hub-idea"
+  | "tech-cc-hub-plan";
 
 export type BuiltinMcpIconKey =
   | "activity"
   | "settings"
   | "sparkles"
   | "timer"
-  | "code";
+  | "code"
+  | "list";
 
 export type BuiltinMcpToolInfo = {
   name: string;
@@ -232,6 +234,32 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
       "启动或打开后如果需要证明 IDEA 已运行，使用 mcp__tech-cc-hub-idea__idea_wait_ready；如果需要把已有 IDE 拉到前台，使用 mcp__tech-cc-hub-idea__idea_focus。",
       "如果 idea_open 返回 reusedExisting=true，应把 IDEA 视为用户持有的运行面；除非用户明确要求，不要再启动重复的 java -jar、bootRun 或类似长驻应用进程。",
       "IDEA MCP 基于启动器实现以兼容 IDEA 2021-2026：优先使用 JetBrains Toolbox 脚本支持热更新启动，再回退到最新安装的 idea64/idea 启动器。",
+    ],
+  },
+  {
+    name: "tech-cc-hub-plan",
+    type: "builtin",
+    command: "builtin",
+    args: [],
+    envKeys: [],
+    enabled: true,
+    iconKey: "list",
+    description: "OpenAI Codex-compatible update_plan tool for live task checklist progress.",
+    iconClassName: "border-emerald-500/15 bg-emerald-50 text-emerald-700",
+    highlights: ["update_plan", "Checklist", "Codex-compatible"],
+    toolGroups: [
+      {
+        title: "Plan progress",
+        summary: "Codex-compatible checklist updates for the current running session.",
+        tools: [
+          { name: "update_plan", description: "Update the current task plan with pending, in_progress, and completed steps." },
+        ],
+      },
+    ],
+    promptHints: [
+      "Plan progress rule: for multi-step work, use the built-in plan tool `mcp__tech-cc-hub-plan__update_plan` to keep a Codex-compatible checklist visible in Usage.",
+      "The `update_plan` input must match OpenAI Codex shape: `{ explanation?: string, plan: [{ step: string, status: \"pending\" | \"in_progress\" | \"completed\" }] }`.",
+      "Maintain at most one `in_progress` item; update the checklist when moving between phases and finish with all applicable items marked `completed`.",
     ],
   },
 ] as const;

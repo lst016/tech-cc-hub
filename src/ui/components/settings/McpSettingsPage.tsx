@@ -6,6 +6,7 @@ import {
   Code2,
   GitCompare,
   Image,
+  ListChecks,
   ScanSearch,
   ServerCog,
   Settings,
@@ -59,6 +60,7 @@ const BUILTIN_ICON_MAP: Record<BuiltinMcpIconKey, LucideIcon> = {
   sparkles: WandSparkles,
   timer: Timer,
   code: Code2,
+  list: ListChecks,
 };
 
 const BUILTIN_TOOL_GROUPS: Record<string, BuiltinToolGroup[]> = {
@@ -229,6 +231,15 @@ const BUILTIN_TOOL_GROUPS: Record<string, BuiltinToolGroup[]> = {
       ],
     },
   ],
+  "tech-cc-hub-plan": [
+    {
+      title: "计划进度",
+      summary: "兼容 OpenAI Codex update_plan 输入形状，给当前会话输出 Usage 进度清单。",
+      tools: [
+        { name: "update_plan", description: "用 pending / in_progress / completed 更新当前任务计划。" },
+      ],
+    },
+  ],
 };
 
 const BUILTIN_SERVER_META: Record<string, BuiltinServerMeta> = {
@@ -273,6 +284,12 @@ const BUILTIN_SERVER_META: Record<string, BuiltinServerMeta> = {
       { label: "打开", description: "复用" },
       { label: "就绪", description: "等待/前台" },
     ],
+  },
+  "tech-cc-hub-plan": {
+    icon: ListChecks,
+    description: "OpenAI Codex 兼容的 update_plan 计划进度能力，用于在 Usage 中展示本轮任务清单。",
+    iconClassName: "border-emerald-500/15 bg-emerald-50 text-emerald-700",
+    highlights: ["update_plan", "计划清单", "Codex 兼容"],
   },
 };
 
