@@ -42,7 +42,15 @@ test('treats same or older registry versions as up to date', () => {
 
 test('keeps the Open Computer Use default plugin version on the expected baseline', () => {
   const source = readFileSync('src/ui/components/settings/PluginsSettingsPage.tsx', 'utf8');
-  assert.match(source, /id:\s*"open-computer-use"[\s\S]*version:\s*"0\.1\.48"/);
+  assert.match(source, /const\s+OPEN_COMPUTER_USE_ID\s*=\s*"open-computer-use"/);
+  assert.match(source, /id:\s*OPEN_COMPUTER_USE_ID[\s\S]*version:\s*"0\.1\.48"/);
+});
+
+test('includes the Figma official MCP default plugin', () => {
+  const source = readFileSync('src/ui/components/settings/PluginsSettingsPage.tsx', 'utf8');
+  assert.match(source, /const\s+FIGMA_OFFICIAL_ID\s*=\s*"figma-official"/);
+  assert.match(source, /id:\s*FIGMA_OFFICIAL_ID/);
+  assert.match(source, /https:\/\/mcp\.figma\.com\/mcp/);
 });
 
 test('formats plugin action results as a toast title plus version details', () => {

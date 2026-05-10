@@ -13,6 +13,7 @@ type DefaultPlugin = {
   version: string;
   description: string;
   sourcePath: string;
+  sourceLabel: string;
   permissions: string[];
 };
 
@@ -24,6 +25,14 @@ type OpenComputerUsePermissionStatus = {
   needsUserAction: boolean;
   openedSystemSettings: boolean;
 };
+
+type FigmaOfficialStatusKind =
+  | "not-configured"
+  | "configured"
+  | "needs-auth"
+  | "auth-expired"
+  | "misconfigured"
+  | "ready";
 
 type PluginInstallResult = {
   success: boolean;
@@ -38,6 +47,10 @@ type PluginInstallResult = {
   message: string;
   error?: string;
   permissions?: OpenComputerUsePermissionStatus;
+  status?: FigmaOfficialStatusKind;
+  authHint?: string;
+  url?: string;
+  capabilities?: string[];
 };
 
 type PluginRuntimeStatus = {
@@ -50,6 +63,11 @@ type PluginRuntimeStatus = {
   updateError?: string;
   updateCheckedAt?: number;
   permissions?: OpenComputerUsePermissionStatus;
+  status?: FigmaOfficialStatusKind;
+  message?: string;
+  authHint?: string;
+  url?: string;
+  capabilities?: string[];
 };
 
 type PluginGuideSessionRequest = {
@@ -63,15 +81,30 @@ type PluginsSettingsPageProps = {
   onStartGuideSession?: (request: PluginGuideSessionRequest) => Promise<void> | void;
 };
 
+const OPEN_COMPUTER_USE_ID = "open-computer-use";
+const FIGMA_OFFICIAL_ID = "figma-official";
+const FIGMA_MCP_URL = "https://mcp.figma.com/mcp";
+
 const DEFAULT_PLUGINS: DefaultPlugin[] = [
   {
-    id: "open-computer-use",
+    id: OPEN_COMPUTER_USE_ID,
     name: "Open Computer Use",
     kind: "mcp-plugin",
     version: "0.1.48",
     description: "本机桌面控制 MCP 插件，作为插件体系的第一颗默认插件。",
     sourcePath: "plugins/open-computer-use",
+    sourceLabel: "GitHub",
     permissions: ["mcp.server", "desktop.read", "desktop.write", "accessibility", "screen-recording"],
+  },
+  {
+    id: FIGMA_OFFICIAL_ID,
+    name: "Figma 官方 MCP",
+    kind: "mcp-plugin",
+    version: "remote",
+    description: "Figma 官方远程 MCP，用于从 Figma 链接和 Frame 获取设计上下文并辅助实现 UI。",
+    sourcePath: FIGMA_MCP_URL,
+    sourceLabel: "Remote HTTP MCP",
+    permissions: ["mcp.remote", "figma.oauth", "design.read"],
   },
 ];
 
@@ -98,7 +131,20 @@ const statusMeta: Record<PluginStatus, { label: string; className: string }> = {
   },
 };
 
-function getPermissionHint(permissions?: OpenComputerUsePermissionStatus): string | null {
+const figmaStatusMeta: Record<FigmaOfficialStatusKind, { label: string; className: string }> = {
+  "not-configured": statusMeta["not-installed"],
+  configured: statusMeta["needs-connect"],
+  "needs-auth": statusMeta["needs-permission"],
+  "auth-expired": statusMeta["needs-permission"],
+  misconfigured: statusMeta["needs-connect"],
+  ready: statusMeta.ready,
+};
+
+function getPermissionHint(plugin: DefaultPlugin, status?: PluginRuntimeStatus): string | null {
+  if (plugin.id === FIGMA_OFFICIAL_ID) {
+    return status?.authHint ?? "Figma 授权有时效，失效后需要重新授权。";
+  }
+  const permissions = status?.permissions;
   if (!permissions?.required) return null;
   if (!permissions.needsUserAction) return "macOS 权限已就绪。";
   return "macOS 还需要授权 Accessibility / Screen Recording。";
@@ -124,6 +170,22 @@ function buildOpenComputerUseGuidePrompt(status: PluginRuntimeStatus | null): st
   ].join("\n");
 }
 
+function buildFigmaOfficialGuidePrompt(status: PluginRuntimeStatus | null): string {
+  return [
+    "你在 tech-cc-hub 的系统工作区里，目标是使用 Figma 官方 MCP 获取设计上下文并实现 UI。",
+    "",
+    "第一版只聚焦 Figma 链接/Frame/图层到 UI 实现，不要宣称 write-to-canvas 或 live UI capture 已完成。",
+    `官方 MCP URL: ${FIGMA_MCP_URL}`,
+    "预期 server name: figma",
+    "如果出现 401/403/auth/token/expired/oauth/unauthorized，请判断为 Figma 授权缺失或过期，引导用户重新授权，不要重装插件。",
+    "",
+    "当前 Figma 插件状态快照：",
+    "```json",
+    JSON.stringify(status ?? { installed: false, connected: false }, null, 2),
+    "```",
+  ].join("\n");
+}
+
 function showPluginActionToast(result: PluginInstallResult): void {
   const message = buildPluginActionToastMessage(result);
   const options = message.description ? { description: message.description } : undefined;
@@ -134,85 +196,155 @@ function showPluginActionToast(result: PluginInstallResult): void {
   toast.error(message.title, options);
 }
 
+function toRuntimeStatus(result: PluginInstallResult): PluginRuntimeStatus {
+  return {
+    installed: result.installed,
+    connected: result.connected,
+    version: result.version,
+    latestVersion: result.latestVersion,
+    updateAvailable: result.updateAvailable,
+    updateStatus: result.updateStatus,
+    updateError: result.updateError,
+    updateCheckedAt: result.updateCheckedAt,
+    permissions: result.permissions,
+    status: result.status,
+    message: result.message,
+    authHint: result.authHint,
+    url: result.url,
+    capabilities: result.capabilities,
+  };
+}
+
+function getPluginStatusMeta(plugin: DefaultPlugin, status?: PluginRuntimeStatus, result?: PluginInstallResult) {
+  if (plugin.id === FIGMA_OFFICIAL_ID) {
+    return figmaStatusMeta[status?.status ?? result?.status ?? "not-configured"];
+  }
+
+  const connected = status?.connected === true || (result?.success && result.connected);
+  const installed = status?.installed === true || result?.installed === true;
+  const permissions = result?.permissions ?? status?.permissions;
+  const needsPermission = Boolean(permissions?.required && permissions.needsUserAction);
+  const updateAvailable = Boolean(status?.updateAvailable || result?.updateAvailable);
+
+  if (updateAvailable && installed) return statusMeta["update-available"];
+  if (connected) return statusMeta.ready;
+  if (needsPermission) return statusMeta["needs-permission"];
+  if (installed) return statusMeta["needs-connect"];
+  return statusMeta["not-installed"];
+}
+
+function getPrimaryActionLabel(plugin: DefaultPlugin, status?: PluginRuntimeStatus, result?: PluginInstallResult, busy = false): string {
+  if (busy) return "处理中...";
+
+  if (plugin.id === FIGMA_OFFICIAL_ID) {
+    const kind = status?.status ?? result?.status ?? "not-configured";
+    if (kind === "misconfigured") return "修复 Figma MCP 配置";
+    if (kind === "auth-expired") return "重新授权";
+    if (kind === "ready") return "重新写入配置";
+    if (kind === "not-configured") return "接入 Figma 官方 MCP";
+    return "重新写入配置";
+  }
+
+  const connected = status?.connected === true || (result?.success && result.connected);
+  const installed = status?.installed === true || result?.installed === true;
+  const needsPermission = Boolean((result?.permissions ?? status?.permissions)?.required && (result?.permissions ?? status?.permissions)?.needsUserAction);
+  if (Boolean(status?.updateAvailable || result?.updateAvailable) && installed) return "更新";
+  if (connected) return "重新检查";
+  if (needsPermission) return "授权";
+  if (installed) return "接入";
+  return "安装";
+}
+
+function getUpdateHint(plugin: DefaultPlugin, status?: PluginRuntimeStatus, result?: PluginInstallResult): string {
+  if (plugin.id === FIGMA_OFFICIAL_ID) {
+    const capabilities = status?.capabilities ?? result?.capabilities ?? ["design-context"];
+    return `能力：${capabilities.join("、")} · 授权过期后需重新授权`;
+  }
+
+  const latestVersion = status?.latestVersion ?? result?.latestVersion;
+  const updateStatus = status?.updateStatus ?? result?.updateStatus;
+  const updateError = status?.updateError ?? result?.updateError;
+  if (Boolean(status?.updateAvailable || result?.updateAvailable) && latestVersion) return `发现新版本 v${latestVersion}`;
+  if (updateStatus === "up-to-date" && latestVersion) return `已是最新 v${latestVersion}`;
+  if (updateStatus === "error") return `扫描失败：${updateError ?? "未知错误"}`;
+  if (latestVersion) return `最新 v${latestVersion}`;
+  return "未扫描更新";
+}
+
 export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPageProps) {
   const [installingPluginId, setInstallingPluginId] = useState<string | null>(null);
   const [checkingUpdatePluginId, setCheckingUpdatePluginId] = useState<string | null>(null);
   const [updatingPluginId, setUpdatingPluginId] = useState<string | null>(null);
   const [launchingGuidePluginId, setLaunchingGuidePluginId] = useState<string | null>(null);
-  const [installResult, setInstallResult] = useState<PluginInstallResult | null>(null);
-  const [runtimeStatus, setRuntimeStatus] = useState<PluginRuntimeStatus | null>(null);
+  const [installResults, setInstallResults] = useState<Record<string, PluginInstallResult>>({});
+  const [runtimeStatuses, setRuntimeStatuses] = useState<Record<string, PluginRuntimeStatus>>({});
   const guideLaunchInFlightRef = useRef(false);
 
   useEffect(() => {
     let mounted = true;
-    let statusLoaded = false;
-    let lastStatus: PluginRuntimeStatus | null = null;
     const electron = window.electron as typeof window.electron & {
       invoke: (channel: string, ...args: unknown[]) => Promise<PluginRuntimeStatus>;
     };
-    void electron.invoke("plugins:getOpenComputerUseStatus")
-      .then((status) => {
-        statusLoaded = true;
-        lastStatus = status as PluginRuntimeStatus;
-        if (mounted) setRuntimeStatus(status as PluginRuntimeStatus);
-        return electron.invoke("plugins:checkOpenComputerUseUpdate");
-      })
-      .then((status) => {
-        if (mounted) setRuntimeStatus(status as PluginRuntimeStatus);
-      })
-      .catch((error) => {
-        if (!mounted) return;
-        if (!statusLoaded) {
-          setRuntimeStatus({ installed: false, connected: false });
-          return;
-        }
-        setRuntimeStatus({
-          installed: lastStatus?.installed ?? false,
-          connected: lastStatus?.connected ?? false,
-          version: lastStatus?.version,
-          latestVersion: lastStatus?.latestVersion,
-          updateAvailable: false,
-          updateStatus: "error",
+
+    void Promise.all([
+      electron.invoke("plugins:getOpenComputerUseStatus")
+        .then(async (status) => {
+          const checked = await electron.invoke("plugins:checkOpenComputerUseUpdate").catch(() => status);
+          return [OPEN_COMPUTER_USE_ID, checked] as const;
+        })
+        .catch((error) => [OPEN_COMPUTER_USE_ID, {
+          installed: false,
+          connected: false,
+          updateStatus: "error" as const,
           updateError: error instanceof Error ? error.message : String(error),
-          updateCheckedAt: Date.now(),
-          permissions: lastStatus?.permissions,
-        });
-      });
+        }] as const),
+      electron.invoke("plugins:getFigmaOfficialStatus")
+        .then((status) => [FIGMA_OFFICIAL_ID, status] as const)
+        .catch((error) => [FIGMA_OFFICIAL_ID, {
+          installed: false,
+          connected: false,
+          status: "not-configured" as const,
+          updateStatus: "error" as const,
+          updateError: error instanceof Error ? error.message : String(error),
+        }] as const),
+    ]).then((entries) => {
+      if (!mounted) return;
+      setRuntimeStatuses(Object.fromEntries(entries) as Record<string, PluginRuntimeStatus>);
+    });
+
     return () => {
       mounted = false;
     };
   }, []);
 
+  const setPluginStatus = (pluginId: string, status: PluginRuntimeStatus) => {
+    setRuntimeStatuses((current) => ({ ...current, [pluginId]: status }));
+  };
+
+  const setPluginResult = (pluginId: string, result: PluginInstallResult) => {
+    setInstallResults((current) => ({ ...current, [pluginId]: result }));
+    setPluginStatus(pluginId, toRuntimeStatus(result));
+  };
+
   const handleInstall = (plugin: DefaultPlugin) => {
     void (async () => {
       setInstallingPluginId(plugin.id);
-      setInstallResult(null);
       try {
+        const channel = plugin.id === FIGMA_OFFICIAL_ID ? "plugins:installFigmaOfficial" : "plugins:installOpenComputerUse";
         const result = await (window.electron as typeof window.electron & {
           invoke: (channel: string, ...args: unknown[]) => Promise<PluginInstallResult>;
-        }).invoke("plugins:installOpenComputerUse") as PluginInstallResult;
-        setInstallResult(result);
+        }).invoke(channel) as PluginInstallResult;
+        setPluginResult(plugin.id, result);
         showPluginActionToast(result);
-        setRuntimeStatus({
-          installed: result.installed,
-          connected: result.connected,
-          version: result.version,
-          latestVersion: result.latestVersion,
-          updateAvailable: result.updateAvailable,
-          updateStatus: result.updateStatus,
-          updateError: result.updateError,
-          updateCheckedAt: result.updateCheckedAt,
-          permissions: result.permissions,
-        });
       } catch (error) {
         const result: PluginInstallResult = {
           success: false,
-          installed: false,
-          connected: false,
-          message: "插件安装请求失败。",
+          installed: runtimeStatuses[plugin.id]?.installed ?? false,
+          connected: runtimeStatuses[plugin.id]?.connected ?? false,
+          message: "插件请求失败。",
           error: error instanceof Error ? error.message : String(error),
         };
-        setInstallResult(result);
+        setPluginResult(plugin.id, result);
         showPluginActionToast(result);
       } finally {
         setInstallingPluginId(null);
@@ -221,15 +353,31 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
   };
 
   const handleCheckUpdate = (plugin: DefaultPlugin) => {
+    if (plugin.id === FIGMA_OFFICIAL_ID) {
+      void (async () => {
+        setCheckingUpdatePluginId(plugin.id);
+        try {
+          const status = await (window.electron as typeof window.electron & {
+            invoke: (channel: string, ...args: unknown[]) => Promise<PluginRuntimeStatus>;
+          }).invoke("plugins:getFigmaOfficialStatus") as PluginRuntimeStatus;
+          setPluginStatus(plugin.id, status);
+        } finally {
+          setCheckingUpdatePluginId(null);
+        }
+      })();
+      return;
+    }
+
     void (async () => {
       setCheckingUpdatePluginId(plugin.id);
       try {
         const status = await (window.electron as typeof window.electron & {
           invoke: (channel: string, ...args: unknown[]) => Promise<PluginRuntimeStatus>;
         }).invoke("plugins:checkOpenComputerUseUpdate") as PluginRuntimeStatus;
-        setRuntimeStatus(status);
+        setPluginStatus(plugin.id, status);
       } catch (error) {
-        setRuntimeStatus((current) => ({
+        const current = runtimeStatuses[plugin.id];
+        setPluginStatus(plugin.id, {
           installed: current?.installed ?? false,
           connected: current?.connected ?? false,
           version: current?.version,
@@ -239,7 +387,7 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
           updateError: error instanceof Error ? error.message : String(error),
           updateCheckedAt: Date.now(),
           permissions: current?.permissions,
-        }));
+        });
       } finally {
         setCheckingUpdatePluginId(null);
       }
@@ -249,31 +397,20 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
   const handleUpdate = (plugin: DefaultPlugin) => {
     void (async () => {
       setUpdatingPluginId(plugin.id);
-      setInstallResult(null);
       try {
         const result = await (window.electron as typeof window.electron & {
           invoke: (channel: string, ...args: unknown[]) => Promise<PluginInstallResult>;
         }).invoke("plugins:updateOpenComputerUse") as PluginInstallResult;
-        setInstallResult(result);
+        setPluginResult(plugin.id, result);
         showPluginActionToast(result);
-        setRuntimeStatus({
-          installed: result.installed,
-          connected: result.connected,
-          version: result.version,
-          latestVersion: result.latestVersion,
-          updateAvailable: result.updateAvailable,
-          updateStatus: result.updateStatus,
-          updateError: result.updateError,
-          updateCheckedAt: result.updateCheckedAt,
-          permissions: result.permissions,
-        });
       } catch (error) {
+        const current = runtimeStatuses[plugin.id];
         const result: PluginInstallResult = {
           success: false,
-          installed: runtimeStatus?.installed ?? true,
-          connected: runtimeStatus?.connected ?? false,
-          version: runtimeStatus?.version,
-          latestVersion: runtimeStatus?.latestVersion,
+          installed: current?.installed ?? true,
+          connected: current?.connected ?? false,
+          version: current?.version,
+          latestVersion: current?.latestVersion,
           updateAvailable: false,
           updateStatus: "error",
           updateError: error instanceof Error ? error.message : String(error),
@@ -281,7 +418,7 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
           message: "插件更新请求失败。",
           error: error instanceof Error ? error.message : String(error),
         };
-        setInstallResult(result);
+        setPluginResult(plugin.id, result);
         showPluginActionToast(result);
       } finally {
         setUpdatingPluginId(null);
@@ -293,11 +430,13 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
     if (!onStartGuideSession || guideLaunchInFlightRef.current) return;
     guideLaunchInFlightRef.current = true;
     setLaunchingGuidePluginId(plugin.id);
+    const status = runtimeStatuses[plugin.id] ?? null;
+    const isFigma = plugin.id === FIGMA_OFFICIAL_ID;
     void Promise.resolve(onStartGuideSession({
-      title: "Open Computer Use 引导安装",
-      prompt: buildOpenComputerUseGuidePrompt(runtimeStatus),
-      agentId: "open-computer-use-guide",
-      allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,TodoWrite",
+      title: isFigma ? "Figma 官方 MCP 引导接入" : "Open Computer Use 引导安装",
+      prompt: isFigma ? buildFigmaOfficialGuidePrompt(status) : buildOpenComputerUseGuidePrompt(status),
+      agentId: isFigma ? "figma-official-mcp-guide" : "open-computer-use-guide",
+      allowedTools: isFigma ? "*" : "Read,Edit,MultiEdit,Write,Bash,Glob,Search,TodoWrite",
     })).catch(() => {
       guideLaunchInFlightRef.current = false;
       setLaunchingGuidePluginId(null);
@@ -326,47 +465,17 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
         </div>
 
         {DEFAULT_PLUGINS.map((plugin) => {
-          const connected = runtimeStatus?.connected === true || (installResult?.success && installResult.connected);
-          const installed = runtimeStatus?.installed === true || installResult?.installed === true;
-          const permissions = installResult?.permissions ?? runtimeStatus?.permissions;
-          const needsPermission = Boolean(permissions?.required && permissions.needsUserAction);
+          const runtimeStatus = runtimeStatuses[plugin.id];
+          const installResult = installResults[plugin.id];
+          const status = getPluginStatusMeta(plugin, runtimeStatus, installResult);
+          const updateHint = getUpdateHint(plugin, runtimeStatus, installResult);
+          const permissionHint = getPermissionHint(plugin, runtimeStatus);
           const updateAvailable = Boolean(runtimeStatus?.updateAvailable || installResult?.updateAvailable);
-          const latestVersion = runtimeStatus?.latestVersion ?? installResult?.latestVersion;
-          const updateStatus = runtimeStatus?.updateStatus ?? installResult?.updateStatus;
-          const updateError = runtimeStatus?.updateError ?? installResult?.updateError;
-          const status = updateAvailable && installed
-            ? statusMeta["update-available"]
-            : connected
-            ? statusMeta.ready
-            : needsPermission
-              ? statusMeta["needs-permission"]
-              : installed
-                ? statusMeta["needs-connect"]
-                : statusMeta["not-installed"];
-          const actionLabel = updatingPluginId === plugin.id
-            ? "更新中..."
-            : installingPluginId === plugin.id
-              ? "处理中..."
-              : updateAvailable && installed
-                ? "更新"
-                : connected
-              ? "重新检查"
-              : needsPermission
-                ? "授权"
-                : installed
-                  ? "接入"
-                  : "安装";
-          const updateHint = updateAvailable && latestVersion
-            ? `发现新版本 v${latestVersion}`
-            : updateStatus === "up-to-date" && latestVersion
-              ? `已是最新 v${latestVersion}`
-              : updateStatus === "error"
-                ? `扫描失败：${updateError ?? "未知错误"}`
-                : latestVersion
-                  ? `最新 v${latestVersion}`
-                  : "未扫描更新";
-          const guideLabel = launchingGuidePluginId === plugin.id ? "启动中..." : "Agent 引导安装";
-          const permissionHint = getPermissionHint(permissions);
+          const installed = runtimeStatus?.installed === true || installResult?.installed === true;
+          const isBusy = installingPluginId === plugin.id || updatingPluginId === plugin.id;
+          const actionLabel = getPrimaryActionLabel(plugin, runtimeStatus, installResult, isBusy);
+          const guideLabel = launchingGuidePluginId === plugin.id ? "启动中..." : plugin.id === FIGMA_OFFICIAL_ID ? "Agent 引导接入" : "Agent 引导安装";
+          const needsPermission = Boolean(runtimeStatus?.permissions?.required && runtimeStatus.permissions.needsUserAction) || runtimeStatus?.status === "auth-expired" || runtimeStatus?.status === "needs-auth";
 
           return (
             <article
@@ -377,13 +486,13 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-base font-bold text-[#1D2129]">{plugin.name}</h3>
                   <span className="rounded-full border border-[#E5E6EB] bg-[#F7F8FA] px-2 py-0.5 text-xs font-semibold text-[#4E5969]">
-                    v{runtimeStatus?.version ?? plugin.version}
+                    {runtimeStatus?.version ? `v${runtimeStatus.version}` : plugin.version}
                   </span>
                 </div>
                 <div className={`mt-1 text-xs font-semibold ${
                   updateAvailable
                     ? "text-amber-700"
-                    : updateStatus === "error"
+                    : runtimeStatus?.updateStatus === "error"
                       ? "text-red-600"
                       : "text-[#86909C]"
                 }`}>
@@ -411,8 +520,8 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
               </span>
 
               <div className="min-w-0 text-sm leading-5 text-[#6B778C]">
-                <div className="truncate font-medium text-[#1D2129]">GitHub</div>
-                <div className="mt-1 truncate text-xs">{plugin.sourcePath}</div>
+                <div className="truncate font-medium text-[#1D2129]">{plugin.sourceLabel}</div>
+                <div className="mt-1 truncate text-xs">{runtimeStatus?.url ?? plugin.sourcePath}</div>
                 <div className="mt-2 flex items-center gap-2 text-xs font-semibold text-[#0E7490]">
                   <ShieldCheck className="h-3.5 w-3.5" />
                   {plugin.permissions.length} 项权限
@@ -429,13 +538,13 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
                   type="button"
                   className="rounded-lg bg-[#1D2129] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#2B303B] disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={() => {
-                    if (updateAvailable && installed) {
+                    if (plugin.id !== FIGMA_OFFICIAL_ID && updateAvailable && installed) {
                       handleUpdate(plugin);
                       return;
                     }
                     handleInstall(plugin);
                   }}
-                  disabled={installingPluginId === plugin.id || updatingPluginId === plugin.id}
+                  disabled={isBusy}
                 >
                   {actionLabel}
                 </button>
@@ -446,7 +555,7 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
                   disabled={checkingUpdatePluginId === plugin.id || installingPluginId === plugin.id || updatingPluginId === plugin.id}
                 >
                   <RefreshCw className={`h-3.5 w-3.5 ${checkingUpdatePluginId === plugin.id ? "animate-spin" : ""}`} />
-                  {checkingUpdatePluginId === plugin.id ? "扫描中..." : "扫描更新"}
+                  {checkingUpdatePluginId === plugin.id ? "扫描中..." : plugin.id === FIGMA_OFFICIAL_ID ? "刷新状态" : "扫描更新"}
                 </button>
                 {onStartGuideSession && (
                   <button
