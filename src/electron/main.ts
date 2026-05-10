@@ -46,6 +46,11 @@ import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkb
 import { startDevBackendBridge, DEV_BACKEND_BRIDGE_PORT } from "./dev-backend-bridge.js";
 import { buildSessionSlashCommandItems } from "./libs/slash-command-catalog.js";
 import { runExternalCli } from "./libs/external-cli.js";
+import {
+  buildFigmaOfficialActionResult,
+  buildNextFigmaOfficialRuntimeConfig,
+  getFigmaOfficialPluginStatusFromConfig,
+} from "./libs/figma-official-plugin.js";
 import { normalizePluginVersion, summarizePluginUpdate, type PluginUpdateSummary } from "./libs/plugin-updates.js";
 import "./libs/claude-settings.js";
 import { addServerEventListener } from "./ipc-handlers.js";
@@ -386,6 +391,16 @@ function connectOpenComputerUsePlugin(version: string, permissions: OpenComputer
   });
 }
 
+function getFigmaOfficialPluginStatus() {
+  return getFigmaOfficialPluginStatusFromConfig(loadGlobalRuntimeConfig());
+}
+
+function installFigmaOfficialPlugin() {
+  const nextConfig = buildNextFigmaOfficialRuntimeConfig(loadGlobalRuntimeConfig());
+  saveGlobalRuntimeConfig(nextConfig);
+  return buildFigmaOfficialActionResult(nextConfig);
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -655,6 +670,8 @@ ipcMain.handle("plugins:getOpenComputerUseStatus", () => getOpenComputerUsePlugi
 ipcMain.handle("plugins:checkOpenComputerUseUpdate", () => checkOpenComputerUsePluginUpdate());
 ipcMain.handle("plugins:installOpenComputerUse", () => installOpenComputerUsePlugin());
 ipcMain.handle("plugins:updateOpenComputerUse", () => updateOpenComputerUsePlugin());
+ipcMain.handle("plugins:getFigmaOfficialStatus", () => getFigmaOfficialPluginStatus());
+ipcMain.handle("plugins:installFigmaOfficial", () => installFigmaOfficialPlugin());
 ipcMain.handle("preview-read-file", (_event, request: unknown) => readPreviewFileForRenderer(request));
 ipcMain.handle("preview-get-image-base64", (_event, request: unknown) => readPreviewFileForRenderer(request));
 ipcMain.handle("preview-get-file-metadata", (_event, request: unknown) => {
@@ -1689,6 +1706,12 @@ app.on("ready", async () => {
             }
             if (channel === "plugins:updateOpenComputerUse") {
               return await updateOpenComputerUsePlugin();
+            }
+            if (channel === "plugins:getFigmaOfficialStatus") {
+              return getFigmaOfficialPluginStatus();
+            }
+            if (channel === "plugins:installFigmaOfficial") {
+              return installFigmaOfficialPlugin();
             }
             throw new Error(`Unsupported dev bridge invoke channel: ${channel}`);
           },
