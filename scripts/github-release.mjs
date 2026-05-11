@@ -17,7 +17,6 @@ const allowDirty = flags.has("--allow-dirty");
 const noRelease = flags.has("--no-release");
 
 const GITHUB_API_BASE = "https://api.github.com";
-const DEFAULT_RELEASE_TAG_PREFIX = "release-";
 
 function log(message) {
   console.log(`[github-release] ${message}`);
