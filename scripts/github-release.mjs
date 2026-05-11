@@ -252,6 +252,7 @@ function getGithubToken() {
 }
 
 async function githubApiRequest(method, endpoint, token, payload) {
+  const body = payload ? JSON.stringify(payload) : undefined;
   const response = await fetch(`${GITHUB_API_BASE}${endpoint}`, {
     method,
     headers: {
@@ -259,9 +260,9 @@ async function githubApiRequest(method, endpoint, token, payload) {
       "Authorization": `token ${token}`,
       "User-Agent": "tech-cc-hub-release-script",
       "X-GitHub-Api-Version": "2022-11-28",
-      ...(payload ? { "Content-Type": "application/json" } : {}),
+      ...(payload ? { "Content-Type": "application/json; charset=utf-8" } : {}),
     },
-    body: payload ? JSON.stringify(payload) : undefined,
+    body,
   });
 
   const responseText = await response.text();
