@@ -14,6 +14,10 @@ const requestedVersion = positionals[0] ?? "patch";
 const dryRun = flags.has("--dry-run");
 const noPush = flags.has("--no-push");
 const allowDirty = flags.has("--allow-dirty");
+const noRelease = flags.has("--no-release");
+
+const GITHUB_API_BASE = "https://api.github.com";
+const DEFAULT_RELEASE_TAG_PREFIX = "release-";
 
 function log(message) {
   console.log(`[github-release] ${message}`);
@@ -67,6 +71,35 @@ function parseVersion(value) {
     minor: Number(match[2]),
     patch: Number(match[3]),
     value: normalized,
+  };
+}
+
+function runWithInput(command, commandArgs, input, options = {}) {
+  if (dryRun && options.mutates !== false) {
+    log(`dry-run: ${command} ${commandArgs.join(" ")}`);
+    return { stdout: "", status: 0 };
+  }
+
+  const result = spawnSync(command, commandArgs, {
+    cwd,
+    env: process.env,
+    input,
+    encoding: "utf8",
+    stdio: ["pipe", "pipe", "pipe"],
+    shell: false,
+  });
+
+  if (result.error) {
+    fail(`${command} failed: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const stderr = result.stderr?.trim();
+    fail(stderr || `${command} exited with ${result.status}`);
+  }
+
+  return {
+    stdout: result.stdout?.trim() ?? "",
+    status: result.status ?? 0,
   };
 }
 
@@ -133,7 +166,173 @@ function ensureOriginRemote() {
   }
 }
 
-function main() {
+function getRepositoryInfo() {
+  const remote = run("git", ["remote", "get-url", "origin"], { capture: true, mutates: false }).stdout;
+  const match = remote.match(/github\.com[:/]([^/]+)\/([^/.]+?)(?:\.git)?$/i);
+  if (!match) {
+    fail(`could not parse GitHub owner/repo from origin remote: ${remote}`);
+  }
+  return {
+    owner: match[1],
+    repo: match[2],
+  };
+}
+
+function getGithubToken() {
+  const tokenFromEnv = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_API_TOKEN;
+  if (tokenFromEnv) {
+    return tokenFromEnv;
+  }
+
+  const result = runWithInput(
+    "git",
+    ["credential", "fill"],
+    "protocol=https\nhost=github.com\n\n",
+    { capture: true, mutates: false },
+  );
+  const passwordLine = result.stdout
+    .split(/\r?\n/)
+    .find((line) => line.startsWith("password="));
+  const token = passwordLine?.replace(/^password=/, "");
+  return token ? token.trim() : "";
+}
+
+async function githubApiRequest(method, endpoint, token, payload) {
+  const response = await fetch(`${GITHUB_API_BASE}${endpoint}`, {
+    method,
+    headers: {
+      "Accept": "application/vnd.github+json",
+      "Authorization": `token ${token}`,
+      "User-Agent": "tech-cc-hub-release-script",
+      "X-GitHub-Api-Version": "2022-11-28",
+      ...(payload ? { "Content-Type": "application/json" } : {}),
+    },
+    body: payload ? JSON.stringify(payload) : undefined,
+  });
+
+  const responseText = await response.text();
+  if (!response.ok) {
+    const error = new Error(
+      `GitHub API ${method} ${endpoint} failed with ${response.status}: ${responseText || response.statusText}`
+    );
+    // @ts-ignore
+    error.status = response.status;
+    throw error;
+  }
+
+  if (!responseText) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(responseText);
+  } catch {
+    return responseText;
+  }
+}
+
+function getPreviousTag(tag) {
+  const tags = run("git", ["tag", "--sort=-creatordate", "--merged"], { capture: true, mutates: false }).stdout
+    .split(/\r?\n/)
+    .map((name) => name.trim())
+    .filter((name) => /^v?\d+\.\d+\.\d+/.test(name));
+
+  const currentTagIndex = tags.indexOf(tag);
+  if (currentTagIndex === -1 || currentTagIndex + 1 >= tags.length) {
+    return null;
+  }
+  return tags[currentTagIndex + 1];
+}
+
+function getCommitsSinceTag(tag) {
+  const range = tag ? `${tag}..HEAD` : "HEAD";
+  const stdout = run("git", ["log", "--no-merges", `--pretty=%h %s`, range], { capture: true, mutates: false }).stdout;
+  return stdout ? stdout.split(/\r?\n/).filter(Boolean) : [];
+}
+
+function getFilesSinceTag(tag) {
+  if (!tag) {
+    return [];
+  }
+
+  const stdout = run("git", ["diff", "--name-only", `${tag}..HEAD`], { capture: true, mutates: false }).stdout;
+  return stdout
+    ? [...new Set(stdout.split(/\r?\n/).filter(Boolean))]
+    : [];
+}
+
+function createReleaseBody({ tag, commits, files }) {
+  const createdTime = new Date().toISOString();
+  const title = `## ${tag} 版本更新`;
+
+  const listify = (items, fallback, max = 40) => {
+    if (!items.length) {
+      return `- ${fallback}`;
+    }
+
+    const visible = items.slice(0, max);
+    const overflow = items.length - visible.length;
+    const lines = visible.map((line) => `- ${line}`);
+    if (overflow > 0) {
+      lines.push(`- ...以及其余 ${overflow} 条变更`);
+    }
+    return lines.join("\n");
+  };
+
+  return `${title}
+
+### 变更提交
+${listify(commits, "无新增提交")}
+
+### 变更文件
+${listify(files, "无文件变更")}
+
+### 说明
+- 发布时间（自动生成）：${createdTime}
+- 来源：脚本生成的提交日志与差异
+`;
+}
+
+async function upsertGithubRelease(tagName, body) {
+  const token = getGithubToken();
+  if (!token) {
+    log("no GitHub token available; skip release API update.");
+    return;
+  }
+
+  const { owner, repo } = getRepositoryInfo();
+  const encodedTag = encodeURIComponent(tagName);
+  let existingRelease = null;
+
+  try {
+    existingRelease = await githubApiRequest("GET", `/repos/${owner}/${repo}/releases/tags/${encodedTag}`, token);
+  } catch (error) {
+    // @ts-ignore
+    if (error?.status !== 404) {
+      throw error;
+    }
+  }
+
+  if (!existingRelease) {
+    await githubApiRequest("POST", `/repos/${owner}/${repo}/releases`, token, {
+      tag_name: tagName,
+      name: tagName,
+      target_commitish: "main",
+      body,
+      draft: false,
+      prerelease: false,
+    });
+    log(`Created GitHub release via API: ${tagName}`);
+  } else {
+    await githubApiRequest("PATCH", `/repos/${owner}/${repo}/releases/${existingRelease.id}`, token, {
+      name: existingRelease.name ?? tagName,
+      body,
+    });
+    log(`Updated GitHub release via API: ${tagName}`);
+  }
+}
+
+async function main() {
   if (!existsSync(packagePath)) {
     fail("package.json not found. Run this from the project root.");
   }
@@ -174,8 +373,19 @@ function main() {
 
   run("git", ["push", "origin", "HEAD"]);
   run("git", ["push", "origin", tag]);
+
+  if (!noRelease) {
+    const previousTag = getPreviousTag(tag);
+    const commits = getCommitsSinceTag(previousTag);
+    const files = getFilesSinceTag(previousTag);
+    const body = createReleaseBody({ tag, commits, files });
+    await upsertGithubRelease(tag, body);
+  }
+
   log("GitHub Actions release workflow has been triggered by the tag push.");
   log("Release page: https://github.com/lst016/tech-cc-hub/releases");
 }
 
-main();
+main().catch((error) => {
+  fail(error instanceof Error ? error.message : String(error));
+});
