@@ -2237,6 +2237,7 @@ export class BrowserWorkbenchManager {
         style.textContent = [
           "#__tech_cc_hub_annotation_layer__{position:fixed;inset:0;z-index:2147483647;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1f2937}",
           ".__tech_cc_hub_hover{position:fixed;border:2px solid #1683ff;background:rgba(22,131,255,.06);box-sizing:border-box;pointer-events:none}",
+          ".__tech_cc_hub_hover_label{position:fixed;max-width:min(360px,calc(100vw - 24px));padding:6px 8px;border-radius:10px;background:rgba(15,23,42,.92);color:#fff;font-size:12px;line-height:1.35;box-shadow:0 10px 24px rgba(15,23,42,.24);pointer-events:none;white-space:normal;word-break:break-word}",
           ".__tech_cc_hub_marker{position:fixed;width:28px;height:28px;border-radius:999px;background:#1683ff;color:white;display:grid;place-items:center;font-size:13px;font-weight:800;box-shadow:0 0 0 3px white,0 8px 24px rgba(22,131,255,.36);pointer-events:auto;cursor:pointer}",
           ".__tech_cc_hub_outline{position:fixed;border:2px solid #1683ff;background:rgba(22,131,255,.08);box-sizing:border-box;pointer-events:none}",
           ".__tech_cc_hub_comment{position:fixed;display:grid;grid-template-columns:minmax(0,1fr) 34px;grid-template-rows:1fr 1fr;align-items:center;gap:6px 10px;width:min(440px,calc(100vw - 32px));height:92px;border:1px solid rgba(15,23,42,.1);border-radius:18px;background:rgba(255,255,255,.96);box-shadow:0 12px 34px rgba(15,23,42,.16);padding:10px 12px 10px 42px;pointer-events:auto}",
@@ -2365,6 +2366,30 @@ export class BrowserWorkbenchManager {
           node.remove();
         });
       }
+      function labelFromDomHint(domHint) {
+        if (!domHint) return "";
+        const target = domHint.target;
+        if (target && target.type === "text" && target.value) return String(target.value).trim();
+        if (target && target.type === "image") return String(target.alt || target.url || "图片").trim();
+        return String(
+          domHint.text
+          || domHint.ariaLabel
+          || domHint.context && domHint.context.nearbyText
+          || domHint.selector
+          || domHint.path
+          || "",
+        ).replace(/\\s+/g, " ").trim();
+      }
+      function annotationTitle(annotation) {
+        const label = labelFromDomHint(annotation && annotation.domHint);
+        return [
+          label ? "元素内容：" + label : "",
+          annotation && annotation.comment ? "说明：" + annotation.comment : "",
+          annotation && annotation.expectation ? "期望：" + annotation.expectation : "",
+          annotation && annotation.url ? "页面：" + annotation.url : "",
+          annotation && annotation.domHint && annotation.domHint.selector ? "Selector：" + annotation.domHint.selector : "",
+        ].filter(Boolean).join("\\n");
+      }
       function updateHover(point) {
         const layer = ensureLayer();
         let hover = layer.querySelector(".__tech_cc_hub_hover");
@@ -2373,17 +2398,35 @@ export class BrowserWorkbenchManager {
           hover.className = "__tech_cc_hub_hover";
           layer.appendChild(hover);
         }
+        let hoverLabel = layer.querySelector(".__tech_cc_hub_hover_label");
+        if (!hoverLabel) {
+          hoverLabel = document.createElement("div");
+          hoverLabel.className = "__tech_cc_hub_hover_label";
+          layer.appendChild(hoverLabel);
+        }
         const domHint = inspectAt(point);
         const box = domHint && domHint.boundingBox;
         if (!box || box.width <= 0 || box.height <= 0) {
           hover.style.display = "none";
+          hoverLabel.style.display = "none";
           return;
         }
+        const label = labelFromDomHint(domHint);
         hover.style.display = "block";
         hover.style.left = box.x + "px";
         hover.style.top = box.y + "px";
         hover.style.width = box.width + "px";
         hover.style.height = box.height + "px";
+        if (label) {
+          hoverLabel.style.display = "block";
+          hoverLabel.textContent = label.length > 180 ? label.slice(0, 180) + "..." : label;
+          const preferredLeft = Math.min(point.x + 12, window.innerWidth - 24);
+          const preferredTop = Math.min(point.y + 14, window.innerHeight - 44);
+          hoverLabel.style.left = Math.max(12, preferredLeft) + "px";
+          hoverLabel.style.top = Math.max(12, preferredTop) + "px";
+        } else {
+          hoverLabel.style.display = "none";
+        }
       }
       function placeWithinViewport(left, top, width, height) {
         return {
@@ -2403,6 +2446,7 @@ export class BrowserWorkbenchManager {
           outline.style.width = box.width + "px";
           outline.style.height = box.height + "px";
           outline.dataset.annotationId = annotation.id;
+          outline.title = annotationTitle(annotation);
           layer.appendChild(outline);
         }
         const marker = document.createElement("button");
@@ -2413,6 +2457,7 @@ export class BrowserWorkbenchManager {
         marker.style.top = Math.max(6, annotation.point.y - 14) + "px";
         marker.dataset.annotationId = annotation.id;
         marker.dataset.annotationKey = annotation.key;
+        marker.title = annotationTitle(annotation);
         const comment = document.createElement("div");
         comment.className = "__tech_cc_hub_comment";
         const preferredLeft = box ? box.x + Math.min(96, Math.max(24, box.width * 0.2)) : annotation.point.x + 18;
@@ -2422,6 +2467,7 @@ export class BrowserWorkbenchManager {
         comment.style.top = placement.top + "px";
         comment.dataset.annotationId = annotation.id;
         comment.dataset.annotationKey = annotation.key;
+        comment.title = annotationTitle(annotation);
         const input = document.createElement("input");
         input.className = "__tech_cc_hub_problem";
         input.placeholder = "问题描述...";
@@ -2441,12 +2487,16 @@ export class BrowserWorkbenchManager {
         function submitComment() {
           annotation.comment = input.value.trim();
           annotation.expectation = expectationInput.value.trim();
+          marker.title = annotationTitle(annotation);
+          comment.title = annotationTitle(annotation);
           emitAnnotation(annotation);
           comment.hidden = true;
         }
         function updateSubmitState() {
           annotation.comment = input.value;
           annotation.expectation = expectationInput.value;
+          marker.title = annotationTitle(annotation);
+          comment.title = annotationTitle(annotation);
           showBackgroundInfo(annotation);
           submit.disabled = !input.value.trim() && !expectationInput.value.trim();
         }
@@ -2511,6 +2561,8 @@ export class BrowserWorkbenchManager {
         const layer = document.getElementById("__tech_cc_hub_annotation_layer__");
         const hover = layer && layer.querySelector(".__tech_cc_hub_hover");
         if (hover) hover.remove();
+        const hoverLabel = layer && layer.querySelector(".__tech_cc_hub_hover_label");
+        if (hoverLabel) hoverLabel.remove();
         if (layer) layer.hidden = true;
         return true;
       }

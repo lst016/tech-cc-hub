@@ -1,50 +1,11 @@
-import {
-  Gitgraph,
-  MergeStyle,
-  TemplateName,
-  templateExtend,
-  type CommitOptions,
-} from "@gitgraph/react";
-import { GitBranch, Search } from "lucide-react";
-import { useMemo, useState, type ReactElement } from "react";
+import { ChevronDown, CircleDot, GitBranch, GitMerge, RotateCcw, Tag, Target } from "lucide-react";
+import { useMemo, useState } from "react";
 import type { UiGitBranch, UiGitCommitNode } from "../../types";
-import { formatRelativeTime } from "./git-ui-utils";
 
-const GRAPH_MESSAGE_WIDTH = 620;
-const GRAPH_MESSAGE_HEIGHT = 54;
-
-const gitgraphTemplate = templateExtend(TemplateName.Metro, {
-  colors: ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#7c3aed", "#0891b2"],
-  branch: {
-    lineWidth: 2,
-    spacing: 16,
-    mergeStyle: MergeStyle.Bezier,
-    label: { display: false },
-  },
-  commit: {
-    spacing: 58,
-    dot: {
-      size: 5,
-      strokeWidth: 3,
-      strokeColor: "#ffffff",
-    },
-    message: {
-      display: true,
-      displayAuthor: false,
-      displayHash: false,
-      color: "#0f172a",
-      font: "600 12px Inter, ui-sans-serif, system-ui, sans-serif",
-    },
-  },
-  tag: {
-    bgColor: "#dcfce7",
-    borderRadius: 8,
-    color: "#047857",
-    font: "600 10px Inter, ui-sans-serif, system-ui, sans-serif",
-    pointerWidth: 6,
-    strokeColor: "#86efac",
-  },
-});
+const GRAPH_COLORS = ["#4d91ff", "#f4bf37", "#db4b93", "#22c55e", "#b16cff", "#38bdf8"];
+const GRAPH_LANE_WIDTH = 14;
+const GRAPH_LEFT_OFFSET = 12;
+const GRAPH_ROW_HEIGHT = 28;
 
 export function GitHistoryPanel({
   history,
@@ -63,98 +24,69 @@ export function GitHistoryPanel({
   onBranchFilterChange: (branch: string) => void;
   onSelectCommit: (hash: string) => void;
 }) {
-  const [query, setQuery] = useState("");
   const [showTags, setShowTags] = useState(true);
   const [showMerges, setShowMerges] = useState(true);
   const branchOptions = useMemo(() => buildBranchOptions(branches, currentBranch), [branches, currentBranch]);
   const visibleHistory = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
     return history
       .filter((commit) => showMerges || commit.parents.length <= 1)
       .filter((commit) => showTags || !commit.refs.some(isTagRef))
       .filter((commit) => branchFilter === "all" || commitBelongsToBranch(commit, branchFilter, currentBranch))
-      .filter((commit) => {
-        if (!normalizedQuery) return true;
-        return [
-          commit.message,
-          commit.shortHash,
-          commit.hash,
-          commit.authorName,
-          ...commit.refs,
-        ].some((value) => value.toLowerCase().includes(normalizedQuery));
-      })
       .slice(0, 120);
-  }, [branchFilter, currentBranch, history, query, showMerges, showTags]);
-  const graphData = visibleHistory.map((commit) => toGitgraphCommit(commit, selectedHash, onSelectCommit));
-  const graphKey = `${branchFilter}:${showTags}:${showMerges}:${graphData.map((commit) => commit.hash).join(":")}:${selectedHash ?? ""}`;
+  }, [branchFilter, currentBranch, history, showMerges, showTags]);
+  const maxLane = visibleHistory.reduce((max, commit) => Math.max(max, commit.graphLane), 0);
+  const graphWidth = Math.max(78, GRAPH_LEFT_OFFSET + (maxLane + 2) * GRAPH_LANE_WIDTH);
+  const laneRanges = useMemo(() => buildLaneRanges(visibleHistory), [visibleHistory]);
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col bg-white">
-      <div className="shrink-0 border-b border-slate-200 px-3 py-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <label className="flex h-8 min-w-[160px] items-center gap-2 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700">
-            <GitBranch className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-            <span className="shrink-0 text-slate-500">分支筛选</span>
+    <section className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-white text-slate-700">
+      <div className="flex h-8 shrink-0 items-center border-b border-slate-200 bg-slate-50 px-2">
+        <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase text-slate-500">
+          <ChevronDown className="h-3.5 w-3.5" />
+          <span>GRAPH</span>
+          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">{visibleHistory.length}</span>
+        </div>
+        <div className="ml-auto flex min-w-0 items-center gap-2">
+          <label className="flex h-6 min-w-0 items-center gap-1 rounded px-1.5 text-[11px] text-slate-700">
+            <GitBranch className="h-3.5 w-3.5 text-[#4d91ff]" />
             <select
               value={branchFilter}
               onChange={(event) => onBranchFilterChange(event.target.value)}
-              className="min-w-0 flex-1 bg-transparent font-semibold text-slate-900 outline-none"
+              className="max-w-[150px] bg-transparent font-semibold text-slate-800 outline-none"
             >
-              <option value="all">全部分支</option>
+              <option className="bg-white" value="all">Auto</option>
               {branchOptions.map((branch) => (
-                <option key={branch} value={branch}>{branch}</option>
+                <option className="bg-white" key={branch} value={branch}>{branch}</option>
               ))}
             </select>
           </label>
-
-          <Toggle
-            checked={branchFilter === "all"}
-            label="All branches"
-            onChange={(checked) => onBranchFilterChange(checked ? "all" : currentBranch || branchOptions[0] || "all")}
-          />
-          <Toggle checked={showTags} label="Tags" onChange={setShowTags} />
-          <Toggle checked={showMerges} label="Merges" onChange={setShowMerges} />
-
-          <label className="ml-auto flex h-8 min-w-[170px] flex-1 items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs text-slate-500 focus-within:border-blue-300 focus-within:bg-white">
-            <Search className="h-3.5 w-3.5 shrink-0" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              className="min-w-0 flex-1 bg-transparent text-slate-800 outline-none placeholder:text-slate-400"
-              placeholder="搜索提交"
-            />
-          </label>
+          <ToggleIcon checked={showTags} label="Tags" icon={<Tag className="h-3.5 w-3.5" />} onChange={setShowTags} />
+          <ToggleIcon checked={showMerges} label="Merges" icon={<GitMerge className="h-3.5 w-3.5" />} onChange={setShowMerges} />
+          <ToolbarIcon title="定位当前分支"><Target className="h-3.5 w-3.5" /></ToolbarIcon>
+          <ToolbarIcon title="刷新视图"><RotateCcw className="h-3.5 w-3.5" /></ToolbarIcon>
         </div>
       </div>
 
-      <div className="grid h-8 shrink-0 grid-cols-[92px_minmax(300px,1fr)_96px_86px_72px] items-center border-b border-slate-200 bg-slate-50 px-3 text-[11px] font-semibold text-slate-500">
-        <span>图谱</span>
-        <span>提交信息</span>
-        <span>作者</span>
-        <span>时间</span>
-        <span>提交哈希</span>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-auto bg-white px-3 py-2">
-        {graphData.length === 0 ? (
-          <div className="flex min-h-64 flex-col items-center justify-center text-center text-xs text-slate-400">
+      <div className="min-h-0 flex-1 overflow-y-auto bg-white">
+        {visibleHistory.length === 0 ? (
+          <div className="flex h-full min-h-64 flex-col items-center justify-center text-center text-xs text-slate-400">
             <GitBranch className="h-6 w-6" />
             <p className="mt-2">没有匹配的提交</p>
           </div>
         ) : (
-          <div className="gitgraph-history min-w-[760px]">
-            <Gitgraph
-              key={graphKey}
-              options={{
-                template: gitgraphTemplate,
-                initCommitOffsetX: 12,
-                initCommitOffsetY: 18,
-              }}
-            >
-              {(gitgraph) => {
-                gitgraph.import(graphData);
-              }}
-            </Gitgraph>
+          <div className="min-w-[620px] py-1">
+            {visibleHistory.map((commit, index) => (
+              <CommitRow
+                key={commit.hash}
+                commit={commit}
+                graphWidth={graphWidth}
+                activeLanes={getActiveLanes(laneRanges, index)}
+                first={index === 0}
+                last={index === visibleHistory.length - 1}
+                selected={selectedHash === commit.hash}
+                onSelectCommit={onSelectCommit}
+              />
+            ))}
           </div>
         )}
       </div>
@@ -162,18 +94,169 @@ export function GitHistoryPanel({
   );
 }
 
-function Toggle({ checked, label, onChange }: { checked: boolean; label: string; onChange: (checked: boolean) => void }) {
+function CommitRow({
+  commit,
+  graphWidth,
+  activeLanes,
+  first,
+  last,
+  selected,
+  onSelectCommit,
+}: {
+  commit: UiGitCommitNode;
+  graphWidth: number;
+  activeLanes: number[];
+  first: boolean;
+  last: boolean;
+  selected: boolean;
+  onSelectCommit: (hash: string) => void;
+}) {
+  const refs = normalizeRefs(commit.refs);
+  const lane = Math.max(0, commit.graphLane);
+  const color = GRAPH_COLORS[lane % GRAPH_COLORS.length] ?? GRAPH_COLORS[0];
+  const isMerge = commit.parents.length > 1;
+  const message = commit.message || "(no message)";
+
   return (
-    <label className="inline-flex h-8 items-center gap-1.5 rounded-md px-1.5 text-xs text-slate-700 hover:bg-slate-50">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-        className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600"
-      />
-      {label}
-    </label>
+    <button
+      type="button"
+      onClick={() => onSelectCommit(commit.hash)}
+      className={`group flex w-full items-center text-left text-[13px] leading-none outline-none ${
+        selected ? "bg-blue-50" : "bg-transparent hover:bg-slate-50"
+      }`}
+      style={{ height: GRAPH_ROW_HEIGHT }}
+    >
+      <div className="relative h-full shrink-0" style={{ width: graphWidth }}>
+        {activeLanes.map((lineLane) => {
+          const lineColor = GRAPH_COLORS[lineLane % GRAPH_COLORS.length] ?? GRAPH_COLORS[0];
+          const left = GRAPH_LEFT_OFFSET + lineLane * GRAPH_LANE_WIDTH;
+          return (
+            <span
+              key={lineLane}
+              className="absolute w-0.5 rounded-full"
+              style={{
+                backgroundColor: lineColor,
+                bottom: last ? GRAPH_ROW_HEIGHT / 2 : 0,
+                left,
+                top: first ? GRAPH_ROW_HEIGHT / 2 : 0,
+              }}
+            />
+          );
+        })}
+        {lane > 0 && (
+          <span
+            className="absolute h-0.5 rounded-full"
+            style={{
+              backgroundColor: color,
+              left: GRAPH_LEFT_OFFSET,
+              top: GRAPH_ROW_HEIGHT / 2 - 1,
+              width: lane * GRAPH_LANE_WIDTH,
+            }}
+          />
+        )}
+        <span
+          className="absolute flex items-center justify-center rounded-full border-2 bg-white"
+          style={{
+            borderColor: color,
+            color,
+            height: isMerge ? 13 : 12,
+            left: GRAPH_LEFT_OFFSET + lane * GRAPH_LANE_WIDTH - 6,
+            top: GRAPH_ROW_HEIGHT / 2 - 6,
+            width: isMerge ? 13 : 12,
+          }}
+        >
+          {isMerge && <CircleDot className="h-2.5 w-2.5" />}
+        </span>
+      </div>
+
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 pr-2">
+        <span className={`min-w-0 truncate font-semibold ${selected ? "text-slate-950" : "text-slate-800"}`} title={message}>
+          {message}
+        </span>
+        {refs.slice(0, 2).map((ref) => (
+          <Pill
+            key={ref}
+            color={isTagRef(ref) ? "#6d28d9" : "#075985"}
+            background={isTagRef(ref) ? "#ede9fe" : "#dbeafe"}
+            label={formatRef(ref)}
+          />
+        ))}
+        <span className="shrink-0 truncate text-[12px] text-slate-500" title={commit.authorName}>
+          {commit.authorName || "-"}
+        </span>
+      </div>
+    </button>
   );
+}
+
+function ToggleIcon({
+  checked,
+  label,
+  icon,
+  onChange,
+}: {
+  checked: boolean;
+  label: string;
+  icon?: React.ReactNode;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      className={`inline-flex h-6 items-center gap-1 rounded px-1.5 text-[11px] hover:bg-slate-100 ${checked ? "text-slate-700" : "text-slate-400"}`}
+      title={label}
+      aria-pressed={checked}
+    >
+      {icon ?? <CircleDot className="h-3.5 w-3.5" />}
+      {label === "Auto" && <span>Auto</span>}
+    </button>
+  );
+}
+
+function ToolbarIcon({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <button type="button" className="inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700" title={title}>
+      {children}
+    </button>
+  );
+}
+
+function Pill({ color, background, label }: { color: string; background: string; label: string }) {
+  return (
+    <span
+      className="inline-flex max-w-36 shrink-0 items-center truncate rounded-full px-1.5 py-0.5 text-[11px] font-medium leading-none"
+      style={{ background, color }}
+      title={label}
+    >
+      {label}
+    </span>
+  );
+}
+
+function buildLaneRanges(commits: UiGitCommitNode[]) {
+  const ranges = new Map<number, { start: number; end: number }>();
+  ranges.set(0, { start: 0, end: Math.max(0, commits.length - 1) });
+
+  commits.forEach((commit, index) => {
+    const lane = Math.max(0, commit.graphLane);
+    const range = ranges.get(lane);
+    if (!range) {
+      ranges.set(lane, { start: index, end: index });
+      return;
+    }
+    range.start = Math.min(range.start, index);
+    range.end = Math.max(range.end, index);
+  });
+
+  return ranges;
+}
+
+function getActiveLanes(ranges: Map<number, { start: number; end: number }>, rowIndex: number) {
+  return Array.from(ranges.entries())
+    .filter(([, range]) => rowIndex >= range.start && rowIndex <= range.end)
+    .map(([lane]) => lane)
+    .sort((a, b) => a - b);
 }
 
 function buildBranchOptions(branches: UiGitBranch[], currentBranch?: string | null) {
@@ -194,131 +277,6 @@ function commitBelongsToBranch(commit: UiGitCommitNode, branchFilter: string, cu
     const normalized = normalizeRefName(ref);
     return normalized === branchFilter || normalized === normalizedFilter;
   });
-}
-
-function toGitgraphCommit(commit: UiGitCommitNode, selectedHash: string | null, onSelectCommit: (hash: string) => void) {
-  const refs = normalizeRefs(commit.refs);
-  return {
-    hash: commit.hash,
-    parents: commit.parents,
-    author: {
-      name: commit.authorName || "unknown",
-      email: commit.authorEmail || "",
-      timestamp: new Date(commit.committedAt).getTime(),
-    },
-    refs,
-    subject: commit.message || "(no message)",
-    body: "",
-    renderMessage: renderCommitMessage(commit, refs, selectedHash === commit.hash, onSelectCommit),
-  };
-}
-
-function renderCommitMessage(
-  commit: UiGitCommitNode,
-  refs: string[],
-  selected: boolean,
-  onSelectCommit: (hash: string) => void,
-): CommitOptions["renderMessage"] {
-  return () => (
-    <foreignObject x="8" y="-22" width={GRAPH_MESSAGE_WIDTH} height={GRAPH_MESSAGE_HEIGHT}>
-      <div
-        onClick={() => onSelectCommit(commit.hash)}
-        style={{
-          background: selected ? "#eff6ff" : "transparent",
-          border: selected ? "1px solid #bfdbfe" : "1px solid transparent",
-          borderRadius: 6,
-          boxSizing: "border-box",
-          cursor: "pointer",
-          display: "grid",
-          gridTemplateColumns: "minmax(260px, 1fr) 88px 72px 66px",
-          height: "100%",
-          overflow: "hidden",
-          padding: "6px 8px",
-          width: "100%",
-        }}
-      >
-        <div style={{ minWidth: 0 }}>
-          <div
-            style={{
-              color: "#0f172a",
-              fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
-              fontSize: 12,
-              fontWeight: 700,
-              lineHeight: "16px",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-            title={commit.message}
-          >
-            {commit.message || "(no message)"}
-          </div>
-          {refs.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4, overflow: "hidden" }}>
-              {refs.slice(0, 3).map((ref) => (
-                <Pill
-                  key={ref}
-                  color={isTagRef(ref) ? "#047857" : "#0369a1"}
-                  background={isTagRef(ref) ? "#dcfce7" : "#e0f2fe"}
-                  label={formatRef(ref)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-        <Cell>{commit.authorName || "-"}</Cell>
-        <Cell>{formatRelativeTime(commit.committedAt)}</Cell>
-        <Cell mono>{commit.shortHash}</Cell>
-      </div>
-    </foreignObject>
-  ) as ReactElement<SVGElement>;
-}
-
-function Cell({ children, mono }: { children: string; mono?: boolean }) {
-  return (
-    <div
-      style={{
-        alignItems: "center",
-        color: "#64748b",
-        display: "flex",
-        fontFamily: mono ? "ui-monospace, SFMono-Regular, Menlo, monospace" : "Inter, ui-sans-serif, system-ui, sans-serif",
-        fontSize: 11,
-        minWidth: 0,
-        overflow: "hidden",
-        paddingLeft: 8,
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-      }}
-      title={children}
-    >
-      {children}
-    </div>
-  );
-}
-
-function Pill({ color, background, label }: { color: string; background: string; label: string }) {
-  return (
-    <span
-      style={{
-        background,
-        borderRadius: 999,
-        color,
-        display: "inline-flex",
-        fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
-        fontSize: 10,
-        fontWeight: 700,
-        lineHeight: "13px",
-        maxWidth: 160,
-        overflow: "hidden",
-        padding: "1px 6px",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-      }}
-      title={label}
-    >
-      {label}
-    </span>
-  );
 }
 
 function normalizeRefs(refs: string[]) {

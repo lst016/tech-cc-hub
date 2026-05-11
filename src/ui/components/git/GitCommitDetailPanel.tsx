@@ -81,7 +81,7 @@ export function GitCommitDetailPanel({
             </div>
           </div>
 
-          <div className="min-h-[280px] bg-[#fbfcfe]">
+          <div className="min-h-[280px] overflow-auto bg-[#fbfcfe]">
             {diffHtml ? (
               <div className="git-diff-viewer min-w-[560px] text-[11px]" dangerouslySetInnerHTML={{ __html: diffHtml }} />
             ) : (

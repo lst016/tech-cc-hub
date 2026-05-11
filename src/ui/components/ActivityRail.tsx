@@ -1176,7 +1176,7 @@ export function ActivityRail({
             </div>
           </div>
         ) : selectedTab === "git" ? (
-          <div className="min-h-0 flex-1">
+          <div className="flex min-h-0 flex-1 overflow-hidden">
             <GitWorkbenchPanel cwd={session?.cwd} />
           </div>
         ) : (

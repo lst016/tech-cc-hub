@@ -102,7 +102,7 @@ const FIGMA_OFFICIAL_ID = "figma-official";
 const FIGMA_MCP_URL = "https://mcp.figma.com/mcp";
 const FIGMA_DESKTOP_MCP_URL = "http://127.0.0.1:3845/mcp";
 // The Electron runner injects enabled Claude Code plugins into Agent SDK sessions.
-const FIGMA_AGENT_GUIDE_ENABLED = true;
+const FIGMA_AGENT_GUIDE_ENABLED = false;
 
 const DEFAULT_PLUGINS: DefaultPlugin[] = [
   {

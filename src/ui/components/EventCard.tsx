@@ -314,6 +314,66 @@ const getTextSnippet = (value: unknown, maxLength = 90): string | undefined => {
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
 };
 
+const parseFirstJsonObject = (value: string): unknown | null => {
+  const trimmed = value.trim();
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    // Browser annotation blocks include human-readable guidance before the JSON.
+  }
+
+  const start = trimmed.indexOf("{");
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < trimmed.length; index += 1) {
+    const char = trimmed[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+    } else if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(trimmed.slice(start, index + 1)) as unknown;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+
+  return null;
+};
+
+const getBrowserAnnotationTargetText = (value: unknown, maxLength = 120): string | undefined => {
+  if (typeof value === "string") return getTextSnippet(value, maxLength);
+  const record = getStringRecord(value);
+  if (!record) return undefined;
+  if (record.type === "text") return getTextSnippet(record.value, maxLength);
+  if (record.type === "image") {
+    return getTextSnippet(record.alt, maxLength) || getTextSnippet(record.url, maxLength) || "图片";
+  }
+  return getTextSnippet(record.value, maxLength)
+    || getTextSnippet(record.text, maxLength)
+    || getTextSnippet(record.label, maxLength)
+    || getTextSnippet(record.alt, maxLength);
+};
+
 const formatBrowserAnnotationUrl = (url?: string) => {
   if (!url) return undefined;
   try {
@@ -345,16 +405,13 @@ const getBrowserAnnotationSummary = (item: unknown, index: number): BrowserAnnot
   const comment = getTextSnippet(record.comment);
   const expectation = getTextSnippet(record.expectation, 160);
 
-  const target = getStringRecord(record.target);
-  const targetText = target?.type === "text"
-    ? getTextSnippet(target.value)
-    : target?.type === "image"
-      ? getTextSnippet(target.alt) || "图片"
-      : undefined;
-
   const dom = getStringRecord(record.dom);
+  const targetText = getBrowserAnnotationTargetText(record.target)
+    || getBrowserAnnotationTargetText(dom?.target)
+    || getTextSnippet(dom?.text, 120)
+    || getTextSnippet(dom?.ariaLabel, 120);
   const domContext = getStringRecord(dom?.context);
-  const nearbyText = getTextSnippet(domContext?.nearbyText, 90);
+  const nearbyText = getTextSnippet(domContext?.nearbyText, 120);
 
   const page = getStringRecord(record.page);
   const pageTitle = getTextSnippet(page?.title, 70);
@@ -394,9 +451,10 @@ const getBrowserAnnotationSummary = (item: unknown, index: number): BrowserAnnot
   const y = typeof nodePosition?.y === "number" ? nodePosition.y : undefined;
   const position = typeof x === "number" && typeof y === "number" ? { x, y } : undefined;
 
-  const label = comment
-    || targetText
+  const label = targetText
     || nearbyText
+    || comment
+    || expectation
     || pageTitle
     || formatBrowserAnnotationUrl(pageUrl)
     || selector
@@ -431,14 +489,14 @@ function extractBrowserAnnotationsPrompt(prompt: string): {
 
   const annotations = blocks.reduce<BrowserAnnotationSummary[]>((items, block) => {
     try {
-      const payload = JSON.parse(block[1]) as BrowserAnnotationsPayload;
-      if (Array.isArray(payload.items)) {
+      const payload = parseFirstJsonObject(block[1]) as BrowserAnnotationsPayload | null;
+      if (payload && Array.isArray(payload.items)) {
         payload.items.forEach((item) => {
           items.push(getBrowserAnnotationSummary(item, items.length));
         });
         return items;
       }
-      if (typeof payload.count === "number") {
+      if (payload && typeof payload.count === "number") {
         for (let index = 0; index < payload.count; index += 1) {
           items.push({ index: items.length + 1, label: `标注 ${items.length + 1}` });
         }
@@ -487,20 +545,30 @@ const BrowserAnnotationChip = ({ annotation }: { annotation: BrowserAnnotationSu
   const source = annotation.sourceCandidates?.[0];
   const sourceTitle = getBrowserAnnotationSourceTitle(source);
   const pageLabel = formatBrowserAnnotationUrl(annotation.pageUrl);
-  const headerLabel = sourceTitle || annotation.pageTitle || pageLabel || annotation.label || `浏览器标注 ${annotation.index}`;
-  const locatorPreview = annotation.target || annotation.selector || annotation.xpath || annotation.path;
+  const headerLabel = annotation.target
+    || annotation.label
+    || annotation.comment
+    || annotation.pageTitle
+    || pageLabel
+    || `浏览器标注 ${annotation.index}`;
+  const locatorPreview = annotation.selector || annotation.xpath || annotation.path;
   const pageText = annotation.pageUrl
     ? `${annotation.pageTitle ? `${annotation.pageTitle} · ` : ""}${pageLabel || annotation.pageUrl}`
     : undefined;
   const title = [
+    annotation.target ? `元素：${annotation.target}` : null,
     annotation.comment,
+    annotation.expectation ? `期望：${annotation.expectation}` : null,
     source ? formatBrowserAnnotationSource(source) : null,
     annotation.pageUrl,
     annotation.selector,
+    annotation.xpath,
+    annotation.path,
   ].filter(Boolean).join("\n");
   const hasDetail = Boolean(
     annotation.comment
     || annotation.expectation
+    || annotation.target
     || locatorPreview
     || (pageText && sourceTitle)
     || annotation.position
@@ -513,7 +581,7 @@ const BrowserAnnotationChip = ({ annotation }: { annotation: BrowserAnnotationSu
           {annotation.index}
         </span>
         <span className="shrink-0 rounded-md bg-[#fff7ed] px-1.5 py-0.5 text-[10px] text-[#9a3412]">
-          标注
+          元素
         </span>
         {source?.file || annotation.pageUrl ? (
           <button
@@ -532,6 +600,12 @@ const BrowserAnnotationChip = ({ annotation }: { annotation: BrowserAnnotationSu
         )}
       </div>
       <div className="mt-2 grid gap-1.5 text-[11px] leading-5 text-muted">
+        {annotation.target && (
+          <div className="min-w-0">
+            <span className="font-semibold text-ink-700">内容 </span>
+            <span className="break-words">{annotation.target}</span>
+          </div>
+        )}
         {annotation.comment && (
           <div className="min-w-0">
             <span className="font-semibold text-ink-700">说明 </span>
@@ -549,7 +623,13 @@ const BrowserAnnotationChip = ({ annotation }: { annotation: BrowserAnnotationSu
             {compactPreview(locatorPreview, 180)}
           </code>
         )}
-        {pageText && sourceTitle && (
+        {sourceTitle && source && (
+          <div className="min-w-0">
+            <span className="font-semibold text-ink-700">来源 </span>
+            <span className="break-words">{formatBrowserAnnotationSource(source)}</span>
+          </div>
+        )}
+        {pageText && (
           <div className="min-w-0">
             <span className="font-semibold text-ink-700">页面 </span>
             <button
@@ -569,8 +649,8 @@ const BrowserAnnotationChip = ({ annotation }: { annotation: BrowserAnnotationSu
         )}
         {!hasDetail && (
           <div className="min-w-0">
-            <span className="font-semibold text-ink-700">说明 </span>
-            <span className="break-words">这条浏览器标注没有保存具体说明，可根据标记编号回到页面定位。</span>
+            <span className="font-semibold text-ink-700">提示 </span>
+            <span className="break-words">这条浏览器标注没有保存元素内容，可回到页面重新标注一次。</span>
           </div>
         )}
       </div>

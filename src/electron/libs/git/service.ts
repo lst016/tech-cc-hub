@@ -2,6 +2,7 @@ import { readFile } from "fs/promises";
 import { relative, resolve, sep } from "path";
 import { simpleGit, type SimpleGit, type StatusResult } from "simple-git";
 import { normalizeGitError } from "./errors.js";
+import { generateCommitMessageSuggestion } from "./commit-message.js";
 import { GIT_LOG_FORMAT, parseGitLog } from "./history.js";
 import { GitOperationLog } from "./operation-log.js";
 import type {
@@ -9,6 +10,7 @@ import type {
   GitChangedFile,
   GitCommitDetail,
   GitCommitDetailRequest,
+  GitCommitMessageSuggestion,
   GitCommitNode,
   GitDiffRequest,
   GitDiffResult,
@@ -120,7 +122,7 @@ export class GitWorkbenchService {
 
   async stageFiles(cwd: string, paths: string[]): Promise<GitResult<GitWorkbenchSnapshot>> {
     return this.mutate(cwd, async (git) => {
-      await git.add(paths);
+      await stagePaths(git, paths);
     });
   }
 
@@ -143,6 +145,41 @@ export class GitWorkbenchService {
       "commit",
       message,
     );
+  }
+
+  async generateCommitMessage(cwd: string, language?: string): Promise<GitResult<GitCommitMessageSuggestion>> {
+    try {
+      const git = this.git(cwd);
+      const status = await git.status();
+      const stagedFiles = this.mapChangedFiles(status).filter((file) => file.staged);
+      if (stagedFiles.length === 0) {
+        return {
+          success: false,
+          error: {
+            code: "nothing_to_commit",
+            message: "请先暂存要提交的文件。",
+          },
+        };
+      }
+
+      const [nameStatus, stat, diff] = await Promise.all([
+        git.raw(["diff", "--cached", "--name-status", "--find-renames"]),
+        git.raw(["diff", "--cached", "--stat", "--find-renames"]),
+        git.diff(["--cached", "--find-renames", "--no-ext-diff"]),
+      ]);
+
+      const suggestion = await generateCommitMessageSuggestion({
+        files: stagedFiles,
+        nameStatus,
+        stat,
+        diff,
+        language,
+      });
+
+      return { success: true, data: suggestion };
+    } catch (error) {
+      return { success: false, error: normalizeGitError(error) };
+    }
   }
 
   async push(cwd: string): Promise<GitResult<GitWorkbenchSnapshot>> {
@@ -344,6 +381,25 @@ function mapStatusCode(code: string): GitChangedFile["status"] {
   if (code === "R") return "renamed";
   if (code === "C") return "copied";
   return "modified";
+}
+
+async function stagePaths(git: SimpleGit, paths: string[]): Promise<void> {
+  const uniquePaths = Array.from(new Set(paths.map((path) => path.trim()).filter(Boolean)));
+  const failures: unknown[] = [];
+  let stagedCount = 0;
+
+  for (const path of uniquePaths) {
+    try {
+      await git.raw(["add", "--", path]);
+      stagedCount += 1;
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+
+  if (stagedCount === 0 && failures.length > 0) {
+    throw failures[0];
+  }
 }
 
 function parseNameStatusFiles(raw: string): GitChangedFile[] {

@@ -46,14 +46,14 @@ export function GitBranchStashPanel({
           onClick={() => setMode("branches")}
           className={`h-10 border-b-2 px-1 text-xs font-semibold ${mode === "branches" ? "border-blue-600 text-slate-950" : "border-transparent text-slate-500"}`}
         >
-          分支 ({localBranches.length})
+          分支管理 ({localBranches.length})
         </button>
         <button
           type="button"
           onClick={() => setMode("stashes")}
           className={`h-10 border-b-2 px-1 text-xs font-semibold ${mode === "stashes" ? "border-blue-600 text-slate-950" : "border-transparent text-slate-500"}`}
         >
-          暂存 ({stashes.length})
+          Stash ({stashes.length})
         </button>
       </div>
 

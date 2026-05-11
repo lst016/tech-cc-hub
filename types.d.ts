@@ -157,6 +157,7 @@ type UiGitResult<T> = import("./src/ui/types").UiGitResult<T>;
 type UiGitWorkbenchSnapshot = import("./src/ui/types").UiGitWorkbenchSnapshot;
 type UiGitDiffResult = import("./src/ui/types").UiGitDiffResult;
 type UiGitCommitDetail = import("./src/ui/types").UiGitCommitDetail;
+type UiGitCommitMessageSuggestion = import("./src/ui/types").UiGitCommitMessageSuggestion;
 
 type EventPayloadMapping = {
     statistics: Statistics;
@@ -201,6 +202,7 @@ type EventPayloadMapping = {
         "git:stage": UiGitResult<UiGitWorkbenchSnapshot>;
         "git:unstage": UiGitResult<UiGitWorkbenchSnapshot>;
         "git:commit": UiGitResult<UiGitWorkbenchSnapshot>;
+        "git:generateCommitMessage": UiGitResult<UiGitCommitMessageSuggestion>;
         "git:pull": UiGitResult<UiGitWorkbenchSnapshot>;
         "git:push": UiGitResult<UiGitWorkbenchSnapshot>;
         "git:createBranch": UiGitResult<UiGitWorkbenchSnapshot>;
@@ -245,6 +247,7 @@ interface Window {
         gitStageFiles: (payload: { cwd: string; paths: string[] }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
         gitUnstageFiles: (payload: { cwd: string; paths: string[] }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
         gitCommit: (payload: { cwd: string; message: string; body?: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
+        generateGitCommitMessage: (payload: { cwd: string; language?: string }) => Promise<UiGitResult<UiGitCommitMessageSuggestion>>;
         gitPull: (payload: { cwd: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
         gitPush: (payload: { cwd: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
         gitCreateBranch: (payload: { cwd: string; name: string; checkout?: boolean }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;

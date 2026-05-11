@@ -202,14 +202,24 @@ function mergePromptWithBrowserAnnotations(prompt: string, annotations: BrowserW
   return [prompt.trim(), annotationPrompt].filter(Boolean).join("\n\n");
 }
 
-function getBrowserAnnotationLabel(annotation: BrowserWorkbenchAnnotation, index: number) {
-  const comment = annotation.comment?.trim();
-  if (comment) return comment;
+function getBrowserAnnotationTargetLabel(annotation: BrowserWorkbenchAnnotation) {
   const target = annotation.domHint?.target;
   if (target?.type === "text" && target.value.trim()) return target.value.trim();
-  if (target?.type === "image") return target.alt?.trim() || "图片";
+  if (target?.type === "image") return target.alt?.trim() || target.url?.trim() || "图片";
+  const text = annotation.domHint?.text?.trim();
+  if (text) return text;
+  const ariaLabel = annotation.domHint?.ariaLabel?.trim();
+  if (ariaLabel) return ariaLabel;
   const nearbyText = annotation.domHint?.context?.nearbyText?.trim();
-  if (nearbyText) return nearbyText.slice(0, 60);
+  if (nearbyText) return nearbyText.slice(0, 90);
+  return annotation.domHint?.selector || annotation.domHint?.path || "";
+}
+
+function getBrowserAnnotationLabel(annotation: BrowserWorkbenchAnnotation, index: number) {
+  const targetLabel = getBrowserAnnotationTargetLabel(annotation);
+  if (targetLabel) return targetLabel.slice(0, 80);
+  const comment = annotation.comment?.trim();
+  if (comment) return comment;
   const pageTitle = annotation.title?.trim();
   if (pageTitle) return pageTitle;
   if (annotation.url) {
@@ -220,6 +230,19 @@ function getBrowserAnnotationLabel(annotation: BrowserWorkbenchAnnotation, index
     }
   }
   return annotation.domHint?.text?.trim() || annotation.domHint?.selector || `批注 ${index + 1}`;
+}
+
+function getBrowserAnnotationHoverTitle(annotation: BrowserWorkbenchAnnotation) {
+  const targetLabel = getBrowserAnnotationTargetLabel(annotation);
+  return [
+    targetLabel ? `元素内容：${targetLabel}` : null,
+    annotation.comment?.trim() ? `说明：${annotation.comment.trim()}` : null,
+    annotation.expectation?.trim() ? `期望：${annotation.expectation.trim()}` : null,
+    annotation.title || annotation.url ? `页面：${annotation.title || annotation.url}` : null,
+    annotation.domHint?.selector ? `Selector：${annotation.domHint.selector}` : null,
+    annotation.domHint?.xpath ? `XPath：${annotation.domHint.xpath}` : null,
+    annotation.url,
+  ].filter(Boolean).join("\n");
 }
 
 type InlineOption = {
@@ -2008,7 +2031,7 @@ export function PromptInput({
                   role="button"
                   tabIndex={0}
                   className="inline-flex h-10 max-w-[280px] cursor-pointer items-center gap-2 rounded-full border border-black/8 bg-white px-3 text-sm font-semibold text-ink-800 shadow-[0_10px_24px_rgba(15,18,24,0.08)] transition hover:border-accent/20"
-                  title={`浏览器批注会以结构化 JSON 随消息一起发送\n${annotation.url}`}
+                  title={getBrowserAnnotationHoverTitle(annotation)}
                   onClick={() => {
                     if (annotation.url) {
                       window.dispatchEvent(new CustomEvent(OPEN_BROWSER_WORKBENCH_URL_EVENT, { detail: { url: annotation.url } }));

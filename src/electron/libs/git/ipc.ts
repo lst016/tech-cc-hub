@@ -9,6 +9,7 @@ export type GitWorkbenchIpcChannel =
   | "git:stage"
   | "git:unstage"
   | "git:commit"
+  | "git:generateCommitMessage"
   | "git:pull"
   | "git:push"
   | "git:createBranch"
@@ -24,6 +25,7 @@ const CHANNELS: GitWorkbenchIpcChannel[] = [
   "git:stage",
   "git:unstage",
   "git:commit",
+  "git:generateCommitMessage",
   "git:pull",
   "git:push",
   "git:createBranch",
@@ -78,6 +80,11 @@ export async function handleGitWorkbenchInvoke(channel: string, ...args: unknown
           message: readRequiredString(payload, "message"),
           body: readOptionalString(payload, "body"),
         });
+      case "git:generateCommitMessage":
+        return service.generateCommitMessage(
+          readRequiredString(payload, "cwd"),
+          readOptionalString(payload, "language"),
+        );
       case "git:pull":
         return service.pull(readRequiredString(payload, "cwd"));
       case "git:push":

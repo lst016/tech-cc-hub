@@ -1,4 +1,4 @@
-import { AlertTriangle, Archive, GitBranch, GitCommitHorizontal, History, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Archive, GitBranch, History, Loader2, RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { UiGitOperationLogEntry, UiGitWorkbenchSnapshot } from "../../types";
 import { useGitWorkbench } from "../../hooks/useGitWorkbench";
@@ -12,22 +12,22 @@ import { GitHistoryPanel } from "./GitHistoryPanel";
 import { GitStatusHeader } from "./GitStatusHeader";
 import { formatAheadBehind } from "./git-ui-utils";
 
-type GitWorkbenchTab = "changes" | "log" | "branches" | "stashes" | "commit";
+type GitWorkbenchTab = "changes" | "log" | "branches" | "stashes";
 
 const TABS: Array<{ id: GitWorkbenchTab; label: string; icon: typeof History }> = [
   { id: "changes", label: "改动", icon: RefreshCw },
   { id: "log", label: "日志", icon: History },
-  { id: "branches", label: "分支", icon: GitBranch },
-  { id: "stashes", label: "暂存", icon: Archive },
-  { id: "commit", label: "提交", icon: GitCommitHorizontal },
+  { id: "branches", label: "分支管理", icon: GitBranch },
+  { id: "stashes", label: "Stash", icon: Archive },
 ];
 
 export function GitWorkbenchPanel({ cwd }: { cwd?: string }) {
   const workbench = useGitWorkbench(cwd);
   const [confirm, setConfirm] = useState<GitConfirmDialogState | null>(null);
-  const [activeTab, setActiveTab] = useState<GitWorkbenchTab>("log");
+  const [activeTab, setActiveTab] = useState<GitWorkbenchTab>("changes");
   const [branchFilter, setBranchFilter] = useState("all");
   const snapshot = workbench.snapshot;
+  const logMode = activeTab === "log";
 
   const tabCounts = useMemo(() => {
     const files = snapshot?.files ?? [];
@@ -36,7 +36,6 @@ export function GitWorkbenchPanel({ cwd }: { cwd?: string }) {
       log: snapshot?.history.length ?? 0,
       branches: snapshot?.branches.filter((branch) => !branch.remote).length ?? 0,
       stashes: snapshot?.stashes.length ?? 0,
-      commit: snapshot?.status.stagedCount ?? 0,
     } satisfies Record<GitWorkbenchTab, number>;
   }, [snapshot]);
 
@@ -52,7 +51,7 @@ export function GitWorkbenchPanel({ cwd }: { cwd?: string }) {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-white">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-white">
       <GitStatusHeader
         snapshot={snapshot}
         loading={workbench.loading}
@@ -126,22 +125,41 @@ export function GitWorkbenchPanel({ cwd }: { cwd?: string }) {
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-auto bg-slate-50">
-            <div className="flex min-h-full min-w-[1060px] flex-col bg-white">
-              <div className="grid min-h-0 flex-1 grid-cols-[280px_minmax(420px,1fr)_380px]">
-                <GitChangesList
-                  files={snapshot.files}
-                  selected={workbench.selectedFile}
-                  actionBusy={workbench.actionBusy}
-                  onSelect={(file) => {
-                    setActiveTab("changes");
-                    workbench.selectFile(file);
-                  }}
-                  onStage={(paths) => { void workbench.stageFiles(paths); }}
-                  onUnstage={(paths) => { void workbench.unstageFiles(paths); }}
-                />
+          <div className="min-h-0 flex-1 overflow-hidden bg-slate-50">
+            <div className={`flex h-full min-h-0 flex-col bg-white ${logMode ? "min-w-[760px]" : "min-w-[960px]"}`}>
+              <div className={`grid min-h-0 flex-1 overflow-hidden ${logMode ? "grid-cols-[minmax(520px,1fr)_320px]" : "grid-cols-[300px_minmax(360px,1fr)_300px]"}`}>
+                {!logMode && (
+                  <aside className="flex min-h-0 flex-col overflow-hidden border-r border-slate-200 bg-white">
+                  <GitChangesList
+                    files={snapshot.files}
+                    selected={workbench.selectedFile}
+                    actionBusy={workbench.actionBusy}
+                    onSelect={(file) => {
+                      setActiveTab("changes");
+                      workbench.selectFile(file);
+                    }}
+                    onStage={(paths) => { void workbench.stageFiles(paths); }}
+                    onUnstage={(paths) => { void workbench.unstageFiles(paths); }}
+                  />
+                  {activeTab === "changes" && (
+                    <GitCommitBox
+                      compact
+                      snapshot={snapshot}
+                      actionBusy={workbench.actionBusy}
+                      onCommit={(message, body) => { void workbench.commit(message, body); }}
+                      onGenerateMessage={workbench.generateCommitMessage}
+                      onPush={() => confirmAndClose({
+                        title: "Push 当前分支",
+                        description: "会把当前分支推送到 upstream。第一版不会强推，也不会改写历史。",
+                        confirmLabel: "Push",
+                        onConfirm: workbench.push,
+                      })}
+                    />
+                  )}
+                  </aside>
+                )}
 
-                <main className="min-h-0 min-w-0 border-r border-slate-200 bg-white">
+                <main className="flex min-h-0 min-w-0 flex-col overflow-hidden border-r border-slate-200 bg-white">
                   {activeTab === "log" && (
                     <GitHistoryPanel
                       history={snapshot.history}
@@ -220,9 +238,6 @@ export function GitWorkbenchPanel({ cwd }: { cwd?: string }) {
                       })}
                     />
                   )}
-                  {activeTab === "commit" && (
-                    <CommitPrimer snapshot={snapshot} />
-                  )}
                 </main>
 
                 {activeTab === "log" ? (
@@ -235,17 +250,6 @@ export function GitWorkbenchPanel({ cwd }: { cwd?: string }) {
                 )}
               </div>
 
-              <GitCommitBox
-                snapshot={snapshot}
-                actionBusy={workbench.actionBusy}
-                onCommit={(message, body) => { void workbench.commit(message, body); }}
-                onPush={() => confirmAndClose({
-                  title: "Push 当前分支",
-                  description: "会把当前分支推送到 upstream。第一版不会强推，也不会改写历史。",
-                  confirmLabel: "Push",
-                  onConfirm: workbench.push,
-                })}
-              />
             </div>
           </div>
         </>
@@ -288,25 +292,6 @@ function GitEmptyState({
             {actionLabel}
           </button>
         )}
-      </div>
-    </div>
-  );
-}
-
-function CommitPrimer({ snapshot }: { snapshot: UiGitWorkbenchSnapshot }) {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col bg-white">
-      <div className="border-b border-slate-200 px-4 py-3">
-        <div className="text-sm font-semibold text-slate-950">提交准备</div>
-        <p className="mt-1 text-xs text-slate-500">左侧选择文件暂存，底部填写提交信息。</p>
-      </div>
-      <div className="grid grid-cols-3 gap-2 p-3 text-xs">
-        <Metric label="未暂存" value={snapshot.status.unstagedCount} />
-        <Metric label="已暂存" value={snapshot.status.stagedCount} />
-        <Metric label="未跟踪" value={snapshot.status.untrackedCount} />
-      </div>
-      <div className="mx-3 rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 py-8 text-center text-xs text-slate-500">
-        提交区已固定在底部，避免滚动时找不到 Commit 按钮。
       </div>
     </div>
   );

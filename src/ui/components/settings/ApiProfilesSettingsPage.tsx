@@ -238,6 +238,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
   const [testingProfileId, setTestingProfileId] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<ModelImportStatus>(null);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const [expandedModelLists, setExpandedModelLists] = useState<Record<string, boolean>>({});
 
   const handleImportModels = async (profile: ApiConfigProfile) => {
     setImportStatus(null);
@@ -446,6 +447,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
       <div className="grid gap-4">
         {profiles.map((profile) => {
           const providerMode = getProviderMode(profile);
+          const modelListExpanded = Boolean(expandedModelLists[profile.id]);
           return (
           <div key={profile.id} className="rounded-[28px] border border-ink-900/10 bg-white/86 p-5 shadow-[0_18px_44px_rgba(24,32,46,0.06)]">
             <div className="flex items-center justify-between gap-3">
@@ -557,13 +559,26 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                     <button
                       type="button"
                       className="rounded-xl border border-ink-900/10 bg-white px-3 py-1.5 text-xs text-ink-700 hover:bg-surface"
-                      onClick={() => onChange((current) => current.map((item) => (
-                        item.id === profile.id
-                          ? { ...item, models: [...(item.models ?? []), createModel()] }
-                          : item
-                      )))}
+                      onClick={() => {
+                        setExpandedModelLists((current) => ({ ...current, [profile.id]: true }));
+                        onChange((current) => current.map((item) => (
+                          item.id === profile.id
+                            ? { ...item, models: [...(item.models ?? []), createModel()] }
+                            : item
+                        )));
+                      }}
                     >
                       + 添加模型
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-ink-900/10 bg-white text-muted transition-colors hover:bg-surface hover:text-ink-800"
+                      aria-label={modelListExpanded ? "收起模型列表" : "展开模型列表"}
+                      title={modelListExpanded ? "收起模型列表" : "展开模型列表"}
+                      aria-expanded={modelListExpanded}
+                      onClick={() => setExpandedModelLists((current) => ({ ...current, [profile.id]: !modelListExpanded }))}
+                    >
+                      <ChevronDown className={`h-4 w-4 transition-transform ${modelListExpanded ? "rotate-180" : ""}`} />
                     </button>
                   </div>
                 </div>
@@ -576,110 +591,112 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                     {importStatus.message}
                   </div>
                 )}
-                <div className="grid gap-3">
-                  {(profile.models ?? []).map((modelItem, modelIndex) => (
-                    <div key={`${profile.id}-${modelIndex}`} className="rounded-2xl border border-ink-900/10 bg-surface p-3">
-                      <div className="flex items-start gap-2">
-                        <div className="grid flex-1 gap-3 lg:grid-cols-3">
-                          <label className="grid gap-1.5">
-                            <span className="text-[11px] font-medium text-muted">模型名</span>
-                            <input
-                              type="text"
-                              className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
-                              placeholder="claude-sonnet-4-5"
-                              value={modelItem.name}
-                              onChange={(event) => onChange((current) => current.map((item) => {
+                {modelListExpanded && (
+                  <div className="grid gap-3">
+                    {(profile.models ?? []).map((modelItem, modelIndex) => (
+                      <div key={`${profile.id}-${modelIndex}`} className="rounded-2xl border border-ink-900/10 bg-surface p-3">
+                        <div className="flex items-start gap-2">
+                          <div className="grid flex-1 gap-3 lg:grid-cols-3">
+                            <label className="grid gap-1.5">
+                              <span className="text-[11px] font-medium text-muted">模型名</span>
+                              <input
+                                type="text"
+                                className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
+                                placeholder="claude-sonnet-4-5"
+                                value={modelItem.name}
+                                onChange={(event) => onChange((current) => current.map((item) => {
+                                  if (item.id !== profile.id) return item;
+                                  const models = [...(item.models ?? [])];
+                                  const previousName = models[modelIndex]?.name ?? "";
+                                  models[modelIndex] = { ...models[modelIndex], name: event.target.value };
+                                  return {
+                                    ...item,
+                                    models,
+                                    model: item.model === previousName ? event.target.value : item.model,
+                                    expertModel: item.expertModel === previousName ? event.target.value : item.expertModel,
+                                    smallModel: item.smallModel === previousName ? event.target.value : item.smallModel,
+                                    imageModel: item.imageModel === previousName ? event.target.value : item.imageModel,
+                                    analysisModel: item.analysisModel === previousName ? event.target.value : item.analysisModel,
+                                  };
+                                }))}
+                              />
+                            </label>
+
+                            <label className="grid gap-1.5">
+                              <span className="text-[11px] font-medium text-muted">上下文窗口</span>
+                              <input
+                                type="number"
+                                min={1}
+                                step={1}
+                                className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
+                                placeholder="例如 200000"
+                                value={modelItem.contextWindow ?? ""}
+                                onChange={(event) => onChange((current) => current.map((item) => {
+                                  if (item.id !== profile.id) return item;
+                                  const models = [...(item.models ?? [])];
+                                  models[modelIndex] = {
+                                    ...models[modelIndex],
+                                    contextWindow: event.target.value ? Number(event.target.value) : undefined,
+                                  };
+                                  return { ...item, models };
+                                }))}
+                              />
+                            </label>
+
+                            <label className="grid gap-1.5">
+                              <span className="text-[11px] font-medium text-muted">压缩阈值 (%)</span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={100}
+                                step={1}
+                                className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
+                                placeholder="70"
+                                value={modelItem.compressionThresholdPercent ?? ""}
+                                onChange={(event) => onChange((current) => current.map((item) => {
+                                  if (item.id !== profile.id) return item;
+                                  const models = [...(item.models ?? [])];
+                                  models[modelIndex] = {
+                                    ...models[modelIndex],
+                                    compressionThresholdPercent: event.target.value ? Number(event.target.value) : undefined,
+                                  };
+                                  return { ...item, models };
+                                }))}
+                              />
+                            </label>
+                          </div>
+
+                          {(profile.models ?? []).length > 1 && (
+                            <button
+                              type="button"
+                              className="rounded-full border border-ink-900/10 p-2 text-muted hover:bg-white hover:text-ink-700"
+                              onClick={() => onChange((current) => current.map((item) => {
                                 if (item.id !== profile.id) return item;
-                                const models = [...(item.models ?? [])];
-                                const previousName = models[modelIndex]?.name ?? "";
-                                models[modelIndex] = { ...models[modelIndex], name: event.target.value };
+                                const models = (item.models ?? []).filter((_, index) => index !== modelIndex);
+                                const deletedName = modelItem.name;
+                                const fallbackModel = models[0]?.name ?? "";
                                 return {
                                   ...item,
                                   models,
-                                  model: item.model === previousName ? event.target.value : item.model,
-                                  expertModel: item.expertModel === previousName ? event.target.value : item.expertModel,
-                                  smallModel: item.smallModel === previousName ? event.target.value : item.smallModel,
-                                  imageModel: item.imageModel === previousName ? event.target.value : item.imageModel,
-                                  analysisModel: item.analysisModel === previousName ? event.target.value : item.analysisModel,
+                                  model: item.model === deletedName ? fallbackModel : item.model,
+                                  expertModel: item.expertModel === deletedName ? fallbackModel : item.expertModel,
+                                  smallModel: item.smallModel === deletedName ? fallbackModel : item.smallModel,
+                                  imageModel: item.imageModel === deletedName ? undefined : item.imageModel,
+                                  analysisModel: item.analysisModel === deletedName ? fallbackModel : item.analysisModel,
                                 };
                               }))}
-                            />
-                          </label>
-
-                          <label className="grid gap-1.5">
-                            <span className="text-[11px] font-medium text-muted">上下文窗口</span>
-                            <input
-                              type="number"
-                              min={1}
-                              step={1}
-                              className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
-                              placeholder="例如 200000"
-                              value={modelItem.contextWindow ?? ""}
-                              onChange={(event) => onChange((current) => current.map((item) => {
-                                if (item.id !== profile.id) return item;
-                                const models = [...(item.models ?? [])];
-                                models[modelIndex] = {
-                                  ...models[modelIndex],
-                                  contextWindow: event.target.value ? Number(event.target.value) : undefined,
-                                };
-                                return { ...item, models };
-                              }))}
-                            />
-                          </label>
-
-                          <label className="grid gap-1.5">
-                            <span className="text-[11px] font-medium text-muted">压缩阈值 (%)</span>
-                            <input
-                              type="number"
-                              min={1}
-                              max={100}
-                              step={1}
-                              className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
-                              placeholder="70"
-                              value={modelItem.compressionThresholdPercent ?? ""}
-                              onChange={(event) => onChange((current) => current.map((item) => {
-                                if (item.id !== profile.id) return item;
-                                const models = [...(item.models ?? [])];
-                                models[modelIndex] = {
-                                  ...models[modelIndex],
-                                  compressionThresholdPercent: event.target.value ? Number(event.target.value) : undefined,
-                                };
-                                return { ...item, models };
-                              }))}
-                            />
-                          </label>
+                              aria-label={`删除模型 ${modelItem.name || modelIndex + 1}`}
+                            >
+                              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                <path d="M6 6l12 12M18 6 6 18" />
+                              </svg>
+                            </button>
+                          )}
                         </div>
-
-                        {(profile.models ?? []).length > 1 && (
-                          <button
-                            type="button"
-                            className="rounded-full border border-ink-900/10 p-2 text-muted hover:bg-white hover:text-ink-700"
-                            onClick={() => onChange((current) => current.map((item) => {
-                              if (item.id !== profile.id) return item;
-                              const models = (item.models ?? []).filter((_, index) => index !== modelIndex);
-                              const deletedName = modelItem.name;
-                              const fallbackModel = models[0]?.name ?? "";
-                              return {
-                                ...item,
-                                models,
-                                model: item.model === deletedName ? fallbackModel : item.model,
-                                expertModel: item.expertModel === deletedName ? fallbackModel : item.expertModel,
-                                smallModel: item.smallModel === deletedName ? fallbackModel : item.smallModel,
-                                imageModel: item.imageModel === deletedName ? undefined : item.imageModel,
-                                analysisModel: item.analysisModel === deletedName ? fallbackModel : item.analysisModel,
-                              };
-                            }))}
-                            aria-label={`删除模型 ${modelItem.name || modelIndex + 1}`}
-                          >
-                            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-                              <path d="M6 6l12 12M18 6 6 18" />
-                            </svg>
-                          </button>
-                        )}
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <label className="grid gap-1.5">

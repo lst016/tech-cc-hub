@@ -162,6 +162,81 @@ code, pre, textarea.mono, input.mono {
   backdrop-filter: blur(18px);
 }
 
+.git-diff-viewer {
+  --git-diff-line-number-width: 54px;
+  background: #fbfcfe;
+  color: #0f172a;
+  font-family: "SF Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.git-diff-viewer .d2h-file-wrapper {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.git-diff-viewer .d2h-diff-table {
+  table-layout: auto;
+  width: max-content;
+  min-width: 100%;
+  font-size: 11px;
+  line-height: 20px;
+}
+
+.git-diff-viewer .d2h-code-linenumber {
+  position: static;
+  display: table-cell;
+  width: var(--git-diff-line-number-width);
+  min-width: var(--git-diff-line-number-width);
+  max-width: var(--git-diff-line-number-width);
+  padding: 0 6px;
+  border-width: 0 1px 0 0;
+  text-align: right;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.git-diff-viewer .line-num1,
+.git-diff-viewer .line-num2 {
+  float: none;
+  display: inline-block;
+  box-sizing: border-box;
+  width: 22px;
+  padding: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: clip;
+  vertical-align: top;
+}
+
+.git-diff-viewer .line-num1:empty,
+.git-diff-viewer .line-num2:empty {
+  width: 22px;
+}
+
+.git-diff-viewer .d2h-code-line {
+  display: block;
+  width: auto;
+  min-width: 420px;
+  padding: 0 12px;
+}
+
+.git-diff-viewer .d2h-code-line-ctn {
+  display: inline;
+  white-space: pre;
+}
+
+.git-diff-viewer .d2h-code-line-prefix {
+  display: inline-block;
+  width: 14px;
+  margin-right: 6px;
+  text-align: center;
+}
+
+.git-diff-viewer .d2h-info .d2h-code-line {
+  color: #94a3b8;
+}
+
 /* Shimmer animation for partial message loading */
 @keyframes shimmer {
   0% { transform: translateX(-120%); }

@@ -127,3 +127,15 @@ export type GitDiffResult = {
   staged: boolean;
   diff: string;
 };
+
+export type GitCommitMessageSuggestion = {
+  message: string;
+  body?: string;
+  source: "ai" | "fallback";
+  model?: string;
+};
+
+export type GitCommitMessageSuggestionRequest = {
+  cwd: string;
+  language?: string;
+};

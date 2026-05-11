@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { UiGitChangedFile, UiGitCommitDetail, UiGitDiffResult, UiGitResult, UiGitWorkbenchSnapshot } from "../types";
+import type { UiGitChangedFile, UiGitCommitDetail, UiGitCommitMessageSuggestion, UiGitDiffResult, UiGitResult, UiGitWorkbenchSnapshot } from "../types";
 
 export type SelectedGitFile = {
   path: string;
@@ -194,6 +194,30 @@ export function useGitWorkbench(cwd?: string) {
     return runMutation("commit", () => window.electron.gitCommit({ cwd, message, body }));
   }, [cwd, runMutation]);
 
+  const generateCommitMessage = useCallback(async (): Promise<UiGitCommitMessageSuggestion | null> => {
+    const workspace = cwd?.trim();
+    if (!workspace) {
+      setError("当前会话没有工作区。");
+      return null;
+    }
+
+    setActionBusy("generateCommitMessage");
+    try {
+      const result = await window.electron.generateGitCommitMessage({ cwd: workspace, language: "zh-CN" });
+      if (result.success) {
+        setError(null);
+        return result.data;
+      }
+      setError(result.error.message);
+      return null;
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+      return null;
+    } finally {
+      setActionBusy(null);
+    }
+  }, [cwd]);
+
   const pull = useCallback(() => {
     if (!cwd) return Promise.resolve();
     return runMutation("pull", () => window.electron.gitPull({ cwd }));
@@ -255,6 +279,7 @@ export function useGitWorkbench(cwd?: string) {
     stageFiles,
     unstageFiles,
     commit,
+    generateCommitMessage,
     pull,
     push,
     createBranch,

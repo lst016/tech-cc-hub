@@ -1,4 +1,4 @@
-import type { ClientEvent, PromptAttachment, ServerEvent, StreamMessage, UiGitCommitDetail, UiGitDiffResult, UiGitResult, UiGitWorkbenchSnapshot } from "./types";
+import type { ClientEvent, PromptAttachment, ServerEvent, StreamMessage, UiGitCommitDetail, UiGitCommitMessageSuggestion, UiGitDiffResult, UiGitResult, UiGitWorkbenchSnapshot } from "./types";
 import type { AppUpdateActionResult, AppUpdateStatus } from "./types";
 
 const browserPreviewSessionId = "browser-preview-session";
@@ -311,6 +311,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     gitStageFiles: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
     gitUnstageFiles: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
     gitCommit: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
+    generateGitCommitMessage: async () => createPreviewGitResult<UiGitCommitMessageSuggestion>(),
     gitPull: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
     gitPush: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
     gitCreateBranch: async () => createPreviewGitResult<UiGitWorkbenchSnapshot>(),
@@ -472,6 +473,7 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       gitStageFiles: async (payload) => await invokeBridge("invoke", "git:stage", payload),
       gitUnstageFiles: async (payload) => await invokeBridge("invoke", "git:unstage", payload),
       gitCommit: async (payload) => await invokeBridge("invoke", "git:commit", payload),
+      generateGitCommitMessage: async (payload) => await invokeBridge("invoke", "git:generateCommitMessage", payload),
       gitPull: async (payload) => await invokeBridge("invoke", "git:pull", payload),
       gitPush: async (payload) => await invokeBridge("invoke", "git:push", payload),
       gitCreateBranch: async (payload) => await invokeBridge("invoke", "git:createBranch", payload),

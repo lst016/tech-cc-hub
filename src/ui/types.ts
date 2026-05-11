@@ -7,6 +7,7 @@ import type {
   GitChangedFile,
   GitCommitDetail,
   GitCommitDetailRequest,
+  GitCommitMessageSuggestion,
   GitCommitNode,
   GitDiffRequest,
   GitDiffResult,
@@ -194,6 +195,7 @@ export type UiGitStashEntry = GitStashEntry;
 export type UiGitCommitNode = GitCommitNode;
 export type UiGitCommitDetail = GitCommitDetail;
 export type UiGitCommitDetailRequest = GitCommitDetailRequest;
+export type UiGitCommitMessageSuggestion = GitCommitMessageSuggestion;
 export type UiGitOperationLogEntry = GitOperationLogEntry;
 export type UiGitWorkbenchSnapshot = GitWorkbenchSnapshot;
 export type UiGitDiffRequest = GitDiffRequest;

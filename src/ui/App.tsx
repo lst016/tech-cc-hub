@@ -969,13 +969,14 @@ function App() {
     setGlobalError,
   ]);
 
-  const sidebarOffset = showSidebar ? sidebarWidth : 0;
   const gitWorkspaceActive =
     !showSessionAnalysis &&
     !isUtilityWorkspace &&
     showActivityRail &&
     workspaceView !== "browser" &&
     activityRailTab === "git";
+  const workspaceSidebarVisible = showSidebar;
+  const sidebarOffset = workspaceSidebarVisible ? sidebarWidth : 0;
   const effectiveActivityRailWidth = gitWorkspaceActive
     ? Math.max(MIN_ACTIVITY_RAIL_WIDTH, viewportWidth - sidebarOffset)
     : activityRailWidth;
@@ -1206,7 +1207,7 @@ function App() {
       </header>
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        {showSidebar && (
+        {workspaceSidebarVisible && (
           <Sidebar
             connected={connected}
             onNewSession={handleNewSession}
@@ -1221,7 +1222,7 @@ function App() {
             width={sidebarWidth}
           />
         )}
-        {showSidebar && (
+        {workspaceSidebarVisible && (
           <div
             className={`fixed bottom-0 ${sidebarHeaderOffsetClass} z-30 w-3 -translate-x-1/2 cursor-col-resize`}
             style={{ left: sidebarWidth }}
@@ -1263,6 +1264,8 @@ function App() {
                 onSendWorkflowOptimizationPrompt={sendWorkflowOptimizationPrompt}
               />
             </div>
+          ) : gitWorkspaceActive ? (
+            <div className="min-h-0 flex-1" aria-hidden="true" />
           ) : (
             <>
               <div className="flex min-h-0 flex-1 flex-col">
@@ -1390,7 +1393,7 @@ function App() {
             </>
           )}
 
-          {!showSessionAnalysis && !isUtilityWorkspace && (
+          {!showSessionAnalysis && !isUtilityWorkspace && !gitWorkspaceActive && (
             <PromptInput
               sendEvent={sendEvent}
               onSendMessage={handleSendMessage}
@@ -1402,7 +1405,7 @@ function App() {
             />
           )}
 
-          {hasNewMessages && !shouldAutoScroll && (
+          {hasNewMessages && !shouldAutoScroll && !gitWorkspaceActive && (
             <div
               style={{
                 left: `${sidebarOffset}px`,
