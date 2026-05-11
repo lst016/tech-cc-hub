@@ -541,6 +541,28 @@ const openBrowserAnnotationSource = (candidate?: BrowserAnnotationSourceCandidat
   return true;
 };
 
+const annotationValueClassName =
+  "min-w-0 overflow-hidden [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] [overflow-wrap:anywhere]";
+
+const BrowserAnnotationMetaRow = ({
+  label,
+  value,
+  children,
+}: {
+  label: string;
+  value?: string;
+  children?: React.ReactNode;
+}) => (
+  <div className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] gap-1">
+    <span className="font-semibold text-ink-700">{label}</span>
+    {children ?? (
+      <span className={annotationValueClassName} title={value}>
+        {value}
+      </span>
+    )}
+  </div>
+);
+
 const BrowserAnnotationChip = ({ annotation }: { annotation: BrowserAnnotationSummary }) => {
   const source = annotation.sourceCandidates?.[0];
   const sourceTitle = getBrowserAnnotationSourceTitle(source);
@@ -575,8 +597,8 @@ const BrowserAnnotationChip = ({ annotation }: { annotation: BrowserAnnotationSu
   );
 
   return (
-    <div className="max-w-full rounded-2xl border border-accent/15 bg-white/94 px-3 py-3 text-left text-xs text-ink-800 shadow-[0_10px_24px_rgba(210,106,61,0.08)]" title={title}>
-      <div className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+    <div className="w-full max-w-[min(680px,100%)] min-w-0 overflow-hidden rounded-2xl border border-accent/15 bg-white/94 px-3 py-3 text-left text-xs text-ink-800 shadow-[0_10px_24px_rgba(210,106,61,0.08)]" title={title}>
+      <div className="flex min-w-0 items-center gap-2 overflow-hidden text-sm font-semibold">
         <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent text-[11px] font-bold text-white">
           {annotation.index}
         </span>
@@ -592,66 +614,49 @@ const BrowserAnnotationChip = ({ annotation }: { annotation: BrowserAnnotationSu
                 openBrowserAnnotationPage(annotation.pageUrl);
               }
             }}
+            title={headerLabel}
           >
             {headerLabel}
           </button>
         ) : (
-          <span className="min-w-0 truncate">{headerLabel}</span>
+          <span className="min-w-0 truncate" title={headerLabel}>{headerLabel}</span>
         )}
       </div>
       <div className="mt-2 grid gap-1.5 text-[11px] leading-5 text-muted">
         {annotation.target && (
-          <div className="min-w-0">
-            <span className="font-semibold text-ink-700">内容 </span>
-            <span className="break-words">{annotation.target}</span>
-          </div>
+          <BrowserAnnotationMetaRow label="内容" value={annotation.target} />
         )}
         {annotation.comment && (
-          <div className="min-w-0">
-            <span className="font-semibold text-ink-700">说明 </span>
-            <span className="break-words">{annotation.comment}</span>
-          </div>
+          <BrowserAnnotationMetaRow label="说明" value={annotation.comment} />
         )}
         {annotation.expectation && (
-          <div className="min-w-0">
-            <span className="font-semibold text-ink-700">期望 </span>
-            <span className="break-words">{annotation.expectation}</span>
-          </div>
+          <BrowserAnnotationMetaRow label="期望" value={annotation.expectation} />
         )}
         {locatorPreview && (
-          <code className="block max-h-20 overflow-hidden whitespace-pre-wrap break-words rounded-xl bg-[#fff7ed] px-2.5 py-2 text-[10px] leading-4 text-[#7c2d12]">
+          <code className="block max-h-20 max-w-full overflow-auto whitespace-pre-wrap rounded-xl bg-[#fff7ed] px-2.5 py-2 text-[10px] leading-4 text-[#7c2d12] [overflow-wrap:anywhere]" title={locatorPreview}>
             {compactPreview(locatorPreview, 180)}
           </code>
         )}
         {sourceTitle && source && (
-          <div className="min-w-0">
-            <span className="font-semibold text-ink-700">来源 </span>
-            <span className="break-words">{formatBrowserAnnotationSource(source)}</span>
-          </div>
+          <BrowserAnnotationMetaRow label="来源" value={formatBrowserAnnotationSource(source)} />
         )}
         {pageText && (
-          <div className="min-w-0">
-            <span className="font-semibold text-ink-700">页面 </span>
+          <BrowserAnnotationMetaRow label="页面">
             <button
               type="button"
-              className="break-all text-left text-accent transition hover:underline"
+              className={`${annotationValueClassName} text-left text-accent transition hover:underline`}
               onClick={() => openBrowserAnnotationPage(annotation.pageUrl)}
+              title={pageText}
             >
               {pageText}
             </button>
-          </div>
+          </BrowserAnnotationMetaRow>
         )}
         {annotation.position && (
-          <div>
-            <span className="font-semibold text-ink-700">坐标 </span>
-            x {annotation.position.x}, y {annotation.position.y}
-          </div>
+          <BrowserAnnotationMetaRow label="坐标" value={`x ${annotation.position.x}, y ${annotation.position.y}`} />
         )}
         {!hasDetail && (
-          <div className="min-w-0">
-            <span className="font-semibold text-ink-700">提示 </span>
-            <span className="break-words">这条浏览器标注没有保存元素内容，可回到页面重新标注一次。</span>
-          </div>
+          <BrowserAnnotationMetaRow label="提示" value="这条浏览器标注没有保存元素内容，可回到页面重新标注一次。" />
         )}
       </div>
     </div>
@@ -942,7 +947,7 @@ const UserMessageCard = ({
         {formatTime(message.capturedAt)}
       </div>
       {annotations.length > 0 && (
-        <div className="mt-2 grid w-full max-w-[78%] gap-2">
+        <div className="mt-2 grid w-full max-w-[78%] min-w-0 justify-items-end gap-2 overflow-hidden">
           {annotations.map((annotation) => (
             <BrowserAnnotationChip key={annotation.index} annotation={annotation} />
           ))}
