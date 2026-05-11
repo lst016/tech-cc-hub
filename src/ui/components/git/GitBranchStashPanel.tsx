@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { UiGitBranch, UiGitStashEntry } from "../../types";
 
 type BranchStashMode = "branches" | "stashes";
+type MaybePromise<T> = T | Promise<T>;
 
 export function GitBranchStashPanel({
   branches,
@@ -21,11 +22,11 @@ export function GitBranchStashPanel({
   currentBranch?: string | null;
   actionBusy: string | null;
   initialMode?: BranchStashMode;
-  onCreateBranch: (name: string, checkout: boolean) => void;
-  onCheckoutBranch: (name: string) => void;
-  onStashSave: (message?: string) => void;
-  onStashApply: (ref: string) => void;
-  onStashDrop: (ref: string) => void;
+  onCreateBranch: (name: string, checkout: boolean) => MaybePromise<unknown>;
+  onCheckoutBranch: (name: string) => MaybePromise<unknown>;
+  onStashSave: (message?: string) => MaybePromise<unknown>;
+  onStashApply: (ref: string) => MaybePromise<unknown>;
+  onStashDrop: (ref: string) => MaybePromise<unknown>;
 }) {
   const [mode, setMode] = useState<BranchStashMode>(initialMode);
   const [branchName, setBranchName] = useState("");
@@ -168,7 +169,7 @@ function BranchGroup({
   branches: UiGitBranch[];
   currentBranch?: string | null;
   disabled: boolean;
-  onCheckoutBranch: (name: string) => void;
+  onCheckoutBranch: (name: string) => MaybePromise<unknown>;
 }) {
   return (
     <section className="mb-4">

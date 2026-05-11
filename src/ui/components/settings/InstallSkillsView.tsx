@@ -1,7 +1,7 @@
 // Source: CV from skills-manager views/InstallSkills.tsx
 // Adapted: Tauri API → Electron IPC, react-router → props, i18n → Chinese
 // Omitted: SkillsMP AI search, source overflow measurement, event-based progress, external URL opener
-// Not yet wired: git preview/confirm (needs previewGitInstall/confirmGitInstall)
+// Git import is wired through Electron IPC preview/confirm handlers.
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   DownloadCloud, UploadCloud, Box, Star, TrendingUp, Clock,
@@ -26,6 +26,25 @@ interface SkillsShSkill {
   installs: number;
 }
 
+type GitPreviewResult = {
+  temp_dir: string;
+  skills: Array<{ dir_name: string; name: string; description: string | null }>;
+};
+
+type GitInstallSelection = {
+  dir_name: string;
+  name: string;
+  description: string | null;
+  selected: boolean;
+};
+
+type GitInstallResult = {
+  installed: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+};
+
 interface Props {
   skills: ManagedSkill[];
   tools: ToolInfo[];
@@ -33,6 +52,18 @@ interface Props {
   onRefresh: () => void;
   onScanResult: (result: ScanResult | null) => void;
   onNavigate: (tab: "my-skills") => void;
+}
+
+function getMarketSourceAvatarLabel(source: string): string {
+  const owner = source.split("/")[0]?.replace(/^@/, "").trim();
+  if (!owner) return "S";
+
+  const parts = owner.split(/[-_\s]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return parts.slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+  }
+
+  return owner.slice(0, 2).toUpperCase();
 }
 
 export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh, onScanResult, onNavigate }: Props) {
@@ -63,13 +94,9 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
   // Git state
   const [gitUrl, setGitUrl] = useState("");
   const [gitLoading, setGitLoading] = useState(false);
-  const [gitPreview, setGitPreview] = useState<{
-    temp_dir: string;
-    skills: Array<{ dir_name: string; name: string; description: string | null }>;
-  } | null>(null);
-  const [gitSelections, setGitSelections] = useState<
-    { dir_name: string; name: string; description: string | null; selected: boolean }[]
-  >([]);
+  const [gitInstalling, setGitInstalling] = useState(false);
+  const [gitPreview, setGitPreview] = useState<GitPreviewResult | null>(null);
+  const [gitSelections, setGitSelections] = useState<GitInstallSelection[]>([]);
 
   const electronApi = window.electron as typeof window.electron & {
     invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
@@ -297,12 +324,64 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
     if (!gitUrl.trim()) return;
     setGitLoading(true);
     try {
-      // Git preview not yet wired; show toast
-      toast.info("Git 导入功能开发中");
+      const result = await invoke<GitPreviewResult>("skills:previewGitInstall", gitUrl.trim());
+      setGitPreview(result);
+      setGitSelections(result.skills.map((skill) => ({ ...skill, selected: true })));
+      toast.success(`找到 ${result.skills.length} 个技能`);
     } catch (e) {
       toast.error(String(e));
     } finally {
       setGitLoading(false);
+    }
+  };
+
+  const closeGitPreview = useCallback(() => {
+    const tempDir = gitPreview?.temp_dir;
+    setGitPreview(null);
+    setGitSelections([]);
+    if (tempDir) {
+      void invoke("skills:cleanupGitPreview", tempDir).catch(() => undefined);
+    }
+  }, [gitPreview?.temp_dir, invoke]);
+
+  const handleGitConfirmInstall = async () => {
+    if (!gitPreview) return;
+    const selected = gitSelections
+      .filter((item) => item.selected)
+      .map((item) => ({
+        dir_name: item.dir_name,
+        name: item.name,
+        selected: true,
+      }));
+    if (selected.length === 0) return;
+
+    setGitInstalling(true);
+    const toastId = toast.loading(`正在安装 ${selected.length} 个 Git 技能...`);
+    try {
+      const result = await invoke<GitInstallResult>("skills:confirmGitInstall", gitPreview.temp_dir, selected);
+      const done = result.installed + result.updated;
+      if (done > 0) {
+        toast.success(`Git 导入完成：新增 ${result.installed} 个，更新 ${result.updated} 个`, {
+          id: toastId,
+          action: { label: "查看", onClick: () => onNavigate("my-skills") },
+        });
+      } else if (result.errors.length > 0) {
+        toast.error(`Git 导入失败：${result.errors[0]}`, { id: toastId });
+      } else {
+        toast.info("没有安装新的技能", { id: toastId });
+      }
+      if (result.errors.length > 0 && done > 0) {
+        toast.error(`部分技能导入失败：${result.errors.slice(0, 2).join("; ")}`);
+      }
+      setGitPreview(null);
+      setGitSelections([]);
+      setGitUrl("");
+      await onRefresh();
+      onScanResult(null);
+    } catch (e) {
+      toast.error(String(e), { id: toastId });
+    } finally {
+      setGitInstalling(false);
     }
   };
 
@@ -519,7 +598,7 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
                       const displayName = skill.name || skill.skill_id;
                       const showSkillId = skill.skill_id.trim() !== displayName.trim();
                       const owner = skill.source.split("/")[0];
-                      const avatarUrl = `https://github.com/${owner}.png?size=32`;
+                      const avatarLabel = getMarketSourceAvatarLabel(skill.source);
                       const sourceRef = `${skill.source}/${skill.skill_id}`;
                       const isInstalled = installedSourceRefs.has(sourceRef);
                       const isInstalling = installingMarketRefs.has(sourceRef);
@@ -532,12 +611,13 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex min-w-0 flex-1 items-center gap-2">
-                              <img
-                                src={avatarUrl}
-                                alt={owner}
-                                className="h-6 w-6 shrink-0 rounded-full border border-[#E5E6EB]"
-                                loading="lazy"
-                              />
+                              <span
+                                className="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-accent/15 bg-accent/8 text-[10px] font-bold leading-none text-accent"
+                                aria-label={`${owner} source`}
+                                title={owner}
+                              >
+                                {avatarLabel}
+                              </span>
                               <div className="min-w-0">
                                 <h3 className="truncate text-[13px] font-semibold text-[#4E5969]">
                                   {displayName}
@@ -907,16 +987,16 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
                   type="text"
                   value={gitUrl}
                   onChange={(e) => setGitUrl(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !gitLoading && gitUrl.trim()) handleGitPreview(); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !gitLoading && !gitInstalling && gitUrl.trim()) handleGitPreview(); }}
                   placeholder="https://github.com/user/skills.git"
-                  disabled={gitLoading}
+                  disabled={gitLoading || gitInstalling}
                   className="w-full rounded-lg border border-[#E5E6EB] bg-white px-3 py-2 text-[13px] text-[#1D2129] outline-none placeholder:text-[#C9CDD4] focus:border-accent disabled:opacity-50"
                 />
               </div>
               <div className="flex gap-2 pt-2">
                 <button
                   onClick={handleGitPreview}
-                  disabled={!gitUrl.trim() || gitLoading}
+                  disabled={!gitUrl.trim() || gitLoading || gitInstalling}
                   className="inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-[13px] font-medium text-white hover:opacity-90 transition-opacity disabled:opacity-50"
                 >
                   {gitLoading ? (
@@ -937,12 +1017,12 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
         </div>
       )}
 
-      {/* Git preview modal (placeholder — backend not yet wired) */}
+      {/* Git preview modal */}
       {gitPreview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
             className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-            onClick={() => { setGitPreview(null); setGitSelections([]); }}
+            onClick={gitInstalling ? undefined : closeGitPreview}
           />
           <div className="relative w-full max-w-md rounded-xl border border-[#E5E6EB] bg-white p-5 shadow-2xl">
             <h2 className="text-[14px] font-semibold text-[#1D2129] mb-3">选择要安装的技能</h2>
@@ -960,7 +1040,7 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
                   <input
                     type="checkbox"
                     checked={item.selected}
-                    disabled={false}
+                    disabled={gitInstalling}
                     onChange={(e) =>
                       setGitSelections((prev) =>
                         prev.map((s, i) => (i === idx ? { ...s, selected: e.target.checked } : s)),
@@ -977,7 +1057,7 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
                           prev.map((s, i) => (i === idx ? { ...s, name: e.target.value } : s)),
                         )
                       }
-                      disabled={!item.selected || false}
+                      disabled={!item.selected || gitInstalling}
                       placeholder="技能名称"
                       className="w-full rounded border border-[#E5E6EB] bg-white px-2 py-1 text-[13px] outline-none focus:border-accent disabled:opacity-50"
                     />
@@ -991,22 +1071,24 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => { setGitPreview(null); setGitSelections([]); }}
-                disabled={false}
+                onClick={closeGitPreview}
+                disabled={gitInstalling}
                 className="px-3 py-1.5 text-[13px] font-medium text-[#86909C] hover:text-[#4E5969] transition-colors"
               >
                 取消
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  toast.info("Git 导入功能开发中");
-                }}
-                disabled={false || gitSelections.every((s) => !s.selected)}
+                onClick={handleGitConfirmInstall}
+                disabled={gitInstalling || gitSelections.every((s) => !s.selected)}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
               >
-                <DownloadCloud className="h-3.5 w-3.5" />
-                确认安装
+                {gitInstalling ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <DownloadCloud className="h-3.5 w-3.5" />
+                )}
+                {gitInstalling ? "安装中..." : "确认安装"}
               </button>
             </div>
           </div>

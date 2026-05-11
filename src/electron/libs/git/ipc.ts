@@ -9,6 +9,7 @@ export type GitWorkbenchIpcChannel =
   | "git:stage"
   | "git:unstage"
   | "git:commit"
+  | "git:generateCommitMessageFast"
   | "git:generateCommitMessage"
   | "git:pull"
   | "git:push"
@@ -25,6 +26,7 @@ const CHANNELS: GitWorkbenchIpcChannel[] = [
   "git:stage",
   "git:unstage",
   "git:commit",
+  "git:generateCommitMessageFast",
   "git:generateCommitMessage",
   "git:pull",
   "git:push",
@@ -80,6 +82,8 @@ export async function handleGitWorkbenchInvoke(channel: string, ...args: unknown
           message: readRequiredString(payload, "message"),
           body: readOptionalString(payload, "body"),
         });
+      case "git:generateCommitMessageFast":
+        return service.generateFallbackCommitMessage(readRequiredString(payload, "cwd"));
       case "git:generateCommitMessage":
         return service.generateCommitMessage(
           readRequiredString(payload, "cwd"),

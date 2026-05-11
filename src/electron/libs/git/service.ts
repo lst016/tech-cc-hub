@@ -2,7 +2,7 @@ import { readFile } from "fs/promises";
 import { relative, resolve, sep } from "path";
 import { simpleGit, type SimpleGit, type StatusResult } from "simple-git";
 import { normalizeGitError } from "./errors.js";
-import { generateCommitMessageSuggestion } from "./commit-message.js";
+import { generateCommitMessageSuggestion, generateFallbackCommitMessageSuggestion } from "./commit-message.js";
 import { GIT_LOG_FORMAT, parseGitLog } from "./history.js";
 import { GitOperationLog } from "./operation-log.js";
 import type {
@@ -14,6 +14,7 @@ import type {
   GitCommitNode,
   GitDiffRequest,
   GitDiffResult,
+  GitWorkbenchError,
   GitResult,
   GitWorkbenchSnapshot,
 } from "./types.js";
@@ -150,22 +151,13 @@ export class GitWorkbenchService {
   async generateCommitMessage(cwd: string, language?: string): Promise<GitResult<GitCommitMessageSuggestion>> {
     try {
       const git = this.git(cwd);
-      const status = await git.status();
-      const stagedFiles = this.mapChangedFiles(status).filter((file) => file.staged);
-      if (stagedFiles.length === 0) {
-        return {
-          success: false,
-          error: {
-            code: "nothing_to_commit",
-            message: "请先暂存要提交的文件。",
-          },
-        };
-      }
+      const stagedFiles = await this.readStagedFiles(git);
+      if (stagedFiles.length === 0) return nothingToCommitResult();
 
       const [nameStatus, stat, diff] = await Promise.all([
         git.raw(["diff", "--cached", "--name-status", "--find-renames"]),
         git.raw(["diff", "--cached", "--stat", "--find-renames"]),
-        git.diff(["--cached", "--find-renames", "--no-ext-diff"]),
+        git.diff(["--cached", "--find-renames", "--no-ext-diff", "--unified=1"]),
       ]);
 
       const suggestion = await generateCommitMessageSuggestion({
@@ -182,10 +174,30 @@ export class GitWorkbenchService {
     }
   }
 
+  async generateFallbackCommitMessage(cwd: string): Promise<GitResult<GitCommitMessageSuggestion>> {
+    try {
+      const git = this.git(cwd);
+      const stagedFiles = await this.readStagedFiles(git);
+      if (stagedFiles.length === 0) return nothingToCommitResult();
+      return { success: true, data: generateFallbackCommitMessageSuggestion(stagedFiles) };
+    } catch (error) {
+      return { success: false, error: normalizeGitError(error) };
+    }
+  }
+
   async push(cwd: string): Promise<GitResult<GitWorkbenchSnapshot>> {
     return this.mutate(
       cwd,
       async (git) => {
+        const status = await git.status();
+        const files = this.mapChangedFiles(status);
+        if (status.ahead === 0 && files.length > 0) {
+          throw {
+            code: "dirty_worktree",
+            message: "当前还有未提交改动。Push 只会推送已经提交的 commit，请先点击“提交”生成 commit 后再 Push。",
+            detail: `push blocked because branch is not ahead and local changes are still uncommitted: staged=${files.filter((file) => file.staged).length}, unstaged=${files.filter((file) => !file.staged).length}`,
+          } satisfies GitWorkbenchError;
+        }
         await git.push();
       },
       "push",
@@ -262,6 +274,11 @@ export class GitWorkbenchService {
 
   private git(cwd: string): SimpleGit {
     return simpleGit({ baseDir: resolve(cwd), binary: "git" });
+  }
+
+  private async readStagedFiles(git: SimpleGit): Promise<GitChangedFile[]> {
+    const status = await git.status();
+    return this.mapChangedFiles(status).filter((file) => file.staged);
   }
 
   private async mutate(
@@ -371,6 +388,16 @@ export class GitWorkbenchService {
       return entries;
     });
   }
+}
+
+function nothingToCommitResult(): GitResult<GitCommitMessageSuggestion> {
+  return {
+    success: false,
+    error: {
+      code: "nothing_to_commit",
+      message: "请先暂存要提交的文件。",
+    },
+  };
 }
 
 function mapStatusCode(code: string): GitChangedFile["status"] {

@@ -2,9 +2,27 @@ export const FIGMA_OFFICIAL_PLUGIN_ID = "figma-official";
 export const FIGMA_MCP_SERVER_NAME = "figma";
 export const FIGMA_MCP_URL = "https://mcp.figma.com/mcp";
 export const FIGMA_DESKTOP_MCP_URL = "http://127.0.0.1:3845/mcp";
+export const FIGMA_REST_API_URL = "https://api.figma.com/v1";
+export const FIGMA_REST_TOOL_NAMES = [
+  "figma_get_current_user",
+  "figma_get_file_metadata",
+  "figma_read_design",
+  "figma_summarize_design",
+  "figma_extract_design_tokens",
+  "figma_get_design_playbook",
+  "figma_audit_design",
+  "figma_generate_tailwind_code",
+  "figma_get_image_urls",
+  "figma_get_image_fills",
+  "figma_list_file_versions",
+  "figma_list_file_comments",
+  "figma_list_file_library",
+  "figma_get_file_variables",
+  "figma_get_dev_resources",
+] as const;
 
-export type FigmaOfficialConnectionMode = "remote" | "desktop";
-export type FigmaOfficialOAuthProvider = "direct" | "codex";
+export type FigmaOfficialConnectionMode = "remote" | "desktop" | "rest";
+export type FigmaOfficialOAuthProvider = "direct" | "codex" | "pat";
 
 export type FigmaOfficialPluginStatusKind =
   | "not-configured"
@@ -30,6 +48,7 @@ export type FigmaOfficialPluginStatus = {
   tools?: string[];
   toolCount?: number;
   lastToolCheckedAt?: number;
+  accountLabel?: string;
   updatedAt?: number;
 };
 
@@ -55,27 +74,30 @@ export function buildFigmaOfficialPluginConfig(
   now = Date.now(),
   mode: FigmaOfficialConnectionMode = "remote",
 ): Record<string, unknown> {
+  const isDesktop = mode === "desktop";
+  const isRest = mode === "rest";
   return {
     id: FIGMA_OFFICIAL_PLUGIN_ID,
-    name: "Figma 官方 MCP",
-    kind: "mcp-plugin",
+    name: isRest ? "Figma Token / REST API" : "Figma 官方 MCP",
+    kind: isRest ? "api-token-plugin" : "mcp-plugin",
     source: {
-      type: mode === "desktop" ? "desktop-mcp" : "remote-mcp",
-      url: mode === "desktop" ? FIGMA_DESKTOP_MCP_URL : FIGMA_MCP_URL,
+      type: isRest ? "figma-rest-api" : isDesktop ? "desktop-mcp" : "remote-mcp",
+      url: isRest ? FIGMA_REST_API_URL : isDesktop ? FIGMA_DESKTOP_MCP_URL : FIGMA_MCP_URL,
     },
     enabled: true,
     installed: true,
     connected: false,
     mode,
-    capabilities: mode === "desktop" ? ["design-context", "selection-context"] : ["design-context"],
+    capabilities: getFigmaCapabilitiesForMode(mode),
     tools: [],
     toolCount: null,
     lastToolCheckedAt: null,
-    authStatus: mode === "desktop" ? "desktop-unavailable" : "unknown",
+    authStatus: isDesktop ? "desktop-unavailable" : isRest ? "needs-auth" : "unknown",
     authProvider: null,
     lastAuthCheckedAt: null,
     lastAuthError: null,
     oauth: null,
+    accountLabel: null,
     updatedAt: now,
   };
 }
@@ -166,6 +188,62 @@ export function buildNextFigmaOfficialDesktopRuntimeConfig(
   };
 }
 
+export function buildNextFigmaOfficialPatRuntimeConfig(
+  config: unknown,
+  accessToken: string,
+  options: {
+    accountLabel?: string;
+    now?: number;
+    tools?: string[];
+  } = {},
+): Record<string, unknown> {
+  const now = options.now ?? Date.now();
+  const current = isRecord(config) ? config : {};
+  const plugins = isRecord(current.plugins) ? current.plugins : {};
+  const mcpServers = isRecord(current.mcpServers) ? current.mcpServers : {};
+  const nextMcpServers = omitFigmaMcpServer(mcpServers);
+  const existingPlugin = isRecord(plugins[FIGMA_OFFICIAL_PLUGIN_ID])
+    ? plugins[FIGMA_OFFICIAL_PLUGIN_ID]
+    : buildFigmaOfficialPluginConfig(now, "rest");
+  const tools = options.tools ?? [...FIGMA_REST_TOOL_NAMES];
+
+  return {
+    ...current,
+    plugins: {
+      ...plugins,
+      [FIGMA_OFFICIAL_PLUGIN_ID]: {
+        ...existingPlugin,
+        name: "Figma Token / REST API",
+        kind: "api-token-plugin",
+        source: {
+          type: "figma-rest-api",
+          url: FIGMA_REST_API_URL,
+        },
+        enabled: true,
+        installed: true,
+        connected: true,
+        mode: "rest",
+        capabilities: getFigmaCapabilitiesForMode("rest"),
+        tools,
+        toolCount: tools.length,
+        lastToolCheckedAt: now,
+        authStatus: "ready",
+        authProvider: "pat",
+        oauth: {
+          access_token: accessToken,
+          token_type: "FigmaToken",
+          provider: "pat",
+        },
+        accountLabel: options.accountLabel ?? null,
+        lastAuthCheckedAt: now,
+        lastAuthError: null,
+        updatedAt: now,
+      },
+    },
+    mcpServers: nextMcpServers,
+  };
+}
+
 export function buildNextFigmaOfficialAuthStateRuntimeConfig(
   config: unknown,
   state: FigmaOfficialAuthState,
@@ -188,7 +266,7 @@ export function buildNextFigmaOfficialAuthStateRuntimeConfig(
   const existingFigmaMcp = isRecord(mcpServers[FIGMA_MCP_SERVER_NAME]) ? mcpServers[FIGMA_MCP_SERVER_NAME] : null;
   const shouldPreserveDesktopMcp = isExpectedFigmaDesktopMcpConfig(existingFigmaMcp) && state !== "ready";
   const oauth = options.oauth === undefined ? existingPlugin.oauth : options.oauth;
-  const authProvider = isRecord(oauth) && oauth.provider === "codex" ? "codex" : isRecord(oauth) && oauth.provider === "direct" ? "direct" : null;
+  const authProvider = readFigmaAuthProvider(oauth);
   const accessToken = state === "ready" && isRecord(oauth) && typeof oauth.access_token === "string"
     ? oauth.access_token
     : null;
@@ -226,7 +304,7 @@ export function buildNextFigmaOfficialAuthStateRuntimeConfig(
         },
         connected: state === "ready",
         mode: nextMode,
-        capabilities: nextMode === "desktop" ? ["design-context", "selection-context"] : ["design-context"],
+        capabilities: getFigmaCapabilitiesForMode(nextMode),
         tools: nextTools,
         toolCount: nextToolCount,
         lastToolCheckedAt: nextToolCheckedAt,
@@ -289,40 +367,41 @@ export function getFigmaOfficialPluginStatusFromConfig(config: unknown): FigmaOf
   const mcpConfig = isRecord(mcpServers[FIGMA_MCP_SERVER_NAME]) ? mcpServers[FIGMA_MCP_SERVER_NAME] : null;
   const isRemoteConfig = isExpectedFigmaMcpConfig(mcpConfig);
   const isDesktopConfig = isExpectedFigmaDesktopMcpConfig(mcpConfig);
+  const isRestConfig = isExpectedFigmaRestPluginConfig(pluginConfig);
 
   if (!pluginConfig && !mcpConfig) {
     return buildStatus("not-configured", {
       installed: false,
       connected: false,
-      message: "尚未接入 Figma 官方 MCP。",
+      message: "尚未接入 Figma。",
     });
   }
 
-  if (!isRemoteConfig && !isDesktopConfig) {
+  if (!isRemoteConfig && !isDesktopConfig && !isRestConfig) {
     return buildStatus("misconfigured", {
       installed: Boolean(pluginConfig),
       connected: false,
-      message: "Figma 官方 MCP 配置异常，可一键修复为官方远程 HTTP MCP 或切换到桌面 MCP。",
+      message: "Figma 配置异常，可重新输入 Figma Token，或切换到桌面 MCP。",
     });
   }
 
-  const mode: FigmaOfficialConnectionMode = isDesktopConfig ? "desktop" : "remote";
+  const mode: FigmaOfficialConnectionMode = isRestConfig ? "rest" : isDesktopConfig ? "desktop" : "remote";
   const authStatus = typeof pluginConfig?.authStatus === "string" ? pluginConfig.authStatus : "";
   const lastAuthError = typeof pluginConfig?.lastAuthError === "string" ? pluginConfig.lastAuthError : "";
   const updatedAt = typeof pluginConfig?.updatedAt === "number" ? pluginConfig.updatedAt : undefined;
+  const accountLabel = typeof pluginConfig?.accountLabel === "string" && pluginConfig.accountLabel.trim()
+    ? pluginConfig.accountLabel.trim()
+    : undefined;
   const oauth = isRecord(pluginConfig?.oauth) ? pluginConfig.oauth : null;
   const expiresAt = typeof oauth?.expiresAt === "number" ? oauth.expiresAt : null;
-  const tools = readStringArray(pluginConfig?.tools);
+  const storedTools = readStringArray(pluginConfig?.tools);
+  const tools = mode === "rest" ? [...FIGMA_REST_TOOL_NAMES] : storedTools;
   const storedToolCount = typeof pluginConfig?.toolCount === "number" && pluginConfig.toolCount >= 0
     ? pluginConfig.toolCount
     : null;
-  const toolCount = storedToolCount ?? (tools.length > 0 ? tools.length : undefined);
+  const toolCount = mode === "rest" ? FIGMA_REST_TOOL_NAMES.length : storedToolCount ?? (tools.length > 0 ? tools.length : undefined);
   const lastToolCheckedAt = typeof pluginConfig?.lastToolCheckedAt === "number" ? pluginConfig.lastToolCheckedAt : undefined;
-  const authProvider = pluginConfig?.authProvider === "codex" || pluginConfig?.authProvider === "direct"
-    ? pluginConfig.authProvider
-    : oauth?.provider === "codex" || oauth?.provider === "direct"
-      ? oauth.provider
-      : undefined;
+  const authProvider = readFigmaAuthProvider(pluginConfig) ?? readFigmaAuthProvider(oauth);
   const isExpired = expiresAt !== null && expiresAt <= Date.now() + 60_000;
 
   if (mode === "desktop") {
@@ -346,6 +425,49 @@ export function getFigmaOfficialPluginStatusFromConfig(config: unknown): FigmaOf
     });
   }
 
+  if (mode === "rest") {
+    if (!oauth?.access_token || authStatus === "needs-auth") {
+      return buildStatus("needs-auth", {
+        installed: true,
+        connected: false,
+        mode,
+        authProvider: "pat",
+        message: "Figma Token 尚未配置。",
+        authHint: "请粘贴 Figma Personal Access Token，系统会先用 /v1/me 校验再保存到本机配置。",
+        updatedAt,
+      });
+    }
+
+    if (authStatus === "auth-expired" || isLikelyFigmaAuthError(lastAuthError)) {
+      return buildStatus("auth-expired", {
+        installed: true,
+        connected: false,
+        mode,
+        authProvider: "pat",
+        message: "Figma Token 无效或已失效。",
+        authHint: "请重新生成并输入 Figma Personal Access Token。",
+        accountLabel,
+        updatedAt,
+      });
+    }
+
+    return buildStatus("ready", {
+      installed: true,
+      connected: true,
+      mode,
+      authProvider: "pat",
+      message: accountLabel
+        ? `Figma Token 已接入：${accountLabel}。`
+        : "Figma Token 已接入。",
+      authHint: "当前使用 Figma REST API + 本机内置工具，不依赖 Codex OAuth。",
+      tools,
+      toolCount,
+      lastToolCheckedAt,
+      accountLabel,
+      updatedAt,
+    });
+  }
+
   if (authStatus === "auth-expired" || isLikelyFigmaAuthError(lastAuthError) || isExpired) {
     return buildStatus("auth-expired", {
       installed: true,
@@ -356,6 +478,7 @@ export function getFigmaOfficialPluginStatusFromConfig(config: unknown): FigmaOf
       authHint: authProvider === "codex"
         ? "Codex 官方 OAuth 凭据有时效，过期后请在插件卡片中点击 Codex 重新授权。"
         : "Figma 授权有时效，过期后请在插件卡片中重新授权。",
+      accountLabel,
       updatedAt,
     });
   }
@@ -368,6 +491,7 @@ export function getFigmaOfficialPluginStatusFromConfig(config: unknown): FigmaOf
       authProvider,
       message: "Figma MCP 已配置，首次使用时需要完成 OAuth 授权。",
       authHint: "首次使用 Figma MCP 工具时，请按 OAuth 流程授权 Figma。",
+      accountLabel,
       updatedAt,
     });
   }
@@ -384,6 +508,7 @@ export function getFigmaOfficialPluginStatusFromConfig(config: unknown): FigmaOf
       tools,
       toolCount,
       lastToolCheckedAt,
+      accountLabel,
       updatedAt,
     });
   }
@@ -394,7 +519,8 @@ export function getFigmaOfficialPluginStatusFromConfig(config: unknown): FigmaOf
     mode,
     authProvider,
     message: "Figma 官方 MCP 已配置；如果首次使用或授权过期，需要通过 OAuth 重新授权。",
-    authHint: "推荐使用 Codex 官方 OAuth 接入；Figma 授权有时效，失效后需要重新授权。",
+    authHint: "普通用户建议输入 Figma Personal Access Token；如果使用官方 MCP，则需要 OAuth 授权。",
+    accountLabel,
     updatedAt,
   });
 }
@@ -403,7 +529,7 @@ export function buildFigmaOfficialActionResult(config: unknown): FigmaOfficialPl
   return {
     ...getFigmaOfficialPluginStatusFromConfig(config),
     success: true,
-    message: "Figma 官方 MCP 配置已写入；首次使用时可能需要完成 OAuth 授权。",
+    message: "Figma 配置已写入。",
   };
 }
 
@@ -442,10 +568,10 @@ function buildStatus(
   return {
     id: FIGMA_OFFICIAL_PLUGIN_ID,
     status,
-    url: mode === "desktop" ? FIGMA_DESKTOP_MCP_URL : FIGMA_MCP_URL,
+    url: mode === "desktop" ? FIGMA_DESKTOP_MCP_URL : mode === "rest" ? FIGMA_REST_API_URL : FIGMA_MCP_URL,
     desktopUrl: FIGMA_DESKTOP_MCP_URL,
     mode,
-    capabilities: mode === "desktop" ? ["design-context", "selection-context"] : ["design-context"],
+    capabilities: getFigmaCapabilitiesForMode(mode),
     ...overrides,
   };
 }
@@ -511,6 +637,41 @@ function isExpectedFigmaDesktopMcpConfig(value: Record<string, unknown> | null):
     value.type === "http" &&
     value.url === FIGMA_DESKTOP_MCP_URL
   );
+}
+
+function isExpectedFigmaRestPluginConfig(value: Record<string, unknown> | null): boolean {
+  if (!value || value.enabled === false) {
+    return false;
+  }
+  const source = isRecord(value.source) ? value.source : {};
+  return value.mode === "rest" || value.authProvider === "pat" || source.type === "figma-rest-api";
+}
+
+function omitFigmaMcpServer(mcpServers: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...mcpServers };
+  delete next[FIGMA_MCP_SERVER_NAME];
+  return next;
+}
+
+function getFigmaCapabilitiesForMode(mode: FigmaOfficialConnectionMode): string[] {
+  if (mode === "desktop") {
+    return ["design-context", "selection-context"];
+  }
+  if (mode === "rest") {
+    return ["design-context", "file-api", "image-export", "metadata", "library", "variables"];
+  }
+  return ["design-context"];
+}
+
+function readFigmaAuthProvider(value: unknown): FigmaOfficialOAuthProvider | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  return value.provider === "codex" || value.provider === "direct" || value.provider === "pat"
+    ? value.provider
+    : value.authProvider === "codex" || value.authProvider === "direct" || value.authProvider === "pat"
+      ? value.authProvider
+      : undefined;
 }
 
 function isLikelyFigmaAuthError(message: string): boolean {

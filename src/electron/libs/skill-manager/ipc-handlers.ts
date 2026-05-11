@@ -5,7 +5,7 @@ import { randomUUID } from "crypto";
 import { execFileSync } from "child_process";
 import { ipcMain, app } from "electron";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from "fs";
-import { join, relative } from "path";
+import { basename, join, relative, resolve, sep } from "path";
 import { tmpdir } from "os";
 import * as db from "./db.js";
 import { getDb } from "./db.js";
@@ -32,7 +32,7 @@ import {
   skillsDir as adapterSkillsDir,
   type ToolAdapter,
 } from "./tool-adapters.js";
-import { installFromLocal, installSkillDirToDestination, hashLocalSource } from "./installer.js";
+import { installFromLocal, installSkillDirToDestination, hashLocalSource, resolveLocalSkillName } from "./installer.js";
 import { inferSkillName, is_valid_skill_dir, hashDirectory, parseSkillMd } from "./sync-engine.js";
 import {
   getAllScenarioDtos,
@@ -77,12 +77,31 @@ import type {
   BatchDeleteSkillsResult,
   BatchUpdateSkillsResult,
   UpdateSkillResult,
+  GitPreviewResult,
   SkillTarget,
 } from "./types.js";
 
-// ── Init ──
+// -- Init --
 
 let initialized = false;
+
+type SkillIpcHandler = (...args: any[]) => unknown | Promise<unknown>;
+
+const skillIpcHandlers = new Map<string, SkillIpcHandler>();
+
+function registerSkillIpcHandler(channel: string, handler: SkillIpcHandler): void {
+  skillIpcHandlers.set(channel, handler);
+  ipcMain.handle(channel, (_event: any, ...args: any[]) => handler(...args));
+}
+
+export async function handleSkillManagerInvoke(channel: string, ...args: unknown[]): Promise<unknown> {
+  initSkillManager();
+  const handler = skillIpcHandlers.get(channel);
+  if (!handler || !channel.startsWith("skills:")) {
+    throw new Error(`Unsupported skill manager channel: ${channel}`);
+  }
+  return await handler(...args);
+}
 
 export function initSkillManager(): void {
   if (initialized) return;
@@ -98,7 +117,7 @@ export function initSkillManager(): void {
   }
 }
 
-// ── Helpers ──
+// -- Helpers --
 
 function managedSkillToDto(skill: ReturnType<typeof getAllSkills>[number]): ManagedSkill {
   const allTargets = getAllTargets();
@@ -300,22 +319,323 @@ function installSkillsshSkill(source: string, skillId: string): ManagedSkill {
   }
 }
 
-// ── Register all handlers ──
+const GIT_PREVIEW_TEMP_PREFIX = "tech-cc-skill-git-";
+
+type GitInstallSelection = {
+  dir_name: string;
+  name?: string;
+  selected?: boolean;
+};
+
+type GitInstallResult = {
+  installed: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+};
+
+function normalizeGitRepoUrl(repoUrl: string): string {
+  const normalized = repoUrl.trim();
+  if (!normalized) {
+    throw new Error("Git repository URL is required");
+  }
+  if (/[\r\n]/.test(normalized)) {
+    throw new Error("Git repository URL cannot contain newlines");
+  }
+  return normalized;
+}
+
+function cloneGitRepo(repoUrl: string): string {
+  const normalizedRepoUrl = normalizeGitRepoUrl(repoUrl);
+  const tempDir = mkdtempSync(join(tmpdir(), GIT_PREVIEW_TEMP_PREFIX));
+  try {
+    execFileSync("git", ["clone", "--depth", "1", normalizedRepoUrl, tempDir], {
+      encoding: "utf-8",
+      stdio: "pipe",
+      timeout: 120_000,
+    });
+    return tempDir;
+  } catch (error) {
+    cleanupGitPreviewTempDir(tempDir);
+    throw new Error(`Git clone failed: ${extractProcessErrorMessage(error)}`);
+  }
+}
+
+function extractProcessErrorMessage(error: unknown): string {
+  const value = error as { stderr?: Buffer | string; stdout?: Buffer | string; message?: string };
+  const stderr = value.stderr ? String(value.stderr).trim() : "";
+  const stdout = value.stdout ? String(value.stdout).trim() : "";
+  return stderr || stdout || value.message || String(error);
+}
+
+function readGitRepoMetadata(tempDir: string): { repoUrl: string; revision: string | null; branch: string | null } {
+  const repoUrl = execFileSync("git", ["-C", tempDir, "remote", "get-url", "origin"], {
+    encoding: "utf-8",
+    stdio: "pipe",
+  }).trim();
+
+  let revision: string | null = null;
+  try {
+    revision = execFileSync("git", ["-C", tempDir, "rev-parse", "HEAD"], {
+      encoding: "utf-8",
+      stdio: "pipe",
+    }).trim();
+  } catch {
+    revision = null;
+  }
+
+  let branch: string | null = null;
+  try {
+    const value = execFileSync("git", ["-C", tempDir, "rev-parse", "--abbrev-ref", "HEAD"], {
+      encoding: "utf-8",
+      stdio: "pipe",
+    }).trim();
+    branch = value && value !== "HEAD" ? value : null;
+  } catch {
+    branch = null;
+  }
+
+  return { repoUrl, revision, branch };
+}
+
+function discoverGitSkillDirs(root: string): string[] {
+  const result: string[] = [];
+  const queue = [root];
+  const ignored = new Set([
+    ".git",
+    "node_modules",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    "target",
+    "vendor",
+    ".next",
+    ".turbo",
+  ]);
+
+  for (let index = 0; index < queue.length && index < 5000; index++) {
+    const dir = queue[index];
+    if (is_valid_skill_dir(dir)) {
+      result.push(dir);
+      continue;
+    }
+
+    let entries: Array<{ isDirectory: () => boolean; name: string }>;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || ignored.has(entry.name)) continue;
+      queue.push(join(dir, entry.name));
+    }
+  }
+
+  return result.sort((a, b) => relative(root, a).localeCompare(relative(root, b), "en"));
+}
+
+function previewGitInstall(repoUrl: string): GitPreviewResult {
+  const tempDir = cloneGitRepo(repoUrl);
+  const skillDirs = discoverGitSkillDirs(tempDir);
+  if (skillDirs.length === 0) {
+    cleanupGitPreviewTempDir(tempDir);
+    throw new Error("No skill directory containing SKILL.md was found in this repository");
+  }
+
+  return {
+    temp_dir: tempDir,
+    skills: skillDirs.map((dir) => {
+      const meta = parseSkillMd(dir);
+      const dirName = relative(tempDir, dir) || ".";
+      return {
+        dir_name: dirName,
+        name: inferSkillName(dir),
+        description: meta.description,
+      };
+    }),
+  };
+}
+
+function isSafeGitPreviewTempDir(tempDir: string): boolean {
+  const resolvedTempDir = resolve(tempDir);
+  const tempRoot = resolve(tmpdir());
+  return basename(resolvedTempDir).startsWith(GIT_PREVIEW_TEMP_PREFIX)
+    && (resolvedTempDir === tempRoot || resolvedTempDir.startsWith(tempRoot + sep));
+}
+
+function resolveGitPreviewSkillDir(tempDir: string, dirName: string): string {
+  if (!isSafeGitPreviewTempDir(tempDir)) {
+    throw new Error("Invalid Git preview temp directory");
+  }
+  if (!dirName || dirName.includes("\0")) {
+    throw new Error("Invalid Git skill directory");
+  }
+  const resolvedTempDir = resolve(tempDir);
+  const skillDir = resolve(resolvedTempDir, dirName);
+  if (skillDir !== resolvedTempDir && !skillDir.startsWith(resolvedTempDir + sep)) {
+    throw new Error("Git skill directory must be inside the preview temp directory");
+  }
+  if (!is_valid_skill_dir(skillDir)) {
+    throw new Error(`Valid skill directory not found: ${dirName}`);
+  }
+  return skillDir;
+}
+
+function gitSourceRef(repoUrl: string, subpath: string | null): string {
+  return subpath ? `${repoUrl}#${subpath.replace(/\\/g, "/")}` : repoUrl;
+}
+
+function installGitSkillSelection(
+  tempDir: string,
+  selection: GitInstallSelection,
+  repoMeta: { repoUrl: string; revision: string | null; branch: string | null },
+): "installed" | "updated" | "skipped" {
+  if (selection.selected === false) {
+    return "skipped";
+  }
+
+  const skillDir = resolveGitPreviewSkillDir(tempDir, selection.dir_name);
+  const subpath = relative(tempDir, skillDir) || null;
+  const sourceRef = gitSourceRef(repoMeta.repoUrl, subpath);
+  const installName = resolveLocalSkillName(skillDir, selection.name || null);
+  const existing = db.getSkillBySourceRef("git", sourceRef);
+  const activeId = getActiveScenarioId();
+
+  if (existing) {
+    const stagedPath = join(skillsDir(), `.${basename(existing.central_path)}.staged-${randomUUID()}`);
+    const result = installSkillDirToDestination(skillDir, installName, stagedPath);
+    const backupPath = `${existing.central_path}.backup-${randomUUID()}`;
+    if (existsSync(existing.central_path)) {
+      renameSync(existing.central_path, backupPath);
+    }
+    try {
+      renameSync(stagedPath, existing.central_path);
+    } catch (error) {
+      if (existsSync(backupPath)) {
+        try { renameSync(backupPath, existing.central_path); } catch { /* ignore */ }
+      }
+      throw error;
+    }
+    try { rmSync(backupPath, { recursive: true, force: true }); } catch { /* ignore */ }
+
+    db.updateSkillAfterReinstall(
+      existing.id, result.name, result.description ?? null,
+      "git", sourceRef, repoMeta.revision, repoMeta.revision, repoMeta.repoUrl, subpath, repoMeta.branch,
+      result.content_hash, "up_to_date",
+    );
+    if (activeId) {
+      try { addSkillToScenarioAndSync(existing.id, activeId); } catch { /* ignore */ }
+    }
+    return "updated";
+  }
+
+  const result = installFromLocal(skillDir, installName);
+  const existingByCentralPath = db.getSkillByCentralPath(result.central_path);
+  if (existingByCentralPath) {
+    db.updateSkillAfterReinstall(
+      existingByCentralPath.id, result.name, result.description ?? null,
+      "git", sourceRef, repoMeta.revision, repoMeta.revision, repoMeta.repoUrl, subpath, repoMeta.branch,
+      result.content_hash, "up_to_date",
+    );
+    if (activeId) {
+      try { addSkillToScenarioAndSync(existingByCentralPath.id, activeId); } catch { /* ignore */ }
+    }
+    return "updated";
+  }
+
+  const now = Date.now();
+  const id = randomUUID();
+  db.insertSkill({
+    id,
+    name: result.name,
+    description: result.description ?? null,
+    source_type: "git",
+    source_ref: sourceRef,
+    source_ref_resolved: repoMeta.repoUrl,
+    source_subpath: subpath,
+    source_branch: repoMeta.branch,
+    source_revision: repoMeta.revision,
+    remote_revision: repoMeta.revision,
+    central_path: result.central_path,
+    content_hash: result.content_hash,
+    enabled: true,
+    created_at: now,
+    updated_at: now,
+    status: "ok",
+    update_status: "up_to_date",
+    last_checked_at: now,
+    last_check_error: null,
+  });
+
+  if (activeId) {
+    try { addSkillToScenarioAndSync(id, activeId); } catch { /* ignore */ }
+  }
+
+  return "installed";
+}
+
+function confirmGitInstall(tempDir: string, selections: GitInstallSelection[]): GitInstallResult {
+  if (!Array.isArray(selections) || selections.length === 0) {
+    throw new Error("Select at least one skill to install");
+  }
+  if (!isSafeGitPreviewTempDir(tempDir)) {
+    throw new Error("Invalid Git preview temp directory");
+  }
+
+  let installed = 0;
+  let updated = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  try {
+    const repoMeta = readGitRepoMetadata(tempDir);
+    for (const selection of selections) {
+      try {
+        const outcome = installGitSkillSelection(tempDir, selection, repoMeta);
+        if (outcome === "installed") installed++;
+        if (outcome === "updated") updated++;
+        if (outcome === "skipped") skipped++;
+      } catch (error) {
+        errors.push(`${selection.dir_name || "unknown"}: ${String(error)}`);
+      }
+    }
+  } finally {
+    cleanupGitPreviewTempDir(tempDir);
+  }
+
+  return { installed, updated, skipped, errors };
+}
+
+function cleanupGitPreviewTempDir(tempDir: string): boolean {
+  if (!tempDir || !isSafeGitPreviewTempDir(tempDir)) {
+    return false;
+  }
+  try {
+    rmSync(tempDir, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// -- Register all handlers --
 
 export function registerSkillManagerHandlers(): void {
   initSkillManager();
 
   // Skills
-  ipcMain.handle("skills:getManagedSkills", () => {
+  registerSkillIpcHandler("skills:getManagedSkills", () => {
     return getAllSkills().map(managedSkillToDto);
   });
 
-  ipcMain.handle("skills:getSkillsForScenario", (_event: any, scenarioId: string) => {
+  registerSkillIpcHandler("skills:getSkillsForScenario", (scenarioId: string) => {
     const skills = getSkillsForScenarioDb(scenarioId);
     return skills.map(managedSkillToDto);
   });
 
-  ipcMain.handle("skills:getSkillDocument", (_event: any, skillId: string) => {
+  registerSkillIpcHandler("skills:getSkillDocument", (skillId: string) => {
     const skill = getSkillById(skillId);
     if (!skill) throw new Error("Skill not found");
 
@@ -336,7 +656,7 @@ export function registerSkillManagerHandlers(): void {
     throw new Error("No documentation file found");
   });
 
-  ipcMain.handle("skills:deleteManagedSkill", (_event: any, skillId: string) => {
+  registerSkillIpcHandler("skills:deleteManagedSkill", (skillId: string) => {
     const skill = getSkillById(skillId);
     if (!skill) throw new Error("Skill not found");
 
@@ -352,7 +672,7 @@ export function registerSkillManagerHandlers(): void {
     deleteSkill(skillId);
   });
 
-  ipcMain.handle("skills:deleteManagedSkills", (_event: any, skillIds: string[]) => {
+  registerSkillIpcHandler("skills:deleteManagedSkills", (skillIds: string[]) => {
     const deleted: string[] = [];
     const failed: string[] = [];
 
@@ -381,7 +701,7 @@ export function registerSkillManagerHandlers(): void {
   });
 
   // Install
-  ipcMain.handle("skills:installLocal", (_event: any, sourcePath: string, name?: string) => {
+  registerSkillIpcHandler("skills:installLocal", (sourcePath: string, name?: string) => {
     const result = installFromLocal(sourcePath, name || null);
     const now = Date.now();
 
@@ -432,7 +752,7 @@ export function registerSkillManagerHandlers(): void {
     return id;
   });
 
-  ipcMain.handle("skills:batchImportFolder", (_event: any, folderPath: string) => {
+  registerSkillIpcHandler("skills:batchImportFolder", (folderPath: string) => {
 
     if (!statSync(folderPath).isDirectory()) {
       throw new Error("Selected path is not a directory");
@@ -510,61 +830,61 @@ export function registerSkillManagerHandlers(): void {
   });
 
   // Tags
-  ipcMain.handle("skills:getAllTags", () => {
+  registerSkillIpcHandler("skills:getAllTags", () => {
     return db.getAllTags() as string[];
   });
 
-  ipcMain.handle("skills:setSkillTags", (_event: any, skillId: string, tags: string[]) => {
+  registerSkillIpcHandler("skills:setSkillTags", (skillId: string, tags: string[]) => {
     db.setTagsForSkill(skillId, tags);
   });
 
   // Scenarios
-  ipcMain.handle("skills:getScenarios", () => {
+  registerSkillIpcHandler("skills:getScenarios", () => {
     return getAllScenarioDtos();
   });
 
-  ipcMain.handle("skills:getActiveScenario", () => {
+  registerSkillIpcHandler("skills:getActiveScenario", () => {
     return getActiveScenarioDto();
   });
 
-  ipcMain.handle("skills:createScenario", (_event: any, name: string, description?: string, icon?: string) => {
+  registerSkillIpcHandler("skills:createScenario", (name: string, description?: string, icon?: string) => {
     return createScenario(name, description || null, icon || null);
   });
 
-  ipcMain.handle("skills:updateScenario", (_event: any, id: string, name: string, description?: string, icon?: string) => {
+  registerSkillIpcHandler("skills:updateScenario", (id: string, name: string, description?: string, icon?: string) => {
     updateScenarioInfo(id, name, description || null, icon || null);
   });
 
-  ipcMain.handle("skills:deleteScenario", (_event: any, id: string) => {
+  registerSkillIpcHandler("skills:deleteScenario", (id: string) => {
     deleteScenarioAndCleanup(id);
   });
 
-  ipcMain.handle("skills:applyScenarioToDefault", (_event: any, id: string) => {
+  registerSkillIpcHandler("skills:applyScenarioToDefault", (id: string) => {
     applyScenarioToDefault(id);
   });
 
-  ipcMain.handle("skills:addSkillToScenario", (_event: any, skillId: string, scenarioId: string) => {
+  registerSkillIpcHandler("skills:addSkillToScenario", (skillId: string, scenarioId: string) => {
     addSkillToScenarioAndSync(skillId, scenarioId);
   });
 
-  ipcMain.handle("skills:removeSkillFromScenario", (_event: any, skillId: string, scenarioId: string) => {
+  registerSkillIpcHandler("skills:removeSkillFromScenario", (skillId: string, scenarioId: string) => {
     removeSkillFromScenarioAndSync(skillId, scenarioId);
   });
 
-  ipcMain.handle("skills:reorderScenarios", (_event: any, ids: string[]) => {
+  registerSkillIpcHandler("skills:reorderScenarios", (ids: string[]) => {
     reorderScenarioList(ids);
   });
 
-  ipcMain.handle("skills:getScenarioSkillOrder", (_event: any, scenarioId: string) => {
+  registerSkillIpcHandler("skills:getScenarioSkillOrder", (scenarioId: string) => {
     return db.getSkillIdsForScenario(scenarioId) as string[];
   });
 
-  ipcMain.handle("skills:reorderScenarioSkills", (_event: any, scenarioId: string, skillIds: string[]) => {
+  registerSkillIpcHandler("skills:reorderScenarioSkills", (scenarioId: string, skillIds: string[]) => {
     db.reorderScenarioSkills(scenarioId, skillIds);
   });
 
   // Sync
-  ipcMain.handle("skills:syncSkillToTool", (_event: any, skillId: string, tool: string) => {
+  registerSkillIpcHandler("skills:syncSkillToTool", (skillId: string, tool: string) => {
     const adapter = findAdapterWithStore(tool);
     if (!adapter) throw new Error(`Unknown tool: ${tool}`);
 
@@ -588,7 +908,7 @@ export function registerSkillManagerHandlers(): void {
     });
   });
 
-  ipcMain.handle("skills:unsyncSkillFromTool", (_event: any, skillId: string, tool: string) => {
+  registerSkillIpcHandler("skills:unsyncSkillFromTool", (skillId: string, tool: string) => {
     const targets = db.getTargetsForSkill(skillId) as Array<{ target_path: string; tool: string }>;
     const target = targets.find((t) => t.tool === tool);
     if (target) {
@@ -597,7 +917,7 @@ export function registerSkillManagerHandlers(): void {
     db.deleteTarget(skillId, tool);
   });
 
-  ipcMain.handle("skills:getSkillToolToggles", (_event: any, skillId: string, scenarioId: string) => {
+  registerSkillIpcHandler("skills:getSkillToolToggles", (skillId: string, scenarioId: string) => {
     const skillIds = db.getSkillIdsForScenario(scenarioId) as string[];
     if (!skillIds.includes(skillId)) {
       throw new Error("Skill is not enabled in this scenario");
@@ -631,7 +951,7 @@ export function registerSkillManagerHandlers(): void {
     });
   });
 
-  ipcMain.handle("skills:setSkillToolToggle", (_event: any, skillId: string, scenarioId: string, tool: string, enabled: boolean) => {
+  registerSkillIpcHandler("skills:setSkillToolToggle", (skillId: string, scenarioId: string, tool: string, enabled: boolean) => {
     const skillIds = db.getSkillIdsForScenario(scenarioId) as string[];
     if (!skillIds.includes(skillId)) {
       throw new Error("Skill is not enabled in this scenario");
@@ -687,7 +1007,7 @@ export function registerSkillManagerHandlers(): void {
   });
 
   // Tools
-  ipcMain.handle("skills:getTools", () => {
+  registerSkillIpcHandler("skills:getTools", () => {
     let disabled: string[] = [];
     let customToolsRaw: string | null = null;
     let customPaths: Record<string, string> = {};
@@ -713,7 +1033,7 @@ export function registerSkillManagerHandlers(): void {
     })) as ToolInfo[];
   });
 
-  ipcMain.handle("skills:setToolEnabled", (_event: any, tool: string, enabled: boolean) => {
+  registerSkillIpcHandler("skills:setToolEnabled", (tool: string, enabled: boolean) => {
     let disabled: string[] = [];
     try {
       const raw = db.getSetting("disabled_tools");
@@ -730,7 +1050,7 @@ export function registerSkillManagerHandlers(): void {
   });
 
   // Scan
-  ipcMain.handle("skills:scanLocalSkills", () => {
+  registerSkillIpcHandler("skills:scanLocalSkills", () => {
     const allTargets = getAllTargets();
     const managedPaths = allTargets.map((t) => t.target_path);
     const managedSkills = getAllSkills();
@@ -753,20 +1073,32 @@ export function registerSkillManagerHandlers(): void {
   });
 
   // Marketplace
-  ipcMain.handle("skills:fetchLeaderboard", async (_event: any, board: string) => {
+  registerSkillIpcHandler("skills:fetchLeaderboard", async (board: string) => {
     return await fetchLeaderboard(board);
   });
 
-  ipcMain.handle("skills:searchSkillssh", async (_event: any, query: string, limit?: number) => {
+  registerSkillIpcHandler("skills:searchSkillssh", async (query: string, limit?: number) => {
     return await searchSkillssh(query, limit);
   });
 
-  ipcMain.handle("skills:installSkillssh", (_event: any, source: string, skillId: string) => {
+  registerSkillIpcHandler("skills:installSkillssh", (source: string, skillId: string) => {
     return installSkillsshSkill(source, skillId);
   });
 
+  registerSkillIpcHandler("skills:previewGitInstall", (repoUrl: string) => {
+    return previewGitInstall(repoUrl);
+  });
+
+  registerSkillIpcHandler("skills:confirmGitInstall", (tempDir: string, selections: GitInstallSelection[]) => {
+    return confirmGitInstall(tempDir, selections);
+  });
+
+  registerSkillIpcHandler("skills:cleanupGitPreview", (tempDir: string) => {
+    return cleanupGitPreviewTempDir(tempDir);
+  });
+
   // Check update
-  ipcMain.handle("skills:checkSkillUpdate", (_event: any, skillId: string) => {
+  registerSkillIpcHandler("skills:checkSkillUpdate", (skillId: string) => {
     const skill = getSkillById(skillId);
     if (!skill) throw new Error("Skill not found");
 
@@ -797,7 +1129,7 @@ export function registerSkillManagerHandlers(): void {
   });
 
   // Reimport local skill
-  ipcMain.handle("skills:reimportLocalSkill", (_event: any, skillId: string) => {
+  registerSkillIpcHandler("skills:reimportLocalSkill", (skillId: string) => {
     const skill = getSkillById(skillId);
     if (!skill) throw new Error("Skill not found");
 
@@ -848,7 +1180,7 @@ export function registerSkillManagerHandlers(): void {
   });
 
   // Update
-  ipcMain.handle("skills:updateSkill", (_event: any, skillId: string) => {
+  registerSkillIpcHandler("skills:updateSkill", (skillId: string) => {
     const skill = getSkillById(skillId);
     if (!skill) throw new Error("Skill not found");
 
@@ -860,7 +1192,7 @@ export function registerSkillManagerHandlers(): void {
     throw new Error("Git-based skill updates require git clone support (not yet ported)");
   });
 
-  ipcMain.handle("skills:batchUpdateSkills", (_event: any, skillIds: string[]) => {
+  registerSkillIpcHandler("skills:batchUpdateSkills", (skillIds: string[]) => {
     let refreshed = 0;
     let unchanged = 0;
     const failed: string[] = [];
@@ -923,7 +1255,7 @@ export function registerSkillManagerHandlers(): void {
   });
 
   // Relink local source
-  ipcMain.handle("skills:relinkLocalSkillSource", (_event: any, skillId: string, sourcePath: string) => {
+  registerSkillIpcHandler("skills:relinkLocalSkillSource", (skillId: string, sourcePath: string) => {
     const skill = getSkillById(skillId);
     if (!skill) throw new Error("Skill not found");
     if (skill.source_type !== "local" && skill.source_type !== "import") {
@@ -960,7 +1292,7 @@ export function registerSkillManagerHandlers(): void {
   });
 
   // Detach local source
-  ipcMain.handle("skills:detachLocalSkillSource", (_event: any, skillId: string) => {
+  registerSkillIpcHandler("skills:detachLocalSkillSource", (skillId: string) => {
     const skill = getSkillById(skillId);
     if (!skill) throw new Error("Skill not found");
     if (skill.source_type !== "local" && skill.source_type !== "import") {
@@ -975,3 +1307,4 @@ export function registerSkillManagerHandlers(): void {
     return managedSkillById(skillId);
   });
 }
+

@@ -20,10 +20,37 @@ describe("git workbench UI source wiring", () => {
     assert.match(preloadSource, /getGitSnapshot/);
     assert.match(preloadSource, /gitCommit/);
     assert.match(preloadSource, /getGitCommitDetail/);
+    assert.match(preloadSource, /generateGitCommitMessageFast/);
     assert.match(preloadSource, /gitPull/);
     assert.match(panelSource, /window\.electron\.gitCommit/);
     assert.match(panelSource, /window\.electron\.getGitCommitDetail/);
+    assert.match(panelSource, /window\.electron\.generateGitCommitMessageFast/);
     assert.doesNotMatch(panelSource, /child_process|simple-git|execFile|spawn/);
+  });
+
+  it("fills commit messages immediately and refines them in the background", () => {
+    const boxSource = readFileSync("src/ui/components/git/GitCommitBox.tsx", "utf8");
+    const hookSource = readFileSync("src/ui/hooks/useGitWorkbench.ts", "utf8");
+    const panelSource = readFileSync("src/ui/components/git/GitWorkbenchPanel.tsx", "utf8");
+
+    assert.match(boxSource, /onGenerateMessageRefined/);
+    assert.match(boxSource, /setRefiningMessage\(true\)/);
+    assert.match(hookSource, /result\.data\.source === "ai"/);
+    assert.match(panelSource, /generateCommitMessageRefined/);
+  });
+
+  it("turns the bottom push button into commit-and-push when staged files exist", () => {
+    const boxSource = readFileSync("src/ui/components/git/GitCommitBox.tsx", "utf8");
+    const hookSource = readFileSync("src/ui/hooks/useGitWorkbench.ts", "utf8");
+
+    assert.match(boxSource, /const pushLabel = stagedCount > 0/);
+    assert.match(boxSource, /const handlePush = async/);
+    assert.match(boxSource, /await onCommit\(message, body\)/);
+    assert.match(boxSource, /await onPush\(\)/);
+    assert.doesNotMatch(boxSource, /onClick=\{onPush\}/);
+    assert.match(readFileSync("src/ui/components/git/GitWorkbenchPanel.tsx", "utf8"), /onPush=\{workbench\.push\}/);
+    assert.match(hookSource, /return true/);
+    assert.match(hookSource, /return false/);
   });
 
   it("does not expose destructive history rewriting actions in the renderer", () => {
@@ -45,20 +72,19 @@ describe("git workbench UI source wiring", () => {
     assert.match(panelSource, /type GitWorkbenchTab/);
     assert.match(panelSource, /setActiveTab/);
     assert.match(panelSource, /GitCommitDetailPanel/);
-    assert.match(historySource, /@gitgraph\/react/);
-    assert.match(historySource, /分支筛选/);
+    assert.match(historySource, /buildBranchOptions/);
     assert.match(historySource, /branchFilter/);
-    assert.match(historySource, /gitgraph\.import/);
-    assert.match(historySource, /renderMessage/);
+    assert.match(historySource, /buildLaneRanges/);
+    assert.match(historySource, /CommitRow/);
   });
 
   it("does not nest interactive file actions inside another button", () => {
     const changesSource = readFileSync("src/ui/components/git/GitChangesList.tsx", "utf8");
 
     assert.doesNotMatch(changesSource, /role="button"/);
-    assert.match(changesSource, /buildFileTree/);
     assert.match(changesSource, /未暂存/);
     assert.match(changesSource, /已暂存/);
     assert.match(changesSource, /aria-label=\{options\.actionLabel\}/);
+    assert.match(changesSource, /renderFileRow/);
   });
 });

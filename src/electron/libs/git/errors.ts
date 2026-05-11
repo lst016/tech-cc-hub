@@ -15,10 +15,25 @@ const PATTERNS: Array<[GitWorkbenchErrorCode, RegExp, string]> = [
 ];
 
 export function normalizeGitError(error: unknown): GitWorkbenchError {
+  if (isGitWorkbenchError(error)) {
+    return error;
+  }
+
   const detail = error instanceof Error ? error.message : String(error);
   const found = PATTERNS.find(([, pattern]) => pattern.test(detail));
   if (found) {
     return { code: found[0], message: found[2], detail };
   }
   return { code: "operation_failed", message: "Git 操作失败。", detail };
+}
+
+function isGitWorkbenchError(error: unknown): error is GitWorkbenchError {
+  return Boolean(
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    "message" in error &&
+    typeof (error as { code?: unknown }).code === "string" &&
+    typeof (error as { message?: unknown }).message === "string"
+  );
 }

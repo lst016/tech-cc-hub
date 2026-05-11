@@ -10,7 +10,7 @@ import { listBuiltinMcpServerInfos } from "../shared/builtin-mcp-registry.js";
 import { runClaude, type RunnerHandle } from "./libs/runner.js";
 import { persistImageAttachmentReference, rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
 import { resolveAgentRuntimeContext } from "./libs/agent-resolver.js";
-import { getApiConfigForModel, getCurrentApiConfig, getModelConfig, supportsRemoteSessionResume } from "./libs/claude-settings.js";
+import { getApiConfigForModel, getCurrentApiConfig, getModelConfig, resolveApiConfigForModel, supportsRemoteSessionResume } from "./libs/claude-settings.js";
 import { loadGlobalRuntimeConfig, saveGlobalRuntimeConfig } from "./libs/config-store.js";
 import { listExternalMcpServerInfos } from "./libs/external-mcp-servers.js";
 import { buildNextFigmaOfficialAuthStateRuntimeConfig, isFigmaMcpOAuthCallbackPrompt, redactFigmaMcpOAuthCallbackPrompt, type FigmaOfficialAuthState } from "./libs/figma-official-plugin.js";
@@ -1007,7 +1007,8 @@ export async function handleClientEvent(event: ClientEvent) {
   if (event.type === "session.start") {
     const { displayAttachments, agentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
     const config = getCurrentApiConfig();
-    const selectedModel = event.payload.runtime?.model?.trim() || config?.model;
+    const requestedModel = event.payload.runtime?.model?.trim() || config?.model;
+    const selectedModel = resolveApiConfigForModel(requestedModel)?.model ?? requestedModel;
     const session = store.createSession({
       cwd: event.payload.cwd,
       title: event.payload.title,
@@ -1112,11 +1113,12 @@ export async function handleClientEvent(event: ClientEvent) {
     const nextTitle = shouldRetitleFromFirstPrompt
       ? buildTitleFromFirstPrompt(storagePrompt, event.payload.attachments)
       : session.title;
-    const selectedModel =
+    const requestedModel =
       event.payload.runtime?.model?.trim()
       || session.model
       || resolveLatestMessageModel(history?.messages)
       || defaultConfig?.model;
+    const selectedModel = resolveApiConfigForModel(requestedModel)?.model ?? requestedModel;
     const previousModel = resolveLatestMessageModel(history?.messages) || session.model || defaultConfig?.model;
     const config = selectedModel ? getApiConfigForModel(selectedModel) ?? defaultConfig : defaultConfig;
     const supportsResume = config ? supportsRemoteSessionResume(config) : true;

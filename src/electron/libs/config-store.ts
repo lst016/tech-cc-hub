@@ -7,9 +7,10 @@ import {
   unlinkSync,
 } from "fs";
 import { join } from "path";
+import { CODEX_OAUTH_BASE_URL } from "../../shared/codex-oauth.js";
 
 export type ApiType = "anthropic";
-export type ApiProviderMode = "custom" | "deepseek";
+export type ApiProviderMode = "custom" | "deepseek" | "codex";
 
 export type ApiModelConfig = {
   name: string;
@@ -228,12 +229,15 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
 }
 
 function normalizeProvider(value: unknown, baseURL: string): ApiProviderMode {
-  if (value === "deepseek") {
-    return "deepseek";
+  if (value === "custom" || value === "deepseek" || value === "codex") {
+    return value;
   }
 
   try {
-    return new URL(baseURL.trim()).hostname === "api.deepseek.com" ? "deepseek" : "custom";
+    const hostname = new URL(baseURL.trim()).hostname;
+    if (hostname === "api.deepseek.com") return "deepseek";
+    if (hostname === "chatgpt.com") return "codex";
+    return "custom";
   } catch {
     return "custom";
   }
@@ -242,6 +246,9 @@ function normalizeProvider(value: unknown, baseURL: string): ApiProviderMode {
 function normalizeBaseURL(value: string, provider: ApiProviderMode): string {
   if (provider === "deepseek") {
     return DEEPSEEK_OFFICIAL_BASE_URL;
+  }
+  if (provider === "codex") {
+    return CODEX_OAUTH_BASE_URL;
   }
 
   const trimmed = value.trim();

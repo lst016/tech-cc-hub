@@ -160,7 +160,7 @@ export function useGitWorkbench(cwd?: string) {
     const workspace = cwd?.trim();
     if (!workspace) {
       setError("当前会话没有工作区。");
-      return;
+      return false;
     }
 
     setActionBusy(label);
@@ -169,15 +169,20 @@ export function useGitWorkbench(cwd?: string) {
       if (result.success) {
         setSnapshot(result.data);
         setError(null);
+        return true;
       } else {
-        setError(result.error.message);
+        const message = result.error.message;
+        await refresh();
+        setError(message);
+        return false;
       }
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
+      return false;
     } finally {
       setActionBusy(null);
     }
-  }, [cwd]);
+  }, [cwd, refresh]);
 
   const stageFiles = useCallback((paths: string[]) => {
     if (!cwd) return Promise.resolve();
@@ -203,7 +208,7 @@ export function useGitWorkbench(cwd?: string) {
 
     setActionBusy("generateCommitMessage");
     try {
-      const result = await window.electron.generateGitCommitMessage({ cwd: workspace, language: "zh-CN" });
+      const result = await window.electron.generateGitCommitMessageFast({ cwd: workspace, language: "zh-CN" });
       if (result.success) {
         setError(null);
         return result.data;
@@ -215,6 +220,22 @@ export function useGitWorkbench(cwd?: string) {
       return null;
     } finally {
       setActionBusy(null);
+    }
+  }, [cwd]);
+
+  const generateCommitMessageRefined = useCallback(async (): Promise<UiGitCommitMessageSuggestion | null> => {
+    const workspace = cwd?.trim();
+    if (!workspace) return null;
+
+    try {
+      const result = await window.electron.generateGitCommitMessage({ cwd: workspace, language: "zh-CN" });
+      if (result.success && result.data.source === "ai") {
+        setError(null);
+        return result.data;
+      }
+      return null;
+    } catch {
+      return null;
     }
   }, [cwd]);
 
@@ -280,6 +301,7 @@ export function useGitWorkbench(cwd?: string) {
     unstageFiles,
     commit,
     generateCommitMessage,
+    generateCommitMessageRefined,
     pull,
     push,
     createBranch,

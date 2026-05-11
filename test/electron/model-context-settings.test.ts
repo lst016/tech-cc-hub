@@ -7,6 +7,29 @@ import {
   getEnabledProfiles,
   normalizeProfile,
 } from "../../src/ui/components/settings/settings-utils.js";
+import {
+  applySharedModelRoutingPatch,
+  buildSharedModelRoutingState,
+} from "../../src/ui/components/settings/model-routing-utils.js";
+import {
+  buildGroupedModelOptions,
+  getModelSearchScore,
+} from "../../src/ui/components/ModelSelect.js";
+
+const MODEL_SEARCH_FIXTURE = [
+  "gpt-5.4",
+  "gpt-5.5",
+  "gpt-5.3-codex-spark",
+  "deepseek-v4-flash",
+  "deepseek-v4-pro",
+  "GLM-5.1-FP8",
+];
+
+function getModelSearchValues(query: string): string[] {
+  return buildGroupedModelOptions(MODEL_SEARCH_FIXTURE, query).flatMap((group) =>
+    group.options.map((option) => option.value),
+  );
+}
 
 test("settings modal and shared types expose per-model context compression fields", () => {
   const apiProfilesSettingsSource = readFileSync("src/ui/components/settings/ApiProfilesSettingsPage.tsx", "utf8");
@@ -47,6 +70,45 @@ test("settings modal and shared types expose per-model context compression field
   assert.match(globalTypesSource, /test-api-config/);
 });
 
+test("shared model routing model slots use grouped searchable comboboxes", () => {
+  const modelRoutingSource = readFileSync("src/ui/components/settings/ModelRoutingSettingsPage.tsx", "utf8");
+  const modelSelectSource = readFileSync("src/ui/components/ModelSelect.tsx", "utf8");
+
+  assert.match(modelRoutingSource, /<ModelSelect/);
+  assert.match(modelSelectSource, /MODEL_GROUP_DEFINITIONS/);
+  assert.match(modelSelectSource, /role="combobox"/);
+  assert.match(modelSelectSource, /buildGroupedModelOptions/);
+  assert.match(modelSelectSource, /getModelSearchScore/);
+  assert.match(modelSelectSource, /isFuzzySubsequence/);
+  assert.doesNotMatch(modelRoutingSource, /<select/);
+});
+
+test("model select search keeps short numeric tokens precise", () => {
+  assert.deepEqual(getModelSearchValues("55"), ["gpt-5.5"]);
+  assert.equal(getModelSearchScore("gpt-5.4", "Codex / GPT-5", "55"), -1);
+});
+
+test("model select search rejects loose two-character subsequences", () => {
+  assert.deepEqual(getModelSearchValues("df"), []);
+  assert.equal(getModelSearchScore("deepseek-v4-flash", "DeepSeek", "df"), -1);
+});
+
+test("model select search keeps useful direct and tight shorthand matches", () => {
+  assert.deepEqual(getModelSearchValues("deep"), ["deepseek-v4-flash", "deepseek-v4-pro"]);
+  assert.deepEqual(getModelSearchValues("v4f"), ["deepseek-v4-flash"]);
+});
+
+test("composer model control uses the searchable grouped model select", () => {
+  const promptInputSource = readFileSync("src/ui/components/PromptInput.tsx", "utf8");
+  const modelSelectSource = readFileSync("src/ui/components/ModelSelect.tsx", "utf8");
+
+  assert.match(promptInputSource, /import \{ ModelSelect \} from "\.\/ModelSelect"/);
+  assert.match(promptInputSource, /variant="composer"/);
+  assert.match(promptInputSource, /placement="top"/);
+  assert.match(modelSelectSource, /搜索模型 \/ 分组/);
+  assert.match(modelSelectSource, /DeepSeek/);
+});
+
 test("enabled profile helpers preserve list order and dedupe models across enabled configs", () => {
   const profiles = [
     {
@@ -85,6 +147,59 @@ test("enabled profile helpers preserve list order and dedupe models across enabl
     "second-small",
     "second-extra",
   ]);
+});
+
+test("shared model routing merges enabled profile models into one editable surface", () => {
+  const profiles = [
+    {
+      id: "codex",
+      name: "Codex OAuth",
+      apiKey: "{}",
+      baseURL: "https://chatgpt.com",
+      model: "gpt-5.4",
+      expertModel: "gpt-5.4",
+      smallModel: "gpt-5.3-codex-spark",
+      analysisModel: "gpt-5.3-codex-spark",
+      models: [{ name: "gpt-5.4" }, { name: "gpt-5.3-codex-spark" }],
+      enabled: true,
+      provider: "codex" as const,
+      apiType: "anthropic" as const,
+    },
+    {
+      id: "default",
+      name: "默认配置",
+      apiKey: "sk-test",
+      baseURL: "https://example.com/v1",
+      model: "deepseek-v4-flash",
+      expertModel: "deepseek-v4-pro",
+      smallModel: "GLM-5.1-FP8",
+      analysisModel: "GLM-5.1-FP8",
+      models: [{ name: "deepseek-v4-flash" }, { name: "deepseek-v4-pro" }, { name: "GLM-5.1-FP8" }],
+      enabled: true,
+      provider: "custom" as const,
+      apiType: "anthropic" as const,
+    },
+  ];
+
+  const state = buildSharedModelRoutingState(profiles);
+  assert.deepEqual(state.routedProfileIds, ["codex", "default"]);
+  assert.deepEqual(state.availableModels, [
+    "gpt-5.4",
+    "gpt-5.3-codex-spark",
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+    "GLM-5.1-FP8",
+  ]);
+
+  const nextProfiles = applySharedModelRoutingPatch(profiles, { smallModel: "GLM-5.1-FP8" });
+  assert.equal(nextProfiles[0]?.smallModel, "GLM-5.1-FP8");
+  assert.equal(nextProfiles[1]?.smallModel, "GLM-5.1-FP8");
+  assert.ok(nextProfiles[0]?.models?.some((model) => model.name === "deepseek-v4-pro"));
+  assert.ok(nextProfiles[1]?.models?.some((model) => model.name === "gpt-5.4"));
+
+  const withoutImageModels = applySharedModelRoutingPatch(nextProfiles, { imageModel: "" });
+  assert.equal(withoutImageModels[0]?.imageModel, undefined);
+  assert.equal(withoutImageModels[1]?.imageModel, undefined);
 });
 
 test("profile normalization preserves configured context window for selected role models", () => {

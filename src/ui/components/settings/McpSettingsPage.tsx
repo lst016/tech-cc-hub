@@ -58,6 +58,7 @@ const BUILTIN_ICON_MAP: Record<BuiltinMcpIconKey, LucideIcon> = {
   activity: Activity,
   settings: Settings,
   sparkles: WandSparkles,
+  figma: WandSparkles,
   timer: Timer,
   code: Code2,
   list: ListChecks,

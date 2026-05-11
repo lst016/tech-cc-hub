@@ -444,7 +444,12 @@ export function SettingsModal({
     <>
       <ModelRoutingSettingsPage profiles={profiles} onChange={updateProfiles} />
       <div className="mt-6">
-        <ApiProfilesSettingsPage profiles={profiles} runtimeSource={runtimeSource} onChange={updateProfiles} />
+        <ApiProfilesSettingsPage
+          profiles={profiles}
+          runtimeSource={runtimeSource}
+          onChange={updateProfiles}
+          onStartGuideSession={handleStartGuideSession}
+        />
       </div>
     </>
   );

@@ -87,6 +87,8 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("git:unstage", payload),
     gitCommit: (payload: any) =>
         ipcInvoke("git:commit", payload),
+    generateGitCommitMessageFast: (payload: any) =>
+        ipcInvoke("git:generateCommitMessageFast", payload),
     generateGitCommitMessage: (payload: any) =>
         ipcInvoke("git:generateCommitMessage", payload),
     gitPull: (payload: any) =>

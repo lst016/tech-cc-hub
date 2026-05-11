@@ -146,14 +146,10 @@ export function GitWorkbenchPanel({ cwd }: { cwd?: string }) {
                       compact
                       snapshot={snapshot}
                       actionBusy={workbench.actionBusy}
-                      onCommit={(message, body) => { void workbench.commit(message, body); }}
+                      onCommit={workbench.commit}
                       onGenerateMessage={workbench.generateCommitMessage}
-                      onPush={() => confirmAndClose({
-                        title: "Push 当前分支",
-                        description: "会把当前分支推送到 upstream。第一版不会强推，也不会改写历史。",
-                        confirmLabel: "Push",
-                        onConfirm: workbench.push,
-                      })}
+                      onGenerateMessageRefined={workbench.generateCommitMessageRefined}
+                      onPush={workbench.push}
                     />
                   )}
                   </aside>

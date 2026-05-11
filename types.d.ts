@@ -16,7 +16,7 @@ type ApiModelConfig = {
     compressionThresholdPercent?: number;
 }
 
-type ApiProviderMode = "custom" | "deepseek";
+type ApiProviderMode = "custom" | "deepseek" | "codex";
 
 type ApiConfig = {
     id: string;
@@ -151,6 +151,16 @@ type ApiConfigTestResult = {
     error?: string;
 };
 
+type CodexOAuthResult = {
+    success: boolean;
+    authorizeUrl?: string;
+    credential?: string;
+    accountId?: string;
+    email?: string;
+    expiresAt?: string;
+    error?: string;
+};
+
 type AppUpdateStatus = import("./src/ui/types").AppUpdateStatus;
 type AppUpdateActionResult = import("./src/ui/types").AppUpdateActionResult;
 type UiGitResult<T> = import("./src/ui/types").UiGitResult<T>;
@@ -170,6 +180,9 @@ type EventPayloadMapping = {
         "save-api-config": { success: boolean; error?: string };
         "fetch-api-models": ApiModelsFetchResult;
         "test-api-config": ApiConfigTestResult;
+        "codex-oauth-start": CodexOAuthResult;
+        "codex-oauth-complete": CodexOAuthResult;
+        "codex-oauth-refresh": CodexOAuthResult;
         "app-update-get-status": AppUpdateStatus;
         "app-update-check": AppUpdateActionResult;
         "app-update-download": AppUpdateActionResult;
@@ -202,6 +215,7 @@ type EventPayloadMapping = {
         "git:stage": UiGitResult<UiGitWorkbenchSnapshot>;
         "git:unstage": UiGitResult<UiGitWorkbenchSnapshot>;
         "git:commit": UiGitResult<UiGitWorkbenchSnapshot>;
+        "git:generateCommitMessageFast": UiGitResult<UiGitCommitMessageSuggestion>;
         "git:generateCommitMessage": UiGitResult<UiGitCommitMessageSuggestion>;
         "git:pull": UiGitResult<UiGitWorkbenchSnapshot>;
         "git:push": UiGitResult<UiGitWorkbenchSnapshot>;
@@ -247,6 +261,7 @@ interface Window {
         gitStageFiles: (payload: { cwd: string; paths: string[] }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
         gitUnstageFiles: (payload: { cwd: string; paths: string[] }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
         gitCommit: (payload: { cwd: string; message: string; body?: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
+        generateGitCommitMessageFast: (payload: { cwd: string; language?: string }) => Promise<UiGitResult<UiGitCommitMessageSuggestion>>;
         generateGitCommitMessage: (payload: { cwd: string; language?: string }) => Promise<UiGitResult<UiGitCommitMessageSuggestion>>;
         gitPull: (payload: { cwd: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;
         gitPush: (payload: { cwd: string }) => Promise<UiGitResult<UiGitWorkbenchSnapshot>>;

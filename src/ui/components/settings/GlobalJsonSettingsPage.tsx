@@ -25,7 +25,7 @@ export function GlobalJsonSettingsPage({
           <div>
             <div className="text-sm font-semibold text-ink-900">全局运行参数</div>
             <p className="mt-1 text-sm leading-6 text-muted">
-              这里放通用参数（例如 skills、hooks、外部工具清单）。  
+              这里放通用参数（例如 systemPromptExt、skills、hooks、外部工具清单）。  
               `env` 中字段会注入到执行环境，技能/工具可直接读取；不想手配也可走系统首次启动自动识别常见凭证并写入全局配置，后续复用时无需重复填写。
             </p>
           </div>
@@ -59,7 +59,7 @@ export function GlobalJsonSettingsPage({
           全局 JSON 配置
         </label>
         <p className="mt-1 text-xs text-muted">
-          行号、Tab 缩进都开启了，粘贴 JSON 后可直接点击“格式化 JSON”。建议保留 `env`，并在其中放入技能需要的 token；如果不想手动配置，首次启动会自动扫描并持久化常见凭证到 `agent-runtime.json`。
+          行号、Tab 缩进都开启了，粘贴 JSON 后可直接点击“格式化 JSON”。`systemPromptExt` 会追加到每次会话的 system prompt；建议保留 `env`，并在其中放入技能需要的 token。
         </p>
         <CodeEditor
           id="global-json"
@@ -67,7 +67,7 @@ export function GlobalJsonSettingsPage({
           onChange={onChange}
           minHeight="260px"
           className="mt-4 h-[36vh] max-h-[360px] flex-none"
-          placeholder='{\n  "env": {\n    "GITHUB_TOKEN": "ghp_xxx",\n    "GROQ_API_KEY": "gsk_xxx"\n  },\n  "skillCredentials": {\n    "github": [\n      "GITHUB_TOKEN"\n    ],\n    "browser": {\n      "env": ["GROQ_API_KEY"]\n    }\n  }\n}'
+          placeholder='{\n  "systemPromptExt": [\n    "工具调用必须少而准；能直接回答时不要调用工具。",\n    "多个互不依赖的只读工具调用要并行或批量执行。"\n  ],\n  "env": {\n    "GITHUB_TOKEN": "ghp_xxx",\n    "GROQ_API_KEY": "gsk_xxx"\n  },\n  "skillCredentials": {\n    "github": [\n      "GITHUB_TOKEN"\n    ],\n    "browser": {\n      "env": ["GROQ_API_KEY"]\n    }\n  }\n}'
         />
 
         <div className={`mt-3 shrink-0 rounded-xl px-3 py-2 text-xs ${parseError ? "border border-error/20 bg-error-light text-error" : "border border-ink-900/10 bg-surface text-muted"}`}>

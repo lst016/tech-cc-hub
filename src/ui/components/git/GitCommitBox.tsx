@@ -1,32 +1,50 @@
 import { GitCommitHorizontal, Loader2, Sparkles, Upload } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { UiGitCommitMessageSuggestion, UiGitWorkbenchSnapshot } from "../../types";
+
+type MaybePromise<T> = T | Promise<T>;
 
 export function GitCommitBox({
   snapshot,
   actionBusy,
   onCommit,
   onGenerateMessage,
+  onGenerateMessageRefined,
   onPush,
   compact = false,
 }: {
   snapshot: UiGitWorkbenchSnapshot | null;
   actionBusy: string | null;
-  onCommit: (message: string, body?: string) => void;
+  onCommit: (message: string, body?: string) => MaybePromise<boolean | void>;
   onGenerateMessage?: () => Promise<UiGitCommitMessageSuggestion | null>;
-  onPush: () => void;
+  onGenerateMessageRefined?: () => Promise<UiGitCommitMessageSuggestion | null>;
+  onPush: () => MaybePromise<boolean | void>;
   compact?: boolean;
 }) {
   const [message, setMessage] = useState("");
   const [body, setBody] = useState("");
+  const [refiningMessage, setRefiningMessage] = useState(false);
+  const messageRef = useRef(message);
+  const bodyRef = useRef(body);
   const stagedCount = snapshot?.status.stagedCount ?? 0;
   const ahead = snapshot?.status.ahead ?? 0;
   const canCommit = stagedCount > 0 && message.trim().length > 0 && !actionBusy;
-  const canGenerate = stagedCount > 0 && !actionBusy && Boolean(onGenerateMessage);
+  const canCommitAndPush = canCommit;
+  const canPushAhead = stagedCount === 0 && ahead > 0 && !actionBusy;
+  const canGenerate = stagedCount > 0 && !actionBusy && !refiningMessage && Boolean(onGenerateMessage);
   const busyCommit = actionBusy === "commit";
   const busyGenerate = actionBusy === "generateCommitMessage";
   const busyPush = actionBusy === "push";
+  const pushLabel = stagedCount > 0 ? "提交并推送" : `推送${ahead > 0 ? ` ${ahead}` : ""}`;
+
+  useEffect(() => {
+    messageRef.current = message;
+  }, [message]);
+
+  useEffect(() => {
+    bodyRef.current = body;
+  }, [body]);
 
   const handleGenerateMessage = async () => {
     if (!onGenerateMessage || !canGenerate) return;
@@ -38,11 +56,65 @@ export function GitCommitBox({
 
     setMessage(suggestion.message);
     setBody(suggestion.body ?? "");
-    toast.success(suggestion.source === "ai" ? "已用 AI 填写提交信息。" : "已生成提交信息。", {
-      description: suggestion.source === "ai"
-        ? `已根据暂存区 diff 生成中文摘要${suggestion.model ? ` · ${suggestion.model}` : ""}。`
-        : "当前 AI 不可用，已按暂存文件生成中文摘要。",
+    messageRef.current = suggestion.message;
+    bodyRef.current = suggestion.body ?? "";
+    toast.success("已先填写本地提交摘要。", {
+      description: onGenerateMessageRefined
+        ? "AI 正在后台精修，完成后会自动替换。"
+        : "已按暂存文件生成中文摘要。",
     });
+
+    if (!onGenerateMessageRefined) return;
+
+    const fastMessage = suggestion.message;
+    const fastBody = suggestion.body ?? "";
+    setRefiningMessage(true);
+    try {
+      const refined = await onGenerateMessageRefined();
+      if (!refined) return;
+      if (messageRef.current !== fastMessage || bodyRef.current !== fastBody) {
+        toast.info("AI 精修已完成，已保留你手动修改的内容。");
+        return;
+      }
+
+      setMessage(refined.message);
+      setBody(refined.body ?? "");
+      messageRef.current = refined.message;
+      bodyRef.current = refined.body ?? "";
+      toast.success("已用 AI 精修提交信息。", {
+        description: `已根据暂存区 diff 生成中文摘要${refined.model ? ` · ${refined.model}` : ""}。`,
+      });
+    } finally {
+      setRefiningMessage(false);
+    }
+  };
+
+  const clearCommitDraft = () => {
+    setMessage("");
+    setBody("");
+    messageRef.current = "";
+    bodyRef.current = "";
+  };
+
+  const handleCommit = async () => {
+    if (!canCommit) return;
+    const committed = await onCommit(message, body);
+    if (committed === false) return;
+    clearCommitDraft();
+  };
+
+  const handlePush = async () => {
+    if (stagedCount > 0) {
+      if (!canCommitAndPush) return;
+      const committed = await onCommit(message, body);
+      if (committed === false) return;
+      clearCommitDraft();
+      await onPush();
+      return;
+    }
+
+    if (!canPushAhead) return;
+    await onPush();
   };
 
   return (
@@ -59,10 +131,10 @@ export function GitCommitBox({
               type="button"
               disabled={!canGenerate}
               onClick={() => { void handleGenerateMessage(); }}
-              title="AI 根据已暂存 diff 填写中文提交信息"
+              title="先本地秒填中文摘要，再后台 AI 精修"
               className="inline-flex h-6 items-center gap-1 rounded-md border border-blue-100 bg-blue-50 px-1.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-100 disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400"
             >
-              {busyGenerate ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+              {busyGenerate || refiningMessage ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
               AI 填写
             </button>
           )}
@@ -90,11 +162,7 @@ export function GitCommitBox({
           <button
             type="button"
             disabled={!canCommit}
-            onClick={() => {
-              onCommit(message, body);
-              setMessage("");
-              setBody("");
-            }}
+            onClick={() => { void handleCommit(); }}
             className={`${compact ? "min-w-0 px-2" : "min-w-28 px-3"} inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-blue-600 text-xs font-semibold text-white hover:bg-blue-500 disabled:bg-slate-200 disabled:text-slate-400`}
           >
             {busyCommit ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitCommitHorizontal className="h-3.5 w-3.5" />}
@@ -102,12 +170,13 @@ export function GitCommitBox({
           </button>
           <button
             type="button"
-            disabled={Boolean(actionBusy)}
-            onClick={onPush}
+            disabled={stagedCount > 0 ? !canCommitAndPush : !canPushAhead}
+            onClick={() => { void handlePush(); }}
+            title={stagedCount > 0 ? "先提交已暂存文件，再推送新的 commit" : "推送当前分支已提交的 commit"}
             className={`${compact ? "min-w-0 px-2" : "min-w-28 px-3"} inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50`}
           >
             {busyPush ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-            推送{ahead > 0 ? ` ${ahead}` : ""}
+            {pushLabel}
           </button>
         </div>
       </div>

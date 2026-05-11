@@ -1,11 +1,13 @@
 import { AlertTriangle, X } from "lucide-react";
 
+type MaybePromise<T> = T | Promise<T>;
+
 export type GitConfirmDialogState = {
   title: string;
   description: string;
   confirmLabel: string;
   tone?: "warning" | "danger";
-  onConfirm: () => void | Promise<void>;
+  onConfirm: () => MaybePromise<unknown>;
 };
 
 export function GitConfirmDialog({

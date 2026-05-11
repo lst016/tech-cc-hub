@@ -3,6 +3,14 @@ import { join } from "path";
 import { homedir } from "os";
 import { spawnSync } from "child_process";
 import {
+  CODEX_OAUTH_DEFAULT_MODEL,
+  CODEX_OAUTH_SMALL_MODEL,
+} from "../../shared/codex-oauth.js";
+import {
+  isModelCompatibleWithApiProvider,
+  pickProviderCompatibleModel,
+} from "../../shared/model-provider-routing.js";
+import {
   loadApiConfigSettings,
   loadGlobalRuntimeConfig,
   saveApiConfigSettings,
@@ -11,6 +19,7 @@ import {
   type GlobalRuntimeConfig,
 } from "./config-store.js";
 import { app } from "electron";
+import { getCodexAnthropicProxyBaseURL } from "./codex-anthropic-proxy.js";
 
 function isUsableConfig(config: ApiConfig | null | undefined): config is ApiConfig {
   return Boolean(
@@ -140,6 +149,11 @@ export function getConfiguredModelNames(config: ApiConfig): string[] {
   ].map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
 }
 
+export function getRoutableModelNames(config: ApiConfig): string[] {
+  return getConfiguredModelNames(config)
+    .filter((modelName) => isModelCompatibleWithApiProvider(config.provider, modelName));
+}
+
 export function getApiConfigForModel(modelName?: string): ApiConfig | null {
   const normalizedModel = modelName?.trim();
   const enabledConfigs = getEnabledUsableApiConfigs();
@@ -148,15 +162,49 @@ export function getApiConfigForModel(modelName?: string): ApiConfig | null {
     return enabledConfigs[0] ?? getFallbackClaudeSettingsConfig();
   }
 
-  const matchedConfig = enabledConfigs.find((config) => getConfiguredModelNames(config).includes(normalizedModel));
+  const matchedConfig = enabledConfigs.find((config) => getRoutableModelNames(config).includes(normalizedModel));
   if (matchedConfig) {
     return matchedConfig;
   }
 
   const fallbackConfig = getFallbackClaudeSettingsConfig();
-  return fallbackConfig && getConfiguredModelNames(fallbackConfig).includes(normalizedModel)
+  return fallbackConfig && getRoutableModelNames(fallbackConfig).includes(normalizedModel)
     ? fallbackConfig
     : null;
+}
+
+export type ResolvedApiConfigForModel = {
+  config: ApiConfig;
+  model: string;
+  requestedModel?: string;
+  fellBack: boolean;
+};
+
+export function resolveApiConfigForModel(modelName?: string): ResolvedApiConfigForModel | null {
+  const defaultConfig = getCurrentApiConfig();
+  if (!defaultConfig) {
+    return null;
+  }
+
+  const requestedModel = modelName?.trim() || defaultConfig.model;
+  const matchedConfig = getApiConfigForModel(requestedModel);
+  if (matchedConfig) {
+    const model = normalizeModelForApiConfig(matchedConfig, requestedModel, matchedConfig.model);
+    return {
+      config: matchedConfig,
+      model,
+      requestedModel,
+      fellBack: model !== requestedModel,
+    };
+  }
+
+  const model = normalizeModelForApiConfig(defaultConfig, defaultConfig.model, defaultConfig.model);
+  return {
+    config: defaultConfig,
+    model,
+    requestedModel,
+    fellBack: Boolean(requestedModel && requestedModel !== model),
+  };
 }
 
 function getFallbackClaudeSettingsConfig(): ApiConfig | null {
@@ -207,24 +255,71 @@ export function getGlobalRuntimeConfig(): GlobalRuntimeConfig {
 
 export function buildEnvForConfig(config: ApiConfig, modelOverride?: string): Record<string, string> {
   const baseEnv = { ...process.env } as Record<string, string>;
-  const selectedModel = modelOverride ?? config.model;
-  const smallModel = config.smallModel?.trim() || config.analysisModel?.trim() || selectedModel;
+  const selectedModel = normalizeModelForApiConfig(config, modelOverride ?? config.model, config.model);
+  const smallModel = normalizeSmallModelForApiConfig(
+    config,
+    config.smallModel?.trim() || config.analysisModel?.trim() || selectedModel,
+    selectedModel,
+  );
   const modelEnv = buildClaudeCodeModelEnv(selectedModel, smallModel);
   const nonEssentialTrafficEnv = buildClaudeCodeNonEssentialTrafficEnv();
+  const anthropicAuthToken = config.provider === "codex" ? "codex-oauth" : config.apiKey;
+  const anthropicBaseURL = config.provider === "codex"
+    ? getCodexAnthropicProxyBaseURL(config.id)
+    : normalizeAnthropicBaseUrlForClaudeCode(config.baseURL);
 
-  baseEnv.ANTHROPIC_AUTH_TOKEN = config.apiKey;
-  baseEnv.ANTHROPIC_BASE_URL = normalizeAnthropicBaseUrlForClaudeCode(config.baseURL);
+  baseEnv.ANTHROPIC_AUTH_TOKEN = anthropicAuthToken;
+  baseEnv.ANTHROPIC_BASE_URL = anthropicBaseURL;
   Object.assign(baseEnv, modelEnv);
 
   const runtimeEnv = buildGlobalRuntimeEnvConfig();
   return {
     ...baseEnv,
     ...runtimeEnv,
-    ANTHROPIC_AUTH_TOKEN: config.apiKey,
-    ANTHROPIC_BASE_URL: normalizeAnthropicBaseUrlForClaudeCode(config.baseURL),
+    ANTHROPIC_AUTH_TOKEN: anthropicAuthToken,
+    ANTHROPIC_BASE_URL: anthropicBaseURL,
     ...modelEnv,
     ...nonEssentialTrafficEnv,
   };
+}
+
+export function normalizeModelForApiConfig(
+  config: ApiConfig,
+  modelName: string | undefined,
+  fallbackModel = config.model,
+): string {
+  const providerFallbackModel = getProviderDefaultModel(config, "main");
+  return (
+    pickProviderCompatibleModel(config.provider, modelName, fallbackModel) ||
+    pickProviderCompatibleModel(config.provider, providerFallbackModel, config.model) ||
+    modelName?.trim() ||
+    config.model
+  );
+}
+
+function normalizeSmallModelForApiConfig(
+  config: ApiConfig,
+  modelName: string | undefined,
+  selectedModel: string,
+): string {
+  const providerFallbackModel = getProviderDefaultModel(config, "small") || selectedModel;
+  return (
+    pickProviderCompatibleModel(config.provider, modelName, providerFallbackModel) ||
+    pickProviderCompatibleModel(config.provider, selectedModel, config.model) ||
+    selectedModel
+  );
+}
+
+function getProviderDefaultModel(config: ApiConfig, slot: "main" | "small"): string {
+  if (config.provider === "codex") {
+    return slot === "small" ? CODEX_OAUTH_SMALL_MODEL : CODEX_OAUTH_DEFAULT_MODEL;
+  }
+
+  if (config.provider === "deepseek") {
+    return "deepseek-v4-flash";
+  }
+
+  return config.model;
 }
 
 function buildClaudeCodeNonEssentialTrafficEnv(): Record<string, string> {

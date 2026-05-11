@@ -18,14 +18,53 @@ export function buildAdminConfigPromptAppend(): string {
 
 export function buildToolCallOptimizationPromptAppend(): string {
   return [
-    "Tool discipline: call only tools present in the current tool list; discover schema-sensitive/deferred tools before use and do not invent missing tools.",
-    "Known concrete files: read them in parallel; unknown target: search once with Grep/Glob/Bash rg/find to narrow, then read only the hits.",
-    "Avoid fragmented chains such as ls -> cat -> grep -> cat when one search or one read-only batch can answer it.",
+    "Tool-call budget: use tools only when the answer, code change, or verification depends on current external state; do not call tools for direct answers or obvious reasoning.",
+    "Before the first tool call, group the needed evidence: if 2+ read-only searches, file reads, status checks, or log reads are independent, run them in one parallel/batched turn when the current tool surface supports it.",
+    "Known concrete files: read only the relevant ranges and batch those reads. Unknown target: run one bounded rg/find/Grep/Glob search to narrow to files and line numbers, then read only the best hits.",
+    "Avoid fragmented chains such as ls -> cat -> grep -> cat when one rg/find search or one read-only batch can answer it.",
+    "Default file reads should stay under 200 lines. After edits, verify only the changed ranges or decisive output; do not full-read a file just to confirm a small change.",
     "Batch read-only work when safe; keep writes, deletes, moves, installs, commits, and other side effects in separate calls.",
+    "Stop exploring once the collected evidence is sufficient. Only add more tool calls when a new error, ambiguity, or explicit user request makes them necessary.",
     "After Edit/Write/MultiEdit, immediately run the smallest meaningful verification and report the result.",
     "Use bounded non-interactive shell commands; on Windows avoid unstable PowerShell surfaces and quote paths carefully.",
     "For scheduled tasks use the persistent tech-cc-hub cron MCP tools, not SDK CronCreate/CronDelete/CronList.",
   ].join("\n");
+}
+
+export function buildGlobalRuntimeSystemPromptExtAppend(globalRuntimeConfig: unknown): string | undefined {
+  const lines = getSystemPromptExtLines(globalRuntimeConfig);
+  if (lines.length === 0) {
+    return undefined;
+  }
+
+  return [
+    "全局 System Prompt 扩展：",
+    ...lines,
+  ].join("\n");
+}
+
+function getSystemPromptExtLines(globalRuntimeConfig: unknown): string[] {
+  if (!isRecord(globalRuntimeConfig)) {
+    return [];
+  }
+
+  const value = globalRuntimeConfig.systemPromptExt;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : [];
+  }
+
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => typeof item === "string" ? item.trim() : "")
+    .filter(Boolean);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function buildBuiltinMcpRegistryPromptAppend(): string {

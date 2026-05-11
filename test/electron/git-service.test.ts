@@ -22,6 +22,14 @@ function createRepo() {
   return cwd;
 }
 
+function addBareRemote(cwd: string) {
+  const remote = mkdtempSync(join(tmpdir(), "tech-cc-hub-git-remote-"));
+  git(remote, ["init", "--bare"]);
+  git(cwd, ["remote", "add", "origin", remote]);
+  git(cwd, ["push", "-u", "origin", "HEAD"]);
+  return remote;
+}
+
 test("GitWorkbenchService reads status, diff and commits", async () => {
   const cwd = createRepo();
   writeFileSync(join(cwd, "README.md"), "# demo\n\nchange\n");
@@ -52,6 +60,53 @@ test("GitWorkbenchService stages and commits files", async () => {
   assert.equal(committed.success, true);
   if (!committed.success) return;
   assert.equal(committed.data.history[0]?.message, "add notes");
+});
+
+test("GitWorkbenchService blocks push when local changes are not committed", async () => {
+  const cwd = createRepo();
+  addBareRemote(cwd);
+  writeFileSync(join(cwd, "notes.txt"), "hello\n");
+  git(cwd, ["add", "notes.txt"]);
+
+  const service = new GitWorkbenchService();
+  const pushed = await service.push(cwd);
+
+  assert.equal(pushed.success, false);
+  if (pushed.success) return;
+  assert.equal(pushed.error.code, "dirty_worktree");
+  assert.match(pushed.error.message, /提交/);
+
+  const snapshot = await service.getSnapshot(cwd);
+  assert.equal(snapshot.success, true);
+  if (!snapshot.success) return;
+  assert.equal(snapshot.data.status.ahead, 0);
+  assert.equal(snapshot.data.status.stagedCount, 1);
+  assert.equal(snapshot.data.operationLog[0]?.operation, "push");
+  assert.equal(snapshot.data.operationLog[0]?.success, false);
+
+  const committed = await service.commit(cwd, { message: "add notes" });
+  assert.equal(committed.success, true);
+  const pushedAfterCommit = await service.push(cwd);
+  assert.equal(pushedAfterCommit.success, true);
+  if (!pushedAfterCommit.success) return;
+  assert.equal(pushedAfterCommit.data.status.ahead, 0);
+  assert.equal(pushedAfterCommit.data.operationLog[0]?.operation, "push");
+  assert.equal(pushedAfterCommit.data.operationLog[0]?.success, true);
+});
+
+test("GitWorkbenchService returns a fast fallback commit message for staged files", async () => {
+  const cwd = createRepo();
+  writeFileSync(join(cwd, "notes.txt"), "hello\n");
+  git(cwd, ["add", "notes.txt"]);
+
+  const service = new GitWorkbenchService();
+  const suggestion = await service.generateFallbackCommitMessage(cwd);
+
+  assert.equal(suggestion.success, true);
+  if (!suggestion.success) return;
+  assert.equal(suggestion.data.source, "fallback");
+  assert.match(suggestion.data.message, /^chore\(repo\):/);
+  assert.match(suggestion.data.body ?? "", /notes\.txt/);
 });
 
 test("GitWorkbenchService reads commit detail files and patch", async () => {

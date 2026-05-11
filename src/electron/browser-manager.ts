@@ -2236,8 +2236,6 @@ export class BrowserWorkbenchManager {
         style.id = "__tech_cc_hub_annotation_style__";
         style.textContent = [
           "#__tech_cc_hub_annotation_layer__{position:fixed;inset:0;z-index:2147483647;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1f2937}",
-          ".__tech_cc_hub_hover{position:fixed;border:2px solid #1683ff;background:rgba(22,131,255,.06);box-sizing:border-box;pointer-events:none}",
-          ".__tech_cc_hub_hover_label{position:fixed;max-width:min(360px,calc(100vw - 24px));padding:6px 8px;border-radius:10px;background:rgba(15,23,42,.92);color:#fff;font-size:12px;line-height:1.35;box-shadow:0 10px 24px rgba(15,23,42,.24);pointer-events:none;white-space:normal;word-break:break-word}",
           ".__tech_cc_hub_marker{position:fixed;width:28px;height:28px;border-radius:999px;background:#1683ff;color:white;display:grid;place-items:center;font-size:13px;font-weight:800;box-shadow:0 0 0 3px white,0 8px 24px rgba(22,131,255,.36);pointer-events:auto;cursor:pointer}",
           ".__tech_cc_hub_outline{position:fixed;border:2px solid #1683ff;background:rgba(22,131,255,.08);box-sizing:border-box;pointer-events:none}",
           ".__tech_cc_hub_comment{position:fixed;display:grid;grid-template-columns:minmax(0,1fr) 34px;grid-template-rows:1fr 1fr;align-items:center;gap:6px 10px;width:min(440px,calc(100vw - 32px));height:92px;border:1px solid rgba(15,23,42,.1);border-radius:18px;background:rgba(255,255,255,.96);box-shadow:0 12px 34px rgba(15,23,42,.16);padding:10px 12px 10px 42px;pointer-events:auto}",
@@ -2334,6 +2332,13 @@ export class BrowserWorkbenchManager {
         const panel = layer.querySelector(".__tech_cc_hub_background");
         if (panel) panel.hidden = true;
       }
+      function clearHoverPreview() {
+        const layer = document.getElementById("__tech_cc_hub_annotation_layer__");
+        const hover = layer && layer.querySelector(".__tech_cc_hub_hover");
+        if (hover) hover.remove();
+        const hoverLabel = layer && layer.querySelector(".__tech_cc_hub_hover_label");
+        if (hoverLabel) hoverLabel.remove();
+      }
       function uid() {
         if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
         return "ann-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
@@ -2389,44 +2394,6 @@ export class BrowserWorkbenchManager {
           annotation && annotation.url ? "页面：" + annotation.url : "",
           annotation && annotation.domHint && annotation.domHint.selector ? "Selector：" + annotation.domHint.selector : "",
         ].filter(Boolean).join("\\n");
-      }
-      function updateHover(point) {
-        const layer = ensureLayer();
-        let hover = layer.querySelector(".__tech_cc_hub_hover");
-        if (!hover) {
-          hover = document.createElement("div");
-          hover.className = "__tech_cc_hub_hover";
-          layer.appendChild(hover);
-        }
-        let hoverLabel = layer.querySelector(".__tech_cc_hub_hover_label");
-        if (!hoverLabel) {
-          hoverLabel = document.createElement("div");
-          hoverLabel.className = "__tech_cc_hub_hover_label";
-          layer.appendChild(hoverLabel);
-        }
-        const domHint = inspectAt(point);
-        const box = domHint && domHint.boundingBox;
-        if (!box || box.width <= 0 || box.height <= 0) {
-          hover.style.display = "none";
-          hoverLabel.style.display = "none";
-          return;
-        }
-        const label = labelFromDomHint(domHint);
-        hover.style.display = "block";
-        hover.style.left = box.x + "px";
-        hover.style.top = box.y + "px";
-        hover.style.width = box.width + "px";
-        hover.style.height = box.height + "px";
-        if (label) {
-          hoverLabel.style.display = "block";
-          hoverLabel.textContent = label.length > 180 ? label.slice(0, 180) + "..." : label;
-          const preferredLeft = Math.min(point.x + 12, window.innerWidth - 24);
-          const preferredTop = Math.min(point.y + 14, window.innerHeight - 44);
-          hoverLabel.style.left = Math.max(12, preferredLeft) + "px";
-          hoverLabel.style.top = Math.max(12, preferredTop) + "px";
-        } else {
-          hoverLabel.style.display = "none";
-        }
       }
       function placeWithinViewport(left, top, width, height) {
         return {
@@ -2557,21 +2524,12 @@ export class BrowserWorkbenchManager {
         document.removeEventListener("mousemove", window.__techCcHubAnnotationHoverHandler, true);
         window.__techCcHubAnnotationHoverHandler = null;
       }
+      clearHoverPreview();
       if (!options.enabled) {
         const layer = document.getElementById("__tech_cc_hub_annotation_layer__");
-        const hover = layer && layer.querySelector(".__tech_cc_hub_hover");
-        if (hover) hover.remove();
-        const hoverLabel = layer && layer.querySelector(".__tech_cc_hub_hover_label");
-        if (hoverLabel) hoverLabel.remove();
         if (layer) layer.hidden = true;
         return true;
       }
-      window.__techCcHubAnnotationHoverHandler = function(event) {
-        if (event.target && event.target.closest && event.target.closest("#__tech_cc_hub_annotation_layer__")) {
-          return;
-        }
-        updateHover({ x: event.clientX, y: event.clientY });
-      };
       window.__techCcHubAnnotationHandler = function(event) {
         if (event.target && event.target.closest && event.target.closest("#__tech_cc_hub_annotation_layer__")) {
           return;
@@ -2594,7 +2552,6 @@ export class BrowserWorkbenchManager {
           };
           removeAnnotation(existing.dataset.annotationId);
           emitAnnotation(removed);
-          updateHover(point);
           clearBackgroundInfo();
           return;
         }
@@ -2612,7 +2569,6 @@ export class BrowserWorkbenchManager {
         showBackgroundInfo(annotation);
         emitAnnotation(annotation);
       };
-      document.addEventListener("mousemove", window.__techCcHubAnnotationHoverHandler, true);
       document.addEventListener("click", window.__techCcHubAnnotationHandler, true);
       return true;
       }`;

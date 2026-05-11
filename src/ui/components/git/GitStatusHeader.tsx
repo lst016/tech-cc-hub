@@ -2,6 +2,8 @@ import { ChevronDown, Download, GitBranch, MoreHorizontal, RefreshCw, Upload } f
 import type { UiGitWorkbenchSnapshot } from "../../types";
 import { formatAheadBehind, repoDisplayName } from "./git-ui-utils";
 
+type MaybePromise<T> = T | Promise<T>;
+
 export function GitStatusHeader({
   snapshot,
   loading,
@@ -15,9 +17,9 @@ export function GitStatusHeader({
   loading: boolean;
   actionBusy: string | null;
   onRefresh: () => void;
-  onPull: () => void;
-  onPush: () => void;
-  onCheckoutBranch: (name: string) => void;
+  onPull: () => MaybePromise<unknown>;
+  onPush: () => MaybePromise<unknown>;
+  onCheckoutBranch: (name: string) => MaybePromise<unknown>;
 }) {
   const status = snapshot?.status ?? null;
   const branchNames = Array.from(new Set((snapshot?.branches ?? [])

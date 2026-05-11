@@ -24,7 +24,7 @@ export type ApiModelConfigProfile = {
   compressionThresholdPercent?: number;
 };
 
-export type ApiProviderMode = "custom" | "deepseek";
+export type ApiProviderMode = "custom" | "deepseek" | "codex";
 
 export type ApiConfigProfile = {
   id: string;

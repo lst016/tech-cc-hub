@@ -23,11 +23,11 @@ import type { PromptAttachment, RuntimeOverrides, ServerEvent } from "../types.j
 import { resolveAgentRuntimeContext } from "./agent-resolver.js";
 import {
   buildEnvForConfig,
-  getApiConfigForModel,
   getClaudeCodeModelOption,
   getClaudeCodePath,
   getCurrentApiConfig,
   getGlobalRuntimeConfig,
+  resolveApiConfigForModel,
 } from "./claude-settings.js";
 import { buildClaudeProjectMemoryPromptAppend } from "./claude-project-memory.js";
 import { saveGlobalRuntimeConfig } from "./config-store.js";
@@ -52,6 +52,7 @@ import {
   buildBrowserWorkbenchPromptAppend,
   buildDesignParityPromptAppend,
   buildBuiltinMcpRegistryPromptAppend,
+  buildGlobalRuntimeSystemPromptExtAppend,
   buildToolCallOptimizationPromptAppend,
 } from "./system-prompt-presets.js";
 import {
@@ -282,9 +283,8 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       }
 
       const requestedModel = getRequestedModelName(defaultConfig.model, runtime?.model);
-      requestedModelForError = requestedModel;
-      const config = getApiConfigForModel(requestedModel);
-      if (!config) {
+      const resolvedConfig = resolveApiConfigForModel(requestedModel);
+      if (!resolvedConfig) {
         const errorMessage = `请求模型「${requestedModel ?? ""}」失败：它不在已启用配置池的模型列表里，请先在设置里启用包含该模型的配置。`;
         onEvent({
           type: "runner.error",
@@ -306,7 +306,11 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         return;
       }
 
-      const env = buildEnvForConfig(config, requestedModel);
+      const { config } = resolvedConfig;
+      const effectiveModel = resolvedConfig.model;
+      requestedModelForError = effectiveModel;
+
+      const env = buildEnvForConfig(config, effectiveModel);
       const globalRuntimeConfig = getGlobalRuntimeConfig();
       const mergedEnv = {
         ...getEnhancedEnv(),
@@ -344,11 +348,13 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         buildBuiltinMcpRegistryPromptAppend(),
       );
       const outputFormat = resolveOutputFormat(runtime?.outputFormat, systemPromptAppend, prompt);
-      const sdkModelOption = getClaudeCodeModelOption(config, requestedModel);
+      const sdkModelOption = getClaudeCodeModelOption(config, effectiveModel);
       console.info("[runner][route]", {
         configuredBaseURL: config.baseURL,
         anthropicBaseURL: mergedEnv.ANTHROPIC_BASE_URL,
-        model: requestedModel,
+        requestedModel,
+        model: effectiveModel,
+        modelFallback: resolvedConfig.fellBack,
         sdkModelOption,
         settingSources: agentContext.settingSources,
         claudePath: getClaudeCodePath(),
@@ -838,30 +844,41 @@ function buildGlobalRuntimePromptAppend(
   const discoveredEnvKeys = getDiscoveredCredentialEnvKeys(runtimeEnv);
   const envKeys = Array.from(new Set([...configuredEnvKeys, ...discoveredEnvKeys])).sort();
   const skillCredentialHints = getSkillCredentialHints(globalRuntimeConfig);
+  const systemPromptExtAppend = buildGlobalRuntimeSystemPromptExtAppend(globalRuntimeConfig);
   const hasConfiguredRuntime = configuredEnvKeys.length > 0 || skillCredentialHints.length > 0;
   const autoDiscoverLabel = hasConfiguredRuntime ? "" : "（未发现自定义凭证映射，已自动发现当前环境候选）";
 
-  if (envKeys.length === 0 && skillCredentialHints.length === 0) {
+  if (envKeys.length === 0 && skillCredentialHints.length === 0 && !systemPromptExtAppend) {
     return undefined;
   }
 
-  const hints: string[] = [
-    "全局运行参数已启用（用于技能与工具执行）：",
-    "若执行 skill/tool 需要鉴权，请优先使用对应环境变量；不要向用户暴露或回显密钥原文。",
-  ];
+  const sections: string[] = [];
 
-  if (configuredEnvKeys.length > 0 || discoveredEnvKeys.length > 0) {
-    hints.push(
-      `已注入环境变量（名字）${autoDiscoverLabel}：${envKeys.join("、")}`,
-    );
+  if (envKeys.length > 0 || skillCredentialHints.length > 0) {
+    const hints: string[] = [
+      "全局运行参数已启用（用于技能与工具执行）：",
+      "若执行 skill/tool 需要鉴权，请优先使用对应环境变量；不要向用户暴露或回显密钥原文。",
+    ];
+
+    if (configuredEnvKeys.length > 0 || discoveredEnvKeys.length > 0) {
+      hints.push(
+        `已注入环境变量（名字）${autoDiscoverLabel}：${envKeys.join("、")}`,
+      );
+    }
+
+    if (skillCredentialHints.length > 0) {
+      hints.push("技能凭证映射（按技能归纳）：");
+      hints.push(...skillCredentialHints.map((hint) => `- ${hint}`));
+    }
+
+    sections.push(hints.join("\n"));
   }
 
-  if (skillCredentialHints.length > 0) {
-    hints.push("技能凭证映射（按技能归纳）：");
-    hints.push(...skillCredentialHints.map((hint) => `- ${hint}`));
+  if (systemPromptExtAppend) {
+    sections.push(systemPromptExtAppend);
   }
 
-  return hints.join("\n");
+  return sections.join("\n\n");
 }
 
 function getConfiguredRuntimeEnvKeys(globalRuntimeConfig: unknown): string[] {

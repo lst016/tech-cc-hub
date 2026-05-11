@@ -2,6 +2,7 @@ export type BuiltinMcpServerName =
   | "tech-cc-hub-browser"
   | "tech-cc-hub-admin"
   | "tech-cc-hub-design"
+  | "tech-cc-hub-figma"
   | "tech-cc-hub-cron"
   | "tech-cc-hub-idea"
   | "tech-cc-hub-plan";
@@ -10,6 +11,7 @@ export type BuiltinMcpIconKey =
   | "activity"
   | "settings"
   | "sparkles"
+  | "figma"
   | "timer"
   | "code"
   | "list";
@@ -175,6 +177,54 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
           { name: "design_list_artifacts", description: "List recent current, diff, comparison, and report artifacts." },
         ],
       },
+    ],
+  },
+  {
+    name: "tech-cc-hub-figma",
+    type: "builtin",
+    command: "builtin",
+    args: [],
+    envKeys: [],
+    enabled: true,
+    iconKey: "figma",
+    description: "Figma REST API tools backed by the user's locally saved Personal Access Token. Reads metadata/nodes, extracts design summaries and tokens, runs design-system/UX audits, generates Tailwind drafts, and inspects exports, comments, versions, library assets, variables, and dev resources without Codex OAuth.",
+    iconClassName: "border-cyan-500/15 bg-cyan-50 text-cyan-700",
+    highlights: ["PAT", "REST API", "UX audit"],
+    workflow: [
+      { label: "Token", description: "设置页保存" },
+      { label: "Read", description: "文件/节点" },
+      { label: "Inspect", description: "库/变量/评论" },
+      { label: "Export", description: "图片资源" },
+    ],
+    toolGroups: [
+      {
+        title: "Figma REST",
+        summary: "普通用户可用的 Figma Personal Access Token 模式，不依赖官方 Remote MCP OAuth。核心能力保持只读。",
+        tools: [
+          { name: "figma_get_current_user", description: "Read the Figma account attached to the saved token." },
+          { name: "figma_get_file_metadata", description: "Read file metadata, or fall back to a lightweight file overview." },
+          { name: "figma_read_design", description: "Read a Figma file or specific nodes from a Figma URL/file key." },
+          { name: "figma_summarize_design", description: "Convert Figma nodes into a compact Agent-friendly design tree." },
+          { name: "figma_extract_design_tokens", description: "Extract color, typography, radius, spacing, and effect token candidates." },
+          { name: "figma_get_design_playbook", description: "Get curated design-system and UX theory guidance before implementation." },
+          { name: "figma_audit_design", description: "Audit selected Figma nodes with design-system, UX-law, token, accessibility, and componentization checks." },
+          { name: "figma_generate_tailwind_code", description: "Generate a Tailwind HTML or React draft from selected Figma nodes." },
+          { name: "figma_get_image_urls", description: "Create Figma image export URLs for node IDs." },
+          { name: "figma_get_image_fills", description: "Read image fill download URLs referenced by the file." },
+          { name: "figma_list_file_versions", description: "Read version history for a Figma file." },
+          { name: "figma_list_file_comments", description: "Read comments from a Figma file." },
+          { name: "figma_list_file_library", description: "Read published components, component sets, and styles in a file library." },
+          { name: "figma_get_file_variables", description: "Read local or published variables from a file when the account supports Variables API." },
+          { name: "figma_get_dev_resources", description: "Read Dev Resources attached to the file or selected nodes." },
+        ],
+      },
+    ],
+    promptHints: [
+      "Figma PAT 规则：用户给出 figma.com 链接并且设置页已保存 Figma Token 时，先按需要选工具：元信息用 `figma_get_file_metadata`，节点 JSON 用 `figma_read_design`，Agent 轻量上下文用 `figma_summarize_design`，设计 token 用 `figma_extract_design_tokens`。",
+      "需要增强设计判断时，先用 `figma_get_design_playbook` 选择 Carbon/Fluent/Primer/Ant/Material/Laws of UX 等约束；读到节点后用 `figma_audit_design` 做 UX、token、组件化、可访问性和场景状态审查。",
+      "需要先出实现草稿时用 `figma_generate_tailwind_code`，但它只是 Tailwind/React 初稿；落地时必须按当前项目组件和视觉截图校对。视觉参考用 `figma_get_image_urls`，图片填充用 `figma_get_image_fills`。",
+      "需要设计系统上下文时用 `figma_list_file_library` 和 `figma_get_file_variables`；需要协作上下文时用 `figma_list_file_comments`、`figma_list_file_versions`、`figma_get_dev_resources`。",
+      "Figma URL 中的 `node-id=1-2` 需要作为节点读取，工具会自动转换成 API 需要的 `1:2`。不要把 Figma PAT 当作官方 Remote MCP OAuth bearer token 使用；高级工具失败时优先提示用户补对应 PAT scope。",
     ],
   },
   {

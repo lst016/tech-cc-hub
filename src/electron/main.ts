@@ -43,8 +43,26 @@ import { startChannelBridge, type ChannelBridgeController } from "./libs/channel
 import { ensureSystemWorkspace } from "./libs/system-workspace.js";
 import { getCurrentApiConfig } from "./libs/claude-settings.js";
 import { preprocessImageAttachments } from "./libs/image-preprocessor.js";
+import {
+    CODEX_OAUTH_BASE_URL,
+    CODEX_OAUTH_MODELS,
+    buildCodexRequestHeaders,
+    buildCodexResponsesRequest,
+    createCodexOAuthAuthorizationFlow,
+    encodeCodexOAuthCredential,
+    exchangeCodexAuthorizationCode,
+    extractCodexModelIdsFromCache,
+    getCodexResponsesPath,
+    mergeCodexModelIds,
+    parseCodexAuthorizationInput,
+    parseCodexResponsesStream,
+    parseCodexOAuthCredential,
+    refreshCodexOAuthToken,
+    toAnthropicMessageResponse,
+    tokenResultToCredential,
+} from "./libs/codex-oauth.js";
 import { loadAgentRuleDocuments, saveUserAgentRuleDocument } from "./libs/agent-rule-docs.js";
-import { registerSkillManagerHandlers } from "./libs/skill-manager/ipc-handlers.js";
+import { handleSkillManagerInvoke, registerSkillManagerHandlers } from "./libs/skill-manager/ipc-handlers.js";
 import { registerCronIpcHandlers, IpcCronEventEmitter } from "./libs/cron-ipc-handlers.js";
 import { handleGitWorkbenchInvoke, registerGitWorkbenchIpcHandlers } from "./libs/git/index.js";
 import { CronService } from "./libs/cron-service.js";
@@ -61,9 +79,12 @@ import {
   buildNextFigmaOfficialCodexAuthRuntimeConfig,
   buildNextFigmaOfficialDesktopRuntimeConfig,
   buildNextFigmaOfficialAuthStateRuntimeConfig,
+  buildNextFigmaOfficialPatRuntimeConfig,
   buildNextFigmaOfficialRuntimeConfig,
   FIGMA_DESKTOP_MCP_URL,
   FIGMA_MCP_URL,
+  FIGMA_REST_API_URL,
+  FIGMA_REST_TOOL_NAMES,
   type FigmaOfficialOAuthTokens,
   getFigmaOfficialPluginStatusFromConfig,
   parseFigmaCodexOAuthCredentialStore,
@@ -444,9 +465,97 @@ async function connectFigmaDesktopOfficialPlugin() {
     ...getFigmaOfficialPluginStatusFromConfig(nextConfig),
     success: available,
     message: available
-      ? "已切换到 Figma Desktop MCP。Codex 官方授权仍保留，后续可继续接官方远程 OAuth/skills。"
+      ? "已切换到 Figma Desktop MCP。也可以随时改用 Figma Token / REST API。"
       : error,
   };
+}
+
+type FigmaPatProfile = {
+  id?: string;
+  email?: string;
+  handle?: string;
+};
+
+async function connectFigmaPatOfficialPlugin(tokenInput: unknown) {
+  const token = typeof tokenInput === "string" ? tokenInput.trim() : "";
+  if (!token) {
+    const currentConfig = loadGlobalRuntimeConfig();
+    return {
+      ...getFigmaOfficialPluginStatusFromConfig(currentConfig),
+      success: false,
+      message: "请先输入 Figma Personal Access Token。",
+      error: "empty-figma-token",
+    };
+  }
+
+  try {
+    const profile = await fetchFigmaPatProfile(token);
+    const accountLabel = [profile.handle, profile.email, profile.id].find((item) => typeof item === "string" && item.trim())?.trim();
+    const nextConfig = buildNextFigmaOfficialPatRuntimeConfig(loadGlobalRuntimeConfig(), token, {
+      accountLabel,
+      tools: [...FIGMA_REST_TOOL_NAMES],
+    });
+    saveGlobalRuntimeConfig(nextConfig);
+    return {
+      ...getFigmaOfficialPluginStatusFromConfig(nextConfig),
+      success: true,
+      message: accountLabel
+        ? `Figma Token 校验通过，已接入 ${accountLabel}。`
+        : "Figma Token 校验通过，已接入 Figma REST API。",
+    };
+  } catch (error) {
+    const message = getErrorMessage(error);
+    return {
+      ...getFigmaOfficialPluginStatusFromConfig(loadGlobalRuntimeConfig()),
+      success: false,
+      message,
+      error: message,
+    };
+  }
+}
+
+async function fetchFigmaPatProfile(token: string): Promise<FigmaPatProfile> {
+  const response = await fetch(`${FIGMA_REST_API_URL}/me`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "X-Figma-Token": token,
+    },
+  });
+  const bodyText = await response.text();
+  const body = parseJsonResponse(bodyText);
+  if (!response.ok) {
+    const detail = getFigmaRestErrorDetail(body, bodyText);
+    throw new Error(`Figma Token 校验失败（${response.status}）：${detail}`);
+  }
+  if (!isPlainObject(body)) {
+    return {};
+  }
+  return {
+    id: typeof body.id === "string" ? body.id : undefined,
+    email: typeof body.email === "string" ? body.email : undefined,
+    handle: typeof body.handle === "string" ? body.handle : undefined,
+  };
+}
+
+function parseJsonResponse(text: string): unknown {
+  if (!text.trim()) {
+    return null;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
+
+function getFigmaRestErrorDetail(body: unknown, fallback: string): string {
+  if (isPlainObject(body)) {
+    if (typeof body.err === "string") return body.err;
+    if (typeof body.message === "string") return body.message;
+    if (typeof body.status === "string") return body.status;
+  }
+  return fallback.trim() || "Token 无效或没有权限";
 }
 
 async function isFigmaDesktopMcpAvailable(timeoutMs = 900): Promise<boolean> {
@@ -1245,6 +1354,7 @@ ipcMain.handle("plugins:getFigmaOfficialStatus", () => getFigmaOfficialPluginSta
 ipcMain.handle("plugins:installFigmaOfficial", () => installFigmaOfficialPlugin());
 ipcMain.handle("plugins:connectFigmaOfficial", () => connectFigmaOfficialPlugin());
 ipcMain.handle("plugins:connectFigmaCodexOfficial", () => connectFigmaCodexOfficialPlugin());
+ipcMain.handle("plugins:connectFigmaPatOfficial", (_event, token: unknown) => connectFigmaPatOfficialPlugin(token));
 ipcMain.handle("plugins:connectFigmaDesktopOfficial", () => connectFigmaDesktopOfficialPlugin());
 ipcMain.handle("shell:openExternal", async (_event, url: unknown) => {
   if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
@@ -1625,21 +1735,21 @@ function readPromptAttachmentPayload(attachments?: unknown[]): PromptAttachment[
     return Array.isArray(attachments) ? (attachments as PromptAttachment[]) : [];
 }
 
-type ApiModelsProvider = "custom" | "deepseek";
+type ApiModelsProvider = "custom" | "deepseek" | "codex";
 
 const DEEPSEEK_OPENAI_BASE_URL = "https://api.deepseek.com";
 const DEEPSEEK_ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic";
+let pendingCodexOAuthFlow: ReturnType<typeof createCodexOAuthAuthorizationFlow> | null = null;
 
 function resolveApiModelsProvider(provider: unknown, baseURL: string): ApiModelsProvider {
-    if (provider === "deepseek") {
-        return "deepseek";
+    if (provider === "custom" || provider === "deepseek" || provider === "codex") {
+        return provider;
     }
 
     try {
         const url = new URL(baseURL);
-        if (url.hostname === "api.deepseek.com") {
-            return "deepseek";
-        }
+        if (url.hostname === "api.deepseek.com") return "deepseek";
+        if (url.hostname === "chatgpt.com") return "codex";
     } catch {
         // Invalid URLs are handled by the generic path below.
     }
@@ -1650,6 +1760,9 @@ function resolveApiModelsProvider(provider: unknown, baseURL: string): ApiModels
 function normalizeApiBaseURLForModels(value: string, provider: ApiModelsProvider): string {
     if (provider === "deepseek") {
         return DEEPSEEK_ANTHROPIC_BASE_URL;
+    }
+    if (provider === "codex") {
+        return CODEX_OAUTH_BASE_URL;
     }
 
     const trimmed = value.trim();
@@ -1672,6 +1785,12 @@ function buildModelsEndpoint(baseURL: string, provider: ApiModelsProvider): { en
         return {
             endpoint: `${DEEPSEEK_OPENAI_BASE_URL}/models`,
             normalizedBaseURL: DEEPSEEK_ANTHROPIC_BASE_URL,
+        };
+    }
+    if (provider === "codex") {
+        return {
+            endpoint: `${CODEX_OAUTH_BASE_URL}/backend-api/codex/models`,
+            normalizedBaseURL: CODEX_OAUTH_BASE_URL,
         };
     }
 
@@ -1707,14 +1826,37 @@ function extractModelIds(payload: unknown): string[] {
         .filter(Boolean)));
 }
 
+function readCodexModelIdsFromCache(): string[] {
+    const codexHome = process.env.CODEX_HOME?.trim() || join(homedir(), ".codex");
+    const cachePath = join(codexHome, "models_cache.json");
+    if (!existsSync(cachePath)) {
+        return [];
+    }
+
+    try {
+        return extractCodexModelIdsFromCache(JSON.parse(readFileSync(cachePath, "utf8")));
+    } catch (error) {
+        console.warn("[codex] failed to read models cache:", error);
+        return [];
+    }
+}
+
 async function fetchApiModels(payload: { baseURL?: string; apiKey?: string; provider?: ApiModelsProvider }): Promise<{ success: boolean; models?: string[]; baseURL?: string; error?: string }> {
     const rawBaseURL = payload?.baseURL?.trim() ?? "";
     const apiKey = payload?.apiKey?.trim() ?? "";
     const provider = resolveApiModelsProvider(payload?.provider, rawBaseURL);
-    const baseURL = rawBaseURL || (provider === "deepseek" ? DEEPSEEK_ANTHROPIC_BASE_URL : "");
+    const baseURL = rawBaseURL || (provider === "deepseek" ? DEEPSEEK_ANTHROPIC_BASE_URL : provider === "codex" ? CODEX_OAUTH_BASE_URL : "");
 
     if (!baseURL) {
         return { success: false, error: "请先填写接口地址。" };
+    }
+    if (provider === "codex") {
+        const cacheModels = readCodexModelIdsFromCache();
+        return {
+            success: true,
+            models: mergeCodexModelIds(cacheModels),
+            baseURL: CODEX_OAUTH_BASE_URL,
+        };
     }
     if (!apiKey) {
         return { success: false, error: "请先填写 API 密钥。" };
@@ -1760,6 +1902,12 @@ function buildMessagesEndpoint(baseURL: string, provider: ApiModelsProvider): { 
             normalizedBaseURL: DEEPSEEK_ANTHROPIC_BASE_URL,
         };
     }
+    if (provider === "codex") {
+        return {
+            endpoint: `${CODEX_OAUTH_BASE_URL}/backend-api/codex/responses`,
+            normalizedBaseURL: CODEX_OAUTH_BASE_URL,
+        };
+    }
 
     const normalizedBaseURL = normalizeApiBaseURLForModels(baseURL, provider);
     const url = new URL(normalizedBaseURL);
@@ -1791,13 +1939,52 @@ async function testApiConfig(payload: { baseURL?: string; apiKey?: string; model
     const apiKey = payload?.apiKey?.trim() ?? "";
     const model = payload?.model?.trim() ?? "";
     const provider = resolveApiModelsProvider(payload?.provider, rawBaseURL);
-    const baseURL = rawBaseURL || (provider === "deepseek" ? DEEPSEEK_ANTHROPIC_BASE_URL : "");
+    const baseURL = rawBaseURL || (provider === "deepseek" ? DEEPSEEK_ANTHROPIC_BASE_URL : provider === "codex" ? CODEX_OAUTH_BASE_URL : "");
 
     if (!baseURL || !apiKey || !model) {
-        return { success: false, error: "请先填写接口地址、API Key 和默认主模型。" };
+        return { success: false, error: provider === "codex" ? "请先完成 Codex OAuth 授权并选择默认主模型。" : "请先填写接口地址、API Key 和默认主模型。" };
     }
 
     try {
+        if (provider === "codex") {
+            const credential = parseCodexOAuthCredential(apiKey);
+            const codexRequest = buildCodexResponsesRequest({
+                model,
+                max_tokens: 8,
+                messages: [
+                    {
+                        role: "user",
+                        content: "ping",
+                    },
+                ],
+            });
+            const endpoint = new URL(getCodexResponsesPath(model), CODEX_OAUTH_BASE_URL).toString();
+            const response = await fetch(endpoint, {
+                method: "POST",
+                headers: buildCodexRequestHeaders(credential, true),
+                body: JSON.stringify({
+                    ...codexRequest,
+                    stream: true,
+                }),
+            });
+            const responseText = await response.text();
+            if (!response.ok) {
+                return {
+                    success: false,
+                    endpoint,
+                    model,
+                    error: extractApiErrorText(responseText) || response.statusText,
+                };
+            }
+            const message = toAnthropicMessageResponse(parseCodexResponsesStream(responseText), model);
+            return {
+                success: true,
+                endpoint,
+                model,
+                message: `测试通过：${message.model || model} 已通过 Codex OAuth 响应。`,
+            };
+        }
+
         const { endpoint } = buildMessagesEndpoint(baseURL, provider);
         const response = await fetch(endpoint, {
             method: "POST",
@@ -1838,6 +2025,75 @@ async function testApiConfig(payload: { baseURL?: string; apiKey?: string; model
         return {
             success: false,
             model,
+            error: error instanceof Error ? error.message : String(error),
+        };
+    }
+}
+
+async function startCodexOAuth(): Promise<{ success: boolean; authorizeUrl?: string; error?: string }> {
+    try {
+        pendingCodexOAuthFlow = createCodexOAuthAuthorizationFlow();
+        await shell.openExternal(pendingCodexOAuthFlow.authorizeUrl);
+        return {
+            success: true,
+            authorizeUrl: pendingCodexOAuthFlow.authorizeUrl,
+        };
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+        };
+    }
+}
+
+async function completeCodexOAuth(payload: { input?: string }): Promise<{ success: boolean; credential?: string; accountId?: string; email?: string; expiresAt?: string; error?: string }> {
+    try {
+        if (!pendingCodexOAuthFlow) {
+            throw new Error("Codex OAuth 流程尚未开始或已过期。");
+        }
+        const { code, state } = parseCodexAuthorizationInput(payload.input ?? "");
+        if (!code || !state) {
+            throw new Error("回调 URL 必须包含 code 和 state。");
+        }
+        if (state !== pendingCodexOAuthFlow.state) {
+            throw new Error("Codex OAuth state 不匹配，请重新授权。");
+        }
+        const result = await exchangeCodexAuthorizationCode(code, pendingCodexOAuthFlow.verifier);
+        pendingCodexOAuthFlow = null;
+        const credential = tokenResultToCredential(result);
+        return {
+            success: true,
+            credential: encodeCodexOAuthCredential(credential),
+            accountId: credential.accountId,
+            email: credential.email,
+            expiresAt: credential.expired,
+        };
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+        };
+    }
+}
+
+async function refreshCodexOAuth(payload: { apiKey?: string }): Promise<{ success: boolean; credential?: string; accountId?: string; email?: string; expiresAt?: string; error?: string }> {
+    try {
+        const previous = parseCodexOAuthCredential(payload.apiKey ?? "");
+        if (!previous.refreshToken) {
+            throw new Error("Codex OAuth 凭据缺少 refresh_token，无法刷新。");
+        }
+        const result = await refreshCodexOAuthToken(previous.refreshToken);
+        const credential = tokenResultToCredential(result, previous);
+        return {
+            success: true,
+            credential: encodeCodexOAuthCredential(credential),
+            accountId: credential.accountId,
+            email: credential.email,
+            expiresAt: credential.expired,
+        };
+    } catch (error) {
+        return {
+            success: false,
             error: error instanceof Error ? error.message : String(error),
         };
     }
@@ -2301,6 +2557,9 @@ app.on("ready", async () => {
             if (channel === "plugins:connectFigmaCodexOfficial") {
               return await connectFigmaCodexOfficialPlugin();
             }
+            if (channel === "plugins:connectFigmaPatOfficial") {
+              return await connectFigmaPatOfficialPlugin(args[0]);
+            }
             if (channel === "plugins:connectFigmaDesktopOfficial") {
               return await connectFigmaDesktopOfficialPlugin();
             }
@@ -2312,8 +2571,20 @@ app.on("ready", async () => {
               await shell.openExternal(url);
               return { success: true };
             }
+            if (channel === "codex-oauth-start") {
+              return await startCodexOAuth();
+            }
+            if (channel === "codex-oauth-complete") {
+              return await completeCodexOAuth(args[0] as { input?: string });
+            }
+            if (channel === "codex-oauth-refresh") {
+              return await refreshCodexOAuth(args[0] as { apiKey?: string });
+            }
             if (channel.startsWith("git:")) {
               return await handleGitWorkbenchInvoke(channel, ...args);
+            }
+            if (channel.startsWith("skills:")) {
+              return await handleSkillManagerInvoke(channel, ...args);
             }
             throw new Error(`Unsupported dev bridge invoke channel: ${channel}`);
           },
@@ -2443,6 +2714,18 @@ app.on("ready", async () => {
                 error: error instanceof Error ? error.message : String(error),
             };
         }
+    });
+
+    ipcMainHandle("codex-oauth-start", async () => {
+        return await startCodexOAuth();
+    });
+
+    ipcMainHandle("codex-oauth-complete", async (_: IpcMainInvokeEvent, payload: { input?: string }) => {
+        return await completeCodexOAuth(payload);
+    });
+
+    ipcMainHandle("codex-oauth-refresh", async (_: IpcMainInvokeEvent, payload: { apiKey?: string }) => {
+        return await refreshCodexOAuth(payload);
     });
 
     ipcMainHandle("app-update-get-status", () => {

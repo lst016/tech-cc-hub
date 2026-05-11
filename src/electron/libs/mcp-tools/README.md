@@ -4,6 +4,7 @@
 
 - `browser.ts`：右侧 BrowserView 工作台能力，包括导航、截图摘要、DOM 查询、样式检查和标注模式。
 - `design.ts`：截图语义分析、截图比照和设计还原能力，包括单张参考图视觉摘要、当前 BrowserView 截图落盘、两张截图对比、diff 图、三栏 comparison 图、热点区域、JSON report 生成、历史 report 读取和产物列表回看。
+- `figma-rest.ts`：Figma Personal Access Token 只读工具面，包括文件/节点读取、轻量设计树、token 提取、设计系统 playbook、UX 审查、Tailwind 初稿、导出图、评论、版本、库资源、变量和 Dev Resources。
 - `admin.ts`：受控管理能力，目前用于写入 `agent-runtime.json` 的 `env`、`skillCredentials` 等全局运行参数。
 
 审阅重点：

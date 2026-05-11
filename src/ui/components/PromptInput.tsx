@@ -17,6 +17,7 @@ import {
 } from "../store/useAppStore";
 import { copyTextToClipboard as copyText } from "../utils/clipboard";
 import { resetBrowserWorkbenchAnnotationState } from "../utils/browser-annotation-reset";
+import { getSlashCommandQuery } from "../utils/slash-command-input";
 import {
   ADD_PROMPT_ATTACHMENT_EVENT,
   OPEN_BROWSER_WORKBENCH_URL_EVENT,
@@ -28,6 +29,7 @@ import {
 } from "../events";
 import { ComposerContextCard } from "./ComposerContextCard";
 import { DecisionPanel } from "./DecisionPanel";
+import { ModelSelect } from "./ModelSelect";
 import { getAvailableModelsForProfiles, getEnabledProfiles } from "./settings/settings-utils";
 
 const DEFAULT_ALLOWED_TOOLS = "*";
@@ -841,17 +843,9 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
     return "";
   }, [activeSession?.messages, activeSessionModel]);
 
-  const validatePromptDraft = useCallback((promptValue: string) => {
-    if (promptValue.startsWith("/") && slashCommands.length > 0) {
-      const slashName = promptValue.trim().slice(1).split(/\s+/)[0];
-      const normalized = slashCommands.map((command) => command.name);
-      if (slashName && !normalized.includes(slashName)) {
-        return `当前会话不支持 /${slashName}。可用命令请从下方联想列表中选择。`;
-      }
-    }
-
-    return null;
-  }, [slashCommands]);
+  // Unknown slash-prefixed text may be an absolute path, so let the runtime
+  // interpret exact supported commands and send every other value as text.
+  const validatePromptDraft = useCallback((_promptValue: string) => null, []);
 
   const buildRuntimeOverrides = useCallback((): RuntimeOverrides | null => {
     const selectedModel = runtimeModel.trim() || activeProfile?.model?.trim() || resolveSessionRuntimeModel();
@@ -1074,7 +1068,7 @@ export function PromptInput({
   const codeReferences = codeReferencesBySessionId[codeReferenceSessionKey] || EMPTY_CODE_REFERENCES;
   const messageReferences = messageReferencesBySessionId[codeReferenceSessionKey] || EMPTY_MESSAGE_REFERENCES;
   const fileReferences = fileReferencesBySessionId[codeReferenceSessionKey] || EMPTY_FILE_REFERENCES;
-  const slashQuery = prompt.startsWith("/") ? prompt.trim().slice(1).split(/\s+/)[0] ?? "" : "";
+  const slashQuery = getSlashCommandQuery(prompt);
   const fileMentionContext = useMemo(
     () => getFileMentionContext(prompt, cursorIndex || prompt.length),
     [cursorIndex, prompt],
@@ -1090,8 +1084,11 @@ export function PromptInput({
     || messageReferences.length > 0
     || fileReferences.length > 0;
   const filteredSlashCommands = useMemo(() => {
-    const normalizedSlashQuery = slashQuery.toLowerCase();
-    const matchedCommands = !slashQuery
+    const activeSlashQuery = slashQuery ?? (showSlashBrowser ? "" : null);
+    if (activeSlashQuery === null) return [];
+
+    const normalizedSlashQuery = activeSlashQuery.toLowerCase();
+    const matchedCommands = !activeSlashQuery
       ? slashCommands
       : slashCommands.filter((command) => {
           const name = command.name.toLowerCase();
@@ -1103,12 +1100,12 @@ export function PromptInput({
       return matchedCommands;
     }
 
-    if (!slashQuery) {
+    if (!activeSlashQuery) {
       return matchedCommands.slice(0, SLASH_PREVIEW_LIMIT);
     }
     return matchedCommands.slice(0, SLASH_QUERY_LIMIT);
   }, [showSlashBrowser, slashCommands, slashQuery]);
-  const showSlashPalette = (prompt.startsWith("/") || showSlashBrowser) && filteredSlashCommands.length > 0 && !disabled;
+  const showSlashPalette = (slashQuery !== null || showSlashBrowser) && filteredSlashCommands.length > 0 && !disabled;
   const filteredFileMentionOptions = useMemo(() => {
     if (!fileMentionContext) return [];
     const query = normalizeMentionPath(fileMentionContext.query.replace(/^["']|["']$/g, "")).toLowerCase();
@@ -1138,6 +1135,7 @@ export function PromptInput({
   const availableModels = useMemo(() => {
     return getAvailableModelsForProfiles(enabledProfiles);
   }, [enabledProfiles]);
+  const selectedRuntimeModel = runtimeModel.trim() || enabledProfiles[0]?.model?.trim() || availableModels[0] || "";
   const clearComposer = useCallback(() => {
     setPrompt("");
     setAttachments([]);
@@ -2154,17 +2152,16 @@ export function PromptInput({
           </button>
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-2 pt-2">
-          <InlineDropdown
+          <ModelSelect
             label="模型"
-            value={runtimeModel}
+            value={selectedRuntimeModel}
+            models={availableModels}
             disabled={disabled || availableModels.length === 0}
             onChange={setRuntimeModel}
-            minWidthClass="min-w-[200px]"
-            options={
-              availableModels.length === 0
-                ? [{ value: "", label: "请先配置模型" }]
-                : availableModels.map((model) => ({ value: model, label: model }))
-            }
+            variant="composer"
+            placement="top"
+            className="min-w-[200px]"
+            placeholder={availableModels.length === 0 ? "请先配置模型" : "选择模型"}
           />
           <InlineDropdown
             label="思考强度"

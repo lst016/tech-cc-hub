@@ -1,4 +1,4 @@
-import { RefreshCw, ShieldCheck } from "lucide-react";
+import { Eye, EyeOff, KeyRound, RefreshCw, ShieldCheck } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { buildPluginActionToastMessage } from "./plugin-toast-messages";
@@ -35,8 +35,8 @@ type FigmaOfficialStatusKind =
   | "misconfigured"
   | "ready";
 
-type FigmaOfficialMode = "remote" | "desktop";
-type FigmaOfficialAuthProvider = "direct" | "codex";
+type FigmaOfficialMode = "remote" | "desktop" | "rest";
+type FigmaOfficialAuthProvider = "direct" | "codex" | "pat";
 
 type PluginInstallResult = {
   success: boolean;
@@ -61,6 +61,7 @@ type PluginInstallResult = {
   tools?: string[];
   toolCount?: number;
   lastToolCheckedAt?: number;
+  accountLabel?: string;
 };
 
 type PluginRuntimeStatus = {
@@ -84,6 +85,7 @@ type PluginRuntimeStatus = {
   tools?: string[];
   toolCount?: number;
   lastToolCheckedAt?: number;
+  accountLabel?: string;
 };
 
 type PluginGuideSessionRequest = {
@@ -101,6 +103,8 @@ const OPEN_COMPUTER_USE_ID = "open-computer-use";
 const FIGMA_OFFICIAL_ID = "figma-official";
 const FIGMA_MCP_URL = "https://mcp.figma.com/mcp";
 const FIGMA_DESKTOP_MCP_URL = "http://127.0.0.1:3845/mcp";
+const FIGMA_REST_API_URL = "https://api.figma.com/v1";
+const FIGMA_TOKEN_SETTINGS_URL = "https://www.figma.com/settings";
 // The Electron runner injects enabled Claude Code plugins into Agent SDK sessions.
 const FIGMA_AGENT_GUIDE_ENABLED = false;
 
@@ -117,13 +121,13 @@ const DEFAULT_PLUGINS: DefaultPlugin[] = [
   },
   {
     id: FIGMA_OFFICIAL_ID,
-    name: "Figma 官方 MCP",
-    kind: "mcp-plugin",
-    version: "remote",
-    description: "Figma 官方远程 MCP，用于从 Figma 链接和 Frame 获取设计上下文并辅助实现 UI。",
-    sourcePath: FIGMA_MCP_URL,
-    sourceLabel: "Remote HTTP MCP",
-    permissions: ["mcp.remote", "figma.oauth", "design.read"],
+    name: "Figma Token / REST API",
+    kind: "api-token-plugin",
+    version: "PAT",
+    description: "使用 Figma Personal Access Token 读取文件/节点，提取设计摘要和 tokens，内置设计系统/UX 审查，生成 Tailwind 初稿，并查看评论、版本、组件样式、变量、Dev Resources 和导出图片 URL，不依赖 Codex OAuth。",
+    sourcePath: FIGMA_REST_API_URL,
+    sourceLabel: "Figma REST API",
+    permissions: ["figma.token", "figma.rest", "design.read", "ux.audit", "metadata", "library", "variables"],
   },
 ];
 
@@ -165,10 +169,15 @@ function getPermissionHint(plugin: DefaultPlugin, status?: PluginRuntimeStatus):
     if (status?.status === "desktop-unavailable") {
       return "未检测到 Figma Desktop 本地 MCP，请打开 Figma 桌面版并启用 Dev Mode MCP Server。";
     }
+    if (status?.authProvider === "pat" || status?.mode === "rest") {
+      return status.connected
+        ? "Figma Token 已保存到本机配置；失效后重新输入即可。"
+        : "请输入 Figma Personal Access Token，保存前会先校验 /v1/me。";
+    }
     if (status?.authProvider === "codex") {
       return "Figma 授权有时效，失效后请点击 Codex 官方授权刷新。";
     }
-    return status?.authHint ?? "Figma 授权有时效，失效后需要重新授权。";
+    return status?.authHint ?? "普通用户建议使用 Figma Personal Access Token 接入。";
   }
   const permissions = status?.permissions;
   if (!permissions?.required) return null;
@@ -198,23 +207,21 @@ function buildOpenComputerUseGuidePrompt(status: PluginRuntimeStatus | null): st
 
 function buildFigmaOfficialGuidePrompt(status: PluginRuntimeStatus | null): string {
   return [
-    "你在 tech-cc-hub 的系统工作区里，目标是使用 Figma 官方 MCP 获取设计上下文并实现 UI。",
+    "你在 tech-cc-hub 的系统工作区里，目标是使用 Figma Token / REST API 获取设计上下文并实现 UI。",
     "",
-    "第一版只聚焦 Figma 链接/Frame/图层到 UI 实现，不要宣称 write-to-canvas 或 live UI capture 已完成。",
+    "优先使用普通用户可用的 Figma Personal Access Token 模式，不要依赖 Codex OAuth。",
+    `Figma REST API URL: ${FIGMA_REST_API_URL}`,
     `官方 MCP URL: ${FIGMA_MCP_URL}`,
     `官方 Desktop MCP URL: ${FIGMA_DESKTOP_MCP_URL}`,
-    "预期 server name: figma",
-    "如果出现 401/403/auth/token/expired/oauth/unauthorized，请判断为 Figma 授权缺失或过期，引导用户重新授权，不要重装插件。",
-    "当前 tech-cc-hub 会把本机已安装的 Claude Code 官方 Figma plugin 作为 Agent SDK local plugin 注入会话；优先使用该插件提供的 Figma MCP 和 Skills。",
-    "如果需要授权，优先走 Figma MCP 的 OAuth 流程，不要切到 Codex OAuth；如果远程 OAuth 反复失败，再引导用户在插件卡片点击「使用桌面 MCP」。",
+    "PAT 保存后，Agent 会使用内置 MCP 工具：figma_get_current_user、figma_get_file_metadata、figma_read_design、figma_summarize_design、figma_extract_design_tokens、figma_get_design_playbook、figma_audit_design、figma_generate_tailwind_code、figma_get_image_urls、figma_get_image_fills、figma_list_file_versions、figma_list_file_comments、figma_list_file_library、figma_get_file_variables、figma_get_dev_resources。",
+    "如果出现 401/403/auth/token/unauthorized，请判断为 Figma Token 缺失、无效或权限不足，引导用户重新输入 PAT，不要重装插件。",
     "",
-    "Agent 引导 OAuth 规则：",
-    "1. 先检查 Figma MCP 工具是否可用；如果工具提示需要 OAuth，触发 MCP 授权流程。",
-    "2. 拿到授权 URL 后，系统会自动打开外部浏览器并复制链接；你仍必须调用 `AskUserQuestion` 等待用户确认，不能只用普通文本回复后结束本回合。",
-    "3. `AskUserQuestion` 里必须提供两个选项：`授权已完成（localhost 页面正常加载）` 和 `localhost 页面打不开，改用 Figma Desktop MCP`。",
-    "4. 如果用户选择授权已完成，继续检查 Figma 工具是否已经可用，或让用户提供 Figma 链接/Frame。",
-    "5. 不要要求用户粘贴 callback URL，除非客户端明确要求提交 callback URL；优先让 Claude/Figma MCP 自己完成 OAuth 状态恢复。",
-    "6. 如果用户说 localhost 页面打不开，停止远程 OAuth 重试，引导用户打开 Figma 桌面版，在设计文件 Dev Mode 中启用 Desktop MCP Server，然后回到插件卡片点「使用桌面 MCP」。",
+    "Agent 使用规则：",
+    "1. 用户给 Figma 链接时，先按任务选择工具：概览用 figma_get_file_metadata，节点原始 JSON 用 figma_read_design，Agent 实现上下文优先用 figma_summarize_design。",
+    "2. 需要设计语言时调用 figma_extract_design_tokens；需要设计理论/设计系统增强时先用 figma_get_design_playbook，再用 figma_audit_design 审查 Figma 节点；需要先出代码草稿时调用 figma_generate_tailwind_code，但落地时必须复用当前项目组件并截图校对。",
+    "3. 需要视觉参考图时调用 figma_get_image_urls；需要设计中的位图资源时调用 figma_get_image_fills。",
+    "4. 需要设计系统上下文时调用 figma_list_file_library 和 figma_get_file_variables；需要协作上下文时调用 figma_list_file_comments、figma_list_file_versions、figma_get_dev_resources。",
+    "5. 只有用户明确要用桌面实时选区，才切到 Figma Desktop MCP。",
     "",
     "当前 Figma 插件状态快照：",
     "```json",
@@ -255,6 +262,7 @@ function toRuntimeStatus(result: PluginInstallResult): PluginRuntimeStatus {
     tools: result.tools,
     toolCount: result.toolCount,
     lastToolCheckedAt: result.lastToolCheckedAt,
+    accountLabel: result.accountLabel,
   };
 }
 
@@ -282,12 +290,12 @@ function getPrimaryActionLabel(plugin: DefaultPlugin, status?: PluginRuntimeStat
   if (plugin.id === FIGMA_OFFICIAL_ID) {
     const kind = status?.status ?? result?.status ?? "not-configured";
     const mode = status?.mode ?? result?.mode;
-    if (mode === "desktop") return kind === "desktop-unavailable" ? "切回 Codex 授权" : "刷新 Codex 授权";
-    if (kind === "misconfigured") return "修复并授权";
-    if (kind === "auth-expired") return "Codex 重新授权";
-    if (kind === "ready") return "刷新 Codex 授权";
-    if (kind === "not-configured") return "Codex 授权接入";
-    return "Codex 授权 Figma";
+    if (kind === "ready" && mode === "rest") return "更新 Token";
+    if (kind === "auth-expired") return "重新输入 Token";
+    if (kind === "misconfigured") return "输入 Token 修复";
+    if (mode === "desktop") return "输入 Token";
+    if (kind === "not-configured") return "输入 Figma Token";
+    return "输入 Token";
   }
 
   const connected = status?.connected === true || (result?.success && result.connected);
@@ -306,12 +314,17 @@ function getUpdateHint(plugin: DefaultPlugin, status?: PluginRuntimeStatus, resu
     const mode = status?.mode ?? result?.mode ?? "remote";
     const authProvider = status?.authProvider ?? result?.authProvider;
     const toolCount = status?.toolCount ?? result?.toolCount;
+    const accountLabel = status?.accountLabel ?? result?.accountLabel;
     const toolHint = typeof toolCount === "number" && toolCount > 0
-      ? ` · 已检测 ${toolCount} 个 MCP 工具`
+      ? ` · ${toolCount} 个内置工具`
       : "";
-    return mode === "desktop"
-      ? `能力：${formatFigmaCapabilities(capabilities)} · Desktop MCP ${status?.desktopUrl ?? result?.desktopUrl ?? FIGMA_DESKTOP_MCP_URL}`
-      : `能力：${formatFigmaCapabilities(capabilities)}${toolHint} · ${authProvider === "codex" ? "Codex 官方 OAuth" : "授权过期后需重新授权"}`;
+    if (mode === "desktop") {
+      return `能力：${formatFigmaCapabilities(capabilities)} · Desktop MCP ${status?.desktopUrl ?? result?.desktopUrl ?? FIGMA_DESKTOP_MCP_URL}`;
+    }
+    if (mode === "rest" || authProvider === "pat") {
+      return `能力：${formatFigmaCapabilities(capabilities)}${toolHint} · Figma Token${accountLabel ? ` · ${accountLabel}` : ""}`;
+    }
+    return `能力：${formatFigmaCapabilities(capabilities)}${toolHint} · ${authProvider === "codex" ? "Codex 官方 OAuth" : "可输入 Token 接入"}`;
   }
 
   const latestVersion = status?.latestVersion ?? result?.latestVersion;
@@ -328,6 +341,8 @@ function formatFigmaCapabilities(capabilities: string[]): string {
   const labels: Record<string, string> = {
     "design-context": "设计上下文",
     "selection-context": "选区上下文",
+    "file-api": "文件 API",
+    "image-export": "图片导出",
   };
   return capabilities.map((capability) => labels[capability] ?? capability).join("、");
 }
@@ -339,6 +354,9 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
   const [launchingGuidePluginId, setLaunchingGuidePluginId] = useState<string | null>(null);
   const [installResults, setInstallResults] = useState<Record<string, PluginInstallResult>>({});
   const [runtimeStatuses, setRuntimeStatuses] = useState<Record<string, PluginRuntimeStatus>>({});
+  const [figmaTokenPanelOpen, setFigmaTokenPanelOpen] = useState(false);
+  const [figmaTokenDraft, setFigmaTokenDraft] = useState("");
+  const [figmaTokenVisible, setFigmaTokenVisible] = useState(false);
   const guideLaunchInFlightRef = useRef(false);
 
   useEffect(() => {
@@ -388,15 +406,17 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
   };
 
   const handleInstall = (plugin: DefaultPlugin) => {
+    if (plugin.id === FIGMA_OFFICIAL_ID) {
+      setFigmaTokenPanelOpen(true);
+      return;
+    }
+
     void (async () => {
       setInstallingPluginId(plugin.id);
       try {
-        const channel = plugin.id === FIGMA_OFFICIAL_ID
-          ? "plugins:connectFigmaCodexOfficial"
-          : "plugins:installOpenComputerUse";
         const result = await (window.electron as typeof window.electron & {
           invoke: (channel: string, ...args: unknown[]) => Promise<PluginInstallResult>;
-        }).invoke(channel) as PluginInstallResult;
+        }).invoke("plugins:installOpenComputerUse") as PluginInstallResult;
         setPluginResult(plugin.id, result);
         showPluginActionToast(result);
       } catch (error) {
@@ -438,6 +458,61 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
         showPluginActionToast(result);
       } finally {
         setInstallingPluginId(null);
+      }
+    })();
+  };
+
+  const handleFigmaPatConnect = (plugin: DefaultPlugin) => {
+    const token = figmaTokenDraft.trim();
+    if (!token) {
+      toast.error("请先输入 Figma Token");
+      return;
+    }
+
+    void (async () => {
+      setInstallingPluginId(plugin.id);
+      try {
+        const result = await (window.electron as typeof window.electron & {
+          invoke: (channel: string, ...args: unknown[]) => Promise<PluginInstallResult>;
+        }).invoke("plugins:connectFigmaPatOfficial", token) as PluginInstallResult;
+        setPluginResult(plugin.id, result);
+        showPluginActionToast(result);
+        if (result.success) {
+          setFigmaTokenDraft("");
+          setFigmaTokenPanelOpen(false);
+          setFigmaTokenVisible(false);
+        }
+      } catch (error) {
+        const current = runtimeStatuses[plugin.id];
+        const result: PluginInstallResult = {
+          success: false,
+          installed: current?.installed ?? true,
+          connected: current?.connected ?? false,
+          status: current?.status ?? "needs-auth",
+          message: "Figma Token 保存失败。",
+          error: error instanceof Error ? error.message : String(error),
+        };
+        setPluginResult(plugin.id, result);
+        showPluginActionToast(result);
+      } finally {
+        setInstallingPluginId(null);
+      }
+    })();
+  };
+
+  const handleOpenFigmaTokenSettings = () => {
+    void (async () => {
+      try {
+        await (window.electron as typeof window.electron & {
+          invoke?: (channel: string, ...args: unknown[]) => Promise<unknown>;
+        }).invoke?.("shell:openExternal", FIGMA_TOKEN_SETTINGS_URL);
+        toast.info("已打开 Figma 设置页", {
+          description: "进入 Security / Personal access tokens 后生成 Token。",
+        });
+      } catch (error) {
+        toast.error("打开 Figma 设置页失败", {
+          description: error instanceof Error ? error.message : String(error),
+        });
       }
     })();
   };
@@ -521,7 +596,7 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
     const isFigma = plugin.id === FIGMA_OFFICIAL_ID;
     if (isFigma && !FIGMA_AGENT_GUIDE_ENABLED) {
       toast.info("Figma Agent 引导授权已暂停", {
-        description: "请使用 Codex 授权接入，或切换到 Figma Desktop MCP。",
+        description: "请直接输入 Figma Token，或切换到 Figma Desktop MCP。",
       });
       return;
     }
@@ -552,7 +627,7 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-[#E5E6EB] bg-white shadow-[0_12px_28px_rgba(24,32,46,0.04)]">
-        <div className="grid min-w-[1120px] grid-cols-[minmax(320px,1fr)_140px_130px_220px_170px] border-b border-[#E5E6EB] bg-[#F7F8FA] px-4 py-3 text-xs font-bold uppercase tracking-[0.08em] text-[#8A94A6]">
+        <div className="grid min-w-[1040px] grid-cols-[minmax(270px,1fr)_130px_110px_190px_220px] border-b border-[#E5E6EB] bg-[#F7F8FA] px-4 py-3 text-xs font-bold uppercase tracking-[0.08em] text-[#8A94A6]">
           <span>插件</span>
           <span>类型</span>
           <span>状态</span>
@@ -573,11 +648,18 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
           const showGuideButton = Boolean(onStartGuideSession) && (plugin.id !== FIGMA_OFFICIAL_ID || FIGMA_AGENT_GUIDE_ENABLED);
           const guideLabel = launchingGuidePluginId === plugin.id ? "启动中..." : plugin.id === FIGMA_OFFICIAL_ID ? "Agent 引导接入" : "Agent 引导安装";
           const needsPermission = Boolean(runtimeStatus?.permissions?.required && runtimeStatus.permissions.needsUserAction) || runtimeStatus?.status === "auth-expired" || runtimeStatus?.status === "needs-auth";
+          const sourceLabel = plugin.id === FIGMA_OFFICIAL_ID
+            ? runtimeStatus?.mode === "desktop"
+              ? "Figma Desktop MCP"
+              : runtimeStatus?.mode === "remote"
+                ? "Remote HTTP MCP"
+                : "Figma REST API"
+            : plugin.sourceLabel;
 
           return (
             <article
               key={plugin.id}
-              className="grid min-w-[1120px] grid-cols-[minmax(320px,1fr)_140px_130px_220px_170px] items-start gap-4 px-4 py-4"
+              className="grid min-w-[1040px] grid-cols-[minmax(270px,1fr)_130px_110px_190px_220px] items-start gap-4 px-4 py-4"
             >
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
@@ -617,7 +699,7 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
               </span>
 
               <div className="min-w-0 text-sm leading-5 text-[#6B778C]">
-                <div className="truncate font-medium text-[#1D2129]">{plugin.sourceLabel}</div>
+                <div className="truncate font-medium text-[#1D2129]">{sourceLabel}</div>
                 <div className="mt-1 truncate text-xs">{runtimeStatus?.url ?? plugin.sourcePath}</div>
                 <div className="mt-2 flex items-center gap-2 text-xs font-semibold text-[#0E7490]">
                   <ShieldCheck className="h-3.5 w-3.5" />
@@ -645,6 +727,73 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
                 >
                   {actionLabel}
                 </button>
+                {plugin.id === FIGMA_OFFICIAL_ID && figmaTokenPanelOpen && (
+                  <div className="grid gap-2 rounded-lg border border-[#DADDE5] bg-[#F7F8FA] p-2">
+                    <label className="text-[11px] font-semibold text-[#4E5969]" htmlFor="figma-pat-input">
+                      Personal Access Token
+                    </label>
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <input
+                        id="figma-pat-input"
+                        type={figmaTokenVisible ? "text" : "password"}
+                        value={figmaTokenDraft}
+                        onChange={(event) => setFigmaTokenDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            handleFigmaPatConnect(plugin);
+                          }
+                        }}
+                        placeholder="粘贴 Figma PAT"
+                        className="min-w-0 flex-1 rounded-md border border-[#DADDE5] bg-white px-2 py-1.5 text-xs font-medium text-[#1D2129] outline-none transition placeholder:text-[#A8B0BD] focus:border-[#1677FF]"
+                        disabled={isBusy}
+                      />
+                      <button
+                        type="button"
+                        title={figmaTokenVisible ? "隐藏 Token" : "显示 Token"}
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[#DADDE5] bg-white text-[#4E5969] transition hover:bg-[#F2F3F5] disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => setFigmaTokenVisible((value) => !value)}
+                        disabled={isBusy}
+                      >
+                        {figmaTokenVisible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        className="inline-flex items-center justify-center gap-1 rounded-md bg-[#1677FF] px-2 py-1.5 text-xs font-semibold text-white transition hover:bg-[#0E63D8] disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => handleFigmaPatConnect(plugin)}
+                        disabled={isBusy || !figmaTokenDraft.trim()}
+                      >
+                        <KeyRound className="h-3.5 w-3.5" />
+                        保存并测试
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-md border border-[#DADDE5] bg-white px-2 py-1.5 text-xs font-semibold text-[#4E5969] transition hover:bg-[#F2F3F5] disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => {
+                          setFigmaTokenPanelOpen(false);
+                          setFigmaTokenDraft("");
+                          setFigmaTokenVisible(false);
+                        }}
+                        disabled={isBusy}
+                      >
+                        取消
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded-md border border-[#BFD7EA] bg-white px-2 py-1.5 text-xs font-semibold text-[#2563A8] transition hover:border-[#8CBCE5] hover:bg-[#F1F8FF] disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={handleOpenFigmaTokenSettings}
+                      disabled={isBusy}
+                    >
+                      打开 Token 页面
+                    </button>
+                    <div className="text-[11px] leading-4 text-[#86909C]">
+                      Token 只保存在本机配置；基础勾 current_user:read、file_content:read。更多工具按需勾 file_metadata:read、file_versions:read、file_comments:read、library_content:read、file_variables:read、file_dev_resources:read。
+                    </div>
+                  </div>
+                )}
                 <button
                   type="button"
                   className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#DADDE5] bg-white px-3 py-2 text-xs font-semibold text-[#4E5969] transition hover:border-[#C9CDD4] hover:bg-[#F7F8FA] disabled:cursor-not-allowed disabled:opacity-60"

@@ -1,7 +1,14 @@
 import type { ApiConfigProfile, ApiModelConfigProfile } from "../../types.js";
+import {
+  CODEX_OAUTH_BASE_URL,
+  CODEX_OAUTH_DEFAULT_MODEL,
+  CODEX_OAUTH_MODELS,
+  CODEX_OAUTH_SMALL_MODEL,
+} from "../../../shared/codex-oauth.js";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 const DEEPSEEK_CONTEXT_WINDOW = 1_000_000;
+const CODEX_CONTEXT_WINDOW = 200_000;
 export const DEEPSEEK_OFFICIAL_BASE_URL = "https://api.deepseek.com/anthropic";
 export const DEEPSEEK_OFFICIAL_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro"] as const;
 
@@ -55,6 +62,30 @@ export function createDeepSeekOfficialProfile(): ApiConfigProfile {
   };
 }
 
+export function createCodexOAuthProfile(): ApiConfigProfile {
+  const models = CODEX_OAUTH_MODELS.map((name) => ({
+    name,
+    contextWindow: CODEX_CONTEXT_WINDOW,
+    compressionThresholdPercent: 70,
+  }));
+
+  return {
+    id: crypto.randomUUID(),
+    name: "Codex OAuth",
+    apiKey: "",
+    baseURL: CODEX_OAUTH_BASE_URL,
+    model: CODEX_OAUTH_DEFAULT_MODEL,
+    expertModel: CODEX_OAUTH_DEFAULT_MODEL,
+    smallModel: CODEX_OAUTH_SMALL_MODEL,
+    imageModel: undefined,
+    analysisModel: CODEX_OAUTH_SMALL_MODEL,
+    models,
+    enabled: true,
+    provider: "codex",
+    apiType: "anthropic",
+  };
+}
+
 function normalizePositiveInteger(value: number | null | undefined): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return undefined;
@@ -76,21 +107,27 @@ function normalizePercent(value: number | null | undefined): number | undefined 
   return normalized;
 }
 
-function normalizeProvider(value: unknown, baseURL: string): "custom" | "deepseek" {
-  if (value === "custom" || value === "deepseek") {
+function normalizeProvider(value: unknown, baseURL: string): "custom" | "deepseek" | "codex" {
+  if (value === "custom" || value === "deepseek" || value === "codex") {
     return value;
   }
 
   try {
-    return new URL(baseURL.trim()).hostname === "api.deepseek.com" ? "deepseek" : "custom";
+    const hostname = new URL(baseURL.trim()).hostname;
+    if (hostname === "api.deepseek.com") return "deepseek";
+    if (hostname === "chatgpt.com") return "codex";
+    return "custom";
   } catch {
     return "custom";
   }
 }
 
-function normalizeBaseURL(value: string, provider: "custom" | "deepseek"): string {
+function normalizeBaseURL(value: string, provider: "custom" | "deepseek" | "codex"): string {
   if (provider === "deepseek") {
     return DEEPSEEK_OFFICIAL_BASE_URL;
+  }
+  if (provider === "codex") {
+    return CODEX_OAUTH_BASE_URL;
   }
 
   const trimmed = value.trim();

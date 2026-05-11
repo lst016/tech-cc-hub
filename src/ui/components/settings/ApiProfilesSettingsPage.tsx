@@ -1,7 +1,16 @@
 import type { ApiConfigProfile } from "../../types";
 import type { DevElectronRuntimeSource } from "../../dev-electron-shim";
+import type { ChannelGuideSessionRequest } from "./ChannelsSettingsPage";
 import { ChevronDown, Plus } from "lucide-react";
 import {
+  CODEX_OAUTH_BASE_URL,
+  CODEX_OAUTH_DEFAULT_MODEL,
+  CODEX_OAUTH_MODELS,
+  CODEX_OAUTH_SMALL_MODEL,
+  mergeCodexModelIds,
+} from "../../../shared/codex-oauth";
+import {
+  createCodexOAuthProfile,
   createDeepSeekOfficialProfile,
   createModel,
   createProfile,
@@ -15,6 +24,7 @@ type ApiProfilesSettingsPageProps = {
   profiles: ApiConfigProfile[];
   runtimeSource: DevElectronRuntimeSource;
   onChange: (updater: (current: ApiConfigProfile[]) => ApiConfigProfile[]) => void;
+  onStartGuideSession?: (request: ChannelGuideSessionRequest) => Promise<void> | void;
 };
 
 const runtimeSourceMeta: Record<DevElectronRuntimeSource, { label: string; description: string; className: string }> = {
@@ -67,6 +77,12 @@ const createProfileOptions: CreateProfileOption[] = [
     description: "只填 SK，自动使用 DeepSeek 官方 Anthropic 接口。",
     create: createDeepSeekOfficialProfile,
   },
+  {
+    id: "codex",
+    label: "Codex OAuth",
+    description: "通过 OpenAI OAuth 接入 Codex Responses 模型。",
+    create: createCodexOAuthProfile,
+  },
 ];
 
 type ApiProfileTestResult = {
@@ -86,7 +102,7 @@ function isDeepSeekBaseURL(baseURL: string | undefined): boolean {
 }
 
 function getProviderMode(profile: ApiConfigProfile): ApiProviderMode {
-  if (profile.provider === "custom" || profile.provider === "deepseek") {
+  if (profile.provider === "custom" || profile.provider === "deepseek" || profile.provider === "codex") {
     return profile.provider;
   }
 
@@ -96,6 +112,9 @@ function getProviderMode(profile: ApiConfigProfile): ApiProviderMode {
 function buildModelsEndpoint(baseURL: string, provider: ApiProviderMode = "custom"): string {
   if (provider === "deepseek") {
     return DEEPSEEK_MODELS_ENDPOINT;
+  }
+  if (provider === "codex") {
+    return `${CODEX_OAUTH_BASE_URL}/backend-api/codex/models`;
   }
 
   const url = new URL(baseURL.trim());
@@ -113,6 +132,9 @@ function buildModelsEndpoint(baseURL: string, provider: ApiProviderMode = "custo
 function normalizeApiBaseURL(baseURL: string, provider: ApiProviderMode = "custom"): string {
   if (provider === "deepseek") {
     return DEEPSEEK_OFFICIAL_BASE_URL;
+  }
+  if (provider === "codex") {
+    return CODEX_OAUTH_BASE_URL;
   }
 
   const url = new URL(baseURL.trim());
@@ -154,6 +176,14 @@ function isLikelyVisionUnderstandingModel(modelName: string): boolean {
 }
 
 async function fetchModelsInBrowser(baseURL: string, apiKey: string, provider: ApiProviderMode = "custom"): Promise<{ success: boolean; models?: string[]; baseURL?: string; error?: string }> {
+  if (provider === "codex") {
+    return {
+      success: true,
+      models: CODEX_OAUTH_MODELS,
+      baseURL: CODEX_OAUTH_BASE_URL,
+    };
+  }
+
   try {
     const endpoint = buildModelsEndpoint(baseURL, provider);
     const response = await fetch(endpoint, {
@@ -186,6 +216,9 @@ function normalizeMessagesBaseURL(baseURL: string, provider: ApiProviderMode): s
   if (provider === "deepseek") {
     return `${DEEPSEEK_OFFICIAL_BASE_URL}/v1`;
   }
+  if (provider === "codex") {
+    return CODEX_OAUTH_BASE_URL;
+  }
 
   const url = new URL(baseURL.trim());
   const trimmedPath = url.pathname.replace(/\/+$/, "");
@@ -194,8 +227,11 @@ function normalizeMessagesBaseURL(baseURL: string, provider: ApiProviderMode): s
 }
 
 async function testApiConfigInBrowser(profile: ApiConfigProfile, provider: ApiProviderMode): Promise<ApiProfileTestResult> {
-  const baseURL = provider === "deepseek" ? DEEPSEEK_OFFICIAL_BASE_URL : profile.baseURL.trim();
+  const baseURL = provider === "deepseek" ? DEEPSEEK_OFFICIAL_BASE_URL : provider === "codex" ? CODEX_OAUTH_BASE_URL : profile.baseURL.trim();
   const model = profile.model?.trim() || profile.models?.find((item) => item.name.trim())?.name.trim() || "";
+  if (provider === "codex") {
+    return { success: false, model, error: "Codex OAuth 测试需要 Electron 后端。" };
+  }
   if (!baseURL || !profile.apiKey.trim() || !model) {
     return { success: false, error: "请先填写接口地址、API Key 和默认主模型。" };
   }
@@ -232,21 +268,106 @@ async function testApiConfigInBrowser(profile: ApiConfigProfile, provider: ApiPr
   }
 }
 
-export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: ApiProfilesSettingsPageProps) {
+function buildCodexGuidePrompt(profile: ApiConfigProfile): string {
+  return [
+    "你在 tech-cc-hub 的系统工作区里，目标是把 Codex OAuth 模型渠道配置到可用状态。",
+    "",
+    "请用 Agent 引导方式完成，不要让用户手动编辑或粘贴 token JSON。",
+    "",
+    "执行顺序：",
+    "1. 在当前仓库运行 `npm run codex:oauth:setup -- --profile-id " + JSON.stringify(profile.id) + " --profile-name " + JSON.stringify(profile.name || "Codex OAuth") + "`。",
+    "2. 脚本会优先复用官方 Codex CLI 的 `~/.codex/auth.json`；如果本机还没登录，会启动 `codex login` 让用户按官方流程完成登录。",
+    "3. 登录完成后脚本会从官方 Codex 凭据导入 access_token / refresh_token / account_id，并写入 tech-cc-hub 的 `api-config.json`。",
+    "4. 完成后提醒用户回到设置页重新打开或刷新配置，再执行“测试连接”。",
+    "5. 如果脚本失败，读取终端错误，优先修复 `codex login status` 未登录、配置文件不可写、Codex CLI 不可用这几类问题。",
+    "",
+    "验收标准：",
+    "- `api-config.json` 里存在 provider 为 `codex` 的配置。",
+    "- baseURL 为 `https://chatgpt.com`。",
+    "- 默认主模型为 `gpt-5.5`，小模型/分析模型为 `gpt-5.3-codex-spark`。",
+    "- 凭据只写入本机配置文件，不在聊天中展示 access_token 或 refresh_token。",
+    "",
+    "当前 UI 配置快照：",
+    JSON.stringify({
+      id: profile.id,
+      name: profile.name,
+      enabled: profile.enabled,
+      baseURL: profile.baseURL,
+      model: profile.model,
+      expertModel: profile.expertModel,
+      smallModel: profile.smallModel,
+      analysisModel: profile.analysisModel,
+      provider: profile.provider,
+      hasSavedCredential: Boolean(profile.apiKey.trim()),
+    }, null, 2),
+  ].join("\n");
+}
+
+export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onStartGuideSession }: ApiProfilesSettingsPageProps) {
   const sourceMeta = runtimeSourceMeta[runtimeSource];
   const [importingProfileId, setImportingProfileId] = useState<string | null>(null);
   const [testingProfileId, setTestingProfileId] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<ModelImportStatus>(null);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [expandedModelLists, setExpandedModelLists] = useState<Record<string, boolean>>({});
+  const [launchingCodexGuideProfileId, setLaunchingCodexGuideProfileId] = useState<string | null>(null);
 
   const handleImportModels = async (profile: ApiConfigProfile) => {
     setImportStatus(null);
     const provider = getProviderMode(profile);
-    const baseURL = provider === "deepseek" ? DEEPSEEK_OFFICIAL_BASE_URL : profile.baseURL.trim();
+    const baseURL = provider === "deepseek" ? DEEPSEEK_OFFICIAL_BASE_URL : provider === "codex" ? CODEX_OAUTH_BASE_URL : profile.baseURL.trim();
 
     if (!baseURL) {
       setImportStatus({ profileId: profile.id, tone: "error", message: "请先填写接口地址。" });
+      return;
+    }
+    if (provider === "codex") {
+      setImportingProfileId(profile.id);
+      const electronApi = window.electron as typeof window.electron & {
+        fetchApiModels?: (payload: { baseURL: string; apiKey: string; provider?: ApiProviderMode }) => Promise<{ success: boolean; models?: string[]; baseURL?: string; error?: string }>;
+      };
+      const result = await (async () => {
+        try {
+          return typeof electronApi.fetchApiModels === "function"
+            ? await electronApi.fetchApiModels({ baseURL, apiKey: profile.apiKey, provider })
+            : await fetchModelsInBrowser(baseURL, profile.apiKey, provider);
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      })();
+      const modelIds = mergeCodexModelIds(result.success ? result.models ?? [] : CODEX_OAUTH_MODELS);
+      onChange((current) => current.map((item) => {
+        if (item.id !== profile.id) return item;
+        const existingModels = new Map((item.models ?? []).map((model) => [model.name, model]));
+        const nextModels = modelIds.map((name) => ({
+          name,
+          contextWindow: existingModels.get(name)?.contextWindow ?? DEFAULT_IMPORTED_CONTEXT_WINDOW,
+          compressionThresholdPercent: existingModels.get(name)?.compressionThresholdPercent ?? 70,
+        }));
+        const fallbackModel = item.model && modelIds.includes(item.model) ? item.model : CODEX_OAUTH_DEFAULT_MODEL;
+        return {
+          ...item,
+          baseURL: CODEX_OAUTH_BASE_URL,
+          models: nextModels,
+          model: fallbackModel,
+          expertModel: item.expertModel && modelIds.includes(item.expertModel) ? item.expertModel : fallbackModel,
+          smallModel: item.smallModel && modelIds.includes(item.smallModel) ? item.smallModel : CODEX_OAUTH_SMALL_MODEL,
+          imageModel: undefined,
+          analysisModel: item.analysisModel && modelIds.includes(item.analysisModel) ? item.analysisModel : CODEX_OAUTH_SMALL_MODEL,
+          provider: "codex",
+        };
+      }));
+      setImportingProfileId(null);
+      setImportStatus({
+        profileId: profile.id,
+        tone: "success",
+        message: result.success
+          ? `已使用 Codex 模型列表，共 ${modelIds.length} 个。`
+          : `读取 Codex 模型缓存失败，已使用内置 Codex 模型列表，共 ${modelIds.length} 个。`,
+      });
       return;
     }
     if (!profile.apiKey.trim()) {
@@ -346,11 +467,11 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
   const handleTestConnection = async (profile: ApiConfigProfile) => {
     setImportStatus(null);
     const provider = getProviderMode(profile);
-    const baseURL = provider === "deepseek" ? DEEPSEEK_OFFICIAL_BASE_URL : profile.baseURL.trim();
+    const baseURL = provider === "deepseek" ? DEEPSEEK_OFFICIAL_BASE_URL : provider === "codex" ? CODEX_OAUTH_BASE_URL : profile.baseURL.trim();
     const model = profile.model?.trim() || profile.models?.find((item) => item.name.trim())?.name.trim() || "";
 
     if (!baseURL || !profile.apiKey.trim() || !model) {
-      setImportStatus({ profileId: profile.id, tone: "error", message: "请先填写接口地址、API Key 和默认主模型。" });
+      setImportStatus({ profileId: profile.id, tone: "error", message: provider === "codex" ? "请先通过 Agent 引导配置完成 OpenAI 账号接入并选择默认主模型。" : "请先填写接口地址、API Key 和默认主模型。" });
       return;
     }
 
@@ -384,6 +505,28 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
   const handleCreateProfile = (create: () => ApiConfigProfile) => {
     setCreateMenuOpen(false);
     onChange((current) => [create(), ...current]);
+  };
+
+  const handleStartCodexGuide = async (profile: ApiConfigProfile) => {
+    if (!onStartGuideSession) {
+      setImportStatus({ profileId: profile.id, tone: "error", message: "当前运行面无法启动 Agent 引导配置，请在桌面端使用。" });
+      return;
+    }
+
+    setImportStatus(null);
+    setLaunchingCodexGuideProfileId(profile.id);
+    try {
+      await Promise.resolve(onStartGuideSession({
+        title: "Codex 模型渠道引导配置",
+        prompt: buildCodexGuidePrompt(profile),
+        agentId: "codex-oauth-guide",
+        allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,TodoWrite",
+      }));
+    } catch (error) {
+      setImportStatus({ profileId: profile.id, tone: "error", message: error instanceof Error ? error.message : "启动 Agent 引导配置失败。" });
+    } finally {
+      setLaunchingCodexGuideProfileId(null);
+    }
   };
 
   return (
@@ -509,10 +652,10 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                 <span className="text-xs font-medium text-muted">接口地址</span>
                 <input
                   type="url"
-                  className={`rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20 ${providerMode === "deepseek" ? "cursor-not-allowed text-muted" : ""}`}
+                  className={`rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20 ${providerMode === "deepseek" || providerMode === "codex" ? "cursor-not-allowed text-muted" : ""}`}
                   placeholder="https://..."
-                  value={providerMode === "deepseek" ? DEEPSEEK_OFFICIAL_BASE_URL : profile.baseURL}
-                  readOnly={providerMode === "deepseek"}
+                  value={providerMode === "deepseek" ? DEEPSEEK_OFFICIAL_BASE_URL : providerMode === "codex" ? CODEX_OAUTH_BASE_URL : profile.baseURL}
+                  readOnly={providerMode === "deepseek" || providerMode === "codex"}
                   onChange={(event) => onChange((current) => current.map((item) => (
                     item.id === profile.id
                       ? { ...item, baseURL: event.target.value }
@@ -521,20 +664,49 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                 />
               </label>
 
-              <label className="grid gap-1.5">
-                <span className="text-xs font-medium text-muted">API 密钥</span>
-                <input
-                  type="text"
-                  className="rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
-                  placeholder="sk-..."
-                  value={profile.apiKey}
-                  onChange={(event) => onChange((current) => current.map((item) => (
-                    item.id === profile.id
-                      ? { ...item, apiKey: event.target.value }
+              {providerMode === "codex" ? (
+                <div className="grid gap-3 rounded-2xl border border-accent/15 bg-accent/5 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-ink-900">OpenAI 账号接入</div>
+                      <div className="mt-1 text-xs leading-5 text-muted">
+                        由 Agent 打开授权页、接收本机回调并写入配置；敏感令牌不会展示在表单里。
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="inline-flex h-8 items-center rounded-full border border-[#F0C7B4] bg-[#FFF4EF] px-3 text-xs font-semibold text-[#C9572C] transition hover:border-[#D96B3A] hover:bg-[#FFEADF] disabled:cursor-not-allowed disabled:border-[#E5E6EB] disabled:bg-[#F7F8FA] disabled:text-[#86909C]"
+                      onClick={() => void handleStartCodexGuide(profile)}
+                      disabled={launchingCodexGuideProfileId === profile.id}
+                    >
+                      {launchingCodexGuideProfileId === profile.id ? "正在启动..." : "Agent 引导配置"}
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-[11px]">
+                    <span className={`rounded-full border px-2.5 py-1 font-medium ${profile.apiKey.trim() ? "border-emerald-500/20 bg-emerald-50 text-emerald-700" : "border-amber-500/20 bg-amber-50 text-amber-700"}`}>
+                      {profile.apiKey.trim() ? "已保存账号凭据" : "未完成账号接入"}
+                    </span>
+                    <span className="rounded-full border border-ink-900/10 bg-white px-2.5 py-1 text-muted">
+                      Codex Responses
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <label className="grid gap-1.5">
+                  <span className="text-xs font-medium text-muted">API 密钥</span>
+                  <input
+                    type="text"
+                    className="rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
+                    placeholder="sk-..."
+                    value={profile.apiKey}
+                    onChange={(event) => onChange((current) => current.map((item) => (
+                      item.id === profile.id
+                        ? { ...item, apiKey: event.target.value }
                       : item
-                  )))}
-                />
-              </label>
+                    )))}
+                  />
+                </label>
+              )}
 
               <div className="grid gap-2">
                 <div className="flex items-center justify-between">
@@ -554,7 +726,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                       onClick={() => void handleImportModels(profile)}
                       disabled={importingProfileId === profile.id}
                     >
-                      {importingProfileId === profile.id ? "拉取中..." : providerMode === "deepseek" ? "从 DeepSeek 拉取模型" : "从接口拉取模型"}
+                      {importingProfileId === profile.id ? "拉取中..." : providerMode === "deepseek" ? "从 DeepSeek 拉取模型" : providerMode === "codex" ? "使用内置 Codex 模型" : "从接口拉取模型"}
                     </button>
                     <button
                       type="button"

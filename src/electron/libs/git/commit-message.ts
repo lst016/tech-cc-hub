@@ -1,11 +1,11 @@
-import { unstable_v2_prompt } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
-import { buildEnvForConfig, getClaudeCodeModelOption, getClaudeCodePath, getCurrentApiConfig } from "../claude-settings.js";
 import type { GitChangedFile, GitCommitMessageSuggestion } from "./types.js";
 
-const MAX_AI_DIFF_CHARS = 18_000;
-const MAX_AI_CONTEXT_CHARS = 22_000;
-const MAX_BODY_CHARS = 700;
+const MAX_AI_DIFF_CHARS = 6_000;
+const MAX_AI_CONTEXT_CHARS = 8_000;
+const MAX_AI_FILE_LINES = 80;
+const MAX_BODY_CHARS = 500;
+const AI_COMMIT_MESSAGE_TIMEOUT_MS = 6_000;
 
 export async function generateCommitMessageSuggestion(input: {
   files: GitChangedFile[];
@@ -15,6 +15,13 @@ export async function generateCommitMessageSuggestion(input: {
   language?: string;
 }): Promise<GitCommitMessageSuggestion> {
   const fallback = buildFallbackCommitSuggestion(input.files);
+  const [
+    { unstable_v2_prompt },
+    { buildEnvForConfig, getClaudeCodeModelOption, getClaudeCodePath, getCurrentApiConfig },
+  ] = await Promise.all([
+    import("@anthropic-ai/claude-agent-sdk"),
+    import("../claude-settings.js"),
+  ]);
   const apiConfig = getCurrentApiConfig();
   if (!apiConfig?.model?.trim()) {
     return fallback;
@@ -28,14 +35,19 @@ export async function generateCommitMessageSuggestion(input: {
 
   try {
     const claudeCodeModelOption = getClaudeCodeModelOption(apiConfig, requestedModel);
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), AI_COMMIT_MESSAGE_TIMEOUT_MS);
     const result: SDKResultMessage = await unstable_v2_prompt(prompt, {
       ...(claudeCodeModelOption ? { model: claudeCodeModelOption } : {}),
+      abortController,
+      maxTurns: 1,
+      tools: [],
       env: {
         ...process.env,
         ...buildEnvForConfig(apiConfig, requestedModel),
       },
       pathToClaudeCodeExecutable: getClaudeCodePath(),
-    } as Parameters<typeof unstable_v2_prompt>[1]);
+    } as Parameters<typeof unstable_v2_prompt>[1]).finally(() => clearTimeout(timeout));
 
     if (result.subtype !== "success") {
       return fallback;
@@ -43,9 +55,13 @@ export async function generateCommitMessageSuggestion(input: {
 
     return normalizeAiSuggestion(result.result, fallback, requestedModel);
   } catch (error) {
-    console.error("[git] failed to generate commit message:", error);
+    console.warn("[git] failed to generate commit message, using fallback:", error);
     return fallback;
   }
+}
+
+export function generateFallbackCommitMessageSuggestion(files: GitChangedFile[]): GitCommitMessageSuggestion {
+  return buildFallbackCommitSuggestion(files);
 }
 
 function buildPrompt(input: {
@@ -56,34 +72,27 @@ function buildPrompt(input: {
   language: string;
 }) {
   const diff = truncateMiddle(input.diff, MAX_AI_DIFF_CHARS);
+  const changedFiles = input.files
+    .slice(0, MAX_AI_FILE_LINES)
+    .map((file) => `- ${file.status}: ${file.path}`)
+    .join("\n");
   const context = [
-    "你是 Git 提交信息生成器。只根据暂存区 diff 生成提交信息，不要描述未暂存或未出现在 diff 里的内容。",
+    "你是 Git 提交信息生成器。只根据暂存区生成提交信息。",
     `输出语言：${input.language === "zh-CN" ? "中文" : input.language}。`,
     "",
-    "遵循 Conventional Commits 1.0.0：",
-    "- message 必须使用 <type>(<scope>): <description> 或 <type>: <description>。",
-    "- type 只能从 feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert, i18n 中选择。",
-    "- scope 可选，必须是英文小写名词，优先从文件路径推断，例如 git, ui, settings, electron。",
-    "- description 用中文，使用祈使句/动宾结构，不超过 72 个字符，末尾不要句号。",
-    "- 如果是破坏性变更，在 type/scope 后加 !，并在 body 末尾写 BREAKING CHANGE: 中文说明。",
+    "要求：",
+    "- 严格输出 JSON，不要 Markdown。",
+    "- message 使用 Conventional Commits：<type>(<scope>): <中文描述>。",
+    "- type 从 feat/fix/perf/refactor/docs/test/build/chore/style/i18n 里选。",
+    "- scope 用英文小写短词，优先从路径推断。",
+    "- message 不超过 72 字符，末尾不要句号。",
+    "- body 可省略；需要时最多 3 条，每条以 '- ' 开头，只写 diff 能证明的事实。",
     "",
-    "选择规则：",
-    "- 新功能或新增可见能力用 feat。",
-    "- 修复错误、交互异常、样式错位、状态不刷新用 fix。",
-    "- 只改文档用 docs；只改测试用 test；只改构建/依赖/脚本用 build 或 chore。",
-    "- 代码结构调整但用户行为不变用 refactor；性能改进用 perf；格式或样式源码整理用 style。",
-    "- 多个文件服务同一个目的时只写一条 message，不要按文件罗列。",
-    "",
-    "body 可选：",
-    "- 只有当 message 说不清楚时才写 body。",
-    "- body 最多 3 条，以 '- ' 开头，只写可从 diff 验证的事实。",
-    "- 说明改了什么和为什么；不要写泛泛的“优化代码”“提升体验”。",
-    "",
-    "输出严格 JSON，不要 Markdown，不要代码块，不要解释。",
-    '格式：{"message":"fix(git): 修复暂存全部文件状态不同步","body":"- 改为逐个暂存文件，避免单个路径失败中断全部操作"}',
+    '输出格式：{"message":"fix(git): 修复暂存全部文件状态不同步","body":"- 同步暂存后的文件列表"}',
     "",
     "Changed files:",
-    input.files.map((file) => `- ${file.status}: ${file.path}`).join("\n"),
+    changedFiles,
+    input.files.length > MAX_AI_FILE_LINES ? `... 还有 ${input.files.length - MAX_AI_FILE_LINES} 个文件` : "",
     "",
     "Name status:",
     input.nameStatus.trim() || "(empty)",
@@ -147,10 +156,29 @@ function buildFallbackCommitSuggestion(files: GitChangedFile[]): GitCommitMessag
     .join("\n");
 
   return {
-    message: `${action}${subject}${suffix}`.slice(0, 72),
+    message: `${fallbackType(targetFiles)}(${fallbackScope(firstFile.path)}): ${action}${subject}${suffix}`.slice(0, 72),
     body,
     source: "fallback",
   };
+}
+
+function fallbackType(files: GitChangedFile[]) {
+  const paths = files.map((file) => file.path.toLowerCase());
+  if (paths.every((path) => path.includes("test") || path.includes("spec"))) return "test";
+  if (paths.every((path) => path.endsWith(".md") || path.includes("/docs/") || path.includes("\\docs\\"))) return "docs";
+  if (paths.some((path) => path.includes("package") || path.includes("vite") || path.includes("tsconfig") || path.includes("eslint"))) return "build";
+  if (paths.some((path) => path.includes("git"))) return "fix";
+  return "chore";
+}
+
+function fallbackScope(filePath: string) {
+  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
+  if (normalized.includes("/git/") || normalized.includes("git")) return "git";
+  if (normalized.includes("/settings/")) return "settings";
+  if (normalized.includes("/electron/")) return "electron";
+  if (normalized.includes("/ui/")) return "ui";
+  if (normalized.includes("/docs/")) return "docs";
+  return "repo";
 }
 
 function summarizeAction(files: GitChangedFile[]) {
