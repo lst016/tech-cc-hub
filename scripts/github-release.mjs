@@ -8,15 +8,53 @@ const cwd = process.cwd();
 const packagePath = path.join(cwd, "package.json");
 const packageLockPath = path.join(cwd, "package-lock.json");
 const args = process.argv.slice(2);
-const flags = new Set(args.filter((arg) => arg.startsWith("--")));
-const positionals = args.filter((arg) => !arg.startsWith("--"));
+const flags = new Set();
+const options = new Map();
+const positionals = [];
+
+for (let i = 0; i < args.length; i++) {
+  const arg = args[i];
+  if (!arg.startsWith("--")) {
+    positionals.push(arg);
+    continue;
+  }
+
+  const [key, ...rest] = arg.split("=");
+  if (rest.length > 0) {
+    options.set(key, rest.join("="));
+    continue;
+  }
+
+  if (i + 1 < args.length && !args[i + 1].startsWith("--")) {
+    options.set(key, args[i + 1]);
+    i += 1;
+    continue;
+  }
+
+  flags.add(key);
+}
+
 const requestedVersion = positionals[0] ?? "patch";
 const dryRun = flags.has("--dry-run");
 const noPush = flags.has("--no-push");
 const allowDirty = flags.has("--allow-dirty");
 const noRelease = flags.has("--no-release");
+const releaseTitleTemplate = options.get("--release-title-template") ?? "## {tag} 版本更新";
+const releaseNoteTemplatePath = options.get("--release-note-template");
 
 const GITHUB_API_BASE = "https://api.github.com";
+const DEFAULT_RELEASE_NOTE_TEMPLATE = `{{title}}
+
+### 变更提交
+{{commits}}
+
+### 变更文件
+{{files}}
+
+### 说明
+- 发布时间（自动生成）：{{generated_at}}
+- 来源：{{source}}
+`;
 
 function log(message) {
   console.log(`[github-release] ${message}`);
@@ -120,9 +158,26 @@ function bumpVersion(current, mode) {
 
   const explicit = parseVersion(mode);
   if (!explicit) {
-    fail("Usage: npm run release:github -- [patch|minor|major|vX.Y.Z] [--dry-run] [--no-push] [--allow-dirty]");
+    fail(
+      "Usage: npm run release:github -- [patch|minor|major|vX.Y.Z] [--dry-run] [--no-push] [--allow-dirty] [--no-release] [--release-title-template \"<tmpl>\"] [--release-note-template <path>]"
+    );
   }
   return explicit.value;
+}
+
+function resolveReleaseTitle(rawTemplate, tag) {
+  return rawTemplate
+    .replaceAll("{tag}", tag)
+    .replaceAll("{{tag}}", tag)
+    .trim();
+}
+
+function getReleaseNoteTemplate() {
+  if (!releaseNoteTemplatePath) {
+    return DEFAULT_RELEASE_NOTE_TEMPLATE;
+  }
+  const customPath = path.resolve(cwd, releaseNoteTemplatePath);
+  return readFileSync(customPath, "utf8");
 }
 
 function ensureGitRepository() {
@@ -262,7 +317,7 @@ function getFilesSinceTag(tag) {
 
 function createReleaseBody({ tag, commits, files }) {
   const createdTime = new Date().toISOString();
-  const title = `## ${tag} 版本更新`;
+  const title = resolveReleaseTitle(releaseTitleTemplate, tag);
 
   const listify = (items, fallback, max = 40) => {
     if (!items.length) {
@@ -278,18 +333,15 @@ function createReleaseBody({ tag, commits, files }) {
     return lines.join("\n");
   };
 
-  return `${title}
+  const template = getReleaseNoteTemplate();
 
-### 变更提交
-${listify(commits, "无新增提交")}
-
-### 变更文件
-${listify(files, "无文件变更")}
-
-### 说明
-- 发布时间（自动生成）：${createdTime}
-- 来源：脚本生成的提交日志与差异
-`;
+  return template
+    .replaceAll("{{title}}", title)
+    .replaceAll("{{tag}}", tag)
+    .replaceAll("{{commits}}", listify(commits, "无新增提交"))
+    .replaceAll("{{files}}", listify(files, "无文件变更"))
+    .replaceAll("{{generated_at}}", createdTime)
+    .replaceAll("{{source}}", "脚本生成的提交日志与差异");
 }
 
 async function upsertGithubRelease(tagName, body) {
