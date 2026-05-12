@@ -12,7 +12,7 @@
 
 ## References
 
-- Spec: `docs/superpowers/specs/2026-05-12-photoshop-psd-web-mcp-design.md`
+- Spec: `docs/superpowers/photoshop/specs/2026-05-12-photoshop-psd-web-mcp-design.md`
 - Existing built-in MCP registry: `src/shared/builtin-mcp-registry.ts`
 - Existing MCP factory: `src/electron/libs/builtin-mcp-servers.ts`
 - Existing tool result helper: `src/electron/libs/mcp-tools/tool-result.ts`
@@ -843,7 +843,7 @@ git commit -m "feat: expose photoshop psd workflow tools"
 
 **Files:**
 - Create: `src/electron/libs/mcp-tools/photoshop/adapter.ts`
-- Create: `docs/superpowers/research/2026-05-12-photoshop-automation-spike.md`
+- Create: `docs/superpowers/photoshop/research/2026-05-12-photoshop-automation-spike.md`
 
 - [ ] **Step 1: Define adapter interface**
 
@@ -865,7 +865,7 @@ Add a short section: "No platform-specific automation implementation should be a
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/electron/libs/mcp-tools/photoshop/adapter.ts docs/superpowers/research/2026-05-12-photoshop-automation-spike.md
+git add src/electron/libs/mcp-tools/photoshop/adapter.ts docs/superpowers/photoshop/research/2026-05-12-photoshop-automation-spike.md
 git commit -m "docs: define photoshop automation spike"
 ```
 
@@ -920,7 +920,7 @@ Then open Settings -> MCP and verify `tech-cc-hub-photoshop` appears with tool g
 
 ```bash
 git status --short
-git add src/electron/libs/mcp-tools/photoshop src/electron/libs/builtin-mcp-servers.ts src/electron/libs/runtime-efficiency.ts src/electron/libs/runner-reuse.ts src/shared/builtin-mcp-registry.ts src/ui/components/settings/McpSettingsPage.tsx test/electron test/fixtures/photoshop docs/superpowers/research/2026-05-12-photoshop-automation-spike.md
+git add src/electron/libs/mcp-tools/photoshop src/electron/libs/builtin-mcp-servers.ts src/electron/libs/runtime-efficiency.ts src/electron/libs/runner-reuse.ts src/shared/builtin-mcp-registry.ts src/ui/components/settings/McpSettingsPage.tsx test/electron test/fixtures/photoshop docs/superpowers/photoshop/research/2026-05-12-photoshop-automation-spike.md
 git commit -m "test: validate photoshop mcp phase one"
 ```
 

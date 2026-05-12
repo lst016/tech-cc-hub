@@ -128,6 +128,55 @@ export type PhotoshopAssetExportPlan = {
   warnings: string[];
 };
 
+export type PhotoshopGeneratedFile = {
+  path: string;
+  language: "html" | "css" | "javascript" | "typescript" | "tsx" | "json" | "markdown";
+  content: string;
+};
+
+export type PhotoshopCodeGenerationResult = {
+  target: PhotoshopCodeTarget;
+  files: PhotoshopGeneratedFile[];
+  warnings: string[];
+};
+
+export type PhotoshopVisualRepairPlan = {
+  referenceImagePath?: string;
+  candidateUrl?: string;
+  manifestSummary: {
+    pageName: string;
+    sectionCount: number;
+    assetCount: number;
+  };
+  steps: Array<{
+    order: number;
+    tool: string;
+    purpose: string;
+  }>;
+  warnings: string[];
+};
+
+export type PhotoshopProjectManifest = {
+  schemaVersion: "1.0";
+  pages: Array<{
+    name: string;
+    sourceFilePath: string;
+    width: number;
+    height: number;
+    sectionCount: number;
+    assetCount: number;
+  }>;
+  sharedAssets: PhotoshopAssetManifest[];
+  sharedComponents: Array<{
+    id: string;
+    type: string;
+    occurrences: number;
+    pages: string[];
+  }>;
+  codeTargets: PhotoshopCodeTarget[];
+  warnings: string[];
+};
+
 export type PhotoshopControlOperation =
   | { type: "rename-layer"; layerId: string; nextName: string }
   | { type: "write-metadata"; layerId: string; key: string; value: string }

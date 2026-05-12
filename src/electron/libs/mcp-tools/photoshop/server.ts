@@ -6,11 +6,14 @@ import {
 import { z } from "zod";
 
 import { analyzeWebPsdLayerTree } from "./analyzer.js";
+import { generateNativeWebProject, generateReactTailwindProject } from "./codegen.js";
 import { checkPhotoshopEnvironment } from "./environment.js";
 import { planPhotoshopAssetExports } from "./export-planner.js";
 import { createEmptyPhotoshopWebManifest, validatePhotoshopWebManifest } from "./manifest.js";
+import { generatePhotoshopProjectManifest } from "./project-manifest.js";
 import { preparePhotoshopControlledChange } from "./safety.js";
-import type { NormalizedPhotoshopLayerTree, PhotoshopControlledChangeInput } from "./types.js";
+import type { NormalizedPhotoshopLayerTree, PhotoshopControlledChangeInput, PhotoshopWebManifest } from "./types.js";
+import { planPhotoshopVisualRepairLoop } from "./visual-loop.js";
 import { getPhotoshopWorkflowGuidance } from "./workflow-guidance.js";
 import { toTextToolResult } from "../tool-result.js";
 
@@ -29,6 +32,10 @@ export const PHOTOSHOP_TOOL_NAMES = [
   "psd_export_web_assets",
   "psd_generate_web_manifest",
   "psd_validate_web_manifest",
+  "psd_generate_native_web_code",
+  "psd_generate_react_tailwind_code",
+  "psd_plan_visual_repair_loop",
+  "psd_generate_project_manifest",
   "psd_read_workflow_guidance",
 ] as const;
 
@@ -67,6 +74,20 @@ const LAYER_TREE_SCHEMA = z.object({
 const LAYER_TREE_INPUT_SCHEMA = {
   layerTree: LAYER_TREE_SCHEMA.describe("Normalized Photoshop/PSD layer tree."),
   filePath: z.string().optional().describe("Optional source PSD/PSB path."),
+};
+
+const MANIFEST_INPUT_SCHEMA = {
+  manifest: z.unknown().describe("Photoshop web manifest."),
+};
+
+const VISUAL_REPAIR_INPUT_SCHEMA = {
+  manifest: z.unknown().describe("Photoshop web manifest."),
+  referenceImagePath: z.string().optional().describe("Optional PSD preview/reference image path."),
+  candidateUrl: z.string().optional().describe("Optional local preview URL to open in BrowserView."),
+};
+
+const PROJECT_MANIFEST_INPUT_SCHEMA = {
+  manifests: z.array(z.unknown()).min(1).describe("One or more Photoshop web manifests."),
 };
 
 const CONTROL_OPERATION_SCHEMA = z.union([
@@ -139,6 +160,38 @@ export function handlePsdValidateWebManifest(input: { manifest: unknown }) {
     assetCount: manifest.assets.length,
     warnings,
   };
+}
+
+function parseManifestOrThrow(value: unknown): PhotoshopWebManifest {
+  const parsed = validatePhotoshopWebManifest(value);
+  if (!parsed.success) {
+    throw new Error(`Invalid Photoshop web manifest: ${parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}`);
+  }
+  return parsed.data;
+}
+
+export function handlePsdGenerateNativeWebCode(input: { manifest: unknown }) {
+  return generateNativeWebProject(parseManifestOrThrow(input.manifest));
+}
+
+export function handlePsdGenerateReactTailwindCode(input: { manifest: unknown }) {
+  return generateReactTailwindProject(parseManifestOrThrow(input.manifest));
+}
+
+export function handlePsdPlanVisualRepairLoop(input: {
+  manifest: unknown;
+  referenceImagePath?: string;
+  candidateUrl?: string;
+}) {
+  return planPhotoshopVisualRepairLoop({
+    manifest: parseManifestOrThrow(input.manifest),
+    referenceImagePath: input.referenceImagePath,
+    candidateUrl: input.candidateUrl,
+  });
+}
+
+export function handlePsdGenerateProjectManifest(input: { manifests: unknown[] }) {
+  return generatePhotoshopProjectManifest(input.manifests.map(parseManifestOrThrow));
 }
 
 export function handlePsdReadWorkflowGuidance() {
@@ -233,6 +286,10 @@ export function getPhotoshopMcpServer(): McpSdkServerConfigWithInstance {
       "psd_plan_asset_exports",
       "psd_generate_web_manifest",
       "psd_validate_web_manifest",
+      "psd_generate_native_web_code",
+      "psd_generate_react_tailwind_code",
+      "psd_plan_visual_repair_loop",
+      "psd_generate_project_manifest",
       "psd_read_workflow_guidance",
     ].includes(name))
     .map((name) => tool(
@@ -259,6 +316,34 @@ export function getPhotoshopMcpServer(): McpSdkServerConfigWithInstance {
       ),
       generateManifest,
       validateManifest,
+      tool(
+        "psd_generate_native_web_code",
+        "Generate a native HTML/CSS/JS draft from a Photoshop web manifest.",
+        MANIFEST_INPUT_SCHEMA,
+        async (input) => toTextToolResult(handlePsdGenerateNativeWebCode({ manifest: input.manifest })),
+      ),
+      tool(
+        "psd_generate_react_tailwind_code",
+        "Generate a React/Tailwind draft from a Photoshop web manifest.",
+        MANIFEST_INPUT_SCHEMA,
+        async (input) => toTextToolResult(handlePsdGenerateReactTailwindCode({ manifest: input.manifest })),
+      ),
+      tool(
+        "psd_plan_visual_repair_loop",
+        "Plan how to connect a Photoshop manifest, PSD preview, BrowserView, and design diff repair loop.",
+        VISUAL_REPAIR_INPUT_SCHEMA,
+        async (input) => toTextToolResult(handlePsdPlanVisualRepairLoop({
+          manifest: input.manifest,
+          referenceImagePath: input.referenceImagePath,
+          candidateUrl: input.candidateUrl,
+        })),
+      ),
+      tool(
+        "psd_generate_project_manifest",
+        "Aggregate multiple Photoshop page manifests into a project-level manifest with shared assets/components.",
+        PROJECT_MANIFEST_INPUT_SCHEMA,
+        async (input) => toTextToolResult(handlePsdGenerateProjectManifest({ manifests: input.manifests })),
+      ),
       guidance,
     ],
   });

@@ -40,6 +40,8 @@ test("built-in MCP registry tool names stay unique", () => {
   assert.equal(toolNames.includes("figma_audit_design"), true);
   assert.equal(toolNames.includes("photoshop_check_environment"), true);
   assert.equal(toolNames.includes("psd_generate_web_manifest"), true);
+  assert.equal(toolNames.includes("psd_generate_native_web_code"), true);
+  assert.equal(toolNames.includes("psd_plan_visual_repair_loop"), true);
 });
 
 test("built-in MCP prompt hints are sourced from the registry", () => {

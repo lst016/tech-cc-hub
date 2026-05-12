@@ -8,6 +8,9 @@ export function getPhotoshopWorkflowGuidance() {
       "Analyze the PSD layer tree before exporting assets.",
       "Prefer naming conventions such as header, nav, hero, section/*, component/*, asset/*, and state/hover.",
       "Generate a page-structure manifest before asking a code generator to write native HTML/CSS/JS or React/Tailwind.",
+      "Use psd_generate_native_web_code for native HTML/CSS/JS drafts when the target is static or framework-free.",
+      "Use psd_generate_react_tailwind_code for React/Tailwind drafts when the project already uses React or Tailwind.",
+      "Use psd_generate_project_manifest to consolidate multiple page manifests before component-library work.",
       "Use tech-cc-hub-design later for BrowserView screenshot comparison and repair loops.",
     ],
     safeEditing: [

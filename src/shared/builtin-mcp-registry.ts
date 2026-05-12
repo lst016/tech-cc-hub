@@ -275,6 +275,10 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
           { name: "psd_export_web_assets", description: "Execute planned web asset exports and return a report." },
           { name: "psd_generate_web_manifest", description: "Generate the page-structure manifest consumed by later code generators." },
           { name: "psd_validate_web_manifest", description: "Validate missing assets, low-confidence regions, naming conflicts, and code target readiness." },
+          { name: "psd_generate_native_web_code", description: "Generate a native HTML/CSS/JS draft from a Photoshop web manifest." },
+          { name: "psd_generate_react_tailwind_code", description: "Generate a React/Tailwind draft from a Photoshop web manifest." },
+          { name: "psd_plan_visual_repair_loop", description: "Plan the BrowserView and design diff loop for repairing generated UI." },
+          { name: "psd_generate_project_manifest", description: "Aggregate multiple page manifests into a project-level manifest with shared components and assets." },
           { name: "psd_read_workflow_guidance", description: "Read built-in PSD-to-web slicing rules, naming conventions, and safe editing guidance." },
         ],
       },
@@ -288,7 +292,8 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
     promptHints: [
       "Photoshop PSD rule: for PSD/PSB webpage slicing tasks, first call `mcp__tech-cc-hub-photoshop__photoshop_check_environment`, then analyze layers before exporting assets.",
       "Photoshop safety rule: any PSD mutation must use `photoshop_apply_controlled_change` with dry-run first, then explicit confirmation and backup.",
-      "PSD-to-code rule: Phase 1 outputs a manifest with `codeTargets` including `html-css-js` and `react-tailwind`; code generation happens in later phases.",
+      "PSD-to-code rule: after `psd_generate_web_manifest`, use `psd_generate_native_web_code` for HTML/CSS/JS or `psd_generate_react_tailwind_code` for React/Tailwind drafts, then use `psd_plan_visual_repair_loop` before visual diff repair.",
+      "PSD project rule: for multi-page PSD work, aggregate page manifests with `psd_generate_project_manifest` before extracting shared components or design-system tokens.",
     ],
   },
   {
