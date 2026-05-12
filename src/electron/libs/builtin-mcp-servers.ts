@@ -11,6 +11,7 @@ import { CRON_TOOL_NAMES, getCronMcpServer } from "./mcp-tools/cron.js";
 import { FIGMA_REST_TOOL_NAMES, getFigmaRestMcpServer } from "./mcp-tools/figma-rest.js";
 import { IDEA_TOOL_NAMES, getIdeaMcpServer } from "./mcp-tools/idea.js";
 import { PLAN_TOOL_NAMES, getPlanMcpServer } from "./mcp-tools/plan.js";
+import { PHOTOSHOP_TOOL_NAMES, getPhotoshopMcpServer } from "./mcp-tools/photoshop/server.js";
 
 type BuiltinMcpFactoryContext = {
   sessionId: string;
@@ -23,6 +24,7 @@ export const BUILTIN_MCP_SERVER_FACTORIES: Record<BuiltinMcpServerName, BuiltinM
   "tech-cc-hub-admin": () => getAdminMcpServer(),
   "tech-cc-hub-design": ({ sessionId }) => getDesignMcpServer(sessionId),
   "tech-cc-hub-figma": () => getFigmaRestMcpServer(),
+  "tech-cc-hub-photoshop": () => getPhotoshopMcpServer(),
   "tech-cc-hub-cron": () => getCronMcpServer(),
   "tech-cc-hub-idea": () => getIdeaMcpServer(),
   "tech-cc-hub-plan": () => getPlanMcpServer(),
@@ -33,6 +35,7 @@ export const BUILTIN_MCP_TOOL_NAMES: Record<BuiltinMcpServerName, readonly strin
   "tech-cc-hub-admin": ADMIN_TOOL_NAMES,
   "tech-cc-hub-design": DESIGN_TOOL_NAMES,
   "tech-cc-hub-figma": FIGMA_REST_TOOL_NAMES,
+  "tech-cc-hub-photoshop": PHOTOSHOP_TOOL_NAMES,
   "tech-cc-hub-cron": CRON_TOOL_NAMES,
   "tech-cc-hub-idea": IDEA_TOOL_NAMES,
   "tech-cc-hub-plan": PLAN_TOOL_NAMES,

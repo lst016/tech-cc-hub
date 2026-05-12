@@ -3,6 +3,7 @@ export type BuiltinMcpServerName =
   | "tech-cc-hub-admin"
   | "tech-cc-hub-design"
   | "tech-cc-hub-figma"
+  | "tech-cc-hub-photoshop"
   | "tech-cc-hub-cron"
   | "tech-cc-hub-idea"
   | "tech-cc-hub-plan";
@@ -12,6 +13,7 @@ export type BuiltinMcpIconKey =
   | "settings"
   | "sparkles"
   | "figma"
+  | "layers"
   | "timer"
   | "code"
   | "list";
@@ -227,6 +229,66 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
       "需要设计系统上下文时用 `figma_list_file_library` 和 `figma_get_file_variables`；需要协作上下文时用 `figma_list_file_comments`、`figma_list_file_versions`、`figma_get_dev_resources`。",
       "Figma URL 中的 `node-id=1-2` 需要作为节点读取，工具会自动转换成 API 需要的 `1:2`。不要把 Figma PAT 当作官方 Remote MCP OAuth bearer token 使用；高级工具失败时优先提示用户补对应 PAT scope。",
       "Figma progressive disclosure rule: when a design response is too large or figma_read_design returns result.truncated=true, use `figma_list_node_index` or result.progressiveDisclosure.nodeIndex to pick the smallest relevant node, then call `figma_summarize_design` or `figma_read_design` with that nodeId and a small depth.",
+    ],
+  },
+  {
+    name: "tech-cc-hub-photoshop",
+    type: "builtin",
+    command: "builtin",
+    args: [],
+    envKeys: [],
+    enabled: true,
+    iconKey: "layers",
+    description: "Photoshop/PSD tooling for webpage slicing, controlled PSD edits, asset export planning, and page-structure manifests.",
+    iconClassName: "border-fuchsia-500/15 bg-fuchsia-50 text-fuchsia-700",
+    highlights: ["PSD", "Photoshop", "Web manifest"],
+    workflow: [
+      { label: "Check", description: "environment" },
+      { label: "Analyze", description: "layers" },
+      { label: "Export", description: "assets" },
+      { label: "Manifest", description: "web" },
+    ],
+    toolGroups: [
+      {
+        title: "Environment and documents",
+        tools: [
+          { name: "photoshop_check_environment", description: "Inspect OS, Photoshop availability, automation channels, and parser fallback capability." },
+          { name: "photoshop_open_document", description: "Open or register a PSD/PSB document and return normalized document metadata." },
+          { name: "photoshop_list_layers", description: "Read a normalized Photoshop/PSD layer tree." },
+        ],
+      },
+      {
+        title: "Layers and export",
+        tools: [
+          { name: "photoshop_select_layer", description: "Select a layer for inspection or manual review." },
+          { name: "photoshop_set_layer_visibility", description: "Temporarily change layer visibility without saving the PSD." },
+          { name: "photoshop_measure_layer", description: "Measure layer bounds, text, style, and render-relevant metadata." },
+          { name: "photoshop_export_layer", description: "Export a layer or group as a frontend asset." },
+          { name: "photoshop_export_document_preview", description: "Export a document/artboard preview for visual comparison." },
+        ],
+      },
+      {
+        title: "Web PSD workflow",
+        tools: [
+          { name: "psd_analyze_web_page", description: "Analyze a webpage PSD into sections, component candidates, tokens, and review warnings." },
+          { name: "psd_plan_asset_exports", description: "Plan asset formats, scales, paths, naming, and conflicts." },
+          { name: "psd_export_web_assets", description: "Execute planned web asset exports and return a report." },
+          { name: "psd_generate_web_manifest", description: "Generate the page-structure manifest consumed by later code generators." },
+          { name: "psd_validate_web_manifest", description: "Validate missing assets, low-confidence regions, naming conflicts, and code target readiness." },
+          { name: "psd_read_workflow_guidance", description: "Read built-in PSD-to-web slicing rules, naming conventions, and safe editing guidance." },
+        ],
+      },
+      {
+        title: "Safe editing",
+        tools: [
+          { name: "photoshop_apply_controlled_change", description: "Plan or apply allowlisted PSD edits with dry-run, confirmation, backup, and changeLog." },
+        ],
+      },
+    ],
+    promptHints: [
+      "Photoshop PSD rule: for PSD/PSB webpage slicing tasks, first call `mcp__tech-cc-hub-photoshop__photoshop_check_environment`, then analyze layers before exporting assets.",
+      "Photoshop safety rule: any PSD mutation must use `photoshop_apply_controlled_change` with dry-run first, then explicit confirmation and backup.",
+      "PSD-to-code rule: Phase 1 outputs a manifest with `codeTargets` including `html-css-js` and `react-tailwind`; code generation happens in later phases.",
     ],
   },
   {

@@ -111,6 +111,7 @@ function isBuiltinMcpServerName(value: unknown): value is BuiltinMcpServerName {
     value === "tech-cc-hub-admin" ||
     value === "tech-cc-hub-design" ||
     value === "tech-cc-hub-figma" ||
+    value === "tech-cc-hub-photoshop" ||
     value === "tech-cc-hub-cron" ||
     value === "tech-cc-hub-idea" ||
     value === "tech-cc-hub-plan"

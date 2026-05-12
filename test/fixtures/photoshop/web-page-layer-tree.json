@@ -1,0 +1,53 @@
+{
+  "document": { "name": "Home", "width": 1440, "height": 2200 },
+  "layers": [
+    {
+      "id": "group-header",
+      "name": "header",
+      "kind": "group",
+      "bounds": { "x": 0, "y": 0, "width": 1440, "height": 96 },
+      "children": [
+        {
+          "id": "layer-logo",
+          "name": "asset/logo",
+          "kind": "image",
+          "bounds": { "x": 80, "y": 28, "width": 120, "height": 40 }
+        }
+      ]
+    },
+    {
+      "id": "group-hero",
+      "name": "Hero Section",
+      "kind": "group",
+      "bounds": { "x": 0, "y": 96, "width": 1440, "height": 640 },
+      "children": [
+        {
+          "id": "text-title",
+          "name": "Hero / H1",
+          "kind": "text",
+          "text": "Launch faster",
+          "bounds": { "x": 120, "y": 180, "width": 520, "height": 72 }
+        },
+        {
+          "id": "btn-primary",
+          "name": "component/button/primary",
+          "kind": "shape",
+          "bounds": { "x": 120, "y": 320, "width": 180, "height": 48 }
+        },
+        {
+          "id": "hero-bg",
+          "name": "background/hero-photo",
+          "kind": "smart-object",
+          "bounds": { "x": 760, "y": 140, "width": 520, "height": 420 }
+        }
+      ]
+    },
+    {
+      "id": "group-unknown",
+      "name": "Content Block",
+      "kind": "group",
+      "bounds": { "x": 0, "y": 736, "width": 1440, "height": 540 },
+      "children": []
+    }
+  ]
+}

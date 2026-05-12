@@ -31,6 +31,7 @@ const VISUAL_SERVERS: readonly BuiltinMcpServerName[] = [
   "tech-cc-hub-browser",
   "tech-cc-hub-design",
   "tech-cc-hub-figma",
+  "tech-cc-hub-photoshop",
 ];
 
 const AUTOMATION_SERVERS: readonly BuiltinMcpServerName[] = [
@@ -48,13 +49,14 @@ const ALL_SERVERS: readonly BuiltinMcpServerName[] = [
   "tech-cc-hub-admin",
   "tech-cc-hub-design",
   "tech-cc-hub-figma",
+  "tech-cc-hub-photoshop",
   "tech-cc-hub-cron",
   "tech-cc-hub-idea",
   "tech-cc-hub-plan",
 ];
 
 const FIGMA_URL_PATTERN = /https?:\/\/(?:www\.)?figma\.com\/(?:design|file|proto|board|slides|make)\//i;
-const VISUAL_TASK_PATTERN = /<browser_annotations>|browserview|localhost|127\.0\.0\.1|screenshot|screen\s*shot|ui\b|css\b|figma|design|layout|pixel|视觉|截图|页面|网页|浏览器|样式|布局|设计|还原|对齐|按钮|组件/i;
+const VISUAL_TASK_PATTERN = /<browser_annotations>|browserview|localhost|127\.0\.0\.1|screenshot|screen\s*shot|ui\b|css\b|figma|photoshop|psd|psb|manifest|design|layout|pixel|视觉|截图|页面|网页|浏览器|样式|布局|设计|还原|对齐|按钮|组件|切图|图层|网页设计稿/i;
 const AUTOMATION_TASK_PATTERN = /cron|schedule|scheduled|reminder|monitor|watch|automation|定时|计划任务|提醒|监控|自动化|每(天|周|小时|分钟)/i;
 const IDE_TASK_PATTERN = /intellij|idea|java|jdk|maven|gradle|spring|tomcat|pom\.xml|\.java\b|编译|启动后端|本地运行/i;
 

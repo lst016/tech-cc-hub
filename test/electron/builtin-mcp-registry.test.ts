@@ -14,6 +14,7 @@ test("built-in MCP registry drives the settings list", () => {
 
   assert.deepEqual(serverInfos.map((server) => server.name), registryNames);
   assert.equal(registryNames.includes("tech-cc-hub-idea"), true);
+  assert.equal(registryNames.includes("tech-cc-hub-photoshop"), true);
   assert.equal(serverInfos.every((server) => server.type === "builtin" && server.command === "builtin"), true);
 });
 
@@ -37,6 +38,8 @@ test("built-in MCP registry tool names stay unique", () => {
   assert.equal(toolNames.includes("idea_wait_ready"), true);
   assert.equal(toolNames.includes("figma_get_design_playbook"), true);
   assert.equal(toolNames.includes("figma_audit_design"), true);
+  assert.equal(toolNames.includes("photoshop_check_environment"), true);
+  assert.equal(toolNames.includes("psd_generate_web_manifest"), true);
 });
 
 test("built-in MCP prompt hints are sourced from the registry", () => {

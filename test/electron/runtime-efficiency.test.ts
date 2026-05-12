@@ -34,8 +34,18 @@ test("runtime efficiency enables visual tools for image attachments", () => {
   assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-browser"));
   assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-design"));
   assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-figma"));
+  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-photoshop"));
   assert.equal(profile.includeBrowserPrompt, true);
   assert.equal(profile.includeDesignPrompt, true);
+});
+
+test("runtime efficiency enables photoshop tools for PSD web slicing prompts", () => {
+  const profile = resolveRuntimeEfficiencyProfile({
+    prompt: "把这个网页 PSD 切图并生成 manifest，后面要写原生 html css js",
+  });
+
+  assert.equal(profile.id, "visual");
+  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-photoshop"));
 });
 
 test("runtime efficiency keeps cron tools out of normal coding turns", () => {
