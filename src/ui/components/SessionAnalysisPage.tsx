@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   buildActivityRailModel,
   type ActivityDetailRow,
@@ -401,10 +401,10 @@ function buildWorkflowOptimizationPrompt(
   session: SessionView | null,
 ) {
   const cardSummary = cards.map((card, index) => [
-    `${index + 1}. ${card.title}：${card.metric}`,
-    `   观察：${card.summary}`,
-    `   证据：${card.evidence}`,
-    `   下一步：${card.action}`,
+    `${index + 1}. ${card.title}: ${card.metric}`,
+    `   观察: ${card.summary}`,
+    `   证据: ${card.evidence}`,
+    `   下一步: ${card.action}`,
   ].join("\n")).join("\n\n");
   const toolItems = model.timeline.filter((item) => TOOL_LIKE_NODE_KINDS.has(item.nodeKind));
   const readItems = model.timeline.filter((item) => item.nodeKind === "file_read");
@@ -426,72 +426,120 @@ function buildWorkflowOptimizationPrompt(
     .map(([name, count]) => `${name}=${count}`)
     .join(", ");
   const sessionDataPointer = [
-    `- tech-cc-hub session id：${session?.id ?? "-"}`,
-    `- Claude/remote session id：${model.contextSnapshot.remoteSessionId || "-"}`,
-    `- cwd：${model.contextSnapshot.cwd || session?.cwd || "-"}`,
-    "- 本地会话库：%APPDATA%/tech-cc-hub/sessions.db；messages.data 内含 user_prompt、prompt_ledger、assistant tool_use、tool_result、result。",
+    `- tech-cc-hub session id: ${session?.id ?? "-"}`,
+    `- Claude/remote session id: ${model.contextSnapshot.remoteSessionId || "-"}`,
+    `- cwd: ${model.contextSnapshot.cwd || session?.cwd || "-"}`,
+    "- 本地会话库: %APPDATA%/tech-cc-hub/sessions.db；messages.data 内含 user_prompt、prompt_ledger、assistant tool_use、tool_result、result。",
   ].join("\n");
   const traceEvidenceSummary = [
-    `- Trace 节点：${model.timeline.length}；轮次：${model.promptAnalysis.ledgers?.length ?? "-"}；Prompt 估算：${model.promptAnalysis.totalTokenEstimate.toLocaleString("zh-CN")} tok。`,
-    `- 工具节点：${toolItems.length}；读文件：${readItems.length}；检索：${searchItems.length}；写入：${writeItems.length}；验证：${validationItems.length}。`,
-    `- 高频工具：${topTools || "无"}`,
+    `- Trace 节点: ${model.timeline.length}; 轮次: ${model.promptAnalysis.ledgers?.length ?? "-"}; Prompt 估算: ${model.promptAnalysis.totalTokenEstimate.toLocaleString("zh-CN")} tok。`,
+    `- 工具节点: ${toolItems.length}; 读文件: ${readItems.length}; 检索: ${searchItems.length}; 写入: ${writeItems.length}; 验证: ${validationItems.length}。`,
+    `- 高频工具: ${topTools || "无"}`,
   ].join("\n");
 
   return [
-    "请基于本轮 Trace 诊断和真实会话数据，优化你后续执行这类任务的工作流、项目规则和 skill 使用方式。",
+    "你是工作流复盘与 Skill 设计助手。你的任务不是继续写业务代码，而是基于本轮真实会话证据，产出下一轮可执行的工作流优化方案。",
     "",
-    "执行前硬要求：",
-    "1. 不要只根据下方诊断报告泛泛总结；先读取或利用真实会话数据，至少核对 user_prompt、prompt_ledger、tool_use/tool_result、result 四类证据。",
-    "2. 优先围绕当前会话对应的项目、规则和工作流给出建议；不要默认把问题归因到系统 prompt。",
-    "3. 先区分产品修复、Rules、Skills、Memory 四类落点；只有当用户明确要求优化承载该会话的应用/工具本身时，才给出产品代码文件和最小补丁方案。",
-    "4. 输出前必须说明哪些结论来自会话数据，哪些只是从 Trace 卡片推断。",
+    "强制工作方式:",
+    "1. 先做证据门: 必须核对真实会话数据，至少覆盖 user_prompt、prompt_ledger、assistant tool_use、tool_result、result。无法核对某类证据时，要明确写“未核对”和原因。",
+    "2. 再做归因门: 每个问题必须先判定根因属于 Product bug、Rules、Skills、Memory、Prompt、Tooling、模型路由、用户需求不清中的哪一类，不要默认甩给系统 prompt。",
+    "3. 再做动作门: 每条建议必须给出可落地动作，包含落点、触发条件、最小改动、验收方式；做不到就降级为观察项。",
+    "4. 区分事实和推断: 凡是只来自 Trace 卡片、统计摘要或 UI 推断的内容，必须标注为“推断”，不能写成已确认事实。",
+    "5. 控制范围: 优先解决本轮最影响效率或正确性的 1-3 个问题，不要为了显得全面而泛化扩散。",
     "",
-    "目标：",
-    "1. 找出本轮最浪费时间、上下文和工具调用的环节。",
-    "2. 把问题转成下一轮可执行的工作流规则，不要只做泛泛总结。",
-    "3. 如果适合沉淀成 skill 或项目规则，请给出具体文件、触发条件、输入输出格式和最小实现步骤。",
-    "4. 后续处理类似任务时，优先按这些规则约束自己。",
+    "分类决策表:",
+    "- Product bug: 应用自身行为错误、UI/交互缺陷、数据采集缺口、路由/模型选择错误；只有用户明确要优化 tech-cc-hub 本身时，才输出代码改动建议。",
+    "- Rules: 稳定行为约束、默认策略、工具调用政策、项目约定、命名规范、验收口径；长期有效，不写进 Memory。",
+    "- Skills: 可复用流程、模板、脚本、触发条件、输入输出协议；适合把执行细节从系统 prompt 中拆出去，保持渐进式披露。",
+    "- Memory: 只记录当前交接状态、最近做了什么、未完成事项、风险和接手线索；不要承载长期规则。",
+    "- Prompt: 本轮提示词本身缺少边界、证据要求、输出格式或反模式约束。",
+    "- Tooling: 工具不可用、工具权限、API 契约、运行环境、并发能力或工具输出结构导致的问题。",
     "",
-    "沉淀位置判断：",
-    "- 规则类内容走 Rules：稳定行为约束、默认策略、工具调用政策、项目约定、命名规范、验收口径都应写入系统/用户/项目规则，不要写入 Memory。",
-    "- 接力类内容走 Memory：Memory 只记录最近做了什么、当前状态、未完成事项、风险和接手线索，不承载长期规则。",
-    "- 可复用能力走 Skills：如果能抽成工具流程、模板、脚本、触发条件或输入输出协议，优先建议优化或新增 skill。",
-    "- 如果一条建议同时像 Rules 和 Memory，优先落到 Rules；如果同时像 Rules 和 Skills，写清 Rules 里的触发约束，并把执行细节放到 Skills。",
+    "Skill 设计准则:",
+    "- 保持短而硬: 只写模型不知道但必须遵守的流程，不堆常识。",
+    "- 设置自由度: 高风险步骤给硬门禁和固定格式，低风险总结给启发式。",
+    "- 渐进式披露: 核心流程放主 skill，大量示例/模板/脚本放 references 或 scripts，按需读取。",
+    "- 反模式显式化: 写清楚“不要做什么”，比只写正向建议更能减少跑偏。",
     "",
-    "内置工具调用模式：",
+    "内置工具调用优化规则:",
     "- 已知多个具体文件需要查看时，优先并发读取，不要串行一个个 Read。",
-    "- 目标文件不明确时，先用一次只读 Bash 搜索/筛选收敛范围，例如 rg/find/sed/awk，再读取少量命中文件。",
-    "- 避免碎片链路：ls -> cat -> grep -> cat。能用一次 rg 或一次批量只读命令得到结论时，不要拆成多次工具调用。",
-    "- 只读批量操作可以合并；写入、删除、移动、安装、提交等有副作用操作不要混进批量 Bash。",
-    "- 复盘时如果发现同目录串行多次 Read、重复 Bash、ls/cat/grep 链路，应优先建议改成并发读取或先搜索收敛。",
+    "- 目标文件不明确时，先用一次搜索或筛选收敛范围，例如 rg/find/sed/awk，再读取少量命中文件。",
+    "- 避免碎片链路: ls -> cat -> grep -> cat。能用一次 rg 或一次批量只读命令得到结论时，不要拆成多次工具调用。",
+    "- 只读批量操作可以合并；写入、删除、移动、安装、提交等有副作用操作不要混进批量 shell。",
+    "- 如果任务可拆成互不冲突的查文件子问题，建议用 Task/subagent 并行查证；如果下一步依赖结果，则本地先做关键路径。",
     "",
-    "会话数据指针：",
+    "必须避免:",
+    "- 不要输出“多写点 prompt”“加强规范”这类不可验收的空建议。",
+    "- 不要把所有问题都塞进 Memory。",
+    "- 不要在没核对 tool_result/result 的情况下断言工具失败原因。",
+    "- 不要建议大改产品代码来掩盖原本可以通过 Rules/Skills 解决的执行习惯问题。",
+    "- 不要只复述下方诊断报告；诊断报告是线索，不是结论。",
+    "",
+    "会话数据指针:",
     sessionDataPointer,
     "",
-    "Trace 证据摘要：",
+    "Trace 证据摘要:",
     traceEvidenceSummary,
     "",
-    "本轮概览：",
-    `- 状态：${model.summary.statusLabel}`,
-    `- 节点数：${model.timeline.length}`,
-    `- 输入规模：${model.summary.inputLabel}`,
-    `- 输出规模：${model.summary.outputLabel}`,
-    `- Prompt 估算：${model.promptAnalysis.totalTokenEstimate.toLocaleString("zh-CN")} tok`,
+    "本轮概览:",
+    `- 状态: ${model.summary.statusLabel}`,
+    `- 节点数: ${model.timeline.length}`,
+    `- 输入规模: ${model.summary.inputLabel}`,
+    `- 输出规模: ${model.summary.outputLabel}`,
+    `- Prompt 估算: ${model.promptAnalysis.totalTokenEstimate.toLocaleString("zh-CN")} tok`,
     "",
-    "工作流优化卡片：",
+    "工作流优化卡片:",
     cardSummary || "- 暂无优化卡片。",
     "",
-    "诊断报告：",
+    "诊断报告:",
     diagnosticReport,
     "",
-    "请输出：",
-    "- 已读取/核对的会话数据来源",
-    "- 优先级排序的工作流问题清单",
-    "- 每个问题的证据",
-    "- 下一轮执行 SOP",
-    "- 应该新增或修改的 Rules / Skills / Memory，并明确为什么不放到其他位置",
-    "- 可以立刻落地的代码或文档改动建议",
+    "请按这个格式输出:",
+    "## 已核对证据",
+    "- 写明已核对的数据源；未核对的证据也要写明原因。",
+    "",
+    "## 优先级结论",
+    "对每个 P0/P1/P2 项使用以下字段:",
+    "- 问题: 一句话说明真实问题。",
+    "- 证据: 引用会话数据、tool_use/tool_result、result 或 Trace 摘要。",
+    "- 根因: Product bug / Rules / Skills / Memory / Prompt / Tooling / 模型路由 / 用户需求不清。",
+    "- 落点: 应改哪里，为什么不是其他位置。",
+    "- 具体改法: 可执行的最小改动。",
+    "- 不做什么: 明确要避免的错误优化方向。",
+    "- 验收: 下一轮如何判断已改善。",
+    "",
+    "## 下一轮 SOP",
+    "- 给出 3-7 步可直接复用的执行顺序。",
+    "",
+    "## Rules / Skills / Memory Patch Proposal",
+    "- 分别列出建议新增或修改的条目；没有就写“无”。",
+    "- Skill 建议必须包含触发条件、输入、输出、核心步骤和可选 references/scripts。",
+    "",
+    "## 需要产品代码修复时才输出",
+    "- 只有当根因是 Product bug，且用户要优化 tech-cc-hub 本身时，才列具体文件和最小补丁方向。",
   ].join("\n");
+}
+export function buildSessionWorkflowOptimizationPrompt(session: SessionView | undefined, partialMessage = ""): string {
+  const model = buildActivityRailModel(session, session?.permissionRequests ?? [], "");
+  const roundGroups = buildRoundTraceGroups(model.timeline, session?.status);
+  const baseGroups: TraceGroup[] = roundGroups.length > 0
+    ? roundGroups
+    : model.executionSteps
+      .map((step, index) => ({
+        id: step.id,
+        indexLabel: String(index + 1),
+        title: step.title,
+        detail: step.detail,
+        status: step.status,
+        metrics: step.metrics,
+        sourceTimelineId: step.sourceTimelineId,
+        items: model.timeline.filter((item) => step.timelineIds.includes(item.id)),
+        isInferred: true,
+      }))
+      .filter((group) => group.items.length > 0);
+  const diagnosticReport = buildTraceDiagnosticReport(model, baseGroups, partialMessage.length);
+  const cards = buildWorkflowOptimizationCards(baseGroups, model.timeline, model.promptAnalysis);
+  return buildWorkflowOptimizationPrompt(cards, diagnosticReport, model, session ?? null);
 }
 
 function normalizeSearchText(text: string) {
@@ -2315,6 +2363,14 @@ export function SessionAnalysisPage({
     () => buildWorkflowOptimizationCards(baseGroups, model.timeline, model.promptAnalysis),
     [baseGroups, model.timeline, model.promptAnalysis],
   );
+  const workflowOptimizationPrompt = useMemo(
+    () => buildWorkflowOptimizationPrompt(workflowOptimizationCards, diagnosticReport, model, session ?? null),
+    [diagnosticReport, model, session, workflowOptimizationCards],
+  );
+  const workflowOptimizationDisabled = !session?.id || session.status === "running";
+  const handleSendWorkflowOptimizationPrompt = useCallback(() => {
+    onSendWorkflowOptimizationPrompt(workflowOptimizationPrompt);
+  }, [onSendWorkflowOptimizationPrompt, workflowOptimizationPrompt]);
 
   const selectedNodeMeta = selectedItem ? getNodeKindMeta(selectedItem) : null;
   const selectedRawText =
@@ -2372,6 +2428,14 @@ export function SessionAnalysisPage({
                 className="w-56 rounded-md border border-slate-200 bg-slate-100 px-3 py-1 text-[11px] font-medium text-slate-700 outline-none transition focus:border-blue-300 focus:bg-white focus:ring-2 focus:ring-blue-100"
               />
             </div>
+            <button
+              type="button"
+              onClick={handleSendWorkflowOptimizationPrompt}
+              disabled={workflowOptimizationDisabled}
+              className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-bold normal-case tracking-normal text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              发送 AI 优化工作流
+            </button>
             <CopyButton label="复制 Session ID" value={session?.id ?? ""} secondary />
             <button
               type="button"
@@ -2788,8 +2852,8 @@ export function SessionAnalysisPage({
                       </div>
                       <button
                         type="button"
-                        onClick={() => onSendWorkflowOptimizationPrompt(buildWorkflowOptimizationPrompt(workflowOptimizationCards, diagnosticReport, model, session ?? null))}
-                        disabled={!session?.id || session.status === "running"}
+                        onClick={handleSendWorkflowOptimizationPrompt}
+                        disabled={workflowOptimizationDisabled}
                         className="shrink-0 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] font-bold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         发送给 AI 优化工作流

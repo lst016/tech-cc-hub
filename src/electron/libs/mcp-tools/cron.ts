@@ -5,11 +5,11 @@ import {
   tool,
   type McpSdkServerConfigWithInstance,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import type { CronService } from "../cron-service.js";
 import type { CreateCronJobParams, CronSchedule } from "../cron-types.js";
+import { toTextToolResult } from "./tool-result.js";
 
 export const CRON_TOOL_NAMES = [
   "create_scheduled_task",
@@ -25,13 +25,6 @@ let cronMcpServer: McpSdkServerConfigWithInstance | null = null;
 
 export function setCronService(service: CronService): void {
   cronServiceRef = service;
-}
-
-function toTextToolResult(payload: unknown, isError = false): CallToolResult {
-  return {
-    isError,
-    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-  };
 }
 
 function buildScheduleFromInput(input: {

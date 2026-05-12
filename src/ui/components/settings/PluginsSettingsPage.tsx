@@ -607,7 +607,7 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
       title: isFigma ? "Figma 官方 MCP 引导接入" : "Open Computer Use 引导安装",
       prompt: isFigma ? buildFigmaOfficialGuidePrompt(status) : buildOpenComputerUseGuidePrompt(status),
       agentId: isFigma ? "figma-official-mcp-guide" : "open-computer-use-guide",
-      allowedTools: isFigma ? "*" : "Read,Edit,MultiEdit,Write,Bash,Glob,Search,TodoWrite",
+      allowedTools: isFigma ? "*" : "Read,Edit,MultiEdit,Write,Bash,Glob,Search,update_plan",
     })).catch(() => {
       guideLaunchInFlightRef.current = false;
       setLaunchingGuidePluginId(null);

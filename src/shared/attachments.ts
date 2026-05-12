@@ -1,6 +1,7 @@
 const BASE64_IMAGE_DATA_PATTERN = /^[A-Za-z0-9+/=\s]+$/;
 const DATA_URL_PREFIX_PATTERN = /^data:/i;
 const URL_PREFIX_PATTERN = /^(blob:|https?:|file:)/i;
+export const TEXT_ATTACHMENT_PROMPT_CHAR_LIMIT = 120_000;
 
 export type AttachmentLike = {
   kind: "image" | "text";
@@ -39,22 +40,61 @@ export function createStoredUserPromptMessage<TAttachment>(
   };
 }
 
-export function resolveImageAttachmentSrc(attachment: Pick<AttachmentLike, "data" | "mimeType" | "preview">): string {
-  const candidate = (attachment.preview ?? attachment.data ?? "").trim();
-  if (!candidate) {
-    return "";
+export function estimateAttachmentPromptChars(attachment: AttachmentLike): number {
+  const priorityLine = `${formatAttachmentName(attachment)} (${attachment.kind}, ${attachment.mimeType || "unknown"}${typeof attachment.size === "number" ? `, ${attachment.size} bytes` : ""})`;
+
+  if (attachment.kind === "image") {
+    const runtimeImageData = attachment.runtimeData?.trim();
+    if (runtimeImageData && isInlineImageAttachmentData(runtimeImageData)) {
+      return priorityLine.length + stripDataUrlPrefix(runtimeImageData).replace(/\s+/g, "").length;
+    }
+
+    const normalizedSummary = attachment.summaryText?.trim();
+    if (normalizedSummary) {
+      return priorityLine.length + `Image attachment summary (${formatAttachmentName(attachment)}):\n${normalizedSummary}`.length;
+    }
+
+    return priorityLine.length + `Image attachment (${formatAttachmentName(attachment)}) is present in this user turn, but no model-readable image payload or summary is available.`.length;
   }
 
-  if (DATA_URL_PREFIX_PATTERN.test(candidate) || URL_PREFIX_PATTERN.test(candidate)) {
-    return candidate;
+  const normalizedText = (attachment.summaryText ?? attachment.data).trim();
+  if (!normalizedText) {
+    return priorityLine.length;
   }
 
-  const normalizedBase64 = candidate.replace(/\s+/g, "");
-  if (normalizedBase64 && BASE64_IMAGE_DATA_PATTERN.test(normalizedBase64)) {
-    return `data:${attachment.mimeType || "image/png"};base64,${normalizedBase64}`;
+  return priorityLine.length + [
+    `Attachment file (${formatAttachmentName(attachment)})`,
+    `Type: ${attachment.mimeType || "text/plain"}`,
+    "",
+    "Use this attachment as the primary source for the current user request.",
+    "```",
+    truncateTextAttachment(normalizedText),
+    "```",
+  ].join("\n").length;
+}
+
+export function resolveImageAttachmentSrc(
+  attachment: Pick<AttachmentLike, "data" | "mimeType" | "preview" | "runtimeData" | "storageUri">,
+): string {
+  const candidates = [
+    attachment.preview,
+    attachment.runtimeData,
+    attachment.data,
+    attachment.storageUri,
+  ].map((value) => value?.trim()).filter((value): value is string => Boolean(value));
+
+  for (const candidate of candidates) {
+    if (DATA_URL_PREFIX_PATTERN.test(candidate) || URL_PREFIX_PATTERN.test(candidate)) {
+      return candidate;
+    }
+
+    const normalizedBase64 = candidate.replace(/\s+/g, "");
+    if (normalizedBase64 && BASE64_IMAGE_DATA_PATTERN.test(normalizedBase64)) {
+      return `data:${attachment.mimeType || "image/png"};base64,${normalizedBase64}`;
+    }
   }
 
-  return candidate;
+  return candidates[0] ?? "";
 }
 
 export function isInlineImageAttachmentData(data?: string): boolean {
@@ -81,26 +121,27 @@ export function buildAnthropicPromptContentBlocks(
 ): Array<Record<string, unknown>> {
   const contentBlocks: Array<Record<string, unknown>> = [];
 
-  if (prompt.trim()) {
+  if (attachments.length > 0) {
     contentBlocks.push({
       type: "text",
-      text: prompt.trim(),
+      text: buildAttachmentPriorityContext(attachments),
     });
   }
 
   for (const attachment of attachments) {
     if (attachment.kind === "image") {
-      // 只有 runtimeData 才允许进入主 Agent 的图片块。
-      // data/preview 常用于 UI 预览和本地资产引用，不能兜底成 base64，否则截图会打爆主上下文。
+      // Only runtimeData is allowed into the main Agent image block.
+      // data/preview are often UI preview or local asset references and should not
+      // silently fall back to base64, otherwise screenshots can explode context.
       const runtimeImageData = attachment.runtimeData;
       if (typeof runtimeImageData !== "string" || !isInlineImageAttachmentData(runtimeImageData)) {
         const normalizedSummary = attachment.summaryText?.trim();
-        if (normalizedSummary) {
-          contentBlocks.push({
-            type: "text",
-            text: normalizedSummary,
-          });
-        }
+        contentBlocks.push({
+          type: "text",
+          text: normalizedSummary
+            ? `Image attachment summary (${formatAttachmentName(attachment)}):\n${normalizedSummary}`
+            : `Image attachment (${formatAttachmentName(attachment)}) is present in this user turn, but no model-readable image payload or summary is available.`,
+        });
         continue;
       }
 
@@ -127,7 +168,22 @@ export function buildAnthropicPromptContentBlocks(
 
     contentBlocks.push({
       type: "text",
-      text: `附件文件：${attachment.name ?? "未命名附件"}\n\`\`\`\n${truncateTextAttachment(normalizedText)}\n\`\`\``,
+      text: [
+        `Attachment file (${formatAttachmentName(attachment)})`,
+        `Type: ${attachment.mimeType || "text/plain"}`,
+        "",
+        "Use this attachment as the primary source for the current user request.",
+        "```",
+        truncateTextAttachment(normalizedText),
+        "```",
+      ].join("\n"),
+    });
+  }
+
+  if (prompt.trim()) {
+    contentBlocks.push({
+      type: "text",
+      text: `User request after reading the attachments first:\n${prompt.trim()}`,
     });
   }
 
@@ -149,7 +205,8 @@ export function sanitizePromptAttachmentsForStorage<TAttachment extends Attachme
     return {
       ...attachment,
       data: storageUri,
-      // preview 是 UI 预览字段，保留原始 data URL 可以避免 localhost/浏览器预览加载 file:// 碎图。
+      // preview is a UI field; keep the original data URL so local preview does
+      // not break when data is replaced by a file/storage URI.
       preview: displayPreview,
       runtimeData: undefined,
     };
@@ -161,10 +218,31 @@ function stripDataUrlPrefix(data: string): string {
   return base64Data;
 }
 
-function truncateTextAttachment(text: string, maxChars = 20_000): string {
+function buildAttachmentPriorityContext(attachments: AttachmentLike[]): string {
+  const attachmentLines = attachments.map((attachment, index) => (
+    `${index + 1}. ${formatAttachmentName(attachment)} (${attachment.kind}, ${attachment.mimeType || "unknown"}${typeof attachment.size === "number" ? `, ${attachment.size} bytes` : ""})`
+  ));
+
+  return [
+    "Current user turn includes attachments. Treat these attachments as the highest-priority source for this turn.",
+    "Read and use the current-turn attachments before reading workspace files, Downloads, or same-name local files.",
+    "If an attachment is Postman/OpenAPI/JSON/API documentation, extract endpoints, methods, parameters, and response fields from the attachment before editing code.",
+    "If an attachment is an image, analyze the image payload or image summary before deciding what the user means; do not claim the attachment is missing.",
+    "",
+    "Attachment list:",
+    ...attachmentLines,
+  ].join("\n");
+}
+
+function formatAttachmentName(attachment: Pick<AttachmentLike, "name">): string {
+  const name = attachment.name?.trim();
+  return name || "unnamed attachment";
+}
+
+function truncateTextAttachment(text: string, maxChars = TEXT_ATTACHMENT_PROMPT_CHAR_LIMIT): string {
   if (text.length <= maxChars) {
     return text;
   }
 
-  return `${text.slice(0, maxChars)}\n\n[已截断，原始长度 ${text.length} 字符]`;
+  return `${text.slice(0, maxChars)}\n\n[Attachment truncated; original length ${text.length} characters.]`;
 }

@@ -3,8 +3,8 @@ import {
   tool,
   type McpSdkServerConfigWithInstance,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { toPlainTextToolResult } from "./tool-result.js";
 
 export const PLAN_TOOL_NAMES = [
   "update_plan",
@@ -15,10 +15,8 @@ const PLAN_MCP_SERVER_VERSION = "1.0.0";
 
 let planMcpServer: McpSdkServerConfigWithInstance | null = null;
 
-function planUpdatedResult(): CallToolResult {
-  return {
-    content: [{ type: "text" as const, text: "Plan updated" }],
-  };
+function planUpdatedResult() {
+  return toPlainTextToolResult("Plan updated");
 }
 
 const PLAN_ITEM_SCHEMA = z.object({

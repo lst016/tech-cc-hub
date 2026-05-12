@@ -386,7 +386,7 @@ function TelegramConfigForm({
       title: "Telegram Bot 引导配置",
       prompt,
       agentId: "telegram-guide",
-      allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,TodoWrite",
+      allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,update_plan",
     })).catch(() => {
       guideLaunchInFlightRef.current = false;
       setLaunchingGuide(false);
@@ -448,7 +448,7 @@ function LarkConfigForm({
       title: "飞书应用引导配置",
       prompt: buildFeishuAppGuidePrompt(channel),
       agentId: "lark-guide",
-      allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,TodoWrite",
+      allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,update_plan",
     })).catch(() => {
       guideLaunchInFlightRef.current = false;
       setLaunchingGuide(false);

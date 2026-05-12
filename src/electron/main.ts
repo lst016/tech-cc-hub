@@ -41,7 +41,7 @@ import { setDesignToolHost } from "./libs/mcp-tools/design.js";
 import { appAutoUpdater, type AppUpdateStatus } from "./libs/auto-updater.js";
 import { startChannelBridge, type ChannelBridgeController } from "./libs/channel-bridge.js";
 import { ensureSystemWorkspace } from "./libs/system-workspace.js";
-import { getCurrentApiConfig } from "./libs/claude-settings.js";
+import { getCurrentApiConfig, resolveImagePreprocessApiConfig } from "./libs/claude-settings.js";
 import { preprocessImageAttachments } from "./libs/image-preprocessor.js";
 import {
     CODEX_OAUTH_BASE_URL,
@@ -2602,7 +2602,7 @@ app.on("ready", async () => {
           preprocessImageAttachments: async (payload: { prompt?: string; selectedModel?: string; attachments?: unknown[] }) => {
             const attachments = readPromptAttachmentPayload(payload?.attachments);
             return await preprocessImageAttachments({
-              config: getCurrentApiConfig(),
+              config: resolveImagePreprocessApiConfig(payload?.selectedModel),
               prompt: payload?.prompt ?? "",
               selectedModel: payload?.selectedModel,
               attachments,
@@ -2795,7 +2795,7 @@ app.on("ready", async () => {
         try {
             const attachments = readPromptAttachmentPayload(payload?.attachments);
             return await preprocessImageAttachments({
-                config: getCurrentApiConfig(),
+                config: resolveImagePreprocessApiConfig(payload?.selectedModel),
                 prompt: payload?.prompt ?? "",
                 selectedModel: payload?.selectedModel,
                 attachments,

@@ -13,13 +13,26 @@ import { extname } from "path";
 
 import { buildRunnerPromptContentBlocks } from "../../shared/runner-prompt.js";
 import { isSuccessfulRunnerResult, shouldSuppressRunnerErrorAfterSuccessfulResult } from "../../shared/runner-status.js";
+import type { BuiltinMcpServerName } from "../../shared/builtin-mcp-registry.js";
+import {
+  createLearnCaptureHook,
+  createCorrectionDetectionHook,
+  createCorrectionTrackingHook,
+  createQualityGateHook,
+  createSecretScanHook,
+  createGitBlastRadiusHook,
+  createCommitValidateHook,
+  createToolCallBudgetHook,
+  createDriftDetectorHook,
+  createReadBeforeWriteHook,
+} from "./learning-hooks.js";
 import {
   normalizeTodoWriteArgs,
   normalizeUpdatePlanArgs,
   type SessionPlanSource,
   type UpdatePlanArgs,
 } from "../../shared/plan-progress.js";
-import type { PromptAttachment, RuntimeOverrides, ServerEvent } from "../types.js";
+import type { AgentRunSurface, PromptAttachment, RuntimeOverrides, ServerEvent } from "../types.js";
 import { resolveAgentRuntimeContext } from "./agent-resolver.js";
 import {
   buildEnvForConfig,
@@ -36,22 +49,30 @@ import {
   isConfiguredExternalMcpTool,
 } from "./external-mcp-servers.js";
 import {
+  CLAUDE_FIGMA_PLUGIN_ID,
   isClaudeCodePluginMcpTool,
   listClaudeCodePluginMcpServerNames,
   resolveEnabledClaudeCodeSdkPlugins,
 } from "./claude-code-plugins.js";
+import {
+  FIGMA_REST_TOOL_NAMES,
+  getFigmaOfficialPluginStatusFromConfig,
+  isLikelyFigmaTokenFailureMessage,
+} from "./figma-official-plugin.js";
 import { summarizeBase64Image, summarizeLocalImageFile } from "./image-preprocessor.js";
 import {
   getBuiltinMcpServers,
   listBuiltinMcpToolNames,
 } from "./builtin-mcp-servers.js";
 import { normalizeRunnerError } from "./runner-error.js";
+import { resolveRuntimeEfficiencyProfile } from "./runtime-efficiency.js";
 import type { Session } from "./session-store.js";
 import {
   buildAdminConfigPromptAppend,
   buildBrowserWorkbenchPromptAppend,
-  buildDesignParityPromptAppend,
   buildBuiltinMcpRegistryPromptAppend,
+  buildClaudeCode2139FeaturePromptAppend,
+  buildDesignParityPromptAppend,
   buildGlobalRuntimeSystemPromptExtAppend,
   buildToolCallOptimizationPromptAppend,
 } from "./system-prompt-presets.js";
@@ -76,6 +97,8 @@ export type RunnerOptions = {
 export type RunnerHandle = {
   abort: () => void;
   appendPrompt: (prompt: string, attachments?: PromptAttachment[]) => Promise<void>;
+  isClosed: () => boolean;
+  reuseKey?: string;
 };
 
 type QueryWithMcpOAuth = Query & {
@@ -90,8 +113,8 @@ const ALWAYS_ALLOWED_TOOLS = new Set([
 ]);
 const SKILL_ENV_HINTS: Record<string, string[]> = {
   feishu: ["FEISHU", "LARK"],
-  飞书: ["FEISHU", "LARK"],
-  "figma官方": ["FIGMA"],
+  椋炰功: ["FEISHU", "LARK"],
+  "figma瀹樻柟": ["FIGMA"],
   lark: ["LARK", "FEISHU"],
   telegram: ["TELEGRAM"],
   figma: ["FIGMA"],
@@ -110,6 +133,16 @@ const BLOCKED_SHELL_TOOL_NAMES = new Set(["mcp__windows__Powershell-Tool"]);
 const BLOCKED_SHELL_TOOL_MESSAGE =
   "This Windows shell tool is disabled in tech-cc-hub because it can hang without returning a tool_result. Use Bash with cmd.exe instead, for example: cmd.exe /d /s /c \"<command>\".";
 const FIGMA_GUIDE_AGENT_ID = "figma-official-mcp-guide";
+const FIGMA_REST_TOOL_NAME_SET = new Set<string>(FIGMA_REST_TOOL_NAMES);
+const FIGMA_OFFICIAL_MCP_SERVER_NAMES = new Set(["figma", "plugin_figma_figma"]);
+const FIGMA_URL_PATTERN = /https?:\/\/(?:www\.)?figma\.com\/(?:design|file|proto|board|slides)\//i;
+const FIGMA_IMPLEMENTATION_ANCHOR_TOOL_NAMES = new Set([
+  "figma_summarize_design",
+  "figma_generate_tailwind_code",
+  "figma_get_image_urls",
+  "figma_audit_design",
+]);
+const FILE_MUTATION_TOOL_NAMES = new Set(["Edit", "MultiEdit", "Write"]);
 
 // SDK built-in cron tools are blocked in favor of tech-cc-hub MCP cron tools
 // which provide persistent storage, execution history, and retry mechanism.
@@ -121,7 +154,7 @@ function isSdkBuiltinCronTool(toolName: string): boolean {
 
 const POWERSHELL_COMMAND_PATTERN = /(^|[^\w.-])(powershell(?:\.exe)?|pwsh(?:\.exe)?)(?=$|[^\w.-])/i;
 const LARGE_IMAGE_READ_GUIDANCE =
-  "图片文件过大，不能用 Read 直接读入主上下文。请改用内置图片/设计工具：如果是两张截图对比，用 mcp__tech-cc-hub-design__design_compare_images；如果是当前浏览器页面与参考图对齐，用 mcp__tech-cc-hub-design__design_compare_current_view；如果只需要图片信息，请基于用户消息里的图片资产路径/缩略图路径调用专门视觉工具或让用户裁剪关键区域。";
+  "Image file is too large for direct Read into the main context. Use the built-in image/design MCP tools instead.";
 
 const PLAN_OUTPUT_FORMAT_SCHEMA = {
   type: "object",
@@ -142,7 +175,7 @@ const PLAN_OUTPUT_FORMAT_SCHEMA = {
   required: ["steps"],
 };
 
-const STRUCTURED_OUTPUT_HINT_PATTERN = /请用\s*JSON|结构化输出|输出 JSON|output.*format.*json|json.*schema|structured.*output/i;
+const STRUCTURED_OUTPUT_HINT_PATTERN = /璇风敤\s*JSON|缁撴瀯鍖栬緭鍑簗杈撳嚭 JSON|output.*format.*json|json.*schema|structured.*output/i;
 
 function getRequestedModelName(configModel: string | undefined, runtimeModel: string | undefined): string | undefined {
   const normalizedRuntimeModel = runtimeModel?.trim();
@@ -174,11 +207,22 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   const { prompt, attachments = [], runtime, session, resumeSessionId, onEvent, onSessionUpdate } = options;
   const abortController = new AbortController();
   const permissionMode = runtime?.permissionMode ?? "bypassPermissions";
-  const pendingAppends: Array<{ prompt: string; attachments: PromptAttachment[] }> = [];
+  const promptInput = new PromptInputQueue();
+  promptInput.enqueue(prompt, attachments);
   let activeQuery: Query | null = null;
+  let runnerClosed = false;
   let rasterImageReads = 0;
   let requestedModelForError: string | undefined;
   let emittedSuccessfulResult = false;
+  let figmaRestAuthFailureSeen = false;
+  let figmaImplementationAnchorSeen = false;
+  let latestGlobalRuntimeConfig: unknown = null;
+  let currentPrompt = prompt;
+  let requiresFigmaImplementationAnchor = shouldRequireFigmaImplementationAnchor(currentPrompt);
+  const desiredBuiltinMcpServerNames = new Set<BuiltinMcpServerName>();
+  let activeBuiltinMcpServerNames = new Set<BuiltinMcpServerName>();
+  let latestProjectCwd: string | undefined;
+  let latestRunSurface: AgentRunSurface = runtime?.runSurface ?? session.runSurface ?? "development";
 
   const sendMessage = (message: SDKMessage) => {
     onEvent({
@@ -214,6 +258,56 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         session.pendingPermissions.delete(toolUseId);
         resolve({ behavior: "deny", message: "Session aborted" });
       }, { once: true });
+    });
+  };
+
+  const collectRuntimeProfileForPrompt = (
+    nextPrompt: string,
+    nextAttachments: readonly PromptAttachment[],
+  ) => {
+    const profile = resolveRuntimeEfficiencyProfile({
+      prompt: nextPrompt,
+      attachments: nextAttachments,
+      runtime,
+      runSurface: latestRunSurface,
+    });
+    for (const serverName of profile.builtinMcpServers) {
+      desiredBuiltinMcpServerNames.add(serverName);
+    }
+    return profile;
+  };
+
+  const ensureMcpServersForPrompt = async (
+    nextPrompt: string,
+    nextAttachments: readonly PromptAttachment[],
+  ): Promise<void> => {
+    const profile = collectRuntimeProfileForPrompt(nextPrompt, nextAttachments);
+    if (!activeQuery) {
+      return;
+    }
+
+    const missingServerNames = profile.builtinMcpServers.filter((serverName) => (
+      !activeBuiltinMcpServerNames.has(serverName)
+    ));
+    if (missingServerNames.length === 0) {
+      return;
+    }
+
+    const nextBuiltinMcpServerNames = new Set(activeBuiltinMcpServerNames);
+    for (const serverName of missingServerNames) {
+      nextBuiltinMcpServerNames.add(serverName);
+    }
+    const enabledBuiltinMcpServerNames = [...nextBuiltinMcpServerNames];
+    const result = await activeQuery.setMcpServers({
+      ...getExternalMcpServers(latestGlobalRuntimeConfig ?? getGlobalRuntimeConfig(), { projectDir: latestProjectCwd }),
+      ...getBuiltinMcpServers(session.id, enabledBuiltinMcpServerNames),
+    });
+    activeBuiltinMcpServerNames = nextBuiltinMcpServerNames;
+    console.info("[runner][mcp-expanded]", {
+      sessionId: session.id,
+      added: missingServerNames,
+      builtinMcpServers: enabledBuiltinMcpServerNames,
+      result,
     });
   };
 
@@ -285,7 +379,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       const requestedModel = getRequestedModelName(defaultConfig.model, runtime?.model);
       const resolvedConfig = resolveApiConfigForModel(requestedModel);
       if (!resolvedConfig) {
-        const errorMessage = `请求模型「${requestedModel ?? ""}」失败：它不在已启用配置池的模型列表里，请先在设置里启用包含该模型的配置。`;
+        const errorMessage = `Requested model "${requestedModel ?? ""}" is not available in the enabled API profiles. Enable a profile that supports this model first.`;
         onEvent({
           type: "runner.error",
           payload: {
@@ -317,12 +411,16 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         ...env,
       };
       let syncedGlobalRuntimeConfig = persistDiscoveredRuntimeConfig(globalRuntimeConfig, mergedEnv);
+      latestGlobalRuntimeConfig = syncedGlobalRuntimeConfig;
       const thinking = buildThinkingConfig(runtime?.reasoningMode);
       const effort = buildEffortLevel(runtime?.reasoningMode);
       const projectCwd = session.cwd && existsSync(session.cwd) ? session.cwd : undefined;
+      latestProjectCwd = projectCwd;
       const resolvedCwd = projectCwd ?? DEFAULT_CWD;
       const runSurface = runtime?.runSurface ?? session.runSurface ?? "development";
+      latestRunSurface = runSurface;
       const agentId = runtime?.agentId ?? session.agentId;
+      const runtimeProfile = collectRuntimeProfileForPrompt(prompt, attachments);
       const agentContext = resolveAgentRuntimeContext({
         cwd: projectCwd,
         surface: runSurface,
@@ -333,19 +431,32 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         agentContext.allowedTools,
         agentContext.enforceAllowedTools,
       );
-      const hooks = buildQualityHooks(resolvedCwd, { config, prompt });
-      const builtinMcpServers = getBuiltinMcpServers(session.id);
+      const hooks = buildQualityHooks(resolvedCwd, {
+        config,
+        getPrompt: () => currentPrompt,
+        sessionId: session.id,
+        onFigmaRestAuthFailure: () => {
+          figmaRestAuthFailureSeen = true;
+        },
+        onFigmaImplementationAnchor: () => {
+          figmaImplementationAnchorSeen = true;
+        },
+      });
+      const enabledBuiltinMcpServerNames = [...desiredBuiltinMcpServerNames];
+      activeBuiltinMcpServerNames = new Set(enabledBuiltinMcpServerNames);
+      const builtinMcpServers = getBuiltinMcpServers(session.id, enabledBuiltinMcpServerNames);
       const sdkPlugins = resolveEnabledClaudeCodeSdkPlugins();
       const sdkPluginMcpServerNames = listClaudeCodePluginMcpServerNames(sdkPlugins);
       const systemPromptAppend = combineSystemPromptAppend(
         buildGlobalRuntimePromptAppend(syncedGlobalRuntimeConfig, mergedEnv),
         buildAdminConfigPromptAppend(),
         agentContext.systemPromptAppend,
-        buildClaudeProjectMemoryPromptAppend(projectCwd),
+        runtimeProfile.includeProjectMemoryPrompt ? buildClaudeProjectMemoryPromptAppend(projectCwd) : undefined,
         buildToolCallOptimizationPromptAppend(),
-        buildBrowserWorkbenchPromptAppend(),
-        buildDesignParityPromptAppend(),
-        buildBuiltinMcpRegistryPromptAppend(),
+        runtimeProfile.includeBrowserPrompt ? buildBrowserWorkbenchPromptAppend() : undefined,
+        runtimeProfile.includeDesignPrompt ? buildDesignParityPromptAppend() : undefined,
+        buildBuiltinMcpRegistryPromptAppend(enabledBuiltinMcpServerNames),
+        runtimeProfile.includeClaudeCompatPrompt ? buildClaudeCode2139FeaturePromptAppend() : undefined,
       );
       const outputFormat = resolveOutputFormat(runtime?.outputFormat, systemPromptAppend, prompt);
       const sdkModelOption = getClaudeCodeModelOption(config, effectiveModel);
@@ -359,10 +470,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         settingSources: agentContext.settingSources,
         claudePath: getClaudeCodePath(),
         sdkPlugins: sdkPlugins.map((plugin) => plugin.path),
+        runtimeProfile: runtimeProfile.id,
+        builtinMcpServers: enabledBuiltinMcpServerNames,
       });
 
       const q = query({
-        prompt: createPromptSource(prompt, attachments),
+        prompt: promptInput,
         options: {
           model: sdkModelOption,
           cwd: resolvedCwd,
@@ -377,14 +490,14 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           systemPrompt: systemPromptAppend
             ? { type: "preset", preset: "claude_code", append: systemPromptAppend }
             : undefined,
-          includePartialMessages: true,
-          includeHookEvents: true,
-          agentProgressSummaries: true,
-          forwardSubagentText: true,
+          includePartialMessages: runtimeProfile.includePartialMessages,
+          includeHookEvents: runtimeProfile.includeHookEvents,
+          agentProgressSummaries: runtimeProfile.agentProgressSummaries,
+          forwardSubagentText: runtimeProfile.forwardSubagentText,
           outputFormat,
           plugins: sdkPlugins.length > 0 ? sdkPlugins : undefined,
           mcpServers: {
-            ...getExternalMcpServers(syncedGlobalRuntimeConfig),
+            ...getExternalMcpServers(syncedGlobalRuntimeConfig, { projectDir: projectCwd }),
             ...builtinMcpServers,
           },
           hooks,
@@ -409,14 +522,36 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               return {
                 behavior: "deny",
                 message:
-                  "SDK 内置的 CronCreate/CronDelete/CronList 已禁用，请使用 mcp__tech-cc-hub-cron 插件（create_scheduled_task / list_scheduled_tasks / delete_scheduled_task）。MCP 插件提供持久化存储、执行历史、重试机制和会话管理能力，内置工具创建的调度不会写入项目数据库。",
+                  "SDK CronCreate/CronDelete/CronList are disabled. Use the tech-cc-hub cron MCP tools so schedules are persisted with history and retry metadata.",
               };
             }
 
+            const figmaImplementationDenyMessage = getFigmaImplementationAnchorDenyMessage(
+              toolName,
+              requiresFigmaImplementationAnchor,
+              figmaImplementationAnchorSeen,
+            );
+            if (figmaImplementationDenyMessage) {
+              return {
+                behavior: "deny",
+                message: figmaImplementationDenyMessage,
+              };
+            }
+            const figmaRouteDenyMessage = getFigmaOfficialRouteDenyMessage(
+              toolName,
+              syncedGlobalRuntimeConfig,
+              figmaRestAuthFailureSeen,
+            );
+            if (figmaRouteDenyMessage) {
+              return {
+                behavior: "deny",
+                message: figmaRouteDenyMessage,
+              };
+            }
             if (permissionMode === "plan") {
               return {
                 behavior: "deny",
-                message: "当前为计划模式，不会执行工具。",
+                message: "Current run is in plan mode; tools will not be executed.",
               };
             }
 
@@ -424,10 +559,10 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               return requestPermissionDecision(toolName, input, signal);
             }
 
-            if (toolName === "Skill" && shouldDenyExternalBrowseSkill(input, prompt)) {
+            if (toolName === "Skill" && shouldDenyExternalBrowseSkill(input, currentPrompt)) {
               return {
                 behavior: "deny",
-                message: "当前任务是在测试 tech-cc-hub 的 Electron 内置浏览器工作台，请使用 mcp__tech-cc-hub-browser__browser_get_state / browser_extract_page 等 MCP 工具，不要使用外部 browse skill。",
+                message: "This task is testing the built-in tech-cc-hub browser workbench. Use tech-cc-hub browser MCP tools instead of the external browse skill.",
               };
             }
 
@@ -439,6 +574,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                   mergedEnv,
                   requestedSkill,
                 );
+                latestGlobalRuntimeConfig = syncedGlobalRuntimeConfig;
               }
             }
 
@@ -466,7 +602,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             ) {
               return {
                 behavior: "deny",
-                message: `当前运行面不允许使用工具：${toolName}`,
+                message: `Current run surface does not allow tool: ${toolName}`,
               };
             }
 
@@ -481,10 +617,6 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         abortSignal: abortController.signal,
         requestPermissionDecision,
       });
-
-      for (const pendingAppend of pendingAppends.splice(0)) {
-        await q.streamInput(createPromptSource(pendingAppend.prompt, pendingAppend.attachments));
-      }
 
       for await (const message of q) {
         if (message.type === "system" && "subtype" in message && message.subtype === "init") {
@@ -506,6 +638,9 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           });
           if (isSuccessfulRunnerResult(message)) {
             emittedSuccessfulResult = true;
+          } else {
+            promptInput.close();
+            q.close();
           }
         }
       }
@@ -517,8 +652,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         });
       }
       activeQuery = null;
+      runnerClosed = true;
+      promptInput.close();
     } catch (error) {
       activeQuery = null;
+      runnerClosed = true;
+      promptInput.close();
       if ((error as Error).name === "AbortError") {
         return;
       }
@@ -526,6 +665,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       const errorMessage = normalizeRunnerError(
         error,
         requestedModelForError ?? getRequestedModelName(getCurrentApiConfig()?.model, runtime?.model),
+        latestGlobalRuntimeConfig,
       );
 
       if (shouldSuppressRunnerErrorAfterSuccessfulResult(emittedSuccessfulResult)) {
@@ -553,14 +693,22 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   })();
 
   return {
-    abort: () => abortController.abort(),
-    appendPrompt: async (nextPrompt: string, nextAttachments: PromptAttachment[] = []) => {
-      if (!activeQuery) {
-        pendingAppends.push({ prompt: nextPrompt, attachments: nextAttachments });
-        return;
-      }
-      await activeQuery.streamInput(createPromptSource(nextPrompt, nextAttachments));
+    abort: () => {
+      runnerClosed = true;
+      promptInput.close();
+      activeQuery?.close();
+      abortController.abort();
     },
+    appendPrompt: async (nextPrompt: string, nextAttachments: PromptAttachment[] = []) => {
+      if (runnerClosed || promptInput.isClosed()) {
+        throw new Error("Runner is closed.");
+      }
+      currentPrompt = nextPrompt;
+      requiresFigmaImplementationAnchor = shouldRequireFigmaImplementationAnchor(currentPrompt);
+      await ensureMcpServersForPrompt(nextPrompt, nextAttachments);
+      promptInput.enqueue(nextPrompt, nextAttachments);
+    },
+    isClosed: () => runnerClosed || promptInput.isClosed(),
   };
 }
 
@@ -599,7 +747,7 @@ async function maybeRunFigmaGuideOAuth(
     }
 
     const answerText = extractPermissionAnswerText(decision);
-    if (/desktop|桌面|打不开/i.test(answerText)) {
+    if (/desktop|妗岄潰|鎵撲笉寮€/i.test(answerText)) {
       return;
     }
 
@@ -629,16 +777,16 @@ function buildFigmaOAuthQuestionInput(authUrl: string): Record<string, unknown> 
   return {
     figmaAuthUrl: authUrl,
     questions: [{
-      question: "请完成 Figma OAuth 授权后选择结果。",
+      question: "Choose the result after finishing Figma OAuth authorization.",
       header: "Figma OAuth",
       options: [
         {
-          label: "授权已完成（localhost 页面正常加载）",
-          description: "已在外部浏览器允许 Figma 访问，并看到 localhost 完成页。",
+          label: "Authorization completed",
+          description: "Figma access was allowed and the localhost completion page loaded.",
         },
         {
-          label: "localhost 页面打不开，改用 Figma Desktop MCP",
-          description: "授权回调没有成功，停止远程 OAuth 重试。",
+          label: "localhost 椤甸潰鎵撲笉寮€锛屾敼鐢?Figma Desktop MCP",
+          description: "The OAuth callback did not complete; stop remote OAuth retry.",
         },
       ],
     }],
@@ -846,7 +994,7 @@ function buildGlobalRuntimePromptAppend(
   const skillCredentialHints = getSkillCredentialHints(globalRuntimeConfig);
   const systemPromptExtAppend = buildGlobalRuntimeSystemPromptExtAppend(globalRuntimeConfig);
   const hasConfiguredRuntime = configuredEnvKeys.length > 0 || skillCredentialHints.length > 0;
-  const autoDiscoverLabel = hasConfiguredRuntime ? "" : "（未发现自定义凭证映射，已自动发现当前环境候选）";
+  const autoDiscoverLabel = hasConfiguredRuntime ? "" : "锛堟湭鍙戠幇鑷畾涔夊嚟璇佹槧灏勶紝宸茶嚜鍔ㄥ彂鐜板綋鍓嶇幆澧冨€欓€夛級";
 
   if (envKeys.length === 0 && skillCredentialHints.length === 0 && !systemPromptExtAppend) {
     return undefined;
@@ -856,18 +1004,18 @@ function buildGlobalRuntimePromptAppend(
 
   if (envKeys.length > 0 || skillCredentialHints.length > 0) {
     const hints: string[] = [
-      "全局运行参数已启用（用于技能与工具执行）：",
-      "若执行 skill/tool 需要鉴权，请优先使用对应环境变量；不要向用户暴露或回显密钥原文。",
+      "鍏ㄥ眬杩愯鍙傛暟宸插惎鐢紙鐢ㄤ簬鎶€鑳戒笌宸ュ叿鎵ц锛夛細",
+      "Use injected environment variables for skill/tool auth when needed; never expose or echo secret values.",
     ];
 
     if (configuredEnvKeys.length > 0 || discoveredEnvKeys.length > 0) {
       hints.push(
-        `已注入环境变量（名字）${autoDiscoverLabel}：${envKeys.join("、")}`,
+        `Injected environment variables${autoDiscoverLabel}: ${envKeys.join(", ")}`,
       );
     }
 
     if (skillCredentialHints.length > 0) {
-      hints.push("技能凭证映射（按技能归纳）：");
+      hints.push("Skill credential mapping:");
       hints.push(...skillCredentialHints.map((hint) => `- ${hint}`));
     }
 
@@ -985,7 +1133,7 @@ function getSkillCredentialHints(globalRuntimeConfig: unknown): string[] {
       if (envs.length === 0) {
         continue;
       }
-      hints.add(`${skillName}: ${envs.join("、")}`);
+      hints.add(`${skillName}: ${envs.join(", ")}`);
     }
   }
 
@@ -1048,7 +1196,7 @@ function shouldDenyExternalBrowseSkill(input: unknown, prompt: string): boolean 
     return false;
   }
 
-  return /内置浏览器|浏览器工作台|当前页面|这个页面|这个网页|爬取|browserview|browser workbench|tech-cc-hub-browser/i.test(prompt);
+  return /鍐呯疆娴忚鍣▅娴忚鍣ㄥ伐浣滃彴|褰撳墠椤甸潰|杩欎釜椤甸潰|杩欎釜缃戦〉|鐖彇|browserview|browser workbench|tech-cc-hub-browser/i.test(prompt);
 }
 
 function checkRasterImageRead(
@@ -1064,10 +1212,11 @@ function checkRasterImageRead(
     return { countRead: false };
   }
 
-  if (filePath.includes("/prompt-attachments/")) {
+  const normalizedFilePath = filePath.replace(/\\/g, "/");
+  if (normalizedFilePath.includes("/prompt-attachments/")) {
     return {
       denyMessage:
-        `这是用户上传截图落盘后的图片资产，不允许用 Read 直接读入主 Agent。请用 mcp__tech-cc-hub-design__design_compare_images 或 mcp__tech-cc-hub-design__design_compare_current_view 处理该路径：${filePath}`,
+        `杩欐槸鐢ㄦ埛涓婁紶鎴浘钀界洏鍚庣殑鍥剧墖璧勪骇锛屼笉鍏佽鐢?Read 鐩存帴璇诲叆涓?Agent銆傝鍏堢敤 mcp__tech-cc-hub-design__design_inspect_image 璇诲彇璇ュ浘鐗囷紱濡傛灉瑕佸仛鎴浘瀵归綈锛屽啀鐢?mcp__tech-cc-hub-design__design_compare_current_view 鎴?mcp__tech-cc-hub-design__design_compare_images 澶勭悊璇ヨ矾寰勶細${filePath}`,
       countRead: false,
     };
   }
@@ -1075,7 +1224,7 @@ function checkRasterImageRead(
   if (currentImageReads >= MAX_IMAGE_READS_PER_RUN) {
     return {
       denyMessage:
-        "当前这轮已经读取过一张图片。继续读取多张栅格图很容易撑爆上下文，请只保留最关键的一张，或改为让用户指定要看哪张。",
+        "This run already read one raster image. Avoid reading more images into the main context; use the design MCP tools or ask for the single key image.",
       countRead: false,
     };
   }
@@ -1089,7 +1238,7 @@ function checkRasterImageRead(
     if (size > MAX_SINGLE_IMAGE_READ_BYTES) {
       return {
         denyMessage:
-          `${LARGE_IMAGE_READ_GUIDANCE} 当前文件大小：${Math.round(size / 1024)} KB。`,
+          `${LARGE_IMAGE_READ_GUIDANCE} Current file size: ${Math.round(size / 1024)} KB.`,
         countRead: false,
       };
     }
@@ -1106,7 +1255,7 @@ function shouldPreprocessImageRead(
 ): boolean {
   void config;
   void filePath;
-  // 临时关闭 Read 图片时的图片模型摘要拦截，避免截图比照/附件链路被替换成不可靠文本。
+  // 涓存椂鍏抽棴 Read 鍥剧墖鏃剁殑鍥剧墖妯″瀷鎽樿鎷︽埅锛岄伩鍏嶆埅鍥炬瘮鐓?闄勪欢閾捐矾琚浛鎹㈡垚涓嶅彲闈犳枃鏈€?
   return false;
 }
 
@@ -1118,16 +1267,33 @@ function buildQualityHooks(
   _cwd: string,
   options: {
     config: NonNullable<ReturnType<typeof getCurrentApiConfig>>;
-    prompt: string;
+    prompt?: string;
+    getPrompt?: () => string;
+    sessionId: string;
+    onFigmaRestAuthFailure?: () => void;
+    onFigmaImplementationAnchor?: () => void;
   },
 ): Partial<Record<string, HookCallbackMatcher[]>> {
   void _cwd;
-  const { config, prompt } = options;
+  const { config, sessionId, onFigmaRestAuthFailure, onFigmaImplementationAnchor } = options;
+  const getCurrentPrompt = options.getPrompt ?? (() => options.prompt ?? "");
   const readFiles = new Set<string>();
   let lastToolSignature: string | null = null;
   let toolFailureCount = 0;
   let repeatWarningCount = 0;
   let rasterImageReads = 0;
+
+  // Learning hooks 鈥?create wrappers that adapt learning-hooks return types to HookCallback
+  const learnCaptureHook = createLearnCaptureHook();
+  const correctionDetectionHook = createCorrectionDetectionHook();
+  const correctionTrackingHook = createCorrectionTrackingHook(sessionId);
+  const driftDetectorHook = createDriftDetectorHook();
+  const secretScanHook = createSecretScanHook();
+  const gitBlastRadiusHook = createGitBlastRadiusHook();
+  const commitValidateHook = createCommitValidateHook();
+  const toolCallBudgetHook = createToolCallBudgetHook();
+  const qualityGateHook = createQualityGateHook(sessionId);
+  const readBeforeWriteHook = createReadBeforeWriteHook();
 
   return {
     UserPromptSubmit: [{
@@ -1139,10 +1305,10 @@ function buildQualityHooks(
         const prompt = input.prompt.trim();
         const hints: string[] = [];
         if (prompt.length > 0 && prompt.length < 12) {
-          hints.push("用户提示较短，执行前先收束关键假设，避免大范围误改");
+          hints.push("User prompt is short; narrow the key assumptions before executing.");
         }
-        if (/[它他她这个那个这里那里上面下面]/.test(prompt) && prompt.length < 48) {
-          hints.push("提示里有较多指代词，输出时优先显式说明你依据的对象");
+        if (/\b(this|that|it|there|above|below)\b/i.test(prompt) && prompt.length < 48) {
+          hints.push("Prompt contains ambiguous references; state the target object you are relying on.");
         }
 
         if (hints.length === 0) {
@@ -1153,11 +1319,16 @@ function buildQualityHooks(
           continue: true,
           hookSpecificOutput: {
             hookEventName: "UserPromptSubmit",
-            additionalContext: `质量提醒：${hints.join("；")}`,
+            additionalContext: `Quality reminder: ${hints.join("; ")}`,
           },
         };
       }],
-    }],
+    },
+    // Learning hooks: correction detection, tracking, drift
+    { hooks: [correctionDetectionHook as never] },
+    { hooks: [correctionTrackingHook as never] },
+    { hooks: [driftDetectorHook as never] },
+    ],
     PreToolUse: [{
       hooks: [async (input) => {
         if (!("tool_name" in input) || typeof input.tool_name !== "string") {
@@ -1181,7 +1352,7 @@ function buildQualityHooks(
           if (fixed !== raw) {
             normalizedInput[key] = fixed;
             didMutate = true;
-            fixes.push(`${label} 去除空白`);
+            fixes.push(`${label} 鍘婚櫎绌虹櫧`);
           }
         };
 
@@ -1194,20 +1365,20 @@ function buildQualityHooks(
           if (fixed !== raw) {
             normalizedInput.command = fixed;
             didMutate = true;
-            fixes.push("Bash command 规范化");
+            fixes.push("Normalized Bash command whitespace");
           }
         };
 
         if (["Read", "Edit", "Write", "MultiEdit"].includes(toolName)) {
           const filePath = typeof toolInput.file_path === "string" ? toolInput.file_path : "";
           if (!filePath) {
-            hints.push(`${toolName} 缺少 file_path，建议先补齐目标路径`);
+            hints.push(`${toolName} 缂哄皯 file_path锛屽缓璁厛琛ラ綈鐩爣璺緞`);
           } else {
             const fixed = trimmed(filePath);
             if (fixed !== filePath) {
               normalizedInput.file_path = fixed;
               didMutate = true;
-              fixes.push("file_path 去除空白");
+              fixes.push("file_path 鍘婚櫎绌虹櫧");
             }
             if (toolName === "Read") {
               if (!shouldPreprocessImageRead(config, fixed)) {
@@ -1230,7 +1401,7 @@ function buildQualityHooks(
               }
               readFiles.add(fixed);
             } else if (!readFiles.has(fixed)) {
-              hints.push(`修改/写入前未读过 ${fixed}，建议补一次 Read`);
+              hints.push(`淇敼/鍐欏叆鍓嶆湭璇昏繃 ${fixed}锛屽缓璁ˉ涓€娆?Read`);
             }
           }
         }
@@ -1238,12 +1409,12 @@ function buildQualityHooks(
         if (toolName === "Bash") {
           normalizeCommand(toolInput.command);
           if (typeof toolInput.command !== "string" || !toolInput.command.trim()) {
-            hints.push("Bash 缺少 command 参数");
+            hints.push("Bash 缂哄皯 command 鍙傛暟");
           } else {
             setTrimmed("command", "command", toolInput.command);
             const command = (toolInput.command as string).toLowerCase();
             if (/(rm\s+-rf|git\s+reset\s+--hard|mkfs|dd\s+if=|format\s+)/i.test(command)) {
-              hints.push("Bash 存在高风险命令，建议先确认参数边界");
+              hints.push("Bash command looks high-risk; verify path and argument boundaries first.");
             }
           }
         }
@@ -1252,7 +1423,7 @@ function buildQualityHooks(
           setTrimmed("path", "path", toolInput.path);
           setTrimmed("pattern", "pattern", toolInput.pattern);
           if (typeof toolInput.pattern !== "string" || !toolInput.pattern.trim()) {
-            hints.push("Glob 缺少 pattern，建议给出明确匹配表达式");
+            hints.push("Glob 缂哄皯 pattern锛屽缓璁粰鍑烘槑纭尮閰嶈〃杈惧紡");
           }
         }
 
@@ -1260,7 +1431,7 @@ function buildQualityHooks(
           setTrimmed("path", "path", toolInput.path);
           setTrimmed("query", "query", toolInput.query);
           if (typeof toolInput.query !== "string" || !toolInput.query.trim()) {
-            hints.push("Search 缺少 query，建议给出检索关键字");
+            hints.push("Search 缂哄皯 query锛屽缓璁粰鍑烘绱㈠叧閿瓧");
           }
         }
 
@@ -1271,21 +1442,21 @@ function buildQualityHooks(
         const toolSignature = `${toolName}:${stableToolSignature(normalizedInput)}`;
         if (lastToolSignature === toolSignature) {
           repeatWarningCount += 1;
-          hints.push("与上条工具输入重复，建议先看上条返回再决定是否重试");
+          hints.push("Tool input repeats the previous call; inspect the last result before retrying.");
         } else {
           repeatWarningCount = 0;
         }
         lastToolSignature = toolSignature;
 
         if (repeatWarningCount >= 2) {
-          hints.push("重复重试次数偏高，请调整参数后再调用工具");
+          hints.push("閲嶅閲嶈瘯娆℃暟鍋忛珮锛岃璋冩暣鍙傛暟鍚庡啀璋冪敤宸ュ叿");
         }
 
         if (fixes.length === 0 && hints.length === 0) {
           return { continue: true };
         }
 
-        const additionalContext = `工具参数优化：${[...fixes, ...hints].join("；")}`;
+        const additionalContext = `Tool input optimization: ${[...fixes, ...hints].join("; ")}`;
         return {
           continue: true,
           hookSpecificOutput: {
@@ -1295,11 +1466,35 @@ function buildQualityHooks(
           },
         };
       }],
-    }],
+    },
+    // Learning hooks: secret scan, git blast radius, commit validation, tool budget, quality gate, read-before-write
+    { hooks: [secretScanHook as never] },
+    { hooks: [gitBlastRadiusHook as never] },
+    { hooks: [commitValidateHook as never] },
+    { hooks: [toolCallBudgetHook as never] },
+    { hooks: [qualityGateHook as never] },
+    { hooks: [readBeforeWriteHook.preToolUse as never] },
+    ],
     PostToolUse: [{
       hooks: [async (input) => {
         if (!("tool_name" in input) || typeof input.tool_name !== "string") {
           return { continue: true };
+        }
+
+        if (
+          "tool_response" in input &&
+          isFigmaRestToolName(input.tool_name) &&
+          isLikelyFigmaRestAuthFailure(input.tool_response)
+        ) {
+          onFigmaRestAuthFailure?.();
+        }
+
+        if (
+          "tool_response" in input &&
+          isFigmaImplementationAnchorToolName(input.tool_name) &&
+          !isLikelyFailedToolResponse(input.tool_response)
+        ) {
+          onFigmaImplementationAnchor?.();
         }
 
         if (input.tool_name === "Read") {
@@ -1311,7 +1506,7 @@ function buildQualityHooks(
         }
 
         try {
-          const summary = await summarizeLocalImageFile({ config, prompt, filePath });
+          const summary = await summarizeLocalImageFile({ config, prompt: getCurrentPrompt(), filePath });
           if (!summary) {
             return { continue: true };
           }
@@ -1320,17 +1515,17 @@ function buildQualityHooks(
             continue: true,
             hookSpecificOutput: {
               hookEventName: "PostToolUse",
-              additionalContext: `已将图片读取结果替换为 ${config.imageModel?.trim() || "图片模型"} 的中文摘要，避免原图进入上下文。`,
+              additionalContext: `Replaced image Read output with a ${config.imageModel?.trim() || "vision model"} summary to avoid context overflow.`,
               updatedToolOutput: createImageSummaryToolOutput(summary),
             },
           };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           const fallback = [
-            `图片文件：${filePath}`,
-            "图片预处理失败，已阻止原图直接进入上下文。",
-            `失败原因：${message}`,
-            "请优先读取相邻文档说明，或只处理用户明确指定的一张关键图片。",
+            `Image file: ${filePath}`,
+            "Image preprocessing failed; raw image output was blocked from the main context.",
+            `Failure reason: ${message}`,
+            "Use adjacent docs or a single user-specified key image instead.",
           ].join("\n");
 
           return {
@@ -1367,7 +1562,7 @@ function buildQualityHooks(
         }
 
         const summarizedPrompt = [
-          prompt.trim(),
+          getCurrentPrompt().trim(),
           inlineImage.textContext.trim() ? `Tool response context: ${inlineImage.textContext.trim()}` : "",
         ].filter(Boolean).join("\n\n");
 
@@ -1413,20 +1608,158 @@ function buildQualityHooks(
       }],
     }],
     PostToolUseFailure: [{
-      hooks: [async () => {
+      hooks: [async (input) => {
+        const failedToolInput: Record<string, unknown> | null = isRecord(input) ? input : null;
+        const failedToolName = typeof failedToolInput?.tool_name === "string"
+          ? failedToolInput.tool_name
+          : "";
+        if (
+          failedToolName &&
+          isFigmaRestToolName(failedToolName) &&
+          isLikelyFigmaRestAuthFailure(input)
+        ) {
+          onFigmaRestAuthFailure?.();
+        }
+
         toolFailureCount += 1;
         return {
           continue: true,
           hookSpecificOutput: {
             hookEventName: "PostToolUseFailure",
             additionalContext: toolFailureCount >= 2
-              ? "工具已连续失败，下一步先总结错误原因并换路径，必要时升级专家模型"
-              : "工具失败后先利用错误信息缩小范围，不要直接重复同一调用",
+              ? "宸ュ叿宸茶繛缁け璐ワ紝涓嬩竴姝ュ厛鎬荤粨閿欒鍘熷洜骞舵崲璺緞锛屽繀瑕佹椂鍗囩骇涓撳妯″瀷"
+              : "宸ュ叿澶辫触鍚庡厛鍒╃敤閿欒淇℃伅缂╁皬鑼冨洿锛屼笉瑕佺洿鎺ラ噸澶嶅悓涓€璋冪敤",
           },
         };
       }],
     }],
+    // Stop: learn capture 鈥?extracts [LEARN] blocks from assistant response
+    Stop: [{
+      hooks: [learnCaptureHook as never],
+    }],
   };
+}
+
+function getFigmaOfficialRouteDenyMessage(
+  toolName: string,
+  globalRuntimeConfig: unknown,
+  restAuthFailureSeen: boolean,
+): string | null {
+  if (!isOfficialFigmaMcpToolName(toolName)) {
+    return null;
+  }
+
+  const status = getFigmaOfficialPluginStatusFromConfig(globalRuntimeConfig);
+  if (status.mode !== "rest" || status.status !== "ready" || restAuthFailureSeen) {
+    return null;
+  }
+
+  return [
+    `Figma REST/PAT is configured and ready in tech-cc-hub; do not use the official OAuth plugin (${CLAUDE_FIGMA_PLUGIN_ID}) first.`,
+    "Use the built-in REST tools instead, for example mcp__tech-cc-hub-figma__figma_read_design, mcp__tech-cc-hub-figma__figma_summarize_design, or mcp__tech-cc-hub-figma__figma_get_image_urls.",
+    "Only switch to the official OAuth Figma MCP after a REST Figma tool explicitly returns a 401/403/token permission failure.",
+  ].join("\n");
+}
+
+function getFigmaImplementationAnchorDenyMessage(
+  toolName: string,
+  requiresFigmaImplementationAnchor: boolean,
+  figmaImplementationAnchorSeen: boolean,
+): string | null {
+  if (!requiresFigmaImplementationAnchor || figmaImplementationAnchorSeen || !FILE_MUTATION_TOOL_NAMES.has(toolName)) {
+    return null;
+  }
+
+  return [
+    "This task includes a Figma design URL. Before editing code, establish an implementation-grade Figma anchor.",
+    "Do not implement from raw figma_read_design JSON alone; it is often too large and truncated.",
+    "First use one of the built-in Figma REST tools: mcp__tech-cc-hub-figma__figma_summarize_design, mcp__tech-cc-hub-figma__figma_generate_tailwind_code, mcp__tech-cc-hub-figma__figma_get_image_urls, or mcp__tech-cc-hub-figma__figma_audit_design.",
+    "Prefer a specific node-id from the Figma URL or a narrowed target node. After that, map the design sections to the existing project components and then edit code.",
+  ].join("\n");
+}
+
+function shouldRequireFigmaImplementationAnchor(prompt: string): boolean {
+  return FIGMA_URL_PATTERN.test(prompt);
+}
+
+function isOfficialFigmaMcpToolName(toolName: string): boolean {
+  const serverName = getMcpServerName(toolName);
+  return Boolean(serverName && FIGMA_OFFICIAL_MCP_SERVER_NAMES.has(serverName));
+}
+
+function getMcpServerName(toolName: string): string | null {
+  const mcpMatch = toolName.match(/^mcp__(.+?)__/);
+  if (mcpMatch?.[1]) {
+    return mcpMatch[1];
+  }
+
+  const doubleUnderscoreIndex = toolName.indexOf("__");
+  if (doubleUnderscoreIndex > 0) {
+    return toolName.slice(0, doubleUnderscoreIndex);
+  }
+
+  const separatorMatch = toolName.match(/^([^:/]+)[:/]/);
+  return separatorMatch?.[1] ?? null;
+}
+
+function isFigmaRestToolName(toolName: string): boolean {
+  for (const restToolName of FIGMA_REST_TOOL_NAME_SET) {
+    if (
+      toolName === restToolName ||
+      toolName.endsWith(`__${restToolName}`) ||
+      toolName.endsWith(`:${restToolName}`) ||
+      toolName.endsWith(`/${restToolName}`)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isFigmaImplementationAnchorToolName(toolName: string): boolean {
+  for (const restToolName of FIGMA_IMPLEMENTATION_ANCHOR_TOOL_NAMES) {
+    if (
+      toolName === restToolName ||
+      toolName.endsWith(`__${restToolName}`) ||
+      toolName.endsWith(`:${restToolName}`) ||
+      toolName.endsWith(`/${restToolName}`)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isLikelyFailedToolResponse(value: unknown): boolean {
+  let text: string;
+  if (typeof value === "string") {
+    text = value;
+  } else {
+    try {
+      text = JSON.stringify(value);
+    } catch {
+      text = String(value);
+    }
+  }
+
+  return /"success"\s*:\s*false|tool\s+failed|exception|unauthorized|forbidden|401|403/i.test(text);
+}
+
+function isLikelyFigmaRestAuthFailure(value: unknown): boolean {
+  let text: string;
+  if (typeof value === "string") {
+    text = value;
+  } else {
+    try {
+      text = JSON.stringify(value);
+    } catch {
+      text = String(value);
+    }
+  }
+
+  return /figma/i.test(text) && isLikelyFigmaTokenFailureMessage(text);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1470,15 +1803,76 @@ function buildEffortLevel(reasoningMode?: RuntimeOverrides["reasoningMode"]): Ef
 
 export function createPromptSource(prompt: string, attachments: PromptAttachment[]): AsyncIterable<SDKUserMessage> {
   return (async function* promptSource(): AsyncIterable<SDKUserMessage> {
-    const content = buildRunnerPromptContentBlocks(prompt, attachments) as unknown as SDKUserMessage["message"]["content"];
-
-    yield {
-      type: "user",
-      message: {
-        role: "user",
-        content,
-      },
-      parent_tool_use_id: null,
-    };
+    yield createPromptMessage(prompt, attachments);
   })();
+}
+
+function createPromptMessage(prompt: string, attachments: PromptAttachment[]): SDKUserMessage {
+  const content = buildRunnerPromptContentBlocks(prompt, attachments) as unknown as SDKUserMessage["message"]["content"];
+
+  return {
+    type: "user",
+    message: {
+      role: "user",
+      content,
+    },
+    parent_tool_use_id: null,
+  };
+}
+
+class PromptInputQueue implements AsyncIterable<SDKUserMessage>, AsyncIterator<SDKUserMessage> {
+  private readonly queue: SDKUserMessage[] = [];
+  private waiter: ((result: IteratorResult<SDKUserMessage>) => void) | null = null;
+  private closed = false;
+
+  [Symbol.asyncIterator](): AsyncIterator<SDKUserMessage> {
+    return this;
+  }
+
+  enqueue(prompt: string, attachments: PromptAttachment[]): void {
+    if (this.closed) {
+      throw new Error("Prompt input queue is closed.");
+    }
+
+    const message = createPromptMessage(prompt, attachments);
+    if (this.waiter) {
+      const waiter = this.waiter;
+      this.waiter = null;
+      waiter({ done: false, value: message });
+      return;
+    }
+
+    this.queue.push(message);
+  }
+
+  next(): Promise<IteratorResult<SDKUserMessage>> {
+    if (this.queue.length > 0) {
+      return Promise.resolve({ done: false, value: this.queue.shift() as SDKUserMessage });
+    }
+
+    if (this.closed) {
+      return Promise.resolve({ done: true, value: undefined });
+    }
+
+    return new Promise((resolve) => {
+      this.waiter = resolve;
+    });
+  }
+
+  close(): void {
+    if (this.closed) {
+      return;
+    }
+
+    this.closed = true;
+    if (this.waiter) {
+      const waiter = this.waiter;
+      this.waiter = null;
+      waiter({ done: true, value: undefined });
+    }
+  }
+
+  isClosed(): boolean {
+    return this.closed;
+  }
 }

@@ -5,20 +5,21 @@ import {
   tool,
   type McpSdkServerConfigWithInstance,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { app, nativeImage } from "electron";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "fs";
 import { basename, join, sep } from "path";
 import { z } from "zod";
 
 import type { BrowserWorkbenchState } from "../../browser-manager.js";
-import { getCurrentApiConfig } from "../claude-settings.js";
+import { resolveImagePreprocessApiConfig } from "../claude-settings.js";
 import { buildDesignInspectionPrompt, parseDesignInspectionDsl } from "../design-inspection-dsl.js";
 import { resolveDesignImagePath } from "../design-image-path.js";
 import { summarizeLocalImageFile } from "../image-preprocessor.js";
+import { toTextToolResult } from "./tool-result.js";
 
 export const DESIGN_TOOL_NAMES = [
   "design_capture_current_view",
+  "design_capture_current_region",
   "design_inspect_image",
   "design_compare_current_view",
   "design_compare_current_view_batch",
@@ -82,6 +83,10 @@ const DEFAULT_SENSITIVITY: ComparisonSensitivity = "balanced";
 const MAX_IGNORE_REGIONS = 32;
 const MAX_HOTSPOT_REGIONS = 8;
 const HOTSPOT_TARGET_TILE_SIZE = 160;
+const MAX_AUTO_RESIZE_ASPECT_DELTA = 0.03;
+const MAX_AUTO_RESIZE_SCALE_DELTA = 0.03;
+const MIN_AUTO_RESIZE_SCALE = 0.5;
+const MAX_AUTO_RESIZE_SCALE = 2;
 const DESIGN_ARTIFACT_KINDS = ["current", "diff", "comparison", "comparison-report", "unknown"] as const satisfies readonly DesignArtifactKind[];
 
 const ignoreRegionToolSchema = z.object({
@@ -113,13 +118,6 @@ function getHost(): DesignToolHost {
     throw new Error("设计还原工具尚未初始化，无法截图。");
   }
   return designHost;
-}
-
-function toTextToolResult(payload: unknown, isError = false): CallToolResult {
-  return {
-    isError,
-    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-  };
 }
 
 // 所有视觉产物放到 userData/design-parity，方便用户和 Agent 一起审阅历史截图/diff。
@@ -229,10 +227,17 @@ function summarizeComparisonReport(report: Record<string, unknown>, reportPath: 
     threshold: report.threshold,
     sensitivity: report.sensitivity,
     diffColorMode: report.diffColorMode,
+    status: report.status,
+    comparable: report.comparable,
+    invalidReason: report.invalidReason,
     differenceRatio: report.differenceRatio,
     averageChannelDelta: report.averageChannelDelta,
     maxChannelDelta: report.maxChannelDelta,
     comparedSize: report.comparedSize,
+    referenceSize: report.referenceSize,
+    candidateSize: report.candidateSize,
+    normalizedCandidateSize: report.normalizedCandidateSize,
+    sizeComparison: report.sizeComparison,
     ignoredPixels: report.ignoredPixels,
     antialiasingPixels: report.antialiasingPixels,
     diffBoundingBox: report.diffBoundingBox,
@@ -284,6 +289,129 @@ function assertReasonableSize(size: ImageSize, label: string): void {
 }
 
 // 当前版本先支持“本地参考图路径”；后续接 Figma API 时，只需要把参考图导出到同一目录再复用 compareImages。
+function roundMetric(value: number, digits = 4): number {
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
+function ratioDelta(left: number, right: number): number {
+  if (left <= 0 || right <= 0) {
+    return 0;
+  }
+  return Math.abs(left - right) / Math.max(left, right);
+}
+
+function describeScale(referenceSize: ImageSize, candidateSize: ImageSize, resizeCandidateToReference: boolean): {
+  referenceSize: ImageSize;
+  candidateSize: ImageSize;
+  widthScale: number;
+  heightScale: number;
+  aspectDelta: number;
+  scaleDelta: number;
+  resizeCandidateToReference: boolean;
+  note: string;
+  invalidReason?: string;
+} {
+  const widthScale = candidateSize.width / referenceSize.width;
+  const heightScale = candidateSize.height / referenceSize.height;
+  const referenceAspect = referenceSize.width / referenceSize.height;
+  const candidateAspect = candidateSize.width / candidateSize.height;
+  const aspectDelta = ratioDelta(referenceAspect, candidateAspect);
+  const scaleDelta = ratioDelta(widthScale, heightScale);
+  const isSameSize = referenceSize.width === candidateSize.width && referenceSize.height === candidateSize.height;
+  let invalidReason: string | undefined;
+
+  if (!resizeCandidateToReference && !isSameSize) {
+    invalidReason = "size-mismatch-without-resize";
+  } else if (aspectDelta > MAX_AUTO_RESIZE_ASPECT_DELTA) {
+    invalidReason = "aspect-ratio-mismatch";
+  } else if (scaleDelta > MAX_AUTO_RESIZE_SCALE_DELTA) {
+    invalidReason = "non-uniform-scale";
+  } else if (
+    widthScale < MIN_AUTO_RESIZE_SCALE
+    || heightScale < MIN_AUTO_RESIZE_SCALE
+    || widthScale > MAX_AUTO_RESIZE_SCALE
+    || heightScale > MAX_AUTO_RESIZE_SCALE
+  ) {
+    invalidReason = "scale-out-of-range";
+  }
+
+  const scaleText = `candidate/reference scale ${roundMetric(widthScale)}x${roundMetric(heightScale)}`;
+  return {
+    referenceSize,
+    candidateSize,
+    widthScale: roundMetric(widthScale),
+    heightScale: roundMetric(heightScale),
+    aspectDelta: roundMetric(aspectDelta),
+    scaleDelta: roundMetric(scaleDelta),
+    resizeCandidateToReference,
+    note: isSameSize
+      ? "reference and candidate have identical pixel size; no resize needed."
+      : `${scaleText}; ${resizeCandidateToReference ? "candidate may be resized for pixel diff if scale is within guardrails." : "candidate resize disabled."}`,
+    invalidReason,
+  };
+}
+
+function createInvalidComparisonReport(input: {
+  referenceImagePath: string;
+  candidateImagePath: string;
+  threshold: number;
+  sensitivity?: ComparisonSensitivity;
+  diffColorMode: DiffColorMode;
+  ignoreAntialiasing?: boolean;
+  maxDifferenceRatio?: number;
+  referenceSize: ImageSize;
+  candidateSize: ImageSize;
+  sizeComparison: ReturnType<typeof describeScale>;
+  label?: string;
+}) {
+  const comparison = {
+    status: "invalid",
+    comparable: false,
+    invalidReason: input.sizeComparison.invalidReason ?? "invalid-size-comparison",
+    referenceImagePath: input.referenceImagePath,
+    candidateImagePath: input.candidateImagePath,
+    diffImagePath: null,
+    comparisonImagePath: null,
+    reportPath: "",
+    threshold: input.threshold,
+    sensitivity: input.sensitivity ?? DEFAULT_SENSITIVITY,
+    diffColorMode: input.diffColorMode,
+    ignoreAntialiasing: input.ignoreAntialiasing === true,
+    maxDifferenceRatio: input.maxDifferenceRatio,
+    resizedCandidateToReference: false,
+    comparedSize: null,
+    referenceSize: input.referenceSize,
+    candidateSize: input.candidateSize,
+    normalizedCandidateSize: input.candidateSize,
+    sizeComparison: input.sizeComparison,
+    differentPixels: 0,
+    totalPixels: 0,
+    comparedPixels: 0,
+    ignoredPixels: 0,
+    antialiasingPixels: 0,
+    differenceRatio: null,
+    averageChannelDelta: null,
+    maxChannelDelta: null,
+    diffBoundingBox: null,
+    topDiffRegions: [],
+    ignoredRegions: [],
+    verdict: {
+      passed: null,
+      comparable: false,
+      maxDifferenceRatio: input.maxDifferenceRatio ?? null,
+      message: "Invalid comparison: reference and candidate dimensions or scale differ too much for a reliable pixel diff.",
+    },
+    advice: [
+      input.sizeComparison.note,
+      "Align viewport/export size first, or capture a matching region before running pixel comparison.",
+      "No diff/comparison image was generated to avoid a misleading red overlay.",
+    ],
+  };
+  comparison.reportPath = writeJsonArtifact(comparison, input.label, "comparison-report");
+  return comparison;
+}
+
 async function captureCurrentView(sessionId: string, label?: string): Promise<CapturedImage & { state: BrowserWorkbenchState }> {
   const host = getHost();
   const capture = await host.captureVisible(sessionId);
@@ -299,6 +427,47 @@ async function captureCurrentView(sessionId: string, label?: string): Promise<Ca
   return {
     path,
     size: image.getSize(),
+    state: host.getState(sessionId),
+  };
+}
+
+async function captureCurrentRegion(sessionId: string, region: IgnoreRegion, label?: string): Promise<CapturedImage & {
+  sourceSize: ImageSize;
+  region: IgnoreRegion;
+  state: BrowserWorkbenchState;
+}> {
+  const host = getHost();
+  const capture = await host.captureVisible(sessionId);
+  if (!capture.success || !capture.dataUrl) {
+    throw new Error(capture.error || "Current BrowserView capture failed.");
+  }
+
+  const image = createImageFromBuffer(dataUrlToBuffer(capture.dataUrl), "current page screenshot");
+  const sourceSize = image.getSize();
+  const normalizedRegion = normalizeRegions([region], sourceSize)[0];
+  if (!normalizedRegion) {
+    throw new Error("Capture region is outside the current screenshot bounds.");
+  }
+
+  const croppedImage = image.crop({
+    x: normalizedRegion.x,
+    y: normalizedRegion.y,
+    width: normalizedRegion.width,
+    height: normalizedRegion.height,
+  });
+  const path = writePngArtifact(croppedImage, label, "region-current");
+
+  return {
+    path,
+    size: croppedImage.getSize(),
+    sourceSize,
+    region: {
+      x: normalizedRegion.x,
+      y: normalizedRegion.y,
+      width: normalizedRegion.width,
+      height: normalizedRegion.height,
+      reason: normalizedRegion.reason,
+    },
     state: host.getState(sessionId),
   };
 }
@@ -595,7 +764,24 @@ function compareImages(input: {
   const candidateImageOriginal = createImageFromPath(candidateImagePath, "当前页面截图");
   const referenceSize = referenceImage.getSize();
   const candidateOriginalSize = candidateImageOriginal.getSize();
-  const shouldResize = input.resizeCandidateToReference !== false
+  const resizeCandidateToReference = input.resizeCandidateToReference !== false;
+  const sizeComparison = describeScale(referenceSize, candidateOriginalSize, resizeCandidateToReference);
+  if (sizeComparison.invalidReason) {
+    return createInvalidComparisonReport({
+      referenceImagePath,
+      candidateImagePath,
+      threshold,
+      sensitivity: input.sensitivity,
+      diffColorMode,
+      ignoreAntialiasing: input.ignoreAntialiasing,
+      maxDifferenceRatio: input.maxDifferenceRatio,
+      referenceSize,
+      candidateSize: candidateOriginalSize,
+      sizeComparison,
+      label: input.label,
+    });
+  }
+  const shouldResize = resizeCandidateToReference
     && (candidateOriginalSize.width !== referenceSize.width || candidateOriginalSize.height !== referenceSize.height);
   const candidateImage = shouldResize
     ? candidateImageOriginal.resize({ width: referenceSize.width, height: referenceSize.height, quality: "best" })
@@ -713,6 +899,9 @@ function compareImages(input: {
     label: input.label,
   });
   const comparison = {
+    status: "valid",
+    comparable: true,
+    invalidReason: null,
     referenceImagePath,
     candidateImagePath,
     diffImagePath: diffPath,
@@ -728,6 +917,7 @@ function compareImages(input: {
     referenceSize,
     candidateSize: candidateOriginalSize,
     normalizedCandidateSize: candidateSize,
+    sizeComparison,
     differentPixels,
     totalPixels,
     comparedPixels,
@@ -754,14 +944,17 @@ function compareImages(input: {
           ? "视觉差异在阈值范围内。"
           : "视觉差异超过阈值。",
     },
-    advice: buildVisualAdvice({
-      differenceRatio,
-      resizedCandidateToReference: shouldResize,
-      ignoredPixels,
-      comparedPixels,
-      boundingBox: diffBoundingBox ?? undefined,
-      maxDifferenceRatio: input.maxDifferenceRatio,
-    }),
+    advice: [
+      sizeComparison.note,
+      ...buildVisualAdvice({
+        differenceRatio,
+        resizedCandidateToReference: shouldResize,
+        ignoredPixels,
+        comparedPixels,
+        boundingBox: diffBoundingBox ?? undefined,
+        maxDifferenceRatio: input.maxDifferenceRatio,
+      }),
+    ],
   };
   comparison.reportPath = writeJsonArtifact(comparison, input.label, "comparison-report");
   return comparison;
@@ -799,6 +992,32 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
     },
   );
 
+  const captureRegionTool = tool(
+    "design_capture_current_region",
+    "Capture a pixel region from the current BrowserView screenshot and save it as a PNG. Use browser_get_element kind=box first when the region comes from a selector, then pass that box here.",
+    {
+      label: z.string().trim().min(1).max(80).optional(),
+      region: ignoreRegionToolSchema,
+    },
+    async (input) => {
+      try {
+        const capture = await captureCurrentRegion(resolvedSessionId, input.region, input.label);
+        return toTextToolResult({
+          action: "design_capture_current_region",
+          success: true,
+          sessionId: resolvedSessionId,
+          capture,
+        });
+      } catch (error) {
+        return toTextToolResult({
+          action: "design_capture_current_region",
+          success: false,
+          error: error instanceof Error ? error.message : "Region capture failed.",
+        }, true);
+      }
+    },
+  );
+
   const inspectImageTool = tool(
     "design_inspect_image",
     "读取一张本地截图/设计图的视觉语义摘要。用于用户上传参考图后先理解页面结构、文字、颜色和布局。只返回文本摘要，不把图片 base64 注入主 Agent 上下文；不要用 Read 读取图片文件。",
@@ -812,7 +1031,7 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
         const image = createImageFromPath(imagePath, "待分析图片");
         const imageSize = image.getSize();
         const inspectionText = await summarizeLocalImageFile({
-          config: getCurrentApiConfig(),
+          config: resolveImagePreprocessApiConfig(),
           prompt: buildDesignInspectionPrompt(input.prompt),
           filePath: imagePath,
         });
@@ -850,10 +1069,13 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
       threshold: z.number().min(0).max(255).optional(),
       ...comparisonTuningToolSchema,
       resizeCandidateToReference: z.boolean().optional(),
+      region: ignoreRegionToolSchema.optional(),
     },
     async (input) => {
       try {
-        const capture = await captureCurrentView(resolvedSessionId, input.label);
+        const capture = input.region
+          ? await captureCurrentRegion(resolvedSessionId, input.region, input.label)
+          : await captureCurrentView(resolvedSessionId, input.label);
         const comparison = compareImages({
           referenceImagePath: input.referenceImagePath,
           candidateImagePath: capture.path,
@@ -871,6 +1093,7 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
           success: true,
           sessionId: resolvedSessionId,
           state: capture.state,
+          capture,
           comparison,
         });
       } catch (error) {
@@ -932,10 +1155,13 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
       threshold: z.number().min(0).max(255).optional(),
       ...comparisonTuningToolSchema,
       resizeCandidateToReference: z.boolean().optional(),
+      region: ignoreRegionToolSchema.optional(),
     },
     async (input) => {
       try {
-        const capture = await captureCurrentView(resolvedSessionId, input.label);
+        const capture = input.region
+          ? await captureCurrentRegion(resolvedSessionId, input.region, input.label)
+          : await captureCurrentView(resolvedSessionId, input.label);
         const results = await Promise.all(input.referenceImagePaths.map(async (referenceImagePath, index) => {
           try {
             const comparison = compareImages({
@@ -1097,6 +1323,7 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
     version: DESIGN_MCP_SERVER_VERSION,
     tools: [
       captureTool,
+      captureRegionTool,
       inspectImageTool,
       compareTool,
       compareCurrentViewBatchTool,

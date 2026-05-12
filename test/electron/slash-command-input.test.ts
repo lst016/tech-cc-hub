@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { getSlashCommandQuery } from "../../src/ui/utils/slash-command-input.js";
+import { getSlashCommandQuery, isDismissedSlashCommandQuery } from "../../src/ui/utils/slash-command-input.js";
 
 describe("slash command input", () => {
   it("keeps absolute paths out of slash command matching", () => {
@@ -14,5 +14,12 @@ describe("slash command input", () => {
     assert.equal(getSlashCommandQuery("/debug current session"), "debug");
     assert.equal(getSlashCommandQuery("  /speckit.specify feature"), "speckit.specify");
     assert.equal(getSlashCommandQuery("/"), "");
+  });
+
+  it("keeps a selected slash command hidden until the query changes or browser is reopened", () => {
+    assert.equal(isDismissedSlashCommandQuery("/ad-crawler", "ad-crawler", false), true);
+    assert.equal(isDismissedSlashCommandQuery("/ad-crawler analyze this", "ad-crawler", false), true);
+    assert.equal(isDismissedSlashCommandQuery("/ad", "ad-crawler", false), false);
+    assert.equal(isDismissedSlashCommandQuery("/ad-crawler", "ad-crawler", true), false);
   });
 });

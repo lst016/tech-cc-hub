@@ -5,13 +5,15 @@ export type BrowserWorkbenchWebPreferences = {
   nodeIntegration: false;
   sandbox: true;
   partition: string;
+  preload?: string;
 };
 
-export function buildBrowserWorkbenchWebPreferences(): BrowserWorkbenchWebPreferences {
+export function buildBrowserWorkbenchWebPreferences(preload?: string): BrowserWorkbenchWebPreferences {
   return {
     contextIsolation: true,
     nodeIntegration: false,
     sandbox: true,
     partition: BROWSER_WORKBENCH_PARTITION,
+    ...(preload ? { preload } : {}),
   };
 }

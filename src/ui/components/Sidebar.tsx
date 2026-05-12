@@ -41,6 +41,8 @@ export function Sidebar({
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const closeTimerRef = useRef<number | null>(null);
   const [hasUpdate, setHasUpdate] = useState(false);
+  const previousSessionStatusRef = useRef<Record<string, string | undefined>>({});
+  const [unreadSessionIds, setUnreadSessionIds] = useState<Record<string, "completed" | "error">>({});
 
   useEffect(() => {
     const unsubscribe = window.electron.onAppUpdateStatus((status: AppUpdateStatus) => {
@@ -66,6 +68,73 @@ export function Sidebar({
       onRefreshArchivedSessions();
     }
   }, [onRefreshArchivedSessions, showArchived]);
+
+  useEffect(() => {
+    const previousStatuses = previousSessionStatusRef.current;
+    const nextStatuses: Record<string, string | undefined> = {};
+    const sessionValues = Object.values(sessions);
+    const runningSessionIds = new Set<string>();
+    const finishedUnreadSessions: Record<string, "completed" | "error"> = {};
+
+    for (const session of sessionValues) {
+      const previousStatus = previousStatuses[session.id];
+      nextStatuses[session.id] = session.status;
+
+      if (session.status === "running") {
+        runningSessionIds.add(session.id);
+      }
+
+      if (
+        previousStatus === "running" &&
+        (session.status === "completed" || session.status === "error") &&
+        session.id !== activeSessionId
+      ) {
+        finishedUnreadSessions[session.id] = session.status;
+      }
+    }
+
+    previousSessionStatusRef.current = nextStatuses;
+
+    if (runningSessionIds.size === 0 && Object.keys(finishedUnreadSessions).length === 0) {
+      return;
+    }
+
+    setUnreadSessionIds((current) => {
+      let next = current;
+      let changed = false;
+      const ensureNext = () => {
+        if (!changed) {
+          next = { ...current };
+          changed = true;
+        }
+        return next;
+      };
+
+      for (const sessionId of runningSessionIds) {
+        if (next[sessionId]) {
+          delete ensureNext()[sessionId];
+        }
+      }
+
+      for (const [sessionId, status] of Object.entries(finishedUnreadSessions)) {
+        if (next[sessionId] !== status) {
+          ensureNext()[sessionId] = status;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [activeSessionId, sessions]);
+
+  useEffect(() => {
+    if (!activeSessionId) return;
+    setUnreadSessionIds((current) => {
+      if (!current[activeSessionId]) return current;
+      const next = { ...current };
+      delete next[activeSessionId];
+      return next;
+    });
+  }, [activeSessionId]);
 
   const workspaceGroups = useMemo(() => {
     const groups = new Map<string, { cwd?: string; sessions: typeof sessionList }>();
@@ -223,10 +292,14 @@ export function Sidebar({
                 </div>
 
                     <div className={`mt-3 flex flex-col gap-1.5 ${expandedGroups[group.key] ? "" : "hidden"}`}>
-                  {group.sessions.map((session) => (
+                  {group.sessions.map((session) => {
+                    const isActiveSession = activeSessionId === session.id;
+                    const isRunningSession = session.status === "running";
+                    const unreadSessionStatus = unreadSessionIds[session.id];
+                    return (
                     <div
                       key={session.id}
-                      className={`cursor-pointer rounded-xl border px-2.5 py-1.5 text-left transition-all ${activeSessionId === session.id ? "border-accent/28 bg-[linear-gradient(180deg,rgba(253,244,241,1),rgba(255,255,255,0.92))] shadow-[0_8px_20px_rgba(210,106,61,0.10)]" : "border-black/6 bg-[#f7f9fc] hover:-translate-y-[1px] hover:bg-white"}`}
+                      className={`relative cursor-pointer overflow-hidden rounded-xl border px-2.5 py-1.5 text-left transition-all ${isActiveSession ? "border-accent/28 bg-[linear-gradient(180deg,rgba(253,244,241,1),rgba(255,255,255,0.92))] shadow-[0_8px_20px_rgba(210,106,61,0.10)]" : "border-black/6 bg-[#f7f9fc] hover:-translate-y-[1px] hover:bg-white"}`}
                       onClick={() => setActiveSessionId(session.id)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
@@ -238,9 +311,23 @@ export function Sidebar({
                       tabIndex={0}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0 flex-1 truncate text-[12px] font-medium text-ink-800">
-                          {session.title}
+                        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                          {unreadSessionStatus ? (
+                            <span
+                              className={`h-2.5 w-2.5 shrink-0 rounded-full shadow-[0_0_0_3px_rgba(210,106,61,0.12)] ${unreadSessionStatus === "error" ? "bg-error" : "bg-accent"}`}
+                              title={unreadSessionStatus === "error" ? "执行失败，未查看" : "执行完成，未查看"}
+                            />
+                          ) : null}
+                          <div className="min-w-0 flex-1 truncate text-[12px] font-medium text-ink-800">
+                            {session.title}
+                          </div>
                         </div>
+                        {isRunningSession && (
+                          <span
+                            className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-emerald-500/25 border-t-emerald-500"
+                            title="正在聊天"
+                          />
+                        )}
                         <DropdownMenu.Root>
                           <DropdownMenu.Trigger asChild>
                             <button
@@ -301,7 +388,8 @@ export function Sidebar({
                         </DropdownMenu.Root>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ))}

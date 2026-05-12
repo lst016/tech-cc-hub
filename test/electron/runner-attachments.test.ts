@@ -4,6 +4,18 @@ import assert from "node:assert/strict";
 import { buildRunnerPromptContentBlocks } from "../../src/shared/runner-prompt.js";
 import { buildAnthropicPromptContentBlocks } from "../../src/shared/attachments.js";
 
+const attachmentPriorityContext = [
+  "Current user turn includes attachments. Treat these attachments as the highest-priority source for this turn.",
+  "Read and use the current-turn attachments before reading workspace files, Downloads, or same-name local files.",
+  "If an attachment is Postman/OpenAPI/JSON/API documentation, extract endpoints, methods, parameters, and response fields from the attachment before editing code.",
+  "If an attachment is an image, analyze the image payload or image summary before deciding what the user means; do not claim the attachment is missing.",
+  "",
+  "Attachment list:",
+  "1. image.png (image, image/png)",
+].join("\n");
+
+const promptAfterAttachments = (prompt: string) => `User request after reading the attachments first:\n${prompt}`;
+
 test("buildAnthropicPromptContentBlocks only emits image blocks from explicit runtimeData", () => {
   const contentBlocks = buildAnthropicPromptContentBlocks("describe this image", [
     {
@@ -19,7 +31,7 @@ test("buildAnthropicPromptContentBlocks only emits image blocks from explicit ru
   assert.deepEqual(contentBlocks, [
     {
       type: "text",
-      text: "describe this image",
+      text: attachmentPriorityContext,
     },
     {
       type: "image",
@@ -28,6 +40,10 @@ test("buildAnthropicPromptContentBlocks only emits image blocks from explicit ru
         media_type: "image/png",
         data: "BBBB",
       },
+    },
+    {
+      type: "text",
+      text: promptAfterAttachments("describe this image"),
     },
   ]);
 });
@@ -47,11 +63,15 @@ test("buildAnthropicPromptContentBlocks does not leak preview base64 into the ma
   assert.deepEqual(contentBlocks, [
     {
       type: "text",
-      text: "use this screenshot",
+      text: attachmentPriorityContext,
     },
     {
       type: "text",
-      text: "图片资产：/tmp/image.png",
+      text: "Image attachment summary (image.png):\n图片资产：/tmp/image.png",
+    },
+    {
+      type: "text",
+      text: promptAfterAttachments("use this screenshot"),
     },
   ]);
 });
@@ -60,7 +80,7 @@ test("buildRunnerPromptContentBlocks always returns array content blocks", () =>
   assert.deepEqual(buildRunnerPromptContentBlocks("plain prompt", []), [
     {
       type: "text",
-      text: "plain prompt",
+      text: promptAfterAttachments("plain prompt"),
     },
   ]);
 });

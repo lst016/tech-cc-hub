@@ -17,7 +17,7 @@ import {
 } from "../store/useAppStore";
 import { copyTextToClipboard as copyText } from "../utils/clipboard";
 import { resetBrowserWorkbenchAnnotationState } from "../utils/browser-annotation-reset";
-import { getSlashCommandQuery } from "../utils/slash-command-input";
+import { getSlashCommandQuery, isDismissedSlashCommandQuery } from "../utils/slash-command-input";
 import {
   ADD_PROMPT_ATTACHMENT_EVENT,
   OPEN_BROWSER_WORKBENCH_URL_EVENT,
@@ -796,7 +796,11 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
       invoke?: <T>(channel: string, ...args: unknown[]) => Promise<T>;
     };
     if (!electronApi.invoke) {
-      setWorkspaceSlashCommands([]);
+      void Promise.resolve().then(() => {
+        if (!cancelled) {
+          setWorkspaceSlashCommands([]);
+        }
+      });
       return () => {
         cancelled = true;
       };
@@ -845,7 +849,10 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
 
   // Unknown slash-prefixed text may be an absolute path, so let the runtime
   // interpret exact supported commands and send every other value as text.
-  const validatePromptDraft = useCallback((_promptValue: string) => null, []);
+  const validatePromptDraft = useCallback((promptValue: string) => {
+    void promptValue;
+    return null;
+  }, []);
 
   const buildRuntimeOverrides = useCallback((): RuntimeOverrides | null => {
     const selectedModel = runtimeModel.trim() || activeProfile?.model?.trim() || resolveSessionRuntimeModel();
@@ -871,36 +878,8 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
     attachments: PromptAttachment[],
   ): Promise<PromptAttachment[] | null> => {
     void promptValue;
-    // 临时关闭图片预处理拦截：当前链路会影响聊天图片预览和真实附件传递。
-    // 先让图片按前端 downscale 后的 data URL 原样发送，保证核心聊天/截图参考功能可用。
     return attachments;
-
-    const hasImageAttachments = attachments.some((attachment) => attachment.kind === "image");
-    const imageModel = activeProfile?.imageModel?.trim();
-    const selectedModel = runtimeModel.trim() || activeProfile?.model?.trim() || resolveSessionRuntimeModel();
-
-    if (!hasImageAttachments) {
-      return attachments;
-    }
-
-    if (!imageModel) {
-      setGlobalError("当前配置没有图片预处理模型，不能可靠识别图片。请先在设置 -> AI接口里选择支持图片的模型后再发送。");
-      return null;
-    }
-
-    const result = await window.electron.preprocessImageAttachments({
-      prompt: promptValue,
-      selectedModel,
-      attachments,
-    });
-
-    if (!result.success) {
-      setGlobalError(result.error || "图片预处理失败。");
-      return null;
-    }
-
-    return result.attachments;
-  }, [activeProfile?.imageModel, activeProfile?.model, resolveSessionRuntimeModel, runtimeModel, setGlobalError]);
+  }, []);
 
   const sendPromptDraft = useCallback(async (
     promptValue: string,
@@ -1048,6 +1027,7 @@ export function PromptInput({
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [queuedMessagesBySession, setQueuedMessagesBySession] = useState<Record<string, QueuedMessageDraft[]>>(readQueuedMessagesFromStorage);
   const [showSlashBrowser, setShowSlashBrowser] = useState(false);
+  const [dismissedSlashQuery, setDismissedSlashQuery] = useState<string | null>(null);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [cursorIndex, setCursorIndex] = useState(0);
   const [fileMentionOptions, setFileMentionOptions] = useState<FileMentionOption[]>([]);
@@ -1105,7 +1085,11 @@ export function PromptInput({
     }
     return matchedCommands.slice(0, SLASH_QUERY_LIMIT);
   }, [showSlashBrowser, slashCommands, slashQuery]);
-  const showSlashPalette = (slashQuery !== null || showSlashBrowser) && filteredSlashCommands.length > 0 && !disabled;
+  const slashPaletteDismissed = isDismissedSlashCommandQuery(prompt, dismissedSlashQuery, showSlashBrowser);
+  const showSlashPalette = (slashQuery !== null || showSlashBrowser)
+    && filteredSlashCommands.length > 0
+    && !slashPaletteDismissed
+    && !disabled;
   const filteredFileMentionOptions = useMemo(() => {
     if (!fileMentionContext) return [];
     const query = normalizeMentionPath(fileMentionContext.query.replace(/^["']|["']$/g, "")).toLowerCase();
@@ -1135,7 +1119,8 @@ export function PromptInput({
   const availableModels = useMemo(() => {
     return getAvailableModelsForProfiles(enabledProfiles);
   }, [enabledProfiles]);
-  const selectedRuntimeModel = runtimeModel.trim() || enabledProfiles[0]?.model?.trim() || availableModels[0] || "";
+  const activeProfile = enabledProfiles[0];
+  const selectedRuntimeModel = runtimeModel.trim() || activeProfile?.model?.trim() || availableModels[0] || "";
   const clearComposer = useCallback(() => {
     setPrompt("");
     setAttachments([]);
@@ -1151,6 +1136,7 @@ export function PromptInput({
     void resetBrowserWorkbenchAnnotationState(window.electron, activeSessionId ?? undefined)
       .catch((error) => console.warn("Failed to reset browser annotation state:", error));
     setShowSlashBrowser(false);
+    setDismissedSlashQuery(null);
   }, [activeSessionId, clearBrowserAnnotations, clearCodeReferences, clearFileReferences, clearMessageReferences, setBrowserWorkbenchAnnotations, setPrompt]);
 
   const updateCursorFromTextarea = useCallback(() => {
@@ -1178,20 +1164,31 @@ export function PromptInput({
     });
   }, [activeSessionId]);
 
-  const appendQueuedDraft = useCallback((queuedMessage: QueuedMessageDraft) => {
+  const prepareQueuedAttachmentsForDispatch = useCallback(async (
+    promptValue: string,
+    draftAttachments: PromptAttachment[],
+  ): Promise<PromptAttachment[] | null> => {
+    void promptValue;
+    return draftAttachments;
+  }, []);
+
+  const appendQueuedDraft = useCallback(async (queuedMessage: QueuedMessageDraft) => {
     if (!activeSessionId) return;
+    const preparedAttachments = await prepareQueuedAttachmentsForDispatch(queuedMessage.prompt, queuedMessage.attachments);
+    if (!preparedAttachments) return;
+
     sendEvent({
       type: "session.append",
       payload: {
         sessionId: activeSessionId,
         prompt: queuedMessage.prompt,
-        attachments: queuedMessage.attachments,
+        attachments: preparedAttachments,
       },
     });
     removeQueuedDraft(queuedMessage.id, activeSessionId);
     onSendMessage?.();
     window.dispatchEvent(new CustomEvent(PROMPT_SENT_EVENT));
-  }, [activeSessionId, onSendMessage, removeQueuedDraft, sendEvent]);
+  }, [activeSessionId, onSendMessage, prepareQueuedAttachmentsForDispatch, removeQueuedDraft, sendEvent]);
 
   const editQueuedDraft = useCallback((queuedMessage: QueuedMessageDraft) => {
     setPrompt(queuedMessage.prompt);
@@ -1247,14 +1244,13 @@ export function PromptInput({
       const promptWithFileReferences = mergePromptWithFileReferences(promptWithCodeReferences, fileReferences);
       const promptWithMessageReferences = mergePromptWithMessageReferences(promptWithFileReferences, messageReferences);
       const promptWithAnnotations = mergePromptWithBrowserAnnotations(promptWithMessageReferences, browserAnnotations);
-      const hasImageAttachments = attachmentsSnapshot.some((attachment) => attachment.kind === "image");
       const validationError = validatePromptDraft(promptWithAnnotations);
       if (validationError) {
         setGlobalError(validationError);
         return false;
       }
 
-      setSubmissionStatus(hasImageAttachments ? "正在压缩并识别图片，本地视觉模型可能需要几十秒..." : "正在发送...");
+      setSubmissionStatus("正在发送...");
 
       const sent = await sendPromptDraft(promptWithAnnotations, attachmentsSnapshot, { clearPrompt: false });
       if (sent) {
@@ -1306,6 +1302,14 @@ export function PromptInput({
     }, 0);
   }, [activeSessionId, addFileReference, effectiveCwd, fileMentionContext, prompt, setPrompt]);
 
+  const selectSlashCommand = useCallback((command: SlashCommandOption) => {
+    const suffix = prompt.includes(" ") ? prompt.slice(prompt.indexOf(" ")) : "";
+    const nextPrompt = `/${command.name}${suffix}`;
+    setPrompt(nextPrompt);
+    setDismissedSlashQuery(command.name.toLowerCase());
+    setShowSlashBrowser(false);
+  }, [prompt, setPrompt]);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (disabled) return;
     if (showSlashPalette) {
@@ -1323,15 +1327,14 @@ export function PromptInput({
       if ((e.key === "Enter" || e.key === "Tab") && filteredSlashCommands.length > 0) {
         e.preventDefault();
         const command = filteredSlashCommands[slashActiveIndex] ?? filteredSlashCommands[0];
-        const suffix = prompt.includes(" ") ? prompt.slice(prompt.indexOf(" ")) : "";
-        setPrompt(`/${command.name}${suffix}`);
-        setShowSlashBrowser(false);
+        selectSlashCommand(command);
         window.setTimeout(() => promptRef.current?.focus(), 0);
         return;
       }
       if (e.key === "Escape") {
         e.preventDefault();
         setShowSlashBrowser(false);
+        setDismissedSlashQuery(slashQuery?.toLowerCase() ?? null);
         return;
       }
     }
@@ -1655,9 +1658,7 @@ export function PromptInput({
                   type="button"
                   className={`rounded-xl px-3 py-2 text-left text-sm transition-colors ${index === slashActiveIndex ? "bg-accent/10 text-accent" : "text-ink-700 hover:bg-surface-secondary"}`}
                   onClick={() => {
-                    const suffix = prompt.includes(" ") ? prompt.slice(prompt.indexOf(" ")) : "";
-                    setPrompt(`/${command.name}${suffix}`);
-                    setShowSlashBrowser(false);
+                    selectSlashCommand(command);
                     promptRef.current?.focus();
                   }}
                 >

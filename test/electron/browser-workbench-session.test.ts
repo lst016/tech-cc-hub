@@ -19,4 +19,14 @@ describe("browser workbench session", () => {
       partition: BROWSER_WORKBENCH_PARTITION,
     });
   });
+
+  it("adds the BrowserWorkbench preload only when provided", () => {
+    assert.deepEqual(buildBrowserWorkbenchWebPreferences("browser-workbench-preload.cjs"), {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      partition: BROWSER_WORKBENCH_PARTITION,
+      preload: "browser-workbench-preload.cjs",
+    });
+  });
 });

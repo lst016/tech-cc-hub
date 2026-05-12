@@ -5,11 +5,11 @@ import {
   tool,
   type McpSdkServerConfigWithInstance,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import type { GlobalRuntimeConfig } from "../config-store.js";
 import { loadGlobalRuntimeConfig, saveGlobalRuntimeConfig } from "../config-store.js";
+import { toTextToolResult } from "./tool-result.js";
 
 export const ADMIN_TOOL_NAMES = ["set_global_runtime_config"] as const;
 
@@ -41,13 +41,6 @@ let adminMcpServer: McpSdkServerConfigWithInstance | null = null;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
-
-function toTextToolResult(payload: unknown, isError = false): CallToolResult {
-  return {
-    isError,
-    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-  };
-}
 
 function isAllowedEnvKey(key: string): boolean {
   const normalized = key.trim();

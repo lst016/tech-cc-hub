@@ -38,15 +38,23 @@ export const BUILTIN_MCP_TOOL_NAMES: Record<BuiltinMcpServerName, readonly strin
   "tech-cc-hub-plan": PLAN_TOOL_NAMES,
 };
 
-export function getBuiltinMcpServers(sessionId: string): Record<string, McpSdkServerConfigWithInstance> {
+export function getBuiltinMcpServers(
+  sessionId: string,
+  enabledServerNames?: readonly BuiltinMcpServerName[],
+): Record<string, McpSdkServerConfigWithInstance> {
+  const enabledNames = enabledServerNames ? new Set(enabledServerNames) : null;
   return Object.fromEntries(
-    BUILTIN_MCP_SERVERS.map((definition) => {
+    BUILTIN_MCP_SERVERS.filter((definition) => !enabledNames || enabledNames.has(definition.name)).map((definition) => {
       const server = BUILTIN_MCP_SERVER_FACTORIES[definition.name]({ sessionId });
       return [server.name, server];
     }),
   );
 }
 
-export function listBuiltinMcpToolNames(): string[] {
-  return Object.values(BUILTIN_MCP_TOOL_NAMES).flatMap((tools) => [...tools]);
+export function listBuiltinMcpToolNames(enabledServerNames?: readonly BuiltinMcpServerName[]): string[] {
+  if (!enabledServerNames) {
+    return Object.values(BUILTIN_MCP_TOOL_NAMES).flatMap((tools) => [...tools]);
+  }
+
+  return enabledServerNames.flatMap((serverName) => [...(BUILTIN_MCP_TOOL_NAMES[serverName] ?? [])]);
 }

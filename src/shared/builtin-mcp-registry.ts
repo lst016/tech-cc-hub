@@ -204,6 +204,7 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
           { name: "figma_get_current_user", description: "Read the Figma account attached to the saved token." },
           { name: "figma_get_file_metadata", description: "Read file metadata, or fall back to a lightweight file overview." },
           { name: "figma_read_design", description: "Read a Figma file or specific nodes from a Figma URL/file key." },
+          { name: "figma_list_node_index", description: "List a compact node index for progressive disclosure before drilling into a large design branch." },
           { name: "figma_summarize_design", description: "Convert Figma nodes into a compact Agent-friendly design tree." },
           { name: "figma_extract_design_tokens", description: "Extract color, typography, radius, spacing, and effect token candidates." },
           { name: "figma_get_design_playbook", description: "Get curated design-system and UX theory guidance before implementation." },
@@ -225,6 +226,7 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
       "需要先出实现草稿时用 `figma_generate_tailwind_code`，但它只是 Tailwind/React 初稿；落地时必须按当前项目组件和视觉截图校对。视觉参考用 `figma_get_image_urls`，图片填充用 `figma_get_image_fills`。",
       "需要设计系统上下文时用 `figma_list_file_library` 和 `figma_get_file_variables`；需要协作上下文时用 `figma_list_file_comments`、`figma_list_file_versions`、`figma_get_dev_resources`。",
       "Figma URL 中的 `node-id=1-2` 需要作为节点读取，工具会自动转换成 API 需要的 `1:2`。不要把 Figma PAT 当作官方 Remote MCP OAuth bearer token 使用；高级工具失败时优先提示用户补对应 PAT scope。",
+      "Figma progressive disclosure rule: when a design response is too large or figma_read_design returns result.truncated=true, use `figma_list_node_index` or result.progressiveDisclosure.nodeIndex to pick the smallest relevant node, then call `figma_summarize_design` or `figma_read_design` with that nodeId and a small depth.",
     ],
   },
   {
@@ -335,8 +337,10 @@ export function listBuiltinMcpToolNames(): string[] {
   ));
 }
 
-export function buildBuiltinMcpPromptHints(): string {
+export function buildBuiltinMcpPromptHints(enabledServerNames?: readonly BuiltinMcpServerName[]): string {
+  const enabledNames = enabledServerNames ? new Set(enabledServerNames) : null;
   return BUILTIN_MCP_SERVERS
+    .filter((server) => !enabledNames || enabledNames.has(server.name))
     .flatMap((server) => server.promptHints ?? [])
     .join("\n");
 }

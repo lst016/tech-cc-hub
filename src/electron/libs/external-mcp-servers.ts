@@ -14,6 +14,9 @@ type ExternalMcpHttpServer = {
 };
 
 type ExternalMcpServer = ExternalMcpStdioServer | ExternalMcpHttpServer;
+type ExternalMcpParseOptions = {
+  projectDir?: string;
+};
 
 export type ExternalMcpServerInfo = {
   name: string;
@@ -26,15 +29,21 @@ export type ExternalMcpServerInfo = {
   enabled: boolean;
 };
 
-export function getExternalMcpServers(config: unknown): Record<string, McpServerConfig> {
-  return parseExternalMcpServers(config) as Record<string, McpServerConfig>;
+export function getExternalMcpServers(
+  config: unknown,
+  options: ExternalMcpParseOptions = {},
+): Record<string, McpServerConfig> {
+  return parseExternalMcpServers(config, options) as Record<string, McpServerConfig>;
 }
 
-export function parseExternalMcpServers(config: unknown): Record<string, ExternalMcpServer> {
+export function parseExternalMcpServers(
+  config: unknown,
+  options: ExternalMcpParseOptions = {},
+): Record<string, ExternalMcpServer> {
   const servers: Record<string, ExternalMcpServer> = {};
 
   for (const [name, value] of Object.entries(getRawMcpServers(config))) {
-    const parsed = parseExternalMcpServer(value);
+    const parsed = parseExternalMcpServer(value, options);
     if (!parsed) {
       continue;
     }
@@ -93,7 +102,7 @@ export function isConfiguredExternalMcpTool(toolName: string, config: unknown): 
   ));
 }
 
-function parseExternalMcpServer(value: unknown): ExternalMcpServer | null {
+function parseExternalMcpServer(value: unknown, options: ExternalMcpParseOptions = {}): ExternalMcpServer | null {
   if (!isRecord(value) || value.enabled === false) {
     return null;
   }
@@ -124,8 +133,17 @@ function parseExternalMcpServer(value: unknown): ExternalMcpServer | null {
     type: "stdio",
     command,
     args: Array.isArray(value.args) ? value.args.filter((arg): arg is string => typeof arg === "string") : [],
-    env: parseStringMap(value.env),
+    env: withClaudeProjectDirEnv(parseStringMap(value.env), options.projectDir),
   };
+}
+
+function withClaudeProjectDirEnv(
+  env: Record<string, string> | undefined,
+  projectDir: string | undefined,
+): Record<string, string> | undefined {
+  const normalizedProjectDir = projectDir?.trim();
+  if (!normalizedProjectDir) return env;
+  return { CLAUDE_PROJECT_DIR: normalizedProjectDir, ...(env ?? {}) };
 }
 
 function getRawMcpServers(config: unknown): Record<string, unknown> {

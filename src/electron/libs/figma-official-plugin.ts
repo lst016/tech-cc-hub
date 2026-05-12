@@ -7,6 +7,7 @@ export const FIGMA_REST_TOOL_NAMES = [
   "figma_get_current_user",
   "figma_get_file_metadata",
   "figma_read_design",
+  "figma_list_node_index",
   "figma_summarize_design",
   "figma_extract_design_tokens",
   "figma_get_design_playbook",

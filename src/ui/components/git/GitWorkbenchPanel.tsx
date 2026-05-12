@@ -126,8 +126,8 @@ export function GitWorkbenchPanel({ cwd }: { cwd?: string }) {
           </div>
 
           <div className="min-h-0 flex-1 overflow-hidden bg-slate-50">
-            <div className={`flex h-full min-h-0 flex-col bg-white ${logMode ? "min-w-[760px]" : "min-w-[960px]"}`}>
-              <div className={`grid min-h-0 flex-1 overflow-hidden ${logMode ? "grid-cols-[minmax(520px,1fr)_320px]" : "grid-cols-[300px_minmax(360px,1fr)_300px]"}`}>
+            <div className={`flex h-full min-h-0 flex-col bg-white ${logMode ? "min-w-[860px]" : "min-w-[960px]"}`}>
+              <div className={`grid min-h-0 flex-1 overflow-hidden ${logMode ? "grid-cols-[minmax(440px,0.9fr)_minmax(380px,0.7fr)]" : "grid-cols-[300px_minmax(360px,1fr)_300px]"}`}>
                 {!logMode && (
                   <aside className="flex min-h-0 flex-col overflow-hidden border-r border-slate-200 bg-white">
                   <GitChangesList

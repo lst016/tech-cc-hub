@@ -215,6 +215,21 @@ function summarizeAttachments(itemNames: string[]) {
   return `${itemNames.length} 个附件 · ${itemNames.slice(0, 2).join("、")}`;
 }
 
+function materialStatusShellClass(tone: ActivityRailTone) {
+  switch (tone) {
+    case "success":
+      return "border-success/15 bg-success-light/35";
+    case "info":
+      return "border-info/15 bg-info-light/30";
+    case "warning":
+      return "border-accent/15 bg-accent-subtle/35";
+    case "error":
+      return "border-error/15 bg-error-light/40";
+    default:
+      return "border-black/5 bg-black/[0.02]";
+  }
+}
+
 function formatMetricAmount(chars: number, tokens?: number) {
   if (typeof tokens === "number") {
     return `${tokens.toLocaleString("zh-CN")} tok`;
@@ -227,6 +242,120 @@ function formatMetricStatus(metrics: ActivityExecutionMetrics) {
   if (metrics.successCount > 0 && metrics.totalCount > 0) return "成功";
   if (metrics.totalCount > 0) return "进行中";
   return "无执行";
+}
+
+function collectTimelineSearchText(item: ActivityTimelineItem) {
+  const sectionText = item.detailSections.flatMap((section) => [
+    section.title,
+    section.summary,
+    section.rawLabel,
+    section.raw,
+    ...section.rows.flatMap((row) => [row.label, row.value]),
+  ]);
+
+  return [
+    item.title,
+    item.preview,
+    item.detail,
+    item.statusLabel,
+    item.toolName,
+    item.nodeSubtype,
+    item.agentDescription,
+    ...item.chips,
+    ...sectionText,
+  ]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(" ");
+}
+
+type MaterialStatusItem = {
+  id: string;
+  label: string;
+  stateLabel: string;
+  detail: string;
+  tone: ActivityRailTone;
+  chips: string[];
+};
+
+function buildMaterialStatusItems(
+  model: ReturnType<typeof buildActivityRailModel>,
+  partialMessage: string,
+): MaterialStatusItem[] {
+  const latestAttachments = model.contextSnapshot.latestAttachments;
+  const attachmentNames = latestAttachments.map((attachment) => attachment.name).filter(Boolean);
+  const timelineTexts = model.timeline.map(collectTimelineSearchText);
+  const timelineText = timelineTexts.join("\n");
+  const lowerTimelineText = timelineText.toLowerCase();
+  const lowerPartialMessage = partialMessage.toLowerCase();
+
+  const figmaToolNames = Array.from(new Set(
+    model.timeline
+      .map((item) => item.toolName)
+      .filter((toolName): toolName is string => typeof toolName === "string" && /figma/i.test(toolName)),
+  ));
+  const figmaEvidence = figmaToolNames.length > 0 || /figma/i.test(lowerTimelineText) || /figma/i.test(lowerPartialMessage);
+
+  const anchorFieldNames = ["nodeId", "nodeIds", "node-id", "fileKey", "fileKeyOrUrl", "node_anchor"].filter((field) => (
+    lowerTimelineText.includes(field.toLowerCase()) || lowerPartialMessage.includes(field.toLowerCase())
+  ));
+  const anchorDetected = anchorFieldNames.length > 0;
+
+  const compareFieldNames = [
+    "compare_current_view",
+    "compare_images",
+    "differenceRatio",
+    "diffBoundingBox",
+    "topDiffRegions",
+    "compare",
+    "diff",
+  ].filter((field) => lowerTimelineText.includes(field.toLowerCase()) || lowerPartialMessage.includes(field.toLowerCase()));
+  const compareDetected = compareFieldNames.length > 0;
+  const compareInvalid = compareDetected && /invalid|failed|error|mismatch|drift|异常|偏差/i.test(timelineText);
+
+  return [
+    {
+      id: "attachment-read",
+      label: "附件",
+      stateLabel: latestAttachments.length > 0 ? "已读" : "待接入",
+      detail: latestAttachments.length > 0
+        ? `已将 ${summarizeAttachments(attachmentNames)} 进入当前轮上下文。`
+        : "当前轮没有附件；等附件流接入后再显示读取状态。",
+      tone: latestAttachments.length > 0 ? "success" : "neutral",
+      chips: attachmentNames.slice(0, 2),
+    },
+    {
+      id: "figma-rest-read",
+      label: "Figma REST",
+      stateLabel: figmaEvidence ? "已读" : "待接入",
+      detail: figmaEvidence
+        ? `已识别 ${figmaToolNames.slice(0, 2).join(" / ") || "Figma 相关工具"}。`
+        : "当前还没有 Figma REST 工具证据，后端补事件后可直接映射。",
+      tone: figmaEvidence ? "info" : "neutral",
+      chips: figmaToolNames.slice(0, 2),
+    },
+    {
+      id: "figma-node-anchor",
+      label: "节点锚点",
+      stateLabel: anchorDetected ? "已锚定" : figmaEvidence ? "待锚点" : "待接入",
+      detail: anchorDetected
+        ? `已发现 ${anchorFieldNames.join(" / ")} 这类锚点字段。`
+        : "当前没有明确的 nodeId / fileKey 锚点字段。",
+      tone: anchorDetected ? "success" : figmaEvidence ? "warning" : "neutral",
+      chips: anchorFieldNames.slice(0, 2),
+    },
+    {
+      id: "figma-compare",
+      label: "对比结果",
+      stateLabel: compareDetected ? (compareInvalid ? "无效" : "有效") : "待接入",
+      detail: compareDetected
+        ? compareInvalid
+          ? "对比里出现了 error / invalid / mismatch 标记，需要人工复核。"
+          : "已看到可复核的 compare / diff 结果，可以继续沿着这条结果判断。"
+        : "当前没有 compare / diff 结果事件；等后端接入后就能直接显示有效性。",
+      tone: compareDetected ? (compareInvalid ? "error" : "success") : "neutral",
+      chips: compareFieldNames.slice(0, 2),
+    },
+  ];
 }
 
 function formatTokenAmount(tokens: number) {
@@ -1111,6 +1240,10 @@ export function ActivityRail({
   const attachmentSummary = summarizeAttachments(
     model.contextSnapshot.latestAttachments.map((attachment) => attachment.name),
   );
+  const materialStatusItems = useMemo(
+    () => buildMaterialStatusItems(model, partialMessage),
+    [model, partialMessage],
+  );
 
   return (
     <>
@@ -1168,6 +1301,7 @@ export function ActivityRail({
           <div className="min-h-0 flex-1">
             <div className="h-full overflow-hidden border-t border-[#d0d7de] bg-white shadow-none">
               <AionWorkspacePreviewPane
+                key={`${session?.id ?? "no-session"}:${session?.cwd ?? "no-workspace"}`}
                 workspace={session?.cwd}
                 conversationId={session?.id}
                 messages={session?.messages}
@@ -1264,6 +1398,64 @@ export function ActivityRail({
                   收起详情抽屉
                 </button>
               )}
+            </div>
+          </section>
+
+          <section className="rounded-[28px] border border-black/5 bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(248,250,252,0.92))] p-4 shadow-[0_16px_32px_rgba(15,23,42,0.05)]">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] uppercase tracking-[0.22em] text-ink-400">Material State</p>
+                <h3 className="mt-1 text-sm font-semibold text-ink-900">资料状态</h3>
+                <p className="mt-1 text-[12px] leading-5 text-ink-500">
+                  先用会话消息、附件和工具调用做前端推导；Figma REST、节点锚点、对比结果的独立事件后端还没完全补齐。
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                <span className="rounded-full border border-black/5 bg-black/[0.03] px-2.5 py-1 text-[10px] font-medium text-ink-500">
+                  前端推导
+                </span>
+                <span className="rounded-full border border-dashed border-black/10 bg-white/80 px-2.5 py-1 text-[10px] font-medium text-ink-400">
+                  后端事件待接入
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-2 md:grid-cols-2">
+              {materialStatusItems.map((item) => (
+                <div
+                  key={item.id}
+                  className={`rounded-2xl border p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)] ${materialStatusShellClass(item.tone)}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${toneAccentClasses(item.tone)}`} />
+                        <div className="truncate text-[13px] font-semibold text-ink-900">{item.label}</div>
+                      </div>
+                      <p className="mt-1 text-[11px] leading-5 text-ink-500">{item.detail}</p>
+                    </div>
+                    <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-medium ${toneClasses(item.tone)}`}>
+                      {item.stateLabel}
+                    </span>
+                  </div>
+                  {item.chips.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {item.chips.map((chip) => (
+                        <span
+                          key={`${item.id}-${chip}`}
+                          className="rounded-full border border-black/5 bg-white/75 px-2 py-0.5 text-[10px] text-ink-500"
+                        >
+                          {chip}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-3 rounded-2xl border border-dashed border-black/10 bg-black/[0.02] px-3 py-2 text-[11px] leading-5 text-ink-500">
+              现在这层只是前端状态壳：它能读到现有附件、Figma 相关工具调用和 compare 证据，但没有独立的后端状态事件时只能做推导。
             </div>
           </section>
 

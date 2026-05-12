@@ -1651,6 +1651,7 @@ export function buildActivityRailModel(
   const taskToolUseMap = new Map<string, string>();
   const toolUseTaskMap = new Map<string, string>();
   const activeTaskNodes = new Map<string, ActivityTimelineItem>();
+  const seenInitRemoteSessionIds = new Set<string>();
 
   for (const message of session.messages) {
     if (message.type === "prompt_ledger") {
@@ -2021,11 +2022,16 @@ export function buildActivityRailModel(
 
     if (message.type === "system" && "subtype" in message) {
       const systemMessage = message as Record<string, unknown>;
+      const remoteSessionId = typeof systemMessage.session_id === "string" ? systemMessage.session_id : "";
       latestRemoteSessionId =
-        (typeof systemMessage.session_id === "string" ? systemMessage.session_id : undefined) ??
+        (remoteSessionId || undefined) ??
         latestRemoteSessionId;
 
       if (message.subtype === "init") {
+        const reusedRuntime = remoteSessionId.length > 0 && seenInitRemoteSessionIds.has(remoteSessionId);
+        if (remoteSessionId) {
+          seenInitRemoteSessionIds.add(remoteSessionId);
+        }
         const modelLabel =
           typeof systemMessage.model === "string" && systemMessage.model.length > 0
             ? systemMessage.model
@@ -2041,12 +2047,12 @@ export function buildActivityRailModel(
             layer: "流程",
             tone: "info",
             nodeKind: "lifecycle",
-            title: "初始化执行环境",
+            title: reusedRuntime ? "复用执行环境" : "初始化执行环境",
             detail: `模型：${modelLabel} · 权限：${String(systemMessage.permissionMode ?? systemMessage.permission_mode ?? "bypassPermissions")}`,
             round: Math.max(round, 1),
             sequence,
-            statusLabel: "已初始化",
-            chips: [],
+            statusLabel: reusedRuntime ? "已复用" : "已初始化",
+            chips: reusedRuntime ? ["同一 Session"] : [],
             attention: false,
             stageKind: "plan",
             metrics: createEmptyMetrics({

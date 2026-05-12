@@ -225,7 +225,13 @@ function extractSlashCommands(messages: StreamMessage[]): string[] | undefined {
 }
 
 function isTransientStreamEventMessage(message: StreamMessage): boolean {
-  return "type" in message && message.type === "stream_event";
+  return (
+    "type" in message &&
+    (
+      message.type === "stream_event" ||
+      (message.type === "system" && "subtype" in message && message.subtype === "status")
+    )
+  );
 }
 
 const MAX_RENDERER_HISTORY_MESSAGES = 600;

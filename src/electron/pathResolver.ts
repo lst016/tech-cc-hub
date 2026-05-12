@@ -7,6 +7,10 @@ export function getPreloadPath() {
     return resolveAppAssetPath(app.getAppPath(), "dist-electron/electron/preload.cjs")
 }
 
+export function getBrowserWorkbenchPreloadPath() {
+    return resolveAppAssetPath(app.getAppPath(), "dist-electron/electron/browser-workbench-preload.cjs")
+}
+
 export function getUIPath() {
     return path.join(app.getAppPath(), '/dist-react/index.html');
 }

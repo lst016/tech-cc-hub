@@ -3,11 +3,16 @@ import { readdirSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { basename, extname, join } from "path";
 
-import { createStoredUserPromptMessage, sanitizePromptAttachmentsForStorage } from "../shared/attachments.js";
+import {
+  createStoredUserPromptMessage,
+  estimateAttachmentPromptChars,
+  sanitizePromptAttachmentsForStorage,
+} from "../shared/attachments.js";
 import { buildPromptLedgerMessage, type PromptLedgerMessage, type PromptLedgerSource } from "../shared/prompt-ledger.js";
 import { createInitialSessionWorkflowState, parseWorkflowMarkdown } from "../shared/workflow-markdown.js";
 import { listBuiltinMcpServerInfos } from "../shared/builtin-mcp-registry.js";
 import { runClaude, type RunnerHandle } from "./libs/runner.js";
+import { buildRunnerReuseKey, canReuseRunner } from "./libs/runner-reuse.js";
 import { persistImageAttachmentReference, rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
 import { resolveAgentRuntimeContext } from "./libs/agent-resolver.js";
 import { getApiConfigForModel, getCurrentApiConfig, getModelConfig, resolveApiConfigForModel, supportsRemoteSessionResume } from "./libs/claude-settings.js";
@@ -19,7 +24,7 @@ import { buildSessionSlashCommands } from "./libs/slash-command-catalog.js";
 import { stripInlineBase64ImagesFromMessage } from "./libs/tool-output-sanitizer.js";
 import { buildSessionWorkflowCatalog } from "./libs/workflow-catalog.js";
 import { buildStatelessContinuationPayload } from "./stateless-continuation.js";
-import type { ClientEvent, PromptAttachment, ServerEvent, StreamMessage } from "./types.js";
+import type { ClientEvent, PromptAttachment, RuntimeOverrides, ServerEvent, StreamMessage } from "./types.js";
 import { isDev } from "./util.js";
 import Database from "better-sqlite3";
 import {
@@ -45,12 +50,14 @@ import {
 
 let sessions: SessionStore;
 const runnerHandles = new Map<string, RunnerHandle>();
+const warmRunnerCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const serverEventListeners = new Set<(event: ServerEvent) => void>();
 const channelReplyTargets = new Map<string, ChannelReplyTarget>();
 const channelLatestAssistantText = new Map<string, string>();
 const channelLastSentAssistantText = new Map<string, string>();
 // Temporarily disable the embedded Figma Agent OAuth bridge; Codex OAuth remains the supported path.
 const FIGMA_AGENT_OAUTH_BRIDGE_ENABLED = false;
+const WARM_RUNNER_IDLE_MS = 30 * 60 * 1000;
 const figmaAuthToolUses = new Map<string, "authenticate" | "complete_authentication">();
 const figmaAuthUrlsBySession = new Map<string, string>();
 let channelReplySender: ((target: ChannelReplyTarget, text: string) => Promise<void> | void) | null = null;
@@ -357,15 +364,16 @@ async function preparePromptAttachmentsForSession(attachments?: PromptAttachment
       size: storedReference?.size ?? attachment.size,
       runtimeData: undefined,
     };
+    const summaryText = attachment.summaryText ?? buildImageAssetSummary(displayAttachment);
     const agentAttachment: PromptAttachment = {
       ...displayAttachment,
       data: storedReference?.storageUri ?? attachment.storageUri ?? attachment.data,
       preview: undefined,
       runtimeData: undefined,
-      summaryText: attachment.summaryText ?? buildImageAssetSummary(displayAttachment),
+      summaryText,
     };
 
-    displayAttachments.push(displayAttachment);
+    displayAttachments.push({ ...displayAttachment, summaryText });
     agentAttachments.push(agentAttachment);
   }
 
@@ -422,11 +430,82 @@ function buildPromptLedgerForRun(options: {
     attachments: (options.attachments ?? []).map((attachment) => ({
       name: attachment.name,
       kind: attachment.kind,
-      chars: attachment.size ?? attachment.data.length,
+      chars: estimateAttachmentPromptChars(attachment),
     })),
     promptSources,
     memorySources,
     historyMessages: options.historyMessages ?? [],
+  });
+}
+
+function clearWarmRunnerCleanupTimer(sessionId: string): void {
+  const timer = warmRunnerCleanupTimers.get(sessionId);
+  if (!timer) {
+    return;
+  }
+  clearTimeout(timer);
+  warmRunnerCleanupTimers.delete(sessionId);
+}
+
+function rememberRunnerHandle(sessionId: string, handle: RunnerHandle, reuseKey: string): void {
+  clearWarmRunnerCleanupTimer(sessionId);
+  handle.reuseKey = reuseKey;
+  runnerHandles.set(sessionId, handle);
+}
+
+function getReusableRunnerHandle(sessionId: string, reuseKey: string): RunnerHandle | null {
+  const handle = runnerHandles.get(sessionId);
+  if (!handle || handle.isClosed() || !canReuseRunner(handle.reuseKey, reuseKey)) {
+    return null;
+  }
+
+  clearWarmRunnerCleanupTimer(sessionId);
+  return handle;
+}
+
+function closeRunnerHandle(sessionId: string): void {
+  clearWarmRunnerCleanupTimer(sessionId);
+  const handle = runnerHandles.get(sessionId);
+  if (handle) {
+    handle.abort();
+    runnerHandles.delete(sessionId);
+  }
+}
+
+function scheduleWarmRunnerCleanup(sessionId: string): void {
+  clearWarmRunnerCleanupTimer(sessionId);
+  const handle = runnerHandles.get(sessionId);
+  if (!handle || handle.isClosed()) {
+    return;
+  }
+
+  const timer = setTimeout(() => {
+    const latest = sessions.getSession(sessionId);
+    if (latest?.status === "running") {
+      return;
+    }
+    closeRunnerHandle(sessionId);
+  }, WARM_RUNNER_IDLE_MS);
+  timer.unref?.();
+  warmRunnerCleanupTimers.set(sessionId, timer);
+}
+
+function buildSessionRunnerReuseKey(options: {
+  session: { cwd?: string; runSurface?: "development" | "maintenance"; agentId?: string; allowedTools?: string };
+  model?: string;
+  runtime?: RuntimeOverrides;
+  prompt: string;
+  attachments?: PromptAttachment[];
+}): string {
+  return buildRunnerReuseKey({
+    cwd: options.session.cwd,
+    model: options.model,
+    allowedTools: options.session.allowedTools,
+    runSurface: options.session.runSurface,
+    agentId: options.session.agentId,
+    runtime: options.runtime,
+    prompt: options.prompt,
+    attachments: options.attachments,
   });
 }
 
@@ -448,6 +527,9 @@ function emit(event: ServerEvent) {
 
   if (nextEvent.type === "session.status") {
     sessions.updateSession(nextEvent.payload.sessionId, { status: nextEvent.payload.status });
+    if (nextEvent.payload.status === "running") {
+      clearWarmRunnerCleanupTimer(nextEvent.payload.sessionId);
+    }
   }
   if (nextEvent.type === "stream.message") {
     const normalizedMessage =
@@ -496,11 +578,12 @@ function emit(event: ServerEvent) {
 
   if (nextEvent.type === "session.status" && nextEvent.payload.status === "completed") {
     maybeSendChannelReply(nextEvent.payload.sessionId);
+    scheduleWarmRunnerCleanup(nextEvent.payload.sessionId);
   }
 
   // 清理 runner handle，避免 appendPrompt 将消息写入已完成的 runner 内部 dead array
-  if (nextEvent.type === "session.status" && (nextEvent.payload.status === "completed" || nextEvent.payload.status === "error")) {
-    runnerHandles.delete(nextEvent.payload.sessionId);
+  if (nextEvent.type === "session.status" && nextEvent.payload.status === "error") {
+    closeRunnerHandle(nextEvent.payload.sessionId);
   }
 
   broadcast(nextEvent);
@@ -811,6 +894,7 @@ export async function handleClientEvent(event: ClientEvent) {
   }
 
   if (event.type === "session.archive") {
+    closeRunnerHandle(event.payload.sessionId);
     const session = store.archiveSession(event.payload.sessionId);
     if (!session) {
       emit({ type: "session.deleted", payload: { sessionId: event.payload.sessionId } });
@@ -1058,13 +1142,22 @@ export async function handleClientEvent(event: ClientEvent) {
       payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: displayAttachments },
     });
 
+    const runnerRuntime = {
+      ...(event.payload.runtime ?? {}),
+      model: selectedModel,
+    };
+    const reuseKey = buildSessionRunnerReuseKey({
+      session,
+      model: selectedModel,
+      runtime: runnerRuntime,
+      prompt: event.payload.prompt,
+      attachments: agentAttachments,
+    });
+
     runClaude({
       prompt: event.payload.prompt,
       attachments: agentAttachments,
-      runtime: {
-        ...(event.payload.runtime ?? {}),
-        model: selectedModel,
-      },
+      runtime: runnerRuntime,
       session,
       resumeSessionId: session.claudeSessionId,
       onEvent: emit,
@@ -1073,7 +1166,7 @@ export async function handleClientEvent(event: ClientEvent) {
       },
     })
       .then((handle) => {
-        runnerHandles.set(session.id, handle);
+        rememberRunnerHandle(session.id, handle, reuseKey);
         store.setAbortController(session.id, undefined);
       })
       .catch((error) => {
@@ -1131,6 +1224,83 @@ export async function handleClientEvent(event: ClientEvent) {
     const canUseRemoteResume = (supportsResume || canUseFigmaOAuthCallbackResume) && !switchedModel;
     const modelConfig = config && selectedModel ? getModelConfig(config, selectedModel) : null;
     const { displayAttachments, agentAttachments: currentAgentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
+    const runnerRuntime = {
+      ...(event.payload.runtime ?? {}),
+      model: selectedModel,
+    };
+    const warmReuseKey = buildSessionRunnerReuseKey({
+      session,
+      model: selectedModel,
+      runtime: runnerRuntime,
+      prompt: event.payload.prompt,
+      attachments: currentAgentAttachments,
+    });
+    const reusableHandle = isFigmaOAuthCallback ? null : getReusableRunnerHandle(session.id, warmReuseKey);
+    if (reusableHandle) {
+      store.updateSession(session.id, {
+        status: "running",
+        title: nextTitle,
+        runSurface: event.payload.runtime?.runSurface ?? session.runSurface ?? "development",
+        agentId: event.payload.runtime?.agentId ?? session.agentId,
+        model: selectedModel,
+        lastPrompt: storagePrompt,
+      });
+      emit({
+        type: "session.status",
+        payload: {
+          sessionId: session.id,
+          status: "running",
+          title: nextTitle,
+          cwd: session.cwd,
+          model: selectedModel,
+          slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
+        },
+      });
+      emit({
+        type: "stream.message",
+        payload: {
+          sessionId: session.id,
+          message: buildPromptLedgerForRun({
+            phase: "continue",
+            prompt: storagePrompt,
+            attachments: currentAgentAttachments,
+            session,
+            historyMessages: [],
+            model: selectedModel,
+          }),
+        },
+      });
+      emit({
+        type: "stream.user_prompt",
+        payload: { sessionId: session.id, prompt: storagePrompt, attachments: displayAttachments },
+      });
+
+      try {
+        await reusableHandle.appendPrompt(event.payload.prompt, currentAgentAttachments);
+      } catch (error) {
+        closeRunnerHandle(session.id);
+        store.updateSession(session.id, { status: "error" });
+        emit({
+          type: "runner.error",
+          payload: { sessionId: session.id, message: `Warm runner append failed: ${String(error)}` },
+        });
+        emit({
+          type: "session.status",
+          payload: {
+            sessionId: session.id,
+            status: "error",
+            title: session.title,
+            cwd: session.cwd,
+            model: session.model,
+            error: String(error),
+          },
+        });
+      }
+      return;
+    }
+    if (runnerHandles.has(session.id)) {
+      closeRunnerHandle(session.id);
+    }
     const continuationPayload = canUseRemoteResume
       ? null
       : buildStatelessContinuationPayload(
@@ -1157,9 +1327,9 @@ export async function handleClientEvent(event: ClientEvent) {
       title: nextTitle,
       runSurface: event.payload.runtime?.runSurface ?? session.runSurface ?? "development",
       agentId: event.payload.runtime?.agentId ?? session.agentId,
-        model: selectedModel,
-        lastPrompt: storagePrompt,
-        continuationSummary: continuationPayload?.usedCompression ? continuationPayload.summaryText : undefined,
+      model: selectedModel,
+      lastPrompt: storagePrompt,
+      continuationSummary: continuationPayload?.usedCompression ? continuationPayload.summaryText : undefined,
       continuationSummaryMessageCount: continuationPayload?.usedCompression
         ? continuationPayload.summaryMessageCount
         : undefined,
@@ -1200,10 +1370,7 @@ export async function handleClientEvent(event: ClientEvent) {
     runClaude({
       prompt,
       attachments: attachmentsForRun,
-      runtime: {
-        ...(event.payload.runtime ?? {}),
-        model: selectedModel,
-      },
+      runtime: runnerRuntime,
       session,
       resumeSessionId,
       onEvent: emit,
@@ -1212,7 +1379,14 @@ export async function handleClientEvent(event: ClientEvent) {
       },
     })
       .then((handle) => {
-        runnerHandles.set(session.id, handle);
+        const coldReuseKey = buildSessionRunnerReuseKey({
+          session,
+          model: selectedModel,
+          runtime: runnerRuntime,
+          prompt,
+          attachments: attachmentsForRun,
+        });
+        rememberRunnerHandle(session.id, handle, coldReuseKey);
       })
       .catch((error) => {
         store.updateSession(session.id, { status: "error" });
@@ -1252,7 +1426,7 @@ export async function handleClientEvent(event: ClientEvent) {
     }
 
     const handle = runnerHandles.get(session.id);
-    if (!handle) {
+    if (!handle || handle.isClosed()) {
       emit({
         type: "runner.error",
         payload: { sessionId: session.id, message: "当前执行器还未就绪，稍后再插入补充指令。" },
@@ -1282,11 +1456,7 @@ export async function handleClientEvent(event: ClientEvent) {
     const session = store.getSession(event.payload.sessionId);
     if (!session) return;
 
-    const handle = runnerHandles.get(session.id);
-    if (handle) {
-      handle.abort();
-      runnerHandles.delete(session.id);
-    }
+    closeRunnerHandle(session.id);
 
     store.updateSession(session.id, { status: "idle" });
     emit({
@@ -1305,11 +1475,7 @@ export async function handleClientEvent(event: ClientEvent) {
 
   if (event.type === "session.delete") {
     const sessionId = event.payload.sessionId;
-    const handle = runnerHandles.get(sessionId);
-    if (handle) {
-      handle.abort();
-      runnerHandles.delete(sessionId);
-    }
+    closeRunnerHandle(sessionId);
 
     store.deleteSession(sessionId);
     emit({
@@ -1531,6 +1697,10 @@ export function cleanupAllSessions(): void {
     handle.abort();
   }
   runnerHandles.clear();
+  for (const [, timer] of warmRunnerCleanupTimers) {
+    clearTimeout(timer);
+  }
+  warmRunnerCleanupTimers.clear();
   taskExecutor?.stopPolling();
   taskExecutor = null;
   if (sessions) {

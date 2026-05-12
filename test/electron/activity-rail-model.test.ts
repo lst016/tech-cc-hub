@@ -162,6 +162,57 @@ test("buildActivityRailModel exposes prompt analysis from prompt ledger", () => 
   assert.ok(model.analysisCards.some((card) => card.id === "prompt-hotspot"));
 });
 
+test("buildActivityRailModel marks repeated init events as runner reuse", () => {
+  const model = buildActivityRailModel(
+    {
+      id: "session-runtime-reuse",
+      title: "Runtime reuse",
+      status: "completed",
+      messages: [
+        {
+          type: "user_prompt",
+          prompt: "第一轮",
+        },
+        {
+          type: "system",
+          subtype: "init",
+          uuid: "init-1",
+          session_id: "remote-reused",
+          model: "deepseek-v4-flash",
+          permissionMode: "bypassPermissions",
+        } as never,
+        {
+          type: "result",
+          subtype: "success",
+          uuid: "result-1",
+          session_id: "remote-reused",
+          duration_ms: 1000,
+          result: "done",
+        } as never,
+        {
+          type: "user_prompt",
+          prompt: "第二轮",
+        },
+        {
+          type: "system",
+          subtype: "init",
+          uuid: "init-2",
+          session_id: "remote-reused",
+          model: "deepseek-v4-flash",
+          permissionMode: "bypassPermissions",
+        } as never,
+      ],
+    },
+    [],
+    "",
+  );
+
+  const lifecycleItems = model.timeline.filter((item) => item.nodeKind === "lifecycle");
+  assert.equal(lifecycleItems.find((item) => item.round === 1)?.title, "初始化执行环境");
+  assert.equal(lifecycleItems.find((item) => item.round === 2)?.title, "复用执行环境");
+  assert.equal(model.timeline.find((item) => item.title === "复用执行环境")?.statusLabel, "已复用");
+});
+
 test("buildActivityRailModel exposes task-level steps and context distribution", () => {
   const model = buildActivityRailModel(
     {

@@ -1,4 +1,5 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+﻿import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type {
   PermissionResult,
   SDKAssistantMessage,
@@ -721,12 +722,10 @@ const CodeReferenceChip = ({ reference }: { reference: CodeReferencePromptSummar
   );
 };
 
-const AttachmentChip = ({ attachment }: { attachment: PromptAttachment }) => (
-  <div className="rounded-2xl border border-black/6 bg-[#eef2f8] px-3 py-2">
-    <div className="truncate text-xs font-semibold text-ink-800">{attachment.name}</div>
-    <div className="mt-1 text-[11px] text-muted">{attachment.kind === "image" ? "图片附件" : "文本附件"}</div>
-  </div>
-);
+const isSyntheticAttachmentPrompt = (text: string) => {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  return /^The user uploaded (?:an image|\d+ images?)\b/i.test(normalized);
+};
 
 const CollapsibleText = ({
   text,
@@ -915,7 +914,30 @@ const UserMessageCard = ({
   }, [message.prompt]);
   const hasVisiblePrompt = visiblePrompt.trim().length > 0;
   const hasAttachments = Boolean(message.attachments?.length);
+  const shouldHidePromptBubble = hasAttachments && isSyntheticAttachmentPrompt(visiblePrompt);
   const [lightboxImage, setLightboxImage] = useState<{ src: string; name: string } | null>(null);
+  useEffect(() => {
+    if (!lightboxImage) return;
+
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousDocumentOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    const preventScroll = (event: WheelEvent | TouchEvent) => {
+      event.preventDefault();
+    };
+
+    document.addEventListener("wheel", preventScroll, { capture: true, passive: false });
+    document.addEventListener("touchmove", preventScroll, { capture: true, passive: false });
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousDocumentOverflow;
+      document.removeEventListener("wheel", preventScroll, { capture: true });
+      document.removeEventListener("touchmove", preventScroll, { capture: true });
+    };
+  }, [lightboxImage]);
 
   return (
     <div className="group mt-5 flex flex-col items-end">
@@ -926,7 +948,7 @@ const UserMessageCard = ({
           onClick={() => appendMessageReferenceToComposer(visiblePrompt || message.prompt, "user", "用户消息", "message", message.capturedAt)}
         />
         <IconButton label="复制" onClick={() => void copyText(visiblePrompt || message.prompt)} />
-        {hasVisiblePrompt ? (
+        {hasVisiblePrompt && !shouldHidePromptBubble ? (
           <div className="max-w-[78%] rounded-[26px] rounded-tr-[8px] border border-accent/16 bg-[linear-gradient(180deg,rgba(253,244,241,0.98),rgba(255,255,255,0.96))] px-5 py-4 text-ink-800 shadow-[0_18px_34px_rgba(210,106,61,0.08)]">
             <CollapsibleText
               text={visiblePrompt}
@@ -962,16 +984,15 @@ const UserMessageCard = ({
       )}
       {message.attachments && message.attachments.length > 0 && (
         <div className="mt-3 grid w-full max-w-[78%] gap-3">
-          <div className="grid gap-2 sm:grid-cols-2">
-            {message.attachments.map((attachment) => (
-              <AttachmentChip key={attachment.id} attachment={attachment} />
-            ))}
-          </div>
           {message.attachments.map((attachment) => {
             if (attachment.kind === "image") {
               const imageSrc = resolveImageAttachmentSrc(attachment);
               return (
                 <div key={`${attachment.id}-preview`} className="overflow-hidden rounded-2xl border border-black/6 bg-[#eef2f8] p-2">
+                  <div className="mb-2 flex min-w-0 items-center gap-2 px-1">
+                    <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-accent">图片</span>
+                    <span className="min-w-0 flex-1 truncate text-xs font-semibold text-ink-800">{attachment.name}</span>
+                  </div>
                   <button type="button" className="block w-full" onClick={() => setLightboxImage({ src: imageSrc, name: attachment.name })}>
                     <img src={imageSrc} alt={attachment.name} className="max-h-64 w-full rounded-xl object-contain" />
                   </button>
@@ -982,7 +1003,10 @@ const UserMessageCard = ({
             return (
               <div key={`${attachment.id}-preview`} className="rounded-2xl border border-black/6 bg-[#eef2f8] p-3">
                 <div className="mb-2 flex items-center justify-between gap-2 text-xs font-semibold text-muted">
-                  <span>{attachment.name}</span>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-accent">文本</span>
+                    <span className="min-w-0 truncate">{attachment.name}</span>
+                  </div>
                   <button
                     type="button"
                     className="rounded-full border border-black/8 bg-white px-2 py-0.5 text-[11px] transition hover:text-accent"
@@ -999,14 +1023,35 @@ const UserMessageCard = ({
           })}
         </div>
       )}
-      {lightboxImage && (
-        <button
-          type="button"
-          className="fixed inset-0 z-[120] grid place-items-center bg-black/70 p-8"
+      {lightboxImage && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={lightboxImage.name}
+          className="fixed inset-0 z-[2147483647] flex h-dvh w-dvw items-center justify-center overflow-hidden bg-black/70 p-8"
           onClick={() => setLightboxImage(null)}
+          onWheel={(event) => event.preventDefault()}
+          onTouchMove={(event) => event.preventDefault()}
         >
-          <img src={lightboxImage.src} alt={lightboxImage.name} className="max-h-full max-w-full rounded-2xl bg-white object-contain shadow-2xl" />
-        </button>
+          {lightboxImage.src ? (
+            <div
+              className="flex h-[min(82vh,760px)] w-[min(88vw,1100px)] items-center justify-center overflow-hidden rounded-2xl bg-black/20"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <img
+                src={lightboxImage.src}
+                alt={lightboxImage.name}
+                className="block max-h-full max-w-full object-contain shadow-2xl"
+                draggable={false}
+              />
+            </div>
+          ) : (
+            <div className="rounded-2xl bg-white px-5 py-4 text-sm text-ink-700 shadow-2xl">
+              图片预览地址为空
+            </div>
+          )}
+        </div>,
+        document.body,
       )}
     </div>
   );
@@ -1135,38 +1180,6 @@ const buildToolGroupSummary = (contents: MessageContent[]): ToolGroupSummaryMode
     total,
     labels: Array.from(counts.entries()).map(([label, count]) => ({ label, count })),
   };
-};
-
-const ToolGroupSummary = ({ summary }: { summary: ToolGroupSummaryModel | null }) => {
-  const [expanded, setExpanded] = useState(false);
-  if (!summary) return null;
-  const shortLabel = summary.labels.map((item) => `${item.label} ${item.count}`).join(" · ");
-
-  return (
-    <div className="mt-4 overflow-hidden rounded-[20px] border border-black/6 bg-white/88 shadow-[0_10px_22px_rgba(30,38,52,0.035)]">
-      <button
-        type="button"
-        className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-ink-700"
-        onClick={() => setExpanded((value) => !value)}
-      >
-        <StatusDot variant="accent" />
-        <span className="font-semibold">工具摘要</span>
-        <span className="min-w-0 flex-1 truncate">本轮使用 {summary.total} 个工具：{shortLabel}</span>
-        <span className="rounded-full border border-black/8 bg-white px-2 py-0.5 text-[11px] font-semibold text-muted">
-          {expanded ? "收起" : "展开"}
-        </span>
-      </button>
-      {expanded && (
-        <div className="flex flex-wrap gap-2 border-t border-black/6 px-4 py-3">
-          {summary.labels.map((item) => (
-            <span key={item.label} className="rounded-full border border-accent/14 bg-accent/8 px-2.5 py-1 text-xs font-semibold text-accent">
-              {item.label} · {item.count}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 };
 
 const ToolUseCard = ({
@@ -1309,10 +1322,75 @@ const ToolUseCard = ({
   );
 };
 
+const ToolProcessGroup = ({
+  contents,
+  showIndicator = false,
+}: {
+  contents: Array<Extract<MessageContent, { type: "tool_use" }>>;
+  showIndicator?: boolean;
+}) => {
+  const [expanded, setExpanded] = useState(false);
+  if (contents.length === 0) return null;
+
+  const firstContent = contents[0]!;
+  const summary = buildToolGroupSummary(contents);
+  const shortLabel = summary
+    ? summary.labels.map((item) => `${item.label} ${item.count}`).join(" · ")
+    : `${getToolLabel(firstContent.name)} · ${getToolSummary(firstContent) || firstContent.name}`;
+
+  return (
+    <div className="mt-3 overflow-hidden rounded-[22px] border border-black/6 bg-white/72 shadow-[0_10px_22px_rgba(30,38,52,0.03)]">
+      <button
+        type="button"
+        className="flex w-full items-center gap-3 px-4 py-3 text-left"
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <StatusDot variant="accent" active={showIndicator && !expanded} />
+        <span className="shrink-0 rounded-lg bg-white px-2.5 py-1 text-sm font-semibold text-accent">过程明细</span>
+        <span className="min-w-0 flex-1 truncate text-sm text-muted">
+          {contents.length} 个工具调用 · {shortLabel}
+        </span>
+        <span className="rounded-full border border-black/8 bg-white px-2 py-0.5 text-[11px] font-semibold text-muted">
+          {expanded ? "收起" : "查看"}
+        </span>
+      </button>
+      {expanded && (
+        <div className="border-t border-black/6 px-3 pb-3">
+          {contents.map((content, index) => (
+            <ToolUseCard
+              key={content.id || index}
+              messageContent={content}
+              showIndicator={showIndicator && index === contents.length - 1}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const isToolResultContent = (content: ToolResultContent): content is Extract<ToolResultContent, { type: "tool_result" }> =>
+  typeof content !== "string" && content.type === "tool_result";
+
+const getToolResultStatus = (messageContent: Extract<ToolResultContent, { type: "tool_result" }>): ToolStatus =>
+  messageContent.is_error ? "error" : "success";
+
+const getToolResultDisplayContent = (messageContent: Extract<ToolResultContent, { type: "tool_result" }>): string => {
+  if (messageContent.is_error) {
+    return extractTagContent(String(messageContent.content), "tool_use_error") || String(messageContent.content);
+  }
+  if (Array.isArray(messageContent.content)) {
+    return messageContent.content
+      .map((item) => (typeof item === "string" ? item : "text" in item ? item.text ?? "" : ""))
+      .join("\n");
+  }
+  return String(messageContent.content);
+};
+
 const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) => {
-  const isToolResult = typeof messageContent !== "string" && messageContent.type === "tool_result";
+  const isToolResult = isToolResultContent(messageContent);
   const toolUseId = isToolResult ? messageContent.tool_use_id : undefined;
-  const status: ToolStatus = isToolResult && messageContent.is_error ? "error" : "success";
+  const status: ToolStatus = isToolResult ? getToolResultStatus(messageContent) : "success";
   const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
@@ -1323,17 +1401,7 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
 
   if (!isToolResult) return null;
 
-  const content = (() => {
-    if (messageContent.is_error) {
-      return extractTagContent(String(messageContent.content), "tool_use_error") || String(messageContent.content);
-    }
-    if (Array.isArray(messageContent.content)) {
-      return messageContent.content
-        .map((item) => (typeof item === "string" ? item : "text" in item ? item.text ?? "" : ""))
-        .join("\n");
-    }
-    return String(messageContent.content);
-  })();
+  const content = getToolResultDisplayContent(messageContent);
 
   const isError = Boolean(messageContent.is_error);
   const preview = compactPreview(content, 100);
@@ -1391,6 +1459,54 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
             referenceSourceRole="tool"
             referenceSourceLabel="工具输出"
           />
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ToolResultGroup = ({ contents }: { contents: ToolResultContent[] }) => {
+  const [expanded, setExpanded] = useState(false);
+  const toolResults = useMemo(() => contents.filter(isToolResultContent), [contents]);
+
+  useEffect(() => {
+    toolResults.forEach((content) => {
+      setToolStatus(content.tool_use_id, getToolResultStatus(content));
+    });
+  }, [toolResults]);
+
+  if (toolResults.length === 0) return null;
+
+  const hasError = toolResults.some((content) => content.is_error);
+  const preview = compactPreview(
+    toolResults.map((content) => getToolResultDisplayContent(content)).filter(Boolean).join("\n"),
+    100,
+  );
+
+  return (
+    <div className={cx(
+      "mt-3 overflow-hidden rounded-[22px] border px-4 py-3",
+      hasError ? "border-red-200 bg-red-50" : "border-black/6 bg-[#f4f7fb]",
+    )}>
+      <div className="flex items-center gap-2">
+        <StatusDot variant={hasError ? "error" : "success"} />
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">过程输出</span>
+        <span className="min-w-0 flex-1 truncate text-[11px] normal-case tracking-normal text-muted">
+          {toolResults.length} 条工具返回{hasError ? " · 有失败" : ""}{preview ? ` · ${preview}` : ""}
+        </span>
+        <button
+          type="button"
+          className="shrink-0 rounded-full border border-black/8 bg-white px-2 py-0.5 text-[11px] font-semibold text-muted transition hover:border-accent/30 hover:text-accent"
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? "收起" : "查看"}
+        </button>
+      </div>
+      {expanded && (
+        <div className="mt-3 border-t border-black/6 pt-1">
+          {toolResults.map((content, index) => (
+            <ToolResult key={`${content.tool_use_id ?? "tool-result"}-${index}`} messageContent={content} />
+          ))}
         </div>
       )}
     </div>
@@ -1546,12 +1662,18 @@ function MessageCardBase({
   }
 
   if (sdkMessage.type === "assistant") {
-    const toolGroupSummary = buildToolGroupSummary(sdkMessage.message.content as MessageContent[]);
+    const messageContents = sdkMessage.message.content as MessageContent[];
+    const processToolContents = messageContents.filter((content): content is Extract<MessageContent, { type: "tool_use" }> =>
+      content.type === "tool_use" && content.name !== "AskUserQuestion",
+    );
+    const firstProcessToolIndex = messageContents.findIndex((content) =>
+      content.type === "tool_use" && content.name !== "AskUserQuestion",
+    );
+
     return (
       <>
-        <ToolGroupSummary summary={toolGroupSummary} />
-        {sdkMessage.message.content.map((content: MessageContent, index: number) => {
-          const isLastContent = index === sdkMessage.message.content.length - 1;
+        {messageContents.map((content: MessageContent, index: number) => {
+          const isLastContent = index === messageContents.length - 1;
           if (content.type === "thinking") {
             return (
               <AssistantTextCard
@@ -1584,7 +1706,16 @@ function MessageCardBase({
                 />
               );
             }
-            return <ToolUseCard key={index} messageContent={content} showIndicator={isLastContent && showIndicator} />;
+            if (index !== firstProcessToolIndex) {
+              return null;
+            }
+            return (
+              <ToolProcessGroup
+                key="tool-process-group"
+                contents={processToolContents}
+                showIndicator={showIndicator}
+              />
+            );
           }
           return null;
         })}
@@ -1596,13 +1727,7 @@ function MessageCardBase({
     const contents = Array.isArray(sdkMessage.message.content)
       ? sdkMessage.message.content
       : [sdkMessage.message.content];
-    return (
-      <>
-        {contents.map((content: ToolResultContent, index: number) => (
-          <ToolResult key={index} messageContent={content} />
-        ))}
-      </>
-    );
+    return <ToolResultGroup contents={contents as ToolResultContent[]} />;
   }
 
   return null;

@@ -1,0 +1,39 @@
+{
+  "name": "pro-workflow",
+  "version": "3.3.0",
+  "description": "Complete AI coding workflow system. Self-correcting memory + persistent FTS5-indexed research wikis + auto-research loop + multi-LLM council on a single SQLite store. 33 skills, 8 agents, 22 commands, 37 hook scripts across 24 events. Cross-agent via SkillKit.",
+  "author": {
+    "name": "Rohit Ghumare",
+    "url": "https://github.com/rohitg00"
+  },
+  "homepage": "https://github.com/rohitg00/pro-workflow",
+  "repository": "https://github.com/rohitg00/pro-workflow",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "workflow",
+    "productivity",
+    "self-correction",
+    "knowledge-base",
+    "wiki",
+    "fts5",
+    "auto-research",
+    "llm-council",
+    "worktrees",
+    "hooks",
+    "agents",
+    "best-practices",
+    "sqlite"
+  ],
+  "skills": ["./skills/"],
+  "agents": [
+    "./agents/planner.md",
+    "./agents/reviewer.md",
+    "./agents/scout.md",
+    "./agents/orchestrator.md",
+    "./agents/debugger.md",
+    "./agents/context-engineer.md",
+    "./agents/permission-analyst.md",
+    "./agents/cost-analyst.md"
+  ]
+}

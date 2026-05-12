@@ -1,17 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 test("app shell avoids fixed-width caps for the chat surface and prompt dock", () => {
-  const appSource = readFileSync(new URL("../../src/ui/App.tsx", import.meta.url), "utf8");
-  const activityRailSource = readFileSync(new URL("../../src/ui/components/ActivityRail.tsx", import.meta.url), "utf8");
-  const promptInputSource = readFileSync(new URL("../../src/ui/components/PromptInput.tsx", import.meta.url), "utf8");
+  const appSource = readFileSync(join(process.cwd(), "src/ui/App.tsx"), "utf8");
+  const activityRailSource = readFileSync(join(process.cwd(), "src/ui/components/ActivityRail.tsx"), "utf8");
+  const promptInputSource = readFileSync(join(process.cwd(), "src/ui/components/PromptInput.tsx"), "utf8");
 
   assert.equal(appSource.includes("max-w-[920px]"), false);
-  assert.match(activityRailSource, /对应计划步骤/);
-  assert.match(activityRailSource, /标记/);
-  assert.match(activityRailSource, /备注/);
-  assert.match(activityRailSource, /AI 调优/);
+  assert.match(activityRailSource, /执行计划/);
+  assert.match(activityRailSource, /查看对应证据/);
+  assert.match(activityRailSource, /打开 Trace Viewer/);
   assert.equal(promptInputSource.includes("lg:max-w-[900px]"), false);
   assert.equal(promptInputSource.includes("max-h-[min(55vh,420px)]"), false);
   assert.match(promptInputSource, /max-h-\[min\(42vh,320px\)\]/);

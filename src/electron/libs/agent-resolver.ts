@@ -69,7 +69,7 @@ const BUILT_IN_SYSTEM_PROFILES: ResolvedAgentProfile[] = [
       "优先通过应用内受控能力完成工作，避免随意扩大修改范围。",
     ].join("\n"),
     skills: [],
-    allowedTools: ["Read", "Edit", "MultiEdit", "Write", "Bash", "Glob", "Search", "TodoWrite"],
+    allowedTools: ["Read", "Edit", "MultiEdit", "Write", "Bash", "Glob", "Search", "update_plan"],
     autoApply: true,
     runSurface: "maintenance",
     visibility: "internal",

@@ -25,6 +25,6 @@ test("normalizeRunnerError adds Figma reauthorization guidance for auth failures
     "claude-sonnet-4-5",
   );
 
-  assert.match(message, /Figma 授权可能已过期/);
-  assert.match(message, /重新授权/);
+  assert.match(message, /Figma OAuth 授权可能已过期/);
+  assert.match(message, /重新走 OAuth 授权/);
 });

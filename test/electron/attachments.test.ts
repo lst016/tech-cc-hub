@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createStoredUserPromptMessage, resolveImageAttachmentSrc } from "../../src/shared/attachments.js";
+import {
+  createStoredUserPromptMessage,
+  estimateAttachmentPromptChars,
+  resolveImageAttachmentSrc,
+} from "../../src/shared/attachments.js";
 
 test("createStoredUserPromptMessage preserves attachments for history replay", () => {
   const attachments = [
@@ -40,4 +44,19 @@ test("resolveImageAttachmentSrc converts raw base64 into a displayable data URL"
   });
 
   assert.equal(src, "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA");
+});
+
+test("estimateAttachmentPromptChars counts stored image summary instead of raw image bytes", () => {
+  const chars = estimateAttachmentPromptChars({
+    kind: "image",
+    name: "large-reference.png",
+    mimeType: "image/png",
+    data: "tech-cc-hub://prompt-attachments/session-id/image.png",
+    storageUri: "tech-cc-hub://prompt-attachments/session-id/image.png",
+    storagePath: "D:\\tmp\\image.png",
+    size: 4_800_000,
+    summaryText: "Local image asset; use design_inspect_image with the saved path.",
+  });
+
+  assert.ok(chars < 1_000);
 });

@@ -26,6 +26,31 @@ test("parses stdio and http external MCP servers", () => {
   assert.equal(infos.find((item) => item.name === "figma")?.url, "https://mcp.figma.com/mcp");
 });
 
+test("injects CLAUDE_PROJECT_DIR into stdio external MCP server env", () => {
+  const parsed = parseExternalMcpServers(
+    {
+      mcpServers: {
+        local: { type: "stdio", command: "local-mcp", env: { A: "1" } },
+        custom: { type: "stdio", command: "custom-mcp", env: { CLAUDE_PROJECT_DIR: "D:\\custom" } },
+        remote: { type: "http", url: "https://example.com/mcp" },
+      },
+    },
+    { projectDir: "D:\\workspace\\demo" },
+  );
+
+  assert.deepEqual(parsed.local, {
+    type: "stdio",
+    command: "local-mcp",
+    args: [],
+    env: { CLAUDE_PROJECT_DIR: "D:\\workspace\\demo", A: "1" },
+  });
+  assert.equal(parsed.custom?.type, "stdio");
+  if (parsed.custom?.type === "stdio") {
+    assert.equal(parsed.custom.env?.CLAUDE_PROJECT_DIR, "D:\\custom");
+  }
+  assert.deepEqual(parsed.remote, { type: "http", url: "https://example.com/mcp" });
+});
+
 test("skips disabled and invalid external MCP entries", () => {
   const config = {
     mcpServers: {

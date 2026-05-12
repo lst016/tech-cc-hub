@@ -1,5 +1,4 @@
-import { unstable_v2_prompt } from "@anthropic-ai/claude-agent-sdk";
-import type { SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import { getCurrentApiConfig, buildEnvForConfig, getClaudeCodeModelOption, getClaudeCodePath} from "./claude-settings.js";
 import { app } from "electron";
 
@@ -48,16 +47,19 @@ export const generateSessionTitle = async (userIntent: string | null, options: {
 
   try {
     const claudeCodeModelOption = getClaudeCodeModelOption(apiConfig, requestedModel);
-    const result: SDKResultMessage = await unstable_v2_prompt(
-      `please analynis the following user input to generate a short but clearly title to identify this conversation theme:
+    const result = await runSinglePromptQuery(
+      `please analyze the following user input to generate a short but clear title to identify this conversation theme:
       ${trimmedIntent}
       directly output the title, do not include any other content`, {
       ...(claudeCodeModelOption ? { model: claudeCodeModelOption } : {}),
+      maxTurns: 1,
+      tools: [],
+      settingSources: [],
       env: currentEnv,
       pathToClaudeCodeExecutable: claudeCodePath,
-    } as Parameters<typeof unstable_v2_prompt>[1]);
+    });
 
-    if (result.subtype === "success") {
+    if (result?.subtype === "success") {
       return result.result;
     }
 
@@ -80,3 +82,17 @@ export const generateSessionTitle = async (userIntent: string | null, options: {
     return "New Session";
   }
 };
+
+async function runSinglePromptQuery(
+  prompt: string,
+  options: NonNullable<Parameters<typeof query>[0]["options"]>,
+): Promise<SDKResultMessage | undefined> {
+  const q = query({ prompt, options });
+  let result: SDKResultMessage | undefined;
+  for await (const message of q) {
+    if (message.type === "result") {
+      result = message;
+    }
+  }
+  return result;
+}

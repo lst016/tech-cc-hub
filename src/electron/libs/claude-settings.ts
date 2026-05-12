@@ -207,6 +207,23 @@ export function resolveApiConfigForModel(modelName?: string): ResolvedApiConfigF
   };
 }
 
+export function resolveImagePreprocessApiConfig(selectedModel?: string): ApiConfig | null {
+  const selectedConfig = resolveApiConfigForModel(selectedModel)?.config ?? getCurrentApiConfig();
+  const imageModel = selectedConfig?.imageModel?.trim();
+  if (!imageModel) {
+    return selectedConfig;
+  }
+
+  const imageModelConfigs = getEnabledUsableApiConfigs().filter((config) => {
+    return config.imageModel?.trim() === imageModel
+      || config.models?.some((model) => model.name.trim() === imageModel);
+  });
+
+  return imageModelConfigs.find((config) => config.provider !== "codex")
+    ?? imageModelConfigs[0]
+    ?? selectedConfig;
+}
+
 function getFallbackClaudeSettingsConfig(): ApiConfig | null {
   // 回退到 ~/.claude/settings.json
   try {

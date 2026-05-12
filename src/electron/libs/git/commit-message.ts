@@ -16,7 +16,7 @@ export async function generateCommitMessageSuggestion(input: {
 }): Promise<GitCommitMessageSuggestion> {
   const fallback = buildFallbackCommitSuggestion(input.files);
   const [
-    { unstable_v2_prompt },
+    { query },
     { buildEnvForConfig, getClaudeCodeModelOption, getClaudeCodePath, getCurrentApiConfig },
   ] = await Promise.all([
     import("@anthropic-ai/claude-agent-sdk"),
@@ -37,19 +37,20 @@ export async function generateCommitMessageSuggestion(input: {
     const claudeCodeModelOption = getClaudeCodeModelOption(apiConfig, requestedModel);
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort(), AI_COMMIT_MESSAGE_TIMEOUT_MS);
-    const result: SDKResultMessage = await unstable_v2_prompt(prompt, {
+    const result = await runSinglePromptQuery(query, prompt, {
       ...(claudeCodeModelOption ? { model: claudeCodeModelOption } : {}),
       abortController,
       maxTurns: 1,
       tools: [],
+      settingSources: [],
       env: {
         ...process.env,
         ...buildEnvForConfig(apiConfig, requestedModel),
       },
       pathToClaudeCodeExecutable: getClaudeCodePath(),
-    } as Parameters<typeof unstable_v2_prompt>[1]).finally(() => clearTimeout(timeout));
+    }).finally(() => clearTimeout(timeout));
 
-    if (result.subtype !== "success") {
+    if (result?.subtype !== "success") {
       return fallback;
     }
 
@@ -58,6 +59,21 @@ export async function generateCommitMessageSuggestion(input: {
     console.warn("[git] failed to generate commit message, using fallback:", error);
     return fallback;
   }
+}
+
+async function runSinglePromptQuery(
+  query: typeof import("@anthropic-ai/claude-agent-sdk").query,
+  prompt: string,
+  options: NonNullable<Parameters<typeof query>[0]["options"]>,
+): Promise<SDKResultMessage | undefined> {
+  const q = query({ prompt, options });
+  let result: SDKResultMessage | undefined;
+  for await (const message of q) {
+    if (message.type === "result") {
+      result = message;
+    }
+  }
+  return result;
 }
 
 export function generateFallbackCommitMessageSuggestion(files: GitChangedFile[]): GitCommitMessageSuggestion {

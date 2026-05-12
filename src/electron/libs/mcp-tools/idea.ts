@@ -3,7 +3,6 @@ import {
   tool,
   type McpSdkServerConfigWithInstance,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import {
@@ -13,6 +12,7 @@ import {
   selectBestIdeaInstallation,
   waitForIdeaReady,
 } from "../idea-launcher.js";
+import { toTextToolResult } from "./tool-result.js";
 
 export const IDEA_TOOL_NAMES = [
   "idea_status",
@@ -25,13 +25,6 @@ const IDEA_TOOLS_SERVER_NAME = "tech-cc-hub-idea";
 const IDEA_MCP_SERVER_VERSION = "1.0.0";
 
 let ideaMcpServer: McpSdkServerConfigWithInstance | null = null;
-
-function toTextToolResult(payload: unknown, isError = false): CallToolResult {
-  return {
-    isError,
-    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-  };
-}
 
 const EDITION_SCHEMA = z.enum(["any", "ultimate", "community"]);
 

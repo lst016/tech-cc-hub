@@ -19,8 +19,17 @@ const DEV_SHIM_MARKER = "__techCCHubDevShim";
 
 export type DevElectronRuntimeSource = "bridge" | "fallback" | "electron";
 
-async function invokePreviewFs<T>(endpoint: "list" | "files" | "read", payload: { cwd: string; path?: string; limit?: number }): Promise<T> {
+async function invokePreviewFs<T>(endpoint: "list" | "files" | "read" | "write", payload: { cwd: string; path?: string; limit?: number; data?: string }): Promise<T> {
   const url = new URL(`/__tech_preview/${endpoint}`, window.location.origin);
+  if (endpoint === "write") {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      cache: "no-store",
+    });
+    return await response.json() as T;
+  }
   url.searchParams.set("cwd", payload.cwd);
   if (payload.path) {
     url.searchParams.set("path", payload.path);
@@ -325,7 +334,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     listPreviewFiles: async (payload) => await invokePreviewFs("files", payload),
     getPreviewImageBase64: async (payload) => await invokePreviewFs("read", payload),
     getPreviewFileMetadata: async () => null,
-    writePreviewFile: unsupportedPreviewMutation,
+    writePreviewFile: async (payload) => await invokePreviewFs("write", payload),
     removePreviewEntry: unsupportedPreviewMutation,
     renamePreviewEntry: unsupportedPreviewMutation,
     openPreviewFile: async () => ({ success: false, error: "浏览器预览态暂不支持用系统应用打开文件。" }),
@@ -488,7 +497,7 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       listPreviewFiles: async (payload) => await invokePreviewFs("files", payload),
       getPreviewImageBase64: async (payload) => await invokePreviewFs("read", payload),
       getPreviewFileMetadata: async () => null,
-      writePreviewFile: unsupportedPreviewMutation,
+      writePreviewFile: async (payload) => await invokePreviewFs("write", payload),
       removePreviewEntry: unsupportedPreviewMutation,
       renamePreviewEntry: unsupportedPreviewMutation,
       openPreviewFile: async () => ({ success: false, error: "浏览器预览态暂不支持用系统应用打开文件。" }),

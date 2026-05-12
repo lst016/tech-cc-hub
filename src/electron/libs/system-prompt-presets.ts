@@ -1,5 +1,9 @@
 import type { PromptLedgerSource } from "../../shared/prompt-ledger.js";
-import { buildBuiltinMcpPromptHints } from "../../shared/builtin-mcp-registry.js";
+import {
+  buildBuiltinMcpPromptHints,
+  type BuiltinMcpServerName,
+} from "../../shared/builtin-mcp-registry.js";
+import { buildClaudeCodeCompatPromptAppend } from "./claude-code-compat-registry.js";
 
 export function buildBrowserWorkbenchPromptAppend(): string {
   return [
@@ -20,6 +24,8 @@ export function buildToolCallOptimizationPromptAppend(): string {
   return [
     "Tool-call budget: use tools only when the answer, code change, or verification depends on current external state; do not call tools for direct answers or obvious reasoning.",
     "Before the first tool call, group the needed evidence: if 2+ read-only searches, file reads, status checks, or log reads are independent, run them in one parallel/batched turn when the current tool surface supports it.",
+    "Use the built-in `Task` tool for parallel investigation only when the work splits into 2+ independent code paths, modules, logs, or requirement sources. Give each Task one clear question, scope boundary, and expected output, then integrate the findings in the parent turn.",
+    "Do not use `Task` for a single file read, a tightly dependent investigation chain, or an immediate blocker whose result is needed before the next local step; handle those directly in the parent turn.",
     "Known concrete files: read only the relevant ranges and batch those reads. Unknown target: run one bounded rg/find/Grep/Glob search to narrow to files and line numbers, then read only the best hits.",
     "Avoid fragmented chains such as ls -> cat -> grep -> cat when one rg/find search or one read-only batch can answer it.",
     "Default file reads should stay under 200 lines. After edits, verify only the changed ranges or decisive output; do not full-read a file just to confirm a small change.",
@@ -67,8 +73,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function buildBuiltinMcpRegistryPromptAppend(): string {
-  return buildBuiltinMcpPromptHints();
+export function buildBuiltinMcpRegistryPromptAppend(enabledServerNames?: readonly BuiltinMcpServerName[]): string {
+  return buildBuiltinMcpPromptHints(enabledServerNames);
+}
+
+export function buildClaudeCode2139FeaturePromptAppend(): string {
+  return buildClaudeCodeCompatPromptAppend();
 }
 
 export function buildDesignParityPromptAppend(): string {
@@ -113,6 +123,12 @@ export function buildTechCCHubSystemPromptSources(): PromptLedgerSource[] {
       label: "tech-cc-hub built-in MCP registry preset",
       sourceKind: "system",
       text: buildBuiltinMcpRegistryPromptAppend(),
+    },
+    {
+      id: "tech-cc-hub-claude-code-2139-preset",
+      label: "tech-cc-hub Claude Code 2.1.139 compatibility preset",
+      sourceKind: "system",
+      text: buildClaudeCode2139FeaturePromptAppend(),
     },
   ];
 }

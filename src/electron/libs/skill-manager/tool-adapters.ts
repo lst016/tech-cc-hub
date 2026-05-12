@@ -95,7 +95,6 @@ export function additionalExistingScanDirs(adapter: ToolAdapter): string[] {
 
 export function defaultToolAdapters(): ToolAdapter[] {
   return [
-    { key: "cursor", display_name: "Cursor", relative_skills_dir: ".cursor/skills", relative_detect_dir: ".cursor", additional_scan_dirs: [], override_skills_dir: null, is_custom: false, recursive_scan: false },
     { key: "claude_code", display_name: "Claude Code", relative_skills_dir: ".claude/skills", relative_detect_dir: ".claude", additional_scan_dirs: [], override_skills_dir: null, is_custom: false, recursive_scan: false },
     { key: "codex", display_name: "Codex", relative_skills_dir: ".codex/skills", relative_detect_dir: ".codex", additional_scan_dirs: [], override_skills_dir: null, is_custom: false, recursive_scan: false },
     { key: "opencode", display_name: "OpenCode", relative_skills_dir: ".config/opencode/skills", relative_detect_dir: ".config/opencode", additional_scan_dirs: [], override_skills_dir: null, is_custom: false, recursive_scan: false },

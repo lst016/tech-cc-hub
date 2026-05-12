@@ -1,11 +1,10 @@
-﻿// 浏览器工作台 MCP 工具：把右侧 BrowserView 的导航、截图、DOM 查询能力暴露给 Agent。
+// 浏览器工作台 MCP 工具：把右侧 BrowserView 的导航、截图、DOM 查询能力暴露给 Agent。
 // 这里不直接依赖 UI 组件，只通过 BrowserWorkbenchToolHost 访问主进程维护的 BrowserView。
 import {
   createSdkMcpServer,
   tool,
   type McpSdkServerConfigWithInstance,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { execFile } from "node:child_process";
 import { z } from "zod";
 
@@ -38,6 +37,7 @@ import type {
   BrowserWorkbenchWaitResult,
   BrowserWorkbenchEvalResult,
 } from "../../browser-manager.js";
+import { toTextToolResult } from "./tool-result.js";
 
 export const BROWSER_TOOL_NAMES = [
   "http_ping",
@@ -196,13 +196,6 @@ function getHost(): BrowserWorkbenchToolHost {
     throw new Error("浏览器工作台尚未初始化，无法执行浏览器工具。");
   }
   return browserHost;
-}
-
-function toTextToolResult(payload: unknown, isError = false): CallToolResult {
-  return {
-    isError,
-    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-  };
 }
 
 type JsonRecord = Record<string, unknown>;

@@ -89,7 +89,13 @@ export type SessionHistoryPage = SessionHistory & {
 };
 
 function isTransientStreamEventMessage(message: StreamMessage): boolean {
-  return "type" in message && message.type === "stream_event";
+  return (
+    "type" in message &&
+    (
+      message.type === "stream_event" ||
+      (message.type === "system" && "subtype" in message && message.subtype === "status")
+    )
+  );
 }
 
 function parseStoredMessage(row: { id: string; data: string; created_at: number }): StreamMessage {

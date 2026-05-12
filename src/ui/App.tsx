@@ -15,7 +15,7 @@ import { UpdateToast } from "./components/UpdateToast";
 import { PromptInput, usePromptActions } from "./components/PromptInput";
 import { MessageCard } from "./components/EventCard";
 import { ActivityRail } from "./components/ActivityRail";
-import { SessionAnalysisPage } from "./components/SessionAnalysisPage";
+import { SessionAnalysisPage, buildSessionWorkflowOptimizationPrompt } from "./components/SessionAnalysisPage";
 import { BrowserWorkbenchPage } from "./components/BrowserWorkbenchPage";
 import MDContent from "./render/markdown";
 import ScheduledTasksPage from "./components/cron/ScheduledTasksPage";
@@ -39,6 +39,246 @@ const MIN_ACTIVITY_RAIL_WIDTH = 400;
 const EMPTY_MESSAGES: StreamMessage[] = [];
 const EMPTY_PERMISSION_REQUESTS: NonNullable<ReturnType<typeof useAppStore.getState>["sessions"][string]["permissionRequests"]> = [];
 type GlobalRuntimeConfig = Record<string, unknown>;
+
+type RenderEntry =
+  | { type: "separator"; key: string; roundNumber: number }
+  | { type: "message"; key: string; originalIndex: number; message: StreamMessage }
+  | { type: "process_group"; key: string; originalIndex: number; messages: Array<{ originalIndex: number; message: StreamMessage }> };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getMessageContentItems(message: StreamMessage): unknown[] {
+  const envelope = message as { message?: unknown };
+  if (!isRecord(envelope.message)) return [];
+  const content = envelope.message.content;
+  return Array.isArray(content) ? content : content ? [content] : [];
+}
+
+function isProcessMessage(message: StreamMessage): boolean {
+  if (!isRecord(message)) return false;
+  const contentItems = getMessageContentItems(message);
+  if (contentItems.length === 0) return false;
+
+  if (message.type === "assistant") {
+    return contentItems.every((item) => (
+      isRecord(item) &&
+      item.type === "tool_use" &&
+      item.name !== "AskUserQuestion"
+    ));
+  }
+
+  if (message.type === "user") {
+    return contentItems.every((item) => isRecord(item) && item.type === "tool_result");
+  }
+
+  return false;
+}
+
+function getProcessGroupSummary(groupMessages: Array<{ message: StreamMessage }>): string {
+  let toolUseCount = 0;
+  let toolResultCount = 0;
+  const toolLabels = new Map<string, number>();
+
+  for (const item of groupMessages) {
+    for (const content of getMessageContentItems(item.message)) {
+      if (!isRecord(content)) continue;
+      if (content.type === "tool_use") {
+        toolUseCount += 1;
+        const name = typeof content.name === "string" ? content.name : "tool";
+        toolLabels.set(name, (toolLabels.get(name) ?? 0) + 1);
+      }
+      if (content.type === "tool_result") {
+        toolResultCount += 1;
+      }
+    }
+  }
+
+  const labelPreview = Array.from(toolLabels.entries())
+    .slice(0, 4)
+    .map(([name, count]) => `${name} ${count}`)
+    .join(" · ");
+  const parts = [
+    toolUseCount ? `${toolUseCount} 个工具调用` : "",
+    toolResultCount ? `${toolResultCount} 条工具返回` : "",
+    labelPreview,
+  ].filter(Boolean);
+  return parts.join(" · ") || `${groupMessages.length} 条过程事件`;
+}
+
+function ProcessGroupCard({
+  messages,
+}: {
+  messages: Array<{ originalIndex: number; message: StreamMessage }>;
+  isLast: boolean;
+  isRunning: boolean;
+  permissionRequest: NonNullable<ReturnType<typeof useAppStore.getState>["sessions"][string]["permissionRequests"]>[number] | undefined;
+  onPermissionResult: (requestId: string, result: PermissionResult) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const summary = useMemo(() => getProcessGroupSummary(messages), [messages]);
+
+  return (
+    <div className="my-0.5">
+      <button
+        type="button"
+        className="flex max-w-full items-center gap-1 px-0.5 py-0 text-left text-[11px] leading-5 text-muted/62 transition hover:text-muted"
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <svg
+          className={`h-2.5 w-2.5 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="m9 6 6 6-6 6" />
+        </svg>
+        <span className="shrink-0">过程</span>
+        <span className="min-w-0 truncate">
+          {messages.length} 条 · {summary}
+        </span>
+      </button>
+      {expanded && (
+        <div className="ml-3 border-l border-black/5 pl-2">
+          {messages.map((entry, index) => (
+            <CompactProcessRow
+              key={`${entry.originalIndex}-${index}`}
+              entry={entry}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CompactProcessRow({
+  entry,
+}: {
+  entry: { originalIndex: number; message: StreamMessage };
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const label = getProcessEntryLabel(entry.message);
+  const summary = getProcessGroupSummary([entry]);
+
+  return (
+    <div id={`chat-message-${entry.originalIndex}`}>
+      <button
+        type="button"
+        className="flex max-w-full items-center gap-1.5 py-0.5 text-left text-[11px] leading-5 text-muted/58 transition hover:text-muted"
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <svg
+          className={`h-2 w-2 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="m9 6 6 6-6 6" />
+        </svg>
+        <span className="h-1 w-1 shrink-0 rounded-full bg-muted/35" />
+        <span className="shrink-0 text-muted/70">{label}</span>
+        <span className="min-w-0 truncate">{summary}</span>
+      </button>
+      {expanded && (
+        <CompactProcessDetails message={entry.message} />
+      )}
+    </div>
+  );
+}
+
+function CompactProcessDetails({
+  message,
+}: {
+  message: StreamMessage;
+}) {
+  const detail = getProcessEntryDetail(message);
+
+  return (
+    <pre className="ml-4 mb-1 max-h-64 overflow-auto rounded-lg border border-black/5 bg-black/[0.025] px-2.5 py-2 text-[11px] leading-5 text-muted/80 [white-space:pre-wrap] [word-break:break-word]">
+      {detail}
+    </pre>
+  );
+}
+
+function getProcessEntryLabel(message: StreamMessage): string {
+  if (message.type === "user") {
+    return "过程输出";
+  }
+  return "过程";
+}
+
+function getProcessEntryDetail(message: StreamMessage): string {
+  if (message.type === "assistant") {
+    const content = (message as { message?: { content?: unknown[] } }).message?.content;
+    if (!Array.isArray(content) || content.length === 0) {
+      return "无过程详情";
+    }
+
+    return content.map((item) => {
+      if (!isProcessDetailRecord(item)) {
+        return formatProcessDetailValue(item);
+      }
+
+      if (item.type === "tool_use") {
+        const name = typeof item.name === "string" ? item.name : "tool";
+        return [
+          `工具调用：${name}`,
+          formatProcessDetailValue(item.input),
+        ].filter(Boolean).join("\n");
+      }
+
+      return formatProcessDetailValue(item);
+    }).join("\n\n");
+  }
+
+  if (message.type === "user") {
+    const content = (message as { message?: { content?: unknown[] } }).message?.content;
+    if (!Array.isArray(content) || content.length === 0) {
+      return "无过程输出";
+    }
+
+    return content.map((item) => {
+      if (!isProcessDetailRecord(item)) {
+        return formatProcessDetailValue(item);
+      }
+
+      if (item.type === "tool_result") {
+        return [
+          "工具返回：",
+          formatProcessDetailValue(item.content ?? item),
+        ].join("\n");
+      }
+
+      return formatProcessDetailValue(item);
+    }).join("\n\n");
+  }
+
+  return formatProcessDetailValue(message);
+}
+
+function formatProcessDetailValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value.trim() || "(empty)";
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function isProcessDetailRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 type StreamEventPayload = {
   type?: string;
@@ -374,16 +614,28 @@ function App() {
   });
 
   const renderEntries = useMemo(() => {
-    const entries: Array<
-      | { type: "separator"; key: string; roundNumber: number }
-      | { type: "message"; key: string; originalIndex: number; message: StreamMessage }
-    > = [];
+    const entries: RenderEntry[] = [];
+    let pendingProcessGroup: Array<{ originalIndex: number; message: StreamMessage }> = [];
     let roundNumber = messages
       .slice(0, displayMessages[0]?.originalIndex ?? 0)
       .filter((message) => message.type === "user_prompt").length;
 
+    const flushProcessGroup = () => {
+      if (pendingProcessGroup.length === 0) return;
+      const first = pendingProcessGroup[0]!;
+      const last = pendingProcessGroup[pendingProcessGroup.length - 1]!;
+      entries.push({
+        type: "process_group",
+        key: `${activeSessionId}-process-${first.originalIndex}-${last.originalIndex}`,
+        originalIndex: first.originalIndex,
+        messages: pendingProcessGroup,
+      });
+      pendingProcessGroup = [];
+    };
+
     for (const item of displayMessages) {
       if (item.message.type === "user_prompt") {
+        flushProcessGroup();
         roundNumber += 1;
         entries.push({
           type: "separator",
@@ -392,6 +644,15 @@ function App() {
         });
       }
 
+      if (isProcessMessage(item.message)) {
+        pendingProcessGroup.push({
+          originalIndex: item.originalIndex,
+          message: item.message,
+        });
+        continue;
+      }
+
+      flushProcessGroup();
       entries.push({
         type: "message",
         key: `${activeSessionId}-msg-${item.originalIndex}`,
@@ -400,6 +661,7 @@ function App() {
       });
     }
 
+    flushProcessGroup();
     return entries;
   }, [activeSessionId, displayMessages, messages]);
 
@@ -896,7 +1158,7 @@ function App() {
         title,
         prompt: trimmedPrompt,
         cwd: systemWorkspace,
-        allowedTools: options?.allowedTools ?? "Read,Edit,MultiEdit,Write,Bash,Glob,Search,TodoWrite",
+        allowedTools: options?.allowedTools ?? "Read,Edit,MultiEdit,Write,Bash,Glob,Search,update_plan",
         runtime: {
           runSurface: "maintenance",
           agentId: options?.agentId ?? "system-maintenance",
@@ -968,6 +1230,15 @@ function App() {
     sendEvent,
     setGlobalError,
   ]);
+  const headerWorkflowOptimizationPrompt = useMemo(
+    () => buildSessionWorkflowOptimizationPrompt(activeSession, partialMessage),
+    [activeSession, partialMessage],
+  );
+  const headerWorkflowOptimizationDisabled =
+    !activeSessionId || activeSession?.status === "running" || !headerWorkflowOptimizationPrompt.trim();
+  const handleHeaderWorkflowOptimization = useCallback(() => {
+    sendWorkflowOptimizationPrompt(headerWorkflowOptimizationPrompt);
+  }, [headerWorkflowOptimizationPrompt, sendWorkflowOptimizationPrompt]);
 
   const gitWorkspaceActive =
     !showSessionAnalysis &&
@@ -1153,6 +1424,23 @@ function App() {
               <span>{runtimeMeta.label}</span>
             </TooltipButton>
           )}
+          <TooltipButton
+            type="button"
+            tooltip={
+              activeSession?.status === "running"
+                ? "当前会话仍在执行中，结束后再发送工作流优化任务"
+                : "发送当前会话的工作流优化词给 AI"
+            }
+            onClick={handleHeaderWorkflowOptimization}
+            disabled={headerWorkflowOptimizationDisabled}
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+            className="inline-flex h-7 items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 text-[11px] font-semibold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            AI 优化工作流
+          </TooltipButton>
           <TooltipButton
             type="button"
             tooltip={currentSessionId ? `复制当前会话 ID：${currentSessionId}` : "暂无会话 ID"}
@@ -1343,6 +1631,20 @@ function App() {
                       }
 
                       const isLastMessage = idx === renderEntries.length - 1;
+                      if (entry.type === "process_group") {
+                        return (
+                          <div key={entry.key} id={`chat-message-${entry.originalIndex}`}>
+                            <ProcessGroupCard
+                              messages={entry.messages}
+                              isLast={isLastMessage}
+                              isRunning={isRunning}
+                              permissionRequest={permissionRequests[0]?.toolName === "AskUserQuestion" ? undefined : permissionRequests[0]}
+                              onPermissionResult={handlePermissionResult}
+                            />
+                          </div>
+                        );
+                      }
+
                       return (
                         <div key={entry.key} id={`chat-message-${entry.originalIndex}`}>
                           <MessageCard

@@ -566,6 +566,8 @@ function PreviewSurface({
   openTabs,
   activeTabPath,
   onSwitchTab,
+  onUpdateFileContent,
+  onSaveFile,
   onCloseTab,
   onCloseOtherTabs,
   onCloseTabsToRight,
@@ -576,6 +578,8 @@ function PreviewSurface({
   openTabs: ActivePreviewFile[];
   activeTabPath: string | null;
   onSwitchTab: (path: string) => void;
+  onUpdateFileContent: (path: string, content: string) => void;
+  onSaveFile: (file: ActivePreviewFile, content: string) => Promise<void>;
   onCloseTab: (path: string) => void;
   onCloseOtherTabs: (path: string) => void;
   onCloseTabsToRight: (path: string) => void;
@@ -593,6 +597,7 @@ function PreviewSurface({
   const [selectionInfo, setSelectionInfo] = useState<CodeSelectionInfo | null>(null);
   const [commentOpen, setCommentOpen] = useState(false);
   const [commentText, setCommentText] = useState('');
+  const [saveStatus, setSaveStatus] = useState<{ path: string; state: 'saving' | 'saved' | 'error'; message?: string } | null>(null);
 
   const fileReferences = useMemo(() => {
     if (!file) return [];
@@ -742,7 +747,9 @@ function PreviewSurface({
   }, [updateReferenceDecorations]);
 
   useEffect(() => {
-    return () => selectionListenerRef.current?.dispose();
+    return () => {
+      selectionListenerRef.current?.dispose();
+    };
   }, []);
 
   const revealLine = useCallback(() => {
@@ -801,6 +808,40 @@ function PreviewSurface({
     window.addEventListener(PROMPT_SENT_EVENT, clearSelectionOverlay);
     return () => window.removeEventListener(PROMPT_SENT_EVENT, clearSelectionOverlay);
   }, [clearSelectionOverlay]);
+
+  const saveCurrentFile = useCallback(async () => {
+    if (!file || file.loading || file.error || file.contentType !== 'code') return;
+    const content = editorRef.current?.getValue() ?? file.content;
+    setSaveStatus({ path: file.path, state: 'saving' });
+    try {
+      await onSaveFile(file, content);
+      setSaveStatus({ path: file.path, state: 'saved' });
+      window.setTimeout(() => {
+        setSaveStatus((current) => (
+          current?.path === file.path && current.state === 'saved' ? null : current
+        ));
+      }, 1400);
+    } catch (error) {
+      setSaveStatus({
+        path: file.path,
+        state: 'error',
+        message: error instanceof Error ? error.message : 'Save failed.',
+      });
+    }
+  }, [file, onSaveFile]);
+
+  useEffect(() => {
+    const handleSaveShortcut = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 's' || event.altKey || event.shiftKey || (!event.ctrlKey && !event.metaKey)) return;
+      if (!file || file.contentType !== 'code') return;
+      event.preventDefault();
+      event.stopPropagation();
+      void saveCurrentFile();
+    };
+
+    window.addEventListener('keydown', handleSaveShortcut, { capture: true });
+    return () => window.removeEventListener('keydown', handleSaveShortcut, { capture: true });
+  }, [file, saveCurrentFile]);
 
   const calculateSelectionPosition = useCallback((editor: monaco.editor.IStandaloneCodeEditor, selection: monaco.Selection) => {
     const layout = editor.getLayoutInfo();
@@ -929,6 +970,11 @@ function PreviewSurface({
           <span className="vscode-preview__dot" />
           <span className="vscode-preview__name">{file.fileName}</span>
           <span className="vscode-preview__language">{file.contentType === 'code' ? monacoLanguage : file.contentType}</span>
+          {saveStatus?.path === file.path && (
+            <span className="vscode-preview__selection-pill" title={saveStatus.message}>
+              {saveStatus.state === 'saving' ? 'Saving...' : saveStatus.state === 'saved' ? 'Saved' : 'Save failed'}
+            </span>
+          )}
           {fileReferences.length > 0 && <span className="vscode-preview__selection-pill">已引用 {fileReferences.length}</span>}
           {selectionInfo && (
             <span className="vscode-preview__selection-pill">
@@ -987,6 +1033,7 @@ function PreviewSurface({
             value={file.content}
             beforeMount={configurePreviewMonacoDefaults}
             onMount={handleEditorMount}
+            onChange={(value) => onUpdateFileContent(file.path, value ?? '')}
             options={{
               readOnly: false,
               minimap: { enabled: false },
@@ -1065,6 +1112,20 @@ export function AionWorkspacePreviewPane({ workspace, conversationId, messages =
     quickOpenEntriesRef.current = quickOpenEntries;
   }, [quickOpenEntries]);
 
+  useEffect(() => {
+    setOpenTabs([]);
+    setActiveTabPath(null);
+    setQuickOpenVisible(false);
+    setQuickOpenQuery('');
+    setQuickOpenEntries([]);
+    setQuickOpenError(undefined);
+    setQuickOpenTruncated(false);
+    setQuickOpenSelectedIndex(0);
+    openTabsRef.current = [];
+    quickOpenEntriesRef.current = [];
+    refreshedOperationIdsRef.current = new Set<string>();
+  }, [conversationId, workspace]);
+
   const activeFile = openTabs.find((t) => t.path === activeTabPath) ?? null;
 
   const openFile = useCallback(async (path: string, options: { revealLine?: number } = {}) => {
@@ -1134,6 +1195,51 @@ export function AionWorkspacePreviewPane({ workspace, conversationId, messages =
         };
 
     setOpenTabs((prev) => prev.map((t) => (t.path === path ? resolved : t)));
+  }, [workspace]);
+
+  const updateOpenFileContent = useCallback((path: string, content: string) => {
+    const normalizedPath = normalizePreviewFilePath(path);
+    setOpenTabs((prev) => prev.map((tab) => (
+      normalizePreviewFilePath(tab.path) === normalizedPath
+        ? { ...tab, content }
+        : tab
+    )));
+  }, []);
+
+  const saveOpenFile = useCallback(async (file: ActivePreviewFile, content: string) => {
+    if (!workspace) {
+      throw new Error('Missing workspace.');
+    }
+    if (typeof window.electron.writePreviewFile !== 'function') {
+      throw new Error('File save is unavailable.');
+    }
+
+    const result = await window.electron.writePreviewFile({
+      cwd: workspace,
+      path: file.path,
+      data: content,
+    });
+    if (!result?.success) {
+      throw new Error(result?.error || 'Save failed.');
+    }
+
+    const savedPath = result.path || file.path;
+    const normalizedPath = normalizePreviewFilePath(file.path);
+    setOpenTabs((prev) => prev.map((tab) => (
+      normalizePreviewFilePath(tab.path) === normalizedPath
+        ? {
+            ...tab,
+            path: savedPath,
+            fileName: basename(savedPath),
+            relativePath: getRelativePath(workspace, savedPath),
+            content,
+            contentType: inferContentType(savedPath, content),
+            loading: false,
+            error: undefined,
+          }
+        : tab
+    )));
+    setActiveTabPath(savedPath);
   }, [workspace]);
 
   const closeTab = useCallback((path: string) => {
@@ -1273,6 +1379,8 @@ export function AionWorkspacePreviewPane({ workspace, conversationId, messages =
           openTabs={openTabs}
           activeTabPath={activeTabPath}
           onSwitchTab={setActiveTabPath}
+          onUpdateFileContent={updateOpenFileContent}
+          onSaveFile={saveOpenFile}
           onCloseTab={closeTab}
           onCloseOtherTabs={closeOtherTabs}
           onCloseTabsToRight={closeTabsToRight}

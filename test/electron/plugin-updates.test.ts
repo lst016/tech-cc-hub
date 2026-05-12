@@ -52,11 +52,12 @@ test('includes the Figma official MCP default plugin', () => {
   assert.match(source, /id:\s*FIGMA_OFFICIAL_ID/);
   assert.match(source, /https:\/\/mcp\.figma\.com\/mcp/);
   assert.match(source, /http:\/\/127\.0\.0\.1:3845\/mcp/);
-  assert.match(source, /plugins:connectFigmaCodexOfficial/);
+  assert.match(source, /plugins:connectFigmaPatOfficial/);
   assert.match(source, /plugins:connectFigmaDesktopOfficial/);
-  assert.match(source, /Codex 授权接入/);
+  assert.match(source, /Figma REST API/);
+  assert.match(source, /Personal Access Token/);
   assert.match(source, /使用桌面 MCP/);
-  assert.match(source, /const\s+FIGMA_AGENT_GUIDE_ENABLED\s*=\s*true/);
+  assert.match(source, /const\s+FIGMA_AGENT_GUIDE_ENABLED\s*=\s*false/);
   assert.match(source, /plugin\.id !== FIGMA_OFFICIAL_ID \|\| FIGMA_AGENT_GUIDE_ENABLED/);
   assert.match(source, /MCP 工具/);
   assert.match(source, /toolCount/);

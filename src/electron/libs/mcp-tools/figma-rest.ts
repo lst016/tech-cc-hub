@@ -18,6 +18,7 @@ import {
   buildFigmaDesignAudit,
   buildFigmaDesignPlaybook,
 } from "./figma-design-intelligence.js";
+import { toTextToolResult } from "./tool-result.js";
 
 export { FIGMA_REST_TOOL_NAMES };
 
@@ -74,12 +75,20 @@ type DesignSummary = {
   warnings: string[];
 };
 
-function toTextToolResult(payload: unknown, isError = false): CallToolResult {
-  return {
-    isError,
-    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+type FigmaNodeIndexEntry = {
+  id?: string;
+  name?: string;
+  type?: string;
+  visible?: boolean;
+  bounds?: {
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
   };
-}
+  childCount: number;
+  path: string;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -93,7 +102,7 @@ function getConfiguredFigmaPat(): string {
   const isPatMode = plugin?.mode === "rest" || plugin?.authProvider === "pat" || oauth?.provider === "pat";
   const token = typeof oauth?.access_token === "string" ? oauth.access_token.trim() : "";
   if (!isPatMode || !token) {
-    throw new Error("Figma Token 未配置。请先到设置 > 插件系统，输入 Figma Personal Access Token。");
+    throw new Error("Figma token is not configured. Add a Figma Personal Access Token in Settings > Plugins first.");
   }
   return token;
 }
@@ -101,14 +110,14 @@ function getConfiguredFigmaPat(): string {
 function parseFigmaLocator(fileKeyOrUrl: string, explicitNodeIds: string[] = []): FigmaLocator {
   const raw = fileKeyOrUrl.trim();
   if (!raw) {
-    throw new Error("缺少 Figma file key 或 URL。");
+    throw new Error("Missing Figma file key or URL.");
   }
 
   const parsedNodeIds = explicitNodeIds.map(normalizeNodeId).filter(Boolean);
   try {
     const url = new URL(raw);
     if (!/figma\.com$/i.test(url.hostname) && !url.hostname.endsWith(".figma.com")) {
-      throw new Error("不是 Figma 链接。");
+      throw new Error("Not a Figma URL.");
     }
 
     const segments = url.pathname.split("/").filter(Boolean);
@@ -122,7 +131,7 @@ function parseFigmaLocator(fileKeyOrUrl: string, explicitNodeIds: string[] = [])
     ));
     const fileKey = keySegmentIndex >= 0 ? segments[keySegmentIndex + 1] : "";
     if (!fileKey) {
-      throw new Error("无法从 Figma URL 中解析 file key。");
+      throw new Error("Could not parse a Figma file key from the URL.");
     }
 
     const nodeIdFromUrl = normalizeNodeId(url.searchParams.get("node-id") ?? "");
@@ -193,7 +202,7 @@ function getFigmaApiErrorMessage(body: unknown, fallback: string): string {
     if (typeof body.message === "string") return body.message;
     if (typeof body.status === "string") return body.status;
   }
-  return fallback.trim() || "请求失败";
+  return fallback.trim() || "璇锋眰澶辫触";
 }
 
 function capPayload(payload: unknown, maxBytes: number): unknown {
@@ -206,6 +215,52 @@ function capPayload(payload: unknown, maxBytes: number): unknown {
     maxBytes,
     bytes: text.length,
     jsonPreview: text.slice(0, maxBytes),
+  };
+}
+
+function capFigmaDesignPayload(
+  payload: unknown,
+  maxBytes: number,
+  options: {
+    fileKey: string;
+    fileKeyOrUrl: string;
+    currentNodeIds: string[];
+    currentDepth?: number;
+  },
+): unknown {
+  const capped = capPayload(payload, maxBytes);
+  if (!isRecord(capped) || capped.truncated !== true) {
+    return capped;
+  }
+
+  const roots = extractDocumentNodes(payload, options.currentNodeIds);
+  const nodeIndex = buildFigmaNodeIndex(roots, 80);
+  const recommendedNodeIds = pickRecommendedNodeIds(nodeIndex, options.currentNodeIds);
+
+  return {
+    truncated: true,
+    maxBytes: capped.maxBytes,
+    bytes: capped.bytes,
+    progressiveDisclosure: {
+      reason: "Figma response is larger than maxBytes. Use the node index below to drill into only the relevant branch instead of increasing maxBytes.",
+      fileKey: options.fileKey,
+      currentNodeIds: options.currentNodeIds,
+      currentDepth: options.currentDepth,
+      recommendedNextTool: "figma_summarize_design",
+      recommendedNextInput: {
+        fileKeyOrUrl: options.fileKeyOrUrl,
+        nodeIds: recommendedNodeIds,
+        depth: 3,
+        maxNodes: 160,
+      },
+      alternatives: [
+        "Use figma_read_design with one nodeId and a small depth when raw node JSON is required.",
+        "Use figma_get_image_urls with the same nodeIds when visual layout is more useful than JSON.",
+        "Use figma_generate_tailwind_code after selecting the smallest frame that matches the implementation target.",
+      ],
+      nodeIndex,
+    },
+    jsonPreview: capped.jsonPreview,
   };
 }
 
@@ -259,6 +314,98 @@ function summarizeFileMetadataFromDocument(payload: unknown): unknown {
       componentSets: countRecordKeys(payload.componentSets),
       styles: countRecordKeys(payload.styles),
     },
+  };
+}
+
+function buildFigmaNodeIndex(roots: Record<string, unknown>[], maxEntries: number): FigmaNodeIndexEntry[] {
+  const entries: FigmaNodeIndexEntry[] = [];
+
+  const visit = (node: Record<string, unknown>, pathParts: string[]) => {
+    if (entries.length >= maxEntries) {
+      return;
+    }
+
+    const name = readString(node, "name") || "(unnamed)";
+    const children = Array.isArray(node.children) ? node.children.filter(isRecord) : [];
+    const entry: FigmaNodeIndexEntry = {
+      id: readString(node, "id"),
+      name,
+      type: readString(node, "type"),
+      visible: readBoolean(node, "visible"),
+      bounds: readNodeIndexBounds(node),
+      childCount: children.length,
+      path: [...pathParts, name].join(" / "),
+    };
+
+    entries.push(entry);
+    for (const child of children) {
+      visit(child, [...pathParts, name]);
+      if (entries.length >= maxEntries) {
+        break;
+      }
+    }
+  };
+
+  for (const root of roots) {
+    visit(root, []);
+    if (entries.length >= maxEntries) {
+      break;
+    }
+  }
+
+  return entries;
+}
+
+function pickRecommendedNodeIds(index: FigmaNodeIndexEntry[], currentNodeIds: string[]): string[] {
+  const branchCandidates = index
+    .filter((entry) => entry.id && entry.childCount > 0)
+    .filter((entry) => !currentNodeIds.includes(entry.id ?? ""));
+
+  const preferred = branchCandidates.find((entry) => {
+    const text = `${entry.name ?? ""} ${entry.path}`.toLowerCase();
+    return /form|frame|content|section|container|椤甸潰|琛ㄥ崟|鍩虹|姝ｆ枃|鎸夐挳|棰勮|妯℃澘/.test(text);
+  }) ?? branchCandidates[0] ?? index.find((entry) => entry.id);
+
+  return preferred?.id ? [preferred.id] : [];
+}
+
+function filterFigmaNodeIndex(index: FigmaNodeIndexEntry[], query?: string): FigmaNodeIndexEntry[] {
+  const normalizedQuery = query?.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return index;
+  }
+
+  const terms = normalizedQuery.split(/\s+/).filter(Boolean);
+  if (terms.length === 0) {
+    return index;
+  }
+
+  return index.filter((entry) => {
+    const haystack = [
+      entry.id,
+      entry.name,
+      entry.type,
+      entry.path,
+    ].filter(Boolean).join(" ").toLowerCase();
+    return terms.every((term) => haystack.includes(term));
+  });
+}
+
+function readNodeIndexBounds(node: Record<string, unknown>): FigmaNodeIndexEntry["bounds"] | undefined {
+  const box = isRecord(node.absoluteBoundingBox)
+    ? node.absoluteBoundingBox
+    : isRecord(node.absoluteRenderBounds)
+      ? node.absoluteRenderBounds
+      : null;
+  if (!box) {
+    return undefined;
+  }
+
+  return {
+    x: readNumber(box, "x"),
+    y: readNumber(box, "y"),
+    width: readNumber(box, "width"),
+    height: readNumber(box, "height"),
   };
 }
 
@@ -398,7 +545,7 @@ function compactDesignNode(
       compact.children = children;
     }
   } else if (getNodeChildren(node).length > 0) {
-    context.warnings.push(`节点 ${compact.name ?? compact.id ?? "(unknown)"} 已到达 maxDepth=${context.maxDepth}，子节点被省略。`);
+    context.warnings.push(`Node ${compact.name ?? compact.id ?? "(unknown)"} reached maxDepth=${context.maxDepth}; child nodes were omitted.`);
   }
 
   return compact;
@@ -793,7 +940,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
 
   const currentUserTool = tool(
     "figma_get_current_user",
-    "使用本机保存的 Figma Personal Access Token 读取当前 Figma 用户信息，用于确认 Token 对应账号。需要 current_user:read scope。",
+    "Read the current Figma user with the locally saved Personal Access Token. Requires current_user:read scope.",
     {
       maxBytes: z.number().int().min(10_000).max(MAX_RESPONSE_BYTES).optional(),
     },
@@ -814,7 +961,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
 
   const fileMetadataTool = tool(
     "figma_get_file_metadata",
-    "读取 Figma 文件元信息。默认使用 /files/:key/meta；如果 Token 没有 file_metadata:read，可开启 fallbackToFileOverview 用 file_content:read 取轻量文件概览。",
+    "Read Figma file metadata. Can fall back to a lightweight file overview when metadata scope is unavailable.",
     {
       fileKeyOrUrl: z.string().trim().min(1),
       fallbackToFileOverview: z.boolean().optional(),
@@ -855,7 +1002,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
 
   const readDesignTool = tool(
     "figma_read_design",
-    "使用本机保存的 Figma Personal Access Token 读取 Figma 文件或节点。传 Figma URL 时会自动解析 file key 和 node-id；有 node-id 时优先读取节点，避免整文件过大。",
+    "Read a Figma file or selected nodes with the locally saved Personal Access Token. Figma URLs are parsed automatically.",
     {
       fileKeyOrUrl: z.string().trim().min(1),
       nodeIds: z.array(z.string().trim().min(1)).max(40).optional(),
@@ -881,7 +1028,12 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
           success: true,
           fileKey: locator.fileKey,
           nodeIds,
-          result: capPayload(payload, clampMaxBytes(input.maxBytes)),
+          result: capFigmaDesignPayload(payload, clampMaxBytes(input.maxBytes), {
+            fileKey: locator.fileKey,
+            fileKeyOrUrl: input.fileKeyOrUrl,
+            currentNodeIds: nodeIds,
+            currentDepth: input.depth ?? (nodeIds.length > 0 ? undefined : 2),
+          }),
         });
       } catch (error) {
         return toTextToolResult({
@@ -893,9 +1045,57 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
     },
   );
 
+  const nodeIndexTool = tool(
+    "figma_list_node_index",
+    "List a compact Figma node index for progressive disclosure. Use this before reading a large file/frame, then drill into the smallest relevant nodeId.",
+    {
+      fileKeyOrUrl: z.string().trim().min(1),
+      nodeIds: z.array(z.string().trim().min(1)).max(40).optional(),
+      depth: z.number().int().min(1).max(6).optional(),
+      query: z.string().trim().optional(),
+      maxEntries: z.number().int().min(1).max(500).optional(),
+      includeInvisible: z.boolean().optional(),
+      maxBytes: z.number().int().min(10_000).max(MAX_RESPONSE_BYTES).optional(),
+    },
+    async (input) => {
+      const action = "figma_list_node_index";
+      try {
+        const token = getConfiguredFigmaPat();
+        const { locator, payload, source } = await fetchFigmaDesignPayload(token, input.fileKeyOrUrl, input.nodeIds, {
+          depth: input.depth ?? 3,
+        });
+        const roots = extractDocumentNodes(payload, locator.nodeIds);
+        const rawIndex = buildFigmaNodeIndex(roots, input.maxEntries ?? 160)
+          .filter((entry) => input.includeInvisible === true || entry.visible !== false);
+        const nodeIndex = filterFigmaNodeIndex(rawIndex, input.query);
+        const recommendedNodeIds = pickRecommendedNodeIds(nodeIndex, locator.nodeIds);
+
+        return toTextToolResult({
+          action,
+          success: true,
+          fileKey: locator.fileKey,
+          nodeIds: locator.nodeIds,
+          source,
+          query: input.query ?? null,
+          result: capPayload({
+            nodeIndex,
+            recommendedNextInput: {
+              fileKeyOrUrl: input.fileKeyOrUrl,
+              nodeIds: recommendedNodeIds,
+              depth: 3,
+              maxNodes: 160,
+            },
+            nextStep: "Pick the smallest node that matches the requested UI area, then call figma_summarize_design or figma_read_design with that nodeId.",
+          }, clampMaxBytes(input.maxBytes)),
+        });
+      } catch (error) {
+        return toFigmaErrorResult(action, error);
+      }
+    },
+  );
   const summarizeDesignTool = tool(
     "figma_summarize_design",
-    "把 Figma 文件或节点转成面向 Agent 的轻量设计树摘要，包含布局、尺寸、颜色、文本、圆角、阴影和 token 摘要。灵感来自 FigmaToCode 的中间表示流程，但实现为本项目自有只读摘要器。",
+    "Summarize a Figma file or nodes into compact Agent-friendly design structure, layout, color, text, radius, shadow, and token notes.",
     {
       fileKeyOrUrl: z.string().trim().min(1),
       nodeIds: z.array(z.string().trim().min(1)).max(40).optional(),
@@ -933,7 +1133,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
 
   const extractDesignTokensTool = tool(
     "figma_extract_design_tokens",
-    "从 Figma 文件或节点提取设计 token 候选：颜色、字体、圆角、间距、阴影。适合生成 CSS 变量、Tailwind token 对照或实现前先看设计语言。",
+    "Extract design-token candidates from a Figma file or nodes: color, typography, radius, spacing, and effects.",
     {
       fileKeyOrUrl: z.string().trim().min(1),
       nodeIds: z.array(z.string().trim().min(1)).max(40).optional(),
@@ -966,7 +1166,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
 
   const designPlaybookTool = tool(
     "figma_get_design_playbook",
-    "返回内置设计增强 playbook：高质量设计系统参考、Laws of UX 原则、Figma token/variables 落地步骤和不同业务域的推荐约束。这个工具不读取 Figma 文件，适合在拿到设计稿前先给 Agent 定设计方向。",
+    "Return the built-in design playbook: design-system references, Laws of UX, token guidance, and domain-specific constraints.",
     {
       domain: z.enum(FIGMA_DESIGN_DOMAINS).optional(),
       includeSources: z.boolean().optional(),
@@ -994,7 +1194,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
 
   const auditDesignTool = tool(
     "figma_audit_design",
-    "读取 Figma 文件或节点，并按设计系统、Laws of UX、token 分层、组件化、可访问性和 AI/中后台场景做轻量审查。返回问题、证据、推荐设计系统和落地 checklist，适合实现 UI 前先做设计质量把关。",
+    "Audit a Figma file or nodes for design-system fit, UX heuristics, token layering, componentization, accessibility, and implementation risks.",
     {
       fileKeyOrUrl: z.string().trim().min(1),
       nodeIds: z.array(z.string().trim().min(1)).max(40).optional(),
@@ -1042,7 +1242,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
 
   const generateTailwindCodeTool = tool(
     "figma_generate_tailwind_code",
-    "根据 Figma 节点生成 Tailwind HTML 或 React 初稿。适合先产出可编辑骨架，再结合截图/项目组件手工收敛；它不是像素级最终实现。",
+    "Generate a Tailwind HTML or React draft from Figma nodes. Treat the result as an editable scaffold, not a pixel-perfect final implementation.",
     {
       fileKeyOrUrl: z.string().trim().min(1),
       nodeIds: z.array(z.string().trim().min(1)).max(8).optional(),
@@ -1079,7 +1279,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
           stats: summary.stats,
           warnings: [
             ...summary.warnings,
-            "生成结果是 Tailwind/React 初稿；落地项目时仍应复用本项目组件、tokens，并用截图校对。",
+            "Generated output is a Tailwind/React draft; reuse project components and tokens, then verify with screenshots.",
           ],
           tokens: summary.tokens,
           treePreview: summary.nodes,
@@ -1092,7 +1292,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
 
   const imageUrlsTool = tool(
     "figma_get_image_urls",
-    "使用本机保存的 Figma Personal Access Token 为指定节点生成 Figma 导出图片 URL。必须提供 nodeIds，或传带 node-id 的 Figma URL。",
+    "Generate Figma image export URLs for selected nodes with the locally saved Personal Access Token.",
     {
       fileKeyOrUrl: z.string().trim().min(1),
       nodeIds: z.array(z.string().trim().min(1)).max(80).optional(),
@@ -1106,7 +1306,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
         const token = getConfiguredFigmaPat();
         const locator = parseFigmaLocator(input.fileKeyOrUrl, input.nodeIds);
         if (locator.nodeIds.length === 0) {
-          throw new Error("缺少 nodeIds。请传带 node-id 的 Figma URL，或显式传 nodeIds。");
+          throw new Error("Missing nodeIds. Pass a Figma URL with node-id or provide nodeIds explicitly.");
         }
         const payload = await figmaApiGet(`images/${encodeURIComponent(locator.fileKey)}`, {
           ids: locator.nodeIds.join(","),
@@ -1133,7 +1333,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
 
   const imageFillsTool = tool(
     "figma_get_image_fills",
-    "读取 Figma 文件中 image fills 的下载 URL 映射。适合查设计里引用的位图资源，URL 会过期。需要 file_content:read scope。",
+    "Read download URL mappings for image fills in a Figma file. URLs are temporary and require file_content:read scope.",
     {
       fileKeyOrUrl: z.string().trim().min(1),
       maxBytes: z.number().int().min(10_000).max(MAX_RESPONSE_BYTES).optional(),
@@ -1158,7 +1358,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
 
   const fileVersionsTool = tool(
     "figma_list_file_versions",
-    "读取 Figma 文件版本历史。需要 file_versions:read scope。",
+    "Read Figma file version history. Requires file_versions:read scope.",
     {
       fileKeyOrUrl: z.string().trim().min(1),
       maxBytes: z.number().int().min(10_000).max(MAX_RESPONSE_BYTES).optional(),
@@ -1183,7 +1383,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
 
   const fileCommentsTool = tool(
     "figma_list_file_comments",
-    "读取 Figma 文件评论列表。需要 file_comments:read scope。",
+    "Read Figma file comments. Requires file_comments:read scope.",
     {
       fileKeyOrUrl: z.string().trim().min(1),
       asMarkdown: z.boolean().optional(),
@@ -1211,7 +1411,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
 
   const fileLibraryTool = tool(
     "figma_list_file_library",
-    "读取文件库中已发布的 components、component_sets、styles。需要 library_content:read scope；只读，不修改 Figma。",
+    "Read published components, component sets, and styles from a Figma file library. Requires library_content:read scope.",
     {
       fileKeyOrUrl: z.string().trim().min(1),
       include: z.array(z.enum(FIGMA_FILE_LIBRARY_KINDS)).max(FIGMA_FILE_LIBRARY_KINDS.length).optional(),
@@ -1242,7 +1442,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
 
   const fileVariablesTool = tool(
     "figma_get_file_variables",
-    "读取文件变量。kind=local 读取本地变量和订阅变量，kind=published 读取发布变量。需要 file_variables:read scope，且 Figma 账号/计划需要支持 Variables REST API。",
+    "Read Figma file variables. kind=local reads local/subscribed variables; kind=published reads published variables. Requires file_variables:read scope.",
     {
       fileKeyOrUrl: z.string().trim().min(1),
       kind: z.enum(FIGMA_VARIABLE_KINDS).optional(),
@@ -1270,7 +1470,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
 
   const devResourcesTool = tool(
     "figma_get_dev_resources",
-    "读取 Figma 文件 Dev Resources，可按 nodeIds 过滤。需要 file_dev_resources:read scope。",
+    "Read Figma Dev Resources for a file, optionally filtered by nodeIds. Requires file_dev_resources:read scope.",
     {
       fileKeyOrUrl: z.string().trim().min(1),
       nodeIds: z.array(z.string().trim().min(1)).max(80).optional(),
@@ -1304,6 +1504,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
       currentUserTool,
       fileMetadataTool,
       readDesignTool,
+      nodeIndexTool,
       summarizeDesignTool,
       extractDesignTokensTool,
       designPlaybookTool,

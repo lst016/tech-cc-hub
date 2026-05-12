@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildBrowserWorkbenchWebPreferences } from "./libs/browser-workbench-session.js";
+import { getBrowserWorkbenchPreloadPath } from "./pathResolver.js";
 import {
   sanitizeBrowserWorkbenchBounds,
   shouldDetachBrowserWorkbenchForBounds,
@@ -376,6 +377,7 @@ export type BrowserWorkbenchEvent =
   | { type: "browser.annotation"; payload: BrowserWorkbenchAnnotation; sessionId?: string };
 
 const ANNOTATION_PREFIX = "__TECH_CC_HUB_ANNOTATION__";
+const BROWSER_WORKBENCH_ANNOTATION_CHANNEL = "browser-workbench-annotation";
 
 const emptyState = (annotationMode = false): BrowserWorkbenchState => ({
   url: "",
@@ -1062,7 +1064,7 @@ export class BrowserWorkbenchManager {
     }
 
     const view = new BrowserView({
-      webPreferences: buildBrowserWorkbenchWebPreferences(),
+      webPreferences: buildBrowserWorkbenchWebPreferences(getBrowserWorkbenchPreloadPath()),
     });
 
     this.view = view;
@@ -1089,6 +1091,11 @@ export class BrowserWorkbenchManager {
     });
     view.webContents.on("console-message", (_event, level, message, line, sourceId) => {
       this.handleConsoleMessage(level, message, line, sourceId);
+    });
+    view.webContents.on("ipc-message", (_event, channel, raw) => {
+      if (channel === BROWSER_WORKBENCH_ANNOTATION_CHANNEL && typeof raw === "string") {
+        this.handleAnnotationMessage(raw);
+      }
     });
 
     return view;
@@ -2237,8 +2244,8 @@ export class BrowserWorkbenchManager {
         style.textContent = [
           "#__tech_cc_hub_annotation_layer__{position:fixed;inset:0;z-index:2147483647;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1f2937}",
           ".__tech_cc_hub_hover{position:fixed;border:2px solid #1683ff;background:rgba(22,131,255,.06);box-sizing:border-box;pointer-events:none}",
-          ".__tech_cc_hub_hover_label{position:fixed;max-width:min(360px,calc(100vw - 24px));padding:6px 8px;border-radius:10px;background:rgba(15,23,42,.92);color:#fff;font-size:12px;line-height:1.35;box-shadow:0 10px 24px rgba(15,23,42,.24);pointer-events:none;white-space:normal;word-break:break-word}",
-          ".__tech_cc_hub_marker{position:fixed;width:28px;height:28px;border-radius:999px;background:#1683ff;color:white;display:grid;place-items:center;font-size:13px;font-weight:800;box-shadow:0 0 0 3px white,0 8px 24px rgba(22,131,255,.36);pointer-events:auto;cursor:pointer}",
+          ".__tech_cc_hub_marker{position:fixed;width:28px;height:28px;border:1px solid rgba(255,255,255,.66);border-radius:999px;background:#1683ff;color:white;display:grid;place-items:center;font-size:13px;font-weight:800;box-shadow:0 8px 24px rgba(22,131,255,.36);pointer-events:auto;cursor:pointer;outline:none}",
+          ".__tech_cc_hub_marker:hover,.__tech_cc_hub_marker:focus,.__tech_cc_hub_marker:focus-visible{background:#1683ff;color:white;box-shadow:0 8px 24px rgba(22,131,255,.36);outline:none}",
           ".__tech_cc_hub_outline{position:fixed;border:2px solid #1683ff;background:rgba(22,131,255,.08);box-sizing:border-box;pointer-events:none}",
           ".__tech_cc_hub_comment{position:fixed;display:grid;grid-template-columns:minmax(0,1fr) 34px;grid-template-rows:1fr 1fr;align-items:center;gap:6px 10px;width:min(440px,calc(100vw - 32px));height:92px;border:1px solid rgba(15,23,42,.1);border-radius:18px;background:rgba(255,255,255,.96);box-shadow:0 12px 34px rgba(15,23,42,.16);padding:10px 12px 10px 42px;pointer-events:auto}",
           ".__tech_cc_hub_comment[hidden]{display:none}",
@@ -2292,42 +2299,7 @@ export class BrowserWorkbenchManager {
         return panel;
       }
       function showBackgroundInfo(annotation) {
-        const panel = ensureBackgroundInfo();
-        const pre = panel.querySelector(".__tech_cc_hub_background-content");
-        if (!annotation || !pre) {
-          panel.hidden = true;
-          return;
-        }
-        const payload = {
-          id: annotation.id,
-          url: annotation.url,
-          title: annotation.title,
-          comment: annotation.comment || "",
-          expectation: annotation.expectation || "",
-          nodePosition: annotation.point,
-          dom: annotation.domHint ? {
-            tagName: annotation.domHint.tagName,
-            role: annotation.domHint.role,
-            text: annotation.domHint.text,
-            ariaLabel: annotation.domHint.ariaLabel,
-            selector: annotation.domHint.selector,
-            selectorCandidates: annotation.domHint.selectorCandidates,
-            path: annotation.domHint.path,
-            xpath: annotation.domHint.xpath,
-            target: annotation.domHint.target,
-            boundingBox: annotation.domHint.boundingBox,
-            componentStack: annotation.domHint.componentStack,
-            sourceCandidates: annotation.domHint.sourceCandidates,
-            componentStackSource: annotation.domHint.componentStackSource,
-            componentStackConfidence: annotation.domHint.componentStackConfidence,
-            context: annotation.domHint.context,
-          } : undefined,
-          timestamp: annotation.createdAt,
-        };
-        const text = JSON.stringify(payload, null, 2);
-        panel.querySelector(".__tech_cc_hub_background-title").textContent = "背景信息 #" + annotation.id.slice(0, 8);
-        pre.textContent = text;
-        panel.hidden = false;
+        clearBackgroundInfo();
       }
       function clearBackgroundInfo() {
         const layer = ensureLayer();
@@ -2338,15 +2310,32 @@ export class BrowserWorkbenchManager {
         const layer = document.getElementById("__tech_cc_hub_annotation_layer__");
         const hover = layer && layer.querySelector(".__tech_cc_hub_hover");
         if (hover) hover.remove();
-        const hoverLabel = layer && layer.querySelector(".__tech_cc_hub_hover_label");
-        if (hoverLabel) hoverLabel.remove();
+      }
+      function clearNativeAnnotationTitles() {
+        const layer = document.getElementById("__tech_cc_hub_annotation_layer__");
+        if (!layer) return;
+        Array.from(layer.querySelectorAll(".__tech_cc_hub_outline,.__tech_cc_hub_marker,.__tech_cc_hub_comment")).forEach(function(node) {
+          node.removeAttribute("title");
+        });
+      }
+      function releasePageHoverState() {
+        clearHoverPreview();
+        clearNativeAnnotationTitles();
+        try {
+          if (document.activeElement && typeof document.activeElement.blur === "function") {
+            document.activeElement.blur();
+          }
+        } catch {}
       }
       function uid() {
         if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
         return "ann-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
       }
       function emitAnnotation(annotation) {
-        console.info(options.prefix + JSON.stringify(annotation));
+        const bridge = window.__techCcHubAnnotation;
+        if (bridge && typeof bridge.emit === "function") {
+          bridge.emit(JSON.stringify(annotation));
+        }
       }
       function annotationKey(domHint, point) {
         const selector = domHint && domHint.selectorCandidates && domHint.selectorCandidates[0];
@@ -2372,6 +2361,7 @@ export class BrowserWorkbenchManager {
         Array.from(layer.querySelectorAll('[data-annotation-id="' + id + '"]')).forEach(function(node) {
           node.remove();
         });
+        annotationStore().delete(id);
       }
       function labelFromDomHint(domHint) {
         if (!domHint) return "";
@@ -2388,14 +2378,176 @@ export class BrowserWorkbenchManager {
         ).replace(/\\s+/g, " ").trim();
       }
       function annotationTitle(annotation) {
-        const label = labelFromDomHint(annotation && annotation.domHint);
-        return [
-          label ? "元素内容：" + label : "",
-          annotation && annotation.comment ? "说明：" + annotation.comment : "",
-          annotation && annotation.expectation ? "期望：" + annotation.expectation : "",
-          annotation && annotation.url ? "页面：" + annotation.url : "",
-          annotation && annotation.domHint && annotation.domHint.selector ? "Selector：" + annotation.domHint.selector : "",
-        ].filter(Boolean).join("\\n");
+        return "";
+      }
+      function annotationStore() {
+        if (!window.__techCcHubAnnotations || typeof window.__techCcHubAnnotations.set !== "function") {
+          window.__techCcHubAnnotations = new Map();
+        }
+        return window.__techCcHubAnnotations;
+      }
+      function resolveAnnotationXPath(xpath) {
+        if (!xpath) return null;
+        try {
+          return document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+        } catch {
+          return null;
+        }
+      }
+      function resolveAnnotationElement(annotation) {
+        const domHint = annotation && annotation.domHint || {};
+        const selectors = [];
+        if (domHint.selector) selectors.push(domHint.selector);
+        if (Array.isArray(domHint.selectorCandidates)) {
+          domHint.selectorCandidates.forEach(function(selector) {
+            if (selector) selectors.push(selector);
+          });
+        }
+        for (const selector of selectors) {
+          try {
+            const found = document.querySelector(selector);
+            if (found) return found;
+          } catch {}
+        }
+        return resolveAnnotationXPath(domHint.xpath);
+      }
+      function annotationCandidateSelectors(annotation) {
+        const domHint = annotation && annotation.domHint || {};
+        const selectors = [];
+        if (domHint.selector) selectors.push(domHint.selector);
+        if (Array.isArray(domHint.selectorCandidates)) {
+          domHint.selectorCandidates.forEach(function(selector) {
+            if (selector) selectors.push(selector);
+          });
+        }
+        return selectors;
+      }
+      function attachAnnotationAnchor(annotation, point) {
+        if (!annotation || !point) return;
+        let rawElement = null;
+        try {
+          rawElement = document.elementFromPoint(point.x, point.y);
+        } catch {}
+        let anchorElement = null;
+        if (rawElement && typeof rawElement.closest === "function") {
+          for (const selector of annotationCandidateSelectors(annotation)) {
+            try {
+              const matched = rawElement.closest(selector);
+              if (matched) {
+                anchorElement = matched;
+                break;
+              }
+            } catch {}
+          }
+        }
+        if (!anchorElement && rawElement && rawElement.nodeType === Node.ELEMENT_NODE) {
+          anchorElement = rawElement;
+        }
+        if (anchorElement) {
+          Object.defineProperty(annotation, "__anchorElement", {
+            value: anchorElement,
+            enumerable: false,
+            configurable: true,
+          });
+        }
+        const initialBox = anchorElement && typeof anchorElement.getBoundingClientRect === "function"
+          ? anchorElement.getBoundingClientRect()
+          : annotation.domHint && annotation.domHint.boundingBox;
+        if (initialBox && initialBox.width > 0 && initialBox.height > 0 && !annotation.pageBox) {
+          annotation.pageBox = {
+            x: initialBox.left !== undefined ? initialBox.left + window.scrollX : initialBox.x + window.scrollX,
+            y: initialBox.top !== undefined ? initialBox.top + window.scrollY : initialBox.y + window.scrollY,
+            width: initialBox.width,
+            height: initialBox.height,
+          };
+        }
+      }
+      function currentAnnotationBox(annotation) {
+        const anchorElement = annotation && annotation.__anchorElement;
+        if (anchorElement && anchorElement.isConnected && typeof anchorElement.getBoundingClientRect === "function") {
+          const rect = anchorElement.getBoundingClientRect();
+          if (rect && rect.width > 0 && rect.height > 0) {
+            return { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+          }
+        }
+        if (annotation && annotation.pageBox) {
+          return {
+            x: annotation.pageBox.x - window.scrollX,
+            y: annotation.pageBox.y - window.scrollY,
+            width: annotation.pageBox.width,
+            height: annotation.pageBox.height,
+          };
+        }
+        const element = resolveAnnotationElement(annotation);
+        if (element && typeof element.getBoundingClientRect === "function") {
+          const rect = element.getBoundingClientRect();
+          if (rect && rect.width > 0 && rect.height > 0) {
+            return { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+          }
+        }
+        return annotation && annotation.domHint && annotation.domHint.boundingBox || null;
+      }
+      function annotationPointForBox(annotation, box) {
+        if (!box) return annotation.point || { x: 0, y: 0 };
+        return {
+          x: box.x + Math.min(Math.max(box.width * 0.5, 14), Math.max(14, box.width - 14)),
+          y: box.y + Math.min(Math.max(box.height * 0.5, 14), Math.max(14, box.height - 14)),
+        };
+      }
+      function placeAnnotationNodes(annotation) {
+        if (!annotation || !annotation.id) return;
+        const layer = ensureLayer();
+        const box = currentAnnotationBox(annotation);
+        const outline = layer.querySelector(".__tech_cc_hub_outline[data-annotation-id='" + annotation.id + "']");
+        const marker = layer.querySelector(".__tech_cc_hub_marker[data-annotation-id='" + annotation.id + "']");
+        const comment = layer.querySelector(".__tech_cc_hub_comment[data-annotation-id='" + annotation.id + "']");
+        if (box && box.width > 0 && box.height > 0) {
+          annotation.domHint = annotation.domHint || {};
+          annotation.domHint.boundingBox = box;
+          if (outline) {
+            outline.style.display = "block";
+            outline.style.left = box.x + "px";
+            outline.style.top = box.y + "px";
+            outline.style.width = box.width + "px";
+            outline.style.height = box.height + "px";
+          }
+        } else if (outline) {
+          outline.style.display = "none";
+        }
+        const point = annotationPointForBox(annotation, box);
+        annotation.point = point;
+        const boxVisible = !box || (
+          box.x + box.width >= 0 &&
+          box.x <= window.innerWidth &&
+          box.y + box.height >= 0 &&
+          box.y <= window.innerHeight
+        );
+        if (marker) {
+          marker.style.visibility = boxVisible ? "visible" : "hidden";
+          marker.style.left = (box ? point.x - 14 : Math.max(6, Math.min(window.innerWidth - 30, point.x - 14))) + "px";
+          marker.style.top = (box ? point.y - 14 : Math.max(6, Math.min(window.innerHeight - 30, point.y - 14))) + "px";
+        }
+        if (comment) {
+          comment.style.visibility = boxVisible ? "visible" : "hidden";
+          const preferredLeft = box ? box.x + Math.min(96, Math.max(24, box.width * 0.2)) : point.x + 18;
+          const preferredTop = box ? box.y + Math.min(14, Math.max(0, box.height - 10)) : point.y + 18;
+          const placement = placeWithinViewport(preferredLeft, preferredTop, Math.min(440, window.innerWidth - 32), 92);
+          comment.style.left = placement.left + "px";
+          comment.style.top = placement.top + "px";
+        }
+      }
+      function syncAnnotationPositions() {
+        annotationStore().forEach(function(annotation) {
+          placeAnnotationNodes(annotation);
+        });
+        clearNativeAnnotationTitles();
+      }
+      function scheduleAnnotationPositionSync() {
+        if (window.__techCcHubAnnotationSyncFrame) return;
+        window.__techCcHubAnnotationSyncFrame = requestAnimationFrame(function() {
+          window.__techCcHubAnnotationSyncFrame = null;
+          syncAnnotationPositions();
+        });
       }
       function updateHover(point) {
         const layer = ensureLayer();
@@ -2405,35 +2557,17 @@ export class BrowserWorkbenchManager {
           hover.className = "__tech_cc_hub_hover";
           layer.appendChild(hover);
         }
-        let hoverLabel = layer.querySelector(".__tech_cc_hub_hover_label");
-        if (!hoverLabel) {
-          hoverLabel = document.createElement("div");
-          hoverLabel.className = "__tech_cc_hub_hover_label";
-          layer.appendChild(hoverLabel);
-        }
         const domHint = inspectAt(point);
         const box = domHint && domHint.boundingBox;
         if (!box || box.width <= 0 || box.height <= 0) {
           hover.style.display = "none";
-          hoverLabel.style.display = "none";
           return;
         }
-        const label = labelFromDomHint(domHint);
         hover.style.display = "block";
         hover.style.left = box.x + "px";
         hover.style.top = box.y + "px";
         hover.style.width = box.width + "px";
         hover.style.height = box.height + "px";
-        if (label) {
-          hoverLabel.style.display = "block";
-          hoverLabel.textContent = label.length > 180 ? label.slice(0, 180) + "..." : label;
-          const preferredLeft = Math.min(point.x + 12, window.innerWidth - 24);
-          const preferredTop = Math.min(point.y + 14, window.innerHeight - 44);
-          hoverLabel.style.left = Math.max(12, preferredLeft) + "px";
-          hoverLabel.style.top = Math.max(12, preferredTop) + "px";
-        } else {
-          hoverLabel.style.display = "none";
-        }
       }
       function placeWithinViewport(left, top, width, height) {
         return {
@@ -2445,6 +2579,14 @@ export class BrowserWorkbenchManager {
         const layer = ensureLayer();
         const count = layer.querySelectorAll(".__tech_cc_hub_marker").length + 1;
         const box = annotation.domHint && annotation.domHint.boundingBox;
+        if (box && box.width > 0 && box.height > 0 && !annotation.pageBox) {
+          annotation.pageBox = {
+            x: box.x + window.scrollX,
+            y: box.y + window.scrollY,
+            width: box.width,
+            height: box.height,
+          };
+        }
         if (box && box.width > 0 && box.height > 0) {
           const outline = document.createElement("div");
           outline.className = "__tech_cc_hub_outline";
@@ -2453,7 +2595,7 @@ export class BrowserWorkbenchManager {
           outline.style.width = box.width + "px";
           outline.style.height = box.height + "px";
           outline.dataset.annotationId = annotation.id;
-          outline.title = annotationTitle(annotation);
+          outline.setAttribute("aria-label", "标注选区");
           layer.appendChild(outline);
         }
         const marker = document.createElement("button");
@@ -2464,7 +2606,7 @@ export class BrowserWorkbenchManager {
         marker.style.top = Math.max(6, annotation.point.y - 14) + "px";
         marker.dataset.annotationId = annotation.id;
         marker.dataset.annotationKey = annotation.key;
-        marker.title = annotationTitle(annotation);
+        marker.setAttribute("aria-label", "标注 " + count);
         const comment = document.createElement("div");
         comment.className = "__tech_cc_hub_comment";
         const preferredLeft = box ? box.x + Math.min(96, Math.max(24, box.width * 0.2)) : annotation.point.x + 18;
@@ -2474,7 +2616,6 @@ export class BrowserWorkbenchManager {
         comment.style.top = placement.top + "px";
         comment.dataset.annotationId = annotation.id;
         comment.dataset.annotationKey = annotation.key;
-        comment.title = annotationTitle(annotation);
         const input = document.createElement("input");
         input.className = "__tech_cc_hub_problem";
         input.placeholder = "问题描述...";
@@ -2494,16 +2635,12 @@ export class BrowserWorkbenchManager {
         function submitComment() {
           annotation.comment = input.value.trim();
           annotation.expectation = expectationInput.value.trim();
-          marker.title = annotationTitle(annotation);
-          comment.title = annotationTitle(annotation);
           emitAnnotation(annotation);
           comment.hidden = true;
         }
         function updateSubmitState() {
           annotation.comment = input.value;
           annotation.expectation = expectationInput.value;
-          marker.title = annotationTitle(annotation);
-          comment.title = annotationTitle(annotation);
           showBackgroundInfo(annotation);
           submit.disabled = !input.value.trim() && !expectationInput.value.trim();
         }
@@ -2554,6 +2691,8 @@ export class BrowserWorkbenchManager {
         submit.disabled = !input.value.trim() && !expectationInput.value.trim();
         layer.appendChild(marker);
         layer.appendChild(comment);
+        annotationStore().set(annotation.id, annotation);
+        placeAnnotationNodes(annotation);
         requestAnimationFrame(function() { input.focus(); });
       }
       if (window.__techCcHubAnnotationHandler) {
@@ -2564,12 +2703,23 @@ export class BrowserWorkbenchManager {
         document.removeEventListener("mousemove", window.__techCcHubAnnotationHoverHandler, true);
         window.__techCcHubAnnotationHoverHandler = null;
       }
+      if (window.__techCcHubAnnotationScrollHandler) {
+        window.removeEventListener("scroll", window.__techCcHubAnnotationScrollHandler, true);
+        document.removeEventListener("scroll", window.__techCcHubAnnotationScrollHandler, true);
+        window.__techCcHubAnnotationScrollHandler = null;
+      }
+      if (window.__techCcHubAnnotationResizeHandler) {
+        window.removeEventListener("resize", window.__techCcHubAnnotationResizeHandler, true);
+        window.__techCcHubAnnotationResizeHandler = null;
+      }
       clearHoverPreview();
+      clearNativeAnnotationTitles();
       if (!options.enabled) {
         const layer = document.getElementById("__tech_cc_hub_annotation_layer__");
         if (layer) layer.hidden = true;
         return true;
       }
+      ensureLayer().hidden = false;
       window.__techCcHubAnnotationHoverHandler = function(event) {
         if (event.target && event.target.closest && event.target.closest("#__tech_cc_hub_annotation_layer__")) {
           return;
@@ -2584,6 +2734,7 @@ export class BrowserWorkbenchManager {
         const domHint = inspectAt(point);
         event.preventDefault();
         event.stopPropagation();
+        releasePageHoverState();
         const key = annotationKey(domHint, point);
         const existing = findAnnotationByKey(key);
         if (existing) {
@@ -2612,12 +2763,18 @@ export class BrowserWorkbenchManager {
           domHint,
           comment: "",
         };
+        attachAnnotationAnchor(annotation, point);
         drawAnnotation(annotation);
         showBackgroundInfo(annotation);
         emitAnnotation(annotation);
       };
+      window.__techCcHubAnnotationScrollHandler = scheduleAnnotationPositionSync;
+      window.__techCcHubAnnotationResizeHandler = scheduleAnnotationPositionSync;
       document.addEventListener("mousemove", window.__techCcHubAnnotationHoverHandler, true);
       document.addEventListener("click", window.__techCcHubAnnotationHandler, true);
+      window.addEventListener("scroll", window.__techCcHubAnnotationScrollHandler, true);
+      document.addEventListener("scroll", window.__techCcHubAnnotationScrollHandler, true);
+      window.addEventListener("resize", window.__techCcHubAnnotationResizeHandler, true);
       return true;
       }`;
   }
@@ -3031,6 +3188,22 @@ export class BrowserWorkbenchManager {
       if (window.__techCcHubAnnotationHoverHandler) {
         document.removeEventListener("mousemove", window.__techCcHubAnnotationHoverHandler, true);
         window.__techCcHubAnnotationHoverHandler = null;
+      }
+      if (window.__techCcHubAnnotationScrollHandler) {
+        window.removeEventListener("scroll", window.__techCcHubAnnotationScrollHandler, true);
+        document.removeEventListener("scroll", window.__techCcHubAnnotationScrollHandler, true);
+        window.__techCcHubAnnotationScrollHandler = null;
+      }
+      if (window.__techCcHubAnnotationResizeHandler) {
+        window.removeEventListener("resize", window.__techCcHubAnnotationResizeHandler, true);
+        window.__techCcHubAnnotationResizeHandler = null;
+      }
+      if (window.__techCcHubAnnotationSyncFrame) {
+        cancelAnimationFrame(window.__techCcHubAnnotationSyncFrame);
+        window.__techCcHubAnnotationSyncFrame = null;
+      }
+      if (window.__techCcHubAnnotations && typeof window.__techCcHubAnnotations.clear === "function") {
+        window.__techCcHubAnnotations.clear();
       }
       if (layer) layer.remove();
       const style = document.getElementById("__tech_cc_hub_annotation_style__");

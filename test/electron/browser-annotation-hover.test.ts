@@ -9,5 +9,14 @@ describe("browser annotation hover preview", () => {
     assert.match(source, /function updateHover\(/);
     assert.match(source, /document\.addEventListener\("mousemove", window\.__techCcHubAnnotationHoverHandler, true\)/);
     assert.match(source, /"\.__tech_cc_hub_hover\{/);
+    assert.doesNotMatch(source, /__tech_cc_hub_hover_label/);
+  });
+
+  it("emits annotations through the BrowserWorkbench preload bridge instead of page console logs", () => {
+    const source = readFileSync("src/electron/browser-manager.ts", "utf8");
+
+    assert.match(source, /window\.__techCcHubAnnotation/);
+    assert.match(source, /bridge\.emit\(JSON\.stringify\(annotation\)\)/);
+    assert.doesNotMatch(source, /console\.info\(options\.prefix/);
   });
 });

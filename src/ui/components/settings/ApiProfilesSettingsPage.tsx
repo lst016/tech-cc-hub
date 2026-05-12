@@ -520,7 +520,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
         title: "Codex 模型渠道引导配置",
         prompt: buildCodexGuidePrompt(profile),
         agentId: "codex-oauth-guide",
-        allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,TodoWrite",
+        allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,update_plan",
       }));
     } catch (error) {
       setImportStatus({ profileId: profile.id, tone: "error", message: error instanceof Error ? error.message : "启动 Agent 引导配置失败。" });

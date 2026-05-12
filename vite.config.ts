@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import tsconfigPaths from 'vite-tsconfig-paths';
-import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { extname, isAbsolute, join, relative } from 'node:path';
 import type { Plugin } from 'vite';
 
@@ -41,6 +41,22 @@ function resolvePreviewRequest(url: URL) {
 	const realPath = realpathSync(requestedPath);
 	if (!isPathWithinRoot(rootPath, realPath)) return { error: '只能访问当前工作目录内的文件。' };
 	return { rootPath, realPath };
+}
+
+function readRequestBody(req: import('node:http').IncomingMessage): Promise<string> {
+	return new Promise((resolve, reject) => {
+		let body = '';
+		req.setEncoding('utf8');
+		req.on('data', (chunk) => {
+			body += chunk;
+			if (body.length > maxPreviewTextBytes * 2) {
+				reject(new Error('Request body is too large.'));
+				req.destroy();
+			}
+		});
+		req.on('end', () => resolve(body));
+		req.on('error', reject);
+	});
 }
 
 function previewFsPlugin(): Plugin {
@@ -124,6 +140,28 @@ function previewFsPlugin(): Plugin {
 					return sendJson(res, { success: true, entries, truncated });
 				} catch (error) {
 					return sendJson(res, { success: false, error: error instanceof Error ? error.message : '索引文件失败。' }, 500);
+				}
+			});
+			server.middlewares.use('/__tech_preview/write', async (req, res) => {
+				try {
+					if (req.method !== 'POST') return sendJson(res, { success: false, error: 'Only POST is supported.' }, 405);
+					const payload = JSON.parse(await readRequestBody(req)) as { cwd?: unknown; path?: unknown; data?: unknown };
+					const cwd = typeof payload.cwd === 'string' ? payload.cwd.trim() : '';
+					const rawPath = typeof payload.path === 'string' ? payload.path.trim() : '';
+					if (!cwd || !rawPath || typeof payload.data !== 'string') {
+						return sendJson(res, { success: false, error: 'Missing cwd, path, or data.' }, 400);
+					}
+					const requestUrl = new URL('http://localhost');
+					requestUrl.searchParams.set('cwd', cwd);
+					requestUrl.searchParams.set('path', rawPath);
+					const resolved = resolvePreviewRequest(requestUrl);
+					if ('error' in resolved) return sendJson(res, { success: false, error: resolved.error }, 400);
+					const stat = statSync(resolved.realPath);
+					if (!stat.isFile()) return sendJson(res, { success: false, error: 'Only regular files can be written.' }, 400);
+					writeFileSync(resolved.realPath, payload.data, 'utf8');
+					return sendJson(res, { success: true, path: resolved.realPath });
+				} catch (error) {
+					return sendJson(res, { success: false, error: error instanceof Error ? error.message : 'Write preview file failed.' }, 500);
 				}
 			});
 			server.middlewares.use('/__tech_preview/read', (req, res) => {
