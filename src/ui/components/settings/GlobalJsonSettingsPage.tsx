@@ -1,4 +1,28 @@
 import { CodeEditor } from "./CodeEditor";
+import { ensureLarkCliRuntimeDefaults } from "../../../shared/lark-runtime-defaults.js";
+
+const GLOBAL_JSON_PLACEHOLDER = JSON.stringify(
+  ensureLarkCliRuntimeDefaults({
+    systemPromptExt: [
+      "工具调用必须少而准；能直接回答时不要调用工具。",
+      "多个互不依赖的只读工具调用要并行或批量执行。",
+    ],
+    env: {
+      GITHUB_TOKEN: "ghp_xxx",
+      GROQ_API_KEY: "gsk_xxx",
+    },
+    skillCredentials: {
+      github: [
+        "GITHUB_TOKEN",
+      ],
+      browser: {
+        env: ["GROQ_API_KEY"],
+      },
+    },
+  }),
+  null,
+  2,
+);
 
 type GlobalJsonSettingsPageProps = {
   configText: string;
@@ -67,7 +91,7 @@ export function GlobalJsonSettingsPage({
           onChange={onChange}
           minHeight="260px"
           className="mt-4 h-[36vh] max-h-[360px] flex-none"
-          placeholder='{\n  "systemPromptExt": [\n    "工具调用必须少而准；能直接回答时不要调用工具。",\n    "多个互不依赖的只读工具调用要并行或批量执行。"\n  ],\n  "env": {\n    "GITHUB_TOKEN": "ghp_xxx",\n    "GROQ_API_KEY": "gsk_xxx"\n  },\n  "skillCredentials": {\n    "github": [\n      "GITHUB_TOKEN"\n    ],\n    "browser": {\n      "env": ["GROQ_API_KEY"]\n    }\n  }\n}'
+          placeholder={GLOBAL_JSON_PLACEHOLDER}
         />
 
         <div className={`mt-3 shrink-0 rounded-xl px-3 py-2 text-xs ${parseError ? "border border-error/20 bg-error-light text-error" : "border border-ink-900/10 bg-surface text-muted"}`}>

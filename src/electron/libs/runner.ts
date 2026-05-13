@@ -73,6 +73,7 @@ import {
   buildBuiltinMcpRegistryPromptAppend,
   buildClaudeCode2139FeaturePromptAppend,
   buildDesignParityPromptAppend,
+  buildFeishuDocumentFetchPromptAppend,
   buildGlobalRuntimeSystemPromptExtAppend,
   buildToolCallOptimizationPromptAppend,
 } from "./system-prompt-presets.js";
@@ -449,6 +450,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       const sdkPluginMcpServerNames = listClaudeCodePluginMcpServerNames(sdkPlugins);
       const systemPromptAppend = combineSystemPromptAppend(
         buildGlobalRuntimePromptAppend(syncedGlobalRuntimeConfig, mergedEnv),
+        buildFeishuDocumentFetchPromptAppend(currentPrompt, mergedEnv),
         buildAdminConfigPromptAppend(),
         agentContext.systemPromptAppend,
         runtimeProfile.includeProjectMemoryPrompt ? buildClaudeProjectMemoryPromptAppend(projectCwd) : undefined,

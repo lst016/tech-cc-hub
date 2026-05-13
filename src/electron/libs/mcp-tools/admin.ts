@@ -23,17 +23,51 @@ const MAX_ENV_ENTRIES = 120;
 const MAX_SKILL_NAME_LENGTH = 128;
 const MAX_SKILL_CREDENTIAL_ENTRIES = 80;
 const MAX_DELETE_ITEMS = 80;
+const MAX_SYSTEM_PROMPT_EXT_LINES = 40;
+const MAX_SYSTEM_PROMPT_EXT_LINE_LENGTH = 2000;
+const MAX_CHANNEL_FIELD_LENGTH = 4096;
+const CHANNEL_PROVIDER_IDS = ["telegram", "lark", "wechat"] as const;
+const CHANNEL_TRANSPORT_MODES = ["bot-api", "lark-cli", "lark-open-platform", "weixin-native", "weixin-openclaw"] as const;
+const LARK_CHANNEL_STRING_FIELDS = [
+  "displayName",
+  "botTokenEnv",
+  "chatIdEnv",
+  "webhookUrlEnv",
+  "appIdEnv",
+  "appSecretEnv",
+  "tenantKeyEnv",
+  "cliCommand",
+  "cliProfile",
+  "cliSendArgsTemplate",
+  "cliReceiveArgsTemplate",
+  "allowedSenderIds",
+  "allowedConversationIds",
+  "notes",
+] as const;
+const LARK_CHANNEL_BOOLEAN_FIELDS = ["enabled", "chatEnabled"] as const;
+
+type ChannelProviderId = typeof CHANNEL_PROVIDER_IDS[number];
+type ChannelTransportMode = typeof CHANNEL_TRANSPORT_MODES[number];
+type ChannelPatch = {
+  defaultChannel?: ChannelProviderId;
+  items?: {
+    lark?: Record<string, string | boolean>;
+  };
+};
+type ConfigSection = "env" | "skillCredentials" | "closeSidebarOnBrowserOpen" | "systemPromptExt" | "channels";
 
 type AdminToolInput = {
   patch?: {
     env?: Record<string, string | number | boolean>;
     skillCredentials?: Record<string, string[]>;
     closeSidebarOnBrowserOpen?: boolean;
+    systemPromptExt?: string[];
+    channels?: ChannelPatch;
   };
   remove?: {
     env?: string[];
     skillCredentials?: string[];
-    sections?: Array<"env" | "skillCredentials" | "closeSidebarOnBrowserOpen">;
+    sections?: ConfigSection[];
   };
 };
 
@@ -65,6 +99,96 @@ function toEnvString(value: string | number | boolean): string {
     return Number.isFinite(value) ? String(value) : "";
   }
   return value ? "true" : "false";
+}
+
+function normalizeSystemPromptExt(value: unknown): string[] {
+  const candidates = typeof value === "string"
+    ? [value]
+    : Array.isArray(value)
+      ? value
+      : [];
+  const lines = candidates
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean);
+
+  if (lines.length > MAX_SYSTEM_PROMPT_EXT_LINES) {
+    throw new Error(`systemPromptExt 不能超过 ${MAX_SYSTEM_PROMPT_EXT_LINES} 行。`);
+  }
+
+  for (const line of lines) {
+    if (line.length > MAX_SYSTEM_PROMPT_EXT_LINE_LENGTH) {
+      throw new Error(`systemPromptExt 单行长度超限（max ${MAX_SYSTEM_PROMPT_EXT_LINE_LENGTH}）。`);
+    }
+  }
+
+  return Array.from(new Set(lines));
+}
+
+function isChannelProviderId(value: unknown): value is ChannelProviderId {
+  return typeof value === "string" && (CHANNEL_PROVIDER_IDS as readonly string[]).includes(value);
+}
+
+function isChannelTransportMode(value: unknown): value is ChannelTransportMode {
+  return typeof value === "string" && (CHANNEL_TRANSPORT_MODES as readonly string[]).includes(value);
+}
+
+function normalizeChannelText(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (trimmed.length > MAX_CHANNEL_FIELD_LENGTH) {
+    throw new Error(`channels 字段值长度超限（max ${MAX_CHANNEL_FIELD_LENGTH}）。`);
+  }
+  return trimmed;
+}
+
+function normalizeLarkChannelPatch(value: unknown): Record<string, string | boolean> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const patch: Record<string, string | boolean> = { provider: "lark" };
+  for (const field of LARK_CHANNEL_BOOLEAN_FIELDS) {
+    if (typeof value[field] === "boolean") {
+      patch[field] = value[field];
+    }
+  }
+  if (isChannelTransportMode(value.transport)) {
+    patch.transport = value.transport;
+  }
+  for (const field of LARK_CHANNEL_STRING_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(value, field)) {
+      const text = normalizeChannelText(value[field]);
+      if (text !== undefined) {
+        patch[field] = text;
+      }
+    }
+  }
+
+  return Object.keys(patch).length > 1 ? patch : undefined;
+}
+
+function normalizeChannelsPatch(value: unknown): ChannelPatch | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const patch: ChannelPatch = {};
+  if (isChannelProviderId(value.defaultChannel)) {
+    patch.defaultChannel = value.defaultChannel;
+  }
+
+  const rawItems = isRecord(value.items) ? value.items : {};
+  const lark = normalizeLarkChannelPatch(rawItems.lark);
+  if (lark) {
+    patch.items = { lark };
+  }
+
+  return patch.defaultChannel || patch.items ? patch : undefined;
 }
 
 // 把 MCP 输入归一成内部补丁结构。这里会过滤非法 key，而不是把模型给的 JSON 原样写盘。
@@ -129,6 +253,20 @@ function normalizePatch(input: unknown): AdminToolInput {
     }
   }
 
+  if (patchInput && Object.prototype.hasOwnProperty.call(patchInput, "systemPromptExt")) {
+    const lines = normalizeSystemPromptExt(patchInput.systemPromptExt);
+    if (lines.length > 0) {
+      patch.systemPromptExt = lines;
+    }
+  }
+
+  if (patchInput && Object.prototype.hasOwnProperty.call(patchInput, "channels")) {
+    const channels = normalizeChannelsPatch(patchInput.channels);
+    if (channels) {
+      patch.channels = channels;
+    }
+  }
+
   const removeInput = isRecord(rootInput.remove) ? rootInput.remove : null;
   if (removeInput?.env && Array.isArray(removeInput.env)) {
     const envKeys = removeInput.env
@@ -155,8 +293,12 @@ function normalizePatch(input: unknown): AdminToolInput {
   }
 
   if (removeInput?.sections && Array.isArray(removeInput.sections)) {
-    const validSections = removeInput.sections.filter((section): section is "env" | "skillCredentials" | "closeSidebarOnBrowserOpen" => {
-      return section === "env" || section === "skillCredentials" || section === "closeSidebarOnBrowserOpen";
+    const validSections = removeInput.sections.filter((section): section is ConfigSection => {
+      return section === "env"
+        || section === "skillCredentials"
+        || section === "closeSidebarOnBrowserOpen"
+        || section === "systemPromptExt"
+        || section === "channels";
     });
     if (validSections.length > 0) {
       remove.sections = Array.from(new Set(validSections));
@@ -192,17 +334,41 @@ function collectSkillEnvCandidates(rawValue: unknown): string[] {
   return [];
 }
 
+function readSystemPromptExtLines(value: unknown): string[] {
+  const raw = typeof value === "string"
+    ? [value]
+    : Array.isArray(value)
+      ? value
+      : [];
+  return raw
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean);
+}
+
+function mergeSystemPromptExtLines(current: unknown, patchLines: string[]): string[] {
+  return Array.from(new Set([
+    ...readSystemPromptExtLines(current),
+    ...patchLines,
+  ]));
+}
+
 // 合并策略是“只改传入字段”：没有出现在 patch/remove 里的配置会原样保留。
 function mergeConfig(currentConfig: unknown, patch?: AdminToolInput["patch"], remove?: AdminToolInput["remove"]): GlobalRuntimeConfig {
   const base: GlobalRuntimeConfig = isRecord(currentConfig) ? { ...currentConfig } : {};
   const sections = new Set(remove?.sections ?? []);
   const shouldTouchEnv = Boolean(patch?.env || remove?.env);
   const shouldTouchSkillCredentials = Boolean(patch?.skillCredentials || remove?.skillCredentials);
+  const shouldTouchChannels = Boolean(patch?.channels);
   const nextEnv = sections.has("env") ? {} : isRecord(base.env) ? { ...base.env } : {};
   const nextSkillCredentials = sections.has("skillCredentials")
     ? {}
     : isRecord(base.skillCredentials)
       ? { ...base.skillCredentials }
+      : {};
+  const nextChannels = sections.has("channels")
+    ? {}
+    : isRecord(base.channels)
+      ? { ...base.channels }
       : {};
 
   if (patch?.closeSidebarOnBrowserOpen !== undefined) {
@@ -247,6 +413,36 @@ function mergeConfig(currentConfig: unknown, patch?: AdminToolInput["patch"], re
     base.skillCredentials = nextSkillCredentials;
   }
 
+  if (patch?.systemPromptExt) {
+    base.systemPromptExt = mergeSystemPromptExtLines(base.systemPromptExt, patch.systemPromptExt);
+    sections.delete("systemPromptExt");
+  }
+  if (sections.has("systemPromptExt")) {
+    delete (base as Record<string, unknown>).systemPromptExt;
+  }
+
+  if (patch?.channels?.defaultChannel) {
+    nextChannels.defaultChannel = patch.channels.defaultChannel;
+  }
+  if (patch?.channels?.items) {
+    const nextItems = isRecord(nextChannels.items) ? { ...nextChannels.items } : {};
+    for (const [provider, channelPatch] of Object.entries(patch.channels.items)) {
+      const currentChannel = isRecord(nextItems[provider]) ? { ...nextItems[provider] } : {};
+      nextItems[provider] = {
+        ...currentChannel,
+        ...channelPatch,
+        provider,
+      };
+    }
+    nextChannels.version = 1;
+    nextChannels.items = nextItems;
+  }
+  if (sections.has("channels")) {
+    delete (base as Record<string, unknown>).channels;
+  } else if (shouldTouchChannels) {
+    base.channels = nextChannels;
+  }
+
   return base;
 }
 
@@ -255,6 +451,10 @@ function buildResultSummary(nextConfig: GlobalRuntimeConfig): Record<string, unk
   const skillCredentials = isRecord(nextConfig.skillCredentials)
     ? Object.keys(nextConfig.skillCredentials as Record<string, unknown>)
     : [];
+  const channels = isRecord(nextConfig.channels) && isRecord(nextConfig.channels.items)
+    ? Object.keys(nextConfig.channels.items)
+    : [];
+  const systemPromptExt = readSystemPromptExtLines(nextConfig.systemPromptExt);
   const closeSidebarOnBrowserOpen = Object.prototype.hasOwnProperty.call(nextConfig, "closeSidebarOnBrowserOpen")
     ? Boolean(nextConfig.closeSidebarOnBrowserOpen)
     : undefined;
@@ -263,10 +463,13 @@ function buildResultSummary(nextConfig: GlobalRuntimeConfig): Record<string, unk
     sections: {
       env: env.length,
       skillCredentials: skillCredentials.length,
+      channels: channels.length,
+      systemPromptExt: systemPromptExt.length,
       closeSidebarOnBrowserOpen,
     },
     envKeys: env,
     skillCredentialSkills: skillCredentials,
+    channelProviders: channels,
   };
 }
 
@@ -284,13 +487,41 @@ const TOOL_INPUT_SCHEMA = {
         ]),
       ),
       closeSidebarOnBrowserOpen: z.boolean(),
+      systemPromptExt: z.union([
+        z.string().trim().min(1),
+        z.array(z.string().trim().min(1)).max(MAX_SYSTEM_PROMPT_EXT_LINES),
+      ]),
+      channels: z.object({
+        defaultChannel: z.enum(CHANNEL_PROVIDER_IDS).optional(),
+        items: z.object({
+          lark: z.object({
+            enabled: z.boolean().optional(),
+            chatEnabled: z.boolean().optional(),
+            transport: z.enum(CHANNEL_TRANSPORT_MODES).optional(),
+            displayName: z.string().optional(),
+            botTokenEnv: z.string().optional(),
+            chatIdEnv: z.string().optional(),
+            webhookUrlEnv: z.string().optional(),
+            appIdEnv: z.string().optional(),
+            appSecretEnv: z.string().optional(),
+            tenantKeyEnv: z.string().optional(),
+            cliCommand: z.string().optional(),
+            cliProfile: z.string().optional(),
+            cliSendArgsTemplate: z.string().optional(),
+            cliReceiveArgsTemplate: z.string().optional(),
+            allowedSenderIds: z.string().optional(),
+            allowedConversationIds: z.string().optional(),
+            notes: z.string().optional(),
+          }).partial().optional(),
+        }).partial().optional(),
+      }).partial(),
     })
     .partial(),
   remove: z
     .object({
       env: z.array(z.string().trim().min(1)).max(MAX_DELETE_ITEMS),
       skillCredentials: z.array(z.string().trim().min(1)).max(MAX_DELETE_ITEMS),
-      sections: z.array(z.enum(["env", "skillCredentials", "closeSidebarOnBrowserOpen"])),
+      sections: z.array(z.enum(["env", "skillCredentials", "closeSidebarOnBrowserOpen", "systemPromptExt", "channels"])),
     })
     .partial(),
 };
@@ -302,9 +533,9 @@ export function getAdminMcpServer(): McpSdkServerConfigWithInstance {
 
   const toolHandler = tool(
     "set_global_runtime_config",
-    "写入/更新 tech-cc-hub 全局运行配置（agent-runtime.json）。支持 env 与 skillCredentials 字段；用于将凭证变量、技能映射等持久化，避免重复手工配置。",
+    "写入/更新 tech-cc-hub 全局运行配置（agent-runtime.json）。支持 env、skillCredentials、channels、systemPromptExt 等字段；用于将凭证变量、技能映射、渠道入口和全局提示持久化，避免重复手工配置。",
     TOOL_INPUT_SCHEMA,
-    async (input, _extra) => {
+    async (input) => {
       try {
         const normalized = normalizePatch(input);
         if (!normalized.patch && !normalized.remove) {

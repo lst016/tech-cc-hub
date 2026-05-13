@@ -13,7 +13,6 @@ import {
 import {
   loadApiConfigSettings,
   loadGlobalRuntimeConfig,
-  saveApiConfigSettings,
   type ApiConfig,
   type ApiModelConfig,
   type GlobalRuntimeConfig,
@@ -250,12 +249,6 @@ function getFallbackClaudeSettingsConfig(): ApiConfig | null {
           provider: "custom",
           apiType: "anthropic"
         };
-        // 持久化到 api-config.json
-        try {
-          saveApiConfigSettings({ profiles: [config] });
-        } catch (e) {
-          console.error("[claude-settings] Failed to persist config:", e);
-        }
         return config;
       }
     }

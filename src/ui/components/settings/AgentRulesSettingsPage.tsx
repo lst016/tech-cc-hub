@@ -6,36 +6,47 @@ type AgentRulesSettingsPageProps = {
   documents: AgentRuleDocuments | null;
   userMarkdown: string;
   onUserMarkdownChange: (value: string) => void;
+  onRefreshDocuments?: () => Promise<void>;
+  refreshing?: boolean;
 };
 
 export function AgentRulesSettingsPage({
   documents,
   userMarkdown,
   onUserMarkdownChange,
+  onRefreshDocuments,
+  refreshing = false,
 }: AgentRulesSettingsPageProps) {
   const [activeTab, setActiveTab] = useState<"system" | "user">("system");
   const systemMarkdown = documents?.systemDefaultMarkdown ?? "";
   const userAgentsPath = documents?.userAgentsPath ?? "~/.claude/CLAUDE.md";
   const userClaudeRoot = documents?.userClaudeRoot ?? "~/.claude";
 
+  const handleTabChange = (tab: "system" | "user") => {
+    if (tab !== activeTab) {
+      void onRefreshDocuments?.();
+    }
+    setActiveTab(tab);
+  };
+
   return (
     <section className="flex min-h-0 flex-col gap-4">
       <div className="flex shrink-0 rounded-[24px] border border-ink-900/8 bg-white/82 p-1.5 shadow-[0_14px_30px_rgba(24,32,46,0.05)]">
         <button
           type="button"
-          onClick={() => setActiveTab("system")}
+          onClick={() => handleTabChange("system")}
           className={`flex-1 rounded-[18px] px-4 py-3 text-left transition ${activeTab === "system" ? "bg-accent text-white shadow-[0_12px_24px_rgba(217,106,58,0.18)]" : "text-ink-600 hover:bg-accent/8"}`}
         >
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] opacity-70">系统</div>
-          <div className="mt-1 text-sm font-semibold">系统默认规则</div>
+          <div className="mt-1 text-sm font-semibold">{refreshing && activeTab === "system" ? "重新拉取中..." : "系统默认规则"}</div>
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab("user")}
+          onClick={() => handleTabChange("user")}
           className={`flex-1 rounded-[18px] px-4 py-3 text-left transition ${activeTab === "user" ? "bg-accent text-white shadow-[0_12px_24px_rgba(217,106,58,0.18)]" : "text-ink-600 hover:bg-accent/8"}`}
         >
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] opacity-70">Claude</div>
-          <div className="mt-1 text-sm font-semibold">用户全局规则</div>
+          <div className="mt-1 text-sm font-semibold">{refreshing && activeTab === "user" ? "重新拉取中..." : "用户全局规则"}</div>
         </button>
       </div>
 

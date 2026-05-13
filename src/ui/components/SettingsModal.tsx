@@ -33,6 +33,7 @@ import {
   normalizeProfile,
   validateProfiles,
 } from "./settings/settings-utils";
+import { ensureLarkCliRuntimeDefaults } from "../../shared/lark-runtime-defaults.js";
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -172,6 +173,10 @@ function getCloseSidebarOnBrowserOpen(config: GlobalRuntimeConfig): boolean {
   return config.closeSidebarOnBrowserOpen !== false;
 }
 
+function normalizeAgentRuleDocuments(documents: AgentRuleDocuments | null | undefined): AgentRuleDocuments {
+  return documents ?? DEFAULT_AGENT_RULE_DOCUMENTS;
+}
+
 function validateGlobalConfigText(rawText: string): string | null {
   const trimmed = rawText.trim();
   if (!trimmed) {
@@ -207,9 +212,11 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const setApiConfigSettings = useAppStore((state) => state.setApiConfigSettings);
   const [profiles, setProfiles] = useState<ApiConfigProfile[]>([]);
+  const [apiConfigDirty, setApiConfigDirty] = useState(false);
   const [globalConfigText, setGlobalConfigText] = useState("{}");
   const [agentRuleDocuments, setAgentRuleDocuments] = useState<AgentRuleDocuments | null>(null);
   const [userAgentMarkdown, setUserAgentMarkdown] = useState("");
+  const [agentRulesRefreshing, setAgentRulesRefreshing] = useState(false);
   const [closeSidebarOnBrowserOpen, setCloseSidebarOnBrowserOpen] = useState(true);
   const [activePageId, setActivePageId] = useState<SettingsPageId>("profiles");
   const [loading, setLoading] = useState(false);
@@ -238,21 +245,24 @@ export function SettingsModal({
         : Promise.resolve(DEFAULT_AGENT_RULE_DOCUMENTS),
     ])
       .then(([apiSettings, globalSettings, ruleDocuments]) => {
-        const normalizedGlobalSettings = typeof globalSettings === "object" && globalSettings !== null && !Array.isArray(globalSettings)
-          ? globalSettings as GlobalRuntimeConfig
-          : {};
+        const normalizedGlobalSettings = ensureLarkCliRuntimeDefaults(
+          typeof globalSettings === "object" && globalSettings !== null && !Array.isArray(globalSettings)
+            ? globalSettings as GlobalRuntimeConfig
+            : {},
+        );
         const normalizedProfiles = apiSettings.profiles.length > 0
           ? apiSettings.profiles.map((profile) => normalizeProfile(profile))
           : [createProfile()];
 
         setApiConfigSettings({ profiles: normalizedProfiles });
         setProfiles(normalizedProfiles);
+        setApiConfigDirty(false);
         setActivePageId(initialPageId ?? "profiles");
         const globalConfigText = JSON.stringify(normalizedGlobalSettings, null, 2);
         setGlobalConfigText(globalConfigText);
         setGlobalConfigParseError(validateGlobalConfigText(globalConfigText));
         setCloseSidebarOnBrowserOpen(getCloseSidebarOnBrowserOpen(normalizedGlobalSettings));
-        const normalizedRuleDocuments = ruleDocuments ?? DEFAULT_AGENT_RULE_DOCUMENTS;
+        const normalizedRuleDocuments = normalizeAgentRuleDocuments(ruleDocuments);
         setAgentRuleDocuments(normalizedRuleDocuments);
         setUserAgentMarkdown(normalizedRuleDocuments.userAgentsMarkdown);
       })
@@ -278,6 +288,24 @@ export function SettingsModal({
     window.addEventListener(DEV_BRIDGE_READY_EVENT, handleDevBridgeReady);
     return () => window.removeEventListener(DEV_BRIDGE_READY_EVENT, handleDevBridgeReady);
   }, [loadSettings]);
+
+  const refreshAgentRuleDocuments = useCallback(async () => {
+    setStatus(null);
+    setAgentRulesRefreshing(true);
+    try {
+      const ruleDocuments = typeof electronApi.getAgentRuleDocuments === "function"
+        ? await electronApi.getAgentRuleDocuments()
+        : DEFAULT_AGENT_RULE_DOCUMENTS;
+      const normalizedRuleDocuments = normalizeAgentRuleDocuments(ruleDocuments);
+      setAgentRuleDocuments(normalizedRuleDocuments);
+      setUserAgentMarkdown(normalizedRuleDocuments.userAgentsMarkdown);
+    } catch (error) {
+      console.error("Failed to reload agent rule documents:", error);
+      toast.error("重新拉取 Claude 全局规则失败。");
+    } finally {
+      setAgentRulesRefreshing(false);
+    }
+  }, [electronApi]);
 
   const enabledProfile = useMemo(() => getEnabledProfile(profiles), [profiles]);
   const pages = useMemo(() => SETTINGS_PAGES.map((page) => {
@@ -310,6 +338,7 @@ export function SettingsModal({
 
   const updateProfiles = (updater: (current: ApiConfigProfile[]) => ApiConfigProfile[]) => {
     setStatus(null);
+    setApiConfigDirty(true);
     setProfiles((current) => updater(current));
   };
 
@@ -379,7 +408,7 @@ export function SettingsModal({
     const normalizedProfiles = profiles.map((profile) => normalizeProfile(profile));
     const normalizedGlobalConfig = parseGlobalConfig(globalConfigText);
     const globalError = validateGlobalConfigText(globalConfigText);
-    const profileError = validateProfiles(normalizedProfiles);
+    const profileError = apiConfigDirty ? validateProfiles(normalizedProfiles) : null;
 
     if (profileError) {
       setStatus({ tone: "error", message: profileError });
@@ -402,7 +431,9 @@ export function SettingsModal({
 
     try {
       const [apiResult, globalResult, ruleResult] = await Promise.all([
-        window.electron.saveApiConfig({ profiles: nextProfiles }),
+        apiConfigDirty
+          ? window.electron.saveApiConfig({ profiles: nextProfiles })
+          : Promise.resolve({ success: true } as { success: boolean; error?: string }),
         window.electron.saveGlobalConfig(normalizedGlobalConfig),
         agentRuleDocuments && typeof electronApi.saveUserAgentRuleDocument === "function"
           ? electronApi.saveUserAgentRuleDocument(userAgentMarkdown)
@@ -425,8 +456,11 @@ export function SettingsModal({
         return;
       }
 
-      setApiConfigSettings({ profiles: nextProfiles });
-      setProfiles(nextProfiles);
+      if (apiConfigDirty) {
+        setApiConfigSettings({ profiles: nextProfiles });
+        setProfiles(nextProfiles);
+        setApiConfigDirty(false);
+      }
       setAgentRuleDocuments((current) => current ? {
         ...current,
         userAgentsMarkdown: userAgentMarkdown,
@@ -490,6 +524,8 @@ export function SettingsModal({
         documents={agentRuleDocuments}
         userMarkdown={userAgentMarkdown}
         onUserMarkdownChange={handleUserAgentMarkdownChange}
+        onRefreshDocuments={refreshAgentRuleDocuments}
+        refreshing={agentRulesRefreshing}
       />
     );
   }

@@ -5,6 +5,10 @@ import {
 } from "../../shared/builtin-mcp-registry.js";
 import { buildClaudeCodeCompatPromptAppend } from "./claude-code-compat-registry.js";
 
+const FEISHU_DOC_URL_PATTERN = /https?:\/\/[^\s<>"'`]*feishu\.cn\/(?:wiki|docx|docs)\/[^\s<>"'`]*/gi;
+const FEISHU_DOC_URL_TRAILING_PUNCTUATION = /[),.;，。；、]+$/;
+const MAX_FEISHU_DOC_URL_HINTS = 3;
+
 export function buildBrowserWorkbenchPromptAppend(): string {
   return [
     "BrowserView rule: for current-page browsing, scraping, debugging, annotations, screenshots, cookies, storage, console logs, URL checks, and DOM inspection, use the built-in tech-cc-hub browser MCP tools instead of external browser skills.",
@@ -34,6 +38,42 @@ export function buildToolCallOptimizationPromptAppend(): string {
     "After Edit/Write/MultiEdit, immediately run the smallest meaningful verification and report the result.",
     "Use bounded non-interactive shell commands; on Windows avoid unstable PowerShell surfaces and quote paths carefully.",
     "For scheduled tasks use the persistent tech-cc-hub cron MCP tools, not SDK CronCreate/CronDelete/CronList.",
+  ].join("\n");
+}
+
+export function extractFeishuDocumentUrls(text: string): string[] {
+  const matches = text.match(FEISHU_DOC_URL_PATTERN) ?? [];
+  const urls = matches
+    .map((url) => url.replace(FEISHU_DOC_URL_TRAILING_PUNCTUATION, ""))
+    .filter(Boolean);
+  return Array.from(new Set(urls)).slice(0, MAX_FEISHU_DOC_URL_HINTS);
+}
+
+export function buildFeishuDocumentFetchPromptAppend(
+  prompt: string,
+  runtimeEnv: Record<string, string | undefined>,
+): string | undefined {
+  const urls = extractFeishuDocumentUrls(prompt);
+  if (urls.length === 0) {
+    return undefined;
+  }
+
+  const hasLarkCliCommand = Boolean(runtimeEnv.LARK_CLI_COMMAND?.trim());
+  const hasLarkCliProfile = Boolean(runtimeEnv.LARK_CLI_PROFILE?.trim());
+  if (!hasLarkCliCommand || !hasLarkCliProfile) {
+    return undefined;
+  }
+
+  const commands = urls.map((url) =>
+    `- \`$LARK_CLI_COMMAND --profile $LARK_CLI_PROFILE docs +fetch --doc "${url}" --format pretty 2>&1\``
+  );
+
+  return [
+    "飞书/Lark 文档链接直读规则：当前用户输入包含 feishu.cn/wiki、feishu.cn/docx 或 feishu.cn/docs 链接。",
+    "优先直接用 lark-cli 文档读取命令；不要先试 `wiki get`、`wiki nodes --help` 或泛化 `--help` 探路。",
+    "Bash 命令：",
+    ...commands,
+    "读取返回 Markdown 后，直接基于文档内容回答用户。",
   ].join("\n");
 }
 

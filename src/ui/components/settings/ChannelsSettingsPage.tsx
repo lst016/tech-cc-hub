@@ -19,6 +19,13 @@ import type {
   ChannelRuntimeConfig,
   ChannelTransportMode,
 } from "../../types";
+import {
+  DEFAULT_LARK_CHANNEL_CONFIG,
+  LARK_CLI_COMMAND_ENV,
+  LARK_CLI_PROFILE_ENV,
+  LARK_CLI_SKILL_ENV_KEYS,
+  LARK_CLI_SYSTEM_PROMPT_EXT,
+} from "../../../shared/lark-runtime-defaults.js";
 
 type ChannelsSettingsPageProps = {
   configText: string;
@@ -68,19 +75,9 @@ const CHANNEL_DEFINITIONS: ChannelDefinition[] = [
     description: "飞书 / Lark 通道。IM 消息通过飞书开放平台应用接入，CLI 模式保留用于非 IM 场景。",
     badge: "Lark",
     source: "Feishu Open Platform + Lark CLI",
-    defaultTransport: "lark-open-platform",
+    defaultTransport: "lark-cli",
     defaults: {
-      enabled: false,
-      transport: "lark-open-platform",
-      displayName: "飞书 / Lark",
-      appIdEnv: "LARK_APP_ID",
-      appSecretEnv: "LARK_APP_SECRET",
-      tenantKeyEnv: "LARK_TENANT_KEY",
-      cliCommand: "lark-cli",
-      cliProfile: "default",
-      cliSendArgsTemplate: "event send --profile {{profile}} --type message --content \"{{text}}\"",
-      cliReceiveArgsTemplate: "event receive --profile {{profile}}",
-      notes: "",
+      ...DEFAULT_LARK_CHANNEL_CONFIG,
     },
   },
   {
@@ -308,6 +305,71 @@ function buildFeishuAppGuidePrompt(channel: ChannelConnectionConfig): string {
   ].join("\n");
 }
 
+function buildLarkCliGuidePrompt(channel: ChannelConnectionConfig): string {
+  const cliCommand = channel.cliCommand?.trim() || DEFAULT_LARK_CHANNEL_CONFIG.cliCommand;
+  const cliProfile = channel.cliProfile?.trim() || DEFAULT_LARK_CHANNEL_CONFIG.cliProfile;
+  return [
+    "你在 tech-cc-hub 的系统工作区里，目标是把 Lark CLI 配置成飞书技能可复用的全局入口。",
+    "",
+    "请按这个顺序处理：",
+    `1. 检查本机是否可用：\`${cliCommand} --version\` 和 \`${cliCommand} --profile ${cliProfile} doctor\`。`,
+    "2. CLI profile 默认使用 `default`。如果 `default` 不存在但发现了已有可用 profile，优先提示用户执行 `lark-cli profile rename <现有profile> default` 把它命名为 default；不要直接把随机 appId/profile 名写入全局配置，除非用户明确要求使用非 default profile。",
+    "3. 如果 lark-cli 不可用，先给出安装/修复命令；如果配置不存在，引导执行 `lark-cli config init`。",
+    "4. 需要用户身份能力时，引导用户按最小权限执行 `lark-cli auth login --domain <domain>` 或 `lark-cli auth login --scope \"<scope>\"`；不要回显任何 token。",
+    "5. CLI 模式不要向 tech-cc-hub 写入 appSecret/token；这些秘钥由本机 lark-cli 配置和系统 keychain 管理。tech-cc-hub 只保存命令和 profile 指针。",
+    "6. 配置完成后，用 `mcp__tech-cc-hub-admin__set_global_runtime_config` 持久化：",
+    "   - `env.LARK_CLI_COMMAND` 写入实际命令或绝对路径。",
+    "   - `env.LARK_CLI_PROFILE` 默认写入 `default`。",
+    "   - `skillCredentials.lark` 和 `skillCredentials.feishu` 关联这两个 env key。",
+    "   - `channels.items.lark` 写入 CLI 模式配置，供任务面板和后续飞书技能复用。",
+    "   - `systemPromptExt` 加入飞书技能读取全局 Lark CLI 配置的提示。",
+    "7. 最后用一个只读命令验证，例如 `lark-cli --profile default doctor` 或按用户需要验证具体 domain。",
+    "",
+    "建议写入的全局配置补丁：",
+    JSON.stringify({
+      patch: {
+        env: {
+          [LARK_CLI_COMMAND_ENV]: cliCommand,
+          [LARK_CLI_PROFILE_ENV]: cliProfile,
+        },
+        skillCredentials: {
+          lark: [...LARK_CLI_SKILL_ENV_KEYS],
+          feishu: [...LARK_CLI_SKILL_ENV_KEYS],
+        },
+        channels: {
+          items: {
+            lark: {
+              provider: "lark",
+              enabled: channel.enabled,
+              transport: "lark-cli",
+              displayName: channel.displayName ?? DEFAULT_LARK_CHANNEL_CONFIG.displayName,
+              cliCommand,
+              cliProfile,
+              cliSendArgsTemplate: channel.cliSendArgsTemplate ?? DEFAULT_LARK_CHANNEL_CONFIG.cliSendArgsTemplate,
+              cliReceiveArgsTemplate: channel.cliReceiveArgsTemplate ?? DEFAULT_LARK_CHANNEL_CONFIG.cliReceiveArgsTemplate,
+              allowedSenderIds: channel.allowedSenderIds ?? "",
+              allowedConversationIds: channel.allowedConversationIds ?? "",
+            },
+          },
+        },
+        systemPromptExt: [LARK_CLI_SYSTEM_PROMPT_EXT],
+      },
+    }, null, 2),
+    "",
+    "当前 UI 配置快照：",
+    JSON.stringify({
+      enabled: channel.enabled,
+      transport: channel.transport,
+      cliCommand,
+      cliProfile,
+      cliSendArgsTemplate: channel.cliSendArgsTemplate,
+      cliReceiveArgsTemplate: channel.cliReceiveArgsTemplate,
+      allowedSenderIds: channel.allowedSenderIds,
+      allowedConversationIds: channel.allowedConversationIds,
+    }, null, 2),
+  ].join("\n");
+}
+
 function ChannelHeader({
   definition,
   channel,
@@ -431,66 +493,89 @@ function LarkConfigForm({
   onPatch: (patch: Partial<ChannelConnectionConfig>) => void;
   onStartGuideSession?: (request: ChannelGuideSessionRequest) => Promise<void> | void;
 }) {
-  const [launchingGuide, setLaunchingGuide] = useState(false);
-  const guideLaunchInFlightRef = useRef(false);
-  const mode = channel.transport === "lark-cli" ? "lark-cli" : "lark-open-platform";
-  const isOpenPlatform = mode === "lark-open-platform";
+  const [launchingGuide, setLaunchingGuide] = useState<Record<"lark-cli" | "lark-open-platform", boolean>>({
+    "lark-cli": false,
+    "lark-open-platform": false,
+  });
+  const guideLaunchInFlightRef = useRef<Record<"lark-cli" | "lark-open-platform", boolean>>({
+    "lark-cli": false,
+    "lark-open-platform": false,
+  });
+  const activeTab: "lark-cli" | "lark-open-platform" = channel.transport === "lark-open-platform"
+    ? "lark-open-platform"
+    : "lark-cli";
 
-  const handleStartGuideSession = () => {
-    if (!onStartGuideSession || guideLaunchInFlightRef.current) {
+  const handleStartGuideSession = (kind: "lark-cli" | "lark-open-platform") => {
+    if (!onStartGuideSession || guideLaunchInFlightRef.current[kind]) {
       return;
     }
 
-    guideLaunchInFlightRef.current = true;
-    setLaunchingGuide(true);
+    guideLaunchInFlightRef.current = { ...guideLaunchInFlightRef.current, [kind]: true };
+    setLaunchingGuide((current) => ({ ...current, [kind]: true }));
 
     void Promise.resolve(onStartGuideSession({
-      title: "飞书应用引导配置",
-      prompt: buildFeishuAppGuidePrompt(channel),
-      agentId: "lark-guide",
+      title: kind === "lark-cli" ? "Lark CLI 引导配置" : "飞书应用引导配置",
+      prompt: kind === "lark-cli" ? buildLarkCliGuidePrompt(channel) : buildFeishuAppGuidePrompt(channel),
+      agentId: kind === "lark-cli" ? "lark-cli-guide" : "lark-guide",
       allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,update_plan",
     })).catch(() => {
-      guideLaunchInFlightRef.current = false;
-      setLaunchingGuide(false);
+      guideLaunchInFlightRef.current = { ...guideLaunchInFlightRef.current, [kind]: false };
+      setLaunchingGuide((current) => ({ ...current, [kind]: false }));
     });
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div>
-        <SectionHeader title="连接方式" />
-        <div className="flex flex-wrap gap-2 rounded-2xl border border-[#E5E6EB] bg-[#FAFAFB] p-3">
+        <SectionHeader title="配置方式" />
+        <div
+          className="grid grid-cols-2 gap-1 rounded-xl border border-[#E5E6EB] bg-[#F7F8FA] p-1"
+          role="tablist"
+          aria-label="飞书配置方式"
+        >
           <button
             type="button"
-            onClick={() => onPatch({ transport: "lark-open-platform" })}
-            className={`rounded-xl border px-3 py-2 text-left text-xs transition ${isOpenPlatform ? "border-[#D96B3A] bg-[#FFF4EF] text-[#C9572C]" : "border-[#E5E6EB] bg-white text-[#4E5969]"}`}
+            role="tab"
+            aria-selected={activeTab === "lark-cli"}
+            onClick={() => onPatch({ transport: "lark-cli" })}
+            className={`rounded-lg px-3 py-2 text-left text-xs transition ${
+              activeTab === "lark-cli"
+                ? "bg-white text-[#1D2129] shadow-sm"
+                : "text-[#4E5969] hover:bg-white/70"
+            }`}
           >
-            <span className="block font-semibold">飞书开放平台</span>
-            <span className="mt-1 block opacity-80">IM 消息通过飞书应用接入。</span>
+            <span className="block font-semibold">Lark CLI</span>
+            <span className="mt-1 block text-[#86909C]">默认使用本机 default profile。</span>
           </button>
           <button
             type="button"
-            onClick={() => onPatch({ transport: "lark-cli" })}
-            className={`rounded-xl border px-3 py-2 text-left text-xs transition ${mode === "lark-cli" ? "border-[#D96B3A] bg-[#FFF4EF] text-[#C9572C]" : "border-[#E5E6EB] bg-white text-[#4E5969]"}`}
+            role="tab"
+            aria-selected={activeTab === "lark-open-platform"}
+            onClick={() => onPatch({ transport: "lark-open-platform" })}
+            className={`rounded-lg px-3 py-2 text-left text-xs transition ${
+              activeTab === "lark-open-platform"
+                ? "bg-white text-[#1D2129] shadow-sm"
+                : "text-[#4E5969] hover:bg-white/70"
+            }`}
           >
-            <span className="block font-semibold">Lark CLI</span>
-            <span className="mt-1 block opacity-80">CLI 模式，用于非 IM 场景。</span>
+            <span className="block font-semibold">飞书 SDK</span>
+            <span className="mt-1 block text-[#86909C]">通过开放平台应用接入。</span>
           </button>
         </div>
       </div>
 
-      {isOpenPlatform ? (
-        <div>
+      {activeTab === "lark-open-platform" ? (
+        <div role="tabpanel" aria-label="飞书 SDK 配置">
           <SectionHeader
-            title="飞书开放平台凭证"
+            title="飞书 SDK 配置"
             action={onStartGuideSession ? (
               <button
                 type="button"
-                disabled={launchingGuide}
-                onClick={handleStartGuideSession}
+                disabled={launchingGuide["lark-open-platform"]}
+                onClick={() => handleStartGuideSession("lark-open-platform")}
                 className="inline-flex h-8 items-center rounded-full border border-[#F0C7B4] bg-[#FFF4EF] px-3 text-xs font-semibold text-[#C9572C] transition hover:border-[#D96B3A] hover:bg-[#FFEADF] disabled:cursor-not-allowed disabled:border-[#E5E6EB] disabled:bg-[#F7F8FA] disabled:text-[#86909C]"
               >
-                {launchingGuide ? "正在启动..." : "Agent 引导配置"}
+                {launchingGuide["lark-open-platform"] ? "SDK 启动中..." : "SDK 引导配置"}
               </button>
             ) : null}
           />
@@ -507,8 +592,20 @@ function LarkConfigForm({
           </div>
         </div>
       ) : (
-        <div>
-          <SectionHeader title="CLI 配置" />
+        <div role="tabpanel" aria-label="Lark CLI 配置">
+          <SectionHeader
+            title="Lark CLI 配置"
+            action={onStartGuideSession ? (
+              <button
+                type="button"
+                disabled={launchingGuide["lark-cli"]}
+                onClick={() => handleStartGuideSession("lark-cli")}
+                className="inline-flex h-8 items-center rounded-full border border-[#F0C7B4] bg-[#FFF4EF] px-3 text-xs font-semibold text-[#C9572C] transition hover:border-[#D96B3A] hover:bg-[#FFEADF] disabled:cursor-not-allowed disabled:border-[#E5E6EB] disabled:bg-[#F7F8FA] disabled:text-[#86909C]"
+              >
+                {launchingGuide["lark-cli"] ? "CLI 启动中..." : "CLI 引导配置"}
+              </button>
+            ) : null}
+          />
           <div className="rounded-2xl border border-[#E5E6EB] bg-white px-4 pt-1">
             <PreferenceRow label="CLI 命令" description="lark-cli 的可执行路径或命令名。">
               <Field label="" value={channel.cliCommand} placeholder="lark-cli" onChange={(cliCommand) => onPatch({ cliCommand })} />
