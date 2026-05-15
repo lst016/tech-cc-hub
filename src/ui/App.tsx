@@ -20,6 +20,7 @@ import { BrowserWorkbenchPage } from "./components/BrowserWorkbenchPage";
 // FeedbackDialog removed — uses direct browser link
 import MDContent from "./render/markdown";
 import ScheduledTasksPage from "./components/cron/ScheduledTasksPage";
+import { KnowledgePanel } from "./components/KnowledgePanel";
 import { TaskPanel } from "./components/TaskPanel";
 import { OPEN_BROWSER_WORKBENCH_URL_EVENT, type OpenBrowserWorkbenchUrlDetail } from "./events";
 import { copyTextToClipboard } from "./utils/clipboard";
@@ -338,6 +339,7 @@ function App() {
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const [hasNewMessages, setHasNewMessages] = useState(false);
   const [showSessionAnalysis, setShowSessionAnalysis] = useState(false);
+  const [showKnowledgePanel, setShowKnowledgePanel] = useState(false);
   const [showCronPage, setShowCronPage] = useState(false);
   const [showTaskPanel, setShowTaskPanel] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -393,7 +395,7 @@ function App() {
   const partialMessage = activeSessionId ? (partialMessagesBySessionId[activeSessionId] ?? "") : "";
   const showPartialMessage = activeSessionId ? (partialVisibilityBySessionId[activeSessionId] ?? false) : false;
   const workspaceView = activeSessionId ? (workspaceViewBySessionId[activeSessionId] ?? "chat") : "chat";
-  const isUtilityWorkspace = showTaskPanel || showCronPage;
+  const isUtilityWorkspace = showKnowledgePanel || showTaskPanel || showCronPage;
   const activityRailTab = activeSessionId ? (activityRailTabBySessionId[activeSessionId] ?? "preview") : "preview";
   const setActiveSessionWorkspaceView = useCallback((nextView: WorkspaceView) => {
     if (!activeSessionId) return;
@@ -553,6 +555,8 @@ function App() {
         profile.smallModel ? { name: profile.smallModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
         profile.imageModel ? { name: profile.imageModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
         profile.analysisModel ? { name: profile.analysisModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
+        profile.embeddingModel ? { name: profile.embeddingModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
+        profile.wikiModel ? { name: profile.wikiModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
       ].filter(Boolean);
       const matched = candidates.find((model) => model?.name === modelName);
       if (matched) return matched;
@@ -1524,8 +1528,9 @@ function App() {
             onDeleteSession={handleDeleteSession}
             onDeleteWorkspace={handleDeleteWorkspace}
             onOpenSettings={openSettings}
-            onOpenCronPage={() => { setShowCronPage(true); setShowTaskPanel(false); }}
-            onOpenTaskPanel={() => { setShowTaskPanel(true); setShowCronPage(false); }}
+            onOpenKnowledgePanel={() => { setShowKnowledgePanel(true); setShowCronPage(false); setShowTaskPanel(false); }}
+            onOpenCronPage={() => { setShowCronPage(true); setShowKnowledgePanel(false); setShowTaskPanel(false); }}
+            onOpenTaskPanel={() => { setShowTaskPanel(true); setShowKnowledgePanel(false); setShowCronPage(false); }}
             width={sidebarWidth}
           />
         )}
@@ -1550,7 +1555,14 @@ function App() {
           }}
         >
 
-          {showCronPage ? (
+          {showKnowledgePanel ? (
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <KnowledgePanel
+                onBack={() => setShowKnowledgePanel(false)}
+                onOpenSettings={openSettings}
+              />
+            </div>
+          ) : showCronPage ? (
             <div className="flex-1 min-h-0 overflow-hidden">
               <ScheduledTasksPage onBack={() => setShowCronPage(false)} />
             </div>

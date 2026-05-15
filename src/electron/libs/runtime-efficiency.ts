@@ -24,6 +24,7 @@ export type RuntimeEfficiencyProfile = {
 const BASE_SERVERS: readonly BuiltinMcpServerName[] = [
   "tech-cc-hub-admin",
   "tech-cc-hub-plan",
+  "tech-cc-hub-knowledge",
 ];
 
 const VISUAL_SERVERS: readonly BuiltinMcpServerName[] = [
@@ -51,6 +52,7 @@ const ALL_SERVERS: readonly BuiltinMcpServerName[] = [
   "tech-cc-hub-cron",
   "tech-cc-hub-idea",
   "tech-cc-hub-plan",
+  "tech-cc-hub-knowledge",
 ];
 
 const FIGMA_URL_PATTERN = /https?:\/\/(?:www\.)?figma\.com\/(?:design|file|proto|board|slides|make)\//i;

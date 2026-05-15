@@ -64,6 +64,7 @@ import { loadAgentRuleDocuments, saveUserAgentRuleDocument } from "./libs/agent-
 import { handleSkillManagerInvoke, registerSkillManagerHandlers } from "./libs/skill-manager/ipc-handlers.js";
 import { registerCronIpcHandlers, IpcCronEventEmitter } from "./libs/cron-ipc-handlers.js";
 import { handleGitWorkbenchInvoke, registerGitWorkbenchIpcHandlers } from "./libs/git/index.js";
+import { handleKnowledgeUiInvoke } from "./libs/knowledge/knowledge-ui-store.js";
 import { CronService } from "./libs/cron-service.js";
 import { CronRepository } from "./libs/cron-repository.js";
 import { CronJobExecutor, CronBusyGuard } from "./libs/cron-executor.js";
@@ -115,6 +116,18 @@ const browserWorkbenches = new Map<string, BrowserWorkbenchManager>();
 const browserWorkbenchEventListeners = new Set<(event: BrowserWorkbenchEvent) => void>();
 let stopDevBackendBridge: (() => void) | null = null;
 let channelBridgeController: ChannelBridgeController | null = null;
+const KNOWLEDGE_UI_CHANNELS = [
+  "knowledge:list",
+  "knowledge:sync-workspaces",
+  "knowledge:add-workspace",
+  "knowledge:remove-workspace",
+  "knowledge:update-generation",
+  "knowledge:complete-generation",
+  "knowledge:run-generation",
+  "knowledge:list-documents",
+  "knowledge:read-document",
+  "knowledge:overview",
+] as const;
 
 async function getOpenComputerUseVersion(): Promise<string | null> {
   try {
@@ -1346,6 +1359,9 @@ ipcMain.handle("sessions:list", (_event, payload?: { archived?: boolean }) => ({
 ipcMain.handle("slash-commands:list", (_event, payload?: { cwd?: string }) => ({
   commands: buildSessionSlashCommandItems({ cwd: payload?.cwd }) ?? [],
 }));
+for (const channel of KNOWLEDGE_UI_CHANNELS) {
+  ipcMain.handle(channel, (_event, ...args: unknown[]) => handleKnowledgeUiInvoke(app.getPath("userData"), channel, ...args));
+}
 ipcMain.handle("plugins:getOpenComputerUseStatus", () => getOpenComputerUsePluginStatus());
 ipcMain.handle("plugins:checkOpenComputerUseUpdate", () => checkOpenComputerUsePluginUpdate());
 ipcMain.handle("plugins:installOpenComputerUse", () => installOpenComputerUsePlugin());
@@ -2582,6 +2598,9 @@ app.on("ready", async () => {
             }
             if (channel.startsWith("git:")) {
               return await handleGitWorkbenchInvoke(channel, ...args);
+            }
+            if (channel.startsWith("knowledge:")) {
+              return handleKnowledgeUiInvoke(app.getPath("userData"), channel, ...args);
             }
             if (channel.startsWith("skills:")) {
               return await handleSkillManagerInvoke(channel, ...args);

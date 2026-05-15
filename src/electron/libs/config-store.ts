@@ -28,6 +28,13 @@ export type ApiConfig = {
   smallModel?: string;
   imageModel?: string;
   analysisModel?: string;
+  embeddingModel?: string;
+  embeddingDimension?: number;
+  embeddingBatchSize?: number;
+  wikiModel?: string;
+  wikiModelCostTier?: "free" | "cheap" | "standard";
+  wikiModelMaxInputTokens?: number;
+  wikiModelMaxOutputTokens?: number;
   models?: ApiModelConfig[];
   enabled: boolean;
   provider?: ApiProviderMode;
@@ -74,6 +81,13 @@ function createDefaultSettings(): ApiConfigSettings {
         smallModel: DEFAULT_MODEL,
         imageModel: undefined,
         analysisModel: DEFAULT_MODEL,
+        embeddingModel: undefined,
+        embeddingDimension: 1536,
+        embeddingBatchSize: 16,
+        wikiModel: undefined,
+        wikiModelCostTier: "cheap",
+        wikiModelMaxInputTokens: 16_000,
+        wikiModelMaxOutputTokens: 4_000,
         models: [DEFAULT_MODEL_CONFIG],
         enabled: true,
         provider: "custom",
@@ -196,6 +210,8 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
     config.smallModel,
     config.imageModel,
     config.analysisModel,
+    config.embeddingModel,
+    config.wikiModel,
     ...(config.models ?? []),
   ]);
   const dedupedModelNames = dedupedModels.map((item) => item.name);
@@ -221,6 +237,13 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
     smallModel: normalizeRoleModel(config.smallModel, normalizeRoleModel(config.analysisModel, selectedModel)),
     imageModel: normalizeOptionalModel(config.imageModel, dedupedModelNames),
     analysisModel: normalizeRoleModel(config.analysisModel, selectedModel),
+    embeddingModel: normalizeOptionalModel(config.embeddingModel, dedupedModelNames),
+    embeddingDimension: normalizePositiveInteger(config.embeddingDimension) ?? 1536,
+    embeddingBatchSize: normalizePositiveInteger(config.embeddingBatchSize) ?? 16,
+    wikiModel: normalizeOptionalModel(config.wikiModel, dedupedModelNames),
+    wikiModelCostTier: normalizeWikiModelCostTier(config.wikiModelCostTier),
+    wikiModelMaxInputTokens: normalizePositiveInteger(config.wikiModelMaxInputTokens) ?? 16_000,
+    wikiModelMaxOutputTokens: normalizePositiveInteger(config.wikiModelMaxOutputTokens) ?? 4_000,
     models: dedupedModels,
     enabled: Boolean(config.enabled),
     provider,
@@ -378,4 +401,11 @@ function normalizeOptionalModel(value: string | undefined, availableModels: stri
   }
 
   return availableModels.includes(normalized) ? normalized : undefined;
+}
+
+function normalizeWikiModelCostTier(value: string | undefined): "free" | "cheap" | "standard" {
+  if (value === "free" || value === "cheap" || value === "standard") {
+    return value;
+  }
+  return "cheap";
 }

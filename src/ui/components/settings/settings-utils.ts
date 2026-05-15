@@ -31,6 +31,13 @@ export function createProfile(): ApiConfigProfile {
     smallModel: "",
     imageModel: undefined,
     analysisModel: "",
+    embeddingModel: undefined,
+    embeddingDimension: 1536,
+    embeddingBatchSize: 16,
+    wikiModel: undefined,
+    wikiModelCostTier: "cheap",
+    wikiModelMaxInputTokens: 16_000,
+    wikiModelMaxOutputTokens: 4_000,
     models: [createModel()],
     enabled: true,
     provider: "custom",
@@ -55,6 +62,13 @@ export function createDeepSeekOfficialProfile(): ApiConfigProfile {
     smallModel: "deepseek-v4-flash",
     imageModel: undefined,
     analysisModel: "deepseek-v4-flash",
+    embeddingModel: undefined,
+    embeddingDimension: 1536,
+    embeddingBatchSize: 16,
+    wikiModel: "deepseek-v4-flash",
+    wikiModelCostTier: "cheap",
+    wikiModelMaxInputTokens: 16_000,
+    wikiModelMaxOutputTokens: 4_000,
     models,
     enabled: true,
     provider: "deepseek",
@@ -79,6 +93,13 @@ export function createCodexOAuthProfile(): ApiConfigProfile {
     smallModel: CODEX_OAUTH_SMALL_MODEL,
     imageModel: undefined,
     analysisModel: CODEX_OAUTH_SMALL_MODEL,
+    embeddingModel: undefined,
+    embeddingDimension: 1536,
+    embeddingBatchSize: 16,
+    wikiModel: CODEX_OAUTH_SMALL_MODEL,
+    wikiModelCostTier: "cheap",
+    wikiModelMaxInputTokens: 16_000,
+    wikiModelMaxOutputTokens: 4_000,
     models,
     enabled: true,
     provider: "codex",
@@ -199,9 +220,13 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
     { name: profile.smallModel ?? "" },
     { name: profile.imageModel ?? "" },
     { name: profile.analysisModel ?? "" },
+    { name: profile.embeddingModel ?? "" },
+    { name: profile.wikiModel ?? "" },
   ]);
   const selectedModel = profile.model.trim() || models[0]?.name || "";
   const imageModel = profile.imageModel?.trim();
+  const embeddingModel = profile.embeddingModel?.trim();
+  const wikiModel = profile.wikiModel?.trim();
 
   if (selectedModel && !models.some((item) => item.name === selectedModel)) {
     models.unshift({
@@ -220,6 +245,15 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
     smallModel: normalizeRoleModel(profile.smallModel, normalizeRoleModel(profile.analysisModel, selectedModel)),
     imageModel: imageModel && models.some((item) => item.name === imageModel) ? imageModel : undefined,
     analysisModel: normalizeRoleModel(profile.analysisModel, selectedModel),
+    embeddingModel: embeddingModel && models.some((item) => item.name === embeddingModel) ? embeddingModel : undefined,
+    embeddingDimension: normalizePositiveInteger(profile.embeddingDimension) ?? 1536,
+    embeddingBatchSize: normalizePositiveInteger(profile.embeddingBatchSize) ?? 16,
+    wikiModel: wikiModel && models.some((item) => item.name === wikiModel) ? wikiModel : undefined,
+    wikiModelCostTier: profile.wikiModelCostTier === "free" || profile.wikiModelCostTier === "cheap" || profile.wikiModelCostTier === "standard"
+      ? profile.wikiModelCostTier
+      : "cheap",
+    wikiModelMaxInputTokens: normalizePositiveInteger(profile.wikiModelMaxInputTokens) ?? 16_000,
+    wikiModelMaxOutputTokens: normalizePositiveInteger(profile.wikiModelMaxOutputTokens) ?? 4_000,
     models,
     enabled: Boolean(profile.enabled),
     provider,
@@ -247,6 +281,8 @@ export function getAvailableModels(profile: ApiConfigProfile): string[] {
       profile.smallModel,
       profile.imageModel,
       profile.analysisModel,
+      profile.embeddingModel,
+      profile.wikiModel,
       ...(profile.models ?? []).map((item) => item.name),
     ]),
   )

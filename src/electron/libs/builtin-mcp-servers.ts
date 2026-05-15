@@ -10,10 +10,12 @@ import { DESIGN_TOOL_NAMES, getDesignMcpServer } from "./mcp-tools/design.js";
 import { CRON_TOOL_NAMES, getCronMcpServer } from "./mcp-tools/cron.js";
 import { FIGMA_REST_TOOL_NAMES, getFigmaRestMcpServer } from "./mcp-tools/figma-rest.js";
 import { IDEA_TOOL_NAMES, getIdeaMcpServer } from "./mcp-tools/idea.js";
+import { KNOWLEDGE_TOOL_NAMES, getKnowledgeMcpServer } from "./mcp-tools/knowledge.js";
 import { PLAN_TOOL_NAMES, getPlanMcpServer } from "./mcp-tools/plan.js";
 
 type BuiltinMcpFactoryContext = {
   sessionId: string;
+  cwd?: string;
 };
 
 type BuiltinMcpFactory = (context: BuiltinMcpFactoryContext) => McpSdkServerConfigWithInstance;
@@ -26,6 +28,7 @@ export const BUILTIN_MCP_SERVER_FACTORIES: Record<BuiltinMcpServerName, BuiltinM
   "tech-cc-hub-cron": () => getCronMcpServer(),
   "tech-cc-hub-idea": () => getIdeaMcpServer(),
   "tech-cc-hub-plan": () => getPlanMcpServer(),
+  "tech-cc-hub-knowledge": ({ cwd }) => getKnowledgeMcpServer(cwd),
 };
 
 export const BUILTIN_MCP_TOOL_NAMES: Record<BuiltinMcpServerName, readonly string[]> = {
@@ -36,16 +39,20 @@ export const BUILTIN_MCP_TOOL_NAMES: Record<BuiltinMcpServerName, readonly strin
   "tech-cc-hub-cron": CRON_TOOL_NAMES,
   "tech-cc-hub-idea": IDEA_TOOL_NAMES,
   "tech-cc-hub-plan": PLAN_TOOL_NAMES,
+  "tech-cc-hub-knowledge": KNOWLEDGE_TOOL_NAMES,
 };
 
 export function getBuiltinMcpServers(
-  sessionId: string,
+  contextOrSessionId: string | BuiltinMcpFactoryContext,
   enabledServerNames?: readonly BuiltinMcpServerName[],
 ): Record<string, McpSdkServerConfigWithInstance> {
+  const context = typeof contextOrSessionId === "string"
+    ? { sessionId: contextOrSessionId }
+    : contextOrSessionId;
   const enabledNames = enabledServerNames ? new Set(enabledServerNames) : null;
   return Object.fromEntries(
     BUILTIN_MCP_SERVERS.filter((definition) => !enabledNames || enabledNames.has(definition.name)).map((definition) => {
-      const server = BUILTIN_MCP_SERVER_FACTORIES[definition.name]({ sessionId });
+      const server = BUILTIN_MCP_SERVER_FACTORIES[definition.name](context);
       return [server.name, server];
     }),
   );

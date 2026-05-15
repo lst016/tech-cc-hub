@@ -144,6 +144,8 @@ export function getConfiguredModelNames(config: ApiConfig): string[] {
     config.smallModel,
     config.imageModel,
     config.analysisModel,
+    config.embeddingModel,
+    config.wikiModel,
     ...(config.models ?? []).map((item) => item.name),
   ].map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
 }
@@ -244,6 +246,13 @@ function getFallbackClaudeSettingsConfig(): ApiConfig | null {
           expertModel: String(model),
           smallModel: String(model),
           analysisModel: String(model),
+          embeddingModel: undefined,
+          embeddingDimension: 1536,
+          embeddingBatchSize: 16,
+          wikiModel: undefined,
+          wikiModelCostTier: "cheap",
+          wikiModelMaxInputTokens: 16_000,
+          wikiModelMaxOutputTokens: 4_000,
           models: [{ name: String(model), compressionThresholdPercent: 70 }],
           enabled: true,
           provider: "custom",

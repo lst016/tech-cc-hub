@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "generatedAt": 1778855185162,
+  "workspaceScope": "workspace:tech-cc-hub",
+  "wikiModel": "MiniMax-M2.7",
+  "costTier": "cheap",
+  "files": [
+    "00-project-overview.md"
+  ]
+}

@@ -5,7 +5,8 @@ export type BuiltinMcpServerName =
   | "tech-cc-hub-figma"
   | "tech-cc-hub-cron"
   | "tech-cc-hub-idea"
-  | "tech-cc-hub-plan";
+  | "tech-cc-hub-plan"
+  | "tech-cc-hub-knowledge";
 
 export type BuiltinMcpIconKey =
   | "activity"
@@ -315,6 +316,43 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
       "Plan progress rule: for multi-step work, use the built-in plan tool `mcp__tech-cc-hub-plan__update_plan` to keep a Codex-compatible checklist visible in Usage.",
       "The `update_plan` input must match OpenAI Codex shape: `{ explanation?: string, plan: [{ step: string, status: \"pending\" | \"in_progress\" | \"completed\" }] }`.",
       "Maintain at most one `in_progress` item; update the checklist when moving between phases and finish with all applicable items marked `completed`.",
+    ],
+  },
+  {
+    name: "tech-cc-hub-knowledge",
+    type: "builtin",
+    command: "builtin",
+    args: [],
+    envKeys: [],
+    enabled: true,
+    iconKey: "list",
+    description: "Local-first Knowledge Engine for .tech RepoWiki Markdown, app-data SQLite/FTS/sqlite-vec indexes, and structured Memory entries.",
+    iconClassName: "border-violet-500/15 bg-violet-50 text-violet-700",
+    highlights: [".tech", "sqlite-vec", "Memory"],
+    workflow: [
+      { label: "Generate", description: "RepoWiki" },
+      { label: "Embed", description: "chunks" },
+      { label: "Search", description: "hybrid" },
+      { label: "Remember", description: "memory" },
+    ],
+    toolGroups: [
+      {
+        title: "Knowledge Engine",
+        summary: "Embedding-backed local knowledge search. .tech only stores readable Markdown/JSON; SQLite/vector indexes stay in app data.",
+        tools: [
+          { name: "knowledge_index", description: "Generate or refresh .tech RepoWiki docs and internal vector/FTS indexes." },
+          { name: "knowledge_search", description: "Hybrid search across RepoWiki chunks and Memory entries." },
+          { name: "knowledge_read", description: "Read a full indexed document or memory entry by id/path/title." },
+          { name: "knowledge_explore", description: "List indexed RepoWiki documents and Memory categories." },
+          { name: "memory_update", description: "Add, update, or soft-delete structured Memory entries." },
+        ],
+      },
+    ],
+    promptHints: [
+      "Knowledge rule: when the task depends on repo-specific background, prior decisions, or durable user preferences, first inspect <knowledge_overview>; if relevant entries exist, use `mcp__tech-cc-hub-knowledge__knowledge_search` or `knowledge_read` before guessing.",
+      "Knowledge Engine is only enabled when an embedding model is configured. FTS5 alone is not sufficient; if tools report `missing-embedding-model`, ask the user to configure the vector model slot.",
+      ".tech storage rule: `.tech/repowiki` and `.tech/memory` contain readable Markdown/JSON only. Do not create `.db`, `.sqlite`, or `.qoder` compatibility files under `.tech`.",
+      "Use `memory_update` for durable decisions, pitfalls, project rules, and user communication preferences that should survive future sessions.",
     ],
   },
 ] as const;

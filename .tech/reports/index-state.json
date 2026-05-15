@@ -1,0 +1,16 @@
+{
+  "workspaceScope": "workspace:tech-cc-hub",
+  "techRoot": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech",
+  "repositoryReady": true,
+  "embeddingEnabled": true,
+  "vectorStoreReady": true,
+  "wikiGenerationEnabled": true,
+  "indexedDocuments": 1,
+  "indexedChunks": 3,
+  "skippedFiles": 96,
+  "generatedFiles": [
+    ".tech/repowiki/zh/content/00-project-overview.md"
+  ],
+  "success": true,
+  "message": "Knowledge Engine 索引完成：1 个文档，3 个 chunks。"
+}

@@ -8,6 +8,7 @@ import {
   type SDKUserMessage,
   type ThinkingConfig,
 } from "@anthropic-ai/claude-agent-sdk";
+import { execFileSync } from "child_process";
 import { existsSync, statSync } from "fs";
 import { extname } from "path";
 
@@ -43,6 +44,7 @@ import {
   resolveApiConfigForModel,
 } from "./claude-settings.js";
 import { buildClaudeProjectMemoryPromptAppend } from "./claude-project-memory.js";
+import { buildKnowledgeOverviewPromptAppend } from "./knowledge/knowledge-overview.js";
 import { saveGlobalRuntimeConfig } from "./config-store.js";
 import {
   getExternalMcpServers,
@@ -111,6 +113,7 @@ const BUILTIN_MCP_TOOL_NAMES = listBuiltinMcpToolNames();
 const CLAUDE_CODE_AUTO_TRUNCATE_ARGS: Record<string, string | null> = {
   "allow-auto-truncate": null,
 };
+let claudeCodeAutoTruncateSupport: boolean | null = null;
 const ALWAYS_ALLOWED_TOOLS = new Set([
   "AskUserQuestion",
   ...BUILTIN_MCP_TOOL_NAMES,
@@ -304,7 +307,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
     const enabledBuiltinMcpServerNames = [...nextBuiltinMcpServerNames];
     const result = await activeQuery.setMcpServers({
       ...getExternalMcpServers(latestGlobalRuntimeConfig ?? getGlobalRuntimeConfig(), { projectDir: latestProjectCwd }),
-      ...getBuiltinMcpServers(session.id, enabledBuiltinMcpServerNames),
+      ...getBuiltinMcpServers({ sessionId: session.id, cwd: latestProjectCwd }, enabledBuiltinMcpServerNames),
     });
     activeBuiltinMcpServerNames = nextBuiltinMcpServerNames;
     console.info("[runner][mcp-expanded]", {
@@ -453,7 +456,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       });
       const enabledBuiltinMcpServerNames = [...desiredBuiltinMcpServerNames];
       activeBuiltinMcpServerNames = new Set(enabledBuiltinMcpServerNames);
-      const builtinMcpServers = getBuiltinMcpServers(session.id, enabledBuiltinMcpServerNames);
+      const builtinMcpServers = getBuiltinMcpServers({ sessionId: session.id, cwd: projectCwd }, enabledBuiltinMcpServerNames);
       const sdkPlugins = resolveEnabledClaudeCodeSdkPlugins();
       const sdkPluginMcpServerNames = listClaudeCodePluginMcpServerNames(sdkPlugins);
       const systemPromptAppend = combineSystemPromptAppend(
@@ -462,6 +465,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         buildAdminConfigPromptAppend(),
         agentContext.systemPromptAppend,
         runtimeProfile.includeProjectMemoryPrompt ? buildClaudeProjectMemoryPromptAppend(projectCwd) : undefined,
+        buildKnowledgeOverviewPromptAppend(projectCwd),
         buildToolCallOptimizationPromptAppend(),
         runtimeProfile.includeBrowserPrompt ? buildBrowserWorkbenchPromptAppend() : undefined,
         runtimeProfile.includeDesignPrompt ? buildDesignParityPromptAppend() : undefined,
@@ -492,7 +496,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           resume: resumeSessionId,
           abortController,
           env: mergedEnv,
-          extraArgs: CLAUDE_CODE_AUTO_TRUNCATE_ARGS,
+          extraArgs: getClaudeCodeExtraArgs(),
           thinking,
           effort,
           pathToClaudeCodeExecutable: getClaudeCodePath(),
@@ -889,6 +893,33 @@ function combineSystemPromptAppend(...sections: Array<string | undefined>): stri
     .filter((section): section is string => Boolean(section))
     .join("\n\n");
   return joined || undefined;
+}
+
+function supportsClaudeCodeAutoTruncate(): boolean {
+  if (claudeCodeAutoTruncateSupport !== null) {
+    return claudeCodeAutoTruncateSupport;
+  }
+
+  try {
+    const claudePath = getClaudeCodePath();
+    if (!claudePath) {
+      claudeCodeAutoTruncateSupport = false;
+      return claudeCodeAutoTruncateSupport;
+    }
+    const help = execFileSync(claudePath, ["--help"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 3000,
+    });
+    claudeCodeAutoTruncateSupport = help.includes("--allow-auto-truncate");
+  } catch {
+    claudeCodeAutoTruncateSupport = false;
+  }
+  return claudeCodeAutoTruncateSupport;
+}
+
+function getClaudeCodeExtraArgs(): Record<string, string | null> | undefined {
+  return supportsClaudeCodeAutoTruncate() ? CLAUDE_CODE_AUTO_TRUNCATE_ARGS : undefined;
 }
 
 function persistDiscoveredRuntimeConfig(

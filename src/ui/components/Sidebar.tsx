@@ -13,6 +13,7 @@ interface SidebarProps {
   onDeleteSession: (sessionId: string) => void;
   onDeleteWorkspace: (sessionIds: string[], workspaceName: string) => void;
   onOpenSettings?: (pageId?: SettingsPageId) => void;
+  onOpenKnowledgePanel?: () => void;
   onOpenCronPage?: () => void;
   onOpenTaskPanel?: () => void;
   width?: number;
@@ -26,6 +27,7 @@ export function Sidebar({
   onDeleteSession,
   onDeleteWorkspace,
   onOpenSettings,
+  onOpenKnowledgePanel,
   onOpenCronPage,
   onOpenTaskPanel,
   width = 320,
@@ -397,6 +399,20 @@ export function Sidebar({
         </div>
 
         <div className="mt-auto space-y-2">
+          <button
+            className="flex w-full items-center justify-between rounded-2xl border border-black/6 bg-white/82 px-4 py-3 text-sm font-medium text-ink-800 shadow-[0_10px_28px_rgba(30,38,52,0.06)] transition-all hover:-translate-y-[1px] hover:border-black/10 hover:bg-white"
+            onClick={() => onOpenKnowledgePanel?.()}
+            aria-label="知识库"
+          >
+            <span>知识库</span>
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M5 5.5A2.5 2.5 0 0 1 7.5 3H19v16H7.5A2.5 2.5 0 0 0 5 21.5z" />
+              <path d="M5 5.5v16" />
+              <path d="M9 7h6" />
+              <path d="M9 11h7" />
+              <path d="M9 15h4" />
+            </svg>
+          </button>
           <button
             className="flex w-full items-center justify-between rounded-2xl border border-black/6 bg-white/82 px-4 py-3 text-sm font-medium text-ink-800 shadow-[0_10px_28px_rgba(30,38,52,0.06)] transition-all hover:-translate-y-[1px] hover:border-black/10 hover:bg-white"
             onClick={() => onOpenTaskPanel?.()}

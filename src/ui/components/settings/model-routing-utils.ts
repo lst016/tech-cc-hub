@@ -6,7 +6,7 @@ import {
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 
-export type ModelSlotPatch = Partial<Pick<ApiConfigProfile, "model" | "expertModel" | "smallModel" | "analysisModel" | "imageModel">>;
+export type ModelSlotPatch = Partial<Pick<ApiConfigProfile, "model" | "expertModel" | "smallModel" | "analysisModel" | "imageModel" | "embeddingModel" | "wikiModel">>;
 
 export type SharedModelRoutingState = {
   routedProfileIds: string[];
@@ -18,6 +18,8 @@ export type SharedModelRoutingState = {
   smallModel: string;
   analysisModel: string;
   imageModel: string;
+  embeddingModel: string;
+  wikiModel: string;
 };
 
 export function buildSharedModelRoutingState(profiles: ApiConfigProfile[]): SharedModelRoutingState {
@@ -37,6 +39,8 @@ export function buildSharedModelRoutingState(profiles: ApiConfigProfile[]): Shar
     smallModel: pickAvailableModel(primaryProfile?.smallModel, availableModels) || mainModel,
     analysisModel: pickAvailableModel(primaryProfile?.analysisModel, availableModels) || mainModel,
     imageModel: pickAvailableModel(primaryProfile?.imageModel, availableModels),
+    embeddingModel: pickAvailableModel(primaryProfile?.embeddingModel, availableModels),
+    wikiModel: pickAvailableModel(primaryProfile?.wikiModel, availableModels),
   };
 }
 
@@ -46,6 +50,8 @@ export function applySharedModelRoutingPatch(profiles: ApiConfigProfile[], patch
   const routedProfiles = profiles.filter((profile) => routedIds.has(profile.id));
   const mergedModels = mergeModelConfigs(routedProfiles, state.availableModels);
   const hasImageModelPatch = Object.prototype.hasOwnProperty.call(patch, "imageModel");
+  const hasEmbeddingModelPatch = Object.prototype.hasOwnProperty.call(patch, "embeddingModel");
+  const hasWikiModelPatch = Object.prototype.hasOwnProperty.call(patch, "wikiModel");
 
   return profiles.map((profile) => {
     if (!routedIds.has(profile.id)) {
@@ -56,6 +62,8 @@ export function applySharedModelRoutingPatch(profiles: ApiConfigProfile[], patch
       ...profile,
       ...patch,
       imageModel: hasImageModelPatch ? patch.imageModel || undefined : profile.imageModel,
+      embeddingModel: hasEmbeddingModelPatch ? patch.embeddingModel || undefined : profile.embeddingModel,
+      wikiModel: hasWikiModelPatch ? patch.wikiModel || undefined : profile.wikiModel,
       models: mergedModels,
     };
   });
