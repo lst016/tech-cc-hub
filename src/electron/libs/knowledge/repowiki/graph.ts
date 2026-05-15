@@ -183,6 +183,26 @@ export class RepoWikiDependencyGraph {
 }
 
 export function getModuleName(path: string): string {
+  if (path === "src/electron/main.ts" || path === "src/electron/ipc-handlers.ts" || path === "src/electron/libs/runner.ts" || path === "src/electron/libs/session-store.ts" || path === "src/electron/dev-backend-bridge.ts") {
+    return "electron-runtime";
+  }
+  if (path.startsWith("src/electron/libs/knowledge/")) return "knowledge-engine";
+  if (path === "src/ui/components/KnowledgePanel.tsx") return "knowledge-ui";
+  if (path.startsWith("src/electron/libs/mcp-tools/") || path === "src/electron/libs/builtin-mcp-servers.ts" || path === "src/shared/builtin-mcp-registry.ts") return "mcp-tools";
+  if (path.startsWith("src/electron/libs/task/")) return "task-engine";
+  if (path.startsWith("src/electron/libs/git/")) return "git-workbench";
+  if (path.startsWith("src/electron/libs/skill-manager/")) return "skill-manager";
+  if (path.startsWith("src/electron/libs/cron") || path.startsWith("src/electron/libs/mcp-tools/cron.ts")) return "cron-automation";
+  if (path.startsWith("src/ui/store/")) return "ui-state";
+  if (path.startsWith("src/ui/components/settings/")) return "settings-ui";
+  if (path.startsWith("src/ui/components/ActivityRail") || path.startsWith("src/ui/components/SessionAnalysisPage")) return "activity-and-diagnostics";
+  if (path.startsWith("src/ui/")) return "ui-shell";
+  if (path.startsWith("src/shared/")) return "shared-contracts";
+  if (path.startsWith("scripts/qa/")) return "qa-smoke-tests";
+  if (path.startsWith("scripts/")) return "scripts";
+  if (path.startsWith("package/")) return "sdk-package";
+  if (path.startsWith("test/") || path.startsWith("tests/")) return "tests";
+
   const parts = path.split("/").filter(Boolean);
   if (parts.length <= 1) return "root";
   const first = parts[0] ?? "root";

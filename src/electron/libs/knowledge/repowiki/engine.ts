@@ -6,6 +6,7 @@ import { RepoWikiAnalyzer } from "./analyzer.js";
 import { RepoWikiBuilder } from "./builder.js";
 import { exportRepoWikiMarkdown } from "./exporter.js";
 import { RepoWikiDependencyGraph } from "./graph.js";
+import { buildRepoWikiIntelligence } from "./intelligence.js";
 import { scanRepoWikiProject } from "./scanner.js";
 import type { RepoWikiSkippedFile } from "./types.js";
 
@@ -25,14 +26,18 @@ export async function generateRepoWiki(paths: KnowledgeWorkspacePaths, wiki: Wik
   });
 
   const graph = RepoWikiDependencyGraph.buildFromProject(scan.project);
+  const project = {
+    ...scan.project,
+    intelligence: buildRepoWikiIntelligence(scan.project, graph),
+  };
   const analyzer = new RepoWikiAnalyzer(wiki, {
     language: "zh",
     concurrency: wiki.costTier === "free" ? 1 : 2,
     onProgress: (message) => console.log(`[repowiki] ${message}`),
   });
-  const wikiData = await analyzer.analyze(scan.project, graph);
+  const wikiData = await analyzer.analyze(project, graph);
   const builder = new RepoWikiBuilder();
-  const repoWiki = builder.build(scan.project, wikiData, graph);
+  const repoWiki = builder.build(project, wikiData, graph);
   const generatedFiles = exportRepoWikiMarkdown(repoWiki, paths.repowikiContentDir, paths.workspaceRoot);
 
   mkdirSync(paths.repowikiMetaDir, { recursive: true });
@@ -51,6 +56,15 @@ export async function generateRepoWiki(paths: KnowledgeWorkspacePaths, wiki: Wik
     costTier: wiki.costTier,
     scannedFiles: scan.project.files.length,
     totalLines: scan.project.totalLines,
+    intelligence: {
+      scripts: project.intelligence.scripts,
+      highValueFiles: project.intelligence.highValueFiles.slice(0, 30),
+      runtimeFlows: project.intelligence.runtimeFlows,
+      ipcChannels: project.intelligence.ipcChannels.length,
+      uiIpcCalls: project.intelligence.uiIpcCalls.length,
+      mcpTools: project.intelligence.mcpTools.length,
+      databaseTables: project.intelligence.databaseTables.length,
+    },
     pages: repoWiki.pages.map((page) => ({
       id: page.id,
       title: page.title,

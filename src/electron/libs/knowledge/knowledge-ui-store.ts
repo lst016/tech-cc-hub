@@ -463,7 +463,10 @@ function inferSectionFromPath(relativePath: string): string {
   const normalized = relativePath.replace(/\\/g, "/");
   const firstSegment = normalized.split("/").at(0) ?? "";
   if (normalized === "index.md" || /^00-|^01-project-overview/i.test(normalized)) return "项目概述";
+  if (normalized === "agent-playbook.md") return "Agent 作业手册";
   if (normalized === "architecture.md" || /arch|架构/i.test(firstSegment)) return "架构设计";
+  if (normalized === "runtime-flows.md") return "关键运行链路";
+  if (normalized === "api-surface.md") return "接口与存储面";
   if (normalized.startsWith("modules/")) return "模块";
   if (normalized === "reading-guide.md") return "阅读指南";
   if (normalized === "dependencies.md") return "依赖关系";

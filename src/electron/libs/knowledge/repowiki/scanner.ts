@@ -1,6 +1,12 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { basename, dirname, extname, join, relative, resolve, sep } from "path";
-import type { RepoWikiFileInfo, RepoWikiScanResult, RepoWikiSkippedFile } from "./types.js";
+import type {
+  RepoWikiCodeSymbol,
+  RepoWikiFileInfo,
+  RepoWikiFileSignal,
+  RepoWikiScanResult,
+  RepoWikiSkippedFile,
+} from "./types.js";
 
 const SKIP_DIRS = new Set([
   ".git",
@@ -357,6 +363,7 @@ export function scanRepoWikiProject(root: string, options: {
       const preview = isConfig || isEntrypoint
         ? text
         : text.split(/\r?\n/).slice(0, previewLines).join("\n");
+      const signals = extractFileSignals(relativePath, text, language, isConfig, isEntrypoint);
 
       files.push({
         path: relativePath,
@@ -368,6 +375,10 @@ export function scanRepoWikiProject(root: string, options: {
         content: text,
         isConfig,
         isEntrypoint,
+        imports: extractImports(text, language),
+        exports: extractExports(text, language),
+        symbols: extractCodeSymbols(text, language),
+        signals,
       });
     }
   }
@@ -426,6 +437,128 @@ function isEntrypointPath(path: string): boolean {
   const name = parts.at(-1) ?? "";
   if (ENTRYPOINT_NAMES.has(name)) return true;
   return parts.length >= 2 && ENTRYPOINT_DIRS.has(parts.at(-2) ?? "");
+}
+
+function extractImports(text: string, language: string): string[] {
+  if (!["javascript", "typescript", "jsx", "tsx"].includes(language)) return [];
+  return uniqueMatches(text, [
+    /import\s+(?:type\s+)?(?:[\s\S]*?)\s+from\s+["']([^"']+)["']/g,
+    /import\s+["']([^"']+)["']/g,
+    /require\s*\(\s*["']([^"']+)["']\s*\)/g,
+    /await\s+import\s*\(\s*["']([^"']+)["']\s*\)/g,
+  ], 36);
+}
+
+function extractExports(text: string, language: string): string[] {
+  if (!["javascript", "typescript", "jsx", "tsx"].includes(language)) return [];
+  const names = uniqueMatches(text, [
+    /^\s*export\s+(?:async\s+)?(?:function|class|interface|type|enum|const|let|var)\s+([A-Za-z_$][\w$]*)/gm,
+    /^\s*export\s*\{([^}]+)\}/gm,
+  ], 36).flatMap((value) => value.split(",").map((part) => part.trim().replace(/\s+as\s+.+$/i, "")));
+  return Array.from(new Set(names.filter(Boolean))).slice(0, 36);
+}
+
+function extractCodeSymbols(text: string, language: string): RepoWikiCodeSymbol[] {
+  if (!["javascript", "typescript", "jsx", "tsx"].includes(language)) return [];
+  const symbols: RepoWikiCodeSymbol[] = [];
+  const lines = text.split(/\r?\n/);
+  for (const [index, line] of lines.entries()) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("//")) continue;
+    const match = trimmed.match(/^(?:export\s+)?(?:default\s+)?(?:async\s+)?(function|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/)
+      ?? trimmed.match(/^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)?\s*=>/)
+      ?? trimmed.match(/^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/);
+    if (!match) continue;
+    const kind = match[2] ? match[1] : "const";
+    const name = match[2] ?? match[1];
+    if (!name || shouldSkipSymbolName(name)) continue;
+    symbols.push({
+      name,
+      kind,
+      line: index + 1,
+      signature: trimmed.length > 180 ? `${trimmed.slice(0, 180)}...` : trimmed,
+    });
+    if (symbols.length >= 40) break;
+  }
+  return symbols;
+}
+
+function extractFileSignals(path: string, text: string, language: string, isConfig: boolean, isEntrypoint: boolean): RepoWikiFileSignal[] {
+  const signals: RepoWikiFileSignal[] = [];
+  const pushMatches = (
+    kind: RepoWikiFileSignal["kind"],
+    pattern: RegExp,
+    detail: string,
+    max = 40,
+  ) => {
+    pattern.lastIndex = 0;
+    for (const match of text.matchAll(pattern)) {
+      const name = match[1]?.trim();
+      if (!name) continue;
+      signals.push({ kind, name, detail, line: lineNumberAt(text, match.index ?? 0) });
+      if (signals.length >= max) return;
+    }
+  };
+
+  if (isConfig) signals.push({ kind: "config", name: path, detail: "project or build configuration" });
+  if (isEntrypoint) signals.push({ kind: "entrypoint", name: path, detail: "runtime or UI entrypoint" });
+
+  if (!isSignalSourceLanguage(language)) {
+    return dedupeSignals(signals);
+  }
+
+  pushMatches("ipc", /ipcMain\.(?:handle|on)\(\s*["'`]([^"'`]+)["'`]/g, "Electron ipcMain channel");
+  pushMatches("ipc", /ipcMainHandle\(\s*["'`]([^"'`]+)["'`]/g, "typed Electron IPC channel");
+  pushMatches("ipc", /registerSkillIpcHandler\(\s*["'`]([^"'`]+)["'`]/g, "skill manager IPC channel");
+  pushMatches("ui_ipc", /invokeKnowledge(?:<[^>]+>)?\(\s*["'`]([^"'`]+)["'`]/g, "renderer knowledge bridge call");
+  pushMatches("ui_ipc", /invoke(?:<[^>]+>)?\(\s*["'`]([^"'`]+)["'`]/g, "renderer IPC invoke");
+  pushMatches("mcp_tool", /tool\(\s*["'`]([^"'`]+)["'`]\s*,/g, "built-in MCP tool");
+  pushMatches("mcp_server", /createSdkMcpServer\(\s*\{[\s\S]*?name:\s*["'`]([^"'`]+)["'`]/g, "built-in MCP server");
+  pushMatches("database", /CREATE\s+(?:VIRTUAL\s+)?TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+([A-Za-z_][\w]*)/gi, "SQLite table");
+  pushMatches("database", /CREATE\s+INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+([A-Za-z_][\w]*)/gi, "SQLite index");
+  pushMatches("event", /type:\s*["'`]([a-z][a-z0-9_.:-]+)["'`]/g, "typed event payload");
+
+  if (/create\s*<|zustand|createStore|use[A-Z]\w*Store/.test(text) || /\/store\//.test(path)) {
+    const storeName = basename(path).replace(/\.[^.]+$/, "");
+    signals.push({ kind: "store", name: storeName, detail: "UI/runtime state store" });
+  }
+
+  return dedupeSignals(signals).slice(0, 80);
+}
+
+function isSignalSourceLanguage(language: string): boolean {
+  return ["javascript", "typescript", "jsx", "tsx", "sql"].includes(language);
+}
+
+function uniqueMatches(text: string, patterns: RegExp[], limit: number): string[] {
+  const values = new Set<string>();
+  for (const pattern of patterns) {
+    pattern.lastIndex = 0;
+    for (const match of text.matchAll(pattern)) {
+      const value = match[1]?.trim();
+      if (value) values.add(value);
+      if (values.size >= limit) return Array.from(values);
+    }
+  }
+  return Array.from(values);
+}
+
+function dedupeSignals(signals: RepoWikiFileSignal[]): RepoWikiFileSignal[] {
+  const seen = new Set<string>();
+  return signals.filter((signal) => {
+    const key = `${signal.kind}:${signal.name}:${signal.detail ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function lineNumberAt(text: string, index: number): number {
+  return text.slice(0, index).split(/\r?\n/).length;
+}
+
+function shouldSkipSymbolName(name: string): boolean {
+  return name.length <= 1 || ["props", "state", "data", "value", "result"].includes(name);
 }
 
 function guessProjectName(root: string, files: RepoWikiFileInfo[]): string {

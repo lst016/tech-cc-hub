@@ -2,7 +2,18 @@
 
 ```mermaid
 graph TD
-  ui[ui] --> shared[shared]
+  activity_and_diagnostics[activity-and-diagnostics] --> shared_contracts[shared-contracts]
+  activity_and_diagnostics[activity-and-diagnostics] --> ui_shell[ui-shell]
+  activity_and_diagnostics[activity-and-diagnostics] --> ui_state[ui-state]
+  knowledge_ui[knowledge-ui] --> ui_shell[ui-shell]
+  knowledge_ui[knowledge-ui] --> ui_state[ui-state]
+  settings_ui[settings-ui] --> ui_shell[ui-shell]
+  ui_shell[ui-shell] --> activity_and_diagnostics[activity-and-diagnostics]
+  ui_shell[ui-shell] --> knowledge_ui[knowledge-ui]
+  ui_shell[ui-shell] --> settings_ui[settings-ui]
+  ui_shell[ui-shell] --> shared_contracts[shared-contracts]
+  ui_shell[ui-shell] --> ui_state[ui-state]
+  ui_state[ui-state] --> shared_contracts[shared-contracts]
 ```
 
 ## 核心文件 (PageRank)

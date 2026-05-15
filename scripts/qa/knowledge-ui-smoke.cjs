@@ -45,16 +45,21 @@ async function main() {
   await page.waitForTimeout(800);
 
   const bodyText = await page.locator('body').innerText({ timeout: 10000 });
-  for (const expected of ['项目概览', '技术栈', '模块']) {
+  for (const expected of ['项目概览', 'Agent 快速定位', '关键工作流', '模块']) {
     if (!bodyText.includes(expected)) {
       throw new Error(`Knowledge UI missing generated content: ${expected}`);
     }
   }
-  const moduleButtonCount = await page.locator('button').filter({ hasText: /src|ui|electron|components|root|scripts/ }).count();
+  const moduleButtonCount = await page.locator('button').filter({ hasText: /knowledge-engine|mcp-tools|electron-runtime|ui-shell|task-engine/ }).count();
   if (moduleButtonCount < 1) {
     throw new Error('Knowledge UI did not render any RepoWiki module page buttons');
   }
-  for (const forbidden of ['后续接入真实', '未生成正文', '当前没有真实 Repo Wiki 正文', '生成后会出现 Repo Wiki 目录', '```markdown']) {
+  for (const expectedButton of [/Agent 作业手册/, /接口与存储面/, /关键运行链路/]) {
+    if (await page.locator('button').filter({ hasText: expectedButton }).count() < 1) {
+      throw new Error(`Knowledge UI missing Agent-useful page button: ${expectedButton}`);
+    }
+  }
+  for (const forbidden of ['后续接入真实', '未生成正文', '当前没有真实 Repo Wiki 正文', '生成后会出现 Repo Wiki 目录', '模型未返回结构化说明', '```markdown']) {
     if (bodyText.includes(forbidden)) {
       throw new Error(`Knowledge UI still contains placeholder/fence text: ${forbidden}`);
     }

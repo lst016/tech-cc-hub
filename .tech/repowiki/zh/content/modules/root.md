@@ -1,122 +1,168 @@
 # root
 
-> Root module of tech-cc-hub: Electron desktop Agent workbench with multi-model routing, task orchestration, and built-in browser
+> Project root configuration layer: build setup, shared types, development guidelines, and entry points for the Desktop Agent workbench.
 
-tech-cc-hub 是基于 Electron + React + Claude Agent SDK 的桌面端 Agent 协作客户端。根目录包含项目配置、构建脚本、多模型路由配置、代码规范、设计系统和类型定义。核心入口为 index.html 加载 src/ui/main.tsx，Electron 主进程入口在 src/electron/main.ts。
+The root module holds project-wide configuration, metadata, and governance files for tech-cc-hub. It defines the build pipeline (Vite + Electron), shared TypeScript types used across both main and renderer processes, development workflows, linting rules, packaging settings, and design/development conventions. An agent modifying any feature layer must first consult CLAUDE.md (default rules) and DESIGN.md (UI conventions) before making changes.
+
+## Agent 可用信息
+
+- npm run dev starts full Electron client, not just Vite; dev:react is only the frontend server
+- CLAUDE.md is the default rule source and prohibits relying on AGENTS.md
+- UI changes must use DESIGN.md tokens (warm gray + clay accent) not raw hex colors
+- Feature labeled with upstream source requires full CV copy + adaptation, not reimplementation
+- 403 errors on file preview indicate path traversal protection triggered by isPathWithinRoot
+- agent-runtime.json rules govern tool call batching and attachment handling behavior
+
+## 优先入口
+
+- `CLAUDE.md`：First read for any modification to understand project rules and conventions
+- `package.json`：To identify available scripts (dev, build, qa commands) before starting work
+- `DESIGN.md`：Required pre-read before any UI/visual/color changes to use correct design tokens
 
 ## 文件
 
-### `package.json`
-
-项目元数据、依赖声明、npm 脚本集合。定义版本 0.1.18，main 入口指向 dist-electron/electron/main.js。
-
-- `scripts` (object) - dev/dev:electron/dev:react 构建命令；qa:* 端到端测试脚本；dist:* 打包分发；release:* 发布到 GitHub
-- `rebuild` (script) - 重建 better-sqlite3 原生模块，用于 Electron native dependency 修复
-- `main` (field) - Electron 主进程产物路径 dist-electron/electron/main.js
-
-### `tsconfig.json`
-
-根级 TypeScript 配置，通过 references 引用 tsconfig.app.json 和 tsconfig.node.json，实现前后端类型编译分离。
-
-### `tsconfig.app.json`
-
-前端(React) TypeScript 配置。target ES2020，jsx react-jsx，paths alias @/* -> ./src/*，include src/ui、src/shared、types.d.ts、types 目录。
-
-- `paths['@/*']` (config) - src/* 路径别名，用于 src/ui 内部跨模块引用
-- `noUncheckedSideEffectImports` (flag) - 禁止未检查副作用导入，提升类型安全性
-
-### `tsconfig.node.json`
-
-Node 端(TypeScript/Vite) 配置，用于 vite.config.ts 等构建脚本的编译。
-
 ### `vite.config.ts`
 
-Vite 构建配置，包含 tech-cc-hub-preview-fs 插件提供文件预览服务(列表/文本预览/图片预览)，以及 MIME 类型映射和路径安全校验。
+Vite bundler configuration with a custom dev-server plugin that exposes a file preview filesystem API. Agents read this to understand how the dev server handles file serving and path safety validation.
 
-- `previewFsPlugin` (function) - 自定义 Vite 中间件插件，提供 /__tech_preview/list、/__tech_preview/text、/__tech_preview/image 三个端点用于 IDE 风格文件预览
-- `isPathWithinRoot` (function) - 安全校验：确保请求路径在 cwd 根目录内，防止目录遍历攻击
-- `ignoredPreviewDirectories` (set) - 预览时忽略 node_modules/.git/dist-react 等目录
+- `previewFsPlugin` (function) - Vite plugin that registers /__tech_preview/list and /__tech_preview/files middleware routes during dev server startup
+- `resolvePreviewRequest` (function) - Resolves and validates file paths to prevent traversal beyond cwd root
+- `isPathWithinRoot` (function) - Path safety check used by preview plugin to enforce workspace boundaries
 
-### `index.html`
+### `package.json`
 
-应用 HTML 入口，设置 CSP 安全策略(限制 self + data: blob:)，加载 /src/ui/main.tsx 入口脚本，显示 app-icon.png 图标。
+Project metadata, scripts, and runtime dependency declarations. Agents use this to understand available npm commands, dependency inventory, and how Electron vs React processes are orchestrated.
 
-### `electron-builder.json`
-
-Electron 打包配置。appId 为 com.devagentforge.techcchub，files 包含 dist-electron、dist-react、claude-agent-sdk 依赖，asarUnpack 展开 SDK，afterPack 运行 win 图标脚本。
-
-- `asarUnpack` (array) - Claude Agent SDK 需要 unpack 以支持动态 require
-- `publish` (array) - GitHub auto-update 发布配置
-
-### `eslint.config.js`
-
-ESLint 配置，extends js.recommended + typescript-eslint recommended，plugins: react-hooks/react-refresh，ignores dist 目录。
-
-### `types.d.ts`
-
-全局类型声明文件。定义 Statistics/StaticData/ApiConfig/BrowserWorkbenchState/BrowserWorkbenchAnnotation/BrowserWorkbenchEvent 等核心类型，为 IPC 通信和全栈共享提供类型安全。
-
-- `ApiConfig` (interface) - AI 接口配置，含 id/name/apiKey/baseURL 主模型字段，以及 expertModel/imageModel/smallModel/analysisModel 多模型槽位
-- `ApiProviderMode` (type) - 提供商模式: custom/deepseek/codex
-- `BrowserWorkbenchEvent` (union) - 浏览器工作台事件联合类型: browser.state/browser.console/browser.annotation
-- `BrowserWorkbenchAnnotation` (interface) - 标注数据，含 id/point/domHint/comment/expectation
-- `BrowserWorkbenchDomHint` (interface) - DOM 定位提示，含 tagName/selector/xpath/componentStack/sourceCandidates
-
-### `agent-runtime.json`
-
-Agent 运行时系统提示扩展配置。定义工具调用预算与并行规则、附件处理策略、标注驱动 UI 修改 SOP，是 Agent 执行时的默认行为准则。
-
-- `systemPromptExt` (array) - 系统提示扩展片段，包含工具调用规则、附件处理、UI 修改 SOP
-
-### `CLAUDE.md`
-
-项目开发指南。定义 tech-cc-hub 为 Electron+React+Claude Agent SDK 的桌面客户端，核心原则：chat-first/workspace-first/execution observability。规定源码 CV 规则和默认规则源。
-
-- `技术栈表` (table) - Electron 39/React 19/TypeScript 5.9/Tailwind v4/Zustand/better-sqlite3/Vite 7
-- `目录结构约束` (rule) - 前端代码统一在 src/ui/，禁止新建 src/renderer/；跨模块引用用 @/ui/... alias
-
-### `DESIGN.md`
-
-设计系统文档。定义 warm utilitarian workbench 美学方向，Product Layer 颜色系统(accent #D26A3D，bg-100 #F8F9FB，ink-900 #16181D)，Workbench Layer 限定在代码预览区域使用 VS Code light 语义。
-
-- `Product Layer Tokens` (table) - bg-100/surface/ink-900/accent 等核心设计 token
-- `Accent color` (token) - primary action/selected state: #D26A3D, hover: #BE5D34, subtle: #F9EEE9
-
-### `.gitignore`
-
-Git 忽略规则。忽略 node_modules/dist/dist-react/dist-electron/.env/.context/.worktrees/ 等运行时和临时文件。
-
-### `.mcp.json`
-
-Model Context Protocol 服务器配置。定义 chrome-devtools 和 darbot-windows-mcp 两个 MCP server。
-
-### `.qoderignore`
-
-代码索引忽略配置，与 .gitignore 规则一致，用于 codex 等工具的索引过滤。
+- `scripts.dev` (string) - Primary dev command: npm run dev starts both Vite and Electron via node scripts/dev.mjs
+- `scripts.build` (string) - Build command: tsc -b && vite build compiles TypeScript then bundles React
+- `scripts.transpile:electron` (string) - Only compiles Electron main process TypeScript without bundling UI
+- `main` (string) - Electron entry point: dist-electron/electron/main.js
 
 ### `README.md`
 
-产品文档。介绍五大核心能力：会话与工作区/模型路由/内置浏览器/执行轨迹/任务系统。包含飞书任务同步原理流程图和快速启动指南。
+配置文件，会影响构建、开发或模型能力；代码信号：config:README.md
 
-- `核心能力表` (table) - 会话工作区/模型路由/内置浏览器/执行轨迹/任务系统/MCP/设计检查
-- `MODEL SLOTS` (concept) - 五类模型槽位: 默认主模型/专家模型/小模型/后端模型/Prompt分析模型/图片预处理模型
+### `tsconfig.json`
+
+Root TypeScript config that references tsconfig.app.json (UI code) and tsconfig.node.json (Vite/build tools). Agents typically open app or node variants directly rather than this file.
+
+### `types.d.ts`
+
+Shared type definitions consumed by both Electron main process and React renderer. Defines API config schemas, browser workbench state types, IPC event shapes, and type aliases for exported UI types. Agents read this to understand cross-process data contracts.
+
+- `ApiConfig` (type) - Gateway configuration shape with model slots (default/expert/small/analysis/image)
+- `BrowserWorkbenchState` (type) - BrowserView state published to renderer via IPC: url, loading, navigation flags, annotation mode
+- `BrowserWorkbenchEvent` (type) - Discriminated union of all browser IPC events: browser.state / browser.console / browser.annotation
+- `UnsubscribeFunction` (type alias) - Standard cleanup function signature used across event subscriptions
+
+### `.gitignore`
+
+Git ignore patterns. Agents read when adding new build output directories (dist-electron, dist-react, dist-test, *.db).
+
+### `.mcp.json`
+
+MCP (Model Context Protocol) server configuration. Declares chrome-devtools and windows MCP servers for IDE integration. Agents may read to understand available MCP tools.
+
+### `.qoderignore`
+
+unknown 文件，1 行；用于 根目录 功能域。
+
+### `agent-runtime.json`
+
+System prompt extension rules injected into Claude Agent execution. Defines tool call budgeting, attachment handling strategy (design_inspect_image for images), and annotation-driven UI modification SOP. This file directly governs agent behavior in task execution.
+
+- `工具调用预算与并行规则` (section) - Agents must batch evidence-gathering calls; no ls→cat→grep→cat chains
+- `标注驱动 UI 修改 SOP` (section) - Sequence: locate from annotation.domHint → batch read ≤3 candidates → single-round edits → tsc --noEmit validation
+
+### `CLAUDE.md`
+
+Default project rules for all agents. Defines source-of-truth hierarchy (CLAUDE.md > upstream), CV policy (full source copy then adapt, no reimplementation), TypeScript/React/UI conventions, and QA command reference. Agents must read this before any modification.
+
+- `项目法规` (section) - CLAUDE.md is the default rule source; AGENTS.md is prohibited unless explicitly requested
+- `源码 CV 政策` (section) - Upstream labeled features must be full source copy + adaptation; no unauthorized reimplementation
+- `启动口径` (section) - npm run dev means full Electron client; npm run dev:react is not project startup
+
+### `DESIGN.md`
+
+Design system documentation with color tokens, semantic naming conventions, and component guidelines. Agents making UI/visual changes must read this first to use correct tokens (warm gray + clay accent for product UI, VS Code light for workbench).
+
+- `Product Layer Tokens` (table) - Accent color #D26A3D, ink-800 for body text, surface white for cards
+- `Workbench Layer Tokens` (table) - VS Code light neutrals for code/file preview surfaces only
+
+### `electron-builder.json`
+
+Electron packaging configuration. Defines what files go into the distributable, ASAR unpacking for SDK dependencies, mac/win/linux build targets, and post-pack icon script.
+
+- `files` (array) - Bundled artifacts: dist-electron, dist-react, and @anthropic-ai/claude-agent-sdk modules
+- `asarUnpack` (array) - Agent SDK files unpacked from ASAR to allow native module access
+
+### `eslint.config.js`
+
+ESLint configuration using typescript-eslint. Agents read to understand lint rules and import resolver setup.
+
+- `import/resolver.typescript` (object) - Enables TypeScript path resolution for eslint-plugin-import
+
+### `index.html`
+
+Entry HTML for the React app. CSP policy restricts content sources; agents rarely modify this unless changing security policy or adding new entry points.
+
+- `Content-Security-Policy` (meta) - Restricts script/style to 'self' only; img allows data: and blob: URIs
+- `#root` (element) - React mount point where App component is rendered
+
+### `tsconfig.app.json`
+
+TypeScript config for React renderer process. Defines @/ alias to ./src/, types field includes ./types, excludes src/electron. Agents modify this when adding new UI source directories.
+
+- `paths.@/*` (object) - Alias @/ maps to ./src/ for all UI imports
+- `exclude` (array) - src/electron excluded from UI build to prevent main-process code leaking into renderer bundle
+
+### `tsconfig.node.json`
+
+TypeScript config for Node/Vite build tooling context. Agents typically don't modify this unless adding new build scripts.
+
+## 数据与接口契约
+
+- **BrowserWorkbenchEvent union**：Discriminated union type at types.d.ts line 97. Events: browser.state | browser.console | browser.annotation. Owned by types.d.ts, consumed by Browser workbench component.
+- **ApiConfig schema**：Gateway configuration at types.d.ts line 21. Fields: baseURL, apiKey, model slots (main/expert/small/analysis/image). Consumed by model routing logic in both Electron and renderer.
+- **/__tech_preview/list**：Dev-only Vite middleware at vite.config.ts line 62. Returns directory entries as JSON for file explorer UI.
+- **/__tech_preview/files**：Dev-only Vite middleware at vite.config.ts line 87. Returns file content with size/type validation.
 
 ## 关键概念
 
-- **Multi-model Routing**：5 类模型槽位架构：主模型(普通聊天)/专家模型(复杂兜底)/小模型/后台模型(轻量后台调用)/Prompt分析模型/图片预处理模型。ApiConfig 接口定义这些槽位，支持 provider 切换。
-- **Workspace-first Sidebar**：左侧按工作区组织会话(session)，任务执行可绑定独立 workspace 避免污染当前聊天上下文。每个 workspace 维护自己的会话历史和执行记录。
-- **Execution Observability**：聊天右侧展示实时统计、诊断和时间线；完整链路可进入 Trace Viewer。BrowserWorkbenchState/BrowserWorkbenchConsoleLog 等类型支撑执行轨迹的 IPC 事件流。
-- **Browser Workbench**：内置 BrowserView 支持页面打开/截图/DOM摘要/样式检查/标注模式。BrowserWorkbenchAnnotation 支持点标注、DOM定位提示(componentStack/sourceCandidates)、标注回写。
-- **Task Orchestration**：飞书任务同步到本地 SQLite 队列，Executor 调度执行，可绑定独立 workspace 和覆盖模型配置。App 重启后恢复状态并对卡住任务做重试判定。
-- **Agent Runtime Config**：agent-runtime.json 定义系统提示扩展，包含工具调用预算规则(并行/批量/最小化读取)、附件处理策略(design_inspect_image)、标注驱动 UI 修改 SOP。
-- **Vite Preview FS Plugin**：自定义 Vite 中间件提供 /__tech_preview/* 端点，支持目录列表/文本预览/图片预览，带路径安全校验(不能访问 cwd 外)和大小限制(maxPreviewTextBytes=512KB, maxPreviewImageBytes=2MB)。
-- **Electron-builder Packing**：asarUnpack 展开 Claude Agent SDK 以支持动态 require；afterPack 执行 win 图标替换脚本；extraResources 包含 preload.cjs。
+- **entrypoints**：index.html is the static entry point; main.tsx is the React entry; dist-electron/electron/main.js is the Electron entry.
+- **model routing slots**：ApiConfig type defines five model slots: default/main, expert, small/backend, analysis, image. Misconfiguration causes 503 errors when backend model hits unavailable channel.
+- **file preview plugin**：vite.config.ts registers a Vite plugin that exposes /__tech_preview/list and /__tech_preview/files dev-only HTTP endpoints for directory browsing and file content serving with path safety enforcement.
+- **two-process architecture**：src/electron (main process) and src/ui (renderer) are separate TypeScript compilation units with isolated tsconfig files. Shared types live at root/types.d.ts.
+- **workspace isolation**：isPathWithinRoot() prevents file preview and MCP tools from accessing files outside the cwd to prevent path traversal.
 
 ## 内部关系
 
-- `tsconfig.json` -> `tsconfig.app.json`：tsconfig.json 通过 references 引用 tsconfig.app.json 和 tsconfig.node.json，实现前后端分离编译
-- `tsconfig.app.json` -> `types.d.ts`：tsconfig.app.json include types.d.ts，使全局类型对前端代码可见
-- `index.html` -> `src/ui/main.tsx`：index.html 通过 script type=module 加载前端入口 src/ui/main.tsx
-- `package.json` -> `electron-builder.json`：package.json 的 build 脚本产出 dist-react，electron-builder.json 的 files 字段引用这些产物
-- `CLAUDE.md` -> `agent-runtime.json`：CLAUDE.md 定义默认规则源；agent-runtime.json 提供运行时行为扩展配置，两者共同约束 Agent 执行策略
-- `.mcp.json` -> `package.json`：MCP server 声明依赖 package.json 的 dependencies/npm scripts 执行
+- `vite.config.ts` -> `tsconfig.app.json`：Vite reads tsconfig.app.json via vite-tsconfig-paths plugin for path alias resolution
+- `index.html` -> `src/ui/main.tsx`：HTML loads the React entry point script from src/ui/main.tsx
+- `package.json` -> `vite.config.ts`：npm run build invokes Vite which loads vite.config.ts
+- `electron-builder.json` -> `package.json`：electron-builder reads main field from package.json to locate entry point
+- `CLAUDE.md` -> `DESIGN.md`：CLAUDE.md references DESIGN.md as required pre-read for UI changes
+- `src/ui` -> `types.d.ts`：UI code imports shared types from the root types.d.ts via @/ alias or relative paths
+
+## 运行注意事项
+
+- Vite dev server serves file preview endpoints only in development mode via previewFsPlugin
+- Electron main process compiled separately via tsc --project src/electron/tsconfig.json, not bundled by Vite
+- UI and Electron are separate TypeScript projects with isolated tsconfig files
+- agent-runtime.json modifies system prompt used by Claude Agent SDK at runtime
+- npm run rebuild fixes native module (better-sqlite3) mismatches after Electron version upgrades
+
+## 修改风险
+
+- Modifying vite.config.ts plugin routes breaks file preview dev server functionality
+- Changing tsconfig.app.json paths alias breaks @/ imports across entire UI codebase
+- Modifying electron-builder.json files array can omit required SDK modules causing runtime crashes
+- Changing design tokens in DESIGN.md without updating component usage breaks visual consistency
+- Updating agent-runtime.json tool call rules changes agent behavior globally across all executions
+
+## 验证
+
+- npm run build - validates TypeScript compilation and Vite bundling success
+- npm run qa:smoke - launches Electron and runs minimal chat smoke test
+- npm run lint - ESLint check with typescript-eslint resolver
+- vite preview (after build) - serves built React app for manual verification

@@ -1,132 +1,143 @@
 # scripts
 
-> 构建、开发、发布和QA测试的自动化脚本集合
+> Build, development, and release utility scripts for the Desktop Agent workbench application.
 
-该模块包含用于Electron应用生命周期管理的各类脚本：Windows打包后图标设置、Codex OAuth配置、开发和发布流程自动化、GitHub Release生成、知识引擎同步以及多场景QA冒烟测试。
+Scripts module provides build automation, development server orchestration, OAuth setup, release management, and compatibility sync utilities. These scripts handle Electron app packaging for Windows and macOS, manage version bumps and GitHub releases, configure API profiles, and synchronize Claude Code compatibility data.
+
+## Agent 可用信息
+
+- Scripts are executable entrypoints for npm run commands in package.json scripts section
+- dev-electron.mjs is critical for macOS development - it prepares signed Electron.app and sets ELECTRON_OVERRIDE_DIST_PATH
+- after-pack-win-icon.cjs must be registered as 'afterPack' hook in electron-builder configuration to apply icons
+- sync-claude-code-compat.mjs requires network access to claudelog.com and generates TypeScript output at hardcoded path
+- github-release.mjs uses GITHUB_TOKEN environment variable for API authentication
+- codex-oauth-setup.mjs reads from TECH_CC_HUB_API_CONFIG env var or platform-specific paths for config persistence
+
+## 优先入口
+
+- `scripts/dev.mjs`：Primary development orchestrator - runs both React and Electron dev servers concurrently
+- `scripts/github-release.mjs`：Release automation entrypoint - run via 'npm run release:github' with version argument
+- `scripts/package-win-safe.mjs`：Windows packaging entrypoint - run via 'npm run package:win-safe'
 
 ## 文件
 
-### `after-pack-win-icon.cjs`
+### `scripts/sync-claude-code-compat.mjs`
 
-Electron打包后钩子，用于Windows平台设置应用的.ico图标
+Fetches Claude Code changelog from claudelog.com and generates TypeScript registry at src/electron/libs/claude-code-compat-registry.ts containing command items and prompt hints for compatibility mapping.
 
-- `applyWindowsIconAfterPack` (function) - 主导出函数，在electron-builder打包完成后检查平台，若为win32则使用rcedit.exe将icon.ico嵌入exe
+- `SOURCE_URL` (const) - Remote URL for Claude Code changelog (https://claudelog.com/claude-code-changelog/)
+- `OUTPUT_FILE` (const) - Output path for generated TypeScript registry file
+- `parseArgs` (function) - Parses --version and -v command line arguments
+- `normalizeVersion` (function) - Normalizes version strings, handles v2.1.x aliasing
+- `fetchText` (function) - HTTP GET with custom User-Agent header
+- `extractSections` (function) - Parses HTML changelog into structured sections with version, date, and item lists
+- `extractCommandItems` (function) - Extracts /command patterns and special commands like 'agents' and 'plugin' from changelog items
 
-### `codex-oauth-setup.mjs`
+### `scripts/codex-oauth-setup.mjs`
 
-配置Codex OAuth认证，更新API配置文件中的模型列表和凭证
+Interactive script to configure Codex OAuth API profile. Creates/modifies api-config.json with proper credentials, models list, and settings for the workbench.
 
-- `parseArgs` (function) - 解析命令行参数，支持--key=value和--flag value两种格式
-- `getDefaultConfigPath` (function) - 根据平台返回API配置文件路径，优先读取TECH_CC_HUB_API_CONFIG环境变量
-- `readSettings` (function) - 读取并解析JSON配置文件，支持旧格式（单profile）和新格式（profiles数组）
-- `writeSettings` (function) - 创建目录并写入JSON配置
-- `buildCodexProfile` (function) - 构建Codex OAuth配置profile，包含模型列表和认证声明
+- `BASE_URL` (const) - OpenAI API base URL (https://chatgpt.com)
+- `DEFAULT_MODEL` (const) - Default model (gpt-5.5) used when not specified in existing config
+- `MODELS` (const) - Full model list including compact variants
+- `getDefaultConfigPath` (function) - Returns platform-specific config path (TECH_CC_HUB_API_CONFIG env var or platform default)
+- `readSettings` (function) - Reads and parses api-config.json, normalizes legacy single profile format
+- `buildCodexProfile` (function) - Constructs profile object preserving previous settings while applying new credential
+- `saveCodexProfile` (function) - Writes updated config maintaining profile array structure
 
-### `dev-electron.mjs`
+### `scripts/after-pack-win-icon.cjs`
 
-Electron开发环境准备和macOS分发路径验证
+Electron-builder afterPack hook (CommonJS) that applies custom icon.ico to Windows executable using rcedit.exe. Only runs on win32 platform.
 
-- `run` (function) - 同步执行命令，失败时抛出带输出的错误
-- `runOptional` (function) - 执行可选命令，忽略错误和输出
-- `verifyCodesign` (function) - 使用codesign验证应用签名
-- `electronVersionLabel` (function) - 从package.json提取Electron版本号并规范化
-- `cleanMacExtendedAttributes` (function) - 清除macOS扩展属性（FinderInfo、quarantine等），避免签名验证问题
-- `prepareMacElectronDist` (function) - 设置ELECTRON_OVERRIDE_DIST_PATH环境变量，使开发时使用本地node_modules中的Electron
+- `applyWindowsIconAfterPack` (function) - Main export - async electron-builder hook
+- `iconPath` (const) - Source icon path (build/icon.ico)
+- `rceditPath` (const) - rcedit.exe binary path from electron-winstaller
 
-### `dev.mjs`
+### `scripts/dev-electron.mjs`
 
-同时启动React和Electron开发服务器
+Prepares signed Electron.app on macOS (codesign verification, caching to ~/Library/Caches/tech-cc-hub), then launches Electron CLI with development environment. Sets ELECTRON_OVERRIDE_DIST_PATH for signed runtime.
 
-- `stopAll` (function) - 终止所有子进程并退出，响应SIGINT/SIGTERM信号
-- `startTask` (function) - 启动npm子进程，监听exit事件，任一任务失败则终止全部
+- `run` (function) - Executes command synchronously, throws on non-zero exit
+- `runOptional` (function) - Executes command ignoring errors (for xattr cleanup)
+- `verifyCodesign` (function) - Verifies app signature using codesign --verify
+- `prepareMacElectronDist` (function) - Main logic - copies Electron.app to cache, cleans extended attributes, signs with ad-hoc identity
+- `cleanMacExtendedAttributes` (function) - Removes macOS extended attributes (FinderInfo, provenance, quarantine)
 
-### `github-release.mjs`
+### `scripts/dev.mjs`
 
-自动化GitHub Release流程，包括版本计算、变更日志生成和资产上传
+Orchestrates concurrent development servers - spawns React (dev:react) and Electron (dev:electron) npm tasks. Handles graceful shutdown on SIGINT/SIGTERM. Exits if any task fails.
 
-- `parseVersion` (function) - 解析语义化版本字符串为{major,minor,patch,value}对象
-- `run` (function) - 执行git/gh命令，支持dry-run模式跳过实际执行
-- `determineNextVersion` (function) - 根据semver bump类型（major/minor/patch）计算下一个版本号
-- `createGitHubRelease` (function) - 调用gh CLI创建GitHub Release并上传tarball/zip资产
-- `generateReleaseNotes` (function) - 从git log生成包含标题、提交、变更文件的发布说明
+- `children` (Map) - Tracks spawned child processes by name
+- `stopAll` (function) - Kills all child processes and exits with code
+- `startTask` (function) - Spawns npm run task, handles exit/error events
 
-### `package-win-safe.mjs`
+### `scripts/github-release.mjs`
 
-安全的Windows打包流程，清理旧产物并生成稳定输出文件
+Automated GitHub release workflow - bumps version in package.json, creates git tags, pushes, optionally creates GitHub release with auto-generated release notes. Supports dry-run mode.
 
-- `cleanOldArtifacts` (function) - 删除win-unpacked、缓存图标和旧版本exe/zip
-- `findExeArtifact` (function) - 在dist目录中查找tech-cc-hub*.exe文件
-- `createStableOutputs` (function) - 生成带日期戳的zip文件（tech-cc-hub-win-{date}.zip）和无后缀exe副本
-- `makeZipFromDir` (function) - 使用tar创建win-unpacked目录的zip压缩包
-- `hasUnpackedArtifact` (function) - 检查是否存在win-unpacked目录作为备选
+- `args` (const) - Parsed command line arguments
+- `requestedVersion` (const) - Version bump mode or explicit version (patch|minor|major|vX.Y.Z)
+- `dryRun` (const) - Flag to simulate without mutating git state
+- `run` (function) - Executes git commands with optional output capture
+- `parseVersion` (function) - Parses semver strings into structured object
+- `bumpVersion` (function) - Increments major/minor/patch or accepts explicit version
+- `createGithubRelease` (function) - Creates GitHub release via GitHub API with generated release notes
 
-### `sync-claude-code-compat.mjs`
+### `scripts/package-win-safe.mjs`
 
-从Claude Code官方changelog同步命令兼容性信息到TypeScript注册表
+Windows packaging script with multi-strategy fallback. Cleans old artifacts, runs electron-builder with code signing disabled, produces stable timestamped outputs (tech-cc-hub-win-x64-YYYYMMDD.exe, .zip) and win-unpacked.zip.
 
-- `normalizeVersion` (function) - 规范化版本号，处理v前缀并修正v0.2.x为v2.1.x
-- `fetchText` (function) - 使用fetch获取changelog页面文本
-- `extractSections` (function) - 从HTML提取各版本变更章节，包含version、date、items
-- `extractCommandItems` (function) - 从变更项中提取命令相关提示
-- `buildPromptHints` (function) - 构建prompt提示模板供LLM理解命令语义
-- `renderRegistry` (function) - 生成TypeScript类型定义文件内容
+- `distDir` (const) - Target directory (process.cwd()/dist)
+- `stamp` (const) - Date stamp for stable output naming (YYYYMMDD format)
+- `cleanOldArtifacts` (function) - Removes win-unpacked/, .icon-ico/, and prior tech-cc-hub artifacts
+- `findExeArtifact` (function) - Locates exe in dist directory matching tech-cc-hub pattern
+- `createStableOutputs` (function) - Creates timestamped stable artifacts with proper naming
+- `runWithFallback` (function) - Attempts packaging strategy, falls back to unsigned on failure
 
-### `qa/browser-workbench-smoke.mjs`
+## 数据与接口契约
 
-BrowserWorkbenchManager冒烟测试，验证浏览器内核的页面加载、元素提取和控制台功能
-
-- `waitForIdle` (function) - 轮询等待页面加载完成（url存在且非loading状态）
-- `makeFixture` (function) - 在临时目录创建两个HTML测试页面，包含链接、图片和console日志
-- `run` (async function) - 主测试入口，创建BrowserWindow和BrowserWorkbenchManager，逐项检查extract/inspect/capture/console功能
-
-### `qa/chat-ui-smoke.cjs`
-
-Playwright驱动的Chat UI冒烟测试，验证@文件提及和/slash命令功能
-
-- `main` (async function) - 启动headless Chrome，测试@src文件提及触发、slash命令弹窗、结构化引用不泄露到textarea、控制台错误检测
-
-### `qa/electron-autostart-smoke.sh`
-
-Shell脚本测试Electron自启动和Session完成流程，通过SQLite数据库轮询验证任务状态
-
-- `cleanup` (function) - EXIT陷阱清理：杀死子进程、删除锁目录
-- `wait_for_vite` (function) - 轮询等待Vite开发服务器在localhost:5173就绪
-- `poll_for_completion` (function) - 轮询sessions.db表中last_prompt匹配的行，等待status=completed且claude_session_id非空
-
-### `qa/knowledge-chat-injection-smoke.mjs`
-
-测试知识库聊天的注入功能，验证overview生成和streaming回复
-
-- `callBridge` (function) - 通过HTTP POST调用bridge RPC方法
-- `subscribeServerEvents` (function) - 订阅SSE事件流，解析data:行并触发回调
-- `main` (async function) - 调用knowledge:overview检查<knowledge_overview>标签，订阅server事件等待assistant消息并验证知识注入内容
-
-### `qa/knowledge-engine-smoke.mjs`
-
-验证知识库索引引擎的完整流程，包括sqlite-vec向量存储和Repo Wiki多页生成
-
-- `readJson` (function) - 读取并解析JSON文件，文件不存在则报错
-- `sqlite` (function) - 执行SQLite查询并返回结果
-- `latestKnowledgeDb` (function) - 在knowledge目录查找最新的knowledge.sqlite文件
-- `walkMarkdown` (function) - 递归遍历目录返回.md文件列表（排除_sidebar.md）
+- **ClaudeCodeCompatRegistry**：Generated TypeScript interface at src/electron/libs/claude-code-compat-registry.ts with {sourceUrl, sourceVersion, sourceDate, generatedAt, commandItems, promptHints}
+- **API Config JSON**：JSON structure with profiles array, each containing {id, name, apiKey, baseURL, model, expertModel, smallModel, analysisModel, models[], enabled, provider, apiType}
+- **GitHub Release API**：POST /repos/{owner}/{repo}/releases with {tag_name, name, body, draft, prerelease}
 
 ## 关键概念
 
-- **Electron After-Pack Hook**：electron-builder在打包完成后触发回调，after-pack-win-icon.cjs利用此钩子修改已打包exe的图标资源
-- **多进程并发管理**：dev.mjs同时管理React(Vite)和Electron两个子进程，任一失败则终止全部
-- **OAuth凭证管理**：codex-oauth-setup.mjs处理OpenAI Codex的OAuth认证流程，持久化到跨平台配置文件
-- **macOS签名清理**：dev-electron.mjs清除扩展属性(xattr)以确保本地Electron能被codesign验证
-- **Semantic Version Bump**：github-release.mjs支持major/minor/patch三种版本递增策略
-- **SSE事件流订阅**：knowledge-chat-injection-smoke.mjs通过fetch+ReadableStream解析Server-Sent Events
-- **SQLite数据库轮询**：electron-autostart-smoke.sh通过sqlite3命令轮询sessions.db验证任务完成状态
-- **向量检索验证**：knowledge-engine-smoke.mjs检查sqlite-vec扩展的indexedDocuments和indexedChunks数量
-- **Playwright浏览器自动化**：chat-ui-smoke.cjs使用Playwright的chromium启动headless浏览器进行UI交互测试
-- **文件协议测试**：browser-workbench-smoke.mjs用pathToFileURL创建本地HTML文件URL供BrowserWorkbenchManager加载
+- **Electron AfterPack Hook**：after-pack-win-icon.cjs exports function matching electron-builder hook signature. Runs after packaging completes. Must be registered in electron-builder config.
+- **macOS Code Signing**：dev-electron.mjs uses codesign --sign with ad-hoc identity (-). Verifies with --verify --deep --strict. Cleans xattr extended attributes to prevent Gatekeeper rejection.
+- **GitHub Release Automation**：github-release.mjs uses GitHub API with Bearer token auth. Supports --dry-run, --no-push, --allow-dirty flags. Generates release notes from git commits with configurable templates.
+- **Multi-Strategy Packaging**：package-win-safe.mjs tries electron-builder with signing disabled, falls back to unsigned builds. Produces timestamped stable outputs alongside standard artifacts.
+- **OAuth Device Flow**：codex-oauth-setup.mjs implements OpenID Connect device authorization grant flow for Codex API, polling /device/code endpoint until user approves.
 
 ## 内部关系
 
-- `package-win-safe.mjs` -> `after-pack-win-icon.cjs`：electron-builder在afterPack钩子中调用after-pack-win-icon.cjs设置Windows图标
-- `dev.mjs` -> `dev-electron.mjs`：dev.mjs执行npm run dev:electron，该脚本内部import dev-electron.mjs准备Electron环境
-- `github-release.mjs` -> `package-win-safe.mjs`：Release流程调用package-win-safe.mjs构建产物后上传tarball
-- `sync-claude-code-compat.mjs` -> `dist-electron/electron/browser-manager.js`：sync脚本输出到src/electron/libs/claude-code-compat-registry.ts供BrowserWorkbenchManager使用
-- `qa/browser-workbench-smoke.mjs` -> `dist-electron/electron/browser-manager.js`：冒烟测试导入BrowserWorkbenchManager类进行功能测试
+- `scripts/dev.mjs` -> `scripts/dev-electron.mjs`：dev.mjs calls 'npm run dev:electron' which invokes dev-electron.mjs script
+- `scripts/dev-electron.mjs` -> `node_modules/electron/cli.js`：Launches Electron CLI from installed dependency
+- `scripts/sync-claude-code-compat.mjs` -> `src/electron/libs/claude-code-compat-registry.ts`：Generates TypeScript registry file consumed by Electron renderer
+- `scripts/codex-oauth-setup.mjs` -> `api-config.json`：Reads/writes API configuration file referenced by Electron main process
+
+## 运行注意事项
+
+- dev-electron.mjs caches signed Electron.app to ~/Library/Caches/tech-cc-hub/electron-{version}-dist to avoid re-signing on each dev session
+- Mac extended attribute cleaning in dev-electron.mjs removes com.apple.quarantine to prevent 'app is damaged' errors
+- package-win-safe.mjs sets CSC_IDENTITY_AUTO_DISCOVERY=false to skip code signing during packaging
+- github-release.mjs reads package.json version and package-lock.json for dependency tracking in release notes
+- codex-oauth-setup.mjs supports both interactive flow and programmatic --profile-id --device-code --device-code-user flags
+- sync-claude-code-compat.mjs supports version selection via --version=2.1.XX or defaults to latest section
+
+## 修改风险
+
+- Changing OUTPUT_FILE path in sync-claude-code-compat.mjs will break import references in src/electron
+- Modifying MODELS array in codex-oauth-setup.mjs affects available model list for all Codex profiles
+- Removing rcedit.exe dependency in after-pack-win-icon.cjs breaks Windows icon application
+- Changing ELECTRON_OVERRIDE_DIST_PATH logic in dev-electron.mjs may cause macOS signature verification failures
+- Altering GitHub API endpoint or auth method in github-release.mjs breaks release creation
+- Changing stable output naming pattern in package-win-safe.mjs breaks release artifact distribution
+
+## 验证
+
+- Run 'node scripts/sync-claude-code-compat.mjs --version=2.1.50' and verify src/electron/libs/claude-code-compat-registry.ts is generated
+- Run 'node scripts/codex-oauth-setup.mjs --help' to verify CLI argument parsing works
+- Run 'node scripts/dev-electron.mjs' on macOS and verify Electron launches with signed app
+- Run 'node scripts/github-release.mjs --dry-run patch' and verify git commands are logged without execution
+- Run 'npm run package:win-safe' and verify stable timestamped artifacts appear in dist/
+- Verify after-pack-win-icon.cjs is listed in electron-builder 'afterPack' hook configuration

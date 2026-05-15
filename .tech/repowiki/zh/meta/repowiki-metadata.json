@@ -6,13 +6,556 @@
     "license": "MIT",
     "vendoredPath": "third_party/repowiki"
   },
-  "generatedAt": 1778860305276,
+  "generatedAt": 1778864038280,
   "workspaceScope": "workspace:tech-cc-hub",
   "projectName": "tech-cc-hub",
   "wikiModel": "MiniMax-M2.7",
   "costTier": "cheap",
-  "scannedFiles": 709,
-  "totalLines": 133061,
+  "scannedFiles": 710,
+  "totalLines": 134225,
+  "intelligence": {
+    "scripts": [
+      {
+        "name": "rebuild",
+        "command": "npx electron-rebuild -f -w better-sqlite3"
+      },
+      {
+        "name": "dev",
+        "command": "node scripts/dev.mjs"
+      },
+      {
+        "name": "dev:react",
+        "command": "vite"
+      },
+      {
+        "name": "dev:electron",
+        "command": "bun run transpile:electron && node scripts/dev-electron.mjs"
+      },
+      {
+        "name": "qa:smoke",
+        "command": "bash scripts/qa/electron-autostart-smoke.sh \"请只回复：SMOKE_OK\""
+      },
+      {
+        "name": "qa:slash",
+        "command": "bash scripts/qa/electron-autostart-smoke.sh \"/debug\""
+      },
+      {
+        "name": "qa:codex",
+        "command": "SMOKE_TIMEOUT_SECONDS=120 bash scripts/qa/electron-autostart-smoke.sh \"/codex consult 你好，只回复 CODEX_SMOKE_OK\""
+      },
+      {
+        "name": "qa:continue",
+        "command": "bash scripts/qa/electron-autostart-smoke.sh \"请只回复：SMOKE_ROUND_1\" \"请只回复：SMOKE_ROUND_2\""
+      },
+      {
+        "name": "qa:chat-ui",
+        "command": "node scripts/qa/chat-ui-smoke.cjs"
+      },
+      {
+        "name": "qa:knowledge",
+        "command": "node scripts/qa/knowledge-engine-smoke.mjs"
+      },
+      {
+        "name": "qa:knowledge-chat",
+        "command": "node scripts/qa/knowledge-chat-injection-smoke.mjs"
+      },
+      {
+        "name": "qa:knowledge-ui",
+        "command": "node scripts/qa/knowledge-ui-smoke.cjs"
+      },
+      {
+        "name": "qa:preview",
+        "command": "node scripts/qa/preview-workbench-smoke.cjs"
+      },
+      {
+        "name": "qa:window:list",
+        "command": "bash scripts/qa/window-id-tools.sh list"
+      },
+      {
+        "name": "qa:window:capture",
+        "command": "bash scripts/qa/window-id-tools.sh capture"
+      },
+      {
+        "name": "codex:oauth:setup",
+        "command": "node scripts/codex-oauth-setup.mjs"
+      },
+      {
+        "name": "build",
+        "command": "tsc -b && vite build"
+      },
+      {
+        "name": "lint",
+        "command": "eslint ."
+      },
+      {
+        "name": "preview",
+        "command": "vite preview"
+      },
+      {
+        "name": "test:activity-rail-model",
+        "command": "tsc --project test/electron/tsconfig.json && node --test dist-test/test/electron/activity-rail-model.test.js"
+      },
+      {
+        "name": "transpile:electron",
+        "command": "tsc --project src/electron/tsconfig.json"
+      },
+      {
+        "name": "package:mac",
+        "command": "bun run transpile:electron && bun run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac zip --arm64 --publish never"
+      },
+      {
+        "name": "package:mac:fast",
+        "command": "bun run transpile:electron && bun run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --arm64 --publish never"
+      },
+      {
+        "name": "package:win",
+        "command": "node scripts/package-win-safe.mjs"
+      },
+      {
+        "name": "dist:mac-arm64",
+        "command": "bun run transpile:electron && bun run build && electron-builder --mac --arm64"
+      },
+      {
+        "name": "dist:mac-x64",
+        "command": "bun run transpile:electron && bun run build && electron-builder --mac --x64"
+      },
+      {
+        "name": "dist:win",
+        "command": "node scripts/package-win-safe.mjs"
+      },
+      {
+        "name": "dist:win:stable",
+        "command": "node scripts/package-win-safe.mjs"
+      }
+    ],
+    "highValueFiles": [
+      {
+        "path": "src/ui/types.ts",
+        "reason": "被依赖较多或包含关键导出",
+        "signals": [
+          "event:user_prompt",
+          "event:stream.message",
+          "event:stream.user_prompt",
+          "event:session.status",
+          "event:session.plan.updated",
+          "event:session.workflow",
+          "event:session.workflow.catalog",
+          "event:session.list"
+        ]
+      },
+      {
+        "path": "src/electron/main.ts",
+        "reason": "Electron 主进程入口，注册窗口、IPC、知识库通道和开发桥",
+        "signals": [
+          "entrypoint:src/electron/main.ts",
+          "ipc:preview-list-directory",
+          "ipc:preview-list-files",
+          "ipc:sessions:list",
+          "ipc:slash-commands:list",
+          "ipc:plugins:getOpenComputerUseStatus",
+          "ipc:plugins:checkOpenComputerUseUpdate",
+          "ipc:plugins:installOpenComputerUse"
+        ]
+      },
+      {
+        "path": "src/electron/ipc-handlers.ts",
+        "reason": "会话生命周期和主要 IPC 编排入口",
+        "signals": [
+          "event:task.updated",
+          "event:task.deleted",
+          "event:task.execution.started",
+          "event:task.execution.completed",
+          "event:task.execution.log",
+          "event:task.stats",
+          "event:task.sync.completed",
+          "event:task.error"
+        ]
+      },
+      {
+        "path": "src/electron/types.ts",
+        "reason": "被依赖较多或包含关键导出",
+        "signals": [
+          "event:user_prompt",
+          "event:builtin",
+          "event:stream.message",
+          "event:stream.user_prompt",
+          "event:session.status",
+          "event:session.plan.updated",
+          "event:session.workflow",
+          "event:session.workflow.catalog"
+        ]
+      },
+      {
+        "path": "src/electron/libs/skill-manager/ipc-handlers.ts",
+        "reason": "定义或调用跨进程接口",
+        "signals": [
+          "ipc:skills:getManagedSkills",
+          "ipc:skills:getSkillsForScenario",
+          "ipc:skills:getSkillDocument",
+          "ipc:skills:deleteManagedSkill",
+          "ipc:skills:deleteManagedSkills",
+          "ipc:skills:installLocal",
+          "ipc:skills:batchImportFolder",
+          "ipc:skills:getAllTags"
+        ]
+      },
+      {
+        "path": "src/electron/libs/mcp-tools/browser.ts",
+        "reason": "暴露给 Agent 的 MCP 工具面",
+        "signals": [
+          "mcp_tool:http_ping",
+          "mcp_tool:diagnose_port",
+          "mcp_tool:bash_batch",
+          "mcp_tool:browser_open_page",
+          "mcp_tool:browser_close_page",
+          "mcp_tool:browser_get_state",
+          "mcp_tool:browser_navigate",
+          "mcp_tool:browser_reload"
+        ]
+      },
+      {
+        "path": "src/electron/libs/runner.ts",
+        "reason": "Agent system prompt、MCP、工作区和会话执行链路",
+        "signals": [
+          "event:object",
+          "event:array",
+          "event:number",
+          "event:string",
+          "event:json_schema",
+          "event:stream.message",
+          "event:permission.request",
+          "event:session.plan.updated"
+        ]
+      },
+      {
+        "path": "src/ui/store/useAppStore.ts",
+        "reason": "主 UI 状态容器，连接会话、活动面板和知识库入口",
+        "signals": [
+          "event:user_prompt",
+          "store:useAppStore"
+        ]
+      },
+      {
+        "path": "src/ui/components/KnowledgePanel.tsx",
+        "reason": "知识库前端入口，工作区列表、生成进度、Markdown 预览",
+        "signals": [
+          "ui_ipc:knowledge:list",
+          "ui_ipc:knowledge:sync-workspaces",
+          "ui_ipc:knowledge:complete-generation",
+          "ui_ipc:knowledge:update-generation",
+          "ui_ipc:knowledge:list-documents",
+          "ui_ipc:knowledge:run-generation",
+          "ui_ipc:knowledge:add-workspace",
+          "ui_ipc:knowledge:remove-workspace"
+        ]
+      },
+      {
+        "path": "src/electron/libs/knowledge/knowledge-repository.ts",
+        "reason": "知识库 SQLite schema、FTS5、sqlite-vec 和检索 API",
+        "signals": [
+          "database:knowledge_documents",
+          "database:knowledge_chunks",
+          "database:knowledge_chunks_fts",
+          "database:knowledge_index_runs",
+          "database:knowledge_chunk_vectors",
+          "database:idx_knowledge_documents_workspace",
+          "database:idx_knowledge_documents_source",
+          "database:idx_knowledge_chunks_document"
+        ]
+      },
+      {
+        "path": "vite.config.ts",
+        "reason": "开发服务、预览构建和 watcher 忽略目录配置",
+        "signals": [
+          "config:vite.config.ts",
+          "event:file"
+        ]
+      },
+      {
+        "path": "src/electron/libs/codex-oauth.ts",
+        "reason": "被依赖较多或包含关键导出",
+        "signals": [
+          "event:text",
+          "event:tool_use",
+          "event:message",
+          "event:codex",
+          "event:output_text",
+          "event:message_start",
+          "event:content_block_start",
+          "event:content_block_delta"
+        ]
+      },
+      {
+        "path": "src/electron/libs/knowledge/knowledge-ui-store.ts",
+        "reason": "Repo Wiki 工作区、生成状态、UI 文档和开发桥 IPC 后端",
+        "signals": [
+          "database:knowledge_ui_workspaces",
+          "database:knowledge_ui_generation",
+          "database:knowledge_ui_documents",
+          "database:idx_knowledge_ui_workspaces_hidden",
+          "database:idx_knowledge_ui_documents_workspace"
+        ]
+      },
+      {
+        "path": "src/ui/App.tsx",
+        "reason": "入口文件，适合从这里跟踪启动链路",
+        "signals": [
+          "entrypoint:src/ui/App.tsx",
+          "ui_ipc:sessions:list",
+          "ui_ipc:shell:openExternal",
+          "event:separator",
+          "event:message",
+          "event:process_group",
+          "event:session.history",
+          "event:session.list"
+        ]
+      },
+      {
+        "path": "src/electron/libs/task/types.ts",
+        "reason": "被依赖较多或包含关键导出",
+        "signals": [
+          "event:task.list",
+          "event:task.updated",
+          "event:task.deleted",
+          "event:task.execution.started",
+          "event:task.execution.completed",
+          "event:task.execution.log",
+          "event:task.execution.bundle",
+          "event:task.settings"
+        ]
+      },
+      {
+        "path": "package.json",
+        "reason": "开发、构建、QA、打包命令和关键依赖来源",
+        "signals": [
+          "config:package.json"
+        ]
+      },
+      {
+        "path": "src/electron/libs/task/executor.ts",
+        "reason": "任务执行、恢复、重试、会话归档触发等核心编排",
+        "signals": [
+          "event:stream.user_prompt",
+          "event:task.execution.bundle",
+          "event:session.status"
+        ]
+      },
+      {
+        "path": "src/ui/components/PromptInput.tsx",
+        "reason": "定义或调用跨进程接口",
+        "signals": [
+          "ui_ipc:slash-commands:list",
+          "event:browser_annotations",
+          "event:browser_annotation",
+          "event:text",
+          "event:code_references",
+          "event:message_references",
+          "event:file_references",
+          "event:session.start"
+        ]
+      },
+      {
+        "path": "src/electron/libs/skill-manager/db.ts",
+        "reason": "包含 SQLite/FTS/vector schema 或索引写入",
+        "signals": [
+          "database:skills",
+          "database:scenarios",
+          "database:scenario_skills",
+          "database:scenario_skill_tools",
+          "database:skill_targets",
+          "database:skill_tags",
+          "database:settings",
+          "database:idx_scenario_skills_skill"
+        ]
+      },
+      {
+        "path": "src/shared/builtin-mcp-registry.ts",
+        "reason": "内置 MCP server 和工具元数据注册表",
+        "signals": [
+          "event:builtin"
+        ]
+      },
+      {
+        "path": "src/electron/libs/mcp-tools/figma-rest.ts",
+        "reason": "暴露给 Agent 的 MCP 工具面",
+        "signals": [
+          "mcp_tool:figma_get_current_user",
+          "mcp_tool:figma_get_file_metadata",
+          "mcp_tool:figma_read_design",
+          "mcp_tool:figma_list_node_index",
+          "mcp_tool:figma_match_ui_nodes",
+          "mcp_tool:figma_summarize_design",
+          "mcp_tool:figma_extract_design_tokens",
+          "mcp_tool:figma_get_design_playbook"
+        ]
+      },
+      {
+        "path": "src/electron/libs/knowledge/knowledge-indexer.ts",
+        "reason": "Repo Wiki 生成、Markdown chunk、embedding、FTS/vector 写入主链路",
+        "signals": []
+      },
+      {
+        "path": "src/ui/components/TaskPanel.tsx",
+        "reason": "保存 UI 或运行态状态",
+        "signals": [
+          "event:task.list",
+          "event:task.stats",
+          "event:task.settings.get",
+          "event:task.providers",
+          "event:task.execution.logs",
+          "event:task.sync",
+          "event:task.execute",
+          "event:task.control"
+        ]
+      },
+      {
+        "path": "src/electron/libs/knowledge/knowledge-overview.ts",
+        "reason": "聊天 system prompt 的知识库 overview 注入",
+        "signals": []
+      },
+      {
+        "path": "package/sdk-tools.d.ts",
+        "reason": "被依赖较多或包含关键导出",
+        "signals": [
+          "event:text",
+          "event:image",
+          "event:notebook",
+          "event:pdf",
+          "event:parts",
+          "event:file_unchanged",
+          "event:create",
+          "event:code"
+        ]
+      },
+      {
+        "path": "pro-workflow/src/db/schema.sql",
+        "reason": "包含 SQLite/FTS/vector schema 或索引写入",
+        "signals": [
+          "database:learnings",
+          "database:learnings_fts",
+          "database:sessions",
+          "database:wikis",
+          "database:wiki_pages",
+          "database:wiki_sources",
+          "database:wiki_claims",
+          "database:wiki_seeds"
+        ]
+      },
+      {
+        "path": "src/electron/libs/builtin-mcp-servers.ts",
+        "reason": "内置 MCP server 工厂映射和 tool name 暴露",
+        "signals": []
+      },
+      {
+        "path": "src/electron/libs/knowledge/repowiki/engine.ts",
+        "reason": "RepoWiki-compatible 生成器入口，串起扫描、图谱、分析、导出",
+        "signals": []
+      },
+      {
+        "path": "src/electron/libs/task/repository.ts",
+        "reason": "包含 SQLite/FTS/vector schema 或索引写入",
+        "signals": [
+          "database:tasks",
+          "database:task_executions",
+          "database:task_execution_logs",
+          "database:task_subtasks",
+          "database:task_artifacts",
+          "database:task_dismissals",
+          "database:idx_tasks_provider",
+          "database:idx_tasks_local_status"
+        ]
+      },
+      {
+        "path": "src/ui/components/settings/InstallSkillsView.tsx",
+        "reason": "定义或调用跨进程接口",
+        "signals": [
+          "ui_ipc:skills:searchSkillssh",
+          "ui_ipc:skills:fetchLeaderboard",
+          "ui_ipc:skills:scanLocalSkills",
+          "ui_ipc:skills:installLocal",
+          "ui_ipc:preview-open-dialog",
+          "ui_ipc:skills:batchImportFolder",
+          "ui_ipc:skills:installSkillssh",
+          "ui_ipc:skills:previewGitInstall"
+        ]
+      }
+    ],
+    "runtimeFlows": [
+      {
+        "title": "知识库生成、索引与注入",
+        "summary": "RepoWiki-compatible 生成器产出 Markdown，text splitter 切块，embedding 写入 sqlite-vec/FTS5，runner 再把 overview 注入 system prompt。",
+        "steps": [
+          "KnowledgePanel 通过 knowledge:run-generation 触发",
+          "knowledge-ui-store 调用 indexKnowledgeWorkspace",
+          "knowledge-indexer 调用 generateRepoWiki 并收集 Markdown",
+          "RecursiveCharacterTextSplitter 切 chunk，embedTextBatches 生成向量",
+          "KnowledgeRepository 写入 documents/chunks/FTS/vector",
+          "knowledge-overview 为新会话拼装 <knowledge_overview>"
+        ],
+        "evidence": [
+          "src/ui/components/KnowledgePanel.tsx",
+          "src/electron/libs/knowledge/knowledge-ui-store.ts",
+          "src/electron/libs/knowledge/knowledge-indexer.ts",
+          "src/electron/libs/knowledge/knowledge-repository.ts",
+          "src/electron/libs/knowledge/knowledge-overview.ts",
+          "src/electron/libs/runner.ts"
+        ]
+      },
+      {
+        "title": "聊天会话执行",
+        "summary": "Renderer 发起 session.start，Electron 持久化会话并构造 runner，上下文、规则、MCP server 和知识库 overview 在 runner 层合并。",
+        "steps": [
+          "UI 创建会话请求",
+          "ipc-handlers/session-store 管理会话状态",
+          "runner 拼接 system prompt、Agent runtime、MCP 工具和工作区",
+          "stream 事件回写到 UI store"
+        ],
+        "evidence": [
+          "src/electron/ipc-handlers.ts",
+          "src/electron/libs/session-store.ts",
+          "src/electron/libs/runner.ts",
+          "src/ui/store/useAppStore.ts"
+        ]
+      },
+      {
+        "title": "任务同步与执行",
+        "summary": "外部任务 provider 只负责映射任务，TaskExecutor 负责并发、恢复、重试、写回和执行记录。",
+        "steps": [
+          "provider-registry 注册外部任务源",
+          "TaskRepository 持久化任务、执行和日志",
+          "TaskExecutor 按状态调度并创建独立 workspace",
+          "执行完成后更新任务状态并可写回外部系统"
+        ],
+        "evidence": [
+          "src/electron/libs/task/provider-registry.ts",
+          "src/electron/libs/task/repository.ts",
+          "src/electron/libs/task/executor.ts",
+          "src/electron/libs/task/workspace.ts"
+        ]
+      },
+      {
+        "title": "内置 MCP 工具面",
+        "summary": "共享 registry 描述可见工具，Electron 工厂创建真实 MCP server；Agent 能调用 browser/design/git/knowledge/plan 等能力。",
+        "steps": [
+          "shared registry 提供 server 和 tool 元数据",
+          "builtin-mcp-servers 映射 server name 到工厂函数",
+          "runner 根据 runtime config 加载 MCP server",
+          "工具处理器访问 BrowserView、Git、设计分析或知识库服务"
+        ],
+        "evidence": [
+          "src/shared/builtin-mcp-registry.ts",
+          "src/electron/libs/builtin-mcp-servers.ts",
+          "src/electron/libs/mcp-tools/browser.ts",
+          "src/electron/libs/mcp-tools/design.ts",
+          "src/electron/libs/mcp-tools/plan.ts"
+        ]
+      }
+    ],
+    "ipcChannels": 80,
+    "uiIpcCalls": 47,
+    "mcpTools": 74,
+    "databaseTables": 80
+  },
   "pages": [
     {
       "id": "index",
@@ -22,95 +565,158 @@
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/index.md"
     },
     {
+      "id": "agent-playbook",
+      "title": "Agent 作业手册",
+      "parentId": "",
+      "order": 1,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/agent-playbook.md"
+    },
+    {
       "id": "architecture",
       "title": "架构",
       "parentId": "",
-      "order": 1,
+      "order": 2,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/architecture.md"
+    },
+    {
+      "id": "runtime-flows",
+      "title": "关键运行链路",
+      "parentId": "",
+      "order": 3,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/runtime-flows.md"
+    },
+    {
+      "id": "api-surface",
+      "title": "接口与存储面",
+      "parentId": "",
+      "order": 4,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/api-surface.md"
+    },
+    {
+      "id": "modules/ui-shell",
+      "title": "ui-shell",
+      "parentId": "modules",
+      "order": 100,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/ui-shell.md"
+    },
+    {
+      "id": "modules/settings-ui",
+      "title": "settings-ui",
+      "parentId": "modules",
+      "order": 101,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/settings-ui.md"
     },
     {
       "id": "modules/electron",
       "title": "electron",
       "parentId": "modules",
-      "order": 100,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/electron.md"
-    },
-    {
-      "id": "modules/doc",
-      "title": "doc",
-      "parentId": "modules",
-      "order": 101,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/doc.md"
-    },
-    {
-      "id": "modules/root",
-      "title": "root",
-      "parentId": "modules",
       "order": 102,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/root.md"
-    },
-    {
-      "id": "modules/test",
-      "title": "test",
-      "parentId": "modules",
-      "order": 103,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/test.md"
-    },
-    {
-      "id": "modules/ui",
-      "title": "ui",
-      "parentId": "modules",
-      "order": 104,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/ui.md"
-    },
-    {
-      "id": "modules/shared",
-      "title": "shared",
-      "parentId": "modules",
-      "order": 105,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/shared.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/electron.md"
     },
     {
       "id": "modules/pro-workflow",
       "title": "pro-workflow",
       "parentId": "modules",
-      "order": 106,
+      "order": 103,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/pro-workflow.md"
+    },
+    {
+      "id": "modules/tests",
+      "title": "tests",
+      "parentId": "modules",
+      "order": 104,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/tests.md"
+    },
+    {
+      "id": "modules/knowledge-engine",
+      "title": "knowledge-engine",
+      "parentId": "modules",
+      "order": 105,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/knowledge-engine.md"
+    },
+    {
+      "id": "modules/mcp-tools",
+      "title": "mcp-tools",
+      "parentId": "modules",
+      "order": 106,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/mcp-tools.md"
+    },
+    {
+      "id": "modules/root",
+      "title": "root",
+      "parentId": "modules",
+      "order": 107,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/root.md"
+    },
+    {
+      "id": "modules/shared-contracts",
+      "title": "shared-contracts",
+      "parentId": "modules",
+      "order": 108,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/shared-contracts.md"
+    },
+    {
+      "id": "modules/task-engine",
+      "title": "task-engine",
+      "parentId": "modules",
+      "order": 109,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/task-engine.md"
+    },
+    {
+      "id": "modules/skill-manager",
+      "title": "skill-manager",
+      "parentId": "modules",
+      "order": 110,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/skill-manager.md"
+    },
+    {
+      "id": "modules/git-workbench",
+      "title": "git-workbench",
+      "parentId": "modules",
+      "order": 111,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/git-workbench.md"
+    },
+    {
+      "id": "modules/activity-and-diagnostics",
+      "title": "activity-and-diagnostics",
+      "parentId": "modules",
+      "order": 112,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/activity-and-diagnostics.md"
+    },
+    {
+      "id": "modules/qa-smoke-tests",
+      "title": "qa-smoke-tests",
+      "parentId": "modules",
+      "order": 113,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/qa-smoke-tests.md"
     },
     {
       "id": "modules/scripts",
       "title": "scripts",
       "parentId": "modules",
-      "order": 107,
+      "order": 114,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/scripts.md"
     },
     {
-      "id": "modules/package",
-      "title": "package",
+      "id": "modules/electron-runtime",
+      "title": "electron-runtime",
       "parentId": "modules",
-      "order": 108,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/package.md"
+      "order": 115,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/electron-runtime.md"
     },
     {
-      "id": "modules/common",
-      "title": "common",
+      "id": "modules/ui-state",
+      "title": "ui-state",
       "parentId": "modules",
-      "order": 109,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/common.md"
+      "order": 116,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/ui-state.md"
     },
     {
-      "id": "modules/docs",
-      "title": "docs",
+      "id": "modules/knowledge-ui",
+      "title": "knowledge-ui",
       "parentId": "modules",
-      "order": 110,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/docs.md"
-    },
-    {
-      "id": "modules/skills",
-      "title": "skills",
-      "parentId": "modules",
-      "order": 111,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/skills.md"
+      "order": 117,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/knowledge-ui.md"
     },
     {
       "id": "reading-guide",
@@ -134,41 +740,41 @@
       "children": []
     },
     {
+      "title": "Agent 作业手册",
+      "pageId": "agent-playbook",
+      "children": []
+    },
+    {
       "title": "架构",
       "pageId": "architecture",
+      "children": []
+    },
+    {
+      "title": "关键运行链路",
+      "pageId": "runtime-flows",
+      "children": []
+    },
+    {
+      "title": "接口与存储面",
+      "pageId": "api-surface",
       "children": []
     },
     {
       "title": "模块",
       "children": [
         {
+          "title": "ui-shell",
+          "pageId": "modules/ui-shell",
+          "children": []
+        },
+        {
+          "title": "settings-ui",
+          "pageId": "modules/settings-ui",
+          "children": []
+        },
+        {
           "title": "electron",
           "pageId": "modules/electron",
-          "children": []
-        },
-        {
-          "title": "doc",
-          "pageId": "modules/doc",
-          "children": []
-        },
-        {
-          "title": "root",
-          "pageId": "modules/root",
-          "children": []
-        },
-        {
-          "title": "test",
-          "pageId": "modules/test",
-          "children": []
-        },
-        {
-          "title": "ui",
-          "pageId": "modules/ui",
-          "children": []
-        },
-        {
-          "title": "shared",
-          "pageId": "modules/shared",
           "children": []
         },
         {
@@ -177,28 +783,73 @@
           "children": []
         },
         {
+          "title": "tests",
+          "pageId": "modules/tests",
+          "children": []
+        },
+        {
+          "title": "knowledge-engine",
+          "pageId": "modules/knowledge-engine",
+          "children": []
+        },
+        {
+          "title": "mcp-tools",
+          "pageId": "modules/mcp-tools",
+          "children": []
+        },
+        {
+          "title": "root",
+          "pageId": "modules/root",
+          "children": []
+        },
+        {
+          "title": "shared-contracts",
+          "pageId": "modules/shared-contracts",
+          "children": []
+        },
+        {
+          "title": "task-engine",
+          "pageId": "modules/task-engine",
+          "children": []
+        },
+        {
+          "title": "skill-manager",
+          "pageId": "modules/skill-manager",
+          "children": []
+        },
+        {
+          "title": "git-workbench",
+          "pageId": "modules/git-workbench",
+          "children": []
+        },
+        {
+          "title": "activity-and-diagnostics",
+          "pageId": "modules/activity-and-diagnostics",
+          "children": []
+        },
+        {
+          "title": "qa-smoke-tests",
+          "pageId": "modules/qa-smoke-tests",
+          "children": []
+        },
+        {
           "title": "scripts",
           "pageId": "modules/scripts",
           "children": []
         },
         {
-          "title": "package",
-          "pageId": "modules/package",
+          "title": "electron-runtime",
+          "pageId": "modules/electron-runtime",
           "children": []
         },
         {
-          "title": "common",
-          "pageId": "modules/common",
+          "title": "ui-state",
+          "pageId": "modules/ui-state",
           "children": []
         },
         {
-          "title": "docs",
-          "pageId": "modules/docs",
-          "children": []
-        },
-        {
-          "title": "skills",
-          "pageId": "modules/skills",
+          "title": "knowledge-ui",
+          "pageId": "modules/knowledge-ui",
           "children": []
         }
       ]
@@ -216,19 +867,28 @@
   ],
   "files": [
     ".tech/repowiki/zh/content/index.md",
+    ".tech/repowiki/zh/content/agent-playbook.md",
     ".tech/repowiki/zh/content/architecture.md",
+    ".tech/repowiki/zh/content/runtime-flows.md",
+    ".tech/repowiki/zh/content/api-surface.md",
+    ".tech/repowiki/zh/content/modules/ui-shell.md",
+    ".tech/repowiki/zh/content/modules/settings-ui.md",
     ".tech/repowiki/zh/content/modules/electron.md",
-    ".tech/repowiki/zh/content/modules/doc.md",
-    ".tech/repowiki/zh/content/modules/root.md",
-    ".tech/repowiki/zh/content/modules/test.md",
-    ".tech/repowiki/zh/content/modules/ui.md",
-    ".tech/repowiki/zh/content/modules/shared.md",
     ".tech/repowiki/zh/content/modules/pro-workflow.md",
+    ".tech/repowiki/zh/content/modules/tests.md",
+    ".tech/repowiki/zh/content/modules/knowledge-engine.md",
+    ".tech/repowiki/zh/content/modules/mcp-tools.md",
+    ".tech/repowiki/zh/content/modules/root.md",
+    ".tech/repowiki/zh/content/modules/shared-contracts.md",
+    ".tech/repowiki/zh/content/modules/task-engine.md",
+    ".tech/repowiki/zh/content/modules/skill-manager.md",
+    ".tech/repowiki/zh/content/modules/git-workbench.md",
+    ".tech/repowiki/zh/content/modules/activity-and-diagnostics.md",
+    ".tech/repowiki/zh/content/modules/qa-smoke-tests.md",
     ".tech/repowiki/zh/content/modules/scripts.md",
-    ".tech/repowiki/zh/content/modules/package.md",
-    ".tech/repowiki/zh/content/modules/common.md",
-    ".tech/repowiki/zh/content/modules/docs.md",
-    ".tech/repowiki/zh/content/modules/skills.md",
+    ".tech/repowiki/zh/content/modules/electron-runtime.md",
+    ".tech/repowiki/zh/content/modules/ui-state.md",
+    ".tech/repowiki/zh/content/modules/knowledge-ui.md",
     ".tech/repowiki/zh/content/reading-guide.md",
     ".tech/repowiki/zh/content/dependencies.md",
     ".tech/repowiki/zh/content/_sidebar.md"

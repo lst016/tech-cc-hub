@@ -59,22 +59,48 @@ function walkMarkdown(dir) {
 const report = readJson(reportPath);
 if (report.success !== true) fail(`Index report is not successful: ${report.error || report.message || "unknown"}`);
 if (report.vectorStoreReady !== true) fail("Index report says sqlite-vec is not ready");
-if (!Number.isFinite(report.indexedDocuments) || report.indexedDocuments < 5) fail(`Repo Wiki did not index enough pages: ${report.indexedDocuments}`);
-if (!Number.isFinite(report.indexedChunks) || report.indexedChunks < 1) fail("No indexed chunks in report");
-if (!Array.isArray(report.generatedFiles) || report.generatedFiles.length < 6) fail("Generated Repo Wiki is not multi-page");
+if (!Number.isFinite(report.indexedDocuments) || report.indexedDocuments < 20) fail(`Repo Wiki did not index enough pages: ${report.indexedDocuments}`);
+if (!Number.isFinite(report.indexedChunks) || report.indexedChunks < 80) fail(`Indexed chunks are too shallow for Agent usage: ${report.indexedChunks}`);
+if (!Array.isArray(report.generatedFiles) || report.generatedFiles.length < 20) fail("Generated Repo Wiki is not a rich multi-page wiki");
 
 if (!existsSync(wikiPath)) fail(`Missing generated wiki markdown: ${wikiPath}`);
 const wikiFiles = walkMarkdown(wikiRoot);
-if (wikiFiles.length < 5) fail(`Repo Wiki markdown page count is too low: ${wikiFiles.length}`);
+if (wikiFiles.length < 20) fail(`Repo Wiki markdown page count is too low: ${wikiFiles.length}`);
 if (!wikiFiles.some((file) => file.includes(`${path.sep}modules${path.sep}`))) fail("Repo Wiki did not generate module pages");
+for (const required of [
+  "agent-playbook.md",
+  "runtime-flows.md",
+  "api-surface.md",
+  path.join("modules", "knowledge-engine.md"),
+  path.join("modules", "mcp-tools.md"),
+]) {
+  if (!existsSync(path.join(wikiRoot, required))) fail(`Missing required Agent-useful page: ${required}`);
+}
 for (const file of wikiFiles) {
   const wiki = readFileSync(file, "utf8");
   if (!wiki.trim().startsWith("# ")) fail(`Generated wiki markdown does not start with a heading: ${file}`);
   if (/^\s*```/.test(wiki)) fail(`Generated wiki markdown is wrapped in a code fence: ${file}`);
   if (/<think>/i.test(wiki)) fail(`Generated wiki markdown still contains model thinking tags: ${file}`);
-  if (/后续接入真实|未生成正文|当前没有真实 Repo Wiki 正文|生成后会出现 Repo Wiki 目录/.test(wiki)) {
+  if (/后续接入真实|未生成正文|当前没有真实 Repo Wiki 正文|生成后会出现 Repo Wiki 目录|模型未返回结构化说明/.test(wiki)) {
     fail(`Generated wiki markdown contains placeholder text: ${file}`);
   }
+}
+
+const indexWiki = readFileSync(path.join(wikiRoot, "index.md"), "utf8");
+for (const expected of ["Agent 快速定位", "关键工作流", "验证命令", "knowledge-indexer.ts", "knowledge-repository.ts"]) {
+  if (!indexWiki.includes(expected)) fail(`Project overview is not Agent-useful; missing: ${expected}`);
+}
+const playbook = readFileSync(path.join(wikiRoot, "agent-playbook.md"), "utf8");
+for (const expected of ["为什么知识库功能必须有 embedding 模型", "高价值文件", "Agent 如何在聊天里看到知识库"]) {
+  if (!playbook.includes(expected)) fail(`Agent playbook missing useful section: ${expected}`);
+}
+const knowledgeModule = readFileSync(path.join(wikiRoot, "modules", "knowledge-engine.md"), "utf8");
+for (const expected of ["Repo Wiki 生成", "embedding", "knowledge_documents", "KnowledgeRepository", "knowledge-overview.ts"]) {
+  if (!knowledgeModule.includes(expected)) fail(`Knowledge module page is too shallow; missing: ${expected}`);
+}
+const apiSurface = readFileSync(path.join(wikiRoot, "api-surface.md"), "utf8");
+for (const expected of ["knowledge:run-generation", "browser_open_page", "knowledge_documents", "Renderer 调用", "MCP Tool"]) {
+  if (!apiSurface.includes(expected)) fail(`API surface page is too shallow; missing: ${expected}`);
 }
 
 const indexCounts = sqlite(

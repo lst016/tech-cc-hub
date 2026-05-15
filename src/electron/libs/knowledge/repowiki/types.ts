@@ -1,3 +1,17 @@
+export type RepoWikiCodeSymbol = {
+  name: string;
+  kind: string;
+  line: number;
+  signature?: string;
+};
+
+export type RepoWikiFileSignal = {
+  kind: "ipc" | "ui_ipc" | "mcp_tool" | "mcp_server" | "database" | "store" | "event" | "config" | "entrypoint";
+  name: string;
+  detail?: string;
+  line?: number;
+};
+
 export type RepoWikiFileInfo = {
   path: string;
   absolutePath: string;
@@ -8,6 +22,56 @@ export type RepoWikiFileInfo = {
   content: string;
   isConfig: boolean;
   isEntrypoint: boolean;
+  imports: string[];
+  exports: string[];
+  symbols: RepoWikiCodeSymbol[];
+  signals: RepoWikiFileSignal[];
+};
+
+export type RepoWikiScriptInfo = {
+  name: string;
+  command: string;
+};
+
+export type RepoWikiDependencyInfo = {
+  name: string;
+  version: string;
+  group: "runtime" | "dev";
+};
+
+export type RepoWikiHighValueFile = {
+  path: string;
+  reason: string;
+  signals: string[];
+};
+
+export type RepoWikiRuntimeFlow = {
+  title: string;
+  summary: string;
+  steps: string[];
+  evidence: string[];
+};
+
+export type RepoWikiAgentQuestion = {
+  question: string;
+  answer: string;
+  files: string[];
+};
+
+export type RepoWikiProjectIntelligence = {
+  scripts: RepoWikiScriptInfo[];
+  dependencies: RepoWikiDependencyInfo[];
+  entrypoints: RepoWikiHighValueFile[];
+  ipcChannels: RepoWikiFileSignal[];
+  uiIpcCalls: RepoWikiFileSignal[];
+  mcpTools: RepoWikiFileSignal[];
+  mcpServers: RepoWikiFileSignal[];
+  databaseTables: RepoWikiFileSignal[];
+  stores: RepoWikiHighValueFile[];
+  events: RepoWikiFileSignal[];
+  highValueFiles: RepoWikiHighValueFile[];
+  runtimeFlows: RepoWikiRuntimeFlow[];
+  agentQuestions: RepoWikiAgentQuestion[];
 };
 
 export type RepoWikiProjectContext = {
@@ -16,6 +80,7 @@ export type RepoWikiProjectContext = {
   files: RepoWikiFileInfo[];
   fileTree: string;
   totalLines: number;
+  intelligence?: RepoWikiProjectIntelligence;
 };
 
 export type TechItem = {
@@ -31,6 +96,12 @@ export type ProjectOverview = {
   tech_stack?: TechItem[];
   setup_instructions?: string[];
   key_features?: string[];
+  agent_summary?: string[];
+  key_workflows?: Array<{ name: string; summary?: string; files?: string[] }>;
+  runtime_surfaces?: string[];
+  storage_and_indexes?: string[];
+  quality_gates?: string[];
+  change_risks?: string[];
 };
 
 export type SymbolDoc = {
@@ -64,6 +135,12 @@ export type ModuleDoc = {
   files?: FileDoc[];
   relationships?: RelationshipDoc[];
   key_concepts?: ConceptDoc[];
+  agent_value?: string[];
+  entrypoints?: Array<{ path: string; reason?: string }>;
+  data_contracts?: ConceptDoc[];
+  operational_notes?: string[];
+  change_risks?: string[];
+  validation?: string[];
 };
 
 export type ArchitectureComponent = {
@@ -79,6 +156,9 @@ export type ArchitectureDiagram = {
   mermaid_component?: string;
   mermaid_sequence?: string;
   data_flow?: string;
+  layers?: ArchitectureComponent[];
+  boundaries?: string[];
+  integration_points?: string[];
 };
 
 export type ReadingStep = {
@@ -93,6 +173,7 @@ export type ReadingGuide = {
   introduction?: string;
   steps?: ReadingStep[];
   tips?: string[];
+  task_paths?: Array<{ task: string; files: string[]; why?: string }>;
 };
 
 export type WikiData = {
