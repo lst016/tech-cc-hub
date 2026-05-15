@@ -80,7 +80,7 @@ export function buildKnowledgeOverviewPromptAppend(projectCwd?: string): string 
     lines.push("  <repowiki>");
     for (const [category, entries] of groupedKnowledge) {
       lines.push(`    <category name="${category}" count="${entries.length}">`);
-      for (const entry of entries.slice(0, 8)) {
+      for (const entry of entries.slice(0, 24)) {
         lines.push(`      <entry title="${escapeXml(entry.title)}" path="${escapeXml(entry.sourcePath)}" />`);
       }
       lines.push("    </category>");
@@ -93,7 +93,7 @@ export function buildKnowledgeOverviewPromptAppend(projectCwd?: string): string 
     lines.push("  <memory>");
     for (const [category, entries] of groupedMemory) {
       lines.push(`    <category name="${category}" count="${entries.length}">`);
-      for (const entry of entries.slice(0, 8)) {
+      for (const entry of entries.slice(0, 18)) {
         const tags = entry.tags.slice(0, 5).join(",");
         lines.push(`      <entry title="${escapeXml(entry.title)}" scope="${escapeXml(entry.scope)}" tags="${escapeXml(tags)}" />`);
       }

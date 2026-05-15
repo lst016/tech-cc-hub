@@ -308,7 +308,7 @@ function applyGitBinding(state: GenerationState, git?: KnowledgeGitState): Gener
 }
 
 function isPlaceholderWikiDocument(document: KnowledgeDocument): boolean {
-  return /占位|后续接入真实|当前没有真实 Repo Wiki 正文|预览壳|真实生成内容写入后/.test(document.content);
+  return /后续接入真实|当前没有真实 Repo Wiki 正文|预览壳|真实生成内容写入后|生成后会出现 Repo Wiki 目录/.test(document.content);
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {

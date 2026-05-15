@@ -39,18 +39,22 @@ async function main() {
   await workspaceButton.click();
   await page.waitForTimeout(1000);
 
-  const generatedDoc = page.getByRole('button', { name: /tech-cc-hub 项目总览/ }).first();
+  const generatedDoc = page.getByRole('button', { name: /tech-cc-hub 项目概览/ }).first();
   await generatedDoc.waitFor({ state: 'visible', timeout: 10000 });
   await generatedDoc.click();
   await page.waitForTimeout(800);
 
   const bodyText = await page.locator('body').innerText({ timeout: 10000 });
-  for (const expected of ['tech-cc-hub 项目总览', '项目定位', '技术栈']) {
+  for (const expected of ['项目概览', '技术栈', '模块']) {
     if (!bodyText.includes(expected)) {
       throw new Error(`Knowledge UI missing generated content: ${expected}`);
     }
   }
-  for (const forbidden of ['后续接入真实', '未生成正文', '占位', '生成后会出现 Repo Wiki 目录', '```markdown']) {
+  const moduleButtonCount = await page.locator('button').filter({ hasText: /src|ui|electron|components|root|scripts/ }).count();
+  if (moduleButtonCount < 1) {
+    throw new Error('Knowledge UI did not render any RepoWiki module page buttons');
+  }
+  for (const forbidden of ['后续接入真实', '未生成正文', '当前没有真实 Repo Wiki 正文', '生成后会出现 Repo Wiki 目录', '```markdown']) {
     if (bodyText.includes(forbidden)) {
       throw new Error(`Knowledge UI still contains placeholder/fence text: ${forbidden}`);
     }

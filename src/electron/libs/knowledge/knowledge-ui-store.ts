@@ -402,11 +402,12 @@ async function runKnowledgeGeneration(
     ? store.replaceDocuments(workspaceKey, generatedDocs)
     : store.listDocuments(workspaceKey);
   const success = Boolean(report.success && generatedDocs.length > 0);
+  const generatedTotal = success ? Math.max(1, generatedDocs.length) : startedState.total || 183;
   const generation = store.updateGeneration(workspaceKey, {
     ...startedState,
     status: success ? "completed" : "paused",
-    completed: success ? startedState.total || 183 : Math.min(startedState.completed, Math.max(0, startedState.total - 1)),
-    total: startedState.total || 183,
+    completed: success ? generatedTotal : Math.min(startedState.completed, Math.max(0, generatedTotal - 1)),
+    total: generatedTotal,
     processing: 0,
     failed: success ? 0 : 1,
     updatedAt: Date.now(),
@@ -436,6 +437,7 @@ function collectGeneratedMarkdownDocuments(workspaceRoot: string, appDataPath: s
         continue;
       }
       if (!stats.isFile() || extname(entry).toLowerCase() !== ".md") continue;
+      if (entry === "_sidebar.md") continue;
       const content = readFileSync(absolutePath, "utf8");
       const relativePath = relative(root, absolutePath);
       const title = extractMarkdownTitle(content, basename(entry));
@@ -458,7 +460,13 @@ function extractMarkdownTitle(content: string, fallbackFileName: string): string
 }
 
 function inferSectionFromPath(relativePath: string): string {
-  const firstSegment = relativePath.split(/[\\/]/).at(0) ?? "";
+  const normalized = relativePath.replace(/\\/g, "/");
+  const firstSegment = normalized.split("/").at(0) ?? "";
+  if (normalized === "index.md" || /^00-|^01-project-overview/i.test(normalized)) return "项目概述";
+  if (normalized === "architecture.md" || /arch|架构/i.test(firstSegment)) return "架构设计";
+  if (normalized.startsWith("modules/")) return "模块";
+  if (normalized === "reading-guide.md") return "阅读指南";
+  if (normalized === "dependencies.md") return "依赖关系";
   if (/arch|架构/i.test(firstSegment)) return "架构设计";
   if (/backend|server|后端|ipc/i.test(firstSegment)) return "后端架构设计";
   return "生成文档";

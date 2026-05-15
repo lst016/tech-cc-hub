@@ -1,8 +1,24 @@
 {
-  "generatedAt": 1778855185437,
+  "generatedAt": 1778860308462,
   "mode": "refresh",
   "wikiModel": "MiniMax-M2.7",
   "generatedFiles": [
-    ".tech/repowiki/zh/content/00-project-overview.md"
+    ".tech/repowiki/zh/content/index.md",
+    ".tech/repowiki/zh/content/architecture.md",
+    ".tech/repowiki/zh/content/modules/electron.md",
+    ".tech/repowiki/zh/content/modules/doc.md",
+    ".tech/repowiki/zh/content/modules/root.md",
+    ".tech/repowiki/zh/content/modules/test.md",
+    ".tech/repowiki/zh/content/modules/ui.md",
+    ".tech/repowiki/zh/content/modules/shared.md",
+    ".tech/repowiki/zh/content/modules/pro-workflow.md",
+    ".tech/repowiki/zh/content/modules/scripts.md",
+    ".tech/repowiki/zh/content/modules/package.md",
+    ".tech/repowiki/zh/content/modules/common.md",
+    ".tech/repowiki/zh/content/modules/docs.md",
+    ".tech/repowiki/zh/content/modules/skills.md",
+    ".tech/repowiki/zh/content/reading-guide.md",
+    ".tech/repowiki/zh/content/dependencies.md",
+    ".tech/repowiki/zh/content/_sidebar.md"
   ]
 }

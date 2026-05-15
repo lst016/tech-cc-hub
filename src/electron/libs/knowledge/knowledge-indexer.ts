@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "fs";
 import { basename, extname, join, relative } from "path";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import { KnowledgeRepository } from "./knowledge-repository.js";
@@ -8,7 +8,6 @@ import {
   type KnowledgeWorkspacePaths,
 } from "./knowledge-paths.js";
 import { embedTextBatches } from "./embedding-client.js";
-import { generateWikiMarkdown } from "./wiki-model-client.js";
 import { resolveKnowledgeModelSettings } from "./knowledge-model-settings.js";
 import type {
   KnowledgeIndexMode,
@@ -20,13 +19,11 @@ import {
   compactWhitespace,
   estimateTokens,
   stableHash,
-  walkWorkspaceFiles,
 } from "./knowledge-utils.js";
+import { generateRepoWiki } from "./repowiki/engine.js";
 
 const DEFAULT_CHUNK_SIZE = 1_800;
 const DEFAULT_CHUNK_OVERLAP = 220;
-const MAX_WIKI_SOURCE_FILES = 120;
-const MAX_WIKI_PROMPT_CHARS = 48_000;
 
 type MarkdownFile = {
   absolutePath: string;
@@ -37,13 +34,6 @@ type MarkdownFile = {
 
 function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
-
-function ensureParentDir(path: string): void {
-  const dir = path.split(/[\\/]/).slice(0, -1).join("/");
-  if (dir && !existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
 }
 
 function extractMarkdownTitle(content: string, fallback: string): string {
@@ -68,6 +58,9 @@ function collectMarkdownFiles(dir: string, root: string): MarkdownFile[] {
       if (!stats.isFile() || extname(entry).toLowerCase() !== ".md") {
         continue;
       }
+      if (entry === "_sidebar.md") {
+        continue;
+      }
       const content = readFileSync(absolutePath, "utf8");
       files.push({
         absolutePath,
@@ -81,59 +74,6 @@ function collectMarkdownFiles(dir: string, root: string): MarkdownFile[] {
   return files;
 }
 
-function buildWikiPrompt(paths: KnowledgeWorkspacePaths): {
-  prompt: string;
-  skipped: Array<{ path: string; reason: string }>;
-} {
-  const { files, skipped } = walkWorkspaceFiles(paths.workspaceRoot, {
-    maxFiles: MAX_WIKI_SOURCE_FILES,
-    maxFileBytes: 80_000,
-    includeTech: false,
-  });
-  const packageJsonPath = join(paths.workspaceRoot, "package.json");
-  const packageJson = existsSync(packageJsonPath)
-    ? readFileSync(packageJsonPath, "utf8").slice(0, 8_000)
-    : "";
-
-  const fileSummaries: string[] = [];
-  let usedChars = 0;
-  for (const file of files) {
-    if (usedChars >= MAX_WIKI_PROMPT_CHARS) {
-      skipped.push({ path: file.relativePath, reason: "wiki prompt budget exceeded" });
-      continue;
-    }
-    const content = readFileSync(file.absolutePath, "utf8");
-    const snippet = content.slice(0, 2_200);
-    const block = [
-      `## ${file.relativePath}`,
-      "```",
-      snippet,
-      "```",
-    ].join("\n");
-    usedChars += block.length;
-    fileSummaries.push(block);
-  }
-
-  const prompt = [
-    `仓库路径：${paths.workspaceRoot}`,
-    "请生成一个面向前端/Agent 的 Repo Wiki 总览，要求：",
-    "- 中文 Markdown。",
-    "- 说明项目用途、主要技术栈、核心目录、运行/构建入口、后续实现切入点。",
-    "- 不要编造没有出现在文件列表或 package.json 里的事实。",
-    "- 内容适合保存到 .tech/repowiki/zh/content/00-project-overview.md。",
-    "",
-    "package.json:",
-    "```json",
-    packageJson,
-    "```",
-    "",
-    "源码片段：",
-    ...fileSummaries,
-  ].join("\n");
-
-  return { prompt, skipped };
-}
-
 async function maybeGenerateWiki(paths: KnowledgeWorkspacePaths, wiki?: WikiModelSettings): Promise<{
   generatedFiles: string[];
   skipped: Array<{ path: string; reason: string }>;
@@ -142,23 +82,8 @@ async function maybeGenerateWiki(paths: KnowledgeWorkspacePaths, wiki?: WikiMode
     return { generatedFiles: [], skipped: [] };
   }
 
-  const { prompt, skipped } = buildWikiPrompt(paths);
-  const markdown = await generateWikiMarkdown(wiki, prompt);
-  const overviewPath = join(paths.repowikiContentDir, "00-project-overview.md");
-  ensureParentDir(overviewPath);
-  writeFileSync(overviewPath, `${markdown.trim()}\n`, "utf8");
-  writeJson(paths.repowikiMetadataPath, {
-    version: 1,
-    generatedAt: Date.now(),
-    workspaceScope: paths.workspaceScope,
-    wikiModel: wiki.model,
-    costTier: wiki.costTier,
-    files: ["00-project-overview.md"],
-  });
-  return {
-    generatedFiles: [relative(paths.workspaceRoot, overviewPath)],
-    skipped,
-  };
+  const generated = await generateRepoWiki(paths, wiki);
+  return generated;
 }
 
 async function buildKnowledgeInputs(

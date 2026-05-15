@@ -1,386 +1,146 @@
 [
   {
+    "path": "src/electron/browser-manager.ts",
+    "reason": "file too large (129934 bytes)"
+  },
+  {
+    "path": "src/ui/assets/icon.png",
+    "reason": "file too large (909057 bytes)"
+  },
+  {
+    "path": "src/ui/assets/react.svg",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "src/ui/components/SessionAnalysisPage.tsx",
+    "reason": "file too large (136471 bytes)"
+  },
+  {
+    "path": "build",
+    "reason": "ignored directory"
+  },
+  {
+    "path": "bun.lock",
+    "reason": "file too large (261672 bytes)"
+  },
+  {
+    "path": "claude-agent-view-prd.svg",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "dist",
+    "reason": "ignored directory"
+  },
+  {
+    "path": "dist-electron",
+    "reason": "ignored directory"
+  },
+  {
+    "path": "dist-react",
+    "reason": "ignored directory"
+  },
+  {
+    "path": "dist-test",
+    "reason": "ignored directory"
+  },
+  {
+    "path": "node_modules",
+    "reason": "ignored directory"
+  },
+  {
+    "path": "package/assistant.mjs",
+    "reason": "file too large (1537554 bytes)"
+  },
+  {
+    "path": "package/bridge.mjs",
+    "reason": "file too large (911020 bytes)"
+  },
+  {
+    "path": "package/browser-sdk.js",
+    "reason": "file too large (634163 bytes)"
+  },
+  {
+    "path": "package/sdk.d.ts",
+    "reason": "file too large (214147 bytes)"
+  },
+  {
+    "path": "package/sdk.mjs",
+    "reason": "file too large (857744 bytes)"
+  },
+  {
+    "path": "package-lock.json",
+    "reason": "file too large (513678 bytes)"
+  },
+  {
+    "path": "pro-workflow/assets/architecture.svg",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "pro-workflow/assets/banner.svg",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "pro-workflow/assets/logo.svg",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "pro-workflow/assets/self-correction-demo.svg",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "pro-workflow/assets/terminal-demo.svg",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "pro-workflow/assets/workflow-flow.svg",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "public/app-icon.png",
+    "reason": "file too large (905633 bytes)"
+  },
+  {
+    "path": "quantgpt.db",
+    "reason": "file too large (139264 bytes)"
+  },
+  {
+    "path": "third_party",
+    "reason": "ignored directory"
+  },
+  {
+    "path": "doc/00-research",
+    "reason": "ignored research/generated docs path"
+  },
+  {
+    "path": "doc/40-product/1.0.0/assets",
+    "reason": "ignored research/generated docs path"
+  },
+  {
+    "path": "doc/assets",
+    "reason": "ignored research/generated docs path"
+  },
+  {
+    "path": ".claude",
+    "reason": "ignored directory"
+  },
+  {
     "path": ".DS_Store",
-    "reason": "unsupported extension"
+    "reason": "binary file"
   },
   {
-    "path": ".claude/worktrees/figma-official-mcp/.git",
+    "path": ".git",
     "reason": "ignored directory"
   },
   {
-    "path": ".claude/worktrees/figma-official-mcp/.gitignore",
-    "reason": "unsupported extension"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/build",
+    "path": ".hermes",
     "reason": "ignored directory"
   },
   {
-    "path": ".claude/worktrees/figma-official-mcp/bun.lock",
-    "reason": "unsupported extension"
+    "path": ".superpowers",
+    "reason": "ignored directory"
   },
   {
-    "path": ".claude/worktrees/figma-official-mcp/doc/00-research/AionUi-调研报告/02-Cron调度模块.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/00-research/AionUi-调研报告/03-Agent管理层.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/00-research/AionUi-调研报告/04-数据库层.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/00-research/AionUi-调研报告/05-WebUI远程访问.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/00-research/AionUi-调研报告/06-UI组件层.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/00-research/AionUi-调研报告/07-ACP协议模块.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/00-research/AionUi-调研报告/08-Preview模块.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/00-research/AionUi-调研报告/README.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/10-architecture/10-系统上下文图.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/10-architecture/11-系统容器图.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/10-architecture/12-控制平面组件图.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/10-architecture/13-执行平面组件图.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/10-architecture/14-数据与智能平面组件图.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/10-architecture/15-核心流程图.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/10-architecture/16-用量与上下文采集架构.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-contracts/INDEX.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-contracts/config/spec.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-contracts/events/spec.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-contracts/ipc/spec.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-contracts/session-lifecycle/spec.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-specs/20-AgentOS集成规范.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-specs/21-统一能力模型.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-specs/22-任务图与递归拆分规范.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-specs/23-上下文同步与合并规范.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-specs/24-事件模型与可观测规范.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-specs/25-会话与状态机规范.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-specs/26-存储与Markdown产物规范.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-specs/27-API与实时通道规范.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-specs/28-关键对象最小Schema.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-specs/29-AgentOS能力映射矩阵.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-specs/30-会话执行分析与标注规范.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-specs/31-工作流Markdown规范.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/20-specs/plugins-system-plan.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/30-operations/30-前端信息架构.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/30-operations/31-Workflow与Skills体系规范.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/30-operations/32-回放与分析报告规范.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/30-operations/33-冲突处理与人工介入规范.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/30-operations/34-MVP切片与迭代路线图.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/30-operations/35-ADR目录.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/30-operations/36-端到端场景样例.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/30-operations/37-规范验收矩阵.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/30-operations/38-聊天内置工作流方案.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-engineering/INDEX.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-engineering/activity-rail/spec.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-engineering/chat-composer/spec.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-engineering/electron-ipc/spec.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-engineering/preview-workbench/spec.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-engineering/settings-skills/spec.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/00-版本总览.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/01-发布目标与范围.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/02-角色与使用场景.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/03-竞品功能点PRD.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/04-竞品详细功能PRD.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/10-需求索引.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/11-FR-聊天与会话控制.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/12-FR-任务图与多Agent编排.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/13-FR-事件流回放与分析.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/14-FR-Spec资产与调优.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/15-FR-项目工作区与文件管理.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/16-FR-权限冲突与人工介入.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/00-竞品功能索引.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/01-输入区与任务发起.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/02-提示词增强.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/03-文件上下文与附件.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/04-思考模式.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/05-Agents体系.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/06-Command体系.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/07-Skill支持.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/08-Memory支持.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/09-MCP服务.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/10-Plugin支持.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/11-历史对话编辑.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/12-版本管理.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/13-执行可观测层-资源附录.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/13-执行可观测层.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/14-工作台工具集.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/15-CLI支持.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/16-OutputStyle.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/17-快捷键.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/18-安全操作确认.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/19-移动端远程开发.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/10-requirements/18-PRD-Trace Workbench参考图拆解与页面重构.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/20-quality/20-NFR-质量属性.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/30-epics/30-Epic索引.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/30-epics/31-Epic-交互工作台.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/30-epics/32-Epic-任务编排与Worker.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/30-epics/33-Epic-证据闭环.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/30-epics/34-Epic-Spec资产中心.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/30-epics/35-Epic-治理与系统能力.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/30-epics/36-StoryPack-EP-001-交互工作台.md",
-    "reason": "wiki prompt budget exceeded"
-  },
-  {
-    "path": ".claude/worktrees/figma-official-mcp/doc/40-product/1.0.0/30-epics/37-StoryPack-EP-002-任务编排与Worker.md",
-    "reason": "wiki prompt budget exceeded"
+    "path": ".tech",
+    "reason": "ignored directory"
   }
 ]

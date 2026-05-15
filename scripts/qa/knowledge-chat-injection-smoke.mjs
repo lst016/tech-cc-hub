@@ -1,7 +1,7 @@
 const BRIDGE_ORIGIN = process.env.TECH_CC_HUB_DEV_BRIDGE_ORIGIN || "http://127.0.0.1:4317";
 const WORKSPACE_ROOT = process.env.KNOWLEDGE_QA_WORKSPACE || process.cwd();
 const TIMEOUT_MS = Number(process.env.KNOWLEDGE_CHAT_QA_TIMEOUT_MS || 150000);
-const EXPECTED_TITLE = "tech-cc-hub 项目总览";
+const EXPECTED_TITLE = "tech-cc-hub 项目概览";
 const EXPECTED_REPLY = "KNOWLEDGE_INJECTION_OK";
 
 function fail(message) {

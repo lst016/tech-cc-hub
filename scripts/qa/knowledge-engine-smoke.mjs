@@ -36,23 +36,46 @@ function latestKnowledgeDb() {
 }
 
 const reportPath = path.join(workspaceRoot, ".tech/reports/index-state.json");
-const wikiPath = path.join(workspaceRoot, ".tech/repowiki/zh/content/00-project-overview.md");
+const wikiRoot = path.join(workspaceRoot, ".tech/repowiki/zh/content");
+const wikiPath = path.join(wikiRoot, "index.md");
 const uiDbPath = path.join(appDataRoot, "knowledge/knowledge-ui.sqlite");
 const indexDbPath = latestKnowledgeDb();
+
+function walkMarkdown(dir) {
+  const files = [];
+  if (!existsSync(dir)) return files;
+  for (const entry of readdirSync(dir)) {
+    const filePath = path.join(dir, entry);
+    const stats = statSync(filePath);
+    if (stats.isDirectory()) {
+      files.push(...walkMarkdown(filePath));
+    } else if (stats.isFile() && entry.endsWith(".md") && entry !== "_sidebar.md") {
+      files.push(filePath);
+    }
+  }
+  return files;
+}
 
 const report = readJson(reportPath);
 if (report.success !== true) fail(`Index report is not successful: ${report.error || report.message || "unknown"}`);
 if (report.vectorStoreReady !== true) fail("Index report says sqlite-vec is not ready");
-if (!Number.isFinite(report.indexedDocuments) || report.indexedDocuments < 1) fail("No indexed documents in report");
+if (!Number.isFinite(report.indexedDocuments) || report.indexedDocuments < 5) fail(`Repo Wiki did not index enough pages: ${report.indexedDocuments}`);
 if (!Number.isFinite(report.indexedChunks) || report.indexedChunks < 1) fail("No indexed chunks in report");
-if (!Array.isArray(report.generatedFiles) || report.generatedFiles.length < 1) fail("No generated Repo Wiki files in report");
+if (!Array.isArray(report.generatedFiles) || report.generatedFiles.length < 6) fail("Generated Repo Wiki is not multi-page");
 
 if (!existsSync(wikiPath)) fail(`Missing generated wiki markdown: ${wikiPath}`);
-const wiki = readFileSync(wikiPath, "utf8");
-if (!wiki.trim().startsWith("# ")) fail("Generated wiki markdown does not start with a heading");
-if (/^\s*```/.test(wiki)) fail("Generated wiki markdown is wrapped in a code fence");
-if (/<think>/i.test(wiki)) fail("Generated wiki markdown still contains model thinking tags");
-if (/后续接入真实|未生成正文|占位/.test(wiki)) fail("Generated wiki markdown contains placeholder text");
+const wikiFiles = walkMarkdown(wikiRoot);
+if (wikiFiles.length < 5) fail(`Repo Wiki markdown page count is too low: ${wikiFiles.length}`);
+if (!wikiFiles.some((file) => file.includes(`${path.sep}modules${path.sep}`))) fail("Repo Wiki did not generate module pages");
+for (const file of wikiFiles) {
+  const wiki = readFileSync(file, "utf8");
+  if (!wiki.trim().startsWith("# ")) fail(`Generated wiki markdown does not start with a heading: ${file}`);
+  if (/^\s*```/.test(wiki)) fail(`Generated wiki markdown is wrapped in a code fence: ${file}`);
+  if (/<think>/i.test(wiki)) fail(`Generated wiki markdown still contains model thinking tags: ${file}`);
+  if (/后续接入真实|未生成正文|当前没有真实 Repo Wiki 正文|生成后会出现 Repo Wiki 目录/.test(wiki)) {
+    fail(`Generated wiki markdown contains placeholder text: ${file}`);
+  }
+}
 
 const indexCounts = sqlite(
   indexDbPath,
@@ -77,15 +100,16 @@ if (Number(uiGeneration[1]) !== Number(uiGeneration[2]) || Number(uiGeneration[3
 
 const uiDocs = Number(sqlite(
   uiDbPath,
-  `select count(*) from knowledge_ui_documents where workspace_key = '${escapedWorkspace}' and length(content) > 100 and content not like '%后续接入真实%' and content not like '%未生成正文%' and content not like '%占位%';`,
+  `select count(*) from knowledge_ui_documents where workspace_key = '${escapedWorkspace}' and length(content) > 100 and content not like '%后续接入真实%' and content not like '%未生成正文%' and content not like '%当前没有真实 Repo Wiki 正文%' and content not like '%生成后会出现 Repo Wiki 目录%';`,
 ));
-if (!Number.isFinite(uiDocs) || uiDocs < 1) fail("UI DB does not contain real generated wiki content");
+if (!Number.isFinite(uiDocs) || uiDocs < 5) fail(`UI DB does not contain enough generated wiki pages: ${uiDocs}`);
 
 console.log(JSON.stringify({
   ok: true,
   workspaceRoot,
   reportPath,
   wikiPath,
+  wikiPages: wikiFiles.length,
   uiDbPath,
   indexDbPath,
   indexedDocuments: indexCounts[0],

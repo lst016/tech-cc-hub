@@ -16,7 +16,7 @@ const previewImageMimeTypes: Record<string, string> = {
 	'.webp': 'image/webp',
 };
 
-const ignoredPreviewDirectories = new Set(['node_modules', '.git', 'dist-react', 'dist-electron']);
+const ignoredPreviewDirectories = new Set(['node_modules', '.git', '.claude', '.codex', '.tech', 'third_party', 'dist-react', 'dist-electron']);
 const maxPreviewTextBytes = 512 * 1024;
 const maxPreviewImageBytes = 2 * 1024 * 1024;
 const maxPreviewQuickOpenEntries = 2_000;
@@ -206,6 +206,16 @@ export default defineConfig(() => {
 		server: {
 			port, // MUST BE LOWERCASE
 			strictPort: true,
+			watch: {
+				ignored: [
+					'**/.claude/**',
+					'**/.codex/**',
+					'**/.tech/**',
+					'**/third_party/**',
+					'**/dist-electron/**',
+					'**/dist-react/**',
+				],
+			},
 			proxy: {
 				"/__dev_bridge": {
 					target: "http://127.0.0.1:4317",

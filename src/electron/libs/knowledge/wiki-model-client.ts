@@ -1,4 +1,5 @@
 import type { WikiModelSettings } from "./knowledge-types.js";
+import type { ChatMessage } from "./repowiki/prompts.js";
 
 type OpenAIChatResponse = {
   choices?: Array<{
@@ -11,6 +12,8 @@ type OpenAIChatResponse = {
     message?: string;
   };
 };
+
+const DEFAULT_WIKI_CALL_TIMEOUT_MS = Number(process.env.TECH_CC_HUB_WIKI_CALL_TIMEOUT_MS || 120_000);
 
 function joinEndpoint(baseURL: string, path: string): string {
   const normalizedBase = baseURL.replace(/\/$/, "");
@@ -27,29 +30,27 @@ function sanitizeWikiMarkdown(text: string): string {
     .trim();
 }
 
-export async function generateWikiMarkdown(settings: WikiModelSettings, prompt: string): Promise<string> {
+export async function completeWikiChat(
+  settings: WikiModelSettings,
+  messages: ChatMessage[],
+  options: { temperature?: number; maxTokens?: number } = {},
+): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DEFAULT_WIKI_CALL_TIMEOUT_MS);
   const response = await fetch(joinEndpoint(settings.baseURL, "/chat/completions"), {
     method: "POST",
+    signal: controller.signal,
     headers: {
       "Authorization": `Bearer ${settings.apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
       model: settings.model,
-      messages: [
-        {
-          role: "system",
-          content: "你是一个仓库 Wiki 生成器。只输出中文 Markdown，不要输出代码围栏外的解释。",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature: 0.2,
-      max_tokens: settings.maxOutputTokens,
+      messages,
+      temperature: options.temperature ?? 0.2,
+      max_tokens: options.maxTokens ?? settings.maxOutputTokens,
     }),
-  });
+  }).finally(() => clearTimeout(timer));
 
   const rawText = await response.text();
   let payload: OpenAIChatResponse;
@@ -68,4 +69,17 @@ export async function generateWikiMarkdown(settings: WikiModelSettings, prompt: 
     throw new Error("wiki model returned empty content");
   }
   return text;
+}
+
+export async function generateWikiMarkdown(settings: WikiModelSettings, prompt: string): Promise<string> {
+  return completeWikiChat(settings, [
+    {
+      role: "system",
+      content: "你是一个仓库 Wiki 生成器。只输出中文 Markdown，不要输出代码围栏外的解释。",
+    },
+    {
+      role: "user",
+      content: prompt,
+    },
+  ]);
 }

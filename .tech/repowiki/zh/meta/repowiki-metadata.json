@@ -1,10 +1,236 @@
 {
-  "version": 1,
-  "generatedAt": 1778855185162,
+  "version": 2,
+  "engine": "he-yufeng/RepoWiki-compatible",
+  "upstream": {
+    "repository": "https://github.com/he-yufeng/RepoWiki",
+    "license": "MIT",
+    "vendoredPath": "third_party/repowiki"
+  },
+  "generatedAt": 1778860305276,
   "workspaceScope": "workspace:tech-cc-hub",
+  "projectName": "tech-cc-hub",
   "wikiModel": "MiniMax-M2.7",
   "costTier": "cheap",
+  "scannedFiles": 709,
+  "totalLines": 133061,
+  "pages": [
+    {
+      "id": "index",
+      "title": "项目概览",
+      "parentId": "",
+      "order": 0,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/index.md"
+    },
+    {
+      "id": "architecture",
+      "title": "架构",
+      "parentId": "",
+      "order": 1,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/architecture.md"
+    },
+    {
+      "id": "modules/electron",
+      "title": "electron",
+      "parentId": "modules",
+      "order": 100,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/electron.md"
+    },
+    {
+      "id": "modules/doc",
+      "title": "doc",
+      "parentId": "modules",
+      "order": 101,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/doc.md"
+    },
+    {
+      "id": "modules/root",
+      "title": "root",
+      "parentId": "modules",
+      "order": 102,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/root.md"
+    },
+    {
+      "id": "modules/test",
+      "title": "test",
+      "parentId": "modules",
+      "order": 103,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/test.md"
+    },
+    {
+      "id": "modules/ui",
+      "title": "ui",
+      "parentId": "modules",
+      "order": 104,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/ui.md"
+    },
+    {
+      "id": "modules/shared",
+      "title": "shared",
+      "parentId": "modules",
+      "order": 105,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/shared.md"
+    },
+    {
+      "id": "modules/pro-workflow",
+      "title": "pro-workflow",
+      "parentId": "modules",
+      "order": 106,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/pro-workflow.md"
+    },
+    {
+      "id": "modules/scripts",
+      "title": "scripts",
+      "parentId": "modules",
+      "order": 107,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/scripts.md"
+    },
+    {
+      "id": "modules/package",
+      "title": "package",
+      "parentId": "modules",
+      "order": 108,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/package.md"
+    },
+    {
+      "id": "modules/common",
+      "title": "common",
+      "parentId": "modules",
+      "order": 109,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/common.md"
+    },
+    {
+      "id": "modules/docs",
+      "title": "docs",
+      "parentId": "modules",
+      "order": 110,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/docs.md"
+    },
+    {
+      "id": "modules/skills",
+      "title": "skills",
+      "parentId": "modules",
+      "order": 111,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/modules/skills.md"
+    },
+    {
+      "id": "reading-guide",
+      "title": "阅读指南",
+      "parentId": "",
+      "order": 900,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/reading-guide.md"
+    },
+    {
+      "id": "dependencies",
+      "title": "依赖关系",
+      "parentId": "",
+      "order": 910,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/dependencies.md"
+    }
+  ],
+  "sidebar": [
+    {
+      "title": "项目概览",
+      "pageId": "index",
+      "children": []
+    },
+    {
+      "title": "架构",
+      "pageId": "architecture",
+      "children": []
+    },
+    {
+      "title": "模块",
+      "children": [
+        {
+          "title": "electron",
+          "pageId": "modules/electron",
+          "children": []
+        },
+        {
+          "title": "doc",
+          "pageId": "modules/doc",
+          "children": []
+        },
+        {
+          "title": "root",
+          "pageId": "modules/root",
+          "children": []
+        },
+        {
+          "title": "test",
+          "pageId": "modules/test",
+          "children": []
+        },
+        {
+          "title": "ui",
+          "pageId": "modules/ui",
+          "children": []
+        },
+        {
+          "title": "shared",
+          "pageId": "modules/shared",
+          "children": []
+        },
+        {
+          "title": "pro-workflow",
+          "pageId": "modules/pro-workflow",
+          "children": []
+        },
+        {
+          "title": "scripts",
+          "pageId": "modules/scripts",
+          "children": []
+        },
+        {
+          "title": "package",
+          "pageId": "modules/package",
+          "children": []
+        },
+        {
+          "title": "common",
+          "pageId": "modules/common",
+          "children": []
+        },
+        {
+          "title": "docs",
+          "pageId": "modules/docs",
+          "children": []
+        },
+        {
+          "title": "skills",
+          "pageId": "modules/skills",
+          "children": []
+        }
+      ]
+    },
+    {
+      "title": "阅读指南",
+      "pageId": "reading-guide",
+      "children": []
+    },
+    {
+      "title": "依赖关系",
+      "pageId": "dependencies",
+      "children": []
+    }
+  ],
   "files": [
-    "00-project-overview.md"
+    ".tech/repowiki/zh/content/index.md",
+    ".tech/repowiki/zh/content/architecture.md",
+    ".tech/repowiki/zh/content/modules/electron.md",
+    ".tech/repowiki/zh/content/modules/doc.md",
+    ".tech/repowiki/zh/content/modules/root.md",
+    ".tech/repowiki/zh/content/modules/test.md",
+    ".tech/repowiki/zh/content/modules/ui.md",
+    ".tech/repowiki/zh/content/modules/shared.md",
+    ".tech/repowiki/zh/content/modules/pro-workflow.md",
+    ".tech/repowiki/zh/content/modules/scripts.md",
+    ".tech/repowiki/zh/content/modules/package.md",
+    ".tech/repowiki/zh/content/modules/common.md",
+    ".tech/repowiki/zh/content/modules/docs.md",
+    ".tech/repowiki/zh/content/modules/skills.md",
+    ".tech/repowiki/zh/content/reading-guide.md",
+    ".tech/repowiki/zh/content/dependencies.md",
+    ".tech/repowiki/zh/content/_sidebar.md"
   ]
 }
