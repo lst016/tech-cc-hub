@@ -18,6 +18,19 @@ import {
   buildFigmaDesignAudit,
   buildFigmaDesignPlaybook,
 } from "./figma-design-intelligence.js";
+import {
+  parseFigmaLocator,
+  type FigmaLocator,
+} from "./figma-locator.js";
+import {
+  buildFigmaNodeIndex,
+  filterFigmaNodeIndex,
+  pickRecommendedNodeIds,
+} from "./figma-node-index.js";
+import {
+  matchUiNodesToFigmaNodes,
+  type FigmaUiMatchNode,
+} from "./figma-ui-node-matcher.js";
 import { toTextToolResult } from "./tool-result.js";
 
 export { FIGMA_REST_TOOL_NAMES };
@@ -31,13 +44,37 @@ const FIGMA_VARIABLE_KINDS = ["local", "published"] as const;
 const FIGMA_CODE_OUTPUTS = ["react", "html"] as const;
 const DEFAULT_SUMMARY_DEPTH = 4;
 const DEFAULT_SUMMARY_MAX_NODES = 120;
+const figmaUiBoundsSchema = z.object({
+  x: z.number().optional(),
+  y: z.number().optional(),
+  width: z.number().optional(),
+  height: z.number().optional(),
+}).passthrough();
+const figmaUiNodeSchema = z.object({
+  ref: z.string().optional(),
+  index: z.number().int().optional(),
+  tagName: z.string().optional(),
+  role: z.string().optional(),
+  name: z.string().optional(),
+  text: z.string().optional(),
+  ariaLabel: z.string().optional(),
+  value: z.string().optional(),
+  placeholder: z.string().optional(),
+  title: z.string().optional(),
+  selector: z.string().optional(),
+  path: z.string().optional(),
+  xpath: z.string().optional(),
+  attributes: z.record(z.string(), z.unknown()).optional(),
+  boundingBox: figmaUiBoundsSchema.optional(),
+  box: figmaUiBoundsSchema.optional(),
+  componentStack: z.array(z.string()).max(20).optional(),
+  context: z.object({
+    ancestorChain: z.array(z.string()).max(20).optional(),
+    nearbyText: z.string().optional(),
+  }).passthrough().optional(),
+}).passthrough();
 
 let figmaRestMcpServer: McpSdkServerConfigWithInstance | null = null;
-
-type FigmaLocator = {
-  fileKey: string;
-  nodeIds: string[];
-};
 
 type CompactDesignNode = {
   id?: string;
@@ -75,21 +112,6 @@ type DesignSummary = {
   warnings: string[];
 };
 
-type FigmaNodeIndexEntry = {
-  id?: string;
-  name?: string;
-  type?: string;
-  visible?: boolean;
-  bounds?: {
-    x?: number;
-    y?: number;
-    width?: number;
-    height?: number;
-  };
-  childCount: number;
-  path: string;
-};
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -105,50 +127,6 @@ function getConfiguredFigmaPat(): string {
     throw new Error("Figma token is not configured. Add a Figma Personal Access Token in Settings > Plugins first.");
   }
   return token;
-}
-
-function parseFigmaLocator(fileKeyOrUrl: string, explicitNodeIds: string[] = []): FigmaLocator {
-  const raw = fileKeyOrUrl.trim();
-  if (!raw) {
-    throw new Error("Missing Figma file key or URL.");
-  }
-
-  const parsedNodeIds = explicitNodeIds.map(normalizeNodeId).filter(Boolean);
-  try {
-    const url = new URL(raw);
-    if (!/figma\.com$/i.test(url.hostname) && !url.hostname.endsWith(".figma.com")) {
-      throw new Error("Not a Figma URL.");
-    }
-
-    const segments = url.pathname.split("/").filter(Boolean);
-    const keySegmentIndex = segments.findIndex((segment) => (
-      segment === "design" ||
-      segment === "file" ||
-      segment === "board" ||
-      segment === "slides" ||
-      segment === "proto" ||
-      segment === "make"
-    ));
-    const fileKey = keySegmentIndex >= 0 ? segments[keySegmentIndex + 1] : "";
-    if (!fileKey) {
-      throw new Error("Could not parse a Figma file key from the URL.");
-    }
-
-    const nodeIdFromUrl = normalizeNodeId(url.searchParams.get("node-id") ?? "");
-    return {
-      fileKey,
-      nodeIds: parsedNodeIds.length > 0 ? parsedNodeIds : nodeIdFromUrl ? [nodeIdFromUrl] : [],
-    };
-  } catch (error) {
-    if (error instanceof TypeError) {
-      return { fileKey: raw, nodeIds: parsedNodeIds };
-    }
-    throw error;
-  }
-}
-
-function normalizeNodeId(nodeId: string): string {
-  return nodeId.trim().replace(/-/g, ":");
 }
 
 function clampMaxBytes(value: number | undefined): number {
@@ -317,97 +295,6 @@ function summarizeFileMetadataFromDocument(payload: unknown): unknown {
   };
 }
 
-function buildFigmaNodeIndex(roots: Record<string, unknown>[], maxEntries: number): FigmaNodeIndexEntry[] {
-  const entries: FigmaNodeIndexEntry[] = [];
-
-  const visit = (node: Record<string, unknown>, pathParts: string[]) => {
-    if (entries.length >= maxEntries) {
-      return;
-    }
-
-    const name = readString(node, "name") || "(unnamed)";
-    const children = Array.isArray(node.children) ? node.children.filter(isRecord) : [];
-    const entry: FigmaNodeIndexEntry = {
-      id: readString(node, "id"),
-      name,
-      type: readString(node, "type"),
-      visible: readBoolean(node, "visible"),
-      bounds: readNodeIndexBounds(node),
-      childCount: children.length,
-      path: [...pathParts, name].join(" / "),
-    };
-
-    entries.push(entry);
-    for (const child of children) {
-      visit(child, [...pathParts, name]);
-      if (entries.length >= maxEntries) {
-        break;
-      }
-    }
-  };
-
-  for (const root of roots) {
-    visit(root, []);
-    if (entries.length >= maxEntries) {
-      break;
-    }
-  }
-
-  return entries;
-}
-
-function pickRecommendedNodeIds(index: FigmaNodeIndexEntry[], currentNodeIds: string[]): string[] {
-  const branchCandidates = index
-    .filter((entry) => entry.id && entry.childCount > 0)
-    .filter((entry) => !currentNodeIds.includes(entry.id ?? ""));
-
-  const preferred = branchCandidates.find((entry) => {
-    const text = `${entry.name ?? ""} ${entry.path}`.toLowerCase();
-    return /form|frame|content|section|container|椤甸潰|琛ㄥ崟|鍩虹|姝ｆ枃|鎸夐挳|棰勮|妯℃澘/.test(text);
-  }) ?? branchCandidates[0] ?? index.find((entry) => entry.id);
-
-  return preferred?.id ? [preferred.id] : [];
-}
-
-function filterFigmaNodeIndex(index: FigmaNodeIndexEntry[], query?: string): FigmaNodeIndexEntry[] {
-  const normalizedQuery = query?.trim().toLowerCase();
-  if (!normalizedQuery) {
-    return index;
-  }
-
-  const terms = normalizedQuery.split(/\s+/).filter(Boolean);
-  if (terms.length === 0) {
-    return index;
-  }
-
-  return index.filter((entry) => {
-    const haystack = [
-      entry.id,
-      entry.name,
-      entry.type,
-      entry.path,
-    ].filter(Boolean).join(" ").toLowerCase();
-    return terms.every((term) => haystack.includes(term));
-  });
-}
-
-function readNodeIndexBounds(node: Record<string, unknown>): FigmaNodeIndexEntry["bounds"] | undefined {
-  const box = isRecord(node.absoluteBoundingBox)
-    ? node.absoluteBoundingBox
-    : isRecord(node.absoluteRenderBounds)
-      ? node.absoluteRenderBounds
-      : null;
-  if (!box) {
-    return undefined;
-  }
-
-  return {
-    x: readNumber(box, "x"),
-    y: readNumber(box, "y"),
-    width: readNumber(box, "width"),
-    height: readNumber(box, "height"),
-  };
-}
 
 async function fetchFigmaDesignPayload(
   token: string,
@@ -1047,7 +934,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
 
   const nodeIndexTool = tool(
     "figma_list_node_index",
-    "List a compact Figma node index for progressive disclosure. Use this before reading a large file/frame, then drill into the smallest relevant nodeId.",
+    "List a compact Figma node index for progressive disclosure. Searches node names, paths, IDs, and visible text; use the Figma URL node-id plus a text query before asking the user for frame numbers.",
     {
       fileKeyOrUrl: z.string().trim().min(1),
       nodeIds: z.array(z.string().trim().min(1)).max(40).optional(),
@@ -1085,7 +972,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
               depth: 3,
               maxNodes: 160,
             },
-            nextStep: "Pick the smallest node that matches the requested UI area, then call figma_summarize_design or figma_read_design with that nodeId.",
+            nextStep: "Use recommendedNextInput first when it is populated; otherwise pick the smallest node that matches the requested UI text/area, then call figma_summarize_design or figma_read_design with that nodeId.",
           }, clampMaxBytes(input.maxBytes)),
         });
       } catch (error) {
@@ -1093,6 +980,60 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
       }
     },
   );
+
+  const matchUiNodesTool = tool(
+    "figma_match_ui_nodes",
+    "Map BrowserView DOM nodes or annotations to likely Figma nodes using text, component hints, role/type hints, and optional geometry. Use after browser_query_nodes/browser_inspect_at_point when the UI-to-Figma relationship is unclear.",
+    {
+      fileKeyOrUrl: z.string().trim().min(1),
+      nodeIds: z.array(z.string().trim().min(1)).max(40).optional(),
+      uiNodes: z.array(figmaUiNodeSchema).min(1).max(40),
+      depth: z.number().int().min(1).max(8).optional(),
+      query: z.string().trim().optional(),
+      maxFigmaNodes: z.number().int().min(20).max(1_000).optional(),
+      maxMatchesPerUiNode: z.number().int().min(1).max(10).optional(),
+      minScore: z.number().int().min(1).max(500).optional(),
+      includeInvisible: z.boolean().optional(),
+      uiViewport: figmaUiBoundsSchema.optional(),
+      maxBytes: z.number().int().min(10_000).max(MAX_RESPONSE_BYTES).optional(),
+    },
+    async (input) => {
+      const action = "figma_match_ui_nodes";
+      try {
+        const token = getConfiguredFigmaPat();
+        const { locator, payload, source } = await fetchFigmaDesignPayload(token, input.fileKeyOrUrl, input.nodeIds, {
+          depth: input.depth ?? DEFAULT_SUMMARY_DEPTH,
+        });
+        const roots = extractDocumentNodes(payload, locator.nodeIds);
+        const rawIndex = buildFigmaNodeIndex(roots, input.maxFigmaNodes ?? 300)
+          .filter((entry) => input.includeInvisible === true || entry.visible !== false);
+        const queriedIndex = input.query ? filterFigmaNodeIndex(rawIndex, input.query) : rawIndex;
+        const figmaNodes = queriedIndex.length > 0 ? queriedIndex : rawIndex;
+        const mapping = matchUiNodesToFigmaNodes(input.uiNodes as FigmaUiMatchNode[], figmaNodes, {
+          maxMatchesPerUiNode: input.maxMatchesPerUiNode,
+          minScore: input.minScore,
+          uiViewport: input.uiViewport,
+          figmaRootBounds: rawIndex.find((entry) => entry.id && locator.nodeIds.includes(entry.id))?.bounds ?? rawIndex[0]?.bounds,
+        });
+
+        return toTextToolResult({
+          action,
+          success: true,
+          fileKey: locator.fileKey,
+          nodeIds: locator.nodeIds,
+          source,
+          query: input.query ?? null,
+          result: capPayload({
+            ...mapping,
+            nextStep: "For high-confidence mappings, call figma_summarize_design with the matched nodeId and inspect the matching browser selector before editing code.",
+          }, clampMaxBytes(input.maxBytes)),
+        });
+      } catch (error) {
+        return toFigmaErrorResult(action, error);
+      }
+    },
+  );
+
   const summarizeDesignTool = tool(
     "figma_summarize_design",
     "Summarize a Figma file or nodes into compact Agent-friendly design structure, layout, color, text, radius, shadow, and token notes.",
@@ -1505,6 +1446,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
       fileMetadataTool,
       readDesignTool,
       nodeIndexTool,
+      matchUiNodesTool,
       summarizeDesignTool,
       extractDesignTokensTool,
       designPlaybookTool,

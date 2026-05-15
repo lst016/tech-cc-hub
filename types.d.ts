@@ -224,7 +224,11 @@ type EventPayloadMapping = {
         "git:stashSave": UiGitResult<UiGitWorkbenchSnapshot>;
         "git:stashApply": UiGitResult<UiGitWorkbenchSnapshot>;
         "git:stashDrop": UiGitResult<UiGitWorkbenchSnapshot>;
+        "feedback:capture-screenshot": string | null;
+        "feedback:submit-issue": FeedbackSubmitResult;
 }
+
+type FeedbackSubmitResult = { success: boolean; issueUrl?: string; error?: string; fallback?: boolean; message?: string };
 
 interface Window {
     electron: {
@@ -301,5 +305,7 @@ interface Window {
         onCronJobUpdated: (callback: (job: import("./src/types/cron").CronJob) => void) => UnsubscribeFunction;
         onCronJobRemoved: (callback: (data: { jobId: string }) => void) => UnsubscribeFunction;
         onCronJobExecuted: (callback: (data: { jobId: string; status: "ok" | "error" | "skipped" | "missed"; error?: string }) => void) => UnsubscribeFunction;
+        captureScreenshot: () => Promise<string | null>;
+        submitFeedback: (payload: { body: string; images?: Array<{ dataUrl: string; name: string }> }) => Promise<FeedbackSubmitResult>;
     }
 }

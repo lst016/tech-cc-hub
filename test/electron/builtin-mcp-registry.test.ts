@@ -37,6 +37,7 @@ test("built-in MCP registry tool names stay unique", () => {
   assert.equal(toolNames.includes("idea_wait_ready"), true);
   assert.equal(toolNames.includes("figma_get_design_playbook"), true);
   assert.equal(toolNames.includes("figma_audit_design"), true);
+  assert.equal(toolNames.includes("figma_match_ui_nodes"), true);
 });
 
 test("built-in MCP prompt hints are sourced from the registry", () => {

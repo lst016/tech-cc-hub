@@ -41,11 +41,10 @@ import { setDesignToolHost } from "./libs/mcp-tools/design.js";
 import { appAutoUpdater, type AppUpdateStatus } from "./libs/auto-updater.js";
 import { startChannelBridge, type ChannelBridgeController } from "./libs/channel-bridge.js";
 import { ensureSystemWorkspace } from "./libs/system-workspace.js";
-import { getCurrentApiConfig, resolveImagePreprocessApiConfig } from "./libs/claude-settings.js";
+import { getCurrentApiConfig, getGlobalRuntimeEnvConfig, resolveImagePreprocessApiConfig } from "./libs/claude-settings.js";
 import { preprocessImageAttachments } from "./libs/image-preprocessor.js";
 import {
     CODEX_OAUTH_BASE_URL,
-    CODEX_OAUTH_MODELS,
     buildCodexRequestHeaders,
     buildCodexResponsesRequest,
     createCodexOAuthAuthorizationFlow,
@@ -91,6 +90,7 @@ import {
   shouldPreserveReadyFigmaOfficialConfigAfterCodexError,
 } from "./libs/figma-official-plugin.js";
 import { normalizePluginVersion, summarizePluginUpdate, type PluginUpdateSummary } from "./libs/plugin-updates.js";
+import { submitFeedbackIssue, type FeedbackSubmitPayload } from "./libs/feedback.js";
 import "./libs/claude-settings.js";
 import { addServerEventListener } from "./ipc-handlers.js";
 
@@ -2867,5 +2867,31 @@ app.on("ready", async () => {
 
     ipcMainHandle("browser-is-devtools-open", (_: IpcMainInvokeEvent, sessionId?: string) => {
         return getBrowserWorkbench(sessionId)!.isDevToolsOpened();
+    });
+
+    // Feedback: capture screenshot of the main window
+    ipcMainHandle("feedback:capture-screenshot", async () => {
+        if (!mainWindow || mainWindow.isDestroyed()) return null;
+        try {
+            const image = await mainWindow.webContents.capturePage();
+            const base64 = image.toJPEG(80).toString("base64");
+            return `data:image/jpeg;base64,${base64}`;
+        } catch (error) {
+            console.error("[feedback] Failed to capture screenshot:", error);
+            return null;
+        }
+    });
+
+    // Feedback: submit GitHub issue, or open a prefilled draft when no token is available.
+    ipcMainHandle("feedback:submit-issue", async (_: IpcMainInvokeEvent, payload: FeedbackSubmitPayload) => {
+        const runtimeEnv = getGlobalRuntimeEnvConfig();
+        const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || runtimeEnv.GITHUB_TOKEN || runtimeEnv.GH_TOKEN;
+        return await submitFeedbackIssue(payload, {
+            token,
+            fetchFn: fetch,
+            openExternal: async (url) => {
+                await shell.openExternal(url);
+            },
+        });
     });
 })

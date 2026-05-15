@@ -18,3 +18,13 @@ test("app shell avoids fixed-width caps for the chat surface and prompt dock", (
   assert.match(appSource, /clamp\(/);
   assert.match(promptInputSource, /clamp\(/);
 });
+
+test("feedback button opens github issues directly", () => {
+  const appSource = readFileSync(join(process.cwd(), "src/ui/App.tsx"), "utf8");
+
+  assert.match(appSource, /github\.com\/lst016\/tech-cc-hub\/issues\/new/);
+  assert.match(appSource, /window\.open\(/);
+  assert.match(appSource, /occluded=\{browserWorkbenchOccluded\}/);
+  // FeedbackDialog removed in favor of direct browser link
+  assert.doesNotMatch(appSource, /showFeedbackDialog/);
+});

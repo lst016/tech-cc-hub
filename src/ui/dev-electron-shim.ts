@@ -380,6 +380,8 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     onCronJobUpdated: () => () => {},
     onCronJobRemoved: () => () => {},
     onCronJobExecuted: () => () => {},
+    captureScreenshot: async () => null,
+    submitFeedback: async () => ({ success: false, error: "浏览器预览态不支持提交反馈，请在 Electron 窗口中操作。" }),
   };
 }
 
@@ -529,6 +531,8 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       onCronJobUpdated: () => () => {},
       onCronJobRemoved: () => () => {},
       onCronJobExecuted: () => () => {},
+      captureScreenshot: async () => await invokeBridge("captureScreenshot"),
+      submitFeedback: async (payload) => await invokeBridge("submitFeedback", payload),
     };
   } catch {
     return null;

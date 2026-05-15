@@ -1,6 +1,7 @@
 {
   "permissions": {
     "allow": [
+      "Bash(curl *ANTHROPIC_BASE_URL/api/*)",
       "Bash(npm run dev)",
       "Bash(npm run dev:react)",
       "Bash(npm run dev:electron)",

@@ -17,6 +17,7 @@ import { MessageCard } from "./components/EventCard";
 import { ActivityRail } from "./components/ActivityRail";
 import { SessionAnalysisPage, buildSessionWorkflowOptimizationPrompt } from "./components/SessionAnalysisPage";
 import { BrowserWorkbenchPage } from "./components/BrowserWorkbenchPage";
+// FeedbackDialog removed — uses direct browser link
 import MDContent from "./render/markdown";
 import ScheduledTasksPage from "./components/cron/ScheduledTasksPage";
 import { TaskPanel } from "./components/TaskPanel";
@@ -414,6 +415,7 @@ function App() {
   const setShowStartModal = useAppStore((s) => s.setShowStartModal);
   const showSettingsModal = useAppStore((s) => s.showSettingsModal);
   const setShowSettingsModal = useAppStore((s) => s.setShowSettingsModal);
+  const browserWorkbenchOccluded = showSettingsModal || showStartModal;
   const globalError = useAppStore((s) => s.globalError);
   const setGlobalError = useAppStore((s) => s.setGlobalError);
   const historyRequested = useAppStore((s) => s.historyRequested);
@@ -1464,6 +1466,23 @@ function App() {
           </TooltipButton>
           <TooltipButton
             type="button"
+            tooltip="在 GitHub 上提交需求反馈或问题"
+            onClick={() => window.electron.invoke("shell:openExternal", "https://github.com/lst016/tech-cc-hub/issues/new")}
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+            className="inline-flex h-7 items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 text-[11px] font-semibold text-amber-700 transition hover:bg-amber-100"
+          >
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              <path d="M12 8v4" />
+              <circle cx="12" cy="16" r="0.5" fill="currentColor" />
+            </svg>
+            <span>需求反馈</span>
+          </TooltipButton>
+          <TooltipButton
+            type="button"
             tooltip="打开执行复盘"
             onClick={() => setShowSessionAnalysis(true)}
             disabled={!activeSessionId}
@@ -1763,7 +1782,7 @@ function App() {
               key={activeSessionId ?? "browser-workbench"}
               active={workspaceView === "browser"}
               initialUrl={activeSessionId ? (activeBrowserWorkbenchState?.url ?? "") : ""}
-              occluded={showSettingsModal || showStartModal}
+              occluded={browserWorkbenchOccluded}
               sessionId={activeSessionId}
               onOpenTrace={() => {
                 setActiveSessionActivityRailTab("trace");

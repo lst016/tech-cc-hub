@@ -108,6 +108,9 @@ type QueryWithMcpOAuth = Query & {
 
 const DEFAULT_CWD = process.cwd();
 const BUILTIN_MCP_TOOL_NAMES = listBuiltinMcpToolNames();
+const CLAUDE_CODE_AUTO_TRUNCATE_ARGS: Record<string, string | null> = {
+  "allow-auto-truncate": null,
+};
 const ALWAYS_ALLOWED_TOOLS = new Set([
   "AskUserQuestion",
   ...BUILTIN_MCP_TOOL_NAMES,
@@ -432,6 +435,11 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         agentContext.allowedTools,
         agentContext.enforceAllowedTools,
       );
+      const enabledSkills = agentContext.skills.length > 0
+        ? agentContext.skills
+        : runSurface === "development"
+          ? "all"
+          : undefined;
       const hooks = buildQualityHooks(resolvedCwd, {
         config,
         getPrompt: () => currentPrompt,
@@ -484,11 +492,13 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           resume: resumeSessionId,
           abortController,
           env: mergedEnv,
+          extraArgs: CLAUDE_CODE_AUTO_TRUNCATE_ARGS,
           thinking,
           effort,
           pathToClaudeCodeExecutable: getClaudeCodePath(),
           permissionMode,
           settingSources: agentContext.settingSources,
+          skills: enabledSkills,
           systemPrompt: systemPromptAppend
             ? { type: "preset", preset: "claude_code", append: systemPromptAppend }
             : undefined,
@@ -1676,6 +1686,8 @@ function getFigmaImplementationAnchorDenyMessage(
     "This task includes a Figma design URL. Before editing code, establish an implementation-grade Figma anchor.",
     "Do not implement from raw figma_read_design JSON alone; it is often too large and truncated.",
     "First use one of the built-in Figma REST tools: mcp__tech-cc-hub-figma__figma_summarize_design, mcp__tech-cc-hub-figma__figma_generate_tailwind_code, mcp__tech-cc-hub-figma__figma_get_image_urls, or mcp__tech-cc-hub-figma__figma_audit_design.",
+    "If the URL node-id is broad or the file contains repeated Frame names, call mcp__tech-cc-hub-figma__figma_list_node_index with the original URL and a text query from the requested UI before asking the user for a frame number.",
+    "If a rendered UI node is involved, collect browser_query_nodes or annotation DOM fields (text, selector, box, attributes, componentStack, context.nearbyText) and call mcp__tech-cc-hub-figma__figma_match_ui_nodes to establish the UI-node to Figma-node mapping.",
     "Prefer a specific node-id from the Figma URL or a narrowed target node. After that, map the design sections to the existing project components and then edit code.",
   ].join("\n");
 }

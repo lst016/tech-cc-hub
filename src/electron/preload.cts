@@ -188,6 +188,10 @@ electron.contextBridge.exposeInMainWorld("electron", {
         electron.ipcRenderer.on("cron:job-executed", cb);
         return () => electron.ipcRenderer.off("cron:job-executed", cb);
     },
+    captureScreenshot: () =>
+        ipcInvoke("feedback:capture-screenshot"),
+    submitFeedback: (payload: any) =>
+        ipcInvoke("feedback:submit-issue", payload),
 } satisfies Window['electron'])
 
 function ipcInvoke<Key extends keyof EventPayloadMapping>(key: Key, ...args: any[]): Promise<EventPayloadMapping[Key]> {

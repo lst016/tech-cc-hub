@@ -204,7 +204,8 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
           { name: "figma_get_current_user", description: "Read the Figma account attached to the saved token." },
           { name: "figma_get_file_metadata", description: "Read file metadata, or fall back to a lightweight file overview." },
           { name: "figma_read_design", description: "Read a Figma file or specific nodes from a Figma URL/file key." },
-          { name: "figma_list_node_index", description: "List a compact node index for progressive disclosure before drilling into a large design branch." },
+          { name: "figma_list_node_index", description: "List a compact node/text index for progressive disclosure before drilling into a large design branch." },
+          { name: "figma_match_ui_nodes", description: "Map BrowserView DOM nodes or annotations to likely Figma nodes." },
           { name: "figma_summarize_design", description: "Convert Figma nodes into a compact Agent-friendly design tree." },
           { name: "figma_extract_design_tokens", description: "Extract color, typography, radius, spacing, and effect token candidates." },
           { name: "figma_get_design_playbook", description: "Get curated design-system and UX theory guidance before implementation." },
@@ -227,6 +228,8 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
       "需要设计系统上下文时用 `figma_list_file_library` 和 `figma_get_file_variables`；需要协作上下文时用 `figma_list_file_comments`、`figma_list_file_versions`、`figma_get_dev_resources`。",
       "Figma URL 中的 `node-id=1-2` 需要作为节点读取，工具会自动转换成 API 需要的 `1:2`。不要把 Figma PAT 当作官方 Remote MCP OAuth bearer token 使用；高级工具失败时优先提示用户补对应 PAT scope。",
       "Figma progressive disclosure rule: when a design response is too large or figma_read_design returns result.truncated=true, use `figma_list_node_index` or result.progressiveDisclosure.nodeIndex to pick the smallest relevant node, then call `figma_summarize_design` or `figma_read_design` with that nodeId and a small depth.",
+      "Figma anchor rule: when the user provides a figma.com URL with node-id, pass that URL directly to `figma_list_node_index` with a query from the requested UI text (Chinese/English terms and `|` alternatives are OK). Do not ask the user to manually provide a Frame number before trying the node/text index.",
+      "UI-to-Figma mapping rule: when the issue is about a concrete rendered UI element, first gather DOM evidence with `browser_query_nodes` or annotations using fields like `text`, `selector`, `box`, `attributes`, `componentStack`, and `context.nearbyText`, then call `figma_match_ui_nodes` with the same Figma URL to map UI nodes to Figma nodeIds before editing.",
     ],
   },
   {
