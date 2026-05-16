@@ -448,11 +448,19 @@ async function runKnowledgeGeneration(
     phase: "正在规划目录",
     updatedAt: Date.now(),
   });
+  store.replaceDocuments(workspaceKey, []);
 
   let report: KnowledgeIndexReport | undefined;
   let progressState = startedState;
   let moduleTotal = 0;
   let embeddingTotal = 0;
+  let previewDocumentCount = 0;
+  const syncGeneratedDocumentPreview = (): void => {
+    const generatedDocs = collectGeneratedMarkdownDocuments(workspaceKey, appDataPath);
+    if (generatedDocs.length === 0 || generatedDocs.length === previewDocumentCount) return;
+    store.replaceDocuments(workspaceKey, generatedDocs);
+    previewDocumentCount = generatedDocs.length;
+  };
   const updateProgress = (event: RepoWikiProgressEvent): void => {
     let completed = progressState.completed;
     let total = Math.max(1, progressState.total);
@@ -505,6 +513,9 @@ async function runKnowledgeGeneration(
       phase,
       updatedAt: Date.now(),
     });
+    if (event.stage === "modules" || event.stage === "done" || event.stage === "indexing") {
+      syncGeneratedDocumentPreview();
+    }
   };
   try {
     report = await indexKnowledgeWorkspace({

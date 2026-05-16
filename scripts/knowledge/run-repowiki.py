@@ -1182,6 +1182,27 @@ def _catalog_relative_path(catalog: dict, by_name: dict[str, dict], children_by_
     return "/".join([*ancestors, f"{name_slug}.md"]) if ancestors else f"{name_slug}.md"
 
 
+def _build_catalog_tree(catalogs: list[dict]) -> tuple[dict[str, dict], dict[str, list[dict]]]:
+    by_name = {str(item.get("name")): item for item in catalogs}
+    children_by_parent: dict[str, list[dict]] = {}
+    for catalog in catalogs:
+        parent = _catalog_parent_name(catalog, by_name)
+        if parent:
+            children_by_parent.setdefault(parent, []).append(catalog)
+    for children in children_by_parent.values():
+        children.sort(key=lambda item: int(item.get("order", 100)))
+    return by_name, children_by_parent
+
+
+def _write_catalog_page_content(output_dir: Path, catalog: dict, page: str, by_name: dict[str, dict], children_by_parent: dict[str, list[dict]]) -> Path:
+    content_dir = output_dir / "content"
+    rel_path = _catalog_relative_path(catalog, by_name, children_by_parent)
+    target = content_dir / rel_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(page, encoding="utf8")
+    return target
+
+
 def _write_catalog_markdown(
     output_dir: Path,
     catalogs: list[dict],
@@ -1193,14 +1214,7 @@ def _write_catalog_markdown(
     content_dir.mkdir(parents=True, exist_ok=True)
     meta_dir.mkdir(parents=True, exist_ok=True)
     page_meta_dir.mkdir(parents=True, exist_ok=True)
-    by_name = {str(item.get("name")): item for item in catalogs}
-    children_by_parent: dict[str, list[dict]] = {}
-    for catalog in catalogs:
-        parent = _catalog_parent_name(catalog, by_name)
-        if parent:
-            children_by_parent.setdefault(parent, []).append(catalog)
-    for children in children_by_parent.values():
-        children.sort(key=lambda item: int(item.get("order", 100)))
+    by_name, children_by_parent = _build_catalog_tree(catalogs)
 
     written: list[Path] = []
     sidebar_lines = ["# Repo Wiki\n"]
@@ -1211,9 +1225,7 @@ def _write_catalog_markdown(
     for catalog in sorted(catalogs, key=lambda item: int(item.get("order", 100))):
         name = str(catalog.get("name"))
         rel_path = _catalog_relative_path(catalog, by_name, children_by_parent)
-        target = content_dir / rel_path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(pages[name], encoding="utf8")
+        target = _write_catalog_page_content(output_dir, catalog, pages[name], by_name, children_by_parent)
         written.append(target)
 
         catalog_id = _catalog_id(catalog)
@@ -1277,6 +1289,7 @@ async def _run_qoder_style(args: argparse.Namespace, project, graph: DependencyG
     progress("Planning wiki catalogs...")
     catalogs = await _plan_catalogs(project, graph, llm, args.language, cache)
     progress(f"Analyzing {len(catalogs)} modules...")
+    by_name, children_by_parent = _build_catalog_tree(catalogs)
     pages: dict[str, str] = {}
     completed = 0
     lock = asyncio.Lock()
@@ -1289,6 +1302,7 @@ async def _run_qoder_style(args: argparse.Namespace, project, graph: DependencyG
             page = await _generate_catalog_page(catalog, project, graph, llm, args.language, cache)
         async with lock:
             pages[name] = page
+            _write_catalog_page_content(output_dir, catalog, page, by_name, children_by_parent)
             completed += 1
             progress(f"Analyzed module {completed}/{len(catalogs)}")
 

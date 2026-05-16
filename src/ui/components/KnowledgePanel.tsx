@@ -782,6 +782,15 @@ export function KnowledgePanel({ onOpenSettings }: KnowledgePanelProps) {
     activateWikiTab(tab);
   };
 
+  const loadWorkspaceDocuments = async (workspaceKey: string): Promise<KnowledgeDocument[]> => {
+    const result = await invokeKnowledge<KnowledgeDocumentsResponse>("knowledge:list-documents", { workspaceKey });
+    const documents = (result.documents ?? [])
+      .map(normalizeKnowledgeDocument)
+      .filter((document): document is KnowledgeDocument => Boolean(document));
+    setDocumentsByWorkspace((current) => ({ ...current, [workspaceKey]: documents }));
+    return documents;
+  };
+
   const closeWikiTab = (tabId: string) => {
     const index = openWikiTabs.findIndex((tab) => tab.id === tabId);
     const nextTabs = openWikiTabs.filter((tab) => tab.id !== tabId);
@@ -798,6 +807,11 @@ export function KnowledgePanel({ onOpenSettings }: KnowledgePanelProps) {
 
   const handleWorkspaceClick = (workspace: KnowledgeWorkspace) => {
     openWorkspaceTab(workspace);
+    const state = generationByWorkspace[workspace.key];
+    if (state && state.status !== "idle") {
+      void loadWorkspaceDocuments(workspace.key)
+        .catch((error) => setWorkspaceError(error instanceof Error ? error.message : "读取 Repo Wiki 文档失败。"));
+    }
     setExpandedWorkspaceKeys((current) => {
       const next = new Set(current);
       if (next.has(workspace.key)) {
@@ -884,7 +898,21 @@ export function KnowledgePanel({ onOpenSettings }: KnowledgePanelProps) {
     const refreshGenerationState = () => {
       void invokeKnowledge<KnowledgeListResponse>("knowledge:list")
         .then((result) => {
-          if (!disposed) applyKnowledgeList(result);
+          if (disposed) return;
+          applyKnowledgeList(result);
+          const generatingWorkspaceKeys = Object.entries(result.generations ?? {})
+            .filter(([, value]) => normalizeGenerationState(value)?.status === "generating")
+            .map(([key]) => normalizeWorkspaceKey(key))
+            .filter(Boolean);
+          for (const workspaceKey of generatingWorkspaceKeys) {
+            void loadWorkspaceDocuments(workspaceKey)
+              .then((documents) => {
+                if (documents.length > 0) completedDocumentSeedRef.current.delete(workspaceKey);
+              })
+              .catch((error) => {
+                if (!disposed) setWorkspaceError(error instanceof Error ? error.message : "刷新 Repo Wiki 文档失败。");
+              });
+          }
         })
         .catch((error) => {
           if (!disposed) setWorkspaceError(error instanceof Error ? error.message : "刷新知识库状态失败。");
@@ -937,25 +965,22 @@ export function KnowledgePanel({ onOpenSettings }: KnowledgePanelProps) {
   }, [autoUpdateByWorkspace]);
 
   useEffect(() => {
-    if (!selectedWorkspace || generation.status !== "completed") {
-      if (!selectedWorkspace) setSelectedDocumentId("");
+    if (!selectedWorkspace) {
+      setSelectedDocumentId("");
       return;
     }
+    if (generation.status === "idle") return;
     const workspaceKey = selectedWorkspace.key;
-    if ((documentsByWorkspace[workspaceKey]?.length ?? 0) > 0 && completedDocumentSeedRef.current.has(workspaceKey)) return;
+    if (generation.status === "completed" && (documentsByWorkspace[workspaceKey]?.length ?? 0) > 0 && completedDocumentSeedRef.current.has(workspaceKey)) return;
 
     let disposed = false;
-    invokeKnowledge<KnowledgeDocumentsResponse>("knowledge:list-documents", { workspaceKey })
-      .then((result) => {
+    loadWorkspaceDocuments(workspaceKey)
+      .then((documents) => {
         if (disposed) return;
-        const documents = (result.documents ?? [])
-          .map(normalizeKnowledgeDocument)
-          .filter((document): document is KnowledgeDocument => Boolean(document));
-        setDocumentsByWorkspace((current) => ({ ...current, [workspaceKey]: documents }));
-        if (documents.length > 0) {
+        if (generation.status === "completed" && documents.length > 0) {
           completedDocumentSeedRef.current.add(workspaceKey);
-          setSelectedDocumentId((current) => documents.some((document) => document.id === current) ? current : "");
         }
+        setSelectedDocumentId((current) => documents.some((document) => document.id === current) ? current : "");
       })
       .catch((error) => {
         if (!disposed) setWorkspaceError(error instanceof Error ? error.message : "读取 Repo Wiki 文档失败。");
@@ -963,21 +988,17 @@ export function KnowledgePanel({ onOpenSettings }: KnowledgePanelProps) {
     return () => {
       disposed = true;
     };
-  }, [documentsByWorkspace, generation.status, selectedWorkspace]);
+  }, [generation.status, selectedWorkspace?.key]);
 
   useEffect(() => {
     if (!selectedWorkspace) {
       if (selectedDocumentId) setSelectedDocumentId("");
       return;
     }
-    if (generation.status !== "completed") {
-      if (selectedDocumentId) setSelectedDocumentId("");
-      return;
-    }
     if (selectedDocumentId && selectedDocuments.length > 0 && !selectedDocuments.some((document) => document.id === selectedDocumentId)) {
       setSelectedDocumentId("");
     }
-  }, [generation.status, selectedDocumentId, selectedDocuments, selectedWorkspace]);
+  }, [selectedDocumentId, selectedDocuments, selectedWorkspace]);
 
   useEffect(() => {
     let disposed = false;
@@ -1188,10 +1209,15 @@ export function KnowledgePanel({ onOpenSettings }: KnowledgePanelProps) {
           ...current,
           [workspaceKey]: nextGeneration,
         }));
-        setDocumentsByWorkspace((current) => ({
-          ...current,
-          [workspaceKey]: documents,
-        }));
+        if (documents.length > 0) {
+          setDocumentsByWorkspace((current) => ({
+            ...current,
+            [workspaceKey]: documents,
+          }));
+        } else if (nextGeneration.status === "completed") {
+          void loadWorkspaceDocuments(workspaceKey)
+            .catch((error) => setWorkspaceError(error instanceof Error ? error.message : "读取 Repo Wiki 文档失败。"));
+        }
         if (!result.success) {
           setWorkspaceError(result.error || result.report?.error || result.report?.message || "Repo Wiki 生成失败。");
         }
@@ -1387,6 +1413,7 @@ export function KnowledgePanel({ onOpenSettings }: KnowledgePanelProps) {
             <div className="space-y-2">
             {workspaces.map((workspace) => {
               const workspaceGeneration = generationByWorkspace[workspace.key] ?? createIdleGeneration();
+              const workspaceDocuments = documentsByWorkspace[workspace.key] ?? [];
               const workspaceGit = gitByWorkspace[workspace.key];
               const selected = workspace.key === selectedWorkspace?.key;
               const expanded = expandedWorkspaceKeys.has(workspace.key);
@@ -1399,7 +1426,11 @@ export function KnowledgePanel({ onOpenSettings }: KnowledgePanelProps) {
               const statusLabel = workspaceGeneration.status === "idle"
                 ? "去生成"
                 : workspaceGeneration.status === "generating"
-                  ? "生成中"
+                  ? workspaceGeneration.total > 1
+                    ? `生成中 ${workspaceGeneration.completed}/${workspaceGeneration.total}`
+                    : workspaceDocuments.length > 0
+                      ? `生成中 ${workspaceDocuments.length}`
+                      : "生成中"
                   : workspaceGeneration.status === "paused"
                     ? "已暂停"
                     : "已完成";
@@ -1450,8 +1481,8 @@ export function KnowledgePanel({ onOpenSettings }: KnowledgePanelProps) {
                   </div>
                   {activeTab === "repo" && expanded && workspaceGeneration.status !== "idle" && (
                     <SectionTree
-                      active={workspaceGeneration.status === "completed"}
-                      documents={documentsByWorkspace[workspace.key] ?? []}
+                      active={workspaceDocuments.length > 0}
+                      documents={workspaceDocuments}
                       selectedDocumentId={selectedDocumentId}
                       onSelectDocument={(document) => openDocumentTab(workspace, document)}
                     />
