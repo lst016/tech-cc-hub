@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": 1778928162980,
+  "generatedAt": 1778936863440,
   "workspaceScope": "workspace:tech-cc-hub",
   "count": 29,
   "cards": [
@@ -896,8 +896,7 @@
         "src/electron/libs/knowledge/repowiki/types.ts",
         "src/electron/libs/knowledge/knowledge-utils.ts",
         "src/electron/libs/knowledge/repowiki/scanner.ts",
-        "src/electron/libs/knowledge/repowiki/intelligence.ts",
-        "src/electron/libs/knowledge/agent-cards.ts"
+        "src/electron/libs/knowledge/repowiki/intelligence.ts"
       ],
       "changeGuide": [
         "先确认需求是否真的属于 knowledge-engine，再从 entryFiles 里包含入口/IPC/schema/store 的文件开始。",
@@ -2220,6 +2219,7 @@
         "npm:qa:chat-ui",
         "npm:qa:knowledge",
         "npm:qa:knowledge-chat",
+        "npm:qa:knowledge-links",
         "npm:qa:knowledge-ui",
         "npm:qa:preview",
         "npm:qa:window:list",
@@ -2244,10 +2244,10 @@
         "npm run qa:chat-ui",
         "npm run qa:knowledge",
         "npm run qa:knowledge-chat",
+        "npm run qa:knowledge-links",
         "npm run qa:knowledge-ui",
         "npm run qa:preview",
-        "npm run qa:window:list",
-        "npm run qa:window:capture"
+        "npm run qa:window:list"
       ],
       "risks": [
         "测试命令通过不等于真实 app 状态正确。",
@@ -2272,6 +2272,7 @@
         "npm run qa:chat-ui: node scripts/qa/chat-ui-smoke.cjs",
         "npm run qa:knowledge: node scripts/qa/knowledge-engine-smoke.mjs",
         "npm run qa:knowledge-chat: node scripts/qa/knowledge-chat-injection-smoke.mjs",
+        "npm run qa:knowledge-links: node scripts/qa/knowledge-links-smoke.mjs",
         "npm run qa:knowledge-ui: node scripts/qa/knowledge-ui-smoke.cjs",
         "npm run qa:preview: node scripts/qa/preview-workbench-smoke.cjs",
         "npm run qa:window:list: bash scripts/qa/window-id-tools.sh list",

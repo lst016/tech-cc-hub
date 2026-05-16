@@ -143,6 +143,8 @@ const MAX_SINGLE_IMAGE_READ_BYTES = 400_000;
 const BLOCKED_SHELL_TOOL_NAMES = new Set(["mcp__windows__Powershell-Tool"]);
 const BLOCKED_SHELL_TOOL_MESSAGE =
   "This Windows shell tool is disabled in tech-cc-hub because it can hang without returning a tool_result. Use Bash with cmd.exe instead, for example: cmd.exe /d /s /c \"<command>\".";
+const KNOWLEDGE_INDEX_INTENT_PATTERN =
+  /(?:knowledge[_\s-]*index|reindex|refresh\s+(?:knowledge|repo\s*wiki)|generate\s+(?:knowledge|repo\s*wiki)|update\s+(?:knowledge|repo\s*wiki)|(?:生成|重新生成|更新|刷新|重建|重跑|索引).{0,12}(?:知识库|知识|Repo\s*Wiki|repowiki)|(?:知识库|知识|Repo\s*Wiki|repowiki).{0,12}(?:生成|重新生成|更新|刷新|重建|重跑|索引))/i;
 const FIGMA_GUIDE_AGENT_ID = "figma-official-mcp-guide";
 const FIGMA_REST_TOOL_NAME_SET = new Set<string>(FIGMA_REST_TOOL_NAMES);
 const FIGMA_OFFICIAL_MCP_SERVER_NAMES = new Set(["figma", "plugin_figma_figma"]);
@@ -161,6 +163,26 @@ const SDK_BUILTIN_CRON_TOOLS = new Set(["CronCreate", "CronDelete", "CronList"])
 
 function isSdkBuiltinCronTool(toolName: string): boolean {
   return SDK_BUILTIN_CRON_TOOLS.has(toolName);
+}
+
+function isKnowledgeIndexTool(toolName: string): boolean {
+  return (
+    toolName === "knowledge_index" ||
+    toolName.endsWith("__knowledge_index") ||
+    toolName.endsWith(":knowledge_index") ||
+    toolName.endsWith("/knowledge_index")
+  );
+}
+
+function getKnowledgeIndexDenyMessage(toolName: string, prompt: string): string | undefined {
+  if (!isKnowledgeIndexTool(toolName) || KNOWLEDGE_INDEX_INTENT_PATTERN.test(prompt)) {
+    return undefined;
+  }
+
+  return [
+    "Knowledge index refresh is reserved for explicit generate/update/reindex requests.",
+    "For retrieval or questions about this repo, use mcp__tech-cc-hub-knowledge__knowledge_search first, then mcp__tech-cc-hub-knowledge__knowledge_read for the selected result.",
+  ].join(" ");
 }
 
 const POWERSHELL_COMMAND_PATTERN = /(^|[^\w.-])(powershell(?:\.exe)?|pwsh(?:\.exe)?)(?=$|[^\w.-])/i;
@@ -544,6 +566,14 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                 behavior: "deny",
                 message:
                   "SDK CronCreate/CronDelete/CronList are disabled. Use the tech-cc-hub cron MCP tools so schedules are persisted with history and retry metadata.",
+              };
+            }
+
+            const knowledgeIndexDenyMessage = getKnowledgeIndexDenyMessage(toolName, currentPrompt);
+            if (knowledgeIndexDenyMessage) {
+              return {
+                behavior: "deny",
+                message: knowledgeIndexDenyMessage,
               };
             }
 

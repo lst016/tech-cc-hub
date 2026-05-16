@@ -48,19 +48,19 @@ flowchart TB
     subgraph Prompt["Prompt 输入"]
         P[用户 Prompt]
     end
-
+    
     subgraph Runtime["Runtime 决策"]
         RE[resolveRuntimeEfficiencyProfile]
         EP[ensureMcpServersForPrompt]
         SQ[activeQuery.setMcpServers]
     end
-
+    
     subgraph Registry["注册层"]
         BR[builtin-mcp-registry.ts]
         BS[builtin-mcp-servers.ts]
         ES[external-mcp-servers.ts]
     end
-
+    
     subgraph ServerFactory["Server 工厂"]
         BK[browser.ts]
         AD[admin.ts]
@@ -68,17 +68,17 @@ flowchart TB
         PL[plan.ts]
         KN[knowledge.ts]
     end
-
+    
     P --> RE
     RE --> EP
     EP --> SQ
     SQ --> BR
     SQ --> ES
-
+    
     BR --> BS
     BS -->|BUILTIN_MCP_SERVER_FACTORIES| ServerFactory
     ES -->|parseExternalMcpServers| ServerFactory
-
+    
     ServerFactory --> BK
     ServerFactory --> AD
     ServerFactory --> CR
@@ -308,14 +308,14 @@ flowchart TB
     BK --> D[buildRunnerReuseDescriptor]
     D --> |resolveRuntimeEfficiencyProfile| PROF
     PROF --> |profile.builtinMcpServers| ARR
-
+    
     ARR --> JSON_STR[JSON.stringify → reuseKey]
     JSON_STR --> CHECK[canReuseRunner]
-
+    
     CHECK --> |比较 8 个字段| EQ{所有字段相等?}
     EQ --> |是| REUSE[复用已有 Runner]
     EQ --> |否| NEW[创建新 Runner]
-
+    
     REUSE --> |reuseKey 匹配| UPDATE[更新 activeBuiltinMcpServerNames]
     NEW --> |重建| SETUP[初始化 Server 列表]
 ```

@@ -1,5 +1,7 @@
 # tech-cc-hub Knowledge Engine 实施 Spec
 
+> 设计背景与选型理由见 `knowledge-engine-development-plan.md`。本文件只保留执行口径、接口契约和验收标准。
+
 ## 结论
 
 当前方案可以进入实施。边界已经收敛：
@@ -42,6 +44,13 @@ app data 内部缓存：
 <appData>/knowledge/<workspaceHash>/knowledge.sqlite
 <appData>/knowledge/<workspaceHash>/memory.sqlite
 ```
+
+跨平台路径策略：
+
+- Electron 主进程统一使用 `app.getPath("userData")` 作为 `<appData>` 根路径，不在 renderer 侧拼接系统目录。
+- macOS 预期路径：`~/Library/Application Support/tech-cc-hub/knowledge/<workspaceHash>/...`。
+- Windows 预期路径：`%APPDATA%/tech-cc-hub/knowledge/<workspaceHash>/...`。
+- dev / preview 环境可以通过 app name 或显式 userData override 隔离测试数据，但不能写入 workspace 下的 `.tech` 之外位置。
 
 规则：
 
@@ -125,45 +134,7 @@ src/electron/libs/knowledge/knowledge-ignore.ts
 - 新建空 `.tech` 目录后不出现 `.db` / `.sqlite`。
 - skipped files 报告可读。
 
-### Phase 3：Repo Wiki 生成器适配
-
-新增：
-
-```text
-src/electron/libs/knowledge/wiki-generation-model.ts
-src/electron/libs/knowledge/repowiki-runner.ts
-src/electron/libs/knowledge/repowiki-adapter.ts
-src/electron/libs/knowledge/markdown-section-parser.ts
-```
-
-策略：
-
-- 第一版用 RepoWiki fork/vendor 或受控 sidecar CLI。
-- tech-cc-hub 负责调用、参数、输出目录和错误报告。
-- 输出目录固定 `.tech/repowiki/zh`。
-- `repowiki-metadata.json` 至少包含：
-  - `repo`
-  - `catalogs`
-  - `items`
-  - `dependent_files`
-  - `progress_status`
-  - `source_refs`
-  - `generated_at`
-  - `generator`
-
-Wiki 生成模型 health check：
-
-- 读模型槽位。
-- 用短输入生成一小段 Markdown。
-- 记录耗时和错误。
-- 失败时禁止 Refresh/Rebuild Wiki。
-
-验收：
-
-- 点击 Refresh/Rebuild Wiki 可以生成 `.tech/repowiki/zh/content/*.md`。
-- 失败时 `.tech/reports/generation-report.json` 有错误信息。
-
-### Phase 4：内部索引库和 sqlite-vec
+### Phase 3：内部索引库和 sqlite-vec
 
 新增：
 
@@ -194,8 +165,18 @@ src/electron/libs/knowledge/embedding-openai-compatible.ts
 - 读模型槽位。
 - 调 OpenAI-compatible `/v1/embeddings`。
 - 校验返回向量维度。
-- 记录模型名、维度、耗时、最近错误。
-- 失败时 Knowledge Engine 不可开启，MCP 返回 `embedding_unavailable`。
+- 记录模型名、维度、耗时、最近错误、`lastHealthCheckAt`。
+- health check 结果缓存 5 分钟；用户手动测试、模型配置变更、baseURL/apiKeyRef 变更时强制刷新。
+- 失败时 Knowledge Engine 不可开启，MCP 返回 `embedding_unavailable`，UI 展示错误原因和最近检查时间。
+
+增量索引策略：
+
+- 文件 hash 未变：跳过 chunk / FTS / embedding。
+- 文件 hash 变化：只删除并重建该文件的 chunk、FTS、vector。
+- 新增文件：只处理新增文件。
+- 删除文件：`knowledge_sources.deleted_at` 标记 tombstone，并删除或失效关联 chunk/vector。
+- 向量模型、维度或 provider 改变：只标记 `needs_reembed=1`，不删除 Markdown 源。
+- 新增/删除文件数超过上次扫描文件数 10%，或入口文件 / package workspace 根变化：触发 catalog 重规划。
 
 验收：
 
@@ -203,6 +184,65 @@ src/electron/libs/knowledge/embedding-openai-compatible.ts
 - chunk 变更时按 hash 增量重建。
 - 向量模型变更时标记需要 re-embed。
 - FTS5 只作为辅助，不能替代 embedding 启用门槛。
+
+### Phase 4：Repo Wiki 生成器适配
+
+新增：
+
+```text
+src/electron/libs/knowledge/wiki-generation-model.ts
+src/electron/libs/knowledge/repowiki-runner.ts
+src/electron/libs/knowledge/repowiki-adapter.ts
+src/electron/libs/knowledge/markdown-section-parser.ts
+```
+
+策略：
+
+- 第一版用 RepoWiki fork/vendor 或受控 sidecar CLI。
+- tech-cc-hub 负责调用、参数、输出目录、checkpoint、输出索引和错误报告。
+- 输出目录固定 `.tech/repowiki/zh`。
+- 生成器必须在 Phase 3 的索引库存在后接入，生成完成的页面直接进入 chunk -> FTS -> embedding -> store 链路。
+- `repowiki-metadata.json` 至少包含：
+  - `schemaVersion: "1.0"`
+  - `repo`
+  - `catalogs`
+  - `items`
+  - `dependent_files`
+  - `progress_status`
+  - `source_refs`
+  - `generated_at`
+  - `generator`
+  - `checkpoint`
+  - `token_budget`
+
+Wiki 生成模型 health check：
+
+- 读模型槽位。
+- 用短输入生成一小段 Markdown。
+- 记录耗时、错误、`lastHealthCheckAt`。
+- health check 结果缓存 5 分钟；用户手动测试或模型配置变更时强制刷新。
+- 失败时禁止 Refresh/Rebuild Wiki，UI 展示 `wiki_model_unavailable` 原因。
+
+Token 预算：
+
+- 小仓库 `<100` 文件：单次 Wiki 生成 output token 上限 `200K`。
+- 中仓库 `100-500` 文件：单次 Wiki 生成 output token 上限 `500K`。
+- 大仓库 `>500` 文件：单次 Wiki 生成 output token 上限 `1M`。
+- 超预算时降低每篇深度、压缩示例和图表，不减少 catalog 覆盖面。
+
+错误恢复：
+
+- 每完成一个 catalog 节点或页面，写入 checkpoint。
+- crash、断网、模型超时后，下一次 refresh 默认从最后 checkpoint 续做。
+- 单页失败不终止全局生成；写入 `generation-report.json` 并在 metadata 中标记 failed item。
+- Catalog 规划失败时使用 profile anchor fallback：项目总览、运行与配置、核心模块、数据/接口、扩展点、故障排查。
+
+验收：
+
+- 点击 Refresh/Rebuild Wiki 可以生成 `.tech/repowiki/zh/content/*.md`。
+- 失败时 `.tech/reports/generation-report.json` 有错误信息。
+- 中断后再次点击 Refresh 能从 checkpoint 继续，而不是全量重来。
+- metadata 顶层含 `schemaVersion`，旧 schema 进入迁移/重建提示。
 
 ### Phase 5：Memory
 
@@ -259,7 +299,7 @@ tech-cc-hub-knowledge
 ```ts
 knowledge_search({
   query: string;
-  mode?: "shallow" | "deep";
+  mode?: "semantic" | "keyword" | "hybrid";
   sourceKinds?: Array<"repo_wiki" | "code" | "memory" | "decision">;
   limit?: number;
   explain?: boolean;
@@ -283,6 +323,12 @@ knowledge_index({
   targets?: Array<"repowiki" | "code" | "memory">;
 })
 
+knowledge_status({
+  includeHealth?: boolean;
+  includeCounts?: boolean;
+  includeLastErrors?: boolean;
+})
+
 memory_update({
   action: "add" | "update" | "delete";
   title: string;
@@ -299,6 +345,7 @@ MCP 行为：
 - embedding 不可用：`knowledge_search` 返回 `embedding_unavailable`。
 - Wiki 生成模型不可用：`knowledge_index refresh/rebuild` 返回 `wiki_model_unavailable`。
 - `knowledge_read` 可读取 `.tech/repowiki` 页面或内部 chunk。
+- `knowledge_status` 即使在 embedding 不可用时也必须可调用，用于告诉 Agent 当前索引文件数、chunk 数、最后更新时间、health check 原因、最近错误和下一步修复建议。
 
 ### Phase 7：Runner prompt 与 Prompt Ledger
 
@@ -339,7 +386,7 @@ overview 示例：
 <knowledge_overview workspace="tech-cc-hub" status="ready">
   <repo_wiki pages="47" status="ready" />
   <index fts_chunks="1200" vector_chunks="1200" embedding_model="text-embedding-..." />
-  <tools>knowledge_search, knowledge_read, knowledge_explore, knowledge_index, memory_update</tools>
+  <tools>knowledge_search, knowledge_read, knowledge_explore, knowledge_index, knowledge_status, memory_update</tools>
 </knowledge_overview>
 ```
 
@@ -374,6 +421,8 @@ src/ui/types.ts
 - Wiki 生成模型状态。
 - sqlite-vec 状态。
 - 索引状态。
+- 最近一次 health check 时间 `lastHealthCheckAt`。
+- 不可用原因：provider 未配置、baseURL 不可达、API key 失效、模型不存在、维度不匹配、sqlite-vec 加载失败。
 - Refresh / Rebuild Wiki。
 - Rebuild vectors。
 - skipped files / generation report 链接。
@@ -383,6 +432,7 @@ src/ui/types.ts
 - 向量模型 health check 未通过：Knowledge Engine 不能开启。
 - Wiki 生成模型 health check 未通过：不能执行 Refresh/Rebuild Wiki。
 - sqlite-vec 不可用：Knowledge Engine 不能开启。
+- 任何置灰按钮都必须显示原因和最近检查时间，不能只禁用交互。
 
 ## 测试计划
 
@@ -396,6 +446,10 @@ test/electron/knowledge-repository.test.ts
 test/electron/knowledge-sqlite-vec.test.ts
 test/electron/knowledge-model-health.test.ts
 test/electron/knowledge-mcp-server.test.ts
+test/electron/knowledge-status-tool.test.ts
+test/electron/knowledge-incremental-index.test.ts
+test/electron/knowledge-repowiki-checkpoint.test.ts
+test/electron/knowledge-token-budget.test.ts
 test/electron/memory-repository.test.ts
 ```
 
@@ -418,6 +472,9 @@ npm run build
 8. `knowledge_read` 能读回相关 Wiki 页面。
 9. `memory_update` 写入决策后 `.tech/memory/memories.json` 更新。
 10. Prompt Ledger 显示 knowledge source。
+11. 修改一个源文件后只重建该文件对应 chunk/vector，不全量重建。
+12. 中断 Wiki 生成后重新执行 refresh 能从 checkpoint 继续。
+13. `knowledge_status` 能返回 health、counts、last errors 和修复建议。
 
 ## 风险
 
@@ -426,6 +483,8 @@ npm run build
 - 云端向量模型成本：必须支持 batch size、增量 hash、模型变更重建提示。
 - Wiki 生成成本：必须默认低成本/免费模型，不走主聊天模型。
 - `.tech` 作为可读协议目录，要保持稳定，避免把运行缓存混进去。
+- 旧版 metadata schema 演进会导致 UI 读不到内容：`repowiki-metadata.json` 必须带 `schemaVersion`，并在 adapter 层做迁移或重建提示。
+- 模型超时或断网会让长任务中断：生成器必须 checkpoint 化，不能要求用户每次全量重跑。
 
 ## 推荐开发分支
 

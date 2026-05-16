@@ -16,16 +16,16 @@
     "src/electron/libs/git/errors.ts",
     "src/electron/libs/git/graph.ts"
   ],
-  "parent_id": "核心模块规格总览-提供模块索引",
+  "parent_id": "core-module-specs",
   "parent": "核心模块规格",
   "parent_chain": [
     "核心模块规格"
   ],
   "section_path": "核心模块规格",
   "layer_level": 1,
-  "order": 37,
+  "order": 46,
   "status": "completed",
   "page_type": "topic",
-  "content_hash": "ce79dfab2b33a7e9fd1fa6e9a3f2c3fcf05f3f91a69cd6639641bc5e3db939d7",
-  "generated_at": 1778928162406
+  "content_hash": "118178a79a4e6488f9621e3acbb2f98793734dbae6ebc1a9ad0cb56b3a1ac5ab",
+  "generated_at": 1778936862846
 }

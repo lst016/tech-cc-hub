@@ -7,7 +7,7 @@ import { useIPC } from "./hooks/useIPC";
 import { useMessageWindow } from "./hooks/useMessageWindow";
 import { useAppStore } from "./store/useAppStore";
 import type { AppUpdateStatus, ServerEvent, SettingsPageId, StreamMessage } from "./types";
-import { Sidebar } from "./components/Sidebar";
+import { DEFAULT_SIDEBAR_WIDTH, Sidebar } from "./components/Sidebar";
 import { StartSessionModal } from "./components/StartSessionModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { TooltipButton } from "./components/TooltipButton";
@@ -352,7 +352,7 @@ function App() {
   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
   const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | null>(null);
   const [appUpdateActionBusy, setAppUpdateActionBusy] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(320);
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [activityRailWidth, setActivityRailWidth] = useState(420);
   const [viewportWidth, setViewportWidth] = useState(() => (
     typeof window === "undefined" ? 1440 : window.innerWidth
@@ -1383,6 +1383,23 @@ function App() {
               <path d="M4 20h4.5l9.4-9.4a2.1 2.1 0 0 0 0-3L16.4 6a2.1 2.1 0 0 0-3 0L4 15.4V20Z" />
               <path d="m12.5 6.9 4.6 4.6" />
             </svg>
+          </TooltipButton>
+          <TooltipButton
+            type="button"
+            tooltip="在 GitHub 上提交需求反馈或问题"
+            onClick={() => window.electron.invoke("shell:openExternal", "https://github.com/lst016/tech-cc-hub/issues/new")}
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+            className="inline-flex h-7 items-center gap-1.5 rounded-full border border-black/10 bg-white px-2.5 text-[11px] font-semibold text-ink-700 transition hover:bg-ink-900/5"
+          >
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              <path d="M12 8v4" />
+              <circle cx="12" cy="16" r="0.5" fill="currentColor" />
+            </svg>
+            <span>需求反馈</span>
           </TooltipButton>
           {showHeaderUpdateButton && (
             <TooltipButton

@@ -34,3 +34,5 @@ dist-test
 .tmp/
 .omx/
 doc/00-research/AionUi/
+.tech/
+.qoder/

@@ -2,23 +2,23 @@
   "id": "module-knowledge-ui",
   "name": "知识库前端交互总览",
   "title": "知识库前端交互总览",
-  "slug": "核心模块规格/知识库前端交互总览/知识库前端交互总览",
-  "path": "核心模块规格/知识库前端交互总览/知识库前端交互总览.md",
+  "slug": "核心模块规格/知识库前端交互总览",
+  "path": "核心模块规格/知识库前端交互总览.md",
   "description": "module-knowledge-ui",
   "prompt": "详细说明 知识库前端交互 的职责、入口文件、调用链、数据结构、扩展点、常见改造路径和验证命令。不要只列文件，要解释每个文件如何协作。",
   "dependent_files": [
     "src/ui/components/KnowledgePanel.tsx"
   ],
-  "parent_id": "核心模块规格总览-提供模块索引",
+  "parent_id": "core-module-specs",
   "parent": "核心模块规格",
   "parent_chain": [
     "核心模块规格"
   ],
-  "section_path": "核心模块规格/知识库前端交互总览",
+  "section_path": "核心模块规格",
   "layer_level": 1,
-  "order": 30,
+  "order": 39,
   "status": "completed",
   "page_type": "topic",
-  "content_hash": "80ec52490fa7f2552dfe08b1c0ec46bd0872bf950d9fbf538c4a3ccd1e465cb2",
-  "generated_at": 1778928162406
+  "content_hash": "ff5cad27645a6d23884e5132c17d5f6c4054adeee17250266c43c146b6b21624",
+  "generated_at": 1778936862846
 }

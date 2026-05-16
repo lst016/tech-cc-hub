@@ -1,9 +1,5 @@
 [
   {
-    "path": "scripts/knowledge/__pycache__",
-    "reason": "ignored directory"
-  },
-  {
     "path": "src/ui/assets/icon.png",
     "reason": "file too large (909057 bytes)"
   },
@@ -173,10 +169,6 @@
   },
   {
     "path": ".github",
-    "reason": "ignored directory"
-  },
-  {
-    "path": ".hermes",
     "reason": "ignored directory"
   },
   {

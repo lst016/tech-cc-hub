@@ -51,6 +51,8 @@
 | RAG 框架参考 | DeepWiki-Open / LlamaIndex / LangChain | 参考 pipeline，不整体嵌入 | 只取设计，不吃掉 tech-cc-hub 的产品边界。 |
 | 长期记忆参考 | `mcp-memory-service` / mem0 类项目 | 后续 optional backend | 只作为 Memory 后端适配，不作为第一版必需。 |
 
+`@langchain/textsplitters` 是第一版的快速路径。如果后续 Electron renderer / preload bundle 体积被它明显拖大，只保留 `RecursiveCharacterTextSplitter` 所需的核心逻辑，内置一个约百行的本地 splitter；这属于打包优化，不改变第一版接口。
+
 ### 不采用为主底座的三方
 
 | 项目 | 不作为主底座的原因 |
@@ -179,6 +181,14 @@ tech-cc-hub 内置 Knowledge MCP
 
 注意：`.tech/` 不放 `.db` / `.sqlite` 文件。FTS5、sqlite-vec、chunk cache、embedding cache、任务状态等运行时索引放在 app data 目录，`.tech/` 只作为项目内可读知识产物目录。
 
+app data 路径策略：
+
+- Electron 主进程统一用 `app.getPath("userData")` 作为内部索引根路径，renderer 不直接拼接系统目录。
+- macOS：`~/Library/Application Support/tech-cc-hub/knowledge/<workspaceHash>/knowledge.sqlite`。
+- Windows：`%APPDATA%/tech-cc-hub/knowledge/<workspaceHash>/knowledge.sqlite`。
+- `<workspaceHash>` 来自规范化后的 workspace 绝对路径 hash，不用 basename，避免同名项目冲突。
+- dev / preview 环境可以覆盖 app name 或 userData 根路径隔离测试库，但不能把 runtime DB 写回 `.tech/`。
+
 需要魔改/适配：
 
 - 加强 ignore 规则，默认排除：
@@ -193,6 +203,7 @@ tech-cc-hub 内置 Knowledge MCP
   - `build`
   - minified bundle
 - 输出稳定 metadata：
+  - schemaVersion
   - page id
   - title
   - path
@@ -301,6 +312,39 @@ export type WikiGenerationModelSlot = {
 - 推荐低温度、可批量、低成本模型；允许用户配置免费模型、本地网关或 new-api 里的低价模型。
 - Wiki 生成模型不可用时，不影响已有知识库检索，但不能执行 refresh/rebuild Wiki。
 - Wiki 生成模型和向量模型分开 health check：前者测试一次短文档生成，后者测试 embedding 向量维度。
+
+两个模型槽位共用同一种 health 状态结构，便于 UI 和 MCP 一致展示：
+
+```ts
+export type KnowledgeModelHealth = {
+  status: "unknown" | "checking" | "ok" | "failed";
+  provider: "openai-compatible";
+  baseURL: string;
+  model: string;
+  dimension?: number;
+  latencyMs?: number;
+  lastHealthCheckAt?: number;
+  cacheTtlMs: number;
+  errorCode?: "missing_config" | "network_error" | "auth_error" | "model_not_found" | "dimension_mismatch" | "invalid_response";
+  errorMessage?: string;
+};
+```
+
+规则：
+
+- health check 默认缓存 5 分钟，避免设置页和 Agent 频繁探活。
+- 用户点击“测试模型”、模型槽位变更、baseURL/apiKeyRef 变更时强制刷新。
+- UI 不能只把按钮置灰；必须展示失败原因、最近检查时间和建议修复动作。
+
+Wiki 生成 token 预算：
+
+| 仓库规模 | 判定 | 单次 Wiki 生成 output token 上限 |
+| --- | --- | --- |
+| 小仓库 | `<100` 文件 | `200K` |
+| 中仓库 | `100-500` 文件 | `500K` |
+| 大仓库 | `>500` 文件 | `1M` |
+
+超预算时优先降低每篇文档深度：减少长代码摘录、减少重复背景、压缩 Mermaid 和示例数量；不能通过减少 catalog 覆盖面来省 token。这样 Agent 至少能知道系统全貌，再通过 `knowledge_read` 深取局部内容。
 
 ### 长期 Memory 底座
 
@@ -541,10 +585,15 @@ export type VectorSearchHit = {
 
 索引策略：
 
+- 文件 hash 未变化：不重新 chunk、FTS、embedding。
+- 文件 hash 变化：只重建该文件对应的 `knowledge_sources` / `knowledge_chunks` / FTS / vector。
+- 新增文件：只处理新增文件。
+- 删除文件：`knowledge_sources.deleted_at` 标记 tombstone，并清理或失效关联 chunk/vector。
 - chunk 内容 hash 未变化，不重新 embedding。
-- 向量模型 provider/model/dimension 变化，标记对应 chunk 需要重嵌。
+- 向量模型 provider/model/dimension 变化，标记对应 chunk 需要重嵌，不删除 `.tech` Markdown。
 - sqlite-vec upsert 成功后回写 `vector_id` 和 `embedding_status = indexed`。
 - sqlite-vec 不可用时进入索引错误状态；不能把 FTS 伪装成已启用知识库。
+- catalog 是否重规划由结构变化触发：新增/删除文件数超过上次扫描文件数 10%，或 package/workspace 根、入口文件、主要依赖图发生变化时，触发 Repo Wiki catalog 重规划；普通文件内容变更只刷新相关页面。
 
 ### 5. Hybrid Retrieval Service
 
@@ -575,10 +624,11 @@ final_score =
 
 检索模式：
 
-- `fetch`：按标题、路径、source id 精确读取。
-- `shallow`：FTS + 标题/path 快速召回。
-- `deep`：vector + FTS + dependency expansion。
-- `explore`：返回 Wiki 目录树、分类树、source kind 统计。
+- `keyword`：FTS + 标题/path 快速召回。
+- `semantic`：embedding vector search。
+- `hybrid`：vector + FTS + 标题/path + dependency expansion，默认模式。
+
+精确读取和目录导航不放在 `knowledge_search.mode` 里：`knowledge_read` 负责按标题、路径、source id 读取全文；`knowledge_explore` 负责返回 Wiki 目录树、分类树、source kind 统计。
 
 ### 6. Agent Memory Repository
 
@@ -636,7 +686,7 @@ src/electron/libs/system-prompt-presets.ts
 ```ts
 knowledge_search({
   query: string;
-  mode?: "shallow" | "deep";
+  mode?: "semantic" | "keyword" | "hybrid";
   sourceKinds?: Array<"repo_wiki" | "code" | "memory" | "decision">;
   limit?: number;
   explain?: boolean;
@@ -660,6 +710,12 @@ knowledge_index({
   targets?: Array<"repowiki" | "code" | "memory">;
 })
 
+knowledge_status({
+  includeHealth?: boolean;
+  includeCounts?: boolean;
+  includeLastErrors?: boolean;
+})
+
 memory_update({
   action: "add" | "update" | "delete";
   title: string;
@@ -670,6 +726,8 @@ memory_update({
   evidenceRefs?: string[];
 })
 ```
+
+`knowledge_status` 是 Agent 的入口诊断工具：即使 embedding provider 不可用也必须返回 workspace、索引文件数、chunk 数、vector 数、Repo Wiki 状态、`lastHealthCheckAt`、最近错误和下一步修复建议。这样 Agent 不需要猜“知识库是不是坏了”。
 
 ### 8. System Prompt Overview
 
@@ -689,6 +747,7 @@ runner 每轮只注入轻量 overview，不注入全文。
   <usage>
     Use knowledge_search for architecture, source references, prior decisions, and repo wiki details.
     Use knowledge_read when a search result needs full content.
+    Use knowledge_status when search/index/model availability is unclear.
     Use memory_update only for stable decisions, preferences, and reusable lessons.
   </usage>
 </knowledge_overview>
@@ -731,7 +790,7 @@ KnowledgeSettingsPage.tsx
   - Run RepoWiki refresh
 - Embedding provider：
   - Cloud vector model（默认）
-  - 未配置/不可用时：Knowledge Engine 开关禁用，只显示修复引导
+  - 未配置/不可用时：Knowledge Engine 开关禁用，并显示失败原因、`lastHealthCheckAt` 和修复引导
 - Vector model：
   - 供应商 / baseURL
   - API key 引用
@@ -739,6 +798,7 @@ KnowledgeSettingsPage.tsx
   - dimension
   - batch size
   - test embedding
+  - 最近一次 health check 时间、耗时、错误码
 - Wiki generation model：
   - 供应商 / baseURL
   - API key 引用
@@ -746,11 +806,13 @@ KnowledgeSettingsPage.tsx
   - max input/output tokens
   - cost tier
   - test wiki generation
+  - 最近一次 health check 时间、耗时、错误码
 - Index：
   - Refresh
   - Rebuild
   - Show skipped files
   - Show stale chunks
+  - Show checkpoint / resumable generation state
 
 ## 文件变更清单
 
@@ -833,9 +895,9 @@ src/ui/components/settings/SettingsModal.tsx
 
 任务：
 
-1. 定义 `.tech/repowiki/zh/content` 和 `.tech/repowiki/zh/meta/repowiki-metadata.json` 的字段。
+1. 定义 `.tech/repowiki/zh/content` 和 `.tech/repowiki/zh/meta/repowiki-metadata.json` 的字段，metadata 顶层必须带 `schemaVersion: "1.0"`。
 2. 在独立 spike 脚本中验证 RepoWiki CLI 对当前仓库生成 Markdown/JSON，并输出到 `.tech/repowiki/zh`。
-3. 验证生成 metadata 能表达 catalog/item/dependent_files/progress_status/source refs。
+3. 验证生成 metadata 能表达 catalog/item/dependent_files/progress_status/source refs/checkpoint/token_budget。
 4. 验证 app data 内部 SQLite/sqlite-vec 能被 Electron 主进程的 `better-sqlite3` 加载。
 5. 验证 `@langchain/textsplitters` 对 Markdown 和 JS/TS 代码分块。
 6. 验证至少一个 embedding provider 能返回稳定维度向量。
@@ -863,7 +925,7 @@ src/ui/components/settings/SettingsModal.tsx
 2. 实现 Markdown section parser。
 3. 实现 app data 内部 `knowledge.sqlite` DDL。
 4. 实现 FTS5 indexing。
-5. 实现 `knowledge_search` 的 `shallow/fetch/explore`。
+5. 实现 `knowledge_search` 的 `keyword` 模式，`knowledge_read` 精确读取，`knowledge_explore` 目录导航。
 
 验收：
 
@@ -893,6 +955,29 @@ src/ui/components/settings/SettingsModal.tsx
 - 自然语言搜 “我想知道内置 MCP 怎么注册” 能召回 registry/factory/plan tool 文档。
 - 没有外部向量数据库时仍能用 sqlite-vec 完成 vector search。
 - 向量模型变更后可标记重建。
+
+### Phase 2.5：增量索引、状态工具与恢复协议
+
+目标：
+
+- 在 RepoWiki 生成器接入前，把“可度量、可恢复、可增量”的底座先做完，避免后续生成了但搜不到、崩了只能重跑。
+
+任务：
+
+1. 实现文件 hash manifest：记录文件路径、content hash、mtime、sourceKind、lastIndexedAt。
+2. 实现增量规则：新增文件只新增索引，变更文件只重建该文件 chunk/vector，删除文件写 tombstone。
+3. 实现向量重嵌标记：provider/model/dimension 变化时只标记 `needs_reembed`。
+4. 实现 catalog 重规划阈值：新增/删除文件数超过 10%，或 workspace/package 根、入口文件、主要依赖图变化时触发。
+5. 实现 `knowledge_status` MCP 工具，返回 health、counts、last errors、lastHealthCheckAt 和修复建议。
+6. 实现 RepoWiki checkpoint schema：每个 catalog/page 完成后可落盘，后续生成器必须复用。
+7. 实现 token budget policy：按仓库规模计算预算，超预算时降深度不降覆盖。
+
+验收：
+
+- 修改单个源码文件后，只更新该文件相关 chunk/vector。
+- 删除文件后搜索结果不再返回该文件，metadata 中保留 tombstone。
+- `knowledge_status` 在 embedding 不可用时仍能返回诊断信息。
+- 模拟生成任务中断后，checkpoint 能被读取并继续。
 
 ### Phase 3：Memory System
 
@@ -972,6 +1057,9 @@ src/ui/components/settings/SettingsModal.tsx
 5. 支持生成中文 Wiki。
 6. 支持增量刷新。
 7. 生成后自动触发 index。
+8. 支持 checkpoint 恢复：catalog/page 级别完成即落盘。
+9. 支持 token 预算：超预算时降低文档深度，不减少 catalog 覆盖面。
+10. Catalog 规划失败时使用 profile anchor fallback，至少生成项目总览、运行与配置、核心模块、数据/接口、扩展点、故障排查。
 
 验收：
 
@@ -979,6 +1067,8 @@ src/ui/components/settings/SettingsModal.tsx
 - 空仓库第一次启用时能直接生成 `.tech/repowiki`。
 - 生成后默认读取 `.tech`。
 - 生成过程失败不影响聊天主流程。
+- 生成任务中断后再次 refresh 能从 checkpoint 继续。
+- `repowiki-metadata.json` 顶层含 `schemaVersion`，旧 schema 能给出迁移/重建提示。
 
 ## MCP 行为规范
 
@@ -986,6 +1076,7 @@ Agent 使用规则：
 
 - 问项目架构、已有能力、源码关系：先用 `knowledge_search`。
 - 搜到结果但需要全文：再用 `knowledge_read`。
+- 不确定当前知识库是否可用、索引是否完成、模型是否健康：先用 `knowledge_status`。
 - 需要保存稳定经验：用 `memory_update`。
 - 如果 embedding provider 不可用，`knowledge_search` 不伪装成已启用知识库；应返回修复提示，要求先配置或启用 embedding。
 - 不要把临时推理、一次性上下文、大段源码写入 memory。
@@ -1054,6 +1145,10 @@ test/electron/knowledge-repowiki-adapter.test.ts
 test/electron/knowledge-markdown-parser.test.ts
 test/electron/knowledge-repository.test.ts
 test/electron/knowledge-retrieval.test.ts
+test/electron/knowledge-incremental-index.test.ts
+test/electron/knowledge-status-tool.test.ts
+test/electron/knowledge-repowiki-checkpoint.test.ts
+test/electron/knowledge-token-budget.test.ts
 test/electron/memory-repository.test.ts
 test/electron/knowledge-mcp-server.test.ts
 ```
@@ -1068,6 +1163,10 @@ test/electron/knowledge-mcp-server.test.ts
 - hybrid rank 合并。
 - sqlite-vec 向量检索。
 - 向量模型和 Wiki 生成模型 health check。
+- `knowledge_status` 在未启用/失败/正常三种状态下的返回结构。
+- 单文件变更、删除 tombstone、向量模型变更 re-embed 标记。
+- RepoWiki checkpoint 恢复和单页失败报告。
+- token budget 降深度不降覆盖面的策略选择。
 - memory scope 隔离。
 
 ### 集成测试
@@ -1097,6 +1196,9 @@ node --test dist-test/test/electron/knowledge-*.test.js
    - “runner system prompt 在哪里拼？”
 11. 检查 Agent 是否调用 `knowledge_search`。
 12. 检查 Prompt Ledger 是否记录知识来源。
+13. 修改一个源码文件后重新索引，确认只更新该文件相关 chunk/vector。
+14. 中断 Wiki 生成后重新 refresh，确认从 checkpoint 继续。
+15. 在模型不可用时调用 `knowledge_status`，确认返回失败原因和修复建议。
 
 ## 风险与取舍
 
@@ -1142,6 +1244,22 @@ node --test dist-test/test/electron/knowledge-*.test.js
 - 全文必须 tool 拉取。
 - Prompt Ledger 统计 token。
 
+### 风险 6：长任务中断后只能全量重跑
+
+应对：
+
+- RepoWiki 生成以 catalog/page 为 checkpoint 单位。
+- 单页失败写入 `generation-report.json` 和 metadata failed item，继续后续页面。
+- refresh 默认续跑，rebuild 才清空 checkpoint。
+
+### 风险 7：schema 演进导致旧产物不可读
+
+应对：
+
+- `repowiki-metadata.json` 顶层必须有 `schemaVersion: "1.0"`。
+- Adapter 先做 schema 检测，再决定迁移、兼容读取或提示重建。
+- validation report 记录 schema mismatch，UI 不吞错误。
+
 ## 推荐实施分支
 
 ```text
@@ -1164,9 +1282,11 @@ MVP 只做：
 8. 实现 Wiki generation health check；未通过则不能刷新/重建 Wiki。
 9. 用 `sqlite-vec` 做内置 vector search。
 10. 提供 `tech-cc-hub-knowledge` MCP。
-11. runner 注入 `<knowledge_overview>`。
-12. Prompt Ledger 显示 knowledge source。
-13. Settings 里能看到 Knowledge Engine 已启用、索引状态、embedding 状态、Wiki 生成模型状态和向量后端状态。
+11. 提供 `knowledge_status`，让 Agent 和 UI 都能读取 health、counts、last errors、lastHealthCheckAt。
+12. runner 注入 `<knowledge_overview>`。
+13. Prompt Ledger 显示 knowledge source。
+14. Settings 里能看到 Knowledge Engine 已启用、索引状态、embedding 状态、Wiki 生成模型状态和向量后端状态。
+15. `repowiki-metadata.json` 带 `schemaVersion`，索引和生成状态可增量恢复。
 
 这样能最快验证价值。
 

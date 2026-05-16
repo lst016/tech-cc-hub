@@ -338,11 +338,12 @@ export function buildEnvForConfig(config: ApiConfig, modelOverride?: string): Re
     selectedModel,
   );
   const modelEnv = buildClaudeCodeModelEnv(selectedModel, smallModel);
-  const nonEssentialTrafficEnv = buildClaudeCodeNonEssentialTrafficEnv();
   const anthropicAuthToken = config.provider === "codex" ? "codex-oauth" : config.apiKey;
   const anthropicBaseURL = config.provider === "codex"
     ? getCodexAnthropicProxyBaseURL(config.id)
     : normalizeAnthropicBaseUrlForClaudeCode(config.baseURL);
+  const nonEssentialTrafficEnv = buildClaudeCodeNonEssentialTrafficEnv();
+  const attributionHeaderEnv = buildClaudeCodeAttributionHeaderEnv(anthropicBaseURL);
 
   baseEnv.ANTHROPIC_AUTH_TOKEN = anthropicAuthToken;
   baseEnv.ANTHROPIC_BASE_URL = anthropicBaseURL;
@@ -356,6 +357,7 @@ export function buildEnvForConfig(config: ApiConfig, modelOverride?: string): Re
     ANTHROPIC_BASE_URL: anthropicBaseURL,
     ...modelEnv,
     ...nonEssentialTrafficEnv,
+    ...attributionHeaderEnv,
   };
 }
 
@@ -406,6 +408,24 @@ function buildClaudeCodeNonEssentialTrafficEnv(): Record<string, string> {
     DISABLE_ERROR_REPORTING: "1",
     DISABLE_TELEMETRY: "1",
   };
+}
+
+function buildClaudeCodeAttributionHeaderEnv(anthropicBaseURL: string): Record<string, string> {
+  if (!shouldSuppressClaudeCodeAttributionHeader(anthropicBaseURL)) {
+    return {};
+  }
+
+  // Claude Code 2.1.x can prepend x-anthropic-billing-header into the system
+  // prompt; third-party Anthropic-compatible gateways should not see it.
+  return { CLAUDE_CODE_ATTRIBUTION_HEADER: "0" };
+}
+
+function shouldSuppressClaudeCodeAttributionHeader(anthropicBaseURL: string): boolean {
+  try {
+    return new URL(anthropicBaseURL).hostname !== "api.anthropic.com";
+  } catch {
+    return true;
+  }
 }
 
 function buildClaudeCodeModelEnv(mainModel: string, smallModel: string): Record<string, string> {

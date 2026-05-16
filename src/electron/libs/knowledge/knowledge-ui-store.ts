@@ -18,6 +18,8 @@ export type KnowledgeUiWorkspace = {
   updatedAt: number;
 };
 
+export type KnowledgeUiWorkspaceRelations = Record<string, string[]>;
+
 export type KnowledgeUiGeneration = {
   status: "idle" | "generating" | "paused" | "completed";
   completed: number;
@@ -134,8 +136,17 @@ export class KnowledgeUiStore {
         PRIMARY KEY (workspace_key, id)
       );
 
+      CREATE TABLE IF NOT EXISTS knowledge_ui_workspace_links (
+        workspace_key TEXT NOT NULL,
+        linked_workspace_key TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (workspace_key, linked_workspace_key)
+      );
+
       CREATE INDEX IF NOT EXISTS idx_knowledge_ui_workspaces_hidden ON knowledge_ui_workspaces(hidden, updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_knowledge_ui_documents_workspace ON knowledge_ui_documents(workspace_key, sort_order);
+      CREATE INDEX IF NOT EXISTS idx_knowledge_ui_workspace_links_target ON knowledge_ui_workspace_links(linked_workspace_key);
     `);
     this.ensureGenerationPhaseColumn();
   }
@@ -148,37 +159,45 @@ export class KnowledgeUiStore {
     }
   }
 
-  list(): { workspaces: KnowledgeUiWorkspace[]; generations: Record<string, KnowledgeUiGeneration> } {
+  list(): { workspaces: KnowledgeUiWorkspace[]; generations: Record<string, KnowledgeUiGeneration>; relations: KnowledgeUiWorkspaceRelations } {
     this.repairCompletedGenerations();
     const workspaces = (this.db
       .prepare("SELECT * FROM knowledge_ui_workspaces WHERE hidden = 0 ORDER BY updated_at DESC")
       .all() as Row[]).map(rowToWorkspace);
     const generationRows = this.db.prepare("SELECT * FROM knowledge_ui_generation").all() as Row[];
     const generations = Object.fromEntries(generationRows.map((row) => [String(row.workspace_key), rowToGeneration(row)]));
-    return { workspaces, generations };
+    return { workspaces, generations, relations: this.listWorkspaceLinks() };
   }
 
   private repairCompletedGenerations(): void {
     const rows = this.db
-      .prepare("SELECT workspace_key, updated_at FROM knowledge_ui_generation WHERE status = 'generating'")
-      .all() as Array<{ workspace_key: string; updated_at: number }>;
+      .prepare("SELECT workspace_key, status, completed, total, failed, updated_at FROM knowledge_ui_generation WHERE status IN ('generating', 'paused')")
+      .all() as Array<{ workspace_key: string; status: string; completed: number; total: number; failed: number; updated_at: number }>;
     if (rows.length === 0) return;
     const countDocs = this.db.prepare("SELECT COUNT(*) AS count FROM knowledge_ui_documents WHERE workspace_key = ?");
     const update = this.db.prepare(
       `UPDATE knowledge_ui_generation
        SET status = 'completed', completed = ?, total = ?, processing = 0, failed = 0, phase = '已完成', updated_at = ?
-       WHERE workspace_key = ? AND status = 'generating'`,
+       WHERE workspace_key = ? AND status IN ('generating', 'paused')`,
     );
     const now = Date.now();
     const tx = this.db.transaction(() => {
       for (const row of rows) {
         const workspaceKey = normalizeKey(row.workspace_key);
         if (ACTIVE_KNOWLEDGE_GENERATIONS.has(workspaceKey)) continue;
-        if (now - Number(row.updated_at ?? 0) < STALE_GENERATION_REPAIR_MS) continue;
-        const result = countDocs.get(row.workspace_key) as { count?: number } | undefined;
-        const total = Number(result?.count ?? 0);
-        if (total > 0) {
+        const completed = Math.max(0, Math.floor(Number(row.completed) || 0));
+        const total = Math.max(0, Math.floor(Number(row.total) || 0));
+        const failed = Math.max(0, Math.floor(Number(row.failed) || 0));
+        const countersAlreadyComplete = failed === 0 && total > 0 && completed >= total;
+        if (countersAlreadyComplete) {
           update.run(total, total, now, row.workspace_key);
+          continue;
+        }
+        if (row.status !== "generating" || now - Number(row.updated_at ?? 0) < STALE_GENERATION_REPAIR_MS) continue;
+        const result = countDocs.get(row.workspace_key) as { count?: number } | undefined;
+        const documentTotal = Number(result?.count ?? 0);
+        if (documentTotal > 0) {
+          update.run(documentTotal, documentTotal, now, row.workspace_key);
         }
       }
     });
@@ -227,7 +246,70 @@ export class KnowledgeUiStore {
   removeWorkspace(key: string): void {
     const workspaceKey = normalizeKey(key);
     if (!workspaceKey) return;
-    this.db.prepare("UPDATE knowledge_ui_workspaces SET hidden = 1, updated_at = ? WHERE key = ?").run(Date.now(), workspaceKey);
+    const now = Date.now();
+    const tx = this.db.transaction(() => {
+      this.db.prepare("UPDATE knowledge_ui_workspaces SET hidden = 1, updated_at = ? WHERE key = ?").run(now, workspaceKey);
+      this.db.prepare("DELETE FROM knowledge_ui_workspace_links WHERE workspace_key = ? OR linked_workspace_key = ?").run(workspaceKey, workspaceKey);
+    });
+    tx();
+  }
+
+  setWorkspaceLinks(workspaceKey: string, linkedWorkspaceKeys: string[]): KnowledgeUiWorkspaceRelations {
+    const key = normalizeKey(workspaceKey);
+    if (!key) throw new Error("workspaceKey 不能为空。");
+    const now = Date.now();
+    const knownRows = this.db.prepare("SELECT key FROM knowledge_ui_workspaces WHERE hidden = 0").all() as Row[];
+    const knownKeys = new Set(knownRows.map((row) => normalizeKey(String(row.key ?? ""))).filter(Boolean));
+    if (!knownKeys.has(key)) throw new Error("请先新增这个知识库，再关联其他知识库。");
+    const targets = Array.from(new Set(linkedWorkspaceKeys.map((item) => normalizeKey(item)).filter(Boolean)))
+      .filter((target) => target !== key && knownKeys.has(target))
+      .slice(0, 12);
+    const remove = this.db.prepare("DELETE FROM knowledge_ui_workspace_links WHERE workspace_key = ?");
+    const insert = this.db.prepare(
+      `INSERT INTO knowledge_ui_workspace_links (workspace_key, linked_workspace_key, created_at, updated_at)
+       VALUES (?, ?, ?, ?)`,
+    );
+    const tx = this.db.transaction(() => {
+      remove.run(key);
+      for (const target of targets) {
+        insert.run(key, target, now, now);
+      }
+    });
+    tx();
+    return this.listWorkspaceLinks();
+  }
+
+  listWorkspaceLinks(workspaceKey?: string): KnowledgeUiWorkspaceRelations {
+    const key = normalizeKey(workspaceKey);
+    const rows = (key
+      ? this.db
+        .prepare(
+          `SELECT link.workspace_key, link.linked_workspace_key
+           FROM knowledge_ui_workspace_links AS link
+           JOIN knowledge_ui_workspaces AS workspace ON workspace.key = link.linked_workspace_key
+           WHERE link.workspace_key = ? AND workspace.hidden = 0
+           ORDER BY link.updated_at DESC`,
+        )
+        .all(key)
+      : this.db
+        .prepare(
+          `SELECT link.workspace_key, link.linked_workspace_key
+           FROM knowledge_ui_workspace_links AS link
+           JOIN knowledge_ui_workspaces AS source ON source.key = link.workspace_key
+           JOIN knowledge_ui_workspaces AS target ON target.key = link.linked_workspace_key
+           WHERE source.hidden = 0 AND target.hidden = 0
+           ORDER BY link.workspace_key ASC, link.updated_at DESC`,
+        )
+        .all()) as Row[];
+    const relations: KnowledgeUiWorkspaceRelations = {};
+    for (const row of rows) {
+      const sourceKey = normalizeKey(String(row.workspace_key ?? ""));
+      const targetKey = normalizeKey(String(row.linked_workspace_key ?? ""));
+      if (!sourceKey || !targetKey) continue;
+      relations[sourceKey] = relations[sourceKey] ?? [];
+      relations[sourceKey].push(targetKey);
+    }
+    return relations;
   }
 
   updateGeneration(workspaceKey: string, state: KnowledgeUiGeneration): KnowledgeUiGeneration {
@@ -337,6 +419,16 @@ export async function handleKnowledgeUiInvoke(appDataPath: string, channel: stri
         const payload = readObject(args[0]);
         store.removeWorkspace(String(payload.workspaceKey ?? payload.key ?? ""));
         return { success: true };
+      }
+      case "knowledge:set-workspace-links": {
+        const payload = readObject(args[0]);
+        const rawTargets = Array.isArray(payload.linkedWorkspaceKeys) ? payload.linkedWorkspaceKeys : [];
+        return {
+          relations: store.setWorkspaceLinks(
+            String(payload.workspaceKey ?? ""),
+            rawTargets.map((item) => String(item)),
+          ),
+        };
       }
       case "knowledge:update-generation": {
         const payload = readObject(args[0]);
@@ -741,13 +833,17 @@ function normalizeGeneration(state: KnowledgeUiGeneration): KnowledgeUiGeneratio
   const total = Number.isFinite(state.total) && state.total > 0 ? Math.floor(state.total) : 0;
   const rawCompleted = Math.max(0, Math.floor(Number(state.completed) || 0));
   const completed = total > 0 ? Math.min(total, rawCompleted) : rawCompleted;
+  const failed = Math.max(0, Math.floor(Number(state.failed) || 0));
+  const status = state.status !== "idle" && failed === 0 && total > 0 && completed >= total
+    ? "completed"
+    : state.status;
   return {
-    status: state.status,
+    status,
     completed,
     total,
-    processing: Math.max(0, Math.floor(Number(state.processing) || 0)),
-    failed: Math.max(0, Math.floor(Number(state.failed) || 0)),
-    phase: state.phase,
+    processing: status === "generating" ? Math.max(0, Math.floor(Number(state.processing) || 0)) : 0,
+    failed,
+    phase: status === "completed" ? state.phase ?? "已完成" : state.phase,
     commitId: state.commitId,
     commitShortHash: state.commitShortHash,
     branch: state.branch ?? null,

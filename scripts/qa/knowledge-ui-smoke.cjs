@@ -62,6 +62,16 @@ async function main() {
   if (!bodyText.includes('生成完成')) {
     throw new Error('Knowledge workspace panel missing: 生成完成');
   }
+  const linkWorkspaceButton = page.getByRole('button', { name: /关联 tech-cc-hub 知识库/ }).first();
+  await linkWorkspaceButton.waitFor({ state: 'visible', timeout: 10000 });
+  await linkWorkspaceButton.click();
+  await page.waitForTimeout(250);
+  bodyText = await page.locator('body').innerText({ timeout: 10000 });
+  if (!bodyText.includes('关联知识库')) {
+    throw new Error('Knowledge workspace link editor did not open');
+  }
+  await linkWorkspaceButton.click();
+  await page.waitForTimeout(150);
   const hasRegenerateButton = await page.getByRole('button', { name: /^重新生成$/ }).isVisible().catch(() => false);
   const hasUpdateButton = await page.getByRole('button', { name: /^更新$/ }).isVisible().catch(() => false);
   if (!hasRegenerateButton && !hasUpdateButton) {
@@ -70,11 +80,26 @@ async function main() {
   if (bodyText.includes('需更新')) {
     throw new Error('Knowledge workspace should render update as a button instead of static 需更新 text');
   }
+  const collapsedSectionCount = await page.locator('button[aria-label^="展开"]').count();
+  if (collapsedSectionCount < 1) {
+    throw new Error('Knowledge UI should default Repo Wiki sections to collapsed state');
+  }
 
+  await page.getByPlaceholder('搜索 Repo Wiki').fill(expectedTitle);
+  await page.waitForTimeout(300);
   const generatedDoc = page.getByRole('button', { name: new RegExp(`打开文档 .*${escapeRegExp(expectedTitle)}`) }).first();
   await generatedDoc.waitFor({ state: 'visible', timeout: 10000 });
   await generatedDoc.click();
   await page.waitForTimeout(800);
+  await page.getByPlaceholder('搜索 Repo Wiki').fill('');
+  await page.waitForTimeout(300);
+  const sectionButtonsToOpen = Math.min(await page.locator('button[aria-label^="展开"]').count(), 8);
+  for (let index = 0; index < sectionButtonsToOpen; index += 1) {
+    const nextCollapsed = page.locator('button[aria-label^="展开"]').first();
+    if (!await nextCollapsed.isVisible().catch(() => false)) break;
+    await nextCollapsed.click();
+    await page.waitForTimeout(80);
+  }
 
   bodyText = await page.locator('body').innerText({ timeout: 10000 });
   for (const expected of [expectedTitle, '本文引用的文件', '目录']) {
@@ -86,6 +111,10 @@ async function main() {
   const rawMermaidCodeBlocks = await page.locator('pre').filter({ hasText: /flowchart|sequenceDiagram|graph TD|graph LR/ }).count();
   if (rawMermaidCodeBlocks > 0) {
     throw new Error(`Knowledge UI still renders Mermaid diagrams as raw code blocks: ${rawMermaidCodeBlocks}`);
+  }
+  const mermaidErrorArtifacts = await page.locator('div[id^="dmermaid-"]').count();
+  if (mermaidErrorArtifacts > 0) {
+    throw new Error(`Knowledge UI leaked Mermaid internal error nodes: ${mermaidErrorArtifacts}`);
   }
   const topicButtonCount = await page.locator('button').filter({ hasText: /知识库|Repo Wiki|文档管理|后端引擎|系统架构|Electron|前端|质量|故障/ }).count();
   if (topicButtonCount < 3) {
@@ -100,7 +129,7 @@ async function main() {
       throw new Error(`Knowledge UI missing Agent-useful page button: ${expectedButton}`);
     }
   }
-  for (const forbidden of ['后续接入真实', '未生成正文', '当前没有真实 Repo Wiki 正文', '生成后会出现 Repo Wiki 目录', '模型未返回结构化说明', '```markdown']) {
+  for (const forbidden of ['后续接入真实', '未生成正文', '当前没有真实 Repo Wiki 正文', '生成后会出现 Repo Wiki 目录', '模型未返回结构化说明', '```markdown', 'Syntax error in text', 'mermaid version']) {
     if (bodyText.includes(forbidden)) {
       throw new Error(`Knowledge UI still contains placeholder/fence text: ${forbidden}`);
     }
@@ -120,6 +149,25 @@ async function main() {
   }
   if (await page.getByRole('button', { name: /^重新生成$/ }).isVisible().catch(() => false)) {
     throw new Error('Knowledge document preview should not render the workspace regenerate button');
+  }
+
+  const taskExecutorDoc = page.getByRole('button', { name: /打开文档 任务执行引擎/ }).first();
+  await taskExecutorDoc.waitFor({ state: 'visible', timeout: 10000 });
+  await taskExecutorDoc.click();
+  await page.waitForTimeout(800);
+  const inlineSourceRef = page.getByRole('button', {
+    name: /打开源码文件 src\/electron\/libs\/task\/executor\.ts#L83-L84/,
+  }).first();
+  await inlineSourceRef.waitFor({ state: 'visible', timeout: 10000 });
+  await inlineSourceRef.click();
+  await page.waitForTimeout(1200);
+  bodyText = await page.locator('body').innerText({ timeout: 10000 });
+  if (!bodyText.includes('src/electron/libs/task/executor.ts#L83-L84')) {
+    throw new Error('Knowledge inline source ref did not open executor.ts in the knowledge tab');
+  }
+  for (const lineNumber of [83, 84]) {
+    const highlightedLine = page.locator(`[data-source-line="${lineNumber}"][data-source-active="true"]`);
+    await highlightedLine.waitFor({ state: 'visible', timeout: 10000 });
   }
 
   const sectionToggle = page.getByRole('button', { name: /折叠(Repo Wiki|项目概述|系统架构|架构设计|业务模块|前端架构设计|后端架构设计)/ }).first();

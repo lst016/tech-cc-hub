@@ -424,13 +424,13 @@ sequenceDiagram
     participant B as builtin-mcp-servers.ts
     participant P as system-prompt-presets.ts
     participant T as tool handler
-
+    
     R->>B: getBuiltinMcpServers(context)
     B->>B: BUILTIN_MCP_SERVER_FACTORIES[serverName](context)
     B->>T: getXxxMcpServer(sessionId?)
     T-->>B: McpSdkServerConfigWithInstance
     B-->>R: Record<serverName, server>
-
+    
     R->>R: buildRunnerReuseKey()
     R->>P: buildBuiltinMcpRegistryPromptAppend()
     P-->>R: prompt hint string
@@ -511,15 +511,15 @@ export function getNewtoolMcpServer(): McpSdkServerConfigWithInstance {
         if (!newtoolServiceRef) {
           return toTextToolResult({ success: false, error: "Service 未初始化" }, true);
         }
-
+        
         // 业务逻辑
         const result = await newtoolServiceRef.doSomething(input.param1);
-
+        
         return toTextToolResult({ success: true, data: result });
       } catch (error) {
-        return toTextToolResult({
-          success: false,
-          error: error instanceof Error ? error.message : String(error)
+        return toTextToolResult({ 
+          success: false, 
+          error: error instanceof Error ? error.message : String(error) 
         }, true);
       }
     },

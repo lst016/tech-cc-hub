@@ -26,93 +26,73 @@
 
 ## 目录
 
-- [1. 模块职责与定位](#1-模块职责与定位)
-- [2. 入口文件与导出契约](#2-入口文件与导出契约)
+- [1. 模块职责](#1-模块职责)
+- [2. 入口文件与导出](#2-入口文件与导出)
 - [3. 核心数据结构](#3-核心数据结构)
-- [4. 调用链路图](#4-调用链路图)
-- [5. IPC Bridge 通道映射](#5-ipc-bridge-通道映射)
-- [6. 预览文件系统（Dev Preview）](#6-预览文件系统dev-preview)
-- [7. 配置与存储层](#7-配置与存储层)
-- [8. MCP 与 Channel 桥接](#8-mcp-与-channel-桥接)
-- [9. 常见失败模式与排障](#9-常见失败模式与排障)
-- [10. Agent 改代码地图](#10-agent-改代码地图)
+- [4. IPC 桥接机制](#4-ipc-桥接机制)
+- [5. 文件预览系统](#5-文件预览系统)
+- [6. 存储抽象层](#6-存储抽象层)
+- [7. 调用链路图](#7-调用链路图)
+- [8. 配置与常量](#8-配置与常量)
+- [9. Agent 改代码地图](#9-agent-改代码地图)
+- [10. 常见问题与排障](#10-常见问题与排障)
 
 ---
 
-## 1. 模块职责与定位
+## 1. 模块职责
 
-`module-common` 是 tech-cc-hub 的**前端共享基础设施层**，为渲染进程（React UI）提供：
+`module-common` 是 tech-cc-hub 的共享基础设施层，提供三大核心能力：
 
-| 职责 | 具体能力 | 源文件 |
-|------|----------|--------|
-| **IPC 桥接** | 渲染进程 → 主进程的通道抽象 | [ipcBridge.ts L152-L252](file://src/common/adapter/ipcBridge.ts#L152-L252) |
-| **文件系统代理** | 读取文件、列出目录、获取元数据 | [ipcBridge.ts L78-L102](file://src/common/adapter/ipcBridge.ts#L78-L102) |
-| **预览内容类型** | 代码/Markdown/图片/PDF 等类型定义 | [preview.ts L1-L11](file://src/common/types/preview.ts#L1-L11) |
-| **配置存储** | localStorage 封装的 ConfigStorage | [storage.ts L9-L21](file://src/common/config/storage.ts#L9-L21) |
-| **工具适配器发现** | 扫描各 Agent 的 skills 目录 | [tool-adapters.ts L73-L94](file://src/electron/libs/skill-manager/tool-adapters.ts#L73-L94) |
-| **图片预处理** | base64 图像摘要（OCR/Vision 模型） | [image-preprocessor.ts L27-L59](file://src/electron/libs/image-preprocessor.ts#L27-L59) |
+| 能力 | 位置 | 用途 |
+|------|------|------|
+| **IPC 桥接** | `adapter/ipcBridge.ts` | 统一封装 Electron IPC 与开发预览 API |
+| **类型定义** | `types/*.ts` | 跨层数据结构（preview/fileSnapshot/chat） |
+| **存储抽象** | `config/storage.ts` | localStorage 统一读写接口 |
+| **工具函数** | `utils.ts`, `chat/*.ts` | UUID 生成、路径拼接等通用逻辑 |
+| **配置常量** | `config/constants.ts` | 业务常量（AIONUI_FILES_MARKER/TIMESTAMP_REGEX） |
 
-**定位**：Common 是"轻量级 Electron IPC shim + 类型定义 + 开发预览适配器"，不包含复杂的业务逻辑，但它定义了所有前端与后端通信的契约。
+**设计原则**：Common 刻意保持轻量，避免直接依赖 Electron 进程，只通过 `ipcBridge` 的双轨机制（Electron Runtime / Dev Preview Server）实现跨环境兼容。
+
+[章节来源](file://src/common/index.ts#L1-L3)
 
 ---
 
-## 2. 入口文件与导出契约
+## 2. 入口文件与导出
 
-### 2.1 主入口：`src/common/index.ts`
+### 2.1 主入口 `src/common/index.ts`
 
 ```typescript
-// src/common/index.ts#L1-L2
 export { ipcBridge } from './adapter/ipcBridge';
 export type { IBridgeResponse, IDirOrFile, IFileMetadata, IWorkspaceFlatFile } from './adapter/ipcBridge';
 ```
 
-入口仅导出两件事：
-1. `ipcBridge` 对象——所有 IPC 调用的入口
-2. 四个核心类型——用于类型安全的桥接响应和文件系统建模
+入口文件仅做转发，核心导出：
 
-### 2.2 ipcBridge 对象结构
+- `ipcBridge` - IPC 桥接对象（主要入口）
+- `IBridgeResponse<T>` - 通用响应封装类型
+- `IDirOrFile` - 目录/文件树节点类型
+- `IFileMetadata` - 文件元数据类型
+- `IWorkspaceFlatFile` - 工作区扁平文件类型
 
-`ipcBridge` 是一个**树形通道注册表**，在 [ipcBridge.ts L152-L252](file://src/common/adapter/ipcBridge.ts#L152-L252) 中定义，结构如下：
+[章节来源](file://src/common/index.ts#L1-L3)
 
-```typescript
-ipcBridge = {
-  application: { getPath: { invoke: async () => '' } },
-  conversation: {
-    getWorkspace: { invoke: getWorkspaceTree },           // 获取工作区目录树
-    responseStream: noopEvent(),                           // 响应流事件
-    turnCompleted: noopEvent(),
-    createWithConversation: { invoke: async () => success() },
-  },
-  fs: {
-    readFile: { invoke: async ({ path }) => readTextFile(path) },       // 读文本文件
-    getImageBase64: { invoke: async ({ path }) => readImageFile(path) }, // 读图片
-    getFileMetadata: { invoke: async ({ path }) => ... },              // 获取元数据
-    writeFile: { invoke: async ({ path, data }) => ... },              // 写文件
-    removeEntry: { invoke: async ({ path }) => ... },                // 删除
-    renameEntry: { invoke: async ({ path, newName }) => ... },        // 重命名
-  },
-  previewHistory: {
-    list: { invoke: async () => readPreviewHistory() },   // 读取历史记录
-    getContent: { invoke: async ({ path }) => readTextFile(path) }, // 读历史内容
-    save: { invoke: async (snapshot) => ... },           // 保存快照
-  },
-  fileSnapshot: {
-    init: { invoke: async () => success() },
-    compare: { invoke: async () => ({ changes: [], snapshots: [] }) },
-    stageFile: { invoke: async () => success() },
-    discardFile: { invoke: async () => success() },
-  },
-  // ... 其他通道
-};
-```
+### 2.2 关键导出符号映射
 
-每个通道都是 `{ invoke: Function }` 或 `noopEvent()`（空实现）的形式，便于渐进式实现。
+| 文件 | 导出符号 | 用途 |
+|------|----------|------|
+| `chat/chatLib.ts` | `TMessage`, `joinPath` | 消息结构体与路径拼接 |
+| `config/storage.ts` | `ConfigStorage`, `TChatConversation` | 存储抽象层 |
+| `config/storageKeys.ts` | `STORAGE_KEYS` | localStorage 键枚举 |
+| `config/constants.ts` | `AIONUI_FILES_MARKER`, `AIONUI_TIMESTAMP_REGEX` | 文件注释标记与时间戳正则 |
+| `types/fileSnapshot.ts` | `FileChangeInfo`, `SnapshotInfo`, `CompareResult` | 版本快照相关类型 |
+| `types/preview.ts` | `PreviewContentType`, `PreviewHistoryTarget`, `PreviewSnapshotInfo`, `RemoteImageFetchRequest` | 预览相关类型 |
+| `utils.ts` | `uuid` | 随机字符串生成器 |
 
 ---
 
 ## 3. 核心数据结构
 
-### 3.1 桥接响应类型
+### 3.1 `IBridgeResponse<T>`
 
 ```typescript
 // src/common/adapter/ipcBridge.ts#L1-L7
@@ -125,9 +105,12 @@ export interface IBridgeResponse<T = unknown> {
 }
 ```
 
-所有 IPC 响应都用 `IBridgeResponse<T>` 包装，`success: false` 时 `error` 字段包含错误信息。
+**用途**：统一所有 IPC 调用响应格式。
 
-### 3.2 工作区目录树节点
+**使用场景**：
+- UI 调用 `ipcBridge.fs.readFile` 时，根据 `success` 判断是否返回 `data` 或 `error`
+
+### 3.2 `IDirOrFile`
 
 ```typescript
 // src/common/adapter/ipcBridge.ts#L9-L16
@@ -137,27 +120,28 @@ export interface IDirOrFile {
   relativePath: string;
   isDir: boolean;
   isFile: boolean;
-  children?: IDirOrFile[];  // 递归嵌套，depth 由调用方控制
+  children?: IDirOrFile[];  // 递归深度由调用方控制
 }
 ```
 
-`getWorkspaceTree()` 返回 `IDirOrFile[]` 树形结构，支持最多 2 层递归展开（[ipcBridge.ts L125](file://src/common/adapter/ipcBridge.ts#L125)）。
+**用途**：工作区文件树结构，支持嵌套_children_实现无限层级。
 
-### 3.3 文件元数据
+### 3.3 `TMessage`
 
 ```typescript
-// src/common/adapter/ipcBridge.ts#L18-L25
-export interface IFileMetadata {
-  name: string;
-  path: string;
-  size: number;
-  type: string;
-  lastModified: number;
-  isDirectory?: boolean;
-}
+// src/common/chat/chatLib.ts#L1-L7
+export type TMessage = {
+  id?: string;
+  role?: string;
+  content?: string;
+  createdAt?: number;
+  [key: string]: unknown;  // 允许扩展
+};
 ```
 
-### 3.4 预览内容类型枚举
+**用途**：聊天消息的最小结构体。
+
+### 3.4 `PreviewContentType`
 
 ```typescript
 // src/common/types/preview.ts#L1-L11
@@ -166,153 +150,127 @@ export type PreviewContentType =
   | 'word' | 'excel' | 'ppt' | 'diff' | 'url';
 ```
 
-### 3.5 预览历史目标
+**用途**：预览内容类型枚举，驱动预览渲染器的分支逻辑。
+
+[章节来源](file://src/common/types/preview.ts#L1-L11)
+
+---
+
+## 4. IPC 桥接机制
+
+### 4.1 双轨运行时策略
+
+`ipcBridge` 实现了**双轨运行时**策略，核心逻辑在 `getElectron()` 和 `getDevPreview()`：
 
 ```typescript
-// src/common/types/preview.ts#L13-L19
-export type PreviewHistoryTarget = {
-  id?: string;
-  path?: string;
-  filePath?: string;
-  title?: string;
-  contentType?: PreviewContentType;
+// src/common/adapter/ipcBridge.ts#L46-L54
+const getElectron = () => (typeof window === 'undefined' ? undefined : (window as any).electron);
+
+const getDevPreview = async <T,>(route: string, payload: Record<string, string>): Promise<T | null> => {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(payload);
+  const response = await fetch(`/__tech_preview/${route}?${params.toString()}`);
+  if (!response.ok) return null;
+  return response.json() as Promise<T>;
 };
 ```
 
-### 3.6 会话配置
+| 运行时 | 检测方式 | 能力 |
+|--------|----------|------|
+| **Electron** | `window.electron` 存在 | 原生文件读写、对话框、进程通信 |
+| **Dev Preview** | Vite 开发服务器 `/__tech_preview/*` | 仅文件读取（安全沙箱） |
+
+**fallback 链**：`getElectron()` → `getDevPreview()`，确保 Dev 模式也能工作。
+
+[章节来源](file://src/common/adapter/ipcBridge.ts#L46-L54)
+
+### 4.2 ipcBridge 对象结构
 
 ```typescript
-// src/common/config/storage.ts#L1-L7
-export type TChatConversation = {
-  id: string;
-  title?: string;
-  workspace?: string;
-  path?: string;
-  [key: string]: unknown;
+// src/common/adapter/ipcBridge.ts#L152-L252
+export const ipcBridge = {
+  application: { getPath: { invoke: async () => '' } },
+  conversation: {
+    getWorkspace: { invoke: getWorkspaceTree },
+    responseStream: noopEvent(),
+    turnCompleted: noopEvent(),
+    // ...
+  },
+  fs: {
+    readFile: { invoke: async ({ path }) => readTextFile(path) },
+    getImageBase64: { invoke: async ({ path }) => readImageFile(path) },
+    writeFile: { invoke: async ({ path, data }) => {...} },
+    // ...
+  },
+  preview: { open: noopEvent() },
+  previewHistory: {
+    list: { invoke: async () => readPreviewHistory() },
+    save: { invoke: async (snapshot) => {...} },
+  },
+  fileSnapshot: {
+    init: { invoke: async () => success() },
+    compare: { invoke: async () => ({ changes: [], snapshots: [] }) },
+    // ...
+  },
+  // ...
 };
 ```
 
-### 3.7 工具适配器定义
+**命名空间**：`fs` / `preview` / `conversation` / `database` / `fileSnapshot` 分组管理。
+
+---
+
+## 5. 文件预览系统
+
+### 5.1 Vite Dev Preview 中间件
+
+`vite.config.ts` 实现了 `previewFsPlugin`，在 Vite 开发服务器上挂载文件服务：
 
 ```typescript
-// src/electron/libs/skill-manager/tool-adapters.ts#L9-L22
-export interface ToolAdapter {
-  key: string;                    // 如 "claude_code", "codex"
-  display_name: string;            // 如 "Claude Code"
-  relative_skills_dir: string;    // 如 ".claude/skills"
-  relative_detect_dir: string;    // 如 ".claude"
-  additional_scan_dirs: string[];
-  override_skills_dir: string | null;
-  is_custom: boolean;
-  recursive_scan: boolean;
+// vite.config.ts#L62-L92
+function previewFsPlugin(): Plugin {
+  return {
+    name: 'tech-cc-hub-preview-fs',
+    configureServer(server) {
+      server.middlewares.use('/__tech_preview/list', (req, res) => {
+        // 读取目录列表，限制 500 条目
+      });
+      server.middlewares.use('/__tech_preview/files', (req, res) => {
+        // 递归索引目录，限制 maxPreviewQuickOpenEntries
+      });
+      server.middlewares.use('/__tech_preview/write', async (req, res) => {
+        // 写入文件（需要 POST）
+      });
+    },
+  };
 }
 ```
 
----
+**关键常量**：
+- `ignoredPreviewDirectories`: `node_modules`, `.git`, `.claude`, `.codex`, `.tech`, `third_party`, `dist-react`, `dist-electron`
+- `maxPreviewTextBytes`: 512 KB
+- `maxPreviewImageBytes`: 2 MB
+- `maxPreviewQuickOpenEntries`: 2000
 
-## 4. 调用链路图
+[章节来源](file://vite.config.ts#L18-L22)
 
-```mermaid
-flowchart TD
-    subgraph Renderer["渲染进程 (React UI)"]
-        BWP[BrowserWorkbenchPage]
-        App[App.tsx]
-    end
-
-    subgraph Common["module-common (共享桥接层)"]
-        ipcBridge[ipcBridge]
-        ConfigStorage[ConfigStorage]
-        joinPath[joinPath]
-        TMessage[TMessage]
-    end
-
-    subgraph DevPreview["开发预览模式 (Vite Dev Server)"]
-        ViteConfig[vite.config.ts]
-        previewFsPlugin[previewFsPlugin]
-    end
-
-    subgraph Electron["Electron 主进程"]
-        ElectronBridge[window.electron]
-        FileOps[readFile / listDirectory]
-    end
-
-    BWP --> ipcBridge
-    App --> ipcBridge
-    ipcBridge -->|fallback: getDevPreview| previewFsPlugin
-    ipcBridge -->|production: getElectron| ElectronBridge
-    previewFsPlugin -->|/\_\_tech_preview/list| ViteConfig
-    previewFsPlugin -->|/\_\_tech_preview/files| ViteConfig
-    previewFsPlugin -->|/\_\_tech_preview/read| ViteConfig
-    ElectronBridge --> FileOps
-
-    style ipcBridge fill:#e1f5fe
-    style ViteConfig fill:#fff3e0
-```
-
-**调用链路说明**：
-
-1. **生产模式**：`ipcBridge.fs.readFile({ path })` → `getElectron()?.readPreviewFile(...)` → Electron 主进程的 `readPreviewFile` IPC handler
-2. **开发预览模式**（非 Electron 环境）：`getDevPreview('read', { cwd, path })` → `fetch('/__tech_preview/read?...')` → Vite 中间件处理
-3. **工作区树获取**：`ipcBridge.conversation.getWorkspace.invoke({ path })` → `getWorkspaceTree()` → `listDirectory()` → 递归 `toDirOrFile()` 嵌套孩子节点
-
----
-
-## 5. IPC Bridge 通道映射
-
-| 通道 | invoke 函数 | 实际调用 | 失败回退 |
-|------|-------------|----------|----------|
-| `conversation.getWorkspace` | `getWorkspaceTree` | Electron `listPreviewDirectory` | Dev Preview `/__tech_preview/list` |
-| `fs.readFile` | `readTextFile` | Electron `readPreviewFile` | Dev Preview `/__tech_preview/read` |
-| `fs.getImageBase64` | `readImageFile` | Electron `getPreviewImageBase64` | Dev Preview `/__tech_preview/read` |
-| `fs.getFileMetadata` | `getPreviewFileMetadata` | Electron `getPreviewFileMetadata` | `null` |
-| `fs.writeFile` | 写文件 | Electron `writePreviewFile` | 失败返回 `IBridgeResponse.success: false` |
-| `fs.removeEntry` | 删除 | Electron `removePreviewEntry` | `'remove unsupported'` |
-| `fs.renameEntry` | 重命名 | Electron `renamePreviewEntry` | `'rename unsupported'` |
-| `dialog.showOpen` | 打开目录对话框 | Electron `openPreviewDirectoryDialog` | `[]` |
-| `previewHistory.list` | `readPreviewHistory` | localStorage 读取 | `[]` |
-| `previewHistory.save` | 保存快照 | localStorage 写入 | 无 |
-
----
-
-## 6. 预览文件系统（Dev Preview）
-
-在 **非 Electron 环境**（如纯前端开发、Vite preview）中，Vite 中间件提供文件系统访问能力。
-
-### 6.1 中间件路由
-
-| 路由 | 功能 | 源文件 |
-|------|------|--------|
-| `GET /__tech_preview/list` | 列出目录（最多 500 条） | [vite.config.ts L66-L92](file://vite.config.ts#L66-L92) |
-| `GET /__tech_preview/files` | 索引文件（支持深度遍历） | [vite.config.ts L93-L144](file://vite.config.ts#L93-L144) |
-| `POST /__tech_preview/write` | 写入文件 | [vite.config.ts L145-L160+](file://vite.config.ts#L145-L160) |
-
-### 6.2 安全约束
-
-- 路径必须在 `cwd`（当前工作目录）以内，使用 `isPathWithinRoot()` 校验
-- 忽略目录：`node_modules`, `.git`, `.claude`, `.codex`, `.tech`, `third_party`, `dist-react`, `dist-electron`（[vite.config.ts L19](file://vite.config.ts#L19)）
-- 文本文件最大 512KB，图片最大 2MB
-- Quick Open 最多 2000 条，文件索引最多 10000 条
-
-### 6.3 resolvePreviewRequest 逻辑
+### 5.2 安全边界
 
 ```typescript
-// vite.config.ts#L35-L43
-function resolvePreviewRequest(url: URL) {
-  const cwd = url.searchParams.get('cwd')?.trim() || '';
-  const rawPath = url.searchParams.get('path')?.trim() || '';
-  const rootPath = realpathSync(cwd);           // 解析 cwd 为绝对路径
-  const requestedPath = rawPath ? (isAbsolute(rawPath) ? rawPath : join(rootPath, rawPath)) : rootPath;
-  const realPath = realpathSync(requestedPath); // 解析请求路径
-  if (!isPathWithinRoot(rootPath, realPath)) return { error: '只能访问当前工作目录内的文件。' };
-  return { rootPath, realPath };
+// vite.config.ts#L24-L27
+function isPathWithinRoot(rootPath: string, targetPath: string) {
+  const rel = relative(rootPath, targetPath);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 ```
 
+**限制**：只能访问当前工作目录（cwd）以内的文件，禁止路径遍历（`..`）。
+
 ---
 
-## 7. 配置与存储层
+## 6. 存储抽象层
 
-### 7.1 ConfigStorage
+### 6.1 ConfigStorage
 
 ```typescript
 // src/common/config/storage.ts#L9-L21
@@ -327,19 +285,103 @@ export const ConfigStorage = {
 };
 ```
 
-**前缀**：`config:`，所以存储键实际为 `config:tech-cc-hub:workspace-tree-collapse` 等。
+**命名空间**：`config:` 前缀，避免与其他 localStorage 键冲突。
 
-### 7.2 STORAGE_KEYS 常量
+### 6.2 STORAGE_KEYS
 
 ```typescript
-// src/common/config/storageKeys.ts#L1-L4
+// src/common/config/storageKeys.ts#L1-L5
 export const STORAGE_KEYS = {
   WORKSPACE_TREE_COLLAPSE: 'tech-cc-hub:workspace-tree-collapse',
   PREVIEW_TABS: 'tech-cc-hub:preview-tabs',
 };
 ```
 
-### 7.3 常量定义
+### 6.3 Preview History
+
+```typescript
+// src/common/adapter/ipcBridge.ts#L143-L150
+const localPreviewHistoryKey = 'tech-cc-hub:aion-preview-history';
+const readPreviewHistory = () => {
+  try {
+    return JSON.parse(localStorage.getItem(localPreviewHistoryKey) || '[]');
+  } catch {
+    return [];
+  }
+};
+```
+
+**限制**：最多保存 50 条历史记录（`slice(0, 50)`）。
+
+---
+
+## 7. 调用链路图
+
+### 7.1 文件读取调用链（Mermaid）
+
+```mermaid
+sequenceDiagram
+    participant UI as BrowserWorkbenchPage.tsx
+    participant Bridge as ipcBridge
+    participant Electron as window.electron
+    participant Vite as Vite Dev Server
+
+    UI->>Bridge: ipcBridge.fs.readFile({ path })
+    Bridge->>Bridge: getElectron()
+    alt Electron Runtime
+        Bridge->>Electron: readPreviewFile({ cwd, path })
+        Electron-->>Bridge: { success, content }
+    else Dev Preview
+        Bridge->>Vite: GET /__tech_preview/read?cwd=...&path=...
+        Vite-->>Bridge: { success, content }
+    end
+    Bridge-->>UI: content string
+```
+
+### 7.2 图像预览处理链（Mermaid）
+
+```mermaid
+flowchart TD
+    A[attachments 传入] --> B{imageModel 配置}
+    B -->|无配置| Z[直接返回 attachments]
+    B -->|有配置| C[preprocessImageAttachments]
+    C --> D{summarizeBase64Image}
+    D --> E{buildImageModelCandidates}
+    E --> F[preferredImageModel]
+    E --> G[config.imageModel]
+    E --> H[config.models]
+    F --> I{isCodexOAuthConfig}
+    I -->|是| J[summarizeImageBase64WithCodexResponses]
+    I -->|否| K{shouldUseOpenAIChatCompletions}
+    K -->|是| L[summarizeImageBase64WithOpenAIChat]
+    K -->|否| M[summarizeImageBase64WithAnthropicMessages]
+    J --> N[返回 summary text]
+    L --> N
+    M --> N
+```
+
+### 7.3 BrowserWorkbenchPage 核心函数关系
+
+```mermaid
+flowchart LR
+    A[BrowserWorkbenchPage] --> B[probeLocalTarget]
+    A --> C[readRecentLocalBrowserTargets]
+    A --> D[buildLocalBrowserTargets]
+    A --> E[toBrowserWorkbenchUrl]
+    A --> F[capturePreviewFrameVisible]
+
+    B --> G[fetch + no-cors]
+    C --> H[localStorage]
+    D --> I[COMMON_LOCAL_BROWSER_PORTS]
+```
+
+[图表来源](file://src/ui/components/BrowserWorkbenchPage.tsx#L58-L310)
+
+---
+
+## 8. 配置与常量
+
+### 8.1 AIONUI_FILES_MARKER
 
 ```typescript
 // src/common/config/constants.ts#L1-L2
@@ -347,192 +389,260 @@ export const AIONUI_FILES_MARKER = '<!-- AIONUI_FILES -->';
 export const AIONUI_TIMESTAMP_REGEX = /\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/g;
 ```
 
-### 7.4 工具函数
+**用途**：Markdown 内容中标记附件区域（类似 Obsidian 的文件嵌入语法）。
+
+### 8.2 Channel 配置
 
 ```typescript
-// src/common/utils.ts#L1-L5
-export const uuid = (size = 16) => {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let output = '';
-  for (let i = 0; i < size; i += 1) output += chars[Math.floor(Math.random() * chars.length)];
-  return output;
+// src/shared/channel-config.ts#L1-L8
+export type ChannelChatToggleConfig = {
+  enabled?: boolean;
+  chatEnabled?: boolean;
 };
+
+export function isChannelChatEnabled(config: ChannelChatToggleConfig | null | undefined): boolean {
+  if (!config?.enabled) return false;
+  return typeof config.chatEnabled === "boolean" ? config.chatEnabled : true;
+}
 ```
+
+**Source of Truth**：运行时配置存储在 `loadGlobalRuntimeConfig().channels`。
+
+### 8.3 数据库初始化
+
+```typescript
+// pro-workflow/src/db/index.ts#L23-L48
+export function initializeDatabase(dbPath: string = DEFAULT_DB_PATH): Database.Database {
+  ensureDbDir();
+  const db = new Database(dbPath);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  // 从 candidates 查找 schema.sql
+  const schemaPath = candidates.find(p => fs.existsSync(p));
+  db.exec(fs.readFileSync(schemaPath, 'utf8'));
+  return db;
+}
+```
+
+**数据库路径**：`~/.pro-workflow/data.db`
+
+**Source of Truth**：SQLite 文件，运行时不可热更新，需重启进程。
+
+[章节来源](file://pro-workflow/src/db/index.ts#L23-L48)
 
 ---
 
-## 8. MCP 与 Channel 桥接
+## 9. Agent 改代码地图
 
-### 8.1 Figma MCP Server
+### 9.1 修改入口速查
 
-`getFigmaRestMcpServer()` 返回 MCP SDK server 实例，支持以下工具（[figma-rest.ts L36](file://src/electron/libs/mcp-tools/figma-rest.ts#L36)）：
+| 改动类型 | 先读文件 | 关键符号/IPC | 修改位置 | 验证命令 |
+|---------|----------|--------------|----------|----------|
+| **添加 IPC 方法** | `ipcBridge.ts` | `ipcBridge.fs.*` | 行 177-206 | `window.electron?.xxx()` 测试 |
+| **扩展文件类型** | `preview.ts` | `PreviewContentType` | 行 1-11 | 预览器渲染分支 |
+| **新增存储键** | `storageKeys.ts` | `STORAGE_KEYS` | 行 1-5 | 检查 localStorage |
+| **修改路径规范** | `ipcBridge.ts` | `normalizePath`, `basename` | 行 56-76 | 跨平台路径测试 |
+| **调整图像模型** | `image-preprocessor.ts` | `buildImageModelCandidates` | 行 193-206 | 图像摘要测试 |
+| **扩展 MCP 工具** | `figma-rest.ts` | `FIGMA_REST_TOOL_NAMES` | 行 13, 36 | MCP 工具列表 |
 
-| 工具名 | 功能 |
-|--------|------|
-| `figma_get_current_user` | 获取当前 Figma 用户 |
-| `figma_get_file_metadata` | 获取文件元数据 |
-| `figma_read_design` | 读取设计文档 |
-| `figma_list_node_index` | 列出节点索引 |
-| `figma_match_ui_nodes` | 匹配 UI 节点到 Figma 节点 |
-| `figma_summarize_design` | 摘要设计 |
-| `figma_extract_design_tokens` | 提取设计令牌 |
-| `figma_get_image_urls` | 获取图片 URL |
-| `figma_get_image_fills` | 获取图片填充 |
+### 9.2 IPC Channel 速查
 
-### 8.2 Channel Bridge
+| Channel 路径 | 用途 | Runtime 来源 | 测试入口 |
+|--------------|------|--------------|----------|
+| `fs.readFile` | 读取文本文件 | `window.electron.readPreviewFile` | Dev: `/__tech_preview/read` |
+| `fs.getImageBase64` | 读取图像 Base64 | `window.electron.getPreviewImageBase64` | Dev: `/__tech_preview/read` |
+| `fs.writeFile` | 写入文件 | `window.electron.writePreviewFile` | Dev: `/__tech_preview/write` |
+| `conversation.getWorkspace` | 获取工作区树 | `window.electron.getWorkspace` | Dev: `/__tech_preview/list` |
+| `previewHistory.list` | 读取历史记录 | localStorage | Browser DevTools |
+| `fileSnapshot.compare` | 比较快照 | `window.electron.compareSnapshots` | 需 Electron Runtime |
 
-`startChannelBridge()` 支持多种传输模式（[channel-bridge.ts L12](file://src/electron/libs/channel-bridge.ts#L12)）：
-
-- `bot-api`（Telegram polling）
-- `webhook`（通用 Webhook）
-- `lark-cli` / `lark-open-platform`（飞书）
-- `weixin-native` / `weixin-openclaw`（微信）
-
-**Telegram polling** 间隔：`POLL_INTERVAL_MS = 2500`（[channel-bridge.ts L43](file://src/electron/libs/channel-bridge.ts#L43)）
-
-### 8.3 图像预处理
-
-`preprocessImageAttachments()` 支持多模型回退（[image-preprocessor.ts L27-L59](file://src/electron/libs/image-preprocessor.ts#L27-L59)）：
-
-1. 首选配置的 `imageModel`
-2. 回退到 Codex OAuth / OpenAI Chat Completions / Anthropic Messages
+### 9.3 前后端桥接点
 
 ```mermaid
-sequenceDiagram
-    participant UI as React Component
-    participant PP as preprocessImageAttachments
-    participant MC as Model Candidates
-    participant API as Image Model API
-
-    UI->>PP: attachments[]
-    PP->>PP: filter image attachments
-    PP->>MC: buildImageModelCandidates
-    MC-->>PP: candidate models
-    Loop for each candidate
-        PP->>API: summarizeImageBase64WithModel
-        alt Codex OAuth config
-            API-->>PP: Codex Responses
-        else OpenAI baseURL
-            alt Anthropic first, then OpenAI retry
-                API-->>PP: Anthropic Messages
-            else
-                API-->>PP: OpenAI Chat Completions
-        end
+flowchart TD
+    subgraph Frontend["前端 (Browser/React)"]
+        A[BrowserWorkbenchPage.tsx]
+        B[ipcBridge 调用]
     end
-    PP-->>UI: ImagePreprocessResult
+
+    subgraph Bridge["桥接层"]
+        C[getElectron]
+        D[getDevPreview]
+    end
+
+    subgraph Backend["后端 (Electron)"]
+        E[window.electron]
+        F[channel-bridge.ts]
+        G[mcp-tools/figma-rest.ts]
+    end
+
+    A --> B
+    B --> C
+    B --> D
+    C --> E
+    E --> F
+    E --> G
+
+    style Bridge fill:#f9f,stroke:#333
+    style Backend fill:#ccf,stroke:#333
 ```
 
----
+**Source of Truth**：
+- **配置**：Electron 进程中的 `loadGlobalRuntimeConfig()`
+- **文件**：Vite Dev Server（`previewFsPlugin`）或 Electron 主进程
+- **数据库**：SQLite 文件（`~/.pro-workflow/data.db`）
 
-## 9. 常见失败模式与排障
+**运行时刷新边界**：
+- IPC 方法改动 → **需重启 Electron 进程**
+- Vite 中间件改动 → Vite 热更新（`server.middlewares.use`）
+- localStorage 改动 → 刷新页面（无热更新）
 
-### 9.1 IPC 调用返回 `{ success: false }`
+### 9.4 常见回归风险
 
-**排查步骤**：
-1. 检查 `error` 字段内容
-2. 确认是否在 Electron 环境中（`isBrowserPreviewRuntime()` 检查 UserAgent）
-3. 开发模式下检查 Vite 是否正常运行，中间件是否注册
+| 风险 | 影响范围 | 规避建议 |
+|------|----------|----------|
+| `normalizePath` 路径分隔符 | Linux 构建失败 | 使用 `path.posix` 或统一 `/` |
+| `getDevPreview` 降级 | Dev 模式文件读取失败 | 确保 fallback 链完整 |
+| `schema.sql` 缺失 | 数据库初始化崩溃 | `npm run build` 确保复制 |
+| `maxPreviewTextBytes` 超限 | 大文件预览被截断 | 用户提示或分片读取 |
+| MCP 工具 `zod` schema 不匹配 | 工具调用失败 | 严格测试参数边界 |
 
-**常见错误**：
-- `'只能访问当前工作目录内的文件。'` → 路径超出 cwd 范围
-- `'读取目录失败。'` → 权限问题或目录不存在
-- `readTextFile` 返回空字符串 → 检查 [ipcBridge.ts L78-L85](file://src/common/adapter/ipcBridge.ts#L78-L85) 的 fallback 逻辑
-
-### 9.2 预览历史为空
-
-- 检查 `localStorage` 键 `tech-cc-hub:aion-preview-history` 是否存在
-- 确认 `readPreviewHistory()` 没有 JSON.parse 异常
-
-### 9.3 Figma MCP 工具不可用
-
-1. 确认 `FIGMA_OFFICIAL_PLUGIN_ID` 配置存在（[figma-rest.ts L122](file://src/electron/libs/mcp-tools/figma-rest.ts#L122)）
-2. 检查 token 模式是否为 `rest` 且 `access_token` 存在
-3. 验证 `FIGMA_REST_API_URL` 网络可达
-
-### 9.4 Channel Bridge 不工作
-
-1. 确认 `loadGlobalRuntimeConfig()` 加载了 `channels` 配置
-2. Telegram 模式下检查 `botTokenEnv` 环境变量是否设置
-3. 微信模式下确认 `transport === "weixin-openclaw"` 且 `WEIXIN_TOKEN` 等环境变量存在
-
----
-
-## 10. Agent 改代码地图
-
-### 10.1 改之前先读这些文件
-
-| 优先级 | 文件 | 理由 |
-|--------|------|------|
-| ★★★ | `src/common/adapter/ipcBridge.ts` | 核心桥接实现，修改通道必读 |
-| ★★★ | `src/common/index.ts` | 入口导出，修改接口必同步导出 |
-| ★★☆ | `vite.config.ts` | Dev Preview 中间件，文件操作相关必读 |
-| ★★☆ | `src/common/types/preview.ts` | 新增预览类型必改此处 |
-| ★☆☆ | `src/electron/libs/skill-manager/tool-adapters.ts` | 工具适配器发现逻辑 |
-| ★☆☆ | `src/electron/libs/image-preprocessor.ts` | 图片预处理流程 |
-
-### 10.2 关键符号速查表
-
-| 符号 | 文件:行 | 用途 |
-|------|---------|------|
-| `ipcBridge` | [index.ts L1](file://src/common/index.ts#L1) | 主入口对象 |
-| `IBridgeResponse` | [ipcBridge.ts L1-L7](file://src/common/adapter/ipcBridge.ts#L1-L7) | 响应包装类型 |
-| `IDirOrFile` | [ipcBridge.ts L9-L16](file://src/common/adapter/ipcBridge.ts#L9-L16) | 目录/文件节点 |
-| `getWorkspaceTree` | [ipcBridge.ts L121-L135](file://src/common/adapter/ipcBridge.ts#L121-L135) | 工作区树获取 |
-| `readTextFile` | [ipcBridge.ts L78-L85](file://src/common/adapter/ipcBridge.ts#L78-L85) | 文本文件读取 |
-| `readImageFile` | [ipcBridge.ts L87-L94](file://src/common/adapter/ipcBridge.ts#L87-L94) | 图片文件读取 |
-| `noopEvent` | [ipcBridge.ts L36-L44](file://src/common/adapter/ipcBridge.ts#L36-L44) | 空事件占位 |
-| `ConfigStorage` | [storage.ts L9-L21](file://src/common/config/storage.ts#L9-L21) | 配置存储 |
-| `STORAGE_KEYS` | [storageKeys.ts L1-L4](file://src/common/config/storageKeys.ts#L1-L4) | 存储键常量 |
-| `ToolAdapter` | [tool-adapters.ts L9-L22](file://src/electron/libs/skill-manager/tool-adapters.ts#L9-L22) | 工具适配器接口 |
-| `defaultToolAdapters` | [tool-adapters.ts L96-L116+](file://src/electron/libs/skill-manager/tool-adapters.ts#L96-L116) | 默认适配器列表 |
-| `preprocessImageAttachments` | [image-preprocessor.ts L27-L59](file://src/electron/libs/image-preprocessor.ts#L27-L59) | 图片预处理入口 |
-| `getFigmaRestMcpServer` | [figma-rest.ts L77+](file://src/electron/libs/mcp-tools/figma-rest.ts#L77) | Figma MCP Server 获取 |
-| `FIGMA_REST_TOOL_NAMES` | [figma-rest.ts L36](file://src/electron/libs/mcp-tools/figma-rest.ts#L36) | Figma 工具名列表 |
-| `startChannelBridge` | [channel-bridge.ts L345+](file://src/electron/libs/channel-bridge.ts#L345) | Channel 桥接启动 |
-| `ChannelBridgeDispatch` | [channel-bridge.ts L36](file://src/electron/libs/channel-bridge.ts#L36) | 消息分发类型 |
-| `isChannelChatEnabled` | [channel-config.ts L6-L8](file://src/shared/channel-config.ts#L6-L8) | Channel 开关检查 |
-
-### 10.3 修改入口点
-
-| 场景 | 修改位置 | 说明 |
-|------|----------|------|
-| 新增 IPC 通道 | `ipcBridge` 对象新增字段 | 在 [ipcBridge.ts L152-L252](file://src/common/adapter/ipcBridge.ts#L152-L252) 添加 |
-| 新增预览类型 | `PreviewContentType` union | 在 [preview.ts L1-L11](file://src/common/types/preview.ts#L1-L11) 添加 |
-| 新增工具适配器 | `defaultToolAdapters()` 数组 | 在 [tool-adapters.ts L96-L116+](file://src/electron/libs/skill-manager/tool-adapters.ts#L96-L116) 添加 |
-| 新增 MCP 工具 | `getFigmaRestMcpServer()` 内部 | 在 [figma-rest.ts L77+](file://src/electron/libs/mcp-tools/figma-rest.ts#L77) 添加 `@tool` 装饰器 |
-| Dev Preview 新路由 | `previewFsPlugin()` 中间件 | 在 [vite.config.ts L62-L160+](file://vite.config.ts#L62-L160) 添加 middleware |
-
-### 10.4 验证命令
+### 9.5 验证命令
 
 ```bash
-# 检查 TypeScript 编译
-npx tsc --noEmit -p tsconfig.json
+# 验证 ipcBridge 导出
+grep -n "export" src/common/index.ts
 
-# 运行单元测试（如果有）
-npm test -- --grep "ipcBridge\|ConfigStorage"
+# 验证 Vite 中间件路由
+grep -n "__tech_preview" vite.config.ts
 
-# 检查导出完整性
-grep -r "export" src/common/index.ts
+# 验证图像模型候选逻辑
+node -e "
+const { isLikelyImageUnderstandingModel } = require('./src/electron/libs/image-preprocessor.js');
+console.log(isLikelyImageUnderstandingModel('gpt-4o'));
+"
 
-# 验证 vite 预览中间件
-npm run dev
-# 访问 http://localhost:5173/__tech_preview/list?cwd=$(pwd)
+# 验证数据库初始化
+node pro-workflow/src/db/index.ts
 
 # 验证 localStorage 键
-node -e "localStorage.setItem('config:test', JSON.stringify({a:1})); console.log(localStorage.getItem('config:test'))"
+grep -n "tech-cc-hub:" src/common/config/storageKeys.ts src/common/adapter/ipcBridge.ts
 ```
-
-### 10.5 常见回归风险
-
-| 风险 | 影响范围 | 缓解措施 |
-|------|----------|----------|
-| `ipcBridge` 结构变更 | 所有调用方 | 保持 `{ invoke: Function }` 接口契约 |
-| `IBridgeResponse` 字段变更 | 错误处理逻辑 | 保留 `success` + 向下兼容的字段 |
-| Dev Preview 中间件返回格式变更 | 前端文件读取 | 保持 `{ success: true/false, data?, error? }` 结构 |
-| `noSuchWindow` Electron 错误 | BrowserWorkbenchPage | 检查 `isBrowserPreviewRuntime()` 返回值 |
-| 工具适配器路径解析 | skills 发现失败 | 验证 `existsSync()` 在 `candidatePaths()` 中正确使用 |
-| 图片预处理回退链失败 | 图像理解不可用 | 测试三种模型路径（Codex/OAI/Anthropic） |
 
 ---
 
-*本文档由 Qoder Repo Wiki 生成器创建，基于代码证据地图自动分析。*
+## 10. 常见问题与排障
+
+### 10.1 文件读取返回空字符串
+
+**排查步骤**：
+
+1. 检查 `getElectron()` 是否返回 `undefined`：
+   ```typescript
+   console.log(typeof window === 'undefined', window.electron);
+   ```
+
+2. 检查 Dev Preview 是否响应：
+   ```bash
+   curl "http://localhost:5173/__tech_preview/read?cwd=/path/to/workspace&path=file.txt"
+   ```
+
+3. 检查响应格式（`success` vs 直接返回字符串）：
+   ```typescript
+   // ipcBridge.ts#L78-L85
+   if (typeof result === 'string') return result;
+   if (result.success === false) return '';
+   return result.content ?? result.data ?? '';
+   ```
+
+[章节来源](file://src/common/adapter/ipcBridge.ts#L78-L85)
+
+### 10.2 预览历史不刷新
+
+**根因**：localStorage 写入后无热更新机制。
+
+**解决**：
+- 重新调用 `ipcBridge.previewHistory.list()` 获取最新列表
+- 或手动触发 `window.location.reload()`
+
+### 10.3 图像预处理失败
+
+**排查步骤**：
+
+1. 确认 `config.imageModel` 已配置：
+   ```typescript
+   if (!imageModel) return null;
+   ```
+
+2. 检查模型是否匹配 `isLikelyImageUnderstandingModel`：
+   - 匹配模式：`/(^|[-_.])(vl|vision|visual|ocr|omni)([-_.]|$)|qwen.*vl|glm.*v|gpt-4o|gemini|grok-2-vision/i`
+   - 排除模式：`/image-?0?1|speech|music|embedding|coder/i`
+
+3. 检查 API Key 配置（CODOX / OpenAI / Anthropic）：
+
+[章节来源](file://src/electron/libs/image-preprocessor.ts#L208-L211)
+
+### 10.4 数据库初始化失败
+
+**错误信息**：`schema.sql not found. Tried: ...`
+
+**解决**：
+```bash
+# 重新构建，确保 schema.sql 被复制到 dist
+npm run build
+```
+
+**检查路径**：
+- 源文件：`pro-workflow/src/db/schema.sql`
+- 目标：`pro-workflow/dist/db/schema.sql` 或 `pro-workflow/dist-esm/db/schema.sql`
+
+[章节来源](file://pro-workflow/src/db/index.ts#L32-L39)
+
+### 10.5 MCP Figma 工具不可用
+
+**排查步骤**：
+
+1. 检查 Token 配置：
+   ```typescript
+   const token = getConfiguredFigmaPat(); // throws if not set
+   ```
+
+2. 检查插件模式：
+   ```typescript
+   // plugin?.mode === "rest" || plugin?.authProvider === "pat"
+   ```
+
+3. 验证工具列表：
+   ```typescript
+   console.log(FIGMA_REST_TOOL_NAMES);
+   // ["figma_get_current_user", "figma_get_file_metadata", ...]
+   ```
+
+[章节来源](file://src/electron/libs/mcp-tools/figma-rest.ts#L119-L130)
+
+---
+
+## 附录：模块文件清单
+
+```
+src/common/
+├── index.ts                          # 主入口
+├── adapter/
+│   └── ipcBridge.ts                  # IPC 桥接核心 (255 行)
+├── chat/
+│   └── chatLib.ts                    # 聊天工具 (15 行)
+├── config/
+│   ├── constants.ts                  # 业务常量 (3 行)
+│   ├── storage.ts                    # localStorage 抽象 (22 行)
+│   └── storageKeys.ts               # 存储键枚举 (5 行)
+├── types/
+│   ├── fileSnapshot.ts               # 快照类型 (19 行)
+│   └── preview.ts                    # 预览类型 (32 行)
+└── utils.ts                          # 通用工具 (7 行)
+```
+
+**行数统计**：约 360 行（不含注释和空行）
+
+---
+
+*本文档由 Agent 根据代码证据地图自动生成。如有疑问，请检查对应源文件。*

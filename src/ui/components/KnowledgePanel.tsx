@@ -1,12 +1,15 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
   BookOpen,
   ChevronDown,
   ChevronRight,
+  FileText,
+  Folder,
   FolderPlus,
   GitBranch,
+  Link2,
   Network,
   PauseCircle,
   Search,
@@ -18,6 +21,7 @@ import {
 import { useAppStore } from "../store/useAppStore";
 import type { ApiConfigProfile, SettingsPageId } from "../types";
 import MDContent from "../render/markdown";
+import { PREVIEW_OPEN_FILE_EVENT, type PreviewOpenFileDetail } from "../events";
 
 type KnowledgePanelProps = {
   onBack?: () => void;
@@ -48,6 +52,8 @@ type KnowledgeWorkspace = {
   updatedAt: number;
 };
 
+type KnowledgeWorkspaceRelations = Record<string, string[]>;
+
 type KnowledgeDocument = {
   id: string;
   workspaceKey: string;
@@ -60,10 +66,27 @@ type KnowledgeDocument = {
 
 type KnowledgeOpenTab = {
   id: string;
-  kind: "workspace" | "document";
+  kind: "workspace" | "document" | "source";
   workspaceKey: string;
   documentId?: string;
+  sourcePath?: string;
+  startLine?: number;
+  endLine?: number;
   title: string;
+};
+
+type SourcePreviewState = {
+  tabId: string;
+  workspaceKey: string;
+  filePath: string;
+  relativePath: string;
+  title: string;
+  startLine?: number;
+  endLine?: number;
+  content?: string;
+  language?: string;
+  loading: boolean;
+  error?: string;
 };
 
 type WikiTreeNode = {
@@ -83,12 +106,17 @@ type KnowledgeListResponse = {
     updatedAt?: number;
   }>;
   generations?: Record<string, GenerationState>;
+  relations?: KnowledgeWorkspaceRelations;
 };
 
 type KnowledgeWorkspaceRecord = NonNullable<KnowledgeListResponse["workspaces"]>[number];
 
 type KnowledgeDocumentsResponse = {
   documents?: KnowledgeDocument[];
+};
+
+type KnowledgeWorkspaceLinksResponse = {
+  relations?: KnowledgeWorkspaceRelations;
 };
 
 type KnowledgeRunGenerationResponse = {
@@ -133,11 +161,18 @@ function getWorkspaceName(cwd?: string): string {
   return parts.at(-1) || cwd;
 }
 
-function getWorkspaceParentPath(cwd?: string): string {
-  if (!cwd) return "";
-  const parts = cwd.split(/[\\/]+/).filter(Boolean);
-  if (parts.length <= 1) return cwd;
-  return parts.slice(0, -1).join("/");
+function normalizeSearchText(value: string): string {
+  return value.trim().toLocaleLowerCase("zh-Hans-CN");
+}
+
+function workspaceMatchesSearch(workspace: KnowledgeWorkspace, query: string): boolean {
+  if (!query) return true;
+  return normalizeSearchText(`${workspace.name}\n${workspace.cwd ?? ""}`).includes(query);
+}
+
+function documentMatchesSearch(document: KnowledgeDocument, query: string): boolean {
+  if (!query) return true;
+  return normalizeSearchText(`${document.title}\n${document.section}\n${document.content}`).includes(query);
 }
 
 function normalizeWorkspaceKey(cwd?: string | null): string {
@@ -243,12 +278,16 @@ function normalizeGenerationState(value: unknown): GenerationState | undefined {
   const total = Number.isFinite(raw.total) && raw.total && raw.total > 0 ? Math.floor(raw.total) : 0;
   const failed = Number.isFinite(raw.failed) && raw.failed && raw.failed > 0 ? Math.floor(raw.failed) : 0;
   const updatedAt = Number.isFinite(raw.updatedAt) && raw.updatedAt && raw.updatedAt > 0 ? raw.updatedAt : Date.now();
-  let completed = Number.isFinite(raw.completed) && raw.completed && raw.completed > 0 ? Math.floor(raw.completed) : 0;
+  const rawCompleted = Number.isFinite(raw.completed) && raw.completed && raw.completed > 0 ? Math.floor(raw.completed) : 0;
+  const completed = total > 0 ? Math.min(total, Math.max(0, rawCompleted)) : Math.max(0, rawCompleted);
   let status = raw.status;
+  if (status !== "idle" && failed === 0 && total > 0 && completed >= total) {
+    status = "completed";
+  }
 
   return {
     status,
-    completed: total > 0 ? Math.min(total, Math.max(0, completed)) : Math.max(0, completed),
+    completed,
     total,
     processing: status === "generating" ? Math.max(1, Math.floor(Number(raw.processing) || 1)) : 0,
     failed,
@@ -277,6 +316,37 @@ function workspaceTabId(workspaceKey: string): string {
 
 function documentTabId(workspaceKey: string, documentId: string): string {
   return `document:${workspaceKey}:${documentId}`;
+}
+
+function sourceTabId(workspaceKey: string, filePath: string): string {
+  return `source:${workspaceKey}:${filePath}`;
+}
+
+function fileNameFromPath(filePath: string): string {
+  const parts = filePath.split(/[\\/]+/).filter(Boolean);
+  return parts.at(-1) || filePath;
+}
+
+function normalizePathForCompare(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function relativePathFromWorkspace(workspaceRoot: string, filePath: string): string {
+  const root = normalizePathForCompare(workspaceRoot);
+  const target = normalizePathForCompare(filePath);
+  return target === root
+    ? fileNameFromPath(filePath)
+    : target.startsWith(`${root}/`)
+      ? target.slice(root.length + 1)
+      : filePath;
+}
+
+function findWorkspaceForSource(workspaces: KnowledgeWorkspace[], filePath: string, fallback?: KnowledgeWorkspace): KnowledgeWorkspace | undefined {
+  const normalizedFilePath = normalizePathForCompare(filePath);
+  return workspaces.find((workspace) => {
+    const root = normalizePathForCompare(workspace.cwd ?? workspace.key);
+    return Boolean(root && (normalizedFilePath === root || normalizedFilePath.startsWith(`${root}/`)));
+  }) ?? fallback;
 }
 
 function resolveHeadFromSnapshot(snapshot: import("../types").UiGitWorkbenchSnapshot): KnowledgeGitState {
@@ -412,6 +482,30 @@ function generationRecordEquals(left: Record<string, GenerationState>, right: Re
   return rightKeys.every((key) => generationStateEquals(left[key], right[key]));
 }
 
+function normalizeWorkspaceRelations(value: unknown): KnowledgeWorkspaceRelations {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const next: KnowledgeWorkspaceRelations = {};
+  for (const [sourceKey, targets] of Object.entries(value)) {
+    const key = normalizeWorkspaceKey(sourceKey);
+    if (!key || !Array.isArray(targets)) continue;
+    const linked = Array.from(new Set(targets.map((item) => normalizeWorkspaceKey(String(item))).filter((item) => item && item !== key)));
+    if (linked.length > 0) next[key] = linked;
+  }
+  return next;
+}
+
+function relationRecordEquals(left: KnowledgeWorkspaceRelations, right: KnowledgeWorkspaceRelations): boolean {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  if (leftKeys.length !== rightKeys.length) return false;
+  return rightKeys.every((key, index) => {
+    if (leftKeys[index] !== key) return false;
+    const leftTargets = [...(left[key] ?? [])].sort();
+    const rightTargets = [...(right[key] ?? [])].sort();
+    return leftTargets.length === rightTargets.length && rightTargets.every((target, targetIndex) => leftTargets[targetIndex] === target);
+  });
+}
+
 function workspaceListEquals(left: KnowledgeWorkspace[], right: KnowledgeWorkspace[]): boolean {
   if (left.length !== right.length) return false;
   return left.every((workspace, index) => {
@@ -441,13 +535,14 @@ function ProgressBlock({ state }: { state: GenerationState }) {
   const percent = hasKnownTotal
     ? Math.min(100, Math.round((state.completed / safeTotal) * 1000) / 10)
     : 0;
+  const isFailed = state.status === "paused" && state.failed > 0;
   const statusLabel = state.status === "paused"
-    ? "已暂停"
+    ? isFailed ? "生成失败" : "已暂停"
     : state.status === "completed"
       ? "已完成"
       : "正在生成中";
   const progressPrefix = state.status === "paused"
-    ? "已暂停"
+    ? isFailed ? "生成失败" : "已暂停"
     : state.status === "completed"
       ? "生成完成"
       : "正在生成中";
@@ -489,13 +584,15 @@ function SectionTree({
   documents,
   selectedDocumentId,
   onSelectDocument,
+  forceExpanded = false,
 }: {
   active: boolean;
   documents: KnowledgeDocument[];
   selectedDocumentId: string;
   onSelectDocument: (document: KnowledgeDocument) => void;
+  forceExpanded?: boolean;
 }) {
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set());
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(() => new Set());
 
   if (!active || documents.length === 0) {
     return null;
@@ -503,7 +600,7 @@ function SectionTree({
 
   const tree = buildDocumentTree(documents);
   const toggleSection = (sectionTitle: string) => {
-    setCollapsedSections((current) => {
+    setExpandedSections((current) => {
       const next = new Set(current);
       if (next.has(sectionTitle)) {
         next.delete(sectionTitle);
@@ -516,7 +613,7 @@ function SectionTree({
 
   const renderNodes = (nodes: WikiTreeNode[], depth = 0): ReactNode => (
     nodes.map((node) => {
-      const collapsed = collapsedSections.has(node.key);
+      const collapsed = !forceExpanded && !expandedSections.has(node.key);
       return (
         <div key={node.key} data-knowledge-section={node.key}>
           <button
@@ -563,7 +660,15 @@ function SectionTree({
   );
 }
 
-function WikiDocumentView({ document, generation }: { document: KnowledgeDocument; generation: GenerationState }) {
+function WikiDocumentView({
+  document,
+  generation,
+  onOpenSourceFile,
+}: {
+  document: KnowledgeDocument;
+  generation: GenerationState;
+  onOpenSourceFile: (detail: PreviewOpenFileDetail) => void;
+}) {
   const placeholder = isPlaceholderWikiDocument(document);
   return (
     <article className="w-full max-w-3xl rounded-xl border border-slate-200 bg-white px-7 py-6 shadow-sm">
@@ -577,12 +682,84 @@ function WikiDocumentView({ document, generation }: { document: KnowledgeDocumen
         </div>
       </div>
       <div className="mt-5 min-w-0">
-        <MDContent text={normalizeWikiDocumentMarkdown(document.content)} />
+        <MDContent
+          text={normalizeWikiDocumentMarkdown(document.content)}
+          sourceRoot={document.workspaceKey}
+          onOpenSourceFile={onOpenSourceFile}
+        />
       </div>
       <div className="mt-6 border-t border-slate-100 pt-4 text-xs text-slate-400">
         {generation.branch ? `${generation.branch} · ` : ""}
         {generation.commitShortHash || generation.commitId?.slice(0, 7) || "未绑定 Commit"}
       </div>
+    </article>
+  );
+}
+
+function SourceFileView({ preview }: { preview?: SourcePreviewState }) {
+  const targetLineRef = useRef<HTMLDivElement | null>(null);
+  const lines = useMemo(() => (preview?.content ?? "").replace(/\r\n/g, "\n").split("\n"), [preview?.content]);
+  const endLine = preview?.endLine && preview.startLine
+    ? Math.max(preview.startLine, preview.endLine)
+    : preview?.startLine;
+
+  useEffect(() => {
+    if (!preview?.startLine || !preview.content) return;
+    window.requestAnimationFrame(() => {
+      targetLineRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+  }, [preview?.content, preview?.startLine, preview?.endLine]);
+
+  if (!preview) {
+    return (
+      <article className="w-full max-w-4xl rounded-xl border border-slate-200 bg-white px-7 py-10 text-center shadow-sm">
+        <FileText className="mx-auto h-8 w-8 text-slate-300" />
+        <div className="mt-4 text-base font-semibold text-slate-700">正在打开源码文件</div>
+      </article>
+    );
+  }
+
+  return (
+    <article className="w-full max-w-5xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Source</div>
+          <h3 className="mt-1 truncate text-lg font-semibold text-slate-950">{preview.title}</h3>
+          <div className="mt-1 truncate font-mono text-xs text-slate-400" title={preview.filePath}>
+            {preview.relativePath}
+            {preview.startLine ? `#L${preview.startLine}${endLine && endLine !== preview.startLine ? `-L${endLine}` : ""}` : ""}
+          </div>
+        </div>
+        {preview.language && (
+          <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
+            {preview.language}
+          </span>
+        )}
+      </div>
+      {preview.loading ? (
+        <div className="flex min-h-72 items-center justify-center text-sm font-medium text-slate-400">正在读取文件...</div>
+      ) : preview.error ? (
+        <div className="px-5 py-6 text-sm leading-6 text-red-600">{preview.error}</div>
+      ) : (
+        <div className="max-h-[68vh] overflow-auto bg-slate-950 py-4 text-[13px] leading-5 text-slate-100">
+          {lines.map((line, index) => {
+            const lineNumber = index + 1;
+            const active = Boolean(preview.startLine && lineNumber >= preview.startLine && lineNumber <= (endLine ?? preview.startLine));
+            return (
+              <div
+                key={lineNumber}
+                ref={preview.startLine === lineNumber ? targetLineRef : undefined}
+                data-source-line={lineNumber}
+                data-source-active={active ? "true" : "false"}
+                className={`grid grid-cols-[4rem_minmax(0,1fr)] gap-3 px-4 font-mono ${active ? "bg-amber-300/20 text-amber-50" : "text-slate-100"}`}
+              >
+                <span className={`select-none text-right ${active ? "text-amber-200" : "text-slate-500"}`}>{lineNumber}</span>
+                <code className="min-w-0 whitespace-pre-wrap break-words">{line || " "}</code>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </article>
   );
 }
@@ -607,9 +784,11 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
   const [activeTab, setActiveTab] = useState<"repo" | "memory">("repo");
   const [selectedWorkspaceKey, setSelectedWorkspaceKey] = useState<string>("");
   const [selectedDocumentId, setSelectedDocumentId] = useState<string>("");
+  const [repoSearchQuery, setRepoSearchQuery] = useState("");
   const [expandedWorkspaceKeys, setExpandedWorkspaceKeys] = useState<Set<string>>(() => new Set());
   const [openWikiTabs, setOpenWikiTabs] = useState<KnowledgeOpenTab[]>([]);
   const [activeWikiTabId, setActiveWikiTabId] = useState<string>("");
+  const [sourcePreviewByTabId, setSourcePreviewByTabId] = useState<Record<string, SourcePreviewState>>({});
   const [systemWorkspace, setSystemWorkspace] = useState<string>("");
   const [manualWorkspacePaths, setManualWorkspacePaths] = useState<string[]>(() => readStoredWorkspacePaths());
   const [hiddenWorkspaceKeys, setHiddenWorkspaceKeys] = useState<Set<string>>(() => readStoredWorkspaceKeySet(KNOWLEDGE_HIDDEN_WORKSPACES_STORAGE_KEY));
@@ -618,6 +797,8 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
   const [storedWorkspaces, setStoredWorkspaces] = useState<KnowledgeWorkspace[]>([]);
   const [documentsByWorkspace, setDocumentsByWorkspace] = useState<Record<string, KnowledgeDocument[]>>({});
   const [generationByWorkspace, setGenerationByWorkspace] = useState<Record<string, GenerationState>>({});
+  const [relationsByWorkspace, setRelationsByWorkspace] = useState<KnowledgeWorkspaceRelations>({});
+  const [linkEditorWorkspaceKey, setLinkEditorWorkspaceKey] = useState<string>("");
   const [gitByWorkspace, setGitByWorkspace] = useState<Record<string, KnowledgeGitState>>({});
   const [autoUpdateByWorkspace, setAutoUpdateByWorkspace] = useState<Record<string, boolean>>(() => readStoredBooleanRecord(KNOWLEDGE_AUTO_UPDATE_STORAGE_KEY));
 
@@ -686,6 +867,29 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
 
     return Array.from(groups.values()).sort((a, b) => b.updatedAt - a.updatedAt);
   }, [hiddenWorkspaceKeys, knowledgeStateReady, manualWorkspacePaths, sessions, storedWorkspaces, systemWorkspace]);
+  const normalizedRepoSearchQuery = useMemo(() => normalizeSearchText(repoSearchQuery), [repoSearchQuery]);
+  const hasRepoSearch = normalizedRepoSearchQuery.length > 0;
+  const filteredDocumentsByWorkspace = useMemo<Record<string, KnowledgeDocument[]>>(() => {
+    if (!hasRepoSearch) return documentsByWorkspace;
+    const next: Record<string, KnowledgeDocument[]> = {};
+    for (const [workspaceKey, documents] of Object.entries(documentsByWorkspace)) {
+      const matchedDocuments = documents.filter((document) => documentMatchesSearch(document, normalizedRepoSearchQuery));
+      if (matchedDocuments.length > 0) {
+        next[workspaceKey] = matchedDocuments;
+      }
+    }
+    return next;
+  }, [documentsByWorkspace, hasRepoSearch, normalizedRepoSearchQuery]);
+  const visibleWorkspaces = useMemo(() => {
+    if (!hasRepoSearch) return workspaces;
+    return workspaces.filter((workspace) => (
+      workspaceMatchesSearch(workspace, normalizedRepoSearchQuery) ||
+      (filteredDocumentsByWorkspace[workspace.key]?.length ?? 0) > 0
+    ));
+  }, [filteredDocumentsByWorkspace, hasRepoSearch, normalizedRepoSearchQuery, workspaces]);
+  const repoSearchResultCount = useMemo(() => (
+    visibleWorkspaces.reduce((count, workspace) => count + 1 + (filteredDocumentsByWorkspace[workspace.key]?.length ?? 0), 0)
+  ), [filteredDocumentsByWorkspace, visibleWorkspaces]);
   const gitWorkspaceSignature = useMemo(() => (
     workspaces
       .map((workspace) => `${workspace.key}\t${workspace.cwd ?? ""}`)
@@ -705,8 +909,9 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
   const activeDocument = activeWikiTab?.kind === "document"
     ? selectedDocuments.find((document) => document.id === activeWikiTab.documentId) ?? selectedDocument
     : undefined;
-  const activeHeaderTitle = activeWikiTab?.title ?? workspaceName;
+  const activeSourcePreview = activeWikiTab?.kind === "source" ? sourcePreviewByTabId[activeWikiTab.id] : undefined;
   const showingDocumentPreview = Boolean(activeWikiTab?.kind === "document" || selectedDocumentId);
+  const showingSourcePreview = activeWikiTab?.kind === "source";
   const previewDocument = activeDocument ?? selectedDocument;
   const selectedPreviewTitle = activeWikiTab?.title ?? selectedDocument?.title;
   const selectedGitState = selectedWorkspace ? gitByWorkspace[selectedWorkspace.key] : undefined;
@@ -751,8 +956,10 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
         nextGenerations[workspaceKey] = generationState;
       }
     }
+    const nextRelations = normalizeWorkspaceRelations(result.relations);
     setStoredWorkspaces((current) => workspaceListEquals(current, nextWorkspaces) ? current : nextWorkspaces);
     setGenerationByWorkspace((current) => generationRecordEquals(current, nextGenerations) ? current : nextGenerations);
+    setRelationsByWorkspace((current) => relationRecordEquals(current, nextRelations) ? current : nextRelations);
   };
 
   const activateWikiTab = (tab: KnowledgeOpenTab) => {
@@ -768,7 +975,11 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
       workspaceKey: workspace.key,
       title: workspace.name,
     };
-    setOpenWikiTabs((current) => current.some((item) => item.id === tab.id) ? current : [...current, tab]);
+    setOpenWikiTabs((current) => {
+      const existingIndex = current.findIndex((item) => item.id === tab.id);
+      if (existingIndex < 0) return [...current, tab];
+      return current.map((item, index) => index === existingIndex ? { ...item, ...tab } : item);
+    });
     activateWikiTab(tab);
   };
 
@@ -780,9 +991,144 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
       documentId: document.id,
       title: document.title,
     };
-    setOpenWikiTabs((current) => current.some((item) => item.id === tab.id) ? current : [...current, tab]);
+    setOpenWikiTabs((current) => {
+      const existingIndex = current.findIndex((item) => item.id === tab.id);
+      if (existingIndex < 0) return [...current, tab];
+      return current.map((item, index) => index === existingIndex ? { ...item, ...tab } : item);
+    });
     activateWikiTab(tab);
   };
+
+  const openSourceTab = useCallback((detail: PreviewOpenFileDetail) => {
+    const fallbackWorkspace = activeWikiTab?.workspaceKey
+      ? workspaces.find((workspace) => workspace.key === activeWikiTab.workspaceKey)
+      : selectedWorkspace;
+    const targetWorkspace = findWorkspaceForSource(workspaces, detail.filePath, fallbackWorkspace ?? selectedWorkspace);
+    const workspaceRoot = targetWorkspace?.cwd ?? targetWorkspace?.key ?? "";
+    if (!targetWorkspace || !workspaceRoot) {
+      setWorkspaceError("没有找到源码文件所属的知识库工作区。");
+      return;
+    }
+
+    const tabId = sourceTabId(targetWorkspace.key, detail.filePath);
+    const title = fileNameFromPath(detail.filePath);
+    const tab: KnowledgeOpenTab = {
+      id: tabId,
+      kind: "source",
+      workspaceKey: targetWorkspace.key,
+      sourcePath: detail.filePath,
+      startLine: detail.startLine,
+      endLine: detail.endLine,
+      title,
+    };
+    const relativePath = relativePathFromWorkspace(workspaceRoot, detail.filePath);
+
+    setOpenWikiTabs((current) => {
+      const existingIndex = current.findIndex((item) => item.id === tab.id);
+      if (existingIndex < 0) return [...current, tab];
+      return current.map((item, index) => index === existingIndex ? { ...item, ...tab } : item);
+    });
+    activateWikiTab(tab);
+    setSourcePreviewByTabId((current) => ({
+      ...current,
+      [tabId]: {
+        ...(current[tabId] ?? {}),
+        tabId,
+        workspaceKey: targetWorkspace.key,
+        filePath: detail.filePath,
+        relativePath,
+        title,
+        startLine: detail.startLine,
+        endLine: detail.endLine,
+        loading: true,
+        error: undefined,
+      },
+    }));
+
+    const electron = (window as unknown as {
+      electron?: {
+        readPreviewFile?: (input: { cwd: string; path: string }) => Promise<{
+          success?: boolean;
+          content?: string;
+          path?: string;
+          language?: string;
+          error?: string;
+        }>;
+      };
+    }).electron;
+
+    const readPromise = electron?.readPreviewFile?.({ cwd: workspaceRoot, path: detail.filePath });
+    if (!readPromise) {
+      setSourcePreviewByTabId((current) => ({
+        ...current,
+        [tabId]: {
+          ...(current[tabId] ?? {
+            tabId,
+            workspaceKey: targetWorkspace.key,
+            filePath: detail.filePath,
+            relativePath,
+            title,
+          }),
+          loading: false,
+          error: "当前运行时没有文件预览 IPC，无法打开源码文件。",
+        },
+      }));
+      return;
+    }
+
+    void readPromise
+      .then((result) => {
+        setSourcePreviewByTabId((current) => ({
+          ...current,
+          [tabId]: {
+            ...(current[tabId] ?? {
+              tabId,
+              workspaceKey: targetWorkspace.key,
+              filePath: detail.filePath,
+              relativePath,
+              title,
+            }),
+            filePath: result.path || detail.filePath,
+            relativePath: relativePathFromWorkspace(workspaceRoot, result.path || detail.filePath),
+            content: result.success ? result.content ?? "" : undefined,
+            language: result.language,
+            startLine: detail.startLine,
+            endLine: detail.endLine,
+            loading: false,
+            error: result.success ? undefined : result.error || "源码文件读取失败。",
+          },
+        }));
+      })
+      .catch((error) => {
+        setSourcePreviewByTabId((current) => ({
+          ...current,
+          [tabId]: {
+            ...(current[tabId] ?? {
+              tabId,
+              workspaceKey: targetWorkspace.key,
+              filePath: detail.filePath,
+              relativePath,
+              title,
+            }),
+            startLine: detail.startLine,
+            endLine: detail.endLine,
+            loading: false,
+            error: error instanceof Error ? error.message : "源码文件读取失败。",
+          },
+        }));
+      });
+  }, [activeWikiTab?.workspaceKey, selectedWorkspace, workspaces]);
+
+  useEffect(() => {
+    const handlePreviewOpenFile = (event: Event) => {
+      const detail = (event as CustomEvent<PreviewOpenFileDetail>).detail;
+      if (!detail?.filePath) return;
+      openSourceTab(detail);
+    };
+
+    window.addEventListener(PREVIEW_OPEN_FILE_EVENT, handlePreviewOpenFile);
+    return () => window.removeEventListener(PREVIEW_OPEN_FILE_EVENT, handlePreviewOpenFile);
+  }, [openSourceTab]);
 
   const loadWorkspaceDocuments = async (workspaceKey: string): Promise<KnowledgeDocument[]> => {
     const result = await invokeKnowledge<KnowledgeDocumentsResponse>("knowledge:list-documents", { workspaceKey });
@@ -796,6 +1142,12 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
   const closeWikiTab = (tabId: string) => {
     const index = openWikiTabs.findIndex((tab) => tab.id === tabId);
     const nextTabs = openWikiTabs.filter((tab) => tab.id !== tabId);
+    setSourcePreviewByTabId((current) => {
+      if (!current[tabId]) return current;
+      const next = { ...current };
+      delete next[tabId];
+      return next;
+    });
     setOpenWikiTabs(nextTabs);
     if (activeWikiTabId !== tabId) return;
     const fallbackTab = nextTabs[Math.max(0, index - 1)] ?? nextTabs[0];
@@ -1139,6 +1491,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
     if (!selectedWorkspace) {
       if (activeWikiTabId) setActiveWikiTabId("");
       if (openWikiTabs.length > 0) setOpenWikiTabs([]);
+      setSourcePreviewByTabId({});
       return;
     }
     if (openWikiTabs.length > 0 || activeWikiTabId) return;
@@ -1285,6 +1638,36 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
     }));
   };
 
+  const saveWorkspaceLinks = (workspaceKey: string, linkedWorkspaceKeys: string[]) => {
+    const key = normalizeWorkspaceKey(workspaceKey);
+    if (!key) return;
+    const nextTargets = Array.from(new Set(linkedWorkspaceKeys.map(normalizeWorkspaceKey).filter((item) => item && item !== key)));
+    setRelationsByWorkspace((current) => ({
+      ...current,
+      [key]: nextTargets,
+    }));
+    void invokeKnowledge<KnowledgeWorkspaceLinksResponse>("knowledge:set-workspace-links", {
+      workspaceKey: key,
+      linkedWorkspaceKeys: nextTargets,
+    })
+      .then((result) => {
+        const nextRelations = normalizeWorkspaceRelations(result.relations);
+        setRelationsByWorkspace((current) => relationRecordEquals(current, nextRelations) ? current : nextRelations);
+      })
+      .catch((error) => setWorkspaceError(error instanceof Error ? error.message : "关联知识库失败。"));
+  };
+
+  const toggleWorkspaceLink = (workspaceKey: string, linkedWorkspaceKey: string) => {
+    const key = normalizeWorkspaceKey(workspaceKey);
+    const target = normalizeWorkspaceKey(linkedWorkspaceKey);
+    if (!key || !target || key === target) return;
+    const currentTargets = relationsByWorkspace[key] ?? [];
+    const nextTargets = currentTargets.includes(target)
+      ? currentTargets.filter((item) => item !== target)
+      : [...currentTargets, target];
+    saveWorkspaceLinks(key, nextTargets);
+  };
+
   const addWorkspace = async () => {
     setWorkspaceError(null);
     try {
@@ -1311,7 +1694,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
       setManualWorkspacePaths((current) => current.some((item) => normalizeWorkspaceKey(item) === key) ? current : [key, ...current]);
       setSelectedWorkspaceKey(key);
     } catch (error) {
-      setWorkspaceError(error instanceof Error ? error.message : "新增工作区失败。");
+      setWorkspaceError(error instanceof Error ? error.message : "新增知识库失败。");
     }
   };
 
@@ -1327,6 +1710,18 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
       delete next[workspace.key];
       return next;
     });
+    setRelationsByWorkspace((current) => {
+      const next: KnowledgeWorkspaceRelations = {};
+      for (const [key, targets] of Object.entries(current)) {
+        if (key === workspace.key) continue;
+        const filteredTargets = targets.filter((target) => target !== workspace.key);
+        if (filteredTargets.length > 0) next[key] = filteredTargets;
+      }
+      return next;
+    });
+    if (linkEditorWorkspaceKey === workspace.key) {
+      setLinkEditorWorkspaceKey("");
+    }
     setDocumentsByWorkspace((current) => {
       const next = { ...current };
       delete next[workspace.key];
@@ -1375,31 +1770,52 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab("memory")}
-              className={`rounded-full px-4 py-2 text-sm font-semibold ${activeTab === "memory" ? "bg-slate-100 text-slate-950 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+              disabled
+              title="TODO：记忆面板后续接入"
+              className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold text-slate-400 opacity-70"
             >
-              记忆
+              <span>记忆</span>
+              <span className="rounded-full border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold leading-none text-slate-400">
+                TODO
+              </span>
             </button>
           </div>
           <div className="mt-4 flex items-center gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
               <Search className="h-4 w-4 text-slate-400" />
               <input
+                value={repoSearchQuery}
+                onChange={(event) => setRepoSearchQuery(event.target.value)}
                 className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-400"
-                placeholder={activeTab === "repo" ? "搜索 Repo Wiki" : "搜索记忆"}
+                placeholder="搜索 Repo Wiki"
               />
+              {repoSearchQuery ? (
+                <button
+                  type="button"
+                  aria-label="清空 Repo Wiki 搜索"
+                  onClick={() => setRepoSearchQuery("")}
+                  className="rounded p-0.5 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
             </div>
             <button className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" type="button" aria-label="筛选">
               <SlidersHorizontal className="h-4 w-4" />
             </button>
           </div>
+          {hasRepoSearch ? (
+            <div className="mt-2 truncate text-xs text-slate-400">
+              找到 {repoSearchResultCount} 个结果
+            </div>
+          ) : null}
           <button
             type="button"
             onClick={addWorkspace}
             className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
           >
             <FolderPlus className="h-4 w-4" />
-            新增工作区
+            新增知识库
           </button>
           {workspaceError && (
             <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
@@ -1408,29 +1824,41 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
           )}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+        <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
           {workspaces.length === 0 ? (
             <div className="rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center">
               <Network className="mx-auto h-7 w-7 text-slate-300" />
-              <div className="mt-3 text-sm font-semibold text-slate-700">暂无项目工作区</div>
-              <div className="mt-1 text-xs leading-5 text-slate-400">新增后再生成 Repo Wiki。</div>
+              <div className="mt-3 text-sm font-semibold text-slate-700">暂无知识库</div>
+              <div className="mt-1 text-xs leading-5 text-slate-400">新增知识库后再生成 Repo Wiki。</div>
               <button
                 type="button"
                 onClick={addWorkspace}
                 className="mt-4 inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
               >
                 <FolderPlus className="h-4 w-4" />
-                新增
+                新增知识库
               </button>
             </div>
+          ) : visibleWorkspaces.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center">
+              <Search className="mx-auto h-7 w-7 text-slate-300" />
+              <div className="mt-3 text-sm font-semibold text-slate-700">没有匹配结果</div>
+              <div className="mt-1 text-xs leading-5 text-slate-400">换个关键词试试，支持搜索标题、章节、正文和工作区路径。</div>
+            </div>
           ) : (
-            <div className="space-y-2">
-            {workspaces.map((workspace) => {
+            <div className="space-y-0.5">
+            {visibleWorkspaces.map((workspace) => {
               const workspaceGeneration = generationByWorkspace[workspace.key] ?? createIdleGeneration();
-              const workspaceDocuments = documentsByWorkspace[workspace.key] ?? [];
+              const workspaceDocuments = filteredDocumentsByWorkspace[workspace.key] ?? [];
               const workspaceGit = gitByWorkspace[workspace.key];
               const selected = workspace.key === selectedWorkspace?.key;
               const expanded = expandedWorkspaceKeys.has(workspace.key);
+              const linkedKeys = relationsByWorkspace[workspace.key] ?? [];
+              const linkedWorkspaces = linkedKeys
+                .map((key) => workspaces.find((item) => item.key === key))
+                .filter((item): item is KnowledgeWorkspace => Boolean(item));
+              const linkEditorOpen = linkEditorWorkspaceKey === workspace.key;
+              const linkCandidates = workspaces.filter((item) => item.key !== workspace.key);
               const needsUpdate = Boolean(
                 workspaceGit?.hasGit &&
                 workspaceGit.commitId &&
@@ -1446,33 +1874,58 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                       ? `生成中 ${workspaceDocuments.length}`
                       : "生成中"
                   : workspaceGeneration.status === "paused"
-                    ? "已暂停"
+                    ? workspaceGeneration.failed > 0 ? "生成失败" : "已暂停"
                     : "已完成";
               return (
                 <div key={workspace.key}>
-                  <div className={`group flex items-center rounded-lg transition-colors ${selected ? "bg-slate-100" : "hover:bg-slate-50"}`}>
+                  <div className={`group/workspace relative flex items-center rounded-md transition-colors ${selected ? "bg-slate-100" : "hover:bg-slate-50"}`}>
                     <button
                       type="button"
                       aria-label={`打开工作区 ${workspace.name}`}
-                      className="flex min-w-0 flex-1 items-center justify-between px-3 py-2 text-left"
+                      title={`${workspace.name}\n${workspace.cwd}`}
+                      className="flex min-w-0 flex-1 items-center justify-between px-1.5 py-1 text-left"
                       onClick={() => handleWorkspaceClick(workspace)}
                     >
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span className="shrink-0 text-slate-400">
-                          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <span
+                          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-slate-500 transition-colors ${
+                            expanded || selected
+                              ? "border-slate-300 bg-white"
+                              : "border-slate-200 bg-white/70"
+                          }`}
+                        >
+                          <Network className="h-3 w-3" />
                         </span>
-                        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm">
-                          <Network className="h-4 w-4" />
-                        </span>
-                        <span className="min-w-0">
-                          <span className="block truncate text-sm font-semibold">{workspace.name}</span>
-                          <span className="block truncate text-xs text-slate-400">
-                            {getWorkspaceParentPath(workspace.cwd) || (workspace.source === "manual" ? "手动添加" : "项目工作区")}
+                        <span className="min-w-0 truncate text-sm font-semibold">{workspace.name}</span>
+                        {linkedKeys.length > 0 ? (
+                          <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-white/80 px-1 py-0.5 text-[10px] font-semibold leading-none text-slate-500">
+                            <Link2 className="h-2.5 w-2.5" />
+                            {linkedKeys.length}
                           </span>
-                        </span>
+                        ) : null}
                       </div>
-                      <span className="ml-3 shrink-0 text-xs font-semibold text-slate-500">{statusLabel}</span>
+                      <span className="ml-1.5 flex shrink-0 items-center gap-1">
+                        <span className="text-[11px] font-semibold text-slate-500">{statusLabel}</span>
+                        {workspaceGeneration.status !== "idle" ? (
+                          <span className="text-slate-400">
+                            {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                          </span>
+                        ) : null}
+                      </span>
                     </button>
+                    <div className="pointer-events-none absolute left-8 top-full z-30 mt-1 hidden min-w-64 max-w-80 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500 shadow-lg group-hover/workspace:block">
+                      <div className="font-semibold text-slate-900">{workspace.name}</div>
+                      {workspaceGit?.branch ? (
+                        <div className="mt-1 flex items-center gap-1.5">
+                          <GitBranch className="h-3.5 w-3.5" />
+                          <span className="truncate">{workspaceGit.branch}</span>
+                        </div>
+                      ) : null}
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <Folder className="h-3.5 w-3.5" />
+                        <span className="truncate">{workspace.cwd}</span>
+                      </div>
+                    </div>
                     {needsUpdate && workspaceGeneration.status !== "generating" ? (
                       <button
                         type="button"
@@ -1486,19 +1939,75 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                     ) : null}
                     <button
                       type="button"
+                      aria-label={`关联 ${workspace.name} 知识库`}
+                      title="关联其他知识库"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setSelectedWorkspaceKey(workspace.key);
+                        setLinkEditorWorkspaceKey((current) => current === workspace.key ? "" : workspace.key);
+                      }}
+                      className={`mr-0.5 rounded-md p-1 transition ${
+                        linkEditorOpen || linkedKeys.length > 0
+                          ? "bg-white text-slate-700"
+                          : "text-slate-400 opacity-0 hover:bg-white hover:text-slate-700 group-hover/workspace:opacity-100 focus:opacity-100"
+                      }`}
+                    >
+                      <Link2 className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
                       aria-label={`删除 ${workspace.name}`}
                       onClick={() => removeWorkspace(workspace)}
-                      className="mr-2 rounded-md p-1 text-slate-400 opacity-0 transition hover:bg-white hover:text-rose-600 group-hover:opacity-100 focus:opacity-100"
+                      className="mr-0.5 rounded-md p-1 text-slate-400 opacity-0 transition hover:bg-white hover:text-rose-600 group-hover/workspace:opacity-100 focus:opacity-100"
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                  {activeTab === "repo" && expanded && workspaceGeneration.status !== "idle" && (
+                  {linkEditorOpen ? (
+                    <div className="mx-1 mt-1 rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
+                      <div className="mb-1.5 flex items-center justify-between gap-2">
+                        <div className="truncate text-xs font-semibold text-slate-700">关联知识库</div>
+                        {linkedWorkspaces.length > 0 ? (
+                          <span className="shrink-0 text-[11px] text-slate-400">{linkedWorkspaces.length} 个</span>
+                        ) : null}
+                      </div>
+                      {linkCandidates.length === 0 ? (
+                        <div className="rounded-md bg-slate-50 px-2 py-1.5 text-xs leading-5 text-slate-400">
+                          先新增前端、后端或接口仓库，再在这里关联。
+                        </div>
+                      ) : (
+                        <div className="space-y-0.5">
+                          {linkCandidates.map((candidate) => {
+                            const checked = linkedKeys.includes(candidate.key);
+                            return (
+                              <button
+                                key={candidate.key}
+                                type="button"
+                                onClick={() => toggleWorkspaceLink(workspace.key, candidate.key)}
+                                className={`flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs transition ${
+                                  checked ? "bg-slate-100 text-slate-900" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                                }`}
+                              >
+                                <span className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border ${
+                                  checked ? "border-slate-700 bg-slate-900" : "border-slate-300 bg-white"
+                                }`}>
+                                  {checked ? <span className="h-1.5 w-1.5 rounded-sm bg-white" /> : null}
+                                </span>
+                                <span className="min-w-0 flex-1 truncate">{candidate.name}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                  {activeTab === "repo" && (expanded || hasRepoSearch) && workspaceGeneration.status !== "idle" && (
                     <SectionTree
                       active={workspaceDocuments.length > 0}
                       documents={workspaceDocuments}
                       selectedDocumentId={selectedDocumentId}
                       onSelectDocument={(document) => openDocumentTab(workspace, document)}
+                      forceExpanded={hasRepoSearch}
                     />
                   )}
                 </div>
@@ -1531,7 +2040,11 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                         className="flex h-full min-w-0 flex-1 items-center gap-2 px-3 text-left"
                         aria-current={active ? "page" : undefined}
                       >
-                        <BookOpen className="h-4 w-4 shrink-0 text-slate-500" />
+                        {tab.kind === "source" ? (
+                          <FileText className="h-4 w-4 shrink-0 text-slate-500" />
+                        ) : (
+                          <BookOpen className="h-4 w-4 shrink-0 text-slate-500" />
+                        )}
                         <span className="min-w-0 truncate">{tab.title}</span>
                       </button>
                       <button
@@ -1548,15 +2061,6 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2 px-5 py-3">
-            <h1 className="min-w-0 truncate text-lg font-semibold">{activeHeaderTitle}</h1>
-            {selectedWorkspace?.cwd && (
-              <>
-                <GitBranch className="h-4 w-4 text-slate-400" />
-                <span className="truncate font-mono text-sm text-slate-500">{selectedWorkspace.cwd}</span>
-              </>
-            )}
-          </div>
         </header>
 
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-8 py-10">
@@ -1565,30 +2069,32 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-dashed border-slate-200 text-slate-300">
                 <Network className="h-7 w-7" />
               </div>
-                    <h2 className="mt-5 text-2xl font-semibold">新增项目工作区</h2>
-                    <p className="mt-2 text-sm leading-6 text-slate-500">系统工作区不会默认进入知识库，请手动选择要生成 Repo Wiki 的项目目录。</p>
+              <h2 className="mt-5 text-2xl font-semibold">新增知识库</h2>
+              <p className="mt-2 text-sm leading-6 text-slate-500">系统工作区不会默认进入知识库，请手动选择要生成 Repo Wiki 的项目目录。</p>
               <button
                 type="button"
                 onClick={addWorkspace}
                 className="mt-6 inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800"
               >
                 <FolderPlus className="h-4 w-4" />
-                新增工作区
+                新增知识库
               </button>
             </div>
           ) : (
-          <div className={`flex w-full flex-col ${showingDocumentPreview ? "max-w-4xl" : "max-w-2xl items-center"}`}>
-            {showingDocumentPreview ? (
-              previewDocument ? (
-                <WikiDocumentView document={previewDocument} generation={generation} />
+            <div className={`flex w-full flex-col ${showingDocumentPreview || showingSourcePreview ? "max-w-5xl" : "max-w-2xl items-center"}`}>
+              {showingSourcePreview ? (
+                <SourceFileView preview={activeSourcePreview} />
+              ) : showingDocumentPreview ? (
+                previewDocument ? (
+                  <WikiDocumentView document={previewDocument} generation={generation} onOpenSourceFile={openSourceTab} />
+                ) : (
+                  <WikiPreviewPlaceholder title={selectedPreviewTitle} />
+                )
               ) : (
-                <WikiPreviewPlaceholder title={selectedPreviewTitle} />
-              )
-            ) : (
-              <>
-                {generation.status !== "completed" ? (
-                  <>
-                    <div className="grid h-36 w-36 grid-cols-3 grid-rows-3 gap-2 opacity-45">
+                <>
+                  {generation.status !== "completed" ? (
+                    <>
+                      <div className="grid h-36 w-36 grid-cols-3 grid-rows-3 gap-2 opacity-45">
                       {Array.from({ length: 9 }).map((_, index) => (
                         <div key={index} className={`rounded border border-dashed border-slate-200 ${index === 4 ? "flex items-center justify-center border-solid bg-white shadow-sm" : ""}`}>
                           {index === 4 ? <Network className="h-7 w-7 text-slate-300" /> : null}
@@ -1679,8 +2185,13 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                   </>
                 ) : generation.status === "paused" ? (
                   <>
-                    <button type="button" onClick={continueGeneration} className="rounded-lg bg-slate-950 px-4 py-3 text-base font-semibold text-white">
-                      继续
+                    <button
+                      type="button"
+                      onClick={generation.failed > 0 ? () => startGeneration() : continueGeneration}
+                      disabled={generation.failed > 0 && (!canStartGeneration || !embeddingReady)}
+                      className="rounded-lg bg-slate-950 px-4 py-3 text-base font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      {generation.failed > 0 ? "重新生成" : "继续"}
                     </button>
                     <button type="button" onClick={cancelGeneration} className="rounded-lg bg-slate-100 px-4 py-3 text-base font-semibold text-slate-900">
                       取消

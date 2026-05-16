@@ -23,8 +23,24 @@ test("feedback button opens github issues directly", () => {
   const appSource = readFileSync(join(process.cwd(), "src/ui/App.tsx"), "utf8");
 
   assert.match(appSource, /github\.com\/lst016\/tech-cc-hub\/issues\/new/);
-  assert.match(appSource, /window\.open\(/);
+  assert.match(appSource, /shell:openExternal/);
   assert.match(appSource, /occluded=\{browserWorkbenchOccluded\}/);
   // FeedbackDialog removed in favor of direct browser link
   assert.doesNotMatch(appSource, /showFeedbackDialog/);
+});
+
+test("left sidebar uses a compact default width", () => {
+  const appSource = readFileSync(join(process.cwd(), "src/ui/App.tsx"), "utf8");
+  const sidebarSource = readFileSync(join(process.cwd(), "src/ui/components/Sidebar.tsx"), "utf8");
+
+  assert.match(sidebarSource, /DEFAULT_SIDEBAR_WIDTH = 280/);
+  assert.match(sidebarSource, /width = DEFAULT_SIDEBAR_WIDTH/);
+  assert.match(appSource, /useState\(DEFAULT_SIDEBAR_WIDTH\)/);
+});
+
+test("activity rail is flush with the app header on macOS", () => {
+  const activityRailSource = readFileSync(join(process.cwd(), "src/ui/components/ActivityRail.tsx"), "utf8");
+
+  assert.match(activityRailSource, /platform === "darwin" \? "top-12" : "top-10"/);
+  assert.doesNotMatch(activityRailSource, /top-14/);
 });

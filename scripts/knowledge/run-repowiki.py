@@ -23,6 +23,13 @@ ROOT = _repo_root()
 REPOWIKI_SRC = ROOT / "third_party" / "repowiki" / "src"
 sys.path.insert(0, str(REPOWIKI_SRC))
 
+SCHEMA_VERSION = "1.0"
+DEFAULT_INCREMENTAL_MAX_CHANGED_FILES = 40
+DEFAULT_INCREMENTAL_CHANGE_RATIO = 0.25
+DEFAULT_REPOWIKI_MAX_PAGES = 96
+DEFAULT_REPOWIKI_MAX_OUTPUT_TOKENS = 672_000
+ESTIMATED_OUTPUT_TOKENS_PER_PAGE = 7_000
+
 from repowiki.core.analyzer import Analyzer  # noqa: E402
 from repowiki.core.cache import Cache  # noqa: E402
 from repowiki.core.graph import DependencyGraph  # noqa: E402
@@ -139,6 +146,198 @@ def _project_source_hash(project) -> str:
     for file in sorted([item for item in project.files if _is_documentable_file(item)], key=lambda item: item.path):
         parts.append(f"{file.path}\0{file.lines}\0{_hash_text(file.content or file.preview or '')}")
     return _hash_text("\n".join(parts))
+
+
+def _project_file_hashes(project) -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    for file in sorted([item for item in project.files if _is_documentable_file(item)], key=lambda item: item.path):
+        hashes[file.path.replace("\\", "/")] = _hash_text(f"{file.lines}\0{file.content or file.preview or ''}")
+    return hashes
+
+
+def _source_hash_from_file_hashes(file_hashes: dict[str, str]) -> str:
+    return _hash_text(json.dumps(file_hashes, ensure_ascii=False, sort_keys=True))
+
+
+def _read_json_file(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        parsed = json.loads(path.read_text(encoding="utf8"))
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _read_previous_metadata(output_dir: Path) -> dict:
+    return _read_json_file(output_dir / "meta" / "repowiki-metadata.json")
+
+
+def _diff_file_hashes(previous: dict[str, str], current: dict[str, str]) -> dict[str, list[str]]:
+    previous_keys = set(previous)
+    current_keys = set(current)
+    added = sorted(current_keys - previous_keys)
+    deleted = sorted(previous_keys - current_keys)
+    modified = sorted(path for path in current_keys & previous_keys if previous.get(path) != current.get(path))
+    return {"added": added, "modified": modified, "deleted": deleted}
+
+
+def _normalized_dependent_file(value: object) -> str:
+    return str(value or "").replace("\\", "/").strip().lstrip("./")
+
+
+def _path_matches_dependent(path: str, dependent: str) -> bool:
+    normalized = path.replace("\\", "/").lstrip("./")
+    dep = _normalized_dependent_file(dependent)
+    if not dep:
+        return False
+    if dep.endswith("/"):
+        return normalized.startswith(dep)
+    if normalized == dep:
+        return True
+    return normalized.startswith(dep.rstrip("/") + "/")
+
+
+def _catalog_depends_on_changed_files(catalog: dict, changed_files: set[str]) -> bool:
+    dependent_files = catalog.get("dependent_files")
+    if not isinstance(dependent_files, list):
+        return False
+    for dependent in dependent_files:
+        dep = _normalized_dependent_file(dependent)
+        if not dep:
+            continue
+        if any(_path_matches_dependent(path, dep) for path in changed_files):
+            return True
+    return False
+
+
+def _is_catalog_sensitive_file(path: str) -> bool:
+    normalized = path.replace("\\", "/").lower()
+    name = Path(normalized).name
+    if "/" not in normalized and name in {
+        "package.json",
+        "pnpm-workspace.yaml",
+        "lerna.json",
+        "turbo.json",
+        "vite.config.ts",
+        "vite.config.js",
+        "tsconfig.json",
+        "pyproject.toml",
+        "go.work",
+        "go.mod",
+        "cargo.toml",
+    }:
+        return True
+    return any(part in normalized for part in (
+        "/routes/",
+        "/pages/",
+        "/app/",
+        "/mcp-tools/",
+        "/knowledge/",
+        "/repowiki/",
+        "/ipc",
+        "/plugins/",
+        "/skills/",
+    ))
+
+
+def _metadata_catalogs(metadata: dict) -> list[dict]:
+    raw_catalogs = metadata.get("wiki_catalogs")
+    if not isinstance(raw_catalogs, list):
+        return []
+    catalogs: list[dict] = []
+    for index, item in enumerate(raw_catalogs):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("title") or "").strip()
+        if not name:
+            continue
+        dependent_files = item.get("dependent_files")
+        if not isinstance(dependent_files, list):
+            dependent_files = []
+        catalogs.append({
+            "name": name,
+            "description": str(item.get("description") or item.get("slug") or _slugify_title(name)).strip(),
+            "prompt": str(item.get("prompt") or f"为 {name} 更新 Repo Wiki 文档。").strip(),
+            "dependent_files": [str(path).strip() for path in dependent_files if str(path).strip()],
+            "parent": str(item.get("parent") or "").strip(),
+            "order": int(item.get("order") if isinstance(item.get("order"), int) else index),
+        })
+    return sorted(catalogs, key=lambda item: int(item.get("order", 100)))
+
+
+def _build_incremental_plan(args: argparse.Namespace, previous_metadata: dict, current_file_hashes: dict[str, str]) -> dict:
+    current_source_hash = _source_hash_from_file_hashes(current_file_hashes)
+    previous_file_hashes = previous_metadata.get("sourceFiles")
+    if not isinstance(previous_file_hashes, dict):
+        previous_file_hashes = previous_metadata.get("source_files")
+    if not isinstance(previous_file_hashes, dict):
+        previous_file_hashes = {}
+    previous_file_hashes = {str(path): str(value) for path, value in previous_file_hashes.items()}
+    previous_source_hash = str(
+        previous_metadata.get("sourceHash")
+        or previous_metadata.get("source_hash")
+        or _source_hash_from_file_hashes(previous_file_hashes) if previous_file_hashes else ""
+    )
+    diff = _diff_file_hashes(previous_file_hashes, current_file_hashes)
+    changed_files = [*diff["added"], *diff["modified"], *diff["deleted"]]
+    total_files = max(1, len(current_file_hashes))
+    changed_ratio = len(changed_files) / total_files
+    max_changed_files = max(1, int(getattr(args, "incremental_max_changed_files", DEFAULT_INCREMENTAL_MAX_CHANGED_FILES)))
+    max_changed_ratio = float(getattr(args, "incremental_change_ratio", DEFAULT_INCREMENTAL_CHANGE_RATIO))
+    catalogs = _metadata_catalogs(previous_metadata)
+    reasons: list[str] = []
+    full = False
+
+    if not previous_metadata:
+        full = True
+        reasons.append("missing-previous-metadata")
+    if previous_metadata and previous_metadata.get("schemaVersion") not in {SCHEMA_VERSION, None}:
+        full = True
+        reasons.append("schema-version-changed")
+    previous_model = str(previous_metadata.get("wikiModel") or previous_metadata.get("wiki_model") or "")
+    if previous_model and previous_model != args.model:
+        full = True
+        reasons.append("wiki-model-changed")
+    previous_language = str(previous_metadata.get("language") or "")
+    if previous_language and previous_language != args.language:
+        full = True
+        reasons.append("language-changed")
+    if previous_metadata and not previous_file_hashes:
+        full = True
+        reasons.append("missing-file-hash-manifest")
+    if previous_metadata and not catalogs:
+        full = True
+        reasons.append("missing-catalog-metadata")
+    if len(changed_files) > max_changed_files:
+        full = True
+        reasons.append("changed-file-count-threshold")
+    if changed_ratio > max_changed_ratio:
+        full = True
+        reasons.append("changed-file-ratio-threshold")
+
+    catalog_changed = bool(diff["added"] or diff["deleted"] or any(_is_catalog_sensitive_file(path) for path in changed_files))
+    if current_source_hash == previous_source_hash and not changed_files and previous_metadata:
+        reasons.append("source-unchanged")
+
+    return {
+        "enabled": True,
+        "mode": "full" if full else "incremental",
+        "reason": reasons[0] if reasons else ("catalog-sensitive-change" if catalog_changed else "small-source-change"),
+        "reasons": reasons,
+        "previousSourceHash": previous_source_hash,
+        "currentSourceHash": current_source_hash,
+        "changedFiles": changed_files,
+        "addedFiles": diff["added"],
+        "modifiedFiles": diff["modified"],
+        "deletedFiles": diff["deleted"],
+        "changedFileCount": len(changed_files),
+        "changedFileRatio": changed_ratio,
+        "catalogChanged": catalog_changed,
+        "previousCatalogCount": len(catalogs),
+        "maxChangedFiles": max_changed_files,
+        "maxChangedRatio": max_changed_ratio,
+    }
 
 
 def _file_rank_lookup(graph: DependencyGraph) -> dict[str, float]:
@@ -576,6 +775,28 @@ def _ensure_required_catalogs(project, graph: DependencyGraph, catalogs: list[di
     next_order = max([int(catalog.get("order", index)) for index, catalog in enumerate(catalogs)] or [0]) + 1
     parent_names = {str(catalog.get("name") or "") for catalog in catalogs}
     architecture_parent = "系统架构" if "系统架构" in parent_names else ("核心架构设计" if "核心架构设计" in parent_names else "")
+
+    if not re.search(r"项目概述|项目介绍|产品定位", haystack, re.I):
+        catalogs.append({
+            "name": "项目概述",
+            "description": "project-overview",
+            "prompt": "说明项目目标、核心能力、主要用户、技术栈、运行边界和最重要的工程入口。",
+            "dependent_files": ["README.md", "package.json", "pyproject.toml", "Cargo.toml", "go.mod"],
+            "parent": "",
+            "order": next_order,
+        })
+        next_order += 1
+
+    if not re.search(r"快速开始|启动|安装|运行", haystack, re.I):
+        catalogs.append({
+            "name": "快速开始",
+            "description": "quick-start",
+            "prompt": "写一份可执行的快速开始指南，覆盖依赖安装、环境变量、启动命令、验证命令、常见初始化失败和下一步阅读路径。",
+            "dependent_files": ["README.md", "package.json", "pnpm-workspace.yaml", "scripts/", "Makefile"],
+            "parent": "",
+            "order": next_order,
+        })
+        next_order += 1
 
     if any("knowledge" in path or "repowiki" in path for path in paths) and not re.search(r"知识库|知识引擎|repo\s*wiki|knowledge\s*engine|knowledge-engine", haystack, re.I):
         catalogs.append({
@@ -1194,6 +1415,121 @@ def _build_catalog_tree(catalogs: list[dict]) -> tuple[dict[str, dict], dict[str
     return by_name, children_by_parent
 
 
+def _read_existing_catalog_pages(output_dir: Path, catalogs: list[dict]) -> dict[str, str]:
+    by_name, children_by_parent = _build_catalog_tree(catalogs)
+    pages: dict[str, str] = {}
+    for catalog in catalogs:
+        name = str(catalog.get("name"))
+        path = output_dir / "content" / _catalog_relative_path(catalog, by_name, children_by_parent)
+        if path.exists():
+            try:
+                content = path.read_text(encoding="utf8")
+            except Exception:
+                continue
+            if content.strip():
+                pages[name] = content
+    return pages
+
+
+def _clean_catalog_output(output_dir: Path) -> None:
+    for relative in ("content", "meta/pages", "meta/failures"):
+        target = output_dir / relative
+        if target.exists():
+            shutil.rmtree(target)
+
+
+def _catalog_hash(catalog: dict) -> str:
+    return _hash_text(json.dumps({
+        "name": catalog.get("name"),
+        "description": catalog.get("description"),
+        "prompt": catalog.get("prompt"),
+        "dependent_files": catalog.get("dependent_files") or [],
+        "parent": catalog.get("parent") or "",
+    }, ensure_ascii=False, sort_keys=True))
+
+
+def _choose_affected_catalogs(catalogs: list[dict], previous_catalogs: list[dict], existing_pages: dict[str, str], incremental_plan: dict) -> set[str]:
+    if incremental_plan.get("mode") == "full":
+        return {str(catalog.get("name")) for catalog in catalogs}
+
+    changed_files = set(str(path) for path in incremental_plan.get("changedFiles") or [])
+    previous_by_name = {str(catalog.get("name")): catalog for catalog in previous_catalogs}
+    affected: set[str] = set()
+    for catalog in catalogs:
+        name = str(catalog.get("name"))
+        if name not in existing_pages:
+            affected.add(name)
+            continue
+        previous = previous_by_name.get(name)
+        if previous is None or _catalog_hash(previous) != _catalog_hash(catalog):
+            affected.add(name)
+            continue
+        if changed_files and _catalog_depends_on_changed_files(catalog, changed_files):
+            affected.add(name)
+
+    if changed_files and not affected:
+        for catalog in catalogs:
+            name = str(catalog.get("name"))
+            if re.search(r"项目概述|快速开始|运行|配置|架构", name):
+                affected.add(name)
+            if len(affected) >= 3:
+                break
+    return affected
+
+
+def _apply_token_budget(catalogs: list[dict], args: argparse.Namespace) -> tuple[list[dict], dict]:
+    max_pages = int(getattr(args, "max_pages", 0) or os.getenv("TECH_CC_HUB_REPOWIKI_MAX_PAGES", "0") or 0)
+    if max_pages <= 0:
+        max_pages = DEFAULT_REPOWIKI_MAX_PAGES
+    max_output_tokens = int(
+        getattr(args, "max_output_tokens", 0)
+        or os.getenv("TECH_CC_HUB_REPOWIKI_MAX_OUTPUT_TOKENS", "0")
+        or DEFAULT_REPOWIKI_MAX_OUTPUT_TOKENS
+    )
+    estimated_output_tokens = len(catalogs) * ESTIMATED_OUTPUT_TOKENS_PER_PAGE
+    token_page_cap = max(12, max_output_tokens // ESTIMATED_OUTPUT_TOKENS_PER_PAGE)
+    cap = max(12, min(max_pages, token_page_cap))
+    budget = {
+        "maxPages": max_pages,
+        "maxOutputTokens": max_output_tokens,
+        "estimatedOutputTokens": estimated_output_tokens,
+        "estimatedOutputTokensPerPage": ESTIMATED_OUTPUT_TOKENS_PER_PAGE,
+        "degraded": False,
+        "strategy": "full-depth",
+        "originalCatalogCount": len(catalogs),
+        "finalCatalogCount": len(catalogs),
+    }
+    if len(catalogs) <= cap:
+        return catalogs, budget
+
+    by_name = {str(catalog.get("name")): catalog for catalog in catalogs}
+    selected: dict[str, dict] = {}
+
+    def include_with_parents(catalog: dict) -> None:
+        parent = str(catalog.get("parent") or "").strip()
+        if parent and parent in by_name:
+            include_with_parents(by_name[parent])
+        selected[str(catalog.get("name"))] = catalog
+
+    for catalog in sorted(catalogs, key=lambda item: int(item.get("order", 100))):
+        if len(selected) >= cap:
+            break
+        include_with_parents(catalog)
+
+    pruned = sorted(selected.values(), key=lambda item: int(item.get("order", 100)))
+    selected_names = {str(item.get("name")) for item in pruned}
+    for item in pruned:
+        if str(item.get("parent") or "") not in selected_names:
+            item["parent"] = ""
+    budget.update({
+        "degraded": True,
+        "strategy": "page-cap",
+        "finalCatalogCount": len(pruned),
+        "droppedCatalogCount": max(0, len(catalogs) - len(pruned)),
+    })
+    return pruned, budget
+
+
 def _write_catalog_page_content(output_dir: Path, catalog: dict, page: str, by_name: dict[str, dict], children_by_parent: dict[str, list[dict]]) -> Path:
     content_dir = output_dir / "content"
     rel_path = _catalog_relative_path(catalog, by_name, children_by_parent)
@@ -1207,6 +1543,7 @@ def _write_catalog_markdown(
     output_dir: Path,
     catalogs: list[dict],
     pages: dict[str, str],
+    page_statuses: dict[str, str] | None = None,
 ) -> tuple[list[Path], dict]:
     content_dir = output_dir / "content"
     meta_dir = output_dir / "meta"
@@ -1247,7 +1584,7 @@ def _write_catalog_markdown(
             "section_path": _catalog_section_path(catalog, by_name, children_by_parent),
             "layer_level": len(parent_chain),
             "order": int(catalog.get("order", 100)),
-            "status": "completed",
+            "status": (page_statuses or {}).get(name, "completed"),
             "page_type": "topic",
             "content_hash": _hash_text(pages[name]),
             "generated_at": generated_at,
@@ -1282,15 +1619,125 @@ def _write_catalog_markdown(
     return written, {"wiki_catalogs": wiki_catalogs, "knowledge_relations": relations}
 
 
-async def _run_qoder_style(args: argparse.Namespace, project, graph: DependencyGraph, llm: LLMClient, output_dir: Path, workspace: Path, cache: Cache | None) -> dict:
+def _build_validation_report(output_dir: Path, catalog_metadata: dict, failures: list[dict]) -> dict:
+    content_dir = output_dir / "content"
+    expected = {
+        str(item.get("path"))
+        for item in catalog_metadata.get("wiki_catalogs", [])
+        if isinstance(item, dict) and str(item.get("path") or "").strip()
+    }
+    markdown_files = [
+        path for path in sorted(content_dir.rglob("*.md")) if path.is_file()
+    ] if content_dir.exists() else []
+    actual = {
+        str(path.relative_to(content_dir)).replace("\\", "/")
+        for path in markdown_files
+        if path.name != "_sidebar.md"
+    }
+    issues: list[dict] = []
+    for missing in sorted(expected - actual):
+        issues.append({
+            "severity": "error",
+            "type": "missing-catalog-page",
+            "path": missing,
+            "message": "catalog 指向的 Markdown 页面不存在。",
+        })
+    for orphan in sorted(actual - expected):
+        issues.append({
+            "severity": "warning",
+            "type": "orphan-content-page",
+            "path": orphan,
+            "message": "Markdown 页面没有被 catalog 引用。",
+        })
+    for failure in failures:
+        issues.append({
+            "severity": "warning",
+            "type": "page-generation-fallback",
+            "path": failure.get("name"),
+            "message": str(failure.get("error") or "页面生成失败，已使用降级内容。"),
+        })
+
+    status = "pass"
+    if any(issue["severity"] == "error" for issue in issues):
+        status = "fail"
+    elif issues:
+        status = "warn"
+
+    report = {
+        "schemaVersion": SCHEMA_VERSION,
+        "checkedAt": int(time.time() * 1000),
+        "status": status,
+        "summary": {
+            "catalogPages": len(expected),
+            "markdownFiles": len(actual),
+            "missingPages": len(expected - actual),
+            "orphanMarkdownFiles": len(actual - expected),
+            "failedPages": len(failures),
+        },
+        "issues": issues,
+    }
+    (output_dir / ".validation-report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf8",
+    )
+    return report
+
+
+async def _run_qoder_style(
+    args: argparse.Namespace,
+    project,
+    graph: DependencyGraph,
+    llm: LLMClient,
+    output_dir: Path,
+    workspace: Path,
+    cache: Cache | None,
+    previous_metadata: dict,
+    incremental_plan: dict,
+    current_file_hashes: dict[str, str],
+) -> dict:
     def progress(message: str) -> None:
         print(json.dumps({"event": "progress", "message": message}, ensure_ascii=False), file=sys.stderr, flush=True)
 
     progress("Planning wiki catalogs...")
-    catalogs = await _plan_catalogs(project, graph, llm, args.language, cache)
-    progress(f"Analyzing {len(catalogs)} modules...")
+    previous_catalogs = _metadata_catalogs(previous_metadata)
+    planning_failure = ""
+    if incremental_plan.get("mode") == "incremental" and not incremental_plan.get("catalogChanged") and previous_catalogs:
+        catalogs = previous_catalogs
+    else:
+        try:
+            catalogs = await _plan_catalogs(project, graph, llm, args.language, cache)
+        except Exception as exc:
+            planning_failure = str(exc)
+            catalogs = _fallback_catalogs(project, graph)
+            incremental_plan["catalogChanged"] = True
+            incremental_plan.setdefault("reasons", []).append("catalog-planner-fallback")
+
+    catalogs, token_budget = _apply_token_budget(catalogs, args)
     by_name, children_by_parent = _build_catalog_tree(catalogs)
+    existing_pages = _read_existing_catalog_pages(output_dir, catalogs)
+    affected_names = _choose_affected_catalogs(catalogs, previous_catalogs, existing_pages, incremental_plan)
+    if planning_failure:
+        affected_names = {str(catalog.get("name")) for catalog in catalogs}
+    if incremental_plan.get("mode") == "full":
+        affected_names = {str(catalog.get("name")) for catalog in catalogs}
+
+    incremental_plan.update({
+        "affectedCatalogIds": [_catalog_id(catalog) for catalog in catalogs if str(catalog.get("name")) in affected_names],
+        "affectedCatalogCount": len(affected_names),
+        "reusedPages": max(0, len(catalogs) - len(affected_names)),
+        "regeneratedPages": len(affected_names),
+    })
+
+    _clean_catalog_output(output_dir)
+    progress(f"Analyzing {len(affected_names)} modules...")
     pages: dict[str, str] = {}
+    page_statuses: dict[str, str] = {}
+    for catalog in catalogs:
+        name = str(catalog.get("name"))
+        if name not in affected_names and name in existing_pages:
+            pages[name] = existing_pages[name]
+            page_statuses[name] = "reused"
+
     completed = 0
     lock = asyncio.Lock()
     semaphore = asyncio.Semaphore(max(1, args.concurrency))
@@ -1302,30 +1749,46 @@ async def _run_qoder_style(args: argparse.Namespace, project, graph: DependencyG
             page = await _generate_catalog_page(catalog, project, graph, llm, args.language, cache)
         async with lock:
             pages[name] = page
+            page_statuses[name] = "completed"
             _write_catalog_page_content(output_dir, catalog, page, by_name, children_by_parent)
             completed += 1
-            progress(f"Analyzed module {completed}/{len(catalogs)}")
+            progress(f"Analyzed module {completed}/{len(affected_names)}")
 
     failures: list[dict] = []
-    results = await asyncio.gather(*(generate_one(catalog) for catalog in catalogs), return_exceptions=True)
-    for catalog, result in zip(catalogs, results, strict=False):
+    affected_catalogs = [catalog for catalog in catalogs if str(catalog.get("name")) in affected_names]
+    results = await asyncio.gather(*(generate_one(catalog) for catalog in affected_catalogs), return_exceptions=True)
+    for catalog, result in zip(affected_catalogs, results, strict=False):
         if isinstance(result, Exception):
             name = str(catalog.get("name"))
+            reused_previous = name in existing_pages
             failures.append({
                 "name": name,
                 "error": str(result),
+                "reused_previous": reused_previous,
                 "dependent_files": catalog.get("dependent_files") or [],
             })
             async with lock:
+                if reused_previous:
+                    pages[name] = existing_pages[name]
+                    page_statuses[name] = "reused_after_failure"
+                else:
+                    pages[name] = f"# {name}\n\n生成失败：{str(result) or '未获得模型输出'}。\n"
+                    page_statuses[name] = "failed"
                 completed += 1
-                progress(f"Analyzed module {completed}/{len(catalogs)}")
+                progress(f"Analyzed module {completed}/{len(affected_names)}")
     for catalog in catalogs:
         name = str(catalog.get("name"))
         if name not in pages:
             pages[name] = f"# {name}\n\n生成失败：未获得模型输出。\n"
+            page_statuses[name] = "failed"
+            failures.append({
+                "name": name,
+                "error": "missing-page-output",
+                "dependent_files": catalog.get("dependent_files") or [],
+            })
     progress("Detecting architecture...")
     progress("Creating reading guide...")
-    written, catalog_metadata = _write_catalog_markdown(output_dir, catalogs, pages)
+    written, catalog_metadata = _write_catalog_markdown(output_dir, catalogs, pages, page_statuses)
     if failures:
         failures_dir = output_dir / "meta" / "failures"
         failures_dir.mkdir(parents=True, exist_ok=True)
@@ -1333,13 +1796,34 @@ async def _run_qoder_style(args: argparse.Namespace, project, graph: DependencyG
             json.dumps(failures, ensure_ascii=False, indent=2) + "\n",
             encoding="utf8",
         )
+    validation_report = _build_validation_report(output_dir, catalog_metadata, failures)
     metadata = {
+        "schemaVersion": SCHEMA_VERSION,
         "generator": "tech-cc-hub qoder-style repowiki",
         "style": "catalog",
+        "language": args.language,
         "project": project.name,
+        "wiki_model": args.model,
+        "sourceHash": incremental_plan["currentSourceHash"],
+        "source_hash": incremental_plan["currentSourceHash"],
+        "sourceFiles": current_file_hashes,
+        "generationMode": incremental_plan.get("mode", "full"),
+        "incremental": incremental_plan,
+        "tokenBudget": token_budget,
+        "validation": {
+            "status": validation_report["status"],
+            "reportPath": ".validation-report.json",
+            "errors": len([issue for issue in validation_report["issues"] if issue["severity"] == "error"]),
+            "warnings": len([issue for issue in validation_report["issues"] if issue["severity"] == "warning"]),
+        },
         "wiki_catalogs": catalog_metadata["wiki_catalogs"],
         "knowledge_relations": catalog_metadata["knowledge_relations"],
         "failures": failures,
+        "fallbacks": {
+            "catalogPlanner": bool(planning_failure),
+            "catalogPlannerError": planning_failure,
+            "pageFailures": len(failures),
+        },
         "pageCount": len(written),
         "tokens": {
             "input": llm.total_input_tokens,
@@ -1361,6 +1845,7 @@ async def _run_qoder_style(args: argparse.Namespace, project, graph: DependencyG
         "pageCount": len(written),
         "generatedFiles": _collect_markdown(output_dir, workspace),
         "tokens": metadata["tokens"],
+        "generationMode": metadata["generationMode"],
     }
 
 
@@ -1373,16 +1858,17 @@ async def _run(args: argparse.Namespace) -> dict:
     if not args.api_key:
         raise ValueError("缺少 Wiki API Key：请传 --api-key 或设置 TECH_WIKI_API_KEY。")
 
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
+    previous_metadata = _read_previous_metadata(output_dir)
 
     project = ingest_local(
         workspace,
         max_file_size=args.max_file_size,
         max_files=args.max_files,
     )
+    current_file_hashes = _project_file_hashes(project)
+    incremental_plan = _build_incremental_plan(args, previous_metadata, current_file_hashes)
     graph = DependencyGraph.build_from_project(project)
     llm = LLMClient(
         model=_normalize_model(args.model, args.api_base),
@@ -1393,10 +1879,24 @@ async def _run(args: argparse.Namespace) -> dict:
     await cache.init()
     if args.style == "qoder":
         try:
-            return await _run_qoder_style(args, project, graph, llm, output_dir, workspace, cache)
+            return await _run_qoder_style(
+                args,
+                project,
+                graph,
+                llm,
+                output_dir,
+                workspace,
+                cache,
+                previous_metadata,
+                incremental_plan,
+                current_file_hashes,
+            )
         finally:
             await cache.close()
 
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     analyzer = Analyzer(
         llm=llm,
         cache=cache,
@@ -1441,6 +1941,26 @@ def main() -> int:
     parser.add_argument("--style", choices=["qoder", "upstream"], default=os.getenv("TECH_CC_HUB_REPOWIKI_STYLE", "qoder"))
     parser.add_argument("--max-files", type=int, default=int(os.getenv("REPOWIKI_MAX_FILES", "0")))
     parser.add_argument("--max-file-size", type=int, default=307200)
+    parser.add_argument(
+        "--incremental-max-changed-files",
+        type=int,
+        default=int(os.getenv("TECH_CC_HUB_REPOWIKI_INCREMENTAL_MAX_CHANGED_FILES", str(DEFAULT_INCREMENTAL_MAX_CHANGED_FILES))),
+    )
+    parser.add_argument(
+        "--incremental-change-ratio",
+        type=float,
+        default=float(os.getenv("TECH_CC_HUB_REPOWIKI_INCREMENTAL_CHANGE_RATIO", str(DEFAULT_INCREMENTAL_CHANGE_RATIO))),
+    )
+    parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=int(os.getenv("TECH_CC_HUB_REPOWIKI_MAX_PAGES", str(DEFAULT_REPOWIKI_MAX_PAGES))),
+    )
+    parser.add_argument(
+        "--max-output-tokens",
+        type=int,
+        default=int(os.getenv("TECH_CC_HUB_REPOWIKI_MAX_OUTPUT_TOKENS", str(DEFAULT_REPOWIKI_MAX_OUTPUT_TOKENS))),
+    )
     parser.add_argument(
         "--file-page-limit",
         type=int,

@@ -16,16 +16,16 @@
     "src/electron/libs/mcp-tools/figma-design-intelligence.ts",
     "src/electron/libs/mcp-tools/figma-locator.ts"
   ],
-  "parent_id": "核心模块规格总览-提供模块索引",
+  "parent_id": "core-module-specs",
   "parent": "核心模块规格",
   "parent_chain": [
     "核心模块规格"
   ],
   "section_path": "核心模块规格/MCP 工具系统总览",
   "layer_level": 1,
-  "order": 31,
+  "order": 40,
   "status": "completed",
   "page_type": "topic",
-  "content_hash": "90fdd140b886282c97186dbc5d68f6304e1a4cd8b381c02623f7bfb2da538633",
-  "generated_at": 1778928162406
+  "content_hash": "6ba1fc35cc09706166522534350a0d3b63997f86130551ce1da019b61ca25a76",
+  "generated_at": 1778936862846
 }

@@ -1,5 +1,12 @@
 # Electron 运行时总览
 
+> module: tech-cc-hub / module-electron-runtime
+> 维护者：tech-cc-hub 核心开发组
+> 适用版本：v1.x（基于 Electron + Claude Agent SDK）
+> 最后更新：2024-
+
+---
+
 <cite>
 **本文引用的文件**
 
@@ -27,168 +34,93 @@
 
 ## 目录
 
-1. [职责定位](#1-职责定位)
-2. [入口与初始化](#2-入口与初始化)
-3. [调用链与数据流](#3-调用链与数据流)
-4. [核心数据结构](#4-核心数据结构)
-5. [错误处理机制](#5-错误处理机制)
-6. [上下文压缩](#6-上下文压缩)
-7. [Runner 复用机制](#7-runner-复用机制)
-8. [Agent 解析与 Profile 路由](#8-agent-解析与-profile-路由)
-9. [Figma MCP 插件集成](#9-figma-mcp-插件集成)
-10. [扩展点与常见改造路径](#10-扩展点与常见改造路径)
-11. [Agent 改代码地图](#11-agent-改代码地图)
+- [职责总览](#职责总览)
+- [核心数据结构](#核心数据结构)
+- [入口与初始化](#入口与初始化)
+- [调用链路：客户端触发 → Runner 执行](#调用链路客户端触发--runner-执行)
+- [IPC 通信体系](#ipc-通信体系)
+- [附件处理流程](#附件处理流程)
+- [配置与持久化](#配置与持久化)
+- [Agent 运行时解析](#agent-运行时解析)
+- [Runner 错误处理](#runner-错误处理)
+- [自动更新机制](#自动更新机制)
+- [扩展点与常见改造路径](#扩展点与常见改造路径)
+- [故障排查速查](#故障排查速查)
+- [Agent 改代码地图](#agent-改代码地图)
 
 ---
 
-## 1. 职责定位
+## 职责总览
 
-Electron 运行时是 tech-cc-hub 的核心执行平面，负责：
+Electron 运行时是 tech-cc-hub 桌面应用的**后端执行引擎**，在 Electron 主进程（Node.js）中运行，负责以下职责：
 
-- **进程间通信桥接**：维护 `main.ts` 与渲染进程的双向 IPC 通道
-- **会话生命周期管理**：通过 `SessionStore` 持久化 `sessions.db`，支持中断恢复
-- **Claude SDK Runner 编排**：调用 `runClaude()` 函数启动 Agent 对话循环
-- **MCP 服务器生命周期**：动态启停 Builtin/External MCP Server
-- **工具调用路由与权限控制**：拦截 SDK 权限请求，向用户展示确认框
-- **附件与上下文管理**：处理用户上传的图片/文本附件，构建 Anthropic 格式的 Content Blocks
-- **上下文压缩**：在超长对话时调用 `buildStatelessContinuationPayload` 压缩历史
-- **结果回放与可观测**：通过 `broadcast()` 向渲染进程推送 `ServerEvent` 事件流
+| 职责域 | 具体说明 |
+|--------|----------|
+| **Claude Agent 执行** | 通过 `runClaude()` 调用 Claude Agent SDK，驱动 AI 对话和任务执行 |
+| **MCP 服务器管理** | 动态启用/禁用内置 MCP 服务器（browser、admin、design、figma、cron 等 7 种），以及外部 MCP 服务器 |
+| **会话管理** | 维护 `SessionStore`（SQLite），管理会话状态（idle/running/completed/error）、历史消息、权限请求 |
+| **附件处理** | 处理用户上传的图片/文本附件，估算 token 预算，构建 Anthropic 兼容的 content blocks |
+| **权限桥接** | 拦截 SDK 的权限请求（文件读写、Shell 执行等），通过 IPC 转发给渲染进程审批 |
+| **插件管理** | 管理 Open Computer Use 和 Figma Official 插件的安装、连接、OAuth 授权状态 |
+| **自动更新** | 通过 `electron-updater` 连接 GitHub Releases，检查并下载更新 |
+| **实时事件广播** | 通过 `broadcast()` 将 `ServerEvent` 推送给所有 BrowserWindow 和监听器 |
 
-**Source-of-Truth 边界**：
-
-| 数据领域 | Source-of-Truth | 运行时刷新边界 |
-|----------|-----------------|----------------|
-| 会话列表 | `sessions.db` (SQLite) | IPC `sessions:list` 触发 reload |
-| API 配置 | `agent-runtime.json` | `getGlobalRuntimeConfig()` 热读取 |
-| MCP Server 状态 | `globalRuntimeConfig.mcpServers` | Runner 初始化时注入 |
-| Agent Profiles | `~/.claude/AGENTS.md` + 项目 `.claude/` | 每次 `resolveAgentRuntimeContext()` 扫描 |
-
-章节来源：[file://src/electron/main.ts#L1-L96](file://src/electron/main.ts#L1-L96)
+**章节来源**：职责域分类基于 `src/electron/ipc-handlers.ts` 第 1-63 行、`src/electron/libs/runner.ts` 第 1-90 行的导入和类型定义。
 
 ---
 
-## 2. 入口与初始化
+## 核心数据结构
 
-### 2.1 Main 进程入口
-
-```text
-src/electron/main.ts (2917 行)
-├── ipcMain.handle 注册 → IPC handlers 路由
-├── BrowserWindow 创建 → preload.cts 注入
-├── SessionStore 初始化 → sessions.db
-├── TaskExecutor 初始化 → 任务系统
-├── CronService 启动 → 定时任务轮询
-└── AppAutoUpdater 初始化 → GitHub Releases
-```
-
-`main.ts` 不直接调用 `runClaude()`，而是委托给 `ipc-handlers.ts` 处理客户端事件。
-
-章节来源：[file://src/electron/main.ts#L30](file://src/electron/main.ts#L30)
-
-### 2.2 渲染进程桥接
-
-`preload.cts` 通过 `contextBridge.exposeInMainWorld` 向渲染进程暴露以下 API：
-
-| IPC 方法 | 功能 |
-|----------|------|
-| `ipcInvoke("client-event")` | 发送 `ClientEvent` 触发 Runner |
-| `ipcRenderer.on("server-event")` | 订阅 `ServerEvent` 流 |
-| `ipcInvoke("generate-session-title")` | AI 生成会话标题 |
-| `ipcInvoke("browser-*")` | BrowserWorkbench 控制 |
-| `ipcInvoke("git:*")` | Git 操作 |
-| `ipcInvoke("preview-*")` | 文件预览 |
-
-章节来源：[file://src/electron/preload.cts#L1-L199](file://src/electron/preload.cts#L1-L199)
-
----
-
-## 3. 调用链与数据流
-
-### 3.1 完整执行链路
-
-```mermaid
-flowchart TD
-    subgraph Renderer["渲染进程"]
-        R1["用户输入 + 附件"]
-        R2["preload.cts invoke"]
-    end
-
-    subgraph Main["Main 进程"]
-        H1["handleClientEvent"]
-        H2["preparePromptAttachmentsForSession"]
-        H3["resolveAgentRuntimeContext"]
-        H4["buildRunnerReuseKey / canReuseRunner"]
-        H5{"Runner 复用判断"}
-        H6["runClaude"]
-        H7["promptInput.enqueue"]
-        H8["SDK Query Loop"]
-        H9["normalizeRunnerError"]
-        H10["broadcast ServerEvent"]
-    end
-
-    subgraph SDK["Claude Agent SDK"]
-        S1["query() 异步迭代"]
-        S2["onToolUse / onMessage"]
-        S3["mcpAuthenticate OAuth"]
-    end
-
-    subgraph MCP["MCP Servers"]
-        M1["Builtin MCP"]
-        M2["External MCP"]
-        M3["Figma Official MCP"]
-    end
-
-    R1 --> R2
-    R2 --> H1
-    H1 --> H2
-    H2 --> H3
-    H3 --> H4
-    H4 --> H5
-    H5 -->|可复用| H6
-    H5 -->|不可复用| H6
-    H6 --> H7
-    H7 --> H8
-    H8 <--> S2
-    H8 --> S1
-    S1 --> M1
-    S1 --> M2
-    S1 --> M3
-    S2 --> H9
-    H9 --> H10
-    H10 --> R1
-```
-
-### 3.2 核心调用序列
-
-```text
-handleClientEvent("user_prompt")
-  ├─ preparePromptAttachmentsForSession()     // 附件预处理
-  ├─ resolveAgentRuntimeContext()            // Agent Profile 解析
-  ├─ buildRunnerReuseKey() / canReuseRunner() // Runner 复用检查
-  ├─ resolveApiConfigForModel()              // API 配置解析
-  ├─ runClaude({ prompt, attachments, runtime, session, onEvent })
-  │   ├─ buildPromptContentBlocks()          // 构建 Content Blocks
-  │   ├─ collectRuntimeProfileForPrompt()   // 计算效率 Profile
-  │   ├─ ensureMcpServersForPrompt()        // 动态启停 MCP
-  │   └─ SDK query() 循环
-  │       ├─ sendMessage() → broadcast()    // 推送 Assistant 消息
-  │       ├─ requestPermissionDecision()    // 权限拦截
-  │       └─ sendPlanUpdate()               // Plan 更新事件
-  └─ broadcast("session.status")             // 最终状态
-```
-
-章节来源：[file://src/electron/ipc-handlers.ts#L1-L450](file://src/electron/ipc-handlers.ts#L1-L450)
-章节来源：[file://src/electron/libs/runner.ts#L213-L400](file://src/electron/libs/runner.ts#L213-L400)
-
----
-
-## 4. 核心数据结构
-
-### 4.1 RunnerOptions 与 RunnerHandle
+### 2.1 关键 TypeScript 类型
 
 ```typescript
-// src/electron/libs/runner.ts#L90-L105
-export type RunnerOptions = {
+// src/electron/types.ts
+
+// 运行时覆盖参数
+type RuntimeOverrides = {
+  model?: string;                    // 覆盖默认模型
+  reasoningMode?: RuntimeReasoningMode;  // "disabled" | "low" | "medium" | "high" | "xhigh"
+  permissionMode?: "default" | "bypassPermissions" | "plan";
+  runSurface?: AgentRunSurface;      // "development" | "maintenance"
+  agentId?: string;
+  outputFormat?: "json" | "none";
+};
+
+// 用户附件
+type PromptAttachment = {
+  id: string;
+  kind: "image" | "text";
+  name: string;
+  mimeType: string;
+  data: string;            // 原始数据或文件 URI
+  runtimeData?: string;    // 仅 runtimeData 可进入 Agent 的 image block
+  preview?: string;        // UI 预览用
+  size?: number;
+  storagePath?: string;
+  storageUri?: string;
+  summaryText?: string;
+};
+
+// 会话状态
+type SessionStatus = "idle" | "running" | "completed" | "error";
+
+// 服务器事件
+type ServerEvent =
+  | { type: "stream.message"; payload: { sessionId: string; message: StreamMessage } }
+  | { type: "permission.request"; payload: { sessionId: string; toolUseId: string; toolName: string; input: unknown } }
+  | { type: "runner.error"; payload: { sessionId?: string; message: string } }
+  | { type: "session.status"; payload: { sessionId: string; status: SessionStatus; ... } }
+  // ... 更多事件类型见 src/electron/types.ts
+```
+
+**章节来源**：`src/electron/types.ts` 第 45-90 行定义 `RuntimeOverrides`、`PromptAttachment`、`SessionStatus`、`ServerEvent`。
+
+### 2.2 Runner 相关数据结构
+
+```typescript
+// src/electron/libs/runner.ts
+
+type RunnerOptions = {
   prompt: string;
   attachments?: PromptAttachment[];
   runtime?: RuntimeOverrides;
@@ -198,7 +130,7 @@ export type RunnerOptions = {
   onSessionUpdate?: (updates: Partial<Session>) => void;
 };
 
-export type RunnerHandle = {
+type RunnerHandle = {
   abort: () => void;
   appendPrompt: (prompt: string, attachments?: PromptAttachment[]) => Promise<void>;
   isClosed: () => boolean;
@@ -206,182 +138,544 @@ export type RunnerHandle = {
 };
 ```
 
-### 4.2 RuntimeOverrides
-
 ```typescript
-// src/electron/types.ts#L45-L52
-export type RuntimeOverrides = {
-  model?: string;
-  reasoningMode?: RuntimeReasoningMode;  // "disabled" | "low" | "medium" | "high" | "xhigh"
-  permissionMode?: "default" | "bypassPermissions" | "plan";
-  runSurface?: AgentRunSurface;          // "development" | "maintenance"
-  agentId?: string;
-  outputFormat?: "json" | "none";
+// src/electron/libs/runner-reuse.ts
+
+type RunnerReuseDescriptor = {
+  cwd: string;
+  model: string;
+  permissionMode: string;
+  reasoningMode: string;
+  outputFormat: string;
+  runSurface: AgentRunSurface;
+  agentId: string;
+  allowedTools: string;
+  runtimeProfile: string;
+  builtinMcpServers: BuiltinMcpServerName[];
 };
 ```
 
-### 4.3 SessionStore 与 SessionInfo
+**章节来源**：`src/electron/libs/runner.ts` 第 90-105 行、`src/electron/libs/runner-reuse.ts` 第 16-27 行。
+
+### 2.3 内置 MCP 服务器名
 
 ```typescript
-// src/electron/types.ts#L130-L148
-export type SessionInfo = {
-  id: string;
-  title: string;
-  status: SessionStatus;  // "idle" | "running" | "completed" | "error"
-  model?: string;
-  claudeSessionId?: string;
-  cwd?: string;
-  runSurface?: AgentRunSurface;
-  agentId?: string;
-  slashCommands?: string[];
-  workflowMarkdown?: string;
-  workflowState?: SessionWorkflowState;
+// src/electron/libs/runner-reuse.ts 第 108-117 行
+type BuiltinMcpServerName =
+  | "tech-cc-hub-browser"   // 浏览器工具
+  | "tech-cc-hub-admin"     // 管理配置工具
+  | "tech-cc-hub-design"    // 设计/Figma 工具
+  | "tech-cc-hub-figma"     // Figma MCP
+  | "tech-cc-hub-cron"      // 定时任务工具
+  | "tech-cc-hub-idea"      // 创意/头脑风暴工具
+  | "tech-cc-hub-plan";     // 规划工具
+```
+
+**章节来源**：`src/electron/libs/runner-reuse.ts` 第 108-117 行。
+
+---
+
+## 入口与初始化
+
+### 3.1 主进程入口：`main.ts`
+
+```typescript
+// src/electron/main.ts 第 30 行
+import {
+  handleClientEvent,
+  sessions,
+  cleanupAllSessions,
+  setChannelReplySender,
+  listStoredSessionsForRenderer,
+  initializeTaskExecutor,
+  initializeNoteRepository,
+} from "./ipc-handlers.js";
+
+// 主窗口创建时初始化 IPC handlers
+// 实际初始化在 app.whenReady() 回调中触发
+```
+
+主进程启动流程：
+
+```mermaid
+flowchart TD
+    A[app.whenReady] --> B[初始化 SessionStore]
+    B --> C[初始化 NoteRepository]
+    C --> D[初始化 TaskExecutor]
+    D --> E[注册 IPC handlers]
+    E --> F[初始化 BrowserWorkbenchManager]
+    F --> G[启动 channel bridge]
+    G --> H[启动 dev backend bridge]
+    H --> I[注册 auto-updater]
+    I --> J[启动 CronService]
+```
+
+**图表来源**：基于 `src/electron/main.ts` 第 98-139 行的初始化序列。
+
+### 3.2 IPC Handlers 初始化
+
+```typescript
+// src/electron/ipc-handlers.ts 第 51-64 行
+let sessions: SessionStore;
+const runnerHandles = new Map<string, RunnerHandle>();
+const warmRunnerCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const WARM_RUNNER_IDLE_MS = 30 * 60 * 1000;  // 30 分钟
+
+function initializeSessions() {
+  if (!sessions) {
+    const dbPath = join(app.getPath("userData"), "sessions.db");
+    sessions = new SessionStore(dbPath);
+    sessions.recoverInterruptedSessions();
+  }
+  return sessions;
+}
+```
+
+**章节来源**：`src/electron/ipc-handlers.ts` 第 51-156 行。
+
+### 3.3 Preload 暴露的 API
+
+```typescript
+// src/electron/preload.cts 第 1-195 行
+electron.contextBridge.exposeInMainWorld("electron", {
+  // 客户端事件
+  sendClientEvent: (event: any) =>
+    electron.ipcRenderer.send("client-event", event),
+  onServerEvent: (callback: (event: any) => void) => ...,  // 返回 unsubscribe 函数
+
+  // 会话操作
+  generateSessionTitle: (userInput: string | null, options?: { model?: string }) => ...,
+  listStoredSessions: (archived?: boolean) => ...,
+
+  // 配置
+  getApiConfig: () => ...,
+  saveApiConfig: (config: any) => ...,
+  getGlobalConfig: () => ...,
+  saveGlobalConfig: (config: any) => ...,
+
+  // 自动更新
+  getAppUpdateStatus: () => ...,
+  checkForAppUpdates: () => ...,
+  downloadAppUpdate: () => ...,
+  installAppUpdate: () => ...,
+
+  // 浏览器工作台
+  openBrowserWorkbench: (url: string, sessionId?: string) => ...,
+  setBrowserWorkbenchBounds: (bounds: any, sessionId?: string) => ...,
+  captureBrowserWorkbenchVisible: (sessionId?: string) => ...,
+  onBrowserWorkbenchEvent: (callback: (event: any) => void) => ...,
   // ...
+});
+```
+
+**章节来源**：`src/electron/preload.cts` 第 1-195 行。
+
+---
+
+## 调用链路：客户端触发 → Runner 执行
+
+### 4.1 完整调用序列
+
+```mermaid
+sequenceDiagram
+    participant Renderer as 渲染进程 (UI)
+    participant IPC as ipc-handlers.ts
+    participant Runner as runner.ts
+    participant SDK as Claude Agent SDK
+    participant MCP as MCP Servers
+
+    Renderer->>IPC: handleClientEvent({ type: "user_prompt", prompt, attachments })
+    IPC->>IPC: preparePromptAttachmentsForSession()
+    IPC->>IPC: buildPromptLedgerForRun()
+    IPC->>IPC: buildRunnerReuseKey()
+    IPC->>IPC: canReuseRunner()? → reuse existing or create new
+
+    alt Runner 复用
+        IPC->>IPC: runnerHandles.get(reuseKey)
+        IPC->>Runner: runner.appendPrompt(newPrompt, newAttachments)
+    else 新建 Runner
+        IPC->>Runner: runClaude(options)
+        Runner->>Runner: resolveAgentRuntimeContext()
+        Runner->>Runner: ensureMcpServersForPrompt()
+        Runner->>SDK: new Query(session, config)
+    end
+
+    SDK-->>Runner: onMessage(message)
+    Runner-->>IPC: onEvent(serverEvent)
+    IPC-->>Renderer: broadcast(serverEvent) via IPC "server-event"
+
+    alt 权限请求
+        SDK-->>Runner: requestPermissionDecision(toolName, input)
+        Runner-->>IPC: sendPermissionRequest(toolUseId, toolName, input)
+        IPC-->>Renderer: ServerEvent{ type: "permission.request" }
+        Renderer-->>IPC: permission decision via pendingPermissions
+    end
+
+    alt MCP OAuth
+        SDK-->>Runner: mcpAuthenticate(serverName, redirectUri)
+        Runner-->>Runner: maybeRunFigmaGuideOAuth()
+    end
+
+    SDK-->>Runner: final result
+    Runner-->>IPC: onEvent(ServerEvent{ type: "stream.message", subtype: "success" })
+    IPC-->>IPC: rememberRunnerHandle(reuseKey, handle)
+```
+
+**图表来源**：基于 `src/electron/libs/runner.ts` 第 213-340 行、`src/electron/ipc-handlers.ts` 第 163-175 行的事件广播流程。
+
+### 4.2 Runner 初始化关键步骤
+
+```typescript
+// src/electron/libs/runner.ts 第 213-340 行（简化）
+export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
+  const { prompt, attachments = [], runtime, session, onEvent } = options;
+  const abortController = new AbortController();
+  const permissionMode = runtime?.permissionMode ?? "bypassPermissions";
+  const promptInput = new PromptInputQueue();
+  promptInput.enqueue(prompt, attachments);
+
+  // 1. 解析 Agent 运行时上下文
+  const runtimeContext = resolveAgentRuntimeContext({
+    cwd: session.cwd,
+    surface: runtime?.runSurface ?? session.runSurface ?? "development",
+    agentId: runtime?.agentId,
+  });
+
+  // 2. 构建 System Prompt 追加内容
+  const systemPromptAppend = [
+    buildBrowserWorkbenchPromptAppend(),      // BrowserView 规则
+    buildAdminConfigPromptAppend(),           // 配置持久化规则
+    buildToolCallOptimizationPromptAppend(),  // 工具调用优化
+    buildGlobalRuntimeSystemPromptExtAppend(globalRuntimeConfig),  // 全局扩展
+    buildBuiltinMcpRegistryPromptAppend(enabledServerNames),      // MCP 提示
+    buildDesignParityPromptAppend(),          // 设计还原规则
+  ].filter(Boolean).join("\n");
+
+  // 3. 动态启用内置 MCP 服务器
+  await ensureMcpServersForPrompt(nextPrompt, nextAttachments);
+
+  // 4. 创建 SDK Query 实例
+  const query = new Query(session, {
+    systemPrompt,
+    systemPromptAppend,
+    tools: effectiveToolSet,
+    mcpServers: enabledMcpServers,
+    permissionMode,
+    // ...
+  });
+
+  // 5. 事件循环
+  for await (const message of query.stream()) {
+    onMessage(message);  // 处理各类 SDKMessage
+  }
+}
+```
+
+**章节来源**：`src/electron/libs/runner.ts` 第 213-340 行、`src/electron/libs/system-prompt-presets.ts` 第 12-130 行。
+
+### 4.3 内置 MCP 服务器动态启用
+
+```typescript
+// src/electron/libs/runner.ts 第 287-319 行
+const ensureMcpServersForPrompt = async (
+  nextPrompt: string,
+  nextAttachments: readonly PromptAttachment[],
+): Promise<void> => {
+  const profile = resolveRuntimeEfficiencyProfile({
+    prompt: nextPrompt,
+    attachments: nextAttachments,
+    runtime,
+    runSurface: latestRunSurface,
+  });
+
+  const missingServerNames = profile.builtinMcpServers.filter(
+    (serverName) => !activeBuiltinMcpServerNames.has(serverName)
+  );
+
+  if (missingServerNames.length === 0) return;
+
+  // 通过 SDK 的 setMcpServers 动态启用
+  await activeQuery.setMcpServers({
+    ...getExternalMcpServers(globalRuntimeConfig, { projectDir: latestProjectCwd }),
+    ...getBuiltinMcpServers({ sessionId: session.id, cwd: latestProjectCwd }, enabledServerNames),
+  });
 };
 ```
 
-### 4.4 PromptAttachment
+**章节来源**：`src/electron/libs/runner.ts` 第 287-319 行。
+
+---
+
+## IPC 通信体系
+
+### 5.1 核心 IPC Channel
+
+| Channel | 方向 | 类型 | 说明 |
+|---------|------|------|------|
+| `client-event` | Renderer → Main | IPC send | 客户端发送事件（user_prompt、permission response 等） |
+| `server-event` | Main → Renderer | IPC send | 服务端推送事件（stream.message、permission.request 等） |
+| `browser-open` | Renderer → Main | IPC invoke | 打开浏览器工作台 |
+| `browser-event` | Main → Renderer | IPC send | 浏览器工作台事件 |
+| `preview-list-directory` | Renderer → Main | IPC invoke | 预览目录列表 |
+| `sessions:list` | Renderer → Main | IPC invoke | 列出会话 |
+| `generate-session-title` | Renderer → Main | IPC invoke | 生成会话标题 |
+| `app-update-get-status` | Renderer → Main | IPC invoke | 获取更新状态 |
+
+**章节来源**：`src/electron/main.ts` 第 27 行注册 `ipcMainHandle` 监听、`src/electron/preload.cts` 第 12-26 行暴露 API。
+
+### 5.2 ClientEvent 类型
 
 ```typescript
-// src/electron/types.ts#L63-L75
-export type PromptAttachment = {
-  id: string;
+// src/electron/types.ts 第 184-214 行（部分）
+type ClientEvent =
+  | { type: "user_prompt"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[] } }
+  | { type: "permission.response"; payload: { toolUseId: string; behavior: "allow" | "deny" | "block"; message?: string } }
+  | { type: "session.create"; payload: { cwd?: string; runSurface?: AgentRunSurface } }
+  | { type: "session.archive"; payload: { sessionId: string } }
+  | { type: "session.delete"; payload: { sessionId: string } }
+  | { type: "runner.abort"; payload: { sessionId: string } }
+  // ...
+```
+
+**章节来源**：`src/electron/types.ts` 第 184 行之后的完整类型定义。
+
+### 5.3 ServerEvent 广播机制
+
+```typescript
+// src/electron/ipc-handlers.ts 第 163-175 行
+function broadcast(event: ServerEvent) {
+  const payload = JSON.stringify(event);
+  if (isDev()) {
+    console.log("[meta][server-event]", event.type);
+  }
+
+  // 1. 发送给所有 BrowserWindow
+  const windows = BrowserWindow.getAllWindows();
+  for (const win of windows) {
+    win.webContents.send("server-event", payload);
+  }
+
+  // 2. 通知注册的监听器（用于内部处理）
+  for (const listener of serverEventListeners) {
+    listener(event);
+  }
+}
+```
+
+**章节来源**：`src/electron/ipc-handlers.ts` 第 163-175 行。
+
+### 5.4 权限请求桥接
+
+```typescript
+// src/electron/libs/runner.ts 第 241-269 行
+const requestPermissionDecision = (toolName: string, input: unknown, signal?: AbortSignal) => {
+  const toolUseId = crypto.randomUUID();
+
+  // 发送权限请求事件到渲染进程
+  sendPermissionRequest(toolUseId, toolName, input);
+
+  return new Promise<PermissionResult>((resolve) => {
+    // 存储待解决的权限请求
+    session.pendingPermissions.set(toolUseId, {
+      toolUseId,
+      toolName,
+      input,
+      resolve: (result) => {
+        session.pendingPermissions.delete(toolUseId);
+        resolve(result as PermissionResult);
+      },
+    });
+
+    // 处理中止信号
+    signal?.addEventListener("abort", () => {
+      session.pendingPermissions.delete(toolUseId);
+      resolve({ behavior: "deny", message: "Session aborted" });
+    }, { once: true });
+  });
+};
+```
+
+**章节来源**：`src/electron/libs/runner.ts` 第 241-269 行。
+
+---
+
+## 附件处理流程
+
+### 6.1 附件数据结构与优先级
+
+```typescript
+// src/shared/attachments.ts 第 6-17 行
+type AttachmentLike = {
   kind: "image" | "text";
-  name: string;
-  mimeType: string;
   data: string;
-  runtimeData?: string;    // 仅此字段进入 SDK 图像块
-  preview?: string;
+  runtimeData?: string;    // 仅有 runtimeData 进入 Agent
+  mimeType: string;
+  preview?: string;        // UI 预览用，不进 Agent
+  name?: string;
   size?: number;
   storagePath?: string;
+  storageUri?: string;
   summaryText?: string;
 };
 ```
 
-### 4.5 ServerEvent 类型体系
+**关键规则**：只有 `runtimeData` 字段可用于构建 Agent 的 image block，`data`/`preview` 是 UI 展示用。
+
+**章节来源**：`src/shared/attachments.ts` 第 6-17 行。
+
+### 6.2 Content Block 构建逻辑
 
 ```typescript
-// src/electron/types.ts#L184-L214
-export type ServerEvent =
-  | { type: "stream.message"; payload: { sessionId: string; message: StreamMessage } }
-  | { type: "session.status"; payload: { sessionId: string; status: SessionStatus; ... } }
-  | { type: "permission.request"; payload: { sessionId: string; toolUseId: string; toolName: string; input: unknown } }
-  | { type: "runner.error"; payload: { sessionId?: string; message: string } }
-  | { type: "session.plan.updated"; payload: SessionPlanSnapshot }
-  | { type: "task.*"; payload: ... }  // 任务系统事件
-  // ...
+// src/shared/attachments.ts 第 118-191 行
+export function buildAnthropicPromptContentBlocks(
+  prompt: string,
+  attachments: AttachmentLike[],
+): Array<Record<string, unknown>> {
+  const contentBlocks = [];
+
+  // 1. 附件优先级上下文
+  if (attachments.length > 0) {
+    contentBlocks.push({
+      type: "text",
+      text: buildAttachmentPriorityContext(attachments),
+    });
+  }
+
+  // 2. 处理每个附件
+  for (const attachment of attachments) {
+    if (attachment.kind === "image") {
+      const runtimeImageData = attachment.runtimeData;
+      // 只有 runtimeData 是有效载荷，data/preview 不可回退
+      if (!isInlineImageAttachmentData(runtimeImageData)) {
+        // 使用 summaryText 或占位符
+        contentBlocks.push({ type: "text", text: `Image attachment summary (${name}): ${summaryText}` });
+        continue;
+      }
+      contentBlocks.push({
+        type: "image",
+        source: { type: "base64", media_type: attachment.mimeType, data: base64Data },
+      });
+    } else {
+      // 文本附件完整展开
+      contentBlocks.push({
+        type: "text",
+        text: `Attachment file (${name})\nType: ${mimeType}\n\nUse this attachment as the primary source.\n\`\`\`\n${truncateTextAttachment(text)}\n\`\`\``,
+      });
+    }
+  }
+
+  // 3. 用户提示
+  contentBlocks.push({
+    type: "text",
+    text: `User request after reading the attachments first:\n${prompt}`,
+  });
+
+  return contentBlocks;
+}
 ```
 
-章节来源：[file://src/electron/types.ts#L45-L214](file://src/electron/types.ts#L45-L214)
+**章节来源**：`src/shared/attachments.ts` 第 118-191 行、`test/electron/runner-attachments.test.ts` 第 19-49 行验证逻辑。
+
+### 6.3 Token 预算估算
+
+```typescript
+// src/shared/attachments.ts 第 43-74 行
+export function estimateAttachmentPromptChars(attachment: AttachmentLike): number {
+  const priorityLine = `${formatAttachmentName(attachment)} (${attachment.kind}, ${attachment.mimeType})`;
+
+  if (attachment.kind === "image") {
+    if (isInlineImageAttachmentData(attachment.runtimeData)) {
+      // 估算 base64 编码后的字符数
+      return priorityLine.length + stripDataUrlPrefix(runtimeImageData).replace(/\s+/g, "").length;
+    }
+    // 使用 summaryText 估算
+    return priorityLine.length + summaryText.length;
+  }
+
+  // 文本附件完整估算
+  const normalizedText = attachment.summaryText ?? attachment.data;
+  return priorityLine.length + normalizedText.length;
+}
+
+// src/shared/attachments.ts 第 4 行
+export const TEXT_ATTACHMENT_PROMPT_CHAR_LIMIT = 120_000;
+```
+
+**章节来源**：`src/shared/attachments.ts` 第 4 行、第 43-74 行。
+
+### 6.4 无状态延续（Stateless Continuation）
+
+```typescript
+// src/electron/stateless-continuation.ts 第 5-19 行
+type StatelessContinuationOptions = {
+  contextWindow?: number;              // 默认 200_000
+  compressionThresholdPercent?: number; // 默认 70
+  recentTurnCount?: number;            // 默认 5
+  existingSummary?: string;
+  existingSummaryMessageCount?: number;
+};
+
+type StatelessContinuationPayload = {
+  prompt: string;
+  usedCompression: boolean;
+  summaryText?: string;
+  summaryMessageCount: number;
+  estimatedTokens: number;
+};
+```
+
+**章节来源**：`src/electron/stateless-continuation.ts` 第 5-19 行。
 
 ---
 
-## 5. 错误处理机制
+## 配置与持久化
 
-### 5.1 normalizeRunnerError
-
-`runner-error.ts` 提供错误归一化逻辑：
+### 7.1 全局运行时配置结构
 
 ```typescript
-// src/electron/libs/runner-error.ts#L21-L50
-export function normalizeRunnerError(
-  error: unknown,
-  requestedModel?: string,
-  globalRuntimeConfig?: unknown,
-): string {
-  // 1. 模型不可用检测 (404, not found, unavailable)
-  if (hasModelContext && modelUnavailable) {
-    return `请求模型${quotedRequestedModel}失败：该模型当前不可用、已下线...`;
+// 存储在 app.getPath("userData") + /agent-runtime.json
+type GlobalRuntimeConfig = {
+  env?: Record<string, string>;         // 环境变量
+  skillCredentials?: Record<string, unknown>;  // 技能凭证
+  closeSidebarOnBrowserOpen?: boolean;
+  systemPromptExt?: string | string[];  // System Prompt 扩展
+  mcpServers?: Record<string, McpServerConfig>;
+  plugins?: Record<string, PluginConfig>;
+};
+```
+
+**章节来源**：`src/electron/libs/system-prompt-presets.ts` 第 81-111 行读取 `systemPromptExt`。
+
+### 7.2 会话存储
+
+```typescript
+// src/electron/ipc-handlers.ts 第 149-156 行
+function initializeSessions() {
+  if (!sessions) {
+    const dbPath = join(app.getPath("userData"), "sessions.db");
+    sessions = new SessionStore(dbPath);
+    sessions.recoverInterruptedSessions();
   }
-  // 2. Figma Auth 错误特殊处理
-  if (isLikelyFigmaAuthError(raw)) {
-    return `${raw}\n\n${buildFigmaAuthGuidance(globalRuntimeConfig)}`;
-  }
-  return raw || "运行失败，请稍后重试。";
+  return sessions;
 }
 ```
 
-### 5.2 Figma Auth 引导
+**数据源**：会话数据存储在 SQLite (`sessions.db`)，由 `SessionStore` 管理。
+
+### 7.3 API 配置管理
 
 ```typescript
-// src/electron/libs/runner-error.ts#L52-L63
-function buildFigmaAuthGuidance(globalRuntimeConfig: unknown): string {
-  const status = getFigmaOfficialPluginStatusFromConfig(globalRuntimeConfig);
-  if (status.mode === "rest") {
-    return "Figma REST/PAT 授权可能无效或缺少 scope。\n请在设置页重新校验 Figma Token...";
-  }
-  return "Figma OAuth 授权可能已过期；只有当前配置确实是官方 OAuth MCP 时，才需要重新走 OAuth 授权。";
-}
+// src/electron/libs/claude-settings.js 导入
+import { loadApiConfigSettings, saveApiConfigSettings } from "./libs/config-store.js";
+import { getCurrentApiConfig, resolveApiConfigForModel } from "./libs/claude-settings.js";
 ```
 
-### 5.3 isSuccessfulRunnerResult
+**章节来源**：`src/electron/main.ts` 第 32-45 行导入配置管理模块。
+
+### 7.4 Runner 复用键
 
 ```typescript
-// src/shared/runner-status.ts#L1-L6
-export function isSuccessfulRunnerResult(message: { type?: unknown; subtype?: unknown }): boolean {
-  return message.type === "result" && message.subtype === "success";
-}
-```
-
-章节来源：[file://src/electron/libs/runner-error.ts#L1-L67](file://src/electron/libs/runner-error.ts#L1-L67)
-章节来源：[file://src/shared/runner-status.ts#L1-L7](file://src/shared/runner-status.ts#L1-L7)
-
----
-
-## 6. 上下文压缩
-
-### 6.1 StatelessContinuation
-
-当对话超长时，`stateless-continuation.ts` 负责压缩历史：
-
-```typescript
-// src/electron/stateless-continuation.ts#L258-L270
-export function buildStatelessContinuationPayload(
-  messages: StreamMessage[],
-  options: StatelessContinuationOptions,
-): StatelessContinuationPayload {
-  // 1. 计算 token 预算
-  // 2. 提取 user/assistant 对话条目
-  // 3. 去重 dedupeHistory()
-  // 4. 生成摘要 buildSummary()
-  // 5. 构建续接提示 buildContinuationPrompt()
-}
-```
-
-### 6.2 压缩参数
-
-| 常量 | 默认值 | 说明 |
-|------|--------|------|
-| `DEFAULT_RECENT_TURN_COUNT` | 5 | 最近 N 轮保留原文 |
-| `DEFAULT_RECENT_ENTRY_LIMIT` | 12 | 最近 12 条对话条目 |
-| `SUMMARY_ENTRY_PREVIEW_LIMIT` | 6 | 摘要中展示条目数 |
-| `SUMMARY_TEXT_LIMIT` | 160 | 单条摘要最大字符 |
-| `DEFAULT_CONTEXT_WINDOW` | 200,000 | 默认上下文窗口 |
-| `DEFAULT_COMPRESSION_THRESHOLD_PERCENT` | 70 | 压缩阈值 |
-| `DEFAULT_IMAGE_ATTACHMENT_TOKEN_ESTIMATE` | 6,000 | 单图 token 估算 |
-
-### 6.3 Token 估算逻辑
-
-```typescript
-// src/electron/stateless-continuation.ts#L157-L177
-function estimateTextTokens(text: string): number {
-  // CJK 字符: 每个 1.2 token
-  // 英文/数字: 每 3 个字符 1 token
-  // 空白符: 每 7 个 1 token
-  return Math.ceil((cjkCount * 1.2) + (otherCount / 3) + (whitespaceCount * 0.15));
-}
-```
-
-章节来源：[file://src/electron/stateless-continuation.ts#L1-L250](file://src/electron/stateless-continuation.ts#L1-L250)
-
----
-
-## 7. Runner 复用机制
-
-### 7.1 复用键构建
-
-```typescript
-// src/electron/libs/runner-reuse.ts#L29-L50
+// src/electron/libs/runner-reuse.ts 第 29-50 行
 export function buildRunnerReuseKey(input: RunnerReuseKeyInput): string {
   return JSON.stringify(buildRunnerReuseDescriptor(input));
 }
@@ -389,6 +683,9 @@ export function buildRunnerReuseKey(input: RunnerReuseKeyInput): string {
 export function canReuseRunner(existingKey: string | undefined, requestedKey: string): boolean {
   const existing = parseRunnerReuseKey(existingKey);
   const requested = parseRunnerReuseKey(requestedKey);
+
+  if (!existing || !requested) return false;
+
   return (
     existing.cwd === requested.cwd &&
     existing.model === requested.model &&
@@ -402,358 +699,58 @@ export function canReuseRunner(existingKey: string | undefined, requestedKey: st
 }
 ```
 
-### 7.2 复用决策字段
+**复用条件**：cwd、model、permissionMode、reasoningMode、outputFormat、runSurface、agentId、allowedTools 都相同时可复用。
 
-`RunnerReuseDescriptor` 包含以下比对字段：
-
-- `cwd` - 工作目录
-- `model` - 模型名称
-- `permissionMode` - 权限模式
-- `reasoningMode` - 推理模式
-- `outputFormat` - 输出格式
-- `runSurface` - 执行面 (development/maintenance)
-- `agentId` - Agent ID
-- `allowedTools` - 允许工具列表
-- `runtimeProfile` - 效率 Profile ID
-- `builtinMcpServers` - 内置 MCP 服务器列表
-
-### 7.3 IPC 层复用管理
-
-```typescript
-// src/electron/ipc-handlers.ts#L440-L460
-const WARM_RUNNER_IDLE_MS = 30 * 60 * 1000;  // 30 分钟空闲保活
-
-function rememberRunnerHandle(sessionId: string, handle: RunnerHandle) {
-  // 保存在 runnerHandles Map 中
-}
-
-function getReusableRunnerHandle(sessionId: string): RunnerHandle | undefined {
-  // 检查 canReuseRunner() 并返回可用 handle
-}
-```
-
-章节来源：[file://src/electron/libs/runner-reuse.ts#L1-L119](file://src/electron/libs/runner-reuse.ts#L1-L119)
-章节来源：[file://src/electron/ipc-handlers.ts#L440-L460](file://src/electron/ipc-handlers.ts#L440-L460)
+**章节来源**：`src/electron/libs/runner-reuse.ts` 第 29-50 行。
 
 ---
 
-## 8. Agent 解析与 Profile 路由
+## Agent 运行时解析
 
-### 8.1 resolveAgentRuntimeContext
+### 8.1 解析入口
 
 ```typescript
-// src/electron/libs/agent-resolver.ts#L79-L159
+// src/electron/libs/agent-resolver.ts 第 79-159 行
 export function resolveAgentRuntimeContext(options: {
   cwd?: string;
   surface?: AgentRunSurface;
   agentId?: string;
-}): ResolvedAgentRuntimeContext {
-  // 1. maintenance 面 → 返回内置 system-maintenance Profile
-  // 2. development 面 → 扫描用户层 + 项目层
-  // 3. user 层: ~/.claude/AGENTS.md
-  // 4. project 层: <cwd>/.claude/AGENTS.md, CLAUDE.md
-  // 5. autoApply profiles 合并 skills/allowedTools
-}
+}): ResolvedAgentRuntimeContext
 ```
 
-### 8.2 内置 System Maintenance Profile
+### 8.2 Profile 发现层级
+
+```mermaid
+flowchart TD
+    A[resolveAgentRuntimeContext] --> B{runSurface?}
+
+    B -->|maintenance| C[使用内置 BUILT_IN_SYSTEM_PROFILES]
+    B -->|development| D[发现 profile]
+
+    D --> E[用户层]
+    D --> F[项目层]
+
+    E --> E1[~/.claude/AGENTS.md]
+    E --> E2[~/.claude/{id}/manifest.json]
+
+    F --> F1[项目/.claude/AGENTS.md]
+    F --> F2[项目/.claude/CLAUDE.md]
+    F --> F3[项目/.claude/{id}/manifest.json]
+
+    C --> G[返回 ResolvedAgentRuntimeContext]
+    E --> H[pickAutoProfiles 或 pickProfileById]
+    F --> H
+    H --> G
+```
+
+**章节来源**：`src/electron/libs/agent-resolver.ts` 第 79-159 行。
+
+### 8.3 内置维护 Agent
 
 ```typescript
-// src/electron/libs/agent-resolver.ts#L58-L77
+// src/electron/libs/agent-resolver.ts 第 58-77 行
 const BUILT_IN_SYSTEM_PROFILES: ResolvedAgentProfile[] = [
   {
     id: DEFAULT_SYSTEM_MAINTENANCE_ID,  // "system-maintenance"
     scope: "system",
     name: "软件维护 Agent",
-    prompt: "你是应用内置的系统维护 Agent。\n你的职责只包括软件自维护...",
-    allowedTools: ["Read", "Edit", "MultiEdit", "Write", "Bash", "Glob", "Search", "update_plan"],
-    runSurface: "maintenance",
-    autoApply: true,
-  },
-];
-```
-
-### 8.3 Profile 发现流程
-
-```mermaid
-flowchart TD
-    A["resolveAgentRuntimeContext(cwd, surface, agentId)"] --> B{"surface === 'maintenance'?"}
-    B -->|Yes| C["返回 BUILT_IN_SYSTEM_PROFILES"]
-    B -->|No| D["扫描 user 层 ~/.claude/"]
-    D --> E["扫描 project 层 <cwd>/.claude/"]
-    E --> F{"agentId 指定?"}
-    F -->|Yes| G["pickProfileById() 精确匹配"]
-    F -->|No| H["pickAutoProfiles() 自动应用"]
-    G --> I["合并 skills / allowedTools"]
-    H --> I
-    I --> J["buildPromptAppend() 构建 System Prompt"]
-```
-
-章节来源：[file://src/electron/libs/agent-resolver.ts#L1-L160](file://src/electron/libs/agent-resolver.ts#L1-L160)
-
----
-
-## 9. Figma MCP 插件集成
-
-### 9.1 连接模式
-
-```typescript
-// src/electron/libs/figma-official-plugin.ts#L26
-export type FigmaOfficialConnectionMode = "remote" | "desktop" | "rest";
-```
-
-| 模式 | 说明 | URL |
-|------|------|-----|
-| `remote` | Figma 官方 MCP 远程 | `https://mcp.figma.com/mcp` |
-| `desktop` | Figma Desktop 本地 MCP | `http://127.0.0.1:3845/mcp` |
-| `rest` | Figma REST API + PAT | `https://api.figma.com/v1` |
-
-### 9.2 认证方式
-
-```typescript
-// src/electron/libs/figma-official-plugin.ts#L27
-export type FigmaOfficialOAuthProvider = "direct" | "codex" | "pat";
-```
-
-### 9.3 REST API 工具清单
-
-```typescript
-// src/electron/libs/figma-official-plugin.ts#L6-L24
-export const FIGMA_REST_TOOL_NAMES = [
-  "figma_get_current_user",
-  "figma_get_file_metadata",
-  "figma_read_design",
-  "figma_list_node_index",
-  "figma_match_ui_nodes",
-  "figma_summarize_design",
-  "figma_extract_design_tokens",
-  "figma_get_design_playbook",
-  "figma_audit_design",
-  "figma_generate_tailwind_code",
-  "figma_get_image_urls",
-  "figma_get_image_fills",
-  "figma_list_file_versions",
-  "figma_list_file_comments",
-  "figma_list_file_library",
-  "figma_get_file_variables",
-  "figma_get_dev_resources",
-];
-```
-
-### 9.4 IPC Handlers 集成点
-
-`main.ts` 中注册以下 IPC handlers：
-
-- `ipcMain.handle("plugins:getFigmaOfficialStatus")` → `getFigmaOfficialPluginStatus()`
-- `ipcMain.handle("plugins:installFigmaOfficial")` → `installFigmaOfficialPlugin()`
-- `ipcMain.handle("plugins:connectFigmaOfficial")` → OAuth/PAT 连接流程
-
-章节来源：[file://src/electron/libs/figma-official-plugin.ts#L1-L250](file://src/electron/libs/figma-official-plugin.ts#L1-L250)
-章节来源：[file://src/electron/main.ts#L445-L491](file://src/electron/main.ts#L445-L491)
-
----
-
-## 10. 扩展点与常见改造路径
-
-### 10.1 新增 System Prompt Preset
-
-在 `system-prompt-presets.ts` 添加导出函数：
-
-```typescript
-// src/electron/libs/system-prompt-presets.ts#L1-L119
-export function buildYourCustomPromptAppend(): string {
-  return ["自定义规则行1", "自定义规则行2"].join("\n");
-}
-```
-
-然后在 `runner.ts` 的 `combineSystemPromptAppend()` 中引入。
-
-### 10.2 新增 IPC Channel
-
-1. 在 `types.ts` 的 `ServerEvent` 联合类型中添加事件变体
-2. 在 `preload.cts` 中通过 `ipcRenderer.invoke()` / `ipcRenderer.on()` 暴露
-3. 在 `ipc-handlers.ts` 中实现 handler 并注册到 `ipcMain.handle()`
-
-### 10.3 新增 Runner Hook
-
-`runner.ts` 已注册以下 learning hooks：
-
-- `createLearnCaptureHook`
-- `createCorrectionDetectionHook`
-- `createQualityGateHook`
-- `createSecretScanHook`
-- `createGitBlastRadiusHook`
-- `createCommitValidateHook`
-
-在 `learning-hooks.ts` 中实现新 hook 并在 `runClaude()` 中注册。
-
-### 10.4 新增 Builtin MCP Server
-
-1. 在 `builtin-mcp-registry.ts` 添加 server 定义
-2. 在 `runner-reuse.ts` 的 `isBuiltinMcpServerName()` 白名单中添加
-3. 在 `system-prompt-presets.ts` 的 `buildBuiltinMcpRegistryPromptAppend()` 中添加 prompt 提示
-
-### 10.5 常见改造路径
-
-| 改造目标 | 修改文件 | 关键符号 |
-|----------|----------|----------|
-| 修改模型选择逻辑 | `ipc-handlers.ts` | `resolveApiConfigForModel()` |
-| 添加权限拦截规则 | `runner.ts` | `requestPermissionDecision()` |
-| 修改错误归一化规则 | `runner-error.ts` | `normalizeRunnerError()` |
-| 添加上下文压缩策略 | `stateless-continuation.ts` | `resolveCompressionBudget()` |
-| 修改会话持久化格式 | `session-store.ts` | `SessionStore` |
-| 新增 Agent Profile 来源 | `agent-resolver.ts` | `discoverAgentLayer()` |
-
-章节来源：[file://src/electron/libs/system-prompt-presets.ts#L1-L176](file://src/electron/libs/system-prompt-presets.ts#L1-L176)
-
----
-
-## 11. Agent 改代码地图
-
-### 11.1 修改入口优先级
-
-| 修改目标 | 优先阅读文件 | 关键符号 |
-|----------|--------------|----------|
-| Runner 核心逻辑 | `runner.ts` | `runClaude()`, `RunnerOptions` |
-| IPC 通信逻辑 | `ipc-handlers.ts` | `handleClientEvent()`, `broadcast()` |
-| 会话持久化 | `session-store.ts` | `SessionStore` |
-| Agent Profile 解析 | `agent-resolver.ts` | `resolveAgentRuntimeContext()` |
-| 附件处理 | `attachments.ts` | `buildAnthropicPromptContentBlocks()` |
-| 错误处理 | `runner-error.ts` | `normalizeRunnerError()` |
-| 上下文压缩 | `stateless-continuation.ts` | `buildStatelessContinuationPayload()` |
-| Runner 复用 | `runner-reuse.ts` | `buildRunnerReuseKey()`, `canReuseRunner()` |
-| 类型定义 | `types.ts` | `RuntimeOverrides`, `ServerEvent` |
-| Preload API | `preload.cts` | `sendClientEvent()`, `onServerEvent()` |
-
-### 11.2 关键 IPC Channel 速查表
-
-| Channel | 方向 | payload 类型 | 用途 |
-|----------|------|--------------|------|
-| `client-event` | Renderer → Main | `ClientEvent` | 触发用户输入处理 |
-| `server-event` | Main → Renderer | `ServerEvent` (JSON) | 推送事件流 |
-| `sessions:list` | Renderer → Main | - | 获取会话列表 |
-| `session:history` | Renderer → Main | `{ sessionId }` | 获取历史消息 |
-| `generate-session-title` | Renderer → Main | `{ userInput }` | 生成标题 |
-| `app-update-*` | Renderer → Main | - | 自动更新控制 |
-| `browser-*` | Renderer → Main | - | BrowserWorkbench 控制 |
-| `preview-*` | Renderer → Main | - | 文件预览 |
-| `git:*` | Renderer → Main | - | Git 操作 |
-| `knowledge:*` | Renderer → Main | - | 知识库操作 |
-
-### 11.3 测试入口
-
-| 测试文件 | 覆盖范围 |
-|----------|----------|
-| `test/electron/runner-attachments.test.ts` | 附件 Content Blocks 构建 |
-| `test/electron/runner-*.test.ts` | Runner 执行逻辑 |
-| `test/shared/attachments.test.ts` | 附件预处理 |
-
-**运行测试命令**：
-
-```bash
-# 运行所有 runner 相关测试
-npm test -- --test-name-pattern="runner"
-
-# 运行 attachments 相关测试
-npm test -- test/electron/runner-attachments.test.ts
-
-# 单文件调试
-npx vitest run src/electron/libs/runner.ts --reporter=verbose
-```
-
-### 11.4 常见回归风险
-
-| 修改位置 | 风险点 | 验证命令 |
-|----------|--------|----------|
-| `runner.ts` 改动 `runClaude()` | 影响所有 Agent 对话 | `npm test -- --test-name-pattern="runClaude\|runner"` |
-| `ipc-handlers.ts` 改动 `broadcast()` | 渲染进程收不到事件 | 手动测试多端 UI 事件订阅 |
-| `types.ts` 改动 `ServerEvent` | 渲染进程 JSON.parse 失败 | 检查 preload.cts 所有 event 处理回调 |
-| `runner-reuse.ts` 改动 `canReuseRunner()` | Runner 复用判断错误导致资源泄漏或配置错乱 | 检查 `runnerHandles` Map 大小监控 |
-| `stateless-continuation.ts` 改动压缩逻辑 | Token 估算不准导致超限 | 检查 Claude API 错误日志中的 `context_limit_exceeded` |
-| `preload.cts` 改动 IPC API | 渲染进程调用失败 | 运行 `electron` 开发模式测试 UI 功能 |
-
-### 11.5 验证命令清单
-
-```bash
-# 1. 开发模式启动（验证 main.ts 初始化）
-npm run dev
-
-# 2. TypeScript 类型检查
-npx tsc --noEmit -p tsconfig.json
-
-# 3. ESLint 检查
-npm run lint
-
-# 4. 运行所有测试
-npm test
-
-# 5. 运行 Electron 主进程测试
-npx vitest run --config vitest.config.ts test/electron/
-
-# 6. 检查 auto-updater 是否在 CI 环境正确禁用
-node -e "process.env.CI='true'; console.log(require('./src/electron/libs/auto-updater.js').isAutoUpdateDisabled())"
-
-# 7. 验证 Figma Plugin 配置构建
-node -e "
-const { buildFigmaOfficialPluginConfig, buildFigmaOfficialMcpConfig } = require('./src/electron/libs/figma-official-plugin.js');
-console.log(JSON.stringify(buildFigmaOfficialPluginConfig(), null, 2));
-"
-```
-
-### 11.6 关键符号索引
-
-| 符号 | 文件 | 行号 | 用途 |
-|------|------|------|------|
-| `runClaude` | `runner.ts` | 213 | Runner 主入口 |
-| `RunnerOptions` | `runner.ts` | 90 | Runner 配置类型 |
-| `handleClientEvent` | `ipc-handlers.ts` | 148+ | IPC 事件处理 |
-| `broadcast` | `ipc-handlers.ts` | 163 | ServerEvent 广播 |
-| `sessions` | `ipc-handlers.ts` | 51 | SessionStore 实例 |
-| `buildRunnerReuseKey` | `runner-reuse.ts` | 28 | 复用键构建 |
-| `canReuseRunner` | `runner-reuse.ts` | 32 | 复用判断 |
-| `normalizeRunnerError` | `runner-error.ts` | 21 | 错误归一化 |
-| `buildStatelessContinuationPayload` | `stateless-continuation.ts` | 258 | 上下文压缩 |
-| `resolveAgentRuntimeContext` | `agent-resolver.ts` | 79 | Agent Profile 解析 |
-| `buildAnthropicPromptContentBlocks` | `attachments.ts` | 118 | Content Blocks 构建 |
-| `buildFigmaOfficialPluginConfig` | `figma-official-plugin.ts` | 75 | Figma 插件配置 |
-| `appAutoUpdater` | `auto-updater.ts` | 108 | 自动更新器 |
-| `sendClientEvent` | `preload.cts` | 12 | 客户端事件发送 |
-| `onServerEvent` | `preload.cts` | 15 | 服务器事件订阅 |
-
-章节来源：[file://src/electron/libs/runner.ts#L90-L105](file://src/electron/libs/runner.ts#L90-L105)
-章节来源：[file://src/electron/ipc-handlers.ts#L163](file://src/electron/ipc-handlers.ts#L163)
-章节来源：[file://src/electron/libs/runner-reuse.ts#L28-L50](file://src/electron/libs/runner-reuse.ts#L28-L50)
-
----
-
-## 附录：数据流总览图
-
-```mermaid
-sequenceDiagram
-    participant R as Renderer (React UI)
-    participant P as preload.cts
-    participant H as ipc-handlers.ts
-    participant S as SessionStore
-    participant A as agent-resolver.ts
-    participant Rn as runner.ts
-    participant M as MCP Servers
-    participant SDK as Claude Agent SDK
-
-    R->>P: sendClientEvent(user_prompt)
-    P->>H: ipcRenderer.invoke("client-event")
-    H->>S: SessionStore.getSession()
-    H->>A: resolveAgentRuntimeContext()
-    A-->>H: ResolvedAgentRuntimeContext
-    H->>Rn: runClaude(options)
-    Rn->>SDK: query() 启动循环
-    SDK->>M: mcpServers 配置
-    M-->>SDK: tool_call 结果
-    SDK-->>Rn: SDKMessage 回调
-    Rn->>H: onEvent(stream.message)
-    H->>P: broadcast(server-event)
-    P->>R: ipcRenderer.on("server-event")
-    R-->>P: 渲染消息列表
-```
-
-图表来源：[file://src/electron/ipc-handlers.ts](file://src/electron/ipc-handlers.ts)
-图表来源：[file://src/electron/libs/runner.ts](file://
