@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import type { ApiConfigProfile, SettingsPageId } from "../types";
+import MDContent from "../render/markdown";
 
 type KnowledgePanelProps = {
   onBack: () => void;
@@ -310,6 +311,12 @@ function isPlaceholderWikiDocument(document: KnowledgeDocument): boolean {
   return /后续接入真实|当前没有真实 Repo Wiki 正文|预览壳|真实生成内容写入后|生成后会出现 Repo Wiki 目录/.test(document.content);
 }
 
+function normalizeWikiDocumentMarkdown(content: string): string {
+  return content
+    .replace(/<cite>\s*/gi, "\n")
+    .replace(/\s*<\/cite>/gi, "\n");
+}
+
 function sectionParts(section: string): string[] {
   const parts = section
     .split("/")
@@ -571,7 +578,9 @@ function WikiDocumentView({ document, generation }: { document: KnowledgeDocumen
           {placeholder ? "需重新生成" : "已生成"}
         </div>
       </div>
-      <pre className="mt-5 whitespace-pre-wrap break-words font-sans text-sm leading-7 text-slate-700">{document.content}</pre>
+      <div className="mt-5 min-w-0">
+        <MDContent text={normalizeWikiDocumentMarkdown(document.content)} />
+      </div>
       <div className="mt-6 border-t border-slate-100 pt-4 text-xs text-slate-400">
         {generation.branch ? `${generation.branch} · ` : ""}
         {generation.commitShortHash || generation.commitId?.slice(0, 7) || "未绑定 Commit"}
