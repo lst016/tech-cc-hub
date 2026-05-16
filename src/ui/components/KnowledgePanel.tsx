@@ -593,8 +593,8 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
     ? selectedDocuments.find((document) => document.id === activeWikiTab.documentId) ?? selectedDocument
     : undefined;
   const activeHeaderTitle = activeWikiTab?.title ?? workspaceName;
-  const showingDocumentPreview = Boolean(activeWikiTab?.kind === "document");
-  const previewDocument = activeDocument;
+  const showingDocumentPreview = Boolean(activeWikiTab?.kind === "document" || selectedDocumentId);
+  const previewDocument = activeDocument ?? selectedDocument;
   const selectedPreviewTitle = activeWikiTab?.title ?? selectedDocument?.title;
   const selectedGitState = selectedWorkspace ? gitByWorkspace[selectedWorkspace.key] : undefined;
   const gitReady = Boolean(selectedGitState?.hasGit && selectedGitState.commitId);

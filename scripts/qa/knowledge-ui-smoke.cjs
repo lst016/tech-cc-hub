@@ -81,6 +81,9 @@ async function main() {
   if (await page.getByRole('button', { name: /关闭 tech-cc-hub 项目概览/ }).count() < 1) {
     throw new Error('Knowledge UI did not open the document in a closable tab');
   }
+  if (await page.getByRole('button', { name: /^重新生成$/ }).isVisible().catch(() => false)) {
+    throw new Error('Knowledge document preview should not render the workspace regenerate button');
+  }
 
   const sectionToggle = page.getByRole('button', { name: /折叠(模块：|项目概览|架构设计|业务模块|前端架构设计|后端架构设计)/ }).first();
   await sectionToggle.waitFor({ state: 'visible', timeout: 10000 });
