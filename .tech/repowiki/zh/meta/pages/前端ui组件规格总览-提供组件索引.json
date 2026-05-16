@@ -1,0 +1,24 @@
+{
+  "id": "前端ui组件规格总览-提供组件索引",
+  "name": "前端UI组件",
+  "title": "前端UI组件",
+  "slug": "前端UI组件/前端UI组件",
+  "path": "前端UI组件/前端UI组件.md",
+  "description": "前端UI组件规格总览，提供组件索引",
+  "prompt": "编写前端UI组件规格总览页面，需要：1)列出所有主要UI组件及其职责；2)说明组件的设计模式（React组件、props接口）；3)提供到各组件详细规格的链接；4)解释组件间的组合关系。引用 doc/40-product/1.0.0/components/ 目录。",
+  "dependent_files": [
+    "src/ui/App.tsx",
+    "src/ui/components/",
+    "doc/40-product/1.0.0/components/"
+  ],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "前端UI组件",
+  "layer_level": 0,
+  "order": 17,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "9404229e337aa1b79e1cfc0cd5eb6b94d9473657d8f2119cf0a3e1da7e14b91b",
+  "generated_at": 1778928162406
+}

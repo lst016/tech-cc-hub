@@ -16,16 +16,16 @@
     "scripts/qa/browser-workbench-smoke.mjs",
     "scripts/qa/chat-ui-smoke.cjs"
   ],
-  "parent_id": "core-module-specs",
+  "parent_id": "核心模块规格总览-提供模块索引",
   "parent": "核心模块规格",
   "parent_chain": [
     "核心模块规格"
   ],
   "section_path": "核心模块规格",
   "layer_level": 1,
-  "order": 72,
+  "order": 41,
   "status": "completed",
   "page_type": "topic",
-  "content_hash": "052b4c90d9e0628b66578be16ab63ecef237d51ed8ab05e6033b4731a57cf462",
-  "generated_at": 1778922186535
+  "content_hash": "906a7b4b1ac8553c217e86da93663476f6cf617f9058f53ac2090c809597021e",
+  "generated_at": 1778928162406
 }

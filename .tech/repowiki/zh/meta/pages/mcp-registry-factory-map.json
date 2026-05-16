@@ -1,0 +1,29 @@
+{
+  "id": "mcp-registry-factory-map",
+  "name": "MCP 工具系统：注册表与工厂映射",
+  "title": "MCP 工具系统：注册表与工厂映射",
+  "slug": "核心模块规格/MCP 工具系统总览/MCP 工具系统：注册表与工厂映射",
+  "path": "核心模块规格/MCP 工具系统总览/MCP 工具系统：注册表与工厂映射.md",
+  "description": "mcp-registry-factory-map",
+  "prompt": "围绕内置 MCP registry、Electron 工厂映射、tool names 暴露、设置页展示和测试约束，说明新增一个内置 MCP Server 需要改哪些文件、每个字段如何影响运行时、如何验证。",
+  "dependent_files": [
+    "src/shared/builtin-mcp-registry.ts",
+    "src/electron/libs/builtin-mcp-servers.ts",
+    "src/electron/libs/runner.ts",
+    "src/ui/components/settings/McpSettingsPage.tsx",
+    "test/electron/builtin-mcp-registry.test.ts"
+  ],
+  "parent_id": "module-mcp-tools",
+  "parent": "MCP 工具系统总览",
+  "parent_chain": [
+    "核心模块规格",
+    "MCP 工具系统总览"
+  ],
+  "section_path": "核心模块规格/MCP 工具系统总览",
+  "layer_level": 2,
+  "order": 56,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "08da01d7415d5191ef2a348244b28c314f3311e6021736c75bde58229352554c",
+  "generated_at": 1778928162406
+}

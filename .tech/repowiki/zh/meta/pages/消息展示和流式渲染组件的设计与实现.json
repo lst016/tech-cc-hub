@@ -1,0 +1,25 @@
+{
+  "id": "消息展示和流式渲染组件的设计与实现",
+  "name": "消息流组件",
+  "title": "消息流组件",
+  "slug": "前端UI组件/消息流组件",
+  "path": "前端UI组件/消息流组件.md",
+  "description": "消息展示和流式渲染组件的设计与实现",
+  "prompt": "编写消息流组件规格文档，需要：1)说明 CMP-004-MessageStream 的功能职责；2)解释消息内容的解析和渲染机制；3)说明流式输出的处理逻辑；4)列出消息类型和展示样式；5)说明与后端的事件交互。需要包含组件使用示例。引用 doc/40-product/1.0.0/components/CMP-004-MessageStream.md。",
+  "dependent_files": [
+    "src/ui/App.tsx",
+    "doc/40-product/1.0.0/components/CMP-004-MessageStream.md"
+  ],
+  "parent_id": "前端ui组件规格总览-提供组件索引",
+  "parent": "前端UI组件",
+  "parent_chain": [
+    "前端UI组件"
+  ],
+  "section_path": "前端UI组件",
+  "layer_level": 1,
+  "order": 19,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "e175ba8c3705993d3f0a96ca0eed47a64d79ac15859cde273d40c8a389159167",
+  "generated_at": 1778928162406
+}

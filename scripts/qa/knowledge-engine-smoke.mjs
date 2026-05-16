@@ -92,6 +92,9 @@ if (maxWikiPathDepth < 3) fail(`Repo Wiki markdown paths are too flat: max depth
 let citePages = 0;
 let mermaidPages = 0;
 let longPages = 0;
+let agentMapPages = 0;
+let sourceLineLinkedPages = 0;
+const mcpTopicBodies = [];
 for (const file of wikiFiles) {
   const wiki = readFileSync(file, "utf8");
   if (!wiki.trim().startsWith("# ")) fail(`Generated wiki markdown does not start with a heading: ${file}`);
@@ -103,10 +106,31 @@ for (const file of wikiFiles) {
   if (wiki.includes("<cite>")) citePages += 1;
   if (/```mermaid/.test(wiki)) mermaidPages += 1;
   if (wiki.split(/\r?\n/).length >= 180) longPages += 1;
+  if (/Agent\s*改代码地图/.test(wiki)) agentMapPages += 1;
+  if (/file:\/\/[^)\s]+#L\d+/i.test(wiki)) sourceLineLinkedPages += 1;
+  if (/MCP|builtin-mcp|mcp-tools|Model Context Protocol/i.test(`${file}\n${wiki}`)) {
+    mcpTopicBodies.push(wiki);
+  }
 }
 if (citePages < Math.ceil(wikiFiles.length * 0.6)) fail(`Too few pages contain cite evidence: ${citePages}/${wikiFiles.length}`);
 if (mermaidPages < Math.max(2, Math.floor(wikiFiles.length * 0.25))) fail(`Too few pages contain Mermaid diagrams: ${mermaidPages}/${wikiFiles.length}`);
 if (longPages < Math.ceil(wikiFiles.length * 0.6)) fail(`Too few pages are substantial enough: ${longPages}/${wikiFiles.length}`);
+if (agentMapPages < Math.ceil(wikiFiles.length * 0.5)) fail(`Too few pages contain Agent implementation maps: ${agentMapPages}/${wikiFiles.length}`);
+if (sourceLineLinkedPages < Math.ceil(wikiFiles.length * 0.5)) fail(`Too few pages cite concrete source lines: ${sourceLineLinkedPages}/${wikiFiles.length}`);
+if (mcpTopicBodies.length === 0) fail("Repo Wiki is missing MCP implementation topics");
+const mcpTopicCorpus = mcpTopicBodies.join("\n");
+for (const expected of [
+  "BUILTIN_MCP_SERVERS",
+  "BUILTIN_MCP_SERVER_FACTORIES",
+  "getBuiltinMcpServers",
+  "listBuiltinMcpToolNames",
+  "ensureMcpServersForPrompt",
+  "activeQuery.setMcpServers",
+]) {
+  if (!mcpTopicCorpus.includes(expected)) {
+    fail(`MCP Repo Wiki topics are too shallow; missing symbol: ${expected}`);
+  }
+}
 
 if (!existsSync(agentCardsRoot)) fail(`Missing Agent Cards directory: ${agentCardsRoot}`);
 const agentCardFiles = walkMarkdown(agentCardsRoot);
@@ -165,6 +189,8 @@ console.log(JSON.stringify({
   catalogPages: wikiCatalogs.length,
   citePages,
   mermaidPages,
+  agentMapPages,
+  sourceLineLinkedPages,
   agentCards: agentCardFiles.length,
   uiDbPath,
   indexDbPath,

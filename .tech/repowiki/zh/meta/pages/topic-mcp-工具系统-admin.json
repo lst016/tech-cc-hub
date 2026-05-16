@@ -1,0 +1,29 @@
+{
+  "id": "topic-mcp-工具系统-admin",
+  "name": "MCP 工具系统：admin",
+  "title": "MCP 工具系统：admin",
+  "slug": "核心模块规格/MCP 工具系统总览/MCP 工具系统：admin",
+  "path": "核心模块规格/MCP 工具系统总览/MCP 工具系统：admin.md",
+  "description": "topic-mcp-工具系统-admin",
+  "prompt": "围绕 `src/electron/libs/mcp-tools/admin.ts` 解释 MCP 工具系统：admin。必须说明入口职责、核心函数或组件、它和上下游文件的关系、修改这个功能时的步骤、回归验证方式和常见失败模式。",
+  "dependent_files": [
+    "src/electron/libs/mcp-tools/admin.ts",
+    "@anthropic-ai/claude-agent-sdk",
+    "zod",
+    "../config-store.js",
+    "./tool-result.js"
+  ],
+  "parent_id": "module-mcp-tools",
+  "parent": "MCP 工具系统总览",
+  "parent_chain": [
+    "核心模块规格",
+    "MCP 工具系统总览"
+  ],
+  "section_path": "核心模块规格/MCP 工具系统总览",
+  "layer_level": 2,
+  "order": 54,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "b4ab61cd1d3509bd62f293a96ad73aa4f4439d852ef99ddc80cfff9a2d17639a",
+  "generated_at": 1778928162406
+}

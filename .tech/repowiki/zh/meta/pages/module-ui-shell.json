@@ -16,16 +16,16 @@
     "src/ui/components/BrowserWorkbenchPage.tsx",
     "src/ui/components/ComposerContextCard.tsx"
   ],
-  "parent_id": "core-module-specs",
+  "parent_id": "核心模块规格总览-提供模块索引",
   "parent": "核心模块规格",
   "parent_chain": [
     "核心模块规格"
   ],
   "section_path": "核心模块规格",
   "layer_level": 1,
-  "order": 53,
+  "order": 34,
   "status": "completed",
   "page_type": "topic",
-  "content_hash": "6fa7df4fa5c95688b0e163e79a325f8e3e6a4160c98fbdff11370e7f1e2e35d8",
-  "generated_at": 1778922186535
+  "content_hash": "f0180c4aef4ae8c294fddf4dad598346b2a347c8c7dfde28ee57acc62403ea75",
+  "generated_at": 1778928162406
 }

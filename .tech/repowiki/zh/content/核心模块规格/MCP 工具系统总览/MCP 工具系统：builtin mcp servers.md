@@ -1,57 +1,100 @@
 # MCP 工具系统：builtin mcp servers
 
+> **目录描述**：topic-mcp-工具系统-builtin-mcp-servers
+
 <cite>
 
 **本文引用的文件**
 
 - [src/electron/libs/builtin-mcp-servers.ts](file://src/electron/libs/builtin-mcp-servers.ts)
-- [src/electron/libs/runner.ts](file://src/electron/libs/runner.ts)
-- [src/ui/components/settings/McpSettingsPage.tsx](file://src/ui/components/settings/McpSettingsPage.tsx)
-- [src/electron/libs/external-mcp-servers.ts](file://src/electron/libs/external-mcp-servers.ts)
+- [src/shared/builtin-mcp-registry.ts](file://src/shared/builtin-mcp-registry.ts)
 - [src/electron/libs/mcp-tools/knowledge.ts](file://src/electron/libs/mcp-tools/knowledge.ts)
+- [src/electron/libs/mcp-tools/plan.ts](file://src/electron/libs/mcp-tools/plan.ts)
+- [src/electron/libs/mcp-tools/cron.ts](file://src/electron/libs/mcp-tools/cron.ts)
+- [src/electron/libs/mcp-tools/browser.ts](file://src/electron/libs/mcp-tools/browser.ts)
+- [src/electron/libs/mcp-tools/admin.ts](file://src/electron/libs/mcp-tools/admin.ts)
+- [src/electron/libs/mcp-tools/tool-result.ts](file://src/electron/libs/mcp-tools/tool-result.ts)
+- [src/electron/libs/runner.ts](file://src/electron/libs/runner.ts)
 - [src/electron/libs/runner-reuse.ts](file://src/electron/libs/runner-reuse.ts)
 - [src/electron/libs/system-prompt-presets.ts](file://src/electron/libs/system-prompt-presets.ts)
-- [src/shared/builtin-mcp-registry.ts](file://src/shared/builtin-mcp-registry.ts)
+- [src/ui/components/settings/McpSettingsPage.tsx](file://src/ui/components/settings/McpSettingsPage.tsx)
 - [test/electron/builtin-mcp-registry.test.ts](file://test/electron/builtin-mcp-registry.test.ts)
+- [src/electron/main.ts](file://src/electron/main.ts)
+- [src/electron/preload.cts](file://src/electron/preload.cts)
+- [src/electron/libs/task/README.md](file://src/electron/libs/task/README.md)
+- [src/electron/libs/task/index.ts](file://src/electron/libs/task/index.ts)
+- [src/electron/libs/task/executor.ts](file://src/electron/libs/task/executor.ts)
 
 </cite>
 
----
-
 ## 目录
 
-- [1. 功能概述](#1-功能概述)
-- [2. 核心数据结构与类型](#2-核心数据结构与类型)
-- [3. 入口职责：`builtin-mcp-servers.ts` 核心函数](#3-入口职责builtin-mcp-servers.ts-核心函数)
-- [4. 调用链路：Server 实例化时序](#4-调用链路server-实例化时序)
-- [5. 上下游文件关系图](#5-上下游文件关系图)
-- [6. 知识引擎 MCP 服务器详解](#6-知识引擎-mcp-服务器详解)
-- [7. Runner 复用与 MCP 服务器](#7-runner-复用与-mcp-服务器)
-- [8. 系统提示词生成](#8-系统提示词生成)
-- [9. 修改步骤与扩展点](#9-修改步骤与扩展点)
-- [10. 回归验证方式](#10-回归验证方式)
-- [11. 常见失败模式与排障](#11-常见失败模式与排障)
+- [系统概览](#系统概览)
+- [核心数据类型](#核心数据类型)
+- [入口职责与调用链](#入口职责与调用链)
+- [服务器工厂模式](#服务器工厂模式)
+- [工具实现概览](#工具实现概览)
+- [UI 展示：McpSettingsPage](#ui-展示mcpsettingpage)
+- [Runner 集成与复用](#runner-集成与复用)
+- [生命周期与状态边界](#生命周期与状态边界)
+- [常见失败模式与排障](#常见失败模式与排障)
+- [扩展点指南](#扩展点指南)
+- [Agent 改代码地图](#agent-改代码地图)
 
 ---
 
-## 1. 功能概述
+## 系统概览
 
-`builtin-mcp-servers.ts` 是 tech-cc-hub 内置 MCP（Model Context Protocol）服务器的**配置与实例化中心**。它负责：
+tech-cc-hub 的 Builtin MCP Server 系统是一组由 Electron 主进程直接提供的工具集，Agent 在运行时通过这些工具访问知识库、定时任务、浏览器自动化、设计还原、配置管理等能力。
 
-1. **注册 8 个内置 MCP 服务器**，每个服务器对应一组专有能力（浏览器自动化、设计还原、Figma 集成、定时任务、IDEA 复用、计划进度、知识引擎、运行配置）。
-2. **按需实例化**：根据会话上下文（`sessionId`、`cwd`）动态创建服务器配置。
-3. **暴露工具清单**：对外提供所有内置工具的名称列表，供权限控制、Prompt 注入和 UI 展示使用。
+### 架构位置
 
-> **章节来源**：`file://src/electron/libs/builtin-mcp-servers.ts#L1-L32`
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Claude Code / SDK                        │
+│                     (Anthropic Agent Runtime)                 │
+└─────────────────────┬───────────────────────────────────────┘
+                      │ tool_calls (mcp__tech-cc-hub-*)
+┌─────────────────────▼───────────────────────────────────────┐
+│              builtin-mcp-servers.ts                          │
+│    getBuiltinMcpServers() → McpSdkServerConfigWithInstance   │
+│    listBuiltinMcpToolNames() → string[]                      │
+└──────────┬──────────────────────────────────────────────────┘
+           │ factory pattern (BUILTIN_MCP_SERVER_FACTORIES)
+┌──────────▼──────────────────────────────────────────────────┐
+│  mcp-tools/*.ts (per-server factory)                         │
+│  ├── knowledge.ts → getKnowledgeMcpServer()                 │
+│  ├── plan.ts     → getPlanMcpServer()                       │
+│  ├── cron.ts     → getCronMcpServer()                       │
+│  ├── browser.ts  → getBrowserMcpServer(sessionId)            │
+│  └── admin.ts    → getAdminMcpServer()                      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**章节来源**：[builtin-mcp-servers.ts#L23-L32](file://src/electron/libs/builtin-mcp-servers.ts#L23-L32)
+
+### 8 个内置 MCP Server
+
+| Server Name | 用途 | 会话相关 |
+|-------------|------|---------|
+| `tech-cc-hub-browser` | 浏览器工作台自动化 | ✅ sessionId |
+| `tech-cc-hub-admin` | 全局运行配置写入 | ❌ |
+| `tech-cc-hub-design` | 设计还原/截图对比 | ✅ sessionId |
+| `tech-cc-hub-figma` | Figma REST API | ❌ |
+| `tech-cc-hub-cron` | 定时任务创建/管理 | ❌ |
+| `tech-cc-hub-idea` | JetBrains IDE 集成 | ❌ |
+| `tech-cc-hub-plan` | 任务计划更新 | ❌ |
+| `tech-cc-hub-knowledge` | 知识库搜索/索引 | ✅ cwd |
+
+**章节来源**：[builtin-mcp-registry.ts#L1-L9](file://src/shared/builtin-mcp-registry.ts#L1-L9)
 
 ---
 
-## 2. 核心数据结构与类型
+## 核心数据类型
 
-### 2.1 Server Name 枚举
+### BuiltinMcpServerName
 
 ```typescript
-// src/shared/builtin-mcp-registry.ts#L1-L9
 export type BuiltinMcpServerName =
   | "tech-cc-hub-browser"
   | "tech-cc-hub-admin"
@@ -63,32 +106,15 @@ export type BuiltinMcpServerName =
   | "tech-cc-hub-knowledge";
 ```
 
-### 2.2 Factory Context
+这个类型是整个系统的核心，所有内置服务器名称必须严格匹配枚举值。runner-reuse.ts 中的 `isBuiltinMcpServerName()` 校验函数硬编码了除 `tech-cc-hub-knowledge` 外的 7 个名称。
+
+**章节来源**：[runner-reuse.ts#L108-L117](file://src/electron/libs/runner-reuse.ts#L108-L117)
+
+### BuiltinMcpServerDefinition
+
+每个内置服务器的元数据定义，包含 UI 显示所需的描述、图标、工具分组：
 
 ```typescript
-// src/electron/libs/builtin-mcp-servers.ts#L16-L19
-type BuiltinMcpFactoryContext = {
-  sessionId: string;
-  cwd?: string;
-};
-```
-
-- `sessionId`：用于状态隔离（如 browser session cookies、knowledge workspace）。
-- `cwd`：用于知识引擎定位工作区根目录。
-
-### 2.3 Factory 函数签名
-
-```typescript
-// src/electron/libs/builtin-mcp-servers.ts#L21
-type BuiltinMcpFactory = (context: BuiltinMcpFactoryContext) => McpSdkServerConfigWithInstance;
-```
-
-每个 factory 函数由对应的 `mcp-tools/*.ts` 文件导出（如 `getBrowserMcpServer`、`getKnowledgeMcpServer`）。
-
-### 2.4 服务器定义元数据
-
-```typescript
-// src/shared/builtin-mcp-registry.ts#L33-L50
 export type BuiltinMcpServerDefinition = {
   name: BuiltinMcpServerName;
   type: "builtin";
@@ -98,56 +124,99 @@ export type BuiltinMcpServerDefinition = {
   enabled: boolean;
   iconKey: BuiltinMcpIconKey;
   description: string;
+  iconClassName: string;
+  highlights: string[];
+  workflow?: Array<{ label: string; description: string }>;
   toolGroups: BuiltinMcpToolGroup[];
   promptHints?: string[];
-  // ...
 };
 ```
 
-> **章节来源**：`file://src/shared/builtin-mcp-registry.ts#L33-L50`
+这些定义存储在 `BUILTIN_MCP_SERVERS` 常量数组中，是 **settings UI 和 prompt hints 的 Source of Truth**。
+
+**章节来源**：[builtin-mcp-registry.ts#L33-L50](file://src/shared/builtin-mcp-registry.ts#L33-L50)
+
+### BuiltinMcpFactoryContext
+
+```typescript
+type BuiltinMcpFactoryContext = {
+  sessionId: string;
+  cwd?: string;
+};
+```
+
+工厂函数接收的上下文参数。部分服务器需要 `sessionId`（browser、design、knowledge），其他服务器不需要会话上下文。
+
+**章节来源**：[builtin-mcp-servers.ts#L16-L19](file://src/electron/libs/builtin-mcp-servers.ts#L16-L19)
 
 ---
 
-## 3. 入口职责：`builtin-mcp-servers.ts` 核心函数
+## 入口职责与调用链
 
-### 3.1 `getBuiltinMcpServers`
+### 入口文件职责
 
-**签名**：
+`src/electron/libs/builtin-mcp-servers.ts` 是整个系统的单一入口文件，负责：
+
+1. **导出工厂映射**：`BUILTIN_MCP_SERVER_FACTORIES`
+2. **导出工具名称映射**：`BUILTIN_MCP_TOOL_NAMES`
+3. **实例化函数**：`getBuiltinMcpServers()`
+4. **工具名称列表函数**：`listBuiltinMcpToolNames()`
+
+### getBuiltinMcpServers()
+
 ```typescript
-// src/electron/libs/builtin-mcp-servers.ts#L45-L59
 export function getBuiltinMcpServers(
   contextOrSessionId: string | BuiltinMcpFactoryContext,
   enabledServerNames?: readonly BuiltinMcpServerName[],
 ): Record<string, McpSdkServerConfigWithInstance>
 ```
 
-**职责**：
-1. 将字符串 `sessionId` 或完整 `BuiltinMcpFactoryContext` 统一为 context 对象。
-2. 如果传入了 `enabledServerNames`，则过滤到仅保留启用的服务器；否则返回全部。
-3. 调用对应 factory 函数实例化服务器，返回 `{ [serverName]: serverConfig }` 映射。
+**职责**：根据上下文和可选的启用的服务器名称列表，返回一个 `Record<服务器名, McpSdkServerConfigWithInstance>` 映射。
 
-**调用方**：主要用于 `runner.ts` 的 `ensureMcpServersForPrompt`。
+**参数**：
+- `contextOrSessionId`: 字符串（直接作为 sessionId）或完整的 `BuiltinMcpFactoryContext`
+- `enabledServerNames`: 可选的白名单，未提供时返回全部服务器
 
-> **图表来源**：`file://src/electron/libs/builtin-mcp-servers.ts#L45-L59`
+**调用链**：
 
-### 3.2 `listBuiltinMcpToolNames`
+```mermaid
+sequenceDiagram
+    participant Runner as runner.ts
+    participant BMS as builtin-mcp-servers.ts
+    participant Registry as builtin-mcp-registry.ts
+    participant Factories as mcp-tools/*.ts
 
-**签名**：
-```typescript
-// src/electron/libs/builtin-mcp-servers.ts#L61-L67
-export function listBuiltinMcpToolNames(enabledServerNames?: readonly BuiltinMcpServerName[]): string[]
+    Runner->>BMS: getBuiltinMcpServers(context, enabledNames)
+    BMS->>Registry: BUILTIN_MCP_SERVERS.filter()
+    BMS->>BMS: BUILTIN_MCP_SERVER_FACTORIES[definition.name](context)
+    BMS->>Factories: get*Server(sessionId/cwd)
+    Factories-->>BMS: McpSdkServerConfigWithInstance
+    BMS-->>Runner: Record<name, server>
 ```
 
-**职责**：
-1. 收集 `BUILTIN_MCP_TOOL_NAMES` 中指定服务器的 tool name 数组。
-2. 若未指定，则返回**所有**内置工具名（用于 `ALWAYS_ALLOWED_TOOLS` 初始化）。
+**章节来源**：[builtin-mcp-servers.ts#L45-L59](file://src/electron/libs/builtin-mcp-servers.ts#L45-L59)
 
-> **图表来源**：`file://src/electron/libs/builtin-mcp-servers.ts#L61-L67`
-
-### 3.3 `BUILTIN_MCP_SERVER_FACTORIES` 映射表
+### listBuiltinMcpToolNames()
 
 ```typescript
-// src/electron/libs/builtin-mcp-servers.ts#L23-L32
+export function listBuiltinMcpToolNames(
+  enabledServerNames?: readonly BuiltinMcpServerName[]
+): string[]
+```
+
+**用途**：
+- 构建 `ALWAYS_ALLOWED_TOOLS` 集合
+- 生成 System Prompt 中的工具提示
+
+**章节来源**：[builtin-mcp-servers.ts#L61-L67](file://src/electron/libs/builtin-mcp-servers.ts#L61-L67)
+
+---
+
+## 服务器工厂模式
+
+### 工厂函数注册表
+
+```typescript
 export const BUILTIN_MCP_SERVER_FACTORIES: Record<BuiltinMcpServerName, BuiltinMcpFactory> = {
   "tech-cc-hub-browser": ({ sessionId }) => getBrowserMcpServer(sessionId),
   "tech-cc-hub-admin": () => getAdminMcpServer(),
@@ -160,430 +229,494 @@ export const BUILTIN_MCP_SERVER_FACTORIES: Record<BuiltinMcpServerName, BuiltinM
 };
 ```
 
-- **browser**、**design** 需要 `sessionId`（隔离 BrowserView 状态）
-- **knowledge** 需要 `cwd`（定位知识工作区）
-- 其余服务器无状态依赖，可复用单例
+**设计原则**：
+- 工厂函数签名统一为 `(context: BuiltinMcpFactoryContext) => McpSdkServerConfigWithInstance`
+- 无状态工厂（除 knowledge.ts 使用 Map 缓存外）直接返回新实例
+- 有状态工厂（cron、plan、admin）使用模块级变量缓存单例
 
-> **章节来源**：`file://src/electron/libs/builtin-mcp-servers.ts#L23-L32`
+**章节来源**：[builtin-mcp-servers.ts#L23-L32](file://src/electron/libs/builtin-mcp-servers.ts#L23-L32)
+
+### 工厂函数模式对比
+
+| 服务器 | 缓存策略 | 状态依赖 |
+|--------|---------|---------|
+| browser | `browserMcpServersBySessionId` Map | sessionId |
+| admin | 模块级单例 `adminMcpServer` | 无 |
+| cron | 模块级单例 `cronMcpServer` + 外部 `CronService` | CronService |
+| plan | 模块级单例 `planMcpServer` | 无 |
+| knowledge | `knowledgeMcpServers` Map (按 cwd) | cwd |
+| figma | 无缓存 | 无 |
+| idea | 无缓存 | 无 |
+
+**图表来源**：[knowledge.ts#L30](file://src/electron/libs/mcp-tools/knowledge.ts#L30), [cron.ts#L23-L24](file://src/electron/libs/mcp-tools/cron.ts#L23-L24), [plan.ts#L16](file://src/electron/libs/mcp-tools/plan.ts#L16)
 
 ---
 
-## 4. 调用链路：Server 实例化时序
+## 工具实现概览
+
+### 工具命名约定
+
+所有内置 MCP 工具通过 `mcp__tech-cc-hub-{server}__{tool}` 格式暴露给 Agent，其中 `{server}` 是服务器名称（去除前缀），`{tool}` 是具体工具名。
+
+**示例**：
+- `mcp__tech-cc-hub-admin__set_global_runtime_config`
+- `mcp__tech-cc-hub-browser__browser_open_page`
+- `mcp__tech-cc-hub-cron__create_scheduled_task`
+
+### 工具结果标准化
+
+所有工具 handler 必须使用 `tool-result.ts` 提供的辅助函数返回结果：
+
+```typescript
+export function toTextToolResult(payload: unknown, isError = false): CallToolResult
+export function toPlainTextToolResult(text: string, isError = false): CallToolResult
+```
+
+**关键规则**：
+- 成功结果：使用 `toTextToolResult({ success: true, ...data })`
+- 错误结果：使用 `toTextToolResult({ success: false, error }, true)`
+
+**章节来源**：[tool-result.ts#L3-L14](file://src/electron/libs/mcp-tools/tool-result.ts#L3-L14)
+
+### 各服务器工具清单
+
+#### Browser 工具 (41 个工具)
+
+主要分组：
+- **导航**：browser_open_page, browser_close_page, browser_get_state, browser_navigate, browser_reload, browser_wait_for
+- **读取**：browser_extract_page, browser_get_element, browser_get_dom_stats, browser_query_nodes, browser_inspect_styles, browser_inspect_at_point, browser_console_logs, browser_eval
+- **交互**：browser_click_element, browser_dblclick_element, browser_focus_element, browser_hover_element, browser_type_element, browser_fill_element, browser_select_element, browser_check_element, browser_uncheck_element, browser_scroll_into_view
+- **键鼠**：browser_press_key, browser_key_down, browser_key_up, browser_keyboard_type, browser_keyboard_insert_text, browser_mouse, browser_scroll_page
+- **截图**：browser_capture_visible, browser_save_screenshot, browser_save_pdf
+- **存储**：browser_cookies, browser_storage, browser_apply_styles, browser_set_annotation_mode
+- **诊断**：http_ping, diagnose_port, bash_batch
+
+**章节来源**：[browser.ts#L42-L85](file://src/electron/libs/mcp-tools/browser.ts#L42-L85)
+
+#### Admin 工具 (1 个工具)
+
+```typescript
+ADMIN_TOOL_NAMES = ["set_global_runtime_config"]
+```
+
+支持 patch 和 remove 两个操作域：
+- `patch.env`: 受限环境变量（排除 ANTHROPIC_* 前缀）
+- `patch.skillCredentials`: 技能凭证引用
+- `patch.closeSidebarOnBrowserOpen`: UI 状态
+- `patch.systemPromptExt`: 系统提示扩展（最多 40 行）
+- `patch.channels`: 通道配置（lark/telegram/wechat）
+
+**安全限制**：值长度受限（ENV_KEY ≤ 128, ENV_VALUE ≤ 4096），防止配置污染。
+
+**章节来源**：[admin.ts#L14, L19-L28](file://src/electron/libs/mcp-tools/admin.ts#L14)
+
+#### Cron 工具 (3 个工具)
+
+```typescript
+CRON_TOOL_NAMES = ["create_scheduled_task", "list_scheduled_tasks", "delete_scheduled_task"]
+```
+
+调度类型支持：
+- `cron`: 标准 5 字段表达式，支持时区
+- `every`: 间隔循环（最小 60s）
+- `at`: 一次性触发（ISO 8601 时间戳）
+
+**安全边界**：Agent 只能删除 `createdBy === "agent"` 的任务。
+
+**章节来源**：[cron.ts#L14-L18, L194-L200](file://src/electron/libs/mcp-tools/cron.ts#L14-L18)
+
+#### Knowledge 工具 (5 个工具)
+
+```typescript
+KNOWLEDGE_TOOL_NAMES = ["knowledge_search", "knowledge_read", "knowledge_explore", "knowledge_index", "memory_update"]
+```
+
+**依赖**：
+- sqlite-vec 扩展（向量存储）
+- Embedding 模型配置
+- workspace 上下文
+
+**关键约束**：向量存储未就绪时抛出错误。
+
+**章节来源**：[knowledge.ts#L20-L26, L107-L109](file://src/electron/libs/mcp-tools/knowledge.ts#L20-L26)
+
+#### Plan 工具 (1 个工具)
+
+```typescript
+PLAN_TOOL_NAMES = ["update_plan"]
+```
+
+使用 `{ alwaysLoad: true }` 标记，确保在每个 Turn 都加载到 System Prompt。
+
+**章节来源**：[plan.ts#L8-L11, L46](file://src/electron/libs/mcp-tools/plan.ts#L8-L11)
+
+---
+
+## UI 展示：McpSettingsPage
+
+`McpSettingsPage.tsx` 是设置页中内置 MCP 服务器的展示组件。
+
+### 组件结构
 
 ```mermaid
-sequenceDiagram
-    participant UI as McpSettingsPage.tsx
-    participant Runner as runner.ts
-    participant Factory as builtin-mcp-servers.ts
-    participant ToolFiles as mcp-tools/*.ts
-    participant External as external-mcp-servers.ts
-    participant Registry as builtin-mcp-registry.ts
+classDiagram
+    class McpSettingsPage {
+        +Tab: builtin | external
+        +getBuiltinServerMeta()
+        +getBuiltinToolGroups()
+    }
 
-    Note over Factory,Registry: 模块初始化阶段
-    Registry->>Factory: 导入 BUILTIN_MCP_SERVERS 定义
-    Factory->>ToolFiles: 导入各 getXxxMcpServer factory
+    class BuiltinToolsPanel {
+        +render(): JSX.Element
+        +ServerCard()
+    }
 
-    Note over UI: UI 渲染阶段
-    UI->>Runner: IPC: mcp.list
-    Runner-->>UI: builtin + external serverInfos
+    class ServerCard {
+        +server: BuiltinServerMeta
+        +expanded: boolean
+        +toggleExpand()
+    }
 
-    Note over Runner: 会话运行阶段
-    Runner->>Runner: collectRuntimeProfileForPrompt()
-    Runner->>Factory: getBuiltinMcpServers(context, enabledNames)
-    Factory->>ToolFiles: 调用对应 getXxxMcpServer()
-    ToolFiles-->>Factory: McpSdkServerConfigWithInstance
-    Factory-->>Runner: Record<serverName, config>
-    Runner->>Runner: activeQuery.setMcpServers({ ...external, ...builtin })
+    McpSettingsPage --> BuiltinToolsPanel
+    BuiltinToolsPanel --> ServerCard
+    McpSettingsPage ..> BuiltinMcpServerDefinition
 ```
 
-**关键时序点**：
+**Source of Truth**：`BUILTIN_MCP_SERVERS` 常量（从 builtin-mcp-registry.ts 导入）
 
-1. **模块加载时**：`builtin-mcp-servers.ts` 导入所有 factory 函数，但**不立即实例化**。
-2. **会话启动时**：Runner 根据 `runtime-efficiency.ts` 的 profile 决定需要哪些服务器。
-3. **动态注册**：通过 `activeQuery.setMcpServers()` 将内置 + 外部服务器合并后注册到 SDK。
+**章节来源**：[McpSettingsPage.tsx#L306, L437-L445](file://src/ui/components/settings/McpSettingsPage.tsx#L306)
 
-> **图表来源**：`file://src/electron/libs/runner.ts#L287-L319`（`ensureMcpServersForPrompt` 逻辑）
+### 图标映射
+
+```typescript
+const BUILTIN_ICON_MAP: Record<BuiltinMcpIconKey, LucideIcon> = {
+  activity: Activity,     // browser
+  settings: Settings,     // admin
+  sparkles: WandSparkles, // design/figma
+  timer: Timer,           // cron
+  code: Code2,            // idea
+  list: ListChecks,       // plan
+};
+```
+
+**章节来源**：[McpSettingsPage.tsx#L57-L65](file://src/ui/components/settings/McpSettingsPage.tsx#L57-L65)
 
 ---
 
-## 5. 上下游文件关系图
+## Runner 集成与复用
 
-```mermaid
-flowchart TB
-    subgraph "共享定义层 (src/shared)"
-        Registry["builtin-mcp-registry.ts<br/>BUILTIN_MCP_SERVERS<br/>BuiltinMcpServerName<br/>buildBuiltinMcpPromptHints"]
-    end
-
-    subgraph "Electron 主进程 (src/electron)"
-        subgraph "入口与编排"
-            Runner["runner.ts<br/>runClaude()<br/>ensureMcpServersForPrompt()"]
-            Reuse["runner-reuse.ts<br/>canReuseRunner()<br/>builtinMcpServers in key"]
-        end
-
-        subgraph "服务器配置"
-            Builtin["builtin-mcp-servers.ts<br/>getBuiltinMcpServers()<br/>listBuiltinMcpToolNames()"]
-            External["external-mcp-servers.ts<br/>getExternalMcpServers()"]
-        end
-
-        subgraph "各服务器实现 (mcp-tools/)"
-            BrowserMcp["browser.ts<br/>getBrowserMcpServer()"]
-            AdminMcp["admin.ts<br/>getAdminMcpServer()"]
-            DesignMcp["design.ts<br/>getDesignMcpServer()"]
-            FigmaMcp["figma-rest.ts<br/>getFigmaRestMcpServer()"]
-            CronMcp["cron.ts<br/>getCronMcpServer()"]
-            IdeaMcp["idea.ts<br/>getIdeaMcpServer()"]
-            PlanMcp["plan.ts<br/>getPlanMcpServer()"]
-            KnowledgeMcp["knowledge.ts<br/>getKnowledgeMcpServer()"]
-        end
-
-        subgraph "系统提示词"
-            SystemPrompt["system-prompt-presets.ts<br/>buildBuiltinMcpRegistryPromptAppend()"]
-        end
-    end
-
-    subgraph "渲染进程 (src/ui)"
-        SettingsPage["McpSettingsPage.tsx<br/>展示服务器列表与工具组"]
-    end
-
-    %% 关系线
-    Registry --> Builtin
-    Registry --> SettingsPage
-    Registry --> SystemPrompt
-
-    Runner --> Builtin
-    Runner --> External
-    Runner --> SystemPrompt
-    Runner --> Reuse
-
-    Builtin --> BrowserMcp
-    Builtin --> AdminMcp
-    Builtin --> DesignMcp
-    Builtin --> FigmaMcp
-    Builtin --> CronMcp
-    Builtin --> IdeaMcp
-    Builtin --> PlanMcp
-    Builtin --> KnowledgeMcp
-
-    SettingsPage --> Registry
-```
-
-**上下游职责分工**：
-
-| 层级 | 文件 | 职责 |
-|------|------|------|
-| **定义层** | `builtin-mcp-registry.ts` | 定义元数据结构、工具清单、Prompt Hints |
-| **配置层** | `builtin-mcp-servers.ts` | 统一入口，按需实例化 |
-| **实现层** | `mcp-tools/*.ts` | 各服务器的具体 `tool()` handler |
-| **编排层** | `runner.ts` | 生命周期管理，调用 `getBuiltinMcpServers` |
-| **复用层** | `runner-reuse.ts` | 将服务器列表纳入复用判断条件 |
-| **提示词层** | `system-prompt-presets.ts` | 注入工具使用规则 |
-| **展示层** | `McpSettingsPage.tsx` | 渲染服务器与工具组的 UI |
-
-> **图表来源**：综合 `file://src/shared/builtin-mcp-registry.ts`、`file://src/electron/libs/builtin-mcp-servers.ts`、`file://src/electron/libs/runner.ts` 的 import 分析
-
----
-
-## 6. 知识引擎 MCP 服务器详解
-
-`knowledge.ts` 是最复杂的内置服务器，提供基于向量搜索的知识检索能力。
-
-### 6.1 工具清单
+### Runner 中的工具加载
 
 ```typescript
-// src/electron/libs/mcp-tools/knowledge.ts#L20-L26
-export const KNOWLEDGE_TOOL_NAMES = [
-  "knowledge_search",
-  "knowledge_read",
-  "knowledge_explore",
-  "knowledge_index",
-  "memory_update",
-] as const;
+// runner.ts#L66-L68
+import { getBuiltinMcpServers, listBuiltinMcpToolNames } from "./builtin-mcp-servers.js";
+
+// 构建 ALWAYS_ALLOWED_TOOLS 集合
+const BUILTIN_MCP_TOOL_NAMES = listBuiltinMcpToolNames();
+const ALWAYS_ALLOWED_TOOLS = new Set([
+  "AskUserQuestion",
+  ...BUILTIN_MCP_TOOL_NAMES,
+]);
 ```
 
-### 6.2 实例化与缓存
+**关键行为**：内置工具被加入 `ALWAYS_ALLOWED_TOOLS`，意味着内置工具的 tool_call 无需每次请求用户确认权限。
+
+**章节来源**：[runner.ts#L112-L120](file://src/electron/libs/runner.ts#L112-L120)
+
+### Runner 复用键
+
+`runner-reuse.ts` 中的 `canReuseRunner()` 函数校验内置服务器列表：
 
 ```typescript
-// src/electron/libs/mcp-tools/knowledge.ts#L128-L133
-const knowledgeMcpServers = new Map<string, McpSdkServerConfigWithInstance>();
-
-export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServerConfigWithInstance {
-  const cacheKey = defaultWorkspaceRoot || "__default__";
-  const cached = knowledgeMcpServers.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
-  // ... 创建并缓存
-}
+// runner-reuse.ts#L72
+builtinMcpServers: [...profile.builtinMcpServers],
 ```
 
-**关键设计**：按 `workspaceRoot` 缓存服务器实例，实现多工作区隔离。
+**复用条件**：如果两个请求的 `builtinMcpServers` 数组不同（顺序敏感），则不能复用同一个 Runner 实例。
 
-### 6.3 核心 handler 示例
+**章节来源**：[runner-reuse.ts#L72](file://src/electron/libs/runner-reuse.ts#L72)
 
-```typescript
-// src/electron/libs/mcp-tools/knowledge.ts#L135-L209
-const searchHandler = tool(
-  "knowledge_search",
-  "Search the built-in Knowledge Engine...",
-  SEARCH_SCHEMA,
-  async (input) => {
-    // 1. 解析 workspaceRoot
-    // 2. 根据 source 过滤 cards/repowiki/memory
-    // 3. 调用 embedTexts() 获取 query embedding
-    // 4. repo.search() 执行向量或 FTS 搜索
-    // 5. 返回 toTextToolResult(results)
-  },
-);
-```
+### System Prompt 注入
 
-**SEARCH_SCHEMA 参数**：
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `query` | string | 搜索词（必填） |
-| `mode` | `"shallow"` / `"deep"` / `"hybrid"` | 搜索模式，默认 hybrid |
-| `source` | `"cards"` / `"repowiki"` / `"memory"` / `"all"` | 数据源，默认 all |
-| `limit` | number | 返回数量，默认 6 |
-
-> **章节来源**：`file://src/electron/libs/mcp-tools/knowledge.ts#L128-L209`
-
----
-
-## 7. Runner 复用与 MCP 服务器
-
-`runner-reuse.ts` 决定是否可以复用现有 Runner 实例，**内置服务器列表是复用条件之一**。
-
-### 7.1 复用 Key 构建
+内置服务器的工具提示通过 `buildBuiltinMcpRegistryPromptAppend()` 注入到 System Prompt：
 
 ```typescript
-// src/electron/libs/runner-reuse.ts#L52-L74
-function buildRunnerReuseDescriptor(input: RunnerReuseKeyInput): RunnerReuseDescriptor {
-  const profile = resolveRuntimeEfficiencyProfile({
-    prompt: input.prompt,
-    attachments: input.attachments,
-    runtime: input.runtime,
-    runSurface,
-  });
-
-  return {
-    // ...
-    builtinMcpServers: [...profile.builtinMcpServers],  // 纳入复用 key
-  };
-}
-```
-
-### 7.2 复用判断
-
-```typescript
-// src/electron/libs/runner-reuse.ts#L33-L50
-export function canReuseRunner(existingKey: string | undefined, requestedKey: string): boolean {
-  const existing = parseRunnerReuseKey(existingKey);
-  const requested = parseRunnerReuseKey(requestedKey);
-
-  return (
-    existing.cwd === requested.cwd &&
-    existing.model === requested.model &&
-    // ...
-    existing.builtinMcpServers.join(",") === requested.builtinMcpServers.join(",")  // 服务器列表必须完全一致
-  );
-}
-```
-
-> **章节来源**：`file://src/electron/libs/runner-reuse.ts#L33-L50`
-
-**注意**：`builtinMcpServers` 是 JSON 数组，需序列化后比较。
-
----
-
-## 8. 系统提示词生成
-
-`system-prompt-presets.ts` 中的 `buildBuiltinMcpRegistryPromptAppend` 负责将工具清单注入到 system prompt。
-
-```typescript
-// src/electron/libs/system-prompt-presets.ts#L117-L119
-export function buildBuiltinMcpRegistryPromptAppend(enabledServerNames?: readonly BuiltinMcpServerName[]): string {
+// system-prompt-presets.ts#L117-L119
+export function buildBuiltinMcpRegistryPromptAppend(
+  enabledServerNames?: readonly BuiltinMcpServerName[]
+): string {
   return buildBuiltinMcpPromptHints(enabledServerNames);
 }
 ```
 
-`buildBuiltinMcpPromptHints` 定义在 `builtin-mcp-registry.ts`，输出形如：
-
-```
-Built-in MCP tool hints:
-- mcp__tech-cc-hub-idea__idea_status: ...
-- mcp__tech-cc-hub-idea__idea_wait_ready: ...
-...
-```
-
-这些提示帮助 Agent 在缺少显式调用时选择合适的工具。
-
-> **章节来源**：`file://src/electron/libs/system-prompt-presets.ts#L117-L119` 和 `file://src/shared/builtin-mcp-registry.ts#L380-L388`
+**章节来源**：[system-prompt-presets.ts#L117-L119](file://src/electron/libs/system-prompt-presets.ts#L117-L119)
 
 ---
 
-## 9. 修改步骤与扩展点
+## 生命周期与状态边界
 
-### 9.1 新增一个内置 MCP 服务器
+### 主进程初始化顺序
 
-1. **在 `mcp-tools/` 下创建实现文件**（如 `myfeature.ts`）：
-   - 导出 `getMyFeatureMcpServer(): McpSdkServerConfigWithInstance`
-   - 导出 `MYFEATURE_TOOL_NAMES` 常量数组
+```mermaid
+sequenceDiagram
+    participant Main as main.ts
+    participant BrowserHost as BrowserWorkbenchManager
+    participant CronSvc as CronService
+    participant Settings as McpSettingsPage
 
-2. **更新 `builtin-mcp-servers.ts`**：
-   - 添加 import
-   - 在 `BUILTIN_MCP_SERVER_FACTORIES` 中添加映射
-   - 在 `BUILTIN_MCP_TOOL_NAMES` 中添加 tool names
+    Main->>Main: app.whenReady()
+    Main->>BrowserHost: new BrowserWorkbenchManager()
+    Main->>Main: setBrowserToolHost(host)
+    Main->>Main: setDesignToolHost(host)
+    Note over Main: CronService 和 CronRepository 实例化
+    Main->>Main: setCronService(cronService)
+    Note over Main: 启动 IPC handlers
+    Main->>Settings: 用户打开设置页
+    Settings->>Settings: 调用 BUILTIN_MCP_SERVERS 渲染
+```
 
-3. **更新 `builtin-mcp-registry.ts`**：
-   - 在 `BuiltinMcpServerName` 中添加字面量
-   - 在 `BUILTIN_MCP_SERVERS` 数组中添加定义对象（含 `toolGroups`、`promptHints`）
+**关键边界**：
+1. `setBrowserToolHost()` 必须在首个 Agent Run 之前调用
+2. `setCronService()` 必须在 `CronService` 完全初始化后调用
+3. UI 不直接持有 MCP Server 实例，只读取元数据
 
-4. **更新 `runner-reuse.ts`**：
-   - 在 `isBuiltinMcpServerName` 中添加新服务器名
+**章节来源**：[main.ts#L39-L41, L65-L71](file://src/electron/main.ts#L39-L41), [main.ts#L65-L71](file://src/electron/main.ts#L65-L71)
 
-5. **如需 UI 展示**：更新 `McpSettingsPage.tsx` 中的 `BUILTIN_TOOL_GROUPS` 和 `BUILTIN_SERVER_META`
+### 前后端桥接
 
-### 9.2 修改现有服务器的 tool list
+```
+┌─────────────────┐      IPC channels       ┌─────────────────┐
+│   Renderer      │ ◄──────────────────────► │   Main Process   │
+│                 │                          │                 │
+│ McpSettingsPage │   settings:get/set        │ IPC Handlers    │
+│                 │                          │                 │
+│                 │   electron.invoke()      │ BUILTIN_MCP_    │
+│                 │ ───────────────────────► │   SERVERS       │
+│                 │                          │ (元数据只读)    │
+└─────────────────┘                          └─────────────────┘
+```
 
-1. 修改对应 `mcp-tools/*.ts` 中的 `tool()` 定义
-2. 更新 `BUILTIN_MCP_TOOL_NAMES`（如有必要）
-3. 更新 `builtin-mcp-registry.ts` 中该服务器的 `toolGroups`
+**注意**：MCP Server 实例仅在 Main Process 生命周期内有效，Renderer 无法直接访问。
 
-### 9.3 调整动态加载策略
-
-如需修改"何时加载哪些服务器"：
-- 查看 `runner.ts` 中的 `collectRuntimeProfileForPrompt` 和 `resolveRuntimeEfficiencyProfile`
-- 查看 `runtime-efficiency.ts` 的 profile 规则
+**章节来源**：[McpSettingsPage.tsx#L301-306](file://src/ui/components/settings/McpSettingsPage.tsx#L301-L306)
 
 ---
 
-## 10. 回归验证方式
+## 常见失败模式与排障
 
-### 10.1 单元测试
+### 1. Browser 工具 Host 未初始化
 
-```bash
-# 运行 builtin-mcp-registry 测试
-pnpm test test/electron/builtin-mcp-registry.test.ts
+**错误信息**：
+```
+浏览器工作台尚未初始化，无法执行浏览器工具。
 ```
 
-**测试覆盖点**（来自 `test/electron/builtin-mcp-registry.test.ts`）：
-
-| 测试名 | 验证内容 |
-|--------|----------|
-| `built-in MCP registry drives the settings list` | `listBuiltinMcpServerInfos()` 返回所有 registry 定义 |
-| `built-in MCP registry contains displayable tool metadata` | 每个 server 都有 description、highlights、toolGroups |
-| `built-in MCP registry tool names stay unique` | 所有工具名唯一（无重复） |
-| `built-in MCP prompt hints are sourced from the registry` | prompt hints 包含关键工具名和 `java -jar` 模板 |
-
-> **图表来源**：`file://test/electron/builtin-mcp-registry.test.ts#L1-L49`
-
-### 10.2 手动验证清单
-
-1. **Settings UI**：
-   - 打开 MCP Settings 页面，确认 Builtin Tab 下显示全部 8 个服务器
-   - 展开每个服务器，确认工具列表与 registry 定义一致
-
-2. **会话运行**：
-   - 发起一个使用 `browser_*` 工具的会话，验证 browser MCP 被正确加载
-   - 验证 `knowledge_search` 工具的搜索结果来自正确的工作区
-
-3. **Runner 复用**：
-   - 连续发起两次相同配置的请求，验证 Runner 实例被复用
-   - 修改 `cwd`，验证新建 Runner（因为 `knowledge` 需要不同 workspace）
-
----
-
-## 11. 常见失败模式与排障
-
-### 11.1 `BUILTIN_MCP_SERVER_FACTORIES` 中找不到 server name
-
-**症状**：
-```
-TypeError: Cannot read properties of undefined (reading 'name')
-```
-
-**原因**：`builtin-mcp-registry.ts` 中定义了新服务器，但 `builtin-mcp-servers.ts` 的 factory 映射表未更新。
+**原因**：`setBrowserToolHost()` 未被调用，或 `BrowserWorkbenchManager` 尚未创建。
 
 **排查步骤**：
-1. 检查 `BuiltinMcpServerName` 类型定义
-2. 检查 `BUILTIN_MCP_SERVER_FACTORIES` 是否有对应的 key
-3. 检查对应的 `getXxxMcpServer` 函数是否正确导出
+1. 检查 main.ts 中 `setBrowserToolHost` 是否在 `app.whenReady()` 内被调用
+2. 确认 `BrowserWorkbenchManager` 实例化成功
+3. 检查是否有异常导致初始化中断
 
-### 11.2 `isBuiltinMcpServerName` 校验失败
+**章节来源**：[browser.ts#L194-L199](file://src/electron/libs/mcp-tools/browser.ts#L194-L199)
 
-**症状**：
+### 2. Cron 工具服务未注入
+
+**错误信息**：
+```json
+{ "success": false, "error": "CronService 未初始化" }
 ```
-canReuseRunner returns false even when servers should match
-```
 
-**原因**：`runner-reuse.ts` 中的 `isBuiltinMcpServerName` 是**硬编码白名单**，新增服务器后未同步更新。
+**原因**：`setCronService()` 未调用，或 `CronService` 构造失败。
 
 **排查步骤**：
-1. 检查 `runner-reuse.ts#L108-L117`
-2. 将新服务器名加入 `isBuiltinMcpServerName` 的 OR 链
+1. 检查 `cron-service.ts` 是否正常加载
+2. 检查 `CronRepository` 是否创建成功
+3. 检查 IPC handler `registerCronIpcHandlers` 是否执行
 
-> **章节来源**：`file://src/electron/libs/runner-reuse.ts#L108-L117`
+**章节来源**：[cron.ts#L108-L109](file://src/electron/libs/mcp-tools/cron.ts#L108-L109)
 
-### 11.3 knowledge MCP 报错 `sqlite-vec extension unavailable`
+### 3. Knowledge 向量存储不可用
 
-**症状**：
+**错误信息**：
 ```
-Error: Knowledge Engine 未启用：sqlite-vec 扩展不可用。
+Knowledge Engine 未启用：sqlite-vec 扩展不可用。
 ```
 
-**原因**：`openKnowledgeRepository` 检查 `repo.isVectorStoreReady()` 失败。
+**原因**：`repo.isVectorStoreReady()` 返回 false，即 sqlite-vec 扩展未加载。
 
 **排查步骤**：
-1. 确认应用首次启动时执行了 `indexKnowledgeWorkspace` 的 scan 模式
-2. 检查 `knowledgeDbPath` 是否存在且包含 vec 表
-3. 验证 embedding model 配置（`knowledge-model-settings.ts`）
+1. 确认项目编译包含 sqlite-vec 绑定
+2. 检查 `assertEmbeddingConfigured()` 是否通过
+3. 验证 Embedding 模型配置
 
-> **章节来源**：`file://src/electron/libs/mcp-tools/knowledge.ts#L107-L109`
+**章节来源**：[knowledge.ts#L107-L109](file://src/electron/libs/mcp-tools/knowledge.ts#L107-L109)
 
-### 11.4 Settings UI 显示 "Electron IPC 未就绪"
+### 4. Admin 工具拒绝写入
 
-**症状**：MCP Settings 页面始终显示 loading 或超时错误。
+**错误信息**：工具返回 `isError: true`，但无明确错误消息。
 
 **原因**：
-1. 渲染进程与 Electron 主进程的 IPC 通道未建立
-2. `window.electron.onServerEvent` 回调未收到 `mcp.list` 响应
+- 环境变量键名以 `ANTHROPIC_` 开头（被过滤）
+- 值长度超过 4096 字符限制
+- systemPromptExt 超过 40 行
 
 **排查步骤**：
-1. 打开 DevTools Console 检查是否有 IPC 错误
-2. 确认主进程正确注册了 `mcp.list` 事件的处理函数
-3. 检查 3 秒 fallback timeout 是否被触发（见 `McpSettingsPage.tsx#L336`）
+1. 检查 `isAllowedEnvKey()` 校验逻辑
+2. 验证输入值是否超过 `MAX_ENV_VALUE_LENGTH`
+3. 检查 `normalizeSystemPromptExt()` 行数限制
 
-> **章节来源**：`file://src/ui/components/settings/McpSettingsPage.tsx#L302-L342`
+**章节来源**：[admin.ts#L79-L91](file://src/electron/libs/mcp-tools/admin.ts#L79-L91)
 
-### 11.5 工具名冲突（工具调用失败）
+### 5. Runner 复用失败
 
-**症状**：Agent 调用 `mcp__xxx__tool_name` 失败，提示 tool not found。
+**表现**：相同会话内 Runner 被重新创建。
 
 **排查步骤**：
-1. 确认工具名在 `BUILTIN_MCP_TOOL_NAMES` 中存在
-2. 确认该工具所属的服务器在 `activeBuiltinMcpServerNames` 中
-3. 检查 `runner.ts` 中 `ensureMcpServersForPrompt` 是否正确追加了缺失的服务器
-4. 查看日志中 `[runner][mcp-expanded]` 的 `added` 字段
+1. 检查 `canReuseRunner()` 的 `builtinMcpServers` 比较
+2. 确认 `runner-reuse.ts` 中 `isBuiltinMcpServerName()` 包含所有服务器
+3. 检查 `buildRunnerReuseDescriptor()` 中的 `builtinMcpServers` 字段
 
-> **章节来源**：`file://src/electron/libs/runner.ts#L313-L318`
+**章节来源**：[runner-reuse.ts#L33-L49](file://src/electron/libs/runner-reuse.ts#L33-L49)
 
 ---
 
-## 附录：内置服务器快速参考
+## 扩展点指南
 
-| 服务器名 | 工具数 | 关键能力 | 依赖参数 |
-|----------|--------|----------|----------|
-| `tech-cc-hub-browser` | ~40 | BrowserView 自动化 | `sessionId` |
-| `tech-cc-hub-admin` | 1 | 运行时配置写入 | - |
-| `tech-cc-hub-design` | 8 | 视觉 diff 与报告 | `sessionId` |
-| `tech-cc-hub-figma` | ~20 | Figma REST API | - |
-| `tech-cc-hub-cron` | 3 | 定时任务持久化 | - |
-| `tech-cc-hub-idea` | 4 | IDEA 启动与复用 | - |
-| `tech-cc-hub-plan` | 1 | update_plan 进度 | - |
-| `tech-cc-hub-knowledge` | 5 | 知识检索与索引 | `cwd` |
+### 新增一个内置 MCP Server
+
+**步骤 1**：在 `builtin-mcp-registry.ts` 的 `BUILTIN_MCP_SERVERS` 数组中添加定义
+
+```typescript
+// src/shared/builtin-mcp-registry.ts
+{
+  name: "tech-cc-hub-{new-server}",
+  type: "builtin",
+  command: "builtin",
+  enabled: true,
+  iconKey: "...",
+  description: "...",
+  toolGroups: [...],
+}
+```
+
+**步骤 2**：在 `mcp-tools/` 下创建工具实现文件，导出 `get*Server()` 函数
+
+**步骤 3**：在 `builtin-mcp-servers.ts` 中注册工厂
+
+```typescript
+// src/electron/libs/builtin-mcp-servers.ts
+import { getNewServer } from "./mcp-tools/new-server.js";
+
+export const BUILTIN_MCP_SERVER_FACTORIES = {
+  // ... existing ...
+  "tech-cc-hub-{new-server}": (context) => getNewServer(context),
+};
+
+export const BUILTIN_MCP_TOOL_NAMES = {
+  // ... existing ...
+  "tech-cc-hub-{new-server}": NEW_SERVER_TOOL_NAMES,
+};
+```
+
+**步骤 4**：在 `runner-reuse.ts` 的 `isBuiltinMcpServerName()` 中添加枚举
+
+**步骤 5**：更新测试 `builtin-mcp-registry.test.ts`
+
+**章节来源**：[builtin-mcp-servers.ts#L23-L32](file://src/electron/libs/builtin-mcp-servers.ts#L23-L32)
+
+### 新增工具到已有服务器
+
+1. 在对应 `mcp-tools/*.ts` 中定义 schema 和 handler
+2. 将工具名添加到 `*_TOOL_NAMES` 数组
+3. 在 `BUILTIN_MCP_SERVERS` 的 `toolGroups` 中添加 `BuiltinMcpToolInfo`
+4. 更新测试验证
 
 ---
 
-**文档版本**：1.0
-**维护者**：tech-cc-hub 开发团队
-**关联规范**：[MCP 服务规范](doc/20-specs/plugins-system-plan.md)
+## Agent 改代码地图
+
+### 改代码前的必读文件
+
+| 优先级 | 文件路径 | 阅读目标 |
+|--------|---------|---------|
+| 🔴 必读 | `src/electron/libs/builtin-mcp-servers.ts` | 理解入口函数签名和工厂映射 |
+| 🔴 必读 | `src/shared/builtin-mcp-registry.ts` | 理解元数据结构（BUILTIN_MCP_SERVERS） |
+| 🟡 必读 | `src/electron/libs/mcp-tools/*.ts` | 理解目标工具的实现 |
+| 🟡 必读 | `src/electron/libs/runner.ts` (L66-L120) | 理解工具如何注入到 Runner |
+| 🟢 参考 | `src/electron/libs/runner-reuse.ts` | 理解复用键构建逻辑 |
+| 🟢 参考 | `src/ui/components/settings/McpSettingsPage.tsx` | 理解 UI 展示逻辑 |
+
+### 关键符号速查
+
+| 符号 | 文件:行号 | 用途 |
+|------|----------|------|
+| `getBuiltinMcpServers()` | builtin-mcp-servers.ts:45 | 主入口函数 |
+| `BUILTIN_MCP_SERVER_FACTORIES` | builtin-mcp-servers.ts:23 | 工厂函数映射表 |
+| `BUILTIN_MCP_TOOL_NAMES` | builtin-mcp-servers.ts:34 | 工具名映射表 |
+| `BUILTIN_MCP_SERVERS` | builtin-mcp-registry.ts:52 | 服务器元数据数组 |
+| `BuiltinMcpServerName` | builtin-mcp-registry.ts:1 | 服务器名称类型 |
+| `BuiltinMcpServerDefinition` | builtin-mcp-registry.ts:33 | 元数据结构类型 |
+| `isBuiltinMcpServerName()` | runner-reuse.ts:108 | 类型守卫 |
+| `setBrowserToolHost()` | browser.ts:186 | Browser Host 注入 |
+| `setCronService()` | cron.ts:26 | Cron Service 注入 |
+| `toTextToolResult()` | tool-result.ts:3 | 结果标准化 |
+
+### 修改入口
+
+| 修改类型 | 入口文件 | 关键操作 |
+|---------|---------|---------|
+| 新增服务器 | builtin-mcp-servers.ts | 添加工厂映射和工具名映射 |
+| 新增工具 | 对应 mcp-tools/*.ts | 定义 schema + handler + TOOL_NAMES |
+| 修改元数据/UI | builtin-mcp-registry.ts | 修改 BUILTIN_MCP_SERVERS 数组项 |
+| 修改复用逻辑 | runner-reuse.ts | 修改 isBuiltinMcpServerName() |
+| 修改 Runner 注入 | runner.ts | 修改 ALWAYS_ALLOWED_TOOLS 或工具加载逻辑 |
+
+### 验证命令
+
+```bash
+# 单元测试
+npx vitest run test/electron/builtin-mcp-registry.test.ts
+
+# 验证工具名不重复
+npx ts-node --esm -e "
+import { listBuiltinMcpToolNames } from './src/shared/builtin-mcp-registry.js';
+const names = listBuiltinMcpToolNames();
+const unique = new Set(names);
+console.log('Total:', names.length, 'Unique:', unique.size, 'Match:', names.length === unique.size);
+"
+
+# 类型检查
+npx tsc --noEmit src/electron/libs/builtin-mcp-servers.ts
+npx tsc --noEmit src/shared/builtin-mcp-registry.ts
+
+# 验证导入一致性
+npx tsc --noEmit && npx vitest run
+```
+
+### 常见回归风险
+
+| 风险点 | 影响 | 预防措施 |
+|--------|------|---------|
+| 工具名重复 | Agent 收到重复工具定义 | 测试验证 `uniqueToolNames.size === toolNames.length` |
+| 工厂函数签名不一致 | 运行时类型错误 | TypeScript 严格模式检查 |
+| 新服务器未加入 runner-reuse | 复用逻辑失效 | 更新 `isBuiltinMcpServerName()` |
+| Admin 工具安全限制被绕过 | 配置污染风险 | 审查 `normalizePatch()` 校验逻辑 |
+| Browser Host 提前访问 | 工具调用失败 | 确保 `setBrowserToolHost()` 在 Runner 前调用 |
+| 测试未覆盖新增服务器 | 元数据不完整 | 添加 registry.test.ts 用例 |
+
+**章节来源**：[test/electron/builtin-mcp-registry.test.ts](file://test/electron/builtin-mcp-registry.test.ts)
+
+---
+
+## 总结
+
+Built-in MCP Server 系统通过 **工厂模式** 将 8 个服务器（共约 60 个工具）封装为统一的入口。核心设计原则：
+
+1. **单一入口**：`builtin-mcp-servers.ts` 是唯一对外暴露的文件
+2. **元数据驱动**：`builtin-mcp-registry.ts` 中的 `BUILTIN_MCP_SERVERS` 是 UI 和 Prompt 的 Source of Truth
+3. **有状态/无状态分离**：部分服务器需要会话上下文（browser、design、knowledge），其他无状态
+4. **安全边界明确**：Admin 工具对写入内容有严格校验，防止配置污染
+5. **Runner 深度集成**：内置工具自动加入 `ALWAYS_ALLOWED_TOOLS`，降低使用门槛
+
+修改此系统时，务必先理解 `BUILTIN_MCP_SERVER_FACTORIES` 与 `BUILTIN_MCP_SERVERS` 的对应关系，确保元数据和实现保持同步。

@@ -16,16 +16,16 @@
     "src/electron/libs/cron-executor.ts",
     "src/electron/libs/cron-ipc-handlers.ts"
   ],
-  "parent_id": "core-module-specs",
+  "parent_id": "核心模块规格总览-提供模块索引",
   "parent": "核心模块规格",
   "parent_chain": [
     "核心模块规格"
   ],
   "section_path": "核心模块规格",
   "layer_level": 1,
-  "order": 54,
+  "order": 35,
   "status": "completed",
   "page_type": "topic",
-  "content_hash": "0a605a0036b65020dbdaeef1fd295f6ece690885ad951f96268facfb7c2d2ace",
-  "generated_at": 1778922186535
+  "content_hash": "732fdd5021b9fff6b438ba835696d8a0d792c076dc0f3100b96b92763f6bf97f",
+  "generated_at": 1778928162406
 }

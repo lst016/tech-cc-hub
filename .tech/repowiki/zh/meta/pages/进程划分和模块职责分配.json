@@ -1,0 +1,25 @@
+{
+  "id": "进程划分和模块职责分配",
+  "name": "系统容器图",
+  "title": "系统容器图",
+  "slug": "系统架构/系统容器图",
+  "path": "系统架构/系统容器图.md",
+  "description": "进程划分和模块职责分配",
+  "prompt": "编写系统容器图说明文档，需要：1)展示主进程、渲染进程、工作进程的关系；2)说明各进程的核心职责；3)标注进程间通信机制（IPC、事件总线）。引用 doc/10-architecture/11-系统容器图.md 的内容。",
+  "dependent_files": [
+    "doc/10-architecture/11-系统容器图.md",
+    "src/electron/main.ts"
+  ],
+  "parent_id": "系统架构总览页面-提供架构图和文档索引",
+  "parent": "系统架构",
+  "parent_chain": [
+    "系统架构"
+  ],
+  "section_path": "系统架构",
+  "layer_level": 1,
+  "order": 6,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "46f9cd4e91aced34b0508a35ad32977fc132d84ccf7b1104e1fd5c7d6e013727",
+  "generated_at": 1778928162406
+}

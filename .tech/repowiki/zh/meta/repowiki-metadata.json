@@ -4,691 +4,703 @@
   "project": "tech-cc-hub",
   "wiki_catalogs": [
     {
-      "id": "项目概述",
+      "id": "项目概述页-包含产品定位-核心能力简介和文档索引",
       "name": "项目概述",
       "title": "项目概述",
-      "slug": "项目概述",
-      "path": "项目概述.md",
-      "description": "项目概述",
-      "prompt": "为 tech-cc-hub 编写 项目概述 文档。",
-      "dependent_files": [],
+      "slug": "项目概述/项目概述",
+      "path": "项目概述/项目概述.md",
+      "description": "项目概述页，包含产品定位、核心能力简介和文档索引",
+      "prompt": "编写项目概述页，需要涵盖：tech-cc-hub的产品定位（基于Electron的AI Agent桌面工作台）、核心能力（会话管理、任务编排、技能体系）、目标用户场景。需要在页面顶部提供到各主要章节的导航链接。",
+      "dependent_files": [
+        "README.md",
+        "doc/README.md"
+      ],
       "parent_id": "",
       "parent": "",
       "parent_chain": [],
       "section_path": "项目概述",
       "layer_level": 0,
+      "order": 0,
+      "status": "completed",
+      "page_type": "topic",
+      "content_hash": "34684f45d85d56d66a781297fe7e203a7d5fb144c728f323eeeeecc047ce3382",
+      "generated_at": 1778928162406
+    },
+    {
+      "id": "tech-cc-hub的产品定义-愿景和核心价值主张",
+      "name": "产品定义",
+      "title": "产品定义",
+      "slug": "项目概述/产品定义",
+      "path": "项目概述/产品定义.md",
+      "description": "tech-cc-hub的产品定义、愿景和核心价值主张",
+      "prompt": "编写产品定义文档，需要说明：1)产品是什么（AI Agent桌面工作台）；2)解决什么问题（复杂任务的人机协作）；3)核心价值主张；4)与竞品的差异化定位。需要引用 doc/00-overview/00-产品定义.md 的内容进行扩展。",
+      "dependent_files": [
+        "doc/00-overview/00-产品定义.md",
+        "doc/40-product/1.0.0/01-发布目标与范围.md"
+      ],
+      "parent_id": "项目概述页-包含产品定位-核心能力简介和文档索引",
+      "parent": "项目概述",
+      "parent_chain": [
+        "项目概述"
+      ],
+      "section_path": "项目概述",
+      "layer_level": 1,
       "order": 1,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "5f667fd582226fa5e503ea300ee8fcabe1a563ce784a5e291db8af6e8db2e57c",
-      "generated_at": 1778922186535
+      "content_hash": "1cddaee103add3b5751b74f1907198712a50e92d93b51086e302537eb1a392ef",
+      "generated_at": 1778928162406
     },
     {
-      "id": "设计原则与非目标",
+      "id": "系统设计的核心原则-以及明确不做什么",
       "name": "设计原则与非目标",
       "title": "设计原则与非目标",
-      "slug": "设计原则与非目标",
-      "path": "设计原则与非目标.md",
-      "description": "设计原则与非目标",
-      "prompt": "为 tech-cc-hub 编写 设计原则与非目标 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
+      "slug": "项目概述/设计原则与非目标",
+      "path": "项目概述/设计原则与非目标.md",
+      "description": "系统设计的核心原则，以及明确不做什么",
+      "prompt": "编写设计原则文档，需要说明：1)核心设计原则（如可观测性、分层解耦）；2)架构决策背后的 rationale；3)明确说明系统的非目标（即不做什么）。需要引用 doc/00-overview/01-设计原则与非目标.md 的内容。",
+      "dependent_files": [
+        "doc/00-overview/01-设计原则与非目标.md",
+        "DESIGN.md"
+      ],
+      "parent_id": "项目概述页-包含产品定位-核心能力简介和文档索引",
+      "parent": "项目概述",
+      "parent_chain": [
+        "项目概述"
+      ],
+      "section_path": "项目概述",
+      "layer_level": 1,
       "order": 2,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "ca9cbe12a31ebde3a5877b23d6570c87ebd8712fca23e72704f28a9cb6ceeba5",
-      "generated_at": 1778922186535
+      "content_hash": "016aa7f2595f27759556c598bc68a28213cd3a19348d85fd78299b389171a9ee",
+      "generated_at": 1778928162406
     },
     {
-      "id": "术语表",
+      "id": "项目相关的关键术语和概念定义",
       "name": "术语表",
       "title": "术语表",
-      "slug": "术语表",
-      "path": "术语表.md",
-      "description": "术语表",
-      "prompt": "为 tech-cc-hub 编写 术语表 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
+      "slug": "项目概述/术语表",
+      "path": "项目概述/术语表.md",
+      "description": "项目相关的关键术语和概念定义",
+      "prompt": "编写术语表，需要定义：1)Session（会话）；2)Task（任务）；3)Worker（工作者）；4)Skill（技能）；5)Artifact（产物）；6)MCP（Model Context Protocol）；7)其他关键术语。需要保持与 doc/00-overview/02-术语表.md 的一致性。",
+      "dependent_files": [
+        "doc/00-overview/02-术语表.md"
+      ],
+      "parent_id": "项目概述页-包含产品定位-核心能力简介和文档索引",
+      "parent": "项目概述",
+      "parent_chain": [
+        "项目概述"
+      ],
+      "section_path": "项目概述",
+      "layer_level": 1,
       "order": 3,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "a8d69237af933dd9f815000129e2ffd7ac09f11774b0fb933a5572ace7f44505",
-      "generated_at": 1778922186535
+      "content_hash": "2c39767569e894482294f557b3521452ff963cf446701571b4b77720f63c4c5b",
+      "generated_at": 1778928162406
     },
     {
-      "id": "系统架构总览",
-      "name": "系统架构总览",
-      "title": "系统架构总览",
-      "slug": "系统架构总览",
-      "path": "系统架构总览.md",
-      "description": "系统架构总览",
-      "prompt": "为 tech-cc-hub 编写 系统架构总览 文档。",
-      "dependent_files": [],
+      "id": "系统架构总览页面-提供架构图和文档索引",
+      "name": "系统架构",
+      "title": "系统架构",
+      "slug": "系统架构/系统架构",
+      "path": "系统架构/系统架构.md",
+      "description": "系统架构总览页面，提供架构图和文档索引",
+      "prompt": "编写系统架构总览页面，需要：1)提供到各架构图的链接（上下文图、容器图、控制平面、执行平面、数据平面）；2)概述系统的主要分层和模块划分；3)说明架构文档的组织方式。引用 doc/10-architecture/ 相关文件。",
+      "dependent_files": [
+        "doc/10-architecture/10-系统上下文图.md",
+        "doc/10-architecture/11-系统容器图.md",
+        "doc/10-architecture/12-控制平面组件图.md",
+        "doc/10-architecture/13-执行平面组件图.md"
+      ],
       "parent_id": "",
       "parent": "",
       "parent_chain": [],
-      "section_path": "Repo Wiki",
+      "section_path": "系统架构",
       "layer_level": 0,
+      "order": 4,
+      "status": "completed",
+      "page_type": "topic",
+      "content_hash": "ec961e211c8b8c815564290e8284aa49211861b6726295c201cfcdb6a9da14a7",
+      "generated_at": 1778928162406
+    },
+    {
+      "id": "外部系统依赖关系和边界定义",
+      "name": "系统上下文图",
+      "title": "系统上下文图",
+      "slug": "系统架构/系统上下文图",
+      "path": "系统架构/系统上下文图.md",
+      "description": "外部系统依赖关系和边界定义",
+      "prompt": "编写系统上下文图说明文档，需要：1)用 Mermaid 或 ASCII 图展示外部系统（Electron、Claude API、文件系统等）；2)说明与外部系统的接口类型（同步API、异步事件、WebSocket等）；3)标注关键的数据流向。需要引用 doc/10-architecture/10-系统上下文图.md 的内容。",
+      "dependent_files": [
+        "doc/10-architecture/10-系统上下文图.md"
+      ],
+      "parent_id": "系统架构总览页面-提供架构图和文档索引",
+      "parent": "系统架构",
+      "parent_chain": [
+        "系统架构"
+      ],
+      "section_path": "系统架构",
+      "layer_level": 1,
+      "order": 5,
+      "status": "completed",
+      "page_type": "topic",
+      "content_hash": "dc12e744a45508d828ed46224c6eca7571e679580e18c424cd619611dbc7c2c4",
+      "generated_at": 1778928162406
+    },
+    {
+      "id": "进程划分和模块职责分配",
+      "name": "系统容器图",
+      "title": "系统容器图",
+      "slug": "系统架构/系统容器图",
+      "path": "系统架构/系统容器图.md",
+      "description": "进程划分和模块职责分配",
+      "prompt": "编写系统容器图说明文档，需要：1)展示主进程、渲染进程、工作进程的关系；2)说明各进程的核心职责；3)标注进程间通信机制（IPC、事件总线）。引用 doc/10-architecture/11-系统容器图.md 的内容。",
+      "dependent_files": [
+        "doc/10-architecture/11-系统容器图.md",
+        "src/electron/main.ts"
+      ],
+      "parent_id": "系统架构总览页面-提供架构图和文档索引",
+      "parent": "系统架构",
+      "parent_chain": [
+        "系统架构"
+      ],
+      "section_path": "系统架构",
+      "layer_level": 1,
+      "order": 6,
+      "status": "completed",
+      "page_type": "topic",
+      "content_hash": "46f9cd4e91aced34b0508a35ad32977fc132d84ccf7b1104e1fd5c7d6e013727",
+      "generated_at": 1778928162406
+    },
+    {
+      "id": "主进程控制链路和状态管理架构",
+      "name": "控制平面设计",
+      "title": "控制平面设计",
+      "slug": "系统架构/控制平面设计",
+      "path": "系统架构/控制平面设计.md",
+      "description": "主进程控制链路和状态管理架构",
+      "prompt": "编写控制平面组件图说明文档，需要：1)展示 Session 控制器的结构和职责；2)说明状态机的设计；3)解释控制命令的下发机制；4)提供关键代码路径的伪代码。需要引用 doc/10-architecture/12-控制平面组件图.md 和 doc/40-product/1.0.0/controllers/ 相关文件。",
+      "dependent_files": [
+        "doc/10-architecture/12-控制平面组件图.md",
+        "doc/40-product/1.0.0/controllers/CTR-001-SessionController.md",
+        "doc/40-product/1.0.0/controllers/CTR-002-ChatController.md"
+      ],
+      "parent_id": "系统架构总览页面-提供架构图和文档索引",
+      "parent": "系统架构",
+      "parent_chain": [
+        "系统架构"
+      ],
+      "section_path": "系统架构",
+      "layer_level": 1,
+      "order": 7,
+      "status": "completed",
+      "page_type": "topic",
+      "content_hash": "45a7077c6be7f9a187c35f7ee39997cd606b38e642658e1867f8d13105973af5",
+      "generated_at": 1778928162406
+    },
+    {
+      "id": "核心模块规格总览-提供模块索引",
+      "name": "核心模块规格",
+      "title": "核心模块规格",
+      "slug": "核心模块规格/核心模块规格",
+      "path": "核心模块规格/核心模块规格.md",
+      "description": "核心模块规格总览，提供模块索引",
+      "prompt": "编写核心模块规格总览页面，需要：1)列出所有核心模块及其职责；2)提供到各模块详细规格的链接；3)说明模块间的依赖关系。模块包括：Electron主进程、工作台UI、技能管理器、任务系统、Git集成。",
+      "dependent_files": [
+        "src/electron/main.ts",
+        "src/ui/App.tsx",
+        "src/electron/libs/skill-manager/index.ts",
+        "src/electron/libs/task/index.ts",
+        "src/electron/libs/git/index.ts"
+      ],
+      "parent_id": "",
+      "parent": "",
+      "parent_chain": [],
+      "section_path": "核心模块规格",
+      "layer_level": 0,
+      "order": 8,
+      "status": "completed",
+      "page_type": "topic",
+      "content_hash": "f69d7a7501f43588148394fe8e5e694c429b0bb9c702fddfd3654b390f0780b9",
+      "generated_at": 1778928162406
+    },
+    {
+      "id": "src-electron-main-ts-的职责划分-初始化流程和ipc通信机制",
+      "name": "Electron主进程架构",
+      "title": "Electron主进程架构",
+      "slug": "核心模块规格/Electron主进程架构",
+      "path": "核心模块规格/Electron主进程架构.md",
+      "description": "src/electron/main.ts 的职责划分、初始化流程和IPC通信机制",
+      "prompt": "编写 Electron 主进程架构文档，需要：1)说明 main.ts 的整体结构和职责；2)绘制初始化流程图（启动、权限申请、插件加载）；3)解释 IPC 通信的设计（channels、handlers）；4)列出关键函数（getOpenComputerUseVersion、installOpenComputerUsePlugin 等）的功能；5)说明错误处理机制。需要包含关键代码片段。",
+      "dependent_files": [
+        "src/electron/main.ts"
+      ],
+      "parent_id": "核心模块规格总览-提供模块索引",
+      "parent": "核心模块规格",
+      "parent_chain": [
+        "核心模块规格"
+      ],
+      "section_path": "核心模块规格",
+      "layer_level": 1,
+      "order": 9,
+      "status": "completed",
+      "page_type": "topic",
+      "content_hash": "39ec32d7f05d5a09a660c1d393c32bfda192a7ac7fb13242ee5376dc286ec767",
+      "generated_at": 1778928162406
+    },
+    {
+      "id": "src-ui-app-tsx-的组件树结构-状态管理和消息处理机制",
+      "name": "工作台UI组件架构",
+      "title": "工作台UI组件架构",
+      "slug": "核心模块规格/工作台UI组件架构",
+      "path": "核心模块规格/工作台UI组件架构.md",
+      "description": "src/ui/App.tsx 的组件树结构、状态管理和消息处理机制",
+      "prompt": "编写工作台UI组件架构文档，需要：1)绘制组件树结构图（App -> ProcessGroupCard -> CompactProcessRow -> CompactProcessDetails）；2)说明组件间状态传递方式；3)解释消息处理链路（isProcessMessage -> getProcessGroupSummary -> 渲染）；4)说明关键道具类型（MessageContentItems、ProcessEntry 等）；5)列出组件使用示例。需要包含组件关系图和代码片段。",
+      "dependent_files": [
+        "src/ui/App.tsx"
+      ],
+      "parent_id": "核心模块规格总览-提供模块索引",
+      "parent": "核心模块规格",
+      "parent_chain": [
+        "核心模块规格"
+      ],
+      "section_path": "核心模块规格",
+      "layer_level": 1,
       "order": 10,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "296cbfadda82e2e9c2f1ef7206495bd542ad6ec8559b68ac6dd8ad6712605a98",
-      "generated_at": 1778922186535
+      "content_hash": "0c739ace30cc692ad594060aab810aac10b3592a3601eaa71f61cd8ef764b9ba",
+      "generated_at": 1778928162406
     },
     {
-      "id": "控制平面组件设计",
-      "name": "控制平面组件设计",
-      "title": "控制平面组件设计",
-      "slug": "控制平面组件设计",
-      "path": "控制平面组件设计.md",
-      "description": "控制平面组件设计",
-      "prompt": "为 tech-cc-hub 编写 控制平面组件设计 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
+      "id": "src-electron-libs-skill-manager-index-ts-的架构设计-初始化和生命周期管理",
+      "name": "技能管理器架构",
+      "title": "技能管理器架构",
+      "slug": "核心模块规格/技能管理器架构",
+      "path": "核心模块规格/技能管理器架构.md",
+      "description": "src/electron/libs/skill-manager/index.ts 的架构设计、初始化和生命周期管理",
+      "prompt": "编写技能管理器架构文档，需要：1)说明 SkillManager 的核心职责；2)绘制初始化流程图（配置加载、技能注册、生命周期管理）；3)解释技能配置的数据结构；4)说明技能的执行和调度机制；5)列出与外部模块的交互接口。需要包含关键代码示例。",
+      "dependent_files": [
+        "src/electron/libs/skill-manager/index.ts",
+        "src/electron/libs/mcp-tools/README.md"
+      ],
+      "parent_id": "核心模块规格总览-提供模块索引",
+      "parent": "核心模块规格",
+      "parent_chain": [
+        "核心模块规格"
+      ],
+      "section_path": "核心模块规格",
+      "layer_level": 1,
       "order": 11,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "480852bf073a79e882f06cd65a28909a58291265133a8b4657f71090bfa47114",
-      "generated_at": 1778922186535
+      "content_hash": "3d4441920aa277082394219a7e26729c0fff760226f28cba13882fff920a7fc9",
+      "generated_at": 1778928162406
     },
     {
-      "id": "执行平面组件设计",
-      "name": "执行平面组件设计",
-      "title": "执行平面组件设计",
-      "slug": "执行平面组件设计",
-      "path": "执行平面组件设计.md",
-      "description": "执行平面组件设计",
-      "prompt": "为 tech-cc-hub 编写 执行平面组件设计 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
+      "id": "src-electron-libs-task-index-ts-的任务概念-状态管理和事件机制",
+      "name": "任务系统设计",
+      "title": "任务系统设计",
+      "slug": "核心模块规格/任务系统设计",
+      "path": "核心模块规格/任务系统设计.md",
+      "description": "src/electron/libs/task/index.ts 的任务概念、状态管理和事件机制",
+      "prompt": "编写任务系统设计文档，需要：1)说明任务系统的核心概念（Task、TaskGraph、Worker）；2)解释任务状态机设计（pending -> running -> completed/failed）；3)说明任务依赖关系的管理；4)解释任务事件的上报机制；5)列出关键的API接口。需要包含状态机图示和代码示例。",
+      "dependent_files": [
+        "src/electron/libs/task/index.ts",
+        "src/electron/libs/task/README.md"
+      ],
+      "parent_id": "核心模块规格总览-提供模块索引",
+      "parent": "核心模块规格",
+      "parent_chain": [
+        "核心模块规格"
+      ],
+      "section_path": "核心模块规格",
+      "layer_level": 1,
       "order": 12,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "b90ec8e12b3c016d04c07ce0d2f5f5eb378d247769e570df0901f2b8b5eacdc8",
-      "generated_at": 1778922186535
+      "content_hash": "b86244ab7817529218a3980d7e3a239a7887ac32dcb96db50f022f1b19965f3f",
+      "generated_at": 1778928162406
     },
     {
-      "id": "数据与智能平面组件设计",
-      "name": "数据与智能平面组件设计",
-      "title": "数据与智能平面组件设计",
-      "slug": "数据与智能平面组件设计",
-      "path": "数据与智能平面组件设计.md",
-      "description": "数据与智能平面组件设计",
-      "prompt": "为 tech-cc-hub 编写 数据与智能平面组件设计 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
+      "id": "src-electron-libs-git-的功能设计-命令封装和使用方式",
+      "name": "Git集成模块",
+      "title": "Git集成模块",
+      "slug": "核心模块规格/Git集成模块",
+      "path": "核心模块规格/Git集成模块.md",
+      "description": "src/electron/libs/git 的功能设计、命令封装和使用方式",
+      "prompt": "编写 Git 集成模块文档，需要：1)说明 Git 集成的功能范围；2)解释 Git 命令的封装方式；3)说明 Git 操作与工作流的集成；4)列出支持的 Git 操作类型；5)说明错误处理和日志记录机制。需要包含使用示例。",
+      "dependent_files": [
+        "src/electron/libs/git/index.ts",
+        "src/electron/libs/git/README.md"
+      ],
+      "parent_id": "核心模块规格总览-提供模块索引",
+      "parent": "核心模块规格",
+      "parent_chain": [
+        "核心模块规格"
+      ],
+      "section_path": "核心模块规格",
+      "layer_level": 1,
       "order": 13,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "236d317f24e3bc8ede50d8ce9b44e551006897d6156a638242bdc1adac278d77",
-      "generated_at": 1778922186535
+      "content_hash": "5745a0ea33f047592922bc8a02f48ef04d7c5d03b970869d37ff0826b8383499",
+      "generated_at": 1778928162406
     },
     {
-      "id": "electron-主进程架构",
-      "name": "Electron 主进程架构",
-      "title": "Electron 主进程架构",
-      "slug": "Electron 主进程架构",
-      "path": "Electron 主进程架构.md",
-      "description": "Electron 主进程架构",
-      "prompt": "为 tech-cc-hub 编写 Electron 主进程架构 文档。",
-      "dependent_files": [],
+      "id": "应用运行时配置总览-包含主进程配置和构建配置",
+      "name": "应用运行时",
+      "title": "应用运行时",
+      "slug": "应用运行时/应用运行时",
+      "path": "应用运行时/应用运行时.md",
+      "description": "应用运行时配置总览，包含主进程配置和构建配置",
+      "prompt": "编写应用运行时配置总览页面，需要：1)列出运行时相关的配置文件；2)说明配置的组织方式（环境变量、配置文件、运行时参数）；3)提供到各配置文件详细说明的链接。",
+      "dependent_files": [
+        "src/electron/main.ts",
+        "vite.config.ts",
+        "package.json"
+      ],
       "parent_id": "",
       "parent": "",
       "parent_chain": [],
-      "section_path": "Repo Wiki",
+      "section_path": "应用运行时",
       "layer_level": 0,
       "order": 14,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "247c9f7d37151b5c0dd47a73f57fa0ea0e43fa54fc844721020654cac2e74fae",
-      "generated_at": 1778922186535
+      "content_hash": "f88d97c20705e1f51ada004eff07299419ce48022cea1c7859c5c52709eb2ae2",
+      "generated_at": 1778928162406
     },
     {
-      "id": "mcp-工具系统",
-      "name": "MCP 工具系统",
-      "title": "MCP 工具系统",
-      "slug": "MCP 工具系统",
-      "path": "MCP 工具系统.md",
-      "description": "MCP 工具系统",
-      "prompt": "为 tech-cc-hub 编写 MCP 工具系统 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
+      "id": "主进程启动参数-配置选项和环境变量设置",
+      "name": "Electron主进程配置",
+      "title": "Electron主进程配置",
+      "slug": "应用运行时/Electron主进程配置",
+      "path": "应用运行时/Electron主进程配置.md",
+      "description": "主进程启动参数、配置选项和环境变量设置",
+      "prompt": "编写 Electron 主进程配置文档，需要：1)列出所有启动参数及其含义；2)说明配置加载的优先级（命令行参数 -> 环境变量 -> 配置文件）；3)解释关键配置项的作用（如日志级别、端口、调试开关）；4)说明配置验证和错误处理。需要包含配置示例。",
+      "dependent_files": [
+        "src/electron/main.ts",
+        "src/electron/tsconfig.json"
+      ],
+      "parent_id": "应用运行时配置总览-包含主进程配置和构建配置",
+      "parent": "应用运行时",
+      "parent_chain": [
+        "应用运行时"
+      ],
+      "section_path": "应用运行时",
+      "layer_level": 1,
       "order": 15,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "dc775ea9060ce7cc0b8590aa36c16a4f0e2b419cc03554987ab3bbc58609656d",
-      "generated_at": 1778922186535
+      "content_hash": "59e79e1e6dd70f1c4321bf43dc8bbc6520a535aee5e67c7ea33e6edd4b6e5883",
+      "generated_at": 1778928162406
     },
     {
-      "id": "git-集成模块",
-      "name": "Git 集成模块",
-      "title": "Git 集成模块",
-      "slug": "Git 集成模块",
-      "path": "Git 集成模块.md",
-      "description": "Git 集成模块",
-      "prompt": "为 tech-cc-hub 编写 Git 集成模块 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
+      "id": "vite-config-ts-的构建配置-插件机制和预览服务器设计",
+      "name": "Vite构建配置",
+      "title": "Vite构建配置",
+      "slug": "应用运行时/Vite构建配置",
+      "path": "应用运行时/Vite构建配置.md",
+      "description": "vite.config.ts 的构建配置、插件机制和预览服务器设计",
+      "prompt": "编写 Vite 构建配置文档，需要：1)说明 vite.config.ts 的整体结构；2)解释核心插件的配置（@vitejs/plugin-react、@tailwindcss/vite、vite-tsconfig-paths）；3)详细说明预览服务器的实现（previewFsPlugin、resolvePreviewRequest、sendJson）；4)说明文件预览的大小限制配置（maxPreviewTextBytes、maxPreviewImageBytes）；5)列出关键的构建产物和输出目录。需要包含配置代码片段。",
+      "dependent_files": [
+        "vite.config.ts"
+      ],
+      "parent_id": "应用运行时配置总览-包含主进程配置和构建配置",
+      "parent": "应用运行时",
+      "parent_chain": [
+        "应用运行时"
+      ],
+      "section_path": "应用运行时",
+      "layer_level": 1,
       "order": 16,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "5e5f301988274ee6a9ad86286b1ae7434fc376cf6147c35912211304bbab4cf8",
-      "generated_at": 1778922186535
+      "content_hash": "8e7de5b8dbeeb8db43d084eec51a955c5ce01e27ef43f68f09b8a3d5ec2e94ba",
+      "generated_at": 1778928162406
     },
     {
-      "id": "skill-管理与执行",
-      "name": "Skill 管理与执行",
-      "title": "Skill 管理与执行",
-      "slug": "Skill 管理与执行",
-      "path": "Skill 管理与执行.md",
-      "description": "Skill 管理与执行",
-      "prompt": "为 tech-cc-hub 编写 Skill 管理与执行 文档。",
-      "dependent_files": [],
+      "id": "前端ui组件规格总览-提供组件索引",
+      "name": "前端UI组件",
+      "title": "前端UI组件",
+      "slug": "前端UI组件/前端UI组件",
+      "path": "前端UI组件/前端UI组件.md",
+      "description": "前端UI组件规格总览，提供组件索引",
+      "prompt": "编写前端UI组件规格总览页面，需要：1)列出所有主要UI组件及其职责；2)说明组件的设计模式（React组件、props接口）；3)提供到各组件详细规格的链接；4)解释组件间的组合关系。引用 doc/40-product/1.0.0/components/ 目录。",
+      "dependent_files": [
+        "src/ui/App.tsx",
+        "src/ui/components/",
+        "doc/40-product/1.0.0/components/"
+      ],
       "parent_id": "",
       "parent": "",
       "parent_chain": [],
-      "section_path": "Repo Wiki",
+      "section_path": "前端UI组件",
       "layer_level": 0,
       "order": 17,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "649b82cdbb4388585e775c4e95732755e9c4d93a6b791c46d8d85cdfb6d5cc5c",
-      "generated_at": 1778922186535
+      "content_hash": "9404229e337aa1b79e1cfc0cd5eb6b94d9473657d8f2119cf0a3e1da7e14b91b",
+      "generated_at": 1778928162406
     },
     {
-      "id": "聊天工作台组件",
-      "name": "聊天工作台组件",
-      "title": "聊天工作台组件",
-      "slug": "聊天工作台组件",
-      "path": "聊天工作台组件.md",
-      "description": "聊天工作台组件",
-      "prompt": "为 tech-cc-hub 编写 聊天工作台组件 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
+      "id": "会话管理和侧边栏组件的设计与实现",
+      "name": "会话侧边栏组件",
+      "title": "会话侧边栏组件",
+      "slug": "前端UI组件/会话侧边栏组件",
+      "path": "前端UI组件/会话侧边栏组件.md",
+      "description": "会话管理和侧边栏组件的设计与实现",
+      "prompt": "编写会话侧边栏组件规格文档，需要：1)说明 CMP-001-SessionSidebar 的功能职责；2)解释会话列表的数据结构和状态管理；3)说明会话切换和搜索的实现；4)列出关键的props接口和回调函数；5)说明与 SessionController 的交互。需要包含组件使用示例。引用 doc/40-product/1.0.0/components/CMP-001-SessionSidebar.md。",
+      "dependent_files": [
+        "src/ui/",
+        "doc/40-product/1.0.0/components/CMP-001-SessionSidebar.md"
+      ],
+      "parent_id": "前端ui组件规格总览-提供组件索引",
+      "parent": "前端UI组件",
+      "parent_chain": [
+        "前端UI组件"
+      ],
+      "section_path": "前端UI组件",
+      "layer_level": 1,
       "order": 18,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "cc036c932ad73a9ce8b5264be1e8824f203bc8c59549370a93a7f13a0ea3e157",
-      "generated_at": 1778922186535
+      "content_hash": "3a447fd625a2ff23393da98b3badd54b3465390b474d887bdecf723542315f72",
+      "generated_at": 1778928162406
     },
     {
-      "id": "任务图与可视化",
-      "name": "任务图与可视化",
-      "title": "任务图与可视化",
-      "slug": "任务图与可视化",
-      "path": "任务图与可视化.md",
-      "description": "任务图与可视化",
-      "prompt": "为 tech-cc-hub 编写 任务图与可视化 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
+      "id": "消息展示和流式渲染组件的设计与实现",
+      "name": "消息流组件",
+      "title": "消息流组件",
+      "slug": "前端UI组件/消息流组件",
+      "path": "前端UI组件/消息流组件.md",
+      "description": "消息展示和流式渲染组件的设计与实现",
+      "prompt": "编写消息流组件规格文档，需要：1)说明 CMP-004-MessageStream 的功能职责；2)解释消息内容的解析和渲染机制；3)说明流式输出的处理逻辑；4)列出消息类型和展示样式；5)说明与后端的事件交互。需要包含组件使用示例。引用 doc/40-product/1.0.0/components/CMP-004-MessageStream.md。",
+      "dependent_files": [
+        "src/ui/App.tsx",
+        "doc/40-product/1.0.0/components/CMP-004-MessageStream.md"
+      ],
+      "parent_id": "前端ui组件规格总览-提供组件索引",
+      "parent": "前端UI组件",
+      "parent_chain": [
+        "前端UI组件"
+      ],
+      "section_path": "前端UI组件",
+      "layer_level": 1,
       "order": 19,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "c3f53ab45fa358a076fa36b86115b78ce00ce09c605eb525c82b020cf1e0e447",
-      "generated_at": 1778922186535
+      "content_hash": "e175ba8c3705993d3f0a96ca0eed47a64d79ac15859cde273d40c8a389159167",
+      "generated_at": 1778928162406
     },
     {
-      "id": "回放与分析模块",
-      "name": "回放与分析模块",
-      "title": "回放与分析模块",
-      "slug": "回放与分析模块",
-      "path": "回放与分析模块.md",
-      "description": "回放与分析模块",
-      "prompt": "为 tech-cc-hub 编写 回放与分析模块 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
+      "id": "任务图可视化和交互组件的设计与实现",
+      "name": "任务图画布组件",
+      "title": "任务图画布组件",
+      "slug": "前端UI组件/任务图画布组件",
+      "path": "前端UI组件/任务图画布组件.md",
+      "description": "任务图可视化和交互组件的设计与实现",
+      "prompt": "编写任务图画布组件规格文档，需要：1)说明 CMP-007-TaskGraphCanvas 的功能职责；2)解释任务图的数据结构；3)说明节点和边的渲染逻辑；4)列出交互操作（拖拽、缩放、选中）；5)说明与 TaskController 的双向绑定。需要包含组件使用示例。引用 doc/40-product/1.0.0/components/CMP-007-TaskGraphCanvas.md。",
+      "dependent_files": [
+        "doc/40-product/1.0.0/components/CMP-007-TaskGraphCanvas.md"
+      ],
+      "parent_id": "前端ui组件规格总览-提供组件索引",
+      "parent": "前端UI组件",
+      "parent_chain": [
+        "前端UI组件"
+      ],
+      "section_path": "前端UI组件",
+      "layer_level": 1,
       "order": 20,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "30f08bd0a9acbe6c482272d7c67153853d86ce189d684a38630fd5bc0c725094",
-      "generated_at": 1778922186535
+      "content_hash": "9b9460237aa3f6212ecdd0eec0ef6dd2330d3e4f2c22c354258e4d9d0bbe0332",
+      "generated_at": 1778928162406
     },
     {
-      "id": "会话生命周期规范",
-      "name": "会话生命周期规范",
-      "title": "会话生命周期规范",
-      "slug": "会话生命周期规范",
-      "path": "会话生命周期规范.md",
-      "description": "会话生命周期规范",
-      "prompt": "为 tech-cc-hub 编写 会话生命周期规范 文档。",
-      "dependent_files": [],
+      "id": "工作流与技能体系总览-包含-skillmanager-任务系统和-proworkflow",
+      "name": "工作流与技能",
+      "title": "工作流与技能",
+      "slug": "工作流与技能/工作流与技能",
+      "path": "工作流与技能/工作流与技能.md",
+      "description": "工作流与技能体系总览，包含 SkillManager、任务系统和 ProWorkflow",
+      "prompt": "编写工作流与技能体系总览页面，需要：1)概述技能系统的架构设计；2)说明 ProWorkflow 脚本体系的作用；3)提供到各子系统详细说明的链接；4)解释工作流与核心模块的集成方式。",
+      "dependent_files": [
+        "src/electron/libs/skill-manager/index.ts",
+        "pro-workflow/"
+      ],
       "parent_id": "",
       "parent": "",
       "parent_chain": [],
-      "section_path": "Repo Wiki",
+      "section_path": "工作流与技能",
       "layer_level": 0,
       "order": 21,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "980e447d593e7d8924eca193be447ebd1ea3ddc73e67074c150f17a78e1b550a",
-      "generated_at": 1778922186535
+      "content_hash": "b8fd42f207ec0996b2c9d60046ff17869718f27af1e21f164fd2b02b98288be1",
+      "generated_at": 1778928162406
     },
     {
-      "id": "事件模型与可观测规范",
-      "name": "事件模型与可观测规范",
-      "title": "事件模型与可观测规范",
-      "slug": "事件模型与可观测规范",
-      "path": "事件模型与可观测规范.md",
-      "description": "事件模型与可观测规范",
-      "prompt": "为 tech-cc-hub 编写 事件模型与可观测规范 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
+      "id": "skillmanager-的架构设计-初始化流程和技能生命周期管理",
+      "name": "技能管理体系",
+      "title": "技能管理体系",
+      "slug": "工作流与技能/技能管理体系",
+      "path": "工作流与技能/技能管理体系.md",
+      "description": "SkillManager 的架构设计、初始化流程和技能生命周期管理",
+      "prompt": "编写技能管理体系文档，需要：1)说明技能管理器的核心架构；2)绘制初始化流程图（配置加载、技能注册、生命周期管理）；3)解释技能配置的数据结构和验证规则；4)说明技能的发现、加载和执行机制；5)列出技能与核心模块的交互接口。需要包含关键代码示例。",
+      "dependent_files": [
+        "src/electron/libs/skill-manager/index.ts",
+        "pro-workflow/skills/"
+      ],
+      "parent_id": "工作流与技能体系总览-包含-skillmanager-任务系统和-proworkflow",
+      "parent": "工作流与技能",
+      "parent_chain": [
+        "工作流与技能"
+      ],
+      "section_path": "工作流与技能",
+      "layer_level": 1,
       "order": 22,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "b44ba8cf740e66984c613fd45a5b5c7d2aef3613a75d43831734cc0eea2c2271",
-      "generated_at": 1778922186535
+      "content_hash": "dd98def3da16f13346707e5e2913b45eb48aa4956bf610d62329bdc3f9313f9f",
+      "generated_at": 1778928162406
     },
     {
-      "id": "api-与实时通道规范",
-      "name": "API 与实时通道规范",
-      "title": "API 与实时通道规范",
-      "slug": "API 与实时通道规范",
-      "path": "API 与实时通道规范.md",
-      "description": "API 与实时通道规范",
-      "prompt": "为 tech-cc-hub 编写 API 与实时通道规范 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
+      "id": "proworkflow-脚本的分类-设计理念和使用方式",
+      "name": "ProWorkflow脚本体系",
+      "title": "ProWorkflow脚本体系",
+      "slug": "工作流与技能/ProWorkflow脚本体系",
+      "path": "工作流与技能/ProWorkflow脚本体系.md",
+      "description": "ProWorkflow 脚本的分类、设计理念和使用方式",
+      "prompt": "编写 ProWorkflow 脚本体系文档，需要：1)说明 ProWorkflow 的整体架构；2)列出所有脚本并按功能分类（会话生命周期、质量门禁、协作流程）；3)解释脚本间的调用关系和数据传递（通过 stdin/stdout 的 JSON 协议）；4)说明脚本的配置和扩展方式；5)列出关键的脚本文件。需要包含脚本使用示例。",
+      "dependent_files": [
+        "pro-workflow/scripts/",
+        "pro-workflow/config.json"
+      ],
+      "parent_id": "工作流与技能体系总览-包含-skillmanager-任务系统和-proworkflow",
+      "parent": "工作流与技能",
+      "parent_chain": [
+        "工作流与技能"
+      ],
+      "section_path": "工作流与技能",
+      "layer_level": 1,
       "order": 23,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "ab6c92b55ec03f67fd78ad7e048f7cb1f1fb8736825719901f37e770d8bc421b",
-      "generated_at": 1778922186535
+      "content_hash": "2bb0211f3871b4c0504c1738235c1b67ad330688dca2749a6ec972c2fc350da4",
+      "generated_at": 1778928162406
     },
     {
-      "id": "存储与产物规范",
-      "name": "存储与产物规范",
-      "title": "存储与产物规范",
-      "slug": "存储与产物规范",
-      "path": "存储与产物规范.md",
-      "description": "存储与产物规范",
-      "prompt": "为 tech-cc-hub 编写 存储与产物规范 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
+      "id": "会话开始-进行中和结束相关脚本的设计与实现",
+      "name": "会话生命周期脚本",
+      "title": "会话生命周期脚本",
+      "slug": "工作流与技能/会话生命周期脚本",
+      "path": "工作流与技能/会话生命周期脚本.md",
+      "description": "会话开始、进行中和结束相关脚本的设计与实现",
+      "prompt": "编写会话生命周期脚本文档，需要：1)说明 session-start.js 的功能（初始化会话目录、日志记录）；2)说明 session-end.js 的功能（会话归档、指标收集）；3)说明 session-check.js 的功能（完成信号检测、大变更检测）；4)解释脚本间的数据共享方式（文件系统）；5)列出关键函数和配置项。需要包含代码片段和流程图。",
+      "dependent_files": [
+        "pro-workflow/scripts/session-start.js",
+        "pro-workflow/scripts/session-end.js",
+        "pro-workflow/scripts/session-check.js"
+      ],
+      "parent_id": "工作流与技能体系总览-包含-skillmanager-任务系统和-proworkflow",
+      "parent": "工作流与技能",
+      "parent_chain": [
+        "工作流与技能"
+      ],
+      "section_path": "工作流与技能",
+      "layer_level": 1,
       "order": 24,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "98ae5a17805c167206eff4ce176db3566cd441fd87766552bbaab3af3a483b8c",
-      "generated_at": 1778922186535
+      "content_hash": "4d1c78a3f67f32138a54e32a00dba3c5e51cea53b7cfa11cf808bdec1fdae938",
+      "generated_at": 1778928162406
     },
     {
-      "id": "agentos-集成规范",
-      "name": "AgentOS 集成规范",
-      "title": "AgentOS 集成规范",
-      "slug": "AgentOS 集成规范",
-      "path": "AgentOS 集成规范.md",
-      "description": "AgentOS 集成规范",
-      "prompt": "为 tech-cc-hub 编写 AgentOS 集成规范 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
+      "id": "质量门禁相关脚本的设计与实现-commit验证-secret扫描等",
+      "name": "质量门禁脚本",
+      "title": "质量门禁脚本",
+      "slug": "工作流与技能/质量门禁脚本",
+      "path": "工作流与技能/质量门禁脚本.md",
+      "description": "质量门禁相关脚本的设计与实现（commit验证、secret扫描等）",
+      "prompt": "编写质量门禁脚本文档，需要：1)说明 pre-commit-check.js 和 pre-push-check.js 的功能；2)说明 commit-validate.js 的提交信息验证规则；3)说明 secret-scan.js 的敏感信息检测模式；4)说明 quality-gate.js 的自适应阈值机制；5)解释质量门禁的触发条件和失败处理。需要包含配置示例和流程图。",
+      "dependent_files": [
+        "pro-workflow/scripts/pre-commit-check.js",
+        "pro-workflow/scripts/pre-push-check.js",
+        "pro-workflow/scripts/commit-validate.js",
+        "pro-workflow/scripts/secret-scan.js",
+        "pro-workflow/scripts/quality-gate.js"
+      ],
+      "parent_id": "工作流与技能体系总览-包含-skillmanager-任务系统和-proworkflow",
+      "parent": "工作流与技能",
+      "parent_chain": [
+        "工作流与技能"
+      ],
+      "section_path": "工作流与技能",
+      "layer_level": 1,
       "order": 25,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "d4693d5a6f2d479456df7913663878c3037ba2771b39fb3128c84743e8d80297",
-      "generated_at": 1778922186535
+      "content_hash": "2a7db8592d385c9b20f16bf715526997d704218481f269ef34c53afce3b227c0",
+      "generated_at": 1778928162406
     },
     {
-      "id": "工作流-markdown-规范",
-      "name": "工作流 Markdown 规范",
-      "title": "工作流 Markdown 规范",
-      "slug": "工作流 Markdown 规范",
-      "path": "工作流 Markdown 规范.md",
-      "description": "工作流 Markdown 规范",
-      "prompt": "为 tech-cc-hub 编写 工作流 Markdown 规范 文档。",
-      "dependent_files": [],
+      "id": "开发-构建和发布脚本总览",
+      "name": "脚本与工具",
+      "title": "脚本与工具",
+      "slug": "脚本与工具/脚本与工具",
+      "path": "脚本与工具/脚本与工具.md",
+      "description": "开发、构建和发布脚本总览",
+      "prompt": "编写脚本与工具总览页面，需要：1)列出所有脚本按用途分类（开发、构建、发布、测试）；2)说明脚本的组织结构；3)提供到各脚本详细说明的链接；4)解释脚本间的依赖关系。",
+      "dependent_files": [
+        "scripts/",
+        "pro-workflow/scripts/"
+      ],
       "parent_id": "",
       "parent": "",
       "parent_chain": [],
-      "section_path": "Repo Wiki",
+      "section_path": "脚本与工具",
       "layer_level": 0,
       "order": 26,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "e224480977d6d230c79b29fcb7ed92eb34b40dff7165afbdd8d12ff93b93235a",
-      "generated_at": 1778922186535
+      "content_hash": "c4ede013edc433e19dcbcb7199779cc41115cf64efbf002138ff3f3e0f5c8e2a",
+      "generated_at": 1778928162406
     },
     {
-      "id": "前端开发指南",
-      "name": "前端开发指南",
-      "title": "前端开发指南",
-      "slug": "前端开发指南",
-      "path": "前端开发指南.md",
-      "description": "前端开发指南",
-      "prompt": "为 tech-cc-hub 编写 前端开发指南 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
-      "order": 30,
+      "id": "dev-mjs-和-dev-electron-mjs-的启动流程和信号处理机制",
+      "name": "开发启动脚本",
+      "title": "开发启动脚本",
+      "slug": "脚本与工具/开发启动脚本",
+      "path": "脚本与工具/开发启动脚本.md",
+      "description": "dev.mjs 和 dev-electron.mjs 的启动流程和信号处理机制",
+      "prompt": "编写开发启动脚本文档，需要：1)说明 dev.mjs 的进程管理机制（startTask、stopAll）；2)说明 dev-electron.mjs 的 Electron 启动流程（verifyCodesign、prepareMacElectronDist）；3)解释脚本间的调用关系；4)列出关键的启动参数和环境配置；5)说明日志输出和错误处理。需要包含启动流程图和代码片段。",
+      "dependent_files": [
+        "scripts/dev.mjs",
+        "scripts/dev-electron.mjs"
+      ],
+      "parent_id": "开发-构建和发布脚本总览",
+      "parent": "脚本与工具",
+      "parent_chain": [
+        "脚本与工具"
+      ],
+      "section_path": "脚本与工具",
+      "layer_level": 1,
+      "order": 27,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "4deebd1df78632f7469179855fe11396eee5bae02debc76401d0486b4a257d75",
-      "generated_at": 1778922186535
-    },
-    {
-      "id": "后端开发指南",
-      "name": "后端开发指南",
-      "title": "后端开发指南",
-      "slug": "后端开发指南",
-      "path": "后端开发指南.md",
-      "description": "后端开发指南",
-      "prompt": "为 tech-cc-hub 编写 后端开发指南 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
-      "order": 31,
-      "status": "completed",
-      "page_type": "topic",
-      "content_hash": "e8646b95033b2e61eb1497c58499103c4bf28042f40e82cd9f00ce6021616325",
-      "generated_at": 1778922186535
-    },
-    {
-      "id": "pro-workflow-开发者指南",
-      "name": "Pro-Workflow 开发者指南",
-      "title": "Pro-Workflow 开发者指南",
-      "slug": "Pro-Workflow 开发者指南",
-      "path": "Pro-Workflow 开发者指南.md",
-      "description": "Pro-Workflow 开发者指南",
-      "prompt": "为 tech-cc-hub 编写 Pro-Workflow 开发者指南 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
-      "order": 32,
-      "status": "completed",
-      "page_type": "topic",
-      "content_hash": "f3e2671a9680068774aba58a7320450336c0982cc866d7834d9992f705a43b26",
-      "generated_at": 1778922186535
-    },
-    {
-      "id": "构建与发布流程",
-      "name": "构建与发布流程",
-      "title": "构建与发布流程",
-      "slug": "构建与发布流程",
-      "path": "构建与发布流程.md",
-      "description": "构建与发布流程",
-      "prompt": "为 tech-cc-hub 编写 构建与发布流程 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
-      "order": 33,
-      "status": "completed",
-      "page_type": "topic",
-      "content_hash": "1a13a1a084f00e97ade079e5160f17f99cd6bfb1a08d43b332bb337faf6bf472",
-      "generated_at": 1778922186535
-    },
-    {
-      "id": "oauth-与认证集成",
-      "name": "OAuth 与认证集成",
-      "title": "OAuth 与认证集成",
-      "slug": "OAuth 与认证集成",
-      "path": "OAuth 与认证集成.md",
-      "description": "OAuth 与认证集成",
-      "prompt": "为 tech-cc-hub 编写 OAuth 与认证集成 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
-      "order": 34,
-      "status": "completed",
-      "page_type": "topic",
-      "content_hash": "aa0e8cbe6b7999f3ab6981b3e1796ddc840f0ff7f83f753b70298832e75bc142",
-      "generated_at": 1778922186535
-    },
-    {
-      "id": "本地开发环境搭建",
-      "name": "本地开发环境搭建",
-      "title": "本地开发环境搭建",
-      "slug": "本地开发环境搭建",
-      "path": "本地开发环境搭建.md",
-      "description": "本地开发环境搭建",
-      "prompt": "为 tech-cc-hub 编写 本地开发环境搭建 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
-      "order": 35,
-      "status": "completed",
-      "page_type": "topic",
-      "content_hash": "8ce68bdf8338f082306cd99221b453466e57e6ae0b9cf58646671ecbdeb15555",
-      "generated_at": 1778922186535
-    },
-    {
-      "id": "electron-客户端测试手册",
-      "name": "Electron 客户端测试手册",
-      "title": "Electron 客户端测试手册",
-      "slug": "Electron 客户端测试手册",
-      "path": "Electron 客户端测试手册.md",
-      "description": "Electron 客户端测试手册",
-      "prompt": "为 tech-cc-hub 编写 Electron 客户端测试手册 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
-      "order": 36,
-      "status": "completed",
-      "page_type": "topic",
-      "content_hash": "ba40bd96b655098ea6518164ded3f75539b12154cbee98175857ac1b9f154424",
-      "generated_at": 1778922186535
-    },
-    {
-      "id": "github-release-自动更新",
-      "name": "GitHub Release 自动更新",
-      "title": "GitHub Release 自动更新",
-      "slug": "GitHub Release 自动更新",
-      "path": "GitHub Release 自动更新.md",
-      "description": "GitHub Release 自动更新",
-      "prompt": "为 tech-cc-hub 编写 GitHub Release 自动更新 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
-      "order": 37,
-      "status": "completed",
-      "page_type": "topic",
-      "content_hash": "bfb7e4ab9b2bb37d0e41d65b5314f41d9ccc5bad365ba2f37b7fd796f1609e3b",
-      "generated_at": 1778922186535
-    },
-    {
-      "id": "产品功能需求",
-      "name": "产品功能需求",
-      "title": "产品功能需求",
-      "slug": "产品功能需求",
-      "path": "产品功能需求.md",
-      "description": "产品功能需求",
-      "prompt": "为 tech-cc-hub 编写 产品功能需求 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
-      "order": 40,
-      "status": "completed",
-      "page_type": "topic",
-      "content_hash": "ef83adb13cd2d9a716505229ea96225b507ea9e10c6a9422a53fd0d7344aefa2",
-      "generated_at": 1778922186535
-    },
-    {
-      "id": "核心-epic-详解",
-      "name": "核心 Epic 详解",
-      "title": "核心 Epic 详解",
-      "slug": "核心 Epic 详解",
-      "path": "核心 Epic 详解.md",
-      "description": "核心 Epic 详解",
-      "prompt": "为 tech-cc-hub 编写 核心 Epic 详解 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
-      "order": 41,
-      "status": "completed",
-      "page_type": "topic",
-      "content_hash": "5e9472c62d79135d7f784e1dd8246c56330199737e929d8b29cc0a2c12ee4277",
-      "generated_at": 1778922186535
-    },
-    {
-      "id": "组件设计规格",
-      "name": "组件设计规格",
-      "title": "组件设计规格",
-      "slug": "组件设计规格",
-      "path": "组件设计规格.md",
-      "description": "组件设计规格",
-      "prompt": "为 tech-cc-hub 编写 组件设计规格 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
-      "order": 42,
-      "status": "completed",
-      "page_type": "topic",
-      "content_hash": "b40b52835207bdc4ac6e37c7e9e4e43d6b890ef1f06ff50d793f0bd6ba361fb3",
-      "generated_at": 1778922186535
-    },
-    {
-      "id": "控制器设计规格",
-      "name": "控制器设计规格",
-      "title": "控制器设计规格",
-      "slug": "控制器设计规格",
-      "path": "控制器设计规格.md",
-      "description": "控制器设计规格",
-      "prompt": "为 tech-cc-hub 编写 控制器设计规格 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
-      "order": 43,
-      "status": "completed",
-      "page_type": "topic",
-      "content_hash": "0dd4a140854d75c199276248be0a1f9a2ce12fac16f4e10c6b0db0be33ca2052",
-      "generated_at": 1778922186535
-    },
-    {
-      "id": "竞品功能分析",
-      "name": "竞品功能分析",
-      "title": "竞品功能分析",
-      "slug": "竞品功能分析",
-      "path": "竞品功能分析.md",
-      "description": "竞品功能分析",
-      "prompt": "为 tech-cc-hub 编写 竞品功能分析 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
-      "order": 44,
-      "status": "completed",
-      "page_type": "topic",
-      "content_hash": "d14ab9993dac53f9afb48e2ee70aee069a4b6a9a13e600785fb3ad404a7f6778",
-      "generated_at": 1778922186535
-    },
-    {
-      "id": "trace-workbench-参考",
-      "name": "Trace Workbench 参考",
-      "title": "Trace Workbench 参考",
-      "slug": "Trace Workbench 参考",
-      "path": "Trace Workbench 参考.md",
-      "description": "Trace Workbench 参考",
-      "prompt": "为 tech-cc-hub 编写 Trace Workbench 参考 文档。",
-      "dependent_files": [],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
-      "order": 45,
-      "status": "completed",
-      "page_type": "topic",
-      "content_hash": "60ba499835d0f9dc34996b5a44c0683ec6246c2b05d961f58ab354b9fed8980b",
-      "generated_at": 1778922186535
+      "content_hash": "2fbd7f42891ad759b057c96da8f73ca311ce4ac61ac53afbcd75cc26fce973eb",
+      "generated_at": 1778928162406
     },
     {
       "id": "knowledge-engine-repowiki",
       "name": "知识库与 Repo Wiki 系统",
       "title": "知识库与 Repo Wiki 系统",
-      "slug": "知识库与 Repo Wiki 系统",
-      "path": "知识库与 Repo Wiki 系统.md",
+      "slug": "系统架构/知识库与 Repo Wiki 系统",
+      "path": "系统架构/知识库与 Repo Wiki 系统.md",
       "description": "knowledge-engine-repowiki",
       "prompt": "详细说明内置知识库、Repo Wiki 生成、主题目录规划、Markdown 产物、向量索引、FTS 检索、MCP 工具和聊天注入链路。必须覆盖数据流、关键 IPC、SQLite 表、进度状态、失败恢复和调试入口。",
       "dependent_files": [
@@ -699,40 +711,18 @@
         "scripts/qa/knowledge-engine-smoke.mjs",
         "scripts/qa/knowledge-chat-injection-smoke.mjs"
       ],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "Repo Wiki",
-      "layer_level": 0,
-      "order": 46,
-      "status": "completed",
-      "page_type": "topic",
-      "content_hash": "30d723358f2944fecf07482997f2e13f597c0fe85c61a364b954726bdf34fce9",
-      "generated_at": 1778922186535
-    },
-    {
-      "id": "core-module-specs",
-      "name": "核心模块规格",
-      "title": "核心模块规格",
-      "slug": "核心模块规格/核心模块规格",
-      "path": "核心模块规格/核心模块规格.md",
-      "description": "core-module-specs",
-      "prompt": "按工程模块整理实现入口、职责边界、关键文件、依赖关系、常见改造路径和验证方式。",
-      "dependent_files": [
-        "src/",
-        "scripts/",
-        "test/"
+      "parent_id": "系统架构总览页面-提供架构图和文档索引",
+      "parent": "系统架构",
+      "parent_chain": [
+        "系统架构"
       ],
-      "parent_id": "",
-      "parent": "",
-      "parent_chain": [],
-      "section_path": "核心模块规格",
-      "layer_level": 0,
-      "order": 47,
+      "section_path": "系统架构",
+      "layer_level": 1,
+      "order": 28,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "e1b6dab8a4e4c265d704d03b7c5c7d501aef56fad44c90760b7a77a6a25c860d",
-      "generated_at": 1778922186535
+      "content_hash": "2a19025f676b68496ea482e2877e9e9528c9808793e2cfe402df9f009550fedf",
+      "generated_at": 1778928162406
     },
     {
       "id": "module-knowledge-engine",
@@ -752,18 +742,18 @@
         "src/electron/libs/knowledge/knowledge-paths.ts",
         "src/electron/libs/knowledge/knowledge-repository.ts"
       ],
-      "parent_id": "core-module-specs",
+      "parent_id": "核心模块规格总览-提供模块索引",
       "parent": "核心模块规格",
       "parent_chain": [
         "核心模块规格"
       ],
       "section_path": "核心模块规格/知识库后端引擎总览",
       "layer_level": 1,
-      "order": 48,
+      "order": 29,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "71d96831625ddc9bf083bb3870c026b26778b7f2bfbcd8c3fbe064cd9ce08a8c",
-      "generated_at": 1778922186535
+      "content_hash": "367aef802b396cc11b9f052db7159d91da650be27b398e2ecd3c0aae41cda434",
+      "generated_at": 1778928162406
     },
     {
       "id": "module-knowledge-ui",
@@ -776,18 +766,18 @@
       "dependent_files": [
         "src/ui/components/KnowledgePanel.tsx"
       ],
-      "parent_id": "core-module-specs",
+      "parent_id": "核心模块规格总览-提供模块索引",
       "parent": "核心模块规格",
       "parent_chain": [
         "核心模块规格"
       ],
       "section_path": "核心模块规格/知识库前端交互总览",
       "layer_level": 1,
-      "order": 49,
+      "order": 30,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "c90c86234e5e915e89ba9e3517b2f12caff3e6020bb745c365c3d72879c324a3",
-      "generated_at": 1778922186535
+      "content_hash": "80ec52490fa7f2552dfe08b1c0ec46bd0872bf950d9fbf538c4a3ccd1e465cb2",
+      "generated_at": 1778928162406
     },
     {
       "id": "module-mcp-tools",
@@ -807,18 +797,18 @@
         "src/electron/libs/mcp-tools/figma-design-intelligence.ts",
         "src/electron/libs/mcp-tools/figma-locator.ts"
       ],
-      "parent_id": "core-module-specs",
+      "parent_id": "核心模块规格总览-提供模块索引",
       "parent": "核心模块规格",
       "parent_chain": [
         "核心模块规格"
       ],
       "section_path": "核心模块规格/MCP 工具系统总览",
       "layer_level": 1,
-      "order": 50,
+      "order": 31,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "33c4b9e2d662686e8ef537bec93b1dd88b2d9aae686f4d4fb590254959f4e44b",
-      "generated_at": 1778922186535
+      "content_hash": "90fdd140b886282c97186dbc5d68f6304e1a4cd8b381c02623f7bfb2da538633",
+      "generated_at": 1778928162406
     },
     {
       "id": "module-electron-runtime",
@@ -838,18 +828,18 @@
         "src/shared/runner-status.ts",
         "test/electron/runner-attachments.test.ts"
       ],
-      "parent_id": "core-module-specs",
+      "parent_id": "核心模块规格总览-提供模块索引",
       "parent": "核心模块规格",
       "parent_chain": [
         "核心模块规格"
       ],
       "section_path": "核心模块规格",
       "layer_level": 1,
-      "order": 51,
+      "order": 32,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "587e3903f1c7d59a1de8bb0b10318e9fc97c266b094865f9a0a781d768f32b19",
-      "generated_at": 1778922186535
+      "content_hash": "d768180d26cacaa6da440929da6fb5216715d025a3daac53e7c801ed9ffdb53f",
+      "generated_at": 1778928162406
     },
     {
       "id": "module-electron-main",
@@ -869,18 +859,18 @@
         "src/electron/libs/attachment-store.ts",
         "src/electron/libs/auto-updater-fallback.ts"
       ],
-      "parent_id": "core-module-specs",
+      "parent_id": "核心模块规格总览-提供模块索引",
       "parent": "核心模块规格",
       "parent_chain": [
         "核心模块规格"
       ],
       "section_path": "核心模块规格",
       "layer_level": 1,
-      "order": 52,
+      "order": 33,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "ac90c2c2275363ee7afc5b46f42e86a6e7f4221b38cde67b2718d654d103997c",
-      "generated_at": 1778922186535
+      "content_hash": "3f6d83897fb214823d38966fc3d24f1576077ff1b4c3c0ee0d8924748331f0da",
+      "generated_at": 1778928162406
     },
     {
       "id": "module-ui-shell",
@@ -900,18 +890,18 @@
         "src/ui/components/BrowserWorkbenchPage.tsx",
         "src/ui/components/ComposerContextCard.tsx"
       ],
-      "parent_id": "core-module-specs",
+      "parent_id": "核心模块规格总览-提供模块索引",
       "parent": "核心模块规格",
       "parent_chain": [
         "核心模块规格"
       ],
       "section_path": "核心模块规格",
       "layer_level": 1,
-      "order": 53,
+      "order": 34,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "6fa7df4fa5c95688b0e163e79a325f8e3e6a4160c98fbdff11370e7f1e2e35d8",
-      "generated_at": 1778922186535
+      "content_hash": "f0180c4aef4ae8c294fddf4dad598346b2a347c8c7dfde28ee57acc62403ea75",
+      "generated_at": 1778928162406
     },
     {
       "id": "module-task-engine",
@@ -931,18 +921,18 @@
         "src/electron/libs/cron-executor.ts",
         "src/electron/libs/cron-ipc-handlers.ts"
       ],
-      "parent_id": "core-module-specs",
+      "parent_id": "核心模块规格总览-提供模块索引",
       "parent": "核心模块规格",
       "parent_chain": [
         "核心模块规格"
       ],
       "section_path": "核心模块规格",
       "layer_level": 1,
-      "order": 54,
+      "order": 35,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "0a605a0036b65020dbdaeef1fd295f6ece690885ad951f96268facfb7c2d2ace",
-      "generated_at": 1778922186535
+      "content_hash": "732fdd5021b9fff6b438ba835696d8a0d792c076dc0f3100b96b92763f6bf97f",
+      "generated_at": 1778928162406
     },
     {
       "id": "module-session-engine",
@@ -962,18 +952,18 @@
         "doc/20-contracts/session-lifecycle/spec.md",
         "doc/40-product/1.0.0/40-delivery/components/CMP-001-SessionSidebar.md"
       ],
-      "parent_id": "core-module-specs",
+      "parent_id": "核心模块规格总览-提供模块索引",
       "parent": "核心模块规格",
       "parent_chain": [
         "核心模块规格"
       ],
       "section_path": "核心模块规格",
       "layer_level": 1,
-      "order": 55,
+      "order": 36,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "492d6e3a4fbbec2c96c4de016bff24a0ce6e1b83185ddbfa08d4c6c97cf8567d",
-      "generated_at": 1778922186535
+      "content_hash": "97b215d8a260329d5d1ad6de94cd030304ab29e9fac89b0c80994ca660a340aa",
+      "generated_at": 1778928162406
     },
     {
       "id": "module-git-workbench",
@@ -993,18 +983,18 @@
         "src/electron/libs/git/errors.ts",
         "src/electron/libs/git/graph.ts"
       ],
-      "parent_id": "core-module-specs",
+      "parent_id": "核心模块规格总览-提供模块索引",
       "parent": "核心模块规格",
       "parent_chain": [
         "核心模块规格"
       ],
       "section_path": "核心模块规格",
       "layer_level": 1,
-      "order": 56,
+      "order": 37,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "8a7d4408ffc8ab9ca1a793d19728448f2f987d2a2bf01823dd0c31b1a060c874",
-      "generated_at": 1778922186535
+      "content_hash": "ce79dfab2b33a7e9fd1fa6e9a3f2c3fcf05f3f91a69cd6639641bc5e3db939d7",
+      "generated_at": 1778928162406
     },
     {
       "id": "module-skill-plugin-system",
@@ -1024,18 +1014,18 @@
         "pro-workflow/skills/wiki-research-loop/scripts/research-loop.js",
         "pro-workflow/skills/wiki-viewer/scripts/render.js"
       ],
-      "parent_id": "core-module-specs",
+      "parent_id": "核心模块规格总览-提供模块索引",
       "parent": "核心模块规格",
       "parent_chain": [
         "核心模块规格"
       ],
       "section_path": "核心模块规格",
       "layer_level": 1,
-      "order": 57,
+      "order": 38,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "7c7f79c23bcd765cf21d409d0900d95fcfccc7f6d361f92eb80ceb7aa41d62ba",
-      "generated_at": 1778922186535
+      "content_hash": "60b8cecb6a6d6491dbf1e7b290200a296dece4fe369d5cd08e813d22f6d26348",
+      "generated_at": 1778928162406
     },
     {
       "id": "module-shared-contracts",
@@ -1055,18 +1045,18 @@
         "src/shared/model-provider-routing.ts",
         "src/shared/plan-progress.ts"
       ],
-      "parent_id": "core-module-specs",
+      "parent_id": "核心模块规格总览-提供模块索引",
       "parent": "核心模块规格",
       "parent_chain": [
         "核心模块规格"
       ],
       "section_path": "核心模块规格",
       "layer_level": 1,
-      "order": 58,
+      "order": 39,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "9ebcebf046084ae306ed465c1034c96414add62f0692dda48b5d555b3144202e",
-      "generated_at": 1778922186535
+      "content_hash": "469cff2972fab18e0d13b80ade3f5a37fcdf8b8b4573346111a1e72f0f94e88f",
+      "generated_at": 1778928162406
     },
     {
       "id": "module-common",
@@ -1086,18 +1076,18 @@
         "src/common/types/fileSnapshot.ts",
         "src/common/types/preview.ts"
       ],
-      "parent_id": "core-module-specs",
+      "parent_id": "核心模块规格总览-提供模块索引",
       "parent": "核心模块规格",
       "parent_chain": [
         "核心模块规格"
       ],
       "section_path": "核心模块规格",
       "layer_level": 1,
-      "order": 59,
+      "order": 40,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "c8e07e53b99d789ccb17cbe78d9043d97e06613f405bab30f5d809583c5aa736",
-      "generated_at": 1778922186535
+      "content_hash": "e88d55aa9553d63bd8887644e06110de8ef57241668ce4e1d6df16661c83a218",
+      "generated_at": 1778928162406
     },
     {
       "id": "module-scripts",
@@ -1117,18 +1107,18 @@
         "scripts/qa/browser-workbench-smoke.mjs",
         "scripts/qa/chat-ui-smoke.cjs"
       ],
-      "parent_id": "core-module-specs",
+      "parent_id": "核心模块规格总览-提供模块索引",
       "parent": "核心模块规格",
       "parent_chain": [
         "核心模块规格"
       ],
       "section_path": "核心模块规格",
       "layer_level": 1,
-      "order": 72,
+      "order": 41,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "052b4c90d9e0628b66578be16ab63ecef237d51ed8ab05e6033b4731a57cf462",
-      "generated_at": 1778922186535
+      "content_hash": "906a7b4b1ac8553c217e86da93663476f6cf617f9058f53ac2090c809597021e",
+      "generated_at": 1778928162406
     },
     {
       "id": "module-pro-workflow",
@@ -1148,18 +1138,18 @@
         "pro-workflow/scripts/embed-wiki.js",
         "pro-workflow/scripts/file-changed.js"
       ],
-      "parent_id": "core-module-specs",
+      "parent_id": "核心模块规格总览-提供模块索引",
       "parent": "核心模块规格",
       "parent_chain": [
         "核心模块规格"
       ],
       "section_path": "核心模块规格",
       "layer_level": 1,
-      "order": 73,
+      "order": 42,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "456844bc9766038e6bf95ea4b819ab51f4f9bc449877b8feebc936496bf32889",
-      "generated_at": 1778922186535
+      "content_hash": "d266a4e9e4194bc84ac254bc9de3a7de85485093fdf5dead6443c3749758c26d",
+      "generated_at": 1778928162406
     },
     {
       "id": "module-tests",
@@ -1179,18 +1169,18 @@
         "test/electron/app-shell-layout.test.ts",
         "test/electron/attachments.test.ts"
       ],
-      "parent_id": "core-module-specs",
+      "parent_id": "核心模块规格总览-提供模块索引",
       "parent": "核心模块规格",
       "parent_chain": [
         "核心模块规格"
       ],
       "section_path": "核心模块规格",
       "layer_level": 1,
-      "order": 74,
+      "order": 43,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "be2d10e75c1c0a06e9e7a84ccbad5d32879a23a32705e770989903ca108ff3a0",
-      "generated_at": 1778922186535
+      "content_hash": "f5b19ffa66a29e8476f82478634122f0c73a03ce18820a151a23f0dd9daecb4a",
+      "generated_at": 1778928162406
     },
     {
       "id": "module-docs",
@@ -1210,18 +1200,49 @@
         "doc/00-overview/04-问题定义与成功指标.md",
         "doc/10-architecture/10-系统上下文图.md"
       ],
-      "parent_id": "core-module-specs",
+      "parent_id": "核心模块规格总览-提供模块索引",
       "parent": "核心模块规格",
       "parent_chain": [
         "核心模块规格"
       ],
       "section_path": "核心模块规格",
       "layer_level": 1,
-      "order": 75,
+      "order": 44,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "30ffdf17f83710f17417d991607953063cf0732d8a0debb0b44a77bdb20bf1e7",
-      "generated_at": 1778922186535
+      "content_hash": "77bf44168910d4b3c5fcc6493293d0722678c1c646714a1d9cd817aceb836ef2",
+      "generated_at": 1778928162406
+    },
+    {
+      "id": "module-package",
+      "name": "发布包与分发配置总览",
+      "title": "发布包与分发配置总览",
+      "slug": "核心模块规格/发布包与分发配置总览",
+      "path": "核心模块规格/发布包与分发配置总览.md",
+      "description": "module-package",
+      "prompt": "详细说明 发布包与分发配置 的职责、入口文件、调用链、数据结构、扩展点、常见改造路径和验证命令。不要只列文件，要解释每个文件如何协作。",
+      "dependent_files": [
+        "package/README.md",
+        "package/package.json",
+        "package/LICENSE.md",
+        "package/agentSdkTypes.d.ts",
+        "package/assistant.d.ts",
+        "package/bridge.d.ts",
+        "package/browser-sdk.d.ts",
+        "package/manifest.json"
+      ],
+      "parent_id": "核心模块规格总览-提供模块索引",
+      "parent": "核心模块规格",
+      "parent_chain": [
+        "核心模块规格"
+      ],
+      "section_path": "核心模块规格",
+      "layer_level": 1,
+      "order": 45,
+      "status": "completed",
+      "page_type": "topic",
+      "content_hash": "1bf0b55034736dca998e1437b47b06753360001043250e9a24d49ce9124edda7",
+      "generated_at": 1778928162406
     },
     {
       "id": "topic-repo-wiki-python-runner",
@@ -1248,11 +1269,11 @@
       ],
       "section_path": "核心模块规格/知识库后端引擎总览",
       "layer_level": 2,
-      "order": 76,
+      "order": 46,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "dd44e0bea339329a48010bfe82307190f6a3680190246b7de1e43ceae1594627",
-      "generated_at": 1778922186535
+      "content_hash": "b0de0783f3f78d73030e50bf6352e753bd71f978bbd4ff9624819cd9f455dc75",
+      "generated_at": 1778928162406
     },
     {
       "id": "topic-agent-knowledge-cards",
@@ -1279,11 +1300,11 @@
       ],
       "section_path": "核心模块规格/知识库后端引擎总览",
       "layer_level": 2,
-      "order": 77,
+      "order": 47,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "023c17c5543721c695aff2a3774a375fab3072af14814e0e926efa9a65101769",
-      "generated_at": 1778922186535
+      "content_hash": "3b8c60664279422c513fcc5c2555a81eb154051e125381b5ee93814c6776049b",
+      "generated_at": 1778928162406
     },
     {
       "id": "topic-知识库后端引擎-embedding-client",
@@ -1305,11 +1326,11 @@
       ],
       "section_path": "核心模块规格/知识库后端引擎总览",
       "layer_level": 2,
-      "order": 78,
+      "order": 48,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "fd900240a9bb3f3ee10499eafc73f7d18c698d2870fc8af2e3a7c6982eb9b38a",
-      "generated_at": 1778922186535
+      "content_hash": "1fb04da1bbe64df96d2ec5acdc2e540fb844bc728a7f80bf7039e2d811e5dec2",
+      "generated_at": 1778928162406
     },
     {
       "id": "topic-知识索引与向量写入",
@@ -1336,11 +1357,11 @@
       ],
       "section_path": "核心模块规格/知识库后端引擎总览",
       "layer_level": 2,
-      "order": 79,
+      "order": 49,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "b2620f97a26abec3d811a4a65fcfdaccd7bf4f9a6fe5ce903fc58e76119e60c5",
-      "generated_at": 1778922186535
+      "content_hash": "8d6d891b7f50e13bc4c39c9c7981e4bae05fe75e7cc40e8b10bccd6c0eda8047",
+      "generated_at": 1778928162406
     },
     {
       "id": "topic-设置页与配置读写",
@@ -1363,11 +1384,11 @@
       ],
       "section_path": "核心模块规格/知识库后端引擎总览",
       "layer_level": 2,
-      "order": 80,
+      "order": 50,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "f1b5a3e0ba0b0f9a132fcbf8194b2b4398b8f2615529fe83149ae8fd58e52fe2",
-      "generated_at": 1778922186535
+      "content_hash": "be2616acdb4b90c9730f205686dd479c263364fcdcfb15fffbf763ee55e143dd",
+      "generated_at": 1778928162406
     },
     {
       "id": "topic-聊天上下文知识注入",
@@ -1394,11 +1415,11 @@
       ],
       "section_path": "核心模块规格/知识库后端引擎总览",
       "layer_level": 2,
-      "order": 81,
+      "order": 51,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "a6f8f76010f2a8fdf16af9ca7987f220302e3ee0f16f4ff494ddf0dcc640a26b",
-      "generated_at": 1778922186535
+      "content_hash": "09ab8a9b331fe445ee0b7220c09f7953dae874870d6bc91db04d1557386bbb85",
+      "generated_at": 1778928162406
     },
     {
       "id": "topic-知识库面板交互",
@@ -1413,7 +1434,8 @@
         "react",
         "lucide-react",
         "../store/useAppStore",
-        "../types"
+        "../types",
+        "../render/markdown"
       ],
       "parent_id": "module-knowledge-ui",
       "parent": "知识库前端交互总览",
@@ -1423,11 +1445,11 @@
       ],
       "section_path": "核心模块规格/知识库前端交互总览",
       "layer_level": 2,
-      "order": 82,
+      "order": 52,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "8616717b566ccb5b1964ff4897843ff2c77f4612bf1f6396547c58dc4f30c434",
-      "generated_at": 1778922186535
+      "content_hash": "293395775b3470a2ebbc3a8847381137ab36b6105b7d0348ff9bccee999fb0f0",
+      "generated_at": 1778928162406
     },
     {
       "id": "topic-mcp-工具系统-builtin-mcp-servers",
@@ -1454,92 +1476,351 @@
       ],
       "section_path": "核心模块规格/MCP 工具系统总览",
       "layer_level": 2,
-      "order": 83,
+      "order": 53,
       "status": "completed",
       "page_type": "topic",
-      "content_hash": "5dc359d2eafcfcd82a9855d6fd9ae1e17827cdc465c374e19500235417457eaf",
-      "generated_at": 1778922186535
+      "content_hash": "50abd8344f1b3e852e09b5666c260bce005a67067ff39c5eba4e7772317eae9f",
+      "generated_at": 1778928162406
+    },
+    {
+      "id": "topic-mcp-工具系统-admin",
+      "name": "MCP 工具系统：admin",
+      "title": "MCP 工具系统：admin",
+      "slug": "核心模块规格/MCP 工具系统总览/MCP 工具系统：admin",
+      "path": "核心模块规格/MCP 工具系统总览/MCP 工具系统：admin.md",
+      "description": "topic-mcp-工具系统-admin",
+      "prompt": "围绕 `src/electron/libs/mcp-tools/admin.ts` 解释 MCP 工具系统：admin。必须说明入口职责、核心函数或组件、它和上下游文件的关系、修改这个功能时的步骤、回归验证方式和常见失败模式。",
+      "dependent_files": [
+        "src/electron/libs/mcp-tools/admin.ts",
+        "@anthropic-ai/claude-agent-sdk",
+        "zod",
+        "../config-store.js",
+        "./tool-result.js"
+      ],
+      "parent_id": "module-mcp-tools",
+      "parent": "MCP 工具系统总览",
+      "parent_chain": [
+        "核心模块规格",
+        "MCP 工具系统总览"
+      ],
+      "section_path": "核心模块规格/MCP 工具系统总览",
+      "layer_level": 2,
+      "order": 54,
+      "status": "completed",
+      "page_type": "topic",
+      "content_hash": "b4ab61cd1d3509bd62f293a96ad73aa4f4439d852ef99ddc80cfff9a2d17639a",
+      "generated_at": 1778928162406
+    },
+    {
+      "id": "topic-浏览器工作台",
+      "name": "浏览器工作台",
+      "title": "浏览器工作台",
+      "slug": "核心模块规格/MCP 工具系统总览/浏览器工作台",
+      "path": "核心模块规格/MCP 工具系统总览/浏览器工作台.md",
+      "description": "topic-浏览器工作台",
+      "prompt": "围绕 `src/electron/libs/mcp-tools/browser.ts` 解释 浏览器工作台。必须说明入口职责、核心函数或组件、它和上下游文件的关系、修改这个功能时的步骤、回归验证方式和常见失败模式。",
+      "dependent_files": [
+        "src/electron/libs/mcp-tools/browser.ts",
+        "@anthropic-ai/claude-agent-sdk",
+        "node:child_process",
+        "zod",
+        "../../browser-manager.js",
+        "./tool-result.js"
+      ],
+      "parent_id": "module-mcp-tools",
+      "parent": "MCP 工具系统总览",
+      "parent_chain": [
+        "核心模块规格",
+        "MCP 工具系统总览"
+      ],
+      "section_path": "核心模块规格/MCP 工具系统总览",
+      "layer_level": 2,
+      "order": 55,
+      "status": "completed",
+      "page_type": "topic",
+      "content_hash": "73c67c6b0b65d22b77e26458042b5e3fe412665457789ada2ac6349cdcbd9652",
+      "generated_at": 1778928162406
+    },
+    {
+      "id": "mcp-registry-factory-map",
+      "name": "MCP 工具系统：注册表与工厂映射",
+      "title": "MCP 工具系统：注册表与工厂映射",
+      "slug": "核心模块规格/MCP 工具系统总览/MCP 工具系统：注册表与工厂映射",
+      "path": "核心模块规格/MCP 工具系统总览/MCP 工具系统：注册表与工厂映射.md",
+      "description": "mcp-registry-factory-map",
+      "prompt": "围绕内置 MCP registry、Electron 工厂映射、tool names 暴露、设置页展示和测试约束，说明新增一个内置 MCP Server 需要改哪些文件、每个字段如何影响运行时、如何验证。",
+      "dependent_files": [
+        "src/shared/builtin-mcp-registry.ts",
+        "src/electron/libs/builtin-mcp-servers.ts",
+        "src/electron/libs/runner.ts",
+        "src/ui/components/settings/McpSettingsPage.tsx",
+        "test/electron/builtin-mcp-registry.test.ts"
+      ],
+      "parent_id": "module-mcp-tools",
+      "parent": "MCP 工具系统总览",
+      "parent_chain": [
+        "核心模块规格",
+        "MCP 工具系统总览"
+      ],
+      "section_path": "核心模块规格/MCP 工具系统总览",
+      "layer_level": 2,
+      "order": 56,
+      "status": "completed",
+      "page_type": "topic",
+      "content_hash": "08da01d7415d5191ef2a348244b28c314f3311e6021736c75bde58229352554c",
+      "generated_at": 1778928162406
+    },
+    {
+      "id": "mcp-runner-injection-flow",
+      "name": "MCP 工具系统：Runner 注入链路",
+      "title": "MCP 工具系统：Runner 注入链路",
+      "slug": "核心模块规格/MCP 工具系统总览/MCP 工具系统：Runner 注入链路",
+      "path": "核心模块规格/MCP 工具系统总览/MCP 工具系统：Runner 注入链路.md",
+      "description": "mcp-runner-injection-flow",
+      "prompt": "说明 Runner 如何根据系统提示和内置 registry 选择 MCP server，如何把 server 注入 active query，runner-reuse 如何影响复用，出现工具不可见时如何定位。",
+      "dependent_files": [
+        "src/electron/libs/runner.ts",
+        "src/electron/libs/runner-reuse.ts",
+        "src/electron/libs/system-prompt-presets.ts",
+        "src/electron/libs/builtin-mcp-servers.ts",
+        "src/shared/builtin-mcp-registry.ts"
+      ],
+      "parent_id": "module-mcp-tools",
+      "parent": "MCP 工具系统总览",
+      "parent_chain": [
+        "核心模块规格",
+        "MCP 工具系统总览"
+      ],
+      "section_path": "核心模块规格/MCP 工具系统总览",
+      "layer_level": 2,
+      "order": 57,
+      "status": "completed",
+      "page_type": "topic",
+      "content_hash": "93c9435a1f2e121eb4e70c2b92c0b530ca39a312320bfe3d5aa1f096a73d35f7",
+      "generated_at": 1778928162406
+    },
+    {
+      "id": "mcp-tool-implementation-template",
+      "name": "MCP 工具系统：工具实现与扩展模板",
+      "title": "MCP 工具系统：工具实现与扩展模板",
+      "slug": "核心模块规格/MCP 工具系统总览/MCP 工具系统：工具实现与扩展模板",
+      "path": "核心模块规格/MCP 工具系统总览/MCP 工具系统：工具实现与扩展模板.md",
+      "description": "mcp-tool-implementation-template",
+      "prompt": "按 mcp-tools 目录解释内置工具实现模式，包括 Server 单例、输入 schema、toTextToolResult、业务服务注入、错误返回、tool names 导出和新增工具模板。",
+      "dependent_files": [
+        "src/electron/libs/mcp-tools/",
+        "src/electron/libs/builtin-mcp-servers.ts",
+        "src/shared/builtin-mcp-registry.ts"
+      ],
+      "parent_id": "module-mcp-tools",
+      "parent": "MCP 工具系统总览",
+      "parent_chain": [
+        "核心模块规格",
+        "MCP 工具系统总览"
+      ],
+      "section_path": "核心模块规格/MCP 工具系统总览",
+      "layer_level": 2,
+      "order": 58,
+      "status": "completed",
+      "page_type": "topic",
+      "content_hash": "2d1062ab323882fd161f98ca75c094791adb3b9843bb9a1722bf9458b09ddda7",
+      "generated_at": 1778928162406
     }
   ],
   "knowledge_relations": [
     {
-      "source_id": "core-module-specs",
+      "source_id": "项目概述页-包含产品定位-核心能力简介和文档索引",
+      "target_id": "tech-cc-hub的产品定义-愿景和核心价值主张",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "项目概述页-包含产品定位-核心能力简介和文档索引",
+      "target_id": "系统设计的核心原则-以及明确不做什么",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "项目概述页-包含产品定位-核心能力简介和文档索引",
+      "target_id": "项目相关的关键术语和概念定义",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "系统架构总览页面-提供架构图和文档索引",
+      "target_id": "外部系统依赖关系和边界定义",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "系统架构总览页面-提供架构图和文档索引",
+      "target_id": "进程划分和模块职责分配",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "系统架构总览页面-提供架构图和文档索引",
+      "target_id": "主进程控制链路和状态管理架构",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "核心模块规格总览-提供模块索引",
+      "target_id": "src-electron-main-ts-的职责划分-初始化流程和ipc通信机制",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "核心模块规格总览-提供模块索引",
+      "target_id": "src-ui-app-tsx-的组件树结构-状态管理和消息处理机制",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "核心模块规格总览-提供模块索引",
+      "target_id": "src-electron-libs-skill-manager-index-ts-的架构设计-初始化和生命周期管理",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "核心模块规格总览-提供模块索引",
+      "target_id": "src-electron-libs-task-index-ts-的任务概念-状态管理和事件机制",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "核心模块规格总览-提供模块索引",
+      "target_id": "src-electron-libs-git-的功能设计-命令封装和使用方式",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "应用运行时配置总览-包含主进程配置和构建配置",
+      "target_id": "主进程启动参数-配置选项和环境变量设置",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "应用运行时配置总览-包含主进程配置和构建配置",
+      "target_id": "vite-config-ts-的构建配置-插件机制和预览服务器设计",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "前端ui组件规格总览-提供组件索引",
+      "target_id": "会话管理和侧边栏组件的设计与实现",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "前端ui组件规格总览-提供组件索引",
+      "target_id": "消息展示和流式渲染组件的设计与实现",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "前端ui组件规格总览-提供组件索引",
+      "target_id": "任务图可视化和交互组件的设计与实现",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "工作流与技能体系总览-包含-skillmanager-任务系统和-proworkflow",
+      "target_id": "skillmanager-的架构设计-初始化流程和技能生命周期管理",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "工作流与技能体系总览-包含-skillmanager-任务系统和-proworkflow",
+      "target_id": "proworkflow-脚本的分类-设计理念和使用方式",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "工作流与技能体系总览-包含-skillmanager-任务系统和-proworkflow",
+      "target_id": "会话开始-进行中和结束相关脚本的设计与实现",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "工作流与技能体系总览-包含-skillmanager-任务系统和-proworkflow",
+      "target_id": "质量门禁相关脚本的设计与实现-commit验证-secret扫描等",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "开发-构建和发布脚本总览",
+      "target_id": "dev-mjs-和-dev-electron-mjs-的启动流程和信号处理机制",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "系统架构总览页面-提供架构图和文档索引",
+      "target_id": "knowledge-engine-repowiki",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "核心模块规格总览-提供模块索引",
       "target_id": "module-knowledge-engine",
       "type": "PARENT_CHILD"
     },
     {
-      "source_id": "core-module-specs",
+      "source_id": "核心模块规格总览-提供模块索引",
       "target_id": "module-knowledge-ui",
       "type": "PARENT_CHILD"
     },
     {
-      "source_id": "core-module-specs",
+      "source_id": "核心模块规格总览-提供模块索引",
       "target_id": "module-mcp-tools",
       "type": "PARENT_CHILD"
     },
     {
-      "source_id": "core-module-specs",
+      "source_id": "核心模块规格总览-提供模块索引",
       "target_id": "module-electron-runtime",
       "type": "PARENT_CHILD"
     },
     {
-      "source_id": "core-module-specs",
+      "source_id": "核心模块规格总览-提供模块索引",
       "target_id": "module-electron-main",
       "type": "PARENT_CHILD"
     },
     {
-      "source_id": "core-module-specs",
+      "source_id": "核心模块规格总览-提供模块索引",
       "target_id": "module-ui-shell",
       "type": "PARENT_CHILD"
     },
     {
-      "source_id": "core-module-specs",
+      "source_id": "核心模块规格总览-提供模块索引",
       "target_id": "module-task-engine",
       "type": "PARENT_CHILD"
     },
     {
-      "source_id": "core-module-specs",
+      "source_id": "核心模块规格总览-提供模块索引",
       "target_id": "module-session-engine",
       "type": "PARENT_CHILD"
     },
     {
-      "source_id": "core-module-specs",
+      "source_id": "核心模块规格总览-提供模块索引",
       "target_id": "module-git-workbench",
       "type": "PARENT_CHILD"
     },
     {
-      "source_id": "core-module-specs",
+      "source_id": "核心模块规格总览-提供模块索引",
       "target_id": "module-skill-plugin-system",
       "type": "PARENT_CHILD"
     },
     {
-      "source_id": "core-module-specs",
+      "source_id": "核心模块规格总览-提供模块索引",
       "target_id": "module-shared-contracts",
       "type": "PARENT_CHILD"
     },
     {
-      "source_id": "core-module-specs",
+      "source_id": "核心模块规格总览-提供模块索引",
       "target_id": "module-common",
       "type": "PARENT_CHILD"
     },
     {
-      "source_id": "core-module-specs",
+      "source_id": "核心模块规格总览-提供模块索引",
       "target_id": "module-scripts",
       "type": "PARENT_CHILD"
     },
     {
-      "source_id": "core-module-specs",
+      "source_id": "核心模块规格总览-提供模块索引",
       "target_id": "module-pro-workflow",
       "type": "PARENT_CHILD"
     },
     {
-      "source_id": "core-module-specs",
+      "source_id": "核心模块规格总览-提供模块索引",
       "target_id": "module-tests",
       "type": "PARENT_CHILD"
     },
     {
-      "source_id": "core-module-specs",
+      "source_id": "核心模块规格总览-提供模块索引",
       "target_id": "module-docs",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "核心模块规格总览-提供模块索引",
+      "target_id": "module-package",
       "type": "PARENT_CHILD"
     },
     {
@@ -1581,13 +1862,38 @@
       "source_id": "module-mcp-tools",
       "target_id": "topic-mcp-工具系统-builtin-mcp-servers",
       "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "module-mcp-tools",
+      "target_id": "topic-mcp-工具系统-admin",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "module-mcp-tools",
+      "target_id": "topic-浏览器工作台",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "module-mcp-tools",
+      "target_id": "mcp-registry-factory-map",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "module-mcp-tools",
+      "target_id": "mcp-runner-injection-flow",
+      "type": "PARENT_CHILD"
+    },
+    {
+      "source_id": "module-mcp-tools",
+      "target_id": "mcp-tool-implementation-template",
+      "type": "PARENT_CHILD"
     }
   ],
   "failures": [],
-  "pageCount": 60,
+  "pageCount": 59,
   "tokens": {
-    "input": 1457672,
-    "output": 318323,
+    "input": 2407136,
+    "output": 405693,
     "cost": 0
   },
   "version": 3,
@@ -1598,479 +1904,467 @@
     "vendoredPath": "third_party/repowiki",
     "adapter": "scripts/knowledge/run-repowiki.py"
   },
-  "generatedAt": 1778922186840,
+  "generatedAt": 1778928162701,
   "workspaceScope": "workspace:tech-cc-hub",
   "projectName": "tech-cc-hub",
   "wikiModel": "MiniMax-M2.7",
   "costTier": "cheap",
   "scannedFiles": 702,
-  "totalLines": 136358,
+  "totalLines": 136836,
   "pages": [
     {
-      "id": "项目概述",
+      "id": "项目概述页-包含产品定位-核心能力简介和文档索引",
       "title": "项目概述",
       "parentId": "",
+      "order": 0,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/项目概述/项目概述.md"
+    },
+    {
+      "id": "tech-cc-hub的产品定义-愿景和核心价值主张",
+      "title": "产品定义",
+      "parentId": "项目概述页-包含产品定位-核心能力简介和文档索引",
       "order": 1,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/项目概述.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/项目概述/产品定义.md"
     },
     {
-      "id": "设计原则与非目标",
+      "id": "系统设计的核心原则-以及明确不做什么",
       "title": "设计原则与非目标",
-      "parentId": "",
+      "parentId": "项目概述页-包含产品定位-核心能力简介和文档索引",
       "order": 2,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/设计原则与非目标.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/项目概述/设计原则与非目标.md"
     },
     {
-      "id": "术语表",
+      "id": "项目相关的关键术语和概念定义",
       "title": "术语表",
-      "parentId": "",
+      "parentId": "项目概述页-包含产品定位-核心能力简介和文档索引",
       "order": 3,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/术语表.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/项目概述/术语表.md"
     },
     {
-      "id": "系统架构总览",
-      "title": "系统架构总览",
+      "id": "系统架构总览页面-提供架构图和文档索引",
+      "title": "系统架构",
       "parentId": "",
+      "order": 4,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/系统架构/系统架构.md"
+    },
+    {
+      "id": "外部系统依赖关系和边界定义",
+      "title": "系统上下文图",
+      "parentId": "系统架构总览页面-提供架构图和文档索引",
+      "order": 5,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/系统架构/系统上下文图.md"
+    },
+    {
+      "id": "进程划分和模块职责分配",
+      "title": "系统容器图",
+      "parentId": "系统架构总览页面-提供架构图和文档索引",
+      "order": 6,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/系统架构/系统容器图.md"
+    },
+    {
+      "id": "主进程控制链路和状态管理架构",
+      "title": "控制平面设计",
+      "parentId": "系统架构总览页面-提供架构图和文档索引",
+      "order": 7,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/系统架构/控制平面设计.md"
+    },
+    {
+      "id": "核心模块规格总览-提供模块索引",
+      "title": "核心模块规格",
+      "parentId": "",
+      "order": 8,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/核心模块规格.md"
+    },
+    {
+      "id": "src-electron-main-ts-的职责划分-初始化流程和ipc通信机制",
+      "title": "Electron主进程架构",
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 9,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/Electron主进程架构.md"
+    },
+    {
+      "id": "src-ui-app-tsx-的组件树结构-状态管理和消息处理机制",
+      "title": "工作台UI组件架构",
+      "parentId": "核心模块规格总览-提供模块索引",
       "order": 10,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/系统架构总览.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/工作台UI组件架构.md"
     },
     {
-      "id": "控制平面组件设计",
-      "title": "控制平面组件设计",
-      "parentId": "",
+      "id": "src-electron-libs-skill-manager-index-ts-的架构设计-初始化和生命周期管理",
+      "title": "技能管理器架构",
+      "parentId": "核心模块规格总览-提供模块索引",
       "order": 11,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/控制平面组件设计.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/技能管理器架构.md"
     },
     {
-      "id": "执行平面组件设计",
-      "title": "执行平面组件设计",
-      "parentId": "",
+      "id": "src-electron-libs-task-index-ts-的任务概念-状态管理和事件机制",
+      "title": "任务系统设计",
+      "parentId": "核心模块规格总览-提供模块索引",
       "order": 12,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/执行平面组件设计.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/任务系统设计.md"
     },
     {
-      "id": "数据与智能平面组件设计",
-      "title": "数据与智能平面组件设计",
-      "parentId": "",
+      "id": "src-electron-libs-git-的功能设计-命令封装和使用方式",
+      "title": "Git集成模块",
+      "parentId": "核心模块规格总览-提供模块索引",
       "order": 13,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/数据与智能平面组件设计.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/Git集成模块.md"
     },
     {
-      "id": "electron-主进程架构",
-      "title": "Electron 主进程架构",
+      "id": "应用运行时配置总览-包含主进程配置和构建配置",
+      "title": "应用运行时",
       "parentId": "",
       "order": 14,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/Electron 主进程架构.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/应用运行时/应用运行时.md"
     },
     {
-      "id": "mcp-工具系统",
-      "title": "MCP 工具系统",
-      "parentId": "",
+      "id": "主进程启动参数-配置选项和环境变量设置",
+      "title": "Electron主进程配置",
+      "parentId": "应用运行时配置总览-包含主进程配置和构建配置",
       "order": 15,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/MCP 工具系统.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/应用运行时/Electron主进程配置.md"
     },
     {
-      "id": "git-集成模块",
-      "title": "Git 集成模块",
-      "parentId": "",
+      "id": "vite-config-ts-的构建配置-插件机制和预览服务器设计",
+      "title": "Vite构建配置",
+      "parentId": "应用运行时配置总览-包含主进程配置和构建配置",
       "order": 16,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/Git 集成模块.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/应用运行时/Vite构建配置.md"
     },
     {
-      "id": "skill-管理与执行",
-      "title": "Skill 管理与执行",
+      "id": "前端ui组件规格总览-提供组件索引",
+      "title": "前端UI组件",
       "parentId": "",
       "order": 17,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/Skill 管理与执行.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/前端UI组件/前端UI组件.md"
     },
     {
-      "id": "聊天工作台组件",
-      "title": "聊天工作台组件",
-      "parentId": "",
+      "id": "会话管理和侧边栏组件的设计与实现",
+      "title": "会话侧边栏组件",
+      "parentId": "前端ui组件规格总览-提供组件索引",
       "order": 18,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/聊天工作台组件.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/前端UI组件/会话侧边栏组件.md"
     },
     {
-      "id": "任务图与可视化",
-      "title": "任务图与可视化",
-      "parentId": "",
+      "id": "消息展示和流式渲染组件的设计与实现",
+      "title": "消息流组件",
+      "parentId": "前端ui组件规格总览-提供组件索引",
       "order": 19,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/任务图与可视化.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/前端UI组件/消息流组件.md"
     },
     {
-      "id": "回放与分析模块",
-      "title": "回放与分析模块",
-      "parentId": "",
+      "id": "任务图可视化和交互组件的设计与实现",
+      "title": "任务图画布组件",
+      "parentId": "前端ui组件规格总览-提供组件索引",
       "order": 20,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/回放与分析模块.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/前端UI组件/任务图画布组件.md"
     },
     {
-      "id": "会话生命周期规范",
-      "title": "会话生命周期规范",
+      "id": "工作流与技能体系总览-包含-skillmanager-任务系统和-proworkflow",
+      "title": "工作流与技能",
       "parentId": "",
       "order": 21,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/会话生命周期规范.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/工作流与技能/工作流与技能.md"
     },
     {
-      "id": "事件模型与可观测规范",
-      "title": "事件模型与可观测规范",
-      "parentId": "",
+      "id": "skillmanager-的架构设计-初始化流程和技能生命周期管理",
+      "title": "技能管理体系",
+      "parentId": "工作流与技能体系总览-包含-skillmanager-任务系统和-proworkflow",
       "order": 22,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/事件模型与可观测规范.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/工作流与技能/技能管理体系.md"
     },
     {
-      "id": "api-与实时通道规范",
-      "title": "API 与实时通道规范",
-      "parentId": "",
+      "id": "proworkflow-脚本的分类-设计理念和使用方式",
+      "title": "ProWorkflow脚本体系",
+      "parentId": "工作流与技能体系总览-包含-skillmanager-任务系统和-proworkflow",
       "order": 23,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/API 与实时通道规范.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/工作流与技能/ProWorkflow脚本体系.md"
     },
     {
-      "id": "存储与产物规范",
-      "title": "存储与产物规范",
-      "parentId": "",
+      "id": "会话开始-进行中和结束相关脚本的设计与实现",
+      "title": "会话生命周期脚本",
+      "parentId": "工作流与技能体系总览-包含-skillmanager-任务系统和-proworkflow",
       "order": 24,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/存储与产物规范.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/工作流与技能/会话生命周期脚本.md"
     },
     {
-      "id": "agentos-集成规范",
-      "title": "AgentOS 集成规范",
-      "parentId": "",
+      "id": "质量门禁相关脚本的设计与实现-commit验证-secret扫描等",
+      "title": "质量门禁脚本",
+      "parentId": "工作流与技能体系总览-包含-skillmanager-任务系统和-proworkflow",
       "order": 25,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/AgentOS 集成规范.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/工作流与技能/质量门禁脚本.md"
     },
     {
-      "id": "工作流-markdown-规范",
-      "title": "工作流 Markdown 规范",
+      "id": "开发-构建和发布脚本总览",
+      "title": "脚本与工具",
       "parentId": "",
       "order": 26,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/工作流 Markdown 规范.md"
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/脚本与工具/脚本与工具.md"
     },
     {
-      "id": "前端开发指南",
-      "title": "前端开发指南",
-      "parentId": "",
-      "order": 30,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/前端开发指南.md"
-    },
-    {
-      "id": "后端开发指南",
-      "title": "后端开发指南",
-      "parentId": "",
-      "order": 31,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/后端开发指南.md"
-    },
-    {
-      "id": "pro-workflow-开发者指南",
-      "title": "Pro-Workflow 开发者指南",
-      "parentId": "",
-      "order": 32,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/Pro-Workflow 开发者指南.md"
-    },
-    {
-      "id": "构建与发布流程",
-      "title": "构建与发布流程",
-      "parentId": "",
-      "order": 33,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/构建与发布流程.md"
-    },
-    {
-      "id": "oauth-与认证集成",
-      "title": "OAuth 与认证集成",
-      "parentId": "",
-      "order": 34,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/OAuth 与认证集成.md"
-    },
-    {
-      "id": "本地开发环境搭建",
-      "title": "本地开发环境搭建",
-      "parentId": "",
-      "order": 35,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/本地开发环境搭建.md"
-    },
-    {
-      "id": "electron-客户端测试手册",
-      "title": "Electron 客户端测试手册",
-      "parentId": "",
-      "order": 36,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/Electron 客户端测试手册.md"
-    },
-    {
-      "id": "github-release-自动更新",
-      "title": "GitHub Release 自动更新",
-      "parentId": "",
-      "order": 37,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/GitHub Release 自动更新.md"
-    },
-    {
-      "id": "产品功能需求",
-      "title": "产品功能需求",
-      "parentId": "",
-      "order": 40,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/产品功能需求.md"
-    },
-    {
-      "id": "核心-epic-详解",
-      "title": "核心 Epic 详解",
-      "parentId": "",
-      "order": 41,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心 Epic 详解.md"
-    },
-    {
-      "id": "组件设计规格",
-      "title": "组件设计规格",
-      "parentId": "",
-      "order": 42,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/组件设计规格.md"
-    },
-    {
-      "id": "控制器设计规格",
-      "title": "控制器设计规格",
-      "parentId": "",
-      "order": 43,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/控制器设计规格.md"
-    },
-    {
-      "id": "竞品功能分析",
-      "title": "竞品功能分析",
-      "parentId": "",
-      "order": 44,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/竞品功能分析.md"
-    },
-    {
-      "id": "trace-workbench-参考",
-      "title": "Trace Workbench 参考",
-      "parentId": "",
-      "order": 45,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/Trace Workbench 参考.md"
+      "id": "dev-mjs-和-dev-electron-mjs-的启动流程和信号处理机制",
+      "title": "开发启动脚本",
+      "parentId": "开发-构建和发布脚本总览",
+      "order": 27,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/脚本与工具/开发启动脚本.md"
     },
     {
       "id": "knowledge-engine-repowiki",
       "title": "知识库与 Repo Wiki 系统",
-      "parentId": "",
-      "order": 46,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/知识库与 Repo Wiki 系统.md"
-    },
-    {
-      "id": "core-module-specs",
-      "title": "核心模块规格",
-      "parentId": "",
-      "order": 47,
-      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/核心模块规格.md"
+      "parentId": "系统架构总览页面-提供架构图和文档索引",
+      "order": 28,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/系统架构/知识库与 Repo Wiki 系统.md"
     },
     {
       "id": "module-knowledge-engine",
       "title": "知识库后端引擎总览",
-      "parentId": "core-module-specs",
-      "order": 48,
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 29,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/知识库后端引擎总览/知识库后端引擎总览.md"
     },
     {
       "id": "module-knowledge-ui",
       "title": "知识库前端交互总览",
-      "parentId": "core-module-specs",
-      "order": 49,
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 30,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/知识库前端交互总览/知识库前端交互总览.md"
     },
     {
       "id": "module-mcp-tools",
       "title": "MCP 工具系统总览",
-      "parentId": "core-module-specs",
-      "order": 50,
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 31,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/MCP 工具系统总览/MCP 工具系统总览.md"
     },
     {
       "id": "module-electron-runtime",
       "title": "Electron 运行时总览",
-      "parentId": "core-module-specs",
-      "order": 51,
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 32,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/Electron 运行时总览.md"
     },
     {
       "id": "module-electron-main",
       "title": "Electron 主进程服务总览",
-      "parentId": "core-module-specs",
-      "order": 52,
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 33,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/Electron 主进程服务总览.md"
     },
     {
       "id": "module-ui-shell",
       "title": "前端 Shell 与组件总览",
-      "parentId": "core-module-specs",
-      "order": 53,
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 34,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/前端 Shell 与组件总览.md"
     },
     {
       "id": "module-task-engine",
       "title": "任务与调度系统总览",
-      "parentId": "core-module-specs",
-      "order": 54,
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 35,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/任务与调度系统总览.md"
     },
     {
       "id": "module-session-engine",
       "title": "会话与历史系统总览",
-      "parentId": "core-module-specs",
-      "order": 55,
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 36,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/会话与历史系统总览.md"
     },
     {
       "id": "module-git-workbench",
       "title": "Git 工作台总览",
-      "parentId": "core-module-specs",
-      "order": 56,
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 37,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/Git 工作台总览.md"
     },
     {
       "id": "module-skill-plugin-system",
       "title": "技能与插件系统总览",
-      "parentId": "core-module-specs",
-      "order": 57,
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 38,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/技能与插件系统总览.md"
     },
     {
       "id": "module-shared-contracts",
       "title": "共享协议与类型总览",
-      "parentId": "core-module-specs",
-      "order": 58,
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 39,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/共享协议与类型总览.md"
     },
     {
       "id": "module-common",
       "title": "Common总览",
-      "parentId": "core-module-specs",
-      "order": 59,
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 40,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/Common总览.md"
     },
     {
       "id": "module-scripts",
       "title": "工程脚本总览",
-      "parentId": "core-module-specs",
-      "order": 72,
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 41,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/工程脚本总览.md"
     },
     {
       "id": "module-pro-workflow",
       "title": "Pro Workflow 自动化总览",
-      "parentId": "core-module-specs",
-      "order": 73,
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 42,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/Pro Workflow 自动化总览.md"
     },
     {
       "id": "module-tests",
       "title": "测试体系总览",
-      "parentId": "core-module-specs",
-      "order": 74,
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 43,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/测试体系总览.md"
     },
     {
       "id": "module-docs",
       "title": "产品与工程文档总览",
-      "parentId": "core-module-specs",
-      "order": 75,
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 44,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/产品与工程文档总览.md"
+    },
+    {
+      "id": "module-package",
+      "title": "发布包与分发配置总览",
+      "parentId": "核心模块规格总览-提供模块索引",
+      "order": 45,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/发布包与分发配置总览.md"
     },
     {
       "id": "topic-repo-wiki-python-runner",
       "title": "Repo Wiki Python Runner",
       "parentId": "module-knowledge-engine",
-      "order": 76,
+      "order": 46,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/知识库后端引擎总览/Repo Wiki Python Runner.md"
     },
     {
       "id": "topic-agent-knowledge-cards",
       "title": "Agent Knowledge Cards",
       "parentId": "module-knowledge-engine",
-      "order": 77,
+      "order": 47,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/知识库后端引擎总览/Agent Knowledge Cards.md"
     },
     {
       "id": "topic-知识库后端引擎-embedding-client",
       "title": "知识库后端引擎：embedding client",
       "parentId": "module-knowledge-engine",
-      "order": 78,
+      "order": 48,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/知识库后端引擎总览/知识库后端引擎：embedding client.md"
     },
     {
       "id": "topic-知识索引与向量写入",
       "title": "知识索引与向量写入",
       "parentId": "module-knowledge-engine",
-      "order": 79,
+      "order": 49,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/知识库后端引擎总览/知识索引与向量写入.md"
     },
     {
       "id": "topic-设置页与配置读写",
       "title": "设置页与配置读写",
       "parentId": "module-knowledge-engine",
-      "order": 80,
+      "order": 50,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/知识库后端引擎总览/设置页与配置读写.md"
     },
     {
       "id": "topic-聊天上下文知识注入",
       "title": "聊天上下文知识注入",
       "parentId": "module-knowledge-engine",
-      "order": 81,
+      "order": 51,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/知识库后端引擎总览/聊天上下文知识注入.md"
     },
     {
       "id": "topic-知识库面板交互",
       "title": "知识库面板交互",
       "parentId": "module-knowledge-ui",
-      "order": 82,
+      "order": 52,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/知识库前端交互总览/知识库面板交互.md"
     },
     {
       "id": "topic-mcp-工具系统-builtin-mcp-servers",
       "title": "MCP 工具系统：builtin mcp servers",
       "parentId": "module-mcp-tools",
-      "order": 83,
+      "order": 53,
       "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/MCP 工具系统总览/MCP 工具系统：builtin mcp servers.md"
+    },
+    {
+      "id": "topic-mcp-工具系统-admin",
+      "title": "MCP 工具系统：admin",
+      "parentId": "module-mcp-tools",
+      "order": 54,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/MCP 工具系统总览/MCP 工具系统：admin.md"
+    },
+    {
+      "id": "topic-浏览器工作台",
+      "title": "浏览器工作台",
+      "parentId": "module-mcp-tools",
+      "order": 55,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/MCP 工具系统总览/浏览器工作台.md"
+    },
+    {
+      "id": "mcp-registry-factory-map",
+      "title": "MCP 工具系统：注册表与工厂映射",
+      "parentId": "module-mcp-tools",
+      "order": 56,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/MCP 工具系统总览/MCP 工具系统：注册表与工厂映射.md"
+    },
+    {
+      "id": "mcp-runner-injection-flow",
+      "title": "MCP 工具系统：Runner 注入链路",
+      "parentId": "module-mcp-tools",
+      "order": 57,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/MCP 工具系统总览/MCP 工具系统：Runner 注入链路.md"
+    },
+    {
+      "id": "mcp-tool-implementation-template",
+      "title": "MCP 工具系统：工具实现与扩展模板",
+      "parentId": "module-mcp-tools",
+      "order": 58,
+      "path": "/Users/lst01/Desktop/学习/tech-cc-hub/.tech/repowiki/zh/content/核心模块规格/MCP 工具系统总览/MCP 工具系统：工具实现与扩展模板.md"
     }
   ],
   "files": [
-    ".tech/repowiki/zh/content/API 与实时通道规范.md",
-    ".tech/repowiki/zh/content/AgentOS 集成规范.md",
-    ".tech/repowiki/zh/content/Electron 主进程架构.md",
-    ".tech/repowiki/zh/content/Electron 客户端测试手册.md",
-    ".tech/repowiki/zh/content/Git 集成模块.md",
-    ".tech/repowiki/zh/content/GitHub Release 自动更新.md",
-    ".tech/repowiki/zh/content/MCP 工具系统.md",
-    ".tech/repowiki/zh/content/OAuth 与认证集成.md",
-    ".tech/repowiki/zh/content/Pro-Workflow 开发者指南.md",
-    ".tech/repowiki/zh/content/Skill 管理与执行.md",
-    ".tech/repowiki/zh/content/Trace Workbench 参考.md",
     ".tech/repowiki/zh/content/_sidebar.md",
-    ".tech/repowiki/zh/content/事件模型与可观测规范.md",
-    ".tech/repowiki/zh/content/产品功能需求.md",
-    ".tech/repowiki/zh/content/任务图与可视化.md",
-    ".tech/repowiki/zh/content/会话生命周期规范.md",
-    ".tech/repowiki/zh/content/前端开发指南.md",
-    ".tech/repowiki/zh/content/后端开发指南.md",
-    ".tech/repowiki/zh/content/回放与分析模块.md",
-    ".tech/repowiki/zh/content/存储与产物规范.md",
-    ".tech/repowiki/zh/content/工作流 Markdown 规范.md",
-    ".tech/repowiki/zh/content/执行平面组件设计.md",
-    ".tech/repowiki/zh/content/控制器设计规格.md",
-    ".tech/repowiki/zh/content/控制平面组件设计.md",
-    ".tech/repowiki/zh/content/数据与智能平面组件设计.md",
-    ".tech/repowiki/zh/content/本地开发环境搭建.md",
-    ".tech/repowiki/zh/content/术语表.md",
-    ".tech/repowiki/zh/content/构建与发布流程.md",
-    ".tech/repowiki/zh/content/核心 Epic 详解.md",
+    ".tech/repowiki/zh/content/前端UI组件/任务图画布组件.md",
+    ".tech/repowiki/zh/content/前端UI组件/会话侧边栏组件.md",
+    ".tech/repowiki/zh/content/前端UI组件/前端UI组件.md",
+    ".tech/repowiki/zh/content/前端UI组件/消息流组件.md",
+    ".tech/repowiki/zh/content/工作流与技能/ProWorkflow脚本体系.md",
+    ".tech/repowiki/zh/content/工作流与技能/会话生命周期脚本.md",
+    ".tech/repowiki/zh/content/工作流与技能/工作流与技能.md",
+    ".tech/repowiki/zh/content/工作流与技能/技能管理体系.md",
+    ".tech/repowiki/zh/content/工作流与技能/质量门禁脚本.md",
+    ".tech/repowiki/zh/content/应用运行时/Electron主进程配置.md",
+    ".tech/repowiki/zh/content/应用运行时/Vite构建配置.md",
+    ".tech/repowiki/zh/content/应用运行时/应用运行时.md",
     ".tech/repowiki/zh/content/核心模块规格/Common总览.md",
     ".tech/repowiki/zh/content/核心模块规格/Electron 主进程服务总览.md",
     ".tech/repowiki/zh/content/核心模块规格/Electron 运行时总览.md",
+    ".tech/repowiki/zh/content/核心模块规格/Electron主进程架构.md",
     ".tech/repowiki/zh/content/核心模块规格/Git 工作台总览.md",
+    ".tech/repowiki/zh/content/核心模块规格/Git集成模块.md",
     ".tech/repowiki/zh/content/核心模块规格/MCP 工具系统总览/MCP 工具系统总览.md",
+    ".tech/repowiki/zh/content/核心模块规格/MCP 工具系统总览/MCP 工具系统：Runner 注入链路.md",
+    ".tech/repowiki/zh/content/核心模块规格/MCP 工具系统总览/MCP 工具系统：admin.md",
     ".tech/repowiki/zh/content/核心模块规格/MCP 工具系统总览/MCP 工具系统：builtin mcp servers.md",
+    ".tech/repowiki/zh/content/核心模块规格/MCP 工具系统总览/MCP 工具系统：工具实现与扩展模板.md",
+    ".tech/repowiki/zh/content/核心模块规格/MCP 工具系统总览/MCP 工具系统：注册表与工厂映射.md",
+    ".tech/repowiki/zh/content/核心模块规格/MCP 工具系统总览/浏览器工作台.md",
     ".tech/repowiki/zh/content/核心模块规格/Pro Workflow 自动化总览.md",
     ".tech/repowiki/zh/content/核心模块规格/产品与工程文档总览.md",
     ".tech/repowiki/zh/content/核心模块规格/任务与调度系统总览.md",
+    ".tech/repowiki/zh/content/核心模块规格/任务系统设计.md",
     ".tech/repowiki/zh/content/核心模块规格/会话与历史系统总览.md",
     ".tech/repowiki/zh/content/核心模块规格/共享协议与类型总览.md",
     ".tech/repowiki/zh/content/核心模块规格/前端 Shell 与组件总览.md",
+    ".tech/repowiki/zh/content/核心模块规格/发布包与分发配置总览.md",
+    ".tech/repowiki/zh/content/核心模块规格/工作台UI组件架构.md",
     ".tech/repowiki/zh/content/核心模块规格/工程脚本总览.md",
     ".tech/repowiki/zh/content/核心模块规格/技能与插件系统总览.md",
+    ".tech/repowiki/zh/content/核心模块规格/技能管理器架构.md",
     ".tech/repowiki/zh/content/核心模块规格/核心模块规格.md",
     ".tech/repowiki/zh/content/核心模块规格/测试体系总览.md",
     ".tech/repowiki/zh/content/核心模块规格/知识库前端交互总览/知识库前端交互总览.md",
@@ -2082,12 +2376,16 @@
     ".tech/repowiki/zh/content/核心模块规格/知识库后端引擎总览/知识索引与向量写入.md",
     ".tech/repowiki/zh/content/核心模块规格/知识库后端引擎总览/聊天上下文知识注入.md",
     ".tech/repowiki/zh/content/核心模块规格/知识库后端引擎总览/设置页与配置读写.md",
-    ".tech/repowiki/zh/content/知识库与 Repo Wiki 系统.md",
-    ".tech/repowiki/zh/content/竞品功能分析.md",
-    ".tech/repowiki/zh/content/系统架构总览.md",
-    ".tech/repowiki/zh/content/组件设计规格.md",
-    ".tech/repowiki/zh/content/聊天工作台组件.md",
-    ".tech/repowiki/zh/content/设计原则与非目标.md",
-    ".tech/repowiki/zh/content/项目概述.md"
+    ".tech/repowiki/zh/content/系统架构/控制平面设计.md",
+    ".tech/repowiki/zh/content/系统架构/知识库与 Repo Wiki 系统.md",
+    ".tech/repowiki/zh/content/系统架构/系统上下文图.md",
+    ".tech/repowiki/zh/content/系统架构/系统容器图.md",
+    ".tech/repowiki/zh/content/系统架构/系统架构.md",
+    ".tech/repowiki/zh/content/脚本与工具/开发启动脚本.md",
+    ".tech/repowiki/zh/content/脚本与工具/脚本与工具.md",
+    ".tech/repowiki/zh/content/项目概述/产品定义.md",
+    ".tech/repowiki/zh/content/项目概述/术语表.md",
+    ".tech/repowiki/zh/content/项目概述/设计原则与非目标.md",
+    ".tech/repowiki/zh/content/项目概述/项目概述.md"
   ]
 }

@@ -1,0 +1,24 @@
+{
+  "id": "任务图可视化和交互组件的设计与实现",
+  "name": "任务图画布组件",
+  "title": "任务图画布组件",
+  "slug": "前端UI组件/任务图画布组件",
+  "path": "前端UI组件/任务图画布组件.md",
+  "description": "任务图可视化和交互组件的设计与实现",
+  "prompt": "编写任务图画布组件规格文档，需要：1)说明 CMP-007-TaskGraphCanvas 的功能职责；2)解释任务图的数据结构；3)说明节点和边的渲染逻辑；4)列出交互操作（拖拽、缩放、选中）；5)说明与 TaskController 的双向绑定。需要包含组件使用示例。引用 doc/40-product/1.0.0/components/CMP-007-TaskGraphCanvas.md。",
+  "dependent_files": [
+    "doc/40-product/1.0.0/components/CMP-007-TaskGraphCanvas.md"
+  ],
+  "parent_id": "前端ui组件规格总览-提供组件索引",
+  "parent": "前端UI组件",
+  "parent_chain": [
+    "前端UI组件"
+  ],
+  "section_path": "前端UI组件",
+  "layer_level": 1,
+  "order": 20,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "9b9460237aa3f6212ecdd0eec0ef6dd2330d3e4f2c22c354258e4d9d0bbe0332",
+  "generated_at": 1778928162406
+}

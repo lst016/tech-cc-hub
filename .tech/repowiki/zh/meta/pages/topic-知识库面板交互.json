@@ -11,7 +11,8 @@
     "react",
     "lucide-react",
     "../store/useAppStore",
-    "../types"
+    "../types",
+    "../render/markdown"
   ],
   "parent_id": "module-knowledge-ui",
   "parent": "知识库前端交互总览",
@@ -21,9 +22,9 @@
   ],
   "section_path": "核心模块规格/知识库前端交互总览",
   "layer_level": 2,
-  "order": 82,
+  "order": 52,
   "status": "completed",
   "page_type": "topic",
-  "content_hash": "8616717b566ccb5b1964ff4897843ff2c77f4612bf1f6396547c58dc4f30c434",
-  "generated_at": 1778922186535
+  "content_hash": "293395775b3470a2ebbc3a8847381137ab36b6105b7d0348ff9bccee999fb0f0",
+  "generated_at": 1778928162406
 }

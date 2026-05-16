@@ -61,7 +61,7 @@
   },
   {
     "path": "package-lock.json",
-    "reason": "file too large (513678 bytes)"
+    "reason": "file too large (508994 bytes)"
   },
   {
     "path": "pro-workflow/.claude-plugin",

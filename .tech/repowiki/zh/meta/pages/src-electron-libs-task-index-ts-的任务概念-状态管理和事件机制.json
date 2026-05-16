@@ -1,0 +1,25 @@
+{
+  "id": "src-electron-libs-task-index-ts-的任务概念-状态管理和事件机制",
+  "name": "任务系统设计",
+  "title": "任务系统设计",
+  "slug": "核心模块规格/任务系统设计",
+  "path": "核心模块规格/任务系统设计.md",
+  "description": "src/electron/libs/task/index.ts 的任务概念、状态管理和事件机制",
+  "prompt": "编写任务系统设计文档，需要：1)说明任务系统的核心概念（Task、TaskGraph、Worker）；2)解释任务状态机设计（pending -> running -> completed/failed）；3)说明任务依赖关系的管理；4)解释任务事件的上报机制；5)列出关键的API接口。需要包含状态机图示和代码示例。",
+  "dependent_files": [
+    "src/electron/libs/task/index.ts",
+    "src/electron/libs/task/README.md"
+  ],
+  "parent_id": "核心模块规格总览-提供模块索引",
+  "parent": "核心模块规格",
+  "parent_chain": [
+    "核心模块规格"
+  ],
+  "section_path": "核心模块规格",
+  "layer_level": 1,
+  "order": 12,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "b86244ab7817529218a3980d7e3a239a7887ac32dcb96db50f022f1b19965f3f",
+  "generated_at": 1778928162406
+}

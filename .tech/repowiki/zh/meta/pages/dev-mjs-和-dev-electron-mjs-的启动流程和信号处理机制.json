@@ -1,0 +1,25 @@
+{
+  "id": "dev-mjs-和-dev-electron-mjs-的启动流程和信号处理机制",
+  "name": "开发启动脚本",
+  "title": "开发启动脚本",
+  "slug": "脚本与工具/开发启动脚本",
+  "path": "脚本与工具/开发启动脚本.md",
+  "description": "dev.mjs 和 dev-electron.mjs 的启动流程和信号处理机制",
+  "prompt": "编写开发启动脚本文档，需要：1)说明 dev.mjs 的进程管理机制（startTask、stopAll）；2)说明 dev-electron.mjs 的 Electron 启动流程（verifyCodesign、prepareMacElectronDist）；3)解释脚本间的调用关系；4)列出关键的启动参数和环境配置；5)说明日志输出和错误处理。需要包含启动流程图和代码片段。",
+  "dependent_files": [
+    "scripts/dev.mjs",
+    "scripts/dev-electron.mjs"
+  ],
+  "parent_id": "开发-构建和发布脚本总览",
+  "parent": "脚本与工具",
+  "parent_chain": [
+    "脚本与工具"
+  ],
+  "section_path": "脚本与工具",
+  "layer_level": 1,
+  "order": 27,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "2fbd7f42891ad759b057c96da8f73ca311ce4ac61ac53afbcd75cc26fce973eb",
+  "generated_at": 1778928162406
+}

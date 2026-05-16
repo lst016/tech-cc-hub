@@ -1,0 +1,24 @@
+{
+  "id": "项目相关的关键术语和概念定义",
+  "name": "术语表",
+  "title": "术语表",
+  "slug": "项目概述/术语表",
+  "path": "项目概述/术语表.md",
+  "description": "项目相关的关键术语和概念定义",
+  "prompt": "编写术语表，需要定义：1)Session（会话）；2)Task（任务）；3)Worker（工作者）；4)Skill（技能）；5)Artifact（产物）；6)MCP（Model Context Protocol）；7)其他关键术语。需要保持与 doc/00-overview/02-术语表.md 的一致性。",
+  "dependent_files": [
+    "doc/00-overview/02-术语表.md"
+  ],
+  "parent_id": "项目概述页-包含产品定位-核心能力简介和文档索引",
+  "parent": "项目概述",
+  "parent_chain": [
+    "项目概述"
+  ],
+  "section_path": "项目概述",
+  "layer_level": 1,
+  "order": 3,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "2c39767569e894482294f557b3521452ff963cf446701571b4b77720f63c4c5b",
+  "generated_at": 1778928162406
+}

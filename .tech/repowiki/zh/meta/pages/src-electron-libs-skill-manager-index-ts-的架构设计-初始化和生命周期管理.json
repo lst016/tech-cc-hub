@@ -1,0 +1,25 @@
+{
+  "id": "src-electron-libs-skill-manager-index-ts-的架构设计-初始化和生命周期管理",
+  "name": "技能管理器架构",
+  "title": "技能管理器架构",
+  "slug": "核心模块规格/技能管理器架构",
+  "path": "核心模块规格/技能管理器架构.md",
+  "description": "src/electron/libs/skill-manager/index.ts 的架构设计、初始化和生命周期管理",
+  "prompt": "编写技能管理器架构文档，需要：1)说明 SkillManager 的核心职责；2)绘制初始化流程图（配置加载、技能注册、生命周期管理）；3)解释技能配置的数据结构；4)说明技能的执行和调度机制；5)列出与外部模块的交互接口。需要包含关键代码示例。",
+  "dependent_files": [
+    "src/electron/libs/skill-manager/index.ts",
+    "src/electron/libs/mcp-tools/README.md"
+  ],
+  "parent_id": "核心模块规格总览-提供模块索引",
+  "parent": "核心模块规格",
+  "parent_chain": [
+    "核心模块规格"
+  ],
+  "section_path": "核心模块规格",
+  "layer_level": 1,
+  "order": 11,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "3d4441920aa277082394219a7e26729c0fff760226f28cba13882fff920a7fc9",
+  "generated_at": 1778928162406
+}

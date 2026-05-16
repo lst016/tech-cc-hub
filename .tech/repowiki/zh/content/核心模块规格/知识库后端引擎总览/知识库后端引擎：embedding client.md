@@ -1,567 +1,525 @@
 # 知识库后端引擎：embedding client
 
 <cite>
+
 **本文引用的文件**
+
 - [src/electron/libs/knowledge/embedding-client.ts](file://src/electron/libs/knowledge/embedding-client.ts)
-- [src/electron/libs/knowledge/knowledge-indexer.ts](file://src/electron/libs/knowledge/knowledge-indexer.ts)
-- [src/electron/libs/knowledge/knowledge-model-settings.ts](file://src/electron/libs/knowledge/knowledge-model-settings.ts)
 - [src/electron/libs/knowledge/knowledge-types.ts](file://src/electron/libs/knowledge/knowledge-types.ts)
-- [src/electron/libs/knowledge/wiki-model-client.ts](file://src/electron/libs/knowledge/wiki-model-client.ts)
-- [src/electron/libs/note-types.ts](file://src/electron/libs/note-types.ts)
-- [src/electron/dev-backend-bridge.ts](file://src/electron/dev-backend-bridge.ts)
-- [src/electron/libs/git/index.ts](file://src/electron/libs/git/index.ts)
-- [src/electron/libs/skill-manager/index.ts](file://src/electron/libs/skill-manager/index.ts)
+- [src/electron/libs/knowledge/knowledge-model-settings.ts](file://src/electron/libs/knowledge/knowledge-model-settings.ts)
+- [src/electron/libs/knowledge/knowledge-indexer.ts](file://src/electron/libs/knowledge/knowledge-indexer.ts)
+- [src/electron/libs/knowledge/knowledge-repository.ts](file://src/electron/libs/knowledge/knowledge-repository.ts)
+- [src/electron/libs/knowledge/knowledge-paths.ts](file://src/electron/libs/knowledge/knowledge-paths.ts)
+- [src/electron/libs/knowledge/knowledge-ui-store.ts](file://src/electron/libs/knowledge/knowledge-ui-store.ts)
+- [src/electron/libs/knowledge/knowledge-overview.ts](file://src/electron/libs/knowledge/knowledge-overview.ts)
+- [src/electron/libs/knowledge/agent-cards.ts](file://src/electron/libs/knowledge/agent-cards.ts)
+- [src/electron/libs/knowledge/knowledge-utils.ts](file://src/electron/libs/knowledge/knowledge-utils.ts)
+- [src/electron/libs/knowledge/repowiki/analyzer.ts](file://src/electron/libs/knowledge/repowiki/analyzer.ts)
+- [src/electron/libs/knowledge/repowiki/builder.ts](file://src/electron/libs/knowledge/repowiki/builder.ts)
+- [src/electron/libs/knowledge/repowiki/engine.ts](file://src/electron/libs/knowledge/repowiki/engine.ts)
+- [src/electron/libs/knowledge/repowiki/exporter.ts](file://src/electron/libs/knowledge/repowiki/exporter.ts)
+- [src/electron/libs/knowledge/repowiki/graph.ts](file://src/electron/libs/knowledge/repowiki/graph.ts)
+- [src/electron/libs/knowledge/repowiki/intelligence.ts](file://src/electron/libs/knowledge/repowiki/intelligence.ts)
+- [src/electron/libs/knowledge/repowiki/prompts.ts](file://src/electron/libs/knowledge/repowiki/prompts.ts)
+- [src/electron/libs/knowledge/repowiki/scanner.ts](file://src/electron/libs/knowledge/repowiki/scanner.ts)
+
 </cite>
 
 # 知识库后端引擎：embedding client
 
 ## 目录
 
-- [1. 模块职责与定位](#1-模块职责与定位)
-- [2. 核心数据结构](#2-核心数据结构)
-- [3. 函数调用链](#3-函数调用链)
-- [4. 入口函数详解](#4-入口函数详解)
-- [5. 与上下游文件的关系](#5-与上下游文件的关系)
-- [6. 配置与参数说明](#6-配置与参数说明)
-- [7. 常见失败模式与排障](#7-常见失败模式与排障)
-- [8. 修改与扩展指南](#8-修改与扩展指南)
-- [9. 回归验证方式](#9-回归验证方式)
-- [10. 附录：调用时序图](#10-附录调用时序图)
+- [1. 入口职责与定位](#1-入口职责与定位)
+- [2. 核心函数与符号清单](#2-核心函数与符号清单)
+- [3. 调用链路与数据流](#3-调用链路与数据流)
+- [4. 配置体系与数据来源](#4-配置体系与数据来源)
+- [5. 存储层与向量持久化](#5-存储层与向量持久化)
+- [6. 常见失败模式与排障](#6-常见失败模式与排障)
+- [7. 扩展点与修改指南](#7-扩展点与修改指南)
+- [8. Agent 改代码地图](#8-agent-改代码地图)
+- [9. 相关模块速查](#9-相关模块速查)
 
 ---
 
-## 1. 模块职责与定位
+## 1. 入口职责与定位
 
-`embedding-client.ts` 是知识库引擎中 **向量嵌入（vector embedding）的调用层**。它负责：
+`embedding-client.ts` 是知识库引擎的**向量生成层**，负责将文本内容转换为高维浮点向量，存入 SQLite + sqlite-vec 索引，供后续语义检索使用。
 
-1. 将文本片段（chunks）发送给配置的 embedding API
-2. 接收并解析 API 返回的 float 向量
-3. 按批次分装请求，支持进度回调
-4. 处理重试逻辑和维度校验
+### 职责边界
 
-该模块不负责：
-- 向量存储（由 `KnowledgeRepository` + sqlite-vec 处理）
-- 文本分块（由 `RecursiveCharacterTextSplitter` 处理）
-- 模型配置解析（由 `knowledge-model-settings.ts` 处理）
+| 职责 | 归属 |
+|------|------|
+| 文本 → 向量生成 | `embedding-client.ts` |
+| 向量维度验证与标准化 | `normalizeEmbeddingVector` |
+| 批量分页与进度回调 | `embedTextBatches` |
+| API 请求重试与错误处理 | `embedTexts` |
+| 模型配置解析与 profile 映射 | `knowledge-model-settings.ts` |
+| 向量写入 SQLite / sqlite-vec | `knowledge-repository.ts` |
 
-章节来源：[src/electron/libs/knowledge/embedding-client.ts#L1-L35](file://src/electron/libs/knowledge/embedding-client.ts#L1-L35)
+**不属于 embedding-client 的职责**：
+- Markdown 文件扫描（`scanner.ts`）
+- Repo Wiki 生成（`engine.ts` → `analyzer.ts` → `builder.ts`）
+- UI 状态管理（`knowledge-ui-store.ts`）
+- Agent Cards 生成（`agent-cards.ts`）
+- system prompt 注入（`knowledge-overview.ts`）
+
+[章节来源](file://src/electron/libs/knowledge/embedding-client.ts#L1-L15)
 
 ---
 
-## 2. 核心数据结构
-
-### EmbeddingModelSettings
-
-由 `knowledge-types.ts` 定义，是调用 embedding API 所需的完整配置：
+## 2. 核心函数与符号清单
 
 ```typescript
-export type EmbeddingModelSettings = {
-  profileId: string;       // 配置 profile 的唯一标识
-  profileName: string;    // profile 名称，用于日志
-  apiKey: string;          // API 密钥
-  baseURL: string;         // API 基础地址（不含尾斜杠）
-  model: string;           // 模型名称，如 text-embedding-3-small
-  dimension: number;       // 向量维度（必须与模型匹配）
-  batchSize: number;       // 每批发送的文本数量上限（默认16，最大128）
-};
-```
+// src/electron/libs/knowledge/embedding-client.ts
+export async function embedTexts(
+  settings: EmbeddingModelSettings,
+  texts: string[]
+): Promise<number[][]>  // line 83-96
 
-章节来源：[src/electron/libs/knowledge/knowledge-types.ts#L100-L108](file://src/electron/libs/knowledge/knowledge-types.ts#L100-L108)
-
-### OpenAIEmbeddingResponse
-
-API 返回的标准化响应结构：
-
-```typescript
-type OpenAIEmbeddingResponse = {
-  data?: Array<{
-    embedding?: number[];
-    index?: number;
-  }>;
-  error?: {
-    message?: string;
-  };
-};
-```
-
-章节来源：[src/electron/libs/knowledge/embedding-client.ts#L3-L11](file://src/electron/libs/knowledge/embedding-client.ts#L3-L11)
-
----
-
-## 3. 函数调用链
-
-```mermaid
-flowchart TD
-    subgraph "调用入口"
-        A[embedTextBatches]
-    end
-
-    subgraph "核心层"
-        A --> B[embedTexts]
-        B --> C[requestEmbeddings]
-        C --> D[normalizeEmbeddingVector]
-    end
-
-    subgraph "工具函数"
-        E[joinEndpoint]
-        F[sleep]
-    end
-
-    C --> E
-    B --> F
-    D --> G[校验维度与数值]
-```
-
-**调用层次说明：**
-
-| 层级 | 函数 | 职责 | 导出 |
-|------|------|------|------|
-| L1 | `embedTextBatches` | 分批调度 + 进度回调 | ✅ 公开 |
-| L2 | `embedTexts` | 重试包装（3次） | ✅ 公开 |
-| L3 | `requestEmbeddings` | HTTP 请求 + 响应解析 | ❌ 内部 |
-| L4 | `normalizeEmbeddingVector` | 向量校验与类型转换 | ❌ 内部 |
-
-章节来源：[src/electron/libs/knowledge/embedding-client.ts#L83-L121](file://src/electron/libs/knowledge/embedding-client.ts#L83-L121)
-
----
-
-## 4. 入口函数详解
-
-### 4.1 embedTextBatches（主入口）
-
-```typescript
 export async function embedTextBatches(
   settings: EmbeddingModelSettings,
   texts: string[],
   onProgress?: (progress: { completed: number; total: number }) => void,
-): Promise<number[][]>
+): Promise<number[][]>  // line 98-121
+
+// 内部函数
+function requestEmbeddings(settings, texts): Promise<number[][]>  // line 36-81
+function normalizeEmbeddingVector(vector, expectedDimension): number[]  // line 22-34
+function joinEndpoint(baseURL, path): string  // line 13-16
+function sleep(ms): Promise<void>  // line 18-20
 ```
 
-**参数说明：**
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `settings` | `EmbeddingModelSettings` | ✅ | 模型配置对象 |
-| `texts` | `string[]` | ✅ | 待嵌入文本数组 |
-| `onProgress` | `Function` | ❌ | 进度回调，每批次完成后调用 |
-
-**返回：**
-- `number[][]` — 二维数组，每个子数组对应 `texts[index]` 的嵌入向量
-
-**核心逻辑：**
-1. 初始化空向量数组，触发初始进度回调 `{ completed: 0, total: texts.length }`
-2. 按 `settings.batchSize` 步长遍历 `texts`
-3. 对每个批次调用 `embedTexts`，传入单批文本
-4. 若整批失败且批次 > 1，**降级为逐条重试**（避免单条失败导致整批丢失）
-5. 更新进度回调 `{ completed, total }`
-
-**典型用法：**
-```typescript
-import { embedTextBatches } from "./embedding-client.js";
-import { resolveKnowledgeModelSettings } from "./knowledge-model-settings.js";
-
-const settings = resolveKnowledgeModelSettings().embedding;
-if (!settings) {
-  throw new Error("未配置 embedding 模型");
-}
-
-const chunks = ["这是第一段文本", "这是第二段文本", "这是第三段文本"];
-
-const embeddings = await embedTextBatches(settings, chunks, ({ completed, total }) => {
-  console.log(`嵌入进度: ${completed}/${total}`);
-});
-
-console.log(`生成了 ${embeddings.length} 个向量`);
-```
-
-章节来源：[src/electron/libs/knowledge/embedding-client.ts#L98-L121](file://src/electron/libs/knowledge/embedding-client.ts#L98-L121)
-
-### 4.2 embedTexts（重试包装器）
+### EmbeddingModelSettings 类型
 
 ```typescript
-export async function embedTexts(settings: EmbeddingModelSettings, texts: string[]): Promise<number[][]>
+// src/electron/libs/knowledge/knowledge-types.ts#L100-108
+export type EmbeddingModelSettings = {
+  profileId: string;
+  profileName: string;
+  apiKey: string;
+  baseURL: string;
+  model: string;
+  dimension: number;
+  batchSize: number;
+};
 ```
 
-**重试策略：**
-- 最多尝试 3 次
-- 每次失败后等待 `350 * attempt` 毫秒再重试（第1次350ms，第2次700ms）
-- 最终抛出最后一次的错误
+### 关键行为说明
 
-**使用场景：**
-- 适用于需要单批次完整成功的场景
-- 由 `embedTextBatches` 在内部调用
+| 函数 | 重试策略 | batch 处理 | 向量验证 |
+|------|----------|-----------|---------|
+| `embedTexts` | 3 次指数退避（350ms × attempt） | 无 | `normalizeEmbeddingVector` 校验维度与数值 |
+| `embedTextBatches` | 继承 `embedTexts` 重试 | 按 `settings.batchSize` 分页 | 同上 |
 
-章节来源：[src/electron/libs/knowledge/embedding-client.ts#L83-L96](file://src/electron/libs/knowledge/embedding-client.ts#L83-L96)
-
-### 4.3 requestEmbeddings（HTTP 层）
-
-```typescript
-async function requestEmbeddings(settings: EmbeddingModelSettings, texts: string[]): Promise<number[][]>
-```
-
-**关键行为：**
-
-1. **空数组处理**：直接返回空数组，不发请求
-2. **URL 拼接**：调用 `joinEndpoint` 确保 baseURL 不含尾斜杠
-3. **请求体格式**：遵循 OpenAI兼容 API 格式
-   ```json
-   { "model": "text-embedding-3-small", "input": ["text1", "text2"] }
-   ```
-4. **响应校验**：
-   - 非 200 状态码抛出错误
-   - 响应非 JSON 格式抛出错误
-   - 缺少 `data[]` 数组抛出错误
-5. **索引匹配**：通过 `item.index` 建立输入输出对应关系
-
-**错误场景示例：**
-```typescript
-// 响应格式异常
-{ "error": { "message": "Invalid API key" } }
-// → 抛出 "Invalid API key"
-
-// 响应缺少 data
-{ }
-// → 抛出 "embedding API response missing data[]"
-
-// 向量维度不匹配
-// → 抛出 "embedding dimension mismatch: expected 1536, got 1024"
-```
-
-章节来源：[src/electron/libs/knowledge/embedding-client.ts#L36-L81](file://src/electron/libs/knowledge/embedding-client.ts#L36-L81)
+[章节来源](file://src/electron/libs/knowledge/embedding-client.ts#L83-L121)
 
 ---
 
-## 5. 与上下游文件的关系
+## 3. 调用链路与数据流
 
-### 5.1 上游：配置解析
+```mermaid
+flowchart TD
+    subgraph 入口
+        A[indexKnowledgeWorkspace] --> B[resolveKnowledgeModelSettings]
+    end
+
+    subgraph 配置层
+        B --> C[embeddingProfile?.embeddingModel]
+        B --> D[resolveEmbeddingDimension]
+    end
+
+    subgraph 向量生成
+        C --> E[embedTextBatches<br/>settings.embedding]
+        E --> F[embedTexts × N batches]
+        F --> G[requestEmbeddings]
+        G --> H[normalizeEmbeddingVector]
+    end
+
+    subgraph 存储层
+        H --> I[buildKnowledgeInputs]
+        I --> J[upsertDocument]
+        J --> K[knowledge_chunks table]
+        J --> L[knowledge_chunk_vectors<br/>sqlite-vec virtual table]
+    end
+
+    subgraph 索引状态
+        K --> M[index-state.json]
+        L --> M
+    end
+```
+
+### 调用序列
+
+```text
+indexKnowledgeWorkspace (knowledge-indexer.ts#L170)
+  ├─ resolveKnowledgeModelSettings (knowledge-model-settings.ts#L49)
+  │   └─ loadApiConfigSettings().profiles
+  ├─ KnowledgeRepository (knowledge-repository.ts#L203)
+  │   └─ isVectorStoreReady → sqlite-vec check
+  ├─ collectMarkdownFiles (knowledge-indexer.ts#L56)
+  ├─ generateAgentKnowledgeCards (agent-cards.ts#L50)
+  ├─ embedTextBatches (embedding-client.ts#L282)
+  │   └─ embedTexts × ceil(texts.length / batchSize)
+  │       └─ requestEmbeddings → POST /embeddings
+  └─ buildKnowledgeInputs (knowledge-indexer.ts#L105)
+      └─ repository.upsertDocument → chunks + vectors
+```
+
+[图表来源](file://src/electron/libs/knowledge/knowledge-indexer.ts#L170-L310)
+
+---
+
+## 4. 配置体系与数据来源
+
+### source-of-truth
+
+`EmbeddingModelSettings` 的配置来源顺序：
+
+1. **用户配置的 API Profile**（`src/electron/libs/config-store.ts`）
+   - `loadApiConfigSettings().profiles`
+   - 筛选条件：`profile.enabled && profile.apiKey.trim() && profile.baseURL.trim()`
+   - 必须有 `profile.embeddingModel` 非空
+
+2. **维度自动推断**（`resolveEmbeddingDimension`）
+   ```typescript
+   // knowledge-model-settings.ts#L16-22
+   const KNOWN_EMBEDDING_DIMENSIONS = [
+     { pattern: /qwen3-embedding-0\.6b/i, dimension: 1024 },
+     { pattern: /qwen3-embedding-4b/i, dimension: 2560 },
+     { pattern: /qwen3-embedding-8b/i, dimension: 4096 },
+     { pattern: /text-embedding-3-small/i, dimension: 1536 },
+     { pattern: /text-embedding-3-large/i, dimension: 3072 },
+   ];
+   ```
+
+3. **batchSize 约束**
+   ```typescript
+   // knowledge-model-settings.ts#L62-65
+   batchSize: Math.min(128, normalizePositiveInteger(embeddingProfile.embeddingBatchSize, 16))
+   ```
+
+### 配置校验
+
+`assertEmbeddingConfigured`（knowledge-model-settings.ts#L85-90）在索引启动时校验：
+- 若 `settings.embedding` 为 `undefined`，抛出错误：**"Knowledge Engine 未启用：请先在模型设置里配置向量模型 embeddingModel。"**
+
+[章节来源](file://src/electron/libs/knowledge/knowledge-model-settings.ts#L49-L90)
+
+---
+
+## 5. 存储层与向量持久化
+
+### SQLite 表结构
+
+```sql
+-- knowledge_documents (主文档表)
+CREATE TABLE knowledge_documents (
+  id TEXT PRIMARY KEY,
+  workspace_scope TEXT NOT NULL,
+  source_kind TEXT NOT NULL,          -- repowiki | agent_card | memory | manual | source
+  source_path TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  ...
+);
+
+-- knowledge_chunks (文本块表)
+CREATE TABLE knowledge_chunks (
+  id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+  chunk_index INTEGER NOT NULL,
+  token_estimate INTEGER NOT NULL,
+  ...
+);
+
+-- knowledge_chunks_fts (FTS5 全文索引)
+CREATE VIRTUAL TABLE knowledge_chunks_fts USING fts5(title, content, source_path, tags);
+
+-- knowledge_chunk_vectors (向量索引)
+CREATE VIRTUAL TABLE knowledge_chunk_vectors USING vec0(
+  chunk_rowid integer primary key,
+  embedding float[dimension]
+);
+```
+
+[章节来源](file://src/electron/libs/knowledge/knowledge-repository.ts#L83-L137)
+
+### 向量写入流程
+
+```typescript
+// knowledge-repository.ts#L162-170
+upsertDocument(input: KnowledgeUpsertInput): KnowledgeDocument {
+  const id = existing?.id ?? crypto.randomUUID();
+  const contentHash = stableHash(input.content);
+  // ...
+  this.db.prepare(`INSERT INTO knowledge_chunks ...`).run(...);
+
+  // 向量写入 sqlite-vec
+  this.db.prepare(`
+    INSERT INTO knowledge_chunk_vectors (chunk_rowid, embedding)
+    VALUES (?, ?)
+  `).run(chunkRowid, JSON.stringify(embedding));
+}
+```
+
+### 运行时刷新边界
+
+| 操作 | 需重启 Electron？ | 需清 DB？ |
+|------|------------------|----------|
+| 修改 embedding model | 否，下次索引自动生效 | 否 |
+| 修改维度 | 否，但需要重建向量表 | **是**，维度不兼容时自动 `DROP TABLE IF EXISTS knowledge_chunk_vectors` |
+| 修改 batchSize | 否 | 否 |
+
+[章节来源](file://src/electron/libs/knowledge/knowledge-repository.ts#L141-L160)
+
+---
+
+## 6. 常见失败模式与排障
+
+### 6.1 向量维度不匹配
+
+**症状**：`embedding dimension mismatch: expected X, got Y`
+
+**原因**：模型切换后维度变更，但 sqlite-vec 表用旧维度创建
+
+**排查步骤**：
+```bash
+# 1. 检查 index-state.json
+cat .tech/reports/index-state.json | jq '.vectorStoreReady, .embeddingEnabled'
+
+# 2. 检查 sqlite-vec 表维度
+sqlite3 appData/knowledge/workspace_xxx/knowledge.sqlite \
+  "SELECT sql FROM sqlite_master WHERE name='knowledge_chunk_vectors'"
+
+# 3. 清除旧向量重新索引
+rm appData/knowledge/workspace_xxx/knowledge.sqlite
+# 下次索引时自动重建
+```
+
+[章节来源](file://src/electron/libs/knowledge/knowledge-repository.ts#L149-L154)
+
+### 6.2 API 请求失败（3 次重试后）
+
+**症状**：`Knowledge Engine 未启用：缺少 embeddingModel`
+
+**排查**：
+1. 检查模型设置里 `embeddingModel` 是否填入
+2. 验证 `baseURL` 可访问（不能以 `/` 结尾）
+3. 验证 `apiKey` 有效
+
+```bash
+# 测试 API 连通性
+curl -X POST https://your-api/v1/embeddings \
+  -H "Authorization: Bearer YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"text-embedding-3-small","input":"test"}'
+```
+
+### 6.3 非 JSON 响应
+
+**症状**：`embedding API returned non-JSON response`
+
+**原因**：API 返回了 HTML 错误页或纯文本
+
+**定位**：查看 `rawText.slice(0, 200)` 的前 200 字符
+
+[章节来源](file://src/electron/libs/knowledge/embedding-client.ts#L53-L59)
+
+### 6.4 sqlite-vec 扩展不可用
+
+**症状**：`sqlite-vec unavailable` 警告，向量存储回退到只写 FTS
+
+```bash
+# 检查 sqlite-vec 加载
+node -e "const { load } = require('sqlite-vec'); console.log('loaded')"
+
+# 验证 better-sqlite3 扩展支持
+sqlite3 appData/knowledge/workspace_xxx/knowledge.sqlite \
+  "SELECT name FROM sqlite_temp_master WHERE name LIKE '%vec%'"
+```
+
+[章节来源](file://src/electron/libs/knowledge/knowledge-repository.ts#L141-L159)
+
+---
+
+## 7. 扩展点与修改指南
+
+### 7.1 切换 embedding 模型
+
+**步骤**：
+1. 在模型设置 UI 添加新 profile，选择 `embeddingModel`
+2. `resolveKnowledgeModelSettings` 在下次索引时自动读取
+3. 如维度变更，需要清除旧 DB
+
+### 7.2 添加新的向量验证规则
+
+在 `normalizeEmbeddingVector`（embedding-client.ts#L22-34）中添加：
+
+```typescript
+// 示例：添加最小值约束
+function normalizeEmbeddingVector(vector: unknown, expectedDimension: number): number[] {
+  // ... 现有校验 ...
+
+  // 新增：检查向量稀疏性
+  const zeroCount = normalized.filter(v => v === 0).length;
+  if (zeroCount / normalized.length > 0.9) {
+    console.warn("[embedding] high sparsity detected, index may be degraded");
+  }
+
+  return normalized;
+}
+```
+
+### 7.3 修改 batch 分页逻辑
+
+当前 `embedTextBatches` 按固定 `batchSize` 分页。如果需要动态 batch：
+- 读取 `settings.batchSize` 调整
+- 可以添加环境变量 `TECH_CC_HUB_EMBEDDING_BATCH_SIZE` 覆盖
+
+[章节来源](file://src/electron/libs/knowledge/embedding-client.ts#L98-L121)
+
+---
+
+## 8. Agent 改代码地图
+
+### 8.1 先读文件（按优先级）
+
+| 优先级 | 文件 | 原因 |
+|--------|------|------|
+| 1 | `embedding-client.ts` | 直接改向量生成逻辑 |
+| 2 | `knowledge-model-settings.ts` | 改配置解析或维度推断 |
+| 3 | `knowledge-repository.ts` | 改向量写入或表结构 |
+| 4 | `knowledge-indexer.ts` | 看完整索引流程 |
+| 5 | `knowledge-types.ts` | 改类型定义 |
+
+### 8.2 关键符号速查
+
+| 符号 | 文件:行 | 用途 |
+|------|---------|------|
+| `embedTexts` | embedding-client.ts:83 | 文本→向量主入口，带重试 |
+| `embedTextBatches` | embedding-client.ts:98 | 批量封装，带进度回调 |
+| `normalizeEmbeddingVector` | embedding-client.ts:22 | 向量校验与标准化 |
+| `requestEmbeddings` | embedding-client.ts:36 | HTTP 请求底层 |
+| `resolveKnowledgeModelSettings` | knowledge-model-settings.ts:49 | 配置解析入口 |
+| `assertEmbeddingConfigured` | knowledge-model-settings.ts:85 | 配置校验断言 |
+| `upsertDocument` | knowledge-repository.ts:162 | 文档+向量写入 |
+| `initializeVectorStore` | knowledge-repository.ts:141 | sqlite-vec 初始化 |
+
+### 8.3 修改入口
+
+| 要修改的功能 | 首选文件 | 入口函数 |
+|-------------|---------|---------|
+| 改重试策略 | `embedding-client.ts` | `embedTexts` |
+| 改维度校验 | `embedding-client.ts` | `normalizeEmbeddingVector` |
+| 改批量大小 | `knowledge-model-settings.ts` | `resolveKnowledgeModelSettings` |
+| 改模型名推断 | `knowledge-model-settings.ts` | `KNOWN_EMBEDDING_DIMENSIONS` |
+| 改向量表结构 | `knowledge-repository.ts` | `initializeVectorStore` |
+
+### 8.4 验证命令
+
+```bash
+# 1. 类型检查
+npm run typecheck
+
+# 2. 单元测试（如果有）
+npm test -- --grep "embedding"
+
+# 3. 端到端索引测试
+# - 在 UI 触发"刷新知识库"
+# - 检查 .tech/reports/index-state.json 的 success 和 indexedChunks
+
+# 4. 检查向量表
+sqlite3 appData/knowledge/workspace_xxx/knowledge.sqlite \
+  "SELECT COUNT(*) FROM knowledge_chunk_vectors"
+```
+
+### 8.5 常见回归风险
+
+| 风险 | 触发场景 | 预防 |
+|------|---------|------|
+| 维度不匹配 | 切换模型后未清 DB | 索引前检查 vectorStoreReady |
+| API 超时 | batchSize 过大 | 保持 batchSize ≤ 128 |
+| 非 JSON 响应未处理 | API 返回错误 HTML | `normalizeEmbeddingVector` 校验数值 |
+| 重试耗尽后静默失败 | 网络不稳定 | `lastError` 必须抛出 |
+
+[章节来源](file://src/electron/libs/knowledge/embedding-client.ts#L83-L96)
+
+---
+
+## 9. 相关模块速查
+
+### repowiki 生成链路
 
 ```mermaid
 flowchart LR
-    A[config-store.js<br/>loadApiConfigSettings] --> B[knowledge-model-settings.ts<br/>resolveKnowledgeModelSettings]
-    B --> C[embedding-client.ts<br/>EmbeddingModelSettings]
-```
-
-**配置来源链路：**
-1. `loadApiConfigSettings()` 从 `config/` 读取用户配置的 profiles
-2. 过滤 `isUsableProfile`（`enabled=true`, `apiKey` 非空, `baseURL` 非空）
-3. 查找包含 `embeddingModel` 字段的 profile
-4. 通过 `resolveEmbeddingDimension` 推断维度（基于模型名正则匹配）
-
-**已知模型维度表：**
-
-| 模型名模式 | 维度 |
-|-----------|------|
-| `qwen3-embedding-0.6b` | 1024 |
-| `qwen3-embedding-4b` | 2560 |
-| `qwen3-embedding-8b` | 4096 |
-| `text-embedding-3-small` | 1536 |
-| `text-embedding-3-large` | 3072 |
-
-章节来源：[src/electron/libs/knowledge/knowledge-model-settings.ts#L16-L22](file://src/electron/libs/knowledge/knowledge-model-settings.ts#L16-L22)
-
-### 5.2 下游：知识库索引器
-
-```mermaid
-sequenceDiagram
-    participant indexer as knowledge-indexer.ts
-    participant splitter as RecursiveCharacterTextSplitter
-    participant embed as embedding-client.ts
-    participant repo as KnowledgeRepository
-
-    indexer->>splitter: splitText(markdownContent)
-    Note over indexer: 生成 chunks[]
-
-    indexer->>embed: embedTextBatches(settings, chunkTexts, onProgress)
-    loop 每 batchSize 条
-        embed->>embed: embedTexts(settings, batch)
-        embed-->>indexer: number[][]
+    subgraph 扫描
+        A[scanRepoWikiProject] --> B[scanner.ts]
     end
 
-    indexer->>repo: upsertDocument(input with embeddings)
-    Note over indexer: 每个 chunk 对应一个向量
-```
-
-**调用入口：**
-```typescript
-// knowledge-indexer.ts#L282
-const embeddings = await embedTextBatches(settings.embedding, chunkTexts, ({ completed, total }) => {
-  options.onProgress?.({
-    stage: "embedding",
-    message: `正在生成向量 ${completed}/${total}。`,
-    completed,
-    total: Math.max(1, total),
-  });
-});
-```
-
-章节来源：[src/electron/libs/knowledge/knowledge-indexer.ts#L282-L289](file://src/electron/libs/knowledge/knowledge-indexer.ts#L282-L289)
-
-### 5.3 并列模块：wiki-model-client
-
-两个 client 模块结构相似，但用途不同：
-
-| 模块 | 用途 | API 端点 |
-|------|------|----------|
-| `embedding-client.ts` | 向量化文本 | `POST /embeddings` |
-| `wiki-model-client.ts` | 生成 Wiki 内容 | `POST /chat/completions` |
-
-`wiki-model-client.ts` 的 `completeWikiChat` 额外包含：
-- 超时控制（默认120秒）
-- Markdown 清洗（移除 `` 标签和代码围栏）
-
-章节来源：[src/electron/libs/knowledge/wiki-model-client.ts#L1-L85](file://src/electron/libs/knowledge/wiki-model-client.ts#L1-L85)
-
----
-
-## 6. 配置与参数说明
-
-### 6.1 EmbeddingModelSettings 完整字段
-
-| 字段 | 默认值 | 来源 | 说明 |
-|------|--------|------|------|
-| `profileId` | — | 配置 | profile 唯一标识 |
-| `profileName` | — | 配置 | profile 显示名 |
-| `apiKey` | — | 配置 | API 密钥 |
-| `baseURL` | — | 配置 | 去掉尾斜杠后的基础 URL |
-| `model` | — | 配置 | embedding 模型名 |
-| `dimension` | `1536` | 推断/配置 | 向量维度 |
-| `batchSize` | `16` | 配置（上限128） | 每批文本数 |
-
-### 6.2 维度自动推断逻辑
-
-```typescript
-// knowledge-model-settings.ts#L32-L36
-function resolveEmbeddingDimension(model: string, configured: number | undefined): number {
-  const known = KNOWN_EMBEDDING_DIMENSIONS.find((entry) => entry.pattern.test(model));
-  if (known) return known.dimension;  // 匹配到已知模型
-  return normalizePositiveInteger(configured, DEFAULT_EMBEDDING_DIMENSION);  // 回退到配置值或默认
-}
-```
-
-### 6.3 批量大小限制
-
-```typescript
-// 限制最大为 128，防止 API 超限
-batchSize: Math.min(
-  128,
-  normalizePositiveInteger(embeddingProfile.embeddingBatchSize, DEFAULT_EMBEDDING_BATCH_SIZE),
-)
-```
-
-章节来源：[src/electron/libs/knowledge/knowledge-model-settings.ts#L54-L66](file://src/electron/libs/knowledge/knowledge-model-settings.ts#L54-L66)
-
----
-
-## 7. 常见失败模式与排障
-
-### 7.1 错误清单
-
-| 错误信息 | 根因 | 排查方向 |
-|---------|------|----------|
-| `embedding response missing vector` | API 返回的 `embedding` 字段为 undefined | 检查 API 响应格式是否正确 |
-| `embedding dimension mismatch: expected X, got Y` | 使用的模型与配置的维度不一致 | 确认模型配置正确 |
-| `embedding API response missing data[]` | API 响应缺少 `data` 数组 | 检查 API 是否返回正确格式 |
-| `embedding API returned non-JSON response` | API 返回了非 JSON 响应 | 检查 baseURL 是否正确、API 是否可用 |
-| `Invalid API key` | API 密钥无效 | 检查 `apiKey` 配置 |
-| `Knowledge Engine 未启用：缺少 embeddingModel` | 未在模型设置中配置 embedding 模型 | 运行 `assertEmbeddingConfigured()` |
-
-### 7.2 排障步骤
-
-**步骤 1：验证配置加载**
-```typescript
-import { resolveKnowledgeModelSettings } from "./knowledge-model-settings.js";
-
-const settings = resolveKnowledgeModelSettings();
-console.log("embedding enabled:", settings.embedding);
-```
-
-**步骤 2：验证 API 连通性**
-```bash
-curl -X POST https://your-api.com/embeddings \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -d '{"model":"text-embedding-3-small","input":["test"]}'
-```
-
-**步骤 3：检查 sqlite-vec 扩展**
-```typescript
-// knowledge-indexer.ts#L208 检查向量存储就绪状态
-if (!repository.isVectorStoreReady()) {
-  // sqlite-vec 扩展不可用
-}
-```
-
-### 7.3 降级行为
-
-当 `embedTextBatches` 的整批请求失败时，会**降级为逐条重试**：
-
-```typescript
-// embedding-client.ts#L107-L117
-try {
-  vectors.push(...await embedTexts(settings, batch));
-} catch (error) {
-  if (batch.length === 1) {
-    throw error;  // 单条失败直接抛出
-  }
-  for (const text of batch) {
-    vectors.push(...await embedTexts(settings, [text]));  // 降级逐条处理
-    onProgress?.({ completed: Math.min(texts.length, vectors.length), total: texts.length });
-  }
-}
-```
-
-这保证了即使个别文本导致整批失败，也不会阻塞整个索引流程。
-
-章节来源：[src/electron/libs/knowledge/embedding-client.ts#L107-L117](file://src/electron/libs/knowledge/embedding-client.ts#L107-L117)
-
----
-
-## 8. 修改与扩展指南
-
-### 8.1 添加新的模型维度
-
-在 `knowledge-model-settings.ts` 的 `KNOWN_EMBEDDING_DIMENSIONS` 数组中添加新条目：
-
-```typescript
-{ pattern: /new-model-name/i, dimension: 2048 },
-```
-
-### 8.2 修改重试策略
-
-编辑 `embedTexts` 函数的重试次数和延迟：
-
-```typescript
-// embedding-client.ts#L85-92
-for (let attempt = 1; attempt <= 3; attempt += 1) {
-  try {
-    return await requestEmbeddings(settings, texts);
-  } catch (error) {
-    lastError = error;
-    if (attempt < 3) {
-      await sleep(350 * attempt);  // 修改此处调整延迟
-    }
-  }
-}
-```
-
-### 8.3 添加请求超时
-
-在 `requestEmbeddings` 中添加 `AbortController`：
-
-```typescript
-const controller = new AbortController();
-const timer = setTimeout(() => controller.abort(), 60_000);
-
-const response = await fetch(joinEndpoint(settings.baseURL, "/embeddings"), {
-  method: "POST",
-  signal: controller.signal,  // 添加超时控制
-  // ...
-}).finally(() => clearTimeout(timer));
-```
-
-### 8.4 扩展进度回调事件
-
-在 `embedTextBatches` 中添加更多事件类型：
-
-```typescript
-onProgress?.({
-  stage: "embedding",          // 新增阶段标识
-  batchIndex: index / settings.batchSize,
-  progress: { completed, total }
-});
-```
-
----
-
-## 9. 回归验证方式
-
-### 9.1 单元测试检查点
-
-| 测试场景 | 预期行为 |
-|---------|---------|
-| 空文本数组 `[]` | 返回 `[]`，不发起请求 |
-| 单条文本 | 正确返回单向量 |
-| 多条文本（< batchSize） | 返回对应数量的向量 |
-| 批次请求失败 | 降级为逐条处理 |
-| 向量维度错误 | 抛出 `dimension mismatch` 错误 |
-| API 返回非 200 | 抛出带错误信息的异常 |
-
-### 9.2 集成测试检查点
-
-**测试链路：**
-```
-indexKnowledgeWorkspace → embedTextBatches → KnowledgeRepository.upsertDocument
-```
-
-**验证方法：**
-1. 启动应用，打开知识库功能
-2. 修改工作区中的一篇 Repo Wiki Markdown 文件
-3. 触发重新索引
-4. 检查 `indexStatePath` 中的 `KnowledgeIndexReport`：
-   ```json
-   {
-     "success": true,
-     "indexedDocuments": 1,
-     "indexedChunks": 3,
-     "vectorStoreReady": true
-   }
-   ```
-
-### 9.3 常见回归场景
-
-| 场景 | 检查点 |
-|------|--------|
-| 修改默认 batchSize 后 | 索引报告中 `indexedChunks` 数量是否正确 |
-| 修改模型维度后 | sqlite-vec 查询是否正常 |
-| 修改 baseURL 后 | 是否正确拼接路径（无双重斜杠） |
-| API 超时后 | 是否按预期抛出错误而非静默失败 |
-
----
-
-## 10. 附录：调用时序图
-
-```mermaid
-sequenceDiagram
-    participant Caller as 调用方
-    participant Batches as embedTextBatches
-    participant Texts as embedTexts
-    participant Request as requestEmbeddings
-    participant API as Embedding API
-    participant Normalize as normalizeEmbeddingVector
-
-    Caller->>Batches: embedTextBatches(settings, texts, onProgress)
-    Batches->>Batches: 初始化进度回调
-    loop texts.length / batchSize
-        Batches->>Texts: embedTexts(settings, batch)
-        loop 3 次重试
-            Texts->>Request: requestEmbeddings(settings, batch)
-            Request->>API: POST /embeddings
-            API-->>Request: { data: [{embedding: [...], index: 0}] }
-            Request->>Normalize: normalizeEmbeddingVector(vector, dimension)
-            Normalize-->>Request: number[]
-            Request-->>Texts: number[][]
-        end
-        Texts-->>Batches: vectors[]
-        Batches->>Batches: onProgress({ completed, total })
+    subgraph 分析
+        B --> C[RepoWikiAnalyzer]
+        C --> D[analyzer.ts]
     end
-    Batches-->>Caller: number[][]
+
+    subgraph 构建
+        D --> E[buildRepoWikiBuilder]
+        E --> F[builder.ts]
+    end
+
+    subgraph 导出
+        F --> G[exportRepoWikiMarkdown]
+        G --> H[exporter.ts]
+    end
+
+    subgraph 引擎
+        A --> I[generateRepoWiki]
+        I --> J[engine.ts]
+        J --> K[intelligence.ts]
+        K --> L[graph.ts]
+    end
+
+    subgraph 提示词
+        D --> M[prompts.ts]
+    end
 ```
 
-图表来源：[src/electron/libs/knowledge/embedding-client.ts#L98-L121](file://src/electron/libs/knowledge/embedding-client.ts#L98-L121)
+### MCP 工具关联
+
+| MCP 工具 | 功能 |
+|---------|------|
+| `mcp__tech-cc-hub-knowledge__knowledge_index` | 触发完整索引（含 embedding） |
+| `mcp__tech-cc-hub-knowledge__knowledge_search` | 语义检索（使用已有向量） |
+
+[章节来源](file://src/electron/libs/knowledge/repowiki/engine.ts#L215-L278)
+
+### UI 状态管理
+
+`KnowledgeUiStore`（knowledge-ui-store.ts）管理：
+- `knowledge_ui_workspaces` 表：工作区列表
+- `knowledge_ui_generation` 表：生成状态
+- `knowledge_ui_documents` 表：UI 文档缓存
+
+与 embedding 无直接依赖，但共享 `workspaceScope` 和 `appDataWorkspaceRoot` 路径。
+
+[章节来源](file://src/electron/libs/knowledge/knowledge-ui-store.ts#L84-L139)
 
 ---
 
-## 总结
+## 快速参考
 
-| 项目 | 说明 |
-|------|------|
-| **模块文件** | `src/electron/libs/knowledge/embedding-client.ts` |
-| **主入口** | `embedTextBatches(settings, texts, onProgress?)` |
-| **核心依赖** | `EmbeddingModelSettings` ← `knowledge-model-settings.ts` |
-| **消费者** | `knowledge-indexer.ts` |
-| **向量维度** | 由模型名自动推断或用户配置 |
-| **批量大小** | 默认 16，最大 128 |
-| **重试策略** | 3 次重试，指数退避（350ms × attempt） |
-| **降级行为** | 批次失败时逐条重试 |
+| 操作 | 关键文件 | 关键符号 |
+|------|---------|---------|
+| 生成向量 | `embedding-client.ts` | `embedTexts`, `embedTextBatches` |
+| 配置模型 | `knowledge-model-settings.ts` | `resolveKnowledgeModelSettings` |
+| 写入存储 | `knowledge-repository.ts` | `upsertDocument`, `initializeVectorStore` |
+| 触发索引 | `knowledge-indexer.ts` | `indexKnowledgeWorkspace` |
+| 检查状态 | `.tech/reports/index-state.json` | `success`, `vectorStoreReady` |
 
-如需修改向量生成逻辑，优先检查 `EmbeddingModelSettings` 配置来源；若需扩展批次行为，关注 `embedTextBatches` 中的进度回调机制。
+---
+
+**文档元信息**
+
+- 版本：1.0
+- 主题：topic-知识库后端引擎-embedding-client
+- 维护者：tech-cc-hub team
+- 适用场景：修改 embedding 模型、排查向量生成失败、扩展知识库索引能力

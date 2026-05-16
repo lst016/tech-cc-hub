@@ -1,0 +1,24 @@
+{
+  "id": "src-ui-app-tsx-的组件树结构-状态管理和消息处理机制",
+  "name": "工作台UI组件架构",
+  "title": "工作台UI组件架构",
+  "slug": "核心模块规格/工作台UI组件架构",
+  "path": "核心模块规格/工作台UI组件架构.md",
+  "description": "src/ui/App.tsx 的组件树结构、状态管理和消息处理机制",
+  "prompt": "编写工作台UI组件架构文档，需要：1)绘制组件树结构图（App -> ProcessGroupCard -> CompactProcessRow -> CompactProcessDetails）；2)说明组件间状态传递方式；3)解释消息处理链路（isProcessMessage -> getProcessGroupSummary -> 渲染）；4)说明关键道具类型（MessageContentItems、ProcessEntry 等）；5)列出组件使用示例。需要包含组件关系图和代码片段。",
+  "dependent_files": [
+    "src/ui/App.tsx"
+  ],
+  "parent_id": "核心模块规格总览-提供模块索引",
+  "parent": "核心模块规格",
+  "parent_chain": [
+    "核心模块规格"
+  ],
+  "section_path": "核心模块规格",
+  "layer_level": 1,
+  "order": 10,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "0c739ace30cc692ad594060aab810aac10b3592a3601eaa71f61cd8ef764b9ba",
+  "generated_at": 1778928162406
+}

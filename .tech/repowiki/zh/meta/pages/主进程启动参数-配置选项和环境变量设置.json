@@ -1,0 +1,25 @@
+{
+  "id": "主进程启动参数-配置选项和环境变量设置",
+  "name": "Electron主进程配置",
+  "title": "Electron主进程配置",
+  "slug": "应用运行时/Electron主进程配置",
+  "path": "应用运行时/Electron主进程配置.md",
+  "description": "主进程启动参数、配置选项和环境变量设置",
+  "prompt": "编写 Electron 主进程配置文档，需要：1)列出所有启动参数及其含义；2)说明配置加载的优先级（命令行参数 -> 环境变量 -> 配置文件）；3)解释关键配置项的作用（如日志级别、端口、调试开关）；4)说明配置验证和错误处理。需要包含配置示例。",
+  "dependent_files": [
+    "src/electron/main.ts",
+    "src/electron/tsconfig.json"
+  ],
+  "parent_id": "应用运行时配置总览-包含主进程配置和构建配置",
+  "parent": "应用运行时",
+  "parent_chain": [
+    "应用运行时"
+  ],
+  "section_path": "应用运行时",
+  "layer_level": 1,
+  "order": 15,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "59e79e1e6dd70f1c4321bf43dc8bbc6520a535aee5e67c7ea33e6edd4b6e5883",
+  "generated_at": 1778928162406
+}

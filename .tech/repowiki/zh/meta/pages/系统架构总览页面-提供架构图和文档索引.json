@@ -1,0 +1,25 @@
+{
+  "id": "系统架构总览页面-提供架构图和文档索引",
+  "name": "系统架构",
+  "title": "系统架构",
+  "slug": "系统架构/系统架构",
+  "path": "系统架构/系统架构.md",
+  "description": "系统架构总览页面，提供架构图和文档索引",
+  "prompt": "编写系统架构总览页面，需要：1)提供到各架构图的链接（上下文图、容器图、控制平面、执行平面、数据平面）；2)概述系统的主要分层和模块划分；3)说明架构文档的组织方式。引用 doc/10-architecture/ 相关文件。",
+  "dependent_files": [
+    "doc/10-architecture/10-系统上下文图.md",
+    "doc/10-architecture/11-系统容器图.md",
+    "doc/10-architecture/12-控制平面组件图.md",
+    "doc/10-architecture/13-执行平面组件图.md"
+  ],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "系统架构",
+  "layer_level": 0,
+  "order": 4,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "ec961e211c8b8c815564290e8284aa49211861b6726295c201cfcdb6a9da14a7",
+  "generated_at": 1778928162406
+}

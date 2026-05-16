@@ -16,16 +16,16 @@
     "src/common/types/fileSnapshot.ts",
     "src/common/types/preview.ts"
   ],
-  "parent_id": "core-module-specs",
+  "parent_id": "核心模块规格总览-提供模块索引",
   "parent": "核心模块规格",
   "parent_chain": [
     "核心模块规格"
   ],
   "section_path": "核心模块规格",
   "layer_level": 1,
-  "order": 59,
+  "order": 40,
   "status": "completed",
   "page_type": "topic",
-  "content_hash": "c8e07e53b99d789ccb17cbe78d9043d97e06613f405bab30f5d809583c5aa736",
-  "generated_at": 1778922186535
+  "content_hash": "e88d55aa9553d63bd8887644e06110de8ef57241668ce4e1d6df16661c83a218",
+  "generated_at": 1778928162406
 }

@@ -276,12 +276,12 @@ def _fallback_catalogs(project, graph: DependencyGraph) -> list[dict]:
 
 def _target_catalog_count(project) -> int:
     try:
-        requested = int(os.getenv("TECH_CC_HUB_REPOWIKI_TARGET_PAGES", "48"))
+        requested = int(os.getenv("TECH_CC_HUB_REPOWIKI_TARGET_PAGES", "56"))
     except ValueError:
-        requested = 48
+        requested = 56
     # Keep tiny repositories from getting nonsense pages while making real app
     # repos deep enough for humans and Agents to use as an implementation map.
-    upper = max(18, min(96, len(project.files) + 8))
+    upper = max(24, min(96, len(project.files) + 12))
     return max(18, min(upper, requested))
 
 
@@ -597,12 +597,63 @@ def _ensure_required_catalogs(project, graph: DependencyGraph, catalogs: list[di
     expanded = _expand_catalogs_from_source(project, graph, catalogs)
     if _max_catalog_parent_depth(expanded) < 2:
         expanded = _expand_catalogs_from_source(project, graph, expanded, force_nested=True)
+
+    expanded_names = {str(catalog.get("name") or "") for catalog in expanded}
+    next_order = max([int(catalog.get("order", index)) for index, catalog in enumerate(expanded)] or [0]) + 1
+    if any("mcp" in path or "modelcontextprotocol" in path for path in paths):
+        mcp_parent = "MCP 工具系统总览" if "MCP 工具系统总览" in expanded_names else ("核心模块规格" if "核心模块规格" in expanded_names else architecture_parent)
+        required_mcp_catalogs = [
+            {
+                "name": "MCP 工具系统：注册表与工厂映射",
+                "description": "mcp-registry-factory-map",
+                "prompt": "围绕内置 MCP registry、Electron 工厂映射、tool names 暴露、设置页展示和测试约束，说明新增一个内置 MCP Server 需要改哪些文件、每个字段如何影响运行时、如何验证。",
+                "dependent_files": [
+                    "src/shared/builtin-mcp-registry.ts",
+                    "src/electron/libs/builtin-mcp-servers.ts",
+                    "src/electron/libs/runner.ts",
+                    "src/ui/components/settings/McpSettingsPage.tsx",
+                    "test/electron/builtin-mcp-registry.test.ts",
+                ],
+                "parent": mcp_parent,
+                "order": next_order,
+            },
+            {
+                "name": "MCP 工具系统：Runner 注入链路",
+                "description": "mcp-runner-injection-flow",
+                "prompt": "说明 Runner 如何根据系统提示和内置 registry 选择 MCP server，如何把 server 注入 active query，runner-reuse 如何影响复用，出现工具不可见时如何定位。",
+                "dependent_files": [
+                    "src/electron/libs/runner.ts",
+                    "src/electron/libs/runner-reuse.ts",
+                    "src/electron/libs/system-prompt-presets.ts",
+                    "src/electron/libs/builtin-mcp-servers.ts",
+                    "src/shared/builtin-mcp-registry.ts",
+                ],
+                "parent": mcp_parent,
+                "order": next_order + 1,
+            },
+            {
+                "name": "MCP 工具系统：工具实现与扩展模板",
+                "description": "mcp-tool-implementation-template",
+                "prompt": "按 mcp-tools 目录解释内置工具实现模式，包括 Server 单例、输入 schema、toTextToolResult、业务服务注入、错误返回、tool names 导出和新增工具模板。",
+                "dependent_files": [
+                    "src/electron/libs/mcp-tools/",
+                    "src/electron/libs/builtin-mcp-servers.ts",
+                    "src/shared/builtin-mcp-registry.ts",
+                ],
+                "parent": mcp_parent,
+                "order": next_order + 2,
+            },
+        ]
+        for catalog in required_mcp_catalogs:
+            _add_catalog(expanded, catalog)
+        next_order += len(required_mcp_catalogs)
+
     return sorted(expanded, key=lambda item: int(item.get("order", 100)))
 
 
 async def _plan_catalogs(project, graph: DependencyGraph, llm: LLMClient, language: str, cache: Cache | None = None) -> list[dict]:
     source_hash = _project_source_hash(project)
-    cache_key = f"qoder-plan:v4:{llm.model}:{language}:{source_hash}"
+    cache_key = f"qoder-plan:v5:{llm.model}:{language}:{source_hash}"
     cached = await cache.get(cache_key) if cache else None
     if isinstance(cached, list):
         return _ensure_required_catalogs(project, graph, cached)
@@ -610,10 +661,11 @@ async def _plan_catalogs(project, graph: DependencyGraph, llm: LLMClient, langua
     prompt = (
         "你是 Qoder Repo Wiki 的目录规划器。请根据代码库生成适合人和 Agent 阅读的 Wiki 目录。\n"
         "要求：\n"
-        "- 生成 24 到 48 个目录项，不要停留在顶层概览；要覆盖主要模块和功能入口。\n"
+        "- 生成 32 到 64 个目录项，不要停留在顶层概览；要覆盖主要模块、运行链路、功能入口和关键扩展点。\n"
         "- 可以有 6 到 12 个顶层目录，其余作为子页面挂在父目录下。\n"
         "- 目录要按产品/架构/运行链路/配置/接口/故障排除等主题拆分。\n"
         "- 大模块和功能点都可以有 parent 字段，允许形成 2 到 4 层嵌套目录，例如：核心模块规格 / 知识库后端引擎总览 / 知识索引与向量写入。\n"
+        "- 不要把每个源码文件机械镜像成一页；每页应该围绕一个可修改的功能点或运行机制。\n"
         "- 每个目录项必须给出 dependent_files，尽量精确到文件或目录。\n"
         "- 每个 prompt 要像写作任务书，明确要解释哪些机制、流程图、代码示例和排障内容。\n"
         "- 标题用中文，避免 00-、01- 这类编号命名。\n\n"
@@ -693,12 +745,211 @@ def _source_lines(file: FileInfo, max_chars: int = 14_000) -> str:
     return "\n".join(numbered)
 
 
-def _select_catalog_files(catalog: dict, project, graph: DependencyGraph, limit: int = 9) -> list[FileInfo]:
+def _strip_trailing_whitespace(text: str) -> str:
+    return "\n".join(line.rstrip() for line in text.splitlines()).strip() + "\n"
+
+
+def _catalog_query(catalog: dict) -> str:
+    return " ".join([
+        str(catalog.get("name", "")),
+        str(catalog.get("description", "")),
+        str(catalog.get("prompt", "")),
+        " ".join(str(item) for item in catalog.get("dependent_files", []) if str(item).strip()),
+    ]).lower()
+
+
+def _catalog_context_file_limit(catalog: dict) -> int:
+    try:
+        configured = int(os.getenv("TECH_CC_HUB_REPOWIKI_CONTEXT_FILES", "0"))
+    except ValueError:
+        configured = 0
+    if configured > 0:
+        return max(8, min(24, configured))
+    query = _catalog_query(catalog)
+    if re.search(r"mcp|knowledge|repowiki|runner|electron|ipc|database|sqlite|vector|embedding|索引|知识|工具|会话", query, re.I):
+        return 18
+    if re.search(r"ui|panel|settings|git|task|cron|agent|browser|plugin|skill|前端|任务|插件", query, re.I):
+        return 16
+    return 14
+
+
+def _tokenize_query(value: str) -> list[str]:
+    stop_words = {
+        "src", "electron", "libs", "components", "settings", "system", "topic", "ui", "ts", "shared",
+        "说明", "围绕", "必须", "解释", "项目", "核心", "模块", "系统", "工具", "总览", "实现", "入口",
+        "文件", "代码", "新增", "方式", "链路",
+    }
+    return [
+        token
+        for token in re.split(r"[^a-z0-9\u4e00-\u9fa5]+", value.lower())
+        if len(token) >= 2 and token not in stop_words
+    ]
+
+
+def _topical_support_paths(query: str, files_by_path: dict[str, FileInfo]) -> list[str]:
+    support_groups: list[tuple[str, list[str]]] = [
+        ("mcp", [
+            "src/shared/builtin-mcp-registry.ts",
+            "src/electron/libs/builtin-mcp-servers.ts",
+            "src/electron/libs/mcp-tools/knowledge.ts",
+            "src/electron/libs/mcp-tools/plan.ts",
+            "src/electron/libs/mcp-tools/cron.ts",
+            "src/electron/libs/mcp-tools/browser.ts",
+            "src/electron/libs/mcp-tools/admin.ts",
+            "src/electron/libs/mcp-tools/tool-result.ts",
+            "src/electron/libs/runner.ts",
+            "src/electron/libs/runner-reuse.ts",
+            "src/electron/libs/system-prompt-presets.ts",
+            "src/ui/components/settings/McpSettingsPage.tsx",
+            "test/electron/builtin-mcp-registry.test.ts",
+        ]),
+        ("knowledge|repowiki|知识", [
+            "src/electron/libs/knowledge/",
+            "src/electron/libs/mcp-tools/knowledge.ts",
+            "src/electron/libs/runner.ts",
+            "src/ui/components/KnowledgePanel.tsx",
+            "scripts/knowledge/run-repowiki.py",
+            "scripts/qa/knowledge-engine-smoke.mjs",
+            "scripts/qa/knowledge-chat-injection-smoke.mjs",
+        ]),
+        ("runner|会话|agent", [
+            "src/electron/libs/runner.ts",
+            "src/electron/libs/runner-reuse.ts",
+            "src/electron/main.ts",
+            "src/electron/preload.cts",
+            "src/electron/libs/system-prompt-presets.ts",
+        ]),
+        ("git", [
+            "src/electron/libs/git/",
+            "src/ui/components/git/",
+            "src/electron/libs/mcp-tools/git.ts",
+        ]),
+        ("task|cron|任务|调度", [
+            "src/electron/libs/cron.ts",
+            "src/electron/libs/task/",
+            "src/ui/components/TaskPanel.tsx",
+            "src/electron/libs/mcp-tools/cron.ts",
+        ]),
+        ("settings|设置", [
+            "src/ui/components/settings/",
+            "src/electron/libs/app-settings.ts",
+            "src/electron/main.ts",
+        ]),
+    ]
+    paths: list[str] = []
+    has_specific_topic = bool(re.search(r"mcp|knowledge|repowiki|runner|git|task|cron|知识|任务|调度", query, re.I))
+    for pattern, candidates in support_groups:
+        if pattern == "settings|设置" and has_specific_topic:
+            continue
+        if not re.search(pattern, query, re.I):
+            continue
+        for candidate in candidates:
+            normalized = candidate.strip("/")
+            if normalized in files_by_path:
+                paths.append(normalized)
+                continue
+            prefix = normalized.rstrip("/") + "/"
+            paths.extend(path for path in files_by_path if path.startswith(prefix))
+    return paths
+
+
+def _graph_neighbor_paths(graph: DependencyGraph, path: str, *, per_direction_limit: int = 5) -> list[str]:
+    nx_graph = getattr(graph, "graph", None)
+    if nx_graph is None or path not in nx_graph:
+        return []
+    neighbors: list[str] = []
+    for direction in ("successors", "predecessors"):
+        try:
+            iterator = getattr(nx_graph, direction)(path)
+            neighbors.extend(str(item) for item in list(iterator)[:per_direction_limit])
+        except Exception:
+            continue
+    return neighbors
+
+
+def _same_directory_companions(
+    file: FileInfo,
+    files_by_path: dict[str, FileInfo],
+    rank_lookup: dict[str, float],
+    tokens: list[str],
+    *,
+    limit: int = 5,
+) -> list[FileInfo]:
+    parent = str(Path(file.path.replace("\\", "/")).parent)
+    if parent in {".", ""}:
+        return []
+    candidates = [
+        item
+        for path, item in files_by_path.items()
+        if path != file.path and str(Path(path).parent) == parent
+    ]
+    if not candidates:
+        return []
+
+    def score(candidate: FileInfo) -> float:
+        path = candidate.path.replace("\\", "/").lower()
+        stem = Path(path).stem.lower()
+        haystack = " ".join([
+            path,
+            " ".join(candidate.symbols[:24]),
+            " ".join(candidate.signals[:24]),
+            " ".join(candidate.exports[:12]),
+        ]).lower()
+        value = _rank_file(candidate, rank_lookup)
+        relevant = False
+        if stem in {"index", "types", "constants", "config", "registry", "server", "tools", "store", "repository", "engine"}:
+            value += 90
+            relevant = True
+        if path.endswith((".test.ts", ".spec.ts", ".test.tsx", ".spec.tsx")) or "/test/" in path:
+            value += 30
+            relevant = True
+        for token in tokens:
+            if token in haystack:
+                value += 80
+                relevant = True
+        if not relevant:
+            return -1_000_000
+        return value
+
+    ranked = [candidate for candidate in sorted(candidates, key=score, reverse=True) if score(candidate) > -1_000_000]
+    return ranked[:limit]
+
+
+def _match_score(file: FileInfo, rank_lookup: dict[str, float], tokens: list[str]) -> float:
+    haystack = " ".join([
+        file.path,
+        file.language,
+        " ".join(file.symbols[:30]),
+        " ".join(file.signals[:30]),
+        " ".join(file.exports[:20]),
+    ]).lower()
+    score = _rank_file(file, rank_lookup)
+    for token in tokens:
+        if token and token in haystack:
+            score += 110
+    return score
+
+
+def _file_has_token_match(file: FileInfo, tokens: list[str]) -> bool:
+    haystack = " ".join([
+        file.path,
+        file.language,
+        " ".join(file.symbols[:30]),
+        " ".join(file.signals[:30]),
+        " ".join(file.exports[:20]),
+    ]).lower()
+    return any(token in haystack for token in tokens)
+
+
+def _select_catalog_files(catalog: dict, project, graph: DependencyGraph, limit: int | None = None) -> list[FileInfo]:
+    context_limit = limit or _catalog_context_file_limit(catalog)
     rank_lookup = _file_rank_lookup(graph)
     candidate_files = [file for file in project.files if _is_documentable_file(file)]
     files_by_path = {file.path.replace("\\", "/"): file for file in candidate_files}
     selected: list[FileInfo] = []
     seen: set[str] = set()
+    query = _catalog_query(catalog)
+    tokens = _tokenize_query(query)
 
     def add(file: FileInfo) -> None:
         if file.path in seen:
@@ -706,7 +957,14 @@ def _select_catalog_files(catalog: dict, project, graph: DependencyGraph, limit:
         seen.add(file.path)
         selected.append(file)
 
+    def add_path(path: str) -> None:
+        normalized = path.replace("\\", "/").strip("/")
+        file = files_by_path.get(normalized)
+        if file:
+            add(file)
+
     dependent = [str(item).replace("\\", "/").strip() for item in catalog.get("dependent_files", []) if str(item).strip()]
+    per_dependent_limit = max(3, min(7, context_limit // max(1, len(dependent)) + 2))
     for dep in dependent:
         normalized = dep.strip("/")
         if normalized in files_by_path:
@@ -714,37 +972,67 @@ def _select_catalog_files(catalog: dict, project, graph: DependencyGraph, limit:
             continue
         prefix = normalized.rstrip("/") + "/"
         matches = [file for path, file in files_by_path.items() if path.startswith(prefix)]
-        for file in sorted(matches, key=lambda item: _rank_file(item, rank_lookup), reverse=True)[: max(2, limit // max(1, len(dependent)))]:
+        for file in sorted(matches, key=lambda item: _match_score(item, rank_lookup, tokens), reverse=True)[:per_dependent_limit]:
             add(file)
 
-    if len(selected) < limit:
-        query = " ".join([
-            str(catalog.get("name", "")),
-            str(catalog.get("description", "")),
-            str(catalog.get("prompt", "")),
-        ]).lower()
-        tokens = [token for token in re.split(r"[^a-z0-9\u4e00-\u9fa5]+", query) if len(token) >= 2]
+    for path in _topical_support_paths(query, files_by_path):
+        if len(selected) >= context_limit:
+            break
+        add_path(path)
 
-        def match_score(file: FileInfo) -> float:
-            haystack = " ".join([
-                file.path,
-                file.language,
-                " ".join(file.symbols[:20]),
-                " ".join(file.signals[:20]),
-            ]).lower()
-            score = _rank_file(file, rank_lookup)
-            for token in tokens:
-                if token and token in haystack:
-                    score += 100
-            return score
-
-        for file in sorted(candidate_files, key=match_score, reverse=True):
-            if len(selected) >= limit:
+    seeds = list(selected)
+    for file in seeds[: max(6, context_limit // 2)]:
+        if len(selected) >= context_limit:
+            break
+        for path in _graph_neighbor_paths(graph, file.path.replace("\\", "/")):
+            if len(selected) >= context_limit:
                 break
-            if match_score(file) <= 0 and selected:
+            add_path(path)
+        for companion in _same_directory_companions(file, files_by_path, rank_lookup, tokens):
+            if len(selected) >= context_limit:
+                break
+            add(companion)
+
+    if len(selected) < context_limit:
+        for file in sorted(candidate_files, key=lambda item: _match_score(item, rank_lookup, tokens), reverse=True):
+            if len(selected) >= context_limit:
+                break
+            score = _match_score(file, rank_lookup, tokens)
+            if selected and (score <= 0 or not _file_has_token_match(file, tokens)):
                 continue
             add(file)
-    return selected[:limit]
+    return selected[:context_limit]
+
+
+def _format_evidence_map(files: list[FileInfo], graph: DependencyGraph) -> str:
+    nx_graph = getattr(graph, "graph", None)
+    lines: list[str] = []
+    for index, file in enumerate(files, 1):
+        path = file.path.replace("\\", "/")
+        successors: list[str] = []
+        predecessors: list[str] = []
+        if nx_graph is not None and path in nx_graph:
+            try:
+                successors = [str(item) for item in list(nx_graph.successors(path))[:8]]
+            except Exception:
+                successors = []
+            try:
+                predecessors = [str(item) for item in list(nx_graph.predecessors(path))[:8]]
+            except Exception:
+                predecessors = []
+        lines.append(f"{index}. {path}")
+        lines.append(f"   - language/lines: {file.language} / {file.lines}")
+        if file.symbols:
+            lines.append(f"   - symbols: {', '.join(file.symbols[:18])}")
+        if file.exports:
+            lines.append(f"   - exports: {', '.join(file.exports[:12])}")
+        if file.signals:
+            lines.append(f"   - runtime signals: {', '.join(file.signals[:12])}")
+        if successors:
+            lines.append(f"   - imports resolved: {', '.join(successors)}")
+        if predecessors:
+            lines.append(f"   - imported by: {', '.join(predecessors)}")
+    return "\n".join(lines)
 
 
 async def _generate_catalog_page(
@@ -761,20 +1049,24 @@ async def _generate_catalog_page(
         for file in files
     ))
     prompt_hash = _hash_text(json.dumps(catalog, ensure_ascii=False, sort_keys=True))
-    cache_key = f"qoder-page:v3:{llm.model}:{language}:{prompt_hash}:{source_hash}"
+    cache_key = f"qoder-page:v5:{llm.model}:{language}:{prompt_hash}:{source_hash}"
     cached = await cache.get(cache_key) if cache else None
     if isinstance(cached, dict) and isinstance(cached.get("page"), str):
         return str(cached["page"])
 
     cite_lines = "\n".join(f"- {_format_source_link(file.path)}" for file in files)
+    evidence_map = _format_evidence_map(files, graph)
     code_context_parts = []
-    for file in files:
+    for index, file in enumerate(files):
+        max_chars = 12_000 if index < 6 else 7_000
         code_context_parts.append(
             f"## {file.path}\n"
             f"- language: {file.language}\n"
             f"- lines: {file.lines}\n"
             f"- symbols: {', '.join(file.symbols[:20])}\n"
-            f"```text\n{_source_lines(file)}\n```"
+            f"- exports: {', '.join(file.exports[:12])}\n"
+            f"- runtime signals: {', '.join(file.signals[:12])}\n"
+            f"```text\n{_source_lines(file, max_chars=max_chars)}\n```"
         )
     code_context = "\n\n".join(code_context_parts)
     prompt = f"""
@@ -797,11 +1089,19 @@ async def _generate_catalog_page(
 6. 关键结论后面要写“章节来源”或“图表来源”，用 `file://path#Lx-Ly` 形式引用来源行。
 7. 需要给出实际用法、参数、状态流或排障步骤时，直接列出来。
 8. 不要输出 JSON，不要解释你在做什么，只输出 Markdown。
-9. 篇幅目标 300 到 650 行，宁愿少而准，不要复制整段源码。
+9. 必须包含 “Agent 改代码地图” 小节，至少写清：先读文件、关键符号/IPC/MCP工具/表结构、修改入口、验证命令、常见回归风险。
+10. 如果主题涉及 MCP、IPC、Runner、知识库、数据库、模型或 UI 状态，必须说明 source-of-truth、运行时刷新/重启边界、前后端桥接点和测试入口。
+11. 必须从“代码证据地图”里抽取具体符号名、函数名、tool 名、IPC channel、表名或组件名，不要只写文件名。
+12. 篇幅目标 350 到 750 行，宁愿少而准，不要复制整段源码。
 
 项目文件树：
 ```text
 {project.file_tree[:16000]}
+```
+
+代码证据地图：
+```text
+{evidence_map}
 ```
 
 参考代码：
@@ -821,6 +1121,7 @@ async def _generate_catalog_page(
     cleaned = re.sub(r"\s*```$", "", cleaned)
     if not cleaned.startswith("#"):
         cleaned = f"# {catalog.get('name')}\n\n{cleaned}"
+    cleaned = _strip_trailing_whitespace(cleaned)
     if cache:
         await cache.put(cache_key, {
             "page": cleaned,

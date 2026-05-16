@@ -1,0 +1,24 @@
+{
+  "id": "应用运行时配置总览-包含主进程配置和构建配置",
+  "name": "应用运行时",
+  "title": "应用运行时",
+  "slug": "应用运行时/应用运行时",
+  "path": "应用运行时/应用运行时.md",
+  "description": "应用运行时配置总览，包含主进程配置和构建配置",
+  "prompt": "编写应用运行时配置总览页面，需要：1)列出运行时相关的配置文件；2)说明配置的组织方式（环境变量、配置文件、运行时参数）；3)提供到各配置文件详细说明的链接。",
+  "dependent_files": [
+    "src/electron/main.ts",
+    "vite.config.ts",
+    "package.json"
+  ],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "应用运行时",
+  "layer_level": 0,
+  "order": 14,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "f88d97c20705e1f51ada004eff07299419ce48022cea1c7859c5c52709eb2ae2",
+  "generated_at": 1778928162406
+}

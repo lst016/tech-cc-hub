@@ -16,16 +16,16 @@
     "src/shared/model-provider-routing.ts",
     "src/shared/plan-progress.ts"
   ],
-  "parent_id": "core-module-specs",
+  "parent_id": "核心模块规格总览-提供模块索引",
   "parent": "核心模块规格",
   "parent_chain": [
     "核心模块规格"
   ],
   "section_path": "核心模块规格",
   "layer_level": 1,
-  "order": 58,
+  "order": 39,
   "status": "completed",
   "page_type": "topic",
-  "content_hash": "9ebcebf046084ae306ed465c1034c96414add62f0692dda48b5d555b3144202e",
-  "generated_at": 1778922186535
+  "content_hash": "469cff2972fab18e0d13b80ade3f5a37fcdf8b8b4573346111a1e72f0f94e88f",
+  "generated_at": 1778928162406
 }

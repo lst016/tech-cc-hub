@@ -9,16 +9,16 @@
   "dependent_files": [
     "src/ui/components/KnowledgePanel.tsx"
   ],
-  "parent_id": "core-module-specs",
+  "parent_id": "核心模块规格总览-提供模块索引",
   "parent": "核心模块规格",
   "parent_chain": [
     "核心模块规格"
   ],
   "section_path": "核心模块规格/知识库前端交互总览",
   "layer_level": 1,
-  "order": 49,
+  "order": 30,
   "status": "completed",
   "page_type": "topic",
-  "content_hash": "c90c86234e5e915e89ba9e3517b2f12caff3e6020bb745c365c3d72879c324a3",
-  "generated_at": 1778922186535
+  "content_hash": "80ec52490fa7f2552dfe08b1c0ec46bd0872bf950d9fbf538c4a3ccd1e465cb2",
+  "generated_at": 1778928162406
 }

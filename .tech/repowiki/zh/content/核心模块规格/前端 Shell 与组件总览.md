@@ -1,14 +1,5 @@
 # 前端 Shell 与组件总览
 
-> **module**: `module-ui-shell`
-> **适用版本**: tech-cc-hub 当前分支
-> **维护者**: 前端团队
-> **最后更新**: 2025-01
-
-本文档描述 `tech-cc-hub` 前端 Shell 的职责划分、入口文件、调用链、数据结构和扩展点。文档面向三类读者：新加入项目的开发者、需要修改 UI 层的行为溯源的 QA、以及负责维护 Electron 桥接的客户端工程师。
-
----
-
 <cite>
 **本文引用的文件**
 - [src/ui/App.tsx](file://src/ui/App.tsx)
@@ -19,293 +10,333 @@
 - [src/ui/components/AionWorkspacePreviewPane.tsx](file://src/ui/components/AionWorkspacePreviewPane.tsx)
 - [src/ui/components/BrowserWorkbenchPage.tsx](file://src/ui/components/BrowserWorkbenchPage.tsx)
 - [src/ui/components/ComposerContextCard.tsx](file://src/ui/components/ComposerContextCard.tsx)
-- [src/electron/main.ts](file://src/electron/main.ts)
+- [src/ui/hooks/useIPC.ts](file://src/ui/hooks/useIPC.ts)
+- [src/ui/hooks/useMessageWindow.ts](file://src/ui/hooks/useMessageWindow.ts)
+- [src/ui/store/useAppStore.ts](file://src/ui/store/useAppStore.ts)
+- [src/ui/types.ts](file://src/ui/types.ts)
+- [src/ui/components/Sidebar.tsx](file://src/ui/components/Sidebar.tsx)
+- [src/ui/main.tsx](file://src/ui/main.tsx)
+- [src/ui/index.css](file://src/ui/index.css)
+- [src/ui/components/git/index.ts](file://src/ui/components/git/index.ts)
 </cite>
 
 ---
 
 ## 目录
 
-- [1. 架构概览](#1-架构概览)
-- [2. 入口文件与根组件](#2-入口文件与根组件)
-- [3. Shell 布局组件](#3-shell-布局组件)
-- [4. 活动轨道（Activity Rail）](#4-活动轨道activity-rail)
-- [5. 工作空间预览窗格](#5-工作空间预览窗格)
-- [6. 浏览器工作台页面](#6-浏览器工作台页面)
-- [7. 上下文卡片](#7-上下文卡片)
-- [8. Electron IPC 集成](#8-electron-ipc-集成)
-- [9. 主题与样式体系](#9-主题与样式体系)
-- [10. 常见改造路径](#10-常见改造路径)
-- [11. 排障速查](#11-排障速查)
+- [1. 模块定位与职责边界](#1-模块定位与职责边界)
+- [2. 入口文件与启动链路](#2-入口文件与启动链路)
+- [3. 核心组件协作图](#3-核心组件协作图)
+- [4. 状态管理层（Zustand Store）](#4-状态管理层zustand-store)
+- [5. IPC 通信桥接](#5-ipc-通信桥接)
+- [6. 消息窗口与历史分页](#6-消息窗口与历史分页)
+- [7. 工作区预览面板](#7-工作区预览面板)
+- [8. 浏览器工作台](#8-浏览器工作台)
+- [9. ActivityRail 时序轴](#9-activityrail-时序轴)
+- [10. 扩展点与常见改造路径](#10-扩展点与常见改造路径)
+- [11. Agent 改代码地图](#11-agent-改代码地图)
+- [12. 验证与排障命令](#12-验证与排障命令)
 
 ---
 
-## 1. 架构概览
+## 1. 模块定位与职责边界
 
-`tech-cc-hub` 的前端是一个 **React + TypeScript + Tailwind CSS** 单页应用，运行在 Electron 渲染进程中。它通过 IPC 与主进程通信，并支持三种运行模式：Electron IPC 模式、Dev Bridge 模式（浏览器连接本地后端）和纯浏览器占位模式。
+`module-ui-shell` 是 tech-cc-hub 的前端呈现层，负责：
 
-前端模块可划分为四个层次：
+1. **会话管理 UI**：侧边栏会话列表、新建/归档/删除会话
+2. **消息渲染**：流式消息卡片、过程折叠组（`ProcessGroupCard`）
+3. **ActivityRail**：执行时序轴、上下文用量面板、计划进度面板
+4. **工作区预览**：Monaco 编辑器集成、文件系统浏览器
+5. **浏览器工作台**：本地开发服务器探测、截图标注
+6. **IPC 桥接**：Electron 主进程通信、WebSocket 事件订阅
 
-```
-┌─────────────────────────────────────────────────┐
-│  Shell 层   │ App.tsx（根组件）                  │
-│             │ - 三栏布局（Sidebar / Center / Rail）│
-│             │ - 模态框挂载点                      │
-├─────────────┼───────────────────────────────────┤
-│  功能组件层 │ ActivityRail / BrowserWorkbenchPage │
-│             │ SessionAnalysisPage / SettingsModal │
-├─────────────┼───────────────────────────────────┤
-│  子系统组件 │ AionWorkspacePreviewPane /          │
-│             │ ComposerContextCard /              │
-│             │ ActivityWorkspaceTabs              │
-├─────────────┼───────────────────────────────────┤
-│  基础支撑层 │ useAppStore / useIPC /              │
-│             │ events.ts / dev-electron-shim.ts   │
-└─────────────┴───────────────────────────────────┘
-```
-
-图表来源：[src/ui/App.tsx#L326-L355](file://src/ui/App.tsx#L326-L355)
+该模块不包含 Agent 执行逻辑，仅负责状态展示和用户交互代理。
 
 ---
 
-## 2. 入口文件与根组件
+## 2. 入口文件与启动链路
 
-### 2.1 App.tsx（根组件）
-
-`App` 是整个前端应用的根组件，负责：
-
-1. **会话管理**：通过 `useAppStore` 访问 `sessions`、`sessionsById`、`activeSessionId` 等状态
-2. **三栏布局**：Sidebar（会话列表）、Center（消息流+输入框）、Activity Rail（活动详情）均可独立开关
-3. **消息流渲染**：`RenderEntry` 类型决定消息以何种形态展示（普通消息、工具调用组、分割线）
-4. **权限请求处理**：`permissionRequests` 状态驱动 `ProcessGroupCard` 中的权限确认按钮
-
-根组件中的关键状态初始化（第 338-370 行）：
-
-```typescript
-const [workspaceViewBySessionId, setWorkspaceViewBySessionId] = useState<Record<string, WorkspaceView>>({});
-const [activityRailTabBySessionId, setActivityRailTabBySessionId] = useState<Record<string, ActivityRailTab>>({});
-const [sidebarWidth, setSidebarWidth] = useState(320);
-const [activityRailWidth, setActivityRailWidth] = useState(420);
+```
+main.tsx (bootstrap)
+  └─> App.tsx (根组件)
+        ├─> Sidebar.tsx         ← 会话列表侧边栏
+        ├─> ActivityRail.tsx    ← 右侧时序轴面板
+        ├─> BrowserWorkbenchPage.tsx ← 浏览器标签页
+        ├─> useIPC()            ← IPC 事件订阅
+        └─> useMessageWindow() ← 消息窗口分页
 ```
 
-章节来源：[src/ui/App.tsx#L327-L372](file://src/ui/App.tsx#L327-L372)
+**关键符号**（来源：[src/ui/main.tsx#L5](file://src/ui/main.tsx#L5)）：
 
-### 2.2 三种运行模式指示器
-
-根组件根据 `getDevElectronRuntimeSource()` 的返回值展示不同的运行模式徽章（第 306-325 行）：
-
-| 模式 | 来源 | 样式类 |
-|------|------|--------|
-| `electron` | 连接桌面端 preload IPC | `border-sky-500/20 bg-sky-50` |
-| `bridge` | localhost 连接开发后端 | `border-emerald-500/20 bg-emerald-50` |
-| `fallback` | 纯浏览器占位 | `border-amber-500/24 bg-amber-50` |
-
-章节来源：[src/ui/App.tsx#L306-L325](file://src/ui/App.tsx#L306-L325)
-
----
-
-## 3. Shell 布局组件
-
-### 3.1 三栏布局尺寸约束
-
-布局使用固定最小宽度约束防止组件压缩变形：
-
-```typescript
-const MIN_CENTER_WIDTH = 300;
-const MIN_SIDEBAR_WIDTH = 250;
-const MIN_ACTIVITY_RAIL_WIDTH = 400;
-```
-
-这些常量定义在文件顶部，驱动拖拽调整逻辑。
-
-章节来源：[src/ui/App.tsx#L38-L40](file://src/ui/App.tsx#L38-L40)
-
-### 3.2 主要导入组件
-
-根组件导入了以下 Shell 组件：
-
-| 组件 | 来源 | 职责 |
+| 符号 | 位置 | 职责 |
 |------|------|------|
-| `Sidebar` | `./components/Sidebar` | 会话列表、搜索、归档 |
-| `StartSessionModal` | `./components/StartSessionModal` | 新建会话引导 |
-| `SettingsModal` | `./components/SettingsModal` | 设置页面 |
-| `ActivityRail` | `./components/ActivityRail` | 活动时间线与上下文分析 |
-| `BrowserWorkbenchPage` | `./components/BrowserWorkbenchPage` | 浏览器预览 |
-| `SessionAnalysisPage` | `./components/SessionAnalysisPage` | 会话分析 |
-| `PromptInput` | `./components/PromptInput` | 消息输入框 |
+| `bootstrap()` | main.tsx:5 | 异步初始化函数，开发模式加载 `dev-electron-shim` |
+| `App` | App.tsx:326 | 根组件，整合所有子模块 |
+| `MIN_SIDEBAR_WIDTH` | App.tsx:39 | 侧边栏最小宽度 250px |
+| `MIN_ACTIVITY_RAIL_WIDTH` | App.tsx:40 | ActivityRail 最小宽度 400px |
 
-章节来源：[src/ui/App.tsx#L10-L24](file://src/ui/App.tsx#L10-L24)
-
----
-
-## 4. 活动轨道（Activity Rail）
-
-### 4.1 ActivityRail 组件职责
-
-`ActivityRail` 是右侧栏的核心组件，负责展示会话执行过程中的结构化活动。组件接收 `buildActivityRailModel` 的输出，后者由 `shared/activity-rail-model` 提供。
-
-核心数据结构 `ActivityTimelineItem` 包含：
-
-- `id`: 唯一标识
-- `nodeKind`: 节点类型（`context`、`plan`、`tool_input`、`file_read`、`file_write`、`terminal`、`browser` 等）
-- `stageKind`: 所属阶段（`inspect`、`implement`、`verify`、`deliver`）
-- `tone`: 色调（`info`、`success`、`warning`、`error`）
-- `title` / `preview` / `detail`: 三级文本展示
-- `chips`: 标签数组，用于搜索过滤
-
-章节来源：[src/ui/components/ActivityRail.tsx#L24-L44](file://src/ui/components/ActivityRail.tsx#L24-L44)
-
-### 4.2 阶段分组渲染
-
-时间线按 `stageKind` 分组，相邻同阶段项合并显示，辅助用户理解当前执行进度：
-
-```typescript
-const STAGE_ORDER = ["inspect", "implement", "verify", "deliver"] as const;
-// 非 STAGE_ORDER 中的阶段以 opacity-60 淡化显示
-```
-
-章节来源：[src/ui/components/ActivityRail.tsx#L46-L54](file://src/ui/components/ActivityRail.tsx#L46-L54)
-
-### 4.3 上下文用量面板
-
-`ContextUsagePanel` 子组件展示 Prompt 令牌分布，按来源分类（system、project、skill、workflow、current、attachment、memory、history、tool）。
-
-关键指标计算逻辑（第 401-411 行）：
-
-- `windowTokens`: 上下文窗口总量（默认 200,000）
-- `autoCompactTokens`: 触发压缩的阈值令牌数
-- `draftTokens`: 当前输入的令牌估算
-- `streamingTokens`: 流式消息的令牌估算
-- `toolDefinitionTokens`: 工具定义的令牌估算
-
-章节来源：[src/ui/components/ActivityRail.tsx#L384-L411](file://src/ui/components/ActivityRail.tsx#L384-L411)
-
-### 4.4 材料状态检测
-
-`buildMaterialStatusItems` 函数（第 280-358 行）通过关键词匹配检测特殊工具的使用状态：
-
-```typescript
-// 检测 Figma 相关工具
-const figmaToolNames = Array.from(new Set(
-  model.timeline
-    .map((item) => item.toolName)
-    .filter((toolName): toolName is string =>
-      typeof toolName === "string" && /figma/i.test(toolName)
-    )
-));
-
-// 检测 nodeId / fileKey 锚点字段
-const anchorFieldNames = ["nodeId", "nodeIds", "fileKey", "fileKeyOrUrl", "node_anchor"];
-
-// 检测对比结果字段
-const compareFieldNames = ["compare_current_view", "compare_images", "differenceRatio"];
-```
-
-章节来源：[src/ui/components/ActivityRail.tsx#L291-L312](file://src/ui/components/ActivityRail.tsx#L291-L312)
+启动时序：
+1. `bootstrap()` 检测 `import.meta.env.DEV`，加载 `dev-electron-shim`
+2. `createRoot(document.getElementById('root')!)` 挂载 React 树
+3. `App` 组件初始化 Zustand store、IPC 订阅、消息窗口状态
 
 ---
 
-## 5. 工作空间预览窗格
+## 3. 核心组件协作图
 
-### 5.1 AionWorkspacePreviewPane 组件职责
+```mermaid
+flowchart TD
+    subgraph 入口层
+        M[main.tsx bootstrap]
+        A[App.tsx 根组件]
+    end
 
-`AionWorkspacePreviewPane` 是工作空间文件浏览与代码预览的核心组件，内嵌 Monaco Editor。它由三个子区域组成：
+    subgraph 状态层
+        S[useAppStore Zustand]
+        T[types.ts 类型定义]
+    end
 
+    subgraph UI层
+        SB[Sidebar.tsx]
+        AR[ActivityRail.tsx]
+        BP[BrowserWorkbenchPage.tsx]
+        PV[AionWorkspacePreviewPane.tsx]
+    end
+
+    subgraph Hooks层
+        IPC[useIPC.ts]
+        MW[useMessageWindow.ts]
+    end
+
+    subgraph 外部通信
+        EP[Electron Preload IPC]
+        SE[ServerEvent Stream]
+    end
+
+    M --> A
+    A --> S
+    A --> IPC
+    A --> MW
+    IPC --> EP
+    MW --> S
+    S --> SB
+    S --> AR
+    S --> BP
+    S --> PV
+    EP --> SE
+
+    style M fill:#e1f5fe
+    style S fill:#f3e5f5
+    style EP fill:#fff3e0
 ```
-┌──────────────────────┬────────────────────────────────────┐
-│  NativeExplorer      │  PreviewSurface (Monaco Editor)    │
-│  文件树侧边栏         │  代码/HTML/图片渲染                 │
-│  - 目录加载缓存       │  - 语法高亮                         │
-│  - 搜索过滤           │  - 代码引用高亮                     │
-│  - 定位当前文件        │  - QuickOpenPalette                │
-└──────────────────────┴────────────────────────────────────┘
-```
 
-章节来源：[src/ui/components/AionWorkspacePreviewPane.tsx#L176-L429](file://src/ui/components/AionWorkspacePreviewPane.tsx#L176-L429)
+**协作说明**：
 
-### 5.2 目录加载与缓存策略
+- `App` 通过 `useAppStore` 读取/写入全局状态（会话列表、活跃会话、浏览器工作台状态）
+- `useIPC` 订阅 `window.electron.onServerEvent`，将 `ServerEvent` 派发给 `App.handleServerEvent`
+- `useMessageWindow` 管理消息窗口的虚拟滚动，支持历史分页加载
 
-目录状态存储在组件 state 中，并通过 ref 保持最新引用：
+---
+
+## 4. 状态管理层（Zustand Store）
+
+**核心文件**：[src/ui/store/useAppStore.ts](file://src/ui/store/useAppStore.ts)
+
+### 4.1 主要状态切片
 
 ```typescript
-const directoryCacheRef = useRef(directoryCache);
-useEffect(() => {
-  directoryCacheRef.current = directoryCache;
-}, [directoryCache]);
-```
-
-缓存键为目录路径，支持增量展开。首次加载根目录时使用 `queueMicrotask` 避免阻塞渲染。
-
-章节来源：[src/ui/components/AionWorkspacePreviewPane.tsx#L186-L263](file://src/ui/components/AionWorkspacePreviewPane.tsx#L186-L263)
-
-### 5.3 内容类型推断
-
-`inferContentType` 函数（第 142-150 行）根据文件扩展名和内容判断预览类型：
-
-```typescript
-function inferContentType(filePath: string, content?: string): PreviewContentType {
-  if (content?.startsWith('data:image/')) return 'image';
-  const extension = getFileExtension(filePath);
-  if (extension === 'html' || extension === 'htm') {
-    if (isRuntimeHtmlShell(content)) return 'code'; // 运行时 HTML 不走 iframe
-    return 'html';
-  }
-  return 'code';
+interface AppState {
+  sessions: Record<string, SessionView>;           // 会话映射表
+  archivedSessions: Record<string, SessionView>;   // 归档会话
+  activeSessionId: string | null;                 // 当前活跃会话
+  browserWorkbenchBySessionId: Record<string, BrowserWorkbenchSessionState>;
+  codeReferencesBySessionId: Record<string, CodeReferenceDraft[]>;
+  messageReferencesBySessionId: Record<string, MessageReferenceDraft[]>;
+  fileReferencesBySessionId: Record<string, FileReferenceDraft[]>;
+  apiConfigSettings: ApiConfigSettings;            // 模型配置
+  runtimeModel: string;                            // 当前模型
+  reasoningMode: RuntimeReasoningMode;             // 推理模式
+  permissionMode: RuntimePermissionMode;          // 权限模式
 }
 ```
 
-章节来源：[src/ui/components/AionWorkspacePreviewPane.tsx#L142-L150](file://src/ui/components/AionWorkspacePreviewPane.tsx#L142-L150)
+### 4.2 SessionView 数据结构
 
-### 5.4 Monaco Worker 配置
+来源：[useAppStore.ts#L32-L56](file://src/ui/store/useAppStore.ts#L32-L56)
 
-组件顶部配置 Monaco Worker（第 50-68 行），避免与 Vite 的 Worker 处理冲突：
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | `string` | 会话唯一 ID |
+| `title` | `string` | 会话标题 |
+| `status` | `"idle" \| "running" \| "completed" \| "error"` | 会话状态 |
+| `messages` | `StreamMessage[]` | 消息列表 |
+| `permissionRequests` | `PermissionRequest[]` | 待审批权限请求 |
+| `workflowState` | `SessionWorkflowState` | 工作流状态 |
+| `latestPlan` | `SessionPlanSnapshot` | 最新计划快照 |
+| `hasMoreHistory` | `boolean` | 是否还有历史消息 |
 
-```typescript
-monacoGlobal.MonacoEnvironment = {
-  getWorker(_: string, label: string) {
-    if (label === 'typescript' || label === 'javascript') {
-      return new Worker(
-        new URL('monaco-editor/esm/vs/language/typescript/ts.worker.js', import.meta.url),
-        { type: 'module' }
-      );
-    }
-    // css、html、json worker 配置...
-  }
-};
-```
+### 4.3 关键操作函数
 
-章节来源：[src/ui/components/AionWorkspacePreviewPane.tsx#L50-L68](file://src/ui/components/AionWorkspacePreviewPane.tsx#L50-L68)
+| 函数 | 位置 | 职责 |
+|------|------|------|
+| `createSession(id)` | useAppStore.ts:170 | 创建空会话视图 |
+| `handleServerEvent(event)` | useAppStore.ts:167 | 处理后端推送事件 |
+| `appendMessagesToSession()` | useAppStore.ts:370 | 追加流式消息 |
+| `mergeMessages()` | useAppStore.ts:271 | 合并历史消息 |
+| `trimMessagesToRecent()` | useAppStore.ts:350 | 裁剪消息至容量限制 |
+| `deriveLatestPlanSnapshot()` | useAppStore.ts:340 | 从消息中提取计划快照 |
 
-### 5.5 VS Code 风格样式
-
-CSS 文件提供完整的 VS Code 风格样式，包括：
-
-- `.aion-workbench`: 整体容器布局
-- `.native-explorer`: 文件树样式
-- `.vscode-preview`: Monaco Editor 容器样式
-- `.quick-open`: 命令面板弹窗
-- `.quick-open__item--selected`: 选中项高亮
-
-图表来源：[src/ui/components/AionWorkspacePreviewPane.css#L1-L146](file://src/ui/components/AionWorkspacePreviewPane.css#L1-L146)
+**MAX_RENDERER_HISTORY_MESSAGES**：单会话最大保留消息数（来源：[useAppStore.ts#L238](file://src/ui/store/useAppStore.ts#L238)）
 
 ---
 
-## 6. 浏览器工作台页面
+## 5. IPC 通信桥接
 
-### 6.1 BrowserWorkbenchPage 组件职责
+**核心文件**：[src/ui/hooks/useIPC.ts](file://src/ui/hooks/useIPC.ts)
 
-`BrowserWorkbenchPage` 封装本地浏览器预览功能，支持：
+### 5.1 通信架构
 
-- 内嵌 iframe 预览本地开发服务器页面
-- 截图捕获并作为附件添加到上下文
-- 本地开发服务器检测（探测 localhost 常用端口）
-- URL 归一化与开发模式标记
+```typescript
+// useIPC.ts 核心逻辑
+export function useIPC(onEvent: (event: ServerEvent) => void) {
+  const [connected, setConnected] = useState(false);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
 
-章节来源：[src/ui/components/BrowserWorkbenchPage.tsx#L320-L329](file://src/ui/components/BrowserWorkbenchPage.tsx#L320-L329)
+  useEffect(() => {
+    const unsubscribe = window.electron.onServerEvent((event: ServerEvent) => {
+      onEvent(event);  // 转发给 App.handleServerEvent
+    });
+    unsubscribeRef.current = unsubscribe;
+    setConnected(true);
+  }, [onEvent]);
 
-### 6.2 本地目标检测
+  const sendEvent = useCallback((event: ClientEvent) => {
+    window.electron.sendClientEvent(event);  // 发往主进程
+  }, []);
 
-`probeLocalTarget` 函数使用 `fetch` 探测本地服务器可用性（第 59-74 行）：
+  return { connected, sendEvent };
+}
+```
+
+### 5.2 双向通道
+
+| 方向 | 方法 | 来源 |
+|------|------|------|
+| 服务端→渲染 | `window.electron.onServerEvent` | useIPC.ts:10 |
+| 渲染→服务端 | `window.electron.sendClientEvent` | useIPC.ts:27 |
+| RPC 调用 | `electron.invoke(channel, args)` | App.tsx:49,60 |
+
+**IPC Channel 清单**：
+
+| Channel | 调用点 | 用途 |
+|---------|--------|------|
+| `sessions:list` | App.tsx:49 | 获取会话列表 |
+| `shell:openExternal` | App.tsx:60 | 外部链接打开 |
+
+### 5.3 Source of Truth 边界
+
+- **运行时刷新**：Electron IPC 推送的 `ServerEvent` 直接写入 `useAppStore`
+- **重启边界**：渲染进程重启后，通过 `sessions:list` RPC 重新 hydrate 会话状态
+- **测试入口**：直接调用 `useAppStore.getState()` 读取当前状态快照
+
+---
+
+## 6. 消息窗口与历史分页
+
+**核心文件**：[src/ui/hooks/useMessageWindow.ts](file://src/ui/hooks/useMessageWindow.ts)
+
+### 6.1 虚拟滚动策略
+
+```typescript
+const INITIAL_VISIBLE_MESSAGE_LIMIT = 160;  // 初始可见消息数
+const LOAD_MORE_MESSAGE_STEP = 120;          // 每次加载增量
+
+// 可见窗口计算
+const windowStart = Math.max(0, messages.length - visibleLimit);
+const hasMoreLocalHistory = windowStart > 0;
+const hasMoreHistory = hasMoreLocalHistory || hasPersistedHistory;
+```
+
+### 6.2 状态返回
+
+来源：[useMessageWindow.ts#L69-L79](file://src/ui/hooks/useMessageWindow.ts#L69-L79)
+
+```typescript
+return {
+  visibleMessages,        // 当前可见消息片段
+  hasMoreHistory,         // 是否还有历史
+  isLoadingHistory,       // 是否正在加载
+  isAtBeginning,          // 是否已到最旧消息
+  loadMoreMessages(),    // 触发历史加载
+  resetToLatest(),       // 滚回最新
+  totalMessages,
+  visibleUserInputs,     // 可见的用户输入计数
+};
+```
+
+### 6.3 滚动锚定
+
+- 底部锚点类名：`.chat-bottom-anchor`（来源：[index.css#L135-L138](file://src/ui/index.css#L135-L138)）
+- 滚动容器类名：`.chat-scroll`（来源：[index.css#L127-L129](file://src/ui/index.css#L127-L129)）
+
+---
+
+## 7. 工作区预览面板
+
+**核心文件**：[src/ui/components/AionWorkspacePreviewPane.tsx](file://src/ui/components/AionWorkspacePreviewPane.tsx)
+
+### 7.1 组件层级
+
+```
+AionWorkspacePreviewPane
+  ├─ NativeExplorer     ← 文件系统树
+  │     ├─ loadDirectory()     ← 异步加载目录
+  │     └─ directoryCacheRef  ← 目录缓存
+  ├─ PreviewSurface     ← Monaco 编辑器
+  │     └─ configurePreviewMonacoDefaults()
+  └─ QuickOpenPalette   ← 快速打开文件
+```
+
+### 7.2 Monaco Worker 配置
+
+来源：[AionWorkspacePreviewPane.tsx#L47-L68](file://src/ui/components/AionWorkspacePreviewPane.tsx#L47-L68)
+
+```typescript
+const monacoGlobal = self as MonacoWorkerEnvironment;
+if (!monacoGlobal.MonacoEnvironment?.getWorker) {
+  monacoGlobal.MonacoEnvironment = {
+    getWorker(_: string, label: string) {
+      if (label === 'json') return new Worker(...json.worker.js);
+      if (label === 'css') return new Worker(...css.worker.js);
+      if (label === 'html') return new Worker(...html.worker.js);
+      if (label === 'typescript') return new Worker(...ts.worker.js);
+      return new Worker(...editor.worker.js);
+    },
+  };
+}
+```
+
+### 7.3 文件内容类型推断
+
+来源：[AionWorkspacePreviewPane.tsx#L142-L150](file://src/ui/components/AionWorkspacePreviewPane.tsx#L142-L150)
+
+| 类型 | 判断条件 | 渲染方式 |
+|------|----------|----------|
+| `image` | `data:image/*` 前缀 | `<img>` |
+| `html` | `.html/.htm` 且非运行时壳 | `<iframe>` |
+| `code` | 其他所有文件 | Monaco 编辑器 |
+
+**关键函数**：`inferContentType(filePath, content)`、`isRuntimeHtmlShell(content)`
+
+---
+
+## 8. 浏览器工作台
+
+**核心文件**：[src/ui/components/BrowserWorkbenchPage.tsx](file://src/ui/components/BrowserWorkbenchPage.tsx)
+
+### 8.1 本地服务器探测
+
+来源：[BrowserWorkbenchPage.tsx#L59-L74](file://src/ui/components/BrowserWorkbenchPage.tsx#L59-L74)
 
 ```typescript
 async function probeLocalTarget(url: string, timeoutMs = 1400): Promise<LocalTargetStatus> {
@@ -322,294 +353,224 @@ async function probeLocalTarget(url: string, timeoutMs = 1400): Promise<LocalTar
 }
 ```
 
-章节来源：[src/ui/components/BrowserWorkbenchPage.tsx#L59-L74](file://src/ui/components/BrowserWorkbenchPage.tsx#L59-L74)
+**探测端口列表**：`[3000, 4173, 5173, 8000, 8001, 8080]`
 
-### 6.3 常用开发端口
+### 8.2 截图捕获
 
-`COMMON_LOCAL_BROWSER_PORTS` 定义了自动探测的端口列表：
+来源：[BrowserWorkbenchPage.tsx#L155-L185](file://src/ui/components/BrowserWorkbenchPage.tsx#L155-L185)
 
-```typescript
-const COMMON_LOCAL_BROWSER_PORTS = [3000, 4173, 5173, 8000, 8001, 8080];
-const MAX_LOCAL_BROWSER_TARGETS = 5;
-```
-
-章节来源：[src/ui/components/BrowserWorkbenchPage.tsx#L53-L54](file://src/ui/components/BrowserWorkbenchPage.tsx#L53-L54)
-
-### 6.4 截图捕获流程
-
-`capturePreviewFrameVisible` 函数（第 155-206 行）将可见 iframe 内容转换为 PNG：
-
-1. 克隆 `iframe.contentDocument.documentElement`
-2. 移除所有 `<script>` 标签防止执行
-3. 注入 `<base>` 标签确保相对资源正确加载
-4. 注入内联样式恢复布局和滚动位置
-5. 序列化 SVG foreignObject 转为 Canvas
-6. 输出 Base64 PNG
-
-章节来源：[src/ui/components/BrowserWorkbenchPage.tsx#L155-L206](file://src/ui/components/BrowserWorkbenchPage.tsx#L155-L206)
-
-### 6.5 状态存储与恢复
-
-浏览器工作台状态按 `sessionId` 持久化到 `useAppStore.browserWorkbenchBySessionId`：
-
-```typescript
-const sessionBrowserState = useAppStore((store) =>
-  sessionId ? store.browserWorkbenchBySessionId[sessionId] : undefined
-);
-// 包括：url、title、loading、canGoBack、canGoForward、annotations
-```
-
-章节来源：[src/ui/components/BrowserWorkbenchPage.tsx#L338-L348](file://src/ui/components/BrowserWorkbenchPage.tsx#L338-L348)
+- 函数：`capturePreviewFrameVisible(frame)`
+- 输出：SVG 序列化的 data URL
+- 附件名：`browser-screenshot-{YYYYMMDDHHmmss}.png`
 
 ---
 
-## 7. 上下文卡片
+## 9. ActivityRail 时序轴
 
-### 7.1 ComposerContextCard 组件职责
+**核心文件**：[src/ui/components/ActivityRail.tsx](file://src/ui/components/ActivityRail.tsx)
 
-`ComposerContextCard` 是输入框上下文附件的可视化展示，支持四种色调：
+### 9.1 节点类型枚举
 
-| tone | 边框颜色 | 背景 | 徽章颜色 |
-|------|----------|------|----------|
-| `code` | `#d0d7de` | `#ffffff` | `#0969da` |
-| `browser` | `accent/16` | `#ffffff` | `accent` |
-| `file` | `black/8` | `#ffffff` | `accent` |
-| `message` | `accent/18` | `rgba(253,244,241,0.86)` | `accent` |
+来源：[ActivityRail.tsx#L24-L44](file://src/ui/components/ActivityRail.tsx#L24-L44)
 
-章节来源：[src/ui/components/ComposerContextCard.tsx#L26-L33](file://src/ui/components/ComposerContextCard.tsx#L26-L33)
+| nodeKind | 中文标签 | 说明 |
+|----------|----------|------|
+| `context` | 上下文 | 上下文注入事件 |
+| `plan` | AI 计划 | 计划生成事件 |
+| `assistant_output` | AI 输出 | 模型响应 |
+| `tool_input` | 工具调用 | 工具输入参数 |
+| `terminal` | 终端/校验 | 终端命令/验证 |
+| `file_read` | 读文件 | 文件读取事件 |
+| `file_write` | 写文件 | 文件写入事件 |
+| `mcp` | MCP | MCP 工具调用 |
+| `error` | 错误 | 错误事件 |
+| `permission` | 人工确认 | 权限审批 |
 
-### 7.2 Props 接口
+### 9.2 Stage 分组
+
+来源：[ActivityRail.tsx#L46-L54](file://src/ui/components/ActivityRail.tsx#L46-L54)
 
 ```typescript
-export type ComposerContextCardProps = {
-  index: number;       // 序号（1-based）
-  tone: ComposerContextTone;
-  label: string;       // 类型标签（代码、文件、页面等）
-  title: string;       // 主标题
-  meta?: string;       // 元信息（路径、大小等）
-  detail?: string;     // 详细信息（tooltip 显示）
-  onOpen?: () => void;
-  onRemove: () => void;
-  onCopy?: () => void;
+const STAGE_ORDER = ["inspect", "implement", "verify", "deliver"] as const;
+const STAGE_LABELS = {
+  inspect: "检查与理解",
+  implement: "实施与修改",
+  verify: "验证与确认",
+  deliver: "整理与输出",
 };
 ```
 
-章节来源：[src/ui/components/ComposerContextCard.tsx#L3-L13](file://src/ui/components/ComposerContextCard.tsx#L3-L13)
+### 9.3 ContextUsagePanel 数据来源
+
+来源：[ActivityRail.tsx#L383](file://src/ui/components/ActivityRail.tsx#L383)
+
+- 调用 `buildContextUsageBreakdown()` 计算用量分布
+- 调用 `buildSegmentedContextUsageCells()` 渲染 token 统计
 
 ---
 
-## 8. Electron IPC 集成
+## 10. 扩展点与常见改造路径
 
-### 8.1 主进程职责
+### 10.1 新增 ActivityRail 节点类型
 
-`src/electron/main.ts` 是 Electron 主进程的入口，负责：
+1. 在 `NODE_KIND_LABELS` 添加枚举映射（ActivityRail.tsx:24-44）
+2. 在 `buildActivityRailModel` 中补充节点生成逻辑
+3. 在 `toneClasses` 中添加色调映射（ActivityRail.tsx:78-91）
 
-- 窗口管理（创建、显示、关闭）
-- IPC 处理器注册（`ipcMainHandle`）
-- 系统集成（剪贴板、Shell、对话框）
-- MCP 插件管理（Open Computer Use、Figma 官方插件）
-- 定时任务服务（`CronService`）
+### 10.2 新增 Sidebar 操作
 
-章节来源：[src/electron/main.ts#L1-L96](file://src/electron/main.ts#L1-L96)
+1. 在 `SidebarProps` 添加新回调签名（Sidebar.tsx:7-20）
+2. 在 `App` 组件中绑定回调实现
+3. 在 JSX 中添加对应按钮
 
-### 8.2 BrowserWorkbenchManager 实例
+### 10.3 扩展 IPC 事件
 
-主进程为每个会话维护独立的 `BrowserWorkbenchManager` 实例：
+1. 在 `types.ts` 的 `ServerEvent` 联合类型中添加新事件类型
+2. 在 `useAppStore.handleServerEvent` 中添加 `event.type` 分支
+3. 在 `useIPC.ts` 的 `onEvent` 回调中验证类型安全
+
+### 10.4 修改消息渲染规则
+
+1. 修改 `isProcessMessage()` 过滤逻辑（App.tsx:61-79）
+2. 修改 `ProcessGroupCard` 组件渲染逻辑
+3. 修改 `CompactProcessRow` 展开详情
+
+---
+
+## 11. Agent 改代码地图
+
+### 11.1 先读文件顺序
+
+```
+1. src/ui/types.ts              ← 类型定义，了解数据结构
+2. src/ui/store/useAppStore.ts  ← 状态管理层，理解状态更新逻辑
+3. src/ui/App.tsx              ← 根组件，理解组件树结构
+4. src/ui/hooks/useIPC.ts       ← IPC 通信层，理解前后端桥接
+5. 目标组件文件                 ← 具体业务组件
+```
+
+### 11.2 关键符号速查表
+
+| 符号 | 文件位置 | 用途 |
+|------|----------|------|
+| `useAppStore` | useAppStore.ts:1 | Zustand store hook |
+| `SessionView` | useAppStore.ts:32 | 会话状态类型 |
+| `StreamMessage` | types.ts:277 | 消息联合类型 |
+| `ServerEvent` | types.ts:281+ | 后端推送事件 |
+| `useIPC` | useIPC.ts:4 | IPC 订阅 hook |
+| `useMessageWindow` | useMessageWindow.ts:24 | 消息窗口 hook |
+| `ActivityRail` | ActivityRail.tsx:115 | 时序轴渲染组件 |
+| `AionWorkspacePreviewPane` | AionWorkspacePreviewPane.tsx:1091 | 文件预览面板 |
+| `BrowserWorkbenchPage` | BrowserWorkbenchPage.tsx:319 | 浏览器工作台 |
+| `Sidebar` | Sidebar.tsx:22 | 侧边栏组件 |
+
+### 11.3 IPC / MCP / Tool 调用
+
+| 调用路径 | 参数 | 返回 |
+|----------|------|------|
+| `electron.invoke('sessions:list')` | - | `SessionInfo[]` |
+| `electron.invoke('shell:openExternal', url)` | `string` | - |
+| `window.electron.listPreviewDirectory({ cwd, path })` | `{ cwd: string, path: string }` | `{ success: boolean, entries?: PreviewEntry[] }` |
+| `window.electron.onServerEvent(callback)` | `(event: ServerEvent) => void` | `unsubscribe()` |
+
+### 11.4 修改入口点
+
+| 改造类型 | 修改文件 | 入口函数/组件 |
+|----------|----------|--------------|
+| 会话列表 UI | `Sidebar.tsx` | `Sidebar` 组件 |
+| 消息渲染 | `App.tsx` | `ProcessGroupCard`, `CompactProcessRow` |
+| IPC 事件处理 | `useAppStore.ts` | `handleServerEvent` |
+| 预览面板 | `AionWorkspacePreviewPane.tsx` | `NativeExplorer`, `PreviewSurface` |
+| 浏览器探测 | `BrowserWorkbenchPage.tsx` | `probeLocalTarget` |
+| 时序轴节点 | `ActivityRail.tsx` | `TimelineItemRow`, `NODE_KIND_LABELS` |
+
+### 11.5 验证命令
+
+```bash
+# TypeScript 类型检查
+npx tsc --noEmit -p tsconfig.json
+
+# ESLint 检查
+npx eslint src/ui --ext .tsx,.ts
+
+# 开发模式启动
+npm run dev
+
+# 构建验证
+npm run build
+
+# Playwright 截图回归（需先启动 dev）
+npx playwright test --grep "ActivityRail"
+```
+
+### 11.6 常见回归风险
+
+| 风险点 | 影响范围 | 规避建议 |
+|--------|----------|----------|
+| 修改 `StreamMessage` 联合类型 | 所有消息渲染组件 | 运行 `npm run type-check` |
+| 修改 `useAppStore` 状态结构 | Sidebar、ActivityRail | 验证 store 测试用例 |
+| 修改 Monaco Worker 配置 | 预览面板语法高亮 | 在 `AionWorkspacePreviewPane` 中测试多文件类型 |
+| 修改 IPC 事件格式 | 实时状态更新 | 模拟 `ServerEvent` 进行单元测试 |
+| 修改 `useMessageWindow` 窗口大小 | 历史消息加载 | 验证长会话（>200 条消息）加载 |
+
+---
+
+## 12. 验证与排障命令
+
+### 12.1 开发环境验证
+
+```bash
+# 验证 Electron IPC 通道可用性
+# 打开 DevTools Console 执行：
+window.electron && console.log('IPC ready') || console.log('IPC missing')
+```
+
+### 12.2 状态快照检查
+
+```bash
+# 在 React DevTools 或 Console 中执行：
+# 获取当前会话列表
+Object.keys(window.__zustand_store__.getState?.()?.sessions || {})
+
+# 获取活跃会话 ID
+window.__zustand_store__.getState?.()?.activeSessionId
+```
+
+### 12.3 常见故障排查
+
+| 症状 | 排查命令/位置 | 可能原因 |
+|------|---------------|----------|
+| IPC 未连接 | 检查 `useIPC.ts` 返回 `connected` | Electron preload 未加载 |
+| 消息窗口空白 | 检查 `messages.length` vs `visibleLimit` | 历史分页未触发 |
+| Monaco 加载失败 | 检查 `MonacoEnvironment.getWorker` | Web Worker 路径错误 |
+| 本地服务器未探测到 | 检查 `probeLocalTarget` 超时设置 | CORS 或防火墙阻止 |
+| ActivityRail 无节点 | 检查 `buildActivityRailModel` 输入 | 后端事件未推送 |
+
+### 12.4 日志埋点建议
+
+在关键路径添加 `console.debug` 或使用 `zustand/middleware` 的 logger：
 
 ```typescript
-const browserWorkbenches = new Map<string, BrowserWorkbenchManager>();
-const DEFAULT_BROWSER_WORKBENCH_SESSION_ID = "global";
+import { create } from 'zustand';
+import { devtools } from 'zustand/middleware';
+
+export const useAppStore = create<AppState>()(
+  devtools(
+    (set, get) => ({ /* ... */ }),
+    { name: 'tech-cc-hub-store' }
+  )
+);
 ```
-
-章节来源：[src/electron/main.ts#L100](file://src/electron/main.ts#L100) 和 [src/electron/main.ts#L115](file://src/electron/main.ts#L115)
-
-### 8.3 预览文件限制
-
-主进程定义预览资源的尺寸限制：
-
-```typescript
-const MAX_PREVIEW_TEXT_BYTES = 512_000;      // 500 KB
-const MAX_PREVIEW_IMAGE_BYTES = 2_000_000;    // 2 MB
-const MAX_PREVIEW_DIRECTORY_ENTRIES = 300;
-const MAX_PREVIEW_QUICK_OPEN_ENTRIES = 2_000;
-```
-
-章节来源：[src/electron/main.ts#L101-L104](file://src/electron/main.ts#L101-L104)
-
-### 8.4 进程间通信通道
-
-关键 IPC 通道列表：
-
-| 通道名 | 方向 | 用途 |
-|--------|------|------|
-| `preview:list-directory` | Renderer → Main | 列出目录内容 |
-| `preview:read-file` | Renderer → Main | 读取文件内容 |
-| `browser-workbench:open` | Renderer → Main | 打开浏览器工作台 |
-| `browser-workbench:set-bounds` | Renderer → Main | 设置浏览器位置 |
-| `mcp:connect` | Renderer → Main | 连接 MCP 服务器 |
-| `skill:invoke` | Renderer → Main | 调用 Skill |
-
-章节来源：[src/electron/main.ts#L30](file://src/electron/main.ts#L30) 和 [src/electron/main.ts#L64-66](file://src/electron/main.ts#L64-L66)
 
 ---
 
-## 9. 主题与样式体系
+**图表来源**：组件协作图基于 [src/ui/App.tsx](file://src/ui/App.tsx)、[src/ui/hooks/useIPC.ts](file://src/ui/hooks/useIPC.ts)、[src/ui/store/useAppStore.ts](file://src/ui/store/useAppStore.ts) 文件依赖关系生成。
 
-### 9.1 CSS 变量定义
-
-`App.css` 使用 CSS 自定义属性定义亮色/暗色主题：
-
-```css
-:root {
-  --primary: #D26A3D;      /* 强调色（珊瑚橙） */
-  --background: #F8F9FB;    /* 亮色背景 */
-  --foreground: #16181D;   /* 主文本 */
-  --border: #E6EAF0;       /* 边框色 */
-}
-
-.dark {
-  --primary: #F2C2AD;      /* 暗色强调色 */
-  --background: #16181D;   /* 暗色背景 */
-  --foreground: #F8F9FB;   /* 暗色文本 */
-  --border: #3D4450;        /* 暗色边框 */
-}
-```
-
-章节来源：[src/ui/App.css#L7-L60](file://src/ui/App.css#L7-L60)
-
-### 9.2 Chart 颜色序列
-
-五个图表颜色的默认值：
-
-```css
---chart-1: #D26A3D;  /* 珊瑚橙 */
---chart-2: #2563EB;  /* 蓝 */
---chart-3: #16A34A;  /* 绿 */
---chart-4: #D97706;  /* 琥珀 */
---chart-5: #BF3989;  /* 品红 */
-```
-
-章节来源：[src/ui/App.css#L27-L31](file://src/ui/App.css#L27-L31)
-
----
-
-## 10. 常见改造路径
-
-### 10.1 添加新的 Activity Rail 节点类型
-
-在 `ActivityRail.tsx` 的 `NODE_KIND_LABELS` 中添加新类型（第 24-44 行），并在 `buildActivityRailModel` 的后端事件映射中添加对应处理逻辑。
-
-### 10.2 扩展 BrowserWorkbenchPage 功能
-
-1. 在 `BrowserWorkbenchPage.tsx` 添加新状态（如 `annotationMode`）
-2. 在 `capturePreviewFrameVisible` 中添加新捕获模式
-3. 通过 `setSessionBrowserAnnotations` 更新附件列表
-
-### 10.3 新增 Workspace Tab
-
-在 `ActivityWorkspaceTabs.tsx` 中：
-
-1. 在 `iconForTab` 函数添加新图标
-2. 修改 `buildActivityWorkspaceTabs` 的返回值
-3. 在 `BrowserWorkbenchPage` 中添加对应的 `onOpen*` 回调
-
-### 10.4 修改主题色
-
-编辑 `App.css` 中的 CSS 变量，注意同步更新 `.dark` 变体以保持对比度。
-
----
-
-## 11. 排障速查
-
-### 11.1 Monaco Editor 不加载
-
-**症状**：预览窗格显示空白或报错 `MonacoEnvironment is not defined`
-
-**排查**：
-1. 检查 `new URL(...)` 的路径是否正确（相对于 `node_modules`）
-2. 确认 Vite 的 `optimizeDeps.exclude` 未排除 `monaco-editor`
-3. 验证 Worker 文件存在于构建输出中
-
-章节来源：[src/ui/components/AionWorkspacePreviewPane.tsx#L50-L68](file://src/ui/components/AionWorkspacePreviewPane.tsx#L50-L68)
-
-### 11.2 文件树目录加载失败
-
-**症状**：`native-explorer__error` 显示"目录读取失败"
-
-**排查**：
-1. 检查 IPC 通道 `preview:list-directory` 是否注册
-2. 确认主进程的 `workspace` 路径（`cwd`）有效
-3. 验证目录权限（非系统保护目录）
-
-章节来源：[src/ui/components/AionWorkspacePreviewPane.tsx#L220-L255](file://src/ui/components/AionWorkspacePreviewPane.tsx#L220-L255)
-
-### 11.3 本地浏览器无法连接
-
-**症状**：`probeLocalTarget` 始终返回 `offline`
-
-**排查**：
-1. 确认目标服务器正在运行
-2. 检查 CORS 配置（`mode: "no-cors"` 仅适用于同源或开放 CORS 的端点）
-3. 延长 `timeoutMs`（默认 1400ms）以适应慢速启动的服务器
-
-章节来源：[src/ui/components/BrowserWorkbenchPage.tsx#L59-L74](file://src/ui/components/BrowserWorkbenchPage.tsx#L59-L74)
-
-### 11.4 Activity Rail 空白
-
-**症状**：活动时间线不显示任何条目
-
-**排查**：
-1. 确认后端发送了 `activity_rail` 相关事件
-2. 检查 `buildActivityRailModel` 的输入数据是否包含 `timeline` 字段
-3. 验证 `nodeKind` 映射与前端 `NODE_KIND_LABELS` 一致
-
-章节来源：[src/ui/components/ActivityRail.tsx#L24-L44](file://src/ui/components/ActivityRail.tsx#L24-L44)
-
----
-
-## 数据流总图
-
-```mermaid
-flowchart TB
-    subgraph Renderer["渲染进程"]
-        A[App.tsx] --> B[useAppStore]
-        A --> C[ActivityRail]
-        A --> D[BrowserWorkbenchPage]
-        A --> E[AionWorkspacePreviewPane]
-        C --> F["buildActivityRailModel"]
-        F --> G["ActivityTimelineItem[]"]
-        D --> H[iframe Preview]
-        E --> I[Monaco Editor]
-    end
-
-    subgraph IPC["IPC 通道"]
-        J["preview:list-directory"]
-        K["browser-workbench:open"]
-        L["mcp:connect"]
-    end
-
-    subgraph Main["主进程"]
-        M["electron/main.ts"]
-        N["BrowserWorkbenchManager"]
-        O["ipc-handlers"]
-    end
-
-    A -->|ipcMainHandle| J
-    E -->|ipcMainHandle| J
-    D -->|ipcMainHandle| K
-    D -->|ipcMainHandle| L
-    J --> O
-    K --> N
-    O --> M
-
-    style A fill:#e1f5fe
-    style M fill:#fff3e0
-```
-
-图表来源：[src/ui/App.tsx#L10](file://src/ui/App.tsx#L10) → [src/electron/main.ts#L30](file://src/electron/main.ts#L30)
-
----
-
-> **文档版本**: 1.0
-> **下次审查日期**: 2025-04
-> **相关规范**: [Activity Rail 规范](../40-engineering/activity-rail/spec.md) · [Electron IPC 规范](../40-engineering/electron-ipc/spec.md) · [Preview Workbench 规范](../40-engineering/preview-workbench/spec.md)
+**章节来源**：
+- 入口链路：[src/ui/main.tsx#L5-L16](file://src/ui/main.tsx#L5-L16)
+- 状态管理：[src/ui/store/useAppStore.ts#L103-L168](file://src/ui/store/useAppStore.ts#L103-L168)
+- IPC 通信：[src/ui/hooks/useIPC.ts#L1-L31](file://src/ui/hooks/useIPC.ts#L1-L31)
+- 消息窗口：[src/ui/hooks/useMessageWindow.ts#L1-L81](file://src/ui/hooks/useMessageWindow.ts#L1-L81)
+- 工作区预览：[src/ui/components/AionWorkspacePreviewPane.tsx#L70-L100](file://src/ui/components/AionWorkspacePreviewPane.tsx#L70-L100)
+- 浏览器工作台：[src/ui/components/BrowserWorkbenchPage.tsx#L20-L60](file://src/ui/components/BrowserWorkbenchPage.tsx#L20-L60)
+- ActivityRail：[src/ui/components/ActivityRail.tsx#L1-L50](file://src/ui/components/ActivityRail.tsx#L1-L50)

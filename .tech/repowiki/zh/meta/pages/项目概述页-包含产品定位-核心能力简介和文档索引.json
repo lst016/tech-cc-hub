@@ -1,0 +1,23 @@
+{
+  "id": "项目概述页-包含产品定位-核心能力简介和文档索引",
+  "name": "项目概述",
+  "title": "项目概述",
+  "slug": "项目概述/项目概述",
+  "path": "项目概述/项目概述.md",
+  "description": "项目概述页，包含产品定位、核心能力简介和文档索引",
+  "prompt": "编写项目概述页，需要涵盖：tech-cc-hub的产品定位（基于Electron的AI Agent桌面工作台）、核心能力（会话管理、任务编排、技能体系）、目标用户场景。需要在页面顶部提供到各主要章节的导航链接。",
+  "dependent_files": [
+    "README.md",
+    "doc/README.md"
+  ],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "项目概述",
+  "layer_level": 0,
+  "order": 0,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "34684f45d85d56d66a781297fe7e203a7d5fb144c728f323eeeeecc047ce3382",
+  "generated_at": 1778928162406
+}

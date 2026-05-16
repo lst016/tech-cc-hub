@@ -16,16 +16,16 @@
     "pro-workflow/skills/wiki-research-loop/scripts/research-loop.js",
     "pro-workflow/skills/wiki-viewer/scripts/render.js"
   ],
-  "parent_id": "core-module-specs",
+  "parent_id": "核心模块规格总览-提供模块索引",
   "parent": "核心模块规格",
   "parent_chain": [
     "核心模块规格"
   ],
   "section_path": "核心模块规格",
   "layer_level": 1,
-  "order": 57,
+  "order": 38,
   "status": "completed",
   "page_type": "topic",
-  "content_hash": "7c7f79c23bcd765cf21d409d0900d95fcfccc7f6d361f92eb80ceb7aa41d62ba",
-  "generated_at": 1778922186535
+  "content_hash": "60b8cecb6a6d6491dbf1e7b290200a296dece4fe369d5cd08e813d22f6d26348",
+  "generated_at": 1778928162406
 }

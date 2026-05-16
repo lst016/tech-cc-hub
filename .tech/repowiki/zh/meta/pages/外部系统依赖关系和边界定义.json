@@ -1,0 +1,24 @@
+{
+  "id": "外部系统依赖关系和边界定义",
+  "name": "系统上下文图",
+  "title": "系统上下文图",
+  "slug": "系统架构/系统上下文图",
+  "path": "系统架构/系统上下文图.md",
+  "description": "外部系统依赖关系和边界定义",
+  "prompt": "编写系统上下文图说明文档，需要：1)用 Mermaid 或 ASCII 图展示外部系统（Electron、Claude API、文件系统等）；2)说明与外部系统的接口类型（同步API、异步事件、WebSocket等）；3)标注关键的数据流向。需要引用 doc/10-architecture/10-系统上下文图.md 的内容。",
+  "dependent_files": [
+    "doc/10-architecture/10-系统上下文图.md"
+  ],
+  "parent_id": "系统架构总览页面-提供架构图和文档索引",
+  "parent": "系统架构",
+  "parent_chain": [
+    "系统架构"
+  ],
+  "section_path": "系统架构",
+  "layer_level": 1,
+  "order": 5,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "dc12e744a45508d828ed46224c6eca7571e679580e18c424cd619611dbc7c2c4",
+  "generated_at": 1778928162406
+}
