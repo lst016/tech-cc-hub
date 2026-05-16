@@ -121,6 +121,7 @@ const KNOWLEDGE_UI_CHANNELS = [
   "knowledge:sync-workspaces",
   "knowledge:add-workspace",
   "knowledge:remove-workspace",
+  "knowledge:set-workspace-links",
   "knowledge:update-generation",
   "knowledge:complete-generation",
   "knowledge:run-generation",

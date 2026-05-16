@@ -62,6 +62,16 @@ async function main() {
   if (!bodyText.includes('生成完成')) {
     throw new Error('Knowledge workspace panel missing: 生成完成');
   }
+  const linkWorkspaceButton = page.getByRole('button', { name: /关联 tech-cc-hub 知识库/ }).first();
+  await linkWorkspaceButton.waitFor({ state: 'visible', timeout: 10000 });
+  await linkWorkspaceButton.click();
+  await page.waitForTimeout(250);
+  bodyText = await page.locator('body').innerText({ timeout: 10000 });
+  if (!bodyText.includes('关联知识库')) {
+    throw new Error('Knowledge workspace link editor did not open');
+  }
+  await linkWorkspaceButton.click();
+  await page.waitForTimeout(150);
   const hasRegenerateButton = await page.getByRole('button', { name: /^重新生成$/ }).isVisible().catch(() => false);
   const hasUpdateButton = await page.getByRole('button', { name: /^更新$/ }).isVisible().catch(() => false);
   if (!hasRegenerateButton && !hasUpdateButton) {

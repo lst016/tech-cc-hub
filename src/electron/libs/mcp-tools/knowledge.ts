@@ -12,6 +12,7 @@ import { indexKnowledgeWorkspace } from "../knowledge/knowledge-indexer.js";
 import { assertEmbeddingConfigured, resolveKnowledgeModelSettings } from "../knowledge/knowledge-model-settings.js";
 import { resolveKnowledgeWorkspacePaths, ensureKnowledgeWorkspaceDirectories } from "../knowledge/knowledge-paths.js";
 import { KnowledgeRepository } from "../knowledge/knowledge-repository.js";
+import { listKnowledgeWorkspaceRootsWithLinks } from "../knowledge/knowledge-workspace-links.js";
 import type { KnowledgeSearchMode } from "../knowledge/knowledge-types.js";
 import { MemoryRepository } from "../memory/memory-repository.js";
 import { MEMORY_CATEGORIES, type MemoryCategory, type MemoryScope } from "../memory/memory-types.js";
@@ -111,6 +112,19 @@ function openKnowledgeRepository(workspaceRoot: string) {
   return { repo, paths, embedding };
 }
 
+function resolveSearchWorkspaceRoots(workspaceRoot: string): string[] {
+  return listKnowledgeWorkspaceRootsWithLinks(app.getPath("userData"), workspaceRoot);
+}
+
+function annotateLinkedResults<T extends Record<string, unknown>>(workspaceRoot: string, primaryWorkspaceRoot: string, rows: T[]): T[] {
+  const linked = workspaceRoot !== primaryWorkspaceRoot;
+  return rows.map((row) => ({
+    ...row,
+    workspaceRoot,
+    linkedWorkspace: linked,
+  }));
+}
+
 function openMemoryRepository(workspaceRoot: string) {
   const paths = resolveKnowledgeWorkspacePaths(workspaceRoot, app.getPath("userData"));
   ensureKnowledgeWorkspaceDirectories(paths);
@@ -142,63 +156,79 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
         const source = input.source ?? "all";
         const mode = input.mode ?? "hybrid";
         const limit = input.limit ?? 6;
+        const workspaceRoots = resolveSearchWorkspaceRoots(workspaceRoot);
         const results: Record<string, unknown> = {
           success: true,
           query: input.query,
           source,
+          workspaceRoot,
+          linkedWorkspaceRoots: workspaceRoots.slice(1),
           cards: [],
           repowiki: [],
           memory: [],
         };
+        const queryEmbedding = mode !== "shallow" && source !== "memory"
+          ? (await embedTexts(assertEmbeddingConfigured(resolveKnowledgeModelSettings()), [input.query]))[0]
+          : undefined;
 
         if (source === "cards" || source === "all") {
-          const { repo, embedding, paths } = openKnowledgeRepository(workspaceRoot);
-          try {
-            const [queryEmbedding] = await embedTexts(embedding, [input.query]);
-            results.cards = repo.search({
-              workspaceScope: paths.workspaceScope,
-              query: input.query,
-              mode: mode as KnowledgeSearchMode,
-              sourceKind: "agent_card",
-              limit,
-              queryEmbedding,
-            });
-          } finally {
-            repo.close();
+          const cards: unknown[] = [];
+          for (const root of workspaceRoots) {
+            const { repo, paths } = openKnowledgeRepository(root);
+            try {
+              cards.push(...annotateLinkedResults(root, workspaceRoot, repo.search({
+                workspaceScope: paths.workspaceScope,
+                query: input.query,
+                mode: mode as KnowledgeSearchMode,
+                sourceKind: "agent_card",
+                limit,
+                queryEmbedding,
+              })));
+            } finally {
+              repo.close();
+            }
           }
+          results.cards = cards.slice(0, limit);
         }
 
         if (source === "repowiki" || source === "all") {
-          const { repo, embedding, paths } = openKnowledgeRepository(workspaceRoot);
-          try {
-            const [queryEmbedding] = await embedTexts(embedding, [input.query]);
-            results.repowiki = repo.search({
-              workspaceScope: paths.workspaceScope,
-              query: input.query,
-              mode: mode as KnowledgeSearchMode,
-              sourceKind: "repowiki",
-              limit,
-              queryEmbedding,
-            });
-          } finally {
-            repo.close();
+          const repowiki: unknown[] = [];
+          for (const root of workspaceRoots) {
+            const { repo, paths } = openKnowledgeRepository(root);
+            try {
+              repowiki.push(...annotateLinkedResults(root, workspaceRoot, repo.search({
+                workspaceScope: paths.workspaceScope,
+                query: input.query,
+                mode: mode as KnowledgeSearchMode,
+                sourceKind: "repowiki",
+                limit,
+                queryEmbedding,
+              })));
+            } finally {
+              repo.close();
+            }
           }
+          results.repowiki = repowiki.slice(0, limit);
         }
 
         if (source === "memory" || source === "all") {
           assertEmbeddingConfigured();
-          const { repo, paths } = openMemoryRepository(workspaceRoot);
-          try {
-            results.memory = repo.search({
-              query: input.query,
-              workspaceScope: paths.workspaceScope as MemoryScope,
-              categories: parseMemoryCategories(input.category),
-              mode: mode === "deep" ? "deep" : "shallow",
-              limit,
-            });
-          } finally {
-            repo.close();
+          const memory: unknown[] = [];
+          for (const root of workspaceRoots) {
+            const { repo, paths } = openMemoryRepository(root);
+            try {
+              memory.push(...annotateLinkedResults(root, workspaceRoot, repo.search({
+                query: input.query,
+                workspaceScope: paths.workspaceScope as MemoryScope,
+                categories: parseMemoryCategories(input.category),
+                mode: mode === "deep" ? "deep" : "shallow",
+                limit,
+              })));
+            } finally {
+              repo.close();
+            }
           }
+          results.memory = memory.slice(0, limit);
         }
 
         return toTextToolResult(results);
@@ -216,62 +246,73 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
       try {
         const workspaceRoot = resolveWorkspaceRoot(input.workspaceRoot, defaultWorkspaceRoot);
         const source = input.source ?? "all";
+        const workspaceRoots = resolveSearchWorkspaceRoots(workspaceRoot);
         if (source === "cards" || source === "all") {
-          const { repo, paths } = openKnowledgeRepository(workspaceRoot);
-          try {
-            const doc = input.id
-              ? repo.getDocument(input.id)
-              : input.path
-                ? repo.getDocumentByPath(paths.workspaceScope, input.path)
-                : undefined;
-            if (doc?.sourceKind === "agent_card") {
-              return toTextToolResult({
-                success: true,
-                source: "cards",
-                document: doc,
-                chunks: repo.readDocumentChunks(doc.id, 40),
-              });
+          for (const root of workspaceRoots) {
+            const { repo, paths } = openKnowledgeRepository(root);
+            try {
+              const doc = input.id
+                ? repo.getDocument(input.id)
+                : input.path
+                  ? repo.getDocumentByPath(paths.workspaceScope, input.path)
+                  : undefined;
+              if (doc?.sourceKind === "agent_card") {
+                return toTextToolResult({
+                  success: true,
+                  source: "cards",
+                  workspaceRoot: root,
+                  linkedWorkspace: root !== workspaceRoot,
+                  document: doc,
+                  chunks: repo.readDocumentChunks(doc.id, 40),
+                });
+              }
+            } finally {
+              repo.close();
             }
-          } finally {
-            repo.close();
           }
         }
 
         if (source === "repowiki" || source === "all") {
-          const { repo, paths } = openKnowledgeRepository(workspaceRoot);
-          try {
-            const doc = input.id
-              ? repo.getDocument(input.id)
-              : input.path
-                ? repo.getDocumentByPath(paths.workspaceScope, input.path)
-                : undefined;
-            if (doc?.sourceKind === "repowiki") {
-              return toTextToolResult({
-                success: true,
-                source: "repowiki",
-                document: doc,
-                chunks: repo.readDocumentChunks(doc.id, 80),
-              });
+          for (const root of workspaceRoots) {
+            const { repo, paths } = openKnowledgeRepository(root);
+            try {
+              const doc = input.id
+                ? repo.getDocument(input.id)
+                : input.path
+                  ? repo.getDocumentByPath(paths.workspaceScope, input.path)
+                  : undefined;
+              if (doc?.sourceKind === "repowiki") {
+                return toTextToolResult({
+                  success: true,
+                  source: "repowiki",
+                  workspaceRoot: root,
+                  linkedWorkspace: root !== workspaceRoot,
+                  document: doc,
+                  chunks: repo.readDocumentChunks(doc.id, 80),
+                });
+              }
+            } finally {
+              repo.close();
             }
-          } finally {
-            repo.close();
           }
         }
 
         if (source === "memory" || source === "all") {
-          const { repo, paths } = openMemoryRepository(workspaceRoot);
-          try {
-            const memory = input.id
-              ? repo.get(input.id)
-              : input.title
-                ? repo.getByTitle(input.title, paths.workspaceScope as MemoryScope) ?? repo.getByTitle(input.title, "global")
-                : undefined;
-            if (memory) {
-              repo.recordAccess(memory.id);
-              return toTextToolResult({ success: true, source: "memory", memory });
+          for (const root of workspaceRoots) {
+            const { repo, paths } = openMemoryRepository(root);
+            try {
+              const memory = input.id
+                ? repo.get(input.id)
+                : input.title
+                  ? repo.getByTitle(input.title, paths.workspaceScope as MemoryScope) ?? repo.getByTitle(input.title, "global")
+                  : undefined;
+              if (memory) {
+                repo.recordAccess(memory.id);
+                return toTextToolResult({ success: true, source: "memory", workspaceRoot: root, linkedWorkspace: root !== workspaceRoot, memory });
+              }
+            } finally {
+              repo.close();
             }
-          } finally {
-            repo.close();
           }
         }
 
@@ -291,37 +332,57 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
         const workspaceRoot = resolveWorkspaceRoot(input.workspaceRoot, defaultWorkspaceRoot);
         const source = input.source ?? "all";
         const limit = input.limit ?? 40;
-        const output: Record<string, unknown> = { success: true, cards: [], repowiki: [], memory: [] };
+        const workspaceRoots = resolveSearchWorkspaceRoots(workspaceRoot);
+        const output: Record<string, unknown> = {
+          success: true,
+          workspaceRoot,
+          linkedWorkspaceRoots: workspaceRoots.slice(1),
+          cards: [],
+          repowiki: [],
+          memory: [],
+        };
 
         if (source === "cards" || source === "all") {
-          const { repo, paths } = openKnowledgeRepository(workspaceRoot);
-          try {
-            output.cards = repo
-              .buildOverview(paths.workspaceScope, limit)
-              .filter((entry) => entry.category === "agent_card");
-          } finally {
-            repo.close();
+          const cards: unknown[] = [];
+          for (const root of workspaceRoots) {
+            const { repo, paths } = openKnowledgeRepository(root);
+            try {
+              cards.push(...annotateLinkedResults(root, workspaceRoot, repo
+                .buildOverview(paths.workspaceScope, limit)
+                .filter((entry) => entry.category === "agent_card")));
+            } finally {
+              repo.close();
+            }
           }
+          output.cards = cards.slice(0, limit);
         }
 
         if (source === "repowiki" || source === "all") {
-          const { repo, paths } = openKnowledgeRepository(workspaceRoot);
-          try {
-            output.repowiki = repo
-              .buildOverview(paths.workspaceScope, limit)
-              .filter((entry) => entry.category === "repowiki");
-          } finally {
-            repo.close();
+          const repowiki: unknown[] = [];
+          for (const root of workspaceRoots) {
+            const { repo, paths } = openKnowledgeRepository(root);
+            try {
+              repowiki.push(...annotateLinkedResults(root, workspaceRoot, repo
+                .buildOverview(paths.workspaceScope, limit)
+                .filter((entry) => entry.category === "repowiki")));
+            } finally {
+              repo.close();
+            }
           }
+          output.repowiki = repowiki.slice(0, limit);
         }
 
         if (source === "memory" || source === "all") {
-          const { repo, paths } = openMemoryRepository(workspaceRoot);
-          try {
-            output.memory = repo.buildOverview(paths.workspaceScope as MemoryScope, limit);
-          } finally {
-            repo.close();
+          const memory: unknown[] = [];
+          for (const root of workspaceRoots) {
+            const { repo, paths } = openMemoryRepository(root);
+            try {
+              memory.push(...annotateLinkedResults(root, workspaceRoot, repo.buildOverview(paths.workspaceScope as MemoryScope, limit)));
+            } finally {
+              repo.close();
+            }
           }
+          output.memory = memory.slice(0, limit);
         }
 
         return toTextToolResult(output);

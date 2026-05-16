@@ -9,6 +9,7 @@ import {
   Folder,
   FolderPlus,
   GitBranch,
+  Link2,
   Network,
   PauseCircle,
   Search,
@@ -50,6 +51,8 @@ type KnowledgeWorkspace = {
   source: "session" | "manual";
   updatedAt: number;
 };
+
+type KnowledgeWorkspaceRelations = Record<string, string[]>;
 
 type KnowledgeDocument = {
   id: string;
@@ -103,12 +106,17 @@ type KnowledgeListResponse = {
     updatedAt?: number;
   }>;
   generations?: Record<string, GenerationState>;
+  relations?: KnowledgeWorkspaceRelations;
 };
 
 type KnowledgeWorkspaceRecord = NonNullable<KnowledgeListResponse["workspaces"]>[number];
 
 type KnowledgeDocumentsResponse = {
   documents?: KnowledgeDocument[];
+};
+
+type KnowledgeWorkspaceLinksResponse = {
+  relations?: KnowledgeWorkspaceRelations;
 };
 
 type KnowledgeRunGenerationResponse = {
@@ -474,6 +482,30 @@ function generationRecordEquals(left: Record<string, GenerationState>, right: Re
   return rightKeys.every((key) => generationStateEquals(left[key], right[key]));
 }
 
+function normalizeWorkspaceRelations(value: unknown): KnowledgeWorkspaceRelations {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const next: KnowledgeWorkspaceRelations = {};
+  for (const [sourceKey, targets] of Object.entries(value)) {
+    const key = normalizeWorkspaceKey(sourceKey);
+    if (!key || !Array.isArray(targets)) continue;
+    const linked = Array.from(new Set(targets.map((item) => normalizeWorkspaceKey(String(item))).filter((item) => item && item !== key)));
+    if (linked.length > 0) next[key] = linked;
+  }
+  return next;
+}
+
+function relationRecordEquals(left: KnowledgeWorkspaceRelations, right: KnowledgeWorkspaceRelations): boolean {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  if (leftKeys.length !== rightKeys.length) return false;
+  return rightKeys.every((key, index) => {
+    if (leftKeys[index] !== key) return false;
+    const leftTargets = [...(left[key] ?? [])].sort();
+    const rightTargets = [...(right[key] ?? [])].sort();
+    return leftTargets.length === rightTargets.length && rightTargets.every((target, targetIndex) => leftTargets[targetIndex] === target);
+  });
+}
+
 function workspaceListEquals(left: KnowledgeWorkspace[], right: KnowledgeWorkspace[]): boolean {
   if (left.length !== right.length) return false;
   return left.every((workspace, index) => {
@@ -765,6 +797,8 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
   const [storedWorkspaces, setStoredWorkspaces] = useState<KnowledgeWorkspace[]>([]);
   const [documentsByWorkspace, setDocumentsByWorkspace] = useState<Record<string, KnowledgeDocument[]>>({});
   const [generationByWorkspace, setGenerationByWorkspace] = useState<Record<string, GenerationState>>({});
+  const [relationsByWorkspace, setRelationsByWorkspace] = useState<KnowledgeWorkspaceRelations>({});
+  const [linkEditorWorkspaceKey, setLinkEditorWorkspaceKey] = useState<string>("");
   const [gitByWorkspace, setGitByWorkspace] = useState<Record<string, KnowledgeGitState>>({});
   const [autoUpdateByWorkspace, setAutoUpdateByWorkspace] = useState<Record<string, boolean>>(() => readStoredBooleanRecord(KNOWLEDGE_AUTO_UPDATE_STORAGE_KEY));
 
@@ -922,8 +956,10 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
         nextGenerations[workspaceKey] = generationState;
       }
     }
+    const nextRelations = normalizeWorkspaceRelations(result.relations);
     setStoredWorkspaces((current) => workspaceListEquals(current, nextWorkspaces) ? current : nextWorkspaces);
     setGenerationByWorkspace((current) => generationRecordEquals(current, nextGenerations) ? current : nextGenerations);
+    setRelationsByWorkspace((current) => relationRecordEquals(current, nextRelations) ? current : nextRelations);
   };
 
   const activateWikiTab = (tab: KnowledgeOpenTab) => {
@@ -1602,6 +1638,36 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
     }));
   };
 
+  const saveWorkspaceLinks = (workspaceKey: string, linkedWorkspaceKeys: string[]) => {
+    const key = normalizeWorkspaceKey(workspaceKey);
+    if (!key) return;
+    const nextTargets = Array.from(new Set(linkedWorkspaceKeys.map(normalizeWorkspaceKey).filter((item) => item && item !== key)));
+    setRelationsByWorkspace((current) => ({
+      ...current,
+      [key]: nextTargets,
+    }));
+    void invokeKnowledge<KnowledgeWorkspaceLinksResponse>("knowledge:set-workspace-links", {
+      workspaceKey: key,
+      linkedWorkspaceKeys: nextTargets,
+    })
+      .then((result) => {
+        const nextRelations = normalizeWorkspaceRelations(result.relations);
+        setRelationsByWorkspace((current) => relationRecordEquals(current, nextRelations) ? current : nextRelations);
+      })
+      .catch((error) => setWorkspaceError(error instanceof Error ? error.message : "关联知识库失败。"));
+  };
+
+  const toggleWorkspaceLink = (workspaceKey: string, linkedWorkspaceKey: string) => {
+    const key = normalizeWorkspaceKey(workspaceKey);
+    const target = normalizeWorkspaceKey(linkedWorkspaceKey);
+    if (!key || !target || key === target) return;
+    const currentTargets = relationsByWorkspace[key] ?? [];
+    const nextTargets = currentTargets.includes(target)
+      ? currentTargets.filter((item) => item !== target)
+      : [...currentTargets, target];
+    saveWorkspaceLinks(key, nextTargets);
+  };
+
   const addWorkspace = async () => {
     setWorkspaceError(null);
     try {
@@ -1644,6 +1710,18 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
       delete next[workspace.key];
       return next;
     });
+    setRelationsByWorkspace((current) => {
+      const next: KnowledgeWorkspaceRelations = {};
+      for (const [key, targets] of Object.entries(current)) {
+        if (key === workspace.key) continue;
+        const filteredTargets = targets.filter((target) => target !== workspace.key);
+        if (filteredTargets.length > 0) next[key] = filteredTargets;
+      }
+      return next;
+    });
+    if (linkEditorWorkspaceKey === workspace.key) {
+      setLinkEditorWorkspaceKey("");
+    }
     setDocumentsByWorkspace((current) => {
       const next = { ...current };
       delete next[workspace.key];
@@ -1746,7 +1824,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
           )}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+        <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
           {workspaces.length === 0 ? (
             <div className="rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center">
               <Network className="mx-auto h-7 w-7 text-slate-300" />
@@ -1768,13 +1846,19 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
               <div className="mt-1 text-xs leading-5 text-slate-400">换个关键词试试，支持搜索标题、章节、正文和工作区路径。</div>
             </div>
           ) : (
-            <div className="space-y-1">
+            <div className="space-y-0.5">
             {visibleWorkspaces.map((workspace) => {
               const workspaceGeneration = generationByWorkspace[workspace.key] ?? createIdleGeneration();
               const workspaceDocuments = filteredDocumentsByWorkspace[workspace.key] ?? [];
               const workspaceGit = gitByWorkspace[workspace.key];
               const selected = workspace.key === selectedWorkspace?.key;
               const expanded = expandedWorkspaceKeys.has(workspace.key);
+              const linkedKeys = relationsByWorkspace[workspace.key] ?? [];
+              const linkedWorkspaces = linkedKeys
+                .map((key) => workspaces.find((item) => item.key === key))
+                .filter((item): item is KnowledgeWorkspace => Boolean(item));
+              const linkEditorOpen = linkEditorWorkspaceKey === workspace.key;
+              const linkCandidates = workspaces.filter((item) => item.key !== workspace.key);
               const needsUpdate = Boolean(
                 workspaceGit?.hasGit &&
                 workspaceGit.commitId &&
@@ -1799,23 +1883,29 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                       type="button"
                       aria-label={`打开工作区 ${workspace.name}`}
                       title={`${workspace.name}\n${workspace.cwd}`}
-                      className="flex min-w-0 flex-1 items-center justify-between px-2 py-1.5 text-left"
+                      className="flex min-w-0 flex-1 items-center justify-between px-1.5 py-1 text-left"
                       onClick={() => handleWorkspaceClick(workspace)}
                     >
-                      <div className="flex min-w-0 items-center gap-2">
+                      <div className="flex min-w-0 items-center gap-1.5">
                         <span
-                          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-slate-500 transition-colors ${
+                          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-slate-500 transition-colors ${
                             expanded || selected
                               ? "border-slate-300 bg-white"
                               : "border-slate-200 bg-white/70"
                           }`}
                         >
-                          <Network className="h-3.5 w-3.5" />
+                          <Network className="h-3 w-3" />
                         </span>
                         <span className="min-w-0 truncate text-sm font-semibold">{workspace.name}</span>
+                        {linkedKeys.length > 0 ? (
+                          <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-white/80 px-1 py-0.5 text-[10px] font-semibold leading-none text-slate-500">
+                            <Link2 className="h-2.5 w-2.5" />
+                            {linkedKeys.length}
+                          </span>
+                        ) : null}
                       </div>
-                      <span className="ml-2 flex shrink-0 items-center gap-1.5">
-                        <span className="text-xs font-semibold text-slate-500">{statusLabel}</span>
+                      <span className="ml-1.5 flex shrink-0 items-center gap-1">
+                        <span className="text-[11px] font-semibold text-slate-500">{statusLabel}</span>
                         {workspaceGeneration.status !== "idle" ? (
                           <span className="text-slate-400">
                             {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
@@ -1849,13 +1939,68 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                     ) : null}
                     <button
                       type="button"
+                      aria-label={`关联 ${workspace.name} 知识库`}
+                      title="关联其他知识库"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setSelectedWorkspaceKey(workspace.key);
+                        setLinkEditorWorkspaceKey((current) => current === workspace.key ? "" : workspace.key);
+                      }}
+                      className={`mr-0.5 rounded-md p-1 transition ${
+                        linkEditorOpen || linkedKeys.length > 0
+                          ? "bg-white text-slate-700"
+                          : "text-slate-400 opacity-0 hover:bg-white hover:text-slate-700 group-hover/workspace:opacity-100 focus:opacity-100"
+                      }`}
+                    >
+                      <Link2 className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
                       aria-label={`删除 ${workspace.name}`}
                       onClick={() => removeWorkspace(workspace)}
-                      className="mr-1 rounded-md p-1 text-slate-400 opacity-0 transition hover:bg-white hover:text-rose-600 group-hover/workspace:opacity-100 focus:opacity-100"
+                      className="mr-0.5 rounded-md p-1 text-slate-400 opacity-0 transition hover:bg-white hover:text-rose-600 group-hover/workspace:opacity-100 focus:opacity-100"
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
+                  {linkEditorOpen ? (
+                    <div className="mx-1 mt-1 rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
+                      <div className="mb-1.5 flex items-center justify-between gap-2">
+                        <div className="truncate text-xs font-semibold text-slate-700">关联知识库</div>
+                        {linkedWorkspaces.length > 0 ? (
+                          <span className="shrink-0 text-[11px] text-slate-400">{linkedWorkspaces.length} 个</span>
+                        ) : null}
+                      </div>
+                      {linkCandidates.length === 0 ? (
+                        <div className="rounded-md bg-slate-50 px-2 py-1.5 text-xs leading-5 text-slate-400">
+                          先新增前端、后端或接口仓库，再在这里关联。
+                        </div>
+                      ) : (
+                        <div className="space-y-0.5">
+                          {linkCandidates.map((candidate) => {
+                            const checked = linkedKeys.includes(candidate.key);
+                            return (
+                              <button
+                                key={candidate.key}
+                                type="button"
+                                onClick={() => toggleWorkspaceLink(workspace.key, candidate.key)}
+                                className={`flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs transition ${
+                                  checked ? "bg-slate-100 text-slate-900" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                                }`}
+                              >
+                                <span className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border ${
+                                  checked ? "border-slate-700 bg-slate-900" : "border-slate-300 bg-white"
+                                }`}>
+                                  {checked ? <span className="h-1.5 w-1.5 rounded-sm bg-white" /> : null}
+                                </span>
+                                <span className="min-w-0 flex-1 truncate">{candidate.name}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
                   {activeTab === "repo" && (expanded || hasRepoSearch) && workspaceGeneration.status !== "idle" && (
                     <SectionTree
                       active={workspaceDocuments.length > 0}

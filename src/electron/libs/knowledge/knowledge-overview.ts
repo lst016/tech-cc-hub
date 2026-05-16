@@ -3,6 +3,7 @@ import { existsSync } from "fs";
 import { resolveKnowledgeModelSettings } from "./knowledge-model-settings.js";
 import { resolveKnowledgeWorkspacePaths } from "./knowledge-paths.js";
 import { KnowledgeRepository } from "./knowledge-repository.js";
+import { listLinkedKnowledgeWorkspaces } from "./knowledge-workspace-links.js";
 import { MemoryRepository } from "../memory/memory-repository.js";
 import type { KnowledgeOverviewEntry } from "./knowledge-types.js";
 import type { MemoryOverviewEntry, MemoryScope } from "../memory/memory-types.js";
@@ -33,7 +34,8 @@ export function buildKnowledgeOverviewPromptAppend(projectCwd?: string): string 
   }
 
   const settings = resolveKnowledgeModelSettings();
-  const paths = resolveKnowledgeWorkspacePaths(projectCwd, app.getPath("userData"));
+  const appDataPath = app.getPath("userData");
+  const paths = resolveKnowledgeWorkspacePaths(projectCwd, appDataPath);
   if (!settings.embedding) {
     return [
       `<knowledge_overview enabled="false" scope="${paths.workspaceScope}" reason="missing_embedding_model">`,
@@ -44,6 +46,8 @@ export function buildKnowledgeOverviewPromptAppend(projectCwd?: string): string 
 
   const knowledgeEntries: KnowledgeOverviewEntry[] = [];
   const memoryEntries: MemoryOverviewEntry[] = [];
+  const linkedWorkspaces = listLinkedKnowledgeWorkspaces(appDataPath, projectCwd);
+  const linkedWorkspaceEntries: Array<{ name: string; cwd: string; scope: string }> = [];
   if (existsSync(paths.knowledgeDbPath)) {
     const repo = new KnowledgeRepository(paths.knowledgeDbPath, {
       embeddingDimension: settings.embedding.dimension,
@@ -54,6 +58,32 @@ export function buildKnowledgeOverviewPromptAppend(projectCwd?: string): string 
       knowledgeEntries.push(...repo.buildOverview(paths.workspaceScope, 80));
     } finally {
       repo.close();
+    }
+  }
+  for (const linkedWorkspace of linkedWorkspaces) {
+    const linkedPaths = resolveKnowledgeWorkspacePaths(linkedWorkspace.cwd, appDataPath);
+    linkedWorkspaceEntries.push({
+      name: linkedWorkspace.name,
+      cwd: linkedWorkspace.cwd,
+      scope: linkedPaths.workspaceScope,
+    });
+    if (existsSync(linkedPaths.knowledgeDbPath)) {
+      const repo = new KnowledgeRepository(linkedPaths.knowledgeDbPath, {
+        embeddingDimension: settings.embedding.dimension,
+      });
+      try {
+        knowledgeEntries.push(...repo.buildOverview(linkedPaths.workspaceScope, 32));
+      } finally {
+        repo.close();
+      }
+    }
+    if (existsSync(linkedPaths.memoryDbPath)) {
+      const memoryRepo = new MemoryRepository(linkedPaths.memoryDbPath);
+      try {
+        memoryEntries.push(...memoryRepo.buildOverview(linkedPaths.workspaceScope as MemoryScope, 8));
+      } finally {
+        memoryRepo.close();
+      }
     }
   }
   if (existsSync(paths.memoryDbPath)) {
@@ -74,13 +104,20 @@ export function buildKnowledgeOverviewPromptAppend(projectCwd?: string): string 
   }
 
   const lines = [
-    `<knowledge_overview enabled="true" scope="${paths.workspaceScope}" knowledge_count="${knowledgeEntries.length}" memory_count="${memoryEntries.length}">`,
+    `<knowledge_overview enabled="true" scope="${paths.workspaceScope}" linked_count="${linkedWorkspaceEntries.length}" knowledge_count="${knowledgeEntries.length}" memory_count="${memoryEntries.length}">`,
     "  <usage>",
     "    Indexed knowledge is already available. For repo-specific background, architecture, prior decisions, or implementation guidance, call mcp__tech-cc-hub-knowledge__knowledge_search first, then mcp__tech-cc-hub-knowledge__knowledge_read for the selected document before using generic source reads.",
     "    Use agent_cards for where-to-start and change-plan questions; use repowiki for module details and code evidence.",
     "    Do not call mcp__tech-cc-hub-knowledge__knowledge_index just to answer a question. Only use it when the user explicitly asks to generate, refresh, reindex, or update the knowledge base.",
     "  </usage>",
   ];
+  if (linkedWorkspaceEntries.length > 0) {
+    lines.push("  <linked_workspaces>");
+    for (const linked of linkedWorkspaceEntries) {
+      lines.push(`    <workspace name="${escapeXml(linked.name)}" scope="${escapeXml(linked.scope)}" cwd="${escapeXml(linked.cwd)}" />`);
+    }
+    lines.push("  </linked_workspaces>");
+  }
 
   const groupedKnowledge = groupKnowledge(knowledgeEntries);
   const agentCardEntries = groupedKnowledge.get("agent_card") ?? [];
