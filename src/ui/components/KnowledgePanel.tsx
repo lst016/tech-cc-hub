@@ -717,6 +717,8 @@ function SourceFileView({ preview }: { preview?: SourcePreviewState }) {
               <div
                 key={lineNumber}
                 ref={preview.startLine === lineNumber ? targetLineRef : undefined}
+                data-source-line={lineNumber}
+                data-source-active={active ? "true" : "false"}
                 className={`grid grid-cols-[4rem_minmax(0,1fr)] gap-3 px-4 font-mono ${active ? "bg-amber-300/20 text-amber-50" : "text-slate-100"}`}
               >
                 <span className={`select-none text-right ${active ? "text-amber-200" : "text-slate-500"}`}>{lineNumber}</span>
@@ -937,7 +939,11 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
       workspaceKey: workspace.key,
       title: workspace.name,
     };
-    setOpenWikiTabs((current) => current.some((item) => item.id === tab.id) ? current : [...current, tab]);
+    setOpenWikiTabs((current) => {
+      const existingIndex = current.findIndex((item) => item.id === tab.id);
+      if (existingIndex < 0) return [...current, tab];
+      return current.map((item, index) => index === existingIndex ? { ...item, ...tab } : item);
+    });
     activateWikiTab(tab);
   };
 
@@ -949,7 +955,11 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
       documentId: document.id,
       title: document.title,
     };
-    setOpenWikiTabs((current) => current.some((item) => item.id === tab.id) ? current : [...current, tab]);
+    setOpenWikiTabs((current) => {
+      const existingIndex = current.findIndex((item) => item.id === tab.id);
+      if (existingIndex < 0) return [...current, tab];
+      return current.map((item, index) => index === existingIndex ? { ...item, ...tab } : item);
+    });
     activateWikiTab(tab);
   };
 
@@ -977,7 +987,11 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
     };
     const relativePath = relativePathFromWorkspace(workspaceRoot, detail.filePath);
 
-    setOpenWikiTabs((current) => current.some((item) => item.id === tab.id) ? current : [...current, tab]);
+    setOpenWikiTabs((current) => {
+      const existingIndex = current.findIndex((item) => item.id === tab.id);
+      if (existingIndex < 0) return [...current, tab];
+      return current.map((item, index) => index === existingIndex ? { ...item, ...tab } : item);
+    });
     activateWikiTab(tab);
     setSourcePreviewByTabId((current) => ({
       ...current,

@@ -122,6 +122,25 @@ async function main() {
     throw new Error('Knowledge document preview should not render the workspace regenerate button');
   }
 
+  const taskExecutorDoc = page.getByRole('button', { name: /打开文档 任务执行引擎/ }).first();
+  await taskExecutorDoc.waitFor({ state: 'visible', timeout: 10000 });
+  await taskExecutorDoc.click();
+  await page.waitForTimeout(800);
+  const inlineSourceRef = page.getByRole('button', {
+    name: /打开源码文件 src\/electron\/libs\/task\/executor\.ts#L83-L84/,
+  }).first();
+  await inlineSourceRef.waitFor({ state: 'visible', timeout: 10000 });
+  await inlineSourceRef.click();
+  await page.waitForTimeout(1200);
+  bodyText = await page.locator('body').innerText({ timeout: 10000 });
+  if (!bodyText.includes('src/electron/libs/task/executor.ts#L83-L84')) {
+    throw new Error('Knowledge inline source ref did not open executor.ts in the knowledge tab');
+  }
+  for (const lineNumber of [83, 84]) {
+    const highlightedLine = page.locator(`[data-source-line="${lineNumber}"][data-source-active="true"]`);
+    await highlightedLine.waitFor({ state: 'visible', timeout: 10000 });
+  }
+
   const sectionToggle = page.getByRole('button', { name: /折叠(Repo Wiki|项目概述|系统架构|架构设计|业务模块|前端架构设计|后端架构设计)/ }).first();
   await sectionToggle.waitFor({ state: 'visible', timeout: 10000 });
   const sectionTitle = (await sectionToggle.innerText()).trim();

@@ -29,7 +29,9 @@ const SOURCE_FILE_EXTENSION_PATTERN = /\.(?:[cm]?[jt]sx?|jsonc?|ya?ml|toml|mdx?|
 const DEFAULT_EXPANDABLE_FRAME_CLASS = "group relative mt-3 overflow-hidden rounded-xl border border-black/8 bg-surface-tertiary";
 
 function stripMarkdownLinkTarget(value: string): string {
-  return value.trim().replace(/^<(.+)>$/, "$1").replace(/^file=/i, "");
+  const trimmed = value.trim();
+  const markdownLink = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(trimmed);
+  return (markdownLink?.[2] ?? trimmed).replace(/^<(.+)>$/, "$1").replace(/^file=/i, "");
 }
 
 function parseLineTarget(value: string): { cleanPath: string; startLine?: number; endLine?: number } {
@@ -641,6 +643,7 @@ function MDContent({
                 type="button"
                 className="inline rounded bg-surface-tertiary px-1.5 py-0.5 text-left font-mono text-base text-accent underline-offset-2 transition [overflow-wrap:anywhere] hover:bg-accent/10 hover:underline"
                 onClick={(event) => handleInlineCodeClick(event, sourceFile, onOpenSourceFile)}
+                aria-label={`打开源码文件 ${rawCode}`}
                 title="打开源码文件"
               >
                 <code {...rest}>{children}</code>
