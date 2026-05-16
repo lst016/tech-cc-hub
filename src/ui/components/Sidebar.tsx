@@ -30,7 +30,7 @@ export function Sidebar({
   onOpenCronPage,
   width = 320,
 }: SidebarProps) {
-  const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-14" : "top-10";
+  const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-12" : "top-10";
   const sessions = useAppStore((state) => state.sessions);
   const archivedSessions = useAppStore((state) => state.archivedSessions);
   const activeSessionId = useAppStore((state) => state.activeSessionId);
@@ -239,19 +239,19 @@ export function Sidebar({
   return (
     <>
       <aside
-        className={`fixed bottom-0 left-0 ${sidebarHeaderOffsetClass} flex min-w-[250px] flex-col gap-3 border-r border-black/6 bg-[linear-gradient(180deg,rgba(248,249,252,0.96),rgba(238,241,246,0.94))] px-2 pb-3 pt-3 shadow-[inset_-1px_0_0_rgba(255,255,255,0.75)] backdrop-blur-xl`}
+        className={`fixed bottom-0 left-0 ${sidebarHeaderOffsetClass} flex min-w-[250px] flex-col gap-2 border-r border-black/8 bg-[#f3f3f3] px-2 pb-2 pt-2 shadow-[inset_-1px_0_0_rgba(255,255,255,0.7)]`}
         style={{ width }}
       >
-      <div className="flex min-h-0 flex-1 flex-col gap-3">
-        <div className="flex gap-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-2">
+        <div className="flex gap-1.5">
           <button
-            className="flex-1 rounded-xl border border-black/6 bg-white/82 px-3 py-2 text-sm font-medium text-ink-800 shadow-[0_8px_18px_rgba(30,38,52,0.06)] transition-all hover:-translate-y-[1px] hover:border-black/10 hover:bg-white"
+            className="flex-1 rounded-lg border border-black/6 bg-white/75 px-3 py-1.5 text-sm font-medium text-ink-800 transition-colors hover:border-black/10 hover:bg-white"
             onClick={() => onNewSession()}
           >
             + 新建会话
           </button>
           <button
-            className={`rounded-xl border px-3 py-2 text-xs font-semibold shadow-[0_8px_18px_rgba(30,38,52,0.06)] transition-all hover:-translate-y-[1px] ${showArchived ? "border-accent/25 bg-accent-subtle text-accent" : "border-black/6 bg-white/82 text-ink-700 hover:bg-white"}`}
+            className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${showArchived ? "border-accent/20 bg-accent/10 text-accent" : "border-black/6 bg-white/65 text-ink-600 hover:bg-white"}`}
             onClick={() => setShowArchived((current) => !current)}
           >
             归档
@@ -260,19 +260,19 @@ export function Sidebar({
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           {workspaceGroups.length === 0 && (
-            <div className="rounded-3xl border border-black/6 bg-white/72 px-4 py-5 text-center text-xs leading-6 text-muted shadow-[0_14px_34px_rgba(30,38,52,0.06)]">
+            <div className="rounded-xl border border-black/6 bg-white/70 px-3 py-4 text-center text-xs leading-6 text-muted">
               还没有会话。直接在底部输入框开始聊天，系统会按工作区自动归档到左侧。
             </div>
           )}
 
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-0.5">
             {workspaceGroups.map((group) => (
               <div
                 key={group.key}
-                className="py-0.5"
+                className="py-px"
               >
                 <div
-                  className="group/workspace flex items-center justify-between gap-1.5 rounded-lg px-3 py-2 transition-colors hover:bg-white/80"
+                  className="group/workspace flex items-center justify-between gap-1 rounded-lg px-2.5 py-1.5 transition-colors hover:bg-[#e7e7e7]"
                   onMouseEnter={(event) => showWorkspaceHoverCard(group, event.currentTarget)}
                   onMouseLeave={() => setWorkspaceHoverCard(null)}
                   onFocus={(event) => showWorkspaceHoverCard(group, event.currentTarget)}
@@ -341,7 +341,7 @@ export function Sidebar({
                     return (
                     <div
                       key={session.id}
-                      className={`group/session relative cursor-pointer overflow-hidden rounded-lg px-3 py-2 text-left transition-colors ${isActiveSession ? "bg-black/10 text-ink-900" : "text-ink-700 hover:bg-black/[0.045]"}`}
+                      className={`group/session relative cursor-pointer overflow-hidden rounded-lg px-2.5 py-1.5 text-left transition-colors ${isActiveSession ? "bg-[#dedede] text-ink-900" : "text-ink-700 hover:bg-[#e7e7e7]"}`}
                       onClick={() => setActiveSessionId(session.id)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
@@ -444,9 +444,9 @@ export function Sidebar({
           </div>
         </div>
 
-        <div className="mt-auto space-y-2">
+        <div className="mt-auto space-y-1">
           <button
-            className="flex w-full items-center justify-between rounded-2xl border border-amber-200/70 bg-amber-50/85 px-4 py-3 text-sm font-semibold text-amber-800 shadow-[0_10px_28px_rgba(146,64,14,0.06)] transition-all hover:-translate-y-[1px] hover:border-amber-300 hover:bg-amber-50"
+            className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-[#e2e2e2] hover:text-ink-950"
             onClick={() => window.electron.invoke("shell:openExternal", "https://github.com/lst016/tech-cc-hub/issues/new")}
             aria-label="需求反馈"
           >
@@ -458,7 +458,7 @@ export function Sidebar({
             </svg>
           </button>
           <button
-            className="flex w-full items-center justify-between rounded-2xl border border-black/6 bg-white/82 px-4 py-3 text-sm font-medium text-ink-800 shadow-[0_10px_28px_rgba(30,38,52,0.06)] transition-all hover:-translate-y-[1px] hover:border-black/10 hover:bg-white"
+            className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-[#e2e2e2] hover:text-ink-950"
             onClick={() => onOpenKnowledgePanel?.()}
             aria-label="知识库（内测期）"
           >
@@ -472,7 +472,7 @@ export function Sidebar({
             </svg>
           </button>
           <button
-            className="flex w-full items-center justify-between rounded-2xl border border-black/6 bg-white/82 px-4 py-3 text-sm font-medium text-ink-800 shadow-[0_10px_28px_rgba(30,38,52,0.06)] transition-all hover:-translate-y-[1px] hover:border-black/10 hover:bg-white"
+            className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-[#e2e2e2] hover:text-ink-950"
             onClick={() => onOpenCronPage?.()}
             aria-label="定时任务"
           >
@@ -483,7 +483,7 @@ export function Sidebar({
             </svg>
           </button>
           <button
-            className="flex w-full items-center justify-between rounded-2xl border border-black/6 bg-white/82 px-4 py-3 text-sm font-medium text-ink-800 shadow-[0_10px_28px_rgba(30,38,52,0.06)] transition-all hover:-translate-y-[1px] hover:border-black/10 hover:bg-white"
+            className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-[#e2e2e2] hover:text-ink-950"
             onClick={() => openSettings()}
             aria-label="设置"
           >
