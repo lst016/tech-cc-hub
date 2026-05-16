@@ -7,7 +7,6 @@ import {
   ChevronRight,
   FolderPlus,
   GitBranch,
-  Lightbulb,
   Network,
   PauseCircle,
   Search,
@@ -1502,13 +1501,6 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                 <span className="truncate font-mono text-sm text-slate-500">{selectedWorkspace.cwd}</span>
               </>
             )}
-          </div>
-          <div className="flex items-center gap-2 bg-sky-50 px-5 py-2 text-sm font-medium text-sky-600">
-            <Lightbulb className="h-4 w-4" />
-            Repo Wiki（为您准备）和知识卡片（为 Agent 准备）将基于您的代码库一起生成和更新。
-            <button className="ml-auto rounded p-1 text-sky-500 hover:bg-sky-100" type="button" aria-label="关闭提示">
-              <X className="h-4 w-4" />
-            </button>
           </div>
         </header>
 
