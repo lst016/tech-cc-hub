@@ -1,5 +1,5 @@
 import { AlertTriangle, Archive, GitBranch, History, Loader2, RefreshCw } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { UiGitOperationLogEntry, UiGitWorkbenchSnapshot } from "../../types";
 import { useGitWorkbench } from "../../hooks/useGitWorkbench";
 import { GitBranchStashPanel } from "./GitBranchStashPanel";
@@ -10,6 +10,7 @@ import { GitConfirmDialog, type GitConfirmDialogState } from "./GitConfirmDialog
 import { GitDiffViewer } from "./GitDiffViewer";
 import { GitHistoryPanel } from "./GitHistoryPanel";
 import { GitStatusHeader } from "./GitStatusHeader";
+import { triggerKnowledgeRefreshAfterCommit } from "./git-knowledge-autoupdate";
 import { formatAheadBehind } from "./git-ui-utils";
 
 type GitWorkbenchTab = "changes" | "log" | "branches" | "stashes";
@@ -40,6 +41,13 @@ export function GitWorkbenchPanel({ cwd }: { cwd?: string }) {
   }, [snapshot]);
 
   const closeConfirm = () => setConfirm(null);
+  const commitAndRefreshKnowledge = useCallback(async (message: string, body?: string) => {
+    const committed = await workbench.commit(message, body);
+    if (committed === false) return false;
+    void triggerKnowledgeRefreshAfterCommit(cwd);
+    return committed;
+  }, [cwd, workbench.commit]);
+
   const confirmAndClose = (state: GitConfirmDialogState) => {
     setConfirm({
       ...state,
@@ -146,7 +154,7 @@ export function GitWorkbenchPanel({ cwd }: { cwd?: string }) {
                       compact
                       snapshot={snapshot}
                       actionBusy={workbench.actionBusy}
-                      onCommit={workbench.commit}
+                      onCommit={commitAndRefreshKnowledge}
                       onGenerateMessage={workbench.generateCommitMessage}
                       onGenerateMessageRefined={workbench.generateCommitMessageRefined}
                       onPush={workbench.push}

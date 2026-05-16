@@ -53,6 +53,20 @@ describe("git workbench UI source wiring", () => {
     assert.match(hookSource, /return false/);
   });
 
+  it("refreshes enabled Repo Wiki workspaces after successful Git commits", () => {
+    const panelSource = readFileSync("src/ui/components/git/GitWorkbenchPanel.tsx", "utf8");
+    const autoUpdateSource = readFileSync("src/ui/components/git/git-knowledge-autoupdate.ts", "utf8");
+
+    assert.match(panelSource, /commitAndRefreshKnowledge/);
+    assert.match(panelSource, /triggerKnowledgeRefreshAfterCommit\(cwd\)/);
+    assert.match(panelSource, /onCommit=\{commitAndRefreshKnowledge\}/);
+    assert.match(autoUpdateSource, /knowledge:list/);
+    assert.match(autoUpdateSource, /knowledge:run-generation/);
+    assert.match(autoUpdateSource, /tech-cc-hub:knowledge-panel-auto-update/);
+    assert.match(autoUpdateSource, /generation\.status !== "idle"/);
+    assert.match(autoUpdateSource, /generation\?\.status === "generating"/);
+  });
+
   it("does not expose destructive history rewriting actions in the renderer", () => {
     const gitSource = [
       readFileSync("src/ui/components/git/GitWorkbenchPanel.tsx", "utf8"),
