@@ -402,9 +402,9 @@ export function Sidebar({
           <button
             className="flex w-full items-center justify-between rounded-2xl border border-black/6 bg-white/82 px-4 py-3 text-sm font-medium text-ink-800 shadow-[0_10px_28px_rgba(30,38,52,0.06)] transition-all hover:-translate-y-[1px] hover:border-black/10 hover:bg-white"
             onClick={() => onOpenKnowledgePanel?.()}
-            aria-label="知识库"
+            aria-label="知识库（内测期）"
           >
-            <span>知识库</span>
+            <span>知识库（内测期）</span>
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
               <path d="M5 5.5A2.5 2.5 0 0 1 7.5 3H19v16H7.5A2.5 2.5 0 0 0 5 21.5z" />
               <path d="M5 5.5v16" />
