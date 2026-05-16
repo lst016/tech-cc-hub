@@ -86,6 +86,25 @@ function getMermaidErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error || "Mermaid 渲染失败");
 }
 
+function normalizeMermaidSvg(svg: string): string {
+  const styleTags: string[] = [];
+  const withoutEmbeddedStyles = svg.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, (styleTag) => {
+    styleTags.push(styleTag);
+    return "";
+  });
+  const normalizedSvg = withoutEmbeddedStyles.replace(
+    /<svg\b([^>]*)>/i,
+    (_match, attributes: string) => {
+      const normalizedAttributes = String(attributes ?? "")
+        .replace(/\srole="[^"]*"/i, "")
+        .replace(/\saria-roledescription="[^"]*"/i, "")
+        .replace(/\saria-label="[^"]*"/i, "");
+      return `<svg${normalizedAttributes} role="img" aria-label="Mermaid 图表">`;
+    },
+  );
+  return `${styleTags.join("")}${normalizedSvg}`;
+}
+
 function MermaidDiagram({ chart }: { chart: string }) {
   const rawId = useId();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -129,7 +148,7 @@ function MermaidDiagram({ chart }: { chart: string }) {
       })
       .then(({ svg, bindFunctions }) => {
         if (disposed) return;
-        setRenderState({ status: "ready", svg });
+        setRenderState({ status: "ready", svg: normalizeMermaidSvg(svg) });
         window.requestAnimationFrame(() => {
           if (!disposed && containerRef.current && bindFunctions) {
             bindFunctions(containerRef.current);
