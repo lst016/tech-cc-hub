@@ -8,7 +8,6 @@ import {
   FolderPlus,
   GitBranch,
   Lightbulb,
-  MoreVertical,
   Network,
   PauseCircle,
   Search,
@@ -1464,45 +1463,36 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                 {openWikiTabs.map((tab) => {
                   const active = tab.id === activeWikiTabId;
                   return (
-                    <button
+                    <div
                       key={tab.id}
-                      type="button"
-                      onClick={() => activateWikiTab(tab)}
-                      className={`group flex h-12 max-w-[240px] shrink-0 items-center gap-2 border-b-2 px-3 text-sm transition ${
+                      className={`group flex h-12 max-w-[240px] shrink-0 items-center border-b-2 text-sm transition ${
                         active
                           ? "border-slate-950 bg-white font-semibold text-slate-950"
                           : "border-transparent bg-slate-50 text-slate-500 hover:bg-white hover:text-slate-800"
                       }`}
                     >
-                      <BookOpen className="h-4 w-4 shrink-0 text-slate-500" />
-                      <span className="min-w-0 truncate">{tab.title}</span>
-                      <span
-                        role="button"
-                        tabIndex={0}
+                      <button
+                        type="button"
+                        onClick={() => activateWikiTab(tab)}
+                        className="flex h-full min-w-0 flex-1 items-center gap-2 px-3 text-left"
+                        aria-current={active ? "page" : undefined}
+                      >
+                        <BookOpen className="h-4 w-4 shrink-0 text-slate-500" />
+                        <span className="min-w-0 truncate">{tab.title}</span>
+                      </button>
+                      <button
+                        type="button"
                         aria-label={`关闭 ${tab.title}`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          closeWikiTab(tab.id);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            closeWikiTab(tab.id);
-                          }
-                        }}
-                        className="ml-auto rounded p-0.5 text-slate-400 opacity-70 hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100"
+                        onClick={() => closeWikiTab(tab.id)}
+                        className="mr-2 rounded p-0.5 text-slate-400 opacity-70 transition hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100 focus:opacity-100"
                       >
                         <X className="h-3.5 w-3.5" />
-                      </span>
-                    </button>
+                      </button>
+                    </div>
                   );
                 })}
               </div>
             </div>
-            <button className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" type="button" aria-label="更多">
-              <MoreVertical className="h-5 w-5" />
-            </button>
           </div>
           <div className="flex items-center gap-2 px-5 py-3">
             <h1 className="min-w-0 truncate text-lg font-semibold">{activeHeaderTitle}</h1>

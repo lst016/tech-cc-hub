@@ -100,6 +100,13 @@ async function main() {
   if (await page.getByRole('button', { name: new RegExp(`关闭 .*${escapeRegExp(expectedTitle)}`) }).count() < 1) {
     throw new Error('Knowledge UI did not open the document in a closable tab');
   }
+  if (await page.getByRole('button', { name: /^更多$/ }).count() > 0) {
+    throw new Error('Knowledge UI still renders an inert top-right More tab action');
+  }
+  const nestedInteractiveCount = await page.evaluate(() => document.querySelectorAll('button button, button [role="button"]').length);
+  if (nestedInteractiveCount > 0) {
+    throw new Error(`Knowledge UI still nests interactive tab controls inside buttons: ${nestedInteractiveCount}`);
+  }
   if (await page.getByRole('button', { name: /^重新生成$/ }).isVisible().catch(() => false)) {
     throw new Error('Knowledge document preview should not render the workspace regenerate button');
   }
