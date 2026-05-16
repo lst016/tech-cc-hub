@@ -160,25 +160,33 @@ export class KnowledgeUiStore {
 
   private repairCompletedGenerations(): void {
     const rows = this.db
-      .prepare("SELECT workspace_key, updated_at FROM knowledge_ui_generation WHERE status = 'generating'")
-      .all() as Array<{ workspace_key: string; updated_at: number }>;
+      .prepare("SELECT workspace_key, status, completed, total, failed, updated_at FROM knowledge_ui_generation WHERE status IN ('generating', 'paused')")
+      .all() as Array<{ workspace_key: string; status: string; completed: number; total: number; failed: number; updated_at: number }>;
     if (rows.length === 0) return;
     const countDocs = this.db.prepare("SELECT COUNT(*) AS count FROM knowledge_ui_documents WHERE workspace_key = ?");
     const update = this.db.prepare(
       `UPDATE knowledge_ui_generation
        SET status = 'completed', completed = ?, total = ?, processing = 0, failed = 0, phase = '已完成', updated_at = ?
-       WHERE workspace_key = ? AND status = 'generating'`,
+       WHERE workspace_key = ? AND status IN ('generating', 'paused')`,
     );
     const now = Date.now();
     const tx = this.db.transaction(() => {
       for (const row of rows) {
         const workspaceKey = normalizeKey(row.workspace_key);
         if (ACTIVE_KNOWLEDGE_GENERATIONS.has(workspaceKey)) continue;
-        if (now - Number(row.updated_at ?? 0) < STALE_GENERATION_REPAIR_MS) continue;
-        const result = countDocs.get(row.workspace_key) as { count?: number } | undefined;
-        const total = Number(result?.count ?? 0);
-        if (total > 0) {
+        const completed = Math.max(0, Math.floor(Number(row.completed) || 0));
+        const total = Math.max(0, Math.floor(Number(row.total) || 0));
+        const failed = Math.max(0, Math.floor(Number(row.failed) || 0));
+        const countersAlreadyComplete = failed === 0 && total > 0 && completed >= total;
+        if (countersAlreadyComplete) {
           update.run(total, total, now, row.workspace_key);
+          continue;
+        }
+        if (row.status !== "generating" || now - Number(row.updated_at ?? 0) < STALE_GENERATION_REPAIR_MS) continue;
+        const result = countDocs.get(row.workspace_key) as { count?: number } | undefined;
+        const documentTotal = Number(result?.count ?? 0);
+        if (documentTotal > 0) {
+          update.run(documentTotal, documentTotal, now, row.workspace_key);
         }
       }
     });
@@ -741,13 +749,17 @@ function normalizeGeneration(state: KnowledgeUiGeneration): KnowledgeUiGeneratio
   const total = Number.isFinite(state.total) && state.total > 0 ? Math.floor(state.total) : 0;
   const rawCompleted = Math.max(0, Math.floor(Number(state.completed) || 0));
   const completed = total > 0 ? Math.min(total, rawCompleted) : rawCompleted;
+  const failed = Math.max(0, Math.floor(Number(state.failed) || 0));
+  const status = state.status !== "idle" && failed === 0 && total > 0 && completed >= total
+    ? "completed"
+    : state.status;
   return {
-    status: state.status,
+    status,
     completed,
     total,
-    processing: Math.max(0, Math.floor(Number(state.processing) || 0)),
-    failed: Math.max(0, Math.floor(Number(state.failed) || 0)),
-    phase: state.phase,
+    processing: status === "generating" ? Math.max(0, Math.floor(Number(state.processing) || 0)) : 0,
+    failed,
+    phase: status === "completed" ? state.phase ?? "已完成" : state.phase,
     commitId: state.commitId,
     commitShortHash: state.commitShortHash,
     branch: state.branch ?? null,

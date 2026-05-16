@@ -268,12 +268,16 @@ function normalizeGenerationState(value: unknown): GenerationState | undefined {
   const total = Number.isFinite(raw.total) && raw.total && raw.total > 0 ? Math.floor(raw.total) : 0;
   const failed = Number.isFinite(raw.failed) && raw.failed && raw.failed > 0 ? Math.floor(raw.failed) : 0;
   const updatedAt = Number.isFinite(raw.updatedAt) && raw.updatedAt && raw.updatedAt > 0 ? raw.updatedAt : Date.now();
-  let completed = Number.isFinite(raw.completed) && raw.completed && raw.completed > 0 ? Math.floor(raw.completed) : 0;
+  const rawCompleted = Number.isFinite(raw.completed) && raw.completed && raw.completed > 0 ? Math.floor(raw.completed) : 0;
+  const completed = total > 0 ? Math.min(total, Math.max(0, rawCompleted)) : Math.max(0, rawCompleted);
   let status = raw.status;
+  if (status !== "idle" && failed === 0 && total > 0 && completed >= total) {
+    status = "completed";
+  }
 
   return {
     status,
-    completed: total > 0 ? Math.min(total, Math.max(0, completed)) : Math.max(0, completed),
+    completed,
     total,
     processing: status === "generating" ? Math.max(1, Math.floor(Number(raw.processing) || 1)) : 0,
     failed,
@@ -497,13 +501,14 @@ function ProgressBlock({ state }: { state: GenerationState }) {
   const percent = hasKnownTotal
     ? Math.min(100, Math.round((state.completed / safeTotal) * 1000) / 10)
     : 0;
+  const isFailed = state.status === "paused" && state.failed > 0;
   const statusLabel = state.status === "paused"
-    ? "已暂停"
+    ? isFailed ? "生成失败" : "已暂停"
     : state.status === "completed"
       ? "已完成"
       : "正在生成中";
   const progressPrefix = state.status === "paused"
-    ? "已暂停"
+    ? isFailed ? "生成失败" : "已暂停"
     : state.status === "completed"
       ? "生成完成"
       : "正在生成中";
@@ -1748,7 +1753,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                       ? `生成中 ${workspaceDocuments.length}`
                       : "生成中"
                   : workspaceGeneration.status === "paused"
-                    ? "已暂停"
+                    ? workspaceGeneration.failed > 0 ? "生成失败" : "已暂停"
                     : "已完成";
               return (
                 <div key={workspace.key}>
@@ -1998,8 +2003,13 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                   </>
                 ) : generation.status === "paused" ? (
                   <>
-                    <button type="button" onClick={continueGeneration} className="rounded-lg bg-slate-950 px-4 py-3 text-base font-semibold text-white">
-                      继续
+                    <button
+                      type="button"
+                      onClick={generation.failed > 0 ? () => startGeneration() : continueGeneration}
+                      disabled={generation.failed > 0 && (!canStartGeneration || !embeddingReady)}
+                      className="rounded-lg bg-slate-950 px-4 py-3 text-base font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      {generation.failed > 0 ? "重新生成" : "继续"}
                     </button>
                     <button type="button" onClick={cancelGeneration} className="rounded-lg bg-slate-100 px-4 py-3 text-base font-semibold text-slate-900">
                       取消
