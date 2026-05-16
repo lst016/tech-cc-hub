@@ -1345,7 +1345,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
       setManualWorkspacePaths((current) => current.some((item) => normalizeWorkspaceKey(item) === key) ? current : [key, ...current]);
       setSelectedWorkspaceKey(key);
     } catch (error) {
-      setWorkspaceError(error instanceof Error ? error.message : "新增工作区失败。");
+      setWorkspaceError(error instanceof Error ? error.message : "新增知识库失败。");
     }
   };
 
@@ -1454,7 +1454,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
             className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
           >
             <FolderPlus className="h-4 w-4" />
-            新增工作区
+            新增知识库
           </button>
           {workspaceError && (
             <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
@@ -1467,15 +1467,15 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
           {workspaces.length === 0 ? (
             <div className="rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center">
               <Network className="mx-auto h-7 w-7 text-slate-300" />
-              <div className="mt-3 text-sm font-semibold text-slate-700">暂无项目工作区</div>
-              <div className="mt-1 text-xs leading-5 text-slate-400">新增后再生成 Repo Wiki。</div>
+              <div className="mt-3 text-sm font-semibold text-slate-700">暂无知识库</div>
+              <div className="mt-1 text-xs leading-5 text-slate-400">新增知识库后再生成 Repo Wiki。</div>
               <button
                 type="button"
                 onClick={addWorkspace}
                 className="mt-4 inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
               >
                 <FolderPlus className="h-4 w-4" />
-                新增
+                新增知识库
               </button>
             </div>
           ) : visibleWorkspaces.length === 0 ? (
@@ -1646,7 +1646,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-dashed border-slate-200 text-slate-300">
                 <Network className="h-7 w-7" />
               </div>
-                    <h2 className="mt-5 text-2xl font-semibold">新增项目工作区</h2>
+                    <h2 className="mt-5 text-2xl font-semibold">新增知识库</h2>
                     <p className="mt-2 text-sm leading-6 text-slate-500">系统工作区不会默认进入知识库，请手动选择要生成 Repo Wiki 的项目目录。</p>
               <button
                 type="button"
@@ -1654,7 +1654,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                 className="mt-6 inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800"
               >
                 <FolderPlus className="h-4 w-4" />
-                新增工作区
+                新增知识库
               </button>
             </div>
           ) : (
