@@ -1530,7 +1530,6 @@ function App() {
             onOpenSettings={openSettings}
             onOpenKnowledgePanel={() => { setShowKnowledgePanel(true); setShowCronPage(false); setShowTaskPanel(false); }}
             onOpenCronPage={() => { setShowCronPage(true); setShowKnowledgePanel(false); setShowTaskPanel(false); }}
-            onOpenTaskPanel={() => { setShowTaskPanel(true); setShowKnowledgePanel(false); setShowCronPage(false); }}
             width={sidebarWidth}
           />
         )}
