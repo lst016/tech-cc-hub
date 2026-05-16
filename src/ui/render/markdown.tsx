@@ -86,10 +86,11 @@ function getMermaidErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error || "Mermaid 渲染失败");
 }
 
-function normalizeMermaidSvg(svg: string): string {
-  const styleTags: string[] = [];
+function splitMermaidSvg(svg: string): { svg: string; css: string } {
+  const cssBlocks: string[] = [];
   const withoutEmbeddedStyles = svg.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, (styleTag) => {
-    styleTags.push(styleTag);
+    const css = /<style\b[^>]*>([\s\S]*?)<\/style>/i.exec(styleTag)?.[1]?.trim();
+    if (css) cssBlocks.push(css);
     return "";
   });
   const normalizedSvg = withoutEmbeddedStyles.replace(
@@ -102,7 +103,7 @@ function normalizeMermaidSvg(svg: string): string {
       return `<svg${normalizedAttributes} role="img" aria-label="Mermaid 图表">`;
     },
   );
-  return `${styleTags.join("")}${normalizedSvg}`;
+  return { svg: normalizedSvg, css: cssBlocks.join("\n") };
 }
 
 function MermaidDiagram({ chart }: { chart: string }) {
@@ -110,7 +111,7 @@ function MermaidDiagram({ chart }: { chart: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const normalizedChart = useMemo(() => chart.trim(), [chart]);
   const diagramId = useMemo(() => `mermaid-${rawId.replace(/[^a-zA-Z0-9_-]/g, "")}`, [rawId]);
-  const [renderState, setRenderState] = useState<{ status: "loading" | "ready" | "error"; svg?: string; error?: string }>({
+  const [renderState, setRenderState] = useState<{ status: "loading" | "ready" | "error"; svg?: string; css?: string; error?: string }>({
     status: "loading",
   });
 
@@ -148,7 +149,8 @@ function MermaidDiagram({ chart }: { chart: string }) {
       })
       .then(({ svg, bindFunctions }) => {
         if (disposed) return;
-        setRenderState({ status: "ready", svg: normalizeMermaidSvg(svg) });
+        const normalized = splitMermaidSvg(svg);
+        setRenderState({ status: "ready", svg: normalized.svg, css: normalized.css });
         window.requestAnimationFrame(() => {
           if (!disposed && containerRef.current && bindFunctions) {
             bindFunctions(containerRef.current);
@@ -165,6 +167,22 @@ function MermaidDiagram({ chart }: { chart: string }) {
       disposed = true;
     };
   }, [diagramId, normalizedChart]);
+
+  useEffect(() => {
+    if (renderState.status !== "ready" || !renderState.css) return undefined;
+    const styleId = `tech-cc-mermaid-style-${diagramId}`;
+    let styleElement = document.getElementById(styleId) as HTMLStyleElement | null;
+    if (!styleElement) {
+      styleElement = document.createElement("style");
+      styleElement.id = styleId;
+      styleElement.dataset.techCcMermaid = "true";
+      document.head.appendChild(styleElement);
+    }
+    styleElement.textContent = renderState.css;
+    return () => {
+      styleElement?.remove();
+    };
+  }, [diagramId, renderState.css, renderState.status]);
 
   if (renderState.status === "error") {
     return (
