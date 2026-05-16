@@ -9,6 +9,7 @@ import {
   CODEX_OAUTH_SMALL_MODEL,
   mergeCodexModelIds,
 } from "../../../shared/codex-oauth";
+import { DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT } from "../../../shared/claude-agent-teams";
 import {
   createCodexOAuthProfile,
   createDeepSeekOfficialProfile,
@@ -520,7 +521,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
         title: "Codex 模型渠道引导配置",
         prompt: buildCodexGuidePrompt(profile),
         agentId: "codex-oauth-guide",
-        allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,update_plan",
+        allowedTools: DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT,
       }));
     } catch (error) {
       setImportStatus({ profileId: profile.id, tone: "error", message: error instanceof Error ? error.message : "启动 Agent 引导配置失败。" });

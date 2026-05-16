@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildClaudeCode2139FeaturePromptAppend,
   buildFeishuDocumentFetchPromptAppend,
   buildGlobalRuntimeSystemPromptExtAppend,
   buildToolCallOptimizationPromptAppend,
@@ -17,6 +18,15 @@ test("tool optimization prompt keeps tool calls sparse, batched, and bounded", (
   assert.match(prompt, /one bounded rg\/find\/Grep\/Glob search/);
   assert.match(prompt, /under 200 lines/);
   assert.match(prompt, /Stop exploring once the collected evidence is sufficient/);
+});
+
+test("Claude Code compatibility prompt includes Agent Teams guidance", () => {
+  const prompt = buildClaudeCode2139FeaturePromptAppend();
+
+  assert.match(prompt, /CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1/);
+  assert.match(prompt, /TeamCreate/);
+  assert.match(prompt, /SendMessage/);
+  assert.match(prompt, /TeamDelete/);
 });
 
 test("global runtime systemPromptExt is appended when configured", () => {

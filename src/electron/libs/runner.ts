@@ -16,6 +16,10 @@ import { buildRunnerPromptContentBlocks } from "../../shared/runner-prompt.js";
 import { isSuccessfulRunnerResult, shouldSuppressRunnerErrorAfterSuccessfulResult } from "../../shared/runner-status.js";
 import type { BuiltinMcpServerName } from "../../shared/builtin-mcp-registry.js";
 import {
+  CLAUDE_AGENT_TEAMS_ENV_VAR,
+  withClaudeAgentTeamsEnv,
+} from "../../shared/claude-agent-teams.js";
+import {
   createLearnCaptureHook,
   createCorrectionDetectionHook,
   createCorrectionTrackingHook,
@@ -413,10 +417,10 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
 
       const env = buildEnvForConfig(config, effectiveModel);
       const globalRuntimeConfig = getGlobalRuntimeConfig();
-      const mergedEnv = {
+      const mergedEnv = withClaudeAgentTeamsEnv({
         ...getEnhancedEnv(),
         ...env,
-      };
+      });
       let syncedGlobalRuntimeConfig = persistDiscoveredRuntimeConfig(globalRuntimeConfig, mergedEnv);
       latestGlobalRuntimeConfig = syncedGlobalRuntimeConfig;
       const thinking = buildThinkingConfig(runtime?.reasoningMode);
@@ -484,6 +488,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         settingSources: agentContext.settingSources,
         claudePath: getClaudeCodePath(),
         sdkPlugins: sdkPlugins.map((plugin) => plugin.path),
+        agentTeamsEnabled: mergedEnv[CLAUDE_AGENT_TEAMS_ENV_VAR] === "1",
         runtimeProfile: runtimeProfile.id,
         builtinMcpServers: enabledBuiltinMcpServerNames,
       });

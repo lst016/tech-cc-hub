@@ -17,7 +17,7 @@ test("runner enables Claude Code auto truncation for oversized resumed contexts"
 
   assert.match(source, /CLAUDE_CODE_AUTO_TRUNCATE_ARGS/);
   assert.match(source, /"allow-auto-truncate": null/);
-  assert.match(source, /extraArgs:\s*CLAUDE_CODE_AUTO_TRUNCATE_ARGS/);
+  assert.match(source, /extraArgs:\s*getClaudeCodeExtraArgs\(\)/);
 });
 
 test("runner enables discovered skills for desktop development sessions", () => {

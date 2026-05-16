@@ -26,6 +26,7 @@ import { OPEN_BROWSER_WORKBENCH_URL_EVENT, type OpenBrowserWorkbenchUrlDetail } 
 import { copyTextToClipboard } from "./utils/clipboard";
 import type { ActivityRailTab } from "./utils/activity-workspace-tabs";
 import { getAvailableModelsForProfiles, getEnabledProfiles } from "./components/settings/settings-utils";
+import { DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT } from "../shared/claude-agent-teams";
 import {
   DEV_BRIDGE_READY_EVENT,
   getDevElectronRuntimeSource,
@@ -1164,7 +1165,7 @@ function App() {
         title,
         prompt: trimmedPrompt,
         cwd: systemWorkspace,
-        allowedTools: options?.allowedTools ?? "Read,Edit,MultiEdit,Write,Bash,Glob,Search,update_plan",
+        allowedTools: options?.allowedTools ?? DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT,
         runtime: {
           runSurface: "maintenance",
           agentId: options?.agentId ?? "system-maintenance",

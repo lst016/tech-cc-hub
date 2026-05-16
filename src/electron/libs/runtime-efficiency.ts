@@ -3,6 +3,7 @@ import type { AgentRunSurface, PromptAttachment, RuntimeOverrides } from "../typ
 
 export type RuntimeEfficiencyProfileId =
   | "standard"
+  | "team"
   | "visual"
   | "automation"
   | "ide"
@@ -59,6 +60,7 @@ const FIGMA_URL_PATTERN = /https?:\/\/(?:www\.)?figma\.com\/(?:design|file|proto
 const VISUAL_TASK_PATTERN = /<browser_annotations>|browserview|localhost|127\.0\.0\.1|screenshot|screen\s*shot|ui\b|css\b|figma|design|layout|pixel|视觉|截图|页面|网页|浏览器|样式|布局|设计|还原|对齐|按钮|组件/i;
 const AUTOMATION_TASK_PATTERN = /cron|schedule|scheduled|reminder|monitor|watch|automation|定时|计划任务|提醒|监控|自动化|每(天|周|小时|分钟)/i;
 const IDE_TASK_PATTERN = /intellij|idea|java|jdk|maven|gradle|spring|tomcat|pom\.xml|\.java\b|编译|启动后端|本地运行/i;
+const AGENT_TEAM_TASK_PATTERN = /agent\s*teams?|teammates?|TeamCreate|TeamDelete|SendMessage|CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS|parallel\s+(?:dev|development|work)|team\s+lead|leader|delegate mode|团队协作|队友|跨层并行|并行开发|多人协作/i;
 
 type ResolveRuntimeEfficiencyProfileInput = {
   prompt: string;
@@ -85,7 +87,20 @@ export function resolveRuntimeEfficiencyProfile(
 
   const prompt = input.prompt.trim();
   const hasImageAttachment = (input.attachments ?? []).some((attachment) => attachment.kind === "image");
-  if (hasImageAttachment || FIGMA_URL_PATTERN.test(prompt) || VISUAL_TASK_PATTERN.test(prompt)) {
+  const isVisualTask = hasImageAttachment || FIGMA_URL_PATTERN.test(prompt) || VISUAL_TASK_PATTERN.test(prompt);
+  if (AGENT_TEAM_TASK_PATTERN.test(prompt)) {
+    return buildProfile("team", isVisualTask ? VISUAL_SERVERS : BASE_SERVERS, {
+      includeBrowserPrompt: isVisualTask,
+      includeDesignPrompt: isVisualTask,
+      includeClaudeCompatPrompt: true,
+      includePartialMessages: isVisualTask,
+      includeHookEvents: true,
+      agentProgressSummaries: true,
+      forwardSubagentText: true,
+    });
+  }
+
+  if (isVisualTask) {
     return buildProfile("visual", VISUAL_SERVERS, {
       includeBrowserPrompt: true,
       includeDesignPrompt: true,

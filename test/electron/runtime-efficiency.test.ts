@@ -13,6 +13,7 @@ test("runtime efficiency defaults to the small standard tool surface", () => {
   assert.deepEqual(profile.builtinMcpServers, [
     "tech-cc-hub-admin",
     "tech-cc-hub-plan",
+    "tech-cc-hub-knowledge",
   ]);
   assert.equal(profile.includePartialMessages, false);
   assert.equal(profile.includeHookEvents, false);
@@ -47,6 +48,35 @@ test("runtime efficiency keeps cron tools out of normal coding turns", () => {
   assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-cron"));
   assert.equal(profile.builtinMcpServers.includes("tech-cc-hub-figma"), false);
   assert.equal(profile.builtinMcpServers.includes("tech-cc-hub-browser"), false);
+});
+
+test("runtime efficiency enables Agent Teams visibility for parallel team prompts", () => {
+  const profile = resolveRuntimeEfficiencyProfile({
+    prompt: "用 Agent Teams 做跨层并行开发，API、数据层、测试分给不同 teammate",
+  });
+
+  assert.equal(profile.id, "team");
+  assert.equal(profile.includeClaudeCompatPrompt, true);
+  assert.equal(profile.includeHookEvents, true);
+  assert.equal(profile.agentProgressSummaries, true);
+  assert.equal(profile.forwardSubagentText, true);
+  assert.deepEqual(profile.builtinMcpServers, [
+    "tech-cc-hub-admin",
+    "tech-cc-hub-plan",
+    "tech-cc-hub-knowledge",
+  ]);
+});
+
+test("runtime efficiency keeps visual tools when Agent Teams work includes UI", () => {
+  const profile = resolveRuntimeEfficiencyProfile({
+    prompt: "用 Agent Teams 分工修 UI 截图还原，leader 负责 review",
+  });
+
+  assert.equal(profile.id, "team");
+  assert.equal(profile.includeBrowserPrompt, true);
+  assert.equal(profile.includeDesignPrompt, true);
+  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-browser"));
+  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-design"));
 });
 
 test("runner reuse key stays stable across normal coding prompts", () => {

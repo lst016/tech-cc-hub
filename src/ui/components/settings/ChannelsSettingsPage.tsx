@@ -26,6 +26,7 @@ import {
   LARK_CLI_SKILL_ENV_KEYS,
   LARK_CLI_SYSTEM_PROMPT_EXT,
 } from "../../../shared/lark-runtime-defaults.js";
+import { DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT } from "../../../shared/claude-agent-teams";
 
 type ChannelsSettingsPageProps = {
   configText: string;
@@ -448,7 +449,7 @@ function TelegramConfigForm({
       title: "Telegram Bot 引导配置",
       prompt,
       agentId: "telegram-guide",
-      allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,update_plan",
+      allowedTools: DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT,
     })).catch(() => {
       guideLaunchInFlightRef.current = false;
       setLaunchingGuide(false);
@@ -517,7 +518,7 @@ function LarkConfigForm({
       title: kind === "lark-cli" ? "Lark CLI 引导配置" : "飞书应用引导配置",
       prompt: kind === "lark-cli" ? buildLarkCliGuidePrompt(channel) : buildFeishuAppGuidePrompt(channel),
       agentId: kind === "lark-cli" ? "lark-cli-guide" : "lark-guide",
-      allowedTools: "Read,Edit,MultiEdit,Write,Bash,Glob,Search,update_plan",
+      allowedTools: DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT,
     })).catch(() => {
       guideLaunchInFlightRef.current = { ...guideLaunchInFlightRef.current, [kind]: false };
       setLaunchingGuide((current) => ({ ...current, [kind]: false }));

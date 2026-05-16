@@ -1,4 +1,5 @@
 import type { SlashCommandItem } from "./slash-command-discovery.js";
+import { buildClaudeAgentTeamsPromptHint } from "../../shared/claude-agent-teams.js";
 
 // Generated compatibility seed. Refresh with:
 //   node scripts/sync-claude-code-compat.mjs
@@ -123,5 +124,6 @@ export function buildClaudeCodeCompatPromptAppend(): string {
   return [
     `Claude Code v${CLAUDE_CODE_COMPAT_REGISTRY.sourceVersion} compatibility notes for tech-cc-hub:`,
     ...CLAUDE_CODE_COMPAT_REGISTRY.promptHints.map((hint) => `- ${hint}`),
+    ...buildClaudeAgentTeamsPromptHint().split("\n").map((hint) => `- ${hint}`),
   ].join("\n");
 }

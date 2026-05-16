@@ -6,6 +6,7 @@ import {
   CODEX_OAUTH_DEFAULT_MODEL,
   CODEX_OAUTH_SMALL_MODEL,
 } from "../../shared/codex-oauth.js";
+import { CLAUDE_AGENT_TEAMS_MIN_CLAUDE_CODE_VERSION } from "../../shared/claude-agent-teams.js";
 import {
   isModelCompatibleWithApiProvider,
   pickProviderCompatibleModel,
@@ -117,6 +118,56 @@ function resolveSdkBundledClaudePath(): string | null {
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
+const claudeCodeAgentTeamsSupportCache = new Map<string, boolean>();
+
+function supportsClaudeCodeAgentTeams(candidatePath: string): boolean {
+  const cached = claudeCodeAgentTeamsSupportCache.get(candidatePath);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const version = readClaudeCodeVersion(candidatePath);
+  const supported = version ? compareSemver(version, CLAUDE_AGENT_TEAMS_MIN_CLAUDE_CODE_VERSION) >= 0 : false;
+  claudeCodeAgentTeamsSupportCache.set(candidatePath, supported);
+  return supported;
+}
+
+function readClaudeCodeVersion(candidatePath: string): string | null {
+  const result = spawnSync(candidatePath, ["--version"], {
+    encoding: "utf8",
+    env: process.env,
+    timeout: 3000,
+  });
+  if (result.status !== 0) {
+    return null;
+  }
+
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  const match = output.match(/(\d+\.\d+\.\d+)/);
+  return match?.[1] ?? null;
+}
+
+function compareSemver(left: string, right: string): number {
+  const leftParts = parseSemver(left);
+  const rightParts = parseSemver(right);
+  for (let index = 0; index < 3; index += 1) {
+    const diff = leftParts[index] - rightParts[index];
+    if (diff !== 0) {
+      return diff;
+    }
+  }
+  return 0;
+}
+
+function parseSemver(version: string): [number, number, number] {
+  const parts = version.split(".").map((part) => Number.parseInt(part, 10));
+  return [
+    Number.isFinite(parts[0]) ? parts[0] : 0,
+    Number.isFinite(parts[1]) ? parts[1] : 0,
+    Number.isFinite(parts[2]) ? parts[2] : 0,
+  ];
+}
+
 // Get Claude Code executable path
 export function getClaudeCodePath(): string | undefined {
   const explicitPath = process.env.CLAUDE_CODE_PATH;
@@ -124,7 +175,13 @@ export function getClaudeCodePath(): string | undefined {
     return explicitPath;
   }
 
-  return resolveSystemClaudePath() ?? resolveSdkBundledClaudePath() ?? undefined;
+  const systemPath = resolveSystemClaudePath();
+  const bundledPath = resolveSdkBundledClaudePath();
+  if (systemPath && supportsClaudeCodeAgentTeams(systemPath)) {
+    return systemPath;
+  }
+
+  return bundledPath ?? systemPath ?? undefined;
 }
 
 // 获取当前有效的配置（优先界面配置，回退到文件配置）

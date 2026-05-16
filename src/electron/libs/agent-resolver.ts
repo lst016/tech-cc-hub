@@ -6,6 +6,7 @@ import {
 import { homedir } from "os";
 import { basename, dirname, extname, isAbsolute, join } from "path";
 import type { PromptLedgerSource } from "../../shared/prompt-ledger.js";
+import { DEFAULT_RESTRICTED_ALLOWED_TOOLS } from "../../shared/claude-agent-teams.js";
 import { buildTechCCHubSystemPromptSources } from "./system-prompt-presets.js";
 
 export type AgentRunSurface = "development" | "maintenance";
@@ -24,6 +25,13 @@ type AgentProfileManifest = {
   autoApply?: boolean;
   runSurface?: AgentRunSurface | "both";
   visibility?: "internal" | "user";
+};
+
+type AgentContextDocument = {
+  scope: AgentScope;
+  path: string;
+  label: string;
+  content: string;
 };
 
 export type ResolvedAgentProfile = {
@@ -69,7 +77,7 @@ const BUILT_IN_SYSTEM_PROFILES: ResolvedAgentProfile[] = [
       "优先通过应用内受控能力完成工作，避免随意扩大修改范围。",
     ].join("\n"),
     skills: [],
-    allowedTools: ["Read", "Edit", "MultiEdit", "Write", "Bash", "Glob", "Search", "update_plan"],
+    allowedTools: [...DEFAULT_RESTRICTED_ALLOWED_TOOLS],
     autoApply: true,
     runSurface: "maintenance",
     visibility: "internal",
@@ -80,10 +88,12 @@ export function resolveAgentRuntimeContext(options: {
   cwd?: string;
   surface?: AgentRunSurface;
   agentId?: string;
+  userClaudeRoot?: string;
 }): ResolvedAgentRuntimeContext {
   const surface = options.surface ?? "development";
   const projectRoot = options.cwd?.trim() ? options.cwd.trim() : undefined;
   const requestedAgentId = normalizeAgentId(options.agentId);
+  const userClaudeRoot = options.userClaudeRoot?.trim() || USER_CLAUDE_ROOT;
 
   if (surface === "maintenance") {
     const selectedProfile = pickProfileById(
@@ -105,8 +115,15 @@ export function resolveAgentRuntimeContext(options: {
     };
   }
 
-  const userLayer = discoverAgentLayer("user", USER_CLAUDE_ROOT, {
-    entryDocs: [join(USER_CLAUDE_ROOT, "AGENTS.md")],
+  const userLayer = discoverAgentLayer("user", userClaudeRoot, {
+    entryDocs: [
+      join(userClaudeRoot, "CLAUDE.md"),
+      join(userClaudeRoot, "AGENTS.md"),
+    ],
+    settingsFiles: [
+      join(userClaudeRoot, "settings.json"),
+      join(userClaudeRoot, "settings.local.json"),
+    ],
   });
   const projectLayer = projectRoot
     ? discoverAgentLayer("project", join(projectRoot, ".claude"), {
@@ -114,6 +131,11 @@ export function resolveAgentRuntimeContext(options: {
         join(projectRoot, "AGENTS.md"),
         join(projectRoot, "CLAUDE.md"),
         join(projectRoot, ".claude", "AGENTS.md"),
+        join(projectRoot, ".claude", "CLAUDE.md"),
+      ],
+      settingsFiles: [
+        join(projectRoot, ".claude", "settings.json"),
+        join(projectRoot, ".claude", "settings.local.json"),
       ],
     })
     : null;
@@ -136,15 +158,17 @@ export function resolveAgentRuntimeContext(options: {
   const entryDocs = [
     ...userLayer.entryDocs,
     ...(projectLayer?.entryDocs ?? []),
+    ...userLayer.settingsDocs,
+    ...(projectLayer?.settingsDocs ?? []),
   ];
 
   return {
     surface,
     selectedAgentId: requestedAgentId,
-    // API routing is owned by tech-cc-hub settings. We already inject user/project
-    // AGENTS/CLAUDE docs into systemPromptAppend below, so do not let Claude Code
-    // load user/project settings.json here; those files can override ANTHROPIC_*
-    // env and silently route a run to a different provider.
+    // API routing is owned by tech-cc-hub settings. We scan user/project
+    // CLAUDE/AGENTS/settings files into the prompt ledger below, but do not
+    // let Claude Code load raw settings.json because those files can override
+    // ANTHROPIC_* env and silently route a run to a different provider.
     settingSources: [],
     systemPromptAppend: buildPromptAppend(
       entryDocs,
@@ -159,7 +183,7 @@ export function resolveAgentRuntimeContext(options: {
 }
 
 function buildPromptLedgerSources(
-  entryDocs: Array<{ scope: AgentScope; path: string; label: string; content: string }>,
+  entryDocs: AgentContextDocument[],
   profiles: ResolvedAgentProfile[],
   skills: string[] = [],
 ): PromptLedgerSource[] {
@@ -207,9 +231,10 @@ function buildPromptLedgerSources(
 function discoverAgentLayer(
   scope: AgentScope,
   claudeRoot: string,
-  options: { entryDocs: string[] },
+  options: { entryDocs: string[]; settingsFiles: string[] },
 ): {
-  entryDocs: Array<{ scope: AgentScope; path: string; label: string; content: string }>;
+  entryDocs: AgentContextDocument[];
+  settingsDocs: AgentContextDocument[];
   profiles: ResolvedAgentProfile[];
 } {
   const entryDocs = options.entryDocs
@@ -221,9 +246,18 @@ function discoverAgentLayer(
       content: safeReadText(path),
     }))
     .filter((doc) => doc.content.trim().length > 0);
+  const settingsDocs = options.settingsFiles
+    .filter((path) => existsSync(path))
+    .map((path) => ({
+      scope,
+      path,
+      label: basename(path),
+      content: buildClaudeSettingsSummary(path),
+    }))
+    .filter((doc) => doc.content.trim().length > 0);
 
   const profiles = discoverAgentProfiles(scope, claudeRoot);
-  return { entryDocs, profiles };
+  return { entryDocs, settingsDocs, profiles };
 }
 
 function discoverAgentProfiles(scope: AgentScope, claudeRoot: string): ResolvedAgentProfile[] {
@@ -367,7 +401,7 @@ function mergeAllowedTools(profiles: ResolvedAgentProfile[]): string[] | undefin
 }
 
 function buildPromptAppend(
-  entryDocs: Array<{ scope: AgentScope; path: string; label: string; content: string }>,
+  entryDocs: AgentContextDocument[],
   profiles: ResolvedAgentProfile[],
 ): string | undefined {
   const sections: string[] = [];
@@ -419,6 +453,212 @@ function safeReadText(path: string): string {
   }
 }
 
+function buildClaudeSettingsSummary(path: string): string {
+  const raw = safeReadText(path).trim();
+  if (!raw) {
+    return "";
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return [
+      "Claude settings file found, but tech-cc-hub could not parse it as JSON.",
+      `Parse error: ${message}`,
+      "Raw contents were not injected to avoid leaking secrets.",
+    ].join("\n");
+  }
+
+  if (!isRecord(parsed)) {
+    return "Claude settings file found, but it is not a JSON object.";
+  }
+
+  const lines = [
+    "Claude settings summary (sanitized).",
+    "tech-cc-hub keeps API/model routing in app settings; env/api credentials in this file are treated as informational and are not injected as raw values.",
+    `Top-level keys: ${Object.keys(parsed).sort().join(", ") || "(none)"}`,
+  ];
+
+  appendSimpleSetting(lines, parsed, "model");
+  appendSimpleSetting(lines, parsed, "outputStyle");
+  appendSimpleSetting(lines, parsed, "teammateMode");
+  appendSimpleSetting(lines, parsed, "todoFeatureEnabled");
+  appendStringArraySetting(lines, parsed, "allowedTools");
+  appendStringArraySetting(lines, parsed, "disallowedTools");
+  appendEnvKeySummary(lines, parsed);
+  appendEnabledPluginSummary(lines, parsed);
+  appendMcpServerSummary(lines, parsed);
+  appendPermissionSummary(lines, parsed);
+  appendHookSummary(lines, parsed);
+
+  return lines.join("\n");
+}
+
+function appendSimpleSetting(lines: string[], settings: Record<string, unknown>, key: string): void {
+  const value = settings[key];
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    lines.push(`${key}: ${String(value)}`);
+  }
+}
+
+function appendStringArraySetting(lines: string[], settings: Record<string, unknown>, key: string): void {
+  const value = settings[key];
+  if (!Array.isArray(value)) {
+    return;
+  }
+
+  const items = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (items.length > 0) {
+    lines.push(`${key}: ${items.join(", ")}`);
+  }
+}
+
+function appendEnvKeySummary(lines: string[], settings: Record<string, unknown>): void {
+  if (!isRecord(settings.env)) {
+    return;
+  }
+
+  const keys = Object.keys(settings.env).sort();
+  if (keys.length > 0) {
+    lines.push(`env keys: ${keys.join(", ")} (values redacted)`);
+  }
+}
+
+function appendEnabledPluginSummary(lines: string[], settings: Record<string, unknown>): void {
+  if (!isRecord(settings.enabledPlugins)) {
+    return;
+  }
+
+  const enabled: string[] = [];
+  const disabled: string[] = [];
+  for (const [pluginId, value] of Object.entries(settings.enabledPlugins).sort(([left], [right]) => left.localeCompare(right))) {
+    if (value === false) {
+      disabled.push(pluginId);
+    } else if (value === true) {
+      enabled.push(pluginId);
+    }
+  }
+
+  if (enabled.length > 0) {
+    lines.push(`enabledPlugins: ${enabled.join(", ")}`);
+  }
+  if (disabled.length > 0) {
+    lines.push(`disabledPlugins: ${disabled.join(", ")}`);
+  }
+}
+
+function appendMcpServerSummary(lines: string[], settings: Record<string, unknown>): void {
+  if (!isRecord(settings.mcpServers)) {
+    return;
+  }
+
+  const summaries = Object.entries(settings.mcpServers)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, value]) => summarizeMcpServer(name, value));
+  if (summaries.length > 0) {
+    lines.push("mcpServers:");
+    lines.push(...summaries.map((summary) => `- ${summary}`));
+  }
+}
+
+function summarizeMcpServer(name: string, value: unknown): string {
+  if (!isRecord(value)) {
+    return `${name}: invalid non-object config`;
+  }
+
+  const parts = [name];
+  const type = typeof value.type === "string" ? value.type : value.url ? "http" : "stdio";
+  parts.push(`type=${type}`);
+  if (typeof value.command === "string" && value.command.trim()) {
+    parts.push(`command=${value.command.trim()}`);
+  }
+  if (typeof value.url === "string" && value.url.trim()) {
+    parts.push(`url=${redactUrl(value.url.trim())}`);
+  }
+  if (Array.isArray(value.args)) {
+    parts.push(`args=${value.args.length}`);
+  }
+  if (isRecord(value.env)) {
+    parts.push(`envKeys=${Object.keys(value.env).sort().join("|") || "none"}`);
+  }
+  if (isRecord(value.headers)) {
+    parts.push(`headerKeys=${Object.keys(value.headers).sort().join("|") || "none"}`);
+  }
+  if (value.enabled === false) {
+    parts.push("enabled=false");
+  }
+
+  return parts.join(" ");
+}
+
+function appendPermissionSummary(lines: string[], settings: Record<string, unknown>): void {
+  if (!isRecord(settings.permissions)) {
+    return;
+  }
+
+  const permissions = settings.permissions;
+  const details: string[] = [];
+  appendPermissionList(details, permissions, "allow");
+  appendPermissionList(details, permissions, "ask");
+  appendPermissionList(details, permissions, "deny");
+  if (typeof permissions.defaultMode === "string") {
+    details.push(`defaultMode=${permissions.defaultMode}`);
+  }
+
+  if (details.length > 0) {
+    lines.push(`permissions: ${details.join("; ")}`);
+  }
+}
+
+function appendPermissionList(details: string[], permissions: Record<string, unknown>, key: string): void {
+  const value = permissions[key];
+  if (!Array.isArray(value)) {
+    return;
+  }
+
+  const items = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (items.length > 0) {
+    details.push(`${key}=${items.join(", ")}`);
+  }
+}
+
+function appendHookSummary(lines: string[], settings: Record<string, unknown>): void {
+  if (!isRecord(settings.hooks)) {
+    return;
+  }
+
+  const summaries = Object.entries(settings.hooks)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([eventName, value]) => {
+      const count = Array.isArray(value) ? value.length : 1;
+      return `${eventName}:${count}`;
+    });
+  if (summaries.length > 0) {
+    lines.push(`hooks: ${summaries.join(", ")} (commands and secrets omitted)`);
+  }
+}
+
+function redactUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return value.replace(/:\/\/[^/@\s]+@/, "://");
+  }
+}
+
 function safeReadRelativeText(targetPath: string, manifestPath: string, claudeRoot: string): string {
   const resolvedPath = isAbsolute(targetPath)
     ? targetPath
@@ -448,4 +688,8 @@ export function getUserClaudeRoot(): string {
 
 export function getSystemAgentProfiles(): ResolvedAgentProfile[] {
   return [...BUILT_IN_SYSTEM_PROFILES];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
