@@ -446,6 +446,18 @@ export function Sidebar({
 
         <div className="mt-auto space-y-2">
           <button
+            className="flex w-full items-center justify-between rounded-2xl border border-amber-200/70 bg-amber-50/85 px-4 py-3 text-sm font-semibold text-amber-800 shadow-[0_10px_28px_rgba(146,64,14,0.06)] transition-all hover:-translate-y-[1px] hover:border-amber-300 hover:bg-amber-50"
+            onClick={() => window.electron.invoke("shell:openExternal", "https://github.com/lst016/tech-cc-hub/issues/new")}
+            aria-label="需求反馈"
+          >
+            <span>需求反馈</span>
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              <path d="M12 8v4" />
+              <circle cx="12" cy="16" r="0.5" fill="currentColor" />
+            </svg>
+          </button>
+          <button
             className="flex w-full items-center justify-between rounded-2xl border border-black/6 bg-white/82 px-4 py-3 text-sm font-medium text-ink-800 shadow-[0_10px_28px_rgba(30,38,52,0.06)] transition-all hover:-translate-y-[1px] hover:border-black/10 hover:bg-white"
             onClick={() => onOpenKnowledgePanel?.()}
             aria-label="知识库（内测期）"

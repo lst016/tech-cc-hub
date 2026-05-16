@@ -1350,8 +1350,8 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
 
   return (
     <section className="flex h-full min-h-0 bg-white text-slate-900">
-      <aside className="flex w-[300px] shrink-0 flex-col border-r border-slate-200 bg-white">
-        <div className="border-b border-slate-200 px-4 py-3">
+      <aside className="flex w-[300px] shrink-0 flex-col border-r border-slate-200 bg-[#f7f7f7]">
+        <div className="border-b border-slate-200 bg-[#f7f7f7] px-4 py-3">
           <div className="flex items-center gap-2">
             {onBack ? (
               <button

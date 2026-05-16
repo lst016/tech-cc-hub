@@ -1470,23 +1470,6 @@ function App() {
           </TooltipButton>
           <TooltipButton
             type="button"
-            tooltip="在 GitHub 上提交需求反馈或问题"
-            onClick={() => window.electron.invoke("shell:openExternal", "https://github.com/lst016/tech-cc-hub/issues/new")}
-            onMouseDown={(event) => {
-              event.preventDefault();
-            }}
-            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-            className="inline-flex h-7 items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 text-[11px] font-semibold text-amber-700 transition hover:bg-amber-100"
-          >
-            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              <path d="M12 8v4" />
-              <circle cx="12" cy="16" r="0.5" fill="currentColor" />
-            </svg>
-            <span>需求反馈</span>
-          </TooltipButton>
-          <TooltipButton
-            type="button"
             tooltip="打开执行复盘"
             onClick={() => setShowSessionAnalysis(true)}
             disabled={!activeSessionId}
