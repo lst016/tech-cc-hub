@@ -82,6 +82,11 @@ async function main() {
       throw new Error(`Knowledge UI missing generated content: ${expected}`);
     }
   }
+  await page.locator('.mermaid-diagram svg').first().waitFor({ state: 'visible', timeout: 15000 });
+  const rawMermaidCodeBlocks = await page.locator('pre').filter({ hasText: /flowchart|sequenceDiagram|graph TD|graph LR/ }).count();
+  if (rawMermaidCodeBlocks > 0) {
+    throw new Error(`Knowledge UI still renders Mermaid diagrams as raw code blocks: ${rawMermaidCodeBlocks}`);
+  }
   const topicButtonCount = await page.locator('button').filter({ hasText: /知识库|Repo Wiki|文档管理|后端引擎|系统架构|Electron|前端|质量|故障/ }).count();
   if (topicButtonCount < 3) {
     throw new Error('Knowledge UI did not render enough Repo Wiki topic page buttons');
