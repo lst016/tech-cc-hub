@@ -134,6 +134,20 @@ function getWorkspaceName(cwd?: string): string {
   return parts.at(-1) || cwd;
 }
 
+function normalizeSearchText(value: string): string {
+  return value.trim().toLocaleLowerCase("zh-Hans-CN");
+}
+
+function workspaceMatchesSearch(workspace: KnowledgeWorkspace, query: string): boolean {
+  if (!query) return true;
+  return normalizeSearchText(`${workspace.name}\n${workspace.cwd ?? ""}`).includes(query);
+}
+
+function documentMatchesSearch(document: KnowledgeDocument, query: string): boolean {
+  if (!query) return true;
+  return normalizeSearchText(`${document.title}\n${document.section}\n${document.content}`).includes(query);
+}
+
 function normalizeWorkspaceKey(cwd?: string | null): string {
   return cwd?.trim() ?? "";
 }
@@ -483,11 +497,13 @@ function SectionTree({
   documents,
   selectedDocumentId,
   onSelectDocument,
+  forceExpanded = false,
 }: {
   active: boolean;
   documents: KnowledgeDocument[];
   selectedDocumentId: string;
   onSelectDocument: (document: KnowledgeDocument) => void;
+  forceExpanded?: boolean;
 }) {
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set());
 
@@ -510,7 +526,7 @@ function SectionTree({
 
   const renderNodes = (nodes: WikiTreeNode[], depth = 0): ReactNode => (
     nodes.map((node) => {
-      const collapsed = collapsedSections.has(node.key);
+      const collapsed = !forceExpanded && collapsedSections.has(node.key);
       return (
         <div key={node.key} data-knowledge-section={node.key}>
           <button
@@ -601,6 +617,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
   const [activeTab, setActiveTab] = useState<"repo" | "memory">("repo");
   const [selectedWorkspaceKey, setSelectedWorkspaceKey] = useState<string>("");
   const [selectedDocumentId, setSelectedDocumentId] = useState<string>("");
+  const [repoSearchQuery, setRepoSearchQuery] = useState("");
   const [expandedWorkspaceKeys, setExpandedWorkspaceKeys] = useState<Set<string>>(() => new Set());
   const [openWikiTabs, setOpenWikiTabs] = useState<KnowledgeOpenTab[]>([]);
   const [activeWikiTabId, setActiveWikiTabId] = useState<string>("");
@@ -680,6 +697,29 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
 
     return Array.from(groups.values()).sort((a, b) => b.updatedAt - a.updatedAt);
   }, [hiddenWorkspaceKeys, knowledgeStateReady, manualWorkspacePaths, sessions, storedWorkspaces, systemWorkspace]);
+  const normalizedRepoSearchQuery = useMemo(() => normalizeSearchText(repoSearchQuery), [repoSearchQuery]);
+  const hasRepoSearch = normalizedRepoSearchQuery.length > 0;
+  const filteredDocumentsByWorkspace = useMemo<Record<string, KnowledgeDocument[]>>(() => {
+    if (!hasRepoSearch) return documentsByWorkspace;
+    const next: Record<string, KnowledgeDocument[]> = {};
+    for (const [workspaceKey, documents] of Object.entries(documentsByWorkspace)) {
+      const matchedDocuments = documents.filter((document) => documentMatchesSearch(document, normalizedRepoSearchQuery));
+      if (matchedDocuments.length > 0) {
+        next[workspaceKey] = matchedDocuments;
+      }
+    }
+    return next;
+  }, [documentsByWorkspace, hasRepoSearch, normalizedRepoSearchQuery]);
+  const visibleWorkspaces = useMemo(() => {
+    if (!hasRepoSearch) return workspaces;
+    return workspaces.filter((workspace) => (
+      workspaceMatchesSearch(workspace, normalizedRepoSearchQuery) ||
+      (filteredDocumentsByWorkspace[workspace.key]?.length ?? 0) > 0
+    ));
+  }, [filteredDocumentsByWorkspace, hasRepoSearch, normalizedRepoSearchQuery, workspaces]);
+  const repoSearchResultCount = useMemo(() => (
+    visibleWorkspaces.reduce((count, workspace) => count + 1 + (filteredDocumentsByWorkspace[workspace.key]?.length ?? 0), 0)
+  ), [filteredDocumentsByWorkspace, visibleWorkspaces]);
   const gitWorkspaceSignature = useMemo(() => (
     workspaces
       .map((workspace) => `${workspace.key}\t${workspace.cwd ?? ""}`)
@@ -1383,14 +1423,31 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
             <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
               <Search className="h-4 w-4 text-slate-400" />
               <input
+                value={repoSearchQuery}
+                onChange={(event) => setRepoSearchQuery(event.target.value)}
                 className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-400"
                 placeholder="搜索 Repo Wiki"
               />
+              {repoSearchQuery ? (
+                <button
+                  type="button"
+                  aria-label="清空 Repo Wiki 搜索"
+                  onClick={() => setRepoSearchQuery("")}
+                  className="rounded p-0.5 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
             </div>
             <button className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" type="button" aria-label="筛选">
               <SlidersHorizontal className="h-4 w-4" />
             </button>
           </div>
+          {hasRepoSearch ? (
+            <div className="mt-2 truncate text-xs text-slate-400">
+              找到 {repoSearchResultCount} 个结果
+            </div>
+          ) : null}
           <button
             type="button"
             onClick={addWorkspace}
@@ -1421,11 +1478,17 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                 新增
               </button>
             </div>
+          ) : visibleWorkspaces.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center">
+              <Search className="mx-auto h-7 w-7 text-slate-300" />
+              <div className="mt-3 text-sm font-semibold text-slate-700">没有匹配结果</div>
+              <div className="mt-1 text-xs leading-5 text-slate-400">换个关键词试试，支持搜索标题、章节、正文和工作区路径。</div>
+            </div>
           ) : (
             <div className="space-y-1">
-            {workspaces.map((workspace) => {
+            {visibleWorkspaces.map((workspace) => {
               const workspaceGeneration = generationByWorkspace[workspace.key] ?? createIdleGeneration();
-              const workspaceDocuments = documentsByWorkspace[workspace.key] ?? [];
+              const workspaceDocuments = filteredDocumentsByWorkspace[workspace.key] ?? [];
               const workspaceGit = gitByWorkspace[workspace.key];
               const selected = workspace.key === selectedWorkspace?.key;
               const expanded = expandedWorkspaceKeys.has(workspace.key);
@@ -1510,12 +1573,13 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
-                  {activeTab === "repo" && expanded && workspaceGeneration.status !== "idle" && (
+                  {activeTab === "repo" && (expanded || hasRepoSearch) && workspaceGeneration.status !== "idle" && (
                     <SectionTree
                       active={workspaceDocuments.length > 0}
                       documents={workspaceDocuments}
                       selectedDocumentId={selectedDocumentId}
                       onSelectDocument={(document) => openDocumentTab(workspace, document)}
+                      forceExpanded={hasRepoSearch}
                     />
                   )}
                 </div>
