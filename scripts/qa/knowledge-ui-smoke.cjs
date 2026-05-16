@@ -59,10 +59,16 @@ async function main() {
   await page.waitForTimeout(1000);
 
   let bodyText = await page.locator('body').innerText({ timeout: 10000 });
-  for (const expected of ['生成完成', '重新生成']) {
-    if (!bodyText.includes(expected)) {
-      throw new Error(`Knowledge workspace panel missing: ${expected}`);
-    }
+  if (!bodyText.includes('生成完成')) {
+    throw new Error('Knowledge workspace panel missing: 生成完成');
+  }
+  const hasRegenerateButton = await page.getByRole('button', { name: /^重新生成$/ }).isVisible().catch(() => false);
+  const hasUpdateButton = await page.getByRole('button', { name: /^更新$/ }).isVisible().catch(() => false);
+  if (!hasRegenerateButton && !hasUpdateButton) {
+    throw new Error('Knowledge workspace panel missing regenerate/update action');
+  }
+  if (bodyText.includes('需更新')) {
+    throw new Error('Knowledge workspace should render update as a button instead of static 需更新 text');
   }
 
   const generatedDoc = page.getByRole('button', { name: new RegExp(`打开文档 .*${escapeRegExp(expectedTitle)}`) }).first();

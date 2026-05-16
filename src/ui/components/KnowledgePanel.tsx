@@ -715,6 +715,12 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
   const autoUpdateEnabled = selectedWorkspace
     ? autoUpdateByWorkspace[selectedWorkspace.key] ?? gitReady
     : false;
+  const selectedNeedsUpdate = Boolean(
+    selectedGitState?.hasGit &&
+    selectedGitState.commitId &&
+    generation.commitId &&
+    generation.commitId !== selectedGitState.commitId,
+  );
   const modelState = useMemo(() => {
     const profiles = getRoutedProfiles(apiConfigSettings.profiles);
     const embeddingProfile = profiles.find((profile) => profile.embeddingModel?.trim());
@@ -1125,21 +1131,21 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
     setActiveWikiTabId(tab.id);
   }, [activeWikiTabId, openWikiTabs.length, selectedWorkspace]);
 
-  const startGeneration = () => {
-    if (!selectedWorkspace) return;
+  const startGeneration = (targetWorkspace = selectedWorkspace) => {
+    if (!targetWorkspace) return;
     if (!embeddingReady) {
       setWorkspaceError("请先配置向量模型 embeddingModel，否则知识库不能生成和索引。");
       return;
     }
-    const git = gitByWorkspace[selectedWorkspace.key];
-    const workspaceKey = selectedWorkspace.key;
+    const git = gitByWorkspace[targetWorkspace.key];
+    const workspaceKey = targetWorkspace.key;
     const workspaceTab: KnowledgeOpenTab = {
       id: workspaceTabId(workspaceKey),
       kind: "workspace",
       workspaceKey,
-      title: selectedWorkspace.name,
+      title: targetWorkspace.name,
     };
-    completedDocumentSeedRef.current.delete(selectedWorkspace.key);
+    completedDocumentSeedRef.current.delete(targetWorkspace.key);
     backendGenerationInFlightRef.current.add(workspaceKey);
     setOpenWikiTabs((current) => {
       const next = current.filter((tab) => tab.workspaceKey !== workspaceKey || tab.kind === "workspace");
@@ -1394,8 +1400,6 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
               );
               const statusLabel = workspaceGeneration.status === "idle"
                 ? "去生成"
-                : needsUpdate
-                  ? "需更新"
                 : workspaceGeneration.status === "generating"
                   ? "生成中"
                   : workspaceGeneration.status === "paused"
@@ -1426,6 +1430,17 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                       </div>
                       <span className="ml-3 shrink-0 text-xs font-semibold text-slate-500">{statusLabel}</span>
                     </button>
+                    {needsUpdate && workspaceGeneration.status !== "generating" ? (
+                      <button
+                        type="button"
+                        aria-label={`更新 ${workspace.name} Repo Wiki`}
+                        onClick={() => startGeneration(workspace)}
+                        disabled={!embeddingReady}
+                        className="mr-2 shrink-0 rounded-md bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                      >
+                        更新
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       aria-label={`删除 ${workspace.name}`}
@@ -1607,7 +1622,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                 {generation.status === "idle" ? (
                   <button
                     type="button"
-                    onClick={startGeneration}
+                    onClick={() => startGeneration()}
                     disabled={!canStartGeneration || !embeddingReady}
                     className="sm:col-span-2 rounded-lg bg-slate-900 px-4 py-3 text-base font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                   >
@@ -1634,11 +1649,11 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                 ) : (
                   <button
                     type="button"
-                    onClick={startGeneration}
+                    onClick={() => startGeneration()}
                     disabled={!canStartGeneration || !embeddingReady}
                     className="sm:col-span-2 rounded-lg bg-slate-950 px-4 py-3 text-base font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
                   >
-                    重新生成
+                    {selectedNeedsUpdate ? "更新" : "重新生成"}
                   </button>
                 )}
               </div>
