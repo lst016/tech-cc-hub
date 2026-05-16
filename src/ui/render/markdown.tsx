@@ -182,13 +182,60 @@ function getMermaidErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error || "Mermaid 渲染失败");
 }
 
+function removeMermaidCssTextNodes(element: Element): void {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  const nodes: Text[] = [];
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    const text = node.textContent?.trim() ?? "";
+    if (/^#mermaid-[\s\S]*\{[\s\S]*font-family/i.test(text) || /^#mermaid-[\s\S]*\{[\s\S]*--mermaid/i.test(text)) {
+      nodes.push(node);
+    }
+  }
+  for (const node of nodes) {
+    node.remove();
+  }
+}
+
+function sanitizeMermaidSvgWithDom(svg: string): { svg: string; css: string } | null {
+  try {
+    const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+    if (doc.querySelector("parsererror")) return null;
+    const svgElement = doc.documentElement;
+    if (!svgElement || svgElement.tagName.toLowerCase() !== "svg") return null;
+    const cssBlocks: string[] = [];
+    for (const style of Array.from(svgElement.querySelectorAll("style"))) {
+      const css = style.textContent?.trim();
+      if (css) cssBlocks.push(css);
+      style.remove();
+    }
+    removeMermaidCssTextNodes(svgElement);
+    svgElement.removeAttribute("role");
+    svgElement.removeAttribute("aria-roledescription");
+    svgElement.removeAttribute("aria-label");
+    svgElement.removeAttribute("aria-labelledby");
+    svgElement.removeAttribute("aria-describedby");
+    svgElement.setAttribute("role", "img");
+    svgElement.setAttribute("aria-label", "Mermaid 图表");
+    return {
+      svg: new XMLSerializer().serializeToString(svgElement),
+      css: cssBlocks.join("\n"),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function splitMermaidSvg(svg: string): { svg: string; css: string } {
+  const parsed = sanitizeMermaidSvgWithDom(svg);
+  if (parsed) return parsed;
+
   const cssBlocks: string[] = [];
   const withoutEmbeddedStyles = svg.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, (styleTag) => {
     const css = /<style\b[^>]*>([\s\S]*?)<\/style>/i.exec(styleTag)?.[1]?.trim();
     if (css) cssBlocks.push(css);
     return "";
-  });
+  }).replace(/#mermaid-[^<>{]*\{[^<]*font-family[^<]*\}/gi, "");
   const normalizedSvg = withoutEmbeddedStyles.replace(
     /<svg\b([^>]*)>/i,
     (_match, attributes: string) => {
