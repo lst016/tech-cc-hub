@@ -383,6 +383,8 @@ function SectionTree({
   selectedDocumentId: string;
   onSelectDocument: (document: KnowledgeDocument) => void;
 }) {
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set());
+
   if (!active || documents.length === 0) {
     return null;
   }
@@ -396,34 +398,56 @@ function SectionTree({
       }, new Map<string, KnowledgeDocument[]>())
       .entries(),
   );
+  const toggleSection = (sectionTitle: string) => {
+    setCollapsedSections((current) => {
+      const next = new Set(current);
+      if (next.has(sectionTitle)) {
+        next.delete(sectionTitle);
+      } else {
+        next.add(sectionTitle);
+      }
+      return next;
+    });
+  };
 
   return (
     <div className="mt-3 space-y-2">
-      {sections.map(([sectionTitle, sectionDocuments]) => (
-        <div key={sectionTitle}>
-          <div className="flex items-center gap-2 px-2 py-1 text-sm font-semibold text-slate-600">
-            <ChevronDown className="h-4 w-4" />
-            <span>{sectionTitle}</span>
+      {sections.map(([sectionTitle, sectionDocuments]) => {
+        const collapsed = collapsedSections.has(sectionTitle);
+        return (
+          <div key={sectionTitle} data-knowledge-section={sectionTitle}>
+            <button
+              type="button"
+              aria-expanded={!collapsed}
+              aria-label={`${collapsed ? "展开" : "折叠"}${sectionTitle}`}
+              onClick={() => toggleSection(sectionTitle)}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm font-semibold text-slate-600 transition hover:bg-slate-100"
+            >
+              {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              <span className="min-w-0 truncate">{sectionTitle}</span>
+            </button>
+            {!collapsed && (
+              <div className="ml-7 mt-1 space-y-1">
+                {sectionDocuments.map((document) => (
+                  <button
+                    type="button"
+                    key={document.id}
+                    aria-label={`打开文档 ${document.title}`}
+                    onClick={() => onSelectDocument(document)}
+                    className={`block w-full truncate rounded-lg px-2 py-1 text-left text-sm transition ${
+                      selectedDocumentId === document.id
+                        ? "bg-slate-100 font-semibold text-slate-900"
+                        : "text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    {document.title}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-          <div className="ml-7 mt-1 space-y-1">
-            {sectionDocuments.map((document) => (
-              <button
-                type="button"
-                key={document.id}
-                aria-label={`打开文档 ${document.title}`}
-                onClick={() => onSelectDocument(document)}
-                className={`block w-full truncate rounded-lg px-2 py-1 text-left text-sm transition ${
-                  selectedDocumentId === document.id
-                    ? "bg-slate-100 font-semibold text-slate-900"
-                    : "text-slate-700 hover:bg-slate-100"
-                }`}
-              >
-                {document.title}
-              </button>
-            ))}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

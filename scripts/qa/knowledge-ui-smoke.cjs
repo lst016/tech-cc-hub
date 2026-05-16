@@ -14,6 +14,10 @@ async function clickIfVisible(locator) {
   return false;
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 async function main() {
   const browser = await chromium.launch({
     headless: true,
@@ -77,6 +81,29 @@ async function main() {
   if (await page.getByRole('button', { name: /关闭 tech-cc-hub 项目概览/ }).count() < 1) {
     throw new Error('Knowledge UI did not open the document in a closable tab');
   }
+
+  const sectionToggle = page.getByRole('button', { name: /折叠(模块：|项目概览|架构设计|业务模块|前端架构设计|后端架构设计)/ }).first();
+  await sectionToggle.waitFor({ state: 'visible', timeout: 10000 });
+  const sectionTitle = (await sectionToggle.innerText()).trim();
+  const sectionGroup = page.locator('[data-knowledge-section]').filter({ hasText: sectionTitle }).first();
+  const childCountBeforeCollapse = await sectionGroup.getByRole('button', { name: /打开文档 / }).count();
+  if (childCountBeforeCollapse < 1) {
+    throw new Error(`Knowledge section has no document children before collapse: ${sectionTitle}`);
+  }
+  await sectionToggle.click();
+  await page.waitForTimeout(300);
+  const collapsedToggle = page.getByRole('button', { name: new RegExp(`展开${escapeRegExp(sectionTitle)}`) }).first();
+  await collapsedToggle.waitFor({ state: 'visible', timeout: 10000 });
+  if ((await collapsedToggle.getAttribute('aria-expanded')) !== 'false') {
+    throw new Error(`Knowledge section did not report collapsed state: ${sectionTitle}`);
+  }
+  const childCountAfterCollapse = await sectionGroup.getByRole('button', { name: /打开文档 / }).count();
+  if (childCountAfterCollapse !== 0) {
+    throw new Error(`Knowledge section children are still visible after collapse: ${sectionTitle}`);
+  }
+  await collapsedToggle.click();
+  await page.waitForTimeout(300);
+  await page.getByRole('button', { name: new RegExp(`折叠${escapeRegExp(sectionTitle)}`) }).first().waitFor({ state: 'visible', timeout: 10000 });
 
   await workspaceButton.click();
   await page.waitForTimeout(500);
