@@ -1,0 +1,31 @@
+{
+  "id": "module-electron-runtime",
+  "name": "Electron 运行时总览",
+  "title": "Electron 运行时总览",
+  "slug": "核心模块规格/Electron 运行时总览/Electron 运行时总览",
+  "path": "核心模块规格/Electron 运行时总览/Electron 运行时总览.md",
+  "description": "module-electron-runtime",
+  "prompt": "详细说明 Electron 运行时 的职责、入口文件、调用链、数据结构、扩展点、常见改造路径和验证命令。不要只列文件，要解释每个文件如何协作。",
+  "dependent_files": [
+    "src/electron/main.ts",
+    "src/electron/libs/runner-error.ts",
+    "src/electron/libs/runner-reuse.ts",
+    "src/electron/libs/runner.ts",
+    "src/electron/preload.cts",
+    "src/shared/runner-prompt.ts",
+    "src/shared/runner-status.ts",
+    "test/electron/runner-attachments.test.ts"
+  ],
+  "parent_id": "core-module-specs",
+  "parent": "核心模块规格",
+  "parent_chain": [
+    "核心模块规格"
+  ],
+  "section_path": "核心模块规格/Electron 运行时总览",
+  "layer_level": 1,
+  "order": 14,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "5f8abcfaa4ac07ddc03331a8e7b70f9232fb10881806d6d04911a18aaf7d0705",
+  "generated_at": 1778919256871
+}

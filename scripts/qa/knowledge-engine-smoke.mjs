@@ -37,7 +37,8 @@ function latestKnowledgeDb() {
 
 const reportPath = path.join(workspaceRoot, ".tech/reports/index-state.json");
 const wikiRoot = path.join(workspaceRoot, ".tech/repowiki/zh/content");
-const wikiPath = path.join(wikiRoot, "index.md");
+const agentCardsRoot = path.join(workspaceRoot, ".tech/repowiki/zh/agent-cards");
+const metadataPath = path.join(workspaceRoot, ".tech/repowiki/zh/meta/repowiki-metadata.json");
 const uiDbPath = path.join(appDataRoot, "knowledge/knowledge-ui.sqlite");
 const indexDbPath = latestKnowledgeDb();
 
@@ -56,52 +57,74 @@ function walkMarkdown(dir) {
   return files;
 }
 
+function containsPlaceholderBody(markdown) {
+  const withoutCodeFences = markdown.replace(/```[\s\S]*?```/g, "");
+  return /(^|\n)\s*(后续接入真实|未生成正文|当前没有真实 Repo Wiki 正文|生成后会出现 Repo Wiki 目录|模型未返回结构化说明)([。.\n]|$)/.test(withoutCodeFences);
+}
+
 const report = readJson(reportPath);
 if (report.success !== true) fail(`Index report is not successful: ${report.error || report.message || "unknown"}`);
 if (report.vectorStoreReady !== true) fail("Index report says sqlite-vec is not ready");
-if (!Number.isFinite(report.indexedDocuments) || report.indexedDocuments < 20) fail(`Repo Wiki did not index enough pages: ${report.indexedDocuments}`);
-if (!Number.isFinite(report.indexedChunks) || report.indexedChunks < 80) fail(`Indexed chunks are too shallow for Agent usage: ${report.indexedChunks}`);
-if (!Array.isArray(report.generatedFiles) || report.generatedFiles.length < 20) fail("Generated Repo Wiki is not a rich multi-page wiki");
+if (!Number.isFinite(report.indexedDocuments) || report.indexedDocuments < 60) fail(`Repo Wiki did not index enough topic pages/cards: ${report.indexedDocuments}`);
+if (!Number.isFinite(report.indexedChunks) || report.indexedChunks < 300) fail(`Indexed chunks are too shallow for Agent usage: ${report.indexedChunks}`);
+if (!Array.isArray(report.generatedFiles) || report.generatedFiles.length < 60) fail("Generated Repo Wiki is not a rich topic wiki");
 
-if (!existsSync(wikiPath)) fail(`Missing generated wiki markdown: ${wikiPath}`);
-const wikiFiles = walkMarkdown(wikiRoot);
-if (wikiFiles.length < 20) fail(`Repo Wiki markdown page count is too low: ${wikiFiles.length}`);
-if (!wikiFiles.some((file) => file.includes(`${path.sep}modules${path.sep}`))) fail("Repo Wiki did not generate module pages");
-for (const required of [
-  "agent-playbook.md",
-  "runtime-flows.md",
-  "api-surface.md",
-  path.join("modules", "knowledge-engine", "index.md"),
-  path.join("modules", "mcp-tools", "index.md"),
-  path.join("modules", "knowledge-engine", "files", "src", "electron", "libs", "knowledge", "knowledge-indexer.ts.md"),
-]) {
-  if (!existsSync(path.join(wikiRoot, required))) fail(`Missing required Agent-useful page: ${required}`);
+const metadata = readJson(metadataPath);
+const wikiCatalogs = Array.isArray(metadata.wiki_catalogs) ? metadata.wiki_catalogs : [];
+if (wikiCatalogs.length < 40) fail(`Repo Wiki catalog is too small for coding assistance: ${wikiCatalogs.length}`);
+if (wikiCatalogs.length > 80) fail(`Repo Wiki catalog looks like a source mirror, not a topic wiki: ${wikiCatalogs.length}`);
+if (!wikiCatalogs.some((catalog) => /知识库|知识引擎|Repo Wiki|Knowledge Engine|knowledge-engine/i.test(`${catalog.name || ""} ${catalog.title || ""} ${catalog.description || ""}`))) {
+  fail("Repo Wiki catalog is missing a knowledge-engine topic");
 }
+if (!wikiCatalogs.some((catalog) => Number(catalog.layer_level || 0) >= 2 || String(catalog.section_path || "").split("/").filter(Boolean).length >= 2)) {
+  fail("Repo Wiki catalog does not contain nested module/topic sections");
+}
+
+const wikiFiles = walkMarkdown(wikiRoot);
+if (wikiFiles.length < 40) fail(`Repo Wiki markdown page count is too low for coding assistance: ${wikiFiles.length}`);
+if (wikiFiles.length > 80) fail(`Repo Wiki markdown page count is too high for the default reading surface: ${wikiFiles.length}`);
+const maxWikiPathDepth = wikiFiles.reduce((max, file) => {
+  const relativePath = path.relative(wikiRoot, file).replaceAll(path.sep, "/");
+  return Math.max(max, relativePath.split("/").length);
+}, 0);
+if (maxWikiPathDepth < 3) fail(`Repo Wiki markdown paths are too flat: max depth ${maxWikiPathDepth}`);
+
+let citePages = 0;
+let mermaidPages = 0;
+let longPages = 0;
 for (const file of wikiFiles) {
   const wiki = readFileSync(file, "utf8");
   if (!wiki.trim().startsWith("# ")) fail(`Generated wiki markdown does not start with a heading: ${file}`);
   if (/^\s*```/.test(wiki)) fail(`Generated wiki markdown is wrapped in a code fence: ${file}`);
   if (/<think>/i.test(wiki)) fail(`Generated wiki markdown still contains model thinking tags: ${file}`);
-  if (/后续接入真实|未生成正文|当前没有真实 Repo Wiki 正文|生成后会出现 Repo Wiki 目录|模型未返回结构化说明/.test(wiki)) {
+  if (containsPlaceholderBody(wiki)) {
     fail(`Generated wiki markdown contains placeholder text: ${file}`);
   }
+  if (wiki.includes("<cite>")) citePages += 1;
+  if (/```mermaid/.test(wiki)) mermaidPages += 1;
+  if (wiki.split(/\r?\n/).length >= 180) longPages += 1;
 }
+if (citePages < Math.ceil(wikiFiles.length * 0.6)) fail(`Too few pages contain cite evidence: ${citePages}/${wikiFiles.length}`);
+if (mermaidPages < Math.max(2, Math.floor(wikiFiles.length * 0.25))) fail(`Too few pages contain Mermaid diagrams: ${mermaidPages}/${wikiFiles.length}`);
+if (longPages < Math.ceil(wikiFiles.length * 0.6)) fail(`Too few pages are substantial enough: ${longPages}/${wikiFiles.length}`);
 
-const indexWiki = readFileSync(path.join(wikiRoot, "index.md"), "utf8");
-for (const expected of ["Agent 快速定位", "关键工作流", "验证命令", "knowledge-indexer.ts", "knowledge-repository.ts"]) {
-  if (!indexWiki.includes(expected)) fail(`Project overview is not Agent-useful; missing: ${expected}`);
+if (!existsSync(agentCardsRoot)) fail(`Missing Agent Cards directory: ${agentCardsRoot}`);
+const agentCardFiles = walkMarkdown(agentCardsRoot);
+if (agentCardFiles.length < 8) fail(`Agent Cards are too shallow for coding assistance: ${agentCardFiles.length}`);
+const agentCardIndex = path.join(agentCardsRoot, "_index.json");
+const agentCards = readJson(agentCardIndex);
+if (!Array.isArray(agentCards.cards) || agentCards.cards.length !== agentCardFiles.length) {
+  fail(`Agent Card index mismatch: files=${agentCardFiles.length}, index=${Array.isArray(agentCards.cards) ? agentCards.cards.length : "missing"}`);
 }
-const playbook = readFileSync(path.join(wikiRoot, "agent-playbook.md"), "utf8");
-for (const expected of ["为什么知识库功能必须有 embedding 模型", "高价值文件", "Agent 如何在聊天里看到知识库"]) {
-  if (!playbook.includes(expected)) fail(`Agent playbook missing useful section: ${expected}`);
+for (const expected of ["运行链路", "模块改造入口", "验证命令与质量门槛"]) {
+  if (!agentCards.cards.some((card) => String(card.title || "").includes(expected))) {
+    fail(`Agent Cards missing useful card: ${expected}`);
+  }
 }
-const knowledgeModule = readFileSync(path.join(wikiRoot, "modules", "knowledge-engine", "index.md"), "utf8");
-for (const expected of ["Repo Wiki 生成", "embedding", "knowledge_documents", "KnowledgeRepository", "knowledge-overview.ts"]) {
-  if (!knowledgeModule.includes(expected)) fail(`Knowledge module page is too shallow; missing: ${expected}`);
-}
-const apiSurface = readFileSync(path.join(wikiRoot, "api-surface.md"), "utf8");
-for (const expected of ["knowledge:run-generation", "browser_open_page", "knowledge_documents", "Renderer 调用", "MCP Tool"]) {
-  if (!apiSurface.includes(expected)) fail(`API surface page is too shallow; missing: ${expected}`);
+for (const card of agentCards.cards) {
+  if (!Array.isArray(card.entryFiles) || card.entryFiles.length === 0) fail(`Agent Card has no entry files: ${card.title}`);
+  if (!Array.isArray(card.validation) || card.validation.length === 0) fail(`Agent Card has no validation path: ${card.title}`);
+  if (!Array.isArray(card.risks) || card.risks.length === 0) fail(`Agent Card has no risk notes: ${card.title}`);
 }
 
 const indexCounts = sqlite(
@@ -114,6 +137,8 @@ if (indexCounts.length !== 4 || indexCounts.some((value) => !Number.isFinite(val
 if (indexCounts[1] !== indexCounts[2] || indexCounts[1] !== indexCounts[3]) {
   fail(`Chunk/FTS/vector row counts differ: ${indexCounts.join("|")}`);
 }
+const indexedAgentCards = Number(sqlite(indexDbPath, "select count(*) from knowledge_documents where source_kind = 'agent_card';"));
+if (indexedAgentCards !== agentCardFiles.length) fail(`Indexed Agent Card count mismatch: ${indexedAgentCards}/${agentCardFiles.length}`);
 
 const escapedWorkspace = workspaceRoot.replaceAll("'", "''");
 const uiGeneration = sqlite(
@@ -129,20 +154,25 @@ const uiDocs = Number(sqlite(
   uiDbPath,
   `select count(*) from knowledge_ui_documents where workspace_key = '${escapedWorkspace}' and length(content) > 100 and content not like '%后续接入真实%' and content not like '%未生成正文%' and content not like '%当前没有真实 Repo Wiki 正文%' and content not like '%生成后会出现 Repo Wiki 目录%';`,
 ));
-if (!Number.isFinite(uiDocs) || uiDocs < 5) fail(`UI DB does not contain enough generated wiki pages: ${uiDocs}`);
+if (!Number.isFinite(uiDocs) || uiDocs < 40) fail(`UI DB does not contain enough generated wiki pages: ${uiDocs}`);
 
 console.log(JSON.stringify({
   ok: true,
   workspaceRoot,
   reportPath,
-  wikiPath,
+  metadataPath,
   wikiPages: wikiFiles.length,
+  catalogPages: wikiCatalogs.length,
+  citePages,
+  mermaidPages,
+  agentCards: agentCardFiles.length,
   uiDbPath,
   indexDbPath,
   indexedDocuments: indexCounts[0],
   indexedChunks: indexCounts[1],
   ftsRows: indexCounts[2],
   vectorRows: indexCounts[3],
+  indexedAgentCards,
   uiDocuments: uiDocs,
 }, null, 2));
 console.log("KNOWLEDGE_ENGINE_QA_OK");

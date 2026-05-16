@@ -95,18 +95,25 @@ export async function embedTexts(settings: EmbeddingModelSettings, texts: string
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-export async function embedTextBatches(settings: EmbeddingModelSettings, texts: string[]): Promise<number[][]> {
+export async function embedTextBatches(
+  settings: EmbeddingModelSettings,
+  texts: string[],
+  onProgress?: (progress: { completed: number; total: number }) => void,
+): Promise<number[][]> {
   const vectors: number[][] = [];
+  onProgress?.({ completed: 0, total: texts.length });
   for (let index = 0; index < texts.length; index += settings.batchSize) {
     const batch = texts.slice(index, index + settings.batchSize);
     try {
       vectors.push(...await embedTexts(settings, batch));
+      onProgress?.({ completed: Math.min(texts.length, vectors.length), total: texts.length });
     } catch (error) {
       if (batch.length === 1) {
         throw error;
       }
       for (const text of batch) {
         vectors.push(...await embedTexts(settings, [text]));
+        onProgress?.({ completed: Math.min(texts.length, vectors.length), total: texts.length });
       }
     }
   }

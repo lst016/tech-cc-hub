@@ -1,0 +1,31 @@
+{
+  "id": "topic-repo-wiki-python-runner",
+  "name": "Repo Wiki Python Runner",
+  "title": "Repo Wiki Python Runner",
+  "slug": "核心模块规格/知识库后端引擎总览/Repo Wiki Python Runner",
+  "path": "核心模块规格/知识库后端引擎总览/Repo Wiki Python Runner.md",
+  "description": "topic-repo-wiki-python-runner",
+  "prompt": "围绕 `scripts/knowledge/run-repowiki.py` 解释 Repo Wiki Python Runner。必须说明入口职责、核心函数或组件、它和上下游文件的关系、修改这个功能时的步骤、回归验证方式和常见失败模式。",
+  "dependent_files": [
+    "scripts/knowledge/run-repowiki.py",
+    "__future__",
+    "argparse",
+    "asyncio",
+    "hashlib",
+    "json",
+    "os"
+  ],
+  "parent_id": "module-knowledge-engine",
+  "parent": "知识库后端引擎总览",
+  "parent_chain": [
+    "核心模块规格",
+    "知识库后端引擎总览"
+  ],
+  "section_path": "核心模块规格/知识库后端引擎总览",
+  "layer_level": 2,
+  "order": 28,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "a0b7dd5776f4141abba754ec0b15fdfcd7713746a46475b4327826a0ac7362b0",
+  "generated_at": 1778919256871
+}

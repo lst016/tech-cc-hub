@@ -49,7 +49,9 @@ export function buildKnowledgeOverviewPromptAppend(projectCwd?: string): string 
       embeddingDimension: settings.embedding.dimension,
     });
     try {
-      knowledgeEntries.push(...repo.buildOverview(paths.workspaceScope, 24));
+      // Pull a wider candidate set because Agent Cards and Repo Wiki share the
+      // same index, then render each section with its own compact limit below.
+      knowledgeEntries.push(...repo.buildOverview(paths.workspaceScope, 80));
     } finally {
       repo.close();
     }
@@ -76,9 +78,19 @@ export function buildKnowledgeOverviewPromptAppend(projectCwd?: string): string 
   ];
 
   const groupedKnowledge = groupKnowledge(knowledgeEntries);
-  if (groupedKnowledge.size > 0) {
+  const agentCardEntries = groupedKnowledge.get("agent_card") ?? [];
+  if (agentCardEntries.length > 0) {
+    lines.push(`  <agent_cards count="${agentCardEntries.length}">`);
+    for (const entry of agentCardEntries.slice(0, 18)) {
+      lines.push(`    <card title="${escapeXml(entry.title)}" path="${escapeXml(entry.sourcePath)}" />`);
+    }
+    lines.push("  </agent_cards>");
+  }
+
+  const repowikiEntries = new Map(Array.from(groupedKnowledge.entries()).filter(([category]) => category !== "agent_card"));
+  if (repowikiEntries.size > 0) {
     lines.push("  <repowiki>");
-    for (const [category, entries] of groupedKnowledge) {
+    for (const [category, entries] of repowikiEntries) {
       lines.push(`    <category name="${category}" count="${entries.length}">`);
       for (const entry of entries.slice(0, 24)) {
         lines.push(`      <entry title="${escapeXml(entry.title)}" path="${escapeXml(entry.sourcePath)}" />`);

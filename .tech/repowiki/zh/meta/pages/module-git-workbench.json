@@ -1,0 +1,31 @@
+{
+  "id": "module-git-workbench",
+  "name": "Git 工作台总览",
+  "title": "Git 工作台总览",
+  "slug": "核心模块规格/Git 工作台总览",
+  "path": "核心模块规格/Git 工作台总览.md",
+  "description": "module-git-workbench",
+  "prompt": "详细说明 Git 工作台 的职责、入口文件、调用链、数据结构、扩展点、常见改造路径和验证命令。不要只列文件，要解释每个文件如何协作。",
+  "dependent_files": [
+    "src/electron/libs/git/README.md",
+    "scripts/github-release.mjs",
+    "src/electron/libs/git/index.ts",
+    "src/ui/components/git/index.ts",
+    "pro-workflow/scripts/git-blast-radius.js",
+    "src/electron/libs/git/commit-message.ts",
+    "src/electron/libs/git/errors.ts",
+    "src/electron/libs/git/graph.ts"
+  ],
+  "parent_id": "core-module-specs",
+  "parent": "核心模块规格",
+  "parent_chain": [
+    "核心模块规格"
+  ],
+  "section_path": "核心模块规格",
+  "layer_level": 1,
+  "order": 19,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "3c24841ac8ab8abfb09af3a6c17cae3e1731913e60dceec41ac03150737310f5",
+  "generated_at": 1778919256871
+}

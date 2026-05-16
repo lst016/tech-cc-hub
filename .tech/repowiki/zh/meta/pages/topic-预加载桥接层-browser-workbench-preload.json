@@ -1,0 +1,25 @@
+{
+  "id": "topic-预加载桥接层-browser-workbench-preload",
+  "name": "预加载桥接层：browser workbench preload",
+  "title": "预加载桥接层：browser workbench preload",
+  "slug": "核心模块规格/Electron 主进程服务总览/预加载桥接层：browser workbench preload",
+  "path": "核心模块规格/Electron 主进程服务总览/预加载桥接层：browser workbench preload.md",
+  "description": "topic-预加载桥接层-browser-workbench-preload",
+  "prompt": "围绕 `src/electron/browser-workbench-preload.cts` 解释 预加载桥接层：browser workbench preload。必须说明入口职责、核心函数或组件、它和上下游文件的关系、修改这个功能时的步骤、回归验证方式和常见失败模式。",
+  "dependent_files": [
+    "src/electron/browser-workbench-preload.cts"
+  ],
+  "parent_id": "module-electron-main",
+  "parent": "Electron 主进程服务总览",
+  "parent_chain": [
+    "核心模块规格",
+    "Electron 主进程服务总览"
+  ],
+  "section_path": "核心模块规格/Electron 主进程服务总览",
+  "layer_level": 2,
+  "order": 46,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "de3d195a223451184f10cd710e742f90ee44ff9d50052fadaa8fc81dc2e00790",
+  "generated_at": 1778919256871
+}

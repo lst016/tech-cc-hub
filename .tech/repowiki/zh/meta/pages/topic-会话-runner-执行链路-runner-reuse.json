@@ -1,0 +1,28 @@
+{
+  "id": "topic-会话-runner-执行链路-runner-reuse",
+  "name": "会话 Runner 执行链路：runner reuse",
+  "title": "会话 Runner 执行链路：runner reuse",
+  "slug": "核心模块规格/Electron 运行时总览/会话 Runner 执行链路：runner reuse",
+  "path": "核心模块规格/Electron 运行时总览/会话 Runner 执行链路：runner reuse.md",
+  "description": "topic-会话-runner-执行链路-runner-reuse",
+  "prompt": "围绕 `src/electron/libs/runner-reuse.ts` 解释 会话 Runner 执行链路：runner reuse。必须说明入口职责、核心函数或组件、它和上下游文件的关系、修改这个功能时的步骤、回归验证方式和常见失败模式。",
+  "dependent_files": [
+    "src/electron/libs/runner-reuse.ts",
+    "../../shared/builtin-mcp-registry.js",
+    "../types.js",
+    "./runtime-efficiency.js"
+  ],
+  "parent_id": "module-electron-runtime",
+  "parent": "Electron 运行时总览",
+  "parent_chain": [
+    "核心模块规格",
+    "Electron 运行时总览"
+  ],
+  "section_path": "核心模块规格/Electron 运行时总览",
+  "layer_level": 2,
+  "order": 42,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "13fca1fb86bd6ba625e26e313f147a4d6507dc9a75cecae85465ad0e836f44c9",
+  "generated_at": 1778919256871
+}

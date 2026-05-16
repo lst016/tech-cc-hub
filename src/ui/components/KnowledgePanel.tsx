@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -33,6 +33,7 @@ type GenerationState = {
   total: number;
   processing: number;
   failed: number;
+  phase?: string;
   commitId?: string;
   commitShortHash?: string;
   branch?: string | null;
@@ -64,6 +65,14 @@ type KnowledgeOpenTab = {
   workspaceKey: string;
   documentId?: string;
   title: string;
+};
+
+type WikiTreeNode = {
+  key: string;
+  title: string;
+  sortOrder: number;
+  children: WikiTreeNode[];
+  documents: KnowledgeDocument[];
 };
 
 type KnowledgeListResponse = {
@@ -244,6 +253,7 @@ function normalizeGenerationState(value: unknown): GenerationState | undefined {
     total,
     processing: status === "generating" ? Math.max(1, Math.floor(Number(raw.processing) || 1)) : 0,
     failed,
+    phase: typeof raw.phase === "string" ? raw.phase : undefined,
     commitId: typeof raw.commitId === "string" ? raw.commitId : undefined,
     commitShortHash: typeof raw.commitShortHash === "string" ? raw.commitShortHash : undefined,
     branch: typeof raw.branch === "string" ? raw.branch : null,
@@ -300,6 +310,57 @@ function isPlaceholderWikiDocument(document: KnowledgeDocument): boolean {
   return /后续接入真实|当前没有真实 Repo Wiki 正文|预览壳|真实生成内容写入后|生成后会出现 Repo Wiki 目录/.test(document.content);
 }
 
+function sectionParts(section: string): string[] {
+  const parts = section
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts : ["生成文档"];
+}
+
+function buildDocumentTree(documents: KnowledgeDocument[]): WikiTreeNode[] {
+  const root: WikiTreeNode = {
+    key: "__root__",
+    title: "",
+    sortOrder: 0,
+    children: [],
+    documents: [],
+  };
+  const byKey = new Map<string, WikiTreeNode>();
+
+  for (const document of documents) {
+    const parts = sectionParts(document.section || "生成文档");
+    let current = root;
+    let key = "";
+    for (const part of parts) {
+      key = key ? `${key}/${part}` : part;
+      let node = byKey.get(key);
+      if (!node) {
+        node = {
+          key,
+          title: part,
+          sortOrder: document.sortOrder,
+          children: [],
+          documents: [],
+        };
+        byKey.set(key, node);
+        current.children.push(node);
+      }
+      node.sortOrder = Math.min(node.sortOrder, document.sortOrder);
+      current = node;
+    }
+    current.documents.push(document);
+  }
+
+  const sortNode = (node: WikiTreeNode) => {
+    node.children.sort((a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title, "zh-Hans-CN"));
+    node.documents.sort((a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title, "zh-Hans-CN"));
+    node.children.forEach(sortNode);
+  };
+  sortNode(root);
+  return root.children;
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => reject(new Error(message)), ms);
@@ -321,6 +382,43 @@ function gitStateEquals(left: KnowledgeGitState | undefined, right: KnowledgeGit
     left.changedCount === right.changedCount &&
     left.error === right.error
   );
+}
+
+function generationStateEquals(left: GenerationState | undefined, right: GenerationState): boolean {
+  if (!left) return false;
+  return (
+    left.status === right.status &&
+    left.completed === right.completed &&
+    left.total === right.total &&
+    left.processing === right.processing &&
+    left.failed === right.failed &&
+    left.phase === right.phase &&
+    left.commitId === right.commitId &&
+    left.commitShortHash === right.commitShortHash &&
+    left.branch === right.branch &&
+    left.updatedAt === right.updatedAt
+  );
+}
+
+function generationRecordEquals(left: Record<string, GenerationState>, right: Record<string, GenerationState>): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) return false;
+  return rightKeys.every((key) => generationStateEquals(left[key], right[key]));
+}
+
+function workspaceListEquals(left: KnowledgeWorkspace[], right: KnowledgeWorkspace[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((workspace, index) => {
+    const next = right[index];
+    return (
+      workspace.key === next.key &&
+      workspace.cwd === next.cwd &&
+      workspace.name === next.name &&
+      workspace.source === next.source &&
+      workspace.updatedAt === next.updatedAt
+    );
+  });
 }
 
 function Toggle({ checked, disabled = false }: { checked: boolean; disabled?: boolean }) {
@@ -346,6 +444,9 @@ function ProgressBlock({ state }: { state: GenerationState }) {
     : state.status === "completed"
       ? "生成完成"
       : "正在生成中";
+  const progressText = state.status === "generating" && state.phase
+    ? state.phase
+    : progressPrefix;
 
   return (
     <div className="w-full max-w-xl rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
@@ -355,8 +456,8 @@ function ProgressBlock({ state }: { state: GenerationState }) {
       </div>
       <div className="mt-3 text-sm leading-6 text-slate-700">
         {hasKnownTotal
-          ? `${progressPrefix}，已完成 ${state.completed}/${state.total} (${percent}%)，处理中: ${state.processing}，失败: ${state.failed}`
-          : `${progressPrefix}，正在全量扫描和生成，处理中: ${state.processing}，失败: ${state.failed}`}
+          ? `${progressText}，已完成 ${state.completed}/${state.total} (${percent}%)，处理中: ${state.processing}，失败: ${state.failed}`
+          : `${progressText}，正在全量扫描和生成，处理中: ${state.processing}，失败: ${state.failed}`}
       </div>
       <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
         <div className="h-full rounded-full bg-slate-500 transition-all duration-300" style={{ width: `${percent}%` }} />
@@ -389,15 +490,7 @@ function SectionTree({
     return null;
   }
 
-  const sections = Array.from(
-    documents
-      .reduce((groups, document) => {
-        const section = document.section || "生成文档";
-        groups.set(section, [...(groups.get(section) ?? []), document]);
-        return groups;
-      }, new Map<string, KnowledgeDocument[]>())
-      .entries(),
-  );
+  const tree = buildDocumentTree(documents);
   const toggleSection = (sectionTitle: string) => {
     setCollapsedSections((current) => {
       const next = new Set(current);
@@ -410,44 +503,51 @@ function SectionTree({
     });
   };
 
+  const renderNodes = (nodes: WikiTreeNode[], depth = 0): ReactNode => (
+    nodes.map((node) => {
+      const collapsed = collapsedSections.has(node.key);
+      return (
+        <div key={node.key} data-knowledge-section={node.key}>
+          <button
+            type="button"
+            aria-expanded={!collapsed}
+            aria-label={`${collapsed ? "展开" : "折叠"}${node.title}`}
+            onClick={() => toggleSection(node.key)}
+            className="flex w-full items-center gap-2 rounded-md py-1 pr-2 text-left text-sm font-semibold text-slate-600 transition hover:bg-slate-100"
+            style={{ paddingLeft: `${8 + depth * 14}px` }}
+          >
+            {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            <span className="min-w-0 truncate">{node.title}</span>
+          </button>
+          {!collapsed && (
+            <div className="mt-1 space-y-1">
+              {node.documents.map((document) => (
+                <button
+                  type="button"
+                  key={document.id}
+                  aria-label={`打开文档 ${document.title}`}
+                  onClick={() => onSelectDocument(document)}
+                  className={`block w-full truncate rounded-lg py-1 pr-2 text-left text-sm transition ${
+                    selectedDocumentId === document.id
+                      ? "bg-slate-100 font-semibold text-slate-900"
+                      : "text-slate-700 hover:bg-slate-100"
+                  }`}
+                  style={{ paddingLeft: `${34 + depth * 14}px` }}
+                >
+                  {document.title}
+                </button>
+              ))}
+              {renderNodes(node.children, depth + 1)}
+            </div>
+          )}
+        </div>
+      );
+    })
+  );
+
   return (
     <div className="mt-3 space-y-2">
-      {sections.map(([sectionTitle, sectionDocuments]) => {
-        const collapsed = collapsedSections.has(sectionTitle);
-        return (
-          <div key={sectionTitle} data-knowledge-section={sectionTitle}>
-            <button
-              type="button"
-              aria-expanded={!collapsed}
-              aria-label={`${collapsed ? "展开" : "折叠"}${sectionTitle}`}
-              onClick={() => toggleSection(sectionTitle)}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm font-semibold text-slate-600 transition hover:bg-slate-100"
-            >
-              {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              <span className="min-w-0 truncate">{sectionTitle}</span>
-            </button>
-            {!collapsed && (
-              <div className="ml-7 mt-1 space-y-1">
-                {sectionDocuments.map((document) => (
-                  <button
-                    type="button"
-                    key={document.id}
-                    aria-label={`打开文档 ${document.title}`}
-                    onClick={() => onSelectDocument(document)}
-                    className={`block w-full truncate rounded-lg px-2 py-1 text-left text-sm transition ${
-                      selectedDocumentId === document.id
-                        ? "bg-slate-100 font-semibold text-slate-900"
-                        : "text-slate-700 hover:bg-slate-100"
-                    }`}
-                  >
-                    {document.title}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })}
+      {renderNodes(tree)}
     </div>
   );
 }
@@ -616,6 +716,9 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
 
   const embeddingReady = Boolean(modelState.embeddingModel);
   const hasStarted = generation.status !== "idle";
+  const hasGeneratingWorkspace = useMemo(() => (
+    Object.values(generationByWorkspace).some((state) => state.status === "generating")
+  ), [generationByWorkspace]);
 
   const applyKnowledgeList = (result: KnowledgeListResponse) => {
     const nextWorkspaces = (result.workspaces ?? [])
@@ -629,9 +732,8 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
         nextGenerations[workspaceKey] = generationState;
       }
     }
-    setStoredWorkspaces(nextWorkspaces);
-    setHiddenWorkspaceKeys(new Set());
-    setGenerationByWorkspace(nextGenerations);
+    setStoredWorkspaces((current) => workspaceListEquals(current, nextWorkspaces) ? current : nextWorkspaces);
+    setGenerationByWorkspace((current) => generationRecordEquals(current, nextGenerations) ? current : nextGenerations);
   };
 
   const activateWikiTab = (tab: KnowledgeOpenTab) => {
@@ -757,6 +859,28 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
       disposed = true;
     };
   }, [knowledgeStateReady, manualWorkspacePaths, sessions, systemWorkspace]);
+
+  useEffect(() => {
+    if (!knowledgeStateReady || !hasGeneratingWorkspace) return;
+
+    let disposed = false;
+    const refreshGenerationState = () => {
+      void invokeKnowledge<KnowledgeListResponse>("knowledge:list")
+        .then((result) => {
+          if (!disposed) applyKnowledgeList(result);
+        })
+        .catch((error) => {
+          if (!disposed) setWorkspaceError(error instanceof Error ? error.message : "刷新知识库状态失败。");
+        });
+    };
+
+    refreshGenerationState();
+    const timer = window.setInterval(refreshGenerationState, 2_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [hasGeneratingWorkspace, knowledgeStateReady]);
 
   useEffect(() => {
     try {
@@ -943,13 +1067,14 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
         const shouldAutoUpdate = autoEnabled && (headChangedWhileVisible || restoredStaleGeneration);
 
         if (!shouldAutoUpdate || !currentGeneration?.commitId || currentGeneration.status === "generating") continue;
-        next[workspaceKey] = applyGitBinding({
-          status: "generating",
-          completed: 0,
-          total: 0,
-          processing: 1,
-          failed: 0,
-        }, git);
+	        next[workspaceKey] = applyGitBinding({
+	          status: "generating",
+	          completed: 0,
+	          total: 1,
+	          processing: 1,
+	          failed: 0,
+	          phase: "准备生成 Repo Wiki",
+	        }, git);
         changed = true;
       }
       return changed ? next : current;
@@ -987,36 +1112,6 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
     setActiveWikiTabId(tab.id);
   }, [activeWikiTabId, openWikiTabs.length, selectedWorkspace]);
 
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setGenerationByWorkspace((currentByWorkspace) => {
-        let changed = false;
-        const nextByWorkspace: Record<string, GenerationState> = {};
-        for (const [workspaceKey, current] of Object.entries(currentByWorkspace)) {
-          if (current.status !== "generating") {
-            nextByWorkspace[workspaceKey] = current;
-            continue;
-          }
-          const hasBackendTask = backendGenerationInFlightRef.current.has(workspaceKey);
-          const nextCompleted = hasBackendTask
-            ? (current.total > 0 ? Math.min(Math.max(0, current.total - 1), current.completed + 3) : current.completed)
-            : (current.total > 0 ? Math.min(current.total, current.completed + 3) : current.completed);
-          nextByWorkspace[workspaceKey] = {
-            ...current,
-            completed: nextCompleted,
-            processing: hasBackendTask || (current.total > 0 && nextCompleted < current.total) ? 1 : 0,
-            status: hasBackendTask || (current.total > 0 && nextCompleted < current.total) ? "generating" : "completed",
-            updatedAt: Date.now(),
-          };
-          changed = true;
-        }
-        return changed ? nextByWorkspace : currentByWorkspace;
-      });
-    }, 900);
-
-    return () => window.clearInterval(timer);
-  }, []);
-
   const startGeneration = () => {
     if (!selectedWorkspace) return;
     if (!embeddingReady) {
@@ -1044,13 +1139,14 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
       delete next[workspaceKey];
       return next;
     });
-    const startedState = applyGitBinding({
-      status: "generating",
-      completed: 0,
-      total: 0,
-      processing: 1,
-      failed: 0,
-    }, git);
+	    const startedState = applyGitBinding({
+	      status: "generating",
+	      completed: 0,
+	      total: 1,
+	      processing: 1,
+	      failed: 0,
+	      phase: "准备生成 Repo Wiki",
+	    }, git);
     setGenerationByWorkspace((current) => ({
       ...current,
       [workspaceKey]: startedState,
@@ -1086,13 +1182,14 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
       .catch((error) => {
         setGenerationByWorkspace((current) => ({
           ...current,
-          [workspaceKey]: {
-            ...(current[workspaceKey] ?? startedState),
-            status: "paused",
-            processing: 0,
-            failed: 1,
-            updatedAt: Date.now(),
-          },
+	          [workspaceKey]: {
+	            ...(current[workspaceKey] ?? startedState),
+	            status: "paused",
+	            processing: 0,
+	            failed: 1,
+	            phase: "生成失败",
+	            updatedAt: Date.now(),
+	          },
         }));
         setWorkspaceError(error instanceof Error ? error.message : "Repo Wiki 生成失败。");
       })

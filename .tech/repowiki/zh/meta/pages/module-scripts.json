@@ -1,0 +1,31 @@
+{
+  "id": "module-scripts",
+  "name": "工程脚本总览",
+  "title": "工程脚本总览",
+  "slug": "核心模块规格/工程脚本总览",
+  "path": "核心模块规格/工程脚本总览.md",
+  "description": "module-scripts",
+  "prompt": "详细说明 工程脚本 的职责、入口文件、调用链、数据结构、扩展点、常见改造路径和验证命令。不要只列文件，要解释每个文件如何协作。",
+  "dependent_files": [
+    "scripts/after-pack-win-icon.cjs",
+    "scripts/codex-oauth-setup.mjs",
+    "scripts/dev-electron.mjs",
+    "scripts/dev.mjs",
+    "scripts/package-win-safe.mjs",
+    "scripts/sync-claude-code-compat.mjs",
+    "scripts/qa/browser-workbench-smoke.mjs",
+    "scripts/qa/chat-ui-smoke.cjs"
+  ],
+  "parent_id": "core-module-specs",
+  "parent": "核心模块规格",
+  "parent_chain": [
+    "核心模块规格"
+  ],
+  "section_path": "核心模块规格",
+  "layer_level": 1,
+  "order": 23,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "bb76ee9037ecb31f5c188ae77869a1c2378a294b335a9a7d6f405f77785857fb",
+  "generated_at": 1778919256871
+}

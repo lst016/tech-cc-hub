@@ -1,0 +1,31 @@
+{
+  "id": "topic-知识索引与向量写入",
+  "name": "知识索引与向量写入",
+  "title": "知识索引与向量写入",
+  "slug": "核心模块规格/知识库后端引擎总览/知识索引与向量写入",
+  "path": "核心模块规格/知识库后端引擎总览/知识索引与向量写入.md",
+  "description": "topic-知识索引与向量写入",
+  "prompt": "围绕 `src/electron/libs/knowledge/knowledge-indexer.ts` 解释 知识索引与向量写入。必须说明入口职责、核心函数或组件、它和上下游文件的关系、修改这个功能时的步骤、回归验证方式和常见失败模式。",
+  "dependent_files": [
+    "src/electron/libs/knowledge/knowledge-indexer.ts",
+    "fs",
+    "path",
+    "@langchain/textsplitters",
+    "./knowledge-repository.js",
+    "./knowledge-paths.js",
+    "./embedding-client.js"
+  ],
+  "parent_id": "module-knowledge-engine",
+  "parent": "知识库后端引擎总览",
+  "parent_chain": [
+    "核心模块规格",
+    "知识库后端引擎总览"
+  ],
+  "section_path": "核心模块规格/知识库后端引擎总览",
+  "layer_level": 2,
+  "order": 31,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "d80ffc7bf1a6fdf1648ac05799df8f0e361224d726091733088d5ba09e8afa9d",
+  "generated_at": 1778919256871
+}

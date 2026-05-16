@@ -1,0 +1,24 @@
+{
+  "id": "core-module-specs",
+  "name": "核心模块规格",
+  "title": "核心模块规格",
+  "slug": "核心模块规格/核心模块规格",
+  "path": "核心模块规格/核心模块规格.md",
+  "description": "core-module-specs",
+  "prompt": "按工程模块整理实现入口、职责边界、关键文件、依赖关系、常见改造路径和验证方式。",
+  "dependent_files": [
+    "src/",
+    "scripts/",
+    "test/"
+  ],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "核心模块规格",
+  "layer_level": 0,
+  "order": 10,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "e8a6255b0a17b3e3604197652392c2cebd79f2af75b759b8d76a724fda9e4ff0",
+  "generated_at": 1778919256871
+}

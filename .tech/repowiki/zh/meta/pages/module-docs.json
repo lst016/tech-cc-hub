@@ -1,0 +1,31 @@
+{
+  "id": "module-docs",
+  "name": "产品与工程文档总览",
+  "title": "产品与工程文档总览",
+  "slug": "核心模块规格/产品与工程文档总览",
+  "path": "核心模块规格/产品与工程文档总览.md",
+  "description": "module-docs",
+  "prompt": "详细说明 产品与工程文档 的职责、入口文件、调用链、数据结构、扩展点、常见改造路径和验证命令。不要只列文件，要解释每个文件如何协作。",
+  "dependent_files": [
+    "doc/README.md",
+    "doc/adr/README.md",
+    "doc/00-overview/00-产品定义.md",
+    "doc/00-overview/01-设计原则与非目标.md",
+    "doc/00-overview/02-术语表.md",
+    "doc/00-overview/03-文档索引.md",
+    "doc/00-overview/04-问题定义与成功指标.md",
+    "doc/10-architecture/10-系统上下文图.md"
+  ],
+  "parent_id": "core-module-specs",
+  "parent": "核心模块规格",
+  "parent_chain": [
+    "核心模块规格"
+  ],
+  "section_path": "核心模块规格",
+  "layer_level": 1,
+  "order": 26,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "fae413118344fedf761f220fd46d152283fd64fa14c7df318e80e3c6e5523ae4",
+  "generated_at": 1778919256871
+}

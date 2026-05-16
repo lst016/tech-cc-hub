@@ -1,4 +1,4 @@
-export type KnowledgeSourceKind = "repowiki" | "memory" | "manual" | "source";
+export type KnowledgeSourceKind = "repowiki" | "agent_card" | "memory" | "manual" | "source";
 
 export type KnowledgeIndexMode = "scan" | "generate" | "refresh";
 

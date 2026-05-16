@@ -32,7 +32,7 @@ const knowledgeMcpServers = new Map<string, McpSdkServerConfigWithInstance>();
 const SEARCH_SCHEMA = {
   query: z.string().min(1).describe("Search query, title, path, or natural-language question."),
   mode: z.enum(["shallow", "deep", "hybrid"]).optional().describe("shallow=FTS, deep=vector, hybrid=vector first then FTS. Defaults to hybrid."),
-  source: z.enum(["repowiki", "memory", "all"]).optional().describe("Search .tech RepoWiki, Memory, or both. Defaults to all."),
+  source: z.enum(["cards", "repowiki", "memory", "all"]).optional().describe("Search Agent Cards, .tech RepoWiki, Memory, or all. Defaults to all."),
   category: z.string().optional().describe("Memory category filter, comma-separated."),
   limit: z.number().min(1).max(20).optional().describe("Defaults to 6."),
   workspaceRoot: z.string().optional().describe("Workspace root. Defaults to current session cwd."),
@@ -42,12 +42,12 @@ const READ_SCHEMA = {
   id: z.string().optional().describe("Knowledge document id or memory id."),
   path: z.string().optional().describe("Workspace-relative .tech RepoWiki path."),
   title: z.string().optional().describe("Memory title or exact document title."),
-  source: z.enum(["repowiki", "memory", "all"]).optional().describe("Defaults to all."),
+  source: z.enum(["cards", "repowiki", "memory", "all"]).optional().describe("Defaults to all."),
   workspaceRoot: z.string().optional().describe("Workspace root. Defaults to current session cwd."),
 };
 
 const EXPLORE_SCHEMA = {
-  source: z.enum(["repowiki", "memory", "all"]).optional().describe("Defaults to all."),
+  source: z.enum(["cards", "repowiki", "memory", "all"]).optional().describe("Defaults to all."),
   workspaceRoot: z.string().optional().describe("Workspace root. Defaults to current session cwd."),
   limit: z.number().min(1).max(80).optional().describe("Defaults to 40."),
 };
@@ -146,9 +146,27 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
           success: true,
           query: input.query,
           source,
+          cards: [],
           repowiki: [],
           memory: [],
         };
+
+        if (source === "cards" || source === "all") {
+          const { repo, embedding, paths } = openKnowledgeRepository(workspaceRoot);
+          try {
+            const [queryEmbedding] = await embedTexts(embedding, [input.query]);
+            results.cards = repo.search({
+              workspaceScope: paths.workspaceScope,
+              query: input.query,
+              mode: mode as KnowledgeSearchMode,
+              sourceKind: "agent_card",
+              limit,
+              queryEmbedding,
+            });
+          } finally {
+            repo.close();
+          }
+        }
 
         if (source === "repowiki" || source === "all") {
           const { repo, embedding, paths } = openKnowledgeRepository(workspaceRoot);
@@ -198,6 +216,27 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
       try {
         const workspaceRoot = resolveWorkspaceRoot(input.workspaceRoot, defaultWorkspaceRoot);
         const source = input.source ?? "all";
+        if (source === "cards" || source === "all") {
+          const { repo, paths } = openKnowledgeRepository(workspaceRoot);
+          try {
+            const doc = input.id
+              ? repo.getDocument(input.id)
+              : input.path
+                ? repo.getDocumentByPath(paths.workspaceScope, input.path)
+                : undefined;
+            if (doc?.sourceKind === "agent_card") {
+              return toTextToolResult({
+                success: true,
+                source: "cards",
+                document: doc,
+                chunks: repo.readDocumentChunks(doc.id, 40),
+              });
+            }
+          } finally {
+            repo.close();
+          }
+        }
+
         if (source === "repowiki" || source === "all") {
           const { repo, paths } = openKnowledgeRepository(workspaceRoot);
           try {
@@ -206,7 +245,7 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
               : input.path
                 ? repo.getDocumentByPath(paths.workspaceScope, input.path)
                 : undefined;
-            if (doc) {
+            if (doc?.sourceKind === "repowiki") {
               return toTextToolResult({
                 success: true,
                 source: "repowiki",
@@ -252,12 +291,25 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
         const workspaceRoot = resolveWorkspaceRoot(input.workspaceRoot, defaultWorkspaceRoot);
         const source = input.source ?? "all";
         const limit = input.limit ?? 40;
-        const output: Record<string, unknown> = { success: true, repowiki: [], memory: [] };
+        const output: Record<string, unknown> = { success: true, cards: [], repowiki: [], memory: [] };
+
+        if (source === "cards" || source === "all") {
+          const { repo, paths } = openKnowledgeRepository(workspaceRoot);
+          try {
+            output.cards = repo
+              .buildOverview(paths.workspaceScope, limit)
+              .filter((entry) => entry.category === "agent_card");
+          } finally {
+            repo.close();
+          }
+        }
 
         if (source === "repowiki" || source === "all") {
           const { repo, paths } = openKnowledgeRepository(workspaceRoot);
           try {
-            output.repowiki = repo.buildOverview(paths.workspaceScope, limit);
+            output.repowiki = repo
+              .buildOverview(paths.workspaceScope, limit)
+              .filter((entry) => entry.category === "repowiki");
           } finally {
             repo.close();
           }

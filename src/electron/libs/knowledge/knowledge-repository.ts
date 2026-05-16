@@ -26,6 +26,9 @@ type RepositoryOptions = {
 function overviewPriority(sourcePath: string, title: string): number {
   const normalized = sourcePath.replace(/\\/g, "/").toLowerCase();
   const normalizedTitle = title.toLowerCase();
+  if (normalized.includes("/agent-cards/") || normalizedTitle.includes("agent card") || normalizedTitle.includes("agent 问答")) {
+    return 12_000;
+  }
   const curated: Array<[RegExp, number]> = [
     [/\/content\/index\.md$/, 10_000],
     [/\/content\/agent-playbook\.md$/, 9_800],
@@ -247,6 +250,36 @@ export class KnowledgeRepository {
       this.deleteDocument(row.id);
     }
     return rows.length;
+  }
+
+  listWorkspaceDocuments(workspaceScope: string, sourceKind?: KnowledgeSourceKind): KnowledgeDocument[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM knowledge_documents
+         WHERE workspace_scope = ? ${sourceKind ? "AND source_kind = ?" : ""}
+         ORDER BY source_path ASC`,
+      )
+      .all(...(sourceKind ? [workspaceScope, sourceKind] : [workspaceScope])) as Row[];
+    return rows.map((row) => this.rowToDocument(row));
+  }
+
+  deleteWorkspaceDocumentsNotIn(workspaceScope: string, sourceKind: KnowledgeSourceKind, keepSourcePaths: Set<string>): number {
+    const rows = this.db
+      .prepare(
+        `SELECT id, source_path
+         FROM knowledge_documents
+         WHERE workspace_scope = ? AND source_kind = ?`,
+      )
+      .all(workspaceScope, sourceKind) as Array<{ id: string; source_path: string }>;
+
+    let deleted = 0;
+    for (const row of rows) {
+      if (!keepSourcePaths.has(String(row.source_path))) {
+        this.deleteDocument(row.id);
+        deleted += 1;
+      }
+    }
+    return deleted;
   }
 
   getDocument(id: string): KnowledgeDocument | undefined {

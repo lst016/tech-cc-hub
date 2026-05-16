@@ -1,0 +1,25 @@
+{
+  "id": "topic-预加载桥接层",
+  "name": "预加载桥接层",
+  "title": "预加载桥接层",
+  "slug": "核心模块规格/Electron 运行时总览/预加载桥接层",
+  "path": "核心模块规格/Electron 运行时总览/预加载桥接层.md",
+  "description": "topic-预加载桥接层",
+  "prompt": "围绕 `src/electron/preload.cts` 解释 预加载桥接层。必须说明入口职责、核心函数或组件、它和上下游文件的关系、修改这个功能时的步骤、回归验证方式和常见失败模式。",
+  "dependent_files": [
+    "src/electron/preload.cts"
+  ],
+  "parent_id": "module-electron-runtime",
+  "parent": "Electron 运行时总览",
+  "parent_chain": [
+    "核心模块规格",
+    "Electron 运行时总览"
+  ],
+  "section_path": "核心模块规格/Electron 运行时总览",
+  "layer_level": 2,
+  "order": 44,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "0302f9a3137070ec4dd98f2f2d0e8e4822ba72999e3e172ee266a98d30b0dfd2",
+  "generated_at": 1778919256871
+}

@@ -1,0 +1,31 @@
+{
+  "id": "module-task-engine",
+  "name": "任务与调度系统总览",
+  "title": "任务与调度系统总览",
+  "slug": "核心模块规格/任务与调度系统总览",
+  "path": "核心模块规格/任务与调度系统总览.md",
+  "description": "module-task-engine",
+  "prompt": "详细说明 任务与调度系统 的职责、入口文件、调用链、数据结构、扩展点、常见改造路径和验证命令。不要只列文件，要解释每个文件如何协作。",
+  "dependent_files": [
+    "src/electron/libs/task/README.md",
+    "src/electron/libs/task/index.ts",
+    "pro-workflow/scripts/task-completed.js",
+    "pro-workflow/scripts/task-created.js",
+    "src/electron/libs/cron-db.ts",
+    "src/electron/libs/cron-event-emitter.ts",
+    "src/electron/libs/cron-executor.ts",
+    "src/electron/libs/cron-ipc-handlers.ts"
+  ],
+  "parent_id": "core-module-specs",
+  "parent": "核心模块规格",
+  "parent_chain": [
+    "核心模块规格"
+  ],
+  "section_path": "核心模块规格",
+  "layer_level": 1,
+  "order": 17,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "29dbd43b6a7b66b9680d407b72dfce95b55a40f8d56a75f8fda2f4ec78bf2d8f",
+  "generated_at": 1778919256871
+}

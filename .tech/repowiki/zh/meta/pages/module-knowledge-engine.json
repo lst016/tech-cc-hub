@@ -1,0 +1,31 @@
+{
+  "id": "module-knowledge-engine",
+  "name": "知识库后端引擎总览",
+  "title": "知识库后端引擎总览",
+  "slug": "核心模块规格/知识库后端引擎总览/知识库后端引擎总览",
+  "path": "核心模块规格/知识库后端引擎总览/知识库后端引擎总览.md",
+  "description": "module-knowledge-engine",
+  "prompt": "详细说明 知识库后端引擎 的职责、入口文件、调用链、数据结构、扩展点、常见改造路径和验证命令。不要只列文件，要解释每个文件如何协作。",
+  "dependent_files": [
+    "scripts/knowledge/run-repowiki.py",
+    "src/electron/libs/knowledge/agent-cards.ts",
+    "src/electron/libs/knowledge/embedding-client.ts",
+    "src/electron/libs/knowledge/knowledge-indexer.ts",
+    "src/electron/libs/knowledge/knowledge-model-settings.ts",
+    "src/electron/libs/knowledge/knowledge-overview.ts",
+    "src/electron/libs/knowledge/knowledge-paths.ts",
+    "src/electron/libs/knowledge/knowledge-repository.ts"
+  ],
+  "parent_id": "core-module-specs",
+  "parent": "核心模块规格",
+  "parent_chain": [
+    "核心模块规格"
+  ],
+  "section_path": "核心模块规格/知识库后端引擎总览",
+  "layer_level": 1,
+  "order": 11,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "b109a2981b9affee49c87f6ba57ba801a49e160e3be627dbe1b0f11cf274a008",
+  "generated_at": 1778919256871
+}

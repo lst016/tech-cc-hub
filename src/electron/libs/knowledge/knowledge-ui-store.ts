@@ -1,10 +1,12 @@
 import Database from "better-sqlite3";
+import { execFileSync } from "child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "fs";
 import { basename, dirname, extname, join, relative, resolve } from "path";
 import { indexKnowledgeWorkspace } from "./knowledge-indexer.js";
 import { buildKnowledgeOverviewPromptAppend } from "./knowledge-overview.js";
 import { resolveKnowledgeWorkspacePaths } from "./knowledge-paths.js";
 import type { KnowledgeIndexReport } from "./knowledge-types.js";
+import type { RepoWikiProgressEvent } from "./repowiki/engine.js";
 import { stableHash } from "./knowledge-utils.js";
 
 export type KnowledgeUiWorkspace = {
@@ -22,6 +24,7 @@ export type KnowledgeUiGeneration = {
   total: number;
   processing: number;
   failed: number;
+  phase?: string;
   commitId?: string;
   commitShortHash?: string;
   branch?: string | null;
@@ -48,6 +51,14 @@ type GeneratedMarkdownDocument = {
   sortOrder: number;
 };
 
+type RepoWikiCatalogMeta = {
+  path: string;
+  title: string;
+  parent: string;
+  sectionPath: string;
+  order: number;
+};
+
 const DEFAULT_DOCUMENTS: Array<{ id: string; section: string; title: string; sortOrder: number }> = [
   { id: "project-introduction", section: "项目概述", title: "项目介绍", sortOrder: 10 },
   { id: "target-users", section: "项目概述", title: "目标用户", sortOrder: 20 },
@@ -66,6 +77,9 @@ const DEFAULT_DOCUMENTS: Array<{ id: string; section: string; title: string; sor
   { id: "mcp-tools", section: "后端架构设计", title: "MCP 工具系统", sortOrder: 250 },
   { id: "knowledge-module", section: "后端架构设计", title: "知识库模块", sortOrder: 260 },
 ];
+
+const ACTIVE_KNOWLEDGE_GENERATIONS = new Set<string>();
+const STALE_GENERATION_REPAIR_MS = 5 * 60 * 1000;
 
 export class KnowledgeUiStore {
   private db: Database.Database;
@@ -101,6 +115,7 @@ export class KnowledgeUiStore {
         total INTEGER NOT NULL,
         processing INTEGER NOT NULL,
         failed INTEGER NOT NULL,
+        phase TEXT,
         commit_id TEXT,
         commit_short_hash TEXT,
         branch TEXT,
@@ -122,6 +137,15 @@ export class KnowledgeUiStore {
       CREATE INDEX IF NOT EXISTS idx_knowledge_ui_workspaces_hidden ON knowledge_ui_workspaces(hidden, updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_knowledge_ui_documents_workspace ON knowledge_ui_documents(workspace_key, sort_order);
     `);
+    this.ensureGenerationPhaseColumn();
+  }
+
+  private ensureGenerationPhaseColumn(): void {
+    const columns = new Set((this.db.prepare("PRAGMA table_info(knowledge_ui_generation)").all() as Row[])
+      .map((row) => String(row.name)));
+    if (!columns.has("phase")) {
+      this.db.prepare("ALTER TABLE knowledge_ui_generation ADD COLUMN phase TEXT").run();
+    }
   }
 
   list(): { workspaces: KnowledgeUiWorkspace[]; generations: Record<string, KnowledgeUiGeneration> } {
@@ -136,18 +160,21 @@ export class KnowledgeUiStore {
 
   private repairCompletedGenerations(): void {
     const rows = this.db
-      .prepare("SELECT workspace_key FROM knowledge_ui_generation WHERE status = 'generating'")
-      .all() as Array<{ workspace_key: string }>;
+      .prepare("SELECT workspace_key, updated_at FROM knowledge_ui_generation WHERE status = 'generating'")
+      .all() as Array<{ workspace_key: string; updated_at: number }>;
     if (rows.length === 0) return;
     const countDocs = this.db.prepare("SELECT COUNT(*) AS count FROM knowledge_ui_documents WHERE workspace_key = ?");
     const update = this.db.prepare(
       `UPDATE knowledge_ui_generation
-       SET status = 'completed', completed = ?, total = ?, processing = 0, failed = 0, updated_at = ?
+       SET status = 'completed', completed = ?, total = ?, processing = 0, failed = 0, phase = '已完成', updated_at = ?
        WHERE workspace_key = ? AND status = 'generating'`,
     );
     const now = Date.now();
     const tx = this.db.transaction(() => {
       for (const row of rows) {
+        const workspaceKey = normalizeKey(row.workspace_key);
+        if (ACTIVE_KNOWLEDGE_GENERATIONS.has(workspaceKey)) continue;
+        if (now - Number(row.updated_at ?? 0) < STALE_GENERATION_REPAIR_MS) continue;
         const result = countDocs.get(row.workspace_key) as { count?: number } | undefined;
         const total = Number(result?.count ?? 0);
         if (total > 0) {
@@ -210,14 +237,15 @@ export class KnowledgeUiStore {
     this.db
       .prepare(
         `INSERT INTO knowledge_ui_generation
-          (workspace_key, status, completed, total, processing, failed, commit_id, commit_short_hash, branch, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (workspace_key, status, completed, total, processing, failed, phase, commit_id, commit_short_hash, branch, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(workspace_key) DO UPDATE SET
           status = excluded.status,
           completed = excluded.completed,
           total = excluded.total,
           processing = excluded.processing,
           failed = excluded.failed,
+          phase = excluded.phase,
           commit_id = excluded.commit_id,
           commit_short_hash = excluded.commit_short_hash,
           branch = excluded.branch,
@@ -230,6 +258,7 @@ export class KnowledgeUiStore {
         next.total,
         next.processing,
         next.failed,
+        next.phase ?? null,
         next.commitId ?? null,
         next.commitShortHash ?? null,
         next.branch ?? null,
@@ -391,21 +420,94 @@ async function runKnowledgeGeneration(
   }
 
   store.addWorkspace(workspaceKey, payload.source === "session" ? "session" : "manual");
+  const requestedState = applyWorkspaceGitBinding(readGeneration(payload.state), workspaceKey);
+  if (ACTIVE_KNOWLEDGE_GENERATIONS.has(workspaceKey)) {
+    const current = store.list().generations[workspaceKey] ?? store.updateGeneration(workspaceKey, {
+      ...requestedState,
+      status: "generating",
+      processing: 1,
+      failed: 0,
+      phase: "已有 Repo Wiki 生成任务正在运行",
+      updatedAt: Date.now(),
+    });
+    return {
+      success: false,
+      generation: current,
+      documents: [],
+      error: "该工作区已有 Repo Wiki 生成任务正在运行。",
+    };
+  }
+  ACTIVE_KNOWLEDGE_GENERATIONS.add(workspaceKey);
   const startedState = store.updateGeneration(workspaceKey, {
-    ...readGeneration(payload.state),
+    ...requestedState,
     status: "generating",
     completed: Number(readObject(payload.state).completed ?? 0),
+    total: Math.max(1, Number(readObject(payload.state).total ?? 0)),
     processing: 1,
     failed: 0,
+    phase: "准备生成 Repo Wiki",
     updatedAt: Date.now(),
   });
 
   let report: KnowledgeIndexReport | undefined;
+  let progressState = startedState;
+  let moduleTotal = 0;
+  let embeddingTotal = 0;
+  const updateProgress = (event: RepoWikiProgressEvent): void => {
+    let completed = progressState.completed;
+    let total = Math.max(1, progressState.total);
+    let phase = event.message || progressState.phase;
+    let processing = 1;
+
+    if (event.stage === "modules" && typeof event.total === "number" && event.total > 0) {
+      moduleTotal = event.total;
+      total = moduleTotal + 3;
+      completed = Math.max(0, event.completed ?? 0);
+      phase = "正在分析模块";
+    } else if (event.stage === "architecture") {
+      total = Math.max(total, moduleTotal + 3 || 4);
+      completed = Math.max(completed, moduleTotal || 1);
+      phase = "正在识别架构";
+    } else if (event.stage === "reading-guide") {
+      total = Math.max(total, moduleTotal + 3 || 4);
+      completed = Math.max(completed, (moduleTotal || 1) + 1);
+      phase = "正在生成阅读指南";
+    } else if (event.stage === "done") {
+      const wikiTotal = moduleTotal + 3 || Math.max(total, 4);
+      total = wikiTotal + 1;
+      completed = Math.max(completed, wikiTotal);
+      phase = "Repo Wiki 已生成，准备索引";
+    } else if (event.stage === "embedding" && typeof event.total === "number" && event.total > 0) {
+      const wikiTotal = moduleTotal + 3 || Math.max(progressState.completed, progressState.total, 1);
+      embeddingTotal = event.total;
+      total = wikiTotal + embeddingTotal + 1;
+      completed = Math.min(total, wikiTotal + Math.max(0, event.completed ?? 0));
+      phase = "正在生成向量";
+    } else if (event.stage === "indexing" && typeof event.total === "number" && event.total > 0) {
+      const wikiTotal = moduleTotal + 3 || Math.max(progressState.completed, progressState.total, 1);
+      total = wikiTotal + embeddingTotal + event.total;
+      completed = Math.min(total, wikiTotal + embeddingTotal + Math.max(0, event.completed ?? 0));
+      phase = embeddingTotal > 0 ? "正在写入索引" : "正在准备索引";
+      processing = completed >= total ? 0 : 1;
+    }
+
+    progressState = store.updateGeneration(workspaceKey, {
+      ...progressState,
+      status: "generating",
+      completed,
+      total,
+      processing,
+      failed: 0,
+      phase,
+      updatedAt: Date.now(),
+    });
+  };
   try {
     report = await indexKnowledgeWorkspace({
       workspaceRoot: workspaceKey,
       appDataPath,
       mode: "refresh",
+      onProgress: updateProgress,
     });
   } catch (error) {
     const failedGeneration = store.updateGeneration(workspaceKey, {
@@ -413,8 +515,10 @@ async function runKnowledgeGeneration(
       status: "paused",
       processing: 0,
       failed: 1,
+      phase: "生成失败",
       updatedAt: Date.now(),
     });
+    ACTIVE_KNOWLEDGE_GENERATIONS.delete(workspaceKey);
     return {
       success: false,
       generation: failedGeneration,
@@ -436,9 +540,11 @@ async function runKnowledgeGeneration(
     total: generatedTotal,
     processing: 0,
     failed: success ? 0 : 1,
+    phase: success ? "已完成" : "生成失败",
     updatedAt: Date.now(),
   });
 
+  ACTIVE_KNOWLEDGE_GENERATIONS.delete(workspaceKey);
   return {
     success,
     generation,
@@ -457,6 +563,7 @@ function collectGeneratedMarkdownDocuments(workspaceRoot: string, appDataPath: s
 
   const docs: GeneratedMarkdownDocument[] = [];
   const usedIds = new Set<string>();
+  const catalogByPath = readRepoWikiCatalogByPath(paths.repowikiMetadataPath);
   function walk(currentDir: string): void {
     const entries = readdirSync(currentDir).sort((left, right) => {
       const leftPath = join(currentDir, left);
@@ -479,18 +586,51 @@ function collectGeneratedMarkdownDocuments(workspaceRoot: string, appDataPath: s
       const relativePath = relative(root, absolutePath);
       const title = extractMarkdownTitle(content, basename(entry));
       const known = DEFAULT_DOCUMENTS.find((doc) => doc.title === title);
+      const catalog = catalogByPath.get(relativePath.replace(/\\/g, "/"));
       const baseId = known?.id ?? slugifyDocumentId(relativePath);
       docs.push({
         id: uniqueDocumentId(baseId, relativePath, usedIds),
-        section: known?.section ?? inferSectionFromPath(relativePath),
+        section: known?.section ?? inferSectionFromCatalog(catalog, relativePath),
         title,
         content,
-        sortOrder: known?.sortOrder ?? 10_000 + docs.length,
+        sortOrder: known?.sortOrder ?? (catalog ? catalog.order : 10_000 + docs.length),
       });
     }
   }
   walk(root);
   return docs.sort((a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title, "zh-Hans-CN"));
+}
+
+function readRepoWikiCatalogByPath(metadataPath: string): Map<string, RepoWikiCatalogMeta> {
+  if (!existsSync(metadataPath)) return new Map();
+  try {
+    const parsed = JSON.parse(readFileSync(metadataPath, "utf8")) as { wiki_catalogs?: unknown };
+    const catalogs = Array.isArray(parsed.wiki_catalogs) ? parsed.wiki_catalogs : [];
+    return catalogs.reduce((map, item) => {
+      if (!item || typeof item !== "object") return map;
+      const record = item as Record<string, unknown>;
+      const path = typeof record.path === "string" ? record.path.replace(/\\/g, "/") : "";
+      if (!path) return map;
+      map.set(path, {
+        path,
+        title: typeof record.title === "string" ? record.title : String(record.name ?? ""),
+        parent: typeof record.parent === "string" ? record.parent : "",
+        sectionPath: typeof record.section_path === "string" ? record.section_path : "",
+        order: Number.isFinite(Number(record.order)) ? Number(record.order) : 10_000 + map.size,
+      });
+      return map;
+    }, new Map<string, RepoWikiCatalogMeta>());
+  } catch {
+    return new Map();
+  }
+}
+
+function inferSectionFromCatalog(catalog: RepoWikiCatalogMeta | undefined, relativePath: string): string {
+  if (catalog?.sectionPath) return catalog.sectionPath;
+  if (catalog?.parent) return catalog.parent;
+  if (catalog?.title && /项目|快速开始|概述|介绍/.test(catalog.title)) return "项目概述";
+  if (catalog) return "Repo Wiki";
+  return inferSectionFromPath(relativePath);
 }
 
 function uniqueDocumentId(baseId: string, sourcePath: string, usedIds: Set<string>): string {
@@ -540,6 +680,32 @@ function slugifyDocumentId(value: string): string {
   return normalized || `doc-${Date.now()}`;
 }
 
+function applyWorkspaceGitBinding(state: KnowledgeUiGeneration, workspaceKey: string): KnowledgeUiGeneration {
+  if (state.commitId) return state;
+  const binding = readWorkspaceGitBinding(workspaceKey);
+  return binding ? { ...state, ...binding } : state;
+}
+
+function readWorkspaceGitBinding(workspaceKey: string): Pick<KnowledgeUiGeneration, "commitId" | "commitShortHash" | "branch"> | undefined {
+  try {
+    const git = (args: string[]) => execFileSync("git", ["-C", workspaceKey, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (git(["rev-parse", "--is-inside-work-tree"]) !== "true") return undefined;
+    const commitId = git(["rev-parse", "HEAD"]);
+    if (!commitId) return undefined;
+    const branchName = git(["rev-parse", "--abbrev-ref", "HEAD"]);
+    return {
+      commitId,
+      commitShortHash: commitId.slice(0, 7),
+      branch: branchName && branchName !== "HEAD" ? branchName : null,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function readGeneration(value: unknown): KnowledgeUiGeneration {
   const state = readObject(value);
   return normalizeGeneration({
@@ -548,6 +714,7 @@ function readGeneration(value: unknown): KnowledgeUiGeneration {
     total: Number(state.total ?? 0),
     processing: Number(state.processing ?? 0),
     failed: Number(state.failed ?? 0),
+    phase: typeof state.phase === "string" ? state.phase : undefined,
     commitId: typeof state.commitId === "string" ? state.commitId : undefined,
     commitShortHash: typeof state.commitShortHash === "string" ? state.commitShortHash : undefined,
     branch: typeof state.branch === "string" ? state.branch : null,
@@ -565,6 +732,7 @@ function normalizeGeneration(state: KnowledgeUiGeneration): KnowledgeUiGeneratio
     total,
     processing: Math.max(0, Math.floor(Number(state.processing) || 0)),
     failed: Math.max(0, Math.floor(Number(state.failed) || 0)),
+    phase: state.phase,
     commitId: state.commitId,
     commitShortHash: state.commitShortHash,
     branch: state.branch ?? null,
@@ -590,6 +758,7 @@ function rowToGeneration(row: Row): KnowledgeUiGeneration {
     total: Number(row.total),
     processing: Number(row.processing),
     failed: Number(row.failed),
+    phase: row.phase ? String(row.phase) : undefined,
     commitId: row.commit_id ? String(row.commit_id) : undefined,
     commitShortHash: row.commit_short_hash ? String(row.commit_short_hash) : undefined,
     branch: row.branch ? String(row.branch) : null,

@@ -1,11 +1,26 @@
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+
 const BRIDGE_ORIGIN = process.env.TECH_CC_HUB_DEV_BRIDGE_ORIGIN || "http://127.0.0.1:4317";
 const WORKSPACE_ROOT = process.env.KNOWLEDGE_QA_WORKSPACE || process.cwd();
 const TIMEOUT_MS = Number(process.env.KNOWLEDGE_CHAT_QA_TIMEOUT_MS || 150000);
-const EXPECTED_TITLE = "tech-cc-hub 项目概览";
 const EXPECTED_REPLY = "KNOWLEDGE_INJECTION_OK";
 
 function fail(message) {
   throw new Error(message);
+}
+
+function expectedTitle() {
+  const metadataPath = path.join(WORKSPACE_ROOT, ".tech/repowiki/zh/meta/repowiki-metadata.json");
+  if (!existsSync(metadataPath)) return "项目概述";
+  try {
+    const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+    const catalogs = Array.isArray(metadata.wiki_catalogs) ? metadata.wiki_catalogs : [];
+    const first = catalogs.find((catalog) => typeof catalog?.title === "string" || typeof catalog?.name === "string");
+    return first?.title || first?.name || "项目概述";
+  } catch {
+    return "项目概述";
+  }
 }
 
 async function callBridge(method, ...args) {
@@ -61,6 +76,7 @@ async function subscribeServerEvents(onEvent, signal) {
 }
 
 async function main() {
+  const EXPECTED_TITLE = expectedTitle();
   const overviewResult = await callBridge("invoke", "knowledge:overview", { workspaceKey: WORKSPACE_ROOT });
   const overview = overviewResult?.overview;
   if (typeof overview !== "string" || !overview.includes("<knowledge_overview")) {
@@ -68,6 +84,9 @@ async function main() {
   }
   if (!overview.includes(EXPECTED_TITLE)) {
     fail(`Knowledge overview does not include generated title: ${EXPECTED_TITLE}`);
+  }
+  if (!overview.includes("<agent_cards") || !overview.includes("运行链路")) {
+    fail("Knowledge overview does not expose Agent Cards for coding assistance");
   }
 
   const controller = new AbortController();

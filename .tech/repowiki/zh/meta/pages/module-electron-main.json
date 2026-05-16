@@ -1,0 +1,31 @@
+{
+  "id": "module-electron-main",
+  "name": "Electron 主进程服务总览",
+  "title": "Electron 主进程服务总览",
+  "slug": "核心模块规格/Electron 主进程服务总览/Electron 主进程服务总览",
+  "path": "核心模块规格/Electron 主进程服务总览/Electron 主进程服务总览.md",
+  "description": "module-electron-main",
+  "prompt": "详细说明 Electron 主进程服务 的职责、入口文件、调用链、数据结构、扩展点、常见改造路径和验证命令。不要只列文件，要解释每个文件如何协作。",
+  "dependent_files": [
+    "src/electron/tsconfig.json",
+    "src/electron/browser-workbench-preload.cts",
+    "src/electron/dev-backend-bridge.ts",
+    "src/electron/ipc-handlers.ts",
+    "src/electron/libs/agent-resolver.ts",
+    "src/electron/libs/agent-rule-docs.ts",
+    "src/electron/libs/attachment-store.ts",
+    "src/electron/libs/auto-updater-fallback.ts"
+  ],
+  "parent_id": "core-module-specs",
+  "parent": "核心模块规格",
+  "parent_chain": [
+    "核心模块规格"
+  ],
+  "section_path": "核心模块规格/Electron 主进程服务总览",
+  "layer_level": 1,
+  "order": 15,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "0bb3494c82ece6b62cfecf4ff33fd42e0140ad68ecf102bfb3f040a423e29abe",
+  "generated_at": 1778919256871
+}

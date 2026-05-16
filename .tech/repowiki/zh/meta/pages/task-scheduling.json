@@ -1,0 +1,26 @@
+{
+  "id": "task-scheduling",
+  "name": "任务和调度系统",
+  "title": "任务和调度系统",
+  "slug": "核心架构设计/任务和调度系统",
+  "path": "核心架构设计/任务和调度系统.md",
+  "description": "task-scheduling",
+  "prompt": "说明任务模型、定时任务、执行器、状态流转、UI 面板和失败处理。",
+  "dependent_files": [
+    "src/electron/libs/task/",
+    "src/electron/libs/cron",
+    "src/ui/components/TaskPanel.tsx"
+  ],
+  "parent_id": "core-architecture",
+  "parent": "核心架构设计",
+  "parent_chain": [
+    "核心架构设计"
+  ],
+  "section_path": "核心架构设计",
+  "layer_level": 1,
+  "order": 7,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "89576472c6936eead0ab3174792526e30787cd5144730a16d17b7a0fbd7c613a",
+  "generated_at": 1778919256871
+}

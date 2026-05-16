@@ -1,0 +1,29 @@
+{
+  "id": "topic-知识库面板交互",
+  "name": "知识库面板交互",
+  "title": "知识库面板交互",
+  "slug": "核心模块规格/知识库前端交互总览/知识库面板交互",
+  "path": "核心模块规格/知识库前端交互总览/知识库面板交互.md",
+  "description": "topic-知识库面板交互",
+  "prompt": "围绕 `src/ui/components/KnowledgePanel.tsx` 解释 知识库面板交互。必须说明入口职责、核心函数或组件、它和上下游文件的关系、修改这个功能时的步骤、回归验证方式和常见失败模式。",
+  "dependent_files": [
+    "src/ui/components/KnowledgePanel.tsx",
+    "react",
+    "lucide-react",
+    "../store/useAppStore",
+    "../types"
+  ],
+  "parent_id": "module-knowledge-ui",
+  "parent": "知识库前端交互总览",
+  "parent_chain": [
+    "核心模块规格",
+    "知识库前端交互总览"
+  ],
+  "section_path": "核心模块规格/知识库前端交互总览",
+  "layer_level": 2,
+  "order": 34,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "a356711808e18abb221c2fa86e2b14248802bc1a228f31ed658f4a1e48569d2b",
+  "generated_at": 1778919256871
+}

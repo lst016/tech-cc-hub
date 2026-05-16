@@ -1,0 +1,31 @@
+{
+  "id": "topic-会话-runner-执行链路-runner",
+  "name": "会话 Runner 执行链路：runner",
+  "title": "会话 Runner 执行链路：runner",
+  "slug": "核心模块规格/Electron 运行时总览/会话 Runner 执行链路：runner",
+  "path": "核心模块规格/Electron 运行时总览/会话 Runner 执行链路：runner.md",
+  "description": "topic-会话-runner-执行链路-runner",
+  "prompt": "围绕 `src/electron/libs/runner.ts` 解释 会话 Runner 执行链路：runner。必须说明入口职责、核心函数或组件、它和上下游文件的关系、修改这个功能时的步骤、回归验证方式和常见失败模式。",
+  "dependent_files": [
+    "src/electron/libs/runner.ts",
+    "@anthropic-ai/claude-agent-sdk",
+    "child_process",
+    "fs",
+    "path",
+    "../../shared/runner-prompt.js",
+    "../../shared/runner-status.js"
+  ],
+  "parent_id": "module-electron-runtime",
+  "parent": "Electron 运行时总览",
+  "parent_chain": [
+    "核心模块规格",
+    "Electron 运行时总览"
+  ],
+  "section_path": "核心模块规格/Electron 运行时总览",
+  "layer_level": 2,
+  "order": 43,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "f14e9b341eaf9be25bc86bbaca5f7f4c45a24c0debcfdb8d202578e5b4c81694",
+  "generated_at": 1778919256871
+}

@@ -1,0 +1,31 @@
+{
+  "id": "module-pro-workflow",
+  "name": "Pro Workflow 自动化总览",
+  "title": "Pro Workflow 自动化总览",
+  "slug": "核心模块规格/Pro Workflow 自动化总览",
+  "path": "核心模块规格/Pro Workflow 自动化总览.md",
+  "description": "module-pro-workflow",
+  "prompt": "详细说明 Pro Workflow 自动化 的职责、入口文件、调用链、数据结构、扩展点、常见改造路径和验证命令。不要只列文件，要解释每个文件如何协作。",
+  "dependent_files": [
+    "pro-workflow/README.md",
+    "pro-workflow/package.json",
+    "pro-workflow/scripts/commit-validate.js",
+    "pro-workflow/scripts/config-watcher.js",
+    "pro-workflow/scripts/cwd-changed.js",
+    "pro-workflow/scripts/drift-detector.js",
+    "pro-workflow/scripts/embed-wiki.js",
+    "pro-workflow/scripts/file-changed.js"
+  ],
+  "parent_id": "core-module-specs",
+  "parent": "核心模块规格",
+  "parent_chain": [
+    "核心模块规格"
+  ],
+  "section_path": "核心模块规格",
+  "layer_level": 1,
+  "order": 24,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "4a7bd2048a3cf516688d7b0c3ee947042a892fb21f29cb56a66961e9d0082b7f",
+  "generated_at": 1778919256871
+}

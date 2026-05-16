@@ -1,0 +1,31 @@
+{
+  "id": "module-tests",
+  "name": "测试体系总览",
+  "title": "测试体系总览",
+  "slug": "核心模块规格/测试体系总览",
+  "path": "核心模块规格/测试体系总览.md",
+  "description": "module-tests",
+  "prompt": "详细说明 测试体系 的职责、入口文件、调用链、数据结构、扩展点、常见改造路径和验证命令。不要只列文件，要解释每个文件如何协作。",
+  "dependent_files": [
+    "test/electron/tsconfig.json",
+    "test/electron/activity-rail-dual-steps.test.ts",
+    "test/electron/activity-rail-model.test.ts",
+    "test/electron/activity-workspace-tabs.test.ts",
+    "test/electron/agent-rules-settings.test.ts",
+    "test/electron/api-config-save-scope.test.ts",
+    "test/electron/app-shell-layout.test.ts",
+    "test/electron/attachments.test.ts"
+  ],
+  "parent_id": "core-module-specs",
+  "parent": "核心模块规格",
+  "parent_chain": [
+    "核心模块规格"
+  ],
+  "section_path": "核心模块规格",
+  "layer_level": 1,
+  "order": 25,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "767030fa987013f85353f217169891ff71583826747b100384db1608a35f2272",
+  "generated_at": 1778919256871
+}

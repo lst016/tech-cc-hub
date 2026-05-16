@@ -10,6 +10,7 @@ export type KnowledgeWorkspacePaths = {
   techRoot: string;
   repowikiRoot: string;
   repowikiContentDir: string;
+  agentCardsDir: string;
   repowikiMetaDir: string;
   repowikiMetadataPath: string;
   memoryDir: string;
@@ -39,6 +40,7 @@ export function resolveKnowledgeWorkspacePaths(workspaceRoot: string, appDataPat
   const techRoot = join(resolvedRoot, ".tech");
   const repowikiRoot = join(techRoot, "repowiki", "zh");
   const repowikiContentDir = join(repowikiRoot, "content");
+  const agentCardsDir = join(repowikiRoot, "agent-cards");
   const repowikiMetaDir = join(repowikiRoot, "meta");
   const memoryDir = join(techRoot, "memory");
   const reportsDir = join(techRoot, "reports");
@@ -53,6 +55,7 @@ export function resolveKnowledgeWorkspacePaths(workspaceRoot: string, appDataPat
     techRoot,
     repowikiRoot,
     repowikiContentDir,
+    agentCardsDir,
     repowikiMetaDir,
     repowikiMetadataPath: join(repowikiMetaDir, "repowiki-metadata.json"),
     memoryDir,
@@ -71,6 +74,7 @@ export function resolveKnowledgeWorkspacePaths(workspaceRoot: string, appDataPat
 export function ensureKnowledgeWorkspaceDirectories(paths: KnowledgeWorkspacePaths): void {
   for (const dir of [
     paths.repowikiContentDir,
+    paths.agentCardsDir,
     paths.repowikiMetaDir,
     paths.memoryDir,
     paths.reportsDir,

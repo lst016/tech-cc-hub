@@ -1,0 +1,24 @@
+{
+  "id": "electron-runtime",
+  "name": "Electron运行时和后端服务",
+  "title": "Electron运行时和后端服务",
+  "slug": "核心架构设计/Electron运行时和后端服务",
+  "path": "核心架构设计/Electron运行时和后端服务.md",
+  "description": "electron-runtime",
+  "prompt": "说明 Electron 主进程、IPC handler、本地存储、后台任务和系统服务集成方式。",
+  "dependent_files": [
+    "src/electron/"
+  ],
+  "parent_id": "core-architecture",
+  "parent": "核心架构设计",
+  "parent_chain": [
+    "核心架构设计"
+  ],
+  "section_path": "核心架构设计",
+  "layer_level": 1,
+  "order": 4,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "93c07da377e8a018ac04361a542255a9e99f2dffe039116a74d35f36032a6cd7",
+  "generated_at": 1778919256871
+}

@@ -1,0 +1,26 @@
+{
+  "id": "topic-electron-主进程服务-dev-backend-bridge",
+  "name": "Electron 主进程服务：dev backend bridge",
+  "title": "Electron 主进程服务：dev backend bridge",
+  "slug": "核心模块规格/Electron 主进程服务总览/Electron 主进程服务：dev backend bridge",
+  "path": "核心模块规格/Electron 主进程服务总览/Electron 主进程服务：dev backend bridge.md",
+  "description": "topic-electron-主进程服务-dev-backend-bridge",
+  "prompt": "围绕 `src/electron/dev-backend-bridge.ts` 解释 Electron 主进程服务：dev backend bridge。必须说明入口职责、核心函数或组件、它和上下游文件的关系、修改这个功能时的步骤、回归验证方式和常见失败模式。",
+  "dependent_files": [
+    "src/electron/dev-backend-bridge.ts",
+    "node:http"
+  ],
+  "parent_id": "module-electron-main",
+  "parent": "Electron 主进程服务总览",
+  "parent_chain": [
+    "核心模块规格",
+    "Electron 主进程服务总览"
+  ],
+  "section_path": "核心模块规格/Electron 主进程服务总览",
+  "layer_level": 2,
+  "order": 47,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "57352c0a7367c46c177fccdef1938efb82fe06a7c1a838eda7b107d368b1bd22",
+  "generated_at": 1778919256871
+}

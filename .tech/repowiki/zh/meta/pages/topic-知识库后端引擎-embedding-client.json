@@ -1,0 +1,26 @@
+{
+  "id": "topic-知识库后端引擎-embedding-client",
+  "name": "知识库后端引擎：embedding client",
+  "title": "知识库后端引擎：embedding client",
+  "slug": "核心模块规格/知识库后端引擎总览/知识库后端引擎：embedding client",
+  "path": "核心模块规格/知识库后端引擎总览/知识库后端引擎：embedding client.md",
+  "description": "topic-知识库后端引擎-embedding-client",
+  "prompt": "围绕 `src/electron/libs/knowledge/embedding-client.ts` 解释 知识库后端引擎：embedding client。必须说明入口职责、核心函数或组件、它和上下游文件的关系、修改这个功能时的步骤、回归验证方式和常见失败模式。",
+  "dependent_files": [
+    "src/electron/libs/knowledge/embedding-client.ts",
+    "./knowledge-types.js"
+  ],
+  "parent_id": "module-knowledge-engine",
+  "parent": "知识库后端引擎总览",
+  "parent_chain": [
+    "核心模块规格",
+    "知识库后端引擎总览"
+  ],
+  "section_path": "核心模块规格/知识库后端引擎总览",
+  "layer_level": 2,
+  "order": 30,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "0b243ab744e944e6031e2d78585939d98d433a072af3b0becd6ebeec072b76c8",
+  "generated_at": 1778919256871
+}

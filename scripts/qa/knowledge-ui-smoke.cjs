@@ -1,4 +1,5 @@
 const path = require('node:path');
+const { existsSync, readFileSync } = require('node:fs');
 const { chromium } = require('@playwright/test');
 
 const DEFAULT_URL = process.env.KNOWLEDGE_UI_QA_URL || 'http://localhost:4173/';
@@ -18,7 +19,21 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function readExpectedTitle() {
+  const metadataPath = path.join(process.cwd(), '.tech/repowiki/zh/meta/repowiki-metadata.json');
+  if (!existsSync(metadataPath)) return '项目概述';
+  try {
+    const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'));
+    const catalogs = Array.isArray(metadata.wiki_catalogs) ? metadata.wiki_catalogs : [];
+    const first = catalogs.find((catalog) => typeof catalog?.title === 'string' || typeof catalog?.name === 'string');
+    return first?.title || first?.name || '项目概述';
+  } catch {
+    return '项目概述';
+  }
+}
+
 async function main() {
+  const expectedTitle = readExpectedTitle();
   const browser = await chromium.launch({
     headless: true,
     executablePath: CHROME_PATH,
@@ -50,22 +65,26 @@ async function main() {
     }
   }
 
-  const generatedDoc = page.getByRole('button', { name: /打开文档 tech-cc-hub 项目概览/ }).first();
+  const generatedDoc = page.getByRole('button', { name: new RegExp(`打开文档 .*${escapeRegExp(expectedTitle)}`) }).first();
   await generatedDoc.waitFor({ state: 'visible', timeout: 10000 });
   await generatedDoc.click();
   await page.waitForTimeout(800);
 
   bodyText = await page.locator('body').innerText({ timeout: 10000 });
-  for (const expected of ['项目概览', 'Agent 快速定位', '关键工作流', '模块']) {
+  for (const expected of [expectedTitle, '本文引用的文件', '目录']) {
     if (!bodyText.includes(expected)) {
       throw new Error(`Knowledge UI missing generated content: ${expected}`);
     }
   }
-  const moduleButtonCount = await page.locator('button').filter({ hasText: /knowledge-engine|mcp-tools|electron-runtime|ui-shell|task-engine/ }).count();
-  if (moduleButtonCount < 1) {
-    throw new Error('Knowledge UI did not render any RepoWiki module page buttons');
+  const topicButtonCount = await page.locator('button').filter({ hasText: /知识库|Repo Wiki|文档管理|后端引擎|系统架构|Electron|前端|质量|故障/ }).count();
+  if (topicButtonCount < 3) {
+    throw new Error('Knowledge UI did not render enough Repo Wiki topic page buttons');
   }
-  for (const expectedButton of [/Agent 作业手册/, /接口与存储面/, /关键运行链路/]) {
+  const nestedSectionCount = await page.locator('[data-knowledge-section*="/"]').count();
+  if (nestedSectionCount < 1) {
+    throw new Error('Knowledge UI did not render nested Repo Wiki sections');
+  }
+  for (const expectedButton of [/知识库|Repo Wiki|文档管理|后端引擎/, /系统架构|架构设计/]) {
     if (await page.locator('button').filter({ hasText: expectedButton }).count() < 1) {
       throw new Error(`Knowledge UI missing Agent-useful page button: ${expectedButton}`);
     }
@@ -78,14 +97,14 @@ async function main() {
   if (!bodyText.includes('已完成')) {
     throw new Error('Knowledge UI does not show completed generation status');
   }
-  if (await page.getByRole('button', { name: /关闭 tech-cc-hub 项目概览/ }).count() < 1) {
+  if (await page.getByRole('button', { name: new RegExp(`关闭 .*${escapeRegExp(expectedTitle)}`) }).count() < 1) {
     throw new Error('Knowledge UI did not open the document in a closable tab');
   }
   if (await page.getByRole('button', { name: /^重新生成$/ }).isVisible().catch(() => false)) {
     throw new Error('Knowledge document preview should not render the workspace regenerate button');
   }
 
-  const sectionToggle = page.getByRole('button', { name: /折叠(模块：|项目概览|架构设计|业务模块|前端架构设计|后端架构设计)/ }).first();
+  const sectionToggle = page.getByRole('button', { name: /折叠(Repo Wiki|项目概述|系统架构|架构设计|业务模块|前端架构设计|后端架构设计)/ }).first();
   await sectionToggle.waitFor({ state: 'visible', timeout: 10000 });
   const sectionTitle = (await sectionToggle.innerText()).trim();
   const sectionGroup = page.locator('[data-knowledge-section]').filter({ hasText: sectionTitle }).first();

@@ -1,1 +1,194 @@
-[]
+[
+  {
+    "path": "scripts/knowledge/__pycache__",
+    "reason": "ignored directory"
+  },
+  {
+    "path": "src/ui/assets/icon.png",
+    "reason": "file too large (909057 bytes)"
+  },
+  {
+    "path": "src/ui/assets/react.svg",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "build",
+    "reason": "ignored directory"
+  },
+  {
+    "path": "bun.lock",
+    "reason": "file too large (261672 bytes)"
+  },
+  {
+    "path": "claude-agent-view-prd.svg",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "dist",
+    "reason": "ignored by repo wiki ignore rules"
+  },
+  {
+    "path": "dist-electron",
+    "reason": "ignored by repo wiki ignore rules"
+  },
+  {
+    "path": "dist-react",
+    "reason": "ignored by repo wiki ignore rules"
+  },
+  {
+    "path": "dist-test",
+    "reason": "ignored by repo wiki ignore rules"
+  },
+  {
+    "path": "node_modules",
+    "reason": "ignored by repo wiki ignore rules"
+  },
+  {
+    "path": "package/assistant.mjs",
+    "reason": "file too large (1537554 bytes)"
+  },
+  {
+    "path": "package/bridge.mjs",
+    "reason": "file too large (911020 bytes)"
+  },
+  {
+    "path": "package/browser-sdk.js",
+    "reason": "file too large (634163 bytes)"
+  },
+  {
+    "path": "package/sdk.mjs",
+    "reason": "file too large (857744 bytes)"
+  },
+  {
+    "path": "package-lock.json",
+    "reason": "file too large (513678 bytes)"
+  },
+  {
+    "path": "pro-workflow/.claude-plugin",
+    "reason": "ignored directory"
+  },
+  {
+    "path": "pro-workflow/.cursor-plugin",
+    "reason": "ignored directory"
+  },
+  {
+    "path": "pro-workflow/.github",
+    "reason": "ignored directory"
+  },
+  {
+    "path": "pro-workflow/assets/architecture.svg",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "pro-workflow/assets/banner.svg",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "pro-workflow/assets/logo.svg",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "pro-workflow/assets/self-correction-demo.svg",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "pro-workflow/assets/terminal-demo.svg",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "pro-workflow/assets/workflow-flow.svg",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "public/app-icon.png",
+    "reason": "file too large (905633 bytes)"
+  },
+  {
+    "path": "quantgpt.db",
+    "reason": "ignored by repo wiki ignore rules"
+  },
+  {
+    "path": "third_party",
+    "reason": "ignored directory"
+  },
+  {
+    "path": "doc/00-research",
+    "reason": "ignored directory"
+  },
+  {
+    "path": "doc/40-product/1.0.0/assets/zcode-competitor/01-task-manager.png",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "doc/40-product/1.0.0/assets/zcode-competitor/02-file-preview.png",
+    "reason": "file too large (716869 bytes)"
+  },
+  {
+    "path": "doc/40-product/1.0.0/assets/zcode-competitor/03-remote-dev.png",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "doc/40-product/1.0.0/assets/zcode-competitor/04-browser-element-select.png",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "doc/40-product/1.0.0/assets/zcode-competitor/05-browser-diff.png",
+    "reason": "file too large (279737 bytes)"
+  },
+  {
+    "path": "doc/40-product/1.0.0/assets/zcode-competitor/06-browser-preview.png",
+    "reason": "file too large (309658 bytes)"
+  },
+  {
+    "path": "doc/40-product/1.0.0/assets/zcode-competitor/07-sidebar-preview.png",
+    "reason": "ignored extension"
+  },
+  {
+    "path": "doc/assets/readme/app-settings-full.png",
+    "reason": "file too large (374614 bytes)"
+  },
+  {
+    "path": "doc/assets/readme/app-settings.png",
+    "reason": "file too large (374614 bytes)"
+  },
+  {
+    "path": "doc/assets/readme/app-task-panel.png",
+    "reason": "file too large (1452075 bytes)"
+  },
+  {
+    "path": "doc/assets/readme/app-workbench.png",
+    "reason": "file too large (1853013 bytes)"
+  },
+  {
+    "path": ".claude",
+    "reason": "ignored directory"
+  },
+  {
+    "path": ".DS_Store",
+    "reason": "ignored by repo wiki ignore rules"
+  },
+  {
+    "path": ".git",
+    "reason": "ignored directory"
+  },
+  {
+    "path": ".github",
+    "reason": "ignored directory"
+  },
+  {
+    "path": ".hermes",
+    "reason": "ignored directory"
+  },
+  {
+    "path": ".qoder",
+    "reason": "ignored directory"
+  },
+  {
+    "path": ".superpowers",
+    "reason": "ignored directory"
+  },
+  {
+    "path": ".tech",
+    "reason": "ignored directory"
+  }
+]

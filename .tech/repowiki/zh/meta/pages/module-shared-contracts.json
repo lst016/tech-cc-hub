@@ -1,0 +1,31 @@
+{
+  "id": "module-shared-contracts",
+  "name": "共享协议与类型总览",
+  "title": "共享协议与类型总览",
+  "slug": "核心模块规格/共享协议与类型总览",
+  "path": "核心模块规格/共享协议与类型总览.md",
+  "description": "module-shared-contracts",
+  "prompt": "详细说明 共享协议与类型 的职责、入口文件、调用链、数据结构、扩展点、常见改造路径和验证命令。不要只列文件，要解释每个文件如何协作。",
+  "dependent_files": [
+    "src/shared/activity-rail-model.ts",
+    "src/shared/attachments.ts",
+    "src/shared/channel-config.ts",
+    "src/shared/codex-oauth.ts",
+    "src/shared/lark-channel.ts",
+    "src/shared/lark-runtime-defaults.ts",
+    "src/shared/model-provider-routing.ts",
+    "src/shared/plan-progress.ts"
+  ],
+  "parent_id": "core-module-specs",
+  "parent": "核心模块规格",
+  "parent_chain": [
+    "核心模块规格"
+  ],
+  "section_path": "核心模块规格",
+  "layer_level": 1,
+  "order": 21,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "9ee3132efd44a657abb7fff2d4b4d12c27a06376c1f41796f004d1cc8f976ac0",
+  "generated_at": 1778919256871
+}

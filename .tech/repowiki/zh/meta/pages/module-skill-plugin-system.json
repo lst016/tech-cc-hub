@@ -1,0 +1,31 @@
+{
+  "id": "module-skill-plugin-system",
+  "name": "技能与插件系统总览",
+  "title": "技能与插件系统总览",
+  "slug": "核心模块规格/技能与插件系统总览",
+  "path": "核心模块规格/技能与插件系统总览.md",
+  "description": "module-skill-plugin-system",
+  "prompt": "详细说明 技能与插件系统 的职责、入口文件、调用链、数据结构、扩展点、常见改造路径和验证命令。不要只列文件，要解释每个文件如何协作。",
+  "dependent_files": [
+    "src/electron/libs/skill-manager/index.ts",
+    "pro-workflow/skills/llm-council/scripts/council.js",
+    "pro-workflow/skills/survey-generator/scripts/build-survey.js",
+    "pro-workflow/skills/wiki-builder/scripts/init_wiki.sh",
+    "pro-workflow/skills/wiki-builder/scripts/wiki-cli.js",
+    "pro-workflow/skills/wiki-query/scripts/query.js",
+    "pro-workflow/skills/wiki-research-loop/scripts/research-loop.js",
+    "pro-workflow/skills/wiki-viewer/scripts/render.js"
+  ],
+  "parent_id": "core-module-specs",
+  "parent": "核心模块规格",
+  "parent_chain": [
+    "核心模块规格"
+  ],
+  "section_path": "核心模块规格",
+  "layer_level": 1,
+  "order": 20,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "e707b33014ac3e100681e7d8e8f429bf11ee0b0b50d40e3c1a5e946c1cc48e51",
+  "generated_at": 1778919256871
+}
