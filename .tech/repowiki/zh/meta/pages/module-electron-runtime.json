@@ -16,16 +16,16 @@
     "src/shared/runner-status.ts",
     "test/electron/runner-attachments.test.ts"
   ],
-  "parent_id": "核心模块规格总览-提供模块索引",
+  "parent_id": "core-module-specs",
   "parent": "核心模块规格",
   "parent_chain": [
     "核心模块规格"
   ],
   "section_path": "核心模块规格",
   "layer_level": 1,
-  "order": 32,
+  "order": 41,
   "status": "completed",
   "page_type": "topic",
-  "content_hash": "d768180d26cacaa6da440929da6fb5216715d025a3daac53e7c801ed9ffdb53f",
-  "generated_at": 1778928162406
+  "content_hash": "672ed5414c6375ade6588b6892d41af7c7372ee2f938e358f23a309d6bf29d83",
+  "generated_at": 1778936862846
 }

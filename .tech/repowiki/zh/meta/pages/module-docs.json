@@ -16,16 +16,16 @@
     "doc/00-overview/04-问题定义与成功指标.md",
     "doc/10-architecture/10-系统上下文图.md"
   ],
-  "parent_id": "核心模块规格总览-提供模块索引",
+  "parent_id": "core-module-specs",
   "parent": "核心模块规格",
   "parent_chain": [
     "核心模块规格"
   ],
   "section_path": "核心模块规格",
   "layer_level": 1,
-  "order": 44,
+  "order": 53,
   "status": "completed",
   "page_type": "topic",
-  "content_hash": "77bf44168910d4b3c5fcc6493293d0722678c1c646714a1d9cd817aceb836ef2",
-  "generated_at": 1778928162406
+  "content_hash": "c81c535dce91e23ff8f21dda553a1e18185188b5265c92161222a71976440246",
+  "generated_at": 1778936862846
 }

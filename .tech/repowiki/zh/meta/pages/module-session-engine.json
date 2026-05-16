@@ -16,16 +16,16 @@
     "doc/20-contracts/session-lifecycle/spec.md",
     "doc/40-product/1.0.0/40-delivery/components/CMP-001-SessionSidebar.md"
   ],
-  "parent_id": "核心模块规格总览-提供模块索引",
+  "parent_id": "core-module-specs",
   "parent": "核心模块规格",
   "parent_chain": [
     "核心模块规格"
   ],
   "section_path": "核心模块规格",
   "layer_level": 1,
-  "order": 36,
+  "order": 45,
   "status": "completed",
   "page_type": "topic",
-  "content_hash": "97b215d8a260329d5d1ad6de94cd030304ab29e9fac89b0c80994ca660a340aa",
-  "generated_at": 1778928162406
+  "content_hash": "cf0a21f83c870100c0d64332ec973085361e3a6c48039871171bab93dccca1cd",
+  "generated_at": 1778936862846
 }

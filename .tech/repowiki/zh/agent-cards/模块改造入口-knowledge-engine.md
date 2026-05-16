@@ -23,7 +23,6 @@
 - `src/electron/libs/knowledge/knowledge-utils.ts`
 - `src/electron/libs/knowledge/repowiki/scanner.ts`
 - `src/electron/libs/knowledge/repowiki/intelligence.ts`
-- `src/electron/libs/knowledge/agent-cards.ts`
 
 ## 改代码指南
 - 先确认需求是否真的属于 knowledge-engine，再从 entryFiles 里包含入口/IPC/schema/store 的文件开始。

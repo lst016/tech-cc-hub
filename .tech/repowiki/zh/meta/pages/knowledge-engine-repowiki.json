@@ -2,8 +2,8 @@
   "id": "knowledge-engine-repowiki",
   "name": "知识库与 Repo Wiki 系统",
   "title": "知识库与 Repo Wiki 系统",
-  "slug": "系统架构/知识库与 Repo Wiki 系统",
-  "path": "系统架构/知识库与 Repo Wiki 系统.md",
+  "slug": "知识库与 Repo Wiki 系统",
+  "path": "知识库与 Repo Wiki 系统.md",
   "description": "knowledge-engine-repowiki",
   "prompt": "详细说明内置知识库、Repo Wiki 生成、主题目录规划、Markdown 产物、向量索引、FTS 检索、MCP 工具和聊天注入链路。必须覆盖数据流、关键 IPC、SQLite 表、进度状态、失败恢复和调试入口。",
   "dependent_files": [
@@ -14,16 +14,14 @@
     "scripts/qa/knowledge-engine-smoke.mjs",
     "scripts/qa/knowledge-chat-injection-smoke.mjs"
   ],
-  "parent_id": "系统架构总览页面-提供架构图和文档索引",
-  "parent": "系统架构",
-  "parent_chain": [
-    "系统架构"
-  ],
-  "section_path": "系统架构",
-  "layer_level": 1,
-  "order": 28,
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 36,
   "status": "completed",
   "page_type": "topic",
-  "content_hash": "2a19025f676b68496ea482e2877e9e9528c9808793e2cfe402df9f009550fedf",
-  "generated_at": 1778928162406
+  "content_hash": "654ea2221c8b216d705c971ec9ae2079438edcd40775aebcd85b7f01c265d80d",
+  "generated_at": 1778936862846
 }

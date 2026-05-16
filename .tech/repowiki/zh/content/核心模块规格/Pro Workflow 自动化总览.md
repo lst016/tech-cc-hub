@@ -1,9 +1,7 @@
 # Pro Workflow 自动化总览
 
 <cite>
-
 **本文引用的文件**
-
 - [pro-workflow/README.md](file://pro-workflow/README.md)
 - [pro-workflow/package.json](file://pro-workflow/package.json)
 - [pro-workflow/scripts/commit-validate.js](file://pro-workflow/scripts/commit-validate.js)
@@ -18,200 +16,207 @@
 - [pro-workflow/package-lock.json](file://pro-workflow/package-lock.json)
 - [pro-workflow/settings.example.json](file://pro-workflow/settings.example.json)
 - [pro-workflow/scripts/research-tick.js](file://pro-workflow/scripts/research-tick.js)
-
 </cite>
+
+---
 
 ## 目录
 
-- [职责定位](#职责定位)
-- [核心架构图](#核心架构图)
-- [入口文件与调用链](#入口文件与调用链)
-- [数据结构](#数据结构)
+- [模块定位与核心职责](#模块定位与核心职责)
+- [入口文件与事件触发链](#入口文件与事件触发链)
+- [核心脚本协作图](#核心脚本协作图)
+- [数据结构与 SQLite 存储](#数据结构与-sqlite-存储)
 - [配置系统](#配置系统)
-- [质量门禁与钩子](#质量门禁与钩子)
-- [自动化脚本详解](#自动化脚本详解)
-- [扩展点](#扩展点)
+- [质量门禁体系](#质量门禁体系)
+- [知识平面与 Research Loop](#知识平面与-research-loop)
+- [扩展点与插件机制](#扩展点与插件机制)
+- [常见改造路径](#常见改造路径)
+- [验证与排障命令](#验证与排障命令)
 - [Agent 改代码地图](#agent-改代码地图)
-- [常见问题与排障](#常见问题与排障)
 
 ---
 
-## 职责定位
+## 模块定位与核心职责
 
-Pro Workflow 是 `tech-cc-hub` 的**自动化执行引擎**，位于项目根目录 `pro-workflow/`。它为 Claude Code Session 提供三层能力：
+`module-pro-workflow` 是 `tech-cc-hub` 中负责 **AI 编程助手的自进化与质量保障** 的核心模块。它通过三个平面实现价值：
 
-| 层级 | 能力 | 核心文件 |
-|------|------|----------|
-| **自修正记忆** | 捕获用户纠正 → 持久化为 SQLite 规则，下次自动复用 | `dist/db/store.js`（构建产物） |
-| **知识平面** | FTS5 索引研究 Wiki，支持 BM25 + 向量混合检索 | `scripts/embed-wiki.js` |
-| **质量门禁** | Commit 验证、配置变更监控、意图漂移检测 | `scripts/commit-validate.js`、`scripts/config-watcher.js`、`scripts/drift-detector.js` |
+1. **自纠正记忆平面** — 将每次人工纠正持久化为可检索规则，Claude 永不再犯
+2. **知识平面** — FTS5 索引的研究维基，支持 BM25 + 向量混合检索
+3. **质量门禁平面** — LLM 驱动的 Hook、Git 守卫、上下文压缩感知
 
-> 章节来源：[pro-workflow/README.md#L16-L18](file://pro-workflow/README.md#L16-L18)
+> 章节来源：[pro-workflow/README.md#L30-L38](file://pro-workflow/README.md#L30-L38)
 
-**设计哲学**：正确一次，永不重复。通过 SQLite + FTS5 实现持久化记忆，通过钩子系统实现主动干预。
+### 技能体系概览
+
+| 技能类别 | 代表技能 | 核心功能 |
+|---------|---------|---------|
+| **知识平面** | `wiki-builder`, `wiki-query`, `wiki-research-loop` | FTS5 索引、BM25 检索、自动研究 |
+| **质量门禁** | `smart-commit`, `llm-gate`, `compact-guard` | Conventional Commits、AI 审核、状态保留 |
+| **记忆学习** | `learn-rule`, `replay-learnings`, `wrap-up` | 纠正捕获、会话回顾 |
+| **编排工程** | `orchestrate`, `agent-teams`, `parallel-worktrees` | 多阶段开发、并行工作树 |
+
+> 章节来源：[pro-workflow/README.md#L163-L218](file://pro-workflow/README.md#L163-L218)
 
 ---
 
-## 核心架构图
+## 入口文件与事件触发链
+
+Pro Workflow 的自动化由 **24 个 Hook 事件** 驱动，每个事件对应一个 `scripts/` 下的脚本。
+
+### 核心脚本入口矩阵
+
+| 脚本 | 触发事件 | 输入来源 | 输出行为 |
+|-----|---------|---------|---------|
+| `cwd-changed.js` | `DirectoryChanged` | `input.cwd` | 检测 Git/Node/Rust/Go/Python 项目类型，写入 `CLAUDE_ENV_FILE` |
+| `file-changed.js` | `FileChanged` | `input.file_path` | 检测重要配置变更，触发 wiki seed 入队 |
+| `config-watcher.js` | `ConfigChange` | `input.config_file` | 记录变更到 `~/.pro-workflow/config-changes.log` |
+| `commit-validate.js` | `PreCommit` | `input.tool_input.command` | 验证 Conventional Commits 格式 |
+| `drift-detector.js` | `UserPromptSubmit` | `input.prompt` | 检测编辑漂移，6次编辑后触发意图重置 |
+| `embed-wiki.js` | CLI 调用 | 命令行参数 | 向量嵌入生成与混合检索 |
+| `research-tick.js` | Cron 调度 | wiki.config.md | 运行自动研究循环 |
+
+> 章节来源：[pro-workflow/scripts/cwd-changed.js#L10-L15](file://pro-workflow/scripts/cwd-changed.js#L10-L15)
+
+### stdin/stdout 契约
+
+所有 Hook 脚本遵循统一契约：
+
+```javascript
+// 输入: JSON from stdin
+const input = JSON.parse(data);
+
+// 输出: stdout 必须是原始 JSON (pass-through)
+// 诊断信息: stderr
+console.error('[ProWorkflow] ...');  // 日志
+console.log(data);                   // 必须传递原始数据
+```
+
+> 章节来源：[pro-workflow/scripts/config-watcher.js#L37-L79](file://pro-workflow/scripts/config-watcher.js#L37-L79)
+
+---
+
+## 核心脚本协作图
 
 ```mermaid
 flowchart TD
-    subgraph ClaudeCode["Claude Code Session"]
-        U[User Prompt]
-        P[SessionStart]
-        E[UserPromptSubmit]
+    subgraph "Session 生命周期"
+        A["SessionStart"] --> B["cwd-changed.js<br/>检测项目类型"]
+        B --> C["加载 learnings + wikis 列表"]
     end
 
-    subgraph Hooks["Hook Scripts (scripts/)"]
-        CW[cwd-changed.js]
-        FC[file-changed.js]
-        CWATCH[config-watcher.js]
-        DD[drift-detector.js]
-        CV[commit-validate.js]
+    subgraph "UserPromptSubmit 事件"
+        D["UserPromptSubmit"] --> E["drift-detector.js<br/>意图追踪"]
+        E --> F{"漂移检测<br/>edits ≥ 6 & relevance < 0.2?"}
+        F -->|是| G["提示用户重聚焦"]
+        F -->|否| H["Auto-inject wiki hits"]
     end
 
-    subgraph Background["Background Loop"]
-        RT[research-tick.js]
-        EW[embed-wiki.js]
+    subgraph "文件变更事件"
+        I["FileChanged"] --> J["file-changed.js"]
+        J --> K{"重要配置文件?"}
+        K -->|package.json| L["提示 npm install"]
+        K -->|.env| M["警告敏感变更"]
+        K -->|wiki/*.md| N["enqueueSeed() 入队验证"]
     end
 
-    subgraph Storage["SQLite Store"]
-        DB[(data.db)]
-        FTS[FTS5 Index]
+    subgraph "PreCommit 事件"
+        O["PreCommit"] --> P["commit-validate.js"]
+        P --> Q{"Conventional Commits?"}
+        Q -->|失败| R["exit 2 → 阻止提交"]
+        Q -->|通过| S["exit 0 → 放行"]
     end
 
-    U --> P
-    P --> |load learnings| DB
-    U --> E
-    E --> |auto-inject wiki| DB
-    E --> DD
-    CW --> |project type| DB
-    FC --> |reactive seeds| DB
-    CWATCH --> |audit config| DB
-    RT --> |tick loop| DB
-    EW --> |embeddings| DB
-    DB --> FTS
+    subgraph "自动研究循环"
+        T["Cron Tick"] --> U["research-tick.js"]
+        U --> V["读取 wiki.config.md"]
+        V --> W{"auto_research.enabled?"}
+        W -->|是| X["spawn research-loop.js"]
+        X --> Y["BM25 + 向量更新"]
+    end
 
-    style Hooks fill:#e1f5fe
-    style Storage fill:#fff3e0
+    style G fill:#ff6b6b
+    style R fill:#ff6b6b
+    style L fill:#51cf66
+    style M fill:#fcc419
 ```
 
-**图表来源**：基于 `pro-workflow/README.md` 第 16-18 行描述的架构
+> 图表来源：[pro-workflow/scripts/drift-detector.js#L62-L66](file://pro-workflow/scripts/drift-detector.js#L62-L66)
 
 ---
 
-## 入口文件与调用链
+## 数据结构与 SQLite 存储
 
-### 1. 入口：Claude Code Hooks
+### 核心依赖
 
-所有自动化脚本通过 Claude Code 的 `hooks.json` 配置注册。典型触发链：
-
-```
-Claude Code Event → hooks.json → scripts/*.js → stdio 响应
-```
-
-**关键事件映射**（参考 `pro-workflow/README.md#L236-L251`）：
-
-| 事件 | 触发脚本 | 职责 |
-|------|----------|------|
-| `SessionStart` | 内置 `learn-rule` 加载 | 从 SQLite 加载所有 learnings |
-| `UserPromptSubmit` | 内置 `wiki-query` | BM25 检索 + 自动注入 top-3 结果 |
-| `CwdChanged` | `scripts/cwd-changed.js` | 检测项目类型，写入 `CLAUDE_ENV_FILE` |
-| `FileChanged` | `scripts/file-changed.js` | 重要配置变更告警 + Wiki seed 入队 |
-| `ConfigChanged` | `scripts/config-watcher.js` | 敏感配置变更审计日志 |
-| `PreCommit` | `scripts/commit-validate.js` | 校验 conventional commits 格式 |
-
-> 章节来源：[pro-workflow/scripts/cwd-changed.js#L1-L8](file://pro-workflow/scripts/cwd-changed.js#L1-L8)
-
-### 2. CLI 入口：`/wiki` 命令族
-
-```bash
-/wiki init <slug> --title "..." --flavor research   # 初始化 Wiki
-/wiki page <slug> <path> --type concept           # 创建页面
-/wiki ask "query" --wiki <slug>                    # BM25 检索
-/wiki seed <slug> "query"                          # 入队研究种子
-/wiki research <slug> --max-pages 5 --budget-usd 0.50  # 启动研究循环
-/wiki embed <slug>                                 # 生成向量嵌入
-/wiki hybrid "query" --wiki <slug>                 # BM25 + vector RRF
-/wiki council "question" --wiki <slug>            # 多 LLM 商议
-```
-
-> 章节来源：[pro-workflow/README.md#L88-L116](file://pro-workflow/README.md#L88-L116)
-
-### 3. 后台循环：`research-tick.js`
-
-每分钟（cron 驱动）检查是否有 opted-in Wiki 带 pending seeds：
-
-```javascript
-// scripts/research-tick.js#L44-L72
-function tick() {
-  if (fs.existsSync(STOP_FILE)) return { skipped: 'stop' };
-  const store = getStore();
-  // 查找 auto_research.enabled 的 Wiki
-  // 执行 research-loop.js --max-pages 1
-}
-```
-
-**Kill Switch**：`touch ~/.pro-workflow/STOP` 可立即停止所有后台循环。
-
----
-
-## 数据结构
-
-### SQLite Schema（构建时从 `src/db/schema.sql` 复制）
-
-核心表结构（基于 `pro-workflow/package.json#L8` 和代码推断）：
-
-| 表名 | 用途 | 关键字段 |
-|------|------|----------|
-| `learnings` | 自修正规则 | `id`, `rule_text`, `created_at`, `source_session` |
-| `wikis` | Wiki 元数据 | `slug`, `title`, `flavor`, `root_path`, `auto_research` |
-| `wiki_pages` | Wiki 页面 + FTS5 | `id`, `wiki_slug`, `rel_path`, `title`, `content` |
-| `wiki_seeds` | 研究种子队列 | `id`, `wiki_slug`, `query`, `depth`, `status` |
-| `wiki_sources` | 引用来源 | `id`, `wiki_slug`, `url`, `title`, `accessed_at` |
-| `wiki_claims` | 提取的论断 | `id`, `page_id`, `claim_text`, `source_id` |
-| `wiki_embeddings` | 向量索引 | `page_id`, `model`, `vector`, `created_at` |
-| `edit_logs` | 编辑历史 | `session_id`, `edit_count`, `intent_keywords` |
-
-> 章节来源：[pro-workflow/package.json#L1-L12](file://pro-workflow/package.json#L1-L12)
-
-### IPC 通道：stdin/stdout JSON
-
-所有 Hook 脚本使用相同协议：
-
-```javascript
-// 输入：process.stdin → JSON
+```json
 {
-  "cwd": "/path/to/project",
-  "session_id": "abc123",
-  "prompt": "用户提示词",
-  "file_path": "/changed/file",        // FileChanged 事件
-  "config_file": "settings.json",      // ConfigChanged 事件
-  "tool_input": { "command": "..." }   // PreCommit 事件
+  "dependencies": {
+    "better-sqlite3": "^12.6.2"
+  }
 }
-
-// 输出：process.stdout → 透传原始 JSON + 副作用
 ```
 
-> 章节来源：[pro-workflow/scripts/config-watcher.js#L29-L39](file://pro-workflow/scripts/config-watcher.js#L29-L39)
+> 章节来源：[pro-workflow/package.json#L44-L46](file://pro-workflow/package.json#L44-L46)
+
+### 数据库路径与初始化
+
+| 配置项 | 值 |
+|-------|-----|
+| 数据库路径 | `~/.pro-workflow/data.db` |
+| 自动初始化 | `config.json` 中 `database.auto_init: true` |
+| 构建目标 | `dist/db/store.js` |
+| Schema 文件 | `src/db/schema.sql` → `dist/db/schema.sql` |
+
+> 章节来源：[pro-workflow/config.json#L2-L5](file://pro-workflow/config.json#L2-L5)
+> 章节来源：[pro-workflow/package.json#L8](file://pro-workflow/package.json#L8)
+
+### Wiki 相关数据表
+
+从代码推断的核心表结构：
+
+| 表名 | 用途 |
+|-----|-----|
+| `wikis` | Wiki 元数据 (slug, title, root_path, flavor) |
+| `wiki_pages` + FTS5 | 页面内容全文搜索 |
+| `wiki_sources` | 外部来源记录 |
+| `wiki_claims` | 提取的论断 |
+| `wiki_seeds` | 研究种子队列 (`status: pending/running/done`) |
+| `wiki_embeddings` | 向量嵌入 (model, embedding blob) |
+| `learnings` | 自纠正规则 |
+| `learnings_wiki` | 规则与 wiki 的关联 |
+
+> 章节来源：[pro-workflow/scripts/embed-wiki.js#L39](file://pro-workflow/scripts/embed-wiki.js#L39)
+> 章节来源：[pro-workflow/scripts/research-tick.js#L54](file://pro-workflow/scripts/research-tick.js#L54)
+
+### 临时文件存储
+
+```javascript
+const getTempDir = () => path.join(os.tmpdir(), 'pro-workflow');
+```
+
+| 临时文件 | 用途 |
+|---------|-----|
+| `intent-{sessionId}` | 意图追踪状态 |
+| `edit-log-{sessionId}` | 编辑历史 |
+| `config-changes.log` | 配置变更审计 |
+| `tick.log` | 研究循环执行日志 |
+
+> 章节来源：[pro-workflow/scripts/drift-detector.js#L6-L8](file://pro-workflow/scripts/drift-detector.js#L6-L8)
 
 ---
 
 ## 配置系统
 
-### `config.json` — 主配置
+### config.json 主配置
 
 ```json
-// pro-workflow/config.json
 {
-  "database": {
-    "path": "~/.pro-workflow/data.db",  // SQLite 路径
-    "auto_init": true
-  },
+  "database": { "path": "~/.pro-workflow/data.db", "auto_init": true },
+  "search": { "default_limit": 10, "highlight_matches": true },
   "self_correction": {
     "enabled": true,
-    "auto_update_claude_md": false,    // 不自动修改 CLAUDE.md
-    "require_approval": true,           // 规则需用户确认
+    "auto_update_claude_md": false,
+    "require_approval": true,
     "learned_file": "~/.claude/LEARNED.md"
   },
   "plan_mode": {
@@ -227,19 +232,30 @@ function tick() {
     "typecheck_command": "npm run typecheck",
     "test_command": "npm test -- --related"
   },
+  "wrap_up": {
+    "check_uncommitted": true,
+    "verify_tests": true,
+    "update_claude_md": true,
+    "create_summary": true
+  },
+  "parallel_sessions": {
+    "suggest_worktrees": true,
+    "worktree_prefix": "../",
+    "native_worktree": true
+  },
   "model_preferences": {
     "quick_fixes": "haiku",
     "features": "sonnet",
-    "refactors": "opus"
+    "refactors": "opus",
+    "architecture": "opus",
+    "debugging": "opus"
   }
 }
 ```
 
 > 章节来源：[pro-workflow/config.json#L1-L47](file://pro-workflow/config.json#L1-L47)
 
-### `settings.example.json` — 权限配置
-
-定义 Claude Code 权限策略，用于 `settings.json` 覆盖：
+### settings.example.json 权限配置
 
 ```json
 {
@@ -247,18 +263,21 @@ function tick() {
     "deny": [
       "Bash(rm -rf *)",
       "Bash(curl * | bash)",
-      "Edit(/vendor/**)"
+      "Edit(/vendor/**)",
+      "Edit(/node_modules/**)"
     ],
     "ask": [
       "Bash(git push *)",
-      "Bash(docker *)"
+      "Bash(git reset *)",
+      "Bash(npm publish *)"
     ],
     "allow": [
-      "Read", "Glob", "Grep",
+      "Read", "Glob", "Grep", "Edit", "Write",
       "Bash(npm run *)",
       "MCP(github:*)",
       "MCP(context7:*)",
-      "Task(*)", "Agent(*)"
+      "Task(*)",
+      "Agent(*)"
     ]
   }
 }
@@ -266,130 +285,68 @@ function tick() {
 
 > 章节来源：[pro-workflow/settings.example.json#L3-L49](file://pro-workflow/settings.example.json#L3-L49)
 
-### `mcp-config.example.json` — MCP 服务器配置
-
-推荐安装的 MCP 服务器：
+### MCP 服务器配置
 
 ```json
 {
   "mcpServers": {
-    "context7": {
-      "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp@latest"],
-      "_comment": "Live docs，避免过时 API 猜测"
-    },
-    "playwright": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-playwright"],
-      "_comment": "E2E 测试，13.7k tokens 平均开销"
-    },
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}" }
-    }
+    "context7": { "command": "npx", "args": ["-y", "@upstash/context7-mcp@latest"] },
+    "playwright": { "command": "npx", "args": ["-y", "@anthropic/mcp-playwright"] },
+    "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"] }
   }
 }
 ```
 
-> 章节来源：[pro-workflow/mcp-config.example.json#L1-L22](file://pro-workflow/mcp-config.example.json#L1-L22)
+> 章节来源：[pro-workflow/mcp-config.example.json#L3-L21](file://pro-workflow/mcp-config.example.json#L3-L21)
 
 ---
 
-## 质量门禁与钩子
+## 质量门禁体系
 
-### `commit-validate.js` — Commit 质量检查
+### Conventional Commits 验证
 
-**职责**：在 PreCommit 事件验证 commit message 符合 conventional commits 格式。
-
-**关键符号**：
-
-| 符号 | 行号 | 含义 |
-|------|------|------|
-| `TYPES` | L2 | 允许的 commit 类型：`feat, fix, refactor, test, docs, chore, perf, ci, style, build, revert` |
-| `PATTERN` | L3 | 正则：`^(feat\|fix\|...)([\w\-.,/ ]+))?!?: .+` |
-| `MAX_SUMMARY` | L4 | 摘要最大长度：72 字符 |
-| `extractMessage()` | L15 | 解析 `git commit -m "..."` 或 heredoc |
-| `validate()` | L46 | 核心校验逻辑 |
-
-**校验规则**：
-
-1. 首行必须匹配 `type(scope): summary` 格式
-2. 摘要长度 ≤ 72 字符
-3. 无 `-m` 参数时跳过（编辑器模式）
-
-**退出码**：`0` = 通过，`2` = 拒绝
+`commit-validate.js` 通过正则验证提交信息：
 
 ```javascript
-// 调用示例
-echo '{"tool_input": {"command": "git commit -m \"feat(auth): add login\"}}' | node scripts/commit-validate.js
+const TYPES = ['feat', 'fix', 'refactor', 'test', 'docs', 'chore', 'perf', 'ci', 'style', 'build', 'revert'];
+const PATTERN = new RegExp(`^(${TYPES.join('|')})(\\([\\w\\-.,/ ]+\\))?!?: .+`);
+const MAX_SUMMARY = 72;
 ```
 
-> 章节来源：[pro-workflow/scripts/commit-validate.js#L1-L79](file://pro-workflow/scripts/commit-validate.js#L1-L79)
+> 章节来源：[pro-workflow/scripts/commit-validate.js#L2-L4](file://pro-workflow/scripts/commit-validate.js#L2-L4)
 
-### `config-watcher.js` — 配置变更审计
+**验证流程**：
 
-**职责**：监控敏感配置（`settings.json`, `hooks.json`）变更并记录日志。
+1. 解析 `-m "..."`、`--message="..."`、Heredoc 或 `--file`
+2. 提取第一行，与 `PATTERN` 匹配
+3. 检查摘要长度 ≤ 72 字符
+4. 通过 → `exit 0`；失败 → `exit 2`
 
-**敏感文件列表**：
+> 章节来源：[pro-workflow/scripts/commit-validate.js#L47-L57](file://pro-workflow/scripts/commit-validate.js#L47-L57)
+
+### 意图漂移检测
 
 ```javascript
-const sensitiveFiles = [
-  'settings.json',
-  'settings.local.json',
-  'hooks.json',
-  '.claudeignore'
-];
+// 当 editsSinceLastTouch ≥ 6 且 relevance < 0.2 时触发
+if (state.editsSinceLastTouch >= 6 && relevance < 0.2) {
+  log(`[ProWorkflow] Drift check: ${state.editsSinceLastTouch} edits since original goal`);
+  log('[ProWorkflow] Current work seems unrelated — refocusing or intentional tangent?');
+  state.editsSinceLastTouch = 0;
+}
 ```
 
-**副作用**：变更记录到 `~/.pro-workflow/config-changes.log`，日志超过 100KB 时截断。
+> 章节来源：[pro-workflow/scripts/drift-detector.js#L62-L66](file://pro-workflow/scripts/drift-detector.js#L62-L66)
 
-> 章节来源：[pro-workflow/scripts/config-watcher.js#L43-L76](file://pro-workflow/scripts/config-watcher.js#L43-L76)
-
-### `drift-detector.js` — 意图漂移检测
-
-**职责**：检测用户意图是否偏离原始任务，防止 Agent 陷入无关修改。
-
-**关键符号**：
-
-| 符号 | 行号 | 含义 |
-|------|------|------|
-| `extractIntent()` | L85 | 从首句提取意图（取前 200 字符） |
-| `extractKeywords()` | L91 | 分词 + 停用词过滤 |
-| `isNewIntent()` | L112 | 检测切换模式（`now let's`, `switch to`, `forget it`） |
-
-**漂移判定**：`editsSinceLastTouch >= 6 && relevance < 0.2` 时告警。
-
-**状态文件**：`~/.pro-workflow/intent-<sessionId>`、`edit-log-<sessionId>`
-
-> 章节来源：[pro-workflow/scripts/drift-detector.js#L52-L67](file://pro-workflow/scripts/drift-detector.js#L52-L67)
-
-### `cwd-changed.js` — 项目类型检测
-
-**职责**：切换目录时检测项目类型，写入环境变量。
-
-**检测逻辑**：
+**关键词重叠度计算**：
 
 ```javascript
-const type = hasPackageJson ? 'node'
-  : fs.existsSync('Cargo.toml') ? 'rust'
-  : fs.existsSync('go.mod') ? 'go'
-  : fs.existsSync('pyproject.toml') ? 'python'
-  : null;
+const overlap = intentKeywords.filter(k => promptKeywords.includes(k)).length;
+const relevance = intentKeywords.length > 0 ? overlap / intentKeywords.length : 1;
 ```
 
-**输出**：如果 `CLAUDE_ENV_FILE` 存在，写入 `export PRO_WORKFLOW_PROJECT_TYPE=<type>`
+> 章节来源：[pro-workflow/scripts/drift-detector.js#L59-L60](file://pro-workflow/scripts/drift-detector.js#L59-L60)
 
-> 章节来源：[pro-workflow/scripts/cwd-changed.js#L22-L33](file://pro-workflow/scripts/cwd-changed.js#L22-L33)
-
-### `file-changed.js` — 重要文件监控 + Wiki Seed 触发
-
-**职责**：两件事合一：
-
-1. **重要配置告警**：检测 `package.json`, `tsconfig.json`, `.env` 等变更并提示验证命令
-2. **Wiki Seed 入队**：编辑 `~/.claude/wikis/<slug>/wiki/*.md` 时自动入队 verify seed
-
-**重要文件模式**：
+### 重要文件变更检测
 
 ```javascript
 const importantPatterns = [
@@ -397,317 +354,442 @@ const importantPatterns = [
   /tsconfig.*\.json$/,
   /\.env$/,
   /Dockerfile/,
+  /docker-compose/,
   /\.github\/workflows\//,
   /CLAUDE\.md$/,
-  /\.claude\//
+  /\.claude\//,
+  /Cargo\.toml$/,
+  /pyproject\.toml$/,
+  /go\.mod$/,
+  /Makefile$/
 ];
 ```
 
-**Wiki seed 入队逻辑**（L28-L49）：
-
-```javascript
-const wikiMatch = filePath.match(
-  /(?:^|\/)\.claude\/wikis\/([^/]+)\/wiki\/.+\.md$/ ||
-  /(?:^|\/)\.pro-workflow\/wikis\/([^/]+)\/wiki\/.+\.md$/
-);
-// 找到 Wiki → store.enqueueSeed({ wiki_slug: slug, query: `verify edits in ${rel}`, depth: 0 })
-```
-
-> 章节来源：[pro-workflow/scripts/file-changed.js#L10-L49](file://pro-workflow/scripts/file-changed.js#L10-L49)
+> 章节来源：[pro-workflow/scripts/file-changed.js#L10-L23](file://pro-workflow/scripts/file-changed.js#L10-L23)
 
 ---
 
-## 自动化脚本详解
+## 知识平面与 Research Loop
 
-### `embed-wiki.js` — 向量嵌入 + 混合检索
+### Wiki 种子入队机制
 
-**两种模式**：
-
-#### 模式 1：`embed-wiki.js all [<slug>]`
-
-批量生成向量嵌入：
+当 wiki 内 Markdown 文件被修改时：
 
 ```javascript
-async function cmdAll(args) {
-  const provider = helpers.getEmbeddingProvider(); // OPENAI_API_KEY 或 VOYAGE_API_KEY
-  const pages = slug ? store.listWikiPages(slug) : store.db.prepare('SELECT * FROM wiki_pages').all();
-
-  // 批量处理，每批 16 个
-  for (let i = 0; i < todo.length; i += batchSize) {
-    const inputs = batch.map(p => `${p.title}\n\n${p.content.slice(0, 8000)}`);
-    const vectors = await provider.embed(inputs);
-    // 写入 wiki_embeddings 表
-  }
+const wikiMatch = filePath.match(/(?:^|\/)\.claude\/wikis\/([^/]+)\/wiki\/.+\.md$/) ||
+                  filePath.match(/(?:^|\/)\.pro-workflow\/wikis\/([^/]+)\/wiki\/.+\.md$/);
+if (wikiMatch) {
+  store.enqueueSeed({ wiki_slug: slug, query: `verify edits in ${rel}`, depth: 0 });
 }
 ```
 
-#### 模式 2：`embed-wiki.js search "<query>"`
+> 章节来源：[pro-workflow/scripts/file-changed.js#L28-L44](file://pro-workflow/scripts/file-changed.js#L28-L44)
 
-混合检索（RRF 融合）：
+### 研究循环驱动
 
 ```javascript
-async function cmdSearch(args) {
-  const qv = await provider.embed([query]);
-  const vectorHits = helpers.vectorSearch(store.db, qv, { wikiSlug: args.wiki, limit });
-  const bm25Hits = store.searchWiki(query, { wikiSlug: args.wiki, limit, loose: true });
+const STOP_FILE = path.join(os.homedir(), '.pro-workflow', 'STOP');
+const LOOP_SCRIPT = path.join(PRO_WORKFLOW_ROOT, 'skills', 'wiki-research-loop', 'scripts', 'research-loop.js');
 
-  // RRF (Reciprocal Rank Fusion)
-  const fused = helpers.reciprocalRankFusion(
-    [vectorHits, bm25Hits],
-    (x) => String(x.page_id)
-  );
+function tick() {
+  if (fs.existsSync(STOP_FILE)) { appendLog('skip: STOP file present'); return { skipped: 'stop' }; }
+  // ... 查询 pending seeds
+  const r = spawnSync('node', [LOOP_SCRIPT, 'run', target.slug, '--max-pages', '1'], {
+    timeout: 10 * 60 * 1000,
+    killSignal: 'SIGKILL'
+  });
 }
 ```
 
-**参数**：
+> 章节来源：[pro-workflow/scripts/research-tick.js#L8-L67](file://pro-workflow/scripts/research-tick.js#L8-L67)
 
-| 参数 | 说明 |
-|------|------|
-| `--wiki <slug>` | 限定搜索范围 |
-| `--limit <n>` | 结果数上限（默认 10） |
-| `--mode hybrid\|vector\|bm25` | 检索模式 |
-| `--force` | 强制重新嵌入 |
-
-> 章节来源：[pro-workflow/scripts/embed-wiki.js#L29-L103](file://pro-workflow/scripts/embed-wiki.js#L29-L103)
-
-### `research-tick.js` — 研究循环触发器
-
-**工作流程**：
+### 向量嵌入与混合检索
 
 ```mermaid
 sequenceDiagram
-    participant Cron as Cron Job
-    participant Tick as research-tick.js
-    participant Store as SQLite Store
-    participant Loop as research-loop.js
+    participant CLI as embed-wiki.js
+    participant Store as SQLite (dist/db/store.js)
+    participant Embed as dist/search/embeddings.js
+    participant Provider as OpenAI/Voyage API
 
-    Cron->>Tick: 每分钟执行
-    Tick->>Tick: 检查 ~/.pro-workflow/STOP
-    Tick->>Store: listWikis()
-    Store-->>Tick: wiki list
-    loop 遍历 Wiki
-        Tick->>Tick: readWikiConfig(root_path)
-        alt auto_research.enabled && pending seeds
-            Tick->>Loop: spawnSync(node, ['run', slug, '--max-pages', '1'])
-            Loop-->>Tick: exit code
-        else
-            Tick->>Tick: skip: no-target
-        end
-    end
-    Tick->>Tick: appendLog(tick.log)
+    CLI->>Store: listWikiPages(slug)
+    CLI->>Embed: getEmbeddingProvider()
+    Embed-->>CLI: provider { name, model }
+    CLI->>Provider: embed(inputs)
+    Provider-->>CLI: vectors[]
+    CLI->>Store: upsertEmbedding(page_id, provider, vector)
+
+    Note over CLI,Store: cmdSearch 模式
+    CLI->>Provider: embed([query])
+    CLI->>Store: vectorSearch(db, qv, {wikiSlug, limit})
+    CLI->>Store: searchWiki(query, {wikiSlug, loose})
+    CLI->>Embed: reciprocalRankFusion([vectorHits], [bm25Hits])
+    CLI-->>User: RRF-ranked results
 ```
 
-**日志文件**：`~/.pro-workflow/tick.log`，每行前缀 `[ISO 时间戳]`
+> 图表来源：[pro-workflow/scripts/embed-wiki.js#L29-L102](file://pro-workflow/scripts/embed-wiki.js#L29-L102)
 
-**超时配置**：10 分钟，超时发送 `SIGKILL`
+### Wiki 配置解析
 
-> 章节来源：[pro-workflow/scripts/research-tick.js#L44-L73](file://pro-workflow/scripts/research-tick.js#L44-L73)
-
----
-
-## 扩展点
-
-### 1. 自定义 Hook 脚本
-
-在 `hooks.json` 中注册新脚本：
-
-```json
-{
-  "hooks": {
-    "CustomEvent": {
-      "after": "path/to/script.js"
-    }
-  }
+```javascript
+function readWikiConfig(rootPath) {
+  const cfgPath = path.join(rootPath, 'wiki.config.md');
+  const m = raw.match(/^---\s*\n([\s\S]*?)\n---/);
+  // 解析 YAML frontmatter: auto_research.enabled
 }
 ```
 
-脚本接收 `stdin` JSON，返回 `stdout` JSON（透传）。
+> 章节来源：[pro-workflow/scripts/research-tick.js#L18-L37](file://pro-workflow/scripts/research-tick.js#L18-L37)
 
-### 2. 新 Wiki Flavor
+---
 
-支持 9 种 Flavor（`pro-workflow/README.md#L128`）：
+## 扩展点与插件机制
 
-| Flavor | 用途 |
-|--------|------|
-| `research` | 通用研究 |
-| `paper` | 学术论文 |
-| `domain` | 领域知识 |
-| `product` | 产品规格 |
-| `person` | 人物档案 |
-| `organization` | 组织架构 |
-| `project` | 项目文档 |
-| `codebase` | 代码库知识 |
-| `incident` | 故障复盘 |
+### 技能扩展
 
-### 3. 自定义 Embedding Provider
+技能存储在 `skills/` 目录，包含：
 
-修改 `scripts/embed-wiki.js` 第 32 行：
+| 技能名 | 功能 |
+|-------|-----|
+| `wiki-builder` | 创建 FTS5 索引 wiki |
+| `wiki-query` | BM25 检索 |
+| `wiki-research-loop` | 预算限制的 BFS 研究 |
+| `llm-council` | 多模型协商 |
+| `smart-commit` | 智能提交 |
+| `compact-guard` | 上下文压缩保护 |
 
-```javascript
-const provider = helpers.getEmbeddingProvider();
-// 支持：OPENAI_API_KEY → text-embedding-3-small
-//        VOYAGE_API_KEY → voyage-3
-//        或实现自定义 provider
+### MCP 服务器扩展
+
+```json
+// 三大推荐 MCP
+mcpServers: {
+  "context7": "Live docs lookup",
+  "playwright": "Browser E2E automation",
+  "github": "PR/issue/code search"
+}
 ```
 
-### 4. 新 LLM Council Provider
+> 章节来源：[pro-workflow/mcp-config.example.json#L23-L34](file://pro-workflow/mcp-config.example.json#L23-L34)
 
-`llm-council` skill 支持 `Anthropic/OpenAI/OpenRouter/Fireworks/custom`，通过 `Promise.allSettled` 并行调用，任一失败不中止。
+### Hook 事件扩展
 
-> 章节来源：[pro-workflow/README.md#L131](file://pro-workflow/README.md#L131)
+可注册的新事件类型：
 
-### 5. 文件变化触发器
+- `PreTool` — 工具执行前
+- `PostTool` — 工具执行后
+- `SessionStart` — 会话启动
+- `SessionEnd` — 会话结束
+- `UserPromptSubmit` — 用户提交前
+- `PreCommit` — 提交前
+- `DirectoryChanged` — 目录切换
+- `ConfigChange` — 配置变更
+- `FileChanged` — 文件变更
 
-在 `scripts/file-changed.js` 的 `importantPatterns` 中添加新模式：
+### 自定义质量门禁
 
 ```javascript
-const importantPatterns = [
-  // ... 现有模式
-  /\.my-config\.yaml$/,
-  /requirements\.txt$/
-];
+// 在 config.json 中扩展
+"quality_gates": {
+  "run_lint": true,
+  "lint_command": "npm run lint",
+  "custom_gate": "node scripts/my-custom-gate.js"
+}
 ```
+
+---
+
+## 常见改造路径
+
+### 改造 1: 添加新项目类型检测
+
+**目标**: 让 `cwd-changed.js` 支持检测 Python Poetry 项目
+
+**步骤**:
+
+1. 在 `cwd-changed.js` 的 `type` 判断链中添加：
+
+```javascript
+: fs.existsSync(path.join(newCwd, 'pyproject.toml')) ? 'python'
+: fs.existsSync(path.join(newCwd, 'poetry.lock')) ? 'python-poetry'  // 新增
+```
+
+2. 在 `CLAUDE_ENV_FILE` 写入时保持一致：
+
+```javascript
+fs.appendFileSync(process.env.CLAUDE_ENV_FILE, `export PRO_WORKFLOW_PROJECT_TYPE=${type}\n`);
+```
+
+> 章节来源：[pro-workflow/scripts/cwd-changed.js#L22-L32](file://pro-workflow/scripts/cwd-changed.js#L22-L32)
+
+### 改造 2: 添加新的 Commit 类型
+
+**目标**: 支持 `types` 数组中新增 `breaking` 或 `wip`
+
+**步骤**:
+
+在 `commit-validate.js` 第 2 行扩展：
+
+```javascript
+const TYPES = ['feat', 'fix', 'refactor', 'test', 'docs', 'chore', 'perf', 'ci', 'style', 'build', 'revert', 'breaking', 'wip'];
+```
+
+> 章节来源：[pro-workflow/scripts/commit-validate.js#L2](file://pro-workflow/scripts/commit-validate.js#L2)
+
+### 改造 3: 调整漂移检测阈值
+
+**目标**: 将默认 6 次编辑改为 10 次
+
+**步骤**:
+
+在 `drift-detector.js` 第 62 行：
+
+```javascript
+if (state.editsSinceLastTouch >= 10 && relevance < 0.2) {  // 6 → 10
+```
+
+> 章节来源：[pro-workflow/scripts/drift-detector.js#L62](file://pro-workflow/scripts/drift-detector.js#L62)
+
+### 改造 4: 添加新的重要文件模式
+
+**目标**: 检测 `.prettierrc` 和 `.eslintrc.js`
+
+**步骤**:
+
+在 `file-changed.js` 的 `importantPatterns` 数组添加：
+
+```javascript
+/\.prettierrc/,
+/\.eslintrc\.js$/,
+```
+
+> 章节来源：[pro-workflow/scripts/file-changed.js#L10](file://pro-workflow/scripts/file-changed.js#L10)
+
+### 改造 5: 修改默认模型偏好
+
+**目标**: 将 quick_fixes 从 `haiku` 改为 `sonnet`
+
+**步骤**:
+
+在 `config.json` 修改：
+
+```json
+"model_preferences": {
+  "quick_fixes": "sonnet"
+}
+```
+
+> 章节来源：[pro-workflow/config.json#L40-L46](file://pro-workflow/config.json#L40-L46)
+
+---
+
+## 验证与排障命令
+
+### 基础验证
+
+```bash
+# 1. 构建 TypeScript
+npm run build
+
+# 2. 初始化数据库
+npm run db:init
+
+# 3. 诊断配置
+/wiki doctor
+
+# 4. 查看 Wiki 状态
+/wiki status
+
+# 5. 测试 Commit 验证
+echo '{"tool_input":{"command":"git commit -m \"feat(parser): add support"}}' | node scripts/commit-validate.js
+# 期望: exit 0
+
+echo '{"tool_input":{"command":"git commit -m \"oops fix\""}}' | node scripts/commit-validate.js
+# 期望: exit 2
+```
+
+### 日志检查
+
+```bash
+# 配置变更日志
+cat ~/.pro-workflow/config-changes.log
+
+# 研究循环执行日志
+cat ~/.pro-workflow/tick.log
+
+# 临时目录清理
+ls -la /tmp/pro-workflow/
+rm -rf /tmp/pro-workflow/*
+```
+
+### 停止自动研究
+
+```bash
+# 创建停止文件
+touch ~/.pro-workflow/STOP
+
+# 移除恢复
+rm ~/.pro-workflow/STOP
+```
+
+> 章节来源：[pro-workflow/scripts/research-tick.js#L8](file://pro-workflow/scripts/research-tick.js#L8)
+
+### Wiki 向量检索测试
+
+```bash
+# 全文 BM25 检索
+node scripts/embed-wiki.js search "episodic memory" --wiki agent-memory --mode bm25
+
+# 向量检索
+node scripts/embed-wiki.js search "episodic memory" --wiki agent-memory --mode vector
+
+# 混合检索 (RRF)
+node scripts/embed-wiki.js search "episodic memory" --wiki agent-memory --mode hybrid
+```
+
+> 章节来源：[pro-workflow/scripts/embed-wiki.js#L105-L109](file://pro-workflow/scripts/embed-wiki.js#L105-L109)
+
+### 意图漂移状态检查
+
+```bash
+# 查看会话意图追踪
+cat /tmp/pro-workflow/intent-{sessionId}
+
+# 查看编辑计数
+cat /tmp/pro-workflow/edit-log-{sessionId}
+```
+
+> 章节来源：[pro-workflow/scripts/drift-detector.js#L36-L37](file://pro-workflow/scripts/drift-detector.js#L36-L37)
 
 ---
 
 ## Agent 改代码地图
 
-### 先读文件（按优先级）
+### 关键符号索引
 
-| 优先级 | 文件 | 原因 |
-|--------|------|------|
-| 1 | `pro-workflow/config.json` | 主配置，所有默认值来源 |
-| 2 | `pro-workflow/package.json` | 构建脚本 `npm run build` 定义 |
-| 3 | `pro-workflow/scripts/commit-validate.js` | 质量门禁核心逻辑 |
-| 4 | `pro-workflow/scripts/embed-wiki.js` | 检索逻辑（BM25 + RRF） |
-| 5 | `pro-workflow/scripts/research-tick.js` | 后台循环入口 |
-| 6 | `pro-workflow/settings.example.json` | 权限白名单 |
+| 符号名 | 类型 | 位置 | 用途 |
+|-------|-----|------|-----|
+| `TYPES` | 常量数组 | `commit-validate.js#L2` | Conventional Commits 类型白名单 |
+| `PATTERN` | RegExp | `commit-validate.js#L3` | 提交信息格式校验 |
+| `extractMessage()` | 函数 | `commit-validate.js#L15` | 解析 git commit 参数 |
+| `validate()` | 函数 | `commit-validate.js#L47` | 格式 + 长度校验 |
+| `readStdin()` | 函数 | `commit-validate.js#L6` | 读取 Claude Code 事件输入 |
+| `getTempDir()` | 函数 | `config-watcher.js#L16` | 获取 `os.tmpdir()/pro-workflow` |
+| `isSensitive` | 布尔 | `config-watcher.js#L49` | 是否为敏感配置 |
+| `importantPatterns` | RegExp数组 | `file-changed.js#L10` | 重要文件检测规则 |
+| `wikiMatch` | RegExp | `file-changed.js#L28` | Wiki 文件变更匹配 |
+| `enqueueSeed()` | Store方法 | `file-changed.js#L43` | 入队研究种子 |
+| `extractIntent()` | 函数 | `drift-detector.js#L86` | 从 prompt 提取意图句 |
+| `extractKeywords()` | 函数 | `drift-detector.js#L92` | 停用词过滤 + 分词 |
+| `isNewIntent()` | 函数 | `drift-detector.js#L112` | 新意图模式匹配 |
+| `getStore()` | 函数 | `embed-wiki.js#L7` | 获取 SQLite store |
+| `getEmbedHelpers()` | 函数 | `embed-wiki.js#L13` | 获取嵌入辅助函数 |
+| `reciprocalRankFusion()` | 函数 | `embed-wiki.js#L90` | RRF 混合排序 |
+| `STOP_FILE` | 常量路径 | `research-tick.js#L8` | 自动循环停止开关 |
+| `LOOP_SCRIPT` | 常量路径 | `research-tick.js#L9` | research-loop.js 路径 |
+| `readWikiConfig()` | 函数 | `research-tick.js#L18` | 解析 wiki.config.md |
 
-### 关键符号速查
+### IPC / Hook 通道
 
-| 符号 | 文件 | 行号 | 用途 |
-|------|------|------|------|
-| `TYPES` | commit-validate.js | L2 | commit 类型列表 |
-| `PATTERN` | commit-validate.js | L3 | commit message 正则 |
-| `MAX_SUMMARY` | commit-validate.js | L4 | 摘要最大长度 |
-| `extractIntent()` | drift-detector.js | L85 | 意图提取 |
-| `getStore()` | embed-wiki.js | L7 | 获取 SQLite store |
-| `getEmbedHelpers()` | embed-wiki.js | L13 | 获取嵌入工具 |
-| `STOP_FILE` | research-tick.js | L8 | 停止循环开关 |
-| `LOOP_SCRIPT` | research-tick.js | L9 | 研究循环脚本路径 |
-| `sensitiveFiles` | config-watcher.js | L43 | 敏感配置列表 |
-| `importantPatterns` | file-changed.js | L10 | 重要文件模式 |
-| `enqueueSeed()` | file-changed.js | L43 | Wiki seed 入队 |
+| Channel | 数据格式 | 触发点 |
+|---------|---------|-------|
+| stdin → Hook | `JSON { config_file, changes }` | `config-watcher.js` |
+| stdin → Hook | `JSON { cwd }` | `cwd-changed.js` |
+| stdin → Hook | `JSON { file_path }` | `file-changed.js` |
+| stdin → Hook | `JSON { prompt, session_id }` | `drift-detector.js` |
+| stdin → Hook | `JSON { tool_input: { command } }` | `commit-validate.js` |
+| stdout → Claude | 原始 JSON | 所有 Hook (pass-through) |
+| stderr → UI | 诊断字符串 | 所有 Hook |
+
+### 运行时刷新/重启边界
+
+| 边界类型 | 触发条件 | 刷新方式 |
+|---------|---------|---------|
+| 配置热更新 | `ConfigChange` 事件 | `config-watcher.js` 记录但不自动重载 |
+| Wiki 内容 | `FileChanged` 匹配 wiki 目录 | `enqueueSeed()` 入队，下次 tick 生效 |
+| SQLite 数据 | 程序退出 | 重新 `createStore()` 读取 |
+| MCP 服务器 | 修改 `.mcp.json` | 需重启 Claude Code 会话 |
+| 环境变量 | 修改 `settings.json` | 需新会话生效 |
+
+### 数据库表结构 (推断)
+
+| 表名 | 主键 | 关键字段 |
+|-----|-----|---------|
+| `wikis` | `slug` | `title`, `root_path`, `flavor`, `created_at` |
+| `wiki_pages` | `id` | `wiki_slug`, `rel_path`, `title`, `content`, `summary` |
+| `wiki_seeds` | `id` | `wiki_slug`, `query`, `depth`, `status` |
+| `wiki_embeddings` | `id` | `page_id`, `model`, `embedding` |
+| `learnings` | `id` | `rule`, `context`, `approved_at` |
 
 ### 修改入口
 
-| 场景 | 修改文件 | 关键行 |
-|------|----------|--------|
-| 添加 commit 类型 | `scripts/commit-validate.js` | L2 `TYPES` 数组 |
-| 修改摘要长度限制 | `scripts/commit-validate.js` | L4 `MAX_SUMMARY` |
-| 添加漂移检测模式 | `scripts/drift-detector.js` | L112 `isNewIntent()` 正则 |
-| 添加重要文件监控 | `scripts/file-changed.js` | L10 `importantPatterns` |
-| 修改敏感配置列表 | `scripts/config-watcher.js` | L43 `sensitiveFiles` |
-| 调整 batch size | `scripts/embed-wiki.js` | L50 `batchSize = 16` |
-| 修改超时时间 | `scripts/research-tick.js` | L65 `timeout: 10 * 60 * 1000` |
+| 场景 | 优先修改文件 |
+|-----|-------------|
+| 添加新文件检测 | `scripts/file-changed.js` |
+| 修改提交验证 | `scripts/commit-validate.js` |
+| 调整漂移阈值 | `scripts/drift-detector.js` |
+| 新增项目类型 | `scripts/cwd-changed.js` |
+| 配置变更处理 | `scripts/config-watcher.js` |
+| 向量检索逻辑 | `scripts/embed-wiki.js` |
+| 研究循环行为 | `scripts/research-tick.js` |
+| 默认配置值 | `config.json` |
 
 ### 验证命令
 
 ```bash
-# 构建项目
-cd pro-workflow && npm run build
+# Hook 脚本语法检查
+node --check scripts/commit-validate.js
+node --check scripts/config-watcher.js
+node --check scripts/cwd-changed.js
+node --check scripts/drift-detector.js
+node --check scripts/file-changed.js
+node --check scripts/embed-wiki.js
+node --check scripts/research-tick.js
 
-# 验证 commit-validate
-echo '{"tool_input": {"command": "git commit -m \"feat: add feature\""}}' | node scripts/commit-validate.js && echo "PASS" || echo "FAIL"
+# TypeScript 编译
+npm run build
 
-# 验证 embed-wiki（需先构建）
-node scripts/embed-wiki.js all --limit 10
+# Commit 验证测试
+echo '{"tool_input":{"command":"git commit -m \"feat(core): add new feature\""}}' | node scripts/commit-validate.js
+echo $?  # 期望 0
 
-# 验证 research-tick（dry-run）
-node scripts/research-tick.js
+echo '{"tool_input":{"command":"git commit -m \"bad\""}}' | node scripts/commit-validate.js
+echo $?  # 期望 2
 
-# 检查 SQLite 数据库
-sqlite3 ~/.pro-workflow/data.db ".tables"
-sqlite3 ~/.pro-workflow/data.db "SELECT * FROM learnings LIMIT 5;"
+# Wiki 向量状态
+node scripts/embed-wiki.js all agent-memory --limit 10
 ```
 
 ### 常见回归风险
 
-| 风险 | 原因 | 缓解 |
-|------|------|------|
-| Hook 脚本 exit 非 0 导致 Session 中断 | `commit-validate.js` 校验失败返回 2 | 确保只有真正需要拒绝的场景返回非 0 |
-| `getStore()` 失败阻塞后台循环 | `dist/db/store.js` 不存在时 `process.exit(1)` | 构建后检查 `npm run build` 成功 |
-| 向量嵌入重复写入 | `wiki_embeddings` 表无 unique 约束 | `embed-wiki.js` L43 检查 `has` 后跳过 |
-| 意图文件残留 | `drift-detector.js` 写 `~/.pro-workflow/intent-*` 后不清理 | Session 结束时清理或在 `SessionEnd` hook 处理 |
+| 风险点 | 影响 | 缓解措施 |
+|-------|-----|---------|
+| stdout 未输出原始 JSON | Claude Code 事件链断裂 | 必须 `console.log(data)` |
+| `process.exit(0)` 误用 | 阻止后续 Hook | 仅在明确放行时使用 |
+| 异常未捕获 | 脚本崩溃 | 所有 Hook 有 try/catch + `process.exit(0)` |
+| `better-sqlite3` 编译失败 | 数据库不可用 | 检查 Node 版本 ≥ 18 |
+| STOP 文件存在 | 研究循环假阴性 | 测试后清理 `~/.pro-workflow/STOP` |
+| 临时文件膨胀 | 磁盘空间 | 定期清理 `/tmp/pro-workflow/` |
 
 ---
 
-## 常见问题与排障
+## 附录：TypeScript 配置
 
-### Q1: Hook 脚本未触发
-
-1. 检查 `hooks.json` 是否正确注册
-2. 确认脚本有执行权限：`chmod +x scripts/*.js`
-3. 检查 Claude Code 版本是否支持该事件
-
-### Q2: `getStore()` 报 "build store first"
-
-```bash
-cd pro-workflow && npm install && npm run build
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "lib": ["ES2022"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  }
+}
 ```
 
-确保 `dist/db/store.js` 存在。
-
-### Q3: 向量嵌入失败
-
-```bash
-# 检查环境变量
-echo $OPENAI_API_KEY
-echo $VOYAGE_API_KEY
-
-# 如果都没有，设置其中一个
-export OPENAI_API_KEY=sk-...
-```
-
-> 章节来源：[pro-workflow/scripts/embed-wiki.js#L33-L35](file://pro-workflow/scripts/embed-wiki.js#L33-L35)
-
-### Q4: research-tick 持续执行但无效果
-
-1. 检查 `~/.pro-workflow/STOP` 是否存在
-2. 确认 Wiki 配置了 `auto_research.enabled: true`
-3. 检查 `~/.pro-workflow/tick.log` 最新行
-
-```bash
-tail -20 ~/.pro-workflow/tick.log
-```
-
-### Q5: commit 被拒绝但格式看起来正确
-
-检查是否有 `--allow-empty` 或 `-F` 参数（文件模式），这种情况下 `commit-validate.js` 会跳过校验返回 0。
-
-> 章节来源：[pro-workflow/scripts/commit-validate.js#L66-L72](file://pro-workflow/scripts/commit-validate.js#L66-L72)
-
----
-
-## 验证命令速查
-
-| 命令 | 用途 |
-|------|------|
-| `npm run build` | 构建 TypeScript + 复制 schema.sql |
-| `npm run clean` | 清理 dist 目录 |
-| `node scripts/commit-validate.js < stdin` | 测试 commit 校验 |
-| `node scripts/embed-wiki.js all` | 批量嵌入所有 Wiki 页面 |
-| `node scripts/embed-wiki.js search "query" --limit 5` | 测试混合检索 |
-| `node scripts/research-tick.js` | 触发研究循环 tick |
-| `sqlite3 ~/.pro-workflow/data.db ".schema"` | 查看数据库 schema |
-| `tail -f ~/.pro-workflow/tick.log` | 监控研究循环日志 |
-| `tail -f ~/.pro-workflow/config-changes.log` | 监控配置变更 |
-| `touch ~/.pro-workflow/STOP` | 停止所有后台循环 |
-
-> 章节来源：[pro-workflow/package.json#L7-L11](file://pro-workflow/package.json#L7-L11)
-
----
-
-**文档版本**：v1.0
-**最后更新**：基于 pro-workflow v3.3.0
-**维护者**：tech-cc-hub Team
+> 章节来源：[pro-workflow/tsconfig.json#L1-L20](file://pro-workflow/tsconfig.json#L1-L20)
