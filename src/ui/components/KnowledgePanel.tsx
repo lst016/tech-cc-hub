@@ -1375,10 +1375,14 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab("memory")}
-              className={`rounded-full px-4 py-2 text-sm font-semibold ${activeTab === "memory" ? "bg-slate-100 text-slate-950 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+              disabled
+              title="TODO：记忆面板后续接入"
+              className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold text-slate-400 opacity-70"
             >
-              记忆
+              <span>记忆</span>
+              <span className="rounded-full border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold leading-none text-slate-400">
+                TODO
+              </span>
             </button>
           </div>
           <div className="mt-4 flex items-center gap-2">
@@ -1386,7 +1390,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
               <Search className="h-4 w-4 text-slate-400" />
               <input
                 className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-400"
-                placeholder={activeTab === "repo" ? "搜索 Repo Wiki" : "搜索记忆"}
+                placeholder="搜索 Repo Wiki"
               />
             </div>
             <button className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" type="button" aria-label="筛选">
