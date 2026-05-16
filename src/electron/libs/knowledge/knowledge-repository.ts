@@ -23,6 +23,38 @@ type RepositoryOptions = {
   embeddingDimension: number;
 };
 
+function overviewPriority(sourcePath: string, title: string): number {
+  const normalized = sourcePath.replace(/\\/g, "/").toLowerCase();
+  const normalizedTitle = title.toLowerCase();
+  const curated: Array<[RegExp, number]> = [
+    [/\/content\/index\.md$/, 10_000],
+    [/\/content\/agent-playbook\.md$/, 9_800],
+    [/\/content\/api-surface\.md$/, 9_700],
+    [/\/content\/runtime-flows\.md$/, 9_600],
+    [/\/content\/architecture\.md$/, 9_500],
+    [/\/content\/reading-guide\.md$/, 9_400],
+    [/\/content\/dependencies\.md$/, 9_300],
+    [/\/modules\/knowledge-engine\/index\.md$/, 9_000],
+    [/\/modules\/mcp-tools\/index\.md$/, 8_900],
+    [/\/modules\/electron-runtime\/index\.md$/, 8_800],
+    [/\/modules\/task-engine\/index\.md$/, 8_700],
+    [/\/modules\/ui-shell\/index\.md$/, 8_600],
+    [/\/modules\/session-engine\/index\.md$/, 8_500],
+    [/\/modules\/[^/]+\/index\.md$/, 7_500],
+  ];
+  for (const [pattern, score] of curated) {
+    if (pattern.test(normalized)) return score;
+  }
+  let score = 0;
+  if (normalized.includes("/modules/knowledge-engine/files/")) score += 650;
+  if (normalized.includes("/modules/mcp-tools/files/")) score += 580;
+  if (normalized.includes("/modules/electron-runtime/files/")) score += 520;
+  if (/(knowledge-indexer|knowledge-repository|knowledge-overview|knowledge-ui-store|repowiki|mcp-tools|runner|main)/.test(normalizedTitle)) {
+    score += 450;
+  }
+  return score;
+}
+
 export class KnowledgeRepository {
   private db: Database.Database;
   private vectorAvailable = false;
@@ -272,6 +304,7 @@ export class KnowledgeRepository {
   }
 
   buildOverview(workspaceScope: string, maxItems = 30): KnowledgeOverviewEntry[] {
+    const scanLimit = Math.max(maxItems * 100, 5_000);
     const rows = this.db
       .prepare(
         `SELECT source_kind, title, source_path, updated_at
@@ -280,13 +313,20 @@ export class KnowledgeRepository {
          ORDER BY updated_at DESC
          LIMIT ?`,
       )
-      .all(workspaceScope, maxItems) as Row[];
-    return rows.map((row) => ({
-      category: String(row.source_kind) as KnowledgeSourceKind,
-      title: String(row.title),
-      sourcePath: String(row.source_path),
-      updatedAt: Number(row.updated_at),
-    }));
+      .all(workspaceScope, scanLimit) as Row[];
+    return rows
+      .map((row) => ({
+        category: String(row.source_kind) as KnowledgeSourceKind,
+        title: String(row.title),
+        sourcePath: String(row.source_path),
+        updatedAt: Number(row.updated_at),
+      }))
+      .sort((left, right) => (
+        overviewPriority(right.sourcePath, right.title) - overviewPriority(left.sourcePath, left.title)
+        || right.updatedAt - left.updatedAt
+        || left.sourcePath.localeCompare(right.sourcePath)
+      ))
+      .slice(0, maxItems);
   }
 
   recordIndexRun(workspaceScope: string, mode: string, status: string, report: unknown): void {

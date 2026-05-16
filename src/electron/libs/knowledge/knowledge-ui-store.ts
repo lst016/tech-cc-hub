@@ -458,7 +458,15 @@ function collectGeneratedMarkdownDocuments(workspaceRoot: string, appDataPath: s
   const docs: GeneratedMarkdownDocument[] = [];
   const usedIds = new Set<string>();
   function walk(currentDir: string): void {
-    for (const entry of readdirSync(currentDir)) {
+    const entries = readdirSync(currentDir).sort((left, right) => {
+      const leftPath = join(currentDir, left);
+      const rightPath = join(currentDir, right);
+      const leftIsDir = statSync(leftPath).isDirectory();
+      const rightIsDir = statSync(rightPath).isDirectory();
+      if (leftIsDir !== rightIsDir) return leftIsDir ? -1 : 1;
+      return left.localeCompare(right, "zh-Hans-CN");
+    });
+    for (const entry of entries) {
       const absolutePath = join(currentDir, entry);
       const stats = statSync(absolutePath);
       if (stats.isDirectory()) {
@@ -508,13 +516,14 @@ function extractMarkdownTitle(content: string, fallbackFileName: string): string
 
 function inferSectionFromPath(relativePath: string): string {
   const normalized = relativePath.replace(/\\/g, "/");
-  const firstSegment = normalized.split("/").at(0) ?? "";
+  const segments = normalized.split("/").filter(Boolean);
+  const firstSegment = segments.at(0) ?? "";
   if (normalized === "index.md" || /^00-|^01-project-overview/i.test(normalized)) return "项目概述";
   if (normalized === "agent-playbook.md") return "Agent 作业手册";
   if (normalized === "architecture.md" || /arch|架构/i.test(firstSegment)) return "架构设计";
   if (normalized === "runtime-flows.md") return "关键运行链路";
   if (normalized === "api-surface.md") return "接口与存储面";
-  if (normalized.startsWith("modules/")) return "模块";
+  if (segments[0] === "modules" && segments[1]) return `模块：${segments[1]}`;
   if (normalized === "reading-guide.md") return "阅读指南";
   if (normalized === "dependencies.md") return "依赖关系";
   if (/arch|架构/i.test(firstSegment)) return "架构设计";

@@ -71,8 +71,9 @@ for (const required of [
   "agent-playbook.md",
   "runtime-flows.md",
   "api-surface.md",
-  path.join("modules", "knowledge-engine.md"),
-  path.join("modules", "mcp-tools.md"),
+  path.join("modules", "knowledge-engine", "index.md"),
+  path.join("modules", "mcp-tools", "index.md"),
+  path.join("modules", "knowledge-engine", "files", "src", "electron", "libs", "knowledge", "knowledge-indexer.ts.md"),
 ]) {
   if (!existsSync(path.join(wikiRoot, required))) fail(`Missing required Agent-useful page: ${required}`);
 }
@@ -94,7 +95,7 @@ const playbook = readFileSync(path.join(wikiRoot, "agent-playbook.md"), "utf8");
 for (const expected of ["为什么知识库功能必须有 embedding 模型", "高价值文件", "Agent 如何在聊天里看到知识库"]) {
   if (!playbook.includes(expected)) fail(`Agent playbook missing useful section: ${expected}`);
 }
-const knowledgeModule = readFileSync(path.join(wikiRoot, "modules", "knowledge-engine.md"), "utf8");
+const knowledgeModule = readFileSync(path.join(wikiRoot, "modules", "knowledge-engine", "index.md"), "utf8");
 for (const expected of ["Repo Wiki 生成", "embedding", "knowledge_documents", "KnowledgeRepository", "knowledge-overview.ts"]) {
   if (!knowledgeModule.includes(expected)) fail(`Knowledge module page is too shallow; missing: ${expected}`);
 }

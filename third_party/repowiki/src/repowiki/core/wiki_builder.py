@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import FileDoc, FileInfo, ProjectContext, WikiData
@@ -87,10 +87,13 @@ class WikiBuilder:
         pages.extend(agent_pages)
         sidebar.extend(SidebarItem(title=page.title, page_id=page.id) for page in agent_pages)
 
-        # 4. module pages plus Qoder-style file pages
+        # 4. module pages plus Qoder-style file pages. Keep the export tree
+        # human-readable: modules/<module>/index.md plus files grouped under
+        # the owning module instead of one huge flat files/ directory.
         module_sidebar = SidebarItem(title="模块", page_id="", children=[])
         for i, mod in enumerate(wiki_data.modules):
-            mod_id = f"modules/{mod.name}"
+            module_slug = self._safe_path_segment(mod.name)
+            mod_id = f"modules/{module_slug}/index"
             mod_md = self._build_module_page(mod)
             pages.append(WikiPage(
                 id=mod_id, title=mod.name, content=mod_md,
@@ -99,7 +102,7 @@ class WikiBuilder:
             mod_item = SidebarItem(title=mod.name, page_id=mod_id, children=[])
             for file_info in file_pages_by_module.get(mod.name, []):
                 file_doc = file_docs_by_path.get(file_info.path)
-                file_id = f"files/{self._page_id_for_path(file_info.path)}"
+                file_id = f"modules/{module_slug}/files/{self._page_id_for_path(file_info.path)}"
                 pages.append(WikiPage(
                     id=file_id,
                     title=file_info.path,
@@ -201,10 +204,27 @@ class WikiBuilder:
             files.sort(key=lambda file: (-self._score_file(file, rank_lookup), file.path))
         return by_module
 
+    def _safe_path_segment(self, value: str) -> str:
+        safe = re.sub(r"[<>:\"|?*\x00-\x1f]+", "-", value.strip())
+        safe = re.sub(r"\s+", "-", safe)
+        safe = safe.replace("/", "-").replace("\\", "-").strip(" .-")
+        if not safe:
+            return "unnamed"
+        if re.fullmatch(r"(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])", safe):
+            return f"_{safe}"
+        return safe
+
     def _page_id_for_path(self, path: str) -> str:
-        safe = re.sub(r"[^a-zA-Z0-9/_-]+", "-", path.replace("\\", "/").lower())
-        safe = safe.replace("/", "__").strip("-")
-        return safe or "file"
+        normalized = path.replace("\\", "/").strip("/")
+        parts = [self._safe_path_segment(part) for part in PurePosixPath(normalized).parts if part not in ("", ".")]
+        if parts:
+            last = parts[-1]
+            lower_last = last.lower()
+            if lower_last.endswith(".markdown"):
+                parts[-1] = last[:-9] or "index"
+            elif lower_last.endswith(".md"):
+                parts[-1] = last[:-3] or "index"
+        return "/".join(parts) or "file"
 
     def _format_list(self, values: list[str], limit: int = 24) -> list[str]:
         return [f"- `{value}`" for value in values[:limit]]
