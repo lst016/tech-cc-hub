@@ -8,7 +8,12 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { copyTextToClipboard } from "../utils/clipboard";
-import { OPEN_BROWSER_WORKBENCH_URL_EVENT, type OpenBrowserWorkbenchUrlDetail } from "../events";
+import {
+  OPEN_BROWSER_WORKBENCH_URL_EVENT,
+  PREVIEW_OPEN_FILE_EVENT,
+  type OpenBrowserWorkbenchUrlDetail,
+  type PreviewOpenFileDetail,
+} from "../events";
 import { normalizeWorkbenchUrl } from "../utils/workbench-url";
 
 type MermaidApi = {
@@ -18,7 +23,97 @@ type MermaidApi = {
 
 let mermaidInitialized = false;
 
-function handleWorkbenchLinkClick(event: MouseEvent<HTMLAnchorElement>, href?: string): void {
+const SOURCE_FILE_EXTENSION_PATTERN = /\.(?:[cm]?[jt]sx?|jsonc?|ya?ml|toml|mdx?|py|sh|zsh|css|scss|html|go|rs|java|kt|swift|sql|vue|svelte|astro)(?::\d+(?:-\d+)?)?$/i;
+
+function stripMarkdownLinkTarget(value: string): string {
+  return value.trim().replace(/^<(.+)>$/, "$1").replace(/^file=/i, "");
+}
+
+function parseLineTarget(value: string): { cleanPath: string; startLine?: number } {
+  let cleanPath = value;
+  let startLine: number | undefined;
+  const hashIndex = cleanPath.indexOf("#");
+  const anchor = hashIndex >= 0 ? cleanPath.slice(hashIndex + 1) : "";
+  if (hashIndex >= 0) {
+    cleanPath = cleanPath.slice(0, hashIndex);
+  }
+  const anchorLine = /(?:^|-)L?(\d+)/i.exec(anchor);
+  if (anchorLine) {
+    startLine = Number(anchorLine[1]);
+  } else {
+    const suffixLine = /:(\d+)(?:-\d+)?$/.exec(cleanPath);
+    if (suffixLine) {
+      startLine = Number(suffixLine[1]);
+      cleanPath = cleanPath.slice(0, -suffixLine[0].length);
+    }
+  }
+  return { cleanPath, startLine };
+}
+
+function decodeFileTarget(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function joinWorkspacePath(sourceRoot: string, relativePath: string): string {
+  const root = sourceRoot.replace(/[\\/]+$/, "");
+  const child = relativePath.replace(/^[\\/]+/, "");
+  return `${root}/${child}`;
+}
+
+function looksLikeWorkspaceSourcePath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!SOURCE_FILE_EXTENSION_PATTERN.test(normalized)) return false;
+  if (normalized.startsWith("./") || normalized.startsWith("../")) return false;
+  if (normalized.includes("/")) return true;
+  return /^(?:readme|package|tsconfig|vite\.config|eslint\.config|tailwind\.config|postcss\.config)\./i.test(normalized);
+}
+
+function parseSourceFileLink(href?: string, sourceRoot?: string): PreviewOpenFileDetail | null {
+  const raw = stripMarkdownLinkTarget(href ?? "");
+  if (!raw) return null;
+  const { cleanPath, startLine } = parseLineTarget(raw);
+  let path = cleanPath;
+  let explicitFileLink = false;
+  const fileSchemeMatch = /^file:\/\/(.*)$/i.exec(path);
+  if (fileSchemeMatch) {
+    explicitFileLink = true;
+    path = fileSchemeMatch[1] ?? "";
+    if (path.startsWith("/")) {
+      path = `/${path.replace(/^\/+/, "")}`;
+    }
+  } else if (!sourceRoot || !looksLikeWorkspaceSourcePath(path)) {
+    return null;
+  }
+
+  path = decodeFileTarget(path).trim();
+  if (!path) return null;
+  if (/^[a-z]+:\/\//i.test(path) || /^(?:javascript|data|mailto|tel):/i.test(path)) return null;
+  if (!explicitFileLink && !looksLikeWorkspaceSourcePath(path)) return null;
+
+  const absolutePath = path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)
+    ? path
+    : sourceRoot
+      ? joinWorkspacePath(sourceRoot, path)
+      : "";
+  if (!absolutePath) return null;
+  return { filePath: absolutePath, startLine };
+}
+
+function handleMarkdownLinkClick(event: MouseEvent<HTMLAnchorElement>, href?: string, sourceRoot?: string): void {
+  const sourceFile = parseSourceFileLink(href, sourceRoot);
+  if (sourceFile && !event.defaultPrevented && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    window.dispatchEvent(new CustomEvent<PreviewOpenFileDetail>(PREVIEW_OPEN_FILE_EVENT, {
+      detail: sourceFile,
+    }));
+    return;
+  }
+
   const url = normalizeWorkbenchUrl(href);
   if (!url || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
     return;
@@ -36,8 +131,9 @@ function MarkdownLink({
   className,
   children,
   node: _node,
+  sourceRoot,
   ...props
-}: AnchorHTMLAttributes<HTMLAnchorElement> & { node?: unknown }) {
+}: AnchorHTMLAttributes<HTMLAnchorElement> & { node?: unknown; sourceRoot?: string }) {
   void _node;
   const normalizedHref = normalizeWorkbenchUrl(href) ?? href;
   const classes = [
@@ -52,7 +148,7 @@ function MarkdownLink({
       className={classes}
       rel="noreferrer"
       target={normalizedHref?.startsWith("http") ? "_blank" : props.target}
-      onClick={(event) => handleWorkbenchLinkClick(event, normalizedHref)}
+      onClick={(event) => handleMarkdownLinkClick(event, href ?? normalizedHref, sourceRoot)}
     >
       {children}
     </a>
@@ -225,7 +321,7 @@ function MermaidDiagram({ chart }: { chart: string }) {
   );
 }
 
-function MDContent({ text }: { text: string }) {
+function MDContent({ text, sourceRoot }: { text: string; sourceRoot?: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
@@ -238,7 +334,7 @@ function MDContent({ text }: { text: string }) {
         ul: (props) => <ul className="mt-2 ml-4 grid min-w-0 list-disc gap-1 has-[:checked]:list-none has-[:checked]:ml-0" {...props} />,
         ol: (props) => <ol className="mt-2 ml-4 grid min-w-0 list-decimal gap-1" {...props} />,
         li: (props) => <li className="min-w-0 text-ink-700 marker:text-muted [overflow-wrap:anywhere]" {...props} />,
-        a: (props) => <MarkdownLink {...props} />,
+        a: (props) => <MarkdownLink {...props} sourceRoot={sourceRoot} />,
         strong: (props) => <strong className="text-ink-900 font-semibold" {...props} />,
         em: (props) => <em className="text-ink-800" {...props} />,
         table: (props) => (

@@ -587,7 +587,7 @@ function WikiDocumentView({ document, generation }: { document: KnowledgeDocumen
         </div>
       </div>
       <div className="mt-5 min-w-0">
-        <MDContent text={normalizeWikiDocumentMarkdown(document.content)} />
+        <MDContent text={normalizeWikiDocumentMarkdown(document.content)} sourceRoot={document.workspaceKey} />
       </div>
       <div className="mt-6 border-t border-slate-100 pt-4 text-xs text-slate-400">
         {generation.branch ? `${generation.branch} · ` : ""}
