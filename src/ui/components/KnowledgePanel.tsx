@@ -739,7 +739,6 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
   const activeDocument = activeWikiTab?.kind === "document"
     ? selectedDocuments.find((document) => document.id === activeWikiTab.documentId) ?? selectedDocument
     : undefined;
-  const activeHeaderTitle = activeWikiTab?.title ?? workspaceName;
   const showingDocumentPreview = Boolean(activeWikiTab?.kind === "document" || selectedDocumentId);
   const previewDocument = activeDocument ?? selectedDocument;
   const selectedPreviewTitle = activeWikiTab?.title ?? selectedDocument?.title;
@@ -1628,15 +1627,6 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                 })}
               </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2 px-5 py-3">
-            <h1 className="min-w-0 truncate text-lg font-semibold">{activeHeaderTitle}</h1>
-            {selectedWorkspace?.cwd && (
-              <>
-                <GitBranch className="h-4 w-4 text-slate-400" />
-                <span className="truncate font-mono text-sm text-slate-500">{selectedWorkspace.cwd}</span>
-              </>
-            )}
           </div>
         </header>
 
