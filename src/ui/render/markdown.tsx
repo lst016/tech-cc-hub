@@ -3,6 +3,7 @@ import type { AnchorHTMLAttributes, MouseEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Maximize2, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
@@ -23,10 +24,24 @@ type MermaidApi = {
   render: (id: string, text: string) => Promise<{ svg: string; bindFunctions?: (element: Element) => void }>;
 };
 
+type MermaidRenderPayload = {
+  sourceId: string;
+  svg: string;
+  css: string;
+};
+
+type MermaidRenderResult = {
+  svg: string;
+  css: string;
+};
+
 let mermaidInitialized = false;
+const mermaidRenderCache = new Map<string, MermaidRenderPayload | Promise<MermaidRenderPayload>>();
 
 const SOURCE_FILE_EXTENSION_PATTERN = /\.(?:[cm]?[jt]sx?|jsonc?|ya?ml|toml|mdx?|py|sh|zsh|css|scss|html|go|rs|java|kt|swift|sql|vue|svelte|astro)(?::\d+(?:-\d+)?)?$/i;
 const DEFAULT_EXPANDABLE_FRAME_CLASS = "group relative mt-3 overflow-hidden rounded-xl border border-black/8 bg-surface-tertiary";
+const MARKDOWN_REMARK_PLUGINS = [remarkGfm, remarkMath, remarkBreaks];
+const MARKDOWN_REHYPE_PLUGINS = [rehypeRaw, rehypeKatex, rehypeHighlight];
 
 function stripMarkdownLinkTarget(value: string): string {
   const trimmed = value.trim();
@@ -446,18 +461,89 @@ function splitMermaidSvg(svg: string): { svg: string; css: string } {
   return { svg: normalizedSvg, css: cssBlocks.join("\n") };
 }
 
+function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
+  return typeof (value as Promise<T>).then === "function";
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function retargetMermaidRenderResult(payload: MermaidRenderPayload, diagramId: string): MermaidRenderResult {
+  if (payload.sourceId === diagramId) {
+    return { svg: payload.svg, css: payload.css };
+  }
+  const sourceIdPattern = new RegExp(escapeRegExp(payload.sourceId), "g");
+  return {
+    svg: payload.svg.replace(sourceIdPattern, diagramId),
+    css: payload.css.replace(sourceIdPattern, diagramId),
+  };
+}
+
+function getCachedMermaidRenderResult(chart: string, diagramId: string): MermaidRenderResult | undefined {
+  const cached = mermaidRenderCache.get(chart);
+  if (!cached || isPromiseLike(cached)) return undefined;
+  return retargetMermaidRenderResult(cached, diagramId);
+}
+
+function initializeMermaid(mermaid: MermaidApi): void {
+  if (mermaidInitialized) return;
+  mermaid.initialize({
+    startOnLoad: false,
+    suppressErrors: true,
+    securityLevel: "strict",
+    theme: "base",
+    themeVariables: {
+      fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+      primaryColor: "#f8fafc",
+      primaryTextColor: "#0f172a",
+      primaryBorderColor: "#94a3b8",
+      lineColor: "#64748b",
+      secondaryColor: "#eef2ff",
+      tertiaryColor: "#ecfdf5",
+    },
+  });
+  mermaidInitialized = true;
+}
+
+async function renderMermaidChart(diagramId: string, normalizedChart: string): Promise<MermaidRenderResult> {
+  const cached = mermaidRenderCache.get(normalizedChart);
+  if (cached) {
+    const payload = await cached;
+    return retargetMermaidRenderResult(payload, diagramId);
+  }
+
+  const renderTask = import("mermaid").then(async (mod) => {
+    cleanupMermaidErrorArtifacts(diagramId);
+    const mermaid = mod.default as MermaidApi;
+    initializeMermaid(mermaid);
+    const { svg } = await mermaid.render(diagramId, normalizedChart);
+    return { sourceId: diagramId, ...splitMermaidSvg(svg) };
+  });
+  mermaidRenderCache.set(normalizedChart, renderTask);
+
+  try {
+    const payload = await renderTask;
+    mermaidRenderCache.set(normalizedChart, payload);
+    return retargetMermaidRenderResult(payload, diagramId);
+  } catch (error) {
+    mermaidRenderCache.delete(normalizedChart);
+    throw error;
+  }
+}
+
 function MermaidDiagram({ chart }: { chart: string }) {
   const rawId = useId();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const normalizedChart = useMemo(() => chart.trim(), [chart]);
   const diagramId = useMemo(() => `mermaid-${rawId.replace(/[^a-zA-Z0-9_-]/g, "")}`, [rawId]);
-  const [renderState, setRenderState] = useState<{ status: "loading" | "ready" | "error"; svg?: string; css?: string; error?: string }>({
-    status: "loading",
+  const [renderState, setRenderState] = useState<{ status: "loading" | "ready" | "error"; svg?: string; css?: string; error?: string }>(() => {
+    const cached = getCachedMermaidRenderResult(normalizedChart, diagramId);
+    return cached ? { status: "ready", ...cached } : { status: "loading" };
   });
 
   useEffect(() => {
     let disposed = false;
-    setRenderState({ status: "loading" });
     if (!normalizedChart) {
       setRenderState({ status: "error", error: "Mermaid 图为空" });
       return () => {
@@ -465,38 +551,22 @@ function MermaidDiagram({ chart }: { chart: string }) {
       };
     }
 
-    void import("mermaid")
-      .then(async (mod) => {
-        cleanupMermaidErrorArtifacts(diagramId);
-        const mermaid = mod.default as MermaidApi;
-        if (!mermaidInitialized) {
-          mermaid.initialize({
-            startOnLoad: false,
-            suppressErrors: true,
-            securityLevel: "strict",
-            theme: "base",
-            themeVariables: {
-              fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
-              primaryColor: "#f8fafc",
-              primaryTextColor: "#0f172a",
-              primaryBorderColor: "#94a3b8",
-              lineColor: "#64748b",
-              secondaryColor: "#eef2ff",
-              tertiaryColor: "#ecfdf5",
-            },
-          });
-          mermaidInitialized = true;
-        }
-        return mermaid.render(diagramId, normalizedChart);
-      })
-      .then(({ svg, bindFunctions }) => {
+    const cached = getCachedMermaidRenderResult(normalizedChart, diagramId);
+    if (cached) {
+      setRenderState({ status: "ready", ...cached });
+      scheduleMermaidErrorCleanup(diagramId);
+      return () => {
+        disposed = true;
+      };
+    }
+
+    setRenderState({ status: "loading" });
+    void renderMermaidChart(diagramId, normalizedChart)
+      .then((result) => {
         if (disposed) return;
-        const normalized = splitMermaidSvg(svg);
-        setRenderState({ status: "ready", svg: normalized.svg, css: normalized.css });
+        setRenderState({ status: "ready", ...result });
         window.requestAnimationFrame(() => {
-          if (!disposed && containerRef.current && bindFunctions) {
-            bindFunctions(containerRef.current);
-          }
+          if (!disposed) scheduleMermaidErrorCleanup(diagramId);
         });
       })
       .catch((error) => {
@@ -586,102 +656,104 @@ function MDContent({
   sourceRoot?: string;
   onOpenSourceFile?: (detail: PreviewOpenFileDetail) => void;
 }) {
+  const markdownComponents = useMemo<Components>(() => ({
+    h1: (props) => <h1 className="mt-4 text-xl font-semibold text-ink-900" {...props} />,
+    h2: (props) => <h2 className="mt-4 text-lg font-semibold text-ink-900" {...props} />,
+    h3: (props) => <h3 className="mt-3 text-base font-semibold text-ink-800" {...props} />,
+    p: (props) => <p className="mt-2 min-w-0 text-base leading-relaxed text-ink-700 [overflow-wrap:anywhere]" {...props} />,
+    ul: (props) => <ul className="mt-2 ml-4 grid min-w-0 list-disc gap-1 has-[:checked]:list-none has-[:checked]:ml-0" {...props} />,
+    ol: (props) => <ol className="mt-2 ml-4 grid min-w-0 list-decimal gap-1" {...props} />,
+    li: (props) => <li className="min-w-0 text-ink-700 marker:text-muted [overflow-wrap:anywhere]" {...props} />,
+    a: (props) => <MarkdownLink {...props} sourceRoot={sourceRoot} onOpenSourceFile={onOpenSourceFile} />,
+    strong: (props) => <strong className="text-ink-900 font-semibold" {...props} />,
+    em: (props) => <em className="text-ink-800" {...props} />,
+    table: (props) => {
+      const table = <table className="min-w-full border-collapse text-sm" {...props} />;
+      const expandedTable = <table className="min-w-full border-collapse text-sm" {...props} />;
+      return (
+        <ExpandableMarkdownBlock
+          title="表格预览"
+          copyLabel="复制表格"
+          copyText={extractText(props.children)}
+          className="group relative mt-3 max-w-full overflow-x-auto rounded-xl border border-black/8 bg-white"
+          expandedChildren={(
+            <div className="min-w-fit">
+              {expandedTable}
+            </div>
+          )}
+        >
+          {table}
+        </ExpandableMarkdownBlock>
+      );
+    },
+    th: (props) => <th className="border-b border-black/8 bg-surface-secondary px-3 py-2 text-left font-semibold text-ink-800 [overflow-wrap:anywhere]" {...props} />,
+    td: (props) => <td className="border-b border-black/6 px-3 py-2 text-ink-700 [overflow-wrap:anywhere]" {...props} />,
+    input: (props) => <input className="mr-2 align-middle accent-[var(--color-accent)]" disabled {...props} />,
+    pre: ({ children, ...props }) => {
+      const code = extractText(children);
+      const language = extractCodeLanguage(children);
+      if (language === "mermaid") {
+        return <MermaidDiagram chart={code} />;
+      }
+      return (
+        <ExpandableMarkdownBlock
+          title={language ? `${language} 代码` : "代码块"}
+          copyLabel="复制代码"
+          copyText={code}
+          expandedChildren={(
+            <pre
+              className="m-0 max-w-none whitespace-pre-wrap rounded-lg bg-surface-tertiary p-4 text-sm leading-6 text-ink-700 [overflow-wrap:anywhere]"
+              {...props}
+            >
+              {children}
+            </pre>
+          )}
+        >
+          <pre
+            className="max-w-full overflow-x-auto whitespace-pre-wrap p-3 pr-20 text-sm text-ink-700 [overflow-wrap:anywhere]"
+            {...props}
+          >
+            {children}
+          </pre>
+        </ExpandableMarkdownBlock>
+      );
+    },
+    code: (props) => {
+      const { children, className, ...rest } = props;
+      const match = /language-(\w+)/.exec(className || "");
+      const rawCode = extractText(children).trim();
+      const isInline = !match && !rawCode.includes("\n");
+      const sourceFile = isInline ? parseSourceFileLink(rawCode, sourceRoot) : null;
+
+      return isInline ? (
+        sourceFile ? (
+          <button
+            type="button"
+            className="inline rounded bg-surface-tertiary px-1.5 py-0.5 text-left font-mono text-base text-accent underline-offset-2 transition [overflow-wrap:anywhere] hover:bg-accent/10 hover:underline"
+            onClick={(event) => handleInlineCodeClick(event, sourceFile, onOpenSourceFile)}
+            aria-label={`打开源码文件 ${rawCode}`}
+            title="打开源码文件"
+          >
+            <code {...rest}>{children}</code>
+          </button>
+        ) : (
+          <code className="rounded bg-surface-tertiary px-1.5 py-0.5 text-accent font-mono text-base [overflow-wrap:anywhere]" {...rest}>
+            {children}
+          </code>
+        )
+      ) : (
+        <code className={`${className} font-mono`} {...rest}>
+          {children}
+        </code>
+      );
+    },
+  }), [onOpenSourceFile, sourceRoot]);
+
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
-      rehypePlugins={[rehypeRaw, rehypeKatex, rehypeHighlight]}
-      components={{
-        h1: (props) => <h1 className="mt-4 text-xl font-semibold text-ink-900" {...props} />,
-        h2: (props) => <h2 className="mt-4 text-lg font-semibold text-ink-900" {...props} />,
-        h3: (props) => <h3 className="mt-3 text-base font-semibold text-ink-800" {...props} />,
-        p: (props) => <p className="mt-2 min-w-0 text-base leading-relaxed text-ink-700 [overflow-wrap:anywhere]" {...props} />,
-        ul: (props) => <ul className="mt-2 ml-4 grid min-w-0 list-disc gap-1 has-[:checked]:list-none has-[:checked]:ml-0" {...props} />,
-        ol: (props) => <ol className="mt-2 ml-4 grid min-w-0 list-decimal gap-1" {...props} />,
-        li: (props) => <li className="min-w-0 text-ink-700 marker:text-muted [overflow-wrap:anywhere]" {...props} />,
-        a: (props) => <MarkdownLink {...props} sourceRoot={sourceRoot} onOpenSourceFile={onOpenSourceFile} />,
-        strong: (props) => <strong className="text-ink-900 font-semibold" {...props} />,
-        em: (props) => <em className="text-ink-800" {...props} />,
-        table: (props) => {
-          const table = <table className="min-w-full border-collapse text-sm" {...props} />;
-          const expandedTable = <table className="min-w-full border-collapse text-sm" {...props} />;
-          return (
-            <ExpandableMarkdownBlock
-              title="表格预览"
-              copyLabel="复制表格"
-              copyText={extractText(props.children)}
-              className="group relative mt-3 max-w-full overflow-x-auto rounded-xl border border-black/8 bg-white"
-              expandedChildren={(
-                <div className="min-w-fit">
-                  {expandedTable}
-                </div>
-              )}
-            >
-              {table}
-            </ExpandableMarkdownBlock>
-          );
-        },
-        th: (props) => <th className="border-b border-black/8 bg-surface-secondary px-3 py-2 text-left font-semibold text-ink-800 [overflow-wrap:anywhere]" {...props} />,
-        td: (props) => <td className="border-b border-black/6 px-3 py-2 text-ink-700 [overflow-wrap:anywhere]" {...props} />,
-        input: (props) => <input className="mr-2 align-middle accent-[var(--color-accent)]" disabled {...props} />,
-        pre: ({ children, ...props }) => {
-          const code = extractText(children);
-          const language = extractCodeLanguage(children);
-          if (language === "mermaid") {
-            return <MermaidDiagram chart={code} />;
-          }
-          return (
-            <ExpandableMarkdownBlock
-              title={language ? `${language} 代码` : "代码块"}
-              copyLabel="复制代码"
-              copyText={code}
-              expandedChildren={(
-                <pre
-                  className="m-0 max-w-none whitespace-pre-wrap rounded-lg bg-surface-tertiary p-4 text-sm leading-6 text-ink-700 [overflow-wrap:anywhere]"
-                  {...props}
-                >
-                  {children}
-                </pre>
-              )}
-            >
-              <pre
-                className="max-w-full overflow-x-auto whitespace-pre-wrap p-3 pr-20 text-sm text-ink-700 [overflow-wrap:anywhere]"
-                {...props}
-              >
-                {children}
-              </pre>
-            </ExpandableMarkdownBlock>
-          );
-        },
-        code: (props) => {
-          const { children, className, ...rest } = props;
-          const match = /language-(\w+)/.exec(className || "");
-          const rawCode = extractText(children).trim();
-          const isInline = !match && !rawCode.includes("\n");
-          const sourceFile = isInline ? parseSourceFileLink(rawCode, sourceRoot) : null;
-
-          return isInline ? (
-            sourceFile ? (
-              <button
-                type="button"
-                className="inline rounded bg-surface-tertiary px-1.5 py-0.5 text-left font-mono text-base text-accent underline-offset-2 transition [overflow-wrap:anywhere] hover:bg-accent/10 hover:underline"
-                onClick={(event) => handleInlineCodeClick(event, sourceFile, onOpenSourceFile)}
-                aria-label={`打开源码文件 ${rawCode}`}
-                title="打开源码文件"
-              >
-                <code {...rest}>{children}</code>
-              </button>
-            ) : (
-              <code className="rounded bg-surface-tertiary px-1.5 py-0.5 text-accent font-mono text-base [overflow-wrap:anywhere]" {...rest}>
-                {children}
-              </code>
-            )
-          ) : (
-            <code className={`${className} font-mono`} {...rest}>
-              {children}
-            </code>
-          );
-        }
-      }}
+      remarkPlugins={MARKDOWN_REMARK_PLUGINS}
+      rehypePlugins={MARKDOWN_REHYPE_PLUGINS}
+      components={markdownComponents}
     >
       {String(text ?? "")}
     </ReactMarkdown>
