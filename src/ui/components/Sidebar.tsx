@@ -18,6 +18,8 @@ interface SidebarProps {
   width?: number;
 }
 
+export const DEFAULT_SIDEBAR_WIDTH = 280;
+
 export function Sidebar({
   onNewSession,
   onArchiveSession,
@@ -28,7 +30,7 @@ export function Sidebar({
   onOpenSettings,
   onOpenKnowledgePanel,
   onOpenCronPage,
-  width = 320,
+  width = DEFAULT_SIDEBAR_WIDTH,
 }: SidebarProps) {
   const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-12" : "top-10";
   const sessions = useAppStore((state) => state.sessions);
