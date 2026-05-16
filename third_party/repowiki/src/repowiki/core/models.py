@@ -16,6 +16,10 @@ class FileInfo(BaseModel):
     content: str = ""
     is_config: bool = False
     is_entrypoint: bool = False
+    imports: list[str] = Field(default_factory=list)
+    exports: list[str] = Field(default_factory=list)
+    symbols: list[str] = Field(default_factory=list)
+    signals: list[str] = Field(default_factory=list)
 
 
 class ProjectContext(BaseModel):

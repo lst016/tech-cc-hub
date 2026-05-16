@@ -1,0 +1,82 @@
+# doc/80-operations/electron-client-qa-runbook.md
+
+> 模块：`doc` · 语言：`markdown` · 行数：64
+
+## 文件职责
+
+此页由 RepoWiki 从真实源码生成，用于让 Agent 快速定位文件职责、符号、依赖和可修改面。
+
+## Agent 使用提示
+
+- 修改此文件前，先查看同模块页面和本页的运行信号。
+- 如果本页包含 IPC、MCP、DB 表或 UI 调用，改动后要同时验证前后端桥接和索引结果。
+- 检索时可以用文件名、关键符号名、IPC channel 或表名作为 query。
+
+## 源码摘录
+
+```markdown
+---
+doc_id: "PRD-100-59"
+title: "59-Electron客户端操作与QA规范"
+doc_type: "delivery"
+layer: "PM"
+status: "active"
+version: "1.0.0"
+last_updated: "2026-04-19"
+owners:
+  - "Product"
+tags:
+  - "claw"
+  - "docs"
+  - "1.0.0"
+  - "electron"
+  - "qa"
+  - "operations"
+---
+
+# 59-Electron客户端操作与QA规范
+
+## Purpose
+固定当前桌面客户端的操作模式，避免后续把 `localhost` 页面误当成 Electron 客户端结果。
+
+## Scope
+本文件只约束 Electron 客户端的日常操作、截图和 QA 验证方式，不定义业务功能本身。
+
+## Behavior / Flow
+### 默认操作模式
+
+1. 启动客户端后，优先操作 `Electron` 真窗口。
+2. 当需要截图、验证布局或记录缺陷时，优先使用 `window id` 精确定位窗口。
+3. 不以 `localhost:5173` 页面替代 Electron 客户端结论。
+
+### 标准步骤
+
+1. 列出当前窗口：
+   - `cd upstream/open-claude-cowork && npm run qa:window:list`
+2. 确认目标 `Electron` 窗口 ID。
+3. 按窗口 ID 截图：
+   - `cd upstream/open-claude-cowork && npm run qa:window:capture -- <window_id> /tmp/agent-cowork.png`
+4. 需要进一步交互时，以该窗口 ID 作为后续操作和证据基线。
+
+## Interfaces / Types
+- 脚本：`upstream/open-claude-cowork/scripts/qa/window-id-tools.sh`
+- 命令：
+  - `npm run qa:window:list`
+  - `npm run qa:window:capture -- <window_id> [output_path]`
+
+## Failure Modes
+- 如果把 `localhost` 页面当成客户端结果，可能出现“网页空白但 Electron 正常”或“浏览器扩展遮挡导致误判”的问题。
+- 如果不锁定 `window id`，多窗口情况下截图和点击很容易落到错误窗口。
+
+## Observability
+- QA 证据优先保存为按窗口 ID 截取的图片。
+- 提交问题时应记录：
+  - `window id`
+  - 截图路径
+  - 触发步骤
+
+## Open Questions / ADR Links
+- 如后续需要自动化点击链，也应沿用本规范，以 `window id` 作为窗口定位基线。
+- 更通用的沉淀方法见 [development-flow-standards.md](./development-flow-standards.md)
+
+```

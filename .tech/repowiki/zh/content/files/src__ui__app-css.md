@@ -1,0 +1,136 @@
+# src/ui/App.css
+
+> 模块：`ui-shell` · 语言：`css` · 行数：118
+
+## 文件职责
+
+此页由 RepoWiki 从真实源码生成，用于让 Agent 快速定位文件职责、符号、依赖和可修改面。
+
+## Agent 使用提示
+
+- 修改此文件前，先查看同模块页面和本页的运行信号。
+- 如果本页包含 IPC、MCP、DB 表或 UI 调用，改动后要同时验证前后端桥接和索引结果。
+- 检索时可以用文件名、关键符号名、IPC channel 或表名作为 query。
+
+## 源码摘录
+
+```css
+@import "tailwindcss";
+
+@plugin "tailwindcss-animate";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: #F8F9FB;
+  --foreground: #16181D;
+  --card: #FFFFFF;
+  --card-foreground: #252932;
+  --popover: #FFFFFF;
+  --popover-foreground: #252932;
+  --primary: #D26A3D;
+  --primary-foreground: #FFFFFF;
+  --secondary: #F3F4F6;
+  --secondary-foreground: #3D4450;
+  --muted: #F3F4F6;
+  --muted-foreground: #697384;
+  --accent: #D26A3D;
+  --accent-foreground: #FFFFFF;
+  --destructive: #DC2626;
+  --destructive-foreground: #FFFFFF;
+  --border: #E6EAF0;
+  --input: #D8DEE7;
+  --ring: #D26A3D;
+  --chart-1: #D26A3D;
+  --chart-2: #2563EB;
+  --chart-3: #16A34A;
+  --chart-4: #D97706;
+  --chart-5: #BF3989;
+  --radius: 0.6rem;
+}
+
+.dark {
+  --background: #16181D;
+  --foreground: #F8F9FB;
+  --card: #252932;
+  --card-foreground: #F8F9FB;
+  --popover: #252932;
+  --popover-foreground: #F8F9FB;
+  --primary: #F2C2AD;
+  --primary-foreground: #16181D;
+  --secondary: #3D4450;
+  --secondary-foreground: #F8F9FB;
+  --muted: #3D4450;
+  --muted-foreground: #98A1B0;
+  --accent: #F2C2AD;
+  --accent-foreground: #16181D;
+  --destructive: #F87171;
+  --destructive-foreground: #16181D;
+  --border: #3D4450;
+  --input: #596272;
+  --ring: #F2C2AD;
+  --chart-1: #F2C2AD;
+  --chart-2: #93C5FD;
+  --chart-3: #86EFAC;
+  --chart-4: #FCD34D;
+  --chart-5: #F0ABFC;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@keyframes bounce-subtle {
+
+  0%,
+  100% {
+    transform: translateX(-50%) translateY(0);
+  }
+
+  50% {
+    transform: translateX(-50%) translateY(-4px);
+  }
+}
+
+.animate-bounce-subtle {
+  animation: bounce-subtle 1.5s ease-in-out infinite;
+}
+
+```

@@ -9,11 +9,14 @@ from collections.abc import Callable
 from repowiki.core.cache import Cache, content_hash
 from repowiki.core.models import (
     ArchitectureDiagram,
+    Concept,
+    FileDoc,
     FileInfo,
     ModuleDoc,
     ProjectContext,
     ProjectOverview,
     ReadingGuide,
+    Symbol,
     WikiData,
 )
 from repowiki.llm.client import LLMClient
@@ -26,6 +29,10 @@ from repowiki.llm.prompts import (
 )
 
 logger = logging.getLogger(__name__)
+
+MAX_MODULE_FILES = 28
+MAX_MODULE_CONTEXT_CHARS = 52_000
+MAX_MODULE_FILE_CHARS = 2_800
 
 
 class Analyzer:
@@ -132,6 +139,10 @@ class Analyzer:
 
         modules: dict[str, list[FileInfo]] = {}
         for f in files:
+            classified = _classify_feature_module(f.path)
+            if classified:
+                modules.setdefault(classified, []).append(f)
+                continue
             parts = Path(f.path).parts
             if len(parts) == 1:
                 # root-level files go into a "root" module
@@ -178,12 +189,36 @@ class Analyzer:
             # build context for this module
             files_text_parts = []
             content_parts = []
-            for f in files:
+            selected_files = sorted(files, key=_file_prompt_priority, reverse=True)[:MAX_MODULE_FILES]
+            omitted_files = [f.path for f in files if f not in selected_files]
+            context_chars = 0
+            for f in selected_files:
                 content = f.content if f.content else f.preview
-                if len(content) > 4096:
-                    content = content[:4096] + "\n... (truncated)"
-                files_text_parts.append(f"### {f.path} ({f.language})\n```{f.language}\n{content}\n```")
+                file_limit = MAX_MODULE_FILE_CHARS
+                if f.is_config or f.is_entrypoint or f.signals:
+                    file_limit = 4_200
+                if len(content) > file_limit:
+                    content = content[:file_limit] + "\n... (truncated)"
+                part = f"### {f.path} ({f.language})\n"
+                if f.symbols:
+                    part += "Symbols: " + ", ".join(f.symbols[:24]) + "\n"
+                if f.signals:
+                    part += "Runtime signals: " + ", ".join(f.signals[:24]) + "\n"
+                if f.imports:
+                    part += "Imports: " + ", ".join(f.imports[:24]) + "\n"
+                part += f"```{f.language}\n{content}\n```"
+                if context_chars + len(part) > MAX_MODULE_CONTEXT_CHARS:
+                    omitted_files.extend(file.path for file in selected_files[selected_files.index(f):])
+                    break
+                files_text_parts.append(part)
+                context_chars += len(part)
                 content_parts.append(content)
+            if omitted_files:
+                files_text_parts.append(
+                    "### Omitted files from this module prompt\n"
+                    + "\n".join(f"- {path}" for path in sorted(set(omitted_files))[:80])
+                    + "\n\nThese files still get deterministic file pages in the exported wiki."
+                )
 
             files_context = "\n\n".join(files_text_parts)
             cache_key = f"module:{name}:{content_hash(''.join(content_parts))}"
@@ -200,7 +235,7 @@ class Analyzer:
             data = extract_json(raw)
             if not data or not isinstance(data, dict):
                 logger.warning("Failed to parse module '%s' JSON", name)
-                return ModuleDoc(name=name, purpose=f"Module containing {len(files)} files")
+                return _fallback_module_doc(name, selected_files)
 
             # ensure name is present (LLM sometimes omits it)
             data.setdefault("name", name)
@@ -208,7 +243,7 @@ class Analyzer:
             try:
                 doc = ModuleDoc(**filtered)
             except Exception:
-                doc = ModuleDoc(name=name, purpose=data.get("purpose", ""))
+                doc = _fallback_module_doc(name, selected_files, purpose=data.get("purpose", ""))
             await self.cache.put(cache_key, doc.model_dump())
             return doc
 
@@ -282,3 +317,88 @@ class Analyzer:
             guide = ReadingGuide()
         await self.cache.put(cache_key, guide.model_dump())
         return guide
+
+
+def _classify_feature_module(path: str) -> str:
+    normalized = path.replace("\\", "/")
+    lower = normalized.lower()
+    if "/knowledge/" in lower or "knowledgepanel" in lower:
+        if "knowledgepanel" in lower or "/src/ui/" in lower:
+            return "knowledge-ui"
+        return "knowledge-engine"
+    if "/mcp-tools/" in lower or "builtin-mcp" in lower or "modelcontextprotocol" in lower:
+        return "mcp-tools"
+    if "runner" in lower or normalized in {"src/electron/main.ts", "src/electron/preload.ts"}:
+        return "electron-runtime"
+    if lower.startswith("src/ui/"):
+        return "ui-shell"
+    if "git" in lower:
+        return "git-workbench"
+    if "task" in lower or "cron" in lower:
+        return "task-engine"
+    if "session" in lower or "conversation" in lower:
+        return "session-engine"
+    if lower.startswith("scripts/"):
+        return "scripts"
+    return ""
+
+
+def _file_prompt_priority(file: FileInfo) -> int:
+    score = 0
+    normalized = file.path.replace("\\", "/").lower()
+    if normalized.startswith("src/"):
+        score += 90
+    if normalized.startswith("scripts/"):
+        score += 30
+    if normalized.startswith("doc/") or normalized.startswith("docs/"):
+        score -= 45
+    if normalized.startswith("test/"):
+        score -= 25
+    if file.is_entrypoint:
+        score += 80
+    if file.is_config:
+        score += 60
+    score += min(len(file.signals), 20) * 5
+    score += min(len(file.symbols), 20) * 3
+    if _classify_feature_module(file.path):
+        score += 20
+    return score
+
+
+def _fallback_module_doc(name: str, files: list[FileInfo], purpose: str = "") -> ModuleDoc:
+    file_docs: list[FileDoc] = []
+    for file in files:
+        symbols: list[Symbol] = []
+        for raw in file.symbols[:16]:
+            symbol_name, _, raw_line = raw.partition("@")
+            try:
+                line = int(raw_line)
+            except ValueError:
+                line = 0
+            symbols.append(Symbol(
+                name=symbol_name,
+                kind="symbol",
+                line=line,
+                description=", ".join(file.signals[:3]) if file.signals else "",
+            ))
+        role = "入口文件" if file.is_entrypoint else "配置文件" if file.is_config else "源码文件"
+        details = []
+        if file.signals:
+            details.append("运行信号：" + "、".join(file.signals[:5]))
+        if file.imports:
+            details.append("依赖：" + "、".join(file.imports[:5]))
+        file_docs.append(FileDoc(
+            path=file.path,
+            purpose=f"{role}。{'；'.join(details)}" if details else role,
+            key_symbols=symbols,
+        ))
+    concepts = [
+        Concept(name="确定性文档", explanation="该模块页由 RepoWiki fallback 从真实源码元数据生成；具体细节见左侧文件页。"),
+    ]
+    return ModuleDoc(
+        name=name,
+        purpose=purpose or f"{name} 模块包含 {len(files)} 个高价值文件。",
+        description="模型未返回稳定 JSON 时，RepoWiki 会保留源码扫描得到的文件、符号、依赖和运行信号，避免生成空泛模块页。",
+        files=file_docs,
+        key_concepts=concepts,
+    )

@@ -235,7 +235,7 @@ function buildHighValueFiles(project: RepoWikiProjectContext, graph: RepoWikiDep
     .filter((item) => item.score > 4)
     .sort((left, right) => right.score - left.score || left.file.path.localeCompare(right.file.path));
 
-  return candidates.map((item) => highValueFile(item.file, item.reason)).slice(0, 48);
+  return candidates.map((item) => highValueFile(item.file, item.reason)).slice(0, 140);
 }
 
 function inferReason(file: RepoWikiFileInfo): string {

@@ -5,6 +5,7 @@ import { indexKnowledgeWorkspace } from "./knowledge-indexer.js";
 import { buildKnowledgeOverviewPromptAppend } from "./knowledge-overview.js";
 import { resolveKnowledgeWorkspacePaths } from "./knowledge-paths.js";
 import type { KnowledgeIndexReport } from "./knowledge-types.js";
+import { stableHash } from "./knowledge-utils.js";
 
 export type KnowledgeUiWorkspace = {
   key: string;
@@ -124,12 +125,37 @@ export class KnowledgeUiStore {
   }
 
   list(): { workspaces: KnowledgeUiWorkspace[]; generations: Record<string, KnowledgeUiGeneration> } {
+    this.repairCompletedGenerations();
     const workspaces = (this.db
       .prepare("SELECT * FROM knowledge_ui_workspaces WHERE hidden = 0 ORDER BY updated_at DESC")
       .all() as Row[]).map(rowToWorkspace);
     const generationRows = this.db.prepare("SELECT * FROM knowledge_ui_generation").all() as Row[];
     const generations = Object.fromEntries(generationRows.map((row) => [String(row.workspace_key), rowToGeneration(row)]));
     return { workspaces, generations };
+  }
+
+  private repairCompletedGenerations(): void {
+    const rows = this.db
+      .prepare("SELECT workspace_key FROM knowledge_ui_generation WHERE status = 'generating'")
+      .all() as Array<{ workspace_key: string }>;
+    if (rows.length === 0) return;
+    const countDocs = this.db.prepare("SELECT COUNT(*) AS count FROM knowledge_ui_documents WHERE workspace_key = ?");
+    const update = this.db.prepare(
+      `UPDATE knowledge_ui_generation
+       SET status = 'completed', completed = ?, total = ?, processing = 0, failed = 0, updated_at = ?
+       WHERE workspace_key = ? AND status = 'generating'`,
+    );
+    const now = Date.now();
+    const tx = this.db.transaction(() => {
+      for (const row of rows) {
+        const result = countDocs.get(row.workspace_key) as { count?: number } | undefined;
+        const total = Number(result?.count ?? 0);
+        if (total > 0) {
+          update.run(total, total, now, row.workspace_key);
+        }
+      }
+    });
+    tx();
   }
 
   syncSessionWorkspaces(inputs: Array<{ cwd: string; name?: string }>, systemWorkspace?: string): { workspaces: KnowledgeUiWorkspace[]; generations: Record<string, KnowledgeUiGeneration> } {
@@ -216,7 +242,7 @@ export class KnowledgeUiStore {
     const generation = this.updateGeneration(workspaceKey, {
       ...state,
       status: "completed",
-      completed: state.total || 183,
+      completed: state.total || state.completed || this.listDocuments(workspaceKey).length,
       processing: 0,
       updatedAt: Date.now(),
     });
@@ -392,7 +418,7 @@ async function runKnowledgeGeneration(
     return {
       success: false,
       generation: failedGeneration,
-      documents: store.listDocuments(workspaceKey),
+      documents: [],
       error: error instanceof Error ? error.message : String(error),
     };
   }
@@ -402,7 +428,7 @@ async function runKnowledgeGeneration(
     ? store.replaceDocuments(workspaceKey, generatedDocs)
     : store.listDocuments(workspaceKey);
   const success = Boolean(report.success && generatedDocs.length > 0);
-  const generatedTotal = success ? Math.max(1, generatedDocs.length) : startedState.total || 183;
+  const generatedTotal = success ? Math.max(1, generatedDocs.length) : startedState.total || 0;
   const generation = store.updateGeneration(workspaceKey, {
     ...startedState,
     status: success ? "completed" : "paused",
@@ -416,7 +442,9 @@ async function runKnowledgeGeneration(
   return {
     success,
     generation,
-    documents,
+    // Keep the long-running generation response small. The renderer reads full
+    // Markdown bodies through knowledge:list-documents after status becomes completed.
+    documents: [],
     report,
     error: success ? undefined : (report.error || report.message || "Repo Wiki 没有生成可读取的 Markdown 文档。"),
   };
@@ -428,6 +456,7 @@ function collectGeneratedMarkdownDocuments(workspaceRoot: string, appDataPath: s
   if (!existsSync(root)) return [];
 
   const docs: GeneratedMarkdownDocument[] = [];
+  const usedIds = new Set<string>();
   function walk(currentDir: string): void {
     for (const entry of readdirSync(currentDir)) {
       const absolutePath = join(currentDir, entry);
@@ -442,8 +471,9 @@ function collectGeneratedMarkdownDocuments(workspaceRoot: string, appDataPath: s
       const relativePath = relative(root, absolutePath);
       const title = extractMarkdownTitle(content, basename(entry));
       const known = DEFAULT_DOCUMENTS.find((doc) => doc.title === title);
+      const baseId = known?.id ?? slugifyDocumentId(relativePath);
       docs.push({
-        id: known?.id ?? slugifyDocumentId(relativePath),
+        id: uniqueDocumentId(baseId, relativePath, usedIds),
         section: known?.section ?? inferSectionFromPath(relativePath),
         title,
         content,
@@ -453,6 +483,23 @@ function collectGeneratedMarkdownDocuments(workspaceRoot: string, appDataPath: s
   }
   walk(root);
   return docs.sort((a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title, "zh-Hans-CN"));
+}
+
+function uniqueDocumentId(baseId: string, sourcePath: string, usedIds: Set<string>): string {
+  if (!usedIds.has(baseId)) {
+    usedIds.add(baseId);
+    return baseId;
+  }
+
+  const hash = stableHash(sourcePath).slice(0, 10);
+  let candidate = `${baseId}-${hash}`;
+  let counter = 2;
+  while (usedIds.has(candidate)) {
+    candidate = `${baseId}-${hash}-${counter}`;
+    counter += 1;
+  }
+  usedIds.add(candidate);
+  return candidate;
 }
 
 function extractMarkdownTitle(content: string, fallbackFileName: string): string {
@@ -489,7 +536,7 @@ function readGeneration(value: unknown): KnowledgeUiGeneration {
   return normalizeGeneration({
     status: state.status === "completed" || state.status === "paused" || state.status === "generating" ? state.status : "idle",
     completed: Number(state.completed ?? 0),
-    total: Number(state.total ?? 183),
+    total: Number(state.total ?? 0),
     processing: Number(state.processing ?? 0),
     failed: Number(state.failed ?? 0),
     commitId: typeof state.commitId === "string" ? state.commitId : undefined,
@@ -500,8 +547,9 @@ function readGeneration(value: unknown): KnowledgeUiGeneration {
 }
 
 function normalizeGeneration(state: KnowledgeUiGeneration): KnowledgeUiGeneration {
-  const total = Number.isFinite(state.total) && state.total > 0 ? Math.floor(state.total) : 183;
-  const completed = Math.max(0, Math.min(total, Math.floor(Number(state.completed) || 0)));
+  const total = Number.isFinite(state.total) && state.total > 0 ? Math.floor(state.total) : 0;
+  const rawCompleted = Math.max(0, Math.floor(Number(state.completed) || 0));
+  const completed = total > 0 ? Math.min(total, rawCompleted) : rawCompleted;
   return {
     status: state.status,
     completed,

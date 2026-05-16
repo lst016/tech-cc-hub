@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { existsSync, readdirSync, statSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { extname, join, relative } from "path";
 
 export const KNOWLEDGE_SOURCE_EXTENSIONS = new Set([
@@ -21,18 +21,26 @@ export const KNOWLEDGE_SOURCE_EXTENSIONS = new Set([
 
 const DEFAULT_SKIP_DIRS = new Set([
   ".git",
-  ".qoder",
   "node_modules",
   "dist",
-  "dist-electron",
-  "dist-react",
-  "dist-test",
   "build",
   ".next",
   ".turbo",
   ".cache",
   "coverage",
+  "__pycache__",
+  "venv",
+  "env",
+  ".tox",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache",
+  "target",
+  "vendor",
+  "third_party",
 ]);
+
+const IGNORE_FILES = [".techignore", ".repowikiignore", ".gitignore"];
 
 export type WalkWorkspaceFile = {
   absolutePath: string;
@@ -45,6 +53,83 @@ export type WalkWorkspaceOptions = {
   maxFileBytes?: number;
   includeTech?: boolean;
 };
+
+function readIgnorePatterns(root: string): string[] {
+  const patterns: string[] = [];
+  for (const fileName of IGNORE_FILES) {
+    const ignorePath = join(root, fileName);
+    if (!existsSync(ignorePath)) {
+      continue;
+    }
+
+    try {
+      const text = readFileSync(ignorePath, "utf8");
+      for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line || line.startsWith("#") || line.startsWith("!")) {
+          continue;
+        }
+        patterns.push(line);
+      }
+    } catch {
+      // Ignore unreadable ignore files; scanning should still be best-effort.
+    }
+  }
+  return patterns;
+}
+
+function wildcardMatch(value: string, pattern: string): boolean {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+  return new RegExp(`^${escaped}$`).test(value);
+}
+
+function matchesIgnorePattern(relativePath: string, patterns: string[], isDirectory = false): boolean {
+  const normalizedPath = relativePath.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const pathParts = normalizedPath.split("/").filter(Boolean);
+  const baseName = pathParts.at(-1) ?? normalizedPath;
+
+  for (const pattern of patterns) {
+    let normalizedPattern = pattern.replace(/\\/g, "/").trim();
+    if (!normalizedPattern) {
+      continue;
+    }
+
+    const directoryOnly = normalizedPattern.endsWith("/");
+    normalizedPattern = normalizedPattern.replace(/^\/+|\/+$/g, "");
+    if (!normalizedPattern || (directoryOnly && !isDirectory)) {
+      continue;
+    }
+
+    if (!normalizedPattern.includes("/")) {
+      if (pathParts.some((part) => wildcardMatch(part, normalizedPattern)) || wildcardMatch(baseName, normalizedPattern)) {
+        return true;
+      }
+      continue;
+    }
+
+    if (normalizedPath === normalizedPattern || normalizedPath.startsWith(`${normalizedPattern}/`)) {
+      return true;
+    }
+    if (wildcardMatch(normalizedPath, normalizedPattern)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function shouldSkipDirectory(entry: string, relativePath: string, ignorePatterns: string[]): boolean {
+  if (entry.startsWith(".")) {
+    return true;
+  }
+  if (DEFAULT_SKIP_DIRS.has(entry) || entry.endsWith(".egg-info")) {
+    return true;
+  }
+  if (entry.startsWith("dist-") || entry.startsWith("dist_")) {
+    return true;
+  }
+  return matchesIgnorePattern(relativePath, ignorePatterns, true);
+}
 
 export function stableHash(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -96,6 +181,7 @@ export function walkWorkspaceFiles(root: string, options: WalkWorkspaceOptions =
   const maxFileBytes = options.maxFileBytes ?? 256_000;
   const files: WalkWorkspaceFile[] = [];
   const skipped: Array<{ path: string; reason: string }> = [];
+  const ignorePatterns = readIgnorePatterns(root);
 
   function walk(dir: string): void {
     if (files.length >= maxFiles) {
@@ -121,10 +207,6 @@ export function walkWorkspaceFiles(root: string, options: WalkWorkspaceOptions =
         skipped.push({ path: relativePath, reason: "internal .tech output" });
         continue;
       }
-      if (DEFAULT_SKIP_DIRS.has(entry)) {
-        skipped.push({ path: relativePath, reason: "ignored directory" });
-        continue;
-      }
 
       let stats;
       try {
@@ -135,11 +217,19 @@ export function walkWorkspaceFiles(root: string, options: WalkWorkspaceOptions =
       }
 
       if (stats.isDirectory()) {
+        if (shouldSkipDirectory(entry, relativePath, ignorePatterns)) {
+          skipped.push({ path: relativePath, reason: "ignored directory" });
+          continue;
+        }
         walk(absolutePath);
         continue;
       }
 
       if (!stats.isFile()) {
+        continue;
+      }
+      if (matchesIgnorePattern(relativePath, ignorePatterns)) {
+        skipped.push({ path: relativePath, reason: "ignored by project config" });
         continue;
       }
 

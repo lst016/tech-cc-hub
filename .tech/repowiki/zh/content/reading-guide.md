@@ -1,97 +1,71 @@
 # 阅读指南
 
-这个代码库是 Electron + React 的 Desktop Agent 工作台。核心链路有四条：会话执行（MCP工具→Runner→会话持久化）、知识库生成（切块→embedding→FTS5/vec索引→overview注入）、任务调度（provider→executor→重试恢复）、和技能管理（安装→场景绑定→工具暴露）。从 electron main 到 renderer 的 IPC 桥接是所有功能的前置依赖，先读 main.ts 再逐层深入。
+这是一个 Electron 桌面代理工作台项目，集成了会话管理、任务执行、浏览器预览、模型路由、Wiki知识管理和LLM多提供商编排。按以下顺序阅读可帮助你从宏观到微观理解系统架构。
 
-## Step 1: Electron 主进程入口：IPC 通道注册和窗口创建 (10 min)
+## 第 1 步：项目概览与架构蓝图 (~10 min)
 
-**文件：** `src/electron/main.ts`
+**文件:** `README.md`, `doc/README.md`, `pro-workflow/README.md`
 
-main.ts 是 Electron 主进程唯一入口。它在 app.on('ready') 后注册所有 ipcMain.handle 通道（sessions:list、preview-*、plugins-*、knowledge-*、client-event 等），创建 BrowserWindow 并初始化数据库连接。找到 registerIpcHandlers() 和 createWindow() 两段代码，理解通道命名空间和窗口 preload 脚本的注入方式。如果要新增 IPC 通道，必须在这里注册。
+先通读项目根目录README了解整体定位，再看doc/README.md理解文档体系，最后细读pro-workflow/README.md深入了解Desktop Agent的核心功能组合。关注：项目目标、核心模块划分、工作流程。
 
-## Step 2: 会话编排层：IPC handlers 和任务事件分发 (15 min)
+## 第 2 步：构建与类型系统配置 (~8 min)
 
-**文件：** `src/electron/ipc-handlers.ts`
+**文件:** `package.json`, `tsconfig.json`, `vite.config.ts`, `pro-workflow/tsconfig.json`
 
-ipc-handlers.ts 定义了 session.start、client-event、getStaticData、generate-session-title 等核心通道的处理逻辑。它连接了 session-store、TaskExecutor、KnowledgeUIStore 和 Runner。当 renderer 通过 client-event 发送用户 prompt 时，这里会触发会话创建并启动 runner 循环。event:task.updated 等任务事件也在这里注册分发器。修改会话生命周期逻辑必须从这里开始。
+了解项目依赖、构建脚本和TypeScript配置。package.json中的scripts定义运行入口，tsconfig.json确定类型检查策略，vite.config.ts揭示前端构建方式。重点关注monorepo组织结构和模块间引用关系。
 
-## Step 3: Agent 执行引擎：Runner 和 MCP 工具链 (20 min)
+## 第 3 步：Pro-workflow入口脚本 (~10 min)
 
-**文件：** `src/electron/libs/runner.ts`, `src/shared/builtin-mcp-registry.ts`
+**文件:** `pro-workflow/scripts/commit-validate.js`, `pro-workflow/scripts/config-watcher.js`, `pro-workflow/scripts/cwd-changed.js`, `pro-workflow/config.json`
 
-runner.ts 是 Agent 执行的核心循环：接收 prompt→合并 system prompt（含 knowledge-overview）→调用 MCP server→解析 tool_use→写入会话历史。builtin-mcp-registry.ts 定义了所有内置工具的元数据（名称、描述、参数 schema）。如果要给 Agent 增加新工具，需要在这两个文件中同时注册。要理解 tool_call 循环如何结束就看 runner 的 resolveLoop 和 abort 处理。
+这三个入口脚本是pro-workflow的核心机制：commit-validate处理提交验证、config-watcher监控配置变更、cwd-changed处理目录切换。结合config.json理解工作流配置驱动的设计理念。
 
-## Step 4: UI 状态容器：Zustand store 和会话视图 (15 min)
+## 第 4 步：Electron运行时核心 (~8 min)
 
-**文件：** `src/ui/store/useAppStore.ts`, `src/ui/types.ts`
+**文件:** `src/electron/libs/git/README.md`, `src/electron/libs/mcp-tools/README.md`, `src/electron/libs/task/README.md`
 
-useAppStore.ts 是前端状态的一级入口，存储当前会话、消息历史、浏览器状态、任务列表等。它通过 window.electronAPI.invoke 与主进程通信，接收事件（event:session.*, event:task.*）来更新状态。types.ts 定义了所有前端事件类型（event:user_prompt、event:stream.message、event:session.status 等），新增事件必须在这里声明。修改 UI 响应逻辑要查这里的事件订阅。
+通过README了解Electron主进程提供的三大核心库：git操作、mcp工具集成、任务执行引擎。这构成桌面代理的基础能力层，是理解系统如何与外部世界交互的关键。
 
-## Step 5: 知识库生成：切块、embedding 和检索 (25 min)
+## 第 5 步：任务引擎模块(task-engine) (~15 min)
 
-**文件：** `src/electron/libs/knowledge/knowledge-indexer.ts`, `src/electron/libs/knowledge/knowledge-repository.ts`, `src/electron/libs/knowledge/knowledge-overview.ts`
+**文件:** `task-engine模块的28个高价值文件`
 
-knowledge-indexer.ts 实现 Markdown 生成→文本切块→embedding（sqlite-vec）→FTS5 写入的完整流水线。knowledge-repository.ts 定义了 knowledge_documents、knowledge_chunks、knowledge_chunks_fts、knowledge_chunk_vectors 四张表和索引。knowledge-overview.ts 生成 XML 摘要注入到 runner 的 system prompt。修改知识库逻辑要同时看这三层：生成器→存储→注入。
+task-engine是项目最核心的模块之一，包含28个高价值文件。理解任务定义、执行引擎、状态管理、错误处理等核心机制。这是整个系统的执行中枢。
 
-## Step 6: 任务执行：Executor、恢复和重试 (20 min)
+## 第 6 步：会话生命周期(session-engine) (~10 min)
 
-**文件：** `src/electron/libs/task/executor.ts`, `src/electron/libs/task/types.ts`
+**文件:** `session-engine模块文件`
 
-executor.ts 管理任务的并发执行、自动重试、会话归档触发和执行记录写回。TaskExecutor 接收 TaskProvider 注册的任务，执行时通过独立 workspace 隔离环境。types.ts 定义了任务状态流转（event:task.execution.started、event:task.execution.completed、event:task.execution.log）。如果修改任务调度逻辑或增加新的执行策略，看 executor 的 _executeWithRetry 和 workspace 管理。
+管理Session创建、消息持久化、浏览器隔离上下文和工作流钩子。理解如何在一个长生命周期中维护用户状态和上下文连续性。
 
-## Step 7: 技能管理：安装、场景和工具暴露 (15 min)
+## 第 7 步：知识与工具生态 (~12 min)
 
-**文件：** `src/electron/libs/skill-manager/ipc-handlers.ts`, `src/electron/libs/skill-manager/db.ts`, `src/ui/components/settings/InstallSkillsView.tsx`
+**文件:** `knowledge-engine模块文件`, `mcp-tools模块文件`, `git-workbench模块文件`
 
-skill-manager 处理技能的安装、删除、场景绑定和工具生成。ipc-handlers.ts 定义了 skills:installLocal、skills:batchImportFolder 等通道。db.ts 定义了 skills、scenarios、scenario_skills 表。renderer 侧通过 InstallSkillsView.tsx 调用这些通道。修改技能安装流程要同时看主进程 IPC handlers 和前端 UI 调用。
+knowledge-engine提供知识管理能力，mcp-tools是MCP协议工具集成，git-workbench处理Git操作。理解这些模块如何为Agent提供外部能力扩展。
 
-## Step 8: MCP 工具面：内置工具实现 (20 min)
+## 第 8 步：UI组件层(ui-shell) (~10 min)
 
-**文件：** `src/electron/libs/mcp-tools/browser.ts`, `src/electron/libs/mcp-tools/cron.ts`, `src/electron/libs/mcp-tools/design.ts`
+**文件:** `ui-shell模块文件`, `package/README.md`
 
-browser.ts 实现了所有浏览器操作工具（open、navigate、click、fill、eval 等），使用 CDP 连接。cron.ts 暴露任务调度工具（create_scheduled_task、list_scheduled_tasks）。design.ts 实现设计对比工具（design_capture_current_view、design_compare_images 等）。这些工具通过 builtin-mcp-servers.ts 创建为真实 MCP server。修改工具行为直接看这些文件。
+ui-shell整合聊天会话、任务执行、浏览器预览、模型路由等功能。package模块封装了Claude Agent SDK。理解前端视图层如何与后端引擎通信。
 
-## Step 9: UI 渲染层：App 入口和知识面板 (15 min)
+## 第 9 步：共享与公共模块 (~8 min)
 
-**文件：** `src/ui/App.tsx`, `src/ui/components/KnowledgePanel.tsx`
+**文件:** `shared模块文件`, `common模块文件`
 
-App.tsx 是 React 渲染入口，注册事件监听（event:separator、event:message、event:session.*），组装各功能面板。KnowledgePanel.tsx 是知识库 UI 入口，通过 bridge 调用 knowledge:run-generation、knowledge:add-workspace 等通道。修改 UI 交互逻辑从这两个文件开始，它们是 renderer 到主进程通信的边界。
+shared提供数据类型定义、业务逻辑工具函数和工作流解析；common提供通用工具、类型定义、IPC通信适配器和配置管理。这些是贯穿全系统的公共能力。
 
-## Tips
+## 第 10 步：技能与自动化(skills) (~6 min)
 
-- 新增 IPC 通道必须在 src/electron/main.ts 的 registerIpcHandlers() 中注册，并在 src/ui/types.ts 中声明对应事件类型，否则类型检查会失败。
-- 修改 MCP 工具时，registry 元数据和实现必须同步更新：src/shared/builtin-mcp-registry.ts 定义 schema，mcp-tools/*.ts 实现逻辑，runner.ts 负责调用循环。
-- 知识库状态必须双写：前端只负责展示，真实状态落在 knowledge_ui_generation 和 knowledge_ui_documents，刷新后通过 bridge 重新拉取。
-- task executor 的 workspace 隔离是关键：每个任务在独立目录执行，修改 workspace 管理逻辑会影响任务隔离性。
-- 使用 npm run dev:electron 启动开发模式，src/ui/dev-electron-shim.ts 提供了 Electron API 的开发替身，适合纯前端调试。
+**文件:** `skills模块文件`
 
-## 按任务阅读
+skills模块提供可复用的自动化工作流技能，包括Git操作、GitHub API调用和Release管理。这是项目将核心能力落地到实际工程实践的最后一环。
 
-### 修改知识库生成流程
+## 提示
 
-knowledge-indexer 是生成主链路（切块→embedding→索引），knowledge-repository 定义存储 schema，knowledge-overview 负责注入 runner 的 system prompt。三层联动，缺一不可。
-
-文件：`src/electron/libs/knowledge/knowledge-indexer.ts`, `src/electron/libs/knowledge/knowledge-repository.ts`, `src/electron/libs/knowledge/knowledge-overview.ts`
-
-### 新增 IPC 通道
-
-main.ts 注册 ipcMain.handle，ipc-handlers.ts 实现处理逻辑，types.ts 声明事件类型。必须同步修改才能通过类型检查。
-
-文件：`src/electron/main.ts`, `src/electron/ipc-handlers.ts`, `src/ui/types.ts`
-
-### 给 Agent 增加新工具
-
-registry 定义工具元数据（名称、schema），mcp-tools 实现工具逻辑，builtin-mcp-servers.ts 将工具包装成真实 MCP server。runner.ts 调用这些 server。
-
-文件：`src/shared/builtin-mcp-registry.ts`, `src/electron/libs/mcp-tools/*.ts`, `src/electron/libs/builtin-mcp-servers.ts`
-
-### 修改任务执行策略
-
-executor 负责并发、重试、恢复，types 定义状态流转，workspace.ts 管理任务隔离目录。修改调度逻辑看这三层。
-
-文件：`src/electron/libs/task/executor.ts`, `src/electron/libs/task/types.ts`, `src/electron/libs/task/workspace.ts`
-
-### 修改 UI 事件响应
-
-useAppStore 是 Zustand 状态容器，接收主进程事件并更新视图。types 定义事件类型，App.tsx 是渲染入口和事件注册处。
-
-文件：`src/ui/store/useAppStore.ts`, `src/ui/types.ts`, `src/ui/App.tsx`
+- 这是一个monorepo结构，模块间存在依赖关系，阅读时应注意箭头指向
+- doc/adr目录下有架构决策记录(ADR)，对于理解关键设计选择非常有价值
+- 测试目录test/electron包含核心功能验证，是理解系统行为的绝佳入口
+- pro-workflow是系统的用户面向层，而electron-runtime是真正的运行时核心
+- 如果时间有限，优先完成步骤1、2、5、6，这四步覆盖了从入口到核心的全链路

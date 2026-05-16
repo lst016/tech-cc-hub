@@ -1,129 +1,133 @@
 # electron-runtime
 
-> Main Electron process runtime managing desktop UI interactions, session persistence, task execution, browser previews, and Claude Code agent orchestration
+> Electron主进程模块，负责窗口管理、IPC通信、MCP协议集成、Agent任务执行和插件系统协调。
 
-Core Electron main process module that bridges the renderer UI with backend services. Handles IPC communication for chat sessions, browser workbench previews, MCP tool routing, task execution (Lark/Trello/Feishu), cron scheduling, knowledge base operations, and session trace replay. Uses SQLite (better-sqlite3) for persistent storage of sessions and messages, and integrates Claude Code via the @anthropic-ai/claude-agent-sdk.
-
-## Agent 可用信息
-
-- IPC channel names for triggering session operations: sessions:list, slash-commands:list, plugins:getOpenComputerUseStatus
-- Task execution event names for debugging: task.updated, task.execution.started, task.execution.completed, task.error
-- Database schema hint: messages table has session_id and created_id indexes for paginated history queries
-- Warm runner cleanup interval is 30 minutes - affects session resume behavior timing
-- ChannelReplyTarget type structure for outbound message routing
-- RunnerHandle.abort() is the cancellation mechanism for running sessions
-- PendingPermission type shows tool permission flow: toolUseId, toolName, input, resolve({behavior, updatedInput, message})
-
-## 优先入口
-
-- `src/electron/main.ts`：Primary Electron main() function creates app, BrowserWindow, and registers all IPC handlers. First file to understand application initialization flow.
-- `src/electron/ipc-handlers.ts`：Exports handleClientEvent() which is the main IPC dispatch function called from main.ts ipcMainHandle wrappers
+这是应用程序的Electron主进程入口，负责管理BrowserWindow生命周期、注册IPC处理器、连接MCP服务器、处理插件授权（如Figma、Open Computer Use）、执行Claude Agent任务（通过runner模块）、管理会话、自动化任务调度、文件预览操作等核心桌面功能。它整合了配置存储、图像预处理、系统工作区、外部CLI命令、Git工作台、知识库和技能管理器等多个子系统，为渲染进程提供统一的后台服务。
 
 ## 文件
 
 ### `src/electron/main.ts`
 
-Electron main entry point - creates BrowserWindow instances, registers IPC handlers, manages system shortcuts, dialogs, clipboard, and desktop capture. Responsible for application lifecycle, menu construction, and auto-updater integration.
+Electron主进程入口文件，初始化BrowserWindow、注册所有IPC处理器、启动后台服务和插件管理器
 
-- `cleanupComplete` (const) - Signals cleanup completion for graceful shutdown
-- `DEFAULT_BROWSER_WORKBENCH_SESSION_ID` (const) - Reserved session ID for browser preview workbench
-- `browserWorkbenches` (Map) - Active BrowserWorkbenchManager instances keyed by session ID
-- `browserWorkbenchEventListeners` (Map) - Event listeners for browser workbench bounds changes
-- `KNOWLEDGE_UI_CHANNELS` (const) - IPC channel constants for knowledge base UI operations
-
-### `src/electron/ipc-handlers.ts`
-
-Central IPC handler registration and event broadcasting. Manages runner lifecycle (warm runners with 30-minute idle cleanup), channel reply targets, Figma OAuth state, and integrates TaskExecutor for external task providers. All IPC channels from renderer are handled here.
-
-- `runnerHandles` (Map<string, RunnerHandle>) - Active Claude Code runner handles for session reuse
-- `warmRunnerCleanupTimers` (Map<string, ReturnType<typeof setTimeout>>) - Timers for cleaning up idle warm runners after WARM_RUNNER_IDLE_MS (30 minutes)
-- `serverEventListeners` (Set<(event: ServerEvent) => void>) - Listeners for broadcasting server events to renderer
-- `channelReplyTargets` (Map<string, ChannelReplyTarget>) - Active channel reply destinations for workspace messaging
-- `initializeTaskExecutor` (function) - Creates TaskExecutor with registered providers: Lark, Trello, FeishuProject
-- `initializeNoteRepository` (function) - Creates NoteRepository with Database instance
-- `setChannelReplySender` (function) - Sets the channel reply sender function for outbound messages
+- `ipcMain.handle listeners` (function) - 注册preview-list-directory、sessions:list、plugins:*、shell:openExternal等30+个IPC通道处理文件操作、插件管理、会话列表等功能
+- `prepareOpenComputerUsePermissions` (function) - 准备Open Computer Use插件所需的系统权限
+- `installOpenComputerUsePlugin` (function) - 安装Open Computer Use插件
+- `getOpenComputerUsePluginStatus` (function) - 获取Open Computer Use插件安装状态和版本
+- `checkOpenComputerUsePluginUpdate` (function) - 检查Open Computer Use插件更新
+- `updateOpenComputerUsePlugin` (function) - 更新Open Computer Use插件
+- `connectOpenComputerUsePlugin` (function) - 连接Open Computer Use MCP服务器
+- `getFigmaOfficialPluginStatus` (function) - 获取Figma官方插件状态（OAuth、PAT、Desktop模式）
+- `installFigmaOfficialPlugin` (function) - 安装Figma官方插件
+- `connectFigmaDesktopOfficialPlugin` (function) - 通过Desktop MCP连接Figma
+- `connectFigmaPatOfficialPlugin` (function) - 通过Personal Access Token连接Figma
+- `fetchFigmaPatProfile` (function) - 获取Figma PAT对应的用户资料
+- `parseJsonResponse` (function) - 解析JSON响应并处理错误详情
+- `getOpenComputerUseVersion` (function) - 获取当前安装的Open Computer Use版本号
+- `getOpenComputerUseLatestVersion` (function) - 获取Open Computer Use最新版本
+- `getCodexCommand` (function) - 获取Codex CLI命令路径
+- `getCodexMcpCredentialsPath` (function) - 获取Codex MCP凭证文件路径
 
 ### `src/electron/libs/runner.ts`
 
-Executes Claude Code via @anthropic-ai/claude-agent-sdk. Builds prompts with attachments, registers learning hooks (secret scan, commit validation, quality gates, drift detection), and normalizes runner errors. Manages MCP OAuth authentication flows.
+Agent任务执行的核心模块，调用Claude Agent SDK运行任务、管理工具集、处理MCP服务器集成
 
-- `runClaude` (function) - Primary entry - executes Claude Code with RunnerOptions, returns RunnerHandle
-- `RunnerHandle` (type) - Handle with abort(), appendPrompt(), isClosed(), and optional reuseKey
-- `ALWAYS_ALLOWED_TOOLS` (Set<string>) - Tools exempt from permission requests: AskUserQuestion + all built-in MCP tools
-- `SKILL_ENV_HINTS` (Record<string, string[]>) - Environment variable hints by skill name for dynamic injection
+- `runClaude` (function) - 核心执行函数，调用Claude Agent SDK执行任务，整合工具、MCP服务器、提示词构建、权限处理和结果处理
+- `getRequestedModelName` (function) - 从运行时配置中提取请求的模型名称
+- `resolveOutputFormat` (function) - 解析输出格式（plaintext、json等）
+- `maybeRunFigmaGuideOAuth` (function) - 检查并引导用户完成Figma OAuth授权流程
+- `isFigmaMcpServerStatus` (function) - 检查Figma MCP服务器状态
+- `buildEffectiveAllowedToolSet` (function) - 构建最终允许使用的工具集，过滤内置和外部MCP工具
+- `parseAllowedTools` (function) - 解析allowedTools字符串配置
+- `combineSystemPromptAppend` (function) - 组合系统提示词追加内容
+- `supportsClaudeCodeAutoTruncate` (function) - 判断是否支持Claude Code自动截断功能
+- `getClaudeCodeExtraArgs` (function) - 获取Claude Code额外参数
+- `persistDiscoveredRuntimeConfig` (function) - 持久化发现的运行时配置
+- `getBestMatchedSkillName` (function) - 根据任务找到最佳匹配技能名称
+- `getSkillEnvCandidates` (function) - 获取技能环境候选变量
+- `buildGlobalRuntimePromptAppend` (function) - 构建全局运行时提示词追加内容
+- `getNormalizedSkillName` (function) - 规范化技能名称
+- `normalizeSkillCredentialKey` (function) - 规范化技能凭证键名
 
-### `src/electron/libs/session-store.ts`
+### `src/electron/libs/runner-reuse.ts`
 
-SQLite-backed persistence for sessions and messages. Provides SessionStore class with load/save/archive operations, workflow state parsing, and legacy CWD resolution for migrated sessions.
+Runner复用逻辑模块，通过生成和比对复用键来确定是否可复用现有runner实例以提升效率
 
-- `SessionStore` (class) - Main store with sessions Map and Database connection
-- `Session` (type) - Runtime session with pendingPermissions Map and AbortController
-- `StoredSession` (type) - Persisted session format without runtime-only fields
-- `parseStoredMessage` (function) - Deserializes stored StreamMessage with capturedAt and historyId normalization
-- `isTransientStreamEventMessage` (function) - Filters out transient events for history storage
+- `buildRunnerReuseKey` (function) - 根据输入参数构建runner复用键，包含cwd、model、allowedTools、runSurface等关键字段
+- `canReuseRunner` (function) - 判断现有runner是否可复用于新请求，比较所有关键参数
+- `buildRunnerReuseDescriptor` (function) - 构建runner复用描述符，包含运行时效率配置文件和内置MCP服务器列表
+- `normalizeKeyPart` (function) - 规范化键值部分，处理空值和空白字符
+- `parseRunnerReuseKey` (function) - 解析复用键为描述符对象
+- `isBuiltinMcpServerName` (function) - 判断是否为内置MCP服务器名称
 
-### `src/electron/dev-backend-bridge.ts`
+### `src/electron/libs/runner-error.ts`
 
-Development-only HTTP bridge enabling frontend-backend RPC communication via JSON POST endpoints and SSE event streams. Allows external tools to invoke handlers and subscribe to server/browser events.
+错误处理和规范化模块，将底层错误转换为用户友好的中文错误消息
 
-- `DEV_BACKEND_BRIDGE_PORT` (const) - Default port 4317 for dev bridge server
-- `startDevBackendBridge` (function) - Creates HTTP server with /health, /events/server, /events/browser, and /rpc/{handler} endpoints
-- `readJsonBody` (function) - Aggregates request chunks and parses JSON body
+- `stringifyRunnerError` (function) - 将任意错误对象转换为字符串，处理Error类型、cause链和JSON序列化
+- `normalizeRunnerError` (function) - 规范化错误消息，特别处理模型不可用（404、not found）和Figma认证错误，返回中文提示
+- `buildFigmaAuthGuidance` (function) - 根据当前Figma配置模式（REST/PAT或OAuth）生成相应的重新授权指导信息
+- `isLikelyFigmaAuthError` (function) - 检测错误消息是否包含Figma认证相关的问题
 
-## 数据与接口契约
+### `src/shared/runner-status.ts`
 
-- **IPC channel: task.updated**：Broadcasts task state changes. Payload: {task: Task}. Owner: src/electron/ipc-handlers.ts initializeTaskExecutor() onTaskUpdated callback
-- **IPC channel: channel.message.receive**：Inbound message from channel workspace. Payload: ChannelReplyTarget + message text. Owner: src/electron/ipc-handlers.ts recordChannelInboundMessage()
-- **Database table: sessions**：Columns: id, title, status, model, cwd, runSurface, agentId, allowedTools, claudeSessionId, workflowMarkdown, workflowState, archivedAt, createdAt, updatedAt. Owner: src/electron/libs/session-store.ts SessionStore
-- **Database table: messages**：Columns: id, session_id, data (JSON StreamMessage), created_at. Indexes on session_id and (session_id, created_id). Owner: src/electron/libs/session-store.ts SessionStore.insertMessage()
-- **IPC channel: permission.request**：Tool permission approval. Handler at src/electron/ipc-handlers.ts resolvePermission(). Resolves PendingPermission from sessions pendingPermissions Map
-- **ServerEvent type**：Union of all event types: stream.message, permission.request, session.status, runner.error, etc. Defined in src/electron/types.ts
-- **RuntimeOverrides type**：Config overrides for runner: apiConfig, envConfig, model, cwd, allowedTools, agentId. Passed through RunnerOptions.runtime field
+共享的状态判断工具模块，用于判断runner执行结果是否成功
+
+- `isSuccessfulRunnerResult` (function) - 判断消息是否为成功的runner结果（type=result且subtype=success）
+- `shouldSuppressRunnerErrorAfterSuccessfulResult` (function) - 判断在已发送成功结果后是否应抑制后续错误
+
+### `src/shared/runner-prompt.ts`
+
+共享的提示词构建模块，负责将prompt和附件转换为Agent SDK所需的格式
+
+- `buildRunnerPromptContentBlocks` (function) - 构建runner提示词内容块，整合用户prompt和附件，返回Anthropic格式的内容数组
+
+### `test/electron/runner-attachments.test.ts`
+
+测试runner提示词和附件处理逻辑
+
+- `attachmentPriorityContext` (const) - 测试用的附件优先级上下文文本
+- `promptAfterAttachments` (function) - 测试辅助函数，用于生成带附件的提示词文本
+- `contentBlocks` (variable) - 测试验证构建的内容块格式正确性
+
+### `test/electron/runner-claude-code-plugins.test.ts`
+
+测试Claude Code插件集成功能
+
+- `source` (variable) - 读取runner.ts源码用于字符串匹配测试，验证插件集成、auto-truncate和技能启用逻辑
+
+### `test/electron/runner-error.test.ts`
+
+测试错误规范化功能
+
+- `message` (variable) - 测试变量，验证normalizeRunnerError对模型缺失、Figma认证等错误的处理
+
+### `test/electron/runner-status.test.ts`
+
+测试runner状态判断逻辑
 
 ## 关键概念
 
-- **Browser Workbench**：Embedded BrowserWindow for live preview. Managed by BrowserWorkbenchManager, bounds tracked, events broadcast on src/electron/main.ts:116
-- **Warm Runner Reuse**：Idle runners kept alive for WARM_RUNNER_IDLE_MS (30min) for faster subsequent prompts. Cleanup timers on src/electron/ipc-handlers.ts:53
-- **Session Persistence**：SQLite tables: sessions (metadata, workflow state), messages (StreamMessage with capturedAt/historyId). Legacy CWD migration handled on session-store.ts:9-21
-- **MCP OAuth Flow**：handleClientEvent() processes mcpAuthenticate via QueryWithMcpOAuth type, supporting server-specific OAuth redirects
-- **Channel Workspace**：Dual-direction messaging system: channelReplyTargets map targets, channelReplySender handles outbound. Events: channel.message.receive
-- **Task Execution Providers**：Three providers registered: LarkTaskProvider, TbTaskProvider, FeishuProjectTaskProvider. Broadcasts task.updated, task.execution.completed, etc.
-- **Cron Service**：CronService + CronRepository + CronJobExecutor for scheduled task execution, registered via setCronService() in MCP tools
+- **MCP (Model Context Protocol)**: Model Context Protocol协议，用于与MCP服务器（如Figma、浏览器工具）通信的标准接口，sdk/client提供Client、StreamableHTTPClientTransport等组件
+- **Runner复用机制**: 通过buildRunnerReuseKey生成唯一键，比对cwd、model、allowedTools、runSurface等参数，判断是否可复用已有runner进程，避免重复启动提升效率
+- **插件系统**: 支持Open Computer Use、Figma官方插件等多种插件的安装、更新、授权和连接，通过IPC通道与渲染进程交互
+- **Figma认证模式**: 支持三种Figma连接模式：Desktop MCP模式、OAuth官方授权模式、PAT（Personal Access Token）本地Token模式，各有不同配置流程
+- **Agent执行表面**: 通过runSurface区分执行场景（development、production等），影响运行时效率配置、可用工具集和系统提示词
+- **运行时效率配置**: 根据prompt长度、附件数量、runSurface等动态选择builtinMcpServers配置，优化执行性能和资源使用
+- **学习钩子**: 通过createLearnCaptureHook、createSecretScanHook等钩子在Agent执行过程中注入质量检查和审计能力
+- **图像预处理**: 通过image-preprocessor模块对附件图像进行摘要处理，支持base64和本地文件两种方式
 
 ## 内部关系
 
-- `src/electron/main.ts` -> `src/electron/ipc-handlers.ts`：Imports IPC handler functions and event emitters for task/cron/channel operations
-- `src/electron/main.ts` -> `src/electron/libs/session-store.ts`：Accesses exported sessions instance for session listing and cleanup
-- `src/electron/ipc-handlers.ts` -> `src/electron/libs/runner.ts`：Uses runClaude() to execute agent prompts and manages RunnerHandle lifecycle
-- `src/electron/ipc-handlers.ts` -> `src/electron/libs/session-store.ts`：Imports SessionStore instance, ServerEventListener setup, and channel workspace types
-- `src/electron/libs/runner.ts` -> `src/shared/runner-prompt.ts`：Uses buildRunnerPromptContentBlocks() for prompt construction
-- `src/electron/libs/runner.ts` -> `src/shared/runner-status.ts`：Checks isSuccessfulRunnerResult() and shouldSuppressRunnerErrorAfterSuccessfulResult()
-- `src/electron/libs/runner.ts` -> `src/electron/libs/learning-hooks.ts`：Registers hooks for secrets, corrections, quality gates, drift detection, git blast radius
-
-## 运行注意事项
-
-- Dev mode bridge runs on port 4317, disabled in production builds via isDev() check
-- Database path passed to initializeNoteRepository() and initializeTaskExecutor() - typically app userData path
-- Browser workbench bounds events allow renderer to sync window positions for floating preview
-- Channel workspace supports both inbound (receive) and outbound (reply) messaging with separate target routing
-- Legacy CWD resolution for sessions ending with /upstream/open-claude-cowork or /Desktop/claw-open-claude-cowork maps to app.getAppPath()
-- Figma Agent OAuth bridge is disabled (FIGMA_AGENT_OAUTH_BRIDGE_ENABLED = false) - Codex OAuth is the supported path
-- Image attachments are preprocessed via preprocessImageAttachments() before being passed to runner
-
-## 修改风险
-
-- Changing WARM_RUNNER_IDLE_MS value affects session resume performance and memory usage
-- Modifying Session type fields requires SQLite migration - StoredSession type must stay compatible
-- Removing IPC channels in main.ts ipcMainHandle calls will break renderer communication without updates to both sides
-- Task provider registration order in initializeTaskExecutor() affects provider IDs - changing requires provider ID updates
-- BrowserWorkbenchManager bounds events are expected by renderer for preview window sync - breaking changes need renderer updates
-- ChannelReplyTarget structure changes break channel workspace messaging
-- Learning hooks in runner.ts affect security scanning behavior - removing hooks may introduce vulnerabilities
-
-## 验证
-
-- Run npm test or specific test files under src/electron/__tests__/ to verify IPC handler behavior
-- Check dev-backend-bridge health: curl http://localhost:4317/health
-- Verify database tables: sqlite3 <path> '.tables' and '.schema sessions' / '.schema messages'
-- Test session persistence by creating session, restarting app, listing sessions via IPC: sessions:list
-- Verify task sync by triggering provider sync and checking task.updated events in renderer dev tools
+- `src/electron/main.ts` → `src/electron/libs/runner.ts`: main.ts导入runner.ts中导出的函数，在IPC处理器中调用runClaude等方法执行Agent任务
+- `src/electron/main.ts` → `src/electron/libs/runner-reuse.ts`: 通过runner-reuse.ts判断是否可复用现有runner实例，优化执行效率
+- `src/electron/libs/runner.ts` → `src/electron/libs/runner-error.ts`: runner.ts导入runner-error.ts中的normalizeRunnerError函数处理执行过程中的错误
+- `src/electron/libs/runner.ts` → `src/shared/runner-prompt.ts`: runner.ts使用shared/runner-prompt.ts中的buildRunnerPromptContentBlocks构建提示词
+- `src/electron/libs/runner.ts` → `src/shared/runner-status.ts`: runner.ts使用runner-status.ts判断执行结果是否成功
+- `src/electron/libs/runner-reuse.ts` → `src/electron/libs/runner-error.ts`: runner-reuse.ts不直接使用，但与runner.ts共享对错误处理模块的依赖
+- `src/shared/runner-prompt.ts` → `src/shared/attachments.js`: runner-prompt.ts导入attachments.js的buildAnthropicPromptContentBlocks函数处理附件
+- `src/electron/main.ts` → `src/electron/libs/claude-settings.js`: main.ts使用config-store和claude-settings管理API配置和运行时环境
+- `src/electron/main.ts` → `src/electron/libs/mcp-tools/browser.js`: 通过browser.ts设置浏览器工具主机
+- `src/electron/main.ts` → `src/electron/libs/mcp-tools/design.js`: 通过design.ts设置设计工具主机
+- `src/electron/main.ts` → `src/electron/libs/auto-updater.js`: 集成自动更新功能
+- `src/electron/main.ts` → `src/electron/ipc-handlers.js`: main.ts导入ipc-handlers.ts中的会话管理和任务执行相关函数

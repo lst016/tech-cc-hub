@@ -1,0 +1,84 @@
+# doc/40-product/1.0.0/40-delivery/40-开发索引.md
+
+> 模块：`doc` · 语言：`markdown` · 行数：66
+
+## 文件职责
+
+此页由 RepoWiki 从真实源码生成，用于让 Agent 快速定位文件职责、符号、依赖和可修改面。
+
+## Agent 使用提示
+
+- 修改此文件前，先查看同模块页面和本页的运行信号。
+- 如果本页包含 IPC、MCP、DB 表或 UI 调用，改动后要同时验证前后端桥接和索引结果。
+- 检索时可以用文件名、关键符号名、IPC channel 或表名作为 query。
+
+## 源码摘录
+
+```markdown
+---
+doc_id: "PRD-100-40"
+title: "40-开发索引"
+doc_type: "index"
+layer: "PM"
+status: "active"
+version: "1.0.0"
+last_updated: "2026-04-29"
+owners:
+  - "Product"
+tags:
+  - "claw"
+  - "docs"
+  - "1.0.0"
+  - "delivery"
+  - "index"
+---
+
+# 40-开发索引
+
+## Purpose
+为 1.0.0 的实际开发组织前端、后端和发布验收文档。
+
+## Interfaces / Types
+- [41-前端开发文档.md](./41-%E5%89%8D%E7%AB%AF%E5%BC%80%E5%8F%91%E6%96%87%E6%A1%A3.md)
+- [42-后端开发文档.md](./42-%E5%90%8E%E7%AB%AF%E5%BC%80%E5%8F%91%E6%96%87%E6%A1%A3.md)
+- [43-迭代计划与发布验收.md](./43-%E8%BF%AD%E4%BB%A3%E8%AE%A1%E5%88%92%E4%B8%8E%E5%8F%91%E5%B8%83%E9%AA%8C%E6%94%B6.md)
+- [44-页面与交互映射.md](./44-%E9%A1%B5%E9%9D%A2%E4%B8%8E%E4%BA%A4%E4%BA%92%E6%98%A0%E5%B0%84.md)
+- [45-API与服务映射.md](./45-API%E4%B8%8E%E6%9C%8D%E5%8A%A1%E6%98%A0%E5%B0%84.md)
+- [46-实施任务单-EP-001-交互工作台.md](./46-%E5%AE%9E%E6%96%BD%E4%BB%BB%E5%8A%A1%E5%8D%95-EP-001-%E4%BA%A4%E4%BA%92%E5%B7%A5%E4%BD%9C%E5%8F%B0.md)
+- [47-实施任务单-EP-002-任务编排与Worker.md](./47-%E5%AE%9E%E6%96%BD%E4%BB%BB%E5%8A%A1%E5%8D%95-EP-002-%E4%BB%BB%E5%8A%A1%E7%BC%96%E6%8E%92%E4%B8%8EWorker.md)
+- [48-组件索引.md](./48-%E7%BB%84%E4%BB%B6%E7%B4%A2%E5%BC%95.md)
+- [49-控制器索引.md](./49-%E6%8E%A7%E5%88%B6%E5%99%A8%E7%B4%A2%E5%BC%95.md)
+- [51-前端UI风格规范.md](./51-%E5%89%8D%E7%AB%AFUI%E9%A3%8E%E6%A0%BC%E8%A7%84%E8%8C%83.md)
+- [52-前端工程最佳实践.md](./52-%E5%89%8D%E7%AB%AF%E5%B7%A5%E7%A8%8B%E6%9C%80%E4%BD%B3%E5%AE%9E%E8%B7%B5.md)
+- [53-后端架构与输入输出规范.md](./53-%E5%90%8E%E7%AB%AF%E6%9E%B6%E6%9E%84%E4%B8%8E%E8%BE%93%E5%85%A5%E8%BE%93%E5%87%BA%E8%A7%84%E8%8C%83.md)
+- [54-官方最佳实践基线与来源.md](./54-%E5%AE%98%E6%96%B9%E6%9C%80%E4%BD%B3%E5%AE%9E%E8%B7%B5%E5%9F%BA%E7%BA%BF%E4%B8%8E%E6%9D%A5%E6%BA%90.md)
+- [55-Figma首版设计Brief.md](./55-Figma%E9%A6%96%E7%89%88%E8%AE%BE%E8%AE%A1Brief.md)
+- [56-桌面工作台屏幕线框.md](./56-%E6%A1%8C%E9%9D%A2%E5%B7%A5%E4%BD%9C%E5%8F%B0%E5%B1%8F%E5%B9%95%E7%BA%BF%E6%A1%86.md)
+- [57-S0可执行原型图.md](./57-S0%E5%8F%AF%E6%89%A7%E8%A1%8C%E5%8E%9F%E5%9E%8B%E5%9B%BE.md)
+- [58-S0功能点细分清单.md](./58-S0%E5%8A%9F%E8%83%BD%E7%82%B9%E7%BB%86%E5%88%86%E6%B8%85%E5%8D%95.md)
+- [59-Electron客户端操作与QA规范.md](./59-Electron%E5%AE%A2%E6%88%B7%E7%AB%AF%E6%93%8D%E4%BD%9C%E4%B8%8EQA%E8%A7%84%E8%8C%83.md)
+- [60-开发流操作沉淀规范.md](./60-%E5%BC%80%E5%8F%91%E6%B5%81%E6%93%8D%E4%BD%9C%E6%B2%89%E6%B7%80%E8%A7%84%E8%8C%83.md)
+- [61-操作复盘模板.md](./61-%E6%93%8D%E4%BD%9C%E5%A4%8D%E7%9B%98%E6%A8%A1%E6%9D%BF.md)
+- [62-操作复盘-Electron客户端验收面偏航.md](./62-%E6%93%8D%E4%BD%9C%E5%A4%8D%E7%9B%98-Electron%E5%AE%A2%E6%88%B7%E7%AB%AF%E9%AA%8C%E6%94%B6%E9%9D%A2%E5%81%8F%E8%88%AA.md)
+- [63-实施计划-会话执行分析与右栏增强.md](./63-%E5%AE%9E%E6%96%BD%E8%AE%A1%E5%88%92-%E4%BC%9A%E8%AF%9D%E6%89%A7%E8%A1%8C%E5%88%86%E6%9E%90%E4%B8%8E%E5%8F%B3%E6%A0%8F%E5%A2%9E%E5%BC%BA.md)
+- [64-实施计划-执行可观测层详细开发方案.md](./64-%E5%AE%9E%E6%96%BD%E8%AE%A1%E5%88%92-%E6%89%A7%E8%A1%8C%E5%8F%AF%E8%A7%82%E6%B5%8B%E5%B1%82%E8%AF%A6%E7%BB%86%E5%BC%80%E5%8F%91%E6%96%B9%E6%A1%88.md)
+
+## Recent Additions
+
+- [65-Trace Workbench截图一致性核对表.md](./65-Trace%20Workbench%E6%88%AA%E5%9B%BE%E4%B8%80%E8%87%B4%E6%80%A7%E6%A0%B8%E5%AF%B9%E8%A1%A8.md)
+- [66-设计方案-Workflow与Skill回放Benchmark.md](./66-%E8%AE%BE%E8%AE%A1%E6%96%B9%E6%A1%88-Workflow%E4%B8%8ESkill%E5%9B%9E%E6%94%BEBenchmark.md)
+
+## Cross-Cut
+
+- [70-browser-workbench-dev-plan.md](../70-browser-workbench-dev-plan.md)
+
+## Behavior / Flow
+1. 前端先跑通交互工作台和主路径
+2. 后端建立 Session / Task / Event / Replay 主链路
+3. 再把 Epic 拆到页面/API/组件/controller/任务单
+4. 按里程碑完成联合验收
+
+## Failure Modes
+- 如果没有前后端分工文档，PRD 很容易停在概念层。
+
+```

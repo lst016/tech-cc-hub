@@ -101,7 +101,6 @@ type KnowledgeGitState = {
 
 const KNOWLEDGE_WORKSPACES_STORAGE_KEY = "tech-cc-hub:knowledge-panel-workspaces";
 const KNOWLEDGE_HIDDEN_WORKSPACES_STORAGE_KEY = "tech-cc-hub:knowledge-panel-hidden-workspaces";
-const KNOWLEDGE_GENERATION_STORAGE_KEY = "tech-cc-hub:knowledge-panel-generation";
 const KNOWLEDGE_AUTO_UPDATE_STORAGE_KEY = "tech-cc-hub:knowledge-panel-auto-update";
 const GIT_REFRESH_INTERVAL_MS = 30_000;
 const GIT_SNAPSHOT_TIMEOUT_MS = 4_000;
@@ -224,57 +223,30 @@ function normalizeGenerationState(value: unknown): GenerationState | undefined {
   if (!value || typeof value !== "object") return undefined;
   const raw = value as Partial<GenerationState>;
   if (!isGenerationStatus(raw.status)) return undefined;
-  const total = Number.isFinite(raw.total) && raw.total && raw.total > 0 ? Math.floor(raw.total) : 183;
+  const total = Number.isFinite(raw.total) && raw.total && raw.total > 0 ? Math.floor(raw.total) : 0;
   const failed = Number.isFinite(raw.failed) && raw.failed && raw.failed > 0 ? Math.floor(raw.failed) : 0;
   const updatedAt = Number.isFinite(raw.updatedAt) && raw.updatedAt && raw.updatedAt > 0 ? raw.updatedAt : Date.now();
   let completed = Number.isFinite(raw.completed) && raw.completed && raw.completed > 0 ? Math.floor(raw.completed) : 0;
   let status = raw.status;
 
-  if (status === "generating") {
-    const elapsedSteps = Math.max(0, Math.floor((Date.now() - updatedAt) / 900));
-    completed = Math.min(total, completed + elapsedSteps * 3);
-    status = completed >= total ? "completed" : "generating";
-  }
-
   return {
     status,
-    completed: Math.min(total, Math.max(0, completed)),
+    completed: total > 0 ? Math.min(total, Math.max(0, completed)) : Math.max(0, completed),
     total,
-    processing: status === "generating" ? 1 : 0,
+    processing: status === "generating" ? Math.max(1, Math.floor(Number(raw.processing) || 1)) : 0,
     failed,
     commitId: typeof raw.commitId === "string" ? raw.commitId : undefined,
     commitShortHash: typeof raw.commitShortHash === "string" ? raw.commitShortHash : undefined,
     branch: typeof raw.branch === "string" ? raw.branch : null,
-    updatedAt: Date.now(),
+    updatedAt,
   };
-}
-
-function readStoredGenerationByWorkspace(): Record<string, GenerationState> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(KNOWLEDGE_GENERATION_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    const next: Record<string, GenerationState> = {};
-    for (const [key, value] of Object.entries(parsed)) {
-      const workspaceKey = normalizeWorkspaceKey(key);
-      const generation = normalizeGenerationState(value);
-      if (workspaceKey && generation && generation.status !== "idle") {
-        next[workspaceKey] = generation;
-      }
-    }
-    return next;
-  } catch {
-    return {};
-  }
 }
 
 function createIdleGeneration(): GenerationState {
   return {
     status: "idle",
     completed: 0,
-    total: 183,
+    total: 0,
     processing: 0,
     failed: 0,
     updatedAt: Date.now(),
@@ -343,7 +315,10 @@ function Toggle({ checked, disabled = false }: { checked: boolean; disabled?: bo
 }
 
 function ProgressBlock({ state }: { state: GenerationState }) {
-  const percent = Math.min(100, Math.round((state.completed / state.total) * 1000) / 10);
+  const hasKnownTotal = state.total > 0;
+  const percent = hasKnownTotal
+    ? Math.min(100, Math.round((state.completed / state.total) * 1000) / 10)
+    : state.status === "completed" ? 100 : 8;
   const statusLabel = state.status === "paused"
     ? "已暂停"
     : state.status === "completed"
@@ -362,7 +337,9 @@ function ProgressBlock({ state }: { state: GenerationState }) {
         <div className="text-sm font-semibold text-slate-800">{statusLabel}</div>
       </div>
       <div className="mt-3 text-sm leading-6 text-slate-700">
-        {progressPrefix}，已完成 {state.completed}/{state.total} ({percent}%)，处理中: {state.processing}，失败: {state.failed}
+        {hasKnownTotal
+          ? `${progressPrefix}，已完成 ${state.completed}/${state.total} (${percent}%)，处理中: ${state.processing}，失败: ${state.failed}`
+          : `${progressPrefix}，正在全量扫描和生成，处理中: ${state.processing}，失败: ${state.failed}`}
       </div>
       <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
         <div className="h-full rounded-full bg-slate-500 transition-all duration-300" style={{ width: `${percent}%` }} />
@@ -470,7 +447,6 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
   const sessions = useAppStore((s) => s.sessions);
   const gitRefreshCacheRef = useRef<Record<string, string>>({});
   const observedGitCommitRef = useRef<Record<string, string>>({});
-  const persistedGenerationSignatureRef = useRef<Record<string, string>>({});
   const completedDocumentSeedRef = useRef<Set<string>>(new Set());
   const backendGenerationInFlightRef = useRef<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"repo" | "memory">("repo");
@@ -483,7 +459,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
   const [knowledgeStateReady, setKnowledgeStateReady] = useState(false);
   const [storedWorkspaces, setStoredWorkspaces] = useState<KnowledgeWorkspace[]>([]);
   const [documentsByWorkspace, setDocumentsByWorkspace] = useState<Record<string, KnowledgeDocument[]>>({});
-  const [generationByWorkspace, setGenerationByWorkspace] = useState<Record<string, GenerationState>>(() => readStoredGenerationByWorkspace());
+  const [generationByWorkspace, setGenerationByWorkspace] = useState<Record<string, GenerationState>>({});
   const [gitByWorkspace, setGitByWorkspace] = useState<Record<string, KnowledgeGitState>>({});
   const [autoUpdateByWorkspace, setAutoUpdateByWorkspace] = useState<Record<string, boolean>>(() => readStoredBooleanRecord(KNOWLEDGE_AUTO_UPDATE_STORAGE_KEY));
 
@@ -712,54 +688,6 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
   }, [autoUpdateByWorkspace]);
 
   useEffect(() => {
-    try {
-      const activeGenerations = Object.fromEntries(
-        Object.entries(generationByWorkspace).filter(([, state]) => state.status !== "idle"),
-      );
-      if (Object.keys(activeGenerations).length === 0) {
-        window.localStorage.removeItem(KNOWLEDGE_GENERATION_STORAGE_KEY);
-        return;
-      }
-      window.localStorage.setItem(KNOWLEDGE_GENERATION_STORAGE_KEY, JSON.stringify(activeGenerations));
-    } catch {
-      // Ignore storage failures; the current UI state still remains usable.
-    }
-  }, [generationByWorkspace]);
-
-  useEffect(() => {
-    if (!knowledgeStateReady) return;
-    for (const [workspaceKey, state] of Object.entries(generationByWorkspace)) {
-      const signature = JSON.stringify({
-        status: state.status,
-        completed: state.completed,
-        total: state.total,
-        processing: state.processing,
-        failed: state.failed,
-        commitId: state.commitId ?? "",
-        branch: state.branch ?? "",
-      });
-      if (persistedGenerationSignatureRef.current[workspaceKey] === signature) continue;
-      persistedGenerationSignatureRef.current[workspaceKey] = signature;
-
-      if (state.status === "completed") {
-        void invokeKnowledge<{ documents?: unknown[] }>("knowledge:complete-generation", { workspaceKey, state })
-          .then((result) => {
-            const documents = (result.documents ?? [])
-              .map(normalizeKnowledgeDocument)
-              .filter((document): document is KnowledgeDocument => Boolean(document));
-            setDocumentsByWorkspace((current) => ({ ...current, [workspaceKey]: documents }));
-            completedDocumentSeedRef.current.add(workspaceKey);
-          })
-          .catch((error) => setWorkspaceError(error instanceof Error ? error.message : "写入 Repo Wiki 文档失败。"));
-        continue;
-      }
-
-      void invokeKnowledge("knowledge:update-generation", { workspaceKey, state })
-        .catch((error) => setWorkspaceError(error instanceof Error ? error.message : "写入生成状态失败。"));
-    }
-  }, [generationByWorkspace, knowledgeStateReady]);
-
-  useEffect(() => {
     if (!selectedWorkspace || generation.status !== "completed") {
       if (!selectedWorkspace) setSelectedDocumentId("");
       return;
@@ -910,7 +838,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
         next[workspaceKey] = applyGitBinding({
           status: "generating",
           completed: 0,
-          total: currentGeneration.total || 183,
+          total: 0,
           processing: 1,
           failed: 0,
         }, git);
@@ -946,13 +874,13 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
           }
           const hasBackendTask = backendGenerationInFlightRef.current.has(workspaceKey);
           const nextCompleted = hasBackendTask
-            ? Math.min(Math.max(0, current.total - 1), current.completed + 3)
-            : Math.min(current.total, current.completed + 3);
+            ? (current.total > 0 ? Math.min(Math.max(0, current.total - 1), current.completed + 3) : current.completed)
+            : (current.total > 0 ? Math.min(current.total, current.completed + 3) : current.completed);
           nextByWorkspace[workspaceKey] = {
             ...current,
             completed: nextCompleted,
-            processing: hasBackendTask || nextCompleted < current.total ? 1 : 0,
-            status: hasBackendTask || nextCompleted < current.total ? "generating" : "completed",
+            processing: hasBackendTask || (current.total > 0 && nextCompleted < current.total) ? 1 : 0,
+            status: hasBackendTask || (current.total > 0 && nextCompleted < current.total) ? "generating" : "completed",
             updatedAt: Date.now(),
           };
           changed = true;
@@ -983,7 +911,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
     const startedState = applyGitBinding({
       status: "generating",
       completed: 0,
-      total: 183,
+      total: 0,
       processing: 1,
       failed: 0,
     }, git);
@@ -1042,15 +970,36 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
 
   const pauseGeneration = () => {
     if (!selectedWorkspace) return;
+    const workspaceKey = selectedWorkspace.key;
+    const nextState = {
+      ...(generationByWorkspace[workspaceKey] ?? createIdleGeneration()),
+      status: "paused" as const,
+      processing: 0,
+      updatedAt: Date.now(),
+    };
     setGenerationByWorkspace((current) => ({
       ...current,
-      [selectedWorkspace.key]: {
-        ...(current[selectedWorkspace.key] ?? createIdleGeneration()),
-        status: "paused",
-        processing: 0,
-        updatedAt: Date.now(),
-      },
+      [workspaceKey]: nextState,
     }));
+    void invokeKnowledge("knowledge:update-generation", { workspaceKey, state: nextState })
+      .catch((error) => setWorkspaceError(error instanceof Error ? error.message : "写入生成状态失败。"));
+  };
+
+  const continueGeneration = () => {
+    startGeneration();
+  };
+
+  const cancelGeneration = () => {
+    if (!selectedWorkspace) return;
+    const workspaceKey = selectedWorkspace.key;
+    const idleState = createIdleGeneration();
+    backendGenerationInFlightRef.current.delete(workspaceKey);
+    setGenerationByWorkspace((current) => ({
+      ...current,
+      [workspaceKey]: idleState,
+    }));
+    void invokeKnowledge("knowledge:update-generation", { workspaceKey, state: idleState })
+      .catch((error) => setWorkspaceError(error instanceof Error ? error.message : "写入生成状态失败。"));
   };
 
   const toggleAutoUpdate = () => {
@@ -1058,27 +1007,6 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
     setAutoUpdateByWorkspace((current) => ({
       ...current,
       [selectedWorkspace.key]: !(current[selectedWorkspace.key] ?? true),
-    }));
-  };
-
-  const continueGeneration = () => {
-    if (!selectedWorkspace) return;
-    setGenerationByWorkspace((current) => ({
-      ...current,
-      [selectedWorkspace.key]: {
-        ...(current[selectedWorkspace.key] ?? createIdleGeneration()),
-        status: "generating",
-        processing: 1,
-        updatedAt: Date.now(),
-      },
-    }));
-  };
-
-  const cancelGeneration = () => {
-    if (!selectedWorkspace) return;
-    setGenerationByWorkspace((current) => ({
-      ...current,
-      [selectedWorkspace.key]: createIdleGeneration(),
     }));
   };
 

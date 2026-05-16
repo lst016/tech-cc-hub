@@ -9,53 +9,22 @@ import type {
 } from "./types.js";
 
 const SKIP_DIRS = new Set([
-  ".git",
-  ".agents",
-  ".claude",
-  ".codex",
-  ".hermes",
-  ".qoder",
-  ".superpowers",
-  ".tech",
   "node_modules",
   "__pycache__",
-  ".venv",
   "venv",
   "env",
-  ".idea",
-  ".vscode",
-  ".next",
   "dist",
-  "dist-electron",
-  "dist-react",
-  "dist-test",
   "build",
-  ".tox",
-  ".mypy_cache",
-  ".pytest_cache",
-  ".ruff_cache",
   "egg-info",
-  ".turbo",
   "coverage",
-  ".cache",
   "vendor",
   "third_party",
   "target",
   "__snapshots__",
-  ".svn",
-  ".hg",
-  ".gradle",
-  ".m2",
   "Pods",
-  ".dart_tool",
-  ".pub-cache",
 ]);
 
-const SKIP_PATH_PREFIXES = [
-  "doc/00-research/",
-  "doc/assets/",
-  "doc/40-product/1.0.0/assets/",
-];
+const IGNORE_FILES = [".techignore", ".repowikiignore", ".gitignore"];
 
 const SKIP_EXTS = [
   ".png",
@@ -293,6 +262,7 @@ export function scanRepoWikiProject(root: string, options: {
   const previewLines = options.previewLines ?? 80;
   const files: RepoWikiFileInfo[] = [];
   const skipped: RepoWikiSkippedFile[] = [];
+  const ignorePatterns = readIgnorePatterns(workspaceRoot);
 
   function walk(currentDir: string): void {
     if (files.length >= maxFiles) return;
@@ -313,8 +283,8 @@ export function scanRepoWikiProject(root: string, options: {
       if (files.length >= maxFiles) return;
       const absolutePath = join(currentDir, entry);
       const relativePath = normalizePath(relative(workspaceRoot, absolutePath));
-      if (shouldSkipPath(relativePath)) {
-        skipped.push({ path: relativePath, reason: "ignored research/generated docs path" });
+      if (matchesIgnore(relativePath, ignorePatterns)) {
+        skipped.push({ path: relativePath, reason: "ignored by repo wiki ignore rules" });
         continue;
       }
 
@@ -327,7 +297,7 @@ export function scanRepoWikiProject(root: string, options: {
       }
 
       if (stats.isDirectory()) {
-        if (SKIP_DIRS.has(entry) || entry.endsWith(".egg-info")) {
+        if (shouldSkipDirectory(entry, relativePath, ignorePatterns)) {
           skipped.push({ path: relativePath, reason: "ignored directory" });
           continue;
         }
@@ -407,9 +377,52 @@ function hasSkippedSuffix(name: string): boolean {
   return SKIP_EXTS.some((suffix) => lower.endsWith(suffix));
 }
 
-function shouldSkipPath(path: string): boolean {
-  const normalized = normalizePath(path);
-  return SKIP_PATH_PREFIXES.some((prefix) => normalized === prefix.replace(/\/$/, "") || normalized.startsWith(prefix));
+function readIgnorePatterns(workspaceRoot: string): string[] {
+  const patterns: string[] = [];
+  for (const fileName of IGNORE_FILES) {
+    const filePath = join(workspaceRoot, fileName);
+    if (!existsSync(filePath)) continue;
+    try {
+      for (const raw of readFileSync(filePath, "utf8").split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line || line.startsWith("#") || line.startsWith("!")) continue;
+        patterns.push(line);
+      }
+    } catch {
+      // Ignore unreadable ignore files; scanning can still proceed with defaults.
+    }
+  }
+  return patterns;
+}
+
+function shouldSkipDirectory(name: string, relativePath: string, ignorePatterns: string[]): boolean {
+  if (name.startsWith(".")) return true;
+  if (SKIP_DIRS.has(name) || name.endsWith(".egg-info")) return true;
+  if (name.startsWith("dist-") || name.startsWith("dist_")) return true;
+  return matchesIgnore(relativePath, ignorePatterns, true);
+}
+
+function matchesIgnore(path: string, patterns: string[], isDirectory = false): boolean {
+  const normalized = normalizePath(path).replace(/^\/+|\/+$/g, "");
+  const parts = normalized.split("/").filter(Boolean);
+  const baseName = parts.at(-1) ?? normalized;
+  for (const rawPattern of patterns) {
+    const directoryOnly = rawPattern.endsWith("/");
+    if (directoryOnly && !isDirectory) continue;
+    const pattern = normalizePath(rawPattern).replace(/^\/+|\/+$/g, "");
+    if (!pattern) continue;
+    if (!pattern.includes("/")) {
+      if (parts.some((part) => wildcardMatch(part, pattern)) || wildcardMatch(baseName, pattern)) return true;
+      continue;
+    }
+    if (normalized === pattern || normalized.startsWith(`${pattern}/`) || wildcardMatch(normalized, pattern)) return true;
+  }
+  return false;
+}
+
+function wildcardMatch(value: string, pattern: string): boolean {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+  return new RegExp(`^${escaped}$`).test(value);
 }
 
 function entryPriority(path: string): number {

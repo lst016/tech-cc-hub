@@ -1,0 +1,83 @@
+# doc/40-product/1.0.0/10-requirements/17-竞品功能拆解/12-版本管理.md
+
+> 模块：`doc` · 语言：`markdown` · 行数：65
+
+## 文件职责
+
+此页由 RepoWiki 从真实源码生成，用于让 Agent 快速定位文件职责、符号、依赖和可修改面。
+
+## Agent 使用提示
+
+- 修改此文件前，先查看同模块页面和本页的运行信号。
+- 如果本页包含 IPC、MCP、DB 表或 UI 调用，改动后要同时验证前后端桥接和索引结果。
+- 检索时可以用文件名、关键符号名、IPC channel 或表名作为 query。
+
+## 源码摘录
+
+```markdown
+---
+doc_id: "PRD-100-17-12"
+title: "12-版本管理"
+doc_type: "prd"
+layer: "PM"
+status: "active"
+version: "1.0.0"
+last_updated: "2026-04-21"
+owners:
+  - "Product"
+tags:
+  - "zcode"
+  - "version"
+  - "checkpoint"
+sources:
+  - "https://zhipu-ai.feishu.cn/wiki/Qr2SwyBsTiSlaYkqBECcxCWnn4c"
+---
+
+# 12-版本管理
+
+## Goal
+把每轮 Agent 修改都沉淀为检查点，支持 diff、undo 和 restore。
+
+## Problem
+如果没有产品化版本管理，用户只能把 Agent 当成一次性输出工具，无法“稳步推进”。竞品把每次对话和代码变更关联成检查点，解决的是可控性。
+
+## Scope
+- 自动检查点
+- Review changes
+- Undo
+- Restore Checkpoint
+- 多文件 diff
+- 检查点与消息绑定
+
+## Flow
+```mermaid
+flowchart TD
+  A[Agent 产生文件修改] --> B[自动创建检查点]
+  B --> C[用户查看 diff]
+  C --> D{是否满意}
+  D -- 否 --> E[Undo 或 Restore]
+  D -- 是 --> F[继续下一轮]
+```
+
+## Detail
+- 检查点应绑定当前对话轮次。
+- diff 视图需要支持多文件。
+- Undo 用于最近一轮快速回退，Restore 用于回到任意历史检查点。
+
+## Edge Cases
+- 没有文件变化时不应创建空检查点。
+- 多次回退后要能清楚区分当前状态所在节点。
+
+## Telemetry
+- `checkpoint_created`
+- `diff_review_opened`
+- `checkpoint_undo`
+- `checkpoint_restore`
+
+## Acceptance
+1. 每次 Agent 修改都有检查点。
+1. 用户能查看本轮 diff。
+1. 用户能撤销最近变更或恢复到历史检查点。
+
+
+```

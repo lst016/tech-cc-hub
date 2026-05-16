@@ -1,0 +1,87 @@
+# doc/40-product/1.0.0/40-delivery/43-迭代计划与发布验收.md
+
+> 模块：`doc` · 语言：`markdown` · 行数：69
+
+## 文件职责
+
+此页由 RepoWiki 从真实源码生成，用于让 Agent 快速定位文件职责、符号、依赖和可修改面。
+
+## Agent 使用提示
+
+- 修改此文件前，先查看同模块页面和本页的运行信号。
+- 如果本页包含 IPC、MCP、DB 表或 UI 调用，改动后要同时验证前后端桥接和索引结果。
+- 检索时可以用文件名、关键符号名、IPC channel 或表名作为 query。
+
+## 源码摘录
+
+```markdown
+---
+doc_id: "PRD-100-43"
+title: "43-迭代计划与发布验收"
+doc_type: "delivery"
+layer: "PM"
+status: "active"
+version: "1.0.0"
+last_updated: "2026-04-19"
+owners:
+  - "Product"
+tags:
+  - "claw"
+  - "docs"
+  - "1.0.0"
+  - "delivery"
+  - "milestone"
+---
+
+# 43-迭代计划与发布验收
+
+## Purpose
+把 1.0.0 从 PRD 映射为明确的实现波次和发布门槛。
+
+## Behavior / Flow
+### Iteration Plan
+
+| Iteration | Primary Outcome |
+|---|---|
+| `I1` | Chat Workspace + Session + 单 Agent 事件流 |
+| `I2` | 第二 AgentOS + Live Timeline + Replay 基础能力 |
+| `I3` | Task Graph + WorkerRun + 结果回写 |
+| `I4` | SpecAsset + Analysis + Governance 面板 |
+| `I5` | 稳定性修复、验收、文档对齐 |
+
+### Release Gates
+
+`RG-001`
+- 聊天主路径完整
+- 默认 Agent 规则正确
+
+`RG-002`
+- 至少一个复杂任务可拆分并完成回写
+
+`RG-003`
+- 至少一个复杂任务可生成 Replay + Analysis
+
+`RG-004`
+- 至少三类 SpecAsset 可保存、绑定、复用
+
+`RG-005`
+- 权限请求、冲突和人工介入可以完整回放
+
+### Exit Criteria
+
+- Must Have 全部完成
+- NFR 核心指标达到最低门槛
+- 追踪矩阵无关键未映射项
+- 文档与实现状态一致
+
+## Failure Modes
+- 若没有发布门槛，团队会把“功能存在”误判成“版本成立”。
+
+## Observability
+- 发布前应输出:
+  - 主路径演示清单
+  - 复杂任务样例回放
+  - 指标快照
+  - 未完成项清单
+
+```
