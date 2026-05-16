@@ -333,7 +333,7 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
 
   const indexHandler = tool(
     "knowledge_index",
-    "Generate or refresh the .tech Knowledge Engine index. It writes readable Markdown/JSON under .tech and keeps internal SQLite/vector indexes in app data.",
+    "Maintenance-only: generate or refresh the .tech Knowledge Engine index. Do not use this to answer repo questions or test retrieval; use knowledge_search/knowledge_read instead.",
     INDEX_SCHEMA,
     async (input) => {
       try {

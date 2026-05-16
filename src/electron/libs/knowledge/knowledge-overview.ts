@@ -75,6 +75,11 @@ export function buildKnowledgeOverviewPromptAppend(projectCwd?: string): string 
 
   const lines = [
     `<knowledge_overview enabled="true" scope="${paths.workspaceScope}" knowledge_count="${knowledgeEntries.length}" memory_count="${memoryEntries.length}">`,
+    "  <usage>",
+    "    Indexed knowledge is already available. For repo-specific background, architecture, prior decisions, or implementation guidance, call mcp__tech-cc-hub-knowledge__knowledge_search first, then mcp__tech-cc-hub-knowledge__knowledge_read for the selected document before using generic source reads.",
+    "    Use agent_cards for where-to-start and change-plan questions; use repowiki for module details and code evidence.",
+    "    Do not call mcp__tech-cc-hub-knowledge__knowledge_index just to answer a question. Only use it when the user explicitly asks to generate, refresh, reindex, or update the knowledge base.",
+    "  </usage>",
   ];
 
   const groupedKnowledge = groupKnowledge(knowledgeEntries);

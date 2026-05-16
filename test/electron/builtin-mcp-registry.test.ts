@@ -47,3 +47,16 @@ test("built-in MCP prompt hints are sourced from the registry", () => {
   assert.match(hints, /mcp__tech-cc-hub-idea__idea_wait_ready/);
   assert.match(hints, /java -jar/);
 });
+
+test("knowledge MCP hints prioritize retrieval over reindexing", () => {
+  const knowledgeServer = BUILTIN_MCP_SERVERS.find((server) => server.name === "tech-cc-hub-knowledge");
+  assert.ok(knowledgeServer);
+
+  const toolNames = knowledgeServer.toolGroups.flatMap((group) => group.tools.map((tool) => tool.name));
+  assert.ok(toolNames.indexOf("knowledge_search") < toolNames.indexOf("knowledge_index"));
+
+  const hints = (knowledgeServer.promptHints ?? []).join("\n");
+  assert.match(hints, /knowledge_search.*knowledge_read/s);
+  assert.match(hints, /Do not use `mcp__tech-cc-hub-knowledge__knowledge_index` to answer a question/);
+  assert.match(hints, /before generic `Read`\/`Grep`\/`Task`/);
+});
