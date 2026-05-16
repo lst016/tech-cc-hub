@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowLeft,
   BookOpen,
   ChevronDown,
   ChevronRight,
@@ -19,6 +20,7 @@ import type { ApiConfigProfile, SettingsPageId } from "../types";
 import MDContent from "../render/markdown";
 
 type KnowledgePanelProps = {
+  onBack?: () => void;
   onOpenSettings?: (pageId?: SettingsPageId) => void;
 };
 
@@ -595,7 +597,7 @@ function WikiPreviewPlaceholder({ title }: { title?: string }) {
   );
 }
 
-export function KnowledgePanel({ onOpenSettings }: KnowledgePanelProps) {
+export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) {
   const apiConfigSettings = useAppStore((s) => s.apiConfigSettings);
   const sessions = useAppStore((s) => s.sessions);
   const gitRefreshCacheRef = useRef<Record<string, string>>({});
@@ -1350,7 +1352,19 @@ export function KnowledgePanel({ onOpenSettings }: KnowledgePanelProps) {
     <section className="flex h-full min-h-0 bg-white text-slate-900">
       <aside className="flex w-[300px] shrink-0 flex-col border-r border-slate-200 bg-white">
         <div className="border-b border-slate-200 px-4 py-3">
-          <div className="text-base font-semibold">知识</div>
+          <div className="flex items-center gap-2">
+            {onBack ? (
+              <button
+                type="button"
+                aria-label="返回聊天"
+                onClick={onBack}
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+            ) : null}
+            <div className="text-base font-semibold">知识</div>
+          </div>
           <div className="mt-4 flex gap-2">
             <button
               type="button"

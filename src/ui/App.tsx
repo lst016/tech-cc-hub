@@ -1557,6 +1557,7 @@ function App() {
           {showKnowledgePanel ? (
             <div className="flex-1 min-h-0 overflow-hidden">
               <KnowledgePanel
+                onBack={() => setShowKnowledgePanel(false)}
                 onOpenSettings={openSettings}
               />
             </div>
