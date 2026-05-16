@@ -126,6 +126,17 @@ function handleMarkdownLinkClick(event: MouseEvent<HTMLAnchorElement>, href?: st
   }));
 }
 
+function handleInlineCodeClick(event: MouseEvent<HTMLButtonElement>, sourceFile: PreviewOpenFileDetail): void {
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  window.dispatchEvent(new CustomEvent<PreviewOpenFileDetail>(PREVIEW_OPEN_FILE_EVENT, {
+    detail: sourceFile,
+  }));
+}
+
 function MarkdownLink({
   href,
   className,
@@ -419,12 +430,25 @@ function MDContent({ text, sourceRoot }: { text: string; sourceRoot?: string }) 
         code: (props) => {
           const { children, className, ...rest } = props;
           const match = /language-(\w+)/.exec(className || "");
-          const isInline = !match && !String(children).includes("\n");
+          const rawCode = extractText(children).trim();
+          const isInline = !match && !rawCode.includes("\n");
+          const sourceFile = isInline ? parseSourceFileLink(rawCode, sourceRoot) : null;
 
           return isInline ? (
-            <code className="rounded bg-surface-tertiary px-1.5 py-0.5 text-accent font-mono text-base [overflow-wrap:anywhere]" {...rest}>
-              {children}
-            </code>
+            sourceFile ? (
+              <button
+                type="button"
+                className="inline rounded bg-surface-tertiary px-1.5 py-0.5 text-left font-mono text-base text-accent underline-offset-2 transition [overflow-wrap:anywhere] hover:bg-accent/10 hover:underline"
+                onClick={(event) => handleInlineCodeClick(event, sourceFile)}
+                title="打开源码文件"
+              >
+                <code {...rest}>{children}</code>
+              </button>
+            ) : (
+              <code className="rounded bg-surface-tertiary px-1.5 py-0.5 text-accent font-mono text-base [overflow-wrap:anywhere]" {...rest}>
+                {children}
+              </code>
+            )
           ) : (
             <code className={`${className} font-mono`} {...rest}>
               {children}

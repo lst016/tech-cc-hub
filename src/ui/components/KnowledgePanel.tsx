@@ -1,10 +1,11 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
   BookOpen,
   ChevronDown,
   ChevronRight,
+  FileText,
   Folder,
   FolderPlus,
   GitBranch,
@@ -19,6 +20,7 @@ import {
 import { useAppStore } from "../store/useAppStore";
 import type { ApiConfigProfile, SettingsPageId } from "../types";
 import MDContent from "../render/markdown";
+import { PREVIEW_OPEN_FILE_EVENT, type PreviewOpenFileDetail } from "../events";
 
 type KnowledgePanelProps = {
   onBack?: () => void;
@@ -61,10 +63,25 @@ type KnowledgeDocument = {
 
 type KnowledgeOpenTab = {
   id: string;
-  kind: "workspace" | "document";
+  kind: "workspace" | "document" | "source";
   workspaceKey: string;
   documentId?: string;
+  sourcePath?: string;
+  startLine?: number;
   title: string;
+};
+
+type SourcePreviewState = {
+  tabId: string;
+  workspaceKey: string;
+  filePath: string;
+  relativePath: string;
+  title: string;
+  startLine?: number;
+  content?: string;
+  language?: string;
+  loading: boolean;
+  error?: string;
 };
 
 type WikiTreeNode = {
@@ -285,6 +302,37 @@ function workspaceTabId(workspaceKey: string): string {
 
 function documentTabId(workspaceKey: string, documentId: string): string {
   return `document:${workspaceKey}:${documentId}`;
+}
+
+function sourceTabId(workspaceKey: string, filePath: string): string {
+  return `source:${workspaceKey}:${filePath}`;
+}
+
+function fileNameFromPath(filePath: string): string {
+  const parts = filePath.split(/[\\/]+/).filter(Boolean);
+  return parts.at(-1) || filePath;
+}
+
+function normalizePathForCompare(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function relativePathFromWorkspace(workspaceRoot: string, filePath: string): string {
+  const root = normalizePathForCompare(workspaceRoot);
+  const target = normalizePathForCompare(filePath);
+  return target === root
+    ? fileNameFromPath(filePath)
+    : target.startsWith(`${root}/`)
+      ? target.slice(root.length + 1)
+      : filePath;
+}
+
+function findWorkspaceForSource(workspaces: KnowledgeWorkspace[], filePath: string, fallback?: KnowledgeWorkspace): KnowledgeWorkspace | undefined {
+  const normalizedFilePath = normalizePathForCompare(filePath);
+  return workspaces.find((workspace) => {
+    const root = normalizePathForCompare(workspace.cwd ?? workspace.key);
+    return Boolean(root && (normalizedFilePath === root || normalizedFilePath.startsWith(`${root}/`)));
+  }) ?? fallback;
 }
 
 function resolveHeadFromSnapshot(snapshot: import("../types").UiGitWorkbenchSnapshot): KnowledgeGitState {
@@ -597,6 +645,69 @@ function WikiDocumentView({ document, generation }: { document: KnowledgeDocumen
   );
 }
 
+function SourceFileView({ preview }: { preview?: SourcePreviewState }) {
+  const targetLineRef = useRef<HTMLDivElement | null>(null);
+  const lines = useMemo(() => (preview?.content ?? "").replace(/\r\n/g, "\n").split("\n"), [preview?.content]);
+
+  useEffect(() => {
+    if (!preview?.startLine || !preview.content) return;
+    window.requestAnimationFrame(() => {
+      targetLineRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+  }, [preview?.content, preview?.startLine]);
+
+  if (!preview) {
+    return (
+      <article className="w-full max-w-4xl rounded-xl border border-slate-200 bg-white px-7 py-10 text-center shadow-sm">
+        <FileText className="mx-auto h-8 w-8 text-slate-300" />
+        <div className="mt-4 text-base font-semibold text-slate-700">正在打开源码文件</div>
+      </article>
+    );
+  }
+
+  return (
+    <article className="w-full max-w-5xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Source</div>
+          <h3 className="mt-1 truncate text-lg font-semibold text-slate-950">{preview.title}</h3>
+          <div className="mt-1 truncate font-mono text-xs text-slate-400" title={preview.filePath}>
+            {preview.relativePath}
+            {preview.startLine ? `#L${preview.startLine}` : ""}
+          </div>
+        </div>
+        {preview.language && (
+          <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
+            {preview.language}
+          </span>
+        )}
+      </div>
+      {preview.loading ? (
+        <div className="flex min-h-72 items-center justify-center text-sm font-medium text-slate-400">正在读取文件...</div>
+      ) : preview.error ? (
+        <div className="px-5 py-6 text-sm leading-6 text-red-600">{preview.error}</div>
+      ) : (
+        <div className="max-h-[68vh] overflow-auto bg-slate-950 py-4 text-[13px] leading-5 text-slate-100">
+          {lines.map((line, index) => {
+            const lineNumber = index + 1;
+            const active = preview.startLine === lineNumber;
+            return (
+              <div
+                key={lineNumber}
+                ref={active ? targetLineRef : undefined}
+                className={`grid grid-cols-[4rem_minmax(0,1fr)] gap-3 px-4 font-mono ${active ? "bg-amber-300/20 text-amber-50" : "text-slate-100"}`}
+              >
+                <span className={`select-none text-right ${active ? "text-amber-200" : "text-slate-500"}`}>{lineNumber}</span>
+                <code className="min-w-0 whitespace-pre-wrap break-words">{line || " "}</code>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </article>
+  );
+}
+
 function WikiPreviewPlaceholder({ title }: { title?: string }) {
   return (
     <div className="w-full max-w-3xl rounded-xl border border-dashed border-slate-200 bg-white px-7 py-10 text-center">
@@ -621,6 +732,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
   const [expandedWorkspaceKeys, setExpandedWorkspaceKeys] = useState<Set<string>>(() => new Set());
   const [openWikiTabs, setOpenWikiTabs] = useState<KnowledgeOpenTab[]>([]);
   const [activeWikiTabId, setActiveWikiTabId] = useState<string>("");
+  const [sourcePreviewByTabId, setSourcePreviewByTabId] = useState<Record<string, SourcePreviewState>>({});
   const [systemWorkspace, setSystemWorkspace] = useState<string>("");
   const [manualWorkspacePaths, setManualWorkspacePaths] = useState<string[]>(() => readStoredWorkspacePaths());
   const [hiddenWorkspaceKeys, setHiddenWorkspaceKeys] = useState<Set<string>>(() => readStoredWorkspaceKeySet(KNOWLEDGE_HIDDEN_WORKSPACES_STORAGE_KEY));
@@ -739,7 +851,9 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
   const activeDocument = activeWikiTab?.kind === "document"
     ? selectedDocuments.find((document) => document.id === activeWikiTab.documentId) ?? selectedDocument
     : undefined;
+  const activeSourcePreview = activeWikiTab?.kind === "source" ? sourcePreviewByTabId[activeWikiTab.id] : undefined;
   const showingDocumentPreview = Boolean(activeWikiTab?.kind === "document" || selectedDocumentId);
+  const showingSourcePreview = activeWikiTab?.kind === "source";
   const previewDocument = activeDocument ?? selectedDocument;
   const selectedPreviewTitle = activeWikiTab?.title ?? selectedDocument?.title;
   const selectedGitState = selectedWorkspace ? gitByWorkspace[selectedWorkspace.key] : undefined;
@@ -817,6 +931,127 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
     activateWikiTab(tab);
   };
 
+  const openSourceTab = useCallback((detail: PreviewOpenFileDetail) => {
+    const fallbackWorkspace = activeWikiTab?.workspaceKey
+      ? workspaces.find((workspace) => workspace.key === activeWikiTab.workspaceKey)
+      : selectedWorkspace;
+    const targetWorkspace = findWorkspaceForSource(workspaces, detail.filePath, fallbackWorkspace ?? selectedWorkspace);
+    const workspaceRoot = targetWorkspace?.cwd ?? targetWorkspace?.key ?? "";
+    if (!targetWorkspace || !workspaceRoot) {
+      setWorkspaceError("没有找到源码文件所属的知识库工作区。");
+      return;
+    }
+
+    const tabId = sourceTabId(targetWorkspace.key, detail.filePath);
+    const title = fileNameFromPath(detail.filePath);
+    const tab: KnowledgeOpenTab = {
+      id: tabId,
+      kind: "source",
+      workspaceKey: targetWorkspace.key,
+      sourcePath: detail.filePath,
+      startLine: detail.startLine,
+      title,
+    };
+    const relativePath = relativePathFromWorkspace(workspaceRoot, detail.filePath);
+
+    setOpenWikiTabs((current) => current.some((item) => item.id === tab.id) ? current : [...current, tab]);
+    activateWikiTab(tab);
+    setSourcePreviewByTabId((current) => ({
+      ...current,
+      [tabId]: {
+        ...(current[tabId] ?? {}),
+        tabId,
+        workspaceKey: targetWorkspace.key,
+        filePath: detail.filePath,
+        relativePath,
+        title,
+        startLine: detail.startLine,
+        loading: true,
+        error: undefined,
+      },
+    }));
+
+    const electron = (window as unknown as {
+      electron?: {
+        readPreviewFile?: (input: { cwd: string; path: string }) => Promise<{
+          success?: boolean;
+          content?: string;
+          path?: string;
+          language?: string;
+          error?: string;
+        }>;
+      };
+    }).electron;
+
+    const readPromise = electron?.readPreviewFile?.({ cwd: workspaceRoot, path: detail.filePath });
+    if (!readPromise) {
+      setSourcePreviewByTabId((current) => ({
+        ...current,
+        [tabId]: {
+          ...(current[tabId] ?? {
+            tabId,
+            workspaceKey: targetWorkspace.key,
+            filePath: detail.filePath,
+            relativePath,
+            title,
+          }),
+          loading: false,
+          error: "当前运行时没有文件预览 IPC，无法打开源码文件。",
+        },
+      }));
+      return;
+    }
+
+    void readPromise
+      .then((result) => {
+        setSourcePreviewByTabId((current) => ({
+          ...current,
+          [tabId]: {
+            ...(current[tabId] ?? {
+              tabId,
+              workspaceKey: targetWorkspace.key,
+              filePath: detail.filePath,
+              relativePath,
+              title,
+            }),
+            filePath: result.path || detail.filePath,
+            relativePath: relativePathFromWorkspace(workspaceRoot, result.path || detail.filePath),
+            content: result.success ? result.content ?? "" : undefined,
+            language: result.language,
+            loading: false,
+            error: result.success ? undefined : result.error || "源码文件读取失败。",
+          },
+        }));
+      })
+      .catch((error) => {
+        setSourcePreviewByTabId((current) => ({
+          ...current,
+          [tabId]: {
+            ...(current[tabId] ?? {
+              tabId,
+              workspaceKey: targetWorkspace.key,
+              filePath: detail.filePath,
+              relativePath,
+              title,
+            }),
+            loading: false,
+            error: error instanceof Error ? error.message : "源码文件读取失败。",
+          },
+        }));
+      });
+  }, [activeWikiTab?.workspaceKey, selectedWorkspace, workspaces]);
+
+  useEffect(() => {
+    const handlePreviewOpenFile = (event: Event) => {
+      const detail = (event as CustomEvent<PreviewOpenFileDetail>).detail;
+      if (!detail?.filePath) return;
+      openSourceTab(detail);
+    };
+
+    window.addEventListener(PREVIEW_OPEN_FILE_EVENT, handlePreviewOpenFile);
+    return () => window.removeEventListener(PREVIEW_OPEN_FILE_EVENT, handlePreviewOpenFile);
+  }, [openSourceTab]);
+
   const loadWorkspaceDocuments = async (workspaceKey: string): Promise<KnowledgeDocument[]> => {
     const result = await invokeKnowledge<KnowledgeDocumentsResponse>("knowledge:list-documents", { workspaceKey });
     const documents = (result.documents ?? [])
@@ -829,6 +1064,12 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
   const closeWikiTab = (tabId: string) => {
     const index = openWikiTabs.findIndex((tab) => tab.id === tabId);
     const nextTabs = openWikiTabs.filter((tab) => tab.id !== tabId);
+    setSourcePreviewByTabId((current) => {
+      if (!current[tabId]) return current;
+      const next = { ...current };
+      delete next[tabId];
+      return next;
+    });
     setOpenWikiTabs(nextTabs);
     if (activeWikiTabId !== tabId) return;
     const fallbackTab = nextTabs[Math.max(0, index - 1)] ?? nextTabs[0];
@@ -1172,6 +1413,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
     if (!selectedWorkspace) {
       if (activeWikiTabId) setActiveWikiTabId("");
       if (openWikiTabs.length > 0) setOpenWikiTabs([]);
+      setSourcePreviewByTabId({});
       return;
     }
     if (openWikiTabs.length > 0 || activeWikiTabId) return;
@@ -1611,7 +1853,11 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                         className="flex h-full min-w-0 flex-1 items-center gap-2 px-3 text-left"
                         aria-current={active ? "page" : undefined}
                       >
-                        <BookOpen className="h-4 w-4 shrink-0 text-slate-500" />
+                        {tab.kind === "source" ? (
+                          <FileText className="h-4 w-4 shrink-0 text-slate-500" />
+                        ) : (
+                          <BookOpen className="h-4 w-4 shrink-0 text-slate-500" />
+                        )}
                         <span className="min-w-0 truncate">{tab.title}</span>
                       </button>
                       <button
@@ -1636,8 +1882,8 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-dashed border-slate-200 text-slate-300">
                 <Network className="h-7 w-7" />
               </div>
-                    <h2 className="mt-5 text-2xl font-semibold">新增知识库</h2>
-                    <p className="mt-2 text-sm leading-6 text-slate-500">系统工作区不会默认进入知识库，请手动选择要生成 Repo Wiki 的项目目录。</p>
+              <h2 className="mt-5 text-2xl font-semibold">新增知识库</h2>
+              <p className="mt-2 text-sm leading-6 text-slate-500">系统工作区不会默认进入知识库，请手动选择要生成 Repo Wiki 的项目目录。</p>
               <button
                 type="button"
                 onClick={addWorkspace}
@@ -1648,18 +1894,20 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
               </button>
             </div>
           ) : (
-          <div className={`flex w-full flex-col ${showingDocumentPreview ? "max-w-4xl" : "max-w-2xl items-center"}`}>
-            {showingDocumentPreview ? (
-              previewDocument ? (
-                <WikiDocumentView document={previewDocument} generation={generation} />
+            <div className={`flex w-full flex-col ${showingDocumentPreview || showingSourcePreview ? "max-w-5xl" : "max-w-2xl items-center"}`}>
+              {showingSourcePreview ? (
+                <SourceFileView preview={activeSourcePreview} />
+              ) : showingDocumentPreview ? (
+                previewDocument ? (
+                  <WikiDocumentView document={previewDocument} generation={generation} />
+                ) : (
+                  <WikiPreviewPlaceholder title={selectedPreviewTitle} />
+                )
               ) : (
-                <WikiPreviewPlaceholder title={selectedPreviewTitle} />
-              )
-            ) : (
-              <>
-                {generation.status !== "completed" ? (
-                  <>
-                    <div className="grid h-36 w-36 grid-cols-3 grid-rows-3 gap-2 opacity-45">
+                <>
+                  {generation.status !== "completed" ? (
+                    <>
+                      <div className="grid h-36 w-36 grid-cols-3 grid-rows-3 gap-2 opacity-45">
                       {Array.from({ length: 9 }).map((_, index) => (
                         <div key={index} className={`rounded border border-dashed border-slate-200 ${index === 4 ? "flex items-center justify-center border-solid bg-white shadow-sm" : ""}`}>
                           {index === 4 ? <Network className="h-7 w-7 text-slate-300" /> : null}
