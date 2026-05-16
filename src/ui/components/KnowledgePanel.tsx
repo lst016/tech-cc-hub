@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   BookOpen,
   ChevronDown,
+  ChevronRight,
   FolderPlus,
   GitBranch,
   Lightbulb,
@@ -55,6 +56,14 @@ type KnowledgeDocument = {
   content: string;
   sortOrder: number;
   updatedAt: number;
+};
+
+type KnowledgeOpenTab = {
+  id: string;
+  kind: "workspace" | "document";
+  workspaceKey: string;
+  documentId?: string;
+  title: string;
 };
 
 type KnowledgeListResponse = {
@@ -253,6 +262,14 @@ function createIdleGeneration(): GenerationState {
   };
 }
 
+function workspaceTabId(workspaceKey: string): string {
+  return `workspace:${workspaceKey}`;
+}
+
+function documentTabId(workspaceKey: string, documentId: string): string {
+  return `document:${workspaceKey}:${documentId}`;
+}
+
 function resolveHeadFromSnapshot(snapshot: import("../types").UiGitWorkbenchSnapshot): KnowledgeGitState {
   const currentBranch = snapshot.status.currentBranch;
   const headCommit = snapshot.history.find((commit) => (
@@ -364,7 +381,7 @@ function SectionTree({
   active: boolean;
   documents: KnowledgeDocument[];
   selectedDocumentId: string;
-  onSelectDocument: (documentId: string) => void;
+  onSelectDocument: (document: KnowledgeDocument) => void;
 }) {
   if (!active || documents.length === 0) {
     return null;
@@ -393,7 +410,8 @@ function SectionTree({
               <button
                 type="button"
                 key={document.id}
-                onClick={() => onSelectDocument(document.id)}
+                aria-label={`打开文档 ${document.title}`}
+                onClick={() => onSelectDocument(document)}
                 className={`block w-full truncate rounded-lg px-2 py-1 text-left text-sm transition ${
                   selectedDocumentId === document.id
                     ? "bg-slate-100 font-semibold text-slate-900"
@@ -452,6 +470,9 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
   const [activeTab, setActiveTab] = useState<"repo" | "memory">("repo");
   const [selectedWorkspaceKey, setSelectedWorkspaceKey] = useState<string>("");
   const [selectedDocumentId, setSelectedDocumentId] = useState<string>("");
+  const [expandedWorkspaceKeys, setExpandedWorkspaceKeys] = useState<Set<string>>(() => new Set());
+  const [openWikiTabs, setOpenWikiTabs] = useState<KnowledgeOpenTab[]>([]);
+  const [activeWikiTabId, setActiveWikiTabId] = useState<string>("");
   const [systemWorkspace, setSystemWorkspace] = useState<string>("");
   const [manualWorkspacePaths, setManualWorkspacePaths] = useState<string[]>(() => readStoredWorkspacePaths());
   const [hiddenWorkspaceKeys, setHiddenWorkspaceKeys] = useState<Set<string>>(() => readStoredWorkspaceKeySet(KNOWLEDGE_HIDDEN_WORKSPACES_STORAGE_KEY));
@@ -540,10 +561,17 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
     ? generationByWorkspace[selectedWorkspace.key] ?? createIdleGeneration()
     : createIdleGeneration();
   const selectedDocuments = selectedWorkspace ? documentsByWorkspace[selectedWorkspace.key] ?? [] : [];
-  const selectedDocument = selectedDocuments.find((document) => document.id === selectedDocumentId)
-    ?? (selectedDocumentId ? undefined : selectedDocuments[0]);
-  const previewDocument = selectedDocument;
-  const selectedPreviewTitle = selectedDocument?.title;
+  const selectedDocument = selectedDocumentId
+    ? selectedDocuments.find((document) => document.id === selectedDocumentId)
+    : undefined;
+  const activeWikiTab = openWikiTabs.find((tab) => tab.id === activeWikiTabId);
+  const activeDocument = activeWikiTab?.kind === "document"
+    ? selectedDocuments.find((document) => document.id === activeWikiTab.documentId) ?? selectedDocument
+    : undefined;
+  const activeHeaderTitle = activeWikiTab?.title ?? workspaceName;
+  const showingDocumentPreview = Boolean(activeWikiTab?.kind === "document");
+  const previewDocument = activeDocument;
+  const selectedPreviewTitle = activeWikiTab?.title ?? selectedDocument?.title;
   const selectedGitState = selectedWorkspace ? gitByWorkspace[selectedWorkspace.key] : undefined;
   const gitReady = Boolean(selectedGitState?.hasGit && selectedGitState.commitId);
   const canStartGeneration = Boolean(selectedWorkspace);
@@ -580,6 +608,62 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
     setStoredWorkspaces(nextWorkspaces);
     setHiddenWorkspaceKeys(new Set());
     setGenerationByWorkspace(nextGenerations);
+  };
+
+  const activateWikiTab = (tab: KnowledgeOpenTab) => {
+    setActiveWikiTabId(tab.id);
+    setSelectedWorkspaceKey(tab.workspaceKey);
+    setSelectedDocumentId(tab.kind === "document" ? tab.documentId ?? "" : "");
+  };
+
+  const openWorkspaceTab = (workspace: KnowledgeWorkspace) => {
+    const tab: KnowledgeOpenTab = {
+      id: workspaceTabId(workspace.key),
+      kind: "workspace",
+      workspaceKey: workspace.key,
+      title: workspace.name,
+    };
+    setOpenWikiTabs((current) => current.some((item) => item.id === tab.id) ? current : [...current, tab]);
+    activateWikiTab(tab);
+  };
+
+  const openDocumentTab = (workspace: KnowledgeWorkspace, document: KnowledgeDocument) => {
+    const tab: KnowledgeOpenTab = {
+      id: documentTabId(workspace.key, document.id),
+      kind: "document",
+      workspaceKey: workspace.key,
+      documentId: document.id,
+      title: document.title,
+    };
+    setOpenWikiTabs((current) => current.some((item) => item.id === tab.id) ? current : [...current, tab]);
+    activateWikiTab(tab);
+  };
+
+  const closeWikiTab = (tabId: string) => {
+    const index = openWikiTabs.findIndex((tab) => tab.id === tabId);
+    const nextTabs = openWikiTabs.filter((tab) => tab.id !== tabId);
+    setOpenWikiTabs(nextTabs);
+    if (activeWikiTabId !== tabId) return;
+    const fallbackTab = nextTabs[Math.max(0, index - 1)] ?? nextTabs[0];
+    if (fallbackTab) {
+      activateWikiTab(fallbackTab);
+    } else {
+      setActiveWikiTabId("");
+      setSelectedDocumentId("");
+    }
+  };
+
+  const handleWorkspaceClick = (workspace: KnowledgeWorkspace) => {
+    openWorkspaceTab(workspace);
+    setExpandedWorkspaceKeys((current) => {
+      const next = new Set(current);
+      if (next.has(workspace.key)) {
+        next.delete(workspace.key);
+      } else {
+        next.add(workspace.key);
+      }
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -705,7 +789,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
         setDocumentsByWorkspace((current) => ({ ...current, [workspaceKey]: documents }));
         if (documents.length > 0) {
           completedDocumentSeedRef.current.add(workspaceKey);
-          setSelectedDocumentId((current) => documents.some((document) => document.id === current) ? current : documents[0]!.id);
+          setSelectedDocumentId((current) => documents.some((document) => document.id === current) ? current : "");
         }
       })
       .catch((error) => {
@@ -725,8 +809,8 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
       if (selectedDocumentId) setSelectedDocumentId("");
       return;
     }
-    if (selectedDocuments.length > 0 && !selectedDocuments.some((document) => document.id === selectedDocumentId)) {
-      setSelectedDocumentId(selectedDocuments[0]!.id);
+    if (selectedDocumentId && selectedDocuments.length > 0 && !selectedDocuments.some((document) => document.id === selectedDocumentId)) {
+      setSelectedDocumentId("");
     }
   }, [generation.status, selectedDocumentId, selectedDocuments, selectedWorkspace]);
 
@@ -863,6 +947,23 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
   }, [selectedWorkspaceKey, workspaces]);
 
   useEffect(() => {
+    if (!selectedWorkspace) {
+      if (activeWikiTabId) setActiveWikiTabId("");
+      if (openWikiTabs.length > 0) setOpenWikiTabs([]);
+      return;
+    }
+    if (openWikiTabs.length > 0 || activeWikiTabId) return;
+    const tab: KnowledgeOpenTab = {
+      id: workspaceTabId(selectedWorkspace.key),
+      kind: "workspace",
+      workspaceKey: selectedWorkspace.key,
+      title: selectedWorkspace.name,
+    };
+    setOpenWikiTabs([tab]);
+    setActiveWikiTabId(tab.id);
+  }, [activeWikiTabId, openWikiTabs.length, selectedWorkspace]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       setGenerationByWorkspace((currentByWorkspace) => {
         let changed = false;
@@ -900,8 +1001,19 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
     }
     const git = gitByWorkspace[selectedWorkspace.key];
     const workspaceKey = selectedWorkspace.key;
+    const workspaceTab: KnowledgeOpenTab = {
+      id: workspaceTabId(workspaceKey),
+      kind: "workspace",
+      workspaceKey,
+      title: selectedWorkspace.name,
+    };
     completedDocumentSeedRef.current.delete(selectedWorkspace.key);
     backendGenerationInFlightRef.current.add(workspaceKey);
+    setOpenWikiTabs((current) => {
+      const next = current.filter((tab) => tab.workspaceKey !== workspaceKey || tab.kind === "workspace");
+      return next.some((tab) => tab.id === workspaceTab.id) ? next : [...next, workspaceTab];
+    });
+    setActiveWikiTabId(workspaceTab.id);
     setSelectedDocumentId("");
     setDocumentsByWorkspace((current) => {
       const next = { ...current };
@@ -943,9 +1055,6 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
           ...current,
           [workspaceKey]: documents,
         }));
-        if (documents.length > 0) {
-          setSelectedDocumentId(documents[0]!.id);
-        }
         if (!result.success) {
           setWorkspaceError(result.error || result.report?.error || result.report?.message || "Repo Wiki 生成失败。");
         }
@@ -1057,6 +1166,17 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
       delete next[workspace.key];
       return next;
     });
+    const remainingTabs = openWikiTabs.filter((tab) => tab.workspaceKey !== workspace.key);
+    setOpenWikiTabs(remainingTabs);
+    if (activeWikiTab?.workspaceKey === workspace.key) {
+      const fallbackTab = remainingTabs[0];
+      if (fallbackTab) {
+        activateWikiTab(fallbackTab);
+      } else {
+        setActiveWikiTabId("");
+        setSelectedDocumentId("");
+      }
+    }
     if (selectedWorkspaceKey === workspace.key) {
       setSelectedWorkspaceKey("");
     }
@@ -1131,6 +1251,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
               const workspaceGeneration = generationByWorkspace[workspace.key] ?? createIdleGeneration();
               const workspaceGit = gitByWorkspace[workspace.key];
               const selected = workspace.key === selectedWorkspace?.key;
+              const expanded = expandedWorkspaceKeys.has(workspace.key);
               const needsUpdate = Boolean(
                 workspaceGit?.hasGit &&
                 workspaceGit.commitId &&
@@ -1151,10 +1272,14 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                   <div className={`group flex items-center rounded-lg transition-colors ${selected ? "bg-slate-100" : "hover:bg-slate-50"}`}>
                     <button
                       type="button"
+                      aria-label={`打开工作区 ${workspace.name}`}
                       className="flex min-w-0 flex-1 items-center justify-between px-3 py-2 text-left"
-                      onClick={() => setSelectedWorkspaceKey(workspace.key)}
+                      onClick={() => handleWorkspaceClick(workspace)}
                     >
                       <div className="flex min-w-0 items-center gap-3">
+                        <span className="shrink-0 text-slate-400">
+                          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        </span>
                         <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm">
                           <Network className="h-4 w-4" />
                         </span>
@@ -1176,12 +1301,12 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
-                  {activeTab === "repo" && selected && workspaceGeneration.status !== "idle" && (
+                  {activeTab === "repo" && expanded && workspaceGeneration.status !== "idle" && (
                     <SectionTree
                       active={workspaceGeneration.status === "completed"}
                       documents={documentsByWorkspace[workspace.key] ?? []}
                       selectedDocumentId={selectedDocumentId}
-                      onSelectDocument={setSelectedDocumentId}
+                      onSelectDocument={(document) => openDocumentTab(workspace, document)}
                     />
                   )}
                 </div>
@@ -1195,16 +1320,48 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
       <main className="flex min-w-0 flex-1 flex-col bg-white">
         <header className="border-b border-slate-200 bg-white">
           <div className="flex h-12 items-center justify-between px-4">
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 flex-1 items-center gap-2">
               <button className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" type="button" onClick={onBack} aria-label="返回聊天">
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <div className="flex h-12 items-center border-b-2 border-slate-950 px-3 text-sm font-semibold">
-                <BookOpen className="mr-2 h-4 w-4 text-slate-500" />
-                {workspaceName}
-                <button className="ml-2 rounded p-1 text-slate-400 hover:bg-slate-100" type="button" aria-label="关闭">
-                  <X className="h-4 w-4" />
-                </button>
+              <div className="flex min-w-0 flex-1 items-end self-stretch overflow-x-auto">
+                {openWikiTabs.map((tab) => {
+                  const active = tab.id === activeWikiTabId;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => activateWikiTab(tab)}
+                      className={`group flex h-12 max-w-[240px] shrink-0 items-center gap-2 border-b-2 px-3 text-sm transition ${
+                        active
+                          ? "border-slate-950 bg-white font-semibold text-slate-950"
+                          : "border-transparent bg-slate-50 text-slate-500 hover:bg-white hover:text-slate-800"
+                      }`}
+                    >
+                      <BookOpen className="h-4 w-4 shrink-0 text-slate-500" />
+                      <span className="min-w-0 truncate">{tab.title}</span>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`关闭 ${tab.title}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          closeWikiTab(tab.id);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            closeWikiTab(tab.id);
+                          }
+                        }}
+                        className="ml-auto rounded p-0.5 text-slate-400 opacity-70 hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
             <button className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" type="button" aria-label="更多">
@@ -1212,7 +1369,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
             </button>
           </div>
           <div className="flex items-center gap-2 px-5 py-3">
-            <h1 className="text-lg font-semibold">{workspaceName}</h1>
+            <h1 className="min-w-0 truncate text-lg font-semibold">{activeHeaderTitle}</h1>
             {selectedWorkspace?.cwd && (
               <>
                 <GitBranch className="h-4 w-4 text-slate-400" />
@@ -1247,70 +1404,74 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
               </button>
             </div>
           ) : (
-          <div className={`flex w-full flex-col ${generation.status === "completed" ? "max-w-4xl" : "max-w-2xl items-center"}`}>
-            {generation.status !== "completed" && (
-              <>
-                <div className="grid h-36 w-36 grid-cols-3 grid-rows-3 gap-2 opacity-45">
-                  {Array.from({ length: 9 }).map((_, index) => (
-                    <div key={index} className={`rounded border border-dashed border-slate-200 ${index === 4 ? "flex items-center justify-center border-solid bg-white shadow-sm" : ""}`}>
-                      {index === 4 ? <Network className="h-7 w-7 text-slate-300" /> : null}
-                    </div>
-                  ))}
-                </div>
-
-                <h2 className="mt-3 text-2xl font-semibold">{hasStarted ? workspaceName : "生成你的 Repo Wiki"}</h2>
-              </>
-            )}
-
-            <div className="mt-8 w-full">
-              {hasStarted ? (
-                generation.status === "completed" && previewDocument ? (
-                  <WikiDocumentView document={previewDocument} generation={generation} />
-                ) : generation.status === "completed" ? (
-                  <WikiPreviewPlaceholder title={selectedPreviewTitle} />
-                ) : (
-                  <ProgressBlock state={generation} />
-                )
+          <div className={`flex w-full flex-col ${showingDocumentPreview ? "max-w-4xl" : "max-w-2xl items-center"}`}>
+            {showingDocumentPreview ? (
+              previewDocument ? (
+                <WikiDocumentView document={previewDocument} generation={generation} />
               ) : (
-                <div className="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-                  <div className="grid gap-0 divide-y divide-slate-100">
-                    <div className="flex items-center justify-between py-4">
-                      <div>
-                        <div className="text-sm font-semibold text-slate-700">自动更新</div>
-                        <div className="mt-1 text-sm text-slate-400">
-                          {selectedGitState?.loading
-                            ? "正在读取 Git 信息..."
-                            : gitReady
-                              ? `绑定 ${selectedGitState?.branch || "HEAD"} · ${selectedGitState?.commitShortHash}${selectedGitState?.changedCount ? `，未提交改动 ${selectedGitState.changedCount}` : ""}`
-                              : selectedGitState?.error || "当前目录没有 Git 信息，不支持自动更新。"}
+                <WikiPreviewPlaceholder title={selectedPreviewTitle} />
+              )
+            ) : (
+              <>
+                {generation.status !== "completed" ? (
+                  <>
+                    <div className="grid h-36 w-36 grid-cols-3 grid-rows-3 gap-2 opacity-45">
+                      {Array.from({ length: 9 }).map((_, index) => (
+                        <div key={index} className={`rounded border border-dashed border-slate-200 ${index === 4 ? "flex items-center justify-center border-solid bg-white shadow-sm" : ""}`}>
+                          {index === 4 ? <Network className="h-7 w-7 text-slate-300" /> : null}
+                        </div>
+                      ))}
+                    </div>
+
+                    <h2 className="mt-3 text-2xl font-semibold">{hasStarted ? workspaceName : "生成你的 Repo Wiki"}</h2>
+                  </>
+                ) : (
+                  <h2 className="text-2xl font-semibold">{workspaceName}</h2>
+                )}
+
+                <div className="mt-8 w-full">
+                  {hasStarted ? (
+                    <ProgressBlock state={generation} />
+                  ) : (
+                    <div className="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+                      <div className="grid gap-0 divide-y divide-slate-100">
+                        <div className="flex items-center justify-between py-4">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-700">自动更新</div>
+                            <div className="mt-1 text-sm text-slate-400">
+                              {selectedGitState?.loading
+                                ? "正在读取 Git 信息..."
+                                : gitReady
+                                  ? `绑定 ${selectedGitState?.branch || "HEAD"} · ${selectedGitState?.commitShortHash}${selectedGitState?.changedCount ? `，未提交改动 ${selectedGitState.changedCount}` : ""}`
+                                  : selectedGitState?.error || "当前目录没有 Git 信息，不支持自动更新。"}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={toggleAutoUpdate}
+                            disabled={!gitReady}
+                            aria-label="自动更新"
+                          >
+                            <Toggle checked={gitReady && autoUpdateEnabled} disabled={!gitReady} />
+                          </button>
+                        </div>
+                        <div className="flex items-center justify-between py-4">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-700">自动导出</div>
+                            <div className="mt-1 text-sm text-slate-400">开启后，生成的 RepoWiki 将自动导出到项目的 .tech/repowiki 目录下。</div>
+                          </div>
+                          <Toggle checked />
+                        </div>
+                        <div className="flex items-center justify-between py-4">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-700">引用</div>
+                            <div className="mt-1 text-sm text-slate-400">开启后，可被 Agent 引用。</div>
+                          </div>
+                          <Toggle checked={embeddingReady} disabled={!embeddingReady} />
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={toggleAutoUpdate}
-                        disabled={!gitReady}
-                        aria-label="自动更新"
-                      >
-                        <Toggle checked={gitReady && autoUpdateEnabled} disabled={!gitReady} />
-                      </button>
                     </div>
-                    <div className="flex items-center justify-between py-4">
-                      <div>
-                        <div className="text-sm font-semibold text-slate-700">自动导出</div>
-                        <div className="mt-1 text-sm text-slate-400">开启后，生成的 RepoWiki 将自动导出到项目的 .tech/repowiki 目录下。</div>
-                      </div>
-                      <Toggle checked />
-                    </div>
-                    <div className="flex items-center justify-between py-4">
-                      <div>
-                        <div className="text-sm font-semibold text-slate-700">引用</div>
-                        <div className="mt-1 text-sm text-slate-400">开启后，可被 Agent 引用。</div>
-                      </div>
-                      <Toggle checked={embeddingReady} disabled={!embeddingReady} />
-                    </div>
-                  </div>
-                </div>
-              )}
+                  )}
 
               {!embeddingReady && (
                 <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-amber-700">
@@ -1369,11 +1530,13 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                 onClick={() => onOpenSettings?.("profiles")}
                 className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-slate-500 hover:text-slate-900"
               >
-                <Settings2 className="h-4 w-4" />
-                配置向量模型：{modelState.embeddingModel || "未配置"}
-                {modelState.wikiModel ? ` · Wiki: ${modelState.wikiModel}` : ""}
-              </button>
-            </div>
+                  <Settings2 className="h-4 w-4" />
+                  配置向量模型：{modelState.embeddingModel || "未配置"}
+                  {modelState.wikiModel ? ` · Wiki: ${modelState.wikiModel}` : ""}
+                </button>
+                </div>
+              </>
+            )}
           </div>
           )}
         </div>

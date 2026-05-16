@@ -34,17 +34,24 @@ async function main() {
   await repoWikiTab.waitFor({ state: 'visible', timeout: 10000 });
   await repoWikiTab.click();
 
-  const workspaceButton = page.getByRole('button', { name: /tech-cc-hub/ }).first();
+  const workspaceButton = page.getByRole('button', { name: /打开工作区 tech-cc-hub/ }).first();
   await workspaceButton.waitFor({ state: 'visible', timeout: 10000 });
   await workspaceButton.click();
   await page.waitForTimeout(1000);
 
-  const generatedDoc = page.getByRole('button', { name: /tech-cc-hub 项目概览/ }).first();
+  let bodyText = await page.locator('body').innerText({ timeout: 10000 });
+  for (const expected of ['生成完成', '重新生成']) {
+    if (!bodyText.includes(expected)) {
+      throw new Error(`Knowledge workspace panel missing: ${expected}`);
+    }
+  }
+
+  const generatedDoc = page.getByRole('button', { name: /打开文档 tech-cc-hub 项目概览/ }).first();
   await generatedDoc.waitFor({ state: 'visible', timeout: 10000 });
   await generatedDoc.click();
   await page.waitForTimeout(800);
 
-  const bodyText = await page.locator('body').innerText({ timeout: 10000 });
+  bodyText = await page.locator('body').innerText({ timeout: 10000 });
   for (const expected of ['项目概览', 'Agent 快速定位', '关键工作流', '模块']) {
     if (!bodyText.includes(expected)) {
       throw new Error(`Knowledge UI missing generated content: ${expected}`);
@@ -66,6 +73,15 @@ async function main() {
   }
   if (!bodyText.includes('已完成')) {
     throw new Error('Knowledge UI does not show completed generation status');
+  }
+  if (await page.getByRole('button', { name: /关闭 tech-cc-hub 项目概览/ }).count() < 1) {
+    throw new Error('Knowledge UI did not open the document in a closable tab');
+  }
+
+  await workspaceButton.click();
+  await page.waitForTimeout(500);
+  if (await generatedDoc.isVisible().catch(() => false)) {
+    throw new Error('Knowledge workspace tree did not collapse after clicking the workspace row again');
   }
 
   const ignoredLogPatterns = [
