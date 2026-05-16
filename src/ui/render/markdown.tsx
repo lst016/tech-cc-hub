@@ -1,5 +1,7 @@
 import { isValidElement, memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { AnchorHTMLAttributes, MouseEvent, ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { Maximize2, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
@@ -24,6 +26,7 @@ type MermaidApi = {
 let mermaidInitialized = false;
 
 const SOURCE_FILE_EXTENSION_PATTERN = /\.(?:[cm]?[jt]sx?|jsonc?|ya?ml|toml|mdx?|py|sh|zsh|css|scss|html|go|rs|java|kt|swift|sql|vue|svelte|astro)(?::\d+(?:-\d+)?)?$/i;
+const DEFAULT_EXPANDABLE_FRAME_CLASS = "group relative mt-3 overflow-hidden rounded-xl border border-black/8 bg-surface-tertiary";
 
 function stripMarkdownLinkTarget(value: string): string {
   return value.trim().replace(/^<(.+)>$/, "$1").replace(/^file=/i, "");
@@ -157,6 +160,141 @@ function handleInlineCodeClick(
   event.preventDefault();
   event.stopPropagation();
   openSourceFileFromMarkdown(sourceFile, onOpenSourceFile);
+}
+
+function MarkdownBlockLightbox({
+  title,
+  children,
+  onClose,
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose]);
+
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      className="fixed inset-0 z-[2147483647] flex h-dvh w-dvw items-center justify-center bg-slate-950/70 p-6 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="flex h-[min(86vh,880px)] w-[min(92vw,1280px)] min-w-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-white shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-4">
+          <div className="min-w-0 truncate text-sm font-semibold text-slate-900">{title}</div>
+          <button
+            type="button"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+            onClick={onClose}
+            aria-label="关闭放大预览"
+            title="关闭"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto bg-white p-5">
+          {children}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function MarkdownBlockActions({
+  copyLabel,
+  copyText,
+  onExpand,
+}: {
+  copyLabel?: string;
+  copyText?: string;
+  onExpand: () => void;
+}) {
+  return (
+    <div className="absolute right-2 top-2 z-10 flex items-center gap-1 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+      {copyText ? (
+        <button
+          type="button"
+          className="rounded-full border border-black/8 bg-white/90 px-2 py-1 text-[11px] font-semibold text-muted shadow-sm transition hover:text-accent"
+          onClick={(event) => {
+            event.stopPropagation();
+            void copyTextToClipboard(copyText);
+          }}
+        >
+          {copyLabel ?? "复制"}
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/8 bg-white/90 text-muted shadow-sm transition hover:text-accent"
+        onClick={(event) => {
+          event.stopPropagation();
+          onExpand();
+        }}
+        aria-label="放大查看"
+        title="放大查看"
+      >
+        <Maximize2 className="h-3.5 w-3.5" aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+function ExpandableMarkdownBlock({
+  title,
+  copyLabel,
+  copyText,
+  className = DEFAULT_EXPANDABLE_FRAME_CLASS,
+  children,
+  expandedChildren,
+}: {
+  title: string;
+  copyLabel?: string;
+  copyText?: string;
+  className?: string;
+  children: ReactNode;
+  expandedChildren?: ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <>
+      <div className={className} onDoubleClick={() => setExpanded(true)}>
+        <MarkdownBlockActions
+          copyLabel={copyLabel}
+          copyText={copyText}
+          onExpand={() => setExpanded(true)}
+        />
+        {children}
+      </div>
+      {expanded ? (
+        <MarkdownBlockLightbox title={title} onClose={() => setExpanded(false)}>
+          {expandedChildren ?? children}
+        </MarkdownBlockLightbox>
+      ) : null}
+    </>
+  );
 }
 
 function MarkdownLink({
@@ -367,32 +505,41 @@ function MermaidDiagram({ chart }: { chart: string }) {
 
   if (renderState.status === "error") {
     return (
-      <div className="group relative mt-3 overflow-hidden rounded-xl border border-amber-200 bg-amber-50">
-        <button
-          type="button"
-          className="absolute right-2 top-2 z-10 rounded-full border border-amber-200 bg-white/90 px-2 py-1 text-[11px] font-semibold text-amber-700 opacity-0 shadow-sm transition hover:text-amber-900 group-hover:opacity-100"
-          onClick={() => void copyTextToClipboard(normalizedChart)}
-        >
-          复制源码
-        </button>
+      <ExpandableMarkdownBlock
+        title="Mermaid 源码"
+        copyLabel="复制源码"
+        copyText={normalizedChart}
+        className="group relative mt-3 overflow-hidden rounded-xl border border-amber-200 bg-amber-50"
+        expandedChildren={(
+          <pre className="m-0 max-w-none whitespace-pre-wrap rounded-lg bg-amber-50 p-4 text-sm leading-6 text-amber-900 [overflow-wrap:anywhere]">
+            {normalizedChart}
+          </pre>
+        )}
+      >
         <div className="px-3 pt-3 text-xs font-semibold text-amber-800">Mermaid 图渲染失败</div>
         <div className="px-3 pt-1 text-xs leading-5 text-amber-700 [overflow-wrap:anywhere]">{renderState.error}</div>
         <pre className="max-w-full overflow-x-auto whitespace-pre-wrap p-3 pr-20 text-sm text-amber-900 [overflow-wrap:anywhere]">
           {normalizedChart}
         </pre>
-      </div>
+      </ExpandableMarkdownBlock>
     );
   }
 
   return (
-    <div className="group relative mt-3 overflow-x-auto rounded-xl border border-black/8 bg-white p-4 shadow-sm">
-      <button
-        type="button"
-        className="absolute right-2 top-2 z-10 rounded-full border border-black/8 bg-white/90 px-2 py-1 text-[11px] font-semibold text-muted opacity-0 shadow-sm transition hover:text-accent group-hover:opacity-100"
-        onClick={() => void copyTextToClipboard(normalizedChart)}
-      >
-        复制源码
-      </button>
+    <ExpandableMarkdownBlock
+      title="Mermaid 图表"
+      copyLabel="复制源码"
+      copyText={normalizedChart}
+      className="group relative mt-3 overflow-x-auto rounded-xl border border-black/8 bg-white p-4 shadow-sm"
+      expandedChildren={renderState.status === "loading" ? (
+        <div className="flex min-h-64 items-center justify-center text-sm font-medium text-muted">正在渲染 Mermaid 图...</div>
+      ) : (
+        <div
+          className="mermaid-diagram min-w-fit [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-none"
+          dangerouslySetInnerHTML={{ __html: renderState.svg ?? "" }}
+        />
+      )}
+    >
       {renderState.status === "loading" ? (
         <div className="flex min-h-28 items-center justify-center text-sm font-medium text-muted">正在渲染 Mermaid 图...</div>
       ) : (
@@ -402,7 +549,7 @@ function MermaidDiagram({ chart }: { chart: string }) {
           dangerouslySetInnerHTML={{ __html: renderState.svg ?? "" }}
         />
       )}
-    </div>
+    </ExpandableMarkdownBlock>
   );
 }
 
@@ -430,11 +577,25 @@ function MDContent({
         a: (props) => <MarkdownLink {...props} sourceRoot={sourceRoot} onOpenSourceFile={onOpenSourceFile} />,
         strong: (props) => <strong className="text-ink-900 font-semibold" {...props} />,
         em: (props) => <em className="text-ink-800" {...props} />,
-        table: (props) => (
-          <div className="mt-3 max-w-full overflow-x-auto rounded-xl border border-black/8 bg-white">
-            <table className="min-w-full border-collapse text-sm" {...props} />
-          </div>
-        ),
+        table: (props) => {
+          const table = <table className="min-w-full border-collapse text-sm" {...props} />;
+          const expandedTable = <table className="min-w-full border-collapse text-sm" {...props} />;
+          return (
+            <ExpandableMarkdownBlock
+              title="表格预览"
+              copyLabel="复制表格"
+              copyText={extractText(props.children)}
+              className="group relative mt-3 max-w-full overflow-x-auto rounded-xl border border-black/8 bg-white"
+              expandedChildren={(
+                <div className="min-w-fit">
+                  {expandedTable}
+                </div>
+              )}
+            >
+              {table}
+            </ExpandableMarkdownBlock>
+          );
+        },
         th: (props) => <th className="border-b border-black/8 bg-surface-secondary px-3 py-2 text-left font-semibold text-ink-800 [overflow-wrap:anywhere]" {...props} />,
         td: (props) => <td className="border-b border-black/6 px-3 py-2 text-ink-700 [overflow-wrap:anywhere]" {...props} />,
         input: (props) => <input className="mr-2 align-middle accent-[var(--color-accent)]" disabled {...props} />,
@@ -445,21 +606,26 @@ function MDContent({
             return <MermaidDiagram chart={code} />;
           }
           return (
-            <div className="group relative mt-3 overflow-hidden rounded-xl border border-black/8 bg-surface-tertiary">
-              <button
-                type="button"
-                className="absolute right-2 top-2 z-10 rounded-full border border-black/8 bg-white/90 px-2 py-1 text-[11px] font-semibold text-muted opacity-0 shadow-sm transition hover:text-accent group-hover:opacity-100"
-                onClick={() => void copyTextToClipboard(code)}
-              >
-                复制代码
-              </button>
+            <ExpandableMarkdownBlock
+              title={language ? `${language} 代码` : "代码块"}
+              copyLabel="复制代码"
+              copyText={code}
+              expandedChildren={(
+                <pre
+                  className="m-0 max-w-none whitespace-pre-wrap rounded-lg bg-surface-tertiary p-4 text-sm leading-6 text-ink-700 [overflow-wrap:anywhere]"
+                  {...props}
+                >
+                  {children}
+                </pre>
+              )}
+            >
               <pre
                 className="max-w-full overflow-x-auto whitespace-pre-wrap p-3 pr-20 text-sm text-ink-700 [overflow-wrap:anywhere]"
                 {...props}
               >
                 {children}
               </pre>
-            </div>
+            </ExpandableMarkdownBlock>
           );
         },
         code: (props) => {
