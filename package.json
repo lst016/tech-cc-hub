@@ -16,6 +16,7 @@
 		"qa:chat-ui": "node scripts/qa/chat-ui-smoke.cjs",
 		"qa:knowledge": "node scripts/qa/knowledge-engine-smoke.mjs",
 		"qa:knowledge-chat": "node scripts/qa/knowledge-chat-injection-smoke.mjs",
+		"qa:knowledge-links": "node scripts/qa/knowledge-links-smoke.mjs",
 		"qa:knowledge-ui": "node scripts/qa/knowledge-ui-smoke.cjs",
 		"qa:preview": "node scripts/qa/preview-workbench-smoke.cjs",
 		"qa:window:list": "bash scripts/qa/window-id-tools.sh list",
