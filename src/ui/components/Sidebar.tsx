@@ -43,6 +43,13 @@ export function Sidebar({
   const [hasUpdate, setHasUpdate] = useState(false);
   const previousSessionStatusRef = useRef<Record<string, string | undefined>>({});
   const [unreadSessionIds, setUnreadSessionIds] = useState<Record<string, "completed" | "error">>({});
+  const [workspaceHoverCard, setWorkspaceHoverCard] = useState<{
+    name: string;
+    cwd: string;
+    sessionCount: number;
+    left: number;
+    top: number;
+  } | null>(null);
 
   useEffect(() => {
     const unsubscribe = window.electron.onAppUpdateStatus((status: AppUpdateStatus) => {
@@ -201,11 +208,27 @@ export function Sidebar({
     useAppStore.getState().setShowSettingsModal(true);
   };
 
+  const showWorkspaceHoverCard = (group: (typeof workspaceGroups)[number], anchor: HTMLElement) => {
+    const cardWidth = 340;
+    const cardHeight = 104;
+    const rect = anchor.getBoundingClientRect();
+    const maxLeft = window.innerWidth - cardWidth - 12;
+    const maxTop = window.innerHeight - cardHeight - 12;
+    setWorkspaceHoverCard({
+      name: formatWorkspaceName(group.cwd),
+      cwd: group.cwd || "未指定目录",
+      sessionCount: group.sessions.length,
+      left: Math.max(12, Math.min(rect.right + 10, maxLeft)),
+      top: Math.max(12, Math.min(rect.top - 4, maxTop)),
+    });
+  };
+
   return (
-    <aside
-      className={`fixed bottom-0 left-0 ${sidebarHeaderOffsetClass} flex min-w-[250px] flex-col gap-4 border-r border-black/6 bg-[linear-gradient(180deg,rgba(248,249,252,0.96),rgba(238,241,246,0.94))] px-4 pb-4 pt-4 shadow-[inset_-1px_0_0_rgba(255,255,255,0.75)] backdrop-blur-xl`}
-      style={{ width }}
-    >
+    <>
+      <aside
+        className={`fixed bottom-0 left-0 ${sidebarHeaderOffsetClass} flex min-w-[250px] flex-col gap-4 border-r border-black/6 bg-[linear-gradient(180deg,rgba(248,249,252,0.96),rgba(238,241,246,0.94))] px-4 pb-4 pt-4 shadow-[inset_-1px_0_0_rgba(255,255,255,0.75)] backdrop-blur-xl`}
+        style={{ width }}
+      >
       <div className="flex min-h-0 flex-1 flex-col gap-4">
         <div className="flex gap-2">
           <button
@@ -229,13 +252,19 @@ export function Sidebar({
             </div>
           )}
 
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
             {workspaceGroups.map((group) => (
               <div
                 key={group.key}
-                className="rounded-[26px] border border-black/6 bg-white/72 px-3 py-3 shadow-[0_14px_34px_rgba(30,38,52,0.06)] backdrop-blur"
+                className="rounded-2xl px-1 py-1"
               >
-                <div className="flex items-start justify-between gap-3">
+                <div
+                  className="group/workspace flex items-center justify-between gap-1.5 rounded-xl px-2 py-1.5 transition-colors hover:bg-white/82 hover:shadow-[0_8px_22px_rgba(30,38,52,0.08)]"
+                  onMouseEnter={(event) => showWorkspaceHoverCard(group, event.currentTarget)}
+                  onMouseLeave={() => setWorkspaceHoverCard(null)}
+                  onFocus={(event) => showWorkspaceHoverCard(group, event.currentTarget)}
+                  onBlur={() => setWorkspaceHoverCard(null)}
+                >
                   <button
                     type="button"
                     className="min-w-0 flex-1 text-left"
@@ -244,14 +273,14 @@ export function Sidebar({
                       [group.key]: !current[group.key],
                     }))}
                   >
-                    <div className="flex items-center gap-2 text-sm font-semibold text-ink-800">
-                      <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-muted" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <div className="flex items-center gap-2 text-[13px] font-semibold text-ink-800">
+                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0 text-muted" fill="none" stroke="currentColor" strokeWidth="1.8">
                         <path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-10Z" />
                       </svg>
                       <span className="truncate">{formatWorkspaceName(group.cwd)}</span>
                       <svg
                         viewBox="0 0 24 24"
-                        className={`h-4 w-4 shrink-0 text-muted transition-transform ${expandedGroups[group.key] ? "rotate-90" : ""}`}
+                        className={`h-3.5 w-3.5 shrink-0 text-muted transition-transform ${expandedGroups[group.key] ? "rotate-90" : ""}`}
                         fill="none"
                         stroke="currentColor"
                         strokeWidth="1.8"
@@ -259,21 +288,20 @@ export function Sidebar({
                         <path d="m9 6 6 6-6 6" />
                       </svg>
                     </div>
-                    <div className="mt-1 truncate text-[11px] text-muted">{group.cwd || "未指定目录"}</div>
                   </button>
                   <button
                     type="button"
-                    className="shrink-0 rounded-full border border-black/6 bg-white/82 p-2 text-ink-600 transition-colors hover:bg-white hover:text-ink-800"
+                    className="shrink-0 rounded-lg p-1.5 text-ink-500 opacity-0 transition-all hover:bg-white hover:text-ink-800 group-hover/workspace:opacity-100 focus:opacity-100"
                     onClick={() => onNewSession(group.cwd)}
                     aria-label={`在 ${formatWorkspaceName(group.cwd)} 中新建会话`}
                   >
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
                       <path d="M12 5v14M5 12h14" />
                     </svg>
                   </button>
                   <button
                     type="button"
-                    className="shrink-0 rounded-full border border-black/6 bg-white/82 p-2 text-ink-600 transition-colors hover:bg-white hover:text-error"
+                    className="shrink-0 rounded-lg p-1.5 text-ink-500 opacity-0 transition-all hover:bg-white hover:text-error group-hover/workspace:opacity-100 focus:opacity-100"
                     onClick={(event) => {
                       event.stopPropagation();
                       onDeleteWorkspace(
@@ -283,7 +311,7 @@ export function Sidebar({
                     }}
                     aria-label={`删除工作区 ${formatWorkspaceName(group.cwd)}`}
                   >
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
                       <path d="M4 7h16" />
                       <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
                       <path d="M7 7l1 12a1 1 0 0 0 1 .9h6a1 1 0 0 0 1-.9l1-12" />
@@ -291,7 +319,7 @@ export function Sidebar({
                   </button>
                 </div>
 
-                    <div className={`mt-3 flex flex-col gap-1.5 ${expandedGroups[group.key] ? "" : "hidden"}`}>
+                    <div className={`mt-1.5 flex flex-col gap-1 ${expandedGroups[group.key] ? "" : "hidden"}`}>
                   {group.sessions.map((session) => {
                     const isActiveSession = activeSessionId === session.id;
                     const isRunningSession = session.status === "running";
@@ -479,5 +507,21 @@ export function Sidebar({
         </Dialog.Portal>
       </Dialog.Root>
     </aside>
+    {workspaceHoverCard && (
+      <div
+        className="pointer-events-none fixed z-[80] w-[min(340px,calc(100vw-24px))] rounded-xl border border-black/10 bg-white px-4 py-3 text-sm text-ink-800 shadow-[0_18px_44px_rgba(15,23,42,0.16)]"
+        style={{ left: workspaceHoverCard.left, top: workspaceHoverCard.top }}
+      >
+        <div className="truncate font-semibold">{workspaceHoverCard.name}</div>
+        <div className="mt-2 flex items-center gap-2 text-xs text-muted">
+          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M4 5h6l2 2h8v12H4z" />
+          </svg>
+          <span className="min-w-0 truncate">{workspaceHoverCard.cwd}</span>
+        </div>
+        <div className="mt-1.5 text-xs text-muted">{workspaceHoverCard.sessionCount} 个会话</div>
+      </div>
+    )}
+    </>
   );
 }
