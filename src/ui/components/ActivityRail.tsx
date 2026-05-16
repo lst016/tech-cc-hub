@@ -1172,7 +1172,7 @@ export function ActivityRail({
   hasBrowserTab?: boolean;
   width?: number;
 }) {
-  const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-14" : "top-10";
+  const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-12" : "top-10";
   const showLabels = width >= 300;
   const model = useMemo(
     () => buildActivityRailModel(session, session?.permissionRequests ?? [], partialMessage),

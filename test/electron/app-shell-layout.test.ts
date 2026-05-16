@@ -37,3 +37,10 @@ test("left sidebar uses a compact default width", () => {
   assert.match(sidebarSource, /width = DEFAULT_SIDEBAR_WIDTH/);
   assert.match(appSource, /useState\(DEFAULT_SIDEBAR_WIDTH\)/);
 });
+
+test("activity rail is flush with the app header on macOS", () => {
+  const activityRailSource = readFileSync(join(process.cwd(), "src/ui/components/ActivityRail.tsx"), "utf8");
+
+  assert.match(activityRailSource, /platform === "darwin" \? "top-12" : "top-10"/);
+  assert.doesNotMatch(activityRailSource, /top-14/);
+});
