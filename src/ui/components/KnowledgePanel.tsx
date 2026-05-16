@@ -1,7 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
-  ArrowLeft,
   BookOpen,
   ChevronDown,
   ChevronRight,
@@ -20,7 +19,6 @@ import type { ApiConfigProfile, SettingsPageId } from "../types";
 import MDContent from "../render/markdown";
 
 type KnowledgePanelProps = {
-  onBack: () => void;
   onOpenSettings?: (pageId?: SettingsPageId) => void;
 };
 
@@ -597,7 +595,7 @@ function WikiPreviewPlaceholder({ title }: { title?: string }) {
   );
 }
 
-export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) {
+export function KnowledgePanel({ onOpenSettings }: KnowledgePanelProps) {
   const apiConfigSettings = useAppStore((s) => s.apiConfigSettings);
   const sessions = useAppStore((s) => s.sessions);
   const gitRefreshCacheRef = useRef<Record<string, string>>({});
@@ -1470,9 +1468,6 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
         <header className="border-b border-slate-200 bg-white">
           <div className="flex h-12 items-center justify-between px-4">
             <div className="flex min-w-0 flex-1 items-center gap-2">
-              <button className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" type="button" onClick={onBack} aria-label="返回聊天">
-                <ArrowLeft className="h-4 w-4" />
-              </button>
               <div className="flex min-w-0 flex-1 items-end self-stretch overflow-x-auto">
                 {openWikiTabs.map((tab) => {
                   const active = tab.id === activeWikiTabId;
