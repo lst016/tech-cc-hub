@@ -5,6 +5,7 @@ import {
   BookOpen,
   ChevronDown,
   ChevronRight,
+  Folder,
   FolderPlus,
   GitBranch,
   Network,
@@ -131,13 +132,6 @@ function getWorkspaceName(cwd?: string): string {
   if (!cwd) return "当前工作区";
   const parts = cwd.split(/[\\/]+/).filter(Boolean);
   return parts.at(-1) || cwd;
-}
-
-function getWorkspaceParentPath(cwd?: string): string {
-  if (!cwd) return "";
-  const parts = cwd.split(/[\\/]+/).filter(Boolean);
-  if (parts.length <= 1) return cwd;
-  return parts.slice(0, -1).join("/");
 }
 
 function normalizeWorkspaceKey(cwd?: string | null): string {
@@ -1428,7 +1422,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
               </button>
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-1">
             {workspaces.map((workspace) => {
               const workspaceGeneration = generationByWorkspace[workspace.key] ?? createIdleGeneration();
               const workspaceDocuments = documentsByWorkspace[workspace.key] ?? [];
@@ -1454,29 +1448,48 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                     : "已完成";
               return (
                 <div key={workspace.key}>
-                  <div className={`group flex items-center rounded-lg transition-colors ${selected ? "bg-slate-100" : "hover:bg-slate-50"}`}>
+                  <div className={`group/workspace relative flex items-center rounded-md transition-colors ${selected ? "bg-slate-100" : "hover:bg-slate-50"}`}>
                     <button
                       type="button"
                       aria-label={`打开工作区 ${workspace.name}`}
-                      className="flex min-w-0 flex-1 items-center justify-between px-3 py-2 text-left"
+                      title={`${workspace.name}\n${workspace.cwd}`}
+                      className="flex min-w-0 flex-1 items-center justify-between px-2 py-1.5 text-left"
                       onClick={() => handleWorkspaceClick(workspace)}
                     >
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span className="shrink-0 text-slate-400">
-                          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span
+                          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-slate-500 transition-colors ${
+                            expanded || selected
+                              ? "border-slate-300 bg-white"
+                              : "border-slate-200 bg-white/70"
+                          }`}
+                        >
+                          <Network className="h-3.5 w-3.5" />
                         </span>
-                        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm">
-                          <Network className="h-4 w-4" />
-                        </span>
-                        <span className="min-w-0">
-                          <span className="block truncate text-sm font-semibold">{workspace.name}</span>
-                          <span className="block truncate text-xs text-slate-400">
-                            {getWorkspaceParentPath(workspace.cwd) || (workspace.source === "manual" ? "手动添加" : "项目工作区")}
-                          </span>
-                        </span>
+                        <span className="min-w-0 truncate text-sm font-semibold">{workspace.name}</span>
                       </div>
-                      <span className="ml-3 shrink-0 text-xs font-semibold text-slate-500">{statusLabel}</span>
+                      <span className="ml-2 flex shrink-0 items-center gap-1.5">
+                        <span className="text-xs font-semibold text-slate-500">{statusLabel}</span>
+                        {workspaceGeneration.status !== "idle" ? (
+                          <span className="text-slate-400">
+                            {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                          </span>
+                        ) : null}
+                      </span>
                     </button>
+                    <div className="pointer-events-none absolute left-8 top-full z-30 mt-1 hidden min-w-64 max-w-80 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500 shadow-lg group-hover/workspace:block">
+                      <div className="font-semibold text-slate-900">{workspace.name}</div>
+                      {workspaceGit?.branch ? (
+                        <div className="mt-1 flex items-center gap-1.5">
+                          <GitBranch className="h-3.5 w-3.5" />
+                          <span className="truncate">{workspaceGit.branch}</span>
+                        </div>
+                      ) : null}
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <Folder className="h-3.5 w-3.5" />
+                        <span className="truncate">{workspace.cwd}</span>
+                      </div>
+                    </div>
                     {needsUpdate && workspaceGeneration.status !== "generating" ? (
                       <button
                         type="button"
@@ -1492,7 +1505,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                       type="button"
                       aria-label={`删除 ${workspace.name}`}
                       onClick={() => removeWorkspace(workspace)}
-                      className="mr-2 rounded-md p-1 text-slate-400 opacity-0 transition hover:bg-white hover:text-rose-600 group-hover:opacity-100 focus:opacity-100"
+                      className="mr-1 rounded-md p-1 text-slate-400 opacity-0 transition hover:bg-white hover:text-rose-600 group-hover/workspace:opacity-100 focus:opacity-100"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
