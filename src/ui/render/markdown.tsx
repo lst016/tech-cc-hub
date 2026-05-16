@@ -29,25 +29,32 @@ function stripMarkdownLinkTarget(value: string): string {
   return value.trim().replace(/^<(.+)>$/, "$1").replace(/^file=/i, "");
 }
 
-function parseLineTarget(value: string): { cleanPath: string; startLine?: number } {
+function parseLineTarget(value: string): { cleanPath: string; startLine?: number; endLine?: number } {
   let cleanPath = value;
   let startLine: number | undefined;
+  let endLine: number | undefined;
   const hashIndex = cleanPath.indexOf("#");
   const anchor = hashIndex >= 0 ? cleanPath.slice(hashIndex + 1) : "";
   if (hashIndex >= 0) {
     cleanPath = cleanPath.slice(0, hashIndex);
   }
-  const anchorLine = /(?:^|-)L?(\d+)/i.exec(anchor);
+  const anchorLine = /^L?(\d+)(?:-L?(\d+))?$/i.exec(anchor);
   if (anchorLine) {
     startLine = Number(anchorLine[1]);
+    endLine = anchorLine[2] ? Number(anchorLine[2]) : undefined;
   } else {
     const suffixLine = /:(\d+)(?:-\d+)?$/.exec(cleanPath);
     if (suffixLine) {
       startLine = Number(suffixLine[1]);
+      const suffixRange = /:(\d+)-(\d+)$/.exec(cleanPath);
+      endLine = suffixRange?.[2] ? Number(suffixRange[2]) : undefined;
       cleanPath = cleanPath.slice(0, -suffixLine[0].length);
     }
   }
-  return { cleanPath, startLine };
+  if (endLine && startLine && endLine < startLine) {
+    endLine = startLine;
+  }
+  return { cleanPath, startLine, endLine };
 }
 
 function decodeFileTarget(value: string): string {
@@ -75,7 +82,7 @@ function looksLikeWorkspaceSourcePath(path: string): boolean {
 function parseSourceFileLink(href?: string, sourceRoot?: string): PreviewOpenFileDetail | null {
   const raw = stripMarkdownLinkTarget(href ?? "");
   if (!raw) return null;
-  const { cleanPath, startLine } = parseLineTarget(raw);
+  const { cleanPath, startLine, endLine } = parseLineTarget(raw);
   let path = cleanPath;
   let explicitFileLink = false;
   const fileSchemeMatch = /^file:\/\/(.*)$/i.exec(path);
@@ -100,17 +107,30 @@ function parseSourceFileLink(href?: string, sourceRoot?: string): PreviewOpenFil
       ? joinWorkspacePath(sourceRoot, path)
       : "";
   if (!absolutePath) return null;
-  return { filePath: absolutePath, startLine };
+  return { filePath: absolutePath, startLine, endLine };
 }
 
-function handleMarkdownLinkClick(event: MouseEvent<HTMLAnchorElement>, href?: string, sourceRoot?: string): void {
+function openSourceFileFromMarkdown(sourceFile: PreviewOpenFileDetail, onOpenSourceFile?: (detail: PreviewOpenFileDetail) => void): void {
+  if (onOpenSourceFile) {
+    onOpenSourceFile(sourceFile);
+    return;
+  }
+  window.dispatchEvent(new CustomEvent<PreviewOpenFileDetail>(PREVIEW_OPEN_FILE_EVENT, {
+    detail: sourceFile,
+  }));
+}
+
+function handleMarkdownLinkClick(
+  event: MouseEvent<HTMLAnchorElement>,
+  href?: string,
+  sourceRoot?: string,
+  onOpenSourceFile?: (detail: PreviewOpenFileDetail) => void,
+): void {
   const sourceFile = parseSourceFileLink(href, sourceRoot);
   if (sourceFile && !event.defaultPrevented && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
     event.preventDefault();
     event.stopPropagation();
-    window.dispatchEvent(new CustomEvent<PreviewOpenFileDetail>(PREVIEW_OPEN_FILE_EVENT, {
-      detail: sourceFile,
-    }));
+    openSourceFileFromMarkdown(sourceFile, onOpenSourceFile);
     return;
   }
 
@@ -126,15 +146,17 @@ function handleMarkdownLinkClick(event: MouseEvent<HTMLAnchorElement>, href?: st
   }));
 }
 
-function handleInlineCodeClick(event: MouseEvent<HTMLButtonElement>, sourceFile: PreviewOpenFileDetail): void {
+function handleInlineCodeClick(
+  event: MouseEvent<HTMLButtonElement>,
+  sourceFile: PreviewOpenFileDetail,
+  onOpenSourceFile?: (detail: PreviewOpenFileDetail) => void,
+): void {
   if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
     return;
   }
   event.preventDefault();
   event.stopPropagation();
-  window.dispatchEvent(new CustomEvent<PreviewOpenFileDetail>(PREVIEW_OPEN_FILE_EVENT, {
-    detail: sourceFile,
-  }));
+  openSourceFileFromMarkdown(sourceFile, onOpenSourceFile);
 }
 
 function MarkdownLink({
@@ -143,8 +165,13 @@ function MarkdownLink({
   children,
   node: _node,
   sourceRoot,
+  onOpenSourceFile,
   ...props
-}: AnchorHTMLAttributes<HTMLAnchorElement> & { node?: unknown; sourceRoot?: string }) {
+}: AnchorHTMLAttributes<HTMLAnchorElement> & {
+  node?: unknown;
+  sourceRoot?: string;
+  onOpenSourceFile?: (detail: PreviewOpenFileDetail) => void;
+}) {
   void _node;
   const normalizedHref = normalizeWorkbenchUrl(href) ?? href;
   const classes = [
@@ -159,7 +186,7 @@ function MarkdownLink({
       className={classes}
       rel="noreferrer"
       target={normalizedHref?.startsWith("http") ? "_blank" : props.target}
-      onClick={(event) => handleMarkdownLinkClick(event, href ?? normalizedHref, sourceRoot)}
+      onClick={(event) => handleMarkdownLinkClick(event, href ?? normalizedHref, sourceRoot, onOpenSourceFile)}
     >
       {children}
     </a>
@@ -379,7 +406,15 @@ function MermaidDiagram({ chart }: { chart: string }) {
   );
 }
 
-function MDContent({ text, sourceRoot }: { text: string; sourceRoot?: string }) {
+function MDContent({
+  text,
+  sourceRoot,
+  onOpenSourceFile,
+}: {
+  text: string;
+  sourceRoot?: string;
+  onOpenSourceFile?: (detail: PreviewOpenFileDetail) => void;
+}) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
@@ -392,7 +427,7 @@ function MDContent({ text, sourceRoot }: { text: string; sourceRoot?: string }) 
         ul: (props) => <ul className="mt-2 ml-4 grid min-w-0 list-disc gap-1 has-[:checked]:list-none has-[:checked]:ml-0" {...props} />,
         ol: (props) => <ol className="mt-2 ml-4 grid min-w-0 list-decimal gap-1" {...props} />,
         li: (props) => <li className="min-w-0 text-ink-700 marker:text-muted [overflow-wrap:anywhere]" {...props} />,
-        a: (props) => <MarkdownLink {...props} sourceRoot={sourceRoot} />,
+        a: (props) => <MarkdownLink {...props} sourceRoot={sourceRoot} onOpenSourceFile={onOpenSourceFile} />,
         strong: (props) => <strong className="text-ink-900 font-semibold" {...props} />,
         em: (props) => <em className="text-ink-800" {...props} />,
         table: (props) => (
@@ -439,7 +474,7 @@ function MDContent({ text, sourceRoot }: { text: string; sourceRoot?: string }) 
               <button
                 type="button"
                 className="inline rounded bg-surface-tertiary px-1.5 py-0.5 text-left font-mono text-base text-accent underline-offset-2 transition [overflow-wrap:anywhere] hover:bg-accent/10 hover:underline"
-                onClick={(event) => handleInlineCodeClick(event, sourceFile)}
+                onClick={(event) => handleInlineCodeClick(event, sourceFile, onOpenSourceFile)}
                 title="打开源码文件"
               >
                 <code {...rest}>{children}</code>

@@ -8,6 +8,7 @@ export const ADD_PROMPT_ATTACHMENT_EVENT = "techcc:add-prompt-attachment";
 export type PreviewOpenFileDetail = {
   filePath: string;
   startLine?: number;
+  endLine?: number;
 };
 
 export type OpenBrowserWorkbenchUrlDetail = {

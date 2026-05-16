@@ -68,6 +68,7 @@ type KnowledgeOpenTab = {
   documentId?: string;
   sourcePath?: string;
   startLine?: number;
+  endLine?: number;
   title: string;
 };
 
@@ -78,6 +79,7 @@ type SourcePreviewState = {
   relativePath: string;
   title: string;
   startLine?: number;
+  endLine?: number;
   content?: string;
   language?: string;
   loading: boolean;
@@ -626,7 +628,15 @@ function SectionTree({
   );
 }
 
-function WikiDocumentView({ document, generation }: { document: KnowledgeDocument; generation: GenerationState }) {
+function WikiDocumentView({
+  document,
+  generation,
+  onOpenSourceFile,
+}: {
+  document: KnowledgeDocument;
+  generation: GenerationState;
+  onOpenSourceFile: (detail: PreviewOpenFileDetail) => void;
+}) {
   const placeholder = isPlaceholderWikiDocument(document);
   return (
     <article className="w-full max-w-3xl rounded-xl border border-slate-200 bg-white px-7 py-6 shadow-sm">
@@ -640,7 +650,11 @@ function WikiDocumentView({ document, generation }: { document: KnowledgeDocumen
         </div>
       </div>
       <div className="mt-5 min-w-0">
-        <MDContent text={normalizeWikiDocumentMarkdown(document.content)} sourceRoot={document.workspaceKey} />
+        <MDContent
+          text={normalizeWikiDocumentMarkdown(document.content)}
+          sourceRoot={document.workspaceKey}
+          onOpenSourceFile={onOpenSourceFile}
+        />
       </div>
       <div className="mt-6 border-t border-slate-100 pt-4 text-xs text-slate-400">
         {generation.branch ? `${generation.branch} · ` : ""}
@@ -653,13 +667,16 @@ function WikiDocumentView({ document, generation }: { document: KnowledgeDocumen
 function SourceFileView({ preview }: { preview?: SourcePreviewState }) {
   const targetLineRef = useRef<HTMLDivElement | null>(null);
   const lines = useMemo(() => (preview?.content ?? "").replace(/\r\n/g, "\n").split("\n"), [preview?.content]);
+  const endLine = preview?.endLine && preview.startLine
+    ? Math.max(preview.startLine, preview.endLine)
+    : preview?.startLine;
 
   useEffect(() => {
     if (!preview?.startLine || !preview.content) return;
     window.requestAnimationFrame(() => {
       targetLineRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
     });
-  }, [preview?.content, preview?.startLine]);
+  }, [preview?.content, preview?.startLine, preview?.endLine]);
 
   if (!preview) {
     return (
@@ -678,7 +695,7 @@ function SourceFileView({ preview }: { preview?: SourcePreviewState }) {
           <h3 className="mt-1 truncate text-lg font-semibold text-slate-950">{preview.title}</h3>
           <div className="mt-1 truncate font-mono text-xs text-slate-400" title={preview.filePath}>
             {preview.relativePath}
-            {preview.startLine ? `#L${preview.startLine}` : ""}
+            {preview.startLine ? `#L${preview.startLine}${endLine && endLine !== preview.startLine ? `-L${endLine}` : ""}` : ""}
           </div>
         </div>
         {preview.language && (
@@ -695,11 +712,11 @@ function SourceFileView({ preview }: { preview?: SourcePreviewState }) {
         <div className="max-h-[68vh] overflow-auto bg-slate-950 py-4 text-[13px] leading-5 text-slate-100">
           {lines.map((line, index) => {
             const lineNumber = index + 1;
-            const active = preview.startLine === lineNumber;
+            const active = Boolean(preview.startLine && lineNumber >= preview.startLine && lineNumber <= (endLine ?? preview.startLine));
             return (
               <div
                 key={lineNumber}
-                ref={active ? targetLineRef : undefined}
+                ref={preview.startLine === lineNumber ? targetLineRef : undefined}
                 className={`grid grid-cols-[4rem_minmax(0,1fr)] gap-3 px-4 font-mono ${active ? "bg-amber-300/20 text-amber-50" : "text-slate-100"}`}
               >
                 <span className={`select-none text-right ${active ? "text-amber-200" : "text-slate-500"}`}>{lineNumber}</span>
@@ -955,6 +972,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
       workspaceKey: targetWorkspace.key,
       sourcePath: detail.filePath,
       startLine: detail.startLine,
+      endLine: detail.endLine,
       title,
     };
     const relativePath = relativePathFromWorkspace(workspaceRoot, detail.filePath);
@@ -971,6 +989,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
         relativePath,
         title,
         startLine: detail.startLine,
+        endLine: detail.endLine,
         loading: true,
         error: undefined,
       },
@@ -1023,6 +1042,8 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
             relativePath: relativePathFromWorkspace(workspaceRoot, result.path || detail.filePath),
             content: result.success ? result.content ?? "" : undefined,
             language: result.language,
+            startLine: detail.startLine,
+            endLine: detail.endLine,
             loading: false,
             error: result.success ? undefined : result.error || "源码文件读取失败。",
           },
@@ -1039,6 +1060,8 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
               relativePath,
               title,
             }),
+            startLine: detail.startLine,
+            endLine: detail.endLine,
             loading: false,
             error: error instanceof Error ? error.message : "源码文件读取失败。",
           },
@@ -1904,7 +1927,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
                 <SourceFileView preview={activeSourcePreview} />
               ) : showingDocumentPreview ? (
                 previewDocument ? (
-                  <WikiDocumentView document={previewDocument} generation={generation} />
+                  <WikiDocumentView document={previewDocument} generation={generation} onOpenSourceFile={openSourceTab} />
                 ) : (
                   <WikiPreviewPlaceholder title={selectedPreviewTitle} />
                 )
