@@ -87,6 +87,10 @@ async function main() {
   if (rawMermaidCodeBlocks > 0) {
     throw new Error(`Knowledge UI still renders Mermaid diagrams as raw code blocks: ${rawMermaidCodeBlocks}`);
   }
+  const mermaidErrorArtifacts = await page.locator('div[id^="dmermaid-"]').count();
+  if (mermaidErrorArtifacts > 0) {
+    throw new Error(`Knowledge UI leaked Mermaid internal error nodes: ${mermaidErrorArtifacts}`);
+  }
   const topicButtonCount = await page.locator('button').filter({ hasText: /知识库|Repo Wiki|文档管理|后端引擎|系统架构|Electron|前端|质量|故障/ }).count();
   if (topicButtonCount < 3) {
     throw new Error('Knowledge UI did not render enough Repo Wiki topic page buttons');
@@ -100,7 +104,7 @@ async function main() {
       throw new Error(`Knowledge UI missing Agent-useful page button: ${expectedButton}`);
     }
   }
-  for (const forbidden of ['后续接入真实', '未生成正文', '当前没有真实 Repo Wiki 正文', '生成后会出现 Repo Wiki 目录', '模型未返回结构化说明', '```markdown']) {
+  for (const forbidden of ['后续接入真实', '未生成正文', '当前没有真实 Repo Wiki 正文', '生成后会出现 Repo Wiki 目录', '模型未返回结构化说明', '```markdown', 'Syntax error in text', 'mermaid version']) {
     if (bodyText.includes(forbidden)) {
       throw new Error(`Knowledge UI still contains placeholder/fence text: ${forbidden}`);
     }

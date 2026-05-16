@@ -360,6 +360,25 @@ function getMermaidErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error || "Mermaid 渲染失败");
 }
 
+function cleanupMermaidErrorArtifacts(diagramId?: string): void {
+  if (typeof document === "undefined") return;
+  if (diagramId) {
+    document.getElementById(`d${diagramId}`)?.remove();
+  }
+  for (const element of Array.from(document.querySelectorAll<HTMLElement>('div[id^="dmermaid-"]'))) {
+    const text = element.innerText || element.textContent || "";
+    if (/syntax error in text|parse error|mermaid version/i.test(text)) {
+      element.remove();
+    }
+  }
+}
+
+function scheduleMermaidErrorCleanup(diagramId?: string): void {
+  cleanupMermaidErrorArtifacts(diagramId);
+  window.requestAnimationFrame(() => cleanupMermaidErrorArtifacts(diagramId));
+  window.setTimeout(() => cleanupMermaidErrorArtifacts(diagramId), 0);
+}
+
 function removeMermaidCssTextNodes(element: Element): void {
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
   const nodes: Text[] = [];
@@ -448,10 +467,12 @@ function MermaidDiagram({ chart }: { chart: string }) {
 
     void import("mermaid")
       .then(async (mod) => {
+        cleanupMermaidErrorArtifacts(diagramId);
         const mermaid = mod.default as MermaidApi;
         if (!mermaidInitialized) {
           mermaid.initialize({
             startOnLoad: false,
+            suppressErrors: true,
             securityLevel: "strict",
             theme: "base",
             themeVariables: {
@@ -480,6 +501,7 @@ function MermaidDiagram({ chart }: { chart: string }) {
       })
       .catch((error) => {
         if (!disposed) {
+          scheduleMermaidErrorCleanup(diagramId);
           setRenderState({ status: "error", error: getMermaidErrorMessage(error) });
         }
       });
@@ -518,8 +540,8 @@ function MermaidDiagram({ chart }: { chart: string }) {
           </pre>
         )}
       >
-        <div className="px-3 pt-3 text-xs font-semibold text-amber-800">Mermaid 图渲染失败</div>
-        <div className="px-3 pt-1 text-xs leading-5 text-amber-700 [overflow-wrap:anywhere]">{renderState.error}</div>
+        <div className="px-3 pt-3 text-xs font-semibold text-amber-800">图表暂不可预览</div>
+        <div className="px-3 pt-1 text-xs leading-5 text-amber-700 [overflow-wrap:anywhere]">这段图表语法无法被当前 Mermaid 版本解析，已保留源码。</div>
         <pre className="max-w-full overflow-x-auto whitespace-pre-wrap p-3 pr-20 text-sm text-amber-900 [overflow-wrap:anywhere]">
           {normalizedChart}
         </pre>
