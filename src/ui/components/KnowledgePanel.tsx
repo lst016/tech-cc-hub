@@ -560,7 +560,7 @@ function SectionTree({
   onSelectDocument: (document: KnowledgeDocument) => void;
   forceExpanded?: boolean;
 }) {
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set());
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(() => new Set());
 
   if (!active || documents.length === 0) {
     return null;
@@ -568,7 +568,7 @@ function SectionTree({
 
   const tree = buildDocumentTree(documents);
   const toggleSection = (sectionTitle: string) => {
-    setCollapsedSections((current) => {
+    setExpandedSections((current) => {
       const next = new Set(current);
       if (next.has(sectionTitle)) {
         next.delete(sectionTitle);
@@ -581,7 +581,7 @@ function SectionTree({
 
   const renderNodes = (nodes: WikiTreeNode[], depth = 0): ReactNode => (
     nodes.map((node) => {
-      const collapsed = !forceExpanded && collapsedSections.has(node.key);
+      const collapsed = !forceExpanded && !expandedSections.has(node.key);
       return (
         <div key={node.key} data-knowledge-section={node.key}>
           <button

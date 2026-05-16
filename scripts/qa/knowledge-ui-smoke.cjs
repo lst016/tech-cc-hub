@@ -70,11 +70,26 @@ async function main() {
   if (bodyText.includes('需更新')) {
     throw new Error('Knowledge workspace should render update as a button instead of static 需更新 text');
   }
+  const collapsedSectionCount = await page.locator('button[aria-label^="展开"]').count();
+  if (collapsedSectionCount < 1) {
+    throw new Error('Knowledge UI should default Repo Wiki sections to collapsed state');
+  }
 
+  await page.getByPlaceholder('搜索 Repo Wiki').fill(expectedTitle);
+  await page.waitForTimeout(300);
   const generatedDoc = page.getByRole('button', { name: new RegExp(`打开文档 .*${escapeRegExp(expectedTitle)}`) }).first();
   await generatedDoc.waitFor({ state: 'visible', timeout: 10000 });
   await generatedDoc.click();
   await page.waitForTimeout(800);
+  await page.getByPlaceholder('搜索 Repo Wiki').fill('');
+  await page.waitForTimeout(300);
+  const sectionButtonsToOpen = Math.min(await page.locator('button[aria-label^="展开"]').count(), 8);
+  for (let index = 0; index < sectionButtonsToOpen; index += 1) {
+    const nextCollapsed = page.locator('button[aria-label^="展开"]').first();
+    if (!await nextCollapsed.isVisible().catch(() => false)) break;
+    await nextCollapsed.click();
+    await page.waitForTimeout(80);
+  }
 
   bodyText = await page.locator('body').innerText({ timeout: 10000 });
   for (const expected of [expectedTitle, '本文引用的文件', '目录']) {
