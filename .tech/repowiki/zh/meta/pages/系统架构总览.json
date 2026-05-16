@@ -1,0 +1,20 @@
+{
+  "id": "系统架构总览",
+  "name": "系统架构总览",
+  "title": "系统架构总览",
+  "slug": "系统架构总览",
+  "path": "系统架构总览.md",
+  "description": "系统架构总览",
+  "prompt": "为 tech-cc-hub 编写 系统架构总览 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 10,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "296cbfadda82e2e9c2f1ef7206495bd542ad6ec8559b68ac6dd8ad6712605a98",
+  "generated_at": 1778922186535
+}

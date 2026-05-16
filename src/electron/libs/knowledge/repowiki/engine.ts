@@ -15,7 +15,7 @@ export type RepoWikiGenerationResult = {
 };
 
 export type RepoWikiProgressEvent = {
-  stage: "modules" | "architecture" | "reading-guide" | "done" | "embedding" | "indexing" | "message";
+  stage: "planning" | "modules" | "architecture" | "reading-guide" | "done" | "embedding" | "indexing" | "message";
   message: string;
   completed?: number;
   total?: number;
@@ -96,6 +96,11 @@ function parseRepoWikiProgress(text: string): RepoWikiProgressEvent[] {
       }
       message = parsed.message;
     } catch {
+      continue;
+    }
+
+    if (/Planning wiki catalogs/i.test(message)) {
+      events.push({ stage: "planning", message, completed: 0, total: 0 });
       continue;
     }
 

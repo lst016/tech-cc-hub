@@ -1,0 +1,20 @@
+{
+  "id": "执行平面组件设计",
+  "name": "执行平面组件设计",
+  "title": "执行平面组件设计",
+  "slug": "执行平面组件设计",
+  "path": "执行平面组件设计.md",
+  "description": "执行平面组件设计",
+  "prompt": "为 tech-cc-hub 编写 执行平面组件设计 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 12,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "b90ec8e12b3c016d04c07ce0d2f5f5eb378d247769e570df0901f2b8b5eacdc8",
+  "generated_at": 1778922186535
+}

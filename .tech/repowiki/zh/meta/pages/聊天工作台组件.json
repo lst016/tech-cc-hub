@@ -1,0 +1,20 @@
+{
+  "id": "聊天工作台组件",
+  "name": "聊天工作台组件",
+  "title": "聊天工作台组件",
+  "slug": "聊天工作台组件",
+  "path": "聊天工作台组件.md",
+  "description": "聊天工作台组件",
+  "prompt": "为 tech-cc-hub 编写 聊天工作台组件 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 18,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "cc036c932ad73a9ce8b5264be1e8824f203bc8c59549370a93a7f13a0ea3e157",
+  "generated_at": 1778922186535
+}

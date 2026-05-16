@@ -1,0 +1,20 @@
+{
+  "id": "git-集成模块",
+  "name": "Git 集成模块",
+  "title": "Git 集成模块",
+  "slug": "Git 集成模块",
+  "path": "Git 集成模块.md",
+  "description": "Git 集成模块",
+  "prompt": "为 tech-cc-hub 编写 Git 集成模块 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 16,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "5e5f301988274ee6a9ad86286b1ae7434fc376cf6147c35912211304bbab4cf8",
+  "generated_at": 1778922186535
+}

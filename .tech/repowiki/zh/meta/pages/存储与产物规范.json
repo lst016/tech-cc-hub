@@ -1,0 +1,20 @@
+{
+  "id": "存储与产物规范",
+  "name": "存储与产物规范",
+  "title": "存储与产物规范",
+  "slug": "存储与产物规范",
+  "path": "存储与产物规范.md",
+  "description": "存储与产物规范",
+  "prompt": "为 tech-cc-hub 编写 存储与产物规范 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 24,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "98ae5a17805c167206eff4ce176db3566cd441fd87766552bbaab3af3a483b8c",
+  "generated_at": 1778922186535
+}

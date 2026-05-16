@@ -1,0 +1,20 @@
+{
+  "id": "设计原则与非目标",
+  "name": "设计原则与非目标",
+  "title": "设计原则与非目标",
+  "slug": "设计原则与非目标",
+  "path": "设计原则与非目标.md",
+  "description": "设计原则与非目标",
+  "prompt": "为 tech-cc-hub 编写 设计原则与非目标 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 2,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "ca9cbe12a31ebde3a5877b23d6570c87ebd8712fca23e72704f28a9cb6ceeba5",
+  "generated_at": 1778922186535
+}

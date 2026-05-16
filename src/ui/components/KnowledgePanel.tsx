@@ -430,10 +430,12 @@ function Toggle({ checked, disabled = false }: { checked: boolean; disabled?: bo
 }
 
 function ProgressBlock({ state }: { state: GenerationState }) {
-  const hasKnownTotal = state.total > 0;
+  const hasKnownTotal = state.total > 1 || state.status === "completed";
+  const isIndeterminate = state.status === "generating" && !hasKnownTotal;
+  const safeTotal = Math.max(1, state.total);
   const percent = hasKnownTotal
-    ? Math.min(100, Math.round((state.completed / state.total) * 1000) / 10)
-    : state.status === "completed" ? 100 : 8;
+    ? Math.min(100, Math.round((state.completed / safeTotal) * 1000) / 10)
+    : 0;
   const statusLabel = state.status === "paused"
     ? "已暂停"
     : state.status === "completed"
@@ -455,12 +457,16 @@ function ProgressBlock({ state }: { state: GenerationState }) {
         <div className="text-sm font-semibold text-slate-800">{statusLabel}</div>
       </div>
       <div className="mt-3 text-sm leading-6 text-slate-700">
-        {hasKnownTotal
+        {isIndeterminate
+          ? `${progressText}，正在等待目录规划结果，处理中: ${state.processing}，失败: ${state.failed}`
+          : hasKnownTotal
           ? `${progressText}，已完成 ${state.completed}/${state.total} (${percent}%)，处理中: ${state.processing}，失败: ${state.failed}`
           : `${progressText}，正在全量扫描和生成，处理中: ${state.processing}，失败: ${state.failed}`}
       </div>
-      <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
-        <div className="h-full rounded-full bg-slate-500 transition-all duration-300" style={{ width: `${percent}%` }} />
+      <div className="relative mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+        {isIndeterminate
+          ? <div className="knowledge-progress-indeterminate absolute inset-y-0 rounded-full bg-slate-500" />
+          : <div className="h-full rounded-full bg-slate-500 transition-all duration-300" style={{ width: `${percent}%` }} />}
       </div>
       <div className="mt-4 border-t border-slate-100 pt-3 text-sm">
         <div>
@@ -1073,7 +1079,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
 	          total: 1,
 	          processing: 1,
 	          failed: 0,
-	          phase: "准备生成 Repo Wiki",
+	          phase: "正在规划目录",
 	        }, git);
         changed = true;
       }
@@ -1145,7 +1151,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
 	      total: 1,
 	      processing: 1,
 	      failed: 0,
-	      phase: "准备生成 Repo Wiki",
+	      phase: "正在规划目录",
 	    }, git);
     setGenerationByWorkspace((current) => ({
       ...current,

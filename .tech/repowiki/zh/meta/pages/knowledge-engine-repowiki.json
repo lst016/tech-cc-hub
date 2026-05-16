@@ -1,0 +1,27 @@
+{
+  "id": "knowledge-engine-repowiki",
+  "name": "知识库与 Repo Wiki 系统",
+  "title": "知识库与 Repo Wiki 系统",
+  "slug": "知识库与 Repo Wiki 系统",
+  "path": "知识库与 Repo Wiki 系统.md",
+  "description": "knowledge-engine-repowiki",
+  "prompt": "详细说明内置知识库、Repo Wiki 生成、主题目录规划、Markdown 产物、向量索引、FTS 检索、MCP 工具和聊天注入链路。必须覆盖数据流、关键 IPC、SQLite 表、进度状态、失败恢复和调试入口。",
+  "dependent_files": [
+    "src/electron/libs/knowledge/",
+    "src/electron/libs/mcp-tools/knowledge.ts",
+    "src/ui/components/KnowledgePanel.tsx",
+    "scripts/knowledge/",
+    "scripts/qa/knowledge-engine-smoke.mjs",
+    "scripts/qa/knowledge-chat-injection-smoke.mjs"
+  ],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 46,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "30d723358f2944fecf07482997f2e13f597c0fe85c61a364b954726bdf34fce9",
+  "generated_at": 1778922186535
+}

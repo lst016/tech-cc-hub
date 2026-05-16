@@ -1,0 +1,20 @@
+{
+  "id": "项目概述",
+  "name": "项目概述",
+  "title": "项目概述",
+  "slug": "项目概述",
+  "path": "项目概述.md",
+  "description": "项目概述",
+  "prompt": "为 tech-cc-hub 编写 项目概述 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "项目概述",
+  "layer_level": 0,
+  "order": 1,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "5f667fd582226fa5e503ea300ee8fcabe1a563ce784a5e291db8af6e8db2e57c",
+  "generated_at": 1778922186535
+}

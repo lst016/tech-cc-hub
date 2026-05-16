@@ -1,0 +1,20 @@
+{
+  "id": "api-与实时通道规范",
+  "name": "API 与实时通道规范",
+  "title": "API 与实时通道规范",
+  "slug": "API 与实时通道规范",
+  "path": "API 与实时通道规范.md",
+  "description": "API 与实时通道规范",
+  "prompt": "为 tech-cc-hub 编写 API 与实时通道规范 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 23,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "ab6c92b55ec03f67fd78ad7e048f7cb1f1fb8736825719901f37e770d8bc421b",
+  "generated_at": 1778922186535
+}

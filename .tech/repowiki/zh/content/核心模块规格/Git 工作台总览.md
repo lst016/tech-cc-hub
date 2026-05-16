@@ -20,369 +20,174 @@
 
 ## 目录
 
-- [1. 职责与边界](#1-职责与边界)
-- [2. 核心模块与调用链](#2-核心模块与调用链)
-- [3. 数据结构](#3-数据结构)
-- [4. IPC 通信机制](#4-ipc-通信机制)
-- [5. 错误处理](#5-错误处理)
-- [6. AI 辅助提交信息生成](#6-ai-辅助提交信息生成)
-- [7. Git 图可视化](#7-git-图可视化)
-- [8. 安全策略](#8-安全策略)
-- [9. 常见改造路径](#9-常见改造路径)
-- [10. 验证命令](#10-验证命令)
+- [概述](#概述)
+- [架构边界](#架构边界)
+- [入口文件与导出](#入口文件与导出)
+- [核心模块详解](#核心模块详解)
+  - [service.ts - 唯一操作入口](#servicets---唯一操作入口)
+  - [types.ts - 领域类型与 IPC payload](#typests---领域类型与-ipc-payload)
+  - [errors.ts - 错误归一化](#errorsts---错误归一化)
+  - [graph.ts - 分支图 lane 分配](#graphts---分支图-lane-分配)
+  - [commit-message.ts - AI 生成提交信息](#commit-messagets---ai-生成提交信息)
+- [IPC 调用链路](#ipc-调用链路)
+- [安全防护 - git-blast-radius](#安全防护---git-blast-radius)
+- [Pro Workflow 扩展](#pro-workflow-扩展)
+- [第一版能力边界](#第一版能力边界)
+- [扩展点与改造路径](#扩展点与改造路径)
+- [验证命令](#验证命令)
 
 ---
 
-## 1. 职责与边界
+## 概述
 
-Git 工作台（Git Workbench）是 tech-cc-hub 的主进程模块，负责在 Electron 环境下安全、可观测地执行 Git 操作。Renderer 进程（前端 UI）**不直接执行 git 命令**，所有操作必须通过 IPC 调用主进程的 `GitWorkbenchService`。
+Git 工作台是 `tech-cc-hub` 桌面端右侧面板的主进程模块。Renderer 进程无法直接执行 Git 命令，所有 Git 操作必须通过 IPC 调用主进程的 `GitWorkbenchService` 完成。这一设计确保了：
 
-### 1.1 模块职责
+1. **安全性**：主进程统一管理 Git 凭据和危险操作拦截
+2. **隔离性**：Git 命令执行不阻塞 Renderer 渲染
+3. **可观测性**：所有操作可记录到 `operation-log.ts`
 
-| 职责 | 说明 |
-|------|------|
-| Git 命令执行 | 在主进程运行 `git` 子进程，统一捕获 stdout/stderr |
-| 状态管理 | 提供工作区状态、暂存区、提交历史等数据 |
-| 分支操作 | 创建、切换、删除分支 |
-| 提交操作 | 暂存文件、提交、推送 |
-| Stash 管理 | 保存、恢复、删除暂存改动 |
-| 图可视化 | 生成轻量级提交图（lane 布局） |
-| AI 辅助 | 调用 Claude SDK 生成提交信息建议 |
-
-> **章节来源**：[src/electron/libs/git/README.md#L1-L14](file://src/electron/libs/git/README.md#L1-L14)
-
-### 1.2 边界限制
-
-**第一版允许的操作**（MVP 范围）：
-
-```
-status / diff / stage / unstage / commit / push /
-create branch / checkout branch /
-stash save / stash apply / stash drop /
-recent history / lightweight graph
-```
-
-**第一版禁止的操作**（高风险、需额外确认）：
-
-```
-reset / rebase / cherry-pick / force push /
-amend / squash / interactive rebase
-```
-
-> **章节来源**：[src/electron/libs/git/README.md#L16-L34](file://src/electron/libs/git/README.md#L16-L34)
-
-禁止操作会由 `git-blast-radius.js` 在 ProWorkflow 层做额外拦截（详见[安全策略](#8-安全策略)）。
+章节来源：[src/electron/libs/git/README.md#L1-L3](file://src/electron/libs/git/README.md#L1-L3)
 
 ---
 
-## 2. 核心模块与调用链
-
-### 2.1 模块架构
+## 架构边界
 
 ```mermaid
-flowchart TB
-    subgraph Renderer["Renderer 进程 (UI)"]
+flowchart TD
+    subgraph Renderer["Renderer 进程"]
         UI[GitWorkbenchPanel]
     end
 
-    subgraph Main["主进程 (Electron)"]
-        IPC[ipc.ts - IPC Handler 注册]
-        SVC[service.ts - GitWorkbenchService]
-        CM[commit-message.ts - AI 提交建议]
-        ERR[errors.ts - 错误归一化]
-        GRAPH[graph.ts - 图 lane 计算]
+    subgraph Main["主进程 libs/git/"]
+        IPC[ipc.ts - IPC handler 注册]
+        Service[service.ts - GitWorkbenchService]
+        Types[types.ts - 类型定义]
+        Errors[errors.ts - 错误归一化]
+        Graph[graph.ts - 图渲染数据]
+        CommitMsg[commit-message.ts - AI 生成]
+        History[history.ts - 历史解析]
+        OpLog[operation-log.ts - 操作日志]
     end
 
     subgraph External["外部依赖"]
-        CLI[git CLI]
-        SDK[Claude Agent SDK]
+        GitCLI[git CLI]
+        ClaudeSDK[Claude Agent SDK]
     end
 
-    UI -->|"handleGitWorkbenchInvoke"| IPC
-    IPC --> SVC
-    SVC -->|"spawn git"| CLI
-    SVC --> CM
-    CM --> SDK
-    SVC --> ERR
-    ERR -->|"normalizeGitError"| SVC
-    SVC --> GRAPH
-    GRAPH -->|"assignGraphLanes"| SVC
-
-    style Renderer fill:#e1f5fe
-    style Main fill:#fff3e0
-    style External fill:#f3e5f5
+    UI -->|IPC invoke| IPC
+    IPC --> Service
+    Service --> Types
+    Service --> Errors
+    Service --> Graph
+    Service --> CommitMsg
+    Service --> History
+    Service --> OpLog
+    Service -->|spawn| GitCLI
+    CommitMsg -->|query| ClaudeSDK
 ```
 
-> **图表来源**：[src/electron/libs/git/index.ts](file://src/electron/libs/git/index.ts) + [src/electron/libs/git/README.md](file://src/electron/libs/git/README.md)
+关键约束：第一版禁止 reset、rebase、cherry-pick、force push、amend、squash、interactive rebase 等高危操作。
 
-### 2.2 入口文件职责
-
-| 文件 | 职责 |
-|------|------|
-| `index.ts` | 对外统一导出 `GitWorkbenchService`、IPC 处理器注册函数、类型定义 |
-| `service.ts` | **唯一 Git 操作入口**，封装所有 git 子进程调用 |
-| `ipc.ts` | Electron IPC handler 注册，将 service 方法暴露给 Renderer |
-| `types.ts` | 领域类型、IPC payload/result 的 TypeScript 接口 |
-| `errors.ts` | Git 错误归一化，将 git stderr 转换为统一错误码 |
-| `history.ts` | Commit history 解析器 |
-| `graph.ts` | 轻量级 graph lane 计算（用于可视化） |
-| `commit-message.ts` | AI 生成 + fallback 提交信息建议 |
-
-> **章节来源**：[src/electron/libs/git/README.md#L6-L14](file://src/electron/libs/git/README.md#L6-L14)
-
-### 2.3 调用链详解
-
-当用户在 UI 点击"提交"时，调用链如下：
-
-```mermaid
-sequenceDiagram
-    participant UI as GitWorkbenchPanel
-    participant IPC as ipc.ts
-    participant SVC as GitWorkbenchService
-    participant GIT as git CLI
-    participant ERR as errors.ts
-    participant CM as commit-message.ts
-    participant SDK as Claude SDK
-
-    UI->>IPC: invoke("git.commit", { files, message })
-    IPC->>SVC: commit({ files, message })
-    SVC->>GIT: git add, git commit, ...
-    GIT-->>SVC: stdout / stderr
-    alt stderr has error
-        SVC->>ERR: normalizeGitError(error)
-        ERR-->>SVC: GitWorkbenchError
-    end
-    SVC-->>IPC: { success, hash, ... }
-    IPC-->>UI: { success, hash, ... }
-    
-    Note over UI,SVC: 提交信息生成路径（可选）
-    UI->>CM: generateCommitMessageSuggestion({ files, diff })
-    CM->>SDK: runSinglePromptQuery(prompt)
-    SDK-->>CM: { message, body }
-    CM-->>UI: GitCommitMessageSuggestion
-```
+章节来源：[src/electron/libs/git/README.md#L16-L34](file://src/electron/libs/git/README.md#L16-L34)
 
 ---
 
-## 3. 数据结构
+## 入口文件与导出
 
-### 3.1 核心类型（来自 types.ts）
+### 主进程入口
 
-```typescript
-// GitWorkbenchError 错误结构
-interface GitWorkbenchError {
-  code: GitWorkbenchErrorCode;  // 错误码
-  message: string;              // 用户友好消息
-  detail: string;              // 原始错误详情
-}
-
-// 错误码枚举
-type GitWorkbenchErrorCode =
-  | "git_not_found"      // Git 未安装
-  | "not_a_repo"         // 非 Git 仓库
-  | "auth_required"      // 认证失败
-  | "dirty_worktree"     // 工作区有未提交改动
-  | "conflict"           // 合并冲突
-  | "no_remote"          // 无 remote 配置
-  | "no_upstream"        // 分支无 upstream
-  | "nothing_to_commit"  // 无可提交内容
-  | "branch_exists"      // 分支已存在
-  | "branch_not_found"   // 分支不存在
-  | "stash_not_found"    // stash 不存在
-  | "operation_failed";  // 通用失败
-```
-
-### 3.2 提交信息建议结构
+`src/electron/libs/git/index.ts` 是对外统一出口，仅 4 行：
 
 ```typescript
-interface GitCommitMessageSuggestion {
-  message: string;      // 主信息，格式: type(scope): subject
-  body?: string;        // 正文，最多 3-5 行
-  source: "ai" | "fallback";  // 来源标识
-  model?: string;       // 使用的 AI 模型（AI 生成时）
-}
-```
-
-### 3.3 提交图节点
-
-```typescript
-interface GitCommitNode {
-  hash: string;
-  parents: string[];    // 父 commit hash 列表
-  graphLane?: number;   // 图可视化 lane 编号
-}
-```
-
-> **章节来源**：[src/electron/libs/git/graph.ts#L1-L15](file://src/electron/libs/git/graph.ts#L1-L15) + [src/electron/libs/git/errors.ts#L1-L40](file://src/electron/libs/git/errors.ts#L1-L40)
-
----
-
-## 4. IPC 通信机制
-
-### 4.1 注册方式
-
-```typescript
-// src/electron/libs/git/index.ts
 export { GitWorkbenchService } from "./service.js";
 export { handleGitWorkbenchInvoke, registerGitWorkbenchIpcHandlers } from "./ipc.js";
 export type * from "./types.js";
 ```
 
-Renderer 通过 `registerGitWorkbenchIpcHandlers()` 注册 IPC 通道，使用 `handleGitWorkbenchInvoke()` 分发调用。
+- `GitWorkbenchService`：核心服务类
+- `handleGitWorkbenchInvoke`：IPC 调用处理器
+- `registerGitWorkbenchIpcHandlers`：Electron IPC handler 注册函数
+- `types.js`：所有领域类型导出
 
-### 4.2 通道命名规范
+章节来源：[src/electron/libs/git/index.ts#L1-L4](file://src/electron/libs/git/index.ts#L1-L4)
 
-IPC 通道遵循 `git.<操作名>` 格式，例如：
+### UI 组件入口
 
-```
-git.status      - 获取工作区状态
-git.commit      - 提交改动
-git.push        - 推送到远程
-git.branch.list - 列出分支
-git.stash.save  - 暂存改动
-```
-
-### 4.3 Renderer 入口
+`src/ui/components/git/index.ts` 导出 React 面板组件：
 
 ```typescript
-// src/ui/components/git/index.ts
 export { GitWorkbenchPanel } from "./GitWorkbenchPanel";
 ```
 
-UI 组件通过 `window.electron.ipc.invoke("git.xxx", payload)` 调用主进程方法。
+UI 层通过 IPC 与主进程通信，不直接依赖 Git 业务逻辑。
 
-> **章节来源**：[src/electron/libs/git/index.ts#L1-L4](file://src/electron/libs/git/index.ts#L1-L4) + [src/ui/components/git/index.ts#L1-L2](file://src/ui/components/git/index.ts#L1-L2)
+章节来源：[src/ui/components/git/index.ts#L1-L2](file://src/ui/components/git/index.ts#L1-L2)
 
 ---
 
-## 5. 错误处理
+## 核心模块详解
 
-### 5.1 错误归一化逻辑
+### service.ts - 唯一操作入口
 
-`errors.ts` 通过正则匹配将 git stderr 转换为统一的 `GitWorkbenchError`：
+`service.ts`（未在引用列表但从 README 可推断）是所有 Git 操作的唯一入口。模块边界定义了以下职责分层：
+
+| 文件 | 职责 |
+|------|------|
+| `types.ts` | 领域类型和 IPC payload/result 定义 |
+| `errors.ts` | Git 错误归一化 |
+| `service.ts` | 唯一 Git 操作入口 |
+| `history.ts` | commit history parser |
+| `graph.ts` | lightweight graph lane 生成 |
+| `operation-log.ts` | 本地高影响操作日志 |
+| `ipc.ts` | Electron IPC handler 注册 |
+
+章节来源：[src/electron/libs/git/README.md#L7-L14](file://src/electron/libs/git/README.md#L7-L14)
+
+---
+
+### types.ts - 领域类型与 IPC payload
+
+（类型定义文件，完整内容未在引用中显示）
+
+预期类型包括：
+- `GitWorkbenchError`：错误结构 `{ code, message, detail }`
+- `GitWorkbenchErrorCode`：错误码枚举，如 `git_not_found`、`not_a_repo`、`auth_required` 等
+- IPC payload/result 类型：用于进程间通信的数据结构
+
+---
+
+### errors.ts - 错误归一化
+
+`errors.ts` 实现了 Git 错误的模式匹配归一化：
 
 ```typescript
 const PATTERNS: Array<[GitWorkbenchErrorCode, RegExp, string]> = [
   ["git_not_found", /not found|ENOENT|spawn git/i, "没有找到 Git，请先安装 Git。"],
-  ["not_a_repo", /not a git repository/i, "当前工作区不是 Git 仓库。"],
-  ["auth_required", /authentication failed|permission denied|403|401/i, "Git 认证失败，请检查系统凭据。"],
-  ["dirty_worktree", /local changes.*would be overwritten/i, "当前有未提交改动，请先 commit 或 stash。"],
+  ["not_a_repo", /not a git repository|not a git repo/i, "当前工作区不是 Git 仓库。"],
+  ["auth_required", /authentication failed|could not read Username|permission denied|403|401/i, "Git 认证失败，请检查系统凭据或远程仓库权限。"],
+  ["dirty_worktree", /local changes.*would be overwritten|Please commit your changes or stash/i, "当前有未提交改动，请先 commit 或 stash。"],
   ["conflict", /CONFLICT|merge conflict|unmerged/i, "Git 操作产生冲突，请先处理冲突文件。"],
-  // ... 更多模式
+  ["no_remote", /No configured push destination|No remote configured|does not appear to be a git repository/i, "当前仓库没有可用 remote。"],
+  ["no_upstream", /no upstream branch|set-upstream|has no upstream branch/i, "当前分支没有 upstream。"],
+  ["nothing_to_commit", /nothing to commit|no changes added to commit/i, "没有可提交的改动。"],
+  ["branch_exists", /already exists/i, "分支已存在。"],
+  ["branch_not_found", /not a commit|pathspec .* did not match/i, "分支不存在。"],
+  ["stash_not_found", /not a stash reference|unknown revision/i, "stash 不存在。"],
 ];
 ```
 
-### 5.2 错误处理流程
+**归一化逻辑**：
+1. 如果输入已是 `GitWorkbenchError`，直接返回
+2. 从错误消息中匹配模式，找到第一个匹配项
+3. 未匹配到任何模式时返回 `operation_failed`
 
-```mermaid
-flowchart LR
-    A[git CLI stderr] --> B{匹配 PATTERNS?}
-    B -->|是| C[返回 GitWorkbenchError]
-    B -->|否| D[返回 operation_failed]
-    
-    style C fill:#c8e6c9
-    style D fill:#ffcdd2
-```
-
-### 5.3 常见错误排查
-
-| 错误码 | 原因 | 解决方案 |
-|--------|------|----------|
-| `git_not_found` | Git 未安装或不在 PATH | 安装 Git 并确保 `git --version` 可用 |
-| `not_a_repo` | 当前目录不是 Git 仓库 | `cd` 到 Git 仓库根目录或 `git init` |
-| `auth_required` | SSH/HTTPS 认证失败 | 检查 SSH key 或 `git credential fill` |
-| `dirty_worktree` | 远端有未拉取的改动 | 先 `git pull` 或 `git stash` |
-| `nothing_to_commit` | 暂存区为空 | 先 `git add` 暂存文件 |
-
-> **章节来源**：[src/electron/libs/git/errors.ts#L3-L28](file://src/electron/libs/git/errors.ts#L3-L28)
+章节来源：[src/electron/libs/git/errors.ts#L3-L28](file://src/electron/libs/git/errors.ts#L3-L28)
 
 ---
 
-## 6. AI 辅助提交信息生成
+### graph.ts - 分支图 lane 分配
 
-### 6.1 生成策略
-
-`commit-message.ts` 提供两层降级策略：
-
-```
-┌─────────────────────────────────────┐
-│ 1. AI 生成（优先）                  │
-│    - 调用 Claude SDK                │
-│    - 超时 6 秒后 fallback           │
-│    - 输出格式：Conventional Commits │
-└─────────────────────────────────────┘
-                    ↓ 失败或超时
-┌─────────────────────────────────────┐
-│ 2. Fallback 规则生成                │
-│    - 根据文件状态推断 type           │
-│    - 根据路径推断 scope              │
-│    - 生成中文简述                    │
-└─────────────────────────────────────┘
-```
-
-### 6.2 AI 生成流程
-
-```typescript
-// 核心参数限制（防止 token 爆炸）
-const MAX_AI_DIFF_CHARS = 6_000;      // diff 最多 6000 字符
-const MAX_AI_CONTEXT_CHARS = 8_000;   // 上下文最多 8000 字符
-const MAX_AI_FILE_LINES = 80;         // 文件列表最多 80 项
-const MAX_BODY_CHARS = 500;           // body 最多 500 字符
-const AI_COMMIT_MESSAGE_TIMEOUT_MS = 6_000;  // 超时 6 秒
-```
-
-### 6.3 Prompt 构造
-
-```typescript
-// buildPrompt() 生成的 prompt 结构
-const prompt = `
-你是 Git 提交信息生成器。只根据暂存区生成提交信息。
-输出语言：${language}。
-
-要求：
-- 严格输出 JSON，不要 Markdown。
-- message 使用 Conventional Commits：<type>(<scope>): <中文描述>
-- type 从 feat/fix/perf/refactor/docs/test/build/chore/style/i18n 里选
-- scope 用英文小写短词
-- message 不超过 72 字符，末尾不要句号
-
-输出格式：{"message":"fix(git): 修复暂存全部文件状态不同步","body":"- 同步暂存后的文件列表"}
-
-Changed files:
-<file list>
-
-Name status:
-<status>
-
-Stat:
-<stat>
-
-Diff:
-<diff content>
-`;
-```
-
-### 6.4 Fallback 规则
-
-当 AI 不可用时，使用规则生成：
-
-| 条件 | type | scope |
-|------|------|-------|
-| 所有文件含 test/spec | `test` | 推断 |
-| 所有文件是 .md 或 docs/ | `docs` | `docs` |
-| 含 package/vite/tsconfig/eslint | `build` | `build` |
-| 含 git | `fix` | `git` |
-| 其他 | `chore` | `repo` |
-
-> **章节来源**：[src/electron/libs/git/commit-message.ts#L1-L179](file://src/electron/libs/git/commit-message.ts#L1-L179)
-
----
-
-## 7. Git 图可视化
-
-### 7.1 Lane 分配算法
-
-`graph.ts` 实现轻量级提交图 lane 计算，用于在 UI 中绘制分支线条：
+`graph.ts` 实现轻量级分支图渲染数据的 lane 分配算法：
 
 ```typescript
 export function assignGraphLanes(commits: GitCommitNode[]): GitCommitNode[] {
@@ -390,261 +195,274 @@ export function assignGraphLanes(commits: GitCommitNode[]): GitCommitNode[] {
   let nextLane = 1;
 
   return commits.map((commit) => {
-    // 获取当前 commit 的 lane
     const lane = laneByHash.get(commit.hash) ?? 0;
-    
-    // 为每个父 commit 分配 lane
     commit.parents.forEach((parent, index) => {
       if (!laneByHash.has(parent)) {
-        // 主父继承当前 lane，其他父分配新 lane
         laneByHash.set(parent, index === 0 ? lane : nextLane++);
       }
     });
-    
     return { ...commit, graphLane: lane };
   });
 }
 ```
 
-### 7.2 算法示意
+**算法核心**：
+1. 遍历每个 commit，确定其在图中的 lane 编号
+2. 第一个父节点继承当前 lane，新分叉创建新 lane
+3. 返回附加了 `graphLane` 属性的 commit 数组
 
-```
-输入 commit 历史（从新到旧）:
-  A (hash: a)
-  └─ B (hash: b, parents: [a])
-     └─ C (hash: c, parents: [b])
-        ├─ D (hash: d, parents: [c])    // 主分支
-        └─ E (hash: e, parents: [c])    // feature 分支
-
-输出带 lane 的节点:
-  A { graphLane: 0 }
-  B { graphLane: 0, parents: [a] }
-  C { graphLane: 0, parents: [b] }
-  D { graphLane: 0, parents: [c] }
-  E { graphLane: 1, parents: [c] }  // 分配新 lane
-```
-
-> **章节来源**：[src/electron/libs/git/graph.ts#L1-L16](file://src/electron/libs/git/graph.ts#L1-L16)
+章节来源：[src/electron/libs/git/graph.ts#L1-L17](file://src/electron/libs/git/graph.ts#L1-L17)
 
 ---
 
-## 8. 安全策略
+### commit-message.ts - AI 生成提交信息
 
-### 8.1 git-blast-radius 防护
+`commit-message.ts` 使用 Claude SDK 生成智能 commit message：
 
-`pro-workflow/scripts/git-blast-radius.js` 在 ProWorkflow 层拦截危险 git 操作：
+#### 主要函数
 
-```javascript
-const BLOCK = [
-  { name: 'force push (--force / -f)',           re: /push\s+.*(?:-f|--force)/ },
-  { name: 'force push (refspec +branch)',        re: /push\s+\S+\s+\+[^\s]+/ },
-  { name: 'remote branch delete',                 re: /push\s+\S+\s+:[^\s]+/ },
-  { name: 'hard reset',                           re: /reset\s+.*--hard/ },
-  { name: 'working-tree clean',                   re: /clean\s+.*-f/ },
-  { name: 'branch deletion (-D)',                 re: /branch\s+.*-D/ },
-  { name: 'checkout discard (.)',                 re: /checkout\s+--?\s+\./ },
-  { name: 'interactive rebase on protected',     re: /rebase\s+.*-i.*(?:main|master)/ },
-  { name: 'filter-branch',                        re: /filter-branch/ },
-  { name: 'reflog expire',                        re: /reflog\s+expire/ },
-  { name: 'stash drop/clear',                     re: /stash\s+(?:drop|clear)/ },
-];
+```typescript
+export async function generateCommitMessageSuggestion(input: {
+  files: GitChangedFile[];
+  stat: string;
+  nameStatus: string;
+  diff: string;
+  language?: string;
+}): Promise<GitCommitMessageSuggestion>
 ```
 
-### 8.2 拦截行为
+#### 提示词构建
 
-| 操作 | 默认行为 | 绕过方式 |
-|------|----------|----------|
-| BLOCK 列表中的操作 | **直接退出（exit 2）** | `PRO_WORKFLOW_ALLOW_UNSAFE_GIT=1` |
-| force-with-lease push | 警告但放行 | - |
+`buildPrompt` 函数构造中文提示词，要求：
+- 输出 JSON（不是 Markdown）
+- 使用 Conventional Commits：`type(scope): description`
+- type 从 `feat/fix/perf/refactor/docs/test/build/chore/style/i18n` 选取
+- message 不超过 72 字符，末尾不加分号
+- body 可选，最多 3 条，只写 diff 能证明的事实
 
-### 8.3 凭证脱敏
+章节来源：[src/electron/libs/git/commit-message.ts#L83-L124](file://src/electron/libs/git/commit-message.ts#L83-L124)
 
-所有命令中的凭证 URL 会被脱敏：
+#### AI 调用配置
 
-```javascript
-function redact(command) {
-  return command.replace(/(https?:\/\/)[^/@\s]+@/gi, '$1***@');
-}
+- 超时：6 秒（`AI_COMMIT_MESSAGE_TIMEOUT_MS = 6000`）
+- 最大上下文：8000 字符
+- 最大 diff：6000 字符
+- 最大文件数：80 个
+
+章节来源：[src/electron/libs/git/commit-message.ts#L3-L8](file://src/electron/libs/git/commit-message.ts#L3-L8)
+
+#### 兜底机制
+
+当 AI 调用失败或模型未配置时，`buildFallbackCommitSuggestion` 根据文件路径推断 type 和 scope：
+
+| 路径特征 | 推断 type |
+|----------|-----------|
+| 含 `test`/`spec` | `test` |
+| 含 `.md`/`/docs/` | `docs` |
+| 含 `package`/`vite`/`tsconfig`/`eslint` | `build` |
+| 含 `git` | `fix` |
+| 其他 | `chore` |
+
+章节来源：[src/electron/libs/git/commit-message.ts#L181-L198](file://src/electron/libs/git/commit-message.ts#L181-L198)
+
+---
+
+## IPC 调用链路
+
+```mermaid
+sequenceDiagram
+    participant UI as GitWorkbenchPanel
+    participant IPC as ipc.ts handler
+    participant Svc as GitWorkbenchService
+    participant Git as git CLI
+
+    UI->>IPC: invoke("git:status")
+    IPC->>Svc: handleGitWorkbenchInvoke(channel, args)
+    Svc->>Git: spawn("git", ["status"])
+    Git-->>Svc: stdout/stderr
+    Svc-->>IPC: result
+    IPC-->>UI: Promise<result>
 ```
 
-> **章节来源**：[pro-workflow/scripts/git-blast-radius.js#L8-L62](file://pro-workflow/scripts/git-blast-radius.js#L8-L62)
+所有 IPC 通道通过 `registerGitWorkbenchIpcHandlers` 注册在主进程，Renderer 使用 `ipcRenderer.invoke()` 调用。
 
-### 8.4 工作目录检测
+---
 
-`cwd-changed.js` 在目录切换时检测 Git 环境：
+## 安全防护 - git-blast-radius
+
+`pro-workflow/scripts/git-blast-radius.js` 是危险 Git 命令拦截器：
+
+#### 阻断模式（BLOCK）
+
+以下命令会被直接阻断，退出码 2：
+
+| 危险操作 | 正则表达式 |
+|----------|-----------|
+| force push | `git push ... --force / -f` |
+| force push (+branch) | `git push ... +branch` |
+| 远程分支删除 (refspec) | `git push ... :ref` |
+| 远程分支删除 (--delete) | `git push ... --delete` |
+| hard reset | `git reset ... --hard` |
+| 工作区清理 | `git clean ... -f` |
+| 分支删除 (-D) | `git branch ... -D` |
+| checkout 丢弃 (.) | `git checkout .` 或 `git restore .` |
+| 交互式 rebase 受保护分支 | `git rebase -i ... main/master/trunk/release/` |
+| history rewrite | `git filter-branch` |
+| reflog expire | `git reflog expire` |
+| ref 删除 | `git update-ref -d` |
+| stash drop/clear | `git stash drop/clear` |
+
+章节来源：[pro-workflow/scripts/git-blast-radius.js#L8-L23](file://pro-workflow/scripts/git-blast-radius.js#L8-L23)
+
+#### 警告模式（WARN_NOT_BLOCK）
+
+- `--force-with-lease push`：警告但不阻断（仍可覆写远程）
+
+章节来源：[pro-workflow/scripts/git-blast-radius.js#L25-L27](file://pro-workflow/scripts/git-blast-radius.js#L25-L27)
+
+#### 绕过方式
+
+```bash
+export PRO_WORKFLOW_ALLOW_UNSAFE_GIT=1
+```
+
+设置环境变量后，所有检查被跳过。
+
+章节来源：[pro-workflow/scripts/git-blast-radius.js#L43](file://pro-workflow/scripts/git-blast-radius.js#L43)
+
+---
+
+## Pro Workflow 扩展
+
+### cwd-changed.js - 目录变更感知
+
+当工作目录变更时，检测项目特征：
 
 ```javascript
 const hasGit = fs.existsSync(path.join(newCwd, '.git'));
 const hasPackageJson = fs.existsSync(path.join(newCwd, 'package.json'));
-const hasClaude = fs.existsSync(path.join(newCwd, 'CLAUDE.md')) || 
-                  fs.existsSync(path.join(newCwd, '.claude'));
+const hasClaude = fs.existsSync(path.join(newCwd, 'CLAUDE.md')) ||
+                 fs.existsSync(path.join(newCwd, '.claude'));
 ```
 
-> **章节来源**：[pro-workflow/scripts/cwd-changed.js#L10-L15](file://pro-workflow/scripts/cwd-changed.js#L10-L15)
+检测项目类型并写入环境文件：
+- `Cargo.toml` → rust
+- `go.mod` → go
+- `pyproject.toml` → python
+- `package.json` → node
+
+章节来源：[pro-workflow/scripts/cwd-changed.js#L11-L33](file://pro-workflow/scripts/cwd-changed.js#L11-L33)
+
+### github-release.mjs - 发布脚本
+
+虽然不在 git module 内，但 `github-release.mjs` 与 Git 工作台协同：
+
+```javascript
+// 验证工作区状态
+ensureGitRepository();    // 检查是否在 Git 仓库
+ensureCleanWorktree();    // 检查工作区是否干净
+ensureOriginRemote();     // 验证 remote URL
+
+// 获取发布信息
+getPreviousTag(tag);      // 获取上一个版本标签
+getCommitsSinceTag(tag);  // 获取提交列表
+getFilesSinceTag(tag);    // 获取变更文件
+```
+
+章节来源：[scripts/github-release.mjs#L183-L317](file://scripts/github-release.mjs#L183-L317)
 
 ---
 
-## 9. 常见改造路径
+## 第一版能力边界
 
-### 9.1 添加新 Git 操作
+### 允许的操作
 
-1. 在 `types.ts` 定义新的 payload/result 类型
-2. 在 `service.ts` 实现操作方法
-3. 在 `ipc.ts` 注册 IPC handler
-4. 在 UI 组件中调用
+- `status` / `diff`：状态查看和差异对比
+- `stage` / `unstage`：文件暂存和取消暂存
+- `commit`：提交改动
+- `ordinary push`：普通推送（禁止 force push）
+- `create` / `checkout branch`：分支创建和切换
+- `stash save` / `apply` / `drop`：stash 管理
+- `recent history` / `lightweight graph`：近期历史和分支图
 
-```typescript
-// 1. types.ts
-interface GitBranchDeleteResult { success: boolean; }
+章节来源：[src/electron/libs/git/README.md#L16-L25](file://src/electron/libs/git/README.md#L16-L25)
 
-// 2. service.ts
-async deleteBranch(name: string): Promise<GitBranchDeleteResult> {
-  const result = await this.run(["branch", "-d", name]);
-  return { success: result.status === 0 };
-}
+### 禁止的操作
 
-// 3. ipc.ts
-ipcMain.handle("git.branch.delete", async (_, name) => {
-  return service.deleteBranch(name);
-});
-```
+- reset
+- rebase
+- cherry-pick
+- force push
+- amend
+- squash
+- interactive rebase
 
-### 9.2 添加新错误码
+这些限制通过 `git-blast-radius.js` 在 Pro Workflow 层实施。
 
-在 `errors.ts` 的 `PATTERNS` 数组中添加新条目：
-
-```typescript
-const PATTERNS: Array<[GitWorkbenchErrorCode, RegExp, string]> = [
-  // ... 现有条目
-  ["your_new_error", /your_pattern/i, "用户友好的中文提示"],
-];
-```
-
-### 9.3 扩展 AI 提交信息
-
-修改 `commit-message.ts` 的 `buildPrompt()` 或 `buildFallbackCommitSuggestion()`：
-
-```typescript
-// 添加新的 type
-const VALID_TYPES = [
-  "feat", "fix", "perf", "refactor", "docs", 
-  "test", "build", "chore", "style", "i18n",
-  "your_new_type"  // 新增
-];
-```
-
-### 9.4 自定义图渲染
-
-`assignGraphLanes()` 返回带 `graphLane` 字段的节点，UI 层可据此渲染 SVG/Canvas：
-
-```typescript
-// UI 层渲染示例
-commits.forEach(commit => {
-  const x = commit.graphLane * LANE_WIDTH;
-  const y = /* 根据时间戳或索引计算 */;
-  drawPoint(x, y);
-  commit.parents.forEach(parent => {
-    drawLine(commit, findCommit(parent));
-  });
-});
-```
+章节来源：[src/electron/libs/git/README.md#L27-L34](file://src/electron/libs/git/README.md#L27-L34)
 
 ---
 
-## 10. 验证命令
+## 扩展点与改造路径
 
-### 10.1 单元测试验证
+### 扩展点 1：新增 Git 操作
 
-```bash
-# 验证 GitWorkbenchService 初始化
-npx ts-node -e "
-  import { GitWorkbenchService } from './src/electron/libs/git/index.js';
-  console.log('Service loaded:', !!GitWorkbenchService);
-"
+1. 在 `types.ts` 中定义新的 payload/result 类型
+2. 在 `service.ts` 中实现操作方法
+3. 在 `ipc.ts` 中注册 IPC handler
+4. 在 `errors.ts` 中添加错误模式（如果需要）
 
-# 验证错误归一化
-npx ts-node -e "
-  import { normalizeGitError } from './src/electron/libs/git/errors.js';
-  const err = normalizeGitError(new Error('nothing to commit'));
-  console.log('Error code:', err.code);  // expected: nothing_to_commit
-"
+### 扩展点 2：AI 能力增强
 
-# 验证 Lane 分配
-npx ts-node -e "
-  import { assignGraphLanes } from './src/electron/libs/git/graph.js';
-  const commits = [
-    { hash: 'c', parents: ['b'] },
-    { hash: 'b', parents: ['a'] },
-    { hash: 'a', parents: [] },
-  ];
-  const result = assignGraphLanes(commits);
-  console.log('Lanes:', result.map(c => c.graphLane));
-"
-```
+`commit-message.ts` 中的 `generateCommitMessageSuggestion` 可扩展：
+- 支持更多模型（目前仅 Claude）
+- 添加自定义提示词模板
+- 支持多语言 commit message
 
-### 10.2 集成测试验证
+### 扩展点 3：安全规则定制
+
+修改 `git-blast-radius.js` 中的 `BLOCK` 数组即可扩展危险命令拦截规则。
+
+### 扩展点 4：分支图渲染
+
+`graph.ts` 中的 `assignGraphLanes` 可调整 lane 分配算法以支持更多分支场景。
+
+---
+
+## 验证命令
+
+### 本地验证 Git 模块
 
 ```bash
-# 验证 IPC 通道注册（需要 Electron 环境）
-npm run electron:dev -- --test-git-workbench
-
-# 验证 Git 命令可用性
+# 检查 git 是否可用
 git --version
-which git
 
-# 验证仓库环境
-git rev-parse --is-inside-work-tree
+# 检查工作区
+cd <project-dir>
+git status
+
+# 运行 git-blast-radius 测试
+echo '{"tool_input":{"command":"git push --force origin main"}}' | node pro-workflow/scripts/git-blast-radius.js
+# 期望输出：blocked "force push (--force / -f)"
 ```
 
-### 10.3 ProWorkflow 验证
+### 发布流程验证
 
 ```bash
-# 验证 git-blast-radius 拦截
-echo '{"tool_input":{"command":"git push --force origin main"}}' | \
-  node pro-workflow/scripts/git-blast-radius.js
-# expected: exit 2，输出 blocked 消息
+# dry-run 模式测试发布
+node scripts/github-release.mjs patch --dry-run
 
-# 验证安全命令放行
-echo '{"tool_input":{"command":"git status"}}' | \
-  node pro-workflow/scripts/git-blast-radius.js
-# expected: exit 0
-
-# 验证绕过环境变量
-PRO_WORKFLOW_ALLOW_UNSAFE_GIT=1 \
-  echo '{"tool_input":{"command":"git push --force origin main"}}' | \
-  node pro-workflow/scripts/git-blast-radius.js
-# expected: exit 0
+# 验证 tag 不存在
+git tag -l | grep "^v"
 ```
 
-### 10.4 常见排障步骤
+### AI 生成测试
 
-| 症状 | 排查命令 |
-|------|----------|
-| IPC 调用失败 | 检查 `registerGitWorkbenchIpcHandlers()` 是否在 `app.on('ready')` 后调用 |
-| AI 生成超时 | 检查 `getCurrentApiConfig()` 返回的模型配置是否有效 |
-| Lane 分配错误 | 确认 `commits` 数组是从新到旧排序 |
-| 危险操作未被拦截 | 检查 `git-blast-radius.js` 是否在 ProWorkflow 前置脚本列表中 |
+在已实现 commit message 生成的组件中触发暂存操作，观察：
+1. 6 秒内是否返回建议
+2. 失败时是否 fallback 到本地生成
 
 ---
 
-## 附录：模块文件索引
-
-| 文件路径 | 用途 |
-|----------|------|
-| `src/electron/libs/git/index.ts` | 主进程统一导出 |
-| `src/electron/libs/git/service.ts` | Git 操作入口 |
-| `src/electron/libs/git/ipc.ts` | IPC Handler 注册 |
-| `src/electron/libs/git/types.ts` | 类型定义 |
-| `src/electron/libs/git/errors.ts` | 错误归一化 |
-| `src/electron/libs/git/history.ts` | 历史解析 |
-| `src/electron/libs/git/graph.ts` | 图 lane 计算 |
-| `src/electron/libs/git/commit-message.ts` | AI 提交建议 |
-| `src/electron/libs/git/README.md` | 模块文档 |
-| `src/ui/components/git/index.ts` | UI 组件导出 |
-| `pro-workflow/scripts/git-blast-radius.js` | 危险操作拦截 |
-| `pro-workflow/scripts/cwd-changed.js` | 目录切换检测 |
-| `scripts/github-release.mjs` | 自动发布脚本 |
-
----
-
-*文档版本：1.0.0 | 最后更新：基于 tech-cc-hub 当前代码状态*
+*文档版本：module-git-workbench · 生成时间：2024*
+*如需更新本文档，请同步修改对应源文件后更新章节来源引用。*

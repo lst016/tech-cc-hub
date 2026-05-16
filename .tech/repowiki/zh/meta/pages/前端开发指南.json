@@ -1,0 +1,20 @@
+{
+  "id": "前端开发指南",
+  "name": "前端开发指南",
+  "title": "前端开发指南",
+  "slug": "前端开发指南",
+  "path": "前端开发指南.md",
+  "description": "前端开发指南",
+  "prompt": "为 tech-cc-hub 编写 前端开发指南 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 30,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "4deebd1df78632f7469179855fe11396eee5bae02debc76401d0486b4a257d75",
+  "generated_at": 1778922186535
+}

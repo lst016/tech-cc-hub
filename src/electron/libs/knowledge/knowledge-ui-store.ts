@@ -445,7 +445,7 @@ async function runKnowledgeGeneration(
     total: Math.max(1, Number(readObject(payload.state).total ?? 0)),
     processing: 1,
     failed: 0,
-    phase: "准备生成 Repo Wiki",
+    phase: "正在规划目录",
     updatedAt: Date.now(),
   });
 
@@ -459,7 +459,11 @@ async function runKnowledgeGeneration(
     let phase = event.message || progressState.phase;
     let processing = 1;
 
-    if (event.stage === "modules" && typeof event.total === "number" && event.total > 0) {
+    if (event.stage === "planning") {
+      completed = 0;
+      total = Math.max(1, total);
+      phase = "正在规划目录";
+    } else if (event.stage === "modules" && typeof event.total === "number" && event.total > 0) {
       moduleTotal = event.total;
       total = moduleTotal + 3;
       completed = Math.max(0, event.completed ?? 0);

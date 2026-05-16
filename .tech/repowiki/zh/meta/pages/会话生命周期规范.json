@@ -1,0 +1,20 @@
+{
+  "id": "会话生命周期规范",
+  "name": "会话生命周期规范",
+  "title": "会话生命周期规范",
+  "slug": "会话生命周期规范",
+  "path": "会话生命周期规范.md",
+  "description": "会话生命周期规范",
+  "prompt": "为 tech-cc-hub 编写 会话生命周期规范 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 21,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "980e447d593e7d8924eca193be447ebd1ea3ddc73e67074c150f17a78e1b550a",
+  "generated_at": 1778922186535
+}

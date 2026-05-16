@@ -55,6 +55,20 @@ pre code.hljs {
   padding: 0;
 }
 
+@keyframes knowledge-progress-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(360%);
+  }
+}
+
+.knowledge-progress-indeterminate {
+  width: 30%;
+  animation: knowledge-progress-indeterminate 1.15s ease-in-out infinite;
+}
+
 html,
 body,
 #root {

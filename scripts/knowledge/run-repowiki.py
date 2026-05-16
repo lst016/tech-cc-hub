@@ -438,9 +438,39 @@ def _add_catalog(catalogs: list[dict], catalog: dict) -> None:
     catalogs.append(catalog)
 
 
-def _expand_catalogs_from_source(project, graph: DependencyGraph, catalogs: list[dict]) -> list[dict]:
+def _catalog_parent_depths(catalogs: list[dict]) -> dict[str, int]:
+    by_name = {str(catalog.get("name") or ""): catalog for catalog in catalogs if str(catalog.get("name") or "")}
+    depths: dict[str, int] = {}
+
+    def depth_for(catalog: dict) -> int:
+        name = str(catalog.get("name") or "")
+        if name in depths:
+            return depths[name]
+        depth = 0
+        seen = {name}
+        parent = str(catalog.get("parent") or "").strip()
+        while parent and parent in by_name and parent not in seen:
+            depth += 1
+            seen.add(parent)
+            parent = str(by_name[parent].get("parent") or "").strip()
+        depths[name] = depth
+        return depth
+
+    for catalog in catalogs:
+        depth_for(catalog)
+    return depths
+
+
+def _max_catalog_parent_depth(catalogs: list[dict]) -> int:
+    depths = _catalog_parent_depths(catalogs)
+    return max(depths.values(), default=0)
+
+
+def _expand_catalogs_from_source(project, graph: DependencyGraph, catalogs: list[dict], *, force_nested: bool = False) -> list[dict]:
     target_count = _target_catalog_count(project)
-    if len(catalogs) >= target_count:
+    if force_nested:
+        target_count = max(len(catalogs) + 8, min(72, max(target_count + 12, 56)))
+    if len(catalogs) >= target_count and not force_nested:
         return catalogs
 
     rank_lookup = _file_rank_lookup(graph)
@@ -477,7 +507,10 @@ def _expand_catalogs_from_source(project, graph: DependencyGraph, catalogs: list
         })
         next_order += 1
 
+    reserve_for_topics = 8 if force_nested else 0
     for module in important_modules[:24]:
+        if force_nested and len(catalogs) >= target_count - reserve_for_topics:
+            break
         if len(catalogs) >= target_count:
             break
         if module == "root" and len(catalogs) > 20:
@@ -562,6 +595,8 @@ def _ensure_required_catalogs(project, graph: DependencyGraph, catalogs: list[di
         })
 
     expanded = _expand_catalogs_from_source(project, graph, catalogs)
+    if _max_catalog_parent_depth(expanded) < 2:
+        expanded = _expand_catalogs_from_source(project, graph, expanded, force_nested=True)
     return sorted(expanded, key=lambda item: int(item.get("order", 100)))
 
 

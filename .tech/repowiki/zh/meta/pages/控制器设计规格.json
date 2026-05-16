@@ -1,0 +1,20 @@
+{
+  "id": "控制器设计规格",
+  "name": "控制器设计规格",
+  "title": "控制器设计规格",
+  "slug": "控制器设计规格",
+  "path": "控制器设计规格.md",
+  "description": "控制器设计规格",
+  "prompt": "为 tech-cc-hub 编写 控制器设计规格 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 43,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "0dd4a140854d75c199276248be0a1f9a2ce12fac16f4e10c6b0db0be33ca2052",
+  "generated_at": 1778922186535
+}

@@ -1,0 +1,20 @@
+{
+  "id": "术语表",
+  "name": "术语表",
+  "title": "术语表",
+  "slug": "术语表",
+  "path": "术语表.md",
+  "description": "术语表",
+  "prompt": "为 tech-cc-hub 编写 术语表 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 3,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "a8d69237af933dd9f815000129e2ffd7ac09f11774b0fb933a5572ace7f44505",
+  "generated_at": 1778922186535
+}

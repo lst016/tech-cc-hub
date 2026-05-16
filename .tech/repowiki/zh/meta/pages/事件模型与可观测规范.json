@@ -1,0 +1,20 @@
+{
+  "id": "事件模型与可观测规范",
+  "name": "事件模型与可观测规范",
+  "title": "事件模型与可观测规范",
+  "slug": "事件模型与可观测规范",
+  "path": "事件模型与可观测规范.md",
+  "description": "事件模型与可观测规范",
+  "prompt": "为 tech-cc-hub 编写 事件模型与可观测规范 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 22,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "b44ba8cf740e66984c613fd45a5b5c7d2aef3613a75d43831734cc0eea2c2271",
+  "generated_at": 1778922186535
+}

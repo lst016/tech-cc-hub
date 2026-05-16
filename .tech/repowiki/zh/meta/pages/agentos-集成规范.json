@@ -1,0 +1,20 @@
+{
+  "id": "agentos-集成规范",
+  "name": "AgentOS 集成规范",
+  "title": "AgentOS 集成规范",
+  "slug": "AgentOS 集成规范",
+  "path": "AgentOS 集成规范.md",
+  "description": "AgentOS 集成规范",
+  "prompt": "为 tech-cc-hub 编写 AgentOS 集成规范 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 25,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "d4693d5a6f2d479456df7913663878c3037ba2771b39fb3128c84743e8d80297",
+  "generated_at": 1778922186535
+}

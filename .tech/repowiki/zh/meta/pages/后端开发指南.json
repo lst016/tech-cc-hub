@@ -1,0 +1,20 @@
+{
+  "id": "后端开发指南",
+  "name": "后端开发指南",
+  "title": "后端开发指南",
+  "slug": "后端开发指南",
+  "path": "后端开发指南.md",
+  "description": "后端开发指南",
+  "prompt": "为 tech-cc-hub 编写 后端开发指南 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 31,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "e8646b95033b2e61eb1497c58499103c4bf28042f40e82cd9f00ce6021616325",
+  "generated_at": 1778922186535
+}

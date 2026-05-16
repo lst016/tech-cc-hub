@@ -1,0 +1,20 @@
+{
+  "id": "控制平面组件设计",
+  "name": "控制平面组件设计",
+  "title": "控制平面组件设计",
+  "slug": "控制平面组件设计",
+  "path": "控制平面组件设计.md",
+  "description": "控制平面组件设计",
+  "prompt": "为 tech-cc-hub 编写 控制平面组件设计 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 11,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "480852bf073a79e882f06cd65a28909a58291265133a8b4657f71090bfa47114",
+  "generated_at": 1778922186535
+}

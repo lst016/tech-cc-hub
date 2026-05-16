@@ -1,0 +1,20 @@
+{
+  "id": "组件设计规格",
+  "name": "组件设计规格",
+  "title": "组件设计规格",
+  "slug": "组件设计规格",
+  "path": "组件设计规格.md",
+  "description": "组件设计规格",
+  "prompt": "为 tech-cc-hub 编写 组件设计规格 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 42,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "b40b52835207bdc4ac6e37c7e9e4e43d6b890ef1f06ff50d793f0bd6ba361fb3",
+  "generated_at": 1778922186535
+}

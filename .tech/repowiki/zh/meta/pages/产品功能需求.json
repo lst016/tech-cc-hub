@@ -1,0 +1,20 @@
+{
+  "id": "产品功能需求",
+  "name": "产品功能需求",
+  "title": "产品功能需求",
+  "slug": "产品功能需求",
+  "path": "产品功能需求.md",
+  "description": "产品功能需求",
+  "prompt": "为 tech-cc-hub 编写 产品功能需求 文档。",
+  "dependent_files": [],
+  "parent_id": "",
+  "parent": "",
+  "parent_chain": [],
+  "section_path": "Repo Wiki",
+  "layer_level": 0,
+  "order": 40,
+  "status": "completed",
+  "page_type": "topic",
+  "content_hash": "ef83adb13cd2d9a716505229ea96225b507ea9e10c6a9422a53fd0d7344aefa2",
+  "generated_at": 1778922186535
+}

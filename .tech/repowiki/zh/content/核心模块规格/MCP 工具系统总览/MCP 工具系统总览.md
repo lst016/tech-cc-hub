@@ -13,180 +13,163 @@
 - [src/electron/main.ts](file://src/electron/main.ts)
 </cite>
 
+# MCP 工具系统总览
+
 ## 目录
 
-- [系统职责与设计原则](#系统职责与设计原则)
+- [职责与设计原则](#职责与设计原则)
 - [架构总览与调用链](#架构总览与调用链)
-- [入口文件与初始化流程](#入口文件与初始化流程)
-- [工具模块详解](#工具模块详解)
-  - [admin.ts - 受控配置管理](#admints---受控配置管理)
-  - [browser.ts - 浏览器工作台](#browserts---浏览器工作台)
-  - [cron.ts - 定时任务](#cronts---定时任务)
-  - [design.ts - 设计还原对比](#designts---设计还原对比)
-  - [Figma 工具集](#figma-工具集)
-- [数据结构与数据结构](#数据结构与数据结构)
-- [安全边界与上限](#安全边界与上限)
+- [服务器注册与工厂模式](#服务器注册与工厂模式)
+- [各工具模块详解](#各工具模块详解)
+- [Host 注入机制](#host-注入机制)
+- [数据结构与 Schema](#数据结构与-schema)
+- [安全边界与限制](#安全边界与限制)
 - [扩展点与常见改造路径](#扩展点与常见改造路径)
-- [验证命令与排障步骤](#验证命令与排障步骤)
+- [验证与排障命令](#验证与排障命令)
 
 ---
 
-## 系统职责与设计原则
+## 职责与设计原则
 
-MCP（Model Context Protocol）工具系统是 tech-cc-hub 向 AI Agent 暴露能力的核心通道。它的职责是：
+MCP 工具系统是 tech-cc-hub 向 Agent 暴露能力的主要通道。每个工具模块对应一类业务能力，独立实现、单独审阅，避免 `libs` 根目录膨胀。
 
-1. **封装 Electron 主进程能力**：将 BrowserView、文件系统、设计分析等能力转译为 Agent 可调用的工具。
-2. **保护宿主安全边界**：每个工具都独立审视，不直接操作 React UI，返回内容以摘要和路径为主。
-3. **统一结果格式**：所有工具通过 `toTextToolResult` 输出，保证 Agent 收到的信息结构一致。
+**设计原则**（来源：[src/electron/libs/mcp-tools/README.md#L1-L22](file://src/electron/libs/mcp-tools/README.md#L1-L22)）：
 
-> 章节来源：[src/electron/libs/mcp-tools/README.md#L1-L4](file://src/electron/libs/mcp-tools/README.md#L1-L4)
-
-**设计原则**（来源：[src/electron/libs/mcp-tools/README.md#L10-L14](file://src/electron/libs/mcp-tools/README.md#L10-L14)）：
-- 每个工具有明确的 host 边界，不直接操作 React UI
-- 返回给模型的内容尽量是摘要、路径和结构化 JSON，避免塞入大图或密钥明文
-- 涉及写入磁盘或配置的工具必须有字段 allowlist 和体积上限
+1. **明确的 host 边界**：工具不直接操作 React UI，只通过 `BrowserWorkbenchToolHost` 或 `DesignToolHost` 接口访问主进程能力。
+2. **摘要式返回**：返回给模型的内容是摘要、路径和结构化 JSON，避免塞入大图或密钥明文。
+3. **受控写入**：涉及写入磁盘或配置的工具必须有字段 allowlist 和体积上限。
 
 ---
 
 ## 架构总览与调用链
 
-下图展示 MCP 工具系统的整体架构和数据流向：
-
 ```mermaid
-flowchart TB
-    subgraph MainProcess["主进程 main.ts"]
-        BM["BrowserWorkbenchManager"]
-        CS["CronService"]
-        DS["DesignToolHost"]
+flowchart TD
+    subgraph main.ts["main.ts (入口)"]
+        A[BrowserWorkbenchManager 创建]
+        B[CronService 创建]
+        C[调用 setBrowserToolHost]
+        D[调用 setDesignToolHost]
+        E[调用 setCronService]
     end
 
-    subgraph ToolServer["MCP 工具层"]
-        Admin["admin.ts<br/>set_global_runtime_config"]
-        Browser["browser.ts<br/>40+ 浏览器工具"]
-        Cron["cron.ts<br/>定时任务三件套"]
-        Design["design.ts<br/>设计对比工具"]
-        Figma["figma-rest.ts<br/>Figma REST API"]
+    subgraph builtin-mcp-servers["builtin-mcp-servers.ts (注册中心)"]
+        F[getBuiltinMcpServers]
+        G[BUILTIN_MCP_SERVER_FACTORIES]
+        H[listBuiltinMcpToolNames]
     end
 
-    subgraph Registry["注册层 builtin-mcp-servers.ts"]
-        Factories["BUILTIN_MCP_SERVER_FACTORIES"]
-        Names["BUILTIN_MCP_TOOL_NAMES"]
-        GetServers["getBuiltinMcpServers()"]
+    subgraph mcp-tools["mcp-tools/ (各工具模块)"]
+        I[admin.ts]
+        J[browser.ts]
+        K[design.ts]
+        L[cron.ts]
+        M[figma-design-intelligence.ts]
+        N[figma-locator.ts]
+        O[figma-rest.ts]
     end
 
-    Agent["Agent Runtime"]
-
-    Agent --> GetServers
-    GetServers --> Factories
-    Factories --> Admin
-    Factories --> Browser
-    Factories --> Cron
-    Factories --> Design
-    Factories --> Figma
-
-    Admin <-->|loadGlobalRuntimeConfig<br/>saveGlobalRuntimeConfig| Config["config-store.ts"]
-    Browser <-->|setBrowserToolHost| BM
-    Cron <-->|setCronService| CS
-    Design <-->|setDesignToolHost| DS
-
-    style MainProcess fill:#e1f5fe
-    style ToolServer fill:#fff3e0
-    style Registry fill:#e8f5e9
+    A --> C
+    A --> D
+    B --> E
+    F --> G
+    G --> I
+    G --> J
+    G --> K
+    G --> L
+    G --> M
+    C --> J
+    D --> K
+    E --> L
 ```
 
-**调用链说明**（来源：[src/electron/libs/builtin-mcp-servers.ts#L45-L59](file://src/electron/libs/builtin-mcp-servers.ts#L45-L59)）：
+### 调用链路说明
 
-1. `getBuiltinMcpServers(contextOrSessionId, enabledServerNames?)` 接收会话上下文
-2. 遍历 `BUILTIN_MCP_SERVERS` 注册表，按 `enabledServerNames` 过滤
-3. 调用对应的 Factory（`BUILTIN_MCP_SERVER_FACTORIES`）创建实例
-4. 返回 `{ [serverName]: McpSdkServerConfigWithInstance }` 映射
+1. **应用启动**：Electron main 进程初始化 `BrowserWorkbenchManager` 和 `CronService`。
+2. **Host 注入**：`main.ts` 调用 `setBrowserToolHost(host)`、`setDesignToolHost(host)`、`setCronService(service)`，将主进程能力注入 MCP 工具。
+3. **服务器获取**：`getBuiltinMcpServers(context, enabledNames)` 根据上下文和启用列表，调用各工具的工厂函数生成 `McpSdkServerConfigWithInstance`。
+4. **工具注册**：SDK 内部将工具注册到 MCP 运行时，Agent 可通过工具名调用。
 
 ---
 
-## 入口文件与初始化流程
+## 服务器注册与工厂模式
 
-### 关键入口文件
+`builtin-mcp-servers.ts` 是整个系统的注册中心。它定义了：
 
-| 文件 | 职责 |
+- **工具名称映射**：`BUILTIN_MCP_TOOL_NAMES` 记录每个服务器对应的工具列表。
+- **工厂函数映射**：`BUILTIN_MCP_SERVER_FACTORIES` 将服务器名映射到创建函数。
+
+```typescript
+// 来源: src/electron/libs/builtin-mcp-servers.ts#L23-L32
+export const BUILTIN_MCP_SERVER_FACTORIES: Record<BuiltinMcpServerName, BuiltinMcpFactory> = {
+  "tech-cc-hub-browser": ({ sessionId }) => getBrowserMcpServer(sessionId),
+  "tech-cc-hub-admin": () => getAdminMcpServer(),
+  "tech-cc-hub-design": ({ sessionId }) => getDesignMcpServer(sessionId),
+  "tech-cc-hub-figma": () => getFigmaRestMcpServer(),
+  "tech-cc-hub-cron": () => getCronMcpServer(),
+  // ...
+};
+```
+
+**关键函数**（来源：[src/electron/libs/builtin-mcp-servers.ts#L45-L59](file://src/electron/libs/builtin-mcp-servers.ts#L45-L59)）：
+
+| 函数 | 作用 |
 |------|------|
-| `builtin-mcp-servers.ts` | 工具工厂注册表、工具名导出、服务器实例化入口 |
-| `mcp-tools/*.ts` | 各工具的具体实现 |
-| `main.ts` | 依赖注入（Host 注入）、生命周期管理 |
-
-### Host 注入时机（来源：[src/electron/main.ts#L39-L41](file://src/electron/main.ts#L39-L41)）
-
-```typescript
-// main.ts 启动顺序
-import { setBrowserToolHost } from "./libs/mcp-tools/browser.js";
-import { setDesignToolHost } from "./libs/mcp-tools/design.js";
-import { setCronService } from "./libs/mcp-tools/cron.js";
-
-// BrowserWorkbenchManager 创建后
-setBrowserToolHost(browserWorkbenchManager);
-setDesignToolHost(designToolHost);
-setCronService(cronService);
-```
-
-**注入时机**：Host 在 `BrowserWorkbenchManager` 实例化后立即注入，确保工具调用时 Host 已就绪。如果注入前调用会抛出 `"浏览器工作台尚未初始化"` 或 `"设计还原工具尚未初始化"`。
+| `getBuiltinMcpServers(context, enabledNames?)` | 返回已启用的服务器实例 Map |
+| `listBuiltinMcpToolNames(enabledNames?)` | 返回已启用工具的名称列表 |
 
 ---
 
-## 工具模块详解
+## 各工具模块详解
 
-### admin.ts - 受控配置管理
+### 1. Admin 工具 (admin.ts)
 
-**职责**：允许 Agent 受控修改 tech-cc-hub 自身的运行配置，包括环境变量、技能凭证、系统提示扩展和渠道配置。
+**职责**：让 Agent 受控地修改 tech-cc-hub 自己的运行配置，如 `env`、`skillCredentials`、`channels`。
 
-**核心工具**（来源：[src/electron/libs/mcp-tools/admin.ts#L14](file://src/electron/libs/mcp-tools/admin.ts#L14)）：
-```typescript
-export const ADMIN_TOOL_NAMES = ["set_global_runtime_config"] as const;
-```
+**核心工具**：`set_global_runtime_config`
 
-**输入 Schema**（来源：[src/electron/libs/mcp-tools/admin.ts#L59-L72](file://src/electron/libs/mcp-tools/admin.ts#L59-L72)）：
+**数据结构**（来源：[src/electron/libs/mcp-tools/admin.ts#L59-L72](file://src/electron/libs/mcp-tools/admin.ts#L59-L72)）：
+
 ```typescript
 type AdminToolInput = {
   patch?: {
-    env?: Record<string, string | number | boolean>;        // 环境变量
-    skillCredentials?: Record<string, string[]>;           // 技能凭证
-    closeSidebarOnBrowserOpen?: boolean;                    // UI 偏好
-    systemPromptExt?: string[];                             // 系统提示扩展
-    channels?: ChannelPatch;                               // 渠道配置
+    env?: Record<string, string | number | boolean>;
+    skillCredentials?: Record<string, string[]>;
+    closeSidebarOnBrowserOpen?: boolean;
+    systemPromptExt?: string[];
+    channels?: ChannelPatch;
   };
   remove?: {
     env?: string[];
     skillCredentials?: string[];
-    sections?: ConfigSection[];  // "env" | "skillCredentials" | ...
+    sections?: ConfigSection[];
   };
 };
 ```
 
-**安全边界**（来源：[src/electron/libs/mcp-tools/admin.ts#L19-L29](file://src/electron/libs/mcp-tools/admin.ts#L19-L29)）：
-- `ANTHROPIC_*` 开头的环境变量禁止写入，防止覆盖主模型凭证
-- 环境变量 Key 必须符合 `^[_A-Za-z][_A-Za-z0-9]*$`
-- 各字段有明确上限（MAX_ENV_KEY_LENGTH=128, MAX_ENV_VALUE_LENGTH=4096 等）
+**安全限制**（来源：[src/electron/libs/mcp-tools/admin.ts#L19-L28](file://src/electron/libs/mcp-tools/admin.ts#L19-L28)）：
 
-**配置合并策略**（来源：[src/electron/libs/mcp-tools/admin.ts#L356](file://src/electron/libs/mcp-tools/admin.ts#L356)）：
-- `mergeConfig()` 采用"只改传入字段"策略，未出现在 patch/remove 里的配置原样保留
-- 支持整节删除（`remove.sections: ["env"]`）
+| 字段 | 上限 |
+|------|------|
+| env key 长度 | 128 |
+| env value 长度 | 4096 |
+| env 条目数 | 120 |
+| skill name 长度 | 128 |
+| 删除条目数 | 80 |
 
----
+**拒绝逻辑**：以 `ANTHROPIC_` 开头的环境变量禁止被 AI 写入，防止覆盖主运行时配置。
 
-### browser.ts - 浏览器工作台
+### 2. Browser 工具 (browser.ts)
 
-**职责**：将 BrowserView 的导航、截图、DOM 查询、元素交互能力暴露给 Agent。
+**职责**：把右侧 BrowserView 的导航、截图、DOM 查询能力暴露给 Agent。
 
-**工具清单**（来源：[src/electron/libs/mcp-tools/browser.ts#L42-L85](file://src/electron/libs/mcp-tools/browser.ts#L42-L85)，共 40+ 个工具）：
+**工具列表**（来源：[src/electron/libs/mcp-tools/browser.ts#L42-L85](file://src/electron/libs/mcp-tools/browser.ts#L42-L85)）共 38 个工具，分为：
 
-| 类别 | 工具示例 |
-|------|----------|
-| 页面控制 | `browser_open_page`, `browser_navigate`, `browser_reload`, `browser_close_page` |
-| 信息获取 | `browser_get_state`, `browser_extract_page`, `browser_get_dom_stats` |
-| 截图与 PDF | `browser_capture_visible`, `browser_save_screenshot`, `browser_save_pdf` |
-| Cookie/Storage | `browser_cookies`, `browser_storage`, `browser_console_logs` |
-| 元素交互 | `browser_click_element`, `browser_fill_element`, `browser_hover_element` |
-| 键盘与鼠标 | `browser_press_key`, `browser_keyboard_type`, `browser_mouse`, `browser_scroll_page` |
-| 样式检查 | `browser_inspect_styles`, `browser_apply_styles`, `browser_inspect_at_point` |
-| 查询与等待 | `browser_query_nodes`, `browser_wait_for`, `browser_eval` |
+- **导航类**：`browser_open_page`、`browser_navigate`、`browser_reload`
+- **截图类**：`browser_capture_visible`、`browser_save_screenshot`、`browser_save_pdf`
+- **交互类**：`browser_click_element`、`browser_fill_element`、`browser_type_element`
+- **DOM 查询**：`browser_query_nodes`、`browser_inspect_styles`、`browser_get_element`
+- **辅助工具**：`http_ping`、`diagnose_port`、`bash_batch`
 
 **Host 接口**（来源：[src/electron/libs/mcp-tools/browser.ts#L88-L168](file://src/electron/libs/mcp-tools/browser.ts#L88-L168)）：
 
@@ -195,452 +178,302 @@ export type BrowserWorkbenchToolHost = {
   open: (sessionId: string, url: string) => BrowserWorkbenchState;
   captureVisible: (sessionId: string) => Promise<{ success: boolean; dataUrl?: string }>;
   clickElement: (sessionId: string, input: {...}) => Promise<{...}>;
-  // ... 20+ 方法
+  // ... 共 28 个方法
 };
 ```
 
-**字段过滤机制**（来源：[src/electron/libs/mcp-tools/browser.ts#L269-L318](file://src/electron/libs/mcp-tools/browser.ts#L269-L318)）：
-- `normalizeFields()` 支持别名（`box` → `boundingBox`, `css` → `computedStyle`）
-- `filterNodeQueryResult()` 和 `filterStyleInspection()` 支持点号路径选取
-- 减少 Agent 上下文噪音，只返回关注字段
-
-**HTTP 诊断工具**（来源：[src/electron/libs/mcp-tools/browser.ts#L376-L534](file://src/electron/libs/mcp-tools/browser.ts#L376-L534)）：
-- `http_ping`: 检测 URL 可达性和响应时间
-- `diagnose_port`: 检查端口是否被占用
-- `bash_batch`: 批量执行 shell 命令（有 MAX_BATCH_COMMANDS=20 上限）
-
----
-
-### cron.ts - 定时任务
-
-**职责**：让 Agent 创建和管理定时任务，任务数据持久化到 SQLite。
-
-**工具清单**（来源：[src/electron/libs/mcp-tools/cron.ts#L14-L18](file://src/electron/libs/mcp-tools/cron.ts#L14-L18)）：
+**字段别名系统**（来源：[src/electron/libs/mcp-tools/browser.ts#L203-L212](file://src/electron/libs/mcp-tools/browser.ts#L203-L212)）：
 
 ```typescript
-export const CRON_TOOL_NAMES = [
-  "create_scheduled_task",
-  "list_scheduled_tasks",
-  "delete_scheduled_task",
-] as const;
+const FIELD_ALIASES = {
+  box: "boundingBox",
+  bounds: "boundingBox",
+  computed: "computedStyle",
+  css: "computedStyle",
+  styles: "computedStyle",
+  style: "computedStyle",
+};
 ```
+
+这允许 Agent 用简短别名查询 DOM 属性。
+
+### 3. Design 工具 (design.ts)
+
+**职责**：设计还原能力，包括截图语义分析、截图比照和 diff 生成。
+
+**工具列表**（来源：[src/electron/libs/mcp-tools/design.ts#L20-L30](file://src/electron/libs/mcp-tools/design.ts#L20-L30)）：
+
+| 工具名 | 用途 |
+|--------|------|
+| `design_capture_current_view` | 捕获当前 BrowserView 截图 |
+| `design_capture_current_region` | 捕获区域截图 |
+| `design_inspect_image` | 单张参考图语义摘要 |
+| `design_compare_current_view` | 当前页面 vs 参考图 |
+| `design_compare_images` | 两张图片对比 |
+| `design_read_comparison_report` | 读取 JSON 报告 |
+| `design_list_artifacts` | 列出历史产物 |
+
+**设计工具 Host**（来源：[src/electron/libs/mcp-tools/design.ts#L32-L35](file://src/electron/libs/mcp-tools/design.ts#L32-L35)）：
+
+```typescript
+export type DesignToolHost = {
+  captureVisible: (sessionId: string) => Promise<{ success: boolean; dataUrl?: string }>;
+  getState: (sessionId: string) => BrowserWorkbenchState;
+};
+```
+
+**产物目录**：`userData/design-parity/`，包含 PNG diff、comparison 图和 JSON report。
+
+**对比调参**（来源：[src/electron/libs/mcp-tools/design.ts#L100-L106](file://src/electron/libs/mcp-tools/design.ts#L100-L106)）：
+
+```typescript
+const comparisonTuningToolSchema = {
+  sensitivity: z.enum(["strict", "balanced", "relaxed"]),
+  diffColorMode: z.enum(["highlight", "directional", "heatmap"]),
+  ignoreAntialiasing: z.boolean(),
+  ignoreRegions: z.array(ignoreRegionToolSchema),
+  maxDifferenceRatio: z.number().min(0).max(1),
+};
+```
+
+### 4. Cron 工具 (cron.ts)
+
+**职责**：让 Agent 创建/管理定时任务。
+
+**工具列表**（来源：[src/electron/libs/mcp-tools/cron.ts#L14-L18](file://src/electron/libs/mcp-tools/cron.ts#L14-L18)）：
+
+| 工具名 | 用途 |
+|--------|------|
+| `create_scheduled_task` | 创建定时任务 |
+| `list_scheduled_tasks` | 列出所有任务 |
+| `delete_scheduled_task` | 删除任务（仅限 createdBy="agent"） |
 
 **调度类型**（来源：[src/electron/libs/mcp-tools/cron.ts#L30-L78](file://src/electron/libs/mcp-tools/cron.ts#L30-L78)）：
 
-| Kind | 参数 | 说明 |
+| 模式 | 参数 | 说明 |
 |------|------|------|
-| `cron` | `cronExpression` (5字段), `timezone` | 标准 cron 表达式，默认 Asia/Shanghai |
-| `every` | `everySeconds` (≥60) | 间隔循环执行 |
-| `at` | `atTimestamp` (ISO 8601) | 一次性定时触发 |
+| `cron` | `cronExpression` (5 字段)、`timezone` | 标准 cron 表达式，默认 Asia/Shanghai |
+| `every` | `everySeconds` (>=60) | 间隔循环执行 |
+| `at` | `atTimestamp` (ISO 8601) | 一次性定时 |
 
-**安全边界**（来源：[src/electron/libs/mcp-tools/cron.ts#L194-L200](file://src/electron/libs/mcp-tools/cron.ts#L194-L200)）：
-- Agent 只能删除 `createdBy === "agent"` 的任务
-- 用户创建的任务会拒绝删除并提示手动操作
+**安全边界**：Agent 创建的任务 `createdBy="agent"`，删除时会校验，阻止删除用户创建的任务。
 
-**任务参数**（来源：[src/electron/libs/mcp-tools/cron.ts#L114-L123](file://src/electron/libs/mcp-tools/cron.ts#L114-L123)）：
-```typescript
-const params: CreateCronJobParams = {
-  name: input.name,
-  schedule,
-  message: input.message,
-  conversationId: input.conversationId || "__system__",
-  executionMode: input.executionMode || "new_conversation", // or "existing"
-};
-```
+### 5. Figma 设计智能 (figma-design-intelligence.ts)
 
----
+**职责**：基于 Figma 设计树做 UX 审查和设计系统推荐。
 
-### design.ts - 设计还原对比
-
-**职责**：通过截图比对量化页面与设计稿的差异，为 Agent 提供视觉验收依据。
-
-**工具清单**（来源：[src/electron/libs/mcp-tools/design.ts#L20-L30](file://src/electron/libs/mcp-tools/design.ts#L20-L30)）：
+**核心函数**（来源：[src/electron/libs/mcp-tools/figma-design-intelligence.ts#L197-L234](file://src/electron/libs/mcp-tools/figma-design-intelligence.ts#L197-L234)）：
 
 ```typescript
-export const DESIGN_TOOL_NAMES = [
-  "design_capture_current_view",      // 截取当前页面
-  "design_capture_current_region",    // 截取指定区域
-  "design_inspect_image",             // 语义摘要单张图
-  "design_compare_current_view",      // 当前页面 vs 参考图
-  "design_compare_current_view_batch", // 批量对比
-  "design_compare_images",            // 两张图对比
-  "design_compare_images_batch",      // 批量图片对比
-  "design_read_comparison_report",    // 读取 JSON report
-  "design_list_artifacts",            // 列出历史产物
-] as const;
-```
-
-**产物存储**（来源：[src/electron/libs/mcp-tools/design.ts#L124-L128](file://src/electron/libs/mcp-tools/design.ts#L124-L128)）：
-
-```typescript
-function getDesignArtifactDir(): string {
-  const dir = join(app.getPath("userData"), "design-parity");
-  mkdirSync(dir, { recursive: true });
-  return dir;
+export function buildFigmaDesignPlaybook(options: {
+  domain?: FigmaDesignDomain;
+  includeSources?: boolean;
+  maxItems?: number;
+}): unknown {
+  // 返回推荐设计系统、UX 原则和 Figma 工作流
 }
 ```
 
-所有产物（截图、diff 图、comparison 图、JSON report）统一存放在 `{userData}/design-parity/`。
-
-**比对调参**（来源：[src/electron/libs/mcp-tools/design.ts#L100-L106](file://src/electron/libs/mcp-tools/design.ts#L100-L106)）：
-
-| 参数 | 说明 |
-|------|------|
-| `sensitivity` | `strict` / `balanced` / `relaxed` |
-| `diffColorMode` | `highlight` / `directional` / `heatmap` |
-| `ignoreAntialiasing` | 忽略文字抗锯齿噪声 |
-| `ignoreRegions` | 忽略动态区域（时间、头像等） |
-| `maxDifferenceRatio` | 差异率阈值，超过则报告失败 |
-
-**推荐工作流**（来源：[src/electron/libs/mcp-tools/README.md#L16-L21](file://src/electron/libs/mcp-tools/README.md#L16-L21)）：
-
-1. 用户给截图 → `design_inspect_image` 语义摘要
-2. 有候选页面 → `design_compare_current_view` 比对
-3. 恢复证据 → `design_list_artifacts` + `design_read_comparison_report`
-
----
-
-### Figma 工具集
-
-#### figma-rest.ts（未在引用中完整展示）
-
-根据 `builtin-mcp-servers.ts` 注册信息（来源：[src/electron/libs/builtin-mcp-servers.ts#L11](file://src/electron/libs/builtin-mcp-servers.ts#L11)）：
-
-```typescript
-import { FIGMA_REST_TOOL_NAMES, getFigmaRestMcpServer } from "./mcp-tools/figma-rest.js";
-```
-
-Figma REST 工具提供：
-- 文件/节点读取
-- 轻量设计树
-- Token 提取
-- 设计系统 playbook
-- UX 审查
-- Tailwind 初稿
-- 导出图、评论、版本、库资源、变量
-
-#### figma-design-intelligence.ts
-
-**职责**：基于 Figma 设计摘要生成设计系统建议、UX 审查发现和实施清单。
-
-**设计域识别**（来源：[src/electron/libs/mcp-tools/figma-design-intelligence.ts#L1-L10](file://src/electron/libs/mcp-tools/figma-design-intelligence.ts#L1-L10)）：
+**设计域**（来源：[src/electron/libs/mcp-tools/figma-design-intelligence.ts#L1-L10](file://src/electron/libs/mcp-tools/figma-design-intelligence.ts#L1-L10)）：
 
 ```typescript
 export const FIGMA_DESIGN_DOMAINS = [
-  "auto", "admin", "saas", "ai-tool", "mobile", "marketing", "data-heavy", "ecommerce"
+  "auto", "admin", "saas", "ai-tool", "mobile",
+  "marketing", "data-heavy", "ecommerce"
 ] as const;
 ```
 
-**设计系统档案**（来源：[src/electron/libs/mcp-tools/figma-design-intelligence.ts#L89-L162](file://src/electron/libs/mcp-tools/figma-design-intelligence.ts#L89-L162)）：
-
-| 档案 ID | 名称 | 最佳场景 |
-|---------|------|----------|
-| carbon | IBM Carbon | admin, data-heavy, saas |
-| fluent | Microsoft Fluent 2 | admin, saas, ai-tool |
-| primer | GitHub Primer | admin, saas, ai-tool |
-| ant-design | Ant Design | admin, saas, data-heavy |
-| material | Material Design 3 | mobile, saas, ecommerce |
-| apple-hig | Apple HIG | mobile, ai-tool |
-| tdesign-arco | TDesign / Arco | admin, saas, data-heavy |
-
-**UX 原则库**（来源：[src/electron/libs/mcp-tools/figma-design-intelligence.ts#L164-L195](file://src/electron/libs/mcp-tools/figma-design-intelligence.ts#L164-L195)）：
-- Jakob's Law（熟悉模式）
-- Fitts's Law（点击目标尺寸）
-- Hick's Law（选项分组）
-- Miller's Law（信息分块）
-- Tesler's Law（复杂度转移）
-- Aesthetic-Usability Effect（视觉秩序）
-
-**审查发现类型**（来源：[src/electron/libs/mcp-tools/figma-design-intelligence.ts#L353-L418](file://src/electron/libs/mcp-tools/figma-design-intelligence.ts#L353-L418)）：
-
-| 发现 ID | 严重度 | 原则 | 说明 |
-|---------|--------|------|------|
-| `small-action-targets` | high | Fitts's Law | 可点击目标偏小 |
-| `too-many-visible-choices` | medium | Hick's Law | 同层选项过多 |
-| `tiny-text` | medium | Accessibility | 字号 < 12px |
-| `token-sprawl` | high | Design Tokens | 颜色/排版 token 候选过多 |
-| `scale-inconsistency` | medium | Design Tokens | 间距/圆角比例不一致 |
-
-#### figma-locator.ts
-
-**职责**：解析 Figma URL 或文件 key，提取 `fileKey` 和 `nodeIds`。
-
-**解析逻辑**（来源：[src/electron/libs/mcp-tools/figma-locator.ts#L6-L44](file://src/electron/libs/mcp-tools/figma-locator.ts#L6-L44)）：
+**审计框架**（来源：[src/electron/libs/mcp-tools/figma-design-intelligence.ts#L12-L19](file://src/electron/libs/mcp-tools/figma-design-intelligence.ts#L12-L19)）：
 
 ```typescript
-export type FigmaLocator = {
-  fileKey: string;
-  nodeIds: string[];
-};
+export const FIGMA_DESIGN_AUDIT_FRAMEWORKS = [
+  "practical", "laws-of-ux", "enterprise",
+  "platform", "token-system", "ai-ux"
+] as const;
+```
 
+### 6. Figma Locator (figma-locator.ts)
+
+**职责**：解析 Figma URL 提取 fileKey 和 nodeId。
+
+```typescript
+// 来源: src/electron/libs/mcp-tools/figma-locator.ts#L6-L44
 export function parseFigmaLocator(fileKeyOrUrl: string, explicitNodeIds: string[] = []): FigmaLocator {
-  // 支持的路径段: design, file, board, slides, proto, make
-  const fileKey = extractFileKey(url);
-  const nodeIdFromUrl = normalizeNodeId(url.searchParams.get("node-id") ?? "");
-  return { fileKey, nodeIds: explicitNodeIds.length > 0 ? explicitNodeIds : nodeIdFromUrl ? [nodeIdFromUrl] : [] };
+  // 支持 design/file/board/slides/proto/make 等路径格式
+  // 自动规范化 node-id (把 - 替换为 :)
 }
 ```
 
 ---
 
-## 数据结构与数据结构
+## Host 注入机制
 
-### GlobalRuntimeConfig（配置存储）
+MCP 工具采用依赖注入模式，通过 setter 函数接收主进程提供的 Host：
 
-由 `config-store.ts` 定义，被 `admin.ts` 使用：
+| 工具模块 | Setter 函数 | 注入位置 |
+|----------|-------------|----------|
+| browser.ts | `setBrowserToolHost(host)` | [main.ts#L39](file://src/electron/main.ts#L39) |
+| design.ts | `setDesignToolHost(host)` | [main.ts#L40](file://src/electron/main.ts#L40) |
+| cron.ts | `setCronService(service)` | [main.ts#L71](file://src/electron/main.ts#L71) |
 
-```typescript
-type GlobalRuntimeConfig = {
-  env?: Record<string, string>;           // Agent 环境变量
-  skillCredentials?: Record<string, string[]>;
-  closeSidebarOnBrowserOpen?: boolean;
-  systemPromptExt?: string[];
-  channels?: {
-    defaultChannel?: ChannelProviderId;  // "telegram" | "lark" | "wechat"
-    items?: {
-      lark?: Record<string, string | boolean>;
-    };
-  };
-};
+```mermaid
+sequenceDiagram
+    participant Main as main.ts
+    participant Manager as BrowserWorkbenchManager
+    participant BrowserMCP as browser.ts
+    participant CronMCP as cron.ts
+
+    Main->>Manager: 创建实例
+    Main->>Main: setBrowserToolHost(manager)
+    Main->>Main: setDesignToolHost(manager)
+    Main->>CronMCP: setCronService(cronService)
+
+    Note over BrowserMCP: 等待工具调用时 getHost()
+    Note over CronMCP: 等待工具调用时 cronServiceRef
 ```
 
-### CronSchedule（调度结构）
-
-来源：[src/electron/libs/mcp-tools/cron.ts#L30-L78](file://src/electron/libs/mcp-tools/cron.ts#L30-L78)
+**未初始化错误处理**（来源：[src/electron/libs/mcp-tools/browser.ts#L194-L199](file://src/electron/libs/mcp-tools/browser.ts#L194-L199)）：
 
 ```typescript
-type CronSchedule =
-  | { kind: "cron"; expr: string; tz: string; description: string }
-  | { kind: "every"; everyMs: number; description: string }
-  | { kind: "at"; atMs: number; description: string };
+function getHost(): BrowserWorkbenchToolHost {
+  if (!browserHost) {
+    throw new Error("浏览器工作台尚未初始化，无法执行浏览器工具。");
+  }
+  return browserHost;
+}
 ```
 
-### 设计比对报告（Comparison Report）
+---
 
-来源：[src/electron/libs/mcp-tools/design.ts#L216-L249](file://src/electron/libs/mcp-tools/design.ts#L216-L249)
+## 数据结构与 Schema
+
+### 管理配置合并
+
+`admin.ts` 中的 `mergeConfig` 函数实现增量合并策略（来源：[src/electron/libs/mcp-tools/admin.ts#L356-L431](file://src/electron/libs/mcp-tools/admin.ts#L356-L431)）：
 
 ```typescript
-type ComparisonReport = {
-  status: "valid" | "invalid";
-  comparable: boolean;
-  differenceRatio: number | null;         // 差异像素比例
-  averageChannelDelta: number | null;    // 平均通道差
-  maxChannelDelta: number | null;
-  topDiffRegions: DiffTileStats[];        // 高差异区域
-  ignoredRegions: NormalizedRegion[];      // 已忽略区域
-  verdict: {
-    passed: boolean | null;
-    comparable: boolean;
-    maxDifferenceRatio: number | null;
-    message: string;
-  };
-  advice: string[];
-};
+function mergeConfig(
+  currentConfig: unknown,
+  patch?: AdminToolInput["patch"],
+  remove?: AdminToolInput["remove"]
+): GlobalRuntimeConfig {
+  // 策略：只改传入字段，未出现的配置原样保留
+  // sections 字段会触发整段删除
+}
 ```
 
-### FigmaDesignSummaryForAudit（设计摘要）
-
-来源：[src/electron/libs/mcp-tools/figma-design-intelligence.ts#L55-L70](file://src/electron/libs/mcp-tools/figma-design-intelligence.ts#L55-L70)
+### 设计产物类型
 
 ```typescript
-type FigmaDesignSummaryForAudit = {
-  nodes: AuditNode[];           // 扁平化设计树
-  tokens: {
-    colors: AuditTokenEntry<string>[];
-    typography: AuditTokenEntry<string>[];
-    radii: AuditTokenEntry<number>[];
-    spacing: AuditTokenEntry<number>[];
-    effects: AuditTokenEntry<string>[];
-  };
-  stats: { visited: number; emitted: number; truncated: boolean };
-  warnings: string[];
+// 来源: src/electron/libs/mcp-tools/design.ts#L74
+type DesignArtifactKind = "current" | "diff" | "comparison" | "comparison-report" | "unknown";
+```
+
+### 差异检测配置
+
+```typescript
+// 来源: src/electron/libs/mcp-tools/design.ts#L63-L72
+type DiffTileStats = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  differentPixels: number;
+  comparedPixels: number;
+  differenceRatio: number;
+  averageDelta: number;
 };
 ```
 
 ---
 
-## 安全边界与上限
+## 安全边界与限制
 
-| 字段 | 常量名 | 值 | 用途 |
-|------|--------|-----|------|
-| 环境变量 Key 长度 | `MAX_ENV_KEY_LENGTH` | 128 | 防止超大 key |
-| 环境变量 Value 长度 | `MAX_ENV_VALUE_LENGTH` | 4096 | 防止大对象 |
-| 环境变量条目数 | `MAX_ENV_ENTRIES` | 120 | 防止一次塞入过多 |
-| 技能凭证条目数 | `MAX_SKILL_CREDENTIAL_ENTRIES` | 80 | 防止污染 |
-| System Prompt 行数 | `MAX_SYSTEM_PROMPT_EXT_LINES` | 40 | 控制上下文 |
-| System Prompt 单行长度 | `MAX_SYSTEM_PROMPT_EXT_LINE_LENGTH` | 2000 | 防止超长行 |
-| 批量 Shell 命令数 | `MAX_BATCH_COMMANDS` | 20 | 防止过长批处理 |
-| 图片最大尺寸 | `MAX_DIMENSION` | 4096px | 防止超大图 |
-| 忽略区域数 | `MAX_IGNORE_REGIONS` | 32 | 控制调参复杂度 |
-| 热点区域数 | `MAX_HOTSPOT_REGIONS` | 8 | 限制报告体积 |
-
-> 章节来源：[src/electron/libs/mcp-tools/admin.ts#L19-L29](file://src/electron/libs/mcp-tools/admin.ts#L19-L29) 和 [src/electron/libs/mcp-tools/browser.ts#L172-L181](file://src/electron/libs/mcp-tools/browser.ts#L172-L181)
+| 模块 | 安全措施 |
+|------|----------|
+| admin.ts | key 格式校验、长度限制、ANTHROPIC_* 前缀拒绝、条目数上限 |
+| design.ts | 路径安全检查（realpath 校验必须在 design-parity 内）、尺寸上限 4096px |
+| cron.ts | createdBy 校验，Agent 无法删除用户任务 |
+| browser.ts | 字段别名防止注入、console 日志量限制 (max 200) |
 
 ---
 
 ## 扩展点与常见改造路径
 
-### 1. 新增内置 MCP Server
+### 1. 新增工具模块
 
-**步骤**：
-1. 在 `src/electron/libs/mcp-tools/` 下创建新文件（如 `mytool.ts`）
-2. 导出 `getXxxMcpServer()` 工厂函数和 `TOOL_NAMES` 常量
-3. 在 `builtin-mcp-servers.ts` 中添加导入和注册
-4. 如需 Host 注入，在 `main.ts` 中调用 `setXxxHost()`
+1. 在 `mcp-tools/` 创建新文件（如 `new-feature.ts`）
+2. 导出 `getNewFeatureMcpServer()` 返回 `MpSdkServerConfigWithInstance`
+3. 在 `builtin-mcp-servers.ts` 添加工厂映射
+4. 如需主进程能力，导出 setter 并在 `main.ts` 调用
 
-```typescript
-// mytool.ts
-export const MY_TOOL_NAMES = ["my_action"] as const;
-export function getMyMcpServer(): McpSdkServerConfigWithInstance {
-  // 实现...
-}
-```
+### 2. 新增 Host 能力
 
-```typescript
-// builtin-mcp-servers.ts
-import { MY_TOOL_NAMES, getMyMcpServer } from "./mcp-tools/mytool.js";
-export const BUILTIN_MCP_SERVER_FACTORIES = {
-  // ... 现有
-  "tech-cc-hub-my": () => getMyMcpServer(),
-};
-export const BUILTIN_MCP_TOOL_NAMES = {
-  // ... 现有
-  "tech-cc-hub-my": MY_TOOL_NAMES,
-};
-```
+1. 在对应工具模块定义新的 Host 类型
+2. 导出 setter 函数
+3. `main.ts` 中在合适的生命周期调用 setter
 
-> 章节来源：[src/electron/libs/builtin-mcp-servers.ts#L23-L32](file://src/electron/libs/builtin-mcp-servers.ts#L23-L32)
+### 3. 扩展 design.ts 比对能力
 
-### 2. 新增设计系统档案
+- 添加新的 `sensitivity` 级别
+- 扩展 `diffColorMode` 模式
+- 新增 ignore region 类型（如动态广告区域）
 
-在 `figma-design-intelligence.ts` 的 `DESIGN_SYSTEM_PROFILES` 数组中添加：
+### 4. 扩展 Figma 审计
 
-```typescript
-{
-  id: "my-design-system",
-  name: "My Design System",
-  source: "https://my-ds.com/",
-  bestFor: ["saas", "admin"],
-  signal: "一句话描述信号",
-  strengths: ["优势1", "优势2"],
-  apply: ["适用建议1", "适用建议2"],
-}
-```
-
-> 章节来源：[src/electron/libs/mcp-tools/figma-design-intelligence.ts#L89-L162](file://src/electron/libs/mcp-tools/figma-design-intelligence.ts#L89-L162)
-
-### 3. 新增 UX 审查发现类型
-
-在 `buildAuditFindings()` 中添加新的检查逻辑：
-
-```typescript
-// 示例：检查对比度问题
-const lowContrastNodes = nodes.filter(({ node }) => {
-  // 检查前景/背景颜色对比度
-});
-if (lowContrastNodes.length > 0) {
-  findings.push({
-    id: "low-color-contrast",
-    severity: "high",
-    principle: "WCAG 2.1 AA",
-    title: "存在低对比度文本",
-    evidence: `${lowContrastNodes.length} 个文本节点对比度不足。`,
-    recommendation: "确保正文文本与背景的对比度至少达到 4.5:1。",
-  });
-}
-```
-
-> 章节来源：[src/electron/libs/mcp-tools/figma-design-intelligence.ts#L353-L418](file://src/electron/libs/mcp-tools/figma-design-intelligence.ts#L353-L418)
-
-### 4. 新增调度类型
-
-在 `cron.ts` 的 `buildScheduleFromInput()` 中添加 `kind` 分支：
-
-```typescript
-case "interval": {
-  const seconds = input.intervalSeconds;
-  if (!seconds || seconds < 5) throw new Error("interval 模式最小间隔 5 秒");
-  return {
-    kind: "interval",
-    everyMs: seconds * 1000,
-    description: desc || `每 ${seconds} 秒`,
-  };
-}
-```
-
-> 章节来源：[src/electron/libs/mcp-tools/cron.ts#L30-L78](file://src/electron/libs/mcp-tools/cron.ts#L30-L78)
+- 在 `DESIGN_SYSTEM_PROFILES` 添加新的设计系统
+- 在 `buildAuditFindings` 添加新的检查规则
+- 扩展 `UX_PRINCIPLES` 列表
 
 ---
 
-## 验证命令与排障步骤
+## 验证与排障命令
 
-### 验证 MCP Server 注册成功
+### 检查工具注册
 
-```bash
-# 在 DevTools Console 中或通过日志检查
-# main.ts 启动时会通过 ipcMainHandle 注册 MCP 相关句柄
+```typescript
+// 查看所有已注册工具名称
+import { listBuiltinMcpToolNames } from "./libs/builtin-mcp-servers.js";
+const allTools = listBuiltinMcpToolNames();
+console.log(allTools);
 ```
 
-### 验证 Host 注入状态
+### 验证 Host 状态
 
-如果收到错误 `"浏览器工作台尚未初始化，无法执行浏览器工具。"`：
-1. 检查 `BrowserWorkbenchManager` 是否已创建
-2. 确认 `main.ts` 中 `setBrowserToolHost()` 已被调用
-3. 检查 `browserWorkbenchEventListeners` 是否有残留窗口
-
-来源：[src/electron/libs/mcp-tools/browser.ts#L194-L199](file://src/electron/libs/mcp-tools/browser.ts#L194-L199)
-
-### 验证设计产物目录
-
-```bash
-# macOS
-open ~/Library/Application\ Support/tech-cc-hub/design-parity/
-
-# Windows
-explorer %APPDATA%\tech-cc-hub\design-parity\
-
-# Linux
-xdg-open ~/.config/tech-cc-hub/design-parity/
+```typescript
+// browser.ts 未初始化会抛出
+try {
+  getHost().captureVisible(sessionId);
+} catch (err) {
+  console.error("BrowserWorkbenchToolHost 未注入:", err.message);
+}
 ```
 
-产物文件命名规范（来源：[src/electron/libs/mcp-tools/design.ts#L130-L138](file://src/electron/libs/mcp-tools/design.ts#L130-L138)）：
+### 设计产物检查
 
-| 文件后缀 | 类型 |
-|----------|------|
-| `-current.png` | 当前页面截图 |
-| `-diff.png` | 差异热力图 |
-| `-comparison.png` | 三栏对比图 |
-| `-comparison-report.json` | 结构化报告 |
+```bash
+# 查看 design-parity 目录产物
+ls -la ~/Library/Application\ Support/tech-cc-hub/design-parity/
 
-### 验证定时任务执行
+# 按类型筛选
+find ~/Library/Application\ Support/tech-cc-hub/design-parity/ -name "*-diff.png"
+```
 
-- 检查 `CronService` 是否正常初始化
-- 查看 SQLite 数据库中的 `cron_jobs` 表
-- `lastRunAtMs` 和 `lastStatus` 记录最近执行状态
+### Cron 任务排查
 
-来源：[src/electron/libs/mcp-tools/cron.ts#L157-L169](file://src/electron/libs/mcp-tools/cron.ts#L157-L169)
+```typescript
+// 检查任务来源
+const job = await cronServiceRef.getJob(jobId);
+if (job.metadata.createdBy !== "agent") {
+  throw new Error("Agent 无权删除用户创建的任务");
+}
+```
 
-### 常见错误码对照
+### 常见失败模式
 
-| 错误信息 | 原因 | 解决方案 |
-|----------|------|----------|
-| `"浏览器工作台尚未初始化，无法执行浏览器工具"` | Host 未注入 | 检查 `main.ts` 中 `setBrowserToolHost` 调用时机 |
-| `"设计还原工具尚未初始化，无法截图"` | Design Host 未注入 | 检查 `setDesignToolHost` 调用 |
-| `"CronService 未初始化"` | Cron Host 未注入 | 检查 `setCronService` 调用 |
-| `"env 字段不能超过 ${MAX_ENV_ENTRIES} 项"` | 超出条目上限 | 减少 `patch.env` 数量 |
-| `"ANTHROPIC_ 开头的环境变量禁止写入"` | 安全策略拦截 | 使用其他 Key 或手动配置 |
-| `"任务不存在: xxx"` | 任务 ID 不存在 | 先 `list_scheduled_tasks` 确认 ID |
-
----
-
-## 总结
-
-MCP 工具系统通过以下设计实现安全、可扩展的 Agent 能力暴露：
-
-1. **工厂注册模式**：`BUILTIN_MCP_SERVER_FACTORIES` 支持按需启用和扩展
-2. **Host 注入解耦**：工具实现与 UI 生命周期分离，测试友好
-3. **严格输入校验**：每个工具都有 Zod Schema 和运行时上限检查
-4. **统一结果格式**：`toTextToolResult` 保证 Agent 收到的数据结构一致
-5. **产物隔离存储**：设计产物统一在 `design-parity` 目录，便于 Agent 和用户共同审阅
-
-> 图表来源：[src/electron/libs/builtin-mcp-servers.ts](file://src/electron/libs/builtin-mcp-servers.ts) 和 [src/electron/main.ts#L39-L41](file://src/electron/main.ts#L39-L41)
+| 场景 | 原因 | 排查 |
+|------|------|------|
+| Browser 工具报 "尚未初始化" | `main.ts` 未调用 `setBrowserToolHost` | 检查 main.ts 第 39 行 |
+| Design 工具报 "设计还原工具尚未初始化" | `setDesignToolHost` 未调用 | 检查 main.ts 第 40 行 |
+| 截图比对报告 "size-mismatch" | 参考图与页面尺寸差距 > 3% | 用 `design_capture_current_view` 重新捕获 |
+| Cron 删除失败 | 任务 `createdBy` 不是 `agent` | 提示用户在 UI 手动操作 |
