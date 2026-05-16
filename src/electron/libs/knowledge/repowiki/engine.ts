@@ -34,6 +34,7 @@ type RepoWikiRunnerResult = {
     output?: number;
     cost?: number;
   };
+  generationMode?: string;
   error?: string;
 };
 
@@ -163,6 +164,8 @@ async function runVendoredRepoWiki(
     "--concurrency", resolveRepoWikiConcurrency(wiki),
     "--max-files", process.env.REPOWIKI_MAX_FILES || "0",
     "--max-file-size", String(maxFileSize),
+    "--max-output-tokens", String(Math.max(0, Math.floor(wiki.maxOutputTokens || 0))),
+    "--max-pages", process.env.TECH_CC_HUB_REPOWIKI_MAX_PAGES || "96",
     "--file-page-limit", process.env.REPOWIKI_FILE_PAGE_LIMIT || process.env.TECH_CC_HUB_REPOWIKI_FILE_PAGE_LIMIT || "0",
   ];
 
@@ -247,6 +250,7 @@ export async function generateRepoWiki(
 
   writeFileSync(paths.repowikiMetadataPath, `${JSON.stringify({
     ...runnerMetadata,
+    schemaVersion: String(runnerMetadata.schemaVersion ?? "1.0"),
     version: 3,
     engine: result.engine || "tech-cc-hub/qoder-style-repowiki",
     upstream: {
@@ -260,6 +264,10 @@ export async function generateRepoWiki(
     projectName: result.projectName || paths.workspaceSlug,
     wikiModel: wiki.model,
     costTier: wiki.costTier,
+    generationMode: String(runnerMetadata.generationMode ?? result.generationMode ?? "full"),
+    incremental: runnerMetadata.incremental ?? null,
+    tokenBudget: runnerMetadata.tokenBudget ?? null,
+    validation: runnerMetadata.validation ?? null,
     scannedFiles,
     totalLines,
     pageCount,
