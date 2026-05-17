@@ -41,7 +41,7 @@ import { setDesignToolHost } from "./libs/mcp-tools/design.js";
 import { appAutoUpdater, type AppUpdateStatus } from "./libs/auto-updater.js";
 import { startChannelBridge, type ChannelBridgeController } from "./libs/channel-bridge.js";
 import { ensureSystemWorkspace } from "./libs/system-workspace.js";
-import { getCurrentApiConfig, getGlobalRuntimeEnvConfig, resolveImagePreprocessApiConfig } from "./libs/claude-settings.js";
+import { getCurrentApiConfig, getGlobalRuntimeEnvConfig, resolveApiConfigForModel, resolveImagePreprocessApiConfig } from "./libs/claude-settings.js";
 import { preprocessImageAttachments } from "./libs/image-preprocessor.js";
 import {
     CODEX_OAUTH_BASE_URL,
@@ -2047,6 +2047,184 @@ async function testApiConfig(payload: { baseURL?: string; apiKey?: string; model
     }
 }
 
+type PromptOptimizeResult = {
+    success: boolean;
+    optimizedPrompt?: string;
+    model?: string;
+    error?: string;
+};
+
+const PROMPT_OPTIMIZE_TIMEOUT_MS = 45_000;
+const PROMPT_OPTIMIZE_MAX_INPUT_CHARS = 20_000;
+const PROMPT_OPTIMIZE_MAX_TOKENS = 1_800;
+
+function buildPromptOptimizeMessages(prompt: string): Array<{ role: "user"; content: string }> {
+    return [{
+        role: "user",
+        content: [
+            "请优化下面这段用户输入，让它更适合作为 agent 执行 prompt。",
+            "",
+            "要求：",
+            "- 保留原意、语言和关键信息，不要编造用户没有说的事实。",
+            "- 如果原文是中文，输出中文；如果原文是英文，输出英文。",
+            "- 让目标、上下文、约束、期望输出和验收标准更清楚。",
+            "- 只输出优化后的 prompt 正文，不要解释，不要 Markdown 代码围栏。",
+            "",
+            "原始 prompt：",
+            prompt,
+        ].join("\n"),
+    }];
+}
+
+function sanitizeOptimizedPrompt(text: string): string {
+    return text
+        .trim()
+        .replace(/<think>[\s\S]*?<\/think>/gi, "")
+        .trim()
+        .replace(/^```(?:markdown|md|text)?[^\S\r\n]*(?:\r?\n|$)/i, "")
+        .replace(/\r?\n```[^\S\r\n]*$/i, "")
+        .replace(/^(?:优化后的\s*)?(?:prompt|提示词|提示)\s*[：:]\s*/i, "")
+        .trim();
+}
+
+function extractOptimizedPromptText(payload: unknown): string {
+    if (!payload || typeof payload !== "object") {
+        return "";
+    }
+
+    const record = payload as Record<string, unknown>;
+    const content = record.content;
+    if (typeof content === "string") {
+        return content;
+    }
+    if (Array.isArray(content)) {
+        return content
+            .map((block) => {
+                if (!block || typeof block !== "object") return "";
+                const text = (block as { text?: unknown }).text;
+                return typeof text === "string" ? text : "";
+            })
+            .filter(Boolean)
+            .join("\n");
+    }
+
+    const choices = record.choices;
+    if (Array.isArray(choices)) {
+        return choices
+            .map((choice) => {
+                if (!choice || typeof choice !== "object") return "";
+                const choiceRecord = choice as { message?: { content?: unknown }; text?: unknown };
+                if (typeof choiceRecord.message?.content === "string") return choiceRecord.message.content;
+                if (typeof choiceRecord.text === "string") return choiceRecord.text;
+                return "";
+            })
+            .filter(Boolean)
+            .join("\n");
+    }
+
+    return "";
+}
+
+async function optimizePrompt(payload: { prompt?: string; model?: string }): Promise<PromptOptimizeResult> {
+    const prompt = payload?.prompt?.trim() ?? "";
+    if (!prompt) {
+        return { success: false, error: "请先在输入框里写一段 prompt。" };
+    }
+    if (prompt.length > PROMPT_OPTIMIZE_MAX_INPUT_CHARS) {
+        return { success: false, error: `当前 prompt 过长，请先压缩到 ${PROMPT_OPTIMIZE_MAX_INPUT_CHARS} 字以内。` };
+    }
+
+    const resolved = resolveApiConfigForModel(payload?.model);
+    if (!resolved) {
+        return { success: false, error: "当前没有可用模型，请先在设置里启用配置。" };
+    }
+
+    const config = resolved.config;
+    const model = resolved.model;
+    const provider = resolveApiModelsProvider(config.provider, config.baseURL);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PROMPT_OPTIMIZE_TIMEOUT_MS);
+
+    try {
+        const messages = buildPromptOptimizeMessages(prompt);
+        const system = "你是一个严谨的 prompt 优化器。你的输出会直接替换用户输入框内容，所以只能输出优化后的 prompt 正文。";
+
+        if (provider === "codex") {
+            const credential = parseCodexOAuthCredential(config.apiKey);
+            const codexRequest = buildCodexResponsesRequest({
+                model,
+                max_tokens: PROMPT_OPTIMIZE_MAX_TOKENS,
+                messages: [
+                    { role: "user", content: `${system}\n\n${messages[0].content}` },
+                ],
+            });
+            const endpoint = new URL(getCodexResponsesPath(model), CODEX_OAUTH_BASE_URL).toString();
+            const response = await fetch(endpoint, {
+                method: "POST",
+                signal: controller.signal,
+                headers: buildCodexRequestHeaders(credential, true),
+                body: JSON.stringify({
+                    ...codexRequest,
+                    stream: true,
+                }),
+            });
+            const responseText = await response.text();
+            if (!response.ok) {
+                return { success: false, model, error: extractApiErrorText(responseText) || response.statusText };
+            }
+
+            const message = toAnthropicMessageResponse(parseCodexResponsesStream(responseText), model);
+            const optimizedPrompt = sanitizeOptimizedPrompt(extractOptimizedPromptText(message));
+            if (!optimizedPrompt) {
+                return { success: false, model, error: "模型没有返回可用的优化结果。" };
+            }
+            return { success: true, model, optimizedPrompt };
+        }
+
+        const { endpoint } = buildMessagesEndpoint(config.baseURL, provider);
+        const response = await fetch(endpoint, {
+            method: "POST",
+            signal: controller.signal,
+            headers: {
+                "content-type": "application/json",
+                "anthropic-version": "2023-06-01",
+                authorization: `Bearer ${config.apiKey}`,
+                "x-api-key": config.apiKey,
+            },
+            body: JSON.stringify({
+                model,
+                max_tokens: PROMPT_OPTIMIZE_MAX_TOKENS,
+                temperature: 0.2,
+                system,
+                messages,
+            }),
+        });
+        const responseText = await response.text();
+        let responsePayload: unknown = {};
+        try {
+            responsePayload = responseText ? JSON.parse(responseText) : {};
+        } catch {
+            responsePayload = {};
+        }
+        if (!response.ok) {
+            return { success: false, model, error: extractApiErrorText(responseText) || response.statusText };
+        }
+
+        const optimizedPrompt = sanitizeOptimizedPrompt(extractOptimizedPromptText(responsePayload));
+        if (!optimizedPrompt) {
+            return { success: false, model, error: "模型没有返回可用的优化结果。" };
+        }
+        return { success: true, model, optimizedPrompt };
+    } catch (error) {
+        const errorMessage = error instanceof Error && error.name === "AbortError"
+            ? "Prompt 优化超时，请稍后重试。"
+            : error instanceof Error ? error.message : String(error);
+        return { success: false, model, error: errorMessage };
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 async function startCodexOAuth(): Promise<{ success: boolean; authorizeUrl?: string; error?: string }> {
     try {
         pendingCodexOAuthFlow = createCodexOAuthAuthorizationFlow();
@@ -2539,6 +2717,9 @@ app.on("ready", async () => {
             return { success: true };
           },
           invoke: async (channel: string, ...args: unknown[]) => {
+            if (channel === "prompt:optimize") {
+              return await optimizePrompt(args[0] as { prompt?: string; model?: string });
+            }
             if (channel === "sessions:list") {
               const payload = args[0] as { archived?: boolean } | undefined;
               return {
@@ -2734,6 +2915,10 @@ app.on("ready", async () => {
                 error: error instanceof Error ? error.message : String(error),
             };
         }
+    });
+
+    ipcMain.handle("prompt:optimize", async (_: IpcMainInvokeEvent, payload: { prompt?: string; model?: string }) => {
+        return await optimizePrompt(payload);
     });
 
     ipcMainHandle("codex-oauth-start", async () => {

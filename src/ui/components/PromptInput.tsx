@@ -1,5 +1,6 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import { ArrowUp, Menu, Sparkles, Square } from "lucide-react";
 import type {
   ApiConfigProfile,
   ClientEvent,
@@ -63,6 +64,13 @@ type SlashCommandOption = {
 };
 
 type SlashCommandPayloadItem = string | SlashCommandOption;
+
+type PromptOptimizeResult = {
+  success: boolean;
+  optimizedPrompt?: string;
+  model?: string;
+  error?: string;
+};
 
 function normalizeSlashCommandList(commands?: SlashCommandPayloadItem[]): SlashCommandOption[] {
   const normalized = new Map<string, SlashCommandOption>();
@@ -270,7 +278,7 @@ function InlineDropdown({
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  const displayLabel = options.find((option) => option.value === value)?.label ?? (options[0]?.label ?? "璇烽€夋嫨");
+  const displayLabel = options.find((option) => option.value === value)?.label ?? (options[0]?.label ?? "请选择");
 
   useEffect(() => {
     if (!open) return;
@@ -296,16 +304,23 @@ function InlineDropdown({
   return (
     <div
       ref={containerRef}
-      className={`relative inline-flex h-9 ${minWidthClass} items-center justify-between gap-2 rounded-xl bg-white px-3 text-xs text-ink-700`}
+      className={`relative inline-flex h-8 ${minWidthClass} items-center justify-between gap-1 rounded-xl bg-white px-2 text-xs text-ink-700`}
     >
-      <span className="text-muted">{label}</span>
+      <span
+        className={`whitespace-nowrap text-muted ${disabled ? "" : "cursor-pointer select-none"}`}
+        onClick={() => {
+          if (!disabled) setOpen((current) => !current);
+        }}
+      >
+        {label}
+      </span>
       <button
         type="button"
-        className={`inline-flex h-8 min-w-[96px] items-center justify-between gap-2 rounded-lg bg-white px-3 text-[13px] text-ink-800 transition ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-surface-secondary"}`}
+        className={`inline-flex h-7 min-w-[58px] items-center justify-between gap-1 rounded-lg bg-white px-2 text-[13px] text-ink-800 transition ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-surface-secondary"}`}
         onClick={() => setOpen((current) => !current)}
         disabled={disabled}
       >
-        <span className="max-w-[170px] truncate">{displayLabel}</span>
+        <span className="max-w-[58px] truncate">{displayLabel}</span>
         <svg
           viewBox="0 0 24 24"
           className={`h-3.5 w-3.5 transition ${open ? "rotate-180" : ""} text-ink-500`}
@@ -1035,6 +1050,7 @@ export function PromptInput({
   const [fileMentionActiveIndex, setFileMentionActiveIndex] = useState(0);
   const [editingCodeReferenceId, setEditingCodeReferenceId] = useState<string | null>(null);
   const [editingCodeReferenceComment, setEditingCodeReferenceComment] = useState("");
+  const [optimizingPrompt, setOptimizingPrompt] = useState(false);
   const autoDispatchRef = useRef<string | null>(null);
   const submitInFlightRef = useRef(false);
   const [submissionStatus, setSubmissionStatus] = useState<string | null>(null);
@@ -1121,6 +1137,47 @@ export function PromptInput({
   }, [enabledProfiles]);
   const activeProfile = enabledProfiles[0];
   const selectedRuntimeModel = runtimeModel.trim() || activeProfile?.model?.trim() || availableModels[0] || "";
+  const handleOptimizePrompt = useCallback(async () => {
+    if (disabled || optimizingPrompt) return;
+
+    const sourcePrompt = prompt.trim();
+    if (!sourcePrompt) {
+      setGlobalError("请先在输入框里写一段 prompt。");
+      promptRef.current?.focus();
+      return;
+    }
+
+    setOptimizingPrompt(true);
+    setSubmissionStatus("正在优化 Prompt...");
+    try {
+      const result = await window.electron.invoke<PromptOptimizeResult>("prompt:optimize", {
+        prompt: sourcePrompt,
+        model: selectedRuntimeModel || undefined,
+      });
+
+      if (!result?.success || !result.optimizedPrompt?.trim()) {
+        setGlobalError(result?.error || "Prompt 优化失败。");
+        return;
+      }
+
+      const optimizedPrompt = result.optimizedPrompt.trim();
+      setPrompt(optimizedPrompt);
+      setCursorIndex(optimizedPrompt.length);
+      setShowSlashBrowser(false);
+      setDismissedSlashQuery(null);
+      setGlobalError(null);
+      window.requestAnimationFrame(() => {
+        promptRef.current?.focus();
+        promptRef.current?.setSelectionRange(optimizedPrompt.length, optimizedPrompt.length);
+      });
+    } catch (error) {
+      setGlobalError(error instanceof Error ? error.message : "Prompt 优化失败。");
+    } finally {
+      setSubmissionStatus(null);
+      setOptimizingPrompt(false);
+    }
+  }, [disabled, optimizingPrompt, prompt, selectedRuntimeModel, setGlobalError, setPrompt]);
+
   const clearComposer = useCallback(() => {
     setPrompt("");
     setAttachments([]);
@@ -1730,7 +1787,7 @@ export function PromptInput({
         </div>
       )}
       <div
-        className={`relative mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[26px] border bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,247,251,0.94))] px-3 py-2.5 shadow-[0_18px_44px_rgba(30,38,52,0.08)] backdrop-blur-xl transition-colors xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)] ${isDraggingFiles ? "border-accent/45 bg-accent/8 shadow-[0_20px_50px_rgba(255,122,64,0.18)]" : "border-black/6"}`}
+        className={`relative mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[18px] border bg-white px-4 pb-3 pt-4 shadow-[0_10px_30px_rgba(15,18,24,0.07)] transition-colors xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)] ${isDraggingFiles ? "border-accent/45 shadow-[0_18px_42px_rgba(255,122,64,0.16)]" : "border-[#d9dde3]"}`}
         onDragEnter={handleComposerDragEnter}
         onDragOver={handleComposerDragOver}
         onDragLeave={handleComposerDragLeave}
@@ -2083,32 +2140,10 @@ export function PromptInput({
           </div>
         )}
 
-        <div className="flex items-end gap-2.5">
-          {slashCommands.length > 0 && (
-            <button
-              type="button"
-              className={`flex h-10 shrink-0 items-center justify-center rounded-2xl border px-3 text-sm transition-colors ${showSlashBrowser ? "border-accent/30 bg-accent-subtle text-accent" : "border-black/6 bg-white text-ink-700 hover:bg-surface-secondary"}`}
-              onClick={() => setShowSlashBrowser((value) => !value)}
-              aria-label="打开 Slash 命令列表"
-              disabled={disabled}
-            >
-              /
-            </button>
-          )}
-          <button
-            type="button"
-            className="flex h-10 shrink-0 items-center justify-center rounded-2xl border border-black/6 bg-white px-3 text-sm text-ink-700 transition-colors hover:bg-surface-secondary"
-            onClick={() => fileInputRef.current?.click()}
-            aria-label="添加附件"
-            disabled={disabled}
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <path d="M21.44 11.05 12.25 20.24a6 6 0 1 1-8.49-8.49l9.2-9.19a4 4 0 1 1 5.65 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-            </svg>
-          </button>
+        <div className="grid gap-2">
           <textarea
             rows={1}
-            className="max-h-[104px] min-h-10 flex-1 resize-none overflow-y-auto bg-transparent py-2 text-[15px] leading-6 text-ink-800 placeholder:text-muted focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            className="max-h-[180px] min-h-[86px] w-full resize-none overflow-y-auto bg-transparent px-1 pb-2 pt-0 text-[17px] leading-7 text-ink-800 placeholder:text-[#a6a8ad] focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
             placeholder={
               disabled
                 ? "先创建或选择一个会话..."
@@ -2116,7 +2151,7 @@ export function PromptInput({
                     ? "可以继续补充文字说明，或直接发送附件..."
                     : isRunning
                       ? "当前仍在执行中，你可以继续输入，系统会自动排队续发..."
-                      : "直接描述你希望 Agent 处理的事情..."
+                      : "描述计划，@ 引用上下文，/ 使用命令"
             }
             value={prompt}
             onChange={(e) => {
@@ -2139,39 +2174,64 @@ export function PromptInput({
             ref={promptRef}
             disabled={disabled}
           />
-          <button
-            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full shadow-[0_12px_24px_rgba(15,18,24,0.26)] transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${!hasDraft && isRunning ? "bg-error text-white hover:bg-error/90" : "bg-white text-ink-900 hover:bg-[#f3f5f8]"}`}
-            onClick={handleButtonClick}
-            aria-label={!hasDraft && isRunning ? "停止会话" : isRunning ? "加入待发送队列" : "发送提示"}
-            disabled={disabled}
-          >
-            {!hasDraft && isRunning ? (
-              <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" /></svg>
-            ) : (
-              <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true"><path d="M3.4 20.6 21 12 3.4 3.4l2.8 7.2L16 12l-9.8 1.4-2.8 7.2Z" fill="currentColor" /></svg>
-            )}
-          </button>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2 pt-2">
-          <ModelSelect
-            label="模型"
-            value={selectedRuntimeModel}
-            models={availableModels}
-            disabled={disabled || availableModels.length === 0}
-            onChange={setRuntimeModel}
-            variant="composer"
-            placement="top"
-            className="min-w-[200px]"
-            placeholder={availableModels.length === 0 ? "请先配置模型" : "选择模型"}
-          />
-          <InlineDropdown
-            label="思考强度"
-            value={reasoningMode}
-            disabled={disabled}
-            onChange={(value) => setReasoningMode(value as RuntimeReasoningMode)}
-            minWidthClass="min-w-[180px]"
-            options={REASONING_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
-          />
+        <div className="mt-2 flex min-h-10 items-center justify-between gap-3 overflow-visible">
+          <div className="flex min-w-max items-center gap-2 text-[#73777f]">
+            <ModelSelect
+              label="模型"
+              value={selectedRuntimeModel}
+              models={availableModels}
+              disabled={disabled || availableModels.length === 0}
+              onChange={setRuntimeModel}
+              variant="composer"
+              placement="top"
+              className="min-w-[112px] max-w-[112px] bg-transparent hover:bg-[#f4f6f8]"
+              placeholder={availableModels.length === 0 ? "请先配置模型" : "选择模型"}
+            />
+            <InlineDropdown
+              label="思考强度"
+              value={reasoningMode}
+              disabled={disabled}
+              onChange={(value) => setReasoningMode(value as RuntimeReasoningMode)}
+              minWidthClass="min-w-[118px] bg-transparent hover:bg-[#f4f6f8]"
+              options={REASONING_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+            />
+          </div>
+          <div className="ml-auto flex min-w-max shrink-0 items-center gap-1 text-[#9ca0a7]">
+            <button
+              type="button"
+              className={`grid h-8 w-8 place-items-center rounded-lg transition hover:bg-[#f4f6f8] disabled:cursor-not-allowed disabled:opacity-50 ${showSlashBrowser ? "bg-[#ecfaf7] text-[#00ad9a]" : ""}`}
+              onClick={() => setShowSlashBrowser((value) => !value)}
+              aria-label="打开 Slash 命令列表"
+              title="Slash 命令"
+              disabled={disabled || slashCommands.length === 0}
+            >
+              <Menu className="h-[19px] w-[19px]" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={`grid h-8 w-8 place-items-center rounded-lg transition hover:bg-[#f4f6f8] disabled:cursor-not-allowed disabled:opacity-50 ${optimizingPrompt ? "bg-[#ecfaf7] text-[#00ad9a]" : ""}`}
+              onClick={() => { void handleOptimizePrompt(); }}
+              aria-label="优化 Prompt"
+              title="优化 Prompt"
+              disabled={disabled || optimizingPrompt}
+            >
+              <Sparkles className={`h-[19px] w-[19px] ${optimizingPrompt ? "animate-pulse" : ""}`} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={`grid h-9 w-9 place-items-center rounded-lg transition disabled:cursor-not-allowed disabled:opacity-60 ${!hasDraft && isRunning ? "bg-error text-white hover:bg-error/90" : "bg-[#a6a8ad] text-white hover:bg-[#8f949b]"}`}
+              onClick={handleButtonClick}
+              aria-label={!hasDraft && isRunning ? "停止会话" : isRunning ? "加入待发送队列" : "发送提示"}
+              disabled={disabled}
+            >
+              {!hasDraft && isRunning ? (
+                <Square className="h-4 w-4 fill-current" aria-hidden="true" />
+              ) : (
+                <ArrowUp className="h-5 w-5 stroke-[2.4]" aria-hidden="true" />
+              )}
+            </button>
+          </div>
         </div>
         <input
           ref={fileInputRef}

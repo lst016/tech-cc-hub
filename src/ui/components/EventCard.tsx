@@ -16,6 +16,7 @@ import { resolveImageAttachmentSrc } from "../../shared/attachments";
 import { copyTextToClipboard as copyText } from "../utils/clipboard";
 import { OPEN_BROWSER_WORKBENCH_URL_EVENT, PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT } from "../events";
 import { extractCodeReferencesPrompt, type CodeReferencePromptSummary } from "../utils/code-reference-prompt";
+import { buildRevisionComposerPrompt, resolveRevisionReferenceSource } from "../utils/message-revision";
 
 type MessageContent = SDKAssistantMessage["message"]["content"][number];
 type ToolResultContent = SDKUserMessage["message"]["content"][number];
@@ -190,6 +191,51 @@ const appendMessageReferenceToComposer = (
   window.dispatchEvent(new CustomEvent(PROMPT_FOCUS_EVENT));
 };
 
+const getSelectedTextWithin = (container: HTMLElement | null) => {
+  const selection = window.getSelection();
+  const selectedText = selection?.toString().trim() ?? "";
+  if (!selection || !selectedText || selection.rangeCount === 0 || !container) return "";
+
+  const anchorNode = selection.anchorNode;
+  const focusNode = selection.focusNode;
+  if ((anchorNode && !container.contains(anchorNode)) || (focusNode && !container.contains(focusNode))) return "";
+
+  return selectedText;
+};
+
+const appendRevisionRequestToComposer = ({
+  selectedText,
+  fallbackText,
+  sourceRole,
+  sourceLabel,
+  capturedAt,
+}: {
+  selectedText?: string | null;
+  fallbackText: string;
+  sourceRole: "user" | "assistant" | "tool" | "system";
+  sourceLabel: string;
+  capturedAt?: number;
+}) => {
+  const source = resolveRevisionReferenceSource({
+    selectedText,
+    fallbackText,
+    fallbackLabel: sourceLabel,
+  });
+  if (!source) return;
+
+  const { activeSessionId, addMessageReference, prompt, setPrompt } = useAppStore.getState();
+  addMessageReference(activeSessionId, {
+    kind: source.kind,
+    sourceRole,
+    sourceLabel: source.sourceLabel,
+    text: source.text,
+    capturedAt,
+  });
+  setPrompt(buildRevisionComposerPrompt(prompt));
+  window.getSelection()?.removeAllRanges();
+  window.dispatchEvent(new CustomEvent(PROMPT_FOCUS_EVENT));
+};
+
 const StatusDot = ({
   variant = "accent",
   active = false,
@@ -240,10 +286,11 @@ const IconButton = ({
     type="button"
     aria-label={label}
     title={label}
+    onMouseDown={(event) => event.preventDefault()}
     onClick={onClick}
     className="grid h-7 w-7 place-items-center rounded-full border border-black/8 bg-white/80 text-[13px] text-muted opacity-0 shadow-sm transition hover:border-accent/30 hover:text-accent group-hover:opacity-100"
   >
-    {label === "复制" ? "⧉" : label === "引用" ? "↩" : "⋯"}
+    {label === "复制" ? "⧉" : label === "引用" ? "↩" : label === "重新修改" ? "✎" : "⋯"}
   </button>
 );
 
@@ -1071,6 +1118,15 @@ const AssistantTextCard = ({
   const [expanded, setExpanded] = useState(tone !== "thinking");
   const thoughtExtraction = useMemo(() => extractThoughtBlocks(text), [text]);
   const visibleAssistantText = thoughtExtraction.visibleText || text;
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const handleRevise = () => {
+    appendRevisionRequestToComposer({
+      selectedText: getSelectedTextWithin(contentRef.current),
+      fallbackText: visibleAssistantText,
+      sourceRole: "assistant",
+      sourceLabel: title,
+    });
+  };
 
   if (tone === "thinking") {
     return (
@@ -1105,9 +1161,13 @@ const AssistantTextCard = ({
       <SectionLabel active={showIndicator} variant="success">{title}</SectionLabel>
       <ThoughtDisplay thoughts={thoughtExtraction.thoughts} showIndicator={showIndicator} />
       <div className="flex gap-2">
-        <div className="min-w-0 flex-1 rounded-[26px] rounded-tl-[8px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 text-ink-800 shadow-[0_14px_30px_rgba(30,38,52,0.055)]">
+        <div
+          ref={contentRef}
+          className="min-w-0 flex-1 rounded-[26px] rounded-tl-[8px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 text-ink-800 shadow-[0_14px_30px_rgba(30,38,52,0.055)]"
+        >
           <MDContent text={visibleAssistantText} />
         </div>
+        <IconButton label="重新修改" onClick={handleRevise} />
         <IconButton label="引用" onClick={() => appendMessageReferenceToComposer(visibleAssistantText, "assistant", title)} />
         <IconButton label="复制" onClick={() => void copyText(visibleAssistantText)} />
       </div>

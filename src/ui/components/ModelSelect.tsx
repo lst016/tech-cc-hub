@@ -186,12 +186,18 @@ export function ModelSelect({
       ref={containerRef}
       className={cx(
         isComposer
-          ? "relative inline-flex h-9 items-center justify-between gap-2 rounded-xl bg-white px-3 text-xs text-ink-700"
+          ? "relative inline-flex h-8 items-center justify-between gap-1 rounded-xl bg-white px-1.5 text-xs text-ink-700"
           : "relative grid min-w-0 gap-1.5",
         className,
       )}
     >
-      <span id={labelId} className={isComposer ? "text-muted" : "text-xs font-medium text-muted"}>
+      <span
+        id={labelId}
+        className={isComposer ? `whitespace-nowrap text-muted ${disabled ? "" : "cursor-pointer select-none"}` : "text-xs font-medium text-muted"}
+        onClick={() => {
+          if (isComposer && !disabled) setOpen((current) => !current);
+        }}
+      >
         {label}
       </span>
       <button
@@ -202,7 +208,7 @@ export function ModelSelect({
         aria-labelledby={labelId}
         className={cx(
           isComposer
-            ? "inline-flex h-8 min-w-[96px] items-center justify-between gap-2 rounded-lg bg-white px-3 text-[13px] text-ink-800 transition focus:outline-none focus:ring-1 focus:ring-accent/20"
+            ? "inline-flex h-7 min-w-[64px] items-center justify-between gap-1 rounded-lg bg-white px-1.5 text-[13px] text-ink-800 transition focus:outline-none focus:ring-1 focus:ring-accent/20"
             : "flex h-[42px] min-w-0 items-center justify-between gap-2 rounded-xl border border-ink-900/10 bg-white px-4 py-2.5 text-left text-sm text-ink-800 transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20",
           disabled
             ? "cursor-not-allowed opacity-60"
@@ -214,11 +220,11 @@ export function ModelSelect({
         onClick={() => setOpen((current) => !current)}
         disabled={disabled}
       >
-        <span className={isComposer ? "max-w-[170px] truncate" : "min-w-0 truncate"}>
+        <span className={isComposer ? "max-w-[52px] truncate" : "min-w-0 truncate"}>
           {selectedLabel || placeholder}
         </span>
         <ChevronDown
-          className={cx("h-4 w-4 shrink-0 text-muted transition-transform", open && "rotate-180")}
+          className={cx(isComposer ? "h-3.5 w-3.5 shrink-0 text-muted transition-transform" : "h-4 w-4 shrink-0 text-muted transition-transform", open && "rotate-180")}
           aria-hidden="true"
         />
       </button>
