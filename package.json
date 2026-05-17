@@ -19,6 +19,7 @@
 		"qa:knowledge-links": "node scripts/qa/knowledge-links-smoke.mjs",
 		"qa:knowledge-ui": "node scripts/qa/knowledge-ui-smoke.cjs",
 		"qa:preview": "node scripts/qa/preview-workbench-smoke.cjs",
+		"qa:enter": "node scripts/qa/playwright-enter-smoke.cjs",
 		"qa:window:list": "bash scripts/qa/window-id-tools.sh list",
 		"qa:window:capture": "bash scripts/qa/window-id-tools.sh capture",
 		"codex:oauth:setup": "node scripts/codex-oauth-setup.mjs",

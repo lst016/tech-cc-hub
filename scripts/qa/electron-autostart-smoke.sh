@@ -33,7 +33,7 @@ trap cleanup EXIT
 
 wait_for_vite() {
   local deadline=$((SECONDS + 20))
-  until curl -sf "http://localhost:5173/" >/dev/null 2>&1; do
+  until curl -sf "http://localhost:4173/" >/dev/null 2>&1; do
     if (( SECONDS >= deadline )); then
       echo "Vite dev server did not become ready in time." >&2
       return 1
@@ -93,14 +93,14 @@ done
 pkill -f "vite" >/dev/null 2>&1 || true
 pkill -f "/node_modules/electron/" >/dev/null 2>&1 || true
 
-bun run dev:react >"$REACT_LOG" 2>&1 &
+npm run dev:react >"$REACT_LOG" 2>&1 &
 VITE_PID="$!"
 wait_for_vite
 
 AGENT_COWORK_DEV_AUTOSTART_PROMPT="$PROMPT_INPUT" \
 AGENT_COWORK_DEV_AUTOSTART_CWD="$AUTOSTART_CWD" \
 AGENT_COWORK_DEV_CONTINUE_PROMPT="$CONTINUE_PROMPT" \
-  bun run dev:electron >"$ELECTRON_LOG" 2>&1 &
+  npm run dev:electron >"$ELECTRON_LOG" 2>&1 &
 ELECTRON_PID="$!"
 
 if ! poll_for_completion; then

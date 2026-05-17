@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import { ArrowUp, Menu, Sparkles, Square } from "lucide-react";
 import type {
@@ -18,7 +18,9 @@ import {
 } from "../store/useAppStore";
 import { copyTextToClipboard as copyText } from "../utils/clipboard";
 import { resetBrowserWorkbenchAnnotationState } from "../utils/browser-annotation-reset";
-import { getSlashCommandQuery, isDismissedSlashCommandQuery } from "../utils/slash-command-input";
+import { getSlashCommandContext, getSlashCommandQuery, isCompletedSlashCommandContext, isDismissedSlashCommandQuery } from "../utils/slash-command-input";
+import { buildSlashCommandDisplayParts, type SlashCommandDisplayPart, serializeSlashCommandDraft } from "../utils/slash-command-display";
+import { getPromptParagraphInputAction, insertTextIntoPrompt, resolvePromptEditorInputCursor, shouldInsertPromptNewline, shouldSubmitPromptOnEnter } from "../utils/prompt-editor-keyboard";
 import {
   ADD_PROMPT_ATTACHMENT_EVENT,
   OPEN_BROWSER_WORKBENCH_URL_EVENT,
@@ -37,6 +39,7 @@ const DEFAULT_ALLOWED_TOOLS = "*";
 const MAX_ROWS = 12;
 const LINE_HEIGHT = 21;
 const MAX_HEIGHT = MAX_ROWS * LINE_HEIGHT;
+const IME_ENTER_GRACE_MS = 120;
 const SLASH_PREVIEW_LIMIT = 8;
 const SLASH_QUERY_LIMIT = 16;
 const FILE_MENTION_PREVIEW_LIMIT = 10;
@@ -556,6 +559,238 @@ function getFileMentionContext(promptValue: string, cursorIndex: number): FileMe
   };
 }
 
+function getPromptTextFromEditorNode(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return node.textContent ?? "";
+  }
+  if (node instanceof HTMLElement) {
+    if (node.dataset.promptEditorSentinel) {
+      return "";
+    }
+    const commandName = node.dataset.slashCommandName;
+    if (commandName) {
+      return `/${commandName}`;
+    }
+  }
+  if (node instanceof HTMLBRElement) {
+    return "\n";
+  }
+
+  let text = "";
+  node.childNodes.forEach((child) => {
+    text += getPromptTextFromEditorNode(child);
+  });
+  return text;
+}
+
+function getPromptTextFromEditor(editor: HTMLElement) {
+  let text = "";
+  editor.childNodes.forEach((child) => {
+    text += getPromptTextFromEditorNode(child);
+  });
+  return text;
+}
+
+function getNodePromptLength(node: Node): number {
+  return getPromptTextFromEditorNode(node).length;
+}
+
+function getEditorBoundaryOffset(editor: HTMLElement, targetNode: Node, targetOffset: number) {
+  let offset = 0;
+  let found = false;
+
+  const visit = (node: Node) => {
+    if (found) return;
+    if (node === targetNode) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        offset += Math.min(targetOffset, node.textContent?.length ?? 0);
+      } else {
+        for (let index = 0; index < Math.min(targetOffset, node.childNodes.length); index += 1) {
+          offset += getNodePromptLength(node.childNodes[index]);
+        }
+      }
+      found = true;
+      return;
+    }
+
+    if (node instanceof HTMLElement && node.dataset.slashCommandName) {
+      offset += getNodePromptLength(node);
+      return;
+    }
+
+    if (node.nodeType === Node.TEXT_NODE || node instanceof HTMLBRElement) {
+      offset += getNodePromptLength(node);
+      return;
+    }
+
+    node.childNodes.forEach(visit);
+  };
+
+  visit(editor);
+  return offset;
+}
+
+function getSelectionOffsetInEditor(editor: HTMLElement) {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return getPromptTextFromEditor(editor).length;
+  const range = selection.getRangeAt(0);
+  if (!editor.contains(range.startContainer)) return getPromptTextFromEditor(editor).length;
+  return getEditorBoundaryOffset(editor, range.startContainer, range.startOffset);
+}
+
+function getSelectionRangeInEditor(editor: HTMLElement) {
+  const selection = window.getSelection();
+  const fallback = getPromptTextFromEditor(editor).length;
+  if (!selection || selection.rangeCount === 0) return { start: fallback, end: fallback };
+  const range = selection.getRangeAt(0);
+  if (!editor.contains(range.startContainer) || !editor.contains(range.endContainer)) {
+    return { start: fallback, end: fallback };
+  }
+  const start = getEditorBoundaryOffset(editor, range.startContainer, range.startOffset);
+  const end = getEditorBoundaryOffset(editor, range.endContainer, range.endOffset);
+  return { start: Math.min(start, end), end: Math.max(start, end) };
+}
+
+function findEditorPositionForOffset(editor: HTMLElement, offset: number): { node: Node; offset: number } {
+  let remaining = Math.max(0, offset);
+
+  const visit = (node: Node): { node: Node; offset: number } | null => {
+    if (node instanceof HTMLElement && node.dataset.promptEditorSentinel) {
+      return null;
+    }
+
+    if (node instanceof HTMLElement && node.dataset.slashCommandName) {
+      const length = getNodePromptLength(node);
+      if (remaining <= length) {
+        return {
+          node: editor,
+          offset: Array.prototype.indexOf.call(editor.childNodes, node) + 1,
+        };
+      }
+      remaining -= length;
+      return null;
+    }
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      const textLength = node.textContent?.length ?? 0;
+      if (remaining <= textLength) {
+        return { node, offset: remaining };
+      }
+      remaining -= textLength;
+      return null;
+    }
+
+    if (node instanceof HTMLBRElement) {
+      if (remaining <= 1) {
+        return {
+          node: editor,
+          offset: Array.prototype.indexOf.call(editor.childNodes, node) + 1,
+        };
+      }
+      remaining -= 1;
+      return null;
+    }
+
+    for (const child of Array.from(node.childNodes)) {
+      const position = visit(child);
+      if (position) return position;
+    }
+    return null;
+  };
+
+  for (const child of Array.from(editor.childNodes)) {
+    const position = visit(child);
+    if (position) return position;
+  }
+
+  return { node: editor, offset: editor.childNodes.length };
+}
+
+function restoreEditorSelection(editor: HTMLElement, offset: number) {
+  const position = findEditorPositionForOffset(editor, offset);
+  const range = document.createRange();
+  range.setStart(position.node, position.offset);
+  range.collapse(true);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function createSlashCommandIconElement() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2.2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("class", "h-[18px] w-[18px] shrink-0 translate-y-[3px]");
+
+  for (const d of [
+    "M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z",
+    "m3.3 7 8.7 5 8.7-5",
+    "M12 22V12",
+  ]) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    svg.appendChild(path);
+  }
+
+  return svg;
+}
+
+function appendPromptTextNode(fragment: DocumentFragment, text: string) {
+  const segments = text.split("\n");
+  segments.forEach((segment, index) => {
+    if (index > 0) {
+      fragment.appendChild(document.createElement("br"));
+    }
+    if (segment) {
+      fragment.appendChild(document.createTextNode(segment));
+    }
+  });
+}
+
+function appendPromptEditorSentinel(fragment: DocumentFragment) {
+  const sentinel = document.createElement("br");
+  sentinel.dataset.promptEditorSentinel = "true";
+  fragment.appendChild(sentinel);
+}
+
+function renderPromptEditorContent(editor: HTMLElement, parts: SlashCommandDisplayPart[]) {
+  const fragment = document.createDocumentFragment();
+  let rawPromptText = "";
+
+  for (const part of parts) {
+    if (part.type === "text") {
+      rawPromptText += part.text;
+      appendPromptTextNode(fragment, part.text);
+      continue;
+    }
+
+    rawPromptText += part.raw;
+    const token = document.createElement("span");
+    token.dataset.slashCommandName = part.commandName;
+    token.contentEditable = "false";
+    token.className = "inline-flex max-w-[240px] items-center gap-1.5 align-baseline font-medium text-[#2f80ed]";
+    token.title = part.description || part.raw;
+    token.appendChild(createSlashCommandIconElement());
+
+    const label = document.createElement("span");
+    label.className = "truncate";
+    label.textContent = part.displayName;
+    token.appendChild(label);
+    fragment.appendChild(token);
+  }
+
+  if (rawPromptText.endsWith("\n")) {
+    appendPromptEditorSentinel(fragment);
+  }
+
+  editor.replaceChildren(fragment);
+}
+
 async function collectFileMentionOptions(workspaceRoot: string): Promise<FileMentionOption[]> {
   const root = workspaceRoot.trim();
   if (!root || !window.electron?.listPreviewDirectory) return [];
@@ -1032,7 +1267,9 @@ export function PromptInput({
   const addFileReference = useAppStore((state) => state.addFileReference);
   const removeFileReference = useAppStore((state) => state.removeFileReference);
   const clearFileReferences = useAppStore((state) => state.clearFileReferences);
-  const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  const promptRef = useRef<HTMLDivElement | null>(null);
+  const promptDraftRef = useRef(prompt);
+  const pendingCursorOffsetRef = useRef<number | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const fileMentionCacheRef = useRef<{ cwd: string; options: FileMentionOption[] } | null>(null);
@@ -1051,6 +1288,7 @@ export function PromptInput({
   const [editingCodeReferenceId, setEditingCodeReferenceId] = useState<string | null>(null);
   const [editingCodeReferenceComment, setEditingCodeReferenceComment] = useState("");
   const [optimizingPrompt, setOptimizingPrompt] = useState(false);
+  const [promptFocused, setPromptFocused] = useState(false);
   const autoDispatchRef = useRef<string | null>(null);
   const submitInFlightRef = useRef(false);
   const [submissionStatus, setSubmissionStatus] = useState<string | null>(null);
@@ -1064,7 +1302,12 @@ export function PromptInput({
   const codeReferences = codeReferencesBySessionId[codeReferenceSessionKey] || EMPTY_CODE_REFERENCES;
   const messageReferences = messageReferencesBySessionId[codeReferenceSessionKey] || EMPTY_MESSAGE_REFERENCES;
   const fileReferences = fileReferencesBySessionId[codeReferenceSessionKey] || EMPTY_FILE_REFERENCES;
-  const slashQuery = getSlashCommandQuery(prompt);
+  const slashDisplayParts = useMemo(() => buildSlashCommandDisplayParts(prompt, slashCommands), [prompt, slashCommands]);
+  const slashCommandContext = useMemo(() => {
+    const context = getSlashCommandContext(prompt, cursorIndex || prompt.length);
+    return isCompletedSlashCommandContext(prompt, context) ? null : context;
+  }, [cursorIndex, prompt]);
+  const slashQuery = slashCommandContext?.query ?? getSlashCommandQuery(prompt, cursorIndex || prompt.length);
   const fileMentionContext = useMemo(
     () => getFileMentionContext(prompt, cursorIndex || prompt.length),
     [cursorIndex, prompt],
@@ -1080,7 +1323,7 @@ export function PromptInput({
     || messageReferences.length > 0
     || fileReferences.length > 0;
   const filteredSlashCommands = useMemo(() => {
-    const activeSlashQuery = slashQuery ?? (showSlashBrowser ? "" : null);
+    const activeSlashQuery = showSlashBrowser ? "" : slashQuery;
     if (activeSlashQuery === null) return [];
 
     const normalizedSlashQuery = activeSlashQuery.toLowerCase();
@@ -1101,7 +1344,7 @@ export function PromptInput({
     }
     return matchedCommands.slice(0, SLASH_QUERY_LIMIT);
   }, [showSlashBrowser, slashCommands, slashQuery]);
-  const slashPaletteDismissed = isDismissedSlashCommandQuery(prompt, dismissedSlashQuery, showSlashBrowser);
+  const slashPaletteDismissed = isDismissedSlashCommandQuery(prompt, dismissedSlashQuery, showSlashBrowser, cursorIndex || prompt.length);
   const showSlashPalette = (slashQuery !== null || showSlashBrowser)
     && filteredSlashCommands.length > 0
     && !slashPaletteDismissed
@@ -1137,13 +1380,52 @@ export function PromptInput({
   }, [enabledProfiles]);
   const activeProfile = enabledProfiles[0];
   const selectedRuntimeModel = runtimeModel.trim() || activeProfile?.model?.trim() || availableModels[0] || "";
+  useEffect(() => {
+    promptDraftRef.current = prompt;
+  }, [prompt]);
+
+  const focusPromptEditor = useCallback((offset?: number) => {
+    if (typeof offset === "number") {
+      pendingCursorOffsetRef.current = Math.max(0, offset);
+    }
+    window.setTimeout(() => {
+      const editor = promptRef.current;
+      if (!editor) return;
+      editor.focus();
+      if (pendingCursorOffsetRef.current !== null) {
+        restoreEditorSelection(editor, pendingCursorOffsetRef.current);
+        pendingCursorOffsetRef.current = null;
+      }
+    }, 0);
+  }, []);
+
+  const setPromptDraft = useCallback((nextPrompt: string, nextCursorIndex = nextPrompt.length) => {
+    promptDraftRef.current = nextPrompt;
+    pendingCursorOffsetRef.current = nextCursorIndex;
+    setPrompt(nextPrompt);
+    setCursorIndex(nextCursorIndex);
+  }, [setPrompt]);
+
+  const isCompositionSettling = useCallback(() => (
+    Date.now() - compositionEndedAtRef.current < IME_ENTER_GRACE_MS
+  ), []);
+
+  const getCurrentPromptDraft = useCallback(() => {
+    const nextPrompt = promptRef.current ? getPromptTextFromEditor(promptRef.current) : promptDraftRef.current;
+    promptDraftRef.current = nextPrompt;
+    if (nextPrompt !== prompt) {
+      setPrompt(nextPrompt);
+    }
+    return nextPrompt;
+  }, [prompt, setPrompt]);
+
   const handleOptimizePrompt = useCallback(async () => {
     if (disabled || optimizingPrompt) return;
 
     const sourcePrompt = prompt.trim();
     if (!sourcePrompt) {
       setGlobalError("请先在输入框里写一段 prompt。");
-      promptRef.current?.focus();
+      focusPromptEditor();
       return;
     }
 
@@ -1161,25 +1443,21 @@ export function PromptInput({
       }
 
       const optimizedPrompt = result.optimizedPrompt.trim();
-      setPrompt(optimizedPrompt);
-      setCursorIndex(optimizedPrompt.length);
+      setPromptDraft(optimizedPrompt, optimizedPrompt.length);
       setShowSlashBrowser(false);
       setDismissedSlashQuery(null);
       setGlobalError(null);
-      window.requestAnimationFrame(() => {
-        promptRef.current?.focus();
-        promptRef.current?.setSelectionRange(optimizedPrompt.length, optimizedPrompt.length);
-      });
+      focusPromptEditor(optimizedPrompt.length);
     } catch (error) {
       setGlobalError(error instanceof Error ? error.message : "Prompt 优化失败。");
     } finally {
       setSubmissionStatus(null);
       setOptimizingPrompt(false);
     }
-  }, [disabled, optimizingPrompt, prompt, selectedRuntimeModel, setGlobalError, setPrompt]);
+  }, [disabled, focusPromptEditor, optimizingPrompt, prompt, selectedRuntimeModel, setGlobalError, setPromptDraft]);
 
   const clearComposer = useCallback(() => {
-    setPrompt("");
+    setPromptDraft("", 0);
     setAttachments([]);
     setFileMentionActiveIndex(0);
     setSlashActiveIndex(0);
@@ -1194,16 +1472,22 @@ export function PromptInput({
       .catch((error) => console.warn("Failed to reset browser annotation state:", error));
     setShowSlashBrowser(false);
     setDismissedSlashQuery(null);
-  }, [activeSessionId, clearBrowserAnnotations, clearCodeReferences, clearFileReferences, clearMessageReferences, setBrowserWorkbenchAnnotations, setPrompt]);
+  }, [activeSessionId, clearBrowserAnnotations, clearCodeReferences, clearFileReferences, clearMessageReferences, setBrowserWorkbenchAnnotations, setPromptDraft]);
 
-  const updateCursorFromTextarea = useCallback(() => {
-    const input = promptRef.current;
-    if (!input) {
+  const syncPromptEditorState = useCallback(() => {
+    const editor = promptRef.current;
+    if (!editor) {
       setCursorIndex(prompt.length);
       return;
     }
-    setCursorIndex(input.selectionStart ?? prompt.length);
-  }, [prompt.length]);
+    const nextPrompt = getPromptTextFromEditor(editor);
+    const nextCursor = getSelectionOffsetInEditor(editor);
+    promptDraftRef.current = nextPrompt;
+    setCursorIndex(nextCursor);
+    if (nextPrompt !== prompt) {
+      setPrompt(nextPrompt);
+    }
+  }, [prompt, setPrompt]);
 
   const removeQueuedDraft = useCallback((queueId: string, sessionId = activeSessionId) => {
     if (!sessionId) return;
@@ -1248,17 +1532,24 @@ export function PromptInput({
   }, [activeSessionId, onSendMessage, prepareQueuedAttachmentsForDispatch, removeQueuedDraft, sendEvent]);
 
   const editQueuedDraft = useCallback((queuedMessage: QueuedMessageDraft) => {
-    setPrompt(queuedMessage.prompt);
+    setPromptDraft(queuedMessage.prompt, queuedMessage.prompt.length);
     setAttachments(queuedMessage.attachments);
     removeQueuedDraft(queuedMessage.id, activeSessionId);
-    window.setTimeout(() => promptRef.current?.focus(), 0);
-  }, [activeSessionId, removeQueuedDraft, setPrompt]);
+    focusPromptEditor(queuedMessage.prompt.length);
+  }, [activeSessionId, focusPromptEditor, removeQueuedDraft, setPromptDraft]);
 
-  const queueCurrentDraft = useCallback(() => {
+  const queueCurrentDraft = useCallback((promptOverride?: string) => {
     if (!activeSessionId) return false;
-    if (!hasDraft) return false;
+    const currentPrompt = promptOverride ?? promptDraftRef.current;
+    const currentHasDraft = currentPrompt.trim().length > 0
+      || attachments.length > 0
+      || browserAnnotations.length > 0
+      || codeReferences.length > 0
+      || messageReferences.length > 0
+      || fileReferences.length > 0;
+    if (!currentHasDraft) return false;
 
-    const promptWithCodeReferences = mergePromptWithCodeReferences(prompt, codeReferences);
+    const promptWithCodeReferences = mergePromptWithCodeReferences(currentPrompt, codeReferences);
     const promptWithFileReferences = mergePromptWithFileReferences(promptWithCodeReferences, fileReferences);
     const promptWithMessageReferences = mergePromptWithMessageReferences(promptWithFileReferences, messageReferences);
     const promptWithAnnotations = mergePromptWithBrowserAnnotations(promptWithMessageReferences, browserAnnotations);
@@ -1283,19 +1574,25 @@ export function PromptInput({
     setGlobalError(null);
     window.dispatchEvent(new CustomEvent(PROMPT_SENT_EVENT));
     return true;
-  }, [activeSessionId, attachments, browserAnnotations, clearComposer, codeReferences, fileReferences, hasDraft, messageReferences, prompt, setGlobalError, validatePromptDraft]);
+  }, [activeSessionId, attachments, browserAnnotations, clearComposer, codeReferences, fileReferences, messageReferences, setGlobalError, validatePromptDraft]);
 
   const submitCurrentInput = useCallback(async () => {
-    if (!hasDraft) return false;
+    const promptSnapshot = getCurrentPromptDraft();
+    const currentHasDraft = promptSnapshot.trim().length > 0
+      || attachments.length > 0
+      || browserAnnotations.length > 0
+      || codeReferences.length > 0
+      || messageReferences.length > 0
+      || fileReferences.length > 0;
+    if (!currentHasDraft) return false;
     if (submitInFlightRef.current) return false;
 
     submitInFlightRef.current = true;
     try {
       if (isRunning) {
-        return queueCurrentDraft();
+        return queueCurrentDraft(promptSnapshot);
       }
 
-      const promptSnapshot = prompt;
       const attachmentsSnapshot = attachments;
       const promptWithCodeReferences = mergePromptWithCodeReferences(promptSnapshot, codeReferences);
       const promptWithFileReferences = mergePromptWithFileReferences(promptWithCodeReferences, fileReferences);
@@ -1315,7 +1612,7 @@ export function PromptInput({
         onSendMessage?.();
         window.dispatchEvent(new CustomEvent(PROMPT_SENT_EVENT));
       } else {
-        setPrompt(promptSnapshot);
+        setPromptDraft(promptSnapshot, promptSnapshot.length);
         setAttachments(attachmentsSnapshot);
       }
       return sent;
@@ -1323,7 +1620,7 @@ export function PromptInput({
       setSubmissionStatus(null);
       submitInFlightRef.current = false;
     }
-  }, [attachments, browserAnnotations, clearComposer, codeReferences, fileReferences, hasDraft, isRunning, messageReferences, onSendMessage, prompt, queueCurrentDraft, sendPromptDraft, setGlobalError, setPrompt, validatePromptDraft]);
+  }, [attachments, browserAnnotations, clearComposer, codeReferences, fileReferences, getCurrentPromptDraft, isRunning, messageReferences, onSendMessage, queueCurrentDraft, sendPromptDraft, setGlobalError, setPromptDraft, validatePromptDraft]);
 
   useEffect(() => {
     const handlePromptSubmit = () => {
@@ -1350,24 +1647,25 @@ export function PromptInput({
       label: option.label,
       workspaceRoot: effectiveCwd,
     });
-    setPrompt(nextPrompt);
+    setPromptDraft(nextPrompt, nextCursor);
     setFileMentionActiveIndex(0);
-    window.setTimeout(() => {
-      promptRef.current?.focus();
-      promptRef.current?.setSelectionRange(nextCursor, nextCursor);
-      setCursorIndex(nextCursor);
-    }, 0);
-  }, [activeSessionId, addFileReference, effectiveCwd, fileMentionContext, prompt, setPrompt]);
+    focusPromptEditor(nextCursor);
+  }, [activeSessionId, addFileReference, effectiveCwd, fileMentionContext, focusPromptEditor, prompt, setPromptDraft]);
 
   const selectSlashCommand = useCallback((command: SlashCommandOption) => {
-    const suffix = prompt.includes(" ") ? prompt.slice(prompt.indexOf(" ")) : "";
-    const nextPrompt = `/${command.name}${suffix}`;
-    setPrompt(nextPrompt);
+    const context = slashCommandContext;
+    const before = context ? prompt.slice(0, context.start) : prompt.slice(0, cursorIndex || prompt.length);
+    const after = context ? prompt.slice(context.end) : prompt.slice(cursorIndex || prompt.length);
+    const replacement = serializeSlashCommandDraft(command.name, "");
+    const nextPrompt = `${before}${replacement}${after.replace(/^\s+/u, "")}`;
+    const nextCursor = before.length + replacement.length;
+    setPromptDraft(nextPrompt, nextCursor);
     setDismissedSlashQuery(command.name.toLowerCase());
     setShowSlashBrowser(false);
-  }, [prompt, setPrompt]);
+    focusPromptEditor(nextCursor);
+  }, [cursorIndex, focusPromptEditor, prompt, setPromptDraft, slashCommandContext]);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (disabled) return;
     if (showSlashPalette) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -1381,11 +1679,10 @@ export function PromptInput({
         });
         return;
       }
-      if ((e.key === "Enter" || e.key === "Tab") && filteredSlashCommands.length > 0) {
+      if (((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") && filteredSlashCommands.length > 0) {
         e.preventDefault();
         const command = filteredSlashCommands[slashActiveIndex] ?? filteredSlashCommands[0];
         selectSlashCommand(command);
-        window.setTimeout(() => promptRef.current?.focus(), 0);
         return;
       }
       if (e.key === "Escape") {
@@ -1407,7 +1704,7 @@ export function PromptInput({
         });
         return;
       }
-      if ((e.key === "Enter" || e.key === "Tab") && filteredFileMentionOptions.length > 0) {
+      if (((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") && filteredFileMentionOptions.length > 0) {
         e.preventDefault();
         insertFileMention(filteredFileMentionOptions[fileMentionActiveIndex] ?? filteredFileMentionOptions[0]);
         return;
@@ -1420,7 +1717,7 @@ export function PromptInput({
     }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
       e.preventDefault();
-      promptRef.current?.focus();
+      focusPromptEditor();
       return;
     }
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -1428,11 +1725,28 @@ export function PromptInput({
       void submitCurrentInput();
       return;
     }
-    if (e.key !== "Enter" || e.shiftKey) return;
-    const justEndedComposition = Date.now() - compositionEndedAtRef.current < 80;
-    if (e.nativeEvent.isComposing || isComposingRef.current || justEndedComposition) return;
-    e.preventDefault();
-    void submitCurrentInput();
+    const keyboardEvent = {
+      key: e.key,
+      shiftKey: e.shiftKey,
+      metaKey: e.metaKey,
+      ctrlKey: e.ctrlKey,
+      nativeEvent: { isComposing: e.nativeEvent.isComposing },
+    };
+    if (shouldInsertPromptNewline(keyboardEvent)) {
+      e.preventDefault();
+      const editor = promptRef.current;
+      const currentPrompt = editor ? getPromptTextFromEditor(editor) : promptDraftRef.current;
+      const fallbackCursor = cursorIndex || currentPrompt.length;
+      const selection = editor ? getSelectionRangeInEditor(editor) : { start: fallbackCursor, end: fallbackCursor };
+      const nextDraft = insertTextIntoPrompt(currentPrompt, "\n", selection.start, selection.end);
+      setPromptDraft(nextDraft.prompt, nextDraft.cursorIndex);
+      focusPromptEditor(nextDraft.cursorIndex);
+      return;
+    }
+    if (shouldSubmitPromptOnEnter(keyboardEvent, isComposingRef.current, isCompositionSettling())) {
+      e.preventDefault();
+      void submitCurrentInput();
+    }
   };
 
   const handleButtonClick = () => {
@@ -1458,7 +1772,7 @@ export function PromptInput({
     }
   }, [setGlobalError]);
 
-  const handlePaste = useCallback(async (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+  const handlePaste = useCallback(async (event: React.ClipboardEvent<HTMLDivElement>) => {
     const clipboardFiles = Array.from(event.clipboardData.items)
       .filter((item) => item.kind === "file")
       .map((item) => item.getAsFile())
@@ -1509,12 +1823,19 @@ export function PromptInput({
 
     if (event.dataTransfer.files.length > 0) {
       await addFiles(event.dataTransfer.files);
-      window.setTimeout(() => promptRef.current?.focus(), 0);
+      focusPromptEditor();
     }
-  }, [addFiles, disabled]);
+  }, [addFiles, disabled, focusPromptEditor]);
 
-  const handleInput = (e: React.FormEvent<HTMLTextAreaElement>) => {
+  const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
+    const previousPrompt = promptDraftRef.current;
+    const nextPrompt = getPromptTextFromEditor(target);
+    const nextCursor = resolvePromptEditorInputCursor(previousPrompt, nextPrompt, getSelectionOffsetInEditor(target));
+    promptDraftRef.current = nextPrompt;
+    pendingCursorOffsetRef.current = nextCursor;
+    setPrompt(nextPrompt);
+    setCursorIndex(nextCursor);
     target.style.height = "auto";
     const scrollHeight = target.scrollHeight;
     if (scrollHeight > MAX_HEIGHT) {
@@ -1525,6 +1846,24 @@ export function PromptInput({
       target.style.overflowY = "hidden";
     }
   };
+
+  const handleBeforeInput = useCallback((event: InputEvent) => {
+    const action = getPromptParagraphInputAction(
+      {
+        inputType: event.inputType,
+        isComposing: event.isComposing,
+      },
+      isComposingRef.current,
+      showSlashPalette || showFileMentionPalette,
+      isCompositionSettling(),
+    );
+    if (action === "allow") return;
+
+    event.preventDefault();
+    if (action === "submit") {
+      void submitCurrentInput();
+    }
+  }, [showFileMentionPalette, showSlashPalette, submitCurrentInput]);
 
   useEffect(() => {
     if (!promptRef.current) return;
@@ -1540,13 +1879,41 @@ export function PromptInput({
   }, [prompt]);
 
   useEffect(() => {
+    const editor = promptRef.current;
+    if (!editor) return;
+    const listener = (event: Event) => {
+      handleBeforeInput(event as InputEvent);
+    };
+    editor.addEventListener("beforeinput", listener);
+    return () => {
+      editor.removeEventListener("beforeinput", listener);
+    };
+  }, [handleBeforeInput]);
+
+  useLayoutEffect(() => {
+    const editor = promptRef.current;
+    if (!editor) return;
+
+    const isActive = document.activeElement === editor;
+    const cursorOffset = pendingCursorOffsetRef.current ?? (isActive ? getSelectionOffsetInEditor(editor) : null);
+    if (editor.dataset.renderedPrompt !== prompt) {
+      renderPromptEditorContent(editor, slashDisplayParts);
+      editor.dataset.renderedPrompt = prompt;
+    }
+    if (isActive && cursorOffset !== null) {
+      restoreEditorSelection(editor, cursorOffset);
+    }
+    pendingCursorOffsetRef.current = null;
+  }, [prompt, slashDisplayParts]);
+
+  useEffect(() => {
     const handlePromptFocus = () => {
-      window.setTimeout(() => promptRef.current?.focus(), 0);
+      focusPromptEditor();
     };
 
     window.addEventListener(PROMPT_FOCUS_EVENT, handlePromptFocus);
     return () => window.removeEventListener(PROMPT_FOCUS_EVENT, handlePromptFocus);
-  }, []);
+  }, [focusPromptEditor]);
 
   useEffect(() => {
     const handleAddPromptAttachment = (event: Event) => {
@@ -1583,13 +1950,13 @@ export function PromptInput({
     const handleGlobalShortcut = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        promptRef.current?.focus();
+        focusPromptEditor();
       }
     };
 
     window.addEventListener("keydown", handleGlobalShortcut);
     return () => window.removeEventListener("keydown", handleGlobalShortcut);
-  }, []);
+  }, [focusPromptEditor]);
 
   useEffect(() => {
     if (!fileMentionContext || disabled) return;
@@ -1690,7 +2057,7 @@ export function PromptInput({
   return (
     <section
       ref={composerRef}
-      className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[rgba(229,234,240,0.64)] via-[rgba(229,234,240,0.12)] to-transparent px-3 pb-3 pt-3 lg:pb-4"
+      className="fixed bottom-0 left-0 right-0 z-[120] bg-gradient-to-t from-[rgba(229,234,240,0.64)] via-[rgba(229,234,240,0.12)] to-transparent px-3 pb-3 pt-3 lg:pb-4"
       style={{
         marginLeft: `${leftOffset}px`,
         marginRight: `${rightOffset}px`,
@@ -1703,25 +2070,24 @@ export function PromptInput({
         </div>
       )}
       {showSlashPalette && (
-        <div className="mx-auto mb-3 w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
+        <div className="relative z-[130] mx-auto mb-3 w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
           <div className="overflow-hidden rounded-[24px] border border-black/6 bg-white/94 shadow-[0_18px_50px_rgba(30,38,52,0.08)] backdrop-blur">
             <div className="border-b border-black/6 px-4 py-2 text-xs font-medium text-muted">
               可用 Slash 命令
             </div>
-            <div className="grid max-h-[min(42vh,320px)] gap-1 overflow-y-auto p-2">
+            <div className="grid max-h-[min(42vh,320px)] gap-1 overflow-y-auto overflow-x-hidden p-2">
               {filteredSlashCommands.map((command, index) => (
                 <button
                   key={command.name}
                   type="button"
-                  className={`rounded-xl px-3 py-2 text-left text-sm transition-colors ${index === slashActiveIndex ? "bg-accent/10 text-accent" : "text-ink-700 hover:bg-surface-secondary"}`}
+                  className={`min-w-0 rounded-xl px-3 py-2 text-left text-sm transition-colors ${index === slashActiveIndex ? "bg-accent/10 text-accent" : "text-ink-700 hover:bg-surface-secondary"}`}
                   onClick={() => {
                     selectSlashCommand(command);
-                    promptRef.current?.focus();
                   }}
                 >
-                  <span className="flex min-w-0 items-baseline gap-2">
+                  <span className="flex min-w-0 items-baseline gap-2 overflow-hidden">
                     <span className="shrink-0 font-medium">/{command.name}</span>
-                    <span className="truncate text-xs font-normal text-muted" title={command.description || "Enter/Tab 选择"}>
+                    <span className="min-w-0 truncate text-xs font-normal text-muted" title={command.description || "Enter/Tab 选择"}>
                       {command.description || "Enter/Tab 选择"}
                     </span>
                   </span>
@@ -2140,28 +2506,35 @@ export function PromptInput({
           </div>
         )}
 
-        <div className="grid gap-2">
-          <textarea
-            rows={1}
-            className="max-h-[180px] min-h-[86px] w-full resize-none overflow-y-auto bg-transparent px-1 pb-2 pt-0 text-[17px] leading-7 text-ink-800 placeholder:text-[#a6a8ad] focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
-            placeholder={
-              disabled
+        <div className="relative grid gap-2">
+          {!prompt && !promptFocused && (
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-0 px-1 pb-2 pt-0 text-[17px] leading-7 text-[#a6a8ad]">
+              {disabled
                 ? "先创建或选择一个会话..."
                 : attachments.length > 0
                     ? "可以继续补充文字说明，或直接发送附件..."
                     : isRunning
                       ? "当前仍在执行中，你可以继续输入，系统会自动排队续发..."
-                      : "描述计划，@ 引用上下文，/ 使用命令"
-            }
-            value={prompt}
-            onChange={(e) => {
-              setPrompt(e.target.value);
-              setCursorIndex(e.target.selectionStart ?? e.target.value.length);
-            }}
-            onSelect={updateCursorFromTextarea}
-            onClick={updateCursorFromTextarea}
-            onKeyUp={updateCursorFromTextarea}
+                      : "描述计划，@ 引用上下文，/ 使用命令"}
+            </div>
+          )}
+          <div
+            ref={promptRef}
+            role="textbox"
+            aria-multiline="true"
+            aria-label="输入提示"
+            aria-disabled={disabled}
+            contentEditable={!disabled}
+            suppressContentEditableWarning
+            tabIndex={disabled ? -1 : 0}
+            className="relative z-10 max-h-[180px] min-h-[86px] w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-1 pb-2 pt-0 text-[17px] leading-7 text-ink-800 caret-ink-800 focus:outline-none aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+            onInput={handleInput}
+            onSelect={syncPromptEditorState}
+            onClick={syncPromptEditorState}
+            onKeyUp={syncPromptEditorState}
             onKeyDown={handleKeyDown}
+            onFocus={() => setPromptFocused(true)}
+            onBlur={() => setPromptFocused(false)}
             onCompositionStart={() => {
               isComposingRef.current = true;
             }}
@@ -2169,10 +2542,7 @@ export function PromptInput({
               isComposingRef.current = false;
               compositionEndedAtRef.current = Date.now();
             }}
-            onInput={handleInput}
             onPaste={(event) => { void handlePaste(event); }}
-            ref={promptRef}
-            disabled={disabled}
           />
         </div>
         <div className="mt-2 flex min-h-10 items-center justify-between gap-3 overflow-visible">
@@ -2220,7 +2590,7 @@ export function PromptInput({
             </button>
             <button
               type="button"
-              className={`grid h-9 w-9 place-items-center rounded-lg transition disabled:cursor-not-allowed disabled:opacity-60 ${!hasDraft && isRunning ? "bg-error text-white hover:bg-error/90" : "bg-[#a6a8ad] text-white hover:bg-[#8f949b]"}`}
+              className={`grid h-9 w-9 place-items-center rounded-lg transition disabled:cursor-not-allowed disabled:opacity-60 ${!hasDraft && isRunning ? "bg-error text-white hover:bg-error/90" : "bg-[#111111] text-white hover:bg-black"}`}
               onClick={handleButtonClick}
               aria-label={!hasDraft && isRunning ? "停止会话" : isRunning ? "加入待发送队列" : "发送提示"}
               disabled={disabled}

@@ -33,31 +33,45 @@ async function main() {
   const promptBox = page.locator('[aria-label="输入提示"]');
   await promptBox.waitFor({ state: 'visible', timeout: 10000 });
   await promptBox.click();
+  await page.waitForTimeout(300);
 
-  await page.keyboard.type('@src');
-  await page.waitForTimeout(1800);
-  const mentionVisible = await page.getByText('@ 文件提及', { exact: true }).isVisible().catch(() => false);
-  if (!mentionVisible) throw new Error('@ file mention palette did not open');
-  await page.keyboard.press('Enter');
-  await page.waitForTimeout(600);
+  // Test 1: Shift+Enter inserts a newline without submitting
+  await page.keyboard.type('line1');
+  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.type('line2');
+  await page.waitForTimeout(200);
 
-  const bodyText = await page.locator('body').innerText({ timeout: 8000 });
-  if (!bodyText.includes('路径引用')) throw new Error('File reference card was not rendered');
-
-  const promptText = await promptBox.innerText();
-  if (promptText.includes('<file_references>') || promptText.includes('<message_references>')) {
-    throw new Error('Structured reference block leaked into prompt box');
+  const textAfterShiftEnter = await promptBox.innerText();
+  if (textAfterShiftEnter !== 'line1\nline2') {
+    throw new Error(`Shift+Enter: expected 'line1\\nline2', got ${JSON.stringify(textAfterShiftEnter)}`);
   }
 
+  // Test 2: Plain Enter submits and clears the prompt box
   await promptBox.click();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A');
-  await page.keyboard.type('/');
+  await page.keyboard.type('hello enter smoke');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Enter');
   await page.waitForTimeout(800);
-  const slashVisible = await page.getByText('可用 Slash 命令', { exact: true }).isVisible().catch(() => false);
-  if (slashVisible) {
-    await page.keyboard.press('Escape');
+
+  const textAfterEnter = (await promptBox.innerText()).trim();
+  if (textAfterEnter !== '') {
+    throw new Error(`Plain Enter: expected empty prompt, got ${JSON.stringify(textAfterEnter)}`);
   }
 
+  // Test 3: Meta+Enter / Ctrl+Enter also submits
+  await promptBox.click();
+  await page.keyboard.type('cmd enter test');
+  await page.waitForTimeout(200);
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
+  await page.waitForTimeout(800);
+
+  const textAfterCmdEnter = (await promptBox.innerText()).trim();
+  if (textAfterCmdEnter !== '') {
+    throw new Error(`Meta/Ctrl+Enter: expected empty prompt, got ${JSON.stringify(textAfterCmdEnter)}`);
+  }
+
+  // Check for unexpected fatal errors
   const unexpectedErrors = logs.filter((line) => {
     if (!line.includes('[pageerror]') && !line.includes('[console:error]')) return false;
     return !isExpectedError(line);
@@ -67,7 +81,7 @@ async function main() {
   }
 
   await browser.close();
-  console.log('CHAT_UI_QA_OK');
+  console.log('PLAYWRIGHT_ENTER_SMOKE_OK');
 }
 
 main().catch(async (error) => {

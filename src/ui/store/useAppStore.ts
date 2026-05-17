@@ -22,6 +22,7 @@ import {
   normalizeUpdatePlanArgs,
   type SessionPlanSnapshot,
 } from "../../shared/plan-progress";
+import { mergeHistoryReplacementMessages, mergeMessages } from "../utils/session-history-merge";
 
 export type PermissionRequest = {
   toolUseId: string;
@@ -251,38 +252,6 @@ function getMessageCursor(message: StreamMessage | undefined): SessionHistoryCur
     beforeCreatedAt: message.capturedAt,
     beforeId: message.historyId,
   };
-}
-
-function getMessageStableKey(message: StreamMessage): string {
-  if (message.historyId) {
-    return `history:${message.historyId}`;
-  }
-
-  if ("uuid" in message && typeof message.uuid === "string" && message.uuid.length > 0) {
-    return `uuid:${message.uuid}`;
-  }
-
-  if (message.type === "user_prompt") {
-    return `user:${message.capturedAt ?? "na"}:${message.prompt}`;
-  }
-
-  return `fallback:${message.type}:${message.capturedAt ?? "na"}:${JSON.stringify(message)}`;
-}
-
-function mergeMessages(olderMessages: StreamMessage[], newerMessages: StreamMessage[]): StreamMessage[] {
-  const merged: StreamMessage[] = [];
-  const seen = new Set<string>();
-
-  for (const message of [...olderMessages, ...newerMessages]) {
-    const key = getMessageStableKey(message);
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    merged.push(message);
-  }
-
-  return merged;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -770,7 +739,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           const existing = (updateArchived ? state.archivedSessions[sessionId] : state.sessions[sessionId]) ?? createSession(sessionId);
           const mergedMessages = mode === "prepend"
             ? mergeMessages(messages, existing.messages)
-            : messages;
+            : mergeHistoryReplacementMessages(messages, existing, status);
           const slashCommands = mergeSlashCommandLists(
             event.payload.slashCommands,
             extractSlashCommands(mergedMessages),

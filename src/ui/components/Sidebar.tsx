@@ -354,7 +354,7 @@ export function Sidebar({
                       role="button"
                       tabIndex={0}
                     >
-                      <div className="flex min-h-7 items-center justify-between gap-2 pr-7">
+                      <div className="flex min-h-7 items-center justify-between gap-2">
                         <div className="flex min-w-0 flex-1 items-center gap-2">
                           {unreadSessionStatus ? (
                             <span
@@ -374,14 +374,14 @@ export function Sidebar({
                           </div>
                         </div>
                         {sessionAge && (
-                          <span className="shrink-0 text-[12px] text-muted transition-opacity group-hover/session:opacity-0">
+                          <span className="pointer-events-none shrink-0 text-[12px] text-muted transition-opacity group-hover/session:opacity-0 group-focus-within/session:opacity-0">
                             {sessionAge}
                           </span>
                         )}
                         <DropdownMenu.Root>
                           <DropdownMenu.Trigger asChild>
                             <button
-                              className="absolute right-2 top-1/2 flex-shrink-0 -translate-y-1/2 rounded-md p-1.5 text-ink-500 opacity-0 transition-opacity hover:bg-black/5 group-hover/session:opacity-100 focus:opacity-100"
+                              className={`absolute right-1.5 top-1/2 z-10 flex-shrink-0 -translate-y-1/2 rounded-md bg-[var(--session-action-bg)] p-1.5 text-ink-500 opacity-0 shadow-[0_0_0_4px_var(--session-action-bg)] transition hover:brightness-95 group-hover/session:opacity-100 focus:opacity-100 ${isActiveSession ? "[--session-action-bg:#dedede]" : "[--session-action-bg:#e7e7e7]"}`}
                               aria-label="打开会话菜单"
                               onClick={(event) => event.stopPropagation()}
                               onPointerDown={(event) => event.stopPropagation()}
