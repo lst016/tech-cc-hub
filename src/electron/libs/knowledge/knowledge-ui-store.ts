@@ -795,14 +795,12 @@ function applyWorkspaceGitBinding(state: KnowledgeUiGeneration, workspaceKey: st
 
 function readWorkspaceGitBinding(workspaceKey: string): Pick<KnowledgeUiGeneration, "commitId" | "commitShortHash" | "branch"> | undefined {
   try {
-    const git = (args: string[]) => execFileSync("git", ["-C", workspaceKey, ...args], {
+    const output = execFileSync("git", ["-C", workspaceKey, "rev-parse", "--is-inside-work-tree", "HEAD", "--abbrev-ref", "HEAD"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-    if (git(["rev-parse", "--is-inside-work-tree"]) !== "true") return undefined;
-    const commitId = git(["rev-parse", "HEAD"]);
-    if (!commitId) return undefined;
-    const branchName = git(["rev-parse", "--abbrev-ref", "HEAD"]);
+    const [insideWorkTree, commitId, branchName] = output.split("\n");
+    if (insideWorkTree !== "true" || !commitId) return undefined;
     return {
       commitId,
       commitShortHash: commitId.slice(0, 7),

@@ -171,43 +171,39 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
           ? (await embedTexts(assertEmbeddingConfigured(resolveKnowledgeModelSettings()), [input.query]))[0]
           : undefined;
 
-        if (source === "cards" || source === "all") {
+        if (source === "cards" || source === "repowiki" || source === "all") {
           const cards: unknown[] = [];
+          const repowiki: unknown[] = [];
+          const wantCards = source === "cards" || source === "all";
+          const wantRepowiki = source === "repowiki" || source === "all";
           for (const root of workspaceRoots) {
             const { repo, paths } = openKnowledgeRepository(root);
             try {
-              cards.push(...annotateLinkedResults(root, workspaceRoot, repo.search({
-                workspaceScope: paths.workspaceScope,
-                query: input.query,
-                mode: mode as KnowledgeSearchMode,
-                sourceKind: "agent_card",
-                limit,
-                queryEmbedding,
-              })));
+              if (wantCards) {
+                cards.push(...annotateLinkedResults(root, workspaceRoot, repo.search({
+                  workspaceScope: paths.workspaceScope,
+                  query: input.query,
+                  mode: mode as KnowledgeSearchMode,
+                  sourceKind: "agent_card",
+                  limit,
+                  queryEmbedding,
+                })));
+              }
+              if (wantRepowiki) {
+                repowiki.push(...annotateLinkedResults(root, workspaceRoot, repo.search({
+                  workspaceScope: paths.workspaceScope,
+                  query: input.query,
+                  mode: mode as KnowledgeSearchMode,
+                  sourceKind: "repowiki",
+                  limit,
+                  queryEmbedding,
+                })));
+              }
             } finally {
               repo.close();
             }
           }
           results.cards = cards.slice(0, limit);
-        }
-
-        if (source === "repowiki" || source === "all") {
-          const repowiki: unknown[] = [];
-          for (const root of workspaceRoots) {
-            const { repo, paths } = openKnowledgeRepository(root);
-            try {
-              repowiki.push(...annotateLinkedResults(root, workspaceRoot, repo.search({
-                workspaceScope: paths.workspaceScope,
-                query: input.query,
-                mode: mode as KnowledgeSearchMode,
-                sourceKind: "repowiki",
-                limit,
-                queryEmbedding,
-              })));
-            } finally {
-              repo.close();
-            }
-          }
           results.repowiki = repowiki.slice(0, limit);
         }
 

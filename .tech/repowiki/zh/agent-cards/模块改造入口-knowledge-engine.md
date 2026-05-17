@@ -23,6 +23,7 @@
 - `src/electron/libs/knowledge/knowledge-utils.ts`
 - `src/electron/libs/knowledge/repowiki/scanner.ts`
 - `src/electron/libs/knowledge/repowiki/intelligence.ts`
+- `src/electron/libs/knowledge/agent-cards.ts`
 
 ## 改代码指南
 - 先确认需求是否真的属于 knowledge-engine，再从 entryFiles 里包含入口/IPC/schema/store 的文件开始。
@@ -43,7 +44,7 @@
 - 数据库 schema 变更要考虑旧数据和向量维度。
 
 ## 检索关键词
-knowledge-engine, knowledge-repository.ts, database:knowledge_documents, database:knowledge_chunks, database:knowledge_chunks_fts, database:knowledge_index_runs, database:knowledge_chunk_vectors, database:idx_knowledge_documents_workspace, database:idx_knowledge_documents_source, database:idx_knowledge_chunks_document, knowledge-ui-store.ts, database:knowledge_ui_workspaces, database:knowledge_ui_generation, database:knowledge_ui_documents, database:idx_knowledge_ui_workspaces_hidden, database:idx_knowledge_ui_documents_workspace, engine.ts, knowledge-indexer.ts, knowledge-overview.ts, types.ts, knowledge-utils.ts, scanner.ts, store:scanner, intelligence.ts
+knowledge-engine, knowledge-repository.ts, database:knowledge_documents, database:knowledge_chunks, database:knowledge_chunks_fts, database:knowledge_index_runs, database:knowledge_chunk_vectors, database:idx_knowledge_documents_workspace, database:idx_knowledge_documents_source, database:idx_knowledge_chunks_document, knowledge-ui-store.ts, database:knowledge_ui_workspaces, database:knowledge_ui_generation, database:knowledge_ui_documents, database:knowledge_ui_workspace_links, database:idx_knowledge_ui_workspaces_hidden, database:idx_knowledge_ui_documents_workspace, database:idx_knowledge_ui_workspace_links_target, engine.ts, knowledge-indexer.ts, knowledge-overview.ts, types.ts, knowledge-utils.ts, scanner.ts
 
 ## 代码信号
 - database:knowledge_documents
@@ -57,8 +58,10 @@ knowledge-engine, knowledge-repository.ts, database:knowledge_documents, databas
 - database:knowledge_ui_workspaces
 - database:knowledge_ui_generation
 - database:knowledge_ui_documents
+- database:knowledge_ui_workspace_links
 - database:idx_knowledge_ui_workspaces_hidden
 - database:idx_knowledge_ui_documents_workspace
+- database:idx_knowledge_ui_workspace_links_target
 - store:scanner
 - store:intelligence
 

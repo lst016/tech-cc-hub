@@ -8,18 +8,8 @@ import { MemoryRepository } from "../memory/memory-repository.js";
 import type { KnowledgeOverviewEntry } from "./knowledge-types.js";
 import type { MemoryOverviewEntry, MemoryScope } from "../memory/memory-types.js";
 
-function groupKnowledge(entries: KnowledgeOverviewEntry[]): Map<string, KnowledgeOverviewEntry[]> {
-  const grouped = new Map<string, KnowledgeOverviewEntry[]>();
-  for (const entry of entries) {
-    const list = grouped.get(entry.category) ?? [];
-    list.push(entry);
-    grouped.set(entry.category, list);
-  }
-  return grouped;
-}
-
-function groupMemory(entries: MemoryOverviewEntry[]): Map<string, MemoryOverviewEntry[]> {
-  const grouped = new Map<string, MemoryOverviewEntry[]>();
+function groupByCategory<T extends { category: string }>(entries: T[]): Map<string, T[]> {
+  const grouped = new Map<string, T[]>();
   for (const entry of entries) {
     const list = grouped.get(entry.category) ?? [];
     list.push(entry);
@@ -61,29 +51,33 @@ export function buildKnowledgeOverviewPromptAppend(projectCwd?: string): string 
     }
   }
   for (const linkedWorkspace of linkedWorkspaces) {
-    const linkedPaths = resolveKnowledgeWorkspacePaths(linkedWorkspace.cwd, appDataPath);
-    linkedWorkspaceEntries.push({
-      name: linkedWorkspace.name,
-      cwd: linkedWorkspace.cwd,
-      scope: linkedPaths.workspaceScope,
-    });
-    if (existsSync(linkedPaths.knowledgeDbPath)) {
-      const repo = new KnowledgeRepository(linkedPaths.knowledgeDbPath, {
-        embeddingDimension: settings.embedding.dimension,
+    try {
+      const linkedPaths = resolveKnowledgeWorkspacePaths(linkedWorkspace.cwd, appDataPath);
+      linkedWorkspaceEntries.push({
+        name: linkedWorkspace.name,
+        cwd: linkedWorkspace.cwd,
+        scope: linkedPaths.workspaceScope,
       });
-      try {
-        knowledgeEntries.push(...repo.buildOverview(linkedPaths.workspaceScope, 32));
-      } finally {
-        repo.close();
+      if (existsSync(linkedPaths.knowledgeDbPath)) {
+        const repo = new KnowledgeRepository(linkedPaths.knowledgeDbPath, {
+          embeddingDimension: settings.embedding.dimension,
+        });
+        try {
+          knowledgeEntries.push(...repo.buildOverview(linkedPaths.workspaceScope, 32));
+        } finally {
+          repo.close();
+        }
       }
-    }
-    if (existsSync(linkedPaths.memoryDbPath)) {
-      const memoryRepo = new MemoryRepository(linkedPaths.memoryDbPath);
-      try {
-        memoryEntries.push(...memoryRepo.buildOverview(linkedPaths.workspaceScope as MemoryScope, 8));
-      } finally {
-        memoryRepo.close();
+      if (existsSync(linkedPaths.memoryDbPath)) {
+        const memoryRepo = new MemoryRepository(linkedPaths.memoryDbPath);
+        try {
+          memoryEntries.push(...memoryRepo.buildOverview(linkedPaths.workspaceScope as MemoryScope, 8));
+        } finally {
+          memoryRepo.close();
+        }
       }
+    } catch {
+      // Skip corrupted linked workspaces; don't lose already collected data.
     }
   }
   if (existsSync(paths.memoryDbPath)) {
@@ -119,7 +113,7 @@ export function buildKnowledgeOverviewPromptAppend(projectCwd?: string): string 
     lines.push("  </linked_workspaces>");
   }
 
-  const groupedKnowledge = groupKnowledge(knowledgeEntries);
+  const groupedKnowledge = groupByCategory(knowledgeEntries);
   const agentCardEntries = groupedKnowledge.get("agent_card") ?? [];
   if (agentCardEntries.length > 0) {
     lines.push(`  <agent_cards count="${agentCardEntries.length}">`);
@@ -142,7 +136,7 @@ export function buildKnowledgeOverviewPromptAppend(projectCwd?: string): string 
     lines.push("  </repowiki>");
   }
 
-  const groupedMemory = groupMemory(memoryEntries);
+  const groupedMemory = groupByCategory(memoryEntries);
   if (groupedMemory.size > 0) {
     lines.push("  <memory>");
     for (const [category, entries] of groupedMemory) {

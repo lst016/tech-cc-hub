@@ -9,13 +9,11 @@
 - `package/sdk.d.ts`: 被依赖较多或包含关键导出
 - `package/sdk-tools.d.ts`: 被依赖较多或包含关键导出
 - `package/package.json`: 配置文件，会影响运行、构建或模型能力
-- `package/README.md`: 配置文件，会影响运行、构建或模型能力
 
 ## 相关文件
 - `package/sdk.d.ts`
 - `package/sdk-tools.d.ts`
 - `package/package.json`
-- `package/README.md`
 
 ## 改代码指南
 - 先确认需求是否真的属于 sdk-package，再从 entryFiles 里包含入口/IPC/schema/store 的文件开始。
@@ -29,7 +27,7 @@
 - MCP 注册、工厂映射和 tool handler 任一缺失都会导致 Agent 调用失败。
 
 ## 检索关键词
-sdk-package, sdk.d.ts, event:error, event:success, event:json_schema, event:claudeai-proxy, event:http, event:sdk, event:sse, event:preset, sdk-tools.d.ts, event:text, event:image, event:notebook, event:pdf, event:parts, event:file_unchanged, event:create, event:code, package.json, config:package/package.json, README.md, config:package/README.md
+sdk-package, sdk.d.ts, event:error, event:success, event:json_schema, event:claudeai-proxy, event:http, event:sdk, event:sse, event:preset, sdk-tools.d.ts, event:text, event:image, event:notebook, event:pdf, event:parts, event:file_unchanged, event:create, event:code, package.json, config:package/package.json
 
 ## 代码信号
 - event:error
@@ -49,6 +47,5 @@ sdk-package, sdk.d.ts, event:error, event:success, event:json_schema, event:clau
 - event:create
 - event:code
 - config:package/package.json
-- config:package/README.md
 
 </agent_card>

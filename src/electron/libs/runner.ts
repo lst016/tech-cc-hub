@@ -124,8 +124,8 @@ const ALWAYS_ALLOWED_TOOLS = new Set([
 ]);
 const SKILL_ENV_HINTS: Record<string, string[]> = {
   feishu: ["FEISHU", "LARK"],
-  椋炰功: ["FEISHU", "LARK"],
-  "figma瀹樻柟": ["FIGMA"],
+  "飞书": ["FEISHU", "LARK"],
+  "figma官方": ["FIGMA"],
   lark: ["LARK", "FEISHU"],
   telegram: ["TELEGRAM"],
   figma: ["FIGMA"],
@@ -546,75 +546,47 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           hooks,
           allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
           canUseTool: async (toolName, input, { signal }) => {
-            if (isBlockedShellTool(toolName)) {
-              return {
-                behavior: "deny",
-                message: BLOCKED_SHELL_TOOL_MESSAGE,
-              };
-            }
+            const denyGuards: Array<() => { behavior: "deny"; message: string } | null> = [
+              () => isBlockedShellTool(toolName)
+                ? { behavior: "deny", message: BLOCKED_SHELL_TOOL_MESSAGE }
+                : null,
+              () => shouldDenyPowerShellCommand(toolName, input)
+                ? { behavior: "deny", message: "PowerShell is disabled by tech-cc-hub's Windows shell policy because it is unstable in this environment. Use cmd.exe instead, for example: cmd.exe /d /s /c \"<command>\"." }
+                : null,
+              () => isSdkBuiltinCronTool(toolName)
+                ? { behavior: "deny", message: "SDK CronCreate/CronDelete/CronList are disabled. Use the tech-cc-hub cron MCP tools so schedules are persisted with history and retry metadata." }
+                : null,
+              () => {
+                const message = getKnowledgeIndexDenyMessage(toolName, currentPrompt);
+                return message ? { behavior: "deny", message } : null;
+              },
+              () => {
+                const message = getFigmaImplementationAnchorDenyMessage(
+                  toolName, requiresFigmaImplementationAnchor, figmaImplementationAnchorSeen,
+                );
+                return message ? { behavior: "deny", message } : null;
+              },
+              () => {
+                const message = getFigmaOfficialRouteDenyMessage(
+                  toolName, syncedGlobalRuntimeConfig, figmaRestAuthFailureSeen,
+                );
+                return message ? { behavior: "deny", message } : null;
+              },
+              () => permissionMode === "plan"
+                ? { behavior: "deny", message: "Current run is in plan mode; tools will not be executed." }
+                : null,
+              () => toolName === "Skill" && shouldDenyExternalBrowseSkill(input, currentPrompt)
+                ? { behavior: "deny", message: "This task is testing the built-in tech-cc-hub browser workbench. Use tech-cc-hub browser MCP tools instead of the external browse skill." }
+                : null,
+            ];
 
-            if (shouldDenyPowerShellCommand(toolName, input)) {
-              return {
-                behavior: "deny",
-                message:
-                  "PowerShell is disabled by tech-cc-hub's Windows shell policy because it is unstable in this environment. Use cmd.exe instead, for example: cmd.exe /d /s /c \"<command>\".",
-              };
-            }
-
-            if (isSdkBuiltinCronTool(toolName)) {
-              return {
-                behavior: "deny",
-                message:
-                  "SDK CronCreate/CronDelete/CronList are disabled. Use the tech-cc-hub cron MCP tools so schedules are persisted with history and retry metadata.",
-              };
-            }
-
-            const knowledgeIndexDenyMessage = getKnowledgeIndexDenyMessage(toolName, currentPrompt);
-            if (knowledgeIndexDenyMessage) {
-              return {
-                behavior: "deny",
-                message: knowledgeIndexDenyMessage,
-              };
-            }
-
-            const figmaImplementationDenyMessage = getFigmaImplementationAnchorDenyMessage(
-              toolName,
-              requiresFigmaImplementationAnchor,
-              figmaImplementationAnchorSeen,
-            );
-            if (figmaImplementationDenyMessage) {
-              return {
-                behavior: "deny",
-                message: figmaImplementationDenyMessage,
-              };
-            }
-            const figmaRouteDenyMessage = getFigmaOfficialRouteDenyMessage(
-              toolName,
-              syncedGlobalRuntimeConfig,
-              figmaRestAuthFailureSeen,
-            );
-            if (figmaRouteDenyMessage) {
-              return {
-                behavior: "deny",
-                message: figmaRouteDenyMessage,
-              };
-            }
-            if (permissionMode === "plan") {
-              return {
-                behavior: "deny",
-                message: "Current run is in plan mode; tools will not be executed.",
-              };
+            for (const guard of denyGuards) {
+              const result = guard();
+              if (result) return result;
             }
 
             if (toolName === "AskUserQuestion") {
               return requestPermissionDecision(toolName, input, signal);
-            }
-
-            if (toolName === "Skill" && shouldDenyExternalBrowseSkill(input, currentPrompt)) {
-              return {
-                behavior: "deny",
-                message: "This task is testing the built-in tech-cc-hub browser workbench. Use tech-cc-hub browser MCP tools instead of the external browse skill.",
-              };
             }
 
             if (toolName === "Skill" && isRecord(input)) {

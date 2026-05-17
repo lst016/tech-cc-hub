@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": 1778936863440,
+  "generatedAt": 1778943853730,
   "workspaceScope": "workspace:tech-cc-hub",
   "count": 29,
   "cards": [
@@ -639,11 +639,11 @@
           "reason": "被依赖较多或包含关键导出"
         },
         {
-          "path": "src/ui/components/settings/ChannelsSettingsPage.tsx",
+          "path": "src/ui/components/settings/skill-utils.ts",
           "reason": "被依赖较多或包含关键导出"
         },
         {
-          "path": "src/ui/components/settings/skill-utils.ts",
+          "path": "src/ui/components/settings/ChannelsSettingsPage.tsx",
           "reason": "被依赖较多或包含关键导出"
         }
       ],
@@ -652,8 +652,8 @@
         "src/ui/components/settings/PluginsSettingsPage.tsx",
         "src/ui/components/settings/MySkillsView.tsx",
         "src/ui/components/settings/settings-utils.ts",
-        "src/ui/components/settings/ChannelsSettingsPage.tsx",
         "src/ui/components/settings/skill-utils.ts",
+        "src/ui/components/settings/ChannelsSettingsPage.tsx",
         "src/ui/components/settings/CodeEditor.tsx",
         "src/ui/components/settings/McpSettingsPage.tsx",
         "src/ui/components/settings/ApiProfilesSettingsPage.tsx",
@@ -896,7 +896,8 @@
         "src/electron/libs/knowledge/repowiki/types.ts",
         "src/electron/libs/knowledge/knowledge-utils.ts",
         "src/electron/libs/knowledge/repowiki/scanner.ts",
-        "src/electron/libs/knowledge/repowiki/intelligence.ts"
+        "src/electron/libs/knowledge/repowiki/intelligence.ts",
+        "src/electron/libs/knowledge/agent-cards.ts"
       ],
       "changeGuide": [
         "先确认需求是否真的属于 knowledge-engine，再从 entryFiles 里包含入口/IPC/schema/store 的文件开始。",
@@ -931,16 +932,16 @@
         "database:knowledge_ui_workspaces",
         "database:knowledge_ui_generation",
         "database:knowledge_ui_documents",
+        "database:knowledge_ui_workspace_links",
         "database:idx_knowledge_ui_workspaces_hidden",
         "database:idx_knowledge_ui_documents_workspace",
+        "database:idx_knowledge_ui_workspace_links_target",
         "engine.ts",
         "knowledge-indexer.ts",
         "knowledge-overview.ts",
         "types.ts",
         "knowledge-utils.ts",
-        "scanner.ts",
-        "store:scanner",
-        "intelligence.ts"
+        "scanner.ts"
       ],
       "sourceSignals": [
         "database:knowledge_documents",
@@ -954,10 +955,89 @@
         "database:knowledge_ui_workspaces",
         "database:knowledge_ui_generation",
         "database:knowledge_ui_documents",
+        "database:knowledge_ui_workspace_links",
         "database:idx_knowledge_ui_workspaces_hidden",
         "database:idx_knowledge_ui_documents_workspace",
+        "database:idx_knowledge_ui_workspace_links_target",
         "store:scanner",
         "store:intelligence"
+      ]
+    },
+    {
+      "id": "module-shared-contracts",
+      "title": "模块改造入口：shared-contracts",
+      "kind": "module",
+      "summary": "当任务落在 shared-contracts 时，优先读取这些高价值文件来确定入口、状态边界、接口契约和验证路径。",
+      "entryFiles": [
+        {
+          "path": "src/shared/slash-commands.ts",
+          "reason": "被依赖较多或包含关键导出"
+        },
+        {
+          "path": "src/shared/attachments.ts",
+          "reason": "保存 UI 或运行态状态"
+        },
+        {
+          "path": "src/shared/prompt-ledger.ts",
+          "reason": "被依赖较多或包含关键导出"
+        },
+        {
+          "path": "src/shared/activity-rail-model.ts",
+          "reason": "被依赖较多或包含关键导出"
+        },
+        {
+          "path": "src/shared/claude-agent-teams.ts",
+          "reason": "被依赖较多或包含关键导出"
+        },
+        {
+          "path": "src/shared/workflow-markdown.ts",
+          "reason": "被依赖较多或包含关键导出"
+        }
+      ],
+      "relatedFiles": [
+        "src/shared/slash-commands.ts",
+        "src/shared/attachments.ts",
+        "src/shared/prompt-ledger.ts",
+        "src/shared/activity-rail-model.ts",
+        "src/shared/claude-agent-teams.ts",
+        "src/shared/workflow-markdown.ts",
+        "src/shared/plan-progress.ts"
+      ],
+      "changeGuide": [
+        "先确认需求是否真的属于 shared-contracts，再从 entryFiles 里包含入口/IPC/schema/store 的文件开始。",
+        "修改共享契约时同步检查调用方、测试、QA smoke 和 system prompt/overview 影响。",
+        "如果文件带有 database、ipc、mcp_tool 或 store 信号，优先做真实运行验证。"
+      ],
+      "validation": [
+        "npm run build"
+      ],
+      "risks": [
+        "改动前先确认入口文件和真实运行面，避免只根据文档猜测。"
+      ],
+      "keywords": [
+        "shared-contracts",
+        "slash-commands.ts",
+        "attachments.ts",
+        "event:user_prompt",
+        "event:text",
+        "event:image",
+        "event:base64",
+        "store:attachments",
+        "prompt-ledger.ts",
+        "event:prompt_ledger",
+        "activity-rail-model.ts",
+        "claude-agent-teams.ts",
+        "workflow-markdown.ts",
+        "plan-progress.ts"
+      ],
+      "sourceSignals": [
+        "event:user_prompt",
+        "event:text",
+        "event:image",
+        "event:base64",
+        "store:attachments",
+        "event:prompt_ledger",
+        "event:user_prompt"
       ]
     },
     {
@@ -1057,81 +1137,6 @@
         "database:settings",
         "database:idx_scenario_skills_skill",
         "entrypoint:src/electron/libs/skill-manager/index.ts"
-      ]
-    },
-    {
-      "id": "module-shared-contracts",
-      "title": "模块改造入口：shared-contracts",
-      "kind": "module",
-      "summary": "当任务落在 shared-contracts 时，优先读取这些高价值文件来确定入口、状态边界、接口契约和验证路径。",
-      "entryFiles": [
-        {
-          "path": "src/shared/slash-commands.ts",
-          "reason": "被依赖较多或包含关键导出"
-        },
-        {
-          "path": "src/shared/attachments.ts",
-          "reason": "保存 UI 或运行态状态"
-        },
-        {
-          "path": "src/shared/prompt-ledger.ts",
-          "reason": "被依赖较多或包含关键导出"
-        },
-        {
-          "path": "src/shared/activity-rail-model.ts",
-          "reason": "被依赖较多或包含关键导出"
-        },
-        {
-          "path": "src/shared/workflow-markdown.ts",
-          "reason": "被依赖较多或包含关键导出"
-        },
-        {
-          "path": "src/shared/plan-progress.ts",
-          "reason": "被依赖较多或包含关键导出"
-        }
-      ],
-      "relatedFiles": [
-        "src/shared/slash-commands.ts",
-        "src/shared/attachments.ts",
-        "src/shared/prompt-ledger.ts",
-        "src/shared/activity-rail-model.ts",
-        "src/shared/workflow-markdown.ts",
-        "src/shared/plan-progress.ts"
-      ],
-      "changeGuide": [
-        "先确认需求是否真的属于 shared-contracts，再从 entryFiles 里包含入口/IPC/schema/store 的文件开始。",
-        "修改共享契约时同步检查调用方、测试、QA smoke 和 system prompt/overview 影响。",
-        "如果文件带有 database、ipc、mcp_tool 或 store 信号，优先做真实运行验证。"
-      ],
-      "validation": [
-        "npm run build"
-      ],
-      "risks": [
-        "改动前先确认入口文件和真实运行面，避免只根据文档猜测。"
-      ],
-      "keywords": [
-        "shared-contracts",
-        "slash-commands.ts",
-        "attachments.ts",
-        "event:user_prompt",
-        "event:text",
-        "event:image",
-        "event:base64",
-        "store:attachments",
-        "prompt-ledger.ts",
-        "event:prompt_ledger",
-        "activity-rail-model.ts",
-        "workflow-markdown.ts",
-        "plan-progress.ts"
-      ],
-      "sourceSignals": [
-        "event:user_prompt",
-        "event:text",
-        "event:image",
-        "event:base64",
-        "store:attachments",
-        "event:prompt_ledger",
-        "event:user_prompt"
       ]
     },
     {
@@ -1399,92 +1404,6 @@
       ]
     },
     {
-      "id": "module-sdk-package",
-      "title": "模块改造入口：sdk-package",
-      "kind": "module",
-      "summary": "当任务落在 sdk-package 时，优先读取这些高价值文件来确定入口、状态边界、接口契约和验证路径。",
-      "entryFiles": [
-        {
-          "path": "package/sdk.d.ts",
-          "reason": "被依赖较多或包含关键导出"
-        },
-        {
-          "path": "package/sdk-tools.d.ts",
-          "reason": "被依赖较多或包含关键导出"
-        },
-        {
-          "path": "package/package.json",
-          "reason": "配置文件，会影响运行、构建或模型能力"
-        },
-        {
-          "path": "package/README.md",
-          "reason": "配置文件，会影响运行、构建或模型能力"
-        }
-      ],
-      "relatedFiles": [
-        "package/sdk.d.ts",
-        "package/sdk-tools.d.ts",
-        "package/package.json",
-        "package/README.md"
-      ],
-      "changeGuide": [
-        "先确认需求是否真的属于 sdk-package，再从 entryFiles 里包含入口/IPC/schema/store 的文件开始。",
-        "修改共享契约时同步检查调用方、测试、QA smoke 和 system prompt/overview 影响。",
-        "如果文件带有 database、ipc、mcp_tool 或 store 信号，优先做真实运行验证。"
-      ],
-      "validation": [
-        "npm run build"
-      ],
-      "risks": [
-        "MCP 注册、工厂映射和 tool handler 任一缺失都会导致 Agent 调用失败。"
-      ],
-      "keywords": [
-        "sdk-package",
-        "sdk.d.ts",
-        "event:error",
-        "event:success",
-        "event:json_schema",
-        "event:claudeai-proxy",
-        "event:http",
-        "event:sdk",
-        "event:sse",
-        "event:preset",
-        "sdk-tools.d.ts",
-        "event:text",
-        "event:image",
-        "event:notebook",
-        "event:pdf",
-        "event:parts",
-        "event:file_unchanged",
-        "event:create",
-        "event:code",
-        "package.json",
-        "config:package/package.json",
-        "README.md",
-        "config:package/README.md"
-      ],
-      "sourceSignals": [
-        "event:error",
-        "event:success",
-        "event:json_schema",
-        "event:claudeai-proxy",
-        "event:http",
-        "event:sdk",
-        "event:sse",
-        "event:preset",
-        "event:text",
-        "event:image",
-        "event:notebook",
-        "event:pdf",
-        "event:parts",
-        "event:file_unchanged",
-        "event:create",
-        "event:code",
-        "config:package/package.json",
-        "config:package/README.md"
-      ]
-    },
-    {
       "id": "module-root",
       "title": "模块改造入口：root",
       "kind": "module",
@@ -1546,6 +1465,84 @@
         "event:browser.annotation",
         "event:directory",
         "event:file"
+      ]
+    },
+    {
+      "id": "module-sdk-package",
+      "title": "模块改造入口：sdk-package",
+      "kind": "module",
+      "summary": "当任务落在 sdk-package 时，优先读取这些高价值文件来确定入口、状态边界、接口契约和验证路径。",
+      "entryFiles": [
+        {
+          "path": "package/sdk.d.ts",
+          "reason": "被依赖较多或包含关键导出"
+        },
+        {
+          "path": "package/sdk-tools.d.ts",
+          "reason": "被依赖较多或包含关键导出"
+        },
+        {
+          "path": "package/package.json",
+          "reason": "配置文件，会影响运行、构建或模型能力"
+        }
+      ],
+      "relatedFiles": [
+        "package/sdk.d.ts",
+        "package/sdk-tools.d.ts",
+        "package/package.json"
+      ],
+      "changeGuide": [
+        "先确认需求是否真的属于 sdk-package，再从 entryFiles 里包含入口/IPC/schema/store 的文件开始。",
+        "修改共享契约时同步检查调用方、测试、QA smoke 和 system prompt/overview 影响。",
+        "如果文件带有 database、ipc、mcp_tool 或 store 信号，优先做真实运行验证。"
+      ],
+      "validation": [
+        "npm run build"
+      ],
+      "risks": [
+        "MCP 注册、工厂映射和 tool handler 任一缺失都会导致 Agent 调用失败。"
+      ],
+      "keywords": [
+        "sdk-package",
+        "sdk.d.ts",
+        "event:error",
+        "event:success",
+        "event:json_schema",
+        "event:claudeai-proxy",
+        "event:http",
+        "event:sdk",
+        "event:sse",
+        "event:preset",
+        "sdk-tools.d.ts",
+        "event:text",
+        "event:image",
+        "event:notebook",
+        "event:pdf",
+        "event:parts",
+        "event:file_unchanged",
+        "event:create",
+        "event:code",
+        "package.json",
+        "config:package/package.json"
+      ],
+      "sourceSignals": [
+        "event:error",
+        "event:success",
+        "event:json_schema",
+        "event:claudeai-proxy",
+        "event:http",
+        "event:sdk",
+        "event:sse",
+        "event:preset",
+        "event:text",
+        "event:image",
+        "event:notebook",
+        "event:pdf",
+        "event:parts",
+        "event:file_unchanged",
+        "event:create",
+        "event:code",
+        "config:package/package.json"
       ]
     },
     {
@@ -2031,11 +2028,11 @@
         "mcp_tool:idea_open @ src/electron/libs/mcp-tools/idea.ts:84 - built-in MCP tool",
         "mcp_tool:idea_focus @ src/electron/libs/mcp-tools/idea.ts:125 - built-in MCP tool",
         "mcp_tool:idea_wait_ready @ src/electron/libs/mcp-tools/idea.ts:143 - built-in MCP tool",
-        "mcp_tool:knowledge_search @ src/electron/libs/mcp-tools/knowledge.ts:135 - built-in MCP tool",
-        "mcp_tool:knowledge_read @ src/electron/libs/mcp-tools/knowledge.ts:211 - built-in MCP tool",
-        "mcp_tool:knowledge_explore @ src/electron/libs/mcp-tools/knowledge.ts:285 - built-in MCP tool",
-        "mcp_tool:knowledge_index @ src/electron/libs/mcp-tools/knowledge.ts:334 - built-in MCP tool",
-        "mcp_tool:memory_update @ src/electron/libs/mcp-tools/knowledge.ts:353 - built-in MCP tool",
+        "mcp_tool:knowledge_search @ src/electron/libs/mcp-tools/knowledge.ts:149 - built-in MCP tool",
+        "mcp_tool:knowledge_read @ src/electron/libs/mcp-tools/knowledge.ts:241 - built-in MCP tool",
+        "mcp_tool:knowledge_explore @ src/electron/libs/mcp-tools/knowledge.ts:326 - built-in MCP tool",
+        "mcp_tool:knowledge_index @ src/electron/libs/mcp-tools/knowledge.ts:395 - built-in MCP tool",
+        "mcp_tool:memory_update @ src/electron/libs/mcp-tools/knowledge.ts:414 - built-in MCP tool",
         "mcp_tool:update_plan @ src/electron/libs/mcp-tools/plan.ts:37 - built-in MCP tool"
       ]
     },
@@ -2148,11 +2145,13 @@
         "database:idx_knowledge_documents_source @ src/electron/libs/knowledge/knowledge-repository.ts:134 - SQLite index",
         "database:idx_knowledge_chunks_document @ src/electron/libs/knowledge/knowledge-repository.ts:135 - SQLite index",
         "database:idx_knowledge_chunks_workspace @ src/electron/libs/knowledge/knowledge-repository.ts:136 - SQLite index",
-        "database:knowledge_ui_workspaces @ src/electron/libs/knowledge/knowledge-ui-store.ts:101 - SQLite table",
-        "database:knowledge_ui_generation @ src/electron/libs/knowledge/knowledge-ui-store.ts:111 - SQLite table",
-        "database:knowledge_ui_documents @ src/electron/libs/knowledge/knowledge-ui-store.ts:125 - SQLite table",
-        "database:idx_knowledge_ui_workspaces_hidden @ src/electron/libs/knowledge/knowledge-ui-store.ts:137 - SQLite index",
-        "database:idx_knowledge_ui_documents_workspace @ src/electron/libs/knowledge/knowledge-ui-store.ts:138 - SQLite index",
+        "database:knowledge_ui_workspaces @ src/electron/libs/knowledge/knowledge-ui-store.ts:103 - SQLite table",
+        "database:knowledge_ui_generation @ src/electron/libs/knowledge/knowledge-ui-store.ts:113 - SQLite table",
+        "database:knowledge_ui_documents @ src/electron/libs/knowledge/knowledge-ui-store.ts:127 - SQLite table",
+        "database:knowledge_ui_workspace_links @ src/electron/libs/knowledge/knowledge-ui-store.ts:139 - SQLite table",
+        "database:idx_knowledge_ui_workspaces_hidden @ src/electron/libs/knowledge/knowledge-ui-store.ts:147 - SQLite index",
+        "database:idx_knowledge_ui_documents_workspace @ src/electron/libs/knowledge/knowledge-ui-store.ts:148 - SQLite index",
+        "database:idx_knowledge_ui_workspace_links_target @ src/electron/libs/knowledge/knowledge-ui-store.ts:149 - SQLite index",
         "database:learnings @ src/electron/libs/learning-store.ts:31 - SQLite table",
         "database:learnings_fts @ src/electron/libs/learning-store.ts:44 - SQLite table",
         "database:learnings_sessions @ src/electron/libs/learning-store.ts:84 - SQLite table",
@@ -2191,9 +2190,7 @@
         "database:idx_tasks_provider @ src/electron/libs/task/repository.ts:127 - SQLite index",
         "database:idx_tasks_local_status @ src/electron/libs/task/repository.ts:128 - SQLite index",
         "database:idx_tasks_external_id @ src/electron/libs/task/repository.ts:129 - SQLite index",
-        "database:idx_tasks_retry_due @ src/electron/libs/task/repository.ts:130 - SQLite index",
-        "database:idx_task_executions_task @ src/electron/libs/task/repository.ts:131 - SQLite index",
-        "database:idx_task_execution_logs_exec @ src/electron/libs/task/repository.ts:132 - SQLite index"
+        "database:idx_tasks_retry_due @ src/electron/libs/task/repository.ts:130 - SQLite index"
       ]
     },
     {

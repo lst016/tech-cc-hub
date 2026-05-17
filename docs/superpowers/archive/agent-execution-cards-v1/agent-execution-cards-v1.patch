@@ -1,0 +1,2338 @@
+diff --git a/docs/superpowers/plans/2026-05-16-agent-execution-cards.md b/docs/superpowers/plans/2026-05-16-agent-execution-cards.md
+new file mode 100644
+index 0000000..898f78c
+--- /dev/null
++++ b/docs/superpowers/plans/2026-05-16-agent-execution-cards.md
+@@ -0,0 +1,79 @@
++# Agent 执行卡片页开发计划
++
++日期：2026-05-16
++状态：已完成
++对应 spec：`docs/superpowers/specs/2026-05-16-agent-execution-cards.md`
++
++## 目标
++
++按 spec 完成 Agent 执行页签，并通过模型测试、transcript 测试、构建和真实 UI smoke 验证。
++
++## 实施步骤
++
++### 1. 模型层
++
++- [x] 在 `ActivityRailModel` 中新增 `agentRuns`
++- [x] 定义 `ActivityAgentRun` 类型
++- [x] 识别 `Task`、`Agent`、Agent Team 工具为 Agent run seed
++- [x] 处理 `task_started` / `task_progress` / `task_notification`
++- [x] 聚合同一 task/tool 下的输出、指标和详情区
++
++### 2. 聊天流入口
++
++- [x] Agent 工具调用不再被折叠为普通“过程”
++- [x] Agent 工具卡片显示“打开 Agent 卡片”
++- [x] 点击后发出 `OPEN_AGENT_RUN_EVENT`
++
++### 3. 右侧工作区
++
++- [x] 支持 `agent:<id>` 动态页签
++- [x] 新增单 Agent 原始 transcript 页
++- [x] 支持多个 Agent 页签并存
++- [x] 支持选中页签内展示和聊天记录一致的原始执行流
++- [x] 支持外部事件创建并定位对应 Agent 页签
++- [x] 低信息工具调用不创建 Agent 页签
++
++### 4. 测试
++
++- [x] 补充 `buildActivityRailModel groups subagent execution into agent cards`
++- [x] 补充 `buildActivityRailModel does not create agent runs for low-detail team task tools`
++- [x] 补充 `buildAgentTranscriptMessages keeps the raw subagent execution stream`
++- [x] 补充 `buildAgentTranscriptMessages keeps Agent Team tool calls and raw task results`
++- [x] 补充 `hasDetailedAgentTranscript rejects low-information team status checks`
++- [x] 更新工作区页签顺序测试
++- [x] 执行 `npm run test:activity-rail-model`
++- [x] 执行 `node --test dist-test/test/electron/agent-transcript.test.js`
++- [x] 执行 `node --test dist-test/test/electron/activity-workspace-tabs.test.js`
++- [x] 执行 `npm run build`
++- [x] 执行 `npm run qa:agent-cards`
++
++## UI 测试计划
++
++浏览器 smoke 以现有本地 dev server 为目标，命令为 `npm run qa:agent-cards`：
++
++1. 打开 `http://localhost:4173`
++2. 等待页面渲染完成
++3. 通过 `OPEN_AGENT_RUN_EVENT` 发送一个没有真实 run / 详细 transcript 的 fake agent 事件
++4. 断言右侧工作区不会创建 fake Agent 页签
++5. 检查浏览器日志没有 fatal error
++
++## 交付清单
++
++- `docs/superpowers/specs/2026-05-16-agent-execution-cards.md`
++- `docs/superpowers/plans/2026-05-16-agent-execution-cards.md`
++- `src/shared/activity-rail-model.ts`
++- `src/ui/components/ActivityRail.tsx`
++- `src/ui/components/EventCard.tsx`
++- `src/ui/App.tsx`
++- `src/ui/events.ts`
++- `src/ui/utils/agent-transcript.ts`
++- `src/ui/utils/activity-workspace-tabs.ts`
++- `src/ui/components/ActivityWorkspaceTabs.tsx`
++- `test/electron/activity-rail-model.test.ts`
++- `test/electron/agent-transcript.test.ts`
++- `test/electron/activity-workspace-tabs.test.ts`
++- `scripts/qa/agent-execution-cards-smoke.cjs`
++
++## 完成定义
++
++所有测试通过；真实 Agent run 到达且有详细 transcript 时才创建 Agent 动态页签，页签只展示该 Agent 的原始消息 transcript，不展示二次汇总；没有详细内容时不显示假页签。
+diff --git a/docs/superpowers/specs/2026-05-16-agent-execution-cards.md b/docs/superpowers/specs/2026-05-16-agent-execution-cards.md
+new file mode 100644
+index 0000000..156e404
+--- /dev/null
++++ b/docs/superpowers/specs/2026-05-16-agent-execution-cards.md
+@@ -0,0 +1,197 @@
++# Agent 执行卡片页开发 Spec
++
++日期：2026-05-16
++状态：已实现
++范围：在右侧 Activity Rail 工作区中提供可独立查看多个 Agent 原始执行流的页签
++
++## 目标
++
++让用户在聊天流中看到 Agent 工具卡片后，可以点击并在右侧创建一个以该 Agent 任务名命名的独立执行页签；当存在多个子 Agent、Agent Team 成员或后台 agent 任务时，每个执行单元都可以创建自己的 tab，并在 tab 内查看和聊天记录一致的原始执行流。
++
++## 背景
++
++当前聊天流已经能显示普通 assistant 内容、工具调用、执行轨迹和 Usage 信息。用户希望沿用“聊天中有一个可点击 Agent 记录，右侧显示该 Agent 执行详情”的交互形态，并把它推广到：
++
++- Claude `Task` 子 Agent
++- Claude Agent Team 工具
++- Agent Team 成员间消息与任务
++- 未来本地 workflow / background agent
++
++这个能力属于 Activity Rail 的工作区扩展，不应做成新的顶级页面，也不应把 Agent Team 包装成自定义 MCP。
++
++## 范围
++
++第一版包含：
++
++- 支持右侧工作区动态 Agent 执行页签，例如 `RepoWiki 对比分析`
++- 在 `activity-rail-model` 中生成 `agentRuns`
++- 将同一个 Agent 的 source tool、SDK task event、进度、输出、完成通知聚合为可定位的 run
++- 聊天流中的 Agent 工具卡片支持点击打开对应右侧卡片
++- 支持多个 Agent 执行页签并存，不互相覆盖
++- 右侧页签展示该 Agent 的原始消息 transcript：assistant 文本、工具调用、工具返回、子 Agent 内部工具流都复用聊天记录渲染组件
++- 补充模型层测试、工作区页签测试和浏览器 UI smoke
++
++第一版不包含：
++
++- 新增 Agent Team 运行时能力
++- 改写 Claude CLI / SDK tool 协议
++- 新增持久化数据库表
++- 做复杂的拖拽、置顶、筛选和跨会话搜索
++- 处理已有 `.tech/repowiki` 生成态文件变更
++
++## 用户体验
++
++### 聊天流
++
++当 assistant 消息中出现 `Task`、`Agent` 或 Agent Team 工具调用时：
++
++- 不再把该消息折叠成普通“过程”块
++- 直接显示 Agent 工具卡片
++- 卡片说明执行内容会沉淀到右侧独立 Agent 执行页
++- 提供“打开 Agent 卡片”入口
++
++### 右侧工作区
++
++右侧工作区页签顺序：
++
++```text
++预览 → 执行轨迹 → Agent 动态页签... → Usage → Git → Browser
++```
++
++动态 Agent 页签的规则：
++
++- 点击聊天中的某个 Agent 工具卡片后，创建一个以该任务名命名的 tab
++- 多个 Agent 可以创建多个 tab，并支持关闭
++- tab 内容只展示该 Agent 的原始聊天执行流，不做全局 Agent 总览，也不做二次摘要
++- 如果没有真实 Agent run 或 transcript 只有列表/状态/创建回执这类低信息内容，不创建 Agent tab
++- Agent 输出到达后，页内按聊天记录的 `MessageCard` 样式展示同一批原始消息片段
++
++## 数据模型
++
++新增 `ActivityAgentRun`：
++
++```ts
++type ActivityAgentRunKind =
++  | "sub_agent"
++  | "agent_team"
++  | "team_member"
++  | "local_workflow"
++  | "background";
++
++type ActivityAgentRunStatus =
++  | "pending"
++  | "running"
++  | "completed"
++  | "failed"
++  | "stopped";
++
++interface ActivityAgentRun {
++  id: string;
++  taskId?: string;
++  toolUseId?: string;
++  title: string;
++  description: string;
++  kind: ActivityAgentRunKind;
++  status: ActivityAgentRunStatus;
++  statusLabel: string;
++  tone: ActivityRailTone;
++  round?: number;
++  sequence?: number;
++  chips: string[];
++  timelineIds: string[];
++  latestSummary?: string;
++  outputText?: string;
++  sourceToolName?: string;
++  metrics: ActivityExecutionMetrics;
++  detailSections: ActivityDetailSection[];
++}
++```
++
++`ActivityRailModel` 新增：
++
++```ts
++agentRuns: ActivityAgentRun[];
++```
++
++聚合规则：
++
++- 优先用 `taskId` 作为 run id
++- 没有 `taskId` 时使用 `toolUseId`
++- 同一 `parentTaskId` / `parentToolUseId` 下的时间线节点归到同一 run
++- `task_notification` 负责更新完成、失败、停止状态
++- 完成态优先级高于运行态，避免已完成 Agent 因早期 source tool 仍显示 running
++
++## 接口与事件
++
++新增前端窗口事件：
++
++```ts
++const OPEN_AGENT_RUN_EVENT = "techcc:open-agent-run";
++
++type OpenAgentRunDetail = {
++  toolUseId?: string;
++  taskId?: string;
++  toolName?: string;
++  agentName?: string;
++};
++```
++
++触发位置：
++
++- 聊天流中可产生详细 transcript 的 Agent 工具卡片，例如 `Task`、`Agent`、带结果的 `TaskGet`
++- `TaskList`、`TaskUpdate`、`TeamCreate`、`TeamDelete` 这类列表/管理工具不触发 Agent tab
++
++响应位置：
++
++- `App.tsx` 打开右侧栏
++- 以 `taskId` / `toolUseId` / `agentName` 生成 `agent:<id>` 动态页签
++- `ActivityRail` 根据 `taskId` / `toolUseId` / `agentName` 解析对应 `agentRun`，并在该 tab 中渲染执行详情
++
++## 关键文件
++
++| 文件 | 责任 |
++| --- | --- |
++| `src/shared/activity-rail-model.ts` | 解析消息并生成 `agentRuns` |
++| `src/ui/components/ActivityRail.tsx` | 渲染动态 Agent 原始 transcript 页 |
++| `src/ui/components/EventCard.tsx` | 聊天流 Agent 工具卡片和跳转入口 |
++| `src/ui/App.tsx` | 右侧栏事件响应和页签切换 |
++| `src/ui/events.ts` | `OPEN_AGENT_RUN_EVENT` 合约 |
++| `src/ui/utils/activity-workspace-tabs.ts` | 支持 `agent:<id>` 动态页签 |
++| `src/ui/utils/agent-transcript.ts` | 从 session messages 中提取某个 Agent 的原始消息序列 |
++| `test/electron/activity-rail-model.test.ts` | agent run 聚合测试 |
++| `test/electron/activity-workspace-tabs.test.ts` | 页签顺序测试 |
++| `test/electron/agent-transcript.test.ts` | 原始 transcript 提取测试 |
++| `scripts/qa/agent-execution-cards-smoke.cjs` | 浏览器 UI smoke |
++
++## 验收标准
++
++- `Task` 子 Agent 执行流能生成 `agentRuns[0]`
++- source tool、task started、task progress、assistant 输出、task notification 能归入同一 Agent 卡
++- 完成通知后卡片状态显示已完成
++- 聊天里的 Agent 工具卡不被折叠进普通过程块
++- 点击“打开 Agent 卡片”能在右侧创建并切到该 Agent 的独立页签
++- 多个 Agent run 能在右侧以多个动态页签保留
++- 右侧 Agent 页签显示的是 session 原始消息序列，和聊天记录同源渲染，不显示二次汇总
++- Agent Team 的 `TaskCreate`、`TaskGet` 调用和原始工具返回都能出现在 transcript 中
++- 无真实 Agent run 或无详细 transcript 时，不创建动态页签
++- `TaskList` 这类低信息团队状态查询不会生成 Agent run
++- `npm run test:activity-rail-model` 通过
++- `node --test dist-test/test/electron/agent-transcript.test.js` 通过
++- `node --test dist-test/test/electron/activity-workspace-tabs.test.js` 通过
++- `npm run build` 通过
++- `npm run qa:agent-cards` 能验证低信息 fake agent 事件不会创建假 Agent 页签
++
++## 风险与降级
++
++- SDK 事件字段可能不稳定：第一版同时兼容 `task_id`、`tool_use_id`、`parentTaskId`、`parentToolUseId`。
++- Agent Team 工具名可能扩展：使用共享 `CLAUDE_AGENT_TEAM_TOOL_NAMES`，减少硬编码分叉。
++- 当前工作树已有 `.tech/repowiki` 生成态改动：本功能不触碰这些文件。
++- 真实 Agent Team session 难以稳定复现：第一版用模型层事件 fixture 验证聚合，用浏览器 smoke 验证 UI 入口。
++
++## 后续扩展
++
++- Agent 卡片筛选：运行中 / 已完成 / 失败
++- 支持把 Agent 卡片固定到会话复盘
++- Agent Team 成员关系图
++- 跨会话搜索某个 agent 的历史执行记录
++- 把 Agent 卡片数据暴露给 Usage / 复盘报告
+diff --git a/package.json b/package.json
+index 55c67c2..13e1efe 100644
+--- a/package.json
++++ b/package.json
+@@ -18,6 +18,7 @@
+ 		"qa:knowledge-chat": "node scripts/qa/knowledge-chat-injection-smoke.mjs",
+ 		"qa:knowledge-links": "node scripts/qa/knowledge-links-smoke.mjs",
+ 		"qa:knowledge-ui": "node scripts/qa/knowledge-ui-smoke.cjs",
++		"qa:agent-cards": "node scripts/qa/agent-execution-cards-smoke.cjs",
+ 		"qa:preview": "node scripts/qa/preview-workbench-smoke.cjs",
+ 		"qa:window:list": "bash scripts/qa/window-id-tools.sh list",
+ 		"qa:window:capture": "bash scripts/qa/window-id-tools.sh capture",
+diff --git a/scripts/qa/agent-execution-cards-smoke.cjs b/scripts/qa/agent-execution-cards-smoke.cjs
+new file mode 100644
+index 0000000..6325b8b
+--- /dev/null
++++ b/scripts/qa/agent-execution-cards-smoke.cjs
+@@ -0,0 +1,57 @@
++const fs = require('fs');
++const { chromium } = require('@playwright/test');
++
++const DEFAULT_URL = process.env.AGENT_CARDS_QA_URL || 'http://localhost:4173/';
++const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
++
++function isKnownDevConsoleNoise(line) {
++  return (
++    line.includes('violates the following Content Security Policy directive')
++    || line.includes('Refused to connect because it violates the document')
++    || line.includes('Download the React DevTools')
++    || line.includes('浏览器预览态不支持 IPC invoke')
++    || line.includes('Failed to invoke session list')
++  );
++}
++
++async function main() {
++  const browser = await chromium.launch({
++    headless: true,
++    executablePath: fs.existsSync(CHROME_PATH) ? CHROME_PATH : undefined,
++  });
++  const page = await browser.newPage({ viewport: { width: 1500, height: 950 } });
++  const logs = [];
++  page.on('console', (message) => logs.push(`[console:${message.type()}] ${message.text()}`));
++  page.on('pageerror', (error) => logs.push(`[pageerror] ${error.stack || error.message}`));
++
++  await page.goto(DEFAULT_URL, { waitUntil: 'domcontentloaded', timeout: 20000 });
++  await page.waitForTimeout(1500);
++
++  await page.evaluate(() => {
++    window.dispatchEvent(new CustomEvent('techcc:open-agent-run', {
++      detail: { toolUseId: 'qa-low-detail-agent', agentName: 'QA Low Detail Agent' },
++    }));
++  });
++  await page.waitForTimeout(700);
++
++  const visibleTabText = await page.locator('body').innerText({ timeout: 8000 });
++  if (visibleTabText.includes('QA Low Detail Agent')) {
++    throw new Error('Low-detail agent event created a fake agent transcript tab');
++  }
++
++  const fatalLogs = logs.filter((line) => (
++    (line.includes('[pageerror]') || line.includes('[console:error]'))
++    && !isKnownDevConsoleNoise(line)
++  ));
++  if (fatalLogs.length > 0) {
++    throw new Error(`Agent cards QA saw fatal browser logs:\n${fatalLogs.join('\n')}`);
++  }
++
++  await browser.close();
++  console.log('AGENT_EXECUTION_CARDS_QA_OK');
++}
++
++main().catch(async (error) => {
++  console.error(error);
++  process.exit(1);
++});
+diff --git a/src/shared/activity-rail-model.ts b/src/shared/activity-rail-model.ts
+index e732f84..e3ae0c5 100644
+--- a/src/shared/activity-rail-model.ts
++++ b/src/shared/activity-rail-model.ts
+@@ -13,6 +13,8 @@ export type ActivityStageKind = "inspect" | "implement" | "verify" | "deliver" |
+ export type ActivityTaskStepStatus = "pending" | "running" | "completed";
+ export type ActivityPlanStepStatus = "pending" | "running" | "completed" | "drifted";
+ export type ActivityMetricStatus = "neutral" | "running" | "success" | "failure";
++export type ActivityAgentRunKind = "sub_agent" | "agent_team" | "team_member" | "local_workflow" | "background";
++export type ActivityAgentRunStatus = "pending" | "running" | "completed" | "failed" | "stopped";
+ export type ActivityNodeKind =
+   | "context"
+   | "plan"
+@@ -176,6 +178,27 @@ export type ActivityAnalysisCard = {
+   supportingTimelineId?: string;
+ };
+ 
++export type ActivityAgentRun = {
++  id: string;
++  taskId?: string;
++  toolUseId?: string;
++  title: string;
++  description: string;
++  kind: ActivityAgentRunKind;
++  status: ActivityAgentRunStatus;
++  statusLabel: string;
++  tone: ActivityRailTone;
++  round: number;
++  sequence: number;
++  chips: string[];
++  timelineIds: string[];
++  latestSummary: string;
++  outputText: string;
++  sourceToolName?: string;
++  metrics: ActivityExecutionMetrics;
++  detailSections: ActivityDetailSection[];
++};
++
+ export type ContextDistributionBucket = {
+   id: string;
+   label: string;
+@@ -236,6 +259,7 @@ export type ActivityRailModel = {
+   planSteps: ActivityPlanStep[];
+   executionSteps: ActivityExecutionStep[];
+   taskSteps: ActivityTaskStep[];
++  agentRuns: ActivityAgentRun[];
+   analysisCards: ActivityAnalysisCard[];
+   contextSnapshot: {
+     latestPrompt: string | null;
+@@ -310,6 +334,18 @@ const DISTRIBUTION_ORDER = [
+   "permission",
+ ] as const;
+ 
++const AGENT_RUN_TOOL_NAMES = new Set([
++  "Task",
++  "Agent",
++  "TaskCreate",
++  "TaskGet",
++]);
++
++const AGENT_TEAM_TOOL_NAMES = new Set([
++  "TaskCreate",
++  "TaskGet",
++]);
++
+ function getResultText(result: SDKResultMessage): string {
+   return result.subtype === "success" ? result.result : result.errors.join("\n");
+ }
+@@ -365,6 +401,10 @@ function tryParseJson(text: string): unknown | null {
+   }
+ }
+ 
++function asRecord(value: unknown): Record<string, unknown> | null {
++  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
++}
++
+ function formatRawDetail(value: unknown): string {
+   if (typeof value === "string") {
+     const parsed = tryParseJson(value);
+@@ -468,6 +508,292 @@ function buildToolOutputSection(name: string, rawDetail: string, isError: boolea
+   };
+ }
+ 
++function getToolInputRecord(item: ActivityTimelineItem): Record<string, unknown> {
++  const section = item.detailSections.find((detailSection) => detailSection.id === "tool-input");
++  if (!section?.raw) return {};
++  return asRecord(tryParseJson(section.raw)) ?? {};
++}
++
++function getToolInputText(item: ActivityTimelineItem, ...keys: string[]): string {
++  const input = getToolInputRecord(item);
++  for (const key of keys) {
++    const value = input[key];
++    if (typeof value === "string" && value.trim()) return value.trim();
++    if (typeof value === "number" && Number.isFinite(value)) return String(value);
++  }
++  return "";
++}
++
++function getToolOutputRaw(item: ActivityTimelineItem): string {
++  return item.detailSections.find((detailSection) => detailSection.id === "tool-output")?.raw?.trim() ?? "";
++}
++
++function collectReadableText(value: unknown, depth = 0): string[] {
++  if (depth > 4 || value === null || value === undefined) return [];
++  if (typeof value === "string") return value.trim() ? [value.trim()] : [];
++  if (typeof value === "number" || typeof value === "boolean") return [String(value)];
++  if (Array.isArray(value)) return value.flatMap((item) => collectReadableText(item, depth + 1));
++  if (!isRecord(value)) return [];
++
++  const preferredKeys = [
++    "result",
++    "content",
++    "output",
++    "text",
++    "message",
++    "summary",
++    "report",
++    "response",
++    "final",
++    "description",
++    "body",
++    "markdown",
++  ];
++  const preferred = preferredKeys.flatMap((key) => collectReadableText(value[key], depth + 1));
++  if (preferred.length > 0) return preferred;
++
++  return Object.values(value).flatMap((item) => collectReadableText(item, depth + 1));
++}
++
++function extractReadableToolOutput(raw: string): string {
++  const trimmed = raw.trim();
++  if (!trimmed) return "";
++  const parsed = tryParseJson(trimmed);
++  if (parsed === null) return trimmed;
++  const texts = collectReadableText(parsed)
++    .map((text) => text.trim())
++    .filter(Boolean);
++  return texts.length > 0 ? Array.from(new Set(texts)).join("\n\n") : trimmed;
++}
++
++function extractTeamTaskIdFromText(text: string): string {
++  const match =
++    text.match(/\bTask\s*#\s*([A-Za-z0-9_-]+)/i) ||
++    text.match(/\btask[_\s-]?id["'\s:=#]+([A-Za-z0-9_-]+)/i) ||
++    text.match(/\bid["'\s:=#]+([A-Za-z0-9_-]+)/i);
++  return match?.[1]?.trim() ?? "";
++}
++
++function getAgentTeamTaskGroupKey(item: ActivityTimelineItem): string | null {
++  if (item.toolName !== "TaskCreate" && item.toolName !== "TaskGet" && item.toolName !== "TaskUpdate") {
++    return null;
++  }
++
++  const taskId =
++    getToolInputText(item, "taskId", "task_id", "id") ||
++    extractTeamTaskIdFromText(getToolOutputRaw(item)) ||
++    extractTeamTaskIdFromText(item.detail);
++  if (taskId) return `team-task:${taskId}`;
++
++  const subject = getToolInputText(item, "subject", "description", "title");
++  return subject ? `team-task-subject:${subject}` : null;
++}
++
++function isAgentRunToolName(toolName?: string): boolean {
++  return Boolean(toolName && AGENT_RUN_TOOL_NAMES.has(toolName));
++}
++
++function inferAgentRunKind(item: ActivityTimelineItem): ActivityAgentRunKind {
++  if (item.toolName && AGENT_TEAM_TOOL_NAMES.has(item.toolName)) return "agent_team";
++  if (item.toolName === "Agent") return getToolInputText(item, "team_name") ? "team_member" : "sub_agent";
++  if (item.nodeSubtype === "local_workflow" || item.chips.includes("本地工作流")) return "local_workflow";
++  if (item.nodeKind === "agent_progress" || item.nodeKind === "handoff" || item.provenance === "sub_agent") return "sub_agent";
++  return "background";
++}
++
++function titleFromAgentTool(item: ActivityTimelineItem): string {
++  const toolName = item.toolName ?? "";
++  const input = getToolInputRecord(item);
++  const name = typeof input.name === "string" ? input.name.trim() : "";
++  const teamName = typeof input.team_name === "string" ? input.team_name.trim() : "";
++  const subject = typeof input.subject === "string" ? input.subject.trim() : "";
++  const to = typeof input.to === "string" ? input.to.trim() : "";
++  const description = getToolInputText(item, "description", "prompt");
++
++  if (toolName === "Task") return `子 Agent：${description || item.title}`;
++  if (toolName === "Agent") return `${teamName ? `${teamName} · ` : ""}${name || "Agent"}：${description || item.title}`;
++  if (toolName === "TeamCreate") return `Agent Team：${teamName || name || description || "新团队"}`;
++  if (toolName === "SendMessage") return `发送给 ${to || name || teamName || "Agent"}`;
++  if (toolName === "TaskCreate") return `团队任务：${subject || description || item.title}`;
++  if (toolName === "TaskUpdate") return `更新团队任务：${subject || getToolInputText(item, "taskId") || item.title}`;
++  if (toolName === "TaskGet") return `读取团队任务：${getToolInputText(item, "taskId") || item.title}`;
++  if (toolName === "TaskList") return "查看团队任务列表";
++  if (toolName === "TeamDelete") return `结束 Agent Team：${teamName || name || item.title}`;
++  return item.title;
++}
++
++function isAgentRunSeed(item: ActivityTimelineItem): boolean {
++  return (
++    item.nodeKind === "agent_progress" ||
++    item.nodeKind === "handoff" ||
++    item.provenance === "sub_agent" ||
++    isAgentRunToolName(item.toolName)
++  );
++}
++
++function getAgentRunGroupKey(item: ActivityTimelineItem): string | null {
++  const teamTaskKey = getAgentTeamTaskGroupKey(item);
++  if (teamTaskKey) return teamTaskKey;
++  if (item.parentTaskId) return item.parentTaskId;
++  if (isAgentRunToolName(item.toolName)) return item.id;
++  if (item.nodeKind === "agent_progress" || item.nodeKind === "handoff" || item.provenance === "sub_agent") return item.id;
++  return null;
++}
++
++function statusFromAgentTimeline(items: ActivityTimelineItem[]): {
++  status: ActivityAgentRunStatus;
++  statusLabel: string;
++  tone: ActivityRailTone;
++} {
++  const text = items.map((item) => `${item.statusLabel ?? ""} ${item.detail}`).join("\n");
++  if (items.some((item) => item.tone === "error") || /失败|错误|failed|killed|终止/i.test(text)) {
++    const stopped = /终止|killed|stopped/i.test(text);
++    return { status: stopped ? "stopped" : "failed", statusLabel: stopped ? "已终止" : "失败", tone: "error" };
++  }
++  if (items.some((item) => item.tone === "success" || /完成|成功|已结束/i.test(item.statusLabel ?? ""))) {
++    return { status: "completed", statusLabel: "已完成", tone: "success" };
++  }
++  if (items.some((item) => item.metrics.status === "running" || /运行中|进行中|处理中/i.test(item.statusLabel ?? ""))) {
++    return { status: "running", statusLabel: "运行中", tone: "info" };
++  }
++  return { status: "pending", statusLabel: "已派遣", tone: "warning" };
++}
++
++function buildAgentRunDetailSections(
++  seed: ActivityTimelineItem,
++  items: ActivityTimelineItem[],
++  status: { statusLabel: string },
++  outputText: string,
++): ActivityDetailSection[] {
++  const rows: ActivityDetailRow[] = [
++    { label: "status", value: status.statusLabel },
++    { label: "kind", value: inferAgentRunKind(seed) },
++    { label: "round", value: `第 ${seed.round} 轮` },
++  ];
++  if (seed.parentTaskId) rows.push({ label: "task_id", value: seed.parentTaskId });
++  const teamTaskId = extractTeamTaskIdFromText(seed.id) || extractTeamTaskIdFromText(getToolOutputRaw(seed)) || getToolInputText(seed, "taskId", "task_id", "id");
++  if (teamTaskId) rows.push({ label: "team_task_id", value: teamTaskId });
++  if (seed.toolName) rows.push({ label: "source_tool", value: seed.toolName });
++
++  const sections: ActivityDetailSection[] = [{
++    id: "agent-summary",
++    title: "Agent 摘要",
++    summary: seed.agentDescription || seed.detail || seed.preview,
++    rows,
++  }];
++
++  if (outputText.trim()) {
++    sections.push({
++      id: "agent-output",
++      title: "执行内容",
++      summary: truncate(outputText, 160),
++      rows: [],
++      raw: outputText,
++      rawLabel: "展开完整执行内容",
++    });
++  }
++
++  sections.push({
++    id: "agent-timeline",
++    title: "关联节点",
++    summary: `${items.length} 个执行节点`,
++    rows: items.slice(0, 8).map((item) => ({
++      label: item.statusLabel || item.layer,
++      value: item.title,
++    })),
++  });
++
++  return sections;
++}
++
++function isLowInformationAgentToolOutput(item: ActivityTimelineItem, output: string): boolean {
++  if (!output.trim()) return true;
++  if (item.toolName === "TaskCreate" && /^Task\s*#?\w+\s+created successfully\b/i.test(output.trim())) return true;
++  if (item.toolName === "TeamCreate" && /^Team\b.+created successfully\b/i.test(output.trim())) return true;
++  if (/No messages from Codex/i.test(output)) return true;
++  if (/agents?\s+(?:are|is)\s+still\s+(?:working|running)/i.test(output)) return true;
++  if (/task list shows/i.test(output)) return true;
++  return false;
++}
++
++function getAgentRunOutputText(item: ActivityTimelineItem): string {
++  if (item.nodeKind === "assistant_output" || item.filterKey === "result" || item.nodeKind === "agent_progress") {
++    return item.detail.trim();
++  }
++  if (isAgentRunToolName(item.toolName)) {
++    const toolOutput = extractReadableToolOutput(getToolOutputRaw(item));
++    if (isLowInformationAgentToolOutput(item, toolOutput)) return "";
++    return toolOutput;
++  }
++  return "";
++}
++
++function buildAgentRuns(timelineChronological: ActivityTimelineItem[]): ActivityAgentRun[] {
++  const groupKeys = new Set<string>();
++  for (const item of timelineChronological) {
++    if (!isAgentRunSeed(item) && !item.parentTaskId) continue;
++    const key = getAgentRunGroupKey(item);
++    if (key) groupKeys.add(key);
++  }
++
++  const runs: ActivityAgentRun[] = [];
++  for (const groupKey of groupKeys) {
++    const items = timelineChronological.filter((item) => {
++      if (item.parentTaskId === groupKey) return true;
++      if (getAgentRunGroupKey(item) === groupKey) return true;
++      return item.id === groupKey && isAgentRunSeed(item);
++    });
++    if (items.length === 0) continue;
++
++    const seed = items.find(isAgentRunSeed) ?? items[0]!;
++    const status = statusFromAgentTimeline(items);
++    const title = seed.nodeKind === "agent_progress"
++      ? seed.title.replace(/^启动/, "")
++      : titleFromAgentTool(seed);
++    const outputText = items
++      .map(getAgentRunOutputText)
++      .filter(Boolean)
++      .join("\n\n");
++    const hasExecutionEvidence =
++      outputText.trim().length > 0 ||
++      items.some((item) => item.id !== seed.id && item.parentTaskId === groupKey);
++    if (!hasExecutionEvidence) continue;
++
++    const latestSummary =
++      [...items].reverse().find((item) => item.agentDescription || item.detail)?.agentDescription ||
++      [...items].reverse().find((item) => item.detail)?.detail ||
++      seed.preview ||
++      title;
++
++    runs.push({
++      id: groupKey,
++      taskId: seed.parentTaskId,
++      toolUseId: isAgentRunToolName(seed.toolName) ? seed.id : undefined,
++      title: truncate(title, 120),
++      description: seed.agentDescription || seed.detail || seed.preview,
++      kind: inferAgentRunKind(seed),
++      status: status.status,
++      statusLabel: status.statusLabel,
++      tone: status.tone,
++      round: seed.round,
++      sequence: seed.sequence,
++      chips: Array.from(new Set([
++        seed.toolName,
++        ...seed.chips,
++        ...items.flatMap((item) => item.chips),
++      ].filter((value): value is string => Boolean(value)))).slice(0, 5),
++      timelineIds: items.map((item) => item.id),
++      latestSummary: truncate(latestSummary, 260),
++      outputText,
++      sourceToolName: seed.toolName,
++      metrics: mergeMetrics(...items.map((item) => item.metrics)),
++      detailSections: buildAgentRunDetailSections(seed, items, status, outputText),
++    });
++  }
++
++  return runs.sort((left, right) => right.sequence - left.sequence);
++}
++
+ function parseHookOutput(rawOutput: string): {
+   additionalContext?: string;
+   reason?: string;
+@@ -798,7 +1124,20 @@ function describeToolInput(name: string, input: Record<string, unknown>): string
+     case "Grep":
+       return String(input.pattern ?? "");
+     case "Task":
++    case "Agent":
+       return String(input.description ?? "");
++    case "TeamCreate":
++      return String(input.name ?? input.team_name ?? input.description ?? "");
++    case "SendMessage":
++      return [input.to, input.message].filter(Boolean).join(" → ");
++    case "TaskCreate":
++      return String(input.subject ?? input.description ?? "");
++    case "TaskGet":
++    case "TaskUpdate":
++      return String(input.taskId ?? input.subject ?? "");
++    case "TaskList":
++    case "TeamDelete":
++      return Object.keys(input).length > 0 ? stringifyUnknown(input) : "";
+     case "WebFetch":
+       return String(input.url ?? "");
+     default:
+@@ -857,7 +1196,18 @@ function classifyToolMetadata(
+   if (["webfetch", "open", "click", "screenshot", "find"].includes(normalizedName)) {
+     return { toolKind, nodeKind: "browser", provenance: "local" };
+   }
+-  if (normalizedName === "task") {
++  if (normalizedName === "task" || normalizedName === "agent") {
++    return { toolKind, nodeKind: "handoff", provenance: "sub_agent" };
++  }
++  if (
++    normalizedName === "teamcreate" ||
++    normalizedName === "teamdelete" ||
++    normalizedName === "sendmessage" ||
++    normalizedName === "taskcreate" ||
++    normalizedName === "taskget" ||
++    normalizedName === "taskupdate" ||
++    normalizedName === "tasklist"
++  ) {
+     return { toolKind, nodeKind: "handoff", provenance: "sub_agent" };
+   }
+   if (normalizedName.includes("memory")) {
+@@ -1593,6 +1943,7 @@ export function buildActivityRailModel(
+       planSteps: [],
+       executionSteps: [],
+       taskSteps: [],
++      agentRuns: [],
+       analysisCards: [],
+       contextSnapshot: {
+         latestPrompt: null,
+@@ -2073,6 +2424,10 @@ export function buildActivityRailModel(
+         if (toolUseId && taskId) {
+           taskToolUseMap.set(taskId, toolUseId);
+           toolUseTaskMap.set(toolUseId, taskId);
++          const sourceToolItem = timelineChronological.find((item) => item.id === toolUseId);
++          if (sourceToolItem && !sourceToolItem.parentTaskId) {
++            sourceToolItem.parentTaskId = taskId;
++          }
+         }
+ 
+         if (skipTranscript || !taskId) continue;
+@@ -2089,6 +2444,7 @@ export function buildActivityRailModel(
+             layer: "流程",
+             tone: "info",
+             nodeKind: "agent_progress",
++            nodeSubtype: taskType,
+             title: `启动${agentLabel}：${description || taskId.slice(0, 8)}`,
+             detail: typeof systemMessage.prompt === "string" ? systemMessage.prompt : description,
+             round: Math.max(round, 1),
+@@ -2112,6 +2468,7 @@ export function buildActivityRailModel(
+       if (message.subtype === "task_progress") {
+         const taskId = typeof systemMessage.task_id === "string" ? systemMessage.task_id : "";
+         const description = typeof systemMessage.description === "string" ? systemMessage.description : "";
++        const subagentType = typeof systemMessage.subagent_type === "string" ? systemMessage.subagent_type : undefined;
+         const summary = typeof systemMessage.summary === "string" ? systemMessage.summary : undefined;
+         const usage = typeof systemMessage.usage === "object" && systemMessage.usage !== null
+           ? (systemMessage.usage as Record<string, unknown>)
+@@ -2156,6 +2513,7 @@ export function buildActivityRailModel(
+           layer: "流程",
+           tone: "info",
+           nodeKind: "agent_progress",
++          nodeSubtype: subagentType,
+           title: description || summary || "子任务进行中",
+           detail: summary || description,
+           round: Math.max(round, 1),
+@@ -2178,6 +2536,82 @@ export function buildActivityRailModel(
+         continue;
+       }
+ 
++      if (message.subtype === "task_notification") {
++        const taskId = typeof systemMessage.task_id === "string" ? systemMessage.task_id : "";
++        const toolUseId = typeof systemMessage.tool_use_id === "string" ? systemMessage.tool_use_id : undefined;
++        const statusValue = typeof systemMessage.status === "string" ? systemMessage.status : "completed";
++        const summary = typeof systemMessage.summary === "string" ? systemMessage.summary : "";
++        const outputFile = typeof systemMessage.output_file === "string" ? systemMessage.output_file : "";
++        const usage = typeof systemMessage.usage === "object" && systemMessage.usage !== null
++          ? (systemMessage.usage as Record<string, unknown>)
++          : null;
++        const durationMs = typeof usage?.duration_ms === "number" ? usage.duration_ms : undefined;
++        const totalTokens = typeof usage?.total_tokens === "number" ? usage.total_tokens : undefined;
++        const toolUses = typeof usage?.tool_uses === "number" ? usage.tool_uses : undefined;
++
++        if (!taskId || systemMessage.skip_transcript === true) continue;
++        if (toolUseId) {
++          taskToolUseMap.set(taskId, toolUseId);
++          toolUseTaskMap.set(toolUseId, taskId);
++          const sourceToolItem = timelineChronological.find((item) => item.id === toolUseId);
++          if (sourceToolItem && !sourceToolItem.parentTaskId) {
++            sourceToolItem.parentTaskId = taskId;
++          }
++        }
++
++        const existing = activeTaskNodes.get(taskId);
++        const statusLabel = statusValue === "completed" ? "已完成" : statusValue === "failed" ? "失败" : "已停止";
++        const tone: ActivityRailTone = statusValue === "completed" ? "success" : "error";
++        const detail = [summary, outputFile ? `输出文件：${outputFile}` : ""].filter(Boolean).join("\n");
++
++        if (existing) {
++          existing.statusLabel = statusLabel;
++          existing.tone = tone;
++          existing.attention = statusValue !== "completed";
++          existing.detail = [existing.detail, detail].filter(Boolean).join("\n");
++          existing.agentDescription = summary || existing.agentDescription;
++          existing.metrics = mergeMetrics(existing.metrics, createEmptyMetrics({
++            durationMs,
++            outputTokens: totalTokens,
++            successCount: statusValue === "completed" ? 1 : 0,
++            failureCount: statusValue === "failed" ? 1 : 0,
++            totalCount: 1,
++            status: statusValue === "completed" ? "success" : "failure",
++          }));
++          activeTaskNodes.delete(taskId);
++          continue;
++        }
++
++        sequence += 1;
++        const notificationItem = createTimelineItem({
++          id: `task-notification-${taskId}`,
++          filterKey: statusValue === "completed" ? "result" : "flow",
++          layer: statusValue === "completed" ? "结果" : "流程",
++          tone,
++          nodeKind: "agent_progress",
++          title: statusValue === "completed" ? "子 Agent 完成" : "子 Agent 结束",
++          detail,
++          round: Math.max(round, 1),
++          sequence,
++          statusLabel,
++          chips: ["子 Agent", ...(typeof toolUses === "number" ? [`${toolUses} 工具`] : [])],
++          attention: statusValue !== "completed",
++          stageKind: "deliver",
++          parentTaskId: taskId,
++          agentDescription: summary,
++          metrics: createEmptyMetrics({
++            durationMs,
++            outputTokens: totalTokens,
++            successCount: statusValue === "completed" ? 1 : 0,
++            failureCount: statusValue === "failed" ? 1 : 0,
++            totalCount: 1,
++            status: statusValue === "completed" ? "success" : "failure",
++          }),
++        });
++        timelineChronological.push(notificationItem);
++        continue;
++      }
++
+       if (message.subtype === "task_updated") {
+         const taskId = typeof systemMessage.task_id === "string" ? systemMessage.task_id : "";
+         const patch = isRecord(systemMessage.patch) ? systemMessage.patch : {};
+@@ -2446,6 +2880,7 @@ export function buildActivityRailModel(
+   const timeline = timelineChronological
+     .filter((item) => item.id !== activeParsedPlan?.sourceTimelineId)
+     .reverse();
++  const agentRuns = buildAgentRuns(timelineChronological);
+   const filterCounts: Record<ActivityRailFilterKey, number> = {
+     all: timeline.length,
+     attention: timeline.filter((item) => item.attention).length,
+@@ -2672,6 +3107,7 @@ export function buildActivityRailModel(
+     planSteps,
+     executionSteps,
+     taskSteps,
++    agentRuns,
+     analysisCards,
+     contextSnapshot: {
+       latestPrompt,
+diff --git a/src/ui/App.tsx b/src/ui/App.tsx
+index 49eeb36..45c947d 100644
+--- a/src/ui/App.tsx
++++ b/src/ui/App.tsx
+@@ -22,11 +22,11 @@ import MDContent from "./render/markdown";
+ import ScheduledTasksPage from "./components/cron/ScheduledTasksPage";
+ import { KnowledgePanel } from "./components/KnowledgePanel";
+ import { TaskPanel } from "./components/TaskPanel";
+-import { OPEN_BROWSER_WORKBENCH_URL_EVENT, type OpenBrowserWorkbenchUrlDetail } from "./events";
++import { OPEN_AGENT_RUN_EVENT, OPEN_BROWSER_WORKBENCH_URL_EVENT, type OpenAgentRunDetail, type OpenBrowserWorkbenchUrlDetail } from "./events";
+ import { copyTextToClipboard } from "./utils/clipboard";
+-import type { ActivityRailTab } from "./utils/activity-workspace-tabs";
++import { makeAgentRailTabId, type ActivityRailTab } from "./utils/activity-workspace-tabs";
+ import { getAvailableModelsForProfiles, getEnabledProfiles } from "./components/settings/settings-utils";
+-import { DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT } from "../shared/claude-agent-teams";
++import { CLAUDE_AGENT_TEAM_TOOL_NAMES, DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT } from "../shared/claude-agent-teams";
+ import {
+   DEV_BRIDGE_READY_EVENT,
+   getDevElectronRuntimeSource,
+@@ -42,6 +42,7 @@ const MIN_ACTIVITY_RAIL_WIDTH = 400;
+ const EMPTY_MESSAGES: StreamMessage[] = [];
+ const EMPTY_PERMISSION_REQUESTS: NonNullable<ReturnType<typeof useAppStore.getState>["sessions"][string]["permissionRequests"]> = [];
+ type GlobalRuntimeConfig = Record<string, unknown>;
++const AGENT_TRANSCRIPT_TOOL_NAMES = new Set<string>(["Task", ...CLAUDE_AGENT_TEAM_TOOL_NAMES]);
+ 
+ type RenderEntry =
+   | { type: "separator"; key: string; roundNumber: number }
+@@ -65,6 +66,14 @@ function isProcessMessage(message: StreamMessage): boolean {
+   if (contentItems.length === 0) return false;
+ 
+   if (message.type === "assistant") {
++    if (contentItems.some((item) => (
++      isRecord(item) &&
++      item.type === "tool_use" &&
++      typeof item.name === "string" &&
++      AGENT_TRANSCRIPT_TOOL_NAMES.has(item.name)
++    ))) {
++      return false;
++    }
+     return contentItems.every((item) => (
+       isRecord(item) &&
+       item.type === "tool_use" &&
+@@ -349,6 +358,7 @@ function App() {
+   const [showActivityRail, setShowActivityRail] = useState(true);
+   const [workspaceViewBySessionId, setWorkspaceViewBySessionId] = useState<Record<string, WorkspaceView>>({});
+   const [activityRailTabBySessionId, setActivityRailTabBySessionId] = useState<Record<string, ActivityRailTab>>({});
++  const [selectedAgentRunTarget, setSelectedAgentRunTarget] = useState<OpenAgentRunDetail | null>(null);
+   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
+   const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | null>(null);
+   const [appUpdateActionBusy, setAppUpdateActionBusy] = useState(false);
+@@ -1038,6 +1048,27 @@ function App() {
+     };
+   }, [activeSessionId, closeSidebarOnBrowserOpen, setActiveSessionWorkspaceView, setBrowserWorkbenchSessionUrl, showSidebar]);
+ 
++  useEffect(() => {
++    const handleOpenAgentRun = (event: Event) => {
++      const detail = (event as CustomEvent<OpenAgentRunDetail>).detail ?? {};
++      const tabSeed = detail.taskId || detail.toolUseId || detail.agentName || "run";
++      setSelectedAgentRunTarget(detail);
++      setShowActivityRail(true);
++      setShowSessionAnalysis(false);
++      setActiveSessionWorkspaceView("chat");
++      setActiveSessionActivityRailTab(makeAgentRailTabId(tabSeed));
++    };
++
++    window.addEventListener(OPEN_AGENT_RUN_EVENT, handleOpenAgentRun);
++    return () => {
++      window.removeEventListener(OPEN_AGENT_RUN_EVENT, handleOpenAgentRun);
++    };
++  }, [setActiveSessionActivityRailTab, setActiveSessionWorkspaceView]);
++
++  useEffect(() => {
++    setSelectedAgentRunTarget(null);
++  }, [activeSessionId]);
++
+   const handleDeleteSession = useCallback((sessionId: string) => {
+     sendEvent({ type: "session.delete", payload: { sessionId } });
+   }, [sendEvent]);
+@@ -1771,6 +1802,7 @@ function App() {
+               globalError={globalError}
+               activeTab={activityRailTab}
+               onActiveTabChange={setActiveSessionActivityRailTab}
++              selectedAgentRunTarget={selectedAgentRunTarget}
+               onOpenBrowserWorkbench={() => {
+                 setShowActivityRail(true);
+                 setShowSessionAnalysis(false);
+diff --git a/src/ui/components/ActivityRail.tsx b/src/ui/components/ActivityRail.tsx
+index 5a9028b..4dcee00 100644
+--- a/src/ui/components/ActivityRail.tsx
++++ b/src/ui/components/ActivityRail.tsx
+@@ -1,6 +1,7 @@
+ import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+ import {
+   buildActivityRailModel,
++  type ActivityAgentRun,
+   type ActivityAnalysisCard,
+   type ActivityDetailSection,
+   type ActivityExecutionMetrics,
+@@ -19,7 +20,17 @@ import { AionWorkspacePreviewPane } from "./AionWorkspacePreviewPane";
+ import { ActivityWorkspaceTabs } from "./ActivityWorkspaceTabs";
+ import { GitWorkbenchPanel } from "./git";
+ import type { SessionView } from "../store/useAppStore";
+-import type { ActivityRailTab, ActivityWorkspaceTab } from "../utils/activity-workspace-tabs";
++import { MessageCard } from "./EventCard";
++import {
++  isAgentRailTab,
++  makeAgentRailTabId,
++  type ActivityAgentRailTab,
++  type ActivityRailTab,
++  type ActivityWorkspaceAgentTab,
++  type ActivityWorkspaceTab,
++} from "../utils/activity-workspace-tabs";
++import { buildAgentTranscriptMessages, hasDetailedAgentTranscript } from "../utils/agent-transcript";
++import type { OpenAgentRunDetail } from "../events";
+ 
+ const NODE_KIND_LABELS: Record<ActivityTimelineItem["nodeKind"], string> = {
+   context: "上下文",
+@@ -1024,6 +1035,175 @@ function DetailSectionCard({ section }: { section: ActivityDetailSection }) {
+   );
+ }
+ 
++const AGENT_RUN_KIND_LABELS: Record<ActivityAgentRun["kind"], string> = {
++  sub_agent: "子 Agent",
++  agent_team: "Agent Team",
++  team_member: "团队成员",
++  local_workflow: "本地工作流",
++  background: "后台任务",
++};
++
++function agentRunStatusClasses(tone: ActivityRailTone) {
++  return toneClasses(tone);
++}
++
++type AgentWorkspaceTabState = {
++  id: ActivityAgentRailTab;
++  taskId?: string;
++  toolUseId?: string;
++  agentName?: string;
++  fallbackLabel: string;
++};
++
++function trimAgentTabLabel(label: string): string {
++  const normalized = label.trim().replace(/\s+/g, " ");
++  return normalized.length > 28 ? `${normalized.slice(0, 27)}...` : normalized;
++}
++
++function buildAgentWorkspaceTabFromTarget(target: OpenAgentRunDetail): AgentWorkspaceTabState {
++  const seed = target.taskId || target.toolUseId || target.agentName || "run";
++  return {
++    id: makeAgentRailTabId(seed),
++    taskId: target.taskId,
++    toolUseId: target.toolUseId,
++    agentName: target.agentName,
++    fallbackLabel: target.agentName || "Agent 执行",
++  };
++}
++
++function buildAgentWorkspaceTabFromId(id: ActivityAgentRailTab): AgentWorkspaceTabState {
++  return {
++    id,
++    fallbackLabel: "Agent 执行",
++  };
++}
++
++function upsertAgentWorkspaceTab(tabs: AgentWorkspaceTabState[], nextTab: AgentWorkspaceTabState): AgentWorkspaceTabState[] {
++  const index = tabs.findIndex((tab) => tab.id === nextTab.id);
++  if (index === -1) return [...tabs, nextTab];
++  const current = tabs[index];
++  const merged = {
++    ...current,
++    ...nextTab,
++    fallbackLabel: nextTab.fallbackLabel || current.fallbackLabel,
++  };
++  if (
++    current.taskId === merged.taskId &&
++    current.toolUseId === merged.toolUseId &&
++    current.agentName === merged.agentName &&
++    current.fallbackLabel === merged.fallbackLabel
++  ) {
++    return tabs;
++  }
++  return tabs.map((tab, tabIndex) => (tabIndex === index ? merged : tab));
++}
++
++function resolveAgentRunFromTab(tab: AgentWorkspaceTabState | null, agentRuns: ActivityAgentRun[]): ActivityAgentRun | null {
++  if (!tab) return null;
++  const tabSeed = tab.id.slice("agent:".length);
++  return agentRuns.find((run) => (
++    run.id === tabSeed ||
++    run.taskId === tabSeed ||
++    run.toolUseId === tabSeed ||
++    run.timelineIds.includes(tabSeed) ||
++    (tab.taskId && (run.taskId === tab.taskId || run.id === tab.taskId)) ||
++    (tab.toolUseId && (run.toolUseId === tab.toolUseId || run.timelineIds.includes(tab.toolUseId))) ||
++    (tab.agentName && run.title.includes(tab.agentName))
++  )) ?? null;
++}
++
++function buildAgentWorkspaceTabItems(tabs: AgentWorkspaceTabState[], agentRuns: ActivityAgentRun[]): ActivityWorkspaceAgentTab[] {
++  return tabs.map((tab) => {
++    const run = resolveAgentRunFromTab(tab, agentRuns);
++    const label = trimAgentTabLabel(run?.title || tab.fallbackLabel);
++    return {
++      id: tab.id,
++      label,
++      title: run ? `${run.title} - ${run.statusLabel}` : `${tab.fallbackLabel} - 等待执行内容`,
++    };
++  });
++}
++
++function AgentRunPage({
++  run,
++  tab,
++  session,
++}: {
++  run: ActivityAgentRun | null;
++  tab: AgentWorkspaceTabState;
++  session: SessionView | undefined;
++}) {
++  const transcriptMessages = useMemo(
++    () => buildAgentTranscriptMessages(session?.messages ?? [], run),
++    [run, session],
++  );
++
++  if (!run) {
++    return (
++      <div className="space-y-4 px-4 pt-4">
++        <section className="rounded-[28px] border border-dashed border-info/25 bg-info-light/24 p-5 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
++          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-info">Agent Page</div>
++          <h2 className="mt-2 text-lg font-semibold text-ink-900">{tab.fallbackLabel}</h2>
++          <p className="mt-2 text-[12px] leading-5 text-ink-500">
++            已经为这个 Agent 建立独立执行页。等原始消息片段到达后，这里会显示和聊天记录一致的执行流。
++          </p>
++          <div className="mt-4 flex flex-wrap gap-1.5">
++            {tab.taskId && <span className="rounded-full border border-black/5 bg-white/78 px-2 py-0.5 text-[10px] text-ink-500">task {tab.taskId.slice(0, 12)}</span>}
++            {tab.toolUseId && <span className="rounded-full border border-black/5 bg-white/78 px-2 py-0.5 text-[10px] text-ink-500">tool {tab.toolUseId.slice(0, 12)}</span>}
++          </div>
++        </section>
++      </div>
++    );
++  }
++
++  return (
++    <div className="space-y-4 px-4 pt-4">
++      <section className="rounded-[28px] border border-black/5 bg-white/86 p-4 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
++        <div className="flex items-start justify-between gap-3">
++          <div className="min-w-0">
++            <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-ink-400">Agent Transcript</div>
++            <h2 className="mt-2 text-lg font-semibold leading-6 text-ink-900">{run.title}</h2>
++          </div>
++          <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-medium ${agentRunStatusClasses(run.tone)}`}>
++            {run.statusLabel}
++          </span>
++        </div>
++
++        <div className="mt-4 flex flex-wrap gap-1.5">
++          <span className="rounded-full border border-black/5 bg-black/[0.03] px-2 py-0.5 text-[10px] text-ink-500">
++            {AGENT_RUN_KIND_LABELS[run.kind]}
++          </span>
++          <span className="rounded-full border border-black/5 bg-black/[0.03] px-2 py-0.5 text-[10px] text-ink-500">
++            {run.timelineIds.length} 节点
++          </span>
++          {run.chips.map((chip) => (
++            <span key={`${run.id}-${chip}`} className="max-w-[180px] truncate rounded-full border border-black/5 bg-white px-2 py-0.5 text-[10px] text-ink-500">
++              {chip}
++            </span>
++          ))}
++        </div>
++      </section>
++
++      <section className="rounded-[28px] border border-black/5 bg-white/82 px-4 pb-5 pt-1 shadow-[0_16px_32px_rgba(15,23,42,0.05)]">
++        {transcriptMessages.length > 0 ? (
++          transcriptMessages.map((message, index) => (
++            <MessageCard
++              key={`${run.id}-${message.type}-${(message as { uuid?: string }).uuid ?? index}`}
++              message={message}
++              isLast={index === transcriptMessages.length - 1 && run.status === "running"}
++              isRunning={run.status === "running"}
++            />
++          ))
++        ) : (
++          <div className="rounded-[24px] border border-dashed border-black/10 bg-black/[0.02] p-4 text-[12px] leading-5 text-ink-500">
++            还没有找到该 Agent 的原始聊天记录片段。当前 tab 只会显示原始消息，不再显示二次汇总。
++          </div>
++        )}
++      </section>
++    </div>
++  );
++}
++
+ function DetailDrawer({
+   title,
+   item,
+@@ -1153,6 +1333,7 @@ export function ActivityRail({
+   onOpenBrowserWorkbench,
+   activeTab,
+   onActiveTabChange,
++  selectedAgentRunTarget,
+   selectedModel,
+   contextWindow,
+   compressionThresholdPercent,
+@@ -1166,6 +1347,7 @@ export function ActivityRail({
+   onOpenBrowserWorkbench?: () => void;
+   activeTab?: ActivityRailTab;
+   onActiveTabChange?: (tab: ActivityRailTab) => void;
++  selectedAgentRunTarget?: OpenAgentRunDetail | null;
+   selectedModel?: string;
+   contextWindow?: number;
+   compressionThresholdPercent?: number;
+@@ -1192,6 +1374,7 @@ export function ActivityRail({
+     handleSelectTab(tab);
+   };
+   const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
++  const [openAgentTabs, setOpenAgentTabs] = useState<AgentWorkspaceTabState[]>([]);
+   const [showContextModal, setShowContextModal] = useState(false);
+   const timelineRef = useRef<HTMLDivElement>(null);
+ 
+@@ -1201,6 +1384,49 @@ export function ActivityRail({
+     el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+   }, [selectedTimelineId]);
+ 
++  useEffect(() => {
++    setOpenAgentTabs([]);
++  }, [session?.id]);
++
++  useEffect(() => {
++    if (!selectedAgentRunTarget) return;
++    const nextTab = buildAgentWorkspaceTabFromTarget(selectedAgentRunTarget);
++    const nextRun = resolveAgentRunFromTab(nextTab, model.agentRuns);
++    if (!nextRun) return;
++    const nextTranscriptMessages = buildAgentTranscriptMessages(session?.messages ?? [], nextRun);
++    if (!hasDetailedAgentTranscript(nextTranscriptMessages)) return;
++
++    setOpenAgentTabs((current) => upsertAgentWorkspaceTab(current, nextTab));
++    if (selectedTab !== nextTab.id) {
++      handleSelectTab(nextTab.id);
++    }
++  }, [model.agentRuns, selectedAgentRunTarget, selectedTab, session?.messages]);
++
++  const agentTabs = useMemo(
++    () => buildAgentWorkspaceTabItems(openAgentTabs, model.agentRuns),
++    [model.agentRuns, openAgentTabs],
++  );
++  const activeAgentTab = useMemo(() => {
++    if (!isAgentRailTab(selectedTab)) return null;
++    return openAgentTabs.find((tab) => tab.id === selectedTab) ?? buildAgentWorkspaceTabFromId(selectedTab);
++  }, [openAgentTabs, selectedTab]);
++  const activeAgentRun = useMemo(
++    () => resolveAgentRunFromTab(activeAgentTab, model.agentRuns),
++    [activeAgentTab, model.agentRuns],
++  );
++  useEffect(() => {
++    if (!activeAgentTab || activeAgentRun) return;
++    setOpenAgentTabs((current) => current.filter((tab) => tab.id !== activeAgentTab.id));
++    handleSelectTab("trace");
++  }, [activeAgentRun, activeAgentTab]);
++  const handleCloseAgentTab = (tabId: ActivityAgentRailTab) => {
++    const nextTabs = openAgentTabs.filter((tab) => tab.id !== tabId);
++    setOpenAgentTabs(nextTabs);
++    if (selectedTab === tabId) {
++      handleSelectTab(nextTabs.at(-1)?.id ?? "trace");
++    }
++  };
++
+   const selectedItem =
+     (selectedTimelineId ? model.timeline.find((item) => item.id === selectedTimelineId) : null) ??
+     null;
+@@ -1280,8 +1506,10 @@ export function ActivityRail({
+             activeTab={selectedTab}
+             showBrowserTab={hasBrowserTab}
+             showLabels={showLabels}
++            agentTabs={agentTabs}
+             showCreateBrowserTab={!hasBrowserTab}
+             onSelectTab={handleSelectWorkspaceTab}
++            onCloseAgentTab={handleCloseAgentTab}
+             onCreateBrowserTab={onOpenBrowserWorkbench}
+           />
+         </div>
+@@ -1313,6 +1541,12 @@ export function ActivityRail({
+           <div className="flex min-h-0 flex-1 overflow-hidden">
+             <GitWorkbenchPanel cwd={session?.cwd} />
+           </div>
++        ) : activeAgentTab && activeAgentRun ? (
++          <AgentRunPage
++            run={activeAgentRun}
++            tab={activeAgentTab}
++            session={session}
++          />
+         ) : (
+         <div className="space-y-4 px-4 pt-4">
+           <section className="rounded-[28px] border border-black/5 bg-white/70 p-4 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
+diff --git a/src/ui/components/ActivityWorkspaceTabs.tsx b/src/ui/components/ActivityWorkspaceTabs.tsx
+index 442ed03..0d4754b 100644
+--- a/src/ui/components/ActivityWorkspaceTabs.tsx
++++ b/src/ui/components/ActivityWorkspaceTabs.tsx
+@@ -1,6 +1,9 @@
+ import {
+   buildActivityWorkspaceTabs,
++  isAgentRailTab,
+   shouldShowCreateBrowserTab,
++  type ActivityAgentRailTab,
++  type ActivityWorkspaceAgentTab,
+   type ActivityWorkspaceTab,
+ } from "../utils/activity-workspace-tabs";
+ 
+@@ -9,9 +12,11 @@ type ActivityWorkspaceTabsProps = {
+   showBrowserTab: boolean;
+   showLabels?: boolean;
+   browserLabel?: string;
++  agentTabs?: ActivityWorkspaceAgentTab[];
+   showCreateBrowserTab?: boolean;
+   onSelectTab: (tab: ActivityWorkspaceTab) => void;
+   onCloseBrowserTab?: () => void;
++  onCloseAgentTab?: (tab: ActivityAgentRailTab) => void;
+   onCreateBrowserTab?: () => void;
+ };
+ 
+@@ -41,6 +46,16 @@ function iconForTab(tab: ActivityWorkspaceTab) {
+     );
+   }
+ 
++  if (isAgentRailTab(tab)) {
++    return (
++      <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
++        <circle cx="12" cy="8" r="3.5" />
++        <path d="M5.5 20a6.5 6.5 0 0 1 13 0" />
++        <path d="M5 8h2M17 8h2M12 2.5v2" />
++      </svg>
++    );
++  }
++
+   if (tab === "git") {
+     return (
+       <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+@@ -73,19 +88,22 @@ export function ActivityWorkspaceTabs({
+   showBrowserTab,
+   showLabels = true,
+   browserLabel = "浏览器",
++  agentTabs = [],
+   showCreateBrowserTab,
+   onSelectTab,
+   onCloseBrowserTab,
++  onCloseAgentTab,
+   onCreateBrowserTab,
+ }: ActivityWorkspaceTabsProps) {
+-  const tabs = buildActivityWorkspaceTabs({ activeTab, showBrowserTab }).filter((tab) => tab.visible);
++  const tabs = buildActivityWorkspaceTabs({ activeTab, showBrowserTab, agentTabs }).filter((tab) => tab.visible);
+   const shouldShowCreate = showCreateBrowserTab ?? shouldShowCreateBrowserTab(showBrowserTab);
+ 
+   return (
+     <div className="flex min-w-0 items-center gap-1.5">
+       {tabs.map((tab) => {
+         const label = tab.id === "browser" ? browserLabel : tab.label;
+-        const labelWidthClass = tab.id === "browser" ? "max-w-[120px]" : "max-w-[160px]";
++        const agentTabId = isAgentRailTab(tab.id) ? tab.id : null;
++        const labelWidthClass = tab.id === "browser" ? "max-w-[120px]" : agentTabId ? "max-w-[190px]" : "max-w-[160px]";
+ 
+         return (
+           <div key={tab.id} className={tabClassName(tab.active)} title={tab.title}>
+@@ -112,6 +130,21 @@ export function ActivityWorkspaceTabs({
+                 x
+               </button>
+             )}
++            {agentTabId && onCloseAgentTab && (
++              <button
++                type="button"
++                onClick={(event) => {
++                  event.preventDefault();
++                  event.stopPropagation();
++                  onCloseAgentTab(agentTabId);
++                }}
++                className="ml-1 hidden h-4 w-4 items-center justify-center rounded-full text-ink-500 transition hover:bg-ink-900/10 hover:text-ink-900 group-hover:inline-flex"
++                title="关闭 Agent 执行页"
++                aria-label="关闭 Agent 执行页"
++              >
++                x
++              </button>
++            )}
+           </div>
+         );
+       })}
+diff --git a/src/ui/components/EventCard.tsx b/src/ui/components/EventCard.tsx
+index 5306e2d..3d93623 100644
+--- a/src/ui/components/EventCard.tsx
++++ b/src/ui/components/EventCard.tsx
+@@ -14,8 +14,9 @@ import MDContent from "../render/markdown";
+ import { DecisionPanel } from "./DecisionPanel";
+ import { resolveImageAttachmentSrc } from "../../shared/attachments";
+ import { copyTextToClipboard as copyText } from "../utils/clipboard";
+-import { OPEN_BROWSER_WORKBENCH_URL_EVENT, PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT } from "../events";
++import { OPEN_AGENT_RUN_EVENT, OPEN_BROWSER_WORKBENCH_URL_EVENT, PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT } from "../events";
+ import { extractCodeReferencesPrompt, type CodeReferencePromptSummary } from "../utils/code-reference-prompt";
++import { CLAUDE_AGENT_TEAM_TOOL_NAMES } from "../../shared/claude-agent-teams";
+ 
+ type MessageContent = SDKAssistantMessage["message"]["content"][number];
+ type ToolResultContent = SDKUserMessage["message"]["content"][number];
+@@ -74,6 +75,8 @@ const toolStatusMap = new Map<string, ToolStatus>();
+ const toolStatusListeners = new Set<() => void>();
+ const MAX_VISIBLE_LINES = 8;
+ const cx = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(" ");
++const AGENT_TOOL_NAMES = new Set<string>(["Task", ...CLAUDE_AGENT_TEAM_TOOL_NAMES]);
++const OPENABLE_AGENT_TRANSCRIPT_TOOL_NAMES = new Set<string>(["Task", "Agent", "TaskGet"]);
+ 
+ const setToolStatus = (toolUseId: string | undefined, status: ToolStatus) => {
+   if (!toolUseId) return;
+@@ -1128,6 +1131,13 @@ const getToolLabel = (name: string) => {
+     WebSearch: "网页搜索",
+     Task: "子 Agent",
+     Agent: "子 Agent",
++    TeamCreate: "Agent Team",
++    TeamDelete: "结束 Team",
++    SendMessage: "Team 消息",
++    TaskCreate: "团队任务",
++    TaskGet: "任务读取",
++    TaskUpdate: "任务更新",
++    TaskList: "任务列表",
+     TodoWrite: "计划更新",
+     Browser: "浏览器",
+     AskUserQuestion: "向你提问",
+@@ -1157,6 +1167,19 @@ const getToolSummary = (messageContent: Extract<MessageContent, { type: "tool_us
+     case "Task":
+     case "Agent":
+       return getRecordString(input, "description") || getRecordString(input, "prompt");
++    case "TeamCreate":
++      return getRecordString(input, "name") || getRecordString(input, "team_name") || getRecordString(input, "description");
++    case "SendMessage":
++      return [getRecordString(input, "to"), getRecordString(input, "message")].filter(Boolean).join(" → ");
++    case "TaskCreate":
++      return getRecordString(input, "subject") || getRecordString(input, "description");
++    case "TaskGet":
++    case "TaskUpdate":
++      return getRecordString(input, "taskId") || getRecordString(input, "subject");
++    case "TaskList":
++      return "查看团队任务";
++    case "TeamDelete":
++      return getRecordString(input, "name") || getRecordString(input, "team_name");
+     default:
+       return getRecordString(input, "description") || getRecordString(input, "query") || getRecordString(input, "url");
+   }
+@@ -1203,7 +1226,8 @@ const ToolUseCard = ({
+   const status = toolStatus ?? "pending";
+   const summary = getToolSummary(messageContent);
+   const rawInput = JSON.stringify(messageContent.input ?? {}, null, 2);
+-  const isAgentTool = messageContent.name === "Task" || messageContent.name === "Agent";
++  const isAgentTool = AGENT_TOOL_NAMES.has(messageContent.name);
++  const canOpenAgentTranscript = OPENABLE_AGENT_TRANSCRIPT_TOOL_NAMES.has(messageContent.name);
+   const isPending = status === "pending";
+   const statusText = status === "success" ? "完成" : status === "error" ? "失败" : "执行中";
+   const statusClass =
+@@ -1220,6 +1244,16 @@ const ToolUseCard = ({
+   const query = getRecordString(input, "query");
+   const url = getRecordString(input, "url");
+   const todos = Array.isArray(input.todos) ? input.todos : Array.isArray(input.items) ? input.items : [];
++  const openAgentRun = () => {
++    if (!canOpenAgentTranscript) return;
++    window.dispatchEvent(new CustomEvent(OPEN_AGENT_RUN_EVENT, {
++      detail: {
++        toolUseId: toolUseId,
++        toolName: messageContent.name,
++        agentName: getRecordString(input, "name") || getRecordString(input, "team_name") || getRecordString(input, "to") || summary || undefined,
++      },
++    }));
++  };
+ 
+   return (
+     <div className={cx(
+@@ -1230,7 +1264,13 @@ const ToolUseCard = ({
+     )}>
+       <button
+         type="button"
+-        onClick={() => setExpanded((value) => !value)}
++        onClick={() => {
++          if (canOpenAgentTranscript) {
++            openAgentRun();
++            return;
++          }
++          setExpanded((value) => !value);
++        }}
+         className="flex w-full items-center gap-3 px-4 py-3 text-left"
+       >
+         <StatusDot variant={status === "error" ? "error" : status === "success" ? "success" : "accent"} active={isPending && showIndicator} />
+@@ -1242,9 +1282,35 @@ const ToolUseCard = ({
+           {statusText}
+         </span>
+       </button>
+-      {isAgentTool && summary && (
++      {isAgentTool && (
+         <div className="border-t border-accent/10 px-4 pb-3 text-xs leading-5 text-muted">
+-          子 Agent 会在后台执行这个子任务；需要看完整链路时，可以切到右侧「执行轨迹」。
++          {canOpenAgentTranscript && (
++            <div className="pt-3">
++              子 Agent / Team Agent 的执行内容会沉淀到右侧「Agent」卡片页。
++            </div>
++          )}
++          <div className="mt-2 flex flex-wrap gap-2">
++            {canOpenAgentTranscript && (
++              <button
++                type="button"
++                onClick={openAgentRun}
++                className="rounded-full border border-accent/20 bg-white px-2.5 py-1 text-[11px] font-semibold text-accent transition hover:bg-accent/8"
++              >
++                打开 Agent 卡片
++              </button>
++            )}
++            <button
++              type="button"
++              onClick={(event) => {
++                event.preventDefault();
++                event.stopPropagation();
++                setExpanded((value) => !value);
++              }}
++              className="rounded-full border border-black/8 bg-white px-2.5 py-1 text-[11px] font-semibold text-muted transition hover:text-accent"
++            >
++              {expanded ? "收起参数" : "查看参数"}
++            </button>
++          </div>
+         </div>
+       )}
+       {expanded && (
+@@ -1333,6 +1399,10 @@ const ToolProcessGroup = ({
+   if (contents.length === 0) return null;
+ 
+   const firstContent = contents[0]!;
++  if (contents.length === 1 && AGENT_TOOL_NAMES.has(firstContent.name)) {
++    return <ToolUseCard messageContent={firstContent} showIndicator={showIndicator} />;
++  }
++
+   const summary = buildToolGroupSummary(contents);
+   const shortLabel = summary
+     ? summary.labels.map((item) => `${item.label} ${item.count}`).join(" · ")
+diff --git a/src/ui/events.ts b/src/ui/events.ts
+index 9b54806..ab41ba8 100644
+--- a/src/ui/events.ts
++++ b/src/ui/events.ts
+@@ -3,6 +3,7 @@ export const PROMPT_SUBMIT_EVENT = "techcc:prompt-submit";
+ export const PROMPT_SENT_EVENT = "techcc:prompt-sent";
+ export const PREVIEW_OPEN_FILE_EVENT = "techcc:preview-open-file";
+ export const OPEN_BROWSER_WORKBENCH_URL_EVENT = "tech-cc-hub:open-browser-workbench-url";
++export const OPEN_AGENT_RUN_EVENT = "techcc:open-agent-run";
+ export const ADD_PROMPT_ATTACHMENT_EVENT = "techcc:add-prompt-attachment";
+ 
+ export type PreviewOpenFileDetail = {
+@@ -15,6 +16,13 @@ export type OpenBrowserWorkbenchUrlDetail = {
+   url: string;
+ };
+ 
++export type OpenAgentRunDetail = {
++  toolUseId?: string;
++  taskId?: string;
++  toolName?: string;
++  agentName?: string;
++};
++
+ export type AddPromptAttachmentDetail = {
+   kind: "image";
+   name?: string;
+diff --git a/src/ui/render/markdown.tsx b/src/ui/render/markdown.tsx
+index 164f6ce..1fa1e4b 100644
+--- a/src/ui/render/markdown.tsx
++++ b/src/ui/render/markdown.tsx
+@@ -1,4 +1,4 @@
+-import { isValidElement, memo, useEffect, useId, useMemo, useRef, useState } from "react";
++import { Component, isValidElement, memo, useEffect, useId, useMemo, useState } from "react";
+ import type { AnchorHTMLAttributes, MouseEvent, ReactNode } from "react";
+ import { createPortal } from "react-dom";
+ import { Maximize2, X } from "lucide-react";
+@@ -37,6 +37,15 @@ type MermaidRenderResult = {
+ 
+ let mermaidInitialized = false;
+ const mermaidRenderCache = new Map<string, MermaidRenderPayload | Promise<MermaidRenderPayload>>();
++const MAX_MERMAID_CACHE_SIZE = 50;
++
++function setMermaidCacheEntry(key: string, value: MermaidRenderPayload | Promise<MermaidRenderPayload>): void {
++  if (mermaidRenderCache.size >= MAX_MERMAID_CACHE_SIZE) {
++    const firstKey = mermaidRenderCache.keys().next().value;
++    if (firstKey !== undefined) mermaidRenderCache.delete(firstKey);
++  }
++  mermaidRenderCache.set(key, value);
++}
+ 
+ const SOURCE_FILE_EXTENSION_PATTERN = /\.(?:[cm]?[jt]sx?|jsonc?|ya?ml|toml|mdx?|py|sh|zsh|css|scss|html|go|rs|java|kt|swift|sql|vue|svelte|astro)(?::\d+(?:-\d+)?)?$/i;
+ const DEFAULT_EXPANDABLE_FRAME_CLASS = "group relative mt-3 overflow-hidden rounded-xl border border-black/8 bg-surface-tertiary";
+@@ -520,11 +529,11 @@ async function renderMermaidChart(diagramId: string, normalizedChart: string): P
+     const { svg } = await mermaid.render(diagramId, normalizedChart);
+     return { sourceId: diagramId, ...splitMermaidSvg(svg) };
+   });
+-  mermaidRenderCache.set(normalizedChart, renderTask);
++  setMermaidCacheEntry(normalizedChart, renderTask);
+ 
+   try {
+     const payload = await renderTask;
+-    mermaidRenderCache.set(normalizedChart, payload);
++    setMermaidCacheEntry(normalizedChart, payload);
+     return retargetMermaidRenderResult(payload, diagramId);
+   } catch (error) {
+     mermaidRenderCache.delete(normalizedChart);
+@@ -532,9 +541,30 @@ async function renderMermaidChart(diagramId: string, normalizedChart: string): P
+   }
+ }
+ 
++class MermaidErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
++  constructor(props: { children: ReactNode }) {
++    super(props);
++    this.state = { error: null };
++  }
++
++  static getDerivedStateFromError(error: unknown) {
++    return { error: error instanceof Error ? error.message : String(error) };
++  }
++
++  render() {
++    if (this.state.error) {
++      return (
++        <div className="my-2 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
++          Mermaid 渲染异常：{this.state.error}
++        </div>
++      );
++    }
++    return this.props.children;
++  }
++}
++
+ function MermaidDiagram({ chart }: { chart: string }) {
+   const rawId = useId();
+-  const containerRef = useRef<HTMLDivElement | null>(null);
+   const normalizedChart = useMemo(() => chart.trim(), [chart]);
+   const diagramId = useMemo(() => `mermaid-${rawId.replace(/[^a-zA-Z0-9_-]/g, "")}`, [rawId]);
+   const [renderState, setRenderState] = useState<{ status: "loading" | "ready" | "error"; svg?: string; css?: string; error?: string }>(() => {
+@@ -638,7 +668,6 @@ function MermaidDiagram({ chart }: { chart: string }) {
+         <div className="flex min-h-28 items-center justify-center text-sm font-medium text-muted">正在渲染 Mermaid 图...</div>
+       ) : (
+         <div
+-          ref={containerRef}
+           className="mermaid-diagram min-w-fit [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-none"
+           dangerouslySetInnerHTML={{ __html: renderState.svg ?? "" }}
+         />
+@@ -693,7 +722,7 @@ function MDContent({
+       const code = extractText(children);
+       const language = extractCodeLanguage(children);
+       if (language === "mermaid") {
+-        return <MermaidDiagram chart={code} />;
++        return <MermaidErrorBoundary><MermaidDiagram chart={code} /></MermaidErrorBoundary>;
+       }
+       return (
+         <ExpandableMarkdownBlock
+diff --git a/src/ui/utils/activity-workspace-tabs.ts b/src/ui/utils/activity-workspace-tabs.ts
+index dabc107..6791f53 100644
+--- a/src/ui/utils/activity-workspace-tabs.ts
++++ b/src/ui/utils/activity-workspace-tabs.ts
+@@ -1,4 +1,6 @@
+-export type ActivityRailTab = "trace" | "usage" | "preview" | "git";
++export type StaticActivityRailTab = "trace" | "usage" | "preview" | "git";
++export type ActivityAgentRailTab = `agent:${string}`;
++export type ActivityRailTab = StaticActivityRailTab | ActivityAgentRailTab;
+ export type ActivityWorkspaceTab = "browser" | ActivityRailTab;
+ 
+ export type ActivityWorkspaceTabItem = {
+@@ -9,9 +11,30 @@ export type ActivityWorkspaceTabItem = {
+   active: boolean;
+ };
+ 
++export type ActivityWorkspaceAgentTab = {
++  id: ActivityAgentRailTab;
++  label: string;
++  title?: string;
++};
++
++export function isAgentRailTab(tab: ActivityWorkspaceTab): tab is ActivityAgentRailTab {
++  return tab.startsWith("agent:");
++}
++
++export function makeAgentRailTabId(seed: string): ActivityAgentRailTab {
++  const normalized = seed
++    .trim()
++    .replace(/\s+/g, "-")
++    .replace(/[^A-Za-z0-9_.:-]/g, "-")
++    .replace(/-+/g, "-")
++    .slice(0, 72);
++  return `agent:${normalized || "run"}`;
++}
++
+ export function buildActivityWorkspaceTabs(input: {
+   activeTab: ActivityWorkspaceTab;
+   showBrowserTab: boolean;
++  agentTabs?: ActivityWorkspaceAgentTab[];
+ }): ActivityWorkspaceTabItem[] {
+   return [
+     {
+@@ -28,6 +51,13 @@ export function buildActivityWorkspaceTabs(input: {
+       visible: true,
+       active: input.activeTab === "trace",
+     },
++    ...(input.agentTabs ?? []).map((tab) => ({
++      id: tab.id,
++      label: tab.label,
++      title: tab.title ?? tab.label,
++      visible: true,
++      active: input.activeTab === tab.id,
++    })),
+     {
+       id: "usage",
+       label: "Usage",
+diff --git a/src/ui/utils/agent-transcript.ts b/src/ui/utils/agent-transcript.ts
+new file mode 100644
+index 0000000..1e36f88
+--- /dev/null
++++ b/src/ui/utils/agent-transcript.ts
+@@ -0,0 +1,111 @@
++import type { StreamMessage } from "../types.js";
++
++export type AgentTranscriptRunTarget = {
++  id: string;
++  taskId?: string;
++  toolUseId?: string;
++  timelineIds: string[];
++};
++
++function contentArrayFromMessage(message: StreamMessage): unknown[] {
++  const record = message as { message?: { content?: unknown } };
++  const content = record.message?.content;
++  if (!content) return [];
++  return Array.isArray(content) ? content : [content];
++}
++
++function messageToolUseIds(message: StreamMessage): string[] {
++  return contentArrayFromMessage(message)
++    .map((content) => {
++      const record = typeof content === "object" && content !== null
++        ? content as { type?: unknown; id?: unknown }
++        : null;
++      return record?.type === "tool_use" && typeof record.id === "string" ? record.id : "";
++    })
++    .filter(Boolean);
++}
++
++function messageToolResultIds(message: StreamMessage): string[] {
++  return contentArrayFromMessage(message)
++    .map((content) => {
++      const record = typeof content === "object" && content !== null
++        ? content as { type?: unknown; tool_use_id?: unknown }
++        : null;
++      return record?.type === "tool_result" && typeof record.tool_use_id === "string" ? record.tool_use_id : "";
++    })
++    .filter(Boolean);
++}
++
++function messageParentToolUseId(message: StreamMessage): string {
++  if (message.type !== "assistant") return "";
++  const parent = (message as { parent_tool_use_id?: unknown }).parent_tool_use_id;
++  return typeof parent === "string" ? parent : "";
++}
++
++function stringifyContent(value: unknown): string {
++  if (typeof value === "string") return value;
++  if (value === null || value === undefined) return "";
++  try {
++    return JSON.stringify(value);
++  } catch {
++    return String(value);
++  }
++}
++
++function isLowInformationAgentText(text: string): boolean {
++  const normalized = text.replace(/\s+/g, " ").trim();
++  if (!normalized) return true;
++  if (/^Task\s*#?\w+\s+created successfully\b/i.test(normalized)) return true;
++  if (/No messages from Codex/i.test(normalized)) return true;
++  if (/agents?\s+(?:are|is)\s+still\s+(?:working|running)/i.test(normalized)) return true;
++  if (/task list shows/i.test(normalized)) return true;
++  return false;
++}
++
++function messageHasDetailedAgentContent(message: StreamMessage): boolean {
++  return contentArrayFromMessage(message).some((content) => {
++    const record = typeof content === "object" && content !== null
++      ? content as { type?: unknown; name?: unknown; text?: unknown; content?: unknown }
++      : null;
++
++    if (record?.type === "text" && typeof record.text === "string") {
++      return !isLowInformationAgentText(record.text);
++    }
++    if (record?.type === "tool_result") {
++      return !isLowInformationAgentText(stringifyContent(record.content));
++    }
++    if (record?.type === "tool_use" && typeof record.name === "string") {
++      return !["Task", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TeamCreate", "TeamDelete", "SendMessage"].includes(record.name);
++    }
++    return false;
++  });
++}
++
++export function hasDetailedAgentTranscript(messages: StreamMessage[]): boolean {
++  return messages.some(messageHasDetailedAgentContent);
++}
++
++export function buildAgentTranscriptMessages(
++  messages: StreamMessage[],
++  run: AgentTranscriptRunTarget | null,
++): StreamMessage[] {
++  if (!run) return [];
++  const linkedIds = new Set([
++    run.id,
++    run.taskId,
++    run.toolUseId,
++    ...run.timelineIds,
++  ].filter((value): value is string => Boolean(value)));
++
++  return messages.filter((message) => {
++    if (message.type === "assistant") {
++      const parentToolUseId = messageParentToolUseId(message);
++      if (parentToolUseId && linkedIds.has(parentToolUseId)) return true;
++      return messageToolUseIds(message).some((toolUseId) => linkedIds.has(toolUseId));
++    }
++    if (message.type === "user") {
++      return messageToolResultIds(message).some((toolUseId) => linkedIds.has(toolUseId));
++    }
++    return false;
++  });
++}
+diff --git a/test/electron/activity-rail-model.test.ts b/test/electron/activity-rail-model.test.ts
+index 36ba99d..aa1c11b 100644
+--- a/test/electron/activity-rail-model.test.ts
++++ b/test/electron/activity-rail-model.test.ts
+@@ -562,6 +562,294 @@ test("buildActivityRailModel structures tool detail sections for drawer renderin
+   assert.match(toolItem.detailSections[1]?.raw ?? "", /"tool_name": "WebSearch"/);
+ });
+ 
++test("buildActivityRailModel groups subagent execution into agent cards", () => {
++  const model = buildActivityRailModel(
++    {
++      id: "session-agent-runs",
++      title: "Agent runs",
++      status: "completed",
++      messages: [
++        {
++          type: "user_prompt",
++          prompt: "派一个调研员做 RepoWiki 对比",
++        },
++        {
++          type: "assistant",
++          capturedAt: 100,
++          uuid: "assistant-agent-tool",
++          session_id: "remote-agent",
++          parent_tool_use_id: null,
++          message: {
++            id: "assistant-agent-tool",
++            model: "Qwen3-Coder-480B-A35B-Instruct",
++            role: "assistant",
++            type: "message",
++            content: [
++              {
++                type: "tool_use",
++                id: "tool-agent",
++                name: "Task",
++                input: {
++                  description: "RepoWiki 对比分析",
++                  prompt: "分析 .tech/repowiki 与 Qoder 的差异。",
++                },
++              },
++            ],
++            stop_reason: null,
++            stop_sequence: null,
++            usage: {
++              input_tokens: 0,
++              output_tokens: 0,
++              cache_creation_input_tokens: null,
++              cache_read_input_tokens: null,
++            },
++          },
++        } as never,
++        {
++          type: "system",
++          subtype: "task_started",
++          uuid: "task-started-1",
++          session_id: "remote-agent",
++          task_id: "task-1",
++          tool_use_id: "tool-agent",
++          description: "RepoWiki 对比分析",
++          task_type: "sub_agent",
++          prompt: "分析 .tech/repowiki 与 Qoder 的差异。",
++        } as never,
++        {
++          type: "system",
++          subtype: "task_progress",
++          uuid: "task-progress-1",
++          session_id: "remote-agent",
++          task_id: "task-1",
++          description: "RepoWiki 对比分析",
++          summary: "已完成架构和文档质量对比。",
++          usage: {
++            total_tokens: 2048,
++            tool_uses: 4,
++            duration_ms: 1500,
++          },
++        } as never,
++        {
++          type: "assistant",
++          capturedAt: 200,
++          uuid: "assistant-child",
++          session_id: "remote-agent",
++          parent_tool_use_id: "tool-agent",
++          message: {
++            id: "assistant-child",
++            model: "Qwen3-Coder-480B-A35B-Instruct",
++            role: "assistant",
++            type: "message",
++            content: [
++              {
++                type: "text",
++                text: "子代理结论：.tech/repowiki 的 Agent Cards 更完整。",
++              },
++            ],
++            stop_reason: null,
++            stop_sequence: null,
++            usage: {
++              input_tokens: 0,
++              output_tokens: 0,
++              cache_creation_input_tokens: null,
++              cache_read_input_tokens: null,
++            },
++          },
++        } as never,
++        {
++          type: "system",
++          subtype: "task_notification",
++          uuid: "task-notification-1",
++          session_id: "remote-agent",
++          task_id: "task-1",
++          tool_use_id: "tool-agent",
++          status: "completed",
++          output_file: "/tmp/task-1.md",
++          summary: "RepoWiki 对比分析完成。",
++          usage: {
++            total_tokens: 4096,
++            tool_uses: 6,
++            duration_ms: 3000,
++          },
++        } as never,
++      ],
++    },
++    [],
++    "",
++  );
++
++  assert.equal(model.agentRuns.length, 1);
++  const run = model.agentRuns[0];
++  assert.equal(run?.id, "task-1");
++  assert.equal(run?.toolUseId, "tool-agent");
++  assert.equal(run?.status, "completed");
++  assert.equal(run?.kind, "sub_agent");
++  assert.ok(run?.timelineIds.includes("tool-agent"));
++  assert.ok(run?.timelineIds.some((id) => id.startsWith("assistant-child-text-")));
++  assert.match(run?.outputText ?? "", /Agent Cards/);
++  assert.ok(model.timeline.find((item) => item.id === "tool-agent")?.parentTaskId === "task-1");
++});
++
++test("buildActivityRailModel merges Agent Team task creation and fetched result content", () => {
++  const model = buildActivityRailModel(
++    {
++      id: "session-team-task",
++      title: "Team Task",
++      status: "completed",
++      messages: [
++        {
++          type: "assistant",
++          capturedAt: 100,
++          uuid: "assistant-team-create",
++          session_id: "remote-team",
++          parent_tool_use_id: null,
++          message: {
++            id: "assistant-team-create",
++            model: "Qwen3-Coder-480B-A35B-Instruct",
++            role: "assistant",
++            type: "message",
++            content: [
++              {
++                type: "tool_use",
++                id: "tool-task-create",
++                name: "TaskCreate",
++                input: { subject: "汇总审查报告", description: "汇总所有成员的审查结论" },
++              },
++            ],
++            stop_reason: null,
++            stop_sequence: null,
++            usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: null, cache_read_input_tokens: null },
++          },
++        } as never,
++        {
++          type: "user",
++          capturedAt: 120,
++          uuid: "user-task-create-result",
++          session_id: "remote-team",
++          message: {
++            role: "user",
++            content: [
++              { type: "tool_result", tool_use_id: "tool-task-create", content: "Task #4 created successfully: 汇总审查报告", is_error: false },
++            ],
++          },
++        } as never,
++        {
++          type: "assistant",
++          capturedAt: 200,
++          uuid: "assistant-team-get",
++          session_id: "remote-team",
++          parent_tool_use_id: null,
++          message: {
++            id: "assistant-team-get",
++            model: "Qwen3-Coder-480B-A35B-Instruct",
++            role: "assistant",
++            type: "message",
++            content: [
++              {
++                type: "tool_use",
++                id: "tool-task-get",
++                name: "TaskGet",
++                input: { taskId: "4" },
++              },
++            ],
++            stop_reason: null,
++            stop_sequence: null,
++            usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: null, cache_read_input_tokens: null },
++          },
++        } as never,
++        {
++          type: "user",
++          capturedAt: 220,
++          uuid: "user-task-get-result",
++          session_id: "remote-team",
++          message: {
++            role: "user",
++            content: [
++              {
++                type: "tool_result",
++                tool_use_id: "tool-task-get",
++                content: JSON.stringify({
++                  task: {
++                    id: 4,
++                    status: "completed",
++                    result: "## 汇总审查报告\n\n- 关键观察：RepoWiki 对比分析已经完成。\n- 风险：需要补齐具体引用。",
++                  },
++                }),
++                is_error: false,
++              },
++            ],
++          },
++        } as never,
++      ],
++    },
++    [],
++    "",
++  );
++
++  assert.equal(model.agentRuns.length, 1);
++  const run = model.agentRuns[0];
++  assert.equal(run?.id, "team-task:4");
++  assert.equal(run?.toolUseId, "tool-task-create");
++  assert.ok(run?.timelineIds.includes("tool-task-create"));
++  assert.ok(run?.timelineIds.includes("tool-task-get"));
++  assert.doesNotMatch(run?.outputText ?? "", /created successfully/);
++  assert.match(run?.outputText ?? "", /汇总审查报告/);
++  assert.match(run?.outputText ?? "", /关键观察/);
++});
++
++test("buildActivityRailModel does not create agent runs for low-detail team task tools", () => {
++  const model = buildActivityRailModel(
++    {
++      id: "session-team-list",
++      title: "Team task list",
++      status: "completed",
++      messages: [
++        {
++          type: "assistant",
++          capturedAt: 100,
++          uuid: "assistant-team-list",
++          session_id: "remote-team-list",
++          parent_tool_use_id: null,
++          message: {
++            id: "assistant-team-list",
++            model: "Qwen3-Coder-480B-A35B-Instruct",
++            role: "assistant",
++            type: "message",
++            content: [
++              {
++                type: "tool_use",
++                id: "tool-task-list",
++                name: "TaskList",
++                input: {},
++              },
++            ],
++            stop_reason: null,
++            stop_sequence: null,
++            usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: null, cache_read_input_tokens: null },
++          },
++        } as never,
++        {
++          type: "user",
++          capturedAt: 120,
++          uuid: "user-task-list-result",
++          session_id: "remote-team-list",
++          message: {
++            role: "user",
++            content: [
++              { type: "tool_result", tool_use_id: "tool-task-list", content: "The agents are still working.", is_error: false },
++            ],
++          },
++        } as never,
++      ],
++    },
++    [],
++    "",
++  );
++
++  assert.equal(model.agentRuns.length, 0);
++});
++
+ test("buildActivityRailModel ignores option-style assistant lists as plan", () => {
+   const model = buildActivityRailModel(
+     {
+diff --git a/test/electron/activity-workspace-tabs.test.ts b/test/electron/activity-workspace-tabs.test.ts
+index 6769be4..88fd2f4 100644
+--- a/test/electron/activity-workspace-tabs.test.ts
++++ b/test/electron/activity-workspace-tabs.test.ts
+@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
+ 
+ import {
+   buildActivityWorkspaceTabs,
++  makeAgentRailTabId,
+   shouldShowCreateBrowserTab,
+ } from "../../src/ui/utils/activity-workspace-tabs.js";
+ 
+@@ -30,6 +31,19 @@ describe("activity workspace tabs", () => {
+     assert.equal(shouldShowCreateBrowserTab(true), false);
+   });
+ 
++  it("opens agent execution pages as dynamic tabs", () => {
++    const agentTabId = makeAgentRailTabId("RepoWiki 对比分析");
++    const visibleTabs = buildActivityWorkspaceTabs({
++      activeTab: agentTabId,
++      showBrowserTab: false,
++      agentTabs: [{ id: agentTabId, label: "RepoWiki 对比分析", title: "RepoWiki 对比分析 - 已完成" }],
++    }).filter((tab) => tab.visible);
++
++    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "trace", agentTabId, "usage", "git"]);
++    assert.equal(visibleTabs.find((tab) => tab.id === agentTabId)?.active, true);
++    assert.equal(visibleTabs.find((tab) => tab.id === agentTabId)?.label, "RepoWiki 对比分析");
++  });
++
+   it("defaults the activity rail to preview in app state", () => {
+     const appSource = readFileSync("src/ui/App.tsx", "utf8");
+     const railSource = readFileSync("src/ui/components/ActivityRail.tsx", "utf8");
+diff --git a/test/electron/agent-transcript.test.ts b/test/electron/agent-transcript.test.ts
+new file mode 100644
+index 0000000..e91a2e0
+--- /dev/null
++++ b/test/electron/agent-transcript.test.ts
+@@ -0,0 +1,164 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++
++import { buildAgentTranscriptMessages, hasDetailedAgentTranscript } from "../../src/ui/utils/agent-transcript.js";
++import type { StreamMessage } from "../../src/ui/types.js";
++
++function uuids(messages: StreamMessage[]): string[] {
++  return messages.map((message) => (message as { uuid?: string }).uuid ?? "");
++}
++
++test("buildAgentTranscriptMessages keeps the raw subagent execution stream", () => {
++  const messages = [
++    {
++      type: "assistant",
++      uuid: "root-task-call",
++      parent_tool_use_id: null,
++      message: {
++        role: "assistant",
++        content: [
++          {
++            type: "tool_use",
++            id: "tool-agent",
++            name: "Task",
++            input: { description: "RepoWiki 对比分析" },
++          },
++        ],
++      },
++    },
++    {
++      type: "assistant",
++      uuid: "child-plan",
++      parent_tool_use_id: "tool-agent",
++      message: {
++        role: "assistant",
++        content: [{ type: "text", text: "我理解了调整后的任务方向，先搜索再分析。" }],
++      },
++    },
++    {
++      type: "assistant",
++      uuid: "child-search-call",
++      parent_tool_use_id: "tool-agent",
++      message: {
++        role: "assistant",
++        content: [{ type: "tool_use", id: "tool-child-grep", name: "Grep", input: { pattern: "repowiki" } }],
++      },
++    },
++    {
++      type: "user",
++      uuid: "child-search-result",
++      message: {
++        role: "user",
++        content: [{ type: "tool_result", tool_use_id: "tool-child-grep", content: "15 个结果", is_error: false }],
++      },
++    },
++    {
++      type: "assistant",
++      uuid: "unrelated",
++      parent_tool_use_id: null,
++      message: {
++        role: "assistant",
++        content: [{ type: "text", text: "主线程里的其他内容" }],
++      },
++    },
++  ] as unknown as StreamMessage[];
++
++  const transcript = buildAgentTranscriptMessages(messages, {
++    id: "task-1",
++    taskId: "task-1",
++    toolUseId: "tool-agent",
++    timelineIds: ["tool-agent", "tool-child-grep", "child-plan-text-1"],
++  });
++
++  assert.deepEqual(uuids(transcript), [
++    "root-task-call",
++    "child-plan",
++    "child-search-call",
++    "child-search-result",
++  ]);
++});
++
++test("buildAgentTranscriptMessages keeps Agent Team tool calls and raw task results", () => {
++  const messages = [
++    {
++      type: "assistant",
++      uuid: "team-create-call",
++      parent_tool_use_id: null,
++      message: {
++        role: "assistant",
++        content: [{ type: "tool_use", id: "tool-task-create", name: "TaskCreate", input: { subject: "汇总审查报告" } }],
++      },
++    },
++    {
++      type: "user",
++      uuid: "team-create-result",
++      message: {
++        role: "user",
++        content: [{ type: "tool_result", tool_use_id: "tool-task-create", content: "Task #4 created successfully: 汇总审查报告", is_error: false }],
++      },
++    },
++    {
++      type: "assistant",
++      uuid: "team-get-call",
++      parent_tool_use_id: null,
++      message: {
++        role: "assistant",
++        content: [{ type: "tool_use", id: "tool-task-get", name: "TaskGet", input: { taskId: "4" } }],
++      },
++    },
++    {
++      type: "user",
++      uuid: "team-get-result",
++      message: {
++        role: "user",
++        content: [
++          {
++            type: "tool_result",
++            tool_use_id: "tool-task-get",
++            content: JSON.stringify({ task: { result: "## 汇总审查报告\n\n- 关键观察：原始内容完整保留。" } }),
++            is_error: false,
++          },
++        ],
++      },
++    },
++  ] as unknown as StreamMessage[];
++
++  const transcript = buildAgentTranscriptMessages(messages, {
++    id: "team-task:4",
++    toolUseId: "tool-task-create",
++    timelineIds: ["tool-task-create", "tool-task-get"],
++  });
++
++  assert.deepEqual(uuids(transcript), [
++    "team-create-call",
++    "team-create-result",
++    "team-get-call",
++    "team-get-result",
++  ]);
++  assert.match(JSON.stringify(transcript), /Task #4 created successfully/);
++  assert.match(JSON.stringify(transcript), /关键观察：原始内容完整保留/);
++});
++
++test("hasDetailedAgentTranscript rejects low-information team status checks", () => {
++  const messages = [
++    {
++      type: "assistant",
++      uuid: "team-list-call",
++      parent_tool_use_id: null,
++      message: {
++        role: "assistant",
++        content: [{ type: "tool_use", id: "tool-task-list", name: "TaskList", input: {} }],
++      },
++    },
++    {
++      type: "user",
++      uuid: "team-list-result",
++      message: {
++        role: "user",
++        content: [{ type: "tool_result", tool_use_id: "tool-task-list", content: "The agents are still working.", is_error: false }],
++      },
++    },
++  ] as unknown as StreamMessage[];
++
++  assert.equal(hasDetailedAgentTranscript(messages), false);
++});

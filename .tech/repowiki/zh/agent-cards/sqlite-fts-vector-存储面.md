@@ -80,11 +80,13 @@ SQLite, FTS5, sqlite-vec, embedding, knowledge_documents, knowledge_chunks
 - database:idx_knowledge_documents_source @ src/electron/libs/knowledge/knowledge-repository.ts:134 - SQLite index
 - database:idx_knowledge_chunks_document @ src/electron/libs/knowledge/knowledge-repository.ts:135 - SQLite index
 - database:idx_knowledge_chunks_workspace @ src/electron/libs/knowledge/knowledge-repository.ts:136 - SQLite index
-- database:knowledge_ui_workspaces @ src/electron/libs/knowledge/knowledge-ui-store.ts:101 - SQLite table
-- database:knowledge_ui_generation @ src/electron/libs/knowledge/knowledge-ui-store.ts:111 - SQLite table
-- database:knowledge_ui_documents @ src/electron/libs/knowledge/knowledge-ui-store.ts:125 - SQLite table
-- database:idx_knowledge_ui_workspaces_hidden @ src/electron/libs/knowledge/knowledge-ui-store.ts:137 - SQLite index
-- database:idx_knowledge_ui_documents_workspace @ src/electron/libs/knowledge/knowledge-ui-store.ts:138 - SQLite index
+- database:knowledge_ui_workspaces @ src/electron/libs/knowledge/knowledge-ui-store.ts:103 - SQLite table
+- database:knowledge_ui_generation @ src/electron/libs/knowledge/knowledge-ui-store.ts:113 - SQLite table
+- database:knowledge_ui_documents @ src/electron/libs/knowledge/knowledge-ui-store.ts:127 - SQLite table
+- database:knowledge_ui_workspace_links @ src/electron/libs/knowledge/knowledge-ui-store.ts:139 - SQLite table
+- database:idx_knowledge_ui_workspaces_hidden @ src/electron/libs/knowledge/knowledge-ui-store.ts:147 - SQLite index
+- database:idx_knowledge_ui_documents_workspace @ src/electron/libs/knowledge/knowledge-ui-store.ts:148 - SQLite index
+- database:idx_knowledge_ui_workspace_links_target @ src/electron/libs/knowledge/knowledge-ui-store.ts:149 - SQLite index
 - database:learnings @ src/electron/libs/learning-store.ts:31 - SQLite table
 - database:learnings_fts @ src/electron/libs/learning-store.ts:44 - SQLite table
 - database:learnings_sessions @ src/electron/libs/learning-store.ts:84 - SQLite table
@@ -92,7 +94,5 @@ SQLite, FTS5, sqlite-vec, embedding, knowledge_documents, knowledge_chunks
 - database:idx_learnings_project @ src/electron/libs/learning-store.ts:79 - SQLite index
 - database:idx_learnings_created_at @ src/electron/libs/learning-store.ts:80 - SQLite index
 - database:idx_learnings_sessions_project @ src/electron/libs/learning-store.ts:94 - SQLite index
-- database:idx_learnings_sessions_started_at @ src/electron/libs/learning-store.ts:95 - SQLite index
-- database:memories @ src/electron/libs/memory/memory-repository.ts:45 - SQLite table
 
 </agent_card>

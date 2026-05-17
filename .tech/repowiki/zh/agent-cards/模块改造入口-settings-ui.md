@@ -10,16 +10,16 @@
 - `src/ui/components/settings/PluginsSettingsPage.tsx`: 定义或调用跨进程接口
 - `src/ui/components/settings/MySkillsView.tsx`: 定义或调用跨进程接口
 - `src/ui/components/settings/settings-utils.ts`: 被依赖较多或包含关键导出
-- `src/ui/components/settings/ChannelsSettingsPage.tsx`: 被依赖较多或包含关键导出
 - `src/ui/components/settings/skill-utils.ts`: 被依赖较多或包含关键导出
+- `src/ui/components/settings/ChannelsSettingsPage.tsx`: 被依赖较多或包含关键导出
 
 ## 相关文件
 - `src/ui/components/settings/InstallSkillsView.tsx`
 - `src/ui/components/settings/PluginsSettingsPage.tsx`
 - `src/ui/components/settings/MySkillsView.tsx`
 - `src/ui/components/settings/settings-utils.ts`
-- `src/ui/components/settings/ChannelsSettingsPage.tsx`
 - `src/ui/components/settings/skill-utils.ts`
+- `src/ui/components/settings/ChannelsSettingsPage.tsx`
 - `src/ui/components/settings/CodeEditor.tsx`
 - `src/ui/components/settings/McpSettingsPage.tsx`
 - `src/ui/components/settings/ApiProfilesSettingsPage.tsx`
