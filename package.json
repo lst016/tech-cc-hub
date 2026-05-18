@@ -54,6 +54,7 @@
 		"@floating-ui/react": "^0.27.19",
 		"@gitgraph/react": "^1.6.0",
 		"@icon-park/react": "^1.4.2",
+		"@langchain/core": "^1.1.46",
 		"@langchain/textsplitters": "^1.0.1",
 		"@monaco-editor/react": "^4.7.0",
 		"@radix-ui/react-dialog": "^1.1.15",
