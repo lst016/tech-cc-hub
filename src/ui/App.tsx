@@ -25,7 +25,6 @@ import { TaskPanel } from "./components/TaskPanel";
 import { OPEN_BROWSER_WORKBENCH_URL_EVENT, type OpenBrowserWorkbenchUrlDetail } from "./events";
 import { copyTextToClipboard } from "./utils/clipboard";
 import type { ActivityRailTab } from "./utils/activity-workspace-tabs";
-import { getAvailableModelsForProfiles, getEnabledProfiles } from "./components/settings/settings-utils";
 import { DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT } from "../shared/claude-agent-teams";
 import {
   DEV_BRIDGE_READY_EVENT,
@@ -367,7 +366,6 @@ function App() {
   showActivityRailRef.current = showActivityRail;
   const [resizingPane, setResizingPane] = useState<"sidebar" | "activityRail" | null>(null);
   const [copiedSessionId, setCopiedSessionId] = useState(false);
-  const runtimeModelSessionSyncRef = useRef<string | null>(null);
   const prevMessagesLengthRef = useRef(0);
   const scrollHeightBeforeLoadRef = useRef(0);
   const shouldRestoreScrollRef = useRef(false);
@@ -410,7 +408,6 @@ function App() {
       current[activeSessionId] === nextTab ? current : { ...current, [activeSessionId]: nextTab }
     ));
   }, [activeSessionId]);
-  const archivedSessions = useAppStore((s) => s.archivedSessions);
   const activeSession = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId]) : undefined));
   const activeHistoryCursor = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId])?.historyCursor : undefined));
   const activeSessionHydrated = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId])?.hydrated : undefined));
@@ -435,7 +432,6 @@ function App() {
   const reasoningMode = useAppStore((s) => s.reasoningMode);
   const permissionMode = useAppStore((s) => s.permissionMode);
   const setApiConfigSettings = useAppStore((s) => s.setApiConfigSettings);
-  const setRuntimeModel = useAppStore((s) => s.setRuntimeModel);
   const pendingStart = useAppStore((s) => s.pendingStart);
   const setPendingStart = useAppStore((s) => s.setPendingStart);
   const apiConfigChecked = useAppStore((s) => s.apiConfigChecked);
@@ -754,7 +750,6 @@ function App() {
 
     const requestHistory = () => {
       markHistoryRequested(activeSessionId);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsLoadingHistory(true);
       sendEvent({
         type: "session.history",
@@ -841,7 +836,6 @@ function App() {
 
   // Reset scroll state on session change
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setShouldAutoScroll(true);
     setHasNewMessages(false);
     setShowSessionAnalysis(false);
@@ -856,7 +850,6 @@ function App() {
     if (shouldAutoScroll) {
       scrollChatToBottom("auto");
     } else if (messages.length > prevMessagesLengthRef.current && prevMessagesLengthRef.current > 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setHasNewMessages(true);
     }
     prevMessagesLengthRef.current = messages.length;
@@ -894,32 +887,6 @@ function App() {
       body.style.overflow = previousBodyOverflow;
     };
   }, [showSessionAnalysis]);
-
-  useEffect(() => {
-    if (!activeSessionId) {
-      runtimeModelSessionSyncRef.current = null;
-      return;
-    }
-
-    const nextSession = activeSession ?? archivedSessions[activeSessionId];
-    const enabledProfiles = getEnabledProfiles(apiConfigSettings.profiles);
-    const fallbackProfile = enabledProfiles[0];
-    const availableModels = getAvailableModelsForProfiles(enabledProfiles);
-    const selectedSessionModel = nextSession?.model?.trim();
-    const fallbackModel = fallbackProfile?.model?.trim();
-    const nextModel = selectedSessionModel && availableModels.includes(selectedSessionModel)
-      ? selectedSessionModel
-      : fallbackModel;
-    if (!nextModel) {
-      return;
-    }
-
-    const syncKey = `${activeSessionId}:${nextModel}`;
-    if (runtimeModelSessionSyncRef.current !== syncKey) {
-      runtimeModelSessionSyncRef.current = syncKey;
-      setRuntimeModel(nextModel);
-    }
-  }, [activeSessionId, activeSession, archivedSessions, apiConfigSettings, setRuntimeModel]);
 
   useEffect(() => {
     return () => {

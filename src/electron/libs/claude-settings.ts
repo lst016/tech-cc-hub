@@ -448,19 +448,13 @@ export function getClaudeCodeModelOption(config: ApiConfig, modelName: string | 
     return undefined;
   }
 
-  try {
-    const url = new URL(config.baseURL);
-    if (url.hostname === "api.anthropic.com") {
-      return normalizedModel;
-    }
-  } catch {
-    // Invalid URLs are handled later by the SDK/network path.
-  }
+  void config;
 
-  // For custom Anthropic-compatible gateways, let ANTHROPIC_MODEL carry the
-  // provider-specific model name. Passing it as --model makes Claude Code apply
-  // its own model availability validation before the request reaches the gateway.
-  return undefined;
+  // Claude Code 2.1.x can ignore environment-only default model overrides for
+  // custom Anthropic-compatible gateways and fall back to its own Opus default.
+  // Always pass the selected model through the SDK so the spawned CLI receives
+  // an explicit --model value.
+  return normalizedModel;
 }
 
 export function normalizeAnthropicBaseUrlForClaudeCode(baseURL: string): string {
