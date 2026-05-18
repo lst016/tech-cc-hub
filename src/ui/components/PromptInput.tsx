@@ -1430,9 +1430,18 @@ export function PromptInput({
   const setPromptDraft = useCallback((nextPrompt: string, nextCursorIndex = nextPrompt.length) => {
     promptDraftRef.current = nextPrompt;
     pendingCursorOffsetRef.current = nextCursorIndex;
+    const editor = promptRef.current;
+    if (editor && !isComposingRef.current) {
+      renderPromptEditorContent(editor, buildSlashCommandDisplayParts(nextPrompt, slashCommands));
+      editor.dataset.renderedPrompt = nextPrompt;
+      if (document.activeElement === editor) {
+        restoreEditorSelection(editor, nextCursorIndex);
+      }
+      pendingCursorOffsetRef.current = null;
+    }
     setPrompt(nextPrompt);
     setCursorIndex(nextCursorIndex);
-  }, [setPrompt]);
+  }, [setPrompt, slashCommands]);
 
   const isCompositionSettling = useCallback(() => (
     Date.now() - compositionEndedAtRef.current < IME_ENTER_GRACE_MS
@@ -1506,6 +1515,12 @@ export function PromptInput({
     setShowSlashBrowser(false);
     setDismissedSlashQuery(null);
   }, [activeSessionId, clearBrowserAnnotations, clearCodeReferences, clearFileReferences, clearMessageReferences, setBrowserWorkbenchAnnotations, setPromptDraft]);
+
+  const clearPromptDraftText = useCallback(() => {
+    setPromptDraft("", 0);
+    setShowSlashBrowser(false);
+    setDismissedSlashQuery(null);
+  }, [setPromptDraft]);
 
   const syncPromptEditorState = useCallback(() => {
     const editor = promptRef.current;
@@ -1638,6 +1653,7 @@ export function PromptInput({
       }
 
       setSubmissionStatus("正在发送...");
+      clearPromptDraftText();
 
       const sent = await sendPromptDraft(promptWithAnnotations, attachmentsSnapshot, { clearPrompt: false });
       if (sent) {
@@ -1653,7 +1669,7 @@ export function PromptInput({
       setSubmissionStatus(null);
       submitInFlightRef.current = false;
     }
-  }, [attachments, browserAnnotations, clearComposer, codeReferences, fileReferences, getCurrentPromptDraft, isRunning, messageReferences, onSendMessage, queueCurrentDraft, sendPromptDraft, setGlobalError, setPromptDraft, validatePromptDraft]);
+  }, [attachments, browserAnnotations, clearComposer, clearPromptDraftText, codeReferences, fileReferences, getCurrentPromptDraft, isRunning, messageReferences, onSendMessage, queueCurrentDraft, sendPromptDraft, setGlobalError, setPromptDraft, validatePromptDraft]);
 
   useEffect(() => {
     const handlePromptSubmit = () => {
