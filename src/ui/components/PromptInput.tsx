@@ -41,8 +41,6 @@ const LINE_HEIGHT = 21;
 const MAX_HEIGHT = MAX_ROWS * LINE_HEIGHT;
 const IME_ENTER_GRACE_MS = 120;
 const SESSION_TITLE_TIMEOUT_MS = 1800;
-const SLASH_PREVIEW_LIMIT = 8;
-const SLASH_QUERY_LIMIT = 16;
 const FILE_MENTION_PREVIEW_LIMIT = 10;
 const FILE_MENTION_SCAN_LIMIT = 260;
 const FILE_MENTION_SCAN_DEPTH = 4;
@@ -1363,14 +1361,7 @@ export function PromptInput({
           return name.includes(normalizedSlashQuery) || description.includes(normalizedSlashQuery);
         });
 
-    if (showSlashBrowser) {
-      return matchedCommands;
-    }
-
-    if (!activeSlashQuery) {
-      return matchedCommands.slice(0, SLASH_PREVIEW_LIMIT);
-    }
-    return matchedCommands.slice(0, SLASH_QUERY_LIMIT);
+    return matchedCommands;
   }, [showSlashBrowser, slashCommands, slashQuery]);
   const slashPaletteDismissed = isDismissedSlashCommandQuery(prompt, dismissedSlashQuery, showSlashBrowser, cursorIndex || prompt.length);
   const showSlashPalette = (slashQuery !== null || showSlashBrowser)
@@ -2144,8 +2135,9 @@ export function PromptInput({
       {showSlashPalette && (
         <div className="relative z-[130] mx-auto mb-3 w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
           <div className="overflow-hidden rounded-[24px] border border-black/6 bg-white/94 shadow-[0_18px_50px_rgba(30,38,52,0.08)] backdrop-blur">
-            <div className="border-b border-black/6 px-4 py-2 text-xs font-medium text-muted">
-              可用 Slash 命令
+            <div className="flex items-center justify-between gap-3 border-b border-black/6 px-4 py-2 text-xs font-medium text-muted">
+              <span>可用 Slash 命令</span>
+              <span>{filteredSlashCommands.length} 个</span>
             </div>
             <div className="grid max-h-[min(42vh,320px)] gap-1 overflow-y-auto overflow-x-hidden p-2">
               {filteredSlashCommands.map((command, index) => (

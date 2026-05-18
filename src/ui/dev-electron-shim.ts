@@ -417,6 +417,7 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       "session.list",
       "session.history",
       "session.workflow.catalog.list",
+      "agent.list",
       "mcp.list",
     ]);
 

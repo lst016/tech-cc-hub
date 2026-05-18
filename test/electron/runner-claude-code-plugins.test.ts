@@ -27,3 +27,15 @@ test("runner enables discovered skills for desktop development sessions", () => 
   assert.match(source, /runSurface === "development"\s*\? "all"/);
   assert.match(source, /skills:\s*enabledSkills/);
 });
+
+test("runner injects explicitly invoked local Claude definitions into the session prompt", () => {
+  const runnerSource = readFileSync("src/electron/libs/runner.ts", "utf8");
+  const catalogSource = readFileSync("src/electron/libs/slash-command-catalog.ts", "utf8");
+  const ipcSource = readFileSync("src/electron/ipc-handlers.ts", "utf8");
+
+  assert.match(runnerSource, /buildInvokedLocalSlashDefinitionPromptAppend\(currentPrompt, projectCwd\)/);
+  assert.match(catalogSource, /Local Claude slash definition invocation:/);
+  assert.match(catalogSource, /discoverSlashCommandDefinitionItemsInRoots\(resolveSlashCommandRoots\(options\.cwd\)\)/);
+  assert.match(ipcSource, /Invoked local Claude \$\{invokedDefinition\.definitionKind\}: \$\{invokedDefinition\.name\}/);
+  assert.match(ipcSource, /sourceKind:\s*"skill"/);
+});

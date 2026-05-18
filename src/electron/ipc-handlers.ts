@@ -1,7 +1,5 @@
 import { app, BrowserWindow, clipboard, dialog, shell, type MessageBoxOptions } from "electron";
-import { readdirSync, readFileSync } from "fs";
-import { homedir } from "os";
-import { basename, extname, join } from "path";
+import { join } from "path";
 
 import {
   createStoredUserPromptMessage,
@@ -14,13 +12,13 @@ import { listBuiltinMcpServerInfos } from "../shared/builtin-mcp-registry.js";
 import { runClaude, type RunnerHandle } from "./libs/runner.js";
 import { buildRunnerReuseKey, canReuseRunner } from "./libs/runner-reuse.js";
 import { persistImageAttachmentReference, rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
-import { resolveAgentRuntimeContext } from "./libs/agent-resolver.js";
+import { listAvailableClaudeAgents, resolveAgentRuntimeContext } from "./libs/agent-resolver.js";
 import { getApiConfigForModel, getCurrentApiConfig, getModelConfig, resolveApiConfigForModel, supportsRemoteSessionResume } from "./libs/claude-settings.js";
 import { loadGlobalRuntimeConfig, saveGlobalRuntimeConfig } from "./libs/config-store.js";
 import { listExternalMcpServerInfos } from "./libs/external-mcp-servers.js";
 import { buildNextFigmaOfficialAuthStateRuntimeConfig, isFigmaMcpOAuthCallbackPrompt, redactFigmaMcpOAuthCallbackPrompt, type FigmaOfficialAuthState } from "./libs/figma-official-plugin.js";
 import { SessionStore } from "./libs/session-store.js";
-import { buildSessionSlashCommands } from "./libs/slash-command-catalog.js";
+import { buildSessionSlashCommands, resolveInvokedLocalSlashDefinition } from "./libs/slash-command-catalog.js";
 import { stripInlineBase64ImagesFromMessage } from "./libs/tool-output-sanitizer.js";
 import { buildSessionWorkflowCatalog } from "./libs/workflow-catalog.js";
 import { buildStatelessContinuationPayload } from "./stateless-continuation.js";
@@ -413,6 +411,20 @@ function buildPromptLedgerForRun(options: {
   }
 
   const promptSources: PromptLedgerSource[] = [...agentContext.promptSources];
+  const invokedDefinition = resolveInvokedLocalSlashDefinition({
+    cwd: options.session.cwd,
+    prompt: options.prompt,
+  });
+  if (invokedDefinition) {
+    promptSources.push({
+      id: `invoked-local-claude-definition-${invokedDefinition.name}`,
+      label: `Invoked local Claude ${invokedDefinition.definitionKind}: ${invokedDefinition.name}`,
+      sourceKind: "skill",
+      text: invokedDefinition.content,
+      sourcePath: invokedDefinition.filePath,
+    });
+  }
+
   if (options.session.workflowMarkdown?.trim()) {
     promptSources.push({
       id: "session-workflow",
@@ -1537,33 +1549,7 @@ export async function handleClientEvent(event: ClientEvent) {
   }
 
   if (event.type === "agent.list") {
-    const agents: Array<{ id: string; name: string; description?: string; scope: string }> = [];
-    const cwd = event.payload.cwd?.trim();
-    const projectRoot = cwd ? join(cwd, ".claude", "agents") : undefined;
-
-    for (const [scope, root] of [["user", join(homedir(), ".claude", "agents")], ["project", projectRoot]] as const) {
-      if (!root) continue;
-      try {
-        const entries = readdirSync(root, { withFileTypes: true });
-        for (const entry of entries) {
-          if (!entry.isFile()) continue;
-          const ext = extname(entry.name).toLowerCase();
-          const id = basename(entry.name, ext);
-          const name = id;
-          if (ext === ".json") {
-            try {
-              const parsed = JSON.parse(readFileSync(join(root, entry.name), "utf8")) as { name?: string; description?: string; enabled?: boolean };
-              if (parsed.enabled === false) continue;
-              agents.push({ id, name: parsed.name?.trim() || name, description: parsed.description?.trim(), scope });
-            } catch { /* skip invalid JSON */ }
-          } else if (ext === ".md") {
-            agents.push({ id, name, scope });
-          }
-        }
-      } catch { /* directory not found */ }
-    }
-
-    emit({ type: "agent.list", payload: { agents } });
+    emit({ type: "agent.list", payload: { agents: listAvailableClaudeAgents({ cwd: event.payload.cwd }) } });
     return;
   }
 

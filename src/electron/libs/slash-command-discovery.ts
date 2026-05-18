@@ -13,6 +13,16 @@ export type SlashCommandItem = {
   description?: string;
 };
 
+export type SkillDefinitionItem = SlashCommandItem & {
+  filePath: string;
+  definitionKind: "skill";
+};
+
+export type SlashCommandDefinitionItem = SlashCommandItem & {
+  filePath: string;
+  definitionKind: "command" | "skill";
+};
+
 const IGNORED_SCAN_DIRS = new Set([".git", "node_modules"]);
 const DISCOVERY_CACHE_TTL_MS = 10_000;
 
@@ -42,49 +52,13 @@ export function discoverSlashCommandItemsInRoots(roots: SlashCommandRoots): Slas
       continue;
     }
 
-    const commandsRoot = join(root, "commands");
-    if (existsSync(commandsRoot)) {
-      for (const filePath of walkMarkdownFiles(commandsRoot)) {
-        const commandName = commandNameFromCommandPath(commandsRoot, filePath);
-        if (commandName) {
-          discoveredCommands.push(commandName);
-          discoveredItems.push({
-            name: commandName,
-            description: readSlashCommandDescription(filePath),
-          });
-        }
-      }
-    }
-
-    const skillsRoot = join(root, "skills");
-    if (existsSync(skillsRoot)) {
-      for (const filePath of walkSkillDefinitionFiles(skillsRoot)) {
-        const commandName = commandNameFromSkillPath(skillsRoot, filePath);
-        if (commandName) {
-          discoveredItems.push({
-            name: commandName,
-            description: readSlashCommandDescription(filePath),
-          });
-        }
-      }
-    }
+    const commandDefinitions = discoverCommandDefinitionItemsInCommandRoot(join(root, "commands"));
+    discoveredCommands.push(...commandDefinitions.map((item) => item.name));
+    discoveredItems.push(...commandDefinitions);
+    discoveredItems.push(...discoverSkillDefinitionItemsInSkillRoot(join(root, "skills")));
   }
 
-  for (const skillsRoot of collectUniqueSkillRoots(roots.skillRoots, roots.skillRootContainers)) {
-    if (!skillsRoot || !existsSync(skillsRoot)) {
-      continue;
-    }
-
-    for (const filePath of walkSkillDefinitionFiles(skillsRoot)) {
-      const commandName = commandNameFromSkillPath(skillsRoot, filePath);
-      if (commandName) {
-        discoveredItems.push({
-          name: commandName,
-          description: readSlashCommandDescription(filePath),
-        });
-      }
-    }
-  }
+  discoveredItems.push(...discoverAdditionalSkillDefinitionItems(roots));
 
   const merged = mergeSlashCommandItems(discoveredCommands, discoveredItems);
   discoveryCache.set(cacheKey, {
@@ -96,6 +70,39 @@ export function discoverSlashCommandItemsInRoots(roots: SlashCommandRoots): Slas
 
 export function clearSlashCommandDiscoveryCache(): void {
   discoveryCache.clear();
+}
+
+export function discoverSkillDefinitionItemsInRoots(roots: SlashCommandRoots): SkillDefinitionItem[] {
+  return discoverSlashCommandDefinitionItemsInRoots(roots)
+    .filter((item): item is SkillDefinitionItem => item.definitionKind === "skill");
+}
+
+export function discoverSlashCommandDefinitionItemsInRoots(roots: SlashCommandRoots): SlashCommandDefinitionItem[] {
+  const seenFiles = new Set<string>();
+  const items: SlashCommandDefinitionItem[] = [];
+
+  for (const root of [roots.project, roots.user, roots.system]) {
+    if (!root || !existsSync(root)) {
+      continue;
+    }
+
+    for (const item of [
+      ...discoverCommandDefinitionItemsInCommandRoot(join(root, "commands")),
+      ...discoverSkillDefinitionItemsInSkillRoot(join(root, "skills")),
+    ]) {
+      if (seenFiles.has(item.filePath)) continue;
+      seenFiles.add(item.filePath);
+      items.push(item);
+    }
+  }
+
+  for (const item of discoverAdditionalSkillDefinitionItems(roots)) {
+    if (seenFiles.has(item.filePath)) continue;
+    seenFiles.add(item.filePath);
+    items.push(item);
+  }
+
+  return items;
 }
 
 function cloneSlashCommandItems(items: SlashCommandItem[] | undefined): SlashCommandItem[] | undefined {
@@ -153,6 +160,53 @@ function collectUniqueSkillRoots(skillRoots?: string[], skillRootContainers?: st
   }
 
   return Array.from(roots);
+}
+
+function discoverAdditionalSkillDefinitionItems(roots: SlashCommandRoots): SkillDefinitionItem[] {
+  return collectUniqueSkillRoots(roots.skillRoots, roots.skillRootContainers)
+    .flatMap((skillsRoot) => discoverSkillDefinitionItemsInSkillRoot(skillsRoot));
+}
+
+function discoverCommandDefinitionItemsInCommandRoot(commandsRoot: string): SlashCommandDefinitionItem[] {
+  if (!commandsRoot || !existsSync(commandsRoot)) {
+    return [];
+  }
+
+  const items: SlashCommandDefinitionItem[] = [];
+  for (const filePath of walkMarkdownFiles(commandsRoot)) {
+    const commandName = commandNameFromCommandPath(commandsRoot, filePath);
+    if (commandName) {
+      items.push({
+        name: commandName,
+        description: readSlashCommandDescription(filePath),
+        filePath,
+        definitionKind: "command",
+      });
+    }
+  }
+
+  return items;
+}
+
+function discoverSkillDefinitionItemsInSkillRoot(skillsRoot: string): SkillDefinitionItem[] {
+  if (!skillsRoot || !existsSync(skillsRoot)) {
+    return [];
+  }
+
+  const items: SkillDefinitionItem[] = [];
+  for (const filePath of walkSkillDefinitionFiles(skillsRoot)) {
+    const commandName = commandNameFromSkillPath(skillsRoot, filePath);
+    if (commandName) {
+      items.push({
+        name: commandName,
+        description: readSlashCommandDescription(filePath),
+        filePath,
+        definitionKind: "skill",
+      });
+    }
+  }
+
+  return items;
 }
 
 function discoverNestedSkillRoots(rootPath: string, maxDepth = 5): string[] {

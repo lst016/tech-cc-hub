@@ -87,6 +87,7 @@ import {
   buildGlobalRuntimeSystemPromptExtAppend,
   buildToolCallOptimizationPromptAppend,
 } from "./system-prompt-presets.js";
+import { buildInvokedLocalSlashDefinitionPromptAppend } from "./slash-command-catalog.js";
 import {
   buildOversizedTextToolOutputReplacement,
   createTextToolOutputBlocks,
@@ -493,6 +494,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         buildGlobalRuntimePromptAppend(syncedGlobalRuntimeConfig, mergedEnv),
         buildFeishuDocumentFetchPromptAppend(currentPrompt, mergedEnv),
         buildAdminConfigPromptAppend(),
+        buildInvokedLocalSlashDefinitionPromptAppend(currentPrompt, projectCwd),
         agentContext.systemPromptAppend,
         runtimeProfile.includeProjectMemoryPrompt ? buildClaudeProjectMemoryPromptAppend(projectCwd) : undefined,
         buildKnowledgeOverviewPromptAppend(projectCwd),

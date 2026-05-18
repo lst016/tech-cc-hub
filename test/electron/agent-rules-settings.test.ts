@@ -16,3 +16,10 @@ test("agent rules tabs reload documents when switching tabs", () => {
   assert.match(modalSource, /setUserAgentMarkdown\(normalizedRuleDocuments\.userAgentsMarkdown\)/);
   assert.match(modalSource, /onRefreshDocuments=\{refreshAgentRuleDocuments\}/);
 });
+
+test("browser preview bridge replays agent list responses", () => {
+  const devShimSource = readFileSync("src/ui/dev-electron-shim.ts", "utf8");
+
+  assert.match(devShimSource, /"agent\.list"/);
+  assert.match(devShimSource, /const replayEventTypes = new Set<ClientEvent\["type"\]>/);
+});

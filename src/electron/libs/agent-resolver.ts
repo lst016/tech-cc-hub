@@ -4,7 +4,7 @@ import {
   readdirSync,
 } from "fs";
 import { homedir } from "os";
-import { basename, dirname, extname, isAbsolute, join } from "path";
+import { basename, dirname, extname, isAbsolute, join, relative } from "path";
 import type { PromptLedgerSource } from "../../shared/prompt-ledger.js";
 import { DEFAULT_RESTRICTED_ALLOWED_TOOLS } from "../../shared/claude-agent-teams.js";
 import { buildTechCCHubSystemPromptSources } from "./system-prompt-presets.js";
@@ -32,6 +32,7 @@ type AgentContextDocument = {
   path: string;
   label: string;
   content: string;
+  kind: "entry" | "rule" | "settings";
 };
 
 export type ResolvedAgentProfile = {
@@ -51,13 +52,22 @@ export type ResolvedAgentProfile = {
 export type ResolvedAgentRuntimeContext = {
   surface: AgentRunSurface;
   selectedAgentId?: string;
-  settingSources: Array<"user" | "project">;
+  settingSources: Array<"user" | "project" | "local">;
   systemPromptAppend?: string;
   promptSources: PromptLedgerSource[];
   skills: string[];
   allowedTools?: string[];
   enforceAllowedTools: boolean;
   appliedProfiles: ResolvedAgentProfile[];
+  availableProfiles: ResolvedAgentProfile[];
+};
+
+export type ListedClaudeAgent = {
+  id: string;
+  name: string;
+  description?: string;
+  scope: AgentScope;
+  sourcePath?: string;
 };
 
 const USER_CLAUDE_ROOT = join(homedir(), ".claude");
@@ -112,6 +122,7 @@ export function resolveAgentRuntimeContext(options: {
       allowedTools: selectedProfile?.allowedTools,
       enforceAllowedTools: true,
       appliedProfiles: selectedProfile ? [selectedProfile] : [],
+      availableProfiles: selectedProfile ? [selectedProfile] : [],
     };
   }
 
@@ -151,13 +162,19 @@ export function resolveAgentRuntimeContext(options: {
     ];
 
   const appliedProfiles = dedupeProfiles(selectedProfiles);
+  const availableProfiles = dedupeProfiles([
+    ...userLayer.profiles,
+    ...(projectLayer?.profiles ?? []),
+  ]);
   const skills = Array.from(
     new Set(appliedProfiles.flatMap((profile) => profile.skills).map((skill) => skill.trim()).filter(Boolean)),
   );
   const allowedTools = mergeAllowedTools(appliedProfiles);
   const entryDocs = [
     ...userLayer.entryDocs,
+    ...userLayer.ruleDocs,
     ...(projectLayer?.entryDocs ?? []),
+    ...(projectLayer?.ruleDocs ?? []),
     ...userLayer.settingsDocs,
     ...(projectLayer?.settingsDocs ?? []),
   ];
@@ -165,27 +182,49 @@ export function resolveAgentRuntimeContext(options: {
   return {
     surface,
     selectedAgentId: requestedAgentId,
-    // API routing is owned by tech-cc-hub settings. We scan user/project
-    // CLAUDE/AGENTS/settings files into the prompt ledger below, but do not
-    // let Claude Code load raw settings.json because those files can override
-    // ANTHROPIC_* env and silently route a run to a different provider.
-    settingSources: [],
+    // Match Claude Code's filesystem configuration discovery for normal
+    // development sessions so user/project/local .claude skills, agents,
+    // rules, CLAUDE.md, and settings are available through native SDK init.
+    settingSources: ["user", "project", "local"],
     systemPromptAppend: buildPromptAppend(
       entryDocs,
       appliedProfiles,
+      availableProfiles,
     ),
-    promptSources: buildPromptLedgerSources(entryDocs, appliedProfiles, skills),
+    promptSources: buildPromptLedgerSources(entryDocs, appliedProfiles, skills, availableProfiles),
     skills,
     allowedTools,
     enforceAllowedTools: false,
     appliedProfiles,
+    availableProfiles,
   };
+}
+
+export function listAvailableClaudeAgents(options: {
+  cwd?: string;
+  userClaudeRoot?: string;
+}): ListedClaudeAgent[] {
+  const userClaudeRoot = options.userClaudeRoot?.trim() || USER_CLAUDE_ROOT;
+  const projectRoot = options.cwd?.trim() ? options.cwd.trim() : undefined;
+  const userProfiles = discoverAgentProfiles("user", userClaudeRoot);
+  const projectProfiles = projectRoot
+    ? discoverAgentProfiles("project", join(projectRoot, ".claude"))
+    : [];
+
+  return dedupeProfiles([...userProfiles, ...projectProfiles]).map((profile) => ({
+    id: profile.id,
+    name: profile.name,
+    description: profile.description,
+    scope: profile.scope,
+    sourcePath: profile.sourcePath,
+  }));
 }
 
 function buildPromptLedgerSources(
   entryDocs: AgentContextDocument[],
   profiles: ResolvedAgentProfile[],
   skills: string[] = [],
+  availableProfiles: ResolvedAgentProfile[] = [],
 ): PromptLedgerSource[] {
   const sources: PromptLedgerSource[] = [{
     id: "system-preset",
@@ -197,7 +236,7 @@ function buildPromptLedgerSources(
 
   for (const doc of entryDocs) {
     sources.push({
-      id: `${doc.scope}-entry-${doc.path}`,
+      id: `${doc.scope}-${doc.kind}-${doc.path}`,
       label: `${scopeLabel(doc.scope)}入口：${doc.label}`,
       sourceKind: doc.scope === "project" ? "project" : "system",
       text: doc.content,
@@ -225,6 +264,16 @@ function buildPromptLedgerSources(
     });
   }
 
+  const agentCatalog = buildAgentCatalog(availableProfiles);
+  if (agentCatalog) {
+    sources.push({
+      id: "local-claude-agent-catalog",
+      label: "Local Claude agent catalog",
+      sourceKind: "skill",
+      text: agentCatalog,
+    });
+  }
+
   return sources;
 }
 
@@ -234,6 +283,7 @@ function discoverAgentLayer(
   options: { entryDocs: string[]; settingsFiles: string[] },
 ): {
   entryDocs: AgentContextDocument[];
+  ruleDocs: AgentContextDocument[];
   settingsDocs: AgentContextDocument[];
   profiles: ResolvedAgentProfile[];
 } {
@@ -244,8 +294,10 @@ function discoverAgentLayer(
       path,
       label: basename(path),
       content: safeReadText(path),
+      kind: "entry" as const,
     }))
     .filter((doc) => doc.content.trim().length > 0);
+  const ruleDocs = discoverRuleDocuments(scope, join(claudeRoot, "rules"));
   const settingsDocs = options.settingsFiles
     .filter((path) => existsSync(path))
     .map((path) => ({
@@ -253,11 +305,28 @@ function discoverAgentLayer(
       path,
       label: basename(path),
       content: buildClaudeSettingsSummary(path),
+      kind: "settings" as const,
     }))
     .filter((doc) => doc.content.trim().length > 0);
 
   const profiles = discoverAgentProfiles(scope, claudeRoot);
-  return { entryDocs, settingsDocs, profiles };
+  return { entryDocs, ruleDocs, settingsDocs, profiles };
+}
+
+function discoverRuleDocuments(scope: AgentScope, rulesRoot: string): AgentContextDocument[] {
+  if (!existsSync(rulesRoot)) {
+    return [];
+  }
+
+  return walkMarkdownFiles(rulesRoot)
+    .map((path) => ({
+      scope,
+      path,
+      label: `rules/${relative(rulesRoot, path).replace(/\\/g, "/")}`,
+      content: safeReadText(path),
+      kind: "rule" as const,
+    }))
+    .filter((doc) => doc.content.trim().length > 0);
 }
 
 function discoverAgentProfiles(scope: AgentScope, claudeRoot: string): ResolvedAgentProfile[] {
@@ -280,20 +349,28 @@ function discoverAgentProfiles(scope: AgentScope, claudeRoot: string): ResolvedA
         }
 
         if (extension === ".md") {
-          const content = safeReadText(fullPath).trim();
-          if (!content) {
+          const parsed = parseMarkdownWithFrontmatter(safeReadText(fullPath));
+          if (!parsed.body.trim()) {
             return [];
           }
+          const frontmatterId = typeof parsed.frontmatter.name === "string" ? parsed.frontmatter.name.trim() : "";
+          const fileId = basename(entry.name, extension);
 
           return [{
-            id: normalizeAgentId(basename(entry.name, extension)) ?? basename(entry.name, extension),
+            id: normalizeAgentId(frontmatterId || fileId) ?? fileId,
             scope,
             sourcePath: fullPath,
-            name: basename(entry.name, extension),
-            prompt: content,
+            name: frontmatterId || fileId,
+            description: typeof parsed.frontmatter.description === "string"
+              ? parsed.frontmatter.description.trim() || undefined
+              : undefined,
+            prompt: parsed.body.trim(),
             skills: [],
-            autoApply: basename(entry.name, extension).toLowerCase() === "default",
-            runSurface: "both",
+            allowedTools: readFrontmatterStringArray(parsed.frontmatter.tools),
+            autoApply: readFrontmatterBoolean(parsed.frontmatter.autoApply)
+              || fileId.toLowerCase() === "default"
+              || frontmatterId.toLowerCase() === "default",
+            runSurface: readRunSurface(parsed.frontmatter.runSurface),
             visibility: "user",
           } satisfies ResolvedAgentProfile];
         }
@@ -403,6 +480,7 @@ function mergeAllowedTools(profiles: ResolvedAgentProfile[]): string[] | undefin
 function buildPromptAppend(
   entryDocs: AgentContextDocument[],
   profiles: ResolvedAgentProfile[],
+  availableProfiles: ResolvedAgentProfile[] = [],
 ): string | undefined {
   const sections: string[] = [];
 
@@ -431,8 +509,33 @@ function buildPromptAppend(
     }
   }
 
+  const agentCatalog = buildAgentCatalog(availableProfiles);
+  if (agentCatalog) {
+    sections.push([
+      "Local Claude agents available from global/project .claude/agents:",
+      "Only selected/default agents are injected in full. When the user asks for one of the listed agents, use that agent name/id and source path as the authority for the current turn.",
+      agentCatalog,
+    ].join("\n"));
+  }
+
   const joined = sections.filter(Boolean).join("\n\n");
   return joined.trim() || undefined;
+}
+
+function buildAgentCatalog(profiles: ResolvedAgentProfile[]): string | undefined {
+  const visibleProfiles = profiles.filter((profile) => profile.visibility !== "internal");
+  if (visibleProfiles.length === 0) {
+    return undefined;
+  }
+
+  return visibleProfiles
+    .map((profile) => [
+      `- ${profile.id} (${scopeLabel(profile.scope)}${profile.name})`,
+      profile.description ? `description=${profile.description}` : undefined,
+      profile.sourcePath ? `source=${profile.sourcePath}` : undefined,
+      profile.autoApply ? "autoApply=true" : undefined,
+    ].filter(Boolean).join(" | "))
+    .join("\n");
 }
 
 function scopeLabel(scope: AgentScope): string {
@@ -451,6 +554,110 @@ function safeReadText(path: string): string {
   } catch {
     return "";
   }
+}
+
+function walkMarkdownFiles(rootPath: string): string[] {
+  const files: string[] = [];
+  const pending = [rootPath];
+
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || !existsSync(current)) {
+      continue;
+    }
+
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const fullPath = join(current, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(fullPath);
+        continue;
+      }
+
+      if (entry.isFile() && extname(entry.name).toLowerCase() === ".md") {
+        files.push(fullPath);
+      }
+    }
+  }
+
+  return files.sort((left, right) => left.localeCompare(right));
+}
+
+function parseMarkdownWithFrontmatter(content: string): {
+  frontmatter: Record<string, unknown>;
+  body: string;
+} {
+  const match = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n)?/);
+  if (!match) {
+    return { frontmatter: {}, body: content };
+  }
+
+  return {
+    frontmatter: parseSimpleFrontmatter(match[1]),
+    body: content.slice(match[0].length),
+  };
+}
+
+function parseSimpleFrontmatter(frontmatter: string): Record<string, unknown> {
+  const parsed: Record<string, unknown> = {};
+  for (const line of frontmatter.split(/\r?\n/)) {
+    const match = line.match(/^([A-Za-z0-9_.-]+):\s*(.*)$/);
+    if (!match) {
+      continue;
+    }
+
+    const key = match[1].trim();
+    const value = match[2].trim();
+    if (value.startsWith("[") && value.endsWith("]")) {
+      parsed[key] = value
+        .slice(1, -1)
+        .split(",")
+        .map((item) => cleanupFrontmatterScalar(item))
+        .filter(Boolean);
+      continue;
+    }
+
+    parsed[key] = cleanupFrontmatterScalar(value);
+  }
+
+  return parsed;
+}
+
+function cleanupFrontmatterScalar(value: string): string {
+  return value.trim().replace(/^['"]|['"]$/g, "");
+}
+
+function readFrontmatterStringArray(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    const items = value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return items.length > 0 ? items : undefined;
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const items = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return items.length > 0 ? items : undefined;
+}
+
+function readFrontmatterBoolean(value: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return false;
+  }
+  return /^(true|yes|1)$/i.test(value.trim());
+}
+
+function readRunSurface(value: unknown): AgentRunSurface | "both" {
+  return value === "development" || value === "maintenance" ? value : "both";
 }
 
 function buildClaudeSettingsSummary(path: string): string {
