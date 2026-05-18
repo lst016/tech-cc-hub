@@ -154,6 +154,7 @@ interface AppState {
   setCwd: (cwd: string) => void;
   setApiConfigSettings: (settings: ApiConfigSettings) => void;
   setRuntimeModel: (model: string) => void;
+  setSessionModel: (sessionId: string | null | undefined, model: string) => void;
   setReasoningMode: (mode: RuntimeReasoningMode) => void;
   setPermissionMode: (mode: RuntimePermissionMode) => void;
   setPendingStart: (pending: boolean) => void;
@@ -588,6 +589,41 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
   setRuntimeModel: (runtimeModel) => set({ runtimeModel }),
+  setSessionModel: (sessionId, model) => {
+    if (!sessionId) return;
+    const nextModel = model.trim() || undefined;
+    set((state) => {
+      const activeSession = state.sessions[sessionId];
+      if (activeSession) {
+        return {
+          sessions: {
+            ...state.sessions,
+            [sessionId]: {
+              ...activeSession,
+              model: nextModel,
+              updatedAt: Date.now(),
+            },
+          },
+        };
+      }
+
+      const archivedSession = state.archivedSessions[sessionId];
+      if (archivedSession) {
+        return {
+          archivedSessions: {
+            ...state.archivedSessions,
+            [sessionId]: {
+              ...archivedSession,
+              model: nextModel,
+              updatedAt: Date.now(),
+            },
+          },
+        };
+      }
+
+      return {};
+    });
+  },
   setReasoningMode: (reasoningMode) => set({ reasoningMode }),
   setPermissionMode: (permissionMode) => set({ permissionMode }),
   setPendingStart: (pendingStart) => set({ pendingStart }),

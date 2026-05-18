@@ -1127,7 +1127,8 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   }, []);
 
   const buildRuntimeOverrides = useCallback((): RuntimeOverrides | null => {
-    const selectedModel = runtimeModel.trim() || activeProfile?.model?.trim() || resolveSessionRuntimeModel();
+    const sessionRuntimeModel = resolveSessionRuntimeModel();
+    const selectedModel = sessionRuntimeModel || runtimeModel.trim() || activeProfile?.model?.trim();
     if (!selectedModel) {
       setGlobalError("请先在设置里启用配置，并至少提供一个模型。");
       return null;
@@ -1278,6 +1279,7 @@ export function PromptInput({
   const apiConfigSettings = useAppStore((state) => state.apiConfigSettings);
   const runtimeModel = useAppStore((state) => state.runtimeModel);
   const setRuntimeModel = useAppStore((state) => state.setRuntimeModel);
+  const setSessionModel = useAppStore((state) => state.setSessionModel);
   const reasoningMode = useAppStore((state) => state.reasoningMode);
   const setReasoningMode = useAppStore((state) => state.setReasoningMode);
   const cwd = useAppStore((state) => state.cwd);
@@ -1323,6 +1325,10 @@ export function PromptInput({
   const activeSessionCwd = useAppStore((state) => {
     if (!activeSessionId) return "";
     return (state.sessions[activeSessionId] ?? state.archivedSessions[activeSessionId])?.cwd ?? "";
+  });
+  const activeSessionModel = useAppStore((state) => {
+    if (!activeSessionId) return "";
+    return (state.sessions[activeSessionId] ?? state.archivedSessions[activeSessionId])?.model?.trim() ?? "";
   });
   const effectiveCwd = cwd.trim() || activeSessionCwd.trim();
   const codeReferences = codeReferencesBySessionId[codeReferenceSessionKey] || EMPTY_CODE_REFERENCES;
@@ -1398,7 +1404,15 @@ export function PromptInput({
     return getAvailableModelsForProfiles(enabledProfiles);
   }, [enabledProfiles]);
   const activeProfile = enabledProfiles[0];
-  const selectedRuntimeModel = runtimeModel.trim() || activeProfile?.model?.trim() || availableModels[0] || "";
+  const selectedRuntimeModel = activeSessionModel || runtimeModel.trim() || activeProfile?.model?.trim() || availableModels[0] || "";
+  const handleRuntimeModelChange = useCallback((model: string) => {
+    if (activeSessionId) {
+      setSessionModel(activeSessionId, model);
+      return;
+    }
+
+    setRuntimeModel(model);
+  }, [activeSessionId, setRuntimeModel, setSessionModel]);
   useEffect(() => {
     promptDraftRef.current = prompt;
   }, [prompt]);
@@ -2616,7 +2630,7 @@ export function PromptInput({
               value={selectedRuntimeModel}
               models={availableModels}
               disabled={disabled || availableModels.length === 0}
-              onChange={setRuntimeModel}
+              onChange={handleRuntimeModelChange}
               variant="composer"
               placement="top"
               className="min-w-[112px] max-w-[112px] bg-transparent hover:bg-[#f4f6f8]"

@@ -1189,7 +1189,8 @@ function App() {
     }
 
     const activeProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
-    const selectedModel = runtimeModel.trim() || activeProfile?.model?.trim() || resolveSessionRuntimeModel();
+    const sessionRuntimeModel = resolveSessionRuntimeModel();
+    const selectedModel = sessionRuntimeModel || runtimeModel.trim() || activeProfile?.model?.trim();
     if (!selectedModel) {
       setGlobalError("当前没有可用模型，请先在设置里启用配置。");
       return;
