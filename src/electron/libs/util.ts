@@ -1,5 +1,11 @@
 import { query, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
-import { getCurrentApiConfig, buildEnvForConfig, getClaudeCodeModelOption, getClaudeCodePath} from "./claude-settings.js";
+import {
+  buildClaudeCodeModelSettings,
+  getCurrentApiConfig,
+  buildEnvForConfig,
+  getClaudeCodeModelOption,
+  getClaudeCodePath,
+} from "./claude-settings.js";
 import { app } from "electron";
 
 // Build enhanced PATH for packaged environment
@@ -55,6 +61,7 @@ export const generateSessionTitle = async (userIntent: string | null, options: {
       maxTurns: 1,
       tools: [],
       settingSources: [],
+      settings: buildClaudeCodeModelSettings(apiConfig, requestedModel),
       env: currentEnv,
       pathToClaudeCodeExecutable: claudeCodePath,
     });

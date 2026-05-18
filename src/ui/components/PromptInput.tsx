@@ -610,7 +610,7 @@ function getPromptTextFromEditor(editor: HTMLElement) {
   editor.childNodes.forEach((child) => {
     text += getPromptTextFromEditorNode(child);
   });
-  return text.replace(/\n+$/, "");
+  return text;
 }
 
 function getNodePromptLength(node: Node): number {

@@ -2,6 +2,7 @@ import { existsSync, readFileSync, realpathSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { spawnSync } from "child_process";
+import type { Settings } from "@anthropic-ai/claude-agent-sdk";
 import {
   CODEX_OAUTH_DEFAULT_MODEL,
   CODEX_OAUTH_SMALL_MODEL,
@@ -20,6 +21,23 @@ import {
 } from "./config-store.js";
 import { app } from "electron";
 import { getCodexAnthropicProxyBaseURL } from "./codex-anthropic-proxy.js";
+
+const CLAUDE_CODE_OPUS_MODEL_OVERRIDE_KEYS = [
+  "opus",
+  "claude-opus-4",
+  "claude-opus-4-0",
+  "claude-opus-4-1",
+  "claude-opus-4-5",
+  "claude-opus-4-6",
+  "claude-opus-4-7",
+  "claude-opus-4-20250514",
+  "claude-4-opus-20250514",
+  "claude-opus-4-1-20250805",
+  "claude-opus-4@20250514",
+  "claude-opus-4-1@20250805",
+  "anthropic.claude-opus-4-20250514-v1:0",
+  "anthropic.claude-opus-4-1-20250805-v1:0",
+];
 
 function isUsableConfig(config: ApiConfig | null | undefined): config is ApiConfig {
   return Boolean(
@@ -332,12 +350,17 @@ export function getGlobalRuntimeConfig(): GlobalRuntimeConfig {
 export function buildEnvForConfig(config: ApiConfig, modelOverride?: string): Record<string, string> {
   const baseEnv = { ...process.env } as Record<string, string>;
   const selectedModel = normalizeModelForApiConfig(config, modelOverride ?? config.model, config.model);
+  const expertModel = normalizeExpertModelForApiConfig(
+    config,
+    config.expertModel?.trim() || selectedModel,
+    selectedModel,
+  );
   const smallModel = normalizeSmallModelForApiConfig(
     config,
     config.smallModel?.trim() || config.analysisModel?.trim() || selectedModel,
     selectedModel,
   );
-  const modelEnv = buildClaudeCodeModelEnv(selectedModel, smallModel);
+  const modelEnv = buildClaudeCodeModelEnv(selectedModel, expertModel, smallModel);
   const anthropicAuthToken = config.provider === "codex" ? "codex-oauth" : config.apiKey;
   const anthropicBaseURL = config.provider === "codex"
     ? getCodexAnthropicProxyBaseURL(config.id)
@@ -388,6 +411,18 @@ function normalizeSmallModelForApiConfig(
   );
 }
 
+function normalizeExpertModelForApiConfig(
+  config: ApiConfig,
+  modelName: string | undefined,
+  selectedModel: string,
+): string {
+  return (
+    pickProviderCompatibleModel(config.provider, modelName, selectedModel) ||
+    pickProviderCompatibleModel(config.provider, config.expertModel, selectedModel) ||
+    selectedModel
+  );
+}
+
 function getProviderDefaultModel(config: ApiConfig, slot: "main" | "small"): string {
   if (config.provider === "codex") {
     return slot === "small" ? CODEX_OAUTH_SMALL_MODEL : CODEX_OAUTH_DEFAULT_MODEL;
@@ -428,17 +463,42 @@ function shouldSuppressClaudeCodeAttributionHeader(anthropicBaseURL: string): bo
   }
 }
 
-function buildClaudeCodeModelEnv(mainModel: string, smallModel: string): Record<string, string> {
+function buildClaudeCodeModelEnv(mainModel: string, expertModel: string, smallModel: string): Record<string, string> {
   return {
     ANTHROPIC_MODEL: mainModel,
     ANTHROPIC_DEFAULT_MODEL: mainModel,
     ANTHROPIC_DEFAULT_SONNET_MODEL: mainModel,
-    ANTHROPIC_DEFAULT_OPUS_MODEL: mainModel,
-    ANTHROPIC_REASONING_MODEL: mainModel,
+    ANTHROPIC_DEFAULT_OPUS_MODEL: expertModel,
+    ANTHROPIC_REASONING_MODEL: expertModel,
     CLAUDE_CODE_SUBAGENT_MODEL: mainModel,
     ANTHROPIC_DEFAULT_HAIKU_MODEL: smallModel,
     ANTHROPIC_SMALL_FAST_MODEL: smallModel,
     CLAUDE_CODE_SMALL_FAST_MODEL: smallModel,
+  };
+}
+
+function buildClaudeCodeOpusModelOverrides(expertModel: string): Record<string, string> {
+  return Object.fromEntries(
+    CLAUDE_CODE_OPUS_MODEL_OVERRIDE_KEYS.map((modelName) => [modelName, expertModel]),
+  );
+}
+
+export function getClaudeCodeExpertModel(config: ApiConfig, modelName: string | undefined): string {
+  const selectedModel = normalizeModelForApiConfig(config, modelName?.trim() || config.model, config.model);
+  return normalizeExpertModelForApiConfig(
+    config,
+    config.expertModel?.trim() || selectedModel,
+    selectedModel,
+  );
+}
+
+export function buildClaudeCodeModelSettings(config: ApiConfig, modelName: string | undefined): Settings {
+  const selectedModel = normalizeModelForApiConfig(config, modelName?.trim() || config.model, config.model);
+  const expertModel = getClaudeCodeExpertModel(config, selectedModel);
+
+  return {
+    model: selectedModel,
+    modelOverrides: buildClaudeCodeOpusModelOverrides(expertModel),
   };
 }
 

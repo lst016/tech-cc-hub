@@ -17,7 +17,13 @@ export async function generateCommitMessageSuggestion(input: {
   const fallback = buildFallbackCommitSuggestion(input.files);
   const [
     { query },
-    { buildEnvForConfig, getClaudeCodeModelOption, getClaudeCodePath, getCurrentApiConfig },
+    {
+      buildClaudeCodeModelSettings,
+      buildEnvForConfig,
+      getClaudeCodeModelOption,
+      getClaudeCodePath,
+      getCurrentApiConfig,
+    },
   ] = await Promise.all([
     import("@anthropic-ai/claude-agent-sdk"),
     import("../claude-settings.js"),
@@ -43,6 +49,7 @@ export async function generateCommitMessageSuggestion(input: {
       maxTurns: 1,
       tools: [],
       settingSources: [],
+      settings: buildClaudeCodeModelSettings(apiConfig, requestedModel),
       env: {
         ...process.env,
         ...buildEnvForConfig(apiConfig, requestedModel),

@@ -41,6 +41,8 @@ import type { AgentRunSurface, PromptAttachment, RuntimeOverrides, ServerEvent }
 import { resolveAgentRuntimeContext } from "./agent-resolver.js";
 import {
   buildEnvForConfig,
+  buildClaudeCodeModelSettings,
+  getClaudeCodeExpertModel,
   getClaudeCodeModelOption,
   getClaudeCodePath,
   getCurrentApiConfig,
@@ -506,6 +508,8 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       );
       const outputFormat = resolveOutputFormat(runtime?.outputFormat, systemPromptAppend, prompt);
       const sdkModelOption = getClaudeCodeModelOption(config, effectiveModel);
+      const sdkModelSettings = buildClaudeCodeModelSettings(config, effectiveModel);
+      const sdkExpertModel = getClaudeCodeExpertModel(config, effectiveModel);
       console.info("[runner][route]", {
         configuredBaseURL: config.baseURL,
         anthropicBaseURL: mergedEnv.ANTHROPIC_BASE_URL,
@@ -513,6 +517,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         model: effectiveModel,
         modelFallback: resolvedConfig.fellBack,
         sdkModelOption,
+        sdkExpertModel,
         settingSources: agentContext.settingSources,
         claudePath: getClaudeCodePath(),
         sdkPlugins: sdkPlugins.map((plugin) => plugin.path),
@@ -535,6 +540,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           pathToClaudeCodeExecutable: getClaudeCodePath(),
           permissionMode,
           settingSources: agentContext.settingSources,
+          settings: sdkModelSettings,
           skills: enabledSkills,
           systemPrompt: systemPromptAppend
             ? { type: "preset", preset: "claude_code", append: systemPromptAppend }
