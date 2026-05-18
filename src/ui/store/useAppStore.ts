@@ -223,6 +223,10 @@ function getAvailableModelsForProfiles(profiles: ApiConfigProfile[]): string[] {
     .filter(Boolean);
 }
 
+function hasApiProfiles(settings: ApiConfigSettings): boolean {
+  return settings.profiles.length > 0;
+}
+
 function extractSlashCommands(messages: StreamMessage[]): string[] | undefined {
   return extractSlashCommandsFromMessages(messages);
 }
@@ -567,7 +571,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   setCwd: (cwd) => set({ cwd }),
   setApiConfigSettings: (apiConfigSettings) => {
     set((state) => {
-      const enabledProfiles = getEnabledProfiles(apiConfigSettings);
+      const nextApiConfigSettings = hasApiProfiles(apiConfigSettings) || !hasApiProfiles(state.apiConfigSettings)
+        ? apiConfigSettings
+        : state.apiConfigSettings;
+      const enabledProfiles = getEnabledProfiles(nextApiConfigSettings);
       const enabledProfile = enabledProfiles[0];
       const availableModels = getAvailableModelsForProfiles(enabledProfiles);
       const runtimeModel = availableModels.includes(state.runtimeModel)
@@ -575,7 +582,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         : (enabledProfile?.model || availableModels[0] || "");
 
       return {
-        apiConfigSettings,
+        apiConfigSettings: nextApiConfigSettings,
         runtimeModel,
       };
     });

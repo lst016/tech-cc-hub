@@ -219,7 +219,7 @@ export function SettingsModal({
   const [agentRulesRefreshing, setAgentRulesRefreshing] = useState(false);
   const [closeSidebarOnBrowserOpen, setCloseSidebarOnBrowserOpen] = useState(true);
   const [activePageId, setActivePageId] = useState<SettingsPageId>("profiles");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
   const [status, setStatus] = useState<{ tone: "error" | "success"; message: string } | null>(null);
