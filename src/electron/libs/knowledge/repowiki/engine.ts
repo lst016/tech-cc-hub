@@ -1,7 +1,7 @@
 import { spawn } from "child_process";
-import { delimiter } from "path";
+import { delimiter, dirname, join, resolve } from "path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { join, resolve } from "path";
+import { fileURLToPath } from "url";
 import type { WikiModelSettings } from "../knowledge-types.js";
 import type { KnowledgeWorkspacePaths } from "../knowledge-paths.js";
 import type { RepoWikiSkippedFile } from "./types.js";
@@ -38,14 +38,60 @@ type RepoWikiRunnerResult = {
   error?: string;
 };
 
-function findRepoRoot(): string {
-  const candidates = [process.cwd(), resolve(process.cwd(), ".."), resolve(process.cwd(), "../..")];
-  for (const candidate of candidates) {
-    if (existsSync(join(candidate, "third_party", "repowiki", "src", "repowiki"))) {
+export type RepoWikiRuntimeRootOptions = {
+  cwd?: string;
+  moduleDir?: string;
+  resourcesPath?: string;
+  explicitRoot?: string;
+  pathExists?: (path: string) => boolean;
+};
+
+const CURRENT_MODULE_DIR = dirname(fileURLToPath(import.meta.url));
+const REPOWIKI_PACKAGE_MARKER = join("third_party", "repowiki", "src", "repowiki");
+const REPOWIKI_RUNNER_MARKER = join("scripts", "knowledge", "run-repowiki.py");
+
+function processResourcesPath(): string | undefined {
+  return (process as typeof process & { resourcesPath?: string }).resourcesPath;
+}
+
+function addWalkUpCandidates(candidates: string[], seed: string | undefined): void {
+  if (!seed) {
+    return;
+  }
+
+  let current = resolve(seed);
+  while (true) {
+    candidates.push(current);
+    const parent = dirname(current);
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+}
+
+function repoWikiRuntimeExists(root: string, pathExists: (path: string) => boolean): boolean {
+  return pathExists(join(root, REPOWIKI_PACKAGE_MARKER)) && pathExists(join(root, REPOWIKI_RUNNER_MARKER));
+}
+
+export function resolveRepoWikiRuntimeRoot(options: RepoWikiRuntimeRootOptions = {}): string {
+  const pathExists = options.pathExists ?? existsSync;
+  const candidates: string[] = [];
+  addWalkUpCandidates(candidates, options.explicitRoot ?? process.env.TECH_CC_HUB_REPO_ROOT);
+  addWalkUpCandidates(candidates, options.cwd ?? process.cwd());
+  addWalkUpCandidates(candidates, options.moduleDir ?? CURRENT_MODULE_DIR);
+  addWalkUpCandidates(candidates, options.resourcesPath ?? processResourcesPath());
+
+  for (const candidate of [...new Set(candidates)]) {
+    if (repoWikiRuntimeExists(candidate, pathExists)) {
       return candidate;
     }
   }
-  throw new Error("找不到 vendored RepoWiki：third_party/repowiki。");
+
+  const checked = [...new Set(candidates)].slice(0, 12).join("; ");
+  throw new Error(
+    `找不到 vendored RepoWiki 运行资源：需要 ${REPOWIKI_PACKAGE_MARKER} 和 ${REPOWIKI_RUNNER_MARKER}。已检查：${checked}`,
+  );
 }
 
 function pythonExecutable(): string {
@@ -57,10 +103,13 @@ function resolveRepoWikiConcurrency(wiki: WikiModelSettings): string {
   if (Number.isFinite(configured) && configured > 0) {
     return String(Math.max(1, Math.min(12, Math.floor(configured))));
   }
-  return wiki.costTier === "free" ? "2" : "6";
+  if (wiki.costTier === "standard") {
+    return "3";
+  }
+  return wiki.costTier === "free" ? "1" : "2";
 }
 
-function parseRunnerJson(stdout: string): RepoWikiRunnerResult {
+function parseRunnerJson(stdout: string, stderr = ""): RepoWikiRunnerResult {
   const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   for (const line of lines.reverse()) {
     try {
@@ -69,7 +118,8 @@ function parseRunnerJson(stdout: string): RepoWikiRunnerResult {
       // Some Python tooling writes non-JSON informational lines. Keep looking.
     }
   }
-  throw new Error(`RepoWiki runner 没有返回 JSON：${stdout.slice(0, 400)}`);
+  const diagnostic = (stderr.trim() || stdout.trim()).slice(0, 1200);
+  throw new Error(`RepoWiki runner 没有返回 JSON：${diagnostic}`);
 }
 
 function readJsonObject(path: string): Record<string, unknown> {
@@ -148,7 +198,7 @@ async function runVendoredRepoWiki(
   wiki: WikiModelSettings,
   onProgress?: (event: RepoWikiProgressEvent) => void,
 ): Promise<RepoWikiRunnerResult> {
-  const repoRoot = findRepoRoot();
+  const repoRoot = resolveRepoWikiRuntimeRoot();
   const scriptPath = join(repoRoot, "scripts", "knowledge", "run-repowiki.py");
   const repowikiSrc = join(repoRoot, "third_party", "repowiki", "src");
   const cachePath = join(paths.appDataWorkspaceRoot, "repowiki-cache.sqlite");
@@ -167,6 +217,7 @@ async function runVendoredRepoWiki(
     "--max-output-tokens", String(Math.max(0, Math.floor(wiki.maxOutputTokens || 0))),
     "--max-pages", process.env.TECH_CC_HUB_REPOWIKI_MAX_PAGES || "96",
     "--file-page-limit", process.env.REPOWIKI_FILE_PAGE_LIMIT || process.env.TECH_CC_HUB_REPOWIKI_FILE_PAGE_LIMIT || "0",
+    "--force-full",
   ];
 
   return await new Promise((resolvePromise, reject) => {
@@ -201,7 +252,7 @@ async function runVendoredRepoWiki(
       const stderrText = Buffer.concat(stderr).toString("utf8");
       let result: RepoWikiRunnerResult;
       try {
-        result = parseRunnerJson(stdoutText);
+        result = parseRunnerJson(stdoutText, stderrText);
       } catch (error) {
         reject(error);
         return;

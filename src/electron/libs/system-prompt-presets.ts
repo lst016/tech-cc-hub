@@ -13,6 +13,7 @@ export function buildBrowserWorkbenchPromptAppend(): string {
   return [
     "BrowserView rule: for current-page browsing, scraping, debugging, annotations, screenshots, cookies, storage, console logs, URL checks, and DOM inspection, use the built-in tech-cc-hub browser MCP tools instead of external browser skills.",
     "Use focused browser helpers when possible: http_ping/diagnose_port for service checks, browser_console_logs(waitFor) for HMR/build waits, browser_query_nodes/browser_get_element/browser_inspect_styles for DOM/style evidence, browser_query_nodes/browser_inspect_styles(fields) for compact output, and browser_apply_styles for temporary CSS preview.",
+    "For local services, a background Bash exit code only proves the launch command returned; verify readiness separately with diagnose_port/http_ping and inspect logs. Spring Boot /actuator/health 503 means the process is reachable but not ready.",
     "For Figma-backed UI fixes, gather DOM node fields (text, selector, box, attributes, componentStack, context.nearbyText) and use figma_match_ui_nodes to map rendered UI nodes to Figma nodes before editing.",
     "If the prompt contains <browser_annotations>, load/use the annotation-ui-fix skill; do not keep its multi-step SOP in global prompt context.",
   ].join("\n");
@@ -37,7 +38,7 @@ export function buildToolCallOptimizationPromptAppend(): string {
     "Batch read-only work when safe; keep writes, deletes, moves, installs, commits, and other side effects in separate calls.",
     "Stop exploring once the collected evidence is sufficient. Only add more tool calls when a new error, ambiguity, or explicit user request makes them necessary.",
     "After Edit/Write/MultiEdit, immediately run the smallest meaningful verification and report the result.",
-    "Use bounded non-interactive shell commands; on Windows avoid unstable PowerShell surfaces and quote paths carefully.",
+    "Use bounded non-interactive shell commands; on Windows avoid unstable PowerShell surfaces and quote paths carefully. In Git Bash, protect Windows executable switches with double slashes when needed, for example `taskkill //PID 1234 //F`.",
     "For scheduled tasks use the persistent tech-cc-hub cron MCP tools, not SDK CronCreate/CronDelete/CronList.",
   ].join("\n");
 }

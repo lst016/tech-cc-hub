@@ -6,6 +6,7 @@ import { app } from "electron";
 import type { StreamMessage } from "../types.js";
 import { extractSlashCommandsFromMessages, mergeSlashCommandLists } from "../../shared/slash-commands.js";
 import { discoverSlashCommandItemsInRoots, discoverSlashCommandsInRoots, type SlashCommandItem, type SlashCommandRoots } from "./slash-command-discovery.js";
+import { CLAUDE_CODE_BUILTIN_COMMAND_ITEMS } from "./claude-code-builtin-commands.js";
 import { CLAUDE_CODE_COMPAT_COMMAND_ITEMS } from "./claude-code-compat-registry.js";
 
 export function resolveSlashCommandRoots(cwd?: string): SlashCommandRoots {
@@ -32,6 +33,7 @@ export function buildSessionSlashCommands(options: {
 }): string[] | undefined {
   return mergeSlashCommandLists(
     CLAUDE_CODE_COMPAT_COMMAND_ITEMS.map((item) => item.name),
+    CLAUDE_CODE_BUILTIN_COMMAND_ITEMS.map((item) => item.name),
     discoverSlashCommandsInRoots(resolveSlashCommandRoots(options.cwd)),
     extractSlashCommandsFromMessages(options.messages),
   );
@@ -50,6 +52,10 @@ export function buildSessionSlashCommandItems(options: {
   }
 
   for (const item of discoveredItems) {
+    merged.set(item.name.toLowerCase(), item);
+  }
+
+  for (const item of CLAUDE_CODE_BUILTIN_COMMAND_ITEMS) {
     merged.set(item.name.toLowerCase(), item);
   }
 

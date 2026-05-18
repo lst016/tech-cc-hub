@@ -279,6 +279,8 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
         tools: [
           { name: "idea_status", description: "检测已安装的 IDEA 启动器和正在运行的 IDEA 进程。" },
           { name: "idea_open", description: "通过 Toolbox 脚本或最新 IDEA 启动器打开项目/文件；可用时优先复用已运行 IDEA。" },
+          { name: "idea_run", description: "Start a Spring Boot project through Maven/Gradle and return PID/logPath plus readiness verification hints." },
+          { name: "idea_restart", description: "Restart a Spring Boot project by killing a PID/port listener or triggering DevTools compile/classes." },
           { name: "idea_focus", description: "把已运行的 IDEA 窗口拉到前台，不启动新的 IDE。" },
           { name: "idea_wait_ready", description: "在启动或复用请求后等待 IDEA 进入运行状态。" },
         ],
@@ -288,6 +290,8 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
       "IDEA 控制规则：处理 Java/Spring 本地运行或验证任务时，如果用户可能已经打开 IntelliJ IDEA，优先使用内置 tech-cc-hub IDEA MCP 工具。",
       "使用 mcp__tech-cc-hub-idea__idea_status 检查本机 IDEA 可用性，使用 mcp__tech-cc-hub-idea__idea_open 复用或打开项目/文件。",
       "启动或打开后如果需要证明 IDEA 已运行，使用 mcp__tech-cc-hub-idea__idea_wait_ready；如果需要把已有 IDE 拉到前台，使用 mcp__tech-cc-hub-idea__idea_focus。",
+      "For Spring Boot service management, use mcp__tech-cc-hub-idea__idea_run or mcp__tech-cc-hub-idea__idea_restart, then verify readiness with diagnose_port/http_ping and returned logPath.",
+      "When multiple IDEA versions are installed, pass version or launcherPath to idea_status/idea_open instead of assuming the newest IDE is the user's active run-config owner.",
       "如果 idea_open 返回 reusedExisting=true，应把 IDEA 视为用户持有的运行面；除非用户明确要求，不要再启动重复的 java -jar、bootRun 或类似长驻应用进程。",
       "IDEA MCP 基于启动器实现以兼容 IDEA 2021-2026：优先使用 JetBrains Toolbox 脚本支持热更新启动，再回退到最新安装的 idea64/idea 启动器。",
     ],

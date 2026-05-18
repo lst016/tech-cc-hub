@@ -18,6 +18,7 @@ test("tool optimization prompt keeps tool calls sparse, batched, and bounded", (
   assert.match(prompt, /one bounded rg\/find\/Grep\/Glob search/);
   assert.match(prompt, /under 200 lines/);
   assert.match(prompt, /Stop exploring once the collected evidence is sufficient/);
+  assert.match(prompt, /taskkill \/\/PID 1234 \/\/F/);
 });
 
 test("Claude Code compatibility prompt includes Agent Teams guidance", () => {

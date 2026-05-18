@@ -5,6 +5,8 @@ export type PromptKeyboardEventLike = {
   ctrlKey?: boolean;
   nativeEvent?: {
     isComposing?: boolean;
+    keyCode?: number;
+    which?: number;
   };
 };
 
@@ -18,10 +20,17 @@ export type PromptParagraphInputAction = "allow" | "block" | "submit";
 export function shouldSubmitPromptOnEnter(
   event: PromptKeyboardEventLike,
   isComposing: boolean,
-  compositionRecentlyEnded = false,
 ) {
   if (event.key !== "Enter" || event.shiftKey) return false;
-  return !event.nativeEvent?.isComposing && !isComposing && !compositionRecentlyEnded;
+  return !isComposing;
+}
+
+export function shouldBlockPromptEnterAfterComposition(
+  event: PromptKeyboardEventLike,
+  isComposing = false,
+) {
+  if (event.key !== "Enter" || event.shiftKey || event.metaKey || event.ctrlKey) return false;
+  return isComposing;
 }
 
 export function shouldInsertPromptNewline(event: PromptKeyboardEventLike) {
@@ -32,10 +41,10 @@ export function getPromptParagraphInputAction(
   event: PromptBeforeInputEventLike,
   isComposing: boolean,
   paletteOpen: boolean,
-  compositionRecentlyEnded = false,
+  compositionEnterPending = false,
 ): PromptParagraphInputAction {
   if (event.inputType !== "insertParagraph") return "allow";
-  if (isComposing || event.isComposing || paletteOpen || compositionRecentlyEnded) return "block";
+  if (isComposing || event.isComposing || paletteOpen || compositionEnterPending) return "block";
   return "submit";
 }
 

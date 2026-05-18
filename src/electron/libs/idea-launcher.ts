@@ -51,6 +51,8 @@ export type IdeaOpenInput = {
   line?: number;
   column?: number;
   edition?: IdeaEdition;
+  version?: string;
+  launcherPath?: string;
   allowLaunch?: boolean;
 };
 
@@ -62,6 +64,7 @@ export type IdeaOpenResult = {
   launcher: IdeaInstallation | null;
   args: string[];
   runningBefore: RunningIdeaProcess[];
+  matchingInstallations?: IdeaInstallation[];
   error?: string;
   note?: string;
 };
@@ -142,6 +145,43 @@ export function selectBestIdeaInstallation(
 
     return b.mtimeMs - a.mtimeMs;
   })[0] ?? null;
+}
+
+export function filterIdeaInstallations(
+  installations: IdeaInstallation[],
+  input: Pick<IdeaOpenInput, "edition" | "version" | "launcherPath"> = {},
+): IdeaInstallation[] {
+  const requestedLauncherPath = input.launcherPath?.trim();
+  const requestedVersion = input.version?.trim();
+  const requestedEdition = input.edition ?? "any";
+
+  return installations.filter((installation) => {
+    if (requestedLauncherPath) {
+      const expectedPath = normalize(resolve(requestedLauncherPath)).toLowerCase();
+      const actualPath = normalize(installation.launcherPath).toLowerCase();
+      if (actualPath !== expectedPath) return false;
+    }
+
+    if (requestedVersion) {
+      const haystack = [
+        installation.versionText,
+        installation.displayName,
+        installation.launcherPath,
+      ].filter(Boolean).join(" ");
+      if (!haystack.includes(requestedVersion)) return false;
+    }
+
+    return requestedEdition === "any"
+      || installation.edition === requestedEdition
+      || installation.edition === "unknown";
+  });
+}
+
+export function selectIdeaInstallation(
+  installations: IdeaInstallation[],
+  input: Pick<IdeaOpenInput, "edition" | "version" | "launcherPath"> = {},
+): IdeaInstallation | null {
+  return selectBestIdeaInstallation(filterIdeaInstallations(installations, input), input.edition ?? "any");
 }
 
 export function buildIdeaOpenArgs(input: Pick<IdeaOpenInput, "projectPath" | "filePath" | "line" | "column">): string[] {
@@ -263,7 +303,8 @@ export async function openIdea(input: IdeaOpenInput = {}): Promise<IdeaOpenResul
     };
   }
 
-  const launcher = selectBestIdeaInstallation(status.installations, input.edition ?? "any");
+  const matchingInstallations = filterIdeaInstallations(status.installations, input);
+  const launcher = selectIdeaInstallation(status.installations, input);
   if (!launcher) {
     return {
       success: false,
@@ -273,6 +314,7 @@ export async function openIdea(input: IdeaOpenInput = {}): Promise<IdeaOpenResul
       launcher: null,
       args,
       runningBefore: status.running,
+      matchingInstallations,
       error: "未找到 IntelliJ IDEA 启动器。请安装 IDEA，或启用 JetBrains Toolbox shell scripts。",
     };
   }
@@ -287,6 +329,7 @@ export async function openIdea(input: IdeaOpenInput = {}): Promise<IdeaOpenResul
       launcher,
       args,
       runningBefore: status.running,
+      matchingInstallations,
       error: spawnResult.error,
     };
   }
@@ -299,6 +342,7 @@ export async function openIdea(input: IdeaOpenInput = {}): Promise<IdeaOpenResul
     launcher,
     args,
     runningBefore: status.running,
+    matchingInstallations,
     note: status.running.length > 0
       ? "已向现有 IDEA 进程发送启动器请求；是否接管由当前安装的 IDE 支持情况决定。"
       : "已在后台发起 IDEA 启动请求。",

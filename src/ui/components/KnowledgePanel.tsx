@@ -155,6 +155,54 @@ function getRoutedProfiles(profiles: ApiConfigProfile[]): ApiConfigProfile[] {
   return enabled.length > 0 ? enabled : profiles.slice(0, 1);
 }
 
+function isCodexProfile(profile: ApiConfigProfile): boolean {
+  if (profile.provider === "codex") {
+    return true;
+  }
+  try {
+    return new URL(profile.baseURL).hostname === "chatgpt.com";
+  } catch {
+    return false;
+  }
+}
+
+function pickKnowledgeProfile(
+  profiles: ApiConfigProfile[],
+  modelField: "embeddingModel" | "wikiModel",
+): ApiConfigProfile | undefined {
+  const withModel = profiles.filter((profile) => profile[modelField]?.trim());
+  return withModel.find((profile) => !isCodexProfile(profile)) ?? withModel[0];
+}
+
+function isLikelyEmbeddingModel(model: string): boolean {
+  const normalized = model.trim().toLowerCase();
+  return (
+    normalized.includes("embedding") ||
+    normalized.startsWith("bge-") ||
+    normalized.startsWith("gte-") ||
+    normalized.startsWith("m3e-") ||
+    normalized.startsWith("e5-")
+  );
+}
+
+function pickWikiGenerationModel(profile: ApiConfigProfile): string {
+  const configuredWikiModel = profile.wikiModel?.trim() || "";
+  if (configuredWikiModel && !isLikelyEmbeddingModel(configuredWikiModel)) {
+    return configuredWikiModel;
+  }
+
+  return (
+    [
+      profile.smallModel,
+      profile.analysisModel,
+      profile.model,
+      profile.expertModel,
+    ]
+      .map((model) => model?.trim() || "")
+      .find((model) => model && !isLikelyEmbeddingModel(model)) ?? configuredWikiModel
+  );
+}
+
 function getWorkspaceName(cwd?: string): string {
   if (!cwd) return "当前工作区";
   const parts = cwd.split(/[\\/]+/).filter(Boolean);
@@ -928,12 +976,12 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
   );
   const modelState = useMemo(() => {
     const profiles = getRoutedProfiles(apiConfigSettings.profiles);
-    const embeddingProfile = profiles.find((profile) => profile.embeddingModel?.trim());
-    const wikiProfile = profiles.find((profile) => profile.wikiModel?.trim());
+    const embeddingProfile = pickKnowledgeProfile(profiles, "embeddingModel");
+    const wikiProfile = pickKnowledgeProfile(profiles, "wikiModel");
     return {
       embeddingModel: embeddingProfile?.embeddingModel?.trim() || "",
       embeddingProfileName: embeddingProfile?.name,
-      wikiModel: wikiProfile?.wikiModel?.trim() || "",
+      wikiModel: wikiProfile ? pickWikiGenerationModel(wikiProfile) : "",
       wikiProfileName: wikiProfile?.name,
     };
   }, [apiConfigSettings.profiles]);
@@ -2063,7 +2111,7 @@ export function KnowledgePanel({ onBack, onOpenSettings }: KnowledgePanelProps) 
           </div>
         </header>
 
-        <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-8 py-10">
+        <div className={`flex min-h-0 flex-1 justify-center overflow-y-auto px-8 py-10 ${showingDocumentPreview || showingSourcePreview ? "items-start" : "items-center"}`}>
           {!selectedWorkspace ? (
             <div className="flex w-full max-w-md flex-col items-center text-center">
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-dashed border-slate-200 text-slate-300">

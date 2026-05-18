@@ -1,14 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   buildIdeaOpenArgs,
   compareVersionParts,
+  filterIdeaInstallations,
   parseIdeaVersionFromPath,
   parseWindowsTasklistCsv,
   selectBestIdeaInstallation,
+  selectIdeaInstallation,
   type IdeaInstallation,
 } from "../../src/electron/libs/idea-launcher.js";
+import {
+  buildSpringBootCommandPlan,
+  restartSpringBoot,
+} from "../../src/electron/libs/spring-boot-runner.js";
 
 function installation(overrides: Partial<IdeaInstallation>): IdeaInstallation {
   return {
@@ -75,6 +83,22 @@ test("selects newest standard IDEA install when no Toolbox script exists", () =>
   assert.equal(best?.versionText, "2026.1");
 });
 
+test("filters IDEA installations by requested version or launcher path", () => {
+  const idea2023 = installation({
+    launcherPath: "C:\\Program Files\\JetBrains\\IntelliJ IDEA 2023.2.8\\bin\\idea64.exe",
+    versionText: "2023.2.8",
+    versionParts: [2023, 2, 8],
+  });
+  const idea2026 = installation({
+    launcherPath: "C:\\Program Files\\JetBrains\\IntelliJ IDEA 2026.1\\bin\\idea64.exe",
+    versionText: "2026.1",
+    versionParts: [2026, 1],
+  });
+
+  assert.deepEqual(filterIdeaInstallations([idea2023, idea2026], { version: "2023.2.8" }), [idea2023]);
+  assert.equal(selectIdeaInstallation([idea2023, idea2026], { launcherPath: idea2023.launcherPath })?.versionText, "2023.2.8");
+});
+
 test("selects newest executable across Toolbox app and standard installs", () => {
   const best = selectBestIdeaInstallation([
     installation({
@@ -116,4 +140,29 @@ test("parses running IDEA from Windows tasklist csv", () => {
   ].join("\r\n"));
 
   assert.deepEqual(processes, [{ imageName: "idea64.exe", pid: 1204 }]);
+});
+
+test("plans Spring Boot Maven and Gradle runner commands", () => {
+  const tempRoot = process.env.TEMP || process.cwd();
+  const mavenProject = join(tempRoot, "tech-cc-hub-maven-plan");
+  const gradleProject = join(tempRoot, "tech-cc-hub-gradle-plan");
+  mkdirSync(mavenProject, { recursive: true });
+  mkdirSync(gradleProject, { recursive: true });
+  writeFileSync(join(mavenProject, "pom.xml"), "<project />");
+  writeFileSync(join(gradleProject, "build.gradle"), "plugins { id 'java' }");
+
+  const mavenPlan = buildSpringBootCommandPlan({ projectPath: mavenProject, buildTool: "auto" }, "run", "win32");
+  const gradlePlan = buildSpringBootCommandPlan({ projectPath: gradleProject, buildTool: "gradle" }, "compile", "win32");
+
+  assert.equal(mavenPlan.tool, "maven");
+  assert.deepEqual(mavenPlan.args, ["spring-boot:run"]);
+  assert.equal(gradlePlan.tool, "gradle");
+  assert.deepEqual(gradlePlan.args, ["classes"]);
+});
+
+test("restart guard prevents duplicate Spring Boot launch without a target", async () => {
+  const result = await restartSpringBoot({ projectPath: process.cwd(), strategy: "kill-and-run" });
+
+  assert.equal(result.success, false);
+  assert.match(result.error ?? "", /requires a pid or port/);
 });

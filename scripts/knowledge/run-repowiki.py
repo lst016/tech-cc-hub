@@ -41,12 +41,6 @@ from repowiki.llm.client import LLMClient  # noqa: E402
 
 
 def _normalize_model(model: str, api_base: str) -> str:
-    if not model:
-        return model
-    if "/" in model:
-        return model
-    if api_base:
-        return f"openai/{model}"
     return model
 
 
@@ -289,6 +283,9 @@ def _build_incremental_plan(args: argparse.Namespace, previous_metadata: dict, c
     reasons: list[str] = []
     full = False
 
+    if getattr(args, "force_full", False):
+        full = True
+        reasons.append("force-full")
     if not previous_metadata:
         full = True
         reasons.append("missing-previous-metadata")
@@ -924,7 +921,7 @@ async def _plan_catalogs(project, graph: DependencyGraph, llm: LLMClient, langua
         except Exception:
             parsed = None
     if not isinstance(parsed, list):
-        return _fallback_catalogs(project, graph)
+        return _ensure_required_catalogs(project, graph, _fallback_catalogs(project, graph))
 
     catalogs: list[dict] = []
     for index, item in enumerate(parsed):
@@ -1487,8 +1484,7 @@ def _apply_token_budget(catalogs: list[dict], args: argparse.Namespace) -> tuple
         or DEFAULT_REPOWIKI_MAX_OUTPUT_TOKENS
     )
     estimated_output_tokens = len(catalogs) * ESTIMATED_OUTPUT_TOKENS_PER_PAGE
-    token_page_cap = max(12, max_output_tokens // ESTIMATED_OUTPUT_TOKENS_PER_PAGE)
-    cap = max(12, min(max_pages, token_page_cap))
+    cap = max_pages
     budget = {
         "maxPages": max_pages,
         "maxOutputTokens": max_output_tokens,
@@ -1702,13 +1698,19 @@ async def _run_qoder_style(
     previous_catalogs = _metadata_catalogs(previous_metadata)
     planning_failure = ""
     if incremental_plan.get("mode") == "incremental" and not incremental_plan.get("catalogChanged") and previous_catalogs:
-        catalogs = previous_catalogs
+        if len(previous_catalogs) < _target_catalog_count(project):
+            incremental_plan["mode"] = "full"
+            incremental_plan["catalogChanged"] = True
+            incremental_plan.setdefault("reasons", []).append("previous-catalog-count-too-small")
+            catalogs = await _plan_catalogs(project, graph, llm, args.language, cache)
+        else:
+            catalogs = previous_catalogs
     else:
         try:
             catalogs = await _plan_catalogs(project, graph, llm, args.language, cache)
         except Exception as exc:
             planning_failure = str(exc)
-            catalogs = _fallback_catalogs(project, graph)
+            catalogs = _ensure_required_catalogs(project, graph, _fallback_catalogs(project, graph))
             incremental_plan["catalogChanged"] = True
             incremental_plan.setdefault("reasons", []).append("catalog-planner-fallback")
 
@@ -1965,6 +1967,12 @@ def main() -> int:
         "--file-page-limit",
         type=int,
         default=int(os.getenv("REPOWIKI_FILE_PAGE_LIMIT", os.getenv("TECH_CC_HUB_REPOWIKI_FILE_PAGE_LIMIT", "0"))),
+    )
+    parser.add_argument(
+        "--force-full",
+        action="store_true",
+        default=os.getenv("TECH_CC_HUB_REPOWIKI_FORCE_FULL", "").strip().lower() in {"1", "true", "yes", "on"},
+        help="Ignore previous generation metadata and rebuild the full RepoWiki catalog.",
     )
     args = parser.parse_args()
 

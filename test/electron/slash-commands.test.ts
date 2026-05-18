@@ -9,6 +9,7 @@ import {
   discoverSlashCommandItemsInRoots,
   discoverSlashCommandsInRoots,
 } from "../../src/electron/libs/slash-command-discovery.js";
+import { CLAUDE_CODE_BUILTIN_COMMAND_ITEMS } from "../../src/electron/libs/claude-code-builtin-commands.js";
 import { extractSlashCommandsFromMessages, mergeSlashCommandLists } from "../../src/shared/slash-commands.js";
 
 test("discoverSlashCommandsInRoots collects project and user markdown command files", () => {
@@ -59,6 +60,14 @@ test("slash command sources merge local commands with runtime init commands", ()
     assert.deepEqual(commands, ["debug", "speckit.specify"]);
   } finally {
     rmSync(sandboxRoot, { recursive: true, force: true });
+  }
+});
+
+test("Claude Code built-in slash command seed includes stable default commands", () => {
+  const names = CLAUDE_CODE_BUILTIN_COMMAND_ITEMS.map((item) => item.name);
+
+  for (const expected of ["help", "init", "doctor", "model", "skills", "goal"]) {
+    assert.ok(names.includes(expected), `expected /${expected} in built-in slash command seed`);
   }
 });
 

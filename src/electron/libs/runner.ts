@@ -74,6 +74,10 @@ import { normalizeRunnerError } from "./runner-error.js";
 import { resolveRuntimeEfficiencyProfile } from "./runtime-efficiency.js";
 import type { Session } from "./session-store.js";
 import {
+  getBashBackgroundServiceGuidance,
+  normalizeWindowsBashCommand,
+} from "./windows-bash-command.js";
+import {
   buildAdminConfigPromptAppend,
   buildBrowserWorkbenchPromptAppend,
   buildBuiltinMcpRegistryPromptAppend,
@@ -1411,11 +1415,18 @@ function buildQualityHooks(
             return;
           }
 
-          const fixed = trimmed(raw.replace(/\n/g, " "));
+          const whitespaceFixed = trimmed(raw.replace(/\n/g, " "));
+          const windowsFixed = normalizeWindowsBashCommand(whitespaceFixed);
+          const fixed = windowsFixed.command;
           if (fixed !== raw) {
             normalizedInput.command = fixed;
             didMutate = true;
-            fixes.push("Normalized Bash command whitespace");
+            if (whitespaceFixed !== raw) {
+              fixes.push("Normalized Bash command whitespace");
+            }
+            if (windowsFixed.note) {
+              fixes.push(windowsFixed.note);
+            }
           }
         };
 
@@ -1458,11 +1469,14 @@ function buildQualityHooks(
 
         if (toolName === "Bash") {
           normalizeCommand(toolInput.command);
-          if (typeof toolInput.command !== "string" || !toolInput.command.trim()) {
+          const effectiveCommand = typeof normalizedInput.command === "string"
+            ? normalizedInput.command
+            : toolInput.command;
+          if (typeof effectiveCommand !== "string" || !effectiveCommand.trim()) {
             hints.push("Bash 缂哄皯 command 鍙傛暟");
           } else {
-            setTrimmed("command", "command", toolInput.command);
-            const command = (toolInput.command as string).toLowerCase();
+            setTrimmed("command", "command", effectiveCommand);
+            const command = effectiveCommand.toLowerCase();
             if (/(rm\s+-rf|git\s+reset\s+--hard|mkfs|dd\s+if=|format\s+)/i.test(command)) {
               hints.push("Bash command looks high-risk; verify path and argument boundaries first.");
             }
@@ -1545,6 +1559,23 @@ function buildQualityHooks(
           !isLikelyFailedToolResponse(input.tool_response)
         ) {
           onFigmaImplementationAnchor?.();
+        }
+
+        if ("tool_response" in input) {
+          const serviceGuidance = getBashBackgroundServiceGuidance(
+            input.tool_name,
+            "tool_input" in input ? input.tool_input : undefined,
+            input.tool_response,
+          );
+          if (serviceGuidance) {
+            return {
+              continue: true,
+              hookSpecificOutput: {
+                hookEventName: "PostToolUse",
+                additionalContext: serviceGuidance,
+              },
+            };
+          }
         }
 
         if (input.tool_name === "Read") {

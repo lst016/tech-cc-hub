@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import type { AgentRunSurface, SessionHistoryCursor, SessionStatus, StreamMessage } from "../types.js";
+import type { AgentRunSurface, PromptAttachment, SessionHistoryCursor, SessionStatus, StreamMessage } from "../types.js";
 import { existsSync } from "fs";
 import electron from "electron";
 import { isSuccessfulRunnerResult } from "../../shared/runner-status.js";
@@ -437,6 +437,46 @@ export class SessionStore {
       )
       .run(id, sessionId, JSON.stringify(storedMessage), capturedAt);
     return storedMessage;
+  }
+
+  replaceUserPromptAndPrune(
+    sessionId: string,
+    historyId: string,
+    prompt: string,
+    attachments?: PromptAttachment[],
+  ): StreamMessage | null {
+    const row = this.db
+      .prepare(
+        `select rowid, id, data, created_at
+         from messages
+         where session_id = ? and id = ?`
+      )
+      .get(sessionId, historyId) as Record<string, unknown> | undefined;
+
+    if (!row || typeof row.data !== "string") return null;
+
+    const existing = JSON.parse(row.data) as StreamMessage;
+    if (existing.type !== "user_prompt") return null;
+
+    const updated = {
+      ...existing,
+      prompt,
+      attachments: attachments && attachments.length > 0 ? attachments : undefined,
+      capturedAt: typeof existing.capturedAt === "number" ? existing.capturedAt : Number(row.created_at),
+      historyId: String(row.id),
+    } satisfies StreamMessage;
+
+    const transaction = this.db.transaction(() => {
+      this.db
+        .prepare("update messages set data = ? where session_id = ? and id = ?")
+        .run(JSON.stringify(updated), sessionId, historyId);
+      this.db
+        .prepare("delete from messages where session_id = ? and rowid > ?")
+        .run(sessionId, Number(row.rowid));
+    });
+    transaction();
+
+    return updated;
   }
 
   deleteSession(id: string): boolean {

@@ -244,6 +244,9 @@ export async function indexKnowledgeWorkspace(options: {
         },
       })),
     ];
+    const repowikiReportFiles = generated.generatedFiles.length > 0
+      ? generated.generatedFiles
+      : markdownFiles.map((file) => file.relativePath);
     options.onProgress?.({
       stage: "indexing",
       message: `准备索引 ${markdownFiles.length} 篇 Repo Wiki 文档和 ${agentCardFiles.length} 张 Agent Cards。`,
@@ -316,7 +319,7 @@ export async function indexKnowledgeWorkspace(options: {
       indexedDocuments,
       indexedChunks,
       skippedFiles: generated.skipped.length + agentCards.skippedFiles.length,
-      generatedFiles: [...generated.generatedFiles, ...agentCards.generatedFiles],
+      generatedFiles: [...repowikiReportFiles, ...agentCards.generatedFiles],
       message: `Knowledge Engine 索引完成：${indexedDocuments} 个文档，${indexedChunks} 个 chunks，刷新 ${changedDocuments} 个文档/${changedChunks} 个 chunks。`,
     };
     writeJson(paths.indexStatePath, report);
@@ -325,7 +328,7 @@ export async function indexKnowledgeWorkspace(options: {
       generatedAt: Date.now(),
       mode: options.mode,
       wikiModel: settings.wiki?.model,
-      generatedFiles: generated.generatedFiles,
+      generatedFiles: repowikiReportFiles,
       agentCardFiles: agentCards.generatedFiles,
       agentCards: agentCards.cards.length,
       indexedDocuments,

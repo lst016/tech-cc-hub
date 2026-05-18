@@ -4,6 +4,7 @@ import {
   getPromptParagraphInputAction,
   insertTextIntoPrompt,
   resolvePromptEditorInputCursor,
+  shouldBlockPromptEnterAfterComposition,
   shouldInsertPromptNewline,
   shouldSubmitPromptOnEnter,
 } from "../../src/ui/utils/prompt-editor-keyboard.js";
@@ -19,14 +20,20 @@ test("Shift+Enter inserts a newline instead of submitting", () => {
 });
 
 test("Enter is ignored only while IME composition is active", () => {
-  assert.equal(shouldSubmitPromptOnEnter({ key: "Enter", nativeEvent: { isComposing: true } }, false), false);
   assert.equal(shouldSubmitPromptOnEnter({ key: "Enter" }, true), false);
   assert.equal(shouldSubmitPromptOnEnter({ key: "Enter" }, false), true);
 });
 
-test("Enter is blocked briefly after IME composition ends", () => {
-  assert.equal(shouldSubmitPromptOnEnter({ key: "Enter" }, false, true), false);
-  assert.equal(shouldSubmitPromptOnEnter({ key: "Enter" }, false, false), true);
+test("IME-owned Enter is consumed before submit", () => {
+  assert.equal(shouldBlockPromptEnterAfterComposition({ key: "Enter" }, true), true);
+  assert.equal(shouldBlockPromptEnterAfterComposition({ key: "Enter", shiftKey: true }, true), false);
+  assert.equal(shouldBlockPromptEnterAfterComposition({ key: "Enter" }, false), false);
+  assert.equal(shouldSubmitPromptOnEnter({ key: "Enter" }, false), true);
+});
+
+test("plain Enter can submit after IME text is committed", () => {
+  assert.equal(shouldBlockPromptEnterAfterComposition({ key: "Enter" }, false), false);
+  assert.equal(shouldSubmitPromptOnEnter({ key: "Enter" }, false), true);
 });
 
 test("contentEditable paragraph input submits when keydown does not catch Enter", () => {
@@ -36,6 +43,9 @@ test("contentEditable paragraph input submits when keydown does not catch Enter"
 test("contentEditable paragraph input is blocked during IME composition", () => {
   assert.equal(getPromptParagraphInputAction({ inputType: "insertParagraph", isComposing: true }, false, false), "block");
   assert.equal(getPromptParagraphInputAction({ inputType: "insertParagraph" }, true, false), "block");
+});
+
+test("contentEditable paragraph input blocks the one pending IME Enter fallback", () => {
   assert.equal(getPromptParagraphInputAction({ inputType: "insertParagraph" }, false, false, true), "block");
 });
 

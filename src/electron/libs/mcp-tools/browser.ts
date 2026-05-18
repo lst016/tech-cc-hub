@@ -179,6 +179,14 @@ const MAX_BATCH_COMMANDS = 20;
 const DEFAULT_BATCH_COMMAND_TIMEOUT_MS = 30000;
 const MAX_BATCH_COMMAND_TIMEOUT_MS = 120000;
 
+type HttpPingState =
+  | "ok"
+  | "redirect"
+  | "reachable_not_ready"
+  | "server_error"
+  | "client_error"
+  | "unknown_status";
+
 let browserHost: BrowserWorkbenchToolHost | null = null;
 const browserMcpServersBySessionId = new Map<string, McpSdkServerConfigWithInstance>();
 
@@ -401,6 +409,8 @@ async function httpPing(url: string, timeoutMs: number): Promise<Record<string, 
       status: response.status,
       statusText: response.statusText,
       ok: response.ok,
+      reachable: true,
+      state: classifyHttpPingStatus(targetUrl, response.status),
       redirected: response.type === "opaqueredirect" || response.status >= 300 && response.status < 400,
       location: response.headers.get("location") || undefined,
       elapsedMs: Date.now() - startedAt,
@@ -412,11 +422,22 @@ async function httpPing(url: string, timeoutMs: number): Promise<Record<string, 
       url: targetUrl,
       method: "HEAD",
       elapsedMs: Date.now() - startedAt,
+      reachable: false,
+      state: "unreachable",
       error: error instanceof Error ? error.message : String(error),
     };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export function classifyHttpPingStatus(url: string, status: number): HttpPingState {
+  if (status >= 200 && status < 300) return "ok";
+  if (status >= 300 && status < 400) return "redirect";
+  if (status === 503 && /\/actuator\/health(?:\/|$|\?)/i.test(url)) return "reachable_not_ready";
+  if (status >= 500 && status < 600) return "server_error";
+  if (status >= 400 && status < 500) return "client_error";
+  return "unknown_status";
 }
 
 function execFileText(command: string, args: string[], timeoutMs = 5000): Promise<string> {
@@ -471,6 +492,144 @@ function parseJsonOutput(output: string): unknown {
   return JSON.parse(trimmed);
 }
 
+export function buildDiagnosePortPowerShellScript(port: number): string {
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    `$port = ${port}`,
+    "$connections = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)",
+    "$items = @()",
+    "foreach ($connection in $connections) {",
+    "  $process = Get-Process -Id $connection.OwningProcess -ErrorAction SilentlyContinue",
+    "  $cim = Get-CimInstance Win32_Process -Filter \"ProcessId = $($connection.OwningProcess)\" -ErrorAction SilentlyContinue",
+    "  $startedAt = $null",
+    "  if ($process -and $process.StartTime) { $startedAt = $process.StartTime.ToString('yyyy-MM-dd HH:mm:ss') }",
+    "  $processName = if ($process) { \"$($process.ProcessName).exe\" } elseif ($cim) { $cim.Name } else { $null }",
+    "  $commandLine = if ($cim) { $cim.CommandLine } else { $null }",
+    "  $items += [pscustomobject]@{",
+    "    pid = $connection.OwningProcess",
+    "    processName = $processName",
+    "    localAddress = $connection.LocalAddress",
+    "    localPort = $connection.LocalPort",
+    "    state = $connection.State.ToString()",
+    "    startedAt = $startedAt",
+    "    commandLine = $commandLine",
+    "  }",
+    "}",
+    "$items | ConvertTo-Json -Compress",
+  ].join("\n");
+}
+
+export function buildPowerShellEncodedCommandArgs(script: string): string[] {
+  return [
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-EncodedCommand",
+    Buffer.from(script, "utf16le").toString("base64"),
+  ];
+}
+
+function parseCsvLine(line: string): string[] {
+  const columns: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+    if (char === '"' && next === '"') {
+      current += '"';
+      index += 1;
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (char === "," && !inQuotes) {
+      columns.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+
+  columns.push(current);
+  return columns;
+}
+
+async function getWindowsProcessName(pid: number): Promise<string | undefined> {
+  try {
+    const output = await execFileText("tasklist.exe", ["/fi", `PID eq ${pid}`, "/fo", "csv", "/nh"], 5000);
+    const columns = parseCsvLine(output.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "");
+    return columns[0] || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function diagnosePortWithNetstat(port: number): Promise<Record<string, unknown>> {
+  const output = await execFileText("netstat.exe", ["-ano", "-p", "tcp"], 5000);
+  const rawListeners = output
+    .split(/\r?\n/)
+    .map((line) => line.trim().split(/\s+/))
+    .filter((parts) => {
+      return parts[0]?.toUpperCase() === "TCP"
+        && parts[1]?.endsWith(`:${port}`)
+        && parts[3]?.toUpperCase() === "LISTENING"
+        && Number.isFinite(Number.parseInt(parts[4] ?? "", 10));
+    });
+
+  const listeners: Array<Record<string, unknown>> = [];
+  for (const parts of rawListeners) {
+    const pid = Number.parseInt(parts[4] ?? "", 10);
+    const localAddress = (parts[1] ?? "").slice(0, -String(port).length - 1);
+    listeners.push({
+      pid,
+      processName: await getWindowsProcessName(pid),
+      localAddress,
+      localPort: port,
+      state: "Listen",
+    });
+  }
+
+  return buildDiagnosePortResult(port, listeners, "netstat");
+}
+
+function buildKillCommands(pid: unknown): Record<string, string> | undefined {
+  if (!pid) return undefined;
+  const normalizedPid = String(pid);
+  return {
+    cmd: `taskkill /PID ${normalizedPid} /F`,
+    bash: `taskkill //PID ${normalizedPid} //F`,
+    powershell: `taskkill.exe /PID ${normalizedPid} /F`,
+  };
+}
+
+function buildDiagnosePortResult(
+  port: number,
+  listeners: Array<Record<string, unknown>>,
+  source: "powershell" | "netstat",
+  diagnosticError?: string,
+): Record<string, unknown> {
+  const first = listeners[0];
+  return {
+    action: "diagnose_port",
+    success: true,
+    source,
+    port,
+    listening: listeners.length > 0,
+    listeners,
+    suggestion: first
+      ? `${port} is occupied by ${String(first.processName || "unknown process")} (PID ${String(first.pid || "unknown")})${first.startedAt ? `, started at ${String(first.startedAt)}` : ""}. Kill only if this is a stale dev server.`
+      : `${port} is free; start the dev server directly.`,
+    killCommand: first?.pid ? `taskkill /PID ${String(first.pid)} /F` : undefined,
+    killCommands: buildKillCommands(first?.pid),
+    diagnosticError,
+  };
+}
+
 async function diagnosePort(port: number): Promise<Record<string, unknown>> {
   if (process.platform !== "win32") {
     return {
@@ -481,51 +640,28 @@ async function diagnosePort(port: number): Promise<Record<string, unknown>> {
     };
   }
 
-  const psScript = [
-    `$port = ${port}`,
-    "$connections = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue",
-    "$items = @()",
-    "foreach ($connection in $connections) {",
-    "  $process = Get-Process -Id $connection.OwningProcess -ErrorAction SilentlyContinue",
-    "  $cim = Get-CimInstance Win32_Process -Filter \"ProcessId = $($connection.OwningProcess)\" -ErrorAction SilentlyContinue",
-    "  $startedAt = $null",
-    "  if ($process -and $process.StartTime) { $startedAt = $process.StartTime.ToString('yyyy-MM-dd HH:mm:ss') }",
-    "  $processName = if ($process) { $process.ProcessName + '.exe' } elseif ($cim) { $cim.Name } else { $null }",
-    "  $items += [pscustomobject]@{",
-    "    pid = $connection.OwningProcess;",
-    "    processName = $processName;",
-    "    localAddress = $connection.LocalAddress;",
-    "    localPort = $connection.LocalPort;",
-    "    state = $connection.State.ToString();",
-    "    startedAt = $startedAt;",
-    "    commandLine = if ($cim) { $cim.CommandLine } else { $null };",
-    "  }",
-    "}",
-    "$items | ConvertTo-Json -Compress",
-  ].join("; ");
+  const psScript = buildDiagnosePortPowerShellScript(port);
 
   try {
-    const output = await execFileText("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", psScript]);
+    const output = await execFileText("powershell.exe", buildPowerShellEncodedCommandArgs(psScript));
     const parsed = parseJsonOutput(output);
     const listeners = Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
-    const first = listeners[0] as Record<string, unknown> | undefined;
-    return {
-      action: "diagnose_port",
-      success: true,
-      port,
-      listening: listeners.length > 0,
-      listeners,
-      suggestion: first
-        ? `${port} is occupied by ${String(first.processName || "unknown process")} (PID ${String(first.pid || "unknown")})${first.startedAt ? `, started at ${String(first.startedAt)}` : ""}. Kill only if this is a stale dev server.`
-        : `${port} is free; start the dev server directly.`,
-      killCommand: first?.pid ? `taskkill /PID ${String(first.pid)} /F` : undefined,
-    };
+    return buildDiagnosePortResult(port, listeners as Array<Record<string, unknown>>, "powershell");
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      return await diagnosePortWithNetstat(port).then((result) => ({
+        ...result,
+        diagnosticError: message,
+      }));
+    } catch {
+      // Fall through to the original PowerShell failure if the fallback also fails.
+    }
     return {
       action: "diagnose_port",
       success: false,
       port,
-      error: error instanceof Error ? error.message : String(error),
+      error: message,
     };
   }
 }

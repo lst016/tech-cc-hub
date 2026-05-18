@@ -1,5 +1,4 @@
 import Database from "better-sqlite3";
-import { load as loadSqliteVec } from "sqlite-vec";
 import type {
   KnowledgeDocument,
   KnowledgeOverviewEntry,
@@ -16,6 +15,7 @@ import {
   stableHash,
   stringifyJsonObject,
 } from "./knowledge-utils.js";
+import { loadSqliteVecExtension } from "./sqlite-vec-loader.js";
 
 type Row = Record<string, unknown>;
 
@@ -140,7 +140,7 @@ export class KnowledgeRepository {
 
   private initializeVectorStore(): void {
     try {
-      loadSqliteVec(this.db);
+      loadSqliteVecExtension(this.db);
       const existing = this.db
         .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'knowledge_chunk_vectors'")
         .get() as { sql?: string } | undefined;

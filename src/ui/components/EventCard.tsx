@@ -16,11 +16,11 @@ import { resolveImageAttachmentSrc } from "../../shared/attachments";
 import { copyTextToClipboard as copyText } from "../utils/clipboard";
 import { OPEN_BROWSER_WORKBENCH_URL_EVENT, PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT } from "../events";
 import { extractCodeReferencesPrompt, type CodeReferencePromptSummary } from "../utils/code-reference-prompt";
-import { buildRevisionComposerPrompt, resolveRevisionReferenceSource } from "../utils/message-revision";
 
 type MessageContent = SDKAssistantMessage["message"]["content"][number];
 type ToolResultContent = SDKUserMessage["message"]["content"][number];
 type ToolStatus = "pending" | "success" | "error";
+type UserPromptRevisionHandler = (prompt: string, attachments: PromptAttachment[], historyId: string) => Promise<boolean> | boolean;
 
 type SystemInitMessage = SDKMessage & {
   subtype?: string;
@@ -191,51 +191,6 @@ const appendMessageReferenceToComposer = (
   window.dispatchEvent(new CustomEvent(PROMPT_FOCUS_EVENT));
 };
 
-const getSelectedTextWithin = (container: HTMLElement | null) => {
-  const selection = window.getSelection();
-  const selectedText = selection?.toString().trim() ?? "";
-  if (!selection || !selectedText || selection.rangeCount === 0 || !container) return "";
-
-  const anchorNode = selection.anchorNode;
-  const focusNode = selection.focusNode;
-  if ((anchorNode && !container.contains(anchorNode)) || (focusNode && !container.contains(focusNode))) return "";
-
-  return selectedText;
-};
-
-const appendRevisionRequestToComposer = ({
-  selectedText,
-  fallbackText,
-  sourceRole,
-  sourceLabel,
-  capturedAt,
-}: {
-  selectedText?: string | null;
-  fallbackText: string;
-  sourceRole: "user" | "assistant" | "tool" | "system";
-  sourceLabel: string;
-  capturedAt?: number;
-}) => {
-  const source = resolveRevisionReferenceSource({
-    selectedText,
-    fallbackText,
-    fallbackLabel: sourceLabel,
-  });
-  if (!source) return;
-
-  const { activeSessionId, addMessageReference, prompt, setPrompt } = useAppStore.getState();
-  addMessageReference(activeSessionId, {
-    kind: source.kind,
-    sourceRole,
-    sourceLabel: source.sourceLabel,
-    text: source.text,
-    capturedAt,
-  });
-  setPrompt(buildRevisionComposerPrompt(prompt));
-  window.getSelection()?.removeAllRanges();
-  window.dispatchEvent(new CustomEvent(PROMPT_FOCUS_EVENT));
-};
-
 const StatusDot = ({
   variant = "accent",
   active = false,
@@ -290,7 +245,7 @@ const IconButton = ({
     onClick={onClick}
     className="grid h-7 w-7 place-items-center rounded-full border border-black/8 bg-white/80 text-[13px] text-muted opacity-0 shadow-sm transition hover:border-accent/30 hover:text-accent group-hover:opacity-100"
   >
-    {label === "复制" ? "⧉" : label === "引用" ? "↩" : label === "重新修改" ? "✎" : "⋯"}
+    {label === "复制" ? "⧉" : label === "引用" ? "↩" : label === "修改" ? "✎" : "⋯"}
   </button>
 );
 
@@ -774,6 +729,17 @@ const isSyntheticAttachmentPrompt = (text: string) => {
   return /^The user uploaded (?:an image|\d+ images?)\b/i.test(normalized);
 };
 
+const extractPromptContextBlocks = (prompt: string) => (
+  Array.from(prompt.matchAll(/<(browser_annotations|code_references)>[\s\S]*?<\/\1>/g), (match) => match[0].trim())
+    .filter(Boolean)
+);
+
+const buildRevisedPromptWithContext = (visiblePrompt: string, contextBlocks: string[]) => (
+  contextBlocks.length > 0
+    ? `${visiblePrompt}\n\n${contextBlocks.join("\n\n")}`
+    : visiblePrompt
+);
+
 const CollapsibleText = ({
   text,
   className,
@@ -946,9 +912,13 @@ const ThoughtDisplay = ({
 const UserMessageCard = ({
   message,
   showIndicator = false,
+  revisionDisabled = false,
+  onRevisePrompt,
 }: {
-  message: { type: "user_prompt"; prompt: string; attachments?: PromptAttachment[]; capturedAt?: number };
+  message: { type: "user_prompt"; prompt: string; attachments?: PromptAttachment[]; capturedAt?: number; historyId?: string };
   showIndicator?: boolean;
+  revisionDisabled?: boolean;
+  onRevisePrompt?: UserPromptRevisionHandler;
 }) => {
   const { visiblePrompt, annotations, codeReferences } = useMemo(() => {
     const browserResult = extractBrowserAnnotationsPrompt(message.prompt);
@@ -962,7 +932,52 @@ const UserMessageCard = ({
   const hasVisiblePrompt = visiblePrompt.trim().length > 0;
   const hasAttachments = Boolean(message.attachments?.length);
   const shouldHidePromptBubble = hasAttachments && isSyntheticAttachmentPrompt(visiblePrompt);
+  const editablePrompt = visiblePrompt || message.prompt;
+  const promptContextBlocks = useMemo(() => extractPromptContextBlocks(message.prompt), [message.prompt]);
+  const canRevisePrompt = hasVisiblePrompt && !shouldHidePromptBubble && Boolean(message.historyId) && Boolean(onRevisePrompt) && !revisionDisabled;
+  const [isEditing, setIsEditing] = useState(false);
+  const [revisionDraft, setRevisionDraft] = useState("");
+  const [revisionSubmitting, setRevisionSubmitting] = useState(false);
+  const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const [lightboxImage, setLightboxImage] = useState<{ src: string; name: string } | null>(null);
+
+  useEffect(() => {
+    if (!isEditing) return;
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    const end = editor.value.length;
+    editor.setSelectionRange(end, end);
+  }, [isEditing]);
+
+  const startRevision = () => {
+    setRevisionDraft(editablePrompt);
+    setIsEditing(true);
+  };
+
+  const cancelRevision = () => {
+    setIsEditing(false);
+    setRevisionDraft("");
+    setRevisionSubmitting(false);
+  };
+
+  const handleRevise = () => {
+    startRevision();
+  };
+
+  const submitRevision = async () => {
+    const trimmedDraft = revisionDraft.trim();
+    if (!trimmedDraft || !message.historyId || !onRevisePrompt || revisionSubmitting) return;
+    setRevisionSubmitting(true);
+    const revisedPrompt = buildRevisedPromptWithContext(trimmedDraft, promptContextBlocks);
+    const sent = await onRevisePrompt(revisedPrompt, message.attachments ?? [], message.historyId);
+    if (sent) {
+      setIsEditing(false);
+      setRevisionDraft("");
+    }
+    setRevisionSubmitting(false);
+  };
+
   useEffect(() => {
     if (!lightboxImage) return;
 
@@ -990,12 +1005,60 @@ const UserMessageCard = ({
     <div className="group mt-5 flex flex-col items-end">
       <SectionLabel active={showIndicator} variant="accent">用户</SectionLabel>
       <div className="flex w-full justify-end gap-2">
-        <IconButton
-          label="引用"
-          onClick={() => appendMessageReferenceToComposer(visiblePrompt || message.prompt, "user", "用户消息", "message", message.capturedAt)}
-        />
-        <IconButton label="复制" onClick={() => void copyText(visiblePrompt || message.prompt)} />
-        {hasVisiblePrompt && !shouldHidePromptBubble ? (
+        {!isEditing && canRevisePrompt && <IconButton label="修改" onClick={handleRevise} />}
+        {!isEditing && (
+          <>
+            <IconButton
+              label="引用"
+              onClick={() => appendMessageReferenceToComposer(visiblePrompt || message.prompt, "user", "用户消息", "message", message.capturedAt)}
+            />
+            <IconButton label="复制" onClick={() => void copyText(visiblePrompt || message.prompt)} />
+          </>
+        )}
+        {isEditing ? (
+          <form
+            className="w-full max-w-[78%] rounded-[26px] rounded-tr-[8px] border border-accent/20 bg-white px-4 py-3 shadow-[0_18px_34px_rgba(210,106,61,0.10)]"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitRevision();
+            }}
+          >
+            <textarea
+              ref={editorRef}
+              value={revisionDraft}
+              onChange={(event) => setRevisionDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  cancelRevision();
+                  return;
+                }
+                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault();
+                  void submitRevision();
+                }
+              }}
+              className="max-h-[38vh] min-h-28 w-full resize-y rounded-[18px] border border-black/8 bg-[#fbfcfe] px-4 py-3 text-sm leading-6 text-ink-800 outline-none transition focus:border-accent/40 focus:bg-white focus:ring-4 focus:ring-accent/10"
+            />
+            <div className="mt-3 flex justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-full border border-black/8 bg-white px-4 py-2 text-sm font-semibold text-ink-700 transition hover:border-accent/30 hover:text-accent"
+                onClick={cancelRevision}
+                disabled={revisionSubmitting}
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                className="rounded-full bg-ink-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!revisionDraft.trim() || revisionSubmitting}
+              >
+                发送
+              </button>
+            </div>
+          </form>
+        ) : hasVisiblePrompt && !shouldHidePromptBubble ? (
           <div className="max-w-[78%] rounded-[26px] rounded-tr-[8px] border border-accent/16 bg-[linear-gradient(180deg,rgba(253,244,241,0.98),rgba(255,255,255,0.96))] px-5 py-4 text-ink-800 shadow-[0_18px_34px_rgba(210,106,61,0.08)]">
             <CollapsibleText
               text={visiblePrompt}
@@ -1118,15 +1181,6 @@ const AssistantTextCard = ({
   const [expanded, setExpanded] = useState(tone !== "thinking");
   const thoughtExtraction = useMemo(() => extractThoughtBlocks(text), [text]);
   const visibleAssistantText = thoughtExtraction.visibleText || text;
-  const contentRef = useRef<HTMLDivElement | null>(null);
-  const handleRevise = () => {
-    appendRevisionRequestToComposer({
-      selectedText: getSelectedTextWithin(contentRef.current),
-      fallbackText: visibleAssistantText,
-      sourceRole: "assistant",
-      sourceLabel: title,
-    });
-  };
 
   if (tone === "thinking") {
     return (
@@ -1162,12 +1216,10 @@ const AssistantTextCard = ({
       <ThoughtDisplay thoughts={thoughtExtraction.thoughts} showIndicator={showIndicator} />
       <div className="flex gap-2">
         <div
-          ref={contentRef}
           className="min-w-0 flex-1 rounded-[26px] rounded-tl-[8px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 text-ink-800 shadow-[0_14px_30px_rgba(30,38,52,0.055)]"
         >
           <MDContent text={visibleAssistantText} />
         </div>
-        <IconButton label="重新修改" onClick={handleRevise} />
         <IconButton label="引用" onClick={() => appendMessageReferenceToComposer(visibleAssistantText, "assistant", title)} />
         <IconButton label="复制" onClick={() => void copyText(visibleAssistantText)} />
       </div>
@@ -1690,17 +1742,26 @@ function MessageCardBase({
   isRunning = false,
   permissionRequest,
   onPermissionResult,
+  onReviseUserPrompt,
 }: {
   message: StreamMessage;
   isLast?: boolean;
   isRunning?: boolean;
   permissionRequest?: PermissionRequest;
   onPermissionResult?: (toolUseId: string, result: PermissionResult) => void;
+  onReviseUserPrompt?: UserPromptRevisionHandler;
 }) {
   const showIndicator = isLast && isRunning;
 
   if (message.type === "user_prompt") {
-    return <UserMessageCard message={message} showIndicator={showIndicator} />;
+    return (
+      <UserMessageCard
+        message={message}
+        showIndicator={showIndicator}
+        revisionDisabled={isRunning}
+        onRevisePrompt={onReviseUserPrompt}
+      />
+    );
   }
 
   const sdkMessage = message as SDKMessage;

@@ -6,7 +6,7 @@ import { Toaster } from "sonner";
 import { useIPC } from "./hooks/useIPC";
 import { useMessageWindow } from "./hooks/useMessageWindow";
 import { useAppStore } from "./store/useAppStore";
-import type { AppUpdateStatus, ServerEvent, SettingsPageId, StreamMessage } from "./types";
+import type { AppUpdateStatus, PromptAttachment, ServerEvent, SettingsPageId, StreamMessage } from "./types";
 import { DEFAULT_SIDEBAR_WIDTH, Sidebar } from "./components/Sidebar";
 import { StartSessionModal } from "./components/StartSessionModal";
 import { SettingsModal } from "./components/SettingsModal";
@@ -526,7 +526,7 @@ function App() {
   }, [handleServerEvent, handlePartialMessages]);
 
   const { connected, sendEvent } = useIPC(onEvent);
-  const { handleStartFromModal } = usePromptActions(sendEvent);
+  const { handleStartFromModal, sendPromptDraft } = usePromptActions(sendEvent);
 
   const messages = activeSession?.messages ?? EMPTY_MESSAGES;
   const permissionRequests = activeSession?.permissionRequests ?? EMPTY_PERMISSION_REQUESTS;
@@ -1078,6 +1078,22 @@ function App() {
     setHasNewMessages(false);
     resetToLatest();
   }, [resetToLatest]);
+
+  const handleReviseUserPrompt = useCallback(async (
+    prompt: string,
+    attachments: PromptAttachment[] = [],
+    historyId: string,
+  ) => {
+    const sent = await sendPromptDraft(prompt, attachments, {
+      clearPrompt: false,
+      displayUserPrompt: false,
+      replaceHistoryId: historyId,
+    });
+    if (sent) {
+      handleSendMessage();
+    }
+    return sent;
+  }, [handleSendMessage, sendPromptDraft]);
 
 
   useEffect(() => {
@@ -1684,6 +1700,7 @@ function App() {
                             isRunning={isRunning}
                             permissionRequest={permissionRequests[0]?.toolName === "AskUserQuestion" ? undefined : permissionRequests[0]}
                             onPermissionResult={handlePermissionResult}
+                            onReviseUserPrompt={handleReviseUserPrompt}
                           />
                         </div>
                       );

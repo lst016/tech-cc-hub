@@ -1199,9 +1199,46 @@ export async function handleClientEvent(event: ClientEvent) {
     }
 
     const defaultConfig = getCurrentApiConfig();
-    const history = store.getSessionHistory(session.id);
     const storagePrompt = redactFigmaMcpOAuthCallbackPrompt(event.payload.prompt);
     const isFigmaOAuthCallback = isFigmaMcpOAuthCallbackPrompt(event.payload.prompt);
+    const { displayAttachments, agentAttachments: currentAgentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
+    const replacingHistoryId = event.payload.replaceHistoryId?.trim();
+
+    if (replacingHistoryId) {
+      const replaced = store.replaceUserPromptAndPrune(session.id, replacingHistoryId, storagePrompt, displayAttachments);
+      if (!replaced) {
+        emit({
+          type: "runner.error",
+          payload: { sessionId: session.id, message: "要修改的用户消息不存在或不能修改。" },
+        });
+        return;
+      }
+
+      const replacedHistory = store.getSessionHistoryPage(session.id);
+      if (replacedHistory) {
+        const displayMessages = await hydrateImagePreviewsForDisplay(replacedHistory.messages);
+        emit({
+          type: "session.history",
+          payload: {
+            sessionId: session.id,
+            status: replacedHistory.session.status,
+            messages: displayMessages,
+            mode: "replace",
+            hasMore: replacedHistory.hasMore,
+            nextCursor: replacedHistory.nextCursor,
+            slashCommands: buildSessionSlashCommands({
+              cwd: replacedHistory.session.cwd,
+              messages: displayMessages,
+            }),
+          },
+        });
+      }
+    }
+
+    const history = store.getSessionHistory(session.id);
+    const historyMessagesForRun = replacingHistoryId
+      ? (history?.messages ?? []).filter((message) => message.historyId !== replacingHistoryId)
+      : history?.messages ?? [];
     const shouldRetitleFromFirstPrompt = isPlaceholderSessionTitle(session.title) && (history?.messages.length ?? 0) === 0;
     const nextTitle = shouldRetitleFromFirstPrompt
       ? buildTitleFromFirstPrompt(storagePrompt, event.payload.attachments)
@@ -1221,9 +1258,8 @@ export async function handleClientEvent(event: ClientEvent) {
       && previousModel
       && selectedModel.trim() !== previousModel.trim(),
     );
-    const canUseRemoteResume = (supportsResume || canUseFigmaOAuthCallbackResume) && !switchedModel;
+    const canUseRemoteResume = (supportsResume || canUseFigmaOAuthCallbackResume) && !switchedModel && !replacingHistoryId;
     const modelConfig = config && selectedModel ? getModelConfig(config, selectedModel) : null;
-    const { displayAttachments, agentAttachments: currentAgentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
     const runnerRuntime = {
       ...(event.payload.runtime ?? {}),
       model: selectedModel,
@@ -1235,7 +1271,7 @@ export async function handleClientEvent(event: ClientEvent) {
       prompt: event.payload.prompt,
       attachments: currentAgentAttachments,
     });
-    const reusableHandle = isFigmaOAuthCallback ? null : getReusableRunnerHandle(session.id, warmReuseKey);
+    const reusableHandle = isFigmaOAuthCallback || replacingHistoryId ? null : getReusableRunnerHandle(session.id, warmReuseKey);
     if (reusableHandle) {
       store.updateSession(session.id, {
         status: "running",
@@ -1270,10 +1306,12 @@ export async function handleClientEvent(event: ClientEvent) {
           }),
         },
       });
-      emit({
-        type: "stream.user_prompt",
-        payload: { sessionId: session.id, prompt: storagePrompt, attachments: displayAttachments },
-      });
+      if (event.payload.displayUserPrompt !== false) {
+        emit({
+          type: "stream.user_prompt",
+          payload: { sessionId: session.id, prompt: storagePrompt, attachments: displayAttachments },
+        });
+      }
 
       try {
         await reusableHandle.appendPrompt(event.payload.prompt, currentAgentAttachments);
@@ -1304,7 +1342,7 @@ export async function handleClientEvent(event: ClientEvent) {
     const continuationPayload = canUseRemoteResume
       ? null
       : buildStatelessContinuationPayload(
-          history?.messages ?? [],
+          historyMessagesForRun,
           isFigmaOAuthCallback ? storagePrompt : event.payload.prompt,
           currentAgentAttachments,
           {
@@ -1355,17 +1393,19 @@ export async function handleClientEvent(event: ClientEvent) {
           prompt: canUseRemoteResume ? storagePrompt : continuationPayload?.prompt ?? storagePrompt,
           attachments: attachmentsForRun,
           session,
-          historyMessages: canUseRemoteResume ? history?.messages ?? [] : [],
+          historyMessages: canUseRemoteResume ? historyMessagesForRun : [],
           model: selectedModel,
           continuationSummary: continuationPayload?.summaryText,
         }),
       },
     });
 
-    emit({
-      type: "stream.user_prompt",
-      payload: { sessionId: session.id, prompt: storagePrompt, attachments: displayAttachments },
-    });
+    if (event.payload.displayUserPrompt !== false) {
+      emit({
+        type: "stream.user_prompt",
+        payload: { sessionId: session.id, prompt: storagePrompt, attachments: displayAttachments },
+      });
+    }
 
     runClaude({
       prompt,

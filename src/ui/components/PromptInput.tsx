@@ -20,7 +20,7 @@ import { copyTextToClipboard as copyText } from "../utils/clipboard";
 import { resetBrowserWorkbenchAnnotationState } from "../utils/browser-annotation-reset";
 import { getSlashCommandContext, getSlashCommandQuery, isCompletedSlashCommandContext, isDismissedSlashCommandQuery } from "../utils/slash-command-input";
 import { buildSlashCommandDisplayParts, type SlashCommandDisplayPart, serializeSlashCommandDraft } from "../utils/slash-command-display";
-import { getPromptParagraphInputAction, insertTextIntoPrompt, resolvePromptEditorInputCursor, shouldInsertPromptNewline, shouldSubmitPromptOnEnter } from "../utils/prompt-editor-keyboard";
+import { getPromptParagraphInputAction, insertTextIntoPrompt, resolvePromptEditorInputCursor, shouldBlockPromptEnterAfterComposition, shouldInsertPromptNewline, shouldSubmitPromptOnEnter } from "../utils/prompt-editor-keyboard";
 import {
   ADD_PROMPT_ATTACHMENT_EVENT,
   OPEN_BROWSER_WORKBENCH_URL_EVENT,
@@ -40,6 +40,7 @@ const MAX_ROWS = 12;
 const LINE_HEIGHT = 21;
 const MAX_HEIGHT = MAX_ROWS * LINE_HEIGHT;
 const IME_ENTER_GRACE_MS = 120;
+const SESSION_TITLE_TIMEOUT_MS = 1800;
 const SLASH_PREVIEW_LIMIT = 8;
 const SLASH_QUERY_LIMIT = 16;
 const FILE_MENTION_PREVIEW_LIMIT = 10;
@@ -74,6 +75,29 @@ type PromptOptimizeResult = {
   model?: string;
   error?: string;
 };
+
+async function generateSessionTitleOrFallback(titleSeed: string): Promise<string> {
+  if (!titleSeed.trim()) return titleSeed;
+
+  let timeoutId: number | undefined;
+  try {
+    const generatedTitle = await Promise.race([
+      window.electron.generateSessionTitle(titleSeed),
+      new Promise<string>((resolve) => {
+        timeoutId = window.setTimeout(() => resolve(titleSeed), SESSION_TITLE_TIMEOUT_MS);
+      }),
+    ]);
+    const trimmedTitle = generatedTitle.trim();
+    return trimmedTitle || titleSeed;
+  } catch (error) {
+    console.warn("Falling back to draft title after title generation failed:", error);
+    return titleSeed;
+  } finally {
+    if (timeoutId !== undefined) {
+      window.clearTimeout(timeoutId);
+    }
+  }
+}
 
 function normalizeSlashCommandList(commands?: SlashCommandPayloadItem[]): SlashCommandOption[] {
   const normalized = new Map<string, SlashCommandOption>();
@@ -588,7 +612,7 @@ function getPromptTextFromEditor(editor: HTMLElement) {
   editor.childNodes.forEach((child) => {
     text += getPromptTextFromEditorNode(child);
   });
-  return text;
+  return text.replace(/\n+$/, "");
 }
 
 function getNodePromptLength(node: Node): number {
@@ -784,7 +808,7 @@ function renderPromptEditorContent(editor: HTMLElement, parts: SlashCommandDispl
     fragment.appendChild(token);
   }
 
-  if (rawPromptText.endsWith("\n")) {
+  if (rawPromptText.endsWith("\n") || rawPromptText.length === 0) {
     appendPromptEditorSentinel(fragment);
   }
 
@@ -1134,9 +1158,9 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   const sendPromptDraft = useCallback(async (
     promptValue: string,
     attachments: PromptAttachment[] = [],
-    options: { clearPrompt?: boolean } = {},
+    options: { clearPrompt?: boolean; displayUserPrompt?: boolean; replaceHistoryId?: string } = {},
   ) => {
-    const { clearPrompt = true } = options;
+    const { clearPrompt = true, displayUserPrompt = true, replaceHistoryId } = options;
     if (!promptValue.trim() && attachments.length === 0) return false;
     const runtime = buildRuntimeOverrides();
     if (!runtime) return false;
@@ -1145,16 +1169,9 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
 
     if (!activeSessionId) {
       let title = "";
-      try {
-        setPendingStart(true);
-        const titleSeed = buildDraftTitle(promptValue, attachments);
-        title = promptValue.trim() ? await window.electron.generateSessionTitle(titleSeed) : titleSeed;
-      } catch (error) {
-        console.error(error);
-        setPendingStart(false);
-        setGlobalError("生成会话标题失败。");
-        return false;
-      }
+      setPendingStart(true);
+      const titleSeed = buildDraftTitle(promptValue, attachments);
+      title = promptValue.trim() ? await generateSessionTitleOrFallback(titleSeed) : titleSeed;
       sendEvent({
         type: "session.start",
         payload: { title, prompt: promptValue, cwd: cwd.trim() || undefined, allowedTools: DEFAULT_ALLOWED_TOOLS, attachments: preparedAttachments, runtime }
@@ -1169,7 +1186,17 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
         setGlobalError(validationError);
         return false;
       }
-      sendEvent({ type: "session.continue", payload: { sessionId: activeSessionId, prompt: promptValue, attachments: preparedAttachments, runtime } });
+      sendEvent({
+        type: "session.continue",
+        payload: {
+          sessionId: activeSessionId,
+          prompt: promptValue,
+          attachments: preparedAttachments,
+          runtime,
+          displayUserPrompt,
+          replaceHistoryId,
+        },
+      });
     }
     if (clearPrompt) {
       setPrompt("");
@@ -1275,6 +1302,7 @@ export function PromptInput({
   const fileMentionCacheRef = useRef<{ cwd: string; options: FileMentionOption[] } | null>(null);
   const isComposingRef = useRef(false);
   const compositionEndedAtRef = useRef(0);
+  const compositionEnterPendingRef = useRef(false);
   const [attachments, setAttachments] = useState<PromptAttachment[]>([]);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [queuedMessagesBySession, setQueuedMessagesBySession] = useState<Record<string, QueuedMessageDraft[]>>(readQueuedMessagesFromStorage);
@@ -1409,6 +1437,11 @@ export function PromptInput({
   const isCompositionSettling = useCallback(() => (
     Date.now() - compositionEndedAtRef.current < IME_ENTER_GRACE_MS
   ), []);
+
+  const clearCompositionEnterGuard = useCallback(() => {
+    compositionEnterPendingRef.current = false;
+    compositionEndedAtRef.current = 0;
+  }, []);
 
   const getCurrentPromptDraft = useCallback(() => {
     const nextPrompt = promptRef.current ? getPromptTextFromEditor(promptRef.current) : promptDraftRef.current;
@@ -1667,6 +1700,30 @@ export function PromptInput({
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (disabled) return;
+    const keyboardEvent = {
+      key: e.key,
+      shiftKey: e.shiftKey,
+      metaKey: e.metaKey,
+      ctrlKey: e.ctrlKey,
+      nativeEvent: {
+        isComposing: e.nativeEvent.isComposing,
+        keyCode: e.nativeEvent.keyCode,
+        which: e.nativeEvent.which,
+      },
+    };
+    if (e.key === "Enter") {
+      if (isComposingRef.current) {
+        return;
+      }
+      e.preventDefault();
+    }
+    if (shouldBlockPromptEnterAfterComposition(keyboardEvent, isComposingRef.current)) {
+      compositionEnterPendingRef.current = true;
+      return;
+    }
+    if (e.key !== "Enter" && !e.nativeEvent.isComposing && !isComposingRef.current) {
+      clearCompositionEnterGuard();
+    }
     if (showSlashPalette) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
@@ -1722,18 +1779,13 @@ export function PromptInput({
     }
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
+      clearCompositionEnterGuard();
       void submitCurrentInput();
       return;
     }
-    const keyboardEvent = {
-      key: e.key,
-      shiftKey: e.shiftKey,
-      metaKey: e.metaKey,
-      ctrlKey: e.ctrlKey,
-      nativeEvent: { isComposing: e.nativeEvent.isComposing },
-    };
     if (shouldInsertPromptNewline(keyboardEvent)) {
       e.preventDefault();
+      clearCompositionEnterGuard();
       const editor = promptRef.current;
       const currentPrompt = editor ? getPromptTextFromEditor(editor) : promptDraftRef.current;
       const fallbackCursor = cursorIndex || currentPrompt.length;
@@ -1743,8 +1795,9 @@ export function PromptInput({
       focusPromptEditor(nextDraft.cursorIndex);
       return;
     }
-    if (shouldSubmitPromptOnEnter(keyboardEvent, isComposingRef.current, isCompositionSettling())) {
+    if (shouldSubmitPromptOnEnter(keyboardEvent, isComposingRef.current)) {
       e.preventDefault();
+      clearCompositionEnterGuard();
       void submitCurrentInput();
     }
   };
@@ -1855,15 +1908,18 @@ export function PromptInput({
       },
       isComposingRef.current,
       showSlashPalette || showFileMentionPalette,
-      isCompositionSettling(),
+      compositionEnterPendingRef.current || isCompositionSettling(),
     );
     if (action === "allow") return;
 
     event.preventDefault();
+    if (event.inputType === "insertParagraph") {
+      clearCompositionEnterGuard();
+    }
     if (action === "submit") {
       void submitCurrentInput();
     }
-  }, [showFileMentionPalette, showSlashPalette, submitCurrentInput]);
+  }, [clearCompositionEnterGuard, isCompositionSettling, showFileMentionPalette, showSlashPalette, submitCurrentInput]);
 
   useEffect(() => {
     if (!promptRef.current) return;
@@ -1896,11 +1952,11 @@ export function PromptInput({
 
     const isActive = document.activeElement === editor;
     const cursorOffset = pendingCursorOffsetRef.current ?? (isActive ? getSelectionOffsetInEditor(editor) : null);
-    if (editor.dataset.renderedPrompt !== prompt) {
+    if (editor.dataset.renderedPrompt !== prompt && !isComposingRef.current) {
       renderPromptEditorContent(editor, slashDisplayParts);
       editor.dataset.renderedPrompt = prompt;
     }
-    if (isActive && cursorOffset !== null) {
+    if (isActive && cursorOffset !== null && !isComposingRef.current) {
       restoreEditorSelection(editor, cursorOffset);
     }
     pendingCursorOffsetRef.current = null;

@@ -6,17 +6,24 @@ import {
 import { z } from "zod";
 
 import {
+  filterIdeaInstallations,
   focusIdea,
   getIdeaStatus,
   openIdea,
-  selectBestIdeaInstallation,
+  selectIdeaInstallation,
   waitForIdeaReady,
 } from "../idea-launcher.js";
+import {
+  restartSpringBoot,
+  runSpringBoot,
+} from "../spring-boot-runner.js";
 import { toTextToolResult } from "./tool-result.js";
 
 export const IDEA_TOOL_NAMES = [
   "idea_status",
   "idea_open",
+  "idea_run",
+  "idea_restart",
   "idea_focus",
   "idea_wait_ready",
 ] as const;
@@ -29,16 +36,35 @@ let ideaMcpServer: McpSdkServerConfigWithInstance | null = null;
 const EDITION_SCHEMA = z.enum(["any", "ultimate", "community"]);
 
 const IDEA_STATUS_SCHEMA = {
+  version: z.string().trim().min(1).optional().describe("Optional IDEA version selector, for example 2023.2.8 or 2026.1."),
+  launcherPath: z.string().trim().min(1).optional().describe("Optional exact IDEA launcher path for machines with multiple IDEA versions."),
   edition: EDITION_SCHEMA.optional().describe("IDEA 版本偏好，默认 any。"),
 };
 
 const IDEA_OPEN_SCHEMA = {
+  version: z.string().trim().min(1).optional().describe("Optional IDEA version selector, for example 2023.2.8 or 2026.1."),
+  launcherPath: z.string().trim().min(1).optional().describe("Optional exact IDEA launcher path for machines with multiple IDEA versions."),
   projectPath: z.string().optional().describe("要在 IntelliJ IDEA 中打开的项目目录。"),
   filePath: z.string().optional().describe("可选：要在 IntelliJ IDEA 中打开的文件路径。"),
   line: z.number().int().positive().optional().describe("可选：filePath 对应的 1 起始行号。"),
   column: z.number().int().positive().optional().describe("可选：filePath 对应的 1 起始列号。"),
   edition: EDITION_SCHEMA.optional().describe("IDEA 版本偏好，默认 any。"),
   allowLaunch: z.boolean().optional().describe("为 false 时只复用已运行 IDEA；如果本机没有运行 IDEA，则直接失败。"),
+};
+
+const IDEA_RUN_SCHEMA = {
+  projectPath: z.string().trim().min(1).describe("Spring Boot project directory containing pom.xml, build.gradle, mvnw, or gradlew."),
+  buildTool: z.enum(["auto", "maven", "gradle"]).optional().describe("Build tool preference. Defaults to auto."),
+  profile: z.string().trim().min(1).optional().describe("Optional SPRING_PROFILES_ACTIVE value."),
+  port: z.number().int().min(1).max(65535).optional().describe("Optional expected service port for verification hints."),
+  waitMs: z.number().int().min(0).max(30000).optional().describe("How long to wait for immediate process exit. Defaults to 4000ms."),
+  env: z.record(z.string(), z.string()).optional().describe("Optional extra environment variables."),
+};
+
+const IDEA_RESTART_SCHEMA = {
+  ...IDEA_RUN_SCHEMA,
+  pid: z.number().int().positive().optional().describe("Optional old Spring Boot PID to kill before restarting."),
+  strategy: z.enum(["kill-and-run", "devtools-compile"]).optional().describe("kill-and-run kills pid/port listeners then runs; devtools-compile runs compile/classes to trigger Spring Boot DevTools."),
 };
 
 const IDEA_FOCUS_SCHEMA = {};
@@ -60,7 +86,8 @@ export function getIdeaMcpServer(): McpSdkServerConfigWithInstance {
     async (input) => {
       try {
         const status = await getIdeaStatus();
-        const recommended = selectBestIdeaInstallation(status.installations, input.edition ?? "any");
+        const matchingInstallations = filterIdeaInstallations(status.installations, input);
+        const recommended = selectIdeaInstallation(status.installations, input);
         return toTextToolResult({
           action: "idea_status",
           success: true,
@@ -68,6 +95,7 @@ export function getIdeaMcpServer(): McpSdkServerConfigWithInstance {
           runningCount: status.running.length,
           running: status.running,
           recommended,
+          matchingInstallations,
           installationCount: status.installations.length,
           installations: status.installations,
         });
@@ -108,6 +136,8 @@ export function getIdeaMcpServer(): McpSdkServerConfigWithInstance {
           line: input.line,
           column: input.column,
           edition: input.edition ?? "any",
+          version: input.version,
+          launcherPath: input.launcherPath,
           allowLaunch: input.allowLaunch ?? true,
         });
 
@@ -119,6 +149,26 @@ export function getIdeaMcpServer(): McpSdkServerConfigWithInstance {
           error: error instanceof Error ? error.message : "打开 IntelliJ IDEA 失败。",
         }, true);
       }
+    },
+  );
+
+  const runHandler = tool(
+    "idea_run",
+    "Start a local Spring Boot project with Maven or Gradle and return PID/logPath plus verification hints. This is a service runner companion for IDEA; launch success is not readiness proof.",
+    IDEA_RUN_SCHEMA,
+    async (input) => {
+      const result = await runSpringBoot(input);
+      return toTextToolResult(result, !result.success);
+    },
+  );
+
+  const restartHandler = tool(
+    "idea_restart",
+    "Restart a local Spring Boot project. kill-and-run can stop a PID or port listener before launching; devtools-compile runs compile/classes to trigger Spring Boot DevTools in an already-running app.",
+    IDEA_RESTART_SCHEMA,
+    async (input) => {
+      const result = await restartSpringBoot(input);
+      return toTextToolResult(result, !result.success);
     },
   );
 
@@ -164,7 +214,7 @@ export function getIdeaMcpServer(): McpSdkServerConfigWithInstance {
   ideaMcpServer = createSdkMcpServer({
     name: IDEA_TOOLS_SERVER_NAME,
     version: IDEA_MCP_SERVER_VERSION,
-    tools: [statusHandler, openHandler, focusHandler, waitReadyHandler],
+    tools: [statusHandler, openHandler, runHandler, restartHandler, focusHandler, waitReadyHandler],
   });
 
   return ideaMcpServer;

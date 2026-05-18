@@ -1,4 +1,4 @@
-import { isValidElement, memo, useEffect, useId, useMemo, useRef, useState } from "react";
+import { isValidElement, memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { AnchorHTMLAttributes, MouseEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Maximize2, X } from "lucide-react";
@@ -532,7 +532,7 @@ async function renderMermaidChart(diagramId: string, normalizedChart: string): P
   }
 }
 
-function MermaidDiagram({ chart }: { chart: string }) {
+const MermaidDiagram = memo(function MermaidDiagram({ chart }: { chart: string }) {
   const rawId = useId();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const normalizedChart = useMemo(() => chart.trim(), [chart]);
@@ -541,11 +541,15 @@ function MermaidDiagram({ chart }: { chart: string }) {
     const cached = getCachedMermaidRenderResult(normalizedChart, diagramId);
     return cached ? { status: "ready", ...cached } : { status: "loading" };
   });
+  const effectiveRenderState = useMemo(() => (
+    normalizedChart
+      ? renderState
+      : { status: "error" as const, error: "Mermaid 图为空" }
+  ), [normalizedChart, renderState]);
 
   useEffect(() => {
     let disposed = false;
     if (!normalizedChart) {
-      setRenderState({ status: "error", error: "Mermaid 图为空" });
       return () => {
         disposed = true;
       };
@@ -553,14 +557,18 @@ function MermaidDiagram({ chart }: { chart: string }) {
 
     const cached = getCachedMermaidRenderResult(normalizedChart, diagramId);
     if (cached) {
-      setRenderState({ status: "ready", ...cached });
+      queueMicrotask(() => {
+        if (!disposed) setRenderState({ status: "ready", ...cached });
+      });
       scheduleMermaidErrorCleanup(diagramId);
       return () => {
         disposed = true;
       };
     }
 
-    setRenderState({ status: "loading" });
+    queueMicrotask(() => {
+      if (!disposed) setRenderState({ status: "loading" });
+    });
     void renderMermaidChart(diagramId, normalizedChart)
       .then((result) => {
         if (disposed) return;
@@ -582,7 +590,7 @@ function MermaidDiagram({ chart }: { chart: string }) {
   }, [diagramId, normalizedChart]);
 
   useEffect(() => {
-    if (renderState.status !== "ready" || !renderState.css) return undefined;
+    if (effectiveRenderState.status !== "ready" || !effectiveRenderState.css) return undefined;
     const styleId = `tech-cc-mermaid-style-${diagramId}`;
     let styleElement = document.getElementById(styleId) as HTMLStyleElement | null;
     if (!styleElement) {
@@ -591,13 +599,13 @@ function MermaidDiagram({ chart }: { chart: string }) {
       styleElement.dataset.techCcMermaid = "true";
       document.head.appendChild(styleElement);
     }
-    styleElement.textContent = renderState.css;
+    styleElement.textContent = effectiveRenderState.css;
     return () => {
       styleElement?.remove();
     };
-  }, [diagramId, renderState.css, renderState.status]);
+  }, [diagramId, effectiveRenderState.css, effectiveRenderState.status]);
 
-  if (renderState.status === "error") {
+  if (effectiveRenderState.status === "error") {
     return (
       <ExpandableMarkdownBlock
         title="Mermaid 源码"
@@ -625,27 +633,27 @@ function MermaidDiagram({ chart }: { chart: string }) {
       copyLabel="复制源码"
       copyText={normalizedChart}
       className="group relative mt-3 overflow-x-auto rounded-xl border border-black/8 bg-white p-4 shadow-sm"
-      expandedChildren={renderState.status === "loading" ? (
+      expandedChildren={effectiveRenderState.status === "loading" ? (
         <div className="flex min-h-64 items-center justify-center text-sm font-medium text-muted">正在渲染 Mermaid 图...</div>
       ) : (
         <div
           className="mermaid-diagram min-w-fit [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-none"
-          dangerouslySetInnerHTML={{ __html: renderState.svg ?? "" }}
+          dangerouslySetInnerHTML={{ __html: effectiveRenderState.svg ?? "" }}
         />
       )}
     >
-      {renderState.status === "loading" ? (
+      {effectiveRenderState.status === "loading" ? (
         <div className="flex min-h-28 items-center justify-center text-sm font-medium text-muted">正在渲染 Mermaid 图...</div>
       ) : (
         <div
           ref={containerRef}
           className="mermaid-diagram min-w-fit [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-none"
-          dangerouslySetInnerHTML={{ __html: renderState.svg ?? "" }}
+          dangerouslySetInnerHTML={{ __html: effectiveRenderState.svg ?? "" }}
         />
       )}
     </ExpandableMarkdownBlock>
   );
-}
+});
 
 function MDContent({
   text,
@@ -656,6 +664,14 @@ function MDContent({
   sourceRoot?: string;
   onOpenSourceFile?: (detail: PreviewOpenFileDetail) => void;
 }) {
+  const onOpenSourceFileRef = useRef(onOpenSourceFile);
+  useEffect(() => {
+    onOpenSourceFileRef.current = onOpenSourceFile;
+  }, [onOpenSourceFile]);
+  const openSourceFile = useCallback((detail: PreviewOpenFileDetail) => {
+    onOpenSourceFileRef.current?.(detail);
+  }, []);
+
   const markdownComponents = useMemo<Components>(() => ({
     h1: (props) => <h1 className="mt-4 text-xl font-semibold text-ink-900" {...props} />,
     h2: (props) => <h2 className="mt-4 text-lg font-semibold text-ink-900" {...props} />,
@@ -664,7 +680,7 @@ function MDContent({
     ul: (props) => <ul className="mt-2 ml-4 grid min-w-0 list-disc gap-1 has-[:checked]:list-none has-[:checked]:ml-0" {...props} />,
     ol: (props) => <ol className="mt-2 ml-4 grid min-w-0 list-decimal gap-1" {...props} />,
     li: (props) => <li className="min-w-0 text-ink-700 marker:text-muted [overflow-wrap:anywhere]" {...props} />,
-    a: (props) => <MarkdownLink {...props} sourceRoot={sourceRoot} onOpenSourceFile={onOpenSourceFile} />,
+    a: (props) => <MarkdownLink {...props} sourceRoot={sourceRoot} onOpenSourceFile={openSourceFile} />,
     strong: (props) => <strong className="text-ink-900 font-semibold" {...props} />,
     em: (props) => <em className="text-ink-800" {...props} />,
     table: (props) => {
@@ -730,7 +746,7 @@ function MDContent({
           <button
             type="button"
             className="inline rounded bg-surface-tertiary px-1.5 py-0.5 text-left font-mono text-base text-accent underline-offset-2 transition [overflow-wrap:anywhere] hover:bg-accent/10 hover:underline"
-            onClick={(event) => handleInlineCodeClick(event, sourceFile, onOpenSourceFile)}
+            onClick={(event) => handleInlineCodeClick(event, sourceFile, openSourceFile)}
             aria-label={`打开源码文件 ${rawCode}`}
             title="打开源码文件"
           >
@@ -747,7 +763,7 @@ function MDContent({
         </code>
       );
     },
-  }), [onOpenSourceFile, sourceRoot]);
+  }), [openSourceFile, sourceRoot]);
 
   return (
     <ReactMarkdown
