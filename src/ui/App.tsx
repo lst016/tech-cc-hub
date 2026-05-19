@@ -389,6 +389,19 @@ function App() {
     messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
   }, []);
 
+  const scrollChatToTop = useCallback((behavior: ScrollBehavior = "auto") => {
+    const container = scrollContainerRef.current;
+    if (container) {
+      container.scrollTo({
+        top: 0,
+        behavior,
+      });
+      return;
+    }
+
+    topSentinelRef.current?.scrollIntoView({ behavior, block: "start" });
+  }, []);
+
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   activeSessionIdRef.current = activeSessionId;
   const partialMessage = activeSessionId ? (partialMessagesBySessionId[activeSessionId] ?? "") : "";
@@ -954,6 +967,11 @@ function App() {
     resetToLatest();
     scrollChatToBottom("smooth");
   }, [resetToLatest, scrollChatToBottom]);
+
+  const scrollToTop = useCallback(() => {
+    setShouldAutoScroll(false);
+    scrollChatToTop("smooth");
+  }, [scrollChatToTop]);
 
   const handleNewSession = useCallback((nextCwd?: string) => {
     useAppStore.getState().setActiveSessionId(null);
@@ -1590,6 +1608,13 @@ function App() {
                           onClick={() => scrollToMessageIndex(chatOverview.latestUserIndex)}
                         >
                           最新提问
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-full px-2 py-1 font-semibold text-accent transition hover:bg-accent/10"
+                          onClick={scrollToTop}
+                        >
+                          到顶部
                         </button>
                         <button
                           type="button"

@@ -68,6 +68,10 @@ export function getCodeReferenceSessionKey(sessionId?: string | null) {
   return sessionId || CODE_REFERENCE_DRAFT_SESSION_ID;
 }
 
+export function getPromptDraftSessionKey(sessionId?: string | null) {
+  return sessionId || CODE_REFERENCE_DRAFT_SESSION_ID;
+}
+
 export type CodeReferenceDraft = {
   id: string;
   kind: "selection" | "comment";
@@ -106,6 +110,7 @@ interface AppState {
   archivedSessions: Record<string, SessionView>;
   activeSessionId: string | null;
   prompt: string;
+  promptDraftsBySessionId: Record<string, string>;
   browserAnnotations: BrowserWorkbenchAnnotation[];
   browserWorkbenchBySessionId: Record<string, BrowserWorkbenchSessionState>;
   codeReferencesBySessionId: Record<string, CodeReferenceDraft[]>;
@@ -371,6 +376,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   archivedSessions: {},
   activeSessionId: null,
   prompt: "",
+  promptDraftsBySessionId: {},
   browserAnnotations: [],
   browserWorkbenchBySessionId: {},
   codeReferencesBySessionId: {},
@@ -391,7 +397,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   availableAgents: [],
   selectedAgentId: "",
 
-  setPrompt: (prompt) => set({ prompt }),
+  setPrompt: (prompt) => set((state) => {
+    const sessionKey = getPromptDraftSessionKey(state.activeSessionId);
+    const nextDrafts = { ...state.promptDraftsBySessionId };
+    if (prompt.length === 0) {
+      delete nextDrafts[sessionKey];
+    } else {
+      nextDrafts[sessionKey] = prompt;
+    }
+    return {
+      prompt,
+      promptDraftsBySessionId: nextDrafts,
+    };
+  }),
   setBrowserAnnotations: (browserAnnotations) => set({ browserAnnotations }),
   clearBrowserAnnotations: () => set({ browserAnnotations: [] }),
   setBrowserWorkbenchUrl: (sessionId, url) => set((state) => ({
@@ -630,7 +648,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   setGlobalError: (globalError) => set({ globalError }),
   setShowStartModal: (showStartModal) => set({ showStartModal }),
   setShowSettingsModal: (showSettingsModal) => set({ showSettingsModal }),
-  setActiveSessionId: (id) => set({ activeSessionId: id }),
+  setActiveSessionId: (id) => set((state) => ({
+    activeSessionId: id,
+    prompt: state.promptDraftsBySessionId[getPromptDraftSessionKey(id)] ?? "",
+  })),
   setApiConfigChecked: (apiConfigChecked) => set({ apiConfigChecked }),
   setSelectedAgentId: (selectedAgentId) => set({ selectedAgentId }),
 
@@ -1034,6 +1055,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           ),
           fileReferencesBySessionId: Object.fromEntries(
             Object.entries(state.fileReferencesBySessionId).filter(([id]) => id !== sessionId),
+          ),
+          promptDraftsBySessionId: Object.fromEntries(
+            Object.entries(state.promptDraftsBySessionId).filter(([id]) => id !== sessionId),
           ),
           showStartModal: !hasRemaining
         });

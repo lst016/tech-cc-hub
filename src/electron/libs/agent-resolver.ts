@@ -72,6 +72,9 @@ export type ListedClaudeAgent = {
 
 const USER_CLAUDE_ROOT = join(homedir(), ".claude");
 const DEFAULT_SYSTEM_MAINTENANCE_ID = "system-maintenance";
+const AGENT_CATALOG_DESCRIPTION_COUNT_LIMIT = 20;
+const AGENT_CATALOG_LONG_DESCRIPTION_LIMIT = 96;
+const AGENT_CATALOG_SHORT_DESCRIPTION_LIMIT = 36;
 
 const BUILT_IN_SYSTEM_PROFILES: ResolvedAgentProfile[] = [
   {
@@ -513,7 +516,7 @@ function buildPromptAppend(
   if (agentCatalog) {
     sections.push([
       "Local Claude agents available from global/project .claude/agents:",
-      "Only selected/default agents are injected in full. When the user asks for one of the listed agents, use that agent name/id and source path as the authority for the current turn.",
+      "Only selected/default agents are injected in full. This catalog is a compact routing index; use the listed id/name/scope when the user asks for one of these agents.",
       agentCatalog,
     ].join("\n"));
   }
@@ -528,14 +531,39 @@ function buildAgentCatalog(profiles: ResolvedAgentProfile[]): string | undefined
     return undefined;
   }
 
-  return visibleProfiles
-    .map((profile) => [
-      `- ${profile.id} (${scopeLabel(profile.scope)}${profile.name})`,
-      profile.description ? `description=${profile.description}` : undefined,
-      profile.sourcePath ? `source=${profile.sourcePath}` : undefined,
-      profile.autoApply ? "autoApply=true" : undefined,
-    ].filter(Boolean).join(" | "))
-    .join("\n");
+  const isLargeCatalog = visibleProfiles.length > AGENT_CATALOG_DESCRIPTION_COUNT_LIMIT;
+  const descriptionLimit = isLargeCatalog
+    ? AGENT_CATALOG_SHORT_DESCRIPTION_LIMIT
+    : AGENT_CATALOG_LONG_DESCRIPTION_LIMIT;
+  const entries = visibleProfiles.map((profile) => {
+    const nameSuffix = profile.name && profile.name !== profile.id ? ` name=${profile.name}` : "";
+    const description = profile.description
+      ? ` desc=${compactCatalogText(profile.description, descriptionLimit)}`
+      : "";
+    const autoApply = profile.autoApply ? " autoApply=true" : "";
+
+    return `- ${profile.id} [${profile.scope}]${nameSuffix}${description}${autoApply}`;
+  });
+
+  return [
+    `${visibleProfiles.length} available agents. Source paths and full prompts are intentionally omitted from this compact catalog to keep the model context small.${isLargeCatalog ? " Descriptions are aggressively shortened because the catalog is large." : ""}`,
+    ...entries,
+  ].join("\n");
+}
+
+function compactCatalogText(text: string, maxLength: number): string {
+  const compacted = text
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^Use this agent when (?:you need to|you need|the user wants to|the user asks to)\s+/i, "")
+    .replace(/^Use this agent when\s+/i, "")
+    .replace(/^Use when (?:you need to|you need|the user wants to|the user asks to)?\s*/i, "")
+    .trim();
+  if (compacted.length <= maxLength) {
+    return compacted;
+  }
+
+  return `${compacted.slice(0, Math.max(0, maxLength - 1)).trimEnd()}...`;
 }
 
 function scopeLabel(scope: AgentScope): string {

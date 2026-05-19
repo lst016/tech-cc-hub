@@ -12,6 +12,8 @@ import { copyTextToClipboard } from '../utils/clipboard';
 import {
   collectCompletedPreviewFileChanges,
   normalizePreviewFilePath,
+  resolvePreviewFileChangePath,
+  type PreviewFileChangeEvent,
 } from '../utils/preview-file-refresh';
 import {
   buildPreviewMonacoModelPath,
@@ -177,14 +179,17 @@ function buildReferenceClipboardText(file: ActivePreviewFile, selectionInfo: Cod
 function NativeExplorer({
   workspace,
   activeFilePath,
+  refreshEvents = [],
   onOpenFile,
 }: {
   workspace: string;
   activeFilePath?: string;
+  refreshEvents?: readonly PreviewFileChangeEvent[];
   onOpenFile: (path: string, options?: { revealLine?: number }) => Promise<void>;
 }) {
   const [directoryCache, setDirectoryCache] = useState<Record<string, DirectoryState>>({});
   const directoryCacheRef = useRef(directoryCache);
+  const refreshedDirectoryOperationIdsRef = useRef(new Set<string>());
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set([workspace]));
   const [searchQuery, setSearchQuery] = useState('');
   const [locatingActiveFile, setLocatingActiveFile] = useState(false);
@@ -258,9 +263,35 @@ function NativeExplorer({
     queueMicrotask(() => {
       setDirectoryCache({});
       setExpandedPaths(new Set([workspace]));
+      refreshedDirectoryOperationIdsRef.current = new Set<string>();
       void loadDirectory(workspace, true);
     });
   }, [loadDirectory, workspace]);
+
+  useEffect(() => {
+    const pendingRefreshes = refreshEvents.filter((event) => {
+      if (refreshedDirectoryOperationIdsRef.current.has(event.operationId)) return false;
+      refreshedDirectoryOperationIdsRef.current.add(event.operationId);
+      return true;
+    });
+    if (!pendingRefreshes.length) return;
+
+    const directoriesToRefresh = new Set<string>();
+    for (const event of pendingRefreshes) {
+      const ancestorDirectories = getPreviewFileAncestorDirectories(workspace, event.path);
+      if (ancestorDirectories.length === 0) {
+        directoriesToRefresh.add(workspace);
+        continue;
+      }
+      for (const directoryPath of ancestorDirectories) {
+        directoriesToRefresh.add(directoryPath);
+      }
+    }
+
+    for (const directoryPath of directoriesToRefresh) {
+      void loadDirectory(directoryPath, true);
+    }
+  }, [loadDirectory, refreshEvents, workspace]);
 
   const handleToggleDirectory = useCallback((path: string) => {
     setExpandedPaths((current) => {
@@ -887,6 +918,19 @@ function PreviewSurface({
     });
   }, [calculateSelectionPosition, revealLine, updateReferenceDecorations]);
 
+  useEffect(() => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model || !file || file.contentType !== 'code') return;
+    if (model.getValue() === file.content) return;
+
+    const viewState = editor.saveViewState();
+    model.setValue(file.content);
+    if (viewState) {
+      editor.restoreViewState(viewState);
+    }
+  }, [file]);
+
   const handleCopySelectionReference = useCallback(() => {
     if (!file || !selectionInfo) return;
     void copyTextToClipboard(buildReferenceClipboardText(file, selectionInfo));
@@ -1092,6 +1136,7 @@ function PreviewSurface({
 export function AionWorkspacePreviewPane({ workspace, conversationId, messages = [], onClose }: AionWorkspacePreviewPaneProps) {
   const [openTabs, setOpenTabs] = useState<ActivePreviewFile[]>([]);
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
+  const [previewFileChangeEvents, setPreviewFileChangeEvents] = useState<PreviewFileChangeEvent[]>([]);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   const [quickOpenQuery, setQuickOpenQuery] = useState('');
   const [quickOpenEntries, setQuickOpenEntries] = useState<PreviewQuickOpenEntry[]>([]);
@@ -1115,6 +1160,7 @@ export function AionWorkspacePreviewPane({ workspace, conversationId, messages =
   useEffect(() => {
     setOpenTabs([]);
     setActiveTabPath(null);
+    setPreviewFileChangeEvents([]);
     setQuickOpenVisible(false);
     setQuickOpenQuery('');
     setQuickOpenEntries([]);
@@ -1342,20 +1388,31 @@ export function AionWorkspacePreviewPane({ workspace, conversationId, messages =
   }, [openFile]);
 
   useEffect(() => {
-    if (!openTabsRef.current.length) return;
-
-    const openTabPaths = new Set(openTabsRef.current.map((tab) => normalizePreviewFilePath(tab.path)));
     const changes = collectCompletedPreviewFileChanges(messages)
       .filter((change) => !refreshedOperationIdsRef.current.has(change.operationId))
-      .filter((change) => openTabPaths.has(normalizePreviewFilePath(change.path)));
+      .map((change) => ({
+        ...change,
+        path: resolvePreviewFileChangePath(workspace, change.path),
+      }));
 
     if (!changes.length) return;
 
+    const openTabPaths = new Set(openTabsRef.current.map((tab) => normalizePreviewFilePath(tab.path)));
+    const changedOpenTabs = changes.filter((change) => openTabPaths.has(normalizePreviewFilePath(change.path)));
+
     for (const change of changes) {
       refreshedOperationIdsRef.current.add(change.operationId);
+    }
+
+    setPreviewFileChangeEvents((current) => [...current.slice(-80), ...changes]);
+    if (quickOpenVisible || quickOpenEntriesRef.current.length > 0) {
+      void loadQuickOpenEntries(true);
+    }
+
+    for (const change of changedOpenTabs) {
       void openFile(change.path);
     }
-  }, [messages, openFile]);
+  }, [loadQuickOpenEntries, messages, openFile, quickOpenVisible, workspace]);
 
   if (!workspace) {
     return (
@@ -1372,7 +1429,12 @@ export function AionWorkspacePreviewPane({ workspace, conversationId, messages =
   return (
     <div className="aion-workbench">
       <div className="aion-workbench__body">
-        <NativeExplorer workspace={workspace} activeFilePath={activeFile?.path} onOpenFile={openFile} />
+        <NativeExplorer
+          workspace={workspace}
+          activeFilePath={activeFile?.path}
+          refreshEvents={previewFileChangeEvents}
+          onOpenFile={openFile}
+        />
         <PreviewSurface
           file={activeFile}
           referenceSessionKey={referenceSessionKey}

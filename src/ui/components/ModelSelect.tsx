@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Search } from "lucide-react";
 
 export type ModelOption = {
@@ -147,6 +147,11 @@ export function ModelSelect({
   const selectedLabel = getSelectedModelLabel(value, emptyOption);
   const isComposer = variant === "composer";
 
+  const closeMenu = useCallback(() => {
+    setOpen(false);
+    setQuery("");
+  }, []);
+
   useEffect(() => {
     if (!open) {
       return;
@@ -169,12 +174,7 @@ export function ModelSelect({
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [open]);
-
-  const closeMenu = () => {
-    setOpen(false);
-    setQuery("");
-  };
+  }, [closeMenu, open]);
 
   const selectOption = (nextValue: string) => {
     onChange(nextValue);
@@ -208,7 +208,7 @@ export function ModelSelect({
         aria-labelledby={labelId}
         className={cx(
           isComposer
-            ? "inline-flex h-7 min-w-[64px] items-center justify-between gap-1 rounded-lg bg-white px-1.5 text-[13px] text-ink-800 transition focus:outline-none focus:ring-1 focus:ring-accent/20"
+            ? "inline-flex h-7 min-w-0 flex-1 items-center justify-between gap-1 rounded-lg bg-white px-1.5 text-[13px] text-ink-800 transition focus:outline-none focus:ring-1 focus:ring-accent/20"
             : "flex h-[42px] min-w-0 items-center justify-between gap-2 rounded-xl border border-ink-900/10 bg-white px-4 py-2.5 text-left text-sm text-ink-800 transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20",
           disabled
             ? "cursor-not-allowed opacity-60"
@@ -220,7 +220,7 @@ export function ModelSelect({
         onClick={() => setOpen((current) => !current)}
         disabled={disabled}
       >
-        <span className={isComposer ? "max-w-[52px] truncate" : "min-w-0 truncate"}>
+        <span className={isComposer ? "min-w-0 flex-1 truncate" : "min-w-0 truncate"}>
           {selectedLabel || placeholder}
         </span>
         <ChevronDown

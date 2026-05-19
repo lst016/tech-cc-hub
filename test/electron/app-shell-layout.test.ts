@@ -38,6 +38,14 @@ test("left sidebar uses a compact default width", () => {
   assert.match(appSource, /useState\(DEFAULT_SIDEBAR_WIDTH\)/);
 });
 
+test("chat overview includes a jump-to-top control", () => {
+  const appSource = readFileSync(join(process.cwd(), "src/ui/App.tsx"), "utf8");
+
+  assert.match(appSource, /const scrollChatToTop = useCallback/);
+  assert.match(appSource, /topSentinelRef\.current\?\.scrollIntoView/);
+  assert.match(appSource, />\s*到顶部\s*<\/button>/);
+});
+
 test("activity rail is flush with the app header on macOS", () => {
   const activityRailSource = readFileSync(join(process.cwd(), "src/ui/components/ActivityRail.tsx"), "utf8");
 

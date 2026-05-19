@@ -1680,7 +1680,7 @@ const SystemInfoCard = ({ message, showIndicator = false }: { message: SDKMessag
         <InfoItem name="会话 ID" value={systemMsg.session_id || "-"} />
         <InfoItem name="模型" value={systemMsg.model || "-"} />
         <InfoItem name="权限" value={systemMsg.permissionMode || "-"} />
-        <InfoItem name="目录" value={systemMsg.cwd || "-"} wide />
+        <InfoItem name="目录" value={systemMsg.cwd || "-"} />
       </div>
     </div>
   );
@@ -1689,7 +1689,7 @@ const SystemInfoCard = ({ message, showIndicator = false }: { message: SDKMessag
 const InfoItem = ({ name, value, wide = false }: { name: string; value: string; wide?: boolean }) => (
   <div
     className={cx(
-      "min-w-0 rounded-xl border border-black/6 bg-white/72 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition hover:border-accent/18 hover:bg-white/88",
+      "min-w-0 overflow-hidden rounded-xl border border-black/6 bg-white/72 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition hover:border-accent/18 hover:bg-white/88",
       wide && "sm:col-span-2",
     )}
   >
@@ -1697,7 +1697,7 @@ const InfoItem = ({ name, value, wide = false }: { name: string; value: string; 
       <span className="h-1.5 w-1.5 rounded-full bg-accent/55" />
       <span>{name}</span>
     </div>
-    <div className="mt-1.5 truncate font-mono text-[13px] leading-5 text-ink-800" title={value}>{value}</div>
+    <div className="mt-1.5 min-w-0 overflow-hidden truncate whitespace-nowrap font-mono text-[13px] leading-5 text-ink-800" title={value}>{value}</div>
   </div>
 );
 

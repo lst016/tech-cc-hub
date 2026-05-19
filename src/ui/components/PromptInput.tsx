@@ -1,5 +1,6 @@
 ﻿import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import type { SetStateAction } from "react";
 import { ArrowUp, Menu, Sparkles, Square } from "lucide-react";
 import type {
   ApiConfigProfile,
@@ -10,6 +11,7 @@ import type {
 } from "../types";
 import {
   getCodeReferenceSessionKey,
+  getPromptDraftSessionKey,
   useAppStore,
   type CodeReferenceDraft,
   type FileReferenceDraft,
@@ -19,7 +21,8 @@ import {
 import { copyTextToClipboard as copyText } from "../utils/clipboard";
 import { resetBrowserWorkbenchAnnotationState } from "../utils/browser-annotation-reset";
 import { getSlashCommandContext, getSlashCommandQuery, isCompletedSlashCommandContext, isDismissedSlashCommandQuery } from "../utils/slash-command-input";
-import { buildSlashCommandDisplayParts, type SlashCommandDisplayPart, serializeSlashCommandDraft } from "../utils/slash-command-display";
+import { buildSlashCommandDisplayParts, serializeSlashCommandDraft } from "../utils/slash-command-display";
+import { getPromptTextFromEditor, getSelectionOffsetInEditor, getSelectionRangeInEditor, renderPromptEditorContent, restoreEditorSelection } from "../utils/prompt-editor-content";
 import { getPromptParagraphInputAction, insertTextIntoPrompt, resolvePromptEditorInputCursor, shouldBlockPromptEnterAfterComposition, shouldInsertPromptNewline, shouldSubmitPromptOnEnter } from "../utils/prompt-editor-keyboard";
 import {
   ADD_PROMPT_ATTACHMENT_EVENT,
@@ -32,6 +35,7 @@ import {
 } from "../events";
 import { ComposerContextCard } from "./ComposerContextCard";
 import { DecisionPanel } from "./DecisionPanel";
+import { InlineDropdown } from "./PromptInlineDropdown";
 import { ModelSelect } from "./ModelSelect";
 import { getAvailableModelsForProfiles, getEnabledProfiles } from "./settings/settings-utils";
 
@@ -59,6 +63,7 @@ const FILE_MENTION_IGNORED_DIRS = new Set([
 const EMPTY_CODE_REFERENCES: CodeReferenceDraft[] = [];
 const EMPTY_FILE_REFERENCES: FileReferenceDraft[] = [];
 const EMPTY_MESSAGE_REFERENCES: MessageReferenceDraft[] = [];
+const EMPTY_ATTACHMENTS: PromptAttachment[] = [];
 
 type SlashCommandOption = {
   name: string;
@@ -280,106 +285,6 @@ function getBrowserAnnotationHoverTitle(annotation: BrowserWorkbenchAnnotation) 
   ].filter(Boolean).join("\n");
 }
 
-type InlineOption = {
-  value: string;
-  label: string;
-};
-
-function InlineDropdown({
-  label,
-  value,
-  options,
-  disabled,
-  onChange,
-  minWidthClass,
-}: {
-  label: string;
-  value: string;
-  options: InlineOption[];
-  disabled: boolean;
-  minWidthClass: string;
-  onChange: (value: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-
-  const displayLabel = options.find((option) => option.value === value)?.label ?? (options[0]?.label ?? "请选择");
-
-  useEffect(() => {
-    if (!open) return;
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    };
-
-    window.addEventListener("mousedown", handlePointerDown);
-    window.addEventListener("keydown", handleEscape);
-    return () => {
-      window.removeEventListener("mousedown", handlePointerDown);
-      window.removeEventListener("keydown", handleEscape);
-    };
-  }, [open]);
-
-  return (
-    <div
-      ref={containerRef}
-      className={`relative inline-flex h-8 ${minWidthClass} items-center justify-between gap-1 rounded-xl bg-white px-2 text-xs text-ink-700`}
-    >
-      <span
-        className={`whitespace-nowrap text-muted ${disabled ? "" : "cursor-pointer select-none"}`}
-        onClick={() => {
-          if (!disabled) setOpen((current) => !current);
-        }}
-      >
-        {label}
-      </span>
-      <button
-        type="button"
-        className={`inline-flex h-7 min-w-[58px] items-center justify-between gap-1 rounded-lg bg-white px-2 text-[13px] text-ink-800 transition ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-surface-secondary"}`}
-        onClick={() => setOpen((current) => !current)}
-        disabled={disabled}
-      >
-        <span className="max-w-[58px] truncate">{displayLabel}</span>
-        <svg
-          viewBox="0 0 24 24"
-          className={`h-3.5 w-3.5 transition ${open ? "rotate-180" : ""} text-ink-500`}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          aria-hidden="true"
-        >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-      </button>
-      {open && !disabled && (
-        <div className="absolute right-0 bottom-full z-20 mb-2 w-full overflow-hidden rounded-xl border border-black/12 bg-white/98 shadow-lg">
-          <div className="max-h-40 overflow-y-auto">
-            {options.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={`flex h-9 w-full items-center px-3 text-left text-sm transition ${option.value === value ? "bg-accent-subtle text-accent" : "text-ink-800 hover:bg-surface-secondary"}`}
-                onClick={() => {
-                  onChange(option.value);
-                  setOpen(false);
-                }}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 const PROMPT_QUEUE_STORAGE_KEY = "tech-cc-hub:prompt-queue";
 
 type QueuedMessageDraft = {
@@ -579,238 +484,6 @@ function getFileMentionContext(promptValue: string, cursorIndex: number): FileMe
     end: safeCursor,
     query,
   };
-}
-
-function getPromptTextFromEditorNode(node: Node): string {
-  if (node.nodeType === Node.TEXT_NODE) {
-    return node.textContent ?? "";
-  }
-  if (node instanceof HTMLElement) {
-    if (node.dataset.promptEditorSentinel) {
-      return "";
-    }
-    const commandName = node.dataset.slashCommandName;
-    if (commandName) {
-      return `/${commandName}`;
-    }
-  }
-  if (node instanceof HTMLBRElement) {
-    return "\n";
-  }
-
-  let text = "";
-  node.childNodes.forEach((child) => {
-    text += getPromptTextFromEditorNode(child);
-  });
-  return text;
-}
-
-function getPromptTextFromEditor(editor: HTMLElement) {
-  let text = "";
-  editor.childNodes.forEach((child) => {
-    text += getPromptTextFromEditorNode(child);
-  });
-  return text;
-}
-
-function getNodePromptLength(node: Node): number {
-  return getPromptTextFromEditorNode(node).length;
-}
-
-function getEditorBoundaryOffset(editor: HTMLElement, targetNode: Node, targetOffset: number) {
-  let offset = 0;
-  let found = false;
-
-  const visit = (node: Node) => {
-    if (found) return;
-    if (node === targetNode) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        offset += Math.min(targetOffset, node.textContent?.length ?? 0);
-      } else {
-        for (let index = 0; index < Math.min(targetOffset, node.childNodes.length); index += 1) {
-          offset += getNodePromptLength(node.childNodes[index]);
-        }
-      }
-      found = true;
-      return;
-    }
-
-    if (node instanceof HTMLElement && node.dataset.slashCommandName) {
-      offset += getNodePromptLength(node);
-      return;
-    }
-
-    if (node.nodeType === Node.TEXT_NODE || node instanceof HTMLBRElement) {
-      offset += getNodePromptLength(node);
-      return;
-    }
-
-    node.childNodes.forEach(visit);
-  };
-
-  visit(editor);
-  return offset;
-}
-
-function getSelectionOffsetInEditor(editor: HTMLElement) {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) return getPromptTextFromEditor(editor).length;
-  const range = selection.getRangeAt(0);
-  if (!editor.contains(range.startContainer)) return getPromptTextFromEditor(editor).length;
-  return getEditorBoundaryOffset(editor, range.startContainer, range.startOffset);
-}
-
-function getSelectionRangeInEditor(editor: HTMLElement) {
-  const selection = window.getSelection();
-  const fallback = getPromptTextFromEditor(editor).length;
-  if (!selection || selection.rangeCount === 0) return { start: fallback, end: fallback };
-  const range = selection.getRangeAt(0);
-  if (!editor.contains(range.startContainer) || !editor.contains(range.endContainer)) {
-    return { start: fallback, end: fallback };
-  }
-  const start = getEditorBoundaryOffset(editor, range.startContainer, range.startOffset);
-  const end = getEditorBoundaryOffset(editor, range.endContainer, range.endOffset);
-  return { start: Math.min(start, end), end: Math.max(start, end) };
-}
-
-function findEditorPositionForOffset(editor: HTMLElement, offset: number): { node: Node; offset: number } {
-  let remaining = Math.max(0, offset);
-
-  const visit = (node: Node): { node: Node; offset: number } | null => {
-    if (node instanceof HTMLElement && node.dataset.promptEditorSentinel) {
-      return null;
-    }
-
-    if (node instanceof HTMLElement && node.dataset.slashCommandName) {
-      const length = getNodePromptLength(node);
-      if (remaining <= length) {
-        return {
-          node: editor,
-          offset: Array.prototype.indexOf.call(editor.childNodes, node) + 1,
-        };
-      }
-      remaining -= length;
-      return null;
-    }
-
-    if (node.nodeType === Node.TEXT_NODE) {
-      const textLength = node.textContent?.length ?? 0;
-      if (remaining <= textLength) {
-        return { node, offset: remaining };
-      }
-      remaining -= textLength;
-      return null;
-    }
-
-    if (node instanceof HTMLBRElement) {
-      if (remaining <= 1) {
-        return {
-          node: editor,
-          offset: Array.prototype.indexOf.call(editor.childNodes, node) + 1,
-        };
-      }
-      remaining -= 1;
-      return null;
-    }
-
-    for (const child of Array.from(node.childNodes)) {
-      const position = visit(child);
-      if (position) return position;
-    }
-    return null;
-  };
-
-  for (const child of Array.from(editor.childNodes)) {
-    const position = visit(child);
-    if (position) return position;
-  }
-
-  return { node: editor, offset: editor.childNodes.length };
-}
-
-function restoreEditorSelection(editor: HTMLElement, offset: number) {
-  const position = findEditorPositionForOffset(editor, offset);
-  const range = document.createRange();
-  range.setStart(position.node, position.offset);
-  range.collapse(true);
-  const selection = window.getSelection();
-  selection?.removeAllRanges();
-  selection?.addRange(range);
-}
-
-function createSlashCommandIconElement() {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "2.2");
-  svg.setAttribute("stroke-linecap", "round");
-  svg.setAttribute("stroke-linejoin", "round");
-  svg.setAttribute("aria-hidden", "true");
-  svg.setAttribute("class", "h-[18px] w-[18px] shrink-0 translate-y-[3px]");
-
-  for (const d of [
-    "M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z",
-    "m3.3 7 8.7 5 8.7-5",
-    "M12 22V12",
-  ]) {
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", d);
-    svg.appendChild(path);
-  }
-
-  return svg;
-}
-
-function appendPromptTextNode(fragment: DocumentFragment, text: string) {
-  const segments = text.split("\n");
-  segments.forEach((segment, index) => {
-    if (index > 0) {
-      fragment.appendChild(document.createElement("br"));
-    }
-    if (segment) {
-      fragment.appendChild(document.createTextNode(segment));
-    }
-  });
-}
-
-function appendPromptEditorSentinel(fragment: DocumentFragment) {
-  const sentinel = document.createElement("br");
-  sentinel.dataset.promptEditorSentinel = "true";
-  fragment.appendChild(sentinel);
-}
-
-function renderPromptEditorContent(editor: HTMLElement, parts: SlashCommandDisplayPart[]) {
-  const fragment = document.createDocumentFragment();
-  let rawPromptText = "";
-
-  for (const part of parts) {
-    if (part.type === "text") {
-      rawPromptText += part.text;
-      appendPromptTextNode(fragment, part.text);
-      continue;
-    }
-
-    rawPromptText += part.raw;
-    const token = document.createElement("span");
-    token.dataset.slashCommandName = part.commandName;
-    token.contentEditable = "false";
-    token.className = "inline-flex max-w-[240px] items-center gap-1.5 align-baseline font-medium text-[#2f80ed]";
-    token.title = part.description || part.raw;
-    token.appendChild(createSlashCommandIconElement());
-
-    const label = document.createElement("span");
-    label.className = "truncate";
-    label.textContent = part.displayName;
-    token.appendChild(label);
-    fragment.appendChild(token);
-  }
-
-  if (rawPromptText.endsWith("\n") || rawPromptText.length === 0) {
-    appendPromptEditorSentinel(fragment);
-  }
-
-  editor.replaceChildren(fragment);
 }
 
 async function collectFileMentionOptions(workspaceRoot: string): Promise<FileMentionOption[]> {
@@ -1303,7 +976,7 @@ export function PromptInput({
   const isComposingRef = useRef(false);
   const compositionEndedAtRef = useRef(0);
   const compositionEnterPendingRef = useRef(false);
-  const [attachments, setAttachments] = useState<PromptAttachment[]>([]);
+  const [attachmentsBySessionId, setAttachmentsBySessionId] = useState<Record<string, PromptAttachment[]>>({});
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [queuedMessagesBySession, setQueuedMessagesBySession] = useState<Record<string, QueuedMessageDraft[]>>(readQueuedMessagesFromStorage);
   const [showSlashBrowser, setShowSlashBrowser] = useState(false);
@@ -1321,6 +994,7 @@ export function PromptInput({
   const submitInFlightRef = useRef(false);
   const [submissionStatus, setSubmissionStatus] = useState<string | null>(null);
   const setGlobalError = useAppStore((state) => state.setGlobalError);
+  const composerDraftSessionKey = getPromptDraftSessionKey(activeSessionId);
   const codeReferenceSessionKey = getCodeReferenceSessionKey(activeSessionId);
   const activeSessionCwd = useAppStore((state) => {
     if (!activeSessionId) return "";
@@ -1331,6 +1005,25 @@ export function PromptInput({
     return (state.sessions[activeSessionId] ?? state.archivedSessions[activeSessionId])?.model?.trim() ?? "";
   });
   const effectiveCwd = cwd.trim() || activeSessionCwd.trim();
+  const attachments = attachmentsBySessionId[composerDraftSessionKey] ?? EMPTY_ATTACHMENTS;
+  const setAttachments = useCallback((nextAttachments: SetStateAction<PromptAttachment[]>) => {
+    setAttachmentsBySessionId((current) => {
+      const currentAttachments = current[composerDraftSessionKey] ?? EMPTY_ATTACHMENTS;
+      const resolvedAttachments = typeof nextAttachments === "function"
+        ? nextAttachments(currentAttachments)
+        : nextAttachments;
+      if (resolvedAttachments.length === 0) {
+        if (!current[composerDraftSessionKey]) return current;
+        const nextBySession = { ...current };
+        delete nextBySession[composerDraftSessionKey];
+        return nextBySession;
+      }
+      return {
+        ...current,
+        [composerDraftSessionKey]: resolvedAttachments,
+      };
+    });
+  }, [composerDraftSessionKey]);
   const codeReferences = codeReferencesBySessionId[codeReferenceSessionKey] || EMPTY_CODE_REFERENCES;
   const messageReferences = messageReferencesBySessionId[codeReferenceSessionKey] || EMPTY_MESSAGE_REFERENCES;
   const fileReferences = fileReferencesBySessionId[codeReferenceSessionKey] || EMPTY_FILE_REFERENCES;
@@ -1519,7 +1212,7 @@ export function PromptInput({
       .catch((error) => console.warn("Failed to reset browser annotation state:", error));
     setShowSlashBrowser(false);
     setDismissedSlashQuery(null);
-  }, [activeSessionId, clearBrowserAnnotations, clearCodeReferences, clearFileReferences, clearMessageReferences, setBrowserWorkbenchAnnotations, setPromptDraft]);
+  }, [activeSessionId, clearBrowserAnnotations, clearCodeReferences, clearFileReferences, clearMessageReferences, setAttachments, setBrowserWorkbenchAnnotations, setPromptDraft]);
 
   const clearPromptDraftText = useCallback(() => {
     setPromptDraft("", 0);
@@ -1589,7 +1282,7 @@ export function PromptInput({
     setAttachments(queuedMessage.attachments);
     removeQueuedDraft(queuedMessage.id, activeSessionId);
     focusPromptEditor(queuedMessage.prompt.length);
-  }, [activeSessionId, focusPromptEditor, removeQueuedDraft, setPromptDraft]);
+  }, [activeSessionId, focusPromptEditor, removeQueuedDraft, setAttachments, setPromptDraft]);
 
   const queueCurrentDraft = useCallback((promptOverride?: string) => {
     if (!activeSessionId) return false;
@@ -1674,7 +1367,7 @@ export function PromptInput({
       setSubmissionStatus(null);
       submitInFlightRef.current = false;
     }
-  }, [attachments, browserAnnotations, clearComposer, clearPromptDraftText, codeReferences, fileReferences, getCurrentPromptDraft, isRunning, messageReferences, onSendMessage, queueCurrentDraft, sendPromptDraft, setGlobalError, setPromptDraft, validatePromptDraft]);
+  }, [attachments, browserAnnotations, clearComposer, clearPromptDraftText, codeReferences, fileReferences, getCurrentPromptDraft, isRunning, messageReferences, onSendMessage, queueCurrentDraft, sendPromptDraft, setAttachments, setGlobalError, setPromptDraft, validatePromptDraft]);
 
   useEffect(() => {
     const handlePromptSubmit = () => {
@@ -1844,7 +1537,7 @@ export function PromptInput({
       console.error(error);
       setGlobalError(error instanceof Error ? error.message : "读取附件失败。");
     }
-  }, [setGlobalError]);
+  }, [setAttachments, setGlobalError]);
 
   const handlePaste = useCallback(async (event: React.ClipboardEvent<HTMLDivElement>) => {
     const clipboardFiles = Array.from(event.clipboardData.items)
@@ -2013,7 +1706,7 @@ export function PromptInput({
 
     window.addEventListener(ADD_PROMPT_ATTACHMENT_EVENT, handleAddPromptAttachment);
     return () => window.removeEventListener(ADD_PROMPT_ATTACHMENT_EVENT, handleAddPromptAttachment);
-  }, [setGlobalError]);
+  }, [setAttachments, setGlobalError]);
 
   useEffect(() => {
     setFileMentionActiveIndex(0);
@@ -2633,7 +2326,7 @@ export function PromptInput({
               onChange={handleRuntimeModelChange}
               variant="composer"
               placement="top"
-              className="min-w-[112px] max-w-[112px] bg-transparent hover:bg-[#f4f6f8]"
+              className="min-w-[190px] max-w-[240px] bg-transparent hover:bg-[#f4f6f8]"
               placeholder={availableModels.length === 0 ? "请先配置模型" : "选择模型"}
             />
             <InlineDropdown

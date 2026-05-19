@@ -76,6 +76,8 @@ test("agent resolver scans user and project Claude documents plus sanitized sett
     assert.match(prompt, /Project default agent prompt/);
     assert.match(prompt, /executor/);
     assert.match(prompt, /Runs implementation work/);
+    assert.match(prompt, /compact routing index/);
+    assert.doesNotMatch(prompt, /source=.*executor\.md/);
     assert.match(prompt, /Claude settings summary \(sanitized\)/);
     assert.match(prompt, /userServer/);
     assert.match(prompt, /projectServer/);
@@ -101,6 +103,40 @@ test("agent resolver scans user and project Claude documents plus sanitized sett
     const listedAgents = listAvailableClaudeAgents({ cwd: projectRoot, userClaudeRoot });
     assert.ok(listedAgents.some((agent) => agent.id === "executor" && agent.description === "Runs implementation work"));
     assert.ok(listedAgents.some((agent) => agent.id === "default" && agent.scope === "project"));
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("agent resolver keeps the local Claude agent catalog compact", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tech-cc-hub-agent-catalog-"));
+  const userClaudeRoot = join(tempRoot, "user-claude");
+
+  try {
+    mkdirSync(join(userClaudeRoot, "agents"), { recursive: true });
+
+    for (let index = 1; index <= 24; index += 1) {
+      writeFileSync(join(userClaudeRoot, "agents", `agent-${index}.md`), [
+        "---",
+        `name: agent-${index}`,
+        `description: ${"Long routing description ".repeat(30)}${index}`,
+        "---",
+        `Agent ${index} full prompt`,
+      ].join("\n"), "utf8");
+    }
+
+    const context = resolveAgentRuntimeContext({ userClaudeRoot });
+    const catalogSource = context.promptSources.find((source) => source.id === "local-claude-agent-catalog");
+    const catalog = catalogSource?.text ?? "";
+
+    assert.match(catalog, /24 available agents/);
+    assert.match(catalog, /agent-1 \[user\]/);
+    assert.match(catalog, /Descriptions are aggressively shortened because the catalog is large/);
+    assert.match(catalog, /desc=Long routing description/);
+    assert.doesNotMatch(catalog, /Long routing description Long routing description Long routing description/);
+    assert.doesNotMatch(catalog, /source=/);
+    assert.doesNotMatch(catalog, /Agent 1 full prompt/);
+    assert.ok(catalog.length < 2_800, `catalog should stay compact, got ${catalog.length} chars`);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
