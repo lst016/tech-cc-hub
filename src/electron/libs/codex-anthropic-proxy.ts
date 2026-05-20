@@ -1,4 +1,7 @@
 import http, { type IncomingMessage, type ServerResponse } from "http";
+import { existsSync, readFileSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 import {
   CODEX_OAUTH_BASE_URL,
   buildCodexRequestHeaders,
@@ -7,6 +10,7 @@ import {
   encodeCodexOAuthCredential,
   getCodexResponsesPath,
   parseCodexResponsesStream,
+  parseCodexCliAuthCredential,
   parseCodexOAuthCredential,
   refreshCodexOAuthToken,
   shouldRefreshCodexCredential,
@@ -26,6 +30,7 @@ const CODEX_PROXY_PORT = 14559;
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 
 let proxyServer: http.Server | null = null;
+const credentialRefreshes = new Map<string, Promise<CodexOAuthCredential>>();
 
 export function getCodexAnthropicProxyBaseURL(profileId: string): string {
   ensureCodexAnthropicProxy();
@@ -137,16 +142,110 @@ async function handleProxyRequest(request: IncomingMessage, response: ServerResp
 
 async function getUsableCredential(profile: ApiConfig): Promise<CodexOAuthCredential> {
   const credential = parseCodexOAuthCredential(profile.apiKey);
-  if (!shouldRefreshCodexCredential(credential)) {
+  if (!needsCredentialRefresh(credential)) {
     return credential;
   }
 
-  const refreshed = tokenResultToCredential(
-    await refreshCodexOAuthToken(credential.refreshToken ?? ""),
-    credential,
-  );
-  saveRefreshedCredential(profile.id, refreshed);
-  return refreshed;
+  const inFlightRefresh = credentialRefreshes.get(profile.id);
+  if (inFlightRefresh) {
+    return inFlightRefresh;
+  }
+
+  const refresh = refreshCredentialForProfile(profile.id, credential)
+    .finally(() => {
+      credentialRefreshes.delete(profile.id);
+    });
+  credentialRefreshes.set(profile.id, refresh);
+  return refresh;
+}
+
+async function refreshCredentialForProfile(
+  profileId: string,
+  staleCredential: CodexOAuthCredential,
+): Promise<CodexOAuthCredential> {
+  const latestCredential = readProfileCredential(profileId);
+  if (latestCredential && !needsCredentialRefresh(latestCredential)) {
+    return latestCredential;
+  }
+
+  const importedCredential = readCodexCliCredential();
+  if (importedCredential && !needsCredentialRefresh(importedCredential)) {
+    saveRefreshedCredential(profileId, importedCredential);
+    return importedCredential;
+  }
+
+  const credential = latestCredential ?? staleCredential;
+  try {
+    const refreshed = tokenResultToCredential(
+      await refreshCodexOAuthToken(credential.refreshToken ?? ""),
+      credential,
+    );
+    saveRefreshedCredential(profileId, refreshed);
+    return refreshed;
+  } catch (error) {
+    const recoveredCredential = readProfileCredential(profileId);
+    if (recoveredCredential && !needsCredentialRefresh(recoveredCredential)) {
+      return recoveredCredential;
+    }
+
+    const recoveredCliCredential = readCodexCliCredential();
+    if (recoveredCliCredential && !needsCredentialRefresh(recoveredCliCredential)) {
+      saveRefreshedCredential(profileId, recoveredCliCredential);
+      return recoveredCliCredential;
+    }
+
+    throw new Error(buildRefreshFailureMessage(error));
+  }
+}
+
+function readProfileCredential(profileId: string): CodexOAuthCredential | null {
+  const profile = loadApiConfigSettings().profiles.find((item) => item.id === profileId);
+  if (!profile?.apiKey) {
+    return null;
+  }
+
+  try {
+    return parseCodexOAuthCredential(profile.apiKey);
+  } catch {
+    return null;
+  }
+}
+
+function readCodexCliCredential(): CodexOAuthCredential | null {
+  const authPath = join(process.env.CODEX_HOME || join(homedir(), ".codex"), "auth.json");
+  if (!existsSync(authPath)) {
+    return null;
+  }
+
+  try {
+    return parseCodexCliAuthCredential(readFileSync(authPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function needsCredentialRefresh(credential: CodexOAuthCredential): boolean {
+  if (!isCredentialLikelyUsable(credential)) {
+    return true;
+  }
+  return shouldRefreshCodexCredential(credential);
+}
+
+function isCredentialLikelyUsable(credential: CodexOAuthCredential): boolean {
+  if (!credential.accessToken || !credential.accountId) {
+    return false;
+  }
+
+  const expiresAt = Date.parse(credential.expired ?? "");
+  return !Number.isFinite(expiresAt) || expiresAt - Date.now() > 60_000;
+}
+
+function buildRefreshFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/refresh token.*already been used|already been used.*refresh token|invalid_grant/i.test(message)) {
+    return `${message} Re-run npm run codex:oauth:setup or codex login so tech-cc-hub can import the latest Codex credentials.`;
+  }
+  return message;
 }
 
 function saveRefreshedCredential(profileId: string, credential: CodexOAuthCredential): void {

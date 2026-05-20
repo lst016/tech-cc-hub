@@ -4,6 +4,9 @@ import { Check, ChevronDown, Search } from "lucide-react";
 export type ModelOption = {
   value: string;
   label: string;
+  description?: string;
+  badge?: string;
+  title?: string;
 };
 
 type ModelGroup = {
@@ -33,6 +36,7 @@ type ModelSelectProps = {
   label: string;
   value: string;
   models: string[];
+  modelOptions?: ModelOption[];
   onChange: (model: string) => void;
   emptyOption?: ModelOption;
   disabled?: boolean;
@@ -124,6 +128,7 @@ export function ModelSelect({
   label,
   value,
   models,
+  modelOptions,
   onChange,
   emptyOption,
   disabled = false,
@@ -140,11 +145,12 @@ export function ModelSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const groupedOptions = useMemo(
-    () => buildGroupedModelOptions(models, query, emptyOption),
-    [emptyOption, models, query],
+    () => buildGroupedModelOptions(modelOptions ?? models, query, emptyOption),
+    [emptyOption, modelOptions, models, query],
   );
   const firstVisibleOption = groupedOptions[0]?.options[0];
-  const selectedLabel = getSelectedModelLabel(value, emptyOption);
+  const selectedLabel = getSelectedModelLabel(value, emptyOption, modelOptions);
+  const selectedOptionTitle = getSelectedModelTitle(value, emptyOption, modelOptions);
   const isComposer = variant === "composer";
 
   const closeMenu = useCallback(() => {
@@ -216,7 +222,7 @@ export function ModelSelect({
               ? "cursor-pointer hover:bg-surface-secondary"
               : "hover:border-accent/45",
         )}
-        title={selectedLabel || placeholder}
+        title={selectedOptionTitle || selectedLabel || placeholder}
         onClick={() => setOpen((current) => !current)}
         disabled={disabled}
       >
@@ -279,13 +285,29 @@ export function ModelSelect({
                           type="button"
                           role="option"
                           aria-selected={selected}
+                          title={option.title ?? option.description ?? option.label}
                           className={cx(
-                            "flex min-h-9 min-w-0 items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm transition-colors",
+                            "flex min-h-10 min-w-0 items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm transition-colors",
                             selected ? "bg-accent/10 text-accent" : "text-ink-800 hover:bg-surface",
                           )}
                           onClick={() => selectOption(option.value)}
                         >
-                          <span className="min-w-0 truncate">{option.label}</span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate">{option.label}</span>
+                            {option.description && (
+                              <span className={cx("mt-0.5 block truncate text-[11px]", selected ? "text-accent/75" : "text-muted")}>
+                                {option.description}
+                              </span>
+                            )}
+                          </span>
+                          {option.badge && (
+                            <span className={cx(
+                              "shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold",
+                              selected ? "bg-accent/10 text-accent" : "bg-surface-secondary text-muted",
+                            )}>
+                              {option.badge}
+                            </span>
+                          )}
                           {selected && <Check className="h-4 w-4 shrink-0" aria-hidden="true" />}
                         </button>
                       );
@@ -301,7 +323,7 @@ export function ModelSelect({
   );
 }
 
-export function buildGroupedModelOptions(models: string[], query: string, emptyOption?: ModelOption): ModelGroup[] {
+export function buildGroupedModelOptions(models: Array<string | ModelOption>, query: string, emptyOption?: ModelOption): ModelGroup[] {
   const hasQuery = getSearchTokens(query).length > 0;
   const groups = new Map<string, ScoredModelGroup>();
   const addOption = (definition: ModelGroupDefinition, option: ModelOption, searchScore: number) => {
@@ -317,22 +339,31 @@ export function buildGroupedModelOptions(models: string[], query: string, emptyO
     }
   }
 
-  models.forEach((model) => {
-    const definition = getModelGroupDefinition(model);
-    const searchScore = getModelSearchScore(model, definition.label, query);
+  models.forEach((item) => {
+    const option = typeof item === "string" ? { value: item, label: item } : item;
+    const definition = getModelGroupDefinition(option.value);
+    const searchLabel = [option.label, option.description, option.badge].filter(Boolean).join(" ");
+    const searchScore = getModelSearchScore(searchLabel, definition.label, query);
     if (searchScore >= 0) {
-      addOption(definition, { value: model, label: model }, searchScore);
+      addOption(definition, option, searchScore);
     }
   });
 
   return Array.from(groups.values()).map((group) => ({
     id: group.id,
     label: group.label,
-    options: (hasQuery ? [...group.options].sort(compareScoredModelOptions) : group.options).map((option) => ({
-      value: option.value,
-      label: option.label,
-    })),
+    options: (hasQuery ? [...group.options].sort(compareScoredModelOptions) : group.options).map(toModelOption),
   }));
+}
+
+function toModelOption(option: ScoredModelOption): ModelOption {
+  return {
+    value: option.value,
+    label: option.label,
+    ...(option.description ? { description: option.description } : {}),
+    ...(option.badge ? { badge: option.badge } : {}),
+    ...(option.title ? { title: option.title } : {}),
+  };
 }
 
 function getModelGroupDefinition(model: string): ModelGroupDefinition {
@@ -340,11 +371,19 @@ function getModelGroupDefinition(model: string): ModelGroupDefinition {
   return MODEL_GROUP_DEFINITIONS.find((definition) => definition.test(normalizedModel)) ?? OTHER_MODEL_GROUP;
 }
 
-function getSelectedModelLabel(value: string, emptyOption?: ModelOption): string {
+function getSelectedModelLabel(value: string, emptyOption?: ModelOption, options?: ModelOption[]): string {
   if (emptyOption && value === emptyOption.value) {
     return emptyOption.label;
   }
-  return value;
+  return options?.find((option) => option.value === value)?.label ?? value;
+}
+
+function getSelectedModelTitle(value: string, emptyOption?: ModelOption, options?: ModelOption[]): string {
+  if (emptyOption && value === emptyOption.value) {
+    return emptyOption.title ?? emptyOption.description ?? emptyOption.label;
+  }
+  const option = options?.find((item) => item.value === value);
+  return option?.title ?? option?.description ?? option?.label ?? value;
 }
 
 export function getModelSearchScore(modelLabel: string, groupLabel: string, query: string): number {

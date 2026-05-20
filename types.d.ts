@@ -14,6 +14,7 @@ type ApiModelConfig = {
     name: string;
     contextWindow?: number;
     compressionThresholdPercent?: number;
+    routingWeight?: number;
 }
 
 type ApiProviderMode = "custom" | "deepseek" | "codex";

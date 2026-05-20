@@ -9,6 +9,7 @@ import {
   mergeCodexModelIds,
   buildSyntheticAnthropicStream,
   parseCodexResponsesStream,
+  parseCodexCliAuthCredential,
   parseCodexOAuthCredential,
   toAnthropicMessageResponse,
 } from "../../src/electron/libs/codex-oauth.js";
@@ -18,6 +19,7 @@ import {
 } from "../../src/ui/components/settings/settings-utils.js";
 import {
   isModelCompatibleWithApiProvider,
+  normalizeProviderModelName,
   pickProviderCompatibleModel,
 } from "../../src/shared/model-provider-routing.js";
 
@@ -43,6 +45,21 @@ test("codex provider does not accept deepseek models from a merged model pool", 
   assert.equal(isModelCompatibleWithApiProvider("codex", "deepseek-v4-flash"), false);
   assert.equal(
     pickProviderCompatibleModel("codex", "deepseek-v4-flash", "gpt-5.5"),
+    "gpt-5.5",
+  );
+});
+
+test("deepseek model names are normalized before routing to Anthropic-compatible gateways", () => {
+  assert.equal(
+    normalizeProviderModelName("custom", "DeepSeek-V4-Pro"),
+    "deepseek-v4-pro",
+  );
+  assert.equal(
+    normalizeProviderModelName("deepseek", "DeepSeek-V4-Pro"),
+    "deepseek-v4-pro",
+  );
+  assert.equal(
+    normalizeProviderModelName("codex", "gpt-5.5"),
     "gpt-5.5",
   );
 });
@@ -89,6 +106,34 @@ test("codex oauth credential requires access token and account id JSON", () => {
     () => parseCodexOAuthCredential(JSON.stringify({ access_token: "access-token" })),
     /account_id/,
   );
+});
+
+test("codex oauth can import official Codex CLI auth credentials", () => {
+  const accessToken = buildJwt({
+    exp: 1_800_000_000,
+    "https://api.openai.com/auth": {
+      chatgpt_account_id: "account-from-jwt",
+    },
+    "https://api.openai.com/profile": {
+      email: "user@example.com",
+    },
+  });
+
+  assert.deepEqual(parseCodexCliAuthCredential(JSON.stringify({
+    tokens: {
+      access_token: accessToken,
+      refresh_token: "refresh-token",
+    },
+    last_refresh: "2026-05-18T00:00:00.000Z",
+  })), {
+    accessToken,
+    refreshToken: "refresh-token",
+    accountId: "account-from-jwt",
+    email: "user@example.com",
+    type: "codex",
+    expired: "2027-01-15T08:00:00.000Z",
+    lastRefresh: "2026-05-18T00:00:00.000Z",
+  });
 });
 
 test("anthropic messages are converted to codex responses requests", () => {
@@ -210,6 +255,23 @@ test("codex setup imports official codex login instead of composing oauth urls",
   assert.match(source, /auth\.json/);
   assert.match(source, /codex login/);
   assert.match(source, /gpt-5\.5/);
+  assert.match(source, /routingWeight/);
+  assert.doesNotMatch(source, /enabled:\s*index === targetIndex/);
   assert.doesNotMatch(source, /auth\.openai\.com\/oauth\/authorize/);
   assert.doesNotMatch(source, /localhost:1455\/auth\/callback/);
 });
+
+test("codex proxy reloads credentials before retrying stale refresh tokens", () => {
+  const source = readFileSync("src/electron/libs/codex-anthropic-proxy.ts", "utf8");
+
+  assert.match(source, /credentialRefreshes/);
+  assert.match(source, /readProfileCredential/);
+  assert.match(source, /readCodexCliCredential/);
+  assert.match(source, /parseCodexCliAuthCredential/);
+  assert.match(source, /already been used/);
+});
+
+function buildJwt(payload: Record<string, unknown>): string {
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${encode({ alg: "none" })}.${encode(payload)}.`;
+}

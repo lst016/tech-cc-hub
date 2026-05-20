@@ -37,7 +37,10 @@ import { ComposerContextCard } from "./ComposerContextCard";
 import { DecisionPanel } from "./DecisionPanel";
 import { InlineDropdown } from "./PromptInlineDropdown";
 import { ModelSelect } from "./ModelSelect";
-import { getAvailableModelsForProfiles, getEnabledProfiles } from "./settings/settings-utils";
+import {
+  getEnabledProfiles,
+  getRoutedModelOptionsForProfiles,
+} from "./settings/settings-utils";
 
 const DEFAULT_ALLOWED_TOOLS = "*";
 const MAX_ROWS = 12;
@@ -774,7 +777,8 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
   }, [activeSession?.slashCommands, workspaceSlashCommands]);
   const enabledProfiles = useMemo(() => getEnabledProfiles(apiConfigSettings.profiles), [apiConfigSettings.profiles]);
   const activeProfile = enabledProfiles[0];
-  const availableModels = useMemo(() => getAvailableModelsForProfiles(enabledProfiles), [enabledProfiles]);
+  const routedModelOptions = useMemo(() => getRoutedModelOptionsForProfiles(enabledProfiles), [enabledProfiles]);
+  const availableModels = useMemo(() => routedModelOptions.map((option) => option.value), [routedModelOptions]);
   const activeSessionModel = activeSession?.model?.trim();
   const resolveSessionRuntimeModel = useCallback((): string => {
     if (activeSessionModel) return activeSessionModel;
@@ -801,7 +805,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
 
   const buildRuntimeOverrides = useCallback((): RuntimeOverrides | null => {
     const sessionRuntimeModel = resolveSessionRuntimeModel();
-    const selectedModel = sessionRuntimeModel || runtimeModel.trim() || activeProfile?.model?.trim();
+    const selectedModel = sessionRuntimeModel || runtimeModel.trim() || routedModelOptions[0]?.value || activeProfile?.model?.trim();
     if (!selectedModel) {
       setGlobalError("请先在设置里启用配置，并至少提供一个模型。");
       return null;
@@ -817,7 +821,7 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
       reasoningMode,
       permissionMode: permissionMode === "plan" ? "bypassPermissions" : permissionMode,
     };
-  }, [activeProfile, availableModels, permissionMode, reasoningMode, resolveSessionRuntimeModel, runtimeModel, setGlobalError]);
+  }, [activeProfile, availableModels, permissionMode, reasoningMode, resolveSessionRuntimeModel, routedModelOptions, runtimeModel, setGlobalError]);
 
   const prepareAttachmentsForDispatch = useCallback(async (
     promptValue: string,
@@ -1093,11 +1097,17 @@ export function PromptInput({
   }, [fileMentionContext, fileMentionOptions]);
   const showFileMentionPalette = Boolean(fileMentionContext) && !showSlashPalette && !disabled && (fileMentionLoading || filteredFileMentionOptions.length > 0);
   const enabledProfiles = useMemo<ApiConfigProfile[]>(() => getEnabledProfiles(apiConfigSettings.profiles), [apiConfigSettings.profiles]);
-  const availableModels = useMemo(() => {
-    return getAvailableModelsForProfiles(enabledProfiles);
-  }, [enabledProfiles]);
+  const routedModelOptions = useMemo(() => getRoutedModelOptionsForProfiles(enabledProfiles), [enabledProfiles]);
+  const availableModels = useMemo(() => routedModelOptions.map((option) => option.value), [routedModelOptions]);
+  const modelSelectOptions = useMemo(() => routedModelOptions.map((option) => ({
+    value: option.value,
+    label: option.label,
+    description: option.routeLabel,
+    badge: option.routingWeight > 0 ? `W${option.routingWeight}` : option.providerLabel,
+    title: `${option.value} -> ${option.routeLabel}`,
+  })), [routedModelOptions]);
   const activeProfile = enabledProfiles[0];
-  const selectedRuntimeModel = activeSessionModel || runtimeModel.trim() || activeProfile?.model?.trim() || availableModels[0] || "";
+  const selectedRuntimeModel = activeSessionModel || runtimeModel.trim() || routedModelOptions[0]?.value || activeProfile?.model?.trim() || "";
   const handleRuntimeModelChange = useCallback((model: string) => {
     if (activeSessionId) {
       setSessionModel(activeSessionId, model);
@@ -1601,6 +1611,8 @@ export function PromptInput({
     const nextCursor = resolvePromptEditorInputCursor(previousPrompt, nextPrompt, getSelectionOffsetInEditor(target));
     promptDraftRef.current = nextPrompt;
     pendingCursorOffsetRef.current = nextCursor;
+    // Avoid repainting native edits; replacing contenteditable children clears the browser undo stack.
+    target.dataset.renderedPrompt = nextPrompt;
     setPrompt(nextPrompt);
     setCursorIndex(nextCursor);
     target.style.height = "auto";
@@ -2322,6 +2334,7 @@ export function PromptInput({
               label="模型"
               value={selectedRuntimeModel}
               models={availableModels}
+              modelOptions={modelSelectOptions}
               disabled={disabled || availableModels.length === 0}
               onChange={handleRuntimeModelChange}
               variant="composer"

@@ -4,6 +4,10 @@ import {
   type McpSdkServerConfigWithInstance,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { app } from "electron";
 import { z } from "zod";
 
 import { loadGlobalRuntimeConfig } from "../config-store.js";
@@ -42,6 +46,7 @@ const MAX_RESPONSE_BYTES = 500_000;
 const FIGMA_FILE_LIBRARY_KINDS = ["components", "component_sets", "styles"] as const;
 const FIGMA_VARIABLE_KINDS = ["local", "published"] as const;
 const FIGMA_CODE_OUTPUTS = ["react", "html"] as const;
+const FIGMA_IMAGE_EXPORT_FORMATS = ["png", "jpg"] as const;
 const DEFAULT_SUMMARY_DEPTH = 4;
 const DEFAULT_SUMMARY_MAX_NODES = 120;
 const figmaUiBoundsSchema = z.object({
@@ -75,6 +80,17 @@ const figmaUiNodeSchema = z.object({
 }).passthrough();
 
 let figmaRestMcpServer: McpSdkServerConfigWithInstance | null = null;
+let figmaRestFullMcpServer: McpSdkServerConfigWithInstance | null = null;
+
+export const FIGMA_REST_CORE_TOOL_NAMES = [
+  "figma_read_design",
+  "figma_list_node_index",
+  "figma_match_ui_nodes",
+  "figma_summarize_design",
+  "figma_export_node_images",
+] as const;
+
+export type FigmaRestToolMode = "core" | "full";
 
 type CompactDesignNode = {
   id?: string;
@@ -163,6 +179,25 @@ async function figmaApiGet(pathname: string, query: Record<string, string | numb
   return body;
 }
 
+async function fetchBinary(url: string): Promise<{ buffer: Buffer; contentType: string | null }> {
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Accept: "image/png,image/jpeg,image/*,*/*;q=0.8",
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Image download ${response.status}: ${text.trim() || response.statusText}`);
+  }
+
+  return {
+    buffer: Buffer.from(await response.arrayBuffer()),
+    contentType: response.headers.get("content-type"),
+  };
+}
+
 function parseJsonBody(text: string): unknown {
   if (!text.trim()) {
     return null;
@@ -232,8 +267,8 @@ function capFigmaDesignPayload(
         maxNodes: 160,
       },
       alternatives: [
+        "Use figma_export_node_images with the same nodeIds, then pass the returned imagePath to design_inspect_image when visual layout intent matters.",
         "Use figma_read_design with one nodeId and a small depth when raw node JSON is required.",
-        "Use figma_get_image_urls with the same nodeIds when visual layout is more useful than JSON.",
         "Use figma_generate_tailwind_code after selecting the smallest frame that matches the implementation target.",
       ],
       nodeIndex,
@@ -244,6 +279,41 @@ function capFigmaDesignPayload(
 
 function getFigmaFileKey(fileKeyOrUrl: string): string {
   return parseFigmaLocator(fileKeyOrUrl).fileKey;
+}
+
+function getFigmaImageArtifactDir(): string {
+  const dir = join(app.getPath("userData"), "design-parity");
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function sanitizeArtifactSegment(value: string | undefined, fallback: string): string {
+  const normalized = value?.trim().replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "");
+  return normalized || fallback;
+}
+
+function createFigmaImageArtifactPath(input: {
+  fileKey: string;
+  nodeId: string;
+  label?: string;
+  format: "png" | "jpg";
+}): string {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const label = sanitizeArtifactSegment(input.label, "figma-node");
+  const node = sanitizeArtifactSegment(input.nodeId.replace(/:/g, "-"), "node");
+  const keyHash = createHash("sha1").update(input.fileKey).digest("hex").slice(0, 8);
+  return join(getFigmaImageArtifactDir(), `${timestamp}-${label}-${node}-${keyHash}.${input.format}`);
+}
+
+function readFigmaImageUrls(payload: unknown, nodeIds: string[]): Array<{ nodeId: string; url: string | null }> {
+  const images = isRecord(payload) && isRecord(payload.images) ? payload.images : {};
+  return nodeIds.map((nodeId) => {
+    const value = images[nodeId];
+    return {
+      nodeId,
+      url: typeof value === "string" && value.trim() ? value : null,
+    };
+  });
 }
 
 function toFigmaErrorResult(action: string, error: unknown): CallToolResult {
@@ -820,9 +890,13 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
-export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
-  if (figmaRestMcpServer) {
+export function getFigmaRestMcpServer(options: { toolMode?: FigmaRestToolMode } = {}): McpSdkServerConfigWithInstance {
+  const toolMode = options.toolMode ?? "full";
+  if (toolMode === "core" && figmaRestMcpServer) {
     return figmaRestMcpServer;
+  }
+  if (toolMode === "full" && figmaRestFullMcpServer) {
+    return figmaRestFullMcpServer;
   }
 
   const currentUserTool = tool(
@@ -972,7 +1046,7 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
               depth: 3,
               maxNodes: 160,
             },
-            nextStep: "Use recommendedNextInput first when it is populated; otherwise pick the smallest node that matches the requested UI text/area, then call figma_summarize_design or figma_read_design with that nodeId.",
+            nextStep: "Use recommendedNextInput first when it is populated; otherwise pick the smallest matching node. For UI implementation, call figma_export_node_images with that nodeId and inspect the returned imagePath before reading deeper JSON.",
           }, clampMaxBytes(input.maxBytes)),
         });
       } catch (error) {
@@ -1272,6 +1346,95 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
     },
   );
 
+  const exportNodeImagesTool = tool(
+    "figma_export_node_images",
+    "Export selected Figma nodes to local PNG/JPG files and return imagePath values that can be passed directly to design_inspect_image or design_compare_images.",
+    {
+      fileKeyOrUrl: z.string().trim().min(1),
+      nodeIds: z.array(z.string().trim().min(1)).max(20).optional(),
+      format: z.enum(FIGMA_IMAGE_EXPORT_FORMATS).optional(),
+      scale: z.number().min(0.01).max(4).optional(),
+      svgIncludeId: z.boolean().optional(),
+      label: z.string().trim().min(1).max(80).optional(),
+      maxBytes: z.number().int().min(10_000).max(MAX_RESPONSE_BYTES).optional(),
+    },
+    async (input) => {
+      const action = "figma_export_node_images";
+      try {
+        const token = getConfiguredFigmaPat();
+        const locator = parseFigmaLocator(input.fileKeyOrUrl, input.nodeIds);
+        if (locator.nodeIds.length === 0) {
+          throw new Error("Missing nodeIds. Pass a Figma URL with node-id or provide nodeIds explicitly.");
+        }
+
+        const format = input.format ?? "png";
+        const payload = await figmaApiGet(`images/${encodeURIComponent(locator.fileKey)}`, {
+          ids: locator.nodeIds.join(","),
+          format,
+          scale: input.scale ?? 1,
+          svg_include_id: input.svgIncludeId,
+        }, token);
+        const imageUrls = readFigmaImageUrls(payload, locator.nodeIds);
+        const artifacts: Array<Record<string, unknown>> = [];
+        const failures: Array<Record<string, unknown>> = [];
+
+        for (const image of imageUrls) {
+          if (!image.url) {
+            failures.push({
+              nodeId: image.nodeId,
+              error: "Figma did not return an export URL for this node. Verify the node can be exported and the token has file_content:read access.",
+            });
+            continue;
+          }
+
+          try {
+            const downloaded = await fetchBinary(image.url);
+            const path = createFigmaImageArtifactPath({
+              fileKey: locator.fileKey,
+              nodeId: image.nodeId,
+              label: input.label,
+              format,
+            });
+            writeFileSync(path, downloaded.buffer);
+            artifacts.push({
+              nodeId: image.nodeId,
+              imagePath: path,
+              format,
+              scale: input.scale ?? 1,
+              sizeBytes: downloaded.buffer.byteLength,
+              contentType: downloaded.contentType,
+              inspectNextInput: { imagePath: path },
+            });
+          } catch (error) {
+            failures.push({
+              nodeId: image.nodeId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
+        return toTextToolResult({
+          action,
+          success: failures.length === 0,
+          fileKey: locator.fileKey,
+          nodeIds: locator.nodeIds,
+          format,
+          scale: input.scale ?? 1,
+          result: capPayload({
+            artifacts,
+            failures,
+            recommendedNextTool: "design_inspect_image",
+            nextStep: artifacts.length > 0
+              ? "Call design_inspect_image once per returned imagePath before coding UI. Use figma_summarize_design with the same nodeIds only to confirm component props/tokens."
+              : "No local images were exported; narrow the node with figma_list_node_index or check Figma PAT file_content:read scope.",
+          }, clampMaxBytes(input.maxBytes)),
+        }, failures.length > 0 && artifacts.length === 0);
+      } catch (error) {
+        return toFigmaErrorResult(action, error);
+      }
+    },
+  );
+
   const imageFillsTool = tool(
     "figma_get_image_fills",
     "Read download URL mappings for image fills in a Figma file. URLs are temporary and require file_content:read scope.",
@@ -1438,29 +1601,43 @@ export function getFigmaRestMcpServer(): McpSdkServerConfigWithInstance {
     },
   );
 
-  figmaRestMcpServer = createSdkMcpServer({
+  const coreTools = [
+    readDesignTool,
+    nodeIndexTool,
+    matchUiNodesTool,
+    summarizeDesignTool,
+    exportNodeImagesTool,
+  ];
+  const allTools = [
+    currentUserTool,
+    fileMetadataTool,
+    readDesignTool,
+    nodeIndexTool,
+    matchUiNodesTool,
+    summarizeDesignTool,
+    extractDesignTokensTool,
+    designPlaybookTool,
+    auditDesignTool,
+    generateTailwindCodeTool,
+    imageUrlsTool,
+    exportNodeImagesTool,
+    imageFillsTool,
+    fileVersionsTool,
+    fileCommentsTool,
+    fileLibraryTool,
+    fileVariablesTool,
+    devResourcesTool,
+  ];
+  const server = createSdkMcpServer({
     name: FIGMA_REST_SERVER_NAME,
     version: FIGMA_REST_SERVER_VERSION,
-    tools: [
-      currentUserTool,
-      fileMetadataTool,
-      readDesignTool,
-      nodeIndexTool,
-      matchUiNodesTool,
-      summarizeDesignTool,
-      extractDesignTokensTool,
-      designPlaybookTool,
-      auditDesignTool,
-      generateTailwindCodeTool,
-      imageUrlsTool,
-      imageFillsTool,
-      fileVersionsTool,
-      fileCommentsTool,
-      fileLibraryTool,
-      fileVariablesTool,
-      devResourcesTool,
-    ],
+    tools: toolMode === "full" ? allTools : coreTools,
   });
 
-  return figmaRestMcpServer;
+  if (toolMode === "full") {
+    figmaRestFullMcpServer = server;
+  } else {
+    figmaRestMcpServer = server;
+  }
+  return server;
 }

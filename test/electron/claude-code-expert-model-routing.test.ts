@@ -11,14 +11,20 @@ test("Claude Code Opus and expert routes map to the configured expert model", ()
   assert.match(claudeSettingsSource, /const expertModel = normalizeExpertModelForApiConfig/);
   assert.match(claudeSettingsSource, /ANTHROPIC_DEFAULT_OPUS_MODEL: expertModel/);
   assert.match(claudeSettingsSource, /ANTHROPIC_REASONING_MODEL: expertModel/);
+  assert.match(claudeSettingsSource, /pickProviderOwnedModelForApiConfig/);
+  assert.match(claudeSettingsSource, /const routedOwner = getApiConfigForModel\(pickedModel\)/);
   assert.match(claudeSettingsSource, /CLAUDE_CODE_OPUS_MODEL_OVERRIDE_KEYS/);
   assert.match(claudeSettingsSource, /"opus"/);
   assert.match(claudeSettingsSource, /"claude-opus-4-6"/);
   assert.match(claudeSettingsSource, /modelOverrides: buildClaudeCodeOpusModelOverrides\(expertModel\)/);
+  assert.match(claudeSettingsSource, /env: buildClaudeCodeSettingsEnv\(config, selectedModel\)/);
+  assert.match(claudeSettingsSource, /ANTHROPIC_AUTH_TOKEN: anthropicAuthToken/);
+  assert.match(claudeSettingsSource, /ANTHROPIC_BASE_URL: anthropicBaseURL/);
 
   assert.match(runnerSource, /const sdkModelSettings = buildClaudeCodeModelSettings\(config, effectiveModel\);/);
   assert.match(runnerSource, /settings: sdkModelSettings,/);
   assert.match(runnerSource, /sdkExpertModel/);
+  assert.match(runnerSource, /settingsEnvBaseURL: sdkModelSettings\.env\?\.ANTHROPIC_BASE_URL/);
 
   assert.match(utilSource, /settings: buildClaudeCodeModelSettings\(apiConfig, requestedModel\),/);
   assert.match(commitMessageSource, /settings: buildClaudeCodeModelSettings\(apiConfig, requestedModel\),/);

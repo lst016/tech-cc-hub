@@ -347,6 +347,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
           name,
           contextWindow: existingModels.get(name)?.contextWindow ?? DEFAULT_IMPORTED_CONTEXT_WINDOW,
           compressionThresholdPercent: existingModels.get(name)?.compressionThresholdPercent ?? 70,
+          routingWeight: existingModels.get(name)?.routingWeight,
         }));
         const fallbackModel = item.model && modelIds.includes(item.model) ? item.model : CODEX_OAUTH_DEFAULT_MODEL;
         return {
@@ -395,6 +396,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
               name,
               contextWindow: existingModels.get(name)?.contextWindow ?? DEEPSEEK_CONTEXT_WINDOW,
               compressionThresholdPercent: existingModels.get(name)?.compressionThresholdPercent ?? 70,
+              routingWeight: existingModels.get(name)?.routingWeight,
             }));
             const fallbackModel = item.model && modelIds.includes(item.model as typeof DEEPSEEK_OFFICIAL_MODELS[number]) ? item.model : modelIds[0];
             return {
@@ -432,6 +434,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
           name,
           contextWindow: existingModels.get(name)?.contextWindow ?? (provider === "deepseek" ? DEEPSEEK_CONTEXT_WINDOW : DEFAULT_IMPORTED_CONTEXT_WINDOW),
           compressionThresholdPercent: existingModels.get(name)?.compressionThresholdPercent ?? 70,
+          routingWeight: existingModels.get(name)?.routingWeight,
         }));
         const fallbackModel = item.model && modelIds.includes(item.model) ? item.model : modelIds[0];
         const fallbackAnalysisModel = item.analysisModel && modelIds.includes(item.analysisModel) ? item.analysisModel : fallbackModel;
@@ -769,7 +772,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
                     {(profile.models ?? []).map((modelItem, modelIndex) => (
                       <div key={`${profile.id}-${modelIndex}`} className="rounded-2xl border border-ink-900/10 bg-surface p-3">
                         <div className="flex items-start gap-2">
-                          <div className="grid flex-1 gap-3 lg:grid-cols-3">
+                          <div className="grid flex-1 gap-3 lg:grid-cols-4">
                             <label className="grid gap-1.5">
                               <span className="text-[11px] font-medium text-muted">模型名</span>
                               <input
@@ -832,6 +835,27 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
                                   models[modelIndex] = {
                                     ...models[modelIndex],
                                     compressionThresholdPercent: event.target.value ? Number(event.target.value) : undefined,
+                                  };
+                                  return { ...item, models };
+                                }))}
+                              />
+                            </label>
+
+                            <label className="grid gap-1.5">
+                              <span className="text-[11px] font-medium text-muted">路由权重</span>
+                              <input
+                                type="number"
+                                min={0}
+                                step={1}
+                                className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
+                                placeholder="0"
+                                value={modelItem.routingWeight ?? ""}
+                                onChange={(event) => onChange((current) => current.map((item) => {
+                                  if (item.id !== profile.id) return item;
+                                  const models = [...(item.models ?? [])];
+                                  models[modelIndex] = {
+                                    ...models[modelIndex],
+                                    routingWeight: event.target.value ? Number(event.target.value) : undefined,
                                   };
                                   return { ...item, models };
                                 }))}

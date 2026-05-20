@@ -15,6 +15,7 @@ export const FIGMA_REST_TOOL_NAMES = [
   "figma_audit_design",
   "figma_generate_tailwind_code",
   "figma_get_image_urls",
+  "figma_export_node_images",
   "figma_get_image_fills",
   "figma_list_file_versions",
   "figma_list_file_comments",

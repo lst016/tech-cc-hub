@@ -5,6 +5,7 @@ import {
   createDeepSeekOfficialProfile,
   getAvailableModelsForProfiles,
   getEnabledProfiles,
+  getRoutedModelOptionsForProfiles,
   normalizeProfile,
 } from "../../src/ui/components/settings/settings-utils.js";
 import {
@@ -15,6 +16,10 @@ import {
   buildGroupedModelOptions,
   getModelSearchScore,
 } from "../../src/ui/components/ModelSelect.js";
+import {
+  getModelRoutingWeight,
+  pickHighestWeightedModelOwner,
+} from "../../src/shared/model-routing-weight.js";
 
 const MODEL_SEARCH_FIXTURE = [
   "gpt-5.4",
@@ -44,10 +49,14 @@ test("settings modal and shared types expose per-model context compression field
 
   assert.match(apiProfilesSettingsSource, /contextWindow/);
   assert.match(apiProfilesSettingsSource, /compressionThresholdPercent/);
+  assert.match(apiProfilesSettingsSource, /routingWeight/);
+  assert.match(apiProfilesSettingsSource, /路由权重/);
   assert.match(uiTypesSource, /contextWindow/);
   assert.match(uiTypesSource, /compressionThresholdPercent/);
+  assert.match(uiTypesSource, /routingWeight/);
   assert.match(configStoreSource, /contextWindow/);
   assert.match(configStoreSource, /compressionThresholdPercent/);
+  assert.match(configStoreSource, /routingWeight/);
   assert.match(uiTypesSource, /analysisModel/);
   assert.match(configStoreSource, /analysisModel/);
   assert.match(claudeSettingsSource, /CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC/);
@@ -98,11 +107,30 @@ test("model select search keeps useful direct and tight shorthand matches", () =
   assert.deepEqual(getModelSearchValues("v4f"), ["deepseek-v4-flash"]);
 });
 
+test("model select preserves routed option metadata for display and search", () => {
+  const groups = buildGroupedModelOptions([
+    {
+      value: "gpt-5.5",
+      label: "gpt-5.5",
+      description: "Codex OAuth / Codex OAuth / weight 50",
+      badge: "W50",
+      title: "gpt-5.5 -> Codex OAuth",
+    },
+  ], "codex");
+
+  const option = groups.flatMap((group) => group.options).find((item) => item.value === "gpt-5.5");
+  assert.equal(option?.description, "Codex OAuth / Codex OAuth / weight 50");
+  assert.equal(option?.badge, "W50");
+  assert.equal(option?.title, "gpt-5.5 -> Codex OAuth");
+});
+
 test("composer model control uses the searchable grouped model select", () => {
   const promptInputSource = readFileSync("src/ui/components/PromptInput.tsx", "utf8");
   const modelSelectSource = readFileSync("src/ui/components/ModelSelect.tsx", "utf8");
 
   assert.match(promptInputSource, /import \{ ModelSelect \} from "\.\/ModelSelect"/);
+  assert.match(promptInputSource, /getRoutedModelOptionsForProfiles/);
+  assert.match(promptInputSource, /modelOptions=\{modelSelectOptions\}/);
   assert.match(promptInputSource, /variant="composer"/);
   assert.match(promptInputSource, /placement="top"/);
   assert.match(modelSelectSource, /搜索模型 \/ 分组/);
@@ -149,6 +177,54 @@ test("enabled profile helpers preserve list order and dedupe models across enabl
   ]);
 });
 
+test("routed model options expose the platform owner selected by routing weight", () => {
+  const profiles = [
+    {
+      id: "gateway",
+      name: "Default Gateway",
+      apiKey: "sk-gateway",
+      baseURL: "https://gateway.example.com/v1",
+      model: "deepseek-v4-flash",
+      expertModel: "gpt-5.5",
+      smallModel: "deepseek-v4-flash",
+      models: [
+        { name: "deepseek-v4-flash" },
+        { name: "gpt-5.5", routingWeight: 1 },
+      ],
+      enabled: true,
+      provider: "custom" as const,
+      apiType: "anthropic" as const,
+    },
+    {
+      id: "codex",
+      name: "Codex OAuth",
+      apiKey: "{}",
+      baseURL: "https://chatgpt.com",
+      model: "gpt-5.5",
+      expertModel: "gpt-5.5",
+      smallModel: "gpt-5.3-codex-spark",
+      models: [
+        { name: "gpt-5.5", routingWeight: 50 },
+        { name: "gpt-5.3-codex-spark" },
+      ],
+      enabled: true,
+      provider: "codex" as const,
+      apiType: "anthropic" as const,
+    },
+  ];
+
+  const options = getRoutedModelOptionsForProfiles(getEnabledProfiles(profiles));
+  const gptOption = options.find((option) => option.value === "gpt-5.5");
+  assert.equal(gptOption?.profileId, "codex");
+  assert.equal(gptOption?.provider, "codex");
+  assert.equal(gptOption?.routingWeight, 50);
+  assert.match(gptOption?.routeLabel ?? "", /Codex OAuth/);
+
+  const deepseekOption = options.find((option) => option.value === "deepseek-v4-flash");
+  assert.equal(deepseekOption?.profileId, "gateway");
+  assert.equal(deepseekOption?.providerLabel, "Custom Gateway");
+});
+
 test("shared model routing merges enabled profile models into one editable surface", () => {
   const profiles = [
     {
@@ -160,7 +236,7 @@ test("shared model routing merges enabled profile models into one editable surfa
       expertModel: "gpt-5.4",
       smallModel: "gpt-5.3-codex-spark",
       analysisModel: "gpt-5.3-codex-spark",
-      models: [{ name: "gpt-5.4" }, { name: "gpt-5.3-codex-spark" }],
+      models: [{ name: "gpt-5.4", routingWeight: 25 }, { name: "gpt-5.3-codex-spark" }],
       enabled: true,
       provider: "codex" as const,
       apiType: "anthropic" as const,
@@ -174,7 +250,7 @@ test("shared model routing merges enabled profile models into one editable surfa
       expertModel: "deepseek-v4-pro",
       smallModel: "GLM-5.1-FP8",
       analysisModel: "GLM-5.1-FP8",
-      models: [{ name: "deepseek-v4-flash" }, { name: "deepseek-v4-pro" }, { name: "GLM-5.1-FP8" }],
+      models: [{ name: "deepseek-v4-flash" }, { name: "deepseek-v4-pro" }, { name: "GLM-5.1-FP8", routingWeight: 10 }],
       enabled: true,
       provider: "custom" as const,
       apiType: "anthropic" as const,
@@ -196,6 +272,9 @@ test("shared model routing merges enabled profile models into one editable surfa
   assert.equal(nextProfiles[1]?.smallModel, "GLM-5.1-FP8");
   assert.ok(nextProfiles[0]?.models?.some((model) => model.name === "deepseek-v4-pro"));
   assert.ok(nextProfiles[1]?.models?.some((model) => model.name === "gpt-5.4"));
+  assert.equal(nextProfiles[0]?.models?.find((model) => model.name === "gpt-5.4")?.routingWeight, 25);
+  assert.equal(nextProfiles[0]?.models?.find((model) => model.name === "GLM-5.1-FP8")?.routingWeight, undefined);
+  assert.equal(nextProfiles[1]?.models?.find((model) => model.name === "GLM-5.1-FP8")?.routingWeight, 10);
 
   const withoutImageModels = applySharedModelRoutingPatch(nextProfiles, { imageModel: "" });
   assert.equal(withoutImageModels[0]?.imageModel, undefined);
@@ -216,6 +295,7 @@ test("profile normalization preserves configured context window for selected rol
         name: "deepseek-v4-pro",
         contextWindow: 1_000_000,
         compressionThresholdPercent: 70,
+        routingWeight: 12,
       },
     ],
     enabled: true,
@@ -223,6 +303,34 @@ test("profile normalization preserves configured context window for selected rol
   });
 
   assert.equal(normalized.models?.find((model) => model.name === "deepseek-v4-pro")?.contextWindow, 1_000_000);
+  assert.equal(normalized.models?.find((model) => model.name === "deepseek-v4-pro")?.routingWeight, 12);
+});
+
+test("model routing weight chooses the highest weighted owner and keeps order on ties", () => {
+  const owners = [
+    { id: "first", models: [{ name: "shared-model", routingWeight: 1 }] },
+    { id: "second", models: [{ name: "shared-model", routingWeight: 20 }] },
+    { id: "third", models: [{ name: "other-model", routingWeight: 50 }] },
+  ];
+
+  const selected = pickHighestWeightedModelOwner(
+    owners,
+    "shared-model",
+    (owner, modelName) => owner.models.some((model) => model.name === modelName),
+  );
+  assert.equal(selected?.id, "second");
+  assert.equal(getModelRoutingWeight(owners[1], "shared-model"), 20);
+
+  const tied = pickHighestWeightedModelOwner(
+    [
+      { id: "first", models: [{ name: "shared-model", routingWeight: 10 }] },
+      { id: "second", models: [{ name: "shared-model", routingWeight: 10 }] },
+    ],
+    "shared-model",
+    (owner, modelName) => owner.models.some((model) => model.name === modelName),
+  );
+  assert.equal(tied?.id, "first");
+  assert.equal(getModelRoutingWeight({ models: [{ name: "shared-model", routingWeight: 0 }] }, "shared-model"), 0);
 });
 
 test("deepseek official profile only requires the key while preserving official models", () => {

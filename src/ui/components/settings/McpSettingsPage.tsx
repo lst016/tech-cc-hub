@@ -180,6 +180,13 @@ const BUILTIN_TOOL_GROUPS: Record<string, BuiltinToolGroup[]> = {
           intent: "两张截图互比",
         },
         {
+          name: "design_compare_images_semantic",
+          description: "Use a vision model to compare two images semantically and output structured issues.",
+          icon: ScanSearch,
+          tag: "semantic",
+          intent: "Find topology/text/value mismatches",
+        },
+        {
           name: "design_compare_current_view_batch",
           description: "当前 BrowserView 一次性对比多张本地参考图，复用增强 diff 参数",
           icon: GitCompare,

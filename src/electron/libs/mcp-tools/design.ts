@@ -10,18 +10,34 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSyn
 import { basename, join, sep } from "path";
 import { z } from "zod";
 
-import type { BrowserWorkbenchState } from "../../browser-manager.js";
+import type {
+  BrowserWorkbenchElementInfoResult,
+  BrowserWorkbenchState,
+} from "../../browser-manager.js";
 import { resolveImagePreprocessApiConfig } from "../claude-settings.js";
-import { buildDesignInspectionPrompt, parseDesignInspectionDsl } from "../design-inspection-dsl.js";
+import {
+  buildDesignInspectionPrompt,
+  buildDesignSemanticDiffPrompt,
+  parseDesignInspectionDsl,
+  parseDesignSemanticDiffDsl,
+} from "../design-inspection-dsl.js";
 import { resolveDesignImagePath } from "../design-image-path.js";
-import { summarizeLocalImageFile } from "../image-preprocessor.js";
+import { summarizeLocalImageFile, summarizeLocalImageFiles } from "../image-preprocessor.js";
+import {
+  buildPaddedRegionFromElementBox,
+  readElementBoxFromInfoResult,
+  type ElementBox,
+} from "./design-element-region.js";
 import { toTextToolResult } from "./tool-result.js";
 
 export const DESIGN_TOOL_NAMES = [
   "design_capture_current_view",
   "design_capture_current_region",
+  "design_capture_current_element",
   "design_inspect_image",
   "design_compare_current_view",
+  "design_compare_element_to_reference",
+  "design_compare_images_semantic",
   "design_compare_current_view_batch",
   "design_compare_images",
   "design_compare_images_batch",
@@ -31,6 +47,12 @@ export const DESIGN_TOOL_NAMES = [
 
 export type DesignToolHost = {
   captureVisible: (sessionId: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>;
+  getElementInfo?: (sessionId: string, input: {
+    kind: "box";
+    target: string;
+    strategy?: "auto" | "ref" | "selector" | "xpath";
+    index?: number;
+  }) => Promise<{ success: boolean; result?: BrowserWorkbenchElementInfoResult; error?: string }>;
   getState: (sessionId: string) => BrowserWorkbenchState;
 };
 
@@ -71,7 +93,7 @@ type DiffTileStats = {
   averageDelta: number;
 };
 
-type DesignArtifactKind = "current" | "diff" | "comparison" | "comparison-report" | "unknown";
+type DesignArtifactKind = "current" | "diff" | "comparison" | "comparison-report" | "semantic-diff-report" | "unknown";
 
 const DESIGN_TOOLS_SERVER_NAME = "tech-cc-hub-design";
 const DESIGN_MCP_SERVER_VERSION = "1.1.0";
@@ -87,7 +109,7 @@ const MAX_AUTO_RESIZE_ASPECT_DELTA = 0.03;
 const MAX_AUTO_RESIZE_SCALE_DELTA = 0.03;
 const MIN_AUTO_RESIZE_SCALE = 0.5;
 const MAX_AUTO_RESIZE_SCALE = 2;
-const DESIGN_ARTIFACT_KINDS = ["current", "diff", "comparison", "comparison-report", "unknown"] as const satisfies readonly DesignArtifactKind[];
+const DESIGN_ARTIFACT_KINDS = ["current", "diff", "comparison", "comparison-report", "semantic-diff-report", "unknown"] as const satisfies readonly DesignArtifactKind[];
 
 const ignoreRegionToolSchema = z.object({
   x: z.number().min(0),
@@ -103,6 +125,12 @@ const comparisonTuningToolSchema = {
   ignoreAntialiasing: z.boolean().optional(),
   ignoreRegions: z.array(ignoreRegionToolSchema).max(MAX_IGNORE_REGIONS).optional(),
   maxDifferenceRatio: z.number().min(0).max(1).optional(),
+};
+const elementTargetToolSchema = {
+  target: z.string().trim().min(1),
+  strategy: z.enum(["auto", "ref", "selector", "xpath"]).optional(),
+  index: z.number().int().min(0).max(200).optional(),
+  padding: z.number().min(0).max(200).optional(),
 };
 
 let designHost: DesignToolHost | null = null;
@@ -171,6 +199,9 @@ function resolveDesignArtifactPath(path: string, label: string): string {
 function inferDesignArtifactKind(fileName: string): DesignArtifactKind {
   if (fileName.endsWith("-comparison-report.json")) {
     return "comparison-report";
+  }
+  if (fileName.endsWith("-semantic-diff-report.json")) {
+    return "semantic-diff-report";
   }
   if (fileName.endsWith("-comparison.png")) {
     return "comparison";
@@ -469,6 +500,75 @@ async function captureCurrentRegion(sessionId: string, region: IgnoreRegion, lab
       reason: normalizedRegion.reason,
     },
     state: host.getState(sessionId),
+  };
+}
+
+async function resolveCurrentElementRegion(
+  sessionId: string,
+  input: {
+    target: string;
+    strategy?: "auto" | "ref" | "selector" | "xpath";
+    index?: number;
+    padding?: number;
+  },
+): Promise<{
+  element: BrowserWorkbenchElementInfoResult;
+  box: ElementBox;
+  region: IgnoreRegion;
+}> {
+  const host = getHost();
+  if (!host.getElementInfo) {
+    throw new Error("Element region capture is not available because the design tool host cannot read BrowserView element boxes.");
+  }
+
+  const result = await host.getElementInfo(sessionId, {
+    kind: "box",
+    target: input.target,
+    strategy: input.strategy,
+    index: input.index,
+  });
+  if (!result.success || !result.result?.found) {
+    throw new Error(result.error || result.result?.error || `Element not found: ${input.target}`);
+  }
+
+  const box = readElementBoxFromInfoResult(result.result);
+  if (!box) {
+    throw new Error(`Element has no usable bounding box: ${input.target}`);
+  }
+
+  return {
+    element: result.result,
+    box,
+    region: buildPaddedRegionFromElementBox(box, input.padding ?? 0),
+  };
+}
+
+async function captureCurrentElement(
+  sessionId: string,
+  input: {
+    target: string;
+    strategy?: "auto" | "ref" | "selector" | "xpath";
+    index?: number;
+    padding?: number;
+    label?: string;
+  },
+): Promise<{
+  element: BrowserWorkbenchElementInfoResult;
+  box: ElementBox;
+  requestedRegion: IgnoreRegion;
+  capture: CapturedImage & {
+    sourceSize: ImageSize;
+    region: IgnoreRegion;
+    state: BrowserWorkbenchState;
+  };
+}> {
+  const elementRegion = await resolveCurrentElementRegion(sessionId, input);
+  const capture = await captureCurrentRegion(sessionId, elementRegion.region, input.label);
+  return {
+    element: elementRegion.element,
+    box: elementRegion.box,
+    requestedRegion: elementRegion.region,
+    capture,
   };
 }
 
@@ -1018,6 +1118,39 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
     },
   );
 
+  const captureElementTool = tool(
+    "design_capture_current_element",
+    "Capture a current BrowserView element by selector/ref/xpath and save the padded element region as a PNG. Use this before element-level visual comparison when a selector is known.",
+    {
+      label: z.string().trim().min(1).max(80).optional(),
+      ...elementTargetToolSchema,
+    },
+    async (input) => {
+      try {
+        const result = await captureCurrentElement(resolvedSessionId, input);
+        return toTextToolResult({
+          action: "design_capture_current_element",
+          success: true,
+          sessionId: resolvedSessionId,
+          target: input.target,
+          strategy: input.strategy ?? "auto",
+          index: input.index ?? 0,
+          padding: input.padding ?? 0,
+          element: result.element,
+          box: result.box,
+          requestedRegion: result.requestedRegion,
+          capture: result.capture,
+        });
+      } catch (error) {
+        return toTextToolResult({
+          action: "design_capture_current_element",
+          success: false,
+          error: error instanceof Error ? error.message : "Element capture failed.",
+        }, true);
+      }
+    },
+  );
+
   const inspectImageTool = tool(
     "design_inspect_image",
     "读取一张本地截图/设计图的视觉语义摘要。用于用户上传参考图后先理解页面结构、文字、颜色和布局。只返回文本摘要，不把图片 base64 注入主 Agent 上下文；不要用 Read 读取图片文件。",
@@ -1034,6 +1167,7 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
           config: resolveImagePreprocessApiConfig(),
           prompt: buildDesignInspectionPrompt(input.prompt),
           filePath: imagePath,
+          strictPrompt: true,
         });
         if (!inspectionText) {
           throw new Error("未配置可用的图片理解模型。请在设置里配置 imageModel / 视觉模型后再分析截图。");
@@ -1101,6 +1235,119 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
           action: "design_compare_current_view",
           success: false,
           error: error instanceof Error ? error.message : "设计对比失败。",
+        }, true);
+      }
+    },
+  );
+
+  const compareElementTool = tool(
+    "design_compare_element_to_reference",
+    "Compare a current BrowserView element region against a local reference image. The tool resolves the selector/ref/xpath to a box, captures that padded region, then generates diff/comparison/report artifacts.",
+    {
+      referenceImagePath: z.string().trim().min(1),
+      label: z.string().trim().min(1).max(80).optional(),
+      threshold: z.number().min(0).max(255).optional(),
+      ...comparisonTuningToolSchema,
+      resizeCandidateToReference: z.boolean().optional(),
+      ...elementTargetToolSchema,
+    },
+    async (input) => {
+      try {
+        const elementCapture = await captureCurrentElement(resolvedSessionId, input);
+        const comparison = compareImages({
+          referenceImagePath: input.referenceImagePath,
+          candidateImagePath: elementCapture.capture.path,
+          threshold: input.threshold,
+          sensitivity: input.sensitivity,
+          diffColorMode: input.diffColorMode,
+          ignoreAntialiasing: input.ignoreAntialiasing,
+          ignoreRegions: input.ignoreRegions,
+          maxDifferenceRatio: input.maxDifferenceRatio,
+          resizeCandidateToReference: input.resizeCandidateToReference,
+          label: input.label,
+        });
+        return toTextToolResult({
+          action: "design_compare_element_to_reference",
+          success: true,
+          sessionId: resolvedSessionId,
+          target: input.target,
+          strategy: input.strategy ?? "auto",
+          index: input.index ?? 0,
+          padding: input.padding ?? 0,
+          element: elementCapture.element,
+          box: elementCapture.box,
+          requestedRegion: elementCapture.requestedRegion,
+          capture: elementCapture.capture,
+          comparison,
+          nextStep: "Use comparison.topDiffRegions and diffBoundingBox to patch the selector's CSS or component styles, then rerun this same tool.",
+        });
+      } catch (error) {
+        return toTextToolResult({
+          action: "design_compare_element_to_reference",
+          success: false,
+          error: error instanceof Error ? error.message : "Element comparison failed.",
+        }, true);
+      }
+    },
+  );
+
+  const compareImagesSemanticTool = tool(
+    "design_compare_images_semantic",
+    "Use the configured vision model to compare two local images semantically and return structured JSON issues. Use this after pixel diff when charts, diagrams, text, values, or layout topology may be wrong.",
+    {
+      referenceImagePath: z.string().trim().min(1),
+      candidateImagePath: z.string().trim().min(1),
+      label: z.string().trim().min(1).max(80).optional(),
+      prompt: z.string().trim().max(1200).optional(),
+    },
+    async (input) => {
+      try {
+        const referenceImagePath = normalizeImagePath(input.referenceImagePath, "reference image path");
+        const candidateImagePath = normalizeImagePath(input.candidateImagePath, "candidate image path");
+        if (isSameImagePath(referenceImagePath, candidateImagePath)) {
+          throw new Error("Reference and candidate images must be different files for semantic comparison.");
+        }
+
+        const referenceImage = createImageFromPath(referenceImagePath, "reference image");
+        const candidateImage = createImageFromPath(candidateImagePath, "candidate image");
+        const semanticText = await summarizeLocalImageFiles({
+          config: resolveImagePreprocessApiConfig(),
+          prompt: buildDesignSemanticDiffPrompt(input.prompt),
+          strictPrompt: true,
+          files: [
+            { filePath: referenceImagePath, attachmentName: "A-reference-design" },
+            { filePath: candidateImagePath, attachmentName: "B-candidate-implementation" },
+          ],
+        });
+        if (!semanticText) {
+          throw new Error("No usable vision model is configured. Configure imageModel before semantic visual diff.");
+        }
+
+        const semanticDiff = parseDesignSemanticDiffDsl(semanticText);
+        const report = {
+          action: "design_compare_images_semantic",
+          success: true,
+          reference: {
+            path: referenceImagePath,
+            size: referenceImage.getSize(),
+          },
+          candidate: {
+            path: candidateImagePath,
+            size: candidateImage.getSize(),
+          },
+          semanticDiff,
+        };
+        const reportPath = writeJsonArtifact(report, input.label, "semantic-diff-report");
+        return toTextToolResult({
+          ...report,
+          reportPath,
+          nextStep: "Patch code from semanticDiff.issues first, especially critical topology/text/value issues, then rerun pixel diff and semantic diff.",
+        });
+      } catch (error) {
+        return toTextToolResult({
+          action: "design_compare_images_semantic",
+          success: false,
+          error: error instanceof Error ? error.message : "Semantic image comparison failed.",
         }, true);
       }
     },
@@ -1324,8 +1571,11 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
     tools: [
       captureTool,
       captureRegionTool,
+      captureElementTool,
       inspectImageTool,
       compareTool,
+      compareElementTool,
+      compareImagesSemanticTool,
       compareCurrentViewBatchTool,
       compareImagesTool,
       compareImagesBatchTool,

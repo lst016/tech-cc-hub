@@ -8,7 +8,7 @@ import { ADMIN_TOOL_NAMES, getAdminMcpServer } from "./mcp-tools/admin.js";
 import { BROWSER_TOOL_NAMES, getBrowserMcpServer } from "./mcp-tools/browser.js";
 import { DESIGN_TOOL_NAMES, getDesignMcpServer } from "./mcp-tools/design.js";
 import { CRON_TOOL_NAMES, getCronMcpServer } from "./mcp-tools/cron.js";
-import { FIGMA_REST_TOOL_NAMES, getFigmaRestMcpServer } from "./mcp-tools/figma-rest.js";
+import { FIGMA_REST_TOOL_NAMES, getFigmaRestMcpServer, type FigmaRestToolMode } from "./mcp-tools/figma-rest.js";
 import { IDEA_TOOL_NAMES, getIdeaMcpServer } from "./mcp-tools/idea.js";
 import { KNOWLEDGE_TOOL_NAMES, getKnowledgeMcpServer } from "./mcp-tools/knowledge.js";
 import { PLAN_TOOL_NAMES, getPlanMcpServer } from "./mcp-tools/plan.js";
@@ -16,6 +16,7 @@ import { PLAN_TOOL_NAMES, getPlanMcpServer } from "./mcp-tools/plan.js";
 type BuiltinMcpFactoryContext = {
   sessionId: string;
   cwd?: string;
+  figmaToolMode?: FigmaRestToolMode;
 };
 
 type BuiltinMcpFactory = (context: BuiltinMcpFactoryContext) => McpSdkServerConfigWithInstance;
@@ -24,7 +25,7 @@ export const BUILTIN_MCP_SERVER_FACTORIES: Record<BuiltinMcpServerName, BuiltinM
   "tech-cc-hub-browser": ({ sessionId }) => getBrowserMcpServer(sessionId),
   "tech-cc-hub-admin": () => getAdminMcpServer(),
   "tech-cc-hub-design": ({ sessionId }) => getDesignMcpServer(sessionId),
-  "tech-cc-hub-figma": () => getFigmaRestMcpServer(),
+  "tech-cc-hub-figma": ({ figmaToolMode }) => getFigmaRestMcpServer({ toolMode: figmaToolMode }),
   "tech-cc-hub-cron": () => getCronMcpServer(),
   "tech-cc-hub-idea": () => getIdeaMcpServer(),
   "tech-cc-hub-plan": () => getPlanMcpServer(),

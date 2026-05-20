@@ -2,7 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildRunnerReuseKey, canReuseRunner } from "../../src/electron/libs/runner-reuse.js";
-import { resolveRuntimeEfficiencyProfile } from "../../src/electron/libs/runtime-efficiency.js";
+import {
+  mergeRuntimeEfficiencyProfile,
+  normalizeRuntimeEfficiencyProfileState,
+  resolveRuntimeEfficiencyProfile,
+  runtimeEfficiencyProfileToState,
+} from "../../src/electron/libs/runtime-efficiency.js";
 
 test("runtime efficiency defaults to the small standard tool surface", () => {
   const profile = resolveRuntimeEfficiencyProfile({
@@ -15,6 +20,7 @@ test("runtime efficiency defaults to the small standard tool surface", () => {
     "tech-cc-hub-plan",
     "tech-cc-hub-knowledge",
   ]);
+  assert.equal(profile.includeProjectMemoryPrompt, false);
   assert.equal(profile.includePartialMessages, false);
   assert.equal(profile.includeHookEvents, false);
 });
@@ -32,11 +38,23 @@ test("runtime efficiency enables visual tools for image attachments", () => {
   });
 
   assert.equal(profile.id, "visual");
+  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-admin"));
+  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-plan"));
+  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-knowledge"));
   assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-browser"));
   assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-design"));
   assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-figma"));
   assert.equal(profile.includeBrowserPrompt, true);
   assert.equal(profile.includeDesignPrompt, true);
+  assert.equal(profile.includeProjectMemoryPrompt, false);
+});
+
+test("runtime efficiency does not re-enable project memory from legacy sticky state", () => {
+  const normalized = normalizeRuntimeEfficiencyProfileState({
+    builtinMcpServers: ["tech-cc-hub-admin", "tech-cc-hub-plan", "tech-cc-hub-knowledge"],
+  });
+
+  assert.equal(normalized?.includeProjectMemoryPrompt, false);
 });
 
 test("runtime efficiency keeps cron tools out of normal coding turns", () => {
@@ -77,6 +95,62 @@ test("runtime efficiency keeps visual tools when Agent Teams work includes UI", 
   assert.equal(profile.includeDesignPrompt, true);
   assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-browser"));
   assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-design"));
+});
+
+test("runtime efficiency sticky state keeps visual tools for later plain prompts", () => {
+  const visual = resolveRuntimeEfficiencyProfile({
+    prompt: "fix UI from screenshot",
+    attachments: [{
+      id: "image-1",
+      kind: "image",
+      data: "tech-cc-hub://prompt-attachments/session/image.png",
+      mimeType: "image/png",
+      name: "reference.png",
+    }],
+  });
+  const plain = resolveRuntimeEfficiencyProfile({
+    prompt: "continue fixing",
+  });
+
+  const merged = mergeRuntimeEfficiencyProfile(plain, runtimeEfficiencyProfileToState(visual));
+
+  assert.equal(merged.id, "standard");
+  assert.deepEqual(merged.builtinMcpServers, [
+    "tech-cc-hub-admin",
+    "tech-cc-hub-plan",
+    "tech-cc-hub-knowledge",
+    "tech-cc-hub-browser",
+    "tech-cc-hub-design",
+    "tech-cc-hub-figma",
+  ]);
+  assert.equal(merged.includeBrowserPrompt, true);
+  assert.equal(merged.includeDesignPrompt, true);
+  assert.equal(merged.includePartialMessages, true);
+  assert.equal(merged.includeClaudeCompatPrompt, true);
+});
+
+test("runtime efficiency does not carry unrelated tools into later visual prompts", () => {
+  const automation = resolveRuntimeEfficiencyProfile({
+    prompt: "schedule a reminder every day to check the build",
+  });
+  const visual = resolveRuntimeEfficiencyProfile({
+    prompt: "UI screenshot repair",
+  });
+
+  const merged = mergeRuntimeEfficiencyProfile(visual, runtimeEfficiencyProfileToState(automation));
+
+  assert.deepEqual(merged.builtinMcpServers, [
+    "tech-cc-hub-admin",
+    "tech-cc-hub-plan",
+    "tech-cc-hub-knowledge",
+    "tech-cc-hub-browser",
+    "tech-cc-hub-design",
+    "tech-cc-hub-figma",
+  ]);
+  assert.equal(merged.builtinMcpServers.includes("tech-cc-hub-cron"), false);
+  assert.equal(merged.includeBrowserPrompt, true);
+  assert.equal(merged.includeDesignPrompt, true);
+  assert.equal(merged.includeClaudeCompatPrompt, true);
 });
 
 test("runner reuse key stays stable across normal coding prompts", () => {

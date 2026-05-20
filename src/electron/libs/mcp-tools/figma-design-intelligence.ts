@@ -142,13 +142,13 @@ const DESIGN_SYSTEM_PROFILES: DesignSystemProfile[] = [
     apply: ["移动端或 macOS 风格界面优先校验触控尺寸、导航层级、系统反馈和平台控件一致性。"],
   },
   {
-    id: "tdesign-arco",
-    name: "TDesign / Arco",
-    source: "https://tdesign.tencent.com/",
+    id: "enterprise-admin-systems",
+    name: "Enterprise Admin Systems",
+    source: "https://ant.design/",
     bestFor: ["admin", "saas", "data-heavy"],
-    signal: "中文互联网中后台设计系统，贴近国内业务配置页和运营后台语境。",
-    strengths: ["中文后台", "业务表格", "运营配置", "复杂筛选"],
-    apply: ["中文管理台优先参考它们的布局密度、表单提示、筛选区和批量操作。"],
+    signal: "Admin and SaaS design-system patterns for dense forms, tables, filters, and operational workflows.",
+    strengths: ["admin density", "business tables", "configuration flows", "complex filtering"],
+    apply: ["For admin surfaces, validate layout density, form hints, filter areas, batch actions, and repeated workflow states against mature enterprise UI patterns."],
   },
   {
     id: "storybook",
@@ -293,7 +293,7 @@ function buildRecommendedStack(domain: FigmaDesignDomain): string[] {
   if (domain === "marketing") {
     return ["Material Design 3 tokens", "Aesthetic-Usability Effect", "responsive layout QA"];
   }
-  return ["Carbon", "Fluent 2", "Primer", "Ant/TDesign", "Laws of UX", "Material token hierarchy"];
+  return ["Carbon", "Fluent 2", "Primer", "Ant Design", "Laws of UX", "Material token hierarchy"];
 }
 
 function inferDomain(domain: FigmaDesignDomain | undefined, summary: FigmaDesignSummaryForAudit): FigmaDesignDomain {
@@ -454,7 +454,7 @@ function buildAuditFindings(
       principle: "Enterprise UX",
       title: "中后台需要明确表格和表单状态矩阵",
       evidence: "配置/后台界面通常不是单屏静态稿，真正成本在状态和边界。",
-      recommendation: "参考 Carbon/Ant/TDesign：为列表、筛选、批量操作、详情抽屉、保存反馈、权限不足、空数据、加载和错误态补变体。",
+      recommendation: "参考成熟企业后台设计系统：为列表、筛选、批量操作、详情抽屉、保存反馈、权限不足、空数据、加载和错误态补变体。",
     });
   }
 

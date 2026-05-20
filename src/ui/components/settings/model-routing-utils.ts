@@ -64,7 +64,7 @@ export function applySharedModelRoutingPatch(profiles: ApiConfigProfile[], patch
       imageModel: hasImageModelPatch ? patch.imageModel || undefined : profile.imageModel,
       embeddingModel: hasEmbeddingModelPatch ? patch.embeddingModel || undefined : profile.embeddingModel,
       wikiModel: hasWikiModelPatch ? patch.wikiModel || undefined : profile.wikiModel,
-      models: mergedModels,
+      models: mergeModelConfigsForProfile(profile, mergedModels, state.availableModels),
     };
   });
 }
@@ -88,6 +88,7 @@ function mergeModelConfigs(profiles: ApiConfigProfile[], availableModels: string
         name,
         contextWindow: model.contextWindow ?? previous?.contextWindow,
         compressionThresholdPercent: model.compressionThresholdPercent ?? previous?.compressionThresholdPercent,
+        routingWeight: model.routingWeight ?? previous?.routingWeight,
       });
     }
   }
@@ -98,6 +99,29 @@ function mergeModelConfigs(profiles: ApiConfigProfile[], availableModels: string
       name,
       contextWindow: model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       compressionThresholdPercent: model?.compressionThresholdPercent ?? 70,
+      routingWeight: model?.routingWeight,
+    };
+  });
+}
+
+function mergeModelConfigsForProfile(
+  profile: ApiConfigProfile,
+  fallbackModels: ApiModelConfigProfile[],
+  availableModels: string[],
+): ApiModelConfigProfile[] {
+  const localModels = new Map((profile.models ?? [])
+    .map((model) => [model.name.trim(), model] as const)
+    .filter(([name]) => Boolean(name)));
+  const fallbackByName = new Map(fallbackModels.map((model) => [model.name, model] as const));
+
+  return availableModels.map((name) => {
+    const localModel = localModels.get(name);
+    const fallbackModel = fallbackByName.get(name);
+    return {
+      name,
+      contextWindow: localModel?.contextWindow ?? fallbackModel?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+      compressionThresholdPercent: localModel?.compressionThresholdPercent ?? fallbackModel?.compressionThresholdPercent ?? 70,
+      routingWeight: localModel?.routingWeight,
     };
   });
 }

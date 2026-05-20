@@ -15,11 +15,11 @@ test("active session model takes precedence over composer runtime model", () => 
   );
   assert.match(
     promptInputSource,
-    /const sessionRuntimeModel = resolveSessionRuntimeModel\(\);\s+const selectedModel = sessionRuntimeModel \|\| runtimeModel\.trim\(\) \|\| activeProfile\?\.model\?\.trim\(\);/,
+    /const sessionRuntimeModel = resolveSessionRuntimeModel\(\);\s+const selectedModel = sessionRuntimeModel \|\| runtimeModel\.trim\(\) \|\| routedModelOptions\[0\]\?\.value \|\| activeProfile\?\.model\?\.trim\(\);/,
   );
   assert.match(
     promptInputSource,
-    /const selectedRuntimeModel = activeSessionModel \|\| runtimeModel\.trim\(\) \|\| activeProfile\?\.model\?\.trim\(\) \|\| availableModels\[0\] \|\| "";/,
+    /const selectedRuntimeModel = activeSessionModel \|\| runtimeModel\.trim\(\) \|\| routedModelOptions\[0\]\?\.value \|\| activeProfile\?\.model\?\.trim\(\) \|\| "";/,
   );
   assert.match(promptInputSource, /onChange=\{handleRuntimeModelChange\}/);
   assert.match(promptInputSource, /setSessionModel\(activeSessionId, model\)/);

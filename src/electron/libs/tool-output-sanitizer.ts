@@ -167,6 +167,13 @@ function extractTextToolResponse(toolResponse: unknown): string {
     return toolResponse;
   }
 
+  if (isRecord(toolResponse)) {
+    const knownPayload = extractKnownTextPayload(toolResponse);
+    if (knownPayload) {
+      return knownPayload;
+    }
+  }
+
   const contentBlocks = getContentBlocks(toolResponse);
   if (contentBlocks.length === 0) {
     return "";
@@ -190,6 +197,23 @@ function extractTextToolResponse(toolResponse: unknown): string {
     })
     .filter(Boolean)
     .join("\n");
+}
+
+function extractKnownTextPayload(toolResponse: Record<string, unknown>): string {
+  if (typeof toolResponse.text === "string") {
+    return toolResponse.text;
+  }
+
+  if (typeof toolResponse.content === "string") {
+    return toolResponse.content;
+  }
+
+  const file = isRecord(toolResponse.file) ? toolResponse.file : null;
+  if (file && typeof file.content === "string") {
+    return file.content;
+  }
+
+  return "";
 }
 
 function getContentBlocks(toolResponse: unknown): unknown[] {

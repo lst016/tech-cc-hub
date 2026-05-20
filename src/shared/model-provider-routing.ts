@@ -49,6 +49,22 @@ export function pickProviderCompatibleModel(
   return "";
 }
 
+export function normalizeProviderModelName(
+  provider: SharedApiProviderMode | undefined,
+  modelName: string,
+): string {
+  const normalized = modelName.trim();
+  if (!normalized) {
+    return "";
+  }
+
+  if ((provider === "custom" || provider === "deepseek") && isDeepSeekModelName(normalized)) {
+    return normalized.toLowerCase();
+  }
+
+  return normalized;
+}
+
 function stripCodexCompactSuffix(modelName: string): string {
   const normalized = modelName.trim();
   return normalized.endsWith(CODEX_OAUTH_COMPACT_MODEL_SUFFIX)

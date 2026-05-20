@@ -125,6 +125,9 @@ export function buildClaudeCode2139FeaturePromptAppend(): string {
 
 export function buildDesignParityPromptAppend(): string {
   return [
+    "Figma visual-first rule: for UI implementation, use figma_list_node_index to narrow the node, figma_export_node_images to save a local image, then design_inspect_image on the returned imagePath before coding from JSON.",
+    "Element-level visual diff rule: when a selector/ref/xpath is known, use design_compare_element_to_reference instead of full-page comparison so the VLM/code loop patches the exact DOM region.",
+    "Semantic visual diff rule: when the reference/candidate contains charts, Sankey diagrams, tables, labels, values, or flow topology, run design_compare_images_semantic after pixel diff and patch critical topology/text/value issues before styling details.",
     "设计还原规则：只要用户提供截图、Figma 图、页面参考图，并要求生成或修改 UI/前端代码，必须优先使用内置设计 MCP 工具。",
     "如果当前轮包含用户上传/粘贴的单张参考图，第一步必须调用 `design_inspect_image` 读取结构化视觉摘要；不要用 Read 读取图片，也不要把同一张图传给 `design_compare_images` 的 reference 和 candidate。",
     "`design_capture_current_view` 可将当前 BrowserView 截图保存成 PNG；`design_compare_current_view` / `design_compare_images` 会返回当前截图、diff 图、三栏 comparison 图、JSON report、差异比例、差异边界、topDiffRegions 和 verdict；批量场景用 `design_compare_current_view_batch` / `design_compare_images_batch`。",

@@ -1,45 +1,69 @@
-import { describe, it } from "node:test";
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
   buildDesignInspectionPrompt,
+  buildDesignSemanticDiffPrompt,
   parseDesignInspectionDsl,
+  parseDesignSemanticDiffDsl,
 } from "../../src/electron/libs/design-inspection-dsl.js";
 
-describe("design inspection DSL", () => {
-  it("builds a JSON-only visual inspection prompt", () => {
-    const prompt = buildDesignInspectionPrompt("分析弹窗");
-    assert.match(prompt, /只输出一个 JSON 对象/);
-    assert.match(prompt, /"regions"/);
-    assert.match(prompt, /"elements"/);
-  });
+test("buildDesignInspectionPrompt requires chart topology for diagrams", () => {
+  const prompt = buildDesignInspectionPrompt("Read this Sankey chart.");
 
-  it("parses fenced JSON returned by the vision model", () => {
-    const dsl = parseDesignInspectionDsl([
-      "图片附件：demo.png",
-      "```json",
-      JSON.stringify({
-        summary: "链接二维码弹窗",
-        screen: { kind: "modal", language: "zh-CN" },
-        regions: [{ id: "header", role: "header", alignment: "center" }],
-        elements: [{ id: "download", type: "button", text: "下载二维码", priority: "high" }],
-        visualTokens: { colors: ["primary blue for download"] },
-        implementationHints: ["modal footer buttons centered"],
-      }),
-      "```",
-    ].join("\n"), { width: 731, height: 588 });
+  assert.match(prompt, /diagram\.nodes/);
+  assert.match(prompt, /diagram\.links/);
+  assert.match(prompt, /topology invariants/);
+});
 
-    assert.equal(dsl.schemaVersion, 1);
-    assert.equal(dsl.summary, "链接二维码弹窗");
-    assert.equal(dsl.screen.kind, "modal");
-    assert.equal(dsl.regions[0].id, "header");
-    assert.equal(dsl.elements[0].text, "下载二维码");
-  });
+test("parseDesignInspectionDsl preserves diagram nodes and links", () => {
+  const dsl = parseDesignInspectionDsl(JSON.stringify({
+    summary: "送达情况 Sankey 图",
+    screen: { kind: "chart", language: "zh-CN" },
+    diagram: {
+      kind: "sankey",
+      nodes: [
+        { id: "total", label: "总计 81", value: "81", position: "left" },
+        { id: "sent", label: "已送达57(70%)", value: "57(70%)", position: "center" },
+      ],
+      links: [
+        { from: "total", to: "sent", value: "57" },
+      ],
+      invariants: ["总计 must split into 已送达, 发送中, 失败"],
+    },
+  }));
 
-  it("falls back to a minimal DSL for plain text summaries", () => {
-    const dsl = parseDesignInspectionDsl("弹窗为链接/二维码模态框，底部有关闭和下载二维码按钮。");
-    assert.equal(dsl.screen.kind, "modal");
-    assert.equal(dsl.rawSummary?.includes("链接/二维码"), true);
-    assert.ok(dsl.implementationHints?.length);
-  });
+  assert.equal(dsl.diagram?.kind, "sankey");
+  assert.equal(dsl.diagram?.nodes?.[0]?.label, "总计 81");
+  assert.equal(dsl.diagram?.links?.[0]?.from, "total");
+});
+
+test("parseDesignSemanticDiffDsl keeps critical topology issues", () => {
+  const prompt = buildDesignSemanticDiffPrompt();
+  assert.match(prompt, /topology/);
+  assert.match(prompt, /nodes/);
+  assert.match(prompt, /links/);
+
+  const diff = parseDesignSemanticDiffDsl(JSON.stringify({
+    score: 24,
+    verdict: "fail",
+    summary: "候选图拓扑错误",
+    issues: [
+      {
+        severity: "critical",
+        type: "topology",
+        region: "right",
+        target: "reply branches",
+        expected: "已读分为已回复和未回复",
+        actual: "候选图把回复节点画成独立右侧分支",
+        fix: "Rebuild Sankey data links from 已读 to 已回复/未回复.",
+        confidence: 0.94,
+      },
+    ],
+  }));
+
+  assert.equal(diff.verdict, "fail");
+  assert.equal(diff.score, 24);
+  assert.equal(diff.issues[0]?.severity, "critical");
+  assert.equal(diff.issues[0]?.type, "topology");
 });

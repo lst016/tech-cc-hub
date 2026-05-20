@@ -20,12 +20,12 @@ test("runner enables Claude Code auto truncation for oversized resumed contexts"
   assert.match(source, /extraArgs:\s*getClaudeCodeExtraArgs\(\)/);
 });
 
-test("runner enables discovered skills for desktop development sessions", () => {
+test("runner only forwards explicitly selected skills", () => {
   const source = readFileSync("src/electron/libs/runner.ts", "utf8");
 
   assert.match(source, /const enabledSkills = agentContext\.skills\.length > 0/);
-  assert.match(source, /runSurface === "development"\s*\? "all"/);
-  assert.match(source, /skills:\s*enabledSkills/);
+  assert.doesNotMatch(source, /runSurface === "development"\s*\? "all"/);
+  assert.match(source, /\.\.\.\(enabledSkills \? \{ skills: enabledSkills \} : \{\}\)/);
 });
 
 test("runner injects explicitly invoked local Claude definitions into the session prompt", () => {

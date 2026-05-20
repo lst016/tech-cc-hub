@@ -5,6 +5,10 @@ import electron from "electron";
 import { isSuccessfulRunnerResult } from "../../shared/runner-status.js";
 import type { SessionWorkflowState, WorkflowScope } from "../../shared/workflow-markdown.js";
 import { stripInlineBase64ImagesFromMessage } from "./tool-output-sanitizer.js";
+import {
+  normalizeRuntimeEfficiencyProfileState,
+  type RuntimeEfficiencyProfileState,
+} from "./runtime-efficiency.js";
 
 const LEGACY_CWD_SUFFIXES = [
   "/upstream/open-claude-cowork",
@@ -23,6 +27,23 @@ function parseWorkflowState(value: unknown): SessionWorkflowState | undefined {
   } catch {
     return undefined;
   }
+}
+
+function parseRuntimeProfileState(value: unknown): RuntimeEfficiencyProfileState | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  try {
+    return normalizeRuntimeEfficiencyProfileState(JSON.parse(value));
+  } catch {
+    return undefined;
+  }
+}
+
+function serializeRuntimeProfileState(value: RuntimeEfficiencyProfileState | undefined): string | null {
+  const normalized = normalizeRuntimeEfficiencyProfileState(value);
+  return normalized ? JSON.stringify(normalized) : null;
 }
 
 export type PendingPermission = {
@@ -50,6 +71,7 @@ export type Session = {
   workflowSourcePath?: string;
   workflowState?: SessionWorkflowState;
   workflowError?: string;
+  runtimeProfileState?: RuntimeEfficiencyProfileState;
   archivedAt?: number;
   pendingPermissions: Map<string, PendingPermission>;
   abortController?: AbortController;
@@ -73,6 +95,7 @@ export type StoredSession = {
   workflowSourcePath?: string;
   workflowState?: SessionWorkflowState;
   workflowError?: string;
+  runtimeProfileState?: RuntimeEfficiencyProfileState;
   archivedAt?: number;
   createdAt: number;
   updatedAt: number;
@@ -183,8 +206,8 @@ export class SessionStore {
     this.db
       .prepare(
         `insert into sessions
-          (id, title, claude_session_id, status, model, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, archived_at, created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` 
+          (id, title, claude_session_id, status, model, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -204,6 +227,7 @@ export class SessionStore {
         session.workflowSourcePath ?? null,
         session.workflowState ? JSON.stringify(session.workflowState) : null,
         session.workflowError ?? null,
+        serializeRuntimeProfileState(session.runtimeProfileState),
         session.archivedAt ?? null,
         now,
         now
@@ -219,7 +243,7 @@ export class SessionStore {
     const archived = Boolean(options?.archived);
     const rows = this.db
       .prepare(
-        `select id, title, claude_session_id, status, model, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, archived_at, created_at, updated_at
+        `select id, title, claude_session_id, status, model, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at, created_at, updated_at
          from sessions
          where archived_at is ${archived ? "not null" : "null"}
          order by updated_at desc`
@@ -245,6 +269,7 @@ export class SessionStore {
       workflowSourcePath: row.workflow_source_path ? String(row.workflow_source_path) : undefined,
       workflowState: parseWorkflowState(row.workflow_state),
       workflowError: row.workflow_error ? String(row.workflow_error) : undefined,
+      runtimeProfileState: parseRuntimeProfileState(row.runtime_profile_state),
       archivedAt: typeof row.archived_at === "number" ? Number(row.archived_at) : undefined,
       createdAt: Number(row.created_at),
       updatedAt: Number(row.updated_at)
@@ -510,6 +535,7 @@ export class SessionStore {
       workflowSourcePath: "workflow_source_path",
       workflowState: "workflow_state",
       workflowError: "workflow_error",
+      runtimeProfileState: "runtime_profile_state",
       archivedAt: "archived_at",
     } as const;
 
@@ -520,6 +546,10 @@ export class SessionStore {
       const value = updates[key];
       if (key === "workflowState") {
         values.push(value === undefined ? null : JSON.stringify(value));
+        continue;
+      }
+      if (key === "runtimeProfileState") {
+        values.push(serializeRuntimeProfileState(value as RuntimeEfficiencyProfileState | undefined));
         continue;
       }
       values.push(value === undefined ? null : (value as string | number));
@@ -555,6 +585,7 @@ export class SessionStore {
         workflow_source_path text,
         workflow_state text,
         workflow_error text,
+        runtime_profile_state text,
         archived_at integer,
         created_at integer not null,
         updated_at integer not null
@@ -570,6 +601,7 @@ export class SessionStore {
     this.ensureSessionColumn("workflow_source_path", "text");
     this.ensureSessionColumn("workflow_state", "text");
     this.ensureSessionColumn("workflow_error", "text");
+    this.ensureSessionColumn("runtime_profile_state", "text");
     this.ensureSessionColumn("archived_at", "integer");
     this.db.exec(
       `create table if not exists messages (
@@ -590,7 +622,7 @@ export class SessionStore {
   private loadSessions(): void {
     const rows = this.db
       .prepare(
-        `select id, title, claude_session_id, status, model, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, archived_at
+        `select id, title, claude_session_id, status, model, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at
          from sessions`
       )
       .all();
@@ -615,6 +647,7 @@ export class SessionStore {
         workflowSourcePath: row.workflow_source_path ? String(row.workflow_source_path) : undefined,
         workflowState: parseWorkflowState(row.workflow_state),
         workflowError: row.workflow_error ? String(row.workflow_error) : undefined,
+        runtimeProfileState: parseRuntimeProfileState(row.runtime_profile_state),
         archivedAt: typeof row.archived_at === "number" ? Number(row.archived_at) : undefined,
         pendingPermissions: new Map()
       };
@@ -669,7 +702,7 @@ export class SessionStore {
   private getSessionRow(id: string): Record<string, unknown> | undefined {
     return this.db
       .prepare(
-        `select id, title, claude_session_id, status, model, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, archived_at, created_at, updated_at
+        `select id, title, claude_session_id, status, model, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at, created_at, updated_at
          from sessions
           where id = ?`
       )
@@ -697,6 +730,7 @@ export class SessionStore {
       workflowSourcePath: sessionRow.workflow_source_path ? String(sessionRow.workflow_source_path) : undefined,
       workflowState: parseWorkflowState(sessionRow.workflow_state),
       workflowError: sessionRow.workflow_error ? String(sessionRow.workflow_error) : undefined,
+      runtimeProfileState: parseRuntimeProfileState(sessionRow.runtime_profile_state),
       archivedAt: typeof sessionRow.archived_at === "number" ? Number(sessionRow.archived_at) : undefined,
       createdAt: Number(sessionRow.created_at),
       updatedAt: Number(sessionRow.updated_at)

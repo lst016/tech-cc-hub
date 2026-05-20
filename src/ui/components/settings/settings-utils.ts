@@ -1,16 +1,33 @@
-import type { ApiConfigProfile, ApiModelConfigProfile } from "../../types.js";
+import type { ApiConfigProfile, ApiModelConfigProfile, ApiProviderMode } from "../../types.js";
 import {
   CODEX_OAUTH_BASE_URL,
   CODEX_OAUTH_DEFAULT_MODEL,
   CODEX_OAUTH_MODELS,
   CODEX_OAUTH_SMALL_MODEL,
 } from "../../../shared/codex-oauth.js";
+import {
+  getModelRoutingWeight,
+  normalizeModelRoutingWeight,
+  pickHighestWeightedModelOwner,
+} from "../../../shared/model-routing-weight.js";
+import { isModelCompatibleWithApiProvider } from "../../../shared/model-provider-routing.js";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 const DEEPSEEK_CONTEXT_WINDOW = 1_000_000;
 const CODEX_CONTEXT_WINDOW = 200_000;
 export const DEEPSEEK_OFFICIAL_BASE_URL = "https://api.deepseek.com/anthropic";
 export const DEEPSEEK_OFFICIAL_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro"] as const;
+
+export type RoutedModelOption = {
+  value: string;
+  label: string;
+  profileId: string;
+  profileName: string;
+  provider?: ApiProviderMode;
+  providerLabel: string;
+  routingWeight: number;
+  routeLabel: string;
+};
 
 export function createModel(): ApiModelConfigProfile {
   return {
@@ -179,6 +196,7 @@ function normalizeModel(model: ApiModelConfigProfile): ApiModelConfigProfile | n
     name,
     contextWindow,
     compressionThresholdPercent,
+    routingWeight: normalizeModelRoutingWeight(model.routingWeight),
   };
 }
 
@@ -196,6 +214,7 @@ function dedupeModels(models: ApiModelConfigProfile[]): ApiModelConfigProfile[] 
       name: normalized.name,
       contextWindow: normalized.contextWindow ?? previous?.contextWindow,
       compressionThresholdPercent: normalized.compressionThresholdPercent ?? previous?.compressionThresholdPercent,
+      routingWeight: normalized.routingWeight ?? previous?.routingWeight,
     });
   }
 
@@ -294,6 +313,51 @@ export function getAvailableModelsForProfiles(profiles: ApiConfigProfile[]): str
   return Array.from(
     new Set(profiles.flatMap((profile) => getAvailableModels(profile))),
   );
+}
+
+export function getRoutedModelOptionsForProfiles(profiles: ApiConfigProfile[]): RoutedModelOption[] {
+  return getAvailableModelsForProfiles(profiles)
+    .map((modelName) => buildRoutedModelOption(profiles, modelName))
+    .filter((option): option is RoutedModelOption => Boolean(option));
+}
+
+function buildRoutedModelOption(profiles: ApiConfigProfile[], modelName: string): RoutedModelOption | null {
+  const owner = pickHighestWeightedModelOwner(
+    profiles,
+    modelName,
+    (profile, targetModel) => profileOwnsRoutableModel(profile, targetModel),
+  );
+
+  if (!owner) {
+    return null;
+  }
+
+  const routingWeight = getModelRoutingWeight(owner, modelName);
+  const profileName = owner.name?.trim() || "Unnamed profile";
+  const providerLabel = getApiProviderLabel(owner.provider);
+  const weightLabel = routingWeight > 0 ? ` / weight ${routingWeight}` : "";
+
+  return {
+    value: modelName,
+    label: modelName,
+    profileId: owner.id,
+    profileName,
+    provider: owner.provider,
+    providerLabel,
+    routingWeight,
+    routeLabel: `${profileName} / ${providerLabel}${weightLabel}`,
+  };
+}
+
+function profileOwnsRoutableModel(profile: ApiConfigProfile, modelName: string): boolean {
+  return getAvailableModels(profile).includes(modelName)
+    && isModelCompatibleWithApiProvider(profile.provider, modelName);
+}
+
+function getApiProviderLabel(provider: ApiProviderMode | undefined): string {
+  if (provider === "codex") return "Codex OAuth";
+  if (provider === "deepseek") return "DeepSeek";
+  return "Custom Gateway";
 }
 
 export function buildRoutingSummary(profile?: ApiConfigProfile): string {

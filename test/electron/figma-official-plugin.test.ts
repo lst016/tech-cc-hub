@@ -243,5 +243,5 @@ test("keeps Agent OAuth callback resume behind the disabled bridge flag", () => 
   const source = readFileSync("src/electron/ipc-handlers.ts", "utf8");
 
   assert.match(source, /const canUseFigmaOAuthCallbackResume = FIGMA_AGENT_OAUTH_BRIDGE_ENABLED && isFigmaOAuthCallback && Boolean\(session\.claudeSessionId\);/);
-  assert.match(source, /const canUseRemoteResume = \(supportsResume \|\| canUseFigmaOAuthCallbackResume\) && !switchedModel;/);
+  assert.match(source, /const canUseRemoteResume = \(supportsResume \|\| canUseFigmaOAuthCallbackResume\) && !switchedModel && !replacingHistoryId;/);
 });

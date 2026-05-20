@@ -73,7 +73,12 @@ import {
   listBuiltinMcpToolNames,
 } from "./builtin-mcp-servers.js";
 import { normalizeRunnerError } from "./runner-error.js";
-import { resolveRuntimeEfficiencyProfile } from "./runtime-efficiency.js";
+import {
+  mergeRuntimeEfficiencyProfile,
+  resolveRuntimeEfficiencyProfile,
+  runtimeEfficiencyProfileStateEquals,
+  runtimeEfficiencyProfileToState,
+} from "./runtime-efficiency.js";
 import type { Session } from "./session-store.js";
 import {
   getBashBackgroundServiceGuidance,
@@ -97,6 +102,7 @@ import {
   extractInlineBase64ImageFromToolResponse,
 } from "./tool-output-sanitizer.js";
 import { getEnhancedEnv } from "./util.js";
+import { buildClaudeCodeSystemPromptOption } from "./claude-system-prompt.js";
 
 export type RunnerOptions = {
   prompt: string;
@@ -159,8 +165,9 @@ const FIGMA_URL_PATTERN = /https?:\/\/(?:www\.)?figma\.com\/(?:design|file|proto
 const FIGMA_IMPLEMENTATION_ANCHOR_TOOL_NAMES = new Set([
   "figma_summarize_design",
   "figma_generate_tailwind_code",
-  "figma_get_image_urls",
+  "figma_export_node_images",
   "figma_audit_design",
+  "design_inspect_image",
 ]);
 const FILE_MUTATION_TOOL_NAMES = new Set(["Edit", "MultiEdit", "Write"]);
 
@@ -261,6 +268,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   let requiresFigmaImplementationAnchor = shouldRequireFigmaImplementationAnchor(currentPrompt);
   const desiredBuiltinMcpServerNames = new Set<BuiltinMcpServerName>();
   let activeBuiltinMcpServerNames = new Set<BuiltinMcpServerName>();
+  let latestFigmaToolMode: "core" | "full" = "full";
   let latestProjectCwd: string | undefined;
   let latestRunSurface: AgentRunSurface = runtime?.runSurface ?? session.runSurface ?? "development";
 
@@ -305,12 +313,19 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
     nextPrompt: string,
     nextAttachments: readonly PromptAttachment[],
   ) => {
-    const profile = resolveRuntimeEfficiencyProfile({
+    const profile = mergeRuntimeEfficiencyProfile(resolveRuntimeEfficiencyProfile({
       prompt: nextPrompt,
       attachments: nextAttachments,
       runtime,
       runSurface: latestRunSurface,
-    });
+    }), session.runtimeProfileState);
+    const nextProfileState = runtimeEfficiencyProfileToState(profile);
+    if (!runtimeEfficiencyProfileStateEquals(session.runtimeProfileState, nextProfileState)) {
+      session.runtimeProfileState = nextProfileState;
+      onSessionUpdate?.({ runtimeProfileState: nextProfileState });
+    }
+    latestFigmaToolMode = "full";
+    desiredBuiltinMcpServerNames.clear();
     for (const serverName of profile.builtinMcpServers) {
       desiredBuiltinMcpServerNames.add(serverName);
     }
@@ -326,26 +341,24 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       return;
     }
 
-    const missingServerNames = profile.builtinMcpServers.filter((serverName) => (
-      !activeBuiltinMcpServerNames.has(serverName)
-    ));
-    if (missingServerNames.length === 0) {
+    const nextBuiltinMcpServerNames = new Set(profile.builtinMcpServers);
+    if (builtinMcpServerSetsEqual(activeBuiltinMcpServerNames, nextBuiltinMcpServerNames)) {
       return;
     }
 
-    const nextBuiltinMcpServerNames = new Set(activeBuiltinMcpServerNames);
-    for (const serverName of missingServerNames) {
-      nextBuiltinMcpServerNames.add(serverName);
-    }
     const enabledBuiltinMcpServerNames = [...nextBuiltinMcpServerNames];
     const result = await activeQuery.setMcpServers({
       ...getExternalMcpServers(latestGlobalRuntimeConfig ?? getGlobalRuntimeConfig(), { projectDir: latestProjectCwd }),
-      ...getBuiltinMcpServers({ sessionId: session.id, cwd: latestProjectCwd }, enabledBuiltinMcpServerNames),
+      ...getBuiltinMcpServers({
+        sessionId: session.id,
+        cwd: latestProjectCwd,
+        figmaToolMode: latestFigmaToolMode,
+      }, enabledBuiltinMcpServerNames),
     });
     activeBuiltinMcpServerNames = nextBuiltinMcpServerNames;
     console.info("[runner][mcp-expanded]", {
       sessionId: session.id,
-      added: missingServerNames,
+      builtinMcpServersChanged: true,
       builtinMcpServers: enabledBuiltinMcpServerNames,
       result,
     });
@@ -473,9 +486,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       );
       const enabledSkills = agentContext.skills.length > 0
         ? agentContext.skills
-        : runSurface === "development"
-          ? "all"
-          : undefined;
+        : undefined;
       const hooks = buildQualityHooks(resolvedCwd, {
         config,
         getPrompt: () => currentPrompt,
@@ -489,7 +500,11 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       });
       const enabledBuiltinMcpServerNames = [...desiredBuiltinMcpServerNames];
       activeBuiltinMcpServerNames = new Set(enabledBuiltinMcpServerNames);
-      const builtinMcpServers = getBuiltinMcpServers({ sessionId: session.id, cwd: projectCwd }, enabledBuiltinMcpServerNames);
+      const builtinMcpServers = getBuiltinMcpServers({
+        sessionId: session.id,
+        cwd: projectCwd,
+        figmaToolMode: latestFigmaToolMode,
+      }, enabledBuiltinMcpServerNames);
       const sdkPlugins = resolveEnabledClaudeCodeSdkPlugins();
       const sdkPluginMcpServerNames = listClaudeCodePluginMcpServerNames(sdkPlugins);
       const systemPromptAppend = combineSystemPromptAppend(
@@ -511,8 +526,13 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       const sdkModelSettings = buildClaudeCodeModelSettings(config, effectiveModel);
       const sdkExpertModel = getClaudeCodeExpertModel(config, effectiveModel);
       console.info("[runner][route]", {
+        sessionId: session.id,
+        configProfileId: config.id,
+        configProfileName: config.name,
+        configProvider: config.provider,
         configuredBaseURL: config.baseURL,
         anthropicBaseURL: mergedEnv.ANTHROPIC_BASE_URL,
+        settingsEnvBaseURL: sdkModelSettings.env?.ANTHROPIC_BASE_URL,
         requestedModel,
         model: effectiveModel,
         modelFallback: resolvedConfig.fellBack,
@@ -541,10 +561,8 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           permissionMode,
           settingSources: agentContext.settingSources,
           settings: sdkModelSettings,
-          skills: enabledSkills,
-          systemPrompt: systemPromptAppend
-            ? { type: "preset", preset: "claude_code", append: systemPromptAppend }
-            : undefined,
+          ...(enabledSkills ? { skills: enabledSkills } : {}),
+          systemPrompt: buildClaudeCodeSystemPromptOption(systemPromptAppend),
           includePartialMessages: runtimeProfile.includePartialMessages,
           includeHookEvents: runtimeProfile.includeHookEvents,
           agentProgressSummaries: runtimeProfile.agentProgressSummaries,
@@ -912,6 +930,23 @@ function combineSystemPromptAppend(...sections: Array<string | undefined>): stri
     .filter((section): section is string => Boolean(section))
     .join("\n\n");
   return joined || undefined;
+}
+
+function builtinMcpServerSetsEqual(
+  left: ReadonlySet<BuiltinMcpServerName>,
+  right: ReadonlySet<BuiltinMcpServerName>,
+): boolean {
+  if (left.size !== right.size) {
+    return false;
+  }
+
+  for (const serverName of left) {
+    if (!right.has(serverName)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function supportsClaudeCodeAutoTruncate(): boolean {
@@ -1745,7 +1780,7 @@ function getFigmaOfficialRouteDenyMessage(
 
   return [
     `Figma REST/PAT is configured and ready in tech-cc-hub; do not use the official OAuth plugin (${CLAUDE_FIGMA_PLUGIN_ID}) first.`,
-    "Use the built-in REST tools instead, for example mcp__tech-cc-hub-figma__figma_read_design, mcp__tech-cc-hub-figma__figma_summarize_design, or mcp__tech-cc-hub-figma__figma_get_image_urls.",
+    "Use the built-in REST tools instead, for example mcp__tech-cc-hub-figma__figma_read_design, mcp__tech-cc-hub-figma__figma_summarize_design, or mcp__tech-cc-hub-figma__figma_export_node_images.",
     "Only switch to the official OAuth Figma MCP after a REST Figma tool explicitly returns a 401/403/token permission failure.",
   ].join("\n");
 }
@@ -1762,7 +1797,8 @@ function getFigmaImplementationAnchorDenyMessage(
   return [
     "This task includes a Figma design URL. Before editing code, establish an implementation-grade Figma anchor.",
     "Do not implement from raw figma_read_design JSON alone; it is often too large and truncated.",
-    "First use one of the built-in Figma REST tools: mcp__tech-cc-hub-figma__figma_summarize_design, mcp__tech-cc-hub-figma__figma_generate_tailwind_code, mcp__tech-cc-hub-figma__figma_get_image_urls, or mcp__tech-cc-hub-figma__figma_audit_design.",
+    "For UI implementation, first use mcp__tech-cc-hub-figma__figma_list_node_index, then mcp__tech-cc-hub-figma__figma_export_node_images, then inspect the returned imagePath with mcp__tech-cc-hub-design__design_inspect_image.",
+    "Use mcp__tech-cc-hub-figma__figma_summarize_design or mcp__tech-cc-hub-figma__figma_read_design with small depth only to confirm component props/tokens.",
     "If the URL node-id is broad or the file contains repeated Frame names, call mcp__tech-cc-hub-figma__figma_list_node_index with the original URL and a text query from the requested UI before asking the user for a frame number.",
     "If a rendered UI node is involved, collect browser_query_nodes or annotation DOM fields (text, selector, box, attributes, componentStack, context.nearbyText) and call mcp__tech-cc-hub-figma__figma_match_ui_nodes to establish the UI-node to Figma-node mapping.",
     "Prefer a specific node-id from the Figma URL or a narrowed target node. After that, map the design sections to the existing project components and then edit code.",

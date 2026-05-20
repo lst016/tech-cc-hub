@@ -79,3 +79,18 @@ test("buildOversizedTextToolOutputReplacement truncates large text tool output",
   assert.match(output.replacementText, /characters omitted/);
   assert.ok(output.replacementText.length < 18_000);
 });
+
+test("buildOversizedTextToolOutputReplacement truncates Claude Read file payloads", () => {
+  const output = buildOversizedTextToolOutputReplacement("Read", {
+    type: "text",
+    file: {
+      filePath: "D:\\workspace\\app\\src\\large.tsx",
+      content: "B".repeat(56_000),
+    },
+  });
+
+  assert.ok(output);
+  assert.equal(output.originalChars, 56_000);
+  assert.match(output.replacementText, /returned 56000 characters/);
+  assert.ok(output.replacementText.length < 18_000);
+});

@@ -10,8 +10,10 @@ import {
 import { CLAUDE_AGENT_TEAMS_MIN_CLAUDE_CODE_VERSION } from "../../shared/claude-agent-teams.js";
 import {
   isModelCompatibleWithApiProvider,
+  normalizeProviderModelName,
   pickProviderCompatibleModel,
 } from "../../shared/model-provider-routing.js";
+import { pickHighestWeightedModelOwner } from "../../shared/model-routing-weight.js";
 import {
   loadApiConfigSettings,
   loadGlobalRuntimeConfig,
@@ -238,7 +240,11 @@ export function getApiConfigForModel(modelName?: string): ApiConfig | null {
     return enabledConfigs[0] ?? getFallbackClaudeSettingsConfig();
   }
 
-  const matchedConfig = enabledConfigs.find((config) => getRoutableModelNames(config).includes(normalizedModel));
+  const matchedConfig = pickHighestWeightedModelOwner(
+    enabledConfigs,
+    normalizedModel,
+    (config, targetModel) => getRoutableModelNames(config).includes(targetModel),
+  );
   if (matchedConfig) {
     return matchedConfig;
   }
@@ -349,38 +355,14 @@ export function getGlobalRuntimeConfig(): GlobalRuntimeConfig {
 
 export function buildEnvForConfig(config: ApiConfig, modelOverride?: string): Record<string, string> {
   const baseEnv = { ...process.env } as Record<string, string>;
-  const selectedModel = normalizeModelForApiConfig(config, modelOverride ?? config.model, config.model);
-  const expertModel = normalizeExpertModelForApiConfig(
-    config,
-    config.expertModel?.trim() || selectedModel,
-    selectedModel,
-  );
-  const smallModel = normalizeSmallModelForApiConfig(
-    config,
-    config.smallModel?.trim() || config.analysisModel?.trim() || selectedModel,
-    selectedModel,
-  );
-  const modelEnv = buildClaudeCodeModelEnv(selectedModel, expertModel, smallModel);
-  const anthropicAuthToken = config.provider === "codex" ? "codex-oauth" : config.apiKey;
-  const anthropicBaseURL = config.provider === "codex"
-    ? getCodexAnthropicProxyBaseURL(config.id)
-    : normalizeAnthropicBaseUrlForClaudeCode(config.baseURL);
-  const nonEssentialTrafficEnv = buildClaudeCodeNonEssentialTrafficEnv();
-  const attributionHeaderEnv = buildClaudeCodeAttributionHeaderEnv(anthropicBaseURL);
-
-  baseEnv.ANTHROPIC_AUTH_TOKEN = anthropicAuthToken;
-  baseEnv.ANTHROPIC_BASE_URL = anthropicBaseURL;
-  Object.assign(baseEnv, modelEnv);
+  const apiEnv = buildClaudeCodeSettingsEnv(config, modelOverride ?? config.model);
+  Object.assign(baseEnv, apiEnv);
 
   const runtimeEnv = buildGlobalRuntimeEnvConfig();
   return {
     ...baseEnv,
     ...runtimeEnv,
-    ANTHROPIC_AUTH_TOKEN: anthropicAuthToken,
-    ANTHROPIC_BASE_URL: anthropicBaseURL,
-    ...modelEnv,
-    ...nonEssentialTrafficEnv,
-    ...attributionHeaderEnv,
+    ...apiEnv,
   };
 }
 
@@ -390,12 +372,13 @@ export function normalizeModelForApiConfig(
   fallbackModel = config.model,
 ): string {
   const providerFallbackModel = getProviderDefaultModel(config, "main");
-  return (
+  const selected = (
     pickProviderCompatibleModel(config.provider, modelName, fallbackModel) ||
     pickProviderCompatibleModel(config.provider, providerFallbackModel, config.model) ||
     modelName?.trim() ||
     config.model
   );
+  return normalizeProviderModelName(config.provider, selected);
 }
 
 function normalizeSmallModelForApiConfig(
@@ -405,8 +388,8 @@ function normalizeSmallModelForApiConfig(
 ): string {
   const providerFallbackModel = getProviderDefaultModel(config, "small") || selectedModel;
   return (
-    pickProviderCompatibleModel(config.provider, modelName, providerFallbackModel) ||
-    pickProviderCompatibleModel(config.provider, selectedModel, config.model) ||
+    pickProviderOwnedModelForApiConfig(config, modelName, providerFallbackModel) ||
+    pickProviderOwnedModelForApiConfig(config, selectedModel, config.model) ||
     selectedModel
   );
 }
@@ -417,10 +400,24 @@ function normalizeExpertModelForApiConfig(
   selectedModel: string,
 ): string {
   return (
-    pickProviderCompatibleModel(config.provider, modelName, selectedModel) ||
-    pickProviderCompatibleModel(config.provider, config.expertModel, selectedModel) ||
+    pickProviderOwnedModelForApiConfig(config, modelName, selectedModel) ||
+    pickProviderOwnedModelForApiConfig(config, config.expertModel, selectedModel) ||
     selectedModel
   );
+}
+
+function pickProviderOwnedModelForApiConfig(
+  config: ApiConfig,
+  modelName: string | undefined,
+  fallbackModel: string | undefined,
+): string | null {
+  const pickedModel = pickProviderCompatibleModel(config.provider, modelName, fallbackModel);
+  if (!pickedModel) {
+    return null;
+  }
+
+  const routedOwner = getApiConfigForModel(pickedModel);
+  return routedOwner?.id === config.id ? pickedModel : null;
 }
 
 function getProviderDefaultModel(config: ApiConfig, slot: "main" | "small"): string {
@@ -499,6 +496,33 @@ export function buildClaudeCodeModelSettings(config: ApiConfig, modelName: strin
   return {
     model: selectedModel,
     modelOverrides: buildClaudeCodeOpusModelOverrides(expertModel),
+    env: buildClaudeCodeSettingsEnv(config, selectedModel),
+  };
+}
+
+function buildClaudeCodeSettingsEnv(config: ApiConfig, modelName: string | undefined): Record<string, string> {
+  const selectedModel = normalizeModelForApiConfig(config, modelName?.trim() || config.model, config.model);
+  const expertModel = normalizeExpertModelForApiConfig(
+    config,
+    config.expertModel?.trim() || selectedModel,
+    selectedModel,
+  );
+  const smallModel = normalizeSmallModelForApiConfig(
+    config,
+    config.smallModel?.trim() || config.analysisModel?.trim() || selectedModel,
+    selectedModel,
+  );
+  const anthropicAuthToken = config.provider === "codex" ? "codex-oauth" : config.apiKey;
+  const anthropicBaseURL = config.provider === "codex"
+    ? getCodexAnthropicProxyBaseURL(config.id)
+    : normalizeAnthropicBaseUrlForClaudeCode(config.baseURL);
+
+  return {
+    ANTHROPIC_AUTH_TOKEN: anthropicAuthToken,
+    ANTHROPIC_BASE_URL: anthropicBaseURL,
+    ...buildClaudeCodeModelEnv(selectedModel, expertModel, smallModel),
+    ...buildClaudeCodeNonEssentialTrafficEnv(),
+    ...buildClaudeCodeAttributionHeaderEnv(anthropicBaseURL),
   };
 }
 

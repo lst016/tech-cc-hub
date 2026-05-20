@@ -22,6 +22,7 @@ export type ApiModelConfigProfile = {
   name: string;
   contextWindow?: number;
   compressionThresholdPercent?: number;
+  routingWeight?: number;
 };
 
 export type ApiProviderMode = "custom" | "deepseek" | "codex";

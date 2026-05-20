@@ -15,7 +15,7 @@ import {
 } from "./codex-oauth.js";
 import { preprocessImageAttachmentsCore, type ImagePreprocessResult } from "./image-preprocessor-core.js";
 
-const IMAGE_SUMMARY_MAX_TOKENS = 1600;
+const IMAGE_SUMMARY_MAX_TOKENS = 2400;
 const IMAGE_MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -23,6 +23,12 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ".gif": "image/gif",
   ".webp": "image/webp",
   ".bmp": "image/bmp",
+};
+
+type ImageSummaryInput = {
+  attachmentName?: string;
+  mimeType: string;
+  base64Data: string;
 };
 export async function preprocessImageAttachments(options: {
   config: ApiConfig | null;
@@ -62,25 +68,49 @@ export async function summarizeLocalImageFile(options: {
   config: ApiConfig | null;
   prompt: string;
   filePath: string;
+  strictPrompt?: boolean;
 }): Promise<string | null> {
-  const { config, prompt, filePath } = options;
+  const result = await summarizeLocalImageFiles({
+    config: options.config,
+    prompt: options.prompt,
+    files: [{ filePath: options.filePath }],
+    strictPrompt: options.strictPrompt,
+  });
+  return result;
+}
+
+export async function summarizeLocalImageFiles(options: {
+  config: ApiConfig | null;
+  prompt: string;
+  files: Array<{ filePath: string; attachmentName?: string }>;
+  strictPrompt?: boolean;
+}): Promise<string | null> {
+  const { config, prompt, files } = options;
   const imageModel = config?.imageModel?.trim();
   if (!config || !imageModel) {
     return null;
   }
 
-  const mimeType = getImageMimeType(filePath);
-  if (!mimeType) {
-    throw new Error(`Unsupported image format: ${filePath}`);
+  const images: ImageSummaryInput[] = [];
+  for (const file of files) {
+    const mimeType = getImageMimeType(file.filePath);
+    if (!mimeType) {
+      throw new Error(`Unsupported image format: ${file.filePath}`);
+    }
+
+    const buffer = await readFile(file.filePath);
+    images.push({
+      attachmentName: file.attachmentName ?? basename(file.filePath),
+      mimeType,
+      base64Data: buffer.toString("base64"),
+    });
   }
 
-  const buffer = await readFile(filePath);
-  return summarizeBase64Image({
+  return summarizeBase64Images({
     config,
     prompt,
-    attachmentName: basename(filePath),
-    mimeType,
-    base64Data: buffer.toString("base64"),
+    images,
+    strictPrompt: options.strictPrompt,
   });
 }
 
@@ -90,32 +120,52 @@ export async function summarizeBase64Image(options: {
   attachmentName?: string;
   mimeType: string;
   base64Data: string;
+  strictPrompt?: boolean;
 }): Promise<string | null> {
-  const { config, prompt, attachmentName, mimeType, base64Data } = options;
+  return summarizeBase64Images({
+    config: options.config,
+    prompt: options.prompt,
+    strictPrompt: options.strictPrompt,
+    images: [{
+      attachmentName: options.attachmentName,
+      mimeType: options.mimeType,
+      base64Data: options.base64Data,
+    }],
+  });
+}
+
+export async function summarizeBase64Images(options: {
+  config: ApiConfig | null;
+  prompt: string;
+  images: ImageSummaryInput[];
+  strictPrompt?: boolean;
+}): Promise<string | null> {
+  const { config, prompt, images } = options;
   const imageModel = config?.imageModel?.trim();
   if (!config || !imageModel) {
     return null;
   }
 
-  return summarizeImageBase64WithModel({
+  return summarizeImagesBase64WithModel({
     config,
     imageModel,
     prompt,
-    attachmentName,
-    mimeType,
-    base64Data,
+    images,
+    strictPrompt: options.strictPrompt,
   });
 }
 
-async function summarizeImageBase64WithModel(options: {
+async function summarizeImagesBase64WithModel(options: {
   config: ApiConfig;
   imageModel: string;
   prompt: string;
-  attachmentName?: string;
-  mimeType: string;
-  base64Data: string;
+  images: ImageSummaryInput[];
+  strictPrompt?: boolean;
 }): Promise<string> {
-  const { config, imageModel, prompt, attachmentName, mimeType, base64Data } = options;
+  const { config, imageModel, prompt, images, strictPrompt } = options;
+  if (images.length === 0) {
+    throw new Error("At least one image is required for image preprocessing.");
+  }
   const candidateModels = buildImageModelCandidates(config, imageModel);
   let lastError: unknown;
 
@@ -128,9 +178,8 @@ async function summarizeImageBase64WithModel(options: {
           config,
           imageModel: candidateModel,
           prompt,
-          attachmentName,
-          mimeType,
-          base64Data,
+          images,
+          strictPrompt,
         });
       }
 
@@ -141,9 +190,8 @@ async function summarizeImageBase64WithModel(options: {
               config,
               imageModel: candidateModel,
               prompt,
-              attachmentName,
-              mimeType,
-              base64Data,
+              images,
+              strictPrompt,
             });
           } catch (error) {
             if (!shouldRetryWithAnthropicMessages(error)) {
@@ -156,9 +204,8 @@ async function summarizeImageBase64WithModel(options: {
           config,
           imageModel: candidateModel,
           prompt,
-          attachmentName,
-          mimeType,
-          base64Data,
+          images,
+          strictPrompt,
         });
       } catch (error) {
         if (shouldRetryWithOpenAIChat(error)) {
@@ -166,9 +213,8 @@ async function summarizeImageBase64WithModel(options: {
             config,
             imageModel: candidateModel,
             prompt,
-            attachmentName,
-            mimeType,
-            base64Data,
+            images,
+            strictPrompt,
           });
         }
         throw error;
@@ -214,16 +260,16 @@ async function summarizeImageBase64WithCodexResponses(options: {
   config: ApiConfig;
   imageModel: string;
   prompt: string;
-  attachmentName?: string;
-  mimeType: string;
-  base64Data: string;
+  images: ImageSummaryInput[];
+  strictPrompt?: boolean;
 }): Promise<string> {
-  const { config, imageModel, prompt, attachmentName, mimeType, base64Data } = options;
+  const { config, imageModel, prompt, images, strictPrompt } = options;
   const credential = readCodexCredential(config);
   const endpoint = new URL(getCodexResponsesPath(imageModel), CODEX_OAUTH_BASE_URL).toString();
   const model = imageModel.endsWith(CODEX_OAUTH_COMPACT_MODEL_SUFFIX)
     ? imageModel.slice(0, -CODEX_OAUTH_COMPACT_MODEL_SUFFIX.length)
     : imageModel;
+  const attachmentNames = images.map((image) => image.attachmentName || "unnamed image");
 
   const response = await fetch(endpoint, {
     method: "POST",
@@ -236,12 +282,12 @@ async function summarizeImageBase64WithCodexResponses(options: {
           content: [
             {
               type: "input_text",
-              text: buildImagePreprocessInstruction(prompt, attachmentName),
+              text: buildImagePreprocessInstruction(prompt, attachmentNames, strictPrompt),
             },
-            {
+            ...images.map((image) => ({
               type: "input_image",
-              image_url: `data:${mimeType};base64,${base64Data}`,
-            },
+              image_url: `data:${image.mimeType};base64,${image.base64Data}`,
+            })),
           ],
         },
       ],
@@ -273,22 +319,18 @@ async function summarizeImageBase64WithCodexResponses(options: {
   }
   assertModelActuallySawImage(text, imageModel);
 
-  return [
-    `鍥剧墖闄勪欢锛?{attachmentName || "鏈懡鍚嶅浘鐗?}`,
-    "浠ヤ笅鍐呭鐢卞浘鐗囬澶勭悊妯″瀷鎻愬彇锛岃浣滀负鍥剧墖涓婁笅鏂囩悊瑙ｏ細",
-    text,
-  ].join("\n\n");
+  return wrapImagePreprocessResult(text, attachmentNames, strictPrompt);
 }
 
 async function summarizeImageBase64WithAnthropicMessages(options: {
   config: ApiConfig;
   imageModel: string;
   prompt: string;
-  attachmentName?: string;
-  mimeType: string;
-  base64Data: string;
+  images: ImageSummaryInput[];
+  strictPrompt?: boolean;
 }): Promise<string> {
-  const { config, imageModel, prompt, attachmentName, mimeType, base64Data } = options;
+  const { config, imageModel, prompt, images, strictPrompt } = options;
+  const attachmentNames = images.map((image) => image.attachmentName || "unnamed image");
   const response = await fetch(buildMessagesEndpoint(config.baseURL), {
     method: "POST",
     headers: {
@@ -306,16 +348,16 @@ async function summarizeImageBase64WithAnthropicMessages(options: {
           content: [
             {
               type: "text",
-              text: buildImagePreprocessInstruction(prompt, attachmentName),
+              text: buildImagePreprocessInstruction(prompt, attachmentNames, strictPrompt),
             },
-            {
+            ...images.map((image) => ({
               type: "image",
               source: {
                 type: "base64",
-                media_type: mimeType,
-                data: base64Data,
+                media_type: image.mimeType,
+                data: image.base64Data,
               },
-            },
+            })),
           ],
         },
       ],
@@ -343,22 +385,18 @@ async function summarizeImageBase64WithAnthropicMessages(options: {
   }
   assertModelActuallySawImage(text, imageModel);
 
-  return [
-    `\u56fe\u7247\u9644\u4ef6\uff1a${attachmentName || "\u672a\u547d\u540d\u56fe\u7247"}`,
-    "\u4ee5\u4e0b\u5185\u5bb9\u7531\u56fe\u7247\u9884\u5904\u7406\u6a21\u578b\u63d0\u53d6\uff0c\u8bf7\u4f5c\u4e3a\u56fe\u7247\u4e0a\u4e0b\u6587\u7406\u89e3\uff1a",
-    text,
-  ].join("\n\n");
+  return wrapImagePreprocessResult(text, attachmentNames, strictPrompt);
 }
 
 async function summarizeImageBase64WithOpenAIChat(options: {
   config: ApiConfig;
   imageModel: string;
   prompt: string;
-  attachmentName?: string;
-  mimeType: string;
-  base64Data: string;
+  images: ImageSummaryInput[];
+  strictPrompt?: boolean;
 }): Promise<string> {
-  const { config, imageModel, prompt, attachmentName, mimeType, base64Data } = options;
+  const { config, imageModel, prompt, images, strictPrompt } = options;
+  const attachmentNames = images.map((image) => image.attachmentName || "unnamed image");
   const response = await fetch(buildChatCompletionsEndpoint(config.baseURL), {
     method: "POST",
     headers: {
@@ -375,14 +413,14 @@ async function summarizeImageBase64WithOpenAIChat(options: {
           content: [
             {
               type: "text",
-              text: buildImagePreprocessInstruction(prompt, attachmentName),
+              text: buildImagePreprocessInstruction(prompt, attachmentNames, strictPrompt),
             },
-            {
+            ...images.map((image) => ({
               type: "image_url",
               image_url: {
-                url: `data:${mimeType};base64,${base64Data}`,
+                url: `data:${image.mimeType};base64,${image.base64Data}`,
               },
-            },
+            })),
           ],
         },
       ],
@@ -417,11 +455,7 @@ async function summarizeImageBase64WithOpenAIChat(options: {
   }
   assertModelActuallySawImage(text, imageModel);
 
-  return [
-    `\u56fe\u7247\u9644\u4ef6\uff1a${attachmentName || "\u672a\u547d\u540d\u56fe\u7247"}`,
-    "\u4ee5\u4e0b\u5185\u5bb9\u7531\u56fe\u7247\u9884\u5904\u7406\u6a21\u578b\u63d0\u53d6\uff0c\u8bf7\u4f5c\u4e3a\u56fe\u7247\u4e0a\u4e0b\u6587\u7406\u89e3\uff1a",
-    text,
-  ].join("\n\n");
+  return wrapImagePreprocessResult(text, attachmentNames, strictPrompt);
 }
 
 function buildMessagesEndpoint(baseURL: string): string {
@@ -516,7 +550,7 @@ function assertImageUnderstandingModel(imageModel: string): void {
 }
 
 function assertModelActuallySawImage(text: string, imageModel: string): void {
-  if (/no image (?:attached|provided|visible)|cannot see (?:the )?image|can\'t see (?:the )?image/i.test(text)) {
+  if (/no image (?:attached|provided|visible)|cannot see (?:the )?image|can't see (?:the )?image/i.test(text)) {
     throw new Error(`\u6a21\u578b ${imageModel} \u8fd4\u56de\u4e86\u6587\u672c\uff0c\u4f46\u6ca1\u6709\u5b9e\u9645\u8bfb\u53d6\u5230\u56fe\u7247\u3002\u8bf7\u6362\u6210\u771f\u6b63\u652f\u6301\u56fe\u7247\u7406\u89e3\u7684\u6a21\u578b\u3002`);
   }
 }
@@ -541,10 +575,31 @@ function getImageMimeType(filePath: string): string | null {
   return IMAGE_MIME_TYPES[extname(filePath).toLowerCase()] ?? null;
 }
 
-function buildImagePreprocessInstruction(prompt: string, attachmentName?: string): string {
-  const normalizedPrompt = prompt.trim() || "\u7528\u6237\u672a\u63d0\u4f9b\u989d\u5916\u8bf4\u660e\u3002";
+function wrapImagePreprocessResult(text: string, attachmentNames: string[], strictPrompt?: boolean): string {
+  if (strictPrompt) {
+    return text;
+  }
+
   return [
-    `\u4f60\u5728\u4e3a\u7f16\u7801 Agent \u9884\u5904\u7406\u56fe\u7247\u9644\u4ef6\u300a${attachmentName || "\u672a\u547d\u540d\u56fe\u7247"}\u300b\u3002`,
+    `\u56fe\u7247\u9644\u4ef6\uff1a${attachmentNames.join(", ") || "\u672a\u547d\u540d\u56fe\u7247"}`,
+    "\u4ee5\u4e0b\u5185\u5bb9\u7531\u56fe\u7247\u9884\u5904\u7406\u6a21\u578b\u63d0\u53d6\uff0c\u8bf7\u4f5c\u4e3a\u56fe\u7247\u4e0a\u4e0b\u6587\u7406\u89e3\uff1a",
+    text,
+  ].join("\n\n");
+}
+
+function buildImagePreprocessInstruction(prompt: string, attachmentNames: string[] = [], strictPrompt?: boolean): string {
+  const normalizedPrompt = prompt.trim() || "\u7528\u6237\u672a\u63d0\u4f9b\u989d\u5916\u8bf4\u660e\u3002";
+  const nameLabel = attachmentNames.join(", ") || "\u672a\u547d\u540d\u56fe\u7247";
+  if (strictPrompt) {
+    return [
+      `\u4f60\u5728\u4e3a\u7f16\u7801 Agent \u9884\u5904\u7406\u56fe\u7247\u9644\u4ef6\u300a${nameLabel}\u300b\u3002`,
+      "\u8bf7\u4e25\u683c\u6309\u7528\u6237\u4efb\u52a1\u8f93\u51fa\u3002\u5982\u679c\u4efb\u52a1\u8981\u6c42 JSON\uff0c\u53ea\u8f93\u51fa JSON\uff0c\u4e0d\u8981 Markdown\uff0c\u4e0d\u8981\u989d\u5916\u89e3\u91ca\u3002",
+      normalizedPrompt,
+    ].join("\n");
+  }
+
+  return [
+    `\u4f60\u5728\u4e3a\u7f16\u7801 Agent \u9884\u5904\u7406\u56fe\u7247\u9644\u4ef6\u300a${nameLabel}\u300b\u3002`,
     "\u8bf7\u8f93\u51fa\u9002\u5408\u7ee7\u7eed\u4ea4\u7ed9 Agent \u7684\u4e2d\u6587\u6458\u8981\uff0c\u4e25\u683c\u63a7\u5236\u5728 500 \u5b57\u4ee5\u5185\u3002",
     "\u4f18\u5148\u63d0\u53d6\uff1a",
     "1. \u754c\u9762\u7ed3\u6784\u3001\u6a21\u5757\u5e03\u5c40\u3001\u6309\u94ae\u3001\u8f93\u5165\u6846\u3001\u8868\u683c\u7b49\u5173\u952e\u5143\u7d20",

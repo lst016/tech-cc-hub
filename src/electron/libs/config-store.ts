@@ -8,6 +8,7 @@ import {
 } from "fs";
 import { join } from "path";
 import { CODEX_OAUTH_BASE_URL } from "../../shared/codex-oauth.js";
+import { normalizeModelRoutingWeight } from "../../shared/model-routing-weight.js";
 
 export type ApiType = "anthropic";
 export type ApiProviderMode = "custom" | "deepseek" | "codex";
@@ -16,6 +17,7 @@ export type ApiModelConfig = {
   name: string;
   contextWindow?: number;
   compressionThresholdPercent?: number;
+  routingWeight?: number;
 };
 
 export type ApiConfig = {
@@ -340,6 +342,7 @@ function normalizeModelConfig(input: string | ApiModelConfig | null | undefined)
     name,
     contextWindow: normalizePositiveInteger(input.contextWindow),
     compressionThresholdPercent: normalizePercent(input.compressionThresholdPercent),
+    routingWeight: normalizeModelRoutingWeight(input.routingWeight),
   };
 }
 
@@ -357,6 +360,7 @@ function dedupeModelConfigs(inputs: Array<string | ApiModelConfig | null | undef
       name: model.name,
       contextWindow: model.contextWindow ?? previous?.contextWindow,
       compressionThresholdPercent: model.compressionThresholdPercent ?? previous?.compressionThresholdPercent,
+      routingWeight: model.routingWeight ?? previous?.routingWeight,
     });
   }
 

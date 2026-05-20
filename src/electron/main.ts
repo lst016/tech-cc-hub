@@ -2548,6 +2548,13 @@ app.on("ready", async () => {
     });
     setDesignToolHost({
       getState: (sessionId) => getBrowserWorkbench(sessionId)?.getState() ?? buildBrowserWorkbenchFallbackState(),
+      getElementInfo: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.getElementInfo(input);
+      },
       captureVisible: async (sessionId) => {
         const browserWorkbench = getBrowserWorkbench(sessionId);
         if (!browserWorkbench) {

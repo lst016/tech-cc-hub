@@ -153,6 +153,63 @@ export function parseCodexOAuthCredential(raw: string): CodexOAuthCredential {
   }) as CodexOAuthCredential;
 }
 
+export function parseCodexCliAuthCredential(raw: string): CodexOAuthCredential | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed)) {
+    return null;
+  }
+
+  const candidates = [
+    isRecord(parsed.tokens) ? parsed.tokens : null,
+    isRecord(parsed.auth) ? parsed.auth : null,
+    parsed,
+  ].filter((item): item is Record<string, unknown> => Boolean(item));
+
+  for (const candidate of candidates) {
+    const accessToken = stringValue(candidate.access_token) || stringValue(candidate.accessToken);
+    if (!accessToken) {
+      continue;
+    }
+
+    const accountId = stringValue(candidate.account_id)
+      || stringValue(candidate.accountId)
+      || extractCodexAccountIdFromJWT(accessToken);
+    if (!accountId) {
+      continue;
+    }
+
+    const idToken = stringValue(candidate.id_token) || stringValue(candidate.idToken);
+    const email = stringValue(candidate.email)
+      || extractEmailFromJWT(accessToken)
+      || (idToken ? extractEmailFromJWT(idToken) : "");
+    const expired = normalizeCodexCredentialExpiry(candidate.expired)
+      || normalizeCodexCredentialExpiry(candidate.expires_at)
+      || normalizeCodexCredentialExpiry(candidate.expiresAt)
+      || jwtExpiresAt(accessToken);
+
+    return removeUndefined({
+      accessToken,
+      refreshToken: stringValue(candidate.refresh_token) || stringValue(candidate.refreshToken) || undefined,
+      accountId,
+      email: email || undefined,
+      type: "codex",
+      expired: expired || undefined,
+      lastRefresh: stringValue(candidate.last_refresh)
+        || stringValue(candidate.lastRefresh)
+        || stringValue(parsed.last_refresh)
+        || stringValue(parsed.lastRefresh)
+        || undefined,
+    }) as CodexOAuthCredential;
+  }
+
+  return null;
+}
+
 export function encodeCodexOAuthCredential(input: CodexOAuthCredential): string {
   const stored: CodexStoredOAuthCredential = {
     access_token: input.accessToken,
@@ -669,7 +726,30 @@ function extractCodexAccountIdFromJWT(token: string): string {
 
 function extractEmailFromJWT(token: string): string {
   const claims = decodeJwtPayload(token);
-  return claims ? stringValue(claims.email) : "";
+  const profile = isRecord(claims?.["https://api.openai.com/profile"])
+    ? claims["https://api.openai.com/profile"]
+    : null;
+  return claims ? stringValue(claims.email) || (profile ? stringValue(profile.email) : "") : "";
+}
+
+function jwtExpiresAt(token: string): string {
+  const claims = decodeJwtPayload(token);
+  const exp = claims?.exp;
+  if (typeof exp !== "number" || !Number.isFinite(exp) || exp <= 0) {
+    return "";
+  }
+  return new Date(exp * 1000).toISOString();
+}
+
+function normalizeCodexCredentialExpiry(value: unknown): string {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return "";
+  }
+  const milliseconds = value > 10_000_000_000 ? value : value * 1000;
+  return new Date(milliseconds).toISOString();
 }
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {

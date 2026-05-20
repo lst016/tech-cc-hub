@@ -93,6 +93,10 @@ function buildCodexProfile(previous, credential, args) {
   const analysisModel = typeof previous?.analysisModel === "string" && previous.analysisModel.trim()
     ? previous.analysisModel.trim()
     : SMALL_MODEL;
+  const modelNames = Array.from(new Set([
+    ...MODELS,
+    ...previousModels.map((item) => typeof item?.name === "string" ? item.name.trim() : "").filter(Boolean),
+  ]));
 
   return {
     id: String(args.profileId || previous?.id || randomUUID()).trim(),
@@ -104,10 +108,11 @@ function buildCodexProfile(previous, credential, args) {
     smallModel,
     imageModel: previous?.imageModel || undefined,
     analysisModel,
-    models: MODELS.map((name) => ({
+    models: modelNames.map((name) => ({
       name,
       contextWindow: previousModels.find?.((item) => item?.name === name)?.contextWindow ?? 200000,
       compressionThresholdPercent: previousModels.find?.((item) => item?.name === name)?.compressionThresholdPercent ?? 70,
+      routingWeight: previousModels.find?.((item) => item?.name === name)?.routingWeight,
     })),
     enabled: true,
     provider: "codex",
@@ -125,10 +130,7 @@ function saveCodexProfile(configPath, credential, args) {
   ));
   const previous = targetIndex >= 0 ? profiles[targetIndex] : undefined;
   const nextProfile = buildCodexProfile(previous, credential, args);
-  const nextProfiles = profiles.map((profile, index) => ({
-    ...profile,
-    enabled: index === targetIndex,
-  }));
+  const nextProfiles = profiles.map((profile) => ({ ...profile }));
   if (targetIndex >= 0) {
     nextProfiles[targetIndex] = nextProfile;
   } else {

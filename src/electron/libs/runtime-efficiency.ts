@@ -22,6 +22,8 @@ export type RuntimeEfficiencyProfile = {
   forwardSubagentText: boolean;
 };
 
+export type RuntimeEfficiencyProfileState = Omit<RuntimeEfficiencyProfile, "id">;
+
 const BASE_SERVERS: readonly BuiltinMcpServerName[] = [
   "tech-cc-hub-admin",
   "tech-cc-hub-plan",
@@ -42,6 +44,15 @@ const AUTOMATION_SERVERS: readonly BuiltinMcpServerName[] = [
 
 const IDE_SERVERS: readonly BuiltinMcpServerName[] = [
   ...BASE_SERVERS,
+  "tech-cc-hub-idea",
+];
+
+const STICKY_SERVER_ORDER: readonly BuiltinMcpServerName[] = [
+  ...BASE_SERVERS,
+  "tech-cc-hub-browser",
+  "tech-cc-hub-design",
+  "tech-cc-hub-figma",
+  "tech-cc-hub-cron",
   "tech-cc-hub-idea",
 ];
 
@@ -125,6 +136,125 @@ export function resolveRuntimeEfficiencyProfile(
   return buildProfile("standard", BASE_SERVERS, {});
 }
 
+export function mergeRuntimeEfficiencyProfile(
+  profile: RuntimeEfficiencyProfile,
+  previousState?: RuntimeEfficiencyProfileState,
+): RuntimeEfficiencyProfile {
+  const stickyState = normalizeRuntimeEfficiencyProfileState(previousState);
+  if (!stickyState) {
+    return {
+      ...profile,
+      builtinMcpServers: normalizeBuiltinMcpServerNames(profile.builtinMcpServers),
+    };
+  }
+
+  const builtinMcpServers = resolveStickyBuiltinMcpServers(profile, stickyState);
+  const hasBrowserTools = builtinMcpServers.includes("tech-cc-hub-browser");
+  const hasDesignTools = builtinMcpServers.includes("tech-cc-hub-design");
+  const hasFigmaTools = builtinMcpServers.includes("tech-cc-hub-figma");
+  const hasExtendedTools = builtinMcpServers.some((serverName) => !BASE_SERVERS.includes(serverName));
+
+  return {
+    ...profile,
+    builtinMcpServers,
+    includeBrowserPrompt: profile.includeBrowserPrompt || stickyState.includeBrowserPrompt || hasBrowserTools,
+    includeDesignPrompt: profile.includeDesignPrompt || stickyState.includeDesignPrompt || hasDesignTools || hasFigmaTools,
+    includeProjectMemoryPrompt: profile.includeProjectMemoryPrompt || stickyState.includeProjectMemoryPrompt,
+    includeClaudeCompatPrompt: profile.includeClaudeCompatPrompt || stickyState.includeClaudeCompatPrompt || hasExtendedTools,
+    includePartialMessages: profile.includePartialMessages || stickyState.includePartialMessages || hasBrowserTools || hasDesignTools,
+    includeHookEvents: profile.includeHookEvents || stickyState.includeHookEvents,
+    agentProgressSummaries: profile.agentProgressSummaries || stickyState.agentProgressSummaries,
+    forwardSubagentText: profile.forwardSubagentText || stickyState.forwardSubagentText,
+  };
+}
+
+export function runtimeEfficiencyProfileToState(profile: RuntimeEfficiencyProfile): RuntimeEfficiencyProfileState {
+  return {
+    builtinMcpServers: normalizeBuiltinMcpServerNames(profile.builtinMcpServers),
+    includeBrowserPrompt: profile.includeBrowserPrompt,
+    includeDesignPrompt: profile.includeDesignPrompt,
+    includeProjectMemoryPrompt: profile.includeProjectMemoryPrompt,
+    includeClaudeCompatPrompt: profile.includeClaudeCompatPrompt,
+    includePartialMessages: profile.includePartialMessages,
+    includeHookEvents: profile.includeHookEvents,
+    agentProgressSummaries: profile.agentProgressSummaries,
+    forwardSubagentText: profile.forwardSubagentText,
+  };
+}
+
+export function runtimeEfficiencyProfileStateEquals(
+  left: RuntimeEfficiencyProfileState | undefined,
+  right: RuntimeEfficiencyProfileState | undefined,
+): boolean {
+  const normalizedLeft = normalizeRuntimeEfficiencyProfileState(left);
+  const normalizedRight = normalizeRuntimeEfficiencyProfileState(right);
+  if (!normalizedLeft || !normalizedRight) {
+    return normalizedLeft === normalizedRight;
+  }
+
+  return JSON.stringify(normalizedLeft) === JSON.stringify(normalizedRight);
+}
+
+export function normalizeRuntimeEfficiencyProfileState(value: unknown): RuntimeEfficiencyProfileState | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const builtinMcpServers = normalizeBuiltinMcpServerNames(value.builtinMcpServers);
+  if (builtinMcpServers.length === 0) {
+    return undefined;
+  }
+
+  const hasBrowserTools = builtinMcpServers.includes("tech-cc-hub-browser");
+  const hasDesignTools = builtinMcpServers.includes("tech-cc-hub-design");
+  const hasFigmaTools = builtinMcpServers.includes("tech-cc-hub-figma");
+  const hasExtendedTools = builtinMcpServers.some((serverName) => !BASE_SERVERS.includes(serverName));
+
+  return {
+    builtinMcpServers,
+    includeBrowserPrompt: Boolean(value.includeBrowserPrompt) || hasBrowserTools,
+    includeDesignPrompt: Boolean(value.includeDesignPrompt) || hasDesignTools || hasFigmaTools,
+    includeProjectMemoryPrompt: Boolean(value.includeProjectMemoryPrompt),
+    includeClaudeCompatPrompt: Boolean(value.includeClaudeCompatPrompt) || hasExtendedTools,
+    includePartialMessages: Boolean(value.includePartialMessages) || hasBrowserTools || hasDesignTools,
+    includeHookEvents: Boolean(value.includeHookEvents),
+    agentProgressSummaries: Boolean(value.agentProgressSummaries),
+    forwardSubagentText: Boolean(value.forwardSubagentText),
+  };
+}
+
+export function normalizeBuiltinMcpServerNames(value: unknown): BuiltinMcpServerName[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const names = new Set(value.filter(isBuiltinMcpServerName));
+  return STICKY_SERVER_ORDER.filter((serverName) => names.has(serverName));
+}
+
+function resolveStickyBuiltinMcpServers(
+  profile: RuntimeEfficiencyProfile,
+  stickyState: RuntimeEfficiencyProfileState,
+): BuiltinMcpServerName[] {
+  const profileServers = normalizeBuiltinMcpServerNames(profile.builtinMcpServers);
+  const stickyVisualServers = stickyState.builtinMcpServers.filter(isVisualServer);
+  const profileIsVisualLane = profile.id === "visual" || (profile.id === "team" && profile.includeBrowserPrompt);
+
+  if (profileIsVisualLane) {
+    return normalizeBuiltinMcpServerNames(profileServers.filter(isVisualServer));
+  }
+
+  if (profile.id === "standard" && stickyVisualServers.length > 0) {
+    return normalizeBuiltinMcpServerNames(stickyVisualServers);
+  }
+
+  return profileServers;
+}
+
+function isVisualServer(serverName: BuiltinMcpServerName): boolean {
+  return VISUAL_SERVERS.includes(serverName);
+}
+
 function buildProfile(
   id: RuntimeEfficiencyProfileId,
   builtinMcpServers: readonly BuiltinMcpServerName[],
@@ -135,7 +265,7 @@ function buildProfile(
     builtinMcpServers,
     includeBrowserPrompt: false,
     includeDesignPrompt: false,
-    includeProjectMemoryPrompt: true,
+    includeProjectMemoryPrompt: false,
     includeClaudeCompatPrompt: false,
     includePartialMessages: false,
     includeHookEvents: false,
@@ -143,4 +273,21 @@ function buildProfile(
     forwardSubagentText: false,
     ...overrides,
   };
+}
+
+function isBuiltinMcpServerName(value: unknown): value is BuiltinMcpServerName {
+  return (
+    value === "tech-cc-hub-admin" ||
+    value === "tech-cc-hub-plan" ||
+    value === "tech-cc-hub-knowledge" ||
+    value === "tech-cc-hub-browser" ||
+    value === "tech-cc-hub-design" ||
+    value === "tech-cc-hub-figma" ||
+    value === "tech-cc-hub-cron" ||
+    value === "tech-cc-hub-idea"
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
