@@ -19,6 +19,7 @@ import {
   type PermissionRequest,
 } from "../store/useAppStore";
 import { copyTextToClipboard as copyText } from "../utils/clipboard";
+import { getPlainTextFromClipboardData } from "../utils/clipboard-text";
 import { resetBrowserWorkbenchAnnotationState } from "../utils/browser-annotation-reset";
 import { getSlashCommandContext, getSlashCommandQuery, isCompletedSlashCommandContext, isDismissedSlashCommandQuery } from "../utils/slash-command-input";
 import { buildSlashCommandDisplayParts, serializeSlashCommandDraft } from "../utils/slash-command-display";
@@ -490,22 +491,6 @@ function getRelativeMentionPath(workspaceRoot: string, filePath: string) {
     return normalizedPath.slice(normalizedRoot.length + 1);
   }
   return normalizedPath;
-}
-
-function getPlainTextFromClipboardData(clipboardData: DataTransfer) {
-  const plainText = clipboardData.getData("text/plain");
-  if (plainText) return plainText;
-
-  const html = clipboardData.getData("text/html");
-  if (!html) return "";
-
-  if (typeof document === "undefined") {
-    return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-  }
-
-  const container = document.createElement("div");
-  container.innerHTML = html;
-  return (container.innerText || container.textContent || "").replace(/\u00a0/g, " ");
 }
 
 function getFileMentionContext(promptValue: string, cursorIndex: number): FileMentionContext | null {

@@ -16,9 +16,7 @@ test("prompt input keeps native edits out of the layout rerender path", () => {
 test("prompt input pastes clipboard html as plain text", () => {
   const source = readFileSync("src/ui/components/PromptInput.tsx", "utf8");
 
-  assert.match(source, /function getPlainTextFromClipboardData\(clipboardData: DataTransfer\)/);
-  assert.match(source, /clipboardData\.getData\("text\/plain"\)/);
-  assert.match(source, /clipboardData\.getData\("text\/html"\)/);
+  assert.match(source, /import \{ getPlainTextFromClipboardData \} from "\.\.\/utils\/clipboard-text"/);
   assert.match(source, /insertTextIntoPrompt\(currentPrompt, plainText, selection\.start, selection\.end\)/);
   assert.match(source, /contentEditable=\{disabled \? false : "plaintext-only"\}/);
   assert.doesNotMatch(source, /execCommand/);
