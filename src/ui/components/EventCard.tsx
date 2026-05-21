@@ -15,7 +15,14 @@ import { DecisionPanel } from "./DecisionPanel";
 import { resolveImageAttachmentSrc } from "../../shared/attachments";
 import { copyTextToClipboard as copyText } from "../utils/clipboard";
 import { OPEN_BROWSER_WORKBENCH_URL_EVENT, PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT } from "../events";
-import { extractCodeReferencesPrompt, type CodeReferencePromptSummary } from "../utils/code-reference-prompt";
+import {
+  extractCodeReferencesPrompt,
+  extractFileReferencesPrompt,
+  extractMessageReferencesPrompt,
+  type CodeReferencePromptSummary,
+  type FileReferencePromptSummary,
+  type MessageReferencePromptSummary,
+} from "../utils/code-reference-prompt";
 
 type MessageContent = SDKAssistantMessage["message"]["content"][number];
 type ToolResultContent = SDKUserMessage["message"]["content"][number];
@@ -724,13 +731,90 @@ const CodeReferenceChip = ({ reference }: { reference: CodeReferencePromptSummar
   );
 };
 
+const FileReferenceChip = ({ reference }: { reference: FileReferencePromptSummary }) => {
+  const label = reference.label || reference.fileName || reference.filePath || `${reference.kind === "directory" ? "目录" : "文件"}引用 ${reference.index}`;
+  const title = [
+    reference.workspaceRoot,
+    reference.filePath,
+  ].filter(Boolean).join("\n");
+  const canOpen = reference.kind === "file" && Boolean(reference.filePath);
+
+  return (
+    <div className="max-w-full rounded-2xl border border-black/8 bg-white/94 px-3 py-3 text-left text-xs text-ink-800 shadow-[0_10px_24px_rgba(15,18,24,0.06)]" title={title}>
+      <div className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+        <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-ink-800 text-[11px] font-bold text-white">
+          {reference.index}
+        </span>
+        <span className="shrink-0 rounded-md bg-black/5 px-1.5 py-0.5 text-[10px] text-muted">
+          {reference.kind === "directory" ? "目录" : "文件"}
+        </span>
+        {canOpen ? (
+          <button
+            type="button"
+            className="min-w-0 truncate text-left text-ink-800 transition hover:underline"
+            onClick={() => window.dispatchEvent(new CustomEvent(PREVIEW_OPEN_FILE_EVENT, {
+              detail: { filePath: reference.filePath },
+            }))}
+          >
+            {label}
+          </button>
+        ) : (
+          <span className="min-w-0 truncate">{label}</span>
+        )}
+      </div>
+      {reference.filePath && reference.filePath !== label && (
+        <div className="mt-2 min-w-0 truncate font-mono text-[11px] leading-5 text-muted" title={reference.filePath}>
+          {reference.filePath}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const getMessageReferenceRoleLabel = (role?: MessageReferencePromptSummary["sourceRole"]) => {
+  if (role === "user") return "用户";
+  if (role === "assistant") return "助手";
+  if (role === "tool") return "工具";
+  if (role === "system") return "系统";
+  return "消息";
+};
+
+const MessageReferenceChip = ({ reference }: { reference: MessageReferencePromptSummary }) => {
+  const roleLabel = getMessageReferenceRoleLabel(reference.sourceRole);
+  const label = reference.sourceLabel || `${roleLabel}引用 ${reference.index}`;
+  const title = [
+    roleLabel,
+    reference.sourceLabel,
+    reference.textPreview,
+  ].filter(Boolean).join("\n");
+
+  return (
+    <div className="max-w-full rounded-2xl border border-accent/18 bg-white/94 px-3 py-3 text-left text-xs text-ink-800 shadow-[0_10px_24px_rgba(210,106,61,0.08)]" title={title}>
+      <div className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+        <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent text-[11px] font-bold text-white">
+          {reference.index}
+        </span>
+        <span className="shrink-0 rounded-md bg-[#fff7ed] px-1.5 py-0.5 text-[10px] text-[#9a3412]">
+          {reference.kind === "selection" ? "选区" : roleLabel}
+        </span>
+        <span className="min-w-0 truncate">{label}</span>
+      </div>
+      {reference.textPreview && (
+        <code className="mt-2 block max-h-20 overflow-hidden whitespace-pre-wrap break-words rounded-xl bg-[#fff7ed] px-2.5 py-2 text-[10px] leading-4 text-[#7c2d12]">
+          {compactPreview(reference.textPreview, 180)}
+        </code>
+      )}
+    </div>
+  );
+};
+
 const isSyntheticAttachmentPrompt = (text: string) => {
   const normalized = text.trim().replace(/\s+/g, " ");
   return /^The user uploaded (?:an image|\d+ images?)\b/i.test(normalized);
 };
 
 const extractPromptContextBlocks = (prompt: string) => (
-  Array.from(prompt.matchAll(/<(browser_annotations|code_references)>[\s\S]*?<\/\1>/g), (match) => match[0].trim())
+  Array.from(prompt.matchAll(/<(browser_annotations|code_references|message_references|file_references)>[\s\S]*?<\/\1>/g), (match) => match[0].trim())
     .filter(Boolean)
 );
 
@@ -920,13 +1004,17 @@ const UserMessageCard = ({
   revisionDisabled?: boolean;
   onRevisePrompt?: UserPromptRevisionHandler;
 }) => {
-  const { visiblePrompt, annotations, codeReferences } = useMemo(() => {
+  const { visiblePrompt, annotations, codeReferences, fileReferences, messageReferences } = useMemo(() => {
     const browserResult = extractBrowserAnnotationsPrompt(message.prompt);
     const codeResult = extractCodeReferencesPrompt(browserResult.visiblePrompt);
+    const fileResult = extractFileReferencesPrompt(codeResult.visiblePrompt);
+    const messageResult = extractMessageReferencesPrompt(fileResult.visiblePrompt);
     return {
-      visiblePrompt: codeResult.visiblePrompt,
+      visiblePrompt: messageResult.visiblePrompt,
       annotations: browserResult.annotations,
       codeReferences: codeResult.codeReferences,
+      fileReferences: fileResult.fileReferences,
+      messageReferences: messageResult.messageReferences,
     };
   }, [message.prompt]);
   const hasVisiblePrompt = visiblePrompt.trim().length > 0;
@@ -1069,7 +1157,7 @@ const UserMessageCard = ({
               referenceCapturedAt={message.capturedAt}
             />
           </div>
-        ) : !hasAttachments && annotations.length === 0 && codeReferences.length === 0 ? (
+        ) : !hasAttachments && annotations.length === 0 && codeReferences.length === 0 && fileReferences.length === 0 && messageReferences.length === 0 ? (
           <div className="max-w-[78%] rounded-[22px] border border-black/6 bg-[#eef2f8] px-4 py-3 text-sm text-muted">
             已发送附件
           </div>
@@ -1089,6 +1177,20 @@ const UserMessageCard = ({
         <div className="mt-2 grid w-full max-w-[78%] gap-2">
           {codeReferences.map((reference) => (
             <CodeReferenceChip key={`${reference.index}:${reference.filePath ?? "unknown"}:${reference.rangeLabel ?? ""}`} reference={reference} />
+          ))}
+        </div>
+      )}
+      {fileReferences.length > 0 && (
+        <div className="mt-2 grid w-full max-w-[78%] gap-2">
+          {fileReferences.map((reference) => (
+            <FileReferenceChip key={`${reference.index}:${reference.filePath ?? "unknown"}:${reference.kind}`} reference={reference} />
+          ))}
+        </div>
+      )}
+      {messageReferences.length > 0 && (
+        <div className="mt-2 grid w-full max-w-[78%] gap-2">
+          {messageReferences.map((reference) => (
+            <MessageReferenceChip key={`${reference.index}:${reference.sourceLabel ?? "message"}:${reference.kind}`} reference={reference} />
           ))}
         </div>
       )}
