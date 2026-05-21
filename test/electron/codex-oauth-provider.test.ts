@@ -49,10 +49,10 @@ test("codex provider does not accept deepseek models from a merged model pool", 
   );
 });
 
-test("deepseek model names are normalized before routing to Anthropic-compatible gateways", () => {
+test("custom gateway model names preserve provider casing before routing", () => {
   assert.equal(
     normalizeProviderModelName("custom", "DeepSeek-V4-Pro"),
-    "deepseek-v4-pro",
+    "DeepSeek-V4-Pro",
   );
   assert.equal(
     normalizeProviderModelName("deepseek", "DeepSeek-V4-Pro"),

@@ -89,6 +89,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
   let sessionUpdatedAt = sessionCreatedAt;
   let sessionStatus: "idle" | "running" | "completed" = "idle";
   let sessionTitle = "新聊天";
+  let sessionModel = "";
   let sessionMessages: StreamMessage[] = [];
   const browserStateBySessionId: Record<string, BrowserWorkbenchState> = {};
   const createEmptyBrowserState = (): BrowserWorkbenchState => ({
@@ -120,6 +121,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
           title: sessionTitle,
           status: sessionStatus,
           cwd: browserPreviewCwd,
+          model: sessionModel,
           runSurface: "development",
           slashCommands: browserPreviewSlashCommandNames,
           createdAt: sessionCreatedAt,
@@ -175,6 +177,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         sessionCreatedAt = Date.now();
         sessionUpdatedAt = sessionCreatedAt;
         sessionStatus = "idle";
+        sessionModel = "";
         sessionTitle = event.payload.title?.trim() || "新聊天";
         sessionMessages = [];
         syncSession();
@@ -183,6 +186,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         sessionUpdatedAt = Date.now();
         sessionStatus = "completed";
         sessionTitle = event.payload.title?.trim() || buildBrowserPreviewTitle(event.payload.prompt);
+        sessionModel = event.payload.runtime?.model?.trim() || sessionModel;
         sessionMessages = [
           {
             type: "user_prompt",
@@ -212,6 +216,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
       if (event.type === "session.continue") {
         sessionUpdatedAt = Date.now();
         sessionStatus = "completed";
+        sessionModel = event.payload.runtime?.model?.trim() || sessionModel;
         sessionMessages = [
           ...sessionMessages,
           {
@@ -222,6 +227,22 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
           },
         ];
         syncSession();
+      }
+      if (event.type === "session.set_model") {
+        sessionUpdatedAt = Date.now();
+        sessionModel = event.payload.model.trim();
+        emit({
+          type: "session.status",
+          payload: {
+            sessionId: event.payload.sessionId,
+            status: sessionStatus,
+            title: sessionTitle,
+            cwd: browserPreviewCwd,
+            model: sessionModel,
+            slashCommands: browserPreviewSlashCommandNames,
+          },
+        });
+        emit(buildSessionListEvent());
       }
       if (event.type === "agent.list") {
         emit({ type: "agent.list", payload: { agents: [] } });

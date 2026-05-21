@@ -41,6 +41,7 @@ import { ModelSelect } from "./ModelSelect";
 import {
   getEnabledProfiles,
   getRoutedModelOptionsForProfiles,
+  resolveAvailableModelName,
 } from "./settings/settings-utils";
 
 const DEFAULT_ALLOWED_TOOLS = "*";
@@ -857,7 +858,10 @@ export function usePromptActions(sendEvent: (event: ClientEvent) => void) {
 
   const buildRuntimeOverrides = useCallback((): RuntimeOverrides | null => {
     const sessionRuntimeModel = resolveSessionRuntimeModel();
-    const selectedModel = sessionRuntimeModel || runtimeModel.trim() || routedModelOptions[0]?.value || activeProfile?.model?.trim();
+    const selectedModel = resolveAvailableModelName(
+      sessionRuntimeModel || runtimeModel.trim() || routedModelOptions[0]?.value || activeProfile?.model?.trim(),
+      availableModels,
+    );
     if (!selectedModel) {
       setGlobalError("请先在设置里启用配置，并至少提供一个模型。");
       return null;
@@ -1161,15 +1165,24 @@ export function PromptInput({
     title: `${option.value} -> ${option.routeLabel}`,
   })), [routedModelOptions]);
   const activeProfile = enabledProfiles[0];
-  const selectedRuntimeModel = activeSessionModel || runtimeModel.trim() || routedModelOptions[0]?.value || activeProfile?.model?.trim() || "";
+  const selectedRuntimeModel = resolveAvailableModelName(
+    activeSessionModel || runtimeModel.trim() || routedModelOptions[0]?.value || activeProfile?.model?.trim(),
+    availableModels,
+  );
   const handleRuntimeModelChange = useCallback((model: string) => {
+    const nextModel = model.trim();
+    setRuntimeModel(nextModel);
     if (activeSessionId) {
-      setSessionModel(activeSessionId, model);
-      return;
+      setSessionModel(activeSessionId, nextModel);
+      sendEvent({
+        type: "session.set_model",
+        payload: {
+          sessionId: activeSessionId,
+          model: nextModel,
+        },
+      });
     }
-
-    setRuntimeModel(model);
-  }, [activeSessionId, setRuntimeModel, setSessionModel]);
+  }, [activeSessionId, sendEvent, setRuntimeModel, setSessionModel]);
   useEffect(() => {
     promptDraftRef.current = prompt;
   }, [prompt]);

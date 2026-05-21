@@ -1458,6 +1458,38 @@ export async function handleClientEvent(event: ClientEvent) {
     return;
   }
 
+  if (event.type === "session.set_model") {
+    const session = store.getSession(event.payload.sessionId);
+    if (!session) {
+      emit({ type: "session.deleted", payload: { sessionId: event.payload.sessionId } });
+      emit({
+        type: "runner.error",
+        payload: { sessionId: event.payload.sessionId, message: "Session no longer exists." },
+      });
+      return;
+    }
+
+    const requestedModel = event.payload.model.trim();
+    const selectedModel = resolveApiConfigForModel(requestedModel)?.model ?? requestedModel;
+    if (!selectedModel) {
+      return;
+    }
+
+    store.updateSession(session.id, { model: selectedModel });
+    emit({
+      type: "session.status",
+      payload: {
+        sessionId: session.id,
+        status: session.status,
+        title: session.title,
+        cwd: session.cwd,
+        model: selectedModel,
+        slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
+      },
+    });
+    return;
+  }
+
   if (event.type === "session.append") {
     const session = store.getSession(event.payload.sessionId);
     if (!session) {

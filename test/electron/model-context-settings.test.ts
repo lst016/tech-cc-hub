@@ -7,6 +7,7 @@ import {
   getEnabledProfiles,
   getRoutedModelOptionsForProfiles,
   normalizeProfile,
+  resolveAvailableModelName,
 } from "../../src/ui/components/settings/settings-utils.js";
 import {
   applySharedModelRoutingPatch,
@@ -176,6 +177,38 @@ test("enabled profile helpers preserve list order and dedupe models across enabl
     "second-small",
     "second-extra",
   ]);
+});
+
+test("enabled profile helpers hide duplicate deepseek casing aliases", () => {
+  const profiles = [
+    {
+      id: "gateway",
+      name: "Default Gateway",
+      apiKey: "sk-gateway",
+      baseURL: "https://gateway.example.com/v1",
+      model: "DeepSeek-V4-Pro",
+      expertModel: "gpt-5.5",
+      smallModel: "DeepSeek-V4-Pro",
+      models: [
+        { name: "DeepSeek-V4-Pro" },
+        { name: "deepseek-v4-pro" },
+        { name: "deepseek-chat" },
+      ],
+      enabled: true,
+      provider: "custom" as const,
+      apiType: "anthropic" as const,
+    },
+  ];
+
+  assert.deepEqual(getAvailableModelsForProfiles(getEnabledProfiles(profiles)), [
+    "DeepSeek-V4-Pro",
+    "gpt-5.5",
+    "deepseek-chat",
+  ]);
+  assert.equal(
+    resolveAvailableModelName("deepseek-v4-pro", getAvailableModelsForProfiles(getEnabledProfiles(profiles))),
+    "DeepSeek-V4-Pro",
+  );
 });
 
 test("routed model options expose the platform owner selected by routing weight", () => {

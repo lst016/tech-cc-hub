@@ -10,7 +10,7 @@ import {
   normalizeModelRoutingWeight,
   pickHighestWeightedModelOwner,
 } from "../../../shared/model-routing-weight.js";
-import { isModelCompatibleWithApiProvider } from "../../../shared/model-provider-routing.js";
+import { isDeepSeekModelName, isModelCompatibleWithApiProvider } from "../../../shared/model-provider-routing.js";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 const DEEPSEEK_CONTEXT_WINDOW = 1_000_000;
@@ -293,26 +293,63 @@ export function getEnabledProfiles(profiles: ApiConfigProfile[]): ApiConfigProfi
 }
 
 export function getAvailableModels(profile: ApiConfigProfile): string[] {
-  return Array.from(
-    new Set([
-      profile.model,
-      profile.expertModel,
-      profile.smallModel,
-      profile.imageModel,
-      profile.analysisModel,
-      profile.embeddingModel,
-      profile.wikiModel,
-      ...(profile.models ?? []).map((item) => item.name),
-    ]),
-  )
-    .map((item) => item?.trim() ?? "")
-    .filter(Boolean);
+  return dedupeAvailableModelNames([
+    profile.model,
+    profile.expertModel,
+    profile.smallModel,
+    profile.imageModel,
+    profile.analysisModel,
+    profile.embeddingModel,
+    profile.wikiModel,
+    ...(profile.models ?? []).map((item) => item.name),
+  ]);
 }
 
 export function getAvailableModelsForProfiles(profiles: ApiConfigProfile[]): string[] {
-  return Array.from(
-    new Set(profiles.flatMap((profile) => getAvailableModels(profile))),
-  );
+  return dedupeAvailableModelNames(profiles.flatMap((profile) => getAvailableModels(profile)));
+}
+
+function dedupeAvailableModelNames(models: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+
+  for (const model of models) {
+    const normalized = model?.trim() ?? "";
+    if (!normalized) {
+      continue;
+    }
+
+    const key = isDeepSeekModelName(normalized)
+      ? `deepseek:${normalized.toLowerCase()}`
+      : `model:${normalized}`;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    deduped.push(normalized);
+  }
+
+  return deduped;
+}
+
+export function resolveAvailableModelName(modelName: string | undefined, availableModels: string[]): string {
+  const normalized = modelName?.trim() ?? "";
+  if (!normalized) {
+    return "";
+  }
+  if (availableModels.includes(normalized)) {
+    return normalized;
+  }
+  if (isDeepSeekModelName(normalized)) {
+    const matchedModel = availableModels.find((availableModel) =>
+      isDeepSeekModelName(availableModel) && availableModel.toLowerCase() === normalized.toLowerCase()
+    );
+    if (matchedModel) {
+      return matchedModel;
+    }
+  }
+  return normalized;
 }
 
 export function getRoutedModelOptionsForProfiles(profiles: ApiConfigProfile[]): RoutedModelOption[] {

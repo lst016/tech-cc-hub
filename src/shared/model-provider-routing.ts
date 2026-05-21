@@ -58,7 +58,7 @@ export function normalizeProviderModelName(
     return "";
   }
 
-  if ((provider === "custom" || provider === "deepseek") && isDeepSeekModelName(normalized)) {
+  if (provider === "deepseek" && isDeepSeekModelName(normalized)) {
     return normalized.toLowerCase();
   }
 
