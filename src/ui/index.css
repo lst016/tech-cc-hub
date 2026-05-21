@@ -55,20 +55,6 @@ pre code.hljs {
   padding: 0;
 }
 
-@keyframes knowledge-progress-indeterminate {
-  0% {
-    transform: translateX(-120%);
-  }
-  100% {
-    transform: translateX(360%);
-  }
-}
-
-.knowledge-progress-indeterminate {
-  width: 30%;
-  animation: knowledge-progress-indeterminate 1.15s ease-in-out infinite;
-}
-
 html,
 body,
 #root {
@@ -135,6 +121,39 @@ code, pre, textarea.mono, input.mono {
 .chat-bottom-anchor {
   height: 1px;
   overflow-anchor: auto;
+}
+
+.prompt-composer-surface {
+  container-type: inline-size;
+}
+
+.prompt-composer-card {
+  display: flex;
+  flex-direction: column;
+  max-height: min(70vh, 440px);
+  overflow: visible;
+}
+
+.prompt-composer-body {
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
+.prompt-composer-editor,
+.prompt-composer-editor * {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@container (max-width: 580px) {
+  .prompt-composer-runtime-controls {
+    display: none;
+  }
+
+  .prompt-composer-footer {
+    justify-content: flex-end;
+  }
 }
 
 .chat-scroll::-webkit-scrollbar {

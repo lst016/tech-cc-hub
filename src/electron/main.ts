@@ -64,13 +64,18 @@ import { loadAgentRuleDocuments, saveUserAgentRuleDocument } from "./libs/agent-
 import { handleSkillManagerInvoke, registerSkillManagerHandlers } from "./libs/skill-manager/ipc-handlers.js";
 import { registerCronIpcHandlers, IpcCronEventEmitter } from "./libs/cron-ipc-handlers.js";
 import { handleGitWorkbenchInvoke, registerGitWorkbenchIpcHandlers } from "./libs/git/index.js";
-import { handleKnowledgeUiInvoke } from "./libs/knowledge/knowledge-ui-store.js";
+import {
+  getManagedCodeGraphStatus,
+  indexManagedCodeGraph,
+  isManagedCodeGraphInitialized,
+  syncManagedCodeGraph,
+} from "./libs/codegraph/managed-codegraph.js";
 import { CronService } from "./libs/cron-service.js";
 import { CronRepository } from "./libs/cron-repository.js";
 import { CronJobExecutor, CronBusyGuard } from "./libs/cron-executor.js";
 import { setCronService } from "./libs/mcp-tools/cron.js";
 import type { ClientEvent, PromptAttachment, ServerEvent } from "./types.js";
-import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkbenchEvent } from "./browser-manager.js";
+import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkbenchEvent, type BrowserWorkbenchNetworkLogInput } from "./browser-manager.js";
 import { startDevBackendBridge, DEV_BACKEND_BRIDGE_PORT } from "./dev-backend-bridge.js";
 import { buildSessionSlashCommandItems } from "./libs/slash-command-catalog.js";
 import { prepareExternalCliCommand, runExternalCli } from "./libs/external-cli.js";
@@ -116,19 +121,11 @@ const browserWorkbenches = new Map<string, BrowserWorkbenchManager>();
 const browserWorkbenchEventListeners = new Set<(event: BrowserWorkbenchEvent) => void>();
 let stopDevBackendBridge: (() => void) | null = null;
 let channelBridgeController: ChannelBridgeController | null = null;
-const KNOWLEDGE_UI_CHANNELS = [
-  "knowledge:list",
-  "knowledge:sync-workspaces",
-  "knowledge:add-workspace",
-  "knowledge:remove-workspace",
-  "knowledge:set-workspace-links",
-  "knowledge:update-generation",
-  "knowledge:complete-generation",
-  "knowledge:run-generation",
-  "knowledge:list-documents",
-  "knowledge:read-document",
-  "knowledge:overview",
-] as const;
+
+type CodeGraphUiPayload = {
+  workspaceRoot?: unknown;
+  mode?: unknown;
+};
 
 async function getOpenComputerUseVersion(): Promise<string | null> {
   try {
@@ -146,6 +143,41 @@ function getNpmCommand(): string {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function resolveCodeGraphWorkspaceRoot(payload: unknown): string {
+  const request = payload && typeof payload === "object" ? payload as CodeGraphUiPayload : {};
+  const workspaceRoot = typeof request.workspaceRoot === "string" ? request.workspaceRoot.trim() : "";
+  if (!workspaceRoot) {
+    throw new Error("workspaceRoot is required.");
+  }
+  if (!existsSync(workspaceRoot)) {
+    throw new Error(`workspaceRoot does not exist: ${workspaceRoot}`);
+  }
+  return workspaceRoot;
+}
+
+async function handleCodeGraphUiInvoke(channel: string, payload: unknown): Promise<unknown> {
+  if (channel === "codegraph:status") {
+    const workspaceRoot = resolveCodeGraphWorkspaceRoot(payload);
+    return { success: true, status: await getManagedCodeGraphStatus(workspaceRoot) };
+  }
+  if (channel === "codegraph:sync") {
+    const workspaceRoot = resolveCodeGraphWorkspaceRoot(payload);
+    const request = payload && typeof payload === "object" ? payload as CodeGraphUiPayload : {};
+    const initialized = isManagedCodeGraphInitialized(workspaceRoot);
+    const mode = request.mode === "index" || !initialized ? "index" : "sync";
+    const result = mode === "index"
+      ? await indexManagedCodeGraph(workspaceRoot)
+      : await syncManagedCodeGraph(workspaceRoot);
+    return {
+      success: true,
+      mode,
+      result,
+      status: await getManagedCodeGraphStatus(workspaceRoot),
+    };
+  }
+  throw new Error(`Unsupported CodeGraph UI channel: ${channel}`);
 }
 
 async function getOpenComputerUseLatestVersion(): Promise<string> {
@@ -1351,6 +1383,150 @@ function readPreviewFileForRenderer(request: unknown): {
   }
 }
 
+const TERMINAL_DEFAULT_TIMEOUT_MS = 120_000;
+const TERMINAL_MAX_TIMEOUT_MS = 10 * 60_000;
+const TERMINAL_MAX_OUTPUT_CHARS = 200_000;
+
+function clampTerminalTimeoutMs(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return TERMINAL_DEFAULT_TIMEOUT_MS;
+  }
+  return Math.max(1_000, Math.min(TERMINAL_MAX_TIMEOUT_MS, Math.floor(value)));
+}
+
+function appendTerminalOutput(current: string, chunk: Buffer): string {
+  if (current.length >= TERMINAL_MAX_OUTPUT_CHARS) {
+    return current;
+  }
+  const text = chunk.toString("utf8");
+  const remaining = TERMINAL_MAX_OUTPUT_CHARS - current.length;
+  if (text.length <= remaining) {
+    return `${current}${text}`;
+  }
+  const marker = "\n...[output truncated]";
+  const available = Math.max(0, remaining - marker.length);
+  return `${current}${text.slice(0, available)}${marker}`;
+}
+
+function resolveTerminalCwd(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    return process.cwd();
+  }
+  try {
+    const realPath = realpathSync(value.trim());
+    if (statSync(realPath).isDirectory()) {
+      return realPath;
+    }
+  } catch {
+    // Fall back to the app working directory if the session cwd disappeared.
+  }
+  return process.cwd();
+}
+
+function buildTerminalShell(command: string): { command: string; args: string[]; label: string } {
+  if (process.platform === "win32") {
+    const shellCommand = "powershell.exe";
+    return {
+      command: shellCommand,
+      args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+      label: shellCommand,
+    };
+  }
+  const shellCommand = process.env.SHELL || "bash";
+  return {
+    command: shellCommand,
+    args: ["-lc", command],
+    label: shellCommand.split(/[\\/]/).pop() || "bash",
+  };
+}
+
+function runTerminalCommandForRenderer(request: unknown): Promise<{
+  success: boolean;
+  command: string;
+  cwd: string;
+  shell: string;
+  exitCode: number | null;
+  signal?: string | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  elapsedMs: number;
+  error?: string;
+}> {
+  const payload = request && typeof request === "object" ? request as { command?: unknown; cwd?: unknown; timeoutMs?: unknown } : {};
+  const command = typeof payload.command === "string" ? payload.command.trim() : "";
+  const cwd = resolveTerminalCwd(payload.cwd);
+  const timeoutMs = clampTerminalTimeoutMs(payload.timeoutMs);
+  const shellInfo = buildTerminalShell(command);
+  const startedAt = Date.now();
+
+  if (!command) {
+    return Promise.resolve({
+      success: false,
+      command,
+      cwd,
+      shell: shellInfo.label,
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      elapsedMs: 0,
+      error: "请输入命令。",
+    });
+  }
+
+  return new Promise((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let settled = false;
+    const child = spawn(shellInfo.command, shellInfo.args, {
+      cwd,
+      env: process.env,
+      windowsHide: true,
+    });
+    const finish = (result: {
+      exitCode: number | null;
+      signal?: string | null;
+      error?: string;
+    }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve({
+        success: !timedOut && !result.error && result.exitCode === 0,
+        command,
+        cwd,
+        shell: shellInfo.label,
+        exitCode: result.exitCode,
+        signal: result.signal,
+        stdout,
+        stderr,
+        timedOut,
+        elapsedMs: Date.now() - startedAt,
+        error: result.error,
+      });
+    };
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, timeoutMs);
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout = appendTerminalOutput(stdout, chunk);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr = appendTerminalOutput(stderr, chunk);
+    });
+    child.on("error", (error) => {
+      finish({ exitCode: null, error: error.message });
+    });
+    child.on("close", (code, signal) => {
+      finish({ exitCode: code, signal });
+    });
+  });
+}
+
 ipcMain.handle("preview-list-directory", (_event, request: unknown) => listPreviewDirectoryForRenderer(request));
 ipcMain.handle("preview-list-files", (_event, request: unknown) => listPreviewFilesForRenderer(request));
 ipcMain.handle("sessions:list", (_event, payload?: { archived?: boolean }) => ({
@@ -1360,9 +1536,20 @@ ipcMain.handle("sessions:list", (_event, payload?: { archived?: boolean }) => ({
 ipcMain.handle("slash-commands:list", (_event, payload?: { cwd?: string }) => ({
   commands: buildSessionSlashCommandItems({ cwd: payload?.cwd }) ?? [],
 }));
-for (const channel of KNOWLEDGE_UI_CHANNELS) {
-  ipcMain.handle(channel, (_event, ...args: unknown[]) => handleKnowledgeUiInvoke(app.getPath("userData"), channel, ...args));
-}
+ipcMain.handle("codegraph:status", async (_event, payload: unknown) => {
+  try {
+    return await handleCodeGraphUiInvoke("codegraph:status", payload);
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) };
+  }
+});
+ipcMain.handle("codegraph:sync", async (_event, payload: unknown) => {
+  try {
+    return await handleCodeGraphUiInvoke("codegraph:sync", payload);
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) };
+  }
+});
 ipcMain.handle("plugins:getOpenComputerUseStatus", () => getOpenComputerUsePluginStatus());
 ipcMain.handle("plugins:checkOpenComputerUseUpdate", () => checkOpenComputerUsePluginUpdate());
 ipcMain.handle("plugins:installOpenComputerUse", () => installOpenComputerUsePlugin());
@@ -1373,6 +1560,7 @@ ipcMain.handle("plugins:connectFigmaOfficial", () => connectFigmaOfficialPlugin(
 ipcMain.handle("plugins:connectFigmaCodexOfficial", () => connectFigmaCodexOfficialPlugin());
 ipcMain.handle("plugins:connectFigmaPatOfficial", (_event, token: unknown) => connectFigmaPatOfficialPlugin(token));
 ipcMain.handle("plugins:connectFigmaDesktopOfficial", () => connectFigmaDesktopOfficialPlugin());
+ipcMain.handle("terminal:run", (_event, request: unknown) => runTerminalCommandForRenderer(request));
 ipcMain.handle("shell:openExternal", async (_event, url: unknown) => {
   if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
     return { success: false, error: "Invalid external URL." };
@@ -2377,6 +2565,13 @@ app.on("ready", async () => {
       goForward: (sessionId) => getBrowserWorkbench(sessionId)?.goForward() ?? buildBrowserWorkbenchFallbackState(),
       getState: (sessionId) => getBrowserWorkbench(sessionId)?.getState() ?? buildBrowserWorkbenchFallbackState(),
       getConsoleLogs: (sessionId, limit) => getBrowserWorkbench(sessionId)?.getConsoleLogs(limit) ?? [],
+      getNetworkLogs: (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "Browser workbench is not initialized." };
+        }
+        return browserWorkbench.getNetworkLogs(input);
+      },
       extractPageSnapshot: async (sessionId) => {
         const browserWorkbench = getBrowserWorkbench(sessionId);
         if (!browserWorkbench) {
@@ -2776,6 +2971,12 @@ app.on("ready", async () => {
               await shell.openExternal(url);
               return { success: true };
             }
+            if (channel === "terminal:run") {
+              return await runTerminalCommandForRenderer(args[0]);
+            }
+            if (channel === "codegraph:status" || channel === "codegraph:sync") {
+              return await handleCodeGraphUiInvoke(channel, args[0]);
+            }
             if (channel === "codex-oauth-start") {
               return await startCodexOAuth();
             }
@@ -2787,9 +2988,6 @@ app.on("ready", async () => {
             }
             if (channel.startsWith("git:")) {
               return await handleGitWorkbenchInvoke(channel, ...args);
-            }
-            if (channel.startsWith("knowledge:")) {
-              return handleKnowledgeUiInvoke(app.getPath("userData"), channel, ...args);
             }
             if (channel.startsWith("skills:")) {
               return await handleSkillManagerInvoke(channel, ...args);
@@ -2828,9 +3026,11 @@ app.on("ready", async () => {
           goForwardBrowserWorkbench: (sessionId?: string) => getBrowserWorkbench(sessionId)!.goForward(),
           getBrowserWorkbenchState: (sessionId?: string) => getBrowserWorkbench(sessionId)!.getState(),
           getBrowserWorkbenchConsoleLogs: (limit?: number, sessionId?: string) => getBrowserWorkbench(sessionId)!.getConsoleLogs(limit),
+          getBrowserWorkbenchFetchLogs: (input?: BrowserWorkbenchNetworkLogInput, sessionId?: string) => getBrowserWorkbench(sessionId)!.getNetworkLogs(input),
           captureBrowserWorkbenchVisible: async (sessionId?: string) => await getBrowserWorkbench(sessionId)!.captureVisible(),
           inspectBrowserWorkbenchAtPoint: async (point: { x: number; y: number }, sessionId?: string) => await getBrowserWorkbench(sessionId)!.inspectAtPoint(point),
           clearBrowserWorkbenchAnnotations: async (sessionId?: string) => await getBrowserWorkbench(sessionId)!.clearAnnotations(),
+          removeBrowserWorkbenchAnnotation: async (annotationId: string, sessionId?: string) => await getBrowserWorkbench(sessionId)!.removeAnnotation(annotationId),
           setBrowserWorkbenchAnnotationMode: async (enabled: boolean, sessionId?: string) => await getBrowserWorkbench(sessionId)!.setAnnotationMode(enabled),
         },
         subscribeServerEvents: (listener) => addServerEventListener(listener as (event: ServerEvent) => void),
@@ -3053,6 +3253,10 @@ app.on("ready", async () => {
         return getBrowserWorkbench(sessionId)!.getConsoleLogs(limit);
     });
 
+    ipcMainHandle("browser-fetch-logs", (_: IpcMainInvokeEvent, input?: BrowserWorkbenchNetworkLogInput, sessionId?: string) => {
+        return getBrowserWorkbench(sessionId)!.getNetworkLogs(input);
+    });
+
     ipcMainHandle("browser-capture-visible", async (_: IpcMainInvokeEvent, sessionId?: string) => {
         return await getBrowserWorkbench(sessionId)!.captureVisible();
     });
@@ -3063,6 +3267,10 @@ app.on("ready", async () => {
 
     ipcMainHandle("browser-clear-annotations", async (_: IpcMainInvokeEvent, sessionId?: string) => {
         return await getBrowserWorkbench(sessionId)!.clearAnnotations();
+    });
+
+    ipcMainHandle("browser-remove-annotation", async (_: IpcMainInvokeEvent, annotationId: string, sessionId?: string) => {
+        return await getBrowserWorkbench(sessionId)!.removeAnnotation(annotationId);
     });
 
     ipcMainHandle("browser-annotation-mode", async (_: IpcMainInvokeEvent, enabled: boolean, sessionId?: string) => {

@@ -276,6 +276,11 @@ async function summarizeImageBase64WithCodexResponses(options: {
     headers: buildCodexRequestHeaders(credential, false),
     body: JSON.stringify({
       model,
+      instructions: [
+        "You are a precise visual inspection assistant.",
+        "Analyze the provided image and follow the user's requested output format.",
+        "Return implementation-useful visual details; do not say you cannot see the image when an image is attached.",
+      ].join(" "),
       input: [
         {
           role: "user",

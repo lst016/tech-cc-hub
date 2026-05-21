@@ -8,6 +8,7 @@ import {
   extractCodexModelIdsFromCache,
   mergeCodexModelIds,
 } from "../../shared/codex-oauth.js";
+import { normalizeToolInputForKnownSchemas } from "./tool-input-normalizer.js";
 
 export {
   CODEX_OAUTH_BASE_URL,
@@ -613,10 +614,81 @@ function convertAnthropicTools(tools: AnthropicMessagesRequest["tools"]): Array<
       type: "function",
       name,
       description: stringValue(tool.description) || undefined,
-      parameters: tool.input_schema ?? { type: "object", properties: {} },
+      parameters: normalizeToolSchemaForCodexResponses(name, tool.input_schema),
     });
   }
   return converted;
+}
+
+function normalizeToolSchemaForCodexResponses(toolName: string, schema: unknown): Record<string, unknown> {
+  const normalized = cloneJsonRecord(schema) ?? { type: "object", properties: {} };
+  if (normalized.type !== "object") {
+    normalized.type = "object";
+  }
+
+  const properties = isRecord(normalized.properties) ? normalized.properties : {};
+  normalized.properties = properties;
+
+  if (matchesToolName(toolName, "Read") && isRecord(properties.pages)) {
+    delete properties.pages;
+    if (Array.isArray(normalized.required)) {
+      normalized.required = normalized.required.filter((item) => item !== "pages");
+    }
+  }
+
+  if (isFigmaToolName(toolName) && isRecord(properties.maxBytes)) {
+    properties.maxBytes = {
+      ...properties.maxBytes,
+      minimum: 10_000,
+      maximum: 500_000,
+      description: [
+        stringValue(properties.maxBytes.description),
+        "Keep this at or below 500000; use narrower Figma nodes instead of increasing response size.",
+      ].filter(Boolean).join(" "),
+    };
+  }
+
+  if (matchesToolName(toolName, "browser_query_nodes") && isRecord(properties.maxResults)) {
+    properties.maxResults = {
+      ...properties.maxResults,
+      minimum: 1,
+      maximum: 50,
+    };
+  }
+
+  if (matchesToolName(toolName, "browser_console_logs") && isRecord(properties.waitFor)) {
+    properties.waitFor = {
+      ...properties.waitFor,
+      minLength: 1,
+      description: [
+        stringValue(properties.waitFor.description),
+        "Omit this field unless waiting for a non-empty text pattern.",
+      ].filter(Boolean).join(" "),
+    };
+  }
+
+  if (matchesToolName(toolName, "design_compare_current_view")) {
+    if (isRecord(properties.target)) {
+      properties.target = {
+        ...properties.target,
+        description: [
+          stringValue(properties.target.description),
+          "Prefer this selector/ref/xpath for component-level visual comparison.",
+        ].filter(Boolean).join(" "),
+      };
+    }
+    if (isRecord(properties.region)) {
+      properties.region = {
+        ...properties.region,
+        description: [
+          stringValue(properties.region.description),
+          "Omit when target is provided; target selector takes precedence over region.",
+        ].filter(Boolean).join(" "),
+      };
+    }
+  }
+
+  return normalized;
 }
 
 function convertToolChoice(toolChoice: unknown): unknown {
@@ -681,11 +753,13 @@ function extractAnthropicContentBlocks(record: Record<string, unknown>): Anthrop
       const callId = stringValue(item.call_id) || stringValue(item.id);
       const name = stringValue(item.name);
       if (callId && name) {
+        const rawInput = parseJsonObject(stringValue(item.arguments));
+        const normalized = normalizeToolInputForKnownSchemas(name, rawInput);
         blocks.push({
           type: "tool_use",
           id: callId,
           name,
-          input: parseJsonObject(stringValue(item.arguments)),
+          input: normalized.input,
         });
       }
       continue;
@@ -785,7 +859,7 @@ function pushSse(lines: string[], event: string, data: unknown): void {
   lines.push(`data: ${JSON.stringify(data)}\n\n`);
 }
 
-function parseJsonObject(value: string): unknown {
+function parseJsonObject(value: string): Record<string, unknown> {
   if (!value) {
     return {};
   }
@@ -843,6 +917,35 @@ function base64Url(value: Buffer): string {
 
 function removeUndefined<T extends Record<string, unknown>>(value: T): Partial<T> {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as Partial<T>;
+}
+
+function cloneJsonRecord(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  try {
+    const cloned = JSON.parse(JSON.stringify(value)) as unknown;
+    return isRecord(cloned) ? cloned : null;
+  } catch {
+    return { ...value };
+  }
+}
+
+function matchesToolName(toolName: string, baseName: string): boolean {
+  return (
+    toolName === baseName ||
+    toolName.endsWith(`__${baseName}`) ||
+    toolName.endsWith(`:${baseName}`) ||
+    toolName.endsWith(`/${baseName}`)
+  );
+}
+
+function isFigmaToolName(toolName: string): boolean {
+  return (
+    toolName.includes("tech-cc-hub-figma") ||
+    /^figma_/.test(toolName) ||
+    /(?:__|:|\/)figma_/.test(toolName)
+  );
 }
 
 function stringValue(value: unknown): string {

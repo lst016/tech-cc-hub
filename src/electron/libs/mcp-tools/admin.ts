@@ -71,8 +71,6 @@ type AdminToolInput = {
   };
 };
 
-let adminMcpServer: McpSdkServerConfigWithInstance | null = null;
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
@@ -527,10 +525,6 @@ const TOOL_INPUT_SCHEMA = {
 };
 
 export function getAdminMcpServer(): McpSdkServerConfigWithInstance {
-  if (adminMcpServer) {
-    return adminMcpServer;
-  }
-
   const toolHandler = tool(
     "set_global_runtime_config",
     "写入/更新 tech-cc-hub 全局运行配置（agent-runtime.json）。支持 env、skillCredentials、channels、systemPromptExt 等字段；用于将凭证变量、技能映射、渠道入口和全局提示持久化，避免重复手工配置。",
@@ -561,11 +555,10 @@ export function getAdminMcpServer(): McpSdkServerConfigWithInstance {
     },
   );
 
-  adminMcpServer = createSdkMcpServer({
+  return createSdkMcpServer({
     name: ADMIN_TOOLS_SERVER_NAME,
     version: ADMIN_MCP_SERVER_VERSION,
     tools: [toolHandler],
   });
 
-  return adminMcpServer;
 }

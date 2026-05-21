@@ -18,6 +18,7 @@ import { buildSegmentedContextUsageCells, type ContextUsageCellSegment } from ".
 import { AionWorkspacePreviewPane } from "./AionWorkspacePreviewPane";
 import { ActivityWorkspaceTabs } from "./ActivityWorkspaceTabs";
 import { GitWorkbenchPanel } from "./git";
+import { TerminalWorkspacePanel } from "./TerminalWorkspacePanel";
 import type { SessionView } from "../store/useAppStore";
 import type { ActivityRailTab, ActivityWorkspaceTab } from "../utils/activity-workspace-tabs";
 
@@ -1157,6 +1158,9 @@ export function ActivityRail({
   contextWindow,
   compressionThresholdPercent,
   hasBrowserTab = false,
+  hasTerminalTab = false,
+  onOpenTerminalWorkspace,
+  onCloseTerminalWorkspace,
   width = 420,
 }: {
   session: SessionView | undefined;
@@ -1170,6 +1174,9 @@ export function ActivityRail({
   contextWindow?: number;
   compressionThresholdPercent?: number;
   hasBrowserTab?: boolean;
+  hasTerminalTab?: boolean;
+  onOpenTerminalWorkspace?: () => void;
+  onCloseTerminalWorkspace?: () => void;
   width?: number;
 }) {
   const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-12" : "top-10";
@@ -1194,6 +1201,7 @@ export function ActivityRail({
   const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
   const [showContextModal, setShowContextModal] = useState(false);
   const timelineRef = useRef<HTMLDivElement>(null);
+  const toolWorkspaceActive = selectedTab === "preview" || selectedTab === "git" || selectedTab === "terminal";
 
   useEffect(() => {
     if (!selectedTimelineId) return;
@@ -1271,18 +1279,22 @@ export function ActivityRail({
       )}
 
       <aside
-        className={`fixed bottom-0 right-0 ${sidebarHeaderOffsetClass} hidden min-w-[400px] overflow-y-auto border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(240,244,248,0.96)_36%,rgba(234,239,245,0.98))] pb-6 shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl lg:flex lg:flex-col`}
-        style={{ width }}
+        className={`fixed bottom-0 right-0 ${sidebarHeaderOffsetClass} hidden min-w-[400px] border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(240,244,248,0.96)_36%,rgba(234,239,245,0.98))] shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl lg:flex lg:flex-col ${toolWorkspaceActive ? "overflow-hidden pb-0" : "overflow-y-auto pb-6"}`}
+        style={{ width, minWidth: width }}
       >
 
-        <div className="flex h-10 shrink-0 items-center justify-between border-b border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,251,253,0.92))] px-4 backdrop-blur-xl">
+        <div className="relative z-[160] flex h-10 shrink-0 items-center justify-between border-b border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,251,253,0.92))] px-4 backdrop-blur-xl">
           <ActivityWorkspaceTabs
             activeTab={selectedTab}
             showBrowserTab={hasBrowserTab}
+            showTerminalTab={hasTerminalTab}
             showLabels={showLabels}
             showCreateBrowserTab={!hasBrowserTab}
+            showCreateTerminalTab={!hasTerminalTab}
             onSelectTab={handleSelectWorkspaceTab}
             onCreateBrowserTab={onOpenBrowserWorkbench}
+            onCreateTerminalTab={onOpenTerminalWorkspace}
+            onCloseTerminalTab={hasTerminalTab ? onCloseTerminalWorkspace : undefined}
           />
         </div>
 
@@ -1312,6 +1324,10 @@ export function ActivityRail({
         ) : selectedTab === "git" ? (
           <div className="flex min-h-0 flex-1 overflow-hidden">
             <GitWorkbenchPanel cwd={session?.cwd} />
+          </div>
+        ) : selectedTab === "terminal" ? (
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            <TerminalWorkspacePanel cwd={session?.cwd} />
           </div>
         ) : (
         <div className="space-y-4 px-4 pt-4">

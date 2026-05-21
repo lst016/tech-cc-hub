@@ -20,6 +20,7 @@ import {
   getModelRoutingWeight,
   pickHighestWeightedModelOwner,
 } from "../../src/shared/model-routing-weight.js";
+import { pickImagePreprocessConfig } from "../../src/shared/image-preprocess-routing.js";
 
 const MODEL_SEARCH_FIXTURE = [
   "gpt-5.4",
@@ -223,6 +224,36 @@ test("routed model options expose the platform owner selected by routing weight"
   const deepseekOption = options.find((option) => option.value === "deepseek-v4-flash");
   assert.equal(deepseekOption?.profileId, "gateway");
   assert.equal(deepseekOption?.providerLabel, "Custom Gateway");
+});
+
+test("image preprocessing follows the routed owner instead of preferring custom gateways", () => {
+  const codex = {
+    id: "codex",
+    provider: "codex" as const,
+    imageModel: "gpt-5.5",
+    models: [
+      { name: "gpt-5.5", routingWeight: 50 },
+      { name: "Qwen3-VL-4B-Instruct" },
+    ],
+  };
+  const gateway = {
+    id: "gateway",
+    provider: "custom" as const,
+    imageModel: "gpt-5.5",
+    models: [
+      { name: "gpt-5.5", routingWeight: 1 },
+      { name: "Qwen3-VL-4B-Instruct" },
+    ],
+  };
+
+  assert.equal(
+    pickImagePreprocessConfig(codex, [codex, gateway], "gpt-5.5")?.id,
+    "codex",
+  );
+  assert.equal(
+    pickImagePreprocessConfig(codex, [codex, gateway], "Qwen3-VL-4B-Instruct")?.id,
+    "gateway",
+  );
 });
 
 test("shared model routing merges enabled profile models into one editable surface", () => {

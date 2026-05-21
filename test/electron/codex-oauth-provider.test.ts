@@ -183,6 +183,112 @@ test("anthropic messages are converted to codex responses requests", () => {
   assert.equal(request.tools?.[0]?.name, "Read");
 });
 
+test("codex responses tool schemas and function call arguments are normalized", () => {
+  const request = buildCodexResponsesRequest({
+    model: "gpt-5.5",
+    system: "Follow project rules.",
+    messages: [{ role: "user", content: "read the file" }],
+    tools: [
+      {
+        name: "Read",
+        description: "Read a file",
+        input_schema: {
+          type: "object",
+          properties: {
+            file_path: { type: "string" },
+            pages: { type: "string" },
+          },
+          required: ["file_path"],
+        },
+      },
+      {
+        name: "mcp__tech-cc-hub-figma__figma_export_node_images",
+        description: "Export Figma images",
+        input_schema: {
+          type: "object",
+          properties: {
+            fileKeyOrUrl: { type: "string" },
+            maxBytes: { type: "number" },
+          },
+        },
+      },
+      {
+        name: "mcp__tech-cc-hub-design__design_compare_current_view",
+        description: "Compare current view",
+        input_schema: {
+          type: "object",
+          properties: {
+            referenceImagePath: { type: "string" },
+            target: { type: "string" },
+            region: { type: "object" },
+          },
+        },
+      },
+    ],
+  });
+
+  const readParams = request.tools?.[0]?.parameters as Record<string, unknown>;
+  const readProperties = readParams.properties as Record<string, Record<string, unknown>>;
+  assert.equal("pages" in readProperties, false);
+
+  const figmaParams = request.tools?.[1]?.parameters as Record<string, unknown>;
+  const figmaProperties = figmaParams.properties as Record<string, Record<string, unknown>>;
+  assert.equal(figmaProperties.maxBytes.maximum, 500_000);
+
+  const compareParams = request.tools?.[2]?.parameters as Record<string, unknown>;
+  const compareProperties = compareParams.properties as Record<string, Record<string, unknown>>;
+  assert.match(String(compareProperties.region.description), /target selector takes precedence/);
+
+  const message = toAnthropicMessageResponse({
+    id: "resp_tools",
+    model: "gpt-5.5",
+    output: [
+      {
+        type: "function_call",
+        call_id: "call_read",
+        name: "Read",
+        arguments: JSON.stringify({ file_path: "src/App.tsx", pages: "> ???" }),
+      },
+      {
+        type: "function_call",
+        call_id: "call_figma",
+        name: "mcp__tech-cc-hub-figma__figma_export_node_images",
+        arguments: JSON.stringify({ fileKeyOrUrl: "https://figma.com/design/key/file", maxBytes: 12_000_000 }),
+      },
+      {
+        type: "function_call",
+        call_id: "call_compare",
+        name: "mcp__tech-cc-hub-design__design_compare_current_view",
+        arguments: JSON.stringify({
+          referenceImagePath: "C:/tmp/reference.png",
+          target: ".drawer",
+          region: { x: 0, y: 0, width: 100, height: 80 },
+        }),
+      },
+    ],
+    usage: {},
+  }, "gpt-5.5");
+
+  assert.deepEqual(message.content[0], {
+    type: "tool_use",
+    id: "call_read",
+    name: "Read",
+    input: { file_path: "src/App.tsx" },
+  });
+  assert.deepEqual(message.content[1], {
+    type: "tool_use",
+    id: "call_figma",
+    name: "mcp__tech-cc-hub-figma__figma_export_node_images",
+    input: { fileKeyOrUrl: "https://figma.com/design/key/file", maxBytes: 500_000 },
+  });
+  assert.deepEqual(message.content[2], {
+    type: "tool_use",
+    id: "call_compare",
+    name: "mcp__tech-cc-hub-design__design_compare_current_view",
+    input: { referenceImagePath: "C:/tmp/reference.png", target: ".drawer" },
+  });
+});
+
 test("codex responses are translated back to anthropic message and stream shapes", () => {
   const response = toAnthropicMessageResponse({
     id: "resp_123",

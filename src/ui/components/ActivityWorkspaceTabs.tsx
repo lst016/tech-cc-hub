@@ -1,21 +1,30 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Plus, Terminal, X } from "lucide-react";
 import {
+  buildActivityWorkspaceCreateOptions,
   buildActivityWorkspaceTabs,
   shouldShowCreateBrowserTab,
+  shouldShowCreateTerminalTab,
+  type ActivityOptionalWorkspaceTab,
   type ActivityWorkspaceTab,
 } from "../utils/activity-workspace-tabs";
 
 type ActivityWorkspaceTabsProps = {
   activeTab: ActivityWorkspaceTab;
   showBrowserTab: boolean;
+  showTerminalTab?: boolean;
   showLabels?: boolean;
   browserLabel?: string;
   showCreateBrowserTab?: boolean;
+  showCreateTerminalTab?: boolean;
   onSelectTab: (tab: ActivityWorkspaceTab) => void;
   onCloseBrowserTab?: () => void;
   onCreateBrowserTab?: () => void;
+  onCloseTerminalTab?: () => void;
+  onCreateTerminalTab?: () => void;
 };
 
-function iconForTab(tab: ActivityWorkspaceTab) {
+function iconForTab(tab: ActivityWorkspaceTab | ActivityOptionalWorkspaceTab) {
   if (tab === "browser") {
     return (
       <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
@@ -23,6 +32,10 @@ function iconForTab(tab: ActivityWorkspaceTab) {
         <path d="M3.5 12h17M12 3.5c2.2 2.3 3.2 5.1 3.2 8.5s-1 6.2-3.2 8.5M12 3.5C9.8 5.8 8.8 8.6 8.8 12s1 6.2 3.2 8.5" />
       </svg>
     );
+  }
+
+  if (tab === "terminal") {
+    return <Terminal className="h-4 w-4 shrink-0" aria-hidden="true" />;
   }
 
   if (tab === "trace") {
@@ -71,21 +84,62 @@ function tabClassName(active: boolean) {
 export function ActivityWorkspaceTabs({
   activeTab,
   showBrowserTab,
+  showTerminalTab = false,
   showLabels = true,
   browserLabel = "浏览器",
   showCreateBrowserTab,
+  showCreateTerminalTab,
   onSelectTab,
   onCloseBrowserTab,
   onCreateBrowserTab,
+  onCloseTerminalTab,
+  onCreateTerminalTab,
 }: ActivityWorkspaceTabsProps) {
-  const tabs = buildActivityWorkspaceTabs({ activeTab, showBrowserTab }).filter((tab) => tab.visible);
-  const shouldShowCreate = showCreateBrowserTab ?? shouldShowCreateBrowserTab(showBrowserTab);
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const createMenuRef = useRef<HTMLDivElement>(null);
+  const tabs = buildActivityWorkspaceTabs({ activeTab, showBrowserTab, showTerminalTab }).filter((tab) => tab.visible);
+  const createOptions = useMemo(
+    () => buildActivityWorkspaceCreateOptions({
+      canCreateBrowserTab: Boolean(onCreateBrowserTab) && (showCreateBrowserTab ?? shouldShowCreateBrowserTab(showBrowserTab)),
+      canCreateTerminalTab: Boolean(onCreateTerminalTab) && (showCreateTerminalTab ?? shouldShowCreateTerminalTab(showTerminalTab)),
+    }),
+    [onCreateBrowserTab, onCreateTerminalTab, showBrowserTab, showCreateBrowserTab, showCreateTerminalTab, showTerminalTab],
+  );
+
+  useEffect(() => {
+    if (!createMenuOpen) return;
+    const closeOnPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && createMenuRef.current?.contains(event.target)) return;
+      setCreateMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setCreateMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnPointerDown);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnPointerDown);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [createMenuOpen]);
+
+  const handleCreateOption = (id: ActivityOptionalWorkspaceTab) => {
+    setCreateMenuOpen(false);
+    if (id === "browser") {
+      onCreateBrowserTab?.();
+      return;
+    }
+    if (id === "terminal") {
+      onCreateTerminalTab?.();
+    }
+  };
 
   return (
     <div className="flex min-w-0 items-center gap-1.5">
       {tabs.map((tab) => {
         const label = tab.id === "browser" ? browserLabel : tab.label;
         const labelWidthClass = tab.id === "browser" ? "max-w-[120px]" : "max-w-[160px]";
+        const closeHandler = tab.id === "browser" ? onCloseBrowserTab : tab.id === "terminal" ? onCloseTerminalTab : undefined;
 
         return (
           <div key={tab.id} className={tabClassName(tab.active)} title={tab.title}>
@@ -97,36 +151,58 @@ export function ActivityWorkspaceTabs({
               {iconForTab(tab.id)}
               <span className={`${showLabels ? labelWidthClass : "hidden"} truncate`}>{label}</span>
             </button>
-            {tab.id === "browser" && onCloseBrowserTab && (
+            {closeHandler && (
               <button
                 type="button"
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
-                  onCloseBrowserTab();
+                  closeHandler();
                 }}
                 className="ml-1 hidden h-4 w-4 items-center justify-center rounded-full text-ink-500 transition hover:bg-ink-900/10 hover:text-ink-900 group-hover:inline-flex"
-                title="关闭浏览器标签"
-                aria-label="关闭浏览器标签"
+                title={`关闭${label}标签`}
+                aria-label={`关闭${label}标签`}
               >
-                x
+                <X className="h-3 w-3" aria-hidden="true" />
               </button>
             )}
           </div>
         );
       })}
-      {shouldShowCreate && (
-        <button
-          type="button"
-          onClick={onCreateBrowserTab}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-muted transition hover:bg-ink-900/5 hover:text-ink-700"
-          title="新建本地浏览器页"
-          aria-label="新建本地浏览器页"
-        >
-          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-            <path d="M12 5v14M5 12h14" />
-          </svg>
-        </button>
+      {createOptions.length > 0 && (
+        <div ref={createMenuRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setCreateMenuOpen((current) => !current)}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-muted transition hover:bg-ink-900/5 hover:text-ink-700"
+            title="添加工作区标签"
+            aria-label="添加工作区标签"
+            aria-haspopup="menu"
+            aria-expanded={createMenuOpen}
+          >
+            <Plus className="h-4 w-4" aria-hidden="true" />
+          </button>
+          {createMenuOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 top-9 z-[220] min-w-[132px] overflow-hidden rounded-2xl border border-black/10 bg-white/95 p-1.5 text-sm text-ink-800 shadow-[0_18px_44px_rgba(15,23,42,0.16)] backdrop-blur-xl"
+            >
+              {createOptions.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => handleCreateOption(option.id)}
+                  className="flex h-9 w-full items-center gap-2 rounded-xl px-2.5 text-left transition hover:bg-ink-900/5"
+                  title={option.title}
+                >
+                  {iconForTab(option.id)}
+                  <span className="truncate">{option.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

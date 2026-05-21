@@ -14,6 +14,7 @@ import {
   pickProviderCompatibleModel,
 } from "../../shared/model-provider-routing.js";
 import { pickHighestWeightedModelOwner } from "../../shared/model-routing-weight.js";
+import { pickImagePreprocessConfig } from "../../shared/image-preprocess-routing.js";
 import {
   loadApiConfigSettings,
   loadGlobalRuntimeConfig,
@@ -296,14 +297,11 @@ export function resolveImagePreprocessApiConfig(selectedModel?: string): ApiConf
     return selectedConfig;
   }
 
-  const imageModelConfigs = getEnabledUsableApiConfigs().filter((config) => {
-    return config.imageModel?.trim() === imageModel
-      || config.models?.some((model) => model.name.trim() === imageModel);
-  });
-
-  return imageModelConfigs.find((config) => config.provider !== "codex")
-    ?? imageModelConfigs[0]
-    ?? selectedConfig;
+  return pickImagePreprocessConfig(
+    selectedConfig,
+    getEnabledUsableApiConfigs(),
+    imageModel,
+  );
 }
 
 function getFallbackClaudeSettingsConfig(): ApiConfig | null {

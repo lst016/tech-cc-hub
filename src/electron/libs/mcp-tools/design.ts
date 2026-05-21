@@ -134,7 +134,6 @@ const elementTargetToolSchema = {
 };
 
 let designHost: DesignToolHost | null = null;
-const designMcpServersBySessionId = new Map<string, McpSdkServerConfigWithInstance>();
 
 // 设计工具复用 BrowserView 截图能力，但独立存储图片文件和 diff，避免把大图塞进模型上下文。
 export function setDesignToolHost(host: DesignToolHost | null): void {
@@ -149,6 +148,32 @@ function getHost(): DesignToolHost {
 }
 
 // 所有视觉产物放到 userData/design-parity，方便用户和 Agent 一起审阅历史截图/diff。
+function describeImagePreprocessRoute(config: ReturnType<typeof resolveImagePreprocessApiConfig>) {
+  if (!config) {
+    return {
+      configured: false,
+    };
+  }
+
+  return {
+    configured: true,
+    profile: config.name,
+    provider: config.provider ?? "custom",
+    imageModel: config.imageModel?.trim() || config.model,
+    baseURL: describeBaseURL(config.baseURL),
+  };
+}
+
+function describeBaseURL(value: string): string {
+  try {
+    const url = new URL(value);
+    const pathname = url.pathname.replace(/\/+$/, "");
+    return `${url.origin}${pathname}`;
+  } catch {
+    return value;
+  }
+}
+
 function getDesignArtifactDir(): string {
   const dir = join(app.getPath("userData"), "design-parity");
   mkdirSync(dir, { recursive: true });
@@ -436,6 +461,8 @@ function createInvalidComparisonReport(input: {
     advice: [
       input.sizeComparison.note,
       "Align viewport/export size first, or capture a matching region before running pixel comparison.",
+      "For Drawer/modal/component parity, prefer design_compare_element_to_reference with the Drawer selector, or use browser_get_element kind=box followed by design_capture_current_region/design_compare_images.",
+      "Do not compare a full page screenshot against a cropped reference UI; it produces misleading or invalid diffs.",
       "No diff/comparison image was generated to avoid a misleading red overlay.",
     ],
   };
@@ -1062,10 +1089,6 @@ function compareImages(input: {
 
 export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWithInstance {
   const resolvedSessionId = sessionId.trim() || "global";
-  const cachedServer = designMcpServersBySessionId.get(resolvedSessionId);
-  if (cachedServer) {
-    return cachedServer;
-  }
 
   const captureTool = tool(
     "design_capture_current_view",
@@ -1159,16 +1182,29 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
       prompt: z.string().trim().max(800).optional(),
     },
     async (input) => {
+      let imageRoute: ReturnType<typeof describeImagePreprocessRoute> | undefined;
       try {
         const imagePath = normalizeImagePath(input.imagePath, "图片路径");
         const image = createImageFromPath(imagePath, "待分析图片");
         const imageSize = image.getSize();
-        const inspectionText = await summarizeLocalImageFile({
-          config: resolveImagePreprocessApiConfig(),
+        const imageConfig = resolveImagePreprocessApiConfig();
+        imageRoute = describeImagePreprocessRoute(imageConfig);
+        let usedNonStrictFallback = false;
+        let inspectionText = await summarizeLocalImageFile({
+          config: imageConfig,
           prompt: buildDesignInspectionPrompt(input.prompt),
           filePath: imagePath,
           strictPrompt: true,
         });
+        if (!inspectionText?.trim()) {
+          usedNonStrictFallback = true;
+          inspectionText = await summarizeLocalImageFile({
+            config: imageConfig,
+            prompt: input.prompt?.trim() || "Analyze this UI/product screenshot and extract implementation-grade visual structure.",
+            filePath: imagePath,
+            strictPrompt: false,
+          });
+        }
         if (!inspectionText) {
           throw new Error("未配置可用的图片理解模型。请在设置里配置 imageModel / 视觉模型后再分析截图。");
         }
@@ -1180,14 +1216,21 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
             path: imagePath,
             size: imageSize,
           },
+          imageRoute,
           summary: dsl.summary,
           dsl,
+          qualityGate: dsl.qualityGate,
+          usedNonStrictFallback,
+          nextStep: dsl.qualityGate.needsStrongerVisionModel
+            ? "The visual inspection is not implementation-grade yet. Rerun with a stronger vision model, export a higher-resolution PNG, or crop the exact target region before coding UI."
+            : "Use dsl.uiSpec and qualityGate as the UI contract before wiring API/data logic.",
           note: "图片只在工具内部交给视觉模型处理，主 Agent 收到的是文本摘要，不包含 base64。",
         });
       } catch (error) {
         return toTextToolResult({
           action: "design_inspect_image",
           success: false,
+          imageRoute,
           error: error instanceof Error ? error.message : "图片分析失败。",
         }, true);
       }
@@ -1204,12 +1247,27 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
       ...comparisonTuningToolSchema,
       resizeCandidateToReference: z.boolean().optional(),
       region: ignoreRegionToolSchema.optional(),
+      target: z.string().trim().min(1).optional(),
+      strategy: z.enum(["auto", "ref", "selector", "xpath"]).optional(),
+      index: z.number().int().min(0).max(200).optional(),
+      padding: z.number().min(0).max(200).optional(),
     },
     async (input) => {
       try {
-        const capture = input.region
-          ? await captureCurrentRegion(resolvedSessionId, input.region, input.label)
-          : await captureCurrentView(resolvedSessionId, input.label);
+        const ignoredRegionBecauseTarget = Boolean(input.region && input.target);
+        const elementCapture = input.target
+          ? await captureCurrentElement(resolvedSessionId, {
+              target: input.target,
+              strategy: input.strategy,
+              index: input.index,
+              padding: input.padding,
+              label: input.label,
+            })
+          : null;
+        const capture = elementCapture?.capture
+          ?? (input.region
+            ? await captureCurrentRegion(resolvedSessionId, input.region, input.label)
+            : await captureCurrentView(resolvedSessionId, input.label));
         const comparison = compareImages({
           referenceImagePath: input.referenceImagePath,
           candidateImagePath: capture.path,
@@ -1227,8 +1285,21 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
           success: true,
           sessionId: resolvedSessionId,
           state: capture.state,
+          target: input.target,
+          inputWarning: ignoredRegionBecauseTarget
+            ? "Both target and region were provided; target selector took precedence and region was ignored."
+            : undefined,
+          strategy: input.target ? input.strategy ?? "auto" : undefined,
+          index: input.target ? input.index ?? 0 : undefined,
+          padding: input.target ? input.padding ?? 0 : undefined,
+          element: elementCapture?.element,
+          box: elementCapture?.box,
+          requestedRegion: elementCapture?.requestedRegion,
           capture,
           comparison,
+          nextStep: input.target
+            ? "Use comparison.topDiffRegions and diffBoundingBox to patch this element, then rerun with the same target."
+            : "For component-level parity, rerun with target set to the Drawer/modal/root selector to avoid full-page diff noise.",
         });
       } catch (error) {
         return toTextToolResult({
@@ -1565,7 +1636,7 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
     },
   );
 
-  const designMcpServer = createSdkMcpServer({
+  return createSdkMcpServer({
     name: DESIGN_TOOLS_SERVER_NAME,
     version: DESIGN_MCP_SERVER_VERSION,
     tools: [
@@ -1584,6 +1655,4 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
     ],
   });
 
-  designMcpServersBySessionId.set(resolvedSessionId, designMcpServer);
-  return designMcpServer;
 }

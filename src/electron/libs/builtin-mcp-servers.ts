@@ -21,6 +21,8 @@ type BuiltinMcpFactoryContext = {
 
 type BuiltinMcpFactory = (context: BuiltinMcpFactoryContext) => McpSdkServerConfigWithInstance;
 
+// Agent SDK MCP server instances are connection-scoped. Factories must return
+// fresh instances for each run; shared state belongs in the tool host modules.
 export const BUILTIN_MCP_SERVER_FACTORIES: Record<BuiltinMcpServerName, BuiltinMcpFactory> = {
   "tech-cc-hub-browser": ({ sessionId }) => getBrowserMcpServer(sessionId),
   "tech-cc-hub-admin": () => getAdminMcpServer(),

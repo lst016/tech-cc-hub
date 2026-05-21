@@ -1,5 +1,10 @@
 # tech-cc-hub Knowledge Engine 实施 Spec
 
+> Deprecated 2026-05-21: this RepoWiki/sqlite-vec implementation spec is no longer active.
+> Runtime knowledge retrieval has moved to managed CodeGraph under `.tech/codegraph`.
+> RepoWiki vendored code, legacy vector indexing, `sqlite-vec`, and LangChain splitters were removed.
+> Do not use this document as an implementation source; keep it only as historical context.
+
 > 设计背景与选型理由见 `knowledge-engine-development-plan.md`。本文件只保留执行口径、接口契约和验收标准。
 
 ## 结论

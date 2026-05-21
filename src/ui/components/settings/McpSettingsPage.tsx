@@ -4,9 +4,12 @@ import {
   CheckCircle2,
   ChevronDown,
   Code2,
+  Database,
   GitCompare,
   Image,
   ListChecks,
+  Loader2,
+  RefreshCw,
   ScanSearch,
   ServerCog,
   Settings,
@@ -21,6 +24,7 @@ import {
   type BuiltinMcpIconKey,
   type BuiltinMcpServerDefinition,
 } from "../../../shared/builtin-mcp-registry";
+import { useAppStore } from "../../store/useAppStore";
 import type { McpServerInfo } from "../../types";
 
 type McpServerEntry = McpServerInfo & {
@@ -87,6 +91,7 @@ const BUILTIN_TOOL_GROUPS: Record<string, BuiltinToolGroup[]> = {
         { name: "browser_inspect_styles", description: "读取计算样式、CSS 变量和节点信息" },
         { name: "browser_inspect_at_point", description: "按视口坐标反查 DOM 线索" },
         { name: "browser_console_logs", description: "读取或等待浏览器控制台日志" },
+        { name: "browser_fetch_logs", description: "读取 Fetch/XHR 请求和 JSON/text 响应体" },
         { name: "browser_eval", description: "在页面上下文执行 JavaScript" },
       ],
     },
@@ -308,6 +313,47 @@ type ElectronClient = {
   onServerEvent: (callback: (event: unknown) => void) => () => void;
 };
 
+type CodeGraphUiStatus = {
+  initialized: boolean;
+  watching: boolean;
+  indexing: boolean;
+  backend?: string;
+  paths: {
+    codegraphRoot: string;
+    databasePath: string;
+  };
+  stats?: {
+    nodeCount: number;
+    edgeCount: number;
+    fileCount: number;
+    dbSizeBytes?: number;
+  };
+};
+
+type CodeGraphStatusResponse = {
+  success: boolean;
+  status?: CodeGraphUiStatus;
+  error?: string;
+};
+
+type CodeGraphSyncResponse = CodeGraphStatusResponse & {
+  mode?: "sync" | "index";
+  result?: {
+    success?: boolean;
+    filesChecked?: number;
+    filesIndexed?: number;
+    filesSkipped?: number;
+    filesErrored?: number;
+    filesAdded?: number;
+    filesModified?: number;
+    filesRemoved?: number;
+    nodesUpdated?: number;
+    nodesCreated?: number;
+    edgesCreated?: number;
+    durationMs?: number;
+  };
+};
+
 function getElectron(): ElectronClient | null {
   const e = window.electron as ElectronClient | undefined;
   return e?.onServerEvent ? e : null;
@@ -463,6 +509,15 @@ function toBuiltinServerMeta(definition: BuiltinMcpServerDefinition | undefined)
   };
 }
 
+function useActiveWorkspaceRoot(): string {
+  return useAppStore((state) => {
+    const activeSession = state.activeSessionId
+      ? state.sessions[state.activeSessionId] ?? state.archivedSessions[state.activeSessionId]
+      : undefined;
+    return activeSession?.cwd?.trim() || state.cwd.trim();
+  });
+}
+
 function formatExternalServerSummary(server: McpServerInfo): string {
   if (server.transport === "http") {
     return `HTTP · ${server.url ?? "未配置 URL"}`;
@@ -552,6 +607,7 @@ function ServerCard({ server, onToggle }: { server: McpServerEntry; onToggle: ()
 function BuiltinToolsPanel({ serverName, groups }: { serverName: string; groups: BuiltinToolGroup[] }) {
   const toolCount = groups.reduce((count, group) => count + group.tools.length, 0);
   const serverMeta = getBuiltinServerMeta(serverName);
+  const activeWorkspaceRoot = useActiveWorkspaceRoot();
 
   if (groups.length === 0) {
     return (
@@ -591,6 +647,9 @@ function BuiltinToolsPanel({ serverName, groups }: { serverName: string; groups:
           </div>
         )}
       </div>
+      {serverName === "tech-cc-hub-knowledge" && (
+        <ManagedCodeGraphActions workspaceRoot={activeWorkspaceRoot} />
+      )}
       <div className="space-y-3">
         {groups.map((group) => (
           <div key={`${serverName}-${group.title}`} className="border-t border-ink-900/8 pt-3 first:border-t-0 first:pt-0">
@@ -629,6 +688,131 @@ function BuiltinToolsPanel({ serverName, groups }: { serverName: string; groups:
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function ManagedCodeGraphActions({ workspaceRoot }: { workspaceRoot: string }) {
+  const [manualWorkspaceRoot, setManualWorkspaceRoot] = useState("");
+  const [status, setStatus] = useState<CodeGraphUiStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busyMode, setBusyMode] = useState<"sync" | "index" | null>(null);
+  const effectiveWorkspaceRoot = manualWorkspaceRoot || workspaceRoot;
+
+  useEffect(() => {
+    if (!effectiveWorkspaceRoot) return;
+    let disposed = false;
+    window.electron.invoke<CodeGraphStatusResponse>("codegraph:status", { workspaceRoot: effectiveWorkspaceRoot })
+      .then((result) => {
+        if (disposed) return;
+        if (result.success) {
+          setStatus(result.status ?? null);
+          setError(null);
+        } else {
+          setError(result.error ?? "读取 CodeGraph 状态失败。");
+        }
+      })
+      .catch((statusError: unknown) => {
+        if (!disposed) setError(statusError instanceof Error ? statusError.message : String(statusError));
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [effectiveWorkspaceRoot]);
+
+  const chooseWorkspace = async () => {
+    const selected = await window.electron.selectDirectory();
+    if (selected) {
+      setManualWorkspaceRoot(selected);
+    }
+  };
+
+  const runCodeGraphSync = async (mode: "sync" | "index") => {
+    if (!effectiveWorkspaceRoot || busyMode) return;
+    setBusyMode(mode);
+    setError(null);
+    try {
+      const result = await window.electron.invoke<CodeGraphSyncResponse>("codegraph:sync", {
+        workspaceRoot: effectiveWorkspaceRoot,
+        mode,
+      });
+      if (!result.success) {
+        throw new Error(result.error ?? "CodeGraph 初始化失败。");
+      }
+      setStatus(result.status ?? null);
+    } catch (syncError) {
+      setError(syncError instanceof Error ? syncError.message : String(syncError));
+    } finally {
+      setBusyMode(null);
+    }
+  };
+
+  const initialized = status?.initialized ?? false;
+  const stats = status?.stats;
+
+  return (
+    <div className="border-t border-ink-900/8 pt-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-ink-700">CodeGraph 本地索引</span>
+            <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${initialized ? "bg-success/10 text-success" : "bg-amber-100 text-amber-700"}`}>
+              {initialized ? "已初始化" : "未初始化"}
+            </span>
+            {status?.backend && (
+              <span className="rounded-full bg-bg-100 px-2 py-0.5 text-[11px] font-medium text-muted">
+                {status.backend}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-xs leading-5 text-muted">
+            由 tech-cc-hub 托管，索引和缓存写入 <code className="rounded bg-surface-secondary px-1">.tech/codegraph</code>，不会创建 upstream <code className="rounded bg-surface-secondary px-1">.codegraph</code>。
+          </p>
+          <p className="mt-1 break-all text-[11px] leading-5 text-ink-400">
+            {effectiveWorkspaceRoot ? `工作区：${effectiveWorkspaceRoot}` : "当前没有工作区；先选择一个目录再初始化。"}
+          </p>
+          {stats && (
+            <p className="mt-1 text-[11px] leading-5 text-ink-400">
+              files {stats.fileCount} · nodes {stats.nodeCount} · edges {stats.edgeCount}
+            </p>
+          )}
+          {error && (
+            <p className="mt-2 rounded-lg border border-error/20 bg-error-light px-2.5 py-1.5 text-xs leading-5 text-error">
+              {error}
+            </p>
+          )}
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          {!effectiveWorkspaceRoot && (
+            <button
+              type="button"
+              className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-ink-900/10 bg-white px-3 text-xs font-semibold text-ink-600 transition-colors hover:bg-bg-100"
+              onClick={chooseWorkspace}
+            >
+              <Database className="h-3.5 w-3.5" />
+              选择目录
+            </button>
+          )}
+          <button
+            type="button"
+            className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-accent/20 bg-accent px-3 text-xs font-semibold text-white transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!effectiveWorkspaceRoot || Boolean(busyMode)}
+            onClick={() => void runCodeGraphSync(initialized ? "sync" : "index")}
+          >
+            {(busyMode === "sync" || busyMode === "index") ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            {initialized ? "增量同步" : "初始化"}
+          </button>
+          <button
+            type="button"
+            className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-ink-900/10 bg-white px-3 text-xs font-semibold text-ink-600 transition-colors hover:bg-bg-100 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!effectiveWorkspaceRoot || Boolean(busyMode)}
+            onClick={() => void runCodeGraphSync("index")}
+          >
+            {busyMode === "index" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Database className="h-3.5 w-3.5" />}
+            重建索引
+          </button>
+        </div>
       </div>
     </div>
   );

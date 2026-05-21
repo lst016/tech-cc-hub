@@ -1,0 +1,109 @@
+export type FigmaDevelopmentWorkflowStep = {
+  phase: string;
+  goal: string;
+  tools: string[];
+  doneWhen: string;
+};
+
+export type FigmaVisualConstraintCategory =
+  | "geometry"
+  | "spacing"
+  | "alignment"
+  | "typography"
+  | "color"
+  | "state"
+  | "content"
+  | "asset"
+  | "interaction";
+
+export type FigmaVisualConstraintGroup = {
+  category: FigmaVisualConstraintCategory;
+  examples: string[];
+};
+
+export const FIGMA_VISUAL_CONSTRAINT_GROUPS: readonly FigmaVisualConstraintGroup[] = [
+  {
+    category: "geometry",
+    examples: ["component width/height", "x/y position", "fixed columns", "viewport-safe bounds"],
+  },
+  {
+    category: "spacing",
+    examples: ["padding", "gap", "row/item height", "section rhythm"],
+  },
+  {
+    category: "alignment",
+    examples: ["start/center/end alignment", "baseline", "grid/flex axis behavior"],
+  },
+  {
+    category: "typography",
+    examples: ["font size", "weight", "line height", "letter spacing"],
+  },
+  {
+    category: "color",
+    examples: ["text color", "background", "border", "state color"],
+  },
+  {
+    category: "state",
+    examples: ["active", "hover", "disabled", "empty", "loading", "selected"],
+  },
+  {
+    category: "content",
+    examples: ["visible text", "empty rendering", "long text wrapping", "localization"],
+  },
+  {
+    category: "asset",
+    examples: ["icons", "avatars", "bitmap crops", "image fill behavior"],
+  },
+  {
+    category: "interaction",
+    examples: ["editable affordance", "focus target", "scroll container", "sticky region"],
+  },
+];
+
+export const FIGMA_COMPONENT_DEVELOPMENT_WORKFLOW_STEPS: readonly FigmaDevelopmentWorkflowStep[] = [
+  {
+    phase: "inventory",
+    goal: "Build a component backlog from the provided Figma URL instead of implementing the whole file at once.",
+    tools: ["figma_list_node_index"],
+    doneWhen: "Exportable positive-bounds frames/components are grouped into page shell, regions, repeated structures, controls, states, content blocks, and visual primitives.",
+  },
+  {
+    phase: "reference-lock",
+    goal: "Lock one Figma child node to one local reference image and one DOM target before editing.",
+    tools: ["figma_export_node_images", "design_inspect_image", "figma_match_ui_nodes"],
+    doneWhen: "The child has nodeId, imagePath, inspect qualityGate.confidence >= 0.75, DOM selector/region, and measurable visual constraints.",
+  },
+  {
+    phase: "constraint-snapshot",
+    goal: "Turn the locked reference into a generic visual contract before code changes.",
+    tools: ["design_inspect_image", "browser_query_nodes", "browser_inspect_styles"],
+    doneWhen: "The current child has a snapshot covering geometry, spacing, alignment, typography, color, state/content variants, and any layout assumptions that need evidence.",
+  },
+  {
+    phase: "child-implementation",
+    goal: "Implement or adapt exactly one child component using existing project components and tokens.",
+    tools: ["browser_query_nodes", "browser_inspect_styles", "design_compare_element_to_reference", "design_compare_current_view"],
+    doneWhen: "The child component's DOM/style evidence matches the locked constraints and the screenshot comparison passes maxDifferenceRatio <= 0.10.",
+  },
+  {
+    phase: "parent-integration",
+    goal: "Assemble passed children into the parent screen without rewriting already accepted children.",
+    tools: ["design_compare_element_to_reference", "design_compare_current_view"],
+    doneWhen: "The parent target passes maxDifferenceRatio <= 0.10 or remaining differences are isolated to named child components.",
+  },
+];
+
+export const FIGMA_COMPONENT_DEVELOPMENT_WORKFLOW_HINTS: readonly string[] = [
+  "Figma component workflow rule: when the Figma file/frame is large, never implement the whole screen in one patch. First build a component backlog, then implement one locked child component at a time.",
+  "Figma genericity rule: do not turn one task's domain shape into a global concept. A Drawer, table, card, form, chart, toolbar, or list item all use the same reference tuple and visual-constraint workflow; domain-specific components are local implementation choices only.",
+  "Figma component inventory rule: start with figma_list_node_index at depth 2-4 and keep exportable=true entries with positive bounds. Group candidates into page shell, layout regions, repeated structures, controls, icons/assets, content blocks, states, and visual primitives.",
+  "Figma reference tuple rule: before editing a child, record Figma nodeId, exported reference imagePath, target DOM selector or region, acceptance gate, and visual constraints. Missing tuple fields mean the child is not ready for code changes.",
+  "Figma visual constraint snapshot rule: each child contract should capture only generic measurable facts: geometry, spacing, alignment, typography, color, state/content variants, assets, and interaction affordances. Do not rely on common UI experience when a constraint can be measured from Figma or DOM.",
+  "Figma component plan rule: use update_plan for the backlog. Keep exactly one component in_progress; each item should track Figma nodeId, intended local component/file, DOM selector or region, reference imagePath once exported, visual constraints, and maxDifferenceRatio <= 0.10.",
+  "Figma component implementation order: tokens/theme first, then page shell, coarse layout regions, repeated structures, controls/states, content/assets, visual primitives, and only then final assembled-page comparison.",
+  "Figma child component loop: for each child, run figma_export_node_images -> design_inspect_image -> lock constraints -> implement/reuse local component -> launch/refresh preview -> browser_inspect_styles/browser_query_nodes for DOM evidence -> design_compare_element_to_reference with the locked selector -> patch until <=0.10 or relock.",
+  "Figma visual/function split rule: visual restoration and functional wiring are separate passes. Do not add interactions, API fields, or editing affordances in the same patch that is trying to repair geometry, color, spacing, or typography unless the locked Figma state requires that affordance.",
+  "Figma evidence rule: risky layout choices such as distributed/end alignment, auto sizing, placeholder empty states, and hardcoded colors should be judged against the locked Figma constraints and current DOM computed styles, not by a standalone CSS rule list.",
+  "Figma difference-cause report rule: when a comparison fails, report expected reference behavior, actual DOM/CSS behavior, cause, and next patch target. Example shape: reference constraint -> current implementation -> difference cause -> repair strategy.",
+  "Figma integration rule: after a child passes, do not rewrite it during later steps unless a later comparison report names that child as regressed. Patch the smallest failing child, then rerun parent comparison.",
+];

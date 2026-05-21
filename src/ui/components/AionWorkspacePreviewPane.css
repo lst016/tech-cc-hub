@@ -802,7 +802,7 @@
 
 .vscode-preview__selection-actions {
   position: absolute;
-  z-index: 20;
+  z-index: 140;
   display: inline-flex;
   overflow: hidden;
   border: 1px solid #d0d7de;
@@ -834,7 +834,7 @@
 
 .vscode-preview__comment-box {
   position: absolute;
-  z-index: 21;
+  z-index: 141;
   width: min(360px, calc(100% - 28px));
   overflow: hidden;
   border: 1px solid #d0d7de;

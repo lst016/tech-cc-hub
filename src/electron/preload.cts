@@ -143,12 +143,16 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("browser-state", sessionId),
     getBrowserWorkbenchConsoleLogs: (limit?: number, sessionId?: string) =>
         ipcInvoke("browser-console-logs", limit, sessionId),
+    getBrowserWorkbenchFetchLogs: (input?: any, sessionId?: string) =>
+        ipcInvoke("browser-fetch-logs", input, sessionId),
     captureBrowserWorkbenchVisible: (sessionId?: string) =>
         ipcInvoke("browser-capture-visible", sessionId),
     inspectBrowserWorkbenchAtPoint: (point: any, sessionId?: string) =>
         ipcInvoke("browser-inspect-at-point", point, sessionId),
     clearBrowserWorkbenchAnnotations: (sessionId?: string) =>
         ipcInvoke("browser-clear-annotations", sessionId),
+    removeBrowserWorkbenchAnnotation: (annotationId: string, sessionId?: string) =>
+        ipcInvoke("browser-remove-annotation", annotationId, sessionId),
     setBrowserWorkbenchAnnotationMode: (enabled: boolean, sessionId?: string) =>
         ipcInvoke("browser-annotation-mode", enabled, sessionId),
     openBrowserWorkbenchDevTools: (sessionId?: string) =>

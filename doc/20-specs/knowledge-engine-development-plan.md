@@ -1,5 +1,10 @@
 # tech-cc-hub 本地知识引擎开发方案
 
+> Deprecated 2026-05-21: this RepoWiki/sqlite-vec plan is no longer active.
+> Runtime knowledge retrieval has moved to managed CodeGraph under `.tech/codegraph`.
+> RepoWiki vendored code, legacy vector indexing, `sqlite-vec`, and LangChain splitters were removed.
+> Do not use this document as an implementation source; keep it only as historical context.
+
 ## 目标
 
 在 tech-cc-hub 中新增一个**内置本地知识引擎版本能力**，让 Agent 能跨会话、跨任务读取仓库知识、历史决策、用户偏好和项目经验。这个能力必须写进 tech-cc-hub 代码、随版本发布、在设置页可见、在 Runner 中默认可用；第三方项目只能作为可替换底座、vendored/forked 子模块、sidecar 或实现参考，不能把产品能力降级成“让用户自己装一个外部插件”。

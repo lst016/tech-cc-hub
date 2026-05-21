@@ -38,11 +38,25 @@ test("left sidebar uses a compact default width", () => {
   assert.match(appSource, /useState\(DEFAULT_SIDEBAR_WIDTH\)/);
 });
 
+test("left sidebar does not expose a standalone knowledge tab", () => {
+  const appSource = readFileSync(join(process.cwd(), "src/ui/App.tsx"), "utf8");
+  const sidebarSource = readFileSync(join(process.cwd(), "src/ui/components/Sidebar.tsx"), "utf8");
+
+  assert.doesNotMatch(sidebarSource, /SHOW_KNOWLEDGE_ENTRY/);
+  assert.doesNotMatch(sidebarSource, /onOpenKnowledgePanel/);
+  assert.doesNotMatch(sidebarSource, /aria-label="知识库"/);
+  assert.doesNotMatch(appSource, /KnowledgePanel/);
+  assert.doesNotMatch(appSource, /showKnowledgePanel/);
+});
+
 test("chat overview includes a jump-to-top control", () => {
   const appSource = readFileSync(join(process.cwd(), "src/ui/App.tsx"), "utf8");
 
   assert.match(appSource, /const scrollChatToTop = useCallback/);
+  assert.match(appSource, /const shouldAutoScrollRef = useRef\(true\)/);
+  assert.match(appSource, /shouldAutoScrollRef\.current = next/);
   assert.match(appSource, /topSentinelRef\.current\?\.scrollIntoView/);
+  assert.match(appSource, /const scrollToTop = useCallback\(\(\) => \{\s*setAutoScrollMode\(false\);[\s\S]*?scrollChatToTop\("smooth"\);/);
   assert.match(appSource, />\s*到顶部\s*<\/button>/);
 });
 
@@ -51,4 +65,11 @@ test("activity rail is flush with the app header on macOS", () => {
 
   assert.match(activityRailSource, /platform === "darwin" \? "top-12" : "top-10"/);
   assert.doesNotMatch(activityRailSource, /top-14/);
+});
+
+test("right rail resize handle follows the effective clamped rail width", () => {
+  const appSource = readFileSync(join(process.cwd(), "src/ui/App.tsx"), "utf8");
+
+  assert.match(appSource, /style=\{\{ right: effectiveActivityRailWidth \}\}/);
+  assert.doesNotMatch(appSource, /style=\{\{ right: activityRailWidth \}\}/);
 });

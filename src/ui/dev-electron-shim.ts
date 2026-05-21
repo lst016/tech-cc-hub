@@ -273,7 +273,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         "",
         "默认要求：涉及网页查看、抓取、调试、标注、截图的场景，默认优先使用 Electron 内置浏览器工作台（BrowserView）。",
         "",
-        "禁止默认走外部 browse skill。请优先用浏览器 MCP（browser_get_state / browser_extract_page / browser_capture_visible ...）。",
+        "禁止默认走外部 browse skill。请优先用浏览器 MCP（browser_get_state / browser_extract_page / browser_fetch_logs / browser_capture_visible ...）。",
         "",
         "设计还原默认规则：只要用户提供截图、Figma 图、页面参考图，并要求生成或修改 UI/前端代码，请优先使用设计 MCP。单张参考图先用 design_inspect_image 生成结构化视觉摘要；已有页面后再用 design_capture_current_view / design_compare_current_view / design_compare_images 生成当前截图、三栏比照图、差异图和 JSON report，再根据 differenceRatio、diffBoundingBox、topDiffRegions 修 UI。动态区域用 ignoreRegions，验收阈值用 maxDifferenceRatio。后续轮次先用 design_list_artifacts 找回产物，再用 design_read_comparison_report 读取历史 report。",
         "",
@@ -305,6 +305,21 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         } catch {
           return { commands: browserPreviewSlashCommands } as T;
         }
+      }
+      if (channel === "terminal:run") {
+        const payload = args[0] && typeof args[0] === "object" ? args[0] as { command?: unknown; cwd?: unknown } : {};
+        return {
+          success: false,
+          command: typeof payload.command === "string" ? payload.command : "",
+          cwd: typeof payload.cwd === "string" ? payload.cwd : browserPreviewCwd,
+          shell: "browser-preview",
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+          timedOut: false,
+          elapsedMs: 0,
+          error: "浏览器预览态不支持本地终端，请在 Electron 客户端里操作。",
+        } as T;
       }
       throw new Error("浏览器预览态不支持 IPC invoke，请在 Electron 客户端里操作。");
     },
@@ -363,12 +378,17 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     goForwardBrowserWorkbench: async (sessionId?: string) => getBrowserState(sessionId),
     getBrowserWorkbenchState: async (sessionId?: string) => getBrowserState(sessionId),
     getBrowserWorkbenchConsoleLogs: async () => [],
+    getBrowserWorkbenchFetchLogs: async () => ({
+      success: true,
+      result: { url: "", captureEnabled: false, count: 0, entries: [] },
+    }),
     captureBrowserWorkbenchVisible: async () => ({
       success: false,
       error: "浏览器预览态暂不支持真实截图，请在 Electron 窗口使用。",
     }),
     inspectBrowserWorkbenchAtPoint: async () => null,
     clearBrowserWorkbenchAnnotations: async (sessionId?: string) => getBrowserState(sessionId),
+    removeBrowserWorkbenchAnnotation: async (_annotationId: string, sessionId?: string) => getBrowserState(sessionId),
     setBrowserWorkbenchAnnotationMode: async (enabled: boolean, sessionId?: string) => (
       setBrowserState(sessionId, { ...getBrowserState(sessionId), annotationMode: enabled })
     ),
@@ -514,9 +534,11 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       goForwardBrowserWorkbench: async (sessionId?: string) => await invokeBridge("goForwardBrowserWorkbench", sessionId),
       getBrowserWorkbenchState: async (sessionId?: string) => await invokeBridge("getBrowserWorkbenchState", sessionId),
       getBrowserWorkbenchConsoleLogs: async (limit?: number, sessionId?: string) => await invokeBridge("getBrowserWorkbenchConsoleLogs", limit, sessionId),
+      getBrowserWorkbenchFetchLogs: async (input?: BrowserWorkbenchNetworkLogInput, sessionId?: string) => await invokeBridge("getBrowserWorkbenchFetchLogs", input, sessionId),
       captureBrowserWorkbenchVisible: async (sessionId?: string) => await invokeBridge("captureBrowserWorkbenchVisible", sessionId),
       inspectBrowserWorkbenchAtPoint: async (point, sessionId?: string) => await invokeBridge("inspectBrowserWorkbenchAtPoint", point, sessionId),
       clearBrowserWorkbenchAnnotations: async (sessionId?: string) => await invokeBridge("clearBrowserWorkbenchAnnotations", sessionId),
+      removeBrowserWorkbenchAnnotation: async (annotationId: string, sessionId?: string) => await invokeBridge("removeBrowserWorkbenchAnnotation", annotationId, sessionId),
       setBrowserWorkbenchAnnotationMode: async (enabled: boolean, sessionId?: string) => await invokeBridge("setBrowserWorkbenchAnnotationMode", enabled, sessionId),
       openBrowserWorkbenchDevTools: async (sessionId?: string) => await invokeBridge("openBrowserWorkbenchDevTools", sessionId),
       closeBrowserWorkbenchDevTools: async (sessionId?: string) => await invokeBridge("closeBrowserWorkbenchDevTools", sessionId),

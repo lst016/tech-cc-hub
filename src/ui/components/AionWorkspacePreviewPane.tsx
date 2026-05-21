@@ -20,6 +20,7 @@ import {
   getFileExtension,
   normalizeMonacoLanguage,
 } from '../utils/preview-language';
+import { calculateSelectionOverlayPosition } from '../utils/selection-overlay-position';
 import {
   getPreviewFileAncestorDirectories,
 } from '../utils/preview-file-locator';
@@ -129,6 +130,7 @@ type CodeSelectionInfo = {
   text: string;
   top: number;
   left: number;
+  commentTop: number;
 };
 
 function basename(path: string) {
@@ -880,9 +882,19 @@ function PreviewSurface({
       lineNumber: selection.endLineNumber,
       column: Math.max(1, selection.endColumn),
     });
-    const top = Math.max(8, Math.min((position?.top ?? 12) + 8, layout.height - 92));
-    const left = Math.max(12, Math.min((position?.left ?? layout.width - 260) + 18, layout.width - 252));
-    return { top, left };
+    const editorTop = editor.getDomNode()?.getBoundingClientRect().top ?? 0;
+    const composerOffsetValue = window.getComputedStyle(document.documentElement).getPropertyValue('--composer-bottom-offset');
+    const composerBottomOffset = Number.parseFloat(composerOffsetValue) || 0;
+
+    return calculateSelectionOverlayPosition({
+      editorWidth: layout.width,
+      editorHeight: layout.height,
+      editorViewportTop: editorTop,
+      selectionTop: position?.top ?? 12,
+      selectionLeft: position?.left ?? layout.width - 260,
+      viewportHeight: window.innerHeight,
+      composerBottomOffset,
+    });
   }, []);
 
   const handleEditorMount = useCallback((editor: monaco.editor.IStandaloneCodeEditor) => {
@@ -1113,7 +1125,7 @@ function PreviewSurface({
         {selectionInfo && commentOpen && (
           <div
             className="vscode-preview__comment-box"
-            style={{ left: selectionInfo.left, top: selectionInfo.top + 38 }}
+            style={{ left: selectionInfo.left, top: selectionInfo.commentTop }}
           >
             <textarea
               value={commentText}

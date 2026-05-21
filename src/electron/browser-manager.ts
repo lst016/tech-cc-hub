@@ -1,4 +1,4 @@
-import { BrowserView, BrowserWindow } from "electron";
+import { BrowserView, BrowserWindow, type WebContents } from "electron";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -33,6 +33,47 @@ export type BrowserWorkbenchConsoleLog = {
   line?: number;
 };
 
+export type BrowserWorkbenchNetworkLog = {
+  id: string;
+  url: string;
+  method?: string;
+  resourceType?: string;
+  status?: number;
+  statusText?: string;
+  mimeType?: string;
+  requestHeaders?: Record<string, string>;
+  responseHeaders?: Record<string, string>;
+  requestPostData?: string;
+  requestPostDataTruncated?: boolean;
+  responseBody?: string;
+  responseBodyBase64Encoded?: boolean;
+  responseBodyTruncated?: boolean;
+  bodyUnavailableReason?: string;
+  errorText?: string;
+  fromDiskCache?: boolean;
+  fromServiceWorker?: boolean;
+  startedAt: number;
+  finishedAt?: number;
+  durationMs?: number;
+};
+
+export type BrowserWorkbenchNetworkLogInput = {
+  limit?: number;
+  includeBody?: boolean;
+  includeHeaders?: boolean;
+  urlContains?: string;
+  resourceTypes?: string[];
+};
+
+export type BrowserWorkbenchNetworkLogResult = {
+  url: string;
+  title?: string;
+  captureEnabled: boolean;
+  captureError?: string;
+  count: number;
+  entries: BrowserWorkbenchNetworkLog[];
+};
+
 export type BrowserWorkbenchSourceCandidate = {
   component?: string;
   file?: string;
@@ -51,6 +92,10 @@ export type BrowserWorkbenchDomHint = {
   selector?: string;
   path?: string;
   xpath?: string;
+  hitTagName?: string;
+  hitPath?: string;
+  hitXPath?: string;
+  hitBoundingBox?: { x: number; y: number; width: number; height: number };
   target?: { type: "text"; value: string } | { type: "image"; url: string; alt?: string };
   selectorCandidates: string[];
   boundingBox?: { x: number; y: number; width: number; height: number };
@@ -378,6 +423,19 @@ export type BrowserWorkbenchEvent =
 
 const ANNOTATION_PREFIX = "__TECH_CC_HUB_ANNOTATION__";
 const BROWSER_WORKBENCH_ANNOTATION_CHANNEL = "browser-workbench-annotation";
+const MAX_NETWORK_LOGS = 200;
+const DEFAULT_NETWORK_LOG_LIMIT = 50;
+const MAX_NETWORK_BODY_CHARS = 64_000;
+const SENSITIVE_HEADER_NAMES = new Set([
+  "authorization",
+  "cookie",
+  "proxy-authorization",
+  "set-cookie",
+  "x-api-key",
+  "x-auth-token",
+  "x-csrf-token",
+  "x-xsrf-token",
+]);
 
 const emptyState = (annotationMode = false): BrowserWorkbenchState => ({
   url: "",
@@ -410,10 +468,66 @@ function toLogLevel(level: unknown): BrowserWorkbenchConsoleLog["level"] {
   return "log";
 }
 
+function readCdpString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readCdpNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function truncateNetworkText(value: string | undefined): { value?: string; truncated?: boolean } {
+  if (!value) return {};
+  if (value.length <= MAX_NETWORK_BODY_CHARS) {
+    return { value };
+  }
+  return { value: value.slice(0, MAX_NETWORK_BODY_CHARS), truncated: true };
+}
+
+function stringifyHeaderValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item)).join(", ");
+  }
+  if (value == null) {
+    return "";
+  }
+  return String(value);
+}
+
+function normalizeNetworkHeaders(headers: unknown): Record<string, string> | undefined {
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+    return undefined;
+  }
+  const normalized: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers as Record<string, unknown>)) {
+    const lowerName = name.toLowerCase();
+    normalized[name] = SENSITIVE_HEADER_NAMES.has(lowerName) || lowerName.includes("token")
+      ? "[redacted]"
+      : stringifyHeaderValue(value);
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function readCdpObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function networkStartedAt(params: Record<string, unknown>): number {
+  const wallTime = readCdpNumber(params.wallTime);
+  return wallTime ? Math.round(wallTime * 1000) : Date.now();
+}
+
 export class BrowserWorkbenchManager {
   private view: BrowserView | null = null;
   private bounds: BrowserWorkbenchBounds = { x: 0, y: 0, width: 0, height: 0 };
   private logs: BrowserWorkbenchConsoleLog[] = [];
+  private networkLogs: BrowserWorkbenchNetworkLog[] = [];
+  private networkLogsByRequestId = new Map<string, BrowserWorkbenchNetworkLog>();
+  private readonly networkListenerContentIds = new Set<number>();
+  private networkCaptureEnabled = false;
+  private networkCaptureError: string | undefined;
   private annotationMode = false;
   private listeners = new Set<(event: BrowserWorkbenchEvent) => void>();
 
@@ -437,6 +551,7 @@ export class BrowserWorkbenchManager {
         // URL parse failed; fall through to loadURL.
       }
     }
+    this.clearNetworkLogs();
     void view.webContents.loadURL(targetUrl);
     this.emitState();
     return this.getState();
@@ -452,6 +567,7 @@ export class BrowserWorkbenchManager {
       }
     }
     this.logs = [];
+    this.clearNetworkLogs();
     this.annotationMode = false;
     this.emitState();
     return this.getState();
@@ -481,6 +597,7 @@ export class BrowserWorkbenchManager {
   }
 
   reload(): BrowserWorkbenchState {
+    this.clearNetworkLogs();
     this.view?.webContents.reload();
     return this.getState();
   }
@@ -556,6 +673,60 @@ export class BrowserWorkbenchManager {
 
   getConsoleLogs(limit = 80): BrowserWorkbenchConsoleLog[] {
     return this.logs.slice(-Math.min(Math.max(limit, 1), 300));
+  }
+
+  getNetworkLogs(input: BrowserWorkbenchNetworkLogInput = {}): { success: boolean; result?: BrowserWorkbenchNetworkLogResult; error?: string } {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "Browser workbench is not open." };
+    }
+
+    const limit = Math.min(Math.max(Math.trunc(input.limit ?? DEFAULT_NETWORK_LOG_LIMIT), 1), MAX_NETWORK_LOGS);
+    const urlContains = input.urlContains?.trim().toLowerCase();
+    const resourceTypes = new Set(
+      (input.resourceTypes ?? [])
+        .map((type) => type.trim().toLowerCase())
+        .filter(Boolean),
+    );
+    const includeBody = input.includeBody !== false;
+    const includeHeaders = Boolean(input.includeHeaders);
+    const entries = this.networkLogs
+      .filter((entry) => {
+        if (urlContains && !entry.url.toLowerCase().includes(urlContains)) {
+          return false;
+        }
+        if (resourceTypes.size > 0 && !resourceTypes.has((entry.resourceType ?? "").toLowerCase())) {
+          return false;
+        }
+        return true;
+      })
+      .slice(-limit)
+      .map((entry) => {
+        const next: BrowserWorkbenchNetworkLog = { ...entry };
+        if (!includeHeaders) {
+          delete next.requestHeaders;
+          delete next.responseHeaders;
+        }
+        if (!includeBody) {
+          delete next.requestPostData;
+          delete next.requestPostDataTruncated;
+          delete next.responseBody;
+          delete next.responseBodyBase64Encoded;
+          delete next.responseBodyTruncated;
+        }
+        return next;
+      });
+
+    return {
+      success: true,
+      result: {
+        url: this.view.webContents.getURL(),
+        title: this.view.webContents.getTitle(),
+        captureEnabled: this.networkCaptureEnabled,
+        captureError: this.networkCaptureError,
+        count: entries.length,
+        entries,
+      },
+    };
   }
 
   addEventListener(listener: (event: BrowserWorkbenchEvent) => void): () => void {
@@ -675,6 +846,20 @@ export class BrowserWorkbenchManager {
       }
       if (this.annotationMode) {
         await this.installAnnotationScript();
+      }
+    }
+    return this.getState();
+  }
+
+  async removeAnnotation(annotationId: string): Promise<BrowserWorkbenchState> {
+    if (this.view && !this.view.webContents.isDestroyed()) {
+      try {
+        await this.view.webContents.executeJavaScript(
+          `(${this.buildRemoveAnnotationScript()})(${JSON.stringify(annotationId)})`,
+          true,
+        );
+      } catch {
+        // Ignore script cleanup errors so the renderer-side draft can still be updated.
       }
     }
     return this.getState();
@@ -1060,6 +1245,7 @@ export class BrowserWorkbenchManager {
     if (this.view && !this.view.webContents.isDestroyed()) {
       this.window.setBrowserView(this.view);
       this.view.setBounds(this.bounds);
+      this.ensureNetworkCapture(this.view);
       return this.view;
     }
 
@@ -1078,9 +1264,15 @@ export class BrowserWorkbenchManager {
       return { action: "deny" };
     });
 
+    this.ensureNetworkCapture(view);
     view.webContents.on("did-start-loading", () => this.emitState());
     view.webContents.on("did-stop-loading", () => this.emitState());
     view.webContents.on("page-title-updated", () => this.emitState());
+    view.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+      if (isMainFrame && !isInPlace) {
+        this.clearNetworkLogs();
+      }
+    });
     view.webContents.on("did-navigate", () => this.emitState());
     view.webContents.on("did-navigate-in-page", () => this.emitState());
     view.webContents.on("did-finish-load", () => {
@@ -1099,6 +1291,161 @@ export class BrowserWorkbenchManager {
     });
 
     return view;
+  }
+
+  private ensureNetworkCapture(view: BrowserView): void {
+    const contents = view.webContents;
+    if (contents.isDestroyed()) return;
+
+    const client = contents.debugger;
+    if (!this.networkListenerContentIds.has(contents.id)) {
+      this.networkListenerContentIds.add(contents.id);
+      client.on("message", (_event, method, params) => {
+        this.handleNetworkDebuggerMessage(contents, method, params);
+      });
+      client.on("detach", (_event, reason) => {
+        this.networkCaptureEnabled = false;
+        this.networkCaptureError = reason ? String(reason) : "debugger detached";
+      });
+    }
+
+    if (client.isAttached()) {
+      this.networkCaptureEnabled = true;
+      this.networkCaptureError = undefined;
+      void client.sendCommand("Network.enable", {
+        maxResourceBufferSize: 1024 * 1024,
+        maxTotalBufferSize: 10 * 1024 * 1024,
+      }).catch((error) => {
+        this.networkCaptureEnabled = false;
+        this.networkCaptureError = error instanceof Error ? error.message : String(error);
+      });
+      return;
+    }
+
+    try {
+      client.attach("1.3");
+      this.networkCaptureEnabled = true;
+      this.networkCaptureError = undefined;
+      void client.sendCommand("Network.enable", {
+        maxResourceBufferSize: 1024 * 1024,
+        maxTotalBufferSize: 10 * 1024 * 1024,
+      }).catch((error) => {
+        this.networkCaptureEnabled = false;
+        this.networkCaptureError = error instanceof Error ? error.message : String(error);
+      });
+    } catch (error) {
+      this.networkCaptureEnabled = false;
+      this.networkCaptureError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  private handleNetworkDebuggerMessage(contents: WebContents, method: string, params: unknown): void {
+    const payload = readCdpObject(params);
+    const requestId = readCdpString(payload.requestId);
+    if (!requestId) return;
+
+    if (method === "Network.requestWillBeSent") {
+      const request = readCdpObject(payload.request);
+      const postData = truncateNetworkText(readCdpString(request.postData));
+      const entry: BrowserWorkbenchNetworkLog = this.networkLogsByRequestId.get(requestId) ?? {
+        id: requestId,
+        url: readCdpString(request.url) ?? "",
+        startedAt: networkStartedAt(payload),
+      };
+      entry.url = readCdpString(request.url) ?? entry.url;
+      entry.method = readCdpString(request.method) ?? entry.method;
+      entry.resourceType = readCdpString(payload.type) ?? entry.resourceType;
+      entry.requestHeaders = normalizeNetworkHeaders(request.headers);
+      entry.requestPostData = postData.value;
+      entry.requestPostDataTruncated = postData.truncated;
+      this.rememberNetworkLog(requestId, entry);
+      return;
+    }
+
+    if (method === "Network.responseReceived") {
+      const response = readCdpObject(payload.response);
+      const entry = this.networkLogsByRequestId.get(requestId);
+      if (!entry) return;
+      entry.resourceType = readCdpString(payload.type) ?? entry.resourceType;
+      entry.status = readCdpNumber(response.status);
+      entry.statusText = readCdpString(response.statusText);
+      entry.mimeType = readCdpString(response.mimeType);
+      entry.responseHeaders = normalizeNetworkHeaders(response.headers);
+      entry.fromDiskCache = Boolean(response.fromDiskCache);
+      entry.fromServiceWorker = Boolean(response.fromServiceWorker);
+      return;
+    }
+
+    if (method === "Network.loadingFinished") {
+      const entry = this.networkLogsByRequestId.get(requestId);
+      if (!entry) return;
+      entry.finishedAt = Date.now();
+      entry.durationMs = Math.max(0, entry.finishedAt - entry.startedAt);
+      if (this.shouldCaptureNetworkBody(entry)) {
+        void this.captureNetworkResponseBody(contents, requestId, entry);
+      }
+      return;
+    }
+
+    if (method === "Network.loadingFailed") {
+      const entry = this.networkLogsByRequestId.get(requestId);
+      if (!entry) return;
+      entry.finishedAt = Date.now();
+      entry.durationMs = Math.max(0, entry.finishedAt - entry.startedAt);
+      entry.errorText = readCdpString(payload.errorText) ?? "loading failed";
+    }
+  }
+
+  private rememberNetworkLog(requestId: string, entry: BrowserWorkbenchNetworkLog): void {
+    if (!this.networkLogsByRequestId.has(requestId)) {
+      this.networkLogs.push(entry);
+    }
+    this.networkLogsByRequestId.set(requestId, entry);
+    while (this.networkLogs.length > MAX_NETWORK_LOGS) {
+      const removed = this.networkLogs.shift();
+      if (removed) {
+        this.networkLogsByRequestId.delete(removed.id);
+      }
+    }
+  }
+
+  private shouldCaptureNetworkBody(entry: BrowserWorkbenchNetworkLog): boolean {
+    const resourceType = (entry.resourceType ?? "").toLowerCase();
+    if (resourceType !== "fetch" && resourceType !== "xhr") {
+      return false;
+    }
+    const mimeType = (entry.mimeType ?? "").toLowerCase();
+    if (!mimeType) return true;
+    return (
+      mimeType.startsWith("text/") ||
+      mimeType.includes("json") ||
+      mimeType.includes("xml") ||
+      mimeType.includes("javascript") ||
+      mimeType.includes("x-www-form-urlencoded") ||
+      mimeType.includes("graphql")
+    );
+  }
+
+  private async captureNetworkResponseBody(contents: WebContents, requestId: string, entry: BrowserWorkbenchNetworkLog): Promise<void> {
+    if (contents.isDestroyed() || !contents.debugger.isAttached()) {
+      entry.bodyUnavailableReason = "debugger detached";
+      return;
+    }
+    try {
+      const bodyResult = await contents.debugger.sendCommand("Network.getResponseBody", { requestId }) as unknown;
+      const bodyPayload = readCdpObject(bodyResult);
+      const bodyText = truncateNetworkText(readCdpString(bodyPayload.body));
+      entry.responseBody = bodyText.value;
+      entry.responseBodyTruncated = bodyText.truncated;
+      entry.responseBodyBase64Encoded = Boolean(bodyPayload.base64Encoded);
+    } catch (error) {
+      entry.bodyUnavailableReason = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  private clearNetworkLogs(): void {
+    this.networkLogs = [];
+    this.networkLogsByRequestId.clear();
   }
 
   private handleConsoleMessage(level: unknown, message: string, line?: number, sourceId?: string): void {
@@ -2338,10 +2685,14 @@ export class BrowserWorkbenchManager {
         }
       }
       function annotationKey(domHint, point) {
+        const hitPath = domHint && domHint.hitPath;
+        const hitXPath = domHint && domHint.hitXPath;
         const selector = domHint && domHint.selectorCandidates && domHint.selectorCandidates[0];
         const xpath = domHint && domHint.xpath;
         const path = domHint && domHint.path;
         const box = domHint && domHint.boundingBox;
+        if (hitPath) return "hit-path:" + hitPath;
+        if (hitXPath) return "hit-xpath:" + hitXPath;
         if (selector && !/^(?:html|body|div|span|p|section|main|article|form|label|ul|li|svg|path)$/.test(selector) && !/^#(?:__nuxt|__next|app|root|main)$/i.test(selector)) {
           return "selector:" + selector;
         }
@@ -2641,6 +2992,7 @@ export class BrowserWorkbenchManager {
         function updateSubmitState() {
           annotation.comment = input.value;
           annotation.expectation = expectationInput.value;
+          emitAnnotation(annotation);
           showBackgroundInfo(annotation);
           submit.disabled = !input.value.trim() && !expectationInput.value.trim();
         }
@@ -2859,7 +3211,8 @@ export class BrowserWorkbenchManager {
         return false;
       }
       function isGenericRootId(value) {
-        return /^(?:__nuxt|__next|app|root|main)$/i.test(cleanText(value));
+        const id = cleanText(value);
+        return /^(?:__nuxt|__next|app|root|main)$/i.test(id) || /^el-id-\\d+-\\d+$/i.test(id);
       }
       function isReasonableHintElement(element) {
         if (!element || !element.getBoundingClientRect) return false;
@@ -2882,17 +3235,49 @@ export class BrowserWorkbenchManager {
         if (!id || isGenericRootId(id)) return false;
         return isReasonableHintElement(element);
       }
+      function isIconLikeElement(element) {
+        if (!element || !element.matches) return false;
+        if (element.matches("svg, path, use, i")) return true;
+        return Array.from(element.classList || []).some(function(className) {
+          return /(?:^|[-_])icon(?:$|[-_])|svg|caret|arrow/i.test(className);
+        });
+      }
+      function hasElementSpecificText(element, promoted) {
+        if (!element) return false;
+        const directText = Array.from(element.childNodes || []).some(function(node) {
+          return node.nodeType === Node.TEXT_NODE && cleanText(node.textContent);
+        });
+        if (directText) return true;
+        const text = textOf(element);
+        if (!text) return false;
+        const promotedText = promoted ? textOf(promoted) : "";
+        if (promotedText && text !== promotedText) return true;
+        return (element.children || []).length <= 1 && text.length <= 160;
+      }
+      function shouldPreferExactElement(element, promoted) {
+        if (!element || !promoted || element === promoted) return false;
+        if (!isReasonableHintElement(element)) return false;
+        if (isIconLikeElement(element) && !hasStableHint(element)) return false;
+        if (hasStableHint(element)) return true;
+        return hasElementSpecificText(element, promoted);
+      }
       function findPreferredElement(element) {
         if (!element) return element;
         const actionable = element.closest && element.closest(
           "button, a[href], input, select, textarea, summary, label, [role='button'], [role='link'], [role='tab'], [role='menuitem'], [data-testid], [data-test], [data-qa], [data-cy], [aria-controls], [onclick]",
         );
         if (actionable) {
+          if (shouldPreferExactElement(element, actionable)) {
+            return element;
+          }
           return actionable;
         }
         let current = element;
         while (current && current !== document.documentElement) {
           if (hasStableHint(current)) {
+            if (shouldPreferExactElement(element, current)) {
+              return element;
+            }
             return current;
           }
           current = current.parentElement;
@@ -3151,6 +3536,7 @@ export class BrowserWorkbenchManager {
       if (!rawElement) return null;
       const element = findPreferredElement(rawElement);
       const rect = element.getBoundingClientRect();
+      const rawRect = rawElement.getBoundingClientRect();
       const candidates = selectorCandidates(element);
       const componentBridge = buildComponentBridge(element);
       return {
@@ -3161,6 +3547,15 @@ export class BrowserWorkbenchManager {
         selector: candidates[0],
         path: pathOf(element),
         xpath: buildXPath(element),
+        hitTagName: rawElement.tagName.toLowerCase(),
+        hitPath: pathOf(rawElement),
+        hitXPath: buildXPath(rawElement),
+        hitBoundingBox: {
+          x: rawRect.x,
+          y: rawRect.y,
+          width: rawRect.width,
+          height: rawRect.height,
+        },
         target: targetOf(element),
         selectorCandidates: candidates,
         componentStack: componentBridge.componentStack,
@@ -3175,6 +3570,25 @@ export class BrowserWorkbenchManager {
         },
         context: buildContext(element),
       };
+    }`;
+  }
+
+  private buildRemoveAnnotationScript(): string {
+    return `function(annotationId) {
+      const id = String(annotationId || "");
+      if (!id) return false;
+      const layer = document.getElementById("__tech_cc_hub_annotation_layer__");
+      if (layer) {
+        Array.from(layer.querySelectorAll("[data-annotation-id]")).forEach(function(node) {
+          if (node.dataset && node.dataset.annotationId === id) {
+            node.remove();
+          }
+        });
+      }
+      if (window.__techCcHubAnnotations && typeof window.__techCcHubAnnotations.delete === "function") {
+        window.__techCcHubAnnotations.delete(id);
+      }
+      return true;
     }`;
   }
 

@@ -20,7 +20,6 @@ import { BrowserWorkbenchPage } from "./components/BrowserWorkbenchPage";
 // FeedbackDialog removed — uses direct browser link
 import MDContent from "./render/markdown";
 import ScheduledTasksPage from "./components/cron/ScheduledTasksPage";
-import { KnowledgePanel } from "./components/KnowledgePanel";
 import { TaskPanel } from "./components/TaskPanel";
 import { OPEN_BROWSER_WORKBENCH_URL_EVENT, type OpenBrowserWorkbenchUrlDetail } from "./events";
 import { copyTextToClipboard } from "./utils/clipboard";
@@ -35,7 +34,7 @@ import {
 const SCROLL_THRESHOLD = 50;
 const INITIAL_HISTORY_LIMIT = 400;
 const HISTORY_PAGE_LIMIT = 200;
-const MIN_CENTER_WIDTH = 300;
+const MIN_CENTER_WIDTH = 430;
 const MIN_SIDEBAR_WIDTH = 250;
 const MIN_ACTIVITY_RAIL_WIDTH = 400;
 const EMPTY_MESSAGES: StreamMessage[] = [];
@@ -49,6 +48,12 @@ type RenderEntry =
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function clampResizablePaneWidth(proposedWidth: number, minWidth: number, maxWidth: number): number {
+  const safeMaxWidth = Math.max(0, maxWidth);
+  if (safeMaxWidth <= minWidth) return safeMaxWidth;
+  return Math.min(Math.max(proposedWidth, minWidth), safeMaxWidth);
 }
 
 function getMessageContentItems(message: StreamMessage): unknown[] {
@@ -337,9 +342,9 @@ function App() {
   const [partialMessagesBySessionId, setPartialMessagesBySessionId] = useState<Record<string, string>>({});
   const [partialVisibilityBySessionId, setPartialVisibilityBySessionId] = useState<Record<string, boolean>>({});
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+  const shouldAutoScrollRef = useRef(true);
   const [hasNewMessages, setHasNewMessages] = useState(false);
   const [showSessionAnalysis, setShowSessionAnalysis] = useState(false);
-  const [showKnowledgePanel, setShowKnowledgePanel] = useState(false);
   const [showCronPage, setShowCronPage] = useState(false);
   const [showTaskPanel, setShowTaskPanel] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -348,6 +353,7 @@ function App() {
   const [showActivityRail, setShowActivityRail] = useState(true);
   const [workspaceViewBySessionId, setWorkspaceViewBySessionId] = useState<Record<string, WorkspaceView>>({});
   const [activityRailTabBySessionId, setActivityRailTabBySessionId] = useState<Record<string, ActivityRailTab>>({});
+  const [terminalTabBySessionId, setTerminalTabBySessionId] = useState<Record<string, boolean>>({});
   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
   const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | null>(null);
   const [appUpdateActionBusy, setAppUpdateActionBusy] = useState(false);
@@ -375,6 +381,11 @@ function App() {
       (typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent || "")));
   const headerHeightClass = isMac ? "h-12 items-center" : "h-10 items-center";
   const sidebarHeaderOffsetClass = isMac ? "top-12" : "top-10";
+
+  const setAutoScrollMode = useCallback((next: boolean) => {
+    shouldAutoScrollRef.current = next;
+    setShouldAutoScroll(next);
+  }, []);
 
   const scrollChatToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const container = scrollContainerRef.current;
@@ -407,7 +418,7 @@ function App() {
   const partialMessage = activeSessionId ? (partialMessagesBySessionId[activeSessionId] ?? "") : "";
   const showPartialMessage = activeSessionId ? (partialVisibilityBySessionId[activeSessionId] ?? false) : false;
   const workspaceView = activeSessionId ? (workspaceViewBySessionId[activeSessionId] ?? "chat") : "chat";
-  const isUtilityWorkspace = showKnowledgePanel || showTaskPanel || showCronPage;
+  const isUtilityWorkspace = showTaskPanel || showCronPage;
   const activityRailTab = activeSessionId ? (activityRailTabBySessionId[activeSessionId] ?? "preview") : "preview";
   const setActiveSessionWorkspaceView = useCallback((nextView: WorkspaceView) => {
     if (!activeSessionId) return;
@@ -475,12 +486,12 @@ function App() {
     if (!dirtyActiveSession) {
       return;
     }
-    if (shouldAutoScroll) {
+    if (shouldAutoScrollRef.current) {
       scrollChatToBottom("auto");
     } else {
       setHasNewMessages(true);
     }
-  }, [scrollChatToBottom, shouldAutoScroll]);
+  }, [scrollChatToBottom]);
 
   const schedulePartialFlush = useCallback((sessionId: string) => {
     partialDirtySessionIdsRef.current.add(sessionId);
@@ -542,6 +553,7 @@ function App() {
   const isRunning = activeSession?.status === "running";
   const activeBrowserWorkbenchState = activeSessionId ? browserWorkbenchBySessionId[activeSessionId] : undefined;
   const activeHasBrowserTab = activeBrowserWorkbenchState?.hasBrowserTab ?? Boolean(activeBrowserWorkbenchState?.url);
+  const activeHasTerminalTab = activeSessionId ? terminalTabBySessionId[activeSessionId] === true : false;
   const selectedUsageModel =
     activeSession?.model?.trim() ||
     runtimeModel?.trim() ||
@@ -797,13 +809,13 @@ function App() {
     const { scrollTop, scrollHeight, clientHeight } = container;
     const isAtBottom = scrollTop + clientHeight >= scrollHeight - SCROLL_THRESHOLD;
 
-    if (isAtBottom !== shouldAutoScroll) {
-      setShouldAutoScroll(isAtBottom);
+    if (isAtBottom !== shouldAutoScrollRef.current) {
+      setAutoScrollMode(isAtBottom);
       if (isAtBottom) {
         setHasNewMessages(false);
       }
     }
-  }, [shouldAutoScroll]);
+  }, [setAutoScrollMode]);
 
   // Set up IntersectionObserver for top sentinel
   useEffect(() => {
@@ -849,7 +861,7 @@ function App() {
 
   // Reset scroll state on session change
   useEffect(() => {
-    setShouldAutoScroll(true);
+    setAutoScrollMode(true);
     setHasNewMessages(false);
     setShowSessionAnalysis(false);
     setIsLoadingHistory(false);
@@ -857,16 +869,16 @@ function App() {
     setTimeout(() => {
       scrollChatToBottom("auto");
     }, 100);
-  }, [activeSessionId, scrollChatToBottom]);
+  }, [activeSessionId, scrollChatToBottom, setAutoScrollMode]);
 
   useEffect(() => {
-    if (shouldAutoScroll) {
+    if (shouldAutoScrollRef.current) {
       scrollChatToBottom("auto");
     } else if (messages.length > prevMessagesLengthRef.current && prevMessagesLengthRef.current > 0) {
       setHasNewMessages(true);
     }
     prevMessagesLengthRef.current = messages.length;
-  }, [messages, partialMessage, scrollChatToBottom, shouldAutoScroll]);
+  }, [messages, partialMessage, scrollChatToBottom]);
 
   useEffect(() => {
     if (!showSessionAnalysis) {
@@ -924,21 +936,17 @@ function App() {
     const handlePointerMove = (event: PointerEvent) => {
       const viewportWidth = window.innerWidth;
       if (resizingPane === "sidebar") {
-        const maxSidebarWidth = Math.max(
-          MIN_SIDEBAR_WIDTH,
-          viewportWidth - (showActivityRailRef.current ? activityRailWidthRef.current : 0) - MIN_CENTER_WIDTH,
-        );
-        const nextWidth = Math.min(Math.max(event.clientX, MIN_SIDEBAR_WIDTH), maxSidebarWidth);
+        const maxSidebarWidth =
+          viewportWidth - (showActivityRailRef.current ? activityRailWidthRef.current : 0) - MIN_CENTER_WIDTH;
+        const nextWidth = clampResizablePaneWidth(event.clientX, MIN_SIDEBAR_WIDTH, maxSidebarWidth);
         setSidebarWidth(nextWidth);
         return;
       }
 
       const proposedWidth = viewportWidth - event.clientX;
-      const maxRailWidth = Math.max(
-        MIN_ACTIVITY_RAIL_WIDTH,
-        viewportWidth - (showSidebarRef.current ? sidebarWidthRef.current : 0) - MIN_CENTER_WIDTH,
-      );
-      const nextWidth = Math.min(Math.max(proposedWidth, MIN_ACTIVITY_RAIL_WIDTH), maxRailWidth);
+      const maxRailWidth =
+        viewportWidth - (showSidebarRef.current ? sidebarWidthRef.current : 0) - MIN_CENTER_WIDTH;
+      const nextWidth = clampResizablePaneWidth(proposedWidth, MIN_ACTIVITY_RAIL_WIDTH, maxRailWidth);
       setActivityRailWidth(nextWidth);
     };
 
@@ -962,16 +970,16 @@ function App() {
   }, [resizingPane]);
 
   const scrollToBottom = useCallback(() => {
-    setShouldAutoScroll(true);
+    setAutoScrollMode(true);
     setHasNewMessages(false);
     resetToLatest();
     scrollChatToBottom("smooth");
-  }, [resetToLatest, scrollChatToBottom]);
+  }, [resetToLatest, scrollChatToBottom, setAutoScrollMode]);
 
   const scrollToTop = useCallback(() => {
-    setShouldAutoScroll(false);
+    setAutoScrollMode(false);
     scrollChatToTop("smooth");
-  }, [scrollChatToTop]);
+  }, [scrollChatToTop, setAutoScrollMode]);
 
   const handleNewSession = useCallback((nextCwd?: string) => {
     useAppStore.getState().setActiveSessionId(null);
@@ -1059,10 +1067,10 @@ function App() {
   }, [activeSessionId, sendEvent, resolvePermissionRequest]);
 
   const handleSendMessage = useCallback(() => {
-    setShouldAutoScroll(true);
+    setAutoScrollMode(true);
     setHasNewMessages(false);
     resetToLatest();
-  }, [resetToLatest]);
+  }, [resetToLatest, setAutoScrollMode]);
 
   const handleReviseUserPrompt = useCallback(async (
     prompt: string,
@@ -1083,13 +1091,13 @@ function App() {
 
   useEffect(() => {
     if (workspaceView !== "chat" || showSessionAnalysis) return;
-    setShouldAutoScroll(true);
+    setAutoScrollMode(true);
     setHasNewMessages(false);
     resetToLatest();
     requestAnimationFrame(() => {
       scrollChatToBottom("auto");
     });
-  }, [resetToLatest, scrollChatToBottom, showSessionAnalysis, workspaceView]);
+  }, [resetToLatest, scrollChatToBottom, setAutoScrollMode, showSessionAnalysis, workspaceView]);
 
   const openSettings = useCallback((pageId?: SettingsPageId) => {
     setSettingsInitialPageId(pageId ?? null);
@@ -1249,17 +1257,40 @@ function App() {
     sendWorkflowOptimizationPrompt(headerWorkflowOptimizationPrompt);
   }, [headerWorkflowOptimizationPrompt, sendWorkflowOptimizationPrompt]);
 
+  const openTerminalWorkspace = useCallback(() => {
+    if (!activeSessionId) return;
+    setTerminalTabBySessionId((current) => (
+      current[activeSessionId] === true ? current : { ...current, [activeSessionId]: true }
+    ));
+    setShowActivityRail(true);
+    setShowSessionAnalysis(false);
+    setActiveSessionWorkspaceView("chat");
+    setActiveSessionActivityRailTab("terminal");
+  }, [activeSessionId, setActiveSessionActivityRailTab, setActiveSessionWorkspaceView]);
+
+  const closeTerminalWorkspace = useCallback(() => {
+    if (!activeSessionId) return;
+    setTerminalTabBySessionId((current) => (
+      current[activeSessionId] ? { ...current, [activeSessionId]: false } : current
+    ));
+    if (activityRailTab === "terminal") {
+      setActiveSessionActivityRailTab("preview");
+    }
+  }, [activeSessionId, activityRailTab, setActiveSessionActivityRailTab]);
+
   const gitWorkspaceActive =
     !showSessionAnalysis &&
     !isUtilityWorkspace &&
     showActivityRail &&
     workspaceView !== "browser" &&
     activityRailTab === "git";
+  const expandedActivityWorkspaceActive = gitWorkspaceActive;
   const workspaceSidebarVisible = showSidebar;
   const sidebarOffset = workspaceSidebarVisible ? sidebarWidth : 0;
-  const effectiveActivityRailWidth = gitWorkspaceActive
+  const maxActivityRailWidth = viewportWidth - sidebarOffset - MIN_CENTER_WIDTH;
+  const effectiveActivityRailWidth = expandedActivityWorkspaceActive
     ? Math.max(MIN_ACTIVITY_RAIL_WIDTH, viewportWidth - sidebarOffset)
-    : activityRailWidth;
+    : clampResizablePaneWidth(activityRailWidth, MIN_ACTIVITY_RAIL_WIDTH, maxActivityRailWidth);
   const activityRailOffset = !showSessionAnalysis && !isUtilityWorkspace && showActivityRail ? effectiveActivityRailWidth : 0;
   const runtimeMeta = runtimeSourceMeta[runtimeSource];
   const currentSessionId = activeSessionId ?? null;
@@ -1531,8 +1562,7 @@ function App() {
             onDeleteSession={handleDeleteSession}
             onDeleteWorkspace={handleDeleteWorkspace}
             onOpenSettings={openSettings}
-            onOpenKnowledgePanel={() => { setShowKnowledgePanel(true); setShowCronPage(false); setShowTaskPanel(false); }}
-            onOpenCronPage={() => { setShowCronPage(true); setShowKnowledgePanel(false); setShowTaskPanel(false); }}
+            onOpenCronPage={() => { setShowCronPage(true); setShowTaskPanel(false); }}
             width={sidebarWidth}
           />
         )}
@@ -1557,14 +1587,7 @@ function App() {
           }}
         >
 
-          {showKnowledgePanel ? (
-            <div className="flex-1 min-h-0 overflow-hidden">
-              <KnowledgePanel
-                onBack={() => setShowKnowledgePanel(false)}
-                onOpenSettings={openSettings}
-              />
-            </div>
-          ) : showCronPage ? (
+          {showCronPage ? (
             <div className="flex-1 min-h-0 overflow-hidden">
               <ScheduledTasksPage onBack={() => setShowCronPage(false)} />
             </div>
@@ -1585,7 +1608,7 @@ function App() {
                 onSendWorkflowOptimizationPrompt={sendWorkflowOptimizationPrompt}
               />
             </div>
-          ) : gitWorkspaceActive ? (
+          ) : expandedActivityWorkspaceActive ? (
             <div className="min-h-0 flex-1" aria-hidden="true" />
           ) : (
             <>
@@ -1619,7 +1642,7 @@ function App() {
                         <button
                           type="button"
                           className="rounded-full px-2 py-1 font-semibold text-accent transition hover:bg-accent/10"
-                          onClick={() => scrollChatToBottom("smooth")}
+                          onClick={scrollToBottom}
                         >
                           到底部
                         </button>
@@ -1736,7 +1759,7 @@ function App() {
             </>
           )}
 
-          {!showSessionAnalysis && !isUtilityWorkspace && !gitWorkspaceActive && (
+          {!showSessionAnalysis && !isUtilityWorkspace && !expandedActivityWorkspaceActive && (
             <PromptInput
               sendEvent={sendEvent}
               onSendMessage={handleSendMessage}
@@ -1748,7 +1771,7 @@ function App() {
             />
           )}
 
-          {hasNewMessages && !shouldAutoScroll && !gitWorkspaceActive && (
+          {hasNewMessages && !shouldAutoScroll && !expandedActivityWorkspaceActive && (
             <div
               style={{
                 left: `${sidebarOffset}px`,
@@ -1790,6 +1813,9 @@ function App() {
               contextWindow={selectedUsageModelConfig?.contextWindow}
               compressionThresholdPercent={selectedUsageModelConfig?.compressionThresholdPercent}
               hasBrowserTab={activeHasBrowserTab}
+              hasTerminalTab={activeHasTerminalTab}
+              onOpenTerminalWorkspace={openTerminalWorkspace}
+              onCloseTerminalWorkspace={closeTerminalWorkspace}
               onOpenSessionAnalysis={() => setShowSessionAnalysis(true)}
               width={effectiveActivityRailWidth}
             />
@@ -1798,7 +1824,7 @@ function App() {
         {!showSessionAnalysis && !isUtilityWorkspace && showActivityRail && (
           <aside
             className={`fixed bottom-0 right-0 ${sidebarHeaderOffsetClass} z-40 min-w-[400px] overflow-hidden border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.94),rgba(240,244,248,0.98)_42%,rgba(234,239,245,0.99))] shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl ${workspaceView === "browser" ? "hidden lg:flex lg:flex-col" : "pointer-events-none hidden"}`}
-            style={{ width: activityRailWidth }}
+            style={{ width: effectiveActivityRailWidth, minWidth: effectiveActivityRailWidth }}
           >
             <BrowserWorkbenchPage
               key={activeSessionId ?? "browser-workbench"}
@@ -1822,13 +1848,16 @@ function App() {
                 setActiveSessionActivityRailTab("git");
                 setActiveSessionWorkspaceView("chat");
               }}
+              hasTerminalTab={activeHasTerminalTab}
+              onOpenTerminal={openTerminalWorkspace}
+              onCloseTerminal={closeTerminalWorkspace}
             />
           </aside>
         )}
-        {!showSessionAnalysis && !isUtilityWorkspace && showActivityRail && !gitWorkspaceActive && (
+        {!showSessionAnalysis && !isUtilityWorkspace && showActivityRail && !expandedActivityWorkspaceActive && (
           <div
             className={`fixed bottom-0 ${sidebarHeaderOffsetClass} z-30 w-3 translate-x-1/2 cursor-col-resize`}
-            style={{ right: activityRailWidth }}
+            style={{ right: effectiveActivityRailWidth }}
             onPointerDown={(event) => {
               event.preventDefault();
               setResizingPane("activityRail");

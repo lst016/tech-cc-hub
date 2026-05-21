@@ -59,7 +59,7 @@ const DEFAULT_AGENT_RULE_DOCUMENTS: AgentRuleDocuments = {
     "",
     "默认要求：涉及网页查看、抓取、调试、标注、截图的场景，默认优先使用 Electron 内置浏览器工作台（BrowserView）。",
     "",
-    "禁止默认走外部 browse skill。请优先用浏览器 MCP（browser_get_state / browser_extract_page / browser_capture_visible ...）。",
+    "禁止默认走外部 browse skill。请优先用浏览器 MCP（browser_get_state / browser_extract_page / browser_fetch_logs / browser_capture_visible ...）。",
     "",
     "设计还原默认规则：只要用户提供截图、Figma 图、页面参考图，并要求生成或修改 UI/前端代码，请优先使用设计 MCP。单张参考图先用 design_inspect_image 生成结构化视觉摘要；已有页面后再用 design_capture_current_view / design_compare_current_view / design_compare_images 生成当前截图、三栏比照图、差异图和 JSON report，再根据 differenceRatio、diffBoundingBox、topDiffRegions 修 UI。动态区域用 ignoreRegions，验收阈值用 maxDifferenceRatio。后续轮次先用 design_list_artifacts 找回产物，再用 design_read_comparison_report 读取历史 report。",
     "",

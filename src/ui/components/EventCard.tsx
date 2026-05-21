@@ -1093,18 +1093,24 @@ const UserMessageCard = ({
         </div>
       )}
       {message.attachments && message.attachments.length > 0 && (
-        <div className="mt-3 grid w-full max-w-[78%] gap-3">
+        <div className="chat-attachment-list mt-2 grid w-full max-w-[78%] gap-2">
           {message.attachments.map((attachment) => {
             if (attachment.kind === "image") {
               const imageSrc = resolveImageAttachmentSrc(attachment);
               return (
-                <div key={`${attachment.id}-preview`} className="overflow-hidden rounded-2xl border border-black/6 bg-[#eef2f8] p-2">
-                  <div className="mb-2 flex min-w-0 items-center gap-2 px-1">
-                    <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-accent">图片</span>
-                    <span className="min-w-0 flex-1 truncate text-xs font-semibold text-ink-800">{attachment.name}</span>
-                  </div>
-                  <button type="button" className="block w-full" onClick={() => setLightboxImage({ src: imageSrc, name: attachment.name })}>
-                    <img src={imageSrc} alt={attachment.name} className="max-h-64 w-full rounded-xl object-contain" />
+                <div key={`${attachment.id}-preview`} className="overflow-hidden rounded-2xl border border-black/6 bg-[#eef2f8] px-2 py-2">
+                  <button
+                    type="button"
+                    className="chat-attachment-image-row flex w-full min-w-0 items-center gap-3 text-left"
+                    onClick={() => setLightboxImage({ src: imageSrc, name: attachment.name })}
+                  >
+                    <span className="grid h-14 w-20 shrink-0 place-items-center overflow-hidden rounded-xl border border-black/6 bg-white">
+                      <img src={imageSrc} alt={attachment.name} className="chat-attachment-image-thumb block max-h-full max-w-full object-contain" />
+                    </span>
+                    <span className="chat-attachment-meta flex min-w-0 flex-1 items-center gap-2">
+                      <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-accent">图片</span>
+                      <span className="min-w-0 flex-1 truncate text-xs font-semibold text-ink-800">{attachment.name}</span>
+                    </span>
                   </button>
                 </div>
               );

@@ -12,6 +12,30 @@ test("runner injects enabled Claude Code plugins into Agent SDK sessions", () =>
   assert.match(source, /mcpAuthenticate\(figmaServer\.name\)/);
 });
 
+test("runner requires visual Figma inspection before file mutation", () => {
+  const source = readFileSync("src/electron/libs/runner.ts", "utf8");
+  const anchorToolSet = source.match(/const FIGMA_IMPLEMENTATION_ANCHOR_TOOL_NAMES = new Set\(\[\n([\s\S]*?)\n\]\);/);
+
+  assert.ok(anchorToolSet);
+  assert.match(anchorToolSet[1], /"design_inspect_image"/);
+  assert.doesNotMatch(anchorToolSet[1], /figma_summarize_design|figma_generate_tailwind_code|figma_export_node_images|figma_audit_design/);
+  assert.match(source, /The implementation anchor is established only after .*design_inspect_image succeeds/);
+  assert.match(source, /generic reference tuple/);
+  assert.match(source, /browser_query_nodes\/browser_inspect_styles/);
+  assert.doesNotMatch(source, /design_lint_visual_parity/);
+  assert.match(source, /isImplementationGradeFigmaAnchorResponse\(input\.tool_response\)/);
+  assert.match(source, /qualityGate\.confidence >= 0\.75/);
+});
+
+test("runner normalizes tool inputs in the permission path as a backstop", () => {
+  const source = readFileSync("src/electron/libs/runner.ts", "utf8");
+
+  assert.match(source, /normalizeToolInputForKnownSchemas\(toolName, input\)/);
+  assert.match(source, /normalizeKnownToolInputsInMessage\(rawMessage\)/);
+  assert.match(source, /\[runner\]\[tool-input-normalized\]/);
+  assert.match(source, /return \{ behavior: "allow", updatedInput: effectiveInput \}/);
+});
+
 test("runner enables Claude Code auto truncation for oversized resumed contexts", () => {
   const source = readFileSync("src/electron/libs/runner.ts", "utf8");
 

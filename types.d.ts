@@ -66,6 +66,47 @@ type BrowserWorkbenchConsoleLog = {
     line?: number;
 }
 
+type BrowserWorkbenchNetworkLog = {
+    id: string;
+    url: string;
+    method?: string;
+    resourceType?: string;
+    status?: number;
+    statusText?: string;
+    mimeType?: string;
+    requestHeaders?: Record<string, string>;
+    responseHeaders?: Record<string, string>;
+    requestPostData?: string;
+    requestPostDataTruncated?: boolean;
+    responseBody?: string;
+    responseBodyBase64Encoded?: boolean;
+    responseBodyTruncated?: boolean;
+    bodyUnavailableReason?: string;
+    errorText?: string;
+    fromDiskCache?: boolean;
+    fromServiceWorker?: boolean;
+    startedAt: number;
+    finishedAt?: number;
+    durationMs?: number;
+}
+
+type BrowserWorkbenchNetworkLogInput = {
+    limit?: number;
+    includeBody?: boolean;
+    includeHeaders?: boolean;
+    urlContains?: string;
+    resourceTypes?: string[];
+}
+
+type BrowserWorkbenchNetworkLogResult = {
+    url: string;
+    title?: string;
+    captureEnabled: boolean;
+    captureError?: string;
+    count: number;
+    entries: BrowserWorkbenchNetworkLog[];
+}
+
 type BrowserWorkbenchSourceCandidate = {
     component?: string;
     file?: string;
@@ -84,6 +125,10 @@ type BrowserWorkbenchDomHint = {
     selector?: string;
     path?: string;
     xpath?: string;
+    hitTagName?: string;
+    hitPath?: string;
+    hitXPath?: string;
+    hitBoundingBox?: { x: number; y: number; width: number; height: number };
     target?: { type: "text"; value: string } | { type: "image"; url: string; alt?: string };
     selectorCandidates: string[];
     boundingBox?: { x: number; y: number; width: number; height: number };
@@ -203,9 +248,11 @@ type EventPayloadMapping = {
         "browser-forward": BrowserWorkbenchState;
         "browser-state": BrowserWorkbenchState;
         "browser-console-logs": BrowserWorkbenchConsoleLog[];
+        "browser-fetch-logs": { success: boolean; result?: BrowserWorkbenchNetworkLogResult; error?: string };
         "browser-capture-visible": BrowserWorkbenchCaptureResult;
         "browser-inspect-at-point": BrowserWorkbenchDomHint | null;
         "browser-clear-annotations": BrowserWorkbenchState;
+        "browser-remove-annotation": BrowserWorkbenchState;
         "browser-annotation-mode": BrowserWorkbenchState;
         "browser-open-devtools": { opened: boolean };
         "browser-close-devtools": { opened: boolean };
@@ -294,9 +341,11 @@ interface Window {
         goForwardBrowserWorkbench: (sessionId?: string) => Promise<BrowserWorkbenchState>;
         getBrowserWorkbenchState: (sessionId?: string) => Promise<BrowserWorkbenchState>;
         getBrowserWorkbenchConsoleLogs: (limit?: number, sessionId?: string) => Promise<BrowserWorkbenchConsoleLog[]>;
+        getBrowserWorkbenchFetchLogs: (input?: BrowserWorkbenchNetworkLogInput, sessionId?: string) => Promise<{ success: boolean; result?: BrowserWorkbenchNetworkLogResult; error?: string }>;
         captureBrowserWorkbenchVisible: (sessionId?: string) => Promise<BrowserWorkbenchCaptureResult>;
         inspectBrowserWorkbenchAtPoint: (point: { x: number; y: number }, sessionId?: string) => Promise<BrowserWorkbenchDomHint | null>;
         clearBrowserWorkbenchAnnotations: (sessionId?: string) => Promise<BrowserWorkbenchState>;
+        removeBrowserWorkbenchAnnotation: (annotationId: string, sessionId?: string) => Promise<BrowserWorkbenchState>;
         setBrowserWorkbenchAnnotationMode: (enabled: boolean, sessionId?: string) => Promise<BrowserWorkbenchState>;
         openBrowserWorkbenchDevTools: (sessionId?: string) => Promise<{ opened: boolean }>;
         closeBrowserWorkbenchDevTools: (sessionId?: string) => Promise<{ opened: boolean }>;

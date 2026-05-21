@@ -9,6 +9,7 @@ export type FigmaNodeIndexEntry = {
     width?: number;
     height?: number;
   };
+  exportable?: boolean;
   text?: string;
   matchScore?: number;
   matchTerms?: string[];
@@ -26,12 +27,14 @@ export function buildFigmaNodeIndex(roots: Record<string, unknown>[], maxEntries
 
     const name = readString(node, "name") || "(unnamed)";
     const children = getNodeChildren(node);
+    const bounds = readNodeIndexBounds(node);
     const entry: FigmaNodeIndexEntry = {
       id: readString(node, "id"),
       name,
       type: readString(node, "type"),
       visible: readBoolean(node, "visible"),
-      bounds: readNodeIndexBounds(node),
+      bounds,
+      exportable: hasExportableFigmaBounds(bounds),
       childCount: children.length,
       path: [...pathParts, name].join(" / "),
     };
@@ -62,6 +65,7 @@ export function buildFigmaNodeIndex(roots: Record<string, unknown>[], maxEntries
 export function pickRecommendedNodeIds(index: FigmaNodeIndexEntry[], currentNodeIds: string[]): string[] {
   const branchCandidates = index
     .filter((entry) => entry.id && entry.childCount > 0)
+    .filter(hasExportableFigmaNodeBounds)
     .filter((entry) => !currentNodeIds.includes(entry.id ?? ""));
 
   const rankedCandidates = [...branchCandidates].sort(compareFigmaRecommendationEntries);
@@ -74,7 +78,7 @@ export function pickRecommendedNodeIds(index: FigmaNodeIndexEntry[], currentNode
   const preferred = branchCandidates.find((entry) => {
     const text = `${entry.name ?? ""} ${entry.path}`.toLowerCase();
     return /form|frame|content|section|container|page|screen|body|button|preview|template/.test(text);
-  }) ?? branchCandidates[0] ?? index.find((entry) => entry.id);
+  }) ?? branchCandidates[0] ?? index.find((entry) => entry.id && hasExportableFigmaNodeBounds(entry)) ?? index.find((entry) => entry.id);
 
   return preferred?.id ? [preferred.id] : [];
 }
@@ -160,6 +164,9 @@ function scoreFigmaNodeIndexEntry(entry: FigmaNodeIndexEntry, terms: string[]): 
   if (entry.childCount > 0) {
     score += 15;
   }
+  if (!hasExportableFigmaNodeBounds(entry)) {
+    score -= 80;
+  }
   score += getFigmaNodeIndexPathDepth(entry) * 4;
   score += getFigmaNodeIndexCompactnessScore(entry);
 
@@ -181,6 +188,11 @@ function getFigmaNodeIndexSearchText(entry: FigmaNodeIndexEntry): string {
 }
 
 function compareFigmaRecommendationEntries(a: FigmaNodeIndexEntry, b: FigmaNodeIndexEntry): number {
+  const exportableDelta = Number(hasExportableFigmaNodeBounds(b)) - Number(hasExportableFigmaNodeBounds(a));
+  if (exportableDelta !== 0) {
+    return exportableDelta;
+  }
+
   const scoreDelta = (b.matchScore ?? 0) - (a.matchScore ?? 0);
   if (scoreDelta !== 0) {
     return scoreDelta;
@@ -203,6 +215,22 @@ function getFigmaNodeIndexArea(entry: FigmaNodeIndexEntry): number {
   const width = entry.bounds?.width;
   const height = entry.bounds?.height;
   return width && height ? width * height : Number.POSITIVE_INFINITY;
+}
+
+function hasExportableFigmaNodeBounds(entry: FigmaNodeIndexEntry): boolean {
+  return hasExportableFigmaBounds(entry.bounds);
+}
+
+function hasExportableFigmaBounds(bounds: FigmaNodeIndexEntry["bounds"]): boolean {
+  return Boolean(
+    bounds &&
+    typeof bounds.width === "number" &&
+    Number.isFinite(bounds.width) &&
+    bounds.width > 0 &&
+    typeof bounds.height === "number" &&
+    Number.isFinite(bounds.height) &&
+    bounds.height > 0
+  );
 }
 
 function getFigmaNodeIndexCompactnessScore(entry: FigmaNodeIndexEntry): number {

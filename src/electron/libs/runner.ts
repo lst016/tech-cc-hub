@@ -74,6 +74,10 @@ import {
 } from "./builtin-mcp-servers.js";
 import { normalizeRunnerError } from "./runner-error.js";
 import {
+  normalizeKnownToolInputsInMessage,
+  normalizeToolInputForKnownSchemas,
+} from "./tool-input-normalizer.js";
+import {
   mergeRuntimeEfficiencyProfile,
   resolveRuntimeEfficiencyProfile,
   runtimeEfficiencyProfileStateEquals,
@@ -163,10 +167,6 @@ const FIGMA_REST_TOOL_NAME_SET = new Set<string>(FIGMA_REST_TOOL_NAMES);
 const FIGMA_OFFICIAL_MCP_SERVER_NAMES = new Set(["figma", "plugin_figma_figma"]);
 const FIGMA_URL_PATTERN = /https?:\/\/(?:www\.)?figma\.com\/(?:design|file|proto|board|slides)\//i;
 const FIGMA_IMPLEMENTATION_ANCHOR_TOOL_NAMES = new Set([
-  "figma_summarize_design",
-  "figma_generate_tailwind_code",
-  "figma_export_node_images",
-  "figma_audit_design",
   "design_inspect_image",
 ]);
 const FILE_MUTATION_TOOL_NAMES = new Set(["Edit", "MultiEdit", "Write"]);
@@ -174,6 +174,8 @@ const FILE_MUTATION_TOOL_NAMES = new Set(["Edit", "MultiEdit", "Write"]);
 // SDK built-in cron tools are blocked in favor of tech-cc-hub MCP cron tools
 // which provide persistent storage, execution history, and retry mechanism.
 const SDK_BUILTIN_CRON_TOOLS = new Set(["CronCreate", "CronDelete", "CronList"]);
+const CODEGRAPH_RETRIEVAL_TOOL_NAMES = new Set(["codegraph_search", "codegraph_context", "codegraph_impact"]);
+const BROAD_CODE_EXPLORATION_TOOL_NAMES = new Set(["Grep", "Glob", "Task"]);
 
 function isSdkBuiltinCronTool(toolName: string): boolean {
   return SDK_BUILTIN_CRON_TOOLS.has(toolName);
@@ -194,9 +196,30 @@ function getKnowledgeIndexDenyMessage(toolName: string, prompt: string): string 
   }
 
   return [
-    "Knowledge index refresh is reserved for explicit generate/update/reindex requests.",
-    "For retrieval or questions about this repo, use mcp__tech-cc-hub-knowledge__knowledge_search first, then mcp__tech-cc-hub-knowledge__knowledge_read for the selected result.",
+    "Legacy knowledge_index is disabled because RepoWiki/vector indexing has been removed.",
+    "For code retrieval or questions about this repo, use mcp__tech-cc-hub-knowledge__codegraph_search or codegraph_context first; these auto-initialize and sync the managed graph.",
   ].join(" ");
+}
+
+function isCodeGraphRetrievalTool(toolName: string): boolean {
+  return Array.from(CODEGRAPH_RETRIEVAL_TOOL_NAMES).some((codegraphToolName) => (
+    toolName === codegraphToolName ||
+    toolName.endsWith(`__${codegraphToolName}`) ||
+    toolName.endsWith(`:${codegraphToolName}`) ||
+    toolName.endsWith(`/${codegraphToolName}`)
+  ));
+}
+
+function getCodeGraphFirstDenyMessage(
+  toolName: string,
+  projectCwd: string | undefined,
+  codeGraphRetrievalSeen: boolean,
+): string | undefined {
+  if (!projectCwd || codeGraphRetrievalSeen || !BROAD_CODE_EXPLORATION_TOOL_NAMES.has(toolName)) {
+    return undefined;
+  }
+
+  return "Use mcp__tech-cc-hub-knowledge__codegraph_search or mcp__tech-cc-hub-knowledge__codegraph_context before broad source exploration. They auto-initialize .tech/codegraph when missing and run incremental sync before retrieval.";
 }
 
 const POWERSHELL_COMMAND_PATTERN = /(^|[^\w.-])(powershell(?:\.exe)?|pwsh(?:\.exe)?)(?=$|[^\w.-])/i;
@@ -263,6 +286,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   let emittedSuccessfulResult = false;
   let figmaRestAuthFailureSeen = false;
   let figmaImplementationAnchorSeen = false;
+  let codeGraphRetrievalSeen = false;
   let latestGlobalRuntimeConfig: unknown = null;
   let currentPrompt = prompt;
   let requiresFigmaImplementationAnchor = shouldRequireFigmaImplementationAnchor(currentPrompt);
@@ -490,7 +514,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       const hooks = buildQualityHooks(resolvedCwd, {
         config,
         getPrompt: () => currentPrompt,
+        projectCwd,
         sessionId: session.id,
+        isCodeGraphRetrievalSeen: () => codeGraphRetrievalSeen,
+        onCodeGraphRetrieval: () => {
+          codeGraphRetrievalSeen = true;
+        },
         onFigmaRestAuthFailure: () => {
           figmaRestAuthFailureSeen = true;
         },
@@ -576,11 +605,26 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           hooks,
           allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
           canUseTool: async (toolName, input, { signal }) => {
+            const schemaNormalization = isRecord(input)
+              ? normalizeToolInputForKnownSchemas(toolName, input)
+              : { input: input as Record<string, unknown>, fixes: [], mutated: false };
+            const effectiveInput = schemaNormalization.mutated ? schemaNormalization.input : input;
+            if (schemaNormalization.mutated) {
+              console.info("[runner][tool-input-normalized]", {
+                sessionId: session.id,
+                toolName,
+                fixes: schemaNormalization.fixes,
+              });
+            }
+            if (isCodeGraphRetrievalTool(toolName)) {
+              codeGraphRetrievalSeen = true;
+            }
+
             const denyGuards: Array<() => { behavior: "deny"; message: string } | null> = [
               () => isBlockedShellTool(toolName)
                 ? { behavior: "deny", message: BLOCKED_SHELL_TOOL_MESSAGE }
                 : null,
-              () => shouldDenyPowerShellCommand(toolName, input)
+              () => shouldDenyPowerShellCommand(toolName, effectiveInput)
                 ? { behavior: "deny", message: "PowerShell is disabled by tech-cc-hub's Windows shell policy because it is unstable in this environment. Use cmd.exe instead, for example: cmd.exe /d /s /c \"<command>\"." }
                 : null,
               () => isSdkBuiltinCronTool(toolName)
@@ -588,6 +632,10 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                 : null,
               () => {
                 const message = getKnowledgeIndexDenyMessage(toolName, currentPrompt);
+                return message ? { behavior: "deny", message } : null;
+              },
+              () => {
+                const message = getCodeGraphFirstDenyMessage(toolName, projectCwd, codeGraphRetrievalSeen);
                 return message ? { behavior: "deny", message } : null;
               },
               () => {
@@ -605,7 +653,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               () => permissionMode === "plan"
                 ? { behavior: "deny", message: "Current run is in plan mode; tools will not be executed." }
                 : null,
-              () => toolName === "Skill" && shouldDenyExternalBrowseSkill(input, currentPrompt)
+              () => toolName === "Skill" && shouldDenyExternalBrowseSkill(effectiveInput, currentPrompt)
                 ? { behavior: "deny", message: "This task is testing the built-in tech-cc-hub browser workbench. Use tech-cc-hub browser MCP tools instead of the external browse skill." }
                 : null,
             ];
@@ -616,11 +664,11 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             }
 
             if (toolName === "AskUserQuestion") {
-              return requestPermissionDecision(toolName, input, signal);
+              return requestPermissionDecision(toolName, effectiveInput, signal);
             }
 
-            if (toolName === "Skill" && isRecord(input)) {
-              const requestedSkill = typeof input.skill === "string" ? input.skill.trim() : "";
+            if (toolName === "Skill" && isRecord(effectiveInput)) {
+              const requestedSkill = typeof effectiveInput.skill === "string" ? effectiveInput.skill.trim() : "";
               if (requestedSkill) {
                 syncedGlobalRuntimeConfig = persistDiscoveredRuntimeConfig(
                   syncedGlobalRuntimeConfig,
@@ -631,8 +679,8 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               }
             }
 
-            if (toolName === "Read" && isRecord(input)) {
-              const filePath = typeof input.file_path === "string" ? input.file_path.trim() : "";
+            if (toolName === "Read" && isRecord(effectiveInput)) {
+              const filePath = typeof effectiveInput.file_path === "string" ? effectiveInput.file_path.trim() : "";
               if (!shouldPreprocessImageRead(config, filePath)) {
                 const imageReadCheck = checkRasterImageRead(filePath, rasterImageReads);
                 if (imageReadCheck.denyMessage) {
@@ -659,7 +707,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               };
             }
 
-            return { behavior: "allow", updatedInput: input };
+            return { behavior: "allow", updatedInput: effectiveInput };
           },
         },
       });
@@ -671,7 +719,8 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         requestPermissionDecision,
       });
 
-      for await (const message of q) {
+      for await (const rawMessage of q) {
+        const message = normalizeKnownToolInputsInMessage(rawMessage);
         if (message.type === "system" && "subtype" in message && message.subtype === "init") {
           const sdkSessionId = message.session_id;
           if (sdkSessionId) {
@@ -758,6 +807,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       }
       currentPrompt = nextPrompt;
       requiresFigmaImplementationAnchor = shouldRequireFigmaImplementationAnchor(currentPrompt);
+      codeGraphRetrievalSeen = false;
       await ensureMcpServersForPrompt(nextPrompt, nextAttachments);
       promptInput.enqueue(nextPrompt, nextAttachments);
     },
@@ -1366,13 +1416,24 @@ function buildQualityHooks(
     config: NonNullable<ReturnType<typeof getCurrentApiConfig>>;
     prompt?: string;
     getPrompt?: () => string;
+    projectCwd?: string;
     sessionId: string;
+    isCodeGraphRetrievalSeen?: () => boolean;
+    onCodeGraphRetrieval?: () => void;
     onFigmaRestAuthFailure?: () => void;
     onFigmaImplementationAnchor?: () => void;
   },
 ): Partial<Record<string, HookCallbackMatcher[]>> {
   void _cwd;
-  const { config, sessionId, onFigmaRestAuthFailure, onFigmaImplementationAnchor } = options;
+  const {
+    config,
+    sessionId,
+    projectCwd,
+    isCodeGraphRetrievalSeen,
+    onCodeGraphRetrieval,
+    onFigmaRestAuthFailure,
+    onFigmaImplementationAnchor,
+  } = options;
   const getCurrentPrompt = options.getPrompt ?? (() => options.prompt ?? "");
   const readFiles = new Set<string>();
   let lastToolSignature: string | null = null;
@@ -1434,10 +1495,14 @@ function buildQualityHooks(
 
         const toolName = input.tool_name;
         const toolInput = isRecord(input.tool_input) ? input.tool_input : {};
-        const normalizedInput: Record<string, unknown> = { ...toolInput };
+        let normalizedInput: Record<string, unknown> = { ...toolInput };
         const hints: string[] = [];
         const fixes: string[] = [];
         let didMutate = false;
+
+        if (isCodeGraphRetrievalTool(toolName)) {
+          onCodeGraphRetrieval?.();
+        }
 
         const trimmed = (value: string): string => value.replace(/\s+/g, " ").trim();
         const setTrimmed = (key: string, label: string, raw: unknown): void => {
@@ -1546,6 +1611,31 @@ function buildQualityHooks(
           setTrimmed("content", "content", toolInput.content);
         }
 
+        const schemaNormalization = normalizeToolInputForKnownSchemas(toolName, normalizedInput);
+        if (schemaNormalization.mutated) {
+          normalizedInput = schemaNormalization.input;
+          didMutate = true;
+          fixes.push(...schemaNormalization.fixes);
+        }
+
+        const codeGraphDenyMessage = getCodeGraphFirstDenyMessage(
+          toolName,
+          projectCwd,
+          isCodeGraphRetrievalSeen?.() ?? false,
+        );
+        if (codeGraphDenyMessage) {
+          return {
+            continue: true,
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              permissionDecision: "deny",
+              permissionDecisionReason: codeGraphDenyMessage,
+              additionalContext: codeGraphDenyMessage,
+              ...(didMutate ? { updatedInput: normalizedInput } : {}),
+            },
+          };
+        }
+
         const toolSignature = `${toolName}:${stableToolSignature(normalizedInput)}`;
         if (lastToolSignature === toolSignature) {
           repeatWarningCount += 1;
@@ -1599,9 +1689,20 @@ function buildQualityHooks(
         if (
           "tool_response" in input &&
           isFigmaImplementationAnchorToolName(input.tool_name) &&
-          !isLikelyFailedToolResponse(input.tool_response)
+          isImplementationGradeFigmaAnchorResponse(input.tool_response)
         ) {
           onFigmaImplementationAnchor?.();
+        } else if (
+          "tool_response" in input &&
+          isFigmaImplementationAnchorToolName(input.tool_name)
+        ) {
+          return {
+            continue: true,
+            hookSpecificOutput: {
+              hookEventName: "PostToolUse",
+              additionalContext: "Figma implementation anchor was not established: design_inspect_image must return success with qualityGate.confidence >= 0.75 and needsStrongerVisionModel=false before file edits.",
+            },
+          };
         }
 
         if ("tool_response" in input) {
@@ -1798,9 +1899,12 @@ function getFigmaImplementationAnchorDenyMessage(
     "This task includes a Figma design URL. Before editing code, establish an implementation-grade Figma anchor.",
     "Do not implement from raw figma_read_design JSON alone; it is often too large and truncated.",
     "For UI implementation, first use mcp__tech-cc-hub-figma__figma_list_node_index, then mcp__tech-cc-hub-figma__figma_export_node_images, then inspect the returned imagePath with mcp__tech-cc-hub-design__design_inspect_image.",
-    "Use mcp__tech-cc-hub-figma__figma_summarize_design or mcp__tech-cc-hub-figma__figma_read_design with small depth only to confirm component props/tokens.",
+    "The implementation anchor is established only after mcp__tech-cc-hub-design__design_inspect_image succeeds; generated Tailwind, summaries, audits, and raw node JSON are supporting material, not the source of truth.",
+    "After the image anchor exists, record the generic reference tuple: Figma nodeId, local reference imagePath, DOM selector/region, acceptance gate, and visual constraints. Do not turn this task's domain shape into a global component concept.",
+    "Use mcp__tech-cc-hub-figma__figma_summarize_design or mcp__tech-cc-hub-figma__figma_read_design with small depth only to confirm component props/tokens after the visual anchor exists.",
     "If the URL node-id is broad or the file contains repeated Frame names, call mcp__tech-cc-hub-figma__figma_list_node_index with the original URL and a text query from the requested UI before asking the user for a frame number.",
     "If a rendered UI node is involved, collect browser_query_nodes or annotation DOM fields (text, selector, box, attributes, componentStack, context.nearbyText) and call mcp__tech-cc-hub-figma__figma_match_ui_nodes to establish the UI-node to Figma-node mapping.",
+    "Before trusting risky layout or color changes, compare the locked visual constraints with current DOM evidence from browser_query_nodes/browser_inspect_styles and screenshot diff; avoid standalone CSS-rule guessing.",
     "Prefer a specific node-id from the Figma URL or a narrowed target node. After that, map the design sections to the existing project components and then edit code.",
   ].join("\n");
 }
@@ -1872,6 +1976,100 @@ function isLikelyFailedToolResponse(value: unknown): boolean {
   }
 
   return /"success"\s*:\s*false|tool\s+failed|exception|unauthorized|forbidden|401|403/i.test(text);
+}
+
+function isImplementationGradeFigmaAnchorResponse(value: unknown): boolean {
+  if (isLikelyFailedToolResponse(value)) {
+    return false;
+  }
+
+  const gates = extractQualityGates(value);
+  return gates.some((gate) => {
+    const confidence = typeof gate.confidence === "number" ? gate.confidence : 0;
+    return confidence >= 0.75 && gate.needsStrongerVisionModel !== true;
+  });
+}
+
+function extractQualityGates(value: unknown): Array<Record<string, unknown>> {
+  const directGates = collectQualityGates(value);
+  if (directGates.length > 0) {
+    return directGates;
+  }
+
+  return collectToolResponseTexts(value)
+    .flatMap((text) => parseJsonCandidates(text))
+    .flatMap(collectQualityGates);
+}
+
+function collectQualityGates(value: unknown, depth = 0): Array<Record<string, unknown>> {
+  if (depth > 6 || !isRecord(value)) {
+    return [];
+  }
+
+  const gates: Array<Record<string, unknown>> = [];
+  if (isRecord(value.qualityGate)) {
+    gates.push(value.qualityGate);
+  }
+  if (isRecord(value.dsl) && isRecord(value.dsl.qualityGate)) {
+    gates.push(value.dsl.qualityGate);
+  }
+
+  for (const nested of Object.values(value)) {
+    if (isRecord(nested)) {
+      gates.push(...collectQualityGates(nested, depth + 1));
+    } else if (Array.isArray(nested)) {
+      for (const item of nested) {
+        gates.push(...collectQualityGates(item, depth + 1));
+      }
+    }
+  }
+
+  return gates;
+}
+
+function collectToolResponseTexts(value: unknown): string[] {
+  if (typeof value === "string") {
+    return [value];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap(collectToolResponseTexts);
+  }
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  const texts: string[] = [];
+  if (typeof value.text === "string") {
+    texts.push(value.text);
+  }
+  if (typeof value.content === "string") {
+    texts.push(value.content);
+  } else if (Array.isArray(value.content)) {
+    texts.push(...value.content.flatMap(collectToolResponseTexts));
+  }
+  return texts;
+}
+
+function parseJsonCandidates(text: string): unknown[] {
+  const candidates = [text.trim()];
+  const firstObject = text.indexOf("{");
+  const lastObject = text.lastIndexOf("}");
+  if (firstObject >= 0 && lastObject > firstObject) {
+    candidates.push(text.slice(firstObject, lastObject + 1));
+  }
+
+  const parsed: unknown[] = [];
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+    try {
+      parsed.push(JSON.parse(candidate) as unknown);
+    } catch {
+      // Ignore non-JSON tool wrapping text.
+    }
+  }
+  return parsed;
 }
 
 function isLikelyFigmaRestAuthFailure(value: unknown): boolean {

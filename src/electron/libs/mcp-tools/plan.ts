@@ -13,8 +13,6 @@ export const PLAN_TOOL_NAMES = [
 const PLAN_MCP_SERVER_NAME = "tech-cc-hub-plan";
 const PLAN_MCP_SERVER_VERSION = "1.0.0";
 
-let planMcpServer: McpSdkServerConfigWithInstance | null = null;
-
 function planUpdatedResult() {
   return toPlainTextToolResult("Plan updated");
 }
@@ -30,10 +28,6 @@ const UPDATE_PLAN_SCHEMA = {
 };
 
 export function getPlanMcpServer(): McpSdkServerConfigWithInstance {
-  if (planMcpServer) {
-    return planMcpServer;
-  }
-
   const updatePlanHandler = tool(
     "update_plan",
     [
@@ -46,12 +40,11 @@ export function getPlanMcpServer(): McpSdkServerConfigWithInstance {
     { alwaysLoad: true },
   );
 
-  planMcpServer = createSdkMcpServer({
+  return createSdkMcpServer({
     name: PLAN_MCP_SERVER_NAME,
     version: PLAN_MCP_SERVER_VERSION,
     tools: [updatePlanHandler],
     alwaysLoad: true,
   });
 
-  return planMcpServer;
 }

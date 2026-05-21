@@ -385,7 +385,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   cwd: "",
   apiConfigSettings: { profiles: [] },
   runtimeModel: "",
-  reasoningMode: "high",
+  reasoningMode: "xhigh",
   pendingStart: false,
   globalError: null,
   permissionMode: "bypassPermissions",

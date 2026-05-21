@@ -40,6 +40,8 @@ test("built-in MCP registry tool names stay unique", () => {
   assert.equal(toolNames.includes("figma_get_design_playbook"), true);
   assert.equal(toolNames.includes("figma_audit_design"), true);
   assert.equal(toolNames.includes("figma_match_ui_nodes"), true);
+  assert.equal(toolNames.includes("browser_fetch_logs"), true);
+  assert.equal(toolNames.includes("design_lint_visual_parity"), false);
 });
 
 test("built-in MCP prompt hints are sourced from the registry", () => {
@@ -50,15 +52,35 @@ test("built-in MCP prompt hints are sourced from the registry", () => {
   assert.match(hints, /java -jar/);
 });
 
+test("built-in Figma MCP hints include the child component development workflow", () => {
+  const hints = buildBuiltinMcpPromptHints(["tech-cc-hub-figma"]);
+
+  assert.match(hints, /Figma component workflow rule/);
+  assert.match(hints, /Figma genericity rule/);
+  assert.match(hints, /component backlog/);
+  assert.match(hints, /exactly one component in_progress/);
+  assert.match(hints, /reference tuple/);
+  assert.match(hints, /design_compare_element_to_reference/);
+});
+
 test("knowledge MCP hints prioritize retrieval over reindexing", () => {
   const knowledgeServer = BUILTIN_MCP_SERVERS.find((server) => server.name === "tech-cc-hub-knowledge");
   assert.ok(knowledgeServer);
 
   const toolNames = knowledgeServer.toolGroups.flatMap((group) => group.tools.map((tool) => tool.name));
-  assert.ok(toolNames.indexOf("knowledge_search") < toolNames.indexOf("knowledge_index"));
+  assert.equal(toolNames.includes("knowledge_search"), false);
+  assert.equal(toolNames.includes("knowledge_index"), false);
+  assert.ok(toolNames.indexOf("codegraph_status") < toolNames.indexOf("memory_update"));
+  assert.ok(toolNames.includes("codegraph_sync"));
+  assert.ok(toolNames.includes("codegraph_search"));
+  assert.ok(toolNames.includes("codegraph_context"));
+  assert.ok(toolNames.includes("codegraph_impact"));
+  assert.ok(toolNames.includes("memory_update"));
 
   const hints = (knowledgeServer.promptHints ?? []).join("\n");
-  assert.match(hints, /knowledge_search.*knowledge_read/s);
-  assert.match(hints, /Do not use `mcp__tech-cc-hub-knowledge__knowledge_index` to answer a question/);
-  assert.match(hints, /before generic `Read`\/`Grep`\/`Task`/);
+  assert.match(hints, /codegraph_search.*codegraph_context/s);
+  assert.match(hints, /\.tech\/codegraph/);
+  assert.match(hints, /auto-initialize.*incremental sync/s);
+  assert.match(hints, /before broad `Read`\/`Grep`\/`Glob`\/`Task`/);
+  assert.match(hints, /do not require an LLM or embedding model/);
 });

@@ -150,11 +150,25 @@ try {
   }, {}));
   logStep("compare-tool-finished");
 
+  const acceptancePayload = parseTextToolPayload(await compareTool.handler({
+    referenceImagePath: referencePath,
+    target: "#loginButton",
+    strategy: "selector",
+    padding,
+    label: "design-element-smoke-acceptance",
+    sensitivity: "strict",
+    maxDifferenceRatio: 0.10,
+  }, {}));
+  logStep("acceptance-compare-tool-finished");
+
   if (!capturePayload.success) {
     throw new Error(`Element capture failed: ${capturePayload.error}`);
   }
   if (!comparePayload.success) {
     throw new Error(`Element comparison failed: ${comparePayload.error}`);
+  }
+  if (!acceptancePayload.success) {
+    throw new Error(`Element acceptance comparison failed: ${acceptancePayload.error}`);
   }
   if (capturePayload.capture.size.width !== paddedSize.width || capturePayload.capture.size.height !== paddedSize.height) {
     throw new Error(`Unexpected capture size: ${JSON.stringify(capturePayload.capture.size)}`);
@@ -162,8 +176,14 @@ try {
   if (!comparePayload.comparison.comparable || comparePayload.comparison.differenceRatio <= 0) {
     throw new Error(`Expected a positive comparable diff, got ${JSON.stringify(comparePayload.comparison)}`);
   }
+  if (!acceptancePayload.comparison.comparable || acceptancePayload.comparison.differenceRatio !== comparePayload.comparison.differenceRatio) {
+    throw new Error(`Expected acceptance comparison to reuse the same comparable diff, got ${JSON.stringify(acceptancePayload.comparison)}`);
+  }
   if (comparePayload.comparison.verdict.passed !== false) {
     throw new Error(`Expected maxDifferenceRatio gate to fail, got ${JSON.stringify(comparePayload.comparison.verdict)}`);
+  }
+  if (acceptancePayload.comparison.verdict.passed !== true) {
+    throw new Error(`Expected 90% acceptance gate to pass, got ${JSON.stringify(acceptancePayload.comparison.verdict)}`);
   }
 
   console.log(JSON.stringify({
@@ -177,7 +197,8 @@ try {
     differenceRatio: comparePayload.comparison.differenceRatio,
     diffBoundingBox: comparePayload.comparison.diffBoundingBox,
     reportPath: comparePayload.comparison.reportPath,
-    verdict: comparePayload.comparison.verdict,
+    strictGate: comparePayload.comparison.verdict,
+    acceptanceGate: acceptancePayload.comparison.verdict,
   }, null, 2));
 } finally {
   clearTimeout(hardTimeout);

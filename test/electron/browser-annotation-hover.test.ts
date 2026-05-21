@@ -30,4 +30,36 @@ describe("browser annotation hover preview", () => {
     assert.match(source, /\.__tech_cc_hub_marker\{[^"]*z-index:40/);
     assert.match(source, /\.__tech_cc_hub_background\{[^"]*z-index:50/);
   });
+
+  it("keys annotations by the exact clicked DOM path before promoted selectors", () => {
+    const source = readFileSync("src/electron/browser-manager.ts", "utf8");
+
+    assert.match(source, /hitPath: pathOf\(rawElement\)/);
+    assert.match(source, /const hitPath = domHint && domHint\.hitPath/);
+    assert.match(source, /if \(hitPath\) return "hit-path:" \+ hitPath/);
+    assert.match(source, /function shouldPreferExactElement\(element, promoted\)/);
+  });
+
+  it("lets specific drawer children beat generated or stable ancestor ids", () => {
+    const source = readFileSync("src/electron/browser-manager.ts", "utf8");
+
+    assert.match(source, /el-id-\\\\d\+-\\\\d\+/);
+    assert.match(
+      source,
+      /if \(hasStableHint\(current\)\) \{[\s\S]*?shouldPreferExactElement\(element, current\)[\s\S]*?return element;[\s\S]*?return current;/,
+    );
+  });
+
+  it("keeps prompt annotation removals synced with BrowserView markers", () => {
+    const promptInputSource = readFileSync("src/ui/components/PromptInput.tsx", "utf8");
+    const preloadSource = readFileSync("src/electron/preload.cts", "utf8");
+    const mainSource = readFileSync("src/electron/main.ts", "utf8");
+    const managerSource = readFileSync("src/electron/browser-manager.ts", "utf8");
+
+    assert.match(managerSource, /function updateSubmitState\(\) \{[\s\S]*?emitAnnotation\(annotation\);/);
+    assert.match(promptInputSource, /removeBrowserWorkbenchAnnotation\?\.\(annotationId, activeSessionId \?\? undefined\)/);
+    assert.match(promptInputSource, /clearBrowserWorkbenchAnnotations\(activeSessionId \?\? undefined\)/);
+    assert.match(preloadSource, /ipcInvoke\("browser-remove-annotation", annotationId, sessionId\)/);
+    assert.match(mainSource, /ipcMainHandle\("browser-remove-annotation"/);
+  });
 });

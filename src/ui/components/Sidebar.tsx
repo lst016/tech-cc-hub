@@ -13,7 +13,6 @@ interface SidebarProps {
   onDeleteSession: (sessionId: string) => void;
   onDeleteWorkspace: (sessionIds: string[], workspaceName: string) => void;
   onOpenSettings?: (pageId?: SettingsPageId) => void;
-  onOpenKnowledgePanel?: () => void;
   onOpenCronPage?: () => void;
   width?: number;
 }
@@ -28,7 +27,6 @@ export function Sidebar({
   onDeleteSession,
   onDeleteWorkspace,
   onOpenSettings,
-  onOpenKnowledgePanel,
   onOpenCronPage,
   width = DEFAULT_SIDEBAR_WIDTH,
 }: SidebarProps) {
@@ -43,6 +41,7 @@ export function Sidebar({
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const closeTimerRef = useRef<number | null>(null);
   const [hasUpdate, setHasUpdate] = useState(false);
+  const [currentTimeMs, setCurrentTimeMs] = useState(0);
   const previousSessionStatusRef = useRef<Record<string, string | undefined>>({});
   const [unreadSessionIds, setUnreadSessionIds] = useState<Record<string, "completed" | "error">>({});
   const [workspaceHoverCard, setWorkspaceHoverCard] = useState<{
@@ -60,6 +59,13 @@ export function Sidebar({
     return unsubscribe;
   }, []);
 
+  useEffect(() => {
+    const refreshCurrentTime = () => setCurrentTimeMs(Date.now());
+    refreshCurrentTime();
+    const timer = window.setInterval(refreshCurrentTime, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const formatWorkspaceName = (cwd?: string) => {
     if (!cwd) return "未绑定工作区";
     const parts = cwd.split(/[\\/]+/).filter(Boolean);
@@ -67,9 +73,9 @@ export function Sidebar({
   };
 
   const formatSessionAge = (updatedAt?: number) => {
-    if (!updatedAt) return "";
+    if (!updatedAt || !currentTimeMs) return "";
     const updatedAtMs = updatedAt < 1_000_000_000_000 ? updatedAt * 1000 : updatedAt;
-    const elapsedMs = Math.max(0, Date.now() - updatedAtMs);
+    const elapsedMs = Math.max(0, currentTimeMs - updatedAtMs);
     const minute = 60 * 1000;
     const hour = 60 * minute;
     const day = 24 * hour;
@@ -447,20 +453,6 @@ export function Sidebar({
         </div>
 
         <div className="mt-auto space-y-1">
-          <button
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-[#e2e2e2] hover:text-ink-950"
-            onClick={() => onOpenKnowledgePanel?.()}
-            aria-label="知识库（内测期）"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <path d="M5 5.5A2.5 2.5 0 0 1 7.5 3H19v16H7.5A2.5 2.5 0 0 0 5 21.5z" />
-              <path d="M5 5.5v16" />
-              <path d="M9 7h6" />
-              <path d="M9 11h7" />
-              <path d="M9 15h4" />
-            </svg>
-            <span className="min-w-0 truncate">知识库（内测期）</span>
-          </button>
           <button
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-[#e2e2e2] hover:text-ink-950"
             onClick={() => onOpenCronPage?.()}

@@ -24,6 +24,7 @@ import { getSlashCommandContext, getSlashCommandQuery, isCompletedSlashCommandCo
 import { buildSlashCommandDisplayParts, serializeSlashCommandDraft } from "../utils/slash-command-display";
 import { getPromptTextFromEditor, getSelectionOffsetInEditor, getSelectionRangeInEditor, renderPromptEditorContent, restoreEditorSelection } from "../utils/prompt-editor-content";
 import { getPromptParagraphInputAction, insertTextIntoPrompt, resolvePromptEditorInputCursor, shouldBlockPromptEnterAfterComposition, shouldInsertPromptNewline, shouldSubmitPromptOnEnter } from "../utils/prompt-editor-keyboard";
+import { scorePreviewQuickOpenEntry } from "../../shared/preview-quick-open";
 import {
   ADD_PROMPT_ATTACHMENT_EVENT,
   OPEN_BROWSER_WORKBENCH_URL_EVENT,
@@ -49,8 +50,10 @@ const MAX_HEIGHT = MAX_ROWS * LINE_HEIGHT;
 const IME_ENTER_GRACE_MS = 120;
 const SESSION_TITLE_TIMEOUT_MS = 1800;
 const FILE_MENTION_PREVIEW_LIMIT = 10;
-const FILE_MENTION_SCAN_LIMIT = 260;
-const FILE_MENTION_SCAN_DEPTH = 4;
+const FILE_MENTION_DIRECTORY_SCAN_LIMIT = 500;
+const FILE_MENTION_FILE_SCAN_LIMIT = 4_000;
+const FILE_MENTION_SCAN_DEPTH = 5;
+const COMPOSER_SURFACE_WIDTH_CLASS = "w-full min-w-[min(430px,_100%)] max-w-[clamp(920px,_calc(100vw-420px),_1320px)] xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]";
 const FILE_MENTION_IGNORED_DIRS = new Set([
   ".git",
   ".next",
@@ -142,6 +145,7 @@ type PreviewDirectoryEntry = {
   name?: string;
   path?: string;
   filePath?: string;
+  relativePath?: string;
   type?: string;
   kind?: string;
   isDirectory?: boolean;
@@ -154,6 +158,13 @@ type PreviewDirectoryResponse =
       entries?: PreviewDirectoryEntry[];
       error?: string;
     };
+
+type PreviewFilesResponse = {
+  success?: boolean;
+  entries?: PreviewDirectoryEntry[];
+  truncated?: boolean;
+  error?: string;
+};
 
 interface PromptInputProps {
   sendEvent: (event: ClientEvent) => void;
@@ -212,6 +223,10 @@ function buildBrowserAnnotationsPrompt(annotations: BrowserWorkbenchAnnotation[]
         selectorCandidates: annotation.domHint.selectorCandidates,
         path: annotation.domHint.path,
         xpath: annotation.domHint.xpath,
+        hitTagName: annotation.domHint.hitTagName,
+        hitPath: annotation.domHint.hitPath,
+        hitXPath: annotation.domHint.hitXPath,
+        hitBoundingBox: annotation.domHint.hitBoundingBox,
         boundingBox: annotation.domHint.boundingBox,
         componentStack: annotation.domHint.componentStack,
         sourceCandidates: annotation.domHint.sourceCandidates,
@@ -476,6 +491,22 @@ function getRelativeMentionPath(workspaceRoot: string, filePath: string) {
   return normalizedPath;
 }
 
+function getPlainTextFromClipboardData(clipboardData: DataTransfer) {
+  const plainText = clipboardData.getData("text/plain");
+  if (plainText) return plainText;
+
+  const html = clipboardData.getData("text/html");
+  if (!html) return "";
+
+  if (typeof document === "undefined") {
+    return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
+
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  return (container.innerText || container.textContent || "").replace(/\u00a0/g, " ");
+}
+
 function getFileMentionContext(promptValue: string, cursorIndex: number): FileMentionContext | null {
   const safeCursor = Math.max(0, Math.min(cursorIndex, promptValue.length));
   const beforeCursor = promptValue.slice(0, safeCursor);
@@ -491,16 +522,46 @@ function getFileMentionContext(promptValue: string, cursorIndex: number): FileMe
 
 async function collectFileMentionOptions(workspaceRoot: string): Promise<FileMentionOption[]> {
   const root = workspaceRoot.trim();
-  if (!root || !window.electron?.listPreviewDirectory) return [];
+  if (!root || !window.electron) return [];
 
   const bridge = window.electron as typeof window.electron & {
     listPreviewDirectory?: (input: { cwd: string; path: string }) => Promise<PreviewDirectoryResponse>;
+    listPreviewFiles?: (input: { cwd: string; limit?: number }) => Promise<PreviewFilesResponse>;
   };
   const seen = new Set<string>();
   const options: FileMentionOption[] = [];
+  let scannedDirectories = 0;
+
+  const addOption = (entry: PreviewDirectoryEntry, fallbackKind: "file" | "directory") => {
+    const name = entry.name?.trim();
+    const entryPath = entry.path || entry.filePath;
+    if (!name || !entryPath) return;
+
+    const isDirectory = entry.isDirectory === true || entry.type === "directory" || entry.kind === "directory" || fallbackKind === "directory";
+    if (isDirectory && FILE_MENTION_IGNORED_DIRS.has(name)) return;
+
+    const normalizedPath = normalizeMentionPath(entryPath);
+    if (seen.has(normalizedPath)) return;
+    seen.add(normalizedPath);
+
+    options.push({
+      path: normalizedPath,
+      label: normalizeMentionPath(entry.relativePath || getRelativeMentionPath(root, normalizedPath)),
+      name,
+      kind: isDirectory ? "directory" : "file",
+    });
+  };
+
+  if (bridge.listPreviewFiles) {
+    const response = await bridge.listPreviewFiles({ cwd: root, limit: FILE_MENTION_FILE_SCAN_LIMIT });
+    const entries = response?.success === false ? [] : response?.entries ?? [];
+    for (const entry of entries) {
+      addOption(entry, "file");
+    }
+  }
 
   const visit = async (directoryPath: string, depth: number): Promise<void> => {
-    if (depth > FILE_MENTION_SCAN_DEPTH || options.length >= FILE_MENTION_SCAN_LIMIT) return;
+    if (!bridge.listPreviewDirectory || depth > FILE_MENTION_SCAN_DEPTH || scannedDirectories >= FILE_MENTION_DIRECTORY_SCAN_LIMIT) return;
     const response = await bridge.listPreviewDirectory?.({ cwd: root, path: directoryPath });
     const entries = Array.isArray(response)
       ? response
@@ -509,7 +570,6 @@ async function collectFileMentionOptions(workspaceRoot: string): Promise<FileMen
         : response?.entries ?? [];
 
     for (const entry of entries) {
-      if (options.length >= FILE_MENTION_SCAN_LIMIT) return;
       const name = entry.name?.trim();
       if (!name) continue;
 
@@ -517,20 +577,12 @@ async function collectFileMentionOptions(workspaceRoot: string): Promise<FileMen
       if (isDirectory && FILE_MENTION_IGNORED_DIRS.has(name)) continue;
 
       const entryPath = entry.path || entry.filePath || `${directoryPath.replace(/\/$/, "")}/${name}`;
-      const normalizedPath = normalizeMentionPath(entryPath);
-      if (seen.has(normalizedPath)) continue;
-      seen.add(normalizedPath);
-
-      const label = getRelativeMentionPath(root, normalizedPath);
-      options.push({
-        path: normalizedPath,
-        label,
-        name,
-        kind: isDirectory ? "directory" : "file",
-      });
-
       if (isDirectory) {
-        await visit(normalizedPath, depth + 1);
+        scannedDirectories += 1;
+        addOption({ ...entry, path: entryPath, isDirectory: true }, "directory");
+        await visit(normalizeMentionPath(entryPath), depth + 1);
+      } else if (!bridge.listPreviewFiles) {
+        addOption({ ...entry, path: entryPath }, "file");
       }
     }
   };
@@ -1074,26 +1126,28 @@ export function PromptInput({
   const filteredFileMentionOptions = useMemo(() => {
     if (!fileMentionContext) return [];
     const query = normalizeMentionPath(fileMentionContext.query.replace(/^["']|["']$/g, "")).toLowerCase();
-    const matched = !query
-      ? fileMentionOptions
-      : fileMentionOptions.filter((option) => {
-          const label = option.label.toLowerCase();
-          const name = option.name.toLowerCase();
-          return label.includes(query) || name.includes(query);
-        });
-    return matched
-      .slice()
-      .sort((a, b) => {
-        if (!query) return 0;
-        const aLabel = a.label.toLowerCase();
-        const bLabel = b.label.toLowerCase();
-        const aName = a.name.toLowerCase();
-        const bName = b.name.toLowerCase();
-        const aScore = (aLabel.startsWith(query) ? 0 : aName.startsWith(query) ? 1 : aLabel.includes(`/${query}`) ? 2 : 3) + (a.kind === "file" ? 0 : 0.2);
-        const bScore = (bLabel.startsWith(query) ? 0 : bName.startsWith(query) ? 1 : bLabel.includes(`/${query}`) ? 2 : 3) + (b.kind === "file" ? 0 : 0.2);
-        return aScore - bScore || a.label.localeCompare(b.label, "zh-CN");
+    if (!query) {
+      return fileMentionOptions.slice(0, FILE_MENTION_PREVIEW_LIMIT);
+    }
+
+    return fileMentionOptions
+      .map((option) => {
+        const score = scorePreviewQuickOpenEntry({
+          name: option.name,
+          path: option.path,
+          relativePath: option.label,
+        }, query);
+        return score === null
+          ? null
+          : {
+              option,
+              score: score + (option.kind === "file" ? 0 : 0.2),
+            };
       })
-      .slice(0, FILE_MENTION_PREVIEW_LIMIT);
+      .filter((item): item is { option: FileMentionOption; score: number } => Boolean(item))
+      .sort((a, b) => a.score - b.score || a.option.label.localeCompare(b.option.label, "zh-CN"))
+      .slice(0, FILE_MENTION_PREVIEW_LIMIT)
+      .map((item) => item.option);
   }, [fileMentionContext, fileMentionOptions]);
   const showFileMentionPalette = Boolean(fileMentionContext) && !showSlashPalette && !disabled && (fileMentionLoading || filteredFileMentionOptions.length > 0);
   const enabledProfiles = useMemo<ApiConfigProfile[]>(() => getEnabledProfiles(apiConfigSettings.profiles), [apiConfigSettings.profiles]);
@@ -1229,6 +1283,27 @@ export function PromptInput({
     setShowSlashBrowser(false);
     setDismissedSlashQuery(null);
   }, [setPromptDraft]);
+
+  const removeBrowserAnnotationDraft = useCallback((annotationId: string) => {
+    const nextAnnotations = browserAnnotations.filter((item) => item.id !== annotationId);
+    if (activeSessionId) {
+      setBrowserWorkbenchAnnotations(activeSessionId, nextAnnotations);
+    } else {
+      setBrowserAnnotations(nextAnnotations);
+    }
+    void window.electron.removeBrowserWorkbenchAnnotation?.(annotationId, activeSessionId ?? undefined)
+      .catch((error) => console.warn("Failed to remove browser annotation marker:", error));
+  }, [activeSessionId, browserAnnotations, setBrowserAnnotations, setBrowserWorkbenchAnnotations]);
+
+  const clearBrowserAnnotationDrafts = useCallback(() => {
+    if (activeSessionId) {
+      setBrowserWorkbenchAnnotations(activeSessionId, []);
+    } else {
+      clearBrowserAnnotations();
+    }
+    void window.electron.clearBrowserWorkbenchAnnotations(activeSessionId ?? undefined)
+      .catch((error) => console.warn("Failed to clear browser annotation markers:", error));
+  }, [activeSessionId, clearBrowserAnnotations, setBrowserWorkbenchAnnotations]);
 
   const syncPromptEditorState = useCallback(() => {
     const editor = promptRef.current;
@@ -1550,18 +1625,33 @@ export function PromptInput({
   }, [setAttachments, setGlobalError]);
 
   const handlePaste = useCallback(async (event: React.ClipboardEvent<HTMLDivElement>) => {
+    if (disabled) return;
+
     const clipboardFiles = Array.from(event.clipboardData.items)
       .filter((item) => item.kind === "file")
       .map((item) => item.getAsFile())
       .filter((file): file is File => Boolean(file));
 
-    if (clipboardFiles.length === 0) {
+    if (clipboardFiles.length > 0) {
+      event.preventDefault();
+      await addFiles(clipboardFiles);
       return;
     }
 
+    const plainText = getPlainTextFromClipboardData(event.clipboardData);
+    if (!plainText) return;
+
     event.preventDefault();
-    await addFiles(clipboardFiles);
-  }, [addFiles]);
+    const editor = promptRef.current ?? event.currentTarget;
+    editor.focus();
+
+    const currentPrompt = getPromptTextFromEditor(editor);
+    const fallbackCursor = cursorIndex || currentPrompt.length;
+    const selection = getSelectionRangeInEditor(editor) ?? { start: fallbackCursor, end: fallbackCursor };
+    const nextDraft = insertTextIntoPrompt(currentPrompt, plainText, selection.start, selection.end);
+    setPromptDraft(nextDraft.prompt, nextDraft.cursorIndex);
+    focusPromptEditor(nextDraft.cursorIndex);
+  }, [addFiles, cursorIndex, disabled, focusPromptEditor, setPromptDraft]);
 
   const handleFileInputChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files.length > 0) {
@@ -1852,7 +1942,7 @@ export function PromptInput({
         </div>
       )}
       {showSlashPalette && (
-        <div className="relative z-[130] mx-auto mb-3 w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
+        <div className={`prompt-composer-surface relative z-[130] mx-auto mb-3 ${COMPOSER_SURFACE_WIDTH_CLASS}`}>
           <div className="overflow-hidden rounded-[24px] border border-black/6 bg-white/94 shadow-[0_18px_50px_rgba(30,38,52,0.08)] backdrop-blur">
             <div className="flex items-center justify-between gap-3 border-b border-black/6 px-4 py-2 text-xs font-medium text-muted">
               <span>可用 Slash 命令</span>
@@ -1881,7 +1971,7 @@ export function PromptInput({
         </div>
       )}
       {showFileMentionPalette && (
-        <div className="mx-auto mb-3 w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
+        <div className={`prompt-composer-surface mx-auto mb-3 ${COMPOSER_SURFACE_WIDTH_CLASS}`}>
           <div className="overflow-hidden rounded-[22px] border border-[#d0d7de] bg-white/96 shadow-[0_18px_50px_rgba(30,38,52,0.10)] backdrop-blur">
             <div className="flex items-center justify-between gap-3 border-b border-black/6 px-4 py-2 text-xs font-medium text-muted">
               <span>@ 文件提及</span>
@@ -1936,7 +2026,7 @@ export function PromptInput({
         </div>
       )}
       <div
-        className={`relative mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[18px] border bg-white px-4 pb-3 pt-4 shadow-[0_10px_30px_rgba(15,18,24,0.07)] transition-colors xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)] ${isDraggingFiles ? "border-accent/45 shadow-[0_18px_42px_rgba(255,122,64,0.16)]" : "border-[#d9dde3]"}`}
+        className={`prompt-composer-surface prompt-composer-card relative mx-auto ${COMPOSER_SURFACE_WIDTH_CLASS} rounded-[18px] border bg-white px-4 pb-3 pt-4 shadow-[0_10px_30px_rgba(15,18,24,0.07)] transition-colors ${isDraggingFiles ? "border-accent/45 shadow-[0_18px_42px_rgba(255,122,64,0.16)]" : "border-[#d9dde3]"}`}
         onDragEnter={handleComposerDragEnter}
         onDragOver={handleComposerDragOver}
         onDragLeave={handleComposerDragLeave}
@@ -1947,6 +2037,7 @@ export function PromptInput({
             松开添加附件
           </div>
         )}
+        <div className="prompt-composer-body min-h-0 flex-1 overflow-y-auto overflow-x-hidden pr-1">
         {currentSessionQueue.length > 0 && (
           <div className="mb-3 min-w-0 overflow-hidden rounded-2xl border border-black/6 bg-[#f6f8fb] px-3 py-3">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -2255,12 +2346,7 @@ export function PromptInput({
                     className="ml-1 rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
                     onClick={(event) => {
                       event.stopPropagation();
-                      const nextAnnotations = browserAnnotations.filter((item) => item.id !== annotation.id);
-                      if (activeSessionId) {
-                        setBrowserWorkbenchAnnotations(activeSessionId, nextAnnotations);
-                      } else {
-                        setBrowserAnnotations(nextAnnotations);
-                      }
+                      removeBrowserAnnotationDraft(annotation.id);
                     }}
                     aria-label={`移除浏览器批注 ${index + 1}`}
                   >
@@ -2275,13 +2361,7 @@ export function PromptInput({
               <button
                 type="button"
                 className="inline-flex h-10 items-center rounded-full border border-black/8 bg-white px-3 text-xs font-semibold text-muted transition hover:bg-black/5 hover:text-ink-700"
-                onClick={() => {
-                  if (activeSessionId) {
-                    setBrowserWorkbenchAnnotations(activeSessionId, []);
-                  } else {
-                    clearBrowserAnnotations();
-                  }
-                }}
+                onClick={clearBrowserAnnotationDrafts}
               >
                 清空
               </button>
@@ -2307,10 +2387,13 @@ export function PromptInput({
             aria-multiline="true"
             aria-label="输入提示"
             aria-disabled={disabled}
-            contentEditable={!disabled}
+            contentEditable={disabled ? false : "plaintext-only"}
             suppressContentEditableWarning
             tabIndex={disabled ? -1 : 0}
-            className="relative z-10 max-h-[180px] min-h-[86px] w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-1 pb-2 pt-0 text-[17px] leading-7 text-ink-800 caret-ink-800 focus:outline-none aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
+            className="prompt-composer-editor relative z-10 h-[104px] max-h-[104px] min-h-[86px] w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words bg-transparent px-1 pb-2 pt-0 text-[17px] leading-7 text-ink-800 caret-ink-800 focus:outline-none aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
             onInput={handleInput}
             onSelect={syncPromptEditorState}
             onClick={syncPromptEditorState}
@@ -2328,8 +2411,9 @@ export function PromptInput({
             onPaste={(event) => { void handlePaste(event); }}
           />
         </div>
-        <div className="mt-2 flex min-h-10 items-center justify-between gap-3 overflow-visible">
-          <div className="flex min-w-max items-center gap-2 text-[#73777f]">
+        </div>
+        <div className="prompt-composer-footer mt-2 flex min-h-10 items-center justify-between gap-3 overflow-visible">
+          <div className="prompt-composer-runtime-controls flex min-w-max items-center gap-2 text-[#73777f]">
             <ModelSelect
               label="模型"
               value={selectedRuntimeModel}

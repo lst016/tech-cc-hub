@@ -19,6 +19,67 @@ export type DesignDiagramStructure = {
   invariants?: string[];
 };
 
+export type DesignVisualBounds = {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  unit?: "px" | "%" | "unknown";
+  confidence?: number;
+};
+
+export type DesignVisualConstraint = {
+  target?: string;
+  category?: "geometry" | "spacing" | "alignment" | "typography" | "color" | "state" | "content" | "asset" | "interaction" | "unknown";
+  property?: string;
+  expected: string;
+  measurement?: string;
+  confidence?: number;
+};
+
+export type DesignInspectionUiSpec = {
+  container?: {
+    kind?: string;
+    bounds?: DesignVisualBounds;
+    position?: string;
+  };
+  tabs?: Array<{
+    text: string;
+    active?: boolean;
+    bounds?: DesignVisualBounds;
+    visualState?: string;
+  }>;
+  sections?: Array<{
+    title: string;
+    bounds?: DesignVisualBounds;
+    collapsible?: boolean;
+    visualState?: string;
+  }>;
+  fields?: Array<{
+    label: string;
+    value?: string;
+    controlType?: "display" | "input" | "textarea" | "select" | "tag" | "icon" | "unknown";
+    editable?: boolean;
+    section?: string;
+    layout?: string;
+    bounds?: DesignVisualBounds;
+  }>;
+  actions?: Array<{
+    text: string;
+    role?: "primary" | "secondary" | "danger" | "icon" | "unknown";
+    bounds?: DesignVisualBounds;
+  }>;
+  visualConstraints?: DesignVisualConstraint[];
+  invariants?: string[];
+};
+
+export type DesignInspectionQualityGate = {
+  confidence: number;
+  missingDetails: string[];
+  needsStrongerVisionModel: boolean;
+  nextStep: string;
+};
+
 export type DesignInspectionDsl = {
   schemaVersion: 1;
   summary: string;
@@ -49,6 +110,8 @@ export type DesignInspectionDsl = {
     spacing?: string[];
     typography?: string[];
   };
+  uiSpec?: DesignInspectionUiSpec;
+  qualityGate: DesignInspectionQualityGate;
   implementationHints?: string[];
   rawSummary?: string;
 };
@@ -106,9 +169,21 @@ export function buildDesignInspectionPrompt(userPrompt?: string): string {
     '    "invariants": ["facts that must not change when implementing, especially node order, link topology, labels, and values"]',
     "  },",
     '  "visualTokens": { "colors": ["color/use"], "spacing": ["spacing pattern"], "typography": ["font size/weight pattern"] },',
+    '  "uiSpec": {',
+    '    "container": { "kind": "drawer|modal|page|card|chart|unknown", "bounds": { "x": 0, "y": 0, "width": 0, "height": 0, "unit": "px|%|unknown", "confidence": 0.0 }, "position": "right|center|full|unknown" },',
+    '    "tabs": [{ "text": "visible tab text", "active": true, "bounds": { "x": 0, "y": 0, "width": 0, "height": 0, "unit": "px|%|unknown", "confidence": 0.0 }, "visualState": "active|inactive|disabled|unknown" }],',
+    '    "sections": [{ "title": "visible section title", "bounds": { "x": 0, "y": 0, "width": 0, "height": 0, "unit": "px|%|unknown", "confidence": 0.0 }, "collapsible": false, "visualState": "expanded|collapsed|unknown" }],',
+    '    "fields": [{ "label": "visible field label", "value": "visible value or unknown", "controlType": "display|input|textarea|select|tag|icon|unknown", "editable": false, "section": "section title", "layout": "label-left/value-right|stacked|grid|unknown", "bounds": { "x": 0, "y": 0, "width": 0, "height": 0, "unit": "px|%|unknown", "confidence": 0.0 } }],',
+    '    "actions": [{ "text": "button/icon text", "role": "primary|secondary|danger|icon|unknown", "bounds": { "x": 0, "y": 0, "width": 0, "height": 0, "unit": "px|%|unknown", "confidence": 0.0 } }],',
+    '    "visualConstraints": [{ "target": "component or element name", "category": "geometry|spacing|alignment|typography|color|state|content|asset|interaction|unknown", "property": "width|x|gap|fontSize|color|state|emptyRendering", "expected": "measurable visual rule from the image", "measurement": "px/color/token/text/state if visible", "confidence": 0.0 }],',
+    '    "invariants": ["visual facts that implementation must preserve before wiring API logic; include any UI that must not be simplified away"]',
+    "  },",
+    '  "qualityGate": { "confidence": 0.0, "missingDetails": ["missing field list|missing geometry|missing active tab state"], "needsStrongerVisionModel": false, "nextStep": "use this spec|rerun with stronger vision model or crop region" },',
     '  "implementationHints": ["front-end restoration advice"]',
     "}",
-    "Requirements: if a field is unreadable, write unknown or omit it. Do not invent exact pixels. If this is a chart or diagram, diagram.nodes, diagram.links, visible labels, numeric values, and topology invariants are mandatory.",
+    "Requirements: if a field is unreadable, write unknown or omit it. Do not invent exact pixels; estimated bounds are allowed only with confidence. If this is a chart or diagram, diagram.nodes, diagram.links, visible labels, numeric values, and topology invariants are mandatory.",
+    "UI restoration rule: preserve visual structure before API/data logic. Do not simplify a UI into only the fields implied by an API payload. If the screenshot shows sections, rows, cards, table cells, tags, icons, active tab state, empty state, or other component states, include them in uiSpec, visualConstraints, and invariants.",
+    "Generic component rule: do not encode a domain-specific component concept unless it is visible in the image. Extract reusable visual constraints that apply to any child component: geometry, spacing, alignment, typography, color, state/content variants, assets, and interactions.",
   ].join("\n");
 }
 
@@ -158,6 +233,13 @@ export function parseDesignInspectionDsl(summary: string, imageSize?: { width: n
     regions: [],
     elements: [],
     visualTokens: {},
+    uiSpec: undefined,
+    qualityGate: {
+      confidence: 0,
+      missingDetails: ["parseable JSON DSL", "uiSpec"],
+      needsStrongerVisionModel: true,
+      nextStep: "Rerun design_inspect_image with a stronger vision model or crop the target UI region before implementing.",
+    },
     implementationHints: [
       "Vision model did not return parseable JSON DSL; extract structure manually before editing code.",
     ],
@@ -200,6 +282,11 @@ function normalizeDsl(
   rawSummary: string,
   imageSize?: { width: number; height: number },
 ): DesignInspectionDsl {
+  const regions = Array.isArray(parsed.regions) ? parsed.regions.map(normalizeRegion).filter(isDesignRegion) : [];
+  const elements = Array.isArray(parsed.elements) ? parsed.elements.map(normalizeElement).filter(isDesignElement) : [];
+  const uiSpec = normalizeUiSpec(parsed.uiSpec);
+  const qualityGate = normalizeInspectionQualityGate(parsed.qualityGate, rawSummary, regions, elements, uiSpec);
+
   return {
     schemaVersion: 1,
     summary: typeof parsed.summary === "string" && parsed.summary.trim()
@@ -212,10 +299,12 @@ function normalizeDsl(
       language: typeof parsed.screen?.language === "string" ? parsed.screen.language.trim() : inferLanguage(rawSummary),
       canvas: parsed.screen?.canvas ?? imageSize,
     },
-    regions: Array.isArray(parsed.regions) ? parsed.regions.map(normalizeRegion).filter(isDesignRegion) : [],
-    elements: Array.isArray(parsed.elements) ? parsed.elements.map(normalizeElement).filter(isDesignElement) : [],
+    regions,
+    elements,
     diagram: normalizeDiagram(parsed.diagram),
     visualTokens: isRecord(parsed.visualTokens) ? parsed.visualTokens : {},
+    uiSpec,
+    qualityGate,
     implementationHints: Array.isArray(parsed.implementationHints)
       ? parsed.implementationHints.filter(isNonEmptyString).map((item) => item.trim())
       : [],
@@ -331,6 +420,224 @@ function normalizeElement(value: unknown): DesignInspectionDsl["elements"][numbe
       ? value.implementationHints.filter(isNonEmptyString).map((item) => item.trim())
       : undefined,
   };
+}
+
+function normalizeBounds(value: unknown): DesignVisualBounds | undefined {
+  if (!isRecord(value)) return undefined;
+  const bounds: DesignVisualBounds = {};
+  if (typeof value.x === "number" && Number.isFinite(value.x)) bounds.x = value.x;
+  if (typeof value.y === "number" && Number.isFinite(value.y)) bounds.y = value.y;
+  if (typeof value.width === "number" && Number.isFinite(value.width) && value.width >= 0) bounds.width = value.width;
+  if (typeof value.height === "number" && Number.isFinite(value.height) && value.height >= 0) bounds.height = value.height;
+  bounds.unit = value.unit === "px" || value.unit === "%" || value.unit === "unknown" ? value.unit : undefined;
+  if (typeof value.confidence === "number" && Number.isFinite(value.confidence)) {
+    bounds.confidence = clampNumber(value.confidence, 0, 1, value.confidence);
+  }
+  return Object.keys(bounds).length > 0 ? bounds : undefined;
+}
+
+function normalizeUiSpec(value: unknown): DesignInspectionUiSpec | undefined {
+  if (!isRecord(value)) return undefined;
+  const container = isRecord(value.container)
+    ? {
+        kind: optionalString(value.container.kind),
+        bounds: normalizeBounds(value.container.bounds),
+        position: optionalString(value.container.position),
+      }
+    : undefined;
+  const tabs = Array.isArray(value.tabs)
+    ? value.tabs.map(normalizeUiTab).filter(isNonNull)
+    : undefined;
+  const sections = Array.isArray(value.sections)
+    ? value.sections.map(normalizeUiSection).filter(isNonNull)
+    : undefined;
+  const fields = Array.isArray(value.fields)
+    ? value.fields.map(normalizeUiField).filter(isNonNull)
+    : undefined;
+  const actions = Array.isArray(value.actions)
+    ? value.actions.map(normalizeUiAction).filter(isNonNull)
+    : undefined;
+  const visualConstraints = Array.isArray(value.visualConstraints)
+    ? value.visualConstraints.map(normalizeVisualConstraint).filter(isNonNull)
+    : undefined;
+  const invariants = Array.isArray(value.invariants)
+    ? value.invariants.filter(isNonEmptyString).map((item) => item.trim())
+    : undefined;
+
+  const spec: DesignInspectionUiSpec = {};
+  if (container && (container.kind || container.bounds || container.position)) spec.container = container;
+  if (tabs?.length) spec.tabs = tabs;
+  if (sections?.length) spec.sections = sections;
+  if (fields?.length) spec.fields = fields;
+  if (actions?.length) spec.actions = actions;
+  if (visualConstraints?.length) spec.visualConstraints = visualConstraints;
+  if (invariants?.length) spec.invariants = invariants;
+  return Object.keys(spec).length > 0 ? spec : undefined;
+}
+
+function normalizeUiTab(value: unknown): NonNullable<DesignInspectionUiSpec["tabs"]>[number] | null {
+  if (!isRecord(value)) return null;
+  const text = optionalString(value.text);
+  if (!text) return null;
+  return {
+    text,
+    active: typeof value.active === "boolean" ? value.active : undefined,
+    bounds: normalizeBounds(value.bounds),
+    visualState: optionalString(value.visualState),
+  };
+}
+
+function normalizeUiSection(value: unknown): NonNullable<DesignInspectionUiSpec["sections"]>[number] | null {
+  if (!isRecord(value)) return null;
+  const title = optionalString(value.title);
+  if (!title) return null;
+  return {
+    title,
+    bounds: normalizeBounds(value.bounds),
+    collapsible: typeof value.collapsible === "boolean" ? value.collapsible : undefined,
+    visualState: optionalString(value.visualState),
+  };
+}
+
+function normalizeUiField(value: unknown): NonNullable<DesignInspectionUiSpec["fields"]>[number] | null {
+  if (!isRecord(value)) return null;
+  const label = optionalString(value.label);
+  if (!label) return null;
+  const controlType = value.controlType === "display"
+    || value.controlType === "input"
+    || value.controlType === "textarea"
+    || value.controlType === "select"
+    || value.controlType === "tag"
+    || value.controlType === "icon"
+    || value.controlType === "unknown"
+    ? value.controlType
+    : undefined;
+  return {
+    label,
+    value: optionalString(value.value),
+    controlType,
+    editable: typeof value.editable === "boolean" ? value.editable : undefined,
+    section: optionalString(value.section),
+    layout: optionalString(value.layout),
+    bounds: normalizeBounds(value.bounds),
+  };
+}
+
+function normalizeUiAction(value: unknown): NonNullable<DesignInspectionUiSpec["actions"]>[number] | null {
+  if (!isRecord(value)) return null;
+  const text = optionalString(value.text);
+  if (!text) return null;
+  const role = value.role === "primary"
+    || value.role === "secondary"
+    || value.role === "danger"
+    || value.role === "icon"
+    || value.role === "unknown"
+    ? value.role
+    : undefined;
+  return {
+    text,
+    role,
+    bounds: normalizeBounds(value.bounds),
+  };
+}
+
+function normalizeVisualConstraint(value: unknown): DesignVisualConstraint | null {
+  if (!isRecord(value)) return null;
+  const expected = optionalString(value.expected);
+  if (!expected) return null;
+  const category = value.category === "geometry"
+    || value.category === "spacing"
+    || value.category === "alignment"
+    || value.category === "typography"
+    || value.category === "color"
+    || value.category === "state"
+    || value.category === "content"
+    || value.category === "asset"
+    || value.category === "interaction"
+    || value.category === "unknown"
+    ? value.category
+    : undefined;
+  return {
+    target: optionalString(value.target),
+    category,
+    property: optionalString(value.property),
+    expected,
+    measurement: optionalString(value.measurement),
+    confidence: typeof value.confidence === "number" ? clampNumber(value.confidence, 0, 1, value.confidence) : undefined,
+  };
+}
+
+function normalizeInspectionQualityGate(
+  value: unknown,
+  rawSummary: string,
+  regions: DesignInspectionDsl["regions"],
+  elements: DesignInspectionDsl["elements"],
+  uiSpec?: DesignInspectionUiSpec,
+): DesignInspectionQualityGate {
+  const source = isRecord(value) ? value : {};
+  const missingDetails = new Set<string>();
+  if (Array.isArray(source.missingDetails)) {
+    for (const item of source.missingDetails) {
+      if (isNonEmptyString(item)) missingDetails.add(item.trim());
+    }
+  }
+
+  if (!uiSpec) missingDetails.add("uiSpec");
+  if (!uiSpec?.container?.bounds && !regions.some((region) => region.style && ("bounds" in region.style || "width" in region.style || "height" in region.style))) {
+    missingDetails.add("container geometry");
+  }
+  if (!uiSpec?.fields?.length && !elements.some((element) => /field|input|textarea|select|tag|form/i.test(element.type))) {
+    missingDetails.add("field list");
+  }
+  if (/tab|tabs|标签|Tab/.test(rawSummary) && !uiSpec?.tabs?.length) {
+    missingDetails.add("tab states");
+  }
+  if (!uiSpec?.invariants?.length) {
+    missingDetails.add("visual invariants");
+  }
+  if (!uiSpec?.visualConstraints?.length) {
+    missingDetails.add("measurable visual constraints");
+  }
+
+  const explicitConfidence = typeof source.confidence === "number"
+    ? clampNumber(source.confidence, 0, 1, source.confidence)
+    : undefined;
+  const inferredConfidence = inferInspectionConfidence(missingDetails.size, regions, elements, uiSpec);
+  const confidence = explicitConfidence ?? inferredConfidence;
+  const needsStrongerVisionModel = typeof source.needsStrongerVisionModel === "boolean"
+    ? source.needsStrongerVisionModel || confidence < 0.65 || missingDetails.size >= 3
+    : confidence < 0.65 || missingDetails.size >= 3;
+
+  return {
+    confidence,
+    missingDetails: Array.from(missingDetails),
+    needsStrongerVisionModel,
+    nextStep: optionalString(source.nextStep)
+      ?? (needsStrongerVisionModel
+        ? "Rerun with a stronger vision model, export a higher-resolution PNG, or crop the exact target region before implementing."
+        : "Use uiSpec as the implementation contract before wiring API/data logic."),
+  };
+}
+
+function inferInspectionConfidence(
+  missingDetailCount: number,
+  regions: DesignInspectionDsl["regions"],
+  elements: DesignInspectionDsl["elements"],
+  uiSpec?: DesignInspectionUiSpec,
+): number {
+  let score = 0.35;
+  if (regions.length >= 3) score += 0.15;
+  if (elements.length >= 5) score += 0.15;
+  if (uiSpec?.container) score += 0.1;
+  if (uiSpec?.fields?.length) score += 0.15;
+  if (uiSpec?.tabs?.length || uiSpec?.sections?.length) score += 0.1;
+  if (uiSpec?.visualConstraints?.length) score += 0.1;
+  score -= Math.min(0.35, missingDetailCount * 0.07);
+  return clampNumber(score, 0, 1, score);
+}
+
+function isNonNull<T>(value: T | null): value is T {
+  return value !== null;
 }
 
 function isDesignRegion(value: DesignInspectionDsl["regions"][number] | null): value is DesignInspectionDsl["regions"][number] {

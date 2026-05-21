@@ -16,6 +16,7 @@ import {
   FIGMA_REST_API_URL,
   FIGMA_REST_TOOL_NAMES,
 } from "../figma-official-plugin.js";
+import { FIGMA_COMPONENT_DEVELOPMENT_WORKFLOW_STEPS } from "../../../shared/figma-development-workflow.js";
 import {
   FIGMA_DESIGN_AUDIT_FRAMEWORKS,
   FIGMA_DESIGN_DOMAINS,
@@ -47,6 +48,11 @@ const FIGMA_FILE_LIBRARY_KINDS = ["components", "component_sets", "styles"] as c
 const FIGMA_VARIABLE_KINDS = ["local", "published"] as const;
 const FIGMA_CODE_OUTPUTS = ["react", "html"] as const;
 const FIGMA_IMAGE_EXPORT_FORMATS = ["png", "jpg"] as const;
+const UI_RESTORATION_INSPECT_PROMPT = [
+  "UI-first inspection for implementation parity.",
+  "Extract an implementation-grade uiSpec: container geometry, tabs and active state, sections, field rows, tags/icons/buttons, and visual invariants.",
+  "Do not simplify the UI from API payload fields. If details are unclear, set qualityGate.needsStrongerVisionModel=true and list missingDetails.",
+].join(" ");
 const DEFAULT_SUMMARY_DEPTH = 4;
 const DEFAULT_SUMMARY_MAX_NODES = 120;
 const figmaUiBoundsSchema = z.object({
@@ -78,9 +84,6 @@ const figmaUiNodeSchema = z.object({
     nearbyText: z.string().optional(),
   }).passthrough().optional(),
 }).passthrough();
-
-let figmaRestMcpServer: McpSdkServerConfigWithInstance | null = null;
-let figmaRestFullMcpServer: McpSdkServerConfigWithInstance | null = null;
 
 export const FIGMA_REST_CORE_TOOL_NAMES = [
   "figma_read_design",
@@ -127,6 +130,17 @@ type DesignSummary = {
   };
   warnings: string[];
 };
+
+function buildFigmaExportQualityWarnings(format: string, scale: number): string[] {
+  const warnings: string[] = [];
+  if (format !== "png") {
+    warnings.push("UI restoration should prefer PNG; JPG can blur small text, borders, and spacing cues.");
+  }
+  if (scale < 1) {
+    warnings.push("UI restoration should prefer scale >= 1. If export is too large, narrow the node or split regions instead of lowering scale.");
+  }
+  return warnings;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -892,12 +906,6 @@ function escapeHtml(value: string): string {
 
 export function getFigmaRestMcpServer(options: { toolMode?: FigmaRestToolMode } = {}): McpSdkServerConfigWithInstance {
   const toolMode = options.toolMode ?? "full";
-  if (toolMode === "core" && figmaRestMcpServer) {
-    return figmaRestMcpServer;
-  }
-  if (toolMode === "full" && figmaRestFullMcpServer) {
-    return figmaRestFullMcpServer;
-  }
 
   const currentUserTool = tool(
     "figma_get_current_user",
@@ -1046,7 +1054,8 @@ export function getFigmaRestMcpServer(options: { toolMode?: FigmaRestToolMode } 
               depth: 3,
               maxNodes: 160,
             },
-            nextStep: "Use recommendedNextInput first when it is populated; otherwise pick the smallest matching node. For UI implementation, call figma_export_node_images with that nodeId and inspect the returned imagePath before reading deeper JSON.",
+            componentDevelopmentWorkflow: FIGMA_COMPONENT_DEVELOPMENT_WORKFLOW_STEPS,
+            nextStep: "Use recommendedNextInput first when it is populated; otherwise pick the smallest matching node with exportable=true and positive bounds. For UI implementation, call figma_export_node_images with that nodeId and inspect the returned imagePath before reading deeper JSON.",
           }, clampMaxBytes(input.maxBytes)),
         });
       } catch (error) {
@@ -1368,10 +1377,12 @@ export function getFigmaRestMcpServer(options: { toolMode?: FigmaRestToolMode } 
         }
 
         const format = input.format ?? "png";
+        const scale = input.scale ?? 1;
+        const qualityWarnings = buildFigmaExportQualityWarnings(format, scale);
         const payload = await figmaApiGet(`images/${encodeURIComponent(locator.fileKey)}`, {
           ids: locator.nodeIds.join(","),
           format,
-          scale: input.scale ?? 1,
+          scale,
           svg_include_id: input.svgIncludeId,
         }, token);
         const imageUrls = readFigmaImageUrls(payload, locator.nodeIds);
@@ -1400,10 +1411,17 @@ export function getFigmaRestMcpServer(options: { toolMode?: FigmaRestToolMode } 
               nodeId: image.nodeId,
               imagePath: path,
               format,
-              scale: input.scale ?? 1,
+              scale,
               sizeBytes: downloaded.buffer.byteLength,
               contentType: downloaded.contentType,
-              inspectNextInput: { imagePath: path },
+              visualReferenceLock: {
+                status: "pending-inspection",
+                nodeId: image.nodeId,
+                referenceImagePath: path,
+                requiredNextTool: "design_inspect_image",
+                acceptanceGate: { maxDifferenceRatio: 0.10 },
+              },
+              inspectNextInput: { imagePath: path, prompt: UI_RESTORATION_INSPECT_PROMPT },
             });
           } catch (error) {
             failures.push({
@@ -1419,13 +1437,14 @@ export function getFigmaRestMcpServer(options: { toolMode?: FigmaRestToolMode } 
           fileKey: locator.fileKey,
           nodeIds: locator.nodeIds,
           format,
-          scale: input.scale ?? 1,
+          scale,
           result: capPayload({
             artifacts,
             failures,
+            qualityWarnings,
             recommendedNextTool: "design_inspect_image",
             nextStep: artifacts.length > 0
-              ? "Call design_inspect_image once per returned imagePath before coding UI. Use figma_summarize_design with the same nodeIds only to confirm component props/tokens."
+              ? "For UI implementation, treat the exported imagePath as a pending visualReferenceLock, call design_inspect_image with inspectNextInput before coding, then compare the same DOM target against this locked image at maxDifferenceRatio <= 0.10. If an export is too large or visually wrong, narrow the Figma node or split regions; avoid JPG/scale<1 unless the task is thumbnail-level."
               : "No local images were exported; narrow the node with figma_list_node_index or check Figma PAT file_content:read scope.",
           }, clampMaxBytes(input.maxBytes)),
         }, failures.length > 0 && artifacts.length === 0);
@@ -1628,16 +1647,10 @@ export function getFigmaRestMcpServer(options: { toolMode?: FigmaRestToolMode } 
     fileVariablesTool,
     devResourcesTool,
   ];
-  const server = createSdkMcpServer({
+  return createSdkMcpServer({
     name: FIGMA_REST_SERVER_NAME,
     version: FIGMA_REST_SERVER_VERSION,
     tools: toolMode === "full" ? allTools : coreTools,
   });
 
-  if (toolMode === "full") {
-    figmaRestFullMcpServer = server;
-  } else {
-    figmaRestMcpServer = server;
-  }
-  return server;
 }

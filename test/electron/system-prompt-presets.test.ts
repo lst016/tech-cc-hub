@@ -2,12 +2,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildBrowserWorkbenchPromptAppend,
   buildClaudeCode2139FeaturePromptAppend,
+  buildDesignParityPromptAppend,
   buildFeishuDocumentFetchPromptAppend,
   buildGlobalRuntimeSystemPromptExtAppend,
   buildToolCallOptimizationPromptAppend,
   extractFeishuDocumentUrls,
 } from "../../src/electron/libs/system-prompt-presets.js";
+
+test("browser prompt encourages fetch log capture for API evidence", () => {
+  const prompt = buildBrowserWorkbenchPromptAppend();
+
+  assert.match(prompt, /fetch\/XHR capture/);
+  assert.match(prompt, /browser_fetch_logs/);
+  assert.match(prompt, /API request\/response evidence/);
+});
 
 test("tool optimization prompt keeps tool calls sparse, batched, and bounded", () => {
   const prompt = buildToolCallOptimizationPromptAppend();
@@ -28,6 +38,38 @@ test("Claude Code compatibility prompt includes Agent Teams guidance", () => {
   assert.match(prompt, /TeamCreate/);
   assert.match(prompt, /SendMessage/);
   assert.match(prompt, /TeamDelete/);
+});
+
+test("design parity prompt requires a 90 percent visual acceptance loop", () => {
+  const prompt = buildDesignParityPromptAppend();
+
+  assert.match(prompt, /Figma 90% acceptance rule/);
+  assert.match(prompt, /maxDifferenceRatio <= 0\.10/);
+  assert.match(prompt, /design_compare_element_to_reference/);
+});
+
+test("design parity prompt requires a locked Figma reference before file edits", () => {
+  const prompt = buildDesignParityPromptAppend();
+
+  assert.match(prompt, /Figma reference-lock rule/);
+  assert.match(prompt, /qualityGate\.confidence >= 0\.75/);
+  assert.match(prompt, /Figma wrong-reference recovery rule/);
+  assert.match(prompt, /figma_match_ui_nodes/);
+});
+
+test("design parity prompt decomposes large Figma files into child component loops", () => {
+  const prompt = buildDesignParityPromptAppend();
+
+  assert.match(prompt, /Figma component workflow rule/);
+  assert.match(prompt, /Figma genericity rule/);
+  assert.match(prompt, /never implement the whole screen in one patch/);
+  assert.match(prompt, /Keep exactly one component in_progress/);
+  assert.match(prompt, /reference tuple/);
+  assert.match(prompt, /visual constraints/);
+  assert.match(prompt, /browser_inspect_styles/);
+  assert.doesNotMatch(prompt, /design_lint_visual_parity/);
+  assert.match(prompt, /visual\/function split rule/);
+  assert.match(prompt, /maxDifferenceRatio <= 0\.10/);
 });
 
 test("global runtime systemPromptExt is appended when configured", () => {

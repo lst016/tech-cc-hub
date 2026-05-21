@@ -31,8 +31,6 @@ export const IDEA_TOOL_NAMES = [
 const IDEA_TOOLS_SERVER_NAME = "tech-cc-hub-idea";
 const IDEA_MCP_SERVER_VERSION = "1.0.0";
 
-let ideaMcpServer: McpSdkServerConfigWithInstance | null = null;
-
 const EDITION_SCHEMA = z.enum(["any", "ultimate", "community"]);
 
 const IDEA_STATUS_SCHEMA = {
@@ -75,10 +73,6 @@ const IDEA_WAIT_READY_SCHEMA = {
 };
 
 export function getIdeaMcpServer(): McpSdkServerConfigWithInstance {
-  if (ideaMcpServer) {
-    return ideaMcpServer;
-  }
-
   const statusHandler = tool(
     "idea_status",
     "发现本机已安装的 IntelliJ IDEA 启动器和正在运行的 IDEA 进程。Java/Spring 本地运行验证前先用它确认是否可复用用户已有 IDE，避免重复启动 java -jar 或 bootRun。",
@@ -211,11 +205,10 @@ export function getIdeaMcpServer(): McpSdkServerConfigWithInstance {
     },
   );
 
-  ideaMcpServer = createSdkMcpServer({
+  return createSdkMcpServer({
     name: IDEA_TOOLS_SERVER_NAME,
     version: IDEA_MCP_SERVER_VERSION,
     tools: [statusHandler, openHandler, runHandler, restartHandler, focusHandler, waitReadyHandler],
   });
 
-  return ideaMcpServer;
 }

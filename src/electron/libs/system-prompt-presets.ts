@@ -1,4 +1,5 @@
 import type { PromptLedgerSource } from "../../shared/prompt-ledger.js";
+import { FIGMA_COMPONENT_DEVELOPMENT_WORKFLOW_HINTS } from "../../shared/figma-development-workflow.js";
 import {
   buildBuiltinMcpPromptHints,
   type BuiltinMcpServerName,
@@ -11,8 +12,8 @@ const MAX_FEISHU_DOC_URL_HINTS = 3;
 
 export function buildBrowserWorkbenchPromptAppend(): string {
   return [
-    "BrowserView rule: for current-page browsing, scraping, debugging, annotations, screenshots, cookies, storage, console logs, URL checks, and DOM inspection, use the built-in tech-cc-hub browser MCP tools instead of external browser skills.",
-    "Use focused browser helpers when possible: http_ping/diagnose_port for service checks, browser_console_logs(waitFor) for HMR/build waits, browser_query_nodes/browser_get_element/browser_inspect_styles for DOM/style evidence, browser_query_nodes/browser_inspect_styles(fields) for compact output, and browser_apply_styles for temporary CSS preview.",
+    "BrowserView rule: for current-page browsing, scraping, debugging, annotations, screenshots, cookies, storage, console logs, fetch/XHR capture, URL checks, and DOM inspection, use the built-in tech-cc-hub browser MCP tools instead of external browser skills.",
+    "Use focused browser helpers when possible: http_ping/diagnose_port for service checks, browser_console_logs(waitFor) for HMR/build waits, browser_fetch_logs for API request/response evidence after page interactions, browser_query_nodes/browser_get_element/browser_inspect_styles for DOM/style evidence, browser_query_nodes/browser_inspect_styles(fields) for compact output, and browser_apply_styles for temporary CSS preview.",
     "For local services, a background Bash exit code only proves the launch command returned; verify readiness separately with diagnose_port/http_ping and inspect logs. Spring Boot /actuator/health 503 means the process is reachable but not ready.",
     "For Figma-backed UI fixes, gather DOM node fields (text, selector, box, attributes, componentStack, context.nearbyText) and use figma_match_ui_nodes to map rendered UI nodes to Figma nodes before editing.",
     "If the prompt contains <browser_annotations>, load/use the annotation-ui-fix skill; do not keep its multi-step SOP in global prompt context.",
@@ -125,7 +126,11 @@ export function buildClaudeCode2139FeaturePromptAppend(): string {
 
 export function buildDesignParityPromptAppend(): string {
   return [
+    ...FIGMA_COMPONENT_DEVELOPMENT_WORKFLOW_HINTS,
     "Figma visual-first rule: for UI implementation, use figma_list_node_index to narrow the node, figma_export_node_images to save a local image, then design_inspect_image on the returned imagePath before coding from JSON.",
+    "Figma reference-lock rule: before editing files, lock one reference tuple: Figma nodeId + exported local imagePath + design_inspect_image qualityGate.confidence >= 0.75 + the DOM target selector/region to repair. Compare and iterate against that same locked tuple.",
+    "Figma wrong-reference recovery rule: if the first visual diff is mostly full-page, the diff worsens after an edit, aspect/size is far off, or the agent realizes the reference was cropped from the wrong node, stop patching and relock the reference with figma_list_node_index / figma_match_ui_nodes / figma_export_node_images.",
+    "Figma 90% acceptance rule: after implementing, capture the target component and run design_compare_element_to_reference or design_compare_current_view with maxDifferenceRatio <= 0.10. If the report verdict fails or is invalid, keep iterating unless a real blocker remains.",
     "Element-level visual diff rule: when a selector/ref/xpath is known, use design_compare_element_to_reference instead of full-page comparison so the VLM/code loop patches the exact DOM region.",
     "Semantic visual diff rule: when the reference/candidate contains charts, Sankey diagrams, tables, labels, values, or flow topology, run design_compare_images_semantic after pixel diff and patch critical topology/text/value issues before styling details.",
     "设计还原规则：只要用户提供截图、Figma 图、页面参考图，并要求生成或修改 UI/前端代码，必须优先使用内置设计 MCP 工具。",

@@ -5,21 +5,11 @@
         "dist-electron",
         "dist-react",
         "build/icon.png",
-        "node_modules/sqlite-vec/**/*",
-        "node_modules/sqlite-vec-*/*",
         "node_modules/@anthropic-ai/claude-agent-sdk/**/*",
         "node_modules/@anthropic-ai/claude-agent-sdk-*/*"
     ],
     "extraResources": [
-        "dist-electron/preload.cjs",
-        {
-            "from": "scripts/knowledge/run-repowiki.py",
-            "to": "scripts/knowledge/run-repowiki.py"
-        },
-        {
-            "from": "third_party/repowiki/src",
-            "to": "third_party/repowiki/src"
-        }
+        "dist-electron/preload.cjs"
     ],
     "publish": [
         {
@@ -31,8 +21,6 @@
         }
     ],
     "asarUnpack": [
-        "node_modules/sqlite-vec/**/*",
-        "node_modules/sqlite-vec-*/*",
         "node_modules/@anthropic-ai/claude-agent-sdk/**/*",
         "node_modules/@anthropic-ai/claude-agent-sdk-*/*"
     ],

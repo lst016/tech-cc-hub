@@ -22,6 +22,8 @@ import type {
   BrowserWorkbenchKeyboardResult,
   BrowserWorkbenchMouseInput,
   BrowserWorkbenchMouseResult,
+  BrowserWorkbenchNetworkLogInput,
+  BrowserWorkbenchNetworkLogResult,
   BrowserWorkbenchNodeQueryResult,
   BrowserWorkbenchSavedFileResult,
   BrowserWorkbenchScrollResult,
@@ -55,6 +57,7 @@ export const BROWSER_TOOL_NAMES = [
   "browser_cookies",
   "browser_storage",
   "browser_console_logs",
+  "browser_fetch_logs",
   "browser_get_dom_stats",
   "browser_snapshot_interactive",
   "browser_click_element",
@@ -94,6 +97,7 @@ export type BrowserWorkbenchToolHost = {
   goForward: (sessionId: string) => BrowserWorkbenchState;
   getState: (sessionId: string) => BrowserWorkbenchState;
   getConsoleLogs: (sessionId: string, limit?: number) => BrowserWorkbenchConsoleLog[];
+  getNetworkLogs: (sessionId: string, input?: BrowserWorkbenchNetworkLogInput) => { success: boolean; result?: BrowserWorkbenchNetworkLogResult; error?: string };
   extractPageSnapshot: (sessionId: string) => Promise<{ success: boolean; snapshot?: BrowserWorkbenchPageSnapshot; error?: string }>;
   captureVisible: (sessionId: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>;
   saveScreenshot: (sessionId: string, input: { path?: string; format?: "png" | "jpeg"; quality?: number }) => Promise<{ success: boolean; result?: BrowserWorkbenchSavedFileResult; error?: string }>;
@@ -175,6 +179,8 @@ const MAX_HTTP_PING_TIMEOUT_MS = 15000;
 const DEFAULT_CONSOLE_WAIT_TIMEOUT_MS = 10000;
 const MAX_CONSOLE_WAIT_TIMEOUT_MS = 60000;
 const CONSOLE_WAIT_INTERVAL_MS = 150;
+const DEFAULT_FETCH_LOG_LIMIT = 30;
+const MAX_FETCH_LOG_LIMIT = 200;
 const MAX_BATCH_COMMANDS = 20;
 const DEFAULT_BATCH_COMMAND_TIMEOUT_MS = 30000;
 const MAX_BATCH_COMMAND_TIMEOUT_MS = 120000;
@@ -188,7 +194,6 @@ type HttpPingState =
   | "unknown_status";
 
 let browserHost: BrowserWorkbenchToolHost | null = null;
-const browserMcpServersBySessionId = new Map<string, McpSdkServerConfigWithInstance>();
 
 // main.ts 在 BrowserWorkbenchManager 创建后调用；cleanup 时会传 null，避免旧窗口残留。
 export function setBrowserToolHost(host: BrowserWorkbenchToolHost | null): void {
@@ -772,10 +777,6 @@ function getShortCaptureSnippet(dataUrl?: string): { dataUrl?: string; truncated
 
 export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWithInstance {
   const resolvedSessionId = sessionId.trim() || "global";
-  const cachedServer = browserMcpServersBySessionId.get(resolvedSessionId);
-  if (cachedServer) {
-    return cachedServer;
-  }
 
   const httpPingTool = tool(
     "http_ping",
@@ -1043,6 +1044,37 @@ export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWit
         sessionId: resolvedSessionId,
         limit: logs.length,
         logs,
+      });
+    },
+  );
+
+  const fetchLogsTool = tool(
+    "browser_fetch_logs",
+    "Read captured BrowserView Fetch/XHR requests, status codes, post data, and JSON/text response bodies. Use this after page interactions when API data matters.",
+    {
+      limit: z.number().int().min(1).max(MAX_FETCH_LOG_LIMIT).optional(),
+      includeBody: z.boolean().optional(),
+      includeHeaders: z.boolean().optional(),
+      urlContains: z.string().trim().min(1).optional(),
+      resourceTypes: z.array(z.string().trim().min(1)).max(20).optional(),
+    },
+    async (input) => {
+      const host = getHost();
+      const result = host.getNetworkLogs(resolvedSessionId, {
+        limit: input.limit ?? DEFAULT_FETCH_LOG_LIMIT,
+        includeBody: input.includeBody,
+        includeHeaders: input.includeHeaders,
+        urlContains: input.urlContains,
+        resourceTypes: input.resourceTypes ?? ["Fetch", "XHR"],
+      });
+      if (!result.success) {
+        return toTextToolResult({ action: "browser_fetch_logs", success: false, error: result.error }, true);
+      }
+      return toTextToolResult({
+        action: "browser_fetch_logs",
+        success: true,
+        sessionId: resolvedSessionId,
+        result: result.result,
       });
     },
   );
@@ -1571,7 +1603,7 @@ export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWit
     },
   );
 
-  const browserMcpServer = createSdkMcpServer({
+  return createSdkMcpServer({
     name: BROWSER_TOOLS_SERVER_NAME,
     version: BROWSER_MCP_SERVER_VERSION,
     tools: [
@@ -1590,6 +1622,7 @@ export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWit
       cookiesTool,
       storageTool,
       consoleLogsTool,
+      fetchLogsTool,
       domStatsTool,
       interactiveSnapshotTool,
       clickElementTool,
@@ -1620,6 +1653,4 @@ export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWit
     ],
   });
 
-  browserMcpServersBySessionId.set(resolvedSessionId, browserMcpServer);
-  return browserMcpServer;
 }

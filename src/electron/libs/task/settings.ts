@@ -13,7 +13,7 @@ export function createDefaultTaskSettings(userDataPath?: string): TaskWorkflowSe
     maxRetryBackoffMs: workflow.agent.maxRetryBackoffMs,
     stallTimeoutMs: workflow.agent.stallTimeoutMs,
     defaultDriverId: "claude",
-    defaultReasoningMode: "high",
+    defaultReasoningMode: "xhigh",
     maxCostUsd: undefined,
     writeBackEnabled: true,
     promptTemplate: workflow.promptTemplate,

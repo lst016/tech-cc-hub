@@ -16,6 +16,9 @@ type BrowserWorkbenchPageProps = {
   onOpenUsage?: () => void;
   onOpenPreview?: () => void;
   onOpenGit?: () => void;
+  hasTerminalTab?: boolean;
+  onOpenTerminal?: () => void;
+  onCloseTerminal?: () => void;
 };
 
 type AnnotationTool = "screenshot" | "page";
@@ -108,6 +111,17 @@ function isLoopbackHost(hostname: string) {
 
 function formatLocalBrowserTargetTitle(url: URL) {
   return url.host || url.hostname || url.href;
+}
+
+function getBrowserTargetOrigin(value: string) {
+  const normalized = normalizeWorkbenchUrl(value) ?? value.trim();
+  if (!normalized || typeof window === "undefined") return "";
+  try {
+    const url = new URL(normalized, window.location.href);
+    return url.origin;
+  } catch {
+    return normalized;
+  }
 }
 
 function getWorkspaceRecentStorageKey(workspaceKey: string) {
@@ -212,10 +226,11 @@ function toBrowserPageTarget(value: string, options: { idPrefix?: string; curren
     const url = new URL(normalized, window.location.href);
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
     if (options.localOnly && !isLoopbackHost(url.hostname)) return null;
-    const targetUrl = `${url.origin}/`;
+    const targetUrl = url.href;
+    const targetOrigin = getBrowserTargetOrigin(targetUrl);
     const host = url.host || url.hostname;
     return {
-      id: `${options.idPrefix ?? "local"}-${encodeURIComponent(targetUrl)}`,
+      id: `${options.idPrefix ?? "local"}-${encodeURIComponent(targetOrigin || targetUrl)}`,
       title: formatLocalBrowserTargetTitle(url),
       host,
       url: targetUrl,
@@ -238,7 +253,15 @@ function readRecentLocalBrowserTargets(workspaceKey: string): LocalBrowserTarget
       .filter((value): value is string => typeof value === "string")
       .map((value) => toBrowserPageTarget(value, { idPrefix: "recent", recent: true }))
       .filter((target): target is LocalBrowserTarget => Boolean(target));
-    const normalizedUrls = Array.from(new Set(targets.map((target) => target.url))).slice(0, MAX_RECENT_LOCAL_BROWSER_TARGETS);
+    const normalizedUrls: string[] = [];
+    const seenOrigins = new Set<string>();
+    for (const target of targets) {
+      const origin = getBrowserTargetOrigin(target.url);
+      if (!origin || seenOrigins.has(origin)) continue;
+      seenOrigins.add(origin);
+      normalizedUrls.push(target.url);
+      if (normalizedUrls.length >= MAX_RECENT_LOCAL_BROWSER_TARGETS) break;
+    }
     if (JSON.stringify(values) !== JSON.stringify(normalizedUrls)) {
       window.localStorage.setItem(storageKey, JSON.stringify(normalizedUrls));
     }
@@ -252,15 +275,18 @@ function readRecentLocalBrowserTargets(workspaceKey: string): LocalBrowserTarget
 
 function rememberRecentLocalBrowserTarget(workspaceKey: string, value: string) {
   const target = toBrowserPageTarget(value, { idPrefix: "recent", recent: true });
-  if (!target || typeof window === "undefined") return;
+  if (!target || typeof window === "undefined") return false;
   try {
-    const existing = readRecentLocalBrowserTargets(workspaceKey)
-      .map((item) => item.url)
-      .filter((url) => url !== target.url);
+    const targetOrigin = getBrowserTargetOrigin(target.url);
+    const current = readRecentLocalBrowserTargets(workspaceKey).map((item) => item.url);
+    const existing = current.filter((url) => getBrowserTargetOrigin(url) !== targetOrigin);
     const next = [target.url, ...existing].slice(0, MAX_RECENT_LOCAL_BROWSER_TARGETS);
+    if (JSON.stringify(current) === JSON.stringify(next)) return false;
     window.localStorage.setItem(getWorkspaceRecentStorageKey(workspaceKey), JSON.stringify(next));
+    return true;
   } catch {
     // localStorage may be disabled in some embedded/runtime contexts.
+    return false;
   }
 }
 
@@ -268,7 +294,8 @@ function buildLocalBrowserTargets(workspaceKey: string): LocalBrowserTarget[] {
   const targets = new Map<string, LocalBrowserTarget>();
   const addTarget = (target: LocalBrowserTarget | null) => {
     if (!target) return;
-    if (!targets.has(target.url)) targets.set(target.url, target);
+    const key = getBrowserTargetOrigin(target.url) || target.url;
+    if (!targets.has(key)) targets.set(key, target);
   };
 
   if (typeof window !== "undefined") {
@@ -326,6 +353,9 @@ export function BrowserWorkbenchPage({
   onOpenUsage,
   onOpenPreview,
   onOpenGit,
+  hasTerminalTab = false,
+  onOpenTerminal,
+  onCloseTerminal,
 }: BrowserWorkbenchPageProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const previewFrameRef = useRef<HTMLIFrameElement | null>(null);
@@ -381,8 +411,9 @@ export function BrowserWorkbenchPage({
   }, [sessionId, setSessionBrowserAnnotations]);
 
   const rememberLocalTarget = useCallback((targetUrl: string) => {
-    rememberRecentLocalBrowserTarget(workspaceKey, targetUrl);
-    setLocalTargets(buildLocalBrowserTargets(workspaceKey));
+    if (rememberRecentLocalBrowserTarget(workspaceKey, targetUrl)) {
+      setLocalTargets(buildLocalBrowserTargets(workspaceKey));
+    }
   }, [workspaceKey]);
 
   const syncBounds = useCallback(() => {
@@ -552,6 +583,7 @@ export function BrowserWorkbenchPage({
           if (!isEditingUrlRef.current && !isStaleUrl) {
             setUrl(event.payload.url);
             persistUrl(event.payload.url);
+            rememberLocalTarget(event.payload.url);
           }
         }
         return;
@@ -584,7 +616,7 @@ export function BrowserWorkbenchPage({
     });
 
     return unsubscribe;
-  }, [persistAnnotations, persistUrl, sessionId]);
+  }, [persistAnnotations, persistUrl, rememberLocalTarget, sessionId]);
 
   useEffect(() => {
     const element = surfaceRef.current;
@@ -818,6 +850,10 @@ export function BrowserWorkbenchPage({
     }
     if (tab === "git") {
       onOpenGit?.();
+      return;
+    }
+    if (tab === "terminal") {
+      onOpenTerminal?.();
     }
   };
 
@@ -842,15 +878,19 @@ export function BrowserWorkbenchPage({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-white/82">
-      <div className="flex h-10 shrink-0 items-center justify-between border-b border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,251,253,0.92))] px-4 backdrop-blur-xl">
+      <div className="relative z-[160] flex h-10 shrink-0 items-center justify-between border-b border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,251,253,0.92))] px-4 backdrop-blur-xl">
         <ActivityWorkspaceTabs
           activeTab="browser"
           showBrowserTab={showBrowserChrome}
+          showTerminalTab={hasTerminalTab}
           browserLabel={state.title || "浏览器"}
           showCreateBrowserTab
+          showCreateTerminalTab={!hasTerminalTab}
           onSelectTab={handleSelectWorkspaceTab}
           onCloseBrowserTab={hasBrowserTab ? () => { void handleCloseBrowserTab(); } : undefined}
           onCreateBrowserTab={() => { void handleCreateBrowserTab(); }}
+          onCreateTerminalTab={onOpenTerminal}
+          onCloseTerminalTab={hasTerminalTab ? onCloseTerminal : undefined}
         />
       </div>
 
@@ -960,7 +1000,7 @@ export function BrowserWorkbenchPage({
                           <LocalTargetPreview target={target} />
                           <div className="min-w-0">
                             <div className="truncate text-[18px] font-semibold text-ink-900">{target.title}</div>
-                            <div className="mt-1 truncate text-[17px] text-muted">{target.host || target.url}</div>
+                            <div className="mt-1 truncate text-[17px] text-muted">{target.url}</div>
                             {(target.current || target.recent) && (
                               <div className="mt-2 inline-flex rounded-md border border-black/8 bg-surface px-2 py-0.5 text-[11px] font-medium text-muted">
                                 {target.current ? "当前" : "最近"}
@@ -1013,7 +1053,7 @@ export function BrowserWorkbenchPage({
                           <LocalTargetPreview target={target} />
                           <div className="min-w-0">
                             <div className="truncate text-[18px] font-semibold text-ink-900">{target.title}</div>
-                            <div className="mt-1 truncate text-[17px] text-muted">{target.host || target.url}</div>
+                            <div className="mt-1 truncate text-[17px] text-muted">{target.url}</div>
                             {(target.current || target.recent) && (
                               <div className="mt-2 inline-flex rounded-md border border-black/8 bg-surface px-2 py-0.5 text-[11px] font-medium text-muted">
                                 {target.current ? "当前" : "最近"}

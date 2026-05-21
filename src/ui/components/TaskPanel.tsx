@@ -360,7 +360,7 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setExecuteOptions({
       driverId: "claude",
-      reasoningMode: selectedTask?.reasoningMode ?? settings?.defaultReasoningMode ?? "high",
+      reasoningMode: selectedTask?.reasoningMode ?? settings?.defaultReasoningMode ?? "xhigh",
       model: selectedTask?.model ?? "",
       workspacePath: selectedTask?.workspacePath ?? "",
     });
@@ -911,7 +911,7 @@ export function TaskPanel({ connected, sendEvent, onBack }: Props) {
                       ))}
                     </select>
                     <select
-                      value={executeOptions.reasoningMode ?? settings?.defaultReasoningMode ?? "high"}
+                      value={executeOptions.reasoningMode ?? settings?.defaultReasoningMode ?? "xhigh"}
                       onChange={(e) => setExecuteOptions((current) => ({ ...current, reasoningMode: e.target.value as UiTaskExecutionOptions["reasoningMode"] }))}
                       className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-800 outline-none"
                     >
