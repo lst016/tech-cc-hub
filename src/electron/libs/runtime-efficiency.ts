@@ -28,11 +28,11 @@ const BASE_SERVERS: readonly BuiltinMcpServerName[] = [
   "tech-cc-hub-admin",
   "tech-cc-hub-plan",
   "tech-cc-hub-knowledge",
+  "tech-cc-hub-browser",
 ];
 
 const VISUAL_SERVERS: readonly BuiltinMcpServerName[] = [
   ...BASE_SERVERS,
-  "tech-cc-hub-browser",
   "tech-cc-hub-design",
   "tech-cc-hub-figma",
 ];
@@ -49,7 +49,6 @@ const IDE_SERVERS: readonly BuiltinMcpServerName[] = [
 
 const STICKY_SERVER_ORDER: readonly BuiltinMcpServerName[] = [
   ...BASE_SERVERS,
-  "tech-cc-hub-browser",
   "tech-cc-hub-design",
   "tech-cc-hub-figma",
   "tech-cc-hub-cron",
@@ -101,10 +100,10 @@ export function resolveRuntimeEfficiencyProfile(
   const isVisualTask = hasImageAttachment || FIGMA_URL_PATTERN.test(prompt) || VISUAL_TASK_PATTERN.test(prompt);
   if (AGENT_TEAM_TASK_PATTERN.test(prompt)) {
     return buildProfile("team", isVisualTask ? VISUAL_SERVERS : BASE_SERVERS, {
-      includeBrowserPrompt: isVisualTask,
+      includeBrowserPrompt: true,
       includeDesignPrompt: isVisualTask,
       includeClaudeCompatPrompt: true,
-      includePartialMessages: isVisualTask,
+      includePartialMessages: true,
       includeHookEvents: true,
       agentProgressSummaries: true,
       forwardSubagentText: true,
@@ -260,14 +259,20 @@ function buildProfile(
   builtinMcpServers: readonly BuiltinMcpServerName[],
   overrides: Partial<Omit<RuntimeEfficiencyProfile, "id" | "builtinMcpServers">>,
 ): RuntimeEfficiencyProfile {
+  const normalizedBuiltinMcpServers = normalizeBuiltinMcpServerNames(builtinMcpServers);
+  const hasBrowserTools = normalizedBuiltinMcpServers.includes("tech-cc-hub-browser");
+  const hasDesignTools = normalizedBuiltinMcpServers.includes("tech-cc-hub-design");
+  const hasFigmaTools = normalizedBuiltinMcpServers.includes("tech-cc-hub-figma");
+  const hasExtendedTools = normalizedBuiltinMcpServers.some((serverName) => !BASE_SERVERS.includes(serverName));
+
   return {
     id,
-    builtinMcpServers,
-    includeBrowserPrompt: false,
-    includeDesignPrompt: false,
+    builtinMcpServers: normalizedBuiltinMcpServers,
+    includeBrowserPrompt: hasBrowserTools,
+    includeDesignPrompt: hasDesignTools || hasFigmaTools,
     includeProjectMemoryPrompt: false,
-    includeClaudeCompatPrompt: false,
-    includePartialMessages: false,
+    includeClaudeCompatPrompt: hasExtendedTools,
+    includePartialMessages: hasBrowserTools || hasDesignTools,
     includeHookEvents: false,
     agentProgressSummaries: false,
     forwardSubagentText: false,

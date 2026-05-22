@@ -25,7 +25,7 @@ test("prompt composer hides runtime controls before hitting minimum width", () =
 test("prompt composer keeps pasted json inside the composer body", () => {
   assert.match(source, /prompt-composer-surface prompt-composer-card/);
   assert.match(source, /prompt-composer-body min-h-0 flex-1 overflow-y-auto overflow-x-hidden/);
-  assert.match(source, /prompt-composer-editor[^"]*h-\[104px\][^"]*overflow-y-auto[^"]*overflow-x-hidden/);
+  assert.match(source, /prompt-composer-editor[^"]*min-h-\[86px\][^"]*overflow-y-auto[^"]*overflow-x-hidden/);
   assert.doesNotMatch(source, /prompt-composer-editor[^"]*max-h-\[180px\]/);
   assert.match(styles, /\.prompt-composer-card\s*\{[\s\S]*max-height:\s*min\(70vh,\s*440px\);[\s\S]*overflow:\s*visible;/);
   assert.match(styles, /\.prompt-composer-editor,\s*\.prompt-composer-editor \*\s*\{[\s\S]*overflow-wrap:\s*anywhere;/);

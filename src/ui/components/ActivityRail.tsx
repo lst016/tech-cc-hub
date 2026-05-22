@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildActivityRailModel,
   type ActivityAnalysisCard,
@@ -15,12 +15,13 @@ import { estimatePromptLedgerTokens, type PromptLedgerSourceKind } from "../../s
 import type { PlanStepStatus, SessionPlanSnapshot } from "../../shared/plan-progress";
 import { buildContextUsageBreakdown, type ContextUsageBreakdownCategory } from "../utils/context-usage-breakdown";
 import { buildSegmentedContextUsageCells, type ContextUsageCellSegment } from "../utils/context-usage-cells";
-import { AionWorkspacePreviewPane } from "./AionWorkspacePreviewPane";
 import { ActivityWorkspaceTabs } from "./ActivityWorkspaceTabs";
-import { GitWorkbenchPanel } from "./git";
-import { TerminalWorkspacePanel } from "./TerminalWorkspacePanel";
 import type { SessionView } from "../store/useAppStore";
 import type { ActivityRailTab, ActivityWorkspaceTab } from "../utils/activity-workspace-tabs";
+
+const AionWorkspacePreviewPane = lazy(() => import("./AionWorkspacePreviewPane").then((module) => ({ default: module.AionWorkspacePreviewPane })));
+const GitWorkbenchPanel = lazy(() => import("./git/GitWorkbenchPanel").then((module) => ({ default: module.GitWorkbenchPanel })));
+const TerminalWorkspacePanel = lazy(() => import("./TerminalWorkspacePanel").then((module) => ({ default: module.TerminalWorkspacePanel })));
 
 const NODE_KIND_LABELS: Record<ActivityTimelineItem["nodeKind"], string> = {
   context: "上下文",
@@ -75,6 +76,17 @@ const PROVENANCE_LABELS: Record<ActivityToolProvenance, string> = {
   transfer_agent: "交接 Agent",
   unknown: "未归类",
 };
+
+function WorkspacePaneFallback({ label }: { label: string }) {
+  return (
+    <div className="flex h-full min-h-0 w-full items-center justify-center bg-white px-4 text-xs text-muted">
+      <div className="flex items-center gap-2 rounded-full border border-black/6 bg-white px-3 py-1.5 shadow-sm">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
+        <span>{label}</span>
+      </div>
+    </div>
+  );
+}
 
 function toneClasses(tone: ActivityRailTone) {
   switch (tone) {
@@ -1185,7 +1197,7 @@ export function ActivityRail({
     () => buildActivityRailModel(session, session?.permissionRequests ?? [], partialMessage),
     [partialMessage, session],
   );
-  const [internalActiveTab, setInternalActiveTab] = useState<ActivityRailTab>("preview");
+  const [internalActiveTab, setInternalActiveTab] = useState<ActivityRailTab>("trace");
   const selectedTab = activeTab ?? internalActiveTab;
   const handleSelectTab = (tab: ActivityRailTab) => {
     if (!activeTab) setInternalActiveTab(tab);
@@ -1312,22 +1324,28 @@ export function ActivityRail({
         ) : selectedTab === "preview" ? (
           <div className="min-h-0 flex-1">
             <div className="h-full overflow-hidden border-t border-[#d0d7de] bg-white shadow-none">
-              <AionWorkspacePreviewPane
-                key={`${session?.id ?? "no-session"}:${session?.cwd ?? "no-workspace"}`}
-                workspace={session?.cwd}
-                conversationId={session?.id}
-                messages={session?.messages}
-                onClose={() => handleSelectTab("trace")}
-              />
+              <Suspense fallback={<WorkspacePaneFallback label="正在加载文件预览..." />}>
+                <AionWorkspacePreviewPane
+                  key={`${session?.id ?? "no-session"}:${session?.cwd ?? "no-workspace"}`}
+                  workspace={session?.cwd}
+                  conversationId={session?.id}
+                  messages={session?.messages}
+                  onClose={() => handleSelectTab("trace")}
+                />
+              </Suspense>
             </div>
           </div>
         ) : selectedTab === "git" ? (
           <div className="flex min-h-0 flex-1 overflow-hidden">
-            <GitWorkbenchPanel cwd={session?.cwd} />
+            <Suspense fallback={<WorkspacePaneFallback label="正在加载 Git 工作台..." />}>
+              <GitWorkbenchPanel cwd={session?.cwd} />
+            </Suspense>
           </div>
         ) : selectedTab === "terminal" ? (
           <div className="flex min-h-0 flex-1 overflow-hidden">
-            <TerminalWorkspacePanel cwd={session?.cwd} />
+            <Suspense fallback={<WorkspacePaneFallback label="正在加载终端工作台..." />}>
+              <TerminalWorkspacePanel cwd={session?.cwd} />
+            </Suspense>
           </div>
         ) : (
         <div className="space-y-4 px-4 pt-4">

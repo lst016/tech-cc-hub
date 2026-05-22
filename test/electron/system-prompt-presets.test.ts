@@ -15,6 +15,9 @@ test("browser prompt encourages fetch log capture for API evidence", () => {
   const prompt = buildBrowserWorkbenchPromptAppend();
 
   assert.match(prompt, /fetch\/XHR capture/);
+  assert.match(prompt, /browser_get_state/);
+  assert.match(prompt, /Current BrowserView first/);
+  assert.match(prompt, /Do not run npm run dev or open a new local page/);
   assert.match(prompt, /browser_fetch_logs/);
   assert.match(prompt, /API request\/response evidence/);
 });

@@ -1,5 +1,5 @@
 ﻿import type { MouseEvent } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import { Download, Loader2, PackageCheck } from "lucide-react";
 import { Toaster } from "sonner";
@@ -8,19 +8,11 @@ import { useMessageWindow } from "./hooks/useMessageWindow";
 import { useAppStore } from "./store/useAppStore";
 import type { AppUpdateStatus, PromptAttachment, ServerEvent, SettingsPageId, StreamMessage } from "./types";
 import { DEFAULT_SIDEBAR_WIDTH, Sidebar } from "./components/Sidebar";
-import { StartSessionModal } from "./components/StartSessionModal";
-import { SettingsModal } from "./components/SettingsModal";
 import { TooltipButton } from "./components/TooltipButton";
 import { UpdateToast } from "./components/UpdateToast";
 import { PromptInput, usePromptActions } from "./components/PromptInput";
-import { MessageCard } from "./components/EventCard";
-import { ActivityRail } from "./components/ActivityRail";
 import { SessionAnalysisPage, buildSessionWorkflowOptimizationPrompt } from "./components/SessionAnalysisPage";
-import { BrowserWorkbenchPage } from "./components/BrowserWorkbenchPage";
 // FeedbackDialog removed — uses direct browser link
-import MDContent from "./render/markdown";
-import ScheduledTasksPage from "./components/cron/ScheduledTasksPage";
-import { TaskPanel } from "./components/TaskPanel";
 import { OPEN_BROWSER_WORKBENCH_URL_EVENT, type OpenBrowserWorkbenchUrlDetail } from "./events";
 import { copyTextToClipboard } from "./utils/clipboard";
 import type { ActivityRailTab } from "./utils/activity-workspace-tabs";
@@ -30,6 +22,15 @@ import {
   getDevElectronRuntimeSource,
   type DevElectronRuntimeSource,
 } from "./dev-electron-shim";
+
+const ActivityRail = lazy(() => import("./components/ActivityRail"));
+const BrowserWorkbenchPage = lazy(() => import("./components/BrowserWorkbenchPage").then((module) => ({ default: module.BrowserWorkbenchPage })));
+const MDContent = lazy(() => import("./render/markdown"));
+const MessageCard = lazy(() => import("./components/EventCard").then((module) => ({ default: module.MessageCard })));
+const ScheduledTasksPage = lazy(() => import("./components/cron/ScheduledTasksPage"));
+const SettingsModal = lazy(() => import("./components/SettingsModal").then((module) => ({ default: module.SettingsModal })));
+const StartSessionModal = lazy(() => import("./components/StartSessionModal").then((module) => ({ default: module.StartSessionModal })));
+const TaskPanel = lazy(() => import("./components/TaskPanel").then((module) => ({ default: module.TaskPanel })));
 
 const SCROLL_THRESHOLD = 50;
 const INITIAL_HISTORY_LIMIT = 400;
@@ -48,6 +49,27 @@ type RenderEntry =
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function PanelLoadFallback({ label = "正在加载..." }: { label?: string }) {
+  return (
+    <div className="flex h-full min-h-0 w-full items-center justify-center bg-transparent px-4 text-xs text-muted">
+      <div className="flex items-center gap-2 rounded-full border border-black/6 bg-white/78 px-3 py-1.5 shadow-sm">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
+        <span>{label}</span>
+      </div>
+    </div>
+  );
+}
+
+function MarkdownLoadFallback() {
+  return (
+    <div className="mt-1 flex flex-col gap-2 px-1">
+      <div className="h-3 w-5/12 rounded-full bg-ink-900/10" />
+      <div className="h-3 w-full rounded-full bg-ink-900/10" />
+      <div className="h-3 w-8/12 rounded-full bg-ink-900/10" />
+    </div>
+  );
 }
 
 function clampResizablePaneWidth(proposedWidth: number, minWidth: number, maxWidth: number): number {
@@ -419,7 +441,7 @@ function App() {
   const showPartialMessage = activeSessionId ? (partialVisibilityBySessionId[activeSessionId] ?? false) : false;
   const workspaceView = activeSessionId ? (workspaceViewBySessionId[activeSessionId] ?? "chat") : "chat";
   const isUtilityWorkspace = showTaskPanel || showCronPage;
-  const activityRailTab = activeSessionId ? (activityRailTabBySessionId[activeSessionId] ?? "preview") : "preview";
+  const activityRailTab = activeSessionId ? (activityRailTabBySessionId[activeSessionId] ?? "trace") : "trace";
   const setActiveSessionWorkspaceView = useCallback((nextView: WorkspaceView) => {
     if (!activeSessionId) return;
     setWorkspaceViewBySessionId((current) => (
@@ -1274,7 +1296,7 @@ function App() {
       current[activeSessionId] ? { ...current, [activeSessionId]: false } : current
     ));
     if (activityRailTab === "terminal") {
-      setActiveSessionActivityRailTab("preview");
+      setActiveSessionActivityRailTab("trace");
     }
   }, [activeSessionId, activityRailTab, setActiveSessionActivityRailTab]);
 
@@ -1589,24 +1611,30 @@ function App() {
 
           {showCronPage ? (
             <div className="flex-1 min-h-0 overflow-hidden">
-              <ScheduledTasksPage onBack={() => setShowCronPage(false)} />
+              <Suspense fallback={<PanelLoadFallback label="正在加载定时任务..." />}>
+                <ScheduledTasksPage onBack={() => setShowCronPage(false)} />
+              </Suspense>
             </div>
           ) : showTaskPanel ? (
             <div className="flex-1 min-h-0 overflow-hidden">
-              <TaskPanel
-                connected={connected}
-                sendEvent={sendEvent}
-                onBack={() => setShowTaskPanel(false)}
-              />
+              <Suspense fallback={<PanelLoadFallback label="正在加载任务面板..." />}>
+                <TaskPanel
+                  connected={connected}
+                  sendEvent={sendEvent}
+                  onBack={() => setShowTaskPanel(false)}
+                />
+              </Suspense>
             </div>
           ) : showSessionAnalysis ? (
             <div className="flex-1 min-h-0 overflow-hidden">
-              <SessionAnalysisPage
-                session={activeSession}
-                partialMessage={partialMessage}
-                onBack={() => setShowSessionAnalysis(false)}
-                onSendWorkflowOptimizationPrompt={sendWorkflowOptimizationPrompt}
-              />
+              <Suspense fallback={<PanelLoadFallback label="正在加载会话分析..." />}>
+                <SessionAnalysisPage
+                  session={activeSession}
+                  partialMessage={partialMessage}
+                  onBack={() => setShowSessionAnalysis(false)}
+                  onSendWorkflowOptimizationPrompt={sendWorkflowOptimizationPrompt}
+                />
+              </Suspense>
             </div>
           ) : expandedActivityWorkspaceActive ? (
             <div className="min-h-0 flex-1" aria-hidden="true" />
@@ -1710,14 +1738,16 @@ function App() {
 
                       return (
                         <div key={entry.key} id={`chat-message-${entry.originalIndex}`}>
-                          <MessageCard
-                            message={entry.message}
-                            isLast={isLastMessage}
-                            isRunning={isRunning}
-                            permissionRequest={permissionRequests[0]?.toolName === "AskUserQuestion" ? undefined : permissionRequests[0]}
-                            onPermissionResult={handlePermissionResult}
-                            onReviseUserPrompt={handleReviseUserPrompt}
-                          />
+                          <Suspense fallback={<MarkdownLoadFallback />}>
+                            <MessageCard
+                              message={entry.message}
+                              isLast={isLastMessage}
+                              isRunning={isRunning}
+                              permissionRequest={permissionRequests[0]?.toolName === "AskUserQuestion" ? undefined : permissionRequests[0]}
+                              onPermissionResult={handlePermissionResult}
+                              onReviseUserPrompt={handleReviseUserPrompt}
+                            />
+                          </Suspense>
                         </div>
                       );
                     })
@@ -1729,7 +1759,11 @@ function App() {
                         <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
                         <span>正在生成</span>
                       </div>
-                      {partialMessage.trim() && <MDContent text={partialMessage} />}
+                      {partialMessage.trim() && (
+                        <Suspense fallback={<MarkdownLoadFallback />}>
+                          <MDContent text={partialMessage} />
+                        </Suspense>
+                      )}
                       {showPartialMessage && (
                         <div className="mt-3 flex flex-col gap-2 px-1">
                         <div className="relative h-3 w-2/12 overflow-hidden rounded-full bg-ink-900/10">
@@ -1798,27 +1832,29 @@ function App() {
             className={workspaceView === "browser" ? "hidden" : "contents"}
             aria-hidden={workspaceView === "browser"}
           >
-            <ActivityRail
-              session={activeSession}
-              partialMessage={partialMessage}
-              globalError={globalError}
-              activeTab={activityRailTab}
-              onActiveTabChange={setActiveSessionActivityRailTab}
-              onOpenBrowserWorkbench={() => {
-                setShowActivityRail(true);
-                setShowSessionAnalysis(false);
-                setActiveSessionWorkspaceView("browser");
-              }}
-              selectedModel={selectedUsageModel}
-              contextWindow={selectedUsageModelConfig?.contextWindow}
-              compressionThresholdPercent={selectedUsageModelConfig?.compressionThresholdPercent}
-              hasBrowserTab={activeHasBrowserTab}
-              hasTerminalTab={activeHasTerminalTab}
-              onOpenTerminalWorkspace={openTerminalWorkspace}
-              onCloseTerminalWorkspace={closeTerminalWorkspace}
-              onOpenSessionAnalysis={() => setShowSessionAnalysis(true)}
-              width={effectiveActivityRailWidth}
-            />
+            <Suspense fallback={<PanelLoadFallback label="正在加载右侧工作区..." />}>
+              <ActivityRail
+                session={activeSession}
+                partialMessage={partialMessage}
+                globalError={globalError}
+                activeTab={activityRailTab}
+                onActiveTabChange={setActiveSessionActivityRailTab}
+                onOpenBrowserWorkbench={() => {
+                  setShowActivityRail(true);
+                  setShowSessionAnalysis(false);
+                  setActiveSessionWorkspaceView("browser");
+                }}
+                selectedModel={selectedUsageModel}
+                contextWindow={selectedUsageModelConfig?.contextWindow}
+                compressionThresholdPercent={selectedUsageModelConfig?.compressionThresholdPercent}
+                hasBrowserTab={activeHasBrowserTab}
+                hasTerminalTab={activeHasTerminalTab}
+                onOpenTerminalWorkspace={openTerminalWorkspace}
+                onCloseTerminalWorkspace={closeTerminalWorkspace}
+                onOpenSessionAnalysis={() => setShowSessionAnalysis(true)}
+                width={effectiveActivityRailWidth}
+              />
+            </Suspense>
           </div>
         )}
         {!showSessionAnalysis && !isUtilityWorkspace && showActivityRail && (
@@ -1826,32 +1862,34 @@ function App() {
             className={`fixed bottom-0 right-0 ${sidebarHeaderOffsetClass} z-40 min-w-[400px] overflow-hidden border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.94),rgba(240,244,248,0.98)_42%,rgba(234,239,245,0.99))] shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl ${workspaceView === "browser" ? "hidden lg:flex lg:flex-col" : "pointer-events-none hidden"}`}
             style={{ width: effectiveActivityRailWidth, minWidth: effectiveActivityRailWidth }}
           >
-            <BrowserWorkbenchPage
-              key={activeSessionId ?? "browser-workbench"}
-              active={workspaceView === "browser"}
-              initialUrl={activeSessionId ? (activeBrowserWorkbenchState?.url ?? "") : ""}
-              occluded={browserWorkbenchOccluded}
-              sessionId={activeSessionId}
-              onOpenTrace={() => {
-                setActiveSessionActivityRailTab("trace");
-                setActiveSessionWorkspaceView("chat");
-              }}
-              onOpenUsage={() => {
-                setActiveSessionActivityRailTab("usage");
-                setActiveSessionWorkspaceView("chat");
-              }}
-              onOpenPreview={() => {
-                setActiveSessionActivityRailTab("preview");
-                setActiveSessionWorkspaceView("chat");
-              }}
-              onOpenGit={() => {
-                setActiveSessionActivityRailTab("git");
-                setActiveSessionWorkspaceView("chat");
-              }}
-              hasTerminalTab={activeHasTerminalTab}
-              onOpenTerminal={openTerminalWorkspace}
-              onCloseTerminal={closeTerminalWorkspace}
-            />
+            <Suspense fallback={<PanelLoadFallback label="正在加载浏览器工作台..." />}>
+              <BrowserWorkbenchPage
+                key={activeSessionId ?? "browser-workbench"}
+                active={workspaceView === "browser"}
+                initialUrl={activeSessionId ? (activeBrowserWorkbenchState?.url ?? "") : ""}
+                occluded={browserWorkbenchOccluded}
+                sessionId={activeSessionId}
+                onOpenTrace={() => {
+                  setActiveSessionActivityRailTab("trace");
+                  setActiveSessionWorkspaceView("chat");
+                }}
+                onOpenUsage={() => {
+                  setActiveSessionActivityRailTab("usage");
+                  setActiveSessionWorkspaceView("chat");
+                }}
+                onOpenPreview={() => {
+                  setActiveSessionActivityRailTab("preview");
+                  setActiveSessionWorkspaceView("chat");
+                }}
+                onOpenGit={() => {
+                  setActiveSessionActivityRailTab("git");
+                  setActiveSessionWorkspaceView("chat");
+                }}
+                hasTerminalTab={activeHasTerminalTab}
+                onOpenTerminal={openTerminalWorkspace}
+                onCloseTerminal={closeTerminalWorkspace}
+              />
+            </Suspense>
           </aside>
         )}
         {!showSessionAnalysis && !isUtilityWorkspace && showActivityRail && !expandedActivityWorkspaceActive && (
@@ -1869,25 +1907,29 @@ function App() {
       </div>
 
       {showStartModal && (
-        <StartSessionModal
-          cwd={cwd}
-          pendingStart={pendingStart}
-          onCwdChange={setCwd}
-          onStart={handleStartFromModal}
-          onClose={() => setShowStartModal(false)}
-        />
+        <Suspense fallback={null}>
+          <StartSessionModal
+            cwd={cwd}
+            pendingStart={pendingStart}
+            onCwdChange={setCwd}
+            onStart={handleStartFromModal}
+            onClose={() => setShowStartModal(false)}
+          />
+        </Suspense>
       )}
 
       {showSettingsModal && (
-        <SettingsModal
-          onClose={() => {
-            setShowSettingsModal(false);
-            setSettingsInitialPageId(null);
-            refreshBrowserWorkbenchPreference();
-          }}
-          initialPageId={settingsInitialPageId ?? undefined}
-          onStartMaintenanceSession={startMaintenanceSession}
-        />
+        <Suspense fallback={<PanelLoadFallback label="正在加载设置..." />}>
+          <SettingsModal
+            onClose={() => {
+              setShowSettingsModal(false);
+              setSettingsInitialPageId(null);
+              refreshBrowserWorkbenchPreference();
+            }}
+            initialPageId={settingsInitialPageId ?? undefined}
+            onStartMaintenanceSession={startMaintenanceSession}
+          />
+        </Suspense>
       )}
 
       <UpdateToast />

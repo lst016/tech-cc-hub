@@ -22,6 +22,8 @@ import { buildSessionSlashCommands, resolveInvokedLocalSlashDefinition } from ".
 import { stripInlineBase64ImagesFromMessage } from "./libs/tool-output-sanitizer.js";
 import { buildSessionWorkflowCatalog } from "./libs/workflow-catalog.js";
 import { buildStatelessContinuationPayload } from "./stateless-continuation.js";
+import { syncManagedCodeGraph } from "./libs/codegraph/managed-codegraph.js";
+import { createSessionCodeGraphAutoSyncScheduler } from "./libs/codegraph/session-codegraph-autosync.js";
 import type { ClientEvent, PromptAttachment, RuntimeOverrides, ServerEvent, StreamMessage } from "./types.js";
 import { isDev } from "./util.js";
 import Database from "better-sqlite3";
@@ -63,6 +65,12 @@ let channelReplySender: ((target: ChannelReplyTarget, text: string) => Promise<v
 let taskExecutor: TaskExecutor | null = null;
 
 let noteRepo: NoteRepository | null = null;
+
+const scheduleCodeGraphAutoSyncAfterTurn = createSessionCodeGraphAutoSyncScheduler({
+  sync: syncManagedCodeGraph,
+  logInfo: (message) => console.info(message),
+  logWarn: (message, error) => console.warn(message, error),
+});
 
 export function initializeNoteRepository(dbPath: string): NoteRepository {
   const noteDb = new Database(dbPath);
@@ -538,10 +546,22 @@ function emit(event: ServerEvent) {
   }
 
   if (nextEvent.type === "session.status") {
+    const previousSession = sessions.getSession(nextEvent.payload.sessionId);
+    const previousStatus = previousSession?.status;
+    const sessionCwd = typeof nextEvent.payload.cwd === "string" && nextEvent.payload.cwd.trim()
+      ? nextEvent.payload.cwd
+      : previousSession?.cwd;
+
     sessions.updateSession(nextEvent.payload.sessionId, { status: nextEvent.payload.status });
     if (nextEvent.payload.status === "running") {
       clearWarmRunnerCleanupTimer(nextEvent.payload.sessionId);
     }
+    scheduleCodeGraphAutoSyncAfterTurn({
+      sessionId: nextEvent.payload.sessionId,
+      cwd: sessionCwd,
+      previousStatus,
+      nextStatus: nextEvent.payload.status,
+    });
   }
   if (nextEvent.type === "stream.message") {
     const normalizedMessage =

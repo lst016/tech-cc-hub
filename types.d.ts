@@ -132,6 +132,7 @@ type BrowserWorkbenchDomHint = {
     target?: { type: "text"; value: string } | { type: "image"; url: string; alt?: string };
     selectorCandidates: string[];
     boundingBox?: { x: number; y: number; width: number; height: number };
+    computedStyle?: Record<string, string>;
     componentStack?: string[];
     sourceCandidates?: BrowserWorkbenchSourceCandidate[];
     componentStackSource?: string;
@@ -148,6 +149,10 @@ type BrowserWorkbenchAnnotation = {
     title?: string;
     comment?: string;
     expectation?: string;
+    styleEdits?: {
+        source: string;
+        changes: Array<{ property: string; before: string; after: string }>;
+    };
     removed?: boolean;
     createdAt: number;
     point: { x: number; y: number };

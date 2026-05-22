@@ -68,12 +68,12 @@ describe("activity workspace tabs", () => {
     );
   });
 
-  it("defaults the activity rail to preview in app state", () => {
+  it("defaults the activity rail to trace in app state", () => {
     const appSource = readFileSync("src/ui/App.tsx", "utf8");
     const railSource = readFileSync("src/ui/components/ActivityRail.tsx", "utf8");
 
-    assert.match(appSource, /activityRailTabBySessionId\[activeSessionId\] \?\? "preview"/);
-    assert.match(railSource, /useState<ActivityRailTab>\("preview"\)/);
+    assert.match(appSource, /activityRailTabBySessionId\[activeSessionId\] \?\? "trace"/);
+    assert.match(railSource, /useState<ActivityRailTab>\("trace"\)/);
   });
 
   it("preserves preview and browser runtime state while switching workspace tabs", () => {

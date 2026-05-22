@@ -204,6 +204,7 @@ function buildBrowserAnnotationsPrompt(annotations: BrowserWorkbenchAnnotation[]
       id: annotation.id,
       comment: annotation.comment?.trim() || "",
       expectation: annotation.expectation?.trim() || "",
+      styleEdits: annotation.styleEdits,
       page: {
         url: annotation.url,
         title: annotation.title,
@@ -230,6 +231,7 @@ function buildBrowserAnnotationsPrompt(annotations: BrowserWorkbenchAnnotation[]
         hitXPath: annotation.domHint.hitXPath,
         hitBoundingBox: annotation.domHint.hitBoundingBox,
         boundingBox: annotation.domHint.boundingBox,
+        computedStyle: annotation.domHint.computedStyle,
         componentStack: annotation.domHint.componentStack,
         sourceCandidates: annotation.domHint.sourceCandidates,
         componentStackSource: annotation.domHint.componentStackSource,
@@ -246,6 +248,8 @@ function buildBrowserAnnotationsPrompt(annotations: BrowserWorkbenchAnnotation[]
     "Treat browser annotations as the primary DOM-targeting context for this request.",
     "Use page.url plus dom.selector/dom.xpath/dom.path before searching code by visible text.",
     "If an item has expectation, treat comment as the observed problem and expectation as the desired state.",
+    "If an item has styleEdits, use those CSS before/after values as the requested visual delta; apply them to the owning source or design token rather than leaving temporary inline preview styles.",
+    "If dom.computedStyle exists, use it as the current visual baseline for the marked element.",
     "If dom.sourceCandidates exists, use high-confidence file/line candidates before broader search.",
     "If dom.componentStack exists, use those component names as the first code-location bridge before generic grep.",
     "If dom.context.ancestorChain or dom.context.nearbyText exists, use it to identify the page section before grepping generic button/link text.",
@@ -2391,7 +2395,8 @@ export function PromptInput({
             spellCheck={false}
             autoCorrect="off"
             autoCapitalize="off"
-            className="prompt-composer-editor relative z-10 h-[104px] max-h-[104px] min-h-[86px] w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words bg-transparent px-1 pb-2 pt-0 text-[17px] leading-7 text-ink-800 caret-ink-800 focus:outline-none aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+            className="prompt-composer-editor relative z-10 min-h-[86px] w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words bg-transparent px-1 pb-2 pt-0 text-[17px] leading-7 text-ink-800 caret-ink-800 focus:outline-none aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+            style={{ maxHeight: MAX_HEIGHT }}
             onInput={handleInput}
             onSelect={syncPromptEditorState}
             onClick={syncPromptEditorState}

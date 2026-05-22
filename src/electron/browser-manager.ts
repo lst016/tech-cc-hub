@@ -99,6 +99,7 @@ export type BrowserWorkbenchDomHint = {
   target?: { type: "text"; value: string } | { type: "image"; url: string; alt?: string };
   selectorCandidates: string[];
   boundingBox?: { x: number; y: number; width: number; height: number };
+  computedStyle?: Record<string, string>;
   componentStack?: string[];
   sourceCandidates?: BrowserWorkbenchSourceCandidate[];
   componentStackSource?: string;
@@ -410,6 +411,10 @@ export type BrowserWorkbenchAnnotation = {
   title?: string;
   comment?: string;
   expectation?: string;
+  styleEdits?: {
+    source: string;
+    changes: Array<{ property: string; before: string; after: string }>;
+  };
   removed?: boolean;
   createdAt: number;
   point: { x: number; y: number };
@@ -2591,17 +2596,61 @@ export class BrowserWorkbenchManager {
         style.textContent = [
           "#__tech_cc_hub_annotation_layer__{position:fixed;inset:0;z-index:2147483647;isolation:isolate;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1f2937}",
           ".__tech_cc_hub_hover{position:fixed;z-index:10;border:2px solid #1683ff;background:rgba(22,131,255,.06);box-sizing:border-box;pointer-events:none}",
+          ".__tech_cc_hub_hover_card{position:fixed;z-index:30;min-width:168px;max-width:min(320px,calc(100vw - 24px));border:1px solid rgba(15,23,42,.14);border-radius:10px;background:rgba(255,255,255,.98);box-shadow:0 10px 26px rgba(15,23,42,.18);padding:8px 10px;pointer-events:none;color:#111827;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}",
+          ".__tech_cc_hub_hover_card_head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px;color:#111827}",
+          ".__tech_cc_hub_hover_card_tag{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}",
+          ".__tech_cc_hub_hover_card_size{flex:0 0 auto;color:#334155}",
+          ".__tech_cc_hub_hover_card_row{display:grid;grid-template-columns:72px minmax(0,1fr);gap:8px;min-width:0;white-space:nowrap}",
+          ".__tech_cc_hub_hover_card_key{color:#64748b}",
+          ".__tech_cc_hub_hover_card_value{min-width:0;overflow:hidden;text-overflow:ellipsis;color:#111827}",
           ".__tech_cc_hub_marker{position:fixed;z-index:40;width:28px;height:28px;border:1px solid rgba(255,255,255,.66);border-radius:999px;background:#1683ff;color:white;display:grid;place-items:center;font-size:13px;font-weight:800;box-shadow:0 8px 24px rgba(22,131,255,.36);pointer-events:auto;cursor:pointer;outline:none}",
           ".__tech_cc_hub_marker:hover,.__tech_cc_hub_marker:focus,.__tech_cc_hub_marker:focus-visible{background:#1683ff;color:white;box-shadow:0 8px 24px rgba(22,131,255,.36);outline:none}",
           ".__tech_cc_hub_outline{position:fixed;z-index:20;border:2px solid #1683ff;background:rgba(22,131,255,.08);box-sizing:border-box;pointer-events:none}",
-          ".__tech_cc_hub_comment{position:fixed;z-index:30;display:grid;grid-template-columns:minmax(0,1fr) 34px;grid-template-rows:1fr 1fr;align-items:center;gap:6px 10px;width:min(440px,calc(100vw - 32px));height:92px;border:1px solid rgba(15,23,42,.1);border-radius:18px;background:rgba(255,255,255,.96);box-shadow:0 12px 34px rgba(15,23,42,.16);padding:10px 12px 10px 42px;pointer-events:auto}",
+          ".__tech_cc_hub_comment{position:fixed;z-index:60;display:flex;flex-direction:column;width:min(340px,calc(100vw - 24px));max-height:min(430px,calc(100vh - 24px));border:1px solid rgba(15,23,42,.1);border-radius:18px;background:rgba(255,255,255,.97);box-shadow:0 14px 34px rgba(15,23,42,.16);padding:0;overflow:hidden;pointer-events:auto;color:#151922;font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;backdrop-filter:blur(12px)}",
           ".__tech_cc_hub_comment[hidden]{display:none}",
-          ".__tech_cc_hub_comment input{min-width:0;flex:1;border:0;outline:0;background:transparent;font-size:16px;color:#1f2937}",
-          ".__tech_cc_hub_comment input::placeholder{color:#b9c0ca}",
-          ".__tech_cc_hub_problem{grid-column:1;grid-row:1;border-bottom:1px solid rgba(15,23,42,.08)!important}",
-          ".__tech_cc_hub_expectation{grid-column:1;grid-row:2;font-size:14px!important}",
-          ".__tech_cc_hub_submit{grid-column:2;grid-row:1/3;display:grid;place-items:center;width:34px;height:34px;border:0;border-radius:999px;background:#1683ff;color:white;font-size:18px;font-weight:800;cursor:pointer;box-shadow:0 8px 18px rgba(22,131,255,.24)}",
-          ".__tech_cc_hub_submit:disabled{background:#cbd5e1;box-shadow:none;cursor:default}",
+          ".__tech_cc_hub_comment[data-editor-open='false']{width:min(360px,calc(100vw - 24px));max-height:48px;border-radius:18px}",
+          ".__tech_cc_hub_comment[data-editor-open='false'] .__tech_cc_hub_flux_top{border-bottom:0}",
+          ".__tech_cc_hub_comment[data-editor-open='false'] .__tech_cc_hub_flux_target,.__tech_cc_hub_comment[data-editor-open='false'] .__tech_cc_hub_tabs,.__tech_cc_hub_comment[data-editor-open='false'] .__tech_cc_hub_flux_body,.__tech_cc_hub_comment[data-editor-open='false'] .__tech_cc_hub_css_body,.__tech_cc_hub_comment[data-editor-open='false'] .__tech_cc_hub_flux_footer{display:none}",
+          ".__tech_cc_hub_flux_top{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid rgba(15,23,42,.07);background:rgba(248,249,251,.88)}",
+          ".__tech_cc_hub_flux_icon{display:grid;place-items:center;width:28px;height:28px;border:0;border-radius:999px;background:#f2f4f7;color:#111827;font-size:15px;line-height:1;flex:0 0 auto;cursor:pointer}",
+          ".__tech_cc_hub_flux_icon[aria-pressed='true']{background:#e8f1ff;color:#1267d8;box-shadow:0 0 0 2px rgba(22,131,255,.16)}",
+          ".__tech_cc_hub_problem{min-width:0;flex:1;height:28px;border:0;outline:0;background:transparent;font-size:13px;color:#111827}",
+          ".__tech_cc_hub_problem::placeholder{color:#b8bec9}",
+          ".__tech_cc_hub_flux_target{display:flex;align-items:center;justify-content:space-between;gap:8px;height:32px;padding:0 14px;border-bottom:1px solid rgba(15,23,42,.06);background:#fff;font-size:13px;font-weight:700;color:#1f2937}",
+          ".__tech_cc_hub_flux_drag{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;color:#9aa3b2;font-size:15px;letter-spacing:1px;cursor:grab;user-select:none;flex:0 0 auto}",
+          ".__tech_cc_hub_flux_drag:hover{background:#eef1f5;color:#5f6b7a}",
+          ".__tech_cc_hub_quick_save{display:grid;place-items:center;width:28px;height:28px;border:0;border-radius:999px;background:#111827;color:white;font-size:14px;font-weight:800;cursor:pointer;flex:0 0 auto}",
+          ".__tech_cc_hub_tabs{display:flex;gap:6px;padding:7px 12px;border-bottom:1px solid rgba(15,23,42,.06);background:#fff}",
+          ".__tech_cc_hub_tab{height:24px;border:0;border-radius:999px;background:transparent;color:#6b7280;padding:0 10px;font-size:12px;font-weight:700;cursor:pointer}",
+          ".__tech_cc_hub_tab[aria-selected='true']{background:#eef4ff;color:#1267d8}",
+          ".__tech_cc_hub_panel[hidden]{display:none}",
+          ".__tech_cc_hub_flux_body{display:flex;flex-direction:column;gap:6px;overflow:auto;padding:8px 12px 6px;background:#fff}",
+          ".__tech_cc_hub_flux_section{display:flex;flex-direction:column;gap:4px;padding-bottom:8px;border-bottom:1px solid rgba(15,23,42,.07)}",
+          ".__tech_cc_hub_flux_section:last-child{border-bottom:0}",
+          ".__tech_cc_hub_flux_row{display:grid;grid-template-columns:92px minmax(0,1fr);align-items:center;gap:8px;min-height:28px;font-size:12px;color:#6b7280}",
+          ".__tech_cc_hub_flux_row label{color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+          ".__tech_cc_hub_flux_control{min-width:0;display:flex;align-items:center;height:28px;border:1px solid rgba(15,23,42,.09);border-radius:9px;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.04);overflow:hidden}",
+          ".__tech_cc_hub_flux_control input,.__tech_cc_hub_flux_control select{min-width:0;width:100%;height:100%;border:0;outline:0;background:transparent;color:#5f6570;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;text-align:center;padding:0 8px}",
+          ".__tech_cc_hub_flux_control select{text-align:left;font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;color:#6b7280}",
+          ".__tech_cc_hub_flux_color{gap:6px;padding:0 7px}",
+          ".__tech_cc_hub_flux_color input[type='color']{width:20px;height:20px;padding:0;border:0;border-radius:7px;background:transparent;overflow:hidden;flex:0 0 auto}",
+          ".__tech_cc_hub_flux_color input[type='text']{text-align:left;padding-left:0}",
+          ".__tech_cc_hub_flux_unit{display:flex;align-items:center;align-self:stretch;padding:0 8px;border-left:1px solid rgba(15,23,42,.07);color:#9aa3b2;font-size:12px;background:#fbfbfc}",
+          ".__tech_cc_hub_flux_quad{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:100%}",
+          ".__tech_cc_hub_flux_quad input{border-right:1px solid rgba(15,23,42,.07)}",
+          ".__tech_cc_hub_flux_quad input:last-child{border-right:0}",
+          ".__tech_cc_hub_flux_footer{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-top:1px solid rgba(15,23,42,.07);background:rgba(255,255,255,.96)}",
+          ".__tech_cc_hub_flux_actions{display:flex;align-items:center;gap:6px}",
+          ".__tech_cc_hub_flux_btn{height:30px;border:1px solid rgba(15,23,42,.08);border-radius:999px;background:#fff;color:#1f2937;padding:0 12px;font-size:13px;cursor:pointer}",
+          ".__tech_cc_hub_flux_btn_primary{background:#1683ff;color:white;border-color:#1683ff;font-weight:700;box-shadow:0 8px 18px rgba(22,131,255,.24)}",
+          ".__tech_cc_hub_flux_btn_icon{display:grid;place-items:center;width:30px;padding:0;color:#111827;font-size:15px}",
+          ".__tech_cc_hub_css_body{overflow:auto;padding:8px 12px 10px;background:#fff;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:#334155}",
+          ".__tech_cc_hub_css_rule{border:1px solid rgba(15,23,42,.08);border-radius:10px;background:#fbfcfe;overflow:hidden}",
+          ".__tech_cc_hub_css_selector{padding:8px 10px;border-bottom:1px solid rgba(15,23,42,.07);color:#1f2937;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+          ".__tech_cc_hub_css_editor{width:100%;min-height:150px;resize:vertical;border:0;outline:0;background:#fff;color:#b42318;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:8px 10px;white-space:pre;tab-size:2}",
+          ".__tech_cc_hub_css_hint{margin-top:8px;color:#94a3b8;font-size:11px;line-height:1.4}",
+          ".__tech_cc_hub_css_matches{margin-top:8px;display:flex;flex-direction:column;gap:6px}",
+          ".__tech_cc_hub_css_match{margin:0;padding:8px 10px;border:1px solid rgba(15,23,42,.08);border-radius:10px;background:#f8fafc;color:#64748b;white-space:pre-wrap;max-height:120px;overflow:auto}",
           ".__tech_cc_hub_background{position:fixed;z-index:50;right:14px;top:14px;max-width:min(420px, calc(100vw - 40px));max-height:min(360px, calc(100vh - 28px));padding:10px 12px;border:1px solid #cbd5e1;background:rgba(255,255,255,0.98);border-radius:16px;box-shadow:0 16px 38px rgba(15,23,42,0.22);font-size:12px;line-height:1.45;color:#1f2937;overflow:hidden;display:none;pointer-events:auto;backdrop-filter:blur(6px)}",
           ".__tech_cc_hub_background[hidden]{display:none}",
           ".__tech_cc_hub_background-header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding-bottom:6px;margin-bottom:8px;border-bottom:1px solid rgba(15,23,42,0.12)}",
@@ -2656,7 +2705,9 @@ export class BrowserWorkbenchManager {
       function clearHoverPreview() {
         const layer = document.getElementById("__tech_cc_hub_annotation_layer__");
         const hover = layer && layer.querySelector(".__tech_cc_hub_hover");
+        const hoverCard = layer && layer.querySelector(".__tech_cc_hub_hover_card");
         if (hover) hover.remove();
+        if (hoverCard) hoverCard.remove();
       }
       function clearNativeAnnotationTitles() {
         const layer = document.getElementById("__tech_cc_hub_annotation_layer__");
@@ -2880,9 +2931,7 @@ export class BrowserWorkbenchManager {
         }
         if (comment) {
           comment.style.visibility = boxVisible ? "visible" : "hidden";
-          const preferredLeft = box ? box.x + Math.min(96, Math.max(24, box.width * 0.2)) : point.x + 18;
-          const preferredTop = box ? box.y + Math.min(14, Math.max(0, box.height - 10)) : point.y + 18;
-          const placement = placeWithinViewport(preferredLeft, preferredTop, Math.min(440, window.innerWidth - 32), 92);
+          const placement = placePanelNearTarget(box, point, comment.dataset.editorOpen === "true");
           comment.style.left = placement.left + "px";
           comment.style.top = placement.top + "px";
         }
@@ -2900,6 +2949,59 @@ export class BrowserWorkbenchManager {
           syncAnnotationPositions();
         });
       }
+      function setHoverNodesHidden(hover, hoverCard) {
+        if (hover) hover.style.display = "none";
+        if (hoverCard) hoverCard.style.display = "none";
+      }
+      function appendHoverCardRow(card, key, value) {
+        const normalized = compactCssValue(value);
+        if (!normalized) return;
+        const row = document.createElement("div");
+        row.className = "__tech_cc_hub_hover_card_row";
+        const label = document.createElement("span");
+        label.className = "__tech_cc_hub_hover_card_key";
+        label.textContent = key;
+        const text = document.createElement("span");
+        text.className = "__tech_cc_hub_hover_card_value";
+        text.textContent = normalized;
+        text.title = normalized;
+        row.appendChild(label);
+        row.appendChild(text);
+        card.appendChild(row);
+      }
+      function hoverColorValue(value) {
+        const normalized = compactCssValue(value);
+        if (!normalized || /^transparent$/i.test(normalized) || /^rgba\\(0,\\s*0,\\s*0,\\s*0\\)$/i.test(normalized)) return "";
+        return /^rgba?\\(/i.test(normalized) ? rgbToHex(normalized) : normalized;
+      }
+      function renderHoverCard(hoverCard, domHint, box) {
+        const style = domHint && domHint.computedStyle || {};
+        hoverCard.replaceChildren();
+        const head = document.createElement("div");
+        head.className = "__tech_cc_hub_hover_card_head";
+        const tag = document.createElement("span");
+        tag.className = "__tech_cc_hub_hover_card_tag";
+        tag.textContent = domHint && (domHint.tagName || domHint.hitTagName) || "element";
+        const size = document.createElement("span");
+        size.className = "__tech_cc_hub_hover_card_size";
+        size.textContent = Math.round(box.width) + "x" + Math.round(box.height);
+        head.appendChild(tag);
+        head.appendChild(size);
+        hoverCard.appendChild(head);
+        appendHoverCardRow(hoverCard, "color", hoverColorValue(style.color));
+        appendHoverCardRow(hoverCard, "background", hoverColorValue(style["background-color"]));
+        appendHoverCardRow(hoverCard, "font", [style["font-size"], style["font-family"]].filter(Boolean).join(" "));
+        appendHoverCardRow(hoverCard, "display", style.display);
+        hoverCard.style.visibility = "hidden";
+        hoverCard.style.display = "block";
+        const rect = hoverCard.getBoundingClientRect();
+        const belowTop = box.y + box.height + 6;
+        const preferredTop = belowTop + rect.height <= window.innerHeight - 12 ? belowTop : box.y - rect.height - 6;
+        const placement = placeWithinViewport(box.x, preferredTop, rect.width, rect.height);
+        hoverCard.style.left = placement.left + "px";
+        hoverCard.style.top = placement.top + "px";
+        hoverCard.style.visibility = "visible";
+      }
       function updateHover(point) {
         const layer = ensureLayer();
         let hover = layer.querySelector(".__tech_cc_hub_hover");
@@ -2908,10 +3010,16 @@ export class BrowserWorkbenchManager {
           hover.className = "__tech_cc_hub_hover";
           layer.appendChild(hover);
         }
+        let hoverCard = layer.querySelector(".__tech_cc_hub_hover_card");
+        if (!hoverCard) {
+          hoverCard = document.createElement("div");
+          hoverCard.className = "__tech_cc_hub_hover_card";
+          layer.appendChild(hoverCard);
+        }
         const domHint = inspectAt(point);
         const box = domHint && domHint.boundingBox;
         if (!box || box.width <= 0 || box.height <= 0) {
-          hover.style.display = "none";
+          setHoverNodesHidden(hover, hoverCard);
           return;
         }
         hover.style.display = "block";
@@ -2919,12 +3027,353 @@ export class BrowserWorkbenchManager {
         hover.style.top = box.y + "px";
         hover.style.width = box.width + "px";
         hover.style.height = box.height + "px";
+        renderHoverCard(hoverCard, domHint, box);
       }
       function placeWithinViewport(left, top, width, height) {
         return {
           left: Math.max(12, Math.min(left, window.innerWidth - width - 12)),
           top: Math.max(12, Math.min(top, window.innerHeight - height - 12)),
         };
+      }
+      function compactPanelSize(editorOpen) {
+        return {
+          width: Math.min(editorOpen ? 340 : 360, window.innerWidth - 24),
+          height: Math.min(editorOpen ? 430 : 48, window.innerHeight - 24),
+        };
+      }
+      function placePanelNearTarget(box, point, editorOpen) {
+        const size = compactPanelSize(editorOpen);
+        const gap = 8;
+        if (!box || box.width <= 0 || box.height <= 0) {
+          return placeWithinViewport((point && point.x || 0) + gap, (point && point.y || 0) + gap, size.width, size.height);
+        }
+        const preferredLeft = box.x + size.width <= window.innerWidth - 12
+          ? box.x
+          : box.x + box.width - size.width;
+        const belowTop = box.y + box.height + gap;
+        const aboveTop = box.y - size.height - gap;
+        const preferredTop = belowTop + size.height <= window.innerHeight - 12 ? belowTop : aboveTop;
+        return placeWithinViewport(preferredLeft, preferredTop, size.width, size.height);
+      }
+      const STYLE_EDIT_PROPERTIES = [
+        "color", "background-color", "opacity", "font-family", "font-size", "font-weight",
+        "line-height", "letter-spacing", "text-align", "width", "height",
+        "padding-top", "padding-right", "padding-bottom", "padding-left",
+        "margin-top", "margin-right", "margin-bottom", "margin-left",
+        "display", "flex-direction", "justify-content", "align-items", "gap",
+        "border-radius", "border-width", "border-color",
+      ];
+      const LENGTH_PROPERTIES = new Set([
+        "font-size", "letter-spacing", "width", "height",
+        "padding-top", "padding-right", "padding-bottom", "padding-left",
+        "margin-top", "margin-right", "margin-bottom", "margin-left",
+        "gap", "border-radius", "border-width",
+      ]);
+      function compactCssValue(value) {
+        return String(value || "").replace(/\\s+/g, " ").trim();
+      }
+      function rgbToHex(value) {
+        const match = compactCssValue(value).match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/i);
+        if (!match) return /^#[0-9a-f]{6}$/i.test(compactCssValue(value)) ? compactCssValue(value) : "#000000";
+        return "#" + [match[1], match[2], match[3]].map(function(part) {
+          return Math.max(0, Math.min(255, Number(part) || 0)).toString(16).padStart(2, "0");
+        }).join("");
+      }
+      function numericInputValue(value) {
+        const match = compactCssValue(value).match(/^-?\\d+(?:\\.\\d+)?/);
+        return match ? match[0] : "";
+      }
+      function valueWithUnit(property, value) {
+        const raw = compactCssValue(value);
+        if (!raw) return "";
+        if (!LENGTH_PROPERTIES.has(property)) return raw;
+        if (/^(auto|inherit|initial|unset|fit-content|max-content|min-content)$/i.test(raw)) return raw;
+        if (/[a-z%)]$/i.test(raw)) return raw;
+        return raw + "px";
+      }
+      function parseCssDeclarations(cssText) {
+        const raw = String(cssText || "").replace(/\\/\\*[\\s\\S]*?\\*\\//g, "");
+        const block = raw.includes("{") && raw.includes("}") ? raw.slice(raw.indexOf("{") + 1, raw.lastIndexOf("}")) : raw;
+        return block.split(";").map(function(entry) {
+          const index = entry.indexOf(":");
+          if (index <= 0) return null;
+          const property = entry.slice(0, index).trim().toLowerCase();
+          const value = entry.slice(index + 1).trim();
+          if (!/^[a-z-]+$/.test(property) || !value) return null;
+          return { property, value };
+        }).filter(Boolean);
+      }
+      function cssDeclarationTextForElement(element) {
+        const inline = element && element.getAttribute && element.getAttribute("style");
+        if (inline && inline.trim()) {
+          return inline.split(";").map(function(entry) {
+            return entry.trim();
+          }).filter(Boolean).map(function(entry) {
+            return "  " + entry.replace(/;$/, "") + ";";
+          }).join("\\n");
+        }
+        if (!element) return "";
+        const computed = window.getComputedStyle(element);
+        return ["color", "background-color", "font-size", "line-height", "font-weight", "display"].map(function(property) {
+          return "  " + property + ": " + compactCssValue(computed.getPropertyValue(property)) + ";";
+        }).join("\\n");
+      }
+      function cssSelectorLabel(annotation) {
+        const domHint = annotation && annotation.domHint || {};
+        return domHint.selector || domHint.hitPath || domHint.path || domHint.tagName || "element";
+      }
+      function applyCssText(annotation, cssText) {
+        const element = selectedElementForAnnotation(annotation);
+        if (!element || !element.style) return;
+        ensureStyleEditState(annotation, element);
+        const declarations = parseCssDeclarations(cssText);
+        const nextProperties = declarations.map(function(item) { return item.property; });
+        const previousProperties = annotation.__cssAppliedProperties || [];
+        previousProperties.forEach(function(property) {
+          if (!nextProperties.includes(property)) element.style.removeProperty(property);
+        });
+        declarations.forEach(function(item) {
+          element.style.setProperty(item.property, item.value);
+        });
+        Object.defineProperty(annotation, "__cssAppliedProperties", {
+          value: nextProperties,
+          enumerable: false,
+          configurable: true,
+        });
+        refreshStyleEdits(annotation, element);
+        emitAnnotation(annotation);
+        scheduleAnnotationPositionSync();
+      }
+      function collectMatchedCssRules(element) {
+        if (!element || typeof element.matches !== "function") return [];
+        const matches = [];
+        Array.from(document.styleSheets).forEach(function(sheet) {
+          if (matches.length >= 5) return;
+          let rules = [];
+          try {
+            rules = Array.from(sheet.cssRules || []);
+          } catch {
+            return;
+          }
+          rules.forEach(function(rule) {
+            if (matches.length >= 5 || !rule || rule.type !== CSSRule.STYLE_RULE || !rule.selectorText || !rule.style) return;
+            try {
+              if (!element.matches(rule.selectorText)) return;
+            } catch {
+              return;
+            }
+            const declarations = Array.from(rule.style).slice(0, 8).map(function(property) {
+              return "  " + property + ": " + rule.style.getPropertyValue(property).trim() + ";";
+            }).join("\\n");
+            matches.push(rule.selectorText + " {\\n" + declarations + "\\n}");
+          });
+        });
+        return matches;
+      }
+      function selectedElementForAnnotation(annotation) {
+        const anchor = annotation && annotation.__anchorElement;
+        if (anchor && anchor.isConnected) return anchor;
+        return resolveAnnotationElement(annotation) || anchor || null;
+      }
+      function ensureStyleEditState(annotation, element) {
+        if (!annotation || !element) return;
+        if (!annotation.styleBefore) {
+          const computed = window.getComputedStyle(element);
+          const styleBefore = {};
+          STYLE_EDIT_PROPERTIES.forEach(function(property) {
+            styleBefore[property] = compactCssValue(computed.getPropertyValue(property));
+          });
+          Object.defineProperty(annotation, "styleBefore", {
+            value: styleBefore,
+            enumerable: false,
+            configurable: true,
+          });
+        }
+        if (!Object.prototype.hasOwnProperty.call(annotation, "__originalInlineStyle")) {
+          Object.defineProperty(annotation, "__originalInlineStyle", {
+            value: element.getAttribute("style") || "",
+            enumerable: false,
+            configurable: true,
+          });
+        }
+      }
+      function refreshStyleEdits(annotation, element) {
+        if (!annotation || !element || !annotation.styleBefore) return [];
+        const computed = window.getComputedStyle(element);
+        const changes = [];
+        STYLE_EDIT_PROPERTIES.forEach(function(property) {
+          const before = compactCssValue(annotation.styleBefore[property]);
+          const after = compactCssValue(computed.getPropertyValue(property));
+          if (before !== after) changes.push({ property, before, after });
+        });
+        if (changes.length > 0) {
+          annotation.styleEdits = { source: "flux-like-advanced-annotation-panel", changes };
+          annotation.expectation = "Apply style changes: " + changes.map(function(change) {
+            return change.property + ": " + change.before + " -> " + change.after;
+          }).join("; ");
+        } else {
+          delete annotation.styleEdits;
+        }
+        return changes;
+      }
+      function applyStyleProperty(annotation, property, value) {
+        const element = selectedElementForAnnotation(annotation);
+        if (!element || !element.style) return;
+        ensureStyleEditState(annotation, element);
+        const normalized = valueWithUnit(property, value);
+        if (normalized) element.style.setProperty(property, normalized);
+        else element.style.removeProperty(property);
+        refreshStyleEdits(annotation, element);
+        emitAnnotation(annotation);
+        scheduleAnnotationPositionSync();
+      }
+      function restoreStyleEdits(annotation) {
+        const element = selectedElementForAnnotation(annotation);
+        if (!element || !Object.prototype.hasOwnProperty.call(annotation, "__originalInlineStyle")) return;
+        const original = annotation.__originalInlineStyle || "";
+        if (original) element.setAttribute("style", original);
+        else element.removeAttribute("style");
+        delete annotation.styleEdits;
+        delete annotation.styleBefore;
+        scheduleAnnotationPositionSync();
+        emitAnnotation(annotation);
+      }
+      function styleSection(body) {
+        const section = document.createElement("div");
+        section.className = "__tech_cc_hub_flux_section";
+        body.appendChild(section);
+        return section;
+      }
+      function styleRow(section, labelText) {
+        const row = document.createElement("div");
+        row.className = "__tech_cc_hub_flux_row";
+        const label = document.createElement("label");
+        label.textContent = labelText;
+        row.appendChild(label);
+        section.appendChild(row);
+        return row;
+      }
+      function addTextStyleRow(section, annotation, labelText, property, unit) {
+        const element = selectedElementForAnnotation(annotation);
+        const computed = element ? window.getComputedStyle(element) : null;
+        const row = styleRow(section, labelText);
+        const control = document.createElement("div");
+        control.className = "__tech_cc_hub_flux_control";
+        const input = document.createElement("input");
+        input.type = LENGTH_PROPERTIES.has(property) ? "number" : "text";
+        input.value = LENGTH_PROPERTIES.has(property)
+          ? numericInputValue(computed && computed.getPropertyValue(property))
+          : compactCssValue(computed && computed.getPropertyValue(property));
+        input.addEventListener("input", function() {
+          applyStyleProperty(annotation, property, input.value);
+        });
+        control.appendChild(input);
+        if (unit) {
+          const unitNode = document.createElement("span");
+          unitNode.className = "__tech_cc_hub_flux_unit";
+          unitNode.textContent = unit;
+          control.appendChild(unitNode);
+        }
+        row.appendChild(control);
+      }
+      function addColorStyleRow(section, annotation, labelText, property) {
+        const element = selectedElementForAnnotation(annotation);
+        const computed = element ? window.getComputedStyle(element) : null;
+        const initial = compactCssValue(computed && computed.getPropertyValue(property));
+        const row = styleRow(section, labelText);
+        const control = document.createElement("div");
+        control.className = "__tech_cc_hub_flux_control __tech_cc_hub_flux_color";
+        const color = document.createElement("input");
+        color.type = "color";
+        color.value = rgbToHex(initial);
+        const text = document.createElement("input");
+        text.type = "text";
+        text.value = initial;
+        color.addEventListener("input", function() {
+          text.value = color.value;
+          applyStyleProperty(annotation, property, color.value);
+        });
+        text.addEventListener("input", function() {
+          applyStyleProperty(annotation, property, text.value);
+        });
+        control.appendChild(color);
+        control.appendChild(text);
+        row.appendChild(control);
+      }
+      function addSelectStyleRow(section, annotation, labelText, property, options) {
+        const element = selectedElementForAnnotation(annotation);
+        const computed = element ? window.getComputedStyle(element) : null;
+        const current = compactCssValue(computed && computed.getPropertyValue(property));
+        const row = styleRow(section, labelText);
+        const control = document.createElement("div");
+        control.className = "__tech_cc_hub_flux_control";
+        const select = document.createElement("select");
+        if (current && !options.some(function(option) { return option.value === current; })) {
+          const currentNode = document.createElement("option");
+          currentNode.value = current;
+          currentNode.textContent = current;
+          select.appendChild(currentNode);
+        }
+        options.forEach(function(option) {
+          const node = document.createElement("option");
+          node.value = option.value;
+          node.textContent = option.label;
+          select.appendChild(node);
+        });
+        const direct = options.find(function(option) { return option.value === current; });
+        select.value = direct ? direct.value : current;
+        select.addEventListener("change", function() {
+          applyStyleProperty(annotation, property, select.value);
+        });
+        control.appendChild(select);
+        row.appendChild(control);
+      }
+      function makePanelDraggable(panel, handle) {
+        let dragState = null;
+        function stopDrag() {
+          dragState = null;
+          window.removeEventListener("pointermove", moveDrag, true);
+          window.removeEventListener("pointerup", stopDrag, true);
+        }
+        function moveDrag(event) {
+          if (!dragState) return;
+          const placement = placeWithinViewport(
+            dragState.left + event.clientX - dragState.x,
+            dragState.top + event.clientY - dragState.y,
+            dragState.width,
+            dragState.height,
+          );
+          panel.style.left = placement.left + "px";
+          panel.style.top = placement.top + "px";
+        }
+        handle.addEventListener("pointerdown", function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          const rect = panel.getBoundingClientRect();
+          dragState = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+          window.addEventListener("pointermove", moveDrag, true);
+          window.addEventListener("pointerup", stopDrag, true);
+        }, true);
+      }
+      function addQuadStyleRow(section, annotation, labelText, properties) {
+        const element = selectedElementForAnnotation(annotation);
+        const computed = element ? window.getComputedStyle(element) : null;
+        const row = styleRow(section, labelText);
+        const control = document.createElement("div");
+        control.className = "__tech_cc_hub_flux_control";
+        const quad = document.createElement("div");
+        quad.className = "__tech_cc_hub_flux_quad";
+        properties.forEach(function(property) {
+          const input = document.createElement("input");
+          input.type = "number";
+          input.value = numericInputValue(computed && computed.getPropertyValue(property));
+          input.addEventListener("input", function() {
+            applyStyleProperty(annotation, property, input.value);
+          });
+          quad.appendChild(input);
+        });
+        control.appendChild(quad);
+        row.appendChild(control);
       }
       function drawAnnotation(annotation) {
         const layer = ensureLayer();
@@ -2960,18 +3409,40 @@ export class BrowserWorkbenchManager {
         marker.setAttribute("aria-label", "标注 " + count);
         const comment = document.createElement("div");
         comment.className = "__tech_cc_hub_comment";
-        const preferredLeft = box ? box.x + Math.min(96, Math.max(24, box.width * 0.2)) : annotation.point.x + 18;
-        const preferredTop = box ? box.y + Math.min(14, Math.max(0, box.height - 10)) : annotation.point.y + 18;
-        const placement = placeWithinViewport(preferredLeft, preferredTop, Math.min(440, window.innerWidth - 32), 92);
+        comment.dataset.editorOpen = "false";
+        const placement = placePanelNearTarget(box, annotation.point, false);
         comment.style.left = placement.left + "px";
         comment.style.top = placement.top + "px";
         comment.dataset.annotationId = annotation.id;
         comment.dataset.annotationKey = annotation.key;
         const input = document.createElement("input");
         input.className = "__tech_cc_hub_problem";
-        input.placeholder = "问题描述...";
+        input.placeholder = "描述这些更改...";
         input.value = annotation.comment || "";
         comment.appendChild(input);
+        const top = document.createElement("div");
+        top.className = "__tech_cc_hub_flux_top";
+        const icon = document.createElement("button");
+        icon.type = "button";
+        icon.className = "__tech_cc_hub_flux_icon";
+        icon.textContent = "≛";
+        icon.setAttribute("aria-label", "样式控制");
+        icon.setAttribute("aria-pressed", "false");
+        comment.insertBefore(top, input);
+        top.appendChild(icon);
+        top.appendChild(input);
+        const topDrag = document.createElement("span");
+        topDrag.className = "__tech_cc_hub_flux_drag";
+        topDrag.textContent = "⋮⋮";
+        topDrag.setAttribute("aria-label", "拖动标注面板");
+        top.appendChild(topDrag);
+        const quickSave = document.createElement("button");
+        quickSave.type = "button";
+        quickSave.className = "__tech_cc_hub_quick_save";
+        quickSave.textContent = "✓";
+        quickSave.setAttribute("aria-label", "保存标注");
+        top.appendChild(quickSave);
+        makePanelDraggable(comment, topDrag);
         const expectationInput = document.createElement("input");
         expectationInput.className = "__tech_cc_hub_expectation";
         expectationInput.placeholder = "预期状态（可选）...";
@@ -2983,15 +3454,205 @@ export class BrowserWorkbenchManager {
         submit.textContent = "➜";
         submit.setAttribute("aria-label", "保存评论");
         comment.appendChild(submit);
+        expectationInput.style.display = "none";
+        submit.style.display = "none";
+        const selectedElement = selectedElementForAnnotation(annotation);
+        if (selectedElement) ensureStyleEditState(annotation, selectedElement);
+        const target = document.createElement("div");
+        target.className = "__tech_cc_hub_flux_target";
+        const targetName = document.createElement("span");
+        targetName.textContent = annotation.domHint && annotation.domHint.tagName || "element";
+        target.appendChild(targetName);
+        comment.appendChild(target);
+        const tabs = document.createElement("div");
+        tabs.className = "__tech_cc_hub_tabs";
+        const visualTab = document.createElement("button");
+        visualTab.type = "button";
+        visualTab.className = "__tech_cc_hub_tab";
+        visualTab.textContent = "Visual";
+        visualTab.setAttribute("aria-selected", "true");
+        const cssTab = document.createElement("button");
+        cssTab.type = "button";
+        cssTab.className = "__tech_cc_hub_tab";
+        cssTab.textContent = "CSS";
+        cssTab.setAttribute("aria-selected", "false");
+        tabs.appendChild(visualTab);
+        tabs.appendChild(cssTab);
+        comment.appendChild(tabs);
+        const body = document.createElement("div");
+        body.className = "__tech_cc_hub_flux_body __tech_cc_hub_panel";
+        comment.appendChild(body);
+        const colorSection = styleSection(body);
+        addColorStyleRow(colorSection, annotation, "文字颜色", "color");
+        addColorStyleRow(colorSection, annotation, "背景", "background-color");
+        addTextStyleRow(colorSection, annotation, "Opacity", "opacity", "");
+        const typeSection = styleSection(body);
+        addSelectStyleRow(typeSection, annotation, "字体", "font-family", [
+          { value: "system-ui, sans-serif", label: "System UI" },
+          { value: "'PingFang SC', sans-serif", label: "PingFang SC" },
+          { value: "Inter, sans-serif", label: "Inter" },
+          { value: "ui-monospace, monospace", label: "Monospace" },
+        ]);
+        addTextStyleRow(typeSection, annotation, "字号", "font-size", "px");
+        addSelectStyleRow(typeSection, annotation, "字重", "font-weight", [
+          { value: "300", label: "300" },
+          { value: "400", label: "400" },
+          { value: "500", label: "500" },
+          { value: "600", label: "600" },
+          { value: "700", label: "700" },
+          { value: "800", label: "800" },
+        ]);
+        addTextStyleRow(typeSection, annotation, "行高", "line-height", "");
+        addTextStyleRow(typeSection, annotation, "字距", "letter-spacing", "px");
+        addSelectStyleRow(typeSection, annotation, "对齐", "text-align", [
+          { value: "left", label: "Left" },
+          { value: "center", label: "Center" },
+          { value: "right", label: "Right" },
+          { value: "justify", label: "Justify" },
+        ]);
+        const boxSection = styleSection(body);
+        addTextStyleRow(boxSection, annotation, "宽度", "width", "px");
+        addTextStyleRow(boxSection, annotation, "高度", "height", "px");
+        addQuadStyleRow(boxSection, annotation, "内边距", ["padding-top", "padding-right", "padding-bottom", "padding-left"]);
+        addQuadStyleRow(boxSection, annotation, "外边距", ["margin-top", "margin-right", "margin-bottom", "margin-left"]);
+        const layoutSection = styleSection(body);
+        addSelectStyleRow(layoutSection, annotation, "Display", "display", [
+          { value: "block", label: "Block" },
+          { value: "flex", label: "Flex" },
+          { value: "grid", label: "Grid" },
+          { value: "inline-flex", label: "Inline flex" },
+          { value: "inline-block", label: "Inline block" },
+        ]);
+        addSelectStyleRow(layoutSection, annotation, "Layout direction", "flex-direction", [
+          { value: "row", label: "Horizontal" },
+          { value: "column", label: "Vertical" },
+          { value: "row-reverse", label: "Horizontal reverse" },
+          { value: "column-reverse", label: "Vertical reverse" },
+        ]);
+        addSelectStyleRow(layoutSection, annotation, "Distribution", "justify-content", [
+          { value: "flex-start", label: "Start" },
+          { value: "center", label: "Center" },
+          { value: "space-between", label: "Space between" },
+          { value: "space-around", label: "Space around" },
+          { value: "flex-end", label: "End" },
+        ]);
+        addSelectStyleRow(layoutSection, annotation, "Alignment", "align-items", [
+          { value: "stretch", label: "Stretch" },
+          { value: "flex-start", label: "Start" },
+          { value: "center", label: "Center" },
+          { value: "flex-end", label: "End" },
+        ]);
+        addTextStyleRow(layoutSection, annotation, "Spacing", "gap", "px");
+        const borderSection = styleSection(body);
+        addTextStyleRow(borderSection, annotation, "圆角", "border-radius", "px");
+        addTextStyleRow(borderSection, annotation, "边框宽度", "border-width", "px");
+        addColorStyleRow(borderSection, annotation, "边框颜色", "border-color");
+        const cssBody = document.createElement("div");
+        cssBody.className = "__tech_cc_hub_css_body __tech_cc_hub_panel";
+        cssBody.hidden = true;
+        const cssRule = document.createElement("div");
+        cssRule.className = "__tech_cc_hub_css_rule";
+        const cssSelector = document.createElement("div");
+        cssSelector.className = "__tech_cc_hub_css_selector";
+        cssSelector.textContent = cssSelectorLabel(annotation) + " {";
+        const cssEditor = document.createElement("textarea");
+        cssEditor.className = "__tech_cc_hub_css_editor";
+        cssEditor.spellcheck = false;
+        cssEditor.value = cssDeclarationTextForElement(selectedElement);
+        const cssClose = document.createElement("div");
+        cssClose.className = "__tech_cc_hub_css_selector";
+        cssClose.textContent = "}";
+        cssRule.appendChild(cssSelector);
+        cssRule.appendChild(cssEditor);
+        cssRule.appendChild(cssClose);
+        cssBody.appendChild(cssRule);
+        const cssHint = document.createElement("div");
+        cssHint.className = "__tech_cc_hub_css_hint";
+        cssHint.textContent = "Edit CSS declarations here for live inline styles.";
+        cssBody.appendChild(cssHint);
+        const matchedRules = collectMatchedCssRules(selectedElement);
+        if (matchedRules.length > 0) {
+          const matches = document.createElement("div");
+          matches.className = "__tech_cc_hub_css_matches";
+          matchedRules.forEach(function(ruleText) {
+            const match = document.createElement("pre");
+            match.className = "__tech_cc_hub_css_match";
+            match.textContent = ruleText;
+            matches.appendChild(match);
+          });
+          cssBody.appendChild(matches);
+        }
+        comment.appendChild(cssBody);
+        const footer = document.createElement("div");
+        footer.className = "__tech_cc_hub_flux_footer";
+        const removeButton = document.createElement("button");
+        removeButton.type = "button";
+        removeButton.className = "__tech_cc_hub_flux_btn __tech_cc_hub_flux_btn_icon";
+        removeButton.textContent = "⌫";
+        removeButton.setAttribute("aria-label", "删除标注");
+        const actions = document.createElement("div");
+        actions.className = "__tech_cc_hub_flux_actions";
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "__tech_cc_hub_flux_btn";
+        cancel.textContent = "取消";
+        const save = document.createElement("button");
+        save.type = "button";
+        save.className = "__tech_cc_hub_flux_btn __tech_cc_hub_flux_btn_primary";
+        save.textContent = "保存";
+        actions.appendChild(cancel);
+        actions.appendChild(save);
+        footer.appendChild(removeButton);
+        footer.appendChild(actions);
+        comment.appendChild(footer);
+        function setEditorOpen(open) {
+          comment.dataset.editorOpen = open ? "true" : "false";
+          icon.setAttribute("aria-pressed", open ? "true" : "false");
+          if (open) {
+            const rect = comment.getBoundingClientRect();
+            const size = compactPanelSize(true);
+            const placement = placeWithinViewport(rect.left, rect.top, size.width, size.height);
+            comment.style.left = placement.left + "px";
+            comment.style.top = placement.top + "px";
+          }
+        }
+        function setActiveTab(tabName) {
+          const cssActive = tabName === "css";
+          visualTab.setAttribute("aria-selected", cssActive ? "false" : "true");
+          cssTab.setAttribute("aria-selected", cssActive ? "true" : "false");
+          body.hidden = cssActive;
+          cssBody.hidden = !cssActive;
+          if (cssActive) {
+            const element = selectedElementForAnnotation(annotation);
+            if (element) cssEditor.value = cssDeclarationTextForElement(element);
+          }
+        }
         function submitComment() {
           annotation.comment = input.value.trim();
-          annotation.expectation = expectationInput.value.trim();
+          const element = selectedElementForAnnotation(annotation);
+          if (element) refreshStyleEdits(annotation, element);
+          if (!annotation.expectation) annotation.expectation = expectationInput.value.trim();
           emitAnnotation(annotation);
           comment.hidden = true;
         }
+        function discardAnnotation() {
+          restoreStyleEdits(annotation);
+          const removed = {
+            id: annotation.id,
+            url: window.location.href,
+            title: document.title,
+            createdAt: Date.now(),
+            point: annotation.point,
+            domHint: annotation.domHint,
+            removed: true,
+          };
+          removeAnnotation(annotation.id);
+          emitAnnotation(removed);
+          clearBackgroundInfo();
+        }
         function updateSubmitState() {
           annotation.comment = input.value;
-          annotation.expectation = expectationInput.value;
+          if (!annotation.styleEdits) annotation.expectation = expectationInput.value;
           emitAnnotation(annotation);
           showBackgroundInfo(annotation);
           submit.disabled = !input.value.trim() && !expectationInput.value.trim();
@@ -3014,6 +3675,61 @@ export class BrowserWorkbenchManager {
           event.preventDefault();
           event.stopPropagation();
           submitComment();
+        }, true);
+        quickSave.addEventListener("click", function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          submitComment();
+        }, true);
+        icon.addEventListener("click", function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          setEditorOpen(comment.dataset.editorOpen !== "true");
+        }, true);
+        visualTab.addEventListener("click", function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          setActiveTab("visual");
+        }, true);
+        cssTab.addEventListener("click", function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          setActiveTab("css");
+          requestAnimationFrame(function() {
+            cssEditor.focus();
+          });
+        }, true);
+        cssEditor.addEventListener("input", function() {
+          applyCssText(annotation, cssEditor.value);
+        });
+        cssEditor.addEventListener("keydown", function(event) {
+          if (event.key === "Tab") {
+            event.preventDefault();
+            const start = cssEditor.selectionStart || 0;
+            const end = cssEditor.selectionEnd || 0;
+            cssEditor.value = cssEditor.value.slice(0, start) + "  " + cssEditor.value.slice(end);
+            cssEditor.selectionStart = cssEditor.selectionEnd = start + 2;
+            applyCssText(annotation, cssEditor.value);
+          }
+          if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+            event.preventDefault();
+            submitComment();
+          }
+        });
+        save.addEventListener("click", function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          submitComment();
+        }, true);
+        cancel.addEventListener("click", function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          discardAnnotation();
+        }, true);
+        removeButton.addEventListener("click", function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          discardAnnotation();
         }, true);
         comment.addEventListener("mousedown", function(event) {
           event.stopPropagation();
@@ -3353,6 +4069,21 @@ export class BrowserWorkbenchManager {
         if (text) return { type: "text", value: text };
         return undefined;
       }
+      function getSimpleComputedStyle(element) {
+        const computed = window.getComputedStyle(element);
+        return [
+          "color",
+          "background-color",
+          "font-size",
+          "font-family",
+          "font-weight",
+          "line-height",
+          "display",
+        ].reduce(function(accumulator, property) {
+          accumulator[property] = computed.getPropertyValue(property);
+          return accumulator;
+        }, {});
+      }
       function pushUnique(list, value) {
         const normalized = cleanText(value);
         if (!normalized || list.includes(normalized)) return;
@@ -3568,6 +4299,7 @@ export class BrowserWorkbenchManager {
           width: rect.width,
           height: rect.height,
         },
+        computedStyle: getSimpleComputedStyle(element),
         context: buildContext(element),
       };
     }`;

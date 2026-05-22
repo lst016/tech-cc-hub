@@ -9,7 +9,7 @@ import {
   runtimeEfficiencyProfileToState,
 } from "../../src/electron/libs/runtime-efficiency.js";
 
-test("runtime efficiency defaults to the small standard tool surface", () => {
+test("runtime efficiency keeps BrowserView tools on the standard surface", () => {
   const profile = resolveRuntimeEfficiencyProfile({
     prompt: "解释一下这个函数为什么会重复读文件",
   });
@@ -19,9 +19,11 @@ test("runtime efficiency defaults to the small standard tool surface", () => {
     "tech-cc-hub-admin",
     "tech-cc-hub-plan",
     "tech-cc-hub-knowledge",
+    "tech-cc-hub-browser",
   ]);
+  assert.equal(profile.includeBrowserPrompt, true);
   assert.equal(profile.includeProjectMemoryPrompt, false);
-  assert.equal(profile.includePartialMessages, false);
+  assert.equal(profile.includePartialMessages, true);
   assert.equal(profile.includeHookEvents, false);
 });
 
@@ -57,7 +59,7 @@ test("runtime efficiency does not re-enable project memory from legacy sticky st
   assert.equal(normalized?.includeProjectMemoryPrompt, false);
 });
 
-test("runtime efficiency keeps cron tools out of normal coding turns", () => {
+test("runtime efficiency keeps design tools out of automation turns", () => {
   const profile = resolveRuntimeEfficiencyProfile({
     prompt: "每天下午提醒我检查构建状态",
   });
@@ -65,7 +67,8 @@ test("runtime efficiency keeps cron tools out of normal coding turns", () => {
   assert.equal(profile.id, "automation");
   assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-cron"));
   assert.equal(profile.builtinMcpServers.includes("tech-cc-hub-figma"), false);
-  assert.equal(profile.builtinMcpServers.includes("tech-cc-hub-browser"), false);
+  assert.equal(profile.builtinMcpServers.includes("tech-cc-hub-browser"), true);
+  assert.equal(profile.includeBrowserPrompt, true);
 });
 
 test("runtime efficiency enables Agent Teams visibility for parallel team prompts", () => {
@@ -82,7 +85,9 @@ test("runtime efficiency enables Agent Teams visibility for parallel team prompt
     "tech-cc-hub-admin",
     "tech-cc-hub-plan",
     "tech-cc-hub-knowledge",
+    "tech-cc-hub-browser",
   ]);
+  assert.equal(profile.includeBrowserPrompt, true);
 });
 
 test("runtime efficiency keeps visual tools when Agent Teams work includes UI", () => {

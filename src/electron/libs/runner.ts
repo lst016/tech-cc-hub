@@ -175,7 +175,39 @@ const FILE_MUTATION_TOOL_NAMES = new Set(["Edit", "MultiEdit", "Write"]);
 // which provide persistent storage, execution history, and retry mechanism.
 const SDK_BUILTIN_CRON_TOOLS = new Set(["CronCreate", "CronDelete", "CronList"]);
 const CODEGRAPH_RETRIEVAL_TOOL_NAMES = new Set(["codegraph_search", "codegraph_context", "codegraph_impact"]);
-const BROAD_CODE_EXPLORATION_TOOL_NAMES = new Set(["Grep", "Glob", "Task"]);
+const BROAD_CODE_EXPLORATION_TOOL_NAMES = new Set(["Grep", "Glob", "Task", "Search"]);
+const SOURCE_CODE_READ_EXTENSIONS = new Set([
+  ".astro",
+  ".c",
+  ".cc",
+  ".cjs",
+  ".cpp",
+  ".cs",
+  ".cxx",
+  ".go",
+  ".graphql",
+  ".gql",
+  ".h",
+  ".hpp",
+  ".java",
+  ".js",
+  ".jsx",
+  ".kt",
+  ".mjs",
+  ".php",
+  ".py",
+  ".rb",
+  ".rs",
+  ".scala",
+  ".sql",
+  ".svelte",
+  ".swift",
+  ".ts",
+  ".tsx",
+  ".vue",
+]);
+const BASH_CODE_EXPLORATION_COMMAND_PATTERN =
+  /(?:^|[;&|()\s])(?:rg|grep|find|fd|tree|findstr)(?:\.exe)?(?=\s|$)|\bgit\s+(?:grep|ls-files)\b|\b(?:Get-ChildItem|Select-String)\b/i;
 
 function isSdkBuiltinCronTool(toolName: string): boolean {
   return SDK_BUILTIN_CRON_TOOLS.has(toolName);
@@ -214,12 +246,69 @@ function getCodeGraphFirstDenyMessage(
   toolName: string,
   projectCwd: string | undefined,
   codeGraphRetrievalSeen: boolean,
+  input?: unknown,
+  prompt = "",
 ): string | undefined {
-  if (!projectCwd || codeGraphRetrievalSeen || !BROAD_CODE_EXPLORATION_TOOL_NAMES.has(toolName)) {
+  if (!projectCwd || codeGraphRetrievalSeen || !isBroadCodeExplorationTool(toolName, input, prompt)) {
     return undefined;
   }
 
   return "Use mcp__tech-cc-hub-knowledge__codegraph_search or mcp__tech-cc-hub-knowledge__codegraph_context before broad source exploration. They auto-initialize .tech/codegraph when missing and run incremental sync before retrieval.";
+}
+
+function isBroadCodeExplorationTool(toolName: string, input: unknown, prompt: string): boolean {
+  if (BROAD_CODE_EXPLORATION_TOOL_NAMES.has(toolName)) {
+    return true;
+  }
+
+  if (toolName === "Bash") {
+    return isBroadCodeExplorationCommand(input);
+  }
+
+  if (toolName === "Read") {
+    return isBroadSourceRead(input, prompt);
+  }
+
+  return false;
+}
+
+function isBroadCodeExplorationCommand(input: unknown): boolean {
+  if (!isRecord(input)) {
+    return false;
+  }
+
+  const command = typeof input.command === "string" ? input.command.trim() : "";
+  return Boolean(command && BASH_CODE_EXPLORATION_COMMAND_PATTERN.test(command));
+}
+
+function isBroadSourceRead(input: unknown, prompt: string): boolean {
+  if (!isRecord(input)) {
+    return false;
+  }
+
+  const filePath = typeof input.file_path === "string" ? input.file_path.trim() : "";
+  if (!SOURCE_CODE_READ_EXTENSIONS.has(extname(filePath).toLowerCase())) {
+    return false;
+  }
+
+  return !promptMentionsFilePath(prompt, filePath);
+}
+
+function promptMentionsFilePath(prompt: string, filePath: string): boolean {
+  const normalizedPrompt = prompt.toLowerCase().replace(/\\/g, "/");
+  const normalizedPath = filePath.toLowerCase().replace(/\\/g, "/");
+  const pathSegments = normalizedPath.split("/").filter(Boolean);
+  const basename = pathSegments.at(-1) ?? "";
+  const tail = pathSegments.slice(-3).join("/");
+
+  return Boolean(
+    basename &&
+    (
+      normalizedPrompt.includes(normalizedPath) ||
+      normalizedPrompt.includes(tail) ||
+      normalizedPrompt.includes(basename)
+    ),
+  );
 }
 
 const POWERSHELL_COMMAND_PATTERN = /(^|[^\w.-])(powershell(?:\.exe)?|pwsh(?:\.exe)?)(?=$|[^\w.-])/i;
@@ -635,7 +724,13 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                 return message ? { behavior: "deny", message } : null;
               },
               () => {
-                const message = getCodeGraphFirstDenyMessage(toolName, projectCwd, codeGraphRetrievalSeen);
+                const message = getCodeGraphFirstDenyMessage(
+                  toolName,
+                  projectCwd,
+                  codeGraphRetrievalSeen,
+                  effectiveInput,
+                  currentPrompt,
+                );
                 return message ? { behavior: "deny", message } : null;
               },
               () => {
@@ -1622,6 +1717,8 @@ function buildQualityHooks(
           toolName,
           projectCwd,
           isCodeGraphRetrievalSeen?.() ?? false,
+          normalizedInput,
+          getCurrentPrompt(),
         );
         if (codeGraphDenyMessage) {
           return {

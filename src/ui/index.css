@@ -139,6 +139,11 @@ code, pre, textarea.mono, input.mono {
   overscroll-behavior: contain;
 }
 
+.prompt-composer-editor {
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
 .prompt-composer-editor,
 .prompt-composer-editor * {
   max-width: 100%;

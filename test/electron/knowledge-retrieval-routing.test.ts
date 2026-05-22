@@ -34,7 +34,13 @@ test("runner requires CodeGraph retrieval before broad source exploration", () =
   const source = readFileSync(join(process.cwd(), "src/electron/libs/runner.ts"), "utf8");
 
   assert.match(source, /CODEGRAPH_RETRIEVAL_TOOL_NAMES/);
-  assert.match(source, /BROAD_CODE_EXPLORATION_TOOL_NAMES = new Set\(\["Grep", "Glob", "Task"\]\)/);
+  assert.match(source, /BROAD_CODE_EXPLORATION_TOOL_NAMES = new Set\(\["Grep", "Glob", "Task", "Search"\]\)/);
+  assert.match(source, /SOURCE_CODE_READ_EXTENSIONS/);
+  assert.match(source, /BASH_CODE_EXPLORATION_COMMAND_PATTERN/);
+  assert.match(source, /function isBroadCodeExplorationTool/);
+  assert.match(source, /toolName === "Read"/);
+  assert.match(source, /toolName === "Bash"/);
+  assert.match(source, /promptMentionsFilePath/);
   assert.match(source, /function getCodeGraphFirstDenyMessage/);
   assert.match(source, /mcp__tech-cc-hub-knowledge__codegraph_search or mcp__tech-cc-hub-knowledge__codegraph_context before broad source exploration/);
   assert.match(source, /codeGraphRetrievalSeen = false/);

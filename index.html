@@ -10,10 +10,145 @@
     img-src 'self' data: blob:;
     style-src 'self' 'unsafe-inline';
     script-src 'self' 'unsafe-inline';">
+    <style>
+        html,
+        body,
+        #root {
+            height: 100%;
+        }
+
+        body {
+            margin: 0;
+            background:
+                radial-gradient(circle at top left, rgba(255, 255, 255, 0.98), rgba(245, 247, 250, 0.96) 36%, rgba(230, 234, 240, 0.98) 100%);
+            color: #252932;
+            font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, sans-serif;
+        }
+
+        .boot-shell {
+            display: grid;
+            min-height: 100%;
+            grid-template-columns: 280px minmax(0, 1fr) 420px;
+        }
+
+        .boot-sidebar,
+        .boot-rail {
+            border-color: rgba(15, 23, 42, 0.06);
+            background: rgba(255, 255, 255, 0.72);
+        }
+
+        .boot-sidebar {
+            border-right: 1px solid rgba(15, 23, 42, 0.06);
+        }
+
+        .boot-rail {
+            border-left: 1px solid rgba(15, 23, 42, 0.06);
+        }
+
+        .boot-main {
+            display: flex;
+            min-width: 0;
+            align-items: center;
+            justify-content: center;
+            padding: 32px;
+        }
+
+        .boot-card {
+            width: min(520px, 100%);
+            border: 1px solid rgba(15, 23, 42, 0.06);
+            border-radius: 24px;
+            background: rgba(255, 255, 255, 0.82);
+            box-shadow: 0 24px 60px rgba(30, 38, 52, 0.08);
+            padding: 28px;
+        }
+
+        .boot-title {
+            margin: 0;
+            color: #16181d;
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: 0;
+        }
+
+        .boot-subtitle {
+            margin: 10px 0 0;
+            color: #697384;
+            font-size: 13px;
+            line-height: 1.8;
+        }
+
+        .boot-lines {
+            display: grid;
+            gap: 10px;
+            margin-top: 24px;
+        }
+
+        .boot-line {
+            height: 12px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: rgba(22, 24, 29, 0.08);
+        }
+
+        .boot-line::after {
+            display: block;
+            width: 42%;
+            height: 100%;
+            transform: translateX(-100%);
+            animation: boot-shimmer 1.2s ease-in-out infinite;
+            background: linear-gradient(90deg, transparent, rgba(22, 24, 29, 0.18), transparent);
+            content: "";
+        }
+
+        .boot-line:nth-child(1) {
+            width: 38%;
+        }
+
+        .boot-line:nth-child(2) {
+            width: 100%;
+        }
+
+        .boot-line:nth-child(3) {
+            width: 74%;
+        }
+
+        @keyframes boot-shimmer {
+            to {
+                transform: translateX(260%);
+            }
+        }
+
+        @media (max-width: 1100px) {
+            .boot-shell {
+                grid-template-columns: 1fr;
+            }
+
+            .boot-sidebar,
+            .boot-rail {
+                display: none;
+            }
+        }
+    </style>
 </head>
 
 <body>
-    <div id="root"></div>
+    <div id="root">
+        <div class="boot-shell" aria-label="tech-cc-hub 正在启动">
+            <aside class="boot-sidebar"></aside>
+            <main class="boot-main">
+                <section class="boot-card">
+                    <h1 class="boot-title">tech-cc-hub</h1>
+                    <p class="boot-subtitle">正在加载工作台...</p>
+                    <div class="boot-lines" aria-hidden="true">
+                        <div class="boot-line"></div>
+                        <div class="boot-line"></div>
+                        <div class="boot-line"></div>
+                    </div>
+                </section>
+            </main>
+            <aside class="boot-rail"></aside>
+        </div>
+    </div>
     <script type="module" src="/src/ui/main.tsx"></script>
 </body>
 
