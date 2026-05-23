@@ -87,6 +87,7 @@ const figmaUiNodeSchema = z.object({
 
 export const FIGMA_REST_CORE_TOOL_NAMES = [
   "figma_read_design",
+  "figma_get_node",
   "figma_list_node_index",
   "figma_match_ui_nodes",
   "figma_summarize_design",
@@ -282,12 +283,12 @@ function capFigmaDesignPayload(
       },
       alternatives: [
         "Use figma_export_node_images with the same nodeIds, then pass the returned imagePath to design_inspect_image when visual layout intent matters.",
-        "Use figma_read_design with one nodeId and a small depth when raw node JSON is required.",
+        "Use figma_get_node with one nodeId and a small depth when you need guaranteed-complete node JSON. figma_read_design always risks truncation on large nodes.",
         "Use figma_generate_tailwind_code after selecting the smallest frame that matches the implementation target.",
       ],
       nodeIndex,
     },
-    jsonPreview: capped.jsonPreview,
+    // 安全措施：截断时绝不返回原始 JSON 片段，防止 Agent 基于不完整数据生成幻觉代码
   };
 }
 
@@ -971,7 +972,7 @@ export function getFigmaRestMcpServer(options: { toolMode?: FigmaRestToolMode } 
 
   const readDesignTool = tool(
     "figma_read_design",
-    "Read a Figma file or selected nodes with the locally saved Personal Access Token. Figma URLs are parsed automatically.",
+    "Read a Figma file or selected nodes. WARNING: large nodes get truncated at maxBytes. NEVER implement UI from truncated data — use figma_get_node with a single nodeId instead, which guarantees complete results. This tool is best for browsing structure; for implementation use figma_get_node or figma_summarize_design.",
     {
       fileKeyOrUrl: z.string().trim().min(1),
       nodeIds: z.array(z.string().trim().min(1)).max(40).optional(),
@@ -1010,6 +1011,47 @@ export function getFigmaRestMcpServer(options: { toolMode?: FigmaRestToolMode } 
           success: false,
           error: error instanceof Error ? error.message : String(error),
         }, true);
+      }
+    },
+  );
+
+  const getNodeTool = tool(
+    "figma_get_node",
+    "Read a single Figma node with guaranteed completeness — no truncation risk because the scope is narrow. Use this for implementation when you need exact node JSON. Contrast with figma_read_design which browses the whole file and truncates large results.",
+    {
+      fileKeyOrUrl: z.string().trim().min(1),
+      nodeIds: z.array(z.string().trim().min(1)).min(1).max(8).describe("Node IDs to read. Prefer exactly one nodeId for implementation work; use 2-8 only when comparing related siblings."),
+      depth: z.number().int().min(1).max(4).optional().describe("Defaults to 2. Keep it small — single nodes rarely need depth>2."),
+      maxBytes: z.number().int().min(10_000).max(MAX_RESPONSE_BYTES).optional(),
+    },
+    async (input) => {
+      const action = "figma_get_node";
+      try {
+        const token = getConfiguredFigmaPat();
+        const locator = parseFigmaLocator(input.fileKeyOrUrl, input.nodeIds);
+        if (locator.nodeIds.length === 0) {
+          throw new Error("nodeIds is required. Pass a Figma URL with node-id or provide nodeIds explicitly.");
+        }
+        const depth = input.depth ?? 2;
+        const payload = await figmaApiGet(
+          `files/${encodeURIComponent(locator.fileKey)}/nodes`,
+          {
+            ids: locator.nodeIds.join(","),
+            depth,
+          },
+          token,
+        );
+        const roots = extractDocumentNodes(payload, locator.nodeIds);
+        return toTextToolResult({
+          action,
+          success: true,
+          fileKey: locator.fileKey,
+          nodeIds: locator.nodeIds,
+          depth,
+          result: capPayload({ nodes: roots }, clampMaxBytes(input.maxBytes)),
+        });
+      } catch (error) {
+        return toFigmaErrorResult(action, error);
       }
     },
   );
@@ -1622,6 +1664,7 @@ export function getFigmaRestMcpServer(options: { toolMode?: FigmaRestToolMode } 
 
   const coreTools = [
     readDesignTool,
+    getNodeTool,
     nodeIndexTool,
     matchUiNodesTool,
     summarizeDesignTool,
@@ -1631,6 +1674,7 @@ export function getFigmaRestMcpServer(options: { toolMode?: FigmaRestToolMode } 
     currentUserTool,
     fileMetadataTool,
     readDesignTool,
+    getNodeTool,
     nodeIndexTool,
     matchUiNodesTool,
     summarizeDesignTool,
