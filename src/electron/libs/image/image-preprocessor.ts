@@ -1,9 +1,9 @@
 ﻿import { readFile } from "fs/promises";
 import { basename, extname } from "path";
 
-import type { PromptAttachment } from "../types.js";
-import type { ApiConfig } from "./config-store.js";
-import { persistImageAttachmentReference } from "./attachment-store.js";
+import type { PromptAttachment } from "../../types.js";
+import type { ApiConfig } from "../config-store.js";
+import { persistImageAttachmentReference } from "../attachment-store.js";
 import {
   CODEX_OAUTH_BASE_URL,
   CODEX_OAUTH_COMPACT_MODEL_SUFFIX,
@@ -12,7 +12,7 @@ import {
   parseCodexOAuthCredential,
   toAnthropicMessageResponse,
   type CodexOAuthCredential,
-} from "./codex-oauth.js";
+} from "../codex/codex-oauth.js";
 import { preprocessImageAttachmentsCore, type ImagePreprocessResult } from "./image-preprocessor-core.js";
 
 const IMAGE_SUMMARY_MAX_TOKENS = 2400;

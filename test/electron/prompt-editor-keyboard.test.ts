@@ -6,6 +6,7 @@ import {
   resolvePromptEditorInputCursor,
   shouldBlockPromptEnterAfterComposition,
   shouldInsertPromptNewline,
+  shouldSuppressPromptAutoReplacement,
   shouldSubmitPromptOnEnter,
 } from "../../src/ui/utils/prompt-editor-keyboard.js";
 
@@ -56,6 +57,11 @@ test("contentEditable paragraph input is blocked while command palettes own Ente
 test("contentEditable non-paragraph input remains native", () => {
   assert.equal(getPromptParagraphInputAction({ inputType: "insertText" }, false, false), "allow");
   assert.equal(getPromptParagraphInputAction({ inputType: "insertLineBreak" }, false, false), "allow");
+});
+
+test("contentEditable replacement input is suppressed to avoid auto-correct rewrite", () => {
+  assert.equal(shouldSuppressPromptAutoReplacement({ inputType: "insertReplacementText" }), true);
+  assert.equal(shouldSuppressPromptAutoReplacement({ inputType: "insertText" }), false);
 });
 
 test("newline insertion preserves raw slash commands and cursor position", () => {

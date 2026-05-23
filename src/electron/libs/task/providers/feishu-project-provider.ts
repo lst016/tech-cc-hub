@@ -1,5 +1,5 @@
 import type { ExternalTask, ExternalTaskStatus, TaskProvider, TaskProviderCapability } from "../types.js";
-import { getGlobalRuntimeEnvConfig } from "../../claude-settings.js";
+import { getGlobalRuntimeEnvConfig } from "../../claude/claude-settings.js";
 import { loadGlobalRuntimeConfig } from "../../config-store.js";
 import { runExternalCli } from "../../external-cli.js";
 

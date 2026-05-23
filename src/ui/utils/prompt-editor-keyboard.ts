@@ -48,6 +48,12 @@ export function getPromptParagraphInputAction(
   return "submit";
 }
 
+export function shouldSuppressPromptAutoReplacement(
+  event: PromptBeforeInputEventLike,
+) {
+  return event.inputType === "insertReplacementText";
+}
+
 export function insertTextIntoPrompt(
   prompt: string,
   text: string,

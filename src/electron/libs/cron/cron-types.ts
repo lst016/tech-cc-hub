@@ -3,7 +3,7 @@ export type {
   CronSchedule,
   CronJob,
   CreateCronJobParams,
-} from "../../types/cron.js";
+} from "../../../types/cron.js";
 
 // Database row type is electron-only
 export type CronJobRow = {

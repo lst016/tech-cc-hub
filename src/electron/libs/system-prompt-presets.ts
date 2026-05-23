@@ -4,7 +4,7 @@ import {
   buildBuiltinMcpPromptHints,
   type BuiltinMcpServerName,
 } from "../../shared/builtin-mcp-registry.js";
-import { buildClaudeCodeCompatPromptAppend } from "./claude-code-compat-registry.js";
+import { buildClaudeCodeCompatPromptAppend } from "./claude/claude-code-compat-registry.js";
 
 const FEISHU_DOC_URL_PATTERN = /https?:\/\/[^\s<>"'`]*feishu\.cn\/(?:wiki|docx|docs)\/[^\s<>"'`]*/gi;
 const FEISHU_DOC_URL_TRAILING_PUNCTUATION = /[),.;，。；、]+$/;

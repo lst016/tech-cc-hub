@@ -1,4 +1,4 @@
-import { getFigmaOfficialPluginStatusFromConfig } from "./figma-official-plugin.js";
+import { getFigmaOfficialPluginStatusFromConfig } from "../figma-official-plugin.js";
 
 export function stringifyRunnerError(error: unknown): string {
   if (typeof error === "string") {

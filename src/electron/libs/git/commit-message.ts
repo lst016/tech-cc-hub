@@ -26,7 +26,7 @@ export async function generateCommitMessageSuggestion(input: {
     },
   ] = await Promise.all([
     import("@anthropic-ai/claude-agent-sdk"),
-    import("../claude-settings.js"),
+    import("../claude/claude-settings.js"),
   ]);
   const apiConfig = getCurrentApiConfig();
   if (!apiConfig?.model?.trim()) {

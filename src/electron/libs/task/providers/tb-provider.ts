@@ -1,6 +1,6 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { getGlobalRuntimeEnvConfig } from "../../claude-settings.js";
+import { getGlobalRuntimeEnvConfig } from "../../claude/claude-settings.js";
 import { loadTaskSettings } from "../settings.js";
 import type { ExternalTask, ExternalTaskStatus, TaskProvider, TaskProviderCapability } from "../types.js";
 

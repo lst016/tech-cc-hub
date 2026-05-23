@@ -2,12 +2,12 @@ import { BrowserView, BrowserWindow, type WebContents } from "electron";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildBrowserWorkbenchWebPreferences } from "./libs/browser-workbench-session.js";
+import { buildBrowserWorkbenchWebPreferences } from "./libs/browser-workbench/browser-workbench-session.js";
 import { getBrowserWorkbenchPreloadPath } from "./pathResolver.js";
 import {
   sanitizeBrowserWorkbenchBounds,
   shouldDetachBrowserWorkbenchForBounds,
-} from "./libs/browser-workbench-bounds.js";
+} from "./libs/browser-workbench/browser-workbench-bounds.js";
 
 export type BrowserWorkbenchBounds = {
   x: number;
@@ -351,7 +351,7 @@ export type BrowserWorkbenchMouseInput = {
 
 export type BrowserWorkbenchMouseResult = {
   success: boolean;
-  action: BrowserWorkbenchMouseInput["action"];
+  action: BrowserWorkbenchMouseInput["action"] | "click" | "dblclick";
   state: BrowserWorkbenchState;
   error?: string;
 };
@@ -1246,6 +1246,437 @@ export class BrowserWorkbenchManager {
     }
   }
 
+  // Source: chrome-devtools-mcp/src/tools/input.ts (click)
+  clickAt(input: { x: number; y: number; dblClick?: boolean }): BrowserWorkbenchMouseResult {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, action: "click", state: this.getState(), error: "浏览器工作台尚未打开页面。" };
+    }
+    try {
+      this.view.webContents.focus();
+      this.view.webContents.sendInputEvent({
+        type: "mouseDown",
+        x: Math.max(0, Math.trunc(input.x)),
+        y: Math.max(0, Math.trunc(input.y)),
+        button: "left",
+        clickCount: 1,
+      });
+      this.view.webContents.sendInputEvent({
+        type: "mouseUp",
+        x: Math.max(0, Math.trunc(input.x)),
+        y: Math.max(0, Math.trunc(input.y)),
+        button: "left",
+        clickCount: 1,
+      });
+      if (input.dblClick) {
+        this.view.webContents.sendInputEvent({
+          type: "mouseDown",
+          x: Math.max(0, Math.trunc(input.x)),
+          y: Math.max(0, Math.trunc(input.y)),
+          button: "left",
+          clickCount: 2,
+        });
+        this.view.webContents.sendInputEvent({
+          type: "mouseUp",
+          x: Math.max(0, Math.trunc(input.x)),
+          y: Math.max(0, Math.trunc(input.y)),
+          button: "left",
+          clickCount: 2,
+        });
+      }
+      return { success: true, action: input.dblClick ? "dblclick" : "click", state: this.getState() };
+    } catch (error) {
+      return { success: false, action: "click", state: this.getState(), error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async dragElement(input: { from_uid: string; to_uid: string; strategy?: "auto" | "ref" | "selector" | "xpath"; index?: number }): Promise<{ success: boolean; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+    try {
+      const result = await this.view.webContents.executeJavaScript(
+        `(${this.buildDragScript()})(${JSON.stringify(input)})`,
+        true,
+      ) as { success: boolean; error?: string };
+      return result;
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  resizeView(input: { width: number; height: number }): BrowserWorkbenchState {
+    const w = Math.max(100, Math.trunc(input.width));
+    const h = Math.max(100, Math.trunc(input.height));
+    this.bounds = { ...this.bounds, width: w, height: h };
+    if (this.view) {
+      this.view.setBounds(this.bounds);
+    }
+    this.emitState();
+    return this.getState();
+  }
+
+  // Source: chrome-devtools-mcp/src/tools/input.ts (handle_dialog)
+  async handleDialog(input: { action: "accept" | "dismiss"; promptText?: string }): Promise<{ success: boolean; message?: string; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+    const contents = this.view.webContents;
+    const wasAttached = contents.debugger.isAttached();
+    try {
+      if (!wasAttached) {
+        contents.debugger.attach();
+      }
+      await contents.debugger.sendCommand("Page.enable");
+      if (input.action === "accept") {
+        await contents.debugger.sendCommand("Page.handleJavaScriptDialog", {
+          accept: true,
+          promptText: input.promptText || "",
+        });
+      } else {
+        await contents.debugger.sendCommand("Page.handleJavaScriptDialog", {
+          accept: false,
+        });
+      }
+      return { success: true, message: input.action === "accept" ? "已接受对话框" : "已拒绝对话框" };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    } finally {
+      if (!wasAttached) {
+        try { contents.debugger.detach(); } catch { /* ignore */ }
+      }
+    }
+  }
+
+  // Source: chrome-devtools-mcp/src/tools/snapshot.ts
+  async enhancedSnapshot(input: { maxResults?: number; visibleOnly?: boolean }): Promise<{ success: boolean; snapshot?: BrowserWorkbenchInteractiveSnapshot; error?: string }> {
+    return this.getInteractiveSnapshot({
+      maxResults: input.maxResults,
+      visibleOnly: input.visibleOnly ?? true,
+    });
+  }
+
+  // Source: chrome-devtools-mcp/src/tools/input.ts (upload_file)
+  async uploadFile(input: { target: string; filePath: string; strategy?: "auto" | "ref" | "selector" | "xpath"; index?: number }): Promise<{ success: boolean; path?: string; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+    const contents = this.view.webContents;
+    const wasAttached = contents.debugger.isAttached();
+    try {
+      if (!wasAttached) {
+        contents.debugger.attach();
+      }
+      // Inject a unique marker script to find the file input and set a data attribute
+      const markId = `cc-hub-upload-${Date.now()}`;
+      const markResult = await contents.executeJavaScript(
+        `(${this.buildUploadFileScript()})(${JSON.stringify({ ...input, markId })})`,
+        true,
+      ) as { success: boolean; error?: string };
+      if (!markResult.success) {
+        return { success: false, error: markResult.error || "文件上传元素未找到" };
+      }
+      // Use CDP DOM.setFileInputFiles to programmatically set files
+      const doc = await contents.debugger.sendCommand("DOM.getDocument") as { root: { nodeId: number } };
+      const nodeResult = await contents.debugger.sendCommand("DOM.querySelector", {
+        nodeId: doc.root.nodeId,
+        selector: `[data-cc-hub-upload="${markId}"]`,
+      }) as { nodeId: number };
+      if (!nodeResult.nodeId) {
+        return { success: false, error: "无法通过 CDP 定位文件输入元素" };
+      }
+      await contents.debugger.sendCommand("DOM.setFileInputFiles", {
+        files: [input.filePath],
+        nodeId: nodeResult.nodeId,
+      });
+      // Clean up the marker attribute after file upload
+      await contents.executeJavaScript(
+        `(() => { const el = document.querySelector('[data-cc-hub-upload="${markId}"]'); if (el) el.removeAttribute('data-cc-hub-upload'); })()`,
+        true,
+      );
+      return { success: true, path: input.filePath };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    } finally {
+      if (!wasAttached) {
+        try { contents.debugger.detach(); } catch { /* ignore */ }
+      }
+    }
+  }
+
+  listNetworkRequests(input: { pageSize?: number; pageIdx?: number; resourceTypes?: string[] }): { success: boolean; result?: BrowserWorkbenchNetworkLogResult; error?: string } {
+    const limit = input.pageSize ?? MAX_NETWORK_LOGS;
+    const offset = (input.pageIdx ?? 0) * limit;
+    let entries = this.networkLogs;
+    if (input.resourceTypes && input.resourceTypes.length > 0) {
+      entries = entries.filter(e => input.resourceTypes!.includes(e.resourceType ?? ""));
+    }
+    const total = entries.length;
+    const page = entries.slice(offset, offset + limit);
+    return {
+      success: true,
+      result: {
+        url: this.view?.webContents.getURL() ?? "",
+        title: this.view?.webContents.getTitle(),
+        captureEnabled: this.networkCaptureEnabled,
+        captureError: this.networkCaptureError,
+        count: total,
+        entries: page,
+      },
+    };
+  }
+
+  async getNetworkRequest(reqid: number): Promise<{ success: boolean; result?: BrowserWorkbenchNetworkLog & { responseBody?: string; responseBodyBase64Encoded?: boolean; responseBodyTruncated?: boolean }; error?: string }> {
+    const entry = this.networkLogs.find(e => e.id === String(reqid));
+    if (!entry) {
+      return { success: false, error: `未找到请求 ID ${reqid}` };
+    }
+    if (!entry.responseBody && !entry.bodyUnavailableReason) {
+      try {
+        const body = await this.getNetworkResponseBody(entry.id);
+        if (body) {
+          entry.responseBody = body.body;
+          entry.responseBodyBase64Encoded = body.base64Encoded;
+        }
+      } catch {
+        // Ignore body fetch errors
+      }
+    }
+    return { success: true, result: entry };
+  }
+
+  listConsoleMessages(input: { pageSize?: number; pageIdx?: number; types?: string[] }): { success: boolean; result?: { url: string; title?: string; total: number; entries: BrowserWorkbenchConsoleLog[] }; error?: string } {
+    const limit = input.pageSize ?? 300;
+    const offset = (input.pageIdx ?? 0) * limit;
+    let entries = this.logs;
+    if (input.types && input.types.length > 0) {
+      entries = entries.filter(e => input.types!.includes(e.level));
+    }
+    const total = entries.length;
+    const page = entries.slice(offset, offset + limit);
+    return {
+      success: true,
+      result: {
+        url: this.view?.webContents.getURL() ?? "",
+        title: this.view?.webContents.getTitle(),
+        total,
+        entries: page,
+      },
+    };
+  }
+
+  getConsoleMessage(msgid: number): { success: boolean; result?: BrowserWorkbenchConsoleLog; error?: string } {
+    if (msgid < 0 || msgid >= this.logs.length) {
+      return { success: false, error: `未找到控制台消息 ID ${msgid}` };
+    }
+    return { success: true, result: this.logs[msgid] };
+  }
+
+  async startPerformanceTrace(input?: { reload?: boolean; autoStop?: boolean }): Promise<{ success: boolean; state: BrowserWorkbenchState; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, state: this.getState(), error: "浏览器工作台尚未打开页面。" };
+    }
+    const contents = this.view.webContents;
+    try {
+      if (!contents.debugger.isAttached()) {
+        contents.debugger.attach();
+      }
+      const categories = [
+        "-*",
+        "devtools.timeline",
+        "disabled-by-default-devtools.timeline",
+        "disabled-by-default-devtools.timeline.frame",
+        "disabled-by-default-devtools.timeline.stack",
+        "v8.execute",
+        "v8",
+        "blink.console",
+        "blink.user_timing",
+        "disabled-by-default-devtools.screenshot",
+        "loading",
+      ];
+      await contents.debugger.sendCommand("Tracing.start", {
+        categories: categories.join(","),
+        options: "record-as-much-as-possible",
+      });
+      if (input?.reload) {
+        this.view.webContents.reload();
+      }
+      if (input?.autoStop !== false) {
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        return await this.stopPerformanceTrace();
+      }
+      return { success: true, state: this.getState() };
+    } catch (error) {
+      return { success: false, state: this.getState(), error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  // Source: chrome-devtools-mcp/src/tools/performance.ts
+  async stopPerformanceTrace(): Promise<{ success: boolean; state: BrowserWorkbenchState; error?: string; traceEvents?: unknown[] }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, state: this.getState(), error: "浏览器工作台尚未打开页面。" };
+    }
+    const contents = this.view.webContents;
+    try {
+      if (!contents.debugger.isAttached()) {
+        return { success: false, state: this.getState(), error: "没有活跃的性能追踪" };
+      }
+      const result = await contents.debugger.sendCommand("Tracing.end") as unknown;
+      const traceEvents = (result as Record<string, unknown>)?.traceEvents as unknown[];
+      contents.debugger.detach();
+      return { success: true, state: this.getState(), traceEvents };
+    } catch (error) {
+      return { success: false, state: this.getState(), error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async emulate(input: {
+    networkConditions?: string;
+    cpuThrottlingRate?: number;
+    userAgent?: string;
+    colorScheme?: "dark" | "light" | "auto";
+    geolocation?: { latitude: number; longitude: number };
+    viewport?: { width: number; height: number; deviceScaleFactor?: number; isMobile?: boolean; isLandscape?: boolean; hasTouch?: boolean };
+  }): Promise<{ success: boolean; state: BrowserWorkbenchState; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, state: this.getState(), error: "浏览器工作台尚未打开页面。" };
+    }
+    const contents = this.view.webContents;
+    try {
+      if (!contents.debugger.isAttached()) {
+        contents.debugger.attach();
+      }
+      // Network conditions
+      if (input.networkConditions) {
+        const conditions: Record<string, unknown> = {};
+        if (input.networkConditions === "Offline") {
+          conditions.offline = true;
+          conditions.latency = 0;
+          conditions.downloadThroughput = 0;
+          conditions.uploadThroughput = 0;
+        } else {
+          // 3G/4G presets
+          conditions.offline = false;
+          conditions.latency = input.networkConditions.includes("3G") ? 100 : 50;
+          conditions.downloadThroughput = input.networkConditions.includes("Slow") ? 500 * 1024 : 5 * 1024 * 1024;
+          conditions.uploadThroughput = input.networkConditions.includes("Slow") ? 500 * 1024 : 5 * 1024 * 1024;
+        }
+        await contents.debugger.sendCommand("Network.emulateNetworkConditions", conditions);
+      }
+      // CPU throttling
+      if (input.cpuThrottlingRate) {
+        await contents.debugger.sendCommand("Emulation.setCPUThrottlingRate", { rate: input.cpuThrottlingRate });
+      }
+      // User agent
+      if (input.userAgent !== undefined) {
+        await contents.debugger.sendCommand("Network.setUserAgentOverride", { userAgent: input.userAgent || "" });
+      }
+      // Color scheme — skip "auto" to restore system default
+      if (input.colorScheme && input.colorScheme !== "auto") {
+        await contents.debugger.sendCommand("Emulation.setEmulatedMedia", {
+          features: [{ name: "prefers-color-scheme", value: input.colorScheme }],
+        });
+      }
+      // Geolocation
+      if (input.geolocation) {
+        await contents.debugger.sendCommand("Emulation.setGeolocationOverride", {
+          latitude: input.geolocation.latitude,
+          longitude: input.geolocation.longitude,
+          accuracy: 50,
+        });
+      }
+      // Viewport
+      if (input.viewport) {
+        const bounds = this.view.getBounds();
+        const w = input.viewport.width || bounds.width;
+        const h = input.viewport.height || bounds.height;
+        this.view.setBounds({ ...bounds, width: w, height: h });
+        await contents.debugger.sendCommand("Emulation.setDeviceMetricsOverride", {
+          width: w,
+          height: h,
+          deviceScaleFactor: input.viewport.deviceScaleFactor || 1,
+          mobile: input.viewport.isMobile || false,
+          screenOrientation: input.viewport.isLandscape
+            ? { type: "landscapePrimary", angle: 90 }
+            : { type: "portraitPrimary", angle: 0 },
+          screen: input.viewport.hasTouch !== undefined
+            ? { hasTouch: input.viewport.hasTouch }
+            : undefined,
+        });
+      }
+      return { success: true, state: this.getState() };
+    } catch (error) {
+      return { success: false, state: this.getState(), error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  listPages(): { success: boolean; pages?: Array<{ pageId: number; url: string; title?: string }>; error?: string } {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: true, pages: [] };
+    }
+    return {
+      success: true,
+      pages: [{
+        pageId: 0,
+        url: this.view.webContents.getURL(),
+        title: this.view.webContents.getTitle(),
+      }],
+    };
+  }
+
+  selectPage(pageId: number): BrowserWorkbenchState {
+    // Single BrowserView: page selection is identity
+    return this.getState();
+  }
+
+  async newPage(input: { url: string; background?: boolean }): Promise<BrowserWorkbenchState> {
+    // Open the URL in the current BrowserView
+    this.open(input.url);
+    return this.getState();
+  }
+
+  // Source: chrome-devtools-mcp/src/tools/script.ts
+  async evaluateScriptEnhanced(input: {
+    function: string;
+    args?: string[];
+  }): Promise<{ success: boolean; result?: BrowserWorkbenchEvalResult & { output?: string }; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+    try {
+      let fnString = input.function;
+      if (input.args && input.args.length > 0) {
+        // Serialize args: try JSON.parse first (number/boolean/object),
+        // fall back to JSON.stringify (plain string)
+        const serializedArgs = input.args.map(a => {
+          try { JSON.parse(a); return a; } catch { return JSON.stringify(a); }
+        });
+        fnString = `(async () => {
+          const fn = (${input.function});
+          return await fn(...[${serializedArgs.join(", ")}]);
+        })`;
+      }
+      const value = await this.view.webContents.executeJavaScript(fnString, true) as unknown;
+      const result: BrowserWorkbenchEvalResult & { output?: string } = {
+        url: this.view.webContents.getURL(),
+        title: this.view.webContents.getTitle(),
+        success: true,
+        value,
+        output: typeof value === "string" ? value : JSON.stringify(value),
+      };
+      return { success: true, result };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const result: BrowserWorkbenchEvalResult & { output?: string } = {
+        url: this.view?.webContents.getURL() ?? "",
+        title: this.view?.webContents.getTitle(),
+        success: false,
+        error: errMsg,
+        output: undefined,
+      };
+      return { success: false, result, error: errMsg };
+    }
+  }
+
   private ensureView(): BrowserView {
     if (this.view && !this.view.webContents.isDestroyed()) {
       this.window.setBrowserView(this.view);
@@ -1445,6 +1876,20 @@ export class BrowserWorkbenchManager {
       entry.responseBodyBase64Encoded = Boolean(bodyPayload.base64Encoded);
     } catch (error) {
       entry.bodyUnavailableReason = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  private async getNetworkResponseBody(requestId: string): Promise<{ body: string; base64Encoded: boolean } | null> {
+    if (!this.view || this.view.webContents.isDestroyed() || !this.view.webContents.debugger.isAttached()) {
+      return null;
+    }
+    try {
+      const bodyResult = await this.view.webContents.debugger.sendCommand("Network.getResponseBody", { requestId }) as unknown;
+      const bodyPayload = readCdpObject(bodyResult);
+      const bodyText = truncateNetworkText(readCdpString(bodyPayload.body));
+      return { body: bodyText.value ?? "", base64Encoded: Boolean(bodyPayload.base64Encoded) };
+    } catch {
+      return null;
     }
   }
 
@@ -4355,6 +4800,115 @@ export class BrowserWorkbenchManager {
       const style = document.getElementById("__tech_cc_hub_annotation_style__");
       if (style) style.remove();
       return true;
+    }`;
+  }
+
+  // Source: chrome-devtools-mcp/src/tools/input.ts (drag)
+  private buildDragScript(): string {
+    return `function(input) {
+      try {
+        const findElement = function(uid, strategy) {
+          if (strategy === "ref" || strategy === "auto") {
+            var el = document.querySelector("[data-cc-hub-ref='" + CSS.escape(uid) + "']");
+            if (el) return el;
+          }
+          if (strategy === "selector" || strategy === "auto") {
+            try { var el2 = document.querySelector(uid); if (el2) return el2; } catch(e) {}
+          }
+          if (strategy === "xpath") {
+            try {
+              var result = document.evaluate(uid, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+              if (result.singleNodeValue) return result.singleNodeValue;
+            } catch(e) {}
+          }
+          return null;
+        };
+        var fromEl = findElement(input.from_uid, input.strategy);
+        var toEl = findElement(input.to_uid, input.strategy);
+        if (!fromEl) return { success: false, error: "拖拽源元素未找到" };
+        if (!toEl) return { success: false, error: "拖拽目标元素未找到" };
+        var fromRect = fromEl.getBoundingClientRect();
+        var toRect = toEl.getBoundingClientRect();
+        var fromX = fromRect.left + fromRect.width / 2;
+        var fromY = fromRect.top + fromRect.height / 2;
+        var toX = toRect.left + toRect.width / 2;
+        var toY = toRect.top + toRect.height / 2;
+        fromEl.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: fromX, clientY: fromY, button: 0 }));
+        fromEl.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: fromX, clientY: fromY, button: 0 }));
+        var steps = 10;
+        for (var i = 1; i <= steps; i++) {
+          var x = fromX + (toX - fromX) * (i / steps);
+          var y = fromY + (toY - fromY) * (i / steps);
+          document.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: x, clientY: y }));
+          document.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: x, clientY: y }));
+        }
+        toEl.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: toX, clientY: toY, button: 0 }));
+        toEl.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: toX, clientY: toY, button: 0 }));
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    }`;
+  }
+
+  // Fallback dialog handler (injected JS). Primary path uses CDP Page.handleJavaScriptDialog.
+  private buildDialogScript(): string {
+    return `function(input) {
+      try {
+        if (!window.__techCcHubDialogInterceptors) {
+          var queue = [];
+          window.__techCcHubDialogInterceptors = { queue: queue };
+          window.alert = function(msg) { queue.push({ message: msg, resolve: function(){}, reject: function(){}, defaultValue: undefined }); };
+          window.confirm = function(msg) { return new Promise(function(resolve) { queue.push({ message: msg, resolve: resolve, reject: function() { resolve(false); }, defaultValue: undefined }); }); };
+          window.prompt = function(msg, def) { return new Promise(function(resolve) { queue.push({ message: msg, resolve: resolve, reject: function() { resolve(null); }, defaultValue: def || "" }); }); };
+        }
+        var interceptors = window.__techCcHubDialogInterceptors;
+        if (interceptors.queue.length === 0) {
+          return { success: false, error: "没有未处理的对话框" };
+        }
+        var dialog = interceptors.queue.shift();
+        if (input.action === "accept") {
+          dialog.resolve(input.promptText !== undefined ? input.promptText : dialog.defaultValue);
+          return { success: true, message: "已接受对话框" };
+        } else {
+          dialog.reject();
+          return { success: true, message: "已拒绝对话框" };
+        }
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    }`;
+  }
+
+  // Source: chrome-devtools-mcp/src/tools/input.ts (upload_file — element locator)
+  private buildUploadFileScript(): string {
+    return `function(input) {
+      try {
+        var el = null;
+        if (input.strategy === "ref" || input.strategy === "auto") {
+          el = document.querySelector("[data-cc-hub-ref='" + CSS.escape(input.target) + "']");
+        }
+        if (!el && (input.strategy === "selector" || input.strategy === "auto")) {
+          try { el = document.querySelector(input.target); } catch(e) {}
+        }
+        if (!el && input.strategy === "xpath") {
+          try {
+            var result = document.evaluate(input.target, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+            el = result.singleNodeValue;
+          } catch(e) {}
+        }
+        if (!el) return { success: false, error: "文件上传元素未找到" };
+        if (el.tagName !== "INPUT" || el.type !== "file") {
+          return { success: false, error: "目标元素不是文件输入元素 (input[type=file])" };
+        }
+        // Mark the element with a unique attribute for CDP DOM.setFileInputFiles targeting
+        if (input.markId) {
+          el.setAttribute("data-cc-hub-upload", input.markId);
+        }
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
+      }
     }`;
   }
 }

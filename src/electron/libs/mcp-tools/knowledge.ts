@@ -51,7 +51,8 @@ const CODEGRAPH_SEARCH_SCHEMA = {
 };
 
 const CODEGRAPH_CONTEXT_SCHEMA = {
-  task: z.string().min(1).describe("Natural-language task or requirement to map to code context."),
+  task: z.string().min(1).optional().describe("Natural-language task or requirement to map to code context. Preferred field."),
+  query: z.string().min(1).optional().describe("Backward-compatible alias for task."),
   maxNodes: z.number().min(1).max(80).optional().describe("Defaults to 20."),
   includeCode: z.boolean().optional().describe("Include source snippets. Defaults to false to keep context small."),
   workspaceRoot: z.string().optional().describe("Workspace root. Defaults to current session cwd."),
@@ -88,6 +89,14 @@ function parseTags(value: string | undefined): string[] {
 function parseCodeGraphKinds(value: string | undefined): NodeKind[] | undefined {
   const kinds = parseTags(value);
   return kinds.length > 0 ? kinds as NodeKind[] : undefined;
+}
+
+function resolveCodeGraphContextTask(input: { task?: string; query?: string }): string {
+  const task = input.task?.trim() || input.query?.trim() || "";
+  if (!task) {
+    throw new Error("task is required. You can also pass query as a backward-compatible alias.");
+  }
+  return task;
 }
 
 function resolveMemoryScope(scope: "global" | "workspace", workspaceScope: string): MemoryScope {
@@ -167,12 +176,13 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
     async (input) => {
       try {
         const workspaceRoot = resolveWorkspaceRoot(input.workspaceRoot, defaultWorkspaceRoot);
-        const context = await buildManagedCodeGraphContext(workspaceRoot, input.task, {
+        const task = resolveCodeGraphContextTask(input);
+        const context = await buildManagedCodeGraphContext(workspaceRoot, task, {
           maxNodes: input.maxNodes ?? 20,
           includeCode: input.includeCode ?? false,
           format: "json",
         });
-        return toTextToolResult({ success: true, workspaceRoot, task: input.task, context });
+        return toTextToolResult({ success: true, workspaceRoot, task, context });
       } catch (error) {
         return toTextToolResult({ success: false, error: error instanceof Error ? error.message : String(error) }, true);
       }

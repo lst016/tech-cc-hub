@@ -85,6 +85,25 @@ export const BROWSER_TOOL_NAMES = [
   "browser_apply_styles",
   "browser_inspect_at_point",
   "browser_set_annotation_mode",
+  "click_at",
+  "drag",
+  "fill_form",
+  "navigate_page",
+  "resize_page",
+  "handle_dialog",
+  "upload_file",
+  "take_snapshot",
+  "list_network_requests",
+  "get_network_request",
+  "list_console_messages",
+  "get_console_message",
+  "performance_start_trace",
+  "performance_stop_trace",
+  "emulate",
+  "list_pages",
+  "select_page",
+  "new_page",
+  "evaluate_script",
 ] as const;
 
 // Host 是主进程注入的 BrowserView 适配层。MCP 工具只依赖这个接口，避免和窗口/UI 生命周期绑死。
@@ -169,6 +188,35 @@ export type BrowserWorkbenchToolHost = {
   applyStyles: (sessionId: string, input: BrowserWorkbenchStyleApplyInput) => Promise<{ success: boolean; result?: BrowserWorkbenchStyleApplyResult; error?: string }>;
   inspectAtPoint: (sessionId: string, point: { x: number; y: number }) => Promise<BrowserWorkbenchDomHint | null>;
   setAnnotationMode: (sessionId: string, enabled: boolean) => Promise<BrowserWorkbenchState>;
+  clickAt: (sessionId: string, input: { x: number; y: number; dblClick?: boolean }) => BrowserWorkbenchMouseResult;
+  dragElement: (sessionId: string, input: { from_uid: string; to_uid: string; strategy?: "auto" | "ref" | "selector" | "xpath"; index?: number }) => Promise<{ success: boolean; error?: string }>;
+  fillForm: (sessionId: string, input: { elements: Array<{ target: string; value: string; strategy?: "auto" | "ref" | "selector" | "xpath"; index?: number }> }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
+  navigatePage: (sessionId: string, input: { type?: "url" | "back" | "forward" | "reload"; url?: string; ignoreCache?: boolean }) => BrowserWorkbenchState;
+  resizeView: (sessionId: string, input: { width: number; height: number }) => BrowserWorkbenchState;
+  handleDialog: (sessionId: string, input: { action: "accept" | "dismiss"; promptText?: string }) => Promise<{ success: boolean; message?: string; error?: string }>;
+  uploadFile: (sessionId: string, input: { target: string; filePath: string; strategy?: "auto" | "ref" | "selector" | "xpath"; index?: number }) => Promise<{ success: boolean; path?: string; error?: string }>;
+  enhancedSnapshot: (sessionId: string, input: { maxResults?: number; visibleOnly?: boolean }) => Promise<{ success: boolean; snapshot?: BrowserWorkbenchInteractiveSnapshot; error?: string }>;
+  listNetworkRequests: (sessionId: string, input: { pageSize?: number; pageIdx?: number; resourceTypes?: string[] }) => { success: boolean; result?: BrowserWorkbenchNetworkLogResult; error?: string };
+  getNetworkRequest: (sessionId: string, reqid: number) => Promise<{ success: boolean; result?: BrowserWorkbenchNetworkLog & { responseBody?: string; responseBodyBase64Encoded?: boolean; responseBodyTruncated?: boolean }; error?: string }>;
+  listConsoleMessages: (sessionId: string, input: { pageSize?: number; pageIdx?: number; types?: string[] }) => { success: boolean; result?: { url: string; title?: string; total: number; entries: BrowserWorkbenchConsoleLog[] }; error?: string };
+  getConsoleMessage: (sessionId: string, msgid: number) => { success: boolean; result?: BrowserWorkbenchConsoleLog; error?: string };
+  startPerformanceTrace: (sessionId: string, input?: { reload?: boolean; autoStop?: boolean }) => Promise<{ success: boolean; state: BrowserWorkbenchState; error?: string }>;
+  stopPerformanceTrace: (sessionId: string) => Promise<{ success: boolean; state: BrowserWorkbenchState; error?: string; traceEvents?: unknown[] }>;
+  emulate: (sessionId: string, input: {
+    networkConditions?: string;
+    cpuThrottlingRate?: number;
+    userAgent?: string;
+    colorScheme?: "dark" | "light" | "auto";
+    geolocation?: { latitude: number; longitude: number };
+    viewport?: { width: number; height: number; deviceScaleFactor?: number; isMobile?: boolean; isLandscape?: boolean; hasTouch?: boolean };
+  }) => Promise<{ success: boolean; state: BrowserWorkbenchState; error?: string }>;
+  listPages: (sessionId: string) => { success: boolean; pages?: Array<{ pageId: number; url: string; title?: string }>; error?: string };
+  selectPage: (sessionId: string, pageId: number) => BrowserWorkbenchState;
+  newPage: (sessionId: string, input: { url: string; background?: boolean }) => Promise<BrowserWorkbenchState>;
+  evaluateScriptEnhanced: (sessionId: string, input: {
+    function: string;
+    args?: string[];
+  }) => Promise<{ success: boolean; result?: BrowserWorkbenchEvalResult & { output?: string }; error?: string }>;
 };
 
 const BROWSER_TOOLS_SERVER_NAME = "tech-cc-hub-browser";
@@ -1603,6 +1651,395 @@ export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWit
     },
   );
 
+  // ── Phase 1: upstream CV tools ──
+  // Sources: chrome-devtools-mcp/src/tools/input.ts, pages.ts, snapshot.ts
+
+  // Source: chrome-devtools-mcp/src/tools/input.ts (click)
+  const clickAtTool = tool(
+    "click_at",
+    `Clicks at the provided coordinates.`,
+    {
+      x: z.number().int().describe("The x coordinate"),
+      y: z.number().int().describe("The y coordinate"),
+      dblClick: z.boolean().optional().describe("Set to true for double clicks. Default is false."),
+    },
+    async (input) => {
+      const host = getHost();
+      const result = host.clickAt(resolvedSessionId, { x: input.x, y: input.y, dblClick: input.dblClick });
+      return toTextToolResult({
+        action: "click_at",
+        success: result.success,
+        x: input.x,
+        y: input.y,
+        dblClick: input.dblClick ?? false,
+        state: result.state,
+        error: result.error,
+      }, !result.success);
+    },
+  );
+
+  const dragTool = tool(
+    "drag",
+    `Drag an element onto another element.`,
+    {
+      from_uid: z.string().min(1).describe("The uid of the element to drag"),
+      to_uid: z.string().min(1).describe("The uid of the element to drop into"),
+      strategy: z.enum(["auto", "ref", "selector", "xpath"]).optional(),
+      index: z.number().int().min(0).optional(),
+    },
+    async (input) => {
+      const host = getHost();
+      const result = await host.dragElement(resolvedSessionId, {
+        from_uid: input.from_uid,
+        to_uid: input.to_uid,
+        strategy: input.strategy,
+        index: input.index,
+      });
+      return toTextToolResult({
+        action: "drag",
+        success: result.success,
+        error: result.error,
+      }, !result.success);
+    },
+  );
+
+  const fillFormTool = tool(
+    "fill_form",
+    `Fill out multiple form elements (inputs, selects, checkboxes, radios) at once. ALWAYS prefer this tool over multiple individual fill or click calls when interacting with forms. It is significantly faster, more reliable, and reduces turn count.`,
+    {
+      elements: z.array(
+        z.object({
+          target: z.string().min(1).describe("The uid/selector/xpath of the element to fill"),
+          value: z.string().describe("Value for the element. 'true' or 'false' for checkboxes, radio buttons and toggles."),
+          strategy: z.enum(["auto", "ref", "selector", "xpath"]).optional(),
+          index: z.number().int().min(0).optional(),
+        }),
+      ).min(1).describe("Elements from snapshot to fill out."),
+    },
+    async (input) => {
+      const host = getHost();
+      const errors: string[] = [];
+      let filled = 0;
+      for (const element of input.elements) {
+        const res = await host.runElementAction(resolvedSessionId, {
+          action: "fill",
+          target: element.target,
+          value: element.value,
+          strategy: element.strategy,
+          index: element.index,
+        });
+        if (res.success) filled++;
+        else errors.push(`${element.target}: ${res.error}`);
+      }
+      const result = { success: errors.length === 0, filled, total: input.elements.length, errors: errors.length > 0 ? errors : undefined };
+      return toTextToolResult(result, !result.success);
+    },
+  );
+
+  const navigatePageTool = tool(
+    "navigate_page",
+    `Go to a URL, or back, forward, or reload.`,
+    {
+      type: z.enum(["url", "back", "forward", "reload"]).optional().describe("Navigate the page by URL, back or forward in history, or reload."),
+      url: z.string().optional().describe("Target URL (only for type=url)"),
+      ignoreCache: z.boolean().optional().describe("Whether to ignore cache on reload."),
+    },
+    async (input) => {
+      const host = getHost();
+      let state: unknown;
+      const resolvedType = input.type || (input.url ? "url" : "reload");
+      if (resolvedType === "url" && input.url) {
+        state = host.open(resolvedSessionId, input.url);
+      } else if (resolvedType === "back") {
+        state = host.goBack(resolvedSessionId);
+      } else if (resolvedType === "forward") {
+        state = host.goForward(resolvedSessionId);
+      } else {
+        state = host.reload(resolvedSessionId);
+      }
+      return toTextToolResult({ action: "navigate_page", type: resolvedType, success: true, state });
+    },
+  );
+
+  const resizePageTool = tool(
+    "resize_page",
+    `Resizes the selected page's viewport to the specified dimensions.`,
+    {
+      width: z.number().int().min(100).describe("Page width in pixels"),
+      height: z.number().int().min(100).describe("Page height in pixels"),
+    },
+    async (input) => {
+      const host = getHost();
+      const state = host.resizeView(resolvedSessionId, { width: input.width, height: input.height });
+      return toTextToolResult({ action: "resize_page", success: true, width: input.width, height: input.height, state });
+    },
+  );
+
+  const handleDialogTool = tool(
+    "handle_dialog",
+    `If a browser dialog was opened, use this command to handle it.`,
+    {
+      action: z.enum(["accept", "dismiss"]).describe("Whether to dismiss or accept the dialog"),
+      promptText: z.string().optional().describe("Optional prompt text to enter into the dialog."),
+    },
+    async (input) => {
+      const host = getHost();
+      const result = await host.handleDialog(resolvedSessionId, { action: input.action, promptText: input.promptText });
+      return toTextToolResult({ action: "handle_dialog", ...result }, !result.success);
+    },
+  );
+
+  const uploadFileTool = tool(
+    "upload_file",
+    "Upload a file through a provided element.",
+    {
+      target: z.string().min(1).describe("The uid/selector/xpath of the file input element on the page"),
+      filePath: z.string().min(1).describe("The local path of the file to upload"),
+      strategy: z.enum(["auto", "ref", "selector", "xpath"]).optional(),
+      index: z.number().int().min(0).optional(),
+    },
+    async (input) => {
+      const host = getHost();
+      const result = await host.uploadFile(resolvedSessionId, {
+        target: input.target,
+        filePath: input.filePath,
+        strategy: input.strategy,
+        index: input.index,
+      });
+      return toTextToolResult({ action: "upload_file", ...result }, !result.success);
+    },
+  );
+
+  const takeSnapshotTool = tool(
+    "take_snapshot",
+    `Take a text snapshot of the currently selected page based on the a11y tree. The snapshot lists page elements along with a unique identifier (uid). Always use the latest snapshot. Prefer taking a snapshot over taking a screenshot.`,
+    {},
+    async () => {
+      const host = getHost();
+      const result = await host.enhancedSnapshot(resolvedSessionId, {
+        maxResults: undefined,
+        visibleOnly: true,
+      });
+      if (!result.success) {
+        return toTextToolResult({ action: "take_snapshot", success: false, error: result.error }, true);
+      }
+      return toTextToolResult({
+        action: "take_snapshot",
+        success: true,
+        url: result.snapshot?.url,
+        total: result.snapshot?.total ?? 0,
+        returned: result.snapshot?.returned ?? 0,
+        elements: result.snapshot?.elements ?? [],
+      });
+    },
+  );
+
+  // ── Phase 2: CDP-based tools ──
+  // Sources: chrome-devtools-mcp/src/tools/network.ts, console.ts, performance.ts
+
+  const listNetworkRequestsTool = tool(
+    "list_network_requests",
+    `List all requests for the currently selected page since the last navigation.`,
+    {
+      pageSize: z.number().int().min(1).max(500).optional().describe("Maximum number of requests to return. When omitted, returns all requests."),
+      pageIdx: z.number().int().min(0).optional().describe("Page number to return (0-based). When omitted, returns the first page."),
+      resourceTypes: z.array(z.string()).optional().describe("Filter requests to only return requests of the specified resource types."),
+    },
+    async (input) => {
+      const host = getHost();
+      const result = host.listNetworkRequests(resolvedSessionId, {
+        pageSize: input.pageSize,
+        pageIdx: input.pageIdx,
+        resourceTypes: input.resourceTypes,
+      });
+      return toTextToolResult(result, !result.success);
+    },
+  );
+
+  const getNetworkRequestTool = tool(
+    "get_network_request",
+    `Gets a network request by an optional reqid, if omitted returns the currently selected request in the DevTools Network panel.`,
+    {
+      reqid: z.number().int().describe("The reqid of the network request."),
+    },
+    async (input) => {
+      const host = getHost();
+      const result = await host.getNetworkRequest(resolvedSessionId, input.reqid);
+      return toTextToolResult(result, !result.success);
+    },
+  );
+
+  const listConsoleMessagesTool = tool(
+    "list_console_messages",
+    `List all console messages for the currently selected page since the last navigation.`,
+    {
+      pageSize: z.number().int().min(1).max(1000).optional().describe("Maximum number of messages to return."),
+      pageIdx: z.number().int().min(0).optional().describe("Page number to return (0-based)."),
+      types: z.array(z.enum(["log", "debug", "info", "error", "warn"])).optional().describe("Filter messages by type."),
+    },
+    async (input) => {
+      const host = getHost();
+      const result = host.listConsoleMessages(resolvedSessionId, {
+        pageSize: input.pageSize,
+        pageIdx: input.pageIdx,
+        types: input.types,
+      });
+      return toTextToolResult(result, !result.success);
+    },
+  );
+
+  const getConsoleMessageTool = tool(
+    "get_console_message",
+    `Gets a console message by its ID. You can get all messages by calling list_console_messages.`,
+    {
+      msgid: z.number().int().min(0).describe("The msgid of a console message from the listed console messages"),
+    },
+    async (input) => {
+      const host = getHost();
+      const result = host.getConsoleMessage(resolvedSessionId, input.msgid);
+      return toTextToolResult(result, !result.success);
+    },
+  );
+
+  const performanceStartTraceTool = tool(
+    "performance_start_trace",
+    `Start a performance trace on the selected webpage. Use to find frontend performance issues and improve page load speed.`,
+    {
+      reload: z.boolean().optional().default(true).describe("Whether to reload the page after starting the trace."),
+      autoStop: z.boolean().optional().default(true).describe("Whether to automatically stop the trace."),
+    },
+    async (input) => {
+      const host = getHost();
+      const result = await host.startPerformanceTrace(resolvedSessionId, {
+        reload: input.reload,
+        autoStop: input.autoStop,
+      });
+      return toTextToolResult(result, !result.success);
+    },
+  );
+
+  const performanceStopTraceTool = tool(
+    "performance_stop_trace",
+    "Stop the active performance trace recording on the selected webpage.",
+    {},
+    async () => {
+      const host = getHost();
+      const result = await host.stopPerformanceTrace(resolvedSessionId);
+      const summary = {
+        success: result.success,
+        error: result.error,
+        traceEventCount: result.traceEvents ? (result.traceEvents as unknown[]).length : 0,
+      };
+      return toTextToolResult(summary, !result.success);
+    },
+  );
+
+  // ── Phase 3: emulate + multi-page + evaluate_script ──
+  // Sources: chrome-devtools-mcp/src/tools/emulation.ts, pages.ts, script.ts
+
+  const emulateTool = tool(
+    "emulate",
+    `Emulates various features on the selected page.`,
+    {
+      networkConditions: z.enum(["Offline", "Slow3G", "Fast3G", "Slow4G", "Fast4G"]).optional().describe("Throttle network. Omit to disable throttling."),
+      cpuThrottlingRate: z.number().int().min(1).max(20).optional().describe("CPU slowdown factor (1-20). Omit to disable."),
+      userAgent: z.string().optional().describe("User agent string to emulate."),
+      colorScheme: z.enum(["dark", "light", "auto"]).optional().describe("Color scheme to emulate."),
+      geolocation: z.string().optional().describe("Geolocation as 'latitude,longitude'."),
+      viewport: z.string().optional().describe("Viewport as 'widthxheightxdpr,mobile,touch,landscape'."),
+    },
+    async (input) => {
+      const host = getHost();
+      let geolocation: { latitude: number; longitude: number } | undefined;
+      if (input.geolocation) {
+        const [lat, lng] = input.geolocation.split(",").map(Number);
+        if (!isNaN(lat) && !isNaN(lng)) {
+          geolocation = { latitude: lat, longitude: lng };
+        }
+      }
+      let viewport: { width: number; height: number; deviceScaleFactor?: number; isMobile?: boolean; isLandscape?: boolean; hasTouch?: boolean } | undefined;
+      if (input.viewport) {
+        const [dims, ...tags] = input.viewport.split(",");
+        const [w, h, dpr] = dims.split("x").map(Number);
+        if (!isNaN(w) && !isNaN(h)) {
+          viewport = {
+            width: w,
+            height: h,
+            deviceScaleFactor: dpr,
+            isMobile: tags.includes("mobile"),
+            isLandscape: tags.includes("landscape"),
+            hasTouch: tags.includes("touch"),
+          };
+        }
+      }
+      const result = await host.emulate(resolvedSessionId, {
+        networkConditions: input.networkConditions,
+        cpuThrottlingRate: input.cpuThrottlingRate,
+        userAgent: input.userAgent,
+        colorScheme: input.colorScheme,
+        geolocation,
+        viewport,
+      });
+      return toTextToolResult({ action: "emulate", ...result }, !result.success);
+    },
+  );
+
+  const listPagesTool = tool(
+    "list_pages",
+    `Get a list of pages open in the browser.`,
+    {},
+    async () => {
+      const host = getHost();
+      const result = host.listPages(resolvedSessionId);
+      return toTextToolResult(result, !result.success);
+    },
+  );
+
+  const selectPageTool = tool(
+    "select_page",
+    `Select a page as a context for future tool calls.`,
+    {
+      pageId: z.number().int().min(0).describe("The ID of the page to select."),
+      bringToFront: z.boolean().optional().describe("Whether to focus the page."),
+    },
+    async (input) => {
+      const host = getHost();
+      const state = host.selectPage(resolvedSessionId, input.pageId);
+      return toTextToolResult({ action: "select_page", success: true, pageId: input.pageId, state });
+    },
+  );
+
+  const newPageTool = tool(
+    "new_page",
+    `Open a new tab and load a URL.`,
+    {
+      url: z.string().min(1).describe("URL to load in a new page."),
+      background: z.boolean().optional().describe("Whether to open in background."),
+    },
+    async (input) => {
+      const host = getHost();
+      const state = await host.newPage(resolvedSessionId, { url: input.url, background: input.background });
+      return toTextToolResult({ action: "new_page", success: true, url: input.url, state });
+    },
+  );
+
+  const evaluateScriptTool = tool(
+    "evaluate_script",
+    `Evaluate a JavaScript function inside the currently selected page. Returns the response as JSON, so returned values have to be JSON-serializable.`,
+    {
+      function: z.string().describe("A JavaScript function declaration to be executed. E.g., '() => { return document.title }'"),
+      args: z.array(z.string()).optional().describe("Optional arguments to pass to the function (element UIDs)."),
+    },
+    async (input) => {
+      const host = getHost();
+      const result = await host.evaluateScriptEnhanced(resolvedSessionId, {
+        function: input.function,
+        args: input.args,
+      });
+      return toTextToolResult(result, !result.success);
+    },
+  );
+
   return createSdkMcpServer({
     name: BROWSER_TOOLS_SERVER_NAME,
     version: BROWSER_MCP_SERVER_VERSION,
@@ -1650,6 +2087,25 @@ export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWit
       applyStylesTool,
       inspectPointTool,
       setAnnotationModeTool,
+      clickAtTool,
+      dragTool,
+      fillFormTool,
+      navigatePageTool,
+      resizePageTool,
+      handleDialogTool,
+      uploadFileTool,
+      takeSnapshotTool,
+      listNetworkRequestsTool,
+      getNetworkRequestTool,
+      listConsoleMessagesTool,
+      getConsoleMessageTool,
+      performanceStartTraceTool,
+      performanceStopTraceTool,
+      emulateTool,
+      listPagesTool,
+      selectPageTool,
+      newPageTool,
+      evaluateScriptTool,
     ],
   });
 

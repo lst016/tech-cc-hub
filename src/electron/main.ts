@@ -38,11 +38,11 @@ import {
 } from "./libs/config-store.js";
 import { setBrowserToolHost } from "./libs/mcp-tools/browser.js";
 import { setDesignToolHost } from "./libs/mcp-tools/design.js";
-import { appAutoUpdater, type AppUpdateStatus } from "./libs/auto-updater.js";
-import { startChannelBridge, type ChannelBridgeController } from "./libs/channel-bridge.js";
+import { appAutoUpdater, type AppUpdateStatus } from "./libs/auto-updater/auto-updater.js";
+import { startChannelBridge, type ChannelBridgeController } from "./libs/channel/channel-bridge.js";
 import { ensureSystemWorkspace } from "./libs/system-workspace.js";
-import { getCurrentApiConfig, getGlobalRuntimeEnvConfig, resolveApiConfigForModel, resolveImagePreprocessApiConfig } from "./libs/claude-settings.js";
-import { preprocessImageAttachments } from "./libs/image-preprocessor.js";
+import { getCurrentApiConfig, getGlobalRuntimeEnvConfig, resolveApiConfigForModel, resolveImagePreprocessApiConfig } from "./libs/claude/claude-settings.js";
+import { preprocessImageAttachments } from "./libs/image/image-preprocessor.js";
 import {
     CODEX_OAUTH_BASE_URL,
     buildCodexRequestHeaders,
@@ -59,10 +59,10 @@ import {
     refreshCodexOAuthToken,
     toAnthropicMessageResponse,
     tokenResultToCredential,
-} from "./libs/codex-oauth.js";
+} from "./libs/codex/codex-oauth.js";
 import { loadAgentRuleDocuments, saveUserAgentRuleDocument } from "./libs/agent-rule-docs.js";
 import { handleSkillManagerInvoke, registerSkillManagerHandlers } from "./libs/skill-manager/ipc-handlers.js";
-import { registerCronIpcHandlers, IpcCronEventEmitter } from "./libs/cron-ipc-handlers.js";
+import { registerCronIpcHandlers, IpcCronEventEmitter } from "./libs/cron/cron-ipc-handlers.js";
 import { handleGitWorkbenchInvoke, registerGitWorkbenchIpcHandlers } from "./libs/git/index.js";
 import {
   getManagedCodeGraphStatus,
@@ -70,9 +70,9 @@ import {
   isManagedCodeGraphInitialized,
   syncManagedCodeGraph,
 } from "./libs/codegraph/managed-codegraph.js";
-import { CronService } from "./libs/cron-service.js";
-import { CronRepository } from "./libs/cron-repository.js";
-import { CronJobExecutor, CronBusyGuard } from "./libs/cron-executor.js";
+import { CronService } from "./libs/cron/cron-service.js";
+import { CronRepository } from "./libs/cron/cron-repository.js";
+import { CronJobExecutor, CronBusyGuard } from "./libs/cron/cron-executor.js";
 import { setCronService } from "./libs/mcp-tools/cron.js";
 import type { ClientEvent, PromptAttachment, ServerEvent } from "./types.js";
 import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkbenchEvent, type BrowserWorkbenchNetworkLogInput } from "./browser-manager.js";
@@ -97,7 +97,7 @@ import {
 } from "./libs/figma-official-plugin.js";
 import { normalizePluginVersion, summarizePluginUpdate, type PluginUpdateSummary } from "./libs/plugin-updates.js";
 import { submitFeedbackIssue, type FeedbackSubmitPayload } from "./libs/feedback.js";
-import "./libs/claude-settings.js";
+import "./libs/claude/claude-settings.js";
 import { addServerEventListener } from "./ipc-handlers.js";
 
 let cleanupComplete = false;
@@ -2518,6 +2518,7 @@ app.on("ready", async () => {
         title: "tech-cc-hub",
         webPreferences: {
             preload: getPreloadPath(),
+            spellcheck: process.platform !== "darwin",
         },
         icon: appIconPath,
         titleBarStyle: "hiddenInset",
@@ -2739,6 +2740,178 @@ app.on("ready", async () => {
           return buildBrowserWorkbenchFallbackState();
         }
         return await browserWorkbench.setAnnotationMode(enabled);
+      },
+      clickAt: (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return {
+            success: false,
+            action: input.dblClick ? "dblclick" : "click",
+            state: buildBrowserWorkbenchFallbackState(),
+            error: "浏览器工作台尚未初始化。",
+          };
+        }
+        return browserWorkbench.clickAt(input);
+      },
+      dragElement: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.dragElement(input);
+      },
+      fillForm: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        const errors: string[] = [];
+        let filled = 0;
+        for (const element of input.elements) {
+          const result = await browserWorkbench.runElementAction({
+            action: "fill",
+            target: element.target,
+            value: element.value,
+            strategy: element.strategy,
+            index: element.index,
+          });
+          if (result.success) {
+            filled += 1;
+          } else {
+            errors.push(`${element.target}: ${result.error ?? "fill failed"}`);
+          }
+        }
+        return {
+          success: errors.length === 0,
+          result: {
+            filled,
+            total: input.elements.length,
+            errors: errors.length > 0 ? errors : undefined,
+          },
+          error: errors.length > 0 ? errors.join("\n") : undefined,
+        };
+      },
+      navigatePage: (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return buildBrowserWorkbenchFallbackState();
+        }
+        const type = input.type || (input.url ? "url" : "reload");
+        if (type === "url" && input.url) {
+          return browserWorkbench.open(input.url);
+        }
+        if (type === "back") {
+          return browserWorkbench.goBack();
+        }
+        if (type === "forward") {
+          return browserWorkbench.goForward();
+        }
+        return browserWorkbench.reload();
+      },
+      resizeView: (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return buildBrowserWorkbenchFallbackState();
+        }
+        return browserWorkbench.resizeView(input);
+      },
+      handleDialog: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.handleDialog(input);
+      },
+      uploadFile: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.uploadFile(input);
+      },
+      enhancedSnapshot: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.enhancedSnapshot(input);
+      },
+      listNetworkRequests: (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return browserWorkbench.listNetworkRequests(input);
+      },
+      getNetworkRequest: async (sessionId, reqid) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.getNetworkRequest(reqid);
+      },
+      listConsoleMessages: (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return browserWorkbench.listConsoleMessages(input);
+      },
+      getConsoleMessage: (sessionId, msgid) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return browserWorkbench.getConsoleMessage(msgid);
+      },
+      startPerformanceTrace: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, state: buildBrowserWorkbenchFallbackState(), error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.startPerformanceTrace(input);
+      },
+      stopPerformanceTrace: async (sessionId) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, state: buildBrowserWorkbenchFallbackState(), error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.stopPerformanceTrace();
+      },
+      emulate: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, state: buildBrowserWorkbenchFallbackState(), error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.emulate(input);
+      },
+      listPages: (sessionId) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return browserWorkbench.listPages();
+      },
+      selectPage: (sessionId, pageId) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return buildBrowserWorkbenchFallbackState();
+        }
+        return browserWorkbench.selectPage(pageId);
+      },
+      newPage: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return buildBrowserWorkbenchFallbackState();
+        }
+        return await browserWorkbench.newPage(input);
+      },
+      evaluateScriptEnhanced: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.evaluateScriptEnhanced(input);
       },
     });
     setDesignToolHost({

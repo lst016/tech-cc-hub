@@ -4,9 +4,9 @@ import { homedir } from "os";
 import { join } from "path";
 import { setTimeout as delay } from "timers/promises";
 
-import { getGlobalRuntimeEnvConfig } from "./claude-settings.js";
-import { loadGlobalRuntimeConfig } from "./config-store.js";
-import { runExternalCli } from "./external-cli.js";
+import { getGlobalRuntimeEnvConfig } from "../claude/claude-settings.js";
+import { loadGlobalRuntimeConfig } from "../config-store.js";
+import { runExternalCli } from "../external-cli.js";
 import type { ChannelInboundMessage, ChannelProviderId, ChannelReplyTarget } from "./channel-workspace.js";
 
 type ChannelTransportMode = "bot-api" | "webhook" | "lark-cli" | "lark-open-platform" | "weixin-native" | "weixin-openclaw";

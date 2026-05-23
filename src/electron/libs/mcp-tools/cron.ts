@@ -7,8 +7,8 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 
-import type { CronService } from "../cron-service.js";
-import type { CreateCronJobParams, CronSchedule } from "../cron-types.js";
+import type { CronService } from "../cron/cron-service.js";
+import type { CreateCronJobParams, CronSchedule } from "../cron/cron-types.js";
 import { toTextToolResult } from "./tool-result.js";
 
 export const CRON_TOOL_NAMES = [

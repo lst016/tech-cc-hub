@@ -9,11 +9,11 @@ import {
 import { buildPromptLedgerMessage, type PromptLedgerMessage, type PromptLedgerSource } from "../shared/prompt-ledger.js";
 import { createInitialSessionWorkflowState, parseWorkflowMarkdown } from "../shared/workflow-markdown.js";
 import { listBuiltinMcpServerInfos } from "../shared/builtin-mcp-registry.js";
-import { runClaude, type RunnerHandle } from "./libs/runner.js";
-import { buildRunnerReuseKey, canReuseRunner } from "./libs/runner-reuse.js";
+import { runClaude, type RunnerHandle } from "./libs/runner/runner.js";
+import { buildRunnerReuseKey, canReuseRunner } from "./libs/runner/runner-reuse.js";
 import { persistImageAttachmentReference, rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
 import { listAvailableClaudeAgents, resolveAgentRuntimeContext } from "./libs/agent-resolver.js";
-import { getApiConfigForModel, getCurrentApiConfig, getModelConfig, resolveApiConfigForModel, supportsRemoteSessionResume } from "./libs/claude-settings.js";
+import { getApiConfigForModel, getCurrentApiConfig, getModelConfig, resolveApiConfigForModel, supportsRemoteSessionResume } from "./libs/claude/claude-settings.js";
 import { loadGlobalRuntimeConfig, saveGlobalRuntimeConfig } from "./libs/config-store.js";
 import { listExternalMcpServerInfos } from "./libs/external-mcp-servers.js";
 import { buildNextFigmaOfficialAuthStateRuntimeConfig, isFigmaMcpOAuthCallbackPrompt, redactFigmaMcpOAuthCallbackPrompt, type FigmaOfficialAuthState } from "./libs/figma-official-plugin.js";
@@ -38,7 +38,7 @@ import {
   type TaskExecutionOptions,
   type TaskProviderId,
 } from "./libs/task/index.js";
-import { NoteRepository } from "./libs/note-repository.js";
+import { NoteRepository } from "./libs/note/note-repository.js";
 import {
   buildChannelSessionTitle,
   buildChannelReplyTarget,
@@ -46,7 +46,7 @@ import {
   recordChannelOutboundMessage,
   recordChannelInboundMessage,
   type ChannelReplyTarget,
-} from "./libs/channel-workspace.js";
+} from "./libs/channel/channel-workspace.js";
 
 let sessions: SessionStore;
 const runnerHandles = new Map<string, RunnerHandle>();

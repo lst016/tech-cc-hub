@@ -23,7 +23,7 @@ import {
   loadApiConfigSettings,
   saveApiConfigSettings,
   type ApiConfig,
-} from "./config-store.js";
+} from "../config-store.js";
 
 const CODEX_PROXY_HOST = "127.0.0.1";
 const CODEX_PROXY_PORT = 14559;

@@ -1,4 +1,4 @@
-import type { PromptAttachment } from "../types.js";
+import type { PromptAttachment } from "../../types.js";
 
 export type ImagePreprocessResult = {
   success: boolean;

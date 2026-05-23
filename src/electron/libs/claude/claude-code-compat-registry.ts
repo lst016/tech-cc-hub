@@ -1,5 +1,5 @@
-import type { SlashCommandItem } from "./slash-command-discovery.js";
-import { buildClaudeAgentTeamsPromptHint } from "../../shared/claude-agent-teams.js";
+import type { SlashCommandItem } from "../slash-command-discovery.js";
+import { buildClaudeAgentTeamsPromptHint } from "../../../shared/claude-agent-teams.js";
 
 // Generated compatibility seed. Refresh with:
 //   node scripts/sync-claude-code-compat.mjs

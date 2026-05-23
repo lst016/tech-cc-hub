@@ -14,8 +14,8 @@ import {
   type SlashCommandItem,
   type SlashCommandRoots,
 } from "./slash-command-discovery.js";
-import { CLAUDE_CODE_BUILTIN_COMMAND_ITEMS } from "./claude-code-builtin-commands.js";
-import { CLAUDE_CODE_COMPAT_COMMAND_ITEMS } from "./claude-code-compat-registry.js";
+import { CLAUDE_CODE_BUILTIN_COMMAND_ITEMS } from "./claude/claude-code-builtin-commands.js";
+import { CLAUDE_CODE_COMPAT_COMMAND_ITEMS } from "./claude/claude-code-compat-registry.js";
 
 const MAX_INVOKED_LOCAL_SLASH_DEFINITION_PROMPT_CHARS = 40_000;
 

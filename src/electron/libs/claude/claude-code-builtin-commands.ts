@@ -1,4 +1,4 @@
-import type { SlashCommandItem } from "./slash-command-discovery.js";
+import type { SlashCommandItem } from "../slash-command-discovery.js";
 
 export const CLAUDE_CODE_BUILTIN_COMMAND_ITEMS: SlashCommandItem[] = [
   { name: "add-dir", description: "Claude Code built-in: add another working directory to the current session." },

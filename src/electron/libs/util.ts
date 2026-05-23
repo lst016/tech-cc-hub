@@ -5,7 +5,7 @@ import {
   buildEnvForConfig,
   getClaudeCodeModelOption,
   getClaudeCodePath,
-} from "./claude-settings.js";
+} from "./claude/claude-settings.js";
 import { app } from "electron";
 
 // Build enhanced PATH for packaged environment

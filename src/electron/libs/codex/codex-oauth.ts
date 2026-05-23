@@ -7,8 +7,8 @@ import {
   CODEX_OAUTH_SMALL_MODEL,
   extractCodexModelIdsFromCache,
   mergeCodexModelIds,
-} from "../../shared/codex-oauth.js";
-import { normalizeToolInputForKnownSchemas } from "./tool-input-normalizer.js";
+} from "../../../shared/codex-oauth.js";
+import { normalizeToolInputForKnownSchemas } from "../tool-input-normalizer.js";
 
 export {
   CODEX_OAUTH_BASE_URL,

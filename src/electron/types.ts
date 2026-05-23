@@ -2,7 +2,7 @@ import type { SDKMessage, PermissionResult } from "@anthropic-ai/claude-agent-sd
 import type { PromptLedgerMessage } from "../shared/prompt-ledger.js";
 import type { SessionPlanSnapshot } from "../shared/plan-progress.js";
 import type { SessionWorkflowState, WorkflowScope, WorkflowSpecDocument } from "../shared/workflow-markdown.js";
-import type { Note, NoteCreateInput, NoteUpdateInput } from "./libs/note-types.js";
+import type { Note, NoteCreateInput, NoteUpdateInput } from "./libs/note/note-types.js";
 
 export type RuntimeReasoningMode = "disabled" | "low" | "medium" | "high" | "xhigh";
 export type AgentRunSurface = "development" | "maintenance";

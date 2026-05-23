@@ -12,13 +12,13 @@ import { execFileSync } from "child_process";
 import { existsSync, statSync } from "fs";
 import { extname } from "path";
 
-import { buildRunnerPromptContentBlocks } from "../../shared/runner-prompt.js";
-import { isSuccessfulRunnerResult, shouldSuppressRunnerErrorAfterSuccessfulResult } from "../../shared/runner-status.js";
-import type { BuiltinMcpServerName } from "../../shared/builtin-mcp-registry.js";
+import { buildRunnerPromptContentBlocks } from "../../../shared/runner-prompt.js";
+import { isSuccessfulRunnerResult, shouldSuppressRunnerErrorAfterSuccessfulResult } from "../../../shared/runner-status.js";
+import type { BuiltinMcpServerName } from "../../../shared/builtin-mcp-registry.js";
 import {
   CLAUDE_AGENT_TEAMS_ENV_VAR,
   withClaudeAgentTeamsEnv,
-} from "../../shared/claude-agent-teams.js";
+} from "../../../shared/claude-agent-teams.js";
 import {
   createLearnCaptureHook,
   createCorrectionDetectionHook,
@@ -30,15 +30,15 @@ import {
   createToolCallBudgetHook,
   createDriftDetectorHook,
   createReadBeforeWriteHook,
-} from "./learning-hooks.js";
+} from "../learning/learning-hooks.js";
 import {
   normalizeTodoWriteArgs,
   normalizeUpdatePlanArgs,
   type SessionPlanSource,
   type UpdatePlanArgs,
-} from "../../shared/plan-progress.js";
-import type { AgentRunSurface, PromptAttachment, RuntimeOverrides, ServerEvent } from "../types.js";
-import { resolveAgentRuntimeContext } from "./agent-resolver.js";
+} from "../../../shared/plan-progress.js";
+import type { AgentRunSurface, PromptAttachment, RuntimeOverrides, ServerEvent } from "../../types.js";
+import { resolveAgentRuntimeContext } from "../agent-resolver.js";
 import {
   buildEnvForConfig,
   buildClaudeCodeModelSettings,
@@ -48,46 +48,46 @@ import {
   getCurrentApiConfig,
   getGlobalRuntimeConfig,
   resolveApiConfigForModel,
-} from "./claude-settings.js";
-import { buildClaudeProjectMemoryPromptAppend } from "./claude-project-memory.js";
-import { buildKnowledgeOverviewPromptAppend } from "./knowledge/knowledge-overview.js";
-import { saveGlobalRuntimeConfig } from "./config-store.js";
+} from "../claude/claude-settings.js";
+import { buildClaudeProjectMemoryPromptAppend } from "../claude/claude-project-memory.js";
+import { buildKnowledgeOverviewPromptAppend } from "../knowledge/knowledge-overview.js";
+import { saveGlobalRuntimeConfig } from "../config-store.js";
 import {
   getExternalMcpServers,
   isConfiguredExternalMcpTool,
-} from "./external-mcp-servers.js";
+} from "../external-mcp-servers.js";
 import {
   CLAUDE_FIGMA_PLUGIN_ID,
   isClaudeCodePluginMcpTool,
   listClaudeCodePluginMcpServerNames,
   resolveEnabledClaudeCodeSdkPlugins,
-} from "./claude-code-plugins.js";
+} from "../claude/claude-code-plugins.js";
 import {
   FIGMA_REST_TOOL_NAMES,
   getFigmaOfficialPluginStatusFromConfig,
   isLikelyFigmaTokenFailureMessage,
-} from "./figma-official-plugin.js";
-import { summarizeBase64Image, summarizeLocalImageFile } from "./image-preprocessor.js";
+} from "../figma-official-plugin.js";
+import { summarizeBase64Image, summarizeLocalImageFile } from "../image/image-preprocessor.js";
 import {
   getBuiltinMcpServers,
   listBuiltinMcpToolNames,
-} from "./builtin-mcp-servers.js";
+} from "../builtin-mcp-servers.js";
 import { normalizeRunnerError } from "./runner-error.js";
 import {
   normalizeKnownToolInputsInMessage,
   normalizeToolInputForKnownSchemas,
-} from "./tool-input-normalizer.js";
+} from "../tool-input-normalizer.js";
 import {
   mergeRuntimeEfficiencyProfile,
   resolveRuntimeEfficiencyProfile,
   runtimeEfficiencyProfileStateEquals,
   runtimeEfficiencyProfileToState,
-} from "./runtime-efficiency.js";
-import type { Session } from "./session-store.js";
+} from "../runtime-efficiency.js";
+import type { Session } from "../session-store.js";
 import {
   getBashBackgroundServiceGuidance,
   normalizeWindowsBashCommand,
-} from "./windows-bash-command.js";
+} from "../windows-bash-command.js";
 import {
   buildAdminConfigPromptAppend,
   buildBrowserWorkbenchPromptAppend,
@@ -97,16 +97,16 @@ import {
   buildFeishuDocumentFetchPromptAppend,
   buildGlobalRuntimeSystemPromptExtAppend,
   buildToolCallOptimizationPromptAppend,
-} from "./system-prompt-presets.js";
-import { buildInvokedLocalSlashDefinitionPromptAppend } from "./slash-command-catalog.js";
+} from "../system-prompt-presets.js";
+import { buildInvokedLocalSlashDefinitionPromptAppend } from "../slash-command-catalog.js";
 import {
   buildOversizedTextToolOutputReplacement,
   createTextToolOutputBlocks,
   buildToolImageReplacementText,
   extractInlineBase64ImageFromToolResponse,
-} from "./tool-output-sanitizer.js";
-import { getEnhancedEnv } from "./util.js";
-import { buildClaudeCodeSystemPromptOption } from "./claude-system-prompt.js";
+} from "../tool-output-sanitizer.js";
+import { getEnhancedEnv } from "../util.js";
+import { buildClaudeCodeSystemPromptOption } from "../claude/claude-system-prompt.js";
 
 export type RunnerOptions = {
   prompt: string;

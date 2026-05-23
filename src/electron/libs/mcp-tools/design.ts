@@ -14,15 +14,15 @@ import type {
   BrowserWorkbenchElementInfoResult,
   BrowserWorkbenchState,
 } from "../../browser-manager.js";
-import { resolveImagePreprocessApiConfig } from "../claude-settings.js";
+import { resolveImagePreprocessApiConfig } from "../claude/claude-settings.js";
 import {
   buildDesignInspectionPrompt,
   buildDesignSemanticDiffPrompt,
   parseDesignInspectionDsl,
   parseDesignSemanticDiffDsl,
 } from "../design-inspection-dsl.js";
-import { resolveDesignImagePath } from "../design-image-path.js";
-import { summarizeLocalImageFile, summarizeLocalImageFiles } from "../image-preprocessor.js";
+import { resolveDesignImagePath } from "../image/design-image-path.js";
+import { summarizeLocalImageFile, summarizeLocalImageFiles } from "../image/image-preprocessor.js";
 import {
   buildPaddedRegionFromElementBox,
   readElementBoxFromInfoResult,

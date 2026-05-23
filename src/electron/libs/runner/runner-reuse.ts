@@ -1,6 +1,6 @@
-import type { BuiltinMcpServerName } from "../../shared/builtin-mcp-registry.js";
-import type { AgentRunSurface, PromptAttachment, RuntimeOverrides } from "../types.js";
-import { resolveRuntimeEfficiencyProfile } from "./runtime-efficiency.js";
+import type { BuiltinMcpServerName } from "../../../shared/builtin-mcp-registry.js";
+import type { AgentRunSurface, PromptAttachment, RuntimeOverrides } from "../../types.js";
+import { resolveRuntimeEfficiencyProfile } from "../runtime-efficiency.js";
 
 export type RunnerReuseKeyInput = {
   cwd?: string;

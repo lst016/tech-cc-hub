@@ -24,7 +24,7 @@ import { resetBrowserWorkbenchAnnotationState } from "../utils/browser-annotatio
 import { getSlashCommandContext, getSlashCommandQuery, isCompletedSlashCommandContext, isDismissedSlashCommandQuery } from "../utils/slash-command-input";
 import { buildSlashCommandDisplayParts, serializeSlashCommandDraft } from "../utils/slash-command-display";
 import { getPromptTextFromEditor, getSelectionOffsetInEditor, getSelectionRangeInEditor, renderPromptEditorContent, restoreEditorSelection } from "../utils/prompt-editor-content";
-import { getPromptParagraphInputAction, insertTextIntoPrompt, resolvePromptEditorInputCursor, shouldBlockPromptEnterAfterComposition, shouldInsertPromptNewline, shouldSubmitPromptOnEnter } from "../utils/prompt-editor-keyboard";
+import { getPromptParagraphInputAction, insertTextIntoPrompt, resolvePromptEditorInputCursor, shouldBlockPromptEnterAfterComposition, shouldInsertPromptNewline, shouldSubmitPromptOnEnter, shouldSuppressPromptAutoReplacement } from "../utils/prompt-editor-keyboard";
 import { scorePreviewQuickOpenEntry } from "../../shared/preview-quick-open";
 import {
   ADD_PROMPT_ATTACHMENT_EVENT,
@@ -1698,6 +1698,11 @@ export function PromptInput({
 
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
+    const nativeEvent = e.nativeEvent as InputEvent;
+    const composingInputType = nativeEvent.inputType === "insertCompositionText" || nativeEvent.inputType === "deleteCompositionText";
+    if (nativeEvent.isComposing || composingInputType) {
+      isComposingRef.current = true;
+    }
     const previousPrompt = promptDraftRef.current;
     const nextPrompt = getPromptTextFromEditor(target);
     const nextCursor = resolvePromptEditorInputCursor(previousPrompt, nextPrompt, getSelectionOffsetInEditor(target));
@@ -1719,6 +1724,10 @@ export function PromptInput({
   };
 
   const handleBeforeInput = useCallback((event: InputEvent) => {
+    if (shouldSuppressPromptAutoReplacement({ inputType: event.inputType, isComposing: event.isComposing })) {
+      event.preventDefault();
+      return;
+    }
     const action = getPromptParagraphInputAction(
       {
         inputType: event.inputType,

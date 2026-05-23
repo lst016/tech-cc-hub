@@ -6,24 +6,24 @@ import type { Settings } from "@anthropic-ai/claude-agent-sdk";
 import {
   CODEX_OAUTH_DEFAULT_MODEL,
   CODEX_OAUTH_SMALL_MODEL,
-} from "../../shared/codex-oauth.js";
-import { CLAUDE_AGENT_TEAMS_MIN_CLAUDE_CODE_VERSION } from "../../shared/claude-agent-teams.js";
+} from "../../../shared/codex-oauth.js";
+import { CLAUDE_AGENT_TEAMS_MIN_CLAUDE_CODE_VERSION } from "../../../shared/claude-agent-teams.js";
 import {
   isModelCompatibleWithApiProvider,
   normalizeProviderModelName,
   pickProviderCompatibleModel,
-} from "../../shared/model-provider-routing.js";
-import { pickHighestWeightedModelOwner } from "../../shared/model-routing-weight.js";
-import { pickImagePreprocessConfig } from "../../shared/image-preprocess-routing.js";
+} from "../../../shared/model-provider-routing.js";
+import { pickHighestWeightedModelOwner } from "../../../shared/model-routing-weight.js";
+import { pickImagePreprocessConfig } from "../../../shared/image-preprocess-routing.js";
 import {
   loadApiConfigSettings,
   loadGlobalRuntimeConfig,
   type ApiConfig,
   type ApiModelConfig,
   type GlobalRuntimeConfig,
-} from "./config-store.js";
+} from "../config-store.js";
 import { app } from "electron";
-import { getCodexAnthropicProxyBaseURL } from "./codex-anthropic-proxy.js";
+import { getCodexAnthropicProxyBaseURL } from "../codex/codex-anthropic-proxy.js";
 
 const CLAUDE_CODE_OPUS_MODEL_OVERRIDE_KEYS = [
   "opus",

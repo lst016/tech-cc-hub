@@ -20,8 +20,8 @@ import type {
   TaskSubtask,
   TaskWorkflowSettings,
 } from "./types.js";
-import { runClaude, type RunnerHandle } from "../runner.js";
-import { getCurrentApiConfig } from "../claude-settings.js";
+import { runClaude, type RunnerHandle } from "../runner/runner.js";
+import { getCurrentApiConfig } from "../claude/claude-settings.js";
 import { computeRetryDueAt, loadTaskWorkflowConfig, type TaskWorkflowConfig } from "./workflow.js";
 import { ensureTaskWorkspace } from "./workspace.js";
 import { applyTaskSettingsToWorkflow, loadTaskSettings, saveTaskSettings } from "./settings.js";
