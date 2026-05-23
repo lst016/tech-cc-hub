@@ -1724,7 +1724,11 @@ export function PromptInput({
   };
 
   const handleBeforeInput = useCallback((event: InputEvent) => {
-    if (shouldSuppressPromptAutoReplacement({ inputType: event.inputType, isComposing: event.isComposing })) {
+    if (shouldSuppressPromptAutoReplacement({
+      inputType: event.inputType,
+      isComposing: event.isComposing,
+      data: event.data,
+    }, isComposingRef.current)) {
       event.preventDefault();
       return;
     }

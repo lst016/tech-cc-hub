@@ -23,6 +23,9 @@ export const FIGMA_REST_TOOL_NAMES = [
   "figma_list_file_library",
   "figma_get_file_variables",
   "figma_get_dev_resources",
+  "figma_scan_text_nodes",
+  "figma_get_team_components",
+  "figma_get_team_styles",
 ] as const;
 
 export type FigmaOfficialConnectionMode = "remote" | "desktop" | "rest";

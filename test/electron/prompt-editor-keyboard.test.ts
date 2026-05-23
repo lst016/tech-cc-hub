@@ -59,9 +59,12 @@ test("contentEditable non-paragraph input remains native", () => {
   assert.equal(getPromptParagraphInputAction({ inputType: "insertLineBreak" }, false, false), "allow");
 });
 
-test("contentEditable replacement input is suppressed to avoid auto-correct rewrite", () => {
-  assert.equal(shouldSuppressPromptAutoReplacement({ inputType: "insertReplacementText" }), true);
-  assert.equal(shouldSuppressPromptAutoReplacement({ inputType: "insertText" }), false);
+test("contentEditable replacement input only suppresses latin auto-correct rewrites", () => {
+  assert.equal(shouldSuppressPromptAutoReplacement({ inputType: "insertReplacementText", data: "teh" }), true);
+  assert.equal(shouldSuppressPromptAutoReplacement({ inputType: "insertReplacementText", data: "你" }), false);
+  assert.equal(shouldSuppressPromptAutoReplacement({ inputType: "insertReplacementText", data: "你", isComposing: true }), false);
+  assert.equal(shouldSuppressPromptAutoReplacement({ inputType: "insertReplacementText", data: "teh" }, true), false);
+  assert.equal(shouldSuppressPromptAutoReplacement({ inputType: "insertText", data: "teh" }), false);
 });
 
 test("newline insertion preserves raw slash commands and cursor position", () => {

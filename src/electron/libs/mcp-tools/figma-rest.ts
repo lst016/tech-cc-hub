@@ -453,6 +453,81 @@ function buildDesignSummary(
   };
 }
 
+type TextNodeEntry = {
+  id: string;
+  name: string;
+  characters: string;
+  nodePath: string[];
+  bounds?: { x?: number; y?: number; width?: number; height?: number };
+  style?: { fontFamily?: string; fontSize?: number; fontWeight?: number; lineHeightPx?: number; textAlignHorizontal?: string };
+};
+
+function scanTextNodes(
+  roots: Record<string, unknown>[],
+  options: {
+    maxNodes?: number;
+    includeInvisible?: boolean;
+  } = {},
+): { entries: TextNodeEntry[]; summary: { visited: number; textNodeCount: number; truncated: boolean; totalCharacters: number } } {
+  const maxNodes = clampInteger(options.maxNodes, 1, 2_000, 500);
+  const entries: TextNodeEntry[] = [];
+  let visited = 0;
+  let totalCharacters = 0;
+  let truncated = false;
+
+  function walk(nodes: Record<string, unknown>[], path: string[]): void {
+    for (const node of nodes) {
+      if (entries.length >= maxNodes) {
+        truncated = true;
+        return;
+      }
+      visited++;
+      const visible = readBoolean(node, "visible");
+      if (visible === false && !options.includeInvisible) {
+        continue;
+      }
+
+      const nodeType = readString(node, "type");
+      if (nodeType === "TEXT") {
+        const characters = readString(node, "characters") ?? "";
+        totalCharacters += characters.length;
+        entries.push({
+          id: readString(node, "id") ?? "",
+          name: readString(node, "name") ?? "",
+          characters,
+          nodePath: [...path],
+          bounds: readBounds(node),
+          style: extractTextNodeStyle(node),
+        });
+      }
+
+      const children = getNodeChildren(node);
+      if (children.length > 0) {
+        const name = readString(node, "name") ?? readString(node, "id") ?? "";
+        walk(children, [...path, name]);
+      }
+      if (truncated) return;
+    }
+  }
+
+  walk(roots, []);
+  return {
+    entries,
+    summary: { visited, textNodeCount: entries.length, truncated, totalCharacters },
+  };
+}
+
+function extractTextNodeStyle(node: Record<string, unknown>): TextNodeEntry["style"] | undefined {
+  const style = isRecord(node.style) ? node.style : {};
+  const result: TextNodeEntry["style"] = {};
+  if (typeof style.fontFamily === "string") result.fontFamily = style.fontFamily;
+  if (typeof style.fontSize === "number") result.fontSize = style.fontSize;
+  if (typeof style.fontWeight === "number") result.fontWeight = style.fontWeight;
+  if (typeof style.lineHeightPx === "number") result.lineHeightPx = style.lineHeightPx;
+  if (typeof style.textAlignHorizontal === "string") result.textAlignHorizontal = style.textAlignHorizontal;
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 function compactDesignNode(
   node: Record<string, unknown>,
   context: {
@@ -1662,6 +1737,105 @@ export function getFigmaRestMcpServer(options: { toolMode?: FigmaRestToolMode } 
     },
   );
 
+  const scanTextNodesTool = tool(
+    "figma_scan_text_nodes",
+    "Scan all text nodes in a Figma file or selected frames and return a flat content inventory. Use for copy audit, localization review, content-consistency checks, and finding orphan or placeholder text strings.",
+    {
+      fileKeyOrUrl: z.string().trim().min(1),
+      nodeIds: z.array(z.string().trim().min(1)).max(40).optional(),
+      depth: z.number().int().min(1).max(8).optional(),
+      maxNodes: z.number().int().min(1).max(2_000).optional(),
+      includeInvisible: z.boolean().optional(),
+      maxBytes: z.number().int().min(10_000).max(MAX_RESPONSE_BYTES).optional(),
+    },
+    async (input) => {
+      const action = "figma_scan_text_nodes";
+      try {
+        const token = getConfiguredFigmaPat();
+        const { locator, payload, source } = await fetchFigmaDesignPayload(token, input.fileKeyOrUrl, input.nodeIds, {
+          depth: input.depth ?? DEFAULT_SUMMARY_DEPTH,
+        });
+        const roots = extractDocumentNodes(payload, locator.nodeIds);
+        const result = scanTextNodes(roots, {
+          maxNodes: input.maxNodes,
+          includeInvisible: input.includeInvisible,
+        });
+        return toTextToolResult({
+          action,
+          success: true,
+          fileKey: locator.fileKey,
+          nodeIds: locator.nodeIds,
+          source,
+          result: capPayload(result, clampMaxBytes(input.maxBytes)),
+        });
+      } catch (error) {
+        return toFigmaErrorResult(action, error);
+      }
+    },
+  );
+
+  const teamComponentsTool = tool(
+    "figma_get_team_components",
+    "Read published components from a Figma team library. Requires team-level access and the team scope token. Supports cursor-based pagination via before/after.",
+    {
+      teamId: z.string().trim().min(1).describe("Figma team ID. Find in the Figma team URL path or via figma_get_current_user."),
+      pageSize: z.number().int().min(1).max(100).optional().describe("Results per page, max 100."),
+      before: z.number().int().optional().describe("Cursor value for fetching the previous page."),
+      after: z.number().int().optional().describe("Cursor value for fetching the next page."),
+      maxBytes: z.number().int().min(10_000).max(MAX_RESPONSE_BYTES).optional(),
+    },
+    async (input) => {
+      const action = "figma_get_team_components";
+      try {
+        const token = getConfiguredFigmaPat();
+        const payload = await figmaApiGet(`teams/${encodeURIComponent(input.teamId)}/components`, {
+          page_size: input.pageSize,
+          before: input.before,
+          after: input.after,
+        }, token);
+        return toTextToolResult({
+          action,
+          success: true,
+          teamId: input.teamId,
+          result: capPayload(payload, clampMaxBytes(input.maxBytes)),
+        });
+      } catch (error) {
+        return toFigmaErrorResult(action, error);
+      }
+    },
+  );
+
+  const teamStylesTool = tool(
+    "figma_get_team_styles",
+    "Read published styles from a Figma team library. Requires team-level access and the team scope token. Supports cursor-based pagination via before/after.",
+    {
+      teamId: z.string().trim().min(1).describe("Figma team ID. Find in the Figma team URL path or via figma_get_current_user."),
+      pageSize: z.number().int().min(1).max(100).optional().describe("Results per page, max 100."),
+      before: z.number().int().optional().describe("Cursor value for fetching the previous page."),
+      after: z.number().int().optional().describe("Cursor value for fetching the next page."),
+      maxBytes: z.number().int().min(10_000).max(MAX_RESPONSE_BYTES).optional(),
+    },
+    async (input) => {
+      const action = "figma_get_team_styles";
+      try {
+        const token = getConfiguredFigmaPat();
+        const payload = await figmaApiGet(`teams/${encodeURIComponent(input.teamId)}/styles`, {
+          page_size: input.pageSize,
+          before: input.before,
+          after: input.after,
+        }, token);
+        return toTextToolResult({
+          action,
+          success: true,
+          teamId: input.teamId,
+          result: capPayload(payload, clampMaxBytes(input.maxBytes)),
+        });
+      } catch (error) {
+        return toFigmaErrorResult(action, error);
+      }
+    },
+  );
+
   const coreTools = [
     readDesignTool,
     getNodeTool,
@@ -1690,6 +1864,9 @@ export function getFigmaRestMcpServer(options: { toolMode?: FigmaRestToolMode } 
     fileLibraryTool,
     fileVariablesTool,
     devResourcesTool,
+    scanTextNodesTool,
+    teamComponentsTool,
+    teamStylesTool,
   ];
   return createSdkMcpServer({
     name: FIGMA_REST_SERVER_NAME,

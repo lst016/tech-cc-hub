@@ -13,6 +13,7 @@ export type PromptKeyboardEventLike = {
 export type PromptBeforeInputEventLike = {
   inputType?: string;
   isComposing?: boolean;
+  data?: string | null;
 };
 
 export type PromptParagraphInputAction = "allow" | "block" | "submit";
@@ -50,8 +51,13 @@ export function getPromptParagraphInputAction(
 
 export function shouldSuppressPromptAutoReplacement(
   event: PromptBeforeInputEventLike,
+  isComposing = false,
 ) {
-  return event.inputType === "insertReplacementText";
+  if (event.inputType !== "insertReplacementText") return false;
+  if (isComposing || event.isComposing) return false;
+  if (typeof event.data !== "string" || event.data.length === 0) return false;
+  const normalized = event.data.normalize("NFKC");
+  return /^[A-Za-z][A-Za-z'’-]*$/.test(normalized);
 }
 
 export function insertTextIntoPrompt(
