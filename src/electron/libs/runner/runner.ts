@@ -10,7 +10,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { execFileSync } from "child_process";
 import { existsSync, statSync } from "fs";
-import { extname } from "path";
+import { basename, extname, isAbsolute, join } from "path";
 
 import { buildRunnerPromptContentBlocks } from "../../../shared/runner-prompt.js";
 import { isSuccessfulRunnerResult, shouldSuppressRunnerErrorAfterSuccessfulResult } from "../../../shared/runner-status.js";
@@ -107,12 +107,20 @@ import {
 } from "../tool-output-sanitizer.js";
 import { getEnhancedEnv } from "../util.js";
 import { buildClaudeCodeSystemPromptOption } from "../claude/claude-system-prompt.js";
+import {
+  normalizeLinkedWorkspaceContext,
+  normalizeWorkspacePath,
+  shellQuotePath,
+  type LinkedWorkspaceContext,
+} from "../../../shared/linked-workspaces.js";
 
 export type RunnerOptions = {
   prompt: string;
+  displayPrompt?: string;
   attachments?: PromptAttachment[];
   runtime?: RuntimeOverrides;
   session: Session;
+  workspaceContext?: LinkedWorkspaceContext;
   resumeSessionId?: string;
   onEvent: (event: ServerEvent) => void;
   onSessionUpdate?: (updates: Partial<Session>) => void;
@@ -120,7 +128,7 @@ export type RunnerOptions = {
 
 export type RunnerHandle = {
   abort: () => void;
-  appendPrompt: (prompt: string, attachments?: PromptAttachment[]) => Promise<void>;
+  appendPrompt: (prompt: string, attachments?: PromptAttachment[], options?: { displayPrompt?: string; workspaceContext?: LinkedWorkspaceContext }) => Promise<void>;
   isClosed: () => boolean;
   reuseKey?: string;
 };
@@ -311,6 +319,103 @@ function promptMentionsFilePath(prompt: string, filePath: string): boolean {
   );
 }
 
+function normalizeRunnerWorkspaceContext(context: LinkedWorkspaceContext | undefined): LinkedWorkspaceContext | null {
+  return normalizeLinkedWorkspaceContext({
+    primaryCwd: context?.primaryCwd,
+    linkedCwds: context?.linkedCwds,
+  });
+}
+
+function isRelativeToolPath(filePath: string): boolean {
+  const trimmed = filePath.trim();
+  return Boolean(trimmed && !isAbsolute(trimmed) && !/^[a-zA-Z]:[\\/]/.test(trimmed));
+}
+
+function commandAlreadyRoutesWorkspace(command: string, workspacePath: string): boolean {
+  const normalizedCommand = command.trim();
+  const normalizedWorkspace = normalizeWorkspacePath(workspacePath);
+  if (!normalizedCommand || !normalizedWorkspace) return true;
+  if (normalizedCommand.includes(normalizedWorkspace)) return true;
+  return /(?:^|[;&|]\s*)(?:cd|pushd)\s+/.test(normalizedCommand);
+}
+
+function promptTargetsLinkedWorkspace(prompt: string, workspacePath: string, linkedCount: number): boolean {
+  const normalizedPrompt = prompt.toLowerCase();
+  const normalizedPath = normalizeWorkspacePath(workspacePath).toLowerCase();
+  const workspaceName = basename(normalizedPath).toLowerCase();
+  if (!normalizedPrompt || !normalizedPath) return false;
+  if (normalizedPrompt.includes(normalizedPath)) return true;
+  if (workspaceName.length >= 3 && normalizedPrompt.includes(workspaceName)) return true;
+
+  const nameTokens = workspaceName
+    .split(/[^a-z0-9\u4e00-\u9fa5]+/i)
+    .filter((token) => token.length >= 3);
+  if (nameTokens.some((token) => normalizedPrompt.includes(token))) return true;
+
+  const backendPrompt = /(后端|服务端|backend|server|api)/i.test(prompt);
+  const frontendPrompt = /(前端|客户端|frontend|front-end|web|ui)/i.test(prompt);
+  if (backendPrompt && /(backend|server|api|service)/i.test(workspaceName)) return true;
+  if (frontendPrompt && /(frontend|front-end|web|ui|client)/i.test(workspaceName)) return true;
+
+  // 只有一个关联目录时，明确提到“关联/跨目录”就可以安全地指向它。
+  return linkedCount === 1 && /(关联工作区|其他工作区|另一个工作区|跨目录|跨仓库|linked workspace)/i.test(prompt);
+}
+
+function resolveLinkedWorkspaceTarget(
+  context: LinkedWorkspaceContext | null,
+  prompt: string,
+): string | null {
+  if (!context) return null;
+  for (const linkedCwd of context.linkedCwds) {
+    if (promptTargetsLinkedWorkspace(prompt, linkedCwd, context.linkedCwds.length)) {
+      return linkedCwd;
+    }
+  }
+  return null;
+}
+
+function routeLinkedWorkspaceToolInput(
+  toolName: string,
+  input: Record<string, unknown>,
+  options: {
+    context: LinkedWorkspaceContext | null;
+    prompt: string;
+  },
+): { input: Record<string, unknown>; routed: boolean; reason?: string } {
+  const targetCwd = resolveLinkedWorkspaceTarget(options.context, options.prompt);
+  if (!targetCwd) return { input, routed: false };
+
+  const nextInput: Record<string, unknown> = { ...input };
+  if (toolName === "Bash") {
+    const command = typeof nextInput.command === "string" ? nextInput.command.trim() : "";
+    if (!command || commandAlreadyRoutesWorkspace(command, targetCwd)) {
+      return { input, routed: false };
+    }
+    nextInput.command = `cd ${shellQuotePath(targetCwd)} && ${command}`;
+    return { input: nextInput, routed: true, reason: "Bash command routed to linked workspace" };
+  }
+
+  if (["Read", "Edit", "Write", "MultiEdit"].includes(toolName)) {
+    const filePath = typeof nextInput.file_path === "string" ? nextInput.file_path.trim() : "";
+    if (!isRelativeToolPath(filePath)) return { input, routed: false };
+    nextInput.file_path = join(targetCwd, filePath);
+    return { input: nextInput, routed: true, reason: `${toolName} file_path routed to linked workspace` };
+  }
+
+  if (["Glob", "Grep", "Search"].includes(toolName)) {
+    const pathValue = typeof nextInput.path === "string" ? nextInput.path.trim() : "";
+    if (!pathValue) {
+      nextInput.path = targetCwd;
+      return { input: nextInput, routed: true, reason: `${toolName} path routed to linked workspace` };
+    }
+    if (!isRelativeToolPath(pathValue)) return { input, routed: false };
+    nextInput.path = join(targetCwd, pathValue);
+    return { input: nextInput, routed: true, reason: `${toolName} relative path routed to linked workspace` };
+  }
+
+  return { input, routed: false };
+}
+
 const POWERSHELL_COMMAND_PATTERN = /(^|[^\w.-])(powershell(?:\.exe)?|pwsh(?:\.exe)?)(?=$|[^\w.-])/i;
 const LARGE_IMAGE_READ_GUIDANCE =
   "Image file is too large for direct Read into the main context. Use the built-in image/design MCP tools instead.";
@@ -363,7 +468,7 @@ function resolveOutputFormat(
 }
 
 export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
-  const { prompt, attachments = [], runtime, session, resumeSessionId, onEvent, onSessionUpdate } = options;
+  const { prompt, displayPrompt = prompt, attachments = [], runtime, session, workspaceContext, resumeSessionId, onEvent, onSessionUpdate } = options;
   const abortController = new AbortController();
   const permissionMode = runtime?.permissionMode ?? "bypassPermissions";
   const promptInput = new PromptInputQueue();
@@ -377,8 +482,9 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   let figmaImplementationAnchorSeen = false;
   let codeGraphRetrievalSeen = false;
   let latestGlobalRuntimeConfig: unknown = null;
-  let currentPrompt = prompt;
-  let requiresFigmaImplementationAnchor = shouldRequireFigmaImplementationAnchor(currentPrompt);
+  let currentDisplayPrompt = displayPrompt;
+  let latestWorkspaceContext = normalizeRunnerWorkspaceContext(workspaceContext);
+  let requiresFigmaImplementationAnchor = shouldRequireFigmaImplementationAnchor(currentDisplayPrompt);
   const desiredBuiltinMcpServerNames = new Set<BuiltinMcpServerName>();
   let activeBuiltinMcpServerNames = new Set<BuiltinMcpServerName>();
   let latestFigmaToolMode: "core" | "full" = "full";
@@ -602,7 +708,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         : undefined;
       const hooks = buildQualityHooks(resolvedCwd, {
         config,
-        getPrompt: () => currentPrompt,
+        getPrompt: () => currentDisplayPrompt,
         projectCwd,
         sessionId: session.id,
         isCodeGraphRetrievalSeen: () => codeGraphRetrievalSeen,
@@ -627,9 +733,9 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       const sdkPluginMcpServerNames = listClaudeCodePluginMcpServerNames(sdkPlugins);
       const systemPromptAppend = combineSystemPromptAppend(
         buildGlobalRuntimePromptAppend(syncedGlobalRuntimeConfig, mergedEnv),
-        buildFeishuDocumentFetchPromptAppend(currentPrompt, mergedEnv),
+        buildFeishuDocumentFetchPromptAppend(currentDisplayPrompt, mergedEnv),
         buildAdminConfigPromptAppend(),
-        buildInvokedLocalSlashDefinitionPromptAppend(currentPrompt, projectCwd),
+        buildInvokedLocalSlashDefinitionPromptAppend(currentDisplayPrompt, projectCwd),
         agentContext.systemPromptAppend,
         runtimeProfile.includeProjectMemoryPrompt ? buildClaudeProjectMemoryPromptAppend(projectCwd) : undefined,
         buildKnowledgeOverviewPromptAppend(projectCwd),
@@ -697,12 +803,24 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             const schemaNormalization = isRecord(input)
               ? normalizeToolInputForKnownSchemas(toolName, input)
               : { input: input as Record<string, unknown>, fixes: [], mutated: false };
-            const effectiveInput = schemaNormalization.mutated ? schemaNormalization.input : input;
+            let effectiveInput: Record<string, unknown> = schemaNormalization.mutated ? schemaNormalization.input : input;
             if (schemaNormalization.mutated) {
               console.info("[runner][tool-input-normalized]", {
                 sessionId: session.id,
                 toolName,
                 fixes: schemaNormalization.fixes,
+              });
+            }
+            const linkedWorkspaceRoute = routeLinkedWorkspaceToolInput(toolName, effectiveInput, {
+              context: latestWorkspaceContext,
+              prompt: currentDisplayPrompt,
+            });
+            if (linkedWorkspaceRoute.routed) {
+              effectiveInput = linkedWorkspaceRoute.input;
+              console.info("[runner][linked-workspace-routed]", {
+                sessionId: session.id,
+                toolName,
+                reason: linkedWorkspaceRoute.reason,
               });
             }
             if (isCodeGraphRetrievalTool(toolName)) {
@@ -720,7 +838,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                 ? { behavior: "deny", message: "SDK CronCreate/CronDelete/CronList are disabled. Use the tech-cc-hub cron MCP tools so schedules are persisted with history and retry metadata." }
                 : null,
               () => {
-                const message = getKnowledgeIndexDenyMessage(toolName, currentPrompt);
+                const message = getKnowledgeIndexDenyMessage(toolName, currentDisplayPrompt);
                 return message ? { behavior: "deny", message } : null;
               },
               () => {
@@ -729,7 +847,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                   projectCwd,
                   codeGraphRetrievalSeen,
                   effectiveInput,
-                  currentPrompt,
+                  currentDisplayPrompt,
                 );
                 return message ? { behavior: "deny", message } : null;
               },
@@ -748,7 +866,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               () => permissionMode === "plan"
                 ? { behavior: "deny", message: "Current run is in plan mode; tools will not be executed." }
                 : null,
-              () => toolName === "Skill" && shouldDenyExternalBrowseSkill(effectiveInput, currentPrompt)
+              () => toolName === "Skill" && shouldDenyExternalBrowseSkill(effectiveInput, currentDisplayPrompt)
                 ? { behavior: "deny", message: "This task is testing the built-in tech-cc-hub browser workbench. Use tech-cc-hub browser MCP tools instead of the external browse skill." }
                 : null,
             ];
@@ -896,12 +1014,19 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       activeQuery?.close();
       abortController.abort();
     },
-    appendPrompt: async (nextPrompt: string, nextAttachments: PromptAttachment[] = []) => {
+    appendPrompt: async (
+      nextPrompt: string,
+      nextAttachments: PromptAttachment[] = [],
+      appendOptions: { displayPrompt?: string; workspaceContext?: LinkedWorkspaceContext } = {},
+    ) => {
       if (runnerClosed || promptInput.isClosed()) {
         throw new Error("Runner is closed.");
       }
-      currentPrompt = nextPrompt;
-      requiresFigmaImplementationAnchor = shouldRequireFigmaImplementationAnchor(currentPrompt);
+      currentDisplayPrompt = appendOptions.displayPrompt ?? nextPrompt;
+      if ("workspaceContext" in appendOptions) {
+        latestWorkspaceContext = normalizeRunnerWorkspaceContext(appendOptions.workspaceContext);
+      }
+      requiresFigmaImplementationAnchor = shouldRequireFigmaImplementationAnchor(currentDisplayPrompt);
       codeGraphRetrievalSeen = false;
       await ensureMcpServersForPrompt(nextPrompt, nextAttachments);
       promptInput.enqueue(nextPrompt, nextAttachments);

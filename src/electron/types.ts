@@ -1,4 +1,5 @@
 import type { SDKMessage, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import type { LinkedWorkspaceContext } from "../shared/linked-workspaces.js";
 import type { PromptLedgerMessage } from "../shared/prompt-ledger.js";
 import type { SessionPlanSnapshot } from "../shared/plan-progress.js";
 import type { SessionWorkflowState, WorkflowScope, WorkflowSpecDocument } from "../shared/workflow-markdown.js";
@@ -223,8 +224,8 @@ export type ServerEvent =
 // Client -> Server events
 export type ClientEvent =
   | { type: "session.create"; payload: { title?: string; cwd?: string; allowedTools?: string } }
-  | { type: "session.start"; payload: { title: string; prompt: string; cwd?: string; allowedTools?: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides } }
-  | { type: "session.continue"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides; displayUserPrompt?: boolean; replaceHistoryId?: string } }
+  | { type: "session.start"; payload: { title: string; prompt: string; agentPrompt?: string; workspaceContext?: LinkedWorkspaceContext; cwd?: string; allowedTools?: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides } }
+  | { type: "session.continue"; payload: { sessionId: string; prompt: string; agentPrompt?: string; workspaceContext?: LinkedWorkspaceContext; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides; displayUserPrompt?: boolean; replaceHistoryId?: string } }
   | { type: "session.set_model"; payload: { sessionId: string; model: string } }
   | { type: "session.append"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[] } }
   | { type: "channel.message.receive"; payload: { provider: ChannelProviderId; text: string; externalConversationId?: string; externalMessageId?: string; senderId?: string; senderName?: string; channelName?: string; title?: string; allowedTools?: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides; receivedAt?: number } }

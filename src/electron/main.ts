@@ -3072,7 +3072,12 @@ app.on("ready", async () => {
             const result = await dialog.showOpenDialog(mainWindow!, {
               properties: ["openDirectory"],
             });
-            return result.canceled ? null : result.filePaths[0];
+            if (result.canceled) return null;
+            try {
+              return realpathSync(result.filePaths[0]);
+            } catch {
+              return result.filePaths[0];
+            }
           },
           getApiConfig: () => loadApiConfigSettings(),
           saveApiConfig: (config: unknown) => {
@@ -3242,11 +3247,15 @@ app.on("ready", async () => {
             properties: ['openDirectory']
         });
 
-        if (result.canceled) {
-            return null;
-        }
+	        if (result.canceled) {
+	            return null;
+	        }
 
-        return result.filePaths[0];
+	        try {
+	            return realpathSync(result.filePaths[0]);
+	        } catch {
+	            return result.filePaths[0];
+	        }
     });
 
     ipcMainHandle("get-system-workspace", () => {

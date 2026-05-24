@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import type { AgentRunSurface, PromptAttachment, SessionHistoryCursor, SessionStatus, StreamMessage } from "../types.js";
-import { existsSync } from "fs";
+import { existsSync, realpathSync } from "fs";
 import electron from "electron";
 import { isSuccessfulRunnerResult } from "../../shared/runner-status.js";
 import type { SessionWorkflowState, WorkflowScope } from "../../shared/workflow-markdown.js";
@@ -155,7 +155,11 @@ export class SessionStore {
   private resolveCwd(cwd?: string): string | undefined {
     if (!cwd) return undefined;
     if (existsSync(cwd)) {
-      return cwd;
+      try {
+        return realpathSync(cwd);
+      } catch {
+        return cwd;
+      }
     }
 
     const appPath = app?.getAppPath?.();

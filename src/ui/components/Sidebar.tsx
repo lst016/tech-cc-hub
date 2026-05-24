@@ -3,6 +3,12 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useAppStore } from "../store/useAppStore";
 import type { AppUpdateStatus, SettingsPageId } from "../types";
+import {
+  LINKED_WORKSPACE_STORAGE_KEY,
+  normalizeLinkedWorkspacesByGroup,
+  normalizeWorkspacePath,
+  readLinkedWorkspacesFromStorage,
+} from "./prompt-input/linked-workspaces";
 
 interface SidebarProps {
   connected: boolean;
@@ -44,6 +50,14 @@ export function Sidebar({
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
   const previousSessionStatusRef = useRef<Record<string, string | undefined>>({});
   const [unreadSessionIds, setUnreadSessionIds] = useState<Record<string, "completed" | "error">>({});
+  const [workspaceLinkDialog, setWorkspaceLinkDialog] = useState<{
+    key: string;
+    name: string;
+    cwd?: string;
+  } | null>(null);
+  const [linkedWorkspacesByGroup, setLinkedWorkspacesByGroup] = useState<Record<string, string[]>>({});
+  const [linkedWorkspacesHydrated, setLinkedWorkspacesHydrated] = useState(false);
+  const [recentCwds, setRecentCwds] = useState<string[]>([]);
   const [workspaceHoverCard, setWorkspaceHoverCard] = useState<{
     name: string;
     cwd: string;
@@ -64,6 +78,43 @@ export function Sidebar({
     refreshCurrentTime();
     const timer = window.setInterval(refreshCurrentTime, 60_000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    try {
+      setLinkedWorkspacesByGroup(readLinkedWorkspacesFromStorage());
+    } catch (error) {
+      console.warn("Failed to parse linked workspace storage:", error);
+    } finally {
+      setLinkedWorkspacesHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!linkedWorkspacesHydrated) return;
+    try {
+      const normalizedGroups = normalizeLinkedWorkspacesByGroup(linkedWorkspacesByGroup);
+      const hasEntries = Object.keys(normalizedGroups).length > 0;
+      if (!hasEntries) {
+        window.localStorage.removeItem(LINKED_WORKSPACE_STORAGE_KEY);
+        return;
+      }
+      window.localStorage.setItem(LINKED_WORKSPACE_STORAGE_KEY, JSON.stringify(normalizedGroups));
+    } catch (error) {
+      console.warn("Failed to persist linked workspace storage:", error);
+    }
+  }, [linkedWorkspacesByGroup, linkedWorkspacesHydrated]);
+
+  useEffect(() => {
+    window.electron.getRecentCwds(20)
+      .then((items) => {
+        setRecentCwds(Array.isArray(items)
+          ? items.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+          : []);
+      })
+      .catch(() => {
+        setRecentCwds([]);
+      });
   }, []);
 
   const formatWorkspaceName = (cwd?: string) => {
@@ -167,7 +218,7 @@ export function Sidebar({
   const workspaceGroups = useMemo(() => {
     const groups = new Map<string, { cwd?: string; sessions: typeof sessionList }>();
     for (const session of sessionList) {
-      const key = session.cwd?.trim() || "__no_workspace__";
+      const key = normalizeWorkspacePath(session.cwd ?? "") || "__no_workspace__";
       const existing = groups.get(key);
       if (existing) {
         existing.sessions.push(session);
@@ -244,6 +295,83 @@ export function Sidebar({
     });
   };
 
+  const addLinkedWorkspace = (groupKey: string, primaryCwd: string | undefined, path: string) => {
+    const normalizedGroupKey = normalizeWorkspacePath(groupKey);
+    const normalizedPath = normalizeWorkspacePath(path);
+    const normalizedPrimary = normalizeWorkspacePath(primaryCwd ?? "");
+    if (!normalizedGroupKey || !normalizedPath) return;
+    if (normalizedPrimary && normalizedPath === normalizedPrimary) return;
+
+    setLinkedWorkspacesByGroup((current) => {
+      const currentItems = current[normalizedGroupKey] ?? [];
+      if (currentItems.includes(normalizedPath)) return current;
+      return {
+        ...current,
+        [normalizedGroupKey]: [...currentItems, normalizedPath],
+      };
+    });
+    setRecentCwds((current) => {
+      const deduped = [normalizedPath, ...current.filter((item) => item !== normalizedPath)];
+      return deduped.slice(0, 20);
+    });
+  };
+
+  const removeLinkedWorkspace = (groupKey: string, path: string) => {
+    const normalizedGroupKey = normalizeWorkspacePath(groupKey);
+    const normalizedPath = normalizeWorkspacePath(path);
+    if (!normalizedGroupKey || !normalizedPath) return;
+    setLinkedWorkspacesByGroup((current) => {
+      const items = current[normalizedGroupKey] ?? [];
+      const nextItems = items.filter((item) => item !== normalizedPath);
+      if (nextItems.length === items.length) return current;
+      if (nextItems.length === 0) {
+        const { [normalizedGroupKey]: _, ...rest } = current;
+        return rest;
+      }
+      return {
+        ...current,
+        [normalizedGroupKey]: nextItems,
+      };
+    });
+  };
+
+  const openWorkspaceLinkDialog = (group: (typeof workspaceGroups)[number]) => {
+    setWorkspaceLinkDialog({
+      key: group.key,
+      name: formatWorkspaceName(group.cwd),
+      cwd: group.cwd,
+    });
+    window.electron.getRecentCwds(20)
+      .then((items) => {
+        setRecentCwds(Array.isArray(items)
+          ? items.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+          : []);
+      })
+      .catch(() => {
+        // Keep previous recent list if refresh failed.
+      });
+  };
+
+  const handlePickLinkedWorkspace = async () => {
+    if (!workspaceLinkDialog) return;
+    const result = await window.electron.selectDirectory();
+    const path = result?.trim();
+    if (!path) return;
+    addLinkedWorkspace(workspaceLinkDialog.key, workspaceLinkDialog.cwd, path);
+  };
+
+  const linkedWorkspacePaths = workspaceLinkDialog
+    ? (linkedWorkspacesByGroup[workspaceLinkDialog.key] ?? [])
+    : [];
+  const suggestedWorkspacePaths = workspaceLinkDialog
+    ? recentCwds
+      .map((item) => normalizeWorkspacePath(item))
+      .filter((item) => Boolean(item))
+      .filter((item) => item !== normalizeWorkspacePath(workspaceLinkDialog.cwd ?? ""))
+      .filter((item) => !linkedWorkspacePaths.includes(item))
+      .slice(0, 8)
+    : [];
+
   return (
     <>
       <aside
@@ -274,11 +402,13 @@ export function Sidebar({
           )}
 
           <div className="flex flex-col gap-0.5">
-            {workspaceGroups.map((group) => (
-              <div
-                key={group.key}
-                className="py-px"
-              >
+            {workspaceGroups.map((group) => {
+              const linkedWorkspaceCount = linkedWorkspacesByGroup[group.key]?.length ?? 0;
+              return (
+                <div
+                  key={group.key}
+                  className="py-px"
+                >
                 <div
                   className="group/workspace flex items-center justify-between gap-1 rounded-lg px-2.5 py-1.5 transition-colors hover:bg-[#e7e7e7]"
                   onMouseEnter={(event) => showWorkspaceHoverCard(group, event.currentTarget)}
@@ -299,6 +429,14 @@ export function Sidebar({
                         <path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-10Z" />
                       </svg>
                       <span className="truncate">{formatWorkspaceName(group.cwd)}</span>
+                      {linkedWorkspaceCount > 0 && (
+                        <span
+                          className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-accent/10 px-1.5 text-[11px] font-semibold text-accent"
+                          title={`已关联 ${linkedWorkspaceCount} 个工作区`}
+                        >
+                          {linkedWorkspaceCount}
+                        </span>
+                      )}
                       <svg
                         viewBox="0 0 24 24"
                         className={`h-3.5 w-3.5 shrink-0 text-muted transition-transform ${expandedGroups[group.key] ? "rotate-90" : ""}`}
@@ -318,6 +456,22 @@ export function Sidebar({
                   >
                     <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
                       <path d="M12 5v14M5 12h14" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-md p-1 text-ink-500 opacity-0 transition-all hover:bg-white hover:text-ink-800 group-hover/workspace:opacity-100 focus:opacity-100"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      openWorkspaceLinkDialog(group);
+                    }}
+                    aria-label={`关联工作区到 ${formatWorkspaceName(group.cwd)}`}
+                    title="关联其他工作区"
+                  >
+                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                      <path d="M9.75 8.5H7a4 4 0 1 0 0 8h2.75" />
+                      <path d="M14.25 8.5H17a4 4 0 1 1 0 8h-2.75" />
+                      <path d="M8.75 12h6.5" />
                     </svg>
                   </button>
                   <button
@@ -448,7 +602,8 @@ export function Sidebar({
                   })}
                 </div>
               </div>
-            ))}
+            );
+            })}
           </div>
         </div>
 
@@ -490,8 +645,8 @@ export function Sidebar({
         }}
       >
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 bg-ink-900/40 backdrop-blur-sm" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 w-full max-w-xl -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-6 shadow-xl">
+          <Dialog.Overlay className="fixed inset-0 z-[21000] bg-ink-900/40 backdrop-blur-sm" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-[21010] w-full max-w-xl -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-6 shadow-xl">
             <div className="flex items-start justify-between gap-4">
               <Dialog.Title className="text-lg font-semibold text-ink-800">恢复命令</Dialog.Title>
               <Dialog.Close asChild>
@@ -516,6 +671,110 @@ export function Sidebar({
                   </svg>
                 )}
               </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+      <Dialog.Root
+        open={Boolean(workspaceLinkDialog)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setWorkspaceLinkDialog(null);
+          }
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[21000] bg-ink-900/40 backdrop-blur-sm" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-[21010] w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <Dialog.Title className="text-lg font-semibold text-ink-800">关联工作区</Dialog.Title>
+                <div className="mt-1 text-xs text-muted">
+                  主工作区：{workspaceLinkDialog?.name || "未绑定工作区"}
+                </div>
+                <div className="mt-1 text-[11px] text-muted-light">
+                  {workspaceLinkDialog?.cwd || "未绑定工作区路径"}
+                </div>
+              </div>
+              <Dialog.Close asChild>
+                <button className="rounded-full p-1 text-ink-500 hover:bg-ink-900/10" aria-label="关闭弹窗">
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M6 6l12 12M18 6l-12 12" />
+                  </svg>
+                </button>
+              </Dialog.Close>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <div>
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-light">已关联</div>
+                {linkedWorkspacePaths.length === 0 ? (
+                  <div className="rounded-xl border border-black/8 bg-surface px-3 py-3 text-sm text-muted">
+                    还没有关联工作区。点击下方「选择目录」或最近目录快速添加。
+                  </div>
+                ) : (
+                  <div className="max-h-48 space-y-2 overflow-y-auto pr-1">
+                    {linkedWorkspacePaths.map((path) => (
+                      <div
+                        key={path}
+                        className="flex items-center justify-between gap-3 rounded-xl border border-black/8 bg-surface px-3 py-2"
+                      >
+                        <span className="min-w-0 truncate text-sm text-ink-800" title={path}>{path}</span>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-muted transition hover:bg-black/5 hover:text-error"
+                          onClick={() => {
+                            if (!workspaceLinkDialog) return;
+                            removeLinkedWorkspace(workspaceLinkDialog.key, path);
+                          }}
+                        >
+                          移除
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {suggestedWorkspacePaths.length > 0 && (
+                <div>
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-light">最近目录</div>
+                  <div className="flex flex-wrap gap-2">
+                    {suggestedWorkspacePaths.map((path) => (
+                      <button
+                        key={path}
+                        type="button"
+                        className="max-w-full truncate rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs text-ink-700 transition hover:border-accent/30 hover:bg-accent/5"
+                        title={path}
+                        onClick={() => {
+                          if (!workspaceLinkDialog) return;
+                          addLinkedWorkspace(workspaceLinkDialog.key, workspaceLinkDialog.cwd, path);
+                        }}
+                      >
+                        {path}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-ink-700 transition hover:bg-surface-tertiary"
+                onClick={() => { void handlePickLinkedWorkspace(); }}
+              >
+                选择目录...
+              </button>
+              <Dialog.Close asChild>
+                <button
+                  type="button"
+                  className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-accent-hover"
+                >
+                  完成
+                </button>
+              </Dialog.Close>
             </div>
           </Dialog.Content>
         </Dialog.Portal>

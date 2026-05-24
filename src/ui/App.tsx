@@ -10,7 +10,7 @@ import type { AppUpdateStatus, PromptAttachment, ServerEvent, SettingsPageId, St
 import { DEFAULT_SIDEBAR_WIDTH, Sidebar } from "./components/Sidebar";
 import { TooltipButton } from "./components/TooltipButton";
 import { UpdateToast } from "./components/UpdateToast";
-import { PromptInput, usePromptActions } from "./components/PromptInput";
+import { PromptInput, usePromptActions } from "./components/prompt-input";
 import { SessionAnalysisPage, buildSessionWorkflowOptimizationPrompt } from "./components/SessionAnalysisPage";
 // FeedbackDialog removed — uses direct browser link
 import { OPEN_BROWSER_WORKBENCH_URL_EVENT, type OpenBrowserWorkbenchUrlDetail } from "./events";
@@ -1020,7 +1020,6 @@ function App() {
       return;
     }
 
-    setCwd("");
     setShowStartModal(true);
   }, [sendEvent, setCwd, setPrompt, setShowStartModal]);
 

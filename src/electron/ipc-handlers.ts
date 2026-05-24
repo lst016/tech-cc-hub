@@ -1121,6 +1121,8 @@ export async function handleClientEvent(event: ClientEvent) {
   }
 
   if (event.type === "session.start") {
+    const displayPrompt = event.payload.prompt;
+    const agentPrompt = event.payload.agentPrompt?.trim() ? event.payload.agentPrompt : displayPrompt;
     const { displayAttachments, agentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
     const config = getCurrentApiConfig();
     const requestedModel = event.payload.runtime?.model?.trim() || config?.model;
@@ -1132,7 +1134,7 @@ export async function handleClientEvent(event: ClientEvent) {
       agentId: event.payload.runtime?.agentId,
       model: selectedModel,
       allowedTools: event.payload.allowedTools,
-      prompt: event.payload.prompt,
+      prompt: displayPrompt,
     });
 
     store.updateSession(session.id, {
@@ -1140,7 +1142,7 @@ export async function handleClientEvent(event: ClientEvent) {
       runSurface: event.payload.runtime?.runSurface ?? session.runSurface ?? "development",
       agentId: event.payload.runtime?.agentId ?? session.agentId,
       model: selectedModel,
-      lastPrompt: event.payload.prompt,
+      lastPrompt: displayPrompt,
     });
 
     emit({
@@ -1161,7 +1163,7 @@ export async function handleClientEvent(event: ClientEvent) {
         sessionId: session.id,
         message: buildPromptLedgerForRun({
           phase: "start",
-          prompt: event.payload.prompt,
+          prompt: displayPrompt,
           attachments: agentAttachments,
           session,
           model: selectedModel,
@@ -1171,7 +1173,7 @@ export async function handleClientEvent(event: ClientEvent) {
 
     emit({
       type: "stream.user_prompt",
-      payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: displayAttachments },
+      payload: { sessionId: session.id, prompt: displayPrompt, attachments: displayAttachments },
     });
 
     const runnerRuntime = {
@@ -1182,12 +1184,14 @@ export async function handleClientEvent(event: ClientEvent) {
       session,
       model: selectedModel,
       runtime: runnerRuntime,
-      prompt: event.payload.prompt,
+      prompt: agentPrompt,
       attachments: agentAttachments,
     });
 
     runClaude({
-      prompt: event.payload.prompt,
+      prompt: agentPrompt,
+      displayPrompt,
+      workspaceContext: event.payload.workspaceContext,
       attachments: agentAttachments,
       runtime: runnerRuntime,
       session,
@@ -1231,8 +1235,10 @@ export async function handleClientEvent(event: ClientEvent) {
     }
 
     const defaultConfig = getCurrentApiConfig();
-    const storagePrompt = redactFigmaMcpOAuthCallbackPrompt(event.payload.prompt);
-    const isFigmaOAuthCallback = isFigmaMcpOAuthCallbackPrompt(event.payload.prompt);
+    const displayPrompt = event.payload.prompt;
+    const agentPrompt = event.payload.agentPrompt?.trim() ? event.payload.agentPrompt : displayPrompt;
+    const storagePrompt = redactFigmaMcpOAuthCallbackPrompt(displayPrompt);
+    const isFigmaOAuthCallback = isFigmaMcpOAuthCallbackPrompt(displayPrompt);
     const { displayAttachments, agentAttachments: currentAgentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
     const replacingHistoryId = event.payload.replaceHistoryId?.trim();
 
@@ -1300,7 +1306,7 @@ export async function handleClientEvent(event: ClientEvent) {
       session,
       model: selectedModel,
       runtime: runnerRuntime,
-      prompt: event.payload.prompt,
+      prompt: agentPrompt,
       attachments: currentAgentAttachments,
     });
     const reusableHandle = isFigmaOAuthCallback || replacingHistoryId ? null : getReusableRunnerHandle(session.id, warmReuseKey);
@@ -1346,7 +1352,10 @@ export async function handleClientEvent(event: ClientEvent) {
       }
 
       try {
-        await reusableHandle.appendPrompt(event.payload.prompt, currentAgentAttachments);
+        await reusableHandle.appendPrompt(agentPrompt, currentAgentAttachments, {
+          displayPrompt: storagePrompt,
+          workspaceContext: event.payload.workspaceContext,
+        });
       } catch (error) {
         closeRunnerHandle(session.id);
         store.updateSession(session.id, { status: "error" });
@@ -1375,7 +1384,7 @@ export async function handleClientEvent(event: ClientEvent) {
       ? null
       : buildStatelessContinuationPayload(
           historyMessagesForRun,
-          isFigmaOAuthCallback ? storagePrompt : event.payload.prompt,
+          isFigmaOAuthCallback ? storagePrompt : agentPrompt,
           currentAgentAttachments,
           {
             contextWindow: modelConfig?.contextWindow,
@@ -1385,9 +1394,9 @@ export async function handleClientEvent(event: ClientEvent) {
             existingSummaryMessageCount: history?.session.continuationSummaryMessageCount,
           },
         );
-    const prompt = canUseRemoteResume ? event.payload.prompt : continuationPayload?.prompt ?? event.payload.prompt;
+    const prompt = canUseRemoteResume ? agentPrompt : continuationPayload?.prompt ?? agentPrompt;
     const resumeSessionId = canUseRemoteResume ? session.claudeSessionId : undefined;
-    const rehydratedAttachments = shouldRehydrateRecentImages(event.payload.prompt, displayAttachments)
+    const rehydratedAttachments = shouldRehydrateRecentImages(displayPrompt, displayAttachments)
       ? await loadRecentReferencedImages(history?.messages ?? [])
       : [];
     const attachmentsForRun = [...currentAgentAttachments, ...rehydratedAttachments];
@@ -1422,7 +1431,7 @@ export async function handleClientEvent(event: ClientEvent) {
         sessionId: session.id,
         message: buildPromptLedgerForRun({
           phase: "continue",
-          prompt: canUseRemoteResume ? storagePrompt : continuationPayload?.prompt ?? storagePrompt,
+          prompt: storagePrompt,
           attachments: attachmentsForRun,
           session,
           historyMessages: canUseRemoteResume ? historyMessagesForRun : [],
@@ -1441,6 +1450,8 @@ export async function handleClientEvent(event: ClientEvent) {
 
     runClaude({
       prompt,
+      displayPrompt: storagePrompt,
+      workspaceContext: event.payload.workspaceContext,
       attachments: attachmentsForRun,
       runtime: runnerRuntime,
       session,
