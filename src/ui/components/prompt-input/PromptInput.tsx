@@ -101,18 +101,6 @@ const REASONING_OPTIONS: Array<{ value: RuntimeReasoningMode; label: string }> =
   { value: "high", label: "高" },
   { value: "xhigh", label: "超高" },
 ];
-const WORKSPACE_DROPDOWN_BROWSE_VALUE = "__browse_workspace__";
-const WORKSPACE_DROPDOWN_EMPTY_VALUE = "__empty_workspace__";
-
-function formatWorkspaceDropdownLabel(path: string): string {
-  const normalized = path.trim();
-  if (!normalized) return "未设置";
-  const parts = normalized.split(/[\\/]+/).filter(Boolean);
-  if (parts.length === 0) return normalized;
-  const name = parts.at(-1) ?? normalized;
-  const parent = parts.at(-2);
-  return parent ? `${name} · ${parent}` : name;
-}
 
 export function PromptInput({
   sendEvent,
@@ -124,13 +112,11 @@ export function PromptInput({
   rightOffset = 340,
 }: PromptInputProps) {
   const storeCwd = useAppStore((state) => state.cwd);
-  const setCwd = useAppStore((state) => state.setCwd);
   const storeActiveSessionId = useAppStore((state) => state.activeSessionId);
   const storeActiveSessionCwd = useAppStore((state) => {
     if (!storeActiveSessionId) return "";
     return (state.sessions[storeActiveSessionId] ?? state.archivedSessions[storeActiveSessionId])?.cwd ?? "";
   });
-  const [recentWorkspaceCwds, setRecentWorkspaceCwds] = useState<string[]>([]);
   const selectedWorkspaceCwd = (storeCwd.trim() || storeActiveSessionCwd.trim());
   const { prompt, setPrompt, isRunning, handleStop, slashCommands, activeSessionId, browserAnnotations, sendPromptDraft, validatePromptDraft } = usePromptActions(
     sendEvent,
@@ -308,75 +294,6 @@ export function PromptInput({
       });
     }
   }, [activeSessionId, sendEvent, setRuntimeModel, setSessionModel]);
-  const workspaceSelectValue = selectedWorkspaceCwd || WORKSPACE_DROPDOWN_EMPTY_VALUE;
-  const workspaceSelectOptions = useMemo(() => {
-    const options: Array<{ value: string; label: string }> = [
-      { value: WORKSPACE_DROPDOWN_EMPTY_VALUE, label: "未设置" },
-    ];
-    const seen = new Set<string>();
-    const addPathOption = (input?: string) => {
-      const normalized = input?.trim();
-      if (!normalized || seen.has(normalized)) return;
-      seen.add(normalized);
-      options.push({
-        value: normalized,
-        label: formatWorkspaceDropdownLabel(normalized),
-      });
-    };
-
-    addPathOption(selectedWorkspaceCwd);
-    addPathOption(storeActiveSessionCwd);
-    addPathOption(storeCwd);
-    for (const path of recentWorkspaceCwds) {
-      addPathOption(path);
-    }
-
-    options.push({ value: WORKSPACE_DROPDOWN_BROWSE_VALUE, label: "选择目录..." });
-    return options;
-  }, [recentWorkspaceCwds, selectedWorkspaceCwd, storeActiveSessionCwd, storeCwd]);
-  const applyWorkspaceSelection = useCallback((nextPath: string) => {
-    setCwd(nextPath);
-    if (!nextPath.trim()) return;
-    setRecentWorkspaceCwds((current) => {
-      const deduped = [nextPath, ...current.filter((item) => item !== nextPath)];
-      return deduped.slice(0, 20);
-    });
-  }, [setCwd]);
-  const handleWorkspaceSelectChange = useCallback((value: string) => {
-    if (value === WORKSPACE_DROPDOWN_BROWSE_VALUE) {
-      void (async () => {
-        const picked = await window.electron.selectDirectory();
-        if (!picked?.trim()) return;
-        applyWorkspaceSelection(picked.trim());
-      })();
-      return;
-    }
-
-    if (value === WORKSPACE_DROPDOWN_EMPTY_VALUE) {
-      applyWorkspaceSelection("");
-      return;
-    }
-
-    applyWorkspaceSelection(value.trim());
-  }, [applyWorkspaceSelection]);
-  useEffect(() => {
-    let cancelled = false;
-    window.electron.getRecentCwds?.(20)
-      .then((items) => {
-        if (cancelled) return;
-        const normalized = Array.isArray(items)
-          ? items.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim())
-          : [];
-        setRecentWorkspaceCwds(normalized);
-      })
-      .catch(() => {
-        if (!cancelled) setRecentWorkspaceCwds([]);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeSessionId]);
   useEffect(() => {
     promptDraftRef.current = prompt;
   }, [prompt]);
@@ -1378,14 +1295,6 @@ export function PromptInput({
         </div>
         <div className="prompt-composer-footer mt-2 flex min-h-10 items-center justify-between gap-3 overflow-visible">
           <div className="prompt-composer-runtime-controls flex min-w-max items-center gap-2 text-[#73777f]">
-            <InlineDropdown
-              label="默认工作区"
-              value={workspaceSelectValue}
-              disabled={disabled}
-              onChange={handleWorkspaceSelectChange}
-              minWidthClass="min-w-[170px] bg-transparent hover:bg-[#f4f6f8]"
-              options={workspaceSelectOptions}
-            />
             <ModelSelect
               label="模型"
               value={selectedRuntimeModel}

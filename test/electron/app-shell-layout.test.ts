@@ -6,7 +6,7 @@ import { join } from "node:path";
 test("app shell avoids fixed-width caps for the chat surface and prompt dock", () => {
   const appSource = readFileSync(join(process.cwd(), "src/ui/App.tsx"), "utf8");
   const activityRailSource = readFileSync(join(process.cwd(), "src/ui/components/ActivityRail.tsx"), "utf8");
-  const promptInputSource = readFileSync(join(process.cwd(), "src/ui/components/PromptInput.tsx"), "utf8");
+  const promptInputSource = readFileSync(join(process.cwd(), "src/ui/components/prompt-input/PromptInput.tsx"), "utf8");
 
   assert.equal(appSource.includes("max-w-[920px]"), false);
   assert.match(activityRailSource, /执行计划/);
@@ -17,6 +17,15 @@ test("app shell avoids fixed-width caps for the chat surface and prompt dock", (
   assert.match(promptInputSource, /max-h-\[min\(42vh,320px\)\]/);
   assert.match(appSource, /clamp\(/);
   assert.match(promptInputSource, /clamp\(/);
+});
+
+test("prompt composer does not expose workspace selection in the footer", () => {
+  const promptInputSource = readFileSync(join(process.cwd(), "src/ui/components/prompt-input/PromptInput.tsx"), "utf8");
+
+  assert.equal(promptInputSource.includes('label="默认工作区"'), false);
+  assert.doesNotMatch(promptInputSource, /WORKSPACE_DROPDOWN/);
+  assert.doesNotMatch(promptInputSource, /handleWorkspaceSelectChange/);
+  assert.doesNotMatch(promptInputSource, /selectDirectory/);
 });
 
 test("feedback button opens github issues directly", () => {
