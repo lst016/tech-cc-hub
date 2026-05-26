@@ -51,6 +51,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function getLatestRuntimeUsageModel(messages: StreamMessage[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message) continue;
+    const record = message as Record<string, unknown>;
+
+    if (message.type === "assistant" && isRecord(record.message)) {
+      const model = record.message.model;
+      if (typeof model === "string" && model.trim()) return model.trim();
+    }
+
+    if (message.type === "prompt_ledger") {
+      const model = record.model;
+      if (typeof model === "string" && model.trim()) return model.trim();
+    }
+
+    if (message.type === "result" && isRecord(record.modelUsage)) {
+      const model = Object.keys(record.modelUsage).find((name) => name.trim());
+      if (model) return model.trim();
+    }
+  }
+
+  return "";
+}
+
 function PanelLoadFallback({ label = "正在加载..." }: { label?: string }) {
   return (
     <div className="flex h-full min-h-0 w-full items-center justify-center bg-transparent px-4 text-xs text-muted">
@@ -563,6 +588,13 @@ function App() {
     if (event.type === "session.history" || event.type === "session.deleted") {
       setIsLoadingHistory(false);
     }
+    if (event.type === "desktop.notification.opened") {
+      const target = event.payload.target;
+      const hasSessionTarget = "sessionId" in target && Boolean(target.sessionId);
+      setShowSessionAnalysis(false);
+      setShowTaskPanel(target.type === "task" && !hasSessionTarget);
+      setShowCronPage(target.type === "cron" && !hasSessionTarget);
+    }
     handleServerEvent(event);
     handlePartialMessages(event);
   }, [handleServerEvent, handlePartialMessages]);
@@ -576,7 +608,9 @@ function App() {
   const activeBrowserWorkbenchState = activeSessionId ? browserWorkbenchBySessionId[activeSessionId] : undefined;
   const activeHasBrowserTab = activeBrowserWorkbenchState?.hasBrowserTab ?? Boolean(activeBrowserWorkbenchState?.url);
   const activeHasTerminalTab = activeSessionId ? terminalTabBySessionId[activeSessionId] === true : false;
+  const latestRuntimeUsageModel = useMemo(() => getLatestRuntimeUsageModel(messages), [messages]);
   const selectedUsageModel =
+    latestRuntimeUsageModel ||
     activeSession?.model?.trim() ||
     runtimeModel?.trim() ||
     apiConfigSettings.profiles.find((profile) => profile.enabled)?.model ||

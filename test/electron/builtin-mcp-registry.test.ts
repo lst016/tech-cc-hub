@@ -80,7 +80,8 @@ test("knowledge MCP hints prioritize retrieval over reindexing", () => {
   const hints = (knowledgeServer.promptHints ?? []).join("\n");
   assert.match(hints, /codegraph_search.*codegraph_context/s);
   assert.match(hints, /\.tech\/codegraph/);
-  assert.match(hints, /auto-initialize.*incremental sync/s);
+  assert.match(hints, /fast-path only/);
+  assert.match(hints, /do not auto-initialize.*incremental sync/s);
   assert.match(hints, /before broad `Read`\/`Grep`\/`Glob`\/`Task`/);
-  assert.match(hints, /do not require an LLM or embedding model/);
+  assert.match(hints, /codegraph_sync mode=index only for explicit refresh\/indexing requests/);
 });

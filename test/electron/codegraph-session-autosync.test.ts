@@ -54,6 +54,7 @@ test("CodeGraph turn autosync serializes repeated requests for the same workspac
   });
 
   const scheduler = createSessionCodeGraphAutoSyncScheduler({
+    minIntervalMs: 0,
     sync: async (workspaceRoot) => {
       calls.push(workspaceRoot);
       if (calls.length === 1) {
@@ -79,5 +80,35 @@ test("CodeGraph turn autosync serializes repeated requests for the same workspac
   releaseFirstSync?.();
   await waitFor(() => calls.length === 2);
 
+  assert.deepEqual(calls, ["D:/workspace/project", "D:/workspace/project"]);
+});
+
+test("CodeGraph turn autosync coalesces repeated requests inside the cooldown", async () => {
+  const calls: string[] = [];
+  const scheduler = createSessionCodeGraphAutoSyncScheduler({
+    minIntervalMs: 80,
+    sync: async (workspaceRoot) => {
+      calls.push(workspaceRoot);
+    },
+  });
+
+  scheduler({
+    sessionId: "session-1",
+    cwd: "D:/workspace/project",
+    previousStatus: "running",
+    nextStatus: "completed",
+  });
+  await waitFor(() => calls.length === 1);
+
+  scheduler({
+    sessionId: "session-2",
+    cwd: "D:/workspace/project",
+    previousStatus: "running",
+    nextStatus: "completed",
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(calls, ["D:/workspace/project"]);
+  await waitFor(() => calls.length === 2);
   assert.deepEqual(calls, ["D:/workspace/project", "D:/workspace/project"]);
 });

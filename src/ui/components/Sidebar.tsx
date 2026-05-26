@@ -24,6 +24,7 @@ interface SidebarProps {
 }
 
 export const DEFAULT_SIDEBAR_WIDTH = 280;
+export const WORKSPACE_SESSION_PREVIEW_LIMIT = 5;
 
 export function Sidebar({
   onNewSession,
@@ -45,6 +46,7 @@ export function Sidebar({
   const [resumeSessionId, setResumeSessionId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [expandedSessionLists, setExpandedSessionLists] = useState<Record<string, boolean>>({});
   const closeTimerRef = useRef<number | null>(null);
   const [hasUpdate, setHasUpdate] = useState(false);
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
@@ -325,8 +327,9 @@ export function Sidebar({
       const nextItems = items.filter((item) => item !== normalizedPath);
       if (nextItems.length === items.length) return current;
       if (nextItems.length === 0) {
-        const { [normalizedGroupKey]: _, ...rest } = current;
-        return rest;
+        const next = { ...current };
+        delete next[normalizedGroupKey];
+        return next;
       }
       return {
         ...current,
@@ -404,6 +407,11 @@ export function Sidebar({
           <div className="flex flex-col gap-0.5">
             {workspaceGroups.map((group) => {
               const linkedWorkspaceCount = linkedWorkspacesByGroup[group.key]?.length ?? 0;
+              const sessionListExpanded = Boolean(expandedSessionLists[group.key]);
+              const hasSessionOverflow = group.sessions.length > WORKSPACE_SESSION_PREVIEW_LIMIT;
+              const visibleSessions = sessionListExpanded || !hasSessionOverflow
+                ? group.sessions
+                : group.sessions.slice(0, WORKSPACE_SESSION_PREVIEW_LIMIT);
               return (
                 <div
                   key={group.key}
@@ -495,7 +503,7 @@ export function Sidebar({
                 </div>
 
                     <div className={`mt-0.5 flex flex-col gap-0.5 ${expandedGroups[group.key] ? "" : "hidden"}`}>
-                  {group.sessions.map((session) => {
+                  {visibleSessions.map((session) => {
                     const isActiveSession = activeSessionId === session.id;
                     const isRunningSession = session.status === "running";
                     const unreadSessionStatus = unreadSessionIds[session.id];
@@ -600,6 +608,20 @@ export function Sidebar({
                     </div>
                     );
                   })}
+                  {hasSessionOverflow && (
+                    <button
+                      type="button"
+                      className="ml-8 mt-0.5 w-fit px-0 py-0.5 text-xs font-medium text-muted transition-colors hover:text-ink-800 focus:outline-none focus-visible:text-ink-800"
+                      aria-expanded={sessionListExpanded}
+                      aria-label={`${sessionListExpanded ? "折叠" : "展开显示"} ${formatWorkspaceName(group.cwd)} 的会话列表`}
+                      onClick={() => setExpandedSessionLists((current) => ({
+                        ...current,
+                        [group.key]: !current[group.key],
+                      }))}
+                    >
+                      {sessionListExpanded ? "折叠" : "展开显示"}
+                    </button>
+                  )}
                 </div>
               </div>
             );

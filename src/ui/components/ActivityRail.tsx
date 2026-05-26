@@ -23,6 +23,10 @@ const AionWorkspacePreviewPane = lazy(() => import("./AionWorkspacePreviewPane")
 const GitWorkbenchPanel = lazy(() => import("./git/GitWorkbenchPanel").then((module) => ({ default: module.GitWorkbenchPanel })));
 const TerminalWorkspacePanel = lazy(() => import("./TerminalWorkspacePanel").then((module) => ({ default: module.TerminalWorkspacePanel })));
 
+const INLINE_TRACE_TIMELINE_LIMIT = 80;
+const MATERIAL_STATUS_TIMELINE_SCAN_LIMIT = 120;
+const MATERIAL_STATUS_TEXT_CHAR_LIMIT = 24_000;
+
 const NODE_KIND_LABELS: Record<ActivityTimelineItem["nodeKind"], string> = {
   context: "上下文",
   plan: "AI 计划",
@@ -296,8 +300,10 @@ function buildMaterialStatusItems(
 ): MaterialStatusItem[] {
   const latestAttachments = model.contextSnapshot.latestAttachments;
   const attachmentNames = latestAttachments.map((attachment) => attachment.name).filter(Boolean);
-  const timelineTexts = model.timeline.map(collectTimelineSearchText);
-  const timelineText = timelineTexts.join("\n");
+  const timelineTexts = model.timeline
+    .slice(0, MATERIAL_STATUS_TIMELINE_SCAN_LIMIT)
+    .map(collectTimelineSearchText);
+  const timelineText = timelineTexts.join("\n").slice(0, MATERIAL_STATUS_TEXT_CHAR_LIMIT);
   const lowerTimelineText = timelineText.toLowerCase();
   const lowerPartialMessage = partialMessage.toLowerCase();
 
@@ -421,7 +427,7 @@ function ContextUsagePanel({
   const toolPayloadTokens = bucketTokensByKind(model, ["tool"]);
   const uniqueToolNames = new Set(model.timeline.map((item) => item.toolName).filter(Boolean));
   const toolDefinitionTokens = uniqueToolNames.size > 0 ? Math.round(uniqueToolNames.size * 260) : 0;
-  const categoryRows: Array<ContextUsageBreakdownCategory & {
+  const ledgerCategoryRows: Array<ContextUsageBreakdownCategory & {
     markerClass: string;
     cellClass: string;
     note?: string;
@@ -484,10 +490,30 @@ function ContextUsagePanel({
       fallbackDetail: "包含历史消息、当前输入、附件，以及当前输入框草稿/流式输出估算。",
     },
   ].filter((row) => row.tokens > 0 || row.label === "当前 Agent");
-  const usedTokens = categoryRows.reduce((sum, row) => sum + (row.tokens ?? 0), 0);
+  const ledgerUsedTokens = ledgerCategoryRows.reduce((sum, row) => sum + (row.tokens ?? 0), 0);
+  const actualInputTokens = model.contextDistribution.actualInputTokens;
+  const usedTokens = Math.max(ledgerUsedTokens, actualInputTokens ?? 0);
+  const unattributedInputTokens = Math.max(0, usedTokens - ledgerUsedTokens);
+  const categoryRows = unattributedInputTokens > 0
+    ? [
+        ...ledgerCategoryRows,
+        {
+          id: "actual-input-delta",
+          label: "模型实际差额",
+          tokens: unattributedInputTokens,
+          markerClass: "bg-violet-500",
+          cellClass: "border-violet-400/30 bg-violet-500/70",
+          fallbackDetail: "模型实际 input_tokens 高于 prompt ledger 可归因估算的部分，通常来自远端会话历史、SDK/工具 schema、系统注入或其他暂未归类开销。",
+        },
+      ]
+    : ledgerCategoryRows;
   const usedRatio = Math.min(1, usedTokens / windowTokens);
   const freeTokens = Math.max(0, windowTokens - usedTokens - autoCompactTokens);
-  const displayModel = selectedModel || model.contextSnapshot.model || model.promptAnalysis.ledgers.at(-1)?.model || "未选择模型";
+  const runtimeModel = model.contextSnapshot.model !== "-" ? model.contextSnapshot.model : "";
+  const displayModel = runtimeModel || selectedModel || model.promptAnalysis.ledgers.at(-1)?.model || "未选择模型";
+  const usageBasis = typeof actualInputTokens === "number"
+    ? "按模型实际 input_tokens 显示；拆分来自 prompt ledger，差额为未归因上下文。"
+    : "基于下一轮 prompt ledger 的上下文估算";
   const selectedBreakdownCategory = categoryRows.find((row) => row.id === selectedBreakdownId) ?? null;
   const breakdownItems = selectedBreakdownCategory
     ? buildContextUsageBreakdown(model.promptAnalysis.segments, selectedBreakdownCategory)
@@ -520,7 +546,7 @@ function ContextUsagePanel({
         ))}
       </div>
 
-      <div className="mt-4 text-[11px] italic text-ink-400">基于下一轮 prompt ledger 的上下文估算</div>
+      <div className="mt-4 text-[11px] italic text-ink-400">{usageBasis}</div>
       <div className="mt-2 space-y-1.5 text-[12px] leading-5">
         {categoryRows.map((row) => {
           const ratio = (row.tokens ?? 0) / windowTokens;
@@ -1194,8 +1220,12 @@ export function ActivityRail({
   const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-12" : "top-10";
   const showLabels = width >= 300;
   const model = useMemo(
-    () => buildActivityRailModel(session, session?.permissionRequests ?? [], partialMessage),
-    [partialMessage, session],
+    () => buildActivityRailModel(session, session?.permissionRequests ?? [], ""),
+    [session],
+  );
+  const visibleTimeline = useMemo(
+    () => model.timeline.slice(0, INLINE_TRACE_TIMELINE_LIMIT),
+    [model.timeline],
   );
   const [internalActiveTab, setInternalActiveTab] = useState<ActivityRailTab>("trace");
   const selectedTab = activeTab ?? internalActiveTab;
@@ -1577,7 +1607,7 @@ export function ActivityRail({
             </div>
           </section>
 
-          {model.timeline.length > 0 && (
+          {visibleTimeline.length > 0 && (
             <section ref={timelineRef} className="rounded-[28px] border border-black/5 bg-white/68 p-4 shadow-[0_16px_32px_rgba(15,23,42,0.05)]">
               <div className="flex items-center justify-between gap-3 mb-4">
                 <div>
@@ -1585,11 +1615,13 @@ export function ActivityRail({
                   <p className="mt-1 text-[12px] text-ink-500">按执行阶段分组，点击节点查看详情。</p>
                 </div>
                 <span className="rounded-full border border-black/5 bg-black/[0.03] px-2.5 py-1 text-[10px] text-ink-500">
-                  {model.timeline.length} 条
+                  {visibleTimeline.length < model.timeline.length
+                    ? `${visibleTimeline.length}/${model.timeline.length} 条`
+                    : `${model.timeline.length} 条`}
                 </span>
               </div>
               <div className="space-y-4">
-                {renderTimelineWithStages(model.timeline, selectedTimelineId, (id) => setSelectedTimelineId(id))}
+                {renderTimelineWithStages(visibleTimeline, selectedTimelineId, (id) => setSelectedTimelineId(id))}
               </div>
             </section>
           )}

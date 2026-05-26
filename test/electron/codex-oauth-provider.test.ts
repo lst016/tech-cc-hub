@@ -12,7 +12,7 @@ import {
   parseCodexCliAuthCredential,
   parseCodexOAuthCredential,
   toAnthropicMessageResponse,
-} from "../../src/electron/libs/codex-oauth.js";
+} from "../../src/electron/libs/codex/codex-oauth.js";
 import {
   createCodexOAuthProfile,
   normalizeProfile,

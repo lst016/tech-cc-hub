@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { pathToFileURL } from "url";
 
-import { resolveDesignImagePath } from "../../src/electron/libs/design-image-path.js";
+import { resolveDesignImagePath } from "../../src/electron/libs/image/design-image-path.js";
 
 describe("design image path resolution", () => {
   it("converts file URI image paths into local filesystem paths", () => {

@@ -3,10 +3,11 @@
 // conversationRepo dependency, SkillSuggestWatcher. Hardcoded Chinese messages.
 
 import { Cron } from "croner";
-import type { CronJob, CronSchedule, CreateCronJobParams } from "./cron-types.js";
+import type { CronJob, CreateCronJobParams } from "./cron-types.js";
 import type { ICronRepository } from "./cron-repository.js";
 import type { ICronEventEmitter } from "./cron-event-emitter.js";
 import type { ICronJobExecutor } from "./cron-executor.js";
+import { notifyCronFinished } from "../desktop-notifications.js";
 
 export class CronService {
   private timers: Map<string, Cron | NodeJS.Timeout> = new Map();
@@ -255,6 +256,15 @@ export class CronService {
     } catch (error) {
       lastStatus = "error";
       lastError = error instanceof Error ? error.message : String(error);
+      notifyCronFinished({
+        jobId: job.id,
+        jobName: job.name,
+        conversationTitle: job.metadata.conversationTitle,
+        sessionId: preparedConversationId,
+        workspacePath: job.metadata.agentConfig?.workspace,
+        status: lastStatus,
+        error: lastError,
+      });
       console.error(`[CronService] 任务 ${job.id} 失败:`, error);
     }
 
@@ -271,7 +281,14 @@ export class CronService {
   private registerCompletionNotification(job: CronJob): void {
     const { conversationId } = job.metadata;
     this.executor.onceIdle(conversationId, async () => {
-      // Notification placeholder - can be wired to Electron Notification API later
+      notifyCronFinished({
+        jobId: job.id,
+        jobName: job.name,
+        conversationTitle: job.metadata.conversationTitle,
+        sessionId: conversationId,
+        workspacePath: job.metadata.agentConfig?.workspace,
+        status: "ok",
+      });
       console.log(`[CronService] 定时任务完成: ${job.name}`);
     });
   }

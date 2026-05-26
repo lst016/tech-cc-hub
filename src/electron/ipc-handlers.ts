@@ -47,6 +47,7 @@ import {
   recordChannelInboundMessage,
   type ChannelReplyTarget,
 } from "./libs/channel/channel-workspace.js";
+import { notifySessionFinished, notifyTaskExecutionFinished } from "./libs/desktop-notifications.js";
 
 let sessions: SessionStore;
 const runnerHandles = new Map<string, RunnerHandle>();
@@ -111,6 +112,16 @@ export function initializeTaskExecutor(dbPath: string): TaskExecutor {
         type: "task.execution.completed",
         payload: { execution },
       } as ServerEvent);
+      const task = taskRepo.getTask(execution.taskId);
+      const executionSession = sessions.getSession(execution.sessionId);
+      notifyTaskExecutionFinished({
+        taskId: execution.taskId,
+        sessionId: execution.sessionId,
+        taskTitle: task?.title,
+        workspacePath: task?.workspacePath ?? executionSession?.cwd,
+        status: execution.status,
+        error: execution.error,
+      });
     },
     onExecutionLog: (log) => {
       broadcast({
@@ -611,11 +622,28 @@ function emit(event: ServerEvent) {
   if (nextEvent.type === "session.status" && nextEvent.payload.status === "completed") {
     maybeSendChannelReply(nextEvent.payload.sessionId);
     scheduleWarmRunnerCleanup(nextEvent.payload.sessionId);
+    const session = sessions.getSession(nextEvent.payload.sessionId);
+    notifySessionFinished({
+      sessionId: nextEvent.payload.sessionId,
+      title: nextEvent.payload.title ?? session?.title,
+      lastPrompt: session?.lastPrompt,
+      workspacePath: nextEvent.payload.cwd ?? session?.cwd,
+      status: nextEvent.payload.status,
+    });
   }
 
   // 清理 runner handle，避免 appendPrompt 将消息写入已完成的 runner 内部 dead array
   if (nextEvent.type === "session.status" && nextEvent.payload.status === "error") {
     closeRunnerHandle(nextEvent.payload.sessionId);
+    const session = sessions.getSession(nextEvent.payload.sessionId);
+    notifySessionFinished({
+      sessionId: nextEvent.payload.sessionId,
+      title: nextEvent.payload.title ?? session?.title,
+      lastPrompt: session?.lastPrompt,
+      workspacePath: nextEvent.payload.cwd ?? session?.cwd,
+      status: nextEvent.payload.status,
+      error: nextEvent.payload.error,
+    });
   }
 
   broadcast(nextEvent);

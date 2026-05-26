@@ -129,6 +129,11 @@ export type AppUpdateActionResult = {
   error?: string;
 };
 
+export type DesktopNotificationOpenTarget =
+  | { type: "session"; sessionId: string }
+  | { type: "task"; taskId: string; sessionId?: string }
+  | { type: "cron"; jobId: string; sessionId?: string };
+
 export type SessionInfo = {
   id: string;
   title: string;
@@ -195,6 +200,7 @@ export type ServerEvent =
   | { type: "session.archived"; payload: { sessionId: string; session?: SessionInfo } }
   | { type: "session.unarchived"; payload: { sessionId: string; session?: SessionInfo } }
   | { type: "session.deleted"; payload: { sessionId: string } }
+  | { type: "desktop.notification.opened"; payload: { target: DesktopNotificationOpenTarget } }
   | { type: "permission.request"; payload: { sessionId: string; toolUseId: string; toolName: string; input: unknown } }
   | { type: "runner.error"; payload: { sessionId?: string; message: string } }
   | { type: "agent.list"; payload: { agents: Array<{ id: string; name: string; description?: string; scope: string }> } }

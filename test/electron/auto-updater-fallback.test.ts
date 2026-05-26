@@ -9,7 +9,7 @@ import {
   isMissingPlatformUpdateMetadataError,
   selectBestReleaseForUpdate,
   summarizeGitHubReleaseForUpdates,
-} from '../../src/electron/libs/auto-updater-fallback.js';
+} from '../../src/electron/libs/auto-updater/auto-updater-fallback.js';
 
 test('detects missing updater metadata errors from electron-updater', () => {
   assert.equal(

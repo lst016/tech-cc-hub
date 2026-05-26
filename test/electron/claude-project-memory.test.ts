@@ -9,7 +9,7 @@ import {
   getClaudeProjectMemoryDir,
   loadClaudeProjectMemory,
   toClaudeProjectSlug,
-} from "../../src/electron/libs/claude-project-memory.js";
+} from "../../src/electron/libs/claude/claude-project-memory.js";
 
 const tempRoot = mkdtempSync(join(tmpdir(), "tech-cc-hub-claude-memory-"));
 

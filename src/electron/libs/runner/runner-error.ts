@@ -1,5 +1,10 @@
 import { getFigmaOfficialPluginStatusFromConfig } from "../figma-official-plugin.js";
 
+export type RunnerErrorDiagnostics = {
+  processStderr?: string;
+  maxDiagnosticChars?: number;
+};
+
 export function stringifyRunnerError(error: unknown): string {
   if (typeof error === "string") {
     return error;
@@ -22,9 +27,11 @@ export function normalizeRunnerError(
   error: unknown,
   requestedModel?: string,
   globalRuntimeConfig?: unknown,
+  diagnostics?: RunnerErrorDiagnostics,
 ): string {
   const raw = stringifyRunnerError(error).trim();
   const normalized = raw.toLowerCase();
+  const diagnosticDetail = buildDiagnosticDetail(raw, diagnostics);
   const quotedRequestedModel = requestedModel ? `「${requestedModel}」` : "当前模型";
   const hasModelContext =
     normalized.includes("model") ||
@@ -34,19 +41,54 @@ export function normalizeRunnerError(
     /(model_not_found|invalid_request_error|unsupported_value)/i.test(raw);
 
   if (hasModelContext && modelUnavailable) {
-    return `请求模型${quotedRequestedModel}失败：该模型当前不可用、已下线，或不被当前服务端支持，请切换到可用模型后重试。`;
+    return appendDiagnosticDetail(
+      `请求模型${quotedRequestedModel}失败：该模型当前不可用、已下线，或不被当前服务端支持，请切换到可用模型后重试。`,
+      diagnosticDetail,
+    );
   }
 
   if (hasModelContext && /(404|status code 404|status: 404)/i.test(raw)) {
-    return `请求模型${quotedRequestedModel}失败：服务端没有找到对应模型，请检查模型名称或切换到可用模型。`;
+    return appendDiagnosticDetail(
+      `请求模型${quotedRequestedModel}失败：服务端没有找到对应模型，请检查模型名称或切换到可用模型。`,
+      diagnosticDetail,
+    );
   }
 
   if (isLikelyFigmaAuthError(raw)) {
     const guidance = buildFigmaAuthGuidance(globalRuntimeConfig);
-    return raw ? `${raw}\n\n${guidance}` : guidance;
+    return appendDiagnosticDetail(raw ? `${raw}\n\n${guidance}` : guidance, diagnosticDetail);
   }
 
-  return raw || "运行失败，请稍后重试。";
+  return appendDiagnosticDetail(raw || "运行失败，请稍后重试。", diagnosticDetail);
+}
+
+function appendDiagnosticDetail(message: string, diagnosticDetail: string | null): string {
+  if (!diagnosticDetail) {
+    return message;
+  }
+  return `${message}\n\nClaude Code stderr:\n${diagnosticDetail}`;
+}
+
+function buildDiagnosticDetail(raw: string, diagnostics?: RunnerErrorDiagnostics): string | null {
+  const stderr = sanitizeRunnerDiagnosticDetail(diagnostics?.processStderr ?? "");
+  if (!stderr) {
+    return null;
+  }
+
+  if (raw && raw.toLowerCase().includes(stderr.toLowerCase())) {
+    return null;
+  }
+
+  const maxChars = diagnostics?.maxDiagnosticChars ?? 4000;
+  return stderr.length > maxChars ? stderr.slice(-maxChars) : stderr;
+}
+
+function sanitizeRunnerDiagnosticDetail(value: string): string {
+  return value
+    .replace(/\r\n/g, "\n")
+    .replace(/\b(ANTHROPIC_AUTH_TOKEN|ANTHROPIC_API_KEY|OPENAI_API_KEY|api[_-]?key|token|secret)\s*[:=]\s*["']?[^"'\s,}]+/gi, "$1=[redacted]")
+    .replace(/\b(sk-[A-Za-z0-9_-]{12,})\b/g, "[redacted]")
+    .trim();
 }
 
 function buildFigmaAuthGuidance(globalRuntimeConfig: unknown): string {

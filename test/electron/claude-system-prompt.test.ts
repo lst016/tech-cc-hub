@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildClaudeCodeSystemPromptOption } from "../../src/electron/libs/claude-system-prompt.js";
+import { buildClaudeCodeSystemPromptOption } from "../../src/electron/libs/claude/claude-system-prompt.js";
 
 test("Claude Code system prompt excludes dynamic preset sections for cacheability", () => {
   assert.deepEqual(buildClaudeCodeSystemPromptOption("  Extra rule  "), {

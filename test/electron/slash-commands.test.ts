@@ -11,7 +11,7 @@ import {
   discoverSlashCommandItemsInRoots,
   discoverSlashCommandsInRoots,
 } from "../../src/electron/libs/slash-command-discovery.js";
-import { CLAUDE_CODE_BUILTIN_COMMAND_ITEMS } from "../../src/electron/libs/claude-code-builtin-commands.js";
+import { CLAUDE_CODE_BUILTIN_COMMAND_ITEMS } from "../../src/electron/libs/claude/claude-code-builtin-commands.js";
 import { extractSlashCommandsFromMessages, mergeSlashCommandLists } from "../../src/shared/slash-commands.js";
 
 test("discoverSlashCommandsInRoots collects project and user markdown command files", () => {

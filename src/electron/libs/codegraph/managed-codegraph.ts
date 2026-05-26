@@ -67,6 +67,17 @@ export type ManagedCodeGraphInstance = {
   fileLock?: InstanceType<CodeGraphUtilsRuntime["FileLock"]>;
 };
 
+export type ManagedCodeGraphSkippedSyncResult = {
+  skipped: true;
+  reason: "not_initialized";
+  filesAdded: 0;
+  filesChanged: 0;
+  filesRemoved: 0;
+  durationMs: 0;
+};
+
+export type ManagedCodeGraphSyncResult = SyncResult | ManagedCodeGraphSkippedSyncResult;
+
 const require = createRequire(import.meta.url);
 const codegraphRuntime = require("@colbymchenry/codegraph") as CodeGraphRuntime;
 const configRuntime = require("@colbymchenry/codegraph/dist/config.js") as CodeGraphConfigRuntime;
@@ -201,14 +212,26 @@ export async function getManagedCodeGraphStatus(workspaceRoot: string): Promise<
   };
 }
 
-export async function syncManagedCodeGraph(workspaceRoot: string): Promise<SyncResult> {
-  const graph = await openManagedCodeGraph(workspaceRoot, { index: true });
+export async function syncManagedCodeGraph(workspaceRoot: string): Promise<ManagedCodeGraphSyncResult> {
+  if (!isManagedCodeGraphInitialized(workspaceRoot)) {
+    return {
+      skipped: true,
+      reason: "not_initialized",
+      filesAdded: 0,
+      filesChanged: 0,
+      filesRemoved: 0,
+      durationMs: 0,
+    };
+  }
+  const graph = await openManagedCodeGraph(workspaceRoot);
   return graph.sync();
 }
 
 async function openManagedCodeGraphForRetrieval(workspaceRoot: string): Promise<ManagedCodeGraphInstance> {
-  const initialized = isManagedCodeGraphInitialized(workspaceRoot);
-  return openManagedCodeGraph(workspaceRoot, initialized ? { sync: true } : { index: true });
+  if (!isManagedCodeGraphInitialized(workspaceRoot)) {
+    throw new Error("CodeGraph index is not initialized. Use codegraph_sync with mode=index only when the user explicitly wants a refresh, otherwise fall back to focused Read/Grep/Glob.");
+  }
+  return openManagedCodeGraph(workspaceRoot);
 }
 
 export async function indexManagedCodeGraph(workspaceRoot: string, options: IndexOptions = {}): Promise<IndexResult> {
@@ -221,6 +244,9 @@ export async function searchManagedCodeGraph(
   query: string,
   options?: SearchOptions,
 ): Promise<SearchResult[]> {
+  if (!isManagedCodeGraphInitialized(workspaceRoot)) {
+    return [];
+  }
   const graph = await openManagedCodeGraphForRetrieval(workspaceRoot);
   return graph.searchNodes(query, options);
 }

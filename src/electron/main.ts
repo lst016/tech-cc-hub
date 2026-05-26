@@ -38,6 +38,7 @@ import {
 } from "./libs/config-store.js";
 import { setBrowserToolHost } from "./libs/mcp-tools/browser.js";
 import { setDesignToolHost } from "./libs/mcp-tools/design.js";
+import { configureDesktopNotifications } from "./libs/desktop-notifications.js";
 import { appAutoUpdater, type AppUpdateStatus } from "./libs/auto-updater/auto-updater.js";
 import { startChannelBridge, type ChannelBridgeController } from "./libs/channel/channel-bridge.js";
 import { ensureSystemWorkspace } from "./libs/system-workspace.js";
@@ -1923,17 +1924,42 @@ function registerReloadShortcuts(): void {
         { accelerator: "F5", handler: reloadWindow },
         { accelerator: "CommandOrControl+Shift+R", handler: reloadWindowIgnoringCache },
     ];
+    const registeredAccelerators = new Set<string>();
 
-    for (const shortcut of shortcuts) {
-        try {
-            const registered = globalShortcut.register(shortcut.accelerator, shortcut.handler);
-            if (!registered) {
-                console.warn(`[main] Failed to register shortcut: ${shortcut.accelerator}`);
-            }
-        } catch (error) {
-            console.warn(`[main] Failed to bind shortcut ${shortcut.accelerator}:`, error);
+    const registerFocusedShortcuts = () => {
+        if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isFocused()) {
+            return;
         }
-    }
+
+        for (const shortcut of shortcuts) {
+            if (registeredAccelerators.has(shortcut.accelerator)) {
+                continue;
+            }
+
+            try {
+                const registered = globalShortcut.register(shortcut.accelerator, shortcut.handler);
+                if (registered) {
+                    registeredAccelerators.add(shortcut.accelerator);
+                    continue;
+                }
+                console.warn(`[main] Failed to register focused shortcut: ${shortcut.accelerator}`);
+            } catch (error) {
+                console.warn(`[main] Failed to bind focused shortcut ${shortcut.accelerator}:`, error);
+            }
+        }
+    };
+
+    const unregisterFocusedShortcuts = () => {
+        for (const accelerator of registeredAccelerators) {
+            globalShortcut.unregister(accelerator);
+        }
+        registeredAccelerators.clear();
+    };
+
+    mainWindow.on("focus", registerFocusedShortcuts);
+    mainWindow.on("blur", unregisterFocusedShortcuts);
+    mainWindow.on("closed", unregisterFocusedShortcuts);
+    registerFocusedShortcuts();
 }
 
 function readPromptAttachmentPayload(attachments?: unknown[]): PromptAttachment[] {
@@ -2484,6 +2510,7 @@ async function refreshCodexOAuth(payload: { apiKey?: string }): Promise<{ succes
 
 installStdIoGuards();
 app.setName("tech-cc-hub");
+configureDesktopNotifications();
 
 // Initialize everything when app is ready
 app.on("ready", async () => {

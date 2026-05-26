@@ -189,6 +189,9 @@ export type ContextDistributionBucket = {
 
 export type ContextDistributionModel = {
   totalChars: number;
+  totalTokenEstimate: number;
+  actualInputTokens?: number;
+  unattributedInputTokens: number;
   buckets: ContextDistributionBucket[];
 };
 
@@ -701,6 +704,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function readTokenCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : undefined;
+}
+
+function maxTokenCount(left: number | undefined, right: number | undefined): number | undefined {
+  if (typeof left !== "number") return right;
+  if (typeof right !== "number") return left;
+  return Math.max(left, right);
+}
+
+function extractUsageTokens(message: unknown): { inputTokens?: number; outputTokens?: number } {
+  if (!isRecord(message) || !isRecord(message.usage)) return {};
+
+  return {
+    inputTokens: readTokenCount(message.usage.input_tokens),
+    outputTokens: readTokenCount(message.usage.output_tokens),
+  };
+}
+
 function createEmptyMetrics(overrides?: Partial<ActivityExecutionMetrics>): ActivityExecutionMetrics {
   return {
     inputChars: 0,
@@ -1142,6 +1164,8 @@ function buildContextDistribution(
 
   return {
     totalChars,
+    totalTokenEstimate: 0,
+    unattributedInputTokens: 0,
     buckets: orderedDrafts.map((bucket) => ({
       ...bucket,
       ratio: totalChars > 0 ? bucket.chars / totalChars : 0,
@@ -1606,6 +1630,8 @@ export function buildActivityRailModel(
       },
       contextDistribution: {
         totalChars: 0,
+        totalTokenEstimate: 0,
+        unattributedInputTokens: 0,
         buckets: [],
       },
       promptAnalysis: {
@@ -1632,6 +1658,8 @@ export function buildActivityRailModel(
   let latestDurationMs: number | undefined;
   let latestInputTokens: number | undefined;
   let latestOutputTokens: number | undefined;
+  let peakInputTokens: number | undefined;
+  let currentTurnPeakInputTokens: number | undefined;
   let latestModel = "";
   let latestRuntimeModel = "";
   let latestRemoteSessionId = "";
@@ -1652,12 +1680,21 @@ export function buildActivityRailModel(
   const toolUseTaskMap = new Map<string, string>();
   const activeTaskNodes = new Map<string, ActivityTimelineItem>();
   const seenInitRemoteSessionIds = new Set<string>();
+  const recordUsageTokens = (usage: { inputTokens?: number; outputTokens?: number }) => {
+    if (typeof usage.inputTokens === "number") {
+      latestInputTokens = usage.inputTokens;
+      peakInputTokens = maxTokenCount(peakInputTokens, usage.inputTokens);
+      currentTurnPeakInputTokens = maxTokenCount(currentTurnPeakInputTokens, usage.inputTokens);
+    }
+    latestOutputTokens = usage.outputTokens ?? latestOutputTokens;
+  };
 
   for (const message of session.messages) {
     if (message.type === "prompt_ledger") {
       latestPromptLedger = message;
       promptLedgers.push(message);
       latestRuntimeModel = message.model?.trim() || latestRuntimeModel;
+      currentTurnPeakInputTokens = undefined;
       sequence += 1;
       timelineChronological.push(
         createTimelineItem({
@@ -1734,6 +1771,8 @@ export function buildActivityRailModel(
       const assistant = message as SDKAssistantMessage;
       const assistantCapturedAt = getCapturedAt(message);
       latestModel = assistant.message.model || latestModel;
+      const assistantUsage = extractUsageTokens(assistant.message);
+      recordUsageTokens(assistantUsage);
       const parentAgentId =
         assistant.parent_tool_use_id
           ? toolUseTaskMap.get(assistant.parent_tool_use_id)
@@ -1968,10 +2007,10 @@ export function buildActivityRailModel(
 
     if (message.type === "result") {
       const result = message as SDKResultMessage;
+      const resultUsage = extractUsageTokens(result);
       sequence += 1;
       latestDurationMs = result.duration_ms ?? latestDurationMs;
-      latestInputTokens = result.usage?.input_tokens ?? latestInputTokens;
-      latestOutputTokens = result.usage?.output_tokens ?? latestOutputTokens;
+      recordUsageTokens(resultUsage);
       latestCostUsd = result.total_cost_usd ?? latestCostUsd;
       latestResultText = getResultText(result) || latestResultText;
       latestRemoteSessionId = result.session_id ?? latestRemoteSessionId;
@@ -2006,8 +2045,8 @@ export function buildActivityRailModel(
             contextChars: roundContextChars,
             outputChars: latestResultText.length,
             durationMs: result.duration_ms,
-            inputTokens: result.usage?.input_tokens,
-            outputTokens: result.usage?.output_tokens,
+            inputTokens: resultUsage.inputTokens,
+            outputTokens: resultUsage.outputTokens,
             successCount: result.subtype === "success" ? 1 : 0,
             failureCount: result.subtype === "success" ? 0 : 1,
             totalCount: 1,
@@ -2454,7 +2493,15 @@ export function buildActivityRailModel(
     result: timeline.filter((item) => item.filterKey === "result").length,
     flow: timeline.filter((item) => item.filterKey === "flow").length,
   };
-  const contextDistribution = buildContextDistribution(distributionBuckets);
+  const promptTokenEstimate = latestPromptLedger?.totalTokenEstimate ?? 0;
+  const displayInputTokens = currentTurnPeakInputTokens ?? peakInputTokens ?? latestInputTokens;
+  const contextDistribution: ContextDistributionModel = {
+    ...buildContextDistribution(distributionBuckets),
+    totalTokenEstimate: promptTokenEstimate,
+    actualInputTokens: displayInputTokens,
+    unattributedInputTokens:
+      typeof displayInputTokens === "number" ? Math.max(0, displayInputTokens - promptTokenEstimate) : 0,
+  };
   const latestPromptSegments = latestPromptLedger
     ? enrichPromptSegmentsWithTimeline(latestPromptLedger.segments ?? [], timeline)
     : [];
@@ -2658,7 +2705,7 @@ export function buildActivityRailModel(
       statusTone: status.tone,
       latestResultLabel: status.label,
       durationLabel: formatDuration(latestDurationMs),
-      inputLabel: formatCompactMetric(executionMetrics.inputChars, latestInputTokens),
+      inputLabel: formatCompactMetric(executionMetrics.inputChars, displayInputTokens),
       contextLabel: formatCompactMetric(executionMetrics.contextChars),
       outputLabel: formatCompactMetric(executionMetrics.outputChars, latestOutputTokens),
       successCount: executionMetrics.successCount,

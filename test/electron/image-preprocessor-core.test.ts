@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { preprocessImageAttachmentsCore } from "../../src/electron/libs/image-preprocessor-core.js";
+import { preprocessImageAttachmentsCore } from "../../src/electron/libs/image/image-preprocessor-core.js";
 import type { PromptAttachment } from "../../src/electron/types.js";
 
 test("preprocessImageAttachmentsCore keeps dispatchable image attachment when image summary is empty", async () => {

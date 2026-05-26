@@ -162,6 +162,77 @@ test("buildActivityRailModel exposes prompt analysis from prompt ledger", () => 
   assert.ok(model.analysisCards.some((card) => card.id === "prompt-hotspot"));
 });
 
+test("buildActivityRailModel uses assistant usage before final result", () => {
+  const ledger = buildPromptLedgerMessage({
+    phase: "continue",
+    model: "gpt-5.5",
+    cwd: "D:/workspace/demo",
+    prompt: "继续检查卡顿原因",
+  });
+
+  const model = buildActivityRailModel(
+    {
+      id: "session-streaming-usage",
+      title: "Streaming Usage",
+      status: "running",
+      messages: [
+        ledger,
+        {
+          type: "assistant",
+          uuid: "assistant-usage",
+          session_id: "remote-usage",
+          parent_tool_use_id: null,
+          message: {
+            id: "assistant-usage",
+            model: "gpt-5.5",
+            role: "assistant",
+            type: "message",
+            content: [{ type: "text", text: "正在分析 trace。" }],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: {
+              input_tokens: 127211,
+              output_tokens: 42,
+              cache_creation_input_tokens: null,
+              cache_read_input_tokens: null,
+            },
+          },
+        } as never,
+        {
+          type: "assistant",
+          uuid: "assistant-small-followup",
+          session_id: "remote-usage",
+          parent_tool_use_id: null,
+          message: {
+            id: "assistant-small-followup",
+            model: "gpt-5.5",
+            role: "assistant",
+            type: "message",
+            content: [{ type: "text", text: "完成。" }],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: {
+              input_tokens: 123,
+              output_tokens: 4,
+              cache_creation_input_tokens: null,
+              cache_read_input_tokens: null,
+            },
+          },
+        } as never,
+      ],
+    },
+    [],
+    "",
+  );
+
+  assert.equal(model.contextSnapshot.model, "gpt-5.5");
+  assert.equal(model.summary.inputLabel, "127,211 tok");
+  assert.equal(model.summary.outputLabel, "4 tok");
+  assert.equal(model.contextDistribution.totalTokenEstimate, ledger.totalTokenEstimate);
+  assert.equal(model.contextDistribution.actualInputTokens, 127211);
+  assert.equal(model.contextDistribution.unattributedInputTokens, 127211 - ledger.totalTokenEstimate);
+});
+
 test("buildActivityRailModel marks repeated init events as runner reuse", () => {
   const model = buildActivityRailModel(
     {

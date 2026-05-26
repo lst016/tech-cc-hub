@@ -33,7 +33,7 @@ test("managed CodeGraph stores its DB under .tech/codegraph", async () => {
   }
 });
 
-test("managed CodeGraph search auto-initializes missing indexes", async () => {
+test("managed CodeGraph search does not auto-initialize missing indexes", async () => {
   const workspaceRoot = mkdtempSync(join(tmpdir(), "tech-cc-hub-codegraph-auto-"));
   writeFileSync(join(workspaceRoot, "gamma.ts"), "export function gammaSearchTarget() { return 3; }\n", "utf8");
 
@@ -43,8 +43,27 @@ test("managed CodeGraph search auto-initializes missing indexes", async () => {
 
     const results = await searchManagedCodeGraph(workspaceRoot, "gammaSearchTarget", { limit: 5 });
 
-    assert.equal(existsSync(paths.databasePath), true);
-    assert.ok(results.some((result) => result.node.name === "gammaSearchTarget"));
+    assert.equal(existsSync(paths.databasePath), false);
+    assert.deepEqual(results, []);
+    assert.equal(existsSync(paths.upstreamCodegraphRoot), false);
+  } finally {
+    closeManagedCodeGraph(workspaceRoot);
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("managed CodeGraph sync skips missing indexes instead of full indexing implicitly", async () => {
+  const workspaceRoot = mkdtempSync(join(tmpdir(), "tech-cc-hub-codegraph-sync-skip-"));
+  writeFileSync(join(workspaceRoot, "epsilon.ts"), "export function epsilonSearchTarget() { return 5; }\n", "utf8");
+
+  try {
+    const paths = resolveManagedCodeGraphPaths(workspaceRoot);
+    assert.equal(existsSync(paths.databasePath), false);
+
+    const sync = await syncManagedCodeGraph(workspaceRoot);
+
+    assert.equal("skipped" in sync && sync.skipped, true);
+    assert.equal(existsSync(paths.databasePath), false);
     assert.equal(existsSync(paths.upstreamCodegraphRoot), false);
   } finally {
     closeManagedCodeGraph(workspaceRoot);
@@ -72,7 +91,7 @@ test("managed CodeGraph sync incrementally picks up changed files", async () => 
   }
 });
 
-test("managed CodeGraph search syncs existing indexes before retrieval", async () => {
+test("managed CodeGraph search does not sync existing indexes before retrieval", async () => {
   const workspaceRoot = mkdtempSync(join(tmpdir(), "tech-cc-hub-codegraph-retrieval-sync-"));
   writeFileSync(join(workspaceRoot, "alpha.ts"), "export function alpha() { return 1; }\n", "utf8");
 
@@ -82,7 +101,7 @@ test("managed CodeGraph search syncs existing indexes before retrieval", async (
 
     const results = await searchManagedCodeGraph(workspaceRoot, "deltaSearchTarget", { limit: 5 });
 
-    assert.ok(results.some((result) => result.node.name === "deltaSearchTarget"));
+    assert.equal(results.some((result) => result.node.name === "deltaSearchTarget"), false);
     assert.equal(existsSync(resolveManagedCodeGraphPaths(workspaceRoot).upstreamCodegraphRoot), false);
   } finally {
     closeManagedCodeGraph(workspaceRoot);

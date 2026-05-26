@@ -83,6 +83,10 @@ import {
   runtimeEfficiencyProfileStateEquals,
   runtimeEfficiencyProfileToState,
 } from "../runtime-efficiency.js";
+import {
+  applyStickyBuiltinMcpServersToProfile,
+  isStatefulBuiltinMcpServerName,
+} from "./sticky-mcp-servers.js";
 import type { Session } from "../session-store.js";
 import {
   getBashBackgroundServiceGuidance,
@@ -113,6 +117,7 @@ import {
   shellQuotePath,
   type LinkedWorkspaceContext,
 } from "../../../shared/linked-workspaces.js";
+import { isManagedCodeGraphInitialized } from "../codegraph/managed-codegraph.js";
 
 export type RunnerOptions = {
   prompt: string;
@@ -135,6 +140,11 @@ export type RunnerHandle = {
 
 type QueryWithMcpOAuth = Query & {
   mcpAuthenticate: (serverName: string, redirectUri?: string) => Promise<unknown>;
+};
+
+type StatefulMcpNotConnectedResult = {
+  toolName: string;
+  toolUseId: string;
 };
 
 const DEFAULT_CWD = process.cwd();
@@ -165,6 +175,7 @@ const SKILL_ENV_HINTS: Record<string, string[]> = {
 const RASTER_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
 const MAX_IMAGE_READS_PER_RUN = 1;
 const MAX_SINGLE_IMAGE_READ_BYTES = 400_000;
+const MAX_RUNNER_STDERR_CHARS = 12_000;
 const BLOCKED_SHELL_TOOL_NAMES = new Set(["mcp__windows__Powershell-Tool"]);
 const BLOCKED_SHELL_TOOL_MESSAGE =
   "This Windows shell tool is disabled in tech-cc-hub because it can hang without returning a tool_result. Use Bash with cmd.exe instead, for example: cmd.exe /d /s /c \"<command>\".";
@@ -237,7 +248,7 @@ function getKnowledgeIndexDenyMessage(toolName: string, prompt: string): string 
 
   return [
     "Legacy knowledge_index is disabled because RepoWiki/vector indexing has been removed.",
-    "For code retrieval or questions about this repo, use mcp__tech-cc-hub-knowledge__codegraph_search or codegraph_context first; these auto-initialize and sync the managed graph.",
+    "For code retrieval or questions about this repo, try mcp__tech-cc-hub-knowledge__codegraph_search or codegraph_context first when the managed index is available; otherwise fall back to focused source reads.",
   ].join(" ");
 }
 
@@ -260,8 +271,11 @@ function getCodeGraphFirstDenyMessage(
   if (!projectCwd || codeGraphRetrievalSeen || !isBroadCodeExplorationTool(toolName, input, prompt)) {
     return undefined;
   }
+  if (!isManagedCodeGraphInitialized(projectCwd)) {
+    return undefined;
+  }
 
-  return "Use mcp__tech-cc-hub-knowledge__codegraph_search or mcp__tech-cc-hub-knowledge__codegraph_context before broad source exploration. They auto-initialize .tech/codegraph when missing and run incremental sync before retrieval.";
+  return "Use mcp__tech-cc-hub-knowledge__codegraph_search or mcp__tech-cc-hub-knowledge__codegraph_context before broad source exploration when the managed index is available. If CodeGraph returns no useful result or an error, fall back to focused Read/Grep/Glob instead of retrying CodeGraph.";
 }
 
 function isBroadCodeExplorationTool(toolName: string, input: unknown, prompt: string): boolean {
@@ -467,6 +481,11 @@ function resolveOutputFormat(
   return undefined;
 }
 
+function appendBoundedText(current: string, chunk: string, maxChars: number): string {
+  const next = `${current}${chunk}`;
+  return next.length > maxChars ? next.slice(-maxChars) : next;
+}
+
 export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   const { prompt, displayPrompt = prompt, attachments = [], runtime, session, workspaceContext, resumeSessionId, onEvent, onSessionUpdate } = options;
   const abortController = new AbortController();
@@ -490,6 +509,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   let latestFigmaToolMode: "core" | "full" = "full";
   let latestProjectCwd: string | undefined;
   let latestRunSurface: AgentRunSurface = runtime?.runSurface ?? session.runSurface ?? "development";
+  let recentClaudeStderr = "";
+  const toolUseNamesById = new Map<string, string>();
+  let statefulMcpRefresh: Promise<void> | null = null;
+  const appendClaudeProcessStderr = (chunk: string) => {
+    recentClaudeStderr = appendBoundedText(recentClaudeStderr, chunk, MAX_RUNNER_STDERR_CHARS);
+  };
 
   const sendMessage = (message: SDKMessage) => {
     onEvent({
@@ -532,12 +557,16 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
     nextPrompt: string,
     nextAttachments: readonly PromptAttachment[],
   ) => {
-    const profile = mergeRuntimeEfficiencyProfile(resolveRuntimeEfficiencyProfile({
+    const previousDesiredBuiltinMcpServerNames = new Set(desiredBuiltinMcpServerNames);
+    const profile = applyStickyBuiltinMcpServersToProfile(mergeRuntimeEfficiencyProfile(resolveRuntimeEfficiencyProfile({
       prompt: nextPrompt,
       attachments: nextAttachments,
       runtime,
       runSurface: latestRunSurface,
-    }), session.runtimeProfileState);
+    }), session.runtimeProfileState), [
+      activeBuiltinMcpServerNames,
+      previousDesiredBuiltinMcpServerNames,
+    ]);
     const nextProfileState = runtimeEfficiencyProfileToState(profile);
     if (!runtimeEfficiencyProfileStateEquals(session.runtimeProfileState, nextProfileState)) {
       session.runtimeProfileState = nextProfileState;
@@ -581,6 +610,64 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       builtinMcpServers: enabledBuiltinMcpServerNames,
       result,
     });
+  };
+
+  const buildMcpServersForBuiltinNames = (enabledBuiltinMcpServerNames: readonly BuiltinMcpServerName[]) => ({
+    ...getExternalMcpServers(latestGlobalRuntimeConfig ?? getGlobalRuntimeConfig(), { projectDir: latestProjectCwd }),
+    ...getBuiltinMcpServers({
+      sessionId: session.id,
+      cwd: latestProjectCwd,
+      figmaToolMode: latestFigmaToolMode,
+    }, enabledBuiltinMcpServerNames),
+  });
+
+  const refreshStatefulMcpServers = async (reason: StatefulMcpNotConnectedResult): Promise<void> => {
+    const queryForRefresh = activeQuery;
+    if (!queryForRefresh) {
+      return;
+    }
+
+    const enabledBuiltinMcpServerNames = [...activeBuiltinMcpServerNames];
+    if (!enabledBuiltinMcpServerNames.some(isStatefulBuiltinMcpServerName)) {
+      return;
+    }
+
+    if (statefulMcpRefresh) {
+      await statefulMcpRefresh;
+      return;
+    }
+
+    statefulMcpRefresh = (async () => {
+      const withoutStatefulServers = enabledBuiltinMcpServerNames.filter((serverName) => !isStatefulBuiltinMcpServerName(serverName));
+      console.warn("[runner][stateful-mcp-reattach-start]", {
+        sessionId: session.id,
+        toolName: reason.toolName,
+        toolUseId: reason.toolUseId,
+        enabledBuiltinMcpServers: enabledBuiltinMcpServerNames,
+      });
+
+      try {
+        await queryForRefresh.setMcpServers(buildMcpServersForBuiltinNames(withoutStatefulServers));
+        const result = await queryForRefresh.setMcpServers(buildMcpServersForBuiltinNames(enabledBuiltinMcpServerNames));
+        console.warn("[runner][stateful-mcp-reattach-complete]", {
+          sessionId: session.id,
+          toolName: reason.toolName,
+          toolUseId: reason.toolUseId,
+          result,
+        });
+      } catch (error) {
+        console.warn("[runner][stateful-mcp-reattach-failed]", {
+          sessionId: session.id,
+          toolName: reason.toolName,
+          toolUseId: reason.toolUseId,
+          error,
+        });
+      } finally {
+        statefulMcpRefresh = null;
+      }
+    })();
+
+    await statefulMcpRefresh;
   };
 
   const sendPlanUpdate = (
@@ -781,6 +868,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           extraArgs: getClaudeCodeExtraArgs(),
           thinking,
           effort,
+          stderr: appendClaudeProcessStderr,
           pathToClaudeCodeExecutable: getClaudeCodePath(),
           permissionMode,
           settingSources: agentContext.settingSources,
@@ -934,6 +1022,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
 
       for await (const rawMessage of q) {
         const message = normalizeKnownToolInputsInMessage(rawMessage);
+        recordToolUseNamesFromMessage(message, toolUseNamesById);
         if (message.type === "system" && "subtype" in message && message.subtype === "init") {
           const sdkSessionId = message.session_id;
           if (sdkSessionId) {
@@ -944,6 +1033,10 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
 
         sendMessage(message);
         extractPlanUpdateFromMessage(message);
+        const statefulNotConnectedResult = findStatefulMcpNotConnectedResult(message, toolUseNamesById);
+        if (statefulNotConnectedResult) {
+          await refreshStatefulMcpServers(statefulNotConnectedResult);
+        }
 
         if (message.type === "result") {
           const status = message.subtype === "success" ? "completed" : "error";
@@ -981,6 +1074,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         error,
         requestedModelForError ?? getRequestedModelName(getCurrentApiConfig()?.model, runtime?.model),
         latestGlobalRuntimeConfig,
+        { processStderr: recentClaudeStderr },
       );
 
       if (shouldSuppressRunnerErrorAfterSuccessfulResult(emittedSuccessfulResult)) {
@@ -1217,6 +1311,89 @@ function builtinMcpServerSetsEqual(
   }
 
   return true;
+}
+
+function recordToolUseNamesFromMessage(
+  message: SDKMessage,
+  toolUseNamesById: Map<string, string>,
+): void {
+  if (message.type !== "assistant") {
+    return;
+  }
+
+  const content = getSdkMessageContentBlocks(message);
+  for (const item of content) {
+    if (!isRecord(item) || item.type !== "tool_use") {
+      continue;
+    }
+
+    const toolUseId = typeof item.id === "string" ? item.id : "";
+    const toolName = typeof item.name === "string" ? item.name : "";
+    if (toolUseId && toolName) {
+      toolUseNamesById.set(toolUseId, toolName);
+    }
+  }
+}
+
+function findStatefulMcpNotConnectedResult(
+  message: SDKMessage,
+  toolUseNamesById: ReadonlyMap<string, string>,
+): StatefulMcpNotConnectedResult | null {
+  if (message.type !== "user") {
+    return null;
+  }
+
+  const content = getSdkMessageContentBlocks(message);
+  for (const item of content) {
+    if (!isRecord(item) || item.type !== "tool_result") {
+      continue;
+    }
+
+    const toolUseId = typeof item.tool_use_id === "string" ? item.tool_use_id : "";
+    const toolName = toolUseNamesById.get(toolUseId);
+    if (!toolUseId || !toolName || !isStatefulBuiltinMcpServerName(getMcpServerName(toolName))) {
+      continue;
+    }
+
+    const resultText = extractToolResultText(item.content).trim();
+    if (resultText === "Not connected") {
+      return { toolName, toolUseId };
+    }
+  }
+
+  return null;
+}
+
+function getSdkMessageContentBlocks(message: SDKMessage): unknown[] {
+  const maybeMessage = (message as { message?: unknown }).message;
+  if (!isRecord(maybeMessage) || !Array.isArray(maybeMessage.content)) {
+    return [];
+  }
+  return maybeMessage.content;
+}
+
+function extractToolResultText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(extractToolResultText).filter(Boolean).join("\n");
+  }
+
+  if (!isRecord(value)) {
+    return "";
+  }
+
+  if (typeof value.text === "string") {
+    return value.text;
+  }
+
+  if ("content" in value) {
+    return extractToolResultText(value.content);
+  }
+
+  return "";
 }
 
 function supportsClaudeCodeAutoTruncate(): boolean {

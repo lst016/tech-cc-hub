@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   sanitizeBrowserWorkbenchBounds,
   shouldDetachBrowserWorkbenchForBounds,
-} from "../../src/electron/libs/browser-workbench-bounds.js";
+} from "../../src/electron/libs/browser-workbench/browser-workbench-bounds.js";
 
 test("sanitizes browser workbench bounds before applying them to Electron", () => {
   assert.deepEqual(

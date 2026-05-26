@@ -24,31 +24,36 @@ export type RuntimeEfficiencyProfile = {
 
 export type RuntimeEfficiencyProfileState = Omit<RuntimeEfficiencyProfile, "id">;
 
-const BASE_SERVERS: readonly BuiltinMcpServerName[] = [
+const CORE_SERVERS: readonly BuiltinMcpServerName[] = [
   "tech-cc-hub-admin",
   "tech-cc-hub-plan",
   "tech-cc-hub-knowledge",
+];
+
+const BROWSER_SERVERS: readonly BuiltinMcpServerName[] = [
+  ...CORE_SERVERS,
   "tech-cc-hub-browser",
 ];
 
 const VISUAL_SERVERS: readonly BuiltinMcpServerName[] = [
-  ...BASE_SERVERS,
+  ...BROWSER_SERVERS,
   "tech-cc-hub-design",
   "tech-cc-hub-figma",
 ];
 
 const AUTOMATION_SERVERS: readonly BuiltinMcpServerName[] = [
-  ...BASE_SERVERS,
+  ...CORE_SERVERS,
   "tech-cc-hub-cron",
 ];
 
 const IDE_SERVERS: readonly BuiltinMcpServerName[] = [
-  ...BASE_SERVERS,
+  ...CORE_SERVERS,
   "tech-cc-hub-idea",
 ];
 
 const STICKY_SERVER_ORDER: readonly BuiltinMcpServerName[] = [
-  ...BASE_SERVERS,
+  ...CORE_SERVERS,
+  "tech-cc-hub-browser",
   "tech-cc-hub-design",
   "tech-cc-hub-figma",
   "tech-cc-hub-cron",
@@ -99,8 +104,8 @@ export function resolveRuntimeEfficiencyProfile(
   const hasImageAttachment = (input.attachments ?? []).some((attachment) => attachment.kind === "image");
   const isVisualTask = hasImageAttachment || FIGMA_URL_PATTERN.test(prompt) || VISUAL_TASK_PATTERN.test(prompt);
   if (AGENT_TEAM_TASK_PATTERN.test(prompt)) {
-    return buildProfile("team", isVisualTask ? VISUAL_SERVERS : BASE_SERVERS, {
-      includeBrowserPrompt: true,
+    return buildProfile("team", isVisualTask ? VISUAL_SERVERS : CORE_SERVERS, {
+      includeBrowserPrompt: isVisualTask,
       includeDesignPrompt: isVisualTask,
       includeClaudeCompatPrompt: true,
       includePartialMessages: true,
@@ -132,7 +137,7 @@ export function resolveRuntimeEfficiencyProfile(
     });
   }
 
-  return buildProfile("standard", BASE_SERVERS, {});
+  return buildProfile("standard", CORE_SERVERS, {});
 }
 
 export function mergeRuntimeEfficiencyProfile(
@@ -151,7 +156,7 @@ export function mergeRuntimeEfficiencyProfile(
   const hasBrowserTools = builtinMcpServers.includes("tech-cc-hub-browser");
   const hasDesignTools = builtinMcpServers.includes("tech-cc-hub-design");
   const hasFigmaTools = builtinMcpServers.includes("tech-cc-hub-figma");
-  const hasExtendedTools = builtinMcpServers.some((serverName) => !BASE_SERVERS.includes(serverName));
+  const hasExtendedTools = builtinMcpServers.some((serverName) => !BROWSER_SERVERS.includes(serverName));
 
   return {
     ...profile,
@@ -207,7 +212,7 @@ export function normalizeRuntimeEfficiencyProfileState(value: unknown): RuntimeE
   const hasBrowserTools = builtinMcpServers.includes("tech-cc-hub-browser");
   const hasDesignTools = builtinMcpServers.includes("tech-cc-hub-design");
   const hasFigmaTools = builtinMcpServers.includes("tech-cc-hub-figma");
-  const hasExtendedTools = builtinMcpServers.some((serverName) => !BASE_SERVERS.includes(serverName));
+  const hasExtendedTools = builtinMcpServers.some((serverName) => !BROWSER_SERVERS.includes(serverName));
 
   return {
     builtinMcpServers,
@@ -263,7 +268,7 @@ function buildProfile(
   const hasBrowserTools = normalizedBuiltinMcpServers.includes("tech-cc-hub-browser");
   const hasDesignTools = normalizedBuiltinMcpServers.includes("tech-cc-hub-design");
   const hasFigmaTools = normalizedBuiltinMcpServers.includes("tech-cc-hub-figma");
-  const hasExtendedTools = normalizedBuiltinMcpServers.some((serverName) => !BASE_SERVERS.includes(serverName));
+  const hasExtendedTools = normalizedBuiltinMcpServers.some((serverName) => !BROWSER_SERVERS.includes(serverName));
 
   return {
     id,

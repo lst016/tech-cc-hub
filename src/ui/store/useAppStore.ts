@@ -836,6 +836,15 @@ export const useAppStore = create<AppState>((set, get) => ({
         break;
       }
 
+      case "desktop.notification.opened": {
+        const target = event.payload.target;
+        const sessionId = "sessionId" in target ? target.sessionId : undefined;
+        if (sessionId) {
+          get().setActiveSessionId(sessionId);
+        }
+        break;
+      }
+
       case "session.workflow": {
         const { sessionId, markdown, state: workflowState, sourceLayer, sourcePath, error } = event.payload;
         set((state) => {

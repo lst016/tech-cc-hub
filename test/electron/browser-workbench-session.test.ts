@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import {
   BROWSER_WORKBENCH_PARTITION,
   buildBrowserWorkbenchWebPreferences,
-} from "../../src/electron/libs/browser-workbench-session.js";
+} from "../../src/electron/libs/browser-workbench/browser-workbench-session.js";
 
 describe("browser workbench session", () => {
   it("uses a persistent partition for login state", () => {

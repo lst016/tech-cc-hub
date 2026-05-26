@@ -33,6 +33,7 @@ export const KNOWLEDGE_TOOL_NAMES = [
 
 const KNOWLEDGE_MCP_SERVER_NAME = "tech-cc-hub-knowledge";
 const KNOWLEDGE_MCP_SERVER_VERSION = "1.0.0";
+const CODEGRAPH_RETRIEVAL_TIMEOUT_MS = 5_000;
 
 const CODEGRAPH_STATUS_SCHEMA = {
   workspaceRoot: z.string().optional().describe("Workspace root. Defaults to current session cwd."),
@@ -117,6 +118,27 @@ function mirrorMemoryJson(repo: MemoryRepository, workspaceScope: string, memory
   writeFileSync(memoryJsonPath, `${JSON.stringify({ version: 1, updatedAt: Date.now(), entries }, null, 2)}\n`, "utf8");
 }
 
+async function runCodeGraphRetrievalWithTimeout<T>(
+  label: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      run(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${label} exceeded ${CODEGRAPH_RETRIEVAL_TIMEOUT_MS}ms. Fall back to focused Read/Grep/Glob for this turn.`));
+        }, CODEGRAPH_RETRIEVAL_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServerConfigWithInstance {
   const codegraphStatusHandler = tool(
     "codegraph_status",
@@ -134,7 +156,7 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
 
   const codegraphSyncHandler = tool(
     "codegraph_sync",
-    "Create or refresh the tech-cc-hub managed CodeGraph index under .tech/codegraph. Defaults to incremental sync when initialized and full index when missing.",
+    "Explicitly create or refresh the tech-cc-hub managed CodeGraph index under .tech/codegraph. Defaults to incremental sync when initialized and full index when missing.",
     CODEGRAPH_SYNC_SCHEMA,
     async (input) => {
       try {
@@ -153,15 +175,18 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
 
   const codegraphSearchHandler = tool(
     "codegraph_search",
-    "Search symbols in the tech-cc-hub managed CodeGraph index before broad Read/Grep exploration. Auto-initializes when missing and runs incremental sync before retrieval.",
+    "Search symbols in the existing tech-cc-hub managed CodeGraph index before broad Read/Grep exploration. Retrieval is fast-path only: it does not auto-index or sync. If results are empty or unavailable, fall back to focused Read/Grep/Glob unless the user explicitly asks to refresh CodeGraph.",
     CODEGRAPH_SEARCH_SCHEMA,
     async (input) => {
       try {
         const workspaceRoot = resolveWorkspaceRoot(input.workspaceRoot, defaultWorkspaceRoot);
-        const results = await searchManagedCodeGraph(workspaceRoot, input.query, {
-          kinds: parseCodeGraphKinds(input.kinds),
-          limit: input.limit ?? 10,
-        });
+        const results = await runCodeGraphRetrievalWithTimeout(
+          "codegraph_search",
+          () => searchManagedCodeGraph(workspaceRoot, input.query, {
+            kinds: parseCodeGraphKinds(input.kinds),
+            limit: input.limit ?? 10,
+          }),
+        );
         return toTextToolResult({ success: true, workspaceRoot, query: input.query, results });
       } catch (error) {
         return toTextToolResult({ success: false, error: error instanceof Error ? error.message : String(error) }, true);
@@ -171,17 +196,20 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
 
   const codegraphContextHandler = tool(
     "codegraph_context",
-    "Build compact graph context for a task or requirement. Auto-initializes when missing and runs incremental sync before retrieval.",
+    "Build compact graph context for a task or requirement from the existing managed CodeGraph index. Retrieval does not auto-index or sync; fall back to focused source reads if the index is unavailable.",
     CODEGRAPH_CONTEXT_SCHEMA,
     async (input) => {
       try {
         const workspaceRoot = resolveWorkspaceRoot(input.workspaceRoot, defaultWorkspaceRoot);
         const task = resolveCodeGraphContextTask(input);
-        const context = await buildManagedCodeGraphContext(workspaceRoot, task, {
-          maxNodes: input.maxNodes ?? 20,
-          includeCode: input.includeCode ?? false,
-          format: "json",
-        });
+        const context = await runCodeGraphRetrievalWithTimeout(
+          "codegraph_context",
+          () => buildManagedCodeGraphContext(workspaceRoot, task, {
+            maxNodes: input.maxNodes ?? 20,
+            includeCode: input.includeCode ?? false,
+            format: "json",
+          }),
+        );
         return toTextToolResult({ success: true, workspaceRoot, task, context });
       } catch (error) {
         return toTextToolResult({ success: false, error: error instanceof Error ? error.message : String(error) }, true);
@@ -191,12 +219,15 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
 
   const codegraphImpactHandler = tool(
     "codegraph_impact",
-    "Analyze the impact radius for a CodeGraph node id before editing a related feature. Auto-initializes when missing and runs incremental sync before retrieval.",
+    "Analyze the impact radius for a CodeGraph node id from the existing managed CodeGraph index. Retrieval does not auto-index or sync; fall back to focused source reads if the index is unavailable.",
     CODEGRAPH_IMPACT_SCHEMA,
     async (input) => {
       try {
         const workspaceRoot = resolveWorkspaceRoot(input.workspaceRoot, defaultWorkspaceRoot);
-        const impact = await getManagedCodeGraphImpact(workspaceRoot, input.nodeId, input.maxDepth ?? 3);
+        const impact = await runCodeGraphRetrievalWithTimeout(
+          "codegraph_impact",
+          () => getManagedCodeGraphImpact(workspaceRoot, input.nodeId, input.maxDepth ?? 3),
+        );
         return toTextToolResult({ success: true, workspaceRoot, nodeId: input.nodeId, impact });
       } catch (error) {
         return toTextToolResult({ success: false, error: error instanceof Error ? error.message : String(error) }, true);

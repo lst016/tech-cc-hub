@@ -9,7 +9,7 @@ import {
   isClaudeCodePluginMcpTool,
   listClaudeCodePluginMcpServerNames,
   resolveEnabledClaudeCodeSdkPlugins,
-} from "../../src/electron/libs/claude-code-plugins.js";
+} from "../../src/electron/libs/claude/claude-code-plugins.js";
 
 test("resolves enabled Claude Code plugins as SDK local plugins", () => {
   const claudeRoot = mkdtempSync(join(tmpdir(), "tech-cc-hub-claude-plugin-"));

@@ -10,28 +10,29 @@ test("knowledge overview tells agents to use CodeGraph before source exploration
   assert.match(source, /For each new user turn that needs source-code evidence/);
   assert.match(source, /codegraph_search or mcp__tech-cc-hub-knowledge__codegraph_context/);
   assert.match(source, /before broad Read\/Grep\/Glob\/Task exploration/);
-  assert.match(source, /Only fall back to Read\/Grep\/Glob\/Task after CodeGraph finds no useful result/);
+  assert.match(source, /Fall back to focused Read\/Grep\/Glob\/Task immediately after CodeGraph finds no useful result/);
+  assert.match(source, /do not retry a failed CodeGraph lookup in the same turn/);
   assert.match(source, /Do not re-read source code that codegraph_context already returned/);
-  assert.match(source, /auto-initialize \.tech\/codegraph when missing and run incremental sync before retrieval/);
-  assert.match(source, /do not require an LLM or embedding model/);
+  assert.match(source, /fast-path only/);
+  assert.match(source, /codegraph_sync mode=index only for explicit refresh\/indexing requests/);
   assert.match(source, /RepoWiki and legacy vector knowledge indexing are disabled/);
   assert.match(source, /memory_update for durable notes/);
   assert.doesNotMatch(source, /use repowiki/i);
 });
 
 test("runner denies accidental knowledge_index calls for retrieval-only prompts", () => {
-  const source = readFileSync(join(process.cwd(), "src/electron/libs/runner.ts"), "utf8");
+  const source = readFileSync(join(process.cwd(), "src/electron/libs/runner/runner.ts"), "utf8");
 
   assert.match(source, /KNOWLEDGE_INDEX_INTENT_PATTERN/);
   assert.match(source, /function isKnowledgeIndexTool/);
   assert.match(source, /function getKnowledgeIndexDenyMessage/);
   assert.match(source, /Legacy knowledge_index is disabled because RepoWiki\/vector indexing has been removed/);
-  assert.match(source, /mcp__tech-cc-hub-knowledge__codegraph_search or codegraph_context first/);
-  assert.match(source, /auto-initialize and sync the managed graph/);
+  assert.match(source, /mcp__tech-cc-hub-knowledge__codegraph_search or codegraph_context first when the managed index is available/);
+  assert.match(source, /otherwise fall back to focused source reads/);
 });
 
 test("runner requires CodeGraph retrieval before broad source exploration", () => {
-  const source = readFileSync(join(process.cwd(), "src/electron/libs/runner.ts"), "utf8");
+  const source = readFileSync(join(process.cwd(), "src/electron/libs/runner/runner.ts"), "utf8");
 
   assert.match(source, /CODEGRAPH_RETRIEVAL_TOOL_NAMES/);
   assert.match(source, /BROAD_CODE_EXPLORATION_TOOL_NAMES = new Set\(\["Grep", "Glob", "Task", "Search"\]\)/);
@@ -42,7 +43,9 @@ test("runner requires CodeGraph retrieval before broad source exploration", () =
   assert.match(source, /toolName === "Bash"/);
   assert.match(source, /promptMentionsFilePath/);
   assert.match(source, /function getCodeGraphFirstDenyMessage/);
-  assert.match(source, /mcp__tech-cc-hub-knowledge__codegraph_search or mcp__tech-cc-hub-knowledge__codegraph_context before broad source exploration/);
+  assert.match(source, /isManagedCodeGraphInitialized\(projectCwd\)/);
+  assert.match(source, /mcp__tech-cc-hub-knowledge__codegraph_search or mcp__tech-cc-hub-knowledge__codegraph_context before broad source exploration when the managed index is available/);
+  assert.match(source, /fall back to focused Read\/Grep\/Glob instead of retrying CodeGraph/);
   assert.match(source, /codeGraphRetrievalSeen = false/);
   assert.match(source, /isCodeGraphRetrievalTool\(toolName\)/);
   assert.match(source, /onCodeGraphRetrieval/);
