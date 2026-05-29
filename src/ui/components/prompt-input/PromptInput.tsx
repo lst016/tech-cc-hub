@@ -6,7 +6,6 @@ import type {
   ApiConfigProfile,
   ClientEvent,
   PromptAttachment,
-  RuntimeReasoningMode,
 } from "../../types";
 import {
   getCodeReferenceSessionKey,
@@ -50,8 +49,7 @@ import {
   type AddPromptAttachmentDetail,
 } from "../../events";
 import { DecisionPanel } from "../DecisionPanel";
-import { InlineDropdown } from "../PromptInlineDropdown";
-import { ModelSelect } from "../ModelSelect";
+import { ComposerModelMenu } from "./ComposerModelMenu";
 import {
   AttachmentChips,
   BrowserAnnotationChips,
@@ -94,14 +92,6 @@ interface PromptInputProps {
   leftOffset?: number;
   rightOffset?: number;
 }
-
-const REASONING_OPTIONS: Array<{ value: RuntimeReasoningMode; label: string }> = [
-  { value: "disabled", label: "关闭思考" },
-  { value: "low", label: "低" },
-  { value: "medium", label: "中" },
-  { value: "high", label: "高" },
-  { value: "xhigh", label: "超高" },
-];
 
 export function PromptInput({
   sendEvent,
@@ -1297,25 +1287,14 @@ export function PromptInput({
         </div>
         <div className="prompt-composer-footer mt-2 flex min-h-10 items-center justify-between gap-3 overflow-visible">
           <div className="prompt-composer-runtime-controls flex min-w-max items-center gap-2 text-[#73777f]">
-            <ModelSelect
-              label="模型"
-              value={selectedRuntimeModel}
-              models={availableModels}
+            <ComposerModelMenu
+              modelValue={selectedRuntimeModel}
               modelOptions={modelSelectOptions}
+              reasoningValue={reasoningMode}
               disabled={disabled || availableModels.length === 0}
-              onChange={handleRuntimeModelChange}
-              variant="composer"
-              placement="top"
-              className="min-w-[190px] max-w-[240px] bg-transparent hover:bg-[#f4f6f8]"
+              onModelChange={handleRuntimeModelChange}
+              onReasoningChange={setReasoningMode}
               placeholder={availableModels.length === 0 ? "请先配置模型" : "选择模型"}
-            />
-            <InlineDropdown
-              label="思考强度"
-              value={reasoningMode}
-              disabled={disabled}
-              onChange={(value) => setReasoningMode(value as RuntimeReasoningMode)}
-              minWidthClass="min-w-[118px] bg-transparent hover:bg-[#f4f6f8]"
-              options={REASONING_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
             />
           </div>
           <div className="ml-auto flex min-w-max shrink-0 items-center gap-1 text-[#9ca0a7]">

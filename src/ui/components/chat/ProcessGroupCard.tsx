@@ -186,8 +186,39 @@ export function ProcessGroupCard({
 
   return (
     <div className="my-0.5">
+      <button
+        type="button"
+        className="flex max-w-full items-center gap-1 px-0.5 py-0 text-left text-[11px] leading-5 text-muted/62 transition hover:text-muted"
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <svg
+          className={`h-2.5 w-2.5 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="m9 6 6 6-6 6" />
+        </svg>
+        <span className="shrink-0">过程明细</span>
+        <span className="min-w-0 truncate">
+          {messages.length} 条 · {summary}
+        </span>
+      </button>
+      {expanded && (
+        <div className="ml-3 border-l border-black/5 pl-2">
+          {messages.map((entry, index) => (
+            <CompactProcessRow
+              key={`${entry.originalIndex}-${index}`}
+              entry={entry}
+            />
+          ))}
+        </div>
+      )}
       {changedFiles.length > 0 && (
-        <div className="mb-2 overflow-hidden rounded-[24px] border border-black/6 bg-white/84 shadow-[0_12px_28px_rgba(30,38,52,0.05)]">
+        <div className="mt-2 overflow-hidden rounded-[24px] border border-black/6 bg-white/84 shadow-[0_12px_28px_rgba(30,38,52,0.05)]">
           <div className="flex items-center justify-between gap-3 border-b border-black/6 px-4 py-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
@@ -247,37 +278,6 @@ export function ProcessGroupCard({
               </button>
             </div>
           )}
-        </div>
-      )}
-      <button
-        type="button"
-        className="flex max-w-full items-center gap-1 px-0.5 py-0 text-left text-[11px] leading-5 text-muted/62 transition hover:text-muted"
-        onClick={() => setExpanded((value) => !value)}
-      >
-        <svg
-          className={`h-2.5 w-2.5 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.4"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="m9 6 6 6-6 6" />
-        </svg>
-        <span className="shrink-0">过程明细</span>
-        <span className="min-w-0 truncate">
-          {messages.length} 条 · {summary}
-        </span>
-      </button>
-      {expanded && (
-        <div className="ml-3 border-l border-black/5 pl-2">
-          {messages.map((entry, index) => (
-            <CompactProcessRow
-              key={`${entry.originalIndex}-${index}`}
-              entry={entry}
-            />
-          ))}
         </div>
       )}
     </div>

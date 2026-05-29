@@ -2784,9 +2784,13 @@ function configureDevelopmentRuntimeIsolation(): void {
     if (!process.env.TECH_CC_HUB_CODEX_PROXY_PORT?.trim()) {
         process.env.TECH_CC_HUB_CODEX_PROXY_PORT = "14560";
     }
+    if (!process.env.TECH_CC_HUB_ANTHROPIC_COMPAT_PROXY_PORT?.trim()) {
+        process.env.TECH_CC_HUB_ANTHROPIC_COMPAT_PROXY_PORT = "14562";
+    }
 
     console.info(`[dev] using isolated Electron session data: ${sessionDataPath}`);
     console.info(`[dev] using Codex proxy port: ${process.env.TECH_CC_HUB_CODEX_PROXY_PORT}`);
+    console.info(`[dev] using Anthropic compatibility proxy port: ${process.env.TECH_CC_HUB_ANTHROPIC_COMPAT_PROXY_PORT}`);
 }
 
 configureDevelopmentRuntimeIsolation();

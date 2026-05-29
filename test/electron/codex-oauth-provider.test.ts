@@ -384,6 +384,7 @@ test("development startup isolates Electron cache and Codex proxy port", () => {
   assert.match(mainSource, /configureDevelopmentRuntimeIsolation/);
   assert.match(mainSource, /app\.setPath\("sessionData"/);
   assert.match(mainSource, /TECH_CC_HUB_CODEX_PROXY_PORT = "14560"/);
+  assert.match(mainSource, /TECH_CC_HUB_ANTHROPIC_COMPAT_PROXY_PORT = "14562"/);
   assert.match(proxySource, /resolveCodexProxyPort/);
   assert.match(proxySource, /TECH_CC_HUB_CODEX_PROXY_PORT/);
 });

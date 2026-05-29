@@ -19,11 +19,21 @@ test("preview open requests are routed through app state before the preview pane
 });
 
 test("process groups surface changed files with preview-open actions", () => {
-  const appSource = readFileSync("src/ui/App.tsx", "utf8");
+  const processGroupSource = readFileSync("src/ui/components/chat/ProcessGroupCard.tsx", "utf8");
 
-  assert.match(appSource, /collectCompletedPreviewFileChanges\(messages\.map\(\(entry\) => entry\.message\)\)/);
-  assert.match(appSource, /已修改 \{changedFiles\.length\} 个文件/);
-  assert.match(appSource, /点击文件在右侧预览打开/);
-  assert.match(appSource, /new CustomEvent<PreviewOpenFileDetail>\(PREVIEW_OPEN_FILE_EVENT/);
-  assert.match(appSource, /再显示 \$\{remainingChangedFileCount\} 个文件/);
+  assert.match(processGroupSource, /collectCompletedPreviewFileChanges\(messages\.map\(\(entry\) => entry\.message\)\)/);
+  assert.match(processGroupSource, /已修改 \{changedFiles\.length\} 个文件/);
+  assert.match(processGroupSource, /点击文件在右侧预览打开/);
+  assert.match(processGroupSource, /new CustomEvent<PreviewOpenFileDetail>\(PREVIEW_OPEN_FILE_EVENT/);
+  assert.match(processGroupSource, /再显示 \$\{remainingChangedFileCount\} 个文件/);
+});
+
+test("process groups render changed files after process details", () => {
+  const processGroupSource = readFileSync("src/ui/components/chat/ProcessGroupCard.tsx", "utf8");
+  const detailsIndex = processGroupSource.indexOf("<span className=\"shrink-0\">过程明细</span>");
+  const changedFilesIndex = processGroupSource.indexOf("已修改 {changedFiles.length} 个文件");
+
+  assert.notEqual(detailsIndex, -1);
+  assert.notEqual(changedFilesIndex, -1);
+  assert.ok(changedFilesIndex > detailsIndex);
 });

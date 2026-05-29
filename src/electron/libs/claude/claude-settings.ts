@@ -24,6 +24,10 @@ import {
 } from "../config-store.js";
 import { app } from "electron";
 import { getCodexAnthropicProxyBaseURL } from "../codex/codex-anthropic-proxy.js";
+import {
+  getAnthropicCompatProxyBaseURL,
+} from "../anthropic/anthropic-compat-proxy.js";
+import { shouldUseAnthropicCompatProxy } from "../anthropic/anthropic-compat.js";
 
 const CLAUDE_CODE_OPUS_MODEL_OVERRIDE_KEYS = [
   "opus",
@@ -513,6 +517,8 @@ function buildClaudeCodeSettingsEnv(config: ApiConfig, modelName: string | undef
   const anthropicAuthToken = config.provider === "codex" ? "codex-oauth" : config.apiKey;
   const anthropicBaseURL = config.provider === "codex"
     ? getCodexAnthropicProxyBaseURL(config.id)
+    : shouldUseAnthropicCompatProxy(config)
+      ? getAnthropicCompatProxyBaseURL(config.id)
     : normalizeAnthropicBaseUrlForClaudeCode(config.baseURL);
 
   return {
