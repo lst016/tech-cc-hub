@@ -16,4 +16,7 @@ test("app exposes a session analysis entry and renders the analysis page skeleto
   assert.match(analysisPageSource, /提示词账本/);
   assert.match(analysisPageSource, /分析优化/);
   assert.match(analysisPageSource, /分析卡片/);
+  assert.match(analysisPageSource, /导出诊断包/);
+  assert.match(analysisPageSource, /buildTraceDiagnosticExportPayload/);
+  assert.match(analysisPageSource, /sanitizeDiagnosticValue/);
 });

@@ -183,6 +183,38 @@ code, pre, textarea.mono, input.mono {
   background-clip: padding-box;
 }
 
+.activity-workspace-tabs-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  scrollbar-gutter: stable;
+  overscroll-behavior-x: contain;
+}
+
+.activity-workspace-tabs-scroll:hover {
+  scrollbar-color: rgba(26, 25, 21, 0.32) transparent;
+}
+
+.activity-workspace-tabs-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.activity-workspace-tabs-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.activity-workspace-tabs-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+
+.activity-workspace-tabs-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgba(26, 25, 21, 0.32);
+}
+
+.activity-workspace-tabs-scroll:hover::-webkit-scrollbar-thumb:hover {
+  background: rgba(26, 25, 21, 0.45);
+}
+
 .partial-message :where(p, ul, ol, pre, blockquote) {
   margin-top: 0.75rem;
 }

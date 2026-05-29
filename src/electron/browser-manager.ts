@@ -3588,17 +3588,11 @@ export class BrowserWorkbenchManager {
       }
       function cssDeclarationTextForElement(element) {
         const inline = element && element.getAttribute && element.getAttribute("style");
-        if (inline && inline.trim()) {
-          return inline.split(";").map(function(entry) {
-            return entry.trim();
-          }).filter(Boolean).map(function(entry) {
-            return "  " + entry.replace(/;$/, "") + ";";
-          }).join("\\n");
-        }
-        if (!element) return "";
-        const computed = window.getComputedStyle(element);
-        return ["color", "background-color", "font-size", "line-height", "font-weight", "display"].map(function(property) {
-          return "  " + property + ": " + compactCssValue(computed.getPropertyValue(property)) + ";";
+        if (!inline || !inline.trim()) return "";
+        return inline.split(";").map(function(entry) {
+          return entry.trim();
+        }).filter(Boolean).map(function(entry) {
+          return "  " + entry.replace(/;$/, "") + ";";
         }).join("\\n");
       }
       function cssSelectorLabel(annotation) {
@@ -3612,6 +3606,9 @@ export class BrowserWorkbenchManager {
         const declarations = parseCssDeclarations(cssText);
         const nextProperties = declarations.map(function(item) { return item.property; });
         const previousProperties = annotation.__cssAppliedProperties || [];
+        nextProperties.concat(previousProperties).forEach(function(property) {
+          markStyleEditTouched(annotation, property);
+        });
         previousProperties.forEach(function(property) {
           if (!nextProperties.includes(property)) element.style.removeProperty(property);
         });
@@ -3681,10 +3678,11 @@ export class BrowserWorkbenchManager {
         }
       }
       function refreshStyleEdits(annotation, element) {
-        if (!annotation || !element || !annotation.styleBefore) return [];
+        const touchedProperties = annotation && annotation.__styleTouchedProperties;
+        if (!annotation || !element || !annotation.styleBefore || !touchedProperties || touchedProperties.length === 0) return [];
         const computed = window.getComputedStyle(element);
         const changes = [];
-        STYLE_EDIT_PROPERTIES.forEach(function(property) {
+        touchedProperties.forEach(function(property) {
           const before = compactCssValue(annotation.styleBefore[property]);
           const after = compactCssValue(computed.getPropertyValue(property));
           if (before !== after) changes.push({ property, before, after });
@@ -3694,15 +3692,35 @@ export class BrowserWorkbenchManager {
           annotation.expectation = "Apply style changes: " + changes.map(function(change) {
             return change.property + ": " + change.before + " -> " + change.after;
           }).join("; ");
+          Object.defineProperty(annotation, "__styleExpectationGenerated", {
+            value: true,
+            enumerable: false,
+            configurable: true,
+          });
         } else {
           delete annotation.styleEdits;
+          if (annotation.__styleExpectationGenerated) {
+            delete annotation.expectation;
+            delete annotation.__styleExpectationGenerated;
+          }
         }
         return changes;
+      }
+      function markStyleEditTouched(annotation, property) {
+        if (!annotation || !property) return;
+        const touched = annotation.__styleTouchedProperties || [];
+        const nextTouched = touched.includes(property) ? touched : touched.concat(property);
+        Object.defineProperty(annotation, "__styleTouchedProperties", {
+          value: nextTouched,
+          enumerable: false,
+          configurable: true,
+        });
       }
       function applyStyleProperty(annotation, property, value) {
         const element = selectedElementForAnnotation(annotation);
         if (!element || !element.style) return;
         ensureStyleEditState(annotation, element);
+        markStyleEditTouched(annotation, property);
         const normalized = valueWithUnit(property, value);
         if (normalized) element.style.setProperty(property, normalized);
         else element.style.removeProperty(property);
@@ -3718,6 +3736,8 @@ export class BrowserWorkbenchManager {
         else element.removeAttribute("style");
         delete annotation.styleEdits;
         delete annotation.styleBefore;
+        delete annotation.__styleTouchedProperties;
+        delete annotation.__styleExpectationGenerated;
         scheduleAnnotationPositionSync();
         emitAnnotation(annotation);
       }
@@ -4112,9 +4132,7 @@ export class BrowserWorkbenchManager {
         }
         function submitComment() {
           annotation.comment = input.value.trim();
-          const element = selectedElementForAnnotation(annotation);
-          if (element) refreshStyleEdits(annotation, element);
-          if (!annotation.expectation) annotation.expectation = expectationInput.value.trim();
+          if (!annotation.styleEdits) annotation.expectation = expectationInput.value.trim();
           emitAnnotation(annotation);
           comment.hidden = true;
         }
@@ -4794,7 +4812,11 @@ export class BrowserWorkbenchManager {
     return `function(annotationId) {
       const id = String(annotationId || "");
       if (!id) return false;
-      const layer = document.getElementById("__tech_cc_hub_annotation_layer__");
+      const host = document.getElementById("__tech_cc_hub_annotation_host__");
+      const root = host && host.shadowRoot;
+      const layer = root
+        ? root.getElementById("__tech_cc_hub_annotation_layer__")
+        : document.getElementById("__tech_cc_hub_annotation_layer__");
       if (layer) {
         Array.from(layer.querySelectorAll("[data-annotation-id]")).forEach(function(node) {
           if (node.dataset && node.dataset.annotationId === id) {
@@ -4811,7 +4833,11 @@ export class BrowserWorkbenchManager {
 
   private buildClearAnnotationsScript(): string {
     return `function() {
-      const layer = document.getElementById("__tech_cc_hub_annotation_layer__");
+      const host = document.getElementById("__tech_cc_hub_annotation_host__");
+      const root = host && host.shadowRoot;
+      const layer = root
+        ? root.getElementById("__tech_cc_hub_annotation_layer__")
+        : document.getElementById("__tech_cc_hub_annotation_layer__");
       if (window.__techCcHubAnnotationHandler) {
         document.removeEventListener("click", window.__techCcHubAnnotationHandler, true);
         window.__techCcHubAnnotationHandler = null;
@@ -4836,9 +4862,17 @@ export class BrowserWorkbenchManager {
       if (window.__techCcHubAnnotations && typeof window.__techCcHubAnnotations.clear === "function") {
         window.__techCcHubAnnotations.clear();
       }
-      if (layer) layer.remove();
-      const style = document.getElementById("__tech_cc_hub_annotation_style__");
+      if (layer) {
+        Array.from(layer.querySelectorAll(".__tech_cc_hub_outline,.__tech_cc_hub_marker,.__tech_cc_hub_comment,.__tech_cc_hub_background,.__tech_cc_hub_hover,.__tech_cc_hub_hover_card")).forEach(function(node) {
+          node.remove();
+        });
+        layer.remove();
+      }
+      const style = root
+        ? root.getElementById("__tech_cc_hub_annotation_style__")
+        : document.getElementById("__tech_cc_hub_annotation_style__");
       if (style) style.remove();
+      if (host) host.remove();
       return true;
     }`;
   }

@@ -1777,7 +1777,51 @@ const AskUserQuestionCard = ({
 };
 
 const SystemInfoCard = ({ message, showIndicator = false }: { message: SDKMessage; showIndicator?: boolean }) => {
-  if (message.type !== "system" || !("subtype" in message) || message.subtype !== "init") return null;
+  if (message.type !== "system" || !("subtype" in message)) return null;
+
+  if (
+    message.subtype === "task_started"
+    || message.subtype === "task_progress"
+    || message.subtype === "task_updated"
+    || message.subtype === "task_notification"
+  ) {
+    const systemMsg = message as unknown as Record<string, unknown>;
+    const patch = typeof systemMsg.patch === "object" && systemMsg.patch !== null
+      ? systemMsg.patch as Record<string, unknown>
+      : {};
+    const status = typeof patch.status === "string" ? patch.status : "";
+    const description = typeof systemMsg.description === "string" ? systemMsg.description : "";
+    const summary = typeof systemMsg.summary === "string" ? systemMsg.summary : "";
+    const prompt = typeof systemMsg.prompt === "string" ? systemMsg.prompt : "";
+    const taskId = typeof systemMsg.task_id === "string" ? systemMsg.task_id : "";
+    const label = message.subtype === "task_started"
+      ? "Agent started"
+      : message.subtype === "task_progress"
+        ? "Agent progress"
+        : message.subtype === "task_notification"
+          ? "Agent notice"
+          : status === "completed"
+            ? "Agent completed"
+            : status === "failed"
+              ? "Agent failed"
+              : "Agent updated";
+    const title = description || summary || (typeof systemMsg.workflow_name === "string" ? systemMsg.workflow_name : "") || taskId.slice(0, 8);
+    const detail = summary || prompt || description || (typeof patch.error === "string" ? patch.error : "");
+
+    return (
+      <div className="mt-3 rounded-[18px] border border-sky-100 bg-sky-50/70 px-3.5 py-3 text-sm text-ink-700">
+        <div className="mb-1.5 flex min-w-0 items-center gap-2 font-semibold text-sky-700">
+          <StatusDot variant={status === "failed" ? "error" : status === "completed" ? "success" : "accent"} />
+          <span className="shrink-0">{label}</span>
+          {taskId && <span className="truncate font-mono text-[11px] font-medium text-sky-600/70">{taskId}</span>}
+        </div>
+        {title && <div className="break-words font-medium text-ink-800">{title}</div>}
+        {detail && detail !== title && <div className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-5 text-ink-600">{detail}</div>}
+      </div>
+    );
+  }
+
+  if (message.subtype !== "init") return null;
 
   const systemMsg = message as SystemInitMessage;
 

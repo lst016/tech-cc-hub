@@ -20,8 +20,14 @@ import {
   type PreviewOpenFileDetail,
 } from "./events";
 import { copyTextToClipboard } from "./utils/clipboard";
-import { DEFAULT_ACTIVITY_RAIL_TAB, type ActivityRailTab } from "./utils/activity-workspace-tabs";
-import { collectCompletedPreviewFileChanges, resolvePreviewFileChangePath } from "./utils/preview-file-refresh";
+import {
+  DEFAULT_ACTIVITY_RAIL_TAB,
+  type ActivityRailTab,
+  type WorkflowAgentRailTab,
+} from "./utils/activity-workspace-tabs";
+import { buildWorkflowAgentSummaries } from "./utils/workflow-agent-transcripts";
+import { ProcessGroupCard as SharedProcessGroupCard } from "./components/chat/ProcessGroupCard";
+import { WorkflowAgentCard } from "./components/workflow/WorkflowAgentCard";
 import { DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT } from "../shared/claude-agent-teams";
 import {
   DEV_BRIDGE_READY_EVENT,
@@ -51,6 +57,7 @@ type GlobalRuntimeConfig = Record<string, unknown>;
 type RenderEntry =
   | { type: "separator"; key: string; roundNumber: number }
   | { type: "message"; key: string; originalIndex: number; message: StreamMessage }
+  | { type: "workflow_agent_card"; key: string; originalIndex: number; agentId: string }
   | { type: "process_group"; key: string; originalIndex: number; messages: Array<{ originalIndex: number; message: StreamMessage }> };
 
 type PendingPreviewOpenRequest = PreviewOpenFileDetail & {
@@ -59,6 +66,28 @@ type PendingPreviewOpenRequest = PreviewOpenFileDetail & {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getWorkflowTaskId(message: StreamMessage): string | null {
+  if (message.type !== "system" || !isRecord(message)) return null;
+  const record = message as Record<string, unknown>;
+  const subtype = typeof record.subtype === "string" ? record.subtype : "";
+  if (
+    subtype !== "task_started"
+    && subtype !== "task_progress"
+    && subtype !== "task_updated"
+    && subtype !== "task_notification"
+  ) return null;
+  const taskId = record.task_id;
+  return typeof taskId === "string" && taskId.trim() ? taskId.trim() : null;
+}
+
+function getWorkflowAgentTabId(agentId: string): WorkflowAgentRailTab {
+  return `workflow-agent:${agentId}`;
+}
+
+function getWorkflowAgentIdFromTab(tab: ActivityRailTab): string | null {
+  return tab.startsWith("workflow-agent:") ? tab.slice("workflow-agent:".length) : null;
 }
 
 function getLatestRuntimeUsageModel(messages: StreamMessage[]): string {
@@ -140,315 +169,6 @@ function isProcessMessage(message: StreamMessage): boolean {
   return false;
 }
 
-function getProcessGroupSummary(groupMessages: Array<{ message: StreamMessage }>): string {
-  let toolUseCount = 0;
-  let toolResultCount = 0;
-  const toolLabels = new Map<string, number>();
-
-  for (const item of groupMessages) {
-    for (const content of getMessageContentItems(item.message)) {
-      if (!isRecord(content)) continue;
-      if (content.type === "tool_use") {
-        toolUseCount += 1;
-        const name = typeof content.name === "string" ? content.name : "tool";
-        toolLabels.set(name, (toolLabels.get(name) ?? 0) + 1);
-      }
-      if (content.type === "tool_result") {
-        toolResultCount += 1;
-      }
-    }
-  }
-
-  const labelPreview = Array.from(toolLabels.entries())
-    .slice(0, 4)
-    .map(([name, count]) => `${name} ${count}`)
-    .join(" · ");
-  const parts = [
-    toolUseCount ? `${toolUseCount} 个工具调用` : "",
-    toolResultCount ? `${toolResultCount} 条工具返回` : "",
-    labelPreview,
-  ].filter(Boolean);
-  return parts.join(" · ") || `${groupMessages.length} 条过程事件`;
-}
-
-function normalizeComparablePath(path: string): string {
-  return path.replace(/\\/g, "/").toLowerCase();
-}
-
-function buildProcessChangedFiles(
-  messages: Array<{ message: StreamMessage }>,
-  workspace?: string,
-): Array<{ path: string; displayPath: string; operationCount: number }> {
-  const changes = collectCompletedPreviewFileChanges(messages.map((entry) => entry.message));
-  const grouped = new Map<string, { path: string; displayPath: string; operationCount: number }>();
-  const normalizedWorkspace = workspace ? normalizeComparablePath(workspace).replace(/\/+$/, "") : "";
-
-  for (const change of changes) {
-    const resolvedPath = resolvePreviewFileChangePath(workspace, change.path);
-    const normalizedResolvedPath = normalizeComparablePath(resolvedPath);
-    const existing = grouped.get(normalizedResolvedPath);
-    if (existing) {
-      existing.operationCount += 1;
-      continue;
-    }
-
-    let displayPath = resolvedPath;
-    if (workspace && normalizedWorkspace && normalizedResolvedPath.startsWith(`${normalizedWorkspace}/`)) {
-      displayPath = resolvedPath.slice(workspace.length + 1);
-    }
-
-    grouped.set(normalizedResolvedPath, {
-      path: resolvedPath,
-      displayPath,
-      operationCount: 1,
-    });
-  }
-
-  return Array.from(grouped.values());
-}
-
-function ProcessGroupCard({
-  messages,
-  workspace,
-}: {
-  messages: Array<{ originalIndex: number; message: StreamMessage }>;
-  workspace?: string;
-  isLast: boolean;
-  isRunning: boolean;
-  permissionRequest: NonNullable<ReturnType<typeof useAppStore.getState>["sessions"][string]["permissionRequests"]>[number] | undefined;
-  onPermissionResult: (requestId: string, result: PermissionResult) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [showAllFiles, setShowAllFiles] = useState(false);
-  const summary = useMemo(() => getProcessGroupSummary(messages), [messages]);
-  const changedFiles = useMemo(() => buildProcessChangedFiles(messages, workspace), [messages, workspace]);
-  const visibleChangedFiles = showAllFiles ? changedFiles : changedFiles.slice(0, 4);
-  const remainingChangedFileCount = Math.max(0, changedFiles.length - visibleChangedFiles.length);
-
-  return (
-    <div className="my-0.5">
-      {changedFiles.length > 0 && (
-        <div className="mb-2 overflow-hidden rounded-[24px] border border-black/6 bg-white/84 shadow-[0_12px_28px_rgba(30,38,52,0.05)]">
-          <div className="flex items-center justify-between gap-3 border-b border-black/6 px-4 py-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
-                <span className="grid h-9 w-9 place-items-center rounded-2xl bg-[#f3f6fb] text-ink-700">
-                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
-                    <path d="M8 4.5h8l3 3V19.5H8z" />
-                    <path d="M13 4.5V8h6M10.5 12h6M10.5 15.5h6" />
-                  </svg>
-                </span>
-                <span>已修改 {changedFiles.length} 个文件</span>
-              </div>
-              <p className="mt-1 text-xs text-muted">点击文件在右侧预览打开</p>
-            </div>
-          </div>
-          <div className="divide-y divide-black/6">
-            {visibleChangedFiles.map((file) => (
-              <button
-                key={file.path}
-                type="button"
-                className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-ink-900/[0.03]"
-                onClick={() => window.dispatchEvent(new CustomEvent<PreviewOpenFileDetail>(PREVIEW_OPEN_FILE_EVENT, {
-                  detail: { filePath: file.path },
-                }))}
-              >
-                <span className="min-w-0 flex-1 truncate text-[13px] text-ink-800" title={file.path}>
-                  {file.displayPath}
-                </span>
-                {file.operationCount > 1 && (
-                  <span className="shrink-0 rounded-full border border-black/8 bg-white px-2 py-0.5 text-[11px] font-medium text-muted">
-                    {file.operationCount} 次
-                  </span>
-                )}
-                <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-ink-400" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                  <path d="M9 6l6 6-6 6" />
-                </svg>
-              </button>
-            ))}
-          </div>
-          {(remainingChangedFileCount > 0 || showAllFiles) && (
-            <div className="px-4 py-2.5">
-              <button
-                type="button"
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-700 transition hover:text-accent"
-                onClick={() => setShowAllFiles((current) => !current)}
-              >
-                <span>{showAllFiles ? "收起" : `再显示 ${remainingChangedFileCount} 个文件`}</span>
-                <svg
-                  viewBox="0 0 24 24"
-                  className={`h-3.5 w-3.5 transition-transform ${showAllFiles ? "rotate-180" : ""}`}
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  aria-hidden="true"
-                >
-                  <path d="M6 9l6 6 6-6" />
-                </svg>
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-      <button
-        type="button"
-        className="flex max-w-full items-center gap-1 px-0.5 py-0 text-left text-[11px] leading-5 text-muted/62 transition hover:text-muted"
-        onClick={() => setExpanded((value) => !value)}
-      >
-        <svg
-          className={`h-2.5 w-2.5 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.4"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="m9 6 6 6-6 6" />
-        </svg>
-        <span className="shrink-0">过程</span>
-        <span className="min-w-0 truncate">
-          {messages.length} 条 · {summary}
-        </span>
-      </button>
-      {expanded && (
-        <div className="ml-3 border-l border-black/5 pl-2">
-          {messages.map((entry, index) => (
-            <CompactProcessRow
-              key={`${entry.originalIndex}-${index}`}
-              entry={entry}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CompactProcessRow({
-  entry,
-}: {
-  entry: { originalIndex: number; message: StreamMessage };
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const label = getProcessEntryLabel(entry.message);
-  const summary = getProcessGroupSummary([entry]);
-
-  return (
-    <div id={`chat-message-${entry.originalIndex}`}>
-      <button
-        type="button"
-        className="flex max-w-full items-center gap-1.5 py-0.5 text-left text-[11px] leading-5 text-muted/58 transition hover:text-muted"
-        onClick={() => setExpanded((value) => !value)}
-      >
-        <svg
-          className={`h-2 w-2 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="m9 6 6 6-6 6" />
-        </svg>
-        <span className="h-1 w-1 shrink-0 rounded-full bg-muted/35" />
-        <span className="shrink-0 text-muted/70">{label}</span>
-        <span className="min-w-0 truncate">{summary}</span>
-      </button>
-      {expanded && (
-        <CompactProcessDetails message={entry.message} />
-      )}
-    </div>
-  );
-}
-
-function CompactProcessDetails({
-  message,
-}: {
-  message: StreamMessage;
-}) {
-  const detail = getProcessEntryDetail(message);
-
-  return (
-    <pre className="ml-4 mb-1 max-h-64 overflow-auto rounded-lg border border-black/5 bg-black/[0.025] px-2.5 py-2 text-[11px] leading-5 text-muted/80 [white-space:pre-wrap] [word-break:break-word]">
-      {detail}
-    </pre>
-  );
-}
-
-function getProcessEntryLabel(message: StreamMessage): string {
-  if (message.type === "user") {
-    return "过程输出";
-  }
-  return "过程";
-}
-
-function getProcessEntryDetail(message: StreamMessage): string {
-  if (message.type === "assistant") {
-    const content = (message as { message?: { content?: unknown[] } }).message?.content;
-    if (!Array.isArray(content) || content.length === 0) {
-      return "无过程详情";
-    }
-
-    return content.map((item) => {
-      if (!isProcessDetailRecord(item)) {
-        return formatProcessDetailValue(item);
-      }
-
-      if (item.type === "tool_use") {
-        const name = typeof item.name === "string" ? item.name : "tool";
-        return [
-          `工具调用：${name}`,
-          formatProcessDetailValue(item.input),
-        ].filter(Boolean).join("\n");
-      }
-
-      return formatProcessDetailValue(item);
-    }).join("\n\n");
-  }
-
-  if (message.type === "user") {
-    const content = (message as { message?: { content?: unknown[] } }).message?.content;
-    if (!Array.isArray(content) || content.length === 0) {
-      return "无过程输出";
-    }
-
-    return content.map((item) => {
-      if (!isProcessDetailRecord(item)) {
-        return formatProcessDetailValue(item);
-      }
-
-      if (item.type === "tool_result") {
-        return [
-          "工具返回：",
-          formatProcessDetailValue(item.content ?? item),
-        ].join("\n");
-      }
-
-      return formatProcessDetailValue(item);
-    }).join("\n\n");
-  }
-
-  return formatProcessDetailValue(message);
-}
-
-function formatProcessDetailValue(value: unknown): string {
-  if (typeof value === "string") {
-    return value.trim() || "(empty)";
-  }
-
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function isProcessDetailRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 type StreamEventPayload = {
   type?: string;
   delta?: {
@@ -515,13 +235,14 @@ function App() {
   const [showActivityRail, setShowActivityRail] = useState(true);
   const [workspaceViewBySessionId, setWorkspaceViewBySessionId] = useState<Record<string, WorkspaceView>>({});
   const [activityRailTabBySessionId, setActivityRailTabBySessionId] = useState<Record<string, ActivityRailTab>>({});
+  const [openWorkflowAgentTabsBySessionId, setOpenWorkflowAgentTabsBySessionId] = useState<Record<string, string[]>>({});
   const [pendingPreviewOpenRequestBySessionId, setPendingPreviewOpenRequestBySessionId] = useState<Record<string, PendingPreviewOpenRequest>>({});
   const [terminalTabBySessionId, setTerminalTabBySessionId] = useState<Record<string, boolean>>({});
   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
   const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | null>(null);
   const [appUpdateActionBusy, setAppUpdateActionBusy] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
-  const [activityRailWidth, setActivityRailWidth] = useState(420);
+  const [activityRailWidth, setActivityRailWidth] = useState(520);
   const [viewportWidth, setViewportWidth] = useState(() => (
     typeof window === "undefined" ? 1440 : window.innerWidth
   ));
@@ -586,6 +307,8 @@ function App() {
   const activityRailTabExplicitlySet = activeSessionId
     ? Object.prototype.hasOwnProperty.call(activityRailTabBySessionId, activeSessionId)
     : false;
+  const openWorkflowAgentTabIds = activeSessionId ? (openWorkflowAgentTabsBySessionId[activeSessionId] ?? []) : [];
+  const selectedWorkflowAgentId = getWorkflowAgentIdFromTab(activityRailTab) ?? undefined;
   const pendingPreviewOpenRequest = activeSessionId ? pendingPreviewOpenRequestBySessionId[activeSessionId] : undefined;
   const setActiveSessionWorkspaceView = useCallback((nextView: WorkspaceView) => {
     if (!activeSessionId) return;
@@ -599,6 +322,31 @@ function App() {
       current[activeSessionId] === nextTab ? current : { ...current, [activeSessionId]: nextTab }
     ));
   }, [activeSessionId]);
+  const openWorkflowAgentTranscript = useCallback((agentId: string) => {
+    if (!activeSessionId) return;
+    setOpenWorkflowAgentTabsBySessionId((current) => {
+      const existing = current[activeSessionId] ?? [];
+      if (existing.includes(agentId)) return current;
+      return { ...current, [activeSessionId]: [...existing, agentId] };
+    });
+    setShowActivityRail(true);
+    setShowSessionAnalysis(false);
+    setActiveSessionWorkspaceView("chat");
+    setActiveSessionActivityRailTab(getWorkflowAgentTabId(agentId));
+  }, [activeSessionId, setActiveSessionActivityRailTab, setActiveSessionWorkspaceView]);
+  const closeWorkflowAgentTranscript = useCallback((tab: WorkflowAgentRailTab) => {
+    if (!activeSessionId) return;
+    const agentId = getWorkflowAgentIdFromTab(tab);
+    if (!agentId) return;
+    const nextOpenTabs = openWorkflowAgentTabIds.filter((id) => id !== agentId);
+    setOpenWorkflowAgentTabsBySessionId((current) => {
+      return { ...current, [activeSessionId]: nextOpenTabs };
+    });
+    if (activityRailTab === tab) {
+      const fallbackAgentId = nextOpenTabs[nextOpenTabs.length - 1];
+      setActiveSessionActivityRailTab(fallbackAgentId ? getWorkflowAgentTabId(fallbackAgentId) : "trace");
+    }
+  }, [activeSessionId, activityRailTab, openWorkflowAgentTabIds, setActiveSessionActivityRailTab]);
   const activeSession = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId]) : undefined));
   const activeHistoryCursor = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId])?.historyCursor : undefined));
   const activeSessionHydrated = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId])?.hydrated : undefined));
@@ -728,6 +476,19 @@ function App() {
   const activeBrowserWorkbenchState = activeSessionId ? browserWorkbenchBySessionId[activeSessionId] : undefined;
   const activeHasBrowserTab = activeBrowserWorkbenchState?.hasBrowserTab ?? Boolean(activeBrowserWorkbenchState?.url);
   const activeHasTerminalTab = activeSessionId ? terminalTabBySessionId[activeSessionId] === true : false;
+  const workflowAgents = useMemo(() => buildWorkflowAgentSummaries(messages), [messages]);
+  const workflowAgentsById = useMemo(() => new Map(workflowAgents.map((agent) => [agent.id, agent])), [workflowAgents]);
+  const workflowAgentTabs = useMemo(() => (
+    openWorkflowAgentTabIds
+      .map((agentId) => workflowAgentsById.get(agentId))
+      .filter((agent): agent is NonNullable<typeof agent> => Boolean(agent))
+      .map((agent) => ({
+        id: getWorkflowAgentTabId(agent.id),
+        label: agent.title,
+        title: agent.title,
+      }))
+  ), [openWorkflowAgentTabIds, workflowAgentsById]);
+  const selectedWorkflowAgent = selectedWorkflowAgentId ? workflowAgentsById.get(selectedWorkflowAgentId) : undefined;
   const latestRuntimeUsageModel = useMemo(() => getLatestRuntimeUsageModel(messages), [messages]);
   const selectedUsageModel =
     latestRuntimeUsageModel ||
@@ -820,6 +581,7 @@ function App() {
   const renderEntries = useMemo(() => {
     const entries: RenderEntry[] = [];
     let pendingProcessGroup: Array<{ originalIndex: number; message: StreamMessage }> = [];
+    const emittedWorkflowAgentCards = new Set<string>();
     let roundNumber = messages
       .slice(0, displayMessages[0]?.originalIndex ?? 0)
       .filter((message) => message.type === "user_prompt").length;
@@ -848,6 +610,21 @@ function App() {
         });
       }
 
+      const workflowTaskId = getWorkflowTaskId(item.message);
+      if (workflowTaskId) {
+        flushProcessGroup();
+        if (!emittedWorkflowAgentCards.has(workflowTaskId) && workflowAgentsById.has(workflowTaskId)) {
+          emittedWorkflowAgentCards.add(workflowTaskId);
+          entries.push({
+            type: "workflow_agent_card",
+            key: `${activeSessionId}-workflow-agent-${workflowTaskId}`,
+            originalIndex: item.originalIndex,
+            agentId: workflowTaskId,
+          });
+        }
+        continue;
+      }
+
       if (isProcessMessage(item.message)) {
         pendingProcessGroup.push({
           originalIndex: item.originalIndex,
@@ -867,7 +644,7 @@ function App() {
 
     flushProcessGroup();
     return entries;
-  }, [activeSessionId, displayMessages, messages]);
+  }, [activeSessionId, displayMessages, messages, workflowAgentsById]);
 
   const chatOverview = useMemo(() => {
     const latestUserEntry = [...renderEntries].reverse().find((entry) => entry.type === "message" && entry.message.type === "user_prompt");
@@ -1904,13 +1681,23 @@ function App() {
                       if (entry.type === "process_group") {
                         return (
                           <div key={entry.key} id={`chat-message-${entry.originalIndex}`}>
-                            <ProcessGroupCard
+                            <SharedProcessGroupCard
                               messages={entry.messages}
                               workspace={activeSession?.cwd}
-                              isLast={isLastMessage}
-                              isRunning={isRunning}
-                              permissionRequest={permissionRequests[0]?.toolName === "AskUserQuestion" ? undefined : permissionRequests[0]}
-                              onPermissionResult={handlePermissionResult}
+                            />
+                          </div>
+                        );
+                      }
+
+                      if (entry.type === "workflow_agent_card") {
+                        const agent = workflowAgentsById.get(entry.agentId);
+                        if (!agent) return null;
+                        return (
+                          <div key={entry.key} id={`chat-message-${entry.originalIndex}`}>
+                            <WorkflowAgentCard
+                              agent={agent}
+                              selected={activityRailTab === getWorkflowAgentTabId(agent.id)}
+                              onOpen={openWorkflowAgentTranscript}
                             />
                           </div>
                         );
@@ -2040,8 +1827,11 @@ function App() {
                 compressionThresholdPercent={selectedUsageModelConfig?.compressionThresholdPercent}
                 hasBrowserTab={activeHasBrowserTab}
                 hasTerminalTab={activeHasTerminalTab}
+                workflowAgentTabs={workflowAgentTabs}
+                selectedWorkflowAgent={selectedWorkflowAgent}
                 onOpenTerminalWorkspace={openTerminalWorkspace}
                 onCloseTerminalWorkspace={closeTerminalWorkspace}
+                onCloseWorkflowAgentTab={closeWorkflowAgentTranscript}
                 onOpenSessionAnalysis={() => setShowSessionAnalysis(true)}
                 width={effectiveActivityRailWidth}
               />

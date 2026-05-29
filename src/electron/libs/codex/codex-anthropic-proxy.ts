@@ -26,15 +26,26 @@ import {
 } from "../config-store.js";
 
 const CODEX_PROXY_HOST = "127.0.0.1";
-const CODEX_PROXY_PORT = 14559;
+const DEFAULT_CODEX_PROXY_PORT = 14559;
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 
 let proxyServer: http.Server | null = null;
 const credentialRefreshes = new Map<string, Promise<CodexOAuthCredential>>();
 
+export function resolveCodexProxyPort(): number {
+  const rawPort = process.env.TECH_CC_HUB_CODEX_PROXY_PORT?.trim();
+  if (!rawPort) {
+    return DEFAULT_CODEX_PROXY_PORT;
+  }
+  const parsed = Number.parseInt(rawPort, 10);
+  return Number.isFinite(parsed) && parsed > 0 && parsed < 65_536
+    ? parsed
+    : DEFAULT_CODEX_PROXY_PORT;
+}
+
 export function getCodexAnthropicProxyBaseURL(profileId: string): string {
   ensureCodexAnthropicProxy();
-  return `http://${CODEX_PROXY_HOST}:${CODEX_PROXY_PORT}/codex/${encodeURIComponent(profileId)}`;
+  return `http://${CODEX_PROXY_HOST}:${resolveCodexProxyPort()}/codex/${encodeURIComponent(profileId)}`;
 }
 
 export function ensureCodexAnthropicProxy(): void {
@@ -61,8 +72,9 @@ export function ensureCodexAnthropicProxy(): void {
   server.on("close", () => {
     resetServerState();
   });
-  server.listen(CODEX_PROXY_PORT, CODEX_PROXY_HOST, () => {
-    console.info(`[codex-proxy] listening on http://${CODEX_PROXY_HOST}:${CODEX_PROXY_PORT}`);
+  const port = resolveCodexProxyPort();
+  server.listen(port, CODEX_PROXY_HOST, () => {
+    console.info(`[codex-proxy] listening on http://${CODEX_PROXY_HOST}:${port}`);
   });
 }
 
@@ -78,7 +90,7 @@ async function handleProxyRequest(request: IncomingMessage, response: ServerResp
       return;
     }
 
-    const parsedUrl = new URL(request.url ?? "/", `http://${CODEX_PROXY_HOST}:${CODEX_PROXY_PORT}`);
+    const parsedUrl = new URL(request.url ?? "/", `http://${CODEX_PROXY_HOST}:${resolveCodexProxyPort()}`);
     const match = /^\/codex\/([^/]+)\/v1\/messages$/.exec(parsedUrl.pathname);
     if (!match) {
       writeJson(response, 404, { error: { message: "route not found" } });

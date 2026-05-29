@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
-import { ChevronDown } from "lucide-react";
+import { CheckCircle2, ChevronDown, Circle } from "lucide-react";
 import type { PermissionRequest } from "../store/useAppStore";
 import { copyTextToClipboard } from "../utils/clipboard";
 
@@ -17,6 +17,12 @@ type AskUserQuestionInput = {
 
 type SelectedOptionsByQuestion = Record<number, string[]>;
 type OtherInputsByQuestion = Record<number, string>;
+
+function QuestionStepIcon({ answered }: { answered: boolean }) {
+  return answered
+    ? <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+    : <Circle className="h-4 w-4 text-accent" aria-hidden="true" />;
+}
 
 export function DecisionPanel({
   request,
@@ -88,22 +94,24 @@ export function DecisionPanel({
   if (request.toolName === "AskUserQuestion" && questions.length > 0) {
     return (
       <div
-        className={`flex flex-col overflow-hidden rounded-[22px] border border-accent/18 bg-[rgba(253,244,241,0.88)] shadow-[0_18px_48px_rgba(30,38,52,0.08)] ${
-          compact ? "max-h-[min(46vh,420px)] p-3" : "max-h-[min(64vh,620px)] p-5"
+        className={`flex flex-col overflow-hidden rounded-xl border border-accent/18 bg-[#FFF8F5] shadow-[0_12px_30px_rgba(30,38,52,0.08)] ${
+          compact ? "max-h-[min(42vh,360px)] p-2.5" : "max-h-[min(58vh,540px)] p-3"
         }`}
       >
-        <div className="flex shrink-0 items-start justify-between gap-3">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-accent/12 pb-2">
           <div className="min-w-0">
-            <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-accent">需要你选择</div>
-            <div className="mt-1 text-sm font-semibold text-ink-800">Agent 正在等你的确认</div>
+            <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-accent">需要你选择</div>
+            <div className="mt-0.5 truncate text-[13px] font-semibold text-ink-800">
+              Agent 等待确认 · {answeredQuestionCount}/{questions.length}
+            </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <span className="rounded-full border border-accent/18 bg-white/80 px-2.5 py-1 text-xs font-semibold text-accent">
-              Codex 式选择
+          <div className="flex shrink-0 items-center gap-1.5">
+            <span className="rounded-md border border-accent/18 bg-white/80 px-2 py-1 text-[11px] font-semibold text-accent">
+              StepForm
             </span>
             <button
               type="button"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-accent/18 bg-white/80 text-accent transition-colors hover:bg-white"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-accent/18 bg-white/80 text-accent transition-colors hover:bg-white"
               aria-label={expanded ? "收起确认面板" : "展开确认面板"}
               aria-expanded={expanded}
               title={expanded ? "收起" : "展开"}
@@ -116,34 +124,51 @@ export function DecisionPanel({
           </div>
         </div>
         {!expanded && (
-          <div className={`${compact ? "mt-2" : "mt-3"} truncate text-xs text-muted`}>
+          <div className="mt-2 truncate text-xs text-muted">
             {answeredQuestionCount > 0 ? `已选择 ${answeredQuestionCount}/${questions.length} 项` : `待选择 ${questions.length} 项`}
           </div>
         )}
         {expanded && (
           <>
-            <div className={`${compact ? "mt-3" : "mt-4"} min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1`}>
+            <div className="mt-2 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
               {questions.map((q, qIndex) => {
                 const selected = selectedOptions[qIndex] ?? [];
                 const otherText = otherInputs[qIndex]?.trim() ?? "";
+                const isAnswered = selected.length > 0 || otherText.length > 0;
                 return (
-                  <div key={qIndex} className={qIndex === 0 ? "" : compact ? "mt-3" : "mt-4"}>
-                    <p className="text-sm font-medium text-ink-800 [overflow-wrap:anywhere]">{q.question}</p>
+                  <div key={qIndex} className={`grid grid-cols-[22px_minmax(0,1fr)] gap-2 rounded-lg border border-black/6 bg-white/72 px-2.5 py-2 ${qIndex === 0 ? "" : "mt-2"}`}>
+                    <div className="flex flex-col items-center pt-0.5">
+                      <QuestionStepIcon answered={isAnswered} />
+                      {qIndex < questions.length - 1 && <div className="mt-1 h-full min-h-6 w-px bg-accent/14" />}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                        <span className="rounded-md bg-accent/8 px-1.5 py-0.5 text-[11px] font-semibold text-accent">
+                          {qIndex + 1}
+                        </span>
+                        {q.header && (
+                          <span className="max-w-full truncate rounded-md border border-black/6 bg-white px-1.5 py-0.5 text-[11px] text-muted">
+                            {q.header}
+                          </span>
+                        )}
+                        {q.multiSelect && <span className="text-[11px] text-muted">多选</span>}
+                      </div>
+                    <p className="mt-1 text-[13px] font-semibold leading-5 text-ink-800 [overflow-wrap:anywhere]">{q.question}</p>
                     {q.header && (
-                      <span className="mt-2 inline-flex max-w-full items-center rounded-full border border-black/6 bg-white/80 px-2 py-0.5 text-xs text-muted [overflow-wrap:anywhere]">
+                      <span className="sr-only">
                         {q.header}
                       </span>
                     )}
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
                       {(q.options ?? []).map((option, optIndex) => {
                         const isSelected = selected.includes(option.label);
                         return (
                           <button
                             key={optIndex}
                             type="button"
-                            className={`max-w-full rounded-full border px-3 py-2 text-left text-sm transition-colors [overflow-wrap:anywhere] ${
+                            className={`min-w-0 rounded-md border px-2.5 py-2 text-left text-[13px] leading-5 transition-colors [overflow-wrap:anywhere] ${
                               isSelected
-                                ? "border-accent/40 bg-white text-accent shadow-[0_8px_20px_rgba(232,117,81,0.14)]"
+                                ? "border-accent/40 bg-white text-accent shadow-[0_6px_14px_rgba(232,117,81,0.12)]"
                                 : "border-black/8 bg-white/65 text-ink-700 hover:border-accent/26 hover:bg-white"
                             }`}
                             onClick={() => {
@@ -151,28 +176,28 @@ export function DecisionPanel({
                             }}
                             aria-pressed={isSelected}
                           >
-                            <span className="font-semibold">{option.label}</span>
-                            {option.description && <span className="ml-2 text-xs text-muted">{option.description}</span>}
+                            <span className="block truncate font-semibold">{option.label}</span>
+                            {option.description && <span className="block truncate text-[11px] text-muted">{option.description}</span>}
                           </button>
                         );
                       })}
                     </div>
                     {(selected.length > 0 || otherText) && (
-                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
                         <span>当前选择</span>
                         {[...selected, otherText].filter(Boolean).map((label) => (
-                          <span key={label} className="rounded-full bg-white px-2 py-1 font-semibold text-accent shadow-[inset_0_0_0_1px_rgba(232,117,81,0.18)] [overflow-wrap:anywhere]">
+                          <span key={label} className="rounded-md bg-white px-1.5 py-0.5 font-semibold text-accent shadow-[inset_0_0_0_1px_rgba(232,117,81,0.18)] [overflow-wrap:anywhere]">
                             {label}
                           </span>
                         ))}
                       </div>
                     )}
                     {allowFreeformAnswer ? (
-                      <div className="mt-3">
-                        <label className="block text-xs font-medium text-muted">其他回答</label>
+                      <div className="mt-2">
+                        <label className="block text-[11px] font-medium text-muted">其他回答</label>
                         <input
                           type="text"
-                          className="mt-1 w-full rounded-xl border border-black/8 bg-white/78 px-3 py-2 text-sm text-ink-700 outline-none transition focus:border-accent/45 focus:bg-white"
+                          className="mt-1 w-full rounded-md border border-black/8 bg-white/78 px-2.5 py-1.5 text-sm text-ink-700 outline-none transition focus:border-accent/45 focus:bg-white"
                           placeholder="输入你的回答..."
                           value={otherInputs[qIndex] ?? ""}
                           onChange={(e) => {
@@ -184,11 +209,11 @@ export function DecisionPanel({
                         />
                       </div>
                     ) : (
-                      <div className="mt-3 rounded-xl border border-accent/12 bg-white/62 px-3 py-2 text-xs leading-5 text-muted">
+                      <div className="mt-2 rounded-md border border-accent/12 bg-white/62 px-2.5 py-2 text-xs leading-5 text-muted">
                         这一步不要粘贴 localhost callback URL。请直接选择上面的状态；如果 localhost 页面打不开，改用 Figma Desktop MCP。
                       </div>
                     )}
-                    {q.multiSelect && <div className="mt-2 text-xs text-muted">当前问题支持多选。</div>}
+                    </div>
                   </div>
                 );
               })}

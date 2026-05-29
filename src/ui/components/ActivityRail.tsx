@@ -22,7 +22,15 @@ import {
 import { buildSegmentedContextUsageCells, type ContextUsageCellSegment } from "../utils/context-usage-cells";
 import { ActivityWorkspaceTabs } from "./ActivityWorkspaceTabs";
 import type { SessionView } from "../store/useAppStore";
-import { DEFAULT_ACTIVITY_RAIL_TAB, type ActivityRailTab, type ActivityWorkspaceTab } from "../utils/activity-workspace-tabs";
+import {
+  DEFAULT_ACTIVITY_RAIL_TAB,
+  type ActivityRailTab,
+  type ActivityWorkspaceTab,
+  type WorkflowAgentRailTab,
+  type WorkflowAgentWorkspaceTabItem,
+} from "../utils/activity-workspace-tabs";
+import { WorkflowAgentTranscriptPanel } from "./workflow/WorkflowAgentTranscriptPanel";
+import type { WorkflowAgentSummary } from "../utils/workflow-agent-transcripts";
 
 const AionWorkspacePreviewPane = lazy(() => import("./AionWorkspacePreviewPane").then((module) => ({ default: module.AionWorkspacePreviewPane })));
 const GitWorkbenchPanel = lazy(() => import("./git/GitWorkbenchPanel").then((module) => ({ default: module.GitWorkbenchPanel })));
@@ -1267,9 +1275,12 @@ export function ActivityRail({
   compressionThresholdPercent,
   hasBrowserTab = false,
   hasTerminalTab = false,
+  workflowAgentTabs = [],
+  selectedWorkflowAgent,
   deferPreviewMount = false,
   onOpenTerminalWorkspace,
   onCloseTerminalWorkspace,
+  onCloseWorkflowAgentTab,
   width = 420,
 }: {
   session: SessionView | undefined;
@@ -1291,9 +1302,12 @@ export function ActivityRail({
   compressionThresholdPercent?: number;
   hasBrowserTab?: boolean;
   hasTerminalTab?: boolean;
+  workflowAgentTabs?: WorkflowAgentWorkspaceTabItem[];
+  selectedWorkflowAgent?: WorkflowAgentSummary;
   deferPreviewMount?: boolean;
   onOpenTerminalWorkspace?: () => void;
   onCloseTerminalWorkspace?: () => void;
+  onCloseWorkflowAgentTab?: (tab: WorkflowAgentRailTab) => void;
   width?: number;
 }) {
   const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-12" : "top-10";
@@ -1322,7 +1336,7 @@ export function ActivityRail({
   const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
   const [showContextModal, setShowContextModal] = useState(false);
   const timelineRef = useRef<HTMLDivElement>(null);
-  const toolWorkspaceActive = selectedTab === "preview" || selectedTab === "git" || selectedTab === "terminal";
+  const toolWorkspaceActive = selectedTab === "preview" || selectedTab === "git" || selectedTab === "terminal" || selectedTab.startsWith("workflow-agent:");
   const shouldMountPreviewPane = selectedTab === "preview" && (!deferPreviewMount || Boolean(pendingPreviewOpenRequest));
 
   useEffect(() => {
@@ -1405,11 +1419,12 @@ export function ActivityRail({
         style={{ width, minWidth: width }}
       >
 
-        <div className="relative z-[160] flex h-10 shrink-0 items-center justify-between border-b border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,251,253,0.92))] px-4 backdrop-blur-xl">
+        <div className="sticky top-0 z-[160] flex h-10 shrink-0 items-center justify-between border-b border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,251,253,0.92))] px-4 backdrop-blur-xl">
           <ActivityWorkspaceTabs
             activeTab={selectedTab}
             showBrowserTab={hasBrowserTab}
             showTerminalTab={hasTerminalTab}
+            workflowAgentTabs={workflowAgentTabs}
             showLabels={showLabels}
             showCreateBrowserTab={!hasBrowserTab}
             showCreateTerminalTab={!hasTerminalTab}
@@ -1417,6 +1432,7 @@ export function ActivityRail({
             onCreateBrowserTab={onOpenBrowserWorkbench}
             onCreateTerminalTab={onOpenTerminalWorkspace}
             onCloseTerminalTab={hasTerminalTab ? onCloseTerminalWorkspace : undefined}
+            onCloseWorkflowAgentTab={onCloseWorkflowAgentTab}
           />
         </div>
 
@@ -1469,6 +1485,14 @@ export function ActivityRail({
             <Suspense fallback={<WorkspacePaneFallback label="正在加载终端工作台..." />}>
               <TerminalWorkspacePanel cwd={session?.cwd} />
             </Suspense>
+          </div>
+        ) : selectedTab.startsWith("workflow-agent:") ? (
+          <div className="flex min-h-0 w-full min-w-0 flex-1 overflow-hidden bg-white">
+            <WorkflowAgentTranscriptPanel
+              agent={selectedWorkflowAgent}
+              workspace={session?.cwd}
+              isRunning={session?.status === "running"}
+            />
           </div>
         ) : (
         <div className="space-y-4 px-4 pt-4">

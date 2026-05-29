@@ -741,6 +741,162 @@
   background: #bf3989;
 }
 
+.vscode-preview__git-line--added {
+  background: rgba(26, 127, 55, 0.07);
+}
+
+.vscode-preview__git-line--modified {
+  background: rgba(9, 105, 218, 0.07);
+}
+
+.vscode-preview__git-line--removed {
+  background: rgba(207, 34, 46, 0.06);
+}
+
+.vscode-preview__git-line-decoration {
+  width: 4px !important;
+  margin-left: 4px;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.vscode-preview__git-gutter-bar {
+  position: relative;
+  cursor: pointer;
+}
+
+.vscode-preview__git-gutter-bar::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 8px;
+  display: block;
+  width: 4px;
+  border-radius: 0;
+  content: "";
+}
+
+.vscode-preview__git-line-decoration--added {
+  background: #1a7f37;
+}
+
+.vscode-preview__git-gutter-bar--added::before {
+  background: #1a7f37;
+}
+
+.vscode-preview__git-line-decoration--modified {
+  background: #0969da;
+}
+
+.vscode-preview__git-gutter-bar--modified::before {
+  background: #0969da;
+}
+
+.vscode-preview__git-line-decoration--removed {
+  background: #cf222e;
+}
+
+.vscode-preview__git-gutter-bar--removed::before {
+  background: #cf222e;
+}
+
+.vscode-preview__git-popover {
+  position: absolute;
+  z-index: 150;
+  width: min(720px, calc(100% - 56px));
+  max-height: min(340px, calc(100% - 28px));
+  overflow: hidden;
+  border: 1px solid #8c959f;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 38px rgba(31, 35, 40, 0.18);
+}
+
+.vscode-preview__git-popover-title {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #d8dee4;
+  background: #f6f8fa;
+  color: #24292f;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 10px;
+}
+
+.vscode-preview__git-popover-title button {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #57606a;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.vscode-preview__git-popover-title button:hover {
+  background: #eaeef2;
+  color: #24292f;
+}
+
+.vscode-preview__git-popover-body {
+  max-height: 306px;
+  overflow: auto;
+  background: #ffffff;
+  font-family: Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.vscode-preview__git-diff-line {
+  display: grid;
+  grid-template-columns: 42px 42px 18px minmax(0, 1fr);
+  min-width: 0;
+  color: #24292f;
+}
+
+.vscode-preview__git-diff-line--added {
+  background: #dafbe1;
+}
+
+.vscode-preview__git-diff-line--removed {
+  background: #ffebe9;
+}
+
+.vscode-preview__git-diff-line--context {
+  background: #ffffff;
+}
+
+.vscode-preview__git-diff-old,
+.vscode-preview__git-diff-new {
+  user-select: none;
+  border-right: 1px solid rgba(27, 31, 36, 0.08);
+  color: #57606a;
+  text-align: right;
+  padding: 0 7px;
+}
+
+.vscode-preview__git-diff-prefix {
+  user-select: none;
+  color: #57606a;
+  text-align: center;
+}
+
+.vscode-preview__git-diff-line code {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
 .vscode-preview__image-wrap {
   display: grid;
   min-height: 100%;

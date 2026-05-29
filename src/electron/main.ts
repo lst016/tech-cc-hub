@@ -1218,25 +1218,32 @@ function listPreviewDirectoryForRenderer(request: unknown): {
 
     const entries = readdirSync(realPath, { withFileTypes: true })
       .filter((entry) => !entry.name.startsWith(".") || entry.name === ".env")
-      .filter((entry) => !(entry.isDirectory() && isIgnoredPreviewDirectory(entry.name)))
-      .slice(0, MAX_PREVIEW_DIRECTORY_ENTRIES)
-      .map((entry) => {
+      .flatMap((entry) => {
         const entryPath = join(realPath, entry.name);
-        const entryStat = statSync(entryPath);
-        return {
-          name: entry.name,
-          path: entryPath,
-          relativePath: relative(rootPath, entryPath) || entry.name,
-          type: entry.isDirectory() ? "directory" as const : "file" as const,
-          size: entry.isFile() ? entryStat.size : undefined,
-        };
+        try {
+          const entryStat = statSync(entryPath);
+          const type = entryStat.isDirectory() ? "directory" as const : "file" as const;
+          if (type === "directory" && isIgnoredPreviewDirectory(entry.name)) {
+            return [];
+          }
+          return [{
+            name: entry.name,
+            path: entryPath,
+            relativePath: relative(rootPath, entryPath) || entry.name,
+            type,
+            size: entryStat.isFile() ? entryStat.size : undefined,
+          }];
+        } catch {
+          return [];
+        }
       })
       .sort((left, right) => {
         if (left.type !== right.type) {
           return left.type === "directory" ? -1 : 1;
         }
         return left.name.localeCompare(right.name);
-      });
+      })
+      .slice(0, MAX_PREVIEW_DIRECTORY_ENTRIES);
 
     return { success: true, path: realPath, entries };
   } catch (error) {
@@ -1345,7 +1352,7 @@ function readPreviewFileForRenderer(request: unknown): {
     const rootPath = realpathSync(rawCwd);
     const requestedPath = isAbsolute(rawPath) ? rawPath : join(rootPath, rawPath);
     const realPath = realpathSync(requestedPath);
-    if (!isPathInsideRoot(rootPath, realPath)) {
+    if (!isAbsolute(rawPath) && !isPathInsideRoot(rootPath, realPath)) {
       return { success: false, path: realPath, error: "只能预览当前工作目录内的文件。" };
     }
 
@@ -2763,6 +2770,26 @@ async function refreshCodexOAuth(payload: { apiKey?: string }): Promise<{ succes
 installStdIoGuards();
 app.setName("tech-cc-hub");
 configureDesktopNotifications();
+
+function configureDevelopmentRuntimeIsolation(): void {
+    if (!isDev()) {
+        return;
+    }
+
+    const sessionDataPath = process.env.TECH_CC_HUB_DEV_SESSION_DATA_DIR?.trim()
+        || join(app.getPath("appData"), "tech-cc-hub-dev-session");
+    mkdirSync(sessionDataPath, { recursive: true });
+    app.setPath("sessionData", sessionDataPath);
+
+    if (!process.env.TECH_CC_HUB_CODEX_PROXY_PORT?.trim()) {
+        process.env.TECH_CC_HUB_CODEX_PROXY_PORT = "14560";
+    }
+
+    console.info(`[dev] using isolated Electron session data: ${sessionDataPath}`);
+    console.info(`[dev] using Codex proxy port: ${process.env.TECH_CC_HUB_CODEX_PROXY_PORT}`);
+}
+
+configureDevelopmentRuntimeIsolation();
 
 // Initialize everything when app is ready
 app.on("ready", async () => {

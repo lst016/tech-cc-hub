@@ -13,4 +13,6 @@ test("workspace preview tree expansion is persisted in app store", () => {
   assert.match(paneSource, /const storedExpandedPaths = useMemo\(\(\) => persistedExpandedPaths \?\? \[workspace\], \[persistedExpandedPaths, workspace\]\)/);
   assert.match(paneSource, /setStoredExpandedPaths\(workspace, \[\.\.\.next\]\)/);
   assert.match(paneSource, /if \(storedExpandedPaths\.length === 0\) \{/);
+  assert.match(paneSource, /for \(const path of storedExpandedPaths\) \{\s*void loadDirectory\(path\);/);
+  assert.match(paneSource, /setDirectoryCache\(\{\}\);[\s\S]{0,220}void loadDirectory\(workspace, true\);[\s\S]{0,80}\}, \[loadDirectory, workspace\]\);/);
 });

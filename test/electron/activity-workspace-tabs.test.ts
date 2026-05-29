@@ -50,6 +50,22 @@ describe("activity workspace tabs", () => {
     assert.equal(shouldShowCreateTerminalTab(true), false);
   });
 
+  it("shows the workflow agent tab only when agent transcripts exist", () => {
+    const defaultTabs = buildActivityWorkspaceTabs({
+      activeTab: "usage",
+      showBrowserTab: false,
+    }).filter((tab) => tab.visible);
+    const visibleTabs = buildActivityWorkspaceTabs({
+      activeTab: "workflow-agent:agent-1",
+      showBrowserTab: false,
+      workflowAgentTabs: [{ id: "workflow-agent:agent-1", label: "Agent one", title: "Agent one" }],
+    }).filter((tab) => tab.visible);
+
+    assert.deepEqual(defaultTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git"]);
+    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git", "workflow-agent:agent-1"]);
+    assert.equal(visibleTabs.find((tab) => tab.id === "workflow-agent:agent-1")?.active, true);
+  });
+
   it("builds a generic plus menu for hidden optional workspace tabs", () => {
     assert.deepEqual(
       buildActivityWorkspaceCreateOptions({

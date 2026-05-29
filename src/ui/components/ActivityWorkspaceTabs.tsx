@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Terminal, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
+import { Bot, Plus, Terminal, X } from "lucide-react";
 import {
   buildActivityWorkspaceCreateOptions,
   buildActivityWorkspaceTabs,
@@ -7,12 +7,15 @@ import {
   shouldShowCreateTerminalTab,
   type ActivityOptionalWorkspaceTab,
   type ActivityWorkspaceTab,
+  type WorkflowAgentRailTab,
+  type WorkflowAgentWorkspaceTabItem,
 } from "../utils/activity-workspace-tabs";
 
 type ActivityWorkspaceTabsProps = {
   activeTab: ActivityWorkspaceTab;
   showBrowserTab: boolean;
   showTerminalTab?: boolean;
+  workflowAgentTabs?: WorkflowAgentWorkspaceTabItem[];
   showLabels?: boolean;
   browserLabel?: string;
   showCreateBrowserTab?: boolean;
@@ -22,6 +25,7 @@ type ActivityWorkspaceTabsProps = {
   onCreateBrowserTab?: () => void;
   onCloseTerminalTab?: () => void;
   onCreateTerminalTab?: () => void;
+  onCloseWorkflowAgentTab?: (tab: WorkflowAgentRailTab) => void;
 };
 
 function iconForTab(tab: ActivityWorkspaceTab | ActivityOptionalWorkspaceTab) {
@@ -36,6 +40,10 @@ function iconForTab(tab: ActivityWorkspaceTab | ActivityOptionalWorkspaceTab) {
 
   if (tab === "terminal") {
     return <Terminal className="h-4 w-4 shrink-0" aria-hidden="true" />;
+  }
+
+  if (tab.startsWith("workflow-agent:")) {
+    return <Bot className="h-4 w-4 shrink-0" aria-hidden="true" />;
   }
 
   if (tab === "trace") {
@@ -74,7 +82,7 @@ function iconForTab(tab: ActivityWorkspaceTab | ActivityOptionalWorkspaceTab) {
 }
 
 function tabClassName(active: boolean) {
-  return `group inline-flex h-8 max-w-[190px] items-center gap-2 rounded-xl px-3 text-[13px] font-medium transition ${
+  return `group inline-flex h-8 max-w-[190px] shrink-0 items-center gap-2 rounded-xl px-3 text-[13px] font-medium transition ${
     active
       ? "bg-ink-900/7 text-ink-900 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.05)]"
       : "text-muted hover:bg-ink-900/5 hover:text-ink-700"
@@ -85,6 +93,7 @@ export function ActivityWorkspaceTabs({
   activeTab,
   showBrowserTab,
   showTerminalTab = false,
+  workflowAgentTabs = [],
   showLabels = true,
   browserLabel = "浏览器",
   showCreateBrowserTab,
@@ -94,10 +103,12 @@ export function ActivityWorkspaceTabs({
   onCreateBrowserTab,
   onCloseTerminalTab,
   onCreateTerminalTab,
+  onCloseWorkflowAgentTab,
 }: ActivityWorkspaceTabsProps) {
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const createMenuRef = useRef<HTMLDivElement>(null);
-  const tabs = buildActivityWorkspaceTabs({ activeTab, showBrowserTab, showTerminalTab }).filter((tab) => tab.visible);
+  const tabsScrollerRef = useRef<HTMLDivElement>(null);
+  const tabs = buildActivityWorkspaceTabs({ activeTab, showBrowserTab, showTerminalTab, workflowAgentTabs }).filter((tab) => tab.visible);
   const createOptions = useMemo(
     () => buildActivityWorkspaceCreateOptions({
       canCreateBrowserTab: Boolean(onCreateBrowserTab) && (showCreateBrowserTab ?? shouldShowCreateBrowserTab(showBrowserTab)),
@@ -134,43 +145,71 @@ export function ActivityWorkspaceTabs({
     }
   };
 
-  return (
-    <div className="flex min-w-0 items-center gap-1.5">
-      {tabs.map((tab) => {
-        const label = tab.id === "browser" ? browserLabel : tab.label;
-        const labelWidthClass = tab.id === "browser" ? "max-w-[120px]" : "max-w-[160px]";
-        const closeHandler = tab.id === "browser" ? onCloseBrowserTab : tab.id === "terminal" ? onCloseTerminalTab : undefined;
+  const handleTabsWheel = (event: WheelEvent<HTMLDivElement>) => {
+    const scroller = tabsScrollerRef.current;
+    if (!scroller) return;
+    const maxScrollLeft = scroller.scrollWidth - scroller.clientWidth;
+    if (maxScrollLeft <= 0) return;
 
-        return (
-          <div key={tab.id} className={tabClassName(tab.active)} title={tab.title}>
-            <button
-              type="button"
-              onClick={() => onSelectTab(tab.id)}
-              className="inline-flex h-full min-w-0 items-center gap-2"
-            >
-              {iconForTab(tab.id)}
-              <span className={`${showLabels ? labelWidthClass : "hidden"} truncate`}>{label}</span>
-            </button>
-            {closeHandler && (
+    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+    if (delta === 0) return;
+    event.preventDefault();
+    scroller.scrollLeft += delta;
+  };
+
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-1.5">
+      <div
+        ref={tabsScrollerRef}
+        onWheel={handleTabsWheel}
+        className="activity-workspace-tabs-scroll flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden pr-1"
+      >
+        {tabs.map((tab) => {
+          const label = tab.id === "browser" ? browserLabel : tab.label;
+          const isWorkflowAgentTab = tab.id.startsWith("workflow-agent:");
+          const labelWidthClass = tab.id === "browser"
+            ? "max-w-[120px]"
+            : isWorkflowAgentTab ? "max-w-[170px]" : "max-w-[160px]";
+          const closeHandler = tab.id === "browser"
+            ? onCloseBrowserTab
+            : tab.id === "terminal"
+              ? onCloseTerminalTab
+              : isWorkflowAgentTab
+                ? () => onCloseWorkflowAgentTab?.(tab.id as WorkflowAgentRailTab)
+                : undefined;
+
+          return (
+            <div key={tab.id} className={tabClassName(tab.active)} title={tab.title}>
               <button
                 type="button"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  closeHandler();
-                }}
-                className="ml-1 hidden h-4 w-4 items-center justify-center rounded-full text-ink-500 transition hover:bg-ink-900/10 hover:text-ink-900 group-hover:inline-flex"
-                title={`关闭${label}标签`}
-                aria-label={`关闭${label}标签`}
+                onClick={() => onSelectTab(tab.id)}
+                className="inline-flex h-full min-w-0 items-center gap-2"
               >
-                <X className="h-3 w-3" aria-hidden="true" />
+                {iconForTab(tab.id)}
+                <span className={`${showLabels ? labelWidthClass : "hidden"} truncate`}>{label}</span>
               </button>
-            )}
-          </div>
-        );
-      })}
+              {closeHandler && (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    closeHandler();
+                  }}
+                  className="ml-1 hidden h-4 w-4 items-center justify-center rounded-full text-ink-500 transition hover:bg-ink-900/10 hover:text-ink-900 group-hover:inline-flex"
+                  title={`关闭${label}标签`}
+                  aria-label={`关闭${label}标签`}
+                >
+                  <X className="h-3 w-3" aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
       {createOptions.length > 0 && (
-        <div ref={createMenuRef} className="relative">
+        <div ref={createMenuRef} className="relative shrink-0">
           <button
             type="button"
             onClick={() => setCreateMenuOpen((current) => !current)}

@@ -33,14 +33,14 @@ function sendJson(res: import('node:http').ServerResponse, payload: unknown, sta
 	res.end(JSON.stringify(payload));
 }
 
-function resolvePreviewRequest(url: URL) {
+function resolvePreviewRequest(url: URL, options: { allowAbsoluteOutsideRoot?: boolean } = {}) {
 	const cwd = url.searchParams.get('cwd')?.trim() || '';
 	const rawPath = url.searchParams.get('path')?.trim() || '';
 	if (!cwd) return { error: '缺少 cwd。' };
 	const rootPath = realpathSync(cwd);
 	const requestedPath = rawPath ? (isAbsolute(rawPath) ? rawPath : join(rootPath, rawPath)) : rootPath;
 	const realPath = realpathSync(requestedPath);
-	if (!isPathWithinRoot(rootPath, realPath)) return { error: '只能访问当前工作目录内的文件。' };
+	if (!isPathWithinRoot(rootPath, realPath) && !(options.allowAbsoluteOutsideRoot && isAbsolute(rawPath))) return { error: '只能访问当前工作目录内的文件。' };
 	return { rootPath, realPath };
 }
 
@@ -72,20 +72,25 @@ function previewFsPlugin(): Plugin {
 					if (!stat.isDirectory()) return sendJson(res, { success: false, error: '只能浏览目录。' }, 400);
 					const entries = readdirSync(resolved.realPath, { withFileTypes: true })
 						.filter((entry) => !entry.name.startsWith('.') || entry.name === '.env')
-						.filter((entry) => !(entry.isDirectory() && ignoredPreviewDirectories.has(entry.name)))
-						.slice(0, 500)
-						.map((entry) => {
+						.flatMap((entry) => {
 							const entryPath = join(resolved.realPath, entry.name);
-							const entryStat = statSync(entryPath);
-							return {
-								name: entry.name,
-								path: entryPath,
-								relativePath: relative(resolved.rootPath, entryPath) || entry.name,
-								type: entry.isDirectory() ? 'directory' : 'file',
-								size: entry.isFile() ? entryStat.size : undefined,
-							};
+							try {
+								const entryStat = statSync(entryPath);
+								const type = entryStat.isDirectory() ? 'directory' as const : 'file' as const;
+								if (type === 'directory' && ignoredPreviewDirectories.has(entry.name)) return [];
+								return [{
+									name: entry.name,
+									path: entryPath,
+									relativePath: relative(resolved.rootPath, entryPath) || entry.name,
+									type,
+									size: entryStat.isFile() ? entryStat.size : undefined,
+								}];
+							} catch {
+								return [];
+							}
 						})
-						.sort((left, right) => left.type === right.type ? left.name.localeCompare(right.name) : left.type === 'directory' ? -1 : 1);
+						.sort((left, right) => left.type === right.type ? left.name.localeCompare(right.name) : left.type === 'directory' ? -1 : 1)
+						.slice(0, 500);
 					return sendJson(res, { success: true, path: resolved.realPath, entries });
 				} catch (error) {
 					return sendJson(res, { success: false, error: error instanceof Error ? error.message : '读取目录失败。' }, 500);
@@ -167,7 +172,7 @@ function previewFsPlugin(): Plugin {
 			});
 			server.middlewares.use('/__tech_preview/read', (req, res) => {
 				try {
-					const resolved = resolvePreviewRequest(new URL(req.url || '', 'http://localhost'));
+					const resolved = resolvePreviewRequest(new URL(req.url || '', 'http://localhost'), { allowAbsoluteOutsideRoot: true });
 					if ('error' in resolved) return sendJson(res, { success: false, error: resolved.error }, 400);
 					const stat = statSync(resolved.realPath);
 					if (!stat.isFile()) return sendJson(res, { success: false, error: '只能预览普通文件。' }, 400);

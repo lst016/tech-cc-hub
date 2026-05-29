@@ -671,6 +671,159 @@ function buildMetadataPreview(item: ActivityTimelineItem, rows: ActivityDetailRo
   return JSON.stringify(payload, null, 2);
 }
 
+function redactDiagnosticText(text: string): string {
+  return text
+    .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s"'`]+/gi, "$1[REDACTED]")
+    .replace(/((?:api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|password|secret)\s*[:=]\s*)["']?[^"',\s}]+["']?/gi, "$1[REDACTED]")
+    .replace(/\b(sk-[A-Za-z0-9_-]{12,})\b/g, "[REDACTED_OPENAI_KEY]")
+    .replace(/\b(xox[baprs]-[A-Za-z0-9-]{12,})\b/g, "[REDACTED_SLACK_TOKEN]");
+}
+
+function sanitizeDiagnosticValue(value: unknown, depth = 0): unknown {
+  if (depth > 16) {
+    return "[Max depth omitted]";
+  }
+  if (typeof value === "string") {
+    const redacted = redactDiagnosticText(value);
+    const maxChars = 200_000;
+    return redacted.length > maxChars
+      ? `${redacted.slice(0, maxChars)}\n...[truncated ${redacted.length - maxChars} chars]`
+      : redacted;
+  }
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeDiagnosticValue(item, depth + 1));
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (/apiKey|accessToken|refreshToken|authToken|authorization|password|secret|cookie/i.test(key)) {
+      result[key] = "[REDACTED]";
+      continue;
+    }
+    result[key] = sanitizeDiagnosticValue(item, depth + 1);
+  }
+  return result;
+}
+
+function buildTraceDiagnosticExportPayload({
+  session,
+  model,
+  groups,
+  visibleGroups,
+  selectedItem,
+  diagnosticReport,
+  workflowOptimizationPrompt,
+  workflowOptimizationCards,
+  partialMessage,
+  searchQuery,
+}: {
+  session: SessionView | undefined;
+  model: ActivityRailModel;
+  groups: TraceGroup[];
+  visibleGroups: TraceGroup[];
+  selectedItem: ActivityTimelineItem | null;
+  diagnosticReport: string;
+  workflowOptimizationPrompt: string;
+  workflowOptimizationCards: WorkflowOptimizationCard[];
+  partialMessage: string;
+  searchQuery: string;
+}) {
+  const payload = {
+    schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    exportKind: "tech-cc-hub.trace-diagnostic",
+    privacyNotice: "This diagnostic export is intended for troubleshooting. Common secret-looking fields are redacted, but review before sharing outside your team.",
+    session: session
+      ? {
+        id: session.id,
+        title: session.title,
+        status: session.status,
+        model: session.model,
+        cwd: session.cwd,
+        executionMode: session.executionMode,
+        reasoningMode: session.reasoningMode,
+        permissionMode: session.permissionMode,
+        workflowSourceLayer: session.workflowSourceLayer,
+        workflowSourcePath: session.workflowSourcePath,
+        workflowError: session.workflowError,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        archivedAt: session.archivedAt,
+        hydrated: session.hydrated,
+        hasMoreHistory: session.hasMoreHistory,
+      }
+      : null,
+    summary: {
+      durationLabel: model.summary.durationLabel,
+      modelLabel: model.summary.modelLabel,
+      inputLabel: model.summary.inputLabel,
+      outputLabel: model.summary.outputLabel,
+      statusLabel: model.summary.statusLabel,
+      statusTone: model.summary.statusTone,
+      filterCounts: model.filterCounts,
+      contextSnapshot: model.contextSnapshot,
+    },
+    currentView: {
+      searchQuery,
+      selectedNodeId: selectedItem?.id ?? null,
+      selectedNodeTitle: selectedItem?.title ?? null,
+      visibleGroupCount: visibleGroups.length,
+      visibleNodeCount: visibleGroups.reduce((sum, group) => sum + group.items.length, 0),
+      liveDraftChars: partialMessage.length,
+    },
+    diagnosticReport,
+    workflowOptimization: {
+      cards: workflowOptimizationCards,
+      prompt: workflowOptimizationPrompt,
+    },
+    groups: groups.map((group) => ({
+      id: group.id,
+      indexLabel: group.indexLabel,
+      title: group.title,
+      detail: group.detail,
+      status: group.status,
+      metrics: group.metrics,
+      sourceTimelineId: group.sourceTimelineId,
+      isInferred: group.isInferred,
+      itemIds: group.items.map((item) => item.id),
+    })),
+    timeline: model.timeline,
+    promptAnalysis: model.promptAnalysis,
+    permissionRequests: session?.permissionRequests ?? [],
+    workflow: {
+      markdown: session?.workflowMarkdown,
+      state: session?.workflowState,
+      spec: session?.workflowSpec,
+      catalog: session?.workflowCatalog,
+    },
+    messages: session?.messages ?? [],
+    partialMessage,
+  };
+
+  return sanitizeDiagnosticValue(payload);
+}
+
+function downloadJsonFile(filename: string, payload: unknown): void {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function buildDiagnosticExportFilename(sessionId?: string): string {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const safeSessionId = (sessionId || "no-session").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 16);
+  return `tech-cc-hub-trace-diagnostic-${safeSessionId}-${timestamp}.json`;
+}
+
 function CopyButton({
   label,
   value,
@@ -2371,6 +2524,32 @@ export function SessionAnalysisPage({
   const handleSendWorkflowOptimizationPrompt = useCallback(() => {
     onSendWorkflowOptimizationPrompt(workflowOptimizationPrompt);
   }, [onSendWorkflowOptimizationPrompt, workflowOptimizationPrompt]);
+  const handleExportDiagnostic = useCallback(() => {
+    const payload = buildTraceDiagnosticExportPayload({
+      session,
+      model,
+      groups: baseGroups,
+      visibleGroups,
+      selectedItem,
+      diagnosticReport,
+      workflowOptimizationPrompt,
+      workflowOptimizationCards,
+      partialMessage,
+      searchQuery,
+    });
+    downloadJsonFile(buildDiagnosticExportFilename(session?.id), payload);
+  }, [
+    baseGroups,
+    diagnosticReport,
+    model,
+    partialMessage,
+    searchQuery,
+    selectedItem,
+    session,
+    visibleGroups,
+    workflowOptimizationCards,
+    workflowOptimizationPrompt,
+  ]);
 
   const selectedNodeMeta = selectedItem ? getNodeKindMeta(selectedItem) : null;
   const selectedRawText =
@@ -2435,6 +2614,15 @@ export function SessionAnalysisPage({
               className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-bold normal-case tracking-normal text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
               发送 AI 优化工作流
+            </button>
+            <button
+              type="button"
+              onClick={handleExportDiagnostic}
+              disabled={!session?.id}
+              title="导出诊断包，包含 Trace、Prompt ledger、原始 messages 和当前复盘摘要"
+              className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold normal-case tracking-normal text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              导出诊断包
             </button>
             <CopyButton label="复制 Session ID" value={session?.id ?? ""} secondary />
             <button

@@ -368,13 +368,24 @@ test("codex setup imports official codex login instead of composing oauth urls",
 });
 
 test("codex proxy reloads credentials before retrying stale refresh tokens", () => {
-  const source = readFileSync("src/electron/libs/codex-anthropic-proxy.ts", "utf8");
+  const source = readFileSync("src/electron/libs/codex/codex-anthropic-proxy.ts", "utf8");
 
   assert.match(source, /credentialRefreshes/);
   assert.match(source, /readProfileCredential/);
   assert.match(source, /readCodexCliCredential/);
   assert.match(source, /parseCodexCliAuthCredential/);
   assert.match(source, /already been used/);
+});
+
+test("development startup isolates Electron cache and Codex proxy port", () => {
+  const mainSource = readFileSync("src/electron/main.ts", "utf8");
+  const proxySource = readFileSync("src/electron/libs/codex/codex-anthropic-proxy.ts", "utf8");
+
+  assert.match(mainSource, /configureDevelopmentRuntimeIsolation/);
+  assert.match(mainSource, /app\.setPath\("sessionData"/);
+  assert.match(mainSource, /TECH_CC_HUB_CODEX_PROXY_PORT = "14560"/);
+  assert.match(proxySource, /resolveCodexProxyPort/);
+  assert.match(proxySource, /TECH_CC_HUB_CODEX_PROXY_PORT/);
 });
 
 function buildJwt(payload: Record<string, unknown>): string {

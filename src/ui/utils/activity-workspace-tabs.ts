@@ -1,4 +1,5 @@
-export type ActivityRailTab = "trace" | "usage" | "preview" | "git" | "terminal";
+export type WorkflowAgentRailTab = `workflow-agent:${string}`;
+export type ActivityRailTab = "trace" | "usage" | "preview" | "git" | "terminal" | WorkflowAgentRailTab;
 export type ActivityWorkspaceTab = "browser" | ActivityRailTab;
 export type ActivityOptionalWorkspaceTab = "browser" | "terminal";
 
@@ -12,6 +13,12 @@ export type ActivityWorkspaceTabItem = {
   active: boolean;
 };
 
+export type WorkflowAgentWorkspaceTabItem = {
+  id: WorkflowAgentRailTab;
+  label: string;
+  title: string;
+};
+
 export type ActivityWorkspaceCreateOption = {
   id: ActivityOptionalWorkspaceTab;
   label: string;
@@ -22,7 +29,14 @@ export function buildActivityWorkspaceTabs(input: {
   activeTab: ActivityWorkspaceTab;
   showBrowserTab: boolean;
   showTerminalTab?: boolean;
+  workflowAgentTabs?: WorkflowAgentWorkspaceTabItem[];
 }): ActivityWorkspaceTabItem[] {
+  const workflowAgentTabs = (input.workflowAgentTabs ?? []).map((tab) => ({
+    ...tab,
+    visible: true,
+    active: input.activeTab === tab.id,
+  }));
+
   return [
     {
       id: "preview",
@@ -52,6 +66,7 @@ export function buildActivityWorkspaceTabs(input: {
       visible: true,
       active: input.activeTab === "git",
     },
+    ...workflowAgentTabs,
     {
       id: "terminal",
       label: "终端",

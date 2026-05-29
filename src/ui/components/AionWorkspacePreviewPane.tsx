@@ -140,6 +140,31 @@ type CodeSelectionInfo = {
   commentTop: number;
 };
 
+type PreviewGitHunkLine = {
+  kind: 'context' | 'added' | 'removed';
+  text: string;
+  oldLine?: number;
+  newLine?: number;
+};
+
+type PreviewGitChangeHunk = {
+  id: string;
+  type: 'added' | 'modified' | 'removed';
+  startLine: number;
+  endLine: number;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: PreviewGitHunkLine[];
+};
+
+type PreviewGitPopover = {
+  hunk: PreviewGitChangeHunk;
+  top: number;
+  left: number;
+};
+
 function basename(path: string) {
   return path.split(/[\\/]/).filter(Boolean).pop() || path;
 }
@@ -148,6 +173,17 @@ function getRelativePath(workspace: string, filePath: string) {
   if (filePath === workspace) return basename(workspace);
   if (filePath.startsWith(`${workspace}/`)) return filePath.slice(workspace.length + 1);
   return filePath;
+}
+
+function isAbsolutePreviewPath(path: string) {
+  return /^[a-z]:[\\/]/i.test(path) || path.startsWith('/') || path.startsWith('\\\\');
+}
+
+function dirname(path: string) {
+  const trimmedPath = path.replace(/[\\/]+$/, '');
+  const index = Math.max(trimmedPath.lastIndexOf('/'), trimmedPath.lastIndexOf('\\'));
+  if (index <= 0) return trimmedPath;
+  return trimmedPath.slice(0, index);
 }
 
 function inferContentType(filePath: string, content?: string): PreviewContentType {
@@ -183,6 +219,99 @@ function getLineLabel(reference: Pick<CodeReferenceDraft, 'startLine' | 'endLine
 
 function buildReferenceClipboardText(file: ActivePreviewFile, selectionInfo: CodeSelectionInfo) {
   return `${file.relativePath}:L${getLineLabel(selectionInfo)}\n\n${selectionInfo.text}`;
+}
+
+function clampPreviewLine(lineNumber: number, maxLineNumber: number) {
+  return Math.min(Math.max(lineNumber, 1), Math.max(maxLineNumber, 1));
+}
+
+function getPreviewGitChangeType(hasAddedLine: boolean, hasRemovedLine: boolean): PreviewGitChangeHunk['type'] {
+  if (hasAddedLine && !hasRemovedLine) return 'added';
+  if (!hasAddedLine && hasRemovedLine) return 'removed';
+  return 'modified';
+}
+
+function parsePreviewGitDiffHunks(diff: string, maxLineNumber: number): PreviewGitChangeHunk[] {
+  const hunks: PreviewGitChangeHunk[] = [];
+  const lines = diff.split(/\r?\n/);
+  let index = 0;
+
+  while (index < lines.length) {
+    const header = lines[index] ?? '';
+    const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(header);
+    if (!match) {
+      index += 1;
+      continue;
+    }
+
+    const oldStart = Number.parseInt(match[1] ?? '1', 10);
+    const oldLines = Number.parseInt(match[2] ?? '1', 10);
+    const newStart = Number.parseInt(match[3] ?? '1', 10);
+    const newLines = Number.parseInt(match[4] ?? '1', 10);
+    const hunkLines: PreviewGitHunkLine[] = [];
+    let oldLine = oldStart;
+    let newLine = newStart;
+    let firstChangedLine: number | null = null;
+    let lastChangedLine: number | null = null;
+    let hasAddedLine = false;
+    let hasRemovedLine = false;
+
+    index += 1;
+    while (index < lines.length && !lines[index]?.startsWith('@@ ')) {
+      const line = lines[index] ?? '';
+      if (line.startsWith('diff --git ') || line.startsWith('--- ') || line.startsWith('+++ ')) break;
+
+      if (line.startsWith('+')) {
+        hunkLines.push({ kind: 'added', text: line.slice(1), newLine });
+        firstChangedLine ??= newLine;
+        lastChangedLine = newLine;
+        hasAddedLine = true;
+        newLine += 1;
+      } else if (line.startsWith('-')) {
+        hunkLines.push({ kind: 'removed', text: line.slice(1), oldLine });
+        firstChangedLine ??= newLine;
+        lastChangedLine ??= newLine;
+        hasRemovedLine = true;
+        oldLine += 1;
+      } else {
+        const text = line.startsWith(' ') ? line.slice(1) : line;
+        hunkLines.push({ kind: 'context', text, oldLine, newLine });
+        oldLine += 1;
+        newLine += 1;
+      }
+      index += 1;
+    }
+
+    if (firstChangedLine !== null && lastChangedLine !== null) {
+      hunks.push({
+        id: `${oldStart}:${newStart}:${hunks.length}`,
+        type: getPreviewGitChangeType(hasAddedLine, hasRemovedLine),
+        startLine: clampPreviewLine(firstChangedLine, maxLineNumber),
+        endLine: clampPreviewLine(Math.max(firstChangedLine, lastChangedLine), maxLineNumber),
+        oldStart,
+        oldLines,
+        newStart,
+        newLines,
+        lines: hunkLines,
+      });
+    }
+  }
+
+  return hunks;
+}
+
+async function readPreviewFileWithFallback(workspace: string, path: string) {
+  const result = await window.electron.readPreviewFile({ cwd: workspace, path });
+  if (result.success || !isAbsolutePreviewPath(path)) {
+    return result;
+  }
+
+  const containingDirectory = dirname(path);
+  if (!containingDirectory || normalizePreviewFilePath(containingDirectory) === normalizePreviewFilePath(workspace)) {
+    return result;
+  }
+
+  return await window.electron.readPreviewFile({ cwd: containingDirectory, path });
 }
 
 function NativeExplorer({
@@ -275,13 +404,21 @@ function NativeExplorer({
   useEffect(() => {
     queueMicrotask(() => {
       setDirectoryCache({});
-      if (storedExpandedPaths.length === 0) {
-        resetStoredExpandedPaths(workspace, workspace);
-      }
       refreshedDirectoryOperationIdsRef.current = new Set<string>();
       void loadDirectory(workspace, true);
     });
-  }, [loadDirectory, resetStoredExpandedPaths, storedExpandedPaths.length, workspace]);
+  }, [loadDirectory, workspace]);
+
+  useEffect(() => {
+    if (storedExpandedPaths.length === 0) {
+      resetStoredExpandedPaths(workspace, workspace);
+      return;
+    }
+
+    for (const path of storedExpandedPaths) {
+      void loadDirectory(path);
+    }
+  }, [loadDirectory, resetStoredExpandedPaths, storedExpandedPaths, workspace]);
 
   useEffect(() => {
     const pendingRefreshes = refreshEvents.filter((event) => {
@@ -604,6 +741,7 @@ function QuickOpenPalette({
 
 function PreviewSurface({
   file,
+  workspace,
   referenceSessionKey,
   openTabs,
   activeTabPath,
@@ -616,6 +754,7 @@ function PreviewSurface({
   onCloseAllTabs,
 }: {
   file: ActivePreviewFile | null;
+  workspace?: string;
   referenceSessionKey: string;
   openTabs: ActivePreviewFile[];
   activeTabPath: string | null;
@@ -631,8 +770,11 @@ function PreviewSurface({
   const codeReferences = useAppStore((state) => state.codeReferencesBySessionId[referenceSessionKey] || EMPTY_CODE_REFERENCES);
   const tabScrollerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const gitHunksRef = useRef<PreviewGitChangeHunk[]>([]);
   const selectionListenerRef = useRef<{ dispose: () => void } | null>(null);
   const decorationsRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+  const gitDecorationsRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+  const gitGutterListenerRef = useRef<{ dispose: () => void } | null>(null);
   const [tabScrollState, setTabScrollState] = useState({ canScrollLeft: false, canScrollRight: false });
   const [tabMenu, setTabMenu] = useState<TabContextMenuState | null>(null);
   const [markdownViewMode, setMarkdownViewMode] = useState<'source' | 'preview'>('source');
@@ -640,6 +782,10 @@ function PreviewSurface({
   const [commentOpen, setCommentOpen] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [saveStatus, setSaveStatus] = useState<{ path: string; state: 'saving' | 'saved' | 'error'; message?: string } | null>(null);
+  const [gitDiffText, setGitDiffText] = useState('');
+  const [gitDiffLoading, setGitDiffLoading] = useState(false);
+  const [gitDiffError, setGitDiffError] = useState<string | null>(null);
+  const [gitPopover, setGitPopover] = useState<PreviewGitPopover | null>(null);
 
   const fileReferences = useMemo(() => {
     if (!file) return [];
@@ -649,6 +795,14 @@ function PreviewSurface({
   const monacoLanguage = normalizeMonacoLanguage(file?.language, file?.fileName);
   const monacoModelPath = buildPreviewMonacoModelPath(file?.path, file?.fileName);
   const isMarkdownFile = file?.contentType === 'code' && monacoLanguage === 'markdown';
+  const gitHunks = useMemo(
+    () => parsePreviewGitDiffHunks(gitDiffText, file?.content.split(/\r?\n/).length ?? 1),
+    [file?.content, gitDiffText],
+  );
+
+  useLayoutEffect(() => {
+    gitHunksRef.current = gitHunks;
+  }, [gitHunks]);
 
   const updateTabScrollState = useCallback(() => {
     const scroller = tabScrollerRef.current;
@@ -720,6 +874,49 @@ function PreviewSurface({
     };
   }, [tabMenu]);
 
+  useEffect(() => {
+    const currentWorkspace = workspace?.trim();
+    if (!currentWorkspace || !file || file.loading || file.error || file.contentType !== 'code') {
+      queueMicrotask(() => {
+        setGitDiffText('');
+        setGitDiffError(null);
+        setGitDiffLoading(false);
+        setGitPopover(null);
+      });
+      return;
+    }
+
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setGitDiffLoading(true);
+      setGitDiffError(null);
+      setGitPopover(null);
+    });
+    void window.electron.getGitDiff({ cwd: currentWorkspace, path: file.path })
+      .then((result) => {
+        if (cancelled) return;
+        if (result.success) {
+          setGitDiffText(result.data.diff);
+          return;
+        }
+        setGitDiffText('');
+        setGitDiffError(result.error.message);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setGitDiffText('');
+        setGitDiffError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        if (!cancelled) setGitDiffLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [file, workspace]);
+
   const scrollTabs = useCallback((direction: -1 | 1) => {
     const scroller = tabScrollerRef.current;
     if (!scroller) return;
@@ -776,11 +973,39 @@ function PreviewSurface({
     })));
   }, [file, fileReferences]);
 
+  const openGitPopover = useCallback((hunk: PreviewGitChangeHunk) => {
+    const editor = editorRef.current;
+    const layout = editor?.getLayoutInfo();
+    const position = editor?.getScrolledVisiblePosition({ lineNumber: hunk.startLine, column: 1 });
+    setGitPopover({
+      hunk,
+      top: Math.max(8, Math.min(position?.top ?? 12, Math.max((layout?.height ?? 360) - 220, 8))),
+      left: Math.max(36, (layout?.glyphMarginLeft ?? 0) + (layout?.glyphMarginWidth ?? 0) + 12),
+    });
+  }, []);
+
+  const updateGitDecorations = useCallback(() => {
+    if (!gitDecorationsRef.current || !file) return;
+    gitDecorationsRef.current.set(gitHunks.map((hunk) => ({
+      range: new monaco.Range(hunk.startLine, 1, hunk.endLine, 1),
+      options: {
+        isWholeLine: true,
+        className: `vscode-preview__git-line vscode-preview__git-line--${hunk.type}`,
+        lineDecorationsClassName: `vscode-preview__git-line-decoration vscode-preview__git-line-decoration--${hunk.type}`,
+        glyphMarginClassName: `vscode-preview__git-gutter-bar vscode-preview__git-gutter-bar--${hunk.type}`,
+        hoverMessage: {
+          value: `Git ${hunk.type === 'added' ? '新增' : hunk.type === 'removed' ? '删除' : '修改'}: 点击左侧标记查看差异`,
+        },
+      },
+    })));
+  }, [file, gitHunks]);
+
   useEffect(() => {
     queueMicrotask(() => {
       setSelectionInfo(null);
       setCommentOpen(false);
       setCommentText('');
+      setGitPopover(null);
     });
   }, [file?.path]);
 
@@ -789,8 +1014,13 @@ function PreviewSurface({
   }, [updateReferenceDecorations]);
 
   useEffect(() => {
+    updateGitDecorations();
+  }, [updateGitDecorations]);
+
+  useEffect(() => {
     return () => {
       selectionListenerRef.current?.dispose();
+      gitGutterListenerRef.current?.dispose();
     };
   }, []);
 
@@ -909,7 +1139,9 @@ function PreviewSurface({
   const handleEditorMount = useCallback((editor: monaco.editor.IStandaloneCodeEditor) => {
     editorRef.current = editor;
     decorationsRef.current = editor.createDecorationsCollection([]);
+    gitDecorationsRef.current = editor.createDecorationsCollection([]);
     updateReferenceDecorations();
+    updateGitDecorations();
     revealLine();
 
     selectionListenerRef.current?.dispose();
@@ -937,7 +1169,26 @@ function PreviewSurface({
         ...position,
       });
     });
-  }, [calculateSelectionPosition, revealLine, updateReferenceDecorations]);
+
+    gitGutterListenerRef.current?.dispose();
+    gitGutterListenerRef.current = editor.onMouseDown((event) => {
+      const targetType = event.target.type;
+      if (
+        targetType !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN
+        && targetType !== monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS
+        && targetType !== monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS
+      ) {
+        return;
+      }
+      const lineNumber = event.target.position?.lineNumber;
+      if (!lineNumber) return;
+      const hunk = gitHunksRef.current.find((item) => lineNumber >= item.startLine && lineNumber <= item.endLine);
+      if (!hunk) return;
+      event.event.preventDefault();
+      event.event.stopPropagation();
+      openGitPopover(hunk);
+    });
+  }, [calculateSelectionPosition, openGitPopover, revealLine, updateGitDecorations, updateReferenceDecorations]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -1046,6 +1297,13 @@ function PreviewSurface({
               L{getLineLabel(selectionInfo)}
             </span>
           )}
+          {gitDiffLoading && <span className="vscode-preview__selection-pill">Git diff...</span>}
+          {!gitDiffLoading && gitHunks.length > 0 && (
+            <span className="vscode-preview__selection-pill">Git {gitHunks.length}</span>
+          )}
+          {!gitDiffLoading && gitDiffError && (
+            <span className="vscode-preview__selection-pill" title={gitDiffError}>Git diff unavailable</span>
+          )}
         </div>
         {isMarkdownFile && (
           <div className="vscode-preview__title-actions" aria-label="Markdown 视图模式">
@@ -1149,6 +1407,35 @@ function PreviewSurface({
             </div>
           </div>
         )}
+        {gitPopover && (
+          <div
+            className="vscode-preview__git-popover"
+            style={{ left: gitPopover.left, top: gitPopover.top }}
+            role="dialog"
+            aria-label="Git 差异"
+          >
+            <div className="vscode-preview__git-popover-title">
+              <span>
+                Git {gitPopover.hunk.type === 'added' ? '新增' : gitPopover.hunk.type === 'removed' ? '删除' : '修改'}
+                {' '}L{gitPopover.hunk.startLine}{gitPopover.hunk.endLine !== gitPopover.hunk.startLine ? `-${gitPopover.hunk.endLine}` : ''}
+              </span>
+              <button type="button" onClick={() => setGitPopover(null)} aria-label="关闭 Git 差异">×</button>
+            </div>
+            <div className="vscode-preview__git-popover-body">
+              {gitPopover.hunk.lines.map((line, index) => (
+                <div
+                  key={`${gitPopover.hunk.id}:${index}`}
+                  className={`vscode-preview__git-diff-line vscode-preview__git-diff-line--${line.kind}`}
+                >
+                  <span className="vscode-preview__git-diff-old">{line.oldLine ?? ''}</span>
+                  <span className="vscode-preview__git-diff-new">{line.newLine ?? ''}</span>
+                  <span className="vscode-preview__git-diff-prefix">{line.kind === 'added' ? '+' : line.kind === 'removed' ? '-' : ' '}</span>
+                  <code>{line.text || ' '}</code>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -1209,7 +1496,7 @@ export function AionWorkspacePreviewPane({
     const existing = openTabsRef.current.find((t) => normalizePreviewFilePath(t.path) === normalizePreviewFilePath(path));
     if (existing) {
       setActiveTabPath(existing.path);
-      const result = await window.electron.readPreviewFile({ cwd: workspace, path: existing.path });
+      const result = await readPreviewFileWithFallback(workspace, existing.path);
       const next: ActivePreviewFile = result.success && result.content !== undefined
         ? {
             ...existing,
@@ -1247,7 +1534,7 @@ export function AionWorkspacePreviewPane({
     setOpenTabs((prev) => [...prev, loadingTab]);
     setActiveTabPath(path);
 
-    const result = await window.electron.readPreviewFile({ cwd: workspace, path });
+    const result = await readPreviewFileWithFallback(workspace, path);
     const resolved: ActivePreviewFile = result.success && result.content !== undefined
       ? {
           path: result.path || path,
@@ -1460,6 +1747,7 @@ export function AionWorkspacePreviewPane({
         />
         <PreviewSurface
           file={activeFile}
+          workspace={workspace}
           referenceSessionKey={referenceSessionKey}
           openTabs={openTabs}
           activeTabPath={activeTabPath}

@@ -75,6 +75,10 @@ describe("browser annotation hover preview", () => {
     assert.match(promptInputSource, /clearBrowserWorkbenchAnnotations\(activeSessionId \?\? undefined\)/);
     assert.match(preloadSource, /ipcInvoke\("browser-remove-annotation", annotationId, sessionId\)/);
     assert.match(mainSource, /ipcMainHandle\("browser-remove-annotation"/);
+    assert.match(managerSource, /const host = document\.getElementById\("__tech_cc_hub_annotation_host__"\)/);
+    assert.match(managerSource, /const root = host && host\.shadowRoot/);
+    assert.match(managerSource, /root\.getElementById\("__tech_cc_hub_annotation_layer__"\)/);
+    assert.match(managerSource, /if \(host\) host\.remove\(\)/);
   });
 
   it("renders a Flux-style annotation property panel for live visual edits", () => {
@@ -106,6 +110,9 @@ describe("browser annotation hover preview", () => {
     const typesSource = readFileSync("types.d.ts", "utf8");
 
     assert.match(managerSource, /annotation\.styleEdits = \{ source: "flux-like-advanced-annotation-panel", changes \}/);
+    assert.match(managerSource, /function markStyleEditTouched\(annotation, property\)/);
+    assert.match(managerSource, /function applyStyleProperty\(annotation, property, value\) \{[\s\S]*?markStyleEditTouched\(annotation, property\);[\s\S]*?refreshStyleEdits\(annotation, element\);/);
+    assert.match(managerSource, /function applyCssText\(annotation, cssText\) \{[\s\S]*?nextProperties\.concat\(previousProperties\)\.forEach\(function\(property\) \{[\s\S]*?markStyleEditTouched\(annotation, property\);[\s\S]*?refreshStyleEdits\(annotation, element\);/);
     assert.match(managerSource, /function applyStyleProperty\(annotation, property, value\)/);
     assert.match(managerSource, /function parseCssDeclarations\(cssText\)/);
     assert.match(managerSource, /function applyCssText\(annotation, cssText\)/);
@@ -114,6 +121,26 @@ describe("browser annotation hover preview", () => {
     assert.match(promptContextSource, /styleEdits: annotation\.styleEdits/);
     assert.match(promptContextSource, /If an item has styleEdits/);
     assert.match(typesSource, /styleEdits\?: \{/);
+  });
+
+  it("does not infer style edits when saving a plain advanced annotation", () => {
+    const source = readFileSync("src/electron/browser-manager.ts", "utf8");
+    const submitComment = source.match(/function submitComment\(\) \{[\s\S]*?\n        \}/)?.[0] ?? "";
+
+    assert.match(source, /if \(!annotation \|\| !element \|\| !annotation\.styleBefore \|\| !touchedProperties \|\| touchedProperties\.length === 0\) return \[\];/);
+    assert.doesNotMatch(submitComment, /refreshStyleEdits\(annotation, element\)/);
+    assert.match(submitComment, /if \(!annotation\.styleEdits\) annotation\.expectation = expectationInput\.value\.trim\(\);/);
+  });
+
+  it("does not seed CSS edits from computed styles", () => {
+    const source = readFileSync("src/electron/browser-manager.ts", "utf8");
+    const cssDeclarationTextForElement = source.match(/function cssDeclarationTextForElement\(element\) \{[\s\S]*?\n      \}/)?.[0] ?? "";
+    const refreshStyleEdits = source.match(/function refreshStyleEdits\(annotation, element\) \{[\s\S]*?\n      \}/)?.[0] ?? "";
+
+    assert.doesNotMatch(cssDeclarationTextForElement, /window\.getComputedStyle/);
+    assert.match(cssDeclarationTextForElement, /if \(!inline \|\| !inline\.trim\(\)\) return "";/);
+    assert.match(refreshStyleEdits, /touchedProperties\.forEach\(function\(property\)/);
+    assert.doesNotMatch(refreshStyleEdits, /STYLE_EDIT_PROPERTIES\.forEach/);
   });
 
   it("carries simple computed CSS in hover cards and annotation prompts", () => {

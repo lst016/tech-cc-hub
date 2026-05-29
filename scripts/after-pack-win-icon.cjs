@@ -31,9 +31,10 @@ module.exports = async function applyWindowsIconAfterPack(context) {
   });
 
   if (result.error) {
-    throw result.error;
+    console.warn(`[after-pack-win-icon] skipped: ${result.error.message}`);
+    return;
   }
   if (result.status !== 0) {
-    throw new Error(`rcedit failed with status ${result.status}`);
+    console.warn(`[after-pack-win-icon] skipped: rcedit failed with status ${result.status}`);
   }
 };
