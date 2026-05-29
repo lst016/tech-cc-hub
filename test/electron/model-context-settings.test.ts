@@ -126,15 +126,26 @@ test("model select preserves routed option metadata for display and search", () 
   assert.equal(option?.title, "gpt-5.5 -> Codex OAuth");
 });
 
-test("composer model control uses the searchable grouped model select", () => {
+test("composer model control uses real configured models in the merged white menu", () => {
   const promptInputSource = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
   const modelSelectSource = readFileSync("src/ui/components/ModelSelect.tsx", "utf8");
+  const composerModelMenuSource = readFileSync("src/ui/components/prompt-input/ComposerModelMenu.tsx", "utf8");
 
-  assert.match(promptInputSource, /import \{ ModelSelect \} from "\.\.\/ModelSelect"/);
+  assert.match(promptInputSource, /import \{ ComposerModelMenu \} from "\.\/ComposerModelMenu"/);
   assert.match(promptInputSource, /getRoutedModelOptionsForProfiles/);
   assert.match(promptInputSource, /modelOptions=\{modelSelectOptions\}/);
-  assert.match(promptInputSource, /variant="composer"/);
-  assert.match(promptInputSource, /placement="top"/);
+  assert.match(promptInputSource, /onModelChange=\{handleRuntimeModelChange\}/);
+  assert.match(composerModelMenuSource, /Context/);
+  assert.match(composerModelMenuSource, /detailLabel: option\.badge/);
+  assert.match(composerModelMenuSource, /\{ value: "xhigh", label: "超高" \}/);
+  assert.match(composerModelMenuSource, /\{ value: "disabled", label: "关闭" \}/);
+  assert.doesNotMatch(composerModelMenuSource, /label: "max"/);
+  assert.doesNotMatch(composerModelMenuSource, /reasoningValue === "disabled" \? "high" : "disabled"/);
+  assert.doesNotMatch(composerModelMenuSource, /Ultimate/);
+  assert.doesNotMatch(composerModelMenuSource, /Performance/);
+  assert.doesNotMatch(composerModelMenuSource, /Efficient/);
+  assert.doesNotMatch(composerModelMenuSource, /Lite/);
+  assert.match(composerModelMenuSource, /bg-white text-\[#171b23\]/);
   assert.match(modelSelectSource, /搜索模型 \/ 分组/);
   assert.match(modelSelectSource, /DeepSeek/);
 });
@@ -202,8 +213,8 @@ test("enabled profile helpers keep distinct deepseek casing variants when both e
 
   assert.deepEqual(getAvailableModelsForProfiles(getEnabledProfiles(profiles)), [
     "DeepSeek-V4-Pro",
-    "deepseek-v4-pro",
     "gpt-5.5",
+    "deepseek-v4-pro",
     "deepseek-chat",
   ]);
   assert.equal(

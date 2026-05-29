@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const source = readFileSync("src/ui/components/PromptInput.tsx", "utf8");
+const source = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
 const appSource = readFileSync("src/ui/App.tsx", "utf8");
 const styles = readFileSync("src/ui/index.css", "utf8");
 
@@ -32,7 +32,7 @@ test("prompt composer keeps pasted json inside the composer body", () => {
 });
 
 test("prompt composer does not clip runtime control popovers", () => {
-  assert.match(source, /<ModelSelect[\s\S]*placement="top"/);
+  assert.match(source, /<ComposerModelMenu/);
   assert.match(styles, /\.prompt-composer-card\s*\{[\s\S]*overflow:\s*visible;/);
   assert.match(source, /prompt-composer-footer[^"]*overflow-visible/);
 });

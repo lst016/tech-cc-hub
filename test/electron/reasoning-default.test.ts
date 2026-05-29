@@ -6,11 +6,13 @@ const appStoreSource = readFileSync("src/ui/store/useAppStore.ts", "utf8");
 const taskSettingsSource = readFileSync("src/electron/libs/task/settings.ts", "utf8");
 const taskPanelSource = readFileSync("src/ui/components/TaskPanel.tsx", "utf8");
 const promptInputSource = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
+const composerModelMenuSource = readFileSync("src/ui/components/prompt-input/ComposerModelMenu.tsx", "utf8");
 const runnerSource = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
 
 test("chat composer defaults reasoning to xhigh", () => {
   assert.match(appStoreSource, /reasoningMode:\s*"xhigh"/);
-  assert.match(promptInputSource, /\{ value: "xhigh", label: "超高" \}/);
+  assert.match(promptInputSource, /reasoningValue=\{reasoningMode\}/);
+  assert.match(composerModelMenuSource, /\{ value: "xhigh", label: "超高" \}/);
 });
 
 test("task workflow defaults reasoning to xhigh", () => {

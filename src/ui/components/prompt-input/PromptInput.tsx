@@ -267,8 +267,9 @@ export function PromptInput({
     title: `${option.value} -> ${option.routeLabel}`,
   })), [routedModelOptions]);
   const activeProfile = enabledProfiles[0];
+  const explicitRuntimeModel = activeSessionModel || runtimeModel.trim();
   const selectedRuntimeModel = resolveAvailableModelName(
-    activeSessionModel || runtimeModel.trim() || routedModelOptions[0]?.value || activeProfile?.model?.trim(),
+    explicitRuntimeModel || routedModelOptions[0]?.value || activeProfile?.model?.trim(),
     availableModels,
   );
   const handleRuntimeModelChange = useCallback((model: string) => {
