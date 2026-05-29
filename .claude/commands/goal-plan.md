@@ -2,7 +2,7 @@
 description: Turn a rough request into a concrete goal, scope, acceptance criteria, and next actions.
 ---
 
-# /goal
+# /goal-plan
 
 You are helping the user turn an ambiguous or broad request into an executable goal for the current `tech-cc-hub` workspace.
 
@@ -23,23 +23,23 @@ $ARGUMENTS
 
 ## Required Output Shape
 
-### 1. 目标
+### 1. Goal
 
 State the goal in one precise sentence.
 
-### 2. 范围
+### 2. Scope
 
 List what is in scope and what is out of scope.
 
-### 3. 验收标准
+### 3. Acceptance Criteria
 
 List observable checks that prove the task is done.
 
-### 4. 执行顺序
+### 4. Execution Order
 
 Give the smallest safe sequence of steps to implement or verify the goal.
 
-### 5. 风险点
+### 5. Risks
 
 Name likely blockers, especially:
 
@@ -48,6 +48,6 @@ Name likely blockers, especially:
 - stale worktree or existing user changes
 - missing browser/Electron verification
 
-### 6. 下一步
+### 6. Next Step
 
 End with the immediate next action the agent should take.

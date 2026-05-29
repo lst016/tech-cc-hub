@@ -368,6 +368,7 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
     ],
     promptHints: [
       "CodeGraph retrieval rule: for each new user turn that needs source-code evidence, treat CodeGraph as the primary code map when an index is already available and call `mcp__tech-cc-hub-knowledge__codegraph_search` or `mcp__tech-cc-hub-knowledge__codegraph_context` before broad `Read`/`Grep`/`Glob`/`Task` source exploration. Fall back to focused source tools when CodeGraph has no useful result, is unavailable, or returns an error; do not retry a failed CodeGraph lookup in the same turn.",
+      "Low-power CodeGraph rule: if a CodeGraph tool is slow, times out, or says it is temporarily bypassed, stop using CodeGraph for that turn and use focused `Read`/`Grep`/`Glob` instead.",
       "CodeGraph freshness rule: retrieval tools are fast-path only and do not auto-initialize `.tech/codegraph` or run incremental sync. Use codegraph_sync mode=index only for explicit refresh/indexing requests.",
       "CodeGraph context rule: do not re-read source code that `codegraph_context` already returned unless you are verifying a small changed range.",
       "Managed CodeGraph storage rule: CodeGraph is owned by tech-cc-hub and must use `.tech/codegraph`; do not create or rely on upstream `.codegraph` directories.",

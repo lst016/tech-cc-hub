@@ -233,6 +233,68 @@ test("buildActivityRailModel uses assistant usage before final result", () => {
   assert.equal(model.contextDistribution.unattributedInputTokens, 127211 - ledger.totalTokenEstimate);
 });
 
+test("buildActivityRailModel shows the latest round as completed after a successful result even if the session stays running", () => {
+  const model = buildActivityRailModel(
+    {
+      id: "session-latest-round-complete",
+      title: "Latest round complete",
+      status: "running",
+      messages: [
+        {
+          type: "user_prompt",
+          prompt: "收尾这一轮",
+        },
+        {
+          type: "result",
+          subtype: "success",
+          uuid: "result-latest-round",
+          session_id: "remote-latest-round",
+          duration_ms: 800,
+          result: "done",
+        } as never,
+      ],
+    },
+    [],
+    "",
+  );
+
+  assert.equal(model.summary.statusLabel, "已完成");
+  assert.equal(model.summary.statusTone, "success");
+});
+
+test("buildActivityRailModel resets latest-round completion once a new user prompt starts", () => {
+  const model = buildActivityRailModel(
+    {
+      id: "session-new-round-running",
+      title: "New round running",
+      status: "running",
+      messages: [
+        {
+          type: "user_prompt",
+          prompt: "第一轮",
+        },
+        {
+          type: "result",
+          subtype: "success",
+          uuid: "result-round-1",
+          session_id: "remote-round-reset",
+          duration_ms: 800,
+          result: "done",
+        } as never,
+        {
+          type: "user_prompt",
+          prompt: "第二轮刚开始",
+        },
+      ],
+    },
+    [],
+    "",
+  );
+
+  assert.equal(model.summary.statusLabel, "执行中");
+  assert.equal(model.summary.statusTone, "info");
+});
+
 test("buildActivityRailModel marks repeated init events as runner reuse", () => {
   const model = buildActivityRailModel(
     {
@@ -282,6 +344,31 @@ test("buildActivityRailModel marks repeated init events as runner reuse", () => 
   assert.equal(lifecycleItems.find((item) => item.round === 1)?.title, "初始化执行环境");
   assert.equal(lifecycleItems.find((item) => item.round === 2)?.title, "复用执行环境");
   assert.equal(model.timeline.find((item) => item.title === "复用执行环境")?.statusLabel, "已复用");
+});
+
+test("buildActivityRailModel exposes background session semantics", () => {
+  const model = buildActivityRailModel(
+    {
+      id: "session-background",
+      title: "Background run",
+      status: "running",
+      executionMode: "background",
+      reasoningMode: "xhigh",
+      permissionMode: "plan",
+      messages: [],
+    },
+    [{
+      toolUseId: "tool-1",
+      toolName: "Bash",
+      input: { command: "npm run build" },
+    }],
+    "",
+  );
+
+  assert.equal(model.sessionSemantics.executionMode, "background");
+  assert.equal(model.sessionSemantics.status, "waiting_input");
+  assert.equal(model.sessionSemantics.effort, "xhigh");
+  assert.equal(model.sessionSemantics.permissionMode, "plan");
 });
 
 test("buildActivityRailModel exposes task-level steps and context distribution", () => {

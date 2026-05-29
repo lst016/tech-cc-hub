@@ -33,11 +33,10 @@ describe("activity workspace tabs", () => {
     assert.equal(shouldShowCreateBrowserTab(true), false);
   });
 
-  it("keeps the terminal tab hidden until the optional tab is opened", () => {
-    const hiddenTabs = buildActivityWorkspaceTabs({
+  it("keeps the terminal tab optional until the user opens it", () => {
+    const defaultTabs = buildActivityWorkspaceTabs({
       activeTab: "preview",
       showBrowserTab: false,
-      showTerminalTab: false,
     }).filter((tab) => tab.visible);
     const visibleTabs = buildActivityWorkspaceTabs({
       activeTab: "terminal",
@@ -45,7 +44,7 @@ describe("activity workspace tabs", () => {
       showTerminalTab: true,
     }).filter((tab) => tab.visible);
 
-    assert.deepEqual(hiddenTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git"]);
+    assert.deepEqual(defaultTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git"]);
     assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git", "terminal"]);
     assert.equal(visibleTabs.find((tab) => tab.id === "terminal")?.active, true);
     assert.equal(shouldShowCreateTerminalTab(true), false);
@@ -68,12 +67,25 @@ describe("activity workspace tabs", () => {
     );
   });
 
-  it("defaults the activity rail to trace in app state", () => {
+  it("defaults the activity rail to usage in app state", () => {
+    const appSource = readFileSync("src/ui/App.tsx", "utf8");
+    const railSource = readFileSync("src/ui/components/ActivityRail.tsx", "utf8");
+    const tabsSource = readFileSync("src/ui/utils/activity-workspace-tabs.ts", "utf8");
+
+    assert.match(tabsSource, /DEFAULT_ACTIVITY_RAIL_TAB: ActivityRailTab = "usage"/);
+    assert.match(appSource, /activityRailTabBySessionId\[activeSessionId\] \?\? DEFAULT_ACTIVITY_RAIL_TAB/);
+    assert.match(railSource, /useState<ActivityRailTab>\(DEFAULT_ACTIVITY_RAIL_TAB\)/);
+  });
+
+  it("keeps startup on the lightweight preview shell until preview is explicitly opened", () => {
     const appSource = readFileSync("src/ui/App.tsx", "utf8");
     const railSource = readFileSync("src/ui/components/ActivityRail.tsx", "utf8");
 
-    assert.match(appSource, /activityRailTabBySessionId\[activeSessionId\] \?\? "trace"/);
-    assert.match(railSource, /useState<ActivityRailTab>\("trace"\)/);
+    assert.match(appSource, /Object\.prototype\.hasOwnProperty\.call\(activityRailTabBySessionId, activeSessionId\)/);
+    assert.match(appSource, /deferPreviewMount=\{!activityRailTabExplicitlySet && !pendingPreviewOpenRequest\}/);
+    assert.match(railSource, /const shouldMountPreviewPane = selectedTab === "preview" && \(!deferPreviewMount \|\| Boolean\(pendingPreviewOpenRequest\)\);/);
+    assert.match(railSource, /shouldMountPreviewPane \? \(/);
+    assert.match(railSource, /预览已就绪/);
   });
 
   it("preserves preview and browser runtime state while switching workspace tabs", () => {
@@ -90,6 +102,7 @@ describe("activity workspace tabs", () => {
     const tabsSource = readFileSync("src/ui/components/ActivityWorkspaceTabs.tsx", "utf8");
 
     assert.match(appSource, /terminalTabBySessionId/);
+    assert.match(appSource, /terminalTabBySessionId\[activeSessionId\] === true/);
     assert.match(appSource, /setActiveSessionActivityRailTab\("terminal"\)/);
     assert.match(railSource, /showTerminalTab=\{hasTerminalTab\}/);
     assert.match(railSource, /selectedTab === "terminal"/);
@@ -114,5 +127,21 @@ describe("activity workspace tabs", () => {
     assert.doesNotMatch(terminalSource, /placeholder=/);
     assert.match(mainSource, /const shellCommand = "powershell\.exe"/);
     assert.match(mainSource, /channel === "terminal:run"[\s\S]*runTerminalCommandForRenderer\(args\[0\]\)/);
+  });
+
+  it("registers dev and watch commands as stoppable background processes", () => {
+    const terminalSource = readFileSync("src/ui/components/TerminalWorkspacePanel.tsx", "utf8");
+    const mainSource = readFileSync("src/electron/main.ts", "utf8");
+
+    assert.match(terminalSource, /isLikelyLongRunningTerminalCommand/);
+    assert.match(terminalSource, /"terminal:start"/);
+    assert.match(terminalSource, /"terminal:list"/);
+    assert.match(terminalSource, /"terminal:stop"/);
+    assert.match(terminalSource, /Background processes/);
+    assert.match(terminalSource, /Stop background process/);
+    assert.match(mainSource, /ipcMain\.handle\("terminal:start"/);
+    assert.match(mainSource, /ipcMain\.handle\("terminal:list"/);
+    assert.match(mainSource, /ipcMain\.handle\("terminal:stop"/);
+    assert.match(mainSource, /taskkill\.exe", \["\/PID", String\(pid\), "\/T", "\/F"\]/);
   });
 });

@@ -1,0 +1,178 @@
+export function normalizeVersion(input) {
+  if (!input) return "";
+  const raw = String(input).trim().replace(/^v/i, "");
+  const match = raw.match(/^(\d+)\.(\d+)\.(\d+)$/);
+  if (!match) return "";
+  if (match[1] === "0" && match[2] === "2") return `2.1.${match[3]}`;
+  return raw;
+}
+
+export function extractSections(html) {
+  const normalized = decodeHtmlEntities(String(html))
+    .replace(/\r\n/g, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<p[^>]*>/gi, "\n")
+    .replace(/<\/li>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "\n- ")
+    .replace(/<code[^>]*>/gi, "`")
+    .replace(/<\/code>/gi, "`")
+    .replace(/<h[1-6][^>]*>/gi, "\n### ")
+    .replace(/<\/h[1-6]>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, "\n\n");
+
+  const matches = [...normalized.matchAll(/(?:^|\n)\s*#{0,6}\s*(?:Claude Code\s*)?v(2\.1\.(\d+))\b[^\n]*/gi)];
+  return matches.map((match, index) => {
+    const version = match[1];
+    const start = match.index + match[0].length;
+    const end = index + 1 < matches.length ? matches[index + 1].index : normalized.length;
+    const body = normalized.slice(start, end);
+    const items = body
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("- "))
+      .map((line) => line.slice(2).trim().replace(/\s+/g, " "))
+      .filter(Boolean);
+    const dateMatch = body.match(/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}\b/);
+    return { version, date: dateMatch?.[0] ?? "", items };
+  });
+}
+
+export function extractCommandItems(items) {
+  const commands = new Map();
+  for (const item of items) {
+    const text = stripTicks(item);
+
+    for (const match of item.matchAll(/`\/([a-z][a-z0-9-]*)\b[^`]*`/gi)) {
+      addCommand(commands, match[1], text);
+    }
+
+    const leadingCommand = item.match(/^(?:`)?\/([a-z][a-z0-9-]*)\b/i);
+    if (leadingCommand?.[1]) {
+      addCommand(commands, leadingCommand[1], text);
+    }
+
+    const addedOrRenamedMatches = item.matchAll(/\b(?:added|renamed)\s+`\/([a-z][a-z0-9-]*)\b[^`]*`/gi);
+    for (const match of addedOrRenamedMatches) {
+      addCommand(commands, match[1], text);
+    }
+
+    if (/\bclaude\s+agents\b/i.test(text)) {
+      addCommand(commands, "agents", text);
+    }
+  }
+  return Array.from(commands.values()).sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export function buildPromptHints(items) {
+  const hints = [];
+  const hasGoal = items.some((item) => /\/goal\b/i.test(item));
+  const hasScrollSpeed = items.some((item) => /\/scroll-speed\b/i.test(item));
+  const hasAgentView = items.some((item) => /\bclaude\s+agents\b|agent view/i.test(item));
+  const hasPluginDetails = items.some((item) => /\bplugin details\b|\/plugin\b/i.test(item));
+  const hasHookExec = items.some((item) => /\bargs:\s*string\[\]|exec form/i.test(item));
+  const hasContinueOnBlock = items.some((item) => /\bcontinueOnBlock\b/i.test(item));
+  const hasProjectDir = items.some((item) => /\bCLAUDE_PROJECT_DIR\b/i.test(item));
+  const hasUsageBreakdown = items.some((item) => /\/usage\b.*per-category breakdown|per-MCP-server cost/i.test(item));
+  const hasCodeReviewRename = items.some((item) => /renamed\s+`?\/simplify`?\s+to\s+`?\/code-review`?/i.test(item));
+  const hasUsageCreditsRename = items.some((item) => /\/extra-usage\b.*\/usage-credits|usage credits/i.test(item));
+  const hasDynamicWorkflows = items.some((item) => /\bdynamic workflows\b|\/workflows\b|workflow status row/i.test(item));
+  const hasUltracode = items.some((item) => /\bultracode\b|standing dynamic-workflow orchestration/i.test(item));
+
+  if (hasGoal) {
+    hints.push("`/goal <goal>` sets or updates a durable completion condition. Restate the goal briefly, use update_plan to track progress, keep later work tied to the goal, and stop only when the goal is satisfied or a real blocker remains.");
+  }
+  if (hasScrollSpeed) {
+    hints.push("`/scroll-speed <slow|normal|fast|number>` is a Claude Code terminal TUI setting. In tech-cc-hub, map it to explicit browser scroll distances or mouse wheel deltas when using browser tools; for chat transcript reading, summarize/navigate instead of pretending to change terminal scroll speed.");
+  }
+  if (hasAgentView) {
+    hints.push("`claude agents` / agent view is a session-and-agent overview. When the user asks for it here, summarize active session, subagent, tool, permission, and blocker state from available session events and progress summaries.");
+  }
+  if (hasPluginDetails) {
+    hints.push("Plugin details should include source, version, status, permissions, configured MCP servers, tool count/tool names, auth mode, update hints, and projected prompt/token impact when available.");
+  }
+  if (hasUsageBreakdown) {
+    hints.push("`/usage` in current Claude Code exposes a per-category breakdown such as skills, subagents, plugins, and per-MCP-server cost. In tech-cc-hub, prefer source-level usage breakdowns over only prompt-ledger totals when the UI has enough evidence.");
+  }
+  if (hasCodeReviewRename) {
+    hints.push("`/code-review` is the current Claude Code review surface focused on correctness findings. Treat `/simplify` as historical wording; prefer review-style behavior and naming in user-facing explanations. Split oversized code or diff input into bounded review chunks, then summarize cross-chunk findings instead of loading everything at once.");
+  }
+  if (hasUsageCreditsRename) {
+    hints.push("`/usage-credits` is the current Claude Code label for what older builds called `/extra-usage`. Prefer the new name in UI copy while keeping old-name compatibility where needed.");
+  }
+  if (hasDynamicWorkflows) {
+    hints.push("Dynamic workflows let Claude create and run workflow plans across many background agents. For broad multi-lane tasks in tech-cc-hub, prefer an explicit workflow plan, keep progress visible in the task/workflow status surface, and avoid spawning large agent trees for small reversible edits.");
+  }
+  if (hasUltracode) {
+    hints.push("`ultracode` is a session-scoped xhigh dynamic-workflow orchestration mode. Use it only when the user's request is explicitly large, parallel, or workflow-oriented; keep ordinary edits on the normal runner path.");
+  }
+  if (hasHookExec || hasContinueOnBlock) {
+    hints.push("Hook `args: string[]` exec form and PostToolUse `continueOnBlock` apply to config-driven Claude Code hooks. tech-cc-hub uses SDK in-process hook callbacks, so keep using structured callbacks and `updatedToolOutput` for PostToolUse output replacement.");
+  }
+  if (hasProjectDir) {
+    hints.push("Stdio MCP servers should receive `CLAUDE_PROJECT_DIR` for the current workspace unless the user explicitly configured that env var.");
+  }
+  return hints;
+}
+
+export function renderRegistry(registry) {
+  const localPromptHints = [
+    "`/code-review` should split oversized code or diff input into bounded review chunks, review each chunk for correctness, security, and regression findings, then summarize cross-chunk risks instead of loading everything at once.",
+  ];
+
+  return `import type { SlashCommandItem } from "../slash-command-discovery.js";
+import { buildClaudeAgentTeamsPromptHint } from "../../../shared/claude-agent-teams.js";
+
+// Generated compatibility seed. Refresh with:
+//   node scripts/sync-claude-code-compat.mjs
+
+export type ClaudeCodeCompatRegistry = {
+  sourceUrl: string;
+  sourceVersion: string;
+  sourceDate: string;
+  generatedAt: string;
+  commandItems: SlashCommandItem[];
+  promptHints: string[];
+};
+
+export const CLAUDE_CODE_COMPAT_REGISTRY: ClaudeCodeCompatRegistry = ${JSON.stringify(registry, null, 2)};
+
+export const CLAUDE_CODE_COMPAT_COMMAND_ITEMS = CLAUDE_CODE_COMPAT_REGISTRY.commandItems;
+
+const CLAUDE_CODE_LOCAL_COMPAT_PROMPT_HINTS = ${JSON.stringify(localPromptHints, null, 2)};
+
+export function buildClaudeCodeCompatPromptAppend(): string {
+  return [
+    \`Claude Code v\${CLAUDE_CODE_COMPAT_REGISTRY.sourceVersion} compatibility notes for tech-cc-hub:\`,
+    ...CLAUDE_CODE_LOCAL_COMPAT_PROMPT_HINTS.map((hint) => \`- \${hint}\`),
+    ...CLAUDE_CODE_COMPAT_REGISTRY.promptHints.map((hint) => \`- \${hint}\`),
+    ...buildClaudeAgentTeamsPromptHint().split("\\n").map((hint) => \`- \${hint}\`),
+  ].join("\\n");
+}
+`;
+}
+
+function addCommand(commands, rawName, description) {
+  const name = rawName.trim().replace(/^\/+/, "").toLowerCase();
+  if (!name) return;
+  if (!commands.has(name)) {
+    commands.set(name, { name, description });
+  }
+}
+
+function stripTicks(text) {
+  return text.replace(/`/g, "");
+}
+
+function decodeHtmlEntities(text) {
+  return text
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(Number.parseInt(code, 16)));
+}

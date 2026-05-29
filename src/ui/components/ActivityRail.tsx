@@ -13,11 +13,16 @@ import {
 import { useAppStore } from "../store/useAppStore";
 import { estimatePromptLedgerTokens, type PromptLedgerSourceKind } from "../../shared/prompt-ledger";
 import type { PlanStepStatus, SessionPlanSnapshot } from "../../shared/plan-progress";
-import { buildContextUsageBreakdown, type ContextUsageBreakdownCategory } from "../utils/context-usage-breakdown";
+import {
+  buildContextUsageBreakdown,
+  buildContextUsageDriverGroups,
+  buildContextUsageSourceSummaryRows,
+  type ContextUsageBreakdownCategory,
+} from "../utils/context-usage-breakdown";
 import { buildSegmentedContextUsageCells, type ContextUsageCellSegment } from "../utils/context-usage-cells";
 import { ActivityWorkspaceTabs } from "./ActivityWorkspaceTabs";
 import type { SessionView } from "../store/useAppStore";
-import type { ActivityRailTab, ActivityWorkspaceTab } from "../utils/activity-workspace-tabs";
+import { DEFAULT_ACTIVITY_RAIL_TAB, type ActivityRailTab, type ActivityWorkspaceTab } from "../utils/activity-workspace-tabs";
 
 const AionWorkspacePreviewPane = lazy(() => import("./AionWorkspacePreviewPane").then((module) => ({ default: module.AionWorkspacePreviewPane })));
 const GitWorkbenchPanel = lazy(() => import("./git/GitWorkbenchPanel").then((module) => ({ default: module.GitWorkbenchPanel })));
@@ -80,6 +85,21 @@ const PROVENANCE_LABELS: Record<ActivityToolProvenance, string> = {
   transfer_agent: "交接 Agent",
   unknown: "未归类",
 };
+
+const CONTEXT_USAGE_SOURCE_CATEGORY_LABELS = {
+  system: "System",
+  project: "Project",
+  skill: "Skill",
+  workflow: "Workflow",
+  memory: "Memory",
+  messages: "Messages",
+  tool_payload: "Tool",
+  tool_definitions: "Tool Defs",
+  plugin: "Plugin",
+  mcp: "MCP",
+  subagent: "Subagent",
+  unattributed: "Derived",
+} as const;
 
 function WorkspacePaneFallback({ label }: { label: string }) {
   return (
@@ -515,9 +535,11 @@ function ContextUsagePanel({
     ? "按模型实际 input_tokens 显示；拆分来自 prompt ledger，差额为未归因上下文。"
     : "基于下一轮 prompt ledger 的上下文估算";
   const selectedBreakdownCategory = categoryRows.find((row) => row.id === selectedBreakdownId) ?? null;
+  const sourceSummaryRows = buildContextUsageSourceSummaryRows(model.promptAnalysis.segments);
   const breakdownItems = selectedBreakdownCategory
     ? buildContextUsageBreakdown(model.promptAnalysis.segments, selectedBreakdownCategory)
     : [];
+  const breakdownDriverGroups = buildContextUsageDriverGroups(breakdownItems);
   const cells = buildUsageCells(categoryRows.map((row) => ({
     id: row.id,
     label: row.label,
@@ -535,8 +557,15 @@ function ContextUsagePanel({
             {formatTokenAmount(usedTokens)}/{formatTokenAmount(windowTokens)} tokens ({formatUsagePercent(usedRatio)})
           </div>
         </div>
-        <div className={`rounded-full border px-2.5 py-1 text-[10px] font-medium ${toneClasses(model.summary.statusTone)}`}>
-          {model.summary.statusLabel}
+        <div className="flex flex-col items-end gap-1">
+          <div className={`rounded-full border px-2.5 py-1 text-[10px] font-medium ${toneClasses(model.summary.statusTone)}`}>
+            {model.summary.statusLabel}
+          </div>
+          {model.sessionSemantics.executionMode === "background" && (
+            <div className="rounded-full border border-info/20 bg-info-light/40 px-2.5 py-1 text-[10px] font-medium text-info">
+              Background
+            </div>
+          )}
         </div>
       </div>
 
@@ -547,6 +576,25 @@ function ContextUsagePanel({
       </div>
 
       <div className="mt-4 text-[11px] italic text-ink-400">{usageBasis}</div>
+      {sourceSummaryRows.length > 0 && (
+        <div className="mt-3 rounded-2xl border border-black/5 bg-black/[0.02] px-3 py-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink-400">Source Attribution</div>
+            <div className="text-[10px] text-ink-400">{sourceSummaryRows.length} drivers</div>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {sourceSummaryRows.map((row) => (
+              <span
+                key={`source-summary-${row.id}`}
+                className="rounded-full border border-black/5 bg-white px-2 py-1 text-[10px] text-ink-500"
+                title={`${row.sourceIds.length} source segment${row.sourceIds.length === 1 ? "" : "s"}`}
+              >
+                {row.label} 路 {formatTokenAmount(row.tokens)} 路 {row.itemCount}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="mt-2 space-y-1.5 text-[12px] leading-5">
         {categoryRows.map((row) => {
           const ratio = (row.tokens ?? 0) / windowTokens;
@@ -587,6 +635,21 @@ function ContextUsagePanel({
               </button>
             </div>
             <div className="mt-3 space-y-2">
+              {breakdownDriverGroups.length > 1 && (
+                <div className="rounded-xl border border-black/5 bg-black/[0.02] px-3 py-2">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink-400">Source Drivers</div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {breakdownDriverGroups.map((group) => (
+                      <span
+                        key={`driver-chip-${group.id}`}
+                        className="rounded-full border border-black/5 bg-white px-2 py-1 text-[10px] text-ink-500"
+                      >
+                        {group.label} 路 {formatTokenAmount(group.tokens)} 路 {group.itemCount}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
               {breakdownItems.length > 0 ? breakdownItems.map((item) => (
                 <div key={item.id} className="rounded-xl border border-black/5 bg-black/[0.025] px-3 py-2">
                   <div className="flex items-start justify-between gap-3">
@@ -596,6 +659,11 @@ function ContextUsagePanel({
                         {item.sourceKind && (
                           <span className="rounded-full bg-white px-2 py-0.5">{PROMPT_SOURCE_KIND_LABELS[item.sourceKind] ?? item.sourceKind}</span>
                         )}
+                        {item.usageCategories.map((category) => (
+                          <span key={`${item.id}-${category}`} className="rounded-full bg-white px-2 py-0.5">
+                            {CONTEXT_USAGE_SOURCE_CATEGORY_LABELS[category] ?? category}
+                          </span>
+                        ))}
                         {item.sourcePath && (
                           <span className="max-w-full truncate rounded-full bg-white px-2 py-0.5">{item.sourcePath}</span>
                         )}
@@ -1191,12 +1259,15 @@ export function ActivityRail({
   onOpenSessionAnalysis,
   onOpenBrowserWorkbench,
   activeTab,
+  pendingPreviewOpenRequest,
+  onConsumePendingPreviewOpenRequest,
   onActiveTabChange,
   selectedModel,
   contextWindow,
   compressionThresholdPercent,
   hasBrowserTab = false,
   hasTerminalTab = false,
+  deferPreviewMount = false,
   onOpenTerminalWorkspace,
   onCloseTerminalWorkspace,
   width = 420,
@@ -1207,12 +1278,20 @@ export function ActivityRail({
   onOpenSessionAnalysis?: () => void;
   onOpenBrowserWorkbench?: () => void;
   activeTab?: ActivityRailTab;
+  pendingPreviewOpenRequest?: {
+    filePath: string;
+    startLine?: number;
+    endLine?: number;
+    nonce: number;
+  };
+  onConsumePendingPreviewOpenRequest?: () => void;
   onActiveTabChange?: (tab: ActivityRailTab) => void;
   selectedModel?: string;
   contextWindow?: number;
   compressionThresholdPercent?: number;
   hasBrowserTab?: boolean;
   hasTerminalTab?: boolean;
+  deferPreviewMount?: boolean;
   onOpenTerminalWorkspace?: () => void;
   onCloseTerminalWorkspace?: () => void;
   width?: number;
@@ -1227,7 +1306,7 @@ export function ActivityRail({
     () => model.timeline.slice(0, INLINE_TRACE_TIMELINE_LIMIT),
     [model.timeline],
   );
-  const [internalActiveTab, setInternalActiveTab] = useState<ActivityRailTab>("trace");
+  const [internalActiveTab, setInternalActiveTab] = useState<ActivityRailTab>(DEFAULT_ACTIVITY_RAIL_TAB);
   const selectedTab = activeTab ?? internalActiveTab;
   const handleSelectTab = (tab: ActivityRailTab) => {
     if (!activeTab) setInternalActiveTab(tab);
@@ -1244,6 +1323,7 @@ export function ActivityRail({
   const [showContextModal, setShowContextModal] = useState(false);
   const timelineRef = useRef<HTMLDivElement>(null);
   const toolWorkspaceActive = selectedTab === "preview" || selectedTab === "git" || selectedTab === "terminal";
+  const shouldMountPreviewPane = selectedTab === "preview" && (!deferPreviewMount || Boolean(pendingPreviewOpenRequest));
 
   useEffect(() => {
     if (!selectedTimelineId) return;
@@ -1355,13 +1435,26 @@ export function ActivityRail({
           <div className="min-h-0 flex-1">
             <div className="h-full overflow-hidden border-t border-[#d0d7de] bg-white shadow-none">
               <Suspense fallback={<WorkspacePaneFallback label="正在加载文件预览..." />}>
-                <AionWorkspacePreviewPane
-                  key={`${session?.id ?? "no-session"}:${session?.cwd ?? "no-workspace"}`}
-                  workspace={session?.cwd}
-                  conversationId={session?.id}
-                  messages={session?.messages}
-                  onClose={() => handleSelectTab("trace")}
-                />
+                {shouldMountPreviewPane ? (
+                  <AionWorkspacePreviewPane
+                    key={`${session?.id ?? "no-session"}:${session?.cwd ?? "no-workspace"}`}
+                    workspace={session?.cwd}
+                    conversationId={session?.id}
+                    messages={session?.messages}
+                    pendingOpenRequest={pendingPreviewOpenRequest}
+                    onConsumePendingOpenRequest={onConsumePendingPreviewOpenRequest}
+                    onClose={() => handleSelectTab("trace")}
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center bg-[#fbfbfc] px-6 text-center">
+                    <div className="max-w-xs space-y-2">
+                      <p className="text-sm font-medium text-ink-900">预览已就绪</p>
+                      <p className="text-xs leading-6 text-ink-500">
+                        首次启动先跳过重型文件预览加载，打开文件后会自动进入右侧预览。
+                      </p>
+                    </div>
+                  </div>
+                )}
               </Suspense>
             </div>
           </div>

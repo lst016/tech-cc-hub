@@ -2,6 +2,8 @@ export type ActivityRailTab = "trace" | "usage" | "preview" | "git" | "terminal"
 export type ActivityWorkspaceTab = "browser" | ActivityRailTab;
 export type ActivityOptionalWorkspaceTab = "browser" | "terminal";
 
+export const DEFAULT_ACTIVITY_RAIL_TAB: ActivityRailTab = "usage";
+
 export type ActivityWorkspaceTabItem = {
   id: ActivityWorkspaceTab;
   label: string;

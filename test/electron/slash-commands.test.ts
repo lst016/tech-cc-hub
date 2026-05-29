@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -68,9 +68,31 @@ test("slash command sources merge local commands with runtime init commands", ()
 test("Claude Code built-in slash command seed includes stable default commands", () => {
   const names = CLAUDE_CODE_BUILTIN_COMMAND_ITEMS.map((item) => item.name);
 
-  for (const expected of ["help", "init", "doctor", "model", "skills", "goal"]) {
+  for (const expected of ["help", "init", "doctor", "model", "skills", "goal", "code-review", "usage-credits"]) {
     assert.ok(names.includes(expected), `expected /${expected} in built-in slash command seed`);
   }
+});
+
+test("Claude Code built-in slash command seed keeps historical aliases for renamed commands", () => {
+  const names = CLAUDE_CODE_BUILTIN_COMMAND_ITEMS.map((item) => item.name);
+
+  assert.ok(names.includes("simplify"));
+  assert.ok(names.includes("extra-usage"));
+});
+
+test("Claude Code /code-review seed tells agents to split oversized reviews", () => {
+  const command = CLAUDE_CODE_BUILTIN_COMMAND_ITEMS.find((item) => item.name === "code-review");
+
+  assert.ok(command);
+  assert.match(command.description ?? "", /split/i);
+  assert.match(command.description ?? "", /oversized|large|long/i);
+  assert.match(command.description ?? "", /chunk/i);
+  assert.match(command.description ?? "", /summar/i);
+});
+
+test("project commands do not shadow Claude Code built-in /goal", () => {
+  assert.equal(existsSync(join(process.cwd(), ".claude", "commands", "goal.md")), false);
+  assert.equal(existsSync(join(process.cwd(), ".claude", "commands", "goal-plan.md")), true);
 });
 
 test("slash command discovery returns cloned cached results", () => {

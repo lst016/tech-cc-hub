@@ -25,6 +25,37 @@ interface SidebarProps {
 
 export const DEFAULT_SIDEBAR_WIDTH = 280;
 export const WORKSPACE_SESSION_PREVIEW_LIMIT = 5;
+export const SIDEBAR_EXPANDED_WORKSPACE_GROUPS_STORAGE_KEY = "tech-cc-hub:sidebar-expanded-workspace-groups";
+
+function readExpandedWorkspaceGroupsFromStorage(): Record<string, boolean> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(SIDEBAR_EXPANDED_WORKSPACE_GROUPS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter((entry): entry is [string, boolean] => typeof entry[0] === "string" && typeof entry[1] === "boolean"),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeExpandedWorkspaceGroupsToStorage(groups: Record<string, boolean>) {
+  if (typeof window === "undefined") return;
+  try {
+    const expandedOnly = Object.fromEntries(Object.entries(groups).filter(([, expanded]) => expanded));
+    if (Object.keys(expandedOnly).length === 0) {
+      window.localStorage.removeItem(SIDEBAR_EXPANDED_WORKSPACE_GROUPS_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(SIDEBAR_EXPANDED_WORKSPACE_GROUPS_STORAGE_KEY, JSON.stringify(expandedOnly));
+  } catch {
+    // Losing this preference is better than breaking the sidebar render path.
+  }
+}
 
 export function Sidebar({
   onNewSession,
@@ -45,7 +76,7 @@ export function Sidebar({
   const [showArchived, setShowArchived] = useState(false);
   const [resumeSessionId, setResumeSessionId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() => readExpandedWorkspaceGroupsFromStorage());
   const [expandedSessionLists, setExpandedSessionLists] = useState<Record<string, boolean>>({});
   const closeTimerRef = useRef<number | null>(null);
   const [hasUpdate, setHasUpdate] = useState(false);
@@ -427,10 +458,14 @@ export function Sidebar({
                   <button
                     type="button"
                     className="min-w-0 flex-1 text-left"
-                    onClick={() => setExpandedGroups((current) => ({
-                      ...current,
-                      [group.key]: !current[group.key],
-                    }))}
+                    onClick={() => setExpandedGroups((current) => {
+                      const next = {
+                        ...current,
+                        [group.key]: !current[group.key],
+                      };
+                      writeExpandedWorkspaceGroupsToStorage(next);
+                      return next;
+                    })}
                   >
                     <div className="flex items-center gap-2 text-[13px] font-semibold text-ink-700">
                       <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-muted" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -506,6 +541,7 @@ export function Sidebar({
                   {visibleSessions.map((session) => {
                     const isActiveSession = activeSessionId === session.id;
                     const isRunningSession = session.status === "running";
+                    const isBackgroundSession = session.executionMode === "background";
                     const unreadSessionStatus = unreadSessionIds[session.id];
                     const sessionAge = formatSessionAge(session.updatedAt);
                     return (
@@ -540,6 +576,14 @@ export function Sidebar({
                           <div className={`min-w-0 flex-1 truncate text-[13px] ${isActiveSession ? "font-semibold text-ink-900" : "font-medium text-ink-700"}`}>
                             {session.title}
                           </div>
+                          {isBackgroundSession && (
+                            <span
+                              className="shrink-0 rounded-full border border-emerald-500/25 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.08em] text-emerald-700"
+                              title="Background session"
+                            >
+                              BG
+                            </span>
+                          )}
                         </div>
                         {sessionAge && (
                           <span className="pointer-events-none shrink-0 text-[12px] text-muted transition-opacity group-hover/session:opacity-0 group-focus-within/session:opacity-0">

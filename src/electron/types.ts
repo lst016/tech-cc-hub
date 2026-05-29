@@ -2,6 +2,7 @@ import type { SDKMessage, PermissionResult } from "@anthropic-ai/claude-agent-sd
 import type { LinkedWorkspaceContext } from "../shared/linked-workspaces.js";
 import type { PromptLedgerMessage } from "../shared/prompt-ledger.js";
 import type { SessionPlanSnapshot } from "../shared/plan-progress.js";
+import type { SessionExecutionMode } from "../shared/session-semantics.js";
 import type { SessionWorkflowState, WorkflowScope, WorkflowSpecDocument } from "../shared/workflow-markdown.js";
 import type { Note, NoteCreateInput, NoteUpdateInput } from "./libs/note/note-types.js";
 
@@ -48,6 +49,7 @@ export type RuntimeOverrides = {
   model?: string;
   reasoningMode?: RuntimeReasoningMode;
   permissionMode?: "default" | "bypassPermissions" | "plan";
+  executionMode?: SessionExecutionMode;
   runSurface?: AgentRunSurface;
   agentId?: string;
   outputFormat?: "json" | "none";
@@ -139,6 +141,9 @@ export type SessionInfo = {
   title: string;
   status: SessionStatus;
   model?: string;
+  executionMode?: SessionExecutionMode;
+  reasoningMode?: RuntimeReasoningMode;
+  permissionMode?: RuntimeOverrides["permissionMode"];
   claudeSessionId?: string;
   cwd?: string;
   runSurface?: AgentRunSurface;
@@ -191,7 +196,7 @@ export type McpServerInfo = {
 export type ServerEvent =
   | { type: "stream.message"; payload: { sessionId: string; message: StreamMessage } }
   | { type: "stream.user_prompt"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[]; capturedAt?: number; historyId?: string } }
-  | { type: "session.status"; payload: { sessionId: string; status: SessionStatus; title?: string; cwd?: string; model?: string; error?: string; slashCommands?: string[] } }
+  | { type: "session.status"; payload: { sessionId: string; status: SessionStatus; title?: string; cwd?: string; model?: string; executionMode?: SessionExecutionMode; reasoningMode?: RuntimeReasoningMode; permissionMode?: RuntimeOverrides["permissionMode"]; error?: string; slashCommands?: string[] } }
   | { type: "session.plan.updated"; payload: SessionPlanSnapshot }
   | { type: "session.workflow"; payload: { sessionId: string; markdown?: string; sourceLayer?: WorkflowScope; sourcePath?: string; state?: SessionWorkflowState; error?: string } }
   | { type: "session.workflow.catalog"; payload: SessionWorkflowCatalog }

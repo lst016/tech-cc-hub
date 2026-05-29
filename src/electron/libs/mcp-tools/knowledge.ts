@@ -1,5 +1,6 @@
 import { app } from "electron";
 import { existsSync, writeFileSync } from "fs";
+import { resolve } from "path";
 import {
   createSdkMcpServer,
   tool,
@@ -34,6 +35,17 @@ export const KNOWLEDGE_TOOL_NAMES = [
 const KNOWLEDGE_MCP_SERVER_NAME = "tech-cc-hub-knowledge";
 const KNOWLEDGE_MCP_SERVER_VERSION = "1.0.0";
 const CODEGRAPH_RETRIEVAL_TIMEOUT_MS = 5_000;
+const CODEGRAPH_SLOW_RETRIEVAL_MS = CODEGRAPH_RETRIEVAL_TIMEOUT_MS;
+const CODEGRAPH_SLOW_COOLDOWN_MS = 10 * 60 * 1_000;
+
+type CodeGraphSlowCircuit = {
+  label: string;
+  durationMs: number;
+  openedAt: number;
+  expiresAt: number;
+};
+
+const slowCodeGraphRetrievals = new Map<string, CodeGraphSlowCircuit>();
 
 const CODEGRAPH_STATUS_SCHEMA = {
   workspaceRoot: z.string().optional().describe("Workspace root. Defaults to current session cwd."),
@@ -76,7 +88,7 @@ const MEMORY_UPDATE_SCHEMA = {
 };
 
 function resolveWorkspaceRoot(input: string | undefined, defaultWorkspaceRoot: string | undefined): string {
-  const workspaceRoot = input?.trim() || defaultWorkspaceRoot || process.cwd();
+  const workspaceRoot = resolve(input?.trim() || defaultWorkspaceRoot || process.cwd());
   if (!existsSync(workspaceRoot)) {
     throw new Error(`workspaceRoot does not exist: ${workspaceRoot}`);
   }
@@ -120,11 +132,25 @@ function mirrorMemoryJson(repo: MemoryRepository, workspaceScope: string, memory
 
 async function runCodeGraphRetrievalWithTimeout<T>(
   label: string,
+  workspaceRoot: string,
   run: () => Promise<T>,
 ): Promise<T> {
+  const now = Date.now();
+  const activeCircuit = slowCodeGraphRetrievals.get(workspaceRoot);
+  if (activeCircuit && activeCircuit.expiresAt > now) {
+    const waitSeconds = Math.ceil((activeCircuit.expiresAt - now) / 1000);
+    throw new Error(
+      `CodeGraph is temporarily bypassed for this workspace because ${activeCircuit.label} took ${activeCircuit.durationMs}ms on this machine. Fall back to focused Read/Grep/Glob for this turn; retry CodeGraph after about ${waitSeconds}s.`,
+    );
+  }
+  if (activeCircuit) {
+    slowCodeGraphRetrievals.delete(workspaceRoot);
+  }
+
+  const startedAt = Date.now();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([
+    const result = await Promise.race([
       run(),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
@@ -132,11 +158,29 @@ async function runCodeGraphRetrievalWithTimeout<T>(
         }, CODEGRAPH_RETRIEVAL_TIMEOUT_MS);
       }),
     ]);
+    recordSlowCodeGraphRetrieval(workspaceRoot, label, Date.now() - startedAt);
+    return result;
+  } catch (error) {
+    recordSlowCodeGraphRetrieval(workspaceRoot, label, Date.now() - startedAt);
+    throw error;
   } finally {
     if (timer) {
       clearTimeout(timer);
     }
   }
+}
+
+function recordSlowCodeGraphRetrieval(workspaceRoot: string, label: string, durationMs: number): void {
+  if (durationMs < CODEGRAPH_SLOW_RETRIEVAL_MS) {
+    return;
+  }
+  const openedAt = Date.now();
+  slowCodeGraphRetrievals.set(workspaceRoot, {
+    label,
+    durationMs,
+    openedAt,
+    expiresAt: openedAt + CODEGRAPH_SLOW_COOLDOWN_MS,
+  });
 }
 
 export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServerConfigWithInstance {
@@ -175,13 +219,14 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
 
   const codegraphSearchHandler = tool(
     "codegraph_search",
-    "Search symbols in the existing tech-cc-hub managed CodeGraph index before broad Read/Grep exploration. Retrieval is fast-path only: it does not auto-index or sync. If results are empty or unavailable, fall back to focused Read/Grep/Glob unless the user explicitly asks to refresh CodeGraph.",
+    "Search symbols in the existing tech-cc-hub managed CodeGraph index before broad Read/Grep exploration. Retrieval is fast-path only: it does not auto-index or sync. If results are empty, unavailable, slow, or temporarily bypassed, fall back to focused Read/Grep/Glob unless the user explicitly asks to refresh CodeGraph.",
     CODEGRAPH_SEARCH_SCHEMA,
     async (input) => {
       try {
         const workspaceRoot = resolveWorkspaceRoot(input.workspaceRoot, defaultWorkspaceRoot);
         const results = await runCodeGraphRetrievalWithTimeout(
           "codegraph_search",
+          workspaceRoot,
           () => searchManagedCodeGraph(workspaceRoot, input.query, {
             kinds: parseCodeGraphKinds(input.kinds),
             limit: input.limit ?? 10,
@@ -196,7 +241,7 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
 
   const codegraphContextHandler = tool(
     "codegraph_context",
-    "Build compact graph context for a task or requirement from the existing managed CodeGraph index. Retrieval does not auto-index or sync; fall back to focused source reads if the index is unavailable.",
+    "Build compact graph context for a task or requirement from the existing managed CodeGraph index. Retrieval does not auto-index or sync; fall back to focused source reads if the index is unavailable, slow, or temporarily bypassed.",
     CODEGRAPH_CONTEXT_SCHEMA,
     async (input) => {
       try {
@@ -204,6 +249,7 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
         const task = resolveCodeGraphContextTask(input);
         const context = await runCodeGraphRetrievalWithTimeout(
           "codegraph_context",
+          workspaceRoot,
           () => buildManagedCodeGraphContext(workspaceRoot, task, {
             maxNodes: input.maxNodes ?? 20,
             includeCode: input.includeCode ?? false,
@@ -219,13 +265,14 @@ export function getKnowledgeMcpServer(defaultWorkspaceRoot?: string): McpSdkServ
 
   const codegraphImpactHandler = tool(
     "codegraph_impact",
-    "Analyze the impact radius for a CodeGraph node id from the existing managed CodeGraph index. Retrieval does not auto-index or sync; fall back to focused source reads if the index is unavailable.",
+    "Analyze the impact radius for a CodeGraph node id from the existing managed CodeGraph index. Retrieval does not auto-index or sync; fall back to focused source reads if the index is unavailable, slow, or temporarily bypassed.",
     CODEGRAPH_IMPACT_SCHEMA,
     async (input) => {
       try {
         const workspaceRoot = resolveWorkspaceRoot(input.workspaceRoot, defaultWorkspaceRoot);
         const impact = await runCodeGraphRetrievalWithTimeout(
           "codegraph_impact",
+          workspaceRoot,
           () => getManagedCodeGraphImpact(workspaceRoot, input.nodeId, input.maxDepth ?? 3),
         );
         return toTextToolResult({ success: true, workspaceRoot, nodeId: input.nodeId, impact });

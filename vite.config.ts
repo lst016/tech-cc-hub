@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import tsconfigPaths from 'vite-tsconfig-paths';
+import { previewTerminalPlugin } from './src/dev/preview-terminal-plugin';
 import { readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { extname, isAbsolute, join, relative } from 'node:path';
 import type { Plugin } from 'vite';
@@ -194,7 +195,7 @@ export default defineConfig(() => {
 	const port = 4173;
 
 	return {
-		plugins: [previewFsPlugin(), react(), tailwindcss(), tsconfigPaths({ ignoreConfigErrors: true })],
+		plugins: [previewFsPlugin(), previewTerminalPlugin(), react(), tailwindcss(), tsconfigPaths({ ignoreConfigErrors: true })],
 		base: './',
 		optimizeDeps: {
 			entries: ['index.html'],

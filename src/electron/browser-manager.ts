@@ -3030,8 +3030,29 @@ export class BrowserWorkbenchManager {
   private buildAnnotationScript(): string {
       return `function(options) {
       const inspectAt = ${this.buildInspectScript()};
+      function ensureHost() {
+        let host = document.getElementById("__tech_cc_hub_annotation_host__");
+        if (!host) {
+          host = document.createElement("div");
+          host.id = "__tech_cc_hub_annotation_host__";
+          host.style.position = "fixed";
+          host.style.inset = "0";
+          host.style.zIndex = "2147483647";
+          host.style.pointerEvents = "none";
+          document.documentElement.appendChild(host);
+        }
+        host.hidden = false;
+        if (!host.shadowRoot) {
+          host.attachShadow({ mode: "open" });
+        }
+        return host;
+      }
+      function annotationRoot() {
+        return ensureHost().shadowRoot;
+      }
       function ensureLayer() {
-        let layer = document.getElementById("__tech_cc_hub_annotation_layer__");
+        const root = annotationRoot();
+        let layer = root && root.getElementById("__tech_cc_hub_annotation_layer__");
         if (layer) {
           layer.hidden = false;
           return layer;
@@ -3102,11 +3123,28 @@ export class BrowserWorkbenchManager {
           ".__tech_cc_hub_background-close{display:grid;place-items:center;width:20px;height:20px;border-radius:999px;border:1px solid #cbd5e1;background:#fff;line-height:1;font-size:12px;cursor:pointer}",
           ".__tech_cc_hub_background pre{margin:0;max-height:264px;overflow:auto;background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0;padding:8px;color:#334155;font-size:11px;white-space:pre-wrap;word-break:break-all}",
         ].join("\\n");
-        document.documentElement.appendChild(style);
+        root.appendChild(style);
         layer = document.createElement("div");
         layer.id = "__tech_cc_hub_annotation_layer__";
-        document.documentElement.appendChild(layer);
+        root.appendChild(layer);
         return layer;
+      }
+      function getLayer() {
+        const root = annotationRoot();
+        return root && root.getElementById("__tech_cc_hub_annotation_layer__");
+      }
+      function eventTargetsOverlay(event) {
+        const path = event && typeof event.composedPath === "function"
+          ? event.composedPath()
+          : [];
+        return path.some(function(node) {
+          return node
+            && typeof node === "object"
+            && (
+              node.id === "__tech_cc_hub_annotation_host__"
+              || node.id === "__tech_cc_hub_annotation_layer__"
+            );
+        });
       }
       function ensureBackgroundInfo() {
         const layer = ensureLayer();
@@ -3148,14 +3186,14 @@ export class BrowserWorkbenchManager {
         if (panel) panel.hidden = true;
       }
       function clearHoverPreview() {
-        const layer = document.getElementById("__tech_cc_hub_annotation_layer__");
+        const layer = getLayer();
         const hover = layer && layer.querySelector(".__tech_cc_hub_hover");
         const hoverCard = layer && layer.querySelector(".__tech_cc_hub_hover_card");
         if (hover) hover.remove();
         if (hoverCard) hoverCard.remove();
       }
       function clearNativeAnnotationTitles() {
-        const layer = document.getElementById("__tech_cc_hub_annotation_layer__");
+        const layer = getLayer();
         if (!layer) return;
         Array.from(layer.querySelectorAll(".__tech_cc_hub_outline,.__tech_cc_hub_marker,.__tech_cc_hub_comment")).forEach(function(node) {
           node.removeAttribute("title");
@@ -4228,19 +4266,21 @@ export class BrowserWorkbenchManager {
       clearHoverPreview();
       clearNativeAnnotationTitles();
       if (!options.enabled) {
-        const layer = document.getElementById("__tech_cc_hub_annotation_layer__");
+        const host = document.getElementById("__tech_cc_hub_annotation_host__");
+        const layer = getLayer();
         if (layer) layer.hidden = true;
+        if (host) host.hidden = true;
         return true;
       }
       ensureLayer().hidden = false;
       window.__techCcHubAnnotationHoverHandler = function(event) {
-        if (event.target && event.target.closest && event.target.closest("#__tech_cc_hub_annotation_layer__")) {
+        if (eventTargetsOverlay(event)) {
           return;
         }
         updateHover({ x: event.clientX, y: event.clientY });
       };
       window.__techCcHubAnnotationHandler = function(event) {
-        if (event.target && event.target.closest && event.target.closest("#__tech_cc_hub_annotation_layer__")) {
+        if (eventTargetsOverlay(event)) {
           return;
         }
         const point = { x: event.clientX, y: event.clientY };

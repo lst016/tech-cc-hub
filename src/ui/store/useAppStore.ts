@@ -4,6 +4,7 @@ import type {
   ApiConfigSettings,
   RuntimePermissionMode,
   RuntimeReasoningMode,
+  RuntimeOverrides,
   SessionHistoryCursor,
   SessionWorkflowCatalog,
   ServerEvent,
@@ -16,6 +17,7 @@ import {
   type WorkflowScope,
   type WorkflowSpecDocument,
 } from "../../shared/workflow-markdown";
+import type { SessionExecutionMode } from "../../shared/session-semantics";
 import { extractSlashCommandsFromMessages, mergeSlashCommandLists } from "../../shared/slash-commands";
 import {
   normalizeTodoWriteArgs,
@@ -35,6 +37,9 @@ export type SessionView = {
   title: string;
   status: SessionStatus;
   model?: string;
+  executionMode?: SessionExecutionMode;
+  reasoningMode?: RuntimeReasoningMode;
+  permissionMode?: RuntimeOverrides["permissionMode"];
   cwd?: string;
   slashCommands?: string[];
   messages: StreamMessage[];
@@ -113,6 +118,7 @@ interface AppState {
   promptDraftsBySessionId: Record<string, string>;
   browserAnnotations: BrowserWorkbenchAnnotation[];
   browserWorkbenchBySessionId: Record<string, BrowserWorkbenchSessionState>;
+  previewExpandedPathsByWorkspace: Record<string, string[]>;
   codeReferencesBySessionId: Record<string, CodeReferenceDraft[]>;
   messageReferencesBySessionId: Record<string, MessageReferenceDraft[]>;
   fileReferencesBySessionId: Record<string, FileReferenceDraft[]>;
@@ -137,6 +143,8 @@ interface AppState {
   setBrowserWorkbenchUrl: (sessionId: string, url: string) => void;
   setBrowserWorkbenchHasTab: (sessionId: string, hasBrowserTab: boolean) => void;
   setBrowserWorkbenchAnnotations: (sessionId: string, annotations: BrowserWorkbenchAnnotation[]) => void;
+  setPreviewExpandedPaths: (workspace: string, paths: string[]) => void;
+  resetPreviewExpandedPaths: (workspace: string, rootPath?: string) => void;
   addCodeReference: (
     sessionId: string | null | undefined,
     reference: Omit<CodeReferenceDraft, "id" | "createdAt"> & Partial<Pick<CodeReferenceDraft, "id" | "createdAt">>,
@@ -379,6 +387,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   promptDraftsBySessionId: {},
   browserAnnotations: [],
   browserWorkbenchBySessionId: {},
+  previewExpandedPathsByWorkspace: {},
   codeReferencesBySessionId: {},
   messageReferencesBySessionId: {},
   fileReferencesBySessionId: {},
@@ -443,6 +452,27 @@ export const useAppStore = create<AppState>((set, get) => ({
       },
     },
   })),
+  setPreviewExpandedPaths: (workspace, paths) => set((state) => {
+    const key = workspace.trim();
+    if (!key) return state;
+    const uniquePaths = Array.from(new Set(paths.map((item) => item.trim()).filter(Boolean)));
+    return {
+      previewExpandedPathsByWorkspace: {
+        ...state.previewExpandedPathsByWorkspace,
+        [key]: uniquePaths.length > 0 ? uniquePaths : [key],
+      },
+    };
+  }),
+  resetPreviewExpandedPaths: (workspace, rootPath) => set((state) => {
+    const key = workspace.trim();
+    if (!key) return state;
+    return {
+      previewExpandedPathsByWorkspace: {
+        ...state.previewExpandedPathsByWorkspace,
+        [key]: [rootPath?.trim() || key],
+      },
+    };
+  }),
   addCodeReference: (sessionId, reference) => {
     const sessionKey = getCodeReferenceSessionKey(sessionId);
     const nextReference: CodeReferenceDraft = {
@@ -751,6 +781,9 @@ export const useAppStore = create<AppState>((set, get) => ({
             status: session.status,
             title: session.title,
             model: session.model,
+            executionMode: session.executionMode,
+            reasoningMode: session.reasoningMode,
+            permissionMode: session.permissionMode,
             cwd: session.cwd,
             slashCommands: session.slashCommands ?? existing.slashCommands,
             ...hydrateWorkflowView(
@@ -880,7 +913,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       case "session.status": {
-        const { sessionId, status, title, cwd, model, slashCommands } = event.payload;
+        const { sessionId, status, title, cwd, model, executionMode, reasoningMode, permissionMode, slashCommands } = event.payload;
         const isNewSession = !state.sessions[sessionId];
         set((state) => {
           const existing = state.sessions[sessionId] ?? createSession(sessionId);
@@ -893,6 +926,9 @@ export const useAppStore = create<AppState>((set, get) => ({
                 title: title ?? existing.title,
                 cwd: cwd ?? existing.cwd,
                 model: model ?? existing.model,
+                executionMode: executionMode ?? existing.executionMode,
+                reasoningMode: reasoningMode ?? existing.reasoningMode,
+                permissionMode: permissionMode ?? existing.permissionMode,
                 slashCommands: slashCommands ?? existing.slashCommands,
                 updatedAt: Date.now()
               }
@@ -964,6 +1000,9 @@ export const useAppStore = create<AppState>((set, get) => ({
                 title: session.title,
                 cwd: session.cwd,
                 model: session.model ?? existing?.model,
+                executionMode: session.executionMode ?? existing?.executionMode,
+                reasoningMode: session.reasoningMode ?? existing?.reasoningMode,
+                permissionMode: session.permissionMode ?? existing?.permissionMode,
                 slashCommands: session.slashCommands,
                 ...hydrateWorkflowView(
                   session.workflowMarkdown,
@@ -1009,6 +1048,9 @@ export const useAppStore = create<AppState>((set, get) => ({
                 title: session.title,
                 cwd: session.cwd,
                 model: session.model ?? existing?.model,
+                executionMode: session.executionMode ?? existing?.executionMode,
+                reasoningMode: session.reasoningMode ?? existing?.reasoningMode,
+                permissionMode: session.permissionMode ?? existing?.permissionMode,
                 slashCommands: session.slashCommands,
                 ...hydrateWorkflowView(
                   session.workflowMarkdown,

@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { ChevronDown } from "lucide-react";
 import type { PromptAttachment } from "../../types";
 import type {
   CodeReferenceDraft,
@@ -30,6 +32,17 @@ function RemoveIcon() {
   );
 }
 
+function getQueuedMessagePanelDetail(queuedMessage: QueuedMessageDraft) {
+  const contextCount = countStructuredContextBlocks(queuedMessage.prompt);
+  const promptPreview = getQueuedPromptPreview(queuedMessage.prompt, contextCount);
+  const label = promptPreview
+    || (queuedMessage.attachments.length === 1
+      ? `附件：${queuedMessage.attachments[0].name}`
+      : `${queuedMessage.attachments.length} 个附件`);
+
+  return { contextCount, label };
+}
+
 export function QueuedMessagesPanel({
   queue,
   isRunning,
@@ -45,14 +58,33 @@ export function QueuedMessagesPanel({
   onEdit: (queuedMessage: QueuedMessageDraft) => void;
   onRemove: (queueId: string) => void;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
+
   if (queue.length === 0) return null;
 
+  const nextQueuedMessage = queue[0]!;
+  const { label: nextLabel } = getQueuedMessagePanelDetail(nextQueuedMessage);
+
   return (
-    <div className="mb-3 min-w-0 overflow-hidden rounded-2xl border border-black/6 bg-[#f6f8fb] px-3 py-3">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="shrink-0 text-xs font-medium text-ink-700">待发送队列 · {queue.length} 条</div>
+    <div className={`mb-3 min-w-0 overflow-hidden rounded-2xl border border-black/6 bg-[#f6f8fb] px-3 ${collapsed ? "py-2" : "py-3"}`}>
+      <div className={`flex flex-wrap items-center justify-between gap-2 ${collapsed ? "" : "mb-2"}`}>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <div className="shrink-0 text-xs font-medium text-ink-700">待发送队列 · {queue.length} 条</div>
+          {collapsed && (
+            <button
+              type="button"
+              className="hidden min-w-0 flex-1 truncate text-left text-[11px] font-medium text-muted transition hover:text-accent sm:block"
+              onClick={() => onEdit(nextQueuedMessage)}
+              title={nextLabel}
+            >
+              下一条：{nextLabel}
+            </button>
+          )}
+        </div>
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 text-[11px] text-muted">
-          <span className="min-w-0">运行中可点「插入」作为补充命令；空闲后会自动续发。</span>
+          {!collapsed && (
+            <span className="min-w-0">运行中可点「插入」作为补充命令；空闲后会自动续发。</span>
+          )}
           <button
             type="button"
             className="shrink-0 rounded-full border border-black/8 bg-white px-2 py-0.5 font-semibold transition hover:text-accent"
@@ -60,72 +92,78 @@ export function QueuedMessagesPanel({
           >
             清空队列
           </button>
+          <button
+            type="button"
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-black/8 bg-white px-2 py-0.5 font-semibold transition hover:text-accent"
+            onClick={() => setCollapsed((value) => !value)}
+            aria-expanded={!collapsed}
+          >
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${collapsed ? "" : "rotate-180"}`} aria-hidden="true" />
+            {collapsed ? "展开" : "收起"}
+          </button>
         </div>
       </div>
-      <div className="grid gap-2">
-        {queue.map((queuedMessage, index) => {
-          const contextCount = countStructuredContextBlocks(queuedMessage.prompt);
-          const promptPreview = getQueuedPromptPreview(queuedMessage.prompt, contextCount);
-          const label = promptPreview
-            || (queuedMessage.attachments.length === 1
-              ? `附件：${queuedMessage.attachments[0].name}`
-              : `${queuedMessage.attachments.length} 个附件`);
+      {!collapsed && (
+        <div className="grid max-h-[240px] gap-2 overflow-y-auto pr-1">
+          {queue.map((queuedMessage, index) => {
+            const { contextCount, label } = getQueuedMessagePanelDetail(queuedMessage);
 
-          return (
-            <div key={queuedMessage.id} className="group grid min-w-0 grid-cols-[auto,minmax(0,1fr)] items-start gap-x-2 gap-y-2 overflow-hidden rounded-2xl border border-black/6 bg-white px-3 py-2 text-xs text-ink-700 transition hover:border-accent/18 hover:shadow-[0_10px_24px_rgba(30,38,52,0.06)] sm:grid-cols-[auto,minmax(0,1fr),auto]">
-              <span className="mt-0.5 shrink-0 rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-semibold text-accent">
-                {index === 0 ? "下一条" : `排队 ${index + 1}`}
-              </span>
-              <button
-                type="button"
-                className="min-w-0 overflow-hidden text-left leading-5 transition hover:text-accent [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] [overflow-wrap:anywhere]"
-                onClick={() => onEdit(queuedMessage)}
-                title={label}
-              >
-                {label}
-              </button>
-              <div className="col-span-2 flex min-w-0 flex-wrap items-center gap-1.5 sm:col-span-1 sm:justify-end">
-                {queuedMessage.attachments.length > 0 && (
-                  <span className="shrink-0 rounded-full bg-[#eef2f8] px-2 py-0.5 text-[11px] text-muted">
-                    附件 {queuedMessage.attachments.length}
-                  </span>
-                )}
-                {contextCount > 0 && (
-                  <span className="shrink-0 rounded-full bg-accent/10 px-2 py-0.5 text-[11px] text-accent">
-                    上下文 {contextCount}
-                  </span>
-                )}
-                <span className="shrink-0 text-[11px] text-muted">{formatShortTime(queuedMessage.createdAt)}</span>
-                {isRunning && (
+            return (
+              <div key={queuedMessage.id} className="group grid min-w-0 grid-cols-[auto,minmax(0,1fr)] items-start gap-x-2 gap-y-2 overflow-hidden rounded-2xl border border-black/6 bg-white px-3 py-2 text-xs text-ink-700 transition hover:border-accent/18 hover:shadow-[0_10px_24px_rgba(30,38,52,0.06)] sm:grid-cols-[auto,minmax(0,1fr),auto]">
+                <span className="mt-0.5 shrink-0 rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-semibold text-accent">
+                  {index === 0 ? "下一条" : `排队 ${index + 1}`}
+                </span>
+                <button
+                  type="button"
+                  className="min-w-0 overflow-hidden text-left leading-5 transition hover:text-accent [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] [overflow-wrap:anywhere]"
+                  onClick={() => onEdit(queuedMessage)}
+                  title={label}
+                >
+                  {label}
+                </button>
+                <div className="col-span-2 flex min-w-0 flex-wrap items-center gap-1.5 sm:col-span-1 sm:justify-end">
+                  {queuedMessage.attachments.length > 0 && (
+                    <span className="shrink-0 rounded-full bg-[#eef2f8] px-2 py-0.5 text-[11px] text-muted">
+                      附件 {queuedMessage.attachments.length}
+                    </span>
+                  )}
+                  {contextCount > 0 && (
+                    <span className="shrink-0 rounded-full bg-accent/10 px-2 py-0.5 text-[11px] text-accent">
+                      上下文 {contextCount}
+                    </span>
+                  )}
+                  <span className="shrink-0 text-[11px] text-muted">{formatShortTime(queuedMessage.createdAt)}</span>
+                  {isRunning && (
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-full border border-accent/18 bg-accent/8 px-2.5 py-1 text-[11px] font-semibold text-accent transition hover:bg-accent/14"
+                      onClick={() => onAppend(queuedMessage)}
+                      title="把这条消息作为补充命令插入当前执行"
+                    >
+                      插入
+                    </button>
+                  )}
                   <button
                     type="button"
-                    className="shrink-0 rounded-full border border-accent/18 bg-accent/8 px-2.5 py-1 text-[11px] font-semibold text-accent transition hover:bg-accent/14"
-                    onClick={() => onAppend(queuedMessage)}
-                    title="把这条消息作为补充命令插入当前执行"
+                    className="shrink-0 rounded-full border border-black/6 bg-white px-2.5 py-1 text-[11px] font-medium text-ink-700 shadow-sm transition-colors hover:border-accent/20 hover:bg-accent/8 hover:text-accent"
+                    onClick={() => onEdit(queuedMessage)}
                   >
-                    插入
+                    编辑
                   </button>
-                )}
-                <button
-                  type="button"
-                  className="shrink-0 rounded-full border border-black/6 bg-white px-2.5 py-1 text-[11px] font-medium text-ink-700 shadow-sm transition-colors hover:border-accent/20 hover:bg-accent/8 hover:text-accent"
-                  onClick={() => onEdit(queuedMessage)}
-                >
-                  编辑
-                </button>
-                <button
-                  type="button"
-                  className="shrink-0 rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
-                  onClick={() => onRemove(queuedMessage.id)}
-                  aria-label="移除待发送消息"
-                >
-                  <RemoveIcon />
-                </button>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
+                    onClick={() => onRemove(queuedMessage.id)}
+                    aria-label="移除待发送消息"
+                  >
+                    <RemoveIcon />
+                  </button>
+                </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

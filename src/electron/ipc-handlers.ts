@@ -1155,9 +1155,15 @@ export async function handleClientEvent(event: ClientEvent) {
     const config = getCurrentApiConfig();
     const requestedModel = event.payload.runtime?.model?.trim() || config?.model;
     const selectedModel = resolveApiConfigForModel(requestedModel)?.model ?? requestedModel;
+    const selectedExecutionMode = event.payload.runtime?.executionMode ?? "foreground";
+    const selectedReasoningMode = event.payload.runtime?.reasoningMode;
+    const selectedPermissionMode = event.payload.runtime?.permissionMode;
     const session = store.createSession({
       cwd: event.payload.cwd,
       title: event.payload.title,
+      executionMode: selectedExecutionMode,
+      reasoningMode: selectedReasoningMode,
+      permissionMode: selectedPermissionMode,
       runSurface: event.payload.runtime?.runSurface ?? "development",
       agentId: event.payload.runtime?.agentId,
       model: selectedModel,
@@ -1167,6 +1173,9 @@ export async function handleClientEvent(event: ClientEvent) {
 
     store.updateSession(session.id, {
       status: "running",
+      executionMode: selectedExecutionMode,
+      reasoningMode: selectedReasoningMode,
+      permissionMode: selectedPermissionMode,
       runSurface: event.payload.runtime?.runSurface ?? session.runSurface ?? "development",
       agentId: event.payload.runtime?.agentId ?? session.agentId,
       model: selectedModel,
@@ -1181,6 +1190,9 @@ export async function handleClientEvent(event: ClientEvent) {
         title: session.title,
         cwd: session.cwd,
         model: selectedModel,
+        executionMode: selectedExecutionMode,
+        reasoningMode: selectedReasoningMode,
+        permissionMode: selectedPermissionMode,
         slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
       },
     });
@@ -1204,8 +1216,14 @@ export async function handleClientEvent(event: ClientEvent) {
       payload: { sessionId: session.id, prompt: displayPrompt, attachments: displayAttachments },
     });
 
+    const nextExecutionMode = event.payload.runtime?.executionMode ?? session.executionMode ?? "foreground";
+    const nextReasoningMode = event.payload.runtime?.reasoningMode ?? session.reasoningMode;
+    const nextPermissionMode = event.payload.runtime?.permissionMode ?? session.permissionMode;
     const runnerRuntime = {
       ...(event.payload.runtime ?? {}),
+      executionMode: nextExecutionMode,
+      reasoningMode: nextReasoningMode,
+      permissionMode: nextPermissionMode,
       model: selectedModel,
     };
     const reuseKey = buildSessionRunnerReuseKey({
@@ -1326,8 +1344,14 @@ export async function handleClientEvent(event: ClientEvent) {
     );
     const canUseRemoteResume = (supportsResume || canUseFigmaOAuthCallbackResume) && !switchedModel && !replacingHistoryId;
     const modelConfig = config && selectedModel ? getModelConfig(config, selectedModel) : null;
+    const nextExecutionMode = event.payload.runtime?.executionMode ?? session.executionMode ?? "foreground";
+    const nextReasoningMode = event.payload.runtime?.reasoningMode ?? session.reasoningMode;
+    const nextPermissionMode = event.payload.runtime?.permissionMode ?? session.permissionMode;
     const runnerRuntime = {
       ...(event.payload.runtime ?? {}),
+      executionMode: nextExecutionMode,
+      reasoningMode: nextReasoningMode,
+      permissionMode: nextPermissionMode,
       model: selectedModel,
     };
     const warmReuseKey = buildSessionRunnerReuseKey({
@@ -1342,6 +1366,9 @@ export async function handleClientEvent(event: ClientEvent) {
       store.updateSession(session.id, {
         status: "running",
         title: nextTitle,
+        executionMode: nextExecutionMode,
+        reasoningMode: nextReasoningMode,
+        permissionMode: nextPermissionMode,
         runSurface: event.payload.runtime?.runSurface ?? session.runSurface ?? "development",
         agentId: event.payload.runtime?.agentId ?? session.agentId,
         model: selectedModel,
@@ -1355,6 +1382,9 @@ export async function handleClientEvent(event: ClientEvent) {
           title: nextTitle,
           cwd: session.cwd,
           model: selectedModel,
+          executionMode: nextExecutionMode,
+          reasoningMode: nextReasoningMode,
+          permissionMode: nextPermissionMode,
           slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
         },
       });
@@ -1432,6 +1462,9 @@ export async function handleClientEvent(event: ClientEvent) {
     store.updateSession(session.id, {
       status: "running",
       title: nextTitle,
+      executionMode: nextExecutionMode,
+      reasoningMode: nextReasoningMode,
+      permissionMode: nextPermissionMode,
       runSurface: event.payload.runtime?.runSurface ?? session.runSurface ?? "development",
       agentId: event.payload.runtime?.agentId ?? session.agentId,
       model: selectedModel,
@@ -1449,6 +1482,9 @@ export async function handleClientEvent(event: ClientEvent) {
         title: nextTitle,
         cwd: session.cwd,
         model: selectedModel,
+        executionMode: nextExecutionMode,
+        reasoningMode: nextReasoningMode,
+        permissionMode: nextPermissionMode,
         slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
       },
     });

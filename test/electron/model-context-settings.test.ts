@@ -42,7 +42,7 @@ test("settings modal and shared types expose per-model context compression field
   const apiProfilesSettingsSource = readFileSync("src/ui/components/settings/ApiProfilesSettingsPage.tsx", "utf8");
   const uiTypesSource = readFileSync("src/ui/types.ts", "utf8");
   const configStoreSource = readFileSync("src/electron/libs/config-store.ts", "utf8");
-  const claudeSettingsSource = readFileSync("src/electron/libs/claude-settings.ts", "utf8");
+  const claudeSettingsSource = readFileSync("src/electron/libs/claude/claude-settings.ts", "utf8");
   const settingsModalSource = readFileSync("src/ui/components/SettingsModal.tsx", "utf8");
   const mainSource = readFileSync("src/electron/main.ts", "utf8");
   const preloadSource = readFileSync("src/electron/preload.cts", "utf8");
@@ -127,10 +127,10 @@ test("model select preserves routed option metadata for display and search", () 
 });
 
 test("composer model control uses the searchable grouped model select", () => {
-  const promptInputSource = readFileSync("src/ui/components/PromptInput.tsx", "utf8");
+  const promptInputSource = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
   const modelSelectSource = readFileSync("src/ui/components/ModelSelect.tsx", "utf8");
 
-  assert.match(promptInputSource, /import \{ ModelSelect \} from "\.\/ModelSelect"/);
+  assert.match(promptInputSource, /import \{ ModelSelect \} from "\.\.\/ModelSelect"/);
   assert.match(promptInputSource, /getRoutedModelOptionsForProfiles/);
   assert.match(promptInputSource, /modelOptions=\{modelSelectOptions\}/);
   assert.match(promptInputSource, /variant="composer"/);
@@ -179,7 +179,7 @@ test("enabled profile helpers preserve list order and dedupe models across enabl
   ]);
 });
 
-test("enabled profile helpers hide duplicate deepseek casing aliases", () => {
+test("enabled profile helpers keep distinct deepseek casing variants when both exist", () => {
   const profiles = [
     {
       id: "gateway",
@@ -202,12 +202,13 @@ test("enabled profile helpers hide duplicate deepseek casing aliases", () => {
 
   assert.deepEqual(getAvailableModelsForProfiles(getEnabledProfiles(profiles)), [
     "DeepSeek-V4-Pro",
+    "deepseek-v4-pro",
     "gpt-5.5",
     "deepseek-chat",
   ]);
   assert.equal(
     resolveAvailableModelName("deepseek-v4-pro", getAvailableModelsForProfiles(getEnabledProfiles(profiles))),
-    "DeepSeek-V4-Pro",
+    "deepseek-v4-pro",
   );
 });
 
@@ -257,6 +258,45 @@ test("routed model options expose the platform owner selected by routing weight"
   const deepseekOption = options.find((option) => option.value === "deepseek-v4-flash");
   assert.equal(deepseekOption?.profileId, "gateway");
   assert.equal(deepseekOption?.providerLabel, "Custom Gateway");
+});
+
+test("routed model options keep official and self-hosted deepseek variants separate", () => {
+  const profiles = [
+    {
+      id: "official",
+      name: "DeepSeek Official",
+      apiKey: "sk-official",
+      baseURL: "https://api.deepseek.com/anthropic",
+      model: "deepseek-v4-pro",
+      expertModel: "deepseek-v4-pro",
+      smallModel: "deepseek-v4-pro",
+      models: [{ name: "deepseek-v4-pro" }],
+      enabled: true,
+      provider: "deepseek" as const,
+      apiType: "anthropic" as const,
+    },
+    {
+      id: "gateway",
+      name: "Default Gateway",
+      apiKey: "sk-gateway",
+      baseURL: "https://gateway.example.com/v1",
+      model: "DeepSeek-V4-Pro",
+      expertModel: "DeepSeek-V4-Pro",
+      smallModel: "DeepSeek-V4-Pro",
+      models: [{ name: "DeepSeek-V4-Pro" }],
+      enabled: true,
+      provider: "custom" as const,
+      apiType: "anthropic" as const,
+    },
+  ];
+
+  const options = getRoutedModelOptionsForProfiles(getEnabledProfiles(profiles));
+  const officialOption = options.find((option) => option.value === "deepseek-v4-pro");
+  const gatewayOption = options.find((option) => option.value === "DeepSeek-V4-Pro");
+  assert.equal(officialOption?.label, "deepseek-v4-pro");
+  assert.equal(officialOption?.provider, "deepseek");
+  assert.equal(gatewayOption?.label, "DeepSeek-V4-Pro");
+  assert.equal(gatewayOption?.provider, "custom");
 });
 
 test("image preprocessing follows the routed owner instead of preferring custom gateways", () => {

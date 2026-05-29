@@ -59,6 +59,7 @@ import {
   MessageFileReferenceChips,
   QueuedMessagesPanel,
 } from "./PromptComposerContextChips";
+import { PromptComposerTerminalStrip } from "./PromptComposerTerminalStrip";
 import {
   getEnabledProfiles,
   getRoutedModelOptionsForProfiles,
@@ -1257,10 +1258,11 @@ export function PromptInput({
                 : attachments.length > 0
                     ? "可以继续补充文字说明，或直接发送附件..."
                     : isRunning
-                      ? "当前仍在执行中，你可以继续输入，系统会自动排队续发..."
+                    ? "当前仍在执行中，你可以继续输入，系统会自动排队续发..."
                       : "描述计划，@ 引用上下文，/ 使用命令"}
             </div>
           )}
+          <PromptComposerTerminalStrip workspaceCwd={selectedWorkspaceCwd} />
           <div
             ref={promptRef}
             role="textbox"

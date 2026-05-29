@@ -1,8 +1,9 @@
 import Database from "better-sqlite3";
-import type { AgentRunSurface, PromptAttachment, SessionHistoryCursor, SessionStatus, StreamMessage } from "../types.js";
+import type { AgentRunSurface, PromptAttachment, RuntimeOverrides, RuntimeReasoningMode, SessionHistoryCursor, SessionStatus, StreamMessage } from "../types.js";
 import { existsSync, realpathSync } from "fs";
 import electron from "electron";
 import { isSuccessfulRunnerResult } from "../../shared/runner-status.js";
+import type { SessionExecutionMode } from "../../shared/session-semantics.js";
 import type { SessionWorkflowState, WorkflowScope } from "../../shared/workflow-markdown.js";
 import { stripInlineBase64ImagesFromMessage } from "./tool-output-sanitizer.js";
 import {
@@ -59,6 +60,9 @@ export type Session = {
   claudeSessionId?: string;
   status: SessionStatus;
   model?: string;
+  executionMode?: SessionExecutionMode;
+  reasoningMode?: RuntimeReasoningMode;
+  permissionMode?: RuntimeOverrides["permissionMode"];
   cwd?: string;
   runSurface?: AgentRunSurface;
   agentId?: string;
@@ -82,6 +86,9 @@ export type StoredSession = {
   title: string;
   status: SessionStatus;
   model?: string;
+  executionMode?: SessionExecutionMode;
+  reasoningMode?: RuntimeReasoningMode;
+  permissionMode?: RuntimeOverrides["permissionMode"];
   cwd?: string;
   runSurface?: AgentRunSurface;
   agentId?: string;
@@ -185,6 +192,9 @@ export class SessionStore {
 
   createSession(options: {
     cwd?: string;
+    executionMode?: SessionExecutionMode;
+    reasoningMode?: RuntimeReasoningMode;
+    permissionMode?: RuntimeOverrides["permissionMode"];
     runSurface?: AgentRunSurface;
     agentId?: string;
     model?: string;
@@ -199,6 +209,9 @@ export class SessionStore {
       title: options.title,
       status: "idle",
       model: options.model?.trim() || undefined,
+      executionMode: options.executionMode ?? "foreground",
+      reasoningMode: options.reasoningMode,
+      permissionMode: options.permissionMode,
       cwd: options.cwd,
       runSurface: options.runSurface,
       agentId: options.agentId,
@@ -210,8 +223,8 @@ export class SessionStore {
     this.db
       .prepare(
         `insert into sessions
-          (id, title, claude_session_id, status, model, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at, created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          (id, title, claude_session_id, status, model, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -219,6 +232,9 @@ export class SessionStore {
         session.claudeSessionId ?? null,
         session.status,
         session.model ?? null,
+        session.executionMode ?? null,
+        session.reasoningMode ?? null,
+        session.permissionMode ?? null,
         session.cwd ?? null,
         session.runSurface ?? null,
         session.agentId ?? null,
@@ -247,7 +263,7 @@ export class SessionStore {
     const archived = Boolean(options?.archived);
     const rows = this.db
       .prepare(
-        `select id, title, claude_session_id, status, model, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at, created_at, updated_at
+        `select id, title, claude_session_id, status, model, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at, created_at, updated_at
          from sessions
          where archived_at is ${archived ? "not null" : "null"}
          order by updated_at desc`
@@ -258,6 +274,9 @@ export class SessionStore {
       title: String(row.title),
       status: row.status as SessionStatus,
       model: row.model ? String(row.model) : undefined,
+      executionMode: row.execution_mode === "background" ? "background" : row.execution_mode === "foreground" ? "foreground" : undefined,
+      reasoningMode: row.reasoning_mode ? (String(row.reasoning_mode) as RuntimeReasoningMode) : undefined,
+      permissionMode: row.permission_mode ? (String(row.permission_mode) as RuntimeOverrides["permissionMode"]) : undefined,
       cwd: this.normalizeStoredCwd(String(row.id), row.cwd ? String(row.cwd) : undefined),
       runSurface: row.run_surface ? (String(row.run_surface) as AgentRunSurface) : undefined,
       agentId: row.agent_id ? String(row.agent_id) : undefined,
@@ -527,6 +546,9 @@ export class SessionStore {
       title: "title",
       status: "status",
       cwd: "cwd",
+      executionMode: "execution_mode",
+      reasoningMode: "reasoning_mode",
+      permissionMode: "permission_mode",
       runSurface: "run_surface",
       agentId: "agent_id",
       model: "model",
@@ -577,6 +599,9 @@ export class SessionStore {
         claude_session_id text,
         status text not null,
         model text,
+        execution_mode text,
+        reasoning_mode text,
+        permission_mode text,
         cwd text,
         run_surface text,
         agent_id text,
@@ -598,6 +623,9 @@ export class SessionStore {
     this.ensureSessionColumn("continuation_summary", "text");
     this.ensureSessionColumn("continuation_summary_message_count", "integer");
     this.ensureSessionColumn("model", "text");
+    this.ensureSessionColumn("execution_mode", "text");
+    this.ensureSessionColumn("reasoning_mode", "text");
+    this.ensureSessionColumn("permission_mode", "text");
     this.ensureSessionColumn("run_surface", "text");
     this.ensureSessionColumn("agent_id", "text");
     this.ensureSessionColumn("workflow_markdown", "text");
@@ -626,7 +654,7 @@ export class SessionStore {
   private loadSessions(): void {
     const rows = this.db
       .prepare(
-        `select id, title, claude_session_id, status, model, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at
+        `select id, title, claude_session_id, status, model, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at
          from sessions`
       )
       .all();
@@ -637,6 +665,9 @@ export class SessionStore {
         claudeSessionId: row.claude_session_id ? String(row.claude_session_id) : undefined,
         status: row.status as SessionStatus,
         model: row.model ? String(row.model) : undefined,
+        executionMode: row.execution_mode === "background" ? "background" : row.execution_mode === "foreground" ? "foreground" : undefined,
+        reasoningMode: row.reasoning_mode ? (String(row.reasoning_mode) as RuntimeReasoningMode) : undefined,
+        permissionMode: row.permission_mode ? (String(row.permission_mode) as RuntimeOverrides["permissionMode"]) : undefined,
         cwd: this.normalizeStoredCwd(String(row.id), row.cwd ? String(row.cwd) : undefined),
         runSurface: row.run_surface ? (String(row.run_surface) as AgentRunSurface) : undefined,
         agentId: row.agent_id ? String(row.agent_id) : undefined,
@@ -706,7 +737,7 @@ export class SessionStore {
   private getSessionRow(id: string): Record<string, unknown> | undefined {
     return this.db
       .prepare(
-        `select id, title, claude_session_id, status, model, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at, created_at, updated_at
+        `select id, title, claude_session_id, status, model, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at, created_at, updated_at
          from sessions
           where id = ?`
       )
@@ -719,6 +750,9 @@ export class SessionStore {
         title: String(sessionRow.title),
         status: sessionRow.status as SessionStatus,
         model: sessionRow.model ? String(sessionRow.model) : undefined,
+        executionMode: sessionRow.execution_mode === "background" ? "background" : sessionRow.execution_mode === "foreground" ? "foreground" : undefined,
+        reasoningMode: sessionRow.reasoning_mode ? (String(sessionRow.reasoning_mode) as RuntimeReasoningMode) : undefined,
+        permissionMode: sessionRow.permission_mode ? (String(sessionRow.permission_mode) as RuntimeOverrides["permissionMode"]) : undefined,
         cwd: this.normalizeStoredCwd(String(sessionRow.id), sessionRow.cwd ? String(sessionRow.cwd) : undefined),
       runSurface: sessionRow.run_surface ? (String(sessionRow.run_surface) as AgentRunSurface) : undefined,
       agentId: sessionRow.agent_id ? String(sessionRow.agent_id) : undefined,

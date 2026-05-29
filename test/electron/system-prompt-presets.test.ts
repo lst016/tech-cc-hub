@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildBrowserWorkbenchPromptAppend,
+  buildClaudeCodeCompatFeaturePromptAppend,
   buildClaudeCode2139FeaturePromptAppend,
   buildDesignParityPromptAppend,
   buildFeishuDocumentFetchPromptAppend,
@@ -35,12 +36,29 @@ test("tool optimization prompt keeps tool calls sparse, batched, and bounded", (
 });
 
 test("Claude Code compatibility prompt includes Agent Teams guidance", () => {
-  const prompt = buildClaudeCode2139FeaturePromptAppend();
+  const prompt = buildClaudeCodeCompatFeaturePromptAppend();
 
   assert.match(prompt, /CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1/);
   assert.match(prompt, /TeamCreate/);
   assert.match(prompt, /SendMessage/);
   assert.match(prompt, /TeamDelete/);
+});
+
+test("Claude Code compatibility prompt makes /code-review split oversized code", () => {
+  const prompt = buildClaudeCodeCompatFeaturePromptAppend();
+
+  assert.match(prompt, /\/code-review/);
+  assert.match(prompt, /split/i);
+  assert.match(prompt, /oversized|large|long/i);
+  assert.match(prompt, /chunk/i);
+  assert.match(prompt, /summar/i);
+});
+
+test("legacy Claude Code 2139 preset name remains an alias", () => {
+  assert.equal(
+    buildClaudeCode2139FeaturePromptAppend(),
+    buildClaudeCodeCompatFeaturePromptAppend(),
+  );
 });
 
 test("design parity prompt requires a 90 percent visual acceptance loop", () => {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import Editor, { loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import { ChevronLeft, ChevronRight, LocateFixed, RefreshCw } from 'lucide-react';
-import { PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT, PROMPT_SENT_EVENT, PROMPT_SUBMIT_EVENT } from '../events';
+import { PROMPT_FOCUS_EVENT, PROMPT_SENT_EVENT, PROMPT_SUBMIT_EVENT } from '../events';
 import {
   filterPreviewQuickOpenEntries,
   type PreviewQuickOpenEntry,
@@ -79,6 +79,13 @@ type AionWorkspacePreviewPaneProps = {
   workspace?: string;
   conversationId?: string;
   messages?: readonly unknown[];
+  pendingOpenRequest?: {
+    filePath: string;
+    startLine?: number;
+    endLine?: number;
+    nonce: number;
+  };
+  onConsumePendingOpenRequest?: () => void;
   onClose?: () => void;
 };
 
@@ -189,10 +196,14 @@ function NativeExplorer({
   refreshEvents?: readonly PreviewFileChangeEvent[];
   onOpenFile: (path: string, options?: { revealLine?: number }) => Promise<void>;
 }) {
+  const persistedExpandedPaths = useAppStore((state) => state.previewExpandedPathsByWorkspace[workspace]);
+  const setStoredExpandedPaths = useAppStore((state) => state.setPreviewExpandedPaths);
+  const resetStoredExpandedPaths = useAppStore((state) => state.resetPreviewExpandedPaths);
   const [directoryCache, setDirectoryCache] = useState<Record<string, DirectoryState>>({});
   const directoryCacheRef = useRef(directoryCache);
   const refreshedDirectoryOperationIdsRef = useRef(new Set<string>());
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set([workspace]));
+  const storedExpandedPaths = useMemo(() => persistedExpandedPaths ?? [workspace], [persistedExpandedPaths, workspace]);
+  const expandedPaths = useMemo(() => new Set(storedExpandedPaths), [storedExpandedPaths]);
   const [searchQuery, setSearchQuery] = useState('');
   const [locatingActiveFile, setLocatingActiveFile] = useState(false);
   const rowRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -264,11 +275,13 @@ function NativeExplorer({
   useEffect(() => {
     queueMicrotask(() => {
       setDirectoryCache({});
-      setExpandedPaths(new Set([workspace]));
+      if (storedExpandedPaths.length === 0) {
+        resetStoredExpandedPaths(workspace, workspace);
+      }
       refreshedDirectoryOperationIdsRef.current = new Set<string>();
       void loadDirectory(workspace, true);
     });
-  }, [loadDirectory, workspace]);
+  }, [loadDirectory, resetStoredExpandedPaths, storedExpandedPaths.length, workspace]);
 
   useEffect(() => {
     const pendingRefreshes = refreshEvents.filter((event) => {
@@ -296,17 +309,15 @@ function NativeExplorer({
   }, [loadDirectory, refreshEvents, workspace]);
 
   const handleToggleDirectory = useCallback((path: string) => {
-    setExpandedPaths((current) => {
-      const next = new Set(current);
-      if (next.has(path) && path !== workspace) {
-        next.delete(path);
-      } else {
-        next.add(path);
-        void loadDirectory(path);
-      }
-      return next;
-    });
-  }, [loadDirectory, workspace]);
+    const next = new Set(expandedPaths);
+    if (next.has(path) && path !== workspace) {
+      next.delete(path);
+    } else {
+      next.add(path);
+      void loadDirectory(path);
+    }
+    setStoredExpandedPaths(workspace, [...next]);
+  }, [expandedPaths, loadDirectory, setStoredExpandedPaths, workspace]);
 
   const handleRefresh = useCallback(() => {
     void loadDirectory(workspace, true);
@@ -327,18 +338,16 @@ function NativeExplorer({
       for (const directoryPath of activeFileAncestorDirectories) {
         await loadDirectory(directoryPath, true);
       }
-      setExpandedPaths((current) => {
-        const next = new Set(current);
-        for (const directoryPath of activeFileAncestorDirectories) {
-          next.add(directoryPath);
-        }
-        return next;
-      });
+      const next = new Set(expandedPaths);
+      for (const directoryPath of activeFileAncestorDirectories) {
+        next.add(directoryPath);
+      }
+      setStoredExpandedPaths(workspace, [...next]);
       scrollRowIntoView(activeFilePath);
     } finally {
       setLocatingActiveFile(false);
     }
-  }, [activeFileAncestorDirectories, activeFilePath, loadDirectory, scrollRowIntoView]);
+  }, [activeFileAncestorDirectories, activeFilePath, expandedPaths, loadDirectory, scrollRowIntoView, setStoredExpandedPaths, workspace]);
 
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
 
@@ -1145,7 +1154,14 @@ function PreviewSurface({
   );
 }
 
-export function AionWorkspacePreviewPane({ workspace, conversationId, messages = [], onClose }: AionWorkspacePreviewPaneProps) {
+export function AionWorkspacePreviewPane({
+  workspace,
+  conversationId,
+  messages = [],
+  pendingOpenRequest,
+  onConsumePendingOpenRequest,
+  onClose,
+}: AionWorkspacePreviewPaneProps) {
   const [openTabs, setOpenTabs] = useState<ActivePreviewFile[]>([]);
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
   const [previewFileChangeEvents, setPreviewFileChangeEvents] = useState<PreviewFileChangeEvent[]>([]);
@@ -1389,15 +1405,10 @@ export function AionWorkspacePreviewPane({ workspace, conversationId, messages =
   }, [openQuickOpen]);
 
   useEffect(() => {
-    const handleOpenFromPrompt = (event: Event) => {
-      const detail = (event as CustomEvent<{ filePath?: string; startLine?: number }>).detail;
-      if (!detail?.filePath) return;
-      void openFile(detail.filePath, { revealLine: detail.startLine });
-    };
-
-    window.addEventListener(PREVIEW_OPEN_FILE_EVENT, handleOpenFromPrompt);
-    return () => window.removeEventListener(PREVIEW_OPEN_FILE_EVENT, handleOpenFromPrompt);
-  }, [openFile]);
+    if (!pendingOpenRequest?.filePath) return;
+    void openFile(pendingOpenRequest.filePath, { revealLine: pendingOpenRequest.startLine });
+    onConsumePendingOpenRequest?.();
+  }, [onConsumePendingOpenRequest, openFile, pendingOpenRequest]);
 
   useEffect(() => {
     const changes = collectCompletedPreviewFileChanges(messages)

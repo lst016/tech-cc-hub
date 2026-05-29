@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildDesktopNotificationAttentionCue,
   buildCronDesktopNotification,
   buildSessionDesktopNotification,
   buildTaskExecutionDesktopNotification,
@@ -24,6 +25,33 @@ test("desktop notifications show when all app windows are backgrounded or minimi
       { focused: true, minimized: true, visible: true },
     ]),
     true,
+  );
+});
+
+test("desktop notifications request stronger attention cues while app is backgrounded", () => {
+  const intent = buildTaskExecutionDesktopNotification({
+    taskId: "task-attention",
+    sessionId: "session-attention",
+    taskTitle: "Background task",
+    status: "completed",
+  });
+
+  assert.ok(intent);
+  assert.deepEqual(
+    buildDesktopNotificationAttentionCue(intent, [
+      { focused: false, minimized: false, visible: true },
+    ]),
+    {
+      flashTaskbar: true,
+      playSound: true,
+      timeoutType: "never",
+    },
+  );
+  assert.equal(
+    buildDesktopNotificationAttentionCue(intent, [
+      { focused: true, minimized: false, visible: true },
+    ]),
+    null,
   );
 });
 

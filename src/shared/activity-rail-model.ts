@@ -5,6 +5,7 @@ import type {
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { PromptLedgerBucket, PromptLedgerMessage, PromptLedgerSegment } from "./prompt-ledger.js";
+import { buildSessionSemanticState, type SessionExecutionMode, type SessionSemanticState } from "./session-semantics.js";
 
 export type ActivityRailTone = "neutral" | "info" | "success" | "warning" | "error";
 export type ActivityRailLayer = "上下文" | "工具" | "结果" | "流程";
@@ -92,6 +93,9 @@ export type SessionLike = {
   title: string;
   status: "idle" | "running" | "completed" | "error";
   cwd?: string;
+  executionMode?: SessionExecutionMode;
+  reasoningMode?: string;
+  permissionMode?: string;
   slashCommands?: string[];
   messages: StreamMessageLike[];
 };
@@ -250,6 +254,7 @@ export type ActivityRailModel = {
     slashCommandCount: number;
     latestResultText: string;
   };
+  sessionSemantics: SessionSemanticState;
   contextDistribution: ContextDistributionModel;
   promptAnalysis: PromptAnalysisModel;
 };
@@ -1628,6 +1633,10 @@ export function buildActivityRailModel(
         slashCommandCount: 0,
         latestResultText: "",
       },
+      sessionSemantics: buildSessionSemanticState({
+        sessionId: "",
+        status: "idle",
+      }),
       contextDistribution: {
         totalChars: 0,
         totalTokenEstimate: 0,
@@ -1648,7 +1657,6 @@ export function buildActivityRailModel(
   const distributionBuckets = new Map<string, DistributionBucketDraft>();
   const toolOutcomeMap = extractToolOutcomeMap(session.messages);
   const timelineChronological: ActivityTimelineItem[] = [];
-  const status = buildStatusSummary(session.status, permissionRequests.length);
 
   let round = 0;
   let sequence = 0;
@@ -1670,6 +1678,7 @@ export function buildActivityRailModel(
   let duplicateToolCount = 0;
   let previousToolKey: string | null = null;
   let finalResultSuccess: boolean | null = null;
+  let latestRoundResultSuccess: boolean | null = null;
   let finalResultTimelineId: string | null = null;
   const hookQualitySignals: HookQualitySignal[] = [];
   let latestParsedPlan: ParsedPlan | null = null;
@@ -2015,6 +2024,7 @@ export function buildActivityRailModel(
       latestResultText = getResultText(result) || latestResultText;
       latestRemoteSessionId = result.session_id ?? latestRemoteSessionId;
       finalResultSuccess = result.subtype === "success";
+      latestRoundResultSuccess = result.subtype === "success";
       finalResultTimelineId = `${result.uuid}-result`;
       addDistribution(
         distributionBuckets,
@@ -2372,6 +2382,8 @@ export function buildActivityRailModel(
       const displayPrompt = formatPromptForDisplay(message.prompt);
       latestPrompt = displayPrompt || message.prompt;
       latestAttachments = message.attachments ?? [];
+      latestRoundResultSuccess = null;
+      currentTurnPeakInputTokens = undefined;
       previousToolKey = null;
       roundContextChars = message.prompt.length + getAttachmentContextChars(latestAttachments);
       const promptTimelineId = `prompt-${round}-${sequence}`;
@@ -2421,6 +2433,13 @@ export function buildActivityRailModel(
       continue;
     }
   }
+
+  const displayStatus = latestRoundResultSuccess === true
+    ? "completed"
+    : latestRoundResultSuccess === false
+      ? "error"
+      : session.status;
+  const status = buildStatusSummary(displayStatus, permissionRequests.length);
 
   if (session.status !== "running" || finalResultSuccess !== null) {
     const staleStatus = finalResultSuccess === false || session.status === "error" ? "failure" : "success";
@@ -2692,6 +2711,17 @@ export function buildActivityRailModel(
     });
   }
 
+  const sessionSemantics = buildSessionSemanticState({
+    sessionId: session.id,
+    executionMode: session.executionMode,
+    status: session.status,
+    model: displayModel !== "-" ? displayModel : undefined,
+    effort: session.reasoningMode,
+    permissionMode: session.permissionMode,
+    pendingPermissionCount: permissionRequests.length,
+    blockerSummary: toolErrorItem?.title,
+  });
+
   return {
     primarySectionTitle: "实时执行轨迹",
     detailCardTitle: "步骤详情",
@@ -2730,6 +2760,7 @@ export function buildActivityRailModel(
       slashCommandCount: session.slashCommands?.length ?? 0,
       latestResultText,
     },
+    sessionSemantics,
     contextDistribution,
     promptAnalysis,
   };

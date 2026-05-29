@@ -14,6 +14,12 @@ export type DesktopNotificationIntent = {
   target: DesktopNotificationTarget;
 };
 
+export type DesktopNotificationAttentionCue = {
+  flashTaskbar: boolean;
+  playSound: boolean;
+  timeoutType: "default" | "never";
+};
+
 export type DesktopNotificationWindowState = {
   focused: boolean;
   minimized: boolean;
@@ -61,6 +67,19 @@ export function shouldShowDesktopNotification(windows: DesktopNotificationWindow
   return !liveWindows.some((windowState) =>
     windowState.focused && windowState.visible && !windowState.minimized
   );
+}
+
+export function buildDesktopNotificationAttentionCue(
+  intent: DesktopNotificationIntent,
+  windows: DesktopNotificationWindowState[],
+): DesktopNotificationAttentionCue | null {
+  if (!shouldShowDesktopNotification(windows)) return null;
+
+  return {
+    flashTaskbar: true,
+    playSound: true,
+    timeoutType: "never",
+  };
 }
 
 export function buildTaskExecutionDesktopNotification(

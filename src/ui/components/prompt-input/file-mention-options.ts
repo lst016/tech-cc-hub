@@ -1,4 +1,4 @@
-import { scorePreviewQuickOpenEntry } from "../../../shared/preview-quick-open";
+import { scorePreviewQuickOpenEntry } from "../../../shared/preview-quick-open.js";
 
 const FILE_MENTION_DIRECTORY_SCAN_LIMIT = 500;
 const FILE_MENTION_FILE_SCAN_LIMIT = 4_000;
@@ -56,6 +56,56 @@ type PreviewFilesResponse = {
 
 export function normalizeMentionPath(path: string) {
   return path.replace(/\\/g, "/").replace(/\/+/g, "/");
+}
+
+function scoreSegmentMatch(pathSegment: string, querySegment: string) {
+  if (!pathSegment || !querySegment) return null;
+  if (pathSegment === querySegment) return -8;
+  if (pathSegment.startsWith(querySegment)) {
+    return -5 + (pathSegment.length - querySegment.length) / 50;
+  }
+  return null;
+}
+
+function scoreStrictMentionPath(option: FileMentionOption, query: string) {
+  const normalizedQuery = normalizeMentionPath(query).toLowerCase().trim();
+  if (!normalizedQuery.includes("/")) return null;
+
+  const querySegments = normalizedQuery.split("/").filter(Boolean);
+  if (querySegments.length === 0) return null;
+
+  const pathSegments = normalizeMentionPath(option.label).toLowerCase().split("/").filter(Boolean);
+  if (pathSegments.length === 0) return null;
+
+  for (let startIndex = 0; startIndex <= pathSegments.length - querySegments.length; startIndex += 1) {
+    const firstSegmentScore = scoreSegmentMatch(pathSegments[startIndex] ?? "", querySegments[0] ?? "");
+    if (firstSegmentScore === null) continue;
+
+    let score = pathSegments.length / 20;
+    score += firstSegmentScore + startIndex * 1.5;
+    let matched = true;
+
+    for (let queryIndex = 1; queryIndex < querySegments.length; queryIndex += 1) {
+      const segmentScore = scoreSegmentMatch(
+        pathSegments[startIndex + queryIndex] ?? "",
+        querySegments[queryIndex] ?? "",
+      );
+      if (segmentScore === null) {
+        matched = false;
+        break;
+      }
+      score += segmentScore;
+    }
+
+    if (!matched) continue;
+
+    if (option.kind === "file" && querySegments.length < pathSegments.length) {
+      score += 0.4;
+    }
+
+    return score;
+  }
+  return null;
 }
 
 function getRelativeMentionPath(workspaceRoot: string, filePath: string) {
@@ -156,6 +206,11 @@ export async function collectFileMentionOptions(workspaceRoot: string): Promise<
 }
 
 export function scoreFileMentionOption(option: FileMentionOption, query: string) {
+  const normalizedQuery = normalizeMentionPath(query).toLowerCase().trim();
+  const strictPathScore = scoreStrictMentionPath(option, query);
+  if (strictPathScore !== null) return strictPathScore;
+  if (normalizedQuery.includes("/")) return null;
+
   return scorePreviewQuickOpenEntry({
     name: option.name,
     path: option.path,

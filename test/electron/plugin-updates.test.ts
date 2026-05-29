@@ -83,3 +83,18 @@ test('uses toast as the default plugin action feedback surface', () => {
   assert.match(source, /buildPluginActionToastMessage/);
   assert.doesNotMatch(source, /\{installResult\s*&&\s*\(/);
 });
+
+test('plugin settings page exposes Claude Code plugin details', () => {
+  const pageSource = readFileSync('src/ui/components/settings/PluginsSettingsPage.tsx', 'utf8');
+  const mainSource = readFileSync('src/electron/main.ts', 'utf8');
+
+  assert.match(mainSource, /resolveClaudeCodePluginDetails/);
+  assert.match(mainSource, /plugins:getClaudeCodePluginDetails/);
+  assert.match(pageSource, /type ClaudeCodePluginDetail = \{/);
+  assert.match(pageSource, /plugins:getClaudeCodePluginDetails/);
+  assert.match(pageSource, /CLAUDE CODE PLUGINS/);
+  assert.match(pageSource, /detail\.mcpServers/);
+  assert.match(pageSource, /detail\.toolNames/);
+  assert.match(pageSource, /detail\.authMode/);
+  assert.match(pageSource, /detail\.projectedTokenImpact/);
+});

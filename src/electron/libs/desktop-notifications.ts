@@ -1,10 +1,11 @@
-import { app, BrowserWindow, Notification } from "electron";
+import { app, BrowserWindow, Notification, shell } from "electron";
 
 import {
+  buildDesktopNotificationAttentionCue,
   buildCronDesktopNotification,
   buildSessionDesktopNotification,
   buildTaskExecutionDesktopNotification,
-  shouldShowDesktopNotification,
+  type DesktopNotificationAttentionCue,
   type CronNotificationInput,
   type DesktopNotificationIntent,
   type DesktopNotificationTarget,
@@ -17,8 +18,10 @@ import type { ServerEvent } from "../types.js";
 export const TECH_CC_HUB_APP_USER_MODEL_ID = "com.devagentforge.techcchub";
 
 const MAX_DEDUPE_KEYS = 200;
+const WINDOWS_TASKBAR_FLASH_MS = 60_000;
 const shownDedupeKeys: string[] = [];
 const shownDedupeKeySet = new Set<string>();
+const activeFlashTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
 export function configureDesktopNotifications(): void {
   if (process.platform === "win32") {
@@ -40,17 +43,22 @@ export function notifyCronFinished(input: CronNotificationInput): boolean {
 
 export function showDesktopNotification(intent: DesktopNotificationIntent | null): boolean {
   if (!intent) return false;
-  if (!Notification.isSupported()) return false;
   if (shownDedupeKeySet.has(intent.dedupeKey)) return false;
-  if (!shouldShowDesktopNotification(getDesktopNotificationWindowStates())) return false;
+
+  const attentionCue = buildDesktopNotificationAttentionCue(intent, getDesktopNotificationWindowStates());
+  if (!attentionCue) return false;
 
   rememberDedupeKey(intent.dedupeKey);
+  showAttentionCue(attentionCue);
+
+  if (!Notification.isSupported()) return true;
 
   const notification = new Notification({
     title: intent.title,
     body: intent.body,
     urgency: intent.urgency,
     silent: false,
+    timeoutType: attentionCue.timeoutType,
   });
 
   notification.on("click", () => {
@@ -88,6 +96,7 @@ function focusPrimaryWindow(): void {
   const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
   if (!window) return;
 
+  stopWindowAttention(window);
   if (window.isMinimized()) {
     window.restore();
   }
@@ -99,6 +108,52 @@ function focusPrimaryWindow(): void {
   if (process.platform === "darwin" || process.platform === "win32") {
     app.focus({ steal: true });
   }
+}
+
+function showAttentionCue(cue: DesktopNotificationAttentionCue): void {
+  if (cue.playSound) {
+    shell.beep();
+  }
+  if (!cue.flashTaskbar) return;
+
+  for (const window of BrowserWindow.getAllWindows()) {
+    requestWindowAttention(window);
+  }
+}
+
+function requestWindowAttention(window: BrowserWindow): void {
+  if (window.isDestroyed()) return;
+  if (process.platform !== "win32" && process.platform !== "linux") return;
+
+  stopWindowAttention(window);
+  window.flashFrame(true);
+
+  const timer = setTimeout(() => {
+    stopWindowAttention(window);
+  }, WINDOWS_TASKBAR_FLASH_MS);
+  activeFlashTimers.set(window.id, timer);
+
+  window.once("focus", () => {
+    stopWindowAttention(window);
+  });
+  window.once("closed", () => {
+    clearWindowAttentionTimer(window.id);
+  });
+}
+
+function stopWindowAttention(window: BrowserWindow): void {
+  clearWindowAttentionTimer(window.id);
+  if (!window.isDestroyed() && (process.platform === "win32" || process.platform === "linux")) {
+    window.flashFrame(false);
+  }
+}
+
+function clearWindowAttentionTimer(windowId: number): void {
+  const timer = activeFlashTimers.get(windowId);
+  if (timer) {
+    clearTimeout(timer);
+  }
+  activeFlashTimers.delete(windowId);
 }
 
 function rememberDedupeKey(key: string): void {

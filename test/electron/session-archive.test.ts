@@ -69,3 +69,38 @@ test("SessionStore persists runtime profile state across reloads", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("SessionStore persists execution mode and runtime controls across reloads", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tech-cc-hub-session-semantics-"));
+  const dbPath = join(dir, "sessions.db");
+  const store = new SessionStore(dbPath);
+
+  try {
+    const session = store.createSession({
+      title: "Background session",
+      cwd: dir,
+      executionMode: "background",
+      model: "gpt-5.5",
+      reasoningMode: "xhigh",
+      permissionMode: "plan",
+    });
+
+    store.close();
+
+    const reopened = new SessionStore(dbPath);
+    try {
+      const restored = reopened.getSession(session.id);
+      assert.equal(restored?.executionMode, "background");
+      assert.equal(restored?.model, "gpt-5.5");
+      assert.equal(restored?.reasoningMode, "xhigh");
+      assert.equal(restored?.permissionMode, "plan");
+      assert.equal(reopened.listSessions()[0]?.executionMode, "background");
+      assert.equal(reopened.listSessions()[0]?.reasoningMode, "xhigh");
+      assert.equal(reopened.listSessions()[0]?.permissionMode, "plan");
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

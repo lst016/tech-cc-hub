@@ -319,14 +319,11 @@ function dedupeAvailableModelNames(models: Array<string | undefined>): string[] 
       continue;
     }
 
-    const key = isDeepSeekModelName(normalized)
-      ? `deepseek:${normalized.toLowerCase()}`
-      : `model:${normalized}`;
-    if (seen.has(key)) {
+    if (seen.has(normalized)) {
       continue;
     }
 
-    seen.add(key);
+    seen.add(normalized);
     deduped.push(normalized);
   }
 

@@ -96,6 +96,7 @@ import {
   buildAdminConfigPromptAppend,
   buildBrowserWorkbenchPromptAppend,
   buildBuiltinMcpRegistryPromptAppend,
+  buildClaudeCodeCompatFeaturePromptAppend,
   buildClaudeCode2139FeaturePromptAppend,
   buildDesignParityPromptAppend,
   buildFeishuDocumentFetchPromptAppend,
@@ -248,7 +249,7 @@ function getKnowledgeIndexDenyMessage(toolName: string, prompt: string): string 
 
   return [
     "Legacy knowledge_index is disabled because RepoWiki/vector indexing has been removed.",
-    "For code retrieval or questions about this repo, try mcp__tech-cc-hub-knowledge__codegraph_search or codegraph_context first when the managed index is available; otherwise fall back to focused source reads.",
+    "For code retrieval or questions about this repo, try mcp__tech-cc-hub-knowledge__codegraph_search or codegraph_context first when the managed index is available; otherwise fall back to focused source reads. If CodeGraph is slow, timed out, temporarily bypassed, or unavailable, fall back to focused source reads.",
   ].join(" ");
 }
 
@@ -275,7 +276,7 @@ function getCodeGraphFirstDenyMessage(
     return undefined;
   }
 
-  return "Use mcp__tech-cc-hub-knowledge__codegraph_search or mcp__tech-cc-hub-knowledge__codegraph_context before broad source exploration when the managed index is available. If CodeGraph returns no useful result or an error, fall back to focused Read/Grep/Glob instead of retrying CodeGraph.";
+  return "Use mcp__tech-cc-hub-knowledge__codegraph_search or mcp__tech-cc-hub-knowledge__codegraph_context before broad source exploration when the managed index is available. If CodeGraph returns no useful result, an error, a timeout, a slow-machine bypass, or feels slow, fall back to focused Read/Grep/Glob instead of retrying CodeGraph.";
 }
 
 function isBroadCodeExplorationTool(toolName: string, input: unknown, prompt: string): boolean {
@@ -830,11 +831,15 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         runtimeProfile.includeBrowserPrompt ? buildBrowserWorkbenchPromptAppend() : undefined,
         runtimeProfile.includeDesignPrompt ? buildDesignParityPromptAppend() : undefined,
         buildBuiltinMcpRegistryPromptAppend(enabledBuiltinMcpServerNames),
-        runtimeProfile.includeClaudeCompatPrompt ? buildClaudeCode2139FeaturePromptAppend() : undefined,
+        runtimeProfile.includeClaudeCompatPrompt ? buildClaudeCodeCompatFeaturePromptAppend() : undefined,
       );
       const outputFormat = resolveOutputFormat(runtime?.outputFormat, systemPromptAppend, prompt);
       const sdkModelOption = getClaudeCodeModelOption(config, effectiveModel);
-      const sdkModelSettings = buildClaudeCodeModelSettings(config, effectiveModel);
+      const dynamicWorkflowSettings = buildClaudeDynamicWorkflowSettings(currentDisplayPrompt, runtime?.reasoningMode);
+      const sdkModelSettings = {
+        ...buildClaudeCodeModelSettings(config, effectiveModel),
+        ...dynamicWorkflowSettings,
+      };
       const sdkExpertModel = getClaudeCodeExpertModel(config, effectiveModel);
       console.info("[runner][route]", {
         sessionId: session.id,
@@ -853,6 +858,8 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         claudePath: getClaudeCodePath(),
         sdkPlugins: sdkPlugins.map((plugin) => plugin.path),
         agentTeamsEnabled: mergedEnv[CLAUDE_AGENT_TEAMS_ENV_VAR] === "1",
+        dynamicWorkflowsEnabled: dynamicWorkflowSettings.enableWorkflows === true,
+        ultracodeEnabled: dynamicWorkflowSettings.ultracode === true,
         runtimeProfile: runtimeProfile.id,
         builtinMcpServers: enabledBuiltinMcpServerNames,
       });
@@ -2523,6 +2530,17 @@ function buildEffortLevel(reasoningMode?: RuntimeOverrides["reasoningMode"]): Ef
   }
 
   return reasoningMode;
+}
+
+function buildClaudeDynamicWorkflowSettings(
+  prompt: string,
+  reasoningMode?: RuntimeOverrides["reasoningMode"],
+): { enableWorkflows: true; ultracode?: true } {
+  const wantsDynamicWorkflow = /\/workflows?\b|dynamic\s+workflows?|动态\s*workflow|动态工作流|ultracode|多\s*agent|多智能体|后台编排|并行编排|大规模.*编排/i.test(prompt);
+  return {
+    enableWorkflows: true,
+    ...(wantsDynamicWorkflow && reasoningMode === "xhigh" ? { ultracode: true } : {}),
+  };
 }
 
 export function createPromptSource(prompt: string, attachments: PromptAttachment[]): AsyncIterable<SDKUserMessage> {

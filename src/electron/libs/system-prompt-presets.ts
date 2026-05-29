@@ -122,8 +122,12 @@ export function buildBuiltinMcpRegistryPromptAppend(enabledServerNames?: readonl
   return buildBuiltinMcpPromptHints(enabledServerNames);
 }
 
-export function buildClaudeCode2139FeaturePromptAppend(): string {
+export function buildClaudeCodeCompatFeaturePromptAppend(): string {
   return buildClaudeCodeCompatPromptAppend();
+}
+
+export function buildClaudeCode2139FeaturePromptAppend(): string {
+  return buildClaudeCodeCompatFeaturePromptAppend();
 }
 
 export function buildDesignParityPromptAppend(): string {
@@ -177,10 +181,10 @@ export function buildTechCCHubSystemPromptSources(): PromptLedgerSource[] {
       text: buildBuiltinMcpRegistryPromptAppend(),
     },
     {
-      id: "tech-cc-hub-claude-code-2139-preset",
-      label: "tech-cc-hub Claude Code 2.1.139 compatibility preset",
+      id: "tech-cc-hub-claude-code-compat-preset",
+      label: "tech-cc-hub Claude Code compatibility preset",
       sourceKind: "system",
-      text: buildClaudeCode2139FeaturePromptAppend(),
+      text: buildClaudeCodeCompatFeaturePromptAppend(),
     },
   ];
 }

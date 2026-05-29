@@ -41,6 +41,16 @@ async function invokePreviewFs<T>(endpoint: "list" | "files" | "read" | "write",
   return await response.json() as T;
 }
 
+async function invokePreviewTerminal<T>(endpoint: "run" | "start" | "list" | "stop", payload?: unknown): Promise<T> {
+  const response = await fetch(`/__tech_terminal/${endpoint}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload ?? {}),
+    cache: "no-store",
+  });
+  return await response.json() as T;
+}
+
 const unsupportedPreviewMutation = async () => ({
   success: false,
   error: "浏览器预览态暂不支持修改文件，请在 Electron 客户端里操作。",
@@ -320,6 +330,15 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     }),
     saveUserAgentRuleDocument: async () => ({ success: true }),
     invoke: async <T,>(channel: string, ...args: unknown[]): Promise<T> => {
+      if (channel === "sessions:list") {
+        const payload = args[0] && typeof args[0] === "object" ? args[0] as { archived?: unknown } : {};
+        const archived = payload.archived === true;
+        const sessionListPayload = buildSessionListEvent().payload as { sessions: unknown[] };
+        return {
+          sessions: archived ? [] : sessionListPayload.sessions,
+          archived,
+        } as T;
+      }
       if (channel === "slash-commands:list") {
         try {
           return await invokeBridge("listSlashCommands", args[0]) as T;
@@ -328,19 +347,16 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         }
       }
       if (channel === "terminal:run") {
-        const payload = args[0] && typeof args[0] === "object" ? args[0] as { command?: unknown; cwd?: unknown } : {};
-        return {
-          success: false,
-          command: typeof payload.command === "string" ? payload.command : "",
-          cwd: typeof payload.cwd === "string" ? payload.cwd : browserPreviewCwd,
-          shell: "browser-preview",
-          exitCode: null,
-          stdout: "",
-          stderr: "",
-          timedOut: false,
-          elapsedMs: 0,
-          error: "浏览器预览态不支持本地终端，请在 Electron 客户端里操作。",
-        } as T;
+        return await invokePreviewTerminal("run", args[0]) as T;
+      }
+      if (channel === "terminal:start") {
+        return await invokePreviewTerminal("start", args[0]) as T;
+      }
+      if (channel === "terminal:stop") {
+        return await invokePreviewTerminal("stop", args[0]) as T;
+      }
+      if (channel === "terminal:list") {
+        return await invokePreviewTerminal("list") as T;
       }
       throw new Error("浏览器预览态不支持 IPC invoke，请在 Electron 客户端里操作。");
     },

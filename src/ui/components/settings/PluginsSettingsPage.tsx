@@ -89,6 +89,20 @@ type PluginRuntimeStatus = {
   accountLabel?: string;
 };
 
+type ClaudeCodePluginDetail = {
+  id: string;
+  name: string;
+  source: "local" | "remote" | "unknown";
+  version?: string;
+  status: "enabled" | "disabled" | "broken" | "unknown";
+  authMode?: string;
+  mcpServers: string[];
+  lspServers: string[];
+  toolNames: string[];
+  projectedTokenImpact?: string;
+  installPath?: string;
+};
+
 type PluginGuideSessionRequest = {
   title: string;
   prompt: string;
@@ -163,6 +177,25 @@ const figmaStatusMeta: Record<FigmaOfficialStatusKind, { label: string; classNam
   "desktop-unavailable": statusMeta["needs-permission"],
   misconfigured: statusMeta["needs-connect"],
   ready: statusMeta.ready,
+};
+
+const claudeCodePluginStatusMeta: Record<ClaudeCodePluginDetail["status"], { label: string; className: string }> = {
+  enabled: {
+    label: "enabled",
+    className: "border-emerald-500/20 bg-emerald-50 text-emerald-700",
+  },
+  disabled: {
+    label: "disabled",
+    className: "border-slate-300 bg-slate-50 text-slate-600",
+  },
+  broken: {
+    label: "broken",
+    className: "border-red-500/20 bg-red-50 text-red-700",
+  },
+  unknown: {
+    label: "unknown",
+    className: "border-amber-500/20 bg-amber-50 text-amber-800",
+  },
 };
 
 function getPermissionHint(plugin: DefaultPlugin, status?: PluginRuntimeStatus): string | null {
@@ -348,6 +381,10 @@ function formatFigmaCapabilities(capabilities: string[]): string {
   return capabilities.map((capability) => labels[capability] ?? capability).join("、");
 }
 
+function formatClaudeCodePluginList(values: string[], fallback = "none"): string {
+  return values.length > 0 ? values.join(", ") : fallback;
+}
+
 export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPageProps) {
   const [installingPluginId, setInstallingPluginId] = useState<string | null>(null);
   const [checkingUpdatePluginId, setCheckingUpdatePluginId] = useState<string | null>(null);
@@ -355,6 +392,8 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
   const [launchingGuidePluginId, setLaunchingGuidePluginId] = useState<string | null>(null);
   const [installResults, setInstallResults] = useState<Record<string, PluginInstallResult>>({});
   const [runtimeStatuses, setRuntimeStatuses] = useState<Record<string, PluginRuntimeStatus>>({});
+  const [claudeCodePluginDetails, setClaudeCodePluginDetails] = useState<ClaudeCodePluginDetail[]>([]);
+  const [claudeCodePluginDetailsError, setClaudeCodePluginDetailsError] = useState<string | null>(null);
   const [figmaTokenPanelOpen, setFigmaTokenPanelOpen] = useState(false);
   const [figmaTokenDraft, setFigmaTokenDraft] = useState("");
   const [figmaTokenVisible, setFigmaTokenVisible] = useState(false);
@@ -363,7 +402,7 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
   useEffect(() => {
     let mounted = true;
     const electron = window.electron as typeof window.electron & {
-      invoke: (channel: string, ...args: unknown[]) => Promise<PluginRuntimeStatus>;
+      invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
     };
 
     void Promise.all([
@@ -391,6 +430,18 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
       if (!mounted) return;
       setRuntimeStatuses(Object.fromEntries(entries) as Record<string, PluginRuntimeStatus>);
     });
+
+    void electron.invoke("plugins:getClaudeCodePluginDetails")
+      .then((details) => {
+        if (!mounted) return;
+        setClaudeCodePluginDetails(Array.isArray(details) ? details as ClaudeCodePluginDetail[] : []);
+        setClaudeCodePluginDetailsError(null);
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        setClaudeCodePluginDetails([]);
+        setClaudeCodePluginDetailsError(error instanceof Error ? error.message : String(error));
+      });
 
     return () => {
       mounted = false;
@@ -828,6 +879,62 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
             </article>
           );
         })}
+      </div>
+
+      <div className="rounded-xl border border-[#E5E6EB] bg-white p-4 shadow-[0_12px_28px_rgba(24,32,46,0.04)]">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#E5E6EB] pb-3">
+          <div>
+            <div className="text-xs font-bold uppercase tracking-[0.16em] text-[#8A94A6]">CLAUDE CODE PLUGINS</div>
+            <p className="mt-1 text-sm leading-5 text-[#6B778C]">
+              Read-only details from Claude Code installed plugins: source, status, MCP servers, tools, auth, LSP and token impact.
+            </p>
+          </div>
+          <span className="rounded-full border border-[#DADDE5] bg-[#F7F8FA] px-2.5 py-1 text-xs font-semibold text-[#4E5969]">
+            {claudeCodePluginDetails.length} detected
+          </span>
+        </div>
+
+        {claudeCodePluginDetailsError ? (
+          <div className="mt-3 rounded-lg border border-red-500/20 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+            Failed to load Claude Code plugin details: {claudeCodePluginDetailsError}
+          </div>
+        ) : claudeCodePluginDetails.length === 0 ? (
+          <div className="mt-3 rounded-lg border border-[#E5E6EB] bg-[#F7F8FA] px-3 py-2 text-sm text-[#6B778C]">
+            No Claude Code plugins discovered under the local Claude plugin cache.
+          </div>
+        ) : (
+          <div className="mt-3 grid gap-3">
+            {claudeCodePluginDetails.map((detail) => {
+              const status = claudeCodePluginStatusMeta[detail.status];
+              return (
+                <article key={detail.id} className="rounded-lg border border-[#E5E6EB] bg-[#FAFBFC] p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-sm font-bold text-[#1D2129]">{detail.name}</h3>
+                    <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${status.className}`}>
+                      {status.label}
+                    </span>
+                    <span className="rounded-full border border-[#DADDE5] bg-white px-2 py-0.5 text-[11px] font-semibold text-[#4E5969]">
+                      {detail.source}
+                    </span>
+                    {detail.version && (
+                      <span className="rounded-full border border-[#DADDE5] bg-white px-2 py-0.5 text-[11px] font-semibold text-[#4E5969]">
+                        v{detail.version}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-2 grid gap-1.5 text-xs leading-5 text-[#4E5969] sm:grid-cols-2">
+                    <div><span className="font-semibold text-[#1D2129]">MCP:</span> {formatClaudeCodePluginList(detail.mcpServers)}</div>
+                    <div><span className="font-semibold text-[#1D2129]">Tools:</span> {formatClaudeCodePluginList(detail.toolNames)}</div>
+                    <div><span className="font-semibold text-[#1D2129]">Auth:</span> {detail.authMode ?? "unknown"}</div>
+                    <div><span className="font-semibold text-[#1D2129]">LSP:</span> {formatClaudeCodePluginList(detail.lspServers)}</div>
+                    <div><span className="font-semibold text-[#1D2129]">Token impact:</span> {detail.projectedTokenImpact ?? "unknown"}</div>
+                    <div className="truncate"><span className="font-semibold text-[#1D2129]">Path:</span> {detail.installPath ?? "unknown"}</div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
       </div>
     </section>
   );

@@ -15,114 +15,80 @@ export type ClaudeCodeCompatRegistry = {
 
 export const CLAUDE_CODE_COMPAT_REGISTRY: ClaudeCodeCompatRegistry = {
   "sourceUrl": "https://claudelog.com/claude-code-changelog/",
-  "sourceVersion": "2.1.139",
-  "sourceDate": "May 11, 2026",
-  "generatedAt": "2026-05-12T03:37:34.697Z",
+  "sourceVersion": "2.1.154",
+  "sourceDate": "May 28, 2026",
+  "generatedAt": "2026-05-29T01:28:01.338Z",
   "commandItems": [
     {
-      "name": "agent-view",
-      "description": "Added agent view (Research Preview): a single list of every Claude Code session — running, blocked on you, or done. Run claude agents to get started. See https://code.claude.com/docs/en/agent-view"
-    },
-    {
       "name": "agents",
-      "description": "Added agent view (Research Preview): a single list of every Claude Code session — running, blocked on you, or done. Run claude agents to get started. See https://code.claude.com/docs/en/agent-view"
+      "description": "claude agents: type ! <command> to run a shell command as a background session you can attach to and detach from. Also available as claude --bg --exec '<command>'"
     },
     {
-      "name": "code",
-      "description": "Added agent view (Research Preview): a single list of every Claude Code session — running, blocked on you, or done. Run claude agents to get started. See https://code.claude.com/docs/en/agent-view"
+      "name": "chrome",
+      "description": "Claude in Chrome: pick which connected browser to use via /chrome → \"Select browser…\", or in-chat when a browser action runs with multiple connected"
     },
     {
-      "name": "context",
-      "description": "/context all per-skill token estimates now account for the model's tokenizer and show rounded values"
+      "name": "claude-api",
+      "description": "Added Claude Opus 4.8 support and 4.7 → 4.8 migration guidance to the /claude-api skill"
     },
     {
-      "name": "ctrl",
-      "description": "[VSCode] Press Cmd/Ctrl+Shift+T to reopen the most recently closed session tab, configurable via claudeCode.enableReopenClosedSessionShortcut"
+      "name": "code-review",
+      "description": "/simplify now runs a cleanup-only review (reuse, simplification, efficiency, altitude) and applies the fixes, instead of running the full /code-review --fix bug-hunting review"
     },
     {
-      "name": "docs",
-      "description": "Added agent view (Research Preview): a single list of every Claude Code session — running, blocked on you, or done. Run claude agents to get started. See https://code.claude.com/docs/en/agent-view"
+      "name": "command",
+      "description": "Fixed background-session classifier losing the user's goal when a scheduled /command fires"
     },
     {
-      "name": "emoji",
-      "description": "Fixed border-embedded text overflowing on CJK/emoji due to visual cell width miscalculation"
+      "name": "effort",
+      "description": "Renamed the /effort slider labels from \"Speed\"/\"Intelligence\" to \"Faster\"/\"Smarter\" for clarity"
     },
     {
-      "name": "en",
-      "description": "Added agent view (Research Preview): a single list of every Claude Code session — running, blocked on you, or done. Run claude agents to get started. See https://code.claude.com/docs/en/agent-view"
-    },
-    {
-      "name": "goal",
-      "description": "Added /goal command: set a completion condition and Claude keeps working across turns until it's met. Works in interactive, -p, and Remote Control. Shows live elapsed/turns/tokens as an overlay panel"
+      "name": "fast",
+      "description": "Deprecated CLAUDE_CODE_OPUS_4_6_FAST_MODE_OVERRIDE (will be removed on 06/01). To use fast mode on Opus 4.6, switch with /model claude-opus-4-6[1m] and then /fast on"
     },
     {
       "name": "logout",
-      "description": "Fixed a deadlock where expired credentials and the forceRemoteSettingsRefresh policy setting blocked claude auth login/logout/status with no way to recover"
-    },
-    {
-      "name": "mcp",
-      "description": "/mcp Reconnect now picks up .mcp.json edits without a restart, and shows the HTTP status and URL when reconnecting fails"
+      "description": "claude agents: /logout now signs you out instead of being sent to a background session"
     },
     {
       "name": "model",
-      "description": "Fixed /model picker \"Default\" row not reflecting ANTHROPIC_DEFAULT_OPUS_MODEL/ANTHROPIC_DEFAULT_SONNET_MODEL overrides"
+      "description": "Deprecated CLAUDE_CODE_OPUS_4_6_FAST_MODE_OVERRIDE (will be removed on 06/01). To use fast mode on Opus 4.6, switch with /model claude-opus-4-6[1m] and then /fast on"
     },
     {
       "name": "plugin",
-      "description": "Added claude plugin details <name> to show a plugin's component inventory and projected per-session token cost"
+      "description": "Plugins can now declare defaultEnabled: false in plugin.json or a marketplace entry; enable them with /plugin or claude plugin enable. Dependencies of enabled plugins are still enabled automatically"
     },
     {
-      "name": "schedule",
-      "description": "Remote Control, /schedule, claude.ai MCP connectors, and notification preferences are now disabled when ANTHROPIC_API_KEY / apiKeyHelper / ANTHROPIC_AUTH_TOKEN is set, even if a Claude.ai login also exists. Unset the API key to use these features"
+      "name": "remote-control",
+      "description": "/remote-control autocomplete now shows \"Disconnect Remote Control\" when Remote Control is already active"
     },
     {
-      "name": "scroll-speed",
-      "description": "Added /scroll-speed command to tune mouse wheel scroll speed with a live preview"
+      "name": "simplify",
+      "description": "/simplify now runs a cleanup-only review (reuse, simplification, efficiency, altitude) and applies the fixes, instead of running the full /code-review --fix bug-hunting review"
     },
     {
-      "name": "settings",
-      "description": "Fixed settings hot-reload not detecting edits to symlinked ~/.claude/settings.json"
-    },
-    {
-      "name": "sse",
-      "description": "Fixed unbounded memory growth when an HTTP/SSE MCP server streams non-protocol data — response bodies now capped at 16 MB per SSE frame"
-    },
-    {
-      "name": "status",
-      "description": "Fixed a deadlock where expired credentials and the forceRemoteSettingsRefresh policy setting blocked claude auth login/logout/status with no way to recover"
-    },
-    {
-      "name": "super",
-      "description": "Fixed keybindings using only the cmd/super/win modifier being flagged as unparseable"
-    },
-    {
-      "name": "tokens",
-      "description": "Added /goal command: set a completion condition and Claude keeps working across turns until it's met. Works in interactive, -p, and Remote Control. Shows live elapsed/turns/tokens as an overlay panel"
-    },
-    {
-      "name": "turns",
-      "description": "Added /goal command: set a completion condition and Claude keeps working across turns until it's met. Works in interactive, -p, and Remote Control. Shows live elapsed/turns/tokens as an overlay panel"
-    },
-    {
-      "name": "win",
-      "description": "Fixed keybindings using only the cmd/super/win modifier being flagged as unparseable"
+      "name": "workflows",
+      "description": "Introducing dynamic workflows: ask Claude to create a workflow and it orchestrates work across tens to hundreds of agents in the background, so you can take on larger, more complex tasks. Run /workflows to view your runs"
     }
   ],
   "promptHints": [
-    "`/goal <goal>` sets or updates a durable completion condition. Restate the goal briefly, use update_plan to track progress, keep later work tied to the goal, and stop only when the goal is satisfied or a real blocker remains.",
-    "`/scroll-speed <slow|normal|fast|number>` is a Claude Code terminal TUI setting. In tech-cc-hub, map it to explicit browser scroll distances or mouse wheel deltas when using browser tools; for chat transcript reading, summarize/navigate instead of pretending to change terminal scroll speed.",
     "`claude agents` / agent view is a session-and-agent overview. When the user asks for it here, summarize active session, subagent, tool, permission, and blocker state from available session events and progress summaries.",
     "Plugin details should include source, version, status, permissions, configured MCP servers, tool count/tool names, auth mode, update hints, and projected prompt/token impact when available.",
-    "Hook `args: string[]` exec form and PostToolUse `continueOnBlock` apply to config-driven Claude Code hooks. tech-cc-hub uses SDK in-process hook callbacks, so keep using structured callbacks and `updatedToolOutput` for PostToolUse output replacement.",
-    "Stdio MCP servers should receive `CLAUDE_PROJECT_DIR` for the current workspace unless the user explicitly configured that env var."
+    "Dynamic workflows let Claude create and run workflow plans across many background agents. For broad multi-lane tasks in tech-cc-hub, prefer an explicit workflow plan, keep progress visible in the task/workflow status surface, and avoid spawning large agent trees for small reversible edits."
   ]
 };
 
 export const CLAUDE_CODE_COMPAT_COMMAND_ITEMS = CLAUDE_CODE_COMPAT_REGISTRY.commandItems;
 
+const CLAUDE_CODE_LOCAL_COMPAT_PROMPT_HINTS = [
+  "`/code-review` should split oversized code or diff input into bounded review chunks, review each chunk for correctness, security, and regression findings, then summarize cross-chunk risks instead of loading everything at once."
+];
+
 export function buildClaudeCodeCompatPromptAppend(): string {
   return [
     `Claude Code v${CLAUDE_CODE_COMPAT_REGISTRY.sourceVersion} compatibility notes for tech-cc-hub:`,
+    ...CLAUDE_CODE_LOCAL_COMPAT_PROMPT_HINTS.map((hint) => `- ${hint}`),
     ...CLAUDE_CODE_COMPAT_REGISTRY.promptHints.map((hint) => `- ${hint}`),
     ...buildClaudeAgentTeamsPromptHint().split("\n").map((hint) => `- ${hint}`),
   ].join("\n");

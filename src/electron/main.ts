@@ -15,6 +15,7 @@ import {
     type MessageBoxOptions,
 } from "electron"
 import { execSync, spawn } from "child_process";
+import type { ChildProcessWithoutNullStreams } from "child_process";
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { createServer, type Server } from "http";
@@ -99,6 +100,7 @@ import {
 import { normalizePluginVersion, summarizePluginUpdate, type PluginUpdateSummary } from "./libs/plugin-updates.js";
 import { submitFeedbackIssue, type FeedbackSubmitPayload } from "./libs/feedback.js";
 import "./libs/claude/claude-settings.js";
+import { resolveClaudeCodePluginDetails } from "./libs/claude/claude-code-plugins.js";
 import { addServerEventListener } from "./ipc-handlers.js";
 
 let cleanupComplete = false;
@@ -1387,6 +1389,34 @@ function readPreviewFileForRenderer(request: unknown): {
 const TERMINAL_DEFAULT_TIMEOUT_MS = 120_000;
 const TERMINAL_MAX_TIMEOUT_MS = 10 * 60_000;
 const TERMINAL_MAX_OUTPUT_CHARS = 200_000;
+const TERMINAL_PROCESS_TAIL_CHARS = 60_000;
+const TERMINAL_PROCESS_HISTORY_LIMIT = 30;
+
+type TerminalProcessStatus = "running" | "exited" | "killed" | "error";
+
+type TerminalProcessRecord = {
+  id: string;
+  command: string;
+  cwd: string;
+  shell: string;
+  pid?: number;
+  startedAt: number;
+  endedAt?: number;
+  exitCode?: number | null;
+  signal?: string | null;
+  stdoutTail: string;
+  stderrTail: string;
+  status: TerminalProcessStatus;
+  error?: string;
+  stopRequested?: boolean;
+  child?: ChildProcessWithoutNullStreams;
+};
+
+type TerminalProcessInfo = Omit<TerminalProcessRecord, "child" | "stopRequested"> & {
+  running: boolean;
+};
+
+const terminalProcesses = new Map<string, TerminalProcessRecord>();
 
 function clampTerminalTimeoutMs(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -1407,6 +1437,13 @@ function appendTerminalOutput(current: string, chunk: Buffer): string {
   const marker = "\n...[output truncated]";
   const available = Math.max(0, remaining - marker.length);
   return `${current}${text.slice(0, available)}${marker}`;
+}
+
+function appendTerminalTail(current: string, chunk: Buffer): string {
+  const next = `${current}${chunk.toString("utf8")}`;
+  return next.length > TERMINAL_PROCESS_TAIL_CHARS
+    ? next.slice(next.length - TERMINAL_PROCESS_TAIL_CHARS)
+    : next;
 }
 
 function resolveTerminalCwd(value: unknown): string {
@@ -1439,6 +1476,216 @@ function buildTerminalShell(command: string): { command: string; args: string[];
     args: ["-lc", command],
     label: shellCommand.split(/[\\/]/).pop() || "bash",
   };
+}
+
+function toTerminalProcessInfo(record: TerminalProcessRecord): TerminalProcessInfo {
+  return {
+    id: record.id,
+    command: record.command,
+    cwd: record.cwd,
+    shell: record.shell,
+    pid: record.pid,
+    startedAt: record.startedAt,
+    endedAt: record.endedAt,
+    exitCode: record.exitCode,
+    signal: record.signal,
+    stdoutTail: record.stdoutTail,
+    stderrTail: record.stderrTail,
+    status: record.status,
+    error: record.error,
+    running: record.status === "running",
+  };
+}
+
+function pruneTerminalProcessHistory(): void {
+  const completed = [...terminalProcesses.values()]
+    .filter((record) => record.status !== "running")
+    .sort((left, right) => (right.endedAt ?? right.startedAt) - (left.endedAt ?? left.startedAt));
+
+  for (const record of completed.slice(TERMINAL_PROCESS_HISTORY_LIMIT)) {
+    terminalProcesses.delete(record.id);
+  }
+}
+
+function finishTerminalProcess(
+  record: TerminalProcessRecord,
+  result: { exitCode?: number | null; signal?: string | null; error?: string },
+): void {
+  if (record.status !== "running") return;
+  record.endedAt = Date.now();
+  record.exitCode = result.exitCode ?? null;
+  record.signal = result.signal ?? null;
+  record.error = result.error;
+  record.status = result.error ? "error" : record.stopRequested ? "killed" : "exited";
+  record.child = undefined;
+  pruneTerminalProcessHistory();
+}
+
+function readTerminalProcessId(request: unknown): string {
+  const payload = request && typeof request === "object" ? request as { id?: unknown; processId?: unknown } : {};
+  const id = typeof payload.id === "string" ? payload.id.trim() : "";
+  const processId = typeof payload.processId === "string" ? payload.processId.trim() : "";
+  return id || processId;
+}
+
+function runTaskkill(pid: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const killer = spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+      windowsHide: true,
+    });
+    let stderr = "";
+    killer.stderr?.on("data", (chunk: Buffer) => {
+      stderr = appendTerminalTail(stderr, chunk);
+    });
+    killer.on("error", reject);
+    killer.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(stderr.trim() || `taskkill exited with code ${code ?? "unknown"}`));
+    });
+  });
+}
+
+async function stopProcessTree(record: TerminalProcessRecord): Promise<void> {
+  if (!record.pid) {
+    record.child?.kill();
+    return;
+  }
+
+  if (process.platform === "win32") {
+    await runTaskkill(record.pid);
+    return;
+  }
+
+  try {
+    process.kill(-record.pid, "SIGTERM");
+  } catch {
+    record.child?.kill("SIGTERM");
+  }
+}
+
+function stopProcessTreeSync(record: TerminalProcessRecord): void {
+  if (!record.pid) {
+    record.child?.kill();
+    return;
+  }
+
+  try {
+    if (process.platform === "win32") {
+      execSync(`taskkill /PID ${record.pid} /T /F`, { stdio: "ignore" });
+      return;
+    }
+    process.kill(-record.pid, "SIGTERM");
+  } catch {
+    try {
+      record.child?.kill();
+    } catch {
+      // Process is already gone.
+    }
+  }
+}
+
+function startTerminalProcessForRenderer(request: unknown): {
+  success: boolean;
+  process?: TerminalProcessInfo;
+  error?: string;
+} {
+  const payload = request && typeof request === "object" ? request as { command?: unknown; cwd?: unknown } : {};
+  const command = typeof payload.command === "string" ? payload.command.trim() : "";
+  const cwd = resolveTerminalCwd(payload.cwd);
+  const shellInfo = buildTerminalShell(command);
+
+  if (!command) {
+    return { success: false, error: "请输入命令。" };
+  }
+
+  try {
+    const child = spawn(shellInfo.command, shellInfo.args, {
+      cwd,
+      env: process.env,
+      windowsHide: true,
+      detached: process.platform !== "win32",
+    });
+    const record: TerminalProcessRecord = {
+      id: randomUUID(),
+      command,
+      cwd,
+      shell: shellInfo.label,
+      pid: child.pid,
+      startedAt: Date.now(),
+      stdoutTail: "",
+      stderrTail: "",
+      status: "running",
+      child,
+    };
+
+    terminalProcesses.set(record.id, record);
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      record.stdoutTail = appendTerminalTail(record.stdoutTail, chunk);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      record.stderrTail = appendTerminalTail(record.stderrTail, chunk);
+    });
+    child.on("error", (error) => {
+      finishTerminalProcess(record, { exitCode: null, error: error.message });
+    });
+    child.on("close", (code, signal) => {
+      finishTerminalProcess(record, { exitCode: code, signal });
+    });
+
+    return { success: true, process: toTerminalProcessInfo(record) };
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) };
+  }
+}
+
+function listTerminalProcessesForRenderer(): {
+  success: boolean;
+  processes: TerminalProcessInfo[];
+} {
+  const processes = [...terminalProcesses.values()]
+    .sort((left, right) => {
+      if (left.status === "running" && right.status !== "running") return -1;
+      if (left.status !== "running" && right.status === "running") return 1;
+      return right.startedAt - left.startedAt;
+    })
+    .map(toTerminalProcessInfo);
+  return { success: true, processes };
+}
+
+async function stopTerminalProcessForRenderer(request: unknown): Promise<{
+  success: boolean;
+  process?: TerminalProcessInfo;
+  error?: string;
+}> {
+  const id = readTerminalProcessId(request);
+  const record = id ? terminalProcesses.get(id) : undefined;
+  if (!record) {
+    return { success: false, error: "后台进程不存在或已清理。" };
+  }
+  if (record.status !== "running") {
+    return { success: true, process: toTerminalProcessInfo(record) };
+  }
+
+  record.stopRequested = true;
+  try {
+    await stopProcessTree(record);
+    return { success: true, process: toTerminalProcessInfo(record) };
+  } catch (error) {
+    record.error = getErrorMessage(error);
+    return { success: false, process: toTerminalProcessInfo(record), error: record.error };
+  }
+}
+
+function cleanupTerminalProcesses(): void {
+  for (const record of terminalProcesses.values()) {
+    if (record.status !== "running") continue;
+    record.stopRequested = true;
+    stopProcessTreeSync(record);
+  }
 }
 
 function runTerminalCommandForRenderer(request: unknown): Promise<{
@@ -1555,6 +1802,7 @@ ipcMain.handle("plugins:getOpenComputerUseStatus", () => getOpenComputerUsePlugi
 ipcMain.handle("plugins:checkOpenComputerUseUpdate", () => checkOpenComputerUsePluginUpdate());
 ipcMain.handle("plugins:installOpenComputerUse", () => installOpenComputerUsePlugin());
 ipcMain.handle("plugins:updateOpenComputerUse", () => updateOpenComputerUsePlugin());
+ipcMain.handle("plugins:getClaudeCodePluginDetails", () => resolveClaudeCodePluginDetails());
 ipcMain.handle("plugins:getFigmaOfficialStatus", () => getFigmaOfficialPluginStatus());
 ipcMain.handle("plugins:installFigmaOfficial", () => installFigmaOfficialPlugin());
 ipcMain.handle("plugins:connectFigmaOfficial", () => connectFigmaOfficialPlugin());
@@ -1562,6 +1810,9 @@ ipcMain.handle("plugins:connectFigmaCodexOfficial", () => connectFigmaCodexOffic
 ipcMain.handle("plugins:connectFigmaPatOfficial", (_event, token: unknown) => connectFigmaPatOfficialPlugin(token));
 ipcMain.handle("plugins:connectFigmaDesktopOfficial", () => connectFigmaDesktopOfficialPlugin());
 ipcMain.handle("terminal:run", (_event, request: unknown) => runTerminalCommandForRenderer(request));
+ipcMain.handle("terminal:start", (_event, request: unknown) => startTerminalProcessForRenderer(request));
+ipcMain.handle("terminal:list", () => listTerminalProcessesForRenderer());
+ipcMain.handle("terminal:stop", (_event, request: unknown) => stopTerminalProcessForRenderer(request));
 ipcMain.handle("shell:openExternal", async (_event, url: unknown) => {
   if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
     return { success: false, error: "Invalid external URL." };
@@ -1891,6 +2142,7 @@ function cleanup(): void {
   setBrowserToolHost(null);
   setDesignToolHost(null);
   closeAllBrowserWorkbenches();
+  cleanupTerminalProcesses();
     cleanupAllSessions();
     killViteDevServer();
 }
@@ -3178,6 +3430,15 @@ app.on("ready", async () => {
             }
             if (channel === "terminal:run") {
               return await runTerminalCommandForRenderer(args[0]);
+            }
+            if (channel === "terminal:start") {
+              return startTerminalProcessForRenderer(args[0]);
+            }
+            if (channel === "terminal:list") {
+              return listTerminalProcessesForRenderer();
+            }
+            if (channel === "terminal:stop") {
+              return await stopTerminalProcessForRenderer(args[0]);
             }
             if (channel === "codegraph:status" || channel === "codegraph:sync") {
               return await handleCodeGraphUiInvoke(channel, args[0]);

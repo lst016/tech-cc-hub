@@ -18,6 +18,7 @@ function codeGraphUsageLines(indent = ""): string[] {
   return [
     `${indent}For each new user turn that needs source-code evidence, try CodeGraph as the primary code map when an index is already available: call mcp__tech-cc-hub-knowledge__codegraph_search or mcp__tech-cc-hub-knowledge__codegraph_context before broad Read/Grep/Glob/Task exploration.`,
     `${indent}Fall back to focused Read/Grep/Glob/Task immediately after CodeGraph finds no useful result, reports an unavailable/uninitialized index, or returns an error; do not retry a failed CodeGraph lookup in the same turn.`,
+    `${indent}If CodeGraph is slow, times out, or says it is temporarily bypassed, stop using CodeGraph for that turn and switch to focused Read/Grep/Glob/Task; older or busy machines may make local graph retrieval slower than source search.`,
     `${indent}Do not re-read source code that codegraph_context already returned unless you need to verify a small changed range.`,
     `${indent}CodeGraph retrieval tools are fast-path only: they do not auto-initialize .tech/codegraph or run incremental sync before retrieval. Use codegraph_sync mode=index only for explicit refresh/indexing requests.`,
   ];

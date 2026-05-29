@@ -34,6 +34,17 @@ describe("browser annotation hover preview", () => {
     assert.match(source, /\.__tech_cc_hub_background\{[^"]*z-index:50/);
   });
 
+  it("isolates annotation chrome inside a shadow root so page CSS cannot leak into it", () => {
+    const source = readFileSync("src/electron/browser-manager.ts", "utf8");
+
+    assert.match(source, /host\.id = "__tech_cc_hub_annotation_host__"/);
+    assert.match(source, /host\.attachShadow\(\{ mode: "open" \}\)/);
+    assert.match(source, /const root = annotationRoot\(\)/);
+    assert.match(source, /root\.appendChild\(style\)/);
+    assert.match(source, /root\.appendChild\(layer\)/);
+    assert.match(source, /event\.composedPath\(\)/);
+  });
+
   it("keys annotations by the exact clicked DOM path before promoted selectors", () => {
     const source = readFileSync("src/electron/browser-manager.ts", "utf8");
 
@@ -54,7 +65,7 @@ describe("browser annotation hover preview", () => {
   });
 
   it("keeps prompt annotation removals synced with BrowserView markers", () => {
-    const promptInputSource = readFileSync("src/ui/components/PromptInput.tsx", "utf8");
+    const promptInputSource = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
     const preloadSource = readFileSync("src/electron/preload.cts", "utf8");
     const mainSource = readFileSync("src/electron/main.ts", "utf8");
     const managerSource = readFileSync("src/electron/browser-manager.ts", "utf8");
@@ -91,7 +102,7 @@ describe("browser annotation hover preview", () => {
 
   it("serializes live style edits into browser annotation prompts", () => {
     const managerSource = readFileSync("src/electron/browser-manager.ts", "utf8");
-    const promptInputSource = readFileSync("src/ui/components/PromptInput.tsx", "utf8");
+    const promptContextSource = readFileSync("src/ui/components/prompt-input/prompt-context-blocks.ts", "utf8");
     const typesSource = readFileSync("types.d.ts", "utf8");
 
     assert.match(managerSource, /annotation\.styleEdits = \{ source: "flux-like-advanced-annotation-panel", changes \}/);
@@ -100,22 +111,22 @@ describe("browser annotation hover preview", () => {
     assert.match(managerSource, /function applyCssText\(annotation, cssText\)/);
     assert.match(managerSource, /cssEditor\.addEventListener\("keydown"/);
     assert.match(managerSource, /refreshStyleEdits\(annotation, element\)/);
-    assert.match(promptInputSource, /styleEdits: annotation\.styleEdits/);
-    assert.match(promptInputSource, /If an item has styleEdits/);
+    assert.match(promptContextSource, /styleEdits: annotation\.styleEdits/);
+    assert.match(promptContextSource, /If an item has styleEdits/);
     assert.match(typesSource, /styleEdits\?: \{/);
   });
 
   it("carries simple computed CSS in hover cards and annotation prompts", () => {
     const managerSource = readFileSync("src/electron/browser-manager.ts", "utf8");
-    const promptInputSource = readFileSync("src/ui/components/PromptInput.tsx", "utf8");
+    const promptContextSource = readFileSync("src/ui/components/prompt-input/prompt-context-blocks.ts", "utf8");
     const typesSource = readFileSync("types.d.ts", "utf8");
 
     assert.match(managerSource, /function getSimpleComputedStyle\(element\)/);
     assert.match(managerSource, /computedStyle: getSimpleComputedStyle\(element\)/);
     assert.match(managerSource, /appendHoverCardRow\(hoverCard, "color", hoverColorValue\(style\.color\)\)/);
     assert.match(managerSource, /appendHoverCardRow\(hoverCard, "font", \[style\["font-size"\], style\["font-family"\]\]\.filter\(Boolean\)\.join\(" "\)\)/);
-    assert.match(promptInputSource, /computedStyle: annotation\.domHint\.computedStyle/);
-    assert.match(promptInputSource, /If dom\.computedStyle exists/);
+    assert.match(promptContextSource, /computedStyle: annotation\.domHint\.computedStyle/);
+    assert.match(promptContextSource, /If dom\.computedStyle exists/);
     assert.match(typesSource, /computedStyle\?: Record<string, string>/);
   });
 });
