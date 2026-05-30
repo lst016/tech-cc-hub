@@ -1,6 +1,6 @@
 import { readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import type { Dirent } from "node:fs";
-import { extname, isAbsolute, join, relative } from "node:path";
+import { dirname, extname, isAbsolute, join, relative } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 
 const DEFAULT_DIRECTORY_ENTRY_LIMIT = 300;
@@ -479,7 +479,7 @@ export async function renamePreviewEntryForRenderer(request: unknown): Promise<P
 
     const payload = request as PreviewPathRequest & { newName?: unknown };
     const newName = typeof payload.newName === "string" ? payload.newName.trim() : "";
-    if (!parseCwd(payload.cwd) || !parsePath(payload.path) || !newName || /[\\/]/.test(newName)) {
+    if (!parseCwd(payload.cwd) || !parsePath(payload.path) || !newName || newName === "." || newName === ".." || /[\\/\0]/.test(newName)) {
       return { success: false, error: "缺少工作目录、路径或合法新名称。" };
     }
 
@@ -491,7 +491,11 @@ export async function renamePreviewEntryForRenderer(request: unknown): Promise<P
       return { success: false, path: resolved.realPath, error: "只能重命名当前工作目录内的子文件。" };
     }
 
-    const newPath = join(resolved.realPath.split(/[\\/]/).slice(0, -1).join("/"), newName);
+    const newPath = join(dirname(resolved.realPath), newName);
+    if (!isPathInsideRoot(resolved.rootPath, newPath)) {
+      return { success: false, path: resolved.realPath, error: "只能重命名当前工作目录内的子文件。" };
+    }
+
     await rename(resolved.realPath, newPath);
     return { success: true, path: resolved.realPath, newPath };
   } catch (error) {

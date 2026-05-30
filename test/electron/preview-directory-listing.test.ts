@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   listPreviewDirectoryForRenderer,
   listPreviewFilesForRenderer,
+  renamePreviewEntryForRenderer,
 } from "../../src/electron/libs/preview-fs.js";
 
 async function withTempWorkspace<T>(run: (root: string) => Promise<T>): Promise<T> {
@@ -54,5 +55,19 @@ test("preview directory listing sorts before applying the visible-entry cap", as
 
     assert.equal(result.success, true);
     assert.deepEqual(result.entries?.map((entry) => entry.name), ["a-directory", "b-file.ts"]);
+  });
+});
+
+test("preview rename rejects dot path segments that would escape the workspace", async () => {
+  await withTempWorkspace(async (root) => {
+    const nested = join(root, "src");
+    const filePath = join(nested, "keep.ts");
+    await mkdir(nested, { recursive: true });
+    await writeFile(filePath, "export const keep = true;\n", "utf8");
+
+    const result = await renamePreviewEntryForRenderer({ cwd: root, path: filePath, newName: ".." });
+
+    assert.equal(result.success, false);
+    assert.match(result.error ?? "", /合法新名称|当前工作目录/);
   });
 });

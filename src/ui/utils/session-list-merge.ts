@@ -50,11 +50,11 @@ export function hydrateWorkflowView(
 
 function hasWorkflowPayload(session: SessionInfo): boolean {
   return (
-    Object.prototype.hasOwnProperty.call(session, "workflowMarkdown") ||
-    Object.prototype.hasOwnProperty.call(session, "workflowState") ||
-    Object.prototype.hasOwnProperty.call(session, "workflowSourceLayer") ||
-    Object.prototype.hasOwnProperty.call(session, "workflowSourcePath") ||
-    Object.prototype.hasOwnProperty.call(session, "workflowError")
+    session.workflowMarkdown !== undefined ||
+    session.workflowState !== undefined ||
+    session.workflowSourceLayer !== undefined ||
+    session.workflowSourcePath !== undefined ||
+    session.workflowError !== undefined
   );
 }
 

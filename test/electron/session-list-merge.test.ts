@@ -47,6 +47,32 @@ test("lightweight session list merge preserves existing workflow detail", () => 
   assert.equal(merged.workflowError, existing.workflowError);
 });
 
+test("lightweight session list merge preserves workflow detail when undefined fields are serialized", () => {
+  const existing = createExistingSession();
+  const summary = {
+    id: existing.id,
+    title: "Updated title",
+    status: "idle",
+    workflowMarkdown: undefined,
+    workflowState: undefined,
+    workflowSourceLayer: undefined,
+    workflowSourcePath: undefined,
+    workflowError: undefined,
+    createdAt: 100,
+    updatedAt: 200,
+  } satisfies SessionInfo;
+
+  const merged = mergeSessionListSession(existing, summary);
+
+  assert.equal(merged.title, "Updated title");
+  assert.equal(merged.status, "idle");
+  assert.equal(merged.workflowMarkdown, existing.workflowMarkdown);
+  assert.equal(merged.workflowState, existing.workflowState);
+  assert.equal(merged.workflowSourceLayer, existing.workflowSourceLayer);
+  assert.equal(merged.workflowSourcePath, existing.workflowSourcePath);
+  assert.equal(merged.workflowError, existing.workflowError);
+});
+
 test("full session list merge refreshes workflow detail when present", () => {
   const existing = createExistingSession();
   const full: SessionInfo = {
