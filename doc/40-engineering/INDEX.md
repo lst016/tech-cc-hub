@@ -39,6 +39,7 @@ tags:
 - [Spec](preview-workbench/spec.md)
 - [50% VSCode 体验验收清单](preview-workbench/vscode-50-checklist.md)
 - [离线测试名单](preview-workbench/offline-test-list-2026-05-30.md)
+- [性能优化第二轮 Spec](preview-workbench/performance-round-2-spec-2026-05-31.md)
 - 组件：`src/ui/components/PreviewPanel.tsx`、`src/ui/components/AionWorkspacePreviewPane.tsx`
 - BrowserView 集成：`src/electron/main.ts`、`src/electron/browser-manager.ts`
 - 相关调研：`doc/00-research/AionUi-调研报告/`
