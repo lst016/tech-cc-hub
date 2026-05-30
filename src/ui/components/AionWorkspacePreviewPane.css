@@ -491,6 +491,11 @@
   opacity: 0;
 }
 
+.vscode-preview__tab-dot--dirty {
+  background: #d97706;
+  opacity: 1;
+}
+
 .vscode-preview__tab--active .vscode-preview__tab-dot {
   opacity: 1;
 }

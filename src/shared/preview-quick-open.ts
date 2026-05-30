@@ -5,6 +5,11 @@ export type PreviewQuickOpenEntry = {
   size?: number;
 };
 
+export type PreviewQuickOpenFilterOptions = {
+  recentPaths?: readonly string[];
+  activePath?: string;
+};
+
 type RankedPreviewQuickOpenEntry = {
   entry: PreviewQuickOpenEntry;
   score: number;
@@ -16,6 +21,16 @@ function normalizePathForQuickOpen(value: string): string {
 
 function compactQuickOpenToken(value: string): string {
   return normalizePathForQuickOpen(value).replace(/[^a-z0-9\u4e00-\u9fff]+/g, "");
+}
+
+function buildRecentPathIndex(recentPaths: readonly string[] | undefined): Map<string, number> {
+  const indexByPath = new Map<string, number>();
+  for (const path of recentPaths ?? []) {
+    const normalizedPath = normalizePathForQuickOpen(path.trim());
+    if (!normalizedPath || indexByPath.has(normalizedPath)) continue;
+    indexByPath.set(normalizedPath, indexByPath.size);
+  }
+  return indexByPath;
 }
 
 function scoreFuzzySubsequence(needle: string, haystack: string): number | null {
@@ -37,9 +52,55 @@ function scoreFuzzySubsequence(needle: string, haystack: string): number | null 
   return score + (haystack.length - needle.length) / 80;
 }
 
-export function scorePreviewQuickOpenEntry(entry: PreviewQuickOpenEntry, query: string): number | null {
+function applyQuickOpenContextScore(
+  score: number,
+  entryPath: string,
+  tokenCount: number,
+  recentPathIndex: Map<string, number>,
+  normalizedActivePath: string,
+): number {
+  const recentIndex = recentPathIndex.get(entryPath);
+
+  if (tokenCount === 0) {
+    if (entryPath === normalizedActivePath) {
+      return score - 3_000;
+    }
+    if (recentIndex !== undefined) {
+      return score - 2_000 + recentIndex;
+    }
+    // Keep non-recent files below MRU results when query is empty.
+    return score + 200;
+  }
+
+  let nextScore = score;
+  if (recentIndex !== undefined) {
+    nextScore -= Math.max(0.5, 2.5 - recentIndex * 0.08);
+  }
+  if (entryPath === normalizedActivePath) {
+    nextScore -= 0.7;
+  }
+  return nextScore;
+}
+
+export function scorePreviewQuickOpenEntry(
+  entry: PreviewQuickOpenEntry,
+  query: string,
+  options: PreviewQuickOpenFilterOptions = {},
+): number | null {
   const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return 0;
+  const recentPathIndex = buildRecentPathIndex(options.recentPaths);
+  const normalizedActivePath = normalizePathForQuickOpen(options.activePath?.trim() || "");
+  const normalizedEntryPath = normalizePathForQuickOpen(entry.path);
+
+  if (tokens.length === 0) {
+    return applyQuickOpenContextScore(
+      0,
+      normalizedEntryPath,
+      0,
+      recentPathIndex,
+      normalizedActivePath,
+    );
+  }
 
   const relativePath = normalizePathForQuickOpen(entry.relativePath);
   const name = entry.name.toLowerCase();
@@ -79,17 +140,24 @@ export function scorePreviewQuickOpenEntry(entry: PreviewQuickOpenEntry, query: 
       : 20 + (pathFuzzyScore ?? 0);
   }
 
-  return score;
+  return applyQuickOpenContextScore(
+    score,
+    normalizedEntryPath,
+    tokens.length,
+    recentPathIndex,
+    normalizedActivePath,
+  );
 }
 
 export function filterPreviewQuickOpenEntries(
   entries: readonly PreviewQuickOpenEntry[],
   query: string,
   limit = 40,
+  options: PreviewQuickOpenFilterOptions = {},
 ): PreviewQuickOpenEntry[] {
   const ranked: RankedPreviewQuickOpenEntry[] = [];
   for (const entry of entries) {
-    const score = scorePreviewQuickOpenEntry(entry, query);
+    const score = scorePreviewQuickOpenEntry(entry, query, options);
     if (score === null) continue;
     ranked.push({ entry, score });
   }
