@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   buildActivityRailModel,
+  limitActivityRailSessionMessages,
   type ActivityDetailRow,
   type ActivityDetailSection,
   type ActivityExecutionMetrics,
@@ -520,7 +521,8 @@ function buildWorkflowOptimizationPrompt(
   ].join("\n");
 }
 export function buildSessionWorkflowOptimizationPrompt(session: SessionView | undefined, partialMessage = ""): string {
-  const model = buildActivityRailModel(session, session?.permissionRequests ?? [], "");
+  const modelSession = session ? limitActivityRailSessionMessages(session, 1_200) : undefined;
+  const model = buildActivityRailModel(modelSession, modelSession?.permissionRequests ?? [], "");
   const roundGroups = buildRoundTraceGroups(model.timeline, session?.status);
   const baseGroups: TraceGroup[] = roundGroups.length > 0
     ? roundGroups
@@ -2257,9 +2259,13 @@ export function SessionAnalysisPage({
   onBack: () => void;
   onSendWorkflowOptimizationPrompt: (prompt: string) => void;
 }) {
-  const model = useMemo(
-    () => buildActivityRailModel(session, session?.permissionRequests ?? [], ""),
+  const modelSession = useMemo(
+    () => session ? limitActivityRailSessionMessages(session, 1_200) : undefined,
     [session],
+  );
+  const model = useMemo(
+    () => buildActivityRailModel(modelSession, modelSession?.permissionRequests ?? [], ""),
+    [modelSession],
   );
   const liveDraftPreview = useMemo(() => truncate(partialMessage.trim(), 120), [partialMessage]);
   const liveDraftChars = partialMessage.length;

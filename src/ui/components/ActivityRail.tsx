@@ -1,6 +1,7 @@
 import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildActivityRailModel,
+  limitActivityRailSessionMessages,
   type ActivityAnalysisCard,
   type ActivityDetailSection,
   type ActivityExecutionMetrics,
@@ -1312,9 +1313,14 @@ export function ActivityRail({
 }) {
   const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-12" : "top-10";
   const showLabels = width >= 300;
+  const deferredSession = useDeferredValue(session);
+  const modelSession = useMemo(
+    () => deferredSession ? limitActivityRailSessionMessages(deferredSession) : undefined,
+    [deferredSession],
+  );
   const model = useMemo(
-    () => buildActivityRailModel(session, session?.permissionRequests ?? [], ""),
-    [session],
+    () => buildActivityRailModel(modelSession, modelSession?.permissionRequests ?? [], ""),
+    [modelSession],
   );
   const visibleTimeline = useMemo(
     () => model.timeline.slice(0, INLINE_TRACE_TIMELINE_LIMIT),

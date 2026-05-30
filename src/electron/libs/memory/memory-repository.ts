@@ -253,17 +253,20 @@ export class MemoryRepository {
     }));
   }
 
-  listAll(workspaceScope?: MemoryScope): MemoryEntry[] {
+  listAll(workspaceScope?: MemoryScope, options?: { limit?: number }): MemoryEntry[] {
     const scopes = workspaceScope ? ["global", workspaceScope] : ["global"];
+    const limit = typeof options?.limit === "number" && Number.isFinite(options.limit)
+      ? Math.max(1, Math.floor(options.limit))
+      : undefined;
     const rows = this.db
       .prepare(
         `SELECT *
          FROM memories
          WHERE deleted_at IS NULL
            AND scope IN (${scopes.map(() => "?").join(",")})
-         ORDER BY updated_at DESC`,
+         ORDER BY updated_at DESC${limit === undefined ? "" : " LIMIT ?"}`,
       )
-      .all(...scopes) as Row[];
+      .all(...scopes, ...(limit === undefined ? [] : [limit])) as Row[];
     return rows.map((row) => this.rowToMemory(row));
   }
 

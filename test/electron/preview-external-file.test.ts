@@ -1,16 +1,40 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-test("preview read allows absolute files outside the active workspace without widening tree browsing", () => {
-  const mainSource = readFileSync("src/electron/main.ts", "utf8");
-  const viteSource = readFileSync("vite.config.ts", "utf8");
+import {
+  listPreviewDirectoryForRenderer,
+  readPreviewFileForRenderer,
+} from "../../src/electron/libs/preview-fs.js";
 
-  assert.match(mainSource, /if \(!isAbsolute\(rawPath\) && !isPathInsideRoot\(rootPath, realPath\)\)/);
-  assert.match(viteSource, /allowAbsoluteOutsideRoot\?: boolean/);
-  assert.match(viteSource, /options\.allowAbsoluteOutsideRoot && isAbsolute\(rawPath\)/);
-  assert.match(viteSource, /__tech_preview\/read[\s\S]*allowAbsoluteOutsideRoot: true/);
-  assert.doesNotMatch(viteSource, /__tech_preview\/list[\s\S]{0,260}allowAbsoluteOutsideRoot: true/);
+async function withTempRoots<T>(run: (workspace: string, externalRoot: string) => Promise<T>): Promise<T> {
+  const root = await mkdtemp(join(tmpdir(), "preview-external-"));
+  const workspace = join(root, "workspace");
+  const externalRoot = join(root, "external");
+  await mkdir(workspace, { recursive: true });
+  await mkdir(externalRoot, { recursive: true });
+  try {
+    return await run(workspace, externalRoot);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test("preview read allows absolute files outside the active workspace without widening tree browsing", async () => {
+  await withTempRoots(async (workspace, externalRoot) => {
+    const externalFile = join(externalRoot, "note.md");
+    await writeFile(externalFile, "# external\n", "utf8");
+
+    const readResult = await readPreviewFileForRenderer({ cwd: workspace, path: externalFile });
+    const listResult = await listPreviewDirectoryForRenderer({ cwd: workspace, path: externalRoot });
+
+    assert.equal(readResult.success, true);
+    assert.equal(readResult.content, "# external\n");
+    assert.equal(listResult.success, false);
+  });
 });
 
 test("preview pane retries external absolute files from their containing directory", () => {

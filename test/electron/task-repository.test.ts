@@ -25,8 +25,9 @@ function createTask(overrides: Partial<ExternalTask> = {}): ExternalTask {
   };
 }
 
-test("task repository persists execution controls, usage, subtasks and artifacts", () => {
+test("task repository persists execution controls, usage, subtasks and artifacts", (t) => {
   const repo = createRepo();
+  t.after(() => repo.close());
   const task = repo.upsertTask(createTask());
 
   repo.setExecuting(task.id, "session-1", {
@@ -76,8 +77,9 @@ test("task repository persists execution controls, usage, subtasks and artifacts
   assert.equal(bundle.artifacts[0]?.path, "/tmp/task-workspace/src/api.ts");
 });
 
-test("task repository handles retry cancellation, pause and interrupted recovery", () => {
+test("task repository handles retry cancellation, pause and interrupted recovery", (t) => {
   const repo = createRepo();
+  t.after(() => repo.close());
   const task = repo.upsertTask(createTask({ externalId: "ext-2" }));
 
   const retrying = repo.scheduleRetry(task.id, 1, Date.now() + 1000, "临时失败");
@@ -102,4 +104,42 @@ test("task repository handles retry cancellation, pause and interrupted recovery
   const paused = repo.markPaused(task.id, "用户暂停");
   assert.equal(paused?.localStatus, "paused");
   assert.equal(paused?.lastError, "用户暂停");
+});
+
+test("task execution bundles can be bounded for renderer payloads", (t) => {
+  const repo = createRepo();
+  t.after(() => repo.close());
+  const task = repo.upsertTask(createTask({ externalId: "ext-bounded" }));
+  const older = repo.createExecution({
+    taskId: task.id,
+    sessionId: "session-old",
+    status: "completed",
+    attempt: 1,
+    startedAt: 1000,
+  });
+  const newer = repo.createExecution({
+    taskId: task.id,
+    sessionId: "session-new",
+    status: "running",
+    attempt: 2,
+    startedAt: 2000,
+  });
+
+  for (let index = 0; index < 5; index += 1) {
+    repo.appendLog({
+      taskId: task.id,
+      executionId: index < 2 ? older.id : newer.id,
+      level: "info",
+      message: `log-${index}`,
+      timestamp: 3000 + index,
+    });
+  }
+
+  const bundle = repo.getExecutionBundle(task.id, {
+    executionLimit: 1,
+    logLimit: 3,
+  });
+
+  assert.deepEqual(bundle.executions.map((execution) => execution.sessionId), ["session-new"]);
+  assert.deepEqual(bundle.logs.map((log) => log.message), ["log-2", "log-3", "log-4"]);
 });

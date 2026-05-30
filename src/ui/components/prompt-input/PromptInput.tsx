@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import type { SetStateAction } from "react";
 import { ArrowUp, Menu, Sparkles, Square } from "lucide-react";
@@ -203,6 +203,7 @@ export function PromptInput({
     () => getFileMentionContext(prompt, cursorIndex || prompt.length),
     [cursorIndex, prompt],
   );
+  const deferredFileMentionQuery = useDeferredValue(fileMentionContext?.query ?? "");
   const currentSessionQueue = useMemo(() => {
     if (!activeSessionId) return [];
     return queuedMessagesBySession[activeSessionId] ?? [];
@@ -235,7 +236,7 @@ export function PromptInput({
     && !disabled;
   const filteredFileMentionOptions = useMemo(() => {
     if (!fileMentionContext) return [];
-    const query = normalizeMentionPath(fileMentionContext.query.replace(/^["']|["']$/g, "")).toLowerCase();
+    const query = normalizeMentionPath(deferredFileMentionQuery.replace(/^["']|["']$/g, "")).toLowerCase();
     if (!query) {
       return fileMentionOptions.slice(0, FILE_MENTION_PREVIEW_LIMIT);
     }
@@ -254,7 +255,7 @@ export function PromptInput({
       .sort((a, b) => a.score - b.score || a.option.label.localeCompare(b.option.label, "zh-CN"))
       .slice(0, FILE_MENTION_PREVIEW_LIMIT)
       .map((item) => item.option);
-  }, [fileMentionContext, fileMentionOptions]);
+  }, [deferredFileMentionQuery, fileMentionContext, fileMentionOptions]);
   const showFileMentionPalette = Boolean(fileMentionContext) && !showSlashPalette && !disabled && (fileMentionLoading || filteredFileMentionOptions.length > 0);
   const enabledProfiles = useMemo<ApiConfigProfile[]>(() => getEnabledProfiles(apiConfigSettings.profiles), [apiConfigSettings.profiles]);
   const routedModelOptions = useMemo(() => getRoutedModelOptionsForProfiles(enabledProfiles), [enabledProfiles]);

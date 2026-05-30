@@ -1,6 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactElement } from 'react';
-import Editor, { loader } from '@monaco-editor/react';
-import * as monaco from 'monaco-editor';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactElement } from 'react';
 import { ChevronLeft, ChevronRight, LocateFixed, RefreshCw } from 'lucide-react';
 import { PROMPT_FOCUS_EVENT, PROMPT_SENT_EVENT, PROMPT_SUBMIT_EVENT } from '../events';
 import {
@@ -30,52 +28,10 @@ import {
   markPreviewTabContent,
 } from '../utils/preview-tab-state';
 import MDContent from '../render/markdown';
+import type { PreviewDecorationCollection, PreviewEditor, PreviewMonaco, PreviewSelection } from './PreviewMonacoEditor';
 import './AionWorkspacePreviewPane.css';
 
-type MonacoWorkerEnvironment = typeof self & {
-  MonacoEnvironment?: {
-    getWorker?: (_: string, label: string) => Worker;
-  };
-};
-
-type MonacoTypeScriptDefaults = {
-  setCompilerOptions: (options: Record<string, unknown>) => void;
-  setDiagnosticsOptions: (options: Record<string, unknown>) => void;
-};
-
-type MonacoTypeScriptRuntime = {
-  JsxEmit?: { Preserve?: number };
-  ModuleKind?: { ESNext?: number };
-  ModuleResolutionKind?: { NodeJs?: number };
-  ScriptTarget?: { ESNext?: number };
-  typescriptDefaults?: MonacoTypeScriptDefaults;
-  javascriptDefaults?: MonacoTypeScriptDefaults;
-};
-
-const monacoGlobal = self as MonacoWorkerEnvironment;
-let previewMonacoDefaultsConfigured = false;
-
-if (!monacoGlobal.MonacoEnvironment?.getWorker) {
-  monacoGlobal.MonacoEnvironment = {
-    getWorker(_: string, label: string) {
-      if (label === 'json') {
-        return new Worker(new URL('monaco-editor/esm/vs/language/json/json.worker.js', import.meta.url), { type: 'module' });
-      }
-      if (label === 'css' || label === 'scss' || label === 'less') {
-        return new Worker(new URL('monaco-editor/esm/vs/language/css/css.worker.js', import.meta.url), { type: 'module' });
-      }
-      if (label === 'html' || label === 'handlebars' || label === 'razor') {
-        return new Worker(new URL('monaco-editor/esm/vs/language/html/html.worker.js', import.meta.url), { type: 'module' });
-      }
-      if (label === 'typescript' || label === 'javascript') {
-        return new Worker(new URL('monaco-editor/esm/vs/language/typescript/ts.worker.js', import.meta.url), { type: 'module' });
-      }
-      return new Worker(new URL('monaco-editor/esm/vs/editor/editor.worker.js', import.meta.url), { type: 'module' });
-    },
-  };
-}
-
-loader.config({ monaco });
+const PreviewMonacoEditor = lazy(() => import('./PreviewMonacoEditor').then((module) => ({ default: module.PreviewMonacoEditor })));
 
 const ROOT_DEPTH = 0;
 const EMPTY_CODE_REFERENCES: CodeReferenceDraft[] = [];
@@ -617,37 +573,6 @@ function NativeExplorer({
   );
 }
 
-function configurePreviewMonacoDefaults(monacoApi: typeof monaco) {
-  if (previewMonacoDefaultsConfigured) return;
-
-  const typescript = (monacoApi.languages as unknown as { typescript?: MonacoTypeScriptRuntime }).typescript;
-  if (!typescript?.typescriptDefaults || !typescript.javascriptDefaults) return;
-
-  const compilerOptions: Record<string, unknown> = {
-    allowJs: true,
-    allowNonTsExtensions: true,
-    allowSyntheticDefaultImports: true,
-    esModuleInterop: true,
-    jsx: typescript.JsxEmit?.Preserve ?? 1,
-    module: typescript.ModuleKind?.ESNext ?? 99,
-    moduleResolution: typescript.ModuleResolutionKind?.NodeJs ?? 2,
-    target: typescript.ScriptTarget?.ESNext ?? 99,
-  };
-  const diagnosticsOptions: Record<string, unknown> = {
-    noSemanticValidation: true,
-    noSuggestionDiagnostics: true,
-  };
-
-  typescript.typescriptDefaults.setCompilerOptions(compilerOptions);
-  typescript.javascriptDefaults.setCompilerOptions({
-    ...compilerOptions,
-    checkJs: false,
-  });
-  typescript.typescriptDefaults.setDiagnosticsOptions(diagnosticsOptions);
-  typescript.javascriptDefaults.setDiagnosticsOptions(diagnosticsOptions);
-  previewMonacoDefaultsConfigured = true;
-}
-
 function QuickOpenPalette({
   query,
   entries,
@@ -787,11 +712,12 @@ function PreviewSurface({
   const addCodeReference = useAppStore((state) => state.addCodeReference);
   const codeReferences = useAppStore((state) => state.codeReferencesBySessionId[referenceSessionKey] || EMPTY_CODE_REFERENCES);
   const tabScrollerRef = useRef<HTMLDivElement | null>(null);
-  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const editorRef = useRef<PreviewEditor | null>(null);
+  const monacoApiRef = useRef<PreviewMonaco | null>(null);
   const gitHunksRef = useRef<PreviewGitChangeHunk[]>([]);
   const selectionListenerRef = useRef<{ dispose: () => void } | null>(null);
-  const decorationsRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
-  const gitDecorationsRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+  const decorationsRef = useRef<PreviewDecorationCollection | null>(null);
+  const gitDecorationsRef = useRef<PreviewDecorationCollection | null>(null);
   const gitGutterListenerRef = useRef<{ dispose: () => void } | null>(null);
   const [tabScrollState, setTabScrollState] = useState({ canScrollLeft: false, canScrollRight: false });
   const [tabMenu, setTabMenu] = useState<TabContextMenuState | null>(null);
@@ -977,9 +903,10 @@ function PreviewSurface({
   }, [onCloseAllTabs, onCloseOtherTabs, onCloseTab, onCloseTabsToRight, tabMenu]);
 
   const updateReferenceDecorations = useCallback(() => {
-    if (!decorationsRef.current || !file) return;
+    const monacoApi = monacoApiRef.current;
+    if (!decorationsRef.current || !file || !monacoApi) return;
     decorationsRef.current.set(fileReferences.map((reference, index) => ({
-      range: new monaco.Range(reference.startLine, 1, reference.endLine, 1),
+      range: new monacoApi.Range(reference.startLine, 1, reference.endLine, 1),
       options: {
         isWholeLine: true,
         className: 'vscode-preview__referenced-line',
@@ -1003,9 +930,10 @@ function PreviewSurface({
   }, []);
 
   const updateGitDecorations = useCallback(() => {
-    if (!gitDecorationsRef.current || !file) return;
+    const monacoApi = monacoApiRef.current;
+    if (!gitDecorationsRef.current || !file || !monacoApi) return;
     gitDecorationsRef.current.set(gitHunks.map((hunk) => ({
-      range: new monaco.Range(hunk.startLine, 1, hunk.endLine, 1),
+      range: new monacoApi.Range(hunk.startLine, 1, hunk.endLine, 1),
       options: {
         isWholeLine: true,
         className: `vscode-preview__git-line vscode-preview__git-line--${hunk.type}`,
@@ -1164,7 +1092,7 @@ function PreviewSurface({
     return () => window.removeEventListener('keydown', handleTabSwitchShortcut, { capture: true });
   }, [activeTabPath, onSwitchTab, openTabs]);
 
-  const calculateSelectionPosition = useCallback((editor: monaco.editor.IStandaloneCodeEditor, selection: monaco.Selection) => {
+  const calculateSelectionPosition = useCallback((editor: PreviewEditor, selection: PreviewSelection) => {
     const layout = editor.getLayoutInfo();
     const position = editor.getScrolledVisiblePosition({
       lineNumber: selection.endLineNumber,
@@ -1185,8 +1113,9 @@ function PreviewSurface({
     });
   }, []);
 
-  const handleEditorMount = useCallback((editor: monaco.editor.IStandaloneCodeEditor) => {
+  const handleEditorMount = useCallback((editor: PreviewEditor, monacoApi: PreviewMonaco) => {
     editorRef.current = editor;
+    monacoApiRef.current = monacoApi;
     decorationsRef.current = editor.createDecorationsCollection([]);
     gitDecorationsRef.current = editor.createDecorationsCollection([]);
     updateReferenceDecorations();
@@ -1221,11 +1150,12 @@ function PreviewSurface({
 
     gitGutterListenerRef.current?.dispose();
     gitGutterListenerRef.current = editor.onMouseDown((event) => {
+      const mouseTargetType = monacoApi.editor.MouseTargetType;
       const targetType = event.target.type;
       if (
-        targetType !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN
-        && targetType !== monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS
-        && targetType !== monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS
+        targetType !== mouseTargetType.GUTTER_GLYPH_MARGIN
+        && targetType !== mouseTargetType.GUTTER_LINE_DECORATIONS
+        && targetType !== mouseTargetType.GUTTER_LINE_NUMBERS
       ) {
         return;
       }
@@ -1401,37 +1331,16 @@ function PreviewSurface({
             <MDContent text={file.content} />
           </div>
         ) : (
-          <Editor
-            key={file.path}
-            height="100%"
-            language={monacoLanguage}
-            path={monacoModelPath}
-            theme="vs"
-            value={file.content}
-            beforeMount={configurePreviewMonacoDefaults}
-            onMount={handleEditorMount}
-            onChange={(value) => onUpdateFileContent(file.path, value ?? '')}
-            options={{
-              readOnly: false,
-              minimap: { enabled: false },
-              fontSize: 12,
-              lineHeight: 20,
-              fontFamily: 'Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-              wordWrap: 'on',
-              scrollBeyondLastLine: false,
-              renderLineHighlight: 'none',
-              overviewRulerBorder: false,
-              hideCursorInOverviewRuler: true,
-              automaticLayout: true,
-              glyphMargin: true,
-              tabSize: 2,
-              padding: { top: 12, bottom: 18 },
-              scrollbar: {
-                verticalScrollbarSize: 10,
-                horizontalScrollbarSize: 10,
-              },
-            }}
-          />
+          <Suspense fallback={<div className="vscode-preview__loading">Loading editor...</div>}>
+            <PreviewMonacoEditor
+              key={file.path}
+              language={monacoLanguage}
+              path={monacoModelPath ?? file.path}
+              value={file.content}
+              onMount={handleEditorMount}
+              onChange={(value) => onUpdateFileContent(file.path, value)}
+            />
+          </Suspense>
         )}
         {selectionInfo && !file.error && !file.loading && file.contentType === 'code' && (
           <div
@@ -1775,7 +1684,7 @@ export function AionWorkspacePreviewPane({
     setQuickOpenLoading(true);
     setQuickOpenError(undefined);
     try {
-      const result: PreviewQuickOpenResponse = await window.electron.listPreviewFiles({ cwd: workspace, limit: 4_000 });
+      const result: PreviewQuickOpenResponse = await window.electron.listPreviewFiles({ cwd: workspace, limit: 2_000 });
       if (!result.success) {
         setQuickOpenEntries([]);
         setQuickOpenError(result.error || '文件索引失败。');

@@ -12,7 +12,6 @@ import type {
   StreamMessage,
 } from "../types";
 import {
-  parseWorkflowMarkdown,
   type SessionWorkflowState,
   type WorkflowScope,
   type WorkflowSpecDocument,
@@ -25,6 +24,7 @@ import {
   type SessionPlanSnapshot,
 } from "../../shared/plan-progress";
 import { mergeHistoryReplacementMessages, mergeMessages } from "../utils/session-history-merge";
+import { hydrateWorkflowView, mergeSessionListSession } from "../utils/session-list-merge";
 
 export type PermissionRequest = {
   toolUseId: string;
@@ -191,24 +191,6 @@ function createSession(id: string): SessionView {
     permissionRequests: [],
     hydrated: false,
     hasMoreHistory: false,
-  };
-}
-
-function hydrateWorkflowView(
-  markdown?: string,
-  workflowState?: SessionWorkflowState,
-  workflowSourceLayer?: WorkflowScope,
-  workflowSourcePath?: string,
-  workflowError?: string,
-): Pick<SessionView, "workflowMarkdown" | "workflowState" | "workflowSourceLayer" | "workflowSourcePath" | "workflowSpec" | "workflowError"> {
-  const parsed = markdown ? parseWorkflowMarkdown(markdown) : null;
-  return {
-    workflowMarkdown: markdown,
-    workflowState,
-    workflowSourceLayer,
-    workflowSourcePath,
-    workflowSpec: parsed?.ok ? parsed.document ?? undefined : undefined,
-    workflowError: workflowError ?? (parsed && !parsed.ok ? parsed.errors.map((item) => item.message).join("；") : undefined),
   };
 }
 
@@ -776,27 +758,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         for (const session of event.payload.sessions) {
           const existing = (event.payload.archived ? state.archivedSessions[session.id] : state.sessions[session.id])
             ?? createSession(session.id);
-          nextSessions[session.id] = {
-            ...existing,
-            status: session.status,
-            title: session.title,
-            model: session.model,
-            executionMode: session.executionMode,
-            reasoningMode: session.reasoningMode,
-            permissionMode: session.permissionMode,
-            cwd: session.cwd,
-            slashCommands: session.slashCommands ?? existing.slashCommands,
-            ...hydrateWorkflowView(
-              session.workflowMarkdown,
-              session.workflowState,
-              session.workflowSourceLayer,
-              session.workflowSourcePath,
-              session.workflowError,
-            ),
-            archivedAt: session.archivedAt,
-            createdAt: session.createdAt,
-            updatedAt: session.updatedAt
-          };
+          nextSessions[session.id] = mergeSessionListSession(existing, session);
         }
 
         if (event.payload.archived) {

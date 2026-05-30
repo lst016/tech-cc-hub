@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, statSync, type Stats } from "fs";
 import { relative, resolve } from "path";
-import { TaskRepository } from "./repository.js";
+import { TaskRepository, type TaskExecutionBundleOptions } from "./repository.js";
 import { ensureProvider, getTaskProvider, listTaskProviderStates } from "./provider-registry.js";
 import type {
   ExternalTaskStatus,
@@ -844,8 +844,8 @@ export class TaskExecutor {
     return this.repo.getArtifacts(taskId);
   }
 
-  getExecutionBundle(taskId: string) {
-    return this.repo.getExecutionBundle(taskId);
+  getExecutionBundle(taskId: string, options?: TaskExecutionBundleOptions) {
+    return this.repo.getExecutionBundle(taskId, options);
   }
 
   async markTaskStatus(taskId: string, status: ExternalTaskStatus): Promise<StoredTask | undefined> {
@@ -996,9 +996,17 @@ function walkWorkspace(workspacePath: string, visitor: (path: string, stat: Stat
 function shouldSkipPath(path: string): boolean {
   return path.split(/[\\/]/).some((part) =>
     part === ".git" ||
+    part === ".tech" ||
+    part === ".turbo" ||
+    part === ".vite" ||
+    part === "build" ||
+    part === "coverage" ||
     part === "node_modules" ||
     part === "dist" ||
     part === "dist-test" ||
+    part === "dist-electron" ||
+    part === "dist-react" ||
+    part === "out" ||
     part === ".DS_Store" ||
     part === ".cache",
   );

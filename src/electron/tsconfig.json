@@ -4,6 +4,8 @@
         "target": "ESNext",
         "module": "NodeNext",
         "outDir": "../../dist-electron",
+        "incremental": true,
+        "tsBuildInfoFile": "../../dist-electron/.tsbuildinfo",
         "skipLibCheck": true,
         // add global types
         "types": [
