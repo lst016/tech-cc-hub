@@ -2,12 +2,16 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { forwardRef } from "react";
 
 type TooltipButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  tooltip?: string;
+  tooltip?: ReactNode;
+  tooltipLabel?: string;
+  tooltipClassName?: string;
   children: ReactNode;
 };
 
 export const TooltipButton = forwardRef<HTMLButtonElement, TooltipButtonProps>(({
   tooltip,
+  tooltipLabel,
+  tooltipClassName,
   title,
   "aria-label": ariaLabel,
   children,
@@ -15,8 +19,16 @@ export const TooltipButton = forwardRef<HTMLButtonElement, TooltipButtonProps>((
   ...rest
 }, ref) => {
   const resolvedTooltip = tooltip ?? ariaLabel ?? title;
-  const finalTitle = title ?? resolvedTooltip;
-  const finalAriaLabel = ariaLabel ?? resolvedTooltip ?? "按钮";
+  const resolvedTooltipLabel = tooltipLabel ??
+    (typeof tooltip === "string" || typeof tooltip === "number" ? String(tooltip) : undefined) ??
+    ariaLabel ??
+    title;
+  const finalTitle = title ?? resolvedTooltipLabel;
+  const finalAriaLabel = ariaLabel ?? resolvedTooltipLabel ?? "按钮";
+  const tooltipClasses = [
+    "pointer-events-none absolute left-1/2 top-full z-[30001] mt-2 -translate-x-1/2 max-w-[min(360px,calc(100vw-2rem))] whitespace-normal rounded-xl border border-black/10 bg-[rgba(20,24,31,0.96)] px-2.5 py-1.5 text-[11px] font-medium text-white opacity-0 shadow-[0_12px_24px_rgba(15,23,42,0.28)] transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100",
+    tooltipClassName,
+  ].filter(Boolean).join(" ");
 
   if (!resolvedTooltip) {
     return (
@@ -44,7 +56,7 @@ export const TooltipButton = forwardRef<HTMLButtonElement, TooltipButtonProps>((
         {children}
       </button>
       <span
-        className="pointer-events-none absolute left-1/2 top-full z-[30001] mt-2 -translate-x-1/2 whitespace-nowrap rounded-xl border border-black/10 bg-[rgba(20,24,31,0.96)] px-2.5 py-1.5 text-[11px] font-medium text-white opacity-0 shadow-[0_12px_24px_rgba(15,23,42,0.28)] transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100"
+        className={tooltipClasses}
         role="tooltip"
       >
         {resolvedTooltip}
