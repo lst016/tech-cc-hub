@@ -16,7 +16,7 @@ export type ApiModelConfig = {
   routingWeight?: number;
 };
 
-export type ApiProviderMode = "custom" | "deepseek" | "codex";
+export type ApiProviderMode = "custom" | "deepseek" | "codex" | "minimax";
 
 export type ApiConfig = {
   id: string;

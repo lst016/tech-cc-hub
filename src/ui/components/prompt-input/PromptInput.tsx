@@ -265,6 +265,7 @@ export function PromptInput({
     description: option.routeLabel,
     badge: option.routingWeight > 0 ? `W${option.routingWeight}` : option.providerLabel,
     title: `${option.value} -> ${option.routeLabel}`,
+    contextWindow: option.contextWindow,
   })), [routedModelOptions]);
   const activeProfile = enabledProfiles[0];
   const explicitRuntimeModel = activeSessionModel || runtimeModel.trim();

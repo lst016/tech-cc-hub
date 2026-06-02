@@ -17,7 +17,12 @@ type ApiModelConfig = {
     routingWeight?: number;
 }
 
-type ApiProviderMode = "custom" | "deepseek" | "codex";
+type ApiModelsFetchModel = {
+    name: string;
+    contextWindow?: number;
+}
+
+type ApiProviderMode = "custom" | "deepseek" | "codex" | "minimax";
 
 type ApiConfig = {
     id: string;
@@ -189,7 +194,7 @@ type UnsubscribeFunction = () => void;
 
 type ApiModelsFetchResult = {
     success: boolean;
-    models?: string[];
+    models?: ApiModelsFetchModel[];
     baseURL?: string;
     error?: string;
 };

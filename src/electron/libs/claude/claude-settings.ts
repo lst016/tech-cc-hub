@@ -7,14 +7,18 @@ import {
   CODEX_OAUTH_DEFAULT_MODEL,
   CODEX_OAUTH_SMALL_MODEL,
 } from "../../../shared/codex-oauth.js";
+import {
+  MINIMAX_DEFAULT_MODEL,
+  MINIMAX_SMALL_MODEL,
+} from "../../../shared/models/minimax.js";
 import { CLAUDE_AGENT_TEAMS_MIN_CLAUDE_CODE_VERSION } from "../../../shared/claude-agent-teams.js";
 import {
   isModelCompatibleWithApiProvider,
   normalizeProviderModelName,
   pickProviderCompatibleModel,
-} from "../../../shared/model-provider-routing.js";
-import { pickHighestWeightedModelOwner } from "../../../shared/model-routing-weight.js";
-import { pickImagePreprocessConfig } from "../../../shared/image-preprocess-routing.js";
+} from "../../../shared/models/model-provider-routing.js";
+import { pickImagePreprocessConfig } from "../../../shared/models/image-preprocess-routing.js";
+import { pickHighestWeightedModelOwner } from "../../../shared/models/model-routing-weight.js";
 import {
   loadApiConfigSettings,
   loadGlobalRuntimeConfig,
@@ -429,6 +433,10 @@ function getProviderDefaultModel(config: ApiConfig, slot: "main" | "small"): str
 
   if (config.provider === "deepseek") {
     return "deepseek-v4-flash";
+  }
+
+  if (config.provider === "minimax") {
+    return slot === "small" ? MINIMAX_SMALL_MODEL : MINIMAX_DEFAULT_MODEL;
   }
 
   return config.model;

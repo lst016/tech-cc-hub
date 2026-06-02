@@ -8,10 +8,11 @@ import {
 } from "fs";
 import { join } from "path";
 import { CODEX_OAUTH_BASE_URL } from "../../shared/codex-oauth.js";
-import { normalizeModelRoutingWeight } from "../../shared/model-routing-weight.js";
+import { MINIMAX_ANTHROPIC_BASE_URL } from "../../shared/models/minimax.js";
+import { normalizeModelRoutingWeight } from "../../shared/models/model-routing-weight.js";
 
 export type ApiType = "anthropic";
-export type ApiProviderMode = "custom" | "deepseek" | "codex";
+export type ApiProviderMode = "custom" | "deepseek" | "codex" | "minimax";
 
 export type ApiModelConfig = {
   name: string;
@@ -254,7 +255,7 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
 }
 
 function normalizeProvider(value: unknown, baseURL: string): ApiProviderMode {
-  if (value === "custom" || value === "deepseek" || value === "codex") {
+  if (value === "custom" || value === "deepseek" || value === "codex" || value === "minimax") {
     return value;
   }
 
@@ -262,6 +263,7 @@ function normalizeProvider(value: unknown, baseURL: string): ApiProviderMode {
     const hostname = new URL(baseURL.trim()).hostname;
     if (hostname === "api.deepseek.com") return "deepseek";
     if (hostname === "chatgpt.com") return "codex";
+    if (hostname === "api.minimax.io") return "minimax";
     return "custom";
   } catch {
     return "custom";
@@ -274,6 +276,9 @@ function normalizeBaseURL(value: string, provider: ApiProviderMode): string {
   }
   if (provider === "codex") {
     return CODEX_OAUTH_BASE_URL;
+  }
+  if (provider === "minimax") {
+    return MINIMAX_ANTHROPIC_BASE_URL;
   }
 
   const trimmed = value.trim();

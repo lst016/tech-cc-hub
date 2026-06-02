@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import type { RuntimeReasoningMode } from "../../types";
-import type { ModelOption } from "../ModelSelect";
+import type { ModelOption } from "../models/ModelSelect";
 
 type ComposerModelMenuProps = {
   modelValue: string;
@@ -23,6 +23,11 @@ const CONTEXT_OPTIONS = [
   { value: "400K", label: "400K", defaultFor: [] },
   { value: "1M", label: "1M", defaultFor: ["deepseek", "qwen", "glm", "kimi", "minimax"] },
 ];
+
+type ContextDisplayOption = {
+  value: string;
+  label: string;
+};
 
 const THINKING_OPTIONS: Array<{ value: RuntimeReasoningMode; label: string }> = [
   { value: "disabled", label: "关闭" },
@@ -50,7 +55,7 @@ export function ComposerModelMenu({
   const selectedOption = displayOptions.find((option) => option.value === modelValue);
   const selectedLabel = selectedOption?.displayLabel || modelValue || placeholder;
   const selectedKind = getModelKind(selectedOption?.value ?? modelValue, selectedOption?.displayLabel);
-  const selectedContextValue = getDefaultContextValue(selectedKind);
+  const selectedContext = getContextDisplay(selectedOption?.contextWindow, selectedKind);
   const selectedThinkingLabel = getReasoningTriggerLabel(reasoningValue);
 
   const closeMenu = useCallback(() => {
@@ -130,8 +135,8 @@ export function ComposerModelMenu({
             <div className="mb-4">
               <div className="mb-2 px-1 text-[12px] font-semibold text-[#73777f]">Context</div>
               <div className="grid gap-1">
-                {CONTEXT_OPTIONS.map((option) => {
-                  const selected = option.value === selectedContextValue;
+                {selectedContext.options.map((option) => {
+                  const selected = option.value === selectedContext.value;
                   return (
                     <div
                       key={option.value}
@@ -139,7 +144,7 @@ export function ComposerModelMenu({
                     >
                       <span className="flex min-w-0 items-baseline gap-2">
                         <span>{option.label}</span>
-                        {selected && <span className="text-[12px] font-medium text-[#8a8f98]">Default</span>}
+                        {selected && <span className="text-[12px] font-medium text-[#8a8f98]">{selectedContext.sourceLabel}</span>}
                       </span>
                       {selected && <Check className="h-4 w-4 text-[#6f7480]" aria-hidden="true" />}
                     </div>
@@ -230,6 +235,44 @@ function getModelKind(value: string, label = value): string {
 
 function getDefaultContextValue(kind: string): string {
   return CONTEXT_OPTIONS.find((option) => option.defaultFor.includes(kind))?.value ?? "200K";
+}
+
+function getContextDisplay(contextWindow: number | undefined, kind: string): {
+  value: string;
+  sourceLabel: string;
+  options: ContextDisplayOption[];
+} {
+  const configuredValue = formatContextWindow(contextWindow);
+  const value = configuredValue ?? getDefaultContextValue(kind);
+  const sourceLabel = configuredValue ? "配置" : "Default";
+  const options = CONTEXT_OPTIONS.map((option) => ({
+    value: option.value,
+    label: option.label,
+  }));
+
+  if (configuredValue && !options.some((option) => option.value === configuredValue)) {
+    options.unshift({ value: configuredValue, label: configuredValue });
+  }
+
+  return {
+    value,
+    sourceLabel,
+    options,
+  };
+}
+
+function formatContextWindow(value: number | undefined): string | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+
+  if (value >= 1_000_000 && value % 1_000_000 === 0) {
+    return `${value / 1_000_000}M`;
+  }
+  if (value >= 1_000 && value % 1_000 === 0) {
+    return `${value / 1_000}K`;
+  }
+  return value.toLocaleString("en-US");
 }
 
 function getReasoningTriggerLabel(value: RuntimeReasoningMode): string {

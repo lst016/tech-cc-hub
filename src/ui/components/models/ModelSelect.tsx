@@ -7,6 +7,7 @@ export type ModelOption = {
   description?: string;
   badge?: string;
   title?: string;
+  contextWindow?: number;
 };
 
 type ModelGroup = {

@@ -6,23 +6,32 @@ import {
   CODEX_OAUTH_SMALL_MODEL,
 } from "../../../shared/codex-oauth.js";
 import {
+  MINIMAX_ANTHROPIC_BASE_URL,
+  MINIMAX_DEFAULT_MODEL,
+  MINIMAX_MODEL_CONFIGS,
+  MINIMAX_SMALL_MODEL,
+} from "../../../shared/models/minimax.js";
+import {
   getModelRoutingWeight,
   normalizeModelRoutingWeight,
   pickHighestWeightedModelOwner,
-} from "../../../shared/model-routing-weight.js";
-import { isDeepSeekModelName, isModelCompatibleWithApiProvider } from "../../../shared/model-provider-routing.js";
+} from "../../../shared/models/model-routing-weight.js";
+import { isDeepSeekModelName, isMiniMaxModelName, isModelCompatibleWithApiProvider } from "../../../shared/models/model-provider-routing.js";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 const DEEPSEEK_CONTEXT_WINDOW = 1_000_000;
 const CODEX_CONTEXT_WINDOW = 200_000;
 export const DEEPSEEK_OFFICIAL_BASE_URL = "https://api.deepseek.com/anthropic";
 export const DEEPSEEK_OFFICIAL_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro"] as const;
+export const MINIMAX_OFFICIAL_BASE_URL = MINIMAX_ANTHROPIC_BASE_URL;
+export const MINIMAX_OFFICIAL_MODELS = MINIMAX_MODEL_CONFIGS.map((model) => model.name);
 
 export type RoutedModelOption = {
   value: string;
   label: string;
   profileId: string;
   profileName: string;
+  contextWindow?: number;
   provider?: ApiProviderMode;
   providerLabel: string;
   routingWeight: number;
@@ -124,6 +133,37 @@ export function createCodexOAuthProfile(): ApiConfigProfile {
   };
 }
 
+export function createMiniMaxOfficialProfile(): ApiConfigProfile {
+  const models = MINIMAX_MODEL_CONFIGS.map((model) => ({
+    name: model.name,
+    contextWindow: model.contextWindow,
+    compressionThresholdPercent: 70,
+  }));
+
+  return {
+    id: crypto.randomUUID(),
+    name: "MiniMax 官方",
+    apiKey: "",
+    baseURL: MINIMAX_OFFICIAL_BASE_URL,
+    model: MINIMAX_DEFAULT_MODEL,
+    expertModel: MINIMAX_DEFAULT_MODEL,
+    smallModel: MINIMAX_SMALL_MODEL,
+    imageModel: undefined,
+    analysisModel: MINIMAX_SMALL_MODEL,
+    embeddingModel: undefined,
+    embeddingDimension: 1536,
+    embeddingBatchSize: 16,
+    wikiModel: MINIMAX_SMALL_MODEL,
+    wikiModelCostTier: "cheap",
+    wikiModelMaxInputTokens: 16_000,
+    wikiModelMaxOutputTokens: 4_000,
+    models,
+    enabled: true,
+    provider: "minimax",
+    apiType: "anthropic",
+  };
+}
+
 function normalizePositiveInteger(value: number | null | undefined): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return undefined;
@@ -145,8 +185,8 @@ function normalizePercent(value: number | null | undefined): number | undefined 
   return normalized;
 }
 
-function normalizeProvider(value: unknown, baseURL: string): "custom" | "deepseek" | "codex" {
-  if (value === "custom" || value === "deepseek" || value === "codex") {
+function normalizeProvider(value: unknown, baseURL: string): "custom" | "deepseek" | "codex" | "minimax" {
+  if (value === "custom" || value === "deepseek" || value === "codex" || value === "minimax") {
     return value;
   }
 
@@ -154,18 +194,22 @@ function normalizeProvider(value: unknown, baseURL: string): "custom" | "deepsee
     const hostname = new URL(baseURL.trim()).hostname;
     if (hostname === "api.deepseek.com") return "deepseek";
     if (hostname === "chatgpt.com") return "codex";
+    if (hostname === "api.minimax.io") return "minimax";
     return "custom";
   } catch {
     return "custom";
   }
 }
 
-function normalizeBaseURL(value: string, provider: "custom" | "deepseek" | "codex"): string {
+function normalizeBaseURL(value: string, provider: "custom" | "deepseek" | "codex" | "minimax"): string {
   if (provider === "deepseek") {
     return DEEPSEEK_OFFICIAL_BASE_URL;
   }
   if (provider === "codex") {
     return CODEX_OAUTH_BASE_URL;
+  }
+  if (provider === "minimax") {
+    return MINIMAX_OFFICIAL_BASE_URL;
   }
 
   const trimmed = value.trim();
@@ -346,6 +390,14 @@ export function resolveAvailableModelName(modelName: string | undefined, availab
       return matchedModel;
     }
   }
+  if (isMiniMaxModelName(normalized)) {
+    const matchedModel = availableModels.find((availableModel) =>
+      isMiniMaxModelName(availableModel) && availableModel.toLowerCase() === normalized.toLowerCase()
+    );
+    if (matchedModel) {
+      return matchedModel;
+    }
+  }
   return normalized;
 }
 
@@ -370,12 +422,14 @@ function buildRoutedModelOption(profiles: ApiConfigProfile[], modelName: string)
   const profileName = owner.name?.trim() || "Unnamed profile";
   const providerLabel = getApiProviderLabel(owner.provider);
   const weightLabel = routingWeight > 0 ? ` / weight ${routingWeight}` : "";
+  const modelConfig = owner.models?.find((model) => model.name === modelName);
 
   return {
     value: modelName,
     label: modelName,
     profileId: owner.id,
     profileName,
+    contextWindow: modelConfig?.contextWindow,
     provider: owner.provider,
     providerLabel,
     routingWeight,
@@ -391,6 +445,7 @@ function profileOwnsRoutableModel(profile: ApiConfigProfile, modelName: string):
 function getApiProviderLabel(provider: ApiProviderMode | undefined): string {
   if (provider === "codex") return "Codex OAuth";
   if (provider === "deepseek") return "DeepSeek";
+  if (provider === "minimax") return "MiniMax";
   return "Custom Gateway";
 }
 

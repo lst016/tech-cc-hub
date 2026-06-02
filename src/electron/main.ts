@@ -102,6 +102,17 @@ import { submitFeedbackIssue, type FeedbackSubmitPayload } from "./libs/feedback
 import "./libs/claude/claude-settings.js";
 import { resolveClaudeCodePluginDetails } from "./libs/claude/claude-code-plugins.js";
 import { addServerEventListener } from "./ipc-handlers.js";
+import {
+    extractApiModelsFromListPayload,
+    toImportedApiModels,
+    type ImportedApiModel,
+} from "../shared/models/api-model-metadata.js";
+import {
+    MINIMAX_ANTHROPIC_BASE_URL,
+    MINIMAX_DEFAULT_MODEL,
+    MINIMAX_M2_CONTEXT_WINDOW,
+    MINIMAX_M3_CONTEXT_WINDOW,
+} from "../shared/models/minimax.js";
 
 let cleanupComplete = false;
 let mainWindow: BrowserWindow | null = null;
@@ -2225,14 +2236,15 @@ function readPromptAttachmentPayload(attachments?: unknown[]): PromptAttachment[
     return Array.isArray(attachments) ? (attachments as PromptAttachment[]) : [];
 }
 
-type ApiModelsProvider = "custom" | "deepseek" | "codex";
+type ApiModelsProvider = "custom" | "deepseek" | "codex" | "minimax";
 
 const DEEPSEEK_OPENAI_BASE_URL = "https://api.deepseek.com";
 const DEEPSEEK_ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic";
+const MINIMAX_MODELS_ENDPOINT = `${MINIMAX_ANTHROPIC_BASE_URL}/v1/models`;
 let pendingCodexOAuthFlow: ReturnType<typeof createCodexOAuthAuthorizationFlow> | null = null;
 
 function resolveApiModelsProvider(provider: unknown, baseURL: string): ApiModelsProvider {
-    if (provider === "custom" || provider === "deepseek" || provider === "codex") {
+    if (provider === "custom" || provider === "deepseek" || provider === "codex" || provider === "minimax") {
         return provider;
     }
 
@@ -2240,6 +2252,7 @@ function resolveApiModelsProvider(provider: unknown, baseURL: string): ApiModels
         const url = new URL(baseURL);
         if (url.hostname === "api.deepseek.com") return "deepseek";
         if (url.hostname === "chatgpt.com") return "codex";
+        if (url.hostname === "api.minimax.io") return "minimax";
     } catch {
         // Invalid URLs are handled by the generic path below.
     }
@@ -2253,6 +2266,9 @@ function normalizeApiBaseURLForModels(value: string, provider: ApiModelsProvider
     }
     if (provider === "codex") {
         return CODEX_OAUTH_BASE_URL;
+    }
+    if (provider === "minimax") {
+        return MINIMAX_ANTHROPIC_BASE_URL;
     }
 
     const trimmed = value.trim();
@@ -2283,6 +2299,12 @@ function buildModelsEndpoint(baseURL: string, provider: ApiModelsProvider): { en
             normalizedBaseURL: CODEX_OAUTH_BASE_URL,
         };
     }
+    if (provider === "minimax") {
+        return {
+            endpoint: MINIMAX_MODELS_ENDPOINT,
+            normalizedBaseURL: MINIMAX_ANTHROPIC_BASE_URL,
+        };
+    }
 
     const normalizedBaseURL = normalizeApiBaseURLForModels(baseURL, provider);
     const url = new URL(normalizedBaseURL);
@@ -2294,26 +2316,8 @@ function buildModelsEndpoint(baseURL: string, provider: ApiModelsProvider): { en
     };
 }
 
-function extractModelIds(payload: unknown): string[] {
-    if (!payload || typeof payload !== "object") {
-        return [];
-    }
-
-    const data = (payload as { data?: unknown }).data;
-    if (!Array.isArray(data)) {
-        return [];
-    }
-
-    return Array.from(new Set(data
-        .map((item) => {
-            if (typeof item === "string") return item;
-            if (item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string") {
-                return (item as { id: string }).id;
-            }
-            return "";
-        })
-        .map((item) => item.trim())
-        .filter(Boolean)));
+function getMiniMaxFallbackContextWindow(modelName: string): number {
+    return modelName === MINIMAX_DEFAULT_MODEL ? MINIMAX_M3_CONTEXT_WINDOW : MINIMAX_M2_CONTEXT_WINDOW;
 }
 
 function readCodexModelIdsFromCache(): string[] {
@@ -2331,11 +2335,17 @@ function readCodexModelIdsFromCache(): string[] {
     }
 }
 
-async function fetchApiModels(payload: { baseURL?: string; apiKey?: string; provider?: ApiModelsProvider }): Promise<{ success: boolean; models?: string[]; baseURL?: string; error?: string }> {
+async function fetchApiModels(payload: { baseURL?: string; apiKey?: string; provider?: ApiModelsProvider }): Promise<{ success: boolean; models?: ImportedApiModel[]; baseURL?: string; error?: string }> {
     const rawBaseURL = payload?.baseURL?.trim() ?? "";
     const apiKey = payload?.apiKey?.trim() ?? "";
     const provider = resolveApiModelsProvider(payload?.provider, rawBaseURL);
-    const baseURL = rawBaseURL || (provider === "deepseek" ? DEEPSEEK_ANTHROPIC_BASE_URL : provider === "codex" ? CODEX_OAUTH_BASE_URL : "");
+    const baseURL = rawBaseURL || (provider === "deepseek"
+        ? DEEPSEEK_ANTHROPIC_BASE_URL
+        : provider === "codex"
+            ? CODEX_OAUTH_BASE_URL
+            : provider === "minimax"
+                ? MINIMAX_ANTHROPIC_BASE_URL
+                : "");
 
     if (!baseURL) {
         return { success: false, error: "请先填写接口地址。" };
@@ -2344,7 +2354,7 @@ async function fetchApiModels(payload: { baseURL?: string; apiKey?: string; prov
         const cacheModels = readCodexModelIdsFromCache();
         return {
             success: true,
-            models: mergeCodexModelIds(cacheModels),
+            models: toImportedApiModels(mergeCodexModelIds(cacheModels), 200_000),
             baseURL: CODEX_OAUTH_BASE_URL,
         };
     }
@@ -2367,7 +2377,11 @@ async function fetchApiModels(payload: { baseURL?: string; apiKey?: string; prov
         }
 
         const responsePayload = await response.json() as unknown;
-        const models = extractModelIds(responsePayload);
+        const fallbackContextWindow = provider === "deepseek" ? 1_000_000 : undefined;
+        const models = extractApiModelsFromListPayload(responsePayload).map((model) => ({
+            ...model,
+            contextWindow: model.contextWindow ?? (provider === "minimax" ? getMiniMaxFallbackContextWindow(model.name) : fallbackContextWindow),
+        }));
         if (models.length === 0) {
             return { success: false, error: "接口没有返回可用模型。" };
         }
@@ -2396,6 +2410,12 @@ function buildMessagesEndpoint(baseURL: string, provider: ApiModelsProvider): { 
         return {
             endpoint: `${CODEX_OAUTH_BASE_URL}/backend-api/codex/responses`,
             normalizedBaseURL: CODEX_OAUTH_BASE_URL,
+        };
+    }
+    if (provider === "minimax") {
+        return {
+            endpoint: `${MINIMAX_ANTHROPIC_BASE_URL}/v1/messages`,
+            normalizedBaseURL: MINIMAX_ANTHROPIC_BASE_URL,
         };
     }
 
@@ -2429,7 +2449,13 @@ async function testApiConfig(payload: { baseURL?: string; apiKey?: string; model
     const apiKey = payload?.apiKey?.trim() ?? "";
     const model = payload?.model?.trim() ?? "";
     const provider = resolveApiModelsProvider(payload?.provider, rawBaseURL);
-    const baseURL = rawBaseURL || (provider === "deepseek" ? DEEPSEEK_ANTHROPIC_BASE_URL : provider === "codex" ? CODEX_OAUTH_BASE_URL : "");
+    const baseURL = rawBaseURL || (provider === "deepseek"
+        ? DEEPSEEK_ANTHROPIC_BASE_URL
+        : provider === "codex"
+            ? CODEX_OAUTH_BASE_URL
+            : provider === "minimax"
+                ? MINIMAX_ANTHROPIC_BASE_URL
+                : "");
 
     if (!baseURL || !apiKey || !model) {
         return { success: false, error: provider === "codex" ? "请先完成 Codex OAuth 授权并选择默认主模型。" : "请先填写接口地址、API Key 和默认主模型。" };

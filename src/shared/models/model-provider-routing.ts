@@ -1,6 +1,6 @@
-import { CODEX_OAUTH_COMPACT_MODEL_SUFFIX } from "./codex-oauth.js";
+import { CODEX_OAUTH_COMPACT_MODEL_SUFFIX } from "../codex-oauth.js";
 
-export type SharedApiProviderMode = "custom" | "deepseek" | "codex";
+export type SharedApiProviderMode = "custom" | "deepseek" | "codex" | "minimax";
 
 export function isCodexModelName(modelName: string): boolean {
   const normalized = stripCodexCompactSuffix(modelName).toLowerCase();
@@ -9,6 +9,10 @@ export function isCodexModelName(modelName: string): boolean {
 
 export function isDeepSeekModelName(modelName: string): boolean {
   return modelName.trim().toLowerCase().includes("deepseek");
+}
+
+export function isMiniMaxModelName(modelName: string): boolean {
+  return modelName.trim().toLowerCase().includes("minimax");
 }
 
 export function isModelCompatibleWithApiProvider(
@@ -26,6 +30,10 @@ export function isModelCompatibleWithApiProvider(
 
   if (provider === "deepseek") {
     return isDeepSeekModelName(normalized);
+  }
+
+  if (provider === "minimax") {
+    return isMiniMaxModelName(normalized);
   }
 
   return true;
