@@ -6,6 +6,8 @@ test("preview qa smoke script supports resilient file selection and log filterin
   const source = readFileSync("scripts/qa/preview-workbench-smoke.cjs", "utf8");
 
   assert.match(source, /http:\/\/localhost:4173\//);
+  assert.match(source, /PREVIEW_QA_CHROME_PATH/);
+  assert.match(source, /resolveChromePath/);
   assert.match(source, /native-explorer__row--file/);
   assert.match(source, /package\.json/);
   assert.match(source, /let chosenFileName =/);

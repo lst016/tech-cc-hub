@@ -1,8 +1,33 @@
 const { chromium } = require('@playwright/test');
+const { existsSync } = require('node:fs');
+const { platform } = require('node:os');
 
 const DEFAULT_URL = process.env.PREVIEW_QA_URL || 'http://localhost:4173/';
-const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEFAULT_PREFERRED_FILE = process.env.PREVIEW_QA_FILE || 'package.json';
+
+function candidateChromePaths() {
+  if (process.env.PREVIEW_QA_CHROME_PATH) return [process.env.PREVIEW_QA_CHROME_PATH];
+  if (platform() === 'darwin') {
+    return ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
+  }
+  if (platform() === 'win32') {
+    return [
+      `${process.env.PROGRAMFILES || 'C:\\Program Files'}\\Google\\Chrome\\Application\\chrome.exe`,
+      `${process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)'}\\Google\\Chrome\\Application\\chrome.exe`,
+      `${process.env.LOCALAPPDATA || ''}\\Google\\Chrome\\Application\\chrome.exe`,
+    ].filter(Boolean);
+  }
+  return [
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+  ];
+}
+
+function resolveChromePath() {
+  return candidateChromePaths().find((candidate) => existsSync(candidate));
+}
 
 function isIgnorableConsoleError(line) {
   return (
@@ -21,9 +46,10 @@ function isFatalBrowserLog(line) {
 }
 
 async function main() {
+  const executablePath = resolveChromePath();
   const browser = await chromium.launch({
     headless: true,
-    executablePath: CHROME_PATH,
+    ...(executablePath ? { executablePath } : {}),
   });
   const page = await browser.newPage({ viewport: { width: 1500, height: 950 } });
   const logs = [];
