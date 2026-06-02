@@ -1,13 +1,13 @@
 // Source: CV from skills-manager Rust core/scanner.rs + commands/scan.rs
 // Adapted for Electron TypeScript backend
 
-import { existsSync, readdirSync, readlinkSync, realpathSync, lstatSync, statSync } from "fs";
+import { existsSync, readdirSync, realpathSync, lstatSync, statSync } from "fs";
 import { join, resolve } from "path";
 import { randomUUID } from "crypto";
-import { allToolAdapters, isInstalled, skillsDir, allScanDirs, additionalExistingScanDirs, type ToolAdapter } from "./tool-adapters.js";
+import { allToolAdapters, isInstalled, skillsDir, additionalExistingScanDirs, type ToolAdapter } from "./tool-adapters.js";
 import { is_valid_skill_dir, inferSkillName } from "./sync-engine.js";
 import { skillsDir as centralSkillsDir } from "./central-repo.js";
-import type { DiscoveredGroup, ScanResult, SkillRecord } from "./types.js";
+import type { DiscoveredGroup, SkillRecord } from "./types.js";
 
 // ── Types ──
 

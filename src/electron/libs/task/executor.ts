@@ -15,7 +15,6 @@ import type {
   TaskFilter,
   TaskProviderId,
   TaskProviderState,
-  TaskReasoningMode,
   TaskStats,
   TaskSubtask,
   TaskWorkflowSettings,

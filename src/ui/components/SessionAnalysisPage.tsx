@@ -2530,7 +2530,7 @@ export function SessionAnalysisPage({
   const handleSendWorkflowOptimizationPrompt = useCallback(() => {
     onSendWorkflowOptimizationPrompt(workflowOptimizationPrompt);
   }, [onSendWorkflowOptimizationPrompt, workflowOptimizationPrompt]);
-  const handleExportDiagnostic = useCallback(() => {
+  const handleExportDiagnostic = () => {
     const payload = buildTraceDiagnosticExportPayload({
       session,
       model,
@@ -2544,18 +2544,7 @@ export function SessionAnalysisPage({
       searchQuery,
     });
     downloadJsonFile(buildDiagnosticExportFilename(session?.id), payload);
-  }, [
-    baseGroups,
-    diagnosticReport,
-    model,
-    partialMessage,
-    searchQuery,
-    selectedItem,
-    session,
-    visibleGroups,
-    workflowOptimizationCards,
-    workflowOptimizationPrompt,
-  ]);
+  };
 
   const selectedNodeMeta = selectedItem ? getNodeKindMeta(selectedItem) : null;
   const selectedRawText =

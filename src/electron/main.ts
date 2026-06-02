@@ -17,10 +17,10 @@ import {
 import { execSync, spawn } from "child_process";
 import type { ChildProcessWithoutNullStreams } from "child_process";
 import { randomUUID } from "crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "fs";
 import { createServer, type Server } from "http";
 import { homedir } from "os";
-import { extname, isAbsolute, join, relative } from "path";
+import { join } from "path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { UnauthorizedError, type OAuthClientProvider, type OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
