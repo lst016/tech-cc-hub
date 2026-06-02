@@ -134,6 +134,10 @@ function isIgnoredPreviewDirectory(name: string): boolean {
   return PREVIEW_IGNORED_DIRECTORIES.has(name);
 }
 
+function normalizePreviewRelativePath(value: string, fallback: string): string {
+  return (value || fallback).replace(/\\/g, "/");
+}
+
 function normalizeLimit(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value)
     ? Math.max(1, Math.min(Math.floor(value), MAX_FILE_SCAN_LIMIT))
@@ -220,7 +224,7 @@ export async function listPreviewDirectoryForRenderer(
         return [{
           name: entry.name,
           path: entryPath,
-          relativePath: relative(resolved.rootPath, entryPath) || entry.name,
+          relativePath: normalizePreviewRelativePath(relative(resolved.rootPath, entryPath), entry.name),
           type,
         }];
       })
@@ -317,7 +321,7 @@ export async function listPreviewFilesForRenderer(
         entries.push({
           name: child.name,
           path: childPath,
-          relativePath: relative(rootPath, childPath) || child.name,
+          relativePath: normalizePreviewRelativePath(relative(rootPath, childPath), child.name),
           type: "file",
         });
         if (entries.length >= limit) {
