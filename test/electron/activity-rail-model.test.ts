@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildActivityRailModel } from "../../src/shared/activity-rail-model.js";
+import {
+  DEFAULT_ACTIVITY_RAIL_MESSAGE_LIMIT,
+  buildActivityRailModel,
+  limitActivityRailSessionMessages,
+} from "../../src/shared/activity-rail-model.js";
 import { buildPromptLedgerMessage } from "../../src/shared/prompt-ledger.js";
 
 test("buildPromptLedgerMessage separates prompt sources for optimization", () => {
@@ -160,6 +164,27 @@ test("buildActivityRailModel exposes prompt analysis from prompt ledger", () => 
   ));
   assert.equal(model.promptAnalysis.ledgers.length, 1);
   assert.ok(model.analysisCards.some((card) => card.id === "prompt-hotspot"));
+});
+
+test("limitActivityRailSessionMessages keeps only the latest bounded window", () => {
+  const messages = Array.from({ length: DEFAULT_ACTIVITY_RAIL_MESSAGE_LIMIT + 5 }, (_, index) => ({
+    type: "user_prompt" as const,
+    prompt: `prompt-${index}`,
+  }));
+  const session = {
+    id: "session-long",
+    title: "Long session",
+    status: "running" as const,
+    messages,
+  };
+
+  const compact = limitActivityRailSessionMessages(session);
+
+  assert.equal(compact.messages.length, DEFAULT_ACTIVITY_RAIL_MESSAGE_LIMIT);
+  assert.equal(compact.messages[0]?.prompt, "prompt-5");
+  assert.equal(compact.messages.at(-1)?.prompt, `prompt-${DEFAULT_ACTIVITY_RAIL_MESSAGE_LIMIT + 4}`);
+  assert.notEqual(compact, session);
+  assert.equal(limitActivityRailSessionMessages({ ...session, messages: messages.slice(0, 2) }).messages.length, 2);
 });
 
 test("buildActivityRailModel uses assistant usage before final result", () => {

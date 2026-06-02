@@ -40,6 +40,8 @@ const RECURSIVE_SCAN_SKIP_DIRS = [
   "vendor",
   "venv",
 ];
+const MAX_RECURSIVE_SCAN_DIRS = 2_000;
+const MAX_RECURSIVE_SCAN_RESULTS = 500;
 
 function isSymlinkToCentral(path: string): boolean {
   try {
@@ -58,6 +60,10 @@ function collectSkillDirsRecursive(
   visited: Set<string>,
   results: string[],
 ): void {
+  if (visited.size >= MAX_RECURSIVE_SCAN_DIRS || results.length >= MAX_RECURSIVE_SCAN_RESULTS) {
+    return;
+  }
+
   let canonical: string;
   try {
     canonical = realpathSync(dir);
@@ -75,6 +81,10 @@ function collectSkillDirsRecursive(
   }
 
   for (const entry of entries) {
+    if (visited.size >= MAX_RECURSIVE_SCAN_DIRS || results.length >= MAX_RECURSIVE_SCAN_RESULTS) {
+      return;
+    }
+
     const path = join(dir, entry.name);
     if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
 

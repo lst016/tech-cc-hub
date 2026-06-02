@@ -104,3 +104,44 @@ test("SessionStore persists execution mode and runtime controls across reloads",
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("SessionStore can return a bounded lightweight session list", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tech-cc-hub-session-list-summary-"));
+  const dbPath = join(dir, "sessions.db");
+  const store = new SessionStore(dbPath);
+
+  try {
+    const first = store.createSession({ title: "First", cwd: dir });
+    const runtimeState = runtimeEfficiencyProfileToState(resolveRuntimeEfficiencyProfile({ prompt: "test" }));
+    store.updateSession(first.id, {
+      workflowMarkdown: "# Heavy workflow",
+      workflowState: {
+        workflowId: "heavy",
+        sourceLayer: "project",
+        sourcePath: join(dir, "workflow.md"),
+        status: "idle",
+        steps: [],
+      },
+      runtimeProfileState: runtimeState,
+    });
+    store.createSession({ title: "Second", cwd: dir });
+    store.createSession({ title: "Third", cwd: dir });
+
+    const full = store.listSessions().find((session) => session.id === first.id);
+    assert.equal(full?.workflowMarkdown, "# Heavy workflow");
+    assert.equal(full?.workflowState?.workflowId, "heavy");
+    assert.deepEqual(full?.runtimeProfileState, runtimeState);
+
+    const summary = store.listSessions({ summary: true, limit: 1 });
+    assert.equal(summary.length, 1);
+    assert.equal(summary[0]?.workflowMarkdown, undefined);
+    assert.equal(summary[0]?.workflowState, undefined);
+    assert.equal(summary[0]?.runtimeProfileState, undefined);
+
+    const bounded = store.listSessions({ summary: true, limit: 2 });
+    assert.equal(bounded.length, 2);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

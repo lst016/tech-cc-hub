@@ -247,7 +247,7 @@ export type ClientEvent =
   | { type: "session.archive"; payload: { sessionId: string } }
   | { type: "session.unarchive"; payload: { sessionId: string } }
   | { type: "session.delete"; payload: { sessionId: string } }
-  | { type: "session.list"; payload?: { archived?: boolean } }
+  | { type: "session.list"; payload?: { archived?: boolean; limit?: number } }
   | { type: "session.history"; payload: { sessionId: string; before?: SessionHistoryCursor; limit?: number } }
   | { type: "permission.response"; payload: { sessionId: string; toolUseId: string; result: PermissionResult } }
   | { type: "agent.list"; payload: { cwd?: string } }

@@ -20,3 +20,12 @@ test("app exposes a session analysis entry and renders the analysis page skeleto
   assert.match(analysisPageSource, /buildTraceDiagnosticExportPayload/);
   assert.match(analysisPageSource, /sanitizeDiagnosticValue/);
 });
+
+test("activity rail and session analysis bound heavy model input", () => {
+  const railSource = readFileSync(join(process.cwd(), "src/ui/components/ActivityRail.tsx"), "utf8");
+  const analysisPageSource = readFileSync(join(process.cwd(), "src/ui/components/SessionAnalysisPage.tsx"), "utf8");
+
+  assert.match(railSource, /useDeferredValue\(session\)/);
+  assert.match(railSource, /limitActivityRailSessionMessages/);
+  assert.match(analysisPageSource, /limitActivityRailSessionMessages/);
+});

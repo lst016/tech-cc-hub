@@ -276,7 +276,7 @@ export function usePromptActions(
     if (!activeSessionId) return;
     sendEvent({ type: "session.stop", payload: { sessionId: activeSessionId } });
     window.setTimeout(() => {
-      sendEvent({ type: "session.list" });
+      sendEvent({ type: "session.list", payload: { limit: 80 } });
       sendEvent({ type: "session.history", payload: { sessionId: activeSessionId } });
     }, 250);
   }, [activeSessionId, sendEvent]);

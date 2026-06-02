@@ -1,19 +1,22 @@
 import { scorePreviewQuickOpenEntry } from "../../../shared/preview-quick-open.js";
 
-const FILE_MENTION_DIRECTORY_SCAN_LIMIT = 500;
-const FILE_MENTION_FILE_SCAN_LIMIT = 4_000;
-const FILE_MENTION_SCAN_DEPTH = 5;
+const FILE_MENTION_DIRECTORY_SCAN_LIMIT = 120;
+const FILE_MENTION_FILE_SCAN_LIMIT = 1_000;
+const FILE_MENTION_SCAN_DEPTH = 4;
 const FILE_MENTION_IGNORED_DIRS = new Set([
   ".git",
   ".next",
+  ".tech",
   ".turbo",
   ".vite",
+  "build",
   "coverage",
   "dist",
   "dist-electron",
   "dist-react",
   "dist-test",
   "node_modules",
+  "out",
 ]);
 
 export type FileMentionOption = {

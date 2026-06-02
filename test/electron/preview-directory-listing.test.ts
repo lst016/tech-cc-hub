@@ -1,28 +1,73 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-test("preview directory listing skips unreadable children instead of failing the whole tree", () => {
-  const mainSource = readFileSync("src/electron/main.ts", "utf8");
-  const viteSource = readFileSync("vite.config.ts", "utf8");
+import {
+  listPreviewDirectoryForRenderer,
+  listPreviewFilesForRenderer,
+  renamePreviewEntryForRenderer,
+} from "../../src/electron/libs/preview-fs.js";
 
-  for (const source of [mainSource, viteSource]) {
-    assert.match(source, /\.flatMap\(\(entry\) => \{/);
-    assert.match(source, /const entryStat = statSync\(entryPath\)/);
-    assert.match(source, /catch \{\s*return \[\];\s*\}/);
+async function withTempWorkspace<T>(run: (root: string) => Promise<T>): Promise<T> {
+  const root = await mkdtemp(join(tmpdir(), "preview-fs-"));
+  try {
+    return await run(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
+}
+
+test("preview quick-open file scan ignores generated and dependency directories", async () => {
+  await withTempWorkspace(async (root) => {
+    await mkdir(join(root, "src"), { recursive: true });
+    await mkdir(join(root, "dist"), { recursive: true });
+    await mkdir(join(root, "dist-test"), { recursive: true });
+    await mkdir(join(root, "build"), { recursive: true });
+    await mkdir(join(root, "coverage"), { recursive: true });
+    await mkdir(join(root, "out"), { recursive: true });
+    await mkdir(join(root, "node_modules", "pkg"), { recursive: true });
+
+    await writeFile(join(root, "src", "keep.ts"), "export const keep = true;\n", "utf8");
+    await writeFile(join(root, "dist", "skip.ts"), "skip\n", "utf8");
+    await writeFile(join(root, "dist-test", "skip.ts"), "skip\n", "utf8");
+    await writeFile(join(root, "build", "skip.ts"), "skip\n", "utf8");
+    await writeFile(join(root, "coverage", "skip.ts"), "skip\n", "utf8");
+    await writeFile(join(root, "out", "skip.ts"), "skip\n", "utf8");
+    await writeFile(join(root, "node_modules", "pkg", "skip.ts"), "skip\n", "utf8");
+
+    const result = await listPreviewFilesForRenderer({ cwd: root, limit: 50 });
+
+    assert.equal(result.success, true);
+    assert.deepEqual(result.entries?.map((entry) => entry.relativePath), ["src/keep.ts"]);
+  });
 });
 
-test("preview directory listing sorts before applying the visible-entry cap", () => {
-  const mainSource = readFileSync("src/electron/main.ts", "utf8");
-  const viteSource = readFileSync("vite.config.ts", "utf8");
+test("preview directory listing sorts before applying the visible-entry cap", async () => {
+  await withTempWorkspace(async (root) => {
+    await mkdir(join(root, "a-directory"), { recursive: true });
+    await mkdir(join(root, "dist-test"), { recursive: true });
+    await writeFile(join(root, "b-file.ts"), "b\n", "utf8");
+    await writeFile(join(root, "z-file.ts"), "z\n", "utf8");
 
-  assert.ok(
-    mainSource.indexOf(".sort((left, right)") < mainSource.indexOf(".slice(0, MAX_PREVIEW_DIRECTORY_ENTRIES)"),
-    "Electron preview listing should sort before truncation",
-  );
-  assert.ok(
-    viteSource.indexOf(".sort((left, right)") < viteSource.indexOf(".slice(0, 500)"),
-    "Vite preview listing should sort before truncation",
-  );
+    const result = await listPreviewDirectoryForRenderer({ cwd: root, path: root }, { maxEntries: 2 });
+
+    assert.equal(result.success, true);
+    assert.deepEqual(result.entries?.map((entry) => entry.name), ["a-directory", "b-file.ts"]);
+  });
+});
+
+test("preview rename rejects dot path segments that would escape the workspace", async () => {
+  await withTempWorkspace(async (root) => {
+    const nested = join(root, "src");
+    const filePath = join(nested, "keep.ts");
+    await mkdir(nested, { recursive: true });
+    await writeFile(filePath, "export const keep = true;\n", "utf8");
+
+    const result = await renamePreviewEntryForRenderer({ cwd: root, path: filePath, newName: ".." });
+
+    assert.equal(result.success, false);
+    assert.match(result.error ?? "", /合法新名称|当前工作目录/);
+  });
 });

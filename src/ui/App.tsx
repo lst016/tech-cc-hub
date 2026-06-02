@@ -7,6 +7,7 @@ import { useIPC } from "./hooks/useIPC";
 import { useMessageWindow } from "./hooks/useMessageWindow";
 import { useAppStore } from "./store/useAppStore";
 import type { AppUpdateStatus, PromptAttachment, ServerEvent, SettingsPageId, StreamMessage } from "./types";
+import { filterDisplayMessages } from "./utils/chat-display-messages";
 import { DEFAULT_SIDEBAR_WIDTH, Sidebar } from "./components/Sidebar";
 import { TooltipButton } from "./components/TooltipButton";
 import { UpdateToast } from "./components/UpdateToast";
@@ -606,26 +607,10 @@ function App() {
     onLoadMore: requestOlderHistory,
   });
 
-  const displayMessages = visibleMessages.filter((item) => {
-    const currentMessage = item.message;
-    if (
-      currentMessage.type === "system" &&
-      "subtype" in currentMessage &&
-      currentMessage.subtype === "init"
-    ) {
-      for (let index = 0; index < item.originalIndex; index += 1) {
-        const previousMessage = messages[index];
-        if (
-          previousMessage?.type === "system" &&
-          "subtype" in previousMessage &&
-          previousMessage.subtype === "init"
-        ) {
-          return false;
-        }
-      }
-    }
-    return true;
-  });
+  const displayMessages = useMemo(
+    () => filterDisplayMessages(visibleMessages, messages),
+    [messages, visibleMessages],
+  );
 
   const renderEntries = useMemo(() => {
     const entries: RenderEntry[] = [];
@@ -742,7 +727,7 @@ function App() {
     const loadSessionsDirectly = () => {
       void (window.electron as typeof window.electron & {
         invoke: (channel: string, ...args: unknown[]) => Promise<{ sessions: unknown[]; archived: boolean }>;
-      }).invoke("sessions:list")
+      }).invoke("sessions:list", { limit: 80 })
         .then((payload) => {
           if (cancelled) return;
           handleServerEvent({
@@ -756,20 +741,12 @@ function App() {
     };
 
     loadSessionsDirectly();
-    sendEvent({ type: "session.list" });
-    const retryTimers = [
-      window.setTimeout(loadSessionsDirectly, 350),
-      window.setTimeout(() => sendEvent({ type: "session.list" }), 350),
-      window.setTimeout(loadSessionsDirectly, 1200),
-      window.setTimeout(() => sendEvent({ type: "session.list" }), 1200),
-    ];
     window.addEventListener(DEV_BRIDGE_READY_EVENT, loadSessionsDirectly);
     return () => {
       cancelled = true;
       window.removeEventListener(DEV_BRIDGE_READY_EVENT, loadSessionsDirectly);
-      retryTimers.forEach((timer) => window.clearTimeout(timer));
     };
-  }, [connected, handleServerEvent, sendEvent]);
+  }, [connected, handleServerEvent]);
 
   useEffect(() => {
     if (!activeSessionId || !connected) return;
@@ -1071,7 +1048,7 @@ function App() {
   }, [sendEvent]);
 
   const handleRefreshArchivedSessions = useCallback(() => {
-    sendEvent({ type: "session.list", payload: { archived: true } });
+    sendEvent({ type: "session.list", payload: { archived: true, limit: 80 } });
   }, [sendEvent]);
 
   const handleDeleteWorkspace = useCallback((sessionIds: string[], workspaceName: string) => {

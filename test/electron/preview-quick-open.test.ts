@@ -39,3 +39,29 @@ test("quick open supports fuzzy multi-token path queries", () => {
   const result = filterPreviewQuickOpenEntries(entries, "aion pane");
   assert.equal(result[0]?.relativePath, "src/ui/components/AionWorkspacePreviewPane.tsx");
 });
+
+test("quick open prefers active and recent files when query is empty", () => {
+  const result = filterPreviewQuickOpenEntries(entries, "", 10, {
+    activePath: "D:/repo/src/ui/components/PromptInput.tsx",
+    recentPaths: [
+      "D:/repo/README.md",
+      "D:/repo/src/pages/main/index.tsx",
+    ],
+  });
+
+  assert.equal(result[0]?.relativePath, "src/ui/components/PromptInput.tsx");
+  assert.equal(result[1]?.relativePath, "README.md");
+  assert.equal(result[2]?.relativePath, "src/pages/main/index.tsx");
+});
+
+test("quick open gives recent files a ranking boost for matching queries", () => {
+  const ranked = filterPreviewQuickOpenEntries(entries, "ui components", 10, {
+    recentPaths: ["D:/repo/src/ui/components/AionWorkspacePreviewPane.tsx"],
+  });
+
+  const promptInputIndex = ranked.findIndex((item) => item.relativePath === "src/ui/components/PromptInput.tsx");
+  const previewPaneIndex = ranked.findIndex((item) => item.relativePath === "src/ui/components/AionWorkspacePreviewPane.tsx");
+  assert.notEqual(promptInputIndex, -1);
+  assert.notEqual(previewPaneIndex, -1);
+  assert.ok(previewPaneIndex <= promptInputIndex);
+});

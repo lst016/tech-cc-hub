@@ -72,6 +72,15 @@ import {
   isManagedCodeGraphInitialized,
   syncManagedCodeGraph,
 } from "./libs/codegraph/managed-codegraph.js";
+import {
+  getPreviewFileMetadataForRenderer,
+  listPreviewDirectoryForRenderer,
+  listPreviewFilesForRenderer,
+  readPreviewFileForRenderer,
+  removePreviewEntryForRenderer,
+  renamePreviewEntryForRenderer,
+  writePreviewFileForRenderer,
+} from "./libs/preview-fs.js";
 import { CronService } from "./libs/cron/cron-service.js";
 import { CronRepository } from "./libs/cron/cron-repository.js";
 import { CronJobExecutor, CronBusyGuard } from "./libs/cron/cron-executor.js";
@@ -117,20 +126,6 @@ import {
 let cleanupComplete = false;
 let mainWindow: BrowserWindow | null = null;
 const DEFAULT_BROWSER_WORKBENCH_SESSION_ID = "global";
-const MAX_PREVIEW_TEXT_BYTES = 512_000;
-const MAX_PREVIEW_IMAGE_BYTES = 2_000_000;
-const MAX_PREVIEW_DIRECTORY_ENTRIES = 300;
-const MAX_PREVIEW_QUICK_OPEN_ENTRIES = 2_000;
-const PREVIEW_IMAGE_MIME_TYPES: Record<string, string> = {
-  ".bmp": "image/bmp",
-  ".gif": "image/gif",
-  ".ico": "image/x-icon",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-  ".svg": "image/svg+xml",
-  ".webp": "image/webp",
-};
 const browserWorkbenches = new Map<string, BrowserWorkbenchManager>();
 const browserWorkbenchEventListeners = new Set<(event: BrowserWorkbenchEvent) => void>();
 let stopDevBackendBridge: (() => void) | null = null;
@@ -1152,258 +1147,6 @@ function broadcastAppUpdateStatus(status: AppUpdateStatus): void {
   }
 }
 
-function detectPreviewLanguage(filePath: string): string | undefined {
-  const extension = extname(filePath).toLowerCase();
-  const languages: Record<string, string> = {
-    ".bash": "bash",
-    ".css": "css",
-    ".go": "go",
-    ".html": "html",
-    ".java": "java",
-    ".js": "javascript",
-    ".json": "json",
-    ".jsx": "javascript",
-    ".md": "markdown",
-    ".markdown": "markdown",
-    ".py": "python",
-    ".rb": "ruby",
-    ".rs": "rust",
-    ".sh": "bash",
-    ".sql": "sql",
-    ".ts": "typescript",
-    ".tsx": "typescript",
-    ".xml": "xml",
-    ".yaml": "yaml",
-    ".yml": "yaml",
-  };
-  return languages[extension];
-}
-
-function isPathInsideRoot(rootPath: string, candidatePath: string): boolean {
-  const rel = relative(rootPath, candidatePath);
-  return Boolean(rel) && !rel.startsWith("..") && !isAbsolute(rel);
-}
-
-function isPathWithinOrEqualRoot(rootPath: string, candidatePath: string): boolean {
-  return rootPath === candidatePath || isPathInsideRoot(rootPath, candidatePath);
-}
-
-function isIgnoredPreviewDirectory(name: string): boolean {
-  return name === ".git" ||
-    name === "node_modules" ||
-    name === "dist-react" ||
-    name === "dist-electron" ||
-    name === ".vite" ||
-    name === ".turbo";
-}
-
-function listPreviewDirectoryForRenderer(request: unknown): {
-  success: boolean;
-  path?: string;
-  entries?: Array<{ name: string; path: string; relativePath: string; type: "file" | "directory"; size?: number }>;
-  error?: string;
-} {
-  try {
-    if (!request || typeof request !== "object") {
-      return { success: false, error: "缺少目录请求参数。" };
-    }
-
-    const payload = request as { cwd?: unknown; path?: unknown };
-    const rawCwd = typeof payload.cwd === "string" ? payload.cwd.trim() : "";
-    const rawPath = typeof payload.path === "string" ? payload.path.trim() : "";
-    if (!rawCwd) {
-      return { success: false, error: "缺少工作目录。" };
-    }
-
-    const rootPath = realpathSync(rawCwd);
-    const requestedPath = rawPath ? (isAbsolute(rawPath) ? rawPath : join(rootPath, rawPath)) : rootPath;
-    const realPath = realpathSync(requestedPath);
-    if (!isPathWithinOrEqualRoot(rootPath, realPath)) {
-      return { success: false, path: realPath, error: "只能浏览当前工作目录内的文件。" };
-    }
-
-    const stat = statSync(realPath);
-    if (!stat.isDirectory()) {
-      return { success: false, path: realPath, error: "只能浏览目录。" };
-    }
-
-    const entries = readdirSync(realPath, { withFileTypes: true })
-      .filter((entry) => !entry.name.startsWith(".") || entry.name === ".env")
-      .flatMap((entry) => {
-        const entryPath = join(realPath, entry.name);
-        try {
-          const entryStat = statSync(entryPath);
-          const type = entryStat.isDirectory() ? "directory" as const : "file" as const;
-          if (type === "directory" && isIgnoredPreviewDirectory(entry.name)) {
-            return [];
-          }
-          return [{
-            name: entry.name,
-            path: entryPath,
-            relativePath: relative(rootPath, entryPath) || entry.name,
-            type,
-            size: entryStat.isFile() ? entryStat.size : undefined,
-          }];
-        } catch {
-          return [];
-        }
-      })
-      .sort((left, right) => {
-        if (left.type !== right.type) {
-          return left.type === "directory" ? -1 : 1;
-        }
-        return left.name.localeCompare(right.name);
-      })
-      .slice(0, MAX_PREVIEW_DIRECTORY_ENTRIES);
-
-    return { success: true, path: realPath, entries };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "读取目录失败。",
-    };
-  }
-}
-
-function listPreviewFilesForRenderer(request: unknown): {
-  success: boolean;
-  entries?: Array<{ name: string; path: string; relativePath: string; type: "file"; size?: number }>;
-  truncated?: boolean;
-  error?: string;
-} {
-  try {
-    if (!request || typeof request !== "object") {
-      return { success: false, error: "缺少文件索引请求参数。" };
-    }
-
-    const payload = request as { cwd?: unknown; limit?: unknown };
-    const rawCwd = typeof payload.cwd === "string" ? payload.cwd.trim() : "";
-    const limit = typeof payload.limit === "number" && Number.isFinite(payload.limit)
-      ? Math.max(1, Math.min(Math.floor(payload.limit), 10_000))
-      : MAX_PREVIEW_QUICK_OPEN_ENTRIES;
-    if (!rawCwd) {
-      return { success: false, error: "缺少工作目录。" };
-    }
-
-    const rootPath = realpathSync(rawCwd);
-    const rootStat = statSync(rootPath);
-    if (!rootStat.isDirectory()) {
-      return { success: false, error: "只能索引目录。" };
-    }
-
-    const entries: Array<{ name: string; path: string; relativePath: string; type: "file"; size?: number }> = [];
-    const pending = [rootPath];
-    let truncated = false;
-
-    while (pending.length > 0) {
-      const currentPath = pending.pop()!;
-      const children = readdirSync(currentPath, { withFileTypes: true })
-        .filter((entry) => !entry.name.startsWith(".") || entry.name === ".env")
-        .sort((left, right) => left.name.localeCompare(right.name));
-
-      for (const child of children) {
-        const childPath = join(currentPath, child.name);
-        if (child.isDirectory()) {
-          if (!isIgnoredPreviewDirectory(child.name)) {
-            pending.push(childPath);
-          }
-          continue;
-        }
-        if (!child.isFile()) continue;
-
-        const childStat = statSync(childPath);
-        entries.push({
-          name: child.name,
-          path: childPath,
-          relativePath: relative(rootPath, childPath) || child.name,
-          type: "file",
-          size: childStat.size,
-        });
-        if (entries.length >= limit) {
-          truncated = pending.length > 0;
-          break;
-        }
-      }
-
-      if (entries.length >= limit) {
-        truncated = truncated || pending.length > 0;
-        break;
-      }
-    }
-
-    entries.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
-    return { success: true, entries, truncated };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "索引文件失败。",
-    };
-  }
-}
-
-function readPreviewFileForRenderer(request: unknown): {
-  success: boolean;
-  path?: string;
-  content?: string;
-  language?: string;
-  error?: string;
-} {
-  try {
-    if (!request || typeof request !== "object") {
-      return { success: false, error: "缺少预览请求参数。" };
-    }
-
-    const payload = request as { cwd?: unknown; path?: unknown };
-    const rawCwd = typeof payload.cwd === "string" ? payload.cwd.trim() : "";
-    const rawPath = typeof payload.path === "string" ? payload.path.trim() : "";
-    if (!rawCwd || !rawPath) {
-      return { success: false, error: "缺少工作目录或文件路径。" };
-    }
-
-    const rootPath = realpathSync(rawCwd);
-    const requestedPath = isAbsolute(rawPath) ? rawPath : join(rootPath, rawPath);
-    const realPath = realpathSync(requestedPath);
-    if (!isAbsolute(rawPath) && !isPathInsideRoot(rootPath, realPath)) {
-      return { success: false, path: realPath, error: "只能预览当前工作目录内的文件。" };
-    }
-
-    const stat = statSync(realPath);
-    if (!stat.isFile()) {
-      return { success: false, path: realPath, error: "只能预览普通文件。" };
-    }
-
-    const extension = extname(realPath).toLowerCase();
-    const imageMime = PREVIEW_IMAGE_MIME_TYPES[extension];
-    if (imageMime) {
-      if (stat.size > MAX_PREVIEW_IMAGE_BYTES) {
-        return { success: false, path: realPath, error: "图片过大，暂不在侧栏预览。" };
-      }
-      const base64 = readFileSync(realPath).toString("base64");
-      return {
-        success: true,
-        path: realPath,
-        content: `data:${imageMime};base64,${base64}`,
-      };
-    }
-
-    if (stat.size > MAX_PREVIEW_TEXT_BYTES) {
-      return { success: false, path: realPath, error: "文件过大，暂不在侧栏预览。" };
-    }
-
-    return {
-      success: true,
-      path: realPath,
-      content: readFileSync(realPath, "utf8"),
-      language: detectPreviewLanguage(realPath),
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "读取预览文件失败。",
-    };
-  }
-}
-
 const TERMINAL_DEFAULT_TIMEOUT_MS = 120_000;
 const TERMINAL_MAX_TIMEOUT_MS = 10 * 60_000;
 const TERMINAL_MAX_OUTPUT_CHARS = 200_000;
@@ -1795,8 +1538,10 @@ function runTerminalCommandForRenderer(request: unknown): Promise<{
 
 ipcMain.handle("preview-list-directory", (_event, request: unknown) => listPreviewDirectoryForRenderer(request));
 ipcMain.handle("preview-list-files", (_event, request: unknown) => listPreviewFilesForRenderer(request));
-ipcMain.handle("sessions:list", (_event, payload?: { archived?: boolean }) => ({
-  sessions: listStoredSessionsForRenderer(Boolean(payload?.archived)),
+ipcMain.handle("sessions:list", (_event, payload?: { archived?: boolean; limit?: number }) => ({
+  sessions: listStoredSessionsForRenderer(Boolean(payload?.archived), {
+    limit: typeof payload?.limit === "number" ? payload.limit : undefined,
+  }),
   archived: Boolean(payload?.archived),
 }));
 ipcMain.handle("slash-commands:list", (_event, payload?: { cwd?: string }) => ({
@@ -1840,110 +1585,10 @@ ipcMain.handle("shell:openExternal", async (_event, url: unknown) => {
 });
 ipcMain.handle("preview-read-file", (_event, request: unknown) => readPreviewFileForRenderer(request));
 ipcMain.handle("preview-get-image-base64", (_event, request: unknown) => readPreviewFileForRenderer(request));
-ipcMain.handle("preview-get-file-metadata", (_event, request: unknown) => {
-  try {
-    if (!request || typeof request !== "object") {
-      return null;
-    }
-    const payload = request as { cwd?: unknown; path?: unknown };
-    const rawCwd = typeof payload.cwd === "string" ? payload.cwd.trim() : "";
-    const rawPath = typeof payload.path === "string" ? payload.path.trim() : "";
-    if (!rawCwd || !rawPath) {
-      return null;
-    }
-    const rootPath = realpathSync(rawCwd);
-    const requestedPath = isAbsolute(rawPath) ? rawPath : join(rootPath, rawPath);
-    const realPath = realpathSync(requestedPath);
-    if (!isPathWithinOrEqualRoot(rootPath, realPath)) {
-      return null;
-    }
-    const stat = statSync(realPath);
-    return {
-      name: realPath.split(/[\\/]/).pop() ?? realPath,
-      path: realPath,
-      size: stat.size,
-      type: stat.isDirectory() ? "directory" : extname(realPath).slice(1),
-      lastModified: stat.mtimeMs,
-      isDirectory: stat.isDirectory(),
-    };
-  } catch {
-    return null;
-  }
-});
-ipcMain.handle("preview-write-file", (_event, request: unknown) => {
-  try {
-    if (!request || typeof request !== "object") {
-      return { success: false, error: "缺少写入请求参数。" };
-    }
-    const payload = request as { cwd?: unknown; path?: unknown; data?: unknown };
-    const rawCwd = typeof payload.cwd === "string" ? payload.cwd.trim() : "";
-    const rawPath = typeof payload.path === "string" ? payload.path.trim() : "";
-    if (!rawCwd || !rawPath || typeof payload.data !== "string") {
-      return { success: false, error: "缺少工作目录、文件路径或写入内容。" };
-    }
-    const rootPath = realpathSync(rawCwd);
-    const requestedPath = isAbsolute(rawPath) ? rawPath : join(rootPath, rawPath);
-    const realPath = realpathSync(requestedPath);
-    if (!isPathWithinOrEqualRoot(rootPath, realPath)) {
-      return { success: false, path: realPath, error: "只能写入当前工作目录内的文件。" };
-    }
-    if (!statSync(realPath).isFile()) {
-      return { success: false, path: realPath, error: "只能写入普通文件。" };
-    }
-    writeFileSync(realPath, payload.data, "utf8");
-    return { success: true, path: realPath };
-  } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : "写入预览文件失败。" };
-  }
-});
-ipcMain.handle("preview-remove-entry", (_event, request: unknown) => {
-  try {
-    if (!request || typeof request !== "object") {
-      return { success: false, error: "缺少删除请求参数。" };
-    }
-    const payload = request as { cwd?: unknown; path?: unknown };
-    const rawCwd = typeof payload.cwd === "string" ? payload.cwd.trim() : "";
-    const rawPath = typeof payload.path === "string" ? payload.path.trim() : "";
-    if (!rawCwd || !rawPath) {
-      return { success: false, error: "缺少工作目录或路径。" };
-    }
-    const rootPath = realpathSync(rawCwd);
-    const requestedPath = isAbsolute(rawPath) ? rawPath : join(rootPath, rawPath);
-    const realPath = realpathSync(requestedPath);
-    if (!isPathWithinOrEqualRoot(rootPath, realPath) || rootPath === realPath) {
-      return { success: false, path: realPath, error: "只能删除当前工作目录内的子文件。" };
-    }
-    rmSync(realPath, { recursive: true, force: true });
-    return { success: true, path: realPath };
-  } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : "删除文件失败。" };
-  }
-});
-ipcMain.handle("preview-rename-entry", (_event, request: unknown) => {
-  try {
-    if (!request || typeof request !== "object") {
-      return { success: false, error: "缺少重命名请求参数。" };
-    }
-    const payload = request as { cwd?: unknown; path?: unknown; newName?: unknown };
-    const rawCwd = typeof payload.cwd === "string" ? payload.cwd.trim() : "";
-    const rawPath = typeof payload.path === "string" ? payload.path.trim() : "";
-    const newName = typeof payload.newName === "string" ? payload.newName.trim() : "";
-    if (!rawCwd || !rawPath || !newName || /[\\/]/.test(newName)) {
-      return { success: false, error: "缺少工作目录、路径或合法新名称。" };
-    }
-    const rootPath = realpathSync(rawCwd);
-    const requestedPath = isAbsolute(rawPath) ? rawPath : join(rootPath, rawPath);
-    const realPath = realpathSync(requestedPath);
-    if (!isPathWithinOrEqualRoot(rootPath, realPath) || rootPath === realPath) {
-      return { success: false, path: realPath, error: "只能重命名当前工作目录内的子文件。" };
-    }
-    const newPath = join(realPath.split(/[\\/]/).slice(0, -1).join("/"), newName);
-    renameSync(realPath, newPath);
-    return { success: true, path: realPath, newPath };
-  } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : "重命名文件失败。" };
-  }
-});
+ipcMain.handle("preview-get-file-metadata", (_event, request: unknown) => getPreviewFileMetadataForRenderer(request));
+ipcMain.handle("preview-write-file", (_event, request: unknown) => writePreviewFileForRenderer(request));
+ipcMain.handle("preview-remove-entry", (_event, request: unknown) => removePreviewEntryForRenderer(request));
+ipcMain.handle("preview-rename-entry", (_event, request: unknown) => renamePreviewEntryForRenderer(request));
 ipcMain.handle("preview-open-file", async (_event, request: unknown) => {
   const path = request && typeof request === "object" && typeof (request as { path?: unknown }).path === "string"
     ? (request as { path: string }).path
@@ -3391,8 +3036,10 @@ app.on("ready", async () => {
             }
             return { success: true, events: emittedEvents };
           },
-          listSessions: (payload?: { archived?: boolean }) => ({
-            sessions: listStoredSessionsForRenderer(Boolean(payload?.archived)),
+          listSessions: (payload?: { archived?: boolean; limit?: number }) => ({
+            sessions: listStoredSessionsForRenderer(Boolean(payload?.archived), {
+              limit: typeof payload?.limit === "number" ? payload.limit : undefined,
+            }),
             archived: Boolean(payload?.archived),
           }),
           listSlashCommands: (payload?: { cwd?: string }) => ({
@@ -3437,9 +3084,11 @@ app.on("ready", async () => {
               return await optimizePrompt(args[0] as { prompt?: string; model?: string });
             }
             if (channel === "sessions:list") {
-              const payload = args[0] as { archived?: boolean } | undefined;
+              const payload = args[0] as { archived?: boolean; limit?: number } | undefined;
               return {
-                sessions: listStoredSessionsForRenderer(Boolean(payload?.archived)),
+                sessions: listStoredSessionsForRenderer(Boolean(payload?.archived), {
+                  limit: typeof payload?.limit === "number" ? payload.limit : undefined,
+                }),
                 archived: Boolean(payload?.archived),
               };
             }

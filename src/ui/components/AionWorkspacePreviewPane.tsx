@@ -1,6 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactElement } from 'react';
-import Editor, { loader } from '@monaco-editor/react';
-import * as monaco from 'monaco-editor';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactElement } from 'react';
 import { ChevronLeft, ChevronRight, LocateFixed, RefreshCw } from 'lucide-react';
 import { PROMPT_FOCUS_EVENT, PROMPT_SENT_EVENT, PROMPT_SUBMIT_EVENT } from '../events';
 import {
@@ -24,56 +22,20 @@ import { calculateSelectionOverlayPosition } from '../utils/selection-overlay-po
 import {
   getPreviewFileAncestorDirectories,
 } from '../utils/preview-file-locator';
+import {
+  confirmClosePreviewTabs,
+  isPreviewTabDirty,
+  markPreviewTabContent,
+} from '../utils/preview-tab-state';
 import MDContent from '../render/markdown';
+import type { PreviewDecorationCollection, PreviewEditor, PreviewMonaco, PreviewSelection } from './PreviewMonacoEditor';
 import './AionWorkspacePreviewPane.css';
 
-type MonacoWorkerEnvironment = typeof self & {
-  MonacoEnvironment?: {
-    getWorker?: (_: string, label: string) => Worker;
-  };
-};
-
-type MonacoTypeScriptDefaults = {
-  setCompilerOptions: (options: Record<string, unknown>) => void;
-  setDiagnosticsOptions: (options: Record<string, unknown>) => void;
-};
-
-type MonacoTypeScriptRuntime = {
-  JsxEmit?: { Preserve?: number };
-  ModuleKind?: { ESNext?: number };
-  ModuleResolutionKind?: { NodeJs?: number };
-  ScriptTarget?: { ESNext?: number };
-  typescriptDefaults?: MonacoTypeScriptDefaults;
-  javascriptDefaults?: MonacoTypeScriptDefaults;
-};
-
-const monacoGlobal = self as MonacoWorkerEnvironment;
-let previewMonacoDefaultsConfigured = false;
-
-if (!monacoGlobal.MonacoEnvironment?.getWorker) {
-  monacoGlobal.MonacoEnvironment = {
-    getWorker(_: string, label: string) {
-      if (label === 'json') {
-        return new Worker(new URL('monaco-editor/esm/vs/language/json/json.worker.js', import.meta.url), { type: 'module' });
-      }
-      if (label === 'css' || label === 'scss' || label === 'less') {
-        return new Worker(new URL('monaco-editor/esm/vs/language/css/css.worker.js', import.meta.url), { type: 'module' });
-      }
-      if (label === 'html' || label === 'handlebars' || label === 'razor') {
-        return new Worker(new URL('monaco-editor/esm/vs/language/html/html.worker.js', import.meta.url), { type: 'module' });
-      }
-      if (label === 'typescript' || label === 'javascript') {
-        return new Worker(new URL('monaco-editor/esm/vs/language/typescript/ts.worker.js', import.meta.url), { type: 'module' });
-      }
-      return new Worker(new URL('monaco-editor/esm/vs/editor/editor.worker.js', import.meta.url), { type: 'module' });
-    },
-  };
-}
-
-loader.config({ monaco });
+const PreviewMonacoEditor = lazy(() => import('./PreviewMonacoEditor').then((module) => ({ default: module.PreviewMonacoEditor })));
 
 const ROOT_DEPTH = 0;
 const EMPTY_CODE_REFERENCES: CodeReferenceDraft[] = [];
+const EMPTY_PREVIEW_RECENT_PATHS: string[] = [];
 
 type AionWorkspacePreviewPaneProps = {
   workspace?: string;
@@ -118,6 +80,8 @@ type ActivePreviewFile = {
   fileName: string;
   relativePath: string;
   content: string;
+  savedContent: string;
+  isDirty: boolean;
   contentType: PreviewContentType;
   language?: string;
   loading?: boolean;
@@ -609,40 +573,11 @@ function NativeExplorer({
   );
 }
 
-function configurePreviewMonacoDefaults(monacoApi: typeof monaco) {
-  if (previewMonacoDefaultsConfigured) return;
-
-  const typescript = (monacoApi.languages as unknown as { typescript?: MonacoTypeScriptRuntime }).typescript;
-  if (!typescript?.typescriptDefaults || !typescript.javascriptDefaults) return;
-
-  const compilerOptions: Record<string, unknown> = {
-    allowJs: true,
-    allowNonTsExtensions: true,
-    allowSyntheticDefaultImports: true,
-    esModuleInterop: true,
-    jsx: typescript.JsxEmit?.Preserve ?? 1,
-    module: typescript.ModuleKind?.ESNext ?? 99,
-    moduleResolution: typescript.ModuleResolutionKind?.NodeJs ?? 2,
-    target: typescript.ScriptTarget?.ESNext ?? 99,
-  };
-  const diagnosticsOptions: Record<string, unknown> = {
-    noSemanticValidation: true,
-    noSuggestionDiagnostics: true,
-  };
-
-  typescript.typescriptDefaults.setCompilerOptions(compilerOptions);
-  typescript.javascriptDefaults.setCompilerOptions({
-    ...compilerOptions,
-    checkJs: false,
-  });
-  typescript.typescriptDefaults.setDiagnosticsOptions(diagnosticsOptions);
-  typescript.javascriptDefaults.setDiagnosticsOptions(diagnosticsOptions);
-  previewMonacoDefaultsConfigured = true;
-}
-
 function QuickOpenPalette({
   query,
   entries,
+  recentPaths,
+  activePath,
   loading,
   error,
   truncated,
@@ -654,6 +589,8 @@ function QuickOpenPalette({
 }: {
   query: string;
   entries: PreviewQuickOpenEntry[];
+  recentPaths: readonly string[];
+  activePath?: string | null;
   loading: boolean;
   error?: string;
   truncated: boolean;
@@ -664,7 +601,13 @@ function QuickOpenPalette({
   onClose: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const matches = useMemo(() => filterPreviewQuickOpenEntries(entries, query, 50), [entries, query]);
+  const matches = useMemo(
+    () => filterPreviewQuickOpenEntries(entries, query, 50, {
+      recentPaths,
+      activePath: activePath ?? undefined,
+    }),
+    [activePath, entries, query, recentPaths],
+  );
   const clampedSelectedIndex = Math.min(Math.max(selectedIndex, 0), Math.max(matches.length - 1, 0));
 
   useEffect(() => {
@@ -769,11 +712,12 @@ function PreviewSurface({
   const addCodeReference = useAppStore((state) => state.addCodeReference);
   const codeReferences = useAppStore((state) => state.codeReferencesBySessionId[referenceSessionKey] || EMPTY_CODE_REFERENCES);
   const tabScrollerRef = useRef<HTMLDivElement | null>(null);
-  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const editorRef = useRef<PreviewEditor | null>(null);
+  const monacoApiRef = useRef<PreviewMonaco | null>(null);
   const gitHunksRef = useRef<PreviewGitChangeHunk[]>([]);
   const selectionListenerRef = useRef<{ dispose: () => void } | null>(null);
-  const decorationsRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
-  const gitDecorationsRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+  const decorationsRef = useRef<PreviewDecorationCollection | null>(null);
+  const gitDecorationsRef = useRef<PreviewDecorationCollection | null>(null);
   const gitGutterListenerRef = useRef<{ dispose: () => void } | null>(null);
   const [tabScrollState, setTabScrollState] = useState({ canScrollLeft: false, canScrollRight: false });
   const [tabMenu, setTabMenu] = useState<TabContextMenuState | null>(null);
@@ -959,9 +903,10 @@ function PreviewSurface({
   }, [onCloseAllTabs, onCloseOtherTabs, onCloseTab, onCloseTabsToRight, tabMenu]);
 
   const updateReferenceDecorations = useCallback(() => {
-    if (!decorationsRef.current || !file) return;
+    const monacoApi = monacoApiRef.current;
+    if (!decorationsRef.current || !file || !monacoApi) return;
     decorationsRef.current.set(fileReferences.map((reference, index) => ({
-      range: new monaco.Range(reference.startLine, 1, reference.endLine, 1),
+      range: new monacoApi.Range(reference.startLine, 1, reference.endLine, 1),
       options: {
         isWholeLine: true,
         className: 'vscode-preview__referenced-line',
@@ -985,9 +930,10 @@ function PreviewSurface({
   }, []);
 
   const updateGitDecorations = useCallback(() => {
-    if (!gitDecorationsRef.current || !file) return;
+    const monacoApi = monacoApiRef.current;
+    if (!gitDecorationsRef.current || !file || !monacoApi) return;
     gitDecorationsRef.current.set(gitHunks.map((hunk) => ({
-      range: new monaco.Range(hunk.startLine, 1, hunk.endLine, 1),
+      range: new monacoApi.Range(hunk.startLine, 1, hunk.endLine, 1),
       options: {
         isWholeLine: true,
         className: `vscode-preview__git-line vscode-preview__git-line--${hunk.type}`,
@@ -1115,7 +1061,38 @@ function PreviewSurface({
     return () => window.removeEventListener('keydown', handleSaveShortcut, { capture: true });
   }, [file, saveCurrentFile]);
 
-  const calculateSelectionPosition = useCallback((editor: monaco.editor.IStandaloneCodeEditor, selection: monaco.Selection) => {
+  useEffect(() => {
+    const handleCloseShortcut = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 'w' || event.altKey || event.shiftKey || (!event.ctrlKey && !event.metaKey)) return;
+      if (!activeTabPath) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onCloseTab(activeTabPath);
+    };
+
+    window.addEventListener('keydown', handleCloseShortcut, { capture: true });
+    return () => window.removeEventListener('keydown', handleCloseShortcut, { capture: true });
+  }, [activeTabPath, onCloseTab]);
+
+  useEffect(() => {
+    const handleTabSwitchShortcut = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 'tab' || event.altKey || (!event.ctrlKey && !event.metaKey)) return;
+      if (openTabs.length < 2) return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      const currentIndex = openTabs.findIndex((tab) => tab.path === activeTabPath);
+      const baseIndex = currentIndex >= 0 ? currentIndex : 0;
+      const direction = event.shiftKey ? -1 : 1;
+      const nextIndex = (baseIndex + direction + openTabs.length) % openTabs.length;
+      onSwitchTab(openTabs[nextIndex]!.path);
+    };
+
+    window.addEventListener('keydown', handleTabSwitchShortcut, { capture: true });
+    return () => window.removeEventListener('keydown', handleTabSwitchShortcut, { capture: true });
+  }, [activeTabPath, onSwitchTab, openTabs]);
+
+  const calculateSelectionPosition = useCallback((editor: PreviewEditor, selection: PreviewSelection) => {
     const layout = editor.getLayoutInfo();
     const position = editor.getScrolledVisiblePosition({
       lineNumber: selection.endLineNumber,
@@ -1136,8 +1113,9 @@ function PreviewSurface({
     });
   }, []);
 
-  const handleEditorMount = useCallback((editor: monaco.editor.IStandaloneCodeEditor) => {
+  const handleEditorMount = useCallback((editor: PreviewEditor, monacoApi: PreviewMonaco) => {
     editorRef.current = editor;
+    monacoApiRef.current = monacoApi;
     decorationsRef.current = editor.createDecorationsCollection([]);
     gitDecorationsRef.current = editor.createDecorationsCollection([]);
     updateReferenceDecorations();
@@ -1172,11 +1150,12 @@ function PreviewSurface({
 
     gitGutterListenerRef.current?.dispose();
     gitGutterListenerRef.current = editor.onMouseDown((event) => {
+      const mouseTargetType = monacoApi.editor.MouseTargetType;
       const targetType = event.target.type;
       if (
-        targetType !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN
-        && targetType !== monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS
-        && targetType !== monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS
+        targetType !== mouseTargetType.GUTTER_GLYPH_MARGIN
+        && targetType !== mouseTargetType.GUTTER_LINE_DECORATIONS
+        && targetType !== mouseTargetType.GUTTER_LINE_NUMBERS
       ) {
         return;
       }
@@ -1243,8 +1222,8 @@ function PreviewSurface({
                 onClick={() => onSwitchTab(tab.path)}
                 onContextMenu={(event) => handleTabContextMenu(event, tab.path)}
               >
-                <span className="vscode-preview__tab-dot" />
-                <span className="vscode-preview__tab-name">{tab.fileName}</span>
+                <span className={`vscode-preview__tab-dot ${tab.isDirty ? 'vscode-preview__tab-dot--dirty' : ''}`} />
+                <span className="vscode-preview__tab-name">{tab.fileName}{tab.isDirty ? ' *' : ''}</span>
                 <button
                   type="button"
                   className="vscode-preview__tab-close"
@@ -1286,6 +1265,11 @@ function PreviewSurface({
           <span className="vscode-preview__dot" />
           <span className="vscode-preview__name">{file.fileName}</span>
           <span className="vscode-preview__language">{file.contentType === 'code' ? monacoLanguage : file.contentType}</span>
+          {file.isDirty && (
+            <span className="vscode-preview__selection-pill">
+              Unsaved
+            </span>
+          )}
           {saveStatus?.path === file.path && (
             <span className="vscode-preview__selection-pill" title={saveStatus.message}>
               {saveStatus.state === 'saving' ? 'Saving...' : saveStatus.state === 'saved' ? 'Saved' : 'Save failed'}
@@ -1347,37 +1331,16 @@ function PreviewSurface({
             <MDContent text={file.content} />
           </div>
         ) : (
-          <Editor
-            key={file.path}
-            height="100%"
-            language={monacoLanguage}
-            path={monacoModelPath}
-            theme="vs"
-            value={file.content}
-            beforeMount={configurePreviewMonacoDefaults}
-            onMount={handleEditorMount}
-            onChange={(value) => onUpdateFileContent(file.path, value ?? '')}
-            options={{
-              readOnly: false,
-              minimap: { enabled: false },
-              fontSize: 12,
-              lineHeight: 20,
-              fontFamily: 'Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-              wordWrap: 'on',
-              scrollBeyondLastLine: false,
-              renderLineHighlight: 'none',
-              overviewRulerBorder: false,
-              hideCursorInOverviewRuler: true,
-              automaticLayout: true,
-              glyphMargin: true,
-              tabSize: 2,
-              padding: { top: 12, bottom: 18 },
-              scrollbar: {
-                verticalScrollbarSize: 10,
-                horizontalScrollbarSize: 10,
-              },
-            }}
-          />
+          <Suspense fallback={<div className="vscode-preview__loading">Loading editor...</div>}>
+            <PreviewMonacoEditor
+              key={file.path}
+              language={monacoLanguage}
+              path={monacoModelPath ?? file.path}
+              value={file.content}
+              onMount={handleEditorMount}
+              onChange={(value) => onUpdateFileContent(file.path, value)}
+            />
+          </Suspense>
         )}
         {selectionInfo && !file.error && !file.loading && file.contentType === 'code' && (
           <div
@@ -1449,6 +1412,7 @@ export function AionWorkspacePreviewPane({
   onConsumePendingOpenRequest,
   onClose,
 }: AionWorkspacePreviewPaneProps) {
+  const [quickOpenRecentPathsByWorkspace, setQuickOpenRecentPathsByWorkspace] = useState<Record<string, string[]>>({});
   const [openTabs, setOpenTabs] = useState<ActivePreviewFile[]>([]);
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
   const [previewFileChangeEvents, setPreviewFileChangeEvents] = useState<PreviewFileChangeEvent[]>([]);
@@ -1463,6 +1427,30 @@ export function AionWorkspacePreviewPane({
   const quickOpenEntriesRef = useRef<PreviewQuickOpenEntry[]>([]);
   const refreshedOperationIdsRef = useRef(new Set<string>());
   const referenceSessionKey = getCodeReferenceSessionKey(conversationId);
+  const quickOpenRecentPaths = workspace
+    ? (quickOpenRecentPathsByWorkspace[workspace] ?? EMPTY_PREVIEW_RECENT_PATHS)
+    : EMPTY_PREVIEW_RECENT_PATHS;
+
+  const markPreviewQuickOpenRecentPath = useCallback((workspacePath: string, recentPath: string) => {
+    const workspaceKey = workspacePath.trim();
+    const targetPath = recentPath.trim();
+    if (!workspaceKey || !targetPath) return;
+
+    setQuickOpenRecentPathsByWorkspace((current) => {
+      const previous = current[workspaceKey] ?? EMPTY_PREVIEW_RECENT_PATHS;
+      const next = [
+        targetPath,
+        ...previous.filter((item) => item !== targetPath),
+      ].slice(0, 120);
+      if (next.length === previous.length && next.every((item, index) => item === previous[index])) {
+        return current;
+      }
+      return {
+        ...current,
+        [workspaceKey]: next,
+      };
+    });
+  }, []);
 
   useLayoutEffect(() => {
     openTabsRef.current = openTabs;
@@ -1482,6 +1470,13 @@ export function AionWorkspacePreviewPane({
     setQuickOpenError(undefined);
     setQuickOpenTruncated(false);
     setQuickOpenSelectedIndex(0);
+    setQuickOpenRecentPathsByWorkspace((current) => {
+      if (!workspace?.trim()) return current;
+      return current[workspace] ? current : {
+        ...current,
+        [workspace]: EMPTY_PREVIEW_RECENT_PATHS,
+      };
+    });
     openTabsRef.current = [];
     quickOpenEntriesRef.current = [];
     refreshedOperationIdsRef.current = new Set<string>();
@@ -1489,13 +1484,27 @@ export function AionWorkspacePreviewPane({
 
   const activeFile = openTabs.find((t) => t.path === activeTabPath) ?? null;
 
-  const openFile = useCallback(async (path: string, options: { revealLine?: number } = {}) => {
+  const openFile = useCallback(async (path: string, options: { revealLine?: number; trackRecent?: boolean } = {}) => {
     if (!workspace) return;
+    const shouldTrackRecent = options.trackRecent !== false;
 
     // If already open, switch to it and reread disk so the preview cannot stay stale.
     const existing = openTabsRef.current.find((t) => normalizePreviewFilePath(t.path) === normalizePreviewFilePath(path));
     if (existing) {
       setActiveTabPath(existing.path);
+      if (shouldTrackRecent) {
+        markPreviewQuickOpenRecentPath(workspace, existing.path);
+      }
+      if (isPreviewTabDirty(existing)) {
+        if (options.revealLine) {
+          setOpenTabs((prev) => prev.map((tab) => (
+            tab.path === existing.path
+              ? { ...tab, revealLine: options.revealLine }
+              : tab
+          )));
+        }
+        return;
+      }
       const result = await readPreviewFileWithFallback(workspace, existing.path);
       const next: ActivePreviewFile = result.success && result.content !== undefined
         ? {
@@ -1504,6 +1513,8 @@ export function AionWorkspacePreviewPane({
             fileName: basename(result.path || existing.path),
             relativePath: getRelativePath(workspace, result.path || existing.path),
             content: result.content,
+            savedContent: result.content,
+            isDirty: false,
             contentType: inferContentType(result.path || existing.path, result.content),
             language: result.language,
             loading: false,
@@ -1517,6 +1528,9 @@ export function AionWorkspacePreviewPane({
             revealLine: options.revealLine ?? existing.revealLine,
           };
       setOpenTabs((prev) => prev.map((t) => (t.path === existing.path ? next : t)));
+      if (shouldTrackRecent && result.success) {
+        markPreviewQuickOpenRecentPath(workspace, next.path);
+      }
       return;
     }
 
@@ -1527,6 +1541,8 @@ export function AionWorkspacePreviewPane({
       fileName,
       relativePath,
       content: '',
+      savedContent: '',
+      isDirty: false,
       contentType: 'code',
       loading: true,
       revealLine: options.revealLine,
@@ -1541,6 +1557,8 @@ export function AionWorkspacePreviewPane({
           fileName: basename(result.path || path),
           relativePath: getRelativePath(workspace, result.path || path),
           content: result.content,
+          savedContent: result.content,
+          isDirty: false,
           contentType: inferContentType(result.path || path, result.content),
           language: result.language,
           revealLine: options.revealLine,
@@ -1550,19 +1568,24 @@ export function AionWorkspacePreviewPane({
           fileName,
           relativePath,
           content: '',
+          savedContent: '',
+          isDirty: false,
           contentType: 'code',
           error: result.error || '文件读取失败。',
           revealLine: options.revealLine,
         };
 
     setOpenTabs((prev) => prev.map((t) => (t.path === path ? resolved : t)));
-  }, [workspace]);
+    if (shouldTrackRecent && result.success) {
+      markPreviewQuickOpenRecentPath(workspace, resolved.path);
+    }
+  }, [markPreviewQuickOpenRecentPath, workspace]);
 
   const updateOpenFileContent = useCallback((path: string, content: string) => {
     const normalizedPath = normalizePreviewFilePath(path);
     setOpenTabs((prev) => prev.map((tab) => (
       normalizePreviewFilePath(tab.path) === normalizedPath
-        ? { ...tab, content }
+        ? markPreviewTabContent(tab, content)
         : tab
     )));
   }, []);
@@ -1594,6 +1617,8 @@ export function AionWorkspacePreviewPane({
             fileName: basename(savedPath),
             relativePath: getRelativePath(workspace, savedPath),
             content,
+            savedContent: content,
+            isDirty: false,
             contentType: inferContentType(savedPath, content),
             loading: false,
             error: undefined,
@@ -1603,51 +1628,63 @@ export function AionWorkspacePreviewPane({
     setActiveTabPath(savedPath);
   }, [workspace]);
 
-  const closeTab = useCallback((path: string) => {
-    setOpenTabs((prev) => {
-      const idx = prev.findIndex((t) => t.path === path);
-      const next = prev.filter((t) => t.path !== path);
+  const confirmCloseTabs = useCallback((tabsToClose: ActivePreviewFile[]) => {
+    return confirmClosePreviewTabs(tabsToClose, (message) => window.confirm(message));
+  }, []);
 
-      if (path === activeTabPath) {
-        // Activate nearest tab: prefer right neighbor, then left
-        const newActive = next[Math.min(idx, next.length - 1)] ?? null;
-        setActiveTabPath(newActive?.path ?? null);
-      }
-      return next;
-    });
-  }, [activeTabPath]);
+  const closeTab = useCallback((path: string) => {
+    const currentTabs = openTabsRef.current;
+    const idx = currentTabs.findIndex((tab) => tab.path === path);
+    if (idx < 0) return;
+    const tab = currentTabs[idx];
+    if (!tab) return;
+    if (!confirmCloseTabs([tab])) return;
+
+    const next = currentTabs.filter((item) => item.path !== path);
+    setOpenTabs(next);
+    if (path === activeTabPath) {
+      const newActive = next[Math.min(idx, next.length - 1)] ?? null;
+      setActiveTabPath(newActive?.path ?? null);
+    }
+  }, [activeTabPath, confirmCloseTabs]);
 
   const closeOtherTabs = useCallback((path: string) => {
-    setOpenTabs((prev) => {
-      const next = prev.filter((tab) => tab.path === path);
-      setActiveTabPath(next[0]?.path ?? null);
-      return next;
-    });
-  }, []);
+    const currentTabs = openTabsRef.current;
+    const tabsToClose = currentTabs.filter((tab) => tab.path !== path);
+    if (!confirmCloseTabs(tabsToClose)) return;
+
+    const next = currentTabs.filter((tab) => tab.path === path);
+    setOpenTabs(next);
+    setActiveTabPath(next[0]?.path ?? null);
+  }, [confirmCloseTabs]);
 
   const closeTabsToRight = useCallback((path: string) => {
-    setOpenTabs((prev) => {
-      const idx = prev.findIndex((tab) => tab.path === path);
-      if (idx < 0) return prev;
-      const next = prev.slice(0, idx + 1);
-      if (!next.some((tab) => tab.path === activeTabPath)) {
-        setActiveTabPath(path);
-      }
-      return next;
-    });
-  }, [activeTabPath]);
+    const currentTabs = openTabsRef.current;
+    const idx = currentTabs.findIndex((tab) => tab.path === path);
+    if (idx < 0) return;
+
+    const tabsToClose = currentTabs.slice(idx + 1);
+    if (!confirmCloseTabs(tabsToClose)) return;
+    const next = currentTabs.slice(0, idx + 1);
+    setOpenTabs(next);
+    if (!next.some((tab) => tab.path === activeTabPath)) {
+      setActiveTabPath(path);
+    }
+  }, [activeTabPath, confirmCloseTabs]);
 
   const closeAllTabs = useCallback(() => {
+    const currentTabs = openTabsRef.current;
+    if (!confirmCloseTabs(currentTabs)) return;
     setOpenTabs([]);
     setActiveTabPath(null);
-  }, []);
+  }, [confirmCloseTabs]);
 
   const loadQuickOpenEntries = useCallback(async (force = false) => {
     if (!workspace || (!force && quickOpenEntriesRef.current.length > 0)) return;
     setQuickOpenLoading(true);
     setQuickOpenError(undefined);
     try {
-      const result: PreviewQuickOpenResponse = await window.electron.listPreviewFiles({ cwd: workspace, limit: 4_000 });
+      const result: PreviewQuickOpenResponse = await window.electron.listPreviewFiles({ cwd: workspace, limit: 2_000 });
       if (!result.success) {
         setQuickOpenEntries([]);
         setQuickOpenError(result.error || '文件索引失败。');
@@ -1684,12 +1721,16 @@ export function AionWorkspacePreviewPane({
       if (key !== 'p' || event.altKey || event.shiftKey || (!event.ctrlKey && !event.metaKey)) return;
       event.preventDefault();
       event.stopPropagation();
+      if (quickOpenVisible) {
+        setQuickOpenVisible(false);
+        return;
+      }
       openQuickOpen();
     };
 
     window.addEventListener('keydown', handleKeyDown, { capture: true });
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
-  }, [openQuickOpen]);
+  }, [openQuickOpen, quickOpenVisible]);
 
   useEffect(() => {
     if (!pendingOpenRequest?.filePath) return;
@@ -1720,7 +1761,7 @@ export function AionWorkspacePreviewPane({
     }
 
     for (const change of changedOpenTabs) {
-      void openFile(change.path);
+      void openFile(change.path, { trackRecent: false });
     }
   }, [loadQuickOpenEntries, messages, openFile, quickOpenVisible, workspace]);
 
@@ -1764,6 +1805,8 @@ export function AionWorkspacePreviewPane({
         <QuickOpenPalette
           query={quickOpenQuery}
           entries={quickOpenEntries}
+          recentPaths={quickOpenRecentPaths}
+          activePath={activeTabPath}
           loading={quickOpenLoading}
           error={quickOpenError}
           truncated={quickOpenTruncated}

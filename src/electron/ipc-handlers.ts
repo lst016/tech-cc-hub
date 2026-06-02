@@ -172,9 +172,15 @@ function initializeSessions() {
   return sessions;
 }
 
-export function listStoredSessionsForRenderer(archived = false) {
+const RENDERER_SESSION_LIST_LIMIT = 80;
+
+export function listStoredSessionsForRenderer(archived = false, options?: { limit?: number }) {
   const store = initializeSessions();
-  return store.listSessions({ archived });
+  return store.listSessions({
+    archived,
+    summary: true,
+    limit: options?.limit ?? RENDERER_SESSION_LIST_LIMIT,
+  });
 }
 
 function broadcast(event: ServerEvent) {
@@ -946,9 +952,10 @@ export async function handleClientEvent(event: ClientEvent) {
 
   if (event.type === "session.list") {
     const archived = Boolean(event.payload?.archived);
+    const limit = typeof event.payload?.limit === "number" ? event.payload.limit : undefined;
     emit({
       type: "session.list",
-      payload: { sessions: listStoredSessionsForRenderer(archived), archived },
+      payload: { sessions: listStoredSessionsForRenderer(archived, { limit }), archived },
     });
     return;
   }
@@ -1022,7 +1029,7 @@ export async function handleClientEvent(event: ClientEvent) {
   }
 
   if (event.type === "session.workflow.catalog.list") {
-    const history = store.getSessionHistory(event.payload.sessionId);
+    const history = store.getSessionHistoryPage(event.payload.sessionId, { limit: 80 });
     if (!history) {
       emit({ type: "session.deleted", payload: { sessionId: event.payload.sessionId } });
       return;

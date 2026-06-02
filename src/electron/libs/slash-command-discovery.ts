@@ -23,8 +23,27 @@ export type SlashCommandDefinitionItem = SlashCommandItem & {
   definitionKind: "command" | "skill";
 };
 
-const IGNORED_SCAN_DIRS = new Set([".git", "node_modules"]);
+const IGNORED_SCAN_DIRS = new Set([
+  ".cache",
+  ".claude",
+  ".codex",
+  ".git",
+  ".next",
+  ".tech",
+  ".turbo",
+  ".vite",
+  "build",
+  "coverage",
+  "dist",
+  "dist-electron",
+  "dist-react",
+  "dist-test",
+  "node_modules",
+  "out",
+]);
 const DISCOVERY_CACHE_TTL_MS = 10_000;
+const MAX_DISCOVERY_FILES = 1_000;
+const MAX_DISCOVERY_DIRS = 2_000;
 
 type DiscoveryCacheEntry = {
   items: SlashCommandItem[] | undefined;
@@ -224,7 +243,7 @@ function discoverNestedSkillRoots(rootPath: string, maxDepth = 5): string[] {
     }
 
     for (const entry of readdirSync(current.path, { withFileTypes: true })) {
-      if (!entry.isDirectory() || IGNORED_SCAN_DIRS.has(entry.name)) {
+      if (!entry.isDirectory() || shouldIgnoreScanDirectory(entry.name)) {
         continue;
       }
 
@@ -292,22 +311,27 @@ function normalizeCommandName(value: string): string | null {
 function walkMarkdownFiles(rootPath: string): string[] {
   const files: string[] = [];
   const pending = [rootPath];
+  let visitedDirs = 0;
 
-  while (pending.length > 0) {
+  while (pending.length > 0 && files.length < MAX_DISCOVERY_FILES && visitedDirs < MAX_DISCOVERY_DIRS) {
     const current = pending.pop();
     if (!current || !existsSync(current)) {
       continue;
     }
+    visitedDirs += 1;
 
     for (const entry of readdirSync(current, { withFileTypes: true })) {
       const fullPath = join(current, entry.name);
       if (entry.isDirectory()) {
-        pending.push(fullPath);
+        if (!shouldIgnoreScanDirectory(entry.name)) {
+          pending.push(fullPath);
+        }
         continue;
       }
 
       if (entry.isFile() && extname(entry.name).toLowerCase() === ".md") {
         files.push(fullPath);
+        if (files.length >= MAX_DISCOVERY_FILES) break;
       }
     }
   }
@@ -318,27 +342,36 @@ function walkMarkdownFiles(rootPath: string): string[] {
 function walkSkillDefinitionFiles(rootPath: string): string[] {
   const files: string[] = [];
   const pending = [rootPath];
+  let visitedDirs = 0;
 
-  while (pending.length > 0) {
+  while (pending.length > 0 && files.length < MAX_DISCOVERY_FILES && visitedDirs < MAX_DISCOVERY_DIRS) {
     const current = pending.pop();
     if (!current || !existsSync(current)) {
       continue;
     }
+    visitedDirs += 1;
 
     for (const entry of readdirSync(current, { withFileTypes: true })) {
       const fullPath = join(current, entry.name);
       if (entry.isDirectory()) {
-        pending.push(fullPath);
+        if (!shouldIgnoreScanDirectory(entry.name)) {
+          pending.push(fullPath);
+        }
         continue;
       }
 
       if (entry.isFile() && entry.name === "SKILL.md") {
         files.push(fullPath);
+        if (files.length >= MAX_DISCOVERY_FILES) break;
       }
     }
   }
 
   return files;
+}
+
+function shouldIgnoreScanDirectory(name: string): boolean {
+  return IGNORED_SCAN_DIRS.has(name);
 }
 
 function commandNameFromCommandPath(rootPath: string, filePath: string): string | null {

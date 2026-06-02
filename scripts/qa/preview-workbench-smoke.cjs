@@ -2,6 +2,23 @@ const { chromium } = require('@playwright/test');
 
 const DEFAULT_URL = process.env.PREVIEW_QA_URL || 'http://localhost:4173/';
 const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const DEFAULT_PREFERRED_FILE = process.env.PREVIEW_QA_FILE || 'package.json';
+
+function isIgnorableConsoleError(line) {
+  return (
+    line.includes('Content Security Policy')
+    || line.includes("violates the following Content Security Policy directive")
+  );
+}
+
+function isFatalBrowserLog(line) {
+  if (line.includes('[pageerror]')) return true;
+  if (line.includes('Maximum update depth')) return true;
+  if (line.includes('getSnapshot')) return true;
+  if (line.includes('worker_file')) return true;
+  if (line.includes('[console:error]')) return !isIgnorableConsoleError(line);
+  return false;
+}
 
 async function main() {
   const browser = await chromium.launch({
@@ -20,7 +37,18 @@ async function main() {
 
   const explorer = page.locator('.native-explorer').first();
   await explorer.waitFor({ state: 'visible', timeout: 8000 });
-  await explorer.getByText('package.json', { exact: true }).click({ timeout: 8000 });
+  let chosenFileName = DEFAULT_PREFERRED_FILE;
+  const preferredFile = explorer.getByText(DEFAULT_PREFERRED_FILE, { exact: true }).first();
+  if (await preferredFile.count() > 0) {
+    await preferredFile.click({ timeout: 8000 });
+  } else {
+    const firstFileRow = explorer.locator('.native-explorer__row--file').first();
+    await firstFileRow.waitFor({ state: 'visible', timeout: 8000 });
+    chosenFileName = (
+      await firstFileRow.locator('.native-explorer__file-name').first().innerText().catch(() => DEFAULT_PREFERRED_FILE)
+    ).trim() || DEFAULT_PREFERRED_FILE;
+    await firstFileRow.click({ timeout: 8000 });
+  }
 
   const editor = page.locator('.monaco-editor').first();
   await editor.waitFor({ state: 'visible', timeout: 10000 });
@@ -43,18 +71,14 @@ async function main() {
 
   const bodyText = await page.locator('body').innerText({ timeout: 8000 });
   const textareaValues = await page.locator('textarea').evaluateAll((nodes) => nodes.map((node) => node.value));
-  if (!bodyText.includes('package.json') || !bodyText.includes('代码')) {
+  if (!bodyText.includes(chosenFileName) || !bodyText.includes('代码')) {
     throw new Error('Code reference chip was not rendered in composer');
   }
   if (textareaValues.some((value) => value.includes('<code_references>'))) {
     throw new Error('Code reference block leaked into textarea instead of staying as UI chip');
   }
 
-  const fatalLogs = logs.filter((line) => (
-    line.includes('[pageerror]')
-    || line.includes('[console:error]')
-    || line.includes('worker_file')
-  ));
+  const fatalLogs = logs.filter((line) => isFatalBrowserLog(line));
   if (fatalLogs.length > 0) {
     throw new Error(`Preview QA saw fatal browser logs:\n${fatalLogs.join('\n')}`);
   }

@@ -100,6 +100,22 @@ export type SessionLike = {
   messages: StreamMessageLike[];
 };
 
+export const DEFAULT_ACTIVITY_RAIL_MESSAGE_LIMIT = 600;
+
+export function limitActivityRailSessionMessages<T extends SessionLike>(
+  session: T,
+  limit = DEFAULT_ACTIVITY_RAIL_MESSAGE_LIMIT,
+): T {
+  const safeLimit = Math.max(1, Math.floor(limit));
+  if (session.messages.length <= safeLimit) {
+    return session;
+  }
+  return {
+    ...session,
+    messages: session.messages.slice(-safeLimit),
+  };
+}
+
 export type PermissionRequestLike = {
   toolUseId: string;
   toolName: string;

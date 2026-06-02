@@ -37,6 +37,7 @@ const KNOWLEDGE_MCP_SERVER_VERSION = "1.0.0";
 const CODEGRAPH_RETRIEVAL_TIMEOUT_MS = 5_000;
 const CODEGRAPH_SLOW_RETRIEVAL_MS = CODEGRAPH_RETRIEVAL_TIMEOUT_MS;
 const CODEGRAPH_SLOW_COOLDOWN_MS = 10 * 60 * 1_000;
+const MEMORY_JSON_MIRROR_LIMIT = 200;
 
 type CodeGraphSlowCircuit = {
   label: string;
@@ -126,8 +127,10 @@ function openMemoryRepository(workspaceRoot: string) {
 }
 
 function mirrorMemoryJson(repo: MemoryRepository, workspaceScope: string, memoryJsonPath: string): void {
-  const entries = repo.listAll(workspaceScope as MemoryScope);
-  writeFileSync(memoryJsonPath, `${JSON.stringify({ version: 1, updatedAt: Date.now(), entries }, null, 2)}\n`, "utf8");
+  const mirroredEntries = repo.listAll(workspaceScope as MemoryScope, { limit: MEMORY_JSON_MIRROR_LIMIT + 1 });
+  const truncated = mirroredEntries.length > MEMORY_JSON_MIRROR_LIMIT;
+  const entries = truncated ? mirroredEntries.slice(0, MEMORY_JSON_MIRROR_LIMIT) : mirroredEntries;
+  writeFileSync(memoryJsonPath, `${JSON.stringify({ version: 1, updatedAt: Date.now(), truncated, entries }, null, 2)}\n`, "utf8");
 }
 
 async function runCodeGraphRetrievalWithTimeout<T>(

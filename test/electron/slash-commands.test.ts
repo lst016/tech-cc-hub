@@ -117,6 +117,28 @@ test("slash command discovery returns cloned cached results", () => {
   }
 });
 
+test("slash command discovery skips generated dependency directories", () => {
+  const sandboxRoot = mkdtempSync(join(tmpdir(), "slash-commands-ignore-"));
+
+  try {
+    const projectRoot = join(sandboxRoot, "project");
+    mkdirSync(join(projectRoot, "commands", "dist"), { recursive: true });
+    mkdirSync(join(projectRoot, "commands", "node_modules"), { recursive: true });
+    mkdirSync(join(projectRoot, "commands", "src"), { recursive: true });
+    writeFileSync(join(projectRoot, "commands", "src", "keep.md"), "# keep\n", "utf8");
+    writeFileSync(join(projectRoot, "commands", "dist", "ignored.md"), "# ignored\n", "utf8");
+    writeFileSync(join(projectRoot, "commands", "node_modules", "ignored.md"), "# ignored\n", "utf8");
+
+    clearSlashCommandDiscoveryCache();
+    const commands = discoverSlashCommandsInRoots({ project: projectRoot });
+
+    assert.deepEqual(commands, ["src.keep"]);
+  } finally {
+    clearSlashCommandDiscoveryCache();
+    rmSync(sandboxRoot, { recursive: true, force: true });
+  }
+});
+
 test("skill definition discovery returns the matched SKILL.md path", () => {
   const sandboxRoot = mkdtempSync(join(tmpdir(), "slash-skill-definition-"));
 

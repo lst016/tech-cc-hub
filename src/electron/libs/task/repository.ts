@@ -19,12 +19,31 @@ import type {
 
 type Row = Record<string, unknown>;
 
+export type TaskExecutionBundleOptions = {
+  executionLimit?: number;
+  logLimit?: number;
+};
+
+const TASK_EXECUTION_BUNDLE_EXECUTION_LIMIT = 10;
+const TASK_EXECUTION_BUNDLE_LOG_LIMIT = 500;
+const TASK_EXECUTION_BUNDLE_MAX_LIMIT = 2_000;
+
+function normalizeBundleLimit(limit: number | undefined, fallback: number): number {
+  const raw = limit ?? fallback;
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.max(1, Math.min(Math.floor(raw), TASK_EXECUTION_BUNDLE_MAX_LIMIT));
+}
+
 export class TaskRepository {
   private db: Database.Database;
 
   constructor(db: Database.Database) {
     this.db = db;
     this.initialize();
+  }
+
+  close(): void {
+    this.db.close();
   }
 
   private initialize(): void {
@@ -768,10 +787,16 @@ export class TaskRepository {
       .run(inputTokens, outputTokens, estimatedCostUsd, Date.now(), taskId);
   }
 
-  getExecutions(taskId: string): TaskExecution[] {
-    return (this.db
-      .prepare("SELECT * FROM task_executions WHERE task_id = ? ORDER BY started_at DESC")
-      .all(taskId) as Row[]).map((row) => this.rowToExecution(row));
+  getExecutions(taskId: string, options?: { limit?: number }): TaskExecution[] {
+    const limit = options?.limit;
+    const rows = limit === undefined
+      ? this.db
+          .prepare("SELECT * FROM task_executions WHERE task_id = ? ORDER BY started_at DESC")
+          .all(taskId)
+      : this.db
+          .prepare("SELECT * FROM task_executions WHERE task_id = ? ORDER BY started_at DESC LIMIT ?")
+          .all(taskId, normalizeBundleLimit(limit, TASK_EXECUTION_BUNDLE_EXECUTION_LIMIT));
+    return (rows as Row[]).map((row) => this.rowToExecution(row));
   }
 
   getLatestExecution(taskId: string): TaskExecution | undefined {
@@ -791,10 +816,26 @@ export class TaskRepository {
     return { ...log, id };
   }
 
-  getExecutionLogs(taskId: string): TaskExecutionLog[] {
-    return (this.db
-      .prepare("SELECT * FROM task_execution_logs WHERE task_id = ? ORDER BY timestamp ASC")
-      .all(taskId) as Row[]).map((row) => this.rowToLog(row));
+  getExecutionLogs(taskId: string, options?: { limit?: number }): TaskExecutionLog[] {
+    const limit = options?.limit;
+    const rows = limit === undefined
+      ? this.db
+          .prepare("SELECT * FROM task_execution_logs WHERE task_id = ? ORDER BY timestamp ASC")
+          .all(taskId)
+      : this.db
+          .prepare(
+            `SELECT *
+             FROM (
+               SELECT *
+               FROM task_execution_logs
+               WHERE task_id = ?
+               ORDER BY timestamp DESC
+               LIMIT ?
+             )
+             ORDER BY timestamp ASC`
+          )
+          .all(taskId, normalizeBundleLimit(limit, TASK_EXECUTION_BUNDLE_LOG_LIMIT));
+    return (rows as Row[]).map((row) => this.rowToLog(row));
   }
 
   replaceSubtasks(taskId: string, executionId: string, subtasks: Array<Pick<TaskSubtask, "title" | "detail" | "status" | "sortOrder">>): TaskSubtask[] {
@@ -853,11 +894,16 @@ export class TaskRepository {
       .all(taskId) as Row[]).map((row) => this.rowToArtifact(row));
   }
 
-  getExecutionBundle(taskId: string) {
+  getExecutionBundle(taskId: string, options?: TaskExecutionBundleOptions) {
+    const executionLimit = normalizeBundleLimit(
+      options?.executionLimit,
+      TASK_EXECUTION_BUNDLE_EXECUTION_LIMIT,
+    );
+    const logLimit = normalizeBundleLimit(options?.logLimit, TASK_EXECUTION_BUNDLE_LOG_LIMIT);
     return {
       taskId,
-      executions: this.getExecutions(taskId),
-      logs: this.getExecutionLogs(taskId),
+      executions: this.getExecutions(taskId, { limit: executionLimit }),
+      logs: this.getExecutionLogs(taskId, { limit: logLimit }),
       subtasks: this.getSubtasks(taskId),
       artifacts: this.getArtifacts(taskId),
     };

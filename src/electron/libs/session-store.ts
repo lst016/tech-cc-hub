@@ -108,6 +108,12 @@ export type StoredSession = {
   updatedAt: number;
 };
 
+export type SessionListOptions = {
+  archived?: boolean;
+  limit?: number;
+  summary?: boolean;
+};
+
 export type SessionHistory = {
   session: StoredSession;
   messages: StreamMessage[];
@@ -117,6 +123,16 @@ export type SessionHistoryPage = SessionHistory & {
   hasMore: boolean;
   nextCursor?: SessionHistoryCursor;
 };
+
+const SESSION_LIST_DEFAULT_SUMMARY_LIMIT = 80;
+const SESSION_LIST_MAX_LIMIT = 500;
+
+function normalizeSessionListLimit(limit: number | undefined, fallback?: number): number | undefined {
+  const raw = limit ?? fallback;
+  if (raw === undefined) return undefined;
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.max(1, Math.min(Math.floor(raw), SESSION_LIST_MAX_LIMIT));
+}
 
 function isTransientStreamEventMessage(message: StreamMessage): boolean {
   return (
@@ -259,44 +275,25 @@ export class SessionStore {
     return this.sessions.get(id);
   }
 
-  listSessions(options?: { archived?: boolean }): StoredSession[] {
+  listSessions(options?: SessionListOptions): StoredSession[] {
     const archived = Boolean(options?.archived);
-    const rows = this.db
-      .prepare(
-        `select id, title, claude_session_id, status, model, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at, created_at, updated_at
+    const summary = Boolean(options?.summary);
+    const limit = normalizeSessionListLimit(
+      options?.limit,
+      summary ? SESSION_LIST_DEFAULT_SUMMARY_LIMIT : undefined,
+    );
+    const columns = summary
+      ? "id, title, claude_session_id, status, model, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, archived_at, created_at, updated_at"
+      : "id, title, claude_session_id, status, model, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at, created_at, updated_at";
+    const sql = `select ${columns}
          from sessions
          where archived_at is ${archived ? "not null" : "null"}
-         order by updated_at desc`
-      )
-      .all() as Array<Record<string, unknown>>;
-    return rows.map((row) => ({
-      id: String(row.id),
-      title: String(row.title),
-      status: row.status as SessionStatus,
-      model: row.model ? String(row.model) : undefined,
-      executionMode: row.execution_mode === "background" ? "background" : row.execution_mode === "foreground" ? "foreground" : undefined,
-      reasoningMode: row.reasoning_mode ? (String(row.reasoning_mode) as RuntimeReasoningMode) : undefined,
-      permissionMode: row.permission_mode ? (String(row.permission_mode) as RuntimeOverrides["permissionMode"]) : undefined,
-      cwd: this.normalizeStoredCwd(String(row.id), row.cwd ? String(row.cwd) : undefined),
-      runSurface: row.run_surface ? (String(row.run_surface) as AgentRunSurface) : undefined,
-      agentId: row.agent_id ? String(row.agent_id) : undefined,
-      allowedTools: row.allowed_tools ? String(row.allowed_tools) : undefined,
-      lastPrompt: row.last_prompt ? String(row.last_prompt) : undefined,
-      claudeSessionId: row.claude_session_id ? String(row.claude_session_id) : undefined,
-      continuationSummary: row.continuation_summary ? String(row.continuation_summary) : undefined,
-      continuationSummaryMessageCount: typeof row.continuation_summary_message_count === "number"
-        ? Number(row.continuation_summary_message_count)
-        : undefined,
-      workflowMarkdown: row.workflow_markdown ? String(row.workflow_markdown) : undefined,
-      workflowSourceLayer: row.workflow_source_layer ? (String(row.workflow_source_layer) as WorkflowScope) : undefined,
-      workflowSourcePath: row.workflow_source_path ? String(row.workflow_source_path) : undefined,
-      workflowState: parseWorkflowState(row.workflow_state),
-      workflowError: row.workflow_error ? String(row.workflow_error) : undefined,
-      runtimeProfileState: parseRuntimeProfileState(row.runtime_profile_state),
-      archivedAt: typeof row.archived_at === "number" ? Number(row.archived_at) : undefined,
-      createdAt: Number(row.created_at),
-      updatedAt: Number(row.updated_at)
-    }));
+         order by updated_at desc${limit === undefined ? "" : " limit ?"}`;
+    const statement = this.db.prepare(sql);
+    const rows = (
+      limit === undefined ? statement.all() : statement.all(limit)
+    ) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapSessionRow(row));
   }
 
   archiveSession(id: string): StoredSession | undefined {

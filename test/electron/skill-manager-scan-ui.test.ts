@@ -17,6 +17,15 @@ test("recursive skill scan skips common heavyweight dependency and build folders
   }
 });
 
+test("recursive skill scan has hard caps for large local trees", () => {
+  const scannerSource = readFileSync("src/electron/libs/skill-manager/scanner.ts", "utf8");
+
+  assert.match(scannerSource, /MAX_RECURSIVE_SCAN_DIRS/);
+  assert.match(scannerSource, /MAX_RECURSIVE_SCAN_RESULTS/);
+  assert.match(scannerSource, /visited\.size\s*>=\s*MAX_RECURSIVE_SCAN_DIRS/);
+  assert.match(scannerSource, /results\.length\s*>=\s*MAX_RECURSIVE_SCAN_RESULTS/);
+});
+
 test("skill marketplace cards do not depend on remote GitHub avatar images", () => {
   const installViewSource = readFileSync("src/ui/components/settings/InstallSkillsView.tsx", "utf8");
 
