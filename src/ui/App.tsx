@@ -50,6 +50,8 @@ const HISTORY_PAGE_LIMIT = 200;
 const MIN_CENTER_WIDTH = 430;
 const MIN_SIDEBAR_WIDTH = 250;
 const MIN_ACTIVITY_RAIL_WIDTH = 400;
+const RELEASE_NOTES_TOOLTIP_MAX_LINES = 8;
+const RELEASE_NOTES_TOOLTIP_MAX_CHARS = 520;
 const EMPTY_MESSAGES: StreamMessage[] = [];
 const EMPTY_PERMISSION_REQUESTS: NonNullable<ReturnType<typeof useAppStore.getState>["sessions"][string]["permissionRequests"]> = [];
 type GlobalRuntimeConfig = Record<string, unknown>;
@@ -140,6 +142,53 @@ function clampResizablePaneWidth(proposedWidth: number, minWidth: number, maxWid
   const safeMaxWidth = Math.max(0, maxWidth);
   if (safeMaxWidth <= minWidth) return safeMaxWidth;
   return Math.min(Math.max(proposedWidth, minWidth), safeMaxWidth);
+}
+
+function summarizeReleaseNotesForTooltip(notes: string): string {
+  const normalizedLines = notes
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line
+      .replace(/^#{1,6}\s*/, "")
+      .replace(/^>\s*/, "")
+      .replace(/^[-*+]\s+/, "• ")
+      .replace(/^\d+[.)]\s+/, "• ")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/__([^_]+)__/g, "$1")
+      .replace(/\*([^*]+)\*/g, "$1")
+      .replace(/_([^_]+)_/g, "$1")
+      .replace(/<[^>]+>/g, "")
+      .replace(/https?:\/\/\S+/g, (url) => url.length > 48 ? `${url.slice(0, 45)}...` : url)
+      .replace(/\s+/g, " ")
+      .trim())
+    .filter(Boolean);
+
+  if (normalizedLines.length === 0) return "";
+
+  let summary = normalizedLines.slice(0, RELEASE_NOTES_TOOLTIP_MAX_LINES).join("\n");
+  if (summary.length > RELEASE_NOTES_TOOLTIP_MAX_CHARS) {
+    summary = `${summary.slice(0, RELEASE_NOTES_TOOLTIP_MAX_CHARS).trimEnd()}...`;
+  } else if (normalizedLines.length > RELEASE_NOTES_TOOLTIP_MAX_LINES) {
+    summary = `${summary}\n...`;
+  }
+  return summary;
+}
+
+function formatReleaseDateForTooltip(value?: string): string | null {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return value;
+  return new Date(timestamp).toLocaleDateString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
 }
 
 function getMessageContentItems(message: StreamMessage): unknown[] {
@@ -1282,13 +1331,61 @@ function App() {
     : headerUpdateStatus?.status === "downloading"
       ? `下载中 ${appUpdateProgress}%`
       : `下载 ${headerUpdateStatus?.version ? `v${headerUpdateStatus.version}` : "更新"}`;
-  const appUpdateButtonTooltip = headerUpdateStatus?.status === "downloaded"
-    ? "新版本已下载完成，点击重启安装"
+  const appUpdateReleaseVersion = headerUpdateStatus?.version ? `v${headerUpdateStatus.version}` : "新版本";
+  const appUpdateVersionMeta = headerUpdateStatus?.currentVersion
+    ? `v${headerUpdateStatus.currentVersion} -> ${appUpdateReleaseVersion}`
+    : appUpdateReleaseVersion;
+  const appUpdateReleaseDate = formatReleaseDateForTooltip(headerUpdateStatus?.releaseDate);
+  const appUpdateReleaseNotesSummary = useMemo(() => {
+    const notes = headerUpdateStatus?.releaseNotes?.trim();
+    if (!notes) return "本次 Release 未提供更新说明。";
+    return summarizeReleaseNotesForTooltip(notes) || "本次 Release 未提供更新说明。";
+  }, [headerUpdateStatus?.releaseNotes]);
+  const appUpdateTooltipTitle = headerUpdateStatus?.status === "downloaded"
+    ? "新版本已下载完成"
     : headerUpdateStatus?.status === "downloading"
       ? "正在下载新版本"
-      : headerUpdateStatus?.version
-        ? `发现新版本 v${headerUpdateStatus.version}，点击下载`
-        : "发现新版本，点击下载";
+      : "发现可用新版本";
+  const appUpdateTooltipActionHint = headerUpdateStatus?.status === "downloaded"
+    ? "点击按钮会重启应用并安装更新。"
+    : headerUpdateStatus?.status === "downloading"
+      ? "下载完成后可重启安装。"
+      : "点击按钮开始下载更新包。";
+  const appUpdateButtonTooltipLabel = useMemo(() => {
+    const meta = [appUpdateVersionMeta, appUpdateReleaseDate ? `发布于 ${appUpdateReleaseDate}` : ""]
+      .filter(Boolean)
+      .join(" · ");
+    return [appUpdateTooltipTitle, meta, appUpdateReleaseNotesSummary, appUpdateTooltipActionHint]
+      .filter(Boolean)
+      .join("\n");
+  }, [
+    appUpdateReleaseDate,
+    appUpdateReleaseNotesSummary,
+    appUpdateTooltipActionHint,
+    appUpdateTooltipTitle,
+    appUpdateVersionMeta,
+  ]);
+  const appUpdateButtonTooltip = useMemo(() => (
+    <span className="block w-[min(340px,calc(100vw-2rem))] text-left">
+      <span className="block text-xs font-semibold leading-5 text-white">{appUpdateTooltipTitle}</span>
+      <span className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[10px] font-medium leading-4 text-white/65">
+        <span>{appUpdateVersionMeta}</span>
+        {appUpdateReleaseDate && <span>发布于 {appUpdateReleaseDate}</span>}
+      </span>
+      <span className="mt-2 block max-h-40 overflow-hidden whitespace-pre-line rounded-lg border border-white/8 bg-white/7 px-2.5 py-2 text-[10.5px] font-normal leading-4 text-white/86 [overflow-wrap:anywhere]">
+        {appUpdateReleaseNotesSummary}
+      </span>
+      <span className="mt-2 block text-[10px] font-medium leading-4 text-white/55">
+        {appUpdateTooltipActionHint}
+      </span>
+    </span>
+  ), [
+    appUpdateReleaseDate,
+    appUpdateReleaseNotesSummary,
+    appUpdateTooltipActionHint,
+    appUpdateTooltipTitle,
+    appUpdateVersionMeta,
+  ]);
 
   const handleHeaderUpdateAction = useCallback(async () => {
     if (!headerUpdateStatus || headerUpdateStatus.status === "downloading") return;
@@ -1416,6 +1513,8 @@ function App() {
             <TooltipButton
               type="button"
               tooltip={appUpdateButtonTooltip}
+              tooltipLabel={appUpdateButtonTooltipLabel}
+              tooltipClassName="w-[min(360px,calc(100vw-2rem))] px-3 py-2.5"
               onClick={handleHeaderUpdateAction}
               disabled={appUpdateActionBusy || headerUpdateStatus?.status === "downloading"}
               onMouseDown={(event) => {
