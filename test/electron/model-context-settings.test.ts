@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  createMiniMaxOfficialProfile,
   createDeepSeekOfficialProfile,
   getAvailableModelsForProfiles,
   getEnabledProfiles,
@@ -16,12 +17,13 @@ import {
 import {
   buildGroupedModelOptions,
   getModelSearchScore,
-} from "../../src/ui/components/ModelSelect.js";
+} from "../../src/ui/components/models/ModelSelect.js";
 import {
   getModelRoutingWeight,
   pickHighestWeightedModelOwner,
-} from "../../src/shared/model-routing-weight.js";
-import { pickImagePreprocessConfig } from "../../src/shared/image-preprocess-routing.js";
+} from "../../src/shared/models/model-routing-weight.js";
+import { pickImagePreprocessConfig } from "../../src/shared/models/image-preprocess-routing.js";
+import { extractApiModelsFromListPayload } from "../../src/shared/models/api-model-metadata.js";
 
 const MODEL_SEARCH_FIXTURE = [
   "gpt-5.4",
@@ -79,11 +81,39 @@ test("settings modal and shared types expose per-model context compression field
   assert.match(preloadSource, /test-api-config/);
   assert.match(devShimSource, /testApiConfig/);
   assert.match(globalTypesSource, /test-api-config/);
+  assert.match(globalTypesSource, /ApiModelsFetchModel/);
+  assert.match(apiProfilesSettingsSource, /extractApiModelsFromListPayload/);
+  assert.match(apiProfilesSettingsSource, /同步 \$\{contextCount\} 个上下文窗口/);
+  assert.match(apiProfilesSettingsSource, /MiniMax 官方/);
+  assert.match(apiProfilesSettingsSource, /Token Plan Subscription Key/);
+  assert.match(uiTypesSource, /minimax/);
+  assert.match(configStoreSource, /MINIMAX_ANTHROPIC_BASE_URL/);
+});
+
+test("model import extracts context windows from common gateway payloads", () => {
+  const models = extractApiModelsFromListPayload({
+    data: [
+      { id: "gpt-5.5", context_window: 200_000 },
+      { id: "deepseek-v4-pro", context_length: "1M" },
+      { id: "openrouter-model", top_provider: { context_length: "128k" } },
+      { name: "limit-model", limits: { contextWindow: "32,768" } },
+      "plain-model",
+      { id: "gpt-5.5", metadata: { context_window: 400_000 } },
+    ],
+  });
+
+  assert.deepEqual(models, [
+    { name: "gpt-5.5", contextWindow: 200_000 },
+    { name: "deepseek-v4-pro", contextWindow: 1_000_000 },
+    { name: "openrouter-model", contextWindow: 128_000 },
+    { name: "limit-model", contextWindow: 32_768 },
+    { name: "plain-model", contextWindow: undefined },
+  ]);
 });
 
 test("shared model routing model slots use grouped searchable comboboxes", () => {
   const modelRoutingSource = readFileSync("src/ui/components/settings/ModelRoutingSettingsPage.tsx", "utf8");
-  const modelSelectSource = readFileSync("src/ui/components/ModelSelect.tsx", "utf8");
+  const modelSelectSource = readFileSync("src/ui/components/models/ModelSelect.tsx", "utf8");
 
   assert.match(modelRoutingSource, /<ModelSelect/);
   assert.match(modelSelectSource, /MODEL_GROUP_DEFINITIONS/);
@@ -128,7 +158,7 @@ test("model select preserves routed option metadata for display and search", () 
 
 test("composer model control uses real configured models in the merged white menu", () => {
   const promptInputSource = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
-  const modelSelectSource = readFileSync("src/ui/components/ModelSelect.tsx", "utf8");
+  const modelSelectSource = readFileSync("src/ui/components/models/ModelSelect.tsx", "utf8");
   const composerModelMenuSource = readFileSync("src/ui/components/prompt-input/ComposerModelMenu.tsx", "utf8");
 
   assert.match(promptInputSource, /import \{ ComposerModelMenu \} from "\.\/ComposerModelMenu"/);
@@ -136,7 +166,10 @@ test("composer model control uses real configured models in the merged white men
   assert.match(promptInputSource, /modelOptions=\{modelSelectOptions\}/);
   assert.match(promptInputSource, /onModelChange=\{handleRuntimeModelChange\}/);
   assert.match(composerModelMenuSource, /Context/);
+  assert.match(composerModelMenuSource, /getContextDisplay/);
+  assert.match(composerModelMenuSource, /contextWindow/);
   assert.match(composerModelMenuSource, /detailLabel: option\.badge/);
+  assert.match(promptInputSource, /contextWindow: option\.contextWindow/);
   assert.match(composerModelMenuSource, /\{ value: "xhigh", label: "超高" \}/);
   assert.match(composerModelMenuSource, /\{ value: "disabled", label: "关闭" \}/);
   assert.doesNotMatch(composerModelMenuSource, /label: "max"/);
@@ -223,6 +256,72 @@ test("enabled profile helpers keep distinct deepseek casing variants when both e
   );
 });
 
+test("minimax official profile uses token plan endpoint and context windows", () => {
+  const profile = createMiniMaxOfficialProfile();
+  const normalized = normalizeProfile({
+    ...profile,
+    apiKey: "sk-cp-test",
+    baseURL: "",
+  });
+
+  assert.equal(normalized.provider, "minimax");
+  assert.equal(normalized.baseURL, "https://api.minimax.io/anthropic");
+  assert.equal(normalized.model, "MiniMax-M3");
+  assert.equal(normalized.expertModel, "MiniMax-M3");
+  assert.equal(normalized.smallModel, "MiniMax-M2.7-highspeed");
+  assert.equal(normalized.analysisModel, "MiniMax-M2.7-highspeed");
+  assert.equal(normalized.models?.find((model) => model.name === "MiniMax-M3")?.contextWindow, 1_000_000);
+  assert.equal(normalized.models?.find((model) => model.name === "MiniMax-M2.7-highspeed")?.contextWindow, 204_800);
+});
+
+test("minimax provider routes only minimax models and resolves casing", () => {
+  const profiles = [
+    {
+      id: "official-minimax",
+      name: "MiniMax Official",
+      apiKey: "sk-cp-test",
+      baseURL: "https://api.minimax.io/anthropic",
+      model: "MiniMax-M3",
+      expertModel: "MiniMax-M3",
+      smallModel: "MiniMax-M2.7-highspeed",
+      models: [
+        { name: "MiniMax-M3", contextWindow: 1_000_000, routingWeight: 20 },
+        { name: "MiniMax-M2.7-highspeed", contextWindow: 204_800 },
+      ],
+      enabled: true,
+      provider: "minimax" as const,
+      apiType: "anthropic" as const,
+    },
+    {
+      id: "gateway",
+      name: "Default Gateway",
+      apiKey: "sk-gateway",
+      baseURL: "https://gateway.example.com/v1",
+      model: "minimax-m3",
+      expertModel: "minimax-m3",
+      smallModel: "gpt-5.5",
+      models: [{ name: "minimax-m3" }, { name: "gpt-5.5" }],
+      enabled: true,
+      provider: "custom" as const,
+      apiType: "anthropic" as const,
+    },
+  ];
+
+  const availableModels = getAvailableModelsForProfiles(getEnabledProfiles(profiles));
+  assert.equal(resolveAvailableModelName("minimax-m3", availableModels), "minimax-m3");
+  assert.equal(resolveAvailableModelName("MiniMax-M3", availableModels), "MiniMax-M3");
+  assert.equal(resolveAvailableModelName("minimax-m3", ["MiniMax-M3"]), "MiniMax-M3");
+
+  const options = getRoutedModelOptionsForProfiles(getEnabledProfiles(profiles));
+  const officialOption = options.find((option) => option.value === "MiniMax-M3");
+  const gatewayOption = options.find((option) => option.value === "minimax-m3");
+  assert.equal(officialOption?.profileId, "official-minimax");
+  assert.equal(officialOption?.provider, "minimax");
+  assert.equal(officialOption?.contextWindow, 1_000_000);
+  assert.equal(gatewayOption?.profileId, "gateway");
+  assert.equal(gatewayOption?.provider, "custom");
+});
+
 test("routed model options expose the platform owner selected by routing weight", () => {
   const profiles = [
     {
@@ -235,7 +334,7 @@ test("routed model options expose the platform owner selected by routing weight"
       smallModel: "deepseek-v4-flash",
       models: [
         { name: "deepseek-v4-flash" },
-        { name: "gpt-5.5", routingWeight: 1 },
+        { name: "gpt-5.5", contextWindow: 200_000, routingWeight: 1 },
       ],
       enabled: true,
       provider: "custom" as const,
@@ -250,7 +349,7 @@ test("routed model options expose the platform owner selected by routing weight"
       expertModel: "gpt-5.5",
       smallModel: "gpt-5.3-codex-spark",
       models: [
-        { name: "gpt-5.5", routingWeight: 50 },
+        { name: "gpt-5.5", contextWindow: 200_000, routingWeight: 50 },
         { name: "gpt-5.3-codex-spark" },
       ],
       enabled: true,
@@ -264,6 +363,7 @@ test("routed model options expose the platform owner selected by routing weight"
   assert.equal(gptOption?.profileId, "codex");
   assert.equal(gptOption?.provider, "codex");
   assert.equal(gptOption?.routingWeight, 50);
+  assert.equal(gptOption?.contextWindow, 200_000);
   assert.match(gptOption?.routeLabel ?? "", /Codex OAuth/);
 
   const deepseekOption = options.find((option) => option.value === "deepseek-v4-flash");

@@ -11,14 +11,29 @@ import {
 } from "../../../shared/codex-oauth";
 import { DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT } from "../../../shared/claude-agent-teams";
 import {
+  extractApiModelsFromListPayload,
+  getImportedApiModelNames,
+  toImportedApiModels,
+  type ImportedApiModel,
+} from "../../../shared/models/api-model-metadata";
+import {
   createCodexOAuthProfile,
   createDeepSeekOfficialProfile,
+  createMiniMaxOfficialProfile,
   createModel,
   createProfile,
   DEEPSEEK_OFFICIAL_BASE_URL,
   DEEPSEEK_OFFICIAL_MODELS,
+  MINIMAX_OFFICIAL_BASE_URL,
   getAvailableModels,
 } from "./settings-utils";
+import {
+  MINIMAX_DEFAULT_MODEL,
+  MINIMAX_M2_CONTEXT_WINDOW,
+  MINIMAX_M3_CONTEXT_WINDOW,
+  MINIMAX_MODEL_CONFIGS,
+  MINIMAX_SMALL_MODEL,
+} from "../../../shared/models/minimax";
 import { useState } from "react";
 
 type ApiProfilesSettingsPageProps = {
@@ -49,6 +64,7 @@ const runtimeSourceMeta: Record<DevElectronRuntimeSource, { label: string; descr
 const DEFAULT_IMPORTED_CONTEXT_WINDOW = 200_000;
 const DEEPSEEK_CONTEXT_WINDOW = 1_000_000;
 const DEEPSEEK_MODELS_ENDPOINT = "https://api.deepseek.com/models";
+const MINIMAX_MODELS_ENDPOINT = "https://api.minimax.io/anthropic/v1/models";
 
 type ModelImportStatus = {
   profileId: string;
@@ -57,6 +73,13 @@ type ModelImportStatus = {
 } | null;
 
 type ApiProviderMode = NonNullable<ApiConfigProfile["provider"]>;
+
+type ApiModelsFetchResult = {
+  success: boolean;
+  models?: Array<string | ImportedApiModel>;
+  baseURL?: string;
+  error?: string;
+};
 
 type CreateProfileOption = {
   id: string;
@@ -84,6 +107,12 @@ const createProfileOptions: CreateProfileOption[] = [
     description: "通过 OpenAI OAuth 接入 Codex Responses 模型。",
     create: createCodexOAuthProfile,
   },
+  {
+    id: "minimax",
+    label: "MiniMax 官方",
+    description: "填 Token Plan Subscription Key，使用 MiniMax Anthropic 官方接口。",
+    create: createMiniMaxOfficialProfile,
+  },
 ];
 
 type ApiProfileTestResult = {
@@ -102,12 +131,22 @@ function isDeepSeekBaseURL(baseURL: string | undefined): boolean {
   }
 }
 
+function isMiniMaxBaseURL(baseURL: string | undefined): boolean {
+  try {
+    return new URL(baseURL?.trim() || "").hostname === "api.minimax.io";
+  } catch {
+    return false;
+  }
+}
+
 function getProviderMode(profile: ApiConfigProfile): ApiProviderMode {
-  if (profile.provider === "custom" || profile.provider === "deepseek" || profile.provider === "codex") {
+  if (profile.provider === "custom" || profile.provider === "deepseek" || profile.provider === "codex" || profile.provider === "minimax") {
     return profile.provider;
   }
 
-  return isDeepSeekBaseURL(profile.baseURL) ? "deepseek" : "custom";
+  if (isDeepSeekBaseURL(profile.baseURL)) return "deepseek";
+  if (isMiniMaxBaseURL(profile.baseURL)) return "minimax";
+  return "custom";
 }
 
 function buildModelsEndpoint(baseURL: string, provider: ApiProviderMode = "custom"): string {
@@ -116,6 +155,9 @@ function buildModelsEndpoint(baseURL: string, provider: ApiProviderMode = "custo
   }
   if (provider === "codex") {
     return `${CODEX_OAUTH_BASE_URL}/backend-api/codex/models`;
+  }
+  if (provider === "minimax") {
+    return MINIMAX_MODELS_ENDPOINT;
   }
 
   const url = new URL(baseURL.trim());
@@ -137,6 +179,9 @@ function normalizeApiBaseURL(baseURL: string, provider: ApiProviderMode = "custo
   if (provider === "codex") {
     return CODEX_OAUTH_BASE_URL;
   }
+  if (provider === "minimax") {
+    return MINIMAX_OFFICIAL_BASE_URL;
+  }
 
   const url = new URL(baseURL.trim());
   const trimmedPath = url.pathname.replace(/\/+$/, "");
@@ -154,33 +199,77 @@ function normalizeApiBaseURL(baseURL: string, provider: ApiProviderMode = "custo
   return url.toString().replace(/\/$/, "");
 }
 
-function getModelIds(payload: unknown): string[] {
-  if (typeof payload !== "object" || payload === null) return [];
-  const data = (payload as { data?: unknown }).data;
-  if (!Array.isArray(data)) return [];
-
-  return Array.from(new Set(data
-    .map((item) => {
-      if (typeof item === "string") return item;
-      if (typeof item === "object" && item !== null && typeof (item as { id?: unknown }).id === "string") {
-        return (item as { id: string }).id;
-      }
-      return "";
-    })
-    .map((item) => item.trim())
-    .filter(Boolean)));
-}
-
 function isLikelyVisionUnderstandingModel(modelName: string): boolean {
   return /(^|[-_.])(vl|vision|visual|ocr|omni)([-_.]|$)|qwen.*vl|glm.*v|gpt-4o|gemini.*vision/i.test(modelName)
     && !/image-?0?1|speech|music|hailuo/i.test(modelName);
 }
 
-async function fetchModelsInBrowser(baseURL: string, apiKey: string, provider: ApiProviderMode = "custom"): Promise<{ success: boolean; models?: string[]; baseURL?: string; error?: string }> {
+function normalizeImportedModels(models: Array<string | ImportedApiModel> | undefined): ImportedApiModel[] {
+  const deduped = new Map<string, ImportedApiModel>();
+  for (const model of models ?? []) {
+    const name = typeof model === "string" ? model.trim() : model.name.trim();
+    if (!name) continue;
+
+    const contextWindow = typeof model === "string" ? undefined : model.contextWindow;
+    const previous = deduped.get(name);
+    deduped.set(name, {
+      name,
+      contextWindow: previous?.contextWindow ?? contextWindow,
+    });
+  }
+
+  return Array.from(deduped.values());
+}
+
+function buildImportedModelConfigs(
+  importedModels: ImportedApiModel[],
+  existingModels: Map<string, NonNullable<ApiConfigProfile["models"]>[number]>,
+  fallbackContextWindow: number,
+): NonNullable<ApiConfigProfile["models"]> {
+  return importedModels.map((model) => {
+    const existing = existingModels.get(model.name);
+    return {
+      name: model.name,
+      contextWindow: resolveImportedContextWindow(existing?.contextWindow, model.contextWindow, fallbackContextWindow),
+      compressionThresholdPercent: existing?.compressionThresholdPercent ?? 70,
+      routingWeight: existing?.routingWeight,
+    };
+  });
+}
+
+function resolveImportedContextWindow(existingContextWindow: number | undefined, importedContextWindow: number | undefined, fallbackContextWindow: number): number {
+  if (
+    importedContextWindow
+    && (!existingContextWindow || existingContextWindow === fallbackContextWindow || existingContextWindow === DEFAULT_IMPORTED_CONTEXT_WINDOW)
+  ) {
+    return importedContextWindow;
+  }
+
+  return existingContextWindow ?? importedContextWindow ?? fallbackContextWindow;
+}
+
+function getMiniMaxFallbackContextWindow(modelName: string): number {
+  return modelName === MINIMAX_DEFAULT_MODEL ? MINIMAX_M3_CONTEXT_WINDOW : MINIMAX_M2_CONTEXT_WINDOW;
+}
+
+function getFallbackImportedModelsForProvider(provider: ApiProviderMode): ImportedApiModel[] {
+  if (provider === "minimax") {
+    return MINIMAX_MODEL_CONFIGS.map((model) => ({
+      name: model.name,
+      contextWindow: model.contextWindow,
+    }));
+  }
+  if (provider === "deepseek") {
+    return toImportedApiModels([...DEEPSEEK_OFFICIAL_MODELS], DEEPSEEK_CONTEXT_WINDOW);
+  }
+  return [];
+}
+
+async function fetchModelsInBrowser(baseURL: string, apiKey: string, provider: ApiProviderMode = "custom"): Promise<ApiModelsFetchResult> {
   if (provider === "codex") {
     return {
       success: true,
-      models: CODEX_OAUTH_MODELS,
+      models: toImportedApiModels(CODEX_OAUTH_MODELS, DEFAULT_IMPORTED_CONTEXT_WINDOW),
       baseURL: CODEX_OAUTH_BASE_URL,
     };
   }
@@ -200,9 +289,13 @@ async function fetchModelsInBrowser(baseURL: string, apiKey: string, provider: A
     }
 
     const payload = await response.json() as unknown;
+    const fallbackContextWindow = provider === "deepseek" ? DEEPSEEK_CONTEXT_WINDOW : undefined;
     return {
       success: true,
-      models: getModelIds(payload),
+      models: extractApiModelsFromListPayload(payload).map((model) => ({
+        ...model,
+        contextWindow: model.contextWindow ?? (provider === "minimax" ? getMiniMaxFallbackContextWindow(model.name) : fallbackContextWindow),
+      })),
       baseURL: normalizeApiBaseURL(baseURL, provider),
     };
   } catch (error) {
@@ -220,6 +313,9 @@ function normalizeMessagesBaseURL(baseURL: string, provider: ApiProviderMode): s
   if (provider === "codex") {
     return CODEX_OAUTH_BASE_URL;
   }
+  if (provider === "minimax") {
+    return `${MINIMAX_OFFICIAL_BASE_URL}/v1`;
+  }
 
   const url = new URL(baseURL.trim());
   const trimmedPath = url.pathname.replace(/\/+$/, "");
@@ -228,7 +324,13 @@ function normalizeMessagesBaseURL(baseURL: string, provider: ApiProviderMode): s
 }
 
 async function testApiConfigInBrowser(profile: ApiConfigProfile, provider: ApiProviderMode): Promise<ApiProfileTestResult> {
-  const baseURL = provider === "deepseek" ? DEEPSEEK_OFFICIAL_BASE_URL : provider === "codex" ? CODEX_OAUTH_BASE_URL : profile.baseURL.trim();
+  const baseURL = provider === "deepseek"
+    ? DEEPSEEK_OFFICIAL_BASE_URL
+    : provider === "codex"
+      ? CODEX_OAUTH_BASE_URL
+      : provider === "minimax"
+        ? MINIMAX_OFFICIAL_BASE_URL
+        : profile.baseURL.trim();
   const model = profile.model?.trim() || profile.models?.find((item) => item.name.trim())?.name.trim() || "";
   if (provider === "codex") {
     return { success: false, model, error: "Codex OAuth 测试需要 Electron 后端。" };
@@ -316,7 +418,13 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
   const handleImportModels = async (profile: ApiConfigProfile) => {
     setImportStatus(null);
     const provider = getProviderMode(profile);
-    const baseURL = provider === "deepseek" ? DEEPSEEK_OFFICIAL_BASE_URL : provider === "codex" ? CODEX_OAUTH_BASE_URL : profile.baseURL.trim();
+    const baseURL = provider === "deepseek"
+      ? DEEPSEEK_OFFICIAL_BASE_URL
+      : provider === "codex"
+        ? CODEX_OAUTH_BASE_URL
+        : provider === "minimax"
+          ? MINIMAX_OFFICIAL_BASE_URL
+          : profile.baseURL.trim();
 
     if (!baseURL) {
       setImportStatus({ profileId: profile.id, tone: "error", message: "请先填写接口地址。" });
@@ -325,7 +433,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
     if (provider === "codex") {
       setImportingProfileId(profile.id);
       const electronApi = window.electron as typeof window.electron & {
-        fetchApiModels?: (payload: { baseURL: string; apiKey: string; provider?: ApiProviderMode }) => Promise<{ success: boolean; models?: string[]; baseURL?: string; error?: string }>;
+        fetchApiModels?: (payload: { baseURL: string; apiKey: string; provider?: ApiProviderMode }) => Promise<ApiModelsFetchResult>;
       };
       const result = await (async () => {
         try {
@@ -339,16 +447,19 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
           };
         }
       })();
-      const modelIds = mergeCodexModelIds(result.success ? result.models ?? [] : CODEX_OAUTH_MODELS);
+      const importedResultModels = normalizeImportedModels(
+        result.success ? result.models : toImportedApiModels(CODEX_OAUTH_MODELS, DEFAULT_IMPORTED_CONTEXT_WINDOW),
+      );
+      const importedModelsByName = new Map(importedResultModels.map((model) => [model.name, model]));
+      const modelIds = mergeCodexModelIds(getImportedApiModelNames(importedResultModels));
+      const importedModels = toImportedApiModels(modelIds, DEFAULT_IMPORTED_CONTEXT_WINDOW).map((model) => ({
+        ...model,
+        contextWindow: importedModelsByName.get(model.name)?.contextWindow ?? model.contextWindow,
+      }));
       onChange((current) => current.map((item) => {
         if (item.id !== profile.id) return item;
         const existingModels = new Map((item.models ?? []).map((model) => [model.name, model]));
-        const nextModels = modelIds.map((name) => ({
-          name,
-          contextWindow: existingModels.get(name)?.contextWindow ?? DEFAULT_IMPORTED_CONTEXT_WINDOW,
-          compressionThresholdPercent: existingModels.get(name)?.compressionThresholdPercent ?? 70,
-          routingWeight: existingModels.get(name)?.routingWeight,
-        }));
+        const nextModels = buildImportedModelConfigs(importedModels, existingModels, DEFAULT_IMPORTED_CONTEXT_WINDOW);
         const fallbackModel = item.model && modelIds.includes(item.model) ? item.model : CODEX_OAUTH_DEFAULT_MODEL;
         return {
           ...item,
@@ -380,48 +491,52 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
     setImportingProfileId(profile.id);
     try {
       const electronApi = window.electron as typeof window.electron & {
-        fetchApiModels?: (payload: { baseURL: string; apiKey: string; provider?: ApiProviderMode }) => Promise<{ success: boolean; models?: string[]; baseURL?: string; error?: string }>;
+        fetchApiModels?: (payload: { baseURL: string; apiKey: string; provider?: ApiProviderMode }) => Promise<ApiModelsFetchResult>;
       };
       const result = typeof electronApi.fetchApiModels === "function"
         ? await electronApi.fetchApiModels({ baseURL, apiKey: profile.apiKey, provider })
         : await fetchModelsInBrowser(baseURL, profile.apiKey, provider);
 
       if (!result.success) {
-        if (provider === "deepseek") {
-          const modelIds = [...DEEPSEEK_OFFICIAL_MODELS];
+        if (provider === "deepseek" || provider === "minimax") {
+          const importedModels = getFallbackImportedModelsForProvider(provider);
+          const modelIds = getImportedApiModelNames(importedModels);
+          const fallbackMainModel = provider === "minimax" ? MINIMAX_DEFAULT_MODEL : modelIds[0];
+          const fallbackExpertModel = provider === "minimax" ? MINIMAX_DEFAULT_MODEL : "deepseek-v4-pro";
+          const fallbackSmallModel = provider === "minimax" ? MINIMAX_SMALL_MODEL : "deepseek-v4-flash";
           onChange((current) => current.map((item) => {
             if (item.id !== profile.id) return item;
             const existingModels = new Map((item.models ?? []).map((model) => [model.name, model]));
-            const nextModels = modelIds.map((name) => ({
-              name,
-              contextWindow: existingModels.get(name)?.contextWindow ?? DEEPSEEK_CONTEXT_WINDOW,
-              compressionThresholdPercent: existingModels.get(name)?.compressionThresholdPercent ?? 70,
-              routingWeight: existingModels.get(name)?.routingWeight,
-            }));
-            const fallbackModel = item.model && modelIds.includes(item.model as typeof DEEPSEEK_OFFICIAL_MODELS[number]) ? item.model : modelIds[0];
+            const nextModels = buildImportedModelConfigs(
+              importedModels,
+              existingModels,
+              provider === "minimax" ? MINIMAX_M2_CONTEXT_WINDOW : DEEPSEEK_CONTEXT_WINDOW,
+            );
+            const fallbackModel = item.model && modelIds.includes(item.model) ? item.model : fallbackMainModel;
             return {
               ...item,
-              baseURL: DEEPSEEK_OFFICIAL_BASE_URL,
+              baseURL: provider === "minimax" ? MINIMAX_OFFICIAL_BASE_URL : DEEPSEEK_OFFICIAL_BASE_URL,
               models: nextModels,
               model: fallbackModel,
-              expertModel: item.expertModel && modelIds.includes(item.expertModel as typeof DEEPSEEK_OFFICIAL_MODELS[number]) ? item.expertModel : "deepseek-v4-pro",
-              smallModel: item.smallModel && modelIds.includes(item.smallModel as typeof DEEPSEEK_OFFICIAL_MODELS[number]) ? item.smallModel : "deepseek-v4-flash",
+              expertModel: item.expertModel && modelIds.includes(item.expertModel) ? item.expertModel : fallbackExpertModel,
+              smallModel: item.smallModel && modelIds.includes(item.smallModel) ? item.smallModel : fallbackSmallModel,
               imageModel: undefined,
-              analysisModel: item.analysisModel && modelIds.includes(item.analysisModel as typeof DEEPSEEK_OFFICIAL_MODELS[number]) ? item.analysisModel : fallbackModel,
-              provider: "deepseek",
+              analysisModel: item.analysisModel && modelIds.includes(item.analysisModel) ? item.analysisModel : fallbackSmallModel,
+              provider,
             };
           }));
           setImportStatus({
             profileId: profile.id,
             tone: "success",
-            message: `官方模型接口暂时没拉到，已使用内置 DeepSeek 模型列表；原始错误：${result.error || "未知错误"}`,
+            message: `官方模型接口暂时没拉到，已使用内置 ${provider === "minimax" ? "MiniMax" : "DeepSeek"} 模型列表；原始错误：${result.error || "未知错误"}`,
           });
           return;
         }
         throw new Error(result.error || "拉取模型失败。");
       }
 
-      const modelIds = result.models ?? [];
+      const importedModels = normalizeImportedModels(result.models);
+      const modelIds = getImportedApiModelNames(importedModels);
       if (modelIds.length === 0) {
         throw new Error("接口没有返回可用模型。");
       }
@@ -430,12 +545,15 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
       onChange((current) => current.map((item) => {
         if (item.id !== profile.id) return item;
         const existingModels = new Map((item.models ?? []).map((model) => [model.name, model]));
-        const nextModels = modelIds.map((name) => ({
-          name,
-          contextWindow: existingModels.get(name)?.contextWindow ?? (provider === "deepseek" ? DEEPSEEK_CONTEXT_WINDOW : DEFAULT_IMPORTED_CONTEXT_WINDOW),
-          compressionThresholdPercent: existingModels.get(name)?.compressionThresholdPercent ?? 70,
-          routingWeight: existingModels.get(name)?.routingWeight,
-        }));
+        const nextModels = buildImportedModelConfigs(
+          importedModels,
+          existingModels,
+          provider === "deepseek"
+            ? DEEPSEEK_CONTEXT_WINDOW
+            : provider === "minimax"
+              ? MINIMAX_M2_CONTEXT_WINDOW
+              : DEFAULT_IMPORTED_CONTEXT_WINDOW,
+        );
         const fallbackModel = item.model && modelIds.includes(item.model) ? item.model : modelIds[0];
         const fallbackAnalysisModel = item.analysisModel && modelIds.includes(item.analysisModel) ? item.analysisModel : fallbackModel;
         const fallbackExpertModel = item.expertModel && modelIds.includes(item.expertModel) ? item.expertModel : fallbackModel;
@@ -456,7 +574,12 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
           provider,
         };
       }));
-      setImportStatus({ profileId: profile.id, tone: "success", message: `已拉取 ${modelIds.length} 个模型，接口地址已规范为 ${normalizedBaseURL}` });
+      const contextCount = importedModels.filter((model) => model.contextWindow).length;
+      setImportStatus({
+        profileId: profile.id,
+        tone: "success",
+        message: `已拉取 ${modelIds.length} 个模型${contextCount > 0 ? `，同步 ${contextCount} 个上下文窗口` : ""}，接口地址已规范为 ${normalizedBaseURL}`,
+      });
     } catch (error) {
       setImportStatus({
         profileId: profile.id,
@@ -471,11 +594,17 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
   const handleTestConnection = async (profile: ApiConfigProfile) => {
     setImportStatus(null);
     const provider = getProviderMode(profile);
-    const baseURL = provider === "deepseek" ? DEEPSEEK_OFFICIAL_BASE_URL : provider === "codex" ? CODEX_OAUTH_BASE_URL : profile.baseURL.trim();
+    const baseURL = provider === "deepseek"
+      ? DEEPSEEK_OFFICIAL_BASE_URL
+      : provider === "codex"
+        ? CODEX_OAUTH_BASE_URL
+        : provider === "minimax"
+          ? MINIMAX_OFFICIAL_BASE_URL
+          : profile.baseURL.trim();
     const model = profile.model?.trim() || profile.models?.find((item) => item.name.trim())?.name.trim() || "";
 
     if (!baseURL || !profile.apiKey.trim() || !model) {
-      setImportStatus({ profileId: profile.id, tone: "error", message: provider === "codex" ? "请先通过 Agent 引导配置完成 OpenAI 账号接入并选择默认主模型。" : "请先填写接口地址、API Key 和默认主模型。" });
+      setImportStatus({ profileId: profile.id, tone: "error", message: provider === "codex" ? "请先通过 Agent 引导配置完成 OpenAI 账号接入并选择默认主模型。" : provider === "minimax" ? "请先填写 MiniMax Token Plan Subscription Key 并选择默认主模型。" : "请先填写接口地址、API Key 和默认主模型。" });
       return;
     }
 
@@ -595,6 +724,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
         {profiles.map((profile) => {
           const providerMode = getProviderMode(profile);
           const modelListExpanded = Boolean(expandedModelLists[profile.id]);
+          const officialProvider = providerMode === "deepseek" || providerMode === "codex" || providerMode === "minimax";
           return (
           <div key={profile.id} className="rounded-[28px] border border-ink-900/10 bg-white/86 p-5 shadow-[0_18px_44px_rgba(24,32,46,0.06)]">
             <div className="flex items-center justify-between gap-3">
@@ -656,10 +786,10 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
                 <span className="text-xs font-medium text-muted">接口地址</span>
                 <input
                   type="url"
-                  className={`rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20 ${providerMode === "deepseek" || providerMode === "codex" ? "cursor-not-allowed text-muted" : ""}`}
+                  className={`rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20 ${officialProvider ? "cursor-not-allowed text-muted" : ""}`}
                   placeholder="https://..."
-                  value={providerMode === "deepseek" ? DEEPSEEK_OFFICIAL_BASE_URL : providerMode === "codex" ? CODEX_OAUTH_BASE_URL : profile.baseURL}
-                  readOnly={providerMode === "deepseek" || providerMode === "codex"}
+                  value={providerMode === "deepseek" ? DEEPSEEK_OFFICIAL_BASE_URL : providerMode === "codex" ? CODEX_OAUTH_BASE_URL : providerMode === "minimax" ? MINIMAX_OFFICIAL_BASE_URL : profile.baseURL}
+                  readOnly={officialProvider}
                   onChange={(event) => onChange((current) => current.map((item) => (
                     item.id === profile.id
                       ? { ...item, baseURL: event.target.value }
@@ -697,11 +827,11 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
                 </div>
               ) : (
                 <label className="grid gap-1.5">
-                  <span className="text-xs font-medium text-muted">API 密钥</span>
+                  <span className="text-xs font-medium text-muted">{providerMode === "minimax" ? "Token Plan Subscription Key" : "API 密钥"}</span>
                   <input
                     type="text"
                     className="rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
-                    placeholder="sk-..."
+                    placeholder={providerMode === "minimax" ? "sk-cp-..." : "sk-..."}
                     value={profile.apiKey}
                     onChange={(event) => onChange((current) => current.map((item) => (
                       item.id === profile.id
@@ -730,7 +860,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
                       onClick={() => void handleImportModels(profile)}
                       disabled={importingProfileId === profile.id}
                     >
-                      {importingProfileId === profile.id ? "拉取中..." : providerMode === "deepseek" ? "从 DeepSeek 拉取模型" : providerMode === "codex" ? "使用内置 Codex 模型" : "从接口拉取模型"}
+                      {importingProfileId === profile.id ? "拉取中..." : providerMode === "deepseek" ? "从 DeepSeek 拉取模型" : providerMode === "minimax" ? "从 MiniMax 拉取模型" : providerMode === "codex" ? "使用内置 Codex 模型" : "从接口拉取模型"}
                     </button>
                     <button
                       type="button"

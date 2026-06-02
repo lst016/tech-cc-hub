@@ -1,4 +1,4 @@
-import { ModelSelect } from "../ModelSelect";
+import { ModelSelect } from "../models/ModelSelect";
 import {
   applySharedModelRoutingPatch,
   buildSharedModelRoutingState,

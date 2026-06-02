@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
-import type { WorkflowSpecDocument } from "../../src/shared/workflow-markdown.js";
+import { parseWorkflowMarkdown, type WorkflowSpecDocument } from "../../src/shared/workflow-markdown.js";
 import { selectWorkflowCandidates } from "../../src/shared/workflow-selector.js";
 
 function createWorkflowDocument(overrides: Partial<WorkflowSpecDocument>): WorkflowSpecDocument {
@@ -121,4 +123,44 @@ test("selectWorkflowCandidates keeps recommendation but avoids auto-bind when ca
 
   assert.equal(result.recommendedWorkflowId, "bugfix-a");
   assert.equal(result.autoSelectedWorkflowId, undefined);
+});
+
+test("selectWorkflowCandidates auto-selects visual multitask workflow for browser annotations", () => {
+  const markdown = readFileSync(
+    join(process.cwd(), ".claude/workflows/visual-multitask-ui-fix.md"),
+    "utf8",
+  );
+  const parsed = parseWorkflowMarkdown(markdown);
+  assert.equal(parsed.ok, true, parsed.errors.map((error) => error.message).join("\n"));
+  assert.ok(parsed.document);
+
+  const genericWorkflow = createWorkflowDocument({
+    workflowId: "product-to-implementation-qa",
+    name: "Product to implementation",
+    scope: "project",
+    autoBind: true,
+    priority: 92,
+    triggers: ["创建功能", "代码实现", "QA测试"],
+    appliesToPaths: ["src/**"],
+  });
+
+  const result = selectWorkflowCandidates([genericWorkflow, parsed.document], {
+    prompt: [
+      "根据这些页面标注做批量 UI 修改，多个组件可以并行处理。",
+      "<browser_annotations>",
+      "{\"items\":[{\"comment\":\"按钮间距太大\",\"expectation\":\"压缩间距\"}]}",
+      "</browser_annotations>",
+    ].join("\n"),
+    cwd: process.cwd(),
+    activePaths: [
+      join(process.cwd(), "src/ui/components/BrowserWorkbenchPage.tsx"),
+      join(process.cwd(), "src/ui/components/prompt-input/PromptInput.tsx"),
+    ],
+    tags: ["frontend", "browser", "visual"],
+  });
+
+  assert.equal(result.recommendedWorkflowId, "visual-multitask-ui-fix");
+  assert.equal(result.autoSelectedWorkflowId, "visual-multitask-ui-fix");
+  assert.equal(result.candidates[0]?.document.workflowId, "visual-multitask-ui-fix");
+  assert.ok(result.candidates[0]?.matchedTriggers.includes("<browser_annotations>"));
 });

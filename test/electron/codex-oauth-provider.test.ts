@@ -21,7 +21,7 @@ import {
   isModelCompatibleWithApiProvider,
   normalizeProviderModelName,
   pickProviderCompatibleModel,
-} from "../../src/shared/model-provider-routing.js";
+} from "../../src/shared/models/model-provider-routing.js";
 
 test("codex oauth profile preserves the official endpoint and built-in model list", () => {
   const profile = createCodexOAuthProfile();
@@ -43,10 +43,22 @@ test("codex provider does not accept deepseek models from a merged model pool", 
   assert.equal(isModelCompatibleWithApiProvider("codex", "gpt-5.5"), true);
   assert.equal(isModelCompatibleWithApiProvider("codex", "gpt-5.3-codex-spark"), true);
   assert.equal(isModelCompatibleWithApiProvider("codex", "deepseek-v4-flash"), false);
+  assert.equal(isModelCompatibleWithApiProvider("codex", "MiniMax-M3"), false);
   assert.equal(
     pickProviderCompatibleModel("codex", "deepseek-v4-flash", "gpt-5.5"),
     "gpt-5.5",
   );
+});
+
+test("minimax provider only accepts minimax model names", () => {
+  assert.equal(isModelCompatibleWithApiProvider("minimax", "MiniMax-M3"), true);
+  assert.equal(isModelCompatibleWithApiProvider("minimax", "MiniMax-M2.7-highspeed"), true);
+  assert.equal(isModelCompatibleWithApiProvider("minimax", "deepseek-v4-flash"), false);
+  assert.equal(
+    pickProviderCompatibleModel("minimax", "deepseek-v4-flash", "MiniMax-M3"),
+    "MiniMax-M3",
+  );
+  assert.equal(normalizeProviderModelName("minimax", "MiniMax-M3"), "MiniMax-M3");
 });
 
 test("custom gateway model names preserve provider casing before routing", () => {
