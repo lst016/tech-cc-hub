@@ -18,8 +18,8 @@ export const CLAUDE_CODE_COMPAT_REGISTRY: ClaudeCodeCompatRegistry = {
   "sourceUrl": "https://claudelog.com/claude-code-changelog/",
   "sourceVersion": "2.1.154",
   "sourceDate": "May 28, 2026",
-  "generatedAt": "2026-06-03T15:10:42.523Z",
-  "sourceDigest": "d4fa66e551aa9928280436e90b9dbcb073c8587ae2098421d3d0c805b147c82f",
+  "generatedAt": "2026-06-03T15:13:39.176Z",
+  "sourceDigest": "79402f06596537e58755424c9fae17bf516f01859c56ac922d93d5851909410d",
   "commandItems": [
     {
       "name": "agents",

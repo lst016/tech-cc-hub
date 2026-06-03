@@ -70,6 +70,12 @@ function parseStrippedSections(text) {
   });
 }
 
+// classifyCompatFacts lives in src/electron/libs/claude/claude-code-compat-facts.ts
+// (canonical TypeScript source). sync-claude-code-compat.mjs does not yet invoke
+// it; Phase 2 will wire the runtime classification in by either (a) compiling
+// the .ts to .js alongside the lib, or (b) running the script via tsx/ts-node.
+// Until then this re-export is intentionally absent.
+
 export function extractOfficialSections(html) {
   return parseStrippedSections(html);
 }
