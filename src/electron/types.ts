@@ -3,6 +3,21 @@ import type { LinkedWorkspaceContext } from "../shared/linked-workspaces.js";
 import type { PromptLedgerMessage } from "../shared/prompt-ledger.js";
 import type { SessionPlanSnapshot } from "../shared/plan-progress.js";
 import type { SessionExecutionMode } from "../shared/session-semantics.js";
+// Phase 5 of the Claude Code 2.1.161 compat workflow. tsc incremental does
+// not pick up new files in src/shared/ unless transitively imported; this
+// re-export keeps the worktree policy in the compile graph.
+export type {
+  AgentWorkspacePolicy,
+  AgentWorkspaceLease,
+  AgentWorkspaceLeaseStatus,
+  ResolveWorkspacePolicyInput,
+  ResolveWorkspacePolicyResult,
+} from "../shared/agent-workspace-policy.js";
+export {
+  resolveAgentWorkspacePolicy,
+  canCleanupWorktree,
+  DEFAULT_WORKTREE_ROOT,
+} from "../shared/agent-workspace-policy.js";
 import type { SessionWorkflowState, WorkflowScope, WorkflowSpecDocument } from "../shared/workflow-markdown.js";
 import type { Note, NoteCreateInput, NoteUpdateInput } from "./libs/note/note-types.js";
 
