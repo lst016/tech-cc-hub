@@ -12,6 +12,7 @@ import {
   normalizeVersion,
   renderRegistry,
   sha256Digest,
+  withCompatCommandAliases,
 } from "./claude-code-compat-sync-lib.mjs";
 
 const OFFICIAL_SOURCE_URL = "https://code.claude.com/docs/en/changelog";
@@ -74,7 +75,7 @@ if (!section) {
   process.exit(1);
 }
 
-const commandItems = extractCommandItems(section.items);
+const commandItems = withCompatCommandAliases(extractCommandItems(section.items));
 const promptHints = buildPromptHints(section.items);
 const facts = classifyCompatFacts(section.version, section.date, section.items);
 report.commandCount = commandItems.length;

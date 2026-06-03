@@ -4,6 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CronService } from "../../src/electron/libs/cron/cron-service.js";
+import { insertCronJob, listCronRuns, deleteCronJob } from "../../src/electron/libs/cron/cron-db.js";
 import type { ICronRepository } from "../../src/electron/libs/cron/cron-repository.js";
 import type { ICronEventEmitter } from "../../src/electron/libs/cron/cron-event-emitter.js";
 import type { ICronJobExecutor } from "../../src/electron/libs/cron/cron-executor.js";
@@ -261,4 +262,107 @@ test("runWatchdog: getStuckRuns 杩斿洖 1 鏉?stuck 鈫?cleared=1", async () =
   // runWatchdog reads the real cron DB helper, so this test only asserts shape.
   const result = await svc.runWatchdog();
   assert.equal(typeof result.cleared, "number");
+});
+
+// ── 7. H-2: executeJob 写 running + done 两条 run 行（F-07 watchdog 喂数据）──
+
+test("H-2: executeJob 写 running 行 + 完结 updateCronRun 写 finished/duration", async () => {
+  const job = makeJob({ id: "cron_h2_test", name: "H-2 验证" });
+  const repo = makeRepo([job]);
+  insertCronJob(job);
+  try {
+    const svc = new CronService(repo, makeEmitter(), makeExecutor());
+    await svc.triggerJob(job.id);
+
+    const runs = listCronRuns(job.id);
+    assert.equal(runs.length, 1, "应写 1 条 run 行");
+    assert.equal(runs[0].status, "ok", "executor 成功 → status=ok");
+    assert.ok(runs[0].finishedAt !== undefined, "完结应写 finishedAt");
+    assert.ok(runs[0].durationMs !== undefined && runs[0].durationMs >= 0, "完结应写 durationMs");
+    assert.equal(runs[0].triggerSource, "manual", "triggerJob 触发 → triggerSource=manual");
+  } finally {
+    deleteCronJob(job.id);
+  }
+});
+
+test("H-2: executeJob 失败时 run 行 status=error 且记 error 信息", async () => {
+  const job = makeJob({ id: "cron_h2_err" });
+  const repo = makeRepo([job]);
+  insertCronJob(job);
+  try {
+    const failingExecutor = {
+      isConversationBusy: () => false,
+      async executeJob() { throw new Error("LLM 504"); },
+      async prepareConversation(j: CronJob) { return j.metadata.conversationId; },
+      onceIdle() {},
+      setProcessing() {},
+    } as unknown as ICronJobExecutor;
+    const svc = new CronService(repo, makeEmitter(), failingExecutor);
+    await svc.triggerJob(job.id);
+
+    const runs = listCronRuns(job.id);
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0].status, "error");
+    assert.ok(runs[0].error?.includes("LLM 504"), "error 字段应包含原始错误信息");
+  } finally {
+    deleteCronJob(job.id);
+  }
+});
+
+// ── 8. H-3: in-flight re-entrancy guard（同一 job 多次 fire 只跑一次）──
+
+test("H-3: 同一 job 并发 triggerJob → executor 实际只跑一次", async () => {
+  const job = makeJob({ id: "cron_h3" });
+  const repo = makeRepo([job]);
+  insertCronJob(job);
+  try {
+    let executeCount = 0;
+    const slowExecutor = {
+      isConversationBusy: () => false,
+      async executeJob(j: CronJob) {
+        executeCount += 1;
+        await new Promise((r) => setTimeout(r, 80));
+        return j.metadata.conversationId;
+      },
+      async prepareConversation(j: CronJob) { return j.metadata.conversationId; },
+      onceIdle() {},
+      setProcessing() {},
+    } as unknown as ICronJobExecutor;
+    const svc = new CronService(repo, makeEmitter(), slowExecutor);
+
+    const results = await Promise.allSettled([
+      svc.triggerJob(job.id),
+      svc.triggerJob(job.id),
+    ]);
+    assert.equal(results[0].status, "fulfilled");
+    assert.equal(results[1].status, "fulfilled");
+    assert.equal(executeCount, 1, "in-flight guard 拦截第二次，只 executor 跑 1 次");
+  } finally {
+    deleteCronJob(job.id);
+  }
+});
+
+// ── 9. H-4: init() 时从 DB 状态 reload pausedJobs（重启不丢暂停态）──
+
+test("H-4: init() 把 DB 中 paused=true 的 job 装进 pausedJobs Set", async () => {
+  const futureAt = Date.now() + 24 * 60 * 60 * 1000;
+  const pausedJob = makeJob({
+    id: "cron_h4_paused",
+    schedule: { kind: "at", atMs: futureAt, description: "future at" },
+    state: { runCount: 0, retryCount: 0, maxRetries: 3, paused: true },
+  });
+  const runningJob = makeJob({
+    id: "cron_h4_running",
+    schedule: { kind: "at", atMs: futureAt + 1000, description: "future at" },
+    state: { runCount: 0, retryCount: 0, maxRetries: 3, paused: false },
+  });
+  const repo = makeRepo([pausedJob, runningJob]);
+
+  const svc = new CronService(repo, makeEmitter(), makeExecutor());
+  await svc.init();
+
+  assert.ok(getPausedJobs(svc).has("cron_h4_paused"), "paused=true 的 job 必须在 pausedJobs");
+  assert.ok(!getPausedJobs(svc).has("cron_h4_running"), "paused=false 的 job 不能进 pausedJobs");
+
+  svc.destroy();
 });

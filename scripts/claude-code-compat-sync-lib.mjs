@@ -142,7 +142,32 @@ export function extractCommandItems(items) {
       addCommand(commands, "agents", text);
     }
   }
-  return Array.from(commands.values()).sort((left, right) => left.name.localeCompare(right.name));
+  const built = Array.from(commands.values()).sort((left, right) => left.name.localeCompare(right.name));
+  return built.map((item) => ({ ...item, source: "claude-code-compat" }));
+}
+
+// Historical-name aliases: when the upstream changelog mentions a renames,
+// we still want the old name to resolve to the new primary. These mappings
+// are curated, not extracted, because the changelog wording varies too much
+// for a regex to be reliable. Last reconciled against the 2.1.154 section.
+const COMPAT_COMMAND_ALIASES = {
+  simplify: "code-review",
+  "extra-usage": "usage-credits",
+};
+
+export function withCompatCommandAliases(items) {
+  const out = items.map((item) => ({ ...item }));
+  for (const [alias, primary] of Object.entries(COMPAT_COMMAND_ALIASES)) {
+    if (out.some((it) => it.name === primary)) {
+      out.push({
+        name: alias,
+        description: `Alias of /${primary} (historical name from the Claude Code changelog).`,
+        source: "claude-code-compat",
+        aliasOf: primary,
+      });
+    }
+  }
+  return out;
 }
 
 export function buildPromptHints(items) {
@@ -246,6 +271,57 @@ function addCommand(commands, rawName, description) {
 
 function stripTicks(text) {
   return text.replace(/`/g, "");
+}
+
+export function resolveSlashCommandByName(typedName, commands) {
+  if (typeof typedName !== "string" || !Array.isArray(commands)) return null;
+  const needle = typedName.trim().replace(/^\/+/, "").toLowerCase();
+  if (!needle) return null;
+  const direct = commands.find((c) => c && typeof c.name === "string" && c.name.toLowerCase() === needle);
+  if (direct) {
+    // If direct is an alias, follow aliasOf to the primary.
+    if (direct.aliasOf) {
+      const primary = commands.find((c) => c && typeof c.name === "string" && c.name.toLowerCase() === direct.aliasOf.toLowerCase());
+      if (primary) {
+        return { ...primary, resolvedFrom: direct.name };
+      }
+    }
+    return { ...direct, resolvedFrom: direct.name };
+  }
+  // typed name is itself a primary; check whether some alias points to it
+  const aliasPointingHere = commands.find((c) => c && c.aliasOf && c.aliasOf.toLowerCase() === needle);
+  if (aliasPointingHere) {
+    return { ...aliasPointingHere, resolvedFrom: aliasPointingHere.name };
+  }
+  return null;
+}
+
+export function mergeSlashCommandItemsByPriority(groups) {
+  // groups: array of SlashCommandItem[] in priority order, lowest first
+  // (compat < builtin < local < message). The first-seen item for a name
+  // is the lowest-priority source; later groups overwrite the slot, and
+  // description only fills in when the higher-priority slot is empty.
+  const merged = new Map();
+  for (const items of groups) {
+    if (!Array.isArray(items)) continue;
+    for (const item of items) {
+      if (!item || typeof item.name !== "string") continue;
+      const key = item.name.trim().replace(/^\/+/, "").toLowerCase();
+      if (!key) continue;
+      const existing = merged.get(key);
+      if (!existing) {
+        merged.set(key, { ...item, name: item.name.trim().replace(/^\/+/, "") });
+        continue;
+      }
+      merged.set(key, {
+        ...existing,
+        ...item,
+        name: existing.name || item.name,
+        description: item.description?.trim() || existing.description?.trim() || undefined,
+      });
+    }
+  }
+  return Array.from(merged.values()).sort((left, right) => left.name.localeCompare(right.name));
 }
 
 // classifyCompatFacts — JS port of the canonical TypeScript classifier at

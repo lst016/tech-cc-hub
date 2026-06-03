@@ -26,6 +26,7 @@
 		"test:activity-rail-model": "tsc --project test/electron/tsconfig.json && node --test dist-test/test/electron/activity-rail-model.test.js",
 		"test:electron:build": "tsc --project test/electron/tsconfig.json",
 		"test:electron:cron": "npm run test:electron:build && cross-env CRON_TEST_FILES=\"dist-test/test/electron/cron-*.test.js\" electron --no-sandbox scripts/test-electron.mjs",
+		"test:electron:all": "npm run test:electron:build && cross-env CRON_TEST_FILES=\"dist-test/test/electron/*cron*.test.js\" electron --no-sandbox scripts/test-electron.mjs",
 		"transpile:electron": "tsc --project src/electron/tsconfig.json",
 		"package:mac": "bun run transpile:electron && bun run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac zip --arm64 --publish never",
 		"package:mac:fast": "bun run transpile:electron && bun run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --arm64 --publish never",

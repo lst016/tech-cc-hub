@@ -62,31 +62,26 @@ export function buildSessionSlashCommandItems(options: {
 }): SlashCommandItem[] | undefined {
   const discoveredItems = discoverSlashCommandItemsInRoots(resolveSlashCommandRoots(options.cwd)) ?? [];
   const messageCommands = extractSlashCommandsFromMessages(options.messages) ?? [];
-  const merged = new Map<string, SlashCommandItem>();
-
-  for (const item of CLAUDE_CODE_COMPAT_COMMAND_ITEMS) {
-    merged.set(item.name.toLowerCase(), item);
-  }
-
-  for (const item of discoveredItems) {
-    merged.set(item.name.toLowerCase(), item);
-  }
-
-  for (const item of CLAUDE_CODE_BUILTIN_COMMAND_ITEMS) {
-    merged.set(item.name.toLowerCase(), item);
-  }
-
-  for (const name of messageCommands) {
+  const taggedDiscovered = discoveredItems.map((it) => ({ ...it, source: "local" as const }));
+  const taggedBuiltin = CLAUDE_CODE_BUILTIN_COMMAND_ITEMS.map((it) => ({ ...it, source: "claude-code-builtin" as const }));
+  const taggedMessage = messageCommands.map((name) => {
     const normalized = name.trim().replace(/^\/+/, "");
-    if (!normalized) continue;
-    const key = normalized.toLowerCase();
-    if (!merged.has(key)) {
-      merged.set(key, { name: normalized });
-    }
-  }
+    if (!normalized) return null;
+    return { name: normalized, source: "message" as const };
+  }).filter((it): it is SlashCommandItem => Boolean(it));
 
-  const commands = Array.from(merged.values()).sort((left, right) => left.name.localeCompare(right.name));
-  return commands.length > 0 ? commands : undefined;
+  // Priority: compat < builtin < local < message. mergeSlashCommandItemsByPriority
+  // walks the groups in order, so later groups overwrite the slot. The compat
+  // group is intentionally first so that local/builtin/messages win the name
+  // (with description backfill when higher-priority entries are empty).
+  const merged = mergeSlashCommandItemsByPriority([
+    CLAUDE_CODE_COMPAT_COMMAND_ITEMS as SlashCommandItem[],
+    taggedBuiltin,
+    taggedDiscovered,
+    taggedMessage,
+  ]);
+
+  return merged.length > 0 ? merged : undefined;
 }
 
 export function resolveInvokedLocalSlashDefinition(options: {

@@ -11,6 +11,8 @@ export type SlashCommandRoots = Partial<Record<"system" | "user" | "project", st
 export type SlashCommandItem = {
   name: string;
   description?: string;
+  source?: "claude-code-compat" | "claude-code-builtin" | "local" | "message";
+  aliasOf?: string;
 };
 
 export type SkillDefinitionItem = SlashCommandItem & {
