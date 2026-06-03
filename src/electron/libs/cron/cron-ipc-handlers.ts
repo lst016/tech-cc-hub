@@ -89,17 +89,24 @@ export function registerCronIpcHandlers(cronService: CronService): void {
   ipcMain.handle("cron:bind-conversation", async (_event, params: { jobId: string; conversationId: string; conversationTitle?: string }) => {
     const job = await cronService.getJob(params.jobId);
     if (!job) throw new Error(`任务不存在: ${params.jobId}`);
+    // C-2: 校验 conversationId 格式；非法则 fallback 到 __system__ + warn
+    const conv = params.conversationId?.trim() || "__system__";
+    let finalConvId = conv;
+    if (conv !== "__system__" && (conv.length > 256 || /[\r\n;'"`]/.test(conv))) {
+      console.warn(`[IPC cron] bind-conversation: 会话 ID 格式非法 (${conv})，回退到 __system__`);
+      finalConvId = "__system__";
+    }
     const updated = await cronService.updateJob(params.jobId, {
       metadata: {
         ...job.metadata,
-        conversationId: params.conversationId,
+        conversationId: finalConvId,
         conversationTitle: params.conversationTitle ?? job.metadata.conversationTitle,
         updatedAt: Date.now(),
       },
     });
     // 通知渲染进程
     for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send("cron:job-bound", { jobId: params.jobId, conversationId: params.conversationId });
+      win.webContents.send("cron:job-bound", { jobId: params.jobId, conversationId: finalConvId });
     }
     return updated;
   });

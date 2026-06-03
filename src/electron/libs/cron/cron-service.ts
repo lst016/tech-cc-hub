@@ -8,7 +8,8 @@ import type { CronJob, CreateCronJobParams, MisfirePolicy } from "./cron-types.j
 import type { ICronRepository } from "./cron-repository.js";
 import type { ICronEventEmitter } from "./cron-event-emitter.js";
 import type { ICronJobExecutor } from "./cron-executor.js";
-import { getStuckRuns, updateCronRun } from "./cron-db.js";
+import { getStuckRuns, insertCronRun, updateCronRun } from "./cron-db.js";
+import type { CronJobRun } from "./cron-types.js";
 import { notifyCronFinished } from "../desktop-notifications.js";
 
 // 退避算法常量（POLICY.md §2）
@@ -26,6 +27,8 @@ export class CronService {
   private retryTimers: Map<string, NodeJS.Timeout> = new Map();
   private retryCounts: Map<string, number> = new Map();
   private pausedJobs: Set<string> = new Set();
+  // H-3/H-5 in-flight re-entrancy guard：同 job 多次 fire 在内存中只允许一个 Promise 跑
+  private inFlightJobs: Map<string, Promise<void>> = new Map();
   private watchdogTimer: NodeJS.Timeout | null = null;
   private initialized = false;
 
@@ -40,7 +43,9 @@ export class CronService {
 
     try {
       const jobs = await this.repo.listEnabled();
+      // H-4：pausedJobs 启动时从 DB 状态 reload，否则暂停任务会在重启后自动恢复
       for (const job of jobs) {
+        if (job.state.paused) this.pausedJobs.add(job.id);
         await this.startTimer(job);
       }
       this.initialized = true;
@@ -126,7 +131,10 @@ export class CronService {
     const job = await this.repo.getById(jobId);
     if (!job) throw new Error(`任务不存在: ${jobId}`);
     const conversationId = await this.executor.prepareConversation(job);
-    void this.executeJob(job, conversationId);
+    // H-5：fire-and-forget 加 .catch 让错误不静默丢失
+    void this.executeJob(job, conversationId).catch((err) => {
+      console.error(`[CronService] runNow 任务 ${jobId} 失败:`, err);
+    });
     return conversationId;
   }
 
@@ -232,6 +240,21 @@ export class CronService {
   // ── Execution ──
 
   private async executeJob(job: CronJob, preparedConversationId?: string): Promise<void> {
+    // H-3/H-5 in-flight re-entrancy guard：crontab tick + runNow + catchup 三路并发
+    // 同一 job 只允许一个 Promise 在跑，第二个调用复用第一个的 Promise
+    const existing = this.inFlightJobs.get(job.id);
+    if (existing) return existing;
+
+    const runPromise = this.executeJobInner(job, preparedConversationId);
+    this.inFlightJobs.set(job.id, runPromise);
+    try {
+      await runPromise;
+    } finally {
+      this.inFlightJobs.delete(job.id);
+    }
+  }
+
+  private async executeJobInner(job: CronJob, preparedConversationId?: string): Promise<void> {
     const conversationId = preparedConversationId ?? job.metadata.conversationId;
 
     // F-12：pause/resume —— timer 保留但 executeJob 早退
@@ -275,6 +298,22 @@ export class CronService {
     let lastStatus: CronJob["state"]["lastStatus"];
     let lastError: string | undefined;
 
+    // H-2：先写 running 行，给 F-07 stuck watchdog 喂数据
+    const runId = `run_${lastRunAtMs}_${Math.random().toString(36).slice(2, 8)}`;
+    const run: CronJobRun = {
+      id: runId,
+      jobId: job.id,
+      startedAt: lastRunAtMs,
+      status: "running",
+      triggerSource: preparedConversationId ? "manual" : "schedule",
+      conversationId,
+    };
+    try {
+      insertCronRun(run);
+    } catch (err) {
+      console.error(`[CronService] 写 run/running 失败（继续执行）:`, err);
+    }
+
     try {
       await this.executor.executeJob(job, () => {
         this.registerCompletionNotification(job);
@@ -296,6 +335,19 @@ export class CronService {
         error: lastError,
       });
       console.error(`[CronService] 任务 ${job.id} 失败:`, error);
+    }
+
+    // H-2：执行结束补全 run 行（status / finishedAt / durationMs）
+    try {
+      updateCronRun(runId, {
+        status: lastStatus === "ok" ? "ok" : "error",
+        finishedAt: Date.now(),
+        durationMs: Date.now() - lastRunAtMs,
+        error: lastError,
+        conversationId,
+      });
+    } catch (err) {
+      console.error(`[CronService] 写 run/done 失败:`, err);
     }
 
     this.updateNextRunTime(job);
@@ -482,6 +534,7 @@ export class CronService {
     this.timers.clear();
     this.retryTimers.clear();
     this.pausedJobs.clear();
+    this.inFlightJobs.clear();
     if (this.watchdogTimer) {
       clearInterval(this.watchdogTimer);
       this.watchdogTimer = null;

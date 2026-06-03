@@ -9,21 +9,13 @@ import type { CronJob, CronJobRow, CronJobRun, CronJobRunRow, CronJobRunStatus, 
 
 let db: Database.Database | null = null;
 
-export function getCronDb(): Database.Database {
-  if (!db) {
-    const userDataPath = app.getPath("userData");
-    if (!existsSync(userDataPath)) mkdirSync(userDataPath, { recursive: true });
-    const dbPath = join(userDataPath, "cron.db");
-    db = new Database(dbPath);
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    migrate(db);
-  }
-  return db;
-}
-
-function migrate(database: Database.Database): void {
-  database.exec(`
+// H-6: schema 版本号；未来加表/列只需追加 MIGRATIONS 数组元素
+//   v1: 初始 (cron_jobs + cron_job_runs + paused 列兼容 ALTER)
+const SCHEMA_VERSION = 1;
+const MIGRATIONS: Array<(database: Database.Database) => void> = [
+  // v1: 初始 schema + paused 列兼容老库
+  (d) => {
+    d.exec(`
     CREATE TABLE IF NOT EXISTS cron_jobs (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -74,6 +66,39 @@ function migrate(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_cron_runs_job ON cron_job_runs(job_id, started_at DESC);
     CREATE INDEX IF NOT EXISTS idx_cron_runs_status ON cron_job_runs(status, started_at);
   `);
+    // paused 列兼容老库
+    const cols = d.prepare("PRAGMA table_info(cron_jobs)").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "paused")) {
+      d.exec("ALTER TABLE cron_jobs ADD COLUMN paused INTEGER NOT NULL DEFAULT 0");
+    }
+  },
+  // 未来示例：
+  // (d) => d.exec("ALTER TABLE cron_jobs ADD COLUMN ...")
+];
+
+export function getCronDb(): Database.Database {
+  if (!db) {
+    const userDataPath = app.getPath("userData");
+    if (!existsSync(userDataPath)) mkdirSync(userDataPath, { recursive: true });
+    const dbPath = join(userDataPath, "cron.db");
+    db = new Database(dbPath);
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    migrate(db);
+  }
+  return db;
+}
+
+function migrate(database: Database.Database): void {
+  const row = database.prepare("PRAGMA user_version").get() as { user_version: number } | undefined;
+  const current = row?.user_version ?? 0;
+  for (let v = current + 1; v <= SCHEMA_VERSION; v++) {
+    const fn = MIGRATIONS[v - 1];
+    if (fn) fn(database);
+  }
+  if (current !== SCHEMA_VERSION) {
+    database.prepare(`PRAGMA user_version = ${SCHEMA_VERSION}`).run();
+  }
 }
 
 // ── Row ↔ Job conversion (CV from AionUi CronStore.ts) ──
@@ -111,6 +136,7 @@ function jobToRow(job: CronJob): CronJobRow {
     run_count: job.state.runCount,
     retry_count: job.state.retryCount,
     max_retries: job.state.maxRetries,
+    paused: job.state.paused ? 1 : 0,
   };
 }
 
@@ -157,6 +183,7 @@ function rowToJob(row: CronJobRow): CronJob {
       runCount: row.run_count,
       retryCount: row.retry_count,
       maxRetries: row.max_retries,
+      paused: row.paused === 1,
     },
   };
 }
@@ -209,7 +236,7 @@ export function updateCronJob(jobId: string, updates: Partial<CronJob>): void {
       conversation_id = ?, conversation_title = ?, agent_type = ?,
       updated_at = ?,
       next_run_at = ?, last_run_at = ?, last_status = ?, last_error = ?,
-      run_count = ?, retry_count = ?, max_retries = ?
+      run_count = ?, retry_count = ?, max_retries = ?, paused = ?
     WHERE id = ?
   `).run(
     row.name, row.description, row.enabled,
@@ -218,7 +245,7 @@ export function updateCronJob(jobId: string, updates: Partial<CronJob>): void {
     row.conversation_id, row.conversation_title, row.agent_type,
     row.updated_at,
     row.next_run_at, row.last_run_at, row.last_status, row.last_error,
-    row.run_count, row.retry_count, row.max_retries,
+    row.run_count, row.retry_count, row.max_retries, row.paused,
     jobId,
   );
 }

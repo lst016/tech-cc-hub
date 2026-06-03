@@ -18,6 +18,43 @@ export const CRON_TOOL_NAMES = [
   "delete_scheduled_task",
 ] as const;
 
+// C-2: 会话存在性 resolver 注入点。main.ts wire-up 时调用
+//   setCronSessionValidator((id) => sessionStore.exists(id))
+// 校验非 __system__ 的 conversationId；未注入时使用格式校验 + warn。
+type SessionValidator = (conversationId: string) => boolean;
+let sessionValidatorRef: SessionValidator | null = null;
+export function setCronSessionValidator(fn: SessionValidator): void {
+  sessionValidatorRef = fn;
+}
+
+// C-2: 解析 conversationId 合法性。优先用 validator，不可用时退回格式校验。
+//  返回 { resolved, fallback, reason }：fallback=true 表示回退到 __system__。
+function resolveConversationId(input: string | undefined): {
+  resolved: string;
+  fallback: boolean;
+  reason?: string;
+} {
+  const raw = input?.trim();
+  if (!raw || raw === "__system__") return { resolved: "__system__", fallback: false };
+  if (sessionValidatorRef) {
+    if (sessionValidatorRef(raw)) return { resolved: raw, fallback: false };
+    return {
+      resolved: "__system__",
+      fallback: true,
+      reason: `会话 ${raw} 不存在，回退到 __system__`,
+    };
+  }
+  // fallback: 简单格式校验（拒绝包含 SQL 注入字符或换行）
+  if (raw.length > 256 || /[\r\n;'"`]/.test(raw)) {
+    return {
+      resolved: "__system__",
+      fallback: true,
+      reason: `会话 ID 包含非法字符或过长，回退到 __system__`,
+    };
+  }
+  return { resolved: raw, fallback: false };
+}
+
 const CRON_TOOLS_SERVER_NAME = "tech-cc-hub-cron";
 const CRON_MCP_SERVER_VERSION = "1.0.0";
 
@@ -130,11 +167,17 @@ export function getCronMcpServer(): McpSdkServerConfigWithInstance {
 
         const schedule = buildScheduleFromInput(input);
 
+        // C-2: 解析 conversationId；不存在则 fallback + warn
+        const conv = resolveConversationId(input.conversationId);
+        if (conv.fallback) {
+          console.warn(`[MCP cron] ${conv.reason}（job=${input.name}）`);
+        }
+
         const params: CreateCronJobParams = {
           name: input.name,
           schedule,
           message: input.message,
-          conversationId: input.conversationId || "__system__",
+          conversationId: conv.resolved,
           conversationTitle: input.name,
           agentType: "default",
           createdBy: "agent",

@@ -35,6 +35,8 @@ export type CronJobRow = {
   run_count: number;
   retry_count: number;
   max_retries: number;
+  /** H-4 paused 持久化：0=未暂停, 1=暂停；兼容老库 ALTER TABLE 添加 */
+  paused: number;
 };
 
 // 单次执行行的 DB row 类型（cron_job_runs 表）
