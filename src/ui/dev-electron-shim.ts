@@ -1,4 +1,4 @@
-import type { ClientEvent, PromptAttachment, ServerEvent, StreamMessage, UiGitCommitDetail, UiGitCommitMessageSuggestion, UiGitDiffResult, UiGitResult, UiGitWorkbenchSnapshot } from "./types";
+import type { ApiConfigSettings, ClientEvent, PromptAttachment, ServerEvent, StreamMessage, UiGitCommitDetail, UiGitCommitMessageSuggestion, UiGitDiffResult, UiGitResult, UiGitWorkbenchSnapshot } from "./types";
 import type { AppUpdateActionResult, AppUpdateStatus } from "./types";
 
 const browserPreviewSessionId = "browser-preview-session";
@@ -76,6 +76,13 @@ const createPreviewUpdateResult = async (): Promise<AppUpdateActionResult> => {
   const status = createPreviewUpdateStatus();
   return { success: false, status, error: status.error };
 };
+
+function getPreviewQaApiConfig(): ApiConfigSettings | null {
+  const config = (window as Window & { __TECH_CC_HUB_QA_API_CONFIG__?: unknown }).__TECH_CC_HUB_QA_API_CONFIG__;
+  if (!config || typeof config !== "object") return null;
+  if (!Array.isArray((config as { profiles?: unknown }).profiles)) return null;
+  return config as ApiConfigSettings;
+}
 
 export function getDevElectronRuntimeSource(): DevElectronRuntimeSource {
   if (typeof window === "undefined" || !window.electron) {
@@ -283,7 +290,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     getRecentCwds: async () => ["/Users/lst01/Desktop/学习/tech-cc-hub"],
     getSystemWorkspace: async () => "/Users/lst01/Desktop/学习/tech-cc-hub",
     selectDirectory: async () => "/Users/lst01/Desktop/学习/tech-cc-hub",
-    getApiConfig: async () => ({ profiles: [] }),
+    getApiConfig: async () => getPreviewQaApiConfig() ?? { profiles: [] },
     saveApiConfig: async () => ({ success: true }),
     fetchApiModels: async () => ({ success: false, error: "当前没有连接 Electron 后端，无法拉取模型。" }),
     testApiConfig: async () => ({ success: false, error: "当前没有连接 Electron 后端，无法测试连接。" }),
@@ -424,6 +431,12 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
       error: "浏览器预览态暂不支持真实截图，请在 Electron 窗口使用。",
     }),
     inspectBrowserWorkbenchAtPoint: async () => null,
+    clickBrowserWorkbenchAtPoint: async (_point: { x: number; y: number; dblClick?: boolean }, sessionId?: string) => ({
+      success: false,
+      action: "click",
+      state: getBrowserState(sessionId),
+      error: "浏览器预览态暂不支持真实点击，请在 Electron 窗口中操作。",
+    }),
     clearBrowserWorkbenchAnnotations: async (sessionId?: string) => getBrowserState(sessionId),
     removeBrowserWorkbenchAnnotation: async (_annotationId: string, sessionId?: string) => getBrowserState(sessionId),
     setBrowserWorkbenchAnnotationMode: async (enabled: boolean, sessionId?: string) => (
@@ -432,6 +445,95 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     openBrowserWorkbenchDevTools: async () => ({ opened: false }),
     closeBrowserWorkbenchDevTools: async () => ({ opened: false }),
     isBrowserWorkbenchDevToolsOpen: async () => false,
+    startBrowserWorkbenchRecording: async () => ({
+      success: false,
+      recording: false,
+      actionCount: 0,
+      error: "浏览器预览态暂不支持录制，请在 Electron 窗口中操作。",
+    }),
+    stopBrowserWorkbenchRecording: async () => ({
+      success: false,
+      recording: false,
+      actionCount: 0,
+      error: "浏览器预览态没有正在运行的录制。",
+    }),
+    getBrowserWorkbenchRecordingState: async () => ({ recording: false, actionCount: 0 }),
+    setBrowserWorkbenchRecordingAssertionMode: async () => ({ recording: false, actionCount: 0, assertionMode: false }),
+    runBrowserWorkbenchRecording: async () => ({
+      success: false,
+      status: "error",
+      recordingId: "",
+      startedAt: Date.now(),
+      endedAt: Date.now(),
+      durationMs: 0,
+      workspaceRoot: "",
+      rootPath: "",
+      specPath: "",
+      outputDir: "",
+      command: "",
+      args: [],
+      stdout: "",
+      stderr: "",
+      events: [],
+      attachments: {
+        traceFiles: [],
+        screenshotFiles: [],
+        videoFiles: [],
+        otherFiles: [],
+      },
+      error: "浏览器预览态暂不支持运行录制测试，请在 Electron 窗口中操作。",
+    }),
+    cancelBrowserWorkbenchRecordingRun: async () => ({
+      success: false,
+      error: "浏览器预览态没有正在运行的录制测试。",
+    }),
+    openBrowserWorkbenchRecordingRunOutput: async () => ({
+      success: false,
+      error: "浏览器预览态暂不支持打开运行输出。",
+    }),
+    openBrowserWorkbenchRecordingTraceViewer: async () => ({
+      success: false,
+      error: "浏览器预览态暂不支持打开 trace。",
+    }),
+    listBrowserWorkbenchRecordings: async () => [],
+    loadBrowserWorkbenchRecording: async () => ({
+      success: false,
+      recording: false,
+      actionCount: 0,
+      error: "浏览器预览态暂不支持加载录制历史。",
+    }),
+    updateBrowserWorkbenchRecordingArtifact: async () => ({
+      success: false,
+      recordingPackage: {
+        id: "",
+        createdAt: Date.now(),
+        rootPathHint: "",
+        recordingPath: "",
+        generatedSpecPath: "",
+        recording: undefined as never,
+        environment: undefined as never,
+        dataScenarios: [],
+        suite: undefined as never,
+        diagnostics: [],
+        artifacts: [],
+      },
+      artifactPath: "",
+      error: "浏览器预览态暂不支持保存录制文件。",
+    }),
+    startBrowserWorkbenchRecordingLocatorPick: async () => ({ recording: false, actionCount: 0 }),
+    cancelBrowserWorkbenchRecordingLocatorPick: async () => ({ recording: false, actionCount: 0 }),
+    addBrowserWorkbenchRecordingAssertion: async () => ({
+      success: false,
+      recording: false,
+      actionCount: 0,
+      error: "浏览器预览态暂不支持添加录制断言。",
+    }),
+    repairBrowserWorkbenchRecordingLocator: async () => ({
+      success: false,
+      recording: false,
+      actionCount: 0,
+      error: "浏览器预览态暂不支持修复录制包。",
+    }),
     onBrowserWorkbenchEvent: () => () => {},
     onCronJobCreated: () => () => {},
     onCronJobUpdated: () => () => {},
@@ -512,7 +614,7 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       getRecentCwds: async (limit?: number) => await invokeBridge("getRecentCwds", limit),
       getSystemWorkspace: async () => await invokeBridge("getSystemWorkspace"),
       selectDirectory: async () => await invokeBridge("selectDirectory"),
-      getApiConfig: async () => await invokeBridge("getApiConfig"),
+      getApiConfig: async () => getPreviewQaApiConfig() ?? await invokeBridge("getApiConfig"),
       saveApiConfig: async (config) => await invokeBridge("saveApiConfig", config),
       fetchApiModels: async (payload) => await invokeBridge("fetchApiModels", payload),
       testApiConfig: async (payload) => await invokeBridge("testApiConfig", payload),
@@ -574,12 +676,28 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       getBrowserWorkbenchFetchLogs: async (input?: BrowserWorkbenchNetworkLogInput, sessionId?: string) => await invokeBridge("getBrowserWorkbenchFetchLogs", input, sessionId),
       captureBrowserWorkbenchVisible: async (sessionId?: string) => await invokeBridge("captureBrowserWorkbenchVisible", sessionId),
       inspectBrowserWorkbenchAtPoint: async (point, sessionId?: string) => await invokeBridge("inspectBrowserWorkbenchAtPoint", point, sessionId),
+      clickBrowserWorkbenchAtPoint: async (point: { x: number; y: number; dblClick?: boolean }, sessionId?: string) => await invokeBridge("clickBrowserWorkbenchAtPoint", point, sessionId),
       clearBrowserWorkbenchAnnotations: async (sessionId?: string) => await invokeBridge("clearBrowserWorkbenchAnnotations", sessionId),
       removeBrowserWorkbenchAnnotation: async (annotationId: string, sessionId?: string) => await invokeBridge("removeBrowserWorkbenchAnnotation", annotationId, sessionId),
       setBrowserWorkbenchAnnotationMode: async (enabled: boolean, sessionId?: string) => await invokeBridge("setBrowserWorkbenchAnnotationMode", enabled, sessionId),
       openBrowserWorkbenchDevTools: async (sessionId?: string) => await invokeBridge("openBrowserWorkbenchDevTools", sessionId),
       closeBrowserWorkbenchDevTools: async (sessionId?: string) => await invokeBridge("closeBrowserWorkbenchDevTools", sessionId),
       isBrowserWorkbenchDevToolsOpen: async (sessionId?: string) => await invokeBridge("isBrowserWorkbenchDevToolsOpen", sessionId),
+      startBrowserWorkbenchRecording: async (sessionId?: string) => await invokeBridge("startBrowserWorkbenchRecording", sessionId),
+      stopBrowserWorkbenchRecording: async (sessionId?: string) => await invokeBridge("stopBrowserWorkbenchRecording", sessionId),
+      getBrowserWorkbenchRecordingState: async (sessionId?: string) => await invokeBridge("getBrowserWorkbenchRecordingState", sessionId),
+      setBrowserWorkbenchRecordingAssertionMode: async (enabled: boolean, sessionId?: string) => await invokeBridge("setBrowserWorkbenchRecordingAssertionMode", enabled, sessionId),
+      runBrowserWorkbenchRecording: async (sessionId?: string) => await invokeBridge("runBrowserWorkbenchRecording", sessionId),
+      cancelBrowserWorkbenchRecordingRun: async (sessionId?: string) => await invokeBridge("cancelBrowserWorkbenchRecordingRun", sessionId),
+      openBrowserWorkbenchRecordingRunOutput: async (sessionId?: string) => await invokeBridge("openBrowserWorkbenchRecordingRunOutput", sessionId),
+      openBrowserWorkbenchRecordingTraceViewer: async (sessionId?: string) => await invokeBridge("openBrowserWorkbenchRecordingTraceViewer", sessionId),
+      listBrowserWorkbenchRecordings: async (sessionId?: string, limit?: number) => await invokeBridge("listBrowserWorkbenchRecordings", sessionId, limit),
+      loadBrowserWorkbenchRecording: async (rootPath: string, sessionId?: string) => await invokeBridge("loadBrowserWorkbenchRecording", rootPath, sessionId),
+      updateBrowserWorkbenchRecordingArtifact: async (artifactPath: string, content: string, sessionId?: string) => await invokeBridge("updateBrowserWorkbenchRecordingArtifact", artifactPath, content, sessionId),
+      startBrowserWorkbenchRecordingLocatorPick: async (actionId: string, sessionId?: string) => await invokeBridge("startBrowserWorkbenchRecordingLocatorPick", actionId, sessionId),
+      cancelBrowserWorkbenchRecordingLocatorPick: async (sessionId?: string) => await invokeBridge("cancelBrowserWorkbenchRecordingLocatorPick", sessionId),
+      addBrowserWorkbenchRecordingAssertion: async (input: { kind: string; value?: string; key?: string; selector?: string }, sessionId?: string) => await invokeBridge("addBrowserWorkbenchRecordingAssertion", input, sessionId),
+      repairBrowserWorkbenchRecordingLocator: async (actionId: string, selector: string, sessionId?: string) => await invokeBridge("repairBrowserWorkbenchRecordingLocator", actionId, selector, sessionId),
       onBrowserWorkbenchEvent: (callback: (event: BrowserWorkbenchEvent) => void) => {
         const source = new EventSource(`${DEV_BACKEND_BRIDGE_ORIGIN}/events/browser`);
         source.onmessage = (message) => {

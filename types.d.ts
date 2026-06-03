@@ -164,10 +164,26 @@ type BrowserWorkbenchAnnotation = {
     domHint?: BrowserWorkbenchDomHint;
 }
 
+type BrowserWorkbenchRecordedAction = import("./src/electron/browser-manager").BrowserWorkbenchRecordedAction;
+type BrowserWorkbenchRecordingArtifact = import("./src/electron/browser-manager").BrowserWorkbenchRecordingArtifact;
+type BrowserWorkbenchRecordingArtifactUpdateResult = import("./src/electron/browser-manager").BrowserWorkbenchRecordingArtifactUpdateResult;
+type BrowserWorkbenchRecordingPackage = import("./src/electron/browser-manager").BrowserWorkbenchRecordingPackage;
+type BrowserWorkbenchRecordingStatus = import("./src/electron/browser-manager").BrowserWorkbenchRecordingStatus;
+type BrowserWorkbenchRecordingResult = import("./src/electron/browser-manager").BrowserWorkbenchRecordingResult;
+type BrowserWorkbenchRecordingRunEvent = import("./src/electron/browser-manager").BrowserWorkbenchRecordingRunEvent;
+type BrowserWorkbenchRecordingRunResult = import("./src/electron/browser-manager").BrowserWorkbenchRecordingRunResult;
+type BrowserWorkbenchRecordingCancelRunResult = import("./src/electron/browser-manager").BrowserWorkbenchRecordingCancelRunResult;
+type BrowserWorkbenchRecordingHistoryItem = import("./src/electron/browser-manager").BrowserWorkbenchRecordingHistoryItem;
+type BrowserWorkbenchRecordingOpenPathResult = import("./src/electron/browser-manager").BrowserWorkbenchRecordingOpenPathResult;
+type BrowserWorkbenchMouseResult = import("./src/electron/browser-manager").BrowserWorkbenchMouseResult;
+
 type BrowserWorkbenchEvent =
     | { type: "browser.state"; payload: BrowserWorkbenchState; sessionId?: string }
     | { type: "browser.console"; payload: BrowserWorkbenchConsoleLog; sessionId?: string }
-    | { type: "browser.annotation"; payload: BrowserWorkbenchAnnotation; sessionId?: string };
+    | { type: "browser.annotation"; payload: BrowserWorkbenchAnnotation; sessionId?: string }
+    | { type: "browser.recording"; payload: BrowserWorkbenchRecordingStatus; sessionId?: string }
+    | { type: "browser.recording.package"; payload: BrowserWorkbenchRecordingResult; sessionId?: string }
+    | { type: "browser.recording.run"; payload: BrowserWorkbenchRecordingRunEvent; sessionId?: string };
 
 type BrowserWorkbenchCaptureResult = {
     success: boolean;
@@ -261,12 +277,28 @@ type EventPayloadMapping = {
         "browser-fetch-logs": { success: boolean; result?: BrowserWorkbenchNetworkLogResult; error?: string };
         "browser-capture-visible": BrowserWorkbenchCaptureResult;
         "browser-inspect-at-point": BrowserWorkbenchDomHint | null;
+        "browser-click-at-point": BrowserWorkbenchMouseResult;
         "browser-clear-annotations": BrowserWorkbenchState;
         "browser-remove-annotation": BrowserWorkbenchState;
         "browser-annotation-mode": BrowserWorkbenchState;
         "browser-open-devtools": { opened: boolean };
         "browser-close-devtools": { opened: boolean };
         "browser-is-devtools-open": boolean;
+        "browser-recording-start": BrowserWorkbenchRecordingResult;
+        "browser-recording-stop": BrowserWorkbenchRecordingResult;
+        "browser-recording-state": BrowserWorkbenchRecordingStatus;
+        "browser-recording-assertion-mode": BrowserWorkbenchRecordingStatus;
+        "browser-recording-run": BrowserWorkbenchRecordingRunResult;
+        "browser-recording-run-cancel": BrowserWorkbenchRecordingCancelRunResult;
+        "browser-recording-open-run-output": BrowserWorkbenchRecordingOpenPathResult;
+        "browser-recording-open-trace-viewer": BrowserWorkbenchRecordingOpenPathResult;
+        "browser-recording-history": BrowserWorkbenchRecordingHistoryItem[];
+        "browser-recording-load-history": BrowserWorkbenchRecordingResult;
+        "browser-recording-update-artifact": BrowserWorkbenchRecordingArtifactUpdateResult;
+        "browser-recording-locator-pick-start": BrowserWorkbenchRecordingStatus;
+        "browser-recording-locator-pick-cancel": BrowserWorkbenchRecordingStatus;
+        "browser-recording-add-assertion": BrowserWorkbenchRecordingResult;
+        "browser-recording-repair-locator": BrowserWorkbenchRecordingResult;
         "git:snapshot": UiGitResult<UiGitWorkbenchSnapshot>;
         "git:diff": UiGitResult<UiGitDiffResult>;
         "git:commitDetail": UiGitResult<UiGitCommitDetail>;
@@ -354,12 +386,28 @@ interface Window {
         getBrowserWorkbenchFetchLogs: (input?: BrowserWorkbenchNetworkLogInput, sessionId?: string) => Promise<{ success: boolean; result?: BrowserWorkbenchNetworkLogResult; error?: string }>;
         captureBrowserWorkbenchVisible: (sessionId?: string) => Promise<BrowserWorkbenchCaptureResult>;
         inspectBrowserWorkbenchAtPoint: (point: { x: number; y: number }, sessionId?: string) => Promise<BrowserWorkbenchDomHint | null>;
+        clickBrowserWorkbenchAtPoint: (point: { x: number; y: number; dblClick?: boolean }, sessionId?: string) => Promise<BrowserWorkbenchMouseResult>;
         clearBrowserWorkbenchAnnotations: (sessionId?: string) => Promise<BrowserWorkbenchState>;
         removeBrowserWorkbenchAnnotation: (annotationId: string, sessionId?: string) => Promise<BrowserWorkbenchState>;
         setBrowserWorkbenchAnnotationMode: (enabled: boolean, sessionId?: string) => Promise<BrowserWorkbenchState>;
         openBrowserWorkbenchDevTools: (sessionId?: string) => Promise<{ opened: boolean }>;
         closeBrowserWorkbenchDevTools: (sessionId?: string) => Promise<{ opened: boolean }>;
         isBrowserWorkbenchDevToolsOpen: (sessionId?: string) => Promise<boolean>;
+        startBrowserWorkbenchRecording: (sessionId?: string) => Promise<BrowserWorkbenchRecordingResult>;
+        stopBrowserWorkbenchRecording: (sessionId?: string) => Promise<BrowserWorkbenchRecordingResult>;
+        getBrowserWorkbenchRecordingState: (sessionId?: string) => Promise<BrowserWorkbenchRecordingStatus>;
+        setBrowserWorkbenchRecordingAssertionMode: (enabled: boolean, sessionId?: string) => Promise<BrowserWorkbenchRecordingStatus>;
+        runBrowserWorkbenchRecording: (sessionId?: string) => Promise<BrowserWorkbenchRecordingRunResult>;
+        cancelBrowserWorkbenchRecordingRun: (sessionId?: string) => Promise<BrowserWorkbenchRecordingCancelRunResult>;
+        openBrowserWorkbenchRecordingRunOutput: (sessionId?: string) => Promise<BrowserWorkbenchRecordingOpenPathResult>;
+        openBrowserWorkbenchRecordingTraceViewer: (sessionId?: string) => Promise<BrowserWorkbenchRecordingOpenPathResult>;
+        listBrowserWorkbenchRecordings: (sessionId?: string, limit?: number) => Promise<BrowserWorkbenchRecordingHistoryItem[]>;
+        loadBrowserWorkbenchRecording: (rootPath: string, sessionId?: string) => Promise<BrowserWorkbenchRecordingResult>;
+        updateBrowserWorkbenchRecordingArtifact: (artifactPath: string, content: string, sessionId?: string) => Promise<BrowserWorkbenchRecordingArtifactUpdateResult>;
+        startBrowserWorkbenchRecordingLocatorPick: (actionId: string, sessionId?: string) => Promise<BrowserWorkbenchRecordingStatus>;
+        cancelBrowserWorkbenchRecordingLocatorPick: (sessionId?: string) => Promise<BrowserWorkbenchRecordingStatus>;
+        addBrowserWorkbenchRecordingAssertion: (input: { kind: BrowserWorkbenchRecordedAction["kind"]; value?: string; key?: string; selector?: string }, sessionId?: string) => Promise<BrowserWorkbenchRecordingResult>;
+        repairBrowserWorkbenchRecordingLocator: (actionId: string, selector: string, sessionId?: string) => Promise<BrowserWorkbenchRecordingResult>;
         onBrowserWorkbenchEvent: (callback: (event: BrowserWorkbenchEvent) => void) => UnsubscribeFunction;
         onCronJobCreated: (callback: (job: import("./src/types/cron").CronJob) => void) => UnsubscribeFunction;
         onCronJobUpdated: (callback: (job: import("./src/types/cron").CronJob) => void) => UnsubscribeFunction;

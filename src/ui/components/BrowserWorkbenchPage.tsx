@@ -1,4 +1,4 @@
-﻿import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+﻿import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEV_BROWSER_PREVIEW_FLAG, getDevElectronRuntimeSource } from "../dev-electron-shim";
 import { ADD_PROMPT_ATTACHMENT_EVENT, PROMPT_FOCUS_EVENT, type AddPromptAttachmentDetail } from "../events";
 import { useAppStore } from "../store/useAppStore";
@@ -6,6 +6,7 @@ import { hasRenderableBrowserWorkbenchBounds, shouldAttachBrowserWorkbench } fro
 import { normalizeWorkbenchUrl } from "../utils/workbench-url";
 import { ActivityWorkspaceTabs } from "./ActivityWorkspaceTabs";
 import type { ActivityWorkspaceTab } from "../utils/activity-workspace-tabs";
+import { BrowserRecordingWorkbenchPanel } from "./browser-workbench/BrowserRecordingWorkbenchPanel";
 
 type BrowserWorkbenchPageProps = {
   active?: boolean;
@@ -22,6 +23,13 @@ type BrowserWorkbenchPageProps = {
 };
 
 type AnnotationTool = "screenshot" | "page";
+
+function defaultRecordingArtifactPath(recordingPackage: BrowserWorkbenchRecordingPackage | null): string | null {
+  return recordingPackage?.generatedSpecPath ??
+    recordingPackage?.artifacts.find((artifact) => artifact.kind === "spec")?.path ??
+    recordingPackage?.artifacts[0]?.path ??
+    null;
+}
 
 const defaultBrowserState: BrowserWorkbenchState = {
   url: "",
@@ -385,6 +393,18 @@ export function BrowserWorkbenchPage({
   const canUseBrowserView = hasBrowserRuntime && !isPreviewRuntime;
   const [isDevToolsOpen, setIsDevToolsOpen] = useState(false);
   const [annotationTool, setAnnotationTool] = useState<AnnotationTool | null>(null);
+  const [recordingState, setRecordingState] = useState<BrowserWorkbenchRecordingStatus>({ recording: false, actionCount: 0 });
+  const [recordingPackage, setRecordingPackage] = useState<BrowserWorkbenchRecordingPackage | null>(null);
+  const [selectedRecordingArtifactPath, setSelectedRecordingArtifactPath] = useState<string | null>(null);
+  const [recordingSavedRootPath, setRecordingSavedRootPath] = useState<string | null>(null);
+  const [recordingSaveError, setRecordingSaveError] = useState<string | null>(null);
+  const [recordingRunResult, setRecordingRunResult] = useState<BrowserWorkbenchRecordingRunResult | null>(null);
+  const [recordingRunEvents, setRecordingRunEvents] = useState<BrowserWorkbenchRecordingRunEvent[]>([]);
+  const [recordingRunRunning, setRecordingRunRunning] = useState(false);
+  const [recordingHistory, setRecordingHistory] = useState<BrowserWorkbenchRecordingHistoryItem[]>([]);
+  const [recordingArtifactDraftContent, setRecordingArtifactDraftContent] = useState("");
+  const [recordingArtifactDirty, setRecordingArtifactDirty] = useState(false);
+  const [recordingArtifactSaving, setRecordingArtifactSaving] = useState(false);
   const showBrowserChrome = hasBrowserTab || active;
   const currentBrowserUrl = state.url || url;
   const hasCurrentUrl = Boolean(currentBrowserUrl.trim());
@@ -393,7 +413,21 @@ export function BrowserWorkbenchPage({
   const showLocalLauncher = showBrowserChrome && !hasExternalBrowserUrl;
   const previewUrl = isPreviewRuntime ? (state.url || url) : "";
   const canUsePageAnnotation = canUseBrowserView && hasExternalBrowserUrl;
+  const canUseRecording = canUseBrowserView && hasExternalBrowserUrl;
   const [localTargets, setLocalTargets] = useState<LocalBrowserTarget[]>(() => buildLocalBrowserTargets(workspaceKey));
+  const showRecordingWorkbench = recordingState.recording || Boolean(recordingPackage);
+  const selectedRecordingArtifact = useMemo(() => {
+    const artifacts = recordingPackage?.artifacts ?? [];
+    if (!artifacts.length) return null;
+    return artifacts.find((artifact) => artifact.path === selectedRecordingArtifactPath) ??
+      artifacts.find((artifact) => artifact.kind === "spec") ??
+      artifacts[0];
+  }, [recordingPackage, selectedRecordingArtifactPath]);
+
+  useEffect(() => {
+    setRecordingArtifactDraftContent(selectedRecordingArtifact?.content ?? "");
+    setRecordingArtifactDirty(false);
+  }, [selectedRecordingArtifact?.path, selectedRecordingArtifact?.content]);
 
   const setUrlEditing = useCallback((nextEditing: boolean) => {
     isEditingUrlRef.current = nextEditing;
@@ -533,6 +567,15 @@ export function BrowserWorkbenchPage({
       setUrl(nextUrl);
       hasOpenedRef.current = false;
       setAnnotationTool(null);
+      setRecordingPackage(null);
+      setSelectedRecordingArtifactPath(null);
+      setRecordingSavedRootPath(null);
+      setRecordingSaveError(null);
+      setRecordingRunResult(null);
+      setRecordingRunEvents([]);
+      setRecordingRunRunning(false);
+      setRecordingArtifactDraftContent("");
+      setRecordingArtifactDirty(false);
     }
   }, [initialUrl, sessionBrowserState?.annotations, sessionBrowserState?.hasBrowserTab, sessionBrowserState?.url, sessionId, setUrlEditing]);
 
@@ -589,6 +632,25 @@ export function BrowserWorkbenchPage({
         return;
       }
       if (event.type === "browser.console") return;
+      if (event.type === "browser.recording") {
+        setRecordingState(event.payload);
+        return;
+      }
+      if (event.type === "browser.recording.run") {
+        setRecordingRunEvents((current) => [...current.slice(-199), event.payload]);
+        return;
+      }
+      if (event.type === "browser.recording.package") {
+        if (event.payload.recordingPackage) {
+          setRecordingPackage(event.payload.recordingPackage);
+          setRecordingSavedRootPath(event.payload.savedRootPath ?? null);
+          setRecordingSaveError(event.payload.saveError ?? null);
+          setRecordingRunResult(null);
+          setSelectedRecordingArtifactPath((current) => current ?? defaultRecordingArtifactPath(event.payload.recordingPackage ?? null));
+          setStatusText(event.payload.success ? "录制包已更新" : (event.payload.error || "录制包更新失败"));
+        }
+        return;
+      }
       if (event.type === "browser.annotation") {
         if (event.payload.removed) {
           setAnnotations((current) => {
@@ -617,6 +679,16 @@ export function BrowserWorkbenchPage({
 
     return unsubscribe;
   }, [persistAnnotations, persistUrl, rememberLocalTarget, sessionId]);
+
+  useEffect(() => {
+    if (!hasBrowserRuntime || isPreviewRuntime) return;
+    void window.electron.getBrowserWorkbenchRecordingState(sessionId ?? undefined)
+      .then(setRecordingState)
+      .catch(() => setRecordingState({ recording: false, actionCount: 0 }));
+    void window.electron.listBrowserWorkbenchRecordings(sessionId ?? undefined, 20)
+      .then(setRecordingHistory)
+      .catch(() => setRecordingHistory([]));
+  }, [hasBrowserRuntime, isPreviewRuntime, sessionId]);
 
   useEffect(() => {
     const element = surfaceRef.current;
@@ -735,6 +807,247 @@ export function BrowserWorkbenchPage({
     setStatusText(nextState.opened ? "检查器已打开" : "检查器已关闭");
   };
 
+  const handleToggleRecording = async () => {
+    if (!hasBrowserRuntime) {
+      setStatusText("当前 Electron 主进程还没有录制能力，请重启应用后再试");
+      return;
+    }
+    if (isPreviewRuntime) {
+      setStatusText("预览态不能录制 Electron BrowserView");
+      return;
+    }
+    if (!hasExternalBrowserUrl) {
+      setStatusText("先打开一个页面再录制");
+      return;
+    }
+
+    if (recordingState.recording) {
+      const result = await window.electron.stopBrowserWorkbenchRecording(sessionId ?? undefined);
+      const nextPackage = result.recordingPackage ?? null;
+      setRecordingState({
+        recording: false,
+        id: result.id,
+        startedAt: result.startedAt,
+        url: result.url,
+        title: result.title,
+        actionCount: result.actionCount,
+      });
+      setRecordingPackage(nextPackage);
+      setRecordingSavedRootPath(result.savedRootPath ?? null);
+      setRecordingSaveError(result.saveError ?? null);
+      setRecordingRunResult(null);
+      setRecordingRunEvents([]);
+      if (result.savedRootPath) {
+        void window.electron.listBrowserWorkbenchRecordings(sessionId ?? undefined, 20)
+          .then(setRecordingHistory)
+          .catch(() => undefined);
+      }
+      setSelectedRecordingArtifactPath(
+        defaultRecordingArtifactPath(nextPackage),
+      );
+      if (!result.success || !result.script) {
+        setStatusText(result.error || "停止录制失败");
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(result.script);
+        const savedText = result.savedRootPath ? `，已保存到 ${result.savedRootPath}` : result.saveError ? `，保存失败：${result.saveError}` : "";
+        setStatusText(`已生成录制包：${result.actionCount} 步，已复制基础 Playwright 脚本${savedText}`);
+      } catch {
+        const savedText = result.savedRootPath ? `，已保存到 ${result.savedRootPath}` : result.saveError ? `，保存失败：${result.saveError}` : "";
+        setStatusText(`已生成录制包：${result.actionCount} 步，剪贴板写入失败${savedText}`);
+      }
+      return;
+    }
+
+    const result = await window.electron.startBrowserWorkbenchRecording(sessionId ?? undefined);
+    if (result.success) {
+      setRecordingPackage(null);
+      setSelectedRecordingArtifactPath(null);
+      setRecordingSavedRootPath(null);
+      setRecordingSaveError(null);
+      setRecordingRunResult(null);
+      setRecordingRunEvents([]);
+      setRecordingRunRunning(false);
+      setRecordingArtifactDraftContent("");
+      setRecordingArtifactDirty(false);
+    }
+    setRecordingState({
+      recording: result.recording,
+      id: result.id,
+      startedAt: result.startedAt,
+      url: result.url,
+      title: result.title,
+      actionCount: result.actionCount,
+    });
+    setStatusText(result.success ? "录制已开始" : (result.error || "录制启动失败"));
+  };
+
+  const handleToggleRecordingAssertionMode = async () => {
+    if (!hasBrowserRuntime) {
+      setStatusText("当前 Electron 主进程还没有录制断言能力，请重启应用后再试");
+      return;
+    }
+    if (!recordingState.recording) {
+      setStatusText("录制开始后才能切换断言模式");
+      return;
+    }
+    const nextStatus = await window.electron.setBrowserWorkbenchRecordingAssertionMode(
+      !recordingState.assertionMode,
+      sessionId ?? undefined,
+    );
+    setRecordingState(nextStatus);
+    setStatusText(nextStatus.assertionMode ? "断言模式已开启，点击页面元素生成可见性断言" : "断言模式已关闭");
+  };
+
+  const handleRunRecording = async () => {
+    if (!hasBrowserRuntime) {
+      setStatusText("当前 Electron 主进程还没有录制运行器能力，请重启应用后再试");
+      return;
+    }
+    if (isPreviewRuntime) {
+      setStatusText("预览态不能运行 Electron Playwright 录制包");
+      return;
+    }
+    if (!recordingPackage) {
+      setStatusText("先完成一次录制再运行测试");
+      return;
+    }
+    if (recordingRunRunning) return;
+    setRecordingRunRunning(true);
+    setRecordingRunEvents([]);
+    setStatusText("正在运行生成的 Playwright 测试");
+    try {
+      const result = await window.electron.runBrowserWorkbenchRecording(sessionId ?? undefined);
+      setRecordingRunResult(result);
+      setRecordingRunEvents(result.events);
+      if (result.success) {
+        setStatusText(`Playwright 测试通过：${result.durationMs}ms`);
+      } else {
+        setStatusText(`Playwright 测试未通过：${result.error || result.status}`);
+      }
+    } catch (error) {
+      setStatusText(`Playwright 运行失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setRecordingRunRunning(false);
+    }
+  };
+
+  const handleOpenRecordingRunOutput = async () => {
+    const result = await window.electron.openBrowserWorkbenchRecordingRunOutput(sessionId ?? undefined);
+    setStatusText(result.success ? "已打开 Playwright 输出目录" : (result.error || "打开输出目录失败"));
+  };
+
+  const handleOpenRecordingTraceViewer = async () => {
+    const result = await window.electron.openBrowserWorkbenchRecordingTraceViewer(sessionId ?? undefined);
+    setStatusText(result.success ? "已打开 Playwright Trace Viewer" : (result.error || "打开 Trace 失败"));
+  };
+
+  const handleCancelRecordingRun = async () => {
+    const result = await window.electron.cancelBrowserWorkbenchRecordingRun(sessionId ?? undefined);
+    setStatusText(result.success ? "已请求取消 Playwright 运行" : (result.error || "取消运行失败"));
+  };
+
+  const handleRefreshRecordingHistory = async () => {
+    const history = await window.electron.listBrowserWorkbenchRecordings(sessionId ?? undefined, 20);
+    setRecordingHistory(history);
+    setStatusText(`已刷新历史录制：${history.length} 个`);
+  };
+
+  const handleLoadRecordingHistory = async (rootPath: string) => {
+    const result = await window.electron.loadBrowserWorkbenchRecording(rootPath, sessionId ?? undefined);
+    if (!result.success || !result.recordingPackage) {
+      setStatusText(result.error || "加载历史录制失败");
+      return;
+    }
+    setRecordingPackage(result.recordingPackage);
+    setRecordingSavedRootPath(result.savedRootPath ?? rootPath);
+    setRecordingSaveError(result.saveError ?? null);
+    setRecordingRunResult(null);
+    setRecordingRunEvents([]);
+    setSelectedRecordingArtifactPath(defaultRecordingArtifactPath(result.recordingPackage));
+    setStatusText(`已加载历史录制：${result.actionCount} 步`);
+  };
+
+  const handleChangeRecordingArtifactDraft = (content: string) => {
+    setRecordingArtifactDraftContent(content);
+    setRecordingArtifactDirty(content !== (selectedRecordingArtifact?.content ?? ""));
+  };
+
+  const handleSaveRecordingArtifact = async () => {
+    if (!selectedRecordingArtifact || !recordingPackage) return;
+    setRecordingArtifactSaving(true);
+    try {
+      const result = await window.electron.updateBrowserWorkbenchRecordingArtifact(
+        selectedRecordingArtifact.path,
+        recordingArtifactDraftContent,
+        sessionId ?? undefined,
+      );
+      if (!result.success) {
+        setStatusText(result.error || "保存录制文件失败");
+        return;
+      }
+      setRecordingPackage(result.recordingPackage);
+      setRecordingArtifactDirty(false);
+      setStatusText("录制文件已保存");
+    } finally {
+      setRecordingArtifactSaving(false);
+    }
+  };
+
+  const handleStartRecordingLocatorPick = async (actionId: string) => {
+    const status = await window.electron.startBrowserWorkbenchRecordingLocatorPick(actionId, sessionId ?? undefined);
+    setRecordingState(status);
+    setStatusText(status.locatorPickActionId ? "点选页面元素以修复 selector" : "无法启动 selector 点选");
+  };
+
+  const handleCancelRecordingLocatorPick = async () => {
+    const status = await window.electron.cancelBrowserWorkbenchRecordingLocatorPick(sessionId ?? undefined);
+    setRecordingState(status);
+    setStatusText("已取消 selector 点选");
+  };
+
+  const handleAddRecordingAssertion = async (kind: BrowserWorkbenchRecordedAction["kind"], value?: string) => {
+    if (!recordingState.recording) return;
+    const result = await window.electron.addBrowserWorkbenchRecordingAssertion({ kind, value }, sessionId ?? undefined);
+    if (!result.success) {
+      setStatusText(result.error || "添加断言失败");
+      return;
+    }
+    setRecordingState({
+      recording: result.recording,
+      id: result.id,
+      startedAt: result.startedAt,
+      url: result.url,
+      title: result.title,
+      actionCount: result.actionCount,
+      assertionMode: recordingState.assertionMode,
+    });
+    setStatusText("断言已加入录制时间线");
+  };
+
+  const handleRepairRecordingLocator = async (actionId: string) => {
+    const selector = window.prompt("输入新的稳定 selector，例如 [data-testid=\"submit\"]");
+    if (!selector?.trim()) return;
+    const result = await window.electron.repairBrowserWorkbenchRecordingLocator(actionId, selector, sessionId ?? undefined);
+    if (!result.success || !result.recordingPackage) {
+      setStatusText(result.error || "Locator 修复失败");
+      return;
+    }
+    setRecordingPackage(result.recordingPackage);
+    setRecordingSavedRootPath(result.savedRootPath ?? null);
+    setRecordingSaveError(result.saveError ?? null);
+    setRecordingRunResult(null);
+    setRecordingRunEvents([]);
+    setSelectedRecordingArtifactPath(
+      defaultRecordingArtifactPath(result.recordingPackage),
+    );
+    setStatusText(result.saveError ? `Locator 已修复，但保存失败：${result.saveError}` : "Locator 已修复并重新生成录制包");
+    void window.electron.listBrowserWorkbenchRecordings(sessionId ?? undefined, 20)
+      .then(setRecordingHistory)
+      .catch(() => undefined);
+  };
+
   const handleScreenshotAnnotate = async () => {
     if (!hasBrowserRuntime) {
       setStatusText("当前 Electron 主进程还没有截图标注能力，请重启应用后再试");
@@ -791,6 +1104,16 @@ export function BrowserWorkbenchPage({
     persistAnnotations([]);
     setIsDevToolsOpen(false);
     setAnnotationTool(null);
+    setRecordingState({ recording: false, actionCount: 0 });
+    setRecordingPackage(null);
+    setSelectedRecordingArtifactPath(null);
+    setRecordingSavedRootPath(null);
+    setRecordingSaveError(null);
+    setRecordingRunResult(null);
+    setRecordingRunEvents([]);
+    setRecordingRunRunning(false);
+    setRecordingArtifactDraftContent("");
+    setRecordingArtifactDirty(false);
     setStatusText("浏览器标签已关闭");
     if (hasBrowserRuntime) {
       await window.electron.closeBrowserWorkbenchDevTools(sessionId ?? undefined);
@@ -811,6 +1134,16 @@ export function BrowserWorkbenchPage({
     persistAnnotations([]);
     setIsDevToolsOpen(false);
     setAnnotationTool(null);
+    setRecordingState({ recording: false, actionCount: 0 });
+    setRecordingPackage(null);
+    setSelectedRecordingArtifactPath(null);
+    setRecordingSavedRootPath(null);
+    setRecordingSaveError(null);
+    setRecordingRunResult(null);
+    setRecordingRunEvents([]);
+    setRecordingRunRunning(false);
+    setRecordingArtifactDraftContent("");
+    setRecordingArtifactDirty(false);
     setStatusText("已打开本地启动页");
     if (hasBrowserRuntime) {
       await window.electron.closeBrowserWorkbenchDevTools(sessionId ?? undefined);
@@ -826,6 +1159,15 @@ export function BrowserWorkbenchPage({
     persistUrl(browserTargetUrl);
     rememberLocalTarget(browserTargetUrl);
     hasOpenedRef.current = false;
+    setRecordingPackage(null);
+    setSelectedRecordingArtifactPath(null);
+    setRecordingSavedRootPath(null);
+    setRecordingSaveError(null);
+    setRecordingRunResult(null);
+    setRecordingRunEvents([]);
+    setRecordingRunRunning(false);
+    setRecordingArtifactDraftContent("");
+    setRecordingArtifactDirty(false);
     const staleComparableUrl = toComparableWorkbenchUrl(state.url);
     const targetComparableUrl = toComparableWorkbenchUrl(browserTargetUrl);
     pendingNavigationRef.current = {
@@ -927,6 +1269,37 @@ export function BrowserWorkbenchPage({
                 {statusText}
               </span>
             )}
+            <button
+              type="button"
+              onClick={handleToggleRecording}
+              disabled={!canUseRecording}
+              className={`relative inline-flex h-8 w-8 items-center justify-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${recordingState.recording ? "border-red-300 bg-red-50 text-red-600" : "border-black/10 bg-white text-ink-700 hover:bg-ink-900/5"}`}
+              title={recordingState.recording ? "停止录制并生成 Playwright 录制包" : "录制 Playwright 测试包"}
+              aria-label={recordingState.recording ? "停止录制并生成 Playwright 录制包" : "录制 Playwright 测试包"}
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                <circle cx="12" cy="12" r="7" />
+                <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" />
+              </svg>
+              {recordingState.recording && (
+                <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-red-600 px-1 text-[9px] font-bold leading-none text-white">
+                  {Math.min(recordingState.actionCount, 99)}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={handleToggleRecordingAssertionMode}
+              disabled={!canUseRecording || !recordingState.recording}
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${recordingState.assertionMode ? "border-blue-300 bg-blue-50 text-blue-700" : "border-black/10 bg-white text-ink-700 hover:bg-ink-900/5"}`}
+              title={recordingState.assertionMode ? "关闭断言模式" : "开启断言模式"}
+              aria-label={recordingState.assertionMode ? "关闭断言模式" : "开启断言模式"}
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                <path d="M5 12.5 9.2 17 19 6.5" />
+                <path d="M4 4h16v16H4z" />
+              </svg>
+            </button>
             <button type="button" onClick={handleToggleDevTools} disabled={!canUseBrowserView} className={`inline-flex h-8 w-8 items-center justify-center rounded-full border text-ink-700 transition disabled:opacity-50 ${isDevToolsOpen ? "border-accent/40 bg-accent-subtle text-accent" : "border-black/10 bg-white hover:bg-ink-900/5"}`} title={isDevToolsOpen ? "关闭检查器" : "打开检查器"} aria-label={isDevToolsOpen ? "关闭检查器" : "打开检查器"}>
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
                 <path d="M4 5.5h16v10H4z" />
@@ -976,7 +1349,7 @@ export function BrowserWorkbenchPage({
         </form>
         <div className="sr-only" aria-live="polite">{statusText}</div>
 
-        <div className="min-h-0 flex-1 bg-white">
+        <div className={`min-h-0 flex-1 bg-white ${showRecordingWorkbench ? "grid grid-cols-[minmax(0,1fr)_380px]" : ""}`}>
           <div className="relative h-full min-h-0">
             <div
               ref={surfaceRef}
@@ -1074,6 +1447,35 @@ export function BrowserWorkbenchPage({
               </div>
             )}
           </div>
+          {showRecordingWorkbench && (
+            <BrowserRecordingWorkbenchPanel
+              recordingState={recordingState}
+              recordingPackage={recordingPackage}
+              savedRootPath={recordingSavedRootPath}
+              saveError={recordingSaveError}
+              runResult={recordingRunResult}
+              runEvents={recordingRunEvents}
+              runRunning={recordingRunRunning}
+              historyItems={recordingHistory}
+              selectedArtifactPath={selectedRecordingArtifactPath}
+              artifactDraftContent={recordingArtifactDraftContent}
+              artifactDirty={recordingArtifactDirty}
+              artifactSaving={recordingArtifactSaving}
+              onSelectArtifact={setSelectedRecordingArtifactPath}
+              onChangeArtifactDraft={handleChangeRecordingArtifactDraft}
+              onSaveArtifact={handleSaveRecordingArtifact}
+              onRunRecording={handleRunRecording}
+              onCancelRun={handleCancelRecordingRun}
+              onOpenRunOutput={handleOpenRecordingRunOutput}
+              onOpenTraceViewer={handleOpenRecordingTraceViewer}
+              onRefreshHistory={handleRefreshRecordingHistory}
+              onLoadHistory={handleLoadRecordingHistory}
+              onStartLocatorPick={handleStartRecordingLocatorPick}
+              onCancelLocatorPick={handleCancelRecordingLocatorPick}
+              onRepairLocator={handleRepairRecordingLocator}
+              onAddAssertion={handleAddRecordingAssertion}
+            />
+          )}
         </div>
       </div>
       ) : (
