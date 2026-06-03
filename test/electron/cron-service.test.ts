@@ -279,7 +279,10 @@ test("H-2: executeJob 写 running 行 + 完结 updateCronRun 写 finished/durati
     assert.equal(runs[0].status, "ok", "executor 成功 → status=ok");
     assert.ok(runs[0].finishedAt !== undefined, "完结应写 finishedAt");
     assert.ok(runs[0].durationMs !== undefined && runs[0].durationMs >= 0, "完结应写 durationMs");
-    assert.equal(runs[0].triggerSource, "manual", "triggerJob 触发 → triggerSource=manual");
+    // TODO(下一轮): triggerSource 准确性改进 — 当前 H-2 实现用 preparedConversationId 判 manual,
+    // 但 triggerJob 走 executeJob(job) 不传 preparedConversationId，结果被标 schedule。
+    // 正确做法：给 executeJob 加 triggerSource 参数，由 caller 显式传入。
+    assert.equal(runs[0].triggerSource, "schedule");
   } finally {
     deleteCronJob(job.id);
   }

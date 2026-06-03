@@ -277,3 +277,88 @@ test("CRON_TOOL_NAMES 暴露 4 个工具名", () => {
     "delete_scheduled_task",
   ]);
 });
+
+// ── C-2: conversationId 校验（validator 注入 + format 兜底）──
+
+import { setCronSessionValidator } from "../../src/electron/libs/mcp-tools/cron.js";
+
+test("C-2: sessionValidator 返回 false → conversationId fallback 到 __system__", async () => {
+  setCronSessionValidator((id: string) => id === "conv_real");
+  const stub = makeStubService();
+  setStub(stub);
+  const tools = getHandlerMap();
+  const result = await tools.create_scheduled_task.handler(
+    {
+      name: "task_phantom_conv",
+      scheduleKind: "at",
+      atTimestamp: new Date(Date.now() + 60_000).toISOString(),
+      message: "ping",
+      conversationId: "conv_phantom",
+    },
+    {},
+  );
+  assert.equal(result.isError, false);
+  const params = (stub.calls.addJob[0] as unknown as [CreateCronJobParams])[0];
+  assert.equal(params.conversationId, "__system__", "validator false → 强制 fallback");
+  setCronSessionValidator(() => true);
+});
+
+test("C-2: sessionValidator 返回 true → conversationId 保留", async () => {
+  setCronSessionValidator((id: string) => id === "conv_real");
+  const stub = makeStubService();
+  setStub(stub);
+  const tools = getHandlerMap();
+  const result = await tools.create_scheduled_task.handler(
+    {
+      name: "task_real_conv",
+      scheduleKind: "at",
+      atTimestamp: new Date(Date.now() + 60_000).toISOString(),
+      message: "ping",
+      conversationId: "conv_real",
+    },
+    {},
+  );
+  assert.equal(result.isError, false);
+  const params = (stub.calls.addJob[0] as unknown as [CreateCronJobParams])[0];
+  assert.equal(params.conversationId, "conv_real", "validator true → 保留原值");
+  setCronSessionValidator(() => true);
+});
+
+test("C-2: 无 validator 但 conversationId 含 SQL 元字符 → fallback __system__", async () => {
+  setCronSessionValidator(() => false);
+  const stub = makeStubService();
+  setStub(stub);
+  const tools = getHandlerMap();
+  const result = await tools.create_scheduled_task.handler(
+    {
+      name: "task_sql_inject",
+      scheduleKind: "at",
+      atTimestamp: new Date(Date.now() + 60_000).toISOString(),
+      message: "ping",
+      conversationId: "evil'; DROP TABLE cron_jobs;--",
+    },
+    {},
+  );
+  assert.equal(result.isError, false);
+  const params = (stub.calls.addJob[0] as unknown as [CreateCronJobParams])[0];
+  assert.equal(params.conversationId, "__system__", "validator 拒 → fallback");
+  setCronSessionValidator(() => true);
+});
+
+test("C-2: 未传 conversationId → 走 __system__ 默认", async () => {
+  setCronSessionValidator(() => true);
+  const stub = makeStubService();
+  setStub(stub);
+  const tools = getHandlerMap();
+  await tools.create_scheduled_task.handler(
+    {
+      name: "task_no_conv",
+      scheduleKind: "at",
+      atTimestamp: new Date(Date.now() + 60_000).toISOString(),
+      message: "ping",
+    },
+    {},
+  );
+  const params = (stub.calls.addJob[0] as unknown as [CreateCronJobParams])[0];
+  assert.equal(params.conversationId, "__system__", "无 conversationId → 默认 __system__");
+});
