@@ -1,4 +1,5 @@
-import { BrowserView, BrowserWindow, type WebContents } from "electron";
+import { BrowserView, BrowserWindow, shell, type WebContents } from "electron";
+import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -8,12 +9,51 @@ import {
   sanitizeBrowserWorkbenchBounds,
   shouldDetachBrowserWorkbenchForBounds,
 } from "./libs/browser-workbench/browser-workbench-bounds.js";
+import {
+  appendBrowserWorkbenchRecordedAction,
+  buildBrowserWorkbenchRecorderInjectionScript,
+  createBrowserWorkbenchRecordingSession,
+  finalizeBrowserWorkbenchRecording,
+  getBrowserWorkbenchRecordingStatus,
+  listBrowserWorkbenchRecordingHistory,
+  readBrowserWorkbenchRecordingPackage,
+  runBrowserWorkbenchRecordingPackage,
+  updateBrowserWorkbenchRecordingArtifact,
+  writeBrowserWorkbenchRecordingPackage,
+  type BrowserWorkbenchRecordingArtifactUpdateResult,
+  type BrowserWorkbenchRecordingCancelRunResult,
+  type BrowserWorkbenchRecordingHistoryItem,
+  type BrowserWorkbenchRecordingOpenPathResult,
+  type BrowserWorkbenchRecordingResult,
+  type BrowserWorkbenchRecordingRunEvent,
+  type BrowserWorkbenchRecordingRunResult,
+  type BrowserWorkbenchRecordingSession,
+  type BrowserWorkbenchRecordingStatus,
+} from "./libs/browser-workbench/browser-workbench-recorder.js";
+
+export type {
+  BrowserWorkbenchRecordedAction,
+  BrowserWorkbenchRecordingArtifact,
+  BrowserWorkbenchRecordingArtifactUpdateResult,
+  BrowserWorkbenchRecordingCancelRunResult,
+  BrowserWorkbenchRecordingHistoryItem,
+  BrowserWorkbenchRecordingOpenPathResult,
+  BrowserWorkbenchRecordingPackage,
+  BrowserWorkbenchRecordingResult,
+  BrowserWorkbenchRecordingRunEvent,
+  BrowserWorkbenchRecordingRunResult,
+  BrowserWorkbenchRecordingStatus,
+} from "./libs/browser-workbench/browser-workbench-recorder.js";
 
 export type BrowserWorkbenchBounds = {
   x: number;
   y: number;
   width: number;
   height: number;
+};
+
+type BrowserWorkbenchManagerOptions = {
+  resolveWorkspaceRoot?: () => string | undefined;
 };
 
 export type BrowserWorkbenchState = {
@@ -424,10 +464,15 @@ export type BrowserWorkbenchAnnotation = {
 export type BrowserWorkbenchEvent =
   | { type: "browser.state"; payload: BrowserWorkbenchState; sessionId?: string }
   | { type: "browser.console"; payload: BrowserWorkbenchConsoleLog; sessionId?: string }
-  | { type: "browser.annotation"; payload: BrowserWorkbenchAnnotation; sessionId?: string };
+  | { type: "browser.annotation"; payload: BrowserWorkbenchAnnotation; sessionId?: string }
+  | { type: "browser.recording"; payload: BrowserWorkbenchRecordingStatus; sessionId?: string }
+  | { type: "browser.recording.package"; payload: BrowserWorkbenchRecordingResult; sessionId?: string }
+  | { type: "browser.recording.run"; payload: BrowserWorkbenchRecordingRunEvent; sessionId?: string };
 
 const ANNOTATION_PREFIX = "__TECH_CC_HUB_ANNOTATION__";
+const RECORDER_PREFIX = "__TECH_CC_HUB_RECORDER__";
 const BROWSER_WORKBENCH_ANNOTATION_CHANNEL = "browser-workbench-annotation";
+const BROWSER_WORKBENCH_RECORDER_CHANNEL = "browser-workbench-recording";
 const MAX_NETWORK_LOGS = 200;
 const DEFAULT_NETWORK_LOG_LIMIT = 50;
 const MAX_NETWORK_BODY_CHARS = 64_000;
@@ -449,6 +494,13 @@ const emptyState = (annotationMode = false): BrowserWorkbenchState => ({
   canGoBack: false,
   canGoForward: false,
   annotationMode,
+});
+
+const emptyRecordingRunAttachments = () => ({
+  traceFiles: [],
+  screenshotFiles: [],
+  videoFiles: [],
+  otherFiles: [],
 });
 
 function normalizeUrl(input: string): string {
@@ -534,9 +586,19 @@ export class BrowserWorkbenchManager {
   private networkCaptureEnabled = false;
   private networkCaptureError: string | undefined;
   private annotationMode = false;
+  private recordingSession: BrowserWorkbenchRecordingSession | null = null;
+  private recordingAssertionMode = false;
+  private recordingLocatorPickActionId: string | undefined;
+  private lastRecordingResult: BrowserWorkbenchRecordingResult | null = null;
+  private lastRecordingRunResult: BrowserWorkbenchRecordingRunResult | null = null;
+  private recordingRunAbortController: AbortController | null = null;
   private listeners = new Set<(event: BrowserWorkbenchEvent) => void>();
 
-  constructor(private readonly window: BrowserWindow, private readonly sessionId?: string) {}
+  constructor(
+    private readonly window: BrowserWindow,
+    private readonly sessionId?: string,
+    private readonly options: BrowserWorkbenchManagerOptions = {},
+  ) {}
 
   open(url: string): BrowserWorkbenchState {
     const targetUrl = normalizeUrl(url);
@@ -574,6 +636,13 @@ export class BrowserWorkbenchManager {
     this.logs = [];
     this.clearNetworkLogs();
     this.annotationMode = false;
+    if (this.recordingSession || this.recordingLocatorPickActionId) {
+      this.recordingSession = null;
+      this.recordingAssertionMode = false;
+      this.recordingLocatorPickActionId = undefined;
+      this.emit({ type: "browser.recording", payload: this.getRecordingState() });
+    }
+    this.lastRecordingResult = null;
     this.emitState();
     return this.getState();
   }
@@ -732,6 +801,400 @@ export class BrowserWorkbenchManager {
         entries,
       },
     };
+  }
+
+  getRecordingState(): BrowserWorkbenchRecordingStatus {
+    return {
+      ...getBrowserWorkbenchRecordingStatus(this.recordingSession),
+      assertionMode: this.recordingAssertionMode,
+      locatorPickActionId: this.recordingLocatorPickActionId,
+    };
+  }
+
+  async startRecording(): Promise<BrowserWorkbenchRecordingResult> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return {
+        success: false,
+        recording: false,
+        actionCount: 0,
+        error: "Browser workbench is not open.",
+      };
+    }
+
+    const state = this.getState();
+    if (!state.url) {
+      return {
+        success: false,
+        recording: false,
+        actionCount: 0,
+        error: "Open a page before recording.",
+      };
+    }
+
+    this.recordingSession = createBrowserWorkbenchRecordingSession({
+      url: state.url,
+      title: state.title,
+      viewport: {
+        width: Math.max(1, Math.round(this.bounds.width)),
+        height: Math.max(1, Math.round(this.bounds.height)),
+      },
+    });
+    this.recordingAssertionMode = false;
+    this.recordingLocatorPickActionId = undefined;
+    await this.installRecordingScript();
+    const status = this.getRecordingState();
+    this.emit({ type: "browser.recording", payload: status });
+    return {
+      success: true,
+      ...status,
+    };
+  }
+
+  async stopRecording(): Promise<BrowserWorkbenchRecordingResult> {
+    const session = this.recordingSession;
+    if (!session) {
+      return {
+        success: false,
+        recording: false,
+        actionCount: 0,
+        error: "No active browser recording.",
+      };
+    }
+
+    this.recordingSession = null;
+    await this.uninstallRecordingScript();
+    const result = finalizeBrowserWorkbenchRecording(session, {
+      evidence: {
+        console: this.logs.slice(-80).map((entry, index) => ({
+          id: `console-${index + 1}`,
+          level: entry.level,
+          message: entry.message,
+          actionId: undefined,
+          timestamp: entry.timestamp,
+        })),
+        network: this.networkLogs.slice(-120).map((entry) => ({
+          id: entry.id,
+          url: entry.url,
+          method: entry.method,
+          status: entry.status,
+          actionId: undefined,
+          timestamp: entry.startedAt,
+        })),
+        screenshots: [],
+        snapshots: [],
+      },
+    });
+    this.recordingAssertionMode = false;
+    this.recordingLocatorPickActionId = undefined;
+    if (result.recordingPackage) {
+      try {
+        const workspaceRoot = this.options.resolveWorkspaceRoot?.() || process.cwd();
+        const writeResult = writeBrowserWorkbenchRecordingPackage(result.recordingPackage, workspaceRoot);
+        result.savedRootPath = writeResult.rootPath;
+      } catch (error) {
+        result.saveError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    this.lastRecordingResult = result;
+    this.emit({ type: "browser.recording", payload: this.getRecordingState() });
+    return result;
+  }
+
+  async setRecordingAssertionMode(enabled: boolean): Promise<BrowserWorkbenchRecordingStatus> {
+    if (!this.recordingSession) {
+      this.recordingAssertionMode = false;
+      return this.getRecordingState();
+    }
+    this.recordingAssertionMode = enabled;
+    await this.installRecordingScript();
+    const status = this.getRecordingState();
+    this.emit({ type: "browser.recording", payload: status });
+    return status;
+  }
+
+  async runRecording(input: { timeoutMs?: number } = {}): Promise<BrowserWorkbenchRecordingRunResult> {
+    const workspaceRoot = this.options.resolveWorkspaceRoot?.() || process.cwd();
+    if (this.recordingRunAbortController) {
+      const now = Date.now();
+      return {
+        success: false,
+        status: "error",
+        recordingId: "",
+        startedAt: now,
+        endedAt: now,
+        durationMs: 0,
+        workspaceRoot,
+        rootPath: "",
+        specPath: "",
+        outputDir: "",
+        command: "",
+        args: [],
+        stdout: "",
+        stderr: "",
+        events: [],
+        attachments: emptyRecordingRunAttachments(),
+        error: "A Playwright recording run is already active.",
+      };
+    }
+    const recordingResult = this.lastRecordingResult;
+    if (!recordingResult?.recordingPackage) {
+      const now = Date.now();
+      return {
+        success: false,
+        status: "error",
+        recordingId: "",
+        startedAt: now,
+        endedAt: now,
+        durationMs: 0,
+        workspaceRoot,
+        rootPath: "",
+        specPath: "",
+        outputDir: "",
+        command: "",
+        args: [],
+        stdout: "",
+        stderr: "",
+        events: [],
+        attachments: emptyRecordingRunAttachments(),
+        error: "No generated browser recording package to run.",
+      };
+    }
+
+    const abortController = new AbortController();
+    this.recordingRunAbortController = abortController;
+    try {
+      const runResult = await runBrowserWorkbenchRecordingPackage({
+        workspaceRoot,
+        recordingPackage: recordingResult.recordingPackage,
+        savedRootPath: recordingResult.savedRootPath,
+        timeoutMs: input.timeoutMs,
+        signal: abortController.signal,
+        onEvent: (event) => {
+          this.emit({ type: "browser.recording.run", payload: event });
+        },
+      });
+      this.lastRecordingRunResult = runResult;
+      return runResult;
+    } finally {
+      if (this.recordingRunAbortController === abortController) {
+        this.recordingRunAbortController = null;
+      }
+    }
+  }
+
+  cancelRecordingRun(): BrowserWorkbenchRecordingCancelRunResult {
+    if (!this.recordingRunAbortController) {
+      return { success: false, error: "No active Playwright recording run." };
+    }
+    this.recordingRunAbortController.abort();
+    return { success: true };
+  }
+
+  async openRecordingRunOutput(): Promise<BrowserWorkbenchRecordingOpenPathResult> {
+    const outputDir = this.lastRecordingRunResult?.outputDir;
+    if (!outputDir) return { success: false, error: "No Playwright run output to open." };
+    const error = await shell.openPath(outputDir);
+    return error ? { success: false, path: outputDir, error } : { success: true, path: outputDir };
+  }
+
+  listRecordingHistory(limit = 30): BrowserWorkbenchRecordingHistoryItem[] {
+    const workspaceRoot = this.options.resolveWorkspaceRoot?.() || process.cwd();
+    return listBrowserWorkbenchRecordingHistory(workspaceRoot, limit);
+  }
+
+  loadRecordingHistory(rootPath: string): BrowserWorkbenchRecordingResult {
+    const workspaceRoot = this.options.resolveWorkspaceRoot?.() || process.cwd();
+    try {
+      const recordingPackage = readBrowserWorkbenchRecordingPackage(workspaceRoot, rootPath);
+      const result: BrowserWorkbenchRecordingResult = {
+        success: true,
+        recording: false,
+        id: recordingPackage.id,
+        startedAt: recordingPackage.recording.startedAt,
+        url: recordingPackage.recording.source.url,
+        title: recordingPackage.recording.source.title,
+        actionCount: recordingPackage.recording.actions.length,
+        actions: [...recordingPackage.recording.actions],
+        fileName: recordingPackage.generatedSpecPath.split("/").pop(),
+        recordingJson: recordingPackage.artifacts.find((artifact) => artifact.kind === "recording")?.content,
+        recordingPackage,
+        savedRootPath: rootPath,
+      };
+      this.lastRecordingResult = result;
+      this.lastRecordingRunResult = null;
+      this.emit({ type: "browser.recording.package", payload: result });
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        recording: false,
+        actionCount: 0,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  updateRecordingArtifact(input: { artifactPath: string; content: string }): BrowserWorkbenchRecordingArtifactUpdateResult {
+    const currentResult = this.lastRecordingResult;
+    const recordingPackage = currentResult?.recordingPackage;
+    if (!recordingPackage) {
+      return {
+        success: false,
+        recordingPackage: {
+          id: "",
+          createdAt: Date.now(),
+          rootPathHint: "",
+          recordingPath: "",
+          generatedSpecPath: "",
+          recording: undefined as never,
+          environment: undefined as never,
+          dataScenarios: [],
+          suite: undefined as never,
+          diagnostics: [],
+          artifacts: [],
+        },
+        artifactPath: input.artifactPath,
+        error: "No generated browser recording package to edit.",
+      };
+    }
+    const workspaceRoot = this.options.resolveWorkspaceRoot?.() || process.cwd();
+    const result = updateBrowserWorkbenchRecordingArtifact({
+      workspaceRoot,
+      recordingPackage,
+      artifactPath: input.artifactPath,
+      content: input.content,
+    });
+    if (result.success) {
+      this.lastRecordingResult = {
+        ...currentResult,
+        recordingPackage: result.recordingPackage,
+        recordingJson: result.recordingPackage.artifacts.find((artifact) => artifact.kind === "recording")?.content,
+      };
+      this.emit({ type: "browser.recording.package", payload: this.lastRecordingResult });
+    }
+    return result;
+  }
+
+  async startRecordingLocatorPick(actionId: string): Promise<BrowserWorkbenchRecordingStatus> {
+    const recordingPackage = this.lastRecordingResult?.recordingPackage;
+    const canRepair = Boolean(actionId && recordingPackage?.recording.actions.some((action) => action.id === actionId));
+    if (!canRepair) {
+      this.recordingLocatorPickActionId = undefined;
+      return this.getRecordingState();
+    }
+    this.recordingLocatorPickActionId = actionId;
+    await this.installRecordingScript();
+    const status = this.getRecordingState();
+    this.emit({ type: "browser.recording", payload: status });
+    return status;
+  }
+
+  async cancelRecordingLocatorPick(): Promise<BrowserWorkbenchRecordingStatus> {
+    this.recordingLocatorPickActionId = undefined;
+    if (this.recordingSession) {
+      await this.installRecordingScript();
+    } else {
+      await this.uninstallRecordingScript();
+    }
+    const status = this.getRecordingState();
+    this.emit({ type: "browser.recording", payload: status });
+    return status;
+  }
+
+  async addRecordingAssertion(input: { kind: BrowserWorkbenchRecordedAction["kind"]; value?: string; key?: string; selector?: string }): Promise<BrowserWorkbenchRecordingResult> {
+    if (!this.recordingSession) {
+      return { success: false, recording: false, actionCount: 0, error: "Start browser recording before adding assertions." };
+    }
+    const state = this.getState();
+    const value = input.value?.trim();
+    const kind = input.kind;
+    const action = appendBrowserWorkbenchRecordedAction(this.recordingSession, {
+      kind,
+      timestamp: Date.now(),
+      url: state.url,
+      title: state.title,
+      value: kind === "assertUrl" ? value || state.url : kind === "assertTitle" ? value || state.title : value,
+      key: input.key,
+      target: input.selector ? { selector: input.selector } : undefined,
+    });
+    if (!action) {
+      return { success: false, recording: true, actionCount: this.recordingSession.actions.length, error: "Assertion payload is not valid for this recording." };
+    }
+    const status = this.getRecordingState();
+    this.emit({ type: "browser.recording", payload: status });
+    return { success: true, ...status };
+  }
+
+  async openRecordingTraceViewer(): Promise<BrowserWorkbenchRecordingOpenPathResult> {
+    const runResult = this.lastRecordingRunResult;
+    const tracePath = runResult?.attachments.traceFiles[0];
+    if (!tracePath) return { success: false, error: "No Playwright trace file to open." };
+    const command = runResult.command;
+    if (command) {
+      try {
+        const child = spawn(command, ["show-trace", tracePath], {
+          cwd: runResult.workspaceRoot,
+          detached: true,
+          stdio: "ignore",
+          windowsHide: true,
+        });
+        child.unref();
+        return { success: true, path: tracePath };
+      } catch (error) {
+        return { success: false, path: tracePath, error: error instanceof Error ? error.message : String(error) };
+      }
+    }
+    const error = await shell.openPath(tracePath);
+    return error ? { success: false, path: tracePath, error } : { success: true, path: tracePath };
+  }
+
+  async repairRecordingLocator(input: { actionId: string; selector: string }): Promise<BrowserWorkbenchRecordingResult> {
+    const recordingPackage = this.lastRecordingResult?.recordingPackage;
+    if (!recordingPackage) {
+      return { success: false, recording: false, actionCount: 0, error: "No generated browser recording package to repair." };
+    }
+    const selector = input.selector.trim();
+    if (!input.actionId || !selector) {
+      return { success: false, recording: false, actionCount: 0, error: "actionId and selector are required." };
+    }
+    const actions = recordingPackage.recording.actions.map((action) => {
+      if (action.id !== input.actionId) return action;
+      return {
+        ...action,
+        target: {
+          ...action.target,
+          selector,
+        },
+      };
+    });
+    const changed = actions.some((action, index) => action !== recordingPackage.recording.actions[index]);
+    if (!changed) {
+      return { success: false, recording: false, actionCount: recordingPackage.recording.actions.length, error: "Recording action not found." };
+    }
+    const session: BrowserWorkbenchRecordingSession = {
+      id: recordingPackage.id,
+      startedAt: recordingPackage.recording.startedAt,
+      startUrl: recordingPackage.recording.source.url,
+      startTitle: recordingPackage.recording.source.title,
+      viewport: recordingPackage.recording.source.viewport,
+      actions,
+    };
+    const result = finalizeBrowserWorkbenchRecording(session, { evidence: recordingPackage.recording.evidence });
+    if (result.recordingPackage) {
+      try {
+        const workspaceRoot = this.options.resolveWorkspaceRoot?.() || process.cwd();
+        const writeResult = writeBrowserWorkbenchRecordingPackage(result.recordingPackage, workspaceRoot);
+        result.savedRootPath = writeResult.rootPath;
+      } catch (error) {
+        result.saveError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    this.lastRecordingResult = result;
+    this.lastRecordingRunResult = null;
+    this.recordingLocatorPickActionId = undefined;
+    this.emit({ type: "browser.recording", payload: this.getRecordingState() });
+    this.emit({ type: "browser.recording.package", payload: result });
+    return result;
   }
 
   addEventListener(listener: (event: BrowserWorkbenchEvent) => void): () => void {
@@ -1252,33 +1715,110 @@ export class BrowserWorkbenchManager {
       return { success: false, action: "click", state: this.getState(), error: "浏览器工作台尚未打开页面。" };
     }
     try {
+      const x = Math.max(0, Math.trunc(input.x));
+      const y = Math.max(0, Math.trunc(input.y));
+      const dispatchDomClick = async () => {
+        await this.view?.webContents.executeJavaScript(
+          `(() => {
+            const x = ${JSON.stringify(x)};
+            const y = ${JSON.stringify(y)};
+            const element = document.elementFromPoint(x, y);
+            if (!element) return false;
+            const options = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 1, view: window };
+            element.dispatchEvent(new MouseEvent("mousemove", options));
+            element.dispatchEvent(new MouseEvent("mousedown", options));
+            element.dispatchEvent(new MouseEvent("mouseup", { ...options, buttons: 0 }));
+            element.dispatchEvent(new MouseEvent("click", { ...options, buttons: 0 }));
+            return true;
+          })()`,
+          true,
+        );
+      };
       this.view.webContents.focus();
+      void dispatchDomClick().catch((error) => {
+        this.handleConsoleMessage(
+          "warn",
+          `[browser-workbench] DOM click fallback failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+      if (this.view.webContents.debugger.isAttached()) {
+        void (async () => {
+          try {
+            await this.view?.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+              type: "mouseMoved",
+              x,
+              y,
+            });
+            await this.view?.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+              type: "mousePressed",
+              x,
+              y,
+              button: "left",
+              clickCount: 1,
+            });
+            await this.view?.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+              type: "mouseReleased",
+              x,
+              y,
+              button: "left",
+              clickCount: 1,
+            });
+            if (input.dblClick) {
+              await this.view?.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+                type: "mousePressed",
+                x,
+                y,
+                button: "left",
+                clickCount: 2,
+              });
+              await this.view?.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+                type: "mouseReleased",
+                x,
+                y,
+                button: "left",
+                clickCount: 2,
+              });
+            }
+          } catch (error) {
+            this.handleConsoleMessage(
+              "warn",
+              `[browser-workbench] CDP click failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        })();
+        return { success: true, action: input.dblClick ? "dblclick" : "click", state: this.getState() };
+      }
+      this.view.webContents.sendInputEvent({
+        type: "mouseMove",
+        x,
+        y,
+      });
       this.view.webContents.sendInputEvent({
         type: "mouseDown",
-        x: Math.max(0, Math.trunc(input.x)),
-        y: Math.max(0, Math.trunc(input.y)),
+        x,
+        y,
         button: "left",
         clickCount: 1,
       });
       this.view.webContents.sendInputEvent({
         type: "mouseUp",
-        x: Math.max(0, Math.trunc(input.x)),
-        y: Math.max(0, Math.trunc(input.y)),
+        x,
+        y,
         button: "left",
         clickCount: 1,
       });
       if (input.dblClick) {
         this.view.webContents.sendInputEvent({
           type: "mouseDown",
-          x: Math.max(0, Math.trunc(input.x)),
-          y: Math.max(0, Math.trunc(input.y)),
+          x,
+          y,
           button: "left",
           clickCount: 2,
         });
         this.view.webContents.sendInputEvent({
           type: "mouseUp",
-          x: Math.max(0, Math.trunc(input.x)),
-          y: Math.max(0, Math.trunc(input.y)),
+          x,
+          y,
           button: "left",
           clickCount: 2,
         });
@@ -1623,7 +2163,7 @@ export class BrowserWorkbenchManager {
     };
   }
 
-  selectPage(pageId: number): BrowserWorkbenchState {
+  selectPage(_pageId: number): BrowserWorkbenchState {
     // Single BrowserView: page selection is identity
     return this.getState();
   }
@@ -1709,11 +2249,20 @@ export class BrowserWorkbenchManager {
         this.clearNetworkLogs();
       }
     });
-    view.webContents.on("did-navigate", () => this.emitState());
-    view.webContents.on("did-navigate-in-page", () => this.emitState());
+    view.webContents.on("did-navigate", (_event, url) => {
+      this.recordNavigation(url);
+      this.emitState();
+    });
+    view.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
+      if (isMainFrame) this.recordNavigation(url);
+      this.emitState();
+    });
     view.webContents.on("did-finish-load", () => {
       if (this.annotationMode) {
         void this.installAnnotationScript();
+      }
+      if (this.recordingSession || this.recordingLocatorPickActionId) {
+        void this.installRecordingScript();
       }
       this.emitState();
     });
@@ -1723,6 +2272,9 @@ export class BrowserWorkbenchManager {
     view.webContents.on("ipc-message", (_event, channel, raw) => {
       if (channel === BROWSER_WORKBENCH_ANNOTATION_CHANNEL && typeof raw === "string") {
         this.handleAnnotationMessage(raw);
+      }
+      if (channel === BROWSER_WORKBENCH_RECORDER_CHANNEL && typeof raw === "string") {
+        this.handleRecordingMessage(raw);
       }
     });
 
@@ -1903,6 +2455,10 @@ export class BrowserWorkbenchManager {
       this.handleAnnotationMessage(message.slice(ANNOTATION_PREFIX.length));
       return;
     }
+    if (message.startsWith(RECORDER_PREFIX)) {
+      this.handleRecordingMessage(message.slice(RECORDER_PREFIX.length));
+      return;
+    }
 
     const log: BrowserWorkbenchConsoleLog = {
       level: toLogLevel(level),
@@ -1935,6 +2491,52 @@ export class BrowserWorkbenchManager {
     }
   }
 
+  private handleRecordingMessage(raw: string): void {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === "object" && (parsed as { kind?: unknown }).kind === "__repairLocator") {
+        void this.handleRecordingLocatorPickMessage(parsed as Record<string, unknown>);
+        return;
+      }
+      if (!this.recordingSession) return;
+      const action = appendBrowserWorkbenchRecordedAction(this.recordingSession, parsed);
+      if (action) {
+        this.emit({ type: "browser.recording", payload: this.getRecordingState() });
+      }
+    } catch {
+      // Ignore malformed recording payloads from pages.
+    }
+  }
+
+  private async handleRecordingLocatorPickMessage(payload: Record<string, unknown>): Promise<void> {
+    const actionId = typeof payload.actionId === "string" ? payload.actionId : this.recordingLocatorPickActionId;
+    const rawTarget = payload.target && typeof payload.target === "object" ? payload.target as Record<string, unknown> : {};
+    const selector = typeof rawTarget.selector === "string" ? rawTarget.selector : "";
+    if (!actionId || !selector) {
+      this.recordingLocatorPickActionId = undefined;
+      this.emit({ type: "browser.recording", payload: this.getRecordingState() });
+      return;
+    }
+    await this.repairRecordingLocator({ actionId, selector });
+    if (!this.recordingSession) {
+      await this.uninstallRecordingScript();
+    }
+  }
+
+  private recordNavigation(url?: string): void {
+    if (!this.recordingSession) return;
+    const action = appendBrowserWorkbenchRecordedAction(this.recordingSession, {
+      kind: "navigate",
+      source: "navigation",
+      url: url || this.view?.webContents.getURL() || "",
+      title: this.view?.webContents.getTitle(),
+      timestamp: Date.now(),
+    });
+    if (action) {
+      this.emit({ type: "browser.recording", payload: this.getRecordingState() });
+    }
+  }
+
   private emitState(): void {
     this.emit({ type: "browser.state", payload: this.getState() });
   }
@@ -1962,6 +2564,38 @@ export class BrowserWorkbenchManager {
       );
       // Cross-origin frames or transient navigations can reject injection. The
       // next completed load will retry if annotation mode is still enabled.
+    }
+  }
+
+  private async installRecordingScript(): Promise<void> {
+    if (!this.view || this.view.webContents.isDestroyed() || (!this.recordingSession && !this.recordingLocatorPickActionId)) return;
+    try {
+      await this.view.webContents.executeJavaScript(
+        `(${buildBrowserWorkbenchRecorderInjectionScript()})(${JSON.stringify({
+          enabled: true,
+          assertionMode: this.recordingAssertionMode,
+          locatorPickActionId: this.recordingLocatorPickActionId,
+          recorderPrefix: RECORDER_PREFIX,
+        })})`,
+        true,
+      );
+    } catch (error) {
+      this.handleConsoleMessage(
+        "warn",
+        `[browser-workbench] recorder injection failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private async uninstallRecordingScript(): Promise<void> {
+    if (!this.view || this.view.webContents.isDestroyed()) return;
+    try {
+      await this.view.webContents.executeJavaScript(
+        `(() => { if (typeof window.__techCcHubRecorderCleanup === "function") window.__techCcHubRecorderCleanup(); return true; })()`,
+        true,
+      );
+    } catch {
+      // The page may have navigated while stopping the recorder.
     }
   }
 
@@ -4919,35 +5553,6 @@ export class BrowserWorkbenchManager {
         toEl.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: toX, clientY: toY, button: 0 }));
         toEl.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: toX, clientY: toY, button: 0 }));
         return { success: true };
-      } catch (error) {
-        return { success: false, error: error instanceof Error ? error.message : String(error) };
-      }
-    }`;
-  }
-
-  // Fallback dialog handler (injected JS). Primary path uses CDP Page.handleJavaScriptDialog.
-  private buildDialogScript(): string {
-    return `function(input) {
-      try {
-        if (!window.__techCcHubDialogInterceptors) {
-          var queue = [];
-          window.__techCcHubDialogInterceptors = { queue: queue };
-          window.alert = function(msg) { queue.push({ message: msg, resolve: function(){}, reject: function(){}, defaultValue: undefined }); };
-          window.confirm = function(msg) { return new Promise(function(resolve) { queue.push({ message: msg, resolve: resolve, reject: function() { resolve(false); }, defaultValue: undefined }); }); };
-          window.prompt = function(msg, def) { return new Promise(function(resolve) { queue.push({ message: msg, resolve: resolve, reject: function() { resolve(null); }, defaultValue: def || "" }); }); };
-        }
-        var interceptors = window.__techCcHubDialogInterceptors;
-        if (interceptors.queue.length === 0) {
-          return { success: false, error: "没有未处理的对话框" };
-        }
-        var dialog = interceptors.queue.shift();
-        if (input.action === "accept") {
-          dialog.resolve(input.promptText !== undefined ? input.promptText : dialog.defaultValue);
-          return { success: true, message: "已接受对话框" };
-        } else {
-          dialog.reject();
-          return { success: true, message: "已拒绝对话框" };
-        }
       } catch (error) {
         return { success: false, error: error instanceof Error ? error.message : String(error) };
       }

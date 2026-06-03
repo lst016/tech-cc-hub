@@ -86,7 +86,7 @@ import { CronRepository } from "./libs/cron/cron-repository.js";
 import { CronJobExecutor, CronBusyGuard } from "./libs/cron/cron-executor.js";
 import { setCronService } from "./libs/mcp-tools/cron.js";
 import type { ClientEvent, PromptAttachment, ServerEvent } from "./types.js";
-import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkbenchEvent, type BrowserWorkbenchNetworkLogInput } from "./browser-manager.js";
+import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkbenchEvent, type BrowserWorkbenchNetworkLogInput, type BrowserWorkbenchRecordedAction } from "./browser-manager.js";
 import { startDevBackendBridge, DEV_BACKEND_BRIDGE_PORT } from "./dev-backend-bridge.js";
 import { buildSessionSlashCommandItems } from "./libs/slash-command-catalog.js";
 import { prepareExternalCliCommand, runExternalCli } from "./libs/external-cli.js";
@@ -1649,7 +1649,9 @@ function getBrowserWorkbench(sessionId?: unknown): BrowserWorkbenchManager | nul
   const existing = browserWorkbenches.get(resolvedSessionId);
   if (existing) return existing;
 
-  const manager = new BrowserWorkbenchManager(mainWindow, resolvedSessionId);
+  const manager = new BrowserWorkbenchManager(mainWindow, resolvedSessionId, {
+    resolveWorkspaceRoot: () => sessions.getSession(resolvedSessionId)?.cwd ?? process.cwd(),
+  });
   manager.addEventListener((event) => {
     for (const listener of browserWorkbenchEventListeners) {
       listener(event);
@@ -3201,9 +3203,25 @@ app.on("ready", async () => {
           getBrowserWorkbenchFetchLogs: (input?: BrowserWorkbenchNetworkLogInput, sessionId?: string) => getBrowserWorkbench(sessionId)!.getNetworkLogs(input),
           captureBrowserWorkbenchVisible: async (sessionId?: string) => await getBrowserWorkbench(sessionId)!.captureVisible(),
           inspectBrowserWorkbenchAtPoint: async (point: { x: number; y: number }, sessionId?: string) => await getBrowserWorkbench(sessionId)!.inspectAtPoint(point),
+          clickBrowserWorkbenchAtPoint: (point: { x: number; y: number; dblClick?: boolean }, sessionId?: string) => getBrowserWorkbench(sessionId)!.clickAt(point),
           clearBrowserWorkbenchAnnotations: async (sessionId?: string) => await getBrowserWorkbench(sessionId)!.clearAnnotations(),
           removeBrowserWorkbenchAnnotation: async (annotationId: string, sessionId?: string) => await getBrowserWorkbench(sessionId)!.removeAnnotation(annotationId),
           setBrowserWorkbenchAnnotationMode: async (enabled: boolean, sessionId?: string) => await getBrowserWorkbench(sessionId)!.setAnnotationMode(enabled),
+          startBrowserWorkbenchRecording: async (sessionId?: string) => await getBrowserWorkbench(sessionId)!.startRecording(),
+          stopBrowserWorkbenchRecording: async (sessionId?: string) => await getBrowserWorkbench(sessionId)!.stopRecording(),
+          getBrowserWorkbenchRecordingState: (sessionId?: string) => getBrowserWorkbench(sessionId)!.getRecordingState(),
+          setBrowserWorkbenchRecordingAssertionMode: async (enabled: boolean, sessionId?: string) => await getBrowserWorkbench(sessionId)!.setRecordingAssertionMode(enabled),
+          runBrowserWorkbenchRecording: async (sessionId?: string) => await getBrowserWorkbench(sessionId)!.runRecording(),
+          cancelBrowserWorkbenchRecordingRun: (sessionId?: string) => getBrowserWorkbench(sessionId)!.cancelRecordingRun(),
+          openBrowserWorkbenchRecordingRunOutput: async (sessionId?: string) => await getBrowserWorkbench(sessionId)!.openRecordingRunOutput(),
+          openBrowserWorkbenchRecordingTraceViewer: async (sessionId?: string) => await getBrowserWorkbench(sessionId)!.openRecordingTraceViewer(),
+          listBrowserWorkbenchRecordings: (sessionId?: string, limit?: number) => getBrowserWorkbench(sessionId)!.listRecordingHistory(limit),
+          loadBrowserWorkbenchRecording: (rootPath: string, sessionId?: string) => getBrowserWorkbench(sessionId)!.loadRecordingHistory(rootPath),
+          updateBrowserWorkbenchRecordingArtifact: (artifactPath: string, content: string, sessionId?: string) => getBrowserWorkbench(sessionId)!.updateRecordingArtifact({ artifactPath, content }),
+          startBrowserWorkbenchRecordingLocatorPick: async (actionId: string, sessionId?: string) => await getBrowserWorkbench(sessionId)!.startRecordingLocatorPick(actionId),
+          cancelBrowserWorkbenchRecordingLocatorPick: async (sessionId?: string) => await getBrowserWorkbench(sessionId)!.cancelRecordingLocatorPick(),
+          addBrowserWorkbenchRecordingAssertion: async (input: { kind: BrowserWorkbenchRecordedAction["kind"]; value?: string; key?: string; selector?: string }, sessionId?: string) => await getBrowserWorkbench(sessionId)!.addRecordingAssertion(input),
+          repairBrowserWorkbenchRecordingLocator: async (actionId: string, selector: string, sessionId?: string) => await getBrowserWorkbench(sessionId)!.repairRecordingLocator({ actionId, selector }),
         },
         subscribeServerEvents: (listener) => addServerEventListener(listener as (event: ServerEvent) => void),
         subscribeBrowserEvents: (listener) => {
@@ -3441,6 +3459,10 @@ app.on("ready", async () => {
         return await getBrowserWorkbench(sessionId)!.inspectAtPoint(point);
     });
 
+    ipcMainHandle("browser-click-at-point", (_: IpcMainInvokeEvent, point: { x: number; y: number; dblClick?: boolean }, sessionId?: string) => {
+        return getBrowserWorkbench(sessionId)!.clickAt(point);
+    });
+
     ipcMainHandle("browser-clear-annotations", async (_: IpcMainInvokeEvent, sessionId?: string) => {
         return await getBrowserWorkbench(sessionId)!.clearAnnotations();
     });
@@ -3463,6 +3485,66 @@ app.on("ready", async () => {
 
     ipcMainHandle("browser-is-devtools-open", (_: IpcMainInvokeEvent, sessionId?: string) => {
         return getBrowserWorkbench(sessionId)!.isDevToolsOpened();
+    });
+
+    ipcMainHandle("browser-recording-start", async (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return await getBrowserWorkbench(sessionId)!.startRecording();
+    });
+
+    ipcMainHandle("browser-recording-stop", async (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return await getBrowserWorkbench(sessionId)!.stopRecording();
+    });
+
+    ipcMainHandle("browser-recording-state", (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return getBrowserWorkbench(sessionId)!.getRecordingState();
+    });
+
+    ipcMainHandle("browser-recording-assertion-mode", async (_: IpcMainInvokeEvent, enabled: boolean, sessionId?: string) => {
+        return await getBrowserWorkbench(sessionId)!.setRecordingAssertionMode(enabled);
+    });
+
+    ipcMainHandle("browser-recording-run", async (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return await getBrowserWorkbench(sessionId)!.runRecording();
+    });
+
+    ipcMainHandle("browser-recording-run-cancel", (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return getBrowserWorkbench(sessionId)!.cancelRecordingRun();
+    });
+
+    ipcMainHandle("browser-recording-open-run-output", async (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return await getBrowserWorkbench(sessionId)!.openRecordingRunOutput();
+    });
+
+    ipcMainHandle("browser-recording-open-trace-viewer", async (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return await getBrowserWorkbench(sessionId)!.openRecordingTraceViewer();
+    });
+
+    ipcMainHandle("browser-recording-history", (_: IpcMainInvokeEvent, sessionId?: string, limit?: number) => {
+        return getBrowserWorkbench(sessionId)!.listRecordingHistory(limit);
+    });
+
+    ipcMainHandle("browser-recording-load-history", (_: IpcMainInvokeEvent, rootPath: string, sessionId?: string) => {
+        return getBrowserWorkbench(sessionId)!.loadRecordingHistory(rootPath);
+    });
+
+    ipcMainHandle("browser-recording-update-artifact", (_: IpcMainInvokeEvent, artifactPath: string, content: string, sessionId?: string) => {
+        return getBrowserWorkbench(sessionId)!.updateRecordingArtifact({ artifactPath, content });
+    });
+
+    ipcMainHandle("browser-recording-locator-pick-start", async (_: IpcMainInvokeEvent, actionId: string, sessionId?: string) => {
+        return await getBrowserWorkbench(sessionId)!.startRecordingLocatorPick(actionId);
+    });
+
+    ipcMainHandle("browser-recording-locator-pick-cancel", async (_: IpcMainInvokeEvent, sessionId?: string) => {
+        return await getBrowserWorkbench(sessionId)!.cancelRecordingLocatorPick();
+    });
+
+    ipcMainHandle("browser-recording-add-assertion", async (_: IpcMainInvokeEvent, input: { kind: BrowserWorkbenchRecordedAction["kind"]; value?: string; key?: string; selector?: string }, sessionId?: string) => {
+        return await getBrowserWorkbench(sessionId)!.addRecordingAssertion(input);
+    });
+
+    ipcMainHandle("browser-recording-repair-locator", async (_: IpcMainInvokeEvent, actionId: string, selector: string, sessionId?: string) => {
+        return await getBrowserWorkbench(sessionId)!.repairRecordingLocator({ actionId, selector });
     });
 
     // Feedback: capture screenshot of the main window

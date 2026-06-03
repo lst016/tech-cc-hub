@@ -149,6 +149,8 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("browser-capture-visible", sessionId),
     inspectBrowserWorkbenchAtPoint: (point: any, sessionId?: string) =>
         ipcInvoke("browser-inspect-at-point", point, sessionId),
+    clickBrowserWorkbenchAtPoint: (point: { x: number; y: number; dblClick?: boolean }, sessionId?: string) =>
+        ipcInvoke("browser-click-at-point", point, sessionId),
     clearBrowserWorkbenchAnnotations: (sessionId?: string) =>
         ipcInvoke("browser-clear-annotations", sessionId),
     removeBrowserWorkbenchAnnotation: (annotationId: string, sessionId?: string) =>
@@ -161,6 +163,36 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("browser-close-devtools", sessionId),
     isBrowserWorkbenchDevToolsOpen: (sessionId?: string) =>
         ipcInvoke("browser-is-devtools-open", sessionId),
+    startBrowserWorkbenchRecording: (sessionId?: string) =>
+        ipcInvoke("browser-recording-start", sessionId),
+    stopBrowserWorkbenchRecording: (sessionId?: string) =>
+        ipcInvoke("browser-recording-stop", sessionId),
+    getBrowserWorkbenchRecordingState: (sessionId?: string) =>
+        ipcInvoke("browser-recording-state", sessionId),
+    setBrowserWorkbenchRecordingAssertionMode: (enabled: boolean, sessionId?: string) =>
+        ipcInvoke("browser-recording-assertion-mode", enabled, sessionId),
+    runBrowserWorkbenchRecording: (sessionId?: string) =>
+        ipcInvoke("browser-recording-run", sessionId),
+    cancelBrowserWorkbenchRecordingRun: (sessionId?: string) =>
+        ipcInvoke("browser-recording-run-cancel", sessionId),
+    openBrowserWorkbenchRecordingRunOutput: (sessionId?: string) =>
+        ipcInvoke("browser-recording-open-run-output", sessionId),
+    openBrowserWorkbenchRecordingTraceViewer: (sessionId?: string) =>
+        ipcInvoke("browser-recording-open-trace-viewer", sessionId),
+    listBrowserWorkbenchRecordings: (sessionId?: string, limit?: number) =>
+        ipcInvoke("browser-recording-history", sessionId, limit),
+    loadBrowserWorkbenchRecording: (rootPath: string, sessionId?: string) =>
+        ipcInvoke("browser-recording-load-history", rootPath, sessionId),
+    updateBrowserWorkbenchRecordingArtifact: (artifactPath: string, content: string, sessionId?: string) =>
+        ipcInvoke("browser-recording-update-artifact", artifactPath, content, sessionId),
+    startBrowserWorkbenchRecordingLocatorPick: (actionId: string, sessionId?: string) =>
+        ipcInvoke("browser-recording-locator-pick-start", actionId, sessionId),
+    cancelBrowserWorkbenchRecordingLocatorPick: (sessionId?: string) =>
+        ipcInvoke("browser-recording-locator-pick-cancel", sessionId),
+    addBrowserWorkbenchRecordingAssertion: (input: { kind: string; value?: string; key?: string; selector?: string }, sessionId?: string) =>
+        ipcInvoke("browser-recording-add-assertion", input, sessionId),
+    repairBrowserWorkbenchRecordingLocator: (actionId: string, selector: string, sessionId?: string) =>
+        ipcInvoke("browser-recording-repair-locator", actionId, selector, sessionId),
     onBrowserWorkbenchEvent: (callback: (event: any) => void) => {
         const cb = (_: Electron.IpcRendererEvent, payload: string) => {
             try {
