@@ -2,19 +2,21 @@ import type { SlashCommandItem } from "../slash-command-discovery.js";
 import { buildClaudeAgentTeamsPromptHint } from "../../../shared/claude-agent-teams.js";
 
 // Generated compatibility seed. Refresh with:
-//   node scripts/sync-claude-code-compat.mjs
+//   node scripts/sync-claude-code-compat.mjs --source official
+// (Falls back to --source claudelog, or --source file --file <path> for offline runs.)
 
 export type ClaudeCodeCompatRegistry = {
   sourceUrl: string;
   sourceVersion: string;
   sourceDate: string;
   generatedAt: string;
+  sourceDigest?: string;
   commandItems: SlashCommandItem[];
   promptHints: string[];
 };
 
 export const CLAUDE_CODE_COMPAT_REGISTRY: ClaudeCodeCompatRegistry = {
-  "sourceUrl": "https://claudelog.com/claude-code-changelog/",
+  "sourceUrl": "https://code.claude.com/docs/en/changelog",
   "sourceVersion": "2.1.154",
   "sourceDate": "May 28, 2026",
   "generatedAt": "2026-05-29T01:28:01.338Z",

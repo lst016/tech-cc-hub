@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export function normalizeVersion(input) {
   if (!input) return "";
   const raw = String(input).trim().replace(/^v/i, "");
@@ -7,9 +9,34 @@ export function normalizeVersion(input) {
   return raw;
 }
 
-export function extractSections(html) {
-  const normalized = decodeHtmlEntities(String(html))
+const HTML_PRELUDE = String.raw`<\!\-\-.*?\-\->`;
+const HTML_SCRIPT = String.raw`<\s*script[\s\S]*?<\s*\/\s*script\s*>`;
+
+export function decodeHtmlEntities(input) {
+  return String(input)
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => safeFromCharCode(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => safeFromCharCode(parseInt(dec, 10)));
+}
+
+function safeFromCharCode(code) {
+  if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return "";
+  try {
+    return String.fromCodePoint(code);
+  } catch {
+    return "";
+  }
+}
+
+function stripHtml(input) {
+  return String(input)
     .replace(/\r\n/g, "\n")
+    .replace(new RegExp(HTML_SCRIPT, "gi"), "")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/p>/gi, "\n")
     .replace(/<p[^>]*>/gi, "\n")
@@ -19,15 +46,13 @@ export function extractSections(html) {
     .replace(/<\/code>/gi, "`")
     .replace(/<h[1-6][^>]*>/gi, "\n### ")
     .replace(/<\/h[1-6]>/gi, "\n")
+    .replace(new RegExp(HTML_PRELUDE, "gi"), "")
     .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, "\"")
-    .replace(/&#39;/g, "'")
     .replace(/\n{3,}/g, "\n\n");
+}
 
+function parseStrippedSections(text) {
+  const normalized = decodeHtmlEntities(stripHtml(text));
   const matches = [...normalized.matchAll(/(?:^|\n)\s*#{0,6}\s*(?:Claude Code\s*)?v(2\.1\.(\d+))\b[^\n]*/gi)];
   return matches.map((match, index) => {
     const version = match[1];
@@ -43,6 +68,49 @@ export function extractSections(html) {
     const dateMatch = body.match(/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}\b/);
     return { version, date: dateMatch?.[0] ?? "", items };
   });
+}
+
+export function extractOfficialSections(html) {
+  return parseStrippedSections(html);
+}
+
+export function extractClaudelogSections(html) {
+  return parseStrippedSections(html);
+}
+
+// Backwards-compatible alias for older callers/tests that referenced the old
+// generic name. The behavior is identical to the official parser today; the
+// source-plumbing layer in sync-claude-code-compat.mjs selects which one to
+// invoke based on --source.
+export const extractSections = extractOfficialSections;
+
+export function sha256Digest(input) {
+  return createHash("sha256").update(String(input), "utf8").digest("hex");
+}
+
+export function buildSyncReport({
+  source,
+  sourceUrl,
+  fetchedAt,
+  sourceDigest,
+  section,
+  commandItems,
+  promptHints,
+}) {
+  return {
+    source,
+    sourceUrl,
+    fetchedAt,
+    sourceDigest,
+    fetchedVersion: section?.version ?? null,
+    fetchedDate: section?.date ?? null,
+    commandCount: commandItems.length,
+    hintCount: promptHints.length,
+    newCommands: commandItems.map((item) => item.name),
+    renamedCommands: [],
+    status: "ok",
+    note: null,
+  };
 }
 
 export function extractCommandItems(items) {
@@ -169,10 +237,4 @@ function addCommand(commands, rawName, description) {
 
 function stripTicks(text) {
   return text.replace(/`/g, "");
-}
-
-function decodeHtmlEntities(text) {
-  return text
-    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(Number.parseInt(code, 16)));
 }
