@@ -26,17 +26,16 @@ function truncateOutput(value: string): string {
   return value.slice(value.length - MAX_RUN_OUTPUT_CHARS);
 }
 
-function resolvePlaywrightCommand(workspaceRoot: string): string {
-  const executableName = process.platform === "win32" ? "playwright.cmd" : "playwright";
+function resolvePlaywrightCliPath(workspaceRoot: string): string {
   const candidates = [
-    join(resolve(workspaceRoot), "node_modules", ".bin", executableName),
-    join(process.cwd(), "node_modules", ".bin", executableName),
+    join(resolve(workspaceRoot), "node_modules", "playwright", "cli.js"),
+    join(process.cwd(), "node_modules", "playwright", "cli.js"),
   ];
-  const command = candidates.find((candidate) => existsSync(candidate));
-  if (!command) {
+  const cliPath = candidates.find((candidate) => existsSync(candidate));
+  if (!cliPath) {
     throw new Error("Playwright CLI not found. Install @playwright/test in the workspace or app root.");
   }
-  return command;
+  return cliPath;
 }
 
 function pathInside(root: string, target: string): boolean {
@@ -139,11 +138,14 @@ export async function runBrowserWorkbenchRecordingPackage(
   const startedAt = Date.now();
   const rootPath = resolveRecordingRootPath(workspaceRoot, input.recordingPackage, input.savedRootPath);
   const specPath = resolveGeneratedSpecPath(input.recordingPackage, rootPath);
+  const specArg = relative(workspaceRoot, specPath).replace(/\\/g, "/");
   const outputDir = join(rootPath, "run-results", `${new Date(startedAt).toISOString().replace(/[-:.]/g, "")}-${basename(specPath, ".ts")}`);
-  const command = resolvePlaywrightCommand(workspaceRoot);
+  const command = process.execPath;
+  const playwrightCliPath = resolvePlaywrightCliPath(workspaceRoot);
   const args = [
+    playwrightCliPath,
     "test",
-    specPath,
+    specArg,
     "--reporter=list",
     "--trace=on",
     "--workers=1",
@@ -288,7 +290,7 @@ export async function runBrowserWorkbenchRecordingPackage(
         stderr,
         events,
         attachments,
-        traceViewerCommand: attachments.traceFiles[0] ? `${command} show-trace ${attachments.traceFiles[0]}` : undefined,
+        traceViewerCommand: attachments.traceFiles[0] ? `${command} ${playwrightCliPath} show-trace ${attachments.traceFiles[0]}` : undefined,
         error: status === "timed-out" ? "Playwright run timed out." : status === "cancelled" ? "Playwright run was cancelled." : undefined,
       });
     });
