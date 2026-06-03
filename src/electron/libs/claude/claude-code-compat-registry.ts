@@ -2,8 +2,7 @@ import type { SlashCommandItem } from "../slash-command-discovery.js";
 import { buildClaudeAgentTeamsPromptHint } from "../../../shared/claude-agent-teams.js";
 
 // Generated compatibility seed. Refresh with:
-//   node scripts/sync-claude-code-compat.mjs --source official
-// (Falls back to --source claudelog, or --source file --file <path> for offline runs.)
+//   node scripts/sync-claude-code-compat.mjs
 
 export type ClaudeCodeCompatRegistry = {
   sourceUrl: string;
@@ -16,10 +15,11 @@ export type ClaudeCodeCompatRegistry = {
 };
 
 export const CLAUDE_CODE_COMPAT_REGISTRY: ClaudeCodeCompatRegistry = {
-  "sourceUrl": "https://code.claude.com/docs/en/changelog",
+  "sourceUrl": "https://claudelog.com/claude-code-changelog/",
   "sourceVersion": "2.1.154",
   "sourceDate": "May 28, 2026",
-  "generatedAt": "2026-05-29T01:28:01.338Z",
+  "generatedAt": "2026-06-03T15:10:42.523Z",
+  "sourceDigest": "d4fa66e551aa9928280436e90b9dbcb073c8587ae2098421d3d0c805b147c82f",
   "commandItems": [
     {
       "name": "agents",

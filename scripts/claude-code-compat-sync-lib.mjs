@@ -206,6 +206,7 @@ export type ClaudeCodeCompatRegistry = {
   sourceVersion: string;
   sourceDate: string;
   generatedAt: string;
+  sourceDigest?: string;
   commandItems: SlashCommandItem[];
   promptHints: string[];
 };
