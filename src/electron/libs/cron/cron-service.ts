@@ -4,7 +4,7 @@
 // v1 扩展（POLICY.md §2-5）：busy-retry 退避、missed-run 恢复、stuck watchdog、pause/resume、misfirePolicy/maxConcurrent。
 
 import { Cron } from "croner";
-import type { CronJob, CreateCronJobParams, MisfirePolicy } from "./cron-types.js";
+import type { CronJob, CreateCronJobParams, MisfirePolicy, CronJobRunTrigger } from "./cron-types.js";
 import type { ICronRepository } from "./cron-repository.js";
 import type { ICronEventEmitter } from "./cron-event-emitter.js";
 import type { ICronJobExecutor } from "./cron-executor.js";
@@ -124,7 +124,8 @@ export class CronService {
   async triggerJob(jobId: string): Promise<void> {
     const job = await this.repo.getById(jobId);
     if (!job) throw new Error(`任务不存在: ${jobId}`);
-    await this.executeJob(job);
+    // triggerJob 是 UI 手动触发，triggerSource=manual
+    await this.executeJob(job, undefined, "manual");
   }
 
   async runNow(jobId: string): Promise<string> {
@@ -132,7 +133,7 @@ export class CronService {
     if (!job) throw new Error(`任务不存在: ${jobId}`);
     const conversationId = await this.executor.prepareConversation(job);
     // H-5：fire-and-forget 加 .catch 让错误不静默丢失
-    void this.executeJob(job, conversationId).catch((err) => {
+    void this.executeJob(job, conversationId, "manual").catch((err) => {
       console.error(`[CronService] runNow 任务 ${jobId} 失败:`, err);
     });
     return conversationId;
@@ -239,13 +240,17 @@ export class CronService {
 
   // ── Execution ──
 
-  private async executeJob(job: CronJob, preparedConversationId?: string): Promise<void> {
+  private async executeJob(
+    job: CronJob,
+    preparedConversationId?: string,
+    triggerSource: CronJobRunTrigger = "schedule",
+  ): Promise<void> {
     // H-3/H-5 in-flight re-entrancy guard：crontab tick + runNow + catchup 三路并发
     // 同一 job 只允许一个 Promise 在跑，第二个调用复用第一个的 Promise
     const existing = this.inFlightJobs.get(job.id);
     if (existing) return existing;
 
-    const runPromise = this.executeJobInner(job, preparedConversationId);
+    const runPromise = this.executeJobInner(job, preparedConversationId, triggerSource);
     this.inFlightJobs.set(job.id, runPromise);
     try {
       await runPromise;
@@ -254,7 +259,11 @@ export class CronService {
     }
   }
 
-  private async executeJobInner(job: CronJob, preparedConversationId?: string): Promise<void> {
+  private async executeJobInner(
+    job: CronJob,
+    preparedConversationId?: string,
+    triggerSource: CronJobRunTrigger = "schedule",
+  ): Promise<void> {
     const conversationId = preparedConversationId ?? job.metadata.conversationId;
 
     // F-12：pause/resume —— timer 保留但 executeJob 早退
@@ -305,7 +314,8 @@ export class CronService {
       jobId: job.id,
       startedAt: lastRunAtMs,
       status: "running",
-      triggerSource: preparedConversationId ? "manual" : "schedule",
+      // triggerSource 由 caller 显式传入（runNow/triggerJob → manual，catchup → catchup，crontab tick → schedule）
+      triggerSource,
       conversationId,
     };
     try {
