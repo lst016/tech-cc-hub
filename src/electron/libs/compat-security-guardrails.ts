@@ -79,7 +79,7 @@ export const EXECUTABLE_CONFIG_PATTERNS: RegExp[] = [
   /(?:^|[\\/])\.devcontainer[\\/]/i,
   /(?:^|[\\/])(?:\.bashrc|\.bash_profile|\.zshrc|\.zprofile|\.profile|\.zshenv)$/i,
   /(?:^|[\\/])PowerShell[\\/]Microsoft\.PowerShell_profile\.ps1$/i,
-  /(?:^|[\\/])\.ps1$/i,
+  /\.ps1$/i,
 ];
 
 export function isExecutableConfigPath(path: string): boolean {
