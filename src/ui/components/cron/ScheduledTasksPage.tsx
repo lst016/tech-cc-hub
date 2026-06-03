@@ -21,7 +21,7 @@ function formatWorkspaceName(cwd?: string) {
 }
 
 const ScheduledTasksPage: React.FC<ScheduledTasksPageProps> = ({ onBack }) => {
-  const { jobs, loading, pauseJob, resumeJob, deleteJob } = useAllCronJobs();
+  const { jobs, loading, pauseJob, resumeJob, deleteJob, bindConversation } = useAllCronJobs();
   const [createDialogVisible, setCreateDialogVisible] = useState(false);
   const [detailJobId, setDetailJobId] = useState<string | null>(null);
   const [selectedWorkspace, setSelectedWorkspace] = useState<{ conversationId: string; conversationTitle: string } | null>(null);
@@ -32,7 +32,9 @@ const ScheduledTasksPage: React.FC<ScheduledTasksPageProps> = ({ onBack }) => {
   // Build workspace map from sessions
   const sessions = useAppStore((s) => s.sessions);
   const archivedSessions = useAppStore((s) => s.archivedSessions);
+  const activeSessionId = useAppStore((s) => s.activeSessionId);
   const allSessions = useMemo(() => ({ ...archivedSessions, ...sessions }), [sessions, archivedSessions]);
+  const currentActiveSession = activeSessionId ? allSessions[activeSessionId] : undefined;
 
   const conversationMap = useMemo(() => {
     const map = new Map<string, { cwd?: string; title: string }>();
@@ -153,6 +155,19 @@ const ScheduledTasksPage: React.FC<ScheduledTasksPageProps> = ({ onBack }) => {
     setCreateDialogVisible(true);
   }, []);
 
+  const handleBindToCurrentSession = useCallback(
+    async (job: CronJob) => {
+      if (!activeSessionId) return;
+      const title = currentActiveSession?.title?.trim() || "当前会话";
+      try {
+        await bindConversation(job, activeSessionId, title);
+      } catch (err) {
+        console.error("绑定会话失败:", err);
+      }
+    },
+    [activeSessionId, currentActiveSession, bindConversation],
+  );
+
   const handleNewTask = useCallback((workspace?: { conversationId: string; conversationTitle: string }) => {
     setSelectedWorkspace(workspace ?? null);
     setCreateDialogVisible(true);
@@ -223,11 +238,13 @@ const ScheduledTasksPage: React.FC<ScheduledTasksPageProps> = ({ onBack }) => {
                 conversationMap={conversationMap}
                 detailJobId={detailJobId}
                 menuJobId={menuJobId}
+                activeSessionId={activeSessionId}
                 onToggleEnabled={handleToggleEnabled}
                 onSelectJob={setDetailJobId}
                 onEdit={handleEdit}
                 onDelete={(id) => setConfirmDeleteId(id)}
                 onSetMenu={setMenuJobId}
+                onBindToCurrentSession={handleBindToCurrentSession}
               />
             )}
 
@@ -243,11 +260,13 @@ const ScheduledTasksPage: React.FC<ScheduledTasksPageProps> = ({ onBack }) => {
                   conversationMap={conversationMap}
                   detailJobId={detailJobId}
                   menuJobId={menuJobId}
+                  activeSessionId={activeSessionId}
                   onToggleEnabled={handleToggleEnabled}
                   onSelectJob={setDetailJobId}
                   onEdit={handleEdit}
                   onDelete={(id) => setConfirmDeleteId(id)}
                   onSetMenu={setMenuJobId}
+                  onBindToCurrentSession={handleBindToCurrentSession}
                 />
               );
             })}
@@ -258,8 +277,12 @@ const ScheduledTasksPage: React.FC<ScheduledTasksPageProps> = ({ onBack }) => {
         {detailJob && (
           <CronTaskDetailInline
             job={detailJob}
+            activeSessionId={activeSessionId}
+            activeSessionTitle={currentActiveSession?.title}
             onClose={() => setDetailJobId(null)}
             onEdit={() => handleEdit(detailJob)}
+            onToggleEnabled={handleToggleEnabled}
+            onBindToCurrentSession={handleBindToCurrentSession}
           />
         )}
 
@@ -305,12 +328,14 @@ const WorkspaceJobGroup: React.FC<{
   conversationMap: Map<string, { cwd?: string; title: string }>;
   detailJobId: string | null;
   menuJobId: string | null;
+  activeSessionId: string | null;
   onToggleEnabled: (job: CronJob) => void;
   onSelectJob: (id: string) => void;
   onEdit: (job: CronJob) => void;
   onDelete: (id: string) => void;
   onSetMenu: (id: string | null) => void;
-}> = ({ label, subtitle, jobs, conversationMap, menuJobId, onToggleEnabled, onSelectJob, onEdit, onDelete, onSetMenu }) => {
+  onBindToCurrentSession: (job: CronJob) => void;
+}> = ({ label, subtitle, jobs, conversationMap, menuJobId, activeSessionId, onToggleEnabled, onSelectJob, onEdit, onDelete, onSetMenu, onBindToCurrentSession }) => {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2 px-1">
@@ -384,6 +409,20 @@ const WorkspaceJobGroup: React.FC<{
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                       编辑
                     </button>
+                    {activeSessionId && job.metadata.conversationId !== activeSessionId && (
+                      <button
+                        type="button"
+                        className="flex items-center gap-2 px-3 py-2 text-sm text-ink hover:bg-muted/5 transition-colors text-left"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onBindToCurrentSession(job);
+                          onSetMenu(null);
+                        }}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                        绑到当前会话
+                      </button>
+                    )}
                     {!isManualOnly && (
                       <button
                         type="button"
@@ -457,11 +496,16 @@ const WorkspaceJobGroup: React.FC<{
 // Inline detail view (simplified from TaskDetailPage)
 const CronTaskDetailInline: React.FC<{
   job: CronJob;
+  activeSessionId: string | null;
+  activeSessionTitle?: string;
   onClose: () => void;
   onEdit: () => void;
-}> = ({ job, onClose }) => {
+  onToggleEnabled: (job: CronJob) => void;
+  onBindToCurrentSession: (job: CronJob) => void;
+}> = ({ job, activeSessionId, activeSessionTitle, onClose, onToggleEnabled, onBindToCurrentSession }) => {
   const isManualOnly = job.schedule.kind === "cron" && !job.schedule.expr;
   const [runningNow, setRunningNow] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const el = (window as unknown as { electron: any }).electron;
@@ -485,6 +529,29 @@ const CronTaskDetailInline: React.FC<{
       console.error("删除任务失败:", err);
     }
   };
+
+  const handleToggleClick = async () => {
+    setBusy(true);
+    try {
+      await onToggleEnabled(job);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleBindClick = async () => {
+    setBusy(true);
+    try {
+      await onBindToCurrentSession(job);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const canBind = Boolean(activeSessionId) && job.metadata.conversationId !== activeSessionId;
+  const currentBindingLabel = job.metadata.conversationId
+    ? (job.metadata.conversationTitle?.trim() || job.metadata.conversationId)
+    : "未绑定";
 
   return (
     <div className="rounded-xl border border-muted/20 bg-white p-6">
@@ -529,6 +596,22 @@ const CronTaskDetailInline: React.FC<{
           </section>
 
           <section>
+            <h3 className="text-[13px] font-medium text-muted mb-2">所属工作区</h3>
+            <p className="text-sm text-ink break-words" title={currentBindingLabel}>{currentBindingLabel}</p>
+            {canBind && (
+              <button
+                type="button"
+                className="mt-2 inline-flex items-center gap-1 rounded-lg border border-muted/30 px-3 py-1.5 text-xs text-ink hover:bg-muted/5 transition-colors disabled:opacity-50"
+                disabled={busy}
+                onClick={handleBindClick}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                绑到当前会话{activeSessionTitle ? `（${activeSessionTitle}）` : ""}
+              </button>
+            )}
+          </section>
+
+          <section>
             <h3 className="text-[13px] font-medium text-muted mb-2">状态</h3>
             <p className="text-sm text-ink">
               已运行 {job.state.runCount} 次
@@ -548,6 +631,17 @@ const CronTaskDetailInline: React.FC<{
                 onClick={handleRunNow}
               >
                 {runningNow ? "运行中..." : "立即运行"}
+              </button>
+            )}
+            {!isManualOnly && (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded-lg border border-muted/30 px-3 py-1.5 text-sm text-ink hover:bg-muted/5 transition-colors disabled:opacity-50"
+                disabled={busy}
+                onClick={handleToggleClick}
+                title={job.enabled ? "暂停该定时任务" : "恢复该定时任务"}
+              >
+                {job.enabled ? "暂停" : "恢复"}
               </button>
             )}
             <button

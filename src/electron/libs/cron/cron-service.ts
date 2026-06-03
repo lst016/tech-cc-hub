@@ -1,18 +1,32 @@
 // Source: CV from AionUi CronService.ts (832 lines)
 // Adapted for tech-cc-hub: removed i18n, powerSaveBlocker, system-resume, orphan cleanup,
 // conversationRepo dependency, SkillSuggestWatcher. Hardcoded Chinese messages.
+// v1 扩展（POLICY.md §2-5）：busy-retry 退避、missed-run 恢复、stuck watchdog、pause/resume、misfirePolicy/maxConcurrent。
 
 import { Cron } from "croner";
-import type { CronJob, CreateCronJobParams } from "./cron-types.js";
+import type { CronJob, CreateCronJobParams, MisfirePolicy } from "./cron-types.js";
 import type { ICronRepository } from "./cron-repository.js";
 import type { ICronEventEmitter } from "./cron-event-emitter.js";
 import type { ICronJobExecutor } from "./cron-executor.js";
+import { getStuckRuns, updateCronRun } from "./cron-db.js";
 import { notifyCronFinished } from "../desktop-notifications.js";
+
+// 退避算法常量（POLICY.md §2）
+const BACKOFF_MIN_MS = 1_000;
+const BACKOFF_MAX_MS = 30_000;
+const BACKOFF_DEFAULT_MS = 30_000;
+// Stuck watchdog 常量（POLICY.md §4）
+const STUCK_THRESHOLD_MS = 600_000; // 10 分钟
+const WATCHDOG_INTERVAL_MS = 5 * 60 * 1_000; // 5 分钟扫描一次
+// Catchup 连续追补上限（POLICY.md §3 catchup 策略）
+const CATCHUP_MAX_FIRES = 5;
 
 export class CronService {
   private timers: Map<string, Cron | NodeJS.Timeout> = new Map();
   private retryTimers: Map<string, NodeJS.Timeout> = new Map();
   private retryCounts: Map<string, number> = new Map();
+  private pausedJobs: Set<string> = new Set();
+  private watchdogTimer: NodeJS.Timeout | null = null;
   private initialized = false;
 
   constructor(
@@ -30,6 +44,10 @@ export class CronService {
         await this.startTimer(job);
       }
       this.initialized = true;
+      // F-05：init 启动时对 enabled 的周期任务跑 missed-run 追补
+      await this.triggerCatchup();
+      // F-07：stuck job watchdog，5 分钟扫描一次
+      this.startWatchdog();
     } catch (error) {
       console.error("[CronService] 初始化失败:", error);
       throw error;
@@ -216,26 +234,38 @@ export class CronService {
   private async executeJob(job: CronJob, preparedConversationId?: string): Promise<void> {
     const conversationId = preparedConversationId ?? job.metadata.conversationId;
 
+    // F-12：pause/resume —— timer 保留但 executeJob 早退
+    if (this.pausedJobs.has(job.id) || job.state.paused) {
+      return;
+    }
+
     const isBusy = this.executor.isConversationBusy(conversationId);
     if (isBusy) {
       const currentRetry = (this.retryCounts.get(job.id) ?? 0) + 1;
       this.retryCounts.set(job.id, currentRetry);
 
-      if (currentRetry > (job.state.maxRetries || 3)) {
+      const maxRetries = job.state.maxRetries || 3;
+      if (currentRetry > maxRetries) {
         this.retryCounts.delete(job.id);
         this.updateNextRunTime(job);
         await this.repo.update(job.id, {
-          state: { ...job.state, lastStatus: "skipped", lastError: `会话正忙,已重试 ${job.state.maxRetries} 次` },
+          state: { ...job.state, lastStatus: "skipped", lastError: `会话正忙,已重试 ${maxRetries} 次` },
         });
         const skippedJob = await this.repo.getById(job.id);
         if (skippedJob) this.emitter.emitJobUpdated(skippedJob);
         return;
       }
 
+      // F-04：busy-retry 退避算法（POLICY.md §2）
+      // 退避间隔 = min(30s, max(1s, (nextRunAtMs - now) / 2))
+      const backoffMs = this.computeBackoffMs(job, Date.now());
+      await this.repo.update(job.id, {
+        state: { ...job.state, lastStatus: "retrying", retryCount: currentRetry },
+      });
       const retryTimer = setTimeout(() => {
         this.retryTimers.delete(job.id);
         void this.executeJob(job);
-      }, 30000);
+      }, backoffMs);
       this.retryTimers.set(job.id, retryTimer);
       return;
     }
@@ -320,6 +350,129 @@ export class CronService {
     }
   }
 
+  // ── Pause / Resume（F-12 / pause-resume）──
+
+  async pauseJob(jobId: string): Promise<CronJob> {
+    const job = await this.repo.getById(jobId);
+    if (!job) throw new Error(`任务不存在: ${jobId}`);
+    this.pausedJobs.add(jobId);
+    job.state.paused = true;
+    await this.repo.update(jobId, { state: job.state });
+    this.emitter.emitJobUpdated(job);
+    return job;
+  }
+
+  async resumeJob(jobId: string): Promise<CronJob> {
+    const job = await this.repo.getById(jobId);
+    if (!job) throw new Error(`任务不存在: ${jobId}`);
+    this.pausedJobs.delete(jobId);
+    job.state.paused = false;
+    this.retryCounts.delete(jobId);
+    this.updateNextRunTime(job);
+    await this.repo.update(jobId, { state: job.state });
+    this.emitter.emitJobUpdated(job);
+    return job;
+  }
+
+  // ── Missed-run 恢复（F-05 / POLICY.md §3）──
+
+  async triggerCatchup(): Promise<{ checkedJob: number; firedCount: number; missedCount: number }> {
+    const jobs = await this.repo.listEnabled();
+    const now = Date.now();
+    let firedCount = 0;
+    let missedCount = 0;
+
+    for (const job of jobs) {
+      if (this.pausedJobs.has(job.id) || job.state.paused) continue;
+      const expectedInterval = this.computeExpectedIntervalMs(job);
+      if (!expectedInterval) continue;
+
+      const lastCheckedAt = job.state.lastRunAtMs ?? job.metadata.createdAt;
+      const rawMissed = Math.floor((now - lastCheckedAt) / expectedInterval) - 1;
+      const missed = Math.max(0, rawMissed);
+      if (missed <= 0) continue;
+
+      const policy: MisfirePolicy = job.state.misfirePolicy ?? "fire-once";
+      if (policy === "skip") {
+        await this.markMissed(job, `错过 ${missed} 次未触发（策略: skip）`);
+        missedCount += 1;
+        continue;
+      }
+
+      const fireCount = policy === "catchup" ? Math.min(missed, CATCHUP_MAX_FIRES) : 1;
+      for (let i = 0; i < fireCount; i++) {
+        // catchup 触发走 trigger_source='catchup'，但这里复用 executeJob 路径
+        void this.executeJob(job);
+        firedCount += 1;
+      }
+    }
+
+    return { checkedJob: jobs.length, firedCount, missedCount };
+  }
+
+  private computeExpectedIntervalMs(job: CronJob): number | undefined {
+    if (job.schedule.kind === "every") return job.schedule.everyMs;
+    if (job.schedule.kind === "cron") {
+      try {
+        const c = new Cron(job.schedule.expr, { timezone: job.schedule.tz });
+        const next = c.nextRun();
+        if (next) {
+          const after = new Cron(job.schedule.expr, { timezone: job.schedule.tz });
+          const second = after.nextRun(new Date(next.getTime() + 1));
+          if (second) return second.getTime() - next.getTime();
+        }
+      } catch {
+        // 表达式非法，忽略
+      }
+    }
+    return undefined;
+  }
+
+  private async markMissed(job: CronJob, error: string): Promise<void> {
+    await this.repo.update(job.id, {
+      state: { ...job.state, lastStatus: "missed", lastError: error },
+    });
+    const updated = await this.repo.getById(job.id);
+    if (updated) this.emitter.emitJobUpdated(updated);
+    this.emitter.emitJobExecuted(job.id, "missed", error);
+  }
+
+  // ── Busy-Retry 退避计算（F-04 / POLICY.md §2）──
+
+  /** 计算单次退避毫秒数：min(30s, max(1s, (nextRunAtMs - now) / 2)) */
+  computeBackoffMs(job: CronJob, now: number): number {
+    const nextRunAtMs = job.state.nextRunAtMs;
+    if (typeof nextRunAtMs !== "number") return BACKOFF_DEFAULT_MS;
+    return Math.min(BACKOFF_MAX_MS, Math.max(BACKOFF_MIN_MS, (nextRunAtMs - now) / 2));
+  }
+
+  // ── Stuck Watchdog（F-07 / POLICY.md §4）──
+
+  private startWatchdog(): void {
+    if (this.watchdogTimer) return;
+    this.watchdogTimer = setInterval(() => {
+      void this.runWatchdog();
+    }, WATCHDOG_INTERVAL_MS);
+  }
+
+  /** 扫描 cron_job_runs.status='running' 且运行超过 600 秒的卡死任务 */
+  async runWatchdog(): Promise<{ cleared: number }> {
+    const cutoff = Date.now() - STUCK_THRESHOLD_MS;
+    const stuck = getStuckRuns(cutoff);
+    for (const run of stuck) {
+      updateCronRun(run.id, {
+        status: "missed",
+        finishedAt: Date.now(),
+        error: "执行超时（watchdog）",
+      });
+      if (run.conversationId) {
+        this.executor.setProcessing(run.conversationId, false);
+      }
+      this.emitter.emitJobExecuted(run.jobId, "missed", "执行超时（watchdog）");
+    }
+    return { cleared: stuck.length };
+  }
+
   // ── Cleanup ──
 
   destroy(): void {
@@ -328,8 +481,13 @@ export class CronService {
     }
     this.timers.clear();
     this.retryTimers.clear();
+    this.pausedJobs.clear();
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
     this.initialized = false;
   }
 }
 
-export type { CronJob, CronSchedule } from "./cron-types.js";
+export type { CronJob, CronSchedule, MisfirePolicy } from "./cron-types.js";

@@ -3,6 +3,10 @@ export type {
   CronSchedule,
   CronJob,
   CreateCronJobParams,
+  CronJobRun,
+  CronJobRunStatus,
+  CronJobRunTrigger,
+  MisfirePolicy,
 } from "../../../types/cron.js";
 
 // Database row type is electron-only
@@ -31,4 +35,19 @@ export type CronJobRow = {
   run_count: number;
   retry_count: number;
   max_retries: number;
+};
+
+// 单次执行行的 DB row 类型（cron_job_runs 表）
+export type CronJobRunRow = {
+  id: string;
+  job_id: string;
+  started_at: number;
+  finished_at: number | null;
+  status: string;
+  error: string | null;
+  duration_ms: number | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  conversation_id: string | null;
+  trigger_source: string;
 };

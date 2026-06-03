@@ -14,6 +14,7 @@ import { toTextToolResult } from "./tool-result.js";
 export const CRON_TOOL_NAMES = [
   "create_scheduled_task",
   "list_scheduled_tasks",
+  "update_scheduled_task",
   "delete_scheduled_task",
 ] as const;
 
@@ -33,6 +34,7 @@ function buildScheduleFromInput(input: {
   everySeconds?: number;
   atTimestamp?: string;
   scheduleDescription?: string;
+  jitterMs?: number;
 }): CronSchedule {
   const kind = input.scheduleKind;
   const desc = input.scheduleDescription?.trim() || "";
@@ -46,6 +48,7 @@ function buildScheduleFromInput(input: {
         expr,
         tz: input.timezone?.trim() || "Asia/Shanghai",
         description: desc || `cron: ${expr}`,
+        jitterMs: input.jitterMs ?? 0,
       };
     }
     case "every": {
@@ -57,6 +60,7 @@ function buildScheduleFromInput(input: {
         kind: "every",
         everyMs: ms,
         description: desc || `每 ${minutes} 分钟`,
+        jitterMs: input.jitterMs ?? 0,
       };
     }
     case "at": {
@@ -86,7 +90,27 @@ const CREATE_SCHEMA = {
   scheduleDescription: z.string().optional().describe("调度描述，不填自动生成"),
   message: z.string().min(1).describe("发送给会话的提示消息"),
   conversationId: z.string().optional().describe("目标会话 ID，默认 __system__"),
-  executionMode: z.enum(["existing", "new_conversation"]).optional().describe("执行模式，默认 new_conversation"),
+  executionMode: z.enum(["existing", "new_conversation"]).optional().describe("执行模式，默认 existing"),
+  templateConversationId: z.string().optional().describe("new_conversation 模式下用于派生新会话的模板会话 ID"),
+  jitterMs: z.number().int().min(0).max(60000).optional().describe("触发抖动毫秒（0-60000），加在 cron / every 模式上"),
+  misfirePolicy: z.enum(["fire-once", "catchup", "skip"]).optional().describe("错过触发策略，默认 fire-once"),
+};
+
+const UPDATE_SCHEMA = {
+  jobId: z.string().min(1).describe("要更新的任务 ID"),
+  enabled: z.boolean().optional().describe("是否启用"),
+  executionMode: z.enum(["existing", "new_conversation"]).optional().describe("执行模式"),
+  message: z.string().min(1).optional().describe("新的提示消息"),
+  schedule: z.object({
+    scheduleKind: z.enum(["cron", "every", "at"]),
+    cronExpression: z.string().optional(),
+    timezone: z.string().optional(),
+    everySeconds: z.number().min(60).optional(),
+    atTimestamp: z.string().optional(),
+    scheduleDescription: z.string().optional(),
+  }).optional().describe("新调度（覆盖式）"),
+  jitterMs: z.number().int().min(0).max(60000).optional().describe("触发抖动毫秒（0-60000）"),
+  misfirePolicy: z.enum(["fire-once", "catchup", "skip"]).optional().describe("错过触发策略"),
 };
 
 const DELETE_SCHEMA = {
@@ -114,7 +138,7 @@ export function getCronMcpServer(): McpSdkServerConfigWithInstance {
           conversationTitle: input.name,
           agentType: "default",
           createdBy: "agent",
-          executionMode: input.executionMode || "new_conversation",
+          executionMode: input.executionMode || "existing",
         };
 
         const job = await cronServiceRef.addJob(params);
@@ -171,6 +195,76 @@ export function getCronMcpServer(): McpSdkServerConfigWithInstance {
     },
   );
 
+  const updateHandler = tool(
+    "update_scheduled_task",
+    "更新一个已存在的定时任务。仅 Agent 自己创建的任务可更新（createdBy='agent'），用户创建的任务请在 UI 中操作。支持修改 enabled、executionMode、message、schedule、jitterMs、misfirePolicy 等字段。",
+    UPDATE_SCHEMA,
+    async (input) => {
+      try {
+        if (!cronServiceRef) {
+          return toTextToolResult({ success: false, error: "CronService 未初始化" }, true);
+        }
+
+        const job = await cronServiceRef.getJob(input.jobId);
+        if (!job) {
+          return toTextToolResult({ success: false, error: `任务不存在: ${input.jobId}` }, true);
+        }
+
+        // 安全边界：Agent 只能 update 自己 createdBy='agent' 的任务
+        if (job.metadata.createdBy !== "agent") {
+          return toTextToolResult({
+            success: false,
+            error: `任务 "${job.name}" 由用户创建，Agent 无权修改。请在 UI 中手动操作。`,
+          }, true);
+        }
+
+        const updates: Partial<typeof job> = {};
+        if (typeof input.enabled === "boolean") updates.enabled = input.enabled;
+        if (input.executionMode) {
+          updates.target = { ...job.target, executionMode: input.executionMode };
+        }
+        if (input.message) {
+          updates.target = {
+            ...(updates.target ?? job.target),
+            payload: { kind: "message", text: input.message },
+          };
+        }
+        if (input.schedule) {
+          updates.schedule = buildScheduleFromInput(input.schedule);
+        }
+        if (typeof input.jitterMs === "number" && (job.schedule.kind === "cron" || job.schedule.kind === "every")) {
+          updates.schedule = { ...job.schedule, jitterMs: input.jitterMs } as typeof job.schedule;
+        }
+        if (input.misfirePolicy) {
+          updates.state = { ...job.state, misfirePolicy: input.misfirePolicy };
+        }
+
+        if (Object.keys(updates).length === 0) {
+          return toTextToolResult({ success: false, error: "未提供任何可更新字段" }, true);
+        }
+
+        const updated = await cronServiceRef.updateJob(input.jobId, updates);
+        return toTextToolResult({
+          success: true,
+          job: {
+            id: updated.id,
+            name: updated.name,
+            enabled: updated.enabled,
+            schedule: updated.schedule,
+            executionMode: updated.target.executionMode,
+            message: updated.target.payload.text,
+            nextRunAtMs: updated.state.nextRunAtMs,
+          },
+        });
+      } catch (error) {
+        return toTextToolResult({
+          success: false,
+          error: error instanceof Error ? error.message : "更新定时任务失败",
+        }, true);
+      }
+    },
+  );
+
   const deleteHandler = tool(
     "delete_scheduled_task",
     "根据任务 ID 删除一个定时任务。仅 Agent 创建的任务可删除，用户创建的任务应提示手动操作。",
@@ -209,7 +303,7 @@ export function getCronMcpServer(): McpSdkServerConfigWithInstance {
   return createSdkMcpServer({
     name: CRON_TOOLS_SERVER_NAME,
     version: CRON_MCP_SERVER_VERSION,
-    tools: [createHandler, listHandler, deleteHandler],
+    tools: [createHandler, listHandler, updateHandler, deleteHandler],
   });
 
 }
