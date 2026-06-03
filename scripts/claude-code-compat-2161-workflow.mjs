@@ -104,10 +104,14 @@ const PHASES = [
       { cmd: "npx", args: ["tsc", "--noEmit"], why: "typecheck" },
     ],
     gate: (ctx) => {
-      const registry = readRegistryTs();
-      const facts = registry.facts || [];
+      const sidecar = resolve(".tmp/claude-code-compat-facts.json");
+      if (!existsSync(sidecar)) return { ok: false, note: "facts sidecar missing; re-run sync" };
+      let facts = [];
+      try { facts = JSON.parse(readFileSync(sidecar, "utf8")); } catch (err) {
+        return { ok: false, note: `facts sidecar unreadable: ${err.message}` };
+      }
       const required = facts.filter((f) => f.severity === "guardrail" || f.severity === "breaking-risk");
-      if (facts.length === 0) return { ok: false, note: "registry.facts is empty" };
+      if (facts.length === 0) return { ok: false, note: "facts sidecar is empty" };
       const orphans = required.filter((f) => !Array.isArray(f.productTargets) || f.productTargets.length === 0);
       if (orphans.length > 0) return { ok: false, note: `${orphans.length} guardrail/breaking-risk facts have no productTargets` };
       const missingIds = facts.filter((f) => !f.id || !f.version || !f.category || !f.severity).length;

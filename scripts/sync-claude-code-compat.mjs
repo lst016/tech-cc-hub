@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import {
   buildPromptHints,
   buildSyncReport,
+  classifyCompatFacts,
   extractClaudelogSections,
   extractOfficialSections,
   extractCommandItems,
@@ -75,8 +76,10 @@ if (!section) {
 
 const commandItems = extractCommandItems(section.items);
 const promptHints = buildPromptHints(section.items);
+const facts = classifyCompatFacts(section.version, section.date, section.items);
 report.commandCount = commandItems.length;
 report.hintCount = promptHints.length;
+report.factCount = facts.length;
 report.newCommands = commandItems.map((item) => item.name);
 
 const registry = {
@@ -87,6 +90,7 @@ const registry = {
   sourceDigest,
   commandItems,
   promptHints,
+  facts,
 };
 
 const rendered = renderRegistry(registry);
@@ -100,7 +104,11 @@ if (!isUtf8Clean(rendered)) {
 
 await writeFile(OUTPUT_FILE, rendered, "utf8");
 await writeReport(report);
-console.log(`Wrote ${OUTPUT_FILE} from ${sourceName} v${section.version} (digest ${sourceDigest.slice(0, 12)}).`);
+// Sidecar JSON: the Phase 2 gate in scripts/claude-code-compat-2161-workflow.mjs
+// reads this instead of parsing the generated TS file. Keeps the workflow
+// runner simple and avoids loading TS at runtime.
+await writeFile(resolve(".tmp/claude-code-compat-facts.json"), JSON.stringify(facts, null, 2), "utf8");
+console.log(`Wrote ${OUTPUT_FILE} from ${sourceName} v${section.version} (digest ${sourceDigest.slice(0, 12)}, ${facts.length} facts).`);
 
 async function writeReport(payload) {
   await mkdir(resolve(".tmp"), { recursive: true });

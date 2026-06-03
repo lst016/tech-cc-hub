@@ -202,6 +202,7 @@ export function renderRegistry(registry) {
   ];
 
   return `import type { SlashCommandItem } from "../slash-command-discovery.js";
+import type { ClaudeCodeCompatFact } from "./claude-code-compat-facts.js";
 import { buildClaudeAgentTeamsPromptHint } from "../../../shared/claude-agent-teams.js";
 
 // Generated compatibility seed. Refresh with:
@@ -215,6 +216,7 @@ export type ClaudeCodeCompatRegistry = {
   sourceDigest?: string;
   commandItems: SlashCommandItem[];
   promptHints: string[];
+  facts: ClaudeCodeCompatFact[];
 };
 
 export const CLAUDE_CODE_COMPAT_REGISTRY: ClaudeCodeCompatRegistry = ${JSON.stringify(registry, null, 2)};
@@ -244,4 +246,117 @@ function addCommand(commands, rawName, description) {
 
 function stripTicks(text) {
   return text.replace(/`/g, "");
+}
+
+// classifyCompatFacts — JS port of the canonical TypeScript classifier at
+// src/electron/libs/claude/claude-code-compat-facts.ts. We keep a JS copy here
+// because sync-claude-code-compat.mjs is run as a plain Node script and cannot
+// import .ts files without a loader. When Phase 2 promotion happens, this JS
+// port should be deleted and the script switched to tsx/ts-node or the .ts
+// file should be compiled alongside the lib.
+
+const COMPAT_FACT_CATEGORY_RULES = [
+  {
+    category: "security",
+    pattern: /\b(secret|redact|exfiltrat|permission|sudo|rm\s+-rf|api[_-]?key|token|password|authorization)\b/i,
+    severity: "guardrail",
+    targets: ["runner", "release-gate", "docs"],
+  },
+  {
+    category: "runtime",
+    pattern: /\b(background session|background agent|workflow|resume|detach|stale|wait(?:ing)? input|blocked|isolated worktree|claude agents|agent view)\b/i,
+    severity: "breaking-risk",
+    targets: ["session-state", "activity-rail", "runner"],
+  },
+  {
+    category: "plugin",
+    pattern: /\b(plugin|plugin\.json|marketplace|defaultEnabled|plugin dependencies|mcp server|lsp server|tool name)\b/i,
+    severity: "compat",
+    targets: ["plugin-manager", "settings-ui", "docs"],
+  },
+  {
+    category: "platform",
+    pattern: /\b(windows|wsl|powershell|ime|clipboard|unc path|\.bat|\.cmd|\.ps1)\b/i,
+    severity: "compat",
+    platforms: ["windows"],
+    targets: ["qa", "docs"],
+  },
+  {
+    category: "model",
+    pattern: /\b(opus|sonnet|effort|xhigh|fast mode|bedrock|vertex|foundry|model alias|claude-opus|claude-sonnet)\b/i,
+    severity: "compat",
+    targets: ["runner", "settings-ui"],
+  },
+  {
+    category: "observability",
+    pattern: /\b(otel|telemetry|usage breakdown|per-mcp-server cost|event buffer|log event)\b/i,
+    severity: "info",
+    targets: ["activity-rail", "docs"],
+  },
+  {
+    category: "command",
+    pattern: /\b(\/[a-z][a-z0-9-]*|claude\s+agents|slash command|renamed\s+`?\/|added\s+`?\/)\b/i,
+    severity: "info",
+    targets: ["slash-catalog"],
+  },
+];
+
+function compatFactSlug(input, maxLen) {
+  return String(input || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, maxLen) || "fact";
+}
+
+export function buildCompatFactId(version, rawText) {
+  return `${version}#${compatFactSlug(rawText, 40)}`;
+}
+
+function classifyCompatFact(version, date, rawText) {
+  const text = String(rawText || "").trim();
+  for (const rule of COMPAT_FACT_CATEGORY_RULES) {
+    if (rule.pattern.test(text)) {
+      return {
+        id: buildCompatFactId(version, text),
+        version,
+        date,
+        category: rule.category,
+        severity: rule.severity,
+        title: text.length > 80 ? text.slice(0, 77) + "..." : text,
+        summary: text,
+        rawText: text,
+        platformTags: rule.platforms,
+        productTargets: rule.targets,
+        implemented: false,
+        testIds: [],
+      };
+    }
+  }
+  return {
+    id: buildCompatFactId(version, text),
+    version,
+    date,
+    category: "ui-copy",
+    severity: "info",
+    title: text.length > 80 ? text.slice(0, 77) + "..." : text,
+    summary: text,
+    rawText: text,
+    productTargets: ["docs"],
+    implemented: false,
+    testIds: [],
+  };
+}
+
+export function classifyCompatFacts(version, date, items) {
+  const seen = new Set();
+  const out = [];
+  if (!Array.isArray(items)) return out;
+  for (const item of items) {
+    const fact = classifyCompatFact(version, date, item);
+    if (seen.has(fact.id)) continue;
+    seen.add(fact.id);
+    out.push(fact);
+  }
+  return out;
 }
