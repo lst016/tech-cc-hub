@@ -2163,7 +2163,8 @@ export class BrowserWorkbenchManager {
     };
   }
 
-  selectPage(_pageId: number): BrowserWorkbenchState {
+  selectPage(pageId: number): BrowserWorkbenchState {
+    void pageId;
     // Single BrowserView: page selection is identity
     return this.getState();
   }
