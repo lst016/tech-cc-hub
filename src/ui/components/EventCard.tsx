@@ -130,9 +130,6 @@ const formatTime = (value?: number) => {
 const formatMinutes = (ms: number | undefined) =>
   typeof ms !== "number" ? "-" : `${(ms / 60000).toFixed(2)} min`;
 
-const formatUsd = (usd: number | undefined) =>
-  typeof usd !== "number" ? "-" : `$${usd.toFixed(2)}`;
-
 const formatTokens = (tokens: number | undefined) => {
   if (typeof tokens !== "number") return "-";
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(4)} M`;
@@ -1854,8 +1851,6 @@ const InfoItem = ({ name, value, wide = false }: { name: string; value: string; 
 );
 
 const SessionResult = ({ message }: { message: SDKResultMessage }) => {
-  const costTitle = `这是 SDK 返回的 total_cost_usd 字段，使用 SDK 内置价格表估算；自定义代理/new-api/折扣倍率/缓存计费可能与它不一致，真实扣费请以 new-api 后台为准。`;
-
   return (
     <div className="mt-5">
       <SectionLabel variant="success">本轮结果</SectionLabel>
@@ -1865,16 +1860,6 @@ const SessionResult = ({ message }: { message: SDKResultMessage }) => {
           <MetricPill label="API 耗时" value={formatMinutes(message.duration_api_ms)} />
           <MetricPill label="输入" value={formatTokens(message.usage?.input_tokens)} />
           <MetricPill label="输出" value={formatTokens(message.usage?.output_tokens)} />
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <span className="text-sm font-semibold text-ink-800">用量</span>
-          <span
-            title={costTitle}
-            className="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-sm font-semibold text-amber-700"
-          >
-            SDK返回估值 {formatUsd(message.total_cost_usd)}
-          </span>
-          <span className="text-xs text-muted">非真实扣费</span>
         </div>
       </div>
     </div>
