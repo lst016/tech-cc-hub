@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  isEmptySuccessfulRunnerResult,
   isSuccessfulRunnerResult,
   shouldSuppressRunnerErrorAfterSuccessfulResult,
 } from "../../src/shared/runner-status.js";
@@ -13,4 +14,23 @@ test("successful runner result is the only terminal state that suppresses late r
 
   assert.equal(shouldSuppressRunnerErrorAfterSuccessfulResult(true), true);
   assert.equal(shouldSuppressRunnerErrorAfterSuccessfulResult(false), false);
+});
+
+test("empty success without assistant activity is not treated as real work", () => {
+  assert.equal(
+    isEmptySuccessfulRunnerResult({ type: "result", subtype: "success", result: "" }, false),
+    true,
+  );
+  assert.equal(
+    isEmptySuccessfulRunnerResult({ type: "result", subtype: "success", result: "" }, true),
+    false,
+  );
+  assert.equal(
+    isEmptySuccessfulRunnerResult({ type: "result", subtype: "success", result: "done" }, false),
+    false,
+  );
+  assert.equal(
+    isEmptySuccessfulRunnerResult({ type: "result", subtype: "error", result: "" }, false),
+    false,
+  );
 });

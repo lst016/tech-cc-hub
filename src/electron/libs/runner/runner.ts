@@ -13,7 +13,11 @@ import { existsSync, statSync } from "fs";
 import { basename, extname, isAbsolute, join } from "path";
 
 import { buildRunnerPromptContentBlocks } from "../../../shared/runner-prompt.js";
-import { isSuccessfulRunnerResult, shouldSuppressRunnerErrorAfterSuccessfulResult } from "../../../shared/runner-status.js";
+import {
+  isEmptySuccessfulRunnerResult,
+  isSuccessfulRunnerResult,
+  shouldSuppressRunnerErrorAfterSuccessfulResult,
+} from "../../../shared/runner-status.js";
 import type { BuiltinMcpServerName } from "../../../shared/builtin-mcp-registry.js";
 import {
   CLAUDE_AGENT_TEAMS_ENV_VAR,
@@ -456,6 +460,10 @@ const PLAN_OUTPUT_FORMAT_SCHEMA = {
 
 const STRUCTURED_OUTPUT_HINT_PATTERN = /璇风敤\s*JSON|缁撴瀯鍖栬緭鍑簗杈撳嚭 JSON|output.*format.*json|json.*schema|structured.*output/i;
 
+const MAX_EMPTY_SUCCESS_AUTO_RETRIES = 2;
+const EMPTY_SUCCESS_RETRY_PROMPT =
+  "Continue the task. The previous turn returned no assistant output and made no tool calls. Do not stop or return an empty result; resume from the last concrete step and keep executing.";
+
 function getRequestedModelName(configModel: string | undefined, runtimeModel: string | undefined): string | undefined {
   const normalizedRuntimeModel = runtimeModel?.trim();
   if (normalizedRuntimeModel) {
@@ -498,6 +506,9 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   let rasterImageReads = 0;
   let requestedModelForError: string | undefined;
   let emittedSuccessfulResult = false;
+  let emittedTerminalStatus = false;
+  let observedAssistantActivity = false;
+  let emptySuccessAutoRetries = 0;
   let figmaRestAuthFailureSeen = false;
   let figmaImplementationAnchorSeen = false;
   let codeGraphRetrievalSeen = false;
@@ -1029,6 +1040,9 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
 
       for await (const rawMessage of q) {
         const message = normalizeKnownToolInputsInMessage(rawMessage);
+        if (hasAssistantActivity(message)) {
+          observedAssistantActivity = true;
+        }
         recordToolUseNamesFromMessage(message, toolUseNamesById);
         if (message.type === "system" && "subtype" in message && message.subtype === "init") {
           const sdkSessionId = message.session_id;
@@ -1038,29 +1052,52 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           }
         }
 
+        if (message.type === "result") {
+          const emptySuccess = isEmptySuccessfulRunnerResult(message, observedAssistantActivity);
+          if (emptySuccess && emptySuccessAutoRetries < MAX_EMPTY_SUCCESS_AUTO_RETRIES) {
+            emptySuccessAutoRetries += 1;
+            observedAssistantActivity = false;
+            console.warn("[runner][empty-success-auto-retry]", {
+              sessionId: session.id,
+              retry: emptySuccessAutoRetries,
+              maxRetries: MAX_EMPTY_SUCCESS_AUTO_RETRIES,
+            });
+            promptInput.enqueue(EMPTY_SUCCESS_RETRY_PROMPT, []);
+            continue;
+          }
+
+          const status = message.subtype === "success" && !emptySuccess ? "completed" : "error";
+          sendMessage(message);
+          onEvent({
+            type: "session.status",
+            payload: {
+              sessionId: session.id,
+              status,
+              title: session.title,
+              error: emptySuccess
+                ? "Runner returned an empty success without assistant output or tool calls."
+                : undefined,
+            },
+          });
+          emittedTerminalStatus = true;
+          if (isSuccessfulRunnerResult(message) && !emptySuccess) {
+            emittedSuccessfulResult = true;
+          } else {
+            promptInput.close();
+            q.close();
+          }
+          continue;
+        }
+
         sendMessage(message);
         extractPlanUpdateFromMessage(message);
         const statefulNotConnectedResult = findStatefulMcpNotConnectedResult(message, toolUseNamesById);
         if (statefulNotConnectedResult) {
           await refreshStatefulMcpServers(statefulNotConnectedResult);
         }
-
-        if (message.type === "result") {
-          const status = message.subtype === "success" ? "completed" : "error";
-          onEvent({
-            type: "session.status",
-            payload: { sessionId: session.id, status, title: session.title },
-          });
-          if (isSuccessfulRunnerResult(message)) {
-            emittedSuccessfulResult = true;
-          } else {
-            promptInput.close();
-            q.close();
-          }
-        }
       }
 
-      if (session.status === "running") {
+      if (!emittedTerminalStatus && session.status === "running") {
         onEvent({
           type: "session.status",
           payload: { sessionId: session.id, status: "completed", title: session.title },
@@ -2560,6 +2597,24 @@ function createPromptMessage(prompt: string, attachments: PromptAttachment[]): S
     },
     parent_tool_use_id: null,
   };
+}
+
+function hasAssistantActivity(message: SDKMessage): boolean {
+  if (message.type !== "assistant") return false;
+  const content = Array.isArray(message.message.content)
+    ? message.message.content
+    : [message.message.content];
+  return content.some((item) => {
+    const value: unknown = item;
+    if (typeof value === "string") return value.trim().length > 0;
+    if (!item || typeof item !== "object") return false;
+    const type = "type" in item ? item.type : undefined;
+    if (type === "text") {
+      const text = "text" in item ? item.text : undefined;
+      return typeof text === "string" && text.trim().length > 0;
+    }
+    return type === "tool_use";
+  });
 }
 
 class PromptInputQueue implements AsyncIterable<SDKUserMessage>, AsyncIterator<SDKUserMessage> {
