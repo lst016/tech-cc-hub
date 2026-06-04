@@ -7,8 +7,20 @@ import {
   unlinkSync,
 } from "fs";
 import { join } from "path";
-import { CODEX_OAUTH_BASE_URL } from "../../shared/codex-oauth.js";
-import { MINIMAX_ANTHROPIC_BASE_URL } from "../../shared/models/minimax.js";
+import {
+  CODEX_OAUTH_BASE_URL,
+  CODEX_OAUTH_DEFAULT_MODEL,
+  CODEX_OAUTH_SMALL_MODEL,
+} from "../../shared/codex-oauth.js";
+import {
+  MINIMAX_ANTHROPIC_BASE_URL,
+  MINIMAX_DEFAULT_MODEL,
+  MINIMAX_SMALL_MODEL,
+} from "../../shared/models/minimax.js";
+import {
+  isModelCompatibleWithApiProvider,
+  pickProviderCompatibleModel,
+} from "../../shared/models/model-provider-routing.js";
 import { normalizeModelRoutingWeight } from "../../shared/models/model-routing-weight.js";
 
 export type ApiType = "anthropic";
@@ -106,7 +118,7 @@ export function loadApiConfigSettings(): ApiConfigSettings {
     if (!existsSync(configPath)) {
       return createDefaultSettings();
     }
-    const raw = readFileSync(configPath, "utf8");
+    const raw = stripUtf8Bom(readFileSync(configPath, "utf8"));
     const parsed = JSON.parse(raw) as ApiConfig | ApiConfigSettings;
     return normalizeApiSettings(parsed);
   } catch (error) {
@@ -156,7 +168,7 @@ export function loadGlobalRuntimeConfig(): GlobalRuntimeConfig {
       return {};
     }
 
-    const raw = readFileSync(configPath, "utf8");
+    const raw = stripUtf8Bom(readFileSync(configPath, "utf8"));
     const parsed = JSON.parse(raw) as unknown;
 
     if (
@@ -217,17 +229,22 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
     config.wikiModel,
     ...(config.models ?? []),
   ]);
-  const dedupedModelNames = dedupedModels.map((item) => item.name);
-  const selectedModel = config.model?.trim() || dedupedModelNames[0];
+  const compatibleModels = filterProviderCompatibleModels(provider, dedupedModels);
+  const compatibleModelNames = compatibleModels.map((item) => item.name);
+  const selectedModel = pickProviderCompatibleModel(provider, config.model, compatibleModelNames[0])
+    || getProviderDefaultModel(provider, "main")
+    || compatibleModelNames[0];
   if (!selectedModel) {
     return null;
   }
 
-  if (!dedupedModelNames.includes(selectedModel)) {
-    dedupedModels.unshift({
+  if (!compatibleModelNames.includes(selectedModel)) {
+    compatibleModels.unshift({
       name: selectedModel,
+      contextWindow: DEFAULT_CONTEXT_WINDOW,
       compressionThresholdPercent: 70,
     });
+    compatibleModelNames.unshift(selectedModel);
   }
 
   return {
@@ -236,22 +253,50 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
     apiKey: config.apiKey.trim(),
     baseURL,
     model: selectedModel,
-    expertModel: normalizeRoleModel(config.expertModel, selectedModel),
-    smallModel: normalizeRoleModel(config.smallModel, normalizeRoleModel(config.analysisModel, selectedModel)),
-    imageModel: normalizeOptionalModel(config.imageModel, dedupedModelNames),
-    analysisModel: normalizeRoleModel(config.analysisModel, selectedModel),
-    embeddingModel: normalizeOptionalModel(config.embeddingModel, dedupedModelNames),
+    expertModel: normalizeProviderRoleModel(provider, config.expertModel, selectedModel),
+    smallModel: normalizeProviderRoleModel(provider, config.smallModel, normalizeProviderRoleModel(provider, config.analysisModel, getProviderDefaultModel(provider, "small") || selectedModel)),
+    imageModel: normalizeOptionalModel(config.imageModel, compatibleModelNames),
+    analysisModel: normalizeProviderRoleModel(provider, config.analysisModel, getProviderDefaultModel(provider, "small") || selectedModel),
+    embeddingModel: normalizeOptionalModel(config.embeddingModel, compatibleModelNames),
     embeddingDimension: normalizePositiveInteger(config.embeddingDimension) ?? 1536,
     embeddingBatchSize: normalizePositiveInteger(config.embeddingBatchSize) ?? 16,
-    wikiModel: normalizeOptionalModel(config.wikiModel, dedupedModelNames),
+    wikiModel: normalizeOptionalModel(config.wikiModel, compatibleModelNames),
     wikiModelCostTier: normalizeWikiModelCostTier(config.wikiModelCostTier),
     wikiModelMaxInputTokens: normalizePositiveInteger(config.wikiModelMaxInputTokens) ?? 16_000,
     wikiModelMaxOutputTokens: normalizePositiveInteger(config.wikiModelMaxOutputTokens) ?? 4_000,
-    models: dedupedModels,
+    models: compatibleModels,
     enabled: Boolean(config.enabled),
     provider,
     apiType: config.apiType ?? "anthropic",
   };
+}
+
+function stripUtf8Bom(value: string): string {
+  return value.replace(/^\uFEFF/, "");
+}
+
+function filterProviderCompatibleModels(provider: ApiProviderMode, models: ApiModelConfig[]): ApiModelConfig[] {
+  if (provider === "custom") {
+    return models;
+  }
+  return models.filter((model) => isModelCompatibleWithApiProvider(provider, model.name));
+}
+
+function getProviderDefaultModel(provider: ApiProviderMode, slot: "main" | "small"): string {
+  if (provider === "codex") {
+    return slot === "small" ? CODEX_OAUTH_SMALL_MODEL : CODEX_OAUTH_DEFAULT_MODEL;
+  }
+  if (provider === "deepseek") {
+    return slot === "small" ? "deepseek-v4-flash" : "deepseek-v4-flash";
+  }
+  if (provider === "minimax") {
+    return slot === "small" ? MINIMAX_SMALL_MODEL : MINIMAX_DEFAULT_MODEL;
+  }
+  return "";
+}
+
+function normalizeProviderRoleModel(provider: ApiProviderMode, value: string | undefined, fallbackModel: string): string {
+  return pickProviderCompatibleModel(provider, value, fallbackModel) || fallbackModel;
 }
 
 function normalizeProvider(value: unknown, baseURL: string): ApiProviderMode {
