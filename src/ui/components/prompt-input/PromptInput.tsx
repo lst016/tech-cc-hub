@@ -76,6 +76,12 @@ const EMPTY_FILE_REFERENCES: FileReferenceDraft[] = [];
 const EMPTY_MESSAGE_REFERENCES: MessageReferenceDraft[] = [];
 const EMPTY_ATTACHMENTS: PromptAttachment[] = [];
 
+function insertTextIntoNativePromptEditor(editor: HTMLElement, text: string) {
+  editor.focus();
+  if (typeof document.execCommand !== "function") return false;
+  return document.execCommand("insertText", false, text);
+}
+
 type PromptOptimizeResult = {
   success: boolean;
   optimizedPrompt?: string;
@@ -708,6 +714,9 @@ export function PromptInput({
       e.preventDefault();
       clearCompositionEnterGuard();
       const editor = promptRef.current;
+      if (editor && insertTextIntoNativePromptEditor(editor, "\n")) {
+        return;
+      }
       const currentPrompt = editor ? getPromptTextFromEditor(editor) : promptDraftRef.current;
       const fallbackCursor = cursorIndex || currentPrompt.length;
       const selection = editor ? getSelectionRangeInEditor(editor) : { start: fallbackCursor, end: fallbackCursor };
@@ -765,7 +774,9 @@ export function PromptInput({
 
     event.preventDefault();
     const editor = promptRef.current ?? event.currentTarget;
-    editor.focus();
+    if (insertTextIntoNativePromptEditor(editor, plainText)) {
+      return;
+    }
 
     const currentPrompt = getPromptTextFromEditor(editor);
     const fallbackCursor = cursorIndex || currentPrompt.length;
@@ -1293,10 +1304,10 @@ export function PromptInput({
             <ComposerModelMenu
               modelValue={selectedRuntimeModel}
               modelOptions={modelSelectOptions}
-              reasoningValue={reasoningMode}
+              reasoningMode={reasoningMode}
               disabled={disabled || availableModels.length === 0}
               onModelChange={handleRuntimeModelChange}
-              onReasoningChange={setReasoningMode}
+              onReasoningModeChange={setReasoningMode}
               placeholder={availableModels.length === 0 ? "请先配置模型" : "选择模型"}
             />
           </div>

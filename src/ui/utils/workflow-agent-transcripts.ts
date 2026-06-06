@@ -1,6 +1,7 @@
 import type { StreamMessage } from "../types.js";
 
 export type WorkflowAgentStatus = "running" | "completed" | "failed" | "killed" | "unknown";
+type WorkflowParentSessionStatus = "idle" | "running" | "completed" | "error";
 
 export type WorkflowAgentSummary = {
   id: string;
@@ -63,6 +64,11 @@ function getParentToolUseId(message: StreamMessage): string | undefined {
   return typeof parentToolUseId === "string" && parentToolUseId.trim() ? parentToolUseId.trim() : undefined;
 }
 
+function getMessageTaskId(message: StreamMessage): string | undefined {
+  const taskId = (message as { task_id?: unknown }).task_id;
+  return typeof taskId === "string" && taskId.trim() ? taskId.trim() : undefined;
+}
+
 function getLinkedToolUseIds(message: StreamMessage): string[] {
   const ids: string[] = [];
   for (const item of getContentItems(message)) {
@@ -79,6 +85,13 @@ function getLinkedToolUseIds(message: StreamMessage): string[] {
   return ids;
 }
 
+function isUnlinkedTaskFallbackMessage(message: StreamMessage): boolean {
+  if (message.type !== "user") return false;
+  const contentItems = getContentItems(message);
+  return contentItems.length > 0
+    && contentItems.every((item) => isRecord(item) && item.type === "tool_result");
+}
+
 function isTaskTranscriptSubtype(subtype: string | undefined) {
   return subtype === "task_started"
     || subtype === "task_progress"
@@ -90,10 +103,14 @@ function roleLabel(taskType?: string, workflowName?: string): string {
   if (workflowName) return workflowName;
   if (taskType === "sub_agent") return "Subagent";
   if (taskType === "local_workflow") return "Workflow";
-  return "Background task";
+  if (taskType === "background" || taskType === "background_task") return "Background task";
+  return "Task";
 }
 
-export function buildWorkflowAgentSummaries(messages: StreamMessage[]): WorkflowAgentSummary[] {
+export function buildWorkflowAgentSummaries(
+  messages: StreamMessage[],
+  parentSessionStatus?: WorkflowParentSessionStatus,
+): WorkflowAgentSummary[] {
   const agents = new Map<string, MutableWorkflowAgentSummary>();
   const taskByToolUseId = new Map<string, string>();
   const hiddenTasks = new Set<string>();
@@ -187,6 +204,10 @@ export function buildWorkflowAgentSummaries(messages: StreamMessage[]): Workflow
       continue;
     }
 
+    if (appendToAgent(getMessageTaskId(message), message)) {
+      continue;
+    }
+
     const parentToolUseId = getParentToolUseId(message);
     if (appendToAgent(parentToolUseId ? taskByToolUseId.get(parentToolUseId) : undefined, message)) {
       continue;
@@ -199,17 +220,19 @@ export function buildWorkflowAgentSummaries(messages: StreamMessage[]): Workflow
       continue;
     }
 
-    if (activeTaskIds.length === 1) {
+    if (activeTaskIds.length === 1 && isUnlinkedTaskFallbackMessage(message)) {
       appendToAgent(activeTaskIds[0], message);
     }
   }
+
+  const fallbackStatus = getTerminalFallbackStatus(parentSessionStatus);
 
   return Array.from(agents.values()).map((agent) => ({
     id: agent.id,
     taskId: agent.taskId,
     title: agent.title,
     role: agent.role,
-    status: agent.status,
+    status: agent.status === "running" && fallbackStatus ? fallbackStatus : agent.status,
     latestSummary: agent.latestSummary,
     messageCount: agent.transcript.length,
     toolCount: countToolUses(agent.transcript),
@@ -217,4 +240,10 @@ export function buildWorkflowAgentSummaries(messages: StreamMessage[]): Workflow
     updatedAt: agent.updatedAt,
     transcript: agent.transcript,
   }));
+}
+
+function getTerminalFallbackStatus(status: WorkflowParentSessionStatus | undefined): WorkflowAgentStatus | undefined {
+  if (status === "completed") return "completed";
+  if (status === "error") return "failed";
+  return undefined;
 }

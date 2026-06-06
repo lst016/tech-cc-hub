@@ -165,13 +165,20 @@ test("composer model control uses real configured models in the merged white men
   assert.match(promptInputSource, /getRoutedModelOptionsForProfiles/);
   assert.match(promptInputSource, /modelOptions=\{modelSelectOptions\}/);
   assert.match(promptInputSource, /onModelChange=\{handleRuntimeModelChange\}/);
+  assert.match(promptInputSource, /reasoningMode=\{reasoningMode\}/);
+  assert.match(promptInputSource, /onReasoningModeChange=\{setReasoningMode\}/);
   assert.match(composerModelMenuSource, /Context/);
+  assert.match(composerModelMenuSource, /思维强度/);
+  assert.match(composerModelMenuSource, /REASONING_OPTIONS/);
+  assert.match(composerModelMenuSource, /closeMenu\(\);/);
   assert.match(composerModelMenuSource, /getContextDisplay/);
   assert.match(composerModelMenuSource, /contextWindow/);
   assert.match(composerModelMenuSource, /detailLabel: option\.badge/);
   assert.match(promptInputSource, /contextWindow: option\.contextWindow/);
-  assert.match(composerModelMenuSource, /\{ value: "xhigh", label: "超高" \}/);
-  assert.match(composerModelMenuSource, /\{ value: "disabled", label: "关闭" \}/);
+  assert.match(composerModelMenuSource, /placeholder="筛选模型"/);
+  assert.match(composerModelMenuSource, /filterComposerModelOptions/);
+  assert.doesNotMatch(composerModelMenuSource, /思考强度/);
+  assert.doesNotMatch(composerModelMenuSource, /THINKING_OPTIONS/);
   assert.doesNotMatch(composerModelMenuSource, /label: "max"/);
   assert.doesNotMatch(composerModelMenuSource, /reasoningValue === "disabled" \? "high" : "disabled"/);
   assert.doesNotMatch(composerModelMenuSource, /Ultimate/);
@@ -265,7 +272,7 @@ test("minimax official profile uses token plan endpoint and context windows", ()
   });
 
   assert.equal(normalized.provider, "minimax");
-  assert.equal(normalized.baseURL, "https://api.minimax.io/anthropic");
+  assert.equal(normalized.baseURL, "https://api.minimaxi.com/anthropic");
   assert.equal(normalized.model, "MiniMax-M3");
   assert.equal(normalized.expertModel, "MiniMax-M3");
   assert.equal(normalized.smallModel, "MiniMax-M2.7-highspeed");
@@ -274,13 +281,54 @@ test("minimax official profile uses token plan endpoint and context windows", ()
   assert.equal(normalized.models?.find((model) => model.name === "MiniMax-M2.7-highspeed")?.contextWindow, 204_800);
 });
 
+test("official provider profile names recover from legacy mojibake", () => {
+  const minimaxProfile = createMiniMaxOfficialProfile();
+  const normalizedMiniMaxProfile = normalizeProfile({
+    ...minimaxProfile,
+    name: "MiniMax 瀹樻柟",
+    apiKey: "sk-cp-test",
+  });
+  const normalizedMiniMaxVariant = normalizeProfile({
+    ...minimaxProfile,
+    name: "MiniMax 瀚樟柿",
+    apiKey: "sk-cp-test",
+  });
+  const deepseekProfile = createDeepSeekOfficialProfile();
+  const normalizedDeepSeekProfile = normalizeProfile({
+    ...deepseekProfile,
+    name: "DeepSeek 瀹樻柟",
+    apiKey: "sk-test",
+  });
+  const normalizedDefaultProfile = normalizeProfile({
+    id: "default",
+    name: "榛樿閰嶇疆",
+    apiKey: "sk-test",
+    baseURL: "https://example.com/v1",
+    model: "gpt-5.5",
+    expertModel: "gpt-5.5",
+    smallModel: "gpt-5.5",
+    analysisModel: "gpt-5.5",
+    models: [{ name: "gpt-5.5" }],
+    enabled: true,
+    provider: "custom" as const,
+    apiType: "anthropic" as const,
+  });
+  const configStoreSource = readFileSync("src/electron/libs/config-store.ts", "utf8");
+
+  assert.equal(normalizedMiniMaxProfile.name, "MiniMax 官方");
+  assert.equal(normalizedMiniMaxVariant.name, "MiniMax 官方");
+  assert.equal(normalizedDeepSeekProfile.name, "DeepSeek 官方");
+  assert.equal(normalizedDefaultProfile.name, "默认配置");
+  assert.match(configStoreSource, /normalizeKnownConfigName/);
+});
+
 test("minimax provider routes only minimax models and resolves casing", () => {
   const profiles = [
     {
       id: "official-minimax",
       name: "MiniMax Official",
       apiKey: "sk-cp-test",
-      baseURL: "https://api.minimax.io/anthropic",
+      baseURL: "https://api.minimaxi.com/anthropic",
       model: "MiniMax-M3",
       expertModel: "MiniMax-M3",
       smallModel: "MiniMax-M2.7-highspeed",
@@ -494,6 +542,55 @@ test("shared model routing merges enabled profile models into one editable surfa
   const withoutImageModels = applySharedModelRoutingPatch(nextProfiles, { imageModel: "" });
   assert.equal(withoutImageModels[0]?.imageModel, undefined);
   assert.equal(withoutImageModels[1]?.imageModel, undefined);
+});
+
+test("shared model routing shows optional slots configured on later enabled profiles", () => {
+  const profiles = [
+    {
+      id: "codex",
+      name: "Codex OAuth",
+      apiKey: "{}",
+      baseURL: "https://chatgpt.com",
+      model: "gpt-5.5",
+      expertModel: "gpt-5.5",
+      smallModel: "gpt-5.3-codex-spark",
+      analysisModel: "gpt-5.3-codex-spark",
+      imageModel: undefined,
+      models: [{ name: "gpt-5.5" }, { name: "gpt-5.3-codex-spark" }],
+      enabled: true,
+      provider: "codex" as const,
+      apiType: "anthropic" as const,
+    },
+    {
+      id: "gateway",
+      name: "Gateway",
+      apiKey: "sk-test",
+      baseURL: "https://example.com/v1",
+      model: "DeepSeek-V4-Pro",
+      expertModel: "gpt-5.5",
+      smallModel: "MiniMax-M3",
+      analysisModel: "MiniMax-M3",
+      imageModel: "gemini-3.1-pro-preview",
+      embeddingModel: "Qwen3-Embedding-8B",
+      wikiModel: "MiniMax-M3",
+      models: [
+        { name: "DeepSeek-V4-Pro" },
+        { name: "gpt-5.5" },
+        { name: "MiniMax-M3" },
+        { name: "gemini-3.1-pro-preview" },
+        { name: "Qwen3-Embedding-8B" },
+      ],
+      enabled: true,
+      provider: "custom" as const,
+      apiType: "anthropic" as const,
+    },
+  ];
+
+  const state = buildSharedModelRoutingState(profiles);
+
+  assert.equal(state.imageModel, "gemini-3.1-pro-preview");
+  assert.equal(state.embeddingModel, "Qwen3-Embedding-8B");
+  assert.equal(state.wikiModel, "MiniMax-M3");
 });
 
 test("profile normalization preserves configured context window for selected role models", () => {

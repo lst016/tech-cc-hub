@@ -130,9 +130,108 @@ describe("workflow agent transcripts", () => {
     ]);
 
     assert.equal(agents.length, 1);
+    assert.equal(agents[0]?.role, "Task");
     assert.equal(agents[0]?.messageCount, 3);
     assert.equal(agents[0]?.transcript[0]?.type, "system");
     assert.equal(agents[0]?.transcript[1]?.type, "user");
+  });
+
+  it("does not place main assistant messages into the active agent transcript", () => {
+    const agents = buildWorkflowAgentSummaries([
+      {
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-active",
+        tool_use_id: "tool-active",
+        description: "Smoke test the hook script",
+      } as never,
+      {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "text",
+              text: "esbuild does not accept --loader=tsx, so I fixed the script.",
+            },
+          ],
+        },
+      } as never,
+      {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "main-edit",
+              name: "Edit",
+              input: { file_path: ".claude/scripts/post-edit-check.sh" },
+            },
+          ],
+        },
+      } as never,
+      {
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task-active",
+        summary: "Smoke test the hook script",
+      } as never,
+    ]);
+
+    assert.equal(agents.length, 1);
+    assert.equal(agents[0]?.messageCount, 2);
+    assert.deepEqual(
+      agents[0]?.transcript.map((message) => message.type),
+      ["system", "system"],
+    );
+    assert.equal(agents[0]?.toolCount, 0);
+  });
+
+  it("keeps directly task-tagged child messages even without parent metadata", () => {
+    const agents = buildWorkflowAgentSummaries([
+      {
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-tagged",
+        tool_use_id: "tool-tagged",
+        description: "Run tagged task",
+      } as never,
+      {
+        type: "assistant",
+        task_id: "task-tagged",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "tagged-read",
+              name: "Read",
+              input: { file_path: "src/file.ts" },
+            },
+          ],
+        },
+      } as never,
+    ]);
+
+    assert.equal(agents.length, 1);
+    assert.equal(agents[0]?.messageCount, 2);
+    assert.equal(agents[0]?.toolCount, 1);
+  });
+
+  it("labels explicit background task types as background tasks", () => {
+    const agents = buildWorkflowAgentSummaries([
+      {
+        type: "system",
+        subtype: "task_started",
+        task_id: "background-task",
+        tool_use_id: "tool-background-task",
+        task_type: "background_task",
+        description: "Run scheduled follow-up",
+      } as never,
+    ]);
+
+    assert.equal(agents[0]?.role, "Background task");
   });
 
   it("links direct tool results by the task tool id when parent metadata is missing", () => {
@@ -203,5 +302,46 @@ describe("workflow agent transcripts", () => {
     );
     assert.equal(agents[0]?.latestSummary, "Reading ChatListController.java");
     assert.equal(agents[0]?.status, "completed");
+  });
+
+  it("settles implicit running tasks when the parent session completed", () => {
+    const messages: StreamMessage[] = [
+      {
+        type: "system",
+        subtype: "task_started",
+        task_id: "typecheck-1",
+        tool_use_id: "tool-typecheck-1",
+        description: "Typecheck the project for errors",
+      } as never,
+      {
+        type: "system",
+        subtype: "task_notification",
+        task_id: "typecheck-1",
+        summary: "Typecheck the project for errors",
+      } as never,
+      {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "done",
+      } as never,
+    ];
+
+    assert.equal(buildWorkflowAgentSummaries(messages, "running")[0]?.status, "running");
+    assert.equal(buildWorkflowAgentSummaries(messages, "completed")[0]?.status, "completed");
+  });
+
+  it("marks implicit running tasks failed when the parent session errors", () => {
+    const agents = buildWorkflowAgentSummaries([
+      {
+        type: "system",
+        subtype: "task_started",
+        task_id: "typecheck-error",
+        tool_use_id: "tool-typecheck-error",
+        description: "Typecheck the project for errors",
+      } as never,
+    ], "error");
+
+    assert.equal(agents[0]?.status, "failed");
   });
 });

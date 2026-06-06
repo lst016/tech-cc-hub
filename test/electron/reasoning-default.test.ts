@@ -11,8 +11,19 @@ const runnerSource = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
 
 test("chat composer defaults reasoning to xhigh", () => {
   assert.match(appStoreSource, /reasoningMode:\s*"xhigh"/);
-  assert.match(promptInputSource, /reasoningValue=\{reasoningMode\}/);
-  assert.match(composerModelMenuSource, /\{ value: "xhigh", label: "超高" \}/);
+  assert.match(promptInputSource, /const reasoningMode = useAppStore\(\(state\) => state\.reasoningMode\)/);
+  assert.match(promptInputSource, /const setReasoningMode = useAppStore\(\(state\) => state\.setReasoningMode\)/);
+  assert.match(promptInputSource, /reasoningMode=\{reasoningMode\}/);
+  assert.match(promptInputSource, /onReasoningModeChange=\{setReasoningMode\}/);
+  assert.match(composerModelMenuSource, /REASONING_OPTIONS/);
+  assert.match(composerModelMenuSource, /思维强度/);
+});
+
+test("chat composer model menu includes fuzzy model filtering", () => {
+  assert.match(composerModelMenuSource, /placeholder="筛选模型"/);
+  assert.match(composerModelMenuSource, /filterComposerModelOptions\(displayOptions, modelFilter\)/);
+  assert.match(composerModelMenuSource, /haystack\.includes\(part\)/);
+  assert.match(composerModelMenuSource, /closeMenu\(\);/);
 });
 
 test("task workflow defaults reasoning to xhigh", () => {
