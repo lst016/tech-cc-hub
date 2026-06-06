@@ -53,6 +53,11 @@ tags:
 - CI Workflow：[.github/workflows/release.yml](../../.github/workflows/release.yml)
 - 详细流程：[github-release-autoupdate-runbook.md](github-release-autoupdate-runbook.md)
 
+## 版本记录
+
+- [v0.1.41 版本更新记录](release-notes-v0.1.41.md)
+- [v0.1.39 Release Notes](release-notes-v0.1.39.md)
+
 ## 操作手册
 
 | 文档 | 说明 |
