@@ -1,5 +1,5 @@
-export const MINIMAX_OPENAI_BASE_URL = "https://api.minimax.io/v1";
-export const MINIMAX_ANTHROPIC_BASE_URL = "https://api.minimax.io/anthropic";
+export const MINIMAX_OPENAI_BASE_URL = "https://api.minimaxi.com/v1";
+export const MINIMAX_ANTHROPIC_BASE_URL = "https://api.minimaxi.com/anthropic";
 export const MINIMAX_DEFAULT_MODEL = "MiniMax-M3";
 export const MINIMAX_SMALL_MODEL = "MiniMax-M2.7-highspeed";
 export const MINIMAX_M3_CONTEXT_WINDOW = 1_000_000;

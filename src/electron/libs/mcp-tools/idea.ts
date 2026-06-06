@@ -10,11 +10,12 @@ import {
   focusIdea,
   getIdeaStatus,
   openIdea,
+  readIdeaRunConsoleLogs,
+  rerunIdeaRunConfiguration,
   selectIdeaInstallation,
   waitForIdeaReady,
 } from "../idea-launcher.js";
 import {
-  restartSpringBoot,
   runSpringBoot,
 } from "../spring-boot-runner.js";
 import { toTextToolResult } from "./tool-result.js";
@@ -24,6 +25,7 @@ export const IDEA_TOOL_NAMES = [
   "idea_open",
   "idea_run",
   "idea_restart",
+  "idea_read_logs",
   "idea_focus",
   "idea_wait_ready",
 ] as const;
@@ -60,9 +62,34 @@ const IDEA_RUN_SCHEMA = {
 };
 
 const IDEA_RESTART_SCHEMA = {
-  ...IDEA_RUN_SCHEMA,
-  pid: z.number().int().positive().optional().describe("Optional old Spring Boot PID to kill before restarting."),
-  strategy: z.enum(["kill-and-run", "devtools-compile"]).optional().describe("kill-and-run kills pid/port listeners then runs; devtools-compile runs compile/classes to trigger Spring Boot DevTools."),
+  projectPath: z.string().trim().min(1).optional().describe("Optional IDEA project directory to bring to the front before rerunning the current Run Configuration."),
+  filePath: z.string().trim().min(1).optional().describe("Optional file to open in IDEA before rerunning the current Run Configuration."),
+  line: z.number().int().positive().optional().describe("Optional 1-based line number for filePath."),
+  column: z.number().int().positive().optional().describe("Optional 1-based column number for filePath."),
+  version: z.string().trim().min(1).optional().describe("Optional IDEA version selector, for example 2023.2.8 or 2026.1."),
+  launcherPath: z.string().trim().min(1).optional().describe("Optional exact IDEA launcher path for machines with multiple IDEA versions."),
+  edition: EDITION_SCHEMA.optional().describe("IDEA edition preference. Defaults to any."),
+  allowLaunch: z.boolean().optional().describe("When false, fail if IDEA is not already running instead of launching it."),
+  shortcut: z.enum(["ctrl-f5", "shift-f10"]).optional().describe("IDE shortcut to send. Defaults to ctrl-f5, IDEA's Rerun action on Windows keymaps. shift-f10 runs the selected configuration."),
+  focusDelayMs: z.number().int().min(0).max(10000).optional().describe("Delay after opening/focusing a project before sending the rerun shortcut. Defaults to 1200ms."),
+};
+
+const IDEA_READ_LOGS_SCHEMA = {
+  projectPath: z.string().trim().min(1).optional().describe("Optional IDEA project directory to bring to the front before reading the current Run console logs."),
+  filePath: z.string().trim().min(1).optional().describe("Optional file to open in IDEA before reading logs."),
+  line: z.number().int().positive().optional().describe("Optional 1-based line number for filePath."),
+  column: z.number().int().positive().optional().describe("Optional 1-based column number for filePath."),
+  version: z.string().trim().min(1).optional().describe("Optional IDEA version selector, for example 2023.2.8 or 2026.1."),
+  launcherPath: z.string().trim().min(1).optional().describe("Optional exact IDEA launcher path for machines with multiple IDEA versions."),
+  edition: EDITION_SCHEMA.optional().describe("IDEA edition preference. Defaults to any."),
+  allowLaunch: z.boolean().optional().describe("When false, fail if IDEA is not already running instead of launching it."),
+  openRunWindow: z.boolean().optional().describe("Open IDEA's Run tool window before copying logs. Defaults to true."),
+  runWindowShortcut: z.string().trim().min(1).optional().describe("Windows SendKeys shortcut for the Run tool window. Defaults to %4 (Alt+4 in IDEA default keymaps)."),
+  copyDelayMs: z.number().int().min(100).max(10000).optional().describe("Delay after copying before reading clipboard text. Defaults to 800ms."),
+  focusDelayMs: z.number().int().min(0).max(10000).optional().describe("Delay after opening/focusing a project before reading logs. Defaults to 1200ms."),
+  tailLines: z.number().int().min(1).max(5000).optional().describe("Return only the last N lines. Defaults to 400."),
+  maxChars: z.number().int().min(1000).max(500000).optional().describe("Return only the last N characters after line trimming. Defaults to 60000."),
+  restoreClipboard: z.boolean().optional().describe("Restore the previous clipboard after copying logs. Defaults to true."),
 };
 
 const IDEA_FOCUS_SCHEMA = {};
@@ -148,7 +175,7 @@ export function getIdeaMcpServer(): McpSdkServerConfigWithInstance {
 
   const runHandler = tool(
     "idea_run",
-    "Start a local Spring Boot project with Maven or Gradle and return PID/logPath plus verification hints. This is a service runner companion for IDEA; launch success is not readiness proof.",
+    "Explicit escape hatch: start a local Spring Boot project from tech-cc-hub with Maven or Gradle and return PID/logPath plus verification hints. Do not use this when the user asks to restart the project already running inside IDEA.",
     IDEA_RUN_SCHEMA,
     async (input) => {
       const result = await runSpringBoot(input);
@@ -158,10 +185,20 @@ export function getIdeaMcpServer(): McpSdkServerConfigWithInstance {
 
   const restartHandler = tool(
     "idea_restart",
-    "Restart a local Spring Boot project. kill-and-run can stop a PID or port listener before launching; devtools-compile runs compile/classes to trigger Spring Boot DevTools in an already-running app.",
+    "Rerun the current IntelliJ IDEA Run Configuration for the requested/already-open project by focusing IDEA and sending the IDE rerun shortcut. This does not start Maven, Gradle, bootRun, or java -jar from tech-cc-hub.",
     IDEA_RESTART_SCHEMA,
     async (input) => {
-      const result = await restartSpringBoot(input);
+      const result = await rerunIdeaRunConfiguration(input);
+      return toTextToolResult(result, !result.success);
+    },
+  );
+
+  const readLogsHandler = tool(
+    "idea_read_logs",
+    "Read the currently running IntelliJ IDEA Run console logs by focusing IDEA, opening the Run tool window, copying console text, and restoring the clipboard. Use this after idea_restart or when the user asks for logs from the project running inside IDEA; do not start Maven/Gradle just to get logs.",
+    IDEA_READ_LOGS_SCHEMA,
+    async (input) => {
+      const result = await readIdeaRunConsoleLogs(input);
       return toTextToolResult(result, !result.success);
     },
   );
@@ -208,7 +245,7 @@ export function getIdeaMcpServer(): McpSdkServerConfigWithInstance {
   return createSdkMcpServer({
     name: IDEA_TOOLS_SERVER_NAME,
     version: IDEA_MCP_SERVER_VERSION,
-    tools: [statusHandler, openHandler, runHandler, restartHandler, focusHandler, waitReadyHandler],
+    tools: [statusHandler, openHandler, runHandler, restartHandler, readLogsHandler, focusHandler, waitReadyHandler],
   });
 
 }

@@ -239,8 +239,9 @@ const BUILTIN_TOOL_GROUPS: Record<string, BuiltinToolGroup[]> = {
       tools: [
         { name: "idea_status", description: "检测已安装的 IDEA 启动器和正在运行的 IDEA 进程。" },
         { name: "idea_open", description: "通过 Toolbox 脚本或最新 IDEA 启动器打开项目/文件；可用时优先复用已运行 IDEA。" },
-        { name: "idea_run", description: "启动 Spring Boot 项目并返回 PID、日志路径和就绪检查提示。" },
-        { name: "idea_restart", description: "通过 PID/端口重启 Spring Boot，或用 compile/classes 触发 DevTools 重启。" },
+        { name: "idea_run", description: "Explicit escape hatch: start Spring Boot from tech-cc-hub with Maven/Gradle when the user asks for an external service process." },
+        { name: "idea_restart", description: "Rerun the current IntelliJ IDEA Run Configuration for the requested/open project; does not start Maven/Gradle from tech-cc-hub." },
+        { name: "idea_read_logs", description: "Read the current IntelliJ IDEA Run console logs for the requested/open project; restores the clipboard and does not start Maven/Gradle." },
         { name: "idea_focus", description: "把已运行的 IDEA 窗口拉到前台，不启动新的 IDE。" },
         { name: "idea_wait_ready", description: "在启动或复用请求后等待 IDEA 进入运行状态。" },
       ],

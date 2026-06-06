@@ -199,7 +199,7 @@ function normalizeProvider(value: unknown, baseURL: string): "custom" | "deepsee
     const hostname = new URL(baseURL.trim()).hostname;
     if (hostname === "api.deepseek.com") return "deepseek";
     if (hostname === "chatgpt.com") return "codex";
-    if (hostname === "api.minimax.io") return "minimax";
+    if (hostname === "api.minimax.io" || hostname === "api.minimaxi.com") return "minimax";
     return "custom";
   } catch {
     return "custom";
@@ -303,7 +303,7 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
 
   return {
     ...profile,
-    name: profile.name.trim() || "未命名配置",
+    name: normalizeKnownProfileName(profile.name, provider),
     apiKey: profile.apiKey.trim(),
     baseURL: normalizeBaseURL(profile.baseURL, provider),
     model: selectedModel,
@@ -325,6 +325,20 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
     provider,
     apiType: "anthropic",
   };
+}
+
+function normalizeKnownProfileName(name: string, provider: ApiProviderMode): string {
+  const trimmed = name.trim();
+  if (provider === "minimax" && /^MiniMax\s+(官方|瀹樻柟|瀚樟柿)$/.test(trimmed)) {
+    return "MiniMax 官方";
+  }
+  if (provider === "deepseek" && /^DeepSeek\s+(官方|瀹樻柟)$/.test(trimmed)) {
+    return "DeepSeek 官方";
+  }
+  if (trimmed === "榛樿閰嶇疆") {
+    return "默认配置";
+  }
+  return trimmed || "未命名配置";
 }
 
 function filterProviderCompatibleModels(provider: ApiProviderMode, models: ApiModelConfigProfile[]): ApiModelConfigProfile[] {

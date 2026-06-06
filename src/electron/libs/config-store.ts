@@ -249,7 +249,7 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
 
   return {
     id: config.id?.trim() || crypto.randomUUID(),
-    name: config.name.trim(),
+    name: normalizeKnownConfigName(config.name, provider),
     apiKey: config.apiKey.trim(),
     baseURL,
     model: selectedModel,
@@ -269,6 +269,20 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
     provider,
     apiType: config.apiType ?? "anthropic",
   };
+}
+
+function normalizeKnownConfigName(name: string, provider: ApiProviderMode): string {
+  const trimmed = name.trim();
+  if (provider === "minimax" && /^MiniMax\s+(官方|瀹樻柟|瀚樟柿)$/.test(trimmed)) {
+    return "MiniMax 官方";
+  }
+  if (provider === "deepseek" && /^DeepSeek\s+(官方|瀹樻柟)$/.test(trimmed)) {
+    return "DeepSeek 官方";
+  }
+  if (trimmed === "榛樿閰嶇疆") {
+    return "默认配置";
+  }
+  return trimmed;
 }
 
 function stripUtf8Bom(value: string): string {
@@ -308,7 +322,7 @@ function normalizeProvider(value: unknown, baseURL: string): ApiProviderMode {
     const hostname = new URL(baseURL.trim()).hostname;
     if (hostname === "api.deepseek.com") return "deepseek";
     if (hostname === "chatgpt.com") return "codex";
-    if (hostname === "api.minimax.io") return "minimax";
+    if (hostname === "api.minimax.io" || hostname === "api.minimaxi.com") return "minimax";
     return "custom";
   } catch {
     return "custom";
@@ -441,11 +455,6 @@ function normalizePercent(value: number | null | undefined): number | undefined 
   }
 
   return normalized;
-}
-
-function normalizeRoleModel(value: string | undefined, fallbackModel: string): string {
-  const normalized = value?.trim();
-  return normalized || fallbackModel;
 }
 
 function normalizeOptionalModel(value: string | undefined, availableModels: string[]): string | undefined {

@@ -250,7 +250,11 @@ export class CronService {
     const existing = this.inFlightJobs.get(job.id);
     if (existing) return existing;
 
-    const runPromise = this.executeJobInner(job, preparedConversationId, triggerSource);
+    const runPromise = (async () => {
+      const latestJob = await this.repo.getById(job.id);
+      if (!latestJob || !latestJob.enabled) return;
+      await this.executeJobInner(latestJob, preparedConversationId, triggerSource);
+    })();
     this.inFlightJobs.set(job.id, runPromise);
     try {
       await runPromise;
@@ -464,7 +468,7 @@ export class CronService {
       const fireCount = policy === "catchup" ? Math.min(missed, CATCHUP_MAX_FIRES) : 1;
       for (let i = 0; i < fireCount; i++) {
         // catchup 触发走 trigger_source='catchup'，但这里复用 executeJob 路径
-        void this.executeJob(job, undefined, "catchup");
+        await this.executeJob(job, undefined, "catchup");
         firedCount += 1;
       }
     }

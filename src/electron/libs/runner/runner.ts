@@ -18,6 +18,7 @@ import {
   isSuccessfulRunnerResult,
   shouldSuppressRunnerErrorAfterSuccessfulResult,
 } from "../../../shared/runner-status.js";
+import { canMainModelReadImages } from "../../../shared/models/model-capabilities.js";
 import type { BuiltinMcpServerName } from "../../../shared/builtin-mcp-registry.js";
 import {
   CLAUDE_AGENT_TEAMS_ENV_VAR,
@@ -101,7 +102,6 @@ import {
   buildBrowserWorkbenchPromptAppend,
   buildBuiltinMcpRegistryPromptAppend,
   buildClaudeCodeCompatFeaturePromptAppend,
-  buildClaudeCode2139FeaturePromptAppend,
   buildDesignParityPromptAppend,
   buildFeishuDocumentFetchPromptAppend,
   buildGlobalRuntimeSystemPromptExtAppend,
@@ -193,6 +193,9 @@ const FIGMA_URL_PATTERN = /https?:\/\/(?:www\.)?figma\.com\/(?:design|file|proto
 const FIGMA_IMPLEMENTATION_ANCHOR_TOOL_NAMES = new Set([
   "design_inspect_image",
 ]);
+const FIGMA_SVG_ASSET_TOOL_NAMES = new Set([
+  "figma_get_image_urls",
+]);
 const FILE_MUTATION_TOOL_NAMES = new Set(["Edit", "MultiEdit", "Write"]);
 
 // SDK built-in cron tools are blocked in favor of tech-cc-hub MCP cron tools
@@ -232,6 +235,8 @@ const SOURCE_CODE_READ_EXTENSIONS = new Set([
 ]);
 const BASH_CODE_EXPLORATION_COMMAND_PATTERN =
   /(?:^|[;&|()\s])(?:rg|grep|find|fd|tree|findstr)(?:\.exe)?(?=\s|$)|\bgit\s+(?:grep|ls-files)\b|\b(?:Get-ChildItem|Select-String)\b/i;
+const AUTHENTICATED_BROWSER_URL_HOST_PATTERN =
+  /(?:^|\.)teambition\.pook\.com$|(?:^|\.)feishu\.cn$|(?:^|\.)larksuite\.com$/i;
 
 function isSdkBuiltinCronTool(toolName: string): boolean {
   return SDK_BUILTIN_CRON_TOOLS.has(toolName);
@@ -511,11 +516,14 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   let emptySuccessAutoRetries = 0;
   let figmaRestAuthFailureSeen = false;
   let figmaImplementationAnchorSeen = false;
+  let figmaSvgAssetSeen = false;
   let codeGraphRetrievalSeen = false;
   let latestGlobalRuntimeConfig: unknown = null;
   let currentDisplayPrompt = displayPrompt;
+  let figmaContextSeen = hasFigmaContext(currentDisplayPrompt, session.lastPrompt);
   let latestWorkspaceContext = normalizeRunnerWorkspaceContext(workspaceContext);
   let requiresFigmaImplementationAnchor = shouldRequireFigmaImplementationAnchor(currentDisplayPrompt);
+  let requiresFigmaSvgAsset = shouldRequireFigmaSvgAsset(currentDisplayPrompt);
   const desiredBuiltinMcpServerNames = new Set<BuiltinMcpServerName>();
   let activeBuiltinMcpServerNames = new Set<BuiltinMcpServerName>();
   let latestFigmaToolMode: "core" | "full" = "full";
@@ -807,6 +815,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         : undefined;
       const hooks = buildQualityHooks(resolvedCwd, {
         config,
+        mainModelName: effectiveModel,
         getPrompt: () => currentDisplayPrompt,
         projectCwd,
         sessionId: session.id,
@@ -819,6 +828,13 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         },
         onFigmaImplementationAnchor: () => {
           figmaImplementationAnchorSeen = true;
+          figmaContextSeen = true;
+        },
+        onFigmaContext: () => {
+          figmaContextSeen = true;
+        },
+        onFigmaSvgAsset: () => {
+          figmaSvgAssetSeen = true;
         },
       });
       const enabledBuiltinMcpServerNames = [...desiredBuiltinMcpServerNames];
@@ -964,6 +980,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                 return message ? { behavior: "deny", message } : null;
               },
               () => {
+                const message = getFigmaSvgAssetDenyMessage(
+                  toolName, effectiveInput, requiresFigmaSvgAsset, figmaContextSeen, figmaSvgAssetSeen,
+                );
+                return message ? { behavior: "deny", message } : null;
+              },
+              () => {
                 const message = getFigmaOfficialRouteDenyMessage(
                   toolName, syncedGlobalRuntimeConfig, figmaRestAuthFailureSeen,
                 );
@@ -975,6 +997,14 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               () => toolName === "Skill" && shouldDenyExternalBrowseSkill(effectiveInput, currentDisplayPrompt)
                 ? { behavior: "deny", message: "This task is testing the built-in tech-cc-hub browser workbench. Use tech-cc-hub browser MCP tools instead of the external browse skill." }
                 : null,
+              () => {
+                const message = getAuthenticatedUrlWebFetchDenyMessage(
+                  toolName,
+                  effectiveInput,
+                  runtimeProfile.includeBrowserPrompt,
+                );
+                return message ? { behavior: "deny", message } : null;
+              },
             ];
 
             for (const guard of denyGuards) {
@@ -1000,7 +1030,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
 
             if (toolName === "Read" && isRecord(effectiveInput)) {
               const filePath = typeof effectiveInput.file_path === "string" ? effectiveInput.file_path.trim() : "";
-              if (!shouldPreprocessImageRead(config, filePath)) {
+              if (!canMainModelReadImages(effectiveModel) && !shouldPreprocessImageRead(config, filePath, effectiveModel)) {
                 const imageReadCheck = checkRasterImageRead(filePath, rasterImageReads);
                 if (imageReadCheck.denyMessage) {
                   return {
@@ -1165,6 +1195,9 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         latestWorkspaceContext = normalizeRunnerWorkspaceContext(appendOptions.workspaceContext);
       }
       requiresFigmaImplementationAnchor = shouldRequireFigmaImplementationAnchor(currentDisplayPrompt);
+      requiresFigmaSvgAsset = shouldRequireFigmaSvgAsset(currentDisplayPrompt);
+      figmaContextSeen = figmaContextSeen || hasFigmaContext(currentDisplayPrompt, session.lastPrompt);
+      figmaSvgAssetSeen = false;
       codeGraphRetrievalSeen = false;
       await ensureMcpServersForPrompt(nextPrompt, nextAttachments);
       promptInput.enqueue(nextPrompt, nextAttachments);
@@ -1787,6 +1820,36 @@ function shouldDenyExternalBrowseSkill(input: unknown, prompt: string): boolean 
   return /鍐呯疆娴忚鍣▅娴忚鍣ㄥ伐浣滃彴|褰撳墠椤甸潰|杩欎釜椤甸潰|杩欎釜缃戦〉|鐖彇|browserview|browser workbench|tech-cc-hub-browser/i.test(prompt);
 }
 
+function getAuthenticatedUrlWebFetchDenyMessage(
+  toolName: string,
+  input: unknown,
+  browserPromptEnabled: boolean,
+): string | undefined {
+  if (!browserPromptEnabled || toolName !== "WebFetch" || !isRecord(input)) {
+    return undefined;
+  }
+
+  const rawUrl = typeof input.url === "string" ? input.url.trim() : "";
+  if (!rawUrl || !isAuthenticatedBrowserUrl(rawUrl)) {
+    return undefined;
+  }
+
+  return [
+    "This URL is likely to require saved browser login state or SSO.",
+    "Use mcp__tech-cc-hub-browser__browser_open_page for the URL, then inspect it with browser_extract_page or browser_snapshot_interactive.",
+    "Do not ask the user to paste task details before trying the built-in BrowserView.",
+  ].join(" ");
+}
+
+function isAuthenticatedBrowserUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return AUTHENTICATED_BROWSER_URL_HOST_PATTERN.test(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 function checkRasterImageRead(
   filePath: string,
   currentImageReads: number,
@@ -1840,11 +1903,13 @@ function checkRasterImageRead(
 function shouldPreprocessImageRead(
   config: NonNullable<ReturnType<typeof getCurrentApiConfig>> | null,
   filePath: string,
+  mainModelName?: string,
 ): boolean {
-  void config;
   void filePath;
+  void mainModelName;
+
   // 涓存椂鍏抽棴 Read 鍥剧墖鏃剁殑鍥剧墖妯″瀷鎽樿鎷︽埅锛岄伩鍏嶆埅鍥炬瘮鐓?闄勪欢閾捐矾琚浛鎹㈡垚涓嶅彲闈犳枃鏈€?
-  return false;
+  return Boolean(config?.imageModel?.trim());
 }
 
 function createImageSummaryToolOutput(summary: string): Array<{ type: "text"; text: string }> {
@@ -1855,6 +1920,7 @@ function buildQualityHooks(
   _cwd: string,
   options: {
     config: NonNullable<ReturnType<typeof getCurrentApiConfig>>;
+    mainModelName?: string;
     prompt?: string;
     getPrompt?: () => string;
     projectCwd?: string;
@@ -1863,17 +1929,22 @@ function buildQualityHooks(
     onCodeGraphRetrieval?: () => void;
     onFigmaRestAuthFailure?: () => void;
     onFigmaImplementationAnchor?: () => void;
+    onFigmaContext?: () => void;
+    onFigmaSvgAsset?: () => void;
   },
 ): Partial<Record<string, HookCallbackMatcher[]>> {
   void _cwd;
   const {
     config,
+    mainModelName,
     sessionId,
     projectCwd,
     isCodeGraphRetrievalSeen,
     onCodeGraphRetrieval,
     onFigmaRestAuthFailure,
     onFigmaImplementationAnchor,
+    onFigmaContext,
+    onFigmaSvgAsset,
   } = options;
   const getCurrentPrompt = options.getPrompt ?? (() => options.prompt ?? "");
   const readFiles = new Set<string>();
@@ -1890,7 +1961,7 @@ function buildQualityHooks(
   const secretScanHook = createSecretScanHook();
   const gitBlastRadiusHook = createGitBlastRadiusHook();
   const commitValidateHook = createCommitValidateHook();
-  const toolCallBudgetHook = createToolCallBudgetHook();
+  const toolCallBudgetHook = createToolCallBudgetHook(sessionId);
   const qualityGateHook = createQualityGateHook(sessionId);
   const readBeforeWriteHook = createReadBeforeWriteHook();
 
@@ -1991,7 +2062,7 @@ function buildQualityHooks(
               fixes.push("file_path 鍘婚櫎绌虹櫧");
             }
             if (toolName === "Read") {
-              if (!shouldPreprocessImageRead(config, fixed)) {
+              if (!canMainModelReadImages(mainModelName ?? config.model) && !shouldPreprocessImageRead(config, fixed, mainModelName)) {
                 const imageReadCheck = checkRasterImageRead(fixed, rasterImageReads);
                 if (imageReadCheck.denyMessage) {
                   return {
@@ -2127,6 +2198,12 @@ function buildQualityHooks(
           isLikelyFigmaRestAuthFailure(input.tool_response)
         ) {
           onFigmaRestAuthFailure?.();
+        } else if (
+          "tool_response" in input &&
+          isFigmaRestToolName(input.tool_name) &&
+          !isLikelyFailedToolResponse(input.tool_response)
+        ) {
+          onFigmaContext?.();
         }
 
         if (
@@ -2146,6 +2223,15 @@ function buildQualityHooks(
               additionalContext: "Figma implementation anchor was not established: design_inspect_image must return success with qualityGate.confidence >= 0.75 and needsStrongerVisionModel=false before file edits.",
             },
           };
+        }
+
+        if (
+          "tool_response" in input &&
+          isFigmaSvgAssetToolName(input.tool_name) &&
+          isFigmaSvgImageUrlRequest("tool_input" in input ? input.tool_input : undefined) &&
+          isLikelyFigmaSvgAssetResponse(input.tool_response)
+        ) {
+          onFigmaSvgAsset?.();
         }
 
         if ("tool_response" in input) {
@@ -2169,7 +2255,7 @@ function buildQualityHooks(
 
         const toolInput = isRecord(input.tool_input) ? input.tool_input : {};
         const filePath = typeof toolInput.file_path === "string" ? toolInput.file_path.trim() : "";
-        if (!shouldPreprocessImageRead(config, filePath)) {
+        if (!shouldPreprocessImageRead(config, filePath, mainModelName)) {
           return { continue: true };
         }
 
@@ -2188,6 +2274,16 @@ function buildQualityHooks(
             },
           };
         } catch (error) {
+          if (canMainModelReadImages(mainModelName ?? config.model)) {
+            return {
+              continue: true,
+              hookSpecificOutput: {
+                hookEventName: "PostToolUse",
+                additionalContext: "Image preprocessing failed; the selected main model supports image understanding, so the raw image Read output was left available as a fallback.",
+              },
+            };
+          }
+
           const message = error instanceof Error ? error.message : String(error);
           const fallback = [
             `Image file: ${filePath}`,
@@ -2352,8 +2448,57 @@ function getFigmaImplementationAnchorDenyMessage(
   ].join("\n");
 }
 
+function getFigmaSvgAssetDenyMessage(
+  toolName: string,
+  toolInput: unknown,
+  requiresFigmaSvgAsset: boolean,
+  figmaContextSeen: boolean,
+  figmaSvgAssetSeen: boolean,
+): string | null {
+  if (figmaSvgAssetSeen || !FILE_MUTATION_TOOL_NAMES.has(toolName)) {
+    return null;
+  }
+
+  const mutationNeedsFigmaSvgAsset = requiresFigmaSvgAsset || (figmaContextSeen && isSvgOrIconMutation(toolName, toolInput));
+  if (!mutationNeedsFigmaSvgAsset) {
+    return null;
+  }
+
+  return [
+    "This Figma implementation is editing SVG/icon/vector content. Do not redraw, approximate, or substitute Figma SVGs with hand-written paths, lucide/Element Plus icons, CSS shapes, or guessed inline SVG.",
+    "Before editing code, identify the exact Figma icon/vector node with mcp__tech-cc-hub-figma__figma_list_node_index or mcp__tech-cc-hub-figma__figma_get_node.",
+    "Then call mcp__tech-cc-hub-figma__figma_get_image_urls with format=\"svg\" for those exact nodeIds and fetch/use the returned SVG asset content.",
+    "Only after the SVG export exists may you adapt it to the project, preserving the Figma path geometry. You may normalize size, currentColor, aria-hidden, and component wrapping, but not invent the icon shape.",
+    "If Figma SVG export fails, report the export failure and stop or ask for a fallback; do not silently fabricate a replacement SVG.",
+  ].join("\n");
+}
+
 function shouldRequireFigmaImplementationAnchor(prompt: string): boolean {
   return FIGMA_URL_PATTERN.test(prompt);
+}
+
+function shouldRequireFigmaSvgAsset(prompt: string): boolean {
+  const normalized = prompt.toLowerCase();
+  return /figma/i.test(normalized) && /(svg|icon|icons|vector|asset|assets|图标|矢量|素材|资产)/i.test(normalized);
+}
+
+function hasFigmaContext(...texts: Array<string | undefined>): boolean {
+  return texts.some((text) => {
+    if (!text) {
+      return false;
+    }
+
+    return FIGMA_URL_PATTERN.test(text) || /figma/i.test(text);
+  });
+}
+
+function isSvgOrIconMutation(toolName: string, value: unknown): boolean {
+  if (!FILE_MUTATION_TOOL_NAMES.has(toolName)) {
+    return false;
+  }
+
+  const text = stringifyForSearch(value);
+  return /(<\/?svg\b|<\/?path\b|\bviewBox\b|\bd=["'][^"']+["']|\bstroke=["']|\bfill=["']|\bcurrentColor\b|@element-plus\/icons-vue|lucide(?:-react|-vue)?|\bIcon[A-Z]\w*|\bicons?\b|svg|图标|矢量)/i.test(text);
 }
 
 function isOfficialFigmaMcpToolName(toolName: string): boolean {
@@ -2404,6 +2549,39 @@ function isFigmaImplementationAnchorToolName(toolName: string): boolean {
   }
 
   return false;
+}
+
+function isFigmaSvgAssetToolName(toolName: string): boolean {
+  for (const restToolName of FIGMA_SVG_ASSET_TOOL_NAMES) {
+    if (
+      toolName === restToolName ||
+      toolName.endsWith(`__${restToolName}`) ||
+      toolName.endsWith(`:${restToolName}`) ||
+      toolName.endsWith(`/${restToolName}`)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isFigmaSvgImageUrlRequest(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const format = typeof value.format === "string" ? value.format.trim().toLowerCase() : "";
+  return format === "svg";
+}
+
+function isLikelyFigmaSvgAssetResponse(value: unknown): boolean {
+  if (isLikelyFailedToolResponse(value)) {
+    return false;
+  }
+
+  const text = stringifyForSearch(value).toLowerCase();
+  return /\.svg(?:\?|["'\s]|$)|format["']?\s*:\s*["']?svg|image\/svg\+xml|svg_export/i.test(text);
 }
 
 function isLikelyFailedToolResponse(value: unknown): boolean {
@@ -2516,18 +2694,20 @@ function parseJsonCandidates(text: string): unknown[] {
 }
 
 function isLikelyFigmaRestAuthFailure(value: unknown): boolean {
-  let text: string;
+  const text = stringifyForSearch(value);
+  return /figma/i.test(text) && isLikelyFigmaTokenFailureMessage(text);
+}
+
+function stringifyForSearch(value: unknown): string {
   if (typeof value === "string") {
-    text = value;
-  } else {
-    try {
-      text = JSON.stringify(value);
-    } catch {
-      text = String(value);
-    }
+    return value;
   }
 
-  return /figma/i.test(text) && isLikelyFigmaTokenFailureMessage(text);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

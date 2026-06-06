@@ -30,7 +30,7 @@ test("restricted allowed-tools defaults include Agent Teams tools", () => {
 });
 
 test("runner injects the Agent Teams env flag into SDK sessions", () => {
-  const source = readFileSync("src/electron/libs/runner.ts", "utf8");
+  const source = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
 
   assert.match(source, /withClaudeAgentTeamsEnv\(\{/);
   assert.match(source, /CLAUDE_AGENT_TEAMS_ENV_VAR/);
@@ -38,7 +38,7 @@ test("runner injects the Agent Teams env flag into SDK sessions", () => {
 });
 
 test("Claude Code path resolution falls back to a team-capable bundled CLI", () => {
-  const source = readFileSync("src/electron/libs/claude-settings.ts", "utf8");
+  const source = readFileSync("src/electron/libs/claude/claude-settings.ts", "utf8");
 
   assert.match(source, /supportsClaudeCodeAgentTeams\(systemPath\)/);
   assert.match(source, /resolveSdkBundledClaudePath\(\)/);

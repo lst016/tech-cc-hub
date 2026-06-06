@@ -5,6 +5,7 @@ import {
   buildDiagnosePortPowerShellScript,
   buildPowerShellEncodedCommandArgs,
   classifyHttpPingStatus,
+  normalizeBrowserEvalExpression,
 } from "../../src/electron/libs/mcp-tools/browser.js";
 import {
   getBashBackgroundServiceGuidance,
@@ -41,4 +42,24 @@ test("Bash post-tool guidance warns that background Spring Boot is not ready pro
   );
 
   assert.match(guidance ?? "", /not readiness proof/);
+});
+
+test("browser eval normalizes bare function expressions into invocations", () => {
+  assert.equal(
+    normalizeBrowserEvalExpression("() => document.title"),
+    "(() => document.title)()",
+  );
+  assert.equal(
+    normalizeBrowserEvalExpression("async () => document.title"),
+    "(async () => document.title)()",
+  );
+  assert.equal(
+    normalizeBrowserEvalExpression("function () { return document.title; }"),
+    "(function () { return document.title; })()",
+  );
+});
+
+test("browser eval leaves already executable expressions unchanged", () => {
+  assert.equal(normalizeBrowserEvalExpression("document.title"), "document.title");
+  assert.equal(normalizeBrowserEvalExpression("(() => document.title)()"), "(() => document.title)()");
 });

@@ -112,6 +112,20 @@ describe("activity workspace tabs", () => {
     assert.doesNotMatch(appSource, /workspaceView[\s\S]{0,180}closeBrowserWorkbench/);
   });
 
+  it("switches to the browser workspace when an agent opens a BrowserView page", () => {
+    const appSource = readFileSync("src/ui/App.tsx", "utf8");
+    const managerSource = readFileSync("src/electron/browser-manager.ts", "utf8");
+    const typesSource = readFileSync("types.d.ts", "utf8");
+
+    assert.match(managerSource, /type: "browser\.open-requested"/);
+    assert.match(managerSource, /payload: \{ url: targetUrl \}/);
+    assert.match(typesSource, /type: "browser\.open-requested"; payload: \{ url: string \}/);
+    assert.match(appSource, /window\.electron\.onBrowserWorkbenchEvent\(\(event\) => \{/);
+    assert.match(appSource, /event\.type !== "browser\.open-requested"/);
+    assert.match(appSource, /setBrowserWorkbenchSessionUrl\(activeSessionId, url\)/);
+    assert.match(appSource, /setActiveSessionWorkspaceView\("browser"\)/);
+  });
+
   it("opens the terminal through optional per-session tab state", () => {
     const appSource = readFileSync("src/ui/App.tsx", "utf8");
     const railSource = readFileSync("src/ui/components/ActivityRail.tsx", "utf8");

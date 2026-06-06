@@ -71,7 +71,7 @@ const CATEGORY_RULES: Array<{
   },
   {
     category: "runtime",
-    pattern: /\b(background session|background agent|workflow|resume|detach|stale|wait[ing]? input|blocked|isolated worktree|claude agents|agent view)\b/i,
+    pattern: /\b(background session|background agent|workflow|resume|detach|stale|wait(?:ing)? input|blocked|isolated worktree|claude agents|agent view)\b/i,
     severity: "breaking-risk",
     targets: ["session-state", "activity-rail", "runner"],
   },

@@ -13,6 +13,7 @@ import {
   toAnthropicMessageResponse,
   type CodexOAuthCredential,
 } from "../codex/codex-oauth.js";
+import { isLikelyImageUnderstandingModel } from "../../../shared/models/model-capabilities.js";
 import { preprocessImageAttachmentsCore, type ImagePreprocessResult } from "./image-preprocessor-core.js";
 
 const IMAGE_SUMMARY_MAX_TOKENS = 2400;
@@ -249,11 +250,6 @@ function buildImageModelCandidates(config: ApiConfig, preferredImageModel: strin
     }
     return isLikelyImageUnderstandingModel(model);
   });
-}
-
-function isLikelyImageUnderstandingModel(modelName: string): boolean {
-  return /(^|[-_.])(vl|vision|visual|ocr|omni)([-_.]|$)|qwen.*vl|glm.*v|gpt-4o|gemini|grok-2-vision/i.test(modelName)
-    && !/image-?0?1|speech|music|embedding|coder/i.test(modelName);
 }
 
 async function summarizeImageBase64WithCodexResponses(options: {

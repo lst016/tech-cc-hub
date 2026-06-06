@@ -1423,6 +1423,7 @@ export function AionWorkspacePreviewPane({
   const [quickOpenError, setQuickOpenError] = useState<string | undefined>();
   const [quickOpenTruncated, setQuickOpenTruncated] = useState(false);
   const [quickOpenSelectedIndex, setQuickOpenSelectedIndex] = useState(0);
+  const consumedPendingOpenNonceRef = useRef<number | null>(null);
   const openTabsRef = useRef(openTabs);
   const quickOpenEntriesRef = useRef<PreviewQuickOpenEntry[]>([]);
   const refreshedOperationIdsRef = useRef(new Set<string>());
@@ -1734,9 +1735,12 @@ export function AionWorkspacePreviewPane({
 
   useEffect(() => {
     if (!pendingOpenRequest?.filePath) return;
+    if (!workspace) return;
+    if (consumedPendingOpenNonceRef.current === pendingOpenRequest.nonce) return;
+    consumedPendingOpenNonceRef.current = pendingOpenRequest.nonce;
     void openFile(pendingOpenRequest.filePath, { revealLine: pendingOpenRequest.startLine });
     onConsumePendingOpenRequest?.();
-  }, [onConsumePendingOpenRequest, openFile, pendingOpenRequest]);
+  }, [onConsumePendingOpenRequest, openFile, pendingOpenRequest, workspace]);
 
   useEffect(() => {
     const changes = collectCompletedPreviewFileChanges(messages)

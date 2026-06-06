@@ -128,6 +128,7 @@ test("computeBackoffMs: 璺?nextRun > 60s 鈫?閽冲埌鏈€澶у€?30s", () =
 test("triggerCatchup fire-once fires once for missed every schedule", async () => {
   const now = Date.now();
   const job = makeJob({
+    id: "cron_catchup_fire_once",
     state: { runCount: 0, retryCount: 0, maxRetries: 3, lastRunAtMs: now - 600_000 },
   });
   const repo = makeRepo([job]);
@@ -135,13 +136,19 @@ test("triggerCatchup fire-once fires once for missed every schedule", async () =
   const emitter = makeEmitter();
   const svc = new CronService(repo, emitter, executor);
 
-  // 闅旂 setTimeout锛氶€氳繃鏋勯€犱竴涓増鏈 executeJob 绔嬪埢璺戝畬
-  // 杩欓噷鎴戜滑鍙鏌?fire 璁℃暟
-  const result = await svc.triggerCatchup();
+  deleteCronJob(job.id);
+  insertCronJob(job);
+  try {
+    const result = await svc.triggerCatchup();
 
-  // missedCount = floor((600_000) / 60_000) - 1 = 9锛沠ire-once 鈫?1
-  assert.equal(result.firedCount, 1);
-  assert.equal(result.missedCount, 0);
+    // missedCount = floor((600_000) / 60_000) - 1 = 9锛沠ire-once 鈫?1
+    assert.equal(result.firedCount, 1);
+    assert.equal(result.missedCount, 0);
+    assert.equal(executor.executeCount, 1);
+    assert.equal(listCronRuns(job.id).length, 1);
+  } finally {
+    deleteCronJob(job.id);
+  }
 });
 
 test("triggerCatchup: policy='skip' 鈫?涓?fire锛岃 missed", async () => {
@@ -171,6 +178,7 @@ test("triggerCatchup: policy='skip' 鈫?涓?fire锛岃 missed", async () => {
 test("triggerCatchup catchup caps missed fires", async () => {
   const now = Date.now();
   const job = makeJob({
+    id: "cron_catchup_cap",
     state: {
       runCount: 0,
       retryCount: 0,
@@ -184,19 +192,25 @@ test("triggerCatchup catchup caps missed fires", async () => {
   const emitter = makeEmitter();
   const svc = new CronService(repo, emitter, executor);
 
-  const result = await svc.triggerCatchup();
-  assert.equal(result.firedCount, Math.min(9, 5));
+  deleteCronJob(job.id);
+  insertCronJob(job);
+  try {
+    const result = await svc.triggerCatchup();
+    assert.equal(result.firedCount, Math.min(9, 5));
+    assert.equal(executor.executeCount, 5, "catchup policy should execute every capped fire");
+    assert.equal((await repo.getById(job.id))?.state.runCount, 5, "each catchup fire should advance runCount");
+    assert.equal(listCronRuns(job.id).length, 5, "each catchup fire should write a run row");
+  } finally {
+    deleteCronJob(job.id);
+  }
 });
 
 // 鈹€鈹€ 3. Stuck Watchdog锛團-07锛夆攢鈹€
 
 test("runWatchdog: getStuckRuns 杩斿洖 0 鈫?cleared=0", async () => {
   const svc = new CronService(makeRepo(), makeEmitter(), makeExecutor());
-  // 榛樿 getStuckRuns 鏄┖鏁扮粍锛堜緷璧栫湡瀹?DB锛屾湰娴嬭瘯閫氳繃 cron-db mock 鎷︽埅锛?  // 浣?runWatchdog 鍐呴儴鐩存帴 import 浜?cron-db锛屾棤娉曞崟娴嬫浛鎹?  // 杩欓噷鍙祴绌哄満鏅細鏋勯€犱竴涓┖ repo锛岃 runWatchdog 璺戣繃 getStuckRuns 绌虹粨鏋?  // 鐢变簬 getStuckRuns 鏉ヨ嚜鐪熷疄 better-sqlite3锛岄渶 stub
-  // 绠€鍖栵細浠呮柇瑷€涓嶆姏寮傚父
-  // 鐪熷疄鍦烘櫙寤鸿鍦?E2E 娴嬭瘯涓鐩?  void fakeDb;
-  // 璺宠繃锛氫緷璧?cron-db 鐨?better-sqlite3锛岄渶瑕?mock 妯″潡灞?  // 鏀逛负閫氳繃 service 鐨?pausedJobs / retryCounts 绛変笉渚濊禆 DB 鐨勮矾寰勫仛鏈€灏忔柇瑷€
-  assert.equal(getPausedJobs(svc).size, 0);
+  const result = await svc.runWatchdog();
+  assert.equal(result.cleared, 0);
 });
 
 test("pauseJob/resumeJob: 缃?state.paused 骞跺奖鍝?executeJob 鏃╅€€", async () => {

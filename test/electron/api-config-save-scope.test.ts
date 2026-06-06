@@ -15,7 +15,7 @@ test("settings save does not rewrite api profiles unless they changed", () => {
 });
 
 test("claude settings fallback is read-only and does not persist into api config", () => {
-  const source = readFileSync("src/electron/libs/claude-settings.ts", "utf8");
+  const source = readFileSync("src/electron/libs/claude/claude-settings.ts", "utf8");
 
   assert.doesNotMatch(source, /saveApiConfigSettings/);
   assert.match(source, /function getFallbackClaudeSettingsConfig\(\): ApiConfig \| null/);

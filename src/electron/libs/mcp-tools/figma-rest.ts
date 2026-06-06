@@ -608,16 +608,40 @@ function extractLayoutInfo(node: Record<string, unknown>): Record<string, unknow
     "layoutSizingHorizontal",
     "layoutSizingVertical",
     "layoutPositioning",
+    "layoutAlign",
+    "layoutGrow",
+    "gridChildHorizontalAlign",
+    "gridChildVerticalAlign",
   ]) {
-    const value = readString(node, key);
-    if (value) {
+    const value = node[key];
+    if (typeof value === "string" || typeof value === "number") {
       layout[key] = value;
     }
   }
-  for (const key of ["itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom"]) {
+  for (const key of [
+    "itemSpacing",
+    "paddingLeft",
+    "paddingRight",
+    "paddingTop",
+    "paddingBottom",
+    "gridRowCount",
+    "gridColumnCount",
+    "gridRowGap",
+    "gridColumnGap",
+    "gridRowAnchorIndex",
+    "gridColumnAnchorIndex",
+    "gridRowSpan",
+    "gridColumnSpan",
+  ]) {
     const value = readNumber(node, key);
     if (value !== undefined) {
       layout[key] = value;
+    }
+  }
+  for (const key of ["gridRowsSizing", "gridColumnsSizing"]) {
+    const value = node[key];
+    if (Array.isArray(value) && value.length > 0) {
+      layout[key] = value.slice(0, 20);
     }
   }
   return layout;
@@ -631,8 +655,25 @@ function extractStyleInfo(node: Record<string, unknown>): Record<string, unknown
   if (strokes.length > 0) style.strokes = strokes;
   const radius = readNumber(node, "cornerRadius");
   if (radius !== undefined) style.cornerRadius = radius;
+  if (Array.isArray(node.rectangleCornerRadii)) style.rectangleCornerRadii = node.rectangleCornerRadii.slice(0, 4);
+  const cornerSmoothing = readNumber(node, "cornerSmoothing");
+  if (cornerSmoothing !== undefined) style.cornerSmoothing = cornerSmoothing;
   const opacity = readNumber(node, "opacity");
   if (opacity !== undefined && opacity !== 1) style.opacity = opacity;
+  for (const key of ["strokeWeight", "strokeAlign", "strokeCap", "strokeJoin", "blendMode", "maskType"]) {
+    const value = node[key];
+    if (typeof value === "string" || typeof value === "number") {
+      style[key] = value;
+    }
+  }
+  if (Array.isArray(node.strokeDashes) && node.strokeDashes.length > 0) style.strokeDashes = node.strokeDashes.slice(0, 16);
+  if (isRecord(node.individualStrokeWeights)) style.individualStrokeWeights = node.individualStrokeWeights;
+  if (readBoolean(node, "strokesIncludedInLayout") !== undefined) style.strokesIncludedInLayout = readBoolean(node, "strokesIncludedInLayout");
+  if (isRecord(node.complexStrokeProperties)) style.complexStrokeProperties = node.complexStrokeProperties;
+  if (Array.isArray(node.variableWidthPoints) && node.variableWidthPoints.length > 0) {
+    style.variableWidthPoints = node.variableWidthPoints.slice(0, 20);
+  }
+  if (isRecord(node.boundVariables)) style.boundVariables = node.boundVariables;
   const effects = getEffectSummaries(node.effects);
   if (effects.length > 0) style.effects = effects;
   return style;
@@ -1439,7 +1480,13 @@ export function getFigmaRestMcpServer(options: { toolMode?: FigmaRestToolMode } 
       nodeIds: z.array(z.string().trim().min(1)).max(80).optional(),
       format: z.enum(["png", "jpg", "svg", "pdf"]).optional(),
       scale: z.number().min(0.01).max(4).optional(),
+      svgOutlineText: z.boolean().optional(),
       svgIncludeId: z.boolean().optional(),
+      svgIncludeNodeId: z.boolean().optional(),
+      svgSimplifyStroke: z.boolean().optional(),
+      contentsOnly: z.boolean().optional(),
+      useAbsoluteBounds: z.boolean().optional(),
+      version: z.string().trim().min(1).optional(),
       maxBytes: z.number().int().min(10_000).max(MAX_RESPONSE_BYTES).optional(),
     },
     async (input) => {
@@ -1453,7 +1500,13 @@ export function getFigmaRestMcpServer(options: { toolMode?: FigmaRestToolMode } 
           ids: locator.nodeIds.join(","),
           format: input.format ?? "png",
           scale: input.scale,
+          svg_outline_text: input.svgOutlineText,
           svg_include_id: input.svgIncludeId,
+          svg_include_node_id: input.svgIncludeNodeId,
+          svg_simplify_stroke: input.svgSimplifyStroke,
+          contents_only: input.contentsOnly,
+          use_absolute_bounds: input.useAbsoluteBounds,
+          version: input.version,
         }, token);
         return toTextToolResult({
           action: "figma_get_image_urls",
@@ -1481,6 +1534,10 @@ export function getFigmaRestMcpServer(options: { toolMode?: FigmaRestToolMode } 
       format: z.enum(FIGMA_IMAGE_EXPORT_FORMATS).optional(),
       scale: z.number().min(0.01).max(4).optional(),
       svgIncludeId: z.boolean().optional(),
+      svgIncludeNodeId: z.boolean().optional(),
+      contentsOnly: z.boolean().optional(),
+      useAbsoluteBounds: z.boolean().optional(),
+      version: z.string().trim().min(1).optional(),
       label: z.string().trim().min(1).max(80).optional(),
       maxBytes: z.number().int().min(10_000).max(MAX_RESPONSE_BYTES).optional(),
     },
@@ -1500,7 +1557,9 @@ export function getFigmaRestMcpServer(options: { toolMode?: FigmaRestToolMode } 
           ids: locator.nodeIds.join(","),
           format,
           scale,
-          svg_include_id: input.svgIncludeId,
+          contents_only: input.contentsOnly,
+          use_absolute_bounds: input.useAbsoluteBounds,
+          version: input.version,
         }, token);
         const imageUrls = readFigmaImageUrls(payload, locator.nodeIds);
         const artifacts: Array<Record<string, unknown>> = [];

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
-import { CheckCircle2, ChevronDown, Circle } from "lucide-react";
+import { CheckCircle2, ChevronDown } from "lucide-react";
 import type { PermissionRequest } from "../store/useAppStore";
 import { copyTextToClipboard } from "../utils/clipboard";
 
@@ -18,10 +18,16 @@ type AskUserQuestionInput = {
 type SelectedOptionsByQuestion = Record<number, string[]>;
 type OtherInputsByQuestion = Record<number, string>;
 
-function QuestionStepIcon({ answered }: { answered: boolean }) {
-  return answered
-    ? <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-hidden="true" />
-    : <Circle className="h-4 w-4 text-accent" aria-hidden="true" />;
+function QuestionStepIcon({ answered, index }: { answered: boolean; index: number }) {
+  return answered ? (
+    <span className="grid h-6 w-6 place-items-center rounded-full border border-accent/30 bg-accent text-white shadow-[0_6px_16px_rgba(210,106,61,0.22)]">
+      <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+    </span>
+  ) : (
+    <span className="grid h-6 w-6 place-items-center rounded-full border border-accent/30 bg-white text-[11px] font-semibold text-accent">
+      {index + 1}
+    </span>
+  );
 }
 
 export function DecisionPanel({
@@ -94,24 +100,27 @@ export function DecisionPanel({
   if (request.toolName === "AskUserQuestion" && questions.length > 0) {
     return (
       <div
-        className={`flex flex-col overflow-hidden rounded-xl border border-accent/18 bg-[#FFF8F5] shadow-[0_12px_30px_rgba(30,38,52,0.08)] ${
-          compact ? "max-h-[min(42vh,360px)] p-2.5" : "max-h-[min(58vh,540px)] p-3"
+        className={`flex flex-col rounded-xl border border-accent/18 bg-white/95 shadow-[0_18px_45px_rgba(30,38,52,0.10)] ring-1 ring-white/80 ${
+          compact ? "p-3" : "p-4"
         }`}
       >
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-accent/12 pb-2">
-          <div className="min-w-0">
-            <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-accent">需要你选择</div>
-            <div className="mt-0.5 truncate text-[13px] font-semibold text-ink-800">
-              Agent 等待确认 · {answeredQuestionCount}/{questions.length}
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-black/6 pb-3">
+          <div className="flex min-w-0 items-start gap-2.5">
+            <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-accent shadow-[0_0_0_4px_rgba(210,106,61,0.12)]" />
+            <div className="min-w-0">
+              <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-accent">需要你选择</div>
+              <div className="mt-0.5 truncate text-[13px] font-semibold text-ink-800">
+                Agent 等待确认 · {answeredQuestionCount}/{questions.length}
+              </div>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            <span className="rounded-md border border-accent/18 bg-white/80 px-2 py-1 text-[11px] font-semibold text-accent">
-              StepForm
+            <span className="rounded-md border border-accent/18 bg-accent/8 px-2 py-1 text-[11px] font-semibold text-accent">
+              步骤确认
             </span>
             <button
               type="button"
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-accent/18 bg-white/80 text-accent transition-colors hover:bg-white"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-black/8 bg-white text-ink-600 transition-colors hover:border-accent/28 hover:bg-accent/6 hover:text-accent"
               aria-label={expanded ? "收起确认面板" : "展开确认面板"}
               aria-expanded={expanded}
               title={expanded ? "收起" : "展开"}
@@ -130,54 +139,52 @@ export function DecisionPanel({
         )}
         {expanded && (
           <>
-            <div className="mt-2 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+            <div className="mt-3">
               {questions.map((q, qIndex) => {
                 const selected = selectedOptions[qIndex] ?? [];
                 const otherText = otherInputs[qIndex]?.trim() ?? "";
                 const isAnswered = selected.length > 0 || otherText.length > 0;
                 return (
-                  <div key={qIndex} className={`grid grid-cols-[22px_minmax(0,1fr)] gap-2 rounded-lg border border-black/6 bg-white/72 px-2.5 py-2 ${qIndex === 0 ? "" : "mt-2"}`}>
-                    <div className="flex flex-col items-center pt-0.5">
-                      <QuestionStepIcon answered={isAnswered} />
-                      {qIndex < questions.length - 1 && <div className="mt-1 h-full min-h-6 w-px bg-accent/14" />}
+                  <div key={qIndex} className={`grid grid-cols-[30px_minmax(0,1fr)] gap-2.5 ${qIndex === 0 ? "" : "mt-3"}`}>
+                    <div className="flex flex-col items-center pt-1.5">
+                      <QuestionStepIcon answered={isAnswered} index={qIndex} />
+                      {qIndex < questions.length - 1 && <div className="mt-1 h-full min-h-10 w-px bg-[linear-gradient(180deg,rgba(210,106,61,0.28),rgba(210,106,61,0.08))]" />}
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 rounded-lg border border-black/6 bg-[#FBFCFE] px-3 py-2.5 shadow-[0_8px_24px_rgba(30,38,52,0.04)]">
                       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                        <span className="rounded-md bg-accent/8 px-1.5 py-0.5 text-[11px] font-semibold text-accent">
-                          {qIndex + 1}
-                        </span>
                         {q.header && (
-                          <span className="max-w-full truncate rounded-md border border-black/6 bg-white px-1.5 py-0.5 text-[11px] text-muted">
+                          <span className="max-w-full truncate rounded-md border border-black/6 bg-white px-2 py-0.5 text-[11px] font-medium text-muted">
                             {q.header}
                           </span>
                         )}
-                        {q.multiSelect && <span className="text-[11px] text-muted">多选</span>}
+                        {q.multiSelect && <span className="rounded-md bg-accent/8 px-1.5 py-0.5 text-[11px] font-semibold text-accent">多选</span>}
                       </div>
-                    <p className="mt-1 text-[13px] font-semibold leading-5 text-ink-800 [overflow-wrap:anywhere]">{q.question}</p>
+                    <p className="mt-1.5 text-[13px] font-semibold leading-5 text-ink-800 [overflow-wrap:anywhere]">{q.question}</p>
                     {q.header && (
                       <span className="sr-only">
                         {q.header}
                       </span>
                     )}
-                    <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                    <div className="mt-2.5 grid grid-cols-1 gap-2">
                       {(q.options ?? []).map((option, optIndex) => {
                         const isSelected = selected.includes(option.label);
                         return (
                           <button
                             key={optIndex}
                             type="button"
-                            className={`min-w-0 rounded-md border px-2.5 py-2 text-left text-[13px] leading-5 transition-colors [overflow-wrap:anywhere] ${
+                            className={`relative min-w-0 overflow-hidden rounded-md border px-3 py-2.5 text-left text-[13px] leading-5 transition-colors [overflow-wrap:anywhere] ${
                               isSelected
-                                ? "border-accent/40 bg-white text-accent shadow-[0_6px_14px_rgba(232,117,81,0.12)]"
-                                : "border-black/8 bg-white/65 text-ink-700 hover:border-accent/26 hover:bg-white"
+                                ? "border-accent/40 bg-accent/[0.07] text-ink-800 shadow-[0_8px_18px_rgba(210,106,61,0.12)]"
+                                : "border-black/8 bg-white text-ink-700 hover:border-accent/28 hover:bg-accent/5"
                             }`}
                             onClick={() => {
                               toggleOption(qIndex, option.label, q.multiSelect);
                             }}
                             aria-pressed={isSelected}
                           >
-                            <span className="block truncate font-semibold">{option.label}</span>
-                            {option.description && <span className="block truncate text-[11px] text-muted">{option.description}</span>}
+                            {isSelected && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-accent" />}
+                            <span className={`block font-semibold ${isSelected ? "text-accent" : "text-ink-800"}`}>{option.label}</span>
+                            {option.description && <span className="mt-0.5 block text-[11px] leading-4 text-muted">{option.description}</span>}
                           </button>
                         );
                       })}
@@ -197,7 +204,7 @@ export function DecisionPanel({
                         <label className="block text-[11px] font-medium text-muted">其他回答</label>
                         <input
                           type="text"
-                          className="mt-1 w-full rounded-md border border-black/8 bg-white/78 px-2.5 py-1.5 text-sm text-ink-700 outline-none transition focus:border-accent/45 focus:bg-white"
+                          className="mt-1 w-full rounded-md border border-black/8 bg-white px-3 py-2 text-sm text-ink-700 outline-none transition focus:border-accent/45 focus:bg-white focus:shadow-[0_0_0_3px_rgba(210,106,61,0.10)]"
                           placeholder="输入你的回答..."
                           value={otherInputs[qIndex] ?? ""}
                           onChange={(e) => {
@@ -251,7 +258,7 @@ export function DecisionPanel({
                 </div>
               )}
             </div>
-            <div className={`${compact ? "mt-3" : "mt-5"} flex shrink-0 flex-wrap gap-3`}>
+            <div className={`${compact ? "mt-3" : "mt-5"} flex shrink-0 flex-wrap gap-3 border-t border-black/6 pt-3`}>
               <button
                 className={`rounded-full px-5 py-2 text-sm font-medium text-white shadow-soft transition-colors ${
                   canSubmit ? "bg-accent hover:bg-accent-hover" : "bg-ink-400/40 cursor-not-allowed"

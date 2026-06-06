@@ -9,7 +9,7 @@
 // Usage:
 //   node scripts/claude-code-compat-2161-workflow.mjs                # run all pending phases
 //   node scripts/claude-code-compat-2161-workflow.mjs --phase 1      # run one phase
-//   node scripts/claude-code-compat-2161-workflow.mjs --phase 1..3   # run a range
+//   node scripts/claude-code-compat-2161-workflow.mjs --phase 1..3   # run a range (also: --range 1..3)
 //   node scripts/claude-code-compat-2161-workflow.mjs --status       # show progress
 //   node scripts/claude-code-compat-2161-workflow.mjs --dry-run      # show plan only
 //   node scripts/claude-code-compat-2161-workflow.mjs --reset        # clear state file
@@ -38,8 +38,14 @@ const dryRun = args.dry_run === true || args["dry-run"] === true;
 const reset = args.reset === true;
 const force = args.force === true;
 const statusOnly = args.status === true;
-const phaseArg = args.phase;
-const rangeArg = args.range;
+let phaseArg = args.phase;
+let rangeArg = args.range;
+
+// 兼容 --phase 1..3 写法：自动转为 --range
+if (typeof phaseArg === "string" && /^\d+\.\.\d+$/.test(phaseArg)) {
+  rangeArg = phaseArg;
+  phaseArg = undefined;
+}
 
 // ---------- Phase catalog ----------
 // Each entry: { id, name, goal, prerequisites, run(state), gate(state), commitMessage }

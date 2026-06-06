@@ -64,7 +64,7 @@ const runtimeSourceMeta: Record<DevElectronRuntimeSource, { label: string; descr
 const DEFAULT_IMPORTED_CONTEXT_WINDOW = 200_000;
 const DEEPSEEK_CONTEXT_WINDOW = 1_000_000;
 const DEEPSEEK_MODELS_ENDPOINT = "https://api.deepseek.com/models";
-const MINIMAX_MODELS_ENDPOINT = "https://api.minimax.io/anthropic/v1/models";
+const MINIMAX_MODELS_ENDPOINT = "https://api.minimaxi.com/anthropic/v1/models";
 
 type ModelImportStatus = {
   profileId: string;
@@ -133,7 +133,8 @@ function isDeepSeekBaseURL(baseURL: string | undefined): boolean {
 
 function isMiniMaxBaseURL(baseURL: string | undefined): boolean {
   try {
-    return new URL(baseURL?.trim() || "").hostname === "api.minimax.io";
+    const hostname = new URL(baseURL?.trim() || "").hostname;
+    return hostname === "api.minimax.io" || hostname === "api.minimaxi.com";
   } catch {
     return false;
   }

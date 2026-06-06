@@ -526,7 +526,7 @@ function App() {
   const activeBrowserWorkbenchState = activeSessionId ? browserWorkbenchBySessionId[activeSessionId] : undefined;
   const activeHasBrowserTab = activeBrowserWorkbenchState?.hasBrowserTab ?? Boolean(activeBrowserWorkbenchState?.url);
   const activeHasTerminalTab = activeSessionId ? terminalTabBySessionId[activeSessionId] === true : false;
-  const workflowAgents = useMemo(() => buildWorkflowAgentSummaries(messages), [messages]);
+  const workflowAgents = useMemo(() => buildWorkflowAgentSummaries(messages, activeSession?.status), [messages, activeSession?.status]);
   const workflowAgentsById = useMemo(() => new Map(workflowAgents.map((agent) => [agent.id, agent])), [workflowAgents]);
   const workflowAgentTabs = useMemo(() => (
     openWorkflowAgentTabIds
@@ -1008,6 +1008,25 @@ function App() {
       window.removeEventListener(OPEN_BROWSER_WORKBENCH_URL_EVENT, handleOpenBrowserWorkbenchUrl);
     };
   }, [activeSessionId, closeSidebarOnBrowserOpen, setActiveSessionWorkspaceView, setBrowserWorkbenchSessionUrl, showSidebar]);
+
+  useEffect(() => {
+    if (!activeSessionId || typeof window.electron.onBrowserWorkbenchEvent !== "function") return;
+    const unsubscribe = window.electron.onBrowserWorkbenchEvent((event) => {
+      if (event.type !== "browser.open-requested") return;
+      if (event.sessionId && event.sessionId !== activeSessionId) return;
+      const url = event.payload.url.trim();
+      if (!url) return;
+
+      setShowSessionAnalysis(false);
+      setShowActivityRail(true);
+      setBrowserWorkbenchSessionUrl(activeSessionId, url);
+      setActiveSessionWorkspaceView("browser");
+      if (closeSidebarOnBrowserOpen && showSidebarRef.current) {
+        setShowSidebar(false);
+      }
+    });
+    return unsubscribe;
+  }, [activeSessionId, closeSidebarOnBrowserOpen, setActiveSessionWorkspaceView, setBrowserWorkbenchSessionUrl]);
 
   useEffect(() => {
     const handlePreviewOpenFile = (event: Event) => {

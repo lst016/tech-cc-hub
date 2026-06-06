@@ -19,7 +19,7 @@ export const SECRET_KEY_PATTERNS: RegExp[] = [
   /\bAWS_SECRET_ACCESS_KEY\b/,
 ];
 
-const SECRET_VALUE_HINT = /(?<![A-Za-z0-9])[A-Za-z0-9_\-]{20,}(?![A-Za-z0-9])/;
+const SECRET_VALUE_HINT = /(?<![A-Za-z0-9])[A-Za-z0-9_-]{20,}(?![A-Za-z0-9])/;
 
 const REDACTED = "[REDACTED]";
 
@@ -91,7 +91,6 @@ export function isExecutableConfigPath(path: string): boolean {
 // Dangerous delete patterns: any rm -rf outside the workspace or with root
 // targeting is treated as confirmation-required. We do NOT silently block —
 // the runner can escalate to a user prompt with the reason.
-const DANGEROUS_DELETE_PATTERN = /\brm\s+(?:-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r|-rf|-fr)\b/;
 
 export type DangerousCommandResult = {
   dangerous: boolean;
@@ -101,24 +100,38 @@ export type DangerousCommandResult = {
 
 export function classifyDangerousCommand(command: string, workspaceRoot: string): DangerousCommandResult {
   if (!command) return { dangerous: false, requiresConfirmation: false };
-  if (DANGEROUS_DELETE_PATTERN.test(command)) {
-    // Check whether the command targets inside the workspace.
-    const targets = extractDeleteTargets(command);
-    const outside = targets.filter((t) => !t.startsWith(workspaceRoot) && !t.startsWith("."));
-    if (outside.length > 0) {
-      return {
-        dangerous: true,
-        reason: `rm -rf targets outside workspace: ${outside.join(", ")}`,
-        requiresConfirmation: true,
-      };
-    }
+
+  const tokens = command.split(/\s+/).filter(Boolean);
+  if (tokens[0] !== "rm") {
+    return { dangerous: false, requiresConfirmation: false };
+  }
+
+  // 聚合所有短 flag（排除 -- 终止符）
+  const flagChars = tokens
+    .slice(1)
+    .filter((t) => t.startsWith("-") && t !== "--")
+    .join("");
+  const hasRecursiveForce = flagChars.includes("r") && flagChars.includes("f");
+
+  if (!hasRecursiveForce) {
+    return { dangerous: false, requiresConfirmation: false };
+  }
+
+  // Check whether the command targets inside the workspace.
+  const targets = extractDeleteTargets(command);
+  const outside = targets.filter((t) => !t.startsWith(workspaceRoot) && !t.startsWith("."));
+  if (outside.length > 0) {
     return {
       dangerous: true,
-      reason: "rm -rf inside workspace still escalates to confirmation",
+      reason: `rm -rf targets outside workspace: ${outside.join(", ")}`,
       requiresConfirmation: true,
     };
   }
-  return { dangerous: false, requiresConfirmation: false };
+  return {
+    dangerous: true,
+    reason: "rm -rf inside workspace still escalates to confirmation",
+    requiresConfirmation: true,
+  };
 }
 
 function extractDeleteTargets(command: string): string[] {

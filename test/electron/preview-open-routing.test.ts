@@ -15,6 +15,8 @@ test("preview open requests are routed through app state before the preview pane
   assert.match(railSource, /pendingOpenRequest=\{pendingPreviewOpenRequest\}/);
   assert.match(paneSource, /pendingOpenRequest\?: \{/);
   assert.match(paneSource, /if \(!pendingOpenRequest\?\.filePath\) return;/);
+  assert.match(paneSource, /if \(!workspace\) return;/);
+  assert.match(paneSource, /consumedPendingOpenNonceRef\.current === pendingOpenRequest\.nonce/);
   assert.match(paneSource, /void openFile\(pendingOpenRequest\.filePath, \{ revealLine: pendingOpenRequest\.startLine \}\);/);
 });
 

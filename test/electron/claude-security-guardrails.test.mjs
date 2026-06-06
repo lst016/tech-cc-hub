@@ -90,3 +90,36 @@ test("classifyDangerousCommand: normal commands are not dangerous", () => {
   assert.equal(out.dangerous, false);
   assert.equal(out.requiresConfirmation, false);
 });
+
+test("classifyDangerousCommand: rm -r -f (split flags) outside workspace is dangerous", () => {
+  const out = mod.classifyDangerousCommand("rm -r -f /outside/path", "/workspace");
+  assert.equal(out.dangerous, true);
+  assert.equal(out.requiresConfirmation, true);
+  assert.match(out.reason, /outside workspace/);
+});
+
+test("classifyDangerousCommand: rm -f -r (reversed split flags) outside workspace is dangerous", () => {
+  const out = mod.classifyDangerousCommand("rm -f -r /outside/path", "/workspace");
+  assert.equal(out.dangerous, true);
+  assert.equal(out.requiresConfirmation, true);
+  assert.match(out.reason, /outside workspace/);
+});
+
+test("classifyDangerousCommand: rm -r -f -- /outside/path is dangerous", () => {
+  const out = mod.classifyDangerousCommand("rm -r -f -- /outside/path", "/workspace");
+  assert.equal(out.dangerous, true);
+  assert.equal(out.requiresConfirmation, true);
+  assert.match(out.reason, /outside workspace/);
+});
+
+test("classifyDangerousCommand: rm -r -f inside workspace still requires confirmation", () => {
+  const out = mod.classifyDangerousCommand("rm -r -f ./local-dir", "/workspace");
+  assert.equal(out.dangerous, true);
+  assert.equal(out.requiresConfirmation, true);
+});
+
+test("classifyDangerousCommand: rm -r without -f is not dangerous", () => {
+  const out = mod.classifyDangerousCommand("rm -r ./local-dir", "/workspace");
+  assert.equal(out.dangerous, false);
+  assert.equal(out.requiresConfirmation, false);
+});

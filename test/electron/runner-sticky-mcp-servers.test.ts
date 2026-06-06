@@ -8,7 +8,18 @@ import {
   mergeStickyBuiltinMcpServerNames,
 } from "../../src/electron/libs/runner/sticky-mcp-servers.js";
 
-test("runner keeps active stateful MCP servers when a later profile omits them", () => {
+const ALL_BUILTIN_MCP_SERVERS = [
+  "tech-cc-hub-admin",
+  "tech-cc-hub-plan",
+  "tech-cc-hub-knowledge",
+  "tech-cc-hub-browser",
+  "tech-cc-hub-design",
+  "tech-cc-hub-figma",
+  "tech-cc-hub-cron",
+  "tech-cc-hub-idea",
+] as const;
+
+test("runner keeps all built-in MCP servers available without forcing visual prompts", () => {
   const leanProfile = resolveRuntimeEfficiencyProfile({
     prompt: "continue the implementation",
   });
@@ -23,18 +34,11 @@ test("runner keeps active stateful MCP servers when a later profile omits them",
 
   const profile = applyStickyBuiltinMcpServersToProfile(leanProfile, [activeVisualServers]);
 
-  assert.deepEqual(profile.builtinMcpServers, [
-    "tech-cc-hub-admin",
-    "tech-cc-hub-plan",
-    "tech-cc-hub-knowledge",
-    "tech-cc-hub-browser",
-    "tech-cc-hub-design",
-    "tech-cc-hub-figma",
-  ]);
-  assert.equal(profile.includeBrowserPrompt, true);
-  assert.equal(profile.includeDesignPrompt, true);
-  assert.equal(profile.includePartialMessages, true);
-  assert.equal(profile.includeClaudeCompatPrompt, true);
+  assert.deepEqual(profile.builtinMcpServers, ALL_BUILTIN_MCP_SERVERS);
+  assert.equal(profile.includeBrowserPrompt, false);
+  assert.equal(profile.includeDesignPrompt, false);
+  assert.equal(profile.includePartialMessages, false);
+  assert.equal(profile.includeClaudeCompatPrompt, false);
 });
 
 test("runner does not keep non-stateful MCP servers when the profile omits them", () => {
@@ -51,14 +55,10 @@ test("runner does not keep non-stateful MCP servers when the profile omits them"
   assert.deepEqual(mergeStickyBuiltinMcpServerNames(nextServerNames, [activeUtilityServers]), nextServerNames);
 });
 
-test("runner does not add stateful MCP servers before they have been enabled", () => {
+test("runner exposes all built-in MCP servers from the first turn", () => {
   const leanProfile = resolveRuntimeEfficiencyProfile({
     prompt: "explain this helper",
   });
 
-  assert.deepEqual(applyStickyBuiltinMcpServersToProfile(leanProfile, []).builtinMcpServers, [
-    "tech-cc-hub-admin",
-    "tech-cc-hub-plan",
-    "tech-cc-hub-knowledge",
-  ]);
+  assert.deepEqual(applyStickyBuiltinMcpServersToProfile(leanProfile, []).builtinMcpServers, ALL_BUILTIN_MCP_SERVERS);
 });

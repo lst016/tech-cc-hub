@@ -17,10 +17,18 @@ test("browser prompt encourages fetch log capture for API evidence", () => {
 
   assert.match(prompt, /fetch\/XHR capture/);
   assert.match(prompt, /browser_get_state/);
+  assert.match(prompt, /Authenticated URL rule/);
+  assert.match(prompt, /Teambition\/Feishu\/Lark/);
+  assert.match(prompt, /Do not use WebFetch first/);
+  assert.match(prompt, /WebFetch fallback rule/);
+  assert.match(prompt, /redirect to another host/);
   assert.match(prompt, /Current BrowserView first/);
   assert.match(prompt, /Do not run npm run dev or open a new local page/);
   assert.match(prompt, /browser_fetch_logs/);
+  assert.match(prompt, /browser_http_request/);
   assert.match(prompt, /API request\/response evidence/);
+  assert.match(prompt, /Save\/display mismatch rule/);
+  assert.match(prompt, /responseJsonFields/);
 });
 
 test("tool optimization prompt keeps tool calls sparse, batched, and bounded", () => {

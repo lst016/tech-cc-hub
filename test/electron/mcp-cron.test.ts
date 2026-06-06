@@ -10,9 +10,13 @@ import type { CronService } from "../../src/electron/libs/cron/cron-service.js";
 import type { CronJob, CreateCronJobParams } from "../../src/electron/libs/cron/cron-types.js";
 
 type Handler = (
-  input: any,
+  input: unknown,
   extra: unknown,
 ) => Promise<{ isError?: boolean; content: Array<{ type: string; text: string }> }>;
+
+type RegisteredToolsHost = {
+  _registeredTools?: Record<string, { handler: Handler }>;
+};
 
 type Stub = {
   calls: Record<string, unknown[][]>;
@@ -21,8 +25,8 @@ type Stub = {
 
 function getHandlerMap(): Record<string, { handler: Handler }> {
   const server = getCronMcpServer();
-  const inst: any = server.instance;
-  const tools = inst._registeredTools as Record<string, { handler: Handler }>;
+  const inst = server.instance as unknown as RegisteredToolsHost;
+  const tools = inst._registeredTools;
   if (!tools) throw new Error("McpServer._registeredTools 不可访问，请检查 SDK 版本");
   return tools;
 }
@@ -343,6 +347,40 @@ test("C-2: 无 validator 但 conversationId 含 SQL 元字符 → fallback __sys
   const params = (stub.calls.addJob[0] as unknown as [CreateCronJobParams])[0];
   assert.equal(params.conversationId, "__system__", "validator 拒 → fallback");
   setCronSessionValidator(() => true);
+});
+
+test("update_scheduled_task: schedule + jitterMs 同时传入 → 新 schedule + 新 jitterMs", async () => {
+  const stub = makeStubService();
+  setStub(stub);
+  // 原任务：cron 表达式 "0 9 * * *"，jitterMs=0
+  stub.impls.getJob = async () => makeJob({
+    id: "job_sched_jitter",
+    schedule: { kind: "cron", expr: "0 9 * * *", tz: "Asia/Shanghai", description: "每天9点", jitterMs: 0 },
+    metadata: { ...makeJob().metadata, createdBy: "agent" },
+  });
+
+  const tools = getHandlerMap();
+  const handler = tools["update_scheduled_task"]!.handler;
+  const result = await handler(
+    {
+      jobId: "job_sched_jitter",
+      schedule: {
+        scheduleKind: "cron",
+        cronExpression: "0 10 * * *",
+      },
+      jitterMs: 5000,
+    },
+    {},
+  );
+
+  assert.equal(result.isError, false);
+  const [jobId, updates] = stub.calls.updateJob[0] as unknown as [string, Partial<CronJob>];
+  assert.equal(jobId, "job_sched_jitter");
+  const sched = updates.schedule;
+  assert.ok(sched);
+  assert.equal(sched.kind, "cron", "schedule.kind 必须是 cron");
+  assert.equal(sched.expr, "0 10 * * *", "cron 表达式必须是新的 0 10 * * *，而非旧的 0 9 * * *");
+  assert.equal(sched.jitterMs, 5000, "jitterMs 必须是 5000");
 });
 
 test("C-2: 未传 conversationId → 走 __system__ 默认", async () => {
