@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 test("runner injects enabled Claude Code plugins into Agent SDK sessions", () => {
-  const source = readFileSync("src/electron/libs/runner.ts", "utf8");
+  const source = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
 
   assert.match(source, /resolveEnabledClaudeCodeSdkPlugins\(\)/);
   assert.match(source, /plugins:\s*sdkPlugins\.length > 0 \? sdkPlugins : undefined/);
@@ -13,7 +13,7 @@ test("runner injects enabled Claude Code plugins into Agent SDK sessions", () =>
 });
 
 test("runner requires visual Figma inspection before file mutation", () => {
-  const source = readFileSync("src/electron/libs/runner.ts", "utf8");
+  const source = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
   const anchorToolSet = source.match(/const FIGMA_IMPLEMENTATION_ANCHOR_TOOL_NAMES = new Set\(\[\n([\s\S]*?)\n\]\);/);
 
   assert.ok(anchorToolSet);
@@ -27,8 +27,26 @@ test("runner requires visual Figma inspection before file mutation", () => {
   assert.match(source, /qualityGate\.confidence >= 0\.75/);
 });
 
+test("runner requires exported Figma SVG assets before SVG file mutation", () => {
+  const source = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
+  const workflowSource = readFileSync("src/shared/figma-development-workflow.ts", "utf8");
+
+  assert.match(source, /const FIGMA_SVG_ASSET_TOOL_NAMES = new Set/);
+  assert.match(source, /"figma_get_image_urls"/);
+  assert.match(source, /shouldRequireFigmaSvgAsset\(currentDisplayPrompt\)/);
+  assert.match(source, /let figmaContextSeen = hasFigmaContext\(currentDisplayPrompt, session\.lastPrompt\)/);
+  assert.match(source, /figmaContextSeen && isSvgOrIconMutation\(toolName, toolInput\)/);
+  assert.match(source, /getFigmaSvgAssetDenyMessage\(\s*toolName, effectiveInput, requiresFigmaSvgAsset, figmaContextSeen, figmaSvgAssetSeen,/);
+  assert.match(source, /onFigmaContext\?\.\(\)/);
+  assert.ok(source.includes('format=\\"svg\\"'));
+  assert.match(source, /isFigmaSvgImageUrlRequest/);
+  assert.match(source, /onFigmaSvgAsset\?\.\(\)/);
+  assert.match(workflowSource, /Figma SVG asset rule/);
+  assert.ok(workflowSource.includes('figma_get_image_urls with format=\\"svg\\"'));
+});
+
 test("runner normalizes tool inputs in the permission path as a backstop", () => {
-  const source = readFileSync("src/electron/libs/runner.ts", "utf8");
+  const source = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
 
   assert.match(source, /normalizeToolInputForKnownSchemas\(toolName, input\)/);
   assert.match(source, /normalizeKnownToolInputsInMessage\(rawMessage\)/);
@@ -37,7 +55,7 @@ test("runner normalizes tool inputs in the permission path as a backstop", () =>
 });
 
 test("runner enables Claude Code auto truncation for oversized resumed contexts", () => {
-  const source = readFileSync("src/electron/libs/runner.ts", "utf8");
+  const source = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
 
   assert.match(source, /CLAUDE_CODE_AUTO_TRUNCATE_ARGS/);
   assert.match(source, /"allow-auto-truncate": null/);
@@ -45,7 +63,7 @@ test("runner enables Claude Code auto truncation for oversized resumed contexts"
 });
 
 test("runner only forwards explicitly selected skills", () => {
-  const source = readFileSync("src/electron/libs/runner.ts", "utf8");
+  const source = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
 
   assert.match(source, /const enabledSkills = agentContext\.skills\.length > 0/);
   assert.doesNotMatch(source, /runSurface === "development"\s*\? "all"/);
@@ -53,11 +71,11 @@ test("runner only forwards explicitly selected skills", () => {
 });
 
 test("runner injects explicitly invoked local Claude definitions into the session prompt", () => {
-  const runnerSource = readFileSync("src/electron/libs/runner.ts", "utf8");
+  const runnerSource = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
   const catalogSource = readFileSync("src/electron/libs/slash-command-catalog.ts", "utf8");
   const ipcSource = readFileSync("src/electron/ipc-handlers.ts", "utf8");
 
-  assert.match(runnerSource, /buildInvokedLocalSlashDefinitionPromptAppend\(currentPrompt, projectCwd\)/);
+  assert.match(runnerSource, /buildInvokedLocalSlashDefinitionPromptAppend\(currentDisplayPrompt, projectCwd\)/);
   assert.match(catalogSource, /Local Claude slash definition invocation:/);
   assert.match(catalogSource, /discoverSlashCommandDefinitionItemsInRoots\(resolveSlashCommandRoots\(options\.cwd\)\)/);
   assert.match(ipcSource, /Invoked local Claude \$\{invokedDefinition\.definitionKind\}: \$\{invokedDefinition\.name\}/);

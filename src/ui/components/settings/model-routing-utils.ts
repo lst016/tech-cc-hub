@@ -38,9 +38,9 @@ export function buildSharedModelRoutingState(profiles: ApiConfigProfile[]): Shar
     expertModel: pickAvailableModel(primaryProfile?.expertModel, availableModels) || mainModel,
     smallModel: pickAvailableModel(primaryProfile?.smallModel, availableModels) || mainModel,
     analysisModel: pickAvailableModel(primaryProfile?.analysisModel, availableModels) || mainModel,
-    imageModel: pickAvailableModel(primaryProfile?.imageModel, availableModels),
-    embeddingModel: pickAvailableModel(primaryProfile?.embeddingModel, availableModels),
-    wikiModel: pickAvailableModel(primaryProfile?.wikiModel, availableModels),
+    imageModel: pickFirstConfiguredSlotModel(routedProfiles, "imageModel", availableModels),
+    embeddingModel: pickFirstConfiguredSlotModel(routedProfiles, "embeddingModel", availableModels),
+    wikiModel: pickFirstConfiguredSlotModel(routedProfiles, "wikiModel", availableModels),
   };
 }
 
@@ -72,6 +72,20 @@ export function applySharedModelRoutingPatch(profiles: ApiConfigProfile[], patch
 function pickAvailableModel(model: string | undefined, availableModels: string[]): string {
   const normalized = model?.trim();
   return normalized && availableModels.includes(normalized) ? normalized : "";
+}
+
+function pickFirstConfiguredSlotModel(
+  profiles: ApiConfigProfile[],
+  slot: "imageModel" | "embeddingModel" | "wikiModel",
+  availableModels: string[],
+): string {
+  for (const profile of profiles) {
+    const picked = pickAvailableModel(profile[slot], availableModels);
+    if (picked) {
+      return picked;
+    }
+  }
+  return "";
 }
 
 function mergeModelConfigs(profiles: ApiConfigProfile[], availableModels: string[]): ApiModelConfigProfile[] {

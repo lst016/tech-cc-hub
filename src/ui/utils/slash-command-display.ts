@@ -1,6 +1,7 @@
 export type SlashCommandDisplayOption = {
   name: string;
   description?: string;
+  aliasOf?: string;
 };
 
 export type SlashCommandDraftDisplay = {
@@ -10,6 +11,7 @@ export type SlashCommandDraftDisplay = {
   prefixLength: number;
   known: boolean;
   description?: string;
+  resolvedFrom?: string;
 };
 
 export type SlashCommandDisplayPart =
@@ -21,6 +23,7 @@ export type SlashCommandDisplayPart =
       displayName: string;
       known: boolean;
       description?: string;
+      resolvedFrom?: string;
     };
 
 const ACRONYMS = new Set(["ai", "api", "db", "json", "mcp", "ocr", "pdf", "qa", "rag", "sdk", "sql", "tdd", "ui", "url"]);
@@ -47,6 +50,32 @@ export function serializeSlashCommandDraft(commandName: string, argument: string
   return `/${normalizedName}${normalizedArgument ? ` ${normalizedArgument}` : " "}`;
 }
 
+// Local alias resolution: when the user types /simplify but the catalog has
+// simplify.aliasOf = "code-review", surface the primary's name and description
+// in the display. This mirrors scripts/claude-code-compat-sync-lib.mjs's
+// resolveSlashCommandByName so the in-UI prompt reflects the renamed primary.
+function resolveAlias(typedName: string, commands: SlashCommandDisplayOption[]): {
+  resolvedName: string;
+  description?: string;
+  known: boolean;
+  resolvedFrom?: string;
+} {
+  const needle = typedName.trim().replace(/^\/+/, "");
+  if (!needle) return { resolvedName: typedName, known: false };
+  const lower = needle.toLowerCase();
+  const direct = commands.find((c) => c.name.toLowerCase() === lower);
+  if (direct) {
+    if (direct.aliasOf) {
+      const primary = commands.find((c) => c.name.toLowerCase() === direct.aliasOf!.toLowerCase());
+      if (primary) {
+        return { resolvedName: primary.name, description: primary.description, known: true, resolvedFrom: direct.name };
+      }
+    }
+    return { resolvedName: direct.name, description: direct.description, known: true };
+  }
+  return { resolvedName: typedName, known: false };
+}
+
 export function parseSlashCommandDraft(
   promptValue: string,
   commands: SlashCommandDisplayOption[] = [],
@@ -60,27 +89,27 @@ export function parseSlashCommandDraft(
   const separator = match[2] ?? "";
   if (!commandName || commandName.includes("/") || commandName.includes("\\")) return null;
 
-  const knownCommand = commands.find((command) => command.name.toLowerCase() === commandName.toLowerCase());
-  const resolvedName = knownCommand?.name ?? commandName;
+  const { resolvedName, description, known, resolvedFrom } = resolveAlias(commandName, commands);
 
   return {
     commandName: resolvedName,
     displayName: formatSlashCommandDisplayName(resolvedName),
     argument: match[3] ?? "",
     prefixLength: 1 + commandName.length + separator.length,
-    known: Boolean(knownCommand),
-    description: knownCommand?.description,
+    known,
+    description,
+    resolvedFrom,
   };
 }
 
 function resolveCommand(commandName: string, commands: SlashCommandDisplayOption[]) {
-  const knownCommand = commands.find((command) => command.name.toLowerCase() === commandName.toLowerCase());
-  const resolvedName = knownCommand?.name ?? commandName;
+  const { resolvedName, description, known, resolvedFrom } = resolveAlias(commandName, commands);
   return {
     commandName: resolvedName,
     displayName: formatSlashCommandDisplayName(resolvedName),
-    known: Boolean(knownCommand),
-    description: knownCommand?.description,
+    known,
+    description,
+    resolvedFrom,
   };
 }
 

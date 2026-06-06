@@ -1899,7 +1899,7 @@ function resolveApiModelsProvider(provider: unknown, baseURL: string): ApiModels
         const url = new URL(baseURL);
         if (url.hostname === "api.deepseek.com") return "deepseek";
         if (url.hostname === "chatgpt.com") return "codex";
-        if (url.hostname === "api.minimax.io") return "minimax";
+        if (url.hostname === "api.minimax.io" || url.hostname === "api.minimaxi.com") return "minimax";
     } catch {
         // Invalid URLs are handled by the generic path below.
     }
@@ -2555,6 +2555,13 @@ app.on("ready", async () => {
           return { success: false, error: "Browser workbench is not initialized." };
         }
         return browserWorkbench.getNetworkLogs(input);
+      },
+      httpRequest: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "Browser workbench is not initialized." };
+        }
+        return await browserWorkbench.httpRequest(input);
       },
       extractPageSnapshot: async (sessionId) => {
         const browserWorkbench = getBrowserWorkbench(sessionId);

@@ -16,6 +16,8 @@ import type {
   BrowserWorkbenchElementActionResult,
   BrowserWorkbenchElementInfoKind,
   BrowserWorkbenchElementInfoResult,
+  BrowserWorkbenchHttpRequestInput,
+  BrowserWorkbenchHttpRequestResult,
   BrowserWorkbenchCookieInput,
   BrowserWorkbenchCookieResult,
   BrowserWorkbenchInteractiveSnapshot,
@@ -58,6 +60,7 @@ export const BROWSER_TOOL_NAMES = [
   "browser_storage",
   "browser_console_logs",
   "browser_fetch_logs",
+  "browser_http_request",
   "browser_get_dom_stats",
   "browser_snapshot_interactive",
   "browser_click_element",
@@ -107,6 +110,23 @@ export const BROWSER_TOOL_NAMES = [
 ] as const;
 
 // Host 是主进程注入的 BrowserView 适配层。MCP 工具只依赖这个接口，避免和窗口/UI 生命周期绑死。
+export function normalizeBrowserEvalExpression(expression: string): string {
+  const trimmed = expression.trim();
+  if (!trimmed) {
+    return expression;
+  }
+
+  const isFunctionExpression = /^(?:async\s+)?function(?:\s+|\*)/.test(trimmed);
+  const isBareArrowExpression =
+    !trimmed.startsWith("((") &&
+    /^(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/.test(trimmed);
+  if (isFunctionExpression || isBareArrowExpression) {
+    return `(${trimmed})()`;
+  }
+
+  return expression;
+}
+
 export type BrowserWorkbenchToolHost = {
   open: (sessionId: string, url: string) => BrowserWorkbenchState;
   close: (sessionId: string) => BrowserWorkbenchState;
@@ -117,6 +137,7 @@ export type BrowserWorkbenchToolHost = {
   getState: (sessionId: string) => BrowserWorkbenchState;
   getConsoleLogs: (sessionId: string, limit?: number) => BrowserWorkbenchConsoleLog[];
   getNetworkLogs: (sessionId: string, input?: BrowserWorkbenchNetworkLogInput) => { success: boolean; result?: BrowserWorkbenchNetworkLogResult; error?: string };
+  httpRequest: (sessionId: string, input: BrowserWorkbenchHttpRequestInput) => Promise<{ success: boolean; result?: BrowserWorkbenchHttpRequestResult; error?: string }>;
   extractPageSnapshot: (sessionId: string) => Promise<{ success: boolean; snapshot?: BrowserWorkbenchPageSnapshot; error?: string }>;
   captureVisible: (sessionId: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>;
   saveScreenshot: (sessionId: string, input: { path?: string; format?: "png" | "jpeg"; quality?: number }) => Promise<{ success: boolean; result?: BrowserWorkbenchSavedFileResult; error?: string }>;
@@ -869,7 +890,7 @@ export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWit
 
   const openPageTool = tool(
     "browser_open_page",
-    "打开/切换浏览器预览页的 URL。",
+    "打开/切换浏览器预览页的 URL。遇到需要登录态、Cookie、SSO、内网/企业系统、Teambition/飞书/Lark 任务或文档链接时，应优先用此工具，而不是 WebFetch。",
     { url: z.string().trim().min(1) },
     async (input) => {
       const host = getHost();
@@ -1098,7 +1119,7 @@ export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWit
 
   const fetchLogsTool = tool(
     "browser_fetch_logs",
-    "Read captured BrowserView Fetch/XHR requests, status codes, post data, and JSON/text response bodies. Use this after page interactions when API data matters.",
+    "Read captured BrowserView Fetch/XHR requests, status codes, post data, body previews, extracted JSON scalar fields, and JSON/text response bodies. Use this after page interactions when API data matters; responseJsonFields/body previews stay available even when includeBody=false.",
     {
       limit: z.number().int().min(1).max(MAX_FETCH_LOG_LIMIT).optional(),
       includeBody: z.boolean().optional(),
@@ -1120,6 +1141,45 @@ export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWit
       }
       return toTextToolResult({
         action: "browser_fetch_logs",
+        success: true,
+        sessionId: resolvedSessionId,
+        result: result.result,
+      });
+    },
+  );
+
+  const httpRequestTool = tool(
+    "browser_http_request",
+    "Send a fetch request from the current BrowserView page context, reusing browser cookies/session credentials. Use it to isolate whether an API bug is frontend submission, backend response, or read-model state.",
+    {
+      method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]).optional(),
+      url: z.string().trim().min(1),
+      body: z.string().optional(),
+      headers: z.record(z.string(), z.string()).optional(),
+      contentType: z.string().trim().min(1).optional(),
+      timeoutMs: z.number().int().min(100).max(60000).optional(),
+    },
+    async (input) => {
+      const host = getHost();
+      const result = await host.httpRequest(resolvedSessionId, {
+        method: input.method,
+        url: input.url,
+        body: input.body,
+        headers: input.headers,
+        contentType: input.contentType,
+        timeoutMs: input.timeoutMs,
+      });
+      if (!result.success) {
+        return toTextToolResult({
+          action: "browser_http_request",
+          success: false,
+          sessionId: resolvedSessionId,
+          error: result.error,
+          result: result.result,
+        }, true);
+      }
+      return toTextToolResult({
+        action: "browser_http_request",
         success: true,
         sessionId: resolvedSessionId,
         result: result.result,
@@ -1369,7 +1429,8 @@ export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWit
     { expression: z.string().trim().min(1) },
     async (input) => {
       const host = getHost();
-      const result = await host.evaluateJavaScript(resolvedSessionId, input.expression);
+      const expression = normalizeBrowserEvalExpression(input.expression);
+      const result = await host.evaluateJavaScript(resolvedSessionId, expression);
       if (!result.success) {
         return toTextToolResult({ action: "browser_eval", success: false, error: result.error, result: result.result }, true);
       }
@@ -2060,6 +2121,7 @@ export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWit
       storageTool,
       consoleLogsTool,
       fetchLogsTool,
+      httpRequestTool,
       domStatsTool,
       interactiveSnapshotTool,
       clickElementTool,

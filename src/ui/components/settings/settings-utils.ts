@@ -16,7 +16,12 @@ import {
   normalizeModelRoutingWeight,
   pickHighestWeightedModelOwner,
 } from "../../../shared/models/model-routing-weight.js";
-import { isDeepSeekModelName, isMiniMaxModelName, isModelCompatibleWithApiProvider } from "../../../shared/models/model-provider-routing.js";
+import {
+  isDeepSeekModelName,
+  isMiniMaxModelName,
+  isModelCompatibleWithApiProvider,
+  pickProviderCompatibleModel,
+} from "../../../shared/models/model-provider-routing.js";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 const DEEPSEEK_CONTEXT_WINDOW = 1_000_000;
@@ -194,7 +199,7 @@ function normalizeProvider(value: unknown, baseURL: string): "custom" | "deepsee
     const hostname = new URL(baseURL.trim()).hostname;
     if (hostname === "api.deepseek.com") return "deepseek";
     if (hostname === "chatgpt.com") return "codex";
-    if (hostname === "api.minimax.io") return "minimax";
+    if (hostname === "api.minimax.io" || hostname === "api.minimaxi.com") return "minimax";
     return "custom";
   } catch {
     return "custom";
@@ -269,14 +274,9 @@ function dedupeModels(models: ApiModelConfigProfile[]): ApiModelConfigProfile[] 
   }));
 }
 
-function normalizeRoleModel(value: string | undefined, fallbackModel: string): string {
-  const normalized = value?.trim();
-  return normalized || fallbackModel;
-}
-
 export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
   const provider = normalizeProvider(profile.provider, profile.baseURL);
-  const models = dedupeModels([
+  const models = filterProviderCompatibleModels(provider, dedupeModels([
     ...(profile.models ?? []),
     { name: profile.model },
     { name: profile.expertModel ?? "" },
@@ -285,8 +285,11 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
     { name: profile.analysisModel ?? "" },
     { name: profile.embeddingModel ?? "" },
     { name: profile.wikiModel ?? "" },
-  ]);
-  const selectedModel = profile.model.trim() || models[0]?.name || "";
+  ]));
+  const selectedModel = pickProviderCompatibleModel(provider, profile.model, models[0]?.name)
+    || getProviderDefaultModel(provider, "main")
+    || models[0]?.name
+    || "";
   const imageModel = profile.imageModel?.trim();
   const embeddingModel = profile.embeddingModel?.trim();
   const wikiModel = profile.wikiModel?.trim();
@@ -300,14 +303,14 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
 
   return {
     ...profile,
-    name: profile.name.trim() || "未命名配置",
+    name: normalizeKnownProfileName(profile.name, provider),
     apiKey: profile.apiKey.trim(),
     baseURL: normalizeBaseURL(profile.baseURL, provider),
     model: selectedModel,
-    expertModel: normalizeRoleModel(profile.expertModel, selectedModel),
-    smallModel: normalizeRoleModel(profile.smallModel, normalizeRoleModel(profile.analysisModel, selectedModel)),
+    expertModel: normalizeProviderRoleModel(provider, profile.expertModel, selectedModel),
+    smallModel: normalizeProviderRoleModel(provider, profile.smallModel, normalizeProviderRoleModel(provider, profile.analysisModel, getProviderDefaultModel(provider, "small") || selectedModel)),
     imageModel: imageModel && models.some((item) => item.name === imageModel) ? imageModel : undefined,
-    analysisModel: normalizeRoleModel(profile.analysisModel, selectedModel),
+    analysisModel: normalizeProviderRoleModel(provider, profile.analysisModel, getProviderDefaultModel(provider, "small") || selectedModel),
     embeddingModel: embeddingModel && models.some((item) => item.name === embeddingModel) ? embeddingModel : undefined,
     embeddingDimension: normalizePositiveInteger(profile.embeddingDimension) ?? 1536,
     embeddingBatchSize: normalizePositiveInteger(profile.embeddingBatchSize) ?? 16,
@@ -322,6 +325,44 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
     provider,
     apiType: "anthropic",
   };
+}
+
+function normalizeKnownProfileName(name: string, provider: ApiProviderMode): string {
+  const trimmed = name.trim();
+  if (provider === "minimax" && /^MiniMax\s+(官方|瀹樻柟|瀚樟柿)$/.test(trimmed)) {
+    return "MiniMax 官方";
+  }
+  if (provider === "deepseek" && /^DeepSeek\s+(官方|瀹樻柟)$/.test(trimmed)) {
+    return "DeepSeek 官方";
+  }
+  if (trimmed === "榛樿閰嶇疆") {
+    return "默认配置";
+  }
+  return trimmed || "未命名配置";
+}
+
+function filterProviderCompatibleModels(provider: ApiProviderMode, models: ApiModelConfigProfile[]): ApiModelConfigProfile[] {
+  if (provider === "custom") {
+    return models;
+  }
+  return models.filter((model) => isModelCompatibleWithApiProvider(provider, model.name));
+}
+
+function getProviderDefaultModel(provider: ApiProviderMode, slot: "main" | "small"): string {
+  if (provider === "codex") {
+    return slot === "small" ? CODEX_OAUTH_SMALL_MODEL : CODEX_OAUTH_DEFAULT_MODEL;
+  }
+  if (provider === "deepseek") {
+    return "deepseek-v4-flash";
+  }
+  if (provider === "minimax") {
+    return slot === "small" ? MINIMAX_SMALL_MODEL : MINIMAX_DEFAULT_MODEL;
+  }
+  return "";
+}
+
+function normalizeProviderRoleModel(provider: ApiProviderMode, value: string | undefined, fallbackModel: string): string {
+  return pickProviderCompatibleModel(provider, value, fallbackModel) || fallbackModel;
 }
 
 export function getEnabledProfile(profiles: ApiConfigProfile[]): ApiConfigProfile | undefined {

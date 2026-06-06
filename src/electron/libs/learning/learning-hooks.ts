@@ -24,19 +24,19 @@ const SECRET_PATTERNS = [
   { name: "AWS Secret Key", re: /\b(?:aws_)?secret(?:_access)?_key\s*[=:]\s*["']?[A-Za-z0-9/+=]{40}["']?/i },
   { name: "GitHub Token", re: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/ },
   { name: "GitHub Fine-Grained Token", re: /\bgithub_pat_[A-Za-z0-9_]{82}\b/ },
-  { name: "Anthropic API Key", re: /\bsk-ant-[A-Za-z0-9_\-]{20,}\b/ },
-  { name: "OpenAI API Key", re: /\bsk-(?:proj-)?(?!ant-)[A-Za-z0-9_\-]{20,}\b/ },
-  { name: "Slack Token", re: /\bxox[baprs]-[A-Za-z0-9\-]{10,}\b/ },
-  { name: "Google API Key", re: /\bAIza[0-9A-Za-z_\-]{35}\b/ },
+  { name: "Anthropic API Key", re: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/ },
+  { name: "OpenAI API Key", re: /\bsk-(?:proj-)?(?!ant-)[A-Za-z0-9_-]{20,}\b/ },
+  { name: "Slack Token", re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
+  { name: "Google API Key", re: /\bAIza[0-9A-Za-z_-]{35}\b/ },
   { name: "Stripe Secret Key", re: /\bsk_live_[0-9a-zA-Z]{24,}\b/ },
   { name: "Private Key Block", re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/ },
   { name: "Generic Bearer Token", re: /\bBearer\s+[A-Za-z0-9_\-.=]{30,}/ },
   { name: "Generic Password Assignment", re: /\b(?:password|passwd|pwd)\s*[=:]\s*["'][^"'\s]{8,}["']/i },
-  { name: "Generic Secret Assignment", re: /\b(?:api[_\-]?key|api[_\-]?secret|secret|token)\s*[=:]\s*["'][A-Za-z0-9_\-]{20,}["']/i },
+  { name: "Generic Secret Assignment", re: /\b(?:api[-_]?key|api[-_]?secret|secret|token)\s*[=:]\s*["'][A-Za-z0-9_-]{20,}["']/i },
 ];
 
 const SECRET_ALLOWLIST = [
-  /example|placeholder|your[_\-]?(?:api[_\-]?)?key|xxx+|\*{4,}|<[A-Z_]+>/i,
+  /example|placeholder|your[-_]?(?:api[-_]?)?key|xxx+|\*{4,}|<[A-Z_]+>/i,
   /process\.env\./,
   /os\.getenv|os\.environ/,
 ];
@@ -122,8 +122,6 @@ const LEARN_TRIGGER_PATTERNS = [
 ];
 
 // ─── Learn Capture ──────────────────────────────────────────────────
-const LEARN_REGEX = /\[LEARN\]\s*([\w][\w\s-]*?)\s*:\s*(.+?)(?:\nMistake:\s*(.+?))?(?:\nCorrection:\s*(.+?))?(?:\nWiki:\s*([A-Za-z0-9_-]+))?(?=\n\[LEARN\]|\n\n|$)/gim;
-
 // ─── Adaptive Quality Gate Threshold ────────────────────────────────
 function getAdaptiveThreshold(store: LearningStore): { first: number; second: number; repeat: number } {
   try {
@@ -288,7 +286,7 @@ export function createQualityGateHook(sessionId: string) {
           additionalContext: `[Quality] ${hints.join("; ")}`,
         },
       };
-    } catch (e) {
+    } catch {
       return { continue: true };
     }
   };
@@ -452,9 +450,9 @@ export function createCommitValidateHook() {
 }
 
 /**
- * Tool call budget hook for PreToolUse (any tool).
+ * Tool call telemetry hook for PreToolUse (any tool).
  */
-export function createToolCallBudgetHook() {
+export function createToolCallBudgetHook(sessionId?: string) {
   return async (input: Record<string, unknown>): Promise<HookReturn> => {
     const toolName = typeof input.tool_name === "string" ? input.tool_name : "";
     if (!toolName) {
@@ -467,49 +465,16 @@ export function createToolCallBudgetHook() {
       return { continue: true };
     }
 
-    const SID = process.env.CLAUDE_SESSION_ID || "default";
+    const SID = sessionId || process.env.CLAUDE_SESSION_ID || "default";
     try {
-      const sessions = store.getRecentSessions(1);
+      const sessions = store.getRecentSessions(100);
       const existing = sessions.find(s => s.session_id === SID);
       if (!existing) {
         store.startSession(SID);
       }
-      // We approximate tool calls as edits + prompts
+      // Track PreToolUse calls for execution-efficiency telemetry only.
       store.updateSessionCounts(SID, 1, 0, 0);
-      const updatedSessions = store.getRecentSessions(1);
-      const updated = updatedSessions.find(s => s.session_id === SID);
-      const count = updated?.edit_count ?? 0;
-
-      const thresholds = [
-        { limit: 20, warn: 15, label: "quick-fix budget (20 calls)" },
-        { limit: 30, warn: 25, label: "bug-fix budget (30 calls)" },
-        { limit: 50, warn: 40, label: "feature budget (50 calls)" },
-        { limit: 80, warn: 65, label: "large-feature budget (80 calls)" },
-      ];
-
-      const hints: string[] = [];
-      for (const t of thresholds) {
-        if (count === t.warn) {
-          hints.push(`${count} tool calls — approaching ${t.label}. Consider wrapping up.`);
-          break;
-        }
-        if (count === t.limit) {
-          hints.push(`${count} tool calls — hit ${t.label}. Commit progress and assess.`);
-          break;
-        }
-      }
-
-      if (hints.length === 0) {
-        return { continue: true };
-      }
-
-      return {
-        continue: true,
-        hookSpecificOutput: {
-          hookEventName: "PreToolUse",
-          additionalContext: `[Budget] ${hints.join("; ")}`,
-        },
-      };
+      return { continue: true };
     } catch {
       return { continue: true };
     }

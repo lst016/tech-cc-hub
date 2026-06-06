@@ -1537,15 +1537,6 @@ export function ActivityRail({
                 <div className="text-[10px] uppercase tracking-[0.18em] text-ink-400">输出</div>
                 <div className="mt-1 text-sm font-semibold text-ink-900">{model.summary.outputLabel}</div>
               </div>
-              <div className="rounded-2xl border border-accent/15 bg-accent-subtle/40 px-3 py-2">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-ink-400">费用</div>
-                <div className="mt-1 flex items-baseline gap-1.5">
-                  <span className="text-sm font-semibold text-ink-900">{model.summary.costLabel}</span>
-                  {model.summary.costLabel !== "-" && (
-                    <span className="text-[9px] text-ink-400/70">非真实扣费</span>
-                  )}
-                </div>
-              </div>
               <div className="rounded-2xl border border-black/5 bg-black/[0.03] px-3 py-2">
                 <div className="text-[10px] uppercase tracking-[0.18em] text-ink-400">成功 / 失败</div>
                 <div className="mt-1 text-sm font-semibold text-ink-900">{model.summary.successCount} / {model.summary.failureCount}</div>

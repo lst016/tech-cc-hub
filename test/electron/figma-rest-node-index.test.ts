@@ -90,6 +90,35 @@ test("Figma export tool advertises a visual reference lock for implementation", 
   assert.match(source, /maxDifferenceRatio:\s*0\.10/);
 });
 
+test("Figma image REST tools expose current export parameters", () => {
+  const source = readFileSync("src/electron/libs/mcp-tools/figma-rest.ts", "utf8");
+
+  assert.match(source, /svgOutlineText/);
+  assert.match(source, /svgIncludeNodeId/);
+  assert.match(source, /svg_outline_text/);
+  assert.match(source, /svg_include_node_id/);
+  assert.match(source, /svg_simplify_stroke/);
+  assert.match(source, /contents_only/);
+  assert.match(source, /use_absolute_bounds/);
+});
+
+test("Figma compact summaries preserve newer layout and stroke fields", () => {
+  const source = readFileSync("src/electron/libs/mcp-tools/figma-rest.ts", "utf8");
+
+  for (const field of [
+    "gridRowCount",
+    "gridColumnCount",
+    "gridRowsSizing",
+    "gridChildHorizontalAlign",
+    "cornerSmoothing",
+    "complexStrokeProperties",
+    "variableWidthPoints",
+    "boundVariables",
+  ]) {
+    assert.match(source, new RegExp(field), field);
+  }
+});
+
 test("Figma node index returns the component development workflow for large designs", () => {
   const source = readFileSync("src/electron/libs/mcp-tools/figma-rest.ts", "utf8");
 

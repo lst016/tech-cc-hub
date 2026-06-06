@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Search } from "lucide-react";
 import type { RuntimeReasoningMode } from "../../types";
 import type { ModelOption } from "../models/ModelSelect";
 
 type ComposerModelMenuProps = {
   modelValue: string;
   modelOptions: ModelOption[];
-  reasoningValue: RuntimeReasoningMode;
+  reasoningMode: RuntimeReasoningMode;
   disabled?: boolean;
   onModelChange: (model: string) => void;
-  onReasoningChange: (mode: RuntimeReasoningMode) => void;
+  onReasoningModeChange: (mode: RuntimeReasoningMode) => void;
   placeholder?: string;
 };
 
@@ -24,42 +24,54 @@ const CONTEXT_OPTIONS = [
   { value: "1M", label: "1M", defaultFor: ["deepseek", "qwen", "glm", "kimi", "minimax"] },
 ];
 
+const REASONING_OPTIONS: Array<{ value: RuntimeReasoningMode; label: string; description: string }> = [
+  { value: "disabled", label: "关闭", description: "不启用额外思考" },
+  { value: "low", label: "低", description: "快速响应" },
+  { value: "medium", label: "中", description: "平衡速度和质量" },
+  { value: "high", label: "高", description: "更充分推理" },
+  { value: "xhigh", label: "超高", description: "最强思考" },
+];
+
 type ContextDisplayOption = {
   value: string;
   label: string;
 };
 
-const THINKING_OPTIONS: Array<{ value: RuntimeReasoningMode; label: string }> = [
-  { value: "disabled", label: "关闭" },
-  { value: "low", label: "低" },
-  { value: "medium", label: "中" },
-  { value: "high", label: "高" },
-  { value: "xhigh", label: "超高" },
-];
-
 export function ComposerModelMenu({
   modelValue,
   modelOptions,
-  reasoningValue,
+  reasoningMode,
   disabled = false,
   onModelChange,
-  onReasoningChange,
+  onReasoningModeChange,
   placeholder = "选择模型",
 }: ComposerModelMenuProps) {
   const labelId = useId();
   const listboxId = useId();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
+  const [modelFilter, setModelFilter] = useState("");
 
   const displayOptions = useMemo(() => buildComposerModelOptions(modelOptions), [modelOptions]);
+  const filteredOptions = useMemo(
+    () => filterComposerModelOptions(displayOptions, modelFilter),
+    [displayOptions, modelFilter],
+  );
   const selectedOption = displayOptions.find((option) => option.value === modelValue);
   const selectedLabel = selectedOption?.displayLabel || modelValue || placeholder;
   const selectedKind = getModelKind(selectedOption?.value ?? modelValue, selectedOption?.displayLabel);
   const selectedContext = getContextDisplay(selectedOption?.contextWindow, selectedKind);
-  const selectedThinkingLabel = getReasoningTriggerLabel(reasoningValue);
 
   const closeMenu = useCallback(() => {
     setOpen(false);
+    setModelFilter("");
+  }, []);
+
+  const toggleMenu = useCallback(() => {
+    setOpen((current) => {
+      if (current) setModelFilter("");
+      return !current;
+    });
   }, []);
 
   useEffect(() => {
@@ -86,6 +98,7 @@ export function ComposerModelMenu({
 
   const selectModel = (model: string) => {
     onModelChange(model);
+    closeMenu();
   };
 
   return (
@@ -98,15 +111,13 @@ export function ComposerModelMenu({
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
         disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
-        title={`${selectedOption?.title ?? selectedOption?.description ?? modelValue}${selectedThinkingLabel ? ` / thinking ${selectedThinkingLabel}` : ""}`}
+        onClick={toggleMenu}
+        title={selectedOption?.title ?? selectedOption?.description ?? modelValue}
       >
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="shrink-0 text-[#73777f]">模型</span>
           <span className="min-w-0 truncate">{selectedLabel}</span>
         </span>
-        <span className="h-3.5 w-px shrink-0 bg-[#d9dde3]" aria-hidden="true" />
-        <span className="shrink-0 text-[#73777f]">思考强度</span>
         <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-[#6f7480] transition ${open ? "rotate-180" : ""}`} aria-hidden="true" />
       </button>
 
@@ -118,9 +129,24 @@ export function ComposerModelMenu({
             aria-labelledby={labelId}
             className="max-h-[min(70vh,560px)] w-[360px] overflow-y-auto border-r border-[#e6e9ee] p-1.5"
           >
-            <div className="px-3 py-2 text-[12px] font-semibold text-[#73777f]">模型</div>
+            <div className="sticky top-0 z-10 flex items-center gap-2 bg-white px-3 py-2">
+              <span className="shrink-0 text-[12px] font-semibold text-[#73777f]">模型</span>
+              <label className="relative min-w-0 flex-1">
+                <span className="sr-only">筛选模型</span>
+                <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#9ca0a7]" aria-hidden="true" />
+                <input
+                  type="search"
+                  value={modelFilter}
+                  onChange={(event) => setModelFilter(event.target.value)}
+                  className="h-7 w-full rounded-md border border-[#d9dde3] bg-white pl-7 pr-2 text-[12px] font-medium text-[#171b23] outline-none transition placeholder:text-[#a6a8ad] focus:border-[#9bbcf7] focus:ring-2 focus:ring-[#dbeafe]"
+                  placeholder="筛选模型"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+            </div>
             <div className="grid gap-1">
-              {displayOptions.map((option) => (
+              {filteredOptions.map((option) => (
                 <ComposerModelRow
                   key={option.value}
                   option={option}
@@ -128,6 +154,11 @@ export function ComposerModelMenu({
                   onSelect={selectModel}
                 />
               ))}
+              {filteredOptions.length === 0 && (
+                <div className="px-3 py-8 text-center text-[13px] font-medium text-[#8a8f98]">
+                  没有匹配模型
+                </div>
+              )}
             </div>
           </div>
 
@@ -153,29 +184,31 @@ export function ComposerModelMenu({
               </div>
             </div>
 
-            <div className="mb-3 h-px bg-[#edf0f3]" />
-
             <div>
-              <div className="mb-2 px-1 text-[12px] font-semibold text-[#73777f]">思考强度</div>
+              <div className="mb-2 px-1 text-[12px] font-semibold text-[#73777f]">思维强度</div>
               <div className="grid gap-1">
-                {THINKING_OPTIONS.map((option) => {
-                  const selected = option.value === reasoningValue;
+                {REASONING_OPTIONS.map((option) => {
+                  const selected = option.value === reasoningMode;
                   return (
                     <button
                       key={option.value}
                       type="button"
-                      className={`flex h-8 items-center justify-between rounded-md px-2 text-left text-[13px] transition ${
+                      className={`flex min-h-9 items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left text-[13px] transition ${
                         selected ? "bg-[#f4f6f8] text-[#171b23]" : "text-[#313743] hover:bg-[#f4f6f8]"
                       }`}
-                      onClick={() => onReasoningChange(option.value)}
+                      onClick={() => onReasoningModeChange(option.value)}
                     >
-                      <span>{option.label}</span>
-                      {selected && <Check className="h-4 w-4 text-[#6f7480]" aria-hidden="true" />}
+                      <span className="min-w-0">
+                        <span className="block font-medium">{option.label}</span>
+                        <span className="mt-0.5 block truncate text-[11px] text-[#8a8f98]">{option.description}</span>
+                      </span>
+                      {selected && <Check className="h-4 w-4 shrink-0 text-[#6f7480]" aria-hidden="true" />}
                     </button>
                   );
                 })}
               </div>
             </div>
+
           </div>
         </div>
       )}
@@ -219,6 +252,31 @@ function buildComposerModelOptions(options: ModelOption[]): ComposerModelOption[
     displayLabel: option.label,
     detailLabel: option.badge ?? "",
   }));
+}
+
+function filterComposerModelOptions(options: ComposerModelOption[], query: string): ComposerModelOption[] {
+  const normalizedQuery = normalizeModelFilterText(query);
+  if (!normalizedQuery) return options;
+
+  const queryParts = normalizedQuery.split(" ").filter(Boolean);
+  return options.filter((option) => {
+    const haystack = normalizeModelFilterText([
+      option.value,
+      option.displayLabel,
+      option.detailLabel,
+      option.description,
+      option.title,
+    ].filter(Boolean).join(" "));
+    return queryParts.every((part) => haystack.includes(part));
+  });
+}
+
+function normalizeModelFilterText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[_./:-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function getModelKind(value: string, label = value): string {
@@ -275,10 +333,3 @@ function formatContextWindow(value: number | undefined): string | undefined {
   return value.toLocaleString("en-US");
 }
 
-function getReasoningTriggerLabel(value: RuntimeReasoningMode): string {
-  if (value === "disabled") return "关闭";
-  if (value === "low") return "低";
-  if (value === "medium") return "中";
-  if (value === "high") return "高";
-  return "超高";
-}

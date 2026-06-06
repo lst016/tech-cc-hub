@@ -1,4 +1,5 @@
 import { BrowserView, BrowserWindow, shell, type WebContents } from "electron";
+import { getChromeCookes, isChromeInstalled } from "./libs/chrome-cookie-sync.js";
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -84,10 +85,13 @@ export type BrowserWorkbenchNetworkLog = {
   requestHeaders?: Record<string, string>;
   responseHeaders?: Record<string, string>;
   requestPostData?: string;
+  requestPostDataPreview?: string;
   requestPostDataTruncated?: boolean;
   responseBody?: string;
+  responseBodyPreview?: string;
   responseBodyBase64Encoded?: boolean;
   responseBodyTruncated?: boolean;
+  responseJsonFields?: Record<string, string | number | boolean | null>;
   bodyUnavailableReason?: string;
   errorText?: string;
   fromDiskCache?: boolean;
@@ -95,6 +99,35 @@ export type BrowserWorkbenchNetworkLog = {
   startedAt: number;
   finishedAt?: number;
   durationMs?: number;
+};
+
+export type BrowserWorkbenchHttpRequestInput = {
+  method?: string;
+  url: string;
+  body?: string;
+  headers?: Record<string, string>;
+  contentType?: string;
+  timeoutMs?: number;
+};
+
+export type BrowserWorkbenchHttpRequestResult = {
+  url: string;
+  title?: string;
+  requestUrl: string;
+  method: string;
+  status?: number;
+  statusText?: string;
+  ok?: boolean;
+  redirected?: boolean;
+  responseUrl?: string;
+  responseHeaders?: Record<string, string>;
+  responseBody?: string;
+  responseBodyPreview?: string;
+  responseBodyTruncated?: boolean;
+  responseJsonFields?: Record<string, string | number | boolean | null>;
+  contentType?: string;
+  durationMs: number;
+  error?: string;
 };
 
 export type BrowserWorkbenchNetworkLogInput = {
@@ -462,6 +495,7 @@ export type BrowserWorkbenchAnnotation = {
 };
 
 export type BrowserWorkbenchEvent =
+  | { type: "browser.open-requested"; payload: { url: string }; sessionId?: string }
   | { type: "browser.state"; payload: BrowserWorkbenchState; sessionId?: string }
   | { type: "browser.console"; payload: BrowserWorkbenchConsoleLog; sessionId?: string }
   | { type: "browser.annotation"; payload: BrowserWorkbenchAnnotation; sessionId?: string }
@@ -476,6 +510,10 @@ const BROWSER_WORKBENCH_RECORDER_CHANNEL = "browser-workbench-recording";
 const MAX_NETWORK_LOGS = 200;
 const DEFAULT_NETWORK_LOG_LIMIT = 50;
 const MAX_NETWORK_BODY_CHARS = 64_000;
+const NETWORK_BODY_PREVIEW_CHARS = 600;
+const MAX_JSON_FIELD_COUNT = 60;
+const DEFAULT_BROWSER_HTTP_TIMEOUT_MS = 10_000;
+const MAX_BROWSER_HTTP_TIMEOUT_MS = 60_000;
 const SENSITIVE_HEADER_NAMES = new Set([
   "authorization",
   "cookie",
@@ -502,6 +540,50 @@ const emptyRecordingRunAttachments = () => ({
   videoFiles: [],
   otherFiles: [],
 });
+
+function previewText(value: string | undefined, maxChars = NETWORK_BODY_PREVIEW_CHARS): string | undefined {
+  if (typeof value !== "string") return undefined;
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars)}...`;
+}
+
+function extractJsonScalarFields(value: string | undefined): Record<string, string | number | boolean | null> | undefined {
+  if (!value?.trim()) return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    const fields: Record<string, string | number | boolean | null> = {};
+    const visit = (node: unknown, path: string, depth: number): void => {
+      if (Object.keys(fields).length >= MAX_JSON_FIELD_COUNT || depth > 6) return;
+      if (node === null || typeof node === "string" || typeof node === "number" || typeof node === "boolean") {
+        fields[path || "$"] = node;
+        return;
+      }
+      if (Array.isArray(node)) {
+        node.slice(0, 8).forEach((item, index) => visit(item, `${path}[${index}]`, depth + 1));
+        return;
+      }
+      if (typeof node === "object") {
+        for (const [key, child] of Object.entries(node as Record<string, unknown>).slice(0, 40)) {
+          visit(child, path ? `${path}.${key}` : key, depth + 1);
+          if (Object.keys(fields).length >= MAX_JSON_FIELD_COUNT) return;
+        }
+      }
+    };
+    visit(parsed, "", 0);
+    return Object.keys(fields).length > 0 ? fields : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function annotateNetworkBody(entry: BrowserWorkbenchNetworkLog): BrowserWorkbenchNetworkLog {
+  return {
+    ...entry,
+    requestPostDataPreview: previewText(entry.requestPostData),
+    responseBodyPreview: previewText(entry.responseBody),
+    responseJsonFields: entry.responseBodyBase64Encoded ? undefined : extractJsonScalarFields(entry.responseBody),
+  };
+}
 
 function normalizeUrl(input: string): string {
   const trimmed = input.trim();
@@ -593,6 +675,8 @@ export class BrowserWorkbenchManager {
   private lastRecordingRunResult: BrowserWorkbenchRecordingRunResult | null = null;
   private recordingRunAbortController: AbortController | null = null;
   private listeners = new Set<(event: BrowserWorkbenchEvent) => void>();
+  private cookieSyncCache = new Map<string, number>();
+  private readonly COOKIE_SYNC_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
   constructor(
     private readonly window: BrowserWindow,
@@ -602,6 +686,7 @@ export class BrowserWorkbenchManager {
 
   open(url: string): BrowserWorkbenchState {
     const targetUrl = normalizeUrl(url);
+    this.emit({ type: "browser.open-requested", payload: { url: targetUrl } });
     const view = this.ensureView();
     // Reattach the existing view without reloading when the URL is unchanged.
     const currentUrl = view.webContents.getURL();
@@ -619,7 +704,11 @@ export class BrowserWorkbenchManager {
       }
     }
     this.clearNetworkLogs();
-    void view.webContents.loadURL(targetUrl);
+    void this.syncChromeCookies(targetUrl).then(() => {
+      if (!view.webContents.isDestroyed()) {
+        view.webContents.loadURL(targetUrl);
+      }
+    });
     this.emitState();
     return this.getState();
   }
@@ -668,6 +757,49 @@ export class BrowserWorkbenchManager {
       // The view may already be detached by another active browser surface.
     }
     this.view.setBounds(this.bounds);
+  }
+
+  private shouldSyncCookies(domain: string): boolean {
+    const lastSync = this.cookieSyncCache.get(domain);
+    if (!lastSync) return true;
+    return Date.now() - lastSync > this.COOKIE_SYNC_INTERVAL;
+  }
+
+  private async syncChromeCookies(url: string): Promise<void> {
+    try {
+      const urlObj = new URL(url);
+      const domain = urlObj.hostname;
+
+      if (!this.shouldSyncCookies(domain)) return;
+      if (!isChromeInstalled()) return;
+
+      const cookies = await getChromeCookes(domain);
+      if (!this.view || this.view.webContents.isDestroyed()) return;
+
+      const session = this.view.webContents.session;
+
+      for (const cookie of cookies) {
+        try {
+          await session.cookies.set({
+            url: cookie.url || `${urlObj.protocol}//${cookie.domain}${cookie.path}`,
+            name: cookie.name,
+            value: cookie.value,
+            domain: cookie.domain,
+            path: cookie.path,
+            secure: cookie.secure,
+            httpOnly: cookie.httpOnly,
+            expirationDate: cookie.expirationDate,
+            sameSite: cookie.sameSite as "unspecified" | "no_restriction" | "lax" | "strict" | undefined,
+          });
+        } catch {
+          // Single cookie injection failure should not affect others
+        }
+      }
+
+      this.cookieSyncCache.set(domain, Date.now());
+    } catch (error) {
+      console.warn("[browser-manager] Chrome cookie sync failed:", error);
+    }
   }
 
   reload(): BrowserWorkbenchState {
@@ -775,7 +907,7 @@ export class BrowserWorkbenchManager {
       })
       .slice(-limit)
       .map((entry) => {
-        const next: BrowserWorkbenchNetworkLog = { ...entry };
+        const next: BrowserWorkbenchNetworkLog = annotateNetworkBody(entry);
         if (!includeHeaders) {
           delete next.requestHeaders;
           delete next.responseHeaders;
@@ -1229,6 +1361,18 @@ export class BrowserWorkbenchManager {
       const buffer = format === "jpeg"
         ? image.toJPEG(Math.max(1, Math.min(Math.trunc(input.quality ?? 90), 100)))
         : image.toPNG();
+      if (buffer.length === 0) {
+        const result: BrowserWorkbenchSavedFileResult = {
+          url: this.view.webContents.getURL(),
+          title: this.view.webContents.getTitle(),
+          success: false,
+          path: filePath,
+          bytes: 0,
+          format,
+          error: "BrowserView screenshot capture returned an empty image.",
+        };
+        return { success: false, result, error: result.error };
+      }
       mkdirSync(dirname(filePath), { recursive: true });
       writeFileSync(filePath, buffer);
       const result: BrowserWorkbenchSavedFileResult = {
@@ -1520,13 +1664,105 @@ export class BrowserWorkbenchManager {
       };
       return { success: true, result };
     } catch (error) {
+      const baseError = error instanceof Error ? error.message : String(error);
+      const hint = /could not be cloned|object could not be cloned|clone/i.test(baseError)
+        ? " Return only JSON-serializable values; DOMRect, HTMLElement, Function, Map, Set, and class instances should be converted to plain objects or strings first."
+        : "";
       const result: BrowserWorkbenchEvalResult = {
         url: this.view.webContents.getURL(),
         title: this.view.webContents.getTitle(),
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: `${baseError}${hint}`,
       };
       return { success: false, result, error: result.error };
+    }
+  }
+
+  async httpRequest(input: BrowserWorkbenchHttpRequestInput): Promise<{ success: boolean; result?: BrowserWorkbenchHttpRequestResult; error?: string }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "Browser workbench is not open." };
+    }
+    const method = (input.method?.trim() || "GET").toUpperCase();
+    const timeoutMs = Math.min(Math.max(Math.trunc(input.timeoutMs ?? DEFAULT_BROWSER_HTTP_TIMEOUT_MS), 100), MAX_BROWSER_HTTP_TIMEOUT_MS);
+    const startedAt = Date.now();
+    try {
+      const payload = {
+        method,
+        url: input.url,
+        body: input.body,
+        headers: input.headers ?? {},
+        contentType: input.contentType,
+        timeoutMs,
+      };
+      const value = await this.view.webContents.executeJavaScript(`(async (input) => {
+        const startedAt = Date.now();
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), input.timeoutMs);
+        const headers = { ...(input.headers || {}) };
+        if (input.contentType && !Object.keys(headers).some((key) => key.toLowerCase() === "content-type")) {
+          headers["content-type"] = input.contentType;
+        }
+        try {
+          const requestUrl = new URL(input.url, window.location.href).toString();
+          const response = await fetch(requestUrl, {
+            method: input.method,
+            headers,
+            body: typeof input.body === "string" ? input.body : undefined,
+            credentials: "include",
+            signal: controller.signal,
+          });
+          const responseHeaders = {};
+          response.headers.forEach((value, key) => {
+            responseHeaders[key] = value;
+          });
+          const responseBody = await response.text();
+          return {
+            requestUrl,
+            method: input.method,
+            status: response.status,
+            statusText: response.statusText,
+            ok: response.ok,
+            redirected: response.redirected,
+            responseUrl: response.url,
+            responseHeaders,
+            responseBody,
+            contentType: response.headers.get("content-type") || undefined,
+            durationMs: Date.now() - startedAt,
+          };
+        } catch (error) {
+          return {
+            requestUrl: input.url,
+            method: input.method,
+            durationMs: Date.now() - startedAt,
+            error: error && error.message ? error.message : String(error),
+          };
+        } finally {
+          clearTimeout(timer);
+        }
+      })(${JSON.stringify(payload)})`, true) as Omit<BrowserWorkbenchHttpRequestResult, "url" | "title" | "responseBodyPreview" | "responseBodyTruncated" | "responseJsonFields">;
+
+      const result: BrowserWorkbenchHttpRequestResult = {
+        ...value,
+        url: this.view.webContents.getURL(),
+        title: this.view.webContents.getTitle(),
+        responseBody: value.responseBody,
+        responseBodyPreview: previewText(value.responseBody),
+        responseBodyTruncated: typeof value.responseBody === "string" && value.responseBody.length > NETWORK_BODY_PREVIEW_CHARS,
+        responseJsonFields: extractJsonScalarFields(value.responseBody),
+        durationMs: typeof value.durationMs === "number" ? value.durationMs : Date.now() - startedAt,
+      };
+      return { success: !result.error, result, error: result.error };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const result: BrowserWorkbenchHttpRequestResult = {
+        url: this.view.webContents.getURL(),
+        title: this.view.webContents.getTitle(),
+        requestUrl: input.url,
+        method,
+        durationMs: Date.now() - startedAt,
+        error: message,
+      };
+      return { success: false, result, error: message };
     }
   }
 
@@ -2163,7 +2399,8 @@ export class BrowserWorkbenchManager {
     };
   }
 
-  selectPage(_pageId: number): BrowserWorkbenchState {
+  selectPage(pageId: number): BrowserWorkbenchState {
+    void pageId;
     // Single BrowserView: page selection is identity
     return this.getState();
   }
@@ -2235,7 +2472,11 @@ export class BrowserWorkbenchManager {
     view.setAutoResize({ width: false, height: false });
     view.webContents.setWindowOpenHandler(({ url }) => {
       if (url) {
-        void view.webContents.loadURL(url);
+        void this.syncChromeCookies(url).then(() => {
+          if (!view.webContents.isDestroyed()) {
+            view.webContents.loadURL(url);
+          }
+        });
       }
       return { action: "deny" };
     });

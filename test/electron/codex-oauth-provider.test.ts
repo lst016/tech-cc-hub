@@ -50,6 +50,31 @@ test("codex provider does not accept deepseek models from a merged model pool", 
   );
 });
 
+test("codex profile normalization repairs minimax model pollution", () => {
+  const polluted = normalizeProfile({
+    ...createCodexOAuthProfile(),
+    apiKey: JSON.stringify({ access_token: "access-token", account_id: "account-id" }),
+    model: "MiniMax-M3",
+    expertModel: "gpt-5.5",
+    smallModel: "MiniMax-M3",
+    analysisModel: "DeepSeek-V4-Pro",
+    models: [
+      { name: "MiniMax-M3", contextWindow: 200_000 },
+      { name: "DeepSeek-V4-Pro", contextWindow: 200_000 },
+      { name: "gpt-5.5", contextWindow: 200_000 },
+      { name: "gpt-5.3-codex-spark", contextWindow: 200_000 },
+    ],
+  });
+
+  assert.equal(polluted.provider, "codex");
+  assert.equal(polluted.model, "gpt-5.5");
+  assert.equal(polluted.smallModel, "gpt-5.3-codex-spark");
+  assert.equal(polluted.analysisModel, "gpt-5.3-codex-spark");
+  assert.ok(polluted.models?.some((model) => model.name === "gpt-5.5"));
+  assert.ok(!polluted.models?.some((model) => model.name === "MiniMax-M3"));
+  assert.ok(!polluted.models?.some((model) => model.name === "DeepSeek-V4-Pro"));
+});
+
 test("minimax provider only accepts minimax model names", () => {
   assert.equal(isModelCompatibleWithApiProvider("minimax", "MiniMax-M3"), true);
   assert.equal(isModelCompatibleWithApiProvider("minimax", "MiniMax-M2.7-highspeed"), true);

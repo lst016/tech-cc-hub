@@ -19,6 +19,7 @@ interface CronJobActionsResult {
   resumeJob: (jobId: string) => Promise<void>;
   deleteJob: (jobId: string) => Promise<void>;
   updateJob: (jobId: string, updates: Partial<CronJob>) => Promise<CronJob>;
+  bindConversation: (job: CronJob, conversationId: string, conversationTitle: string) => Promise<CronJob>;
 }
 
 function useCronJobActions(
@@ -46,7 +47,24 @@ function useCronJobActions(
     return updated;
   }, [onJobUpdated]);
 
-  return { pauseJob, resumeJob, deleteJob, updateJob };
+  // 绑定/重绑一个定时任务到指定会话；保留 metadata 其它字段，只覆盖 conversationId / conversationTitle / updatedAt
+  const bindConversation = useCallback(async (job: CronJob, conversationId: string, conversationTitle: string) => {
+    const updated = await getElectron().invoke("cron:update-job", {
+      jobId: job.id,
+      updates: {
+        metadata: {
+          ...job.metadata,
+          conversationId,
+          conversationTitle,
+          updatedAt: Date.now(),
+        },
+      },
+    });
+    onJobUpdated?.(job.id, updated);
+    return updated;
+  }, [onJobUpdated]);
+
+  return { pauseJob, resumeJob, deleteJob, updateJob, bindConversation };
 }
 
 // ── Hooks ──

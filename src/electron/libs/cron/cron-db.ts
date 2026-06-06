@@ -5,25 +5,17 @@ import Database from "better-sqlite3";
 import { app } from "electron";
 import { join } from "path";
 import { existsSync, mkdirSync } from "fs";
-import type { CronJob, CronJobRow } from "./cron-types.js";
+import type { CronJob, CronJobRow, CronJobRun, CronJobRunRow, CronJobRunStatus, CronJobRunTrigger } from "./cron-types.js";
 
 let db: Database.Database | null = null;
 
-export function getCronDb(): Database.Database {
-  if (!db) {
-    const userDataPath = app.getPath("userData");
-    if (!existsSync(userDataPath)) mkdirSync(userDataPath, { recursive: true });
-    const dbPath = join(userDataPath, "cron.db");
-    db = new Database(dbPath);
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    migrate(db);
-  }
-  return db;
-}
-
-function migrate(database: Database.Database): void {
-  database.exec(`
+// H-6: schema 版本号；未来加表/列只需追加 MIGRATIONS 数组元素
+//   v1: 初始 (cron_jobs + cron_job_runs + paused 列兼容 ALTER)
+const SCHEMA_VERSION = 1;
+const MIGRATIONS: Array<(database: Database.Database) => void> = [
+  // v1: 初始 schema + paused 列兼容老库
+  (d) => {
+    d.exec(`
     CREATE TABLE IF NOT EXISTS cron_jobs (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -53,7 +45,60 @@ function migrate(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_cron_jobs_conversation ON cron_jobs(conversation_id);
     CREATE INDEX IF NOT EXISTS idx_cron_jobs_next_run ON cron_jobs(next_run_at);
+
+    -- 单次执行历史：每次 fire / 手动触发 / 启动追补都写一行
+    -- SPEC §4.2；保留 AionUi 适配注释
+    CREATE TABLE IF NOT EXISTS cron_job_runs (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER,
+      status TEXT NOT NULL,            -- 'running' | 'ok' | 'error' | 'skipped' | 'missed'
+      error TEXT,
+      duration_ms INTEGER,
+      tokens_in INTEGER,
+      tokens_out INTEGER,
+      conversation_id TEXT,            -- 本次执行实际写入的会话 ID
+      trigger_source TEXT,             -- 'schedule' | 'manual' | 'catchup'
+      FOREIGN KEY (job_id) REFERENCES cron_jobs(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cron_runs_job ON cron_job_runs(job_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cron_runs_status ON cron_job_runs(status, started_at);
   `);
+    // paused 列兼容老库
+    const cols = d.prepare("PRAGMA table_info(cron_jobs)").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "paused")) {
+      d.exec("ALTER TABLE cron_jobs ADD COLUMN paused INTEGER NOT NULL DEFAULT 0");
+    }
+  },
+  // 未来示例：
+  // (d) => d.exec("ALTER TABLE cron_jobs ADD COLUMN ...")
+];
+
+export function getCronDb(): Database.Database {
+  if (!db) {
+    const userDataPath = app.getPath("userData");
+    if (!existsSync(userDataPath)) mkdirSync(userDataPath, { recursive: true });
+    const dbPath = join(userDataPath, "cron.db");
+    db = new Database(dbPath);
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    migrate(db);
+  }
+  return db;
+}
+
+function migrate(database: Database.Database): void {
+  const row = database.prepare("PRAGMA user_version").get() as { user_version: number } | undefined;
+  const current = row?.user_version ?? 0;
+  for (let v = current + 1; v <= SCHEMA_VERSION; v++) {
+    const fn = MIGRATIONS[v - 1];
+    if (fn) fn(database);
+  }
+  if (current !== SCHEMA_VERSION) {
+    database.prepare(`PRAGMA user_version = ${SCHEMA_VERSION}`).run();
+  }
 }
 
 // ── Row ↔ Job conversion (CV from AionUi CronStore.ts) ──
@@ -91,6 +136,7 @@ function jobToRow(job: CronJob): CronJobRow {
     run_count: job.state.runCount,
     retry_count: job.state.retryCount,
     max_retries: job.state.maxRetries,
+    paused: job.state.paused ? 1 : 0,
   };
 }
 
@@ -137,6 +183,7 @@ function rowToJob(row: CronJobRow): CronJob {
       runCount: row.run_count,
       retryCount: row.retry_count,
       maxRetries: row.max_retries,
+      paused: row.paused === 1,
     },
   };
 }
@@ -189,7 +236,7 @@ export function updateCronJob(jobId: string, updates: Partial<CronJob>): void {
       conversation_id = ?, conversation_title = ?, agent_type = ?,
       updated_at = ?,
       next_run_at = ?, last_run_at = ?, last_status = ?, last_error = ?,
-      run_count = ?, retry_count = ?, max_retries = ?
+      run_count = ?, retry_count = ?, max_retries = ?, paused = ?
     WHERE id = ?
   `).run(
     row.name, row.description, row.enabled,
@@ -198,7 +245,7 @@ export function updateCronJob(jobId: string, updates: Partial<CronJob>): void {
     row.conversation_id, row.conversation_title, row.agent_type,
     row.updated_at,
     row.next_run_at, row.last_run_at, row.last_status, row.last_error,
-    row.run_count, row.retry_count, row.max_retries,
+    row.run_count, row.retry_count, row.max_retries, row.paused,
     jobId,
   );
 }
@@ -236,4 +283,131 @@ export function deleteCronJobsByConversation(conversationId: string): number {
   const database = getCronDb();
   const result = database.prepare("DELETE FROM cron_jobs WHERE conversation_id = ?").run(conversationId);
   return result.changes;
+}
+
+// ── cron_job_runs CRUD（CV from AionUi CronStore.ts 模式）──
+
+// 插入一条执行记录（执行开始时 status='running'；结束时由 updateCronRun 补全）
+export function insertCronRun(run: CronJobRun): void {
+  const database = getCronDb();
+  database.prepare(`
+    INSERT INTO cron_job_runs (
+      id, job_id, started_at, finished_at, status, error,
+      duration_ms, tokens_in, tokens_out, conversation_id, trigger_source
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    run.id,
+    run.jobId,
+    run.startedAt,
+    run.finishedAt ?? null,
+    run.status,
+    run.error ?? null,
+    run.durationMs ?? null,
+    run.tokensIn ?? null,
+    run.tokensOut ?? null,
+    run.conversationId ?? null,
+    run.triggerSource,
+  );
+}
+
+// 列出某 job 的执行历史，按 started_at DESC；limit 默认 50
+export function listCronRuns(jobId: string, limit = 50): CronJobRun[] {
+  const database = getCronDb();
+  const rows = database.prepare(`
+    SELECT * FROM cron_job_runs
+    WHERE job_id = ?
+    ORDER BY started_at DESC
+    LIMIT ?
+  `).all(jobId, limit) as CronJobRunRow[];
+  return rows.map(rowToRun);
+}
+
+// 局部更新一条执行记录（执行结束时调用，传入 runId + 任意 patch 字段）
+export function updateCronRun(
+  runId: string,
+  updates: {
+    finishedAt?: number;
+    status?: CronJobRunStatus;
+    error?: string;
+    durationMs?: number;
+    tokensIn?: number;
+    tokensOut?: number;
+    conversationId?: string;
+  },
+): void {
+  const database = getCronDb();
+  const sets: string[] = [];
+  const values: (string | number | null)[] = [];
+
+  if (updates.finishedAt !== undefined) {
+    sets.push("finished_at = ?");
+    values.push(updates.finishedAt);
+  }
+  if (updates.status !== undefined) {
+    sets.push("status = ?");
+    values.push(updates.status);
+  }
+  if (updates.error !== undefined) {
+    sets.push("error = ?");
+    values.push(updates.error);
+  }
+  if (updates.durationMs !== undefined) {
+    sets.push("duration_ms = ?");
+    values.push(updates.durationMs);
+  }
+  if (updates.tokensIn !== undefined) {
+    sets.push("tokens_in = ?");
+    values.push(updates.tokensIn);
+  }
+  if (updates.tokensOut !== undefined) {
+    sets.push("tokens_out = ?");
+    values.push(updates.tokensOut);
+  }
+  if (updates.conversationId !== undefined) {
+    sets.push("conversation_id = ?");
+    values.push(updates.conversationId);
+  }
+
+  if (sets.length === 0) return;
+  values.push(runId);
+
+  database.prepare(`
+    UPDATE cron_job_runs SET ${sets.join(", ")} WHERE id = ?
+  `).run(...values);
+}
+
+// 列出卡死的执行记录：status='running' 且 started_at 早于 cutoffMs 之前
+// 给 SPEC §F-07 stuck job watchdog 用，stuck 阈值默认 10 分钟
+export function getStuckRuns(cutoffMs: number, triggerSource?: CronJobRunTrigger): CronJobRun[] {
+  const database = getCronDb();
+  const rows = triggerSource
+    ? database.prepare(`
+        SELECT * FROM cron_job_runs
+        WHERE status = 'running' AND started_at < ? AND trigger_source = ?
+        ORDER BY started_at ASC
+      `).all(cutoffMs, triggerSource) as CronJobRunRow[]
+    : database.prepare(`
+        SELECT * FROM cron_job_runs
+        WHERE status = 'running' AND started_at < ?
+        ORDER BY started_at ASC
+      `).all(cutoffMs) as CronJobRunRow[];
+  return rows.map(rowToRun);
+}
+
+// ── Row ↔ Run conversion ──
+
+function rowToRun(row: CronJobRunRow): CronJobRun {
+  return {
+    id: row.id,
+    jobId: row.job_id,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at ?? undefined,
+    status: row.status as CronJobRunStatus,
+    error: row.error ?? undefined,
+    durationMs: row.duration_ms ?? undefined,
+    tokensIn: row.tokens_in ?? undefined,
+    tokensOut: row.tokens_out ?? undefined,
+    conversationId: row.conversation_id ?? undefined,
+    triggerSource: row.trigger_source as CronJobRunTrigger,
+  };
 }

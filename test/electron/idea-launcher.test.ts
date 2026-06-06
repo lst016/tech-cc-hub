@@ -11,11 +11,11 @@ import {
   parseWindowsTasklistCsv,
   selectBestIdeaInstallation,
   selectIdeaInstallation,
+  tailLogText,
   type IdeaInstallation,
 } from "../../src/electron/libs/idea-launcher.js";
 import {
   buildSpringBootCommandPlan,
-  restartSpringBoot,
 } from "../../src/electron/libs/spring-boot-runner.js";
 
 function installation(overrides: Partial<IdeaInstallation>): IdeaInstallation {
@@ -142,6 +142,23 @@ test("parses running IDEA from Windows tasklist csv", () => {
   assert.deepEqual(processes, [{ imageName: "idea64.exe", pid: 1204 }]);
 });
 
+test("tails copied IDEA Run console logs by line and character limits", () => {
+  const result = tailLogText([
+    "line 1",
+    "line 2",
+    "line 3",
+    "line 4",
+  ].join("\r\n"), { tailLines: 3, maxChars: 20 });
+
+  assert.equal(result.text, "line 2\nline 3\nline 4");
+  assert.equal(result.lineCount, 3);
+  assert.equal(result.truncated, true);
+
+  const charLimited = tailLogText(`${"a".repeat(1005)}tail`, { tailLines: 10, maxChars: 1000 });
+  assert.equal(charLimited.text, `${"a".repeat(996)}tail`);
+  assert.equal(charLimited.truncated, true);
+});
+
 test("plans Spring Boot Maven and Gradle runner commands", () => {
   const tempRoot = process.env.TEMP || process.cwd();
   const mavenProject = join(tempRoot, "tech-cc-hub-maven-plan");
@@ -151,18 +168,11 @@ test("plans Spring Boot Maven and Gradle runner commands", () => {
   writeFileSync(join(mavenProject, "pom.xml"), "<project />");
   writeFileSync(join(gradleProject, "build.gradle"), "plugins { id 'java' }");
 
-  const mavenPlan = buildSpringBootCommandPlan({ projectPath: mavenProject, buildTool: "auto" }, "run", "win32");
-  const gradlePlan = buildSpringBootCommandPlan({ projectPath: gradleProject, buildTool: "gradle" }, "compile", "win32");
+  const mavenPlan = buildSpringBootCommandPlan({ projectPath: mavenProject, buildTool: "auto" }, "win32");
+  const gradlePlan = buildSpringBootCommandPlan({ projectPath: gradleProject, buildTool: "gradle" }, "win32");
 
   assert.equal(mavenPlan.tool, "maven");
   assert.deepEqual(mavenPlan.args, ["spring-boot:run"]);
   assert.equal(gradlePlan.tool, "gradle");
-  assert.deepEqual(gradlePlan.args, ["classes"]);
-});
-
-test("restart guard prevents duplicate Spring Boot launch without a target", async () => {
-  const result = await restartSpringBoot({ projectPath: process.cwd(), strategy: "kill-and-run" });
-
-  assert.equal(result.success, false);
-  assert.match(result.error ?? "", /requires a pid or port/);
+  assert.deepEqual(gradlePlan.args, ["bootRun"]);
 });

@@ -121,6 +121,16 @@ test("normalizes browser fetch log filters", () => {
   assert.equal("urlContains" in result.input, false);
 });
 
+test("normalizes browser session HTTP request inputs", () => {
+  const result = normalizeToolInputForKnownSchemas("mcp__tech-cc-hub-browser__browser_http_request", {
+    timeoutMs: 120000,
+    contentType: "   ",
+  });
+
+  assert.equal(result.input.timeoutMs, 60000);
+  assert.equal("contentType" in result.input, false);
+});
+
 test("drops invalid zero-sized compare regions and invalid ignore regions", () => {
   const result = normalizeToolInputForKnownSchemas("mcp__tech-cc-hub-design__design_compare_current_view", {
     referenceImagePath: "C:/tmp/reference.png",

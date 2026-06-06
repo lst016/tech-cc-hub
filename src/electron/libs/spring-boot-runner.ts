@@ -1,4 +1,4 @@
-import { spawn, execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   closeSync,
@@ -16,7 +16,6 @@ import {
 import { setTimeout as delay } from "node:timers/promises";
 
 export type SpringBootBuildTool = "auto" | "maven" | "gradle";
-export type SpringBootRestartStrategy = "kill-and-run" | "devtools-compile";
 
 export type SpringBootCommandPlan = {
   cwd: string;
@@ -35,13 +34,8 @@ export type SpringBootRunInput = {
   env?: Record<string, string>;
 };
 
-export type SpringBootRestartInput = SpringBootRunInput & {
-  pid?: number;
-  strategy?: SpringBootRestartStrategy;
-};
-
 export type SpringBootRunResult = {
-  action: "idea_run" | "idea_restart";
+  action: "idea_run";
   success: boolean;
   started: boolean;
   plan?: SpringBootCommandPlan;
@@ -51,7 +45,6 @@ export type SpringBootRunResult = {
   exitedEarly?: boolean;
   exitCode?: number | null;
   signal?: NodeJS.Signals | null;
-  killedPids?: number[];
   tail?: string;
   verification?: {
     port?: number;
@@ -63,8 +56,7 @@ export type SpringBootRunResult = {
 };
 
 type StartOptions = {
-  action: "idea_run" | "idea_restart";
-  goal: "run" | "compile";
+  action: "idea_run";
 };
 
 const DEFAULT_WAIT_MS = 4000;
@@ -72,7 +64,6 @@ const MAX_WAIT_MS = 30000;
 
 export function buildSpringBootCommandPlan(
   input: Pick<SpringBootRunInput, "projectPath" | "buildTool">,
-  goal: "run" | "compile" = "run",
   platform: NodeJS.Platform = process.platform,
 ): SpringBootCommandPlan {
   const cwd = resolve(input.projectPath);
@@ -89,8 +80,8 @@ export function buildSpringBootCommandPlan(
       cwd,
       tool: "maven",
       command,
-      args: goal === "run" ? ["spring-boot:run"] : ["-DskipTests", "compile"],
-      commandLine: formatCommandLine(command, goal === "run" ? ["spring-boot:run"] : ["-DskipTests", "compile"]),
+      args: ["spring-boot:run"],
+      commandLine: formatCommandLine(command, ["spring-boot:run"]),
     };
   }
 
@@ -100,8 +91,8 @@ export function buildSpringBootCommandPlan(
       cwd,
       tool: "gradle",
       command,
-      args: goal === "run" ? ["bootRun"] : ["classes"],
-      commandLine: formatCommandLine(command, goal === "run" ? ["bootRun"] : ["classes"]),
+      args: ["bootRun"],
+      commandLine: formatCommandLine(command, ["bootRun"]),
     };
   }
 
@@ -109,36 +100,13 @@ export function buildSpringBootCommandPlan(
 }
 
 export async function runSpringBoot(input: SpringBootRunInput): Promise<SpringBootRunResult> {
-  return startSpringBoot(input, { action: "idea_run", goal: "run" });
-}
-
-export async function restartSpringBoot(input: SpringBootRestartInput): Promise<SpringBootRunResult> {
-  const strategy = input.strategy ?? "kill-and-run";
-  if (strategy === "devtools-compile") {
-    return startSpringBoot(input, { action: "idea_restart", goal: "compile" });
-  }
-
-  if (!Number.isFinite(input.pid) && !Number.isFinite(input.port)) {
-    return {
-      action: "idea_restart",
-      success: false,
-      started: false,
-      error: "idea_restart with kill-and-run requires a pid or port. Use strategy=devtools-compile to trigger Spring Boot DevTools without killing a process.",
-    };
-  }
-
-  const killedPids = await killRequestedTargets(input);
-  const result = await startSpringBoot(input, { action: "idea_restart", goal: "run" });
-  return {
-    ...result,
-    killedPids,
-  };
+  return startSpringBoot(input, { action: "idea_run" });
 }
 
 async function startSpringBoot(input: SpringBootRunInput, options: StartOptions): Promise<SpringBootRunResult> {
   try {
     const waitMs = clampWaitMs(input.waitMs);
-    const plan = buildSpringBootCommandPlan(input, options.goal);
+    const plan = buildSpringBootCommandPlan(input);
     const logPath = createLogPath(plan.cwd, options.action);
     const logFd = openSync(logPath, "a");
     const spawnSpec = toSpawnSpec(plan);
@@ -164,7 +132,7 @@ async function startSpringBoot(input: SpringBootRunInput, options: StartOptions)
     if (exit) {
       return {
         action: options.action,
-        success: options.goal === "compile" && exit.code === 0,
+        success: false,
         started: false,
         plan,
         pid: child.pid,
@@ -175,9 +143,7 @@ async function startSpringBoot(input: SpringBootRunInput, options: StartOptions)
         signal: exit.signal,
         tail: readLogTail(logPath),
         verification,
-        note: options.goal === "compile"
-          ? "DevTools restart compile finished; verify the already-running app separately."
-          : "Spring Boot command exited during the startup wait window; inspect the log before treating it as running.",
+        note: "Spring Boot command exited during the startup wait window; inspect the log before treating it as running.",
       };
     }
 
@@ -202,50 +168,6 @@ async function startSpringBoot(input: SpringBootRunInput, options: StartOptions)
       error: error instanceof Error ? error.message : String(error),
     };
   }
-}
-
-async function killRequestedTargets(input: SpringBootRestartInput): Promise<number[]> {
-  const pids = new Set<number>();
-  if (Number.isFinite(input.pid)) {
-    pids.add(Math.trunc(input.pid as number));
-  }
-  if (process.platform === "win32" && Number.isFinite(input.port)) {
-    for (const pid of await findWindowsPortPids(Math.trunc(input.port as number))) {
-      pids.add(pid);
-    }
-  }
-  if (pids.size === 0) {
-    return [];
-  }
-
-  for (const pid of pids) {
-    if (process.platform === "win32") {
-      await execFileText("taskkill.exe", ["/PID", String(pid), "/T", "/F"], 10000).catch(() => "");
-    } else {
-      try {
-        process.kill(-pid, "SIGTERM");
-      } catch {
-        try {
-          process.kill(pid, "SIGTERM");
-        } catch {
-          // best effort
-        }
-      }
-    }
-  }
-  return [...pids];
-}
-
-async function findWindowsPortPids(port: number): Promise<number[]> {
-  const output = await execFileText("netstat.exe", ["-ano", "-p", "tcp"], 5000).catch(() => "");
-  return Array.from(new Set(output
-    .split(/\r?\n/)
-    .map((line) => line.trim().split(/\s+/))
-    .filter((parts) => parts[0]?.toUpperCase() === "TCP"
-      && parts[1]?.endsWith(`:${port}`)
-      && parts[3]?.toUpperCase() === "LISTENING")
-    .map((parts) => Number.parseInt(parts[4] ?? "", 10))
-    .filter(Number.isFinite)));
 }
 
 function toSpawnSpec(plan: SpringBootCommandPlan): { command: string; args: string[] } {
@@ -315,16 +237,4 @@ function formatCommandLine(command: string, args: string[]): string {
 function quoteArg(value: string): string {
   if (!/[\s"]/u.test(value)) return value;
   return `"${value.replace(/"/g, '\\"')}"`;
-}
-
-function execFileText(command: string, args: string[], timeoutMs: number): Promise<string> {
-  return new Promise((resolvePromise, reject) => {
-    execFile(command, args, { windowsHide: true, timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) {
-        reject(new Error(stderr?.trim() || error.message));
-        return;
-      }
-      resolvePromise(stdout);
-    });
-  });
 }

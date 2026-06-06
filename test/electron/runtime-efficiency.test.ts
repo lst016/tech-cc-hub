@@ -9,18 +9,27 @@ import {
   runtimeEfficiencyProfileToState,
 } from "../../src/electron/libs/runtime-efficiency.js";
 
-test("runtime efficiency keeps plain coding prompts on the lean standard surface", () => {
+const ALL_BUILTIN_MCP_SERVERS = [
+  "tech-cc-hub-admin",
+  "tech-cc-hub-plan",
+  "tech-cc-hub-knowledge",
+  "tech-cc-hub-browser",
+  "tech-cc-hub-design",
+  "tech-cc-hub-figma",
+  "tech-cc-hub-cron",
+  "tech-cc-hub-idea",
+] as const;
+
+test("runtime efficiency exposes all built-in MCP tools while keeping plain prompts lean", () => {
   const profile = resolveRuntimeEfficiencyProfile({
     prompt: "解释一下这个函数为什么会重复读文件",
   });
 
   assert.equal(profile.id, "standard");
-  assert.deepEqual(profile.builtinMcpServers, [
-    "tech-cc-hub-admin",
-    "tech-cc-hub-plan",
-    "tech-cc-hub-knowledge",
-  ]);
+  assert.deepEqual(profile.builtinMcpServers, ALL_BUILTIN_MCP_SERVERS);
   assert.equal(profile.includeBrowserPrompt, false);
+  assert.equal(profile.includeDesignPrompt, false);
+  assert.equal(profile.includeClaudeCompatPrompt, false);
   assert.equal(profile.includeProjectMemoryPrompt, false);
   assert.equal(profile.includePartialMessages, false);
   assert.equal(profile.includeHookEvents, false);
@@ -39,12 +48,7 @@ test("runtime efficiency enables visual tools for image attachments", () => {
   });
 
   assert.equal(profile.id, "visual");
-  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-admin"));
-  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-plan"));
-  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-knowledge"));
-  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-browser"));
-  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-design"));
-  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-figma"));
+  assert.deepEqual(profile.builtinMcpServers, ALL_BUILTIN_MCP_SERVERS);
   assert.equal(profile.includeBrowserPrompt, true);
   assert.equal(profile.includeDesignPrompt, true);
   assert.equal(profile.includeProjectMemoryPrompt, false);
@@ -64,10 +68,10 @@ test("runtime efficiency keeps design tools out of automation turns", () => {
   });
 
   assert.equal(profile.id, "automation");
-  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-cron"));
-  assert.equal(profile.builtinMcpServers.includes("tech-cc-hub-figma"), false);
-  assert.equal(profile.builtinMcpServers.includes("tech-cc-hub-browser"), false);
+  assert.deepEqual(profile.builtinMcpServers, ALL_BUILTIN_MCP_SERVERS);
   assert.equal(profile.includeBrowserPrompt, false);
+  assert.equal(profile.includeDesignPrompt, false);
+  assert.equal(profile.includeClaudeCompatPrompt, true);
 });
 
 test("runtime efficiency enables Agent Teams visibility for parallel team prompts", () => {
@@ -80,11 +84,7 @@ test("runtime efficiency enables Agent Teams visibility for parallel team prompt
   assert.equal(profile.includeHookEvents, true);
   assert.equal(profile.agentProgressSummaries, true);
   assert.equal(profile.forwardSubagentText, true);
-  assert.deepEqual(profile.builtinMcpServers, [
-    "tech-cc-hub-admin",
-    "tech-cc-hub-plan",
-    "tech-cc-hub-knowledge",
-  ]);
+  assert.deepEqual(profile.builtinMcpServers, ALL_BUILTIN_MCP_SERVERS);
   assert.equal(profile.includeBrowserPrompt, false);
 });
 
@@ -96,8 +96,7 @@ test("runtime efficiency keeps visual tools when Agent Teams work includes UI", 
   assert.equal(profile.id, "team");
   assert.equal(profile.includeBrowserPrompt, true);
   assert.equal(profile.includeDesignPrompt, true);
-  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-browser"));
-  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-design"));
+  assert.deepEqual(profile.builtinMcpServers, ALL_BUILTIN_MCP_SERVERS);
 });
 
 test("runtime efficiency sticky state keeps visual tools for later plain prompts", () => {
@@ -118,21 +117,14 @@ test("runtime efficiency sticky state keeps visual tools for later plain prompts
   const merged = mergeRuntimeEfficiencyProfile(plain, runtimeEfficiencyProfileToState(visual));
 
   assert.equal(merged.id, "standard");
-  assert.deepEqual(merged.builtinMcpServers, [
-    "tech-cc-hub-admin",
-    "tech-cc-hub-plan",
-    "tech-cc-hub-knowledge",
-    "tech-cc-hub-browser",
-    "tech-cc-hub-design",
-    "tech-cc-hub-figma",
-  ]);
+  assert.deepEqual(merged.builtinMcpServers, ALL_BUILTIN_MCP_SERVERS);
   assert.equal(merged.includeBrowserPrompt, true);
   assert.equal(merged.includeDesignPrompt, true);
   assert.equal(merged.includePartialMessages, true);
   assert.equal(merged.includeClaudeCompatPrompt, true);
 });
 
-test("runtime efficiency does not carry unrelated tools into later visual prompts", () => {
+test("runtime efficiency keeps all tools while carrying only relevant prompt hints", () => {
   const automation = resolveRuntimeEfficiencyProfile({
     prompt: "schedule a reminder every day to check the build",
   });
@@ -142,15 +134,7 @@ test("runtime efficiency does not carry unrelated tools into later visual prompt
 
   const merged = mergeRuntimeEfficiencyProfile(visual, runtimeEfficiencyProfileToState(automation));
 
-  assert.deepEqual(merged.builtinMcpServers, [
-    "tech-cc-hub-admin",
-    "tech-cc-hub-plan",
-    "tech-cc-hub-knowledge",
-    "tech-cc-hub-browser",
-    "tech-cc-hub-design",
-    "tech-cc-hub-figma",
-  ]);
-  assert.equal(merged.builtinMcpServers.includes("tech-cc-hub-cron"), false);
+  assert.deepEqual(merged.builtinMcpServers, ALL_BUILTIN_MCP_SERVERS);
   assert.equal(merged.includeBrowserPrompt, true);
   assert.equal(merged.includeDesignPrompt, true);
   assert.equal(merged.includeClaudeCompatPrompt, true);

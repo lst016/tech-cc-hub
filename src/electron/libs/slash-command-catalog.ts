@@ -62,29 +62,45 @@ export function buildSessionSlashCommandItems(options: {
 }): SlashCommandItem[] | undefined {
   const discoveredItems = discoverSlashCommandItemsInRoots(resolveSlashCommandRoots(options.cwd)) ?? [];
   const messageCommands = extractSlashCommandsFromMessages(options.messages) ?? [];
-  const merged = new Map<string, SlashCommandItem>();
-
-  for (const item of CLAUDE_CODE_COMPAT_COMMAND_ITEMS) {
-    merged.set(item.name.toLowerCase(), item);
-  }
-
-  for (const item of discoveredItems) {
-    merged.set(item.name.toLowerCase(), item);
-  }
-
-  for (const item of CLAUDE_CODE_BUILTIN_COMMAND_ITEMS) {
-    merged.set(item.name.toLowerCase(), item);
-  }
-
+  const taggedDiscovered = discoveredItems.map((it) => ({ ...it, source: "local" as const }));
+  const taggedBuiltin = CLAUDE_CODE_BUILTIN_COMMAND_ITEMS.map((it) => ({ ...it, source: "claude-code-builtin" as const }));
+  const taggedMessage: SlashCommandItem[] = [];
   for (const name of messageCommands) {
     const normalized = name.trim().replace(/^\/+/, "");
-    if (!normalized) continue;
-    const key = normalized.toLowerCase();
-    if (!merged.has(key)) {
-      merged.set(key, { name: normalized });
-    }
+    if (normalized) taggedMessage.push({ name: normalized, source: "message" });
   }
 
+  // Priority: compat < builtin < local < message. We walk the groups in
+  // order, so later (higher-priority) groups overwrite the slot. Description
+  // backfills from the lower-priority slot when the higher-priority entry
+  // is empty. The same algorithm lives in
+  // scripts/claude-code-compat-sync-lib.mjs's mergeSlashCommandItemsByPriority
+  // for .mjs-side testability; keep both copies in sync.
+  const merged = new Map<string, SlashCommandItem>();
+  const groups: SlashCommandItem[][] = [
+    CLAUDE_CODE_COMPAT_COMMAND_ITEMS as SlashCommandItem[],
+    taggedBuiltin,
+    taggedDiscovered,
+    taggedMessage,
+  ];
+  for (const items of groups) {
+    for (const item of items) {
+      if (!item || typeof item.name !== "string") continue;
+      const key = item.name.trim().replace(/^\/+/, "").toLowerCase();
+      if (!key) continue;
+      const existing = merged.get(key);
+      if (!existing) {
+        merged.set(key, { ...item, name: item.name.trim().replace(/^\/+/, "") });
+        continue;
+      }
+      merged.set(key, {
+        ...existing,
+        ...item,
+        name: existing.name || item.name,
+        description: item.description?.trim() || existing.description?.trim() || undefined,
+      });
+    }
+  }
   const commands = Array.from(merged.values()).sort((left, right) => left.name.localeCompare(right.name));
   return commands.length > 0 ? commands : undefined;
 }

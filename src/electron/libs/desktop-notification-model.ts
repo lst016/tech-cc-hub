@@ -78,7 +78,7 @@ export function buildDesktopNotificationAttentionCue(
   return {
     flashTaskbar: true,
     playSound: true,
-    timeoutType: "never",
+    timeoutType: "default",
   };
 }
 

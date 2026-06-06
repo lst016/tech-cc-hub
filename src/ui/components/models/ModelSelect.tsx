@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Search } from "lucide-react";
+import { isLikelyImageUnderstandingModel } from "../../../shared/models/model-capabilities.js";
 
 export type ModelOption = {
   value: string;
@@ -120,8 +121,8 @@ export const MODEL_GROUP_DEFINITIONS: ModelGroupDefinition[] = [
   {
     id: "multimodal",
     label: "图像 / 多模态",
-    test: (model) =>
-      /image|vision|visual|vl|video|audio|speech|tts|whisper|sora|seedance|hailuo/.test(model),
+    test: (model) => isLikelyImageUnderstandingModel(model)
+      || /video|audio|speech|tts|whisper|sora|seedance|hailuo/.test(model),
   },
 ];
 

@@ -82,10 +82,13 @@ type BrowserWorkbenchNetworkLog = {
     requestHeaders?: Record<string, string>;
     responseHeaders?: Record<string, string>;
     requestPostData?: string;
+    requestPostDataPreview?: string;
     requestPostDataTruncated?: boolean;
     responseBody?: string;
+    responseBodyPreview?: string;
     responseBodyBase64Encoded?: boolean;
     responseBodyTruncated?: boolean;
+    responseJsonFields?: Record<string, string | number | boolean | null>;
     bodyUnavailableReason?: string;
     errorText?: string;
     fromDiskCache?: boolean;
@@ -93,6 +96,35 @@ type BrowserWorkbenchNetworkLog = {
     startedAt: number;
     finishedAt?: number;
     durationMs?: number;
+}
+
+type BrowserWorkbenchHttpRequestInput = {
+    method?: string;
+    url: string;
+    body?: string;
+    headers?: Record<string, string>;
+    contentType?: string;
+    timeoutMs?: number;
+}
+
+type BrowserWorkbenchHttpRequestResult = {
+    url: string;
+    title?: string;
+    requestUrl: string;
+    method: string;
+    status?: number;
+    statusText?: string;
+    ok?: boolean;
+    redirected?: boolean;
+    responseUrl?: string;
+    responseHeaders?: Record<string, string>;
+    responseBody?: string;
+    responseBodyPreview?: string;
+    responseBodyTruncated?: boolean;
+    responseJsonFields?: Record<string, string | number | boolean | null>;
+    contentType?: string;
+    durationMs: number;
+    error?: string;
 }
 
 type BrowserWorkbenchNetworkLogInput = {
@@ -178,6 +210,7 @@ type BrowserWorkbenchRecordingOpenPathResult = import("./src/electron/browser-ma
 type BrowserWorkbenchMouseResult = import("./src/electron/browser-manager").BrowserWorkbenchMouseResult;
 
 type BrowserWorkbenchEvent =
+    | { type: "browser.open-requested"; payload: { url: string }; sessionId?: string }
     | { type: "browser.state"; payload: BrowserWorkbenchState; sessionId?: string }
     | { type: "browser.console"; payload: BrowserWorkbenchConsoleLog; sessionId?: string }
     | { type: "browser.annotation"; payload: BrowserWorkbenchAnnotation; sessionId?: string }

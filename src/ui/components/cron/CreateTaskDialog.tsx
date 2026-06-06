@@ -4,6 +4,13 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import type { CronJob, CronSchedule, CreateCronJobParams } from "../../../types/cron.js";
+import { useAppStore } from "../../store/useAppStore.js";
+
+function formatWorkspaceName(cwd?: string) {
+  if (!cwd) return "未绑定工作区";
+  const parts = cwd.split(/[\\/]+/).filter(Boolean);
+  return parts.at(-1) || cwd;
+}
 
 interface CreateTaskDialogProps {
   visible: boolean;
@@ -95,6 +102,37 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [selectedConvId, setSelectedConvId] = useState(conversationId ?? "");
   const [selectedConvTitle, setSelectedConvTitle] = useState(conversationTitle ?? "");
+
+  // 从 useAppStore 拉 sessions 列表作为回退，合并 prop 传入的 workspaces，保证下拉永远可用
+  const sessions = useAppStore((s) => s.sessions);
+  const archivedSessions = useAppStore((s) => s.archivedSessions);
+  const activeSessionId = useAppStore((s) => s.activeSessionId);
+
+  const effectiveWorkspaces = useMemo(() => {
+    const map = new Map<string, { conversationId: string; conversationTitle: string; workspaceName: string }>();
+    for (const ws of workspaces ?? []) {
+      map.set(ws.conversationId, ws);
+    }
+    for (const [id, session] of Object.entries(sessions)) {
+      if (map.has(id)) continue;
+      if (!session.cwd) continue;
+      map.set(id, {
+        conversationId: id,
+        conversationTitle: session.title,
+        workspaceName: formatWorkspaceName(session.cwd),
+      });
+    }
+    for (const [id, session] of Object.entries(archivedSessions)) {
+      if (map.has(id)) continue;
+      if (!session.cwd) continue;
+      map.set(id, {
+        conversationId: id,
+        conversationTitle: session.title,
+        workspaceName: formatWorkspaceName(session.cwd),
+      });
+    }
+    return Array.from(map.values());
+  }, [workspaces, sessions, archivedSessions]);
 
   // Populate form for edit mode
   useEffect(() => {
@@ -299,7 +337,7 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
                   onSelectWorkspace?.({ conversationId: "__system__", conversationTitle: "系统工作区" });
                   return;
                 }
-                const ws = workspaces?.find((w) => w.conversationId === value);
+                const ws = effectiveWorkspaces.find((w) => w.conversationId === value);
                 setSelectedConvId(value);
                 setSelectedConvTitle(ws?.conversationTitle ?? "");
                 onSelectWorkspace?.(ws ?? { conversationId: value, conversationTitle: "" });
@@ -307,12 +345,30 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
             >
               <option value="">不绑定工作区</option>
               <option value="__system__">系统工作区 — 全局任务</option>
-              {workspaces?.map((ws) => (
+              {effectiveWorkspaces.map((ws) => (
                 <option key={ws.conversationId} value={ws.conversationId}>
                   {ws.workspaceName} — {ws.conversationTitle}
                 </option>
               ))}
             </select>
+            {activeSessionId && (() => {
+              const activeSession = sessions[activeSessionId] ?? archivedSessions[activeSessionId];
+              if (!activeSession) return null;
+              return (
+                <button
+                  type="button"
+                  className="self-start mt-1 inline-flex items-center gap-1 rounded-md border border-muted/30 px-2 py-1 text-xs text-ink hover:bg-muted/5 transition-colors"
+                  onClick={() => {
+                    setSelectedConvId(activeSessionId);
+                    setSelectedConvTitle(activeSession.title || "当前会话");
+                    onSelectWorkspace?.({ conversationId: activeSessionId, conversationTitle: activeSession.title || "当前会话" });
+                  }}
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                  使用当前会话{activeSession.title ? `（${activeSession.title}）` : ""}
+                </button>
+              );
+            })()}
             <p className="text-xs text-muted">选择定时任务关联的工作区，任务将在该工作区的会话中执行</p>
           </div>
 

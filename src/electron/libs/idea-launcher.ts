@@ -69,6 +69,51 @@ export type IdeaOpenResult = {
   note?: string;
 };
 
+export type IdeaRerunShortcut = "ctrl-f5" | "shift-f10";
+
+export type IdeaRerunInput = Pick<IdeaOpenInput, "projectPath" | "filePath" | "line" | "column" | "edition" | "version" | "launcherPath" | "allowLaunch"> & {
+  shortcut?: IdeaRerunShortcut;
+  focusDelayMs?: number;
+};
+
+export type IdeaRerunResult = {
+  success: boolean;
+  action: "idea_restart";
+  shortcut: IdeaRerunShortcut;
+  keyStroke: string;
+  openResult?: IdeaOpenResult;
+  focused: boolean;
+  sent: boolean;
+  running: RunningIdeaProcess[];
+  note?: string;
+  error?: string;
+};
+
+export type IdeaReadLogsInput = Pick<IdeaOpenInput, "projectPath" | "filePath" | "line" | "column" | "edition" | "version" | "launcherPath" | "allowLaunch"> & {
+  openRunWindow?: boolean;
+  runWindowShortcut?: string;
+  focusDelayMs?: number;
+  copyDelayMs?: number;
+  tailLines?: number;
+  maxChars?: number;
+  restoreClipboard?: boolean;
+};
+
+export type IdeaReadLogsResult = {
+  success: boolean;
+  action: "idea_read_logs";
+  focused: boolean;
+  copied: boolean;
+  openResult?: IdeaOpenResult;
+  running: RunningIdeaProcess[];
+  text: string;
+  lineCount: number;
+  truncated: boolean;
+  source: "idea-run-console";
+  note?: string;
+  error?: string;
+};
+
 export type IdeaFocusResult = {
   success: boolean;
   action: "idea_focus";
@@ -349,6 +394,172 @@ export async function openIdea(input: IdeaOpenInput = {}): Promise<IdeaOpenResul
   };
 }
 
+export async function rerunIdeaRunConfiguration(input: IdeaRerunInput = {}): Promise<IdeaRerunResult> {
+  const shortcut = input.shortcut ?? "ctrl-f5";
+  const keyStroke = shortcutToSendKeysStroke(shortcut);
+  let openResult: IdeaOpenResult | undefined;
+
+  if (input.projectPath || input.filePath) {
+    openResult = await openIdea({
+      projectPath: input.projectPath,
+      filePath: input.filePath,
+      line: input.line,
+      column: input.column,
+      edition: input.edition,
+      version: input.version,
+      launcherPath: input.launcherPath,
+      allowLaunch: input.allowLaunch ?? true,
+    });
+    if (!openResult.success) {
+      return {
+        success: false,
+        action: "idea_restart",
+        shortcut,
+        keyStroke,
+        openResult,
+        focused: false,
+        sent: false,
+        running: openResult.runningBefore,
+        error: openResult.error ?? "Unable to open or reuse the requested IDEA project before rerun.",
+      };
+    }
+    await delay(clampWaitMs(input.focusDelayMs, 0, 10000, 1200));
+  }
+
+  const focusResult = await focusIdea();
+  if (!focusResult.success) {
+    return {
+      success: false,
+      action: "idea_restart",
+      shortcut,
+      keyStroke,
+      openResult,
+      focused: false,
+      sent: false,
+      running: focusResult.running,
+      error: focusResult.error ?? "IDEA is not running.",
+    };
+  }
+
+  try {
+    await sendIdeaRerunShortcut(keyStroke);
+    return {
+      success: true,
+      action: "idea_restart",
+      shortcut,
+      keyStroke,
+      openResult,
+      focused: true,
+      sent: true,
+      running: focusResult.running,
+      note: "Requested IDEA to rerun the current Run Configuration. This uses the IDE run surface and does not start Maven/Gradle from tech-cc-hub.",
+    };
+  } catch (error) {
+    return {
+      success: false,
+      action: "idea_restart",
+      shortcut,
+      keyStroke,
+      openResult,
+      focused: true,
+      sent: false,
+      running: focusResult.running,
+      error: error instanceof Error ? error.message : "Failed to send IDEA rerun shortcut.",
+    };
+  }
+}
+
+export async function readIdeaRunConsoleLogs(input: IdeaReadLogsInput = {}): Promise<IdeaReadLogsResult> {
+  let openResult: IdeaOpenResult | undefined;
+
+  if (input.projectPath || input.filePath) {
+    openResult = await openIdea({
+      projectPath: input.projectPath,
+      filePath: input.filePath,
+      line: input.line,
+      column: input.column,
+      edition: input.edition,
+      version: input.version,
+      launcherPath: input.launcherPath,
+      allowLaunch: input.allowLaunch ?? true,
+    });
+    if (!openResult.success) {
+      return {
+        success: false,
+        action: "idea_read_logs",
+        focused: false,
+        copied: false,
+        openResult,
+        running: openResult.runningBefore,
+        text: "",
+        lineCount: 0,
+        truncated: false,
+        source: "idea-run-console",
+        error: openResult.error ?? "Unable to open or reuse the requested IDEA project before reading logs.",
+      };
+    }
+    await delay(clampWaitMs(input.focusDelayMs, 0, 10000, 1200));
+  }
+
+  const focusResult = await focusIdea();
+  if (!focusResult.success) {
+    return {
+      success: false,
+      action: "idea_read_logs",
+      focused: false,
+      copied: false,
+      openResult,
+      running: focusResult.running,
+      text: "",
+      lineCount: 0,
+      truncated: false,
+      source: "idea-run-console",
+      error: focusResult.error ?? "IDEA is not running.",
+    };
+  }
+
+  try {
+    const rawText = await copyIdeaRunConsoleText({
+      openRunWindow: input.openRunWindow ?? true,
+      runWindowShortcut: input.runWindowShortcut ?? "%4",
+      copyDelayMs: clampWaitMs(input.copyDelayMs, 100, 10000, 800),
+      restoreClipboard: input.restoreClipboard ?? true,
+    });
+    const trimmed = tailLogText(rawText, {
+      tailLines: input.tailLines ?? 400,
+      maxChars: input.maxChars ?? 60000,
+    });
+
+    return {
+      success: true,
+      action: "idea_read_logs",
+      focused: true,
+      copied: true,
+      openResult,
+      running: focusResult.running,
+      text: trimmed.text,
+      lineCount: trimmed.lineCount,
+      truncated: trimmed.truncated,
+      source: "idea-run-console",
+      note: "Copied the current IntelliJ IDEA Run console text and restored the previous clipboard when requested.",
+    };
+  } catch (error) {
+    return {
+      success: false,
+      action: "idea_read_logs",
+      focused: true,
+      copied: false,
+      openResult,
+      running: focusResult.running,
+      text: "",
+      lineCount: 0,
+      truncated: false,
+      source: "idea-run-console",
+      error: error instanceof Error ? error.message : "Failed to copy IDEA Run console logs.",
+    };
+  }
+}
+
 export async function focusIdea(): Promise<IdeaFocusResult> {
   const running = await listRunningIdeaProcesses(process.platform).catch(() => []);
   const target = running[0];
@@ -462,6 +673,102 @@ async function listRunningIdeaProcesses(platform: NodeJS.Platform): Promise<Runn
 function clampWaitMs(value: number | undefined, min: number, max: number, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;
   return Math.max(min, Math.min(Math.floor(value ?? fallback), max));
+}
+
+function shortcutToSendKeysStroke(shortcut: IdeaRerunShortcut): string {
+  switch (shortcut) {
+    case "shift-f10":
+      return "+{F10}";
+    case "ctrl-f5":
+    default:
+      return "^{F5}";
+  }
+}
+
+async function sendIdeaRerunShortcut(keyStroke: string): Promise<void> {
+  if (process.platform !== "win32") {
+    throw new Error("IDEA Run Configuration rerun is currently supported only on Windows.");
+  }
+
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.SendKeys]::SendWait('${keyStroke.replace(/'/g, "''")}')
+`;
+  await execFileText("powershell.exe", ["-NoProfile", "-STA", "-Command", script], 5000);
+}
+
+export function tailLogText(text: string, options: { tailLines?: number; maxChars?: number } = {}): { text: string; lineCount: number; truncated: boolean } {
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = normalized.length > 0 ? normalized.split("\n") : [];
+  const lineLimit = clampCount(options.tailLines, 1, 5000, 400);
+  let truncated = lines.length > lineLimit;
+  let output = lines.slice(-lineLimit).join("\n");
+
+  const charLimit = clampCount(options.maxChars, 1000, 500000, 60000);
+  if (output.length > charLimit) {
+    output = output.slice(-charLimit);
+    truncated = true;
+  }
+
+  return {
+    text: output,
+    lineCount: output ? output.split("\n").length : 0,
+    truncated,
+  };
+}
+
+function clampCount(value: number | undefined, min: number, max: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(Math.floor(value ?? fallback), max));
+}
+
+async function copyIdeaRunConsoleText(input: {
+  openRunWindow: boolean;
+  runWindowShortcut: string;
+  copyDelayMs: number;
+  restoreClipboard: boolean;
+}): Promise<string> {
+  if (process.platform !== "win32") {
+    throw new Error("IDEA Run console log capture is currently supported only on Windows.");
+  }
+
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+$oldClipboard = ""
+$hadClipboard = $false
+try {
+  $oldClipboard = Get-Clipboard -Raw -ErrorAction Stop
+  $hadClipboard = $true
+} catch {}
+try {
+  if (${input.openRunWindow ? "$true" : "$false"}) {
+    [System.Windows.Forms.SendKeys]::SendWait('${powershellSingleQuoted(input.runWindowShortcut)}')
+    Start-Sleep -Milliseconds 500
+  }
+  [System.Windows.Forms.SendKeys]::SendWait('^a')
+  Start-Sleep -Milliseconds 120
+  [System.Windows.Forms.SendKeys]::SendWait('^c')
+  Start-Sleep -Milliseconds ${input.copyDelayMs}
+  $captured = Get-Clipboard -Raw -ErrorAction SilentlyContinue
+  if ($null -eq $captured) { $captured = "" }
+  [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($captured))
+} finally {
+  if (${input.restoreClipboard ? "$true" : "$false"}) {
+    if ($hadClipboard) {
+      Set-Clipboard -Value $oldClipboard
+    } else {
+      Set-Clipboard -Value ""
+    }
+  }
+}
+`;
+  const encoded = (await execFileText("powershell.exe", ["-NoProfile", "-STA", "-Command", script], 15000)).trim();
+  if (!encoded) return "";
+  return Buffer.from(encoded, "base64").toString("utf8");
+}
+
+function powershellSingleQuoted(value: string): string {
+  return value.replace(/'/g, "''");
 }
 
 async function focusWindowsProcess(pid: number): Promise<void> {

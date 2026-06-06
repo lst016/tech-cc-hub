@@ -7,6 +7,7 @@ export type ToolInputNormalizationResult = {
 const FIGMA_REST_MAX_BYTES = 500_000;
 const BROWSER_QUERY_MAX_RESULTS = 50;
 const BROWSER_FETCH_LOG_LIMIT = 200;
+const BROWSER_HTTP_MAX_TIMEOUT_MS = 60_000;
 const FIGMA_EXPORT_MIN_SCALE = 0.01;
 const FIGMA_EXPORT_MAX_SCALE = 4;
 
@@ -32,6 +33,11 @@ export function normalizeToolInputForKnownSchemas(
   if (matchesToolName(toolName, "browser_fetch_logs")) {
     clampNumber(input, "limit", 1, BROWSER_FETCH_LOG_LIMIT, fixes, "Clamped browser_fetch_logs.limit");
     removeEmptyString(input, "urlContains", fixes, "Removed empty browser_fetch_logs.urlContains");
+  }
+
+  if (matchesToolName(toolName, "browser_http_request")) {
+    clampNumber(input, "timeoutMs", 100, BROWSER_HTTP_MAX_TIMEOUT_MS, fixes, "Clamped browser_http_request.timeoutMs");
+    removeEmptyString(input, "contentType", fixes, "Removed empty browser_http_request.contentType");
   }
 
   if (isFigmaRestTool(toolName)) {

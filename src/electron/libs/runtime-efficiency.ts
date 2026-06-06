@@ -24,35 +24,10 @@ export type RuntimeEfficiencyProfile = {
 
 export type RuntimeEfficiencyProfileState = Omit<RuntimeEfficiencyProfile, "id">;
 
-const CORE_SERVERS: readonly BuiltinMcpServerName[] = [
+const STICKY_SERVER_ORDER: readonly BuiltinMcpServerName[] = [
   "tech-cc-hub-admin",
   "tech-cc-hub-plan",
   "tech-cc-hub-knowledge",
-];
-
-const BROWSER_SERVERS: readonly BuiltinMcpServerName[] = [
-  ...CORE_SERVERS,
-  "tech-cc-hub-browser",
-];
-
-const VISUAL_SERVERS: readonly BuiltinMcpServerName[] = [
-  ...BROWSER_SERVERS,
-  "tech-cc-hub-design",
-  "tech-cc-hub-figma",
-];
-
-const AUTOMATION_SERVERS: readonly BuiltinMcpServerName[] = [
-  ...CORE_SERVERS,
-  "tech-cc-hub-cron",
-];
-
-const IDE_SERVERS: readonly BuiltinMcpServerName[] = [
-  ...CORE_SERVERS,
-  "tech-cc-hub-idea",
-];
-
-const STICKY_SERVER_ORDER: readonly BuiltinMcpServerName[] = [
-  ...CORE_SERVERS,
   "tech-cc-hub-browser",
   "tech-cc-hub-design",
   "tech-cc-hub-figma",
@@ -104,7 +79,7 @@ export function resolveRuntimeEfficiencyProfile(
   const hasImageAttachment = (input.attachments ?? []).some((attachment) => attachment.kind === "image");
   const isVisualTask = hasImageAttachment || FIGMA_URL_PATTERN.test(prompt) || VISUAL_TASK_PATTERN.test(prompt);
   if (AGENT_TEAM_TASK_PATTERN.test(prompt)) {
-    return buildProfile("team", isVisualTask ? VISUAL_SERVERS : CORE_SERVERS, {
+    return buildProfile("team", ALL_SERVERS, {
       includeBrowserPrompt: isVisualTask,
       includeDesignPrompt: isVisualTask,
       includeClaudeCompatPrompt: true,
@@ -116,7 +91,7 @@ export function resolveRuntimeEfficiencyProfile(
   }
 
   if (isVisualTask) {
-    return buildProfile("visual", VISUAL_SERVERS, {
+    return buildProfile("visual", ALL_SERVERS, {
       includeBrowserPrompt: true,
       includeDesignPrompt: true,
       includeClaudeCompatPrompt: true,
@@ -126,18 +101,18 @@ export function resolveRuntimeEfficiencyProfile(
   }
 
   if (AUTOMATION_TASK_PATTERN.test(prompt)) {
-    return buildProfile("automation", AUTOMATION_SERVERS, {
+    return buildProfile("automation", ALL_SERVERS, {
       includeClaudeCompatPrompt: true,
     });
   }
 
   if (IDE_TASK_PATTERN.test(prompt)) {
-    return buildProfile("ide", IDE_SERVERS, {
+    return buildProfile("ide", ALL_SERVERS, {
       includeClaudeCompatPrompt: true,
     });
   }
 
-  return buildProfile("standard", CORE_SERVERS, {});
+  return buildProfile("standard", ALL_SERVERS, {});
 }
 
 export function mergeRuntimeEfficiencyProfile(
@@ -153,19 +128,15 @@ export function mergeRuntimeEfficiencyProfile(
   }
 
   const builtinMcpServers = resolveStickyBuiltinMcpServers(profile, stickyState);
-  const hasBrowserTools = builtinMcpServers.includes("tech-cc-hub-browser");
-  const hasDesignTools = builtinMcpServers.includes("tech-cc-hub-design");
-  const hasFigmaTools = builtinMcpServers.includes("tech-cc-hub-figma");
-  const hasExtendedTools = builtinMcpServers.some((serverName) => !BROWSER_SERVERS.includes(serverName));
 
   return {
     ...profile,
     builtinMcpServers,
-    includeBrowserPrompt: profile.includeBrowserPrompt || stickyState.includeBrowserPrompt || hasBrowserTools,
-    includeDesignPrompt: profile.includeDesignPrompt || stickyState.includeDesignPrompt || hasDesignTools || hasFigmaTools,
+    includeBrowserPrompt: profile.includeBrowserPrompt || stickyState.includeBrowserPrompt,
+    includeDesignPrompt: profile.includeDesignPrompt || stickyState.includeDesignPrompt,
     includeProjectMemoryPrompt: profile.includeProjectMemoryPrompt || stickyState.includeProjectMemoryPrompt,
-    includeClaudeCompatPrompt: profile.includeClaudeCompatPrompt || stickyState.includeClaudeCompatPrompt || hasExtendedTools,
-    includePartialMessages: profile.includePartialMessages || stickyState.includePartialMessages || hasBrowserTools || hasDesignTools,
+    includeClaudeCompatPrompt: profile.includeClaudeCompatPrompt || stickyState.includeClaudeCompatPrompt,
+    includePartialMessages: profile.includePartialMessages || stickyState.includePartialMessages,
     includeHookEvents: profile.includeHookEvents || stickyState.includeHookEvents,
     agentProgressSummaries: profile.agentProgressSummaries || stickyState.agentProgressSummaries,
     forwardSubagentText: profile.forwardSubagentText || stickyState.forwardSubagentText,
@@ -209,18 +180,13 @@ export function normalizeRuntimeEfficiencyProfileState(value: unknown): RuntimeE
     return undefined;
   }
 
-  const hasBrowserTools = builtinMcpServers.includes("tech-cc-hub-browser");
-  const hasDesignTools = builtinMcpServers.includes("tech-cc-hub-design");
-  const hasFigmaTools = builtinMcpServers.includes("tech-cc-hub-figma");
-  const hasExtendedTools = builtinMcpServers.some((serverName) => !BROWSER_SERVERS.includes(serverName));
-
   return {
     builtinMcpServers,
-    includeBrowserPrompt: Boolean(value.includeBrowserPrompt) || hasBrowserTools,
-    includeDesignPrompt: Boolean(value.includeDesignPrompt) || hasDesignTools || hasFigmaTools,
+    includeBrowserPrompt: Boolean(value.includeBrowserPrompt),
+    includeDesignPrompt: Boolean(value.includeDesignPrompt),
     includeProjectMemoryPrompt: Boolean(value.includeProjectMemoryPrompt),
-    includeClaudeCompatPrompt: Boolean(value.includeClaudeCompatPrompt) || hasExtendedTools,
-    includePartialMessages: Boolean(value.includePartialMessages) || hasBrowserTools || hasDesignTools,
+    includeClaudeCompatPrompt: Boolean(value.includeClaudeCompatPrompt),
+    includePartialMessages: Boolean(value.includePartialMessages),
     includeHookEvents: Boolean(value.includeHookEvents),
     agentProgressSummaries: Boolean(value.agentProgressSummaries),
     forwardSubagentText: Boolean(value.forwardSubagentText),
@@ -241,22 +207,8 @@ function resolveStickyBuiltinMcpServers(
   stickyState: RuntimeEfficiencyProfileState,
 ): BuiltinMcpServerName[] {
   const profileServers = normalizeBuiltinMcpServerNames(profile.builtinMcpServers);
-  const stickyVisualServers = stickyState.builtinMcpServers.filter(isVisualServer);
-  const profileIsVisualLane = profile.id === "visual" || (profile.id === "team" && profile.includeBrowserPrompt);
-
-  if (profileIsVisualLane) {
-    return normalizeBuiltinMcpServerNames(profileServers.filter(isVisualServer));
-  }
-
-  if (profile.id === "standard" && stickyVisualServers.length > 0) {
-    return normalizeBuiltinMcpServerNames(stickyVisualServers);
-  }
-
-  return profileServers;
-}
-
-function isVisualServer(serverName: BuiltinMcpServerName): boolean {
-  return VISUAL_SERVERS.includes(serverName);
+  const stickyServers = normalizeBuiltinMcpServerNames(stickyState.builtinMcpServers);
+  return normalizeBuiltinMcpServerNames([...profileServers, ...stickyServers]);
 }
 
 function buildProfile(
@@ -265,19 +217,15 @@ function buildProfile(
   overrides: Partial<Omit<RuntimeEfficiencyProfile, "id" | "builtinMcpServers">>,
 ): RuntimeEfficiencyProfile {
   const normalizedBuiltinMcpServers = normalizeBuiltinMcpServerNames(builtinMcpServers);
-  const hasBrowserTools = normalizedBuiltinMcpServers.includes("tech-cc-hub-browser");
-  const hasDesignTools = normalizedBuiltinMcpServers.includes("tech-cc-hub-design");
-  const hasFigmaTools = normalizedBuiltinMcpServers.includes("tech-cc-hub-figma");
-  const hasExtendedTools = normalizedBuiltinMcpServers.some((serverName) => !BROWSER_SERVERS.includes(serverName));
 
   return {
     id,
     builtinMcpServers: normalizedBuiltinMcpServers,
-    includeBrowserPrompt: hasBrowserTools,
-    includeDesignPrompt: hasDesignTools || hasFigmaTools,
+    includeBrowserPrompt: false,
+    includeDesignPrompt: false,
     includeProjectMemoryPrompt: false,
-    includeClaudeCompatPrompt: hasExtendedTools,
-    includePartialMessages: hasBrowserTools || hasDesignTools,
+    includeClaudeCompatPrompt: false,
+    includePartialMessages: false,
     includeHookEvents: false,
     agentProgressSummaries: false,
     forwardSubagentText: false,

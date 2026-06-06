@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 
 import {
   buildDesktopNotificationAttentionCue,
@@ -44,7 +45,7 @@ test("desktop notifications request stronger attention cues while app is backgro
     {
       flashTaskbar: true,
       playSound: true,
-      timeoutType: "never",
+      timeoutType: "default",
     },
   );
   assert.equal(
@@ -53,6 +54,14 @@ test("desktop notifications request stronger attention cues while app is backgro
     ]),
     null,
   );
+});
+
+test("desktop notifications auto-close after a short timeout", () => {
+  const source = readFileSync("src/electron/libs/desktop-notifications.ts", "utf8");
+
+  assert.match(source, /DESKTOP_NOTIFICATION_AUTO_CLOSE_MS\s*=\s*6_000/);
+  assert.match(source, /setTimeout\(\(\)\s*=>\s*\{\s*notification\.close\(\);/s);
+  assert.match(source, /notification\.once\("close",\s*\(\)\s*=>\s*\{/);
 });
 
 test("builds a completed task notification with a session click target", () => {

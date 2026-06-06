@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export function normalizeVersion(input) {
   if (!input) return "";
   const raw = String(input).trim().replace(/^v/i, "");
@@ -7,9 +9,34 @@ export function normalizeVersion(input) {
   return raw;
 }
 
-export function extractSections(html) {
-  const normalized = decodeHtmlEntities(String(html))
+const HTML_PRELUDE = String.raw`<\!\-\-.*?\-\->`;
+const HTML_SCRIPT = String.raw`<\s*script[\s\S]*?<\s*\/\s*script\s*>`;
+
+export function decodeHtmlEntities(input) {
+  return String(input)
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => safeFromCharCode(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => safeFromCharCode(parseInt(dec, 10)));
+}
+
+function safeFromCharCode(code) {
+  if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return "";
+  try {
+    return String.fromCodePoint(code);
+  } catch {
+    return "";
+  }
+}
+
+function stripHtml(input) {
+  return String(input)
     .replace(/\r\n/g, "\n")
+    .replace(new RegExp(HTML_SCRIPT, "gi"), "")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/p>/gi, "\n")
     .replace(/<p[^>]*>/gi, "\n")
@@ -19,15 +46,13 @@ export function extractSections(html) {
     .replace(/<\/code>/gi, "`")
     .replace(/<h[1-6][^>]*>/gi, "\n### ")
     .replace(/<\/h[1-6]>/gi, "\n")
+    .replace(new RegExp(HTML_PRELUDE, "gi"), "")
     .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, "\"")
-    .replace(/&#39;/g, "'")
     .replace(/\n{3,}/g, "\n\n");
+}
 
+function parseStrippedSections(text) {
+  const normalized = decodeHtmlEntities(stripHtml(text));
   const matches = [...normalized.matchAll(/(?:^|\n)\s*#{0,6}\s*(?:Claude Code\s*)?v(2\.1\.(\d+))\b[^\n]*/gi)];
   return matches.map((match, index) => {
     const version = match[1];
@@ -43,6 +68,55 @@ export function extractSections(html) {
     const dateMatch = body.match(/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}\b/);
     return { version, date: dateMatch?.[0] ?? "", items };
   });
+}
+
+// classifyCompatFacts lives in src/electron/libs/claude/claude-code-compat-facts.ts
+// (canonical TypeScript source). sync-claude-code-compat.mjs does not yet invoke
+// it; Phase 2 will wire the runtime classification in by either (a) compiling
+// the .ts to .js alongside the lib, or (b) running the script via tsx/ts-node.
+// Until then this re-export is intentionally absent.
+
+export function extractOfficialSections(html) {
+  return parseStrippedSections(html);
+}
+
+export function extractClaudelogSections(html) {
+  return parseStrippedSections(html);
+}
+
+// Backwards-compatible alias for older callers/tests that referenced the old
+// generic name. The behavior is identical to the official parser today; the
+// source-plumbing layer in sync-claude-code-compat.mjs selects which one to
+// invoke based on --source.
+export const extractSections = extractOfficialSections;
+
+export function sha256Digest(input) {
+  return createHash("sha256").update(String(input), "utf8").digest("hex");
+}
+
+export function buildSyncReport({
+  source,
+  sourceUrl,
+  fetchedAt,
+  sourceDigest,
+  section,
+  commandItems,
+  promptHints,
+}) {
+  return {
+    source,
+    sourceUrl,
+    fetchedAt,
+    sourceDigest,
+    fetchedVersion: section?.version ?? null,
+    fetchedDate: section?.date ?? null,
+    commandCount: commandItems.length,
+    hintCount: promptHints.length,
+    newCommands: commandItems.map((item) => item.name),
+    renamedCommands: [],
+    status: "ok",
+    note: null,
+  };
 }
 
 export function extractCommandItems(items) {
@@ -68,7 +142,32 @@ export function extractCommandItems(items) {
       addCommand(commands, "agents", text);
     }
   }
-  return Array.from(commands.values()).sort((left, right) => left.name.localeCompare(right.name));
+  const built = Array.from(commands.values()).sort((left, right) => left.name.localeCompare(right.name));
+  return built.map((item) => ({ ...item, source: "claude-code-compat" }));
+}
+
+// Historical-name aliases: when the upstream changelog mentions a renames,
+// we still want the old name to resolve to the new primary. These mappings
+// are curated, not extracted, because the changelog wording varies too much
+// for a regex to be reliable. Last reconciled against the 2.1.154 section.
+const COMPAT_COMMAND_ALIASES = {
+  simplify: "code-review",
+  "extra-usage": "usage-credits",
+};
+
+export function withCompatCommandAliases(items) {
+  const out = items.map((item) => ({ ...item }));
+  for (const [alias, primary] of Object.entries(COMPAT_COMMAND_ALIASES)) {
+    if (out.some((it) => it.name === primary)) {
+      out.push({
+        name: alias,
+        description: `Alias of /${primary} (historical name from the Claude Code changelog).`,
+        source: "claude-code-compat",
+        aliasOf: primary,
+      });
+    }
+  }
+  return out;
 }
 
 export function buildPromptHints(items) {
@@ -128,6 +227,7 @@ export function renderRegistry(registry) {
   ];
 
   return `import type { SlashCommandItem } from "../slash-command-discovery.js";
+import type { ClaudeCodeCompatFact } from "./claude-code-compat-facts.js";
 import { buildClaudeAgentTeamsPromptHint } from "../../../shared/claude-agent-teams.js";
 
 // Generated compatibility seed. Refresh with:
@@ -138,8 +238,10 @@ export type ClaudeCodeCompatRegistry = {
   sourceVersion: string;
   sourceDate: string;
   generatedAt: string;
+  sourceDigest?: string;
   commandItems: SlashCommandItem[];
   promptHints: string[];
+  facts: ClaudeCodeCompatFact[];
 };
 
 export const CLAUDE_CODE_COMPAT_REGISTRY: ClaudeCodeCompatRegistry = ${JSON.stringify(registry, null, 2)};
@@ -171,8 +273,166 @@ function stripTicks(text) {
   return text.replace(/`/g, "");
 }
 
-function decodeHtmlEntities(text) {
-  return text
-    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(Number.parseInt(code, 16)));
+export function resolveSlashCommandByName(typedName, commands) {
+  if (typeof typedName !== "string" || !Array.isArray(commands)) return null;
+  const needle = typedName.trim().replace(/^\/+/, "").toLowerCase();
+  if (!needle) return null;
+  const direct = commands.find((c) => c && typeof c.name === "string" && c.name.toLowerCase() === needle);
+  if (direct) {
+    // If direct is an alias, follow aliasOf to the primary.
+    if (direct.aliasOf) {
+      const primary = commands.find((c) => c && typeof c.name === "string" && c.name.toLowerCase() === direct.aliasOf.toLowerCase());
+      if (primary) {
+        return { ...primary, resolvedFrom: direct.name };
+      }
+    }
+    return { ...direct, resolvedFrom: direct.name };
+  }
+  // typed name is itself a primary; check whether some alias points to it
+  const aliasPointingHere = commands.find((c) => c && c.aliasOf && c.aliasOf.toLowerCase() === needle);
+  if (aliasPointingHere) {
+    return { ...aliasPointingHere, resolvedFrom: aliasPointingHere.name };
+  }
+  return null;
+}
+
+export function mergeSlashCommandItemsByPriority(groups) {
+  // groups: array of SlashCommandItem[] in priority order, lowest first
+  // (compat < builtin < local < message). The first-seen item for a name
+  // is the lowest-priority source; later groups overwrite the slot, and
+  // description only fills in when the higher-priority slot is empty.
+  const merged = new Map();
+  for (const items of groups) {
+    if (!Array.isArray(items)) continue;
+    for (const item of items) {
+      if (!item || typeof item.name !== "string") continue;
+      const key = item.name.trim().replace(/^\/+/, "").toLowerCase();
+      if (!key) continue;
+      const existing = merged.get(key);
+      if (!existing) {
+        merged.set(key, { ...item, name: item.name.trim().replace(/^\/+/, "") });
+        continue;
+      }
+      merged.set(key, {
+        ...existing,
+        ...item,
+        name: existing.name || item.name,
+        description: item.description?.trim() || existing.description?.trim() || undefined,
+      });
+    }
+  }
+  return Array.from(merged.values()).sort((left, right) => left.name.localeCompare(right.name));
+}
+
+// classifyCompatFacts — JS port of the canonical TypeScript classifier at
+// src/electron/libs/claude/claude-code-compat-facts.ts. We keep a JS copy here
+// because sync-claude-code-compat.mjs is run as a plain Node script and cannot
+// import .ts files without a loader. When Phase 2 promotion happens, this JS
+// port should be deleted and the script switched to tsx/ts-node or the .ts
+// file should be compiled alongside the lib.
+
+const COMPAT_FACT_CATEGORY_RULES = [
+  {
+    category: "security",
+    pattern: /\b(secret|redact|exfiltrat|permission|sudo|rm\s+-rf|api[_-]?key|token|password|authorization)\b/i,
+    severity: "guardrail",
+    targets: ["runner", "release-gate", "docs"],
+  },
+  {
+    category: "runtime",
+    pattern: /\b(background session|background agent|workflow|resume|detach|stale|wait(?:ing)? input|blocked|isolated worktree|claude agents|agent view)\b/i,
+    severity: "breaking-risk",
+    targets: ["session-state", "activity-rail", "runner"],
+  },
+  {
+    category: "plugin",
+    pattern: /\b(plugin|plugin\.json|marketplace|defaultEnabled|plugin dependencies|mcp server|lsp server|tool name)\b/i,
+    severity: "compat",
+    targets: ["plugin-manager", "settings-ui", "docs"],
+  },
+  {
+    category: "platform",
+    pattern: /\b(windows|wsl|powershell|ime|clipboard|unc path|\.bat|\.cmd|\.ps1)\b/i,
+    severity: "compat",
+    platforms: ["windows"],
+    targets: ["qa", "docs"],
+  },
+  {
+    category: "model",
+    pattern: /\b(opus|sonnet|effort|xhigh|fast mode|bedrock|vertex|foundry|model alias|claude-opus|claude-sonnet)\b/i,
+    severity: "compat",
+    targets: ["runner", "settings-ui"],
+  },
+  {
+    category: "observability",
+    pattern: /\b(otel|telemetry|usage breakdown|per-mcp-server cost|event buffer|log event)\b/i,
+    severity: "info",
+    targets: ["activity-rail", "docs"],
+  },
+  {
+    category: "command",
+    pattern: /\b(\/[a-z][a-z0-9-]*|claude\s+agents|slash command|renamed\s+`?\/|added\s+`?\/)\b/i,
+    severity: "info",
+    targets: ["slash-catalog"],
+  },
+];
+
+function compatFactSlug(input, maxLen) {
+  return String(input || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, maxLen) || "fact";
+}
+
+export function buildCompatFactId(version, rawText) {
+  return `${version}#${compatFactSlug(rawText, 40)}`;
+}
+
+function classifyCompatFact(version, date, rawText) {
+  const text = String(rawText || "").trim();
+  for (const rule of COMPAT_FACT_CATEGORY_RULES) {
+    if (rule.pattern.test(text)) {
+      return {
+        id: buildCompatFactId(version, text),
+        version,
+        date,
+        category: rule.category,
+        severity: rule.severity,
+        title: text.length > 80 ? text.slice(0, 77) + "..." : text,
+        summary: text,
+        rawText: text,
+        platformTags: rule.platforms,
+        productTargets: rule.targets,
+        implemented: false,
+        testIds: [],
+      };
+    }
+  }
+  return {
+    id: buildCompatFactId(version, text),
+    version,
+    date,
+    category: "ui-copy",
+    severity: "info",
+    title: text.length > 80 ? text.slice(0, 77) + "..." : text,
+    summary: text,
+    rawText: text,
+    productTargets: ["docs"],
+    implemented: false,
+    testIds: [],
+  };
+}
+
+export function classifyCompatFacts(version, date, items) {
+  const seen = new Set();
+  const out = [];
+  if (!Array.isArray(items)) return out;
+  for (const item of items) {
+    const fact = classifyCompatFact(version, date, item);
+    if (seen.has(fact.id)) continue;
+    seen.add(fact.id);
+    out.push(fact);
+  }
+  return out;
 }

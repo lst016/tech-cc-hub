@@ -35,12 +35,14 @@ test("built-in MCP registry tool names stay unique", () => {
   assert.equal(toolNames.includes("idea_open"), true);
   assert.equal(toolNames.includes("idea_run"), true);
   assert.equal(toolNames.includes("idea_restart"), true);
+  assert.equal(toolNames.includes("idea_read_logs"), true);
   assert.equal(toolNames.includes("idea_focus"), true);
   assert.equal(toolNames.includes("idea_wait_ready"), true);
   assert.equal(toolNames.includes("figma_get_design_playbook"), true);
   assert.equal(toolNames.includes("figma_audit_design"), true);
   assert.equal(toolNames.includes("figma_match_ui_nodes"), true);
   assert.equal(toolNames.includes("browser_fetch_logs"), true);
+  assert.equal(toolNames.includes("browser_http_request"), true);
   assert.equal(toolNames.includes("design_lint_visual_parity"), false);
 });
 
@@ -49,6 +51,11 @@ test("built-in MCP prompt hints are sourced from the registry", () => {
 
   assert.match(hints, /mcp__tech-cc-hub-idea__idea_status/);
   assert.match(hints, /mcp__tech-cc-hub-idea__idea_wait_ready/);
+  assert.match(hints, /mcp__tech-cc-hub-idea__idea_restart/);
+  assert.match(hints, /mcp__tech-cc-hub-idea__idea_read_logs/);
+  assert.match(hints, /Run Configuration/);
+  assert.match(hints, /正在运行的日志/);
+  assert.match(hints, /Only use mcp__tech-cc-hub-idea__idea_run when the user explicitly asks/);
   assert.match(hints, /java -jar/);
 });
 

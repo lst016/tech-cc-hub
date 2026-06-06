@@ -19,6 +19,7 @@ export const TECH_CC_HUB_APP_USER_MODEL_ID = "com.devagentforge.techcchub";
 
 const MAX_DEDUPE_KEYS = 200;
 const WINDOWS_TASKBAR_FLASH_MS = 60_000;
+const DESKTOP_NOTIFICATION_AUTO_CLOSE_MS = 6_000;
 const shownDedupeKeys: string[] = [];
 const shownDedupeKeySet = new Set<string>();
 const activeFlashTimers = new Map<number, ReturnType<typeof setTimeout>>();
@@ -63,8 +64,16 @@ export function showDesktopNotification(intent: DesktopNotificationIntent | null
 
   notification.on("click", () => {
     openDesktopNotificationTarget(intent.target);
+    notification.close();
   });
   notification.show();
+
+  const closeTimer = setTimeout(() => {
+    notification.close();
+  }, DESKTOP_NOTIFICATION_AUTO_CLOSE_MS);
+  notification.once("close", () => {
+    clearTimeout(closeTimer);
+  });
   return true;
 }
 

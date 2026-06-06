@@ -240,14 +240,42 @@ function buildOpenComputerUseGuidePrompt(status: PluginRuntimeStatus | null): st
 }
 
 function buildFigmaOfficialGuidePrompt(status: PluginRuntimeStatus | null): string {
+  const toolList = status?.tools && status.tools.length > 0
+    ? status.tools.join("、")
+    : [
+      "figma_get_current_user",
+      "figma_get_file_metadata",
+      "figma_read_design",
+      "figma_get_node",
+      "figma_list_node_index",
+      "figma_match_ui_nodes",
+      "figma_summarize_design",
+      "figma_extract_design_tokens",
+      "figma_get_design_playbook",
+      "figma_audit_design",
+      "figma_generate_tailwind_code",
+      "figma_get_image_urls",
+      "figma_export_node_images",
+      "figma_get_image_fills",
+      "figma_list_file_versions",
+      "figma_list_file_comments",
+      "figma_list_file_library",
+      "figma_get_file_variables",
+      "figma_get_dev_resources",
+      "figma_scan_text_nodes",
+      "figma_get_team_components",
+      "figma_get_team_styles",
+    ].join("、");
+
   return [
     "你在 tech-cc-hub 的系统工作区里，目标是使用 Figma Token / REST API 获取设计上下文并实现 UI。",
     "",
     "优先使用普通用户可用的 Figma Personal Access Token 模式，不要依赖 Codex OAuth。",
     `Figma REST API URL: ${FIGMA_REST_API_URL}`,
+    `Figma REST tools currently enabled: ${toolList}`,
     `官方 MCP URL: ${FIGMA_MCP_URL}`,
     `官方 Desktop MCP URL: ${FIGMA_DESKTOP_MCP_URL}`,
-    "PAT 保存后，Agent 会使用内置 MCP 工具：figma_get_current_user、figma_get_file_metadata、figma_read_design、figma_summarize_design、figma_extract_design_tokens、figma_get_design_playbook、figma_audit_design、figma_generate_tailwind_code、figma_get_image_urls、figma_export_node_images、figma_get_image_fills、figma_list_file_versions、figma_list_file_comments、figma_list_file_library、figma_get_file_variables、figma_get_dev_resources。",
+    `PAT 保存后，Agent 会使用内置 MCP 工具：${toolList}。`,
     "如果出现 401/403/auth/token/unauthorized，请判断为 Figma Token 缺失、无效或权限不足，引导用户重新输入 PAT，不要重装插件。",
     "",
     "Agent 使用规则：",

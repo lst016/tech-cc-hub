@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 test("Claude Code Opus and expert routes map to the configured expert model", () => {
-  const claudeSettingsSource = readFileSync("src/electron/libs/claude-settings.ts", "utf8");
-  const runnerSource = readFileSync("src/electron/libs/runner.ts", "utf8");
+  const claudeSettingsSource = readFileSync("src/electron/libs/claude/claude-settings.ts", "utf8");
+  const runnerSource = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
   const utilSource = readFileSync("src/electron/libs/util.ts", "utf8");
   const commitMessageSource = readFileSync("src/electron/libs/git/commit-message.ts", "utf8");
 
@@ -21,7 +21,9 @@ test("Claude Code Opus and expert routes map to the configured expert model", ()
   assert.match(claudeSettingsSource, /ANTHROPIC_AUTH_TOKEN: anthropicAuthToken/);
   assert.match(claudeSettingsSource, /ANTHROPIC_BASE_URL: anthropicBaseURL/);
 
-  assert.match(runnerSource, /const sdkModelSettings = buildClaudeCodeModelSettings\(config, effectiveModel\);/);
+  assert.match(runnerSource, /const dynamicWorkflowSettings = buildClaudeDynamicWorkflowSettings\(currentDisplayPrompt, runtime\?\.reasoningMode\);/);
+  assert.match(runnerSource, /\.\.\.buildClaudeCodeModelSettings\(config, effectiveModel\)/);
+  assert.match(runnerSource, /\.\.\.dynamicWorkflowSettings/);
   assert.match(runnerSource, /settings: sdkModelSettings,/);
   assert.match(runnerSource, /sdkExpertModel/);
   assert.match(runnerSource, /settingsEnvBaseURL: sdkModelSettings\.env\?\.ANTHROPIC_BASE_URL/);
