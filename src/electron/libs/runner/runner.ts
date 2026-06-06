@@ -297,10 +297,6 @@ function isBroadCodeExplorationTool(toolName: string, input: unknown, prompt: st
     return isBroadCodeExplorationCommand(input);
   }
 
-  if (toolName === "Read") {
-    return isBroadSourceRead(input, prompt);
-  }
-
   return false;
 }
 
@@ -1905,11 +1901,10 @@ function shouldPreprocessImageRead(
   filePath: string,
   mainModelName?: string,
 ): boolean {
-  void filePath;
   void mainModelName;
 
   // 涓存椂鍏抽棴 Read 鍥剧墖鏃剁殑鍥剧墖妯″瀷鎽樿鎷︽埅锛岄伩鍏嶆埅鍥炬瘮鐓?闄勪欢閾捐矾琚浛鎹㈡垚涓嶅彲闈犳枃鏈€?
-  return Boolean(config?.imageModel?.trim());
+  return Boolean(config?.imageModel?.trim() && RASTER_IMAGE_EXTENSIONS.has(extname(filePath).toLowerCase()));
 }
 
 function createImageSummaryToolOutput(summary: string): Array<{ type: "text"; text: string }> {

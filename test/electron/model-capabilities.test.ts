@@ -33,6 +33,6 @@ test("runner routes image Read policy through the selected main model capability
 test("runner keeps preprocessing enabled before direct image fallback", () => {
   const source = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
 
-  assert.match(source, /void mainModelName;\s*[\s\S]*return Boolean\(config\?\.imageModel\?\.trim\(\)\);/);
+  assert.match(source, /RASTER_IMAGE_EXTENSIONS\.has\(extname\(filePath\)\.toLowerCase\(\)\)/);
   assert.match(source, /Image preprocessing failed; the selected main model supports image understanding/);
 });

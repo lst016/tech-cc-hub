@@ -39,9 +39,9 @@ test("runner requires CodeGraph retrieval before broad source exploration", () =
   assert.match(source, /SOURCE_CODE_READ_EXTENSIONS/);
   assert.match(source, /BASH_CODE_EXPLORATION_COMMAND_PATTERN/);
   assert.match(source, /function isBroadCodeExplorationTool/);
-  assert.match(source, /toolName === "Read"/);
   assert.match(source, /toolName === "Bash"/);
   assert.match(source, /promptMentionsFilePath/);
+  assert.doesNotMatch(source, /if \(toolName === "Read"\) \{\s*return isBroadSourceRead/);
   assert.match(source, /function getCodeGraphFirstDenyMessage/);
   assert.match(source, /isManagedCodeGraphInitialized\(projectCwd\)/);
   assert.match(source, /mcp__tech-cc-hub-knowledge__codegraph_search or mcp__tech-cc-hub-knowledge__codegraph_context before broad source exploration when the managed index is available/);
