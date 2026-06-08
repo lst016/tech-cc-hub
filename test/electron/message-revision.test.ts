@@ -27,7 +27,7 @@ test("user message revision edits inline and does not use the composer scaffold"
 });
 
 test("inline revision reuses session continue without duplicating the user prompt", () => {
-  const promptInputSource = readFileSync("src/ui/components/PromptInput.tsx", "utf8");
+  const promptInputSource = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
   const appSource = readFileSync("src/ui/App.tsx", "utf8");
   const electronTypes = readFileSync("src/electron/types.ts", "utf8");
   const ipcHandlers = readFileSync("src/electron/ipc-handlers.ts", "utf8");

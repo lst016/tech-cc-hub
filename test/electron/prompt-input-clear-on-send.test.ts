@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 test("prompt input clears visible text before awaiting message dispatch", () => {
-  const source = readFileSync("src/ui/components/PromptInput.tsx", "utf8");
+  const source = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
   const submitStart = source.indexOf("const submitCurrentInput = useCallback");
   const sendStart = source.indexOf("const sent = await sendPromptDraft", submitStart);
   const clearStart = source.indexOf("clearPromptDraftText();", submitStart);
@@ -15,7 +15,7 @@ test("prompt input clears visible text before awaiting message dispatch", () => 
 });
 
 test("prompt draft updates synchronously replace the contenteditable DOM", () => {
-  const source = readFileSync("src/ui/components/PromptInput.tsx", "utf8");
+  const source = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
   const setDraftStart = source.indexOf("const setPromptDraft = useCallback");
   const clearComposerStart = source.indexOf("const clearComposer = useCallback", setDraftStart);
   const setDraftSection = source.slice(setDraftStart, clearComposerStart);

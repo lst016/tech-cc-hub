@@ -15,7 +15,7 @@ test("prompt text drafts are scoped to the active session", () => {
 });
 
 test("prompt input attachments are scoped to the active session draft", () => {
-  const promptInputSource = readFileSync("src/ui/components/PromptInput.tsx", "utf8");
+  const promptInputSource = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
 
   assert.match(promptInputSource, /const \[attachmentsBySessionId, setAttachmentsBySessionId\] = useState<Record<string, PromptAttachment\[\]>>\(\{\}\);/);
   assert.match(promptInputSource, /const composerDraftSessionKey = getPromptDraftSessionKey\(activeSessionId\);/);
