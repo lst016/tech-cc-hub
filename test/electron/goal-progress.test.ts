@@ -177,7 +177,11 @@ describe("goal progress", () => {
     assert.match(promptInputSource, /prompt-composer-goal/);
     assert.match(promptInputSource, /进行中的目标/);
     assert.match(promptInputSource, /session\?\.status !== "running"/);
-    assert.match(promptInputSource, /rounded-\[28px\]/);
+    assert.match(promptInputSource, /dismissedGoalKeyBySessionId/);
+    assert.match(promptInputSource, /visibleGoal/);
+    assert.match(promptInputSource, /aria-label="隐藏当前目标"/);
+    assert.match(promptInputSource, /rounded-2xl/);
+    assert.doesNotMatch(promptInputSource, /rounded-\[28px\]/);
     assert.doesNotMatch(promptInputSource, /rounded-t-\[28px\]/);
     assert.doesNotMatch(promptInputSource, /border-b-0/);
     assert.doesNotMatch(activityRailSource, /GoalProgressPanel/);

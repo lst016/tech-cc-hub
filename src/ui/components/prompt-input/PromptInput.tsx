@@ -1,7 +1,7 @@
 ﻿import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import type { SetStateAction } from "react";
-import { ArrowUp, Menu, Paperclip, Sparkles, Square, Target } from "lucide-react";
+import { ArrowUp, Menu, Paperclip, Sparkles, Square, Target, X } from "lucide-react";
 import type {
   ApiConfigProfile,
   ClientEvent,
@@ -190,6 +190,7 @@ export function PromptInput({
   const [submissionStatus, setSubmissionStatus] = useState<string | null>(null);
   const [goalNow, setGoalNow] = useState(() => Date.now());
   const [goalModeEnabled, setGoalModeEnabled] = useState(false);
+  const [dismissedGoalKeyBySessionId, setDismissedGoalKeyBySessionId] = useState<Record<string, string>>({});
   const setGlobalError = useAppStore((state) => state.setGlobalError);
   const composerDraftSessionKey = getPromptDraftSessionKey(activeSessionId);
   const codeReferenceSessionKey = getCodeReferenceSessionKey(activeSessionId);
@@ -201,6 +202,19 @@ export function PromptInput({
     if (!activeSessionId) return "";
     return (state.sessions[activeSessionId] ?? state.archivedSessions[activeSessionId])?.model?.trim() ?? "";
   });
+  const activeGoalKey = activeGoal && activeSessionId
+    ? `${activeSessionId}:${activeGoal.status}:${activeGoal.updatedAt}:${activeGoal.objective}`
+    : "";
+  const visibleGoal = activeGoal && activeGoalKey !== dismissedGoalKeyBySessionId[activeSessionId || ""]
+    ? activeGoal
+    : undefined;
+  const dismissVisibleGoal = useCallback(() => {
+    if (!activeSessionId || !activeGoalKey) return;
+    setDismissedGoalKeyBySessionId((current) => ({
+      ...current,
+      [activeSessionId]: activeGoalKey,
+    }));
+  }, [activeGoalKey, activeSessionId]);
   const effectiveCwd = activeSessionCwd.trim() || selectedWorkspaceCwd;
   const attachments = attachmentsBySessionId[composerDraftSessionKey] ?? EMPTY_ATTACHMENTS;
   const setAttachments = useCallback((nextAttachments: SetStateAction<PromptAttachment[]>) => {
@@ -1143,15 +1157,27 @@ export function PromptInput({
           <span>{submissionStatus}</span>
         </div>
       )}
-      {activeGoal && (
+      {visibleGoal && (
         <div className={`prompt-composer-goal mx-auto mb-2 ${COMPOSER_SURFACE_WIDTH_CLASS}`}>
-          <div className="flex min-h-11 items-center gap-2 rounded-[28px] border border-[#d9dde3] bg-white/94 px-4 py-2 text-[13px] text-ink-700 shadow-[0_10px_30px_rgba(15,18,24,0.06)] backdrop-blur-xl">
-            <Target className={`h-4 w-4 shrink-0 ${activeGoal.status === "blocked" ? "text-amber-500" : "text-[#9aa0a8]"}`} aria-hidden="true" />
-            <span className="shrink-0 font-semibold text-ink-900">{goalStatusLabel(activeGoal.status)}</span>
-            <span className="min-w-0 flex-1 truncate text-muted" title={activeGoal.objective}>
-              {activeGoal.objective}
+          <div className="flex min-h-10 items-center gap-2 rounded-2xl border border-[#e3e7ee] bg-[#fbfcfe]/95 px-3 py-2 text-[13px] text-ink-700 shadow-[0_8px_24px_rgba(15,18,24,0.05)] backdrop-blur-xl">
+            <span
+              className={`h-2 w-2 shrink-0 rounded-full ${visibleGoal.status === "blocked" ? "bg-amber-500" : "bg-[#34c759]"}`}
+              aria-hidden="true"
+            />
+            <span className="shrink-0 font-semibold text-ink-900">{goalStatusLabel(visibleGoal.status)}</span>
+            <span className="min-w-0 flex-1 truncate text-muted" title={visibleGoal.objective}>
+              {visibleGoal.objective}
             </span>
-            <span className="shrink-0 text-muted">· {formatGoalAge(activeGoal.updatedAt, goalNow)}</span>
+            <span className="shrink-0 text-muted">· {formatGoalAge(visibleGoal.updatedAt, goalNow)}</span>
+            <button
+              type="button"
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-[#8b929c] transition hover:bg-[#edf1f5] hover:text-ink-900"
+              onClick={dismissVisibleGoal}
+              aria-label="隐藏当前目标"
+              title="隐藏当前目标"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
           </div>
         </div>
       )}
