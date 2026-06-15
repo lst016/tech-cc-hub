@@ -48,6 +48,53 @@ test("GitWorkbenchService reads status, diff and commits", async () => {
   assert.match(diff.data.diff, /change/);
 });
 
+test("GitWorkbenchService resolves absolute diff paths in the owning repository", async () => {
+  const cwd = createRepo();
+  const externalCwd = createRepo();
+  const externalPath = join(externalCwd, "README.md");
+  writeFileSync(externalPath, "# demo\n\nexternal change\n");
+
+  const service = new GitWorkbenchService();
+  const diff = await service.getDiff({ cwd, path: externalPath });
+
+  assert.equal(diff.success, true);
+  if (!diff.success) return;
+  assert.equal(diff.data.path, externalPath);
+  assert.match(diff.data.diff, /external change/);
+});
+
+test("GitWorkbenchService resolves absolute untracked paths in the owning repository", async () => {
+  const cwd = createRepo();
+  const externalCwd = createRepo();
+  const externalPath = join(externalCwd, "notes.txt");
+  writeFileSync(externalPath, "outside\n");
+
+  const service = new GitWorkbenchService();
+  const diff = await service.getDiff({ cwd, path: externalPath });
+
+  assert.equal(diff.success, true);
+  if (!diff.success) return;
+  assert.equal(diff.data.path, externalPath);
+  assert.match(diff.data.diff, /new file mode 100644/);
+  assert.match(diff.data.diff, /b\/notes\.txt/);
+  assert.match(diff.data.diff, /\+outside/);
+});
+
+test("GitWorkbenchService ignores absolute preview paths without an owning repository", async () => {
+  const cwd = createRepo();
+  const externalDir = mkdtempSync(join(tmpdir(), "tech-cc-hub-no-git-"));
+  const externalPath = join(externalDir, "notes.txt");
+  writeFileSync(externalPath, "outside\n");
+
+  const service = new GitWorkbenchService();
+  const diff = await service.getDiff({ cwd, path: externalPath });
+
+  assert.equal(diff.success, true);
+  if (!diff.success) return;
+  assert.equal(diff.data.path, externalPath);
+  assert.equal(diff.data.diff, "");
+});
+
 test("GitWorkbenchService stages and commits files", async () => {
   const cwd = createRepo();
   writeFileSync(join(cwd, "notes.txt"), "hello\n");

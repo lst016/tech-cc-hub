@@ -258,6 +258,121 @@ test("buildActivityRailModel uses assistant usage before final result", () => {
   assert.equal(model.contextDistribution.unattributedInputTokens, 127211 - ledger.totalTokenEstimate);
 });
 
+test("buildActivityRailModel does not use cumulative result usage as context window usage", () => {
+  const ledger = buildPromptLedgerMessage({
+    phase: "continue",
+    model: "DeepSeek-V4-Pro",
+    cwd: "D:/workspace/demo",
+    prompt: "check cumulative usage",
+  });
+
+  const model = buildActivityRailModel(
+    {
+      id: "session-cumulative-result-usage",
+      title: "Cumulative Result Usage",
+      status: "completed",
+      messages: [
+        ledger,
+        {
+          type: "assistant",
+          uuid: "assistant-context-usage",
+          session_id: "remote-usage",
+          parent_tool_use_id: null,
+          message: {
+            id: "assistant-context-usage",
+            model: "deepseek-v4-pro",
+            role: "assistant",
+            type: "message",
+            content: [{ type: "text", text: "checking" }],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: {
+              input_tokens: 117_229,
+              output_tokens: 42,
+              cache_creation_input_tokens: null,
+              cache_read_input_tokens: null,
+            },
+          },
+        } as never,
+        {
+          type: "result",
+          capturedAt: 2000,
+          uuid: "result-cumulative-usage",
+          session_id: "remote-usage",
+          subtype: "success",
+          duration_ms: 1200,
+          duration_api_ms: 1000,
+          total_cost_usd: 0,
+          usage: {
+            input_tokens: 6_459_879,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 6_452_736,
+            output_tokens: 12_207,
+          },
+          result: "done",
+        } as never,
+      ],
+    },
+    [],
+    "",
+  );
+
+  assert.equal(model.summary.inputLabel, "117,229 tok");
+  assert.equal(model.contextDistribution.actualInputTokens, 117_229);
+  assert.equal(model.contextDistribution.unattributedInputTokens, 117_229 - ledger.totalTokenEstimate);
+
+  const resultItem = model.timeline.find((item) => item.id === "result-cumulative-usage-result");
+  assert.equal(resultItem?.metrics.inputTokens, 6_459_879);
+  assert.equal(resultItem?.metrics.outputTokens, 12_207);
+});
+
+test("buildActivityRailModel avoids result usage fallback when prompt ledger is available", () => {
+  const ledger = buildPromptLedgerMessage({
+    phase: "continue",
+    model: "MiniMax-M3",
+    cwd: "D:/workspace/demo",
+    prompt: "check provider usage",
+  });
+
+  const model = buildActivityRailModel(
+    {
+      id: "session-ledger-with-result-only-usage",
+      title: "Ledger With Result Usage",
+      status: "completed",
+      messages: [
+        ledger,
+        {
+          type: "result",
+          capturedAt: 2000,
+          uuid: "result-ledger-with-result-only-usage",
+          session_id: "remote-usage",
+          subtype: "success",
+          duration_ms: 1200,
+          duration_api_ms: 1000,
+          total_cost_usd: 0,
+          usage: {
+            input_tokens: 2_124_559,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 9_435_499,
+            output_tokens: 1_207,
+          },
+          result: "done",
+        } as never,
+      ],
+    },
+    [],
+    "",
+  );
+
+  assert.equal(model.contextDistribution.totalTokenEstimate, ledger.totalTokenEstimate);
+  assert.equal(model.contextDistribution.actualInputTokens, undefined);
+  assert.equal(model.contextDistribution.unattributedInputTokens, 0);
+
+  const resultItem = model.timeline.find((item) => item.id === "result-ledger-with-result-only-usage-result");
+  assert.equal(resultItem?.metrics.inputTokens, 2_124_559);
+  assert.equal(resultItem?.metrics.outputTokens, 1_207);
+});
+
 test("buildActivityRailModel shows the latest round as completed after a successful result even if the session stays running", () => {
   const model = buildActivityRailModel(
     {

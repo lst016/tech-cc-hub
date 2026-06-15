@@ -1705,11 +1705,18 @@ export function buildActivityRailModel(
   const toolUseTaskMap = new Map<string, string>();
   const activeTaskNodes = new Map<string, ActivityTimelineItem>();
   const seenInitRemoteSessionIds = new Set<string>();
-  const recordUsageTokens = (usage: { inputTokens?: number; outputTokens?: number }) => {
+  const recordUsageTokens = (
+    usage: { inputTokens?: number; outputTokens?: number },
+    options: { contributesToContextWindow?: boolean } = { contributesToContextWindow: true },
+  ) => {
     if (typeof usage.inputTokens === "number") {
-      latestInputTokens = usage.inputTokens;
-      peakInputTokens = maxTokenCount(peakInputTokens, usage.inputTokens);
-      currentTurnPeakInputTokens = maxTokenCount(currentTurnPeakInputTokens, usage.inputTokens);
+      if (options.contributesToContextWindow && usage.inputTokens > 0) {
+        latestInputTokens = usage.inputTokens;
+        peakInputTokens = maxTokenCount(peakInputTokens, usage.inputTokens);
+        currentTurnPeakInputTokens = maxTokenCount(currentTurnPeakInputTokens, usage.inputTokens);
+      } else if (!latestPromptLedger && typeof latestInputTokens !== "number" && typeof peakInputTokens !== "number" && usage.inputTokens > 0) {
+        latestInputTokens = usage.inputTokens;
+      }
     }
     latestOutputTokens = usage.outputTokens ?? latestOutputTokens;
   };
@@ -2035,7 +2042,9 @@ export function buildActivityRailModel(
       const resultUsage = extractUsageTokens(result);
       sequence += 1;
       latestDurationMs = result.duration_ms ?? latestDurationMs;
-      recordUsageTokens(resultUsage);
+      // Result usage is cumulative for the whole agent run. Keep it on the
+      // result node, but do not treat it as the current context-window size.
+      recordUsageTokens(resultUsage, { contributesToContextWindow: false });
       latestCostUsd = result.total_cost_usd ?? latestCostUsd;
       latestResultText = getResultText(result) || latestResultText;
       latestRemoteSessionId = result.session_id ?? latestRemoteSessionId;

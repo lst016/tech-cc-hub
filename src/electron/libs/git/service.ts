@@ -1,5 +1,5 @@
-import { readFile } from "fs/promises";
-import { relative, resolve, sep } from "path";
+import { readFile, realpath } from "fs/promises";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "path";
 import { simpleGit, type SimpleGit, type StatusResult } from "simple-git";
 import { normalizeGitError } from "./errors.js";
 import { generateCommitMessageSuggestion, generateFallbackCommitMessageSuggestion } from "./commit-message.js";
@@ -72,18 +72,22 @@ export class GitWorkbenchService {
 
   async getDiff(request: GitDiffRequest): Promise<GitResult<GitDiffResult>> {
     try {
-      const git = this.git(request.cwd);
+      const target = await this.resolveDiffTarget(request);
+      if (!target) {
+        return { success: true, data: { path: request.path, staged: Boolean(request.staged), diff: "" } };
+      }
+
+      const git = this.git(target.cwd);
       if (!request.staged) {
         const status = await git.status();
-        const untracked = status.files.some((file) => file.path === request.path && file.index === "?" && file.working_dir === "?");
+        const untracked = status.files.some((file) => file.path === target.path && file.index === "?" && file.working_dir === "?");
         if (untracked) {
-          const repoRoot = (await git.revparse(["--show-toplevel"])).trim();
-          const diff = await buildUntrackedFileDiff(repoRoot, request.path);
+          const diff = await buildUntrackedFileDiff(target.cwd, target.path);
           return { success: true, data: { path: request.path, staged: false, diff } };
         }
       }
 
-      const args = request.staged ? ["--cached", "--", request.path] : ["--", request.path];
+      const args = request.staged ? ["--cached", "--", target.path] : ["--", target.path];
       const diff = await git.diff(args);
       return { success: true, data: { path: request.path, staged: Boolean(request.staged), diff } };
     } catch (error) {
@@ -276,6 +280,21 @@ export class GitWorkbenchService {
     return simpleGit({ baseDir: resolve(cwd), binary: "git" });
   }
 
+  private async resolveDiffTarget(request: GitDiffRequest): Promise<{ cwd: string; path: string } | null> {
+    const trimmedPath = request.path.trim();
+    if (!isAbsolute(trimmedPath)) {
+      const git = this.git(request.cwd);
+      const repoRoot = (await git.revparse(["--show-toplevel"])).trim();
+      return { cwd: repoRoot, path: normalizeGitPath(trimmedPath) };
+    }
+
+    const ownerRepoRoot = await findGitRepoRoot(dirname(trimmedPath));
+    if (!ownerRepoRoot) return null;
+
+    const relativePath = await toRepoRelativePath(ownerRepoRoot, trimmedPath);
+    return { cwd: ownerRepoRoot, path: normalizeGitPath(relativePath) };
+  }
+
   private async readStagedFiles(git: SimpleGit): Promise<GitChangedFile[]> {
     const status = await git.status();
     return this.mapChangedFiles(status).filter((file) => file.staged);
@@ -455,11 +474,48 @@ function parseNameStatusFiles(raw: string): GitChangedFile[] {
     .filter((file) => file.path.length > 0);
 }
 
+async function findGitRepoRoot(baseDir: string): Promise<string | null> {
+  try {
+    const git = simpleGit({ baseDir: resolve(baseDir), binary: "git" });
+    return (await git.revparse(["--show-toplevel"])).trim();
+  } catch {
+    return null;
+  }
+}
+
+async function toRepoRelativePath(repoRoot: string, filePath: string): Promise<string> {
+  const root = await realpath(resolve(repoRoot));
+  const absolutePath = await resolveDiffPath(filePath);
+  const rel = relative(root, absolutePath);
+  if (isRelativePathOutsideRoot(rel)) {
+    throw new Error("Git diff path must stay inside the repository.");
+  }
+  return rel;
+}
+
+async function resolveDiffPath(filePath: string): Promise<string> {
+  const absolutePath = resolve(filePath);
+  try {
+    return await realpath(absolutePath);
+  } catch {
+    const parent = await realpath(dirname(absolutePath));
+    return resolve(parent, basename(absolutePath));
+  }
+}
+
+function isRelativePathOutsideRoot(path: string): boolean {
+  return path.startsWith("..") || path === "" || path.split(sep).includes("..");
+}
+
+function normalizeGitPath(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
 async function buildUntrackedFileDiff(repoRoot: string, filePath: string): Promise<string> {
   const root = resolve(repoRoot);
   const absolutePath = resolve(root, filePath);
   const rel = relative(root, absolutePath);
-  if (rel.startsWith("..") || rel === "" || rel.split(sep).includes("..")) {
+  if (isRelativePathOutsideRoot(rel)) {
     throw new Error("Git diff path must stay inside the repository.");
   }
 

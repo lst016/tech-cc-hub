@@ -36,12 +36,12 @@ test("runner requires CodeGraph retrieval before broad source exploration", () =
 
   assert.match(source, /CODEGRAPH_RETRIEVAL_TOOL_NAMES/);
   assert.match(source, /BROAD_CODE_EXPLORATION_TOOL_NAMES = new Set\(\["Grep", "Glob", "Task", "Search"\]\)/);
-  assert.match(source, /SOURCE_CODE_READ_EXTENSIONS/);
   assert.match(source, /BASH_CODE_EXPLORATION_COMMAND_PATTERN/);
   assert.match(source, /function isBroadCodeExplorationTool/);
   assert.match(source, /toolName === "Bash"/);
-  assert.match(source, /promptMentionsFilePath/);
-  assert.doesNotMatch(source, /if \(toolName === "Read"\) \{\s*return isBroadSourceRead/);
+  assert.doesNotMatch(source, /SOURCE_CODE_READ_EXTENSIONS/);
+  assert.doesNotMatch(source, /isBroadSourceRead/);
+  assert.doesNotMatch(source, /return isBroadSourceRead/);
   assert.match(source, /function getCodeGraphFirstDenyMessage/);
   assert.match(source, /isManagedCodeGraphInitialized\(projectCwd\)/);
   assert.match(source, /mcp__tech-cc-hub-knowledge__codegraph_search or mcp__tech-cc-hub-knowledge__codegraph_context before broad source exploration when the managed index is available/);
@@ -51,6 +51,16 @@ test("runner requires CodeGraph retrieval before broad source exploration", () =
   assert.match(source, /onCodeGraphRetrieval/);
   assert.match(source, /permissionDecision: "deny"/);
   assert.match(source, /permissionDecisionReason: codeGraphDenyMessage/);
+});
+
+test("runner routes CodeGraph workspace tools to linked workspace roots", () => {
+  const source = readFileSync(join(process.cwd(), "src/electron/libs/runner/runner.ts"), "utf8");
+
+  assert.match(source, /CODEGRAPH_WORKSPACE_TOOL_NAMES/);
+  assert.match(source, /function isCodeGraphWorkspaceTool/);
+  assert.match(source, /isCodeGraphWorkspaceTool\(toolName\)/);
+  assert.match(source, /nextInput\.workspaceRoot = targetCwd/);
+  assert.match(source, /CodeGraph workspaceRoot routed to linked workspace/);
 });
 
 test("legacy knowledge_index tool is no longer registered", () => {

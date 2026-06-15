@@ -17,6 +17,7 @@ import {
   type WorkflowSpecDocument,
 } from "../../shared/workflow-markdown";
 import type { SessionExecutionMode } from "../../shared/session-semantics";
+import { deriveLatestGoalSnapshot, type SessionGoalSnapshot } from "../../shared/goal-progress";
 import { extractSlashCommandsFromMessages, mergeSlashCommandLists } from "../../shared/slash-commands";
 import {
   normalizeTodoWriteArgs,
@@ -52,6 +53,7 @@ export type SessionView = {
   workflowSpec?: WorkflowSpecDocument;
   workflowError?: string;
   workflowCatalog?: SessionWorkflowCatalog;
+  latestGoal?: SessionGoalSnapshot;
   latestPlan?: SessionPlanSnapshot;
   archivedAt?: number;
   createdAt?: number;
@@ -355,6 +357,7 @@ function appendMessagesToSession(
     ...session,
     slashCommands: slashCommands ?? session.slashCommands,
     messages: trimmed.messages,
+    latestGoal: deriveLatestGoalSnapshot(session.id, trimmed.messages, session.latestGoal),
     latestPlan: deriveLatestPlanSnapshot(session.id, nextMessages, session.latestPlan),
     hasMoreHistory: trimmed.trimmed ? true : session.hasMoreHistory,
     historyCursor: trimmed.trimmed ? trimmed.historyCursor ?? session.historyCursor : session.historyCursor,
@@ -808,6 +811,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             status,
             messages: mergedMessages,
             slashCommands: slashCommands ?? existing.slashCommands,
+            latestGoal: deriveLatestGoalSnapshot(sessionId, mergedMessages, existing.latestGoal),
             latestPlan: deriveLatestPlanSnapshot(sessionId, mergedMessages, existing.latestPlan),
             hydrated: true,
             hasMoreHistory: hasMore,

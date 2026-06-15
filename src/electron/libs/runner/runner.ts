@@ -202,41 +202,14 @@ const FILE_MUTATION_TOOL_NAMES = new Set(["Edit", "MultiEdit", "Write"]);
 // which provide persistent storage, execution history, and retry mechanism.
 const SDK_BUILTIN_CRON_TOOLS = new Set(["CronCreate", "CronDelete", "CronList"]);
 const CODEGRAPH_RETRIEVAL_TOOL_NAMES = new Set(["codegraph_search", "codegraph_context", "codegraph_impact"]);
-const BROAD_CODE_EXPLORATION_TOOL_NAMES = new Set(["Grep", "Glob", "Task", "Search"]);
-const SOURCE_CODE_READ_EXTENSIONS = new Set([
-  ".astro",
-  ".c",
-  ".cc",
-  ".cjs",
-  ".cpp",
-  ".cs",
-  ".cxx",
-  ".go",
-  ".graphql",
-  ".gql",
-  ".h",
-  ".hpp",
-  ".java",
-  ".js",
-  ".jsx",
-  ".kt",
-  ".mjs",
-  ".php",
-  ".py",
-  ".rb",
-  ".rs",
-  ".scala",
-  ".sql",
-  ".svelte",
-  ".swift",
-  ".ts",
-  ".tsx",
-  ".vue",
+const CODEGRAPH_WORKSPACE_TOOL_NAMES = new Set([
+  "codegraph_status",
+  "codegraph_sync",
+  ...CODEGRAPH_RETRIEVAL_TOOL_NAMES,
 ]);
+const BROAD_CODE_EXPLORATION_TOOL_NAMES = new Set(["Grep", "Glob", "Task", "Search"]);
 const BASH_CODE_EXPLORATION_COMMAND_PATTERN =
   /(?:^|[;&|()\s])(?:rg|grep|find|fd|tree|findstr)(?:\.exe)?(?=\s|$)|\bgit\s+(?:grep|ls-files)\b|\b(?:Get-ChildItem|Select-String)\b/i;
-const AUTHENTICATED_BROWSER_URL_HOST_PATTERN =
-  /(?:^|\.)teambition\.pook\.com$|(?:^|\.)feishu\.cn$|(?:^|\.)larksuite\.com$/i;
 
 function isSdkBuiltinCronTool(toolName: string): boolean {
   return SDK_BUILTIN_CRON_TOOLS.has(toolName);
@@ -271,14 +244,22 @@ function isCodeGraphRetrievalTool(toolName: string): boolean {
   ));
 }
 
+function isCodeGraphWorkspaceTool(toolName: string): boolean {
+  return Array.from(CODEGRAPH_WORKSPACE_TOOL_NAMES).some((codegraphToolName) => (
+    toolName === codegraphToolName ||
+    toolName.endsWith(`__${codegraphToolName}`) ||
+    toolName.endsWith(`:${codegraphToolName}`) ||
+    toolName.endsWith(`/${codegraphToolName}`)
+  ));
+}
+
 function getCodeGraphFirstDenyMessage(
   toolName: string,
   projectCwd: string | undefined,
   codeGraphRetrievalSeen: boolean,
   input?: unknown,
-  prompt = "",
 ): string | undefined {
-  if (!projectCwd || codeGraphRetrievalSeen || !isBroadCodeExplorationTool(toolName, input, prompt)) {
+  if (!projectCwd || codeGraphRetrievalSeen || !isBroadCodeExplorationTool(toolName, input)) {
     return undefined;
   }
   if (!isManagedCodeGraphInitialized(projectCwd)) {
@@ -288,7 +269,7 @@ function getCodeGraphFirstDenyMessage(
   return "Use mcp__tech-cc-hub-knowledge__codegraph_search or mcp__tech-cc-hub-knowledge__codegraph_context before broad source exploration when the managed index is available. If CodeGraph returns no useful result, an error, a timeout, a slow-machine bypass, or feels slow, fall back to focused Read/Grep/Glob instead of retrying CodeGraph.";
 }
 
-function isBroadCodeExplorationTool(toolName: string, input: unknown, prompt: string): boolean {
+function isBroadCodeExplorationTool(toolName: string, input: unknown): boolean {
   if (BROAD_CODE_EXPLORATION_TOOL_NAMES.has(toolName)) {
     return true;
   }
@@ -307,36 +288,6 @@ function isBroadCodeExplorationCommand(input: unknown): boolean {
 
   const command = typeof input.command === "string" ? input.command.trim() : "";
   return Boolean(command && BASH_CODE_EXPLORATION_COMMAND_PATTERN.test(command));
-}
-
-function isBroadSourceRead(input: unknown, prompt: string): boolean {
-  if (!isRecord(input)) {
-    return false;
-  }
-
-  const filePath = typeof input.file_path === "string" ? input.file_path.trim() : "";
-  if (!SOURCE_CODE_READ_EXTENSIONS.has(extname(filePath).toLowerCase())) {
-    return false;
-  }
-
-  return !promptMentionsFilePath(prompt, filePath);
-}
-
-function promptMentionsFilePath(prompt: string, filePath: string): boolean {
-  const normalizedPrompt = prompt.toLowerCase().replace(/\\/g, "/");
-  const normalizedPath = filePath.toLowerCase().replace(/\\/g, "/");
-  const pathSegments = normalizedPath.split("/").filter(Boolean);
-  const basename = pathSegments.at(-1) ?? "";
-  const tail = pathSegments.slice(-3).join("/");
-
-  return Boolean(
-    basename &&
-    (
-      normalizedPrompt.includes(normalizedPath) ||
-      normalizedPrompt.includes(tail) ||
-      normalizedPrompt.includes(basename)
-    ),
-  );
 }
 
 function normalizeRunnerWorkspaceContext(context: LinkedWorkspaceContext | undefined): LinkedWorkspaceContext | null {
@@ -431,6 +382,13 @@ function routeLinkedWorkspaceToolInput(
     if (!isRelativeToolPath(pathValue)) return { input, routed: false };
     nextInput.path = join(targetCwd, pathValue);
     return { input: nextInput, routed: true, reason: `${toolName} relative path routed to linked workspace` };
+  }
+
+  if (isCodeGraphWorkspaceTool(toolName)) {
+    const workspaceRoot = typeof nextInput.workspaceRoot === "string" ? nextInput.workspaceRoot.trim() : "";
+    if (workspaceRoot) return { input, routed: false };
+    nextInput.workspaceRoot = targetCwd;
+    return { input: nextInput, routed: true, reason: "CodeGraph workspaceRoot routed to linked workspace" };
   }
 
   return { input, routed: false };
@@ -965,7 +923,6 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                   projectCwd,
                   codeGraphRetrievalSeen,
                   effectiveInput,
-                  currentDisplayPrompt,
                 );
                 return message ? { behavior: "deny", message } : null;
               },
@@ -998,6 +955,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                   toolName,
                   effectiveInput,
                   runtimeProfile.includeBrowserPrompt,
+                  currentDisplayPrompt,
                 );
                 return message ? { behavior: "deny", message } : null;
               },
@@ -1820,30 +1778,51 @@ function getAuthenticatedUrlWebFetchDenyMessage(
   toolName: string,
   input: unknown,
   browserPromptEnabled: boolean,
+  prompt: string,
 ): string | undefined {
   if (!browserPromptEnabled || toolName !== "WebFetch" || !isRecord(input)) {
     return undefined;
   }
 
   const rawUrl = typeof input.url === "string" ? input.url.trim() : "";
-  if (!rawUrl || !isAuthenticatedBrowserUrl(rawUrl)) {
+  if (!rawUrl || !shouldUseBrowserViewBeforeWebFetch(rawUrl, prompt)) {
     return undefined;
   }
 
   return [
-    "This URL is likely to require saved browser login state or SSO.",
+    "The user provided this URL directly; it may require saved browser login state, cookies, or SSO.",
     "Use mcp__tech-cc-hub-browser__browser_open_page for the URL, then inspect it with browser_extract_page or browser_snapshot_interactive.",
     "Do not ask the user to paste task details before trying the built-in BrowserView.",
   ].join(" ");
 }
 
-function isAuthenticatedBrowserUrl(rawUrl: string): boolean {
+function shouldUseBrowserViewBeforeWebFetch(rawUrl: string, prompt: string): boolean {
   try {
     const url = new URL(rawUrl);
-    return AUTHENTICATED_BROWSER_URL_HOST_PATTERN.test(url.hostname);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    if (isLocalBrowserBypassHost(url.hostname)) return false;
+    return promptMentionsUrl(prompt, rawUrl, url);
   } catch {
     return false;
   }
+}
+
+function isLocalBrowserBypassHost(hostname: string): boolean {
+  return hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]";
+}
+
+function promptMentionsUrl(prompt: string, rawUrl: string, url: URL): boolean {
+  const haystack = prompt.toLowerCase();
+  const href = url.href.toLowerCase();
+  const raw = rawUrl.toLowerCase();
+  const withoutTrailingSlash = href.endsWith("/") ? href.slice(0, -1) : href;
+  return haystack.includes(raw) ||
+    haystack.includes(href) ||
+    haystack.includes(withoutTrailingSlash) ||
+    haystack.includes(`${url.hostname.toLowerCase()}${url.pathname.toLowerCase()}`);
 }
 
 function checkRasterImageRead(
@@ -2130,7 +2109,6 @@ function buildQualityHooks(
           projectCwd,
           isCodeGraphRetrievalSeen?.() ?? false,
           normalizedInput,
-          getCurrentPrompt(),
         );
         if (codeGraphDenyMessage) {
           return {

@@ -118,22 +118,24 @@ function createStableOutputs() {
   }
 }
 
-function runWithFallback(strategyLabel, command) {
+function runWithFallback(strategyLabel, commands) {
   log(`strategy: ${strategyLabel}`);
-  const result = run(command[0], command.slice(1), {
-    env: {
-      ...noSignEnv,
-      ...process.env,
-      CSC_IDENTITY_AUTO_DISCOVERY: "false",
-    },
-  });
-  if (result.ok) {
-    log(`success: ${strategyLabel}`);
-    return true;
+  for (const command of commands) {
+    const result = run(command[0], command.slice(1), {
+      env: {
+        ...noSignEnv,
+        ...process.env,
+        CSC_IDENTITY_AUTO_DISCOVERY: "false",
+      },
+    });
+    if (!result.ok) {
+      log(`failed: ${strategyLabel} (status=${result.status ?? "n/a"})`);
+      return false;
+    }
   }
 
-  log(`failed: ${strategyLabel} (status=${result.status ?? "n/a"})`);
-  return false;
+  log(`success: ${strategyLabel}`);
+  return true;
 }
 
 async function main() {
@@ -152,9 +154,15 @@ async function main() {
   }
 
   const strategies = [
-    ["Primary", ["npx", "electron-builder", "--win", "--x64", "--config.win.forceCodeSigning=false", "--config.win.signAndEditExecutable=false"]],
-    ["Fallback-dir", ["npx", "electron-builder", "--win", "--x64", "--dir", "--config.win.forceCodeSigning=false", "--config.win.signAndEditExecutable=false"]],
-    ["Fallback-no-sign-flag", ["npx", "electron-builder", "--win", "--x64", "--dir", "--config.asar=true"]],
+    [
+      "Primary-dir-prepackaged",
+      [
+        ["npx", "electron-builder", "--win", "--x64", "--dir", "--config.win.forceCodeSigning=false", "--config.win.signAndEditExecutable=false"],
+        ["npx", "electron-builder", "--win", "--x64", "--prepackaged", path.join("dist", "win-unpacked"), "--config.win.forceCodeSigning=false", "--config.win.signAndEditExecutable=false"],
+      ],
+    ],
+    ["Fallback-dir", [["npx", "electron-builder", "--win", "--x64", "--dir", "--config.win.forceCodeSigning=false", "--config.win.signAndEditExecutable=false"]]],
+    ["Fallback-no-sign-flag", [["npx", "electron-builder", "--win", "--x64", "--dir", "--config.asar=true"]]],
   ];
 
   let built = false;

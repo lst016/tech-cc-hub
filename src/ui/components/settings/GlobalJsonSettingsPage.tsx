@@ -29,8 +29,6 @@ type GlobalJsonSettingsPageProps = {
   parseError: string | null;
   onChange: (next: string) => void;
   onFormat: () => void;
-  closeSidebarOnBrowserOpen: boolean;
-  onCloseSidebarOnBrowserOpenChange: (next: boolean) => void;
 };
 
 export function GlobalJsonSettingsPage({
@@ -38,8 +36,6 @@ export function GlobalJsonSettingsPage({
   parseError,
   onChange,
   onFormat,
-  closeSidebarOnBrowserOpen,
-  onCloseSidebarOnBrowserOpenChange,
 }: GlobalJsonSettingsPageProps) {
   return (
     <div className="flex min-h-0 flex-col gap-4">
@@ -62,21 +58,6 @@ export function GlobalJsonSettingsPage({
             格式化 JSON
           </button>
           </div>
-        </div>
-
-        <div className="mt-4 shrink-0 rounded-2xl border border-ink-900/10 bg-surface px-4 py-3">
-          <label htmlFor="close-sidebar-on-browser-open" className="flex items-start gap-3 text-sm">
-            <input
-              id="close-sidebar-on-browser-open"
-              type="checkbox"
-              className="mt-1 h-4 w-4 rounded border-ink-900/40 text-accent focus:ring-accent"
-              checked={closeSidebarOnBrowserOpen}
-              onChange={(event) => onCloseSidebarOnBrowserOpenChange(event.target.checked)}
-            />
-            <span className="leading-6 text-muted">
-              打开浏览器工作台时自动收起左侧栏（默认开启）
-            </span>
-          </label>
         </div>
 
         <label htmlFor="global-json" className="mt-4 block text-xs font-medium text-muted">

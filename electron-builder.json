@@ -38,11 +38,14 @@
         "category": "Utility"
     },
     "win": {
+        "icon": "build/icon.ico",
         "target": [
             "nsis"
         ]
     },
     "nsis": {
+        "installerIcon": "build/icon.ico",
+        "uninstallerIcon": "build/icon.ico",
         "oneClick": false,
         "allowToChangeInstallationDirectory": true,
         "createDesktopShortcut": true,

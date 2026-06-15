@@ -169,10 +169,6 @@ const SETTINGS_PAGES: SettingsPageDefinition[] = [
   },
 ];
 
-function getCloseSidebarOnBrowserOpen(config: GlobalRuntimeConfig): boolean {
-  return config.closeSidebarOnBrowserOpen !== false;
-}
-
 function normalizeAgentRuleDocuments(documents: AgentRuleDocuments | null | undefined): AgentRuleDocuments {
   return documents ?? DEFAULT_AGENT_RULE_DOCUMENTS;
 }
@@ -217,7 +213,6 @@ export function SettingsModal({
   const [agentRuleDocuments, setAgentRuleDocuments] = useState<AgentRuleDocuments | null>(null);
   const [userAgentMarkdown, setUserAgentMarkdown] = useState("");
   const [agentRulesRefreshing, setAgentRulesRefreshing] = useState(false);
-  const [closeSidebarOnBrowserOpen, setCloseSidebarOnBrowserOpen] = useState(true);
   const [activePageId, setActivePageId] = useState<SettingsPageId>("profiles");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -261,7 +256,6 @@ export function SettingsModal({
         const globalConfigText = JSON.stringify(normalizedGlobalSettings, null, 2);
         setGlobalConfigText(globalConfigText);
         setGlobalConfigParseError(validateGlobalConfigText(globalConfigText));
-        setCloseSidebarOnBrowserOpen(getCloseSidebarOnBrowserOpen(normalizedGlobalSettings));
         const normalizedRuleDocuments = normalizeAgentRuleDocuments(ruleDocuments);
         setAgentRuleDocuments(normalizedRuleDocuments);
         setUserAgentMarkdown(normalizedRuleDocuments.userAgentsMarkdown);
@@ -345,34 +339,13 @@ export function SettingsModal({
   const handleGlobalConfigChange = (next: string) => {
     setStatus(null);
     setGlobalConfigText(next);
-    const parsed = parseGlobalConfig(next);
     setGlobalConfigParseError(validateGlobalConfigText(next));
-    if (parsed !== null) {
-      setCloseSidebarOnBrowserOpen(getCloseSidebarOnBrowserOpen(parsed));
-    }
   };
 
   const handleUserAgentMarkdownChange = (next: string) => {
     setStatus(null);
     setUserAgentMarkdown(next);
   };
-
-  const handleCloseSidebarOnBrowserOpenChange = useCallback((next: boolean) => {
-    const parseError = validateGlobalConfigText(globalConfigText);
-    if (parseError) {
-      setGlobalConfigParseError(parseError);
-      return;
-    }
-    const parsed = parseGlobalConfig(globalConfigText) ?? {};
-    const nextConfig = {
-      ...parsed,
-      closeSidebarOnBrowserOpen: next,
-    };
-    const nextText = JSON.stringify(nextConfig, null, 2);
-    setCloseSidebarOnBrowserOpen(next);
-    setGlobalConfigText(nextText);
-    setGlobalConfigParseError(null);
-  }, [globalConfigText]);
 
   const handleStartGuideSession = useCallback(async (request: ChannelGuideSessionRequest) => {
     setStatus(null);
@@ -494,8 +467,6 @@ export function SettingsModal({
         parseError={globalConfigParseError}
         onChange={handleGlobalConfigChange}
         onFormat={handleFormatGlobalConfig}
-        closeSidebarOnBrowserOpen={closeSidebarOnBrowserOpen}
-        onCloseSidebarOnBrowserOpenChange={handleCloseSidebarOnBrowserOpenChange}
       />
     );
   }

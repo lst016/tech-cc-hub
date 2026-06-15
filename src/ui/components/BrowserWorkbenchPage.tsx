@@ -13,7 +13,6 @@ type BrowserWorkbenchPageProps = {
   initialUrl?: string;
   occluded?: boolean;
   sessionId?: string | null;
-  onOpenTrace?: () => void;
   onOpenUsage?: () => void;
   onOpenPreview?: () => void;
   onOpenGit?: () => void;
@@ -357,7 +356,6 @@ export function BrowserWorkbenchPage({
   initialUrl = "",
   occluded = false,
   sessionId = null,
-  onOpenTrace,
   onOpenUsage,
   onOpenPreview,
   onOpenGit,
@@ -1178,10 +1176,6 @@ export function BrowserWorkbenchPage({
   }, [persistUrl, rememberLocalTarget, sessionId, setSessionBrowserHasTab, setUrlEditing, state.url]);
   const showBrowserSurface = showBrowserChrome;
   const handleSelectWorkspaceTab = (tab: ActivityWorkspaceTab) => {
-    if (tab === "trace") {
-      onOpenTrace?.();
-      return;
-    }
     if (tab === "usage") {
       onOpenUsage?.();
       return;

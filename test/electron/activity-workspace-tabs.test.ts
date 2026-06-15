@@ -10,13 +10,13 @@ import {
 } from "../../src/ui/utils/activity-workspace-tabs.js";
 
 describe("activity workspace tabs", () => {
-  it("keeps non-browser tabs visible when no browser tab exists", () => {
+  it("does not expose the deprecated trace tab when no browser tab exists", () => {
     const visibleTabs = buildActivityWorkspaceTabs({
       activeTab: "trace",
       showBrowserTab: false,
     }).filter((tab) => tab.visible);
 
-    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git"]);
+    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "git"]);
     assert.equal(shouldShowCreateBrowserTab(false), true);
     assert.equal(shouldShowCreateTerminalTab(false), true);
   });
@@ -27,7 +27,7 @@ describe("activity workspace tabs", () => {
       showBrowserTab: true,
     }).filter((tab) => tab.visible);
 
-    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git", "browser"]);
+    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "git", "browser"]);
     assert.equal(visibleTabs.find((tab) => tab.id === "browser")?.active, true);
     assert.equal(visibleTabs.find((tab) => tab.id === "preview")?.title, "文件预览");
     assert.equal(shouldShowCreateBrowserTab(true), false);
@@ -44,8 +44,8 @@ describe("activity workspace tabs", () => {
       showTerminalTab: true,
     }).filter((tab) => tab.visible);
 
-    assert.deepEqual(defaultTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git"]);
-    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git", "terminal"]);
+    assert.deepEqual(defaultTabs.map((tab) => tab.id), ["preview", "usage", "git"]);
+    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "git", "terminal"]);
     assert.equal(visibleTabs.find((tab) => tab.id === "terminal")?.active, true);
     assert.equal(shouldShowCreateTerminalTab(true), false);
   });
@@ -61,8 +61,8 @@ describe("activity workspace tabs", () => {
       workflowAgentTabs: [{ id: "workflow-agent:agent-1", label: "Agent one", title: "Agent one" }],
     }).filter((tab) => tab.visible);
 
-    assert.deepEqual(defaultTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git"]);
-    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git", "workflow-agent:agent-1"]);
+    assert.deepEqual(defaultTabs.map((tab) => tab.id), ["preview", "usage", "git"]);
+    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "git", "workflow-agent:agent-1"]);
     assert.equal(visibleTabs.find((tab) => tab.id === "workflow-agent:agent-1")?.active, true);
   });
 

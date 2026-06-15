@@ -80,27 +80,37 @@ function scoreStrictMentionPath(option: FileMentionOption, query: string) {
   const pathSegments = normalizeMentionPath(option.label).toLowerCase().split("/").filter(Boolean);
   if (pathSegments.length === 0) return null;
 
-  for (let startIndex = 0; startIndex <= pathSegments.length - querySegments.length; startIndex += 1) {
+  for (let startIndex = 0; startIndex < pathSegments.length; startIndex += 1) {
     const firstSegmentScore = scoreSegmentMatch(pathSegments[startIndex] ?? "", querySegments[0] ?? "");
     if (firstSegmentScore === null) continue;
 
     let score = pathSegments.length / 20;
     score += firstSegmentScore + startIndex * 1.5;
-    let matched = true;
+    let pathIndex = startIndex;
+    let matchedAllSegments = true;
 
     for (let queryIndex = 1; queryIndex < querySegments.length; queryIndex += 1) {
-      const segmentScore = scoreSegmentMatch(
-        pathSegments[startIndex + queryIndex] ?? "",
-        querySegments[queryIndex] ?? "",
-      );
-      if (segmentScore === null) {
-        matched = false;
+      let matchedSegment = false;
+      for (let nextPathIndex = pathIndex + 1; nextPathIndex < pathSegments.length; nextPathIndex += 1) {
+        const segmentScore = scoreSegmentMatch(
+          pathSegments[nextPathIndex] ?? "",
+          querySegments[queryIndex] ?? "",
+        );
+        if (segmentScore === null) continue;
+
+        score += segmentScore + Math.max(0, nextPathIndex - pathIndex - 1) * 1.2;
+        pathIndex = nextPathIndex;
+        matchedSegment = true;
         break;
       }
-      score += segmentScore;
+
+      if (!matchedSegment) {
+        matchedAllSegments = false;
+        break;
+      }
     }
 
-    if (!matched) continue;
+    if (!matchedAllSegments) continue;
 
     if (option.kind === "file" && querySegments.length < pathSegments.length) {
       score += 0.4;

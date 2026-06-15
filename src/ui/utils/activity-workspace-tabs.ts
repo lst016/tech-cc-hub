@@ -45,6 +45,9 @@ export function buildActivityWorkspaceTabs(input: {
       visible: true,
       active: input.activeTab === "preview",
     },
+    /*
+    Trace rail is deprecated; keep the implementation dormant until the
+    replacement path fully lands.
     {
       id: "trace",
       label: "执行轨迹",
@@ -52,6 +55,7 @@ export function buildActivityWorkspaceTabs(input: {
       visible: true,
       active: input.activeTab === "trace",
     },
+    */
     {
       id: "usage",
       label: "Usage",

@@ -54,13 +54,12 @@ type ChannelPatch = {
     lark?: Record<string, string | boolean>;
   };
 };
-type ConfigSection = "env" | "skillCredentials" | "closeSidebarOnBrowserOpen" | "systemPromptExt" | "channels";
+type ConfigSection = "env" | "skillCredentials" | "systemPromptExt" | "channels";
 
 type AdminToolInput = {
   patch?: {
     env?: Record<string, string | number | boolean>;
     skillCredentials?: Record<string, string[]>;
-    closeSidebarOnBrowserOpen?: boolean;
     systemPromptExt?: string[];
     channels?: ChannelPatch;
   };
@@ -244,13 +243,6 @@ function normalizePatch(input: unknown): AdminToolInput {
     }
   }
 
-  if (patchInput && Object.prototype.hasOwnProperty.call(patchInput, "closeSidebarOnBrowserOpen")) {
-    const raw = patchInput.closeSidebarOnBrowserOpen;
-    if (typeof raw === "boolean") {
-      patch.closeSidebarOnBrowserOpen = raw;
-    }
-  }
-
   if (patchInput && Object.prototype.hasOwnProperty.call(patchInput, "systemPromptExt")) {
     const lines = normalizeSystemPromptExt(patchInput.systemPromptExt);
     if (lines.length > 0) {
@@ -294,7 +286,6 @@ function normalizePatch(input: unknown): AdminToolInput {
     const validSections = removeInput.sections.filter((section): section is ConfigSection => {
       return section === "env"
         || section === "skillCredentials"
-        || section === "closeSidebarOnBrowserOpen"
         || section === "systemPromptExt"
         || section === "channels";
     });
@@ -368,15 +359,6 @@ function mergeConfig(currentConfig: unknown, patch?: AdminToolInput["patch"], re
     : isRecord(base.channels)
       ? { ...base.channels }
       : {};
-
-  if (patch?.closeSidebarOnBrowserOpen !== undefined) {
-    base.closeSidebarOnBrowserOpen = patch.closeSidebarOnBrowserOpen;
-    sections.delete("closeSidebarOnBrowserOpen");
-  }
-
-  if (remove?.sections?.includes("closeSidebarOnBrowserOpen")) {
-    delete (base as Record<string, unknown>).closeSidebarOnBrowserOpen;
-  }
 
   if (patch?.env) {
     for (const [key, value] of Object.entries(patch.env)) {
@@ -453,9 +435,6 @@ function buildResultSummary(nextConfig: GlobalRuntimeConfig): Record<string, unk
     ? Object.keys(nextConfig.channels.items)
     : [];
   const systemPromptExt = readSystemPromptExtLines(nextConfig.systemPromptExt);
-  const closeSidebarOnBrowserOpen = Object.prototype.hasOwnProperty.call(nextConfig, "closeSidebarOnBrowserOpen")
-    ? Boolean(nextConfig.closeSidebarOnBrowserOpen)
-    : undefined;
 
   return {
     sections: {
@@ -463,7 +442,6 @@ function buildResultSummary(nextConfig: GlobalRuntimeConfig): Record<string, unk
       skillCredentials: skillCredentials.length,
       channels: channels.length,
       systemPromptExt: systemPromptExt.length,
-      closeSidebarOnBrowserOpen,
     },
     envKeys: env,
     skillCredentialSkills: skillCredentials,
@@ -484,7 +462,6 @@ const TOOL_INPUT_SCHEMA = {
           z.object({ env: z.array(z.string().trim().min(1)).max(200) }),
         ]),
       ),
-      closeSidebarOnBrowserOpen: z.boolean(),
       systemPromptExt: z.union([
         z.string().trim().min(1),
         z.array(z.string().trim().min(1)).max(MAX_SYSTEM_PROMPT_EXT_LINES),
@@ -519,7 +496,7 @@ const TOOL_INPUT_SCHEMA = {
     .object({
       env: z.array(z.string().trim().min(1)).max(MAX_DELETE_ITEMS),
       skillCredentials: z.array(z.string().trim().min(1)).max(MAX_DELETE_ITEMS),
-      sections: z.array(z.enum(["env", "skillCredentials", "closeSidebarOnBrowserOpen", "systemPromptExt", "channels"])),
+      sections: z.array(z.enum(["env", "skillCredentials", "systemPromptExt", "channels"])),
     })
     .partial(),
 };

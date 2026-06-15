@@ -17,7 +17,9 @@ test("preview open requests are routed through app state before the preview pane
   assert.match(paneSource, /if \(!pendingOpenRequest\?\.filePath\) return;/);
   assert.match(paneSource, /if \(!workspace\) return;/);
   assert.match(paneSource, /consumedPendingOpenNonceRef\.current === pendingOpenRequest\.nonce/);
-  assert.match(paneSource, /void openFile\(pendingOpenRequest\.filePath, \{ revealLine: pendingOpenRequest\.startLine \}\);/);
+  assert.match(paneSource, /revealLine: pendingOpenRequest\.startLine/);
+  assert.match(paneSource, /revealFirstChange: pendingOpenRequest\.revealFirstChange/);
+  assert.match(paneSource, /revealNonce: pendingOpenRequest\.nonce/);
 });
 
 test("process groups surface changed files with preview-open actions", () => {
@@ -25,8 +27,9 @@ test("process groups surface changed files with preview-open actions", () => {
 
   assert.match(processGroupSource, /collectCompletedPreviewFileChanges\(messages\.map\(\(entry\) => entry\.message\)\)/);
   assert.match(processGroupSource, /已修改 \{changedFiles\.length\} 个文件/);
-  assert.match(processGroupSource, /点击文件在右侧预览打开/);
+  assert.match(processGroupSource, /点击文件在右侧预览并跳到首个修改处/);
   assert.match(processGroupSource, /new CustomEvent<PreviewOpenFileDetail>\(PREVIEW_OPEN_FILE_EVENT/);
+  assert.match(processGroupSource, /detail: \{ filePath: file\.path, revealFirstChange: true \}/);
   assert.match(processGroupSource, /再显示 \$\{remainingChangedFileCount\} 个文件/);
 });
 

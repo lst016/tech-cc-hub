@@ -22,7 +22,7 @@ import { buildSessionSlashCommands, resolveInvokedLocalSlashDefinition } from ".
 import { stripInlineBase64ImagesFromMessage } from "./libs/tool-output-sanitizer.js";
 import { buildSessionWorkflowCatalog } from "./libs/workflow-catalog.js";
 import { buildStatelessContinuationPayload } from "./stateless-continuation.js";
-import { syncManagedCodeGraph } from "./libs/codegraph/managed-codegraph.js";
+import { ensureManagedCodeGraphSynced } from "./libs/codegraph/managed-codegraph.js";
 import { createSessionCodeGraphAutoSyncScheduler } from "./libs/codegraph/session-codegraph-autosync.js";
 import type { ClientEvent, PromptAttachment, RuntimeOverrides, ServerEvent, StreamMessage } from "./types.js";
 import { isDev } from "./util.js";
@@ -68,7 +68,7 @@ let taskExecutor: TaskExecutor | null = null;
 let noteRepo: NoteRepository | null = null;
 
 const scheduleCodeGraphAutoSyncAfterTurn = createSessionCodeGraphAutoSyncScheduler({
-  sync: syncManagedCodeGraph,
+  sync: ensureManagedCodeGraphSynced,
   logInfo: (message) => console.info(message),
   logWarn: (message, error) => console.warn(message, error),
 });

@@ -55,7 +55,6 @@ const RELEASE_NOTES_TOOLTIP_MAX_LINES = 8;
 const RELEASE_NOTES_TOOLTIP_MAX_CHARS = 520;
 const EMPTY_MESSAGES: StreamMessage[] = [];
 const EMPTY_PERMISSION_REQUESTS: NonNullable<ReturnType<typeof useAppStore.getState>["sessions"][string]["permissionRequests"]> = [];
-type GlobalRuntimeConfig = Record<string, unknown>;
 
 type RenderEntry =
   | { type: "separator"; key: string; roundNumber: number }
@@ -281,7 +280,6 @@ function App() {
   const [showTaskPanel, setShowTaskPanel] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
-  const [closeSidebarOnBrowserOpen, setCloseSidebarOnBrowserOpen] = useState(true);
   const [showActivityRail, setShowActivityRail] = useState(true);
   const [workspaceViewBySessionId, setWorkspaceViewBySessionId] = useState<Record<string, WorkspaceView>>({});
   const [activityRailTabBySessionId, setActivityRailTabBySessionId] = useState<Record<string, ActivityRailTab>>({});
@@ -394,7 +392,7 @@ function App() {
     });
     if (activityRailTab === tab) {
       const fallbackAgentId = nextOpenTabs[nextOpenTabs.length - 1];
-      setActiveSessionActivityRailTab(fallbackAgentId ? getWorkflowAgentTabId(fallbackAgentId) : "trace");
+      setActiveSessionActivityRailTab(fallbackAgentId ? getWorkflowAgentTabId(fallbackAgentId) : DEFAULT_ACTIVITY_RAIL_TAB);
     }
   }, [activeSessionId, activityRailTab, openWorkflowAgentTabIds, setActiveSessionActivityRailTab]);
   const activeSession = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId]) : undefined));
@@ -998,16 +996,13 @@ function App() {
         setBrowserWorkbenchSessionUrl(activeSessionId, url);
       }
       setActiveSessionWorkspaceView("browser");
-      if (closeSidebarOnBrowserOpen && showSidebar) {
-        setShowSidebar(false);
-      }
     };
 
     window.addEventListener(OPEN_BROWSER_WORKBENCH_URL_EVENT, handleOpenBrowserWorkbenchUrl);
     return () => {
       window.removeEventListener(OPEN_BROWSER_WORKBENCH_URL_EVENT, handleOpenBrowserWorkbenchUrl);
     };
-  }, [activeSessionId, closeSidebarOnBrowserOpen, setActiveSessionWorkspaceView, setBrowserWorkbenchSessionUrl, showSidebar]);
+  }, [activeSessionId, setActiveSessionWorkspaceView, setBrowserWorkbenchSessionUrl]);
 
   useEffect(() => {
     if (!activeSessionId || typeof window.electron.onBrowserWorkbenchEvent !== "function") return;
@@ -1021,12 +1016,9 @@ function App() {
       setShowActivityRail(true);
       setBrowserWorkbenchSessionUrl(activeSessionId, url);
       setActiveSessionWorkspaceView("browser");
-      if (closeSidebarOnBrowserOpen && showSidebarRef.current) {
-        setShowSidebar(false);
-      }
     });
     return unsubscribe;
-  }, [activeSessionId, closeSidebarOnBrowserOpen, setActiveSessionWorkspaceView, setBrowserWorkbenchSessionUrl]);
+  }, [activeSessionId, setActiveSessionWorkspaceView, setBrowserWorkbenchSessionUrl]);
 
   useEffect(() => {
     const handlePreviewOpenFile = (event: Event) => {
@@ -1127,20 +1119,6 @@ function App() {
     setShowSettingsModal(true);
   }, [setShowSettingsModal]);
 
-  const refreshBrowserWorkbenchPreference = useCallback(() => {
-    window.electron.getGlobalConfig()
-      .then((config) => {
-        const normalizedConfig = typeof config === "object" && config !== null && !Array.isArray(config)
-          ? config as GlobalRuntimeConfig
-          : {};
-        const configured = normalizedConfig.closeSidebarOnBrowserOpen;
-        setCloseSidebarOnBrowserOpen(configured !== false);
-      })
-      .catch((error) => {
-        console.error("Failed to load browser workbench preference:", error);
-      });
-  }, []);
-
   useEffect(() => {
     const handleDevBridgeReady = () => {
       setRuntimeSource(getDevElectronRuntimeSource());
@@ -1151,13 +1129,11 @@ function App() {
         .catch((error) => {
           console.error("Failed to refresh API config settings after bridge ready:", error);
         });
-
-      refreshBrowserWorkbenchPreference();
     };
 
     window.addEventListener(DEV_BRIDGE_READY_EVENT, handleDevBridgeReady);
     return () => window.removeEventListener(DEV_BRIDGE_READY_EVENT, handleDevBridgeReady);
-  }, [refreshBrowserWorkbenchPreference, setApiConfigSettings]);
+  }, [setApiConfigSettings]);
 
   const startMaintenanceSession = useCallback(async (
     maintenancePrompt: string,
@@ -1297,7 +1273,7 @@ function App() {
       current[activeSessionId] ? { ...current, [activeSessionId]: false } : current
     ));
     if (activityRailTab === "terminal") {
-      setActiveSessionActivityRailTab("trace");
+      setActiveSessionActivityRailTab(DEFAULT_ACTIVITY_RAIL_TAB);
     }
   }, [activeSessionId, activityRailTab, setActiveSessionActivityRailTab]);
 
@@ -1411,10 +1387,6 @@ function App() {
       setGlobalError("复制会话 ID 失败，请重试。");
     }
   }, [currentSessionId, setGlobalError]);
-
-  useEffect(() => {
-    refreshBrowserWorkbenchPreference();
-  }, [refreshBrowserWorkbenchPreference]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1945,10 +1917,6 @@ function App() {
                 initialUrl={activeSessionId ? (activeBrowserWorkbenchState?.url ?? "") : ""}
                 occluded={browserWorkbenchOccluded}
                 sessionId={activeSessionId}
-                onOpenTrace={() => {
-                  setActiveSessionActivityRailTab("trace");
-                  setActiveSessionWorkspaceView("chat");
-                }}
                 onOpenUsage={() => {
                   setActiveSessionActivityRailTab("usage");
                   setActiveSessionWorkspaceView("chat");
@@ -2000,7 +1968,6 @@ function App() {
             onClose={() => {
               setShowSettingsModal(false);
               setSettingsInitialPageId(null);
-              refreshBrowserWorkbenchPreference();
             }}
             initialPageId={settingsInitialPageId ?? undefined}
             onStartMaintenanceSession={startMaintenanceSession}

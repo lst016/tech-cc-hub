@@ -2,7 +2,7 @@ import { existsSync, copyFileSync, readFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir, homedir } from "os";
 import { execSync } from "child_process";
-import { createDecipheriv } from "crypto";
+import { createDecipheriv, createHash } from "crypto";
 import Database from "better-sqlite3";
 
 // ---------------------------------------------------------------------------
@@ -32,11 +32,40 @@ interface RawCookieRow {
   samesite: number;
 }
 
+export type ChromeCookieSyncStatus =
+  | "ok"
+  | "unsupported"
+  | "unavailable"
+  | "locked"
+  | "error";
+
+export interface ChromeCookieSyncResult {
+  status: ChromeCookieSyncStatus;
+  cookies: ChromeCookie[];
+  profilesScanned: number;
+  rowsRead: number;
+  decrypted: number;
+  skipped: number;
+  errors: string[];
+}
+
+type ChromeProfileCandidate = {
+  name: string;
+  dirName: string;
+  cookiePath: string;
+};
+
+type CookieRowsResult = {
+  rows: RawCookieRow[];
+  error?: string;
+  locked?: boolean;
+};
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const CHROME_COOKIE_TMP = join(tmpdir(), "tech-cc-hub-chrome-cookies-tmp");
+const CHROME_COOKIE_TMP_PREFIX = "tech-cc-hub-chrome-cookies";
 
 // Chrome epoch offset: microseconds between 1601-01-01 and 1970-01-01
 const CHROME_EPOCH_OFFSET = 11644473600000000n;
@@ -56,67 +85,162 @@ let cachedMasterKey: Buffer | null = null;
  */
 export function isChromeInstalled(): boolean {
   if (process.platform !== "win32") return false;
-  const cookiePath = getChromeCookiePath();
   const localStatePath = getChromeLocalStatePath();
-  return existsSync(cookiePath) && existsSync(localStatePath);
+  return existsSync(localStatePath) && getChromeProfileCandidates().length > 0;
 }
 
 /**
  * Retrieve Chrome cookies matching the given domain, converted to Electron-compatible format.
- * Returns an empty array on any error or non-Windows platform.
+ * Returns a structured result so callers can distinguish "no matching cookies"
+ * from "Chrome has the database locked".
  */
-export async function getChromeCookes(domain: string): Promise<ChromeCookie[]> {
-  if (process.platform !== "win32") return [];
+export async function getChromeCookies(domain: string): Promise<ChromeCookieSyncResult> {
+  if (process.platform !== "win32") return emptyResult("unsupported");
 
   try {
     const masterKey = getMasterKey();
-    if (!masterKey) return [];
+    if (!masterKey) return emptyResult("unavailable", ["Chrome master key is unavailable"]);
 
-    const rows = readCookieRows(domain);
-    if (!rows.length) return [];
+    const profiles = getChromeProfileCandidates();
+    if (!profiles.length) return emptyResult("unavailable", ["Chrome cookie store is unavailable"]);
 
     const results: ChromeCookie[] = [];
+    const errors: string[] = [];
+    let rowsRead = 0;
+    let skipped = 0;
+    let sawLockedProfile = false;
 
-    for (const row of rows) {
-      try {
-        const value = decryptCookieValue(row.encrypted_value, masterKey);
-        if (value === null) continue;
+    for (const profile of profiles) {
+      const readResult = readCookieRows(profile, domain);
+      if (readResult.locked) sawLockedProfile = true;
+      if (readResult.error) errors.push(`${profile.name}: ${readResult.error}`);
+      if (!readResult.rows.length) continue;
+      rowsRead += readResult.rows.length;
 
-        results.push({
-          url: buildCookieUrl(row.host_key, row.path, row.is_secure === 1),
-          name: row.name,
-          value,
-          domain: row.host_key,
-          path: row.path,
-          secure: row.is_secure === 1,
-          httpOnly: row.is_httponly === 1,
-          expirationDate: convertChromeTimestamp(row.expires_utc),
-          sameSite: mapSameSite(row.samesite),
-        });
-      } catch {
-        // Skip individual cookie decryption failures silently
+      for (const row of readResult.rows) {
+        try {
+          const value = decryptCookieValue(row, masterKey);
+          if (value === null) {
+            skipped += 1;
+            continue;
+          }
+
+          results.push({
+            url: buildCookieUrl(row.host_key, row.path, row.is_secure === 1),
+            name: row.name,
+            value,
+            domain: row.host_key,
+            path: row.path,
+            secure: row.is_secure === 1,
+            httpOnly: row.is_httponly === 1,
+            expirationDate: convertChromeTimestamp(row.expires_utc),
+            sameSite: mapSameSite(row.samesite),
+          });
+        } catch {
+          skipped += 1;
+        }
       }
+
+      if (results.length > 0) break;
     }
 
-    return results;
+    const status: ChromeCookieSyncStatus = results.length > 0
+      ? "ok"
+      : rowsRead > 0 && skipped > 0
+        ? "error"
+        : rowsRead > 0
+          ? "ok"
+      : sawLockedProfile
+        ? "locked"
+        : errors.length > 0
+          ? "error"
+          : "ok";
+
+    return {
+      status,
+      cookies: results,
+      profilesScanned: profiles.length,
+      rowsRead,
+      decrypted: results.length,
+      skipped,
+      errors,
+    };
   } catch (err) {
-    console.error("[chrome-cookie-sync] Failed to read Chrome cookies:", (err as Error).message);
-    return [];
+    const message = (err as Error).message;
+    console.error("[chrome-cookie-sync] Failed to read Chrome cookies:", message);
+    return emptyResult("error", [message]);
   }
+}
+
+/**
+ * Backward-compatible spelling for existing imports.
+ */
+export async function getChromeCookes(domain: string): Promise<ChromeCookie[]> {
+  const result = await getChromeCookies(domain);
+  return result.cookies;
 }
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function getChromeCookiePath(): string {
+function emptyResult(status: ChromeCookieSyncStatus, errors: string[] = []): ChromeCookieSyncResult {
+  return {
+    status,
+    cookies: [],
+    profilesScanned: 0,
+    rowsRead: 0,
+    decrypted: 0,
+    skipped: 0,
+    errors,
+  };
+}
+
+function getChromeUserDataPath(): string {
   const localAppData = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
-  return join(localAppData, "Google", "Chrome", "User Data", "Default", "Network", "Cookies");
+  return join(localAppData, "Google", "Chrome", "User Data");
 }
 
 function getChromeLocalStatePath(): string {
-  const localAppData = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
-  return join(localAppData, "Google", "Chrome", "User Data", "Local State");
+  return join(getChromeUserDataPath(), "Local State");
+}
+
+function getChromeProfileCandidates(): ChromeProfileCandidate[] {
+  const userDataPath = getChromeUserDataPath();
+  const localStatePath = getChromeLocalStatePath();
+  const orderedDirNames: string[] = [];
+
+  if (existsSync(localStatePath)) {
+    try {
+      const localState = JSON.parse(readFileSync(localStatePath, "utf-8"));
+      const lastUsed = typeof localState?.profile?.last_used === "string"
+        ? localState.profile.last_used
+        : "";
+      if (lastUsed) orderedDirNames.push(lastUsed);
+      const infoCache = localState?.profile?.info_cache;
+      if (infoCache && typeof infoCache === "object" && !Array.isArray(infoCache)) {
+        orderedDirNames.push(...Object.keys(infoCache));
+      }
+    } catch {
+      // Fall back to Default below.
+    }
+  }
+
+  orderedDirNames.push("Default");
+
+  const seen = new Set<string>();
+  return orderedDirNames
+    .filter((dirName) => {
+      if (!dirName || seen.has(dirName)) return false;
+      seen.add(dirName);
+      return true;
+    })
+    .map((dirName) => ({
+      name: dirName,
+      dirName,
+      cookiePath: join(userDataPath, dirName, "Network", "Cookies"),
+    }))
+    .filter((profile) => existsSync(profile.cookiePath));
 }
 
 /**
@@ -187,49 +311,76 @@ function dpapiDecrypt(encrypted: Buffer): Buffer | null {
  * Copy the Chrome Cookies DB to a temp location (to bypass file lock)
  * and read rows matching the domain.
  */
-function readCookieRows(domain: string): RawCookieRow[] {
-  const cookiePath = getChromeCookiePath();
+function readCookieRows(profile: ChromeProfileCandidate, domain: string): CookieRowsResult {
+  const cookiePath = profile.cookiePath;
   if (!existsSync(cookiePath)) {
-    console.error("[chrome-cookie-sync] Chrome Cookies DB not found");
-    return [];
+    const message = "Chrome Cookies DB not found";
+    console.error("[chrome-cookie-sync]", message);
+    return { rows: [], error: message };
   }
 
-  // Copy to temp to bypass Chrome's file lock
+  const tempPath = join(tmpdir(), `${CHROME_COOKIE_TMP_PREFIX}-${process.pid}-${Date.now()}-${profile.dirName}`);
   try {
-    copyFileSync(cookiePath, CHROME_COOKIE_TMP);
+    copyFileSync(cookiePath, tempPath);
   } catch (err) {
-    console.error("[chrome-cookie-sync] Failed to copy Cookies DB:", (err as Error).message);
-    return [];
+    const error = err as NodeJS.ErrnoException;
+    const message = `Failed to copy Cookies DB: ${error.message}`;
+    console.error("[chrome-cookie-sync]", message);
+    return { rows: [], error: message, locked: isFileLockedError(error) };
   }
 
   let db: Database.Database | null = null;
   try {
-    db = new Database(CHROME_COOKIE_TMP, { readonly: true });
+    db = new Database(tempPath, { readonly: true });
 
-    // Normalize domain for LIKE query: ensure we match both .example.com and example.com
-    const normalizedDomain = domain.startsWith(".") ? domain.substring(1) : domain;
+    const candidates = buildChromeCookieDomainCandidates(domain);
+    if (!candidates.length) return { rows: [] };
+    const placeholders = candidates.map(() => "?").join(", ");
 
     const rows = db.prepare(`
       SELECT host_key, name, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite
       FROM cookies
-      WHERE host_key LIKE ? OR host_key LIKE ?
-    `).all(`%${normalizedDomain}`, `.${normalizedDomain}`) as RawCookieRow[];
+      WHERE host_key IN (${placeholders})
+    `).all(...candidates) as RawCookieRow[];
 
-    return rows;
+    return { rows };
   } catch (err) {
-    console.error("[chrome-cookie-sync] SQLite read failed:", (err as Error).message);
-    return [];
+    const message = `SQLite read failed: ${(err as Error).message}`;
+    console.error("[chrome-cookie-sync]", message);
+    return { rows: [], error: message };
   } finally {
     try { db?.close(); } catch { /* ignore */ }
-    try { unlinkSync(CHROME_COOKIE_TMP); } catch { /* ignore */ }
+    try { unlinkSync(tempPath); } catch { /* ignore */ }
   }
+}
+
+function isFileLockedError(error: NodeJS.ErrnoException): boolean {
+  return error.code === "EBUSY" || error.code === "EPERM" || error.code === "EACCES";
+}
+
+export function buildChromeCookieDomainCandidates(domain: string): string[] {
+  const normalized = domain.trim().toLowerCase().replace(/^\.+/, "");
+  if (!normalized) return [];
+  if (normalized === "localhost" || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(normalized)) {
+    return [normalized];
+  }
+
+  const labels = normalized.split(".").filter(Boolean);
+  const candidates: string[] = [];
+  for (let index = 0; index <= labels.length - 2; index += 1) {
+    const suffix = labels.slice(index).join(".");
+    if (index === 0) candidates.push(suffix);
+    candidates.push(`.${suffix}`);
+  }
+  return Array.from(new Set(candidates));
 }
 
 /**
  * Decrypt a single cookie value using AES-256-GCM.
  * Format: "v10" or "v20" (3 bytes) + nonce (12 bytes) + ciphertext + auth_tag (16 bytes)
  */
-function decryptCookieValue(encrypted: Buffer, masterKey: Buffer): string | null {
+function decryptCookieValue(row: RawCookieRow, masterKey: Buffer): string | null {
+  const encrypted = row.encrypted_value;
   if (!encrypted || encrypted.length < 31) {
     // Too short to contain prefix + nonce + tag; might be empty/unencrypted
     return encrypted?.toString("utf-8") || "";
@@ -255,10 +406,18 @@ function decryptCookieValue(encrypted: Buffer, masterKey: Buffer): string | null
     const decipher = createDecipheriv("aes-256-gcm", masterKey, nonce);
     decipher.setAuthTag(authTag);
     const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-    return decrypted.toString("utf-8");
+    return stripChromeCookieHostHash(decrypted, row.host_key).toString("utf-8");
   } catch {
     return null;
   }
+}
+
+export function stripChromeCookieHostHash(value: Buffer, hostKey: string): Buffer {
+  if (value.length < 33) return value;
+  const digest = createHash("sha256").update(hostKey).digest();
+  return value.subarray(0, digest.length).equals(digest)
+    ? value.subarray(digest.length)
+    : value;
 }
 
 /**

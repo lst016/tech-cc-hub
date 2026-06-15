@@ -1294,6 +1294,7 @@ export function ActivityRail({
     filePath: string;
     startLine?: number;
     endLine?: number;
+    revealFirstChange?: boolean;
     nonce: number;
   };
   onConsumePendingPreviewOpenRequest?: () => void;
@@ -1327,7 +1328,8 @@ export function ActivityRail({
     [model.timeline],
   );
   const [internalActiveTab, setInternalActiveTab] = useState<ActivityRailTab>(DEFAULT_ACTIVITY_RAIL_TAB);
-  const selectedTab = activeTab ?? internalActiveTab;
+  const requestedTab = activeTab ?? internalActiveTab;
+  const selectedTab = requestedTab === "trace" ? DEFAULT_ACTIVITY_RAIL_TAB : requestedTab;
   const handleSelectTab = (tab: ActivityRailTab) => {
     if (!activeTab) setInternalActiveTab(tab);
     onActiveTabChange?.(tab);
@@ -1465,7 +1467,7 @@ export function ActivityRail({
                     messages={session?.messages}
                     pendingOpenRequest={pendingPreviewOpenRequest}
                     onConsumePendingOpenRequest={onConsumePendingPreviewOpenRequest}
-                    onClose={() => handleSelectTab("trace")}
+                    onClose={() => handleSelectTab(DEFAULT_ACTIVITY_RAIL_TAB)}
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center bg-[#fbfbfc] px-6 text-center">

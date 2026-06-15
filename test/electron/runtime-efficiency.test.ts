@@ -9,24 +9,40 @@ import {
   runtimeEfficiencyProfileToState,
 } from "../../src/electron/libs/runtime-efficiency.js";
 
-const ALL_BUILTIN_MCP_SERVERS = [
+const BASE_BUILTIN_MCP_SERVERS = [
   "tech-cc-hub-admin",
   "tech-cc-hub-plan",
   "tech-cc-hub-knowledge",
+] as const;
+
+const VISUAL_BUILTIN_MCP_SERVERS = [
+  ...BASE_BUILTIN_MCP_SERVERS,
   "tech-cc-hub-browser",
   "tech-cc-hub-design",
+] as const;
+
+const FIGMA_BUILTIN_MCP_SERVERS = [
+  ...VISUAL_BUILTIN_MCP_SERVERS,
   "tech-cc-hub-figma",
+] as const;
+
+const AUTOMATION_BUILTIN_MCP_SERVERS = [
+  ...BASE_BUILTIN_MCP_SERVERS,
   "tech-cc-hub-cron",
+] as const;
+
+const IDE_BUILTIN_MCP_SERVERS = [
+  ...BASE_BUILTIN_MCP_SERVERS,
   "tech-cc-hub-idea",
 ] as const;
 
-test("runtime efficiency exposes all built-in MCP tools while keeping plain prompts lean", () => {
+test("runtime efficiency keeps plain prompts on a small built-in MCP surface", () => {
   const profile = resolveRuntimeEfficiencyProfile({
     prompt: "解释一下这个函数为什么会重复读文件",
   });
 
   assert.equal(profile.id, "standard");
-  assert.deepEqual(profile.builtinMcpServers, ALL_BUILTIN_MCP_SERVERS);
+  assert.deepEqual(profile.builtinMcpServers, BASE_BUILTIN_MCP_SERVERS);
   assert.equal(profile.includeBrowserPrompt, false);
   assert.equal(profile.includeDesignPrompt, false);
   assert.equal(profile.includeClaudeCompatPrompt, false);
@@ -48,10 +64,21 @@ test("runtime efficiency enables visual tools for image attachments", () => {
   });
 
   assert.equal(profile.id, "visual");
-  assert.deepEqual(profile.builtinMcpServers, ALL_BUILTIN_MCP_SERVERS);
+  assert.deepEqual(profile.builtinMcpServers, VISUAL_BUILTIN_MCP_SERVERS);
   assert.equal(profile.includeBrowserPrompt, true);
   assert.equal(profile.includeDesignPrompt, true);
   assert.equal(profile.includeProjectMemoryPrompt, false);
+});
+
+test("runtime efficiency adds Figma tools only for Figma visual tasks", () => {
+  const profile = resolveRuntimeEfficiencyProfile({
+    prompt: "Use this Figma design: https://www.figma.com/design/abc123/File?node-id=1-2",
+  });
+
+  assert.equal(profile.id, "visual");
+  assert.deepEqual(profile.builtinMcpServers, FIGMA_BUILTIN_MCP_SERVERS);
+  assert.equal(profile.includeBrowserPrompt, true);
+  assert.equal(profile.includeDesignPrompt, true);
 });
 
 test("runtime efficiency does not re-enable project memory from legacy sticky state", () => {
@@ -68,7 +95,19 @@ test("runtime efficiency keeps design tools out of automation turns", () => {
   });
 
   assert.equal(profile.id, "automation");
-  assert.deepEqual(profile.builtinMcpServers, ALL_BUILTIN_MCP_SERVERS);
+  assert.deepEqual(profile.builtinMcpServers, AUTOMATION_BUILTIN_MCP_SERVERS);
+  assert.equal(profile.includeBrowserPrompt, false);
+  assert.equal(profile.includeDesignPrompt, false);
+  assert.equal(profile.includeClaudeCompatPrompt, true);
+});
+
+test("runtime efficiency keeps visual tools out of IDE turns", () => {
+  const profile = resolveRuntimeEfficiencyProfile({
+    prompt: "debug this Java Spring Maven build in IntelliJ IDEA",
+  });
+
+  assert.equal(profile.id, "ide");
+  assert.deepEqual(profile.builtinMcpServers, IDE_BUILTIN_MCP_SERVERS);
   assert.equal(profile.includeBrowserPrompt, false);
   assert.equal(profile.includeDesignPrompt, false);
   assert.equal(profile.includeClaudeCompatPrompt, true);
@@ -84,7 +123,7 @@ test("runtime efficiency enables Agent Teams visibility for parallel team prompt
   assert.equal(profile.includeHookEvents, true);
   assert.equal(profile.agentProgressSummaries, true);
   assert.equal(profile.forwardSubagentText, true);
-  assert.deepEqual(profile.builtinMcpServers, ALL_BUILTIN_MCP_SERVERS);
+  assert.deepEqual(profile.builtinMcpServers, BASE_BUILTIN_MCP_SERVERS);
   assert.equal(profile.includeBrowserPrompt, false);
 });
 
@@ -96,7 +135,7 @@ test("runtime efficiency keeps visual tools when Agent Teams work includes UI", 
   assert.equal(profile.id, "team");
   assert.equal(profile.includeBrowserPrompt, true);
   assert.equal(profile.includeDesignPrompt, true);
-  assert.deepEqual(profile.builtinMcpServers, ALL_BUILTIN_MCP_SERVERS);
+  assert.deepEqual(profile.builtinMcpServers, VISUAL_BUILTIN_MCP_SERVERS);
 });
 
 test("runtime efficiency sticky state keeps visual tools for later plain prompts", () => {
@@ -117,27 +156,58 @@ test("runtime efficiency sticky state keeps visual tools for later plain prompts
   const merged = mergeRuntimeEfficiencyProfile(plain, runtimeEfficiencyProfileToState(visual));
 
   assert.equal(merged.id, "standard");
-  assert.deepEqual(merged.builtinMcpServers, ALL_BUILTIN_MCP_SERVERS);
+  assert.deepEqual(merged.builtinMcpServers, VISUAL_BUILTIN_MCP_SERVERS);
   assert.equal(merged.includeBrowserPrompt, true);
   assert.equal(merged.includeDesignPrompt, true);
   assert.equal(merged.includePartialMessages, true);
   assert.equal(merged.includeClaudeCompatPrompt, true);
 });
 
-test("runtime efficiency keeps all tools while carrying only relevant prompt hints", () => {
+test("runtime efficiency does not keep non-stateful tools from previous turns", () => {
   const automation = resolveRuntimeEfficiencyProfile({
     prompt: "schedule a reminder every day to check the build",
   });
-  const visual = resolveRuntimeEfficiencyProfile({
-    prompt: "UI screenshot repair",
+  const plain = resolveRuntimeEfficiencyProfile({
+    prompt: "continue the implementation",
   });
 
-  const merged = mergeRuntimeEfficiencyProfile(visual, runtimeEfficiencyProfileToState(automation));
+  const merged = mergeRuntimeEfficiencyProfile(plain, runtimeEfficiencyProfileToState(automation));
 
-  assert.deepEqual(merged.builtinMcpServers, ALL_BUILTIN_MCP_SERVERS);
-  assert.equal(merged.includeBrowserPrompt, true);
-  assert.equal(merged.includeDesignPrompt, true);
-  assert.equal(merged.includeClaudeCompatPrompt, true);
+  assert.deepEqual(merged.builtinMcpServers, BASE_BUILTIN_MCP_SERVERS);
+  assert.equal(merged.includeBrowserPrompt, false);
+  assert.equal(merged.includeDesignPrompt, false);
+  assert.equal(merged.includeClaudeCompatPrompt, false);
+});
+
+test("runtime efficiency drops stale all-server state from old plain turns", () => {
+  const plain = resolveRuntimeEfficiencyProfile({
+    prompt: "continue the implementation",
+  });
+  const merged = mergeRuntimeEfficiencyProfile(plain, {
+    builtinMcpServers: [
+      "tech-cc-hub-admin",
+      "tech-cc-hub-plan",
+      "tech-cc-hub-knowledge",
+      "tech-cc-hub-browser",
+      "tech-cc-hub-design",
+      "tech-cc-hub-figma",
+      "tech-cc-hub-cron",
+      "tech-cc-hub-idea",
+    ],
+    includeBrowserPrompt: false,
+    includeDesignPrompt: false,
+    includeProjectMemoryPrompt: false,
+    includeClaudeCompatPrompt: false,
+    includePartialMessages: false,
+    includeHookEvents: false,
+    agentProgressSummaries: false,
+    forwardSubagentText: false,
+  });
+
+  assert.deepEqual(merged.builtinMcpServers, BASE_BUILTIN_MCP_SERVERS);
+  assert.equal(merged.includeBrowserPrompt, false);
+  assert.equal(merged.includeDesignPrompt, false);
+  assert.equal(merged.includeClaudeCompatPrompt, false);
 });
 
 test("runner reuse key stays stable across normal coding prompts", () => {

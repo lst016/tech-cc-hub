@@ -1,7 +1,7 @@
 ﻿import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import type { SetStateAction } from "react";
-import { ArrowUp, Menu, Sparkles, Square } from "lucide-react";
+import { ArrowUp, Menu, Paperclip, Sparkles, Square, Target } from "lucide-react";
 import type {
   ApiConfigProfile,
   ClientEvent,
@@ -30,7 +30,7 @@ import {
   scoreFileMentionOption,
   type FileMentionOption,
 } from "./file-mention-options";
-import { fileToAttachment, hasDraggedFiles } from "./prompt-attachments";
+import { fileToAttachment, hasDraggedFiles, PROMPT_ATTACHMENT_ACCEPT } from "./prompt-attachments";
 import {
   buildQueuedPrompt,
   mergeQueuedAttachments,
@@ -76,6 +76,28 @@ const EMPTY_FILE_REFERENCES: FileReferenceDraft[] = [];
 const EMPTY_MESSAGE_REFERENCES: MessageReferenceDraft[] = [];
 const EMPTY_ATTACHMENTS: PromptAttachment[] = [];
 
+type ComposerGoalStatus = NonNullable<ReturnType<typeof useAppStore.getState>["sessions"][string]["latestGoal"]>["status"];
+
+function formatGoalAge(updatedAt?: number, now = Date.now()): string {
+  if (!updatedAt || !Number.isFinite(updatedAt)) return "";
+  const elapsedSeconds = Math.max(0, Math.floor((now - updatedAt) / 1000));
+  if (elapsedSeconds < 60) return `${elapsedSeconds}s`;
+  const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+  if (elapsedMinutes < 60) return `${elapsedMinutes}m`;
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  return `${elapsedHours}h`;
+}
+
+function goalStatusLabel(status: ComposerGoalStatus) {
+  return status === "blocked" ? "受阻的目标" : "进行中的目标";
+}
+
+function formatGoalModePrompt(promptValue: string): string {
+  const trimmed = promptValue.trim();
+  if (!trimmed || /^\/goal(?:\s|$)/i.test(trimmed)) return promptValue;
+  return `/goal ${trimmed}`;
+}
+
 type PromptOptimizeResult = {
   success: boolean;
   optimizedPrompt?: string;
@@ -107,6 +129,13 @@ export function PromptInput({
   const storeActiveSessionCwd = useAppStore((state) => {
     if (!storeActiveSessionId) return "";
     return (state.sessions[storeActiveSessionId] ?? state.archivedSessions[storeActiveSessionId])?.cwd ?? "";
+  });
+  const activeGoal = useAppStore((state) => {
+    if (!storeActiveSessionId) return undefined;
+    const session = state.sessions[storeActiveSessionId] ?? state.archivedSessions[storeActiveSessionId];
+    if (session?.status !== "running") return undefined;
+    const goal = session.latestGoal;
+    return goal?.objective && goal.status !== "complete" ? goal : undefined;
   });
   const selectedWorkspaceCwd = (storeCwd.trim() || storeActiveSessionCwd.trim());
   const { prompt, setPrompt, isRunning, handleStop, slashCommands, activeSessionId, browserAnnotations, sendPromptDraft, validatePromptDraft } = usePromptActions(
@@ -159,6 +188,8 @@ export function PromptInput({
   const autoDispatchRef = useRef<string | null>(null);
   const submitInFlightRef = useRef(false);
   const [submissionStatus, setSubmissionStatus] = useState<string | null>(null);
+  const [goalNow, setGoalNow] = useState(() => Date.now());
+  const [goalModeEnabled, setGoalModeEnabled] = useState(false);
   const setGlobalError = useAppStore((state) => state.setGlobalError);
   const composerDraftSessionKey = getPromptDraftSessionKey(activeSessionId);
   const codeReferenceSessionKey = getCodeReferenceSessionKey(activeSessionId);
@@ -489,7 +520,9 @@ export function PromptInput({
 
   const queueCurrentDraft = useCallback((promptOverride?: string) => {
     if (!activeSessionId) return false;
-    const currentPrompt = promptOverride ?? promptDraftRef.current;
+    const currentPrompt = goalModeEnabled
+      ? formatGoalModePrompt(promptOverride ?? promptDraftRef.current)
+      : (promptOverride ?? promptDraftRef.current);
     const currentHasDraft = currentPrompt.trim().length > 0
       || attachments.length > 0
       || browserAnnotations.length > 0
@@ -522,10 +555,11 @@ export function PromptInput({
       [activeSessionId]: [...(current[activeSessionId] ?? []), nextQueuedMessage],
     }));
     clearComposer();
+    setGoalModeEnabled(false);
     setGlobalError(null);
     window.dispatchEvent(new CustomEvent(PROMPT_SENT_EVENT));
     return true;
-  }, [activeSessionId, attachments, browserAnnotations, clearComposer, codeReferences, fileReferences, messageReferences, setGlobalError, validatePromptDraft]);
+  }, [activeSessionId, attachments, browserAnnotations, clearComposer, codeReferences, fileReferences, goalModeEnabled, messageReferences, setGlobalError, validatePromptDraft]);
 
   const submitCurrentInput = useCallback(async () => {
     const promptSnapshot = getCurrentPromptDraft();
@@ -545,7 +579,8 @@ export function PromptInput({
       }
 
       const attachmentsSnapshot = attachments;
-      const promptWithAnnotations = mergePromptWithComposerContext(promptSnapshot, {
+      const promptForMode = goalModeEnabled ? formatGoalModePrompt(promptSnapshot) : promptSnapshot;
+      const promptWithAnnotations = mergePromptWithComposerContext(promptForMode, {
         codeReferences,
         fileReferences,
         messageReferences,
@@ -563,6 +598,7 @@ export function PromptInput({
       const sent = await sendPromptDraft(promptWithAnnotations, attachmentsSnapshot, { clearPrompt: false });
       if (sent) {
         clearComposer();
+        setGoalModeEnabled(false);
         onSendMessage?.();
         window.dispatchEvent(new CustomEvent(PROMPT_SENT_EVENT));
       } else {
@@ -574,7 +610,7 @@ export function PromptInput({
       setSubmissionStatus(null);
       submitInFlightRef.current = false;
     }
-  }, [attachments, browserAnnotations, clearComposer, clearPromptDraftText, codeReferences, fileReferences, getCurrentPromptDraft, isRunning, messageReferences, onSendMessage, queueCurrentDraft, sendPromptDraft, setAttachments, setGlobalError, setPromptDraft, validatePromptDraft]);
+  }, [attachments, browserAnnotations, clearComposer, clearPromptDraftText, codeReferences, fileReferences, getCurrentPromptDraft, goalModeEnabled, isRunning, messageReferences, onSendMessage, queueCurrentDraft, sendPromptDraft, setAttachments, setGlobalError, setPromptDraft, validatePromptDraft]);
 
   useEffect(() => {
     const handlePromptSubmit = () => {
@@ -780,14 +816,19 @@ export function PromptInput({
     event.target.value = "";
   }, [addFiles]);
 
-  const handleComposerDragEnter = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+  const handleSelectAttachmentClick = useCallback(() => {
+    if (disabled) return;
+    fileInputRef.current?.click();
+  }, [disabled]);
+
+  const handleComposerDragEnter = useCallback((event: React.DragEvent<HTMLElement>) => {
     if (disabled || !hasDraggedFiles(event.dataTransfer)) return;
     event.preventDefault();
     event.stopPropagation();
     setIsDraggingFiles(true);
   }, [disabled]);
 
-  const handleComposerDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+  const handleComposerDragOver = useCallback((event: React.DragEvent<HTMLElement>) => {
     if (disabled || !hasDraggedFiles(event.dataTransfer)) return;
     event.preventDefault();
     event.stopPropagation();
@@ -795,14 +836,14 @@ export function PromptInput({
     setIsDraggingFiles(true);
   }, [disabled]);
 
-  const handleComposerDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+  const handleComposerDragLeave = useCallback((event: React.DragEvent<HTMLElement>) => {
     if (!hasDraggedFiles(event.dataTransfer)) return;
     const nextTarget = event.relatedTarget as Node | null;
     if (nextTarget && event.currentTarget.contains(nextTarget)) return;
     setIsDraggingFiles(false);
   }, []);
 
-  const handleComposerDrop = useCallback(async (event: React.DragEvent<HTMLDivElement>) => {
+  const handleComposerDrop = useCallback(async (event: React.DragEvent<HTMLElement>) => {
     if (disabled || !hasDraggedFiles(event.dataTransfer)) return;
     event.preventDefault();
     event.stopPropagation();
@@ -813,6 +854,23 @@ export function PromptInput({
       focusPromptEditor();
     }
   }, [addFiles, disabled, focusPromptEditor]);
+
+  useEffect(() => {
+    const preventWindowFileNavigation = (event: DragEvent) => {
+      if (disabled || !hasDraggedFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "copy";
+      }
+    };
+
+    window.addEventListener("dragover", preventWindowFileNavigation);
+    window.addEventListener("drop", preventWindowFileNavigation);
+    return () => {
+      window.removeEventListener("dragover", preventWindowFileNavigation);
+      window.removeEventListener("drop", preventWindowFileNavigation);
+    };
+  }, [disabled]);
 
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
@@ -1038,6 +1096,13 @@ export function PromptInput({
   }, [queuedMessagesBySession]);
 
   useEffect(() => {
+    if (!activeGoal) return;
+    setGoalNow(Date.now());
+    const timer = window.setInterval(() => setGoalNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [activeGoal]);
+
+  useEffect(() => {
     const composerElement = composerRef.current;
     if (!composerElement) return;
 
@@ -1067,11 +1132,27 @@ export function PromptInput({
         marginLeft: `${leftOffset}px`,
         marginRight: `${rightOffset}px`,
       }}
+      onDragEnter={handleComposerDragEnter}
+      onDragOver={handleComposerDragOver}
+      onDragLeave={handleComposerDragLeave}
+      onDrop={(event) => { void handleComposerDrop(event); }}
     >
       {submissionStatus && (
         <div className="mx-auto mb-3 flex w-fit max-w-[min(720px,calc(100vw-80px))] items-center gap-2 rounded-full border border-accent/20 bg-white/95 px-4 py-2 text-sm font-medium text-ink-800 shadow-[0_14px_36px_rgba(24,32,46,0.12)] backdrop-blur-xl">
           <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-accent" />
           <span>{submissionStatus}</span>
+        </div>
+      )}
+      {activeGoal && (
+        <div className={`prompt-composer-goal mx-auto mb-2 ${COMPOSER_SURFACE_WIDTH_CLASS}`}>
+          <div className="flex min-h-11 items-center gap-2 rounded-[28px] border border-[#d9dde3] bg-white/94 px-4 py-2 text-[13px] text-ink-700 shadow-[0_10px_30px_rgba(15,18,24,0.06)] backdrop-blur-xl">
+            <Target className={`h-4 w-4 shrink-0 ${activeGoal.status === "blocked" ? "text-amber-500" : "text-[#9aa0a8]"}`} aria-hidden="true" />
+            <span className="shrink-0 font-semibold text-ink-900">{goalStatusLabel(activeGoal.status)}</span>
+            <span className="min-w-0 flex-1 truncate text-muted" title={activeGoal.objective}>
+              {activeGoal.objective}
+            </span>
+            <span className="shrink-0 text-muted">· {formatGoalAge(activeGoal.updatedAt, goalNow)}</span>
+          </div>
         </div>
       )}
       {showSlashPalette && (
@@ -1160,10 +1241,6 @@ export function PromptInput({
       )}
       <div
         className={`prompt-composer-surface prompt-composer-card relative mx-auto ${COMPOSER_SURFACE_WIDTH_CLASS} rounded-[18px] border bg-white px-4 pb-3 pt-4 shadow-[0_10px_30px_rgba(15,18,24,0.07)] transition-colors ${isDraggingFiles ? "border-accent/45 shadow-[0_18px_42px_rgba(255,122,64,0.16)]" : "border-[#d9dde3]"}`}
-        onDragEnter={handleComposerDragEnter}
-        onDragOver={handleComposerDragOver}
-        onDragLeave={handleComposerDragLeave}
-        onDrop={(event) => { void handleComposerDrop(event); }}
       >
         {isDraggingFiles && (
           <div className="pointer-events-none absolute inset-2 z-10 grid place-items-center rounded-[22px] border border-dashed border-accent/45 bg-white/75 text-sm font-semibold text-accent shadow-inner backdrop-blur-sm">
@@ -1321,6 +1398,31 @@ export function PromptInput({
             </button>
             <button
               type="button"
+              className="grid h-8 w-8 place-items-center rounded-lg transition hover:bg-[#f4f6f8] disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={handleSelectAttachmentClick}
+              aria-label="添加附件"
+              title="添加附件"
+              disabled={disabled}
+            >
+              <Paperclip className="h-[19px] w-[19px]" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={`grid h-8 w-8 place-items-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                goalModeEnabled
+                  ? "border-[#34c759] bg-[#f3fbf6] text-[#1f9d4d]"
+                  : "border-transparent text-[#73777f] hover:bg-[#f4f6f8]"
+              }`}
+              onClick={() => setGoalModeEnabled((value) => !value)}
+              aria-label={goalModeEnabled ? "关闭追求目标模式" : "开启追求目标模式"}
+              aria-pressed={goalModeEnabled}
+              title="追求目标"
+              disabled={disabled}
+            >
+              <Target className="h-4 w-4 shrink-0" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
               className={`grid h-9 w-9 place-items-center rounded-lg transition disabled:cursor-not-allowed disabled:opacity-60 ${!hasDraft && isRunning ? "bg-error text-white hover:bg-error/90" : "bg-[#111111] text-white hover:bg-black"}`}
               onClick={handleButtonClick}
               aria-label={!hasDraft && isRunning ? "停止会话" : isRunning ? "加入待发送队列" : "发送提示"}
@@ -1339,7 +1441,7 @@ export function PromptInput({
           type="file"
           multiple
           className="hidden"
-          accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,.txt,.md,.markdown,.json,.yaml,.yml,.xml,.svg,.csv,.tsv,.log,.js,.jsx,.ts,.tsx,.py,.rb,.java,.go,.rs,.sh,.css,.html,.sql,.toml,.ini,.env"
+          accept={PROMPT_ATTACHMENT_ACCEPT}
           onChange={(event) => { void handleFileInputChange(event); }}
         />
       </div>
