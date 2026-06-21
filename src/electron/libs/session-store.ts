@@ -5,11 +5,13 @@ import electron from "electron";
 import { isSuccessfulRunnerResult } from "../../shared/runner-status.js";
 import type { SessionExecutionMode } from "../../shared/session-semantics.js";
 import type { SessionWorkflowState, WorkflowScope } from "../../shared/workflow-markdown.js";
+import type { WorkflowRunPatch, WorkflowRunRecord } from "../../shared/workflows/workflow-runs.js";
 import { stripInlineBase64ImagesFromMessage } from "./tool-output-sanitizer.js";
 import {
   normalizeRuntimeEfficiencyProfileState,
   type RuntimeEfficiencyProfileState,
 } from "./runtime-efficiency.js";
+import { WorkflowRunRepository } from "./workflows/workflow-run-store.js";
 
 const LEGACY_CWD_SUFFIXES = [
   "/upstream/open-claude-cowork",
@@ -167,9 +169,11 @@ function createHistoryCursor(message: StreamMessage | undefined): SessionHistory
 export class SessionStore {
   private sessions = new Map<string, Session>();
   private db: Database.Database;
+  private workflowRuns: WorkflowRunRepository;
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
+    this.workflowRuns = new WorkflowRunRepository(this.db);
     this.initialize();
     this.recoverSuccessfulErrorSessions();
     this.loadSessions();
@@ -529,10 +533,35 @@ export class SessionStore {
     if (existing) {
       this.sessions.delete(id);
     }
+    this.workflowRuns.deleteWorkflowRunsForSession(id);
     this.db.prepare(`delete from messages where session_id = ?`).run(id);
     const result = this.db.prepare(`delete from sessions where id = ?`).run(id);
     const removedFromDb = result.changes > 0;
     return removedFromDb || Boolean(existing);
+  }
+
+  listWorkflowRuns(sessionId: string): WorkflowRunRecord[] {
+    return this.workflowRuns.listWorkflowRuns(sessionId);
+  }
+
+  getWorkflowRun(workflowRunId: string): WorkflowRunRecord | undefined {
+    return this.workflowRuns.getWorkflowRun(workflowRunId);
+  }
+
+  getWorkflowRunByTask(sessionId: string, taskId: string): WorkflowRunRecord | undefined {
+    return this.workflowRuns.getWorkflowRunByTask(sessionId, taskId);
+  }
+
+  upsertWorkflowRun(patch: WorkflowRunPatch): WorkflowRunRecord {
+    return this.workflowRuns.upsertWorkflowRun(patch);
+  }
+
+  deleteWorkflowRunsForSession(sessionId: string): void {
+    this.workflowRuns.deleteWorkflowRunsForSession(sessionId);
+  }
+
+  getDatabaseForTest(): Database.Database {
+    return this.db;
   }
 
   private persistSession(id: string, updates: Partial<Session>): void {

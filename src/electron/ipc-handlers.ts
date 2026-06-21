@@ -21,6 +21,10 @@ import { SessionStore } from "./libs/session-store.js";
 import { buildSessionSlashCommands, resolveInvokedLocalSlashDefinition } from "./libs/slash-command-catalog.js";
 import { stripInlineBase64ImagesFromMessage } from "./libs/tool-output-sanitizer.js";
 import { buildSessionWorkflowCatalog } from "./libs/workflow-catalog.js";
+import {
+  collectWorkflowToolUseNames,
+  extractWorkflowRunPatchesFromMessage,
+} from "./libs/workflows/workflow-output-parser.js";
 import { buildStatelessContinuationPayload } from "./stateless-continuation.js";
 import { ensureManagedCodeGraphSynced } from "./libs/codegraph/managed-codegraph.js";
 import { createSessionCodeGraphAutoSyncScheduler } from "./libs/codegraph/session-codegraph-autosync.js";
@@ -48,6 +52,7 @@ import {
   type ChannelReplyTarget,
 } from "./libs/channel/channel-workspace.js";
 import { notifySessionFinished, notifyTaskExecutionFinished } from "./libs/desktop-notifications.js";
+import type { WorkflowRunRecord } from "../shared/workflows/workflow-runs.js";
 
 let sessions: SessionStore;
 const runnerHandles = new Map<string, RunnerHandle>();
@@ -61,6 +66,8 @@ const FIGMA_AGENT_OAUTH_BRIDGE_ENABLED = false;
 const WARM_RUNNER_IDLE_MS = 30 * 60 * 1000;
 const figmaAuthToolUses = new Map<string, "authenticate" | "complete_authentication">();
 const figmaAuthUrlsBySession = new Map<string, string>();
+const workflowToolUseNamesBySession = new Map<string, Map<string, string>>();
+const workflowTaskIdsBySession = new Map<string, Set<string>>();
 let channelReplySender: ((target: ChannelReplyTarget, text: string) => Promise<void> | void) | null = null;
 
 let taskExecutor: TaskExecutor | null = null;
@@ -556,6 +563,8 @@ function emit(event: ServerEvent) {
     (nextEvent.type === "session.status" ||
       nextEvent.type === "stream.message" ||
       nextEvent.type === "stream.user_prompt" ||
+      nextEvent.type === "workflow.runs" ||
+      nextEvent.type === "workflow.run.updated" ||
       nextEvent.type === "permission.request") &&
     !hasLiveSession(nextEvent.payload.sessionId)
   ) {
@@ -590,6 +599,7 @@ function emit(event: ServerEvent) {
       nextEvent.payload.sessionId,
       stripInlineBase64ImagesFromMessage(normalizedMessage),
     );
+    trackWorkflowRunsFromStreamMessage(nextEvent.payload.sessionId, message);
     nextEvent = {
       ...nextEvent,
       payload: {
@@ -653,6 +663,44 @@ function emit(event: ServerEvent) {
   }
 
   broadcast(nextEvent);
+}
+
+function getWorkflowToolUseNamesForSession(sessionId: string): Map<string, string> {
+  const existing = workflowToolUseNamesBySession.get(sessionId);
+  if (existing) return existing;
+  const next = new Map<string, string>();
+  workflowToolUseNamesBySession.set(sessionId, next);
+  return next;
+}
+
+function getWorkflowTaskIdsForSession(sessionId: string): Set<string> {
+  const existing = workflowTaskIdsBySession.get(sessionId);
+  if (existing) return existing;
+  const next = new Set<string>();
+  workflowTaskIdsBySession.set(sessionId, next);
+  return next;
+}
+
+function trackWorkflowRunsFromStreamMessage(sessionId: string, message: StreamMessage): void {
+  const toolUseNames = getWorkflowToolUseNamesForSession(sessionId);
+  const taskIds = getWorkflowTaskIdsForSession(sessionId);
+  collectWorkflowToolUseNames(message, toolUseNames);
+
+  const patches = extractWorkflowRunPatchesFromMessage({
+    sessionId,
+    message,
+    toolUseNames,
+    knownWorkflowTaskIds: taskIds,
+  });
+
+  for (const patch of patches) {
+    const run = sessions.upsertWorkflowRun(patch);
+    taskIds.add(run.taskId);
+    broadcast({
+      type: "workflow.run.updated",
+      payload: run,
+    });
+  }
 }
 
 function trackFigmaAuthToolState(sessionId: string, message: StreamMessage): void {
@@ -942,11 +990,145 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
   });
 }
 
+function buildWorkflowRunResumePrompt(run: WorkflowRunRecord): string {
+  const lines = [
+    "请使用 Workflow tool 继续运行此 workflow，只继续这个 run，不要改写脚本内容：",
+    run.workflowName ? `- workflowName: ${run.workflowName}` : null,
+    run.scriptPath ? `- scriptPath: ${run.scriptPath}` : null,
+    `- resumeFromRunId: ${run.runId}`,
+    `- taskId: ${run.taskId}`,
+    run.summary ? `- previousSummary: ${run.summary}` : null,
+  ].filter((line): line is string => Boolean(line));
+  return lines.join("\n");
+}
+
+function buildWorkflowRunRerunPrompt(run: WorkflowRunRecord): string {
+  const lines = [
+    "请使用 Workflow tool 重新运行此 workflow 脚本，保留当前会话上下文并汇报新的 runId/taskId：",
+    run.workflowName ? `- workflowName: ${run.workflowName}` : null,
+    `- scriptPath: ${run.scriptPath}`,
+    run.summary ? `- previousSummary: ${run.summary}` : null,
+  ].filter((line): line is string => Boolean(line));
+  return lines.join("\n");
+}
+
+async function continueWorkflowRunFromPrompt(options: {
+  sessionId: string;
+  workflowRunId: string;
+  mode: "resume" | "rerun";
+}) {
+  const store = initializeSessions();
+  const session = store.getSession(options.sessionId);
+  if (!session) {
+    emit({ type: "session.deleted", payload: { sessionId: options.sessionId } });
+    return;
+  }
+
+  const run = store.getWorkflowRun(options.workflowRunId);
+  if (!run || run.sessionId !== options.sessionId) {
+    emit({
+      type: "runner.error",
+      payload: { sessionId: options.sessionId, message: "Workflow run no longer exists." },
+    });
+    return;
+  }
+
+  if (options.mode === "resume") {
+    if (!run.runId || run.taskType === "remote_agent") {
+      emit({
+        type: "runner.error",
+        payload: { sessionId: options.sessionId, message: "这个 workflow run 没有可在当前会话恢复的本地 runId。" },
+      });
+      return;
+    }
+    if (run.status === "running" || run.status === "launching" || run.status === "backgrounded") {
+      emit({
+        type: "runner.error",
+        payload: { sessionId: options.sessionId, message: "原 workflow run 仍在运行，需要结束后再恢复。" },
+      });
+      return;
+    }
+  }
+
+  if (options.mode === "rerun" && !run.scriptPath) {
+    emit({
+      type: "runner.error",
+      payload: { sessionId: options.sessionId, message: "这个 workflow run 没有可复跑的 scriptPath。" },
+    });
+    return;
+  }
+
+  await handleClientEvent({
+    type: "session.continue",
+    payload: {
+      sessionId: options.sessionId,
+      prompt: options.mode === "resume" ? buildWorkflowRunResumePrompt(run) : buildWorkflowRunRerunPrompt(run),
+      runtime: {
+        workflowMode: "force",
+      },
+    },
+  });
+}
+
 export async function handleClientEvent(event: ClientEvent) {
   const store = initializeSessions();
 
   if (event.type === "channel.message.receive") {
     await handleChannelMessageEvent(event);
+    return;
+  }
+
+  if (event.type === "workflow.runs.list") {
+    const session = store.getSession(event.payload.sessionId);
+    if (!session) {
+      emit({ type: "session.deleted", payload: { sessionId: event.payload.sessionId } });
+      return;
+    }
+    emit({
+      type: "workflow.runs",
+      payload: {
+        sessionId: event.payload.sessionId,
+        runs: store.listWorkflowRuns(event.payload.sessionId),
+      },
+    });
+    return;
+  }
+
+  if (event.type === "workflow.run.resume") {
+    await continueWorkflowRunFromPrompt({
+      sessionId: event.payload.sessionId,
+      workflowRunId: event.payload.workflowRunId,
+      mode: "resume",
+    });
+    return;
+  }
+
+  if (event.type === "workflow.run.rerun") {
+    await continueWorkflowRunFromPrompt({
+      sessionId: event.payload.sessionId,
+      workflowRunId: event.payload.workflowRunId,
+      mode: "rerun",
+    });
+    return;
+  }
+
+  if (event.type === "workflow.run.stop") {
+    const handle = runnerHandles.get(event.payload.sessionId);
+    if (!handle || handle.isClosed()) {
+      emit({
+        type: "runner.error",
+        payload: { sessionId: event.payload.sessionId, message: "当前没有可控制的 workflow runner。" },
+      });
+      return;
+    }
+    try {
+      await handle.stopTask(event.payload.taskId);
+    } catch (error) {
+      emit({
+        type: "runner.error",
+        payload: { sessionId: event.payload.sessionId, message: `停止 workflow task 失败: ${String(error)}` },
+      });
+    }
     return;
   }
 
@@ -1662,6 +1844,8 @@ export async function handleClientEvent(event: ClientEvent) {
   if (event.type === "session.delete") {
     const sessionId = event.payload.sessionId;
     closeRunnerHandle(sessionId);
+    workflowToolUseNamesBySession.delete(sessionId);
+    workflowTaskIdsBySession.delete(sessionId);
 
     store.deleteSession(sessionId);
     emit({

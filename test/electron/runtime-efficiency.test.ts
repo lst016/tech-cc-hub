@@ -49,6 +49,7 @@ test("runtime efficiency keeps plain prompts on a small built-in MCP surface", (
   assert.equal(profile.includeProjectMemoryPrompt, false);
   assert.equal(profile.includePartialMessages, false);
   assert.equal(profile.includeHookEvents, false);
+  assert.equal(profile.enableAgentTeams, false);
 });
 
 test("runtime efficiency enables visual tools for image attachments", () => {
@@ -68,6 +69,7 @@ test("runtime efficiency enables visual tools for image attachments", () => {
   assert.equal(profile.includeBrowserPrompt, true);
   assert.equal(profile.includeDesignPrompt, true);
   assert.equal(profile.includeProjectMemoryPrompt, false);
+  assert.equal(profile.enableAgentTeams, false);
 });
 
 test("runtime efficiency adds Figma tools only for Figma visual tasks", () => {
@@ -99,6 +101,7 @@ test("runtime efficiency keeps design tools out of automation turns", () => {
   assert.equal(profile.includeBrowserPrompt, false);
   assert.equal(profile.includeDesignPrompt, false);
   assert.equal(profile.includeClaudeCompatPrompt, true);
+  assert.equal(profile.enableAgentTeams, false);
 });
 
 test("runtime efficiency keeps visual tools out of IDE turns", () => {
@@ -123,6 +126,7 @@ test("runtime efficiency enables Agent Teams visibility for parallel team prompt
   assert.equal(profile.includeHookEvents, true);
   assert.equal(profile.agentProgressSummaries, true);
   assert.equal(profile.forwardSubagentText, true);
+  assert.equal(profile.enableAgentTeams, true);
   assert.deepEqual(profile.builtinMcpServers, BASE_BUILTIN_MCP_SERVERS);
   assert.equal(profile.includeBrowserPrompt, false);
 });
@@ -135,7 +139,40 @@ test("runtime efficiency keeps visual tools when Agent Teams work includes UI", 
   assert.equal(profile.id, "team");
   assert.equal(profile.includeBrowserPrompt, true);
   assert.equal(profile.includeDesignPrompt, true);
+  assert.equal(profile.enableAgentTeams, true);
   assert.deepEqual(profile.builtinMcpServers, VISUAL_BUILTIN_MCP_SERVERS);
+});
+
+test("runtime efficiency keeps ordinary broad research off Agent Teams", () => {
+  const profile = resolveRuntimeEfficiencyProfile({
+    prompt: "帮我开源社区找下有没有 web端显示ps的开源项目 我想内置在我们的app里面通过我们自带的浏览器插件做标注切图 多找下",
+  });
+
+  assert.equal(profile.id, "visual");
+  assert.equal(profile.includeBrowserPrompt, true);
+  assert.equal(profile.includeDesignPrompt, true);
+  assert.equal(profile.enableAgentTeams, false);
+});
+
+test("runtime efficiency enables Agent Teams for explicit ultracode workflow runs", () => {
+  const profile = resolveRuntimeEfficiencyProfile({
+    prompt: "ultracode: 帮我并行调研 PSD web viewer 方案",
+  });
+
+  assert.equal(profile.id, "team");
+  assert.equal(profile.enableAgentTeams, true);
+  assert.equal(profile.includeClaudeCompatPrompt, true);
+  assert.equal(profile.includeHookEvents, true);
+});
+
+test("runtime efficiency enables Agent Teams for forced workflow mode", () => {
+  const profile = resolveRuntimeEfficiencyProfile({
+    prompt: "帮我并行调研 PSD web viewer 方案",
+    runtime: { workflowMode: "force" },
+  });
+
+  assert.equal(profile.id, "team");
+  assert.equal(profile.enableAgentTeams, true);
 });
 
 test("runtime efficiency sticky state keeps visual tools for later plain prompts", () => {
@@ -202,12 +239,14 @@ test("runtime efficiency drops stale all-server state from old plain turns", () 
     includeHookEvents: false,
     agentProgressSummaries: false,
     forwardSubagentText: false,
+    enableAgentTeams: true,
   });
 
   assert.deepEqual(merged.builtinMcpServers, BASE_BUILTIN_MCP_SERVERS);
   assert.equal(merged.includeBrowserPrompt, false);
   assert.equal(merged.includeDesignPrompt, false);
   assert.equal(merged.includeClaudeCompatPrompt, false);
+  assert.equal(merged.enableAgentTeams, false);
 });
 
 test("runner reuse key stays stable across normal coding prompts", () => {
@@ -247,4 +286,40 @@ test("runner reuse allows compatible turns to expand the tool surface in-place",
   assert.notEqual(coding, visual);
   assert.equal(canReuseRunner(coding, visual), true);
   assert.equal(canReuseRunner(visual, coding), true);
+});
+
+test("runner reuse changes when SDK workflow mode changes", () => {
+  const autoWorkflow = buildRunnerReuseKey({
+    cwd: "D:\\tool\\tech-cc-hub",
+    model: "gpt-5.5",
+    prompt: "继续修复这个问题",
+    runtime: { workflowMode: "auto" },
+  });
+  const disabledWorkflow = buildRunnerReuseKey({
+    cwd: "D:\\tool\\tech-cc-hub",
+    model: "gpt-5.5",
+    prompt: "继续修复这个问题",
+    runtime: { workflowMode: "off" },
+  });
+
+  assert.notEqual(autoWorkflow, disabledWorkflow);
+  assert.equal(canReuseRunner(autoWorkflow, disabledWorkflow), false);
+  assert.equal(canReuseRunner(disabledWorkflow, autoWorkflow), false);
+});
+
+test("runner reuse changes when Agent Teams env eligibility changes", () => {
+  const standard = buildRunnerReuseKey({
+    cwd: "D:\\tool\\tech-cc-hub",
+    model: "gpt-5.5",
+    prompt: "继续修复这个问题",
+  });
+  const ultracode = buildRunnerReuseKey({
+    cwd: "D:\\tool\\tech-cc-hub",
+    model: "gpt-5.5",
+    prompt: "ultracode: 继续修复这个问题",
+  });
+
+  assert.notEqual(standard, ultracode);
+  assert.equal(canReuseRunner(standard, ultracode), false);
+  assert.equal(canReuseRunner(ultracode, standard), false);
 });

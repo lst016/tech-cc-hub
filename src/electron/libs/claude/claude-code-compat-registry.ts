@@ -787,11 +787,22 @@ const CLAUDE_CODE_LOCAL_COMPAT_PROMPT_HINTS = [
   "`/code-review` should split oversized code or diff input into bounded review chunks, review each chunk for correctness, security, and regression findings, then summarize cross-chunk risks instead of loading everything at once."
 ];
 
-export function buildClaudeCodeCompatPromptAppend(): string {
+export type ClaudeCodeCompatPromptAppendOptions = {
+  includeAgentTeamsHint?: boolean;
+};
+
+export function buildClaudeCodeCompatPromptAppend(
+  options: ClaudeCodeCompatPromptAppendOptions = {},
+): string {
+  const includeAgentTeamsHint = options.includeAgentTeamsHint ?? true;
+  const agentTeamsHints = includeAgentTeamsHint
+    ? buildClaudeAgentTeamsPromptHint().split("\n").map((hint) => `- ${hint}`)
+    : [];
+
   return [
     `Claude Code v${CLAUDE_CODE_COMPAT_REGISTRY.sourceVersion} compatibility notes for tech-cc-hub:`,
     ...CLAUDE_CODE_LOCAL_COMPAT_PROMPT_HINTS.map((hint) => `- ${hint}`),
     ...CLAUDE_CODE_COMPAT_REGISTRY.promptHints.map((hint) => `- ${hint}`),
-    ...buildClaudeAgentTeamsPromptHint().split("\n").map((hint) => `- ${hint}`),
+    ...agentTeamsHints,
   ].join("\n");
 }

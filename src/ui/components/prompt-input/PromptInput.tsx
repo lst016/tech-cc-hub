@@ -1,7 +1,7 @@
 ﻿import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import type { SetStateAction } from "react";
-import { ArrowUp, Menu, Paperclip, Sparkles, Square, Target, X } from "lucide-react";
+import { ArrowUp, Menu, Paperclip, Sparkles, Square, Target, Workflow, X } from "lucide-react";
 import type {
   ApiConfigProfile,
   ClientEvent,
@@ -63,6 +63,7 @@ import {
   getRoutedModelOptionsForProfiles,
   resolveAvailableModelName,
 } from "../settings/settings-utils";
+import { TooltipButton } from "../TooltipButton";
 
 
 const MAX_ROWS = 12;
@@ -71,6 +72,7 @@ const MAX_HEIGHT = MAX_ROWS * LINE_HEIGHT;
 const IME_ENTER_GRACE_MS = 120;
 const FILE_MENTION_PREVIEW_LIMIT = 10;
 const COMPOSER_SURFACE_WIDTH_CLASS = "w-full min-w-[min(430px,_100%)] max-w-[clamp(920px,_calc(100vw-420px),_1320px)] xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]";
+const COMPOSER_ICON_TOOLTIP_CLASS = "!top-auto bottom-full !mt-0 mb-2 whitespace-nowrap";
 const EMPTY_CODE_REFERENCES: CodeReferenceDraft[] = [];
 const EMPTY_FILE_REFERENCES: FileReferenceDraft[] = [];
 const EMPTY_MESSAGE_REFERENCES: MessageReferenceDraft[] = [];
@@ -96,6 +98,34 @@ function formatGoalModePrompt(promptValue: string): string {
   const trimmed = promptValue.trim();
   if (!trimmed || /^\/goal(?:\s|$)/i.test(trimmed)) return promptValue;
   return `/goal ${trimmed}`;
+}
+
+function formatWorkflowModePrompt(promptValue: string): string {
+  const trimmed = promptValue.trim();
+  if (!trimmed || /^ultracode\b\s*:?\s*/i.test(trimmed)) return promptValue;
+
+  const goalPrefixMatch = /^\/goal(?:\s+|$)/i.exec(trimmed);
+  if (goalPrefixMatch) {
+    const goalPrompt = trimmed.slice(goalPrefixMatch[0].length).trim();
+    if (!goalPrompt || /^ultracode\b\s*:?\s*/i.test(goalPrompt)) return promptValue;
+    return `/goal ultracode: ${goalPrompt}`;
+  }
+
+  return `ultracode: ${trimmed}`;
+}
+
+function formatComposerModePrompt(
+  promptValue: string,
+  {
+    goalModeEnabled,
+    workflowForceEnabled,
+  }: {
+    goalModeEnabled: boolean;
+    workflowForceEnabled: boolean;
+  },
+): string {
+  const goalPrompt = goalModeEnabled ? formatGoalModePrompt(promptValue) : promptValue;
+  return workflowForceEnabled ? formatWorkflowModePrompt(goalPrompt) : goalPrompt;
 }
 
 type PromptOptimizeResult = {
@@ -190,6 +220,7 @@ export function PromptInput({
   const [submissionStatus, setSubmissionStatus] = useState<string | null>(null);
   const [goalNow, setGoalNow] = useState(() => Date.now());
   const [goalModeEnabled, setGoalModeEnabled] = useState(false);
+  const [workflowForceEnabled, setWorkflowForceEnabled] = useState(false);
   const [dismissedGoalKeyBySessionId, setDismissedGoalKeyBySessionId] = useState<Record<string, string>>({});
   const setGlobalError = useAppStore((state) => state.setGlobalError);
   const composerDraftSessionKey = getPromptDraftSessionKey(activeSessionId);
@@ -534,9 +565,10 @@ export function PromptInput({
 
   const queueCurrentDraft = useCallback((promptOverride?: string) => {
     if (!activeSessionId) return false;
-    const currentPrompt = goalModeEnabled
-      ? formatGoalModePrompt(promptOverride ?? promptDraftRef.current)
-      : (promptOverride ?? promptDraftRef.current);
+    const currentPrompt = formatComposerModePrompt(promptOverride ?? promptDraftRef.current, {
+      goalModeEnabled,
+      workflowForceEnabled,
+    });
     const currentHasDraft = currentPrompt.trim().length > 0
       || attachments.length > 0
       || browserAnnotations.length > 0
@@ -570,10 +602,11 @@ export function PromptInput({
     }));
     clearComposer();
     setGoalModeEnabled(false);
+    setWorkflowForceEnabled(false);
     setGlobalError(null);
     window.dispatchEvent(new CustomEvent(PROMPT_SENT_EVENT));
     return true;
-  }, [activeSessionId, attachments, browserAnnotations, clearComposer, codeReferences, fileReferences, goalModeEnabled, messageReferences, setGlobalError, validatePromptDraft]);
+  }, [activeSessionId, attachments, browserAnnotations, clearComposer, codeReferences, fileReferences, goalModeEnabled, messageReferences, setGlobalError, validatePromptDraft, workflowForceEnabled]);
 
   const submitCurrentInput = useCallback(async () => {
     const promptSnapshot = getCurrentPromptDraft();
@@ -593,7 +626,10 @@ export function PromptInput({
       }
 
       const attachmentsSnapshot = attachments;
-      const promptForMode = goalModeEnabled ? formatGoalModePrompt(promptSnapshot) : promptSnapshot;
+      const promptForMode = formatComposerModePrompt(promptSnapshot, {
+        goalModeEnabled,
+        workflowForceEnabled,
+      });
       const promptWithAnnotations = mergePromptWithComposerContext(promptForMode, {
         codeReferences,
         fileReferences,
@@ -613,6 +649,7 @@ export function PromptInput({
       if (sent) {
         clearComposer();
         setGoalModeEnabled(false);
+        setWorkflowForceEnabled(false);
         onSendMessage?.();
         window.dispatchEvent(new CustomEvent(PROMPT_SENT_EVENT));
       } else {
@@ -624,7 +661,7 @@ export function PromptInput({
       setSubmissionStatus(null);
       submitInFlightRef.current = false;
     }
-  }, [attachments, browserAnnotations, clearComposer, clearPromptDraftText, codeReferences, fileReferences, getCurrentPromptDraft, goalModeEnabled, isRunning, messageReferences, onSendMessage, queueCurrentDraft, sendPromptDraft, setAttachments, setGlobalError, setPromptDraft, validatePromptDraft]);
+  }, [attachments, browserAnnotations, clearComposer, clearPromptDraftText, codeReferences, fileReferences, getCurrentPromptDraft, goalModeEnabled, isRunning, messageReferences, onSendMessage, queueCurrentDraft, sendPromptDraft, setAttachments, setGlobalError, setPromptDraft, validatePromptDraft, workflowForceEnabled]);
 
   useEffect(() => {
     const handlePromptSubmit = () => {
@@ -1402,37 +1439,60 @@ export function PromptInput({
             />
           </div>
           <div className="ml-auto flex min-w-max shrink-0 items-center gap-1 text-[#9ca0a7]">
-            <button
+            <TooltipButton
               type="button"
               className={`grid h-8 w-8 place-items-center rounded-lg transition hover:bg-[#f4f6f8] disabled:cursor-not-allowed disabled:opacity-50 ${showSlashBrowser ? "bg-[#ecfaf7] text-[#00ad9a]" : ""}`}
               onClick={() => setShowSlashBrowser((value) => !value)}
               aria-label="打开 Slash 命令列表"
               title="Slash 命令"
+              tooltip="Slash 命令"
+              tooltipClassName={COMPOSER_ICON_TOOLTIP_CLASS}
               disabled={disabled || slashCommands.length === 0}
             >
               <Menu className="h-[19px] w-[19px]" aria-hidden="true" />
-            </button>
-            <button
+            </TooltipButton>
+            <TooltipButton
               type="button"
               className={`grid h-8 w-8 place-items-center rounded-lg transition hover:bg-[#f4f6f8] disabled:cursor-not-allowed disabled:opacity-50 ${optimizingPrompt ? "bg-[#ecfaf7] text-[#00ad9a]" : ""}`}
               onClick={() => { void handleOptimizePrompt(); }}
               aria-label="优化 Prompt"
               title="优化 Prompt"
+              tooltip="优化 Prompt"
+              tooltipClassName={COMPOSER_ICON_TOOLTIP_CLASS}
               disabled={disabled || optimizingPrompt}
             >
               <Sparkles className={`h-[19px] w-[19px] ${optimizingPrompt ? "animate-pulse" : ""}`} aria-hidden="true" />
-            </button>
-            <button
+            </TooltipButton>
+            <TooltipButton
               type="button"
               className="grid h-8 w-8 place-items-center rounded-lg transition hover:bg-[#f4f6f8] disabled:cursor-not-allowed disabled:opacity-50"
               onClick={handleSelectAttachmentClick}
               aria-label="添加附件"
               title="添加附件"
+              tooltip="添加附件"
+              tooltipClassName={COMPOSER_ICON_TOOLTIP_CLASS}
               disabled={disabled}
             >
               <Paperclip className="h-[19px] w-[19px]" aria-hidden="true" />
-            </button>
-            <button
+            </TooltipButton>
+            <TooltipButton
+              type="button"
+              className={`grid h-8 w-8 place-items-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                workflowForceEnabled
+                  ? "border-blue-200 bg-blue-50 text-blue-700"
+                  : "border-transparent text-[#73777f] hover:bg-[#f4f6f8]"
+              }`}
+              onClick={() => setWorkflowForceEnabled((value) => !value)}
+              aria-label={workflowForceEnabled ? "取消本次使用 Workflow" : "本次使用 Workflow"}
+              aria-pressed={workflowForceEnabled}
+              title="本次使用 Workflow"
+              tooltip="本次使用 Workflow"
+              tooltipClassName={COMPOSER_ICON_TOOLTIP_CLASS}
+              disabled={disabled}
+            >
+              <Workflow className="h-4 w-4 shrink-0" aria-hidden="true" />
+            </TooltipButton>
+            <TooltipButton
               type="button"
               className={`grid h-8 w-8 place-items-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-50 ${
                 goalModeEnabled
@@ -1443,15 +1503,19 @@ export function PromptInput({
               aria-label={goalModeEnabled ? "关闭追求目标模式" : "开启追求目标模式"}
               aria-pressed={goalModeEnabled}
               title="追求目标"
+              tooltip="追求目标"
+              tooltipClassName={COMPOSER_ICON_TOOLTIP_CLASS}
               disabled={disabled}
             >
               <Target className="h-4 w-4 shrink-0" aria-hidden="true" />
-            </button>
-            <button
+            </TooltipButton>
+            <TooltipButton
               type="button"
               className={`grid h-9 w-9 place-items-center rounded-lg transition disabled:cursor-not-allowed disabled:opacity-60 ${!hasDraft && isRunning ? "bg-error text-white hover:bg-error/90" : "bg-[#111111] text-white hover:bg-black"}`}
               onClick={handleButtonClick}
               aria-label={!hasDraft && isRunning ? "停止会话" : isRunning ? "加入待发送队列" : "发送提示"}
+              tooltip={!hasDraft && isRunning ? "停止会话" : isRunning ? "加入待发送队列" : "发送提示"}
+              tooltipClassName={COMPOSER_ICON_TOOLTIP_CLASS}
               disabled={disabled}
             >
               {!hasDraft && isRunning ? (
@@ -1459,7 +1523,7 @@ export function PromptInput({
               ) : (
                 <ArrowUp className="h-5 w-5 stroke-[2.4]" aria-hidden="true" />
               )}
-            </button>
+            </TooltipButton>
           </div>
         </div>
         <input

@@ -1,0 +1,74 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+
+import { SessionStore } from "../../src/electron/libs/session-store.js";
+
+describe("workflow run store", () => {
+  it("inserts, updates, lists, and deletes workflow runs by session", () => {
+    const dir = mkdtempSync(join(tmpdir(), "workflow-runs-"));
+    const dbPath = join(dir, "sessions.db");
+    const store = new SessionStore(dbPath);
+
+    try {
+      const session = store.createSession({ title: "Workflow session" });
+      const inserted = store.upsertWorkflowRun({
+        sessionId: session.id,
+        taskId: "task-1",
+        taskType: "local_workflow",
+        workflowName: "Repository inspection",
+        runId: "run-1",
+        source: "sdk-workflow-tool",
+        status: "running",
+        summary: "Started",
+        scriptPath: "/repo/workflow.js",
+        transcriptDir: "/tmp/transcripts/run-1",
+        launchedAt: 1_000,
+        updatedAt: 1_000,
+      });
+
+      assert.equal(inserted.id, `${session.id}:task-1`);
+      assert.equal(store.listWorkflowRuns(session.id).length, 1);
+
+      const updated = store.upsertWorkflowRun({
+        sessionId: session.id,
+        taskId: "task-1",
+        status: "completed",
+        summary: "Completed",
+        completedAt: 2_000,
+        updatedAt: 2_000,
+      });
+
+      assert.equal(updated.scriptPath, "/repo/workflow.js");
+      assert.equal(updated.status, "completed");
+      assert.equal(updated.summary, "Completed");
+      assert.equal(updated.completedAt, 2_000);
+      assert.deepEqual(store.listWorkflowRuns(session.id).map((run) => run.id), [inserted.id]);
+
+      store.deleteSession(session.id);
+      assert.deepEqual(store.listWorkflowRuns(session.id), []);
+    } finally {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("creates the workflow_runs table for an existing database", () => {
+    const dir = mkdtempSync(join(tmpdir(), "workflow-runs-migrate-"));
+    const dbPath = join(dir, "sessions.db");
+    const store = new SessionStore(dbPath);
+
+    try {
+      const table = store
+        .getDatabaseForTest()
+        .prepare("select name from sqlite_master where type = 'table' and name = 'workflow_runs'")
+        .get() as { name?: string } | undefined;
+      assert.equal(table?.name, "workflow_runs");
+    } finally {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

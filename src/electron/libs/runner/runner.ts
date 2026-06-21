@@ -22,7 +22,8 @@ import { canMainModelReadImages } from "../../../shared/models/model-capabilitie
 import type { BuiltinMcpServerName } from "../../../shared/builtin-mcp-registry.js";
 import {
   CLAUDE_AGENT_TEAMS_ENV_VAR,
-  withClaudeAgentTeamsEnv,
+  buildClaudeAgentTeamsDisallowedTools,
+  resolveClaudeAgentTeamsEnv,
 } from "../../../shared/claude-agent-teams.js";
 import {
   createLearnCaptureHook,
@@ -85,6 +86,7 @@ import {
 import {
   mergeRuntimeEfficiencyProfile,
   resolveRuntimeEfficiencyProfile,
+  isExplicitDynamicWorkflowPrompt,
   runtimeEfficiencyProfileStateEquals,
   runtimeEfficiencyProfileToState,
 } from "../runtime-efficiency.js";
@@ -139,6 +141,7 @@ export type RunnerOptions = {
 export type RunnerHandle = {
   abort: () => void;
   appendPrompt: (prompt: string, attachments?: PromptAttachment[], options?: { displayPrompt?: string; workspaceContext?: LinkedWorkspaceContext }) => Promise<void>;
+  stopTask: (taskId: string) => Promise<void>;
   isClosed: () => boolean;
   reuseKey?: string;
 };
@@ -739,12 +742,6 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
 
       const env = buildEnvForConfig(config, effectiveModel);
       const globalRuntimeConfig = getGlobalRuntimeConfig();
-      const mergedEnv = withClaudeAgentTeamsEnv({
-        ...getEnhancedEnv(),
-        ...env,
-      });
-      let syncedGlobalRuntimeConfig = persistDiscoveredRuntimeConfig(globalRuntimeConfig, mergedEnv);
-      latestGlobalRuntimeConfig = syncedGlobalRuntimeConfig;
       const thinking = buildThinkingConfig(runtime?.reasoningMode);
       const effort = buildEffortLevel(runtime?.reasoningMode);
       const projectCwd = session.cwd && existsSync(session.cwd) ? session.cwd : undefined;
@@ -754,6 +751,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       latestRunSurface = runSurface;
       const agentId = runtime?.agentId ?? session.agentId;
       const runtimeProfile = collectRuntimeProfileForPrompt(prompt, attachments);
+      const mergedEnv = resolveClaudeAgentTeamsEnv({
+        ...getEnhancedEnv(),
+        ...env,
+      }, runtimeProfile.enableAgentTeams);
+      let syncedGlobalRuntimeConfig = persistDiscoveredRuntimeConfig(globalRuntimeConfig, mergedEnv);
+      latestGlobalRuntimeConfig = syncedGlobalRuntimeConfig;
       const agentContext = resolveAgentRuntimeContext({
         cwd: projectCwd,
         surface: runSurface,
@@ -812,15 +815,18 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         runtimeProfile.includeBrowserPrompt ? buildBrowserWorkbenchPromptAppend() : undefined,
         runtimeProfile.includeDesignPrompt ? buildDesignParityPromptAppend() : undefined,
         buildBuiltinMcpRegistryPromptAppend(enabledBuiltinMcpServerNames),
-        runtimeProfile.includeClaudeCompatPrompt ? buildClaudeCodeCompatFeaturePromptAppend() : undefined,
+        runtimeProfile.includeClaudeCompatPrompt ? buildClaudeCodeCompatFeaturePromptAppend({
+          includeAgentTeamsHint: runtimeProfile.enableAgentTeams,
+        }) : undefined,
       );
       const outputFormat = resolveOutputFormat(runtime?.outputFormat, systemPromptAppend, prompt);
       const sdkModelOption = getClaudeCodeModelOption(config, effectiveModel);
-      const dynamicWorkflowSettings = buildClaudeDynamicWorkflowSettings(currentDisplayPrompt, runtime?.reasoningMode);
+      const dynamicWorkflowSettings = buildClaudeDynamicWorkflowSettings(currentDisplayPrompt, runtime?.reasoningMode, runtime?.workflowMode);
       const sdkModelSettings = {
         ...buildClaudeCodeModelSettings(config, effectiveModel),
         ...dynamicWorkflowSettings,
       };
+      const agentTeamsDisallowedTools = buildClaudeAgentTeamsDisallowedTools(runtimeProfile.enableAgentTeams);
       const sdkExpertModel = getClaudeCodeExpertModel(config, effectiveModel);
       console.info("[runner][route]", {
         sessionId: session.id,
@@ -839,7 +845,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         claudePath: getClaudeCodePath(),
         sdkPlugins: sdkPlugins.map((plugin) => plugin.path),
         agentTeamsEnabled: mergedEnv[CLAUDE_AGENT_TEAMS_ENV_VAR] === "1",
-        dynamicWorkflowsEnabled: dynamicWorkflowSettings.enableWorkflows === true,
+        dynamicWorkflowsEnabled: dynamicWorkflowSettings.enableWorkflows === true && dynamicWorkflowSettings.disableWorkflows !== true,
         ultracodeEnabled: dynamicWorkflowSettings.ultracode === true,
         runtimeProfile: runtimeProfile.id,
         builtinMcpServers: enabledBuiltinMcpServerNames,
@@ -874,6 +880,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             ...builtinMcpServers,
           },
           hooks,
+          disallowedTools: agentTeamsDisallowedTools,
           allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
           canUseTool: async (toolName, input, { signal }) => {
             const schemaNormalization = isRecord(input)
@@ -1155,6 +1162,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       codeGraphRetrievalSeen = false;
       await ensureMcpServersForPrompt(nextPrompt, nextAttachments);
       promptInput.enqueue(nextPrompt, nextAttachments);
+    },
+    stopTask: async (taskId: string) => {
+      if (runnerClosed || promptInput.isClosed() || !activeQuery) {
+        throw new Error("Runner is not ready for task control.");
+      }
+      await activeQuery.stopTask(taskId);
     },
     isClosed: () => runnerClosed || promptInput.isClosed(),
   };
@@ -2725,8 +2738,14 @@ function buildEffortLevel(reasoningMode?: RuntimeOverrides["reasoningMode"]): Ef
 function buildClaudeDynamicWorkflowSettings(
   prompt: string,
   reasoningMode?: RuntimeOverrides["reasoningMode"],
-): { enableWorkflows: true; ultracode?: true } {
-  const wantsDynamicWorkflow = /\/workflows?\b|dynamic\s+workflows?|动态\s*workflow|动态工作流|ultracode|多\s*agent|多智能体|后台编排|并行编排|大规模.*编排/i.test(prompt);
+  workflowMode: RuntimeOverrides["workflowMode"] = "auto",
+): { enableWorkflows?: true; disableWorkflows?: true; ultracode?: true } {
+  if (workflowMode === "off") {
+    return { disableWorkflows: true };
+  }
+
+  const wantsDynamicWorkflow = workflowMode === "force"
+    || isExplicitDynamicWorkflowPrompt(prompt);
   return {
     enableWorkflows: true,
     ...(wantsDynamicWorkflow && reasoningMode === "xhigh" ? { ultracode: true } : {}),

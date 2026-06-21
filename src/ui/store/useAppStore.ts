@@ -5,6 +5,7 @@ import type {
   RuntimePermissionMode,
   RuntimeReasoningMode,
   RuntimeOverrides,
+  RuntimeWorkflowMode,
   SessionHistoryCursor,
   SessionWorkflowCatalog,
   ServerEvent,
@@ -129,6 +130,7 @@ interface AppState {
   runtimeModel: string;
   reasoningMode: RuntimeReasoningMode;
   permissionMode: RuntimePermissionMode;
+  workflowMode: RuntimeWorkflowMode;
   pendingStart: boolean;
   globalError: string | null;
   sessionsLoaded: boolean;
@@ -172,6 +174,7 @@ interface AppState {
   setSessionModel: (sessionId: string | null | undefined, model: string) => void;
   setReasoningMode: (mode: RuntimeReasoningMode) => void;
   setPermissionMode: (mode: RuntimePermissionMode) => void;
+  setWorkflowMode: (workflowMode: RuntimeWorkflowMode) => void;
   setPendingStart: (pending: boolean) => void;
   setGlobalError: (error: string | null) => void;
   setShowStartModal: (show: boolean) => void;
@@ -383,6 +386,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingStart: false,
   globalError: null,
   permissionMode: "bypassPermissions",
+  workflowMode: "auto",
   sessionsLoaded: false,
   showStartModal: false,
   showSettingsModal: false,
@@ -659,6 +663,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   setReasoningMode: (reasoningMode) => set({ reasoningMode }),
   setPermissionMode: (permissionMode) => set({ permissionMode }),
+  setWorkflowMode: (workflowMode) => set({ workflowMode }),
   setPendingStart: (pendingStart) => set({ pendingStart }),
   setGlobalError: (globalError) => set({ globalError }),
   setShowStartModal: (showStartModal) => set({ showStartModal }),

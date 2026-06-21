@@ -20,6 +20,7 @@ export type RuntimeEfficiencyProfile = {
   includeHookEvents: boolean;
   agentProgressSummaries: boolean;
   forwardSubagentText: boolean;
+  enableAgentTeams: boolean;
 };
 
 export type RuntimeEfficiencyProfileState = Omit<RuntimeEfficiencyProfile, "id">;
@@ -85,6 +86,7 @@ const VISUAL_TASK_PATTERN = /<browser_annotations>|browserview|localhost|127\.0\
 const AUTOMATION_TASK_PATTERN = /cron|schedule|scheduled|reminder|monitor|watch|automation|定时|计划任务|提醒|监控|自动化|每(天|周|小时|分钟)/i;
 const IDE_TASK_PATTERN = /intellij|idea|java|jdk|maven|gradle|spring|tomcat|pom\.xml|\.java\b|编译|启动后端|本地运行/i;
 const AGENT_TEAM_TASK_PATTERN = /agent\s*teams?|teammates?|TeamCreate|TeamDelete|SendMessage|CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS|parallel\s+(?:dev|development|work)|team\s+lead|leader|delegate mode|团队协作|队友|跨层并行|并行开发|多人协作/i;
+const EXPLICIT_DYNAMIC_WORKFLOW_PATTERN = /dynamic\s+workflows?|动态\s*workflow|动态工作流|ultracode|多\s*agent|多智能体|后台编排|并行编排|大规模.*编排/i;
 
 type ResolveRuntimeEfficiencyProfileInput = {
   prompt: string;
@@ -106,6 +108,7 @@ export function resolveRuntimeEfficiencyProfile(
       includeHookEvents: true,
       agentProgressSummaries: true,
       forwardSubagentText: true,
+      enableAgentTeams: true,
     });
   }
 
@@ -114,7 +117,10 @@ export function resolveRuntimeEfficiencyProfile(
   const isFigmaTask = FIGMA_URL_PATTERN.test(prompt) || FIGMA_TASK_PATTERN.test(prompt);
   const isVisualTask = hasImageAttachment || isFigmaTask || VISUAL_TASK_PATTERN.test(prompt);
   const visualServers = isFigmaTask ? FIGMA_VISUAL_SERVERS : VISUAL_SERVERS;
-  if (AGENT_TEAM_TASK_PATTERN.test(prompt)) {
+  const wantsAgentTeams = input.runtime?.workflowMode === "force" ||
+    AGENT_TEAM_TASK_PATTERN.test(prompt) ||
+    isExplicitDynamicWorkflowPrompt(prompt);
+  if (wantsAgentTeams) {
     return buildProfile("team", isVisualTask ? visualServers : BASE_SERVERS, {
       includeBrowserPrompt: isVisualTask,
       includeDesignPrompt: isVisualTask,
@@ -123,6 +129,7 @@ export function resolveRuntimeEfficiencyProfile(
       includeHookEvents: true,
       agentProgressSummaries: true,
       forwardSubagentText: true,
+      enableAgentTeams: true,
     });
   }
 
@@ -177,6 +184,7 @@ export function mergeRuntimeEfficiencyProfile(
     includeHookEvents: profile.includeHookEvents || (stickyPromptState && stickyState.includeHookEvents),
     agentProgressSummaries: profile.agentProgressSummaries || (stickyPromptState && stickyState.agentProgressSummaries),
     forwardSubagentText: profile.forwardSubagentText || (stickyPromptState && stickyState.forwardSubagentText),
+    enableAgentTeams: profile.enableAgentTeams,
   };
 }
 
@@ -191,6 +199,7 @@ export function runtimeEfficiencyProfileToState(profile: RuntimeEfficiencyProfil
     includeHookEvents: profile.includeHookEvents,
     agentProgressSummaries: profile.agentProgressSummaries,
     forwardSubagentText: profile.forwardSubagentText,
+    enableAgentTeams: profile.enableAgentTeams,
   };
 }
 
@@ -227,6 +236,7 @@ export function normalizeRuntimeEfficiencyProfileState(value: unknown): RuntimeE
     includeHookEvents: Boolean(value.includeHookEvents),
     agentProgressSummaries: Boolean(value.agentProgressSummaries),
     forwardSubagentText: Boolean(value.forwardSubagentText),
+    enableAgentTeams: Boolean(value.enableAgentTeams),
   };
 }
 
@@ -256,6 +266,10 @@ function shouldCarryStickyPromptState(stickyState: RuntimeEfficiencyProfileState
   return stickyState.includeBrowserPrompt || stickyState.includeDesignPrompt || stickyState.includePartialMessages;
 }
 
+export function isExplicitDynamicWorkflowPrompt(prompt: string): boolean {
+  return EXPLICIT_DYNAMIC_WORKFLOW_PATTERN.test(prompt);
+}
+
 function buildProfile(
   id: RuntimeEfficiencyProfileId,
   builtinMcpServers: readonly BuiltinMcpServerName[],
@@ -274,6 +288,7 @@ function buildProfile(
     includeHookEvents: false,
     agentProgressSummaries: false,
     forwardSubagentText: false,
+    enableAgentTeams: false,
     ...overrides,
   };
 }

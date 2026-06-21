@@ -4,7 +4,10 @@ import {
   buildBuiltinMcpPromptHints,
   type BuiltinMcpServerName,
 } from "../../shared/builtin-mcp-registry.js";
-import { buildClaudeCodeCompatPromptAppend } from "./claude/claude-code-compat-registry.js";
+import {
+  buildClaudeCodeCompatPromptAppend,
+  type ClaudeCodeCompatPromptAppendOptions,
+} from "./claude/claude-code-compat-registry.js";
 
 const FEISHU_DOC_URL_PATTERN = /https?:\/\/[^\s<>"'`]*feishu\.cn\/(?:wiki|docx|docs)\/[^\s<>"'`]*/gi;
 const FEISHU_DOC_URL_TRAILING_PUNCTUATION = /[),.;，。；、]+$/;
@@ -125,12 +128,16 @@ export function buildBuiltinMcpRegistryPromptAppend(enabledServerNames?: readonl
   return buildBuiltinMcpPromptHints(enabledServerNames);
 }
 
-export function buildClaudeCodeCompatFeaturePromptAppend(): string {
-  return buildClaudeCodeCompatPromptAppend();
+export function buildClaudeCodeCompatFeaturePromptAppend(
+  options?: ClaudeCodeCompatPromptAppendOptions,
+): string {
+  return buildClaudeCodeCompatPromptAppend(options);
 }
 
-export function buildClaudeCode2139FeaturePromptAppend(): string {
-  return buildClaudeCodeCompatFeaturePromptAppend();
+export function buildClaudeCode2139FeaturePromptAppend(
+  options?: ClaudeCodeCompatPromptAppendOptions,
+): string {
+  return buildClaudeCodeCompatFeaturePromptAppend(options);
 }
 
 export function buildDesignParityPromptAppend(): string {

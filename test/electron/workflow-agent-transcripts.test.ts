@@ -331,6 +331,26 @@ describe("workflow agent transcripts", () => {
     assert.equal(buildWorkflowAgentSummaries(messages, "completed")[0]?.status, "completed");
   });
 
+  it("marks implicit running tasks stopped when the parent session is idle", () => {
+    const agents = buildWorkflowAgentSummaries([
+      {
+        type: "system",
+        subtype: "task_started",
+        task_id: "research-loop",
+        tool_use_id: "tool-research-loop",
+        description: "Research canvas libraries",
+      } as never,
+      {
+        type: "system",
+        subtype: "task_progress",
+        task_id: "research-loop",
+        summary: "Still checking package metadata",
+      } as never,
+    ], "idle");
+
+    assert.equal(agents[0]?.status, "killed");
+  });
+
   it("marks implicit running tasks failed when the parent session errors", () => {
     const agents = buildWorkflowAgentSummaries([
       {

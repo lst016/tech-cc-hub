@@ -18,7 +18,7 @@ test("browser prompt encourages fetch log capture for API evidence", () => {
   assert.match(prompt, /fetch\/XHR capture/);
   assert.match(prompt, /browser_get_state/);
   assert.match(prompt, /Authenticated URL rule/);
-  assert.match(prompt, /Teambition\/Feishu\/Lark/);
+  assert.match(prompt, /task\/doc systems/);
   assert.match(prompt, /Do not use WebFetch first/);
   assert.match(prompt, /WebFetch fallback rule/);
   assert.match(prompt, /redirect to another host/);
@@ -50,6 +50,15 @@ test("Claude Code compatibility prompt includes Agent Teams guidance", () => {
   assert.match(prompt, /TeamCreate/);
   assert.match(prompt, /SendMessage/);
   assert.match(prompt, /TeamDelete/);
+});
+
+test("Claude Code compatibility prompt can omit Agent Teams guidance when disabled", () => {
+  const prompt = buildClaudeCodeCompatFeaturePromptAppend({ includeAgentTeamsHint: false });
+
+  assert.doesNotMatch(prompt, /CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1/);
+  assert.doesNotMatch(prompt, /TeamCreate/);
+  assert.doesNotMatch(prompt, /SendMessage/);
+  assert.doesNotMatch(prompt, /TeamDelete/);
 });
 
 test("Claude Code compatibility prompt makes /code-review split oversized code", () => {
