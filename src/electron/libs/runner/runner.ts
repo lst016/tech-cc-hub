@@ -469,7 +469,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   let requestedModelForError: string | undefined;
   let emittedSuccessfulResult = false;
   let emittedTerminalStatus = false;
-  let observedAssistantActivity = false;
+  let observedAssistantTextActivity = false;
   let emptySuccessAutoRetries = 0;
   let figmaRestAuthFailureSeen = false;
   let figmaImplementationAnchorSeen = false;
@@ -743,7 +743,6 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       const env = buildEnvForConfig(config, effectiveModel);
       const globalRuntimeConfig = getGlobalRuntimeConfig();
       const thinking = buildThinkingConfig(runtime?.reasoningMode);
-      const effort = buildEffortLevel(runtime?.reasoningMode);
       const projectCwd = session.cwd && existsSync(session.cwd) ? session.cwd : undefined;
       latestProjectCwd = projectCwd;
       const resolvedCwd = projectCwd ?? DEFAULT_CWD;
@@ -755,6 +754,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         ...getEnhancedEnv(),
         ...env,
       }, runtimeProfile.enableAgentTeams);
+      const effort = buildEffortLevel(runtime?.reasoningMode, mergedEnv);
       let syncedGlobalRuntimeConfig = persistDiscoveredRuntimeConfig(globalRuntimeConfig, mergedEnv);
       latestGlobalRuntimeConfig = syncedGlobalRuntimeConfig;
       const agentContext = resolveAgentRuntimeContext({
@@ -1031,8 +1031,8 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
 
       for await (const rawMessage of q) {
         const message = normalizeKnownToolInputsInMessage(rawMessage);
-        if (hasAssistantActivity(message)) {
-          observedAssistantActivity = true;
+        if (hasAssistantTextActivity(message)) {
+          observedAssistantTextActivity = true;
         }
         recordToolUseNamesFromMessage(message, toolUseNamesById);
         if (message.type === "system" && "subtype" in message && message.subtype === "init") {
@@ -1044,10 +1044,10 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         }
 
         if (message.type === "result") {
-          const emptySuccess = isEmptySuccessfulRunnerResult(message, observedAssistantActivity);
+          const emptySuccess = isEmptySuccessfulRunnerResult(message, observedAssistantTextActivity);
           if (emptySuccess && emptySuccessAutoRetries < MAX_EMPTY_SUCCESS_AUTO_RETRIES) {
             emptySuccessAutoRetries += 1;
-            observedAssistantActivity = false;
+            observedAssistantTextActivity = false;
             console.warn("[runner][empty-success-auto-retry]", {
               sessionId: session.id,
               retry: emptySuccessAutoRetries,
@@ -1066,7 +1066,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               status,
               title: session.title,
               error: emptySuccess
-                ? "Runner returned an empty success without assistant output or tool calls."
+                ? "Runner returned an empty success without assistant text output."
                 : undefined,
             },
           });
@@ -1088,10 +1088,18 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         }
       }
 
-      if (!emittedTerminalStatus && session.status === "running") {
+      if (!emittedTerminalStatus && !runnerClosed) {
+        const errorMessage = "Runner ended without a result message.";
+        onEvent({
+          type: "runner.error",
+          payload: {
+            sessionId: session.id,
+            message: errorMessage,
+          },
+        });
         onEvent({
           type: "session.status",
-          payload: { sessionId: session.id, status: "completed", title: session.title },
+          payload: { sessionId: session.id, status: "error", title: session.title, error: errorMessage },
         });
       }
       activeQuery = null;
@@ -1160,6 +1168,8 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       figmaContextSeen = figmaContextSeen || hasFigmaContext(currentDisplayPrompt, session.lastPrompt);
       figmaSvgAssetSeen = false;
       codeGraphRetrievalSeen = false;
+      observedAssistantTextActivity = false;
+      emptySuccessAutoRetries = 0;
       await ensureMcpServersForPrompt(nextPrompt, nextAttachments);
       promptInput.enqueue(nextPrompt, nextAttachments);
     },
@@ -2727,12 +2737,40 @@ function buildThinkingConfig(reasoningMode?: RuntimeOverrides["reasoningMode"]):
   return { type: "adaptive" };
 }
 
-function buildEffortLevel(reasoningMode?: RuntimeOverrides["reasoningMode"]): EffortLevel | undefined {
+function buildEffortLevel(
+  reasoningMode?: RuntimeOverrides["reasoningMode"],
+  env?: Record<string, string | undefined>,
+): EffortLevel | undefined {
   if (!reasoningMode || reasoningMode === "disabled") {
     return undefined;
   }
 
+  if (reasoningMode === "xhigh" && isBedrockRuntimeEnv(env)) {
+    return "max";
+  }
+
   return reasoningMode;
+}
+
+function isBedrockRuntimeEnv(env?: Record<string, string | undefined>): boolean {
+  if (!env) {
+    return false;
+  }
+
+  if (isTruthyEnvValue(env.CLAUDE_CODE_USE_BEDROCK)) {
+    return true;
+  }
+
+  const model = env.ANTHROPIC_MODEL ?? env.ANTHROPIC_DEFAULT_MODEL ?? "";
+  return /^(?:[a-z0-9-]+\.)?anthropic\.claude-/i.test(model);
+}
+
+function isTruthyEnvValue(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+
+  return /^(?:1|true|yes|on)$/i.test(value.trim());
 }
 
 function buildClaudeDynamicWorkflowSettings(
@@ -2771,7 +2809,7 @@ function createPromptMessage(prompt: string, attachments: PromptAttachment[]): S
   };
 }
 
-function hasAssistantActivity(message: SDKMessage): boolean {
+function hasAssistantTextActivity(message: SDKMessage): boolean {
   if (message.type !== "assistant") return false;
   const content = Array.isArray(message.message.content)
     ? message.message.content
@@ -2785,7 +2823,7 @@ function hasAssistantActivity(message: SDKMessage): boolean {
       const text = "text" in item ? item.text : undefined;
       return typeof text === "string" && text.trim().length > 0;
     }
-    return type === "tool_use";
+    return false;
   });
 }
 

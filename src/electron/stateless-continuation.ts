@@ -256,6 +256,23 @@ function shouldCompressHistory(
   return thresholdTokens > 0 && estimatedTokens >= thresholdTokens;
 }
 
+export function shouldCompressStatelessContinuation(
+  messages: StreamMessage[],
+  latestPrompt: string,
+  latestAttachments: PromptAttachment[] = [],
+  options: StatelessContinuationOptions = {},
+): boolean {
+  const dedupedHistory = dedupeHistory(messages);
+  const fullHistoryText = formatHistory(dedupedHistory);
+  const latestAttachmentSummary = summarizeAttachments(latestAttachments);
+  const latestAttachmentTokens = estimateAttachmentTokens(latestAttachments);
+  const latestMessageText = latestPrompt.trim() || "[attachments only]";
+  const fullEstimatedTokens =
+    estimatePromptTokens([fullHistoryText, latestMessageText, latestAttachmentSummary]) + latestAttachmentTokens;
+
+  return shouldCompressHistory(fullEstimatedTokens, options);
+}
+
 export function buildStatelessContinuationPayload(
   messages: StreamMessage[],
   latestPrompt: string,
@@ -268,21 +285,20 @@ export function buildStatelessContinuationPayload(
   const latestAttachmentSummary = summarizeAttachments(latestAttachments);
   const latestAttachmentTokens = estimateAttachmentTokens(latestAttachments);
   const latestMessageText = latestPrompt.trim() || "[attachments only]";
-  const rawRecentHistory = dedupedHistory.slice(-Math.max(DEFAULT_RECENT_ENTRY_LIMIT, recentEntryCount));
-  const rawHistoryText = formatHistory(rawRecentHistory);
-  const rawEstimatedTokens =
-    estimatePromptTokens([rawHistoryText, latestMessageText, latestAttachmentSummary]) + latestAttachmentTokens;
+  const fullHistoryText = formatHistory(dedupedHistory);
+  const fullEstimatedTokens =
+    estimatePromptTokens([fullHistoryText, latestMessageText, latestAttachmentSummary]) + latestAttachmentTokens;
 
-  if (!shouldCompressHistory(rawEstimatedTokens, options)) {
+  if (!shouldCompressHistory(fullEstimatedTokens, options)) {
     return {
       prompt: buildContinuationPrompt({
-        recentHistoryText: rawHistoryText,
+        recentHistoryText: fullHistoryText,
         latestMessageText,
         latestAttachmentSummary,
       }),
       usedCompression: false,
       summaryMessageCount: 0,
-      estimatedTokens: rawEstimatedTokens,
+      estimatedTokens: fullEstimatedTokens,
     };
   }
 

@@ -4,10 +4,10 @@ export function isSuccessfulRunnerResult(message: { type?: unknown; subtype?: un
 
 export function isEmptySuccessfulRunnerResult(
   message: { type?: unknown; subtype?: unknown; result?: unknown },
-  hasAssistantActivity: boolean,
+  hasAssistantTextActivity: boolean,
 ): boolean {
   return isSuccessfulRunnerResult(message) &&
-    !hasAssistantActivity &&
+    !hasAssistantTextActivity &&
     typeof message.result === "string" &&
     message.result.trim().length === 0;
 }

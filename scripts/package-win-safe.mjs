@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -50,7 +50,7 @@ function cleanOldArtifacts() {
       }
       if (
         /^tech-cc-hub(?!-ui\b)/i.test(file) &&
-        (file.endsWith(".exe") || file.endsWith(".zip"))
+        (file.endsWith(".exe") || file.endsWith(".zip") || file.endsWith(".blockmap"))
       ) {
         try {
           rmSync(path.join(distDir, file), { force: true });
@@ -67,6 +67,56 @@ function findExeArtifact() {
   const candidates = readdirSync(distDir).filter((f) => f.endsWith(".exe"));
   const matched = candidates.find((f) => /^tech-cc-hub/i.test(f));
   return matched ? path.join(distDir, matched) : null;
+}
+
+function readLatestInstallerName() {
+  const latestPath = path.join(distDir, "latest.yml");
+  if (!existsSync(latestPath)) return null;
+  const latestContent = readFileSync(latestPath, "utf8");
+  const pathMatch = latestContent.match(/^path:\s*['"]?(.+?)['"]?\s*$/m);
+  return pathMatch?.[1] ?? null;
+}
+
+function normalizeArtifactName(name) {
+  return name.toLowerCase().replace(/[\s-]+/g, "");
+}
+
+function findSourceInstallerForAlias(aliasName) {
+  if (!existsSync(distDir)) return null;
+  const normalizedAlias = normalizeArtifactName(aliasName);
+  const candidates = readdirSync(distDir)
+    .filter((file) => file.endsWith(".exe"))
+    .filter((file) => !file.includes("__uninstaller"))
+    .filter((file) => !/^tech-cc-hub-win-x64-/i.test(file));
+  const matched = candidates.find((file) => normalizeArtifactName(file) === normalizedAlias)
+    ?? candidates.find((file) => /^tech-cc-hub/i.test(file) && /Setup/i.test(file));
+  return matched ? path.join(distDir, matched) : null;
+}
+
+function ensureUpdaterMetadataAliases() {
+  const latestInstallerName = readLatestInstallerName();
+  if (!latestInstallerName) return;
+
+  const aliasExePath = path.join(distDir, latestInstallerName);
+  const sourceExePath = existsSync(aliasExePath)
+    ? aliasExePath
+    : findSourceInstallerForAlias(latestInstallerName);
+  if (!sourceExePath || !existsSync(sourceExePath)) {
+    log(`warning: latest.yml points to ${latestInstallerName}, but no matching installer was found`);
+    return;
+  }
+
+  if (sourceExePath !== aliasExePath) {
+    copyFileSync(sourceExePath, aliasExePath);
+    log(`created updater installer alias: ${path.relative(cwd, aliasExePath)}`);
+  }
+
+  const sourceBlockmapPath = `${sourceExePath}.blockmap`;
+  const aliasBlockmapPath = `${aliasExePath}.blockmap`;
+  if (existsSync(sourceBlockmapPath) && sourceBlockmapPath !== aliasBlockmapPath) {
+    copyFileSync(sourceBlockmapPath, aliasBlockmapPath);
+    log(`created updater blockmap alias: ${path.relative(cwd, aliasBlockmapPath)}`);
+  }
 }
 
 function hasUnpackedArtifact() {
@@ -187,6 +237,7 @@ async function main() {
   }
 
   createStableOutputs();
+  ensureUpdaterMetadataAliases();
   log("packaging done.");
 }
 

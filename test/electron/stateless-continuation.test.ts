@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildStatelessContinuationPrompt } from "../../src/electron/stateless-continuation.js";
+import {
+  buildStatelessContinuationPrompt,
+  shouldCompressStatelessContinuation,
+} from "../../src/electron/stateless-continuation.js";
 
 test("buildStatelessContinuationPrompt marks image attachments on the latest turn in stateless mode", () => {
   const prompt = buildStatelessContinuationPrompt(
@@ -140,6 +143,81 @@ test("buildStatelessContinuationPrompt keeps raw history when the model threshol
   assert.doesNotMatch(prompt, /Earlier conversation summary:/);
   assert.match(prompt, /User: Short question/);
   assert.match(prompt, /Assistant: Short answer/);
+});
+
+test("buildStatelessContinuationPrompt keeps all raw history before the model threshold", () => {
+  const messages = Array.from({ length: 10 }, (_, index) => {
+    const round = index + 1;
+    return [
+      {
+        type: "user_prompt" as const,
+        prompt: `Round ${round} question`,
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: `Round ${round} answer`,
+      } as never,
+    ];
+  }).flat();
+
+  const prompt = buildStatelessContinuationPrompt(messages, "Continue", [], {
+    contextWindow: 10_000,
+    compressionThresholdPercent: 80,
+    recentTurnCount: 5,
+  });
+
+  assert.doesNotMatch(prompt, /Earlier conversation summary:/);
+  assert.match(prompt, /User: Round 1 question/);
+  assert.match(prompt, /Assistant: Round 1 answer/);
+  assert.match(prompt, /User: Round 10 question/);
+});
+
+test("buildStatelessContinuationPrompt triggers compression from full history, not only recent turns", () => {
+  const oldLongChunk = "old long context ".repeat(160);
+  const messages = [
+    ...Array.from({ length: 4 }, (_, index) => {
+      const round = index + 1;
+      return [
+        {
+          type: "user_prompt" as const,
+          prompt: `Round ${round} question: ${oldLongChunk}`,
+        },
+        {
+          type: "result",
+          subtype: "success",
+          result: `Round ${round} answer: ${oldLongChunk}`,
+        } as never,
+      ];
+    }).flat(),
+    ...Array.from({ length: 5 }, (_, index) => {
+      const round = index + 5;
+      return [
+        {
+          type: "user_prompt" as const,
+          prompt: `Round ${round} short question`,
+        },
+        {
+          type: "result",
+          subtype: "success",
+          result: `Round ${round} short answer`,
+        } as never,
+      ];
+    }).flat(),
+  ];
+
+  const options = {
+    contextWindow: 4_000,
+    compressionThresholdPercent: 40,
+    recentTurnCount: 5,
+  };
+  const prompt = buildStatelessContinuationPrompt(messages, "Continue", [], options);
+
+  assert.equal(shouldCompressStatelessContinuation(messages, "Continue", [], options), true);
+  assert.match(prompt, /Earlier conversation summary:/);
+  assert.match(prompt, /Round 1 question:/);
+  assert.doesNotMatch(prompt, /User: Round 1 question:/);
+  assert.match(prompt, /User: Round 9 short question/);
 });
 
 test("buildStatelessContinuationPrompt still compresses when the latest five turns alone exceed the threshold", () => {

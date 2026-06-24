@@ -34,9 +34,16 @@ test("task workflow defaults reasoning to xhigh", () => {
 
 test("runner forwards reasoning mode as SDK thinking and effort options", () => {
   assert.match(runnerSource, /const thinking = buildThinkingConfig\(runtime\?\.reasoningMode\);/);
-  assert.match(runnerSource, /const effort = buildEffortLevel\(runtime\?\.reasoningMode\);/);
+  assert.match(runnerSource, /const effort = buildEffortLevel\(runtime\?\.reasoningMode,\s*mergedEnv\);/);
   assert.match(runnerSource, /thinking,\s*\n\s*effort,/);
   assert.match(runnerSource, /return reasoningMode;/);
+});
+
+test("runner maps xhigh effort to max for Bedrock transport", () => {
+  assert.match(runnerSource, /reasoningMode === "xhigh" && isBedrockRuntimeEnv\(env\)/);
+  assert.match(runnerSource, /return "max";/);
+  assert.match(runnerSource, /env\.CLAUDE_CODE_USE_BEDROCK/);
+  assert.ok(runnerSource.includes('/^(?:[a-z0-9-]+\\.)?anthropic\\.claude-/i.test(model);'));
 });
 
 test("runner enables Claude Code workflows without forcing ultracode for ordinary prompts", () => {

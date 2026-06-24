@@ -25,7 +25,7 @@ import {
   collectWorkflowToolUseNames,
   extractWorkflowRunPatchesFromMessage,
 } from "./libs/workflows/workflow-output-parser.js";
-import { buildStatelessContinuationPayload } from "./stateless-continuation.js";
+import { buildStatelessContinuationPayload, shouldCompressStatelessContinuation } from "./stateless-continuation.js";
 import { ensureManagedCodeGraphSynced } from "./libs/codegraph/managed-codegraph.js";
 import { createSessionCodeGraphAutoSyncScheduler } from "./libs/codegraph/session-codegraph-autosync.js";
 import type { ClientEvent, PromptAttachment, RuntimeOverrides, ServerEvent, StreamMessage } from "./types.js";
@@ -1524,6 +1524,19 @@ export async function handleClientEvent(event: ClientEvent) {
     const selectedModel = resolveApiConfigForModel(requestedModel)?.model ?? requestedModel;
     const previousModel = resolveLatestMessageModel(history?.messages) || session.model || defaultConfig?.model;
     const config = selectedModel ? getApiConfigForModel(selectedModel) ?? defaultConfig : defaultConfig;
+    const modelConfig = config && selectedModel ? getModelConfig(config, selectedModel) : null;
+    const shouldForceStatelessCompression = shouldCompressStatelessContinuation(
+      historyMessagesForRun,
+      isFigmaOAuthCallback ? storagePrompt : agentPrompt,
+      currentAgentAttachments,
+      {
+        contextWindow: modelConfig?.contextWindow,
+        compressionThresholdPercent: modelConfig?.compressionThresholdPercent,
+        recentTurnCount: 5,
+        existingSummary: history?.session.continuationSummary,
+        existingSummaryMessageCount: history?.session.continuationSummaryMessageCount,
+      },
+    );
     const supportsResume = config ? supportsRemoteSessionResume(config) : true;
     const canUseFigmaOAuthCallbackResume = FIGMA_AGENT_OAUTH_BRIDGE_ENABLED && isFigmaOAuthCallback && Boolean(session.claudeSessionId);
     const switchedModel = Boolean(
@@ -1531,8 +1544,11 @@ export async function handleClientEvent(event: ClientEvent) {
       && previousModel
       && selectedModel.trim() !== previousModel.trim(),
     );
-    const canUseRemoteResume = (supportsResume || canUseFigmaOAuthCallbackResume) && !switchedModel && !replacingHistoryId;
-    const modelConfig = config && selectedModel ? getModelConfig(config, selectedModel) : null;
+    const canUseRemoteResume =
+      !shouldForceStatelessCompression
+      && (supportsResume || canUseFigmaOAuthCallbackResume)
+      && !switchedModel
+      && !replacingHistoryId;
     const nextExecutionMode = event.payload.runtime?.executionMode ?? session.executionMode ?? "foreground";
     const nextReasoningMode = event.payload.runtime?.reasoningMode ?? session.reasoningMode;
     const nextPermissionMode = event.payload.runtime?.permissionMode ?? session.permissionMode;
@@ -1550,7 +1566,9 @@ export async function handleClientEvent(event: ClientEvent) {
       prompt: agentPrompt,
       attachments: currentAgentAttachments,
     });
-    const reusableHandle = isFigmaOAuthCallback || replacingHistoryId ? null : getReusableRunnerHandle(session.id, warmReuseKey);
+    const reusableHandle = isFigmaOAuthCallback || replacingHistoryId || shouldForceStatelessCompression
+      ? null
+      : getReusableRunnerHandle(session.id, warmReuseKey);
     if (reusableHandle) {
       store.updateSession(session.id, {
         status: "running",
@@ -1687,7 +1705,7 @@ export async function handleClientEvent(event: ClientEvent) {
           prompt: storagePrompt,
           attachments: attachmentsForRun,
           session,
-          historyMessages: canUseRemoteResume ? historyMessagesForRun : [],
+          historyMessages: canUseRemoteResume || !continuationPayload?.usedCompression ? historyMessagesForRun : [],
           model: selectedModel,
           continuationSummary: continuationPayload?.summaryText,
         }),

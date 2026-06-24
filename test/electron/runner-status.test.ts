@@ -16,7 +16,7 @@ test("successful runner result is the only terminal state that suppresses late r
   assert.equal(shouldSuppressRunnerErrorAfterSuccessfulResult(false), false);
 });
 
-test("empty success without assistant activity is not treated as real work", () => {
+test("empty success without assistant text is not treated as real work", () => {
   assert.equal(
     isEmptySuccessfulRunnerResult({ type: "result", subtype: "success", result: "" }, false),
     true,
