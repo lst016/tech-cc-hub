@@ -1,1 +1,24 @@
-aW1wb3J0IHRlc3QgZnJvbSAibm9kZTp0ZXN0IjsNCmltcG9ydCBhc3NlcnQgZnJvbSAibm9kZTphc3NlcnQvc3RyaWN0IjsNCmltcG9ydCB7IHJlYWRGaWxlU3luYyB9IGZyb20gIm5vZGU6ZnMiOw0KDQpjb25zdCBydW5uZXJTb3VyY2UgPSByZWFkRmlsZVN5bmMoInNyYy9lbGVjdHJvbi9saWJzL3J1bm5lci9ydW5uZXIudHMiLCAidXRmOCIpOw0KDQp0ZXN0KCJydW5uZXIgdHJlYXRzIG9ubHkgdmlzaWJsZSBhc3Npc3RhbnQgdGV4dCBhcyBlbXB0eS1zdWNjZXNzIGFjdGl2aXR5IiwgKCkgPT4gew0KICBhc3NlcnQubWF0Y2gocnVubmVyU291cmNlLCAvbGV0IG9ic2VydmVkQXNzaXN0YW50VGV4dEFjdGl2aXR5ID0gZmFsc2U7Lyk7DQogIGFzc2VydC5tYXRjaChydW5uZXJTb3VyY2UsIC9pZiBcKGhhc0Fzc2lzdGFudFRleHRBY3Rpdml0eVwobWVzc2FnZVwpXCkgXHtccypvYnNlcnZlZEFzc2lzdGFudFRleHRBY3Rpdml0eSA9IHRydWU7Lyk7DQogIGFzc2VydC5tYXRjaChydW5uZXJTb3VyY2UsIC9pc0VtcHR5U3VjY2Vzc2Z1bFJ1bm5lclJlc3VsdFwobWVzc2FnZSwgb2JzZXJ2ZWRBc3Npc3RhbnRUZXh0QWN0aXZpdHlcKS8pOw0KICBhc3NlcnQubWF0Y2gocnVubmVyU291cmNlLCAvZnVuY3Rpb24gaGFzQXNzaXN0YW50VGV4dEFjdGl2aXR5XChtZXNzYWdlOiBTREtNZXNzYWdlXCk6IGJvb2xlYW4vKTsNCiAgYXNzZXJ0Lm1hdGNoKHJ1bm5lclNvdXJjZSwgL3JldHVybiBmYWxzZTtccypcfVwpO1xzKlx9Lyk7DQogIGFzc2VydC5kb2VzTm90TWF0Y2gocnVubmVyU291cmNlLCAvcmV0dXJuIHR5cGUgPT09ICJ0b29sX3VzZSI7Lyk7DQp9KTsNCg0KdGVzdCgicnVubmVyIHJlc2V0cyBlbXB0eS1zdWNjZXNzIHRyYWNraW5nIGZvciBlYWNoIHdhcm0gYXBwZW5kZWQgcHJvbXB0IiwgKCkgPT4gew0KICBhc3NlcnQubWF0Y2gocnVubmVyU291cmNlLCAvb2JzZXJ2ZWRBc3Npc3RhbnRUZXh0QWN0aXZpdHkgPSBmYWxzZTtccyplbXB0eVN1Y2Nlc3NBdXRvUmV0cmllcyA9IDA7XHMqYXdhaXQgZW5zdXJlTWNwU2VydmVyc0ZvclByb21wdC8pOw0KfSk7DQoNCnRlc3QoInJ1bm5lciByZXBvcnRzIGEgbWlzc2luZyB0ZXJtaW5hbCByZXN1bHQgaW5zdGVhZCBvZiBzaWxlbnRseSBjb21wbGV0aW5nIiwgKCkgPT4gew0KICBhc3NlcnQubWF0Y2gocnVubmVyU291cmNlLCAvY29uc3QgZXJyb3JNZXNzYWdlID0gIlJ1bm5lciBlbmRlZCB3aXRob3V0IGEgcmVzdWx0IG1lc3NhZ2VcLiI7Lyk7DQogIGFzc2VydC5tYXRjaChydW5uZXJTb3VyY2UsIC90eXBlOiAicnVubmVyXC5lcnJvciIvKTsNCiAgYXNzZXJ0Lm1hdGNoKHJ1bm5lclNvdXJjZSwgL3N0YXR1czogImVycm9yIiwgdGl0bGU6IHNlc3Npb25cLnRpdGxlLCBlcnJvcjogZXJyb3JNZXNzYWdlLyk7DQp9KTsNCg==
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+const runnerSource = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
+
+test("runner treats only visible assistant text as empty-success activity", () => {
+  assert.match(runnerSource, /let observedAssistantTextActivity = false;/);
+  assert.match(runnerSource, /if \(hasAssistantTextActivity\(message\)\) \{\s*observedAssistantTextActivity = true;/);
+  assert.match(runnerSource, /isEmptySuccessfulRunnerResult\(message, observedAssistantTextActivity\)/);
+  assert.match(runnerSource, /function hasAssistantTextActivity\(message: SDKMessage\): boolean/);
+  assert.match(runnerSource, /return false;\s*\}\);\s*\}/);
+  assert.doesNotMatch(runnerSource, /return type === "tool_use";/);
+});
+
+test("runner resets empty-success tracking for each warm appended prompt", () => {
+  assert.match(runnerSource, /observedAssistantTextActivity = false;\s*emptySuccessAutoRetries = 0;\s*await ensureMcpServersForPrompt/);
+});
+
+test("runner reports a missing terminal result instead of silently completing", () => {
+  assert.match(runnerSource, /const errorMessage = "Runner ended without a result message\.";/);
+  assert.match(runnerSource, /type: "runner\.error"/);
+  assert.match(runnerSource, /status: "error", title: session\.title, error: errorMessage/);
+});

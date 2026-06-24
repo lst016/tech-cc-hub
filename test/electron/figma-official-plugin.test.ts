@@ -1,1 +1,247 @@
-aW1wb3J0IGFzc2VydCBmcm9tICJub2RlOmFzc2VydC9zdHJpY3QiOw0KaW1wb3J0IHsgcmVhZEZpbGVTeW5jIH0gZnJvbSAibm9kZTpmcyI7DQppbXBvcnQgdGVzdCBmcm9tICJub2RlOnRlc3QiOw0KDQppbXBvcnQgew0KICBidWlsZEZpZ21hRGVza3RvcE1jcENvbmZpZywNCiAgYnVpbGRGaWdtYU9mZmljaWFsTWNwQ29uZmlnLA0KICBidWlsZEZpZ21hT2ZmaWNpYWxQbHVnaW5Db25maWcsDQogIGJ1aWxkTmV4dEZpZ21hT2ZmaWNpYWxDb2RleEF1dGhSdW50aW1lQ29uZmlnLA0KICBidWlsZE5leHRGaWdtYU9mZmljaWFsRGVza3RvcFJ1bnRpbWVDb25maWcsDQogIGJ1aWxkTmV4dEZpZ21hT2ZmaWNpYWxBdXRoU3RhdGVSdW50aW1lQ29uZmlnLA0KICBidWlsZE5leHRGaWdtYU9mZmljaWFsUnVudGltZUNvbmZpZywNCiAgZ2V0RmlnbWFPZmZpY2lhbFBsdWdpblN0YXR1c0Zyb21Db25maWcsDQogIGlzRmlnbWFNY3BPQXV0aENhbGxiYWNrUHJvbXB0LA0KICBwYXJzZUZpZ21hQ29kZXhPQXV0aENyZWRlbnRpYWxTdG9yZSwNCiAgcmVkYWN0RmlnbWFNY3BPQXV0aENhbGxiYWNrUHJvbXB0LA0KICBzaG91bGRQcmVzZXJ2ZVJlYWR5RmlnbWFPZmZpY2lhbENvbmZpZ0FmdGVyQ29kZXhFcnJvciwNCn0gZnJvbSAiLi4vLi4vc3JjL2VsZWN0cm9uL2xpYnMvZmlnbWEtb2ZmaWNpYWwtcGx1Z2luLmpzIjsNCg0KdGVzdCgiYnVpbGRzIG9mZmljaWFsIEZpZ21hIHJlbW90ZSBNQ1AgY29uZmlnIiwgKCkgPT4gew0KICBhc3NlcnQuZGVlcEVxdWFsKGJ1aWxkRmlnbWFPZmZpY2lhbE1jcENvbmZpZygpLCB7DQogICAgdHlwZTogImh0dHAiLA0KICAgIHVybDogImh0dHBzOi8vbWNwLmZpZ21hLmNvbS9tY3AiLA0KICAgIGVuYWJsZWQ6IHRydWUsDQogIH0pOw0KDQogIGFzc2VydC5kZWVwRXF1YWwoYnVpbGRGaWdtYU9mZmljaWFsTWNwQ29uZmlnKCJmaWdtYS10b2tlbiIpLCB7DQogICAgdHlwZTogImh0dHAiLA0KICAgIHVybDogImh0dHBzOi8vbWNwLmZpZ21hLmNvbS9tY3AiLA0KICAgIGVuYWJsZWQ6IHRydWUsDQogICAgaGVhZGVyczogew0KICAgICAgQXV0aG9yaXphdGlvbjogIkJlYXJlciBmaWdtYS10b2tlbiIsDQogICAgfSwNCiAgfSk7DQp9KTsNCg0KdGVzdCgiYnVpbGRzIG9mZmljaWFsIEZpZ21hIGRlc2t0b3AgTUNQIGNvbmZpZyIsICgpID0+IHsNCiAgYXNzZXJ0LmRlZXBFcXVhbChidWlsZEZpZ21hRGVza3RvcE1jcENvbmZpZygpLCB7DQogICAgdHlwZTogImh0dHAiLA0KICAgIHVybDogImh0dHA6Ly8xMjcuMC4wLjE6Mzg0NS9tY3AiLA0KICAgIGVuYWJsZWQ6IHRydWUsDQogIH0pOw0KfSk7DQoNCnRlc3QoInByZXNlcnZlcyB1bnJlbGF0ZWQgcnVudGltZSBjb25maWcgd2hlbiBhZGRpbmcgRmlnbWEiLCAoKSA9PiB7DQogIGNvbnN0IG5leHQgPSBidWlsZE5leHRGaWdtYU9mZmljaWFsUnVudGltZUNvbmZpZyh7DQogICAgcGx1Z2luczogeyAib3Blbi1jb21wdXRlci11c2UiOiB7IGlkOiAib3Blbi1jb21wdXRlci11c2UiIH0gfSwNCiAgICBtY3BTZXJ2ZXJzOiB7ICJvcGVuLWNvbXB1dGVyLXVzZSI6IHsgdHlwZTogInN0ZGlvIiwgY29tbWFuZDogIm9wZW4tY29tcHV0ZXItdXNlIiB9IH0sDQogICAgb3RoZXI6IHRydWUsDQogIH0sIDEwMDApOw0KDQogIGFzc2VydC5lcXVhbCgobmV4dC5wbHVnaW5zIGFzIFJlY29yZDxzdHJpbmcsIHVua25vd24+KVsib3Blbi1jb21wdXRlci11c2UiXSAhPSBudWxsLCB0cnVlKTsNCiAgYXNzZXJ0LmVxdWFsKChuZXh0Lm1jcFNlcnZlcnMgYXMgUmVjb3JkPHN0cmluZywgdW5rbm93bj4pWyJvcGVuLWNvbXB1dGVyLXVzZSJdICE9IG51bGwsIHRydWUpOw0KICBhc3NlcnQuZXF1YWwobmV4dC5vdGhlciwgdHJ1ZSk7DQogIGFzc2VydC5kZWVwRXF1YWwoKG5leHQubWNwU2VydmVycyBhcyBSZWNvcmQ8c3RyaW5nLCB1bmtub3duPikuZmlnbWEsIGJ1aWxkRmlnbWFPZmZpY2lhbE1jcENvbmZpZygpKTsNCn0pOw0KDQp0ZXN0KCJkZXRlY3RzIG1pc3NpbmcsIGNvbmZpZ3VyZWQsIGFuZCBtaXNjb25maWd1cmVkIEZpZ21hIHBsdWdpbiBzdGF0dXMiLCAoKSA9PiB7DQogIGFzc2VydC5lcXVhbChnZXRGaWdtYU9mZmljaWFsUGx1Z2luU3RhdHVzRnJvbUNvbmZpZyh7fSkuc3RhdHVzLCAibm90LWNvbmZpZ3VyZWQiKTsNCg0KICBjb25zdCBjb25maWd1cmVkID0gew0KICAgIHBsdWdpbnM6IHsgImZpZ21hLW9mZmljaWFsIjogYnVpbGRGaWdtYU9mZmljaWFsUGx1Z2luQ29uZmlnKDEwMDApIH0sDQogICAgbWNwU2VydmVyczogeyBmaWdtYTogYnVpbGRGaWdtYU9mZmljaWFsTWNwQ29uZmlnKCkgfSwNCiAgfTsNCiAgYXNzZXJ0LmVxdWFsKGdldEZpZ21hT2ZmaWNpYWxQbHVnaW5TdGF0dXNGcm9tQ29uZmlnKGNvbmZpZ3VyZWQpLnN0YXR1cywgImNvbmZpZ3VyZWQiKTsNCg0KICBjb25zdCBtaXNjb25maWd1cmVkID0gew0KICAgIHBsdWdpbnM6IHsgImZpZ21hLW9mZmljaWFsIjogYnVpbGRGaWdtYU9mZmljaWFsUGx1Z2luQ29uZmlnKDEwMDApIH0sDQogICAgbWNwU2VydmVyczogeyBmaWdtYTogeyB0eXBlOiAic3RkaW8iLCBjb21tYW5kOiAiZmlnbWEiIH0gfSwNCiAgfTsNCiAgYXNzZXJ0LmVxdWFsKGdldEZpZ21hT2ZmaWNpYWxQbHVnaW5TdGF0dXNGcm9tQ29uZmlnKG1pc2NvbmZpZ3VyZWQpLnN0YXR1cywgIm1pc2NvbmZpZ3VyZWQiKTsNCn0pOw0KDQp0ZXN0KCJjYW4gc3dpdGNoIEZpZ21hIHBsdWdpbiB0byBkZXNrdG9wIE1DUCBtb2RlIiwgKCkgPT4gew0KICBjb25zdCBuZXh0ID0gYnVpbGROZXh0RmlnbWFPZmZpY2lhbERlc2t0b3BSdW50aW1lQ29uZmlnKHsNCiAgICBwbHVnaW5zOiB7ICJvcGVuLWNvbXB1dGVyLXVzZSI6IHsgaWQ6ICJvcGVuLWNvbXB1dGVyLXVzZSIgfSB9LA0KICAgIG1jcFNlcnZlcnM6IHsgIm9wZW4tY29tcHV0ZXItdXNlIjogeyB0eXBlOiAic3RkaW8iLCBjb21tYW5kOiAib3Blbi1jb21wdXRlci11c2UiIH0gfSwNCiAgfSwgew0KICAgIGF2YWlsYWJsZTogdHJ1ZSwNCiAgICBub3c6IDMwMDAsDQogIH0pOw0KDQogIGNvbnN0IGZpZ21hUGx1Z2luID0gKG5leHQucGx1Z2lucyBhcyBSZWNvcmQ8c3RyaW5nLCBSZWNvcmQ8c3RyaW5nLCB1bmtub3duPj4pWyJmaWdtYS1vZmZpY2lhbCJdOw0KICBhc3NlcnQuZXF1YWwoZmlnbWFQbHVnaW4ubW9kZSwgImRlc2t0b3AiKTsNCiAgYXNzZXJ0LmVxdWFsKGZpZ21hUGx1Z2luLmNvbm5lY3RlZCwgdHJ1ZSk7DQogIGFzc2VydC5lcXVhbChmaWdtYVBsdWdpbi5hdXRoU3RhdHVzLCAicmVhZHkiKTsNCiAgYXNzZXJ0LmRlZXBFcXVhbCgobmV4dC5tY3BTZXJ2ZXJzIGFzIFJlY29yZDxzdHJpbmcsIHVua25vd24+KS5maWdtYSwgYnVpbGRGaWdtYURlc2t0b3BNY3BDb25maWcoKSk7DQoNCiAgY29uc3Qgc3RhdHVzID0gZ2V0RmlnbWFPZmZpY2lhbFBsdWdpblN0YXR1c0Zyb21Db25maWcobmV4dCk7DQogIGFzc2VydC5lcXVhbChzdGF0dXMubW9kZSwgImRlc2t0b3AiKTsNCiAgYXNzZXJ0LmVxdWFsKHN0YXR1cy5zdGF0dXMsICJyZWFkeSIpOw0KICBhc3NlcnQuZXF1YWwoc3RhdHVzLmNvbm5lY3RlZCwgdHJ1ZSk7DQp9KTsNCg0KdGVzdCgibWFya3MgZGVza3RvcCBNQ1AgdW5hdmFpbGFibGUgd2hlbiB0aGUgbG9jYWwgc2VydmVyIGlzIG5vdCBkZXRlY3RlZCIsICgpID0+IHsNCiAgY29uc3QgbmV4dCA9IGJ1aWxkTmV4dEZpZ21hT2ZmaWNpYWxEZXNrdG9wUnVudGltZUNvbmZpZyh7fSwgew0KICAgIGF2YWlsYWJsZTogZmFsc2UsDQogICAgZXJyb3I6ICJjb25uZWN0aW9uIHJlZnVzZWQiLA0KICAgIG5vdzogMzAwMCwNCiAgfSk7DQoNCiAgY29uc3Qgc3RhdHVzID0gZ2V0RmlnbWFPZmZpY2lhbFBsdWdpblN0YXR1c0Zyb21Db25maWcobmV4dCk7DQogIGFzc2VydC5lcXVhbChzdGF0dXMubW9kZSwgImRlc2t0b3AiKTsNCiAgYXNzZXJ0LmVxdWFsKHN0YXR1cy5zdGF0dXMsICJkZXNrdG9wLXVuYXZhaWxhYmxlIik7DQogIGFzc2VydC5lcXVhbChzdGF0dXMuY29ubmVjdGVkLCBmYWxzZSk7DQogIGFzc2VydC5tYXRjaChzdGF0dXMuYXV0aEhpbnQgPz8gIiIsIC9GaWdtYSDmoYzpnaLniYgvKTsNCn0pOw0KDQp0ZXN0KCJkZXRlY3RzIEZpZ21hIGF1dGggZXhwaXJ5IGhpbnRzIHdpdGhvdXQgbWFya2luZyBjb25maWcgYnJva2VuIiwgKCkgPT4gew0KICBjb25zdCBzdGF0dXMgPSBnZXRGaWdtYU9mZmljaWFsUGx1Z2luU3RhdHVzRnJvbUNvbmZpZyh7DQogICAgcGx1Z2luczogew0KICAgICAgImZpZ21hLW9mZmljaWFsIjogew0KICAgICAgICAuLi5idWlsZEZpZ21hT2ZmaWNpYWxQbHVnaW5Db25maWcoMTAwMCksDQogICAgICAgIGF1dGhTdGF0dXM6ICJhdXRoLWV4cGlyZWQiLA0KICAgICAgICBsYXN0QXV0aEVycm9yOiAiNDAxIHVuYXV0aG9yaXplZCB0b2tlbiBleHBpcmVkIiwNCiAgICAgIH0sDQogICAgfSwNCiAgICBtY3BTZXJ2ZXJzOiB7IGZpZ21hOiBidWlsZEZpZ21hT2ZmaWNpYWxNY3BDb25maWcoKSB9LA0KICB9KTsNCg0KICBhc3NlcnQuZXF1YWwoc3RhdHVzLnN0YXR1cywgImF1dGgtZXhwaXJlZCIpOw0KICBhc3NlcnQubWF0Y2goc3RhdHVzLmF1dGhIaW50ID8/ICIiLCAv6YeN5paw5o6I5p2DLyk7DQp9KTsNCg0KdGVzdCgidXBkYXRlcyBGaWdtYSBhdXRoIHN0YXRlIHdpdGhvdXQgZHJvcHBpbmcgTUNQIGNvbmZpZyIsICgpID0+IHsNCiAgY29uc3QgbmV4dCA9IGJ1aWxkTmV4dEZpZ21hT2ZmaWNpYWxBdXRoU3RhdGVSdW50aW1lQ29uZmlnKHsNCiAgICBwbHVnaW5zOiB7ICJvcGVuLWNvbXB1dGVyLXVzZSI6IHsgaWQ6ICJvcGVuLWNvbXB1dGVyLXVzZSIgfSB9LA0KICAgIG1jcFNlcnZlcnM6IHsgIm9wZW4tY29tcHV0ZXItdXNlIjogeyB0eXBlOiAic3RkaW8iLCBjb21tYW5kOiAib3Blbi1jb21wdXRlci11c2UiIH0gfSwNCiAgfSwgInJlYWR5Iiwgew0KICAgIG5vdzogMjAwMCwNCiAgICBvYXV0aDogew0KICAgICAgYWNjZXNzX3Rva2VuOiAiZmlnbWEtYWNjZXNzLXRva2VuIiwNCiAgICAgIHRva2VuX3R5cGU6ICJCZWFyZXIiLA0KICAgICAgZXhwaXJlc19pbjogMzYwMCwNCiAgICAgIGV4cGlyZXNBdDogRGF0ZS5ub3coKSArIDM2MDBfMDAwLA0KICAgIH0sDQogIH0pOw0KDQogIGNvbnN0IGZpZ21hUGx1Z2luID0gKG5leHQucGx1Z2lucyBhcyBSZWNvcmQ8c3RyaW5nLCBSZWNvcmQ8c3RyaW5nLCB1bmtub3duPj4pWyJmaWdtYS1vZmZpY2lhbCJdOw0KICBhc3NlcnQuZXF1YWwoZmlnbWFQbHVnaW4uY29ubmVjdGVkLCB0cnVlKTsNCiAgYXNzZXJ0LmVxdWFsKGZpZ21hUGx1Z2luLmF1dGhTdGF0dXMsICJyZWFkeSIpOw0KICBhc3NlcnQuZGVlcEVxdWFsKChuZXh0Lm1jcFNlcnZlcnMgYXMgUmVjb3JkPHN0cmluZywgdW5rbm93bj4pLmZpZ21hLCBidWlsZEZpZ21hT2ZmaWNpYWxNY3BDb25maWcoImZpZ21hLWFjY2Vzcy10b2tlbiIpKTsNCiAgYXNzZXJ0LmVxdWFsKChuZXh0Lm1jcFNlcnZlcnMgYXMgUmVjb3JkPHN0cmluZywgdW5rbm93bj4pWyJvcGVuLWNvbXB1dGVyLXVzZSJdICE9IG51bGwsIHRydWUpOw0KfSk7DQoNCnRlc3QoInBhcnNlcyBDb2RleCBmaWxlLXN0b3JlIEZpZ21hIE9BdXRoIGNyZWRlbnRpYWxzIiwgKCkgPT4gew0KICBjb25zdCBvYXV0aCA9IHBhcnNlRmlnbWFDb2RleE9BdXRoQ3JlZGVudGlhbFN0b3JlKHsNCiAgICAiZmlnbWF8aGFzaCI6IHsNCiAgICAgIHNlcnZlcl9uYW1lOiAiZmlnbWEiLA0KICAgICAgc2VydmVyX3VybDogImh0dHBzOi8vbWNwLmZpZ21hLmNvbS9tY3AiLA0KICAgICAgY2xpZW50X2lkOiAiY29kZXgtY2xpZW50IiwNCiAgICAgIGFjY2Vzc190b2tlbjogImZpZ21hLWFjY2Vzcy10b2tlbiIsDQogICAgICByZWZyZXNoX3Rva2VuOiAiZmlnbWEtcmVmcmVzaC10b2tlbiIsDQogICAgICBleHBpcmVzX2F0OiAyMDAwLA0KICAgICAgc2NvcGVzOiBbIm1jcDpjb25uZWN0Il0sDQogICAgfSwNCiAgfSk7DQoNCiAgYXNzZXJ0LmRlZXBFcXVhbChvYXV0aCwgew0KICAgIGFjY2Vzc190b2tlbjogImZpZ21hLWFjY2Vzcy10b2tlbiIsDQogICAgdG9rZW5fdHlwZTogIkJlYXJlciIsDQogICAgcmVmcmVzaF90b2tlbjogImZpZ21hLXJlZnJlc2gtdG9rZW4iLA0KICAgIHNjb3BlOiAibWNwOmNvbm5lY3QiLA0KICAgIGV4cGlyZXNBdDogMjAwMCwNCiAgICBwcm92aWRlcjogImNvZGV4IiwNCiAgICBjbGllbnRfaWQ6ICJjb2RleC1jbGllbnQiLA0KICB9KTsNCn0pOw0KDQp0ZXN0KCJ3cml0ZXMgQ29kZXggT0F1dGggY3JlZGVudGlhbHMgaW50byB0aGUgRmlnbWEgcmVtb3RlIE1DUCBjb25maWciLCAoKSA9PiB7DQogIGNvbnN0IG5leHQgPSBidWlsZE5leHRGaWdtYU9mZmljaWFsQ29kZXhBdXRoUnVudGltZUNvbmZpZyh7fSwgew0KICAgIGFjY2Vzc190b2tlbjogImZpZ21hLWFjY2Vzcy10b2tlbiIsDQogICAgdG9rZW5fdHlwZTogIkJlYXJlciIsDQogICAgZXhwaXJlc0F0OiBEYXRlLm5vdygpICsgMzYwMF8wMDAsDQogICAgcHJvdmlkZXI6ICJjb2RleCIsDQogIH0sIDIwMDAsIFsiZ2V0X2Rlc2lnbl9jb250ZXh0IiwgImdldF9zY3JlZW5zaG90IiwgIndob2FtaSJdKTsNCg0KICBjb25zdCBmaWdtYVBsdWdpbiA9IChuZXh0LnBsdWdpbnMgYXMgUmVjb3JkPHN0cmluZywgUmVjb3JkPHN0cmluZywgdW5rbm93bj4+KVsiZmlnbWEtb2ZmaWNpYWwiXTsNCiAgYXNzZXJ0LmVxdWFsKGZpZ21hUGx1Z2luLmNvbm5lY3RlZCwgdHJ1ZSk7DQogIGFzc2VydC5lcXVhbChmaWdtYVBsdWdpbi5hdXRoU3RhdHVzLCAicmVhZHkiKTsNCiAgYXNzZXJ0LmVxdWFsKGZpZ21hUGx1Z2luLmF1dGhQcm92aWRlciwgImNvZGV4Iik7DQogIGFzc2VydC5lcXVhbChmaWdtYVBsdWdpbi50b29sQ291bnQsIDMpOw0KICBhc3NlcnQuZXF1YWwoZmlnbWFQbHVnaW4ubGFzdFRvb2xDaGVja2VkQXQsIDIwMDApOw0KICBhc3NlcnQuZGVlcEVxdWFsKGZpZ21hUGx1Z2luLnRvb2xzLCBbImdldF9kZXNpZ25fY29udGV4dCIsICJnZXRfc2NyZWVuc2hvdCIsICJ3aG9hbWkiXSk7DQogIGFzc2VydC5kZWVwRXF1YWwoZmlnbWFQbHVnaW4uc291cmNlLCB7DQogICAgdHlwZTogImNvZGV4LXN1cHBvcnRlZC1jbGllbnQtb2F1dGgiLA0KICAgIHVybDogImh0dHBzOi8vbWNwLmZpZ21hLmNvbS9tY3AiLA0KICB9KTsNCiAgYXNzZXJ0LmRlZXBFcXVhbCgobmV4dC5tY3BTZXJ2ZXJzIGFzIFJlY29yZDxzdHJpbmcsIHVua25vd24+KS5maWdtYSwgYnVpbGRGaWdtYU9mZmljaWFsTWNwQ29uZmlnKCJmaWdtYS1hY2Nlc3MtdG9rZW4iKSk7DQoNCiAgY29uc3Qgc3RhdHVzID0gZ2V0RmlnbWFPZmZpY2lhbFBsdWdpblN0YXR1c0Zyb21Db25maWcobmV4dCk7DQogIGFzc2VydC5lcXVhbChzdGF0dXMudG9vbENvdW50LCAzKTsNCiAgYXNzZXJ0LmRlZXBFcXVhbChzdGF0dXMudG9vbHMsIFsiZ2V0X2Rlc2lnbl9jb250ZXh0IiwgImdldF9zY3JlZW5zaG90IiwgIndob2FtaSJdKTsNCn0pOw0KDQp0ZXN0KCJwcmVzZXJ2ZXMgcmVhZHkgRmlnbWEgQ29kZXggYXV0aCBjb25maWcgb24gdHJhbnNpZW50IGNvbm5lY3QgZXJyb3JzIiwgKCkgPT4gew0KICBjb25zdCByZWFkeSA9IGJ1aWxkTmV4dEZpZ21hT2ZmaWNpYWxDb2RleEF1dGhSdW50aW1lQ29uZmlnKHt9LCB7DQogICAgYWNjZXNzX3Rva2VuOiAiZmlnbWEtYWNjZXNzLXRva2VuIiwNCiAgICB0b2tlbl90eXBlOiAiQmVhcmVyIiwNCiAgICBleHBpcmVzQXQ6IERhdGUubm93KCkgKyAzNjAwXzAwMCwNCiAgICBwcm92aWRlcjogImNvZGV4IiwNCiAgfSwgMjAwMCwgWyJnZXRfZGVzaWduX2NvbnRleHQiXSk7DQoNCiAgYXNzZXJ0LmVxdWFsKHNob3VsZFByZXNlcnZlUmVhZHlGaWdtYU9mZmljaWFsQ29uZmlnQWZ0ZXJDb2RleEVycm9yKHJlYWR5LCAiZmV0Y2ggZmFpbGVkIiksIHRydWUpOw0KICBhc3NlcnQuZXF1YWwoc2hvdWxkUHJlc2VydmVSZWFkeUZpZ21hT2ZmaWNpYWxDb25maWdBZnRlckNvZGV4RXJyb3IocmVhZHksICJDb2RleCBGaWdtYSBPQXV0aCB0aW1lZCBvdXQiKSwgdHJ1ZSk7DQogIGFzc2VydC5lcXVhbChzaG91bGRQcmVzZXJ2ZVJlYWR5RmlnbWFPZmZpY2lhbENvbmZpZ0FmdGVyQ29kZXhFcnJvcihyZWFkeSwgIjQwMSB1bmF1dGhvcml6ZWQgdG9rZW4gZXhwaXJlZCIpLCBmYWxzZSk7DQp9KTsNCg0KdGVzdCgibWFya3MgRmlnbWEgYXV0aCBleHBpcmVkIHdoZW4gdGhlIHN0b3JlZCB0b2tlbiBpcyBwYXN0IGl0cyBleHBpcnkiLCAoKSA9PiB7DQogIGNvbnN0IHN0YXR1cyA9IGdldEZpZ21hT2ZmaWNpYWxQbHVnaW5TdGF0dXNGcm9tQ29uZmlnKHsNCiAgICBwbHVnaW5zOiB7DQogICAgICAiZmlnbWEtb2ZmaWNpYWwiOiB7DQogICAgICAgIC4uLmJ1aWxkRmlnbWFPZmZpY2lhbFBsdWdpbkNvbmZpZygxMDAwKSwNCiAgICAgICAgY29ubmVjdGVkOiB0cnVlLA0KICAgICAgICBhdXRoU3RhdHVzOiAicmVhZHkiLA0KICAgICAgICBvYXV0aDogew0KICAgICAgICAgIGFjY2Vzc190b2tlbjogImV4cGlyZWQtdG9rZW4iLA0KICAgICAgICAgIGV4cGlyZXNBdDogRGF0ZS5ub3coKSAtIDEwMDAsDQogICAgICAgIH0sDQogICAgICB9LA0KICAgIH0sDQogICAgbWNwU2VydmVyczogeyBmaWdtYTogYnVpbGRGaWdtYU9mZmljaWFsTWNwQ29uZmlnKCJleHBpcmVkLXRva2VuIikgfSwNCiAgfSk7DQoNCiAgYXNzZXJ0LmVxdWFsKHN0YXR1cy5zdGF0dXMsICJhdXRoLWV4cGlyZWQiKTsNCiAgYXNzZXJ0LmVxdWFsKHN0YXR1cy5jb25uZWN0ZWQsIGZhbHNlKTsNCiAgYXNzZXJ0Lm1hdGNoKHN0YXR1cy5hdXRoSGludCA/PyAiIiwgL+mHjeaWsOaOiOadgy8pOw0KfSk7DQoNCnRlc3QoImRldGVjdHMgYW5kIHJlZGFjdHMgRmlnbWEgTUNQIE9BdXRoIGNhbGxiYWNrIHByb21wdHMiLCAoKSA9PiB7DQogIGNvbnN0IGNhbGxiYWNrID0gImh0dHA6Ly9sb2NhbGhvc3Q6NjIwNzUvY2FsbGJhY2s/Y29kZT1zZWNyZXQtY29kZSZzdGF0ZT1zZWNyZXQtc3RhdGUiOw0KDQogIGFzc2VydC5lcXVhbChpc0ZpZ21hTWNwT0F1dGhDYWxsYmFja1Byb21wdChjYWxsYmFjayksIHRydWUpOw0KICBhc3NlcnQuZXF1YWwoaXNGaWdtYU1jcE9BdXRoQ2FsbGJhY2tQcm9tcHQoImh0dHBzOi8vd3d3LmZpZ21hLmNvbS9maWxlL2FiYyIpLCBmYWxzZSk7DQoNCiAgY29uc3QgcmVkYWN0ZWQgPSByZWRhY3RGaWdtYU1jcE9BdXRoQ2FsbGJhY2tQcm9tcHQoYOe7p+e7rSAke2NhbGxiYWNrfWApOw0KICBhc3NlcnQubWF0Y2gocmVkYWN0ZWQsIC9jb2RlPSUzQ3JlZGFjdGVkJTNFLyk7DQogIGFzc2VydC5tYXRjaChyZWRhY3RlZCwgL3N0YXRlPSUzQ3JlZGFjdGVkJTNFLyk7DQogIGFzc2VydC5kb2VzTm90TWF0Y2gocmVkYWN0ZWQsIC9zZWNyZXQtY29kZXxzZWNyZXQtc3RhdGUvKTsNCn0pOw0KDQp0ZXN0KCJrZWVwcyBBZ2VudCBPQXV0aCBjYWxsYmFjayByZXN1bWUgYmVoaW5kIHRoZSBkaXNhYmxlZCBicmlkZ2UgZmxhZyIsICgpID0+IHsNCiAgY29uc3Qgc291cmNlID0gcmVhZEZpbGVTeW5jKCJzcmMvZWxlY3Ryb24vaXBjLWhhbmRsZXJzLnRzIiwgInV0ZjgiKTsNCg0KICBhc3NlcnQubWF0Y2goc291cmNlLCAvY29uc3QgY2FuVXNlRmlnbWFPQXV0aENhbGxiYWNrUmVzdW1lID0gRklHTUFfQUdFTlRfT0FVVEhfQlJJREdFX0VOQUJMRUQgJiYgaXNGaWdtYU9BdXRoQ2FsbGJhY2sgJiYgQm9vbGVhblwoc2Vzc2lvblwuY2xhdWRlU2Vzc2lvbklkXCk7Lyk7DQogIGFzc2VydC5tYXRjaChzb3VyY2UsIC9jb25zdCBjYW5Vc2VSZW1vdGVSZXN1bWUgPVxzKiFzaG91bGRGb3JjZVN0YXRlbGVzc0NvbXByZXNzaW9uXHMqJiZccypcKHN1cHBvcnRzUmVzdW1lIFx8XHwgY2FuVXNlRmlnbWFPQXV0aENhbGxiYWNrUmVzdW1lXCkvKTsNCn0pOw0K
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+import {
+  buildFigmaDesktopMcpConfig,
+  buildFigmaOfficialMcpConfig,
+  buildFigmaOfficialPluginConfig,
+  buildNextFigmaOfficialCodexAuthRuntimeConfig,
+  buildNextFigmaOfficialDesktopRuntimeConfig,
+  buildNextFigmaOfficialAuthStateRuntimeConfig,
+  buildNextFigmaOfficialRuntimeConfig,
+  getFigmaOfficialPluginStatusFromConfig,
+  isFigmaMcpOAuthCallbackPrompt,
+  parseFigmaCodexOAuthCredentialStore,
+  redactFigmaMcpOAuthCallbackPrompt,
+  shouldPreserveReadyFigmaOfficialConfigAfterCodexError,
+} from "../../src/electron/libs/figma-official-plugin.js";
+
+test("builds official Figma remote MCP config", () => {
+  assert.deepEqual(buildFigmaOfficialMcpConfig(), {
+    type: "http",
+    url: "https://mcp.figma.com/mcp",
+    enabled: true,
+  });
+
+  assert.deepEqual(buildFigmaOfficialMcpConfig("figma-token"), {
+    type: "http",
+    url: "https://mcp.figma.com/mcp",
+    enabled: true,
+    headers: {
+      Authorization: "Bearer figma-token",
+    },
+  });
+});
+
+test("builds official Figma desktop MCP config", () => {
+  assert.deepEqual(buildFigmaDesktopMcpConfig(), {
+    type: "http",
+    url: "http://127.0.0.1:3845/mcp",
+    enabled: true,
+  });
+});
+
+test("preserves unrelated runtime config when adding Figma", () => {
+  const next = buildNextFigmaOfficialRuntimeConfig({
+    plugins: { "open-computer-use": { id: "open-computer-use" } },
+    mcpServers: { "open-computer-use": { type: "stdio", command: "open-computer-use" } },
+    other: true,
+  }, 1000);
+
+  assert.equal((next.plugins as Record<string, unknown>)["open-computer-use"] != null, true);
+  assert.equal((next.mcpServers as Record<string, unknown>)["open-computer-use"] != null, true);
+  assert.equal(next.other, true);
+  assert.deepEqual((next.mcpServers as Record<string, unknown>).figma, buildFigmaOfficialMcpConfig());
+});
+
+test("detects missing, configured, and misconfigured Figma plugin status", () => {
+  assert.equal(getFigmaOfficialPluginStatusFromConfig({}).status, "not-configured");
+
+  const configured = {
+    plugins: { "figma-official": buildFigmaOfficialPluginConfig(1000) },
+    mcpServers: { figma: buildFigmaOfficialMcpConfig() },
+  };
+  assert.equal(getFigmaOfficialPluginStatusFromConfig(configured).status, "configured");
+
+  const misconfigured = {
+    plugins: { "figma-official": buildFigmaOfficialPluginConfig(1000) },
+    mcpServers: { figma: { type: "stdio", command: "figma" } },
+  };
+  assert.equal(getFigmaOfficialPluginStatusFromConfig(misconfigured).status, "misconfigured");
+});
+
+test("can switch Figma plugin to desktop MCP mode", () => {
+  const next = buildNextFigmaOfficialDesktopRuntimeConfig({
+    plugins: { "open-computer-use": { id: "open-computer-use" } },
+    mcpServers: { "open-computer-use": { type: "stdio", command: "open-computer-use" } },
+  }, {
+    available: true,
+    now: 3000,
+  });
+
+  const figmaPlugin = (next.plugins as Record<string, Record<string, unknown>>)["figma-official"];
+  assert.equal(figmaPlugin.mode, "desktop");
+  assert.equal(figmaPlugin.connected, true);
+  assert.equal(figmaPlugin.authStatus, "ready");
+  assert.deepEqual((next.mcpServers as Record<string, unknown>).figma, buildFigmaDesktopMcpConfig());
+
+  const status = getFigmaOfficialPluginStatusFromConfig(next);
+  assert.equal(status.mode, "desktop");
+  assert.equal(status.status, "ready");
+  assert.equal(status.connected, true);
+});
+
+test("marks desktop MCP unavailable when the local server is not detected", () => {
+  const next = buildNextFigmaOfficialDesktopRuntimeConfig({}, {
+    available: false,
+    error: "connection refused",
+    now: 3000,
+  });
+
+  const status = getFigmaOfficialPluginStatusFromConfig(next);
+  assert.equal(status.mode, "desktop");
+  assert.equal(status.status, "desktop-unavailable");
+  assert.equal(status.connected, false);
+  assert.match(status.authHint ?? "", /Figma 桌面版/);
+});
+
+test("detects Figma auth expiry hints without marking config broken", () => {
+  const status = getFigmaOfficialPluginStatusFromConfig({
+    plugins: {
+      "figma-official": {
+        ...buildFigmaOfficialPluginConfig(1000),
+        authStatus: "auth-expired",
+        lastAuthError: "401 unauthorized token expired",
+      },
+    },
+    mcpServers: { figma: buildFigmaOfficialMcpConfig() },
+  });
+
+  assert.equal(status.status, "auth-expired");
+  assert.match(status.authHint ?? "", /重新授权/);
+});
+
+test("updates Figma auth state without dropping MCP config", () => {
+  const next = buildNextFigmaOfficialAuthStateRuntimeConfig({
+    plugins: { "open-computer-use": { id: "open-computer-use" } },
+    mcpServers: { "open-computer-use": { type: "stdio", command: "open-computer-use" } },
+  }, "ready", {
+    now: 2000,
+    oauth: {
+      access_token: "figma-access-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+      expiresAt: Date.now() + 3600_000,
+    },
+  });
+
+  const figmaPlugin = (next.plugins as Record<string, Record<string, unknown>>)["figma-official"];
+  assert.equal(figmaPlugin.connected, true);
+  assert.equal(figmaPlugin.authStatus, "ready");
+  assert.deepEqual((next.mcpServers as Record<string, unknown>).figma, buildFigmaOfficialMcpConfig("figma-access-token"));
+  assert.equal((next.mcpServers as Record<string, unknown>)["open-computer-use"] != null, true);
+});
+
+test("parses Codex file-store Figma OAuth credentials", () => {
+  const oauth = parseFigmaCodexOAuthCredentialStore({
+    "figma|hash": {
+      server_name: "figma",
+      server_url: "https://mcp.figma.com/mcp",
+      client_id: "codex-client",
+      access_token: "figma-access-token",
+      refresh_token: "figma-refresh-token",
+      expires_at: 2000,
+      scopes: ["mcp:connect"],
+    },
+  });
+
+  assert.deepEqual(oauth, {
+    access_token: "figma-access-token",
+    token_type: "Bearer",
+    refresh_token: "figma-refresh-token",
+    scope: "mcp:connect",
+    expiresAt: 2000,
+    provider: "codex",
+    client_id: "codex-client",
+  });
+});
+
+test("writes Codex OAuth credentials into the Figma remote MCP config", () => {
+  const next = buildNextFigmaOfficialCodexAuthRuntimeConfig({}, {
+    access_token: "figma-access-token",
+    token_type: "Bearer",
+    expiresAt: Date.now() + 3600_000,
+    provider: "codex",
+  }, 2000, ["get_design_context", "get_screenshot", "whoami"]);
+
+  const figmaPlugin = (next.plugins as Record<string, Record<string, unknown>>)["figma-official"];
+  assert.equal(figmaPlugin.connected, true);
+  assert.equal(figmaPlugin.authStatus, "ready");
+  assert.equal(figmaPlugin.authProvider, "codex");
+  assert.equal(figmaPlugin.toolCount, 3);
+  assert.equal(figmaPlugin.lastToolCheckedAt, 2000);
+  assert.deepEqual(figmaPlugin.tools, ["get_design_context", "get_screenshot", "whoami"]);
+  assert.deepEqual(figmaPlugin.source, {
+    type: "codex-supported-client-oauth",
+    url: "https://mcp.figma.com/mcp",
+  });
+  assert.deepEqual((next.mcpServers as Record<string, unknown>).figma, buildFigmaOfficialMcpConfig("figma-access-token"));
+
+  const status = getFigmaOfficialPluginStatusFromConfig(next);
+  assert.equal(status.toolCount, 3);
+  assert.deepEqual(status.tools, ["get_design_context", "get_screenshot", "whoami"]);
+});
+
+test("preserves ready Figma Codex auth config on transient connect errors", () => {
+  const ready = buildNextFigmaOfficialCodexAuthRuntimeConfig({}, {
+    access_token: "figma-access-token",
+    token_type: "Bearer",
+    expiresAt: Date.now() + 3600_000,
+    provider: "codex",
+  }, 2000, ["get_design_context"]);
+
+  assert.equal(shouldPreserveReadyFigmaOfficialConfigAfterCodexError(ready, "fetch failed"), true);
+  assert.equal(shouldPreserveReadyFigmaOfficialConfigAfterCodexError(ready, "Codex Figma OAuth timed out"), true);
+  assert.equal(shouldPreserveReadyFigmaOfficialConfigAfterCodexError(ready, "401 unauthorized token expired"), false);
+});
+
+test("marks Figma auth expired when the stored token is past its expiry", () => {
+  const status = getFigmaOfficialPluginStatusFromConfig({
+    plugins: {
+      "figma-official": {
+        ...buildFigmaOfficialPluginConfig(1000),
+        connected: true,
+        authStatus: "ready",
+        oauth: {
+          access_token: "expired-token",
+          expiresAt: Date.now() - 1000,
+        },
+      },
+    },
+    mcpServers: { figma: buildFigmaOfficialMcpConfig("expired-token") },
+  });
+
+  assert.equal(status.status, "auth-expired");
+  assert.equal(status.connected, false);
+  assert.match(status.authHint ?? "", /重新授权/);
+});
+
+test("detects and redacts Figma MCP OAuth callback prompts", () => {
+  const callback = "http://localhost:62075/callback?code=secret-code&state=secret-state";
+
+  assert.equal(isFigmaMcpOAuthCallbackPrompt(callback), true);
+  assert.equal(isFigmaMcpOAuthCallbackPrompt("https://www.figma.com/file/abc"), false);
+
+  const redacted = redactFigmaMcpOAuthCallbackPrompt(`继续 ${callback}`);
+  assert.match(redacted, /code=%3Credacted%3E/);
+  assert.match(redacted, /state=%3Credacted%3E/);
+  assert.doesNotMatch(redacted, /secret-code|secret-state/);
+});
+
+test("keeps Agent OAuth callback resume behind the disabled bridge flag", () => {
+  const source = readFileSync("src/electron/ipc-handlers.ts", "utf8");
+
+  assert.match(source, /const canUseFigmaOAuthCallbackResume = FIGMA_AGENT_OAUTH_BRIDGE_ENABLED && isFigmaOAuthCallback && Boolean\(session\.claudeSessionId\);/);
+  assert.match(source, /const canUseRemoteResume =\s*!shouldForceStatelessCompression\s*&&\s*\(supportsResume \|\| canUseFigmaOAuthCallbackResume\)/);
+});

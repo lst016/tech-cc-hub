@@ -1,1 +1,253 @@
-aW1wb3J0IHRlc3QgZnJvbSAibm9kZTp0ZXN0IjsNCmltcG9ydCBhc3NlcnQgZnJvbSAibm9kZTphc3NlcnQvc3RyaWN0IjsNCg0KaW1wb3J0IHsNCiAgYnVpbGRTdGF0ZWxlc3NDb250aW51YXRpb25Qcm9tcHQsDQogIHNob3VsZENvbXByZXNzU3RhdGVsZXNzQ29udGludWF0aW9uLA0KfSBmcm9tICIuLi8uLi9zcmMvZWxlY3Ryb24vc3RhdGVsZXNzLWNvbnRpbnVhdGlvbi5qcyI7DQoNCnRlc3QoImJ1aWxkU3RhdGVsZXNzQ29udGludWF0aW9uUHJvbXB0IG1hcmtzIGltYWdlIGF0dGFjaG1lbnRzIG9uIHRoZSBsYXRlc3QgdHVybiBpbiBzdGF0ZWxlc3MgbW9kZSIsICgpID0+IHsNCiAgY29uc3QgcHJvbXB0ID0gYnVpbGRTdGF0ZWxlc3NDb250aW51YXRpb25Qcm9tcHQoDQogICAgWw0KICAgICAgeyB0eXBlOiAidXNlcl9wcm9tcHQiLCBwcm9tcHQ6ICJwbGVhc2UgcmVhZCB0aGUgaW1hZ2UiIH0sDQogICAgICB7IHR5cGU6ICJyZXN1bHQiLCBzdWJ0eXBlOiAic3VjY2VzcyIsIHJlc3VsdDogIkkgY291bGQgbm90IHNlZSBhbnkgdXBsb2FkZWQgaW1hZ2UuIiB9IGFzIG5ldmVyLA0KICAgIF0sDQogICAgImFuYWx5emUgdGhpcyBpbWFnZSIsDQogICAgWw0KICAgICAgew0KICAgICAgICBpZDogImltYWdlLTEiLA0KICAgICAgICBraW5kOiAiaW1hZ2UiLA0KICAgICAgICBuYW1lOiAiaW1hZ2UucG5nIiwNCiAgICAgICAgbWltZVR5cGU6ICJpbWFnZS9wbmciLA0KICAgICAgICBkYXRhOiAiZGF0YTppbWFnZS9wbmc7YmFzZTY0LEFBQUEiLA0KICAgICAgfSwNCiAgICBdLA0KICApOw0KDQogIGFzc2VydC5tYXRjaChwcm9tcHQsIC9sYXRlc3QgbWVzc2FnZSBpbmNsdWRlcyBhdHRhY2htZW50czogMSBhdHRhY2htZW50LCAxIGltYWdlL2kpOw0KICBhc3NlcnQubWF0Y2gocHJvbXB0LCAvaWYgaW1hZ2UgYXR0YWNobWVudHMgYXJlIHByZXNlbnQgaW4gdGhlIGN1cnJlbnQgdHVybiwgYW5hbHl6ZSB0aGVtIGRpcmVjdGx5L2kpOw0KICBhc3NlcnQubWF0Y2gocHJvbXB0LCAvZG8gbm90IHJlcGVhdCBlYXJsaWVyIGNsYWltcyB0aGF0IGFuIGltYWdlIHdhcyBtaXNzaW5nL2kpOw0KfSk7DQoNCnRlc3QoImJ1aWxkU3RhdGVsZXNzQ29udGludWF0aW9uUHJvbXB0IGNvbXByZXNzZXMgYnkgZGVmYXVsdCB3aGVuIGNvbnRleHQgbWV0YWRhdGEgaXMgbWlzc2luZyIsICgpID0+IHsNCiAgY29uc3QgbG9uZ0NodW5rID0gIui/nue7reS4iuS4i+aWhyIucmVwZWF0KDEwXzAwMCk7DQogIGNvbnN0IG1lc3NhZ2VzID0gQXJyYXkuZnJvbSh7IGxlbmd0aDogNiB9LCAoXywgaW5kZXgpID0+IHsNCiAgICBjb25zdCByb3VuZCA9IGluZGV4ICsgMTsNCiAgICByZXR1cm4gWw0KICAgICAgew0KICAgICAgICB0eXBlOiAidXNlcl9wcm9tcHQiIGFzIGNvbnN0LA0KICAgICAgICBwcm9tcHQ6IGDnrKwke3JvdW5kfei9rumXrumimO+8miR7bG9uZ0NodW5rfWAsDQogICAgICB9LA0KICAgICAgew0KICAgICAgICB0eXBlOiAicmVzdWx0IiwNCiAgICAgICAgc3VidHlwZTogInN1Y2Nlc3MiLA0KICAgICAgICByZXN1bHQ6IGDnrKwke3JvdW5kfei9ruWbnuetlO+8miR7bG9uZ0NodW5rfWAsDQogICAgICB9IGFzIG5ldmVyLA0KICAgIF07DQogIH0pLmZsYXQoKTsNCg0KICBjb25zdCBwcm9tcHQgPSBidWlsZFN0YXRlbGVzc0NvbnRpbnVhdGlvblByb21wdChtZXNzYWdlcywgIue7p+e7rSIpOw0KDQogIGFzc2VydC5tYXRjaChwcm9tcHQsIC9FYXJsaWVyIGNvbnZlcnNhdGlvbiBzdW1tYXJ5Oi8pOw0KICBhc3NlcnQubWF0Y2gocHJvbXB0LCAvTGF0ZXN0IHVzZXIgbWVzc2FnZTog57un57utLyk7DQp9KTsNCg0KdGVzdCgiYnVpbGRTdGF0ZWxlc3NDb250aW51YXRpb25Qcm9tcHQgY291bnRzIGxhdGVzdCB0ZXh0IGF0dGFjaG1lbnRzIHRvd2FyZCB0aGUgY29tcHJlc3Npb24gYnVkZ2V0IiwgKCkgPT4gew0KICBjb25zdCBtZXNzYWdlcyA9IEFycmF5LmZyb20oeyBsZW5ndGg6IDQgfSwgKF8sIGluZGV4KSA9PiB7DQogICAgY29uc3Qgcm91bmQgPSBpbmRleCArIDE7DQogICAgcmV0dXJuIFsNCiAgICAgIHsNCiAgICAgICAgdHlwZTogInVzZXJfcHJvbXB0IiBhcyBjb25zdCwNCiAgICAgICAgcHJvbXB0OiBgUm91bmQgJHtyb3VuZH0gcXVlc3Rpb246ICR7ImZvbGxvdy11cCAiLnJlcGVhdCg0MCl9YCwNCiAgICAgIH0sDQogICAgICB7DQogICAgICAgIHR5cGU6ICJyZXN1bHQiLA0KICAgICAgICBzdWJ0eXBlOiAic3VjY2VzcyIsDQogICAgICAgIHJlc3VsdDogYFJvdW5kICR7cm91bmR9IGFuc3dlcjogJHsiYW5zd2VyICIucmVwZWF0KDQwKX1gLA0KICAgICAgfSBhcyBuZXZlciwNCiAgICBdOw0KICB9KS5mbGF0KCk7DQoNCiAgY29uc3QgcHJvbXB0ID0gYnVpbGRTdGF0ZWxlc3NDb250aW51YXRpb25Qcm9tcHQoDQogICAgbWVzc2FnZXMsDQogICAgIkNvbnRpbnVlIHdpdGggdGhlIGF0dGFjaGVkIHNwZWMiLA0KICAgIFsNCiAgICAgIHsNCiAgICAgICAgaWQ6ICJhdHRhY2htZW50LTEiLA0KICAgICAgICBraW5kOiAidGV4dCIsDQogICAgICAgIG5hbWU6ICJzcGVjLm1kIiwNCiAgICAgICAgbWltZVR5cGU6ICJ0ZXh0L21hcmtkb3duIiwNCiAgICAgICAgZGF0YTogIkRldGFpbGVkIGF0dGFjaG1lbnQgYm9keS4gIi5yZXBlYXQoNjAwKSwNCiAgICAgIH0sDQogICAgXSwNCiAgICB7DQogICAgICBjb250ZXh0V2luZG93OiA1XzAwMCwNCiAgICAgIGNvbXByZXNzaW9uVGhyZXNob2xkUGVyY2VudDogNDAsDQogICAgICByZWNlbnRUdXJuQ291bnQ6IDQsDQogICAgfSwNCiAgKTsNCg0KICBhc3NlcnQubWF0Y2gocHJvbXB0LCAvRWFybGllciBjb252ZXJzYXRpb24gc3VtbWFyeTovKTsNCiAgYXNzZXJ0Lm1hdGNoKHByb21wdCwgL2xhdGVzdCBtZXNzYWdlIGluY2x1ZGVzIGF0dGFjaG1lbnRzOiAxIGF0dGFjaG1lbnQsIDEgdGV4dCBhdHRhY2htZW50L2kpOw0KfSk7DQoNCnRlc3QoImJ1aWxkU3RhdGVsZXNzQ29udGludWF0aW9uUHJvbXB0IGNvbXByZXNzZXMgb2xkZXIgaGlzdG9yeSBhZnRlciB0aGUgbW9kZWwgdGhyZXNob2xkIGFuZCBrZWVwcyB0aGUgbGF0ZXN0IDUgdHVybnMgcmF3IiwgKCkgPT4gew0KICBjb25zdCBtZXNzYWdlcyA9IEFycmF5LmZyb20oeyBsZW5ndGg6IDYgfSwgKF8sIGluZGV4KSA9PiB7DQogICAgY29uc3Qgcm91bmQgPSBpbmRleCArIDE7DQogICAgcmV0dXJuIFsNCiAgICAgIHsNCiAgICAgICAgdHlwZTogInVzZXJfcHJvbXB0IiBhcyBjb25zdCwNCiAgICAgICAgcHJvbXB0OiBgUm91bmQgJHtyb3VuZH0gcXVlc3Rpb246ICR7Im5lZWQgZGV0YWlsZWQgY29udGludWl0eSAiLnJlcGVhdCgxMCl9YCwNCiAgICAgIH0sDQogICAgICB7DQogICAgICAgIHR5cGU6ICJyZXN1bHQiLA0KICAgICAgICBzdWJ0eXBlOiAic3VjY2VzcyIsDQogICAgICAgIHJlc3VsdDogYFJvdW5kICR7cm91bmR9IGFuc3dlcjogJHsiaGVyZSBpcyBhIGZhaXJseSBsb25nIGFzc2lzdGFudCByZXBseSAiLnJlcGVhdCgxMCl9YCwNCiAgICAgIH0gYXMgbmV2ZXIsDQogICAgXTsNCiAgfSkuZmxhdCgpOw0KDQogIGNvbnN0IHByb21wdCA9IGJ1aWxkU3RhdGVsZXNzQ29udGludWF0aW9uUHJvbXB0KA0KICAgIG1lc3NhZ2VzLA0KICAgICJQbGVhc2UgY29udGludWUgZnJvbSB0aGUgbGF0ZXN0IGNvbnRleHQiLA0KICAgIFtdLA0KICAgIHsNCiAgICAgIGNvbnRleHRXaW5kb3c6IDFfMDAwLA0KICAgICAgY29tcHJlc3Npb25UaHJlc2hvbGRQZXJjZW50OiAyMCwNCiAgICAgIHJlY2VudFR1cm5Db3VudDogNSwNCiAgICB9LA0KICApOw0KDQogIGFzc2VydC5tYXRjaChwcm9tcHQsIC9FYXJsaWVyIGNvbnZlcnNhdGlvbiBzdW1tYXJ5Oi8pOw0KICBhc3NlcnQubWF0Y2gocHJvbXB0LCAvUm91bmQgMSBxdWVzdGlvbjovKTsNCiAgYXNzZXJ0LmRvZXNOb3RNYXRjaChwcm9tcHQsIC9Vc2VyOiBSb3VuZCAxIHF1ZXN0aW9uOi8pOw0KICBhc3NlcnQubWF0Y2gocHJvbXB0LCAvUm91bmQgNiBxdWVzdGlvbjovKTsNCiAgYXNzZXJ0Lm1hdGNoKHByb21wdCwgL0xhdGVzdCB1c2VyIG1lc3NhZ2U6IFBsZWFzZSBjb250aW51ZSBmcm9tIHRoZSBsYXRlc3QgY29udGV4dC8pOw0KfSk7DQoNCnRlc3QoImJ1aWxkU3RhdGVsZXNzQ29udGludWF0aW9uUHJvbXB0IGtlZXBzIHJhdyBoaXN0b3J5IHdoZW4gdGhlIG1vZGVsIHRocmVzaG9sZCBpcyBub3QgcmVhY2hlZCIsICgpID0+IHsNCiAgY29uc3QgcHJvbXB0ID0gYnVpbGRTdGF0ZWxlc3NDb250aW51YXRpb25Qcm9tcHQoDQogICAgWw0KICAgICAgeyB0eXBlOiAidXNlcl9wcm9tcHQiLCBwcm9tcHQ6ICJTaG9ydCBxdWVzdGlvbiIgfSwNCiAgICAgIHsgdHlwZTogInJlc3VsdCIsIHN1YnR5cGU6ICJzdWNjZXNzIiwgcmVzdWx0OiAiU2hvcnQgYW5zd2VyIiB9IGFzIG5ldmVyLA0KICAgIF0sDQogICAgIkNvbnRpbnVlIiwNCiAgICBbXSwNCiAgICB7DQogICAgICBjb250ZXh0V2luZG93OiAxMF8wMDAsDQogICAgICBjb21wcmVzc2lvblRocmVzaG9sZFBlcmNlbnQ6IDgwLA0KICAgICAgcmVjZW50VHVybkNvdW50OiA1LA0KICAgIH0sDQogICk7DQoNCiAgYXNzZXJ0LmRvZXNOb3RNYXRjaChwcm9tcHQsIC9FYXJsaWVyIGNvbnZlcnNhdGlvbiBzdW1tYXJ5Oi8pOw0KICBhc3NlcnQubWF0Y2gocHJvbXB0LCAvVXNlcjogU2hvcnQgcXVlc3Rpb24vKTsNCiAgYXNzZXJ0Lm1hdGNoKHByb21wdCwgL0Fzc2lzdGFudDogU2hvcnQgYW5zd2VyLyk7DQp9KTsNCg0KdGVzdCgiYnVpbGRTdGF0ZWxlc3NDb250aW51YXRpb25Qcm9tcHQga2VlcHMgYWxsIHJhdyBoaXN0b3J5IGJlZm9yZSB0aGUgbW9kZWwgdGhyZXNob2xkIiwgKCkgPT4gew0KICBjb25zdCBtZXNzYWdlcyA9IEFycmF5LmZyb20oeyBsZW5ndGg6IDEwIH0sIChfLCBpbmRleCkgPT4gew0KICAgIGNvbnN0IHJvdW5kID0gaW5kZXggKyAxOw0KICAgIHJldHVybiBbDQogICAgICB7DQogICAgICAgIHR5cGU6ICJ1c2VyX3Byb21wdCIgYXMgY29uc3QsDQogICAgICAgIHByb21wdDogYFJvdW5kICR7cm91bmR9IHF1ZXN0aW9uYCwNCiAgICAgIH0sDQogICAgICB7DQogICAgICAgIHR5cGU6ICJyZXN1bHQiLA0KICAgICAgICBzdWJ0eXBlOiAic3VjY2VzcyIsDQogICAgICAgIHJlc3VsdDogYFJvdW5kICR7cm91bmR9IGFuc3dlcmAsDQogICAgICB9IGFzIG5ldmVyLA0KICAgIF07DQogIH0pLmZsYXQoKTsNCg0KICBjb25zdCBwcm9tcHQgPSBidWlsZFN0YXRlbGVzc0NvbnRpbnVhdGlvblByb21wdChtZXNzYWdlcywgIkNvbnRpbnVlIiwgW10sIHsNCiAgICBjb250ZXh0V2luZG93OiAxMF8wMDAsDQogICAgY29tcHJlc3Npb25UaHJlc2hvbGRQZXJjZW50OiA4MCwNCiAgICByZWNlbnRUdXJuQ291bnQ6IDUsDQogIH0pOw0KDQogIGFzc2VydC5kb2VzTm90TWF0Y2gocHJvbXB0LCAvRWFybGllciBjb252ZXJzYXRpb24gc3VtbWFyeTovKTsNCiAgYXNzZXJ0Lm1hdGNoKHByb21wdCwgL1VzZXI6IFJvdW5kIDEgcXVlc3Rpb24vKTsNCiAgYXNzZXJ0Lm1hdGNoKHByb21wdCwgL0Fzc2lzdGFudDogUm91bmQgMSBhbnN3ZXIvKTsNCiAgYXNzZXJ0Lm1hdGNoKHByb21wdCwgL1VzZXI6IFJvdW5kIDEwIHF1ZXN0aW9uLyk7DQp9KTsNCg0KdGVzdCgiYnVpbGRTdGF0ZWxlc3NDb250aW51YXRpb25Qcm9tcHQgdHJpZ2dlcnMgY29tcHJlc3Npb24gZnJvbSBmdWxsIGhpc3RvcnksIG5vdCBvbmx5IHJlY2VudCB0dXJucyIsICgpID0+IHsNCiAgY29uc3Qgb2xkTG9uZ0NodW5rID0gIm9sZCBsb25nIGNvbnRleHQgIi5yZXBlYXQoMTYwKTsNCiAgY29uc3QgbWVzc2FnZXMgPSBbDQogICAgLi4uQXJyYXkuZnJvbSh7IGxlbmd0aDogNCB9LCAoXywgaW5kZXgpID0+IHsNCiAgICAgIGNvbnN0IHJvdW5kID0gaW5kZXggKyAxOw0KICAgICAgcmV0dXJuIFsNCiAgICAgICAgew0KICAgICAgICAgIHR5cGU6ICJ1c2VyX3Byb21wdCIgYXMgY29uc3QsDQogICAgICAgICAgcHJvbXB0OiBgUm91bmQgJHtyb3VuZH0gcXVlc3Rpb246ICR7b2xkTG9uZ0NodW5rfWAsDQogICAgICAgIH0sDQogICAgICAgIHsNCiAgICAgICAgICB0eXBlOiAicmVzdWx0IiwNCiAgICAgICAgICBzdWJ0eXBlOiAic3VjY2VzcyIsDQogICAgICAgICAgcmVzdWx0OiBgUm91bmQgJHtyb3VuZH0gYW5zd2VyOiAke29sZExvbmdDaHVua31gLA0KICAgICAgICB9IGFzIG5ldmVyLA0KICAgICAgXTsNCiAgICB9KS5mbGF0KCksDQogICAgLi4uQXJyYXkuZnJvbSh7IGxlbmd0aDogNSB9LCAoXywgaW5kZXgpID0+IHsNCiAgICAgIGNvbnN0IHJvdW5kID0gaW5kZXggKyA1Ow0KICAgICAgcmV0dXJuIFsNCiAgICAgICAgew0KICAgICAgICAgIHR5cGU6ICJ1c2VyX3Byb21wdCIgYXMgY29uc3QsDQogICAgICAgICAgcHJvbXB0OiBgUm91bmQgJHtyb3VuZH0gc2hvcnQgcXVlc3Rpb25gLA0KICAgICAgICB9LA0KICAgICAgICB7DQogICAgICAgICAgdHlwZTogInJlc3VsdCIsDQogICAgICAgICAgc3VidHlwZTogInN1Y2Nlc3MiLA0KICAgICAgICAgIHJlc3VsdDogYFJvdW5kICR7cm91bmR9IHNob3J0IGFuc3dlcmAsDQogICAgICAgIH0gYXMgbmV2ZXIsDQogICAgICBdOw0KICAgIH0pLmZsYXQoKSwNCiAgXTsNCg0KICBjb25zdCBvcHRpb25zID0gew0KICAgIGNvbnRleHRXaW5kb3c6IDRfMDAwLA0KICAgIGNvbXByZXNzaW9uVGhyZXNob2xkUGVyY2VudDogNDAsDQogICAgcmVjZW50VHVybkNvdW50OiA1LA0KICB9Ow0KICBjb25zdCBwcm9tcHQgPSBidWlsZFN0YXRlbGVzc0NvbnRpbnVhdGlvblByb21wdChtZXNzYWdlcywgIkNvbnRpbnVlIiwgW10sIG9wdGlvbnMpOw0KDQogIGFzc2VydC5lcXVhbChzaG91bGRDb21wcmVzc1N0YXRlbGVzc0NvbnRpbnVhdGlvbihtZXNzYWdlcywgIkNvbnRpbnVlIiwgW10sIG9wdGlvbnMpLCB0cnVlKTsNCiAgYXNzZXJ0Lm1hdGNoKHByb21wdCwgL0VhcmxpZXIgY29udmVyc2F0aW9uIHN1bW1hcnk6Lyk7DQogIGFzc2VydC5tYXRjaChwcm9tcHQsIC9Sb3VuZCAxIHF1ZXN0aW9uOi8pOw0KICBhc3NlcnQuZG9lc05vdE1hdGNoKHByb21wdCwgL1VzZXI6IFJvdW5kIDEgcXVlc3Rpb246Lyk7DQogIGFzc2VydC5tYXRjaChwcm9tcHQsIC9Vc2VyOiBSb3VuZCA5IHNob3J0IHF1ZXN0aW9uLyk7DQp9KTsNCg0KdGVzdCgiYnVpbGRTdGF0ZWxlc3NDb250aW51YXRpb25Qcm9tcHQgc3RpbGwgY29tcHJlc3NlcyB3aGVuIHRoZSBsYXRlc3QgZml2ZSB0dXJucyBhbG9uZSBleGNlZWQgdGhlIHRocmVzaG9sZCIsICgpID0+IHsNCiAgY29uc3QgbWVzc2FnZXMgPSBBcnJheS5mcm9tKHsgbGVuZ3RoOiA1IH0sIChfLCBpbmRleCkgPT4gew0KICAgIGNvbnN0IHJvdW5kID0gaW5kZXggKyAxOw0KICAgIGNvbnN0IHJlcGVhdGVkID0gIui/meaYr+S4gOS4qumdnuW4uOmVv+eahOi/nue7reS4iuS4i+aWh+eJh+aute+8jOeUqOadpeaooeaLn+mrmCB0b2tlbiDkvJror53jgIIiLnJlcGVhdCg5MCk7DQogICAgcmV0dXJuIFsNCiAgICAgIHsNCiAgICAgICAgdHlwZTogInVzZXJfcHJvbXB0IiBhcyBjb25zdCwNCiAgICAgICAgcHJvbXB0OiBg56ysICR7cm91bmR9IOi9rumXrumimO+8miR7cmVwZWF0ZWR9YCwNCiAgICAgIH0sDQogICAgICB7DQogICAgICAgIHR5cGU6ICJyZXN1bHQiLA0KICAgICAgICBzdWJ0eXBlOiAic3VjY2VzcyIsDQogICAgICAgIHJlc3VsdDogYOesrCAke3JvdW5kfSDova7lm57nrZTvvJoke3JlcGVhdGVkfWAsDQogICAgICB9IGFzIG5ldmVyLA0KICAgIF07DQogIH0pLmZsYXQoKTsNCg0KICBjb25zdCBwcm9tcHQgPSBidWlsZFN0YXRlbGVzc0NvbnRpbnVhdGlvblByb21wdCgNCiAgICBtZXNzYWdlcywNCiAgICAi57un57ut5aSE55CG5b2T5YmN6Zeu6aKYIiwNCiAgICBbXSwNCiAgICB7DQogICAgICBjb250ZXh0V2luZG93OiA0XzAwMCwNCiAgICAgIGNvbXByZXNzaW9uVGhyZXNob2xkUGVyY2VudDogNDAsDQogICAgICByZWNlbnRUdXJuQ291bnQ6IDUsDQogICAgfSwNCiAgKTsNCg0KICBhc3NlcnQubWF0Y2gocHJvbXB0LCAvRWFybGllciBjb252ZXJzYXRpb24gc3VtbWFyeTovKTsNCiAgYXNzZXJ0Lm1hdGNoKHByb21wdCwgL0xhdGVzdCB1c2VyIG1lc3NhZ2U6IOe7p+e7reWkhOeQhuW9k+WJjemXrumimC8pOw0KfSk7DQo=
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  buildStatelessContinuationPrompt,
+  shouldCompressStatelessContinuation,
+} from "../../src/electron/stateless-continuation.js";
+
+test("buildStatelessContinuationPrompt marks image attachments on the latest turn in stateless mode", () => {
+  const prompt = buildStatelessContinuationPrompt(
+    [
+      { type: "user_prompt", prompt: "please read the image" },
+      { type: "result", subtype: "success", result: "I could not see any uploaded image." } as never,
+    ],
+    "analyze this image",
+    [
+      {
+        id: "image-1",
+        kind: "image",
+        name: "image.png",
+        mimeType: "image/png",
+        data: "data:image/png;base64,AAAA",
+      },
+    ],
+  );
+
+  assert.match(prompt, /latest message includes attachments: 1 attachment, 1 image/i);
+  assert.match(prompt, /if image attachments are present in the current turn, analyze them directly/i);
+  assert.match(prompt, /do not repeat earlier claims that an image was missing/i);
+});
+
+test("buildStatelessContinuationPrompt compresses by default when context metadata is missing", () => {
+  const longChunk = "连续上下文".repeat(10_000);
+  const messages = Array.from({ length: 6 }, (_, index) => {
+    const round = index + 1;
+    return [
+      {
+        type: "user_prompt" as const,
+        prompt: `第${round}轮问题：${longChunk}`,
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: `第${round}轮回答：${longChunk}`,
+      } as never,
+    ];
+  }).flat();
+
+  const prompt = buildStatelessContinuationPrompt(messages, "继续");
+
+  assert.match(prompt, /Earlier conversation summary:/);
+  assert.match(prompt, /Latest user message: 继续/);
+});
+
+test("buildStatelessContinuationPrompt counts latest text attachments toward the compression budget", () => {
+  const messages = Array.from({ length: 4 }, (_, index) => {
+    const round = index + 1;
+    return [
+      {
+        type: "user_prompt" as const,
+        prompt: `Round ${round} question: ${"follow-up ".repeat(40)}`,
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: `Round ${round} answer: ${"answer ".repeat(40)}`,
+      } as never,
+    ];
+  }).flat();
+
+  const prompt = buildStatelessContinuationPrompt(
+    messages,
+    "Continue with the attached spec",
+    [
+      {
+        id: "attachment-1",
+        kind: "text",
+        name: "spec.md",
+        mimeType: "text/markdown",
+        data: "Detailed attachment body. ".repeat(600),
+      },
+    ],
+    {
+      contextWindow: 5_000,
+      compressionThresholdPercent: 40,
+      recentTurnCount: 4,
+    },
+  );
+
+  assert.match(prompt, /Earlier conversation summary:/);
+  assert.match(prompt, /latest message includes attachments: 1 attachment, 1 text attachment/i);
+});
+
+test("buildStatelessContinuationPrompt compresses older history after the model threshold and keeps the latest 5 turns raw", () => {
+  const messages = Array.from({ length: 6 }, (_, index) => {
+    const round = index + 1;
+    return [
+      {
+        type: "user_prompt" as const,
+        prompt: `Round ${round} question: ${"need detailed continuity ".repeat(10)}`,
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: `Round ${round} answer: ${"here is a fairly long assistant reply ".repeat(10)}`,
+      } as never,
+    ];
+  }).flat();
+
+  const prompt = buildStatelessContinuationPrompt(
+    messages,
+    "Please continue from the latest context",
+    [],
+    {
+      contextWindow: 1_000,
+      compressionThresholdPercent: 20,
+      recentTurnCount: 5,
+    },
+  );
+
+  assert.match(prompt, /Earlier conversation summary:/);
+  assert.match(prompt, /Round 1 question:/);
+  assert.doesNotMatch(prompt, /User: Round 1 question:/);
+  assert.match(prompt, /Round 6 question:/);
+  assert.match(prompt, /Latest user message: Please continue from the latest context/);
+});
+
+test("buildStatelessContinuationPrompt keeps raw history when the model threshold is not reached", () => {
+  const prompt = buildStatelessContinuationPrompt(
+    [
+      { type: "user_prompt", prompt: "Short question" },
+      { type: "result", subtype: "success", result: "Short answer" } as never,
+    ],
+    "Continue",
+    [],
+    {
+      contextWindow: 10_000,
+      compressionThresholdPercent: 80,
+      recentTurnCount: 5,
+    },
+  );
+
+  assert.doesNotMatch(prompt, /Earlier conversation summary:/);
+  assert.match(prompt, /User: Short question/);
+  assert.match(prompt, /Assistant: Short answer/);
+});
+
+test("buildStatelessContinuationPrompt keeps all raw history before the model threshold", () => {
+  const messages = Array.from({ length: 10 }, (_, index) => {
+    const round = index + 1;
+    return [
+      {
+        type: "user_prompt" as const,
+        prompt: `Round ${round} question`,
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: `Round ${round} answer`,
+      } as never,
+    ];
+  }).flat();
+
+  const prompt = buildStatelessContinuationPrompt(messages, "Continue", [], {
+    contextWindow: 10_000,
+    compressionThresholdPercent: 80,
+    recentTurnCount: 5,
+  });
+
+  assert.doesNotMatch(prompt, /Earlier conversation summary:/);
+  assert.match(prompt, /User: Round 1 question/);
+  assert.match(prompt, /Assistant: Round 1 answer/);
+  assert.match(prompt, /User: Round 10 question/);
+});
+
+test("buildStatelessContinuationPrompt triggers compression from full history, not only recent turns", () => {
+  const oldLongChunk = "old long context ".repeat(160);
+  const messages = [
+    ...Array.from({ length: 4 }, (_, index) => {
+      const round = index + 1;
+      return [
+        {
+          type: "user_prompt" as const,
+          prompt: `Round ${round} question: ${oldLongChunk}`,
+        },
+        {
+          type: "result",
+          subtype: "success",
+          result: `Round ${round} answer: ${oldLongChunk}`,
+        } as never,
+      ];
+    }).flat(),
+    ...Array.from({ length: 5 }, (_, index) => {
+      const round = index + 5;
+      return [
+        {
+          type: "user_prompt" as const,
+          prompt: `Round ${round} short question`,
+        },
+        {
+          type: "result",
+          subtype: "success",
+          result: `Round ${round} short answer`,
+        } as never,
+      ];
+    }).flat(),
+  ];
+
+  const options = {
+    contextWindow: 4_000,
+    compressionThresholdPercent: 40,
+    recentTurnCount: 5,
+  };
+  const prompt = buildStatelessContinuationPrompt(messages, "Continue", [], options);
+
+  assert.equal(shouldCompressStatelessContinuation(messages, "Continue", [], options), true);
+  assert.match(prompt, /Earlier conversation summary:/);
+  assert.match(prompt, /Round 1 question:/);
+  assert.doesNotMatch(prompt, /User: Round 1 question:/);
+  assert.match(prompt, /User: Round 9 short question/);
+});
+
+test("buildStatelessContinuationPrompt still compresses when the latest five turns alone exceed the threshold", () => {
+  const messages = Array.from({ length: 5 }, (_, index) => {
+    const round = index + 1;
+    const repeated = "这是一个非常长的连续上下文片段，用来模拟高 token 会话。".repeat(90);
+    return [
+      {
+        type: "user_prompt" as const,
+        prompt: `第 ${round} 轮问题：${repeated}`,
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: `第 ${round} 轮回答：${repeated}`,
+      } as never,
+    ];
+  }).flat();
+
+  const prompt = buildStatelessContinuationPrompt(
+    messages,
+    "继续处理当前问题",
+    [],
+    {
+      contextWindow: 4_000,
+      compressionThresholdPercent: 40,
+      recentTurnCount: 5,
+    },
+  );
+
+  assert.match(prompt, /Earlier conversation summary:/);
+  assert.match(prompt, /Latest user message: 继续处理当前问题/);
+});
