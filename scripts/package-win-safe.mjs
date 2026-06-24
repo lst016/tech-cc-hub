@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -119,6 +119,23 @@ function ensureUpdaterMetadataAliases() {
   }
 }
 
+function ensureWindowsAppUpdateConfig() {
+  const resourcesDir = path.join(distDir, "win-unpacked", "resources");
+  if (!existsSync(resourcesDir)) return;
+
+  const appUpdatePath = path.join(resourcesDir, "app-update.yml");
+  const content = [
+    "provider: github",
+    "owner: lst016",
+    "repo: tech-cc-hub",
+    "updaterCacheDirName: tech-cc-hub-updater",
+    "",
+  ].join("\n");
+  mkdirSync(resourcesDir, { recursive: true });
+  writeFileSync(appUpdatePath, content, "utf8");
+  log(`wrote updater app config: ${path.relative(cwd, appUpdatePath)}`);
+}
+
 function hasUnpackedArtifact() {
   return existsSync(path.join(distDir, "win-unpacked"));
 }
@@ -181,6 +198,9 @@ function runWithFallback(strategyLabel, commands) {
     if (!result.ok) {
       log(`failed: ${strategyLabel} (status=${result.status ?? "n/a"})`);
       return false;
+    }
+    if (command.includes("--dir")) {
+      ensureWindowsAppUpdateConfig();
     }
   }
 
