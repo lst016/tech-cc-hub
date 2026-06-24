@@ -5,18 +5,22 @@ import { readFileSync } from "node:fs";
 import {
   buildActivityWorkspaceCreateOptions,
   buildActivityWorkspaceTabs,
+  buildWorkflowAgentWorkspaceTabs,
+  getActivityRailTabAfterClosingWorkflowAgent,
+  getWorkflowAgentTabId,
+  normalizeActivityRailTab,
   shouldShowCreateBrowserTab,
   shouldShowCreateTerminalTab,
 } from "../../src/ui/utils/activity-workspace-tabs.js";
 
 describe("activity workspace tabs", () => {
-  it("keeps non-browser tabs visible when no browser tab exists", () => {
+  it("does not expose the deprecated trace tab when no browser tab exists", () => {
     const visibleTabs = buildActivityWorkspaceTabs({
       activeTab: "trace",
       showBrowserTab: false,
     }).filter((tab) => tab.visible);
 
-    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git"]);
+    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "git"]);
     assert.equal(shouldShowCreateBrowserTab(false), true);
     assert.equal(shouldShowCreateTerminalTab(false), true);
   });
@@ -27,7 +31,7 @@ describe("activity workspace tabs", () => {
       showBrowserTab: true,
     }).filter((tab) => tab.visible);
 
-    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git", "browser"]);
+    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "git", "browser"]);
     assert.equal(visibleTabs.find((tab) => tab.id === "browser")?.active, true);
     assert.equal(visibleTabs.find((tab) => tab.id === "preview")?.title, "文件预览");
     assert.equal(shouldShowCreateBrowserTab(true), false);
@@ -44,8 +48,8 @@ describe("activity workspace tabs", () => {
       showTerminalTab: true,
     }).filter((tab) => tab.visible);
 
-    assert.deepEqual(defaultTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git"]);
-    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git", "terminal"]);
+    assert.deepEqual(defaultTabs.map((tab) => tab.id), ["preview", "usage", "git"]);
+    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "git", "terminal"]);
     assert.equal(visibleTabs.find((tab) => tab.id === "terminal")?.active, true);
     assert.equal(shouldShowCreateTerminalTab(true), false);
   });
@@ -61,9 +65,64 @@ describe("activity workspace tabs", () => {
       workflowAgentTabs: [{ id: "workflow-agent:agent-1", label: "Agent one", title: "Agent one" }],
     }).filter((tab) => tab.visible);
 
-    assert.deepEqual(defaultTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git"]);
-    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "trace", "usage", "git", "workflow-agent:agent-1"]);
+    assert.deepEqual(defaultTabs.map((tab) => tab.id), ["preview", "usage", "git"]);
+    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "git", "workflow-agent:agent-1"]);
     assert.equal(visibleTabs.find((tab) => tab.id === "workflow-agent:agent-1")?.active, true);
+  });
+
+  it("builds workflow agent tabs only for explicitly opened agent transcripts", () => {
+    assert.deepEqual(
+      buildWorkflowAgentWorkspaceTabs({
+        openAgentIds: [],
+        agents: [
+          { id: "agent-1", title: "Run import workflow" },
+        ],
+      }),
+      [],
+    );
+
+    assert.deepEqual(
+      buildWorkflowAgentWorkspaceTabs({
+        openAgentIds: ["missing", "agent-1"],
+        agents: [
+          { id: "agent-1", title: "Run import workflow" },
+          { id: "agent-2", title: "Run export workflow" },
+        ],
+      }),
+      [
+        {
+          id: "workflow-agent:agent-1",
+          label: "Run import workflow",
+          title: "Run import workflow",
+        },
+      ],
+    );
+  });
+
+  it("falls legacy workflow and trace tabs back to usage", () => {
+    assert.equal(normalizeActivityRailTab("workflow"), "usage");
+    assert.equal(normalizeActivityRailTab("trace"), "usage");
+    assert.equal(normalizeActivityRailTab("workflow-agent:agent-1"), "workflow-agent:agent-1");
+    assert.equal(normalizeActivityRailTab(undefined), "usage");
+  });
+
+  it("falls back to the previous workflow agent tab or usage when closing an agent transcript", () => {
+    assert.equal(getWorkflowAgentTabId("agent-1"), "workflow-agent:agent-1");
+    assert.equal(getActivityRailTabAfterClosingWorkflowAgent({
+      activeTab: "workflow-agent:agent-2",
+      closingTab: "workflow-agent:agent-2",
+      openAgentIds: ["agent-1", "agent-2"],
+    }), "workflow-agent:agent-1");
+    assert.equal(getActivityRailTabAfterClosingWorkflowAgent({
+      activeTab: "workflow-agent:agent-1",
+      closingTab: "workflow-agent:agent-1",
+      openAgentIds: ["agent-1"],
+    }), "usage");
+    assert.equal(getActivityRailTabAfterClosingWorkflowAgent({
+      activeTab: "git",
+      closingTab: "workflow-agent:agent-1",
+      openAgentIds: ["agent-1"],
+    }), "git");
   });
 
   it("builds a generic plus menu for hidden optional workspace tabs", () => {

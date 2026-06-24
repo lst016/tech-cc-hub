@@ -44,6 +44,35 @@ test("preview quick-open file scan ignores generated and dependency directories"
   });
 });
 
+test("preview quick-open file scan respects root gitignore rules", async () => {
+  await withTempWorkspace(async (root) => {
+    await mkdir(join(root, "src"), { recursive: true });
+    await mkdir(join(root, "tmp", "cache"), { recursive: true });
+    await mkdir(join(root, "logs"), { recursive: true });
+
+    await writeFile(join(root, ".gitignore"), [
+      "tmp/",
+      "*.log",
+      "logs/*.txt",
+      "!logs/keep.txt",
+      "",
+    ].join("\n"), "utf8");
+    await writeFile(join(root, "src", "keep.ts"), "export const keep = true;\n", "utf8");
+    await writeFile(join(root, "tmp", "cache", "ignored.ts"), "ignored\n", "utf8");
+    await writeFile(join(root, "debug.log"), "ignored\n", "utf8");
+    await writeFile(join(root, "logs", "drop.txt"), "ignored\n", "utf8");
+    await writeFile(join(root, "logs", "keep.txt"), "keep\n", "utf8");
+
+    const result = await listPreviewFilesForRenderer({ cwd: root, limit: 50 });
+
+    assert.equal(result.success, true);
+    assert.deepEqual(result.entries?.map((entry) => entry.relativePath), [
+      "logs/keep.txt",
+      "src/keep.ts",
+    ]);
+  });
+});
+
 test("preview directory listing sorts before applying the visible-entry cap", async () => {
   await withTempWorkspace(async (root) => {
     await mkdir(join(root, "a-directory"), { recursive: true });

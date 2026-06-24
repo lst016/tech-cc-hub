@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -111,4 +112,12 @@ test("CodeGraph turn autosync coalesces repeated requests inside the cooldown", 
   assert.deepEqual(calls, ["D:/workspace/project"]);
   await waitFor(() => calls.length === 2);
   assert.deepEqual(calls, ["D:/workspace/project", "D:/workspace/project"]);
+});
+
+test("session turn autosync ensures missing workspace indexes instead of skip-only sync", () => {
+  const source = readFileSync("src/electron/ipc-handlers.ts", "utf8");
+
+  assert.match(source, /ensureManagedCodeGraphSynced/);
+  assert.match(source, /sync:\s*ensureManagedCodeGraphSynced/);
+  assert.doesNotMatch(source, /sync:\s*syncManagedCodeGraph/);
 });

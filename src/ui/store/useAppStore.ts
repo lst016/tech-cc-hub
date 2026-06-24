@@ -5,6 +5,7 @@ import type {
   RuntimePermissionMode,
   RuntimeReasoningMode,
   RuntimeOverrides,
+  RuntimeWorkflowMode,
   SessionHistoryCursor,
   SessionWorkflowCatalog,
   ServerEvent,
@@ -17,6 +18,7 @@ import {
   type WorkflowSpecDocument,
 } from "../../shared/workflow-markdown";
 import type { SessionExecutionMode } from "../../shared/session-semantics";
+import { deriveLatestGoalSnapshot, type SessionGoalSnapshot } from "../../shared/goal-progress";
 import { extractSlashCommandsFromMessages, mergeSlashCommandLists } from "../../shared/slash-commands";
 import {
   normalizeTodoWriteArgs,
@@ -52,6 +54,7 @@ export type SessionView = {
   workflowSpec?: WorkflowSpecDocument;
   workflowError?: string;
   workflowCatalog?: SessionWorkflowCatalog;
+  latestGoal?: SessionGoalSnapshot;
   latestPlan?: SessionPlanSnapshot;
   archivedAt?: number;
   createdAt?: number;
@@ -127,6 +130,7 @@ interface AppState {
   runtimeModel: string;
   reasoningMode: RuntimeReasoningMode;
   permissionMode: RuntimePermissionMode;
+  workflowMode: RuntimeWorkflowMode;
   pendingStart: boolean;
   globalError: string | null;
   sessionsLoaded: boolean;
@@ -170,6 +174,7 @@ interface AppState {
   setSessionModel: (sessionId: string | null | undefined, model: string) => void;
   setReasoningMode: (mode: RuntimeReasoningMode) => void;
   setPermissionMode: (mode: RuntimePermissionMode) => void;
+  setWorkflowMode: (workflowMode: RuntimeWorkflowMode) => void;
   setPendingStart: (pending: boolean) => void;
   setGlobalError: (error: string | null) => void;
   setShowStartModal: (show: boolean) => void;
@@ -355,6 +360,7 @@ function appendMessagesToSession(
     ...session,
     slashCommands: slashCommands ?? session.slashCommands,
     messages: trimmed.messages,
+    latestGoal: deriveLatestGoalSnapshot(session.id, trimmed.messages, session.latestGoal),
     latestPlan: deriveLatestPlanSnapshot(session.id, nextMessages, session.latestPlan),
     hasMoreHistory: trimmed.trimmed ? true : session.hasMoreHistory,
     historyCursor: trimmed.trimmed ? trimmed.historyCursor ?? session.historyCursor : session.historyCursor,
@@ -380,6 +386,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingStart: false,
   globalError: null,
   permissionMode: "bypassPermissions",
+  workflowMode: "auto",
   sessionsLoaded: false,
   showStartModal: false,
   showSettingsModal: false,
@@ -656,6 +663,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   setReasoningMode: (reasoningMode) => set({ reasoningMode }),
   setPermissionMode: (permissionMode) => set({ permissionMode }),
+  setWorkflowMode: (workflowMode) => set({ workflowMode }),
   setPendingStart: (pendingStart) => set({ pendingStart }),
   setGlobalError: (globalError) => set({ globalError }),
   setShowStartModal: (showStartModal) => set({ showStartModal }),
@@ -808,6 +816,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             status,
             messages: mergedMessages,
             slashCommands: slashCommands ?? existing.slashCommands,
+            latestGoal: deriveLatestGoalSnapshot(sessionId, mergedMessages, existing.latestGoal),
             latestPlan: deriveLatestPlanSnapshot(sessionId, mergedMessages, existing.latestPlan),
             hydrated: true,
             hasMoreHistory: hasMore,

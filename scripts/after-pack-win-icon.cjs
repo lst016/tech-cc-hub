@@ -2,6 +2,12 @@ const { existsSync } = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
+const MAX_ICON_APPLY_ATTEMPTS = 5;
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 module.exports = async function applyWindowsIconAfterPack(context) {
   if (context.electronPlatformName !== "win32") {
     return;
@@ -20,21 +26,27 @@ module.exports = async function applyWindowsIconAfterPack(context) {
   const exePath = candidates.find((candidate) => existsSync(candidate));
 
   if (!exePath || !existsSync(iconPath) || !existsSync(rceditPath)) {
-    console.warn("[after-pack-win-icon] skipped: missing exe, icon, or rcedit");
-    return;
+    throw new Error("[after-pack-win-icon] missing exe, icon, or rcedit");
   }
 
-  const result = spawnSync(rceditPath, [exePath, "--set-icon", iconPath], {
-    cwd: projectDir,
-    stdio: "inherit",
-    shell: false,
-  });
+  let lastFailure = "";
+  for (let attempt = 1; attempt <= MAX_ICON_APPLY_ATTEMPTS; attempt += 1) {
+    const result = spawnSync(rceditPath, [exePath, "--set-icon", iconPath], {
+      cwd: projectDir,
+      stdio: "inherit",
+      shell: false,
+    });
 
-  if (result.error) {
-    console.warn(`[after-pack-win-icon] skipped: ${result.error.message}`);
-    return;
+    if (!result.error && result.status === 0) {
+      console.log(`[after-pack-win-icon] applied ${iconPath} to ${exePath} (attempt ${attempt})`);
+      return;
+    }
+
+    lastFailure = result.error?.message ?? `rcedit failed with status ${result.status ?? "unknown"}`;
+    if (attempt < MAX_ICON_APPLY_ATTEMPTS) {
+      await wait(250 * attempt);
+    }
   }
-  if (result.status !== 0) {
-    console.warn(`[after-pack-win-icon] skipped: rcedit failed with status ${result.status}`);
-  }
+
+  throw new Error(`[after-pack-win-icon] ${lastFailure}`);
 };

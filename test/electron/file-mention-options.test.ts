@@ -31,6 +31,12 @@ const mentionOptions: FileMentionOption[] = [
     name: "ActivityCalendar",
     kind: "directory",
   },
+  {
+    path: "D:/repo/src/features/target/TargetPanel.tsx",
+    label: "src/features/target/TargetPanel.tsx",
+    name: "TargetPanel.tsx",
+    kind: "file",
+  },
 ];
 
 test("file mention prefers slash-separated path prefixes over loose fuzzy matches", () => {
@@ -49,6 +55,13 @@ test("file mention prefers slash-separated path prefixes over loose fuzzy matche
   );
   assert.equal(
     ranked.some((item) => item.option.label === "src/pages/system/account"),
-    false,
+    true,
   );
+});
+
+test("file mention slash query can match descendants under the requested directory", () => {
+  const targetByName = mentionOptions.find((option) => option.label === "src/features/target/TargetPanel.tsx");
+  assert.ok(targetByName);
+  assert.notEqual(scoreFileMentionOption(targetByName, "target"), null);
+  assert.notEqual(scoreFileMentionOption(targetByName, "src/target"), null);
 });

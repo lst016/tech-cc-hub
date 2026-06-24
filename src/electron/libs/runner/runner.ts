@@ -22,7 +22,8 @@ import { canMainModelReadImages } from "../../../shared/models/model-capabilitie
 import type { BuiltinMcpServerName } from "../../../shared/builtin-mcp-registry.js";
 import {
   CLAUDE_AGENT_TEAMS_ENV_VAR,
-  withClaudeAgentTeamsEnv,
+  buildClaudeAgentTeamsDisallowedTools,
+  resolveClaudeAgentTeamsEnv,
 } from "../../../shared/claude-agent-teams.js";
 import {
   createLearnCaptureHook,
@@ -85,6 +86,7 @@ import {
 import {
   mergeRuntimeEfficiencyProfile,
   resolveRuntimeEfficiencyProfile,
+  isExplicitDynamicWorkflowPrompt,
   runtimeEfficiencyProfileStateEquals,
   runtimeEfficiencyProfileToState,
 } from "../runtime-efficiency.js";
@@ -139,6 +141,7 @@ export type RunnerOptions = {
 export type RunnerHandle = {
   abort: () => void;
   appendPrompt: (prompt: string, attachments?: PromptAttachment[], options?: { displayPrompt?: string; workspaceContext?: LinkedWorkspaceContext }) => Promise<void>;
+  stopTask: (taskId: string) => Promise<void>;
   isClosed: () => boolean;
   reuseKey?: string;
 };
@@ -202,41 +205,14 @@ const FILE_MUTATION_TOOL_NAMES = new Set(["Edit", "MultiEdit", "Write"]);
 // which provide persistent storage, execution history, and retry mechanism.
 const SDK_BUILTIN_CRON_TOOLS = new Set(["CronCreate", "CronDelete", "CronList"]);
 const CODEGRAPH_RETRIEVAL_TOOL_NAMES = new Set(["codegraph_search", "codegraph_context", "codegraph_impact"]);
-const BROAD_CODE_EXPLORATION_TOOL_NAMES = new Set(["Grep", "Glob", "Task", "Search"]);
-const SOURCE_CODE_READ_EXTENSIONS = new Set([
-  ".astro",
-  ".c",
-  ".cc",
-  ".cjs",
-  ".cpp",
-  ".cs",
-  ".cxx",
-  ".go",
-  ".graphql",
-  ".gql",
-  ".h",
-  ".hpp",
-  ".java",
-  ".js",
-  ".jsx",
-  ".kt",
-  ".mjs",
-  ".php",
-  ".py",
-  ".rb",
-  ".rs",
-  ".scala",
-  ".sql",
-  ".svelte",
-  ".swift",
-  ".ts",
-  ".tsx",
-  ".vue",
+const CODEGRAPH_WORKSPACE_TOOL_NAMES = new Set([
+  "codegraph_status",
+  "codegraph_sync",
+  ...CODEGRAPH_RETRIEVAL_TOOL_NAMES,
 ]);
+const BROAD_CODE_EXPLORATION_TOOL_NAMES = new Set(["Grep", "Glob", "Task", "Search"]);
 const BASH_CODE_EXPLORATION_COMMAND_PATTERN =
   /(?:^|[;&|()\s])(?:rg|grep|find|fd|tree|findstr)(?:\.exe)?(?=\s|$)|\bgit\s+(?:grep|ls-files)\b|\b(?:Get-ChildItem|Select-String)\b/i;
-const AUTHENTICATED_BROWSER_URL_HOST_PATTERN =
-  /(?:^|\.)teambition\.pook\.com$|(?:^|\.)feishu\.cn$|(?:^|\.)larksuite\.com$/i;
 
 function isSdkBuiltinCronTool(toolName: string): boolean {
   return SDK_BUILTIN_CRON_TOOLS.has(toolName);
@@ -271,14 +247,22 @@ function isCodeGraphRetrievalTool(toolName: string): boolean {
   ));
 }
 
+function isCodeGraphWorkspaceTool(toolName: string): boolean {
+  return Array.from(CODEGRAPH_WORKSPACE_TOOL_NAMES).some((codegraphToolName) => (
+    toolName === codegraphToolName ||
+    toolName.endsWith(`__${codegraphToolName}`) ||
+    toolName.endsWith(`:${codegraphToolName}`) ||
+    toolName.endsWith(`/${codegraphToolName}`)
+  ));
+}
+
 function getCodeGraphFirstDenyMessage(
   toolName: string,
   projectCwd: string | undefined,
   codeGraphRetrievalSeen: boolean,
   input?: unknown,
-  prompt = "",
 ): string | undefined {
-  if (!projectCwd || codeGraphRetrievalSeen || !isBroadCodeExplorationTool(toolName, input, prompt)) {
+  if (!projectCwd || codeGraphRetrievalSeen || !isBroadCodeExplorationTool(toolName, input)) {
     return undefined;
   }
   if (!isManagedCodeGraphInitialized(projectCwd)) {
@@ -288,17 +272,13 @@ function getCodeGraphFirstDenyMessage(
   return "Use mcp__tech-cc-hub-knowledge__codegraph_search or mcp__tech-cc-hub-knowledge__codegraph_context before broad source exploration when the managed index is available. If CodeGraph returns no useful result, an error, a timeout, a slow-machine bypass, or feels slow, fall back to focused Read/Grep/Glob instead of retrying CodeGraph.";
 }
 
-function isBroadCodeExplorationTool(toolName: string, input: unknown, prompt: string): boolean {
+function isBroadCodeExplorationTool(toolName: string, input: unknown): boolean {
   if (BROAD_CODE_EXPLORATION_TOOL_NAMES.has(toolName)) {
     return true;
   }
 
   if (toolName === "Bash") {
     return isBroadCodeExplorationCommand(input);
-  }
-
-  if (toolName === "Read") {
-    return isBroadSourceRead(input, prompt);
   }
 
   return false;
@@ -311,36 +291,6 @@ function isBroadCodeExplorationCommand(input: unknown): boolean {
 
   const command = typeof input.command === "string" ? input.command.trim() : "";
   return Boolean(command && BASH_CODE_EXPLORATION_COMMAND_PATTERN.test(command));
-}
-
-function isBroadSourceRead(input: unknown, prompt: string): boolean {
-  if (!isRecord(input)) {
-    return false;
-  }
-
-  const filePath = typeof input.file_path === "string" ? input.file_path.trim() : "";
-  if (!SOURCE_CODE_READ_EXTENSIONS.has(extname(filePath).toLowerCase())) {
-    return false;
-  }
-
-  return !promptMentionsFilePath(prompt, filePath);
-}
-
-function promptMentionsFilePath(prompt: string, filePath: string): boolean {
-  const normalizedPrompt = prompt.toLowerCase().replace(/\\/g, "/");
-  const normalizedPath = filePath.toLowerCase().replace(/\\/g, "/");
-  const pathSegments = normalizedPath.split("/").filter(Boolean);
-  const basename = pathSegments.at(-1) ?? "";
-  const tail = pathSegments.slice(-3).join("/");
-
-  return Boolean(
-    basename &&
-    (
-      normalizedPrompt.includes(normalizedPath) ||
-      normalizedPrompt.includes(tail) ||
-      normalizedPrompt.includes(basename)
-    ),
-  );
 }
 
 function normalizeRunnerWorkspaceContext(context: LinkedWorkspaceContext | undefined): LinkedWorkspaceContext | null {
@@ -435,6 +385,13 @@ function routeLinkedWorkspaceToolInput(
     if (!isRelativeToolPath(pathValue)) return { input, routed: false };
     nextInput.path = join(targetCwd, pathValue);
     return { input: nextInput, routed: true, reason: `${toolName} relative path routed to linked workspace` };
+  }
+
+  if (isCodeGraphWorkspaceTool(toolName)) {
+    const workspaceRoot = typeof nextInput.workspaceRoot === "string" ? nextInput.workspaceRoot.trim() : "";
+    if (workspaceRoot) return { input, routed: false };
+    nextInput.workspaceRoot = targetCwd;
+    return { input: nextInput, routed: true, reason: "CodeGraph workspaceRoot routed to linked workspace" };
   }
 
   return { input, routed: false };
@@ -785,12 +742,6 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
 
       const env = buildEnvForConfig(config, effectiveModel);
       const globalRuntimeConfig = getGlobalRuntimeConfig();
-      const mergedEnv = withClaudeAgentTeamsEnv({
-        ...getEnhancedEnv(),
-        ...env,
-      });
-      let syncedGlobalRuntimeConfig = persistDiscoveredRuntimeConfig(globalRuntimeConfig, mergedEnv);
-      latestGlobalRuntimeConfig = syncedGlobalRuntimeConfig;
       const thinking = buildThinkingConfig(runtime?.reasoningMode);
       const effort = buildEffortLevel(runtime?.reasoningMode);
       const projectCwd = session.cwd && existsSync(session.cwd) ? session.cwd : undefined;
@@ -800,6 +751,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       latestRunSurface = runSurface;
       const agentId = runtime?.agentId ?? session.agentId;
       const runtimeProfile = collectRuntimeProfileForPrompt(prompt, attachments);
+      const mergedEnv = resolveClaudeAgentTeamsEnv({
+        ...getEnhancedEnv(),
+        ...env,
+      }, runtimeProfile.enableAgentTeams);
+      let syncedGlobalRuntimeConfig = persistDiscoveredRuntimeConfig(globalRuntimeConfig, mergedEnv);
+      latestGlobalRuntimeConfig = syncedGlobalRuntimeConfig;
       const agentContext = resolveAgentRuntimeContext({
         cwd: projectCwd,
         surface: runSurface,
@@ -858,15 +815,18 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         runtimeProfile.includeBrowserPrompt ? buildBrowserWorkbenchPromptAppend() : undefined,
         runtimeProfile.includeDesignPrompt ? buildDesignParityPromptAppend() : undefined,
         buildBuiltinMcpRegistryPromptAppend(enabledBuiltinMcpServerNames),
-        runtimeProfile.includeClaudeCompatPrompt ? buildClaudeCodeCompatFeaturePromptAppend() : undefined,
+        runtimeProfile.includeClaudeCompatPrompt ? buildClaudeCodeCompatFeaturePromptAppend({
+          includeAgentTeamsHint: runtimeProfile.enableAgentTeams,
+        }) : undefined,
       );
       const outputFormat = resolveOutputFormat(runtime?.outputFormat, systemPromptAppend, prompt);
       const sdkModelOption = getClaudeCodeModelOption(config, effectiveModel);
-      const dynamicWorkflowSettings = buildClaudeDynamicWorkflowSettings(currentDisplayPrompt, runtime?.reasoningMode);
+      const dynamicWorkflowSettings = buildClaudeDynamicWorkflowSettings(currentDisplayPrompt, runtime?.reasoningMode, runtime?.workflowMode);
       const sdkModelSettings = {
         ...buildClaudeCodeModelSettings(config, effectiveModel),
         ...dynamicWorkflowSettings,
       };
+      const agentTeamsDisallowedTools = buildClaudeAgentTeamsDisallowedTools(runtimeProfile.enableAgentTeams);
       const sdkExpertModel = getClaudeCodeExpertModel(config, effectiveModel);
       console.info("[runner][route]", {
         sessionId: session.id,
@@ -885,7 +845,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         claudePath: getClaudeCodePath(),
         sdkPlugins: sdkPlugins.map((plugin) => plugin.path),
         agentTeamsEnabled: mergedEnv[CLAUDE_AGENT_TEAMS_ENV_VAR] === "1",
-        dynamicWorkflowsEnabled: dynamicWorkflowSettings.enableWorkflows === true,
+        dynamicWorkflowsEnabled: dynamicWorkflowSettings.enableWorkflows === true && dynamicWorkflowSettings.disableWorkflows !== true,
         ultracodeEnabled: dynamicWorkflowSettings.ultracode === true,
         runtimeProfile: runtimeProfile.id,
         builtinMcpServers: enabledBuiltinMcpServerNames,
@@ -920,6 +880,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             ...builtinMcpServers,
           },
           hooks,
+          disallowedTools: agentTeamsDisallowedTools,
           allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
           canUseTool: async (toolName, input, { signal }) => {
             const schemaNormalization = isRecord(input)
@@ -969,7 +930,6 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                   projectCwd,
                   codeGraphRetrievalSeen,
                   effectiveInput,
-                  currentDisplayPrompt,
                 );
                 return message ? { behavior: "deny", message } : null;
               },
@@ -1002,6 +962,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                   toolName,
                   effectiveInput,
                   runtimeProfile.includeBrowserPrompt,
+                  currentDisplayPrompt,
                 );
                 return message ? { behavior: "deny", message } : null;
               },
@@ -1201,6 +1162,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       codeGraphRetrievalSeen = false;
       await ensureMcpServersForPrompt(nextPrompt, nextAttachments);
       promptInput.enqueue(nextPrompt, nextAttachments);
+    },
+    stopTask: async (taskId: string) => {
+      if (runnerClosed || promptInput.isClosed() || !activeQuery) {
+        throw new Error("Runner is not ready for task control.");
+      }
+      await activeQuery.stopTask(taskId);
     },
     isClosed: () => runnerClosed || promptInput.isClosed(),
   };
@@ -1824,30 +1791,51 @@ function getAuthenticatedUrlWebFetchDenyMessage(
   toolName: string,
   input: unknown,
   browserPromptEnabled: boolean,
+  prompt: string,
 ): string | undefined {
   if (!browserPromptEnabled || toolName !== "WebFetch" || !isRecord(input)) {
     return undefined;
   }
 
   const rawUrl = typeof input.url === "string" ? input.url.trim() : "";
-  if (!rawUrl || !isAuthenticatedBrowserUrl(rawUrl)) {
+  if (!rawUrl || !shouldUseBrowserViewBeforeWebFetch(rawUrl, prompt)) {
     return undefined;
   }
 
   return [
-    "This URL is likely to require saved browser login state or SSO.",
+    "The user provided this URL directly; it may require saved browser login state, cookies, or SSO.",
     "Use mcp__tech-cc-hub-browser__browser_open_page for the URL, then inspect it with browser_extract_page or browser_snapshot_interactive.",
     "Do not ask the user to paste task details before trying the built-in BrowserView.",
   ].join(" ");
 }
 
-function isAuthenticatedBrowserUrl(rawUrl: string): boolean {
+function shouldUseBrowserViewBeforeWebFetch(rawUrl: string, prompt: string): boolean {
   try {
     const url = new URL(rawUrl);
-    return AUTHENTICATED_BROWSER_URL_HOST_PATTERN.test(url.hostname);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    if (isLocalBrowserBypassHost(url.hostname)) return false;
+    return promptMentionsUrl(prompt, rawUrl, url);
   } catch {
     return false;
   }
+}
+
+function isLocalBrowserBypassHost(hostname: string): boolean {
+  return hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]";
+}
+
+function promptMentionsUrl(prompt: string, rawUrl: string, url: URL): boolean {
+  const haystack = prompt.toLowerCase();
+  const href = url.href.toLowerCase();
+  const raw = rawUrl.toLowerCase();
+  const withoutTrailingSlash = href.endsWith("/") ? href.slice(0, -1) : href;
+  return haystack.includes(raw) ||
+    haystack.includes(href) ||
+    haystack.includes(withoutTrailingSlash) ||
+    haystack.includes(`${url.hostname.toLowerCase()}${url.pathname.toLowerCase()}`);
 }
 
 function checkRasterImageRead(
@@ -1905,11 +1893,10 @@ function shouldPreprocessImageRead(
   filePath: string,
   mainModelName?: string,
 ): boolean {
-  void filePath;
   void mainModelName;
 
   // 涓存椂鍏抽棴 Read 鍥剧墖鏃剁殑鍥剧墖妯″瀷鎽樿鎷︽埅锛岄伩鍏嶆埅鍥炬瘮鐓?闄勪欢閾捐矾琚浛鎹㈡垚涓嶅彲闈犳枃鏈€?
-  return Boolean(config?.imageModel?.trim());
+  return Boolean(config?.imageModel?.trim() && RASTER_IMAGE_EXTENSIONS.has(extname(filePath).toLowerCase()));
 }
 
 function createImageSummaryToolOutput(summary: string): Array<{ type: "text"; text: string }> {
@@ -2135,7 +2122,6 @@ function buildQualityHooks(
           projectCwd,
           isCodeGraphRetrievalSeen?.() ?? false,
           normalizedInput,
-          getCurrentPrompt(),
         );
         if (codeGraphDenyMessage) {
           return {
@@ -2752,8 +2738,14 @@ function buildEffortLevel(reasoningMode?: RuntimeOverrides["reasoningMode"]): Ef
 function buildClaudeDynamicWorkflowSettings(
   prompt: string,
   reasoningMode?: RuntimeOverrides["reasoningMode"],
-): { enableWorkflows: true; ultracode?: true } {
-  const wantsDynamicWorkflow = /\/workflows?\b|dynamic\s+workflows?|动态\s*workflow|动态工作流|ultracode|多\s*agent|多智能体|后台编排|并行编排|大规模.*编排/i.test(prompt);
+  workflowMode: RuntimeOverrides["workflowMode"] = "auto",
+): { enableWorkflows?: true; disableWorkflows?: true; ultracode?: true } {
+  if (workflowMode === "off") {
+    return { disableWorkflows: true };
+  }
+
+  const wantsDynamicWorkflow = workflowMode === "force"
+    || isExplicitDynamicWorkflowPrompt(prompt);
   return {
     enableWorkflows: true,
     ...(wantsDynamicWorkflow && reasoningMode === "xhigh" ? { ultracode: true } : {}),
