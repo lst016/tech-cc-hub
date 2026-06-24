@@ -1,17 +1,1 @@
-export function isSuccessfulRunnerResult(message: { type?: unknown; subtype?: unknown }): boolean {
-  return message.type === "result" && message.subtype === "success";
-}
-
-export function isEmptySuccessfulRunnerResult(
-  message: { type?: unknown; subtype?: unknown; result?: unknown },
-  hasAssistantActivity: boolean,
-): boolean {
-  return isSuccessfulRunnerResult(message) &&
-    !hasAssistantActivity &&
-    typeof message.result === "string" &&
-    message.result.trim().length === 0;
-}
-
-export function shouldSuppressRunnerErrorAfterSuccessfulResult(hasEmittedSuccessfulResult: boolean): boolean {
-  return hasEmittedSuccessfulResult;
-}
+ZXhwb3J0IGZ1bmN0aW9uIGlzU3VjY2Vzc2Z1bFJ1bm5lclJlc3VsdChtZXNzYWdlOiB7IHR5cGU/OiB1bmtub3duOyBzdWJ0eXBlPzogdW5rbm93biB9KTogYm9vbGVhbiB7DQogIHJldHVybiBtZXNzYWdlLnR5cGUgPT09ICJyZXN1bHQiICYmIG1lc3NhZ2Uuc3VidHlwZSA9PT0gInN1Y2Nlc3MiOw0KfQ0KDQpleHBvcnQgZnVuY3Rpb24gaXNFbXB0eVN1Y2Nlc3NmdWxSdW5uZXJSZXN1bHQoDQogIG1lc3NhZ2U6IHsgdHlwZT86IHVua25vd247IHN1YnR5cGU/OiB1bmtub3duOyByZXN1bHQ/OiB1bmtub3duIH0sDQogIGhhc0Fzc2lzdGFudFRleHRBY3Rpdml0eTogYm9vbGVhbiwNCik6IGJvb2xlYW4gew0KICByZXR1cm4gaXNTdWNjZXNzZnVsUnVubmVyUmVzdWx0KG1lc3NhZ2UpICYmDQogICAgIWhhc0Fzc2lzdGFudFRleHRBY3Rpdml0eSAmJg0KICAgIHR5cGVvZiBtZXNzYWdlLnJlc3VsdCA9PT0gInN0cmluZyIgJiYNCiAgICBtZXNzYWdlLnJlc3VsdC50cmltKCkubGVuZ3RoID09PSAwOw0KfQ0KDQpleHBvcnQgZnVuY3Rpb24gc2hvdWxkU3VwcHJlc3NSdW5uZXJFcnJvckFmdGVyU3VjY2Vzc2Z1bFJlc3VsdChoYXNFbWl0dGVkU3VjY2Vzc2Z1bFJlc3VsdDogYm9vbGVhbik6IGJvb2xlYW4gew0KICByZXR1cm4gaGFzRW1pdHRlZFN1Y2Nlc3NmdWxSZXN1bHQ7DQp9DQo=
