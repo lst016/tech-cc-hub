@@ -6,12 +6,14 @@ import { Toaster } from "sonner";
 import { useIPC } from "./hooks/useIPC";
 import { useMessageWindow } from "./hooks/useMessageWindow";
 import { useAppStore } from "./store/useAppStore";
+import { useWorkflowRunStore } from "./store/workflowRunStore";
 import type { AppUpdateStatus, PromptAttachment, ServerEvent, SettingsPageId, StreamMessage } from "./types";
 import { filterDisplayMessages } from "./utils/chat-display-messages";
 import { DEFAULT_SIDEBAR_WIDTH, Sidebar } from "./components/Sidebar";
 import { TooltipButton } from "./components/TooltipButton";
 import { UpdateToast } from "./components/UpdateToast";
-import { PromptInput, usePromptActions } from "./components/prompt-input";
+import { PromptInput } from "./components/prompt-input/PromptInput";
+import { usePromptActions } from "./components/prompt-input/usePromptActions";
 import { SessionAnalysisPage, buildSessionWorkflowOptimizationPrompt } from "./components/SessionAnalysisPage";
 // FeedbackDialog removed — uses direct browser link
 import {
@@ -23,12 +25,17 @@ import {
 import { copyTextToClipboard } from "./utils/clipboard";
 import {
   DEFAULT_ACTIVITY_RAIL_TAB,
+  buildWorkflowAgentWorkspaceTabs,
+  getActivityRailTabAfterClosingWorkflowAgent,
+  getWorkflowAgentIdFromTab,
+  getWorkflowAgentTabId,
   type ActivityRailTab,
   type WorkflowAgentRailTab,
 } from "./utils/activity-workspace-tabs";
 import { buildWorkflowAgentSummaries } from "./utils/workflow-agent-transcripts";
 import { ProcessGroupCard as SharedProcessGroupCard } from "./components/chat/ProcessGroupCard";
 import { WorkflowAgentCard } from "./components/workflow/WorkflowAgentCard";
+import type { WorkflowRunAction, WorkflowRunRecord } from "../shared/workflows/workflow-runs";
 import { DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT } from "../shared/claude-agent-teams";
 import {
   DEV_BRIDGE_READY_EVENT,
@@ -54,8 +61,8 @@ const MIN_ACTIVITY_RAIL_WIDTH = 400;
 const RELEASE_NOTES_TOOLTIP_MAX_LINES = 8;
 const RELEASE_NOTES_TOOLTIP_MAX_CHARS = 520;
 const EMPTY_MESSAGES: StreamMessage[] = [];
+const EMPTY_WORKFLOW_RUNS: WorkflowRunRecord[] = [];
 const EMPTY_PERMISSION_REQUESTS: NonNullable<ReturnType<typeof useAppStore.getState>["sessions"][string]["permissionRequests"]> = [];
-type GlobalRuntimeConfig = Record<string, unknown>;
 
 type RenderEntry =
   | { type: "separator"; key: string; roundNumber: number }
@@ -83,14 +90,6 @@ function getWorkflowTaskId(message: StreamMessage): string | null {
   ) return null;
   const taskId = record.task_id;
   return typeof taskId === "string" && taskId.trim() ? taskId.trim() : null;
-}
-
-function getWorkflowAgentTabId(agentId: string): WorkflowAgentRailTab {
-  return `workflow-agent:${agentId}`;
-}
-
-function getWorkflowAgentIdFromTab(tab: ActivityRailTab): string | null {
-  return tab.startsWith("workflow-agent:") ? tab.slice("workflow-agent:".length) : null;
 }
 
 function getLatestRuntimeUsageModel(messages: StreamMessage[]): string {
@@ -281,7 +280,6 @@ function App() {
   const [showTaskPanel, setShowTaskPanel] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
-  const [closeSidebarOnBrowserOpen, setCloseSidebarOnBrowserOpen] = useState(true);
   const [showActivityRail, setShowActivityRail] = useState(true);
   const [workspaceViewBySessionId, setWorkspaceViewBySessionId] = useState<Record<string, WorkspaceView>>({});
   const [activityRailTabBySessionId, setActivityRailTabBySessionId] = useState<Record<string, ActivityRailTab>>({});
@@ -393,13 +391,17 @@ function App() {
       return { ...current, [activeSessionId]: nextOpenTabs };
     });
     if (activityRailTab === tab) {
-      const fallbackAgentId = nextOpenTabs[nextOpenTabs.length - 1];
-      setActiveSessionActivityRailTab(fallbackAgentId ? getWorkflowAgentTabId(fallbackAgentId) : "trace");
+      setActiveSessionActivityRailTab(getActivityRailTabAfterClosingWorkflowAgent({
+        activeTab: activityRailTab,
+        closingTab: tab,
+        openAgentIds: openWorkflowAgentTabIds,
+      }));
     }
   }, [activeSessionId, activityRailTab, openWorkflowAgentTabIds, setActiveSessionActivityRailTab]);
   const activeSession = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId]) : undefined));
   const activeHistoryCursor = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId])?.historyCursor : undefined));
   const activeSessionHydrated = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId])?.hydrated : undefined));
+  const workflowRuns = useWorkflowRunStore((s) => (activeSessionId ? (s.runsBySessionId[activeSessionId] ?? EMPTY_WORKFLOW_RUNS) : EMPTY_WORKFLOW_RUNS));
   const showStartModal = useAppStore((s) => s.showStartModal);
   const setShowStartModal = useAppStore((s) => s.setShowStartModal);
   const showSettingsModal = useAppStore((s) => s.showSettingsModal);
@@ -506,6 +508,15 @@ function App() {
     if (event.type === "session.history" || event.type === "session.deleted") {
       setIsLoadingHistory(false);
     }
+    if (event.type === "workflow.runs") {
+      useWorkflowRunStore.getState().setRuns(event.payload.sessionId, event.payload.runs);
+    }
+    if (event.type === "workflow.run.updated") {
+      useWorkflowRunStore.getState().upsertRun(event.payload);
+    }
+    if (event.type === "session.deleted") {
+      useWorkflowRunStore.getState().clearSession(event.payload.sessionId);
+    }
     if (event.type === "desktop.notification.opened") {
       const target = event.payload.target;
       const hasSessionTarget = "sessionId" in target && Boolean(target.sessionId);
@@ -528,16 +539,10 @@ function App() {
   const activeHasTerminalTab = activeSessionId ? terminalTabBySessionId[activeSessionId] === true : false;
   const workflowAgents = useMemo(() => buildWorkflowAgentSummaries(messages, activeSession?.status), [messages, activeSession?.status]);
   const workflowAgentsById = useMemo(() => new Map(workflowAgents.map((agent) => [agent.id, agent])), [workflowAgents]);
-  const workflowAgentTabs = useMemo(() => (
-    openWorkflowAgentTabIds
-      .map((agentId) => workflowAgentsById.get(agentId))
-      .filter((agent): agent is NonNullable<typeof agent> => Boolean(agent))
-      .map((agent) => ({
-        id: getWorkflowAgentTabId(agent.id),
-        label: agent.title,
-        title: agent.title,
-      }))
-  ), [openWorkflowAgentTabIds, workflowAgentsById]);
+  const workflowAgentTabs = useMemo(() => buildWorkflowAgentWorkspaceTabs({
+    openAgentIds: openWorkflowAgentTabIds,
+    agents: workflowAgents,
+  }), [openWorkflowAgentTabIds, workflowAgents]);
   const selectedWorkflowAgent = selectedWorkflowAgentId ? workflowAgentsById.get(selectedWorkflowAgentId) : undefined;
   const latestRuntimeUsageModel = useMemo(() => getLatestRuntimeUsageModel(messages), [messages]);
   const selectedUsageModel =
@@ -781,6 +786,14 @@ function App() {
     };
   }, [activeSession, activeSessionHydrated, activeSessionId, connected, historyRequested, markHistoryRequested, sendEvent]);
 
+  useEffect(() => {
+    if (!activeSessionId || !connected) return;
+    sendEvent({
+      type: "workflow.runs.list",
+      payload: { sessionId: activeSessionId },
+    });
+  }, [activeSessionId, connected, sendEvent]);
+
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
@@ -998,16 +1011,13 @@ function App() {
         setBrowserWorkbenchSessionUrl(activeSessionId, url);
       }
       setActiveSessionWorkspaceView("browser");
-      if (closeSidebarOnBrowserOpen && showSidebar) {
-        setShowSidebar(false);
-      }
     };
 
     window.addEventListener(OPEN_BROWSER_WORKBENCH_URL_EVENT, handleOpenBrowserWorkbenchUrl);
     return () => {
       window.removeEventListener(OPEN_BROWSER_WORKBENCH_URL_EVENT, handleOpenBrowserWorkbenchUrl);
     };
-  }, [activeSessionId, closeSidebarOnBrowserOpen, setActiveSessionWorkspaceView, setBrowserWorkbenchSessionUrl, showSidebar]);
+  }, [activeSessionId, setActiveSessionWorkspaceView, setBrowserWorkbenchSessionUrl]);
 
   useEffect(() => {
     if (!activeSessionId || typeof window.electron.onBrowserWorkbenchEvent !== "function") return;
@@ -1021,12 +1031,9 @@ function App() {
       setShowActivityRail(true);
       setBrowserWorkbenchSessionUrl(activeSessionId, url);
       setActiveSessionWorkspaceView("browser");
-      if (closeSidebarOnBrowserOpen && showSidebarRef.current) {
-        setShowSidebar(false);
-      }
     });
     return unsubscribe;
-  }, [activeSessionId, closeSidebarOnBrowserOpen, setActiveSessionWorkspaceView, setBrowserWorkbenchSessionUrl]);
+  }, [activeSessionId, setActiveSessionWorkspaceView, setBrowserWorkbenchSessionUrl]);
 
   useEffect(() => {
     const handlePreviewOpenFile = (event: Event) => {
@@ -1127,20 +1134,6 @@ function App() {
     setShowSettingsModal(true);
   }, [setShowSettingsModal]);
 
-  const refreshBrowserWorkbenchPreference = useCallback(() => {
-    window.electron.getGlobalConfig()
-      .then((config) => {
-        const normalizedConfig = typeof config === "object" && config !== null && !Array.isArray(config)
-          ? config as GlobalRuntimeConfig
-          : {};
-        const configured = normalizedConfig.closeSidebarOnBrowserOpen;
-        setCloseSidebarOnBrowserOpen(configured !== false);
-      })
-      .catch((error) => {
-        console.error("Failed to load browser workbench preference:", error);
-      });
-  }, []);
-
   useEffect(() => {
     const handleDevBridgeReady = () => {
       setRuntimeSource(getDevElectronRuntimeSource());
@@ -1151,13 +1144,11 @@ function App() {
         .catch((error) => {
           console.error("Failed to refresh API config settings after bridge ready:", error);
         });
-
-      refreshBrowserWorkbenchPreference();
     };
 
     window.addEventListener(DEV_BRIDGE_READY_EVENT, handleDevBridgeReady);
     return () => window.removeEventListener(DEV_BRIDGE_READY_EVENT, handleDevBridgeReady);
-  }, [refreshBrowserWorkbenchPreference, setApiConfigSettings]);
+  }, [setApiConfigSettings]);
 
   const startMaintenanceSession = useCallback(async (
     maintenancePrompt: string,
@@ -1297,9 +1288,30 @@ function App() {
       current[activeSessionId] ? { ...current, [activeSessionId]: false } : current
     ));
     if (activityRailTab === "terminal") {
-      setActiveSessionActivityRailTab("trace");
+      setActiveSessionActivityRailTab(DEFAULT_ACTIVITY_RAIL_TAB);
     }
   }, [activeSessionId, activityRailTab, setActiveSessionActivityRailTab]);
+
+  const handleWorkflowRunAction = useCallback((action: WorkflowRunAction, run: WorkflowRunRecord) => {
+    if (action === "stop") {
+      sendEvent({
+        type: "workflow.run.stop",
+        payload: {
+          sessionId: run.sessionId,
+          taskId: run.taskId,
+        },
+      });
+      return;
+    }
+
+    sendEvent({
+      type: action === "resume" ? "workflow.run.resume" : "workflow.run.rerun",
+      payload: {
+        sessionId: run.sessionId,
+        workflowRunId: run.id,
+      },
+    });
+  }, [sendEvent]);
 
   const gitWorkspaceActive =
     !showSessionAnalysis &&
@@ -1411,10 +1423,6 @@ function App() {
       setGlobalError("复制会话 ID 失败，请重试。");
     }
   }, [currentSessionId, setGlobalError]);
-
-  useEffect(() => {
-    refreshBrowserWorkbenchPreference();
-  }, [refreshBrowserWorkbenchPreference]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1924,6 +1932,8 @@ function App() {
                 hasTerminalTab={activeHasTerminalTab}
                 workflowAgentTabs={workflowAgentTabs}
                 selectedWorkflowAgent={selectedWorkflowAgent}
+                workflowRuns={workflowRuns}
+                onWorkflowRunAction={handleWorkflowRunAction}
                 onOpenTerminalWorkspace={openTerminalWorkspace}
                 onCloseTerminalWorkspace={closeTerminalWorkspace}
                 onCloseWorkflowAgentTab={closeWorkflowAgentTranscript}
@@ -1945,10 +1955,6 @@ function App() {
                 initialUrl={activeSessionId ? (activeBrowserWorkbenchState?.url ?? "") : ""}
                 occluded={browserWorkbenchOccluded}
                 sessionId={activeSessionId}
-                onOpenTrace={() => {
-                  setActiveSessionActivityRailTab("trace");
-                  setActiveSessionWorkspaceView("chat");
-                }}
                 onOpenUsage={() => {
                   setActiveSessionActivityRailTab("usage");
                   setActiveSessionWorkspaceView("chat");
@@ -2000,7 +2006,6 @@ function App() {
             onClose={() => {
               setShowSettingsModal(false);
               setSettingsInitialPageId(null);
-              refreshBrowserWorkbenchPreference();
             }}
             initialPageId={settingsInitialPageId ?? undefined}
             onStartMaintenanceSession={startMaintenanceSession}

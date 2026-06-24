@@ -230,7 +230,7 @@ export function ProcessGroupCard({
                 </span>
                 <span>已修改 {changedFiles.length} 个文件</span>
               </div>
-              <p className="mt-1 text-xs text-muted">点击文件在右侧预览打开</p>
+              <p className="mt-1 text-xs text-muted">点击文件在右侧预览并跳到首个修改处</p>
             </div>
           </div>
           <div className="divide-y divide-black/6">
@@ -240,7 +240,7 @@ export function ProcessGroupCard({
                 type="button"
                 className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-ink-900/[0.03]"
                 onClick={() => window.dispatchEvent(new CustomEvent<PreviewOpenFileDetail>(PREVIEW_OPEN_FILE_EVENT, {
-                  detail: { filePath: file.path },
+                  detail: { filePath: file.path, revealFirstChange: true },
                 }))}
               >
                 <span className="min-w-0 flex-1 truncate text-[13px] text-ink-800" title={file.path}>

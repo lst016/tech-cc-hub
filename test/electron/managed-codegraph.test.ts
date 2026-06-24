@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   closeManagedCodeGraph,
+  ensureManagedCodeGraphSynced,
   openManagedCodeGraph,
   resolveManagedCodeGraphPaths,
   searchManagedCodeGraph,
@@ -64,6 +65,27 @@ test("managed CodeGraph sync skips missing indexes instead of full indexing impl
 
     assert.equal("skipped" in sync && sync.skipped, true);
     assert.equal(existsSync(paths.databasePath), false);
+    assert.equal(existsSync(paths.upstreamCodegraphRoot), false);
+  } finally {
+    closeManagedCodeGraph(workspaceRoot);
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("managed CodeGraph ensure sync indexes a missing workspace for autosync", async () => {
+  const workspaceRoot = mkdtempSync(join(tmpdir(), "tech-cc-hub-codegraph-ensure-"));
+  writeFileSync(join(workspaceRoot, "zeta.ts"), "export function zetaSearchTarget() { return 6; }\n", "utf8");
+
+  try {
+    const paths = resolveManagedCodeGraphPaths(workspaceRoot);
+    assert.equal(existsSync(paths.databasePath), false);
+
+    const ensured = await ensureManagedCodeGraphSynced(workspaceRoot);
+    const results = await searchManagedCodeGraph(workspaceRoot, "zetaSearchTarget", { limit: 5 });
+
+    assert.equal(ensured.mode, "index");
+    assert.equal(existsSync(paths.databasePath), true);
+    assert.ok(results.some((result) => result.node.name === "zetaSearchTarget"));
     assert.equal(existsSync(paths.upstreamCodegraphRoot), false);
   } finally {
     closeManagedCodeGraph(workspaceRoot);

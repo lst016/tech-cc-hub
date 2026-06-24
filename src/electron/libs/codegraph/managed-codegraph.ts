@@ -78,6 +78,11 @@ export type ManagedCodeGraphSkippedSyncResult = {
 
 export type ManagedCodeGraphSyncResult = SyncResult | ManagedCodeGraphSkippedSyncResult;
 
+export type ManagedCodeGraphEnsureSyncResult = {
+  mode: "index" | "sync";
+  result: IndexResult | ManagedCodeGraphSyncResult;
+};
+
 const require = createRequire(import.meta.url);
 const codegraphRuntime = require("@colbymchenry/codegraph") as CodeGraphRuntime;
 const configRuntime = require("@colbymchenry/codegraph/dist/config.js") as CodeGraphConfigRuntime;
@@ -212,7 +217,7 @@ export async function getManagedCodeGraphStatus(workspaceRoot: string): Promise<
   };
 }
 
-export async function syncManagedCodeGraph(workspaceRoot: string): Promise<ManagedCodeGraphSyncResult> {
+export async function syncManagedCodeGraph(workspaceRoot: string, options: IndexOptions = {}): Promise<ManagedCodeGraphSyncResult> {
   if (!isManagedCodeGraphInitialized(workspaceRoot)) {
     return {
       skipped: true,
@@ -224,7 +229,7 @@ export async function syncManagedCodeGraph(workspaceRoot: string): Promise<Manag
     };
   }
   const graph = await openManagedCodeGraph(workspaceRoot);
-  return graph.sync();
+  return graph.sync(options);
 }
 
 async function openManagedCodeGraphForRetrieval(workspaceRoot: string): Promise<ManagedCodeGraphInstance> {
@@ -237,6 +242,23 @@ async function openManagedCodeGraphForRetrieval(workspaceRoot: string): Promise<
 export async function indexManagedCodeGraph(workspaceRoot: string, options: IndexOptions = {}): Promise<IndexResult> {
   const graph = await openManagedCodeGraph(workspaceRoot);
   return graph.indexAll(options);
+}
+
+export async function ensureManagedCodeGraphSynced(
+  workspaceRoot: string,
+  options: IndexOptions = {},
+): Promise<ManagedCodeGraphEnsureSyncResult> {
+  if (!isManagedCodeGraphInitialized(workspaceRoot)) {
+    return {
+      mode: "index",
+      result: await indexManagedCodeGraph(workspaceRoot, options),
+    };
+  }
+
+  return {
+    mode: "sync",
+    result: await syncManagedCodeGraph(workspaceRoot, options),
+  };
 }
 
 export async function searchManagedCodeGraph(

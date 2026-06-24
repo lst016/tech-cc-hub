@@ -40,7 +40,7 @@ test("runner forwards reasoning mode as SDK thinking and effort options", () => 
 });
 
 test("runner enables Claude Code workflows without forcing ultracode for ordinary prompts", () => {
-  assert.match(runnerSource, /buildClaudeDynamicWorkflowSettings\(currentDisplayPrompt, runtime\?\.reasoningMode\)/);
+  assert.match(runnerSource, /buildClaudeDynamicWorkflowSettings\(currentDisplayPrompt, runtime\?\.reasoningMode, runtime\?\.workflowMode\)/);
   assert.match(runnerSource, /enableWorkflows:\s*true/);
   assert.match(runnerSource, /wantsDynamicWorkflow && reasoningMode === "xhigh"/);
 });

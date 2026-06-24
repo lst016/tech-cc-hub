@@ -82,7 +82,7 @@ function iconForTab(tab: ActivityWorkspaceTab | ActivityOptionalWorkspaceTab) {
 }
 
 function tabClassName(active: boolean) {
-  return `group inline-flex h-8 max-w-[190px] shrink-0 items-center gap-2 rounded-xl px-3 text-[13px] font-medium transition ${
+  return `group relative inline-flex h-8 max-w-[190px] shrink-0 items-center gap-2 rounded-xl px-3 text-[13px] font-medium transition ${
     active
       ? "bg-ink-900/7 text-ink-900 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.05)]"
       : "text-muted hover:bg-ink-900/5 hover:text-ink-700"
@@ -169,7 +169,7 @@ export function ActivityWorkspaceTabs({
           const isWorkflowAgentTab = tab.id.startsWith("workflow-agent:");
           const labelWidthClass = tab.id === "browser"
             ? "max-w-[120px]"
-            : isWorkflowAgentTab ? "max-w-[170px]" : "max-w-[160px]";
+            : isWorkflowAgentTab ? "max-w-[112px]" : "max-w-[160px]";
           const closeHandler = tab.id === "browser"
             ? onCloseBrowserTab
             : tab.id === "terminal"
@@ -196,7 +196,7 @@ export function ActivityWorkspaceTabs({
                     event.stopPropagation();
                     closeHandler();
                   }}
-                  className="ml-1 hidden h-4 w-4 items-center justify-center rounded-full text-ink-500 transition hover:bg-ink-900/10 hover:text-ink-900 group-hover:inline-flex"
+                  className={`h-5 w-5 shrink-0 items-center justify-center rounded-full border border-ink-900/10 bg-white text-ink-700 shadow-sm transition hover:border-ink-900/20 hover:bg-ink-900/8 hover:text-ink-950 ${isWorkflowAgentTab ? "inline-flex" : "hidden group-hover:inline-flex"}`}
                   title={`关闭${label}标签`}
                   aria-label={`关闭${label}标签`}
                 >

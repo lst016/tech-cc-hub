@@ -25,6 +25,7 @@ import { ActivityWorkspaceTabs } from "./ActivityWorkspaceTabs";
 import type { SessionView } from "../store/useAppStore";
 import {
   DEFAULT_ACTIVITY_RAIL_TAB,
+  normalizeActivityRailTab,
   type ActivityRailTab,
   type ActivityWorkspaceTab,
   type WorkflowAgentRailTab,
@@ -32,6 +33,8 @@ import {
 } from "../utils/activity-workspace-tabs";
 import { WorkflowAgentTranscriptPanel } from "./workflow/WorkflowAgentTranscriptPanel";
 import type { WorkflowAgentSummary } from "../utils/workflow-agent-transcripts";
+import { findWorkflowRunForTranscript } from "../utils/workflow-run-transcript";
+import type { WorkflowRunAction, WorkflowRunRecord } from "../../shared/workflows/workflow-runs";
 
 const AionWorkspacePreviewPane = lazy(() => import("./AionWorkspacePreviewPane").then((module) => ({ default: module.AionWorkspacePreviewPane })));
 const GitWorkbenchPanel = lazy(() => import("./git/GitWorkbenchPanel").then((module) => ({ default: module.GitWorkbenchPanel })));
@@ -1278,10 +1281,12 @@ export function ActivityRail({
   hasTerminalTab = false,
   workflowAgentTabs = [],
   selectedWorkflowAgent,
+  workflowRuns = [],
   deferPreviewMount = false,
   onOpenTerminalWorkspace,
   onCloseTerminalWorkspace,
   onCloseWorkflowAgentTab,
+  onWorkflowRunAction,
   width = 420,
 }: {
   session: SessionView | undefined;
@@ -1294,6 +1299,7 @@ export function ActivityRail({
     filePath: string;
     startLine?: number;
     endLine?: number;
+    revealFirstChange?: boolean;
     nonce: number;
   };
   onConsumePendingPreviewOpenRequest?: () => void;
@@ -1305,10 +1311,12 @@ export function ActivityRail({
   hasTerminalTab?: boolean;
   workflowAgentTabs?: WorkflowAgentWorkspaceTabItem[];
   selectedWorkflowAgent?: WorkflowAgentSummary;
+  workflowRuns?: WorkflowRunRecord[];
   deferPreviewMount?: boolean;
   onOpenTerminalWorkspace?: () => void;
   onCloseTerminalWorkspace?: () => void;
   onCloseWorkflowAgentTab?: (tab: WorkflowAgentRailTab) => void;
+  onWorkflowRunAction?: (action: WorkflowRunAction, run: WorkflowRunRecord) => void;
   width?: number;
 }) {
   const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-12" : "top-10";
@@ -1327,7 +1335,8 @@ export function ActivityRail({
     [model.timeline],
   );
   const [internalActiveTab, setInternalActiveTab] = useState<ActivityRailTab>(DEFAULT_ACTIVITY_RAIL_TAB);
-  const selectedTab = activeTab ?? internalActiveTab;
+  const requestedTab = activeTab ?? internalActiveTab;
+  const selectedTab = normalizeActivityRailTab(requestedTab);
   const handleSelectTab = (tab: ActivityRailTab) => {
     if (!activeTab) setInternalActiveTab(tab);
     onActiveTabChange?.(tab);
@@ -1386,6 +1395,7 @@ export function ActivityRail({
       return true;
     });
   }, [model.timeline, session?.status]);
+  const selectedWorkflowRun = findWorkflowRunForTranscript(selectedWorkflowAgent, workflowRuns);
 
   const attachmentSummary = summarizeAttachments(
     model.contextSnapshot.latestAttachments.map((attachment) => attachment.name),
@@ -1465,7 +1475,7 @@ export function ActivityRail({
                     messages={session?.messages}
                     pendingOpenRequest={pendingPreviewOpenRequest}
                     onConsumePendingOpenRequest={onConsumePendingPreviewOpenRequest}
-                    onClose={() => handleSelectTab("trace")}
+                    onClose={() => handleSelectTab(DEFAULT_ACTIVITY_RAIL_TAB)}
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center bg-[#fbfbfc] px-6 text-center">
@@ -1496,6 +1506,8 @@ export function ActivityRail({
           <div className="flex min-h-0 w-full min-w-0 flex-1 overflow-hidden bg-white">
             <WorkflowAgentTranscriptPanel
               agent={selectedWorkflowAgent}
+              workflowRun={selectedWorkflowRun}
+              onWorkflowRunAction={onWorkflowRunAction}
               workspace={session?.cwd}
               isRunning={session?.status === "running"}
             />

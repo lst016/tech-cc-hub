@@ -18,3 +18,17 @@ test("session continue preserves execution mode and runtime controls before runn
     "runtime controls must be resolved before building the reuse key",
   );
 });
+
+test("prompt runtime defaults SDK workflow mode to auto and sends it with prompts", () => {
+  const storeSource = readFileSync("src/ui/store/useAppStore.ts", "utf8");
+  const promptActionsSource = readFileSync("src/ui/components/prompt-input/usePromptActions.ts", "utf8");
+
+  assert.match(storeSource, /workflowMode: RuntimeWorkflowMode;/);
+  assert.match(storeSource, /setWorkflowMode: \(workflowMode: RuntimeWorkflowMode\) => void;/);
+  assert.match(storeSource, /workflowMode: "auto"/);
+  assert.match(storeSource, /setWorkflowMode: \(workflowMode\) => set\(\{ workflowMode \}\)/);
+
+  assert.match(promptActionsSource, /const workflowMode = useAppStore\(\(state\) => state\.workflowMode\);/);
+  assert.match(promptActionsSource, /workflowMode,/);
+  assert.match(promptActionsSource, /permissionMode: permissionMode === "plan" \? "bypassPermissions" : permissionMode,[\s\S]*workflowMode,/);
+});

@@ -9,6 +9,7 @@ export type PreviewOpenFileDetail = {
   filePath: string;
   startLine?: number;
   endLine?: number;
+  revealFirstChange?: boolean;
 };
 
 export type OpenBrowserWorkbenchUrlDetail = {

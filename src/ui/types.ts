@@ -4,6 +4,7 @@ import type { PromptLedgerMessage } from "../shared/prompt-ledger.js";
 import type { LinkedWorkspaceContext } from "../shared/linked-workspaces.js";
 import type { SessionExecutionMode } from "../shared/session-semantics.js";
 import type { SessionWorkflowState, WorkflowScope, WorkflowSpecDocument } from "../shared/workflow-markdown.js";
+import type { WorkflowRunRecord } from "../shared/workflows/workflow-runs.js";
 import type {
   GitBranch,
   GitChangedFile,
@@ -57,6 +58,7 @@ export type ApiConfigSettings = {
 };
 
 export type RuntimeReasoningMode = "disabled" | "low" | "medium" | "high" | "xhigh";
+export type RuntimeWorkflowMode = "auto" | "force" | "off";
 
 export type RuntimePermissionMode = "default" | "bypassPermissions" | "plan";
 export type AgentRunSurface = "development" | "maintenance";
@@ -250,6 +252,7 @@ export type SettingsPageId = "profiles" | "channels" | "plugins" | "mcp" | "glob
 export type RuntimeOverrides = {
   model?: string;
   reasoningMode?: RuntimeReasoningMode;
+  workflowMode?: RuntimeWorkflowMode;
   permissionMode?: RuntimePermissionMode;
   executionMode?: SessionExecutionMode;
   runSurface?: AgentRunSurface;
@@ -343,6 +346,8 @@ export type ServerEvent =
   | { type: "session.plan.updated"; payload: SessionPlanSnapshot }
   | { type: "session.workflow"; payload: { sessionId: string; markdown?: string; sourceLayer?: WorkflowScope; sourcePath?: string; state?: SessionWorkflowState; error?: string } }
   | { type: "session.workflow.catalog"; payload: SessionWorkflowCatalog }
+  | { type: "workflow.runs"; payload: { sessionId: string; runs: WorkflowRunRecord[] } }
+  | { type: "workflow.run.updated"; payload: WorkflowRunRecord }
   | { type: "session.list"; payload: { sessions: SessionInfo[]; archived?: boolean } }
   | { type: "session.history"; payload: { sessionId: string; status: SessionStatus; messages: StreamMessage[]; mode: "replace" | "prepend"; hasMore: boolean; nextCursor?: SessionHistoryCursor; slashCommands?: string[] } }
   | { type: "session.archived"; payload: { sessionId: string; session?: SessionInfo } }
@@ -386,6 +391,10 @@ export type ClientEvent =
   | { type: "session.workflow.catalog.list"; payload: { sessionId: string } }
   | { type: "session.workflow.set"; payload: { sessionId: string; markdown: string; sourceLayer: WorkflowScope; sourcePath?: string } }
   | { type: "session.workflow.clear"; payload: { sessionId: string } }
+  | { type: "workflow.runs.list"; payload: { sessionId: string } }
+  | { type: "workflow.run.resume"; payload: { sessionId: string; workflowRunId: string } }
+  | { type: "workflow.run.rerun"; payload: { sessionId: string; workflowRunId: string } }
+  | { type: "workflow.run.stop"; payload: { sessionId: string; taskId: string } }
   | { type: "session.stop"; payload: { sessionId: string } }
   | { type: "session.archive"; payload: { sessionId: string } }
   | { type: "session.unarchive"; payload: { sessionId: string } }

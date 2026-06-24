@@ -82,9 +82,6 @@ export function QueuedMessagesPanel({
           )}
         </div>
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 text-[11px] text-muted">
-          {!collapsed && (
-            <span className="min-w-0">运行中可点「插入」作为补充命令；空闲后会自动续发。</span>
-          )}
           <button
             type="button"
             className="shrink-0 rounded-full border border-black/8 bg-white px-2 py-0.5 font-semibold transition hover:text-accent"

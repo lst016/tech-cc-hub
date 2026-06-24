@@ -4,7 +4,10 @@ import {
   buildBuiltinMcpPromptHints,
   type BuiltinMcpServerName,
 } from "../../shared/builtin-mcp-registry.js";
-import { buildClaudeCodeCompatPromptAppend } from "./claude/claude-code-compat-registry.js";
+import {
+  buildClaudeCodeCompatPromptAppend,
+  type ClaudeCodeCompatPromptAppendOptions,
+} from "./claude/claude-code-compat-registry.js";
 
 const FEISHU_DOC_URL_PATTERN = /https?:\/\/[^\s<>"'`]*feishu\.cn\/(?:wiki|docx|docs)\/[^\s<>"'`]*/gi;
 const FEISHU_DOC_URL_TRAILING_PUNCTUATION = /[),.;，。；、]+$/;
@@ -13,7 +16,7 @@ const MAX_FEISHU_DOC_URL_HINTS = 3;
 export function buildBrowserWorkbenchPromptAppend(): string {
   return [
     "BrowserView rule: for current-page browsing, scraping, debugging, annotations, screenshots, cookies, storage, console logs, fetch/XHR capture, URL checks, and DOM inspection, use the built-in tech-cc-hub browser MCP tools instead of external browser skills.",
-    "Authenticated URL rule: when the user gives a URL that may depend on saved login state, cookies, SSO, internal/enterprise access, or task/doc systems such as Teambition/Feishu/Lark, the first retrieval attempt must use browser_open_page or browser_get_state plus BrowserView inspection. Do not use WebFetch first for these URLs.",
+    "Authenticated URL rule: when the user gives a URL that may depend on saved login state, cookies, SSO, internal/enterprise access, or task/doc systems, the first retrieval attempt must use browser_open_page or browser_get_state plus BrowserView inspection. Do not use WebFetch first for these URLs.",
     "WebFetch fallback rule: if WebFetch reports login required, 401/403, redirect to another host, SSO/OAuth/login, or asks to follow an auth redirect, immediately switch to browser_open_page and inspect the page with browser_extract_page/browser_snapshot_interactive instead of asking the user to paste task details.",
     "Current BrowserView first: before starting a dev server, opening localhost, or launching external browser automation, call browser_get_state. If the right-side BrowserView already has an active URL/title, reuse that page and inspect it with browser_extract_page/browser_query_nodes/browser_fetch_logs/browser_capture_visible.",
     "Do not run npm run dev or open a new local page just to inspect an already-open BrowserView. Start or reopen only after browser_get_state/http_ping/diagnose_port shows there is no usable page, the current URL is wrong, or the user explicitly asked to launch a service.",
@@ -27,7 +30,7 @@ export function buildBrowserWorkbenchPromptAppend(): string {
 
 export function buildAdminConfigPromptAppend(): string {
   return [
-    "运行配置持久化规则：如需向 `agent-runtime.json` 写入通用配置（如 `env`、`skillCredentials`、`closeSidebarOnBrowserOpen`），应优先使用 `mcp__tech-cc-hub-admin__set_global_runtime_config` 工具。",
+    "运行配置持久化规则：如需向 `agent-runtime.json` 写入通用配置（如 `env`、`skillCredentials`、`systemPromptExt`），应优先使用 `mcp__tech-cc-hub-admin__set_global_runtime_config` 工具。",
     "工具只做合规持久化更新，不应回显任何密钥明文；返回值按字段名统计变化即可。",
   ].join("\n");
 }
@@ -125,12 +128,16 @@ export function buildBuiltinMcpRegistryPromptAppend(enabledServerNames?: readonl
   return buildBuiltinMcpPromptHints(enabledServerNames);
 }
 
-export function buildClaudeCodeCompatFeaturePromptAppend(): string {
-  return buildClaudeCodeCompatPromptAppend();
+export function buildClaudeCodeCompatFeaturePromptAppend(
+  options?: ClaudeCodeCompatPromptAppendOptions,
+): string {
+  return buildClaudeCodeCompatPromptAppend(options);
 }
 
-export function buildClaudeCode2139FeaturePromptAppend(): string {
-  return buildClaudeCodeCompatFeaturePromptAppend();
+export function buildClaudeCode2139FeaturePromptAppend(
+  options?: ClaudeCodeCompatPromptAppendOptions,
+): string {
+  return buildClaudeCodeCompatFeaturePromptAppend(options);
 }
 
 export function buildDesignParityPromptAppend(): string {

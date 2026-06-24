@@ -80,6 +80,7 @@ export function usePromptActions(
   const runtimeModel = useAppStore((state) => state.runtimeModel);
   const reasoningMode = useAppStore((state) => state.reasoningMode);
   const permissionMode = useAppStore((state) => state.permissionMode);
+  const workflowMode = useAppStore((state) => state.workflowMode);
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const activeSession = useAppStore((state) => (state.activeSessionId ? (state.sessions[state.activeSessionId] ?? state.archivedSessions[state.activeSessionId]) : undefined));
   const setPrompt = useAppStore((state) => state.setPrompt);
@@ -183,8 +184,9 @@ export function usePromptActions(
       model: selectedModel,
       reasoningMode,
       permissionMode: permissionMode === "plan" ? "bypassPermissions" : permissionMode,
+      workflowMode,
     };
-  }, [activeProfile, availableModels, permissionMode, reasoningMode, resolveSessionRuntimeModel, routedModelOptions, runtimeModel, setGlobalError]);
+  }, [activeProfile, availableModels, permissionMode, reasoningMode, resolveSessionRuntimeModel, routedModelOptions, runtimeModel, setGlobalError, workflowMode]);
 
   const prepareAttachmentsForDispatch = useCallback(async (
     promptValue: string,

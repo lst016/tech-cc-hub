@@ -45,6 +45,7 @@ type AionWorkspacePreviewPaneProps = {
     filePath: string;
     startLine?: number;
     endLine?: number;
+    revealFirstChange?: boolean;
     nonce: number;
   };
   onConsumePendingOpenRequest?: () => void;
@@ -87,6 +88,8 @@ type ActivePreviewFile = {
   loading?: boolean;
   error?: string;
   revealLine?: number;
+  revealFirstChange?: boolean;
+  revealNonce?: number;
 };
 
 type TabContextMenuState = {
@@ -715,6 +718,8 @@ function PreviewSurface({
   const editorRef = useRef<PreviewEditor | null>(null);
   const monacoApiRef = useRef<PreviewMonaco | null>(null);
   const gitHunksRef = useRef<PreviewGitChangeHunk[]>([]);
+  const scheduledFirstGitRevealTimersRef = useRef<Array<() => void>>([]);
+  const revealedFirstGitChangeRef = useRef<string | null>(null);
   const selectionListenerRef = useRef<{ dispose: () => void } | null>(null);
   const decorationsRef = useRef<PreviewDecorationCollection | null>(null);
   const gitDecorationsRef = useRef<PreviewDecorationCollection | null>(null);
@@ -747,6 +752,13 @@ function PreviewSurface({
   useLayoutEffect(() => {
     gitHunksRef.current = gitHunks;
   }, [gitHunks]);
+
+  const clearScheduledFirstGitReveal = useCallback(() => {
+    for (const cancel of scheduledFirstGitRevealTimersRef.current) {
+      cancel();
+    }
+    scheduledFirstGitRevealTimersRef.current = [];
+  }, []);
 
   const updateTabScrollState = useCallback(() => {
     const scroller = tabScrollerRef.current;
@@ -820,7 +832,13 @@ function PreviewSurface({
 
   useEffect(() => {
     const currentWorkspace = workspace?.trim();
-    if (!currentWorkspace || !file || file.loading || file.error || file.contentType !== 'code') {
+    if (
+      !currentWorkspace
+      || !file
+      || file.loading
+      || file.error
+      || file.contentType !== 'code'
+    ) {
       queueMicrotask(() => {
         setGitDiffText('');
         setGitDiffError(null);
@@ -952,8 +970,10 @@ function PreviewSurface({
       setCommentOpen(false);
       setCommentText('');
       setGitPopover(null);
+      clearScheduledFirstGitReveal();
+      revealedFirstGitChangeRef.current = null;
     });
-  }, [file?.path]);
+  }, [clearScheduledFirstGitReveal, file?.path]);
 
   useEffect(() => {
     updateReferenceDecorations();
@@ -965,10 +985,11 @@ function PreviewSurface({
 
   useEffect(() => {
     return () => {
+      clearScheduledFirstGitReveal();
       selectionListenerRef.current?.dispose();
       gitGutterListenerRef.current?.dispose();
     };
-  }, []);
+  }, [clearScheduledFirstGitReveal]);
 
   const revealLine = useCallback(() => {
     if (!file?.revealLine || !editorRef.current) return;
@@ -980,6 +1001,59 @@ function PreviewSurface({
   useEffect(() => {
     revealLine();
   }, [revealLine]);
+
+  const revealFirstGitChange = useCallback((force = false): boolean => {
+    const editor = editorRef.current;
+    const firstHunk = gitHunksRef.current[0];
+    if (!file?.revealFirstChange || file.revealLine || !editor || !firstHunk) return false;
+
+    const revealKey = `${file.path}:${file.revealNonce ?? 0}:${firstHunk.id}`;
+    if (!force && revealedFirstGitChangeRef.current === revealKey) return true;
+
+    const modelLineCount = editor.getModel()?.getLineCount();
+    const lineNumber = Math.max(1, Math.min(firstHunk.startLine, modelLineCount ?? firstHunk.startLine));
+    revealedFirstGitChangeRef.current = revealKey;
+
+    editor.revealLineInCenter(lineNumber);
+    editor.setPosition({ lineNumber, column: 1 });
+    editor.focus();
+    return true;
+  }, [file]);
+
+  const scheduleRevealFirstGitChange = useCallback(() => {
+    if (!file?.revealFirstChange || file.revealLine) return;
+    const firstHunk = gitHunksRef.current[0];
+    if (!firstHunk) return;
+
+    const revealKey = `${file.path}:${file.revealNonce ?? 0}:${firstHunk.id}`;
+    if (revealedFirstGitChangeRef.current === revealKey) return;
+
+    clearScheduledFirstGitReveal();
+
+    const scheduleFrame = () => {
+      let frameId = 0;
+      frameId = window.requestAnimationFrame(() => {
+        revealFirstGitChange(true);
+      });
+      scheduledFirstGitRevealTimersRef.current.push(() => window.cancelAnimationFrame(frameId));
+    };
+
+    const scheduleTimeout = (delayMs: number) => {
+      const timeoutId = window.setTimeout(() => {
+        revealFirstGitChange(true);
+      }, delayMs);
+      scheduledFirstGitRevealTimersRef.current.push(() => window.clearTimeout(timeoutId));
+    };
+
+    scheduleFrame();
+    scheduleTimeout(80);
+    scheduleTimeout(220);
+    scheduleTimeout(500);
+  }, [clearScheduledFirstGitReveal, file, revealFirstGitChange]);
+
+  useEffect(() => {
+    scheduleRevealFirstGitChange();
+  }, [gitHunks, scheduleRevealFirstGitChange]);
 
   const clearSelectionOverlay = useCallback(() => {
     setSelectionInfo(null);
@@ -1121,6 +1195,7 @@ function PreviewSurface({
     updateReferenceDecorations();
     updateGitDecorations();
     revealLine();
+    scheduleRevealFirstGitChange();
 
     selectionListenerRef.current?.dispose();
     selectionListenerRef.current = editor.onDidChangeCursorSelection((event) => {
@@ -1167,7 +1242,7 @@ function PreviewSurface({
       event.event.stopPropagation();
       openGitPopover(hunk);
     });
-  }, [calculateSelectionPosition, openGitPopover, revealLine, updateGitDecorations, updateReferenceDecorations]);
+  }, [calculateSelectionPosition, openGitPopover, revealLine, scheduleRevealFirstGitChange, updateGitDecorations, updateReferenceDecorations]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -1180,7 +1255,8 @@ function PreviewSurface({
     if (viewState) {
       editor.restoreViewState(viewState);
     }
-  }, [file]);
+    scheduleRevealFirstGitChange();
+  }, [file, scheduleRevealFirstGitChange]);
 
   const handleCopySelectionReference = useCallback(() => {
     if (!file || !selectionInfo) return;
@@ -1485,7 +1561,10 @@ export function AionWorkspacePreviewPane({
 
   const activeFile = openTabs.find((t) => t.path === activeTabPath) ?? null;
 
-  const openFile = useCallback(async (path: string, options: { revealLine?: number; trackRecent?: boolean } = {}) => {
+  const openFile = useCallback(async (
+    path: string,
+    options: { revealLine?: number; revealFirstChange?: boolean; revealNonce?: number; trackRecent?: boolean } = {},
+  ) => {
     if (!workspace) return;
     const shouldTrackRecent = options.trackRecent !== false;
 
@@ -1497,10 +1576,15 @@ export function AionWorkspacePreviewPane({
         markPreviewQuickOpenRecentPath(workspace, existing.path);
       }
       if (isPreviewTabDirty(existing)) {
-        if (options.revealLine) {
+        if (options.revealLine || options.revealFirstChange) {
           setOpenTabs((prev) => prev.map((tab) => (
             tab.path === existing.path
-              ? { ...tab, revealLine: options.revealLine }
+              ? {
+                  ...tab,
+                  revealLine: options.revealLine,
+                  revealFirstChange: options.revealFirstChange,
+                  revealNonce: options.revealNonce,
+                }
               : tab
           )));
         }
@@ -1520,13 +1604,17 @@ export function AionWorkspacePreviewPane({
             language: result.language,
             loading: false,
             error: undefined,
-            revealLine: options.revealLine ?? existing.revealLine,
+            revealLine: options.revealFirstChange ? undefined : (options.revealLine ?? existing.revealLine),
+            revealFirstChange: options.revealFirstChange ?? existing.revealFirstChange,
+            revealNonce: options.revealNonce ?? existing.revealNonce,
           }
         : {
             ...existing,
             loading: false,
             error: result.error || '文件读取失败。',
-            revealLine: options.revealLine ?? existing.revealLine,
+            revealLine: options.revealFirstChange ? undefined : (options.revealLine ?? existing.revealLine),
+            revealFirstChange: options.revealFirstChange ?? existing.revealFirstChange,
+            revealNonce: options.revealNonce ?? existing.revealNonce,
           };
       setOpenTabs((prev) => prev.map((t) => (t.path === existing.path ? next : t)));
       if (shouldTrackRecent && result.success) {
@@ -1547,6 +1635,8 @@ export function AionWorkspacePreviewPane({
       contentType: 'code',
       loading: true,
       revealLine: options.revealLine,
+      revealFirstChange: options.revealFirstChange,
+      revealNonce: options.revealNonce,
     };
     setOpenTabs((prev) => [...prev, loadingTab]);
     setActiveTabPath(path);
@@ -1563,6 +1653,8 @@ export function AionWorkspacePreviewPane({
           contentType: inferContentType(result.path || path, result.content),
           language: result.language,
           revealLine: options.revealLine,
+          revealFirstChange: options.revealFirstChange,
+          revealNonce: options.revealNonce,
         }
       : {
           path,
@@ -1574,6 +1666,8 @@ export function AionWorkspacePreviewPane({
           contentType: 'code',
           error: result.error || '文件读取失败。',
           revealLine: options.revealLine,
+          revealFirstChange: options.revealFirstChange,
+          revealNonce: options.revealNonce,
         };
 
     setOpenTabs((prev) => prev.map((t) => (t.path === path ? resolved : t)));
@@ -1738,7 +1832,11 @@ export function AionWorkspacePreviewPane({
     if (!workspace) return;
     if (consumedPendingOpenNonceRef.current === pendingOpenRequest.nonce) return;
     consumedPendingOpenNonceRef.current = pendingOpenRequest.nonce;
-    void openFile(pendingOpenRequest.filePath, { revealLine: pendingOpenRequest.startLine });
+    void openFile(pendingOpenRequest.filePath, {
+      revealLine: pendingOpenRequest.startLine,
+      revealFirstChange: pendingOpenRequest.revealFirstChange,
+      revealNonce: pendingOpenRequest.nonce,
+    });
     onConsumePendingOpenRequest?.();
   }, [onConsumePendingOpenRequest, openFile, pendingOpenRequest, workspace]);
 

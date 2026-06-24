@@ -245,5 +245,6 @@ export function buildWorkflowAgentSummaries(
 function getTerminalFallbackStatus(status: WorkflowParentSessionStatus | undefined): WorkflowAgentStatus | undefined {
   if (status === "completed") return "completed";
   if (status === "error") return "failed";
+  if (status === "idle") return "killed";
   return undefined;
 }

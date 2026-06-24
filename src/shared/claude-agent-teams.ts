@@ -7,6 +7,7 @@ export const CLAUDE_AGENT_TEAM_TOOL_NAMES = [
   "TeamDelete",
   "SendMessage",
   "Agent",
+  "Task",
   "TaskCreate",
   "TaskGet",
   "TaskUpdate",
@@ -35,6 +36,24 @@ export function withClaudeAgentTeamsEnv<T extends Record<string, string | undefi
     ...env,
     [CLAUDE_AGENT_TEAMS_ENV_VAR]: configuredValue || CLAUDE_AGENT_TEAMS_ENV_VALUE,
   };
+}
+
+export function resolveClaudeAgentTeamsEnv<T extends Record<string, string | undefined>>(
+  env: T,
+  enabled: boolean,
+): T & Record<typeof CLAUDE_AGENT_TEAMS_ENV_VAR, string | undefined> {
+  if (enabled) {
+    return withClaudeAgentTeamsEnv(env);
+  }
+
+  return {
+    ...env,
+    [CLAUDE_AGENT_TEAMS_ENV_VAR]: undefined,
+  };
+}
+
+export function buildClaudeAgentTeamsDisallowedTools(enabled: boolean): string[] | undefined {
+  return enabled ? undefined : [...CLAUDE_AGENT_TEAM_TOOL_NAMES];
 }
 
 export function buildClaudeAgentTeamsPromptHint(): string {

@@ -18,12 +18,14 @@ type RunnerReuseDescriptor = {
   model: string;
   permissionMode: string;
   reasoningMode: string;
+  workflowMode: string;
   outputFormat: string;
   runSurface: AgentRunSurface;
   agentId: string;
   allowedTools: string;
   runtimeProfile: string;
   builtinMcpServers: BuiltinMcpServerName[];
+  agentTeamsEnabled: boolean;
 };
 
 export function buildRunnerReuseKey(input: RunnerReuseKeyInput): string {
@@ -42,10 +44,12 @@ export function canReuseRunner(existingKey: string | undefined, requestedKey: st
     existing.model === requested.model &&
     existing.permissionMode === requested.permissionMode &&
     existing.reasoningMode === requested.reasoningMode &&
+    existing.workflowMode === requested.workflowMode &&
     existing.outputFormat === requested.outputFormat &&
     existing.runSurface === requested.runSurface &&
     existing.agentId === requested.agentId &&
-    existing.allowedTools === requested.allowedTools
+    existing.allowedTools === requested.allowedTools &&
+    existing.agentTeamsEnabled === requested.agentTeamsEnabled
   );
 }
 
@@ -64,12 +68,14 @@ function buildRunnerReuseDescriptor(input: RunnerReuseKeyInput): RunnerReuseDesc
     model: normalizeKeyPart(input.model),
     permissionMode: input.runtime?.permissionMode ?? "bypassPermissions",
     reasoningMode: input.runtime?.reasoningMode ?? "",
+    workflowMode: input.runtime?.workflowMode ?? "auto",
     outputFormat: input.runtime?.outputFormat ?? "",
     runSurface,
     agentId: normalizeKeyPart(agentId),
     allowedTools: normalizeKeyPart(input.allowedTools),
     runtimeProfile: profile.id,
     builtinMcpServers: [...profile.builtinMcpServers],
+    agentTeamsEnabled: profile.enableAgentTeams,
   };
 }
 
@@ -93,12 +99,14 @@ function parseRunnerReuseKey(value: string | undefined): RunnerReuseDescriptor |
       model: typeof parsed.model === "string" ? parsed.model : "",
       permissionMode: typeof parsed.permissionMode === "string" ? parsed.permissionMode : "",
       reasoningMode: typeof parsed.reasoningMode === "string" ? parsed.reasoningMode : "",
+      workflowMode: typeof parsed.workflowMode === "string" ? parsed.workflowMode : "auto",
       outputFormat: typeof parsed.outputFormat === "string" ? parsed.outputFormat : "",
       runSurface: parsed.runSurface === "maintenance" ? "maintenance" : "development",
       agentId: typeof parsed.agentId === "string" ? parsed.agentId : "",
       allowedTools: typeof parsed.allowedTools === "string" ? parsed.allowedTools : "",
       runtimeProfile: typeof parsed.runtimeProfile === "string" ? parsed.runtimeProfile : "",
       builtinMcpServers: parsed.builtinMcpServers.filter(isBuiltinMcpServerName),
+      agentTeamsEnabled: parsed.agentTeamsEnabled === true,
     };
   } catch {
     return null;

@@ -21,7 +21,7 @@ test("Claude Code Opus and expert routes map to the configured expert model", ()
   assert.match(claudeSettingsSource, /ANTHROPIC_AUTH_TOKEN: anthropicAuthToken/);
   assert.match(claudeSettingsSource, /ANTHROPIC_BASE_URL: anthropicBaseURL/);
 
-  assert.match(runnerSource, /const dynamicWorkflowSettings = buildClaudeDynamicWorkflowSettings\(currentDisplayPrompt, runtime\?\.reasoningMode\);/);
+  assert.match(runnerSource, /const dynamicWorkflowSettings = buildClaudeDynamicWorkflowSettings\(currentDisplayPrompt, runtime\?\.reasoningMode, runtime\?\.workflowMode\);/);
   assert.match(runnerSource, /\.\.\.buildClaudeCodeModelSettings\(config, effectiveModel\)/);
   assert.match(runnerSource, /\.\.\.dynamicWorkflowSettings/);
   assert.match(runnerSource, /settings: sdkModelSettings,/);

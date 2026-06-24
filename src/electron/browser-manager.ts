@@ -1,5 +1,5 @@
 import { BrowserView, BrowserWindow, shell, type WebContents } from "electron";
-import { getChromeCookes, isChromeInstalled } from "./libs/chrome-cookie-sync.js";
+import { getChromeCookies, isChromeInstalled, type ChromeCookieSyncStatus } from "./libs/chrome-cookie-sync.js";
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -55,6 +55,13 @@ export type BrowserWorkbenchBounds = {
 
 type BrowserWorkbenchManagerOptions = {
   resolveWorkspaceRoot?: () => string | undefined;
+};
+
+type BrowserWorkbenchCookieSyncResult = {
+  status: ChromeCookieSyncStatus | "skipped";
+  imported: number;
+  failed: number;
+  cacheable: boolean;
 };
 
 export type BrowserWorkbenchState = {
@@ -696,6 +703,11 @@ export class BrowserWorkbenchManager {
         const targetParsed = new URL(targetUrl);
         if (currentParsed.href === targetParsed.href) {
           view.setBounds(this.bounds);
+          void this.syncChromeCookies(targetUrl).then((result) => {
+            if (result.imported > 0 && !view.webContents.isDestroyed()) {
+              view.webContents.reload();
+            }
+          });
           this.emitState();
           return this.getState();
         }
@@ -765,20 +777,27 @@ export class BrowserWorkbenchManager {
     return Date.now() - lastSync > this.COOKIE_SYNC_INTERVAL;
   }
 
-  private async syncChromeCookies(url: string): Promise<void> {
+  private async syncChromeCookies(url: string): Promise<BrowserWorkbenchCookieSyncResult> {
     try {
       const urlObj = new URL(url);
       const domain = urlObj.hostname;
 
-      if (!this.shouldSyncCookies(domain)) return;
-      if (!isChromeInstalled()) return;
+      if (!this.shouldSyncCookies(domain)) return { status: "skipped", imported: 0, failed: 0, cacheable: true };
+      if (!isChromeInstalled()) {
+        this.cookieSyncCache.set(domain, Date.now());
+        return { status: "unavailable", imported: 0, failed: 0, cacheable: true };
+      }
 
-      const cookies = await getChromeCookes(domain);
-      if (!this.view || this.view.webContents.isDestroyed()) return;
+      const result = await getChromeCookies(domain);
+      if (!this.view || this.view.webContents.isDestroyed()) {
+        return { status: result.status, imported: 0, failed: 0, cacheable: result.status === "ok" };
+      }
 
       const session = this.view.webContents.session;
+      let imported = 0;
+      let failed = 0;
 
-      for (const cookie of cookies) {
+      for (const cookie of result.cookies) {
         try {
           await session.cookies.set({
             url: cookie.url || `${urlObj.protocol}//${cookie.domain}${cookie.path}`,
@@ -791,14 +810,37 @@ export class BrowserWorkbenchManager {
             expirationDate: cookie.expirationDate,
             sameSite: cookie.sameSite as "unspecified" | "no_restriction" | "lax" | "strict" | undefined,
           });
+          imported += 1;
         } catch {
+          failed += 1;
           // Single cookie injection failure should not affect others
         }
       }
 
-      this.cookieSyncCache.set(domain, Date.now());
+      if (imported > 0) {
+        await session.cookies.flushStore();
+      }
+      const cacheable = result.status === "ok" || result.status === "unsupported" || result.status === "unavailable";
+      if (cacheable) {
+        this.cookieSyncCache.set(domain, Date.now());
+      }
+      if (result.status === "locked") {
+        console.warn(
+          `[browser-manager] Chrome cookie sync skipped for ${domain}: Chrome Cookies DB is locked by a running Chrome process.`,
+        );
+      } else if (result.status === "error") {
+        console.warn(
+          `[browser-manager] Chrome cookie sync failed for ${domain}: ${result.errors.join("; ") || "unknown error"}`,
+        );
+      } else if (imported > 0 || failed > 0) {
+        console.info(
+          `[browser-manager] Chrome cookie sync for ${domain}: imported=${imported}, failed=${failed}, profiles=${result.profilesScanned}, rows=${result.rowsRead}, skipped=${result.skipped}`,
+        );
+      }
+      return { status: result.status, imported, failed, cacheable };
     } catch (error) {
       console.warn("[browser-manager] Chrome cookie sync failed:", error);
+      return { status: "error", imported: 0, failed: 0, cacheable: false };
     }
   }
 

@@ -105,6 +105,13 @@ type PreviewFilesRequest = {
   limit?: unknown;
 };
 
+type PreviewGitignoreRule = {
+  negated: boolean;
+  directoryOnly: boolean;
+  hasSlash: boolean;
+  regex: RegExp;
+};
+
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
@@ -132,6 +139,117 @@ function isVisiblePreviewEntry(name: string): boolean {
 
 function isIgnoredPreviewDirectory(name: string): boolean {
   return PREVIEW_IGNORED_DIRECTORIES.has(name);
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[\\^$+?.()|[\]{}]/g, "\\$&");
+}
+
+function gitignoreGlobToRegexSource(pattern: string): string {
+  let source = "";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    if (char === "*") {
+      if (pattern[index + 1] === "*") {
+        if (pattern[index + 2] === "/") {
+          source += "(?:.*/)?";
+          index += 2;
+        } else {
+          source += ".*";
+          index += 1;
+        }
+      } else {
+        source += "[^/]*";
+      }
+    } else if (char === "?") {
+      source += "[^/]";
+    } else {
+      source += escapeRegex(char);
+    }
+  }
+  return source;
+}
+
+function parsePreviewGitignoreRule(line: string): PreviewGitignoreRule | null {
+  let pattern = line.trim();
+  if (!pattern || pattern.startsWith("#")) return null;
+
+  let negated = false;
+  if (pattern.startsWith("!")) {
+    negated = true;
+    pattern = pattern.slice(1).trim();
+  } else if (pattern.startsWith("\\!") || pattern.startsWith("\\#")) {
+    pattern = pattern.slice(1);
+  }
+
+  pattern = normalizePreviewRelativePath(pattern, pattern)
+    .replace(/^\.\//, "")
+    .replace(/^\/+/, "");
+  const directoryOnly = pattern.endsWith("/");
+  pattern = pattern.replace(/\/+$/, "");
+  if (!pattern) return null;
+
+  return {
+    negated,
+    directoryOnly,
+    hasSlash: pattern.includes("/"),
+    regex: new RegExp(`^${gitignoreGlobToRegexSource(pattern)}$`),
+  };
+}
+
+async function loadPreviewGitignoreRules(rootPath: string): Promise<PreviewGitignoreRule[]> {
+  try {
+    const content = await readFile(join(rootPath, ".gitignore"), "utf8");
+    return content
+      .split(/\r?\n/)
+      .map(parsePreviewGitignoreRule)
+      .filter((rule): rule is PreviewGitignoreRule => Boolean(rule));
+  } catch {
+    return [];
+  }
+}
+
+function previewGitignoreRuleMatches(
+  rule: PreviewGitignoreRule,
+  relativePath: string,
+  isDirectory: boolean,
+): boolean {
+  const segments = relativePath.split("/").filter(Boolean);
+  if (segments.length === 0) return false;
+
+  if (!rule.hasSlash) {
+    return segments.some((segment, index) => (
+      rule.regex.test(segment) &&
+      (!rule.directoryOnly || isDirectory || index < segments.length - 1)
+    ));
+  }
+
+  if (rule.regex.test(relativePath)) {
+    return !rule.directoryOnly || isDirectory;
+  }
+
+  for (let index = 1; index < segments.length; index += 1) {
+    const ancestorPath = segments.slice(0, index).join("/");
+    if (rule.regex.test(ancestorPath)) return true;
+  }
+  return false;
+}
+
+function isPreviewGitignored(
+  rules: PreviewGitignoreRule[],
+  relativePath: string,
+  isDirectory: boolean,
+): boolean {
+  const normalizedPath = normalizePreviewRelativePath(relativePath, relativePath).replace(/^\/+/, "");
+  if (!normalizedPath || rules.length === 0) return false;
+
+  let ignored = false;
+  for (const rule of rules) {
+    if (previewGitignoreRuleMatches(rule, normalizedPath, isDirectory)) {
+      ignored = !rule.negated;
+    }
+  }
+  return ignored;
 }
 
 function normalizePreviewRelativePath(value: string, fallback: string): string {
@@ -214,6 +332,7 @@ export async function listPreviewDirectoryForRenderer(
       return { success: false, path: resolved.realPath, error: "只能浏览目录。" };
     }
 
+    const gitignoreRules = await loadPreviewGitignoreRules(resolved.rootPath);
     const candidates = (await readdir(resolved.realPath, { withFileTypes: true }))
       .filter((entry) => isVisiblePreviewEntry(entry.name))
       .flatMap((entry) => {
@@ -221,10 +340,12 @@ export async function listPreviewDirectoryForRenderer(
         if (!type) return [];
         if (type === "directory" && isIgnoredPreviewDirectory(entry.name)) return [];
         const entryPath = join(resolved.realPath, entry.name);
+        const relativePath = normalizePreviewRelativePath(relative(resolved.rootPath, entryPath), entry.name);
+        if (isPreviewGitignored(gitignoreRules, relativePath, type === "directory")) return [];
         return [{
           name: entry.name,
           path: entryPath,
-          relativePath: normalizePreviewRelativePath(relative(resolved.rootPath, entryPath), entry.name),
+          relativePath,
           type,
         }];
       })
@@ -278,6 +399,7 @@ export async function listPreviewFilesForRenderer(
     const pending = [rootPath];
     const startedAt = Date.now();
     const timeBudgetMs = options.timeBudgetMs ?? FILE_SCAN_TIME_BUDGET_MS;
+    const gitignoreRules = await loadPreviewGitignoreRules(rootPath);
     let visitedDirectories = 0;
     let truncated = false;
 
@@ -310,7 +432,10 @@ export async function listPreviewFilesForRenderer(
 
       for (const child of sortedChildren) {
         const childPath = join(currentPath, child.name);
-        if (child.isDirectory()) {
+        const childRelativePath = normalizePreviewRelativePath(relative(rootPath, childPath), child.name);
+        const childIsDirectory = child.isDirectory();
+        if (isPreviewGitignored(gitignoreRules, childRelativePath, childIsDirectory)) continue;
+        if (childIsDirectory) {
           if (!isIgnoredPreviewDirectory(child.name)) {
             pending.push(childPath);
           }
@@ -321,7 +446,7 @@ export async function listPreviewFilesForRenderer(
         entries.push({
           name: child.name,
           path: childPath,
-          relativePath: normalizePreviewRelativePath(relative(rootPath, childPath), child.name),
+          relativePath: childRelativePath,
           type: "file",
         });
         if (entries.length >= limit) {
