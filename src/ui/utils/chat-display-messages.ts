@@ -11,16 +11,12 @@ export function filterDisplayMessages<T extends { type?: unknown; subtype?: unkn
   visibleMessages: Array<ChatDisplayMessageEntry<T>>,
   allMessages: T[],
 ): Array<ChatDisplayMessageEntry<T>> {
-  const firstVisibleIndex = visibleMessages[0]?.originalIndex ?? 0;
-  let hasSeenInit = allMessages.slice(0, firstVisibleIndex).some(isInitSystemMessage);
+  void allMessages;
   const displayMessages: Array<ChatDisplayMessageEntry<T>> = [];
 
   for (const item of visibleMessages) {
     if (isInitSystemMessage(item.message)) {
-      if (hasSeenInit) {
-        continue;
-      }
-      hasSeenInit = true;
+      continue;
     }
     displayMessages.push(item);
   }

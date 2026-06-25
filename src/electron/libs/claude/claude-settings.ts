@@ -630,10 +630,6 @@ export function getModelConfig(config: ApiConfig, modelName = config.model): Api
 }
 
 export function supportsRemoteSessionResume(config: ApiConfig): boolean {
-  try {
-    const url = new URL(config.baseURL);
-    return url.hostname === "api.anthropic.com";
-  } catch {
-    return false;
-  }
+  // Claude Code resume is keyed by the SDK/CLI session, not by the upstream API host.
+  return Boolean(config.baseURL?.trim());
 }

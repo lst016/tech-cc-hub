@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { filterDisplayMessages } from "../../src/ui/utils/chat-display-messages.js";
 
-test("filterDisplayMessages keeps only the first init message without rescanning per row", () => {
+test("filterDisplayMessages hides init system messages from the chat transcript", () => {
   const messages = [
     { type: "system", subtype: "init", label: "init-0" },
     { type: "assistant", label: "assistant-1" },
@@ -16,10 +16,10 @@ test("filterDisplayMessages keeps only the first init message without rescanning
     messages,
   );
 
-  assert.deepEqual(display.map((item) => item.message.label), ["init-0", "assistant-1", "user-3"]);
+  assert.deepEqual(display.map((item) => item.message.label), ["assistant-1", "user-3"]);
 });
 
-test("filterDisplayMessages drops visible init when an older hidden init already exists", () => {
+test("filterDisplayMessages hides visible init even when earlier history is not loaded", () => {
   const messages = [
     { type: "system", subtype: "init", label: "hidden-init" },
     { type: "assistant", label: "hidden-assistant" },

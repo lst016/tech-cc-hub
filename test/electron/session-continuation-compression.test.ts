@@ -20,3 +20,10 @@ test("prompt ledger keeps full history visible when stateless continuation has n
     /historyMessages: canUseRemoteResume \|\| !continuationPayload\?\.usedCompression \? historyMessagesForRun : \[\]/,
   );
 });
+
+test("session resume is not gated to the official Anthropic host", () => {
+  const claudeSettingsSource = readFileSync("src/electron/libs/claude/claude-settings.ts", "utf8");
+
+  assert.doesNotMatch(claudeSettingsSource, /hostname\s*===\s*["']api\.anthropic\.com["']/);
+  assert.match(claudeSettingsSource, /supportsRemoteSessionResume[\s\S]*Boolean\(config\.baseURL\?\.trim\(\)\)/);
+});
