@@ -432,7 +432,7 @@ function buildDetailRows(
   return rows;
 }
 
-function buildToolInputSection(name: string, input: Record<string, unknown>, detail: string): ActivityDetailSection {
+function buildToolInputSection(name: string, input: unknown, detail: string): ActivityDetailSection {
   const normalizedName = name.toLowerCase();
   const preferredKeys =
     normalizedName === "toolsearch"
@@ -441,10 +441,11 @@ function buildToolInputSection(name: string, input: Record<string, unknown>, det
         ? ["command", "description"]
         : ["file_path", "pattern", "old_string", "new_string", "replace_all"];
 
-  const rows = buildDetailRows(input, preferredKeys);
+  const inputRecord = isRecord(input) ? input : null;
+  const rows = inputRecord ? buildDetailRows(inputRecord, preferredKeys) : [];
   const summary =
     normalizedName === "toolsearch"
-      ? [input.query ? `query=${String(input.query)}` : "", input.max_results !== undefined ? `max_results=${String(input.max_results)}` : ""]
+      ? [inputRecord?.query ? `query=${String(inputRecord.query)}` : "", inputRecord?.max_results !== undefined ? `max_results=${String(inputRecord.max_results)}` : ""]
           .filter(Boolean)
           .join(" · ")
       : detail || undefined;
@@ -828,7 +829,11 @@ function getToolResultDetail(content: NonNullable<SDKUserMessage["message"]["con
   return stringifyUnknown(content);
 }
 
-function describeToolInput(name: string, input: Record<string, unknown>): string {
+function describeToolInput(name: string, input: unknown): string {
+  if (!isRecord(input)) {
+    return typeof input === "string" ? input : stringifyUnknown(input);
+  }
+
   switch (name) {
     case "Bash":
       return String(input.command ?? "");
@@ -1821,7 +1826,7 @@ export function buildActivityRailModel(
         if (content.type === "tool_use") {
           sequence += 1;
 
-          const toolInput = (content.input ?? {}) as Record<string, unknown>;
+          const toolInput = content.input ?? {};
           const detail = describeToolInput(content.name, toolInput);
           const toolKey = `${content.name}:${detail}`;
           if (previousToolKey === toolKey) {

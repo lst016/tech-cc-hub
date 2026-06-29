@@ -4063,6 +4063,26 @@ export class BrowserWorkbenchManager {
             );
         });
       }
+      function pointFromEvent(event) {
+        const touches = event && (event.changedTouches || event.touches);
+        const touch = touches && touches.length ? touches[0] : null;
+        const source = touch || event;
+        if (!source) return null;
+        const x = Number(source.clientX);
+        const y = Number(source.clientY);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+        return { x, y };
+      }
+      function isTouchLikeActivation(event) {
+        return Boolean(
+          event
+          && (
+            event.type === "touchstart"
+            || event.pointerType === "touch"
+            || event.pointerType === "pen"
+          ),
+        );
+      }
       function ensureBackgroundInfo() {
         const layer = ensureLayer();
         let panel = layer.querySelector(".__tech_cc_hub_background");
@@ -5185,6 +5205,14 @@ export class BrowserWorkbenchManager {
         document.removeEventListener("click", window.__techCcHubAnnotationHandler, true);
         window.__techCcHubAnnotationHandler = null;
       }
+      if (window.__techCcHubAnnotationPointerHandler) {
+        document.removeEventListener("pointerdown", window.__techCcHubAnnotationPointerHandler, true);
+        window.__techCcHubAnnotationPointerHandler = null;
+      }
+      if (window.__techCcHubAnnotationTouchHandler) {
+        document.removeEventListener("touchstart", window.__techCcHubAnnotationTouchHandler, true);
+        window.__techCcHubAnnotationTouchHandler = null;
+      }
       if (window.__techCcHubAnnotationHoverHandler) {
         document.removeEventListener("mousemove", window.__techCcHubAnnotationHoverHandler, true);
         window.__techCcHubAnnotationHoverHandler = null;
@@ -5208,17 +5236,16 @@ export class BrowserWorkbenchManager {
         return true;
       }
       ensureLayer().hidden = false;
-      window.__techCcHubAnnotationHoverHandler = function(event) {
-        if (eventTargetsOverlay(event)) {
-          return;
-        }
-        updateHover({ x: event.clientX, y: event.clientY });
-      };
-      window.__techCcHubAnnotationHandler = function(event) {
-        if (eventTargetsOverlay(event)) {
-          return;
-        }
-        const point = { x: event.clientX, y: event.clientY };
+      let lastTouchActivation = null;
+      function rememberTouchActivation(point) {
+        lastTouchActivation = { point, until: Date.now() + 700 };
+      }
+      function isRecentTouchActivation(point) {
+        if (!lastTouchActivation || Date.now() > lastTouchActivation.until) return false;
+        return Math.abs(point.x - lastTouchActivation.point.x) <= 8
+          && Math.abs(point.y - lastTouchActivation.point.y) <= 8;
+      }
+      function activateAnnotation(event, point) {
         const domHint = inspectAt(point);
         event.preventDefault();
         event.stopPropagation();
@@ -5255,11 +5282,61 @@ export class BrowserWorkbenchManager {
         drawAnnotation(annotation);
         showBackgroundInfo(annotation);
         emitAnnotation(annotation);
+      }
+      window.__techCcHubAnnotationHoverHandler = function(event) {
+        if (eventTargetsOverlay(event)) {
+          return;
+        }
+        const point = pointFromEvent(event);
+        if (point) updateHover(point);
+      };
+      window.__techCcHubAnnotationHandler = function(event) {
+        if (eventTargetsOverlay(event)) {
+          return;
+        }
+        const point = pointFromEvent(event);
+        if (!point) return;
+        if (event.type === "click" && isRecentTouchActivation(point)) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        activateAnnotation(event, point);
+      };
+      window.__techCcHubAnnotationPointerHandler = function(event) {
+        if (eventTargetsOverlay(event) || !isTouchLikeActivation(event)) {
+          return;
+        }
+        const point = pointFromEvent(event);
+        if (!point) return;
+        if (isRecentTouchActivation(point)) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        rememberTouchActivation(point);
+        activateAnnotation(event, point);
+      };
+      window.__techCcHubAnnotationTouchHandler = function(event) {
+        if (eventTargetsOverlay(event)) {
+          return;
+        }
+        const point = pointFromEvent(event);
+        if (!point) return;
+        if (isRecentTouchActivation(point)) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        rememberTouchActivation(point);
+        activateAnnotation(event, point);
       };
       window.__techCcHubAnnotationScrollHandler = scheduleAnnotationPositionSync;
       window.__techCcHubAnnotationResizeHandler = scheduleAnnotationPositionSync;
       document.addEventListener("mousemove", window.__techCcHubAnnotationHoverHandler, true);
       document.addEventListener("click", window.__techCcHubAnnotationHandler, true);
+      document.addEventListener("pointerdown", window.__techCcHubAnnotationPointerHandler, true);
+      document.addEventListener("touchstart", window.__techCcHubAnnotationTouchHandler, { capture: true, passive: false });
       window.addEventListener("scroll", window.__techCcHubAnnotationScrollHandler, true);
       document.addEventListener("scroll", window.__techCcHubAnnotationScrollHandler, true);
       window.addEventListener("resize", window.__techCcHubAnnotationResizeHandler, true);

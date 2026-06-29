@@ -417,6 +417,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
       });
     },
     setBrowserWorkbenchBounds: async (_bounds: unknown, sessionId?: string) => getBrowserState(sessionId),
+    hideAllBrowserWorkbenches: async () => [],
     reloadBrowserWorkbench: async (sessionId?: string) => getBrowserState(sessionId),
     goBackBrowserWorkbench: async (sessionId?: string) => getBrowserState(sessionId),
     goForwardBrowserWorkbench: async (sessionId?: string) => getBrowserState(sessionId),
@@ -668,6 +669,7 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       openBrowserWorkbench: async (url, sessionId?: string) => await invokeBridge("openBrowserWorkbench", url, sessionId),
       closeBrowserWorkbench: async (sessionId?: string) => await invokeBridge("closeBrowserWorkbench", sessionId),
       setBrowserWorkbenchBounds: async (bounds, sessionId?: string) => await invokeBridge("setBrowserWorkbenchBounds", bounds, sessionId),
+      hideAllBrowserWorkbenches: async () => await invokeBridge("hideAllBrowserWorkbenches"),
       reloadBrowserWorkbench: async (sessionId?: string) => await invokeBridge("reloadBrowserWorkbench", sessionId),
       goBackBrowserWorkbench: async (sessionId?: string) => await invokeBridge("goBackBrowserWorkbench", sessionId),
       goForwardBrowserWorkbench: async (sessionId?: string) => await invokeBridge("goForwardBrowserWorkbench", sessionId),

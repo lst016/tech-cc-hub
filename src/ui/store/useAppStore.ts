@@ -242,22 +242,10 @@ function isTransientStreamEventMessage(message: StreamMessage): boolean {
   );
 }
 
-const MAX_RENDERER_HISTORY_MESSAGES = 600;
 const STREAM_MESSAGE_BATCH_DELAY_MS = 32;
 
 let pendingStreamMessageTimer: ReturnType<typeof setTimeout> | null = null;
 const pendingStreamMessagesBySession = new Map<string, StreamMessage[]>();
-
-function getMessageCursor(message: StreamMessage | undefined): SessionHistoryCursor | undefined {
-  if (!message?.historyId || typeof message.capturedAt !== "number") {
-    return undefined;
-  }
-
-  return {
-    beforeCreatedAt: message.capturedAt,
-    beforeId: message.historyId,
-  };
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -322,26 +310,6 @@ function deriveLatestPlanSnapshot(
   ), fallback);
 }
 
-function trimMessagesToRecent(
-  messages: StreamMessage[],
-  fallbackCursor?: SessionHistoryCursor,
-): {
-  messages: StreamMessage[];
-  trimmed: boolean;
-  historyCursor?: SessionHistoryCursor;
-} {
-  if (messages.length <= MAX_RENDERER_HISTORY_MESSAGES) {
-    return { messages, trimmed: false, historyCursor: fallbackCursor };
-  }
-
-  const trimmedMessages = messages.slice(-MAX_RENDERER_HISTORY_MESSAGES);
-  return {
-    messages: trimmedMessages,
-    trimmed: true,
-    historyCursor: getMessageCursor(trimmedMessages[0]) ?? fallbackCursor,
-  };
-}
-
 function appendMessagesToSession(
   session: SessionView,
   nextMessages: StreamMessage[],
@@ -351,19 +319,14 @@ function appendMessagesToSession(
     slashCommands = mergeSlashCommandLists(slashCommands, extractSlashCommands([message]));
   }
 
-  const trimmed = trimMessagesToRecent(
-    [...session.messages, ...nextMessages],
-    session.historyCursor,
-  );
+  const messages = [...session.messages, ...nextMessages];
 
   return {
     ...session,
     slashCommands: slashCommands ?? session.slashCommands,
-    messages: trimmed.messages,
-    latestGoal: deriveLatestGoalSnapshot(session.id, trimmed.messages, session.latestGoal),
+    messages,
+    latestGoal: deriveLatestGoalSnapshot(session.id, messages, session.latestGoal),
     latestPlan: deriveLatestPlanSnapshot(session.id, nextMessages, session.latestPlan),
-    hasMoreHistory: trimmed.trimmed ? true : session.hasMoreHistory,
-    historyCursor: trimmed.trimmed ? trimmed.historyCursor ?? session.historyCursor : session.historyCursor,
   };
 }
 

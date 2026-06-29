@@ -40,6 +40,9 @@ test('collects successful completed file writes from streamed tool messages', ()
     {
       path: 'D:\\workspace\\kefu\\boke-kefu-vue\\src\\index.tsx',
       operationId: 'toolu_edit_1',
+      operation: 'edited',
+      additions: 0,
+      deletions: 0,
     },
   ]);
 });
@@ -110,10 +113,56 @@ test('collects completed apply_patch file additions and updates', () => {
     {
       path: 'src/new-file.ts',
       operationId: 'patch-1:src/new-file.ts',
+      operation: 'created',
+      additions: 1,
+      deletions: 0,
     },
     {
       path: 'src/existing.ts',
       operationId: 'patch-1:src/existing.ts',
+      operation: 'edited',
+      additions: 1,
+      deletions: 1,
+    },
+  ]);
+});
+
+test('estimates edit and multiedit line stats for changed file cards', () => {
+  const messages = [
+    {
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'edit-1',
+            name: 'MultiEdit',
+            input: {
+              file_path: 'src/app.tsx',
+              edits: [
+                { old_string: 'old', new_string: 'new\nline' },
+                { old_string: 'remove\nthis', new_string: 'add' },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    {
+      type: 'user',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'edit-1', content: 'ok' }],
+      },
+    },
+  ];
+
+  assert.deepEqual(collectCompletedPreviewFileChanges(messages), [
+    {
+      path: 'src/app.tsx',
+      operationId: 'edit-1',
+      operation: 'edited',
+      additions: 3,
+      deletions: 3,
     },
   ]);
 });

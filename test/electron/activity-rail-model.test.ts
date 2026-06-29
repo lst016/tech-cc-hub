@@ -8,6 +8,47 @@ import {
 } from "../../src/shared/activity-rail-model.js";
 import { buildPromptLedgerMessage } from "../../src/shared/prompt-ledger.js";
 
+test("buildActivityRailModel accepts freeform string tool input", () => {
+  const model = buildActivityRailModel({
+    id: "string-tool-input-session",
+    title: "String tool input",
+    status: "completed",
+    messages: [
+      {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "tool-apply-patch",
+              name: "apply_patch",
+              input: "*** Begin Patch\n*** Update File: src/ui/App.tsx\n@@\n-old\n+new\n*** End Patch",
+            },
+          ],
+        },
+      } as never,
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-apply-patch",
+              content: "Success. Updated the following files.",
+              is_error: false,
+            },
+          ],
+        },
+      } as never,
+    ],
+  }, [], "");
+
+  assert.ok(model.timeline.some((item) => item.id === "tool-apply-patch"));
+  assert.ok(model.timeline.some((item) => item.detail.includes("*** Begin Patch")));
+});
+
 test("buildPromptLedgerMessage separates prompt sources for optimization", () => {
   const ledger = buildPromptLedgerMessage({
     phase: "continue",

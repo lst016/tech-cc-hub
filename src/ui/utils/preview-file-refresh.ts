@@ -16,6 +16,9 @@ const PATCH_MOVE_HEADER_PATTERN = /^\*\*\* Move to: (.+)$/gm;
 export type PreviewFileChangeEvent = {
   path: string;
   operationId: string;
+  operation: 'created' | 'edited' | 'deleted' | 'renamed' | 'written';
+  additions: number;
+  deletions: number;
 };
 
 type ToolUseContent = {
@@ -52,6 +55,13 @@ function isWriteToolName(name: string): boolean {
   return WRITE_TOOL_NAMES.has(normalized) || normalized.endsWith('__write_file');
 }
 
+type PreviewFileChangeDraft = Omit<PreviewFileChangeEvent, 'operationId'>;
+
+function countTextLines(value: unknown): number {
+  if (typeof value !== 'string' || !value.length) return 0;
+  return value.split(/\r\n|\r|\n/).length;
+}
+
 function pushUniquePath(paths: string[], path: unknown) {
   if (typeof path !== 'string') return;
   const trimmed = path.trim();
@@ -59,6 +69,19 @@ function pushUniquePath(paths: string[], path: unknown) {
   if (!paths.some((existing) => normalizePreviewFilePath(existing) === normalizePreviewFilePath(trimmed))) {
     paths.push(trimmed);
   }
+}
+
+function mergeChangeDraft(changes: PreviewFileChangeDraft[], next: PreviewFileChangeDraft) {
+  const normalizedPath = normalizePreviewFilePath(next.path);
+  const existing = changes.find((change) => normalizePreviewFilePath(change.path) === normalizedPath);
+  if (!existing) {
+    changes.push(next);
+    return;
+  }
+
+  existing.additions += next.additions;
+  existing.deletions += next.deletions;
+  existing.operation = next.operation;
 }
 
 function collectPatchFilePaths(patch: string): string[] {
@@ -76,12 +99,89 @@ function collectPatchFilePaths(patch: string): string[] {
   return paths;
 }
 
-function collectInputFilePaths(input: unknown): string[] {
+function collectPatchFileChanges(patch: string): PreviewFileChangeDraft[] {
+  const changes: PreviewFileChangeDraft[] = [];
+  let current: PreviewFileChangeDraft | null = null;
+
+  const commitCurrent = () => {
+    if (!current) return;
+    mergeChangeDraft(changes, current);
+    current = null;
+  };
+
+  for (const line of patch.split(/\r\n|\r|\n/)) {
+    const fileMatch = /^\*\*\* (Add|Update|Delete) File: (.+)$/.exec(line);
+    if (fileMatch) {
+      commitCurrent();
+      const action = fileMatch[1];
+      current = {
+        path: fileMatch[2]!.trim(),
+        operation: action === 'Add' ? 'created' : action === 'Delete' ? 'deleted' : 'edited',
+        additions: 0,
+        deletions: 0,
+      };
+      continue;
+    }
+
+    const moveMatch = /^\*\*\* Move to: (.+)$/.exec(line);
+    if (moveMatch) {
+      if (current) {
+        current.path = moveMatch[1]!.trim();
+        current.operation = 'renamed';
+      } else {
+        current = {
+          path: moveMatch[1]!.trim(),
+          operation: 'renamed',
+          additions: 0,
+          deletions: 0,
+        };
+      }
+      continue;
+    }
+
+    if (!current) continue;
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      current.additions += 1;
+    } else if (line.startsWith('-') && !line.startsWith('---')) {
+      current.deletions += 1;
+    }
+  }
+
+  commitCurrent();
+
+  if (changes.length > 0) return changes;
+  return collectPatchFilePaths(patch).map((path) => ({
+    path,
+    operation: 'edited',
+    additions: 0,
+    deletions: 0,
+  }));
+}
+
+function collectEditStats(input: Record<string, unknown>): { additions: number; deletions: number } {
+  let additions = countTextLines(input.new_string ?? input.newString ?? input.replacement ?? input.new_str);
+  let deletions = countTextLines(input.old_string ?? input.oldString ?? input.old_str);
+
+  const edits = input.edits;
+  if (Array.isArray(edits)) {
+    additions = 0;
+    deletions = 0;
+    for (const edit of edits) {
+      if (!isRecord(edit)) continue;
+      additions += countTextLines(edit.new_string ?? edit.newString ?? edit.replacement);
+      deletions += countTextLines(edit.old_string ?? edit.oldString);
+    }
+  }
+
+  return { additions, deletions };
+}
+
+function collectInputFileChanges(input: unknown, toolName: string): PreviewFileChangeDraft[] {
   const paths: string[] = [];
   if (typeof input === 'string') {
-    return collectPatchFilePaths(input);
+    return collectPatchFileChanges(input);
   }
-  if (!isRecord(input)) return paths;
+  if (!isRecord(input)) return [];
 
   for (const key of FILE_PATH_INPUT_KEYS) {
     pushUniquePath(paths, input[key]);
@@ -101,18 +201,30 @@ function collectInputFilePaths(input: unknown): string[] {
 
   const patch = input.patch ?? input.diff ?? input.content;
   if (typeof patch === 'string') {
-    for (const path of collectPatchFilePaths(patch)) {
-      pushUniquePath(paths, path);
+    const patchChanges = collectPatchFileChanges(patch);
+    if (patchChanges.length > 0) {
+      return patchChanges;
     }
   }
 
-  return paths;
+  const normalizedToolName = normalizeToolName(toolName);
+  const operation: PreviewFileChangeDraft['operation'] = normalizedToolName.includes('write') || normalizedToolName === 'create'
+    ? 'written'
+    : 'edited';
+  const editStats = collectEditStats(input);
+  const contentLineCount = operation === 'written' ? countTextLines(input.content) : 0;
+  return paths.map((path) => ({
+    path,
+    operation,
+    additions: Math.max(editStats.additions, contentLineCount),
+    deletions: editStats.deletions,
+  }));
 }
 
-function getWriteToolPaths(content: ToolUseContent): string[] {
+function getWriteToolChanges(content: ToolUseContent): PreviewFileChangeDraft[] {
   if (content.type !== 'tool_use') return [];
   if (typeof content.name !== 'string' || !isWriteToolName(content.name)) return [];
-  return collectInputFilePaths(content.input);
+  return collectInputFileChanges(content.input, content.name);
 }
 
 export function normalizePreviewFilePath(path: string): string {
@@ -148,7 +260,7 @@ export function resolvePreviewFileChangePath(workspace: string | undefined, path
 }
 
 export function collectCompletedPreviewFileChanges(messages: readonly unknown[]): PreviewFileChangeEvent[] {
-  const pendingWriteToolPaths = new Map<string, string[]>();
+  const pendingWriteToolChanges = new Map<string, PreviewFileChangeDraft[]>();
   const changes: PreviewFileChangeEvent[] = [];
   const seenOperationIds = new Set<string>();
 
@@ -159,9 +271,9 @@ export function collectCompletedPreviewFileChanges(messages: readonly unknown[])
     if (message.type === 'assistant') {
       for (const content of contents) {
         if (!isRecord(content)) continue;
-        const paths = getWriteToolPaths(content);
-        if (!paths.length || typeof content.id !== 'string') continue;
-        pendingWriteToolPaths.set(content.id, paths);
+        const toolChanges = getWriteToolChanges(content);
+        if (!toolChanges.length || typeof content.id !== 'string') continue;
+        pendingWriteToolChanges.set(content.id, toolChanges);
       }
       continue;
     }
@@ -172,15 +284,15 @@ export function collectCompletedPreviewFileChanges(messages: readonly unknown[])
       const result = content as ToolResultContent;
       if (result.type !== 'tool_result' || typeof result.tool_use_id !== 'string') continue;
       if (result.is_error) continue;
-      const paths = pendingWriteToolPaths.get(result.tool_use_id);
-      if (!paths?.length) continue;
+      const toolChanges = pendingWriteToolChanges.get(result.tool_use_id);
+      if (!toolChanges?.length) continue;
 
-      for (const path of paths) {
-        const operationId = paths.length === 1
+      for (const change of toolChanges) {
+        const operationId = toolChanges.length === 1
           ? result.tool_use_id
-          : `${result.tool_use_id}:${normalizePreviewFilePath(path)}`;
+          : `${result.tool_use_id}:${normalizePreviewFilePath(change.path)}`;
         if (seenOperationIds.has(operationId)) continue;
-        changes.push({ path, operationId });
+        changes.push({ ...change, operationId });
         seenOperationIds.add(operationId);
       }
     }

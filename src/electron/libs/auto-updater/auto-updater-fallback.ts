@@ -99,12 +99,10 @@ export function selectBestReleaseForUpdate(
   platform: NodeJS.Platform,
   arch: string,
 ): ReleaseFallbackInfo | null {
-  const newerReleases = releases
+  return releases
     .map((release) => summarizeGitHubReleaseForUpdates(release, platform, arch))
     .filter((release) => release.version && compareAppVersions(release.version, currentVersion) > 0)
-    .sort((left, right) => compareAppVersions(right.version, left.version));
-
-  return newerReleases.find((release) => release.hasCompatibleUpdateMetadata) ?? newerReleases[0] ?? null;
+    .sort((left, right) => compareAppVersions(right.version, left.version))[0] ?? null;
 }
 
 export function buildGitHubReleaseDownloadFeedUrl(owner: string, repo: string, tagName: string): string {

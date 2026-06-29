@@ -46,7 +46,7 @@ test('uses electron-updater default metadata names per platform', () => {
   assert.deepEqual(getPlatformUpdateMetadataCandidates('linux', 'x64'), ['latest-linux.yml']);
 });
 
-test('selects the newest compatible release above the current version', () => {
+test('selects the newest release above the current version', () => {
   const release = selectBestReleaseForUpdate([
     {
       tag_name: 'v0.1.13',
@@ -70,10 +70,10 @@ test('selects the newest compatible release above the current version', () => {
     },
   ], '0.1.10', 'win32', 'x64');
 
-  assert.equal(release?.version, '0.1.12');
-  assert.equal(release?.tagName, 'v0.1.12');
-  assert.equal(release?.metadataFile, 'latest.yml');
-  assert.equal(release?.hasCompatibleUpdateMetadata, true);
+  assert.equal(release?.version, '0.1.13');
+  assert.equal(release?.tagName, 'v0.1.13');
+  assert.equal(release?.metadataFile, undefined);
+  assert.equal(release?.hasCompatibleUpdateMetadata, false);
 });
 
 test('builds a release-specific generic updater feed url', () => {
@@ -105,7 +105,7 @@ test('keeps differential updates for adjacent compatible releases', () => {
   );
 });
 
-test('uses a full download plan when the newest compatible release skips releases', () => {
+test('uses a full download plan when the newest release skips releases', () => {
   const plan = createReleaseUpdatePlan([
     {
       tag_name: 'v0.1.12',
@@ -126,5 +126,24 @@ test('uses a full download plan when the newest compatible release skips release
 
   assert.equal(plan.selectedRelease?.tagName, 'v0.1.12');
   assert.equal(plan.isMultiReleaseUpdate, true);
+  assert.equal(plan.previousBlockmapBaseUrl, undefined);
+});
+
+test('does not downgrade to an older compatible release when the newest release lacks metadata', () => {
+  const plan = createReleaseUpdatePlan([
+    {
+      tag_name: 'v0.1.13',
+      name: '0.1.13',
+      assets: [{ name: 'latest-mac.yml' }],
+    },
+    {
+      tag_name: 'v0.1.12',
+      name: '0.1.12',
+      assets: [{ name: 'latest.yml' }, { name: 'tech-cc-hub-Setup-0.1.12.exe' }],
+    },
+  ], '0.1.11', 'win32', 'x64', 'lst016', 'tech-cc-hub');
+
+  assert.equal(plan.selectedRelease?.tagName, 'v0.1.13');
+  assert.equal(plan.selectedRelease?.hasCompatibleUpdateMetadata, false);
   assert.equal(plan.previousBlockmapBaseUrl, undefined);
 });

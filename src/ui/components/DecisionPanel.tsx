@@ -1,16 +1,15 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
-import { CheckCircle2, ChevronDown } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronUp, MessageSquare, Sparkles } from "lucide-react";
 import type { PermissionRequest } from "../store/useAppStore";
+import {
+  normalizeAskUserQuestions,
+  type AskUserQuestion,
+} from "../utils/ask-user-question";
 import { copyTextToClipboard } from "../utils/clipboard";
 
 type AskUserQuestionInput = {
-  questions?: Array<{
-    question: string;
-    header?: string;
-    options?: Array<{ label: string; description?: string }>;
-    multiSelect?: boolean;
-  }>;
+  questions?: unknown;
   answers?: Record<string, string>;
   figmaAuthUrl?: string;
 };
@@ -18,16 +17,69 @@ type AskUserQuestionInput = {
 type SelectedOptionsByQuestion = Record<number, string[]>;
 type OtherInputsByQuestion = Record<number, string>;
 
+const OPTION_LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+
+function clampQuestionIndex(index: number, total: number): number {
+  if (total <= 0) return 0;
+  return Math.min(Math.max(index, 0), total - 1);
+}
+
+function isQuestionAnswered(
+  qIndex: number,
+  selectedOptions: SelectedOptionsByQuestion,
+  otherInputs: OtherInputsByQuestion,
+  allowFreeformAnswer: boolean,
+): boolean {
+  const selected = selectedOptions[qIndex] ?? [];
+  const otherText = allowFreeformAnswer ? otherInputs[qIndex]?.trim() ?? "" : "";
+  return selected.length > 0 || otherText.length > 0;
+}
+
+function getCurrentQuestionIndex(
+  questions: AskUserQuestion[],
+  selectedOptions: SelectedOptionsByQuestion,
+  otherInputs: OtherInputsByQuestion,
+  allowFreeformAnswer: boolean,
+): number {
+  const firstUnanswered = questions.findIndex((_, qIndex) => (
+    !isQuestionAnswered(qIndex, selectedOptions, otherInputs, allowFreeformAnswer)
+  ));
+  return firstUnanswered >= 0 ? firstUnanswered : Math.max(questions.length - 1, 0);
+}
+
 function QuestionStepIcon({ answered, index }: { answered: boolean; index: number }) {
   return answered ? (
-    <span className="grid h-6 w-6 place-items-center rounded-full border border-accent/30 bg-accent text-white shadow-[0_6px_16px_rgba(210,106,61,0.22)]">
+    <span className="grid h-6 w-6 place-items-center rounded-md border border-[#c7ead6] bg-[#f2fbf5] text-[#1f9d4d]">
       <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
     </span>
   ) : (
-    <span className="grid h-6 w-6 place-items-center rounded-full border border-accent/30 bg-white text-[11px] font-semibold text-accent">
+    <span className="grid h-6 w-6 place-items-center rounded-md border border-[#d6dbe3] bg-white text-[12px] font-semibold text-ink-700">
       {index + 1}
     </span>
   );
+}
+
+function buildAnswers(
+  questions: AskUserQuestion[],
+  selectedOptions: SelectedOptionsByQuestion,
+  otherInputs: OtherInputsByQuestion,
+  allowFreeformAnswer: boolean,
+) {
+  const answers: Record<string, string> = {};
+
+  questions.forEach((q, qIndex) => {
+    const selected = selectedOptions[qIndex] ?? [];
+    const otherText = allowFreeformAnswer ? otherInputs[qIndex]?.trim() ?? "" : "";
+    const value = q.multiSelect
+      ? [...selected, otherText].filter(Boolean).join(", ")
+      : otherText || selected[0] || "";
+
+    if (value) {
+      answers[q.question] = value;
+    }
+  });
+
+  return answers;
 }
 
 export function DecisionPanel({
@@ -40,10 +92,12 @@ export function DecisionPanel({
   compact?: boolean;
 }) {
   const input = request.input as AskUserQuestionInput | null;
-  const questions = input?.questions ?? [];
+  const questions = normalizeAskUserQuestions(input);
   const figmaAuthUrl = typeof input?.figmaAuthUrl === "string" ? input.figmaAuthUrl : "";
   const allowFreeformAnswer = !figmaAuthUrl;
   const requestKey = request.toolUseId;
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const questionRefs = useRef<Array<HTMLElement | null>>([]);
   const [selectedOptionsByRequest, setSelectedOptionsByRequest] = useState<Record<string, SelectedOptionsByQuestion>>({});
   const [otherInputsByRequest, setOtherInputsByRequest] = useState<Record<string, OtherInputsByQuestion>>({});
   const [copiedAuthUrlByRequest, setCopiedAuthUrlByRequest] = useState<Record<string, boolean>>({});
@@ -52,189 +106,229 @@ export function DecisionPanel({
   const otherInputs = otherInputsByRequest[requestKey] ?? {};
   const copiedAuthUrl = copiedAuthUrlByRequest[requestKey] ?? false;
   const expanded = expandedByRequest[requestKey] ?? true;
+  const currentQuestionIndex = getCurrentQuestionIndex(questions, selectedOptions, otherInputs, allowFreeformAnswer);
 
-  const toggleOption = (qIndex: number, optionLabel: string, multiSelect?: boolean) => {
+  const scrollToQuestion = (qIndex: number) => {
+    const nextIndex = clampQuestionIndex(qIndex, questions.length);
+    window.requestAnimationFrame(() => {
+      questionRefs.current[nextIndex]?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  };
+
+  const answeredQuestionCount = questions.reduce((count, _, qIndex) => (
+    isQuestionAnswered(qIndex, selectedOptions, otherInputs, allowFreeformAnswer) ? count + 1 : count
+  ), 0);
+
+  const canSubmit = questions.length > 0 && answeredQuestionCount === questions.length;
+
+  const handleOptionClick = (qIndex: number, optionLabel: string, multiSelect?: boolean) => {
     setSelectedOptionsByRequest((prev) => {
       const currentRequestOptions = prev[requestKey] ?? {};
       const current = currentRequestOptions[qIndex] ?? [];
-      if (multiSelect) {
-        const next = current.includes(optionLabel)
+      const next = multiSelect
+        ? current.includes(optionLabel)
           ? current.filter((label) => label !== optionLabel)
-          : [...current, optionLabel];
-        return { ...prev, [requestKey]: { ...currentRequestOptions, [qIndex]: next } };
-      }
-      return { ...prev, [requestKey]: { ...currentRequestOptions, [qIndex]: [optionLabel] } };
+          : [...current, optionLabel]
+        : [optionLabel];
+      return { ...prev, [requestKey]: { ...currentRequestOptions, [qIndex]: next } };
     });
+
+    if (!multiSelect) {
+      setOtherInputsByRequest((prev) => {
+        const currentRequestInputs = prev[requestKey] ?? {};
+        if (!currentRequestInputs[qIndex]) return prev;
+        return { ...prev, [requestKey]: { ...currentRequestInputs, [qIndex]: "" } };
+      });
+      if (qIndex < questions.length - 1) {
+        window.setTimeout(() => scrollToQuestion(qIndex + 1), 80);
+      }
+    }
   };
 
-  const buildAnswers = () => {
-    const answers: Record<string, string> = {};
-    questions.forEach((q, qIndex) => {
-      const selected = selectedOptions[qIndex] ?? [];
-      const otherText = allowFreeformAnswer ? otherInputs[qIndex]?.trim() ?? "" : "";
-      let value = "";
-      if (q.multiSelect) {
-        const combined = [...selected];
-        if (otherText) combined.push(otherText);
-        value = combined.join(", ");
-      } else {
-        value = otherText || selected[0] || "";
-      }
-      if (value) answers[q.question] = value;
-    });
-    return answers;
+  const handleOtherInputChange = (qIndex: number, value: string) => {
+    setOtherInputsByRequest((prev) => ({
+      ...prev,
+      [requestKey]: { ...(prev[requestKey] ?? {}), [qIndex]: value },
+    }));
+
+    if (value.trim()) {
+      setSelectedOptionsByRequest((prev) => {
+        const currentRequestOptions = prev[requestKey] ?? {};
+        if (!currentRequestOptions[qIndex]?.length) return prev;
+        return { ...prev, [requestKey]: { ...currentRequestOptions, [qIndex]: [] } };
+      });
+    }
   };
-
-  const canSubmit = questions.every((_, qIndex) => {
-    const selected = selectedOptions[qIndex] ?? [];
-    const otherText = allowFreeformAnswer ? otherInputs[qIndex]?.trim() ?? "" : "";
-    return selected.length > 0 || otherText.length > 0;
-  });
-
-  const answeredQuestionCount = questions.reduce((count, _, qIndex) => {
-    const selected = selectedOptions[qIndex] ?? [];
-    const otherText = allowFreeformAnswer ? otherInputs[qIndex]?.trim() ?? "" : "";
-    return selected.length > 0 || otherText.length > 0 ? count + 1 : count;
-  }, 0);
 
   if (request.toolName === "AskUserQuestion" && questions.length > 0) {
     return (
-      <div
-        className={`flex flex-col rounded-xl border border-accent/18 bg-white/95 shadow-[0_18px_45px_rgba(30,38,52,0.10)] ring-1 ring-white/80 ${
-          compact ? "p-3" : "p-4"
-        }`}
-      >
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-black/6 pb-3">
-          <div className="flex min-w-0 items-start gap-2.5">
-            <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-accent shadow-[0_0_0_4px_rgba(210,106,61,0.12)]" />
-            <div className="min-w-0">
-              <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-accent">需要你选择</div>
-              <div className="mt-0.5 truncate text-[13px] font-semibold text-ink-800">
-                Agent 等待确认 · {answeredQuestionCount}/{questions.length}
-              </div>
-            </div>
+      <div className="overflow-hidden rounded-lg border border-[#dfe3ea] bg-white shadow-[0_16px_40px_rgba(15,23,42,0.10)]">
+        <div className="flex min-h-12 shrink-0 items-center justify-between gap-3 border-b border-[#eef1f4] px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <MessageSquare className="h-4 w-4 shrink-0 text-[#5f6772]" aria-hidden="true" />
+            <span className="truncate text-[15px] font-medium text-ink-800">请回答以下问题</span>
           </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <span className="rounded-md border border-accent/18 bg-accent/8 px-2 py-1 text-[11px] font-semibold text-accent">
-              步骤确认
+          <div className="flex shrink-0 items-center gap-2 text-sm text-muted">
+            <button
+              type="button"
+              className="grid h-7 w-7 place-items-center rounded-md text-ink-700 transition hover:bg-[#f4f6f8]"
+              aria-label="上一题"
+              title="上一题"
+              onClick={() => scrollToQuestion(currentQuestionIndex - 1)}
+            >
+              <ChevronUp className="h-4 w-4" aria-hidden="true" />
+            </button>
+            <span className="min-w-10 text-center tabular-nums">
+              {currentQuestionIndex + 1} / {questions.length}
             </span>
             <button
               type="button"
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-black/8 bg-white text-ink-600 transition-colors hover:border-accent/28 hover:bg-accent/6 hover:text-accent"
-              aria-label={expanded ? "收起确认面板" : "展开确认面板"}
-              aria-expanded={expanded}
-              title={expanded ? "收起" : "展开"}
-              onClick={() => {
-                setExpandedByRequest((prev) => ({ ...prev, [requestKey]: !(prev[requestKey] ?? true) }));
-              }}
+              className="grid h-7 w-7 place-items-center rounded-md text-ink-700 transition hover:bg-[#f4f6f8]"
+              aria-label="下一题"
+              title="下一题"
+              onClick={() => scrollToQuestion(currentQuestionIndex + 1)}
             >
-              <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`} />
+              <ChevronDown className="h-4 w-4" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="ml-1 rounded-md border border-[#dfe3ea] bg-white px-2 py-1 text-[12px] font-medium text-muted transition hover:bg-[#f7f8fa] hover:text-ink-800"
+              aria-expanded={expanded}
+              onClick={() => setExpandedByRequest((prev) => ({ ...prev, [requestKey]: !(prev[requestKey] ?? true) }))}
+            >
+              {expanded ? "收起" : "展开"}
             </button>
           </div>
         </div>
+
         {!expanded && (
-          <div className="mt-2 truncate text-xs text-muted">
-            {answeredQuestionCount > 0 ? `已选择 ${answeredQuestionCount}/${questions.length} 项` : `待选择 ${questions.length} 项`}
+          <div className="px-4 py-3 text-sm text-muted">
+            已回答 {answeredQuestionCount} / {questions.length} 个问题
           </div>
         )}
+
         {expanded && (
           <>
-            <div className="mt-3">
-              {questions.map((q, qIndex) => {
-                const selected = selectedOptions[qIndex] ?? [];
-                const otherText = otherInputs[qIndex]?.trim() ?? "";
-                const isAnswered = selected.length > 0 || otherText.length > 0;
-                return (
-                  <div key={qIndex} className={`grid grid-cols-[30px_minmax(0,1fr)] gap-2.5 ${qIndex === 0 ? "" : "mt-3"}`}>
-                    <div className="flex flex-col items-center pt-1.5">
-                      <QuestionStepIcon answered={isAnswered} index={qIndex} />
-                      {qIndex < questions.length - 1 && <div className="mt-1 h-full min-h-10 w-px bg-[linear-gradient(180deg,rgba(210,106,61,0.28),rgba(210,106,61,0.08))]" />}
-                    </div>
-                    <div className="min-w-0 rounded-lg border border-black/6 bg-[#FBFCFE] px-3 py-2.5 shadow-[0_8px_24px_rgba(30,38,52,0.04)]">
-                      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                        {q.header && (
-                          <span className="max-w-full truncate rounded-md border border-black/6 bg-white px-2 py-0.5 text-[11px] font-medium text-muted">
-                            {q.header}
-                          </span>
-                        )}
-                        {q.multiSelect && <span className="rounded-md bg-accent/8 px-1.5 py-0.5 text-[11px] font-semibold text-accent">多选</span>}
+            <div
+              ref={scrollContainerRef}
+              className={`scroll-smooth overflow-y-auto px-4 ${compact ? "max-h-[min(42vh,330px)] py-3" : "max-h-[min(52vh,440px)] py-4"}`}
+            >
+              <div className="grid gap-5">
+                {questions.map((q, qIndex) => {
+                  const selected = selectedOptions[qIndex] ?? [];
+                  const otherText = otherInputs[qIndex] ?? "";
+                  const isAnswered = isQuestionAnswered(qIndex, selectedOptions, otherInputs, allowFreeformAnswer);
+                  const customOptionLabel = OPTION_LABELS[(q.options?.length ?? 0)] ?? "自定义";
+
+                  return (
+                    <section
+                      key={`${q.question}-${qIndex}`}
+                      ref={(node) => {
+                        questionRefs.current[qIndex] = node;
+                      }}
+                      className="scroll-mt-3"
+                    >
+                      <div className="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-3">
+                        <QuestionStepIcon answered={isAnswered} index={qIndex} />
+                        <div className="min-w-0">
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            <span className="text-[15px] font-semibold leading-6 text-ink-900">
+                              {qIndex + 1}.
+                            </span>
+                            <h3 className="min-w-0 flex-1 text-[15px] font-semibold leading-6 text-ink-900 [overflow-wrap:anywhere]">
+                              {q.question}
+                            </h3>
+                            {q.header && (
+                              <span className="shrink-0 rounded-md border border-[#e1e5eb] bg-[#f7f8fa] px-2 py-0.5 text-[11px] text-muted">
+                                {q.header}
+                              </span>
+                            )}
+                            {q.multiSelect && (
+                              <span className="shrink-0 rounded-md bg-[#eef7ff] px-2 py-0.5 text-[11px] font-medium text-[#0969da]">
+                                多选
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="mt-3 grid gap-2">
+                            {(q.options ?? []).map((option, optIndex) => {
+                              const isSelected = selected.includes(option.label);
+                              return (
+                                <button
+                                  key={`${option.label}-${optIndex}`}
+                                  type="button"
+                                  className={`group flex min-w-0 items-start gap-3 rounded-md border px-3 py-2 text-left transition ${
+                                    isSelected
+                                      ? "border-[#cfd8e3] bg-[#f3f7fb] text-ink-900 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.02)]"
+                                      : "border-transparent bg-white text-ink-800 hover:border-[#dfe3ea] hover:bg-[#fafbfc]"
+                                  }`}
+                                  onClick={() => handleOptionClick(qIndex, option.label, q.multiSelect)}
+                                  aria-pressed={isSelected}
+                                >
+                                  <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-md border text-[13px] font-medium ${
+                                    isSelected
+                                      ? "border-[#b8c4d1] bg-white text-ink-900"
+                                      : "border-[#d7dce3] bg-white text-muted group-hover:text-ink-800"
+                                  }`}>
+                                    {OPTION_LABELS[optIndex] ?? optIndex + 1}
+                                  </span>
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block text-[15px] leading-6 [overflow-wrap:anywhere]">{option.label}</span>
+                                    {option.description && (
+                                      <span className="mt-0.5 block text-[12px] leading-5 text-muted [overflow-wrap:anywhere]">
+                                        {option.description}
+                                      </span>
+                                    )}
+                                  </span>
+                                </button>
+                              );
+                            })}
+
+                            {allowFreeformAnswer && (
+                              <label className="flex min-w-0 items-start gap-3 rounded-md border border-transparent bg-white px-3 py-2 text-left transition focus-within:border-[#dfe3ea] focus-within:bg-[#fafbfc]">
+                                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-[#d7dce3] bg-white text-[13px] font-medium text-muted">
+                                  {customOptionLabel}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block text-[15px] leading-6 text-ink-800">或输入自定义答案</span>
+                                  <input
+                                    type="text"
+                                    className="mt-1 w-full border-0 bg-transparent px-0 py-1 text-[14px] leading-5 text-ink-800 outline-none placeholder:text-[#a6a8ad]"
+                                    placeholder="输入后可继续选择下一题"
+                                    value={otherText}
+                                    onChange={(event) => handleOtherInputChange(qIndex, event.target.value)}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter" && otherText.trim() && qIndex < questions.length - 1) {
+                                        event.preventDefault();
+                                        scrollToQuestion(qIndex + 1);
+                                      }
+                                    }}
+                                  />
+                                </span>
+                              </label>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    <p className="mt-1.5 text-[13px] font-semibold leading-5 text-ink-800 [overflow-wrap:anywhere]">{q.question}</p>
-                    {q.header && (
-                      <span className="sr-only">
-                        {q.header}
-                      </span>
-                    )}
-                    <div className="mt-2.5 grid grid-cols-1 gap-2">
-                      {(q.options ?? []).map((option, optIndex) => {
-                        const isSelected = selected.includes(option.label);
-                        return (
-                          <button
-                            key={optIndex}
-                            type="button"
-                            className={`relative min-w-0 overflow-hidden rounded-md border px-3 py-2.5 text-left text-[13px] leading-5 transition-colors [overflow-wrap:anywhere] ${
-                              isSelected
-                                ? "border-accent/40 bg-accent/[0.07] text-ink-800 shadow-[0_8px_18px_rgba(210,106,61,0.12)]"
-                                : "border-black/8 bg-white text-ink-700 hover:border-accent/28 hover:bg-accent/5"
-                            }`}
-                            onClick={() => {
-                              toggleOption(qIndex, option.label, q.multiSelect);
-                            }}
-                            aria-pressed={isSelected}
-                          >
-                            {isSelected && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-accent" />}
-                            <span className={`block font-semibold ${isSelected ? "text-accent" : "text-ink-800"}`}>{option.label}</span>
-                            {option.description && <span className="mt-0.5 block text-[11px] leading-4 text-muted">{option.description}</span>}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {(selected.length > 0 || otherText) && (
-                      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
-                        <span>当前选择</span>
-                        {[...selected, otherText].filter(Boolean).map((label) => (
-                          <span key={label} className="rounded-md bg-white px-1.5 py-0.5 font-semibold text-accent shadow-[inset_0_0_0_1px_rgba(232,117,81,0.18)] [overflow-wrap:anywhere]">
-                            {label}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    {allowFreeformAnswer ? (
-                      <div className="mt-2">
-                        <label className="block text-[11px] font-medium text-muted">其他回答</label>
-                        <input
-                          type="text"
-                          className="mt-1 w-full rounded-md border border-black/8 bg-white px-3 py-2 text-sm text-ink-700 outline-none transition focus:border-accent/45 focus:bg-white focus:shadow-[0_0_0_3px_rgba(210,106,61,0.10)]"
-                          placeholder="输入你的回答..."
-                          value={otherInputs[qIndex] ?? ""}
-                          onChange={(e) => {
-                            setOtherInputsByRequest((prev) => ({
-                              ...prev,
-                              [requestKey]: { ...(prev[requestKey] ?? {}), [qIndex]: e.target.value },
-                            }));
-                          }}
-                        />
-                      </div>
-                    ) : (
-                      <div className="mt-2 rounded-md border border-accent/12 bg-white/62 px-2.5 py-2 text-xs leading-5 text-muted">
-                        这一步不要粘贴 localhost callback URL。请直接选择上面的状态；如果 localhost 页面打不开，改用 Figma Desktop MCP。
-                      </div>
-                    )}
-                    </div>
-                  </div>
-                );
-              })}
+                    </section>
+                  );
+                })}
+              </div>
+
               {figmaAuthUrl && (
-                <div className={`${compact ? "mt-3" : "mt-4"} rounded-2xl border border-accent/18 bg-white/72 p-3`}>
-                  <div className="text-xs font-bold uppercase tracking-[0.14em] text-accent">Figma OAuth</div>
-                  <div className="mt-1 break-all text-xs text-muted">{figmaAuthUrl}</div>
-                  <div className="mt-2 text-xs leading-5 text-ink-700">
-                    请用外部浏览器打开授权链接。授权后如果 localhost 页面正常显示完成，就点「授权已完成」；不要把 callback 地址粘回这里。
+                <div className="mt-5 rounded-lg border border-[#dfe3ea] bg-[#fafbfc] p-3">
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Figma OAuth</div>
+                  <div className="mt-2 break-all text-xs leading-5 text-ink-700">{figmaAuthUrl}</div>
+                  <div className="mt-2 text-xs leading-5 text-muted">
+                    请用外部浏览器打开授权链接。授权完成后，直接在上方问题里选择对应状态；不要把 localhost callback 地址粘回这里。
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       type="button"
-                      className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-white shadow-soft transition-colors hover:bg-accent-hover"
+                      className="rounded-md bg-[#111111] px-3 py-1.5 text-sm font-medium text-white transition hover:bg-black"
                       onClick={() => {
                         void (window.electron as typeof window.electron & { invoke?: (channel: string, ...args: unknown[]) => Promise<unknown> })
                           .invoke?.("shell:openExternal", figmaAuthUrl)
@@ -245,7 +339,7 @@ export function DecisionPanel({
                     </button>
                     <button
                       type="button"
-                      className="rounded-full border border-ink-900/10 bg-surface px-4 py-2 text-sm font-semibold text-ink-700 transition-colors hover:bg-surface-tertiary"
+                      className="rounded-md border border-[#dfe3ea] bg-white px-3 py-1.5 text-sm font-medium text-ink-700 transition hover:bg-[#f4f6f8]"
                       onClick={() => {
                         void copyTextToClipboard(figmaAuthUrl).then(() => {
                           setCopiedAuthUrlByRequest((prev) => ({ ...prev, [requestKey]: true }));
@@ -258,25 +352,40 @@ export function DecisionPanel({
                 </div>
               )}
             </div>
-            <div className={`${compact ? "mt-3" : "mt-5"} flex shrink-0 flex-wrap gap-3 border-t border-black/6 pt-3`}>
-              <button
-                className={`rounded-full px-5 py-2 text-sm font-medium text-white shadow-soft transition-colors ${
-                  canSubmit ? "bg-accent hover:bg-accent-hover" : "bg-ink-400/40 cursor-not-allowed"
-                }`}
-                onClick={() => {
-                  if (!canSubmit) return;
-                  onSubmit({ behavior: "allow", updatedInput: { ...(input as Record<string, unknown>), answers: buildAnswers() } });
-                }}
-                disabled={!canSubmit}
-              >
-                用已选项继续
-              </button>
-              <button
-                className="rounded-full border border-ink-900/10 bg-surface px-5 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-surface-tertiary"
-                onClick={() => onSubmit({ behavior: "deny", message: "User canceled the question" })}
-              >
-                取消
-              </button>
+
+            <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[#eef1f4] px-4 py-3">
+              <div className="flex min-w-0 items-center gap-2 text-sm text-muted">
+                <Sparkles className="h-4 w-4 shrink-0 text-ink-700" aria-hidden="true" />
+                <span className="truncate">推荐选项</span>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  className="rounded-md px-3 py-1.5 text-sm font-medium text-muted transition hover:bg-[#f4f6f8] hover:text-ink-800"
+                  onClick={() => onSubmit({ behavior: "deny", message: "User canceled the question" })}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-md px-3 py-1.5 text-sm font-semibold text-white transition ${
+                    canSubmit ? "bg-[#111111] hover:bg-black" : "cursor-not-allowed bg-[#c9ced6]"
+                  }`}
+                  onClick={() => {
+                    if (!canSubmit) return;
+                    onSubmit({
+                      behavior: "allow",
+                      updatedInput: {
+                        ...(input as Record<string, unknown>),
+                        answers: buildAnswers(questions, selectedOptions, otherInputs, allowFreeformAnswer),
+                      },
+                    });
+                  }}
+                  disabled={!canSubmit}
+                >
+                  继续
+                </button>
+              </div>
             </div>
           </>
         )}
@@ -285,25 +394,27 @@ export function DecisionPanel({
   }
 
   return (
-    <div className="rounded-2xl border border-accent/20 bg-accent-subtle p-5">
-      <div className="text-xs font-semibold text-accent">权限请求</div>
+    <div className="rounded-lg border border-[#dfe3ea] bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.10)]">
+      <div className="text-xs font-semibold text-muted">权限请求</div>
       <p className="mt-2 text-sm text-ink-700">
-        Claude 想要使用：<span className="font-medium">{request.toolName}</span>
+        Agent 想要使用：<span className="font-medium">{request.toolName}</span>
       </p>
-      <div className="mt-3 rounded-xl bg-surface-tertiary p-3">
-        <pre className="text-xs text-ink-600 font-mono whitespace-pre-wrap break-words max-h-40 overflow-auto">
+      <div className="mt-3 rounded-md bg-[#f6f8fa] p-3">
+        <pre className="max-h-40 whitespace-pre-wrap break-words font-mono text-xs text-ink-600">
           {JSON.stringify(request.input, null, 2)}
         </pre>
       </div>
-      <div className="mt-4 flex flex-wrap gap-3">
+      <div className="mt-4 flex flex-wrap gap-2">
         <button
-          className="rounded-full bg-accent px-5 py-2 text-sm font-medium text-white shadow-soft hover:bg-accent-hover transition-colors"
+          type="button"
+          className="rounded-md bg-[#111111] px-4 py-2 text-sm font-medium text-white transition hover:bg-black"
           onClick={() => onSubmit({ behavior: "allow", updatedInput: request.input as Record<string, unknown> })}
         >
           允许
         </button>
         <button
-          className="rounded-full border border-ink-900/10 bg-surface px-5 py-2 text-sm font-medium text-ink-700 hover:bg-surface-tertiary transition-colors"
+          type="button"
+          className="rounded-md border border-[#dfe3ea] bg-white px-4 py-2 text-sm font-medium text-ink-700 transition hover:bg-[#f4f6f8]"
           onClick={() => onSubmit({ behavior: "deny", message: "User denied the request" })}
         >
           拒绝

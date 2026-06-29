@@ -133,6 +133,8 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("browser-close", sessionId),
     setBrowserWorkbenchBounds: (bounds: any, sessionId?: string) =>
         ipcInvoke("browser-set-bounds", bounds, sessionId),
+    hideAllBrowserWorkbenches: () =>
+        ipcInvoke("browser-hide-all"),
     reloadBrowserWorkbench: (sessionId?: string) =>
         ipcInvoke("browser-reload", sessionId),
     goBackBrowserWorkbench: (sessionId?: string) =>

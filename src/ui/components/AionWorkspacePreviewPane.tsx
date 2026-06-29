@@ -1617,6 +1617,7 @@ export function AionWorkspacePreviewPane({
             revealNonce: options.revealNonce ?? existing.revealNonce,
           };
       setOpenTabs((prev) => prev.map((t) => (t.path === existing.path ? next : t)));
+      setActiveTabPath(next.path);
       if (shouldTrackRecent && result.success) {
         markPreviewQuickOpenRecentPath(workspace, next.path);
       }
@@ -1670,10 +1671,11 @@ export function AionWorkspacePreviewPane({
           revealNonce: options.revealNonce,
         };
 
-    setOpenTabs((prev) => prev.map((t) => (t.path === path ? resolved : t)));
-    if (shouldTrackRecent && result.success) {
-      markPreviewQuickOpenRecentPath(workspace, resolved.path);
-    }
+      setOpenTabs((prev) => prev.map((t) => (t.path === path ? resolved : t)));
+      setActiveTabPath(resolved.path);
+      if (shouldTrackRecent && result.success) {
+        markPreviewQuickOpenRecentPath(workspace, resolved.path);
+      }
   }, [markPreviewQuickOpenRecentPath, workspace]);
 
   const updateOpenFileContent = useCallback((path: string, content: string) => {
@@ -1831,13 +1833,14 @@ export function AionWorkspacePreviewPane({
     if (!pendingOpenRequest?.filePath) return;
     if (!workspace) return;
     if (consumedPendingOpenNonceRef.current === pendingOpenRequest.nonce) return;
-    consumedPendingOpenNonceRef.current = pendingOpenRequest.nonce;
     void openFile(pendingOpenRequest.filePath, {
       revealLine: pendingOpenRequest.startLine,
       revealFirstChange: pendingOpenRequest.revealFirstChange,
       revealNonce: pendingOpenRequest.nonce,
+    }).finally(() => {
+      consumedPendingOpenNonceRef.current = pendingOpenRequest.nonce;
+      onConsumePendingOpenRequest?.();
     });
-    onConsumePendingOpenRequest?.();
   }, [onConsumePendingOpenRequest, openFile, pendingOpenRequest, workspace]);
 
   useEffect(() => {

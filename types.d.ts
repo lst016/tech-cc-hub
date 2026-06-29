@@ -302,6 +302,7 @@ type EventPayloadMapping = {
         "browser-open": BrowserWorkbenchState;
         "browser-close": BrowserWorkbenchState;
         "browser-set-bounds": BrowserWorkbenchState;
+        "browser-hide-all": BrowserWorkbenchState[];
         "browser-reload": BrowserWorkbenchState;
         "browser-back": BrowserWorkbenchState;
         "browser-forward": BrowserWorkbenchState;
@@ -411,6 +412,7 @@ interface Window {
         openBrowserWorkbench: (url: string, sessionId?: string) => Promise<BrowserWorkbenchState>;
         closeBrowserWorkbench: (sessionId?: string) => Promise<BrowserWorkbenchState>;
         setBrowserWorkbenchBounds: (bounds: BrowserWorkbenchBounds, sessionId?: string) => Promise<BrowserWorkbenchState>;
+        hideAllBrowserWorkbenches: () => Promise<BrowserWorkbenchState[]>;
         reloadBrowserWorkbench: (sessionId?: string) => Promise<BrowserWorkbenchState>;
         goBackBrowserWorkbench: (sessionId?: string) => Promise<BrowserWorkbenchState>;
         goForwardBrowserWorkbench: (sessionId?: string) => Promise<BrowserWorkbenchState>;

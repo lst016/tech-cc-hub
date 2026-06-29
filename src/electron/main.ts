@@ -86,7 +86,7 @@ import { CronRepository } from "./libs/cron/cron-repository.js";
 import { CronJobExecutor, CronBusyGuard } from "./libs/cron/cron-executor.js";
 import { setCronService } from "./libs/mcp-tools/cron.js";
 import type { ClientEvent, PromptAttachment, ServerEvent } from "./types.js";
-import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkbenchEvent, type BrowserWorkbenchNetworkLogInput, type BrowserWorkbenchRecordedAction } from "./browser-manager.js";
+import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkbenchEvent, type BrowserWorkbenchNetworkLogInput, type BrowserWorkbenchRecordedAction, type BrowserWorkbenchState } from "./browser-manager.js";
 import { startDevBackendBridge, DEV_BACKEND_BRIDGE_PORT } from "./dev-backend-bridge.js";
 import { buildSessionSlashCommandItems } from "./libs/slash-command-catalog.js";
 import { prepareExternalCliCommand, runExternalCli } from "./libs/external-cli.js";
@@ -1676,6 +1676,20 @@ function closeAllBrowserWorkbenches(): void {
   }
 }
 
+function hideAllBrowserWorkbenches(): BrowserWorkbenchState[] {
+  const hiddenStates: BrowserWorkbenchState[] = [];
+  const hiddenBounds: BrowserWorkbenchBounds = { x: 0, y: 0, width: 0, height: 0 };
+  for (const manager of browserWorkbenches.values()) {
+    hiddenStates.push(manager.setBounds(hiddenBounds));
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    for (const view of mainWindow.getBrowserViews()) {
+      mainWindow.removeBrowserView(view);
+    }
+  }
+  return hiddenStates;
+}
+
 function isIgnorableStreamError(error: unknown): error is NodeJS.ErrnoException {
     return Boolean(
         error &&
@@ -3202,6 +3216,7 @@ app.on("ready", async () => {
           openBrowserWorkbench: (url: string, sessionId?: string) => getBrowserWorkbench(sessionId)!.open(url),
           closeBrowserWorkbench: (sessionId?: string) => getBrowserWorkbench(sessionId)!.close(),
           setBrowserWorkbenchBounds: (bounds: BrowserWorkbenchBounds, sessionId?: string) => getBrowserWorkbench(sessionId)!.setBounds(bounds),
+          hideAllBrowserWorkbenches,
           reloadBrowserWorkbench: (sessionId?: string) => getBrowserWorkbench(sessionId)!.reload(),
           goBackBrowserWorkbench: (sessionId?: string) => getBrowserWorkbench(sessionId)!.goBack(),
           goForwardBrowserWorkbench: (sessionId?: string) => getBrowserWorkbench(sessionId)!.goForward(),
@@ -3432,6 +3447,10 @@ app.on("ready", async () => {
 
     ipcMainHandle("browser-set-bounds", (_: IpcMainInvokeEvent, bounds: BrowserWorkbenchBounds, sessionId?: string) => {
         return getBrowserWorkbench(sessionId)!.setBounds(bounds);
+    });
+
+    ipcMainHandle("browser-hide-all", () => {
+        return hideAllBrowserWorkbenches();
     });
 
     ipcMainHandle("browser-reload", (_: IpcMainInvokeEvent, sessionId?: string) => {

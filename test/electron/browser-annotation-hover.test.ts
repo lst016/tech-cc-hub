@@ -7,6 +7,7 @@ describe("browser annotation hover preview", () => {
     const source = readFileSync("src/electron/browser-manager.ts", "utf8");
 
     assert.match(source, /function updateHover\(/);
+    assert.match(source, /function pointFromEvent\(event\)/);
     assert.match(source, /document\.addEventListener\("mousemove", window\.__techCcHubAnnotationHoverHandler, true\)/);
     assert.match(source, /"\.__tech_cc_hub_hover\{/);
     assert.match(source, /"\.__tech_cc_hub_hover_card\{/);
@@ -52,6 +53,22 @@ describe("browser annotation hover preview", () => {
     assert.match(source, /const hitPath = domHint && domHint\.hitPath/);
     assert.match(source, /if \(hitPath\) return "hit-path:" \+ hitPath/);
     assert.match(source, /function shouldPreferExactElement\(element, promoted\)/);
+  });
+
+  it("supports touch and pointer activation for annotation mode in mobile emulation", () => {
+    const source = readFileSync("src/electron/browser-manager.ts", "utf8");
+
+    assert.match(source, /function pointFromEvent\(event\) \{[\s\S]*?event\.changedTouches \|\| event\.touches/);
+    assert.match(source, /function activateAnnotation\(event, point\)/);
+    assert.match(source, /event\.type === "touchstart"/);
+    assert.match(source, /event\.pointerType === "touch"/);
+    assert.match(source, /function rememberTouchActivation\(point\)/);
+    assert.match(source, /function isRecentTouchActivation\(point\)/);
+    assert.match(source, /document\.addEventListener\("pointerdown", window\.__techCcHubAnnotationPointerHandler, true\)/);
+    assert.match(source, /document\.addEventListener\("touchstart", window\.__techCcHubAnnotationTouchHandler, \{ capture: true, passive: false \}\)/);
+    assert.match(source, /document\.removeEventListener\("pointerdown", window\.__techCcHubAnnotationPointerHandler, true\)/);
+    assert.match(source, /document\.removeEventListener\("touchstart", window\.__techCcHubAnnotationTouchHandler, true\)/);
+    assert.match(source, /event\.type === "click" && isRecentTouchActivation\(point\)/);
   });
 
   it("lets specific drawer children beat generated or stable ancestor ids", () => {
@@ -125,7 +142,7 @@ describe("browser annotation hover preview", () => {
 
   it("does not infer style edits when saving a plain advanced annotation", () => {
     const source = readFileSync("src/electron/browser-manager.ts", "utf8");
-    const submitComment = source.match(/function submitComment\(\) \{[\s\S]*?\n        \}/)?.[0] ?? "";
+    const submitComment = source.match(/function submitComment\(\) \{[\s\S]*?\n\s{8}\}/)?.[0] ?? "";
 
     assert.match(source, /if \(!annotation \|\| !element \|\| !annotation\.styleBefore \|\| !touchedProperties \|\| touchedProperties\.length === 0\) return \[\];/);
     assert.doesNotMatch(submitComment, /refreshStyleEdits\(annotation, element\)/);
@@ -134,8 +151,8 @@ describe("browser annotation hover preview", () => {
 
   it("does not seed CSS edits from computed styles", () => {
     const source = readFileSync("src/electron/browser-manager.ts", "utf8");
-    const cssDeclarationTextForElement = source.match(/function cssDeclarationTextForElement\(element\) \{[\s\S]*?\n      \}/)?.[0] ?? "";
-    const refreshStyleEdits = source.match(/function refreshStyleEdits\(annotation, element\) \{[\s\S]*?\n      \}/)?.[0] ?? "";
+    const cssDeclarationTextForElement = source.match(/function cssDeclarationTextForElement\(element\) \{[\s\S]*?\n\s{6}\}/)?.[0] ?? "";
+    const refreshStyleEdits = source.match(/function refreshStyleEdits\(annotation, element\) \{[\s\S]*?\n\s{6}\}/)?.[0] ?? "";
 
     assert.doesNotMatch(cssDeclarationTextForElement, /window\.getComputedStyle/);
     assert.match(cssDeclarationTextForElement, /if \(!inline \|\| !inline\.trim\(\)\) return "";/);

@@ -8,7 +8,6 @@ import { useMessageWindow } from "./hooks/useMessageWindow";
 import { useAppStore } from "./store/useAppStore";
 import { useWorkflowRunStore } from "./store/workflowRunStore";
 import type { AppUpdateStatus, PromptAttachment, ServerEvent, SettingsPageId, StreamMessage } from "./types";
-import { filterDisplayMessages } from "./utils/chat-display-messages";
 import { DEFAULT_SIDEBAR_WIDTH, Sidebar } from "./components/Sidebar";
 import { TooltipButton } from "./components/TooltipButton";
 import { UpdateToast } from "./components/UpdateToast";
@@ -612,18 +611,18 @@ function App() {
     onLoadMore: requestOlderHistory,
   });
 
-  const displayMessages = useMemo(
-    () => filterDisplayMessages(visibleMessages, messages),
-    [messages, visibleMessages],
-  );
-
   const renderEntries = useMemo(() => {
     const entries: RenderEntry[] = [];
     let pendingProcessGroup: Array<{ originalIndex: number; message: StreamMessage }> = [];
     const emittedWorkflowAgentCards = new Set<string>();
-    let roundNumber = messages
-      .slice(0, displayMessages[0]?.originalIndex ?? 0)
-      .filter((message) => message.type === "user_prompt").length;
+    const firstVisibleIndex = visibleMessages[0]?.originalIndex;
+    let userPromptCountBefore = 0;
+    if (firstVisibleIndex !== undefined) {
+      for (let i = 0; i < firstVisibleIndex; i++) {
+        if (messages[i]?.type === "user_prompt") userPromptCountBefore++;
+      }
+    }
+    let roundNumber = userPromptCountBefore;
 
     const flushProcessGroup = () => {
       if (pendingProcessGroup.length === 0) return;
@@ -638,7 +637,8 @@ function App() {
       pendingProcessGroup = [];
     };
 
-    for (const item of displayMessages) {
+    for (const item of visibleMessages) {
+      if (item.message.type === "system" && item.message.subtype === "init") continue;
       if (item.message.type === "user_prompt") {
         flushProcessGroup();
         roundNumber += 1;
@@ -683,16 +683,21 @@ function App() {
 
     flushProcessGroup();
     return entries;
-  }, [activeSessionId, displayMessages, messages, workflowAgentsById]);
+  }, [activeSessionId, visibleMessages, workflowAgentsById, messages]);
 
   const chatOverview = useMemo(() => {
     const latestUserEntry = [...renderEntries].reverse().find((entry) => entry.type === "message" && entry.message.type === "user_prompt");
+    let tools = 0;
+    for (const item of visibleMessages) {
+      if (item.message.type === "system" && item.message.subtype === "init") continue;
+      tools += getToolUseCount(item.message);
+    }
     return {
       rounds: renderEntries.filter((entry) => entry.type === "separator").length,
-      tools: displayMessages.reduce((total, item) => total + getToolUseCount(item.message), 0),
+      tools,
       latestUserIndex: latestUserEntry?.type === "message" ? latestUserEntry.originalIndex : null,
     };
-  }, [displayMessages, renderEntries]);
+  }, [renderEntries, visibleMessages]);
 
   const scrollToMessageIndex = useCallback((index: number | null) => {
     if (index === null) return;
@@ -1039,27 +1044,31 @@ function App() {
     const handlePreviewOpenFile = (event: Event) => {
       const detail = (event as CustomEvent<PreviewOpenFileDetail>).detail;
       if (!detail?.filePath) return;
+      const sessionId = activeSessionIdRef.current;
+      if (!sessionId) return;
 
       setShowSessionAnalysis(false);
       setShowActivityRail(true);
-      setActiveSessionWorkspaceView("chat");
-      setActiveSessionActivityRailTab("preview");
-
-      if (!activeSessionId) return;
+      setWorkspaceViewBySessionId((current) => (
+        current[sessionId] === "chat" ? current : { ...current, [sessionId]: "chat" }
+      ));
       setPendingPreviewOpenRequestBySessionId((current) => ({
         ...current,
-        [activeSessionId]: {
+        [sessionId]: {
           ...detail,
           nonce: Date.now(),
         },
       }));
+      setActivityRailTabBySessionId((current) => (
+        current[sessionId] === "preview" ? current : { ...current, [sessionId]: "preview" }
+      ));
     };
 
     window.addEventListener(PREVIEW_OPEN_FILE_EVENT, handlePreviewOpenFile);
     return () => {
       window.removeEventListener(PREVIEW_OPEN_FILE_EVENT, handlePreviewOpenFile);
     };
-  }, [activeSessionId, setActiveSessionActivityRailTab, setActiveSessionWorkspaceView]);
+  }, []);
 
   const handleDeleteSession = useCallback((sessionId: string) => {
     sendEvent({ type: "session.delete", payload: { sessionId } });
@@ -1394,6 +1403,11 @@ function App() {
     appUpdateTooltipTitle,
     appUpdateVersionMeta,
   ]);
+
+  useEffect(() => {
+    if (!browserWorkbenchOccluded || typeof window.electron.hideAllBrowserWorkbenches !== "function") return;
+    void window.electron.hideAllBrowserWorkbenches();
+  }, [browserWorkbenchOccluded]);
 
   const handleHeaderUpdateAction = useCallback(async () => {
     if (!headerUpdateStatus || headerUpdateStatus.status === "downloading") return;

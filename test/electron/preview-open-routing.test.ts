@@ -2,41 +2,49 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-test("preview open requests are routed through app state before the preview pane consumes them", () => {
+test("preview open requests are routed through session-scoped pending state", () => {
   const appSource = readFileSync("src/ui/App.tsx", "utf8");
   const railSource = readFileSync("src/ui/components/ActivityRail.tsx", "utf8");
   const paneSource = readFileSync("src/ui/components/AionWorkspacePreviewPane.tsx", "utf8");
 
-  assert.match(appSource, /PREVIEW_OPEN_FILE_EVENT/);
-  assert.match(appSource, /pendingPreviewOpenRequestBySessionId/);
-  assert.match(appSource, /setActiveSessionActivityRailTab\("preview"\)/);
+  assert.match(appSource, /window\.addEventListener\(PREVIEW_OPEN_FILE_EVENT, handlePreviewOpenFile\)/);
+  assert.match(appSource, /const sessionId = activeSessionIdRef\.current/);
+  assert.match(appSource, /setPendingPreviewOpenRequestBySessionId\(\(current\) => \(\{/);
+  assert.match(appSource, /\[sessionId\]: \{/);
+  assert.match(appSource, /setActivityRailTabBySessionId\(\(current\) => \(/);
+  assert.match(appSource, /\[sessionId\]: "preview"/);
   assert.match(appSource, /pendingPreviewOpenRequest=\{pendingPreviewOpenRequest\}/);
+
   assert.match(railSource, /pendingPreviewOpenRequest\?: \{/);
+  assert.match(railSource, /shouldMountPreviewPane = selectedTab === "preview"/);
   assert.match(railSource, /pendingOpenRequest=\{pendingPreviewOpenRequest\}/);
+
   assert.match(paneSource, /pendingOpenRequest\?: \{/);
   assert.match(paneSource, /if \(!pendingOpenRequest\?\.filePath\) return;/);
   assert.match(paneSource, /if \(!workspace\) return;/);
   assert.match(paneSource, /consumedPendingOpenNonceRef\.current === pendingOpenRequest\.nonce/);
-  assert.match(paneSource, /revealLine: pendingOpenRequest\.startLine/);
-  assert.match(paneSource, /revealFirstChange: pendingOpenRequest\.revealFirstChange/);
-  assert.match(paneSource, /revealNonce: pendingOpenRequest\.nonce/);
+  assert.match(paneSource, /openFile\(pendingOpenRequest\.filePath, \{/);
+  assert.match(paneSource, /\.finally\(\(\) => \{/);
+  assert.match(paneSource, /consumedPendingOpenNonceRef\.current = pendingOpenRequest\.nonce/);
+  assert.match(paneSource, /onConsumePendingOpenRequest\?\.\(\)/);
+  assert.match(paneSource, /setActiveTabPath\(resolved\.path\)/);
 });
 
 test("process groups surface changed files with preview-open actions", () => {
   const processGroupSource = readFileSync("src/ui/components/chat/ProcessGroupCard.tsx", "utf8");
 
   assert.match(processGroupSource, /collectCompletedPreviewFileChanges\(messages\.map\(\(entry\) => entry\.message\)\)/);
-  assert.match(processGroupSource, /已修改 \{changedFiles\.length\} 个文件/);
-  assert.match(processGroupSource, /点击文件在右侧预览并跳到首个修改处/);
+  assert.match(processGroupSource, /ChangePreviewPopover/);
+  assert.match(processGroupSource, /operationLabel\(file\.operation\)/);
   assert.match(processGroupSource, /new CustomEvent<PreviewOpenFileDetail>\(PREVIEW_OPEN_FILE_EVENT/);
   assert.match(processGroupSource, /detail: \{ filePath: file\.path, revealFirstChange: true \}/);
-  assert.match(processGroupSource, /再显示 \$\{remainingChangedFileCount\} 个文件/);
+  assert.match(processGroupSource, /setPreviewOpen\(true\)/);
 });
 
 test("process groups render changed files after process details", () => {
   const processGroupSource = readFileSync("src/ui/components/chat/ProcessGroupCard.tsx", "utf8");
-  const detailsIndex = processGroupSource.indexOf("<span className=\"shrink-0\">过程明细</span>");
-  const changedFilesIndex = processGroupSource.indexOf("已修改 {changedFiles.length} 个文件");
+  const detailsIndex = processGroupSource.indexOf("CompactProcessDetails");
+  const changedFilesIndex = processGroupSource.indexOf("changedFiles.length > 0");
 
   assert.notEqual(detailsIndex, -1);
   assert.notEqual(changedFilesIndex, -1);
