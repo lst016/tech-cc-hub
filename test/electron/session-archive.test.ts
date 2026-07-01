@@ -70,6 +70,37 @@ test("SessionStore persists runtime profile state across reloads", () => {
   }
 });
 
+test("SessionStore skips high-frequency thinking token events", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tech-cc-hub-thinking-tokens-"));
+  const dbPath = join(dir, "sessions.db");
+  const store = new SessionStore(dbPath);
+
+  try {
+    const session = store.createSession({ title: "Thinking token stream", cwd: dir });
+
+    store.recordMessage(session.id, {
+      type: "system",
+      subtype: "thinking_tokens",
+      estimated_tokens: 100,
+      estimated_tokens_delta: 1,
+      uuid: "thinking-1",
+    } as never);
+    store.recordMessage(session.id, {
+      type: "assistant",
+      message: { content: [{ type: "text", text: "done" }] },
+      uuid: "assistant-1",
+    } as never);
+
+    const history = store.getSessionHistory(session.id);
+
+    assert.equal(history?.messages.length, 1);
+    assert.equal(history?.messages[0]?.type, "assistant");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("SessionStore persists execution mode and runtime controls across reloads", () => {
   const dir = mkdtempSync(join(tmpdir(), "tech-cc-hub-session-semantics-"));
   const dbPath = join(dir, "sessions.db");

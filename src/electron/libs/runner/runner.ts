@@ -22,6 +22,7 @@ import { canMainModelReadImages } from "../../../shared/models/model-capabilitie
 import type { BuiltinMcpServerName } from "../../../shared/builtin-mcp-registry.js";
 import {
   CLAUDE_AGENT_TEAMS_ENV_VAR,
+  TASK_TOOL_NAMES,
   buildClaudeAgentTeamsDisallowedTools,
   resolveClaudeAgentTeamsEnv,
 } from "../../../shared/claude-agent-teams.js";
@@ -38,7 +39,7 @@ import {
   createReadBeforeWriteHook,
 } from "../learning/learning-hooks.js";
 import {
-  normalizeTodoWriteArgs,
+  normalizeTaskCreateArgs,
   normalizeUpdatePlanArgs,
   type SessionPlanSource,
   type UpdatePlanArgs,
@@ -56,6 +57,8 @@ import {
   resolveApiConfigForModel,
 } from "../claude/claude-settings.js";
 import { buildClaudeProjectMemoryPromptAppend } from "../claude/claude-project-memory.js";
+import { buildBetasForModel } from "../claude/claude-betas.js";
+import { buildClaudeSandboxSettings } from "../claude/claude-sandbox-policy.js";
 import { buildKnowledgeOverviewPromptAppend } from "../knowledge/knowledge-overview.js";
 import { saveGlobalRuntimeConfig } from "../config-store.js";
 import {
@@ -687,9 +690,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         continue;
       }
 
-      if (toolName === "TodoWrite") {
-        const args = normalizeTodoWriteArgs(item.input);
-        if (args) sendPlanUpdate(args, "todo_write", toolName, toolUseId, turnId);
+      if ((TASK_TOOL_NAMES as readonly string[]).includes(toolName)) {
+        const input = toolName === "TaskUpdate"
+          ? { item: item.input }
+          : item.input;
+        const args = normalizeTaskCreateArgs(input);
+        if (args) sendPlanUpdate(args, "task_create", toolName, toolUseId, turnId);
       }
     }
   };
@@ -855,7 +861,11 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         prompt: promptInput,
         options: {
           model: sdkModelOption,
+          betas: buildBetasForModel(effectiveModel),
           cwd: resolvedCwd,
+          additionalDirectories: latestWorkspaceContext?.linkedCwds?.length
+            ? latestWorkspaceContext.linkedCwds
+            : undefined,
           resume: resumeSessionId,
           abortController,
           env: mergedEnv,
@@ -867,6 +877,10 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           permissionMode,
           settingSources: agentContext.settingSources,
           settings: sdkModelSettings,
+          sandbox: buildClaudeSandboxSettings({
+            enabled: permissionMode !== "bypassPermissions",
+            workspaceRoot: resolvedCwd,
+          }),
           ...(enabledSkills ? { skills: enabledSkills } : {}),
           systemPrompt: buildClaudeCodeSystemPromptOption(systemPromptAppend),
           includePartialMessages: runtimeProfile.includePartialMessages,
@@ -1043,7 +1057,43 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           }
         }
 
+        if (message.type === "system" && "subtype" in message && message.subtype === "memory_recall") {
+          const memoryMsg = message as Record<string, unknown>;
+          const mode = typeof memoryMsg.mode === "string" ? memoryMsg.mode : "unknown";
+          const memories = Array.isArray(memoryMsg.memories) ? memoryMsg.memories : [];
+          console.info("[runner][memory-recall]", {
+            sessionId: session.id,
+            mode,
+            count: memories.length,
+          });
+        }
+
         if (message.type === "result") {
+          const resultMeta = message as Record<string, unknown>;
+          const origin = typeof resultMeta.origin === "string" ? resultMeta.origin : undefined;
+          const stopReason = typeof resultMeta.stop_reason === "string" ? resultMeta.stop_reason : undefined;
+          if (origin || stopReason === "refusal") {
+            console.info("[runner][result]", {
+              sessionId: session.id,
+              origin,
+              stopReason,
+            });
+          }
+          if (stopReason === "refusal") {
+            const refusalMessage = normalizeRunnerError(
+              "stop_reason: refusal",
+              requestedModelForError ?? getRequestedModelName(getCurrentApiConfig()?.model, runtime?.model),
+              latestGlobalRuntimeConfig,
+              { processStderr: recentClaudeStderr },
+            );
+            onEvent({
+              type: "runner.error",
+              payload: {
+                sessionId: session.id,
+                message: refusalMessage,
+              },
+            });
+          }
           const emptySuccess = isEmptySuccessfulRunnerResult(message, observedAssistantTextActivity);
           if (emptySuccess && emptySuccessAutoRetries < MAX_EMPTY_SUCCESS_AUTO_RETRIES) {
             emptySuccessAutoRetries += 1;
@@ -1058,6 +1108,24 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           }
 
           const status = message.subtype === "success" && !emptySuccess ? "completed" : "error";
+          if (!emptySuccess && typeof activeQuery?.getContextUsage === "function") {
+            try {
+              const usage = await activeQuery.getContextUsage();
+              onEvent({
+                type: "stream.message",
+                payload: {
+                  sessionId: session.id,
+                  message: {
+                    type: "context_usage",
+                    usage,
+                    capturedAt: Date.now(),
+                  },
+                },
+              });
+            } catch (error) {
+              console.warn("[runner][context-usage] failed", error instanceof Error ? error.message : String(error));
+            }
+          }
           sendMessage(message);
           onEvent({
             type: "session.status",
@@ -1990,7 +2058,62 @@ function buildQualityHooks(
           },
         };
       }],
-    },
+    }],
+    ConfigChange: [{
+      hooks: [async (input) => {
+        const source = "source" in input && typeof input.source === "string" ? input.source : "unknown";
+        const filePath = "file_path" in input && typeof input.file_path === "string" ? input.file_path : undefined;
+        console.info("[runner][hook][config-change]", { sessionId, source, filePath });
+        return { continue: true };
+      }],
+    }],
+    TeammateIdle: [{
+      hooks: [async (input) => {
+        const teammateName = "teammate_name" in input && typeof input.teammate_name === "string" ? input.teammate_name : "teammate";
+        const teamName = "team_name" in input && typeof input.team_name === "string" ? input.team_name : "team";
+        return {
+          continue: true,
+          hookSpecificOutput: {
+            hookEventName: "TeammateIdle",
+            additionalContext: `Teammate idle: ${teammateName} in ${teamName}. Reassign or summarize if work is complete.`,
+          },
+        };
+      }],
+    }],
+    TaskCompleted: [{
+      hooks: [async (input) => {
+        const taskSubject = "task_subject" in input && typeof input.task_subject === "string" ? input.task_subject : "task";
+        const teammateName = "teammate_name" in input && typeof input.teammate_name === "string" ? input.teammate_name : undefined;
+        return {
+          continue: true,
+          hookSpecificOutput: {
+            hookEventName: "TaskCompleted",
+            additionalContext: `Task completed${teammateName ? ` by ${teammateName}` : ""}: ${taskSubject}. Integrate the result before starting dependent work.`,
+          },
+        };
+      }],
+    }],
+    MessageDisplay: [{
+      hooks: [async (input) => {
+        if (!("hook_event_name" in input) || input.hook_event_name !== "MessageDisplay") {
+          return { continue: true };
+        }
+        // Display-only hook: passthrough, no transformation applied.
+        // The delta is rendered as-is; the hook exists so future
+        // per-message display transforms have a registration point.
+        return { continue: true };
+      }],
+    }],
+    PreCompact: [{
+      hooks: [async (input) => {
+        if (!("hook_event_name" in input) || input.hook_event_name !== "PreCompact") {
+          return { continue: true };
+        }
+        const trigger = "trigger" in input && typeof input.trigger === "string" ? input.trigger : "unknown";
+        console.info("[runner][hook][pre-compact]", { sessionId, trigger });
+        return { continue: true };
+      }],
+    }],
     // Learning hooks: correction detection, tracking, drift
     { hooks: [correctionDetectionHook as never] },
     { hooks: [correctionTrackingHook as never] },
@@ -2114,10 +2237,6 @@ function buildQualityHooks(
           if (typeof toolInput.query !== "string" || !toolInput.query.trim()) {
             hints.push("Search 缂哄皯 query锛屽缓璁粰鍑烘绱㈠叧閿瓧");
           }
-        }
-
-        if (toolName === "TodoWrite") {
-          setTrimmed("content", "content", toolInput.content);
         }
 
         const schemaNormalization = normalizeToolInputForKnownSchemas(toolName, normalizedInput);

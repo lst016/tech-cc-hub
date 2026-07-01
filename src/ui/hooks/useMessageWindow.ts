@@ -4,6 +4,7 @@ import { getUserPromptAnchoredWindowStart } from "../utils/render-history-window
 
 const INITIAL_VISIBLE_MESSAGE_LIMIT = 160;
 const LOAD_MORE_MESSAGE_STEP = 120;
+const MAX_ANCHORED_VISIBLE_MESSAGES = 260;
 
 export interface IndexedMessage {
   originalIndex: number;
@@ -33,7 +34,11 @@ export function useMessageWindow(
   const { hasMoreHistory: hasPersistedHistory, isLoadingHistory, onLoadMore } = options;
   const [visibleLimit, setVisibleLimit] = useState(INITIAL_VISIBLE_MESSAGE_LIMIT);
   const targetWindowStart = Math.max(0, messages.length - visibleLimit);
-  const windowStart = getUserPromptAnchoredWindowStart(messages, targetWindowStart);
+  const windowStart = getUserPromptAnchoredWindowStart(
+    messages,
+    targetWindowStart,
+    Math.max(visibleLimit, MAX_ANCHORED_VISIBLE_MESSAGES),
+  );
   const hasMoreLocalHistory = windowStart > 0;
   const hasMoreHistory = hasMoreLocalHistory || hasPersistedHistory;
   const visibleMessages = useMemo(() => {

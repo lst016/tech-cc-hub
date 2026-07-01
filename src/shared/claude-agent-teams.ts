@@ -2,16 +2,20 @@ export const CLAUDE_AGENT_TEAMS_ENV_VAR = "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"
 export const CLAUDE_AGENT_TEAMS_ENV_VALUE = "1";
 export const CLAUDE_AGENT_TEAMS_MIN_CLAUDE_CODE_VERSION = "2.1.142";
 
+export const TASK_TOOL_NAMES = [
+  "TaskCreate",
+  "TaskGet",
+  "TaskUpdate",
+  "TaskList",
+] as const;
+
 export const CLAUDE_AGENT_TEAM_TOOL_NAMES = [
   "TeamCreate",
   "TeamDelete",
   "SendMessage",
   "Agent",
   "Task",
-  "TaskCreate",
-  "TaskGet",
-  "TaskUpdate",
-  "TaskList",
+  ...TASK_TOOL_NAMES,
 ] as const;
 
 export const DEFAULT_RESTRICTED_ALLOWED_TOOLS = [

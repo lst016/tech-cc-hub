@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -15,6 +15,11 @@ const noSignEnv = {
 
 function log(message) {
   console.log(`[tech-cc-hub-packager] ${message}`);
+}
+
+function failPackaging(message) {
+  log(`error: ${message}`);
+  process.exit(1);
 }
 
 function run(cmd, args, options = {}) {
@@ -69,12 +74,51 @@ function findExeArtifact() {
   return matched ? path.join(distDir, matched) : null;
 }
 
+function normalizeLatestArtifactName(value) {
+  if (!value || typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  let artifactName = trimmed;
+  try {
+    const parsedUrl = new URL(trimmed);
+    artifactName = decodeURIComponent(path.basename(parsedUrl.pathname));
+  } catch {
+    artifactName = path.basename(decodeURIComponent(trimmed));
+  }
+
+  if (!artifactName || artifactName === "." || artifactName === "..") return null;
+  if (path.isAbsolute(artifactName) || artifactName.includes("/") || artifactName.includes("\\") || artifactName.includes("..")) {
+    failPackaging(`latest.yml declares an unsafe artifact path: ${value}`);
+  }
+  return artifactName;
+}
+
 function readLatestInstallerName() {
   const latestPath = path.join(distDir, "latest.yml");
   if (!existsSync(latestPath)) return null;
   const latestContent = readFileSync(latestPath, "utf8");
   const pathMatch = latestContent.match(/^path:\s*['"]?(.+?)['"]?\s*$/m);
-  return pathMatch?.[1] ?? null;
+  return normalizeLatestArtifactName(pathMatch?.[1]);
+}
+
+function readLatestInstallerUrls() {
+  const latestPath = path.join(distDir, "latest.yml");
+  if (!existsSync(latestPath)) return [];
+  const latestContent = readFileSync(latestPath, "utf8");
+  return [...latestContent.matchAll(/^\s*-\s+url:\s*['"]?(.+?)['"]?\s*$/gm)]
+    .map((match) => normalizeLatestArtifactName(match[1]))
+    .filter(Boolean);
+}
+
+function assertNonEmptyFile(filePath, label) {
+  if (!existsSync(filePath)) {
+    failPackaging(`${label} is missing: ${path.relative(cwd, filePath)}`);
+  }
+  const size = statSync(filePath).size;
+  if (size <= 0) {
+    failPackaging(`${label} is empty: ${path.relative(cwd, filePath)}`);
+  }
 }
 
 function normalizeArtifactName(name) {
@@ -102,8 +146,7 @@ function ensureUpdaterMetadataAliases() {
     ? aliasExePath
     : findSourceInstallerForAlias(latestInstallerName);
   if (!sourceExePath || !existsSync(sourceExePath)) {
-    log(`warning: latest.yml points to ${latestInstallerName}, but no matching installer was found`);
-    return;
+    failPackaging(`latest.yml points to ${latestInstallerName}, but no matching installer was found`);
   }
 
   if (sourceExePath !== aliasExePath) {
@@ -117,6 +160,24 @@ function ensureUpdaterMetadataAliases() {
     copyFileSync(sourceBlockmapPath, aliasBlockmapPath);
     log(`created updater blockmap alias: ${path.relative(cwd, aliasBlockmapPath)}`);
   }
+}
+
+function validateUpdaterArtifacts() {
+  const latestPath = path.join(distDir, "latest.yml");
+  assertNonEmptyFile(latestPath, "updater metadata");
+
+  const latestInstallerName = readLatestInstallerName();
+  if (!latestInstallerName) {
+    failPackaging("latest.yml does not declare an installer path");
+  }
+
+  const latestUrls = readLatestInstallerUrls();
+  const installerNames = [...new Set([latestInstallerName, ...latestUrls].filter(Boolean))];
+  for (const installerName of installerNames) {
+    assertNonEmptyFile(path.join(distDir, installerName), `updater installer asset ${installerName}`);
+  }
+
+  assertNonEmptyFile(path.join(distDir, `${latestInstallerName}.blockmap`), "updater blockmap asset");
 }
 
 function ensureWindowsAppUpdateConfig() {
@@ -258,6 +319,7 @@ async function main() {
 
   createStableOutputs();
   ensureUpdaterMetadataAliases();
+  validateUpdaterArtifacts();
   log("packaging done.");
 }
 

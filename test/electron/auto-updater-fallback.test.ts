@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -38,6 +39,8 @@ test('reports missing Windows updater metadata for mac-only releases', () => {
 
   assert.equal(fallback.version, '0.1.5');
   assert.equal(fallback.hasCompatibleUpdateMetadata, false);
+  assert.equal(fallback.hasCompatibleInstallerAsset, false);
+  assert.deepEqual(fallback.missingUpdateAssets, ['one of latest.yml', 'platform installer asset']);
 });
 
 test('uses electron-updater default metadata names per platform', () => {
@@ -46,8 +49,13 @@ test('uses electron-updater default metadata names per platform', () => {
   assert.deepEqual(getPlatformUpdateMetadataCandidates('linux', 'x64'), ['latest-linux.yml']);
 });
 
-test('selects the newest release above the current version', () => {
+test('selects the newest complete release above the current version', () => {
   const release = selectBestReleaseForUpdate([
+    {
+      tag_name: 'v0.1.14',
+      name: '0.1.14',
+      assets: [{ name: 'latest.yml' }, { name: 'helper.exe' }],
+    },
     {
       tag_name: 'v0.1.13',
       name: '0.1.13',
@@ -70,10 +78,11 @@ test('selects the newest release above the current version', () => {
     },
   ], '0.1.10', 'win32', 'x64');
 
-  assert.equal(release?.version, '0.1.13');
-  assert.equal(release?.tagName, 'v0.1.13');
-  assert.equal(release?.metadataFile, undefined);
-  assert.equal(release?.hasCompatibleUpdateMetadata, false);
+  assert.equal(release?.version, '0.1.12');
+  assert.equal(release?.tagName, 'v0.1.12');
+  assert.equal(release?.metadataFile, 'latest.yml');
+  assert.equal(release?.hasCompatibleUpdateMetadata, true);
+  assert.equal(release?.hasCompatibleInstallerAsset, true);
 });
 
 test('builds a release-specific generic updater feed url', () => {
@@ -129,7 +138,7 @@ test('uses a full download plan when the newest release skips releases', () => {
   assert.equal(plan.previousBlockmapBaseUrl, undefined);
 });
 
-test('does not downgrade to an older compatible release when the newest release lacks metadata', () => {
+test('skips incomplete releases when a newer pipeline upload is missing updater assets', () => {
   const plan = createReleaseUpdatePlan([
     {
       tag_name: 'v0.1.13',
@@ -143,7 +152,62 @@ test('does not downgrade to an older compatible release when the newest release 
     },
   ], '0.1.11', 'win32', 'x64', 'lst016', 'tech-cc-hub');
 
-  assert.equal(plan.selectedRelease?.tagName, 'v0.1.13');
-  assert.equal(plan.selectedRelease?.hasCompatibleUpdateMetadata, false);
+  assert.equal(plan.selectedRelease?.tagName, 'v0.1.12');
+  assert.equal(plan.selectedRelease?.hasCompatibleUpdateMetadata, true);
+  assert.equal(plan.selectedRelease?.hasCompatibleInstallerAsset, true);
   assert.equal(plan.previousBlockmapBaseUrl, undefined);
+});
+
+test('skips prerelease and draft releases for stable auto updates', () => {
+  const release = selectBestReleaseForUpdate([
+    {
+      tag_name: 'v0.1.14',
+      name: '0.1.14',
+      prerelease: true,
+      assets: [{ name: 'latest.yml' }, { name: 'tech-cc-hub-Setup-0.1.14.exe' }],
+    },
+    {
+      tag_name: 'v0.1.13',
+      name: '0.1.13',
+      draft: true,
+      assets: [{ name: 'latest.yml' }, { name: 'tech-cc-hub-Setup-0.1.13.exe' }],
+    },
+    {
+      tag_name: 'v0.1.12',
+      name: '0.1.12',
+      assets: [{ name: 'latest.yml' }, { name: 'tech-cc-hub-Setup-0.1.12.exe' }],
+    },
+  ], '0.1.11', 'win32', 'x64');
+
+  assert.equal(release?.tagName, 'v0.1.12');
+});
+
+test('can exclude a failed release and retry the next complete release', () => {
+  const plan = createReleaseUpdatePlan([
+    {
+      tag_name: 'v0.1.13',
+      name: '0.1.13',
+      assets: [{ name: 'latest.yml' }, { name: 'tech-cc-hub-Setup-0.1.13.exe' }],
+    },
+    {
+      tag_name: 'v0.1.12',
+      name: '0.1.12',
+      assets: [{ name: 'latest.yml' }, { name: 'tech-cc-hub-Setup-0.1.12.exe' }],
+    },
+  ], '0.1.11', 'win32', 'x64', 'lst016', 'tech-cc-hub', { excludeTags: ['v0.1.13'] });
+
+  assert.equal(plan.selectedRelease?.tagName, 'v0.1.12');
+});
+
+test('auto-updater fallback prepares the next release without nesting another checkForUpdates call', () => {
+  const source = readFileSync('src/electron/libs/auto-updater/auto-updater.ts', 'utf8');
+  const fallbackStart = source.indexOf('private async checkReleaseFallback');
+  const downloadStart = source.indexOf('async downloadUpdate', fallbackStart);
+  assert.notEqual(fallbackStart, -1);
+  assert.notEqual(downloadStart, -1);
+  const fallbackSource = source.slice(fallbackStart, downloadStart);
+
+  assert.doesNotMatch(fallbackSource, /autoUpdater\.checkForUpdates\(/);
+  assert.match(fallbackSource, /prepared \$\{fallback\.tagName\} for the next update check/);
+  assert.match(fallbackSource, /skippedUpdateReleaseTags\.add\(failedTag\)/);
 });

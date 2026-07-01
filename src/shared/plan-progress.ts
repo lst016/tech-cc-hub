@@ -10,7 +10,7 @@ export type UpdatePlanArgs = {
   plan: PlanItemArg[];
 };
 
-export type SessionPlanSource = "update_plan" | "todo_write";
+export type SessionPlanSource = "update_plan" | "task_create";
 
 export type SessionPlanSnapshot = UpdatePlanArgs & {
   sessionId: string;
@@ -64,15 +64,15 @@ export function normalizeUpdatePlanArgs(input: unknown): UpdatePlanArgs | null {
   return { explanation, plan };
 }
 
-export function normalizeTodoWriteArgs(input: unknown): UpdatePlanArgs | null {
+export function normalizeTaskCreateArgs(input: unknown): UpdatePlanArgs | null {
   if (!isRecord(input)) return null;
 
-  const items = Array.isArray(input.todos)
-    ? input.todos
-    : Array.isArray(input.items)
-      ? input.items
-      : Array.isArray(input.plan)
-        ? input.plan
+  const items = Array.isArray(input.items)
+    ? input.items
+    : Array.isArray(input.plan)
+      ? input.plan
+      : isRecord(input.item)
+        ? [input.item]
         : [];
 
   const plan = items

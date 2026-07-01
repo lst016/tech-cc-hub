@@ -74,6 +74,10 @@ let taskExecutor: TaskExecutor | null = null;
 
 let noteRepo: NoteRepository | null = null;
 
+function isThinkingTokenStreamMessage(message: StreamMessage): boolean {
+  return message.type === "system" && "subtype" in message && message.subtype === "thinking_tokens";
+}
+
 const scheduleCodeGraphAutoSyncAfterTurn = createSessionCodeGraphAutoSyncScheduler({
   sync: ensureManagedCodeGraphSynced,
   logInfo: (message) => console.info(message),
@@ -594,6 +598,9 @@ function emit(event: ServerEvent) {
       typeof nextEvent.payload.message.capturedAt === "number"
         ? nextEvent.payload.message
         : { ...nextEvent.payload.message, capturedAt: Date.now() };
+    if (isThinkingTokenStreamMessage(normalizedMessage)) {
+      return;
+    }
     trackFigmaAuthToolState(nextEvent.payload.sessionId, normalizedMessage);
     const message = sessions.recordMessage(
       nextEvent.payload.sessionId,

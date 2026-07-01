@@ -16,6 +16,9 @@ type ChangedFileSummary = {
   deletions: number;
 };
 
+const EAGER_CHANGE_SUMMARY_MESSAGE_LIMIT = 80;
+const PROCESS_ROW_BATCH_SIZE = 120;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -317,8 +320,14 @@ const ProcessGroupCard = memo(function ProcessGroupCard({
 
   const [expanded, setExpanded] = useState(false);
   const [showAllFiles, setShowAllFiles] = useState(false);
+  const [visibleProcessCount, setVisibleProcessCount] = useState(PROCESS_ROW_BATCH_SIZE);
   const summary = useMemo(() => getProcessGroupSummary(messages), [messages]);
-  const changedFiles = useMemo(() => buildProcessChangedFiles(messages, workspace), [messages, workspace]);
+  const changedFiles = useMemo(
+    () => buildProcessChangedFiles(messages, workspace),
+    [messages, workspace],
+  );
+  const visibleProcessMessages = expanded ? messages.slice(0, visibleProcessCount) : [];
+  const remainingProcessMessageCount = Math.max(0, messages.length - visibleProcessMessages.length);
   const visibleChangedFiles = showAllFiles ? changedFiles : changedFiles.slice(0, 4);
   const remainingChangedFileCount = Math.max(0, changedFiles.length - visibleChangedFiles.length);
   const totalAdditions = changedFiles.reduce((sum, file) => sum + file.additions, 0);
@@ -349,12 +358,21 @@ const ProcessGroupCard = memo(function ProcessGroupCard({
       </button>
       {expanded && (
         <div className="ml-3 border-l border-black/5 pl-2">
-          {messages.map((entry, index) => (
+          {visibleProcessMessages.map((entry, index) => (
             <CompactProcessRow
               key={`${entry.originalIndex}-${index}`}
               entry={entry}
             />
           ))}
+          {remainingProcessMessageCount > 0 && (
+            <button
+              type="button"
+              className="mt-1 inline-flex items-center gap-1 rounded-full border border-black/8 bg-white px-2.5 py-1 text-[11px] font-medium text-muted transition hover:border-accent/25 hover:text-accent"
+              onClick={() => setVisibleProcessCount((current) => Math.min(messages.length, current + PROCESS_ROW_BATCH_SIZE))}
+            >
+              再显示 {Math.min(PROCESS_ROW_BATCH_SIZE, remainingProcessMessageCount)} 条过程
+            </button>
+          )}
         </div>
       )}
       {changedFiles.length > 0 && (

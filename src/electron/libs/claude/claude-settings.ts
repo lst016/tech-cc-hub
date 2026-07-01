@@ -41,13 +41,6 @@ const CLAUDE_CODE_OPUS_MODEL_OVERRIDE_KEYS = [
   "claude-opus-4-5",
   "claude-opus-4-6",
   "claude-opus-4-7",
-  "claude-opus-4-20250514",
-  "claude-4-opus-20250514",
-  "claude-opus-4-1-20250805",
-  "claude-opus-4@20250514",
-  "claude-opus-4-1@20250805",
-  "anthropic.claude-opus-4-20250514-v1:0",
-  "anthropic.claude-opus-4-1-20250805-v1:0",
 ];
 
 function isUsableConfig(config: ApiConfig | null | undefined): config is ApiConfig {

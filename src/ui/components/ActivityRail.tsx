@@ -770,7 +770,7 @@ function PlanProgressPanel({ snapshot }: { snapshot?: SessionPlanSnapshot }) {
       : running
         ? "border-blue-200 bg-blue-50 text-blue-700"
         : "border-slate-200 bg-slate-50 text-slate-600";
-  const sourceLabel = snapshot?.source === "todo_write" ? "TodoWrite 兼容" : "update_plan";
+  const sourceLabel = snapshot?.source === "task_create" ? "Task 工具链" : "update_plan";
 
   return (
     <section className="rounded-[28px] border border-black/5 bg-white/72 p-4 text-ink-700 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">

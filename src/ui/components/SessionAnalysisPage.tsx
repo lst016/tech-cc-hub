@@ -12,6 +12,7 @@ import {
 } from "../../shared/activity-rail-model";
 import type { PromptLedgerRiskKind, PromptLedgerSegment, PromptLedgerSourceKind } from "../../shared/prompt-ledger";
 import type { SessionView } from "../store/useAppStore";
+import type { StreamMessage } from "../types";
 
 type InspectorTabKey = "node" | "prompt" | "raw" | "analytics";
 
@@ -39,6 +40,11 @@ type TraceGroup = {
   items: ActivityTimelineItem[];
   isInferred: boolean;
 };
+
+const DIAGNOSTIC_EXPORT_HEAD_MESSAGE_COUNT = 80;
+const DIAGNOSTIC_EXPORT_TAIL_MESSAGE_COUNT = 1_120;
+const DIAGNOSTIC_EXPORT_MESSAGE_STRING_LIMIT = 4_000;
+const DIAGNOSTIC_EXPORT_TOP_MESSAGE_COUNT = 12;
 
 type PromptOptimizationAction = {
   id: string;
@@ -710,6 +716,93 @@ function sanitizeDiagnosticValue(value: unknown, depth = 0): unknown {
   return result;
 }
 
+function compactDiagnosticMessageValue(value: unknown, depth = 0): unknown {
+  if (depth > 16) {
+    return "[Max depth omitted]";
+  }
+  if (typeof value === "string") {
+    const redacted = redactDiagnosticText(value);
+    return redacted.length > DIAGNOSTIC_EXPORT_MESSAGE_STRING_LIMIT
+      ? `${redacted.slice(0, DIAGNOSTIC_EXPORT_MESSAGE_STRING_LIMIT)}\n...[truncated ${redacted.length - DIAGNOSTIC_EXPORT_MESSAGE_STRING_LIMIT} chars]`
+      : redacted;
+  }
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => compactDiagnosticMessageValue(item, depth + 1));
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (/apiKey|accessToken|refreshToken|authToken|authorization|password|secret|cookie/i.test(key)) {
+      result[key] = "[REDACTED]";
+      continue;
+    }
+    result[key] = compactDiagnosticMessageValue(item, depth + 1);
+  }
+  return result;
+}
+
+function approximateJsonBytes(value: unknown): number {
+  return new Blob([JSON.stringify(value)]).size;
+}
+
+function buildMessageExport(messages: StreamMessage[]) {
+  const totalMessageCount = messages.length;
+  const typeCounts: Record<string, number> = {};
+  const approxBytesByType: Record<string, number> = {};
+  const topMessages: Array<{
+    index: number;
+    type: string;
+    approxBytes: number;
+    historyId?: string;
+    capturedAt?: number;
+  }> = [];
+
+  messages.forEach((message, index) => {
+    const type = typeof message.type === "string" ? message.type : "unknown";
+    const approxBytes = approximateJsonBytes(message);
+    typeCounts[type] = (typeCounts[type] ?? 0) + 1;
+    approxBytesByType[type] = (approxBytesByType[type] ?? 0) + approxBytes;
+    topMessages.push({
+      index,
+      type,
+      approxBytes,
+      historyId: typeof message.historyId === "string" ? message.historyId : undefined,
+      capturedAt: typeof message.capturedAt === "number" ? message.capturedAt : undefined,
+    });
+  });
+
+  topMessages.sort((a, b) => b.approxBytes - a.approxBytes);
+
+  const headCount = Math.min(DIAGNOSTIC_EXPORT_HEAD_MESSAGE_COUNT, totalMessageCount);
+  const remainingAfterHead = Math.max(0, totalMessageCount - headCount);
+  const tailCount = Math.min(DIAGNOSTIC_EXPORT_TAIL_MESSAGE_COUNT, remainingAfterHead);
+  const omittedMiddleMessageCount = Math.max(0, totalMessageCount - headCount - tailCount);
+  const selectedMessages = omittedMiddleMessageCount > 0
+    ? [
+      ...messages.slice(0, headCount),
+      ...messages.slice(totalMessageCount - tailCount),
+    ]
+    : messages;
+
+  return {
+    metadata: {
+      totalMessageCount,
+      includedMessageCount: selectedMessages.length,
+      headMessageCount: omittedMiddleMessageCount > 0 ? headCount : selectedMessages.length,
+      tailMessageCount: omittedMiddleMessageCount > 0 ? tailCount : 0,
+      omittedMiddleMessageCount,
+      messageStringCharLimit: DIAGNOSTIC_EXPORT_MESSAGE_STRING_LIMIT,
+      typeCounts,
+      approxBytesByType,
+      topMessages: topMessages.slice(0, DIAGNOSTIC_EXPORT_TOP_MESSAGE_COUNT),
+    },
+    messages: selectedMessages.map((message) => compactDiagnosticMessageValue(message)),
+  };
+}
+
 function buildTraceDiagnosticExportPayload({
   session,
   model,
@@ -733,6 +826,7 @@ function buildTraceDiagnosticExportPayload({
   partialMessage: string;
   searchQuery: string;
 }) {
+  const messageExport = buildMessageExport(session?.messages ?? []);
   const payload = {
     schemaVersion: 1,
     exportedAt: new Date().toISOString(),
@@ -801,7 +895,8 @@ function buildTraceDiagnosticExportPayload({
       spec: session?.workflowSpec,
       catalog: session?.workflowCatalog,
     },
-    messages: session?.messages ?? [],
+    messageExport: messageExport.metadata,
+    messages: messageExport.messages,
     partialMessage,
   };
 
@@ -809,7 +904,7 @@ function buildTraceDiagnosticExportPayload({
 }
 
 function downloadJsonFile(filename: string, payload: unknown): void {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+  const blob = new Blob([JSON.stringify(payload)], { type: "application/json;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;

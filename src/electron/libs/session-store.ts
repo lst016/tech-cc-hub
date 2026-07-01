@@ -141,7 +141,11 @@ function isTransientStreamEventMessage(message: StreamMessage): boolean {
     "type" in message &&
     (
       message.type === "stream_event" ||
-      (message.type === "system" && "subtype" in message && message.subtype === "status")
+      (
+        message.type === "system" &&
+        "subtype" in message &&
+        (message.subtype === "status" || message.subtype === "thinking_tokens")
+      )
     )
   );
 }

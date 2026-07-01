@@ -2,7 +2,17 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-DB_PATH="${HOME}/Library/Application Support/agent-cowork/sessions.db"
+if [[ -n "${SMOKE_DB_PATH:-}" ]]; then
+  DB_PATH="$SMOKE_DB_PATH"
+elif [[ "${APPDATA:-}" == *\\* ]]; then
+  DB_PATH="$(cygpath -u "$APPDATA")/tech-cc-hub/sessions.db"
+elif [[ -n "${APPDATA:-}" ]]; then
+  DB_PATH="${APPDATA}/tech-cc-hub/sessions.db"
+elif [[ "$(uname -s)" == Darwin* ]]; then
+  DB_PATH="${HOME}/Library/Application Support/tech-cc-hub/sessions.db"
+else
+  DB_PATH="${HOME}/.config/tech-cc-hub/sessions.db"
+fi
 LOCK_DIR="/tmp/agent-cowork-smoke.lock"
 PROMPT_INPUT="${1:-请只回复：SMOKE_OK}"
 CONTINUE_PROMPT="${2:-}"
@@ -10,6 +20,7 @@ TIMEOUT_SECONDS="${SMOKE_TIMEOUT_SECONDS:-60}"
 AUTOSTART_CWD="${SMOKE_AUTOSTART_CWD:-$ROOT_DIR}"
 
 STAMP="$(date +%s)"
+STARTED_AT_MS=$((STAMP * 1000))
 SAFE_TOKEN="$(printf '%s' "$PROMPT_INPUT" | tr ' /' '__' | tr -cd '[:alnum:]_-' | cut -c1-40)"
 REACT_LOG="/tmp/agent-cowork-react-${STAMP}-${SAFE_TOKEN}.log"
 ELECTRON_LOG="/tmp/agent-cowork-electron-${STAMP}-${SAFE_TOKEN}.log"
@@ -27,6 +38,29 @@ cleanup() {
     kill "${VITE_PID}" >/dev/null 2>&1 || true
     wait "${VITE_PID}" >/dev/null 2>&1 || true
   fi
+}
+
+kill_windows_port() {
+  local port="$1"
+  if [[ "$(uname -s)" != MINGW* && "$(uname -s)" != MSYS* && "$(uname -s)" != CYGWIN* ]]; then
+    return 0
+  fi
+
+  local pids
+  pids="$(netstat -ano 2>/dev/null | tr -d '\r' | while read -r proto local_addr foreign_addr state pid rest; do
+    if [[ "$local_addr" == *":${port}" && "$state" == "LISTENING" && "$pid" =~ ^[0-9]+$ ]]; then
+      echo "$pid"
+    fi
+  done | sort -u || true)"
+  if [[ -z "$pids" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r pid; do
+    if [[ "$pid" =~ ^[0-9]+$ ]]; then
+      taskkill //PID "$pid" //F >/dev/null 2>&1 || true
+    fi
+  done <<< "$pids"
 }
 
 trap cleanup EXIT
@@ -49,9 +83,12 @@ poll_for_completion() {
   fi
 
   local deadline=$((SECONDS + TIMEOUT_SECONDS))
+  until [[ -s "$DB_PATH" ]] || (( SECONDS >= deadline )); do
+    sleep 1
+  done
   while (( SECONDS < deadline )); do
     local row
-    row="$(sqlite3 "$DB_PATH" "select status || '|' || ifnull(claude_session_id,'') || '|' || replace(ifnull(title,''), char(10), ' ') || '|' || id from sessions where last_prompt = '$expected_prompt' order by updated_at desc limit 1;" 2>/dev/null || true)"
+    row="$(sqlite3 "$DB_PATH" "select status || '|' || ifnull(claude_session_id,'') || '|' || replace(ifnull(title,''), char(10), ' ') || '|' || id from sessions where updated_at >= $STARTED_AT_MS order by updated_at desc limit 1;" 2>/dev/null || true)"
     if [[ -n "$row" ]]; then
       local status claude_session_id title session_id
       IFS='|' read -r status claude_session_id title session_id <<<"$row"
@@ -75,7 +112,7 @@ poll_for_completion() {
     sleep 2
   done
 
-  echo "Timed out waiting for session completion." >&2
+  echo "Timed out waiting for session completion. DB_PATH=$DB_PATH" >&2
   return 1
 }
 
@@ -92,6 +129,8 @@ done
 
 pkill -f "vite" >/dev/null 2>&1 || true
 pkill -f "/node_modules/electron/" >/dev/null 2>&1 || true
+kill_windows_port 4173
+kill_windows_port 4317
 
 npm run dev:react >"$REACT_LOG" 2>&1 &
 VITE_PID="$!"

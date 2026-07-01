@@ -21,6 +21,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileS
 import { createServer, type Server } from "http";
 import { homedir } from "os";
 import { join } from "path";
+import { startup } from "@anthropic-ai/claude-agent-sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { UnauthorizedError, type OAuthClientProvider, type OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -29,7 +30,7 @@ import { ipcMainHandle, isDev, DEV_PORT } from "./util.js";
 import { getPreloadPath, getUIPath, getIconPath } from "./pathResolver.js";
 import { getStaticData, pollResources, stopPolling } from "./test.js";
 import { handleClientEvent, sessions, cleanupAllSessions, setChannelReplySender, listStoredSessionsForRenderer, initializeTaskExecutor, initializeNoteRepository } from "./ipc-handlers.js";
-import { generateSessionTitle } from "./libs/util.js";
+import { generateSessionTitle, getEnhancedEnv } from "./libs/util.js";
 import {
   loadApiConfigSettings,
   type ApiConfigSettings,
@@ -43,7 +44,7 @@ import { configureDesktopNotifications } from "./libs/desktop-notifications.js";
 import { appAutoUpdater, type AppUpdateStatus } from "./libs/auto-updater/auto-updater.js";
 import { startChannelBridge, type ChannelBridgeController } from "./libs/channel/channel-bridge.js";
 import { ensureSystemWorkspace } from "./libs/system-workspace.js";
-import { getCurrentApiConfig, getGlobalRuntimeEnvConfig, resolveApiConfigForModel, resolveImagePreprocessApiConfig } from "./libs/claude/claude-settings.js";
+import { getClaudeCodePath, getCurrentApiConfig, getGlobalRuntimeEnvConfig, resolveApiConfigForModel, resolveImagePreprocessApiConfig } from "./libs/claude/claude-settings.js";
 import { preprocessImageAttachments } from "./libs/image/image-preprocessor.js";
 import {
     CODEX_OAUTH_BASE_URL,
@@ -2485,6 +2486,18 @@ configureDevelopmentRuntimeIsolation();
 // Initialize everything when app is ready
 app.on("ready", async () => {
     Menu.setApplicationMenu(null);
+    try {
+        await startup({
+            options: {
+                env: getEnhancedEnv(),
+                pathToClaudeCodeExecutable: getClaudeCodePath(),
+            },
+            initializeTimeoutMs: 5000,
+        });
+        console.info("[startup] Claude Code subprocess prewarmed");
+    } catch (error) {
+        console.warn("[startup] prewarm failed", error instanceof Error ? error.message : String(error));
+    }
     const appIconPath = getIconPath();
     if (process.platform === "darwin" && app.dock) {
         app.setActivationPolicy("regular");

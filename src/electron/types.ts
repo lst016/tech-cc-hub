@@ -1,4 +1,4 @@
-import type { SDKMessage, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKControlGetContextUsageResponse, SDKMessage, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import type { LinkedWorkspaceContext } from "../shared/linked-workspaces.js";
 import type { PromptLedgerMessage } from "../shared/prompt-ledger.js";
 import type { SessionPlanSnapshot } from "../shared/plan-progress.js";
@@ -104,7 +104,13 @@ export type UserPromptMessage = {
   historyId?: string;
 };
 
-export type StreamMessage = (SDKMessage | UserPromptMessage | PromptLedgerMessage) & {
+export type ContextUsageMessage = {
+  type: "context_usage";
+  usage: SDKControlGetContextUsageResponse;
+  capturedAt?: number;
+};
+
+export type StreamMessage = (SDKMessage | UserPromptMessage | PromptLedgerMessage | ContextUsageMessage) & {
   capturedAt?: number;
   historyId?: string;
 };

@@ -41,6 +41,24 @@ test("visible message windows start at the current user prompt when a turn excee
   assert.equal(messages[windowStart]?.type === "user_prompt" ? messages[windowStart].prompt : "", "current prompt");
 });
 
+test("visible message windows keep the current turn boundary even when the turn is oversized", () => {
+  const messages: StreamMessage[] = [
+    {
+      type: "user_prompt",
+      prompt: "current prompt",
+      capturedAt: 1,
+      historyId: "current-prompt",
+    },
+    ...Array.from({ length: 500 }, (_, index) => assistantMessage(`current process ${index}`)),
+  ];
+  const targetWindowStart = messages.length - 160;
+
+  const windowStart = getUserPromptAnchoredWindowStart(messages, targetWindowStart, 260);
+
+  assert.equal(windowStart, 0);
+  assert.equal(messages[windowStart]?.type, "user_prompt");
+});
+
 test("visible message windows keep the full loaded page when the user prompt boundary is not loaded yet", () => {
   const messages: StreamMessage[] = Array.from({ length: 400 }, (_, index) => assistantMessage(`current process ${index}`));
   const targetWindowStart = messages.length - 160;
@@ -58,5 +76,6 @@ test("renderer store keeps loaded messages instead of trimming chat history", ()
   assert.doesNotMatch(renderWindowSource, /MAX_RENDERER_HISTORY_MESSAGES/);
   assert.doesNotMatch(renderWindowSource, /trimMessagesToRecent/);
   assert.match(storeSource, /const messages = \[\.\.\.session\.messages, \.\.\.nextMessages\]/);
-  assert.match(storeSource, /messages,\s+latestGoal: deriveLatestGoalSnapshot\(session\.id, messages, session\.latestGoal\)/);
+  assert.match(storeSource, /const shouldUpdateGoal = nextMessages\.some\(messageMayAffectGoalSnapshot\)/);
+  assert.match(storeSource, /latestGoal: shouldUpdateGoal \? deriveLatestGoalSnapshot\(session\.id, messages, session\.latestGoal\) : session\.latestGoal/);
 });

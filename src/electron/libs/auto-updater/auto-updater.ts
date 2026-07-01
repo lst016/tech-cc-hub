@@ -1,4 +1,4 @@
-import { app } from "electron";
+﻿import { app } from "electron";
 import log from "electron-log";
 import { createRequire } from "node:module";
 import type { ProgressInfo, UpdateInfo } from "electron-updater";
@@ -6,7 +6,7 @@ import {
   buildGitHubReleaseDownloadFeedUrl,
   createReleaseUpdatePlan,
   isMissingPlatformUpdateMetadataError,
-  selectBestReleaseForUpdate,
+  selectNewestReleaseAboveCurrent,
   type GitHubReleaseLike,
   type ReleaseFallbackInfo,
   type ReleaseUpdatePlan,
@@ -110,6 +110,8 @@ class AppAutoUpdater {
   private initialized = false;
   private readonly listeners = new Set<AppUpdateStatusListener>();
   private status: AppUpdateStatus;
+  private lastPreparedUpdatePlan: ReleaseUpdatePlan | null = null;
+  private readonly skippedUpdateReleaseTags = new Set<string>();
 
   constructor() {
     const channel = getUpdateChannel();
@@ -220,6 +222,7 @@ class AppAutoUpdater {
   }
 
   private useDefaultGitHubFeed(): void {
+    this.lastPreparedUpdatePlan = null;
     autoUpdater.disableDifferentialDownload = false;
     autoUpdater.previousBlockmapBaseUrlOverride = null;
     autoUpdater.setFeedURL({
@@ -273,7 +276,9 @@ class AppAutoUpdater {
         process.arch,
         UPDATE_OWNER,
         UPDATE_REPO,
+        { excludeTags: this.skippedUpdateReleaseTags },
       );
+      this.lastPreparedUpdatePlan = plan;
       const release = plan.selectedRelease;
       if (!release?.tagName || !release.hasCompatibleUpdateMetadata) return release;
 
@@ -299,11 +304,33 @@ class AppAutoUpdater {
     try {
       const currentVersion = app.getVersion();
       const releases = await this.fetchRecentReleases();
-      const fallback = releases
-        ? selectBestReleaseForUpdate(releases, currentVersion, process.platform, process.arch)
+      const failedTag = this.lastPreparedUpdatePlan?.selectedRelease?.tagName;
+      if (failedTag) {
+        this.skippedUpdateReleaseTags.add(failedTag);
+      }
+      const fallbackPlan = releases
+        ? createReleaseUpdatePlan(releases, currentVersion, process.platform, process.arch, UPDATE_OWNER, UPDATE_REPO, {
+          excludeTags: this.skippedUpdateReleaseTags,
+        })
         : null;
+      const fallback = fallbackPlan?.selectedRelease ?? null;
 
       if (!fallback) {
+        const newestRelease = releases
+          ? selectNewestReleaseAboveCurrent(releases, currentVersion, process.platform, process.arch)
+          : null;
+        if (newestRelease && newestRelease.missingUpdateAssets.length > 0) {
+          return this.setStatus({
+            status: "unsupported",
+            version: newestRelease.version,
+            releaseName: newestRelease.releaseName,
+            releaseDate: newestRelease.releaseDate,
+            releaseNotes: newestRelease.releaseNotes,
+            releaseUrl: newestRelease.releaseUrl,
+            checkedAt: Date.now(),
+            error: `发现 v${newestRelease.version}，但该 Release 缺少当前平台 (${process.platform}/${process.arch}) 的自动更新元数据或安装包。请等待对应安装包发布或到 GitHub Releases 手动查看。`,
+          });
+        }
         return this.setStatus({
           status: "not-available",
           checkedAt: Date.now(),
@@ -311,31 +338,30 @@ class AppAutoUpdater {
         });
       }
 
-      const latestVersion = fallback.version;
-
-      if (!fallback.hasCompatibleUpdateMetadata) {
+      if (!fallbackPlan) {
         return this.setStatus({
-          status: "unsupported",
-          version: latestVersion,
-          releaseName: fallback.releaseName,
-          releaseDate: fallback.releaseDate,
-          releaseNotes: fallback.releaseNotes,
-          releaseUrl: fallback.releaseUrl,
+          status: "error",
           checkedAt: Date.now(),
-          error: `发现 v${latestVersion}，但该 Release 没有当前平台 (${process.platform}/${process.arch}) 的自动更新元数据。请等待对应安装包发布或到 GitHub Releases 手动查看。`,
+          error: originalError,
         });
       }
 
+      this.lastPreparedUpdatePlan = fallbackPlan;
+      this.useReleaseDownloadFeed(fallbackPlan);
+      log.warn(
+        `Skipping incomplete or unreachable app update release ${failedTag ?? "(unknown)"}; prepared ${fallback.tagName} for the next update check`,
+      );
       return this.setStatus({
-        status: "error",
-        version: latestVersion,
+        status: "available",
+        version: fallback.version,
         releaseName: fallback.releaseName,
         releaseDate: fallback.releaseDate,
         releaseNotes: fallback.releaseNotes,
         releaseUrl: fallback.releaseUrl,
         checkedAt: Date.now(),
-        error: originalError,
+        error: `当前 Release 自动更新资产不可用，已切换到 ${fallback.tagName ?? `v${fallback.version}`}；请再次检查更新以继续。`,
       });
+
     } catch {
       return null;
     }

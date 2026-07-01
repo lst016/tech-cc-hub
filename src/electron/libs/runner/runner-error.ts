@@ -40,6 +40,20 @@ export function normalizeRunnerError(
     /(not found|unknown model|unsupported model|invalid model|model.*does not exist|no such model|unavailable model)/i.test(raw) ||
     /(model_not_found|invalid_request_error|unsupported_value)/i.test(raw);
 
+  if (/\b(refusal|refused|stop_reason[\s\S]*refusal|safety refusal)\b/i.test(raw)) {
+    return appendDiagnosticDetail(
+      "模型出于安全策略拒绝了本次请求。请调整输入，去除高风险、违规或不可执行的部分后重试。",
+      diagnosticDetail,
+    );
+  }
+
+  if (/\b(overloaded|529|rate overloaded|server overloaded|capacity)\b/i.test(raw)) {
+    return appendDiagnosticDetail(
+      "上游模型服务当前过载或容量不足，请稍后重试，或切换到其它可用模型/供应商。",
+      diagnosticDetail,
+    );
+  }
+
   if (hasModelContext && modelUnavailable) {
     return appendDiagnosticDetail(
       `请求模型${quotedRequestedModel}失败：该模型当前不可用、已下线，或不被当前服务端支持，请切换到可用模型后重试。`,

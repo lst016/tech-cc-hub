@@ -15,6 +15,8 @@ import { DecisionPanel } from "./DecisionPanel";
 import { resolveImageAttachmentSrc } from "../../shared/attachments";
 import { copyTextToClipboard as copyText } from "../utils/clipboard";
 import { OPEN_BROWSER_WORKBENCH_URL_EVENT, PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT } from "../events";
+import { TASK_TOOL_NAMES } from "../../shared/claude-agent-teams";
+import { normalizeTaskCreateArgs } from "../../shared/plan-progress";
 import {
   extractCodeReferencesPrompt,
   extractFileReferencesPrompt,
@@ -28,6 +30,9 @@ type MessageContent = SDKAssistantMessage["message"]["content"][number];
 type ToolResultContent = SDKUserMessage["message"]["content"][number];
 type ToolStatus = "pending" | "success" | "error";
 type UserPromptRevisionHandler = (prompt: string, attachments: PromptAttachment[], historyId: string) => Promise<boolean> | boolean;
+
+const TOOL_RESULT_PREVIEW_CHAR_LIMIT = 2_000;
+const TOOL_RESULT_RENDER_CHAR_LIMIT = 30_000;
 
 type SystemInitMessage = SDKMessage & {
   subtype?: string;
@@ -1332,6 +1337,12 @@ const AssistantTextCard = ({
   );
 };
 
+type ToolUseMeta = {
+  displayName?: string;
+  iconUrl?: string;
+  mcpServerName?: string;
+};
+
 const getToolLabel = (name: string) => {
   const map: Record<string, string> = {
     Bash: "命令",
@@ -1345,12 +1356,36 @@ const getToolLabel = (name: string) => {
     WebSearch: "网页搜索",
     Task: "子 Agent",
     Agent: "子 Agent",
-    TodoWrite: "计划更新",
+    TaskCreate: "新增任务",
+    TaskUpdate: "更新任务",
+    TaskList: "任务列表",
+    TaskGet: "获取任务",
     Browser: "浏览器",
     AskUserQuestion: "向你提问",
   };
   return map[name] ?? name;
 };
+
+const getToolUseMeta = (messageContent: Extract<MessageContent, { type: "tool_use" }>): ToolUseMeta => {
+  const record = messageContent as unknown as Record<string, unknown>;
+  const meta = record.tool_use_meta && typeof record.tool_use_meta === "object" && !Array.isArray(record.tool_use_meta)
+    ? record.tool_use_meta as Record<string, unknown>
+    : record;
+  const displayName = typeof meta.displayName === "string" && meta.displayName.trim()
+    ? meta.displayName.trim()
+    : undefined;
+  const iconUrl = typeof meta.icon_url === "string" && meta.icon_url.trim()
+    ? meta.icon_url.trim()
+    : undefined;
+  const mcpServerName = typeof meta.mcp_server_name === "string" && meta.mcp_server_name.trim()
+    ? meta.mcp_server_name.trim()
+    : undefined;
+  return { displayName, iconUrl, mcpServerName };
+};
+
+const getToolDisplayLabel = (messageContent: Extract<MessageContent, { type: "tool_use" }>) => (
+  getToolUseMeta(messageContent).displayName ?? getToolLabel(messageContent.name)
+);
 
 const getToolSummary = (messageContent: Extract<MessageContent, { type: "tool_use" }>) => {
   const input = (messageContent.input ?? {}) as Record<string, unknown>;
@@ -1388,7 +1423,7 @@ const buildToolGroupSummary = (contents: MessageContent[]): ToolGroupSummaryMode
   const counts = new Map<string, number>();
   contents.forEach((content) => {
     if (content.type !== "tool_use" || content.name === "AskUserQuestion") return;
-    const label = getToolLabel(content.name);
+    const label = getToolDisplayLabel(content);
     counts.set(label, (counts.get(label) ?? 0) + 1);
   });
   const total = Array.from(counts.values()).reduce((sum, count) => sum + count, 0);
@@ -1419,6 +1454,8 @@ const ToolUseCard = ({
 
   const status = toolStatus ?? "pending";
   const summary = getToolSummary(messageContent);
+  const toolMeta = getToolUseMeta(messageContent);
+  const toolLabel = toolMeta.displayName ?? getToolLabel(messageContent.name);
   const rawInput = JSON.stringify(messageContent.input ?? {}, null, 2);
   const isAgentTool = messageContent.name === "Task" || messageContent.name === "Agent";
   const isPending = status === "pending";
@@ -1436,7 +1473,10 @@ const ToolUseCard = ({
   const patch = getRecordString(input, "patch") || getRecordString(input, "diff");
   const query = getRecordString(input, "query");
   const url = getRecordString(input, "url");
-  const todos = Array.isArray(input.todos) ? input.todos : Array.isArray(input.items) ? input.items : [];
+  const taskPlan = (TASK_TOOL_NAMES as readonly string[]).includes(messageContent.name)
+    ? normalizeTaskCreateArgs(messageContent.name === "TaskUpdate" ? { item: input } : input)
+    : null;
+  const taskItems = taskPlan?.plan ?? [];
 
   return (
     <div className={cx(
@@ -1451,10 +1491,13 @@ const ToolUseCard = ({
         className="flex w-full items-center gap-3 px-4 py-3 text-left"
       >
         <StatusDot variant={status === "error" ? "error" : status === "success" ? "success" : "accent"} active={isPending && showIndicator} />
-        <span className="shrink-0 rounded-lg bg-white/80 px-2.5 py-1 text-sm font-semibold text-accent">
-          {getToolLabel(messageContent.name)}
+        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white/80 px-2.5 py-1 text-sm font-semibold text-accent">
+          {toolMeta.iconUrl && <img src={toolMeta.iconUrl} alt="" className="h-4 w-4 rounded" />}
+          <span>{toolLabel}</span>
         </span>
-        <span className="min-w-0 flex-1 truncate text-sm text-ink-700">{summary || messageContent.name}</span>
+        <span className="min-w-0 flex-1 truncate text-sm text-ink-700">
+          {[toolMeta.mcpServerName, summary || messageContent.name].filter(Boolean).join(" · ")}
+        </span>
         <span className={cx("shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold", statusClass)}>
           {statusText}
         </span>
@@ -1503,22 +1546,17 @@ const ToolUseCard = ({
               <span>{query || url}</span>
             </div>
           )}
-          {messageContent.name === "TodoWrite" && todos.length > 0 && (
+          {(TASK_TOOL_NAMES as readonly string[]).includes(messageContent.name) && taskItems.length > 0 && (
             <div className="mb-3 rounded-2xl border border-black/6 bg-white px-3 py-2">
-              <div className="mb-2 text-[11px] font-semibold text-muted">计划清单</div>
+              <div className="mb-2 text-[11px] font-semibold text-muted">任务清单</div>
               <div className="grid gap-1">
-                {todos.slice(0, 12).map((todo, index) => {
-                  const record = todo && typeof todo === "object" ? todo as Record<string, unknown> : {};
-                  const content = String(record.content ?? record.text ?? record.title ?? `步骤 ${index + 1}`);
-                  const status = String(record.status ?? "");
-                  return (
-                    <div key={index} className="flex items-center gap-2 rounded-xl bg-[#f6f8fb] px-2 py-1.5 text-xs text-ink-700">
-                      <span className={cx("h-2 w-2 rounded-full", status === "completed" ? "bg-emerald-500" : status === "in_progress" ? "bg-accent" : "bg-slate-300")} />
-                      <span className="min-w-0 flex-1 truncate">{content}</span>
-                      {status && <span className="shrink-0 text-muted">{status}</span>}
-                    </div>
-                  );
-                })}
+                {taskItems.slice(0, 12).map((item, index) => (
+                  <div key={index} className="flex items-center gap-2 rounded-xl bg-[#f6f8fb] px-2 py-1.5 text-xs text-ink-700">
+                    <span className={cx("h-2 w-2 rounded-full", item.status === "completed" ? "bg-emerald-500" : item.status === "in_progress" ? "bg-accent" : "bg-slate-300")} />
+                    <span className="min-w-0 flex-1 truncate">{item.step}</span>
+                    {item.status && <span className="shrink-0 text-muted">{item.status}</span>}
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -1553,7 +1591,7 @@ const ToolProcessGroup = ({
   const summary = buildToolGroupSummary(contents);
   const shortLabel = summary
     ? summary.labels.map((item) => `${item.label} ${item.count}`).join(" · ")
-    : `${getToolLabel(firstContent.name)} · ${getToolSummary(firstContent) || firstContent.name}`;
+    : `${getToolDisplayLabel(firstContent)} · ${getToolSummary(firstContent) || firstContent.name}`;
 
   return (
     <div className="mt-3 overflow-hidden rounded-[22px] border border-black/6 bg-white/72 shadow-[0_10px_22px_rgba(30,38,52,0.03)]">
@@ -1604,6 +1642,24 @@ const getToolResultDisplayContent = (messageContent: Extract<ToolResultContent, 
   return String(messageContent.content);
 };
 
+const getToolResultPreviewContent = (
+  messageContent: Extract<ToolResultContent, { type: "tool_result" }>,
+  limit = TOOL_RESULT_PREVIEW_CHAR_LIMIT,
+): string => {
+  if (Array.isArray(messageContent.content)) {
+    let output = "";
+    for (const item of messageContent.content) {
+      const text = typeof item === "string" ? item : "text" in item ? item.text ?? "" : "";
+      if (!text) continue;
+      output += output ? `\n${text}` : text;
+      if (output.length >= limit) return output.slice(0, limit);
+    }
+    return output;
+  }
+
+  return String(messageContent.content).slice(0, limit);
+};
+
 const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) => {
   const isToolResult = isToolResultContent(messageContent);
   const toolUseId = isToolResult ? messageContent.tool_use_id : undefined;
@@ -1618,10 +1674,14 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
 
   if (!isToolResult) return null;
 
-  const content = getToolResultDisplayContent(messageContent);
-
   const isError = Boolean(messageContent.is_error);
-  const preview = compactPreview(content, 100);
+  const previewContent = getToolResultPreviewContent(messageContent);
+  const preview = compactPreview(previewContent, 100);
+  const content = expanded ? getToolResultDisplayContent(messageContent) : "";
+  const renderedContent = content.length > TOOL_RESULT_RENDER_CHAR_LIMIT
+    ? content.slice(0, TOOL_RESULT_RENDER_CHAR_LIMIT)
+    : content;
+  const contentTruncated = content.length > TOOL_RESULT_RENDER_CHAR_LIMIT;
 
   return (
     <div className="mt-3 rounded-[22px] border border-black/6 bg-[#f4f7fb] px-4 py-3">
@@ -1654,14 +1714,17 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
           <button
             type="button"
             className="rounded-full border border-red-200 bg-white px-2 py-0.5 font-semibold"
-            onClick={() => void copyText(content)}
+            onClick={() => void copyText(getToolResultDisplayContent(messageContent))}
           >
             复制诊断
           </button>
           <button
             type="button"
             className="rounded-full border border-red-200 bg-white px-2 py-0.5 font-semibold"
-            onClick={() => appendTextToComposer(`请根据这段工具失败诊断继续修复：\n\n${content.slice(0, 3000)}`)}
+            onClick={() => {
+              const diagnostic = getToolResultDisplayContent(messageContent);
+              appendTextToComposer(`请根据这段工具失败诊断继续修复：\n\n${diagnostic.slice(0, 3000)}`);
+            }}
           >
             让 Agent 修复
           </button>
@@ -1670,12 +1733,17 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
       {expanded && (
         <div className="mt-3 border-t border-black/6 pt-3">
           <CollapsibleText
-            text={content}
-            renderMarkdown={!isError && isMarkdown(content)}
+            text={renderedContent}
+            renderMarkdown={!contentTruncated && !isError && isMarkdown(renderedContent)}
             className={isError ? "text-red-600" : "text-ink-700"}
             referenceSourceRole="tool"
             referenceSourceLabel="工具输出"
           />
+          {contentTruncated && (
+            <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+              输出较大，这里只渲染前 {TOOL_RESULT_RENDER_CHAR_LIMIT.toLocaleString()} 个字符；需要完整内容可使用复制。
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1696,7 +1764,7 @@ const ToolResultGroup = ({ contents }: { contents: ToolResultContent[] }) => {
 
   const hasError = toolResults.some((content) => content.is_error);
   const preview = compactPreview(
-    toolResults.map((content) => getToolResultDisplayContent(content)).filter(Boolean).join("\n"),
+    toolResults.map((content) => getToolResultPreviewContent(content, 300)).filter(Boolean).join("\n"),
     100,
   );
 

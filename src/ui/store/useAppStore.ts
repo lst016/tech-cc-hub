@@ -20,8 +20,9 @@ import {
 import type { SessionExecutionMode } from "../../shared/session-semantics";
 import { deriveLatestGoalSnapshot, type SessionGoalSnapshot } from "../../shared/goal-progress";
 import { extractSlashCommandsFromMessages, mergeSlashCommandLists } from "../../shared/slash-commands";
+import { TASK_TOOL_NAMES } from "../../shared/claude-agent-teams";
 import {
-  normalizeTodoWriteArgs,
+  normalizeTaskCreateArgs,
   normalizeUpdatePlanArgs,
   type SessionPlanSnapshot,
 } from "../../shared/plan-progress";
@@ -237,7 +238,11 @@ function isTransientStreamEventMessage(message: StreamMessage): boolean {
     "type" in message &&
     (
       message.type === "stream_event" ||
-      (message.type === "system" && "subtype" in message && message.subtype === "status")
+      (
+        message.type === "system" &&
+        "subtype" in message &&
+        (message.subtype === "status" || message.subtype === "thinking_tokens")
+      )
     )
   );
 }
@@ -249,6 +254,47 @@ const pendingStreamMessagesBySession = new Map<string, StreamMessage[]>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isGoalToolNameCandidate(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const name = value.trim();
+  return (
+    name === "create_goal" ||
+    name === "update_goal" ||
+    name === "get_goal" ||
+    name.endsWith("__create_goal") ||
+    name.endsWith("__update_goal") ||
+    name.endsWith("__get_goal") ||
+    name.endsWith(":create_goal") ||
+    name.endsWith(":update_goal") ||
+    name.endsWith(":get_goal") ||
+    name.endsWith("/create_goal") ||
+    name.endsWith("/update_goal") ||
+    name.endsWith("/get_goal")
+  );
+}
+
+function messageMayAffectGoalSnapshot(message: StreamMessage): boolean {
+  if (message.type === "user_prompt") {
+    return typeof message.prompt === "string" && /^\s*\/goal(?:\s|$)/i.test(message.prompt);
+  }
+
+  if (message.type === "assistant" && isRecord(message.message)) {
+    const content = Array.isArray(message.message.content) ? message.message.content : [];
+    return content.some((item) => (
+      isRecord(item) &&
+      item.type === "tool_use" &&
+      isGoalToolNameCandidate(item.name)
+    ));
+  }
+
+  if (message.type === "user" && isRecord(message.message)) {
+    const content = Array.isArray(message.message.content) ? message.message.content : [];
+    return content.some((item) => isRecord(item) && item.type === "tool_result");
+  }
+
+  return false;
 }
 
 function extractPlanSnapshotFromMessage(sessionId: string, message: StreamMessage): SessionPlanSnapshot | null {
@@ -281,14 +327,17 @@ function extractPlanSnapshotFromMessage(sessionId: string, message: StreamMessag
       continue;
     }
 
-    if (toolName === "TodoWrite") {
-      const args = normalizeTodoWriteArgs(item.input);
+    if ((TASK_TOOL_NAMES as readonly string[]).includes(toolName)) {
+      const input = toolName === "TaskUpdate"
+        ? { item: item.input }
+        : item.input;
+      const args = normalizeTaskCreateArgs(input);
       if (args) {
         snapshot = {
           sessionId,
           turnId,
           updatedAt: message.capturedAt ?? Date.now(),
-          source: "todo_write",
+          source: "task_create",
           toolName,
           toolUseId,
           ...args,
@@ -320,12 +369,13 @@ function appendMessagesToSession(
   }
 
   const messages = [...session.messages, ...nextMessages];
+  const shouldUpdateGoal = nextMessages.some(messageMayAffectGoalSnapshot);
 
   return {
     ...session,
     slashCommands: slashCommands ?? session.slashCommands,
     messages,
-    latestGoal: deriveLatestGoalSnapshot(session.id, messages, session.latestGoal),
+    latestGoal: shouldUpdateGoal ? deriveLatestGoalSnapshot(session.id, messages, session.latestGoal) : session.latestGoal,
     latestPlan: deriveLatestPlanSnapshot(session.id, nextMessages, session.latestPlan),
   };
 }

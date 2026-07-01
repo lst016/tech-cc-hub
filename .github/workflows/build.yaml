@@ -56,6 +56,9 @@ jobs:
             dist/*.dmg
             dist/*.AppImage
             dist/*.exe
+            dist/*.yml
+            dist/*.blockmap
+            dist/*.zip
 
   release:
     needs: [build-desktop]
@@ -77,6 +80,20 @@ jobs:
         run: |
           echo "Release assets:"
           ls -la release-assets/
+
+      - name: Verify Windows updater assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          test -s latest.yml
+          installer="$(awk '/^path:/ { print $2; exit }' latest.yml | tr -d "'\"")"
+          if [ -z "$installer" ]; then
+            echo "latest.yml does not declare path"
+            exit 1
+          fi
+          test -s "$installer"
+          test -s "${installer}.blockmap"
 
       - name: Generate Checksums
         run: |

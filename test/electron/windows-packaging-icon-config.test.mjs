@@ -6,6 +6,7 @@ test("Windows packaging keeps the app icon enabled for packaged executables and 
   const builderConfig = JSON.parse(await readFile("electron-builder.json", "utf8"));
   const packageJson = JSON.parse(await readFile("package.json", "utf8"));
   const packageWinSafe = await readFile("scripts/package-win-safe.mjs", "utf8");
+  const buildWorkflow = await readFile(".github/workflows/build.yaml", "utf8");
 
   assert.equal(builderConfig.win?.icon, "build/icon.ico");
   assert.equal(builderConfig.nsis?.installerIcon, "build/icon.ico");
@@ -24,4 +25,16 @@ test("Windows packaging keeps the app icon enabled for packaged executables and 
   assert.match(packageWinSafe, /provider: github/);
   assert.match(packageWinSafe, /owner: lst016/);
   assert.match(packageWinSafe, /repo: tech-cc-hub/);
+  assert.match(packageWinSafe, /validateUpdaterArtifacts/);
+  assert.match(packageWinSafe, /normalizeLatestArtifactName/);
+  assert.match(packageWinSafe, /new URL\(trimmed\)/);
+  assert.match(packageWinSafe, /decodeURIComponent/);
+  assert.match(packageWinSafe, /latest\.yml does not declare an installer path/);
+  assert.match(packageWinSafe, /updater blockmap asset/);
+
+  assert.match(buildWorkflow, /dist\/\*\.yml/);
+  assert.match(buildWorkflow, /dist\/\*\.blockmap/);
+  assert.match(buildWorkflow, /Verify Windows updater assets/);
+  assert.match(buildWorkflow, /test -s latest\.yml/);
+  assert.match(buildWorkflow, /test -s "\$\{installer\}\.blockmap"/);
 });

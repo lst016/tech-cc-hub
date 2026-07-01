@@ -1,5 +1,6 @@
 import type {
   SDKAssistantMessage,
+  SDKControlGetContextUsageResponse,
   SDKMessage,
   SDKResultMessage,
   SDKUserMessage,
@@ -86,7 +87,13 @@ export type UserPromptMessageLike = {
   capturedAt?: number;
 };
 
-export type StreamMessageLike = (SDKMessage & { capturedAt?: number }) | UserPromptMessageLike | PromptLedgerMessage;
+export type ContextUsageMessageLike = {
+  type: "context_usage";
+  usage: SDKControlGetContextUsageResponse;
+  capturedAt?: number;
+};
+
+export type StreamMessageLike = (SDKMessage & { capturedAt?: number }) | UserPromptMessageLike | PromptLedgerMessage | ContextUsageMessageLike;
 
 export type SessionLike = {
   id: string;
@@ -722,6 +729,14 @@ function formatCost(usd: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
+function formatContextUsageLabel(usage: SDKControlGetContextUsageResponse | null | undefined): string | null {
+  if (!usage) return null;
+  const total = formatNumber(usage.totalTokens);
+  const max = formatNumber(usage.maxTokens);
+  const percentage = Number.isFinite(usage.percentage) ? usage.percentage.toFixed(1) : "0.0";
+  return `${total}/${max} tok · ${percentage}%`;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -827,6 +842,21 @@ function getToolResultDetail(content: NonNullable<SDKUserMessage["message"]["con
     return stringifyUnknown(content.content);
   }
   return stringifyUnknown(content);
+}
+
+function getToolUseMeta(content: unknown): { displayName?: string; iconUrl?: string; mcpServerName?: string } {
+  if (!isRecord(content)) return {};
+  const meta = isRecord(content.tool_use_meta) ? content.tool_use_meta : content;
+  const displayName = typeof meta.displayName === "string" && meta.displayName.trim()
+    ? meta.displayName.trim()
+    : undefined;
+  const iconUrl = typeof meta.icon_url === "string" && meta.icon_url.trim()
+    ? meta.icon_url.trim()
+    : undefined;
+  const mcpServerName = typeof meta.mcp_server_name === "string" && meta.mcp_server_name.trim()
+    ? meta.mcp_server_name.trim()
+    : undefined;
+  return { displayName, iconUrl, mcpServerName };
 }
 
 function describeToolInput(name: string, input: unknown): string {
@@ -1687,6 +1717,7 @@ export function buildActivityRailModel(
   let latestDurationMs: number | undefined;
   let latestInputTokens: number | undefined;
   let latestOutputTokens: number | undefined;
+  let latestContextUsage: SDKControlGetContextUsageResponse | null = null;
   let peakInputTokens: number | undefined;
   let currentTurnPeakInputTokens: number | undefined;
   let latestModel = "";
@@ -1727,6 +1758,12 @@ export function buildActivityRailModel(
   };
 
   for (const message of session.messages) {
+    if (message.type === "context_usage") {
+      latestContextUsage = message.usage;
+      recordUsageTokens({ inputTokens: message.usage.totalTokens }, { contributesToContextWindow: true });
+      continue;
+    }
+
     if (message.type === "prompt_ledger") {
       latestPromptLedger = message;
       promptLedgers.push(message);
@@ -1827,6 +1864,8 @@ export function buildActivityRailModel(
           sequence += 1;
 
           const toolInput = content.input ?? {};
+          const toolMeta = getToolUseMeta(content);
+          const toolDisplayName = toolMeta.displayName ?? content.name;
           const detail = describeToolInput(content.name, toolInput);
           const toolKey = `${content.name}:${detail}`;
           if (previousToolKey === toolKey) {
@@ -1904,14 +1943,17 @@ export function buildActivityRailModel(
               tone,
               nodeKind,
               nodeSubtype,
-              title: `调用 ${content.name}`,
-              detail: detailSummary || [detail || "无额外参数", outcome ? `结果：${outcome.detail}` : ""].filter(Boolean).join("\n"),
+              title: `调用 ${toolDisplayName}`,
+              detail: [
+                toolMeta.mcpServerName ? `MCP Server: ${toolMeta.mcpServerName}` : "",
+                detailSummary || [detail || "无额外参数", outcome ? `结果：${outcome.detail}` : ""].filter(Boolean).join("\n"),
+              ].filter(Boolean).join("\n"),
               round: Math.max(round, 1),
               sequence,
               statusLabel: outcome ? (outcome.isError ? "失败" : "成功") : "运行中",
-              chips: [content.name],
+              chips: [toolDisplayName, toolMeta.mcpServerName].filter((value): value is string => Boolean(value)),
               attention: Boolean(outcome?.isError),
-              toolName: content.name,
+              toolName: toolDisplayName,
               provenance,
               stageKind,
               detailSections: outputSection ? [inputSection, outputSection] : [inputSection],
@@ -2766,7 +2808,7 @@ export function buildActivityRailModel(
       latestResultLabel: status.label,
       durationLabel: formatDuration(latestDurationMs),
       inputLabel: formatCompactMetric(executionMetrics.inputChars, displayInputTokens),
-      contextLabel: formatCompactMetric(executionMetrics.contextChars),
+      contextLabel: formatContextUsageLabel(latestContextUsage) ?? formatCompactMetric(executionMetrics.contextChars),
       outputLabel: formatCompactMetric(executionMetrics.outputChars, latestOutputTokens),
       successCount: executionMetrics.successCount,
       failureCount: executionMetrics.failureCount,

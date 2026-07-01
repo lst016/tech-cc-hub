@@ -99,6 +99,12 @@ async function runSinglePromptQuery(
   for await (const message of q) {
     if (message.type === "result") {
       result = message;
+      const origin = typeof (message as Record<string, unknown>).origin === "string"
+        ? (message as Record<string, unknown>).origin
+        : undefined;
+      if (origin) {
+        console.info("[single-query][result]", { origin });
+      }
     }
   }
   return result;

@@ -16,6 +16,7 @@ export type RunnerReuseKeyInput = {
 type RunnerReuseDescriptor = {
   cwd: string;
   model: string;
+  origin: string;
   permissionMode: string;
   reasoningMode: string;
   workflowMode: string;
@@ -42,6 +43,7 @@ export function canReuseRunner(existingKey: string | undefined, requestedKey: st
   return (
     existing.cwd === requested.cwd &&
     existing.model === requested.model &&
+    existing.origin === requested.origin &&
     existing.permissionMode === requested.permissionMode &&
     existing.reasoningMode === requested.reasoningMode &&
     existing.workflowMode === requested.workflowMode &&
@@ -66,6 +68,7 @@ function buildRunnerReuseDescriptor(input: RunnerReuseKeyInput): RunnerReuseDesc
   return {
     cwd: normalizeKeyPart(input.cwd),
     model: normalizeKeyPart(input.model),
+    origin: normalizeKeyPart((input.runtime as { origin?: string } | undefined)?.origin),
     permissionMode: input.runtime?.permissionMode ?? "bypassPermissions",
     reasoningMode: input.runtime?.reasoningMode ?? "",
     workflowMode: input.runtime?.workflowMode ?? "auto",
@@ -97,6 +100,7 @@ function parseRunnerReuseKey(value: string | undefined): RunnerReuseDescriptor |
     return {
       cwd: typeof parsed.cwd === "string" ? parsed.cwd : "",
       model: typeof parsed.model === "string" ? parsed.model : "",
+      origin: typeof parsed.origin === "string" ? parsed.origin : "",
       permissionMode: typeof parsed.permissionMode === "string" ? parsed.permissionMode : "",
       reasoningMode: typeof parsed.reasoningMode === "string" ? parsed.reasoningMode : "",
       workflowMode: typeof parsed.workflowMode === "string" ? parsed.workflowMode : "auto",
