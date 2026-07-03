@@ -143,4 +143,26 @@ describe("workflow output parser", () => {
     assert.equal(completed[0]?.completedAt, 4_000);
     assert.equal(completed[0]?.summary, "Done");
   });
+
+  it("classifies workflow ReferenceError task failures as script errors", () => {
+    const patches = extractWorkflowRunPatchesFromMessage({
+      sessionId: "session-4",
+      message: {
+        type: "system",
+        subtype: "task_updated",
+        task_id: "task-local",
+        patch: {
+          status: "failed",
+          error: "Error: id is not defined at <anonymous> (workflow.js:376:113)",
+        },
+        capturedAt: 5_000,
+      } as never,
+      toolUseNames: new Map(),
+      knownWorkflowTaskIds: new Set(["task-local"]),
+    });
+
+    assert.equal(patches[0]?.status, "failed");
+    assert.equal(patches[0]?.failureKind, "script_error");
+    assert.equal(patches[0]?.completedAt, 5_000);
+  });
 });

@@ -1,10 +1,10 @@
 import { createRequire } from "module";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { join, resolve } from "path";
+import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { dirname, join, resolve, sep } from "path";
 
 import type {
   BuildContextOptions,
-  CodeGraphConfig,
+  FileLock,
   GraphStats,
   IndexOptions,
   IndexResult,
@@ -16,16 +16,11 @@ import type {
 } from "@colbymchenry/codegraph";
 
 type CodeGraphRuntime = typeof import("@colbymchenry/codegraph");
-type CodeGraphConfigRuntime = typeof import("@colbymchenry/codegraph/dist/config.js");
-type CodeGraphDbRuntime = typeof import("@colbymchenry/codegraph/dist/db/index.js");
-type CodeGraphQueriesRuntime = typeof import("@colbymchenry/codegraph/dist/db/queries.js");
-type CodeGraphUtilsRuntime = typeof import("@colbymchenry/codegraph/dist/utils.js");
 
 export type ManagedCodeGraphPaths = {
   workspaceRoot: string;
   techRoot: string;
   codegraphRoot: string;
-  configPath: string;
   databasePath: string;
   lockPath: string;
   cacheDir: string;
@@ -41,8 +36,14 @@ export type ManagedCodeGraphStatus = {
   stats?: GraphStats;
 };
 
+export type ManagedCodeGraphRuntimeInfo = {
+  source: "package" | "packaged-unpacked";
+  entry: string;
+  platformPackage?: string;
+  treeSitterPath?: string;
+};
+
 export type ManagedCodeGraphOpenOptions = {
-  config?: Partial<CodeGraphConfig>;
   index?: boolean;
   sync?: boolean;
   watch?: boolean;
@@ -62,9 +63,8 @@ export type ManagedCodeGraphInstance = {
   searchNodes(query: string, options?: SearchOptions): SearchResult[];
   buildContext(input: string, options?: BuildContextOptions): Promise<TaskContext | string>;
   getImpactRadius(nodeId: string, maxDepth?: number): Subgraph;
-  updateConfig(updates: Partial<CodeGraphConfig>): void;
   uninitialize(): void;
-  fileLock?: InstanceType<CodeGraphUtilsRuntime["FileLock"]>;
+  fileLock?: FileLock;
 };
 
 export type ManagedCodeGraphSkippedSyncResult = {
@@ -84,11 +84,8 @@ export type ManagedCodeGraphEnsureSyncResult = {
 };
 
 const require = createRequire(import.meta.url);
-const codegraphRuntime = require("@colbymchenry/codegraph") as CodeGraphRuntime;
-const configRuntime = require("@colbymchenry/codegraph/dist/config.js") as CodeGraphConfigRuntime;
-const dbRuntime = require("@colbymchenry/codegraph/dist/db/index.js") as CodeGraphDbRuntime;
-const queriesRuntime = require("@colbymchenry/codegraph/dist/db/queries.js") as CodeGraphQueriesRuntime;
-const utilsRuntime = require("@colbymchenry/codegraph/dist/utils.js") as CodeGraphUtilsRuntime;
+const codegraphRuntimeInfo = resolveCodeGraphRuntimeInfo();
+const codegraphRuntime = require(codegraphRuntimeInfo.entry) as CodeGraphRuntime;
 
 const MANAGED_CODEGRAPH_DIR = "codegraph";
 const MANAGED_GITIGNORE = [
@@ -99,14 +96,52 @@ const MANAGED_GITIGNORE = [
   "",
 ].join("\n");
 
-const MANAGED_EXCLUDES = [
-  "**/.tech/codegraph/**",
-  "**/.tech/repowiki/**",
-  "**/.codegraph/**",
-  "**/.omx/**",
-];
-
 const instances = new Map<string, ManagedCodeGraphInstance>();
+
+function resolveCodeGraphRuntimeInfo(): ManagedCodeGraphRuntimeInfo {
+  const unpackedRuntime = resolvePackagedUnpackedCodeGraphRuntime();
+  if (unpackedRuntime) {
+    return unpackedRuntime;
+  }
+
+  return {
+    source: "package",
+    entry: require.resolve("@colbymchenry/codegraph"),
+  };
+}
+
+function resolvePackagedUnpackedCodeGraphRuntime(): ManagedCodeGraphRuntimeInfo | null {
+  const platformPackage = `@colbymchenry/codegraph-${process.platform}-${process.arch}`;
+
+  try {
+    const platformPackageJson = require.resolve(`${platformPackage}/package.json`);
+    const unpackedPackageJson = platformPackageJson.replace(`${sep}app.asar${sep}`, `${sep}app.asar.unpacked${sep}`);
+
+    if (unpackedPackageJson === platformPackageJson || !existsSync(unpackedPackageJson)) {
+      return null;
+    }
+
+    const packageRoot = dirname(unpackedPackageJson);
+    const entry = join(packageRoot, "lib", "dist", "index.js");
+    const treeSitter = join(packageRoot, "lib", "node_modules", "web-tree-sitter", "tree-sitter.cjs");
+    if (existsSync(entry) && existsSync(treeSitter)) {
+      return {
+        source: "packaged-unpacked",
+        entry,
+        platformPackage,
+        treeSitterPath: treeSitter,
+      };
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+export function getManagedCodeGraphRuntimeInfo(): ManagedCodeGraphRuntimeInfo {
+  return { ...codegraphRuntimeInfo };
+}
 
 export function resolveManagedCodeGraphPaths(workspaceRoot: string): ManagedCodeGraphPaths {
   const root = resolve(workspaceRoot);
@@ -116,7 +151,6 @@ export function resolveManagedCodeGraphPaths(workspaceRoot: string): ManagedCode
     workspaceRoot: root,
     techRoot,
     codegraphRoot,
-    configPath: join(codegraphRoot, "config.json"),
     databasePath: join(codegraphRoot, "codegraph.db"),
     lockPath: join(codegraphRoot, "codegraph.lock"),
     cacheDir: join(codegraphRoot, "cache"),
@@ -150,20 +184,18 @@ export async function openManagedCodeGraph(
   await codegraphRuntime.initGrammars();
 
   const isInitialized = existsSync(paths.databasePath);
-  const config = loadOrCreateManagedConfig(paths, options.config);
   const db = isInitialized
-    ? dbRuntime.DatabaseConnection.open(paths.databasePath)
-    : dbRuntime.DatabaseConnection.initialize(paths.databasePath);
-  const queries = new queriesRuntime.QueryBuilder(db.getDb());
+    ? codegraphRuntime.DatabaseConnection.open(paths.databasePath)
+    : codegraphRuntime.DatabaseConnection.initialize(paths.databasePath);
+  const queries = new codegraphRuntime.QueryBuilder(db.getDb());
   const graph = Reflect.construct(codegraphRuntime.CodeGraph, [
     db,
     queries,
-    config,
     paths.workspaceRoot,
   ]) as ManagedCodeGraphInstance;
 
-  graph.fileLock = new utilsRuntime.FileLock(paths.lockPath);
-  hardenManagedInstance(graph, paths, config);
+  graph.fileLock = new codegraphRuntime.FileLock(paths.lockPath);
+  hardenManagedInstance(graph);
   instances.set(cacheKey, graph);
 
   try {
@@ -305,52 +337,7 @@ function ensureManagedCodeGraphDirectory(paths: ManagedCodeGraphPaths): void {
   writeFileSync(join(paths.codegraphRoot, ".gitignore"), MANAGED_GITIGNORE, "utf8");
 }
 
-function loadOrCreateManagedConfig(
-  paths: ManagedCodeGraphPaths,
-  overrides?: Partial<CodeGraphConfig>,
-): CodeGraphConfig {
-  if (existsSync(paths.configPath)) {
-    const parsed = JSON.parse(readFileSync(paths.configPath, "utf8")) as unknown;
-    if (!configRuntime.validateConfig(parsed)) {
-      throw new Error(`Invalid managed CodeGraph config: ${paths.configPath}`);
-    }
-    const merged = normalizeManagedConfig(paths, { ...parsed, ...overrides });
-    saveManagedConfig(paths, merged);
-    return merged;
-  }
-
-  const config = normalizeManagedConfig(paths, {
-    ...configRuntime.createDefaultConfig(paths.workspaceRoot),
-    ...overrides,
-  });
-  saveManagedConfig(paths, config);
-  return config;
-}
-
-function normalizeManagedConfig(paths: ManagedCodeGraphPaths, config: CodeGraphConfig): CodeGraphConfig {
-  const exclude = Array.from(new Set([...(config.exclude ?? []), ...MANAGED_EXCLUDES]));
-  return {
-    ...config,
-    rootDir: paths.workspaceRoot,
-    exclude,
-  };
-}
-
-function saveManagedConfig(paths: ManagedCodeGraphPaths, config: CodeGraphConfig): void {
-  writeFileSync(paths.configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-}
-
-function hardenManagedInstance(
-  graph: ManagedCodeGraphInstance,
-  paths: ManagedCodeGraphPaths,
-  config: CodeGraphConfig,
-): void {
-  graph.updateConfig = (updates: Partial<CodeGraphConfig>) => {
-    Object.assign(config, updates);
-    const normalized = normalizeManagedConfig(paths, config);
-    Object.assign(config, normalized);
-    saveManagedConfig(paths, normalized);
-  };
+function hardenManagedInstance(graph: ManagedCodeGraphInstance): void {
   graph.uninitialize = () => {
     throw new Error("Managed CodeGraph storage is owned by tech-cc-hub; remove .tech/codegraph through the managed service.");
   };

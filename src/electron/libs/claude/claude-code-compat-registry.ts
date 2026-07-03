@@ -784,7 +784,8 @@ export const CLAUDE_CODE_COMPAT_REGISTRY: ClaudeCodeCompatRegistry = {
 export const CLAUDE_CODE_COMPAT_COMMAND_ITEMS = CLAUDE_CODE_COMPAT_REGISTRY.commandItems;
 
 const CLAUDE_CODE_LOCAL_COMPAT_PROMPT_HINTS = [
-  "`/code-review` should split oversized code or diff input into bounded review chunks, review each chunk for correctness, security, and regression findings, then summarize cross-chunk risks instead of loading everything at once."
+  "`/code-review` should split oversized code or diff input into bounded review chunks, review each chunk for correctness, security, and regression findings, then summarize cross-chunk risks instead of loading everything at once.",
+  "Dynamic workflow scripts must quote agent prompts with String.raw or plain strings, never an outer template literal that can interpolate prompt examples like `${id}` or `${agentId}` before the workflow runner executes them.",
 ];
 
 export type ClaudeCodeCompatPromptAppendOptions = {

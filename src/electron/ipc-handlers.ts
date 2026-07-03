@@ -1000,6 +1000,7 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
 function buildWorkflowRunResumePrompt(run: WorkflowRunRecord): string {
   const lines = [
     "请使用 Workflow tool 继续运行此 workflow，只继续这个 run，不要改写脚本内容：",
+    "如果 Workflow tool 判定必须修复脚本才能继续，agent(...) 的长提示词必须使用 String.raw 或普通字符串包裹，避免提示词里的 `${id}`、`${agentId}` 等示例被 workflow.js 当成外层 JS 模板变量执行。",
     run.workflowName ? `- workflowName: ${run.workflowName}` : null,
     run.scriptPath ? `- scriptPath: ${run.scriptPath}` : null,
     `- resumeFromRunId: ${run.runId}`,
@@ -1012,6 +1013,7 @@ function buildWorkflowRunResumePrompt(run: WorkflowRunRecord): string {
 function buildWorkflowRunRerunPrompt(run: WorkflowRunRecord): string {
   const lines = [
     "请使用 Workflow tool 重新运行此 workflow 脚本，保留当前会话上下文并汇报新的 runId/taskId：",
+    "复跑前如果需要修复脚本，agent(...) 的长提示词必须使用 String.raw 或普通字符串包裹，避免提示词里的 `${id}`、`${agentId}` 等示例被 workflow.js 当成外层 JS 模板变量执行。",
     run.workflowName ? `- workflowName: ${run.workflowName}` : null,
     `- scriptPath: ${run.scriptPath}`,
     run.summary ? `- previousSummary: ${run.summary}` : null,

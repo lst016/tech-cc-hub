@@ -71,6 +71,15 @@ test("Claude Code compatibility prompt makes /code-review split oversized code",
   assert.match(prompt, /summar/i);
 });
 
+test("Claude Code compatibility prompt guards workflow scripts from template interpolation", () => {
+  const prompt = buildClaudeCodeCompatFeaturePromptAppend();
+
+  assert.match(prompt, /Dynamic workflow scripts/);
+  assert.match(prompt, /String\.raw/);
+  assert.match(prompt, /\$\{id\}/);
+  assert.match(prompt, /\$\{agentId\}/);
+});
+
 test("legacy Claude Code 2139 preset name remains an alias", () => {
   assert.equal(
     buildClaudeCode2139FeaturePromptAppend(),

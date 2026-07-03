@@ -14,6 +14,7 @@ import {
     desktopCapturer,
     type MessageBoxOptions,
 } from "electron"
+import log from "electron-log";
 import { execSync, spawn } from "child_process";
 import type { ChildProcessWithoutNullStreams } from "child_process";
 import { randomUUID } from "crypto";
@@ -68,6 +69,7 @@ import { handleSkillManagerInvoke, registerSkillManagerHandlers } from "./libs/s
 import { registerCronIpcHandlers, IpcCronEventEmitter } from "./libs/cron/cron-ipc-handlers.js";
 import { handleGitWorkbenchInvoke, registerGitWorkbenchIpcHandlers } from "./libs/git/index.js";
 import {
+  getManagedCodeGraphRuntimeInfo,
   getManagedCodeGraphStatus,
   indexManagedCodeGraph,
   isManagedCodeGraphInitialized,
@@ -2459,6 +2461,17 @@ installStdIoGuards();
 app.setName("tech-cc-hub");
 configureDesktopNotifications();
 
+function configureUserDataOverride(): void {
+    const userDataPath = process.env.TECH_CC_HUB_USER_DATA_DIR?.trim();
+    if (!userDataPath) {
+        return;
+    }
+
+    mkdirSync(userDataPath, { recursive: true });
+    app.setPath("userData", userDataPath);
+    app.setPath("sessionData", join(userDataPath, "session-data"));
+}
+
 function configureDevelopmentRuntimeIsolation(): void {
     if (!isDev()) {
         return;
@@ -2481,11 +2494,32 @@ function configureDevelopmentRuntimeIsolation(): void {
     console.info(`[dev] using Anthropic compatibility proxy port: ${process.env.TECH_CC_HUB_ANTHROPIC_COMPAT_PROXY_PORT}`);
 }
 
+function logStartupEnvironment(): void {
+    const codeGraphRuntime = getManagedCodeGraphRuntimeInfo();
+    const startupInfo = {
+        version: app.getVersion(),
+        isPackaged: app.isPackaged,
+        platform: process.platform,
+        arch: process.arch,
+        resourcesPath: process.resourcesPath,
+        userDataPath: app.getPath("userData"),
+        sessionDataPath: app.getPath("sessionData"),
+        codeGraphRuntimeSource: codeGraphRuntime.source,
+        codeGraphRuntimeEntry: codeGraphRuntime.entry,
+        codeGraphTreeSitterPath: codeGraphRuntime.treeSitterPath,
+    };
+
+    log.info("[startup] environment", startupInfo);
+    console.info("[startup] environment", startupInfo);
+}
+
+configureUserDataOverride();
 configureDevelopmentRuntimeIsolation();
 
 // Initialize everything when app is ready
 app.on("ready", async () => {
     Menu.setApplicationMenu(null);
+    logStartupEnvironment();
     try {
         await startup({
             options: {

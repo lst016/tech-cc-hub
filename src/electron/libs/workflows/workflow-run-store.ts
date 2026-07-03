@@ -63,9 +63,18 @@ function mergeDefined(
   patch: WorkflowRunPatch,
   now: number,
 ): WorkflowRunRecord {
+  const isStalePatch = existing !== undefined
+    && patch.updatedAt !== undefined
+    && patch.updatedAt < existing.updatedAt;
+  const pick = <T>(patched: T | undefined, current: T | undefined): T | undefined => (
+    isStalePatch ? current ?? patched : patched ?? current
+  );
   const id = patch.id ?? existing?.id ?? createWorkflowRunId(patch.sessionId, patch.taskId);
-  const status = patch.status ?? existing?.status ?? "unknown";
-  const updatedAt = patch.updatedAt ?? now;
+  const patchedStatus = pick(patch.status, existing?.status) ?? "unknown";
+  const status = patch.status === "unknown" && existing?.status && existing.status !== "unknown"
+    ? existing.status
+    : patchedStatus;
+  const updatedAt = isStalePatch ? existing.updatedAt : patch.updatedAt ?? now;
   const completedAt = patch.completedAt
     ?? existing?.completedAt
     ?? (isTerminalWorkflowRunStatus(status) ? updatedAt : undefined);
@@ -73,23 +82,77 @@ function mergeDefined(
   return {
     id,
     sessionId: patch.sessionId,
-    taskId: patch.taskId,
-    taskType: patch.taskType ?? existing?.taskType,
-    workflowName: patch.workflowName ?? existing?.workflowName,
-    runId: patch.runId ?? existing?.runId,
-    source: patch.source ?? existing?.source ?? "unknown",
+    taskId: pick(patch.taskId, existing?.taskId) ?? patch.taskId,
+    taskType: pick(patch.taskType, existing?.taskType),
+    workflowName: pick(patch.workflowName, existing?.workflowName),
+    runId: pick(patch.runId, existing?.runId),
+    source: pick(patch.source, existing?.source) ?? "unknown",
     status,
-    summary: patch.summary ?? existing?.summary,
-    scriptPath: patch.scriptPath ?? existing?.scriptPath,
-    transcriptDir: patch.transcriptDir ?? existing?.transcriptDir,
-    sessionUrl: patch.sessionUrl ?? existing?.sessionUrl,
-    warning: patch.warning ?? existing?.warning,
-    error: patch.error ?? existing?.error,
-    failureKind: patch.failureKind ?? existing?.failureKind,
-    launchedAt: patch.launchedAt ?? existing?.launchedAt ?? updatedAt,
+    summary: pick(patch.summary, existing?.summary),
+    scriptPath: pick(patch.scriptPath, existing?.scriptPath),
+    transcriptDir: pick(patch.transcriptDir, existing?.transcriptDir),
+    sessionUrl: pick(patch.sessionUrl, existing?.sessionUrl),
+    warning: pick(patch.warning, existing?.warning),
+    error: pick(patch.error, existing?.error),
+    failureKind: pick(patch.failureKind, existing?.failureKind),
+    launchedAt: pick(patch.launchedAt, existing?.launchedAt) ?? updatedAt,
     updatedAt,
     completedAt,
   };
+}
+
+function pickLatestRecord(records: Array<WorkflowRunRecord | undefined>): WorkflowRunRecord | undefined {
+  return records
+    .filter((record): record is WorkflowRunRecord => Boolean(record))
+    .sort((a, b) => b.updatedAt - a.updatedAt || b.launchedAt - a.launchedAt || b.id.localeCompare(a.id))[0];
+}
+
+function toPatch(record: WorkflowRunRecord): WorkflowRunPatch {
+  return {
+    id: record.id,
+    sessionId: record.sessionId,
+    taskId: record.taskId,
+    taskType: record.taskType,
+    workflowName: record.workflowName,
+    runId: record.runId,
+    source: record.source,
+    status: record.status,
+    summary: record.summary,
+    scriptPath: record.scriptPath,
+    transcriptDir: record.transcriptDir,
+    sessionUrl: record.sessionUrl,
+    warning: record.warning,
+    error: record.error,
+    failureKind: record.failureKind,
+    launchedAt: record.launchedAt,
+    updatedAt: record.updatedAt,
+    completedAt: record.completedAt,
+  };
+}
+
+function collapseWorkflowRunDuplicates(records: WorkflowRunRecord[]): WorkflowRunRecord[] {
+  const byStableRunId = new Map<string, WorkflowRunRecord>();
+  const collapsed: WorkflowRunRecord[] = [];
+
+  for (const record of records) {
+    if (!record.runId) {
+      collapsed.push(record);
+      continue;
+    }
+
+    const key = `${record.sessionId}:${record.runId}`;
+    const existing = byStableRunId.get(key);
+    if (!existing) {
+      byStableRunId.set(key, record);
+      collapsed.push(record);
+      continue;
+    }
+
+    Object.assign(existing, mergeDefined(existing, toPatch(record), existing.updatedAt));
+    existing.id = createWorkflowRunId(existing.sessionId, existing.taskId);
+  }
+
+  return collapsed;
 }
 
 export class WorkflowRunRepository {
@@ -134,6 +197,11 @@ export class WorkflowRunRepository {
       `create index if not exists idx_workflow_runs_session_updated
        on workflow_runs(session_id, updated_at desc)`
     );
+    this.db.exec(
+      `create index if not exists idx_workflow_runs_session_run_id
+       on workflow_runs(session_id, run_id)
+       where run_id is not null`
+    );
   }
 
   listWorkflowRuns(sessionId: string): WorkflowRunRecord[] {
@@ -147,7 +215,7 @@ export class WorkflowRunRepository {
          order by updated_at desc, launched_at desc, id desc`
       )
       .all(sessionId) as WorkflowRunRow[];
-    return rows.map(mapRow);
+    return collapseWorkflowRunDuplicates(rows.map(mapRow));
   }
 
   getWorkflowRun(id: string): WorkflowRunRecord | undefined {
@@ -167,9 +235,38 @@ export class WorkflowRunRepository {
     return this.getWorkflowRun(createWorkflowRunId(sessionId, taskId));
   }
 
+  getWorkflowRunByRunId(sessionId: string, runId: string): WorkflowRunRecord | undefined {
+    const row = this.db
+      .prepare(
+        `select id, session_id, task_id, task_type, workflow_name, run_id, source, status,
+                summary, script_path, transcript_dir, session_url, warning, error,
+                failure_kind, launched_at, updated_at, completed_at
+         from workflow_runs
+         where session_id = ? and run_id = ?
+         order by updated_at desc, launched_at desc, id desc
+         limit 1`
+      )
+      .get(sessionId, runId) as WorkflowRunRow | undefined;
+    return row ? mapRow(row) : undefined;
+  }
+
   upsertWorkflowRun(patch: WorkflowRunPatch): WorkflowRunRecord {
-    const id = patch.id ?? createWorkflowRunId(patch.sessionId, patch.taskId);
-    const record = mergeDefined(this.getWorkflowRun(id), { ...patch, id }, Date.now());
+    const targetId = patch.id ?? createWorkflowRunId(patch.sessionId, patch.taskId);
+    const existingById = this.getWorkflowRun(targetId);
+    const existingByRunId = patch.runId ? this.getWorkflowRunByRunId(patch.sessionId, patch.runId) : undefined;
+    const existing = pickLatestRecord([existingById, existingByRunId]);
+    const merged = mergeDefined(existing, { ...patch, id: targetId }, Date.now());
+    const record = {
+      ...merged,
+      id: patch.id ?? createWorkflowRunId(merged.sessionId, merged.taskId),
+    };
+
+    if (patch.runId) {
+      this.db
+        .prepare("delete from workflow_runs where session_id = ? and run_id = ? and id != ?")
+        .run(record.sessionId, patch.runId, record.id);
+    }
+
     this.db
       .prepare(
         `insert into workflow_runs

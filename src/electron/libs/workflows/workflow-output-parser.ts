@@ -201,7 +201,15 @@ function classifyFailureKind(record: Record<string, unknown>): WorkflowRunPatch[
 
   if (!text) return undefined;
   if (text.includes("permission") || text.includes("canusetool") || text.includes("denied")) return "permission_denied";
-  if (text.includes("script") || text.includes("parse") || text.includes("syntax")) return "script_error";
+  if (
+    text.includes("script")
+    || text.includes("parse")
+    || text.includes("syntax")
+    || text.includes("referenceerror")
+    || /\bworkflow\.js\b/.test(text)
+  ) {
+    return "script_error";
+  }
   if (text.includes("agent")) return "agent_failed";
   if (text.includes("runtime") || text.includes("sdk") || text.includes("process")) return "runtime_error";
   return "unknown";

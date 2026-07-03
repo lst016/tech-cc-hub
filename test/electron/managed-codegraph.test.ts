@@ -25,9 +25,9 @@ test("managed CodeGraph stores its DB under .tech/codegraph", async () => {
     assert.equal(existsSync(paths.upstreamCodegraphRoot), false);
     assert.equal(graph.getStats().fileCount, 1);
 
-    const config = JSON.parse(readFileSync(paths.configPath, "utf8")) as { exclude?: string[] };
-    assert.ok(config.exclude?.includes("**/.tech/codegraph/**"));
-    assert.ok(config.exclude?.includes("**/.codegraph/**"));
+    const gitignore = readFileSync(join(paths.codegraphRoot, ".gitignore"), "utf8");
+    assert.ok(gitignore.includes("*"));
+    assert.ok(gitignore.includes("!.gitignore"));
   } finally {
     closeManagedCodeGraph(workspaceRoot);
     rmSync(workspaceRoot, { recursive: true, force: true });

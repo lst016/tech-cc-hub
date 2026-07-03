@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -180,6 +180,60 @@ function validateUpdaterArtifacts() {
   assertNonEmptyFile(path.join(distDir, `${latestInstallerName}.blockmap`), "updater blockmap asset");
 }
 
+function validatePackagedCodeGraphRuntime() {
+  const codegraphRuntimeRoot = path.join(
+    distDir,
+    "win-unpacked",
+    "resources",
+    "app.asar.unpacked",
+    "node_modules",
+    "@colbymchenry",
+    "codegraph-win32-x64",
+  );
+
+  assertNonEmptyFile(path.join(codegraphRuntimeRoot, "node.exe"), "CodeGraph bundled Node runtime");
+  assertNonEmptyFile(path.join(codegraphRuntimeRoot, "lib", "dist", "index.js"), "CodeGraph library entry");
+  assertNonEmptyFile(
+    path.join(codegraphRuntimeRoot, "lib", "node_modules", "web-tree-sitter", "tree-sitter.cjs"),
+    "CodeGraph web-tree-sitter runtime dependency",
+  );
+  assertNonEmptyFile(
+    path.join(codegraphRuntimeRoot, "lib", "node_modules", "tree-sitter-wasms", "package.json"),
+    "CodeGraph tree-sitter-wasms runtime dependency",
+  );
+}
+
+function syncPackagedCodeGraphRuntimeDeps() {
+  const sourceDeps = path.join(
+    cwd,
+    "node_modules",
+    "@colbymchenry",
+    "codegraph-win32-x64",
+    "lib",
+    "node_modules",
+  );
+  const targetDeps = path.join(
+    distDir,
+    "win-unpacked",
+    "resources",
+    "app.asar.unpacked",
+    "node_modules",
+    "@colbymchenry",
+    "codegraph-win32-x64",
+    "lib",
+    "node_modules",
+  );
+
+  if (!existsSync(sourceDeps)) {
+    failPackaging(`CodeGraph bundled runtime dependencies are missing from node_modules: ${path.relative(cwd, sourceDeps)}`);
+  }
+
+  mkdirSync(path.dirname(targetDeps), { recursive: true });
+  rmSync(targetDeps, { recursive: true, force: true });
+  cpSync(sourceDeps, targetDeps, { recursive: true });
+  log(`synced CodeGraph bundled runtime deps: ${path.relative(cwd, targetDeps)}`);
+}
+
 function ensureWindowsAppUpdateConfig() {
   const resourcesDir = path.join(distDir, "win-unpacked", "resources");
   if (!existsSync(resourcesDir)) return;
@@ -262,6 +316,8 @@ function runWithFallback(strategyLabel, commands) {
     }
     if (command.includes("--dir")) {
       ensureWindowsAppUpdateConfig();
+      syncPackagedCodeGraphRuntimeDeps();
+      validatePackagedCodeGraphRuntime();
     }
   }
 
@@ -320,6 +376,7 @@ async function main() {
   createStableOutputs();
   ensureUpdaterMetadataAliases();
   validateUpdaterArtifacts();
+  validatePackagedCodeGraphRuntime();
   log("packaging done.");
 }
 

@@ -6,7 +6,9 @@
         "dist-react",
         "build/icon.png",
         "node_modules/@anthropic-ai/claude-agent-sdk/**/*",
-        "node_modules/@anthropic-ai/claude-agent-sdk-*/*"
+        "node_modules/@anthropic-ai/claude-agent-sdk-*/*",
+        "node_modules/@colbymchenry/codegraph/**/*",
+        "node_modules/@colbymchenry/codegraph-*/**/*"
     ],
     "extraResources": [
         "dist-electron/preload.cjs"
@@ -22,7 +24,9 @@
     ],
     "asarUnpack": [
         "node_modules/@anthropic-ai/claude-agent-sdk/**/*",
-        "node_modules/@anthropic-ai/claude-agent-sdk-*/*"
+        "node_modules/@anthropic-ai/claude-agent-sdk-*/*",
+        "node_modules/@colbymchenry/codegraph/**/*",
+        "node_modules/@colbymchenry/codegraph-*/**/*"
     ],
     "afterPack": "scripts/after-pack-win-icon.cjs",
     "icon": "./build/icon",
