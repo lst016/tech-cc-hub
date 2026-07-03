@@ -16,7 +16,6 @@ type ChangedFileSummary = {
   deletions: number;
 };
 
-const EAGER_CHANGE_SUMMARY_MESSAGE_LIMIT = 80;
 const PROCESS_ROW_BATCH_SIZE = 120;
 
 function isRecord(value: unknown): value is Record<string, unknown> {

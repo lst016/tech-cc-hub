@@ -28,14 +28,11 @@ import {
 } from "../../../shared/claude-agent-teams.js";
 import {
   createLearnCaptureHook,
-  createCorrectionDetectionHook,
-  createCorrectionTrackingHook,
   createQualityGateHook,
   createSecretScanHook,
   createGitBlastRadiusHook,
   createCommitValidateHook,
   createToolCallBudgetHook,
-  createDriftDetectorHook,
   createReadBeforeWriteHook,
 } from "../learning/learning-hooks.js";
 import {
@@ -2020,9 +2017,6 @@ function buildQualityHooks(
 
   // Learning hooks 鈥?create wrappers that adapt learning-hooks return types to HookCallback
   const learnCaptureHook = createLearnCaptureHook();
-  const correctionDetectionHook = createCorrectionDetectionHook();
-  const correctionTrackingHook = createCorrectionTrackingHook(sessionId);
-  const driftDetectorHook = createDriftDetectorHook();
   const secretScanHook = createSecretScanHook();
   const gitBlastRadiusHook = createGitBlastRadiusHook();
   const commitValidateHook = createCommitValidateHook();
@@ -2071,26 +2065,16 @@ function buildQualityHooks(
       hooks: [async (input) => {
         const teammateName = "teammate_name" in input && typeof input.teammate_name === "string" ? input.teammate_name : "teammate";
         const teamName = "team_name" in input && typeof input.team_name === "string" ? input.team_name : "team";
-        return {
-          continue: true,
-          hookSpecificOutput: {
-            hookEventName: "TeammateIdle",
-            additionalContext: `Teammate idle: ${teammateName} in ${teamName}. Reassign or summarize if work is complete.`,
-          },
-        };
+        console.info("[runner][hook][teammate-idle]", { sessionId, teammateName, teamName });
+        return { continue: true };
       }],
     }],
     TaskCompleted: [{
       hooks: [async (input) => {
         const taskSubject = "task_subject" in input && typeof input.task_subject === "string" ? input.task_subject : "task";
         const teammateName = "teammate_name" in input && typeof input.teammate_name === "string" ? input.teammate_name : undefined;
-        return {
-          continue: true,
-          hookSpecificOutput: {
-            hookEventName: "TaskCompleted",
-            additionalContext: `Task completed${teammateName ? ` by ${teammateName}` : ""}: ${taskSubject}. Integrate the result before starting dependent work.`,
-          },
-        };
+        console.info("[runner][hook][task-completed]", { sessionId, taskSubject, teammateName });
+        return { continue: true };
       }],
     }],
     MessageDisplay: [{
@@ -2114,11 +2098,6 @@ function buildQualityHooks(
         return { continue: true };
       }],
     }],
-    // Learning hooks: correction detection, tracking, drift
-    { hooks: [correctionDetectionHook as never] },
-    { hooks: [correctionTrackingHook as never] },
-    { hooks: [driftDetectorHook as never] },
-    ],
     PreToolUse: [{
       hooks: [async (input) => {
         if (!("tool_name" in input) || typeof input.tool_name !== "string") {
