@@ -30,6 +30,9 @@ tags:
 - App 整包更新走 GitHub Releases。
 - macOS 包在 `macos-14` runner 构建。
 - Windows 包在 `windows-latest` runner 构建。
+- `v*` tag 发布只走 `.github/workflows/release.yml`；`.github/workflows/build.yaml` 仅作为手动构建验证入口，避免同一个 tag 被两条流水线重复发布。
+- Windows 发布包统一执行 `npm run dist:win`，由 `scripts/package-win-safe.mjs` 生成 installer、`latest.yml`、blockmap 和稳定别名。
+- Release 上传前会再次校验 `latest.yml` 指向的 installer、`.blockmap` 和声明文件大小，校验失败不创建 GitHub Release。
 - 客户端启动后通过 `electron-updater` 检查 release metadata。
 - 发现新版本后由用户手动下载，下载完成后重启安装。
 - `skills / prompts / rules / templates` 这类内容热更新后续单独做，不和 Electron 主程序整包更新混在一起。

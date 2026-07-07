@@ -91,7 +91,10 @@ const skillIpcHandlers = new Map<string, SkillIpcHandler>();
 
 function registerSkillIpcHandler(channel: string, handler: SkillIpcHandler): void {
   skillIpcHandlers.set(channel, handler);
-  ipcMain.handle(channel, (_event: any, ...args: any[]) => handler(...args));
+  ipcMain.handle(channel, (_event: any, ...args: any[]) => {
+    initSkillManager();
+    return handler(...args);
+  });
 }
 
 export async function handleSkillManagerInvoke(channel: string, ...args: unknown[]): Promise<unknown> {
@@ -623,8 +626,6 @@ function cleanupGitPreviewTempDir(tempDir: string): boolean {
 // -- Register all handlers --
 
 export function registerSkillManagerHandlers(): void {
-  initSkillManager();
-
   // Skills
   registerSkillIpcHandler("skills:getManagedSkills", () => {
     return getAllSkills().map(managedSkillToDto);

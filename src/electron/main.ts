@@ -2513,6 +2513,22 @@ function logStartupEnvironment(): void {
     console.info("[startup] environment", startupInfo);
 }
 
+function prewarmClaudeCodeSubprocess(): void {
+    void startup({
+        options: {
+            env: getEnhancedEnv(),
+            pathToClaudeCodeExecutable: getClaudeCodePath(),
+        },
+        initializeTimeoutMs: 5000,
+    })
+        .then(() => {
+            console.info("[startup] Claude Code subprocess prewarmed");
+        })
+        .catch((error) => {
+            console.warn("[startup] prewarm failed", error instanceof Error ? error.message : String(error));
+        });
+}
+
 configureUserDataOverride();
 configureDevelopmentRuntimeIsolation();
 
@@ -2520,18 +2536,7 @@ configureDevelopmentRuntimeIsolation();
 app.on("ready", async () => {
     Menu.setApplicationMenu(null);
     logStartupEnvironment();
-    try {
-        await startup({
-            options: {
-                env: getEnhancedEnv(),
-                pathToClaudeCodeExecutable: getClaudeCodePath(),
-            },
-            initializeTimeoutMs: 5000,
-        });
-        console.info("[startup] Claude Code subprocess prewarmed");
-    } catch (error) {
-        console.warn("[startup] prewarm failed", error instanceof Error ? error.message : String(error));
-    }
+    prewarmClaudeCodeSubprocess();
     const appIconPath = getIconPath();
     if (process.platform === "darwin" && app.dock) {
         app.setActivationPolicy("regular");

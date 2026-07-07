@@ -39,7 +39,7 @@
 		"dist:linux": "bun run transpile:electron && bun run build && electron-builder --linux --x64",
 		"release:mac-arm64": "npm run transpile:electron && npm run build && electron-builder --mac --arm64 --publish always",
 		"release:mac-x64": "npm run transpile:electron && npm run build && electron-builder --mac --x64 --publish always",
-		"release:win-x64": "npm run transpile:electron && npm run build && electron-builder --win --x64 --publish always --config.win.forceCodeSigning=false --config.win.signAndEditExecutable=false",
+		"release:win-x64": "npm run dist:win",
 		"release:github": "node scripts/github-release.mjs"
 	},
 	"dependencies": {

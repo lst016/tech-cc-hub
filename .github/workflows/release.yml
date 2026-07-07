@@ -10,35 +10,153 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build ${{ matrix.name }}
+  build-desktop:
+    name: Build ${{ matrix.platform }} ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: macOS arm64
-            os: macos-14
-            command: npm run release:mac-arm64
-          - name: Windows x64
-            os: windows-latest
-            command: npm run release:win-x64
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+            script: dist:linux
+          - os: windows-latest
+            platform: win
+            arch: x64
+            script: dist:win
+          - os: macos-latest
+            platform: mac
+            arch: arm64
+            script: dist:mac-arm64
+          - os: macos-15-large
+            platform: mac
+            arch: x64
+            script: dist:mac-x64
+
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: "22"
-          cache: npm
+          bun-version: latest
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install
 
-      - name: Build and publish
-        run: ${{ matrix.command }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Build desktop artifacts
+        run: bun run ${{ matrix.script }}
+
+      - name: Verify Windows updater artifacts
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: |
+          $latestPath = Join-Path "dist" "latest.yml"
+          if (-not (Test-Path -LiteralPath $latestPath)) {
+            throw "dist/latest.yml is missing"
+          }
+
+          $latest = Get-Content -LiteralPath $latestPath
+          $pathLine = $latest | Select-String -Pattern "^\s*path:\s*['""]?(.+?)['""]?\s*$" | Select-Object -First 1
+          if (-not $pathLine) {
+            throw "latest.yml does not declare installer path"
+          }
+
+          $installerName = $pathLine.Matches[0].Groups[1].Value.Trim()
+          $installerPath = Join-Path "dist" $installerName
+          if (-not (Test-Path -LiteralPath $installerPath)) {
+            throw "latest.yml points to missing installer: $installerName"
+          }
+
+          $blockmapPath = "$installerPath.blockmap"
+          if (-not (Test-Path -LiteralPath $blockmapPath)) {
+            throw "missing updater blockmap: $blockmapPath"
+          }
+
+          $sizeLine = $latest | Select-String -Pattern "^\s*size:\s*(\d+)\s*$" | Select-Object -First 1
+          if ($sizeLine) {
+            $declaredSize = [int64]$sizeLine.Matches[0].Groups[1].Value
+            $actualSize = (Get-Item -LiteralPath $installerPath).Length
+            if ($declaredSize -ne $actualSize) {
+              throw "latest.yml size mismatch for $installerName. declared=$declaredSize actual=$actualSize"
+            }
+          }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            dist/*.dmg
+            dist/*.AppImage
+            dist/*.exe
+            dist/*.yml
+            dist/*.blockmap
+            dist/*.zip
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-desktop]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        run: |
+          echo "Release assets:"
+          ls -la release-assets/
+
+      - name: Verify Windows updater assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          test -s latest.yml
+          installer="$(awk '/^path:/ { print $2; exit }' latest.yml | tr -d "'\"")"
+          if [ -z "$installer" ]; then
+            echo "latest.yml does not declare path"
+            exit 1
+          fi
+          test -s "$installer"
+          test -s "${installer}.blockmap"
+          declared_size="$(awk '/^[[:space:]]*size:/ { print $2; exit }' latest.yml)"
+          if [ -n "$declared_size" ]; then
+            actual_size="$(wc -c < "$installer" | tr -d ' ')"
+            if [ "$declared_size" != "$actual_size" ]; then
+              echo "latest.yml size mismatch for $installer: declared=$declared_size actual=$actual_size"
+              exit 1
+            fi
+          fi
+
+      - name: Generate checksums
+        run: |
+          cd release-assets
+          sha256sum * > SHA256SUMS || true
+          cat SHA256SUMS
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          draft: false
+          generate_release_notes: true
+          files: release-assets/*
+          fail_on_unmatched_files: false
