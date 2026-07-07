@@ -17,22 +17,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            platform: linux
-            arch: x64
-            script: dist:linux
           - os: windows-latest
             platform: win
             arch: x64
-            script: dist:win
-          - os: macos-latest
+            command: npm run release:win-x64
+            uploads_artifacts: true
+          - os: macos-14
             platform: mac
             arch: arm64
-            script: dist:mac-arm64
-          - os: macos-15-large
-            platform: mac
-            arch: x64
-            script: dist:mac-x64
+            command: npm run release:mac-arm64
+            uploads_artifacts: false
 
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -43,16 +37,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          bun-version: latest
+          node-version: "22"
+          cache: npm
 
       - name: Install dependencies
-        run: bun install
+        run: npm ci
 
       - name: Build desktop artifacts
-        run: bun run ${{ matrix.script }}
+        run: ${{ matrix.command }}
 
       - name: Verify Windows updater artifacts
         if: matrix.platform == 'win'
@@ -90,6 +85,7 @@ jobs:
           }
 
       - name: Upload artifacts
+        if: matrix.uploads_artifacts
         uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}

@@ -36,7 +36,9 @@ test("Windows packaging keeps the app icon enabled for packaged executables and 
 
   assert.doesNotMatch(buildWorkflow, /push:\s*\n\s*tags:/);
   assert.doesNotMatch(buildWorkflow, /softprops\/action-gh-release/);
-  assert.match(releaseWorkflow, /script: dist:win/);
+  assert.match(releaseWorkflow, /command: npm run release:win-x64/);
+  assert.doesNotMatch(releaseWorkflow, /script: dist:linux/);
+  assert.doesNotMatch(releaseWorkflow, /script: dist:mac-x64/);
   assert.match(releaseWorkflow, /dist\/\*\.yml/);
   assert.match(releaseWorkflow, /dist\/\*\.blockmap/);
   assert.match(releaseWorkflow, /Verify Windows updater assets/);
