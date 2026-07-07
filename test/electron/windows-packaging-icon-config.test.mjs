@@ -22,6 +22,9 @@ test("Windows packaging keeps the app icon enabled for packaged executables and 
   assert.match(packageWinSafe, /signAndEditExecutable=false/);
   assert.match(packageWinSafe, /Primary-dir-prepackaged/);
   assert.match(packageWinSafe, /--prepackaged/);
+  assert.match(packageWinSafe, /shouldUseShellForCommand/);
+  assert.match(packageWinSafe, /shell: useShell/);
+  assert.match(packageWinSafe, /process\.platform === "win32" && \(cmd === "npm" \|\| cmd === "npx"\)/);
   assert.match(packageWinSafe, /ensureWindowsAppUpdateConfig/);
   assert.match(packageWinSafe, /app-update\.yml/);
   assert.match(packageWinSafe, /provider: github/);

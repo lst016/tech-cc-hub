@@ -23,17 +23,23 @@ function failPackaging(message) {
 }
 
 function run(cmd, args, options = {}) {
+  const useShell = shouldUseShellForCommand(cmd);
   log(`run: ${cmd} ${args.join(" ")}`);
   const result = spawnSync(cmd, args, {
     cwd,
     stdio: "inherit",
     env: { ...process.env, ...options.env },
-    shell: false,
+    shell: useShell,
   });
   if (result.error) {
+    log(`failed to start ${cmd}: ${result.error.message}`);
     return { ok: false, error: result.error };
   }
   return { ok: result.status === 0, status: result.status };
+}
+
+function shouldUseShellForCommand(cmd) {
+  return process.platform === "win32" && (cmd === "npm" || cmd === "npx");
 }
 
 function cleanOldArtifacts() {
