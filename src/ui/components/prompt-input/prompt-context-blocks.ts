@@ -225,7 +225,9 @@ export function mergePromptWithCodeReferences(prompt: string, references: CodeRe
 }
 
 export function getMessageReferenceLabel(reference: MessageReferenceDraft) {
-  return reference.kind === "selection" ? `${reference.sourceLabel} · 选区` : reference.sourceLabel;
+  if (reference.kind === "selection") return `${reference.sourceLabel} · 选区`;
+  if (reference.kind === "comment") return `${reference.sourceLabel} · 评论`;
+  return reference.sourceLabel;
 }
 
 function buildMessageReferencesPrompt(references: MessageReferenceDraft[]) {
@@ -238,7 +240,11 @@ function buildMessageReferencesPrompt(references: MessageReferenceDraft[]) {
     items: references.map((reference, index) => {
       const truncated = reference.text.length > 6000;
       return {
-        type: reference.kind === "selection" ? "message_selection" : "message_reference",
+        type: reference.kind === "selection"
+          ? "message_selection"
+          : reference.kind === "comment"
+            ? "message_comment"
+            : "message_reference",
         index: index + 1,
         id: reference.id,
         source: {
@@ -246,6 +252,7 @@ function buildMessageReferencesPrompt(references: MessageReferenceDraft[]) {
           label: reference.sourceLabel,
           capturedAt: reference.capturedAt,
         },
+        comment: reference.comment,
         selection: {
           text: truncated ? `${reference.text.slice(0, 6000)}\n...<message reference truncated>` : reference.text,
           truncated,

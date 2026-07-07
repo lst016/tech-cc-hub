@@ -96,10 +96,11 @@ export type CodeReferenceDraft = {
 
 export type MessageReferenceDraft = {
   id: string;
-  kind: "selection" | "message";
+  kind: "selection" | "message" | "comment";
   sourceRole: "user" | "assistant" | "tool" | "system";
   sourceLabel: string;
   text: string;
+  comment?: string;
   capturedAt?: number;
   createdAt: number;
 };
@@ -540,15 +541,29 @@ export const useAppStore = create<AppState>((set, get) => ({
       id: reference.id ?? crypto.randomUUID(),
       createdAt: reference.createdAt ?? Date.now(),
       text: reference.text.trim(),
+      comment: reference.comment?.trim() || undefined,
       sourceLabel: reference.sourceLabel.trim() || reference.sourceRole,
     };
 
-    set((state) => ({
-      messageReferencesBySessionId: {
-        ...state.messageReferencesBySessionId,
-        [sessionKey]: [...(state.messageReferencesBySessionId[sessionKey] ?? []), nextReference],
-      },
-    }));
+    set((state) => {
+      const existing = state.messageReferencesBySessionId[sessionKey] ?? [];
+      const withoutDuplicate = existing.filter((item) => !(
+        item.sourceRole === nextReference.sourceRole
+        && item.sourceLabel === nextReference.sourceLabel
+        && item.text === nextReference.text
+        && item.capturedAt === nextReference.capturedAt
+        && (
+          item.kind === nextReference.kind
+          || (item.kind !== "message" && nextReference.kind !== "message")
+        )
+      ));
+      return {
+        messageReferencesBySessionId: {
+          ...state.messageReferencesBySessionId,
+          [sessionKey]: [...withoutDuplicate, nextReference],
+        },
+      };
+    });
 
     return nextReference;
   },

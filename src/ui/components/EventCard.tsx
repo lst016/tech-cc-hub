@@ -1,5 +1,6 @@
 ﻿import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useCallback } from "react";
 import type {
   PermissionResult,
   SDKAssistantMessage,
@@ -14,7 +15,7 @@ import MDContent from "../render/markdown";
 import { DecisionPanel } from "./DecisionPanel";
 import { resolveImageAttachmentSrc } from "../../shared/attachments";
 import { copyTextToClipboard as copyText } from "../utils/clipboard";
-import { OPEN_BROWSER_WORKBENCH_URL_EVENT, PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT } from "../events";
+import { OPEN_BROWSER_WORKBENCH_URL_EVENT, PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT, PROMPT_SUBMIT_EVENT } from "../events";
 import { TASK_TOOL_NAMES } from "../../shared/claude-agent-teams";
 import { normalizeTaskCreateArgs } from "../../shared/plan-progress";
 import {
@@ -86,7 +87,49 @@ type BrowserAnnotationSummary = {
 const toolStatusMap = new Map<string, ToolStatus>();
 const toolStatusListeners = new Set<() => void>();
 const MAX_VISIBLE_LINES = 8;
+const CHAT_SELECTION_BLOCK_SELECTOR = "li, p, pre, blockquote, h1, h2, h3, h4, h5, h6, td, th";
 const cx = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(" ");
+
+const getSelectionAnchorRect = (range: Range, anchorNode: Node | null, focusNode: Node | null): DOMRect | null => {
+  const directRect = range.getBoundingClientRect();
+  if (directRect.width || directRect.height) {
+    return directRect;
+  }
+
+  const rects = Array.from(range.getClientRects());
+  const visibleRect = rects.find((rect) => rect.width || rect.height);
+  if (visibleRect) {
+    return visibleRect;
+  }
+
+  const candidateNodes = [focusNode, anchorNode];
+  for (const node of candidateNodes) {
+    const element = node instanceof Element ? node : node?.parentElement ?? null;
+    const rect = element?.getBoundingClientRect();
+    if (rect && (rect.width || rect.height)) {
+      return rect;
+    }
+  }
+
+  return null;
+};
+
+const getSelectionBlockElement = (node: Node | null, container: HTMLElement): HTMLElement | null => {
+  let element = node instanceof HTMLElement ? node : node?.parentElement ?? null;
+  while (element && element !== container) {
+    if (element.matches(CHAT_SELECTION_BLOCK_SELECTOR)) {
+      return element;
+    }
+    element = element.parentElement;
+  }
+  return null;
+};
+
+const getSelectionBlockText = (element: HTMLElement): string => (
+  (element.innerText || element.textContent || "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+);
 
 const setToolStatus = (toolUseId: string | undefined, status: ToolStatus) => {
   if (!toolUseId) return;
@@ -184,8 +227,9 @@ const appendMessageReferenceToComposer = (
   text: string,
   sourceRole: "user" | "assistant" | "tool" | "system",
   sourceLabel: string,
-  kind: "selection" | "message" = "message",
+  kind: "selection" | "message" | "comment" = "message",
   capturedAt?: number,
+  comment?: string,
 ) => {
   const trimmed = text.trim();
   if (!trimmed) return;
@@ -195,6 +239,7 @@ const appendMessageReferenceToComposer = (
     sourceRole,
     sourceLabel,
     text: trimmed,
+    comment: comment?.trim() || undefined,
     capturedAt,
   });
   window.dispatchEvent(new CustomEvent(PROMPT_FOCUS_EVENT));
@@ -787,6 +832,7 @@ const MessageReferenceChip = ({ reference }: { reference: MessageReferencePrompt
   const title = [
     roleLabel,
     reference.sourceLabel,
+    reference.comment,
     reference.textPreview,
   ].filter(Boolean).join("\n");
 
@@ -797,10 +843,15 @@ const MessageReferenceChip = ({ reference }: { reference: MessageReferencePrompt
           {reference.index}
         </span>
         <span className="shrink-0 rounded-md bg-[#fff7ed] px-1.5 py-0.5 text-[10px] text-[#9a3412]">
-          {reference.kind === "selection" ? "选区" : roleLabel}
+          {reference.kind === "selection" ? "选区" : reference.kind === "comment" ? "评论" : roleLabel}
         </span>
         <span className="min-w-0 truncate">{label}</span>
       </div>
+      {reference.comment && (
+        <div className="mt-2 break-words rounded-xl border border-accent/12 bg-white px-2.5 py-2 text-[11px] leading-5 text-ink-800">
+          {reference.comment}
+        </div>
+      )}
       {reference.textPreview && (
         <code className="mt-2 block max-h-20 overflow-hidden whitespace-pre-wrap break-words rounded-xl bg-[#fff7ed] px-2.5 py-2 text-[10px] leading-4 text-[#7c2d12]">
           {compactPreview(reference.textPreview, 180)}
@@ -848,86 +899,259 @@ const CollapsibleText = ({
     text: string;
     x: number;
     y: number;
+    commentOpen: boolean;
+    comment: string;
   } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const selectionPopoverRef = useRef<HTMLDivElement | null>(null);
+  const selectionCaptureFrameRef = useRef<number | null>(null);
+  const selectionCaptureTimeoutRef = useRef<number | null>(null);
+  const selectionStartBlockRef = useRef<HTMLElement | null>(null);
   const lines = useMemo(() => text.split("\n"), [text]);
   const hasMore = lines.length > maxLines || text.length > 1400;
   const visibleText = hasMore && !expanded ? lines.slice(0, maxLines).join("\n") : text;
+  const selectionText = selectionDraft?.text ?? "";
+  const selectionComment = selectionDraft?.comment ?? "";
 
-  const handleSelectionCapture = () => {
-    const selection = window.getSelection();
-    const selectedText = selection?.toString().trim() ?? "";
-    if (!selection || selectedText.length === 0 || selection.rangeCount === 0) {
-      setSelectionDraft(null);
-      return;
-    }
+  const clearSelectionDraft = useCallback(() => {
+    setSelectionDraft(null);
+    selectionStartBlockRef.current = null;
+    window.getSelection()?.removeAllRanges();
+  }, []);
 
+  const addSelectionReference = useCallback((kind: "selection" | "comment", comment?: string) => {
+    if (!selectionText) return;
+    appendMessageReferenceToComposer(
+      selectionText,
+      referenceSourceRole,
+      referenceSourceLabel,
+      kind,
+      referenceCapturedAt,
+      comment,
+    );
+  }, [referenceCapturedAt, referenceSourceLabel, referenceSourceRole, selectionText]);
+
+  const handleSendComment = useCallback(() => {
+    const trimmedComment = selectionComment.trim();
+    if (!trimmedComment) return;
+    addSelectionReference("comment", trimmedComment);
+    clearSelectionDraft();
+    window.setTimeout(() => {
+      const submit = () => window.dispatchEvent(new CustomEvent(PROMPT_SUBMIT_EVENT));
+      if (typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(submit);
+        return;
+      }
+      submit();
+    }, 0);
+  }, [addSelectionReference, clearSelectionDraft, selectionComment]);
+
+  const captureSelectionDraft = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    const anchorNode = selection.anchorNode;
-    const focusNode = selection.focusNode;
-    if ((anchorNode && !container.contains(anchorNode)) || (focusNode && !container.contains(focusNode))) {
-      setSelectionDraft(null);
+    const selection = window.getSelection();
+    const selectedText = selection?.toString().trim() ?? "";
+    const anchorNode = selection?.anchorNode ?? null;
+    const focusNode = selection?.focusNode ?? null;
+    const anchorInside = Boolean(anchorNode && container.contains(anchorNode));
+    const focusInside = Boolean(focusNode && container.contains(focusNode));
+    const activeElement = document.activeElement;
+    const popoverHasFocus = Boolean(activeElement && selectionPopoverRef.current?.contains(activeElement));
+    if (!anchorInside && !focusInside) {
+      if (popoverHasFocus) return;
+      if (selectionDraft) clearSelectionDraft();
+      return;
+    }
+
+    if (!selection || selectedText.length === 0 || selection.rangeCount === 0 || selection.isCollapsed) {
+      if (popoverHasFocus) return;
+      if (selectionDraft) clearSelectionDraft();
       return;
     }
 
     const range = selection.getRangeAt(0);
-    const rect = range.getBoundingClientRect();
-    if (!rect.width && !rect.height) return;
+    const rect = getSelectionAnchorRect(range, anchorNode, focusNode);
+    if (!rect) return;
+
+    let draftText = selectedText;
+    let draftRect = rect;
+    const anchorBlock = getSelectionBlockElement(anchorNode, container);
+    const focusBlock = getSelectionBlockElement(focusNode, container);
+    if (anchorBlock && focusBlock && anchorBlock !== focusBlock) {
+      const preferredBlock =
+        selectionStartBlockRef.current && container.contains(selectionStartBlockRef.current)
+          ? selectionStartBlockRef.current
+          : anchorBlock;
+      const blockText = getSelectionBlockText(preferredBlock);
+      const blockRect = preferredBlock.getBoundingClientRect();
+      if (blockText) {
+        draftText = blockText;
+      }
+      if (blockRect.width || blockRect.height) {
+        draftRect = blockRect;
+      }
+    }
+
+    if (!draftText) return;
 
     setSelectionDraft({
-      text: selectedText,
-      x: rect.left + rect.width / 2,
-      y: Math.max(12, rect.top - 38),
+      text: draftText,
+      x: draftRect.left + draftRect.width / 2,
+      y: Math.max(12, draftRect.top - 38),
+      commentOpen: false,
+      comment: "",
     });
-  };
+  }, [clearSelectionDraft, selectionDraft]);
+
+  const cancelScheduledSelectionCapture = useCallback(() => {
+    if (selectionCaptureFrameRef.current !== null && typeof window.cancelAnimationFrame === "function") {
+      window.cancelAnimationFrame(selectionCaptureFrameRef.current);
+      selectionCaptureFrameRef.current = null;
+    }
+    if (selectionCaptureTimeoutRef.current !== null) {
+      window.clearTimeout(selectionCaptureTimeoutRef.current);
+      selectionCaptureTimeoutRef.current = null;
+    }
+  }, []);
+
+  const scheduleSelectionCapture = useCallback(() => {
+    cancelScheduledSelectionCapture();
+    const runCapture = () => {
+      selectionCaptureFrameRef.current = null;
+      captureSelectionDraft();
+    };
+
+    if (typeof window.requestAnimationFrame === "function") {
+      selectionCaptureFrameRef.current = window.requestAnimationFrame(runCapture);
+      return;
+    }
+
+    window.setTimeout(runCapture, 0);
+  }, [cancelScheduledSelectionCapture, captureSelectionDraft]);
+
+  const scheduleDeferredSelectionCapture = useCallback(() => {
+    cancelScheduledSelectionCapture();
+    selectionCaptureTimeoutRef.current = window.setTimeout(() => {
+      selectionCaptureTimeoutRef.current = null;
+      captureSelectionDraft();
+    }, 32);
+  }, [cancelScheduledSelectionCapture, captureSelectionDraft]);
 
   useEffect(() => {
     if (!selectionDraft) return;
-    const clearSelectionDraft = (event?: Event) => {
-      if (event?.target && containerRef.current?.contains(event.target as Node)) return;
-      setSelectionDraft(null);
+    const handleDismiss = (event?: Event) => {
+      const target = event?.target as Node | null;
+      if (target && containerRef.current?.contains(target)) return;
+      if (target && selectionPopoverRef.current?.contains(target)) return;
+      clearSelectionDraft();
     };
 
-    window.addEventListener("mousedown", clearSelectionDraft);
-    window.addEventListener("scroll", clearSelectionDraft, true);
-    window.addEventListener("resize", clearSelectionDraft);
+    window.addEventListener("mousedown", handleDismiss);
+    window.addEventListener("scroll", handleDismiss, true);
+    window.addEventListener("resize", handleDismiss);
     return () => {
-      window.removeEventListener("mousedown", clearSelectionDraft);
-      window.removeEventListener("scroll", clearSelectionDraft, true);
-      window.removeEventListener("resize", clearSelectionDraft);
+      window.removeEventListener("mousedown", handleDismiss);
+      window.removeEventListener("scroll", handleDismiss, true);
+      window.removeEventListener("resize", handleDismiss);
     };
-  }, [selectionDraft]);
+  }, [clearSelectionDraft, selectionDraft]);
+
+  useEffect(() => {
+    document.addEventListener("selectionchange", scheduleSelectionCapture);
+    window.addEventListener("mouseup", scheduleDeferredSelectionCapture, true);
+    window.addEventListener("pointerup", scheduleDeferredSelectionCapture, true);
+    return () => {
+      document.removeEventListener("selectionchange", scheduleSelectionCapture);
+      window.removeEventListener("mouseup", scheduleDeferredSelectionCapture, true);
+      window.removeEventListener("pointerup", scheduleDeferredSelectionCapture, true);
+      cancelScheduledSelectionCapture();
+    };
+  }, [cancelScheduledSelectionCapture, scheduleDeferredSelectionCapture, scheduleSelectionCapture]);
 
   return (
     <div
       ref={containerRef}
       className={cx("min-w-0 max-w-full [overflow-wrap:anywhere]", className)}
-      onMouseUp={handleSelectionCapture}
-      onKeyUp={handleSelectionCapture}
+      onMouseDown={(event) => {
+        const container = containerRef.current;
+        if (!container) return;
+        selectionStartBlockRef.current = getSelectionBlockElement(event.target as Node | null, container);
+      }}
+      onPointerDown={(event) => {
+        const container = containerRef.current;
+        if (!container) return;
+        selectionStartBlockRef.current = getSelectionBlockElement(event.target as Node | null, container);
+      }}
+      onMouseUp={scheduleSelectionCapture}
+      onKeyUp={scheduleSelectionCapture}
     >
-      {selectionDraft && (
-        <button
-          type="button"
-          className="fixed z-[80] inline-flex h-8 items-center gap-1 rounded-full border border-accent/24 bg-white/96 px-3 text-xs font-semibold text-accent shadow-[0_12px_30px_rgba(15,18,24,0.18)] transition hover:border-accent/42 hover:bg-accent/8"
+      {selectionDraft && typeof document !== "undefined" && createPortal(
+        <div
+          ref={selectionPopoverRef}
+          className="fixed z-[80] flex min-w-[220px] max-w-[320px] flex-col gap-2 rounded-2xl border border-accent/20 bg-white/96 p-2 shadow-[0_12px_30px_rgba(15,18,24,0.18)] backdrop-blur"
           style={{ left: selectionDraft.x, top: selectionDraft.y, transform: "translateX(-50%)" }}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            appendMessageReferenceToComposer(
-              selectionDraft.text,
-              referenceSourceRole,
-              referenceSourceLabel,
-              "selection",
-              referenceCapturedAt,
-            );
-            setSelectionDraft(null);
-            window.getSelection()?.removeAllRanges();
-          }}
         >
-          <span>↩</span>
-          <span>引用选区</span>
-        </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="inline-flex h-8 items-center gap-1 rounded-full border border-accent/24 bg-white px-3 text-xs font-semibold text-accent transition hover:border-accent/42 hover:bg-accent/8"
+              onClick={() => {
+                addSelectionReference("selection");
+                clearSelectionDraft();
+              }}
+            >
+              <span>↩</span>
+              <span>添加到对话</span>
+            </button>
+            <button
+              type="button"
+              className="inline-flex h-8 items-center rounded-full border border-black/10 bg-white px-3 text-xs font-semibold text-ink-700 transition hover:border-accent/24 hover:bg-accent/8 hover:text-accent"
+              onClick={() => setSelectionDraft((current) => current ? { ...current, commentOpen: !current.commentOpen } : current)}
+            >
+              评论
+            </button>
+          </div>
+          {selectionDraft.commentOpen && (
+            <div className="flex flex-col gap-2 rounded-xl border border-black/6 bg-[#f8fafc] p-2">
+              <textarea
+                value={selectionDraft.comment}
+                onChange={(event) => setSelectionDraft((current) => current ? { ...current, comment: event.target.value } : current)}
+                placeholder="写一句评论，之后可以一条条发送回复..."
+                className="min-h-[72px] w-full resize-none rounded-xl border border-black/10 bg-white px-3 py-2 text-xs leading-5 text-ink-800 outline-none focus:border-accent"
+              />
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  className="inline-flex h-8 items-center rounded-full border border-black/10 bg-white px-3 text-xs font-semibold text-muted transition hover:bg-black/5 hover:text-ink-700"
+                  onClick={() => setSelectionDraft((current) => current ? { ...current, commentOpen: false, comment: "" } : current)}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex h-8 items-center rounded-full border border-accent/20 bg-white px-3 text-xs font-semibold text-accent transition hover:bg-accent/8"
+                  onClick={() => {
+                    const trimmedComment = selectionDraft.comment.trim();
+                    if (!trimmedComment) return;
+                    addSelectionReference("comment", trimmedComment);
+                    clearSelectionDraft();
+                  }}
+                >
+                  加入评论
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex h-8 items-center rounded-full bg-accent px-3 text-xs font-semibold text-white transition hover:opacity-90"
+                  onClick={handleSendComment}
+                >
+                  直接发送
+                </button>
+              </div>
+            </div>
+          )}
+        </div>,
+        document.body,
       )}
       {renderMarkdown ? (
         <MDContent text={visibleText} />
@@ -1328,7 +1552,13 @@ const AssistantTextCard = ({
         <div
           className="min-w-0 flex-1 rounded-[26px] rounded-tl-[8px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 text-ink-800 shadow-[0_14px_30px_rgba(30,38,52,0.055)]"
         >
-          <MDContent text={visibleAssistantText} />
+          <CollapsibleText
+            text={visibleAssistantText}
+            renderMarkdown
+            maxLines={24}
+            referenceSourceRole="assistant"
+            referenceSourceLabel={title}
+          />
         </div>
         <IconButton label="引用" onClick={() => appendMessageReferenceToComposer(visibleAssistantText, "assistant", title)} />
         <IconButton label="复制" onClick={() => void copyText(visibleAssistantText)} />

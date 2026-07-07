@@ -1,4 +1,4 @@
-import { getFigmaOfficialPluginStatusFromConfig } from "../figma-official-plugin.js";
+import { FIGMA_MCP_SERVER_NAME, getFigmaOfficialPluginStatusFromConfig } from "../figma-official-plugin.js";
 
 export type RunnerErrorDiagnostics = {
   processStderr?: string;
@@ -32,7 +32,7 @@ export function normalizeRunnerError(
   const raw = stringifyRunnerError(error).trim();
   const normalized = raw.toLowerCase();
   const diagnosticDetail = buildDiagnosticDetail(raw, diagnostics);
-  const quotedRequestedModel = requestedModel ? `「${requestedModel}」` : "当前模型";
+  const quotedRequestedModel = requestedModel ? ` "${requestedModel}"` : " current model";
   const hasModelContext =
     normalized.includes("model") ||
     (requestedModel ? normalized.includes(requestedModel.toLowerCase()) : false);
@@ -42,28 +42,28 @@ export function normalizeRunnerError(
 
   if (/\b(refusal|refused|stop_reason[\s\S]*refusal|safety refusal)\b/i.test(raw)) {
     return appendDiagnosticDetail(
-      "模型出于安全策略拒绝了本次请求。请调整输入，去除高风险、违规或不可执行的部分后重试。",
+      "The model refused this request because of safety policy. Adjust the prompt and retry.",
       diagnosticDetail,
     );
   }
 
   if (/\b(overloaded|529|rate overloaded|server overloaded|capacity)\b/i.test(raw)) {
     return appendDiagnosticDetail(
-      "上游模型服务当前过载或容量不足，请稍后重试，或切换到其它可用模型/供应商。",
+      "The upstream model service is overloaded or at capacity. Retry later or switch to another available model/provider.",
       diagnosticDetail,
     );
   }
 
   if (hasModelContext && modelUnavailable) {
     return appendDiagnosticDetail(
-      `请求模型${quotedRequestedModel}失败：该模型当前不可用、已下线，或不被当前服务端支持，请切换到可用模型后重试。`,
+      `Requested model${quotedRequestedModel} is unavailable, offline, or not supported by the current provider. Switch to an available model and retry.`,
       diagnosticDetail,
     );
   }
 
   if (hasModelContext && /(404|status code 404|status: 404)/i.test(raw)) {
     return appendDiagnosticDetail(
-      `请求模型${quotedRequestedModel}失败：服务端没有找到对应模型，请检查模型名称或切换到可用模型。`,
+      `Requested model${quotedRequestedModel} was not found by the provider. Check the model name or switch to an available model.`,
       diagnosticDetail,
     );
   }
@@ -73,9 +73,8 @@ export function normalizeRunnerError(
     return appendDiagnosticDetail(raw ? `${raw}\n\n${guidance}` : guidance, diagnosticDetail);
   }
 
-  return appendDiagnosticDetail(raw || "运行失败，请稍后重试。", diagnosticDetail);
+  return appendDiagnosticDetail(raw || "Runner failed. Please retry later.", diagnosticDetail);
 }
-
 function appendDiagnosticDetail(message: string, diagnosticDetail: string | null): string {
   if (!diagnosticDetail) {
     return message;
@@ -108,14 +107,30 @@ function sanitizeRunnerDiagnosticDetail(value: string): string {
 function buildFigmaAuthGuidance(globalRuntimeConfig: unknown): string {
   const status = getFigmaOfficialPluginStatusFromConfig(globalRuntimeConfig);
   if (status.mode === "rest") {
+    const modeHint = hasConfiguredFigmaOfficialMcp(globalRuntimeConfig)
+      ? "Current config has Figma REST/PAT and official Figma MCP enabled in parallel; either route can be used for comparison/debugging."
+      : "Current config uses the locally stored Figma Personal Access Token; do not paste PAT into chat.";
     return [
-      "Figma REST/PAT 授权可能无效或缺少 scope。",
-      "当前配置走本机保存的 Figma Personal Access Token，不需要在聊天里粘贴 PAT，也不应优先走官方 OAuth。",
-      "请在设置页重新校验 Figma Token，或补齐对应 REST API scope 后重试。",
+      "Figma REST/PAT authorization may be invalid or missing required scope.",
+      modeHint,
+      "Revalidate the Figma Token in settings, complete missing REST API scope, or use the official Figma MCP route to compare behavior.",
     ].join("\n");
   }
 
-  return "Figma OAuth 授权可能已过期；只有当前配置确实是官方 OAuth MCP 时，才需要重新走 OAuth 授权。";
+  return "Figma OAuth authorization may be expired. Re-run OAuth only when the active route is official Figma MCP.";
+}
+
+function hasConfiguredFigmaOfficialMcp(config: unknown): boolean {
+  if (!isRecord(config) || !isRecord(config.mcpServers)) {
+    return false;
+  }
+
+  const figmaMcp = config.mcpServers[FIGMA_MCP_SERVER_NAME];
+  return isRecord(figmaMcp) && figmaMcp.enabled !== false;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isLikelyFigmaAuthError(message: string): boolean {

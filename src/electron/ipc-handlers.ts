@@ -688,6 +688,11 @@ function getWorkflowTaskIdsForSession(sessionId: string): Set<string> {
   return next;
 }
 
+function hasActiveWorkflowRun(sessionId: string): boolean {
+  return sessions.listWorkflowRuns(sessionId).some((run) =>
+    run.status === "launching" || run.status === "running" || run.status === "backgrounded");
+}
+
 function trackWorkflowRunsFromStreamMessage(sessionId: string, message: StreamMessage): void {
   const toolUseNames = getWorkflowToolUseNamesForSession(sessionId);
   const taskIds = getWorkflowTaskIdsForSession(sessionId);
@@ -1575,6 +1580,7 @@ export async function handleClientEvent(event: ClientEvent) {
       prompt: agentPrompt,
       attachments: currentAgentAttachments,
     });
+    const liveHandle = runnerHandles.get(session.id);
     const reusableHandle = isFigmaOAuthCallback || replacingHistoryId || shouldForceStatelessCompression
       ? null
       : getReusableRunnerHandle(session.id, warmReuseKey);
@@ -1647,6 +1653,66 @@ export async function handleClientEvent(event: ClientEvent) {
             model: session.model,
             error: String(error),
           },
+        });
+      }
+      return;
+    }
+    const shouldAppendToActiveWorkflowRunner =
+      !isFigmaOAuthCallback
+      && !replacingHistoryId
+      && !shouldForceStatelessCompression
+      && Boolean(liveHandle)
+      && !liveHandle?.isClosed()
+      && hasActiveWorkflowRun(session.id);
+    if (shouldAppendToActiveWorkflowRunner && liveHandle && !liveHandle.isClosed()) {
+      store.updateSession(session.id, {
+        status: "running",
+        lastPrompt: storagePrompt,
+      });
+      emit({
+        type: "session.status",
+        payload: {
+          sessionId: session.id,
+          status: "running",
+          title: session.title,
+          cwd: session.cwd,
+          model: session.model,
+          executionMode: session.executionMode,
+          reasoningMode: session.reasoningMode,
+          permissionMode: session.permissionMode,
+          slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
+        },
+      });
+      emit({
+        type: "stream.message",
+        payload: {
+          sessionId: session.id,
+          message: buildPromptLedgerForRun({
+            phase: "continue",
+            prompt: storagePrompt,
+            attachments: currentAgentAttachments,
+            session,
+            historyMessages: [],
+            model: session.model,
+          }),
+        },
+      });
+      if (event.payload.displayUserPrompt !== false) {
+        emit({
+          type: "stream.user_prompt",
+          payload: { sessionId: session.id, prompt: storagePrompt, attachments: displayAttachments },
+        });
+      }
+
+      try {
+        await liveHandle.appendPrompt(agentPrompt, currentAgentAttachments, {
+          displayPrompt: storagePrompt,
+          workspaceContext: event.payload.workspaceContext,
+        });
+      } catch (error) {
+        emit({
+          type: "runner.error",
+          payload: { sessionId: session.id, message: `插入进度追问失败: ${String(error)}` },
         });
       }
       return;

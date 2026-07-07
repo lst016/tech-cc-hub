@@ -208,7 +208,9 @@ export function buildNextFigmaOfficialPatRuntimeConfig(
   const current = isRecord(config) ? config : {};
   const plugins = isRecord(current.plugins) ? current.plugins : {};
   const mcpServers = isRecord(current.mcpServers) ? current.mcpServers : {};
-  const nextMcpServers = omitFigmaMcpServer(mcpServers);
+  const existingFigmaMcp = isRecord(mcpServers[FIGMA_MCP_SERVER_NAME])
+    ? mcpServers[FIGMA_MCP_SERVER_NAME]
+    : null;
   const existingPlugin = isRecord(plugins[FIGMA_OFFICIAL_PLUGIN_ID])
     ? plugins[FIGMA_OFFICIAL_PLUGIN_ID]
     : buildFigmaOfficialPluginConfig(now, "rest");
@@ -247,7 +249,10 @@ export function buildNextFigmaOfficialPatRuntimeConfig(
         updatedAt: now,
       },
     },
-    mcpServers: nextMcpServers,
+    mcpServers: {
+      ...mcpServers,
+      [FIGMA_MCP_SERVER_NAME]: existingFigmaMcp ?? buildFigmaOfficialMcpConfig(),
+    },
   };
 }
 
@@ -652,12 +657,6 @@ function isExpectedFigmaRestPluginConfig(value: Record<string, unknown> | null):
   }
   const source = isRecord(value.source) ? value.source : {};
   return value.mode === "rest" || value.authProvider === "pat" || source.type === "figma-rest-api";
-}
-
-function omitFigmaMcpServer(mcpServers: Record<string, unknown>): Record<string, unknown> {
-  const next = { ...mcpServers };
-  delete next[FIGMA_MCP_SERVER_NAME];
-  return next;
 }
 
 function getFigmaCapabilitiesForMode(mode: FigmaOfficialConnectionMode): string[] {

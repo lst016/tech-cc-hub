@@ -14,6 +14,7 @@
 		"qa:codex": "SMOKE_TIMEOUT_SECONDS=120 bash scripts/qa/electron-autostart-smoke.sh \"/codex consult 你好，只回复 CODEX_SMOKE_OK\"",
 		"qa:continue": "bash scripts/qa/electron-autostart-smoke.sh \"请只回复：SMOKE_ROUND_1\" \"请只回复：SMOKE_ROUND_2\"",
 		"qa:chat-ui": "node scripts/qa/chat-ui-smoke.cjs",
+		"qa:chat-selection-comment": "npm run build && node scripts/qa/chat-selection-comment-smoke.cjs",
 		"qa:design-element": "npm run transpile:electron && electron scripts/qa/design-element-tool-smoke.mjs",
 		"qa:preview": "node scripts/qa/preview-workbench-smoke.cjs",
 		"qa:enter": "node scripts/qa/playwright-enter-smoke.cjs",

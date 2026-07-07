@@ -259,6 +259,30 @@ const runtimeSourceMeta: Record<DevElectronRuntimeSource, { label: string; toolt
   },
 };
 
+type QaAssistantConversationSeed = {
+  sessionId?: string;
+  title?: string;
+  userPrompt?: string;
+  assistantMarkdown?: string;
+};
+
+type TechCcHubQaApi = {
+  seedAssistantConversation: (seed?: QaAssistantConversationSeed) => { sessionId: string; assistantMarkdown: string };
+  getMessageReferences: (sessionId?: string) => Array<{ kind: string; text: string; comment?: string }>;
+};
+
+const DEFAULT_QA_ASSISTANT_MARKDOWN = [
+  '✅ "转人工次数"数据源已修正：',
+  "",
+  "| 维度 | 改前 | 改后 |",
+  "| --- | --- | --- |",
+  "| 接口字段名 | `transferCount`（不存在） | `artificialEnterCount`（Vue 1:1） |",
+  "",
+  "Vue 端 `userInfoDescription/index.vue:22` 和 `UserBar.tsx:236` 都读取 `chatSession?.artificialEnterCount ?? ''` / `socketStore.currentUser?.artificialEnterCount`，字段名是 `artificialEnterCount`。",
+  "",
+  "刷新页面后转人工次数应该正常显示数值了。",
+].join("\n");
+
 function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -427,6 +451,82 @@ function App() {
   const apiConfigChecked = useAppStore((s) => s.apiConfigChecked);
   const setApiConfigChecked = useAppStore((s) => s.setApiConfigChecked);
   const [settingsInitialPageId, setSettingsInitialPageId] = useState<SettingsPageId | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const qaApi: TechCcHubQaApi = {
+      seedAssistantConversation: (seed = {}) => {
+        const now = Date.now();
+        const currentState = useAppStore.getState();
+        const sessionId = seed.sessionId?.trim() || currentState.activeSessionId || "browser-preview-session";
+        const assistantMarkdown = seed.assistantMarkdown?.trim() || DEFAULT_QA_ASSISTANT_MARKDOWN;
+        const sessionTitle = seed.title?.trim() || "QA Selection Comment";
+        const userPrompt = seed.userPrompt?.trim() || "帮我确认转人工次数这段说明有没有问题";
+        const assistantMessage = {
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: assistantMarkdown, citations: [] }],
+          },
+          capturedAt: now,
+        } as unknown as StreamMessage;
+        const messages: StreamMessage[] = [
+          {
+            type: "user_prompt",
+            prompt: userPrompt,
+            capturedAt: now - 1_000,
+          },
+          assistantMessage,
+        ];
+
+        useAppStore.setState((state) => {
+          const existing = state.sessions[sessionId] ?? state.archivedSessions[sessionId];
+          return {
+            sessions: {
+              ...state.sessions,
+              [sessionId]: {
+                id: sessionId,
+                title: sessionTitle,
+                status: "completed",
+                cwd: existing?.cwd ?? state.cwd,
+                model: existing?.model ?? state.runtimeModel,
+                messages,
+                permissionRequests: [],
+                hydrated: true,
+                hasMoreHistory: false,
+                createdAt: existing?.createdAt ?? now,
+                updatedAt: now,
+              },
+            },
+            activeSessionId: sessionId,
+            showStartModal: false,
+            globalError: null,
+            prompt: "",
+          };
+        });
+
+        return { sessionId, assistantMarkdown };
+      },
+      getMessageReferences: (sessionId?: string) => {
+        const state = useAppStore.getState();
+        const targetSessionId = sessionId ?? state.activeSessionId ?? "";
+        return (state.messageReferencesBySessionId[targetSessionId] ?? []).map((reference) => ({
+          kind: reference.kind,
+          text: reference.text,
+          comment: reference.comment,
+        }));
+      },
+    };
+
+    (window as Window & { __TECH_CC_HUB_QA__?: TechCcHubQaApi }).__TECH_CC_HUB_QA__ = qaApi;
+    return () => {
+      const qaWindow = window as Window & { __TECH_CC_HUB_QA__?: TechCcHubQaApi };
+      if (qaWindow.__TECH_CC_HUB_QA__ === qaApi) {
+        delete qaWindow.__TECH_CC_HUB_QA__;
+      }
+    };
+  }, []);
 
   // Helper function to extract partial message content
   const getPartialMessageContent = (eventMessage: StreamEventPayload) => {

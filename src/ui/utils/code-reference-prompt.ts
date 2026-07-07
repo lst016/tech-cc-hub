@@ -22,10 +22,11 @@ export type FileReferencePromptSummary = {
 
 export type MessageReferencePromptSummary = {
   index: number;
-  kind: 'message' | 'selection';
+  kind: 'message' | 'selection' | 'comment';
   sourceRole?: 'user' | 'assistant' | 'tool' | 'system';
   sourceLabel?: string;
   capturedAt?: number;
+  comment?: string;
   textPreview?: string;
 };
 
@@ -206,10 +207,11 @@ function summarizeMessageReferenceItem(item: unknown, index: number): MessageRef
 
   return {
     index: getRecordNumber(item, 'index') ?? index + 1,
-    kind: itemType === 'message_selection' ? 'selection' : 'message',
+    kind: itemType === 'message_selection' ? 'selection' : itemType === 'message_comment' ? 'comment' : 'message',
     sourceRole: getSourceRole(getRecordString(source, 'role')),
     sourceLabel: getRecordString(source, 'label'),
     capturedAt: getRecordNumber(source, 'capturedAt'),
+    comment: getRecordString(item, 'comment'),
     textPreview: getRecordString(selection, 'text'),
   };
 }
