@@ -18,11 +18,14 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES,
+  buildNextBuiltinMcpServerEnabledConfig,
   getBuiltinMcpServerDefinition,
   type BuiltinMcpIconKey,
   type BuiltinMcpServerDefinition,
+  type BuiltinMcpServerName,
 } from "../../../shared/builtin-mcp-registry";
 import { useAppStore } from "../../store/useAppStore";
 import type { McpServerInfo } from "../../types";
@@ -312,6 +315,8 @@ const BUILTIN_SERVER_META: Record<string, BuiltinServerMeta> = {
 type ElectronClient = {
   sendClientEvent: (event: unknown) => void;
   onServerEvent: (callback: (event: unknown) => void) => () => void;
+  getGlobalConfig?: () => Promise<unknown>;
+  saveGlobalConfig?: (config: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
 };
 
 type CodeGraphUiStatus = {
@@ -360,12 +365,44 @@ function getElectron(): ElectronClient | null {
   return e?.onServerEvent ? e : null;
 }
 
+function resolveEnabledBuiltinNamesFromConfig(config: unknown): Set<string> {
+  if (!isRecord(config)) {
+    return new Set(DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES);
+  }
+
+  const mcp = isRecord(config.mcp) ? config.mcp : null;
+  const builtin = mcp && isRecord(mcp.builtin) ? mcp.builtin : null;
+  const enabledServers = builtin && Array.isArray(builtin.enabledServers)
+    ? builtin.enabledServers
+    : null;
+  if (!enabledServers) {
+    return new Set(DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES);
+  }
+
+  return new Set(enabledServers.filter((name): name is string => typeof name === "string"));
+}
+
+function applyBuiltinEnabledOverride(
+  servers: McpServerEntry[],
+  enabledNames: ReadonlySet<string> | null,
+): McpServerEntry[] {
+  if (!enabledNames) return servers;
+  return servers.map((server) => server.type === "builtin"
+    ? { ...server, enabled: enabledNames.has(server.name) }
+    : server);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 export function McpSettingsPage() {
   const [builtin, setBuiltin] = useState<McpServerEntry[]>([]);
   const [external, setExternal] = useState<McpServerEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<McpTab>("builtin");
+  const enabledBuiltinNamesRef = useRef<Set<string> | null>(null);
 
   useEffect(() => {
     const electron = getElectron();
@@ -377,15 +414,24 @@ export function McpSettingsPage() {
       return () => window.clearTimeout(fallbackTimer);
     }
 
+    const refreshEnabledOverride = async () => {
+      if (typeof electron.getGlobalConfig !== "function") return;
+      const config = await electron.getGlobalConfig();
+      enabledBuiltinNamesRef.current = resolveEnabledBuiltinNamesFromConfig(config);
+      setBuiltin((prev) => applyBuiltinEnabledOverride(prev, enabledBuiltinNamesRef.current));
+    };
+
     const unsubscribe = electron.onServerEvent((event: unknown) => {
       const evt = event as { type: string; payload?: { builtin?: McpServerInfo[]; external?: McpServerInfo[] } };
       if (evt.type === "mcp.list" && evt.payload) {
-        setBuiltin((evt.payload.builtin ?? []).map((s) => ({ ...s, expanded: false })));
+        const nextBuiltin = (evt.payload.builtin ?? []).map((s) => ({ ...s, expanded: false }));
+        setBuiltin(applyBuiltinEnabledOverride(nextBuiltin, enabledBuiltinNamesRef.current));
         setExternal((evt.payload.external ?? []).map((s) => ({ ...s, expanded: false })));
         setLoading(false);
       }
     });
 
+    void refreshEnabledOverride();
     electron.sendClientEvent({ type: "mcp.list" });
 
     // Fallback timeout
@@ -402,11 +448,40 @@ export function McpSettingsPage() {
     setter((prev) => prev.map((s, i) => i === index ? { ...s, expanded: !s.expanded } : s));
   };
 
+  const toggleBuiltinEnabled = (name: string, enabled: boolean) => {
+    const electron = getElectron();
+    if (!electron) return;
+    const nextEnabledNames = new Set(enabledBuiltinNamesRef.current ?? DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES);
+    if (enabled) {
+      nextEnabledNames.add(name);
+    } else {
+      nextEnabledNames.delete(name);
+    }
+    enabledBuiltinNamesRef.current = nextEnabledNames;
+    setBuiltin((prev) => prev.map((server) => (
+      server.name === name ? { ...server, enabled } : server
+    )));
+    if (typeof electron.getGlobalConfig === "function" && typeof electron.saveGlobalConfig === "function") {
+      void electron.getGlobalConfig()
+        .then((config) => electron.saveGlobalConfig!(
+          buildNextBuiltinMcpServerEnabledConfig(config, name as BuiltinMcpServerName, enabled),
+        ))
+        .catch((saveError) => console.warn("[mcp-settings] Failed to persist built-in MCP toggle:", saveError));
+    }
+    electron.sendClientEvent({
+      type: "mcp.builtin.setEnabled",
+      payload: { name: name as BuiltinMcpServerName, enabled },
+    });
+  };
+
   return (
     <div>
       <div className="mb-6">
         <p className="text-sm text-ink-600">
           查看当前已加载的 MCP 服务器。内置 MCP 由应用自动提供，外部 MCP 在全局配置的 <code className="rounded bg-surface-secondary px-1 py-0.5 text-xs">mcpServers</code> 中定义。
+        </p>
+        <p className="mt-2 text-xs leading-5 text-muted">
+          默认勾选 browser / admin / design / cron / plan / knowledge；figma、idea 等其它内置 MCP 按需手动勾选。
         </p>
       </div>
 
@@ -447,6 +522,7 @@ export function McpSettingsPage() {
                       key={server.name}
                       server={server}
                       onToggle={() => toggleExpand(index, false)}
+                      onEnabledChange={(enabled) => toggleBuiltinEnabled(server.name, enabled)}
                     />
                   ))
                 )}
@@ -526,7 +602,15 @@ function formatExternalServerSummary(server: McpServerInfo): string {
   return server.command;
 }
 
-function ServerCard({ server, onToggle }: { server: McpServerEntry; onToggle: () => void }) {
+function ServerCard({
+  server,
+  onToggle,
+  onEnabledChange,
+}: {
+  server: McpServerEntry;
+  onToggle: () => void;
+  onEnabledChange?: (enabled: boolean) => void;
+}) {
   const toolGroups = server.type === "builtin" ? getBuiltinToolGroups(server.name) : [];
   const toolCount = toolGroups.reduce((count, group) => count + group.tools.length, 0);
   const serverMeta = server.type === "builtin" ? getBuiltinServerMeta(server.name) : undefined;
@@ -560,10 +644,26 @@ function ServerCard({ server, onToggle }: { server: McpServerEntry; onToggle: ()
             </span>
           )}
         </span>
+        {server.type === "builtin" && onEnabledChange && (
+          <label
+            className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-ink-900/10 bg-white px-2.5 py-1 text-[11px] font-medium text-ink-600 transition-colors hover:bg-bg-100"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 rounded border-ink-900/20 text-success focus:ring-success/30"
+              checked={server.enabled}
+              onChange={(event) => onEnabledChange(event.currentTarget.checked)}
+            />
+            启用
+          </label>
+        )}
+        {server.type !== "builtin" && (
         <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium ${server.enabled ? "bg-success/10 text-success" : "bg-surface-secondary text-ink-400"}`}>
           {server.enabled && <CheckCircle2 className="h-3 w-3" />}
           {server.enabled ? "启用" : "禁用"}
         </span>
+        )}
         <ChevronDown className={`h-4 w-4 shrink-0 text-ink-400 transition-transform ${server.expanded ? "rotate-180" : ""}`} />
       </button>
 
@@ -597,7 +697,7 @@ function ServerCard({ server, onToggle }: { server: McpServerEntry; onToggle: ()
             </div>
           )}
           {server.type === "builtin" && (
-            <BuiltinToolsPanel serverName={server.name} groups={toolGroups} />
+            <BuiltinToolsPanel serverName={server.name} groups={toolGroups} enabled={server.enabled} />
           )}
         </div>
       )}
@@ -605,7 +705,7 @@ function ServerCard({ server, onToggle }: { server: McpServerEntry; onToggle: ()
   );
 }
 
-function BuiltinToolsPanel({ serverName, groups }: { serverName: string; groups: BuiltinToolGroup[] }) {
+function BuiltinToolsPanel({ serverName, groups, enabled }: { serverName: string; groups: BuiltinToolGroup[]; enabled: boolean }) {
   const toolCount = groups.reduce((count, group) => count + group.tools.length, 0);
   const serverMeta = getBuiltinServerMeta(serverName);
   const activeWorkspaceRoot = useActiveWorkspaceRoot();
@@ -630,6 +730,9 @@ function BuiltinToolsPanel({ serverName, groups }: { serverName: string; groups:
           </div>
           <span className="rounded-full border border-ink-900/8 bg-white px-2.5 py-1 text-[11px] font-semibold text-ink-500">
             {toolCount} tools
+          </span>
+          <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${enabled ? "border-success/15 bg-success/10 text-success" : "border-ink-900/8 bg-white text-ink-400"}`}>
+            {enabled ? "will load" : "will not load"}
           </span>
         </div>
         {serverMeta?.workflow && (

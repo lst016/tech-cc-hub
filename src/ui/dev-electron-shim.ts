@@ -1,5 +1,6 @@
 import type { ApiConfigSettings, ClientEvent, PromptAttachment, ServerEvent, StreamMessage, UiGitCommitDetail, UiGitCommitMessageSuggestion, UiGitDiffResult, UiGitResult, UiGitWorkbenchSnapshot } from "./types";
 import type { AppUpdateActionResult, AppUpdateStatus } from "./types";
+import type { BuiltinMcpServerName } from "../shared/builtin-mcp-registry";
 
 const browserPreviewSessionId = "browser-preview-session";
 const browserPreviewCwd = "/Users/lst01/Desktop/学习/tech-cc-hub";
@@ -16,6 +17,24 @@ const BRIDGE_HEALTH_TIMEOUT_MS = 500;
 export const DEV_BRIDGE_READY_EVENT = "tech-cc-hub:dev-bridge-ready";
 export const DEV_BROWSER_PREVIEW_FLAG = "__tech_cc_hub_browser_preview";
 const DEV_SHIM_MARKER = "__techCCHubDevShim";
+const DEV_BUILTIN_MCP_SERVER_NAMES: readonly BuiltinMcpServerName[] = [
+  "tech-cc-hub-browser",
+  "tech-cc-hub-admin",
+  "tech-cc-hub-design",
+  "tech-cc-hub-figma",
+  "tech-cc-hub-cron",
+  "tech-cc-hub-idea",
+  "tech-cc-hub-plan",
+  "tech-cc-hub-knowledge",
+];
+const devEnabledBuiltinMcpServers = new Set<BuiltinMcpServerName>([
+  "tech-cc-hub-browser",
+  "tech-cc-hub-admin",
+  "tech-cc-hub-design",
+  "tech-cc-hub-cron",
+  "tech-cc-hub-plan",
+  "tech-cc-hub-knowledge",
+]);
 
 export type DevElectronRuntimeSource = "bridge" | "fallback" | "electron";
 
@@ -268,12 +287,35 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         emit({
           type: "mcp.list",
           payload: {
-            builtin: [
-              { name: "tech-cc-hub-browser", type: "builtin", command: "builtin", args: [], envKeys: [], enabled: true },
-              { name: "tech-cc-hub-admin", type: "builtin", command: "builtin", args: [], envKeys: [], enabled: true },
-              { name: "tech-cc-hub-design", type: "builtin", command: "builtin", args: [], envKeys: [], enabled: true },
-              { name: "tech-cc-hub-cron", type: "builtin", command: "builtin", args: [], envKeys: [], enabled: true },
-            ],
+            builtin: DEV_BUILTIN_MCP_SERVER_NAMES.map((name) => ({
+              name,
+              type: "builtin",
+              command: "builtin",
+              args: [],
+              envKeys: [],
+              enabled: devEnabledBuiltinMcpServers.has(name),
+            })),
+            external: [],
+          },
+        });
+      }
+      if (event.type === "mcp.builtin.setEnabled") {
+        if (event.payload.enabled) {
+          devEnabledBuiltinMcpServers.add(event.payload.name);
+        } else {
+          devEnabledBuiltinMcpServers.delete(event.payload.name);
+        }
+        emit({
+          type: "mcp.list",
+          payload: {
+            builtin: DEV_BUILTIN_MCP_SERVER_NAMES.map((name) => ({
+              name,
+              type: "builtin",
+              command: "builtin",
+              args: [],
+              envKeys: [],
+              enabled: devEnabledBuiltinMcpServers.has(name),
+            })),
             external: [],
           },
         });
@@ -579,6 +621,7 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       "session.workflow.catalog.list",
       "agent.list",
       "mcp.list",
+      "mcp.builtin.setEnabled",
     ]);
 
     return {

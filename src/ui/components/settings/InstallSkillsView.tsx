@@ -15,6 +15,7 @@ import { cn } from "./skill-utils";
 const MARKET_PAGE_SIZE = 24;
 const MARKET_SEARCH_STEP = 60;
 const MARKET_SEARCH_DEBOUNCE_MS = 450;
+type MarketTab = "hot" | "trending" | "alltime";
 
 // Upstream SkillsShSkill shape (from skills.sh marketplace)
 interface SkillsShSkill {
@@ -23,8 +24,20 @@ interface SkillsShSkill {
   name: string;
   source: string;
   description?: string;
+  zh_description?: string;
+  detail_url?: string;
+  repo_url?: string;
   installs: number;
 }
+
+type MarketPreviewNotice = {
+  title: string;
+  description: string;
+  primaryLabel: string;
+  primaryUrl: string;
+  secondaryLabel: string;
+  secondaryUrl: string;
+};
 
 type GitPreviewResult = {
   temp_dir: string;
@@ -66,19 +79,82 @@ function getMarketSourceAvatarLabel(source: string): string {
   return owner.slice(0, 2).toUpperCase();
 }
 
+function normalizeMarketSource(source: string): string {
+  return source.trim().replace(/^@/, "").replace(/^\/+|\/+$/g, "");
+}
+
+function buildSkillDetailUrl(source: string, skillId: string): string {
+  return `https://skills.sh/${normalizeMarketSource(source)}/${skillId.trim().replace(/^\/+|\/+$/g, "")}`;
+}
+
+function buildSkillRepoUrl(source: string): string {
+  return `https://github.com/${normalizeMarketSource(source)}`;
+}
+
+function stripUrlProtocol(url: string): string {
+  return url.replace(/^https?:\/\//, "");
+}
+
+function formatInstallCount(installs: number): string {
+  if (installs >= 1_000_000) return `${(installs / 1_000_000).toFixed(1)}M`;
+  if (installs >= 1_000) return `${(installs / 1_000).toFixed(1)}K`;
+  return String(installs);
+}
+
+function isPreviewMarketUnsupported(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes("ipc invoke")
+    || (normalized.includes("preview") && normalized.includes("ipc"))
+    || normalized.includes("electron client")
+    || normalized.includes("electron 客户端");
+}
+
+function buildMarketPreviewNotice(query: string, marketTab: MarketTab): MarketPreviewNotice {
+  const trimmedQuery = query.trim();
+  if (trimmedQuery) {
+    return {
+      title: "浏览器预览态不支持直接读取技能市场",
+      description: `当前搜索词为“${trimmedQuery}”。可以先打开 skills.sh 后再继续搜索和浏览详情。`,
+      primaryLabel: "打开 skills.sh",
+      primaryUrl: "https://skills.sh/",
+      secondaryLabel: "打开 GitHub 技能仓库榜单",
+      secondaryUrl: "https://github.com/topics/agent-skills",
+    };
+  }
+
+  const boardUrl = marketTab === "trending"
+    ? "https://skills.sh/trending"
+    : marketTab === "hot"
+      ? "https://skills.sh/hot"
+      : "https://skills.sh/";
+  const boardLabel = marketTab === "trending" ? "打开趋势榜" : marketTab === "hot" ? "打开热门榜" : "打开总榜";
+
+  return {
+    title: "浏览器预览态不支持直接安装技能",
+    description: "当前页面可以改为外开浏览 skills.sh。正式安装和同步请回到 Electron 客户端中的技能管理页执行。",
+    primaryLabel: boardLabel,
+    primaryUrl: boardUrl,
+    secondaryLabel: "打开 skills.sh 首页",
+    secondaryUrl: "https://skills.sh/",
+  };
+}
+
 export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh, onScanResult, onNavigate }: Props) {
+  void _tools;
   const [activeTab, setActiveTab] = useState<"market" | "local" | "git">("local");
 
   // Market state
-  const [marketTab, setMarketTab] = useState<"hot" | "trending" | "alltime">("alltime");
+  const [marketTab, setMarketTab] = useState<MarketTab>("alltime");
   const [marketQuery, setMarketQuery] = useState("");
   const [marketSourceFilter, setMarketSourceFilter] = useState("all");
   const [marketSkills, setMarketSkills] = useState<SkillsShSkill[]>([]);
+  const [marketDetailsById, setMarketDetailsById] = useState<Record<string, SkillsShSkill>>({});
   const [marketPage, setMarketPage] = useState(1);
   const [marketSearchLimit, setMarketSearchLimit] = useState(MARKET_SEARCH_STEP);
   const [marketLoading, setMarketLoading] = useState(false);
   const [marketLoadingMore, setMarketLoadingMore] = useState(false);
   const [marketError, setMarketError] = useState<string | null>(null);
+  const [marketPreviewNotice, setMarketPreviewNotice] = useState<MarketPreviewNotice | null>(null);
   const [installingMarketRefs, setInstallingMarketRefs] = useState<Set<string>>(new Set());
   const [marketReloadKey, setMarketReloadKey] = useState(0);
   const [debouncedMarketQuery, setDebouncedMarketQuery] = useState("");
@@ -107,6 +183,14 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
       electronApi.invoke(channel, ...args) as Promise<T>,
     [electronApi],
   );
+
+  const openExternalUrl = useCallback(async (url: string) => {
+    try {
+      await invoke("shell:openExternal", url);
+    } catch {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  }, [invoke]);
 
   // Installed source refs for market "already installed" check
   const installedSourceRefs = useMemo(() => {
@@ -140,6 +224,7 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
     setMarketLoading(true);
     if (!loadingMore) setMarketPage(1);
     setMarketError(null);
+    setMarketPreviewNotice(null);
 
     let stale = false;
     const request = query
@@ -155,6 +240,11 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
       .catch((e) => {
         if (stale) return;
         const message = String(e);
+        if (isPreviewMarketUnsupported(message)) {
+          setMarketSkills([]);
+          setMarketPreviewNotice(buildMarketPreviewNotice(query, marketTab));
+          return;
+        }
         setMarketError(message);
         toast.error(message);
       })
@@ -405,6 +495,13 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
   const currentMarketPage = Math.min(marketPage, totalMarketPages);
   const marketPageStart = (currentMarketPage - 1) * MARKET_PAGE_SIZE;
   const paginatedMarketSkills = filteredMarketSkills.slice(marketPageStart, marketPageStart + MARKET_PAGE_SIZE);
+  const missingMarketDetails = useMemo(
+    () => paginatedMarketSkills.filter((skill) => {
+      const cached = marketDetailsById[skill.id];
+      return !cached || (!cached.description && !cached.detail_url && !cached.repo_url && !cached.zh_description);
+    }),
+    [marketDetailsById, paginatedMarketSkills],
+  );
 
   const visibleMarketPages = Array.from({ length: totalMarketPages }, (_, i) => i + 1).filter((page) => {
     if (totalMarketPages <= 7) return true;
@@ -418,6 +515,28 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
 
   const scanGroups = scanResult?.groups ?? [];
   const pendingGroups = scanGroups.filter((g) => !g.imported);
+
+  useEffect(() => {
+    if (activeTab !== "market" || missingMarketDetails.length === 0) return;
+
+    let stale = false;
+    void invoke<SkillsShSkill[]>("skills:enrichSkillsshSkills", missingMarketDetails)
+      .then((details) => {
+        if (stale || !Array.isArray(details) || details.length === 0) return;
+        setMarketDetailsById((prev) => {
+          const next = { ...prev };
+          for (const detail of details) {
+            next[detail.id] = { ...(next[detail.id] ?? {}), ...detail };
+          }
+          return next;
+        });
+      })
+      .catch(() => undefined);
+
+    return () => {
+      stale = true;
+    };
+  }, [activeTab, invoke, missingMarketDetails]);
 
   const scrollMarketListToTop = () => {
     marketListRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -582,32 +701,79 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
               <div ref={marketListRef} className="scroll-mt-4" />
 
               {filteredMarketSkills.length === 0 ? (
-                <div className="rounded-xl border border-[#E5E6EB] bg-white flex flex-col items-center justify-center px-6 py-14 text-center">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-[#E5E6EB] bg-[#F5F6F8] text-[#86909C]">
-                    <Search className="h-5 w-5" />
+                marketPreviewNotice ? (
+                  <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 px-6 py-8">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="max-w-2xl">
+                        <p className="text-[13px] font-semibold text-amber-700">{marketPreviewNotice.title}</p>
+                        <p className="mt-1 text-[13px] leading-6 text-[#4E5969]">{marketPreviewNotice.description}</p>
+                        <div className="mt-3 space-y-2">
+                          <div className="rounded-lg border border-[#E5E6EB] bg-white px-3 py-2">
+                            <p className="text-[12px] font-medium text-[#86909C]">{marketPreviewNotice.primaryLabel}</p>
+                            <p className="mt-0.5 truncate text-[12px] text-[#4E5969]">
+                              {stripUrlProtocol(marketPreviewNotice.primaryUrl)}
+                            </p>
+                          </div>
+                          <div className="rounded-lg border border-[#E5E6EB] bg-white px-3 py-2">
+                            <p className="text-[12px] font-medium text-[#86909C]">{marketPreviewNotice.secondaryLabel}</p>
+                            <p className="mt-0.5 truncate text-[12px] text-[#4E5969]">
+                              {stripUrlProtocol(marketPreviewNotice.secondaryUrl)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void openExternalUrl(marketPreviewNotice.primaryUrl)}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[13px] font-medium text-white transition-colors hover:bg-accent/90"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          {marketPreviewNotice.primaryLabel}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void openExternalUrl(marketPreviewNotice.secondaryUrl)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#E5E6EB] bg-white px-3 py-2 text-[13px] font-medium text-[#4E5969] transition-colors hover:bg-[#F5F6F8]"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          {marketPreviewNotice.secondaryLabel}
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  <h3 className="mt-4 text-[14px] font-semibold text-[#4E5969]">没有找到技能</h3>
-                  <p className="mt-1 max-w-md text-[13px] text-[#86909C]">
-                    没有匹配当前筛选条件的技能，请尝试其他关键词或筛选条件
-                  </p>
-                </div>
+                ) : (
+                  <div className="rounded-xl border border-[#E5E6EB] bg-white flex flex-col items-center justify-center px-6 py-14 text-center">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-[#E5E6EB] bg-[#F5F6F8] text-[#86909C]">
+                      <Search className="h-5 w-5" />
+                    </div>
+                    <h3 className="mt-4 text-[14px] font-semibold text-[#4E5969]">没有找到技能</h3>
+                    <p className="mt-1 max-w-md text-[13px] text-[#86909C]">
+                      没有匹配当前筛选条件的技能，请尝试其他关键词或筛选条件
+                    </p>
+                  </div>
+                )
               ) : (
                 <>
                   <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-3">
                     {paginatedMarketSkills.map((skill) => {
-                      const displayName = skill.name || skill.skill_id;
-                      const showSkillId = skill.skill_id.trim() !== displayName.trim();
-                      const owner = skill.source.split("/")[0];
-                      const avatarLabel = getMarketSourceAvatarLabel(skill.source);
-                      const sourceRef = `${skill.source}/${skill.skill_id}`;
+                      const enrichedSkill = { ...skill, ...(marketDetailsById[skill.id] ?? {}) };
+                      const displayName = enrichedSkill.name || enrichedSkill.skill_id;
+                      const showSkillId = enrichedSkill.skill_id.trim() !== displayName.trim();
+                      const owner = enrichedSkill.source.split("/")[0];
+                      const avatarLabel = getMarketSourceAvatarLabel(enrichedSkill.source);
+                      const sourceRef = `${enrichedSkill.source}/${enrichedSkill.skill_id}`;
                       const isInstalled = installedSourceRefs.has(sourceRef);
                       const isInstalling = installingMarketRefs.has(sourceRef);
-                      const skillsShUrl = `https://skills.sh/${skill.source}/${skill.skill_id}`;
+                      const skillsShUrl = enrichedSkill.detail_url || buildSkillDetailUrl(enrichedSkill.source, enrichedSkill.skill_id);
+                      const repoUrl = enrichedSkill.repo_url || buildSkillRepoUrl(enrichedSkill.source);
+                      const chineseIntro = enrichedSkill.zh_description?.trim();
+                      const description = enrichedSkill.description?.trim();
 
                       return (
                         <div
-                          key={skill.id}
-                          className="rounded-xl border border-[#E5E6EB] bg-white flex flex-col gap-2 p-3 transition-colors hover:border-[#C9CDD4]"
+                          key={enrichedSkill.id}
+                          className="rounded-xl border border-[#E5E6EB] bg-white flex flex-col gap-3 p-3 transition-colors hover:border-[#C9CDD4]"
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -623,65 +789,92 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
                                   {displayName}
                                 </h3>
                                 {showSkillId && (
-                                  <p className="truncate text-[13px] leading-4 text-[#86909C]">{skill.skill_id}</p>
+                                  <p className="truncate text-[12px] leading-4 text-[#86909C]">{enrichedSkill.skill_id}</p>
                                 )}
                               </div>
                             </div>
-                            <div className="flex shrink-0 items-center gap-1">
-                              <button
-                                onClick={() => window.open(skillsShUrl, "_blank")}
-                                className="rounded-[5px] p-1 text-[#86909C] transition-colors hover:bg-[#F2F3F5] hover:text-[#4E5969]"
-                                title="在 skills.sh 查看"
+                            {isInstalled && (
+                              <span
+                                className="rounded-[5px] border border-emerald-500/20 bg-emerald-500/10 p-1 text-emerald-500"
+                                title="已安装"
                               >
-                                <ExternalLink className="h-3.5 w-3.5" />
-                              </button>
-                              {isInstalled && (
-                                <span className="rounded-[5px] border border-emerald-500/20 bg-emerald-500/10 p-1 text-emerald-500"
-                                  title="已安装">
-                                  <DownloadCloud className="h-3.5 w-3.5" />
-                                </span>
-                              )}
-                            </div>
+                                <DownloadCloud className="h-3.5 w-3.5" />
+                              </span>
+                            )}
                           </div>
 
                           <div className="flex flex-wrap items-center gap-1">
                             <button
                               type="button"
-                              onClick={() => setMarketSourceFilter(skill.source)}
-                              disabled={marketSourceFilter === skill.source}
+                              onClick={() => setMarketSourceFilter(enrichedSkill.source)}
+                              disabled={marketSourceFilter === enrichedSkill.source}
                               className={cn(
-                                "rounded-[5px] bg-accent/8 px-1.5 py-0.5 text-[13px] leading-4 font-medium text-accent transition-colors",
-                                marketSourceFilter === skill.source
+                                "rounded-[5px] bg-accent/8 px-1.5 py-0.5 text-[12px] leading-4 font-medium text-accent transition-colors",
+                                marketSourceFilter === enrichedSkill.source
                                   ? "cursor-default opacity-90"
                                   : "hover:bg-accent/15",
                               )}
                             >
-                              @{skill.source}
+                              @{enrichedSkill.source}
                             </button>
-                            {marketTab === "alltime" && skill.installs > 0 && (
-                              <span className="inline-flex items-center gap-1 rounded-[5px] border border-[#E5E6EB] bg-[#F5F6F8] px-1.5 py-0.5 text-[13px] leading-4 text-[#86909C]">
+                            {marketTab === "alltime" && enrichedSkill.installs > 0 && (
+                              <span className="inline-flex items-center gap-1 rounded-[5px] border border-[#E5E6EB] bg-[#F5F6F8] px-1.5 py-0.5 text-[12px] leading-4 text-[#86909C]">
                                 <DownloadCloud className="h-3 w-3" />
-                                {skill.installs >= 1_000_000
-                                  ? `${(skill.installs / 1_000_000).toFixed(1)}M`
-                                  : skill.installs >= 1_000
-                                    ? `${(skill.installs / 1_000).toFixed(1)}K`
-                                    : skill.installs}
+                                {formatInstallCount(enrichedSkill.installs)}
                               </span>
                             )}
                             {isInstalled && (
-                              <span className="inline-flex items-center gap-1 rounded-[5px] border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[13px] leading-4 font-medium text-emerald-500">
+                              <span className="inline-flex items-center gap-1 rounded-[5px] border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[12px] leading-4 font-medium text-emerald-500">
                                 <DownloadCloud className="h-3 w-3" />
                                 已安装
                               </span>
                             )}
                           </div>
 
+                          <div className="space-y-2">
+                            {chineseIntro && (
+                              <div className="rounded-lg border border-accent/15 bg-accent/5 px-2.5 py-2">
+                                <p className="text-[11px] font-medium tracking-wide text-accent">中文导读</p>
+                                <p className="mt-1 text-[12px] leading-5 text-[#4E5969]">{chineseIntro}</p>
+                              </div>
+                            )}
+                            <div className="min-h-[68px] rounded-lg border border-[#F2F3F5] bg-[#FAFBFC] px-2.5 py-2">
+                              <p className="text-[11px] font-medium tracking-wide text-[#86909C]">Description</p>
+                              <p className="mt-1 text-[12px] leading-5 text-[#4E5969]">
+                                {description || "暂无公开描述，可点击下方链接前往 skills.sh 查看详情。"}
+                              </p>
+                            </div>
+                            <div className="rounded-lg border border-[#F2F3F5] bg-white px-2.5 py-2">
+                              <p className="text-[11px] font-medium tracking-wide text-[#86909C]">技能页地址</p>
+                              <p className="mt-1 truncate text-[12px] text-[#4E5969]">{stripUrlProtocol(skillsShUrl)}</p>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void openExternalUrl(skillsShUrl)}
+                              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#E5E6EB] bg-white px-3 py-2 text-[12px] font-medium text-[#4E5969] transition-colors hover:bg-[#F5F6F8]"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                              浏览器打开
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void openExternalUrl(repoUrl)}
+                              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#E5E6EB] bg-white px-3 py-2 text-[12px] font-medium text-[#4E5969] transition-colors hover:bg-[#F5F6F8]"
+                            >
+                              <GitBranch className="h-3.5 w-3.5" />
+                              打开仓库
+                            </button>
+                          </div>
+
                           <button
                             type="button"
-                            onClick={() => handleInstallMarketSkill(skill)}
+                            onClick={() => handleInstallMarketSkill(enrichedSkill)}
                             disabled={isInstalled || isInstalling}
                             className={cn(
-                              "mt-auto inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors",
+                              "mt-auto inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors",
                               isInstalled
                                 ? "cursor-default border border-emerald-500/20 bg-emerald-500/10 text-emerald-600"
                                 : "bg-accent text-white hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-70",

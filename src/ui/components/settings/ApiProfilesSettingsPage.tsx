@@ -123,6 +123,16 @@ type ApiProfileTestResult = {
   error?: string;
 };
 
+type CodexManualCredential = {
+  access_token: string;
+  refresh_token?: string;
+  account_id: string;
+  email?: string;
+  type?: string;
+  expired?: string;
+  last_refresh?: string;
+};
+
 function isDeepSeekBaseURL(baseURL: string | undefined): boolean {
   try {
     return new URL(baseURL?.trim() || "").hostname === "api.deepseek.com";
@@ -372,24 +382,140 @@ async function testApiConfigInBrowser(profile: ApiConfigProfile, provider: ApiPr
   }
 }
 
-function buildCodexGuidePrompt(profile: ApiConfigProfile): string {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function removeUndefined<T extends Record<string, unknown>>(input: T): Partial<T> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)) as Partial<T>;
+}
+
+function parseJwtPayload(token: string): Record<string, unknown> | null {
+  const [, payload] = token.split(".");
+  if (!payload) return null;
+
+  try {
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "=");
+    return JSON.parse(atob(padded)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function extractCodexAccountId(accessToken: string): string {
+  const payload = parseJwtPayload(accessToken);
+  if (!isRecord(payload)) return "";
+
+  const authClaim = payload["https://api.openai.com/auth"];
+  return stringValue(payload.chatgpt_account_id)
+    || stringValue(payload.account_id)
+    || (isRecord(authClaim) ? stringValue(authClaim.chatgpt_account_id) : "");
+}
+
+function extractCodexEmail(accessToken: string, idToken?: string): string {
+  return stringValue(parseJwtPayload(accessToken)?.email)
+    || (idToken ? stringValue(parseJwtPayload(idToken)?.email) : "");
+}
+
+function normalizeCodexManualCredentialInput(raw: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("Manual Codex credential must be valid JSON.");
+  }
+
+  if (!isRecord(parsed)) {
+    throw new Error("Manual Codex credential must be a JSON object.");
+  }
+
+  const candidates = [
+    isRecord(parsed.tokens) ? parsed.tokens : null,
+    isRecord(parsed.auth) ? parsed.auth : null,
+    parsed,
+  ].filter((item): item is Record<string, unknown> => Boolean(item));
+
+  for (const candidate of candidates) {
+    const accessToken = stringValue(candidate.access_token) || stringValue(candidate.accessToken);
+    if (!accessToken) continue;
+
+    const accountId = stringValue(candidate.account_id)
+      || stringValue(candidate.accountId)
+      || extractCodexAccountId(accessToken);
+    if (!accountId) continue;
+
+    const idToken = stringValue(candidate.id_token) || stringValue(candidate.idToken);
+    const credential: CodexManualCredential = {
+      access_token: accessToken,
+      refresh_token: stringValue(candidate.refresh_token) || stringValue(candidate.refreshToken) || undefined,
+      account_id: accountId,
+      email: stringValue(candidate.email) || extractCodexEmail(accessToken, idToken) || undefined,
+      type: "codex",
+      expired: stringValue(candidate.expired) || stringValue(candidate.expires_at) || stringValue(candidate.expiresAt) || undefined,
+      last_refresh: stringValue(candidate.last_refresh) || stringValue(candidate.lastRefresh) || stringValue(parsed.last_refresh) || stringValue(parsed.lastRefresh) || undefined,
+    };
+    return JSON.stringify(removeUndefined(credential), null, 2);
+  }
+
+  throw new Error("Manual Codex JSON needs access_token plus account_id, or an official Codex auth.json that contains them.");
+}
+
+function buildCodexGuidePrompt(profile: ApiConfigProfile, profiles: ApiConfigProfile[]): string {
+  const profileSummaries = profiles.map((item) => ({
+    id: item.id,
+    name: item.name,
+    enabled: item.enabled,
+    provider: item.provider,
+    baseURL: item.baseURL,
+    model: item.model,
+    smallModel: item.smallModel,
+    analysisModel: item.analysisModel,
+    isTargetCodexProfile: item.id === profile.id,
+    hasSavedCredential: Boolean(item.apiKey.trim()),
+  }));
+
   return [
-    "你在 tech-cc-hub 的系统工作区里，目标是把 Codex OAuth 模型渠道配置到可用状态。",
+    "Hard constraints:",
+    "- This app supports multiple API profiles/providers at the same time. Treat `api-config.json.profiles` as an append/update list, not a single gateway config.",
+    "- Preserve every existing non-Codex profile exactly, including custom/minimax/deepseek gateways, credentials, enabled flags, model fields, and ordering.",
+    "- Do not create, update, delete, disable, rename, reorder, or normalize any API profile from the Agent session.",
+    "- The Agent session is a read-only credential handoff. The user will paste the returned JSON into the settings input box and save manually.",
+    "- Never run a setup command or script that writes `api-config.json`; especially do not run `npm run codex:oauth:setup` for this flow.",
     "",
-    "请用 Agent 引导方式完成，不要让用户手动编辑或粘贴 token JSON。",
+    "Secret-handling rules:",
+    "- Do not print raw secret values in diagnostics, shell output summaries, intermediate updates, or exploratory notes.",
+    "- Exception: the final handoff may contain exactly one fenced `Manual Codex credential JSON` block because the user explicitly needs to paste it into the UI input box.",
+    "- Treat these fields as secrets: `apiKey`, `access_token`, `refresh_token`, `id_token`, `authorization`, `x-api-key`, cookies, and any value from `~/.codex/auth.json`.",
+    "- Do not run broad text searches such as `rg apiKey`, `rg access_token`, or raw `cat/Get-Content` output over config files, backups, caches, or session databases.",
+    "- When reading config files, use a structured parser and print only redacted booleans/counts such as `hasApiKey`, `credentialLength`, profile ids, providers, and model names.",
+    "- Backups may contain secrets. Create them locally when needed, but do not read them back into chat except through the same redacted summary shape.",
     "",
-    "执行顺序：",
-    "1. 在当前仓库运行 `npm run codex:oauth:setup -- --profile-id " + JSON.stringify(profile.id) + " --profile-name " + JSON.stringify(profile.name || "Codex OAuth") + "`。",
-    "2. 脚本会优先复用官方 Codex CLI 的 `~/.codex/auth.json`；如果本机还没登录，会启动 `codex login` 让用户按官方流程完成登录。",
-    "3. 登录完成后脚本会从官方 Codex 凭据导入 access_token / refresh_token / account_id，并写入 tech-cc-hub 的 `api-config.json`。",
-    "4. 完成后提醒用户回到设置页重新打开或刷新配置，再执行“测试连接”。",
-    "5. 如果脚本失败，读取终端错误，优先修复 `codex login status` 未登录、配置文件不可写、Codex CLI 不可用这几类问题。",
+    "Read-only handoff playbook:",
+    "1. Do not open or edit `api-config.json`; the UI snapshot below is enough context for this handoff.",
+    "2. Locate Codex CLI auth at `$env:CODEX_HOME\\auth.json` when `CODEX_HOME` is set, otherwise `$HOME\\.codex\\auth.json`.",
+    "3. If Codex CLI is not logged in, guide the user to run `codex login`; do not run any tech-cc-hub setup/import script.",
+    "4. Read Codex auth with a structured JSON parser. Avoid broad secret searches and do not echo the raw file during diagnostics.",
+    "5. Extract only `access_token`, optional `refresh_token`, `account_id`, optional `email`, optional expiry fields.",
+    "6. Return one fenced `Manual Codex credential JSON` block for the user to paste into the settings input box.",
+    "7. Tell the user to click `Apply manual credential`, then the settings save button, then test the connection.",
     "",
-    "验收标准：",
-    "- `api-config.json` 里存在 provider 为 `codex` 的配置。",
-    "- baseURL 为 `https://chatgpt.com`。",
-    "- 默认主模型为 `gpt-5.5`，小模型/分析模型为 `gpt-5.3-codex-spark`。",
-    "- 凭据只写入本机配置文件，不在聊天中展示 access_token 或 refresh_token。",
+    "你在 tech-cc-hub 的系统工作区里，目标是只引导用户拿到 Codex credential JSON，不自动修改配置。",
+    "",
+    "请用 Agent 引导方式完成：Agent 只负责读取/整理值并显示给用户，用户自己粘贴到设置页输入框保存。",
+    "",
+    "禁止事项：",
+    "- 不要运行 `npm run codex:oauth:setup`。",
+    "- 不要写入、覆盖、格式化、备份或恢复 `api-config.json`。",
+    "- 不要修改任何已有网关、模型来源或 MCP 配置。",
+    "",
+    "最终交付：",
+    "- 输出一个 fenced `Manual Codex credential JSON` 代码块，包含 access_token、可选 refresh_token、account_id、可选 email/type/expired/last_refresh。",
+    "- 提醒用户把这段 JSON 粘贴到 Codex 配置卡片的手填输入框，点击 `Apply manual credential`，再点击设置页保存。",
     "",
     "当前 UI 配置快照：",
     JSON.stringify({
@@ -404,6 +530,14 @@ function buildCodexGuidePrompt(profile: ApiConfigProfile): string {
       provider: profile.provider,
       hasSavedCredential: Boolean(profile.apiKey.trim()),
     }, null, 2),
+    "",
+    "Additional acceptance criteria:",
+    "- `api-config.json.profiles` still contains every pre-existing non-Codex profile id from the snapshot below.",
+    "- Non-Codex profiles are not deleted, disabled, renamed, reordered, or overwritten.",
+    "- The final response must include a short before/after profile summary with secrets omitted.",
+    "",
+    "Existing API profile preservation snapshot (no secrets):",
+    JSON.stringify(profileSummaries, null, 2),
   ].join("\n");
 }
 
@@ -415,6 +549,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [expandedModelLists, setExpandedModelLists] = useState<Record<string, boolean>>({});
   const [launchingCodexGuideProfileId, setLaunchingCodexGuideProfileId] = useState<string | null>(null);
+  const [manualCodexCredentialDrafts, setManualCodexCredentialDrafts] = useState<Record<string, string>>({});
 
   const handleImportModels = async (profile: ApiConfigProfile) => {
     setImportStatus(null);
@@ -652,7 +787,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
     try {
       await Promise.resolve(onStartGuideSession({
         title: "Codex 模型渠道引导配置",
-        prompt: buildCodexGuidePrompt(profile),
+        prompt: buildCodexGuidePrompt(profile, profiles),
         agentId: "codex-oauth-guide",
         allowedTools: DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT,
       }));
@@ -660,6 +795,36 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
       setImportStatus({ profileId: profile.id, tone: "error", message: error instanceof Error ? error.message : "启动 Agent 引导配置失败。" });
     } finally {
       setLaunchingCodexGuideProfileId(null);
+    }
+  };
+
+  const handleApplyManualCodexCredential = (profile: ApiConfigProfile) => {
+    const raw = manualCodexCredentialDrafts[profile.id]?.trim() ?? "";
+    if (!raw) {
+      setImportStatus({ profileId: profile.id, tone: "error", message: "Paste Codex credential JSON first." });
+      return;
+    }
+
+    try {
+      const credential = normalizeCodexManualCredentialInput(raw);
+      onChange((current) => current.map((item) => (
+        item.id === profile.id
+          ? {
+            ...item,
+            apiKey: credential,
+            baseURL: CODEX_OAUTH_BASE_URL,
+            provider: "codex",
+          }
+          : item
+      )));
+      setManualCodexCredentialDrafts((current) => ({ ...current, [profile.id]: "" }));
+      setImportStatus({ profileId: profile.id, tone: "success", message: "Manual Codex credential applied. Click the settings save button to persist it; secret values were not printed." });
+    } catch (error) {
+      setImportStatus({
+        profileId: profile.id,
+        tone: "error",
+        message: error instanceof Error ? error.message : "Manual Codex credential is invalid.",
+      });
     }
   };
 
@@ -825,6 +990,44 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
                       Codex Responses
                     </span>
                   </div>
+                  <details className="rounded-2xl border border-ink-900/10 bg-white/80 px-3 py-2 text-xs text-muted">
+                    <summary className="cursor-pointer select-none font-semibold text-ink-800">
+                      Manual credential JSON fallback
+                    </summary>
+                    <div className="mt-3 grid gap-2">
+                      <p className="leading-5">
+                        Use this only when the guided setup cannot run on this machine. Paste official Codex auth.json content, or a JSON object with access_token and account_id. The value is applied to this profile and cleared from this box; click the settings save button to persist it.
+                      </p>
+                      <textarea
+                        spellCheck={false}
+                        rows={5}
+                        className="w-full rounded-xl border border-ink-900/10 bg-surface px-3 py-2 font-mono text-[11px] text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
+                        placeholder={'{"access_token":"...","refresh_token":"...","account_id":"..."}'}
+                        value={manualCodexCredentialDrafts[profile.id] ?? ""}
+                        onChange={(event) => setManualCodexCredentialDrafts((current) => ({
+                          ...current,
+                          [profile.id]: event.target.value,
+                        }))}
+                      />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          className="rounded-xl border border-emerald-500/20 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={!manualCodexCredentialDrafts[profile.id]?.trim()}
+                          onClick={() => handleApplyManualCodexCredential(profile)}
+                        >
+                          Apply manual credential
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-xl border border-ink-900/10 bg-white px-3 py-1.5 text-xs text-ink-700 hover:bg-surface"
+                          onClick={() => setManualCodexCredentialDrafts((current) => ({ ...current, [profile.id]: "" }))}
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+                  </details>
                 </div>
               ) : (
                 <label className="grid gap-1.5">

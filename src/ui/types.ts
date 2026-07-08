@@ -2,6 +2,7 @@ import type { SDKControlGetContextUsageResponse, SDKMessage, PermissionResult } 
 import type { SessionPlanSnapshot } from "../shared/plan-progress.js";
 import type { PromptLedgerMessage } from "../shared/prompt-ledger.js";
 import type { LinkedWorkspaceContext } from "../shared/linked-workspaces.js";
+import type { BuiltinMcpServerName } from "../shared/builtin-mcp-registry.js";
 import type { SessionExecutionMode } from "../shared/session-semantics.js";
 import type { SessionWorkflowState, WorkflowScope, WorkflowSpecDocument } from "../shared/workflow-markdown.js";
 import type { WorkflowRunRecord } from "../shared/workflows/workflow-runs.js";
@@ -425,6 +426,7 @@ export type ClientEvent =
   | { type: "task.execution.logs"; payload: { taskId: string } }
   // MCP client events
   | { type: "mcp.list" }
+  | { type: "mcp.builtin.setEnabled"; payload: { name: BuiltinMcpServerName; enabled: boolean } }
   // Note CRUD client events
   | { type: "note.list" }
   | { type: "note.create"; payload: { title: string; content: string } }

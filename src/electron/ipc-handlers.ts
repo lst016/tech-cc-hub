@@ -8,7 +8,12 @@ import {
 } from "../shared/attachments.js";
 import { buildPromptLedgerMessage, type PromptLedgerMessage, type PromptLedgerSource } from "../shared/prompt-ledger.js";
 import { createInitialSessionWorkflowState, parseWorkflowMarkdown } from "../shared/workflow-markdown.js";
-import { listBuiltinMcpServerInfos } from "../shared/builtin-mcp-registry.js";
+import {
+  buildNextBuiltinMcpServerEnabledConfig,
+  isBuiltinMcpServerName,
+  listBuiltinMcpServerInfos,
+  resolveEnabledBuiltinMcpServerNames,
+} from "../shared/builtin-mcp-registry.js";
 import { runClaude, type RunnerHandle } from "./libs/runner/runner.js";
 import { buildRunnerReuseKey } from "./libs/runner/runner-reuse.js";
 import { persistImageAttachmentReference, rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
@@ -1980,9 +1985,29 @@ export async function handleClientEvent(event: ClientEvent) {
   if (event.type === "mcp.list") {
     const config = loadGlobalRuntimeConfig();
 
-    const builtin = listBuiltinMcpServerInfos();
+    const builtin = listBuiltinMcpServerInfos(resolveEnabledBuiltinMcpServerNames(config));
     const external = listExternalMcpServerInfos(config);
 
+    emit({ type: "mcp.list", payload: { builtin, external } });
+    return;
+  }
+
+  if (event.type === "mcp.builtin.setEnabled") {
+    const serverName = event.payload.name;
+    if (!isBuiltinMcpServerName(serverName)) {
+      emit({ type: "runner.error", payload: { message: `Unknown built-in MCP server: ${String(serverName)}` } });
+      return;
+    }
+
+    const nextConfig = buildNextBuiltinMcpServerEnabledConfig(
+      loadGlobalRuntimeConfig(),
+      serverName,
+      Boolean(event.payload.enabled),
+    );
+    saveGlobalRuntimeConfig(nextConfig);
+
+    const builtin = listBuiltinMcpServerInfos(resolveEnabledBuiltinMcpServerNames(nextConfig));
+    const external = listExternalMcpServerInfos(nextConfig);
     emit({ type: "mcp.list", payload: { builtin, external } });
     return;
   }

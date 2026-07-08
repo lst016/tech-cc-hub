@@ -51,6 +51,15 @@ export type BuiltinMcpServerDefinition = {
   promptHints?: string[];
 };
 
+export const DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES: readonly BuiltinMcpServerName[] = [
+  "tech-cc-hub-browser",
+  "tech-cc-hub-admin",
+  "tech-cc-hub-design",
+  "tech-cc-hub-cron",
+  "tech-cc-hub-plan",
+  "tech-cc-hub-knowledge",
+];
+
 export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
   {
     name: "tech-cc-hub-browser",
@@ -194,7 +203,7 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
     command: "builtin",
     args: [],
     envKeys: [],
-    enabled: true,
+    enabled: false,
     iconKey: "figma",
     description: "Figma REST API tools backed by the user's locally saved Personal Access Token. Reads metadata/nodes, extracts design summaries and tokens, runs design-system/UX audits, generates Tailwind drafts, and inspects exports, comments, versions, library assets, variables, and dev resources without Codex OAuth.",
     iconClassName: "border-cyan-500/15 bg-cyan-50 text-cyan-700",
@@ -275,7 +284,7 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
     command: "builtin",
     args: [],
     envKeys: [],
-    enabled: true,
+    enabled: false,
     iconKey: "code",
     description: "IntelliJ IDEA 2021-2026 启动与复用能力。优先使用 JetBrains Toolbox 脚本适配热更新启动，再回退到最新安装的 IDEA 启动器。",
     iconClassName: "border-sky-500/15 bg-sky-50 text-sky-700",
@@ -387,15 +396,92 @@ export function getBuiltinMcpServerDefinition(name: string): BuiltinMcpServerDef
   return BUILTIN_MCP_SERVERS.find((server) => server.name === name);
 }
 
-export function listBuiltinMcpServerInfos(): Array<Pick<BuiltinMcpServerDefinition, "name" | "type" | "command" | "args" | "envKeys" | "enabled">> {
-  return BUILTIN_MCP_SERVERS.map(({ name, type, command, args, envKeys, enabled }) => ({
+export function listBuiltinMcpServerInfos(
+  enabledServerNames: readonly BuiltinMcpServerName[] = DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES,
+): Array<Pick<BuiltinMcpServerDefinition, "name" | "type" | "command" | "args" | "envKeys" | "enabled">> {
+  const enabledNames = new Set(enabledServerNames);
+  return BUILTIN_MCP_SERVERS.map(({ name, type, command, args, envKeys }) => ({
     name,
     type,
     command,
     args: [...args],
     envKeys: [...envKeys],
-    enabled,
+    enabled: enabledNames.has(name),
   }));
+}
+
+export function resolveEnabledBuiltinMcpServerNames(config: unknown): BuiltinMcpServerName[] {
+  const configured = getConfiguredEnabledBuiltinMcpServerNames(config);
+  if (!configured) {
+    return [...DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES];
+  }
+  return normalizeBuiltinMcpServerConfigNames(configured);
+}
+
+export function filterEnabledBuiltinMcpServerNames(
+  serverNames: readonly BuiltinMcpServerName[],
+  config: unknown,
+): BuiltinMcpServerName[] {
+  const enabledNames = new Set(resolveEnabledBuiltinMcpServerNames(config));
+  return serverNames.filter((serverName) => enabledNames.has(serverName));
+}
+
+export function buildNextBuiltinMcpServerEnabledConfig(
+  config: unknown,
+  serverName: BuiltinMcpServerName,
+  enabled: boolean,
+): Record<string, unknown> {
+  const nextConfig = isRecord(config) ? { ...config } : {};
+  const currentEnabledNames = new Set(resolveEnabledBuiltinMcpServerNames(config));
+  if (enabled) {
+    currentEnabledNames.add(serverName);
+  } else {
+    currentEnabledNames.delete(serverName);
+  }
+
+  const mcp = isRecord(nextConfig.mcp) ? { ...nextConfig.mcp } : {};
+  const builtin = isRecord(mcp.builtin) ? { ...mcp.builtin } : {};
+  builtin.enabledServers = BUILTIN_MCP_SERVERS
+    .map((server) => server.name)
+    .filter((name) => currentEnabledNames.has(name));
+  mcp.builtin = builtin;
+  nextConfig.mcp = mcp;
+
+  return nextConfig;
+}
+
+export function isBuiltinMcpServerName(value: unknown): value is BuiltinMcpServerName {
+  return BUILTIN_MCP_SERVERS.some((server) => server.name === value);
+}
+
+function getConfiguredEnabledBuiltinMcpServerNames(config: unknown): unknown[] | null {
+  if (!isRecord(config)) {
+    return null;
+  }
+
+  const mcp = isRecord(config.mcp) ? config.mcp : null;
+  const builtin = mcp && isRecord(mcp.builtin) ? mcp.builtin : null;
+  if (builtin && Array.isArray(builtin.enabledServers)) {
+    return builtin.enabledServers;
+  }
+
+  const legacyBuiltin = isRecord(config.builtinMcpServers) ? config.builtinMcpServers : null;
+  if (legacyBuiltin && Array.isArray(legacyBuiltin.enabledServers)) {
+    return legacyBuiltin.enabledServers;
+  }
+
+  return null;
+}
+
+function normalizeBuiltinMcpServerConfigNames(value: unknown[]): BuiltinMcpServerName[] {
+  const names = new Set(value.filter(isBuiltinMcpServerName));
+  return BUILTIN_MCP_SERVERS
+    .map((server) => server.name)
+    .filter((serverName) => names.has(serverName));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 export function listBuiltinMcpToolNames(): string[] {

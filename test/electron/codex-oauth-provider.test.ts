@@ -384,9 +384,26 @@ test("codex streaming responses are folded into anthropic-compatible output", ()
   assert.equal(message.usage.output_tokens, 5);
 });
 
-test("codex settings use agent-guided setup instead of exposing oauth secrets", () => {
+test("codex settings use read-only agent handoff plus manual credential input", () => {
   const source = readFileSync("src/ui/components/settings/ApiProfilesSettingsPage.tsx", "utf8");
 
+  assert.match(source, /Manual credential JSON fallback/);
+  assert.match(source, /normalizeCodexManualCredentialInput/);
+  assert.match(source, /read-only credential handoff/);
+  assert.match(source, /Manual Codex credential JSON/);
+  assert.match(source, /Do not create, update, delete, disable, rename, reorder, or normalize any API profile from the Agent session/);
+  assert.match(source, /Never run a setup command or script that writes `api-config\.json`/);
+  assert.match(source, /do not run any tech-cc-hub setup\/import script/);
+  assert.match(source, /multiple API profiles\/providers/);
+  assert.match(source, /Preserve every existing non-Codex profile exactly/);
+  assert.match(source, /Secret-handling rules/);
+  assert.match(source, /Do not print raw secret values in diagnostics/);
+  assert.match(source, /Do not run broad text searches such as `rg apiKey`/);
+  assert.match(source, /use a structured parser and print only redacted booleans\/counts/);
+  assert.match(source, /Existing API profile preservation snapshot/);
+  assert.doesNotMatch(source, /Run the setup command below/);
+  assert.doesNotMatch(source, /timestamped backup/);
+  assert.doesNotMatch(source, /npm run codex:oauth:setup -- --profile-id/);
   assert.match(source, /Agent 引导配置/);
   assert.doesNotMatch(source, /OAuth 凭据/);
   assert.doesNotMatch(source, /Codex 授权/);

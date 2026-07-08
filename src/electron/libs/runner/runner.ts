@@ -19,7 +19,10 @@ import {
   shouldSuppressRunnerErrorAfterSuccessfulResult,
 } from "../../../shared/runner-status.js";
 import { canMainModelReadImages } from "../../../shared/models/model-capabilities.js";
-import type { BuiltinMcpServerName } from "../../../shared/builtin-mcp-registry.js";
+import {
+  filterEnabledBuiltinMcpServerNames,
+  type BuiltinMcpServerName,
+} from "../../../shared/builtin-mcp-registry.js";
 import {
   CLAUDE_AGENT_TEAMS_ENV_VAR,
   TASK_TOOL_NAMES,
@@ -557,6 +560,11 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
     return profile;
   };
 
+  const resolveUserEnabledBuiltinMcpServers = (
+    serverNames: readonly BuiltinMcpServerName[],
+    config: unknown = getGlobalRuntimeConfig(),
+  ): BuiltinMcpServerName[] => filterEnabledBuiltinMcpServerNames(serverNames, config);
+
   const ensureMcpServersForPrompt = async (
     nextPrompt: string,
     nextAttachments: readonly PromptAttachment[],
@@ -566,12 +574,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       return;
     }
 
-    const nextBuiltinMcpServerNames = new Set(profile.builtinMcpServers);
+    const enabledBuiltinMcpServerNames = resolveUserEnabledBuiltinMcpServers(profile.builtinMcpServers);
+    const nextBuiltinMcpServerNames = new Set(enabledBuiltinMcpServerNames);
     if (builtinMcpServerSetsEqual(activeBuiltinMcpServerNames, nextBuiltinMcpServerNames)) {
       return;
     }
 
-    const enabledBuiltinMcpServerNames = [...nextBuiltinMcpServerNames];
     const result = await activeQuery.setMcpServers({
       ...getExternalMcpServers(latestGlobalRuntimeConfig ?? getGlobalRuntimeConfig(), { projectDir: latestProjectCwd }),
       ...getBuiltinMcpServers({
@@ -797,7 +805,11 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           figmaSvgAssetSeen = true;
         },
       });
-      const enabledBuiltinMcpServerNames = [...desiredBuiltinMcpServerNames];
+      const enabledBuiltinMcpServerNames = resolveUserEnabledBuiltinMcpServers(
+        [...desiredBuiltinMcpServerNames],
+        syncedGlobalRuntimeConfig,
+      );
+      const enabledBuiltinMcpServerSet = new Set(enabledBuiltinMcpServerNames);
       activeBuiltinMcpServerNames = new Set(enabledBuiltinMcpServerNames);
       const builtinMcpServers = getBuiltinMcpServers({
         sessionId: session.id,
@@ -813,14 +825,14 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       const systemPromptAppend = combineSystemPromptAppend(
         buildGlobalRuntimePromptAppend(syncedGlobalRuntimeConfig, mergedEnv),
         buildFeishuDocumentFetchPromptAppend(currentDisplayPrompt, mergedEnv),
-        buildAdminConfigPromptAppend(),
+        enabledBuiltinMcpServerSet.has("tech-cc-hub-admin") ? buildAdminConfigPromptAppend() : undefined,
         buildInvokedLocalSlashDefinitionPromptAppend(currentDisplayPrompt, projectCwd),
         agentContext.systemPromptAppend,
         runtimeProfile.includeProjectMemoryPrompt ? buildClaudeProjectMemoryPromptAppend(projectCwd) : undefined,
-        buildKnowledgeOverviewPromptAppend(projectCwd),
+        enabledBuiltinMcpServerSet.has("tech-cc-hub-knowledge") ? buildKnowledgeOverviewPromptAppend(projectCwd) : undefined,
         buildToolCallOptimizationPromptAppend(),
-        runtimeProfile.includeBrowserPrompt ? buildBrowserWorkbenchPromptAppend() : undefined,
-        runtimeProfile.includeDesignPrompt ? buildDesignParityPromptAppend() : undefined,
+        runtimeProfile.includeBrowserPrompt && enabledBuiltinMcpServerSet.has("tech-cc-hub-browser") ? buildBrowserWorkbenchPromptAppend() : undefined,
+        runtimeProfile.includeDesignPrompt && enabledBuiltinMcpServerSet.has("tech-cc-hub-design") ? buildDesignParityPromptAppend() : undefined,
         buildBuiltinMcpRegistryPromptAppend(enabledBuiltinMcpServerNames),
         runtimeProfile.includeClaudeCompatPrompt ? buildClaudeCodeCompatFeaturePromptAppend({
           includeAgentTeamsHint: runtimeProfile.enableAgentTeams,
@@ -941,6 +953,9 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                 return message ? { behavior: "deny", message } : null;
               },
               () => {
+                if (!activeBuiltinMcpServerNames.has("tech-cc-hub-knowledge")) {
+                  return null;
+                }
                 const message = getCodeGraphFirstDenyMessage(
                   toolName,
                   projectCwd,
@@ -977,7 +992,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                 const message = getAuthenticatedUrlWebFetchDenyMessage(
                   toolName,
                   effectiveInput,
-                  runtimeProfile.includeBrowserPrompt,
+                  activeBuiltinMcpServerNames.has("tech-cc-hub-browser"),
                   currentDisplayPrompt,
                 );
                 return message ? { behavior: "deny", message } : null;

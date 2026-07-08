@@ -1,5 +1,6 @@
 import type { SDKControlGetContextUsageResponse, SDKMessage, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import type { LinkedWorkspaceContext } from "../shared/linked-workspaces.js";
+import type { BuiltinMcpServerName } from "../shared/builtin-mcp-registry.js";
 import type { PromptLedgerMessage } from "../shared/prompt-ledger.js";
 import type { SessionPlanSnapshot } from "../shared/plan-progress.js";
 import type { SessionExecutionMode } from "../shared/session-semantics.js";
@@ -285,6 +286,7 @@ export type ClientEvent =
   | { type: "agent.list"; payload: { cwd?: string } }
   // MCP client events
   | { type: "mcp.list" }
+  | { type: "mcp.builtin.setEnabled"; payload: { name: BuiltinMcpServerName; enabled: boolean } }
   // Task system client events
   | { type: "task.list"; payload?: { filter?: Record<string, unknown> } }
   | { type: "task.sync"; payload: { provider: string } }

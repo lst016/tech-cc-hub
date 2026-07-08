@@ -3,9 +3,13 @@ import test from "node:test";
 
 import {
   BUILTIN_MCP_SERVERS,
+  DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES,
+  buildNextBuiltinMcpServerEnabledConfig,
   buildBuiltinMcpPromptHints,
+  filterEnabledBuiltinMcpServerNames,
   listBuiltinMcpServerInfos,
   listBuiltinMcpToolNames,
+  resolveEnabledBuiltinMcpServerNames,
 } from "../../src/shared/builtin-mcp-registry.js";
 
 test("built-in MCP registry drives the settings list", () => {
@@ -15,6 +19,37 @@ test("built-in MCP registry drives the settings list", () => {
   assert.deepEqual(serverInfos.map((server) => server.name), registryNames);
   assert.equal(registryNames.includes("tech-cc-hub-idea"), true);
   assert.equal(serverInfos.every((server) => server.type === "builtin" && server.command === "builtin"), true);
+});
+
+test("built-in MCP defaults keep heavy optional servers opt-in", () => {
+  const serverInfos = listBuiltinMcpServerInfos();
+  const enabledNames = serverInfos.filter((server) => server.enabled).map((server) => server.name);
+
+  assert.deepEqual(enabledNames, [...DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES]);
+  assert.equal(enabledNames.includes("tech-cc-hub-browser"), true);
+  assert.equal(enabledNames.includes("tech-cc-hub-admin"), true);
+  assert.equal(enabledNames.includes("tech-cc-hub-design"), true);
+  assert.equal(enabledNames.includes("tech-cc-hub-cron"), true);
+  assert.equal(enabledNames.includes("tech-cc-hub-plan"), true);
+  assert.equal(enabledNames.includes("tech-cc-hub-knowledge"), true);
+  assert.equal(enabledNames.includes("tech-cc-hub-figma"), false);
+  assert.equal(enabledNames.includes("tech-cc-hub-idea"), false);
+});
+
+test("built-in MCP enabled list can be persisted and used to filter runtime servers", () => {
+  const nextConfig = buildNextBuiltinMcpServerEnabledConfig({}, "tech-cc-hub-figma", true);
+  const enabledNames = resolveEnabledBuiltinMcpServerNames(nextConfig);
+
+  assert.equal(enabledNames.includes("tech-cc-hub-figma"), true);
+  assert.equal(enabledNames.includes("tech-cc-hub-idea"), false);
+  assert.deepEqual(
+    filterEnabledBuiltinMcpServerNames([
+      "tech-cc-hub-browser",
+      "tech-cc-hub-figma",
+      "tech-cc-hub-idea",
+    ], nextConfig),
+    ["tech-cc-hub-browser", "tech-cc-hub-figma"],
+  );
 });
 
 test("built-in MCP registry contains displayable tool metadata", () => {

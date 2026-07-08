@@ -54,6 +54,7 @@ import {
 } from "./scanner.js";
 import {
   fetchLeaderboard,
+  enrichSkillsshSkills,
   searchSkillssh,
 } from "./marketplace.js";
 import { skillsDir } from "./central-repo.js";
@@ -1080,6 +1081,10 @@ export function registerSkillManagerHandlers(): void {
 
   registerSkillIpcHandler("skills:searchSkillssh", async (query: string, limit?: number) => {
     return await searchSkillssh(query, limit);
+  });
+
+  registerSkillIpcHandler("skills:enrichSkillsshSkills", async (skills: SkillsShSkill[]) => {
+    return await enrichSkillsshSkills(skills);
   });
 
   registerSkillIpcHandler("skills:installSkillssh", (source: string, skillId: string) => {

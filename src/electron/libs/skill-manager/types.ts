@@ -100,6 +100,10 @@ export interface SkillsShSkill {
   skill_id: string;
   name: string;
   source: string;
+  description?: string;
+  zh_description?: string;
+  detail_url?: string;
+  repo_url?: string;
   installs: number;
 }
 
