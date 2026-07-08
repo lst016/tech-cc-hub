@@ -1076,6 +1076,43 @@ export const useAppStore = create<AppState>((set, get) => ({
         break;
       }
 
+      case "session.renamed": {
+        const { sessionId, title, updatedAt } = event.payload;
+        set((state) => {
+          const nextSessions = { ...state.sessions };
+          const nextArchivedSessions = { ...state.archivedSessions };
+          let changed = false;
+
+          if (nextSessions[sessionId]) {
+            nextSessions[sessionId] = {
+              ...nextSessions[sessionId],
+              title,
+              updatedAt,
+            };
+            changed = true;
+          }
+
+          if (nextArchivedSessions[sessionId]) {
+            nextArchivedSessions[sessionId] = {
+              ...nextArchivedSessions[sessionId],
+              title,
+              updatedAt,
+            };
+            changed = true;
+          }
+
+          if (!changed) {
+            return {};
+          }
+
+          return {
+            sessions: nextSessions,
+            archivedSessions: nextArchivedSessions,
+          };
+        });
+        break;
+      }
+
       case "session.deleted": {
         const { sessionId } = event.payload;
         const state = get();

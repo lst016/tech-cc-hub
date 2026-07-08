@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Dialog from "@radix-ui/react-dialog";
+import { toast } from "sonner";
 import { useAppStore } from "../store/useAppStore";
 import type { AppUpdateStatus, SettingsPageId } from "../types";
 import {
@@ -15,6 +16,7 @@ interface SidebarProps {
   onNewSession: (cwd?: string) => void;
   onArchiveSession: (sessionId: string) => void;
   onUnarchiveSession: (sessionId: string) => void;
+  onRenameSession: (sessionId: string, title: string) => void;
   onRefreshArchivedSessions: () => void;
   onDeleteSession: (sessionId: string) => void;
   onDeleteWorkspace: (sessionIds: string[], workspaceName: string) => void;
@@ -61,6 +63,7 @@ export function Sidebar({
   onNewSession,
   onArchiveSession,
   onUnarchiveSession,
+  onRenameSession,
   onRefreshArchivedSessions,
   onDeleteSession,
   onDeleteWorkspace,
@@ -75,6 +78,8 @@ export function Sidebar({
   const setActiveSessionId = useAppStore((state) => state.setActiveSessionId);
   const [showArchived, setShowArchived] = useState(false);
   const [resumeSessionId, setResumeSessionId] = useState<string | null>(null);
+  const [renameDialog, setRenameDialog] = useState<{ sessionId: string; initialTitle: string } | null>(null);
+  const [renameTitle, setRenameTitle] = useState("");
   const [copied, setCopied] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() => readExpandedWorkspaceGroupsFromStorage());
   const [expandedSessionLists, setExpandedSessionLists] = useState<Record<string, boolean>>({});
@@ -280,6 +285,12 @@ export function Sidebar({
   }, [resumeSessionId]);
 
   useEffect(() => {
+    if (!renameDialog) {
+      setRenameTitle("");
+    }
+  }, [renameDialog]);
+
+  useEffect(() => {
     return () => {
       if (closeTimerRef.current) {
         window.clearTimeout(closeTimerRef.current);
@@ -303,6 +314,26 @@ export function Sidebar({
     closeTimerRef.current = window.setTimeout(() => {
       setResumeSessionId(null);
     }, 3000);
+  };
+
+  const openRenameDialog = (sessionId: string, title: string) => {
+    setRenameDialog({ sessionId, initialTitle: title });
+    setRenameTitle(title);
+  };
+
+  const handleRenameSubmit = () => {
+    if (!renameDialog) return;
+    const nextTitle = renameTitle.trim();
+    if (!nextTitle) {
+      toast.error("会话标题不能为空");
+      return;
+    }
+    if (nextTitle === renameDialog.initialTitle.trim()) {
+      setRenameDialog(null);
+      return;
+    }
+    onRenameSession(renameDialog.sessionId, nextTitle);
+    setRenameDialog(null);
   };
 
   const openSettings = (pageId?: SettingsPageId) => {
@@ -609,6 +640,16 @@ export function Sidebar({
                             <DropdownMenu.Content className="z-50 min-w-[220px] rounded-xl border border-ink-900/10 bg-white p-1 shadow-lg" align="center" sideOffset={8}>
                               <DropdownMenu.Item
                                 className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-700 outline-none hover:bg-ink-900/5"
+                                onSelect={() => openRenameDialog(session.id, session.title)}
+                              >
+                                <svg viewBox="0 0 24 24" className="h-4 w-4 text-ink-500" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                  <path d="M4 20h4l10.5-10.5a2.12 2.12 0 1 0-3-3L5.5 17v3z" />
+                                  <path d="M13.5 6.5l4 4" />
+                                </svg>
+                                重命名这个会话
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Item
+                                className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-700 outline-none hover:bg-ink-900/5"
                                 onSelect={() => showArchived ? onUnarchiveSession(session.id) : onArchiveSession(session.id)}
                               >
                                 <svg viewBox="0 0 24 24" className="h-4 w-4 text-ink-500" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -701,6 +742,71 @@ export function Sidebar({
           </button>
         </div>
       </div>
+      <Dialog.Root
+        open={Boolean(renameDialog)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRenameDialog(null);
+          }
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[21000] bg-ink-900/40 backdrop-blur-sm" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-[21010] w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <Dialog.Title className="text-lg font-semibold text-ink-800">重命名会话</Dialog.Title>
+                <Dialog.Description className="mt-1 text-sm text-muted">
+                  改一个更好找的标题，方便后续继续使用这个会话。
+                </Dialog.Description>
+              </div>
+              <Dialog.Close asChild>
+                <button className="rounded-full p-1 text-ink-500 hover:bg-ink-900/10" aria-label="关闭弹窗">
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M6 6l12 12M18 6l-12 12" />
+                  </svg>
+                </button>
+              </Dialog.Close>
+            </div>
+            <form
+              className="mt-5 space-y-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                handleRenameSubmit();
+              }}
+            >
+              <label className="block">
+                <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-light">会话标题</span>
+                <input
+                  autoFocus
+                  type="text"
+                  value={renameTitle}
+                  onChange={(event) => setRenameTitle(event.target.value)}
+                  maxLength={120}
+                  className="w-full rounded-xl border border-black/10 bg-surface px-3 py-2.5 text-sm text-ink-900 outline-none transition focus:border-accent/40 focus:bg-white focus:ring-2 focus:ring-accent/10"
+                  placeholder="输入新的会话标题"
+                />
+              </label>
+              <div className="flex items-center justify-end gap-2">
+                <Dialog.Close asChild>
+                  <button
+                    type="button"
+                    className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-ink-700 transition hover:bg-surface-tertiary"
+                  >
+                    取消
+                  </button>
+                </Dialog.Close>
+                <button
+                  type="submit"
+                  className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-accent-hover"
+                >
+                  保存
+                </button>
+              </div>
+            </form>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
       <Dialog.Root
         open={!!resumeSessionId}
         onOpenChange={(open) => {

@@ -5,19 +5,19 @@ import test from "node:test";
 const ipcHandlersSource = readFileSync("src/electron/ipc-handlers.ts", "utf8");
 
 test("session continue forces app-managed compression before warm runner or remote resume", () => {
-  assert.match(ipcHandlersSource, /shouldCompressStatelessContinuation\(/);
-  assert.match(ipcHandlersSource, /const shouldForceStatelessCompression = shouldCompressStatelessContinuation\(/);
-  assert.match(ipcHandlersSource, /const canUseRemoteResume =\s*!shouldForceStatelessCompression\s*&&/);
-  assert.match(
-    ipcHandlersSource,
-    /isFigmaOAuthCallback \|\| replacingHistoryId \|\| shouldForceStatelessCompression\s*\?\s*null\s*:\s*getReusableRunnerHandle/,
+  assert.match(ipcHandlersSource, /const continuationPayload = buildStatelessContinuationPayload\(/);
+  assert.match(ipcHandlersSource, /const prompt = continuationPayload\.prompt;/);
+  assert.match(ipcHandlersSource, /const resumeSessionId = undefined;/);
+  assert.ok(
+    ipcHandlersSource.indexOf("if (runnerHandles.has(session.id))") < ipcHandlersSource.indexOf("const continuationPayload = buildStatelessContinuationPayload("),
+    "session.continue should close any warm runner before rebuilding stateless history",
   );
 });
 
 test("prompt ledger keeps full history visible when stateless continuation has not compressed", () => {
   assert.match(
     ipcHandlersSource,
-    /historyMessages: canUseRemoteResume \|\| !continuationPayload\?\.usedCompression \? historyMessagesForRun : \[\]/,
+    /historyMessages: continuationPayload\.usedCompression \? \[\] : historyMessagesForRun/,
   );
 });
 
