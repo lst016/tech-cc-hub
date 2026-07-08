@@ -1,0 +1,60 @@
+# tech-cc-hub CI/CD
+# 构建 Windows 安装包并发布到 Pages 和 Generic Packages
+
+image: node:20-bullseye
+
+stages:
+  - build
+  - package
+  - pages
+
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - node_modules/
+    - .npm/
+
+before_script:
+  - npm ci --prefer-offline --no-audit --no-fund
+
+build:
+  stage: build
+  script:
+    - npm run transpile:electron
+    - npm run build
+  artifacts:
+    paths:
+      - dist-electron/
+      - dist-react/
+      - dist/
+    expire_in: 1 hour
+
+package:
+  stage: package
+  script:
+    - apt-get update && apt-get install -y --no-install-recommends wine64 wine32
+    - npx electron-builder --win --x64 --dir --config.win.forceCodeSigning=false --config.win.signAndEditExecutable=false
+    - npx electron-builder --win --x64 --prepackaged dist/win-unpacked --config.win.forceCodeSigning=false --config.win.signAndEditExecutable=false
+    - |
+      echo "Preparing Pages artifacts..."
+      mkdir -p public/releases
+      cp dist/latest.yml public/releases/ || true
+      cp dist/*.exe public/releases/ || true
+      cp dist/*.exe.blockmap public/releases/ || true
+      cp dist/*.zip public/releases/ || true
+  dependencies:
+    - build
+  artifacts:
+    paths:
+      - public/
+    expire_in: 30 days
+
+pages:
+  stage: pages
+  script:
+    - echo "Pages deploying from public/ directory"
+  artifacts:
+    paths:
+      - public/
+  only:
+    - main

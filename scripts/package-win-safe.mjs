@@ -246,9 +246,8 @@ function ensureWindowsAppUpdateConfig() {
 
   const appUpdatePath = path.join(resourcesDir, "app-update.yml");
   const content = [
-    "provider: github",
-    "owner: lst016",
-    "repo: tech-cc-hub",
+    "provider: generic",
+    "url: https://lushengtao.public.pookgitlab.com/tech-cc-hub/releases",
     "updaterCacheDirName: tech-cc-hub-updater",
     "",
   ].join("\n");

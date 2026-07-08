@@ -15,11 +15,9 @@
     ],
     "publish": [
         {
-            "provider": "github",
-            "owner": "lst016",
-            "repo": "tech-cc-hub",
-            "releaseType": "release",
-            "publishAutoUpdate": true
+            "provider": "generic",
+            "url": "https://lushengtao.public.pookgitlab.com/tech-cc-hub/releases",
+            "channel": "latest"
         }
     ],
     "asarUnpack": [
