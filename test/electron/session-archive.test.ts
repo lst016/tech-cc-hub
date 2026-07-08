@@ -70,6 +70,29 @@ test("SessionStore persists runtime profile state across reloads", () => {
   }
 });
 
+test("SessionStore persists renamed titles across reloads", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tech-cc-hub-session-rename-"));
+  const dbPath = join(dir, "sessions.db");
+  const store = new SessionStore(dbPath);
+
+  try {
+    const session = store.createSession({ title: "Old title", cwd: dir });
+
+    store.updateSession(session.id, { title: "Renamed title" });
+    store.close();
+
+    const reopened = new SessionStore(dbPath);
+    try {
+      assert.equal(reopened.getSession(session.id)?.title, "Renamed title");
+      assert.equal(reopened.listSessions()[0]?.title, "Renamed title");
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("SessionStore skips high-frequency thinking token events", () => {
   const dir = mkdtempSync(join(tmpdir(), "tech-cc-hub-thinking-tokens-"));
   const dbPath = join(dir, "sessions.db");

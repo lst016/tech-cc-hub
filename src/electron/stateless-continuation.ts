@@ -2,6 +2,8 @@ import type { PromptAttachment, StreamMessage } from "./types.js";
 
 type ConversationEntry = { role: "user" | "assistant"; text: string };
 
+type ContentBlock = Record<string, unknown>;
+
 export type StatelessContinuationOptions = {
   contextWindow?: number;
   compressionThresholdPercent?: number;
@@ -19,7 +21,6 @@ export type StatelessContinuationPayload = {
 };
 
 const DEFAULT_RECENT_TURN_COUNT = 5;
-const DEFAULT_RECENT_ENTRY_LIMIT = 12;
 const SUMMARY_ENTRY_PREVIEW_LIMIT = 6;
 const SUMMARY_TEXT_LIMIT = 160;
 const DEFAULT_CONTEXT_WINDOW = 200_000;
@@ -73,6 +74,65 @@ function buildAttachmentHistoryLines(attachments?: PromptAttachment[]): string[]
   return [summarizeAttachments(attachments), ...detailLines].filter(Boolean);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeContentBlocks(content: unknown): Array<string | ContentBlock> {
+  if (Array.isArray(content)) {
+    return content.filter((item): item is string | ContentBlock => typeof item === "string" || isRecord(item));
+  }
+  if (typeof content === "string" || isRecord(content)) {
+    return [content];
+  }
+  return [];
+}
+
+function stringifyStructuredContent(value: unknown): string {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function extractSdkMessageText(message: StreamMessage): ConversationEntry | null {
+  if (message.type !== "user" && message.type !== "assistant") {
+    return null;
+  }
+
+  const sdkMessage = "message" in message && isRecord(message.message) ? message.message : null;
+  if (!sdkMessage) {
+    return null;
+  }
+
+  const textParts = normalizeContentBlocks(sdkMessage.content).map((item) => {
+    if (typeof item === "string") {
+      return item.trim();
+    }
+
+    switch (item.type) {
+      case "text":
+        return typeof item.text === "string" ? item.text.trim() : "";
+      case "tool_result":
+        return stringifyStructuredContent(item.content);
+      case "tool_use": {
+        const toolName = typeof item.name === "string" ? item.name.trim() : "tool";
+        const toolInput = "input" in item ? stringifyStructuredContent(item.input) : "";
+        return toolInput ? `${toolName}: ${toolInput}` : toolName;
+      }
+      default:
+        return "";
+    }
+  }).filter(Boolean);
+
+  const text = textParts.join("\n");
+  return text ? { role: message.type, text } : null;
+}
+
 function extractTextFromMessage(message: StreamMessage): ConversationEntry | null {
   if (message.type === "user_prompt") {
     const text = [message.prompt.trim(), ...buildAttachmentHistoryLines(message.attachments)]
@@ -84,6 +144,11 @@ function extractTextFromMessage(message: StreamMessage): ConversationEntry | nul
   if (message.type === "result" && message.subtype === "success") {
     const text = message.result.trim();
     return text ? { role: "assistant", text } : null;
+  }
+
+  const sdkMessageText = extractSdkMessageText(message);
+  if (sdkMessageText) {
+    return sdkMessageText;
   }
 
   return null;

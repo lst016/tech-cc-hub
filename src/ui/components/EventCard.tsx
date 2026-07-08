@@ -1,4 +1,4 @@
-﻿import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useCallback } from "react";
 import type {
@@ -88,7 +88,27 @@ const toolStatusMap = new Map<string, ToolStatus>();
 const toolStatusListeners = new Set<() => void>();
 const MAX_VISIBLE_LINES = 8;
 const CHAT_SELECTION_BLOCK_SELECTOR = "li, p, pre, blockquote, h1, h2, h3, h4, h5, h6, td, th";
+const CHAT_SELECTION_ACTIVE_BODY_ATTR = "data-chat-selection-active";
+const CHAT_SELECTION_ALLOWED_ATTR = "data-chat-selection-allow";
+const CHAT_SELECTION_POPOVER_ATTR = "data-chat-selection-popover";
 const cx = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(" ");
+
+const enableChatSelectionScope = (container: HTMLElement | null) => {
+  if (typeof document === "undefined" || !container) return;
+  for (const element of document.querySelectorAll<HTMLElement>(`[${CHAT_SELECTION_ALLOWED_ATTR}]`)) {
+    element.removeAttribute(CHAT_SELECTION_ALLOWED_ATTR);
+  }
+  container.setAttribute(CHAT_SELECTION_ALLOWED_ATTR, "true");
+  document.body.setAttribute(CHAT_SELECTION_ACTIVE_BODY_ATTR, "true");
+};
+
+const disableChatSelectionScope = () => {
+  if (typeof document === "undefined") return;
+  for (const element of document.querySelectorAll<HTMLElement>(`[${CHAT_SELECTION_ALLOWED_ATTR}]`)) {
+    element.removeAttribute(CHAT_SELECTION_ALLOWED_ATTR);
+  }
+  document.body.removeAttribute(CHAT_SELECTION_ACTIVE_BODY_ATTR);
+};
 
 const getSelectionAnchorRect = (range: Range, anchorNode: Node | null, focusNode: Node | null): DOMRect | null => {
   const directRect = range.getBoundingClientRect();
@@ -914,6 +934,7 @@ const CollapsibleText = ({
   const selectionComment = selectionDraft?.comment ?? "";
 
   const clearSelectionDraft = useCallback(() => {
+    disableChatSelectionScope();
     setSelectionDraft(null);
     selectionStartBlockRef.current = null;
     window.getSelection()?.removeAllRanges();
@@ -1035,6 +1056,7 @@ const CollapsibleText = ({
     selectionCaptureTimeoutRef.current = window.setTimeout(() => {
       selectionCaptureTimeoutRef.current = null;
       captureSelectionDraft();
+      disableChatSelectionScope();
     }, 32);
   }, [cancelScheduledSelectionCapture, captureSelectionDraft]);
 
@@ -1069,6 +1091,10 @@ const CollapsibleText = ({
     };
   }, [cancelScheduledSelectionCapture, scheduleDeferredSelectionCapture, scheduleSelectionCapture]);
 
+  useEffect(() => () => {
+    disableChatSelectionScope();
+  }, []);
+
   return (
     <div
       ref={containerRef}
@@ -1076,11 +1102,13 @@ const CollapsibleText = ({
       onMouseDown={(event) => {
         const container = containerRef.current;
         if (!container) return;
+        enableChatSelectionScope(container);
         selectionStartBlockRef.current = getSelectionBlockElement(event.target as Node | null, container);
       }}
       onPointerDown={(event) => {
         const container = containerRef.current;
         if (!container) return;
+        enableChatSelectionScope(container);
         selectionStartBlockRef.current = getSelectionBlockElement(event.target as Node | null, container);
       }}
       onMouseUp={scheduleSelectionCapture}
@@ -1089,6 +1117,7 @@ const CollapsibleText = ({
       {selectionDraft && typeof document !== "undefined" && createPortal(
         <div
           ref={selectionPopoverRef}
+          {...{ [CHAT_SELECTION_POPOVER_ATTR]: "true" }}
           className="fixed z-[80] flex min-w-[220px] max-w-[320px] flex-col gap-2 rounded-2xl border border-accent/20 bg-white/96 p-2 shadow-[0_12px_30px_rgba(15,18,24,0.18)] backdrop-blur"
           style={{ left: selectionDraft.x, top: selectionDraft.y, transform: "translateX(-50%)" }}
         >

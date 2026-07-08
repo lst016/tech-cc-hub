@@ -230,6 +230,7 @@ export type ServerEvent =
   | { type: "session.history"; payload: { sessionId: string; status: SessionStatus; messages: StreamMessage[]; mode: "replace" | "prepend"; hasMore: boolean; nextCursor?: SessionHistoryCursor; slashCommands?: string[] } }
   | { type: "session.archived"; payload: { sessionId: string; session?: SessionInfo } }
   | { type: "session.unarchived"; payload: { sessionId: string; session?: SessionInfo } }
+  | { type: "session.renamed"; payload: { sessionId: string; title: string; updatedAt: number } }
   | { type: "session.deleted"; payload: { sessionId: string } }
   | { type: "desktop.notification.opened"; payload: { target: DesktopNotificationOpenTarget } }
   | { type: "permission.request"; payload: { sessionId: string; toolUseId: string; toolName: string; input: unknown } }
@@ -276,6 +277,7 @@ export type ClientEvent =
   | { type: "session.stop"; payload: { sessionId: string } }
   | { type: "session.archive"; payload: { sessionId: string } }
   | { type: "session.unarchive"; payload: { sessionId: string } }
+  | { type: "session.rename"; payload: { sessionId: string; title: string } }
   | { type: "session.delete"; payload: { sessionId: string } }
   | { type: "session.list"; payload?: { archived?: boolean; limit?: number } }
   | { type: "session.history"; payload: { sessionId: string; before?: SessionHistoryCursor; limit?: number } }

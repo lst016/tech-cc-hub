@@ -220,6 +220,64 @@ test("buildStatelessContinuationPrompt triggers compression from full history, n
   assert.match(prompt, /User: Round 9 short question/);
 });
 
+test("buildStatelessContinuationPrompt counts SDK-style user and assistant history when deciding compression", () => {
+  const longToolOutput = "tool result line ".repeat(220);
+  const messages = [
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "tool-1",
+            name: "Bash",
+            input: { command: "rg -n currentData src" },
+          },
+        ],
+      },
+    } as never,
+    {
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "tool-1",
+            content: longToolOutput,
+            is_error: false,
+          },
+        ],
+      },
+    } as never,
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: `I found the relevant fields. ${"assistant summary ".repeat(120)}`,
+          },
+        ],
+      },
+    } as never,
+  ];
+
+  const options = {
+    contextWindow: 2_000,
+    compressionThresholdPercent: 20,
+    recentTurnCount: 2,
+  };
+
+  assert.equal(shouldCompressStatelessContinuation(messages, "继续", [], options), true);
+  const prompt = buildStatelessContinuationPrompt(messages, "继续", [], options);
+  assert.match(prompt, /Earlier conversation summary:/);
+  assert.match(prompt, /Bash: /);
+  assert.match(prompt, /I found the relevant fields/);
+});
+
 test("buildStatelessContinuationPrompt still compresses when the latest five turns alone exceed the threshold", () => {
   const messages = Array.from({ length: 5 }, (_, index) => {
     const round = index + 1;

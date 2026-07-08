@@ -1,4 +1,4 @@
-﻿import type { MouseEvent } from "react";
+import type { MouseEvent } from "react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import { Download, Loader2, PackageCheck } from "lucide-react";
@@ -1182,6 +1182,10 @@ function App() {
     sendEvent({ type: "session.unarchive", payload: { sessionId } });
   }, [sendEvent]);
 
+  const handleRenameSession = useCallback((sessionId: string, title: string) => {
+    sendEvent({ type: "session.rename", payload: { sessionId, title } });
+  }, [sendEvent]);
+
   const handleRefreshArchivedSessions = useCallback(() => {
     sendEvent({ type: "session.list", payload: { archived: true, limit: 80 } });
   }, [sendEvent]);
@@ -1753,6 +1757,7 @@ function App() {
             onNewSession={handleNewSession}
             onArchiveSession={handleArchiveSession}
             onUnarchiveSession={handleUnarchiveSession}
+            onRenameSession={handleRenameSession}
             onRefreshArchivedSessions={handleRefreshArchivedSessions}
             onDeleteSession={handleDeleteSession}
             onDeleteWorkspace={handleDeleteWorkspace}
