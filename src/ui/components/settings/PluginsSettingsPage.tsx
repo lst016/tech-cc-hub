@@ -4,8 +4,42 @@ import { toast } from "sonner";
 import { DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT } from "../../../shared/claude-agent-teams";
 import { buildPluginActionToastMessage } from "./plugin-toast-messages";
 
-type PluginStatus = "not-installed" | "needs-permission" | "needs-connect" | "ready" | "update-available";
+type PluginStatus = "not-installed" | "needs-permission" | "needs-connect" | "ready" | "update-available" | "emulator-pending" | "emulator-needs-remote-host" | "emulator-installing" | "emulator-error";
 type PluginUpdateStatus = "unknown" | "up-to-date" | "update-available" | "error";
+
+// Phase 8: device-emulator-plugin inline types. Mirrors the optional fields on
+// PluginManifest in src/electron/libs/compat-plugin-default-enabled.ts. Kept
+// inline here to avoid widening the import surface until Phase 2 wires IPC.
+type EmulatorPlatform = "android" | "ios";
+type InstallSource =
+  | { kind: "npm"; packageName: string }
+  | { kind: "github-release"; repo: string; assetPattern: string };
+type RemoteAgentProtocol = "websocket" | "http";
+type EmulatorInstallStatusKind =
+  | "not-installed"
+  | "installing"
+  | "installed"
+  | "needs-remote-agent"
+  | "ready"
+  | "error";
+
+// Mirrors src/electron/libs/emulator-installer/types.ts. Kept inline because
+// the renderer can't easily import from src/electron; the IPC payload is
+// already shaped as EmulatorInstallResult so a type-only mirror is enough.
+type EmulatorInstallResult = {
+  success: boolean;
+  installed: boolean;
+  connected: boolean;
+  status: EmulatorInstallStatusKind;
+  version?: string;
+  latestVersion?: string;
+  updateAvailable?: boolean;
+  message: string;
+  error?: string;
+  installPath?: string;
+  remoteAgentUrl?: string;
+  checkedAt: number;
+};
 
 type DefaultPlugin = {
   id: string;
@@ -16,6 +50,10 @@ type DefaultPlugin = {
   sourcePath: string;
   sourceLabel: string;
   permissions: string[];
+  emulatorPlatform?: EmulatorPlatform;
+  installSource?: InstallSource;
+  requiresRemoteAgent?: boolean;
+  remoteAgentProtocol?: RemoteAgentProtocol;
 };
 
 type OpenComputerUsePermissionStatus = {
@@ -75,7 +113,7 @@ type PluginRuntimeStatus = {
   updateError?: string;
   updateCheckedAt?: number;
   permissions?: OpenComputerUsePermissionStatus;
-  status?: FigmaOfficialStatusKind;
+  status?: FigmaOfficialStatusKind | EmulatorInstallStatusKind;
   message?: string;
   authHint?: string;
   url?: string;
@@ -116,6 +154,8 @@ type PluginsSettingsPageProps = {
 
 const OPEN_COMPUTER_USE_ID = "open-computer-use";
 const FIGMA_OFFICIAL_ID = "figma-official";
+const ANDROID_EMULATOR_ID = "android-emulator";
+const IOS_EMULATOR_ID = "ios-emulator";
 const FIGMA_MCP_URL = "https://mcp.figma.com/mcp";
 const FIGMA_DESKTOP_MCP_URL = "http://127.0.0.1:3845/mcp";
 const FIGMA_REST_API_URL = "https://api.figma.com/v1";
@@ -144,6 +184,32 @@ const DEFAULT_PLUGINS: DefaultPlugin[] = [
     sourceLabel: "Figma REST API",
     permissions: ["figma.token", "figma.rest", "design.read", "ux.audit", "metadata", "library", "variables"],
   },
+  {
+    id: "android-emulator",
+    name: "Android Device Emulator",
+    kind: "device-emulator-plugin",
+    version: "latest",
+    description: "通过 @mobilenext/mobile-mcp 提供 Android 真机/模拟器控制能力（截图、点击、滑动、输入、获取 UI 层级、启动 App）。包不随产品发布，点安装后自动从 npm registry 拉取。",
+    sourcePath: "npm:@mobilenext/mobile-mcp",
+    sourceLabel: "npm registry",
+    permissions: ["mcp.server", "mobile.control", "mobile.screenshot", "mobile.input", "adb"],
+    emulatorPlatform: "android",
+    installSource: { kind: "npm", packageName: "@mobilenext/mobile-mcp" },
+  },
+  {
+    id: "ios-emulator",
+    name: "iOS Device Emulator",
+    kind: "device-emulator-plugin",
+    version: "latest",
+    description: "iOS 真机/模拟器控制能力，通过 @mobilenext/mobile-mcp 暴露。包不随产品发布，点安装后自动从 npm registry 拉取。Windows/Linux 平台需要配置一台远程 macOS agent 才能使用。",
+    sourcePath: "npm:@mobilenext/mobile-mcp",
+    sourceLabel: "npm registry + 远程 Mac",
+    permissions: ["mcp.server", "mobile.control", "mobile.screenshot", "mobile.input", "ios-deploy"],
+    emulatorPlatform: "ios",
+    installSource: { kind: "npm", packageName: "@mobilenext/mobile-mcp" },
+    requiresRemoteAgent: true,
+    remoteAgentProtocol: "websocket",
+  },
 ];
 
 const statusMeta: Record<PluginStatus, { label: string; className: string }> = {
@@ -166,6 +232,22 @@ const statusMeta: Record<PluginStatus, { label: string; className: string }> = {
   "update-available": {
     label: "可更新",
     className: "border-amber-500/20 bg-amber-50 text-amber-800",
+  },
+  "emulator-pending": {
+    label: "待安装模拟器",
+    className: "border-[#DADDE5] bg-[#F7F8FA] text-[#4E5969]",
+  },
+  "emulator-needs-remote-host": {
+    label: "需配置远程 Mac",
+    className: "border-orange-500/20 bg-orange-50 text-orange-800",
+  },
+  "emulator-installing": {
+    label: "安装中...",
+    className: "border-[#BFD7EA] bg-[#F1F8FF] text-[#2563A8]",
+  },
+  "emulator-error": {
+    label: "安装失败",
+    className: "border-red-500/20 bg-red-50 text-red-700",
   },
 };
 
@@ -329,8 +411,22 @@ function toRuntimeStatus(result: PluginInstallResult): PluginRuntimeStatus {
 }
 
 function getPluginStatusMeta(plugin: DefaultPlugin, status?: PluginRuntimeStatus, result?: PluginInstallResult) {
+  if (plugin.kind === "device-emulator-plugin") {
+    const eStatus = status?.status as string | undefined;
+    if (eStatus === "ready" && !plugin.requiresRemoteAgent) return statusMeta.ready;
+    if (eStatus === "needs-remote-agent" || (eStatus === "ready" && plugin.requiresRemoteAgent)) {
+      return statusMeta["emulator-needs-remote-host"];
+    }
+    if (eStatus === "installing") return statusMeta["emulator-installing"];
+    if (eStatus === "error") return statusMeta["emulator-error"];
+    return statusMeta["emulator-pending"];
+  }
+
   if (plugin.id === FIGMA_OFFICIAL_ID) {
-    return figmaStatusMeta[status?.status ?? result?.status ?? "not-configured"];
+    // PluginRuntimeStatus.status is FigmaOfficialStatusKind | EmulatorInstallStatusKind;
+    // narrow back to FigmaOfficialStatusKind before indexing the typed record.
+    const figmaStatus = (status?.status ?? result?.status) as FigmaOfficialStatusKind | undefined;
+    return figmaStatusMeta[figmaStatus ?? "not-configured"];
   }
 
   const connected = status?.connected === true || (result?.success && result.connected);
@@ -348,6 +444,11 @@ function getPluginStatusMeta(plugin: DefaultPlugin, status?: PluginRuntimeStatus
 
 function getPrimaryActionLabel(plugin: DefaultPlugin, status?: PluginRuntimeStatus, result?: PluginInstallResult, busy = false): string {
   if (busy) return "处理中...";
+
+  if (plugin.kind === "device-emulator-plugin") {
+    if (plugin.requiresRemoteAgent) return "配置远程 Mac";
+    return "安装模拟器";
+  }
 
   if (plugin.id === FIGMA_OFFICIAL_ID) {
     const kind = status?.status ?? result?.status ?? "not-configured";
@@ -425,6 +526,9 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
   const [figmaTokenPanelOpen, setFigmaTokenPanelOpen] = useState(false);
   const [figmaTokenDraft, setFigmaTokenDraft] = useState("");
   const [figmaTokenVisible, setFigmaTokenVisible] = useState(false);
+  const [iosRemoteConfigOpen, setIosRemoteConfigOpen] = useState(false);
+  const [iosRemoteUrlDraft, setIosRemoteUrlDraft] = useState("");
+  const [iosRemoteBusy, setIosRemoteBusy] = useState(false);
   const guideLaunchInFlightRef = useRef(false);
 
   useEffect(() => {
@@ -453,6 +557,33 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
           status: "not-configured" as const,
           updateStatus: "error" as const,
           updateError: error instanceof Error ? error.message : String(error),
+        }] as const),
+      electron.invoke("plugins:getEmulatorStatus", {
+        pluginId: ANDROID_EMULATOR_ID,
+        emulatorPlatform: "android",
+        installSource: { kind: "npm", packageName: "@mobilenext/mobile-mcp" },
+        requiresRemoteAgent: false,
+      })
+        .then((status) => [ANDROID_EMULATOR_ID, status] as const)
+        .catch((error) => [ANDROID_EMULATOR_ID, {
+          installed: false,
+          connected: false,
+          status: "error" as const,
+          message: error instanceof Error ? error.message : String(error),
+        }] as const),
+      electron.invoke("plugins:getEmulatorStatus", {
+        pluginId: IOS_EMULATOR_ID,
+        emulatorPlatform: "ios",
+        installSource: { kind: "npm", packageName: "@mobilenext/mobile-mcp" },
+        requiresRemoteAgent: true,
+        remoteAgentProtocol: "websocket",
+      })
+        .then((status) => [IOS_EMULATOR_ID, status] as const)
+        .catch((error) => [IOS_EMULATOR_ID, {
+          installed: false,
+          connected: false,
+          status: "error" as const,
+          message: error instanceof Error ? error.message : String(error),
         }] as const),
     ]).then((entries) => {
       if (!mounted) return;
@@ -491,6 +622,81 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
       return;
     }
 
+    // Phase 8: device-emulator-plugin install — drives the npm registry pull
+    // through plugins:installEmulator (registered by
+    // src/electron/libs/emulator-installer/ipc.ts). The result is folded back
+    // into runtimeStatuses so the card status chip updates in place.
+    if (plugin.kind === "device-emulator-plugin") {
+      // iOS already-installed card: opening the action should surface the
+      // remote-Mac config panel rather than re-run the npm install.
+      if (plugin.requiresRemoteAgent && runtimeStatuses[plugin.id]?.installed) {
+        setIosRemoteConfigOpen(true);
+        void (async () => {
+          try {
+            const res = await (window.electron as typeof window.electron & {
+              invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
+            }).invoke("plugins:getRemoteAgentUrl", plugin.id);
+            const parsed = res as { success?: boolean; data?: unknown };
+            if (parsed?.success && typeof parsed.data === "string" && parsed.data) {
+              setIosRemoteUrlDraft(parsed.data);
+            }
+          } catch {
+            // best-effort prefill; ignore failures
+          }
+        })();
+        return;
+      }
+      if (!plugin.emulatorPlatform || !plugin.installSource) {
+        toast.error(`${plugin.name} 元数据不完整`, {
+          description: "请重启应用或在外部重新打开设置。",
+        });
+        return;
+      }
+      void (async () => {
+        setInstallingPluginId(plugin.id);
+        try {
+          const input = {
+            pluginId: plugin.id,
+            emulatorPlatform: plugin.emulatorPlatform,
+            installSource: plugin.installSource,
+            requiresRemoteAgent: plugin.requiresRemoteAgent,
+            remoteAgentProtocol: plugin.remoteAgentProtocol,
+          };
+          const result = await (window.electron as typeof window.electron & {
+            invoke: (channel: string, ...args: unknown[]) => Promise<EmulatorInstallResult>;
+          }).invoke("plugins:installEmulator", input) as EmulatorInstallResult;
+          setPluginStatus(plugin.id, {
+            installed: result.installed,
+            connected: result.connected,
+            version: result.version,
+            latestVersion: result.latestVersion,
+            updateAvailable: result.updateAvailable,
+            updateStatus: result.updateAvailable ? "update-available" : (result.installed ? "up-to-date" : "unknown"),
+            status: result.status,
+            message: result.message,
+          });
+          if (result.installed) {
+            toast.success(`${plugin.name} 安装完成`, { description: result.message });
+          } else {
+            toast.error(`${plugin.name} 安装失败`, { description: result.error ?? result.message });
+          }
+        } catch (error) {
+          setPluginStatus(plugin.id, {
+            installed: false,
+            connected: false,
+            status: "error",
+            message: error instanceof Error ? error.message : String(error),
+          });
+          toast.error(`${plugin.name} 安装请求失败`, {
+            description: error instanceof Error ? error.message : String(error),
+          });
+        } finally {
+          setInstallingPluginId(null);
+        }
+      })();
+      return;
+    }
+
     void (async () => {
       setInstallingPluginId(plugin.id);
       try {
@@ -513,6 +719,69 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
         setInstallingPluginId(null);
       }
     })();
+  };
+
+  // Phase 8: iOS remote macOS agent — save ws URL and probe connectivity. Reached
+  // from the inline panel that opens when the iOS card's primary button is
+  // clicked after install. Saves to ~/.claude/plugins/emulator-remote.json via
+  // plugins:setRemoteAgentUrl, then immediately probes via plugins:probeEmulatorAgent
+  // so the user sees a single success/failure toast for the whole flow.
+  const handleIosRemoteConfigSave = async (plugin: DefaultPlugin) => {
+    const url = iosRemoteUrlDraft.trim();
+    if (!url) {
+      toast.error("请填写远程 Mac Agent 的 WebSocket 地址");
+      return;
+    }
+    if (!/^wss?:\/\/[^\s]+$/i.test(url)) {
+      toast.error("WebSocket 地址格式不正确", {
+        description: "形如 ws://192.168.1.10:8765 或 wss://mac.example.com/agent",
+      });
+      return;
+    }
+    setIosRemoteBusy(true);
+    try {
+      const electron = window.electron as typeof window.electron & {
+        invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
+      };
+      const saveRes = await electron.invoke("plugins:setRemoteAgentUrl", plugin.id, url) as {
+        success?: boolean;
+        error?: string;
+      };
+      if (!saveRes?.success) {
+        toast.error("保存失败", { description: saveRes?.error ?? "未知错误" });
+        return;
+      }
+      const probeRes = await electron.invoke("plugins:probeEmulatorAgent", url) as {
+        success?: boolean;
+        data?: { ok: boolean; agentVersion?: string; platform?: string; error?: string };
+        error?: string;
+      };
+      if (!probeRes?.success || !probeRes.data) {
+        toast.error("连接测试失败", {
+          description: probeRes?.error ?? "保存成功但探测失败，请确认 Agent 已启动。",
+        });
+        return;
+      }
+      if (probeRes.data.ok) {
+        const meta = `${probeRes.data.agentVersion ?? "unknown"}${probeRes.data.platform ? ` · ${probeRes.data.platform}` : ""}`;
+        toast.success("远程 Mac Agent 已连接", { description: meta });
+        setPluginStatus(plugin.id, {
+          installed: true,
+          connected: true,
+          status: "ready",
+          message: `远程 Agent ${meta}`,
+        });
+        setIosRemoteConfigOpen(false);
+      } else {
+        toast.error("远程 Agent 不可达", { description: probeRes.data.error ?? "未知错误" });
+      }
+    } catch (error) {
+      toast.error("连接请求失败", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setIosRemoteBusy(false);
+    }
   };
 
   const handleFigmaDesktopConnect = (plugin: DefaultPlugin) => {
@@ -568,7 +837,9 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
           success: false,
           installed: current?.installed ?? true,
           connected: current?.connected ?? false,
-          status: current?.status ?? "needs-auth",
+          // current?.status is FigmaOfficialStatusKind | EmulatorInstallStatusKind;
+          // this catch branch is figma-only, so narrow to FigmaOfficialStatusKind.
+          status: (current?.status as FigmaOfficialStatusKind | undefined) ?? "needs-auth",
           message: "Figma Token 保存失败。",
           error: error instanceof Error ? error.message : String(error),
         };
@@ -871,6 +1142,52 @@ export function PluginsSettingsPage({ onStartGuideSession }: PluginsSettingsPage
                     </button>
                     <div className="text-[11px] leading-4 text-[#86909C]">
                       Token 只保存在本机配置；基础勾 current_user:read、file_content:read。更多工具按需勾 file_metadata:read、file_versions:read、file_comments:read、library_content:read、file_variables:read、file_dev_resources:read。
+                    </div>
+                  </div>
+                )}
+                {plugin.id === IOS_EMULATOR_ID && iosRemoteConfigOpen && (
+                  <div className="grid gap-2 rounded-lg border border-[#DADDE5] bg-[#F7F8FA] p-2">
+                    <label className="text-[11px] font-semibold text-[#4E5969]" htmlFor="ios-remote-url-input">
+                      远程 Mac Agent WebSocket 地址
+                    </label>
+                    <input
+                      id="ios-remote-url-input"
+                      type="text"
+                      value={iosRemoteUrlDraft}
+                      onChange={(event) => setIosRemoteUrlDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && !iosRemoteBusy) {
+                          event.preventDefault();
+                          void handleIosRemoteConfigSave(plugin);
+                        }
+                      }}
+                      placeholder="ws://192.168.1.10:8765 或 wss://mac.example.com/agent"
+                      className="min-w-0 rounded-md border border-[#DADDE5] bg-white px-2 py-1.5 text-xs font-medium text-[#1D2129] outline-none transition placeholder:text-[#A8B0BD] focus:border-[#1677FF]"
+                      disabled={iosRemoteBusy}
+                    />
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        className="inline-flex items-center justify-center gap-1 rounded-md bg-[#1677FF] px-2 py-1.5 text-xs font-semibold text-white transition hover:bg-[#0E63D8] disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => void handleIosRemoteConfigSave(plugin)}
+                        disabled={iosRemoteBusy || !iosRemoteUrlDraft.trim()}
+                      >
+                        {iosRemoteBusy ? "测试中..." : "保存并测试连接"}
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-md border border-[#DADDE5] bg-white px-2 py-1.5 text-xs font-semibold text-[#4E5969] transition hover:bg-[#F2F3F5] disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => {
+                          setIosRemoteConfigOpen(false);
+                          setIosRemoteUrlDraft("");
+                        }}
+                        disabled={iosRemoteBusy}
+                      >
+                        取消
+                      </button>
+                    </div>
+                    <div className="text-[11px] leading-4 text-[#86909C]">
+                      在远程 Mac 上启动 tech-cc-hub agent（Phase 4 提供脚本），得到一个本地 ws 地址后填入并保存，会自动 ping 一次确认连通。
                     </div>
                   </div>
                 )}

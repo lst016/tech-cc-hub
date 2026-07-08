@@ -1594,7 +1594,7 @@ function App() {
           </TooltipButton>
           <TooltipButton
             type="button"
-            tooltip="新建会话"
+            tooltip="新建工作区"
             onClick={handleNewSessionClick}
             onMouseDown={(event) => {
               event.preventDefault();

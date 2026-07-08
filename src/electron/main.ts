@@ -28,6 +28,8 @@ import { UnauthorizedError, type OAuthClientProvider, type OAuthDiscoveryState }
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { ipcMainHandle, isDev, DEV_PORT } from "./util.js";
+import { registerEmulatorInstallerIpc } from "./libs/emulator-installer/ipc.js";
+import { registerEmulatorRemoteIpc } from "./libs/emulator-remote/index.js";
 import { getPreloadPath, getUIPath, getIconPath } from "./pathResolver.js";
 import { getStaticData, pollResources, stopPolling } from "./test.js";
 import { handleClientEvent, sessions, cleanupAllSessions, setChannelReplySender, listStoredSessionsForRenderer, initializeTaskExecutor, initializeNoteRepository } from "./ipc-handlers.js";
@@ -1575,6 +1577,12 @@ ipcMain.handle("plugins:connectFigmaOfficial", () => connectFigmaOfficialPlugin(
 ipcMain.handle("plugins:connectFigmaCodexOfficial", () => connectFigmaCodexOfficialPlugin());
 ipcMain.handle("plugins:connectFigmaPatOfficial", (_event, token: unknown) => connectFigmaPatOfficialPlugin(token));
 ipcMain.handle("plugins:connectFigmaDesktopOfficial", () => connectFigmaDesktopOfficialPlugin());
+// Phase 8: device-emulator-plugin install + status IPC. Registers channels
+// plugins:installEmulator / plugins:getEmulatorStatus / plugins:checkEmulatorUpdate.
+registerEmulatorInstallerIpc();
+// Phase 8: iOS remote macOS agent bridge. Registers channels
+// plugins:getRemoteAgentUrl / plugins:setRemoteAgentUrl / plugins:probeEmulatorAgent.
+registerEmulatorRemoteIpc();
 ipcMain.handle("terminal:run", (_event, request: unknown) => runTerminalCommandForRenderer(request));
 ipcMain.handle("terminal:start", (_event, request: unknown) => startTerminalProcessForRenderer(request));
 ipcMain.handle("terminal:list", () => listTerminalProcessesForRenderer());

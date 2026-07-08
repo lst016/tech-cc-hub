@@ -449,7 +449,7 @@ export function Sidebar({
             className="flex-1 rounded-lg border border-black/6 bg-white/75 px-3 py-1.5 text-sm font-medium text-ink-800 transition-colors hover:border-black/10 hover:bg-white"
             onClick={() => onNewSession()}
           >
-            + 新建会话
+            + 新建工作区
           </button>
           <button
             className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${showArchived ? "border-accent/20 bg-accent/10 text-accent" : "border-black/6 bg-white/65 text-ink-600 hover:bg-white"}`}

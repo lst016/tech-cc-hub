@@ -66,6 +66,11 @@ tags:
 - BrowserView：`src/electron/browser-manager.ts`
 - 自动更新：`src/electron/libs/auto-updater.ts`
 
+### Execution Performance（执行链路性能）
+
+- [执行链路性能优化 Spec 2026-07-08](execution-perf/spec-2026-07-08.md)
+- 关注范围：`src/electron/ipc-handlers.ts` `broadcast` / `src/electron/libs/session-store.ts` `recordMessage` / `src/ui/store/useAppStore.ts` `appendMessagesToSession` / `src/shared/activity-rail-model.ts` `buildActivityRailModel`
+
 ## 关联目录
 
 | 目录 | 说明 |

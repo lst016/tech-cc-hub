@@ -30,7 +30,7 @@ export function StartSessionModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/20 px-4 py-8 backdrop-blur-sm">
       <div className="w-full max-w-lg rounded-2xl border border-ink-900/5 bg-surface p-6 shadow-elevated">
         <div className="flex items-center justify-between">
-          <div className="text-base font-semibold text-ink-800">新建会话</div>
+          <div className="text-base font-semibold text-ink-800">新建工作区</div>
           <button
             className="rounded-full p-1.5 text-muted transition-colors hover:bg-surface-tertiary hover:text-ink-700"
             onClick={onClose}

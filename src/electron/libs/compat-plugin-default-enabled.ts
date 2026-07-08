@@ -8,6 +8,16 @@
 
 export type PluginEnableState = "enabled" | "disabled" | "default-disabled" | "auto-from-dep";
 
+// Phase 8: device-emulator-plugin kind. Optional metadata; only used when a
+// plugin declares kind = "device-emulator-plugin" in the settings layer.
+export type EmulatorPlatform = "android" | "ios";
+
+export type InstallSource =
+  | { kind: "npm"; packageName: string }
+  | { kind: "github-release"; repo: string; assetPattern: string };
+
+export type RemoteAgentProtocol = "websocket" | "http";
+
 export type PluginManifest = {
   name: string;
   version?: string;
@@ -15,6 +25,11 @@ export type PluginManifest = {
   mcpServers: string[];
   toolNames: string[];
   dependencies: string[];
+  // Optional fields used by the device-emulator-plugin kind.
+  emulatorPlatform?: EmulatorPlatform;
+  installSource?: InstallSource;
+  requiresRemoteAgent?: boolean;
+  remoteAgentProtocol?: RemoteAgentProtocol;
 };
 
 export type PluginDuplicate = {

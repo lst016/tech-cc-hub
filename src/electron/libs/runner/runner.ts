@@ -62,8 +62,8 @@ import {
   getExternalMcpServers,
   isConfiguredExternalMcpTool,
 } from "../external-mcp-servers.js";
+import { buildEmulatorMcpServers } from "../emulator-installer/emulator-mcp-server.js";
 import {
-  CLAUDE_FIGMA_PLUGIN_ID,
   isClaudeCodePluginMcpTool,
   listClaudeCodePluginMcpServerNames,
   resolveEnabledClaudeCodeSdkPlugins,
@@ -804,6 +804,10 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         cwd: projectCwd,
         figmaToolMode: latestFigmaToolMode,
       }, enabledBuiltinMcpServerNames);
+      // Phase 8: device-emulator-plugin MCP injection. Empty object when
+      // @mobilenext/mobile-mcp is not yet installed, so the SDK map is
+      // untouched and the session is unaffected.
+      const emulatorMcpServers = await buildEmulatorMcpServers();
       const sdkPlugins = resolveEnabledClaudeCodeSdkPlugins();
       const sdkPluginMcpServerNames = listClaudeCodePluginMcpServerNames(sdkPlugins);
       const systemPromptAppend = combineSystemPromptAppend(
@@ -887,6 +891,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           outputFormat,
           plugins: sdkPlugins.length > 0 ? sdkPlugins : undefined,
           mcpServers: {
+            ...emulatorMcpServers,
             ...getExternalMcpServers(syncedGlobalRuntimeConfig, { projectDir: projectCwd }),
             ...builtinMcpServers,
           },
@@ -2512,11 +2517,7 @@ function getFigmaOfficialRouteDenyMessage(
     return null;
   }
 
-  return [
-    `Figma REST/PAT is configured and ready in tech-cc-hub; do not use the official OAuth plugin (${CLAUDE_FIGMA_PLUGIN_ID}) first.`,
-    "Use the built-in REST tools instead, for example mcp__tech-cc-hub-figma__figma_read_design, mcp__tech-cc-hub-figma__figma_summarize_design, or mcp__tech-cc-hub-figma__figma_export_node_images.",
-    "Only switch to the official OAuth Figma MCP after a REST Figma tool explicitly returns a 401/403/token permission failure.",
-  ].join("\n");
+  return null;
 }
 
 function getFigmaImplementationAnchorDenyMessage(
