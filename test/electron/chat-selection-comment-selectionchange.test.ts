@@ -13,6 +13,8 @@ test("chat selection comments capture on release instead of rerendering on every
   assert.match(source, /if \(!anchorInside && !focusInside\) \{\s+if \(popoverHasFocus\) return;\s+if \(selectionDraft\) clearSelectionDraft\(\{ clearDomSelection: false \}\);/);
   assert.match(source, /if \(!selection \|\| selectedText\.length === 0 \|\| selection\.rangeCount === 0 \|\| selection\.isCollapsed\) \{\s+if \(popoverHasFocus\) return;\s+if \(selectionDraft\) clearSelectionDraft\(\{ clearDomSelection: false \}\);/);
   assert.match(source, /if \(shouldClearDomSelection\) \{\s+window\.getSelection\(\)\?\.removeAllRanges\(\);/);
+  assert.match(source, /const handleSelectionCopy = useCallback\(\(event: ClipboardEvent\) => \{/);
+  assert.match(source, /document\.addEventListener\("copy", handleSelectionCopy, true\)/);
   assert.match(source, /const getSelectionAnchorRect = \(range: Range, anchorNode: Node \| null, focusNode: Node \| null\): DOMRect \| null =>/);
   assert.match(source, /const CHAT_SELECTION_BLOCK_SELECTOR = "li, p, pre, blockquote, h1, h2, h3, h4, h5, h6, td, th"/);
   assert.match(source, /const getSelectionBlockElement = \(node: Node \| null, container: HTMLElement\): HTMLElement \| null =>/);

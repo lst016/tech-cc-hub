@@ -1044,6 +1044,28 @@ const CollapsibleText = ({
     }, 32);
   }, [cancelScheduledSelectionCapture, captureSelectionDraft]);
 
+  const handleSelectionCopy = useCallback((event: ClipboardEvent) => {
+    if (!selectionDraft) return;
+
+    const container = containerRef.current;
+    const selection = window.getSelection();
+    const anchorNode = selection?.anchorNode ?? null;
+    const focusNode = selection?.focusNode ?? null;
+    const anchorInside = Boolean(container && anchorNode && container.contains(anchorNode));
+    const focusInside = Boolean(container && focusNode && container.contains(focusNode));
+    if (!anchorInside && !focusInside) return;
+
+    const clipboardText = selection?.toString() || selectionText;
+    if (!clipboardText) return;
+
+    event.preventDefault();
+    if (event.clipboardData) {
+      event.clipboardData.setData("text/plain", clipboardText);
+      return;
+    }
+    void copyText(clipboardText);
+  }, [selectionDraft, selectionText]);
+
   useEffect(() => {
     if (!selectionDraft) return;
     const handleDismiss = (event?: Event) => {
@@ -1073,6 +1095,14 @@ const CollapsibleText = ({
       cancelScheduledSelectionCapture();
     };
   }, [cancelScheduledSelectionCapture, scheduleDeferredSelectionCapture, selectionTrackingActive]);
+
+  useEffect(() => {
+    if (!selectionDraft) return;
+    document.addEventListener("copy", handleSelectionCopy, true);
+    return () => {
+      document.removeEventListener("copy", handleSelectionCopy, true);
+    };
+  }, [handleSelectionCopy, selectionDraft]);
 
   return (
     <div
