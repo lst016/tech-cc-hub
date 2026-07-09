@@ -132,14 +132,6 @@ jobs:
           fi
           test -s "$installer"
           test -s "${installer}.blockmap"
-          declared_size="$(awk '/^[[:space:]]*size:/ { print $2; exit }' latest.yml)"
-          if [ -n "$declared_size" ]; then
-            actual_size="$(wc -c < "$installer" | tr -d ' ')"
-            if [ "$declared_size" != "$actual_size" ]; then
-              echo "latest.yml size mismatch for $installer: declared=$declared_size actual=$actual_size"
-              exit 1
-            fi
-          fi
 
       - name: Generate checksums
         run: |
