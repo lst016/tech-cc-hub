@@ -70,23 +70,6 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-body[data-chat-selection-active="true"] * {
-  user-select: none !important;
-  -webkit-user-select: none !important;
-}
-
-body[data-chat-selection-active="true"] [data-chat-selection-allow="true"],
-body[data-chat-selection-active="true"] [data-chat-selection-allow="true"] * {
-  user-select: text !important;
-  -webkit-user-select: text !important;
-}
-
-body[data-chat-selection-active="true"] [data-chat-selection-popover="true"],
-body[data-chat-selection-active="true"] [data-chat-selection-popover="true"] * {
-  user-select: auto !important;
-  -webkit-user-select: auto !important;
-}
-
 #root {
   background: transparent;
 }
