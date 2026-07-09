@@ -125,7 +125,16 @@ jobs:
           set -euo pipefail
           cd release-assets
           test -s latest.yml
-          installer="$(awk '/^path:/ { print $2; exit }' latest.yml | tr -d "'\"")"
+          installer="$(python - <<'PY'
+import re
+from pathlib import Path
+
+text = Path("latest.yml").read_text(encoding="utf-8")
+match = re.search(r"^path:\s*['\"]?(.+?)['\"]?\s*$", text, re.M)
+if match:
+    print(match.group(1))
+PY
+)"
           if [ -z "$installer" ]; then
             echo "latest.yml does not declare path"
             exit 1
