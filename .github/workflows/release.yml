@@ -126,15 +126,15 @@ jobs:
           cd release-assets
           test -s latest.yml
           installer="$(python - <<'PY'
-import re
-from pathlib import Path
+          import re
+          from pathlib import Path
 
-text = Path("latest.yml").read_text(encoding="utf-8")
-match = re.search(r"^path:\s*['\"]?(.+?)['\"]?\s*$", text, re.M)
-if match:
-    print(match.group(1))
-PY
-)"
+          text = Path("latest.yml").read_text(encoding="utf-8")
+          match = re.search(r"^path:\s*['\"]?(.+?)['\"]?\s*$", text, re.M)
+          if match:
+              print(match.group(1))
+          PY
+          )"
           if [ -z "$installer" ]; then
             echo "latest.yml does not declare path"
             exit 1
