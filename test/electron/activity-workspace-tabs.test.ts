@@ -10,18 +10,20 @@ import {
   getWorkflowAgentTabId,
   normalizeActivityRailTab,
   shouldShowCreateBrowserTab,
+  shouldShowCreateGitTab,
   shouldShowCreateTerminalTab,
 } from "../../src/ui/utils/activity-workspace-tabs.js";
 
 describe("activity workspace tabs", () => {
-  it("does not expose the deprecated trace tab when no browser tab exists", () => {
+  it("keeps browser required and hides deprecated trace and optional git by default", () => {
     const visibleTabs = buildActivityWorkspaceTabs({
       activeTab: "trace",
       showBrowserTab: false,
     }).filter((tab) => tab.visible);
 
-    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "git"]);
-    assert.equal(shouldShowCreateBrowserTab(false), true);
+    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "browser"]);
+    assert.equal(shouldShowCreateBrowserTab(false), false);
+    assert.equal(shouldShowCreateGitTab(false), true);
     assert.equal(shouldShowCreateTerminalTab(false), true);
   });
 
@@ -31,10 +33,27 @@ describe("activity workspace tabs", () => {
       showBrowserTab: true,
     }).filter((tab) => tab.visible);
 
-    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "git", "browser"]);
+    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "browser"]);
     assert.equal(visibleTabs.find((tab) => tab.id === "browser")?.active, true);
     assert.equal(visibleTabs.find((tab) => tab.id === "preview")?.title, "文件预览");
     assert.equal(shouldShowCreateBrowserTab(true), false);
+  });
+
+  it("keeps the git tab optional until the user opens it", () => {
+    const defaultTabs = buildActivityWorkspaceTabs({
+      activeTab: "preview",
+      showBrowserTab: false,
+    }).filter((tab) => tab.visible);
+    const visibleTabs = buildActivityWorkspaceTabs({
+      activeTab: "git",
+      showBrowserTab: false,
+      showGitTab: true,
+    }).filter((tab) => tab.visible);
+
+    assert.deepEqual(defaultTabs.map((tab) => tab.id), ["preview", "usage", "browser"]);
+    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "git", "browser"]);
+    assert.equal(visibleTabs.find((tab) => tab.id === "git")?.active, true);
+    assert.equal(shouldShowCreateGitTab(true), false);
   });
 
   it("keeps the terminal tab optional until the user opens it", () => {
@@ -48,8 +67,8 @@ describe("activity workspace tabs", () => {
       showTerminalTab: true,
     }).filter((tab) => tab.visible);
 
-    assert.deepEqual(defaultTabs.map((tab) => tab.id), ["preview", "usage", "git"]);
-    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "git", "terminal"]);
+    assert.deepEqual(defaultTabs.map((tab) => tab.id), ["preview", "usage", "browser"]);
+    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "terminal", "browser"]);
     assert.equal(visibleTabs.find((tab) => tab.id === "terminal")?.active, true);
     assert.equal(shouldShowCreateTerminalTab(true), false);
   });
@@ -65,8 +84,8 @@ describe("activity workspace tabs", () => {
       workflowAgentTabs: [{ id: "workflow-agent:agent-1", label: "Agent one", title: "Agent one" }],
     }).filter((tab) => tab.visible);
 
-    assert.deepEqual(defaultTabs.map((tab) => tab.id), ["preview", "usage", "git"]);
-    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "git", "workflow-agent:agent-1"]);
+    assert.deepEqual(defaultTabs.map((tab) => tab.id), ["preview", "usage", "browser"]);
+    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "workflow-agent:agent-1", "browser"]);
     assert.equal(visibleTabs.find((tab) => tab.id === "workflow-agent:agent-1")?.active, true);
   });
 
@@ -129,16 +148,26 @@ describe("activity workspace tabs", () => {
     assert.deepEqual(
       buildActivityWorkspaceCreateOptions({
         canCreateBrowserTab: shouldShowCreateBrowserTab(false),
+        canCreateGitTab: shouldShowCreateGitTab(false),
         canCreateTerminalTab: shouldShowCreateTerminalTab(false),
       }).map((option) => option.id),
-      ["terminal", "browser"],
+      ["git", "terminal"],
     );
     assert.deepEqual(
       buildActivityWorkspaceCreateOptions({
         canCreateBrowserTab: shouldShowCreateBrowserTab(false),
+        canCreateGitTab: shouldShowCreateGitTab(false),
         canCreateTerminalTab: shouldShowCreateTerminalTab(true),
       }).map((option) => option.id),
-      ["browser"],
+      ["git"],
+    );
+    assert.deepEqual(
+      buildActivityWorkspaceCreateOptions({
+        canCreateBrowserTab: shouldShowCreateBrowserTab(false),
+        canCreateGitTab: shouldShowCreateGitTab(true),
+        canCreateTerminalTab: shouldShowCreateTerminalTab(false),
+      }).map((option) => option.id),
+      ["terminal"],
     );
   });
 
@@ -185,14 +214,18 @@ describe("activity workspace tabs", () => {
     assert.match(appSource, /setActiveSessionWorkspaceView\("browser"\)/);
   });
 
-  it("opens the terminal through optional per-session tab state", () => {
+  it("opens git and terminal through optional per-session tab state", () => {
     const appSource = readFileSync("src/ui/App.tsx", "utf8");
     const railSource = readFileSync("src/ui/components/ActivityRail.tsx", "utf8");
     const tabsSource = readFileSync("src/ui/components/ActivityWorkspaceTabs.tsx", "utf8");
 
+    assert.match(appSource, /gitTabBySessionId/);
+    assert.match(appSource, /gitTabBySessionId\[activeSessionId\] === true/);
+    assert.match(appSource, /setActiveSessionActivityRailTab\("git"\)/);
     assert.match(appSource, /terminalTabBySessionId/);
     assert.match(appSource, /terminalTabBySessionId\[activeSessionId\] === true/);
     assert.match(appSource, /setActiveSessionActivityRailTab\("terminal"\)/);
+    assert.match(railSource, /showGitTab=\{hasGitTab\}/);
     assert.match(railSource, /showTerminalTab=\{hasTerminalTab\}/);
     assert.match(railSource, /selectedTab === "terminal"/);
     assert.match(tabsSource, /buildActivityWorkspaceCreateOptions/);

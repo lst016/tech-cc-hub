@@ -46,7 +46,11 @@ export async function preprocessImageAttachments(options: {
 
   const imageModel = config?.imageModel?.trim();
   if (!config || !imageModel) {
-    return { success: true, attachments };
+    return {
+      success: false,
+      attachments,
+      error: "当前配置没有图片预处理模型，不能可靠识别图片。请先在设置里配置一个支持视觉理解的图片预处理模型。",
+    };
   }
 
   return preprocessImageAttachmentsCore({

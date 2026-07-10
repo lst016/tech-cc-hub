@@ -93,8 +93,8 @@ code, pre, textarea.mono, input.mono {
 }
 
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 9px;
+  height: 9px;
 }
 
 ::-webkit-scrollbar-track {
@@ -111,6 +111,8 @@ code, pre, textarea.mono, input.mono {
 }
 
 .chat-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(26, 25, 21, 0.22) transparent;
   scrollbar-gutter: stable both-edges;
 }
 
@@ -162,24 +164,30 @@ code, pre, textarea.mono, input.mono {
 }
 
 .chat-scroll::-webkit-scrollbar {
-  width: 10px;
+  width: 13px;
 }
 
 .chat-scroll::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.03);
+  background: transparent;
   border-radius: 999px;
+  border-right: 4px solid transparent;
+  background-clip: padding-box;
 }
 
 .chat-scroll::-webkit-scrollbar-thumb {
-  background: rgba(26, 25, 21, 0.18);
+  background: rgba(26, 25, 21, 0.22);
   border-radius: 999px;
-  border: 2px solid transparent;
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+  border-right: 4px solid transparent;
   background-clip: padding-box;
 }
 
 .chat-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(26, 25, 21, 0.28);
-  border: 2px solid transparent;
+  background: rgba(26, 25, 21, 0.34);
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+  border-right: 4px solid transparent;
   background-clip: padding-box;
 }
 
@@ -195,7 +203,7 @@ code, pre, textarea.mono, input.mono {
 }
 
 .activity-workspace-tabs-scroll::-webkit-scrollbar {
-  height: 6px;
+  height: 9px;
 }
 
 .activity-workspace-tabs-scroll::-webkit-scrollbar-track {

@@ -429,6 +429,25 @@ const MAX_EMPTY_SUCCESS_AUTO_RETRIES = 2;
 const EMPTY_SUCCESS_RETRY_PROMPT =
   "Continue the task. The previous turn returned no assistant output and made no tool calls. Do not stop or return an empty result; resume from the last concrete step and keep executing.";
 
+function buildEmptySuccessFallbackMessage(sessionId: string, model?: string): SDKMessage {
+  return {
+    type: "assistant",
+    message: {
+      id: `fallback-${crypto.randomUUID()}`,
+      type: "message",
+      role: "assistant",
+      model: model ?? "unknown",
+      content: [{ type: "text", text: "本轮工具执行已完成，但模型没有返回文字说明。" }],
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      usage: { input_tokens: 0, output_tokens: 0 },
+    },
+    parent_tool_use_id: null,
+    uuid: crypto.randomUUID(),
+    session_id: sessionId,
+  } as SDKMessage;
+}
+
 function getRequestedModelName(configModel: string | undefined, runtimeModel: string | undefined): string | undefined {
   const normalizedRuntimeModel = runtimeModel?.trim();
   if (normalizedRuntimeModel) {
@@ -1142,6 +1161,9 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             } catch (error) {
               console.warn("[runner][context-usage] failed", error instanceof Error ? error.message : String(error));
             }
+          }
+          if (emptySuccess) {
+            sendMessage(buildEmptySuccessFallbackMessage(session.id, requestedModelForError));
           }
           sendMessage(message);
           onEvent({

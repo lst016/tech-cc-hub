@@ -22,7 +22,11 @@ import {
   getModelRoutingWeight,
   pickHighestWeightedModelOwner,
 } from "../../src/shared/models/model-routing-weight.js";
-import { pickImagePreprocessConfig } from "../../src/shared/models/image-preprocess-routing.js";
+import {
+  pickImagePreprocessConfig,
+  resolveImagePreprocessRouteConfig,
+  type ImagePreprocessRouteConfig,
+} from "../../src/shared/models/image-preprocess-routing.js";
 import { extractApiModelsFromListPayload } from "../../src/shared/models/api-model-metadata.js";
 
 const MODEL_SEARCH_FIXTURE = [
@@ -458,7 +462,7 @@ test("routed model options keep official and self-hosted deepseek variants separ
   assert.equal(gatewayOption?.provider, "custom");
 });
 
-test("image preprocessing follows the routed owner instead of preferring custom gateways", () => {
+test("image preprocessing follows routed weights only across configs that declare the image model", () => {
   const codex = {
     id: "codex",
     provider: "codex" as const,
@@ -483,9 +487,54 @@ test("image preprocessing follows the routed owner instead of preferring custom 
     "codex",
   );
   assert.equal(
-    pickImagePreprocessConfig(codex, [codex, gateway], "Qwen3-VL-4B-Instruct")?.id,
-    "gateway",
+    pickImagePreprocessConfig(codex, [codex, gateway], "Qwen3-VL-4B-Instruct"),
+    null,
   );
+});
+
+test("image preprocessing config lookup can use image models from another enabled profile", () => {
+  const selectedConfig = {
+    id: "codex",
+    provider: "codex" as const,
+    models: [{ name: "gpt-5.5" }],
+  };
+  const imageConfig = {
+    id: "default",
+    provider: "custom" as const,
+    imageModel: "gemini-3-pro-image-preview",
+    models: [
+      { name: "DeepSeek-V4-Pro" },
+      { name: "gemini-3-pro-image-preview" },
+    ],
+  };
+
+  const settingsPageSource = readFileSync("src/ui/components/settings/ApiProfilesSettingsPage.tsx", "utf8");
+
+  assert.equal(
+    resolveImagePreprocessRouteConfig(selectedConfig, [selectedConfig, imageConfig])?.id,
+    "default",
+  );
+  assert.match(settingsPageSource, /isLikelyImageUnderstandingModel/);
+  assert.doesNotMatch(settingsPageSource, /function isLikelyVisionUnderstandingModel/);
+});
+
+test("image preprocessing route ignores model-list matches without an executable imageModel", () => {
+  const selectedConfig: ImagePreprocessRouteConfig = {
+    id: "selected",
+    provider: "custom" as const,
+    models: [{ name: "gemini-3-pro-image-preview", routingWeight: 100 }],
+  };
+  const imageConfig: ImagePreprocessRouteConfig = {
+    id: "image",
+    provider: "custom" as const,
+    imageModel: "gemini-3-pro-image-preview",
+    models: [{ name: "gemini-3-pro-image-preview", routingWeight: 1 }],
+  };
+
+  const resolved = resolveImagePreprocessRouteConfig(selectedConfig, [selectedConfig, imageConfig]);
+
+  assert.equal(resolved?.id, "image");
+  assert.equal(resolved?.imageModel, "gemini-3-pro-image-preview");
 });
 
 test("shared model routing merges enabled profile models into one editable surface", () => {

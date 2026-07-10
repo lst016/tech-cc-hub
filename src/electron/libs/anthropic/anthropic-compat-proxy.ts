@@ -7,6 +7,7 @@ import {
 import {
   sanitizeAnthropicMessagesPayload,
 } from "./anthropic-compat.js";
+import { listenWithWindowsPortOwnerKill } from "../local-port-guard.js";
 
 const ANTHROPIC_COMPAT_PROXY_HOST = "127.0.0.1";
 const DEFAULT_ANTHROPIC_COMPAT_PROXY_PORT = 14561;
@@ -46,15 +47,21 @@ export function ensureAnthropicCompatProxy(): void {
     }
   };
 
-  server.on("error", (error) => {
+  const handleListenError = (error: NodeJS.ErrnoException) => {
     console.error("[anthropic-compat-proxy] failed:", error);
     resetServerState();
-  });
+  };
   server.on("close", resetServerState);
 
   const port = resolveAnthropicCompatProxyPort();
-  server.listen(port, ANTHROPIC_COMPAT_PROXY_HOST, () => {
+  server.on("listening", () => {
     console.info(`[anthropic-compat-proxy] listening on http://${ANTHROPIC_COMPAT_PROXY_HOST}:${port}`);
+  });
+  listenWithWindowsPortOwnerKill(server, {
+    host: ANTHROPIC_COMPAT_PROXY_HOST,
+    label: "anthropic-compat-proxy",
+    onError: handleListenError,
+    port,
   });
 }
 

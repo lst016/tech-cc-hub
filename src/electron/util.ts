@@ -1,7 +1,8 @@
 import { ipcMain, WebContents, WebFrameMain } from "electron";
 import { getUIPath } from "./pathResolver.js";
 import { pathToFileURL } from "url";
-export const DEV_PORT = 4173;
+export { DEV_PORT } from "./ipc-frame-validation.js";
+import { DEV_PORT, isAllowedDevFrameUrl } from "./ipc-frame-validation.js";
 
 // Checks if you are in development mode
 export function isDev(): boolean {
@@ -22,7 +23,7 @@ export function ipcWebContentsSend<Key extends keyof EventPayloadMapping>(key: K
 }
 
 export function validateEventFrame(frame: WebFrameMain) {
-    if (isDev() && new URL(frame.url).host === `localhost:${DEV_PORT}`) return;
+    if (isDev() && isAllowedDevFrameUrl(frame.url)) return;
 
     if (frame.url !== pathToFileURL(getUIPath()).toString()) throw new Error("Malicious event");
 }

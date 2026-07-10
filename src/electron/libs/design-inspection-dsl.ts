@@ -1,3 +1,62 @@
+export type DesignSystemPalette = {
+  primary?: string;
+  secondary?: string;
+  accent?: string;
+  success?: string;
+  warning?: string;
+  danger?: string;
+  info?: string;
+  backgrounds?: Array<{ name: string; value: string; usage: string }>;
+  text?: Array<{ name: string; value: string; usage: string }>;
+  borders?: Array<{ name: string; value: string; usage: string }>;
+  semantic?: Record<string, string>;
+};
+
+export type DesignSystemTypography = {
+  fontFamilies?: string[];
+  textStyles?: Array<{
+    name: string;
+    fontSize: string;
+    fontWeight: string;
+    lineHeight?: string;
+    letterSpacing?: string;
+    usage: string;
+  }>;
+};
+
+export type DesignSystemSpacing = {
+  scale?: string;
+  patterns?: Array<{ name: string; value: string; usage: string }>;
+};
+
+export type DesignSystemComponents = {
+  buttons?: Array<{ variant: string; style: Record<string, unknown>; states?: Record<string, unknown> }>;
+  cards?: Array<{ description: string; style: Record<string, unknown> }>;
+  inputs?: Array<{ description: string; style: Record<string, unknown> }>;
+  icons?: Array<{ description: string; type: string; style: Record<string, unknown> }>;
+  tables?: Array<{ description: string; style: Record<string, unknown> }>;
+  dialogs?: Array<{ description: string; style: Record<string, unknown> }>;
+};
+
+export type DesignSystemAnimation = {
+  durations?: string[];
+  easing?: string[];
+};
+
+export type DesignSystemDarkMode = {
+  supported: boolean;
+  changes?: Array<{ token: string; light: string; dark: string }>;
+};
+
+export type DesignExtractedSystem = {
+  colors?: DesignSystemPalette;
+  typography?: DesignSystemTypography;
+  spacing?: DesignSystemSpacing;
+  components?: DesignSystemComponents;
+  animation?: DesignSystemAnimation;
+  darkMode?: DesignSystemDarkMode;
+};
+
 export type DesignDiagramStructure = {
   kind: string;
   title?: string;
@@ -110,6 +169,7 @@ export type DesignInspectionDsl = {
     spacing?: string[];
     typography?: string[];
   };
+  designSystem?: DesignExtractedSystem;
   uiSpec?: DesignInspectionUiSpec;
   qualityGate: DesignInspectionQualityGate;
   implementationHints?: string[];
@@ -146,15 +206,60 @@ export type DesignSemanticDiffDsl = {
 };
 
 export function buildDesignInspectionPrompt(userPrompt?: string): string {
-  const normalizedPrompt = userPrompt?.trim() || "Analyze this UI/product screenshot and extract implementation-grade visual structure.";
+  const normalizedPrompt = userPrompt?.trim() || "Analyze this UI/product screenshot and extract implementation-grade visual structure and design system.";
   return [
     normalizedPrompt,
     "",
+    "You are a design system extraction engine. Given one or more UI screenshots, extract a complete design system that an engineer can use to faithfully re-implement the design.",
+    "",
     "Return only one JSON object. Do not return Markdown, code fences, or prose.",
+    "",
+    "=== EXTRACTION PRIORITIES ===",
+    "1. DESIGN SYSTEM (designSystem) — extract the reusable visual design language first",
+    "2. UI STRUCTURE (uiSpec) — component layout, containers, tabs, fields, actions",
+    "3. LAYOUT (regions/elements) — page regions and key elements",
+    "4. DIAGRAMS (diagram) — if this is a chart/diagram, extract topology",
+    "",
     "JSON schema:",
     "{",
     '  "summary": "short Chinese summary within 100 chars",',
     '  "screen": { "kind": "modal|page|component|chart|diagram|unknown", "language": "zh-CN|en|mixed|unknown" },',
+    "",
+    '  "designSystem": {',
+    '    "colors": {',
+    '      "primary": "#hex primary brand color",',
+    '      "secondary": "#hex secondary if visible",',
+    '      "accent": "#hex accent/cta color",',
+    '      "success": "#hex if visible",',
+    '      "warning": "#hex if visible",',
+    '      "danger": "#hex if visible",',
+    '      "info": "#hex if visible",',
+    '      "backgrounds": [{"name": "page|card|sidebar|input|modal|table-row", "value": "#hex", "usage": "where this background is used"}],',
+    '      "text": [{"name": "primary|secondary|muted|link|heading|body|caption|placeholder|disabled", "value": "#hex", "usage": "where this text color is used"}],',
+    '      "borders": [{"name": "input|card|divider|table|focus", "value": "#hex", "usage": "where this border is used"}],',
+    '      "semantic": { "error": "#hex", "success": "#hex", "warning": "#hex", "info": "#hex" }',
+    "    },",
+    '    "typography": {',
+    '      "fontFamilies": ["font name(s) visible in the UI"],',
+    '      "textStyles": [',
+    '        { "name": "h1|h2|h3|heading|body|body-small|caption|label|button|input|tag|helper|tooltip|badge", "fontSize": "px/rem", "fontWeight": "400|500|600|700|bold|normal", "lineHeight": "optional", "letterSpacing": "optional", "usage": "where this style is applied" }',
+    "      ]",
+    "    },",
+    '    "spacing": {',
+    '      "scale": "4px grid | 8px grid | inconsistent",',
+    '      "patterns": [{"name": "card-padding|section-gap|input-padding|list-gap|button-padding|page-margin|icon-gap", "value": "px", "usage": "where this spacing appears"}]',
+    "    },",
+    '    "components": {',
+    '      "buttons": [{"variant": "primary|secondary|ghost|danger|icon|link", "style": {"background": "#hex", "color": "#hex", "borderRadius": "px", "padding": "px", "fontSize": "px", "fontWeight": ""}, "states": {"hover": {}, "active": {}, "disabled": {}}}],',
+    '      "cards": [{"description": "eg card container", "style": {"background": "#hex", "borderRadius": "px", "padding": "px", "boxShadow": ""}}],',
+    '      "inputs": [{"description": "text input / select / textarea", "style": {"background": "#hex", "border": "#hex", "borderRadius": "px", "padding": "px", "fontSize": "px", "height": "px"}}],',
+    '      "tables": [{"description": "table/list style", "style": {"headerBackground": "#hex", "rowStripe": "#hex", "border": "#hex", "fontSize": "px"}}],',
+    '      "dialogs": [{"description": "modal/drawer/tooltip", "style": {"background": "#hex", "borderRadius": "px", "boxShadow": "", "padding": "px", "overlay": "#hex"}}]',
+    "    },",
+    '    "animation": { "durations": ["ms values seen"], "easing": ["easing names or cubic-bezier"] },',
+    '    "darkMode": { "supported": false, "changes": [{"token": "background-primary", "light": "#hex", "dark": "#hex" if visible}] }',
+    "  },",
+    "",
     '  "regions": [',
     '    { "id": "header", "role": "header|body|footer|sidebar|toolbar|content|chart-area|unknown", "description": "region description", "alignment": "position/alignment", "style": { "background": "", "radius": "", "padding": "" } }',
     "  ],",
@@ -181,7 +286,16 @@ export function buildDesignInspectionPrompt(userPrompt?: string): string {
     '  "qualityGate": { "confidence": 0.0, "missingDetails": ["missing field list|missing geometry|missing active tab state"], "needsStrongerVisionModel": false, "nextStep": "use this spec|rerun with stronger vision model or crop region" },',
     '  "implementationHints": ["front-end restoration advice"]',
     "}",
-    "Requirements: if a field is unreadable, write unknown or omit it. Do not invent exact pixels; estimated bounds are allowed only with confidence. If this is a chart or diagram, diagram.nodes, diagram.links, visible labels, numeric values, and topology invariants are mandatory.",
+    "",
+    "=== DESIGN SYSTEM EXTRACTION RULES ===",
+    "1. Colors: Extract hex values precisely. Name each background/text/border by its UI role, not just 'color1'/'color2'. Include hover/active/disabled states if visible.",
+    "2. Typography: Group font sizes into a type scale hierarchy. Note which sizes are used for headings, body, captions, labels, buttons, inputs.",
+    "3. Spacing: Infer the grid system (4px/8px) from element padding and gaps. List patterns like card-padding=24px, section-gap=32px, input-padding=12px.",
+    "4. Components: For each component type (button/card/input/table/dialog), document its visible style properties. Include variant differences and state changes if shown.",
+    "5. Animation/Dark mode: Only include if visible in the screenshots. Do not invent.",
+    "",
+    "=== GENERAL RULES ===",
+    "If a field is unreadable, write unknown or omit it. Do not invent exact pixels; estimated bounds are allowed only with confidence. If this is a chart or diagram, diagram.nodes, diagram.links, visible labels, numeric values, and topology invariants are mandatory.",
     "UI restoration rule: preserve visual structure before API/data logic. Do not simplify a UI into only the fields implied by an API payload. If the screenshot shows sections, rows, cards, table cells, tags, icons, active tab state, empty state, or other component states, include them in uiSpec, visualConstraints, and invariants.",
     "Generic component rule: do not encode a domain-specific component concept unless it is visible in the image. Extract reusable visual constraints that apply to any child component: geometry, spacing, alignment, typography, color, state/content variants, assets, and interactions.",
   ].join("\n");
@@ -208,6 +322,63 @@ export function buildDesignSemanticDiffPrompt(userPrompt?: string): string {
     "  ]",
     "}",
     "Scoring: 100 means visually and semantically equivalent; 0 means unrelated. If chart nodes/links/labels/values differ, mark severity critical and verdict fail even if colors are similar.",
+  ].join("\n");
+}
+
+export function buildDesignSystemExtractionPrompt(userPrompt?: string): string {
+  const normalizedPrompt = userPrompt?.trim() || "Extract the complete design system from this UI screenshot.";
+  return [
+    normalizedPrompt,
+    "",
+    "You are a design system extraction engine. Given one or more UI screenshots, extract ONLY the reusable design tokens and component patterns — not the page layout.",
+    "",
+    "Return only one JSON object. Do not return Markdown, code fences, or prose.",
+    "",
+    "JSON schema:",
+    "{",
+    '  "summary": "short Chinese summary within 100 chars",',
+    '  "colors": {',
+    '    "primary": "#hex",',
+    '    "secondary": "#hex",',
+    '    "accent": "#hex",',
+    '    "success": "#hex if visible",',
+    '    "warning": "#hex if visible",',
+    '    "danger": "#hex if visible",',
+    '    "info": "#hex if visible",',
+    '    "backgrounds": [{"name": "page|card|sidebar|input|modal|table-row|tag", "value": "#hex", "usage": "where used"}],',
+    '    "text": [{"name": "primary|secondary|muted|link|heading|body|caption|placeholder|disabled|on-primary", "value": "#hex", "usage": "where used"}],',
+    '    "borders": [{"name": "input|card|divider|table|focus|selected", "value": "#hex", "usage": "where used"}],',
+    '    "semantic": { "error": "#hex", "success": "#hex", "warning": "#hex", "info": "#hex" }',
+    "  },",
+    '  "typography": {',
+    '    "fontFamilies": ["family names used"],',
+    '    "textStyles": [',
+    '      { "name": "h1|h2|h3|heading|body|body-small|caption|label|button|input|tag|helper|tooltip|badge|code", "fontSize": "px/rem", "fontWeight": "400|500|600|700", "lineHeight": "optional", "letterSpacing": "optional", "usage": "where applied" }',
+    "    ]",
+    "  },",
+    '  "spacing": {',
+    '    "scale": "4px grid | 8px grid | inconsistent",',
+    '    "patterns": [{"name": "card-padding|section-gap|input-padding|list-gap|button-padding|page-margin|icon-gap", "value": "px", "usage": "where used"}]',
+    "  },",
+    '  "components": {',
+    '    "buttons": [{"variant": "primary|secondary|ghost|danger|icon|link", "style": {"background": "#hex", "color": "#hex", "borderRadius": "px", "padding": "px", "fontSize": "px", "fontWeight": ""}, "states": {"hover": {}, "active": {}, "disabled": {}}}],',
+    '    "cards": [{"description": "card style", "style": {"background": "#hex", "borderRadius": "px", "padding": "px", "boxShadow": ""}}],',
+    '    "inputs": [{"description": "input style", "style": {"background": "#hex", "border": "#hex", "borderRadius": "px", "padding": "px", "fontSize": "px"}}],',
+    '    "tables": [{"description": "table style", "style": {"headerBackground": "#hex", "rowStripe": "#hex", "border": "#hex", "fontSize": "px"}}],',
+    '    "dialogs": [{"description": "modal/drawer/tooltip", "style": {"background": "#hex", "borderRadius": "px", "padding": "px", "overlay": "#hex"}}],',
+    '    "icons": [{"description": "icon type", "style": {"size": "px", "color": "#hex"}}]',
+    "  },",
+    '  "animation": { "durations": ["ms values seen"], "easing": ["easing names"] },',
+    '  "darkMode": { "supported": false, "changes": [{"token": "background-primary", "light": "#hex", "dark": "#hex"}] }',
+    "}",
+    "",
+    "RULES:",
+    "- Extract hex values precisely. Name each color by UI role, not 'color1'/'color2'.",
+    "- Group font sizes into a type scale hierarchy (h1→body→caption). Note usage context.",
+    "- Infer grid system from padding/gaps. 4px grid is the web default; note if 8px or custom.",
+    "- For components, include hover/active/disabled states only if visible in the screenshots.",
+    "- For dark mode / animation: only include if visible. Do not invent.",
+    "- If a field is unreadable, write 'unknown' or omit it. Do not hallucinate values.",
   ].join("\n");
 }
 
@@ -303,6 +474,7 @@ function normalizeDsl(
     elements,
     diagram: normalizeDiagram(parsed.diagram),
     visualTokens: isRecord(parsed.visualTokens) ? parsed.visualTokens : {},
+    designSystem: normalizeDesignSystem(parsed.designSystem),
     uiSpec,
     qualityGate,
     implementationHints: Array.isArray(parsed.implementationHints)
@@ -370,6 +542,149 @@ function normalizeDiagram(value: unknown): DesignDiagramStructure | undefined {
     links: Array.isArray(value.links) ? value.links.map(normalizeDiagramLink).filter(isDiagramLink) : undefined,
     invariants: Array.isArray(value.invariants) ? value.invariants.filter(isNonEmptyString).map((item) => item.trim()) : undefined,
   };
+}
+
+function normalizeDesignSystem(value: unknown): DesignExtractedSystem | undefined {
+  if (!isRecord(value)) return undefined;
+  const colors = normalizeDesignColors(value.colors);
+  const typography = normalizeDesignTypography(value.typography);
+  const spacing = normalizeDesignSpacing(value.spacing);
+  const components = normalizeDesignComponents(value.components);
+  const animation = normalizeDesignAnimation(value.animation);
+  const darkMode = normalizeDesignDarkMode(value.darkMode);
+  const ds: DesignExtractedSystem = {};
+  if (colors) ds.colors = colors;
+  if (typography) ds.typography = typography;
+  if (spacing) ds.spacing = spacing;
+  if (components) ds.components = components;
+  if (animation) ds.animation = animation;
+  if (darkMode) ds.darkMode = darkMode;
+  return Object.keys(ds).length > 0 ? ds : undefined;
+}
+
+function normalizeDesignColors(value: unknown): DesignSystemPalette | undefined {
+  if (!isRecord(value)) return undefined;
+  const palette: DesignSystemPalette = {};
+  const hexProps = ["primary", "secondary", "accent", "success", "warning", "danger", "info"] as const;
+  for (const prop of hexProps) {
+    if (typeof value[prop] === "string" && value[prop].trim()) palette[prop] = value[prop].trim();
+  }
+  if (Array.isArray(value.backgrounds)) palette.backgrounds = value.backgrounds.filter(isRecord).map((b: Record<string, unknown>) => ({
+    name: stringOr(b.name, "bg"),
+    value: stringOr(b.value, "#unknown"),
+    usage: stringOr(b.usage, "unknown"),
+  }));
+  if (Array.isArray(value.text)) palette.text = value.text.filter(isRecord).map((t: Record<string, unknown>) => ({
+    name: stringOr(t.name, "text"),
+    value: stringOr(t.value, "#unknown"),
+    usage: stringOr(t.usage, "unknown"),
+  }));
+  if (Array.isArray(value.borders)) palette.borders = value.borders.filter(isRecord).map((b: Record<string, unknown>) => ({
+    name: stringOr(b.name, "border"),
+    value: stringOr(b.value, "#unknown"),
+    usage: stringOr(b.usage, "unknown"),
+  }));
+  if (isRecord(value.semantic)) {
+    const sem: Record<string, string> = {};
+    for (const [k, v] of Object.entries(value.semantic)) {
+      if (typeof v === "string" && v.trim()) sem[k] = v.trim();
+    }
+    if (Object.keys(sem).length > 0) palette.semantic = sem;
+  }
+  return Object.keys(palette).length > 0 ? palette : undefined;
+}
+
+function normalizeDesignTypography(value: unknown): DesignSystemTypography | undefined {
+  if (!isRecord(value)) return undefined;
+  const typography: DesignSystemTypography = {};
+  if (Array.isArray(value.fontFamilies)) {
+    typography.fontFamilies = value.fontFamilies.filter(isNonEmptyString).map((f: string) => f.trim());
+  }
+  if (Array.isArray(value.textStyles)) {
+    typography.textStyles = value.textStyles.filter(isRecord).map((s: Record<string, unknown>) => ({
+      name: stringOr(s.name, "text-style"),
+      fontSize: stringOr(s.fontSize, "unknown"),
+      fontWeight: stringOr(s.fontWeight, "400"),
+      lineHeight: optionalString(s.lineHeight),
+      letterSpacing: optionalString(s.letterSpacing),
+      usage: stringOr(s.usage, "unknown"),
+    }));
+  }
+  return typography.fontFamilies?.length || typography.textStyles?.length ? typography : undefined;
+}
+
+function normalizeDesignSpacing(value: unknown): DesignSystemSpacing | undefined {
+  if (!isRecord(value)) return undefined;
+  const spacing: DesignSystemSpacing = {};
+  if (typeof value.scale === "string" && value.scale.trim()) spacing.scale = value.scale.trim();
+  if (Array.isArray(value.patterns)) {
+    spacing.patterns = value.patterns.filter(isRecord).map((p: Record<string, unknown>) => ({
+      name: stringOr(p.name, "spacing"),
+      value: stringOr(p.value, "unknown"),
+      usage: stringOr(p.usage, "unknown"),
+    }));
+  }
+  return spacing.scale || spacing.patterns?.length ? spacing : undefined;
+}
+
+function normalizeDesignComponents(value: unknown): DesignSystemComponents | undefined {
+  if (!isRecord(value)) return undefined;
+  const comps: DesignSystemComponents = {};
+  if (Array.isArray(value.buttons)) {
+    comps.buttons = value.buttons.filter(isRecord).map((b: Record<string, unknown>) => ({
+      variant: stringOr(b.variant, "default"),
+      style: isRecord(b.style) ? b.style : {},
+      states: isRecord(b.states) ? b.states : undefined,
+    }));
+  }
+  if (Array.isArray(value.cards)) {
+    comps.cards = value.cards.filter(isRecord).map((c: Record<string, unknown>) => ({
+      description: stringOr(c.description, "card"),
+      style: isRecord(c.style) ? c.style : {},
+    }));
+  }
+  if (Array.isArray(value.inputs)) {
+    comps.inputs = value.inputs.filter(isRecord).map((i: Record<string, unknown>) => ({
+      description: stringOr(i.description, "input"),
+      style: isRecord(i.style) ? i.style : {},
+    }));
+  }
+  if (Array.isArray(value.tables)) {
+    comps.tables = value.tables.filter(isRecord).map((t: Record<string, unknown>) => ({
+      description: stringOr(t.description, "table"),
+      style: isRecord(t.style) ? t.style : {},
+    }));
+  }
+  if (Array.isArray(value.dialogs)) {
+    comps.dialogs = value.dialogs.filter(isRecord).map((d: Record<string, unknown>) => ({
+      description: stringOr(d.description, "dialog"),
+      style: isRecord(d.style) ? d.style : {},
+    }));
+  }
+  return comps.buttons?.length || comps.cards?.length || comps.inputs?.length || comps.tables?.length || comps.dialogs?.length
+    ? comps
+    : undefined;
+}
+
+function normalizeDesignAnimation(value: unknown): DesignSystemAnimation | undefined {
+  if (!isRecord(value)) return undefined;
+  const anim: DesignSystemAnimation = {};
+  if (Array.isArray(value.durations)) anim.durations = value.durations.filter(isNonEmptyString).map((d: string) => d.trim());
+  if (Array.isArray(value.easing)) anim.easing = value.easing.filter(isNonEmptyString).map((e: string) => e.trim());
+  return anim.durations?.length || anim.easing?.length ? anim : undefined;
+}
+
+function normalizeDesignDarkMode(value: unknown): DesignSystemDarkMode | undefined {
+  if (!isRecord(value)) return undefined;
+  const dm: DesignSystemDarkMode = { supported: value.supported === true };
+  if (Array.isArray(value.changes)) {
+    dm.changes = value.changes.filter(isRecord).map((c: Record<string, unknown>) => ({
+      token: stringOr(c.token, "token"),
+      light: stringOr(c.light, "unknown"),
+      dark: stringOr(c.dark, "unknown"),
+    }));
+  }
+  return dm.supported || dm.changes?.length ? dm : undefined;
 }
 
 function normalizeDiagramNode(value: unknown): NonNullable<DesignDiagramStructure["nodes"]>[number] | null {

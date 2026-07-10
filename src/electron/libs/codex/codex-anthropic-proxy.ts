@@ -24,6 +24,7 @@ import {
   saveApiConfigSettings,
   type ApiConfig,
 } from "../config-store.js";
+import { listenWithWindowsPortOwnerKill } from "../local-port-guard.js";
 
 const CODEX_PROXY_HOST = "127.0.0.1";
 const DEFAULT_CODEX_PROXY_PORT = 14559;
@@ -65,16 +66,22 @@ export function ensureCodexAnthropicProxy(): void {
     proxyServer = null;
   };
 
-  server.on("error", (error) => {
+  const handleListenError = (error: NodeJS.ErrnoException) => {
     console.error("[codex-proxy] failed:", error);
     resetServerState();
-  });
+  };
   server.on("close", () => {
     resetServerState();
   });
   const port = resolveCodexProxyPort();
-  server.listen(port, CODEX_PROXY_HOST, () => {
+  server.on("listening", () => {
     console.info(`[codex-proxy] listening on http://${CODEX_PROXY_HOST}:${port}`);
+  });
+  listenWithWindowsPortOwnerKill(server, {
+    host: CODEX_PROXY_HOST,
+    label: "codex-proxy",
+    onError: handleListenError,
+    port,
   });
 }
 

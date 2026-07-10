@@ -17,6 +17,7 @@ import type {
 import { resolveImagePreprocessApiConfig } from "../claude/claude-settings.js";
 import {
   buildDesignInspectionPrompt,
+  buildDesignSystemExtractionPrompt,
   buildDesignSemanticDiffPrompt,
   parseDesignInspectionDsl,
   parseDesignSemanticDiffDsl,
@@ -35,6 +36,8 @@ export const DESIGN_TOOL_NAMES = [
   "design_capture_current_region",
   "design_capture_current_element",
   "design_inspect_image",
+  "design_extract_design_system",
+  "design_generate_ux_prompt",
   "design_compare_current_view",
   "design_compare_element_to_reference",
   "design_compare_images_semantic",
@@ -1237,6 +1240,115 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
     },
   );
 
+  const extractDesignSystemTool = tool(
+    "design_extract_design_system",
+    "从一张或多张本地截图/设计图中提取完整设计系统（色彩体系、字体层级、间距体系、组件样式、动画/暗黑模式）。结果可直接用于设计 token 生成和 UI 实现。适合参考多张图推断统一设计语言。",
+    {
+      imagePaths: z.array(z.string().trim().min(1)).min(1).max(8),
+      prompt: z.string().trim().max(800).optional(),
+    },
+    async (input) => {
+      let imageRoute: ReturnType<typeof describeImagePreprocessRoute> | undefined;
+      try {
+        const imageConfig = resolveImagePreprocessApiConfig();
+        imageRoute = describeImagePreprocessRoute(imageConfig);
+        const normalizedPaths = input.imagePaths.map((path) => normalizeImagePath(path, "设计图路径"));
+        const images = normalizedPaths.map((path) => {
+          const image = createImageFromPath(path, "设计图");
+          return { image, size: image.getSize() };
+        });
+        const fileEntries = normalizedPaths.map((path, index) => ({
+          filePath: path,
+          attachmentName: `design-${index + 1}`,
+        }));
+        const extractionText = await summarizeLocalImageFiles({
+          config: imageConfig,
+          prompt: buildDesignSystemExtractionPrompt(input.prompt),
+          files: fileEntries,
+          strictPrompt: true,
+        }) ?? (await summarizeLocalImageFiles({
+          config: imageConfig,
+          prompt: input.prompt?.trim() || "Extract colors, typography, spacing, component styles from this UI design.",
+          files: fileEntries,
+          strictPrompt: false,
+        }));
+        if (!extractionText) {
+          throw new Error("未配置可用的图片理解模型。请在设置里配置 imageModel / 视觉模型后再提取设计系统。");
+        }
+        const dsl = parseDesignInspectionDsl(extractionText).designSystem;
+        return toTextToolResult({
+          action: "design_extract_design_system",
+          success: true,
+          images: images.map((img, index) => ({ path: normalizedPaths[index], size: img.size })),
+          imageRoute,
+          designSystem: dsl ?? extractionText,
+          raw: extractionText,
+          nextStep: "Use the extracted design system tokens in your component styling. For UI structure analysis, call design_inspect_image separately.",
+          note: "图片只在工具内部交给视觉模型处理，主 Agent 收到的是文本摘要，不包含 base64。",
+        });
+      } catch (error) {
+        return toTextToolResult({
+          action: "design_extract_design_system",
+          success: false,
+          imageRoute,
+          error: error instanceof Error ? error.message : "设计系统提取失败。",
+        }, true);
+      }
+    },
+  );
+
+  const generateUxPromptTool = tool(
+    "design_generate_ux_prompt",
+    "基于 design_inspect_image 或 design_extract_design_system 的结构化输出，生成一段可直接作为 Agent 指令的 UI 实现 prompt。合并设计系统 token + 页面结构 spec + 产品需求，不含任何特定框架绑定。",
+    {
+      designSystem: z.string().trim().min(1),
+      pageSpec: z.string().trim().optional(),
+      productRequirement: z.string().trim().max(2000).optional(),
+      label: z.string().trim().max(80).optional(),
+    },
+    async (input) => {
+      try {
+        const dsHeader = "## 设计系统 Tokens\n\n以下设计系统代已经从参考图中提取，实现时请严格遵循：\n\n";
+        const specHeader = input.pageSpec ? "\n\n## 页面结构规范\n\n以下 UI 结构从参考图中提取，布局/颜色/间距必须还原：\n\n" : "";
+        const prdHeader = input.productRequirement ? "\n\n## 产品需求\n\n" : "";
+        const prompt = [
+          "## 任务：根据以下设计规范实现 UI\n",
+          dsHeader,
+          input.designSystem,
+          specHeader,
+          input.pageSpec ?? "",
+          prdHeader,
+          input.productRequirement ?? "",
+          "\n\n## 实现要求",
+          "1. 严格按照设计系统 tokens 使用颜色、字体和间距",
+          "2. 页面结构与 spec 中的 regions/elements 布局一致",
+          "3. 实现 hover/active/disabled 状态（如果 spec 中有）",
+          "4. 响应式适配所有主流断点",
+          "5. 代码完整可运行，不需要预留 TODO 标记",
+          "6. 不添加 spec 中未出现的功能或 UI 元素",
+          "\n## 验收标准",
+          "- 视觉上对齐参考图",
+          "- 设计 token 使用一致",
+          "- 组件状态完成",
+          "- 响应式布局适配",
+        ].join("\n");
+        return toTextToolResult({
+          action: "design_generate_ux_prompt",
+          success: true,
+          label: input.label,
+          prompt,
+          note: "生成的 prompt 可以直接用作 Agent 实现指令，或传给 executor agent 执行。工具/框架选择由 Agent 自行决定，工具只负责设计规范输出。",
+        });
+      } catch (error) {
+        return toTextToolResult({
+          action: "design_generate_ux_prompt",
+          success: false,
+          error: error instanceof Error ? error.message : "生成实现 prompt 失败。",
+        }, true);
+      }
+    },
+  );
+
   const compareTool = tool(
     "design_compare_current_view",
     "将当前内置浏览器 BrowserView 截图与参考设计图进行截图比照，保存当前截图、diff 图、三栏 comparison 图和 JSON report。返回差异比例、差异边界、热点区域、忽略区域和验收结论。referenceImagePath 应传 Figma 导出的 PNG/JPG/WebP 文件路径。若只是读取单张参考图，请用 design_inspect_image。",
@@ -1644,6 +1756,8 @@ export function getDesignMcpServer(sessionId = "global"): McpSdkServerConfigWith
       captureRegionTool,
       captureElementTool,
       inspectImageTool,
+      extractDesignSystemTool,
+      generateUxPromptTool,
       compareTool,
       compareElementTool,
       compareImagesSemanticTool,

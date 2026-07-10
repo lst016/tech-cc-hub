@@ -3,7 +3,7 @@ import { Bot, Plus, Terminal, X } from "lucide-react";
 import {
   buildActivityWorkspaceCreateOptions,
   buildActivityWorkspaceTabs,
-  shouldShowCreateBrowserTab,
+  shouldShowCreateGitTab,
   shouldShowCreateTerminalTab,
   type ActivityOptionalWorkspaceTab,
   type ActivityWorkspaceTab,
@@ -14,15 +14,17 @@ import {
 type ActivityWorkspaceTabsProps = {
   activeTab: ActivityWorkspaceTab;
   showBrowserTab: boolean;
+  showGitTab?: boolean;
   showTerminalTab?: boolean;
   workflowAgentTabs?: WorkflowAgentWorkspaceTabItem[];
   showLabels?: boolean;
   browserLabel?: string;
-  showCreateBrowserTab?: boolean;
+  showCreateGitTab?: boolean;
   showCreateTerminalTab?: boolean;
   onSelectTab: (tab: ActivityWorkspaceTab) => void;
   onCloseBrowserTab?: () => void;
-  onCreateBrowserTab?: () => void;
+  onCloseGitTab?: () => void;
+  onCreateGitTab?: () => void;
   onCloseTerminalTab?: () => void;
   onCreateTerminalTab?: () => void;
   onCloseWorkflowAgentTab?: (tab: WorkflowAgentRailTab) => void;
@@ -92,15 +94,17 @@ function tabClassName(active: boolean) {
 export function ActivityWorkspaceTabs({
   activeTab,
   showBrowserTab,
+  showGitTab = false,
   showTerminalTab = false,
   workflowAgentTabs = [],
   showLabels = true,
   browserLabel = "浏览器",
-  showCreateBrowserTab,
+  showCreateGitTab,
   showCreateTerminalTab,
   onSelectTab,
   onCloseBrowserTab,
-  onCreateBrowserTab,
+  onCloseGitTab,
+  onCreateGitTab,
   onCloseTerminalTab,
   onCreateTerminalTab,
   onCloseWorkflowAgentTab,
@@ -108,13 +112,21 @@ export function ActivityWorkspaceTabs({
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const createMenuRef = useRef<HTMLDivElement>(null);
   const tabsScrollerRef = useRef<HTMLDivElement>(null);
-  const tabs = buildActivityWorkspaceTabs({ activeTab, showBrowserTab, showTerminalTab, workflowAgentTabs }).filter((tab) => tab.visible);
+  const tabs = buildActivityWorkspaceTabs({ activeTab, showBrowserTab, showGitTab, showTerminalTab, workflowAgentTabs }).filter((tab) => tab.visible);
   const createOptions = useMemo(
     () => buildActivityWorkspaceCreateOptions({
-      canCreateBrowserTab: Boolean(onCreateBrowserTab) && (showCreateBrowserTab ?? shouldShowCreateBrowserTab(showBrowserTab)),
+      canCreateBrowserTab: false,
+      canCreateGitTab: Boolean(onCreateGitTab) && (showCreateGitTab ?? shouldShowCreateGitTab(showGitTab)),
       canCreateTerminalTab: Boolean(onCreateTerminalTab) && (showCreateTerminalTab ?? shouldShowCreateTerminalTab(showTerminalTab)),
     }),
-    [onCreateBrowserTab, onCreateTerminalTab, showBrowserTab, showCreateBrowserTab, showCreateTerminalTab, showTerminalTab],
+    [
+      onCreateGitTab,
+      onCreateTerminalTab,
+      showCreateGitTab,
+      showCreateTerminalTab,
+      showGitTab,
+      showTerminalTab,
+    ],
   );
 
   useEffect(() => {
@@ -136,8 +148,8 @@ export function ActivityWorkspaceTabs({
 
   const handleCreateOption = (id: ActivityOptionalWorkspaceTab) => {
     setCreateMenuOpen(false);
-    if (id === "browser") {
-      onCreateBrowserTab?.();
+    if (id === "git") {
+      onCreateGitTab?.();
       return;
     }
     if (id === "terminal") {
@@ -172,6 +184,8 @@ export function ActivityWorkspaceTabs({
             : isWorkflowAgentTab ? "max-w-[112px]" : "max-w-[160px]";
           const closeHandler = tab.id === "browser"
             ? onCloseBrowserTab
+            : tab.id === "git"
+              ? onCloseGitTab
             : tab.id === "terminal"
               ? onCloseTerminalTab
               : isWorkflowAgentTab

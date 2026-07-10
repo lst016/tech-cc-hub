@@ -8,7 +8,7 @@ import {
 } from "../../src/shared/models/model-capabilities.js";
 
 test("model capability detection identifies image-understanding main models", () => {
-  for (const model of ["gpt-4o", "gpt-5.5", "gemini-3.1-pro-preview", "qwen2.5-vl", "glm-4v", "grok-2-vision"]) {
+  for (const model of ["gpt-4o", "gpt-5.5", "gemini-3.1-pro-preview", "gemini-3-pro-image-preview", "qwen2.5-vl", "glm-4v", "grok-2-vision"]) {
     assert.equal(isLikelyImageUnderstandingModel(model), true, model);
     assert.equal(canMainModelReadImages(model), true, model);
   }

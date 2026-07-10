@@ -22,6 +22,7 @@ import {
   type PreviewOpenFileDetail,
 } from "./events";
 import { copyTextToClipboard } from "./utils/clipboard";
+import { shouldShowChatThinkingPlaceholder } from "./utils/chat-thinking-state";
 import {
   DEFAULT_ACTIVITY_RAIL_TAB,
   buildWorkflowAgentWorkspaceTabs,
@@ -133,6 +134,22 @@ function MarkdownLoadFallback() {
       <div className="h-3 w-5/12 rounded-full bg-ink-900/10" />
       <div className="h-3 w-full rounded-full bg-ink-900/10" />
       <div className="h-3 w-8/12 rounded-full bg-ink-900/10" />
+    </div>
+  );
+}
+
+function ThinkingTextPlaceholder() {
+  return (
+    <div className="group mt-5 pointer-events-none select-none">
+      <div className="mb-2 flex w-full items-center gap-2 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500/70" />
+        <span>助手</span>
+      </div>
+      <div className="pl-4 text-[15px] font-medium text-ink-900/30">
+        <span className="inline-block animate-pulse">
+          正在思考
+        </span>
+      </div>
     </div>
   );
 }
@@ -308,6 +325,7 @@ function App() {
   const [activityRailTabBySessionId, setActivityRailTabBySessionId] = useState<Record<string, ActivityRailTab>>({});
   const [openWorkflowAgentTabsBySessionId, setOpenWorkflowAgentTabsBySessionId] = useState<Record<string, string[]>>({});
   const [pendingPreviewOpenRequestBySessionId, setPendingPreviewOpenRequestBySessionId] = useState<Record<string, PendingPreviewOpenRequest>>({});
+  const [gitTabBySessionId, setGitTabBySessionId] = useState<Record<string, boolean>>({});
   const [terminalTabBySessionId, setTerminalTabBySessionId] = useState<Record<string, boolean>>({});
   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
   const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | null>(null);
@@ -635,6 +653,7 @@ function App() {
   const isRunning = activeSession?.status === "running";
   const activeBrowserWorkbenchState = activeSessionId ? browserWorkbenchBySessionId[activeSessionId] : undefined;
   const activeHasBrowserTab = activeBrowserWorkbenchState?.hasBrowserTab ?? Boolean(activeBrowserWorkbenchState?.url);
+  const activeHasGitTab = activeSessionId ? gitTabBySessionId[activeSessionId] === true : false;
   const activeHasTerminalTab = activeSessionId ? terminalTabBySessionId[activeSessionId] === true : false;
   const workflowAgents = useMemo(() => buildWorkflowAgentSummaries(messages, activeSession?.status), [messages, activeSession?.status]);
   const workflowAgentsById = useMemo(() => new Map(workflowAgents.map((agent) => [agent.id, agent])), [workflowAgents]);
@@ -798,6 +817,23 @@ function App() {
       latestUserIndex: latestUserEntry?.type === "message" ? latestUserEntry.originalIndex : null,
     };
   }, [renderEntries, visibleMessages]);
+
+  const lastRenderableEntryType = useMemo(() => {
+    for (let index = renderEntries.length - 1; index >= 0; index -= 1) {
+      const entry = renderEntries[index];
+      if (!entry || entry.type === "separator") continue;
+      if (entry.type === "message") return entry.message.type;
+      return entry.type;
+    }
+    return null;
+  }, [renderEntries]);
+
+  const showThinkingPlaceholder = useMemo(() => shouldShowChatThinkingPlaceholder({
+    isRunning,
+    partialMessage,
+    showPartialMessage,
+    lastRenderableEntryType,
+  }), [isRunning, partialMessage, showPartialMessage, lastRenderableEntryType]);
 
   const scrollToMessageIndex = useCallback((index: number | null) => {
     if (index === null) return;
@@ -1384,6 +1420,27 @@ function App() {
     sendWorkflowOptimizationPrompt(headerWorkflowOptimizationPrompt);
   }, [headerWorkflowOptimizationPrompt, sendWorkflowOptimizationPrompt]);
 
+  const openGitWorkspace = useCallback(() => {
+    if (!activeSessionId) return;
+    setGitTabBySessionId((current) => (
+      current[activeSessionId] === true ? current : { ...current, [activeSessionId]: true }
+    ));
+    setShowActivityRail(true);
+    setShowSessionAnalysis(false);
+    setActiveSessionWorkspaceView("chat");
+    setActiveSessionActivityRailTab("git");
+  }, [activeSessionId, setActiveSessionActivityRailTab, setActiveSessionWorkspaceView]);
+
+  const closeGitWorkspace = useCallback(() => {
+    if (!activeSessionId) return;
+    setGitTabBySessionId((current) => (
+      current[activeSessionId] ? { ...current, [activeSessionId]: false } : current
+    ));
+    if (activityRailTab === "git") {
+      setActiveSessionActivityRailTab(DEFAULT_ACTIVITY_RAIL_TAB);
+    }
+  }, [activeSessionId, activityRailTab, setActiveSessionActivityRailTab]);
+
   const openTerminalWorkspace = useCallback(() => {
     if (!activeSessionId) return;
     setTerminalTabBySessionId((current) => (
@@ -1431,6 +1488,7 @@ function App() {
     !isUtilityWorkspace &&
     showActivityRail &&
     workspaceView !== "browser" &&
+    activeHasGitTab &&
     activityRailTab === "git";
   const expandedActivityWorkspaceActive = gitWorkspaceActive;
   const workspaceSidebarVisible = showSidebar;
@@ -1942,6 +2000,8 @@ function App() {
                     })
                   )}
 
+                  {showThinkingPlaceholder && <ThinkingTextPlaceholder />}
+
                   {(showPartialMessage || partialMessage.trim()) && (
                     <div className="partial-message rounded-[26px] border border-black/5 bg-[linear-gradient(180deg,rgba(245,247,250,0.95),rgba(255,255,255,0.86))] px-6 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
                       <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
@@ -2048,11 +2108,14 @@ function App() {
                 contextWindow={selectedUsageModelConfig?.contextWindow}
                 compressionThresholdPercent={selectedUsageModelConfig?.compressionThresholdPercent}
                 hasBrowserTab={activeHasBrowserTab}
+                hasGitTab={activeHasGitTab}
                 hasTerminalTab={activeHasTerminalTab}
                 workflowAgentTabs={workflowAgentTabs}
                 selectedWorkflowAgent={selectedWorkflowAgent}
                 workflowRuns={workflowRuns}
                 onWorkflowRunAction={handleWorkflowRunAction}
+                onOpenGitWorkspace={openGitWorkspace}
+                onCloseGitWorkspace={closeGitWorkspace}
                 onOpenTerminalWorkspace={openTerminalWorkspace}
                 onCloseTerminalWorkspace={closeTerminalWorkspace}
                 onCloseWorkflowAgentTab={closeWorkflowAgentTranscript}
@@ -2083,9 +2146,10 @@ function App() {
                   setActiveSessionWorkspaceView("chat");
                 }}
                 onOpenGit={() => {
-                  setActiveSessionActivityRailTab("git");
-                  setActiveSessionWorkspaceView("chat");
+                  openGitWorkspace();
                 }}
+                hasGitTab={activeHasGitTab}
+                onCloseGit={closeGitWorkspace}
                 hasTerminalTab={activeHasTerminalTab}
                 onOpenTerminal={openTerminalWorkspace}
                 onCloseTerminal={closeTerminalWorkspace}
@@ -2136,7 +2200,7 @@ function App() {
       <Toaster position="top-right" richColors closeButton />
 
       {globalError && (
-        <div className="fixed bottom-28 left-1/2 z-50 w-[min(520px,calc(100vw-2rem))] -translate-x-1/2">
+        <div className="fixed top-14 left-1/2 z-[30000] w-[min(520px,calc(100vw-2rem))] -translate-x-1/2">
           <div className="flex items-center gap-3 rounded-2xl border border-error/15 bg-white/92 px-3.5 py-3 text-ink-800 shadow-[0_18px_45px_rgba(15,23,42,0.16)] backdrop-blur-xl">
             <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-error" />
             <span className="min-w-0 flex-1 truncate text-sm" title={globalError}>{globalError}</span>

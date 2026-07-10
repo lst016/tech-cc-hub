@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { preprocessImageAttachmentsCore } from "../../src/electron/libs/image/image-preprocessor-core.js";
 import type { PromptAttachment } from "../../src/electron/types.js";
 
-test("preprocessImageAttachmentsCore keeps dispatchable image attachment when image summary is empty", async () => {
-  const attachment: PromptAttachment = {
+function createImageAttachment(): PromptAttachment {
+  return {
     id: "image-1",
     kind: "image",
     name: "image.png",
@@ -15,6 +16,23 @@ test("preprocessImageAttachmentsCore keeps dispatchable image attachment when im
     preview: "data:image/png;base64,AAAA",
     size: 4,
   };
+}
+
+test("preprocessImageAttachments fails instead of silently dispatching images without an image model", () => {
+  const source = readFileSync("src/electron/libs/image/image-preprocessor.ts", "utf8");
+  const missingConfigStart = source.indexOf("if (!config || !imageModel)");
+  const coreCallStart = source.indexOf("return preprocessImageAttachmentsCore", missingConfigStart);
+  const missingConfigBranch = source.slice(missingConfigStart, coreCallStart);
+
+  assert.ok(missingConfigStart >= 0);
+  assert.ok(coreCallStart > missingConfigStart);
+  assert.match(missingConfigBranch, /success:\s*false/);
+  assert.match(missingConfigBranch, /图片预处理模型/);
+  assert.doesNotMatch(missingConfigBranch, /success:\s*true/);
+});
+
+test("preprocessImageAttachmentsCore keeps dispatchable image attachment when image summary is empty", async () => {
+  const attachment = createImageAttachment();
 
   const result = await preprocessImageAttachmentsCore({
     imageModel: "image-model",

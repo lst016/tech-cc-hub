@@ -16,6 +16,7 @@ import {
   toImportedApiModels,
   type ImportedApiModel,
 } from "../../../shared/models/api-model-metadata";
+import { isLikelyImageUnderstandingModel } from "../../../shared/models/model-capabilities";
 import {
   createCodexOAuthProfile,
   createDeepSeekOfficialProfile,
@@ -104,7 +105,7 @@ const createProfileOptions: CreateProfileOption[] = [
   {
     id: "codex",
     label: "Codex OAuth",
-    description: "通过 OpenAI OAuth 接入 Codex Responses 模型。",
+    description: "通过 OpenAI OAuth 接入 Codex 响应模型。",
     create: createCodexOAuthProfile,
   },
   {
@@ -208,11 +209,6 @@ function normalizeApiBaseURL(baseURL: string, provider: ApiProviderMode = "custo
   }
 
   return url.toString().replace(/\/$/, "");
-}
-
-function isLikelyVisionUnderstandingModel(modelName: string): boolean {
-  return /(^|[-_.])(vl|vision|visual|ocr|omni)([-_.]|$)|qwen.*vl|glm.*v|gpt-4o|gemini.*vision/i.test(modelName)
-    && !/image-?0?1|speech|music|hailuo/i.test(modelName);
 }
 
 function normalizeImportedModels(models: Array<string | ImportedApiModel> | undefined): ImportedApiModel[] {
@@ -694,9 +690,9 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
         const fallbackAnalysisModel = item.analysisModel && modelIds.includes(item.analysisModel) ? item.analysisModel : fallbackModel;
         const fallbackExpertModel = item.expertModel && modelIds.includes(item.expertModel) ? item.expertModel : fallbackModel;
         const fallbackSmallModel = item.smallModel && modelIds.includes(item.smallModel) ? item.smallModel : fallbackAnalysisModel;
-        const fallbackImageModel = item.imageModel && modelIds.includes(item.imageModel) && isLikelyVisionUnderstandingModel(item.imageModel)
+        const fallbackImageModel = item.imageModel && modelIds.includes(item.imageModel) && isLikelyImageUnderstandingModel(item.imageModel)
           ? item.imageModel
-          : modelIds.find(isLikelyVisionUnderstandingModel);
+          : modelIds.find(isLikelyImageUnderstandingModel);
 
         return {
           ...item,
@@ -987,16 +983,16 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
                       {profile.apiKey.trim() ? "已保存账号凭据" : "未完成账号接入"}
                     </span>
                     <span className="rounded-full border border-ink-900/10 bg-white px-2.5 py-1 text-muted">
-                      Codex Responses
+                      Codex 响应模型
                     </span>
                   </div>
                   <details className="rounded-2xl border border-ink-900/10 bg-white/80 px-3 py-2 text-xs text-muted">
                     <summary className="cursor-pointer select-none font-semibold text-ink-800">
-                      Manual credential JSON fallback
+                      手动凭据 JSON 兜底
                     </summary>
                     <div className="mt-3 grid gap-2">
                       <p className="leading-5">
-                        Use this only when the guided setup cannot run on this machine. Paste official Codex auth.json content, or a JSON object with access_token and account_id. The value is applied to this profile and cleared from this box; click the settings save button to persist it.
+                        仅当这台机器无法运行 Agent 引导配置时再使用这里。你可以粘贴官方 Codex auth.json 内容，或者粘贴一个包含 access_token 和 account_id 的 JSON 对象。点击应用后，这里的内容会清空，之后再点设置页保存按钮即可持久化。
                       </p>
                       <textarea
                         spellCheck={false}
@@ -1016,14 +1012,14 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
                           disabled={!manualCodexCredentialDrafts[profile.id]?.trim()}
                           onClick={() => handleApplyManualCodexCredential(profile)}
                         >
-                          Apply manual credential
+                          应用手动凭据
                         </button>
                         <button
                           type="button"
                           className="rounded-xl border border-ink-900/10 bg-white px-3 py-1.5 text-xs text-ink-700 hover:bg-surface"
                           onClick={() => setManualCodexCredentialDrafts((current) => ({ ...current, [profile.id]: "" }))}
                         >
-                          Clear
+                          清空
                         </button>
                       </div>
                     </div>

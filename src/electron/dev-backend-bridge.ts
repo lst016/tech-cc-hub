@@ -1,8 +1,11 @@
+import { execFile } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { promisify } from "node:util";
 
 export const DEV_BACKEND_BRIDGE_PORT = 4317;
+const execFileAsync = promisify(execFile);
 
-type JsonHandler = (...args: any[]) => unknown | Promise<unknown>;
+type JsonHandler = (...args: never[]) => unknown | Promise<unknown>;
 
 type DevBackendBridgeOptions = {
   port?: number;
@@ -37,7 +40,7 @@ function writeSseHeaders(response: ServerResponse): void {
   response.write(":ok\n\n");
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<any> {
+async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -51,10 +54,53 @@ async function readJsonBody(request: IncomingMessage): Promise<any> {
   return raw.trim() ? JSON.parse(raw) : {};
 }
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function findWindowsPortListenerPids(port: number): Promise<number[]> {
+  const { stdout } = await execFileAsync("netstat.exe", ["-ano", "-p", "tcp"], {
+    timeout: 5000,
+    windowsHide: true,
+  });
+  const pids = new Set<number>();
+  for (const line of String(stdout).split(/\r?\n/)) {
+    const parts = line.trim().split(/\s+/);
+    if (
+      parts[0]?.toUpperCase() === "TCP" &&
+      parts[1]?.endsWith(`:${port}`) &&
+      parts[3]?.toUpperCase() === "LISTENING"
+    ) {
+      const pid = Number.parseInt(parts[4] ?? "", 10);
+      if (Number.isFinite(pid) && pid > 0 && pid !== process.pid) {
+        pids.add(pid);
+      }
+    }
+  }
+  return [...pids];
+}
+
+async function killWindowsPortListeners(port: number): Promise<number[]> {
+  if (process.platform !== "win32") {
+    return [];
+  }
+
+  const pids = await findWindowsPortListenerPids(port);
+  for (const pid of pids) {
+    await execFileAsync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+      timeout: 5000,
+      windowsHide: true,
+    });
+  }
+  return pids;
+}
+
 export function startDevBackendBridge(options: DevBackendBridgeOptions): BridgeHandle {
   const port = options.port ?? DEV_BACKEND_BRIDGE_PORT;
   const serverEventClients = new Set<ServerResponse>();
   const browserEventClients = new Set<ServerResponse>();
+  let closed = false;
+  let killedPortOwner = false;
 
   const pushSseEvent = (clients: Set<ServerResponse>, payload: unknown) => {
     const serialized = JSON.stringify(payload);
@@ -121,8 +167,10 @@ export function startDevBackendBridge(options: DevBackendBridgeOptions): BridgeH
 
       try {
         const body = await readJsonBody(request);
-        const args = Array.isArray(body?.args) ? body.args : [];
-        const result = await handler(...args);
+        const args = body && typeof body === "object" && "args" in body && Array.isArray(body.args)
+          ? body.args
+          : [];
+        const result = await (handler as (...args: unknown[]) => unknown | Promise<unknown>)(...args);
         writeJson(response, 200, { success: true, result });
       } catch (error) {
         writeJson(response, 500, {
@@ -136,19 +184,61 @@ export function startDevBackendBridge(options: DevBackendBridgeOptions): BridgeH
     writeJson(response, 404, { success: false, error: "Not found" });
   });
 
-  server.listen(port, "127.0.0.1");
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    unsubscribeServerEvents();
+    unsubscribeBrowserEvents();
+    for (const response of serverEventClients) {
+      response.end();
+    }
+    serverEventClients.clear();
+    for (const response of browserEventClients) {
+      response.end();
+    }
+    browserEventClients.clear();
+  };
+
+  const listen = () => {
+    if (closed) return;
+    server.listen(port, "127.0.0.1");
+  };
+
+  server.on("error", (error: NodeJS.ErrnoException) => {
+    if (closed) return;
+    if (error.code === "EADDRINUSE" && !killedPortOwner) {
+      killedPortOwner = true;
+      void (async () => {
+        try {
+          const killedPids = await killWindowsPortListeners(port);
+          if (closed) return;
+          if (killedPids.length === 0) {
+            cleanup();
+            console.warn(`[dev-backend-bridge] Port ${port} is already in use, but no Windows listener PID could be killed.`);
+            return;
+          }
+          console.warn(`[dev-backend-bridge] Port ${port} was occupied by PID(s) ${killedPids.join(", ")}; killed and retrying startup.`);
+          await sleep(250);
+          listen();
+        } catch (killError) {
+          cleanup();
+          console.error(`[dev-backend-bridge] Failed to kill process occupying port ${port}:`, killError);
+        }
+      })();
+      return;
+    }
+    cleanup();
+    console.error("[dev-backend-bridge] Failed to start dev bridge:", error);
+  });
+
+  listen();
 
   return {
     stop: () => {
-      unsubscribeServerEvents();
-      unsubscribeBrowserEvents();
-      for (const response of serverEventClients) {
-        response.end();
+      cleanup();
+      if (server.listening) {
+        server.close();
       }
-      for (const response of browserEventClients) {
-        response.end();
-      }
-      server.close();
     },
   };
 }

@@ -19,6 +19,11 @@ import { OPEN_BROWSER_WORKBENCH_URL_EVENT, PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS
 import { TASK_TOOL_NAMES } from "../../shared/claude-agent-teams";
 import { normalizeTaskCreateArgs } from "../../shared/plan-progress";
 import {
+  getAskUserQuestionSignature,
+  normalizeAskUserQuestions,
+  type AskUserQuestionInput,
+} from "../utils/ask-user-question";
+import {
   extractCodeReferencesPrompt,
   extractFileReferencesPrompt,
   extractMessageReferencesPrompt,
@@ -34,6 +39,8 @@ type UserPromptRevisionHandler = (prompt: string, attachments: PromptAttachment[
 
 const TOOL_RESULT_PREVIEW_CHAR_LIMIT = 2_000;
 const TOOL_RESULT_RENDER_CHAR_LIMIT = 30_000;
+const USER_PROMPT_PARSE_CHAR_LIMIT = 40_000;
+const USER_PROMPT_RENDER_CHAR_LIMIT = 16_000;
 
 type SystemInitMessage = SDKMessage & {
   subtype?: string;
@@ -41,15 +48,6 @@ type SystemInitMessage = SDKMessage & {
   model?: string;
   permissionMode?: string;
   cwd?: string;
-};
-
-type AskUserQuestionInput = {
-  questions?: Array<{
-    question: string;
-    header?: string;
-    options?: Array<{ label: string; description?: string }>;
-    multiSelect?: boolean;
-  }>;
 };
 
 type BrowserAnnotationsPayload = {
@@ -302,16 +300,6 @@ const IconButton = ({
     {label === "复制" ? "⧉" : label === "引用" ? "↩" : label === "修改" ? "✎" : "⋯"}
   </button>
 );
-
-const getAskUserQuestionSignature = (input?: AskUserQuestionInput | null) => {
-  if (!input?.questions?.length) return "";
-  return input.questions
-    .map((question) => {
-      const options = (question.options ?? []).map((option) => `${option.label}|${option.description ?? ""}`).join(",");
-      return `${question.question}|${question.header ?? ""}|${question.multiSelect ? "1" : "0"}|${options}`;
-    })
-    .join("||");
-};
 
 export function isMarkdown(text: string): boolean {
   if (!text || typeof text !== "string") return false;
@@ -1267,7 +1255,28 @@ const UserMessageCard = ({
   revisionDisabled?: boolean;
   onRevisePrompt?: UserPromptRevisionHandler;
 }) => {
-  const { visiblePrompt, annotations, codeReferences, fileReferences, messageReferences } = useMemo(() => {
+  const {
+    visiblePrompt,
+    annotations,
+    codeReferences,
+    fileReferences,
+    messageReferences,
+    promptParsingSkipped,
+    promptTruncated,
+  } = useMemo(() => {
+    if (message.prompt.length > USER_PROMPT_PARSE_CHAR_LIMIT) {
+      const truncatedPrompt = message.prompt.slice(0, USER_PROMPT_RENDER_CHAR_LIMIT);
+      return {
+        visiblePrompt: truncatedPrompt,
+        annotations: [] as BrowserAnnotationSummary[],
+        codeReferences: [] as CodeReferencePromptSummary[],
+        fileReferences: [] as FileReferencePromptSummary[],
+        messageReferences: [] as MessageReferencePromptSummary[],
+        promptParsingSkipped: true,
+        promptTruncated: message.prompt.length > USER_PROMPT_RENDER_CHAR_LIMIT,
+      };
+    }
+
     const browserResult = extractBrowserAnnotationsPrompt(message.prompt);
     const codeResult = extractCodeReferencesPrompt(browserResult.visiblePrompt);
     const fileResult = extractFileReferencesPrompt(codeResult.visiblePrompt);
@@ -1278,6 +1287,8 @@ const UserMessageCard = ({
       codeReferences: codeResult.codeReferences,
       fileReferences: fileResult.fileReferences,
       messageReferences: messageResult.messageReferences,
+      promptParsingSkipped: false,
+      promptTruncated: false,
     };
   }, [message.prompt]);
   const hasVisiblePrompt = visiblePrompt.trim().length > 0;
@@ -1413,12 +1424,17 @@ const UserMessageCard = ({
           <div className="max-w-[78%] rounded-[26px] rounded-tr-[8px] border border-accent/16 bg-[linear-gradient(180deg,rgba(253,244,241,0.98),rgba(255,255,255,0.96))] px-5 py-4 text-ink-800 shadow-[0_18px_34px_rgba(210,106,61,0.08)]">
             <CollapsibleText
               text={visiblePrompt}
-              renderMarkdown
+              renderMarkdown={!promptParsingSkipped}
               maxLines={24}
               referenceSourceRole="user"
               referenceSourceLabel="用户消息"
               referenceCapturedAt={message.capturedAt}
             />
+            {(promptParsingSkipped || promptTruncated) && (
+              <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                这条用户消息过大，已跳过富文本/引用解析，并仅渲染前 {USER_PROMPT_RENDER_CHAR_LIMIT.toLocaleString()} 个字符，避免打开会话时拖垮界面。
+              </div>
+            )}
           </div>
         ) : !hasAttachments && annotations.length === 0 && codeReferences.length === 0 && fileReferences.length === 0 && messageReferences.length === 0 ? (
           <div className="max-w-[78%] rounded-[22px] border border-black/6 bg-[#eef2f8] px-4 py-3 text-sm text-muted">
@@ -2077,7 +2093,7 @@ const AskUserQuestionCard = ({
   if (messageContent.type !== "tool_use") return null;
 
   const input = messageContent.input as AskUserQuestionInput | null;
-  const questions = input?.questions ?? [];
+  const questions = normalizeAskUserQuestions(input);
   const currentSignature = getAskUserQuestionSignature(input);
   const requestSignature = getAskUserQuestionSignature(permissionRequest?.input as AskUserQuestionInput | undefined);
   const isActiveRequest = permissionRequest && currentSignature === requestSignature;

@@ -188,14 +188,6 @@ export function usePromptActions(
     };
   }, [activeProfile, availableModels, permissionMode, reasoningMode, resolveSessionRuntimeModel, routedModelOptions, runtimeModel, setGlobalError, workflowMode]);
 
-  const prepareAttachmentsForDispatch = useCallback(async (
-    promptValue: string,
-    attachments: PromptAttachment[],
-  ): Promise<PromptAttachment[] | null> => {
-    void promptValue;
-    return attachments;
-  }, []);
-
   const sendPromptDraft = useCallback(async (
     promptValue: string,
     attachments: PromptAttachment[] = [],
@@ -209,8 +201,6 @@ export function usePromptActions(
       : promptValue;
     const runtime = buildRuntimeOverrides();
     if (!runtime) return false;
-    const preparedAttachments = await prepareAttachmentsForDispatch(promptForAgent, attachments);
-    if (!preparedAttachments) return false;
 
     if (!activeSessionId) {
       let title = "";
@@ -226,7 +216,7 @@ export function usePromptActions(
           workspaceContext: linkedWorkspaceContext ?? undefined,
           cwd: effectiveWorkspaceCwd || undefined,
           allowedTools: DEFAULT_ALLOWED_TOOLS,
-          attachments: preparedAttachments,
+          attachments,
           runtime,
         },
       });
@@ -247,7 +237,7 @@ export function usePromptActions(
           prompt: promptValue,
           agentPrompt: promptForAgent === promptValue ? undefined : promptForAgent,
           workspaceContext: linkedWorkspaceContext ?? undefined,
-          attachments: preparedAttachments,
+          attachments,
           runtime,
           displayUserPrompt,
           replaceHistoryId,
@@ -259,7 +249,7 @@ export function usePromptActions(
     }
     setGlobalError(null);
     return true;
-  }, [activeSession, activeSessionId, buildRuntimeOverrides, effectiveWorkspaceCwd, prepareAttachmentsForDispatch, sendEvent, setGlobalError, setPendingStart, setPrompt, validatePromptDraft]);
+  }, [activeSession, activeSessionId, buildRuntimeOverrides, effectiveWorkspaceCwd, sendEvent, setGlobalError, setPendingStart, setPrompt, validatePromptDraft]);
 
   const handleSend = useCallback((attachments: PromptAttachment[] = []) => {
     const promptWithAnnotations = mergePromptWithBrowserAnnotations(prompt, activeBrowserAnnotations);

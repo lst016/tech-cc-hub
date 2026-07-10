@@ -22,3 +22,9 @@ test("runner reports a missing terminal result instead of silently completing", 
   assert.match(runnerSource, /type: "runner\.error"/);
   assert.match(runnerSource, /status: "error", title: session\.title, error: errorMessage/);
 });
+
+test("runner emits a visible assistant fallback for an empty successful result", () => {
+  assert.match(runnerSource, /function buildEmptySuccessFallbackMessage\(sessionId: string, model\?: string\): SDKMessage/);
+  assert.match(runnerSource, /本轮工具执行已完成，但模型没有返回文字说明。/);
+  assert.match(runnerSource, /if \(emptySuccess\) \{\s*sendMessage\(buildEmptySuccessFallbackMessage/);
+});

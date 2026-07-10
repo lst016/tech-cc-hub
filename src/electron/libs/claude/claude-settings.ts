@@ -17,7 +17,7 @@ import {
   normalizeProviderModelName,
   pickProviderCompatibleModel,
 } from "../../../shared/models/model-provider-routing.js";
-import { pickImagePreprocessConfig } from "../../../shared/models/image-preprocess-routing.js";
+import { resolveImagePreprocessRouteConfig } from "../../../shared/models/image-preprocess-routing.js";
 import { pickHighestWeightedModelOwner } from "../../../shared/models/model-routing-weight.js";
 import {
   loadApiConfigSettings,
@@ -293,16 +293,8 @@ export function resolveApiConfigForModel(modelName?: string): ResolvedApiConfigF
 
 export function resolveImagePreprocessApiConfig(selectedModel?: string): ApiConfig | null {
   const selectedConfig = resolveApiConfigForModel(selectedModel)?.config ?? getCurrentApiConfig();
-  const imageModel = selectedConfig?.imageModel?.trim();
-  if (!imageModel) {
-    return selectedConfig;
-  }
-
-  return pickImagePreprocessConfig(
-    selectedConfig,
-    getEnabledUsableApiConfigs(),
-    imageModel,
-  );
+  const enabledConfigs = getEnabledUsableApiConfigs();
+  return resolveImagePreprocessRouteConfig(selectedConfig, enabledConfigs);
 }
 
 function getFallbackClaudeSettingsConfig(): ApiConfig | null {

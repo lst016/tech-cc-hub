@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   getAskUserQuestionSignature,
@@ -58,4 +59,10 @@ test("getAskUserQuestionSignature uses normalized question shapes", () => {
     }),
     "Merge?||0|Yes|,No|",
   );
+});
+
+test("EventCard uses normalized ask-user-question payloads", () => {
+  const source = readFileSync("src/ui/components/EventCard.tsx", "utf8");
+  assert.match(source, /const questions = normalizeAskUserQuestions\(input\);/);
+  assert.doesNotMatch(source, /input\?\.questions\s*\?\?\s*\[\]/);
 });

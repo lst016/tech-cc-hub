@@ -3,6 +3,7 @@ import { DEV_BROWSER_PREVIEW_FLAG, getDevElectronRuntimeSource } from "../dev-el
 import { ADD_PROMPT_ATTACHMENT_EVENT, PROMPT_FOCUS_EVENT, type AddPromptAttachmentDetail } from "../events";
 import { useAppStore } from "../store/useAppStore";
 import { hasRenderableBrowserWorkbenchBounds, shouldAttachBrowserWorkbench } from "../utils/browser-workbench-visibility";
+import { formatIpcInvokeError } from "../utils/ipc-error";
 import { normalizeWorkbenchUrl } from "../utils/workbench-url";
 import { ActivityWorkspaceTabs } from "./ActivityWorkspaceTabs";
 import type { ActivityWorkspaceTab } from "../utils/activity-workspace-tabs";
@@ -16,6 +17,8 @@ type BrowserWorkbenchPageProps = {
   onOpenUsage?: () => void;
   onOpenPreview?: () => void;
   onOpenGit?: () => void;
+  hasGitTab?: boolean;
+  onCloseGit?: () => void;
   hasTerminalTab?: boolean;
   onOpenTerminal?: () => void;
   onCloseTerminal?: () => void;
@@ -258,7 +261,7 @@ function readRecentLocalBrowserTargets(workspaceKey: string): LocalBrowserTarget
     if (!Array.isArray(values)) return [];
     const targets = values
       .filter((value): value is string => typeof value === "string")
-      .map((value) => toBrowserPageTarget(value, { idPrefix: "recent", recent: true }))
+      .map((value) => toBrowserPageTarget(value, { idPrefix: "recent", recent: true, localOnly: true }))
       .filter((target): target is LocalBrowserTarget => Boolean(target));
     const normalizedUrls: string[] = [];
     const seenOrigins = new Set<string>();
@@ -273,7 +276,7 @@ function readRecentLocalBrowserTargets(workspaceKey: string): LocalBrowserTarget
       window.localStorage.setItem(storageKey, JSON.stringify(normalizedUrls));
     }
     return normalizedUrls
-      .map((value) => toBrowserPageTarget(value, { idPrefix: "recent", recent: true }))
+      .map((value) => toBrowserPageTarget(value, { idPrefix: "recent", recent: true, localOnly: true }))
       .filter((target): target is LocalBrowserTarget => Boolean(target));
   } catch {
     return [];
@@ -281,7 +284,7 @@ function readRecentLocalBrowserTargets(workspaceKey: string): LocalBrowserTarget
 }
 
 function rememberRecentLocalBrowserTarget(workspaceKey: string, value: string) {
-  const target = toBrowserPageTarget(value, { idPrefix: "recent", recent: true });
+  const target = toBrowserPageTarget(value, { idPrefix: "recent", recent: true, localOnly: true });
   if (!target || typeof window === "undefined") return false;
   try {
     const targetOrigin = getBrowserTargetOrigin(target.url);
@@ -359,6 +362,8 @@ export function BrowserWorkbenchPage({
   onOpenUsage,
   onOpenPreview,
   onOpenGit,
+  hasGitTab = false,
+  onCloseGit,
   hasTerminalTab = false,
   onOpenTerminal,
   onCloseTerminal,
@@ -549,7 +554,7 @@ export function BrowserWorkbenchPage({
     void openUrl(nextUrl).catch((error) => {
       hasOpenedRef.current = false;
       console.warn("Failed to auto-open browser workbench:", error);
-      setStatusText(`页面自动打开失败：${error instanceof Error ? error.message : String(error)}`);
+      setStatusText(`页面自动打开失败：${formatIpcInvokeError(error)}`);
     });
   }, [openUrl]);
 
@@ -1119,35 +1124,6 @@ export function BrowserWorkbenchPage({
     }
   };
 
-  const handleCreateBrowserTab = async () => {
-    setHasBrowserTab(true);
-    if (sessionId) setSessionBrowserHasTab(sessionId, true);
-    hasOpenedRef.current = false;
-    pendingNavigationRef.current = null;
-    setState(defaultBrowserState);
-    setUrlEditing(false);
-    setUrl("");
-    persistUrl("");
-    setAnnotations([]);
-    persistAnnotations([]);
-    setIsDevToolsOpen(false);
-    setAnnotationTool(null);
-    setRecordingState({ recording: false, actionCount: 0 });
-    setRecordingPackage(null);
-    setSelectedRecordingArtifactPath(null);
-    setRecordingSavedRootPath(null);
-    setRecordingSaveError(null);
-    setRecordingRunResult(null);
-    setRecordingRunEvents([]);
-    setRecordingRunRunning(false);
-    setRecordingArtifactDraftContent("");
-    setRecordingArtifactDirty(false);
-    setStatusText("已打开本地启动页");
-    if (hasBrowserRuntime) {
-      await window.electron.closeBrowserWorkbenchDevTools(sessionId ?? undefined);
-      await window.electron.closeBrowserWorkbench(sessionId ?? undefined);
-    }
-  };
   const handleOpenLocalTarget = useCallback((targetUrl: string) => {
     const browserTargetUrl = toBrowserWorkbenchUrl(targetUrl);
     setHasBrowserTab(true);
@@ -1218,13 +1194,15 @@ export function BrowserWorkbenchPage({
         <ActivityWorkspaceTabs
           activeTab="browser"
           showBrowserTab={showBrowserChrome}
+          showGitTab={hasGitTab}
           showTerminalTab={hasTerminalTab}
           browserLabel={state.title || "浏览器"}
-          showCreateBrowserTab
+          showCreateGitTab={!hasGitTab}
           showCreateTerminalTab={!hasTerminalTab}
           onSelectTab={handleSelectWorkspaceTab}
           onCloseBrowserTab={hasBrowserTab ? () => { void handleCloseBrowserTab(); } : undefined}
-          onCreateBrowserTab={() => { void handleCreateBrowserTab(); }}
+          onCreateGitTab={onOpenGit}
+          onCloseGitTab={hasGitTab ? onCloseGit : undefined}
           onCreateTerminalTab={onOpenTerminal}
           onCloseTerminalTab={hasTerminalTab ? onCloseTerminal : undefined}
         />

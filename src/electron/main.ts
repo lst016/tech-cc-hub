@@ -1672,6 +1672,30 @@ function getBrowserWorkbench(sessionId?: unknown): BrowserWorkbenchManager | nul
   return manager;
 }
 
+function openBrowserWorkbenchForIpc(url: string, sessionId?: unknown): BrowserWorkbenchState {
+  const resolvedSessionId = resolveBrowserWorkbenchSessionId(sessionId);
+  const browserWorkbench = getBrowserWorkbench(resolvedSessionId);
+  if (!browserWorkbench) {
+    const error = new Error("Browser workbench is not ready yet.");
+    log.error("[browser-open] main window unavailable", {
+      sessionId: resolvedSessionId,
+      url,
+    });
+    throw error;
+  }
+
+  try {
+    return browserWorkbench.open(url);
+  } catch (error) {
+    log.error("[browser-open] failed", {
+      sessionId: resolvedSessionId,
+      url,
+      error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error),
+    });
+    throw error;
+  }
+}
+
 function closeAllBrowserWorkbenches(): void {
   for (const manager of browserWorkbenches.values()) {
     manager.close();
@@ -2593,6 +2617,28 @@ app.on("ready", async () => {
             closeAllBrowserWorkbenches();
         }
     });
+    if (isDev()) {
+        mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+            if (!isMainFrame) return;
+            console.error("[main-window] did-fail-load", {
+                errorCode,
+                errorDescription,
+                validatedURL,
+            });
+        });
+        mainWindow.webContents.on("console-message", (details) => {
+            const { level, message, lineNumber, sourceId } = details;
+            if (level !== "warning" && level !== "error" && !/error|exception|failed|uncaught/i.test(message)) {
+                return;
+            }
+            console.error("[renderer][console-message]", {
+                level,
+                message,
+                line: lineNumber,
+                sourceId,
+            });
+        });
+    }
     mainWindow.webContents.on("before-input-event", (event, input) => {
         const isReloadShortcut =
             input.key.toLowerCase() === "r" &&
@@ -3273,7 +3319,7 @@ app.on("ready", async () => {
           checkForAppUpdates: async () => await appAutoUpdater.checkForUpdates(),
           downloadAppUpdate: async () => await appAutoUpdater.downloadUpdate(),
           installAppUpdate: () => appAutoUpdater.quitAndInstall(),
-          openBrowserWorkbench: (url: string, sessionId?: string) => getBrowserWorkbench(sessionId)!.open(url),
+          openBrowserWorkbench: (url: string, sessionId?: string) => openBrowserWorkbenchForIpc(url, sessionId),
           closeBrowserWorkbench: (sessionId?: string) => getBrowserWorkbench(sessionId)!.close(),
           setBrowserWorkbenchBounds: (bounds: BrowserWorkbenchBounds, sessionId?: string) => getBrowserWorkbench(sessionId)!.setBounds(bounds),
           hideAllBrowserWorkbenches,
@@ -3498,7 +3544,7 @@ app.on("ready", async () => {
     });
 
     ipcMainHandle("browser-open", (_: IpcMainInvokeEvent, url: string, sessionId?: string) => {
-        return getBrowserWorkbench(sessionId)!.open(url);
+        return openBrowserWorkbenchForIpc(url, sessionId);
     });
 
     ipcMainHandle("browser-close", (_: IpcMainInvokeEvent, sessionId?: string) => {

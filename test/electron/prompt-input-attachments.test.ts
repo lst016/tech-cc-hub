@@ -66,6 +66,20 @@ test("prompt input routes the picker accept list through attachment support", ()
   }
 });
 
+test("prompt send path dispatches image attachments without blocking on preprocessing", () => {
+  const source = readFileSync("src/ui/components/prompt-input/usePromptActions.ts", "utf8");
+  const sendStart = source.indexOf("const sendPromptDraft = useCallback");
+  const handleSendStart = source.indexOf("const handleSend = useCallback", sendStart);
+  const sendSection = source.slice(sendStart, handleSendStart);
+
+  assert.ok(sendStart >= 0);
+  assert.ok(handleSendStart > sendStart);
+  assert.doesNotMatch(source, /prepareAttachmentsForDispatch/);
+  assert.doesNotMatch(sendSection, /preprocessImageAttachments/);
+  assert.doesNotMatch(sendSection, /preparedAttachments/);
+  assert.equal(sendSection.match(/\battachments,\r?\n\s+runtime,/g)?.length, 2);
+});
+
 test("fileToAttachment extracts readable text from xlsx workbooks", async () => {
   const workbook = makeStoreZip({
     "xl/workbook.xml": [

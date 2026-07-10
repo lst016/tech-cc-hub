@@ -1,7 +1,7 @@
 export type WorkflowAgentRailTab = `workflow-agent:${string}`;
 export type ActivityRailTab = "trace" | "usage" | "preview" | "git" | "terminal" | WorkflowAgentRailTab;
 export type ActivityWorkspaceTab = "browser" | ActivityRailTab;
-export type ActivityOptionalWorkspaceTab = "browser" | "terminal";
+export type ActivityOptionalWorkspaceTab = "git" | "terminal";
 
 export const DEFAULT_ACTIVITY_RAIL_TAB: ActivityRailTab = "usage";
 
@@ -79,6 +79,7 @@ export function buildWorkflowAgentWorkspaceTabs(input: {
 export function buildActivityWorkspaceTabs(input: {
   activeTab: ActivityWorkspaceTab;
   showBrowserTab: boolean;
+  showGitTab?: boolean;
   showTerminalTab?: boolean;
   workflowAgentTabs?: WorkflowAgentWorkspaceTabItem[];
 }): ActivityWorkspaceTabItem[] {
@@ -118,7 +119,7 @@ export function buildActivityWorkspaceTabs(input: {
       id: "git",
       label: "Git",
       title: "Git 工作台",
-      visible: true,
+      visible: input.showGitTab === true,
       active: input.activeTab === "git",
     },
     ...workflowAgentTabs,
@@ -133,7 +134,7 @@ export function buildActivityWorkspaceTabs(input: {
       id: "browser",
       label: "浏览器",
       title: "浏览器",
-      visible: input.showBrowserTab,
+      visible: true,
       active: input.activeTab === "browser",
     },
   ];
@@ -141,9 +142,17 @@ export function buildActivityWorkspaceTabs(input: {
 
 export function buildActivityWorkspaceCreateOptions(input: {
   canCreateBrowserTab: boolean;
+  canCreateGitTab?: boolean;
   canCreateTerminalTab: boolean;
 }): ActivityWorkspaceCreateOption[] {
   return [
+    input.canCreateGitTab
+      ? {
+          id: "git",
+          label: "Git",
+          title: "Open Git workspace",
+        }
+      : null,
     input.canCreateTerminalTab
       ? {
           id: "terminal",
@@ -151,18 +160,16 @@ export function buildActivityWorkspaceCreateOptions(input: {
           title: "打开终端",
         }
       : null,
-    input.canCreateBrowserTab
-      ? {
-          id: "browser",
-          label: "浏览器",
-          title: "打开浏览器",
-        }
-      : null,
   ].filter((option): option is ActivityWorkspaceCreateOption => Boolean(option));
 }
 
-export function shouldShowCreateBrowserTab(showBrowserTab: boolean): boolean {
-  return !showBrowserTab;
+export function shouldShowCreateBrowserTab(_showBrowserTab: boolean): boolean {
+  void _showBrowserTab;
+  return false;
+}
+
+export function shouldShowCreateGitTab(showGitTab: boolean): boolean {
+  return !showGitTab;
 }
 
 export function shouldShowCreateTerminalTab(showTerminalTab: boolean): boolean {

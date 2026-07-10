@@ -1278,11 +1278,14 @@ export function ActivityRail({
   contextWindow,
   compressionThresholdPercent,
   hasBrowserTab = false,
+  hasGitTab = false,
   hasTerminalTab = false,
   workflowAgentTabs = [],
   selectedWorkflowAgent,
   workflowRuns = [],
   deferPreviewMount = false,
+  onOpenGitWorkspace,
+  onCloseGitWorkspace,
   onOpenTerminalWorkspace,
   onCloseTerminalWorkspace,
   onCloseWorkflowAgentTab,
@@ -1308,11 +1311,14 @@ export function ActivityRail({
   contextWindow?: number;
   compressionThresholdPercent?: number;
   hasBrowserTab?: boolean;
+  hasGitTab?: boolean;
   hasTerminalTab?: boolean;
   workflowAgentTabs?: WorkflowAgentWorkspaceTabItem[];
   selectedWorkflowAgent?: WorkflowAgentSummary;
   workflowRuns?: WorkflowRunRecord[];
   deferPreviewMount?: boolean;
+  onOpenGitWorkspace?: () => void;
+  onCloseGitWorkspace?: () => void;
   onOpenTerminalWorkspace?: () => void;
   onCloseTerminalWorkspace?: () => void;
   onCloseWorkflowAgentTab?: (tab: WorkflowAgentRailTab) => void;
@@ -1439,13 +1445,15 @@ export function ActivityRail({
           <ActivityWorkspaceTabs
             activeTab={selectedTab}
             showBrowserTab={hasBrowserTab}
+            showGitTab={hasGitTab}
             showTerminalTab={hasTerminalTab}
             workflowAgentTabs={workflowAgentTabs}
             showLabels={showLabels}
-            showCreateBrowserTab={!hasBrowserTab}
+            showCreateGitTab={!hasGitTab}
             showCreateTerminalTab={!hasTerminalTab}
             onSelectTab={handleSelectWorkspaceTab}
-            onCreateBrowserTab={onOpenBrowserWorkbench}
+            onCreateGitTab={onOpenGitWorkspace}
+            onCloseGitTab={hasGitTab ? onCloseGitWorkspace : undefined}
             onCreateTerminalTab={onOpenTerminalWorkspace}
             onCloseTerminalTab={hasTerminalTab ? onCloseTerminalWorkspace : undefined}
             onCloseWorkflowAgentTab={onCloseWorkflowAgentTab}
