@@ -4,7 +4,12 @@ import { useEffect, useState } from "react";
 import type { GeneratedImageArtifactLite } from "../../utils/generated-image-result";
 import { buildContinueEditingReference } from "../../utils/generated-image-result";
 import { copyTextToClipboard as copyText } from "../../utils/clipboard";
-import { PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT } from "../../events";
+import {
+  OPEN_WORKSPACE_PLUGIN_EVENT,
+  PREVIEW_OPEN_FILE_EVENT,
+  PROMPT_FOCUS_EVENT,
+  type OpenWorkspacePluginDetail,
+} from "../../events";
 import { useAppStore } from "../../store/useAppStore";
 
 type GeneratedImageResultCardProps = {
@@ -119,6 +124,7 @@ function GeneratedImageThumb({ artifact }: { artifact: GeneratedImageArtifactLit
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5">
+        <ActionButton onClick={openCanvasEditor}>去画布编辑</ActionButton>
         <ActionButton onClick={() => openFile(artifact.path)}>打开文件</ActionButton>
         <ActionButton onClick={() => openContainingFolder(artifact.path)}>所在目录</ActionButton>
         <ActionButton onClick={() => void copyText(artifact.path)}>复制路径</ActionButton>
@@ -182,6 +188,12 @@ function continueEditing(artifacts: GeneratedImageArtifactLite[]) {
   const { prompt, setPrompt } = useAppStore.getState();
   setPrompt(prompt.trim() ? `${prompt.trim()}\n\n${reference}` : reference);
   window.dispatchEvent(new CustomEvent(PROMPT_FOCUS_EVENT));
+}
+
+function openCanvasEditor() {
+  window.dispatchEvent(new CustomEvent<OpenWorkspacePluginDetail>(OPEN_WORKSPACE_PLUGIN_EVENT, {
+    detail: { pluginId: "codex-canvas" },
+  }));
 }
 
 function formatBytes(bytes: number): string {

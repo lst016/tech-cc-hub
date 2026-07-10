@@ -21,6 +21,8 @@ describe("workspace plugin view pane", () => {
     assert.match(appSource, /closeWorkspacePluginTab/);
     assert.match(appSource, /openWorkspacePluginTab/);
     assert.match(appSource, /hiddenWorkspacePlugins=\{hiddenWorkspacePlugins\}/);
+    assert.match(appSource, /window\.addEventListener\(OPEN_WORKSPACE_PLUGIN_EVENT, handleOpenWorkspacePlugin\)/);
+    assert.match(appSource, /openWorkspacePluginTab\(getWorkspacePluginTabId\(pluginId\)\)/);
     assert.match(railSource, /onCloseWorkspacePluginTab/);
     assert.match(railSource, /onOpenWorkspacePluginTab/);
     assert.match(preloadSource, /workspacePlugins: \{/);

@@ -3,6 +3,7 @@ export const PROMPT_SUBMIT_EVENT = "techcc:prompt-submit";
 export const PROMPT_SENT_EVENT = "techcc:prompt-sent";
 export const PREVIEW_OPEN_FILE_EVENT = "techcc:preview-open-file";
 export const OPEN_BROWSER_WORKBENCH_URL_EVENT = "tech-cc-hub:open-browser-workbench-url";
+export const OPEN_WORKSPACE_PLUGIN_EVENT = "tech-cc-hub:open-workspace-plugin";
 export const ADD_PROMPT_ATTACHMENT_EVENT = "techcc:add-prompt-attachment";
 
 export type PreviewOpenFileDetail = {
@@ -14,6 +15,10 @@ export type PreviewOpenFileDetail = {
 
 export type OpenBrowserWorkbenchUrlDetail = {
   url: string;
+};
+
+export type OpenWorkspacePluginDetail = {
+  pluginId: string;
 };
 
 export type AddPromptAttachmentDetail = {

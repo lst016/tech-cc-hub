@@ -64,7 +64,7 @@ test("ships Codex-Canvas as the first local browser-view plugin", () => {
   const manifest = JSON.parse(readFileSync("plugins/codex-canvas/tech-cc-hub.plugin.json", "utf8"));
   assert.deepEqual(normalizeWorkspacePluginManifest(manifest), {
     id: "codex-canvas",
-    label: "Canvas",
+    label: "画布",
     surface: "browser-view",
     start: {
       command: "node",

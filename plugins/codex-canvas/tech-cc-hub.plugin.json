@@ -1,6 +1,6 @@
 {
   "id": "codex-canvas",
-  "label": "Canvas",
+  "label": "画布",
   "surface": "browser-view",
   "start": {
     "command": "node",

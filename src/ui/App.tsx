@@ -17,8 +17,10 @@ import { SessionAnalysisPage, buildSessionWorkflowOptimizationPrompt } from "./c
 // FeedbackDialog removed — uses direct browser link
 import {
   OPEN_BROWSER_WORKBENCH_URL_EVENT,
+  OPEN_WORKSPACE_PLUGIN_EVENT,
   PREVIEW_OPEN_FILE_EVENT,
   type OpenBrowserWorkbenchUrlDetail,
+  type OpenWorkspacePluginDetail,
   type PreviewOpenFileDetail,
 } from "./events";
 import { copyTextToClipboard } from "./utils/clipboard";
@@ -1226,6 +1228,19 @@ function App() {
       window.removeEventListener(OPEN_BROWSER_WORKBENCH_URL_EVENT, handleOpenBrowserWorkbenchUrl);
     };
   }, [activeSessionId, setActiveSessionWorkspaceView, setBrowserWorkbenchSessionUrl]);
+
+  useEffect(() => {
+    const handleOpenWorkspacePlugin = (event: Event) => {
+      const pluginId = (event as CustomEvent<OpenWorkspacePluginDetail>).detail?.pluginId?.trim();
+      if (!pluginId || !workspacePlugins.some((plugin) => plugin.id === pluginId)) return;
+      openWorkspacePluginTab(getWorkspacePluginTabId(pluginId));
+    };
+
+    window.addEventListener(OPEN_WORKSPACE_PLUGIN_EVENT, handleOpenWorkspacePlugin);
+    return () => {
+      window.removeEventListener(OPEN_WORKSPACE_PLUGIN_EVENT, handleOpenWorkspacePlugin);
+    };
+  }, [openWorkspacePluginTab, workspacePlugins]);
 
   useEffect(() => {
     if (!activeSessionId || typeof window.electron.onBrowserWorkbenchEvent !== "function") return;

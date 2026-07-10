@@ -148,7 +148,10 @@ export class WorkspacePluginManager {
   async open(input: { pluginId: string; sessionId: string }): Promise<WorkspacePluginLaunch> {
     const key = launchKey(input.pluginId, input.sessionId);
     const existing = this.launches.get(key);
-    if (existing) return { pluginId: existing.pluginId, sessionId: existing.sessionId, url: existing.url };
+    if (existing) {
+      await this.syncInitialSessionImages(existing);
+      return { pluginId: existing.pluginId, sessionId: existing.sessionId, url: existing.url };
+    }
 
     const session = this.options.sessionStore.getSession(input.sessionId);
     if (!session?.cwd) throw new Error("Workspace plugin requires an active session with a workspace.");

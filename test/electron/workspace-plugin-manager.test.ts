@@ -144,7 +144,15 @@ test("workspace plugin manager shares historical, generated, and newly attached 
         attachments: [{ id: "new-upload", kind: "image", name: "new-upload.png", mimeType: "image/png", data: "file://new-upload", storagePath: newImagePath }],
       });
 
-      assert.deepEqual(requests.map((request) => request.path), [historicalImagePath, generatedImagePath, newImagePath]);
+      await manager.open({ pluginId: "codex-canvas", sessionId: "session-1" });
+
+      assert.deepEqual(requests.map((request) => request.path), [
+        historicalImagePath,
+        generatedImagePath,
+        newImagePath,
+        historicalImagePath,
+        generatedImagePath,
+      ]);
       assert.ok(requests.every((request) => request.prompt === "Shared from the active chat"));
     });
   });
