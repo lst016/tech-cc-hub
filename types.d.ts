@@ -415,7 +415,7 @@ interface Window {
         workspacePlugins: {
             list: () => Promise<import("./src/shared/workspace-plugins").WorkspacePluginDescriptor[]>;
             open: (input: { pluginId: string; sessionId: string }) => Promise<import("./src/electron/libs/workspace-plugins/workspace-plugin-manager").WorkspacePluginLaunch>;
-            close: (input: { sessionId: string }) => Promise<void>;
+            close: (input: { pluginId: string; sessionId: string }) => Promise<void>;
         };
         openBrowserWorkbench: (url: string, sessionId?: string) => Promise<BrowserWorkbenchState>;
         closeBrowserWorkbench: (sessionId?: string) => Promise<BrowserWorkbenchState>;

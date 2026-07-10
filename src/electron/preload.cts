@@ -130,7 +130,7 @@ electron.contextBridge.exposeInMainWorld("electron", {
     workspacePlugins: {
         list: () => ipcInvoke("workspace-plugins:list"),
         open: (input: { pluginId: string; sessionId: string }) => ipcInvoke("workspace-plugins:open", input),
-        close: (input: { sessionId: string }) => ipcInvoke("workspace-plugins:close", input),
+        close: (input: { pluginId: string; sessionId: string }) => ipcInvoke("workspace-plugins:close", input),
     },
     openBrowserWorkbench: (url: string, sessionId?: string) =>
         ipcInvoke("browser-open", url, sessionId),

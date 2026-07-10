@@ -92,7 +92,7 @@ const IDE_TASK_PATTERN = /intellij|idea|java|jdk|maven|gradle|spring|tomcat|pom\
 const AGENT_TEAM_TASK_PATTERN = /agent\s*teams?|teammates?|TeamCreate|TeamDelete|SendMessage|CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS|parallel\s+(?:dev|development|work)|team\s+lead|leader|delegate mode|团队协作|队友|跨层并行|并行开发|多人协作/i;
 const EXPLICIT_DYNAMIC_WORKFLOW_PATTERN = /dynamic\s+workflows?|动态\s*workflow|动态工作流|ultracode|多\s*agent|多智能体|后台编排|并行编排|大规模.*编排/i;
 // 生图意图识别：覆盖显式触发词和中英文生图/编辑意图。详见 §8.3。
-const IMAGE_GENERATION_TASK_PATTERN = /\$imagegen|\bimagegen\b|画图|画(?:一)?(?:张|个|只|幅)|生成图片|生成一张|生图|做一张海报|生成插画|画报|插画|banner|海报|sprite|编辑这张图|修改图片|替换背景|改背景|基于参考图|参考图.*改|参考图.*编辑|generate\s+image|draw\s+(?:a\s+)?(?:image|picture|logo|icon|poster|illustration)|create\s+(?:an?\s+)?(?:image|picture|poster|banner|illustration)|edit\s+(?:the\s+)?(?:image|picture)|image\s+generation|text[- ]to[- ]image/i;
+const IMAGE_GENERATION_TASK_PATTERN = /\$imagegen|\bimagegen\b|画图|画(?:一)?(?:张|个|只|幅)|(?:生成|创建)(?:一|几|两|三|四|多)?(?:张|个|只|幅)?[^，。！？\n]{0,32}(?:图片?|图像|海报|插画|图标|logo|banner)|生成图片|生成一张|生图|做一张海报|生成插画|画报|插画|banner|海报|sprite|编辑这张图|修改图片|替换背景|改背景|基于参考图|参考图.*改|参考图.*编辑|generate\s+image|draw\s+(?:a\s+)?(?:image|picture|logo|icon|poster|illustration)|create\s+(?:an?\s+)?(?:image|picture|poster|banner|illustration)|edit\s+(?:the\s+)?(?:image|picture)|image\s+generation|text[- ]to[- ]image/i;
 
 type ResolveRuntimeEfficiencyProfileInput = {
   prompt: string;

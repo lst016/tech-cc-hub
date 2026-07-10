@@ -16,7 +16,14 @@ describe("workspace plugin view pane", () => {
     assert.match(railSource, /workspacePlugins=\{workspacePlugins\}/);
     assert.match(railSource, /<WorkspacePluginViewPane/);
     assert.match(appSource, /window\.electron\.workspacePlugins\.list\(\)/);
-    assert.match(appSource, /workspacePlugins=\{workspacePlugins\}/);
+    assert.match(appSource, /workspacePlugins=\{visibleWorkspacePlugins\}/);
+    assert.match(appSource, /closedWorkspacePluginIdsBySessionId/);
+    assert.match(appSource, /closeWorkspacePluginTab/);
+    assert.match(appSource, /openWorkspacePluginTab/);
+    assert.match(appSource, /hiddenWorkspacePlugins=\{hiddenWorkspacePlugins\}/);
+    assert.match(railSource, /onCloseWorkspacePluginTab/);
+    assert.match(railSource, /onOpenWorkspacePluginTab/);
     assert.match(preloadSource, /workspacePlugins: \{/);
+    assert.match(preloadSource, /close: \(input: \{ pluginId: string; sessionId: string \}\)/);
   });
 });

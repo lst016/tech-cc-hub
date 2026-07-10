@@ -27,16 +27,19 @@ import {
   DEFAULT_ACTIVITY_RAIL_TAB,
   buildWorkflowAgentWorkspaceTabs,
   getActivityRailTabAfterClosingWorkflowAgent,
+  getWorkspacePluginIdFromTab,
+  getWorkspacePluginTabId,
   getWorkflowAgentIdFromTab,
   getWorkflowAgentTabId,
   type ActivityRailTab,
+  type PluginRailTab,
   type WorkflowAgentRailTab,
 } from "./utils/activity-workspace-tabs";
 import { buildWorkflowAgentSummaries } from "./utils/workflow-agent-transcripts";
 import { ProcessGroupCard as SharedProcessGroupCard } from "./components/chat/ProcessGroupCard";
 import { WorkflowAgentCard } from "./components/workflow/WorkflowAgentCard";
 import type { WorkflowRunAction, WorkflowRunRecord } from "../shared/workflows/workflow-runs";
-import type { WorkspacePluginDescriptor } from "../shared/workspace-plugins";
+import { getWorkspacePluginSurfaceId, type WorkspacePluginDescriptor } from "../shared/workspace-plugins";
 import { DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT } from "../shared/claude-agent-teams";
 import {
   DEV_BRIDGE_READY_EVENT,
@@ -64,6 +67,7 @@ const RELEASE_NOTES_TOOLTIP_MAX_CHARS = 520;
 const EMPTY_MESSAGES: StreamMessage[] = [];
 const EMPTY_WORKFLOW_RUNS: WorkflowRunRecord[] = [];
 const EMPTY_PERMISSION_REQUESTS: NonNullable<ReturnType<typeof useAppStore.getState>["sessions"][string]["permissionRequests"]> = [];
+const EMPTY_WORKSPACE_PLUGIN_IDS: string[] = [];
 
 type RenderEntry =
   | { type: "separator"; key: string; roundNumber: number }
@@ -329,6 +333,7 @@ function App() {
   const [gitTabBySessionId, setGitTabBySessionId] = useState<Record<string, boolean>>({});
   const [terminalTabBySessionId, setTerminalTabBySessionId] = useState<Record<string, boolean>>({});
   const [workspacePlugins, setWorkspacePlugins] = useState<WorkspacePluginDescriptor[]>([]);
+  const [closedWorkspacePluginIdsBySessionId, setClosedWorkspacePluginIdsBySessionId] = useState<Record<string, string[]>>({});
   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
   const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | null>(null);
   const [appUpdateActionBusy, setAppUpdateActionBusy] = useState(false);
@@ -414,6 +419,17 @@ function App() {
     ? Object.prototype.hasOwnProperty.call(activityRailTabBySessionId, activeSessionId)
     : false;
   const openWorkflowAgentTabIds = activeSessionId ? (openWorkflowAgentTabsBySessionId[activeSessionId] ?? []) : [];
+  const closedWorkspacePluginIds = activeSessionId
+    ? (closedWorkspacePluginIdsBySessionId[activeSessionId] ?? EMPTY_WORKSPACE_PLUGIN_IDS)
+    : EMPTY_WORKSPACE_PLUGIN_IDS;
+  const visibleWorkspacePlugins = useMemo(
+    () => workspacePlugins.filter((plugin) => !closedWorkspacePluginIds.includes(plugin.id)),
+    [closedWorkspacePluginIds, workspacePlugins],
+  );
+  const hiddenWorkspacePlugins = useMemo(
+    () => workspacePlugins.filter((plugin) => closedWorkspacePluginIds.includes(plugin.id)),
+    [closedWorkspacePluginIds, workspacePlugins],
+  );
   const selectedWorkflowAgentId = getWorkflowAgentIdFromTab(activityRailTab) ?? undefined;
   const pendingPreviewOpenRequest = activeSessionId ? pendingPreviewOpenRequestBySessionId[activeSessionId] : undefined;
   const setActiveSessionWorkspaceView = useCallback((nextView: WorkspaceView) => {
@@ -456,6 +472,39 @@ function App() {
       }));
     }
   }, [activeSessionId, activityRailTab, openWorkflowAgentTabIds, setActiveSessionActivityRailTab]);
+  const closeWorkspacePluginTab = useCallback((tab: PluginRailTab) => {
+    if (!activeSessionId) return;
+    const pluginId = getWorkspacePluginIdFromTab(tab);
+    if (!pluginId) return;
+    setClosedWorkspacePluginIdsBySessionId((current) => {
+      const closed = current[activeSessionId] ?? [];
+      if (closed.includes(pluginId)) return current;
+      return { ...current, [activeSessionId]: [...closed, pluginId] };
+    });
+    if (activityRailTab === tab) {
+      setActiveSessionActivityRailTab(DEFAULT_ACTIVITY_RAIL_TAB);
+    }
+    if (window.electron?.workspacePlugins?.close && window.electron?.closeBrowserWorkbench) {
+      void Promise.all([
+        window.electron.workspacePlugins.close({ pluginId, sessionId: activeSessionId }),
+        window.electron.closeBrowserWorkbench(getWorkspacePluginSurfaceId(pluginId, activeSessionId)),
+      ]).catch(() => {});
+    }
+  }, [activeSessionId, activityRailTab, setActiveSessionActivityRailTab]);
+  const openWorkspacePluginTab = useCallback((tab: PluginRailTab) => {
+    if (!activeSessionId) return;
+    const pluginId = getWorkspacePluginIdFromTab(tab);
+    if (!pluginId) return;
+    setClosedWorkspacePluginIdsBySessionId((current) => {
+      const closed = current[activeSessionId] ?? [];
+      if (!closed.includes(pluginId)) return current;
+      return { ...current, [activeSessionId]: closed.filter((id) => id !== pluginId) };
+    });
+    setShowActivityRail(true);
+    setShowSessionAnalysis(false);
+    setActiveSessionWorkspaceView("chat");
+    setActiveSessionActivityRailTab(getWorkspacePluginTabId(pluginId));
+  }, [activeSessionId, setActiveSessionActivityRailTab, setActiveSessionWorkspaceView]);
   const activeSession = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId]) : undefined));
   const activeHistoryCursor = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId])?.historyCursor : undefined));
   const activeSessionHydrated = useAppStore((s) => (s.activeSessionId ? (s.sessions[s.activeSessionId] ?? s.archivedSessions[s.activeSessionId])?.hydrated : undefined));
@@ -2128,7 +2177,8 @@ function App() {
                 hasBrowserTab={activeHasBrowserTab}
                 hasGitTab={activeHasGitTab}
                 hasTerminalTab={activeHasTerminalTab}
-                workspacePlugins={workspacePlugins}
+                workspacePlugins={visibleWorkspacePlugins}
+                hiddenWorkspacePlugins={hiddenWorkspacePlugins}
                 workflowAgentTabs={workflowAgentTabs}
                 selectedWorkflowAgent={selectedWorkflowAgent}
                 workflowRuns={workflowRuns}
@@ -2137,6 +2187,8 @@ function App() {
                 onCloseGitWorkspace={closeGitWorkspace}
                 onOpenTerminalWorkspace={openTerminalWorkspace}
                 onCloseTerminalWorkspace={closeTerminalWorkspace}
+                onCloseWorkspacePluginTab={closeWorkspacePluginTab}
+                onOpenWorkspacePluginTab={openWorkspacePluginTab}
                 onCloseWorkflowAgentTab={closeWorkflowAgentTranscript}
                 onOpenSessionAnalysis={() => setShowSessionAnalysis(true)}
                 width={effectiveActivityRailWidth}

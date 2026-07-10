@@ -8,6 +8,7 @@ import {
   shouldShowCreateTerminalTab,
   type ActivityOptionalWorkspaceTab,
   type ActivityWorkspaceTab,
+  type PluginRailTab,
   type WorkflowAgentRailTab,
   type WorkflowAgentWorkspaceTabItem,
 } from "../utils/activity-workspace-tabs";
@@ -18,6 +19,7 @@ type ActivityWorkspaceTabsProps = {
   showGitTab?: boolean;
   showTerminalTab?: boolean;
   workspacePlugins?: WorkspacePluginDescriptor[];
+  hiddenWorkspacePlugins?: WorkspacePluginDescriptor[];
   workflowAgentTabs?: WorkflowAgentWorkspaceTabItem[];
   showLabels?: boolean;
   browserLabel?: string;
@@ -28,6 +30,8 @@ type ActivityWorkspaceTabsProps = {
   onCloseGitTab?: () => void;
   onCreateGitTab?: () => void;
   onCloseTerminalTab?: () => void;
+  onCloseWorkspacePluginTab?: (tab: PluginRailTab) => void;
+  onCreateWorkspacePluginTab?: (tab: PluginRailTab) => void;
   onCreateTerminalTab?: () => void;
   onCloseWorkflowAgentTab?: (tab: WorkflowAgentRailTab) => void;
 };
@@ -99,6 +103,7 @@ export function ActivityWorkspaceTabs({
   showGitTab = false,
   showTerminalTab = false,
   workspacePlugins = [],
+  hiddenWorkspacePlugins = [],
   workflowAgentTabs = [],
   showLabels = true,
   browserLabel = "浏览器",
@@ -109,6 +114,8 @@ export function ActivityWorkspaceTabs({
   onCloseGitTab,
   onCreateGitTab,
   onCloseTerminalTab,
+  onCloseWorkspacePluginTab,
+  onCreateWorkspacePluginTab,
   onCreateTerminalTab,
   onCloseWorkflowAgentTab,
 }: ActivityWorkspaceTabsProps) {
@@ -121,10 +128,13 @@ export function ActivityWorkspaceTabs({
       canCreateBrowserTab: false,
       canCreateGitTab: Boolean(onCreateGitTab) && (showCreateGitTab ?? shouldShowCreateGitTab(showGitTab)),
       canCreateTerminalTab: Boolean(onCreateTerminalTab) && (showCreateTerminalTab ?? shouldShowCreateTerminalTab(showTerminalTab)),
+      workspacePlugins: onCreateWorkspacePluginTab ? hiddenWorkspacePlugins : [],
     }),
     [
       onCreateGitTab,
+      onCreateWorkspacePluginTab,
       onCreateTerminalTab,
+      hiddenWorkspacePlugins,
       showCreateGitTab,
       showCreateTerminalTab,
       showGitTab,
@@ -157,7 +167,9 @@ export function ActivityWorkspaceTabs({
     }
     if (id === "terminal") {
       onCreateTerminalTab?.();
+      return;
     }
+    if (id.startsWith("plugin:")) onCreateWorkspacePluginTab?.(id as PluginRailTab);
   };
 
   const handleTabsWheel = (event: WheelEvent<HTMLDivElement>) => {
@@ -191,6 +203,8 @@ export function ActivityWorkspaceTabs({
               ? onCloseGitTab
             : tab.id === "terminal"
               ? onCloseTerminalTab
+              : tab.id.startsWith("plugin:")
+                ? () => onCloseWorkspacePluginTab?.(tab.id as PluginRailTab)
               : isWorkflowAgentTab
                 ? () => onCloseWorkflowAgentTab?.(tab.id as WorkflowAgentRailTab)
                 : undefined;

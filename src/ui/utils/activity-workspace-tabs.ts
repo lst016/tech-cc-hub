@@ -4,7 +4,7 @@ export type WorkflowAgentRailTab = `workflow-agent:${string}`;
 export type PluginRailTab = `plugin:${string}`;
 export type ActivityRailTab = "trace" | "usage" | "preview" | "git" | "terminal" | WorkflowAgentRailTab | PluginRailTab;
 export type ActivityWorkspaceTab = "browser" | ActivityRailTab;
-export type ActivityOptionalWorkspaceTab = "git" | "terminal";
+export type ActivityOptionalWorkspaceTab = "git" | "terminal" | PluginRailTab;
 
 export const DEFAULT_ACTIVITY_RAIL_TAB: ActivityRailTab = "usage";
 
@@ -164,6 +164,7 @@ export function buildActivityWorkspaceCreateOptions(input: {
   canCreateBrowserTab: boolean;
   canCreateGitTab?: boolean;
   canCreateTerminalTab: boolean;
+  workspacePlugins?: WorkspacePluginDescriptor[];
 }): ActivityWorkspaceCreateOption[] {
   return [
     input.canCreateGitTab
@@ -180,6 +181,11 @@ export function buildActivityWorkspaceCreateOptions(input: {
           title: "打开终端",
         }
       : null,
+    ...(input.workspacePlugins ?? []).map((plugin) => ({
+      id: getWorkspacePluginTabId(plugin.id),
+      label: plugin.label,
+      title: `Open ${plugin.label}`,
+    })),
   ].filter((option): option is ActivityWorkspaceCreateOption => Boolean(option));
 }
 

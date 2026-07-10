@@ -1,15 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { WorkspacePluginDescriptor } from "../../../shared/workspace-plugins";
+import { getWorkspacePluginSurfaceId, type WorkspacePluginDescriptor } from "../../../shared/workspace-plugins";
 import type { WorkspacePluginLaunch } from "../../../electron/libs/workspace-plugins/workspace-plugin-manager";
 
 type WorkspacePluginViewPaneProps = {
   plugin: WorkspacePluginDescriptor;
   sessionId?: string;
 };
-
-function getSurfaceId(pluginId: string, sessionId: string) {
-  return `workspace-plugin:${pluginId}:${sessionId}`;
-}
 
 function canUsePluginBrowserView() {
   return typeof window !== "undefined" &&
@@ -22,7 +18,7 @@ export function WorkspacePluginViewPane({ plugin, sessionId }: WorkspacePluginVi
   const surfaceRef = useRef<HTMLDivElement>(null);
   const [launch, setLaunch] = useState<WorkspacePluginLaunch | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const surfaceId = sessionId ? getSurfaceId(plugin.id, sessionId) : null;
+  const surfaceId = sessionId ? getWorkspacePluginSurfaceId(plugin.id, sessionId) : null;
   const unavailableError = !sessionId || !surfaceId
     ? "请先打开一个带工作目录的会话。"
     : !canUsePluginBrowserView()

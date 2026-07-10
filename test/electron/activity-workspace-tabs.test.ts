@@ -192,6 +192,27 @@ describe("activity workspace tabs", () => {
     );
   });
 
+  it("returns a closed workspace plugin to the plus menu", () => {
+    assert.deepEqual(
+      buildActivityWorkspaceCreateOptions({
+        canCreateBrowserTab: false,
+        canCreateGitTab: false,
+        canCreateTerminalTab: false,
+        workspacePlugins: [{
+          id: "codex-canvas",
+          label: "Canvas",
+          surface: "browser-view",
+          permissions: ["session.snapshot", "session.send", "session.images.receive"],
+        }],
+      }),
+      [{
+        id: "plugin:codex-canvas",
+        label: "Canvas",
+        title: "Open Canvas",
+      }],
+    );
+  });
+
   it("defaults the activity rail to usage in app state", () => {
     const appSource = readFileSync("src/ui/App.tsx", "utf8");
     const railSource = readFileSync("src/ui/components/ActivityRail.tsx", "utf8");

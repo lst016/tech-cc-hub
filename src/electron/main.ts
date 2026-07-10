@@ -93,6 +93,7 @@ import { setCronService } from "./libs/mcp-tools/cron.js";
 import type { ClientEvent, PromptAttachment, ServerEvent } from "./types.js";
 import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkbenchEvent, type BrowserWorkbenchNetworkLogInput, type BrowserWorkbenchRecordedAction, type BrowserWorkbenchState } from "./browser-manager.js";
 import { WorkspacePluginManager } from "./libs/workspace-plugins/workspace-plugin-manager.js";
+import { getGeneratedImagesRoot } from "./libs/image/image-generation-artifacts.js";
 import { startDevBackendBridge, DEV_BACKEND_BRIDGE_PORT } from "./dev-backend-bridge.js";
 import { buildSessionSlashCommandItems } from "./libs/slash-command-catalog.js";
 import { prepareExternalCliCommand, runExternalCli } from "./libs/external-cli.js";
@@ -1684,6 +1685,7 @@ function getWorkspacePluginManager(): WorkspacePluginManager {
       pluginsRoot: workspacePluginsRoot(),
       sessionStore: sessions,
       dispatch: handleClientEvent,
+      generatedImagesRoot: getGeneratedImagesRoot(),
     });
   }
   return workspacePluginManager;
@@ -2588,6 +2590,13 @@ app.on("ready", async () => {
     Menu.setApplicationMenu(null);
     logStartupEnvironment();
     prewarmClaudeCodeSubprocess();
+    addServerEventListener((event) => {
+      if (event.type !== "stream.user_prompt" || !event.payload.attachments?.length) return;
+      void workspacePluginManager?.syncSessionImages({
+        sessionId: event.payload.sessionId,
+        attachments: event.payload.attachments,
+      });
+    });
     const appIconPath = getIconPath();
     if (process.platform === "darwin" && app.dock) {
         app.setActivationPolicy("regular");
@@ -3581,10 +3590,13 @@ app.on("ready", async () => {
     });
 
     ipcMainHandle("workspace-plugins:close", async (_event: IpcMainInvokeEvent, input: unknown) => {
-      if (!input || typeof input !== "object" || typeof (input as { sessionId?: unknown }).sessionId !== "string") {
-        throw new Error("Workspace plugin close request requires sessionId.");
+      if (!input || typeof input !== "object" || typeof (input as { pluginId?: unknown }).pluginId !== "string" || typeof (input as { sessionId?: unknown }).sessionId !== "string") {
+        throw new Error("Workspace plugin close request requires pluginId and sessionId.");
       }
-      await getWorkspacePluginManager().closeSession((input as { sessionId: string }).sessionId.trim());
+      await getWorkspacePluginManager().close({
+        pluginId: (input as { pluginId: string }).pluginId.trim(),
+        sessionId: (input as { sessionId: string }).sessionId.trim(),
+      });
     });
 
     ipcMainHandle("browser-close", (_: IpcMainInvokeEvent, sessionId?: string) => {

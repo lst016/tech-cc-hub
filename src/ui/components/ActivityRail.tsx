@@ -30,6 +30,7 @@ import {
   normalizeActivityRailTab,
   type ActivityRailTab,
   type ActivityWorkspaceTab,
+  type PluginRailTab,
   type WorkflowAgentRailTab,
   type WorkflowAgentWorkspaceTabItem,
 } from "../utils/activity-workspace-tabs";
@@ -1284,6 +1285,7 @@ export function ActivityRail({
   hasGitTab = false,
   hasTerminalTab = false,
   workspacePlugins = [],
+  hiddenWorkspacePlugins = [],
   workflowAgentTabs = [],
   selectedWorkflowAgent,
   workflowRuns = [],
@@ -1292,6 +1294,8 @@ export function ActivityRail({
   onCloseGitWorkspace,
   onOpenTerminalWorkspace,
   onCloseTerminalWorkspace,
+  onCloseWorkspacePluginTab,
+  onOpenWorkspacePluginTab,
   onCloseWorkflowAgentTab,
   onWorkflowRunAction,
   width = 420,
@@ -1318,6 +1322,7 @@ export function ActivityRail({
   hasGitTab?: boolean;
   hasTerminalTab?: boolean;
   workspacePlugins?: WorkspacePluginDescriptor[];
+  hiddenWorkspacePlugins?: WorkspacePluginDescriptor[];
   workflowAgentTabs?: WorkflowAgentWorkspaceTabItem[];
   selectedWorkflowAgent?: WorkflowAgentSummary;
   workflowRuns?: WorkflowRunRecord[];
@@ -1326,6 +1331,8 @@ export function ActivityRail({
   onCloseGitWorkspace?: () => void;
   onOpenTerminalWorkspace?: () => void;
   onCloseTerminalWorkspace?: () => void;
+  onCloseWorkspacePluginTab?: (tab: PluginRailTab) => void;
+  onOpenWorkspacePluginTab?: (tab: PluginRailTab) => void;
   onCloseWorkflowAgentTab?: (tab: WorkflowAgentRailTab) => void;
   onWorkflowRunAction?: (action: WorkflowRunAction, run: WorkflowRunRecord) => void;
   width?: number;
@@ -1454,6 +1461,7 @@ export function ActivityRail({
             showGitTab={hasGitTab}
             showTerminalTab={hasTerminalTab}
             workspacePlugins={workspacePlugins}
+            hiddenWorkspacePlugins={hiddenWorkspacePlugins}
             workflowAgentTabs={workflowAgentTabs}
             showLabels={showLabels}
             showCreateGitTab={!hasGitTab}
@@ -1463,6 +1471,8 @@ export function ActivityRail({
             onCloseGitTab={hasGitTab ? onCloseGitWorkspace : undefined}
             onCreateTerminalTab={onOpenTerminalWorkspace}
             onCloseTerminalTab={hasTerminalTab ? onCloseTerminalWorkspace : undefined}
+            onCloseWorkspacePluginTab={onCloseWorkspacePluginTab}
+            onCreateWorkspacePluginTab={onOpenWorkspacePluginTab}
             onCloseWorkflowAgentTab={onCloseWorkflowAgentTab}
           />
         </div>
