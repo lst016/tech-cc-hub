@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codex-Canvas</title>
+    <link rel="icon" href="/icon.png" type="image/png" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <main class="canvas-pane">
+        <section class="board-shell" aria-label="Canvas workspace">
+          <header class="project-header">
+            <span class="project-mark"></span>
+            <input id="projectTitle" class="project-title-input" value="Untitled" aria-label="Project title" spellcheck="false" />
+            <button title="Project options" aria-label="Project options">
+              <svg class="header-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m6 9 6 6 6-6"></path>
+              </svg>
+            </button>
+          </header>
+          <div id="projectMenu" class="project-menu" hidden></div>
+
+          <button id="settingsButton" class="settings-button" title="Settings" aria-label="Settings">
+            <svg class="settings-gear" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 15.25a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5z"></path>
+              <path d="M19.4 13.5a7.9 7.9 0 0 0 .05-1.5 7.9 7.9 0 0 0-.05-1.5l2.02-1.54-1.9-3.28-2.37.98a8.45 8.45 0 0 0-2.58-1.5L14.25 2h-4.5l-.32 3.16a8.45 8.45 0 0 0-2.58 1.5l-2.37-.98-1.9 3.28L4.6 10.5a7.9 7.9 0 0 0-.05 1.5 7.9 7.9 0 0 0 .05 1.5l-2.02 1.54 1.9 3.28 2.37-.98a8.45 8.45 0 0 0 2.58 1.5l.32 3.16h4.5l.32-3.16a8.45 8.45 0 0 0 2.58-1.5l2.37.98 1.9-3.28-2.02-1.54z"></path>
+            </svg>
+          </button>
+          <div id="settingsMenu" class="settings-menu" hidden>
+            <div class="settings-menu-section">
+              <button class="settings-menu-row settings-menu-parent" data-settings-row="language">
+                <svg class="settings-row-icon settings-row-svg" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M9 6.371c0 4.418 -2.239 6.629 -5 6.629"></path>
+                  <path d="M4 6.371h7"></path>
+                  <path d="M5 9c0 2.144 2.252 3.908 6 4"></path>
+                  <path d="M12 20l4 -9l4 9"></path>
+                  <path d="M19.1 18h-6.2"></path>
+                  <path d="M6.694 3l.793 .582"></path>
+                </svg>
+                <span data-i18n="language">Language</span>
+                <span class="settings-row-value" data-language-current>English</span>
+                <svg class="settings-menu-chevron" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M9 6l6 6l-6 6"></path>
+                </svg>
+              </button>
+              <button id="appUpdateButton" class="settings-menu-row settings-version-row" type="button">
+                <svg class="settings-row-icon settings-row-svg" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 7h-9"></path>
+                  <path d="M14 17H5"></path>
+                  <circle cx="17" cy="17" r="3"></circle>
+                  <circle cx="7" cy="7" r="3"></circle>
+                </svg>
+                <span data-i18n="appVersion">Version</span>
+                <span class="settings-version-value">
+                  <span id="appVersionValue">...</span>
+                  <span id="appUpdateStatus"></span>
+                </span>
+              </button>
+            </div>
+            <div class="settings-submenu" data-settings-submenu="language">
+              <button data-language="en">
+                <span>English</span>
+                <span class="settings-check" aria-hidden="true"></span>
+              </button>
+              <button data-language="zh">
+                <span>简体中文</span>
+                <span class="settings-check" aria-hidden="true"></span>
+              </button>
+            </div>
+          </div>
+
+          <div id="board" class="board" tabindex="0" aria-label="Codex canvas">
+            <div id="emptyState" class="empty-state">
+            </div>
+            <div id="world" class="world">
+              <div id="objects" class="objects"></div>
+            </div>
+            <div id="selectionToolbar" class="selection-toolbar" hidden>
+              <button data-action="quick-edit" data-tooltip="Quick Edit" title="Quick Edit" aria-label="Quick Edit">
+                <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72" />
+                  <path d="m14 7 3 3" />
+                  <path d="M5 6v4" />
+                  <path d="M19 14v4" />
+                  <path d="M10 2v2" />
+                  <path d="M7 8H3" />
+                  <path d="M21 16h-4" />
+                  <path d="M11 3H9" />
+                </svg>
+                <span>Quick Edit</span>
+              </button>
+              <button data-action="remove-bg" data-tooltip="Remove BG" title="Remove BG" aria-label="Remove BG">
+                <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <line x1="2" x2="22" y1="2" y2="22" />
+                  <path d="M10.41 10.41a2 2 0 1 1-2.83-2.83" />
+                  <line x1="13.5" x2="6" y1="13.5" y2="21" />
+                  <line x1="18" x2="21" y1="12" y2="15" />
+                  <path d="M3.59 3.59A1.99 1.99 0 0 0 3 5v14a2 2 0 0 0 2 2h14c.55 0 1.052-.22 1.41-.59" />
+                  <path d="M21 15V5a2 2 0 0 0-2-2H9" />
+                </svg>
+                <span>Remove BG</span>
+              </button>
+              <button data-action="expand" data-tooltip="Expand" title="Expand" aria-label="Expand">
+                <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M15 3h6v6" />
+                  <path d="M9 21H3v-6" />
+                  <path d="M21 3l-7 7" />
+                  <path d="M3 21l7 -7" />
+                  <rect x="8" y="8" width="8" height="8" rx="1.5" />
+                </svg>
+                <span>Expand</span>
+              </button>
+              <button data-action="crop" data-tooltip="Crop" title="Crop" aria-label="Crop">
+                <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M6 2v14a2 2 0 0 0 2 2h14" />
+                  <path d="M18 22V8a2 2 0 0 0 -2 -2H2" />
+                </svg>
+                <span>Crop</span>
+              </button>
+              <button data-action="edit-elements" data-tooltip="Edit Elements" title="Edit Elements" aria-label="Edit Elements">
+                <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z" />
+                  <path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12" />
+                  <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17" />
+                </svg>
+                <span>Edit Elements</span>
+              </button>
+              <span class="toolbar-row-break" data-toolbar-group-break hidden aria-hidden="true"></span>
+              <button data-action="reset-layer-group" data-tooltip="Reset group" title="Reset group" aria-label="Reset group" hidden>
+                <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M3.05 11a9 9 0 1 1 2.64 6.36" />
+                  <path d="M3 4v7h7" />
+                  <path d="M8 11a4 4 0 1 0 1.17-2.83" />
+                </svg>
+                <span>Reset group</span>
+              </button>
+              <button data-action="layer-down" data-tooltip="Layer down" title="Layer down" aria-label="Layer down" hidden>
+                <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 5v14" />
+                  <path d="m18 13 -6 6 -6 -6" />
+                </svg>
+                <span>Layer down</span>
+              </button>
+              <button data-action="layer-up" data-tooltip="Layer up" title="Layer up" aria-label="Layer up" hidden>
+                <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 19V5" />
+                  <path d="m6 11 6 -6 6 6" />
+                </svg>
+                <span>Layer up</span>
+              </button>
+              <button data-action="group-layer-group" data-tooltip="Group" title="Group" aria-label="Group" hidden>
+                <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8 7V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-2" />
+                  <rect x="5" y="10" width="9" height="9" rx="2" />
+                  <path d="M5 14H3a2 2 0 0 1-2-2V8" />
+                  <path d="M14 19h2a2 2 0 0 0 2-2v-2" />
+                </svg>
+                <span>Group</span>
+              </button>
+              <button data-action="edit-text" data-tooltip="Edit Text" title="Edit Text" aria-label="Edit Text">
+                <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 4v16" />
+                  <path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2" />
+                  <path d="M9 20h6" />
+                </svg>
+                <span>Edit Text</span>
+              </button>
+              <button class="icon-only" data-action="send-to-chat" data-tooltip="Send to chat" title="Send to chat" aria-label="Send to chat">
+                <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M14.536 21.686a.5.5 0 0 0 .937 -.024l6.5 -19a.496 .496 0 0 0 -.635 -.635l-19 6.5a.5 .5 0 0 0 -.024 .937l7.93 3.18a2 2 0 0 1 1.112 1.11z" />
+                  <path d="m21.854 2.147 -10.94 10.939" />
+                </svg>
+              </button>
+              <button class="icon-only" data-action="copy-file-mention" data-tooltip="Copy @file" title="Copy @file" aria-label="Copy @file">
+                <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="4" />
+                  <path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8" />
+                </svg>
+              </button>
+              <button class="icon-only" data-action="download" data-tooltip="Download" title="Download" aria-label="Download">
+                <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 15V3" />
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <path d="m7 10 5 5 5-5" />
+                </svg>
+              </button>
+            </div>
+            <form id="quickEditComposer" class="quick-edit-composer" hidden>
+              <div id="editTextPanel" class="edit-text-panel" hidden>
+                <div class="edit-text-title">Edit Text</div>
+                <div id="editTextList" class="edit-text-list"></div>
+                <div id="editTextStatus" class="edit-text-status"></div>
+              </div>
+              <div id="expandPanel" class="expand-panel" hidden>
+                <div class="expand-title" data-i18n="expandTitle">Expand</div>
+                <label class="expand-field">
+                  <span data-i18n="expandScale">Scale</span>
+                  <select id="expandScale" aria-label="Expand scale">
+                    <option value="1">1x</option>
+                    <option value="1.5">1.5x</option>
+                    <option value="2">2x</option>
+                    <option value="3">3x</option>
+                  </select>
+                </label>
+                <label class="expand-field">
+                  <span data-i18n="expandPreset">Preset</span>
+                  <select id="expandPreset" aria-label="Expand preset">
+                    <option value="general" data-i18n="expandPresetGeneral">General</option>
+                    <option value="photo" data-i18n="expandPresetPhoto">Photo</option>
+                    <option value="poster" data-i18n="expandPresetPoster">Poster</option>
+                    <option value="product" data-i18n="expandPresetProduct">Product</option>
+                  </select>
+                </label>
+                <div id="expandRatios" class="expand-ratios" role="radiogroup" aria-label="Expand ratio">
+                  <button type="button" class="active" data-expand-ratio="original" role="radio" aria-checked="true" data-i18n="expandOriginalRatio">Original ratio</button>
+                  <button type="button" data-expand-ratio="1:1" role="radio" aria-checked="false">1:1</button>
+                  <button type="button" data-expand-ratio="3:4" role="radio" aria-checked="false">3:4</button>
+                  <button type="button" data-expand-ratio="2:3" role="radio" aria-checked="false">2:3</button>
+                  <button type="button" data-expand-ratio="9:16" role="radio" aria-checked="false">9:16</button>
+                  <button type="button" data-expand-ratio="4:3" role="radio" aria-checked="false">4:3</button>
+                  <button type="button" data-expand-ratio="3:2" role="radio" aria-checked="false">3:2</button>
+                  <button type="button" data-expand-ratio="16:9" role="radio" aria-checked="false">16:9</button>
+                  <button type="button" data-expand-ratio="4:5" role="radio" aria-checked="false">4:5</button>
+                  <button type="button" data-expand-ratio="5:4" role="radio" aria-checked="false">5:4</button>
+                </div>
+              </div>
+              <textarea id="quickEditPrompt" rows="2" autocomplete="off" spellcheck="true" data-i18n-placeholder="quickEditPlaceholder" placeholder="Describe your edit here"></textarea>
+              <div id="quickEditMarkupControls" class="quick-edit-markup-controls" aria-label="Markup tools">
+                <div id="quickEditColorPalette" class="quick-edit-color-palette" aria-label="Markup colors"></div>
+                <div class="quick-edit-markup-tools">
+                  <button type="button" title="Pencil" aria-label="Pencil" data-tooltip="Pencil" data-quick-edit-tool="pencil">
+                    <svg class="quick-edit-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4"></path>
+                      <path d="M13.5 6.5l4 4"></path>
+                    </svg>
+                  </button>
+                  <button type="button" title="Text" aria-label="Text" data-tooltip="Text" data-quick-edit-tool="text">
+                    <svg class="quick-edit-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M6 4l12 0"></path>
+                      <path d="M12 4l0 16"></path>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div class="quick-edit-actions">
+                <button type="button" id="quickEditCancel" class="secondary-action" data-i18n="cancel">Cancel</button>
+                <button type="submit" id="quickEditRun" data-i18n="run">Run</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="canvas-controls" aria-label="Canvas view controls">
+            <button title="Reset view" aria-label="Reset view" data-tooltip="Reset view" data-view-action="reset">
+              <svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3.06 13a9 9 0 1 0 .49 -4.087"></path>
+                <path d="M3 4.001v5h5"></path>
+                <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"></path>
+              </svg>
+            </button>
+            <span id="zoomLabel">5%</span>
+          </div>
+
+          <nav class="tool-dock" aria-label="Canvas tools">
+            <button class="active" title="Hand" aria-label="Hand" data-tooltip="Hand" data-tool="hand">
+              <svg class="dock-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 13v-8.5a1.5 1.5 0 0 1 3 0v6.5"></path>
+                <path d="M11 5.5v-2a1.5 1.5 0 0 1 3 0v7.5"></path>
+                <path d="M14 5.5a1.5 1.5 0 0 1 3 0v5.5"></path>
+                <path d="M17 7.5a1.5 1.5 0 0 1 3 0v6.5a6 6 0 0 1 -6 6h-2c-2.4 0 -3.4 -.6 -4.8 -2l-3.6 -4.5a1.5 1.5 0 0 1 2.3 -1.9l2.1 1.4"></path>
+              </svg>
+            </button>
+            <button title="Select" aria-label="Select" data-tooltip="Select" data-tool="select">
+              <svg class="dock-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7.904 17.563a1.2 1.2 0 0 0 2.228 .308l2.09 -3.093l4.907 4.907a1.067 1.067 0 0 0 1.509 0l1.047 -1.047a1.067 1.067 0 0 0 0 -1.509l-4.907 -4.907l3.113 -2.09a1.2 1.2 0 0 0 -.309 -2.228l-13.582 -3.904l3.904 13.563"></path>
+              </svg>
+            </button>
+            <button title="Upload image" aria-label="Upload image" data-tooltip="Upload image" data-view-action="upload">
+              <svg class="dock-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M15 8h.01"></path>
+                <path d="M12.5 21h-6.5a3 3 0 0 1 -3 -3v-12a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v6.5"></path>
+                <path d="M3 16l5 -5c.928 -.893 2.072 -.893 3 0l3.5 3.5"></path>
+                <path d="M14 14l1 -1c.679 -.653 1.473 -.829 2.214 -.526"></path>
+                <path d="M19 22v-6"></path>
+                <path d="M22 19l-3 -3l-3 3"></path>
+              </svg>
+            </button>
+            <button title="Pencil" aria-label="Pencil" data-tooltip="Pencil" data-tool="pencil">
+              <svg class="dock-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4"></path>
+                <path d="M13.5 6.5l4 4"></path>
+              </svg>
+            </button>
+            <button title="Text" aria-label="Text" data-tooltip="Text" data-tool="text">
+              <svg class="dock-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 4l12 0"></path>
+                <path d="M12 4l0 16"></path>
+              </svg>
+            </button>
+            <span class="dock-separator"></span>
+            <button title="Undo" aria-label="Undo" data-tooltip="Undo" data-history-action="undo" disabled>
+              <svg class="dock-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M9 14l-4 -4l4 -4"></path>
+                <path d="M5 10h11a4 4 0 1 1 0 8h-1"></path>
+              </svg>
+            </button>
+            <button title="Redo" aria-label="Redo" data-tooltip="Redo" data-history-action="redo" disabled>
+              <svg class="dock-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M15 14l4 -4l-4 -4"></path>
+                <path d="M19 10h-11a4 4 0 1 0 0 8h1"></path>
+              </svg>
+            </button>
+            <button title="Reset view" aria-label="Reset view" data-tooltip="Reset view" data-view-action="reset">
+              <svg class="dock-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3.06 13a9 9 0 1 0 .49 -4.087"></path>
+                <path d="M3 4.001v5h5"></path>
+                <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"></path>
+              </svg>
+            </button>
+          </nav>
+          <input id="imageUploadInput" type="file" accept="image/*" multiple hidden />
+          <div id="colorPalette" class="color-palette" aria-label="Tool colors" hidden></div>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
