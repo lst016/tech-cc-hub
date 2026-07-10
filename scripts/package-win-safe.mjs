@@ -333,6 +333,12 @@ function runWithFallback(strategyLabel, commands) {
 async function main() {
   cleanOldArtifacts();
 
+  const pluginRuntime = run("npm", ["run", "prepare:workspace-plugins"]);
+  if (!pluginRuntime.ok) {
+    log("workspace plugin runtime preparation failed, stop.");
+    process.exit(1);
+  }
+
   const preBuild = run("npm", ["run", "transpile:electron"]);
   if (!preBuild.ok) {
     log("transpile failed, stop.");

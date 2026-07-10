@@ -11,7 +11,15 @@
         "node_modules/@colbymchenry/codegraph-*/**/*"
     ],
     "extraResources": [
-        "dist-electron/preload.cjs"
+        "dist-electron/preload.cjs",
+        {
+            "from": "plugins/codex-canvas",
+            "to": "plugins/codex-canvas",
+            "filter": [
+                "**/*",
+                "node_modules/**/*"
+            ]
+        }
     ],
     "publish": [
         {

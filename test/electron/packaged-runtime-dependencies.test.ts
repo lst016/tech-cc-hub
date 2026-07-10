@@ -11,6 +11,7 @@ type PackageLike = {
 
 type BuilderConfigLike = {
   files?: string[];
+  extraResources?: Array<string | { from?: string; to?: string; filter?: string[] }>;
   asarUnpack?: string[];
 };
 
@@ -59,4 +60,18 @@ test("CodeGraph bundled runtime dependencies are kept in Windows packages", () =
   assert.match(packagedSmoke, /PACKAGED_SMOKE_OK/);
   assert.match(packagedSmoke, /TECH_CC_HUB_USER_DATA_DIR/);
   assert.match(packagedSmoke, /Cannot find module/);
+});
+
+test("Canvas plugin runtime is copied outside app.asar with its own locked dependencies", () => {
+  const packageJson = readJson("package.json");
+  const builderConfig = readJson("electron-builder.json") as BuilderConfigLike;
+  const packageWinSafe = readFileSync("scripts/package-win-safe.mjs", "utf8");
+  const canvasResource = builderConfig.extraResources?.find((resource) => (
+    typeof resource !== "string" && resource.from === "plugins/codex-canvas" && resource.to === "plugins/codex-canvas"
+  ));
+
+  assert.equal(packageJson.scripts?.["prepare:workspace-plugins"], "npm --prefix plugins/codex-canvas ci --ignore-scripts");
+  assert.ok(canvasResource);
+  assert.ok(typeof canvasResource !== "string" && canvasResource.filter?.includes("node_modules/**/*"));
+  assert.match(packageWinSafe, /npm", \["run", "prepare:workspace-plugins"\]/);
 });

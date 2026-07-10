@@ -7,6 +7,8 @@ import {
   buildActivityWorkspaceTabs,
   buildWorkflowAgentWorkspaceTabs,
   getActivityRailTabAfterClosingWorkflowAgent,
+  getWorkspacePluginIdFromTab,
+  getWorkspacePluginTabId,
   getWorkflowAgentTabId,
   normalizeActivityRailTab,
   shouldShowCreateBrowserTab,
@@ -87,6 +89,25 @@ describe("activity workspace tabs", () => {
     assert.deepEqual(defaultTabs.map((tab) => tab.id), ["preview", "usage", "browser"]);
     assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "workflow-agent:agent-1", "browser"]);
     assert.equal(visibleTabs.find((tab) => tab.id === "workflow-agent:agent-1")?.active, true);
+  });
+
+  it("adds installed browser-view plugins as persistent right rail tabs", () => {
+    const pluginTabId = getWorkspacePluginTabId("codex-canvas");
+    const visibleTabs = buildActivityWorkspaceTabs({
+      activeTab: pluginTabId,
+      showBrowserTab: false,
+      workspacePlugins: [{
+        id: "codex-canvas",
+        label: "Canvas",
+        surface: "browser-view",
+        permissions: ["session.snapshot", "session.send"],
+      }],
+    }).filter((tab) => tab.visible);
+
+    assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", pluginTabId, "browser"]);
+    assert.equal(visibleTabs.find((tab) => tab.id === pluginTabId)?.active, true);
+    assert.equal(getWorkspacePluginIdFromTab(pluginTabId), "codex-canvas");
+    assert.equal(getWorkspacePluginIdFromTab("workflow-agent:agent-1"), null);
   });
 
   it("builds workflow agent tabs only for explicitly opened agent transcripts", () => {

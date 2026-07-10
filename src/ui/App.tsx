@@ -36,6 +36,7 @@ import { buildWorkflowAgentSummaries } from "./utils/workflow-agent-transcripts"
 import { ProcessGroupCard as SharedProcessGroupCard } from "./components/chat/ProcessGroupCard";
 import { WorkflowAgentCard } from "./components/workflow/WorkflowAgentCard";
 import type { WorkflowRunAction, WorkflowRunRecord } from "../shared/workflows/workflow-runs";
+import type { WorkspacePluginDescriptor } from "../shared/workspace-plugins";
 import { DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT } from "../shared/claude-agent-teams";
 import {
   DEV_BRIDGE_READY_EVENT,
@@ -327,6 +328,7 @@ function App() {
   const [pendingPreviewOpenRequestBySessionId, setPendingPreviewOpenRequestBySessionId] = useState<Record<string, PendingPreviewOpenRequest>>({});
   const [gitTabBySessionId, setGitTabBySessionId] = useState<Record<string, boolean>>({});
   const [terminalTabBySessionId, setTerminalTabBySessionId] = useState<Record<string, boolean>>({});
+  const [workspacePlugins, setWorkspacePlugins] = useState<WorkspacePluginDescriptor[]>([]);
   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
   const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | null>(null);
   const [appUpdateActionBusy, setAppUpdateActionBusy] = useState(false);
@@ -354,6 +356,21 @@ function App() {
       (typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent || "")));
   const headerHeightClass = isMac ? "h-12 items-center" : "h-10 items-center";
   const sidebarHeaderOffsetClass = isMac ? "top-12" : "top-10";
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!window.electron?.workspacePlugins?.list) return;
+    void window.electron.workspacePlugins.list()
+      .then((plugins) => {
+        if (!cancelled) setWorkspacePlugins(plugins);
+      })
+      .catch(() => {
+        if (!cancelled) setWorkspacePlugins([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runtimeSource]);
 
   const setAutoScrollMode = useCallback((next: boolean) => {
     shouldAutoScrollRef.current = next;
@@ -2111,6 +2128,7 @@ function App() {
                 hasBrowserTab={activeHasBrowserTab}
                 hasGitTab={activeHasGitTab}
                 hasTerminalTab={activeHasTerminalTab}
+                workspacePlugins={workspacePlugins}
                 workflowAgentTabs={workflowAgentTabs}
                 selectedWorkflowAgent={selectedWorkflowAgent}
                 workflowRuns={workflowRuns}

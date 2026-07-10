@@ -92,6 +92,7 @@ import { CronJobExecutor, CronBusyGuard } from "./libs/cron/cron-executor.js";
 import { setCronService } from "./libs/mcp-tools/cron.js";
 import type { ClientEvent, PromptAttachment, ServerEvent } from "./types.js";
 import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkbenchEvent, type BrowserWorkbenchNetworkLogInput, type BrowserWorkbenchRecordedAction, type BrowserWorkbenchState } from "./browser-manager.js";
+import { WorkspacePluginManager } from "./libs/workspace-plugins/workspace-plugin-manager.js";
 import { startDevBackendBridge, DEV_BACKEND_BRIDGE_PORT } from "./dev-backend-bridge.js";
 import { buildSessionSlashCommandItems } from "./libs/slash-command-catalog.js";
 import { prepareExternalCliCommand, runExternalCli } from "./libs/external-cli.js";
@@ -135,6 +136,7 @@ const browserWorkbenches = new Map<string, BrowserWorkbenchManager>();
 const browserWorkbenchEventListeners = new Set<(event: BrowserWorkbenchEvent) => void>();
 let stopDevBackendBridge: (() => void) | null = null;
 let channelBridgeController: ChannelBridgeController | null = null;
+let workspacePluginManager: WorkspacePluginManager | null = null;
 
 type CodeGraphUiPayload = {
   workspaceRoot?: unknown;
@@ -1672,6 +1674,21 @@ function getBrowserWorkbench(sessionId?: unknown): BrowserWorkbenchManager | nul
   return manager;
 }
 
+function workspacePluginsRoot(): string {
+  return app.isPackaged ? join(process.resourcesPath, "plugins") : join(app.getAppPath(), "plugins");
+}
+
+function getWorkspacePluginManager(): WorkspacePluginManager {
+  if (!workspacePluginManager) {
+    workspacePluginManager = new WorkspacePluginManager({
+      pluginsRoot: workspacePluginsRoot(),
+      sessionStore: sessions,
+      dispatch: handleClientEvent,
+    });
+  }
+  return workspacePluginManager;
+}
+
 function openBrowserWorkbenchForIpc(url: string, sessionId?: unknown): BrowserWorkbenchState {
   const resolvedSessionId = resolveBrowserWorkbenchSessionId(sessionId);
   const browserWorkbench = getBrowserWorkbench(resolvedSessionId);
@@ -1855,6 +1872,8 @@ function cleanup(): void {
   setChannelReplySender(null);
   setBrowserToolHost(null);
   setDesignToolHost(null);
+  void workspacePluginManager?.closeAll();
+  workspacePluginManager = null;
   closeAllBrowserWorkbenches();
   cleanupTerminalProcesses();
     cleanupAllSessions();
@@ -3544,7 +3563,28 @@ app.on("ready", async () => {
     });
 
     ipcMainHandle("browser-open", (_: IpcMainInvokeEvent, url: string, sessionId?: string) => {
-        return openBrowserWorkbenchForIpc(url, sessionId);
+      return openBrowserWorkbenchForIpc(url, sessionId);
+    });
+
+    ipcMainHandle("workspace-plugins:list", async () => {
+      return await getWorkspacePluginManager().list();
+    });
+
+    ipcMainHandle("workspace-plugins:open", async (_event: IpcMainInvokeEvent, input: unknown) => {
+      if (!input || typeof input !== "object" || typeof (input as { pluginId?: unknown }).pluginId !== "string" || typeof (input as { sessionId?: unknown }).sessionId !== "string") {
+        throw new Error("Workspace plugin open request requires pluginId and sessionId.");
+      }
+      return await getWorkspacePluginManager().open({
+        pluginId: (input as { pluginId: string }).pluginId.trim(),
+        sessionId: (input as { sessionId: string }).sessionId.trim(),
+      });
+    });
+
+    ipcMainHandle("workspace-plugins:close", async (_event: IpcMainInvokeEvent, input: unknown) => {
+      if (!input || typeof input !== "object" || typeof (input as { sessionId?: unknown }).sessionId !== "string") {
+        throw new Error("Workspace plugin close request requires sessionId.");
+      }
+      await getWorkspacePluginManager().closeSession((input as { sessionId: string }).sessionId.trim());
     });
 
     ipcMainHandle("browser-close", (_: IpcMainInvokeEvent, sessionId?: string) => {

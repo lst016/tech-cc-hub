@@ -1,5 +1,8 @@
+import { getWorkspacePluginTabId, type WorkspacePluginDescriptor } from "../../shared/workspace-plugins.js";
+
 export type WorkflowAgentRailTab = `workflow-agent:${string}`;
-export type ActivityRailTab = "trace" | "usage" | "preview" | "git" | "terminal" | WorkflowAgentRailTab;
+export type PluginRailTab = `plugin:${string}`;
+export type ActivityRailTab = "trace" | "usage" | "preview" | "git" | "terminal" | WorkflowAgentRailTab | PluginRailTab;
 export type ActivityWorkspaceTab = "browser" | ActivityRailTab;
 export type ActivityOptionalWorkspaceTab = "git" | "terminal";
 
@@ -43,6 +46,14 @@ export function getWorkflowAgentIdFromTab(tab: string | undefined): string | nul
   return tab?.startsWith("workflow-agent:") ? tab.slice("workflow-agent:".length) : null;
 }
 
+export { getWorkspacePluginTabId };
+
+export function getWorkspacePluginIdFromTab(tab: string | undefined): string | null {
+  if (!tab?.startsWith("plugin:")) return null;
+  const id = tab.slice("plugin:".length);
+  return /^[a-z][a-z0-9-]{1,63}$/.test(id) ? id : null;
+}
+
 export function getActivityRailTabAfterClosingWorkflowAgent(input: {
   activeTab: string | undefined;
   closingTab: WorkflowAgentRailTab;
@@ -81,12 +92,20 @@ export function buildActivityWorkspaceTabs(input: {
   showBrowserTab: boolean;
   showGitTab?: boolean;
   showTerminalTab?: boolean;
+  workspacePlugins?: WorkspacePluginDescriptor[];
   workflowAgentTabs?: WorkflowAgentWorkspaceTabItem[];
 }): ActivityWorkspaceTabItem[] {
   const workflowAgentTabs = (input.workflowAgentTabs ?? []).map((tab) => ({
     ...tab,
     visible: true,
     active: input.activeTab === tab.id,
+  }));
+  const workspacePluginTabs = (input.workspacePlugins ?? []).map((plugin) => ({
+    id: getWorkspacePluginTabId(plugin.id),
+    label: plugin.label,
+    title: plugin.label,
+    visible: true,
+    active: input.activeTab === getWorkspacePluginTabId(plugin.id),
   }));
 
   return [
@@ -130,6 +149,7 @@ export function buildActivityWorkspaceTabs(input: {
       visible: input.showTerminalTab === true,
       active: input.activeTab === "terminal",
     },
+    ...workspacePluginTabs,
     {
       id: "browser",
       label: "浏览器",

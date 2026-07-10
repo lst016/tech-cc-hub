@@ -299,6 +299,9 @@ type EventPayloadMapping = {
         "save-user-agent-rule-document": { success: boolean; error?: string };
         "debug-save-trace-snapshot": { success: boolean; path?: string; error?: string };
         "preprocess-image-attachments": ImagePreprocessResult;
+        "workspace-plugins:list": import("./src/shared/workspace-plugins").WorkspacePluginDescriptor[];
+        "workspace-plugins:open": import("./src/electron/libs/workspace-plugins/workspace-plugin-manager").WorkspacePluginLaunch;
+        "workspace-plugins:close": void;
         "browser-open": BrowserWorkbenchState;
         "browser-close": BrowserWorkbenchState;
         "browser-set-bounds": BrowserWorkbenchState;
@@ -409,6 +412,11 @@ interface Window {
         openPreviewFile: (payload: { path: string }) => Promise<{ success: boolean; error?: string }>;
         showPreviewItemInFolder: (payload: { path: string }) => Promise<{ success: boolean; error?: string }>;
         openPreviewDirectoryDialog: (payload: { properties?: string[] }) => Promise<string[]>;
+        workspacePlugins: {
+            list: () => Promise<import("./src/shared/workspace-plugins").WorkspacePluginDescriptor[]>;
+            open: (input: { pluginId: string; sessionId: string }) => Promise<import("./src/electron/libs/workspace-plugins/workspace-plugin-manager").WorkspacePluginLaunch>;
+            close: (input: { sessionId: string }) => Promise<void>;
+        };
         openBrowserWorkbench: (url: string, sessionId?: string) => Promise<BrowserWorkbenchState>;
         closeBrowserWorkbench: (sessionId?: string) => Promise<BrowserWorkbenchState>;
         setBrowserWorkbenchBounds: (bounds: BrowserWorkbenchBounds, sessionId?: string) => Promise<BrowserWorkbenchState>;
