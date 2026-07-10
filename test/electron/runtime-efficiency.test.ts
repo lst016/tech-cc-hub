@@ -258,6 +258,22 @@ test("runtime efficiency enables image generation tool for image generation prom
   assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-admin"));
 });
 
+test("runtime efficiency recognizes generic Chinese draw requests as image generation", () => {
+  const profile = resolveRuntimeEfficiencyProfile({
+    prompt: "画图 画一只小猪",
+  });
+
+  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-image"));
+});
+
+test("runtime efficiency recognizes Chinese draw requests without a quantity", () => {
+  const profile = resolveRuntimeEfficiencyProfile({
+    prompt: "hi 画只猪",
+  });
+
+  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-image"));
+});
+
 test("runtime efficiency loads image generation tool for $imagegen trigger", () => {
   const profile = resolveRuntimeEfficiencyProfile({
     prompt: "$imagegen a logo for my app",

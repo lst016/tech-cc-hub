@@ -5,7 +5,12 @@ import {
   resolvePreviewFileChangePath,
   type PreviewFileChangeEvent,
 } from "../../utils/preview-file-refresh";
+import {
+  parseGeneratedImageResult,
+  type GeneratedImageResult,
+} from "../../utils/generated-image-result";
 import { PREVIEW_OPEN_FILE_EVENT, type PreviewOpenFileDetail } from "../../events";
+import { GeneratedImageResultCard } from "./GeneratedImageResultCard";
 
 type ChangedFileSummary = {
   path: string;
@@ -17,6 +22,11 @@ type ChangedFileSummary = {
 };
 
 const PROCESS_ROW_BATCH_SIZE = 120;
+
+type SuccessfulGeneratedImageResult = Extract<GeneratedImageResult, {
+  isImageGeneration: true;
+  success: true;
+}>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -114,6 +124,50 @@ function formatProcessDetailValue(value: unknown): string {
   }
 }
 
+function getToolResultText(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    return content.map((item) => {
+      if (isRecord(item) && typeof item.text === "string") {
+        return item.text;
+      }
+      return formatProcessDetailValue(item);
+    }).join("\n");
+  }
+
+  if (isRecord(content) && typeof content.text === "string") {
+    return content.text;
+  }
+
+  return formatProcessDetailValue(content);
+}
+
+function collectGeneratedImageResults(
+  messages: Array<{ message: StreamMessage }>,
+): SuccessfulGeneratedImageResult[] {
+  const results: SuccessfulGeneratedImageResult[] = [];
+  const resultKeys = new Set<string>();
+
+  for (const entry of messages) {
+    for (const content of getMessageContentItems(entry.message)) {
+      if (!isRecord(content) || content.type !== "tool_result") continue;
+
+      const result = parseGeneratedImageResult(getToolResultText(content.content));
+      if (!result.isImageGeneration || !result.success) continue;
+
+      const key = result.artifacts.map((artifact) => artifact.path).join("\u0000");
+      if (resultKeys.has(key)) continue;
+      resultKeys.add(key);
+      results.push(result);
+    }
+  }
+
+  return results;
+}
+
 function getProcessEntryDetail(message: StreamMessage): string {
   const content = (message as { message?: { content?: unknown[] } }).message?.content;
   if (!Array.isArray(content) || content.length === 0) {
@@ -131,7 +185,7 @@ function getProcessEntryDetail(message: StreamMessage): string {
     }
 
     if (item.type === "tool_result") {
-      return ["工具返回：", formatProcessDetailValue(item.content ?? item)].join("\n");
+      return ["工具返回：", getToolResultText(item.content ?? item)].join("\n");
     }
 
     return formatProcessDetailValue(item);
@@ -325,6 +379,7 @@ const ProcessGroupCard = memo(function ProcessGroupCard({
     () => buildProcessChangedFiles(messages, workspace),
     [messages, workspace],
   );
+  const generatedImages = useMemo(() => collectGeneratedImageResults(messages), [messages]);
   const visibleProcessMessages = expanded ? messages.slice(0, visibleProcessCount) : [];
   const remainingProcessMessageCount = Math.max(0, messages.length - visibleProcessMessages.length);
   const visibleChangedFiles = showAllFiles ? changedFiles : changedFiles.slice(0, 4);
@@ -374,6 +429,16 @@ const ProcessGroupCard = memo(function ProcessGroupCard({
           )}
         </div>
       )}
+      {generatedImages.map((result) => (
+        <GeneratedImageResultCard
+          key={result.artifacts.map((artifact) => artifact.path).join("\u0000")}
+          mode={result.mode}
+          model={result.model}
+          profileName={result.profileName}
+          artifacts={result.artifacts}
+          outputHint={result.outputHint}
+        />
+      ))}
       {changedFiles.length > 0 && (
         <div className="relative mt-2 overflow-visible rounded-[24px] border border-black/6 bg-white/84 shadow-[0_12px_28px_rgba(30,38,52,0.05)]">
           <div className="flex items-center justify-between gap-3 border-b border-black/6 px-4 py-3">

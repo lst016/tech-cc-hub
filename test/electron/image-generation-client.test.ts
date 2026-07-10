@@ -5,14 +5,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
   generateImages,
   __test__,
-  type ImageGenerationRequest,
 } from "../../src/electron/libs/image/image-generation-client.js";
 import type { ImageGenerationRouteConfig } from "../../src/shared/models/image-generation-routing.js";
 
@@ -49,11 +47,12 @@ test("resolveMode picks edit when reference images present and action is auto", 
   assert.equal(resolveMode({ prompt: "x", action: "edit" }), "edit");
 });
 
-test("validateRequest rejects oversized count, bad size, and too many references", () => {
+test("validateRequest rejects invalid count but preserves provider-defined image sizes", () => {
   assert.equal(validateRequest({ prompt: "", }).ok, false);
   assert.equal(validateRequest({ prompt: "x", count: 5 }).ok, false);
   assert.equal(validateRequest({ prompt: "x", count: 0 }).ok, false);
-  assert.equal(validateRequest({ prompt: "x", size: "9999x9999" as unknown as `${number}x${number}` }).ok, false);
+  assert.equal(validateRequest({ prompt: "x", size: "9999x9999" as unknown as `${number}x${number}` }).ok, true);
+  assert.equal(validateRequest({ prompt: "x", size: "2k" as unknown as `${number}x${number}` }).ok, true);
   assert.equal(validateRequest({ prompt: "x", quality: "ultra" as unknown as "auto" }).ok, false);
   assert.equal(validateRequest({ prompt: "x", referenceImagePaths: ["a", "b", "c", "d", "e"] }).ok, false);
   assert.equal(validateRequest({ prompt: "x" }).ok, true);

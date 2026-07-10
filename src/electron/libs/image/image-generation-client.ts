@@ -26,7 +26,7 @@ export type ImageGenerationRequest = {
   action?: ImageGenerationAction;
   referenceImagePaths?: string[];
   maskPath?: string;
-  size?: "auto" | `${number}x${number}`;
+  size?: string;
   quality?: "auto" | "low" | "medium" | "high";
   outputFormat?: "png" | "jpeg" | "webp";
   background?: "auto" | "opaque" | "transparent";
@@ -82,7 +82,6 @@ export type GenerateImageParams = {
   context: ResolveContext;
 };
 
-const SUPPORTED_SIZES = new Set(["auto", "1024x1024", "1536x1024", "1024x1536", "512x512", "256x256"]);
 const SUPPORTED_QUALITIES = new Set(["auto", "low", "medium", "high"]);
 const SUPPORTED_FORMATS = new Set(["png", "jpeg", "webp"]);
 const SUPPORTED_BACKGROUNDS = new Set(["auto", "opaque", "transparent"]);
@@ -143,8 +142,8 @@ function validateRequest(request: ImageGenerationRequest): { ok: true } | { ok: 
     return { ok: false, error: `参考图最多 ${MAX_REFERENCE_IMAGES} 张，本次传了 ${refs.length} 张。` };
   }
 
-  if (request.size && !SUPPORTED_SIZES.has(request.size)) {
-    return { ok: false, error: `size ${request.size} 不在支持列表内。` };
+  if (request.size !== undefined && !request.size.trim()) {
+    return { ok: false, error: "size 不能为空。" };
   }
   if (request.quality && !SUPPORTED_QUALITIES.has(request.quality)) {
     return { ok: false, error: `quality ${request.quality} 不在支持列表内。` };

@@ -53,6 +53,45 @@ test("built-in MCP enabled list can be persisted and used to filter runtime serv
   );
 });
 
+test("built-in MCP migration adds image generation to the unversioned legacy default", () => {
+  const enabledNames = resolveEnabledBuiltinMcpServerNames({
+    mcp: {
+      builtin: {
+        enabledServers: [
+          "tech-cc-hub-browser",
+          "tech-cc-hub-admin",
+          "tech-cc-hub-design",
+          "tech-cc-hub-cron",
+          "tech-cc-hub-plan",
+          "tech-cc-hub-knowledge",
+        ],
+      },
+    },
+  });
+
+  assert.deepEqual(enabledNames, [...DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES]);
+});
+
+test("versioned built-in MCP config preserves an explicit image tool disable", () => {
+  const enabledNames = resolveEnabledBuiltinMcpServerNames({
+    mcp: {
+      builtin: {
+        schemaVersion: 2,
+        enabledServers: [
+          "tech-cc-hub-browser",
+          "tech-cc-hub-admin",
+          "tech-cc-hub-design",
+          "tech-cc-hub-cron",
+          "tech-cc-hub-plan",
+          "tech-cc-hub-knowledge",
+        ],
+      },
+    },
+  });
+
+  assert.equal(enabledNames.includes("tech-cc-hub-image"), false);
+});
+
 test("built-in MCP registry contains displayable tool metadata", () => {
   for (const server of BUILTIN_MCP_SERVERS) {
     assert.ok(server.description.trim(), `${server.name} needs a description`);

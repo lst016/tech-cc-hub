@@ -63,6 +63,10 @@ export const DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES: readonly BuiltinMcpServer
   "tech-cc-hub-image",
 ];
 
+const BUILTIN_MCP_ENABLED_SERVERS_SCHEMA_VERSION = 2;
+const LEGACY_DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES: readonly BuiltinMcpServerName[] = DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES
+  .filter((name) => name !== "tech-cc-hub-image");
+
 export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
   {
     name: "tech-cc-hub-browser",
@@ -453,7 +457,10 @@ export function resolveEnabledBuiltinMcpServerNames(config: unknown): BuiltinMcp
   if (!configured) {
     return [...DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES];
   }
-  return normalizeBuiltinMcpServerConfigNames(configured);
+  const enabledNames = normalizeBuiltinMcpServerConfigNames(configured);
+  return shouldMigrateLegacyDefaultEnabledServers(config, enabledNames)
+    ? [...DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES]
+    : enabledNames;
 }
 
 export function filterEnabledBuiltinMcpServerNames(
@@ -479,6 +486,7 @@ export function buildNextBuiltinMcpServerEnabledConfig(
 
   const mcp = isRecord(nextConfig.mcp) ? { ...nextConfig.mcp } : {};
   const builtin = isRecord(mcp.builtin) ? { ...mcp.builtin } : {};
+  builtin.schemaVersion = BUILTIN_MCP_ENABLED_SERVERS_SCHEMA_VERSION;
   builtin.enabledServers = BUILTIN_MCP_SERVERS
     .map((server) => server.name)
     .filter((name) => currentEnabledNames.has(name));
@@ -516,6 +524,27 @@ function normalizeBuiltinMcpServerConfigNames(value: unknown[]): BuiltinMcpServe
   return BUILTIN_MCP_SERVERS
     .map((server) => server.name)
     .filter((serverName) => names.has(serverName));
+}
+
+function shouldMigrateLegacyDefaultEnabledServers(
+  config: unknown,
+  enabledNames: readonly BuiltinMcpServerName[],
+): boolean {
+  if (getBuiltinMcpEnabledServersSchemaVersion(config) >= BUILTIN_MCP_ENABLED_SERVERS_SCHEMA_VERSION) {
+    return false;
+  }
+
+  return enabledNames.length === LEGACY_DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES.length
+    && enabledNames.every((name) => LEGACY_DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES.includes(name));
+}
+
+function getBuiltinMcpEnabledServersSchemaVersion(config: unknown): number {
+  if (!isRecord(config) || !isRecord(config.mcp) || !isRecord(config.mcp.builtin)) {
+    return 0;
+  }
+
+  const value = config.mcp.builtin.schemaVersion;
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

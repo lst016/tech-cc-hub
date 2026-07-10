@@ -44,7 +44,7 @@ import {
   type SessionPlanSource,
   type UpdatePlanArgs,
 } from "../../../shared/plan-progress.js";
-import type { AgentRunSurface, PromptAttachment, RuntimeOverrides, ServerEvent } from "../../types.js";
+import type { AgentRunSurface, ApiConfig, PromptAttachment, RuntimeOverrides, ServerEvent } from "../../types.js";
 import { resolveAgentRuntimeContext } from "../agent-resolver.js";
 import {
   buildEnvForConfig,
@@ -509,6 +509,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   let activeBuiltinMcpServerNames = new Set<BuiltinMcpServerName>();
   let latestFigmaToolMode: "core" | "full" = "full";
   let latestProjectCwd: string | undefined;
+  let selectedImageGenerationConfig: ApiConfig | null = null;
   let latestRunSurface: AgentRunSurface = runtime?.runSurface ?? session.runSurface ?? "development";
   let recentClaudeStderr = "";
   const toolUseNamesById = new Map<string, string>();
@@ -586,6 +587,23 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
     config: unknown = getGlobalRuntimeConfig(),
   ): BuiltinMcpServerName[] => filterEnabledBuiltinMcpServerNames(serverNames, config);
 
+  const syncImageGenerationSessionContext = (enabledBuiltinMcpServerNames: readonly BuiltinMcpServerName[]): void => {
+    if (!enabledBuiltinMcpServerNames.includes("tech-cc-hub-image")) {
+      setImageGenerationSessionContext(null);
+      return;
+    }
+
+    const enabledConfigs = getEnabledUsableApiConfigs()
+      .map((cfg) => toImageGenerationRouteConfig(cfg))
+      .filter((cfg): cfg is NonNullable<ReturnType<typeof toImageGenerationRouteConfig>> => Boolean(cfg));
+    setImageGenerationSessionContext({
+      sessionId: session.id,
+      cwd: latestProjectCwd,
+      selectedConfig: toImageGenerationRouteConfig(selectedImageGenerationConfig),
+      enabledConfigs,
+    });
+  };
+
   const ensureMcpServersForPrompt = async (
     nextPrompt: string,
     nextAttachments: readonly PromptAttachment[],
@@ -601,6 +619,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       return;
     }
 
+    syncImageGenerationSessionContext(enabledBuiltinMcpServerNames);
     const result = await activeQuery.setMcpServers({
       ...getExternalMcpServers(latestGlobalRuntimeConfig ?? getGlobalRuntimeConfig(), { projectDir: latestProjectCwd }),
       ...getBuiltinMcpServers({
@@ -769,6 +788,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       }
 
       const { config } = resolvedConfig;
+      selectedImageGenerationConfig = config;
       const effectiveModel = resolvedConfig.model;
       requestedModelForError = effectiveModel;
 
@@ -838,20 +858,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         figmaToolMode: latestFigmaToolMode,
       }, enabledBuiltinMcpServerNames);
       // 生图工具会话上下文注入：让 image_generate 能解析路由、落盘到 sessionId 目录。
-      if (enabledBuiltinMcpServerSet.has("tech-cc-hub-image")) {
-        const enabledRouteConfigs = getEnabledUsableApiConfigs();
-        const routeEnabledConfigs = enabledRouteConfigs
-          .map((cfg) => toImageGenerationRouteConfig(cfg))
-          .filter((cfg): cfg is NonNullable<ReturnType<typeof toImageGenerationRouteConfig>> => Boolean(cfg));
-        setImageGenerationSessionContext({
-          sessionId: session.id,
-          cwd: projectCwd,
-          selectedConfig: toImageGenerationRouteConfig(config),
-          enabledConfigs: routeEnabledConfigs,
-        });
-      } else {
-        setImageGenerationSessionContext(null);
-      }
+      syncImageGenerationSessionContext(enabledBuiltinMcpServerNames);
       // Phase 8: device-emulator-plugin MCP injection. Empty object when
       // @mobilenext/mobile-mcp is not yet installed, so the SDK map is
       // untouched and the session is unaffected.

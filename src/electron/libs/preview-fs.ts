@@ -10,7 +10,9 @@ const FILE_SCAN_EVENT_LOOP_YIELD_INTERVAL = 50;
 const FILE_SCAN_TIME_BUDGET_MS = 750;
 
 export const MAX_PREVIEW_TEXT_BYTES = 512_000;
-export const MAX_PREVIEW_IMAGE_BYTES = 2_000_000;
+// Generated images commonly exceed 2 MB even at low quality. Keep previews
+// bounded while allowing the app to render normal model output inline.
+export const MAX_PREVIEW_IMAGE_BYTES = 8_000_000;
 
 export const PREVIEW_IMAGE_MIME_TYPES: Record<string, string> = {
   ".bmp": "image/bmp",

@@ -37,6 +37,19 @@ test("preview read allows absolute files outside the active workspace without wi
   });
 });
 
+test("preview read supports generated-image-sized PNG files", async () => {
+  await withTempRoots(async (workspace, externalRoot) => {
+    const imageFile = join(externalRoot, "generated.png");
+    // This is larger than the former 2 MB cap but below the bounded 8 MB cap.
+    await writeFile(imageFile, Buffer.alloc(2_300_000));
+
+    const readResult = await readPreviewFileForRenderer({ cwd: workspace, path: imageFile });
+
+    assert.equal(readResult.success, true);
+    assert.match(String(readResult.content), /^data:image\/png;base64,/);
+  });
+});
+
 test("preview pane retries external absolute files from their containing directory", () => {
   const paneSource = readFileSync("src/ui/components/AionWorkspacePreviewPane.tsx", "utf8");
 

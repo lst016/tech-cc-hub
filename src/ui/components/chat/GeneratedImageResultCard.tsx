@@ -21,6 +21,11 @@ type LoadState =
   | { status: "missing" }
   | { status: "error"; message: string };
 
+function getImagePreviewCwd(absolutePath: string): string {
+  const separatorIndex = Math.max(absolutePath.lastIndexOf("/"), absolutePath.lastIndexOf("\\"));
+  return separatorIndex > 0 ? absolutePath.slice(0, separatorIndex) : ".";
+}
+
 function useImageDataUrl(absolutePath: string): LoadState {
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
@@ -30,7 +35,7 @@ function useImageDataUrl(absolutePath: string): LoadState {
     void (async () => {
       try {
         const result = await window.electron.readPreviewFile({
-          cwd: "",
+          cwd: getImagePreviewCwd(absolutePath),
           path: absolutePath,
         });
         if (cancelled) return;
