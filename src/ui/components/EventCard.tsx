@@ -1059,7 +1059,7 @@ const CollapsibleText = ({
   useEffect(() => {
     if (!selectionDraft) return;
     const handleDismiss = (event?: Event) => {
-      const target = event?.target as Node | null;
+      const target = event?.target instanceof Node ? event.target : null;
       if (target && containerRef.current?.contains(target)) return;
       if (target && selectionPopoverRef.current?.contains(target)) return;
       clearSelectionDraft();
@@ -1116,13 +1116,13 @@ const CollapsibleText = ({
       {selectionDraft && typeof document !== "undefined" && createPortal(
         <div
           ref={selectionPopoverRef}
-          className="fixed z-[80] flex w-max max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-[12px] border border-black/10 bg-white/98 shadow-[0_8px_24px_rgba(15,18,24,0.13)] backdrop-blur"
+          className="fixed z-[80] flex w-max max-w-[calc(100vw-24px)] flex-col gap-1.5 items-center"
           style={{ left: selectionDraft.x, top: selectionDraft.y, transform: "translateX(-50%)" }}
         >
           <div
             role="group"
             aria-label="选区操作"
-            className="flex h-[38px] items-stretch divide-x divide-black/10"
+            className="relative z-10 flex h-[38px] items-stretch divide-x divide-black/10 overflow-hidden rounded-[10px] border border-black/10 bg-white/98 shadow-[0_6px_18px_rgba(15,18,24,0.11)] backdrop-blur"
           >
             <button
               type="button"
@@ -1148,7 +1148,7 @@ const CollapsibleText = ({
             </button>
           </div>
           {selectionDraft.commentOpen && (
-            <div className="flex w-[318px] max-w-full flex-col gap-2 border-t border-black/8 bg-[#fbfcfd] p-2.5">
+            <div className="-mt-2 flex w-[318px] max-w-full flex-col gap-2 rounded-[12px] border border-black/10 bg-[#fbfcfd] p-2.5 shadow-[0_10px_28px_rgba(15,18,24,0.13)] backdrop-blur">
               <textarea
                 value={selectionDraft.comment}
                 onChange={(event) => setSelectionDraft((current) => current ? { ...current, comment: event.target.value } : current)}

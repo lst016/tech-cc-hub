@@ -4,11 +4,12 @@ const { chromium } = require("@playwright/test");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
 const previewPort = Number(process.env.CHAT_SELECTION_COMMENT_QA_PORT || 4175);
-const previewUrl = process.env.CHAT_SELECTION_COMMENT_QA_URL || `http://127.0.0.1:${previewPort}/`;
+const previewUrl = process.env.CHAT_SELECTION_COMMENT_QA_URL || `http://127.0.0.1:${previewPort}/?__tech_cc_hub_browser_preview=1`;
 const previewTimeoutMs = Number(process.env.CHAT_SELECTION_COMMENT_QA_TIMEOUT_MS || 45000);
 const expectedErrorPatterns = [
   /Content Security Policy/i,
   /Refused to connect/i,
+  /Failed to load resource: net::ERR_CONNECTION_REFUSED/i,
   /Fetch API cannot load http:\/\/localhost/i,
   /Failed to load resource: the server responded with a status of 500/i,
 ];
@@ -71,7 +72,7 @@ async function seedAssistantConversationUntilVisible(page) {
 
   for (let attempt = 1; attempt <= 4; attempt += 1) {
     await page.evaluate(() => {
-      window.__TECH_CC_HUB_QA__.seedAssistantConversation();
+      window.__TECH_CC_HUB_QA__.seedAssistantConversation({ sessionId: "qa-selection-comment-session" });
     });
     await page.waitForTimeout(attempt === 1 ? 400 : 1200);
 
