@@ -4,6 +4,7 @@ import net from "node:net";
 import { resolveCodexExecutable, spawnCodexProcess, stopCodexProcess } from "./codex-runner.mjs";
 import { APP_VERSION } from "./version.mjs";
 import { createOperationLease } from "./operation-leases.mjs";
+import { hasTechCcHubTransport, sendCanvasAssetToTechCcHub } from "./tech-cc-hub-transport.mjs";
 
 const appServerStartupTimeoutMs = 5000;
 const chatTurnTimeoutMs = 120000;
@@ -21,6 +22,14 @@ export async function sendImageToBoundChat({ projectDir, threadId, imagePath, pr
     const error = new Error("The selected image must be a local canvas asset before sending to chat.");
     error.statusCode = 400;
     throw error;
+  }
+  if (hasTechCcHubTransport()) {
+    return sendCanvasAssetToTechCcHub({
+      threadId,
+      imagePath,
+      prompt,
+      action: "send-to-chat",
+    });
   }
   return sendInputsToBoundChat({
     projectDir,
@@ -51,6 +60,14 @@ export async function sendMentionToBoundChat({ projectDir, threadId, filePath, p
     const error = new Error("The selected image must be a local canvas asset before mentioning it in chat.");
     error.statusCode = 400;
     throw error;
+  }
+  if (hasTechCcHubTransport()) {
+    return sendCanvasAssetToTechCcHub({
+      threadId,
+      imagePath: filePath,
+      prompt,
+      action: "mention-file",
+    });
   }
   const input = [
     {

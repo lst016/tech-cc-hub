@@ -1519,7 +1519,7 @@ export function ActivityRail({
           </div>
         ) : selectedWorkspacePlugin ? (
           <div className="flex min-h-0 flex-1 overflow-hidden bg-white">
-            <WorkspacePluginViewPane plugin={selectedWorkspacePlugin} sessionId={session?.id} />
+            <WorkspacePluginViewPane key={`${selectedWorkspacePlugin.id}:${session?.id ?? "no-session"}`} plugin={selectedWorkspacePlugin} sessionId={session?.id} />
           </div>
         ) : selectedTab.startsWith("workflow-agent:") ? (
           <div className="flex min-h-0 w-full min-w-0 flex-1 overflow-hidden bg-white">

@@ -23,6 +23,11 @@ export function WorkspacePluginViewPane({ plugin, sessionId }: WorkspacePluginVi
   const [launch, setLaunch] = useState<WorkspacePluginLaunch | null>(null);
   const [error, setError] = useState<string | null>(null);
   const surfaceId = sessionId ? getSurfaceId(plugin.id, sessionId) : null;
+  const unavailableError = !sessionId || !surfaceId
+    ? "请先打开一个带工作目录的会话。"
+    : !canUsePluginBrowserView()
+      ? "当前运行环境不支持插件工作区，请在桌面应用中打开。"
+      : null;
 
   const syncBounds = useCallback(() => {
     if (!surfaceId || !canUsePluginBrowserView()) return;
@@ -39,20 +44,9 @@ export function WorkspacePluginViewPane({ plugin, sessionId }: WorkspacePluginVi
   }, [surfaceId]);
 
   useEffect(() => {
-    if (!sessionId || !surfaceId) {
-      setLaunch(null);
-      setError("请先打开一个带工作目录的会话。");
-      return;
-    }
-    if (!canUsePluginBrowserView()) {
-      setLaunch(null);
-      setError("当前运行环境不支持插件工作区，请在桌面应用中打开。");
-      return;
-    }
+    if (unavailableError || !sessionId || !surfaceId) return;
 
     let cancelled = false;
-    setLaunch(null);
-    setError(null);
     void (async () => {
       try {
         const launch = await window.electron.workspacePlugins.open({ pluginId: plugin.id, sessionId });
@@ -69,7 +63,7 @@ export function WorkspacePluginViewPane({ plugin, sessionId }: WorkspacePluginVi
       cancelled = true;
       void window.electron.setBrowserWorkbenchBounds({ x: 0, y: 0, width: 0, height: 0 }, surfaceId);
     };
-  }, [plugin.id, sessionId, surfaceId]);
+  }, [plugin.id, sessionId, surfaceId, unavailableError]);
 
   useEffect(() => {
     if (!launch || !surfaceId) return;
@@ -87,15 +81,15 @@ export function WorkspacePluginViewPane({ plugin, sessionId }: WorkspacePluginVi
 
   return (
     <div ref={surfaceRef} className="relative h-full w-full overflow-hidden bg-white">
-      {!launch && !error && (
+      {!launch && !unavailableError && !error && (
         <div className="grid h-full place-items-center px-6 text-center text-sm text-ink-500">
           正在启动 {plugin.label}…
         </div>
       )}
-      {error && (
+      {(unavailableError || error) && (
         <div className="grid h-full place-items-center px-6 text-center">
           <div className="max-w-sm rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
-            {plugin.label} 未能启动：{error}
+            {plugin.label} 未能启动：{unavailableError || error}
           </div>
         </div>
       )}

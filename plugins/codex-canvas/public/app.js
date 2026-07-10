@@ -136,7 +136,8 @@ const translations = {
     jobFailed: "failed.",
     jobDeleteBlocked: "A running image job cannot be deleted. Wait for it to finish or fail.",
     chatSendStarted: "Sending image to bound chat...",
-    chatSendDone: "Image submitted through Codex app-server. If it does not appear in the visible chat, use Copy @file.",
+    chatSendDone: "Image submitted to the current visible chat.",
+    chatSendNote: "Add a note for the current chat (optional):",
     fileMentionCopied: "@file reference copied. Paste it into the Codex chat box.",
     fileMentionCopyFailed: "Could not copy @file reference.",
     chatNotBound: "Bind this canvas to a Codex thread first.",
@@ -275,7 +276,8 @@ const translations = {
     jobFailed: "失败。",
     jobDeleteBlocked: "图片任务仍在运行，完成或失败后才能删除。",
     chatSendStarted: "正在发送图片到已绑定对话...",
-    chatSendDone: "图片已通过 Codex app-server 提交；如果当前对话没有显示，请用“复制 @文件”。",
+    chatSendDone: "图片已提交到当前可见对话。",
+    chatSendNote: "给当前对话添加备注（可留空）：",
     fileMentionCopied: "@file 引用已复制，请粘贴到 Codex 聊天框。",
     fileMentionCopyFailed: "无法复制 @file 引用。",
     chatNotBound: "请先把画布绑定到 Codex thread。",
@@ -3433,6 +3435,8 @@ async function startImageJob(action, options = {}) {
 async function sendSelectedImageToChat() {
   const object = state.objects.find((item) => item.id === selectedId);
   if (!object || (object.type || "image") !== "image") return;
+  const prompt = window.prompt(t("chatSendNote"), "");
+  if (prompt === null) return;
 
   showToast(t("chatSendStarted"));
   try {
@@ -3441,7 +3445,8 @@ async function sendSelectedImageToChat() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         action: "send-to-chat",
-        objectId: object.id
+        objectId: object.id,
+        prompt
       })
     });
     const result = await response.json();

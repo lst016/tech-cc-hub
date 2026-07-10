@@ -1674,10 +1674,14 @@ function getBrowserWorkbench(sessionId?: unknown): BrowserWorkbenchManager | nul
   return manager;
 }
 
+function workspacePluginsRoot(): string {
+  return app.isPackaged ? join(process.resourcesPath, "plugins") : join(app.getAppPath(), "plugins");
+}
+
 function getWorkspacePluginManager(): WorkspacePluginManager {
   if (!workspacePluginManager) {
     workspacePluginManager = new WorkspacePluginManager({
-      pluginsRoot: join(app.getAppPath(), "plugins"),
+      pluginsRoot: workspacePluginsRoot(),
       sessionStore: sessions,
       dispatch: handleClientEvent,
     });

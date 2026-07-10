@@ -299,6 +299,9 @@ type EventPayloadMapping = {
         "save-user-agent-rule-document": { success: boolean; error?: string };
         "debug-save-trace-snapshot": { success: boolean; path?: string; error?: string };
         "preprocess-image-attachments": ImagePreprocessResult;
+        "workspace-plugins:list": import("./src/shared/workspace-plugins").WorkspacePluginDescriptor[];
+        "workspace-plugins:open": import("./src/electron/libs/workspace-plugins/workspace-plugin-manager").WorkspacePluginLaunch;
+        "workspace-plugins:close": void;
         "browser-open": BrowserWorkbenchState;
         "browser-close": BrowserWorkbenchState;
         "browser-set-bounds": BrowserWorkbenchState;

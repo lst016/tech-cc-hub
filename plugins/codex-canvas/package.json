@@ -52,6 +52,7 @@
     "start": "node ./bin/codex-canvas.mjs start",
     "validate": "node ./bin/codex-canvas.mjs status --json",
     "smoke": "node ./scripts/smoke.mjs",
+    "smoke:tech-cc-hub": "node ./scripts/tech-cc-hub-transport-smoke.mjs",
     "smoke:visual": "node ./scripts/visual-smoke.mjs",
     "visual:regression": "node ./scripts/visual-regression.mjs",
     "verify:release": "node ./scripts/verify-release.mjs",

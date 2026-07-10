@@ -7,7 +7,9 @@ const mainSource = readFileSync("src/electron/main.ts", "utf8");
 test("Electron main process owns workspace plugin discovery, launch, and cleanup", () => {
   assert.match(mainSource, /import \{ WorkspacePluginManager \} from "\.\/libs\/workspace-plugins\/workspace-plugin-manager\.js";/);
   assert.match(mainSource, /let workspacePluginManager: WorkspacePluginManager \| null = null;/);
-  assert.match(mainSource, /pluginsRoot: join\(app\.getAppPath\(\), "plugins"\)/);
+  assert.match(mainSource, /function workspacePluginsRoot\(\): string/);
+  assert.match(mainSource, /app\.isPackaged \? join\(process\.resourcesPath, "plugins"\) : join\(app\.getAppPath\(\), "plugins"\)/);
+  assert.match(mainSource, /pluginsRoot: workspacePluginsRoot\(\)/);
   assert.match(mainSource, /dispatch: handleClientEvent/);
   assert.match(mainSource, /workspacePluginManager\?\.closeAll\(\)/);
 });

@@ -904,7 +904,7 @@ async function sendObjectToBoundChat(projectDir, project, body = {}) {
       projectDir,
       threadId,
       imagePath,
-      prompt: sendToChatPrompt()
+      prompt: sendToChatPrompt(body.prompt)
     });
   return {
     ...result,
@@ -914,8 +914,9 @@ async function sendObjectToBoundChat(projectDir, project, body = {}) {
   };
 }
 
-function sendToChatPrompt() {
-  return "Use this selected Codex-Canvas image as context.";
+function sendToChatPrompt(note) {
+  const normalizedNote = typeof note === "string" ? note.trim() : "";
+  return normalizedNote || "Use this selected Codex-Canvas image as context.";
 }
 
 function mentionFilePrompt(object) {
