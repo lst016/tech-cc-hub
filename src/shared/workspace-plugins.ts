@@ -9,6 +9,7 @@ export type WorkspacePluginManifest = {
   start: {
     command: string;
     args: string[];
+    urlTemplate?: string;
   };
   permissions: WorkspacePluginPermission[];
 };
@@ -55,6 +56,10 @@ export function normalizeWorkspacePluginManifest(value: unknown): WorkspacePlugi
   if (!command || !Array.isArray(value.start.args) || !value.start.args.every((arg) => typeof arg === "string")) {
     return null;
   }
+  const urlTemplate = value.start.urlTemplate === undefined
+    ? undefined
+    : normalizeString(value.start.urlTemplate);
+  if (value.start.urlTemplate !== undefined && !urlTemplate) return null;
 
   const permissions = normalizePermissions(value.permissions);
   if (!permissions) return null;
@@ -66,6 +71,7 @@ export function normalizeWorkspacePluginManifest(value: unknown): WorkspacePlugi
     start: {
       command,
       args: [...value.start.args],
+      ...(urlTemplate ? { urlTemplate } : {}),
     },
     permissions,
   };

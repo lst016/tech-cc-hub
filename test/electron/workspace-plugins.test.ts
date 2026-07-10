@@ -34,3 +34,27 @@ test("rejects undeclared permissions and unsafe workspace plugin identifiers", (
     permissions: ["session.stop"],
   }), null);
 });
+
+test("preserves a local URL template for a launchable workspace plugin", () => {
+  assert.deepEqual(normalizeWorkspacePluginManifest({
+    id: "codex-canvas",
+    label: "Canvas",
+    surface: "browser-view",
+    start: {
+      command: "node",
+      args: ["bin/codex-canvas.mjs", "start", "--port", "{port}"],
+      urlTemplate: "http://127.0.0.1:{port}/?threadId={sessionId}",
+    },
+    permissions: ["session.snapshot", "session.send"],
+  }), {
+    id: "codex-canvas",
+    label: "Canvas",
+    surface: "browser-view",
+    start: {
+      command: "node",
+      args: ["bin/codex-canvas.mjs", "start", "--port", "{port}"],
+      urlTemplate: "http://127.0.0.1:{port}/?threadId={sessionId}",
+    },
+    permissions: ["session.snapshot", "session.send"],
+  });
+});
