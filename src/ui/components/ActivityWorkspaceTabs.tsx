@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
 import { Bot, Plus, Terminal, X } from "lucide-react";
+import type { WorkspacePluginDescriptor } from "../../shared/workspace-plugins";
 import {
   buildActivityWorkspaceCreateOptions,
   buildActivityWorkspaceTabs,
@@ -16,6 +17,7 @@ type ActivityWorkspaceTabsProps = {
   showBrowserTab: boolean;
   showGitTab?: boolean;
   showTerminalTab?: boolean;
+  workspacePlugins?: WorkspacePluginDescriptor[];
   workflowAgentTabs?: WorkflowAgentWorkspaceTabItem[];
   showLabels?: boolean;
   browserLabel?: string;
@@ -96,6 +98,7 @@ export function ActivityWorkspaceTabs({
   showBrowserTab,
   showGitTab = false,
   showTerminalTab = false,
+  workspacePlugins = [],
   workflowAgentTabs = [],
   showLabels = true,
   browserLabel = "浏览器",
@@ -112,7 +115,7 @@ export function ActivityWorkspaceTabs({
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const createMenuRef = useRef<HTMLDivElement>(null);
   const tabsScrollerRef = useRef<HTMLDivElement>(null);
-  const tabs = buildActivityWorkspaceTabs({ activeTab, showBrowserTab, showGitTab, showTerminalTab, workflowAgentTabs }).filter((tab) => tab.visible);
+  const tabs = buildActivityWorkspaceTabs({ activeTab, showBrowserTab, showGitTab, showTerminalTab, workspacePlugins, workflowAgentTabs }).filter((tab) => tab.visible);
   const createOptions = useMemo(
     () => buildActivityWorkspaceCreateOptions({
       canCreateBrowserTab: false,

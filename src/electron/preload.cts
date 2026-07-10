@@ -127,6 +127,11 @@ electron.contextBridge.exposeInMainWorld("electron", {
         electron.ipcRenderer.invoke("preview-show-item-in-folder", payload),
     openPreviewDirectoryDialog: (payload: any) =>
         electron.ipcRenderer.invoke("preview-open-dialog", payload),
+    workspacePlugins: {
+        list: () => ipcInvoke("workspace-plugins:list"),
+        open: (input: { pluginId: string; sessionId: string }) => ipcInvoke("workspace-plugins:open", input),
+        close: (input: { sessionId: string }) => ipcInvoke("workspace-plugins:close", input),
+    },
     openBrowserWorkbench: (url: string, sessionId?: string) =>
         ipcInvoke("browser-open", url, sessionId),
     closeBrowserWorkbench: (sessionId?: string) =>

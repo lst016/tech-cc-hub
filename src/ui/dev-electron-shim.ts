@@ -441,6 +441,13 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     openPreviewFile: async () => ({ success: false, error: "浏览器预览态暂不支持用系统应用打开文件。" }),
     showPreviewItemInFolder: async () => ({ success: false, error: "浏览器预览态暂不支持在 Finder 中定位。" }),
     openPreviewDirectoryDialog: async () => [],
+    workspacePlugins: {
+      list: async () => [],
+      open: async () => {
+        throw new Error("Workspace plugins require the Electron desktop runtime.");
+      },
+      close: async () => {},
+    },
     openBrowserWorkbench: async (url: string, sessionId?: string) => {
       const browserState = getBrowserState(sessionId);
       return setBrowserState(sessionId, {
@@ -709,6 +716,13 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       openPreviewFile: async () => ({ success: false, error: "浏览器预览态暂不支持用系统应用打开文件。" }),
       showPreviewItemInFolder: async () => ({ success: false, error: "浏览器预览态暂不支持在 Finder 中定位。" }),
       openPreviewDirectoryDialog: async () => [],
+      workspacePlugins: {
+        list: async () => [],
+        open: async () => {
+          throw new Error("Workspace plugins require the Electron desktop runtime.");
+        },
+        close: async () => {},
+      },
       openBrowserWorkbench: async (url, sessionId?: string) => await invokeBridge("openBrowserWorkbench", url, sessionId),
       closeBrowserWorkbench: async (sessionId?: string) => await invokeBridge("closeBrowserWorkbench", sessionId),
       setBrowserWorkbenchBounds: async (bounds, sessionId?: string) => await invokeBridge("setBrowserWorkbenchBounds", bounds, sessionId),

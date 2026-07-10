@@ -23,14 +23,17 @@ import {
 import { buildSegmentedContextUsageCells, type ContextUsageCellSegment } from "../utils/context-usage-cells";
 import { ActivityWorkspaceTabs } from "./ActivityWorkspaceTabs";
 import type { SessionView } from "../store/useAppStore";
+import type { WorkspacePluginDescriptor } from "../../shared/workspace-plugins";
 import {
   DEFAULT_ACTIVITY_RAIL_TAB,
+  getWorkspacePluginIdFromTab,
   normalizeActivityRailTab,
   type ActivityRailTab,
   type ActivityWorkspaceTab,
   type WorkflowAgentRailTab,
   type WorkflowAgentWorkspaceTabItem,
 } from "../utils/activity-workspace-tabs";
+import { WorkspacePluginViewPane } from "./workspace-plugins/WorkspacePluginViewPane";
 import { WorkflowAgentTranscriptPanel } from "./workflow/WorkflowAgentTranscriptPanel";
 import type { WorkflowAgentSummary } from "../utils/workflow-agent-transcripts";
 import { findWorkflowRunForTranscript } from "../utils/workflow-run-transcript";
@@ -1280,6 +1283,7 @@ export function ActivityRail({
   hasBrowserTab = false,
   hasGitTab = false,
   hasTerminalTab = false,
+  workspacePlugins = [],
   workflowAgentTabs = [],
   selectedWorkflowAgent,
   workflowRuns = [],
@@ -1313,6 +1317,7 @@ export function ActivityRail({
   hasBrowserTab?: boolean;
   hasGitTab?: boolean;
   hasTerminalTab?: boolean;
+  workspacePlugins?: WorkspacePluginDescriptor[];
   workflowAgentTabs?: WorkflowAgentWorkspaceTabItem[];
   selectedWorkflowAgent?: WorkflowAgentSummary;
   workflowRuns?: WorkflowRunRecord[];
@@ -1343,6 +1348,7 @@ export function ActivityRail({
   const [internalActiveTab, setInternalActiveTab] = useState<ActivityRailTab>(DEFAULT_ACTIVITY_RAIL_TAB);
   const requestedTab = activeTab ?? internalActiveTab;
   const selectedTab = normalizeActivityRailTab(requestedTab);
+  const selectedWorkspacePlugin = workspacePlugins.find((plugin) => plugin.id === getWorkspacePluginIdFromTab(selectedTab));
   const handleSelectTab = (tab: ActivityRailTab) => {
     if (!activeTab) setInternalActiveTab(tab);
     onActiveTabChange?.(tab);
@@ -1357,7 +1363,7 @@ export function ActivityRail({
   const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
   const [showContextModal, setShowContextModal] = useState(false);
   const timelineRef = useRef<HTMLDivElement>(null);
-  const toolWorkspaceActive = selectedTab === "preview" || selectedTab === "git" || selectedTab === "terminal" || selectedTab.startsWith("workflow-agent:");
+  const toolWorkspaceActive = selectedTab === "preview" || selectedTab === "git" || selectedTab === "terminal" || selectedTab.startsWith("workflow-agent:") || Boolean(selectedWorkspacePlugin);
   const shouldMountPreviewPane = selectedTab === "preview" && (!deferPreviewMount || Boolean(pendingPreviewOpenRequest));
 
   useEffect(() => {
@@ -1447,6 +1453,7 @@ export function ActivityRail({
             showBrowserTab={hasBrowserTab}
             showGitTab={hasGitTab}
             showTerminalTab={hasTerminalTab}
+            workspacePlugins={workspacePlugins}
             workflowAgentTabs={workflowAgentTabs}
             showLabels={showLabels}
             showCreateGitTab={!hasGitTab}
@@ -1509,6 +1516,10 @@ export function ActivityRail({
             <Suspense fallback={<WorkspacePaneFallback label="正在加载终端工作台..." />}>
               <TerminalWorkspacePanel cwd={session?.cwd} />
             </Suspense>
+          </div>
+        ) : selectedWorkspacePlugin ? (
+          <div className="flex min-h-0 flex-1 overflow-hidden bg-white">
+            <WorkspacePluginViewPane plugin={selectedWorkspacePlugin} sessionId={session?.id} />
           </div>
         ) : selectedTab.startsWith("workflow-agent:") ? (
           <div className="flex min-h-0 w-full min-w-0 flex-1 overflow-hidden bg-white">

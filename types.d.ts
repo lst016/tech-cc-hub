@@ -409,6 +409,11 @@ interface Window {
         openPreviewFile: (payload: { path: string }) => Promise<{ success: boolean; error?: string }>;
         showPreviewItemInFolder: (payload: { path: string }) => Promise<{ success: boolean; error?: string }>;
         openPreviewDirectoryDialog: (payload: { properties?: string[] }) => Promise<string[]>;
+        workspacePlugins: {
+            list: () => Promise<import("./src/shared/workspace-plugins").WorkspacePluginDescriptor[]>;
+            open: (input: { pluginId: string; sessionId: string }) => Promise<import("./src/electron/libs/workspace-plugins/workspace-plugin-manager").WorkspacePluginLaunch>;
+            close: (input: { sessionId: string }) => Promise<void>;
+        };
         openBrowserWorkbench: (url: string, sessionId?: string) => Promise<BrowserWorkbenchState>;
         closeBrowserWorkbench: (sessionId?: string) => Promise<BrowserWorkbenchState>;
         setBrowserWorkbenchBounds: (bounds: BrowserWorkbenchBounds, sessionId?: string) => Promise<BrowserWorkbenchState>;
