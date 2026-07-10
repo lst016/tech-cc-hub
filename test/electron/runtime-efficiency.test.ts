@@ -249,6 +249,48 @@ test("runtime efficiency drops stale all-server state from old plain turns", () 
   assert.equal(merged.enableAgentTeams, false);
 });
 
+test("runtime efficiency enables image generation tool for image generation prompts", () => {
+  const profile = resolveRuntimeEfficiencyProfile({
+    prompt: "画一张极简科技风登录页背景",
+  });
+
+  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-image"));
+  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-admin"));
+});
+
+test("runtime efficiency loads image generation tool for $imagegen trigger", () => {
+  const profile = resolveRuntimeEfficiencyProfile({
+    prompt: "$imagegen a logo for my app",
+  });
+
+  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-image"));
+});
+
+test("runtime efficiency does not load image generation tool for plain screenshot analysis", () => {
+  const profile = resolveRuntimeEfficiencyProfile({
+    prompt: "照着截图修一下页面",
+    attachments: [{
+      id: "image-1",
+      kind: "image",
+      data: "tech-cc-hub://prompt-attachments/session/image.png",
+      mimeType: "image/png",
+      name: "reference.png",
+    }],
+  });
+
+  assert.equal(profile.builtinMcpServers.includes("tech-cc-hub-image"), false);
+  assert.equal(profile.id, "visual");
+});
+
+test("runtime efficiency keeps image generation tool in maintenance profile", () => {
+  const profile = resolveRuntimeEfficiencyProfile({
+    prompt: "anything",
+    runSurface: "maintenance",
+  });
+
+  assert.ok(profile.builtinMcpServers.includes("tech-cc-hub-image"));
+});
+
 test("runner reuse key stays stable across normal coding prompts", () => {
   const first = buildRunnerReuseKey({
     cwd: "D:\\tool\\tech-cc-hub",

@@ -12,6 +12,7 @@ import { FIGMA_REST_TOOL_NAMES, getFigmaRestMcpServer, type FigmaRestToolMode } 
 import { IDEA_TOOL_NAMES, getIdeaMcpServer } from "./mcp-tools/idea.js";
 import { KNOWLEDGE_TOOL_NAMES, getKnowledgeMcpServer } from "./mcp-tools/knowledge.js";
 import { PLAN_TOOL_NAMES, getPlanMcpServer } from "./mcp-tools/plan.js";
+import { IMAGE_GENERATION_TOOL_NAMES, getImageGenerationMcpServer } from "./mcp-tools/image-generation.js";
 
 type BuiltinMcpFactoryContext = {
   sessionId: string;
@@ -32,6 +33,7 @@ export const BUILTIN_MCP_SERVER_FACTORIES: Record<BuiltinMcpServerName, BuiltinM
   "tech-cc-hub-idea": () => getIdeaMcpServer(),
   "tech-cc-hub-plan": () => getPlanMcpServer(),
   "tech-cc-hub-knowledge": ({ cwd }) => getKnowledgeMcpServer(cwd),
+  "tech-cc-hub-image": () => getImageGenerationMcpServer(),
 };
 
 export const BUILTIN_MCP_TOOL_NAMES: Record<BuiltinMcpServerName, readonly string[]> = {
@@ -43,6 +45,7 @@ export const BUILTIN_MCP_TOOL_NAMES: Record<BuiltinMcpServerName, readonly strin
   "tech-cc-hub-idea": IDEA_TOOL_NAMES,
   "tech-cc-hub-plan": PLAN_TOOL_NAMES,
   "tech-cc-hub-knowledge": KNOWLEDGE_TOOL_NAMES,
+  "tech-cc-hub-image": IMAGE_GENERATION_TOOL_NAMES,
 };
 
 export function getBuiltinMcpServers(

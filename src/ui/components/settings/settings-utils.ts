@@ -61,6 +61,7 @@ export function createProfile(): ApiConfigProfile {
     expertModel: "",
     smallModel: "",
     imageModel: undefined,
+    imageGenerationModel: undefined,
     analysisModel: "",
     embeddingModel: undefined,
     embeddingDimension: 1536,
@@ -92,6 +93,7 @@ export function createDeepSeekOfficialProfile(): ApiConfigProfile {
     expertModel: "deepseek-v4-pro",
     smallModel: "deepseek-v4-flash",
     imageModel: undefined,
+    imageGenerationModel: undefined,
     analysisModel: "deepseek-v4-flash",
     embeddingModel: undefined,
     embeddingDimension: 1536,
@@ -123,6 +125,7 @@ export function createCodexOAuthProfile(): ApiConfigProfile {
     expertModel: CODEX_OAUTH_DEFAULT_MODEL,
     smallModel: CODEX_OAUTH_SMALL_MODEL,
     imageModel: undefined,
+    imageGenerationModel: undefined,
     analysisModel: CODEX_OAUTH_SMALL_MODEL,
     embeddingModel: undefined,
     embeddingDimension: 1536,
@@ -154,6 +157,7 @@ export function createMiniMaxOfficialProfile(): ApiConfigProfile {
     expertModel: MINIMAX_DEFAULT_MODEL,
     smallModel: MINIMAX_SMALL_MODEL,
     imageModel: undefined,
+    imageGenerationModel: undefined,
     analysisModel: MINIMAX_SMALL_MODEL,
     embeddingModel: undefined,
     embeddingDimension: 1536,
@@ -276,21 +280,24 @@ function dedupeModels(models: ApiModelConfigProfile[]): ApiModelConfigProfile[] 
 
 export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
   const provider = normalizeProvider(profile.provider, profile.baseURL);
-  const models = filterProviderCompatibleModels(provider, dedupeModels([
+  const dedupeInput = [
     ...(profile.models ?? []),
     { name: profile.model },
     { name: profile.expertModel ?? "" },
     { name: profile.smallModel ?? "" },
     { name: profile.imageModel ?? "" },
+    { name: profile.imageGenerationModel ?? "" },
     { name: profile.analysisModel ?? "" },
     { name: profile.embeddingModel ?? "" },
     { name: profile.wikiModel ?? "" },
-  ]));
+  ];
+  const models = filterProviderCompatibleModels(provider, dedupeModels(dedupeInput));
   const selectedModel = pickProviderCompatibleModel(provider, profile.model, models[0]?.name)
     || getProviderDefaultModel(provider, "main")
     || models[0]?.name
     || "";
   const imageModel = profile.imageModel?.trim();
+  const imageGenerationModel = profile.imageGenerationModel?.trim();
   const embeddingModel = profile.embeddingModel?.trim();
   const wikiModel = profile.wikiModel?.trim();
 
@@ -310,6 +317,7 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
     expertModel: normalizeProviderRoleModel(provider, profile.expertModel, selectedModel),
     smallModel: normalizeProviderRoleModel(provider, profile.smallModel, normalizeProviderRoleModel(provider, profile.analysisModel, getProviderDefaultModel(provider, "small") || selectedModel)),
     imageModel: imageModel && models.some((item) => item.name === imageModel) ? imageModel : undefined,
+    imageGenerationModel: imageGenerationModel && models.some((item) => item.name === imageGenerationModel) ? imageGenerationModel : undefined,
     analysisModel: normalizeProviderRoleModel(provider, profile.analysisModel, getProviderDefaultModel(provider, "small") || selectedModel),
     embeddingModel: embeddingModel && models.some((item) => item.name === embeddingModel) ? embeddingModel : undefined,
     embeddingDimension: normalizePositiveInteger(profile.embeddingDimension) ?? 1536,
@@ -383,6 +391,7 @@ export function getAvailableModels(profile: ApiConfigProfile): string[] {
     profile.expertModel,
     profile.smallModel,
     profile.imageModel,
+    profile.imageGenerationModel,
     profile.analysisModel,
     profile.embeddingModel,
     profile.wikiModel,
@@ -537,6 +546,9 @@ export function validateProfiles(profiles: ApiConfigProfile[]): string | null {
 
     if (profile.imageModel && !profile.models?.some((item) => item.name === profile.imageModel)) {
       return `配置“${profile.name}”的图片预处理模型必须在模型列表中。`;
+    }
+    if (profile.imageGenerationModel && !profile.models?.some((item) => item.name === profile.imageGenerationModel)) {
+      return `配置“${profile.name}”的生图模型必须在模型列表中。`;
     }
     if (profile.smallModel && !profile.models?.some((item) => item.name === profile.smallModel)) {
       return `配置“${profile.name}”的小模型必须在模型列表中。`;

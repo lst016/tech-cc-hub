@@ -537,6 +537,57 @@ test("image preprocessing route ignores model-list matches without an executable
   assert.equal(resolved?.imageModel, "gemini-3-pro-image-preview");
 });
 
+test("imageGenerationModel persists, normalizes, and clears independently from imageModel", () => {
+  const profiles = [
+    {
+      id: "gateway",
+      name: "Gateway",
+      apiKey: "sk-test",
+      baseURL: "https://example.com/v1",
+      model: "gpt-image-2",
+      expertModel: "gpt-image-2",
+      smallModel: "gpt-image-2",
+      imageModel: "gemini-3-pro-image-preview",
+      imageGenerationModel: "gpt-image-2",
+      analysisModel: "gpt-image-2",
+      models: [{ name: "gpt-image-2" }, { name: "gemini-3-pro-image-preview" }],
+      enabled: true,
+      provider: "custom" as const,
+      apiType: "anthropic" as const,
+    },
+  ];
+
+  const state = buildSharedModelRoutingState(profiles);
+  assert.equal(state.imageGenerationModel, "gpt-image-2");
+  assert.equal(state.imageModel, "gemini-3-pro-image-preview");
+  assert.notEqual(state.imageGenerationModel, state.imageModel);
+
+  const normalized = normalizeProfile(profiles[0]);
+  assert.equal(normalized.imageGenerationModel, "gpt-image-2");
+  assert.equal(normalizeProfile({ ...profiles[0], imageGenerationModel: undefined }).imageGenerationModel, undefined);
+
+  const legacy = normalizeProfile({
+    id: "legacy",
+    name: "Legacy",
+    apiKey: "sk-test",
+    baseURL: "https://example.com/v1",
+    model: "gpt-image-2",
+    expertModel: "gpt-image-2",
+    smallModel: "gpt-image-2",
+    analysisModel: "gpt-image-2",
+    models: [{ name: "gpt-image-2" }],
+    enabled: true,
+    provider: "custom" as const,
+    apiType: "anthropic" as const,
+  });
+  assert.equal(legacy.imageGenerationModel, undefined);
+  assert.equal(legacy.imageModel, undefined);
+
+  const cleared = applySharedModelRoutingPatch(profiles, { imageGenerationModel: "" });
+  assert.equal(cleared[0]?.imageGenerationModel, undefined);
+  assert.equal(cleared[0]?.imageModel, "gemini-3-pro-image-preview");
+});
+
 test("shared model routing merges enabled profile models into one editable surface", () => {
   const profiles = [
     {
@@ -591,6 +642,14 @@ test("shared model routing merges enabled profile models into one editable surfa
   const withoutImageModels = applySharedModelRoutingPatch(nextProfiles, { imageModel: "" });
   assert.equal(withoutImageModels[0]?.imageModel, undefined);
   assert.equal(withoutImageModels[1]?.imageModel, undefined);
+
+  const withImageGenerationModels = applySharedModelRoutingPatch(nextProfiles, { imageGenerationModel: "GLM-5.1-FP8" });
+  assert.equal(withImageGenerationModels[0]?.imageGenerationModel, "GLM-5.1-FP8");
+  assert.equal(withImageGenerationModels[1]?.imageGenerationModel, "GLM-5.1-FP8");
+
+  const withoutImageGenerationModels = applySharedModelRoutingPatch(withImageGenerationModels, { imageGenerationModel: "" });
+  assert.equal(withoutImageGenerationModels[0]?.imageGenerationModel, undefined);
+  assert.equal(withoutImageGenerationModels[1]?.imageGenerationModel, undefined);
 });
 
 test("shared model routing shows optional slots configured on later enabled profiles", () => {

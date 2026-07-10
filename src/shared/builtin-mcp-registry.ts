@@ -8,7 +8,8 @@ export type BuiltinMcpServerName =
   | "tech-cc-hub-cron"
   | "tech-cc-hub-idea"
   | "tech-cc-hub-plan"
-  | "tech-cc-hub-knowledge";
+  | "tech-cc-hub-knowledge"
+  | "tech-cc-hub-image";
 
 export type BuiltinMcpIconKey =
   | "activity"
@@ -17,7 +18,8 @@ export type BuiltinMcpIconKey =
   | "figma"
   | "timer"
   | "code"
-  | "list";
+  | "list"
+  | "image";
 
 export type BuiltinMcpToolInfo = {
   name: string;
@@ -58,6 +60,7 @@ export const DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES: readonly BuiltinMcpServer
   "tech-cc-hub-cron",
   "tech-cc-hub-plan",
   "tech-cc-hub-knowledge",
+  "tech-cc-hub-image",
 ];
 
 export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
@@ -388,6 +391,41 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
       "CodeGraph tools do not require an LLM or embedding model; do not block CodeGraph status, sync, search, context, or impact on profile configuration.",
       ".tech storage rule: `.tech/codegraph` may contain managed local DB/cache files; `.tech/memory` remains readable Markdown/JSON only. Do not create `.qoder` compatibility files under `.tech`.",
       "Use `memory_update` for durable decisions, pitfalls, project rules, and user communication preferences that should survive future sessions.",
+    ],
+  },
+  {
+    name: "tech-cc-hub-image",
+    type: "builtin",
+    command: "builtin",
+    args: [],
+    envKeys: [],
+    enabled: true,
+    iconKey: "image",
+    description: "Built-in image generation and editing via OpenAI Images compatible API. Saves generated images locally and returns path-only tool results.",
+    iconClassName: "border-fuchsia-500/15 bg-fuchsia-50 text-fuchsia-700",
+    highlights: ["Text-to-image", "Reference edit", "Local asset"],
+    workflow: [
+      { label: "意图", description: "画/改图" },
+      { label: "调用", description: "image_generate" },
+      { label: "落盘", description: "本地文件" },
+      { label: "回显", description: "图片卡片" },
+    ],
+    toolGroups: [
+      {
+        title: "Image generation",
+        summary: "文生图、参考图编辑。结果只返回本地路径与元数据，不返回 base64。",
+        tools: [
+          { name: "image_generate", description: "根据 prompt 生成新图，或基于参考图编辑。最多 4 张，默认 1 张。" },
+        ],
+      },
+    ],
+    promptHints: [
+      "Image generation rule: 当用户要求画图、生成视觉资产、做海报/插画/banner/sprite，或基于参考图编辑（替换背景、改颜色、修改主体）时，调用 `mcp__tech-cc-hub-image__image_generate`。无参考图走文生图，有参考图走编辑。",
+      "Image generation vs inspect: 仅分析截图、读取界面内容时使用 `design_inspect_image`，不要调用 `image_generate`。只有明确要生成或编辑图片时才调用生图工具。",
+      "Image generation reference rule: 用户附带参考图时，传完整的 `storagePath` 绝对路径到 `referenceImagePaths`，不能传 image.png 等占位文件名。",
+      "Image generation cost rule: 未获得明确生成/编辑意图时，不主动产生付费图片请求；默认生成 1 张，单次最多 4 张。429 不自动重试。",
+      "Image generation output rule: 生成成功后在最终回答中简短说明结果（模型、尺寸、张数、本地路径），不复制 base64。工具结果已落盘，路径会自动渲染为图片卡片。",
+      "Image generation unconfigured rule: 工具返回 NOT_CONFIGURED 时，提示用户到 设置 → 模型路由 → 生图模型 配置一个支持 OpenAI Images 兼容接口的模型；返回 UNSUPPORTED_PROVIDER 时说明 Codex OAuth 不能替代标准 Image API Key。",
     ],
   },
 ] as const;

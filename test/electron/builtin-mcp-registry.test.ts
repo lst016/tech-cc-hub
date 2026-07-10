@@ -32,6 +32,7 @@ test("built-in MCP defaults keep heavy optional servers opt-in", () => {
   assert.equal(enabledNames.includes("tech-cc-hub-cron"), true);
   assert.equal(enabledNames.includes("tech-cc-hub-plan"), true);
   assert.equal(enabledNames.includes("tech-cc-hub-knowledge"), true);
+  assert.equal(enabledNames.includes("tech-cc-hub-image"), true);
   assert.equal(enabledNames.includes("tech-cc-hub-figma"), false);
   assert.equal(enabledNames.includes("tech-cc-hub-idea"), false);
 });
@@ -79,6 +80,7 @@ test("built-in MCP registry tool names stay unique", () => {
   assert.equal(toolNames.includes("browser_fetch_logs"), true);
   assert.equal(toolNames.includes("browser_http_request"), true);
   assert.equal(toolNames.includes("design_lint_visual_parity"), false);
+  assert.equal(toolNames.includes("image_generate"), true);
 });
 
 test("built-in MCP prompt hints are sourced from the registry", () => {
@@ -105,8 +107,7 @@ test("built-in Figma MCP hints include the child component development workflow"
   assert.match(hints, /design_compare_element_to_reference/);
 });
 
-test("knowledge MCP hints prioritize retrieval over reindexing", () => {
-  const knowledgeServer = BUILTIN_MCP_SERVERS.find((server) => server.name === "tech-cc-hub-knowledge");
+test("knowledge MCP hints prioritize retrieval over reindexing", () => {  const knowledgeServer = BUILTIN_MCP_SERVERS.find((server) => server.name === "tech-cc-hub-knowledge");
   assert.ok(knowledgeServer);
 
   const toolNames = knowledgeServer.toolGroups.flatMap((group) => group.tools.map((tool) => tool.name));

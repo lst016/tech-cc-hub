@@ -6,7 +6,7 @@ import {
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 
-export type ModelSlotPatch = Partial<Pick<ApiConfigProfile, "model" | "expertModel" | "smallModel" | "analysisModel" | "imageModel" | "embeddingModel" | "wikiModel">>;
+export type ModelSlotPatch = Partial<Pick<ApiConfigProfile, "model" | "expertModel" | "smallModel" | "analysisModel" | "imageModel" | "imageGenerationModel" | "embeddingModel" | "wikiModel">>;
 
 export type SharedModelRoutingState = {
   routedProfileIds: string[];
@@ -18,6 +18,7 @@ export type SharedModelRoutingState = {
   smallModel: string;
   analysisModel: string;
   imageModel: string;
+  imageGenerationModel: string;
   embeddingModel: string;
   wikiModel: string;
 };
@@ -39,6 +40,7 @@ export function buildSharedModelRoutingState(profiles: ApiConfigProfile[]): Shar
     smallModel: pickAvailableModel(primaryProfile?.smallModel, availableModels) || mainModel,
     analysisModel: pickAvailableModel(primaryProfile?.analysisModel, availableModels) || mainModel,
     imageModel: pickFirstConfiguredSlotModel(routedProfiles, "imageModel", availableModels),
+    imageGenerationModel: pickFirstConfiguredSlotModel(routedProfiles, "imageGenerationModel", availableModels),
     embeddingModel: pickFirstConfiguredSlotModel(routedProfiles, "embeddingModel", availableModels),
     wikiModel: pickFirstConfiguredSlotModel(routedProfiles, "wikiModel", availableModels),
   };
@@ -50,6 +52,7 @@ export function applySharedModelRoutingPatch(profiles: ApiConfigProfile[], patch
   const routedProfiles = profiles.filter((profile) => routedIds.has(profile.id));
   const mergedModels = mergeModelConfigs(routedProfiles, state.availableModels);
   const hasImageModelPatch = Object.prototype.hasOwnProperty.call(patch, "imageModel");
+  const hasImageGenerationModelPatch = Object.prototype.hasOwnProperty.call(patch, "imageGenerationModel");
   const hasEmbeddingModelPatch = Object.prototype.hasOwnProperty.call(patch, "embeddingModel");
   const hasWikiModelPatch = Object.prototype.hasOwnProperty.call(patch, "wikiModel");
 
@@ -62,6 +65,7 @@ export function applySharedModelRoutingPatch(profiles: ApiConfigProfile[], patch
       ...profile,
       ...patch,
       imageModel: hasImageModelPatch ? patch.imageModel || undefined : profile.imageModel,
+      imageGenerationModel: hasImageGenerationModelPatch ? patch.imageGenerationModel || undefined : profile.imageGenerationModel,
       embeddingModel: hasEmbeddingModelPatch ? patch.embeddingModel || undefined : profile.embeddingModel,
       wikiModel: hasWikiModelPatch ? patch.wikiModel || undefined : profile.wikiModel,
       models: mergeModelConfigsForProfile(profile, mergedModels, state.availableModels),
@@ -76,7 +80,7 @@ function pickAvailableModel(model: string | undefined, availableModels: string[]
 
 function pickFirstConfiguredSlotModel(
   profiles: ApiConfigProfile[],
-  slot: "imageModel" | "embeddingModel" | "wikiModel",
+  slot: "imageModel" | "imageGenerationModel" | "embeddingModel" | "wikiModel",
   availableModels: string[],
 ): string {
   for (const profile of profiles) {

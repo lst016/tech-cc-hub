@@ -53,6 +53,7 @@ import {
   getClaudeCodeModelOption,
   getClaudeCodePath,
   getCurrentApiConfig,
+  getEnabledUsableApiConfigs,
   getGlobalRuntimeConfig,
   resolveApiConfigForModel,
 } from "../claude/claude-settings.js";
@@ -81,6 +82,7 @@ import {
   getBuiltinMcpServers,
   listBuiltinMcpToolNames,
 } from "../builtin-mcp-servers.js";
+import { setImageGenerationSessionContext, toImageGenerationRouteConfig } from "../mcp-tools/image-generation.js";
 import { normalizeRunnerError } from "./runner-error.js";
 import {
   normalizeKnownToolInputsInMessage,
@@ -835,6 +837,21 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         cwd: projectCwd,
         figmaToolMode: latestFigmaToolMode,
       }, enabledBuiltinMcpServerNames);
+      // 生图工具会话上下文注入：让 image_generate 能解析路由、落盘到 sessionId 目录。
+      if (enabledBuiltinMcpServerSet.has("tech-cc-hub-image")) {
+        const enabledRouteConfigs = getEnabledUsableApiConfigs();
+        const routeEnabledConfigs = enabledRouteConfigs
+          .map((cfg) => toImageGenerationRouteConfig(cfg))
+          .filter((cfg): cfg is NonNullable<ReturnType<typeof toImageGenerationRouteConfig>> => Boolean(cfg));
+        setImageGenerationSessionContext({
+          sessionId: session.id,
+          cwd: projectCwd,
+          selectedConfig: toImageGenerationRouteConfig(config),
+          enabledConfigs: routeEnabledConfigs,
+        });
+      } else {
+        setImageGenerationSessionContext(null);
+      }
       // Phase 8: device-emulator-plugin MCP injection. Empty object when
       // @mobilenext/mobile-mcp is not yet installed, so the SDK map is
       // untouched and the session is unaffected.

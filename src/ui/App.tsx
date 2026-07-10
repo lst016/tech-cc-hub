@@ -686,6 +686,7 @@ function App() {
         profile.expertModel ? { name: profile.expertModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
         profile.smallModel ? { name: profile.smallModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
         profile.imageModel ? { name: profile.imageModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
+        profile.imageGenerationModel ? { name: profile.imageGenerationModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
         profile.analysisModel ? { name: profile.analysisModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
         profile.embeddingModel ? { name: profile.embeddingModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
         profile.wikiModel ? { name: profile.wikiModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,

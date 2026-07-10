@@ -12,6 +12,7 @@ const builtinSdkMcpToolFiles = [
   "src/electron/libs/mcp-tools/design.ts",
   "src/electron/libs/mcp-tools/figma-rest.ts",
   "src/electron/libs/mcp-tools/idea.ts",
+  "src/electron/libs/mcp-tools/image-generation.ts",
   "src/electron/libs/mcp-tools/knowledge.ts",
   "src/electron/libs/mcp-tools/plan.ts",
 ] as const;

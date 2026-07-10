@@ -42,6 +42,7 @@ export type ApiConfig = {
   expertModel?: string;
   smallModel?: string;
   imageModel?: string;
+  imageGenerationModel?: string;
   analysisModel?: string;
   embeddingModel?: string;
   embeddingDimension?: number;
@@ -224,6 +225,7 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
     config.expertModel,
     config.smallModel,
     config.imageModel,
+    config.imageGenerationModel,
     config.analysisModel,
     config.embeddingModel,
     config.wikiModel,
@@ -256,6 +258,7 @@ function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | n
     expertModel: normalizeProviderRoleModel(provider, config.expertModel, selectedModel),
     smallModel: normalizeProviderRoleModel(provider, config.smallModel, normalizeProviderRoleModel(provider, config.analysisModel, getProviderDefaultModel(provider, "small") || selectedModel)),
     imageModel: normalizeOptionalModel(config.imageModel, compatibleModelNames),
+    imageGenerationModel: normalizeOptionalModel(config.imageGenerationModel, compatibleModelNames),
     analysisModel: normalizeProviderRoleModel(provider, config.analysisModel, getProviderDefaultModel(provider, "small") || selectedModel),
     embeddingModel: normalizeOptionalModel(config.embeddingModel, compatibleModelNames),
     embeddingDimension: normalizePositiveInteger(config.embeddingDimension) ?? 1536,

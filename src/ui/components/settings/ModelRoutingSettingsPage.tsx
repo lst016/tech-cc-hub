@@ -131,6 +131,13 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
               onChange={(imageModel) => patchRouting({ imageModel: imageModel || undefined })}
             />
             <ModelSelect
+              label="生图模型"
+              value={state.imageGenerationModel}
+              models={state.availableModels}
+              emptyOption={{ value: "", label: "不启用生图" }}
+              onChange={(imageGenerationModel) => patchRouting({ imageGenerationModel: imageGenerationModel || undefined })}
+            />
+            <ModelSelect
               label="向量模型 / 知识库"
               value={state.embeddingModel}
               models={state.availableModels}

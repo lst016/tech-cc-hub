@@ -23,6 +23,8 @@ import {
   normalizeAskUserQuestions,
   type AskUserQuestionInput,
 } from "../utils/ask-user-question";
+import { parseGeneratedImageResult } from "../utils/generated-image-result";
+import { GeneratedImageResultCard } from "./chat/GeneratedImageResultCard";
 import {
   extractCodeReferencesPrompt,
   extractFileReferencesPrompt,
@@ -1965,6 +1967,20 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
     ? content.slice(0, TOOL_RESULT_RENDER_CHAR_LIMIT)
     : content;
   const contentTruncated = content.length > TOOL_RESULT_RENDER_CHAR_LIMIT;
+
+  // 生图结果优先渲染为图片卡片（成功时直接展示，不要求展开工具输出）
+  const generatedImage = parseGeneratedImageResult(previewContent);
+  if (generatedImage.isImageGeneration && generatedImage.success) {
+    return (
+      <GeneratedImageResultCard
+        mode={generatedImage.mode}
+        model={generatedImage.model}
+        profileName={generatedImage.profileName}
+        artifacts={generatedImage.artifacts}
+        outputHint={generatedImage.outputHint}
+      />
+    );
+  }
 
   return (
     <div className="mt-3 rounded-[22px] border border-black/6 bg-[#f4f7fb] px-4 py-3">

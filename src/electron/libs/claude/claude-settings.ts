@@ -51,7 +51,7 @@ function isUsableConfig(config: ApiConfig | null | undefined): config is ApiConf
   );
 }
 
-function getEnabledUsableApiConfigs(): ApiConfig[] {
+export function getEnabledUsableApiConfigs(): ApiConfig[] {
   return loadApiConfigSettings().profiles.filter((profile) => profile.enabled && isUsableConfig(profile));
 }
 
@@ -222,6 +222,7 @@ export function getConfiguredModelNames(config: ApiConfig): string[] {
     config.expertModel,
     config.smallModel,
     config.imageModel,
+    config.imageGenerationModel,
     config.analysisModel,
     config.embeddingModel,
     config.wikiModel,

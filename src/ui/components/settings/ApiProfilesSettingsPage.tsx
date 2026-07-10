@@ -1285,6 +1285,27 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
               </label>
 
               <label className="grid gap-1.5">
+                <span className="text-xs font-medium text-muted">生图模型</span>
+                <select
+                  className="rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
+                  value={profile.imageGenerationModel ?? ""}
+                  onChange={(event) => onChange((current) => current.map((item) => (
+                    item.id === profile.id
+                      ? { ...item, imageGenerationModel: event.target.value || undefined }
+                      : item
+                  )))}
+                >
+                  <option value="">不启用生图</option>
+                  {getAvailableModels(profile).map((item) => (
+                    <option key={`imagegen-${item}`} value={item}>{item}</option>
+                  ))}
+                </select>
+                <span className="text-[11px] text-muted">
+                  图片预处理模型负责看图；生图模型负责生成和编辑图片。生图要求网关支持 OpenAI Images 兼容接口。
+                </span>
+              </label>
+
+              <label className="grid gap-1.5">
                 <span className="text-xs font-medium text-muted">Prompt 分析模型</span>
                 <select
                   className="rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"

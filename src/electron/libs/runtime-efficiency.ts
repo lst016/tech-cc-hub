@@ -34,6 +34,7 @@ const STICKY_SERVER_ORDER: readonly BuiltinMcpServerName[] = [
   "tech-cc-hub-figma",
   "tech-cc-hub-cron",
   "tech-cc-hub-idea",
+  "tech-cc-hub-image",
 ];
 
 const ALL_SERVERS: readonly BuiltinMcpServerName[] = [
@@ -45,7 +46,10 @@ const ALL_SERVERS: readonly BuiltinMcpServerName[] = [
   "tech-cc-hub-idea",
   "tech-cc-hub-plan",
   "tech-cc-hub-knowledge",
+  "tech-cc-hub-image",
 ];
+
+const MAINTENANCE_SERVERS: readonly BuiltinMcpServerName[] = ALL_SERVERS;
 
 const BASE_SERVERS: readonly BuiltinMcpServerName[] = [
   "tech-cc-hub-admin",
@@ -87,6 +91,8 @@ const AUTOMATION_TASK_PATTERN = /cron|schedule|scheduled|reminder|monitor|watch|
 const IDE_TASK_PATTERN = /intellij|idea|java|jdk|maven|gradle|spring|tomcat|pom\.xml|\.java\b|编译|启动后端|本地运行/i;
 const AGENT_TEAM_TASK_PATTERN = /agent\s*teams?|teammates?|TeamCreate|TeamDelete|SendMessage|CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS|parallel\s+(?:dev|development|work)|team\s+lead|leader|delegate mode|团队协作|队友|跨层并行|并行开发|多人协作/i;
 const EXPLICIT_DYNAMIC_WORKFLOW_PATTERN = /dynamic\s+workflows?|动态\s*workflow|动态工作流|ultracode|多\s*agent|多智能体|后台编排|并行编排|大规模.*编排/i;
+// 生图意图识别：覆盖显式触发词和中英文生图/编辑意图。详见 §8.3。
+const IMAGE_GENERATION_TASK_PATTERN = /\$imagegen|\bimagegen\b|画一张|画个|生成图片|生成一张|生图|做一张海报|生成插画|画报|插画|banner|海报|sprite|编辑这张图|修改图片|替换背景|改背景|基于参考图|参考图.*改|参考图.*编辑|generate\s+image|draw\s+(?:a\s+)?(?:image|picture|logo|icon|poster|illustration)|create\s+(?:an?\s+)?(?:image|picture|poster|banner|illustration)|edit\s+(?:the\s+)?(?:image|picture)|image\s+generation|text[- ]to[- ]image/i;
 
 type ResolveRuntimeEfficiencyProfileInput = {
   prompt: string;
@@ -100,7 +106,7 @@ export function resolveRuntimeEfficiencyProfile(
 ): RuntimeEfficiencyProfile {
   const runSurface = input.runtime?.runSurface ?? input.runSurface;
   if (runSurface === "maintenance") {
-    return buildProfile("maintenance", ALL_SERVERS, {
+    return buildProfile("maintenance", MAINTENANCE_SERVERS, {
       includeBrowserPrompt: true,
       includeDesignPrompt: true,
       includeClaudeCompatPrompt: true,
@@ -116,12 +122,14 @@ export function resolveRuntimeEfficiencyProfile(
   const hasImageAttachment = (input.attachments ?? []).some((attachment) => attachment.kind === "image");
   const isFigmaTask = FIGMA_URL_PATTERN.test(prompt) || FIGMA_TASK_PATTERN.test(prompt);
   const isVisualTask = hasImageAttachment || isFigmaTask || VISUAL_TASK_PATTERN.test(prompt);
+  const isImageGenerationTask = IMAGE_GENERATION_TASK_PATTERN.test(prompt);
   const visualServers = isFigmaTask ? FIGMA_VISUAL_SERVERS : VISUAL_SERVERS;
   const wantsAgentTeams = input.runtime?.workflowMode === "force" ||
     AGENT_TEAM_TASK_PATTERN.test(prompt) ||
     isExplicitDynamicWorkflowPrompt(prompt);
   if (wantsAgentTeams) {
-    return buildProfile("team", isVisualTask ? visualServers : BASE_SERVERS, {
+    const teamServers = mergeImageGenerationIntoServers(isVisualTask ? visualServers : BASE_SERVERS, isImageGenerationTask);
+    return buildProfile("team", teamServers, {
       includeBrowserPrompt: isVisualTask,
       includeDesignPrompt: isVisualTask,
       includeClaudeCompatPrompt: true,
@@ -130,6 +138,17 @@ export function resolveRuntimeEfficiencyProfile(
       agentProgressSummaries: true,
       forwardSubagentText: true,
       enableAgentTeams: true,
+    });
+  }
+
+  // 生图意图：在现有 profile 基础上追加 tech-cc-hub-image。
+  // 仅有截图附件但没有生成/编辑意图时，保持现有 visual profile，不追加生图工具。
+  if (isImageGenerationTask) {
+    const baseServers = isVisualTask ? visualServers : BASE_SERVERS;
+    return buildProfile("standard", mergeImageGenerationIntoServers(baseServers, true), {
+      includeBrowserPrompt: isVisualTask,
+      includeDesignPrompt: isVisualTask,
+      includeClaudeCompatPrompt: true,
     });
   }
 
@@ -246,7 +265,9 @@ export function normalizeBuiltinMcpServerNames(value: unknown): BuiltinMcpServer
   }
 
   const names = new Set(value.filter(isBuiltinMcpServerName));
-  return STICKY_SERVER_ORDER.filter((serverName) => names.has(serverName));
+  const ordered = STICKY_SERVER_ORDER.filter((serverName) => names.has(serverName));
+  const remaining = [...names].filter((serverName) => !STICKY_SERVER_ORDER.includes(serverName));
+  return [...ordered, ...remaining];
 }
 
 function resolveStickyBuiltinMcpServers(
@@ -268,6 +289,29 @@ function shouldCarryStickyPromptState(stickyState: RuntimeEfficiencyProfileState
 
 export function isExplicitDynamicWorkflowPrompt(prompt: string): boolean {
   return EXPLICIT_DYNAMIC_WORKFLOW_PATTERN.test(prompt);
+}
+
+export function isImageGenerationPrompt(prompt: string): boolean {
+  return IMAGE_GENERATION_TASK_PATTERN.test(prompt);
+}
+
+/**
+ * 把 tech-cc-hub-image 合并进现有 server 列表（保持去重和 STICKY_SERVER_ORDER 顺序）。
+ * 仅当 includeImage=true 时追加；否则原样返回。
+ */
+function mergeImageGenerationIntoServers(
+  servers: readonly BuiltinMcpServerName[],
+  includeImage: boolean,
+): BuiltinMcpServerName[] {
+  if (!includeImage) {
+    return [...servers];
+  }
+  const set = new Set(servers);
+  set.add("tech-cc-hub-image");
+  // 按 STICKY_SERVER_ORDER 排序，未在其中的追加到末尾
+  const ordered = STICKY_SERVER_ORDER.filter((name) => set.has(name));
+  const remaining = [...set].filter((name) => !STICKY_SERVER_ORDER.includes(name));
+  return [...ordered, ...remaining];
 }
 
 function buildProfile(
@@ -302,7 +346,8 @@ function isBuiltinMcpServerName(value: unknown): value is BuiltinMcpServerName {
     value === "tech-cc-hub-design" ||
     value === "tech-cc-hub-figma" ||
     value === "tech-cc-hub-cron" ||
-    value === "tech-cc-hub-idea"
+    value === "tech-cc-hub-idea" ||
+    value === "tech-cc-hub-image"
   );
 }
 

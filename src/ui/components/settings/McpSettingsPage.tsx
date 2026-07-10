@@ -69,6 +69,7 @@ const BUILTIN_ICON_MAP: Record<BuiltinMcpIconKey, LucideIcon> = {
   timer: Timer,
   code: Code2,
   list: ListChecks,
+  image: Image,
 };
 
 const BUILTIN_TOOL_GROUPS: Record<string, BuiltinToolGroup[]> = {

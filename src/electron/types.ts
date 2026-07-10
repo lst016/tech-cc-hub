@@ -45,6 +45,7 @@ export type ApiConfig = {
   expertModel?: string;
   smallModel?: string;
   imageModel?: string;
+  imageGenerationModel?: string;
   analysisModel?: string;
   embeddingModel?: string;
   embeddingDimension?: number;
