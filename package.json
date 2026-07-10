@@ -1,0 +1,80 @@
+{
+  "name": "codex-canvas",
+  "version": "0.2.1",
+  "description": "Local infinite canvas plugin for Codex image workflows.",
+  "type": "module",
+  "homepage": "https://github.com/Xiangyu-CAS/codex-canvas",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Xiangyu-CAS/codex-canvas.git"
+  },
+  "bin": {
+    "codex-canvas": "./bin/codex-canvas.mjs"
+  },
+  "files": [
+    ".codex-plugin/",
+    ".mcp.json",
+    "AGENTS.md",
+    "INSTALL.md",
+    "README.md",
+    "README.en.md",
+    "README.ja.md",
+    "SKILL.md",
+    "LICENSE",
+    "assets/icon.png",
+    "bin/",
+    "public/app.js",
+    "public/canvas-history.js",
+    "public/icon.png",
+    "public/index.html",
+    "public/styles.css",
+    "scripts/compose_annotations.py",
+    "scripts/checkout-stable-release.mjs",
+    "scripts/install-personal-plugin.mjs",
+    "scripts/prepare_completed_background.py",
+    "scripts/prepare_expand_canvas.py",
+    "scripts/remove_chroma_key_connected.py",
+    "scripts/split_elements.py",
+    "scripts/verify_elements_layers.py",
+    "skills/",
+    "src/"
+  ],
+  "scripts": {
+    "setup:ocr": "node ./bin/codex-canvas.mjs setup-ocr",
+    "setup:image-deps": "node ./bin/codex-canvas.mjs setup-image-deps",
+    "setup:deps": "node ./bin/codex-canvas.mjs setup-deps",
+    "checkout:stable": "node ./scripts/checkout-stable-release.mjs",
+    "install:personal": "node ./scripts/install-personal-plugin.mjs",
+    "install:dev-cache": "node ./scripts/link-dev-plugin-cache.mjs",
+    "doctor:ocr": "node ./bin/codex-canvas.mjs doctor-ocr --json",
+    "doctor:image-deps": "node ./bin/codex-canvas.mjs doctor-image-deps --json",
+    "doctor:deps": "node ./bin/codex-canvas.mjs doctor-deps --json",
+    "start": "node ./bin/codex-canvas.mjs start",
+    "validate": "node ./bin/codex-canvas.mjs status --json",
+    "smoke": "node ./scripts/smoke.mjs",
+    "smoke:visual": "node ./scripts/visual-smoke.mjs",
+    "visual:regression": "node ./scripts/visual-regression.mjs",
+    "verify:release": "node ./scripts/verify-release.mjs",
+    "verify:archive": "node ./scripts/verify-release-archive.mjs",
+    "build:release": "node ./scripts/build-release.mjs",
+    "test": "npm run smoke"
+  },
+  "keywords": [
+    "codex",
+    "plugin",
+    "canvas",
+    "imagegen"
+  ],
+  "author": {
+    "name": "Codex-Canvas Contributors"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.18"
+  },
+  "dependencies": {
+    "ag-psd": "^31.0.0",
+    "cross-spawn": "^7.0.6",
+    "pngjs": "^7.0.0"
+  }
+}

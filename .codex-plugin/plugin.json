@@ -1,0 +1,43 @@
+{
+  "name": "codex-canvas",
+  "version": "0.2.1",
+  "description": "Local infinite canvas for Codex image generation and editing workflows.",
+  "author": {
+    "name": "Codex-Canvas Contributors"
+  },
+  "homepage": "https://github.com/Xiangyu-CAS/codex-canvas",
+  "repository": "https://github.com/Xiangyu-CAS/codex-canvas.git",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "canvas",
+    "imagegen",
+    "images"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Codex Canvas",
+    "shortDescription": "Open a local infinite canvas for Codex images.",
+    "longDescription": "Codex Canvas adds a project-local infinite canvas to Codex. It can open a browser canvas, collect ImageGen outputs, run background image-edit jobs, split images into editable element layers, and send selected canvas images back to a bound Codex thread.",
+    "developerName": "Codex-Canvas Contributors",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/Xiangyu-CAS/codex-canvas",
+    "privacyPolicyURL": "https://github.com/Xiangyu-CAS/codex-canvas",
+    "termsOfServiceURL": "https://github.com/Xiangyu-CAS/codex-canvas",
+    "defaultPrompt": [
+      "Open the Codex-Canvas board",
+      "Generate an image and collect it on canvas",
+      "Show the current canvas status"
+    ],
+    "brandColor": "#14161B",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/icon.png",
+    "screenshots": []
+  }
+}
