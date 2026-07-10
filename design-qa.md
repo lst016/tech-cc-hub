@@ -5,12 +5,12 @@
 - Collapsed source visual truth: `C:/Users/LUSHEN~1/AppData/Local/Temp/codex-clipboard-b550f5ff-5c39-49ae-88c2-698abaafca0a.png`.
 - Expanded source visual truth: `D:/tool/tech-cc-hub/.superpowers/brainstorm/selection-popover-20260711/content/selected-a-design.html`.
 - Full-view implementation screenshots:
-  - `D:/tool/tech-cc-hub/.worktrees/selection-popover-polish/.superpowers/design-qa/chat-selection-popover/runtime-collapsed-full.png`.
-  - `D:/tool/tech-cc-hub/.worktrees/selection-popover-polish/.superpowers/design-qa/chat-selection-popover/runtime-expanded-full.png`.
+  - `D:/tool/tech-cc-hub/.superpowers/design-qa/chat-selection-popover/runtime-collapsed-full.png`.
+  - `D:/tool/tech-cc-hub/.superpowers/design-qa/chat-selection-popover/runtime-expanded-full.png`.
 - Focused implementation screenshots:
-  - `D:/tool/tech-cc-hub/.worktrees/selection-popover-polish/.superpowers/design-qa/chat-selection-popover/runtime-collapsed-focus.png`.
-  - `D:/tool/tech-cc-hub/.worktrees/selection-popover-polish/.superpowers/design-qa/chat-selection-popover/runtime-expanded-focus.png`.
-- Combined comparison: `D:/tool/tech-cc-hub/.worktrees/selection-popover-polish/.superpowers/design-qa/chat-selection-popover/comparison.png`.
+  - `D:/tool/tech-cc-hub/.superpowers/design-qa/chat-selection-popover/runtime-collapsed-focus.png`.
+  - `D:/tool/tech-cc-hub/.superpowers/design-qa/chat-selection-popover/runtime-expanded-focus.png`.
+- Combined comparison: `D:/tool/tech-cc-hub/.superpowers/design-qa/chat-selection-popover/comparison.png`.
 
 ## Viewport and state
 
