@@ -36,7 +36,7 @@
 
 - Fonts and typography: passed. The component keeps the product's system font, uses 13px medium toolbar labels, 13px textarea text, and 12px semibold footer actions without clipping or unintended wrapping.
 - Spacing and layout rhythm: passed. The toolbar is content-width, 38px high, and centered above a responsive 318px comment card. Independent borders and elevation preserve the approved A hierarchy.
-- Colors and visual tokens: passed. Neutral borders and white surfaces match the target's light chrome; the existing product orange remains intentionally reserved for selection actions and the primary send button.
+- Colors and visual tokens: passed. Neutral borders and white surfaces match the target's light chrome; `添加到对话` uses the requested black text, while orange remains limited to the existing return glyph and primary send action.
 - Image quality and asset fidelity: not applicable. The component contains no raster imagery, logos, illustrations, or custom icon assets. The existing return glyph remains text and is hidden from assistive technology.
 - Copy and content: passed. `添加到对话`, `评论`, `取消`, `加入评论`, `直接发送`, and the textarea placeholder remain unchanged.
 
@@ -63,7 +63,7 @@
 
 ### Final visual verdict
 
-- Score: 94/100.
+- Score: 96/100.
 - Verdict: pass.
 - Category match: true.
 - No actionable P0, P1, or P2 differences remain.

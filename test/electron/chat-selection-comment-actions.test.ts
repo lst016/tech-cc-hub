@@ -9,7 +9,8 @@ test("chat selection popover supports compact comment actions alongside quote", 
   )?.[0] ?? "";
 
   assert.match(source, /kind: "selection" \| "message" \| "comment" = "message"/);
-  assert.match(popoverSource, /<span>添加到对话<\/span>/);
+  assert.match(popoverSource, /<span className="text-ink-700">添加到对话<\/span>/);
+  assert.doesNotMatch(popoverSource, /<svg/);
   assert.match(popoverSource, /评论/);
   assert.match(popoverSource, /加入评论/);
   assert.match(popoverSource, /直接发送/);

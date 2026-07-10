@@ -1133,7 +1133,7 @@ const CollapsibleText = ({
               }}
             >
               <span aria-hidden="true">↩</span>
-              <span>添加到对话</span>
+              <span className="text-ink-700">添加到对话</span>
             </button>
             <button
               type="button"
