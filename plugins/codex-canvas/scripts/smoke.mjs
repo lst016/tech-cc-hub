@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { normalizePort } from "../src/cli.mjs";
 import { sendImageToBoundChat, stopActiveChatOperations } from "../src/codex-chat.mjs";
+import { resolveCodexExecutable } from "../src/codex-runner.mjs";
 import { collectRecentImages } from "../src/collector.mjs";
 import { createImageJob, getIgnoredGeneratedImagePaths, getImageJob, markTextRecognitionCancelledForTest, placeImportedElementLayersForTest, prepareImageForCollectionForTest } from "../src/jobs.mjs";
 import { checkImageProcessingDepsAvailable } from "../src/ocr-setup.mjs";
@@ -59,6 +60,7 @@ async function main() {
     ["canvas history queue", testCanvasHistoryQueue],
     ["http canvas mutation scope", testHttpCanvasMutationScope],
     ["image job error contract", testImageJobErrorContract],
+    ["codex app CLI precedence", testCodexAppCliPrecedence],
     ["thread migration asset paths", testThreadMigrationAssetPaths],
     ["persistent project registry", testPersistentProjectRegistry],
     ["persistent project registry restored auto collector", testPersistentProjectRegistryRestoredAutoCollector],
@@ -1359,6 +1361,48 @@ async function testImageJobErrorContract() {
   }
   if (!app.includes("appUpdateInfo?.canUpdate && appUpdateInfo?.updateAvailable")) {
     throw new Error("frontend update button should not POST an update while the updater is blocked.");
+  }
+}
+
+async function testCodexAppCliPrecedence() {
+  if (process.platform !== "win32") return;
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-canvas-app-cli-"));
+  const appCli = path.join(tmp, "OpenAI", "Codex", "bin", "current", "codex.exe");
+  await fs.mkdir(path.dirname(appCli), { recursive: true });
+  await fs.writeFile(appCli, "placeholder");
+
+  const previousCanvasCli = process.env.CODEX_CANVAS_CODEX_CLI;
+  const previousAppCli = process.env.CODEX_CLI_PATH;
+  const previousLocalAppData = process.env.LOCALAPPDATA;
+  const previousProgramFiles = process.env.PROGRAMFILES;
+  const previousProgramFilesX86 = process.env["PROGRAMFILES(X86)"];
+  const previousPath = process.env.PATH;
+  try {
+    delete process.env.CODEX_CANVAS_CODEX_CLI;
+    delete process.env.CODEX_CLI_PATH;
+    process.env.LOCALAPPDATA = tmp;
+    process.env.PROGRAMFILES = "";
+    process.env["PROGRAMFILES(X86)"] = "";
+    process.env.PATH = "";
+
+    assertEqual(
+      await resolveCodexExecutable(),
+      appCli,
+      "image jobs should use the current Codex App CLI before PATH candidates"
+    );
+  } finally {
+    if (previousCanvasCli === undefined) delete process.env.CODEX_CANVAS_CODEX_CLI;
+    else process.env.CODEX_CANVAS_CODEX_CLI = previousCanvasCli;
+    if (previousAppCli === undefined) delete process.env.CODEX_CLI_PATH;
+    else process.env.CODEX_CLI_PATH = previousAppCli;
+    if (previousLocalAppData === undefined) delete process.env.LOCALAPPDATA;
+    else process.env.LOCALAPPDATA = previousLocalAppData;
+    if (previousProgramFiles === undefined) delete process.env.PROGRAMFILES;
+    else process.env.PROGRAMFILES = previousProgramFiles;
+    if (previousProgramFilesX86 === undefined) delete process.env["PROGRAMFILES(X86)"];
+    else process.env["PROGRAMFILES(X86)"] = previousProgramFilesX86;
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
   }
 }
 

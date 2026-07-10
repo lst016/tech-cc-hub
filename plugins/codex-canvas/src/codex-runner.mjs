@@ -10,7 +10,8 @@ export async function resolveCodexExecutable() {
   const configured = process.env.CODEX_CANVAS_CODEX_CLI;
   const candidates = [
     configured,
-    ...platformBundledCandidates(),
+    process.env.CODEX_CLI_PATH,
+    ...await platformBundledCandidates(),
     ...pathCandidates()
   ].filter(Boolean);
 
@@ -157,7 +158,7 @@ function summarizeCodexFailure(log) {
   return detail.length > 240 ? `${detail.slice(0, 237)}...` : detail;
 }
 
-function platformBundledCandidates() {
+async function platformBundledCandidates() {
   if (process.platform === "darwin") {
     return [
       "/Applications/Codex.app/Contents/Resources/codex",
@@ -172,15 +173,41 @@ function platformBundledCandidates() {
       process.env.PROGRAMFILES && path.join(process.env.PROGRAMFILES, "Codex"),
       process.env["PROGRAMFILES(X86)"] && path.join(process.env["PROGRAMFILES(X86)"], "Codex")
     ].filter(Boolean);
-    return roots.flatMap((root) => [
-      path.join(root, "resources", "codex.exe"),
-      path.join(root, "resources", "codex.cmd"),
-      path.join(root, "codex.exe"),
-      path.join(root, "codex.cmd")
-    ]);
+    return [
+      await openAiCodexAppCandidates(),
+      ...roots.flatMap((root) => [
+        path.join(root, "resources", "codex.exe"),
+        path.join(root, "resources", "codex.cmd"),
+        path.join(root, "codex.exe"),
+        path.join(root, "codex.cmd")
+      ])
+    ].flat();
   }
 
   return [];
+}
+
+async function openAiCodexAppCandidates() {
+  const binRoot = process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, "OpenAI", "Codex", "bin");
+  if (!binRoot) return [];
+  try {
+    const entries = await fs.readdir(binRoot, { withFileTypes: true });
+    const candidates = await Promise.all(entries
+      .filter((entry) => entry.isDirectory())
+      .map(async (entry) => {
+        const directory = path.join(binRoot, entry.name);
+        const stat = await fs.stat(directory);
+        return {
+          executable: path.join(directory, "codex.exe"),
+          modifiedAt: stat.mtimeMs
+        };
+      }));
+    return candidates
+      .sort((left, right) => right.modifiedAt - left.modifiedAt)
+      .map((candidate) => candidate.executable);
+  } catch {
+    return [];
+  }
 }
 
 function pathCandidates() {
