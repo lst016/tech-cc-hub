@@ -1116,48 +1116,56 @@ const CollapsibleText = ({
       {selectionDraft && typeof document !== "undefined" && createPortal(
         <div
           ref={selectionPopoverRef}
-          className="fixed z-[80] flex min-w-[220px] max-w-[320px] flex-col gap-2 rounded-2xl border border-accent/20 bg-white/96 p-2 shadow-[0_12px_30px_rgba(15,18,24,0.18)] backdrop-blur"
+          className="fixed z-[80] flex w-max max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-[12px] border border-black/10 bg-white/98 shadow-[0_8px_24px_rgba(15,18,24,0.13)] backdrop-blur"
           style={{ left: selectionDraft.x, top: selectionDraft.y, transform: "translateX(-50%)" }}
         >
-          <div className="flex flex-wrap items-center gap-2">
+          <div
+            role="group"
+            aria-label="选区操作"
+            className="flex h-[38px] items-stretch divide-x divide-black/10"
+          >
             <button
               type="button"
-              className="inline-flex h-8 items-center gap-1 rounded-full border border-accent/24 bg-white px-3 text-xs font-semibold text-accent transition hover:border-accent/42 hover:bg-accent/8"
+              className="inline-flex items-center gap-1.5 bg-white px-3.5 text-[13px] font-medium text-accent transition-colors hover:bg-accent/6 focus-visible:relative focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/35"
               onClick={() => {
                 addSelectionReference("selection");
                 clearSelectionDraft();
               }}
             >
-              <span>↩</span>
+              <span aria-hidden="true">↩</span>
               <span>添加到对话</span>
             </button>
             <button
               type="button"
-              className="inline-flex h-8 items-center rounded-full border border-black/10 bg-white px-3 text-xs font-semibold text-ink-700 transition hover:border-accent/24 hover:bg-accent/8 hover:text-accent"
+              aria-expanded={selectionDraft.commentOpen}
+              className={cx(
+                "inline-flex items-center bg-white px-3.5 text-[13px] font-medium transition-colors hover:bg-accent/6 hover:text-accent focus-visible:relative focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/35",
+                selectionDraft.commentOpen ? "bg-accent/8 text-accent" : "text-ink-700",
+              )}
               onClick={() => setSelectionDraft((current) => current ? { ...current, commentOpen: !current.commentOpen } : current)}
             >
               评论
             </button>
           </div>
           {selectionDraft.commentOpen && (
-            <div className="flex flex-col gap-2 rounded-xl border border-black/6 bg-[#f8fafc] p-2">
+            <div className="flex w-[318px] max-w-full flex-col gap-2 border-t border-black/8 bg-[#fbfcfd] p-2.5">
               <textarea
                 value={selectionDraft.comment}
                 onChange={(event) => setSelectionDraft((current) => current ? { ...current, comment: event.target.value } : current)}
                 placeholder="写一句评论，之后可以一条条发送回复..."
-                className="min-h-[72px] w-full resize-none rounded-xl border border-black/10 bg-white px-3 py-2 text-xs leading-5 text-ink-800 outline-none focus:border-accent"
+                className="min-h-[76px] w-full resize-none rounded-[9px] border border-black/10 bg-white px-3 py-2.5 text-[13px] leading-5 text-ink-800 outline-none transition focus:border-accent/50 focus:ring-2 focus:ring-accent/10"
               />
-              <div className="flex flex-wrap items-center justify-end gap-2">
+              <div className="flex items-center justify-end gap-1.5">
                 <button
                   type="button"
-                  className="inline-flex h-8 items-center rounded-full border border-black/10 bg-white px-3 text-xs font-semibold text-muted transition hover:bg-black/5 hover:text-ink-700"
+                  className="inline-flex h-[38px] items-center rounded-[8px] border border-black/10 bg-white px-3 text-xs font-semibold text-muted transition hover:bg-black/5 hover:text-ink-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25"
                   onClick={() => setSelectionDraft((current) => current ? { ...current, commentOpen: false, comment: "" } : current)}
                 >
                   取消
                 </button>
                 <button
                   type="button"
-                  className="inline-flex h-8 items-center rounded-full border border-accent/20 bg-white px-3 text-xs font-semibold text-accent transition hover:bg-accent/8"
+                  className="inline-flex h-[38px] items-center rounded-[8px] border border-accent/24 bg-white px-3 text-xs font-semibold text-accent transition hover:bg-accent/8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25"
                   onClick={() => {
                     const trimmedComment = selectionDraft.comment.trim();
                     if (!trimmedComment) return;
@@ -1169,7 +1177,7 @@ const CollapsibleText = ({
                 </button>
                 <button
                   type="button"
-                  className="inline-flex h-8 items-center rounded-full bg-accent px-3 text-xs font-semibold text-white transition hover:opacity-90"
+                  className="inline-flex h-[38px] items-center rounded-[8px] bg-accent px-3 text-xs font-semibold text-white transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-1"
                   onClick={handleSendComment}
                 >
                   直接发送
