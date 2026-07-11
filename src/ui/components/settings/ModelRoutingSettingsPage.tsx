@@ -68,14 +68,6 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
             <button
               type="button"
               className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-xs text-ink-700 transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={() => patchRouting({ wikiModel: state.smallModel || state.mainModel })}
-              disabled={!state.smallModel && !state.mainModel}
-            >
-              Wiki 模型同步小模型
-            </button>
-            <button
-              type="button"
-              className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-xs text-ink-700 transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
               onClick={() => patchRouting({ imageModel: state.mainModel })}
               disabled={!state.mainModel}
             >
@@ -84,7 +76,7 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
           </div>
         </div>
         <p className="text-sm leading-6 text-muted">
-          启用配置共用这一套模型分工：主模型对话，专家兜底，小模型处理后台调用，Prompt 分析复盘，图片模型先读图，向量模型驱动知识库，Wiki 模型生成 .tech 文档。
+          启用配置共用这一套模型分工：主模型对话，专家兜底，小模型处理后台调用，Prompt 分析复盘，图片模型先读图，生图模型调用 OpenAI Images 接口。
         </p>
       </div>
 
@@ -136,20 +128,6 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
               models={state.availableModels}
               emptyOption={{ value: "", label: "不启用生图" }}
               onChange={(imageGenerationModel) => patchRouting({ imageGenerationModel: imageGenerationModel || undefined })}
-            />
-            <ModelSelect
-              label="向量模型 / 知识库"
-              value={state.embeddingModel}
-              models={state.availableModels}
-              emptyOption={{ value: "", label: "未配置则禁用知识库" }}
-              onChange={(embeddingModel) => patchRouting({ embeddingModel: embeddingModel || undefined })}
-            />
-            <ModelSelect
-              label="Wiki 生成模型"
-              value={state.wikiModel}
-              models={state.availableModels}
-              emptyOption={{ value: "", label: "仅索引已有 .tech 文档" }}
-              onChange={(wikiModel) => patchRouting({ wikiModel: wikiModel || undefined })}
             />
           </div>
         </div>

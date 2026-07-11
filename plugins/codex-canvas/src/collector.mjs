@@ -5,7 +5,7 @@ import path from "node:path";
 import { addImage, isSupportedImageBuffer, readState } from "./store.mjs";
 
 const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif"]);
-const boardPadding = 120;
+const boardPadding = 64;
 const verticalGap = 56;
 const horizontalGap = 64;
 const editGap = 72;

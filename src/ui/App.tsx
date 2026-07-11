@@ -335,7 +335,7 @@ function App() {
   const [gitTabBySessionId, setGitTabBySessionId] = useState<Record<string, boolean>>({});
   const [terminalTabBySessionId, setTerminalTabBySessionId] = useState<Record<string, boolean>>({});
   const [workspacePlugins, setWorkspacePlugins] = useState<WorkspacePluginDescriptor[]>([]);
-  const [closedWorkspacePluginIdsBySessionId, setClosedWorkspacePluginIdsBySessionId] = useState<Record<string, string[]>>({});
+  const [openWorkspacePluginIdsBySessionId, setOpenWorkspacePluginIdsBySessionId] = useState<Record<string, string[]>>({});
   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
   const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | null>(null);
   const [appUpdateActionBusy, setAppUpdateActionBusy] = useState(false);
@@ -421,16 +421,16 @@ function App() {
     ? Object.prototype.hasOwnProperty.call(activityRailTabBySessionId, activeSessionId)
     : false;
   const openWorkflowAgentTabIds = activeSessionId ? (openWorkflowAgentTabsBySessionId[activeSessionId] ?? []) : [];
-  const closedWorkspacePluginIds = activeSessionId
-    ? (closedWorkspacePluginIdsBySessionId[activeSessionId] ?? EMPTY_WORKSPACE_PLUGIN_IDS)
+  const openWorkspacePluginIds = activeSessionId
+    ? (openWorkspacePluginIdsBySessionId[activeSessionId] ?? EMPTY_WORKSPACE_PLUGIN_IDS)
     : EMPTY_WORKSPACE_PLUGIN_IDS;
   const visibleWorkspacePlugins = useMemo(
-    () => workspacePlugins.filter((plugin) => !closedWorkspacePluginIds.includes(plugin.id)),
-    [closedWorkspacePluginIds, workspacePlugins],
+    () => workspacePlugins.filter((plugin) => openWorkspacePluginIds.includes(plugin.id)),
+    [openWorkspacePluginIds, workspacePlugins],
   );
   const hiddenWorkspacePlugins = useMemo(
-    () => workspacePlugins.filter((plugin) => closedWorkspacePluginIds.includes(plugin.id)),
-    [closedWorkspacePluginIds, workspacePlugins],
+    () => workspacePlugins.filter((plugin) => !openWorkspacePluginIds.includes(plugin.id)),
+    [openWorkspacePluginIds, workspacePlugins],
   );
   const selectedWorkflowAgentId = getWorkflowAgentIdFromTab(activityRailTab) ?? undefined;
   const pendingPreviewOpenRequest = activeSessionId ? pendingPreviewOpenRequestBySessionId[activeSessionId] : undefined;
@@ -478,10 +478,10 @@ function App() {
     if (!activeSessionId) return;
     const pluginId = getWorkspacePluginIdFromTab(tab);
     if (!pluginId) return;
-    setClosedWorkspacePluginIdsBySessionId((current) => {
-      const closed = current[activeSessionId] ?? [];
-      if (closed.includes(pluginId)) return current;
-      return { ...current, [activeSessionId]: [...closed, pluginId] };
+    setOpenWorkspacePluginIdsBySessionId((current) => {
+      const open = current[activeSessionId] ?? [];
+      if (!open.includes(pluginId)) return current;
+      return { ...current, [activeSessionId]: open.filter((id) => id !== pluginId) };
     });
     if (activityRailTab === tab) {
       setActiveSessionActivityRailTab(DEFAULT_ACTIVITY_RAIL_TAB);
@@ -497,10 +497,10 @@ function App() {
     if (!activeSessionId) return;
     const pluginId = getWorkspacePluginIdFromTab(tab);
     if (!pluginId) return;
-    setClosedWorkspacePluginIdsBySessionId((current) => {
-      const closed = current[activeSessionId] ?? [];
-      if (!closed.includes(pluginId)) return current;
-      return { ...current, [activeSessionId]: closed.filter((id) => id !== pluginId) };
+    setOpenWorkspacePluginIdsBySessionId((current) => {
+      const open = current[activeSessionId] ?? [];
+      if (open.includes(pluginId)) return current;
+      return { ...current, [activeSessionId]: [...open, pluginId] };
     });
     setShowActivityRail(true);
     setShowSessionAnalysis(false);
@@ -756,8 +756,6 @@ function App() {
         profile.imageModel ? { name: profile.imageModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
         profile.imageGenerationModel ? { name: profile.imageGenerationModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
         profile.analysisModel ? { name: profile.analysisModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
-        profile.embeddingModel ? { name: profile.embeddingModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
-        profile.wikiModel ? { name: profile.wikiModel, contextWindow: undefined, compressionThresholdPercent: undefined } : null,
       ].filter(Boolean);
       const matched = candidates.find((model) => model?.name === modelName);
       if (matched) return matched;

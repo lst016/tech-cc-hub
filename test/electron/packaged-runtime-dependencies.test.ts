@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 type PackageLike = {
   version?: string;
   scripts?: Record<string, string>;
   dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
   packages?: Record<string, { dependencies?: Record<string, string> }>;
 };
 
@@ -62,16 +63,33 @@ test("CodeGraph bundled runtime dependencies are kept in Windows packages", () =
   assert.match(packagedSmoke, /Cannot find module/);
 });
 
-test("Canvas plugin runtime is copied outside app.asar with its own locked dependencies", () => {
+test("Canvas plugin runtime is bundled by the host project without private node_modules", () => {
   const packageJson = readJson("package.json");
   const builderConfig = readJson("electron-builder.json") as BuilderConfigLike;
   const packageWinSafe = readFileSync("scripts/package-win-safe.mjs", "utf8");
+  const canvasManifest = readJson("plugins/codex-canvas/tech-cc-hub.plugin.json") as {
+    start?: { args?: string[] };
+  };
   const canvasResource = builderConfig.extraResources?.find((resource) => (
     typeof resource !== "string" && resource.from === "plugins/codex-canvas" && resource.to === "plugins/codex-canvas"
   ));
+  const canvasDependenciesResource = builderConfig.extraResources?.find((resource) => (
+    typeof resource !== "string"
+    && resource.from === "plugins/codex-canvas/node_modules"
+    && resource.to === "plugins/codex-canvas/node_modules"
+  ));
 
-  assert.equal(packageJson.scripts?.["prepare:workspace-plugins"], "npm --prefix plugins/codex-canvas ci --ignore-scripts");
+  assert.equal(
+    packageJson.scripts?.["prepare:workspace-plugins"],
+    "node scripts/build-canvas-plugin-runtime.mjs",
+  );
+  assert.equal(packageJson.devDependencies?.["ag-psd"], "^31.0.0");
+  assert.equal(packageJson.devDependencies?.["cross-spawn"], "^7.0.6");
+  assert.equal(packageJson.devDependencies?.pngjs, "^7.0.0");
   assert.ok(canvasResource);
-  assert.ok(typeof canvasResource !== "string" && canvasResource.filter?.includes("node_modules/**/*"));
+  assert.equal(canvasDependenciesResource, undefined);
+  assert.ok(canvasManifest.start?.args?.includes("dist/codex-canvas.mjs"));
+  assert.ok(existsSync("scripts/build-canvas-plugin-runtime.mjs"));
   assert.match(packageWinSafe, /npm", \["run", "prepare:workspace-plugins"\]/);
+  assert.match(packageWinSafe, /validatePackagedCanvasRuntime/);
 });

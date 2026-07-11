@@ -1,15 +1,18 @@
 import http from "node:http";
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import { watch } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { promisify } from "node:util";
 import { collectRecentImages, defaultGeneratedImagesRoot, generatedImagesDirForThread } from "./collector.mjs";
 import { hasActiveChatOperations, sendImageToBoundChat, sendMentionToBoundChat, stopActiveChatOperations } from "./codex-chat.mjs";
 import { createImageJob, createTextRecognitionJob, getActivePlaceholderIds, getIgnoredGeneratedImagePaths, getImageJob, getTextRecognitionJob, hasActiveCanvasJobs, hasRunningImageJobs, submitTextRecognitionEdit } from "./jobs.mjs";
-import { assetsDirFor, projectRegistryPath, publicDir, runtimePathFor } from "./paths.mjs";
+import { assetsDirFor, pluginRoot, projectRegistryPath, publicDir, runtimePathFor } from "./paths.mjs";
 import { exportLayerGroupPsd } from "./psd-export.mjs";
 import { addImage, addObject, deleteObject, deleteObjects, ensureProjectStore, markStaleJobPlaceholders, promptHistory, readState, reorderLayerGroupLayer, restoreObjects, searchObjects, setLayerGroupOrder, updateObject, updateObjects, updateProjectMeta, updateSelection, updateViewport, versionGroups } from "./store.mjs";
 import { canvasIdForThread, normalizeThreadId } from "./runtime.mjs";
+import { getTechCcHubSessionSnapshot } from "./tech-cc-hub-transport.mjs";
 import { appUpdateStatus, updateApp } from "./updater.mjs";
 import { APP_VERSION } from "./version.mjs";
 
@@ -28,6 +31,7 @@ const contentTypes = {
 };
 const defaultMaxJsonBodyBytes = 32 * 1024 * 1024;
 const maxQueryLimit = 100;
+const execFileAsync = promisify(execFile);
 
 export async function createServer({ projectDir, host = "127.0.0.1", port = 43217, autoCollect = true, chatThreadId = null, autoCollectIntervalMs = 5000, autoCollectWatchDebounceMs = 250, maxJsonBodyBytes = defaultMaxJsonBodyBytes, persistentRegistryPath = projectRegistryPath(), generatedImagesRoot = defaultGeneratedImagesRoot(), hasActiveJobs = hasActiveCanvasJobs } = {}) {
   const registry = createProjectRegistry({ host, port, autoCollect, autoCollectIntervalMs, autoCollectWatchDebounceMs, maxJsonBodyBytes, persistentRegistryPath, generatedImagesRoot, hasActiveJobs });
@@ -136,6 +140,11 @@ async function handleRequest(request, response, context) {
 
   const project = resolveRequestProject(context.registry, requestUrl);
   const projectDir = project.projectDir;
+
+  if (request.method === "GET" && pathname === "/api/session") {
+    const session = await getTechCcHubSessionSnapshot().catch(() => null);
+    return sendJson(response, 200, { session });
+  }
 
   if (request.method === "GET" && pathname === "/api/state") {
     const state = await markStaleJobPlaceholders(projectDir, {
@@ -299,6 +308,15 @@ async function handleRequest(request, response, context) {
     return sendJson(response, 200, await runMaintenanceSensitiveOperation(
       context.registry,
       () => sendObjectToBoundChat(projectDir, project, body)
+    ));
+  }
+
+  if (request.method === "POST" && pathname === "/api/annotation-edit") {
+    const body = await readJson(request, context.registry);
+    assertExpectedCanvasScope(project, body);
+    return sendJson(response, 202, await runMaintenanceSensitiveOperation(
+      context.registry,
+      () => startAnnotationImageJob(projectDir, project, body)
     ));
   }
 
@@ -912,6 +930,231 @@ async function sendObjectToBoundChat(projectDir, project, body = {}) {
     objectId: object.id,
     imagePath
   };
+}
+
+async function startAnnotationImageJob(projectDir, project, body = {}) {
+  if (body.action !== "annotation-edit") {
+    const error = new Error("Annotation edit requires the stable annotation-edit action.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const objectId = typeof body.objectId === "string" ? body.objectId : "";
+  const state = await readState(projectDir, storeOptionsFor(project));
+  const source = state.objects.find((item) => item.id === objectId);
+  if (!source || (source.type || "image") !== "image") {
+    const error = new Error("A selected canvas image is required before editing by annotations.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const sourceImagePath = source.assetPath || source.sourcePath;
+  if (!sourceImagePath) {
+    const error = new Error("The selected image must be a local canvas asset before editing by annotations.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const annotationReference = await createAnnotationEditReference(projectDir, project, source, state.objects);
+  const result = await createImageJob(projectDir, {
+    action: "quick-edit",
+    objectId: source.id,
+    prompt: annotationReference.prompt
+  }, {
+    ...storeOptionsFor(project),
+    preparedImagePaths: [sourceImagePath, annotationReference.referenceImagePath]
+  });
+  return {
+    ...result,
+    annotationAction: "annotation-edit",
+    objectId: source.id,
+    referenceImagePath: annotationReference.referenceImagePath,
+    annotationManifestPath: annotationReference.annotationManifestPath,
+    annotationCount: annotationReference.annotationCount
+  };
+}
+
+async function createAnnotationEditReference(projectDir, project, source, objects) {
+  const annotations = collectSourceAnnotations(source, objects);
+  if (!annotations.length) {
+    const error = new Error("Add at least one arrow annotation and label before editing by annotations.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const sourceImagePath = source.assetPath || source.sourcePath;
+  const assetsDir = assetsDirFor(projectDir, project.canvasId);
+  const token = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+  const referenceImagePath = path.join(assetsDir, `annotation-reference-${token}.png`);
+  const annotationManifestPath = path.join(assetsDir, `annotation-reference-${token}.json`);
+  const outputBounds = annotationReferenceBounds(source, annotations);
+  const manifest = {
+    version: 1,
+    sourceObjectId: source.id,
+    sourceRect: objectRect(source),
+    outputBounds,
+    sourceSize: sourcePixelSize(source),
+    items: annotations
+  };
+
+  await fs.mkdir(assetsDir, { recursive: true });
+  await fs.writeFile(annotationManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  await composeAnnotationReference({
+    sourceImagePath,
+    annotationManifestPath,
+    referenceImagePath
+  });
+  return {
+    referenceImagePath,
+    annotationManifestPath,
+    annotationCount: annotations.length,
+    prompt: annotationEditPrompt(annotations)
+  };
+}
+
+function collectSourceAnnotations(source, objects) {
+  const items = [];
+  for (const object of objects) {
+    if (!object || object.sourceImageId !== source.id) continue;
+    if (object.type === "annotation-arrow") {
+      const points = Array.isArray(object.points)
+        ? object.points
+          .filter((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y))
+          .map((point) => ({ x: Math.round(object.x + point.x), y: Math.round(object.y + point.y) }))
+        : [];
+      if (points.length === 2) {
+        const control = annotationCurveControlPoint(points[0], points[1]);
+        items.push({
+          id: object.id,
+          type: "annotation-arrow",
+          points,
+          stroke: object.stroke || "#d93025",
+          strokeWidth: Number.isFinite(object.strokeWidth) ? object.strokeWidth : 4,
+          arrowhead: "start",
+          curve: "quadratic",
+          control
+        });
+      }
+      continue;
+    }
+    if (object.type === "text" && object.isAnnotationLabel === true && String(object.text || "").trim()) {
+      items.push({
+        id: object.id,
+        type: "text",
+        text: String(object.text).trim(),
+        x: object.x,
+        y: object.y,
+        width: object.width,
+        height: object.height,
+        fontSize: object.fontSize || 20,
+        color: object.color || "#d93025"
+      });
+    }
+  }
+  return items;
+}
+
+function objectRect(object) {
+  return {
+    x: Number.isFinite(object?.x) ? object.x : 0,
+    y: Number.isFinite(object?.y) ? object.y : 0,
+    width: Math.max(1, Number.isFinite(object?.width) ? object.width : 1),
+    height: Math.max(1, Number.isFinite(object?.height) ? object.height : 1)
+  };
+}
+
+function annotationCurveControlPoint(start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const distance = Math.hypot(dx, dy);
+  if (distance < 0.001) return { x: start.x, y: start.y };
+  let normalX = -dy / distance;
+  let normalY = dx / distance;
+  if (normalY > 0) {
+    normalX *= -1;
+    normalY *= -1;
+  }
+  const bend = Math.min(40, Math.max(12, distance * 0.18));
+  return {
+    x: Number(((start.x + end.x) / 2 + normalX * bend).toFixed(3)),
+    y: Number(((start.y + end.y) / 2 + normalY * bend).toFixed(3))
+  };
+}
+
+function sourcePixelSize(source) {
+  return {
+    width: Math.max(1, Math.round(Number.isFinite(source.naturalWidth) ? source.naturalWidth : source.width || 1)),
+    height: Math.max(1, Math.round(Number.isFinite(source.naturalHeight) ? source.naturalHeight : source.height || 1))
+  };
+}
+
+function annotationReferenceBounds(source, annotations) {
+  const rectangles = [objectRect(source)];
+  for (const annotation of annotations) {
+    if (annotation.type === "annotation-arrow") {
+      const curvePoints = annotation.control ? [...annotation.points, annotation.control] : annotation.points;
+      const xs = curvePoints.map((point) => point.x);
+      const ys = curvePoints.map((point) => point.y);
+      const padding = Math.max(16, Number(annotation.strokeWidth || 4) * 4);
+      rectangles.push({
+        x: Math.min(...xs) - padding,
+        y: Math.min(...ys) - padding,
+        width: Math.max(...xs) - Math.min(...xs) + padding * 2,
+        height: Math.max(...ys) - Math.min(...ys) + padding * 2
+      });
+    } else {
+      rectangles.push(objectRect(annotation));
+    }
+  }
+  const padding = 24;
+  const left = Math.min(...rectangles.map((rect) => rect.x)) - padding;
+  const top = Math.min(...rectangles.map((rect) => rect.y)) - padding;
+  const right = Math.max(...rectangles.map((rect) => rect.x + rect.width)) + padding;
+  const bottom = Math.max(...rectangles.map((rect) => rect.y + rect.height)) + padding;
+  return {
+    x: Math.round(left),
+    y: Math.round(top),
+    width: Math.max(1, Math.round(right - left)),
+    height: Math.max(1, Math.round(bottom - top))
+  };
+}
+
+async function composeAnnotationReference({ sourceImagePath, annotationManifestPath, referenceImagePath }) {
+  const scriptPath = path.join(pluginRoot, "scripts", "compose_annotations.py");
+  const args = [
+    scriptPath,
+    "--source", sourceImagePath,
+    "--annotations", annotationManifestPath,
+    "--out", referenceImagePath,
+    "--force"
+  ];
+  const candidates = process.platform === "win32"
+    ? [["py", ["-3", ...args]], ["python", args], ["python3", args]]
+    : [["python3", args], ["python", args]];
+  const errors = [];
+  for (const [command, commandArgs] of candidates) {
+    try {
+      await execFileAsync(command, commandArgs, { windowsHide: true, maxBuffer: 1024 * 1024 });
+      return;
+    } catch (error) {
+      errors.push(`${command}: ${error.stderr || error.message}`.trim());
+    }
+  }
+  const error = new Error(`Could not compose the annotation reference locally. Install the Canvas image-processing dependency (Pillow) and retry. ${errors.join(" | ")}`);
+  error.statusCode = 422;
+  throw error;
+}
+
+function annotationEditPrompt(annotations) {
+  const annotationCount = annotations.length;
+  const instructions = annotations
+    .filter((item) => item.type === "text" && String(item.text || "").trim())
+    .map((item, index) => `${index + 1}. ${String(item.text).trim()}`);
+  return [
+    "Use the first attached image as the source image and final output frame.",
+    `Use the second attached Codex-Canvas reference only as edit guidance. It contains ${annotationCount} persistent Cowart-style annotation item(s); red arrowheads identify target regions and attached labels state the requested changes.`,
+    ...(instructions.length ? ["Follow these annotation instructions exactly:", ...instructions] : []),
+    "Apply only the indicated changes to the first attached image and preserve all unmarked content.",
+    "Return the same dimensions and aspect ratio as the first attached image.",
+    "Do not include reference margins, arrows, label boxes, annotation text, or other markup in the final image."
+  ].join("\n");
 }
 
 function sendToChatPrompt(note) {

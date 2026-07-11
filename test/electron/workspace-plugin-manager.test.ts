@@ -110,6 +110,46 @@ test("workspace plugin manager discovers manifests and starts a session-scoped l
   });
 });
 
+test("workspace plugin manager coalesces concurrent opens for the same plugin session", async () => {
+  await withPluginRoot(async (pluginsRoot, workspace) => {
+    let spawned = 0;
+    let bridgeCount = 0;
+    let releaseReady!: () => void;
+    let releaseSpawned!: () => void;
+    const ready = new Promise<void>((resolve) => { releaseReady = resolve; });
+    const firstSpawned = new Promise<void>((resolve) => { releaseSpawned = resolve; });
+    const manager = new WorkspacePluginManager({
+      pluginsRoot,
+      sessionStore: { getSession: (sessionId: string) => sessionId === "session-1" ? { id: sessionId, cwd: workspace } : undefined },
+      dispatch: async () => {},
+      allocatePort: async () => 45678,
+      createBridge: async () => {
+        bridgeCount += 1;
+        return { url: "http://127.0.0.1:30001", token: "bridge-token", close: async () => {} };
+      },
+      spawnProcess: () => {
+        spawned += 1;
+        releaseSpawned();
+        return { kill: () => true };
+      },
+      waitForReady: async () => await ready,
+    });
+
+    const firstOpen = manager.open({ pluginId: "codex-canvas", sessionId: "session-1" });
+    await firstSpawned;
+    const secondOpen = manager.open({ pluginId: "codex-canvas", sessionId: "session-1" });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(spawned, 1);
+    assert.equal(bridgeCount, 1);
+
+    releaseReady();
+    assert.deepEqual(await Promise.all([firstOpen, secondOpen]), [
+      { pluginId: "codex-canvas", sessionId: "session-1", url: "http://127.0.0.1:45678/?threadId=session-1" },
+      { pluginId: "codex-canvas", sessionId: "session-1", url: "http://127.0.0.1:45678/?threadId=session-1" },
+    ]);
+  });
+});
+
 test("workspace plugin manager shares historical, generated, and newly attached chat images with an open plugin", async () => {
   await withImageHookServer(async (port, requests) => {
     await withPluginRoot(async (pluginsRoot, workspace) => {

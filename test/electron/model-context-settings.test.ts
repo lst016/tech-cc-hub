@@ -679,14 +679,13 @@ test("shared model routing shows optional slots configured on later enabled prof
       smallModel: "MiniMax-M3",
       analysisModel: "MiniMax-M3",
       imageModel: "gemini-3.1-pro-preview",
-      embeddingModel: "Qwen3-Embedding-8B",
-      wikiModel: "MiniMax-M3",
+      imageGenerationModel: "gpt-image-2",
       models: [
         { name: "DeepSeek-V4-Pro" },
         { name: "gpt-5.5" },
         { name: "MiniMax-M3" },
         { name: "gemini-3.1-pro-preview" },
-        { name: "Qwen3-Embedding-8B" },
+        { name: "gpt-image-2" },
       ],
       enabled: true,
       provider: "custom" as const,
@@ -697,8 +696,7 @@ test("shared model routing shows optional slots configured on later enabled prof
   const state = buildSharedModelRoutingState(profiles);
 
   assert.equal(state.imageModel, "gemini-3.1-pro-preview");
-  assert.equal(state.embeddingModel, "Qwen3-Embedding-8B");
-  assert.equal(state.wikiModel, "MiniMax-M3");
+  assert.equal(state.imageGenerationModel, "gpt-image-2");
 });
 
 test("profile normalization preserves configured context window for selected role models", () => {

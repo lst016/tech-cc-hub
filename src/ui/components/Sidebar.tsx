@@ -459,7 +459,7 @@ export function Sidebar({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="sidebar-scroll min-h-0 flex-1 overflow-y-auto">
           {workspaceGroups.length === 0 && (
             <div className="rounded-xl border border-black/6 bg-white/70 px-3 py-4 text-center text-xs leading-6 text-muted">
               还没有会话。直接在底部输入框开始聊天，系统会按工作区自动归档到左侧。

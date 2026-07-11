@@ -14,13 +14,7 @@
           <header class="project-header">
             <span class="project-mark"></span>
             <input id="projectTitle" class="project-title-input" value="Untitled" aria-label="Project title" spellcheck="false" />
-            <button title="Project options" aria-label="Project options">
-              <svg class="header-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="m6 9 6 6 6-6"></path>
-              </svg>
-            </button>
           </header>
-          <div id="projectMenu" class="project-menu" hidden></div>
 
           <button id="settingsButton" class="settings-button" title="Settings" aria-label="Settings">
             <svg class="settings-gear" viewBox="0 0 24 24" aria-hidden="true">
@@ -91,6 +85,15 @@
                 </svg>
                 <span>Quick Edit</span>
               </button>
+              <button data-action="annotation-edit" data-tooltip="Generate from annotations" title="Generate from annotations" aria-label="Generate from annotations">
+                <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 19h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4L4 15v4" />
+                  <path d="M13.5 6.5l4 4" />
+                  <path d="M3 3l5 5" />
+                  <path d="M3 8l5 -5" />
+                </svg>
+                <span>Generate from annotations</span>
+              </button>
               <button data-action="remove-bg" data-tooltip="Remove BG" title="Remove BG" aria-label="Remove BG">
                 <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
                   <line x1="2" x2="22" y1="2" y2="22" />
@@ -119,13 +122,23 @@
                 </svg>
                 <span>Crop</span>
               </button>
-              <button data-action="edit-elements" data-tooltip="Edit Elements" title="Edit Elements" aria-label="Edit Elements">
+              <button class="danger" data-action="delete-selected" data-tooltip="Delete" title="Delete" aria-label="Delete">
+                <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 7h16" />
+                  <path d="M10 11v6" />
+                  <path d="M14 11v6" />
+                  <path d="M6 7l1 14h10l1-14" />
+                  <path d="M9 7V4h6v3" />
+                </svg>
+                <span>Delete</span>
+              </button>
+              <button data-action="edit-elements" data-tooltip="Split Layers" title="Split Layers" aria-label="Split Layers">
                 <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z" />
                   <path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12" />
                   <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17" />
                 </svg>
-                <span>Edit Elements</span>
+                <span>Split Layers</span>
               </button>
               <span class="toolbar-row-break" data-toolbar-group-break hidden aria-hidden="true"></span>
               <button data-action="reset-layer-group" data-tooltip="Reset group" title="Reset group" aria-label="Reset group" hidden>
@@ -296,6 +309,14 @@
               <svg class="dock-icon" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M6 4l12 0"></path>
                 <path d="M12 4l0 16"></path>
+              </svg>
+            </button>
+            <button title="Annotate" aria-label="Annotate" data-tooltip="Annotate" data-tool="annotation">
+              <svg class="dock-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 19h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4L4 15v4" />
+                <path d="M13.5 6.5l4 4" />
+                <path d="M4 4l5 5" />
+                <path d="M4 9l5 -5" />
               </svg>
             </button>
             <span class="dock-separator"></span>

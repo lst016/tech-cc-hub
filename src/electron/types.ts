@@ -47,13 +47,6 @@ export type ApiConfig = {
   imageModel?: string;
   imageGenerationModel?: string;
   analysisModel?: string;
-  embeddingModel?: string;
-  embeddingDimension?: number;
-  embeddingBatchSize?: number;
-  wikiModel?: string;
-  wikiModelCostTier?: "free" | "cheap" | "standard";
-  wikiModelMaxInputTokens?: number;
-  wikiModelMaxOutputTokens?: number;
   models?: ApiModelConfig[];
   enabled: boolean;
   provider?: ApiProviderMode;

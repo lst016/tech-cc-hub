@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, relative } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import type { ClientEvent, PromptAttachment } from "../../types.js";
 
@@ -36,13 +37,36 @@ type SessionSendRequest = {
   source: PluginBridgeSource;
 };
 
+export type WorkspacePluginImageGenerationRequest = {
+  sessionId: string;
+  action: "generate" | "edit";
+  prompt: string;
+  referenceImagePaths: string[];
+};
+
+export type WorkspacePluginImageGenerationResult = {
+  success: boolean;
+  model?: string;
+  artifacts?: Array<{ path: string }>;
+  error?: string;
+};
+
+export type WorkspacePluginImageGenerator = (
+  request: WorkspacePluginImageGenerationRequest,
+) => Promise<WorkspacePluginImageGenerationResult>;
+
+export type WorkspacePluginDispatchEvent = Extract<ClientEvent, {
+  type: "session.continue" | "session.append";
+}>;
+
 export type WorkspacePluginBridgeInput = {
   sessionId: string;
   token: string;
   sessionStore: {
     getSession(sessionId: string): PluginBridgeSession | undefined;
   };
-  dispatch(event: Extract<ClientEvent, { type: "session.continue" }>): Promise<void> | void;
+  dispatch(event: WorkspacePluginDispatchEvent): Promise<void> | void;
+  generateImage?: WorkspacePluginImageGenerator;
 };
 
 export type WorkspacePluginBridge = {
@@ -97,6 +121,25 @@ function parseSessionSendRequest(value: unknown): SessionSendRequest | null {
   };
 }
 
+function parseImageGenerationRequest(value: unknown): WorkspacePluginImageGenerationRequest | null {
+  if (!isRecord(value) || typeof value.sessionId !== "string" || typeof value.prompt !== "string") return null;
+  if (value.action !== "generate" && value.action !== "edit") return null;
+  if (!Array.isArray(value.referenceImagePaths) || value.referenceImagePaths.length > 4) return null;
+  const referenceImagePaths = value.referenceImagePaths
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (referenceImagePaths.length !== value.referenceImagePaths.length) return null;
+  const prompt = value.prompt.trim();
+  if (!prompt) return null;
+  return {
+    sessionId: value.sessionId.trim(),
+    action: value.action,
+    prompt,
+    referenceImagePaths,
+  };
+}
+
 function isPathInsideRoot(rootPath: string, candidatePath: string): boolean {
   const relativePath = relative(rootPath, candidatePath);
   return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
@@ -136,6 +179,7 @@ async function createImageAttachment(input: {
     runtimeData: data,
     size: fileStat.size,
     storagePath: resolvedImagePath,
+    storageUri: pathToFileURL(resolvedImagePath).toString(),
   };
 }
 
@@ -169,6 +213,25 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     return;
   }
 
+  if (request.method === "POST" && request.url === "/v1/session/image-generate") {
+    if (!input.generateImage) {
+      writeJson(response, 403, { error: "This workspace plugin is not allowed to generate images." });
+      return;
+    }
+    try {
+      const body = parseImageGenerationRequest(await readJson(request));
+      if (!body || body.sessionId !== input.sessionId) {
+        writeJson(response, 400, { error: "Invalid workspace plugin image generation request." });
+        return;
+      }
+      const result = await input.generateImage(body);
+      writeJson(response, result.success ? 200 : 422, result);
+    } catch (error) {
+      writeJson(response, 500, { error: error instanceof Error ? error.message : "Plugin image generation failed." });
+    }
+    return;
+  }
+
   if (request.method !== "POST" || request.url !== "/v1/session/send") {
     writeJson(response, 404, { error: "Not found" });
     return;
@@ -190,14 +253,14 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       workspaceRoot: session.cwd,
       source: body.source,
     });
-    await input.dispatch({
-      type: "session.continue",
-      payload: {
-        sessionId: input.sessionId,
-        prompt: buildPluginPrompt(body.source, body.prompt ?? ""),
-        attachments: [attachment],
-      },
-    });
+    const payload = {
+      sessionId: input.sessionId,
+      prompt: buildPluginPrompt(body.source, body.prompt ?? ""),
+      attachments: [attachment],
+    };
+    await input.dispatch(session.status === "running"
+      ? { type: "session.append", payload }
+      : { type: "session.continue", payload });
     writeJson(response, 202, { status: "accepted" });
   } catch (error) {
     writeJson(response, 400, { error: error instanceof Error ? error.message : "Plugin request failed." });

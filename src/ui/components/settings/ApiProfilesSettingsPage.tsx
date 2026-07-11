@@ -17,6 +17,7 @@ import {
   type ImportedApiModel,
 } from "../../../shared/models/api-model-metadata";
 import { isLikelyImageUnderstandingModel } from "../../../shared/models/model-capabilities";
+import { ModelSelect } from "../models/ModelSelect";
 import {
   createCodexOAuthProfile,
   createDeepSeekOfficialProfile,
@@ -1226,104 +1227,74 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
                 )}
               </div>
 
-              <label className="grid gap-1.5">
-                <span className="text-xs font-medium text-muted">默认主模型</span>
-                <select
-                  className="rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
-                  value={profile.model}
-                  onChange={(event) => onChange((current) => current.map((item) => (
-                    item.id === profile.id
-                      ? { ...item, model: event.target.value }
-                      : item
-                  )))}
-                >
-                  {getAvailableModels(profile).map((item) => (
-                    <option key={item} value={item}>{item}</option>
-                  ))}
-                </select>
-              </label>
+              <ModelSelect
+                label="默认主模型"
+                value={profile.model}
+                models={getAvailableModels(profile)}
+                onChange={(value) => onChange((current) => current.map((item) => (
+                  item.id === profile.id
+                    ? { ...item, model: value }
+                    : item
+                )))}
+              />
 
-              <label className="grid gap-1.5">
-                <span className="text-xs font-medium text-muted">小模型 / 后台模型</span>
-                <select
-                  className="rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
-                  value={profile.smallModel ?? profile.model}
-                  onChange={(event) => onChange((current) => current.map((item) => (
-                    item.id === profile.id
-                      ? { ...item, smallModel: event.target.value }
-                      : item
-                  )))}
-                >
-                  {getAvailableModels(profile).map((item) => (
-                    <option key={`small-${item}`} value={item}>{item}</option>
-                  ))}
-                </select>
-                <span className="text-[11px] text-muted">
-                  用于标题生成、Haiku / small-fast 后台调用，避免 Claude Code 请求网关没有的官方小模型。
-                </span>
-              </label>
+              <ModelSelect
+                label="小模型 / 后台模型"
+                value={profile.smallModel ?? profile.model}
+                models={getAvailableModels(profile)}
+                onChange={(value) => onChange((current) => current.map((item) => (
+                  item.id === profile.id
+                    ? { ...item, smallModel: value }
+                    : item
+                )))}
+              />
+              <span className="-mt-0.5 text-[11px] text-muted">
+                用于标题生成、Haiku / small-fast 后台调用，避免 Claude Code 请求网关没有的官方小模型。
+              </span>
 
-              <label className="grid gap-1.5">
-                <span className="text-xs font-medium text-muted">图片预处理模型</span>
-                <select
-                  className="rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
-                  value={profile.imageModel ?? ""}
-                  onChange={(event) => onChange((current) => current.map((item) => (
-                    item.id === profile.id
-                      ? { ...item, imageModel: event.target.value || undefined }
-                      : item
-                  )))}
-                >
-                  <option value="">不预处理图片</option>
-                  {getAvailableModels(profile).map((item) => (
-                    <option key={`image-${item}`} value={item}>{item}</option>
-                  ))}
-                </select>
-                <span className="text-[11px] text-muted">
-                  有图片附件时，先走图片模型提取 OCR 和界面摘要，再把文本交给主 Agent。
-                </span>
-              </label>
+              <ModelSelect
+                label="图片预处理模型"
+                value={profile.imageModel ?? ""}
+                models={getAvailableModels(profile)}
+                emptyOption={{ value: "", label: "不预处理图片" }}
+                onChange={(value) => onChange((current) => current.map((item) => (
+                  item.id === profile.id
+                    ? { ...item, imageModel: value || undefined }
+                    : item
+                )))}
+              />
+              <span className="-mt-0.5 text-[11px] text-muted">
+                有图片附件时，先走图片模型提取 OCR 和界面摘要，再把文本交给主 Agent。
+              </span>
 
-              <label className="grid gap-1.5">
-                <span className="text-xs font-medium text-muted">生图模型</span>
-                <select
-                  className="rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
-                  value={profile.imageGenerationModel ?? ""}
-                  onChange={(event) => onChange((current) => current.map((item) => (
-                    item.id === profile.id
-                      ? { ...item, imageGenerationModel: event.target.value || undefined }
-                      : item
-                  )))}
-                >
-                  <option value="">不启用生图</option>
-                  {getAvailableModels(profile).map((item) => (
-                    <option key={`imagegen-${item}`} value={item}>{item}</option>
-                  ))}
-                </select>
-                <span className="text-[11px] text-muted">
-                  图片预处理模型负责看图；生图模型负责生成和编辑图片。生图要求网关支持 OpenAI Images 兼容接口。
-                </span>
-              </label>
+              <ModelSelect
+                label="生图模型"
+                value={profile.imageGenerationModel ?? ""}
+                models={getAvailableModels(profile)}
+                emptyOption={{ value: "", label: "不启用生图" }}
+                onChange={(value) => onChange((current) => current.map((item) => (
+                  item.id === profile.id
+                    ? { ...item, imageGenerationModel: value || undefined }
+                    : item
+                )))}
+              />
+              <span className="-mt-0.5 text-[11px] text-muted">
+                图片预处理模型负责看图；生图模型负责生成和编辑图片。生图要求网关支持 OpenAI Images 兼容接口。
+              </span>
 
-              <label className="grid gap-1.5">
-                <span className="text-xs font-medium text-muted">Prompt 分析模型</span>
-                <select
-                  className="rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
-                  value={profile.analysisModel ?? profile.model}
-                  onChange={(event) => onChange((current) => current.map((item) => (
-                    item.id === profile.id
-                      ? { ...item, analysisModel: event.target.value }
-                      : item
-                  )))}
-                >
-                  {getAvailableModels(profile).map((item) => (
-                    <option key={`analysis-${item}`} value={item}>{item}</option>
-                  ))}
-                </select>
-                <span className="text-[11px] text-muted">
-                  用于 Prompt 分布诊断、改写建议和上下文压缩建议，避免占用主执行模型的路由。
-                </span>
-              </label>
+              <ModelSelect
+                label="Prompt 分析模型"
+                value={profile.analysisModel ?? profile.model}
+                models={getAvailableModels(profile)}
+                onChange={(value) => onChange((current) => current.map((item) => (
+                  item.id === profile.id
+                    ? { ...item, analysisModel: value }
+                    : item
+                )))}
+              />
+              <span className="-mt-0.5 text-[11px] text-muted">
+                用于 Prompt 分布诊断、改写建议和上下文压缩建议，避免占用主执行模型的路由。
+              </span>
             </div>
           </div>
           );

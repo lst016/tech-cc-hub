@@ -93,20 +93,20 @@ test("image generation route returns NOT_CONFIGURED when no slot is set", () => 
   }
 });
 
-test("image generation route ignores slot when model not in config model list", () => {
+test("image generation route uses slot even when model is not in config model list", () => {
   const selected = {
     id: "selected",
     provider: "custom" as const,
     baseURL: "https://gateway.example.com/v1",
     apiKey: "sk-selected",
     imageGenerationModel: "gpt-image-2",
-    models: [{ name: "gpt-5.5" }], // 生图模型不在列表里
+    models: [{ name: "gpt-5.5" }], // 生图模型不在主模型列表里，但仍应可用
   };
 
   const route = resolveImageGenerationRoute(selected, [selected]);
-  assert.equal(route.ok, false);
-  if (!route.ok) {
-    assert.equal(route.code, "NOT_CONFIGURED");
+  assert.equal(route.ok, true);
+  if (route.ok) {
+    assert.equal(route.model, "gpt-image-2");
   }
 });
 

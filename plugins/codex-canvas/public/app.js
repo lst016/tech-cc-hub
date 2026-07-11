@@ -6,8 +6,6 @@ const objectLayer = document.querySelector("#objects");
 const emptyState = document.querySelector("#emptyState");
 const boardShell = document.querySelector(".board-shell");
 const projectTitle = document.querySelector("#projectTitle");
-const projectOptionsButton = document.querySelector(".project-header button");
-const projectMenu = document.querySelector("#projectMenu");
 const settingsButton = document.querySelector("#settingsButton");
 const settingsMenu = document.querySelector("#settingsMenu");
 const appVersionValue = document.querySelector("#appVersionValue");
@@ -45,10 +43,12 @@ const languageStorageKey = "codexCanvasLanguage";
 const toolColorStorageKey = "codexCanvasToolColor";
 const toolColors = ["#202124", "#d93025", "#f9ab00", "#188038", "#1a73e8", "#9334e6", "#ffffff"];
 const defaultQuickEditMarkColor = "#d93025";
+const defaultAnnotationColor = "#d93025";
+const annotationMinimumLength = 8;
+const annotationPadding = 18;
 const initialSearchParams = new URLSearchParams(window.location.search);
 let currentProjectId = initialSearchParams.get("project") || "";
 let currentThreadId = initialSearchParams.get("threadId") || initialSearchParams.get("thread-id") || "";
-let registeredProjects = [];
 const pendingTextRecognitionCancels = new Set();
 let quickEditAutoColorPrevious = null;
 
@@ -77,9 +77,6 @@ const translations = {
     updateRunning: "Updating...",
     updateDone: "Updated. Close the canvas and start a new Codex task to load the new version.",
     updateFailed: "Update failed.",
-    projectOptions: "Project options",
-    switchCanvas: "Switch canvas",
-    currentCanvas: "Current",
     promptHistory: "Prompt history",
     promptHistorySearch: "Filter prompts",
     promptHistoryLoading: "Loading prompts...",
@@ -103,6 +100,11 @@ const translations = {
     versionGroupAnnotate: "Diff",
     versionDiffLabel: "Pixel diff",
     textPlaceholder: "Text",
+    annotationLabelPlaceholder: "Describe the requested change",
+    annotationSelectImage: "Select an image before drawing an annotation.",
+    annotationCreated: "Annotation added. Type the requested change.",
+    annotationEditStarted: "Generating from the annotated reference...",
+    annotationEditDone: "Generate-from-annotations job started in Canvas.",
     quickEditPlaceholder: "Describe your edit here",
     expandPlaceholder: "Describe what should extend beyond the image edges",
     quickEditEmpty: "Describe the edit first.",
@@ -137,7 +139,6 @@ const translations = {
     jobDeleteBlocked: "A running image job cannot be deleted. Wait for it to finish or fail.",
     chatSendStarted: "Sending image to bound chat...",
     chatSendDone: "Image submitted to the current visible chat.",
-    chatSendNote: "Add a note for the current chat (optional):",
     fileMentionCopied: "@file reference copied. Paste it into the Codex chat box.",
     fileMentionCopyFailed: "Could not copy @file reference.",
     chatNotBound: "Bind this canvas to a Codex thread first.",
@@ -149,7 +150,9 @@ const translations = {
       "remove-bg": "Remove BG",
       "expand": "Expand",
       "crop": "Crop",
-      "edit-elements": "Edit Elements",
+      "annotation-edit": "Generate from annotations",
+      "delete-selected": "Delete",
+      "edit-elements": "Split Layers",
       "reset-layer-group": "Reset group",
       "layer-up": "Layer up",
       "layer-down": "Layer down",
@@ -164,7 +167,9 @@ const translations = {
       "remove-bg": "Remove BG",
       "expand": "Expand",
       "crop": "Crop",
-      "edit-elements": "Edit Elements",
+      "annotation-edit": "Generate from annotations",
+      "delete-selected": "Delete",
+      "edit-elements": "Split Layers",
       "reset-layer-group": "Reset group",
       "layer-up": "Layer up",
       "layer-down": "Layer down",
@@ -179,6 +184,7 @@ const translations = {
       select: "Select",
       pencil: "Pencil",
       text: "Text",
+      annotation: "Annotate",
       "upload-image": "Upload image"
     },
     controls: {
@@ -190,6 +196,7 @@ const translations = {
       image: "Image",
       text: "Text",
       drawing: "Drawing",
+      "annotation-arrow": "Annotation",
       job: "Job"
     }
   },
@@ -217,9 +224,6 @@ const translations = {
     updateRunning: "更新中...",
     updateDone: "已更新。请关闭画布并新建 Codex 任务，以加载新版 MCP 和技能。",
     updateFailed: "更新失败。",
-    projectOptions: "项目选项",
-    switchCanvas: "切换画布",
-    currentCanvas: "当前",
     promptHistory: "提示词历史",
     promptHistorySearch: "筛选提示词",
     promptHistoryLoading: "正在加载提示词...",
@@ -277,7 +281,6 @@ const translations = {
     jobDeleteBlocked: "图片任务仍在运行，完成或失败后才能删除。",
     chatSendStarted: "正在发送图片到已绑定对话...",
     chatSendDone: "图片已提交到当前可见对话。",
-    chatSendNote: "给当前对话添加备注（可留空）：",
     fileMentionCopied: "@file 引用已复制，请粘贴到 Codex 聊天框。",
     fileMentionCopyFailed: "无法复制 @file 引用。",
     chatNotBound: "请先把画布绑定到 Codex thread。",
@@ -289,7 +292,8 @@ const translations = {
       "remove-bg": "去背景",
       "expand": "扩图",
       "crop": "裁剪",
-      "edit-elements": "编辑元素",
+      "delete-selected": "删除",
+      "edit-elements": "拆分图层",
       "reset-layer-group": "重置组",
       "layer-up": "上移一层",
       "layer-down": "下移一层",
@@ -304,7 +308,8 @@ const translations = {
       "remove-bg": "去背景",
       "expand": "扩图",
       "crop": "裁剪",
-      "edit-elements": "编辑元素",
+      "delete-selected": "删除",
+      "edit-elements": "拆分图层",
       "reset-layer-group": "重置组",
       "layer-up": "上移一层",
       "layer-down": "下移一层",
@@ -335,6 +340,26 @@ const translations = {
   }
 };
 
+Object.assign(translations.zh, {
+  annotationLabelPlaceholder: "\u8f93\u5165\u5e0c\u671b\u4fee\u6539\u7684\u5185\u5bb9",
+  annotationSelectImage: "\u8bf7\u5148\u9009\u62e9\u4e00\u5f20\u56fe\u7247\u518d\u6807\u6ce8\u3002",
+  annotationCreated: "\u6807\u6ce8\u5df2\u6dfb\u52a0\uff0c\u8bf7\u8f93\u5165\u5e0c\u671b\u7684\u4fee\u6539\u3002",
+  annotationEditStarted: "\u6b63\u5728\u6309\u6807\u6ce8\u751f\u6210...",
+  annotationEditDone: "\u6309\u6807\u6ce8\u751f\u6210\u4efb\u52a1\u5df2\u5728\u753b\u5e03\u4e2d\u542f\u52a8\u3002"
+});
+Object.assign(translations.zh.actions, {
+  "annotation-edit": "\u6309\u6807\u6ce8\u751f\u6210"
+});
+Object.assign(translations.zh.actionNames, {
+  "annotation-edit": "\u6309\u6807\u6ce8\u751f\u6210"
+});
+Object.assign(translations.zh.tools, {
+  annotation: "\u6807\u6ce8"
+});
+Object.assign(translations.zh.objectTypes, {
+  "annotation-arrow": "\u6807\u6ce8"
+});
+
 let state = null;
 let knownObjectIds = null;
 let suppressNextAutoFocus = false;
@@ -349,6 +374,7 @@ let language = loadLanguage();
 let drag = null;
 let resize = null;
 let drawing = null;
+let annotationDrawing = null;
 let marquee = null;
 let cropSession = null;
 let cropDrag = null;
@@ -374,6 +400,8 @@ let versionDiffOverlay = null;
 let versionDiffHeatmapToken = 0;
 let appUpdateInfo = null;
 let appUpdateBusy = false;
+let boundSessionTitle = "";
+let projectTitleEdited = false;
 const composerImageActions = new Set(["quick-edit", "expand", "edit-text"]);
 const immediateImageJobActions = new Set(["remove-bg", "edit-elements"]);
 const groupSelectionActions = new Set(["reset-layer-group", "layer-up", "layer-down", "group-layer-group"]);
@@ -387,6 +415,7 @@ const singleSelectionActions = new Set([
   ...composerImageActions,
   ...immediateImageJobActions,
   "crop",
+  "annotation-edit",
   "send-to-chat",
   "copy-file-mention"
 ]);
@@ -396,10 +425,11 @@ applyLanguage();
 setActiveTool(defaultCanvasTool);
 renderCanvasHistoryStatus();
 renderColorPalette();
-await loadProjects();
 await loadState();
+await loadBoundSessionTitle();
 refreshAppUpdateStatus({ checkRemote: true }).catch(() => {});
 setInterval(loadState, 2000);
+setInterval(() => { loadBoundSessionTitle().catch(() => {}); }, 5000);
 
 projectTitle.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
@@ -407,16 +437,17 @@ projectTitle.addEventListener("keydown", (event) => {
     projectTitle.blur();
   }
   if (event.key === "Escape") {
-    projectTitle.value = state?.title || "Untitled";
+    projectTitleEdited = false;
+    projectTitle.value = currentProjectDisplayTitle();
     projectTitle.blur();
   }
 });
 
-projectTitle.addEventListener("blur", saveProjectTitle);
-
-projectOptionsButton?.addEventListener("click", (event) => {
-  event.stopPropagation();
-  toggleProjectMenu();
+projectTitle.addEventListener("focus", () => { projectTitleEdited = false; });
+projectTitle.addEventListener("input", () => { projectTitleEdited = true; });
+projectTitle.addEventListener("blur", () => {
+  if (projectTitleEdited) saveProjectTitle();
+  else projectTitle.value = currentProjectDisplayTitle();
 });
 
 settingsButton.addEventListener("click", (event) => {
@@ -500,7 +531,6 @@ canvasSearch.input.addEventListener("input", scheduleCanvasSearch);
 canvasSearch.type.addEventListener("change", runCanvasSearch);
 canvasSearch.input.addEventListener("focus", () => {
   settingsMenu.hidden = true;
-  projectMenu.hidden = true;
   closePromptHistoryPanel();
   canvasSearch.panel.classList.add("active");
   if (canvasSearch.input.value.trim() || searchResults.length) {
@@ -554,6 +584,14 @@ document.addEventListener("click", (event) => {
       startCropMode();
       return;
     }
+    if (action === "annotation-edit") {
+      startAnnotationImageJob();
+      return;
+    }
+    if (action === "delete-selected") {
+      deleteSelectedObject();
+      return;
+    }
     if (immediateImageJobActions.has(action)) {
       startImageJob(action);
       return;
@@ -587,6 +625,11 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && annotationDrawing) {
+    event.preventDefault();
+    cancelAnnotation();
+    return;
+  }
   const historyDirection = canvasHistoryShortcut(event);
   if (historyDirection) {
     if (isNativeUndoTarget(event.target)) return;
@@ -634,6 +677,10 @@ board.addEventListener("pointerdown", (event) => {
       startDrawing(event);
       return;
     }
+    if (activeTool === "annotation") {
+      startAnnotation(event);
+      return;
+    }
     if (activeTool === "text") {
       createTextObject(event);
       return;
@@ -656,9 +703,6 @@ document.addEventListener("pointerdown", (event) => {
   }
   if (!isCanvasSearchEvent) {
     closeCanvasSearch({ keepQuery: true });
-  }
-  if (!event.target.closest("#projectMenu, .project-header button")) {
-    projectMenu.hidden = true;
   }
   if (isSettingsEvent || isPromptHistoryEvent || isCanvasSearchEvent) return;
   if (!quickEditObjectId && !selectedId && selectedIds.size === 0) return;
@@ -848,7 +892,6 @@ function togglePromptHistoryPanel() {
   const nextOpen = promptHistoryUi.panel.hidden;
   if (nextOpen) {
     settingsMenu.hidden = true;
-    projectMenu.hidden = true;
     promptHistoryUi.panel.hidden = false;
     promptHistoryUi.button.classList.add("active");
     fetchDiscoveryPanel();
@@ -1192,6 +1235,16 @@ async function loadState() {
   if (autoFocusObject) frameCanvasObject(autoFocusObject);
 }
 
+async function loadBoundSessionTitle() {
+  const response = await fetch(apiPath("/api/session"));
+  if (!response.ok) return;
+  const payload = await response.json();
+  const nextTitle = typeof payload?.session?.title === "string" ? payload.session.title.trim() : "";
+  if (nextTitle === boundSessionTitle) return;
+  boundSessionTitle = nextTitle;
+  if (document.activeElement !== projectTitle) projectTitle.value = currentProjectDisplayTitle();
+}
+
 function autoFocusObjectForStateUpdate(nextState, addedObjects) {
   if (!Array.isArray(addedObjects) || addedObjects.length === 0) return null;
   const selectedNewObject = addedObjects.find((object) => object.id === nextState.selection);
@@ -1202,72 +1255,6 @@ function autoFocusObjectForStateUpdate(nextState, addedObjects) {
 function isAutoFocusableObject(object) {
   const type = object?.type || "image";
   return type === "image" || type === "job";
-}
-
-async function loadProjects() {
-  const response = await fetch("/api/projects");
-  const payload = await response.json();
-  registeredProjects = Array.isArray(payload.projects) ? payload.projects : [];
-  if (!currentProjectId && registeredProjects.length > 0) {
-    currentProjectId = registeredProjects[0].id;
-    const url = new URL(window.location.href);
-    url.searchParams.set("project", currentProjectId);
-    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
-  }
-  renderProjectMenu();
-}
-
-async function toggleProjectMenu() {
-  if (!projectMenu) return;
-  if (projectMenu.hidden) {
-    await loadProjects().catch(() => {});
-    projectMenu.hidden = false;
-  } else {
-    projectMenu.hidden = true;
-  }
-}
-
-function renderProjectMenu() {
-  if (!projectMenu) return;
-  projectMenu.replaceChildren();
-
-  const title = document.createElement("div");
-  title.className = "project-menu-title";
-  title.textContent = t("switchCanvas");
-  projectMenu.append(title);
-
-  for (const project of registeredProjects) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.dataset.projectId = project.id;
-    button.className = project.id === currentProjectId ? "active" : "";
-
-    const name = document.createElement("span");
-    name.className = "project-menu-name";
-    name.textContent = project.title || basename(project.projectDir) || project.id;
-    button.append(name);
-
-    const pathLabel = document.createElement("span");
-    pathLabel.className = "project-menu-path";
-    pathLabel.textContent = project.id === currentProjectId ? t("currentCanvas") : project.projectDir;
-    button.append(pathLabel);
-
-    button.addEventListener("click", () => switchProject(project));
-    projectMenu.append(button);
-  }
-}
-
-function switchProject(project) {
-  const projectId = project?.id || "";
-  if (!projectId || projectId === currentProjectId) {
-    projectMenu.hidden = true;
-    return;
-  }
-  const url = new URL(window.location.href);
-  url.searchParams.set("project", projectId);
-  if (project.chatThreadId) url.searchParams.set("threadId", project.chatThreadId);
-  else url.searchParams.delete("threadId");
-  window.location.href = `${url.pathname}${url.search}`;
 }
 
 function createCanvasSearchUi() {
@@ -1485,8 +1472,14 @@ function searchResultSnippet(result) {
 }
 
 function render() {
+  if (render.isRendering) {
+    render.needsRefresh = true;
+    return;
+  }
+  render.isRendering = true;
+  try {
   if (document.activeElement !== projectTitle) {
-    projectTitle.value = state.title || "Untitled";
+    projectTitle.value = currentProjectDisplayTitle();
   }
   objectLayer.replaceChildren();
   emptyState.hidden = state.objects.length > 0;
@@ -1502,13 +1495,18 @@ function render() {
 
   const selectedGroupId = selectedLayerGroupId();
   const visibleSelection = selectedObjectIds();
+  const annotatedSourceImageIds = new Set(state.objects
+    .filter((object) => object.type === "annotation-arrow" || object.isAnnotationLabel === true)
+    .map((object) => object.sourceImageId)
+    .filter(Boolean));
   for (const object of state.objects) {
     const element = document.createElement("div");
     const objectType = object.type || "image";
     const isSelectedObject = visibleSelection.has(object.id) && !selectedGroupId;
     const isSelectedGroupMember = selectedGroupId && object.layerGroupId === selectedGroupId;
     const isFillingBackground = object.layerGroupKind === "background" && object.layerGroupBackgroundStatus === "filling";
-    element.className = `canvas-object ${objectType}-object${object.hasAlpha ? " alpha-image-object" : ""}${isSelectedObject ? " selected" : ""}${isSelectedGroupMember ? " layer-group-member-selected" : ""}${isFillingBackground ? " layer-background-filling" : ""}`;
+    const annotationPositionClass = object.isAnnotationLabel === true ? annotationLabelPositionClass(object) : "";
+    element.className = `canvas-object ${objectType}-object${object.isAnnotationLabel === true ? ` annotation-label-object ${annotationPositionClass}` : ""}${object.hasAlpha ? " alpha-image-object" : ""}${isSelectedObject ? " selected" : ""}${isSelectedGroupMember ? " layer-group-member-selected" : ""}${isFillingBackground ? " layer-background-filling" : ""}`;
     element.style.left = `${object.x}px`;
     element.style.top = `${object.y}px`;
     element.style.width = `${object.width}px`;
@@ -1518,7 +1516,9 @@ function render() {
       applyImageAnnotationMetadata(element, object);
     }
 
-    if (object.type === "drawing") {
+    if (object.type === "annotation-arrow") {
+      element.append(renderAnnotationArrowObject(object));
+    } else if (object.type === "drawing") {
       element.append(renderDrawingObject(object));
     } else if (object.type === "text") {
       element.append(renderTextObject(object));
@@ -1548,18 +1548,35 @@ function render() {
         element.append(renderCropOverlay(object));
       }
     }
+    if ((object.type || "image") === "image" && annotatedSourceImageIds.has(object.id)) {
+      element.append(renderAnnotationEditTrigger(object));
+    }
+    if (object.type === "text" && object.isAnnotationLabel === true) {
+      element.append(renderAnnotationDeleteTrigger(object));
+    }
 
     element.addEventListener("pointerdown", (event) => {
       if (event.button !== 0 || event.isPrimary === false || activeTool === "hand") return;
+      const textTarget = event.target.closest(".text-content");
+      if (object.type === "text" && object.isAnnotationLabel && textTarget) {
+        event.stopPropagation();
+        if (editingTextId === object.id) return;
+        setLocalSelection([object.id], { fromUser: true });
+        updateSelectionUi();
+        return;
+      }
       if (activeTool === "pencil") {
         startDrawing(event);
+        return;
+      }
+      if (activeTool === "annotation") {
+        startAnnotation(event, object);
         return;
       }
       if (activeTool === "text") {
         createTextObject(event);
         return;
       }
-      const textTarget = event.target.closest(".text-content");
       if (object.type === "text" && editingTextId === object.id && textTarget) {
         if (event.detail >= 2) return;
         textTarget.blur();
@@ -1594,8 +1611,16 @@ function render() {
   }
   const expandPreview = renderExpandPreviewFrame();
   if (expandPreview) objectLayer.append(expandPreview);
+  if (annotationDrawing?.preview) objectLayer.append(annotationDrawing.preview);
 
   updateSelectionUi();
+  } finally {
+    render.isRendering = false;
+    if (render.needsRefresh) {
+      render.needsRefresh = false;
+      render();
+    }
+  }
 }
 
 function renderExpandPreviewFrame() {
@@ -1842,20 +1867,158 @@ function renderDrawingObject(object) {
   return svg;
 }
 
+function renderAnnotationArrowObject(object) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.classList.add("annotation-arrow-content");
+  svg.setAttribute("width", "100%");
+  svg.setAttribute("height", "100%");
+  svg.setAttribute("aria-hidden", "true");
+
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  const arrowhead = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  line.classList.add("annotation-arrow-line");
+  arrowhead.classList.add("annotation-arrow-head");
+  svg.append(line, arrowhead);
+  updateAnnotationArrowElement(svg, object);
+  return svg;
+}
+
+function renderAnnotationEditTrigger(object) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "annotation-edit-trigger";
+  button.textContent = actionLabel("annotation-edit");
+  button.title = actionLabel("annotation-edit");
+  button.setAttribute("aria-label", actionLabel("annotation-edit"));
+  button.addEventListener("pointerdown", (event) => event.stopPropagation());
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setActiveTool("select");
+    setLocalSelection([object.id], { fromUser: true });
+    render();
+    startAnnotationImageJob();
+  });
+  return button;
+}
+
+function renderAnnotationDeleteTrigger(object) {
+  const button = document.createElement("button");
+  const label = language === "zh" ? "删除标注" : "Delete annotation";
+  button.type = "button";
+  button.className = "annotation-delete-trigger";
+  button.style.left = `${annotationDeleteOffset(object)}px`;
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("viewBox", "0 0 24 24");
+  icon.setAttribute("aria-hidden", "true");
+  icon.innerHTML = '<path d="M7 7l10 10M17 7 7 17" />';
+  button.append(icon);
+  button.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setLocalSelection([object.id], { fromUser: true });
+    editingTextId = null;
+    deleteSelectedObject();
+  });
+  return button;
+}
+
+function annotationDeleteOffset(object) {
+  const fontSize = Math.min(object.fontSize || 14, 14);
+  const canvas = annotationDeleteOffset.canvas || (annotationDeleteOffset.canvas = document.createElement("canvas"));
+  const context = canvas.getContext("2d");
+  context.font = `500 ${fontSize}px "Microsoft YaHei UI", "Segoe UI", sans-serif`;
+  const textWidth = String(object.text || "")
+    .split(/\r?\n/)
+    .reduce((width, line) => Math.max(width, context.measureText(line).width), 0);
+  const zoom = Math.max(viewport.zoom, 0.01);
+  const deleteSize = 16 / zoom;
+  if (annotationLabelPositionClass(object) === "annotation-label-before-target") {
+    return Math.max(0, object.width - deleteSize);
+  }
+  return Math.max(0, Math.min(object.width - deleteSize, Math.ceil(textWidth) + (5 / zoom)));
+}
+
+function annotationLabelPositionClass(object) {
+  const arrow = state?.objects.find((item) => item.id === object.annotationArrowId && item.type === "annotation-arrow");
+  const endpoint = Array.isArray(arrow?.points) ? arrow.points[1] : null;
+  if (!endpoint) return "annotation-label-after-target";
+  const endpointX = arrow.x + endpoint.x;
+  return object.x + object.width <= endpointX
+    ? "annotation-label-before-target"
+    : "annotation-label-after-target";
+}
+
+function updateAnnotationArrowElement(svg, object) {
+  svg.setAttribute("viewBox", `0 0 ${object.width} ${object.height}`);
+  const line = svg.querySelector(".annotation-arrow-line");
+  const arrowhead = svg.querySelector(".annotation-arrow-head");
+  const [start, end] = Array.isArray(object.points) ? object.points : [];
+  if (!line || !arrowhead || !start || !end) return;
+  const color = object.stroke || defaultAnnotationColor;
+  const strokeWidth = object.strokeWidth || 4;
+  const control = annotationCurveControlPoint(start, end);
+  const linePath = `M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`;
+  for (const path of [line, arrowhead]) {
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", color);
+    path.setAttribute("stroke-width", String(strokeWidth));
+    path.setAttribute("stroke-linecap", "round");
+  }
+  line.setAttribute("d", linePath);
+  arrowhead.setAttribute("d", annotationArrowheadPath(control, start, Math.max(10, strokeWidth * 3)));
+  arrowhead.setAttribute("stroke-linejoin", "round");
+}
+
+function annotationCurveControlPoint(start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const distance = Math.hypot(dx, dy);
+  if (distance < 0.001) return { x: start.x, y: start.y };
+  let normalX = -dy / distance;
+  let normalY = dx / distance;
+  if (normalY > 0) {
+    normalX *= -1;
+    normalY *= -1;
+  }
+  const bend = Math.min(40, Math.max(12, distance * 0.18));
+  return {
+    x: (start.x + end.x) / 2 + normalX * bend,
+    y: (start.y + end.y) / 2 + normalY * bend
+  };
+}
+
+function annotationArrowheadPath(start, end, length) {
+  const angle = Math.atan2(end.y - start.y, end.x - start.x);
+  const wing = Math.PI / 6;
+  const first = {
+    x: end.x - Math.cos(angle - wing) * length,
+    y: end.y - Math.sin(angle - wing) * length
+  };
+  const second = {
+    x: end.x - Math.cos(angle + wing) * length,
+    y: end.y - Math.sin(angle + wing) * length
+  };
+  return `M ${first.x} ${first.y} L ${end.x} ${end.y} L ${second.x} ${second.y}`;
+}
+
 function renderTextObject(object) {
   const text = document.createElement("div");
-  text.className = "text-content";
+  text.className = `text-content${object.isAnnotationLabel ? " annotation-label" : ""}`;
   text.textContent = object.text || "Text";
   text.contentEditable = String(editingTextId === object.id);
   text.spellcheck = false;
-  text.style.fontSize = `${object.fontSize || 28}px`;
+  text.style.fontSize = `${object.isAnnotationLabel ? Math.min(object.fontSize || 14, 14) : (object.fontSize || 28)}px`;
   text.style.color = object.color || "#202124";
   text.addEventListener("dblclick", (event) => {
     event.stopPropagation();
-    editingTextId = object.id;
-    setLocalSelection([object.id], { fromUser: true });
-    render();
-    focusTextObject(object.id);
+    beginTextEditing(object.id);
   });
   text.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
@@ -1872,6 +2035,19 @@ function renderTextObject(object) {
     saveTextObject(object.id, text.textContent || "Text");
   });
   return text;
+}
+
+function beginTextEditing(id) {
+  const object = state.objects.find((item) => item.id === id);
+  if (!object || object.type !== "text") return;
+  if (editingTextId === id) {
+    focusTextObject(id);
+    return;
+  }
+  editingTextId = id;
+  setLocalSelection([id], { fromUser: true });
+  render();
+  focusTextObject(id);
 }
 
 function renderJobObject(object) {
@@ -2839,6 +3015,171 @@ function startPan(event) {
   }
 }
 
+function startAnnotation(event, targetObject = null) {
+  if (annotationDrawing) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const start = pointerToWorld(event);
+  const source = annotationSourceFor(start, targetObject);
+  if (!source) {
+    showToast(t("annotationSelectImage"));
+    return;
+  }
+
+  board.classList.add("annotating");
+  try {
+    board.setPointerCapture(event.pointerId);
+  } catch {
+    // Window listeners below keep the interaction usable if pointer capture is unavailable.
+  }
+  const preview = document.createElement("div");
+  preview.className = "canvas-object annotation-arrow-object annotation-preview";
+  preview.setAttribute("aria-hidden", "true");
+  objectLayer.append(preview);
+  annotationDrawing = {
+    pointerId: event.pointerId,
+    sourceImageId: source.id,
+    start,
+    end: start,
+    preview
+  };
+  updateAnnotationPreview();
+  board.addEventListener("pointermove", moveAnnotation);
+  board.addEventListener("pointerup", endAnnotation, { once: true });
+  board.addEventListener("pointercancel", cancelAnnotation, { once: true });
+}
+
+function annotationSourceFor(start, targetObject = null) {
+  if ((targetObject?.type || "image") === "image") return targetObject;
+  const selected = state.objects.find((object) => object.id === selectedId);
+  if ((selected?.type || "image") === "image") return selected;
+  return state.objects.find((object) => (object.type || "image") === "image" && pointInsideObject(start, object)) || null;
+}
+
+function pointInsideObject(point, object) {
+  return point.x >= object.x
+    && point.x <= object.x + object.width
+    && point.y >= object.y
+    && point.y <= object.y + object.height;
+}
+
+function moveAnnotation(event) {
+  if (!annotationDrawing || event.pointerId !== annotationDrawing.pointerId) return;
+  annotationDrawing.end = pointerToWorld(event);
+  updateAnnotationPreview();
+}
+
+async function endAnnotation(event) {
+  if (event && annotationDrawing && event.pointerId !== annotationDrawing.pointerId) return;
+  board.classList.remove("annotating");
+  board.removeEventListener("pointermove", moveAnnotation);
+  board.removeEventListener("pointercancel", cancelAnnotation);
+  if (!annotationDrawing) return;
+  const active = annotationDrawing;
+  annotationDrawing = null;
+  active.preview.remove();
+  releaseBoardPointer(active.pointerId);
+  if (Math.hypot(active.end.x - active.start.x, active.end.y - active.start.y) < annotationMinimumLength / Math.max(viewport.zoom, 0.01)) return;
+
+  try {
+    const payload = annotationArrowPayload(active.start, active.end, active.sourceImageId);
+    const arrow = await createObject(payload);
+    const label = await createAnnotationLabel(arrow);
+    setLocalSelection([label.id], { fromUser: true });
+    editingTextId = label.id;
+    setActiveTool("select");
+    render();
+    focusTextObject(label.id);
+    showToast(t("annotationCreated"));
+  } catch (error) {
+    showToast(error?.message || t("jobFailed"));
+  }
+}
+
+function cancelAnnotation() {
+  board.classList.remove("annotating");
+  board.removeEventListener("pointermove", moveAnnotation);
+  if (!annotationDrawing) return;
+  const active = annotationDrawing;
+  annotationDrawing = null;
+  active.preview.remove();
+  releaseBoardPointer(active.pointerId);
+}
+
+function annotationArrowPayload(start, end, sourceImageId) {
+  const bounds = annotationBoundsForPoints(start, end);
+  return {
+    type: "annotation-arrow",
+    name: "Annotation arrow",
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    points: [
+      { x: Math.round(start.x - bounds.x), y: Math.round(start.y - bounds.y) },
+      { x: Math.round(end.x - bounds.x), y: Math.round(end.y - bounds.y) }
+    ],
+    stroke: activeColor || defaultAnnotationColor,
+    strokeWidth: 4,
+    arrowhead: "start",
+    curve: "quadratic",
+    sourceImageId
+  };
+}
+
+function annotationBoundsForPoints(start, end) {
+  const left = Math.min(start.x, end.x) - annotationPadding;
+  const top = Math.min(start.y, end.y) - annotationPadding;
+  const right = Math.max(start.x, end.x) + annotationPadding;
+  const bottom = Math.max(start.y, end.y) + annotationPadding;
+  return {
+    x: Math.round(left),
+    y: Math.round(top),
+    width: Math.max(1, Math.round(right - left)),
+    height: Math.max(1, Math.round(bottom - top))
+  };
+}
+
+function updateAnnotationPreview() {
+  if (!annotationDrawing) return;
+  const payload = annotationArrowPayload(
+    annotationDrawing.start,
+    annotationDrawing.end,
+    annotationDrawing.sourceImageId
+  );
+  const preview = annotationDrawing.preview;
+  preview.style.left = `${payload.x}px`;
+  preview.style.top = `${payload.y}px`;
+  preview.style.width = `${payload.width}px`;
+  preview.style.height = `${payload.height}px`;
+  const arrow = preview.querySelector(".annotation-arrow-content");
+  if (arrow) updateAnnotationArrowElement(arrow, payload);
+  else preview.append(renderAnnotationArrowObject(payload));
+}
+
+async function createAnnotationLabel(arrow) {
+  const start = arrow.points?.[0] || { x: arrow.width / 2, y: arrow.height / 2 };
+  const end = arrow.points?.[1] || start;
+  const labelWidth = 236;
+  const endX = arrow.x + end.x;
+  const endY = arrow.y + end.y;
+  const labelGap = 4;
+  const labelX = end.x < start.x ? endX - labelWidth - labelGap : endX + labelGap;
+  return createObject({
+    type: "text",
+    text: t("annotationLabelPlaceholder"),
+    x: Math.round(labelX),
+    y: Math.round(endY - 26),
+    width: labelWidth,
+    height: 42,
+    fontSize: 14,
+    color: arrow.stroke || defaultAnnotationColor,
+    sourceImageId: arrow.sourceImageId,
+    annotationArrowId: arrow.id,
+    isAnnotationLabel: true
+  });
+}
+
 function startDrawing(event) {
   event.preventDefault();
   selectObject(null, { renderNow: false });
@@ -2973,7 +3314,8 @@ function deleteSelectedObject() {
   const ids = selectedIds.size ? [...selectedIds] : (selectedId ? [selectedId] : []);
   if (!ids.length) return;
   const groupId = ids.length === 1 ? selectedLayerGroupId() : null;
-  const deleteIds = groupId ? layerGroupMembers(groupId).map((object) => object.id) : ids;
+  const initialIds = groupId ? layerGroupMembers(groupId).map((object) => object.id) : ids;
+  const deleteIds = relatedAnnotationDeleteIds(initialIds);
   const blockedJob = state.objects.find((object) => deleteIds.includes(object.id)
     && object.type === "job"
     && !["done", "failed"].includes(object.status));
@@ -3073,15 +3415,12 @@ function cloneCanvasObject(object) {
 }
 
 function updateCanvasScope(serverScope = null) {
-  const project = registeredProjects.find((item) => item.id === currentProjectId)
-    || registeredProjects.find((item) => item.chatThreadId && item.chatThreadId === currentThreadId)
-    || null;
   const nextScope = serverScope && typeof serverScope === "object"
     ? serverScope
     : {
-        projectId: project?.id || currentProjectId || null,
-        canvasId: project?.canvasId || null,
-        threadId: project?.chatThreadId || currentThreadId || null
+        projectId: currentProjectId || null,
+        canvasId: null,
+        threadId: currentThreadId || null
       };
   if (!nextScope.projectId && !nextScope.canvasId && !nextScope.threadId) return;
   canvasScope = {
@@ -3435,9 +3774,6 @@ async function startImageJob(action, options = {}) {
 async function sendSelectedImageToChat() {
   const object = state.objects.find((item) => item.id === selectedId);
   if (!object || (object.type || "image") !== "image") return;
-  const prompt = window.prompt(t("chatSendNote"), "");
-  if (prompt === null) return;
-
   showToast(t("chatSendStarted"));
   try {
     const response = await fetch(apiPath("/api/chat-turn"), {
@@ -3446,7 +3782,7 @@ async function sendSelectedImageToChat() {
       body: JSON.stringify({
         action: "send-to-chat",
         objectId: object.id,
-        prompt
+        prompt: ""
       })
     });
     const result = await response.json();
@@ -3457,6 +3793,32 @@ async function sendSelectedImageToChat() {
     showToast(t("chatSendDone"));
   } catch (error) {
     showToast(error?.message || `${labelAction("send-to-chat")} ${t("jobFailed")}`);
+  }
+}
+
+async function startAnnotationImageJob() {
+  const object = state.objects.find((item) => item.id === selectedId);
+  if (!object || (object.type || "image") !== "image") return;
+  showToast(t("annotationEditStarted"));
+  try {
+    const response = await fetch(apiPath("/api/annotation-edit"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(withExpectedCanvasScope({
+        action: "annotation-edit",
+        objectId: object.id
+      }))
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(result.error || `${labelAction("annotation-edit")} ${t("jobFailed")}`);
+    }
+    await loadState();
+    frameJobPlacement(object.id, result.placeholder || null);
+    pollImageJob(result.id);
+    showToast(t("annotationEditDone"));
+  } catch (error) {
+    showToast(error?.message || `${labelAction("annotation-edit")} ${t("jobFailed")}`);
   }
 }
 
@@ -3989,6 +4351,9 @@ function isDeleteEditingTarget(target) {
 
 function setActiveTool(tool) {
   activeTool = tool || defaultCanvasTool;
+  if (activeTool === "annotation" && activeColor === "#202124") {
+    activeColor = defaultAnnotationColor;
+  }
   toolDock.querySelectorAll("[data-tool]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tool === activeTool);
   });
@@ -3999,6 +4364,7 @@ function setActiveTool(tool) {
   board.classList.toggle("tool-hand", activeTool === "hand");
   board.classList.toggle("tool-pencil", activeTool === "pencil");
   board.classList.toggle("tool-text", activeTool === "text");
+  board.classList.toggle("tool-annotation", activeTool === "annotation");
   updateColorPalette();
 }
 
@@ -4033,7 +4399,7 @@ function renderColorPaletteInto(container) {
 }
 
 function updateColorPalette() {
-  colorPalette.hidden = Boolean(quickEditObjectId) || !(activeTool === "pencil" || activeTool === "text");
+  colorPalette.hidden = Boolean(quickEditObjectId) || !(activeTool === "pencil" || activeTool === "text" || activeTool === "annotation");
   for (const palette of [colorPalette, quickEditColorPalette].filter(Boolean)) {
     palette.querySelectorAll("[data-color]").forEach((button) => {
       button.classList.toggle("active", button.dataset.color === activeColor);
@@ -4050,7 +4416,7 @@ function setActiveColor(color) {
   if (!object) return;
   const selection = captureSelectionSnapshot();
   const scopeMeta = currentCanvasScopeMeta();
-  if (object.type === "drawing") {
+  if (object.type === "drawing" || object.type === "annotation-arrow") {
     const previous = object.stroke || "#202124";
     if (previous === activeColor) return;
     object.stroke = activeColor;
@@ -4202,8 +4568,6 @@ function applyLanguage() {
     }
   }
 
-  projectOptionsButton.title = t("projectOptions");
-  projectOptionsButton.setAttribute("aria-label", t("projectOptions"));
   settingsButton.title = t("settings");
   settingsButton.setAttribute("aria-label", t("settings"));
   board.setAttribute("aria-label", t("codexCanvas"));
@@ -4223,7 +4587,6 @@ function applyLanguage() {
   const currentLanguage = settingsMenu.querySelector("[data-language-current]");
   if (currentLanguage) currentLanguage.textContent = language === "zh" ? "简体中文" : "English";
   renderAppUpdateStatus();
-  renderProjectMenu();
   updatePromptHistoryLabels();
 
   settingsMenu.querySelectorAll("[data-language]").forEach((button) => {
@@ -4448,12 +4811,47 @@ async function saveProjectTitle() {
   }).catch(() => {});
 }
 
+function relatedAnnotationDeleteIds(initialIds) {
+  const deleteIds = new Set(initialIds);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const object of state.objects) {
+      const type = object.type || "image";
+      const shouldDelete = (type === "annotation-arrow" && (
+        deleteIds.has(object.sourceImageId)
+        || state.objects.some((candidate) => candidate.isAnnotationLabel === true
+          && candidate.annotationArrowId === object.id
+          && deleteIds.has(candidate.id))
+      )) || (object.isAnnotationLabel === true && (
+        deleteIds.has(object.sourceImageId)
+        || deleteIds.has(object.annotationArrowId)
+      ));
+      if (shouldDelete && !deleteIds.has(object.id)) {
+        deleteIds.add(object.id);
+        changed = true;
+      }
+    }
+  }
+  return [...deleteIds];
+}
+
+function currentProjectDisplayTitle() {
+  const savedTitle = String(state?.title || "").trim();
+  return savedTitle && savedTitle !== "Untitled" ? savedTitle : boundSessionTitle || "Untitled";
+}
+
 function applyViewport() {
   world.style.transform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`;
   world.style.setProperty("--resize-handle-size", `${8 / viewport.zoom}px`);
   world.style.setProperty("--resize-handle-offset", `${-4 / viewport.zoom}px`);
   world.style.setProperty("--resize-handle-border", `${1.5 / viewport.zoom}px`);
   world.style.setProperty("--resize-handle-radius", `${2 / viewport.zoom}px`);
+  world.style.setProperty("--annotation-delete-size", `${16 / viewport.zoom}px`);
+  world.style.setProperty("--annotation-delete-icon-size", `${10 / viewport.zoom}px`);
+  world.style.setProperty("--annotation-delete-radius", `${4 / viewport.zoom}px`);
+  world.style.setProperty("--annotation-delete-top", `${-8 / viewport.zoom}px`);
+  world.style.setProperty("--annotation-label-control-padding", `${14 / viewport.zoom}px`);
   zoomLabel.textContent = `${Math.round(viewport.zoom * 100)}%`;
 }
 
@@ -4782,10 +5180,6 @@ function assetUrl(src, object = null) {
     return src;
   }
   return src;
-}
-
-function basename(filePath) {
-  return String(filePath || "").split(/[\\/]/).filter(Boolean).at(-1) || "";
 }
 
 async function downloadSelectedImage() {

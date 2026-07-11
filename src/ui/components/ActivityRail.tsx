@@ -1054,6 +1054,9 @@ function ContextDistributionModal({
       <div
         className="w-full max-w-3xl rounded-[28px] border border-black/5 bg-surface p-6 shadow-elevated"
         onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
       >
         <div className="flex items-start justify-between gap-4">
           <div>

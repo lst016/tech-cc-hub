@@ -23,7 +23,12 @@ export function GitConfirmDialog({
   const danger = state.tone === "danger";
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/18 p-4 backdrop-blur-sm">
+    <div
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/18 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label={state.title}
+    >
       <div className="w-full max-w-sm rounded-2xl border border-white/70 bg-white p-4 shadow-[0_24px_70px_rgba(15,23,42,0.2)]">
         <div className="flex items-start gap-3">
           <span className={`mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${danger ? "bg-red-50 text-red-600" : "bg-amber-50 text-amber-600"}`}>

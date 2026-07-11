@@ -79,6 +79,6 @@ test("ships Codex-Canvas as the first local browser-view plugin", () => {
         urlTemplate: "http://127.0.0.1:{port}/api/images?threadId={sessionId}",
       },
     },
-    permissions: ["session.snapshot", "session.send", "session.images.receive"],
+    permissions: ["session.snapshot", "session.send", "session.images.receive", "session.images.generate"],
   });
 });

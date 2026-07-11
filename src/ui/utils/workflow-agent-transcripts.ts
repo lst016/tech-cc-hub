@@ -19,6 +19,7 @@ export type WorkflowAgentSummary = {
 
 type MutableWorkflowAgentSummary = WorkflowAgentSummary & {
   toolUseId?: string;
+  taskType?: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -152,6 +153,7 @@ export function buildWorkflowAgentSummaries(
       updatedAt: timestamp,
       transcript: [],
       toolUseId,
+      taskType,
     };
 
     if (description) next.title = description;
@@ -162,6 +164,7 @@ export function buildWorkflowAgentSummaries(
       next.updatedAt = timestamp;
     }
     if (toolUseId) next.toolUseId = toolUseId;
+    if (taskType) next.taskType = taskType;
     if (subtype === "task_updated") next.status = getPatchStatus(record) ?? next.status;
     if (subtype === "task_progress" && next.status === "unknown") next.status = "running";
     agents.set(taskId, next);
@@ -232,7 +235,9 @@ export function buildWorkflowAgentSummaries(
     taskId: agent.taskId,
     title: agent.title,
     role: agent.role,
-    status: agent.status === "running" && fallbackStatus ? fallbackStatus : agent.status,
+    status: agent.status === "running" && agent.taskType !== "local_workflow" && fallbackStatus
+      ? fallbackStatus
+      : agent.status,
     latestSummary: agent.latestSummary,
     messageCount: agent.transcript.length,
     toolCount: countToolUses(agent.transcript),

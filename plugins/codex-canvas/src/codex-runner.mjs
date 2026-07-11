@@ -3,8 +3,10 @@ import crossSpawn from "cross-spawn";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { generateCanvasImageWithTechCcHub, hasTechCcHubTransport } from "./tech-cc-hub-transport.mjs";
 
 const executableNames = process.platform === "win32" ? ["codex.exe", "codex.cmd", "codex"] : ["codex"];
+const techCcHubImageActions = new Set(["quick-edit", "remove-bg", "expand", "edit-text"]);
 
 export async function resolveCodexExecutable() {
   const configured = process.env.CODEX_CANVAS_CODEX_CLI;
@@ -14,7 +16,6 @@ export async function resolveCodexExecutable() {
     ...await platformBundledCandidates(),
     ...pathCandidates()
   ].filter(Boolean);
-
   for (const candidate of candidates) {
     if (await isExecutable(candidate)) return candidate;
   }
@@ -25,6 +26,10 @@ export async function resolveCodexExecutable() {
 }
 
 export async function startCodexImageJob({ projectDir, action, imagePath, outputDir, logPath, prompt: userPrompt, transparentLayerMode = false }) {
+  if (hasTechCcHubTransport() && techCcHubImageActions.has(action)) {
+    return await startTechCcHubImageJob({ action, imagePath, outputDir, logPath, prompt: userPrompt, transparentLayerMode });
+  }
+
   const executable = await resolveCodexExecutable();
   await fs.mkdir(outputDir, { recursive: true });
   await fs.mkdir(path.dirname(logPath), { recursive: true });
@@ -95,6 +100,62 @@ export async function startCodexImageJob({ projectDir, action, imagePath, output
   return { child, done, executable, prompt };
 }
 
+async function startTechCcHubImageJob({ action, imagePath, outputDir, logPath, prompt: userPrompt, transparentLayerMode }) {
+  await fs.mkdir(outputDir, { recursive: true });
+  await fs.mkdir(path.dirname(logPath), { recursive: true });
+  const prompt = promptForTechCcHubAction({ action, userPrompt, transparentLayerMode });
+  const imagePaths = (Array.isArray(imagePath) ? imagePath : [imagePath]).filter(Boolean);
+  const controller = new AbortController();
+  const child = {
+    exitCode: null,
+    signalCode: null,
+    abort() {
+      if (controller.signal.aborted) return false;
+      controller.abort();
+      return true;
+    },
+  };
+  const done = (async () => {
+    const result = await generateCanvasImageWithTechCcHub({
+      prompt,
+      action: "edit",
+      referenceImagePaths: imagePaths,
+      signal: controller.signal,
+    });
+    controller.signal.throwIfAborted();
+    const copied = [];
+    try {
+      for (const [index, artifact] of result.artifacts.entries()) {
+        controller.signal.throwIfAborted();
+        const extension = path.extname(artifact.path).toLowerCase() || ".png";
+        const targetPath = path.join(outputDir, `tech-cc-hub-${index + 1}${extension}`);
+        try {
+          await fs.copyFile(artifact.path, targetPath);
+          controller.signal.throwIfAborted();
+        } catch (error) {
+          await fs.rm(targetPath, { force: true });
+          throw error;
+        }
+        copied.push(targetPath);
+      }
+      controller.signal.throwIfAborted();
+      await fs.appendFile(logPath, `[codex-canvas] Tech CC Hub image bridge completed with ${copied.length} image(s) using ${result.model || "the configured image model"}.\n`);
+      return { executable: "tech-cc-hub-image-bridge", copied };
+    } catch (error) {
+      await Promise.all(copied.map(async (copiedPath) => await fs.rm(copiedPath, { force: true })));
+      throw error;
+    }
+  })();
+  void done.catch(() => {});
+
+  return {
+    child,
+    done,
+    executable: "tech-cc-hub-image-bridge",
+    prompt,
+  };
+}
+
 export function spawnCodexProcess(executable, args, options = {}) {
   return crossSpawn(executable, args, {
     ...options,
@@ -103,6 +164,13 @@ export function spawnCodexProcess(executable, args, options = {}) {
 }
 
 export function stopCodexProcess(child, signal = "SIGTERM") {
+  if (typeof child?.abort === "function") {
+    try {
+      return Promise.resolve(child.abort());
+    } catch {
+      return Promise.resolve(false);
+    }
+  }
   if (!child || child.exitCode !== null || child.signalCode !== null) {
     return Promise.resolve(false);
   }
@@ -237,6 +305,41 @@ function transparentLayerChromaInstructions() {
 
 function maybeTransparentLayerChromaInstruction(transparentLayerMode) {
   return transparentLayerMode ? transparentLayerChromaInstructions() : "";
+}
+
+function promptForTechCcHubAction({ action, userPrompt, transparentLayerMode }) {
+  const request = String(userPrompt || "").trim();
+  const preserveSource = "Preserve the source image's important subject identity, composition, aspect ratio, visible text, colors, and design intent unless the request explicitly changes them.";
+  if (action === "quick-edit") {
+    return [
+      "Edit the supplied image according to this instruction:",
+      request || "Improve the image naturally.",
+      "Remove any temporary annotation strokes or labels from the final image.",
+      preserveSource,
+      maybeTransparentLayerChromaInstruction(transparentLayerMode),
+    ].filter(Boolean).join("\n");
+  }
+  if (action === "expand") {
+    return [
+      "Outpaint the supplied padded image according to this instruction:",
+      request || "Expand the image naturally beyond its current frame.",
+      "Keep the original source area unchanged and replace every blurred or empty padded area with coherent content. Do not leave borders, seams, or blank margins.",
+      preserveSource,
+    ].join("\n");
+  }
+  if (action === "edit-text") {
+    return [
+      "Edit only the visible text in the supplied image according to this confirmed edit plan:",
+      request || "Apply the requested text changes.",
+      "Keep non-text content, composition, typography style, perspective, and colors unchanged.",
+      maybeTransparentLayerChromaInstruction(transparentLayerMode),
+    ].filter(Boolean).join("\n");
+  }
+  return [
+    "Remove the background from the supplied image while preserving only the primary foreground subject.",
+    "Render the subject on a perfectly flat solid #ff00ff chroma-key background with crisp edges and generous padding.",
+    "Do not include text, shadows, reflections, gradients, or #ff00ff in the subject.",
+  ].join("\n");
 }
 
 function promptForAction({ action, outputDir, userPrompt, transparentLayerMode = false }) {

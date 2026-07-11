@@ -18,10 +18,10 @@ import log from "electron-log";
 import { execSync, spawn } from "child_process";
 import type { ChildProcessWithoutNullStreams } from "child_process";
 import { randomUUID } from "crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "fs";
 import { createServer, type Server } from "http";
 import { homedir } from "os";
-import { join } from "path";
+import { extname, join } from "path";
 import { startup } from "@anthropic-ai/claude-agent-sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { UnauthorizedError, type OAuthClientProvider, type OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
@@ -47,8 +47,10 @@ import { configureDesktopNotifications } from "./libs/desktop-notifications.js";
 import { appAutoUpdater, type AppUpdateStatus } from "./libs/auto-updater/auto-updater.js";
 import { startChannelBridge, type ChannelBridgeController } from "./libs/channel/channel-bridge.js";
 import { ensureSystemWorkspace } from "./libs/system-workspace.js";
-import { getClaudeCodePath, getCurrentApiConfig, getGlobalRuntimeEnvConfig, resolveApiConfigForModel, resolveImagePreprocessApiConfig } from "./libs/claude/claude-settings.js";
+import { getClaudeCodePath, getCurrentApiConfig, getEnabledUsableApiConfigs, getGlobalRuntimeEnvConfig, resolveApiConfigForModel, resolveImagePreprocessApiConfig } from "./libs/claude/claude-settings.js";
 import { preprocessImageAttachments } from "./libs/image/image-preprocessor.js";
+import { generateImages } from "./libs/image/image-generation-client.js";
+import { toImageGenerationRouteConfig } from "./libs/mcp-tools/image-generation.js";
 import {
     CODEX_OAUTH_BASE_URL,
     buildCodexRequestHeaders,
@@ -93,6 +95,7 @@ import { setCronService } from "./libs/mcp-tools/cron.js";
 import type { ClientEvent, PromptAttachment, ServerEvent } from "./types.js";
 import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkbenchEvent, type BrowserWorkbenchNetworkLogInput, type BrowserWorkbenchRecordedAction, type BrowserWorkbenchState } from "./browser-manager.js";
 import { WorkspacePluginManager } from "./libs/workspace-plugins/workspace-plugin-manager.js";
+import type { WorkspacePluginImageGenerationRequest, WorkspacePluginImageGenerationResult } from "./libs/workspace-plugins/workspace-plugin-bridge.js";
 import { getGeneratedImagesRoot } from "./libs/image/image-generation-artifacts.js";
 import { startDevBackendBridge, DEV_BACKEND_BRIDGE_PORT } from "./dev-backend-bridge.js";
 import { buildSessionSlashCommandItems } from "./libs/slash-command-catalog.js";
@@ -1680,12 +1683,53 @@ function workspacePluginsRoot(): string {
   return app.isPackaged ? join(process.resourcesPath, "plugins") : join(app.getAppPath(), "plugins");
 }
 
+async function generateWorkspacePluginImage(
+  request: WorkspacePluginImageGenerationRequest,
+): Promise<WorkspacePluginImageGenerationResult> {
+  const session = sessions.getSession(request.sessionId);
+  if (!session?.cwd) return { success: false, error: "Bound session has no workspace." };
+
+  const selectedConfig = resolveApiConfigForModel(session.model)?.config ?? getCurrentApiConfig();
+  const enabledConfigs = getEnabledUsableApiConfigs()
+    .map((config) => toImageGenerationRouteConfig(config))
+    .filter((config): config is NonNullable<ReturnType<typeof toImageGenerationRouteConfig>> => Boolean(config));
+  const result = await generateImages({
+    sessionId: request.sessionId,
+    cwd: session.cwd,
+    request: {
+      prompt: request.prompt,
+      action: request.action,
+      referenceImagePaths: request.referenceImagePaths,
+      count: 1,
+      outputFormat: "png",
+    },
+    context: {
+      selectedConfig: toImageGenerationRouteConfig(selectedConfig),
+      enabledConfigs,
+    },
+  });
+  if (!result.success) return { success: false, error: result.message };
+  const resultDir = join(getGeneratedImagesRoot(), "canvas-bridge-results", request.sessionId);
+  mkdirSync(resultDir, { recursive: true });
+  return {
+    success: true,
+    model: result.model,
+    artifacts: result.artifacts.map((artifact) => {
+      const extension = extname(artifact.path) || ".png";
+      const path = join(resultDir, `${Date.now()}-${randomUUID()}${extension}`);
+      renameSync(artifact.path, path);
+      return { path };
+    }),
+  };
+}
+
 function getWorkspacePluginManager(): WorkspacePluginManager {
   if (!workspacePluginManager) {
     workspacePluginManager = new WorkspacePluginManager({
       pluginsRoot: workspacePluginsRoot(),
       sessionStore: sessions,
       dispatch: handleClientEvent,
+      generateImage: generateWorkspacePluginImage,
       generatedImagesRoot: getGeneratedImagesRoot(),
     });
   }

@@ -331,6 +331,27 @@ describe("workflow agent transcripts", () => {
     assert.equal(buildWorkflowAgentSummaries(messages, "completed")[0]?.status, "completed");
   });
 
+  it("keeps a detached local workflow running after the parent session completes", () => {
+    const agents = buildWorkflowAgentSummaries([
+      {
+        type: "system",
+        subtype: "task_started",
+        task_id: "workflow-task-1",
+        task_type: "local_workflow",
+        workflow_name: "phase2-cancellable-hub-image",
+        description: "Design and verify cancellable Hub image generation changes",
+      } as never,
+      {
+        type: "system",
+        subtype: "task_progress",
+        task_id: "workflow-task-1",
+        summary: "Reviewing cancellation behavior",
+      } as never,
+    ], "completed");
+
+    assert.equal(agents[0]?.status, "running");
+  });
+
   it("marks implicit running tasks stopped when the parent session is idle", () => {
     const agents = buildWorkflowAgentSummaries([
       {

@@ -26,7 +26,7 @@ test("design_inspect_image retries with a non-strict summary when strict JSON re
 });
 
 test("codex image preprocessing sends responses instructions", () => {
-  const source = readFileSync("src/electron/libs/image-preprocessor.ts", "utf8");
+  const source = readFileSync("src/electron/libs/image/image-preprocessor.ts", "utf8");
   const codexStart = source.indexOf("async function summarizeImageBase64WithCodexResponses");
   const codexSource = source.slice(codexStart, source.indexOf("summarizeImageBase64WithAnthropicMessages", codexStart));
 

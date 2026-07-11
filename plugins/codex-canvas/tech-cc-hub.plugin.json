@@ -5,7 +5,7 @@
   "start": {
     "command": "node",
     "args": [
-      "bin/codex-canvas.mjs",
+      "dist/codex-canvas.mjs",
       "start",
       "--host",
       "127.0.0.1",
@@ -29,6 +29,7 @@
   "permissions": [
     "session.snapshot",
     "session.send",
-    "session.images.receive"
+    "session.images.receive",
+    "session.images.generate"
   ]
 }

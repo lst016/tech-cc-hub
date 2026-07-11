@@ -1,7 +1,7 @@
-﻿import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import type { SetStateAction } from "react";
-import { ArrowUp, Menu, Paperclip, Sparkles, Square, Target, Workflow, X } from "lucide-react";
+import { ArrowUp, Maximize2, Menu, Minimize2, Paperclip, Sparkles, Square, Target, Workflow, X } from "lucide-react";
 import type {
   ApiConfigProfile,
   ClientEvent,
@@ -64,11 +64,13 @@ import {
   resolveAvailableModelName,
 } from "../settings/settings-utils";
 import { TooltipButton } from "../TooltipButton";
-
+import { incrementModelUsage } from "./model-usage-count";
 
 const MAX_ROWS = 12;
 const LINE_HEIGHT = 21;
 const MAX_HEIGHT = MAX_ROWS * LINE_HEIGHT;
+// 放大态：输入框区域整体拉到视口高度的 70%，覆盖默认最大高度
+const EXPANDED_MAX_HEIGHT = "70vh";
 const IME_ENTER_GRACE_MS = 120;
 const FILE_MENTION_PREVIEW_LIMIT = 10;
 const COMPOSER_SURFACE_WIDTH_CLASS = "w-full min-w-[min(430px,_100%)] max-w-[clamp(920px,_calc(100vw-420px),_1320px)] xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]";
@@ -215,6 +217,7 @@ export function PromptInput({
   const [editingCodeReferenceComment, setEditingCodeReferenceComment] = useState("");
   const [optimizingPrompt, setOptimizingPrompt] = useState(false);
   const [promptFocused, setPromptFocused] = useState(false);
+  const [composerExpanded, setComposerExpanded] = useState(false);
   const autoDispatchRef = useRef<string | null>(null);
   const submitInFlightRef = useRef(false);
   const [submissionStatus, setSubmissionStatus] = useState<string | null>(null);
@@ -622,7 +625,9 @@ export function PromptInput({
     submitInFlightRef.current = true;
     try {
       if (isRunning) {
-        return queueCurrentDraft(promptSnapshot);
+        const queued = queueCurrentDraft(promptSnapshot);
+        if (queued) incrementModelUsage(selectedRuntimeModel);
+        return queued;
       }
 
       const attachmentsSnapshot = attachments;
@@ -647,6 +652,7 @@ export function PromptInput({
 
       const sent = await sendPromptDraft(promptWithAnnotations, attachmentsSnapshot, { clearPrompt: false });
       if (sent) {
+        incrementModelUsage(selectedRuntimeModel);
         clearComposer();
         setGoalModeEnabled(false);
         setWorkflowForceEnabled(false);
@@ -661,7 +667,7 @@ export function PromptInput({
       setSubmissionStatus(null);
       submitInFlightRef.current = false;
     }
-  }, [attachments, browserAnnotations, clearComposer, clearPromptDraftText, codeReferences, fileReferences, getCurrentPromptDraft, goalModeEnabled, isRunning, messageReferences, onSendMessage, queueCurrentDraft, sendPromptDraft, setAttachments, setGlobalError, setPromptDraft, validatePromptDraft, workflowForceEnabled]);
+  }, [attachments, browserAnnotations, clearComposer, clearPromptDraftText, codeReferences, fileReferences, getCurrentPromptDraft, goalModeEnabled, isRunning, messageReferences, onSendMessage, queueCurrentDraft, selectedRuntimeModel, sendPromptDraft, setAttachments, setGlobalError, setPromptDraft, validatePromptDraft, workflowForceEnabled]);
 
   useEffect(() => {
     const handlePromptSubmit = () => {
@@ -816,8 +822,36 @@ export function PromptInput({
       handleStop();
       return;
     }
+    setComposerExpanded(false);
     void submitCurrentInput();
   };
+
+  const handleToggleComposerExpand = useCallback(() => {
+    if (disabled) return;
+    setComposerExpanded((value) => {
+      const next = !value;
+      const editor = promptRef.current;
+      if (editor) {
+        if (next) {
+          // 放大：直接把高度固定到 70vh，覆盖内容自适应的小高度
+          editor.style.height = EXPANDED_MAX_HEIGHT;
+          editor.style.overflowY = "auto";
+        } else {
+          // 收起：按内容重新计算高度，避免残留放大态的固定高度
+          editor.style.height = "auto";
+          const scrollHeight = editor.scrollHeight;
+          if (scrollHeight > MAX_HEIGHT) {
+            editor.style.height = `${MAX_HEIGHT}px`;
+            editor.style.overflowY = "auto";
+          } else {
+            editor.style.height = `${scrollHeight}px`;
+            editor.style.overflowY = "hidden";
+          }
+        }
+      }
+      return next;
+    });
+  }, [disabled]);
 
   const addFiles = useCallback(async (files: FileList | File[]) => {
     const fileArray = Array.from(files);
@@ -939,6 +973,12 @@ export function PromptInput({
     target.dataset.renderedPrompt = nextPrompt;
     setPrompt(nextPrompt);
     setCursorIndex(nextCursor);
+    if (composerExpanded) {
+      // 放大态：保持 70vh 固定高度，不随内容收缩
+      target.style.height = EXPANDED_MAX_HEIGHT;
+      target.style.overflowY = "auto";
+      return;
+    }
     target.style.height = "auto";
     const scrollHeight = target.scrollHeight;
     if (scrollHeight > MAX_HEIGHT) {
@@ -981,6 +1021,12 @@ export function PromptInput({
 
   useEffect(() => {
     if (!promptRef.current) return;
+    if (composerExpanded) {
+      // 放大态：无视内容多少，直接固定到 70vh
+      promptRef.current.style.height = EXPANDED_MAX_HEIGHT;
+      promptRef.current.style.overflowY = "auto";
+      return;
+    }
     promptRef.current.style.height = "auto";
     const scrollHeight = promptRef.current.scrollHeight;
     if (scrollHeight > MAX_HEIGHT) {
@@ -990,7 +1036,7 @@ export function PromptInput({
       promptRef.current.style.height = `${scrollHeight}px`;
       promptRef.current.style.overflowY = "hidden";
     }
-  }, [prompt]);
+  }, [prompt, composerExpanded]);
 
   useEffect(() => {
     const editor = promptRef.current;
@@ -1178,7 +1224,8 @@ export function PromptInput({
   return (
     <section
       ref={composerRef}
-      className="fixed bottom-0 left-0 right-0 z-[120] bg-gradient-to-t from-[rgba(229,234,240,0.64)] via-[rgba(229,234,240,0.12)] to-transparent px-3 pb-3 pt-3 lg:pb-4"
+      data-prompt-composer
+      className="fixed bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-[rgba(229,234,240,0.64)] via-[rgba(229,234,240,0.12)] to-transparent px-3 pb-3 pt-3 lg:pb-4"
       style={{
         marginLeft: `${leftOffset}px`,
         marginRight: `${rightOffset}px`,
@@ -1303,7 +1350,7 @@ export function PromptInput({
         </div>
       )}
       <div
-        className={`prompt-composer-surface prompt-composer-card relative mx-auto ${COMPOSER_SURFACE_WIDTH_CLASS} rounded-[18px] border bg-white px-4 pb-3 pt-4 shadow-[0_10px_30px_rgba(15,18,24,0.07)] transition-colors ${isDraggingFiles ? "border-accent/45 shadow-[0_18px_42px_rgba(255,122,64,0.16)]" : "border-[#d9dde3]"}`}
+        className={`prompt-composer-surface prompt-composer-card relative mx-auto ${COMPOSER_SURFACE_WIDTH_CLASS} rounded-[18px] border bg-white px-4 pb-3 pt-4 shadow-[0_10px_30px_rgba(15,18,24,0.07)] transition-colors ${isDraggingFiles ? "border-accent/45 shadow-[0_18px_42px_rgba(255,122,64,0.16)]" : "border-[#d9dde3]"} ${composerExpanded ? "prompt-composer-card--expanded" : ""}`}
       >
         {isDraggingFiles && (
           <div className="pointer-events-none absolute inset-2 z-10 grid place-items-center rounded-[22px] border border-dashed border-accent/45 bg-white/75 text-sm font-semibold text-accent shadow-inner backdrop-blur-sm">
@@ -1407,7 +1454,7 @@ export function PromptInput({
             autoCorrect="off"
             autoCapitalize="off"
             className="prompt-composer-editor relative z-10 min-h-[86px] w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words bg-transparent px-1 pb-2 pt-0 text-[17px] leading-7 text-ink-800 caret-ink-800 focus:outline-none aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
-            style={{ maxHeight: MAX_HEIGHT }}
+            style={{ maxHeight: composerExpanded ? EXPANDED_MAX_HEIGHT : MAX_HEIGHT }}
             onInput={handleInput}
             onSelect={syncPromptEditorState}
             onClick={syncPromptEditorState}
@@ -1508,6 +1555,25 @@ export function PromptInput({
               disabled={disabled}
             >
               <Target className="h-4 w-4 shrink-0" aria-hidden="true" />
+            </TooltipButton>
+            <TooltipButton
+              type="button"
+              className={`grid h-8 w-8 place-items-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                composerExpanded
+                  ? "border-accent/45 bg-[#fff4ee] text-accent"
+                  : "border-transparent text-[#73777f] hover:bg-[#f4f6f8]"
+              }`}
+              onClick={handleToggleComposerExpand}
+              aria-label={composerExpanded ? "收起输入框" : "放大输入框"}
+              aria-pressed={composerExpanded}
+              title={composerExpanded ? "收起输入框" : "放大输入框"}
+              tooltip={composerExpanded ? "收起输入框" : "放大输入框"}
+              tooltipClassName={COMPOSER_ICON_TOOLTIP_CLASS}
+              disabled={disabled}
+            >
+              {composerExpanded
+                ? <Minimize2 className="h-[19px] w-[19px]" aria-hidden="true" />
+                : <Maximize2 className="h-[19px] w-[19px]" aria-hidden="true" />}
             </TooltipButton>
             <TooltipButton
               type="button"

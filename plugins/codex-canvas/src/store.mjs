@@ -817,8 +817,8 @@ async function removeDuplicateAsset(asset, duplicate) {
 
 export async function addObject(projectDir, input, options = {}) {
   const type = typeof input.type === "string" ? input.type : "";
-  if (!["drawing", "text"].includes(type)) {
-    const error = new Error("add_object requires type to be drawing or text");
+  if (!["drawing", "text", "annotation-arrow"].includes(type)) {
+    const error = new Error("add_object requires type to be drawing, text, or annotation-arrow");
     error.statusCode = 400;
     throw error;
   }
@@ -943,6 +943,17 @@ function sanitizeString(value, fallback = "", limit = 300, trim = true) {
   return (normalized || fallback).slice(0, limit);
 }
 
+function sanitizeRelatedObjectId(value) {
+  return sanitizeString(value, "", 200);
+}
+
+function objectNameFallback(type) {
+  if (type === "text") return "Text";
+  if (type === "drawing") return "Drawing";
+  if (type === "annotation-arrow") return "Annotation";
+  return "Image";
+}
+
 function normalizePersistedObject(object, context = {}) {
   if (!object || typeof object !== "object") return null;
   const id = sanitizeString(object.id, "", 200);
@@ -952,7 +963,7 @@ function normalizePersistedObject(object, context = {}) {
     ...object,
     id,
     type,
-    name: sanitizeString(object.name, type === "text" ? "Text" : type === "drawing" ? "Drawing" : "Image"),
+    name: sanitizeString(object.name, objectNameFallback(type)),
     prompt: sanitizeString(object.prompt, "", 4000),
     imagegenPrompt: sanitizeString(object.imagegenPrompt, "", 20000),
     x: sanitizeCoordinate(object.x),
@@ -972,6 +983,21 @@ function normalizePersistedObject(object, context = {}) {
     normalized.stroke = sanitizeString(object.stroke, "#202124", 80);
     normalized.strokeWidth = sanitizeStrokeWidth(object.strokeWidth);
   }
+  if (type === "annotation-arrow") {
+    normalized.points = sanitizePoints(object.points).slice(0, 2);
+    normalized.stroke = sanitizeString(object.stroke, "#d93025", 80);
+    normalized.strokeWidth = sanitizeStrokeWidth(object.strokeWidth);
+    normalized.arrowhead = "start";
+    normalized.curve = "quadratic";
+  }
+  const sourceImageId = sanitizeRelatedObjectId(object.sourceImageId);
+  if (sourceImageId) normalized.sourceImageId = sourceImageId;
+  else delete normalized.sourceImageId;
+  const annotationArrowId = sanitizeRelatedObjectId(object.annotationArrowId);
+  if (annotationArrowId) normalized.annotationArrowId = annotationArrowId;
+  else delete normalized.annotationArrowId;
+  if (object.isAnnotationLabel === true) normalized.isAnnotationLabel = true;
+  else delete normalized.isAnnotationLabel;
   if (object.crop && typeof object.crop === "object") {
     const crop = sanitizeCrop(object.crop);
     if (crop) normalized.crop = crop;
@@ -1544,7 +1570,7 @@ function normalizeObject(input) {
   const base = {
     id: `${type}_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`,
     type,
-    name: sanitizeString(input.name, type === "text" ? "Text" : "Drawing"),
+    name: sanitizeString(input.name, objectNameFallback(type)),
     x: Number.isFinite(input.x) ? sanitizeCoordinate(input.x) : 120,
     y: Number.isFinite(input.y) ? sanitizeCoordinate(input.y) : 120,
     width: Number.isFinite(input.width) ? sanitizeDimension(input.width, 220) : 220,
@@ -1557,7 +1583,22 @@ function normalizeObject(input) {
       ...base,
       text: sanitizeString(input.text, "Text", 2000, false),
       fontSize: Number.isFinite(input.fontSize) ? sanitizeFontSize(input.fontSize) : 28,
-      color: sanitizeString(input.color, "#202124", 80)
+      color: sanitizeString(input.color, "#202124", 80),
+      ...(sanitizeRelatedObjectId(input.sourceImageId) ? { sourceImageId: sanitizeRelatedObjectId(input.sourceImageId) } : {}),
+      ...(sanitizeRelatedObjectId(input.annotationArrowId) ? { annotationArrowId: sanitizeRelatedObjectId(input.annotationArrowId) } : {}),
+      ...(input.isAnnotationLabel === true ? { isAnnotationLabel: true } : {})
+    };
+  }
+
+  if (type === "annotation-arrow") {
+    return {
+      ...base,
+      points: sanitizePoints(input.points).slice(0, 2),
+      stroke: sanitizeString(input.stroke, "#d93025", 80),
+      strokeWidth: Number.isFinite(input.strokeWidth) ? sanitizeStrokeWidth(input.strokeWidth) : 4,
+      arrowhead: "start",
+      curve: "quadratic",
+      ...(sanitizeRelatedObjectId(input.sourceImageId) ? { sourceImageId: sanitizeRelatedObjectId(input.sourceImageId) } : {})
     };
   }
 

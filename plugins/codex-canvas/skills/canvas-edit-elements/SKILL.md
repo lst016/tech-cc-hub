@@ -1,11 +1,11 @@
 ---
 name: canvas-edit-elements
-description: "Generate an instance segmentation map for a selected Codex-Canvas image, split the source into transparent element layers, and collect the layers back onto the canvas."
+description: "Split a selected Codex-Canvas image into transparent editable layers and collect them back onto the canvas."
 ---
 
-# Codex-Canvas Edit Elements
+# Codex-Canvas 拆分图层 (Split Layers)
 
-Use this skill when the user invokes Edit Elements from Codex-Canvas or asks to separate a selected canvas image into editable visual elements.
+Use this skill when the user invokes 拆分图层 (Split Layers) from Codex-Canvas or asks to separate a selected canvas image into editable visual elements.
 
 ## Behavior
 
@@ -21,6 +21,6 @@ Use this skill when the user invokes Edit Elements from Codex-Canvas or asks to 
 10. The segmentation map and background-completion raw output are internal job artifacts and should not appear as canvas objects. The only canvas background object is the imported residual background layer; when completion finishes, Codex-Canvas replaces that same layer asset in place.
 11. Collected layers are stacked at their original relative positions, with the background as the bottom layer, so the group reconstructs the source composition when layered before and after background completion.
 12. Collected layers keep shared `layerGroupId` metadata for reset, layer-order controls, and PSD export, but they should start unlocked so the user can immediately drag individual elements. The canvas may offer a separate Group control when the user wants to move all associated layers as one unit.
-13. When a user downloads any member of an Edit Elements layer group, Codex-Canvas should export the whole associated layer set as a PSD with one Photoshop layer per canvas image layer.
+13. When a user downloads any member of a Split Layers group, Codex-Canvas should export the whole associated layer set as a PSD with one Photoshop layer per canvas image layer.
 
-Do not ask follow-up questions from a background Edit Elements job. Make the most reasonable general-purpose element separation from the selected image.
+Do not ask follow-up questions from a background Split Layers job. Make the most reasonable general-purpose element separation from the selected image.

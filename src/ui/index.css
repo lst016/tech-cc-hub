@@ -111,7 +111,7 @@ code, pre, textarea.mono, input.mono {
 }
 
 .chat-scroll {
-  scrollbar-width: thin;
+  scrollbar-width: auto;
   scrollbar-color: rgba(26, 25, 21, 0.22) transparent;
   scrollbar-gutter: stable both-edges;
 }
@@ -134,6 +134,11 @@ code, pre, textarea.mono, input.mono {
   flex-direction: column;
   max-height: min(70vh, 440px);
   overflow: visible;
+}
+
+/* 放大态：放开卡片高度上限，让编辑区可以撑到 70vh */
+.prompt-composer-card.prompt-composer-card--expanded {
+  max-height: 70vh;
 }
 
 .prompt-composer-body {
@@ -164,7 +169,7 @@ code, pre, textarea.mono, input.mono {
 }
 
 .chat-scroll::-webkit-scrollbar {
-  width: 13px;
+  width: 16px;
 }
 
 .chat-scroll::-webkit-scrollbar-track {
@@ -189,6 +194,29 @@ code, pre, textarea.mono, input.mono {
   border-bottom: 1px solid transparent;
   border-right: 4px solid transparent;
   background-clip: padding-box;
+}
+
+.sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #D1D1CC transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: #D1D1CC;
+  border-radius: 3px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: #9B9B96;
 }
 
 .activity-workspace-tabs-scroll {
@@ -324,6 +352,18 @@ code, pre, textarea.mono, input.mono {
 
 .animate-shimmer {
   animation: shimmer 1.4s linear infinite;
+}
+
+/* Full-screen dialogs temporarily remove the fixed composer from the visual stack. */
+[data-prompt-composer] {
+  transition: opacity 120ms ease, transform 120ms ease, visibility 0s linear;
+}
+
+body:has([aria-modal="true"]) [data-prompt-composer] {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(12px);
 }
 
 @keyframes slideUp {

@@ -10,11 +10,13 @@ import {
   type WorkspacePluginDescriptor,
   type WorkspacePluginManifest,
 } from "../../../shared/workspace-plugins.js";
-import type { ClientEvent, PromptAttachment } from "../../types.js";
+import type { PromptAttachment } from "../../types.js";
 import {
   startWorkspacePluginBridge,
   type WorkspacePluginBridge,
   type WorkspacePluginBridgeInput,
+  type WorkspacePluginDispatchEvent,
+  type WorkspacePluginImageGenerator,
 } from "./workspace-plugin-bridge.js";
 
 type WorkspacePluginSession = {
@@ -58,7 +60,8 @@ export type WorkspacePluginManagerOptions = {
     getSession(sessionId: string): WorkspacePluginSession | undefined;
     getSessionHistory?(sessionId: string): WorkspacePluginSessionHistory | null | undefined;
   };
-  dispatch(event: Extract<ClientEvent, { type: "session.continue" }>): Promise<void> | void;
+  dispatch(event: WorkspacePluginDispatchEvent): Promise<void> | void;
+  generateImage?: WorkspacePluginImageGenerator;
   generatedImagesRoot?: string;
   allocatePort?: () => Promise<number>;
   createBridge?: (input: WorkspacePluginBridgeInput) => Promise<WorkspacePluginBridge>;
@@ -129,6 +132,8 @@ function toDescriptor(plugin: WorkspacePluginRecord): WorkspacePluginDescriptor 
 
 export class WorkspacePluginManager {
   private readonly launches = new Map<string, WorkspacePluginLaunchRecord>();
+  private readonly openings = new Map<string, Promise<WorkspacePluginLaunch>>();
+  private readonly openingSessionIds = new Map<string, string>();
   private readonly allocatePort: () => Promise<number>;
   private readonly createBridge: (input: WorkspacePluginBridgeInput) => Promise<WorkspacePluginBridge>;
   private readonly spawnProcess: (input: SpawnPluginProcessInput) => PluginProcess;
@@ -153,6 +158,24 @@ export class WorkspacePluginManager {
       return { pluginId: existing.pluginId, sessionId: existing.sessionId, url: existing.url };
     }
 
+    const opening = this.openings.get(key);
+    if (opening) return await opening;
+
+    const nextOpening = this.openFresh(input, key);
+    this.openings.set(key, nextOpening);
+    this.openingSessionIds.set(key, input.sessionId);
+    try {
+      return await nextOpening;
+    } finally {
+      if (this.openings.get(key) === nextOpening) {
+        this.openings.delete(key);
+        this.openingSessionIds.delete(key);
+      }
+    }
+  }
+
+  private async openFresh(input: { pluginId: string; sessionId: string }, key: string): Promise<WorkspacePluginLaunch> {
+
     const session = this.options.sessionStore.getSession(input.sessionId);
     if (!session?.cwd) throw new Error("Workspace plugin requires an active session with a workspace.");
     const plugin = (await this.readPlugins()).find((candidate) => candidate.id === input.pluginId);
@@ -165,6 +188,9 @@ export class WorkspacePluginManager {
       token: randomUUID(),
       sessionStore: this.options.sessionStore,
       dispatch: this.options.dispatch,
+      generateImage: plugin.permissions.includes("session.images.generate")
+        ? this.options.generateImage
+        : undefined,
     });
     const values = {
       port,
@@ -209,15 +235,19 @@ export class WorkspacePluginManager {
   }
 
   async closeSession(sessionId: string): Promise<void> {
-    const closing = [...this.launches.values()].filter((launch) => launch.sessionId === sessionId);
-    await Promise.all(closing.map(async (launch) => {
-      await this.closeLaunch(launch);
-    }));
+    const closingKeys = new Set([
+      ...[...this.launches.entries()]
+        .filter(([, launch]) => launch.sessionId === sessionId)
+        .map(([key]) => key),
+      ...[...this.openingSessionIds.entries()]
+        .filter(([, openingSessionId]) => openingSessionId === sessionId)
+        .map(([key]) => key),
+    ]);
+    await Promise.all([...closingKeys].map(async (key) => await this.closeKey(key)));
   }
 
   async close(input: { pluginId: string; sessionId: string }): Promise<void> {
-    const launch = this.launches.get(launchKey(input.pluginId, input.sessionId));
-    if (launch) await this.closeLaunch(launch);
+    await this.closeKey(launchKey(input.pluginId, input.sessionId));
   }
 
   async syncSessionImages(input: { sessionId: string; attachments?: readonly PromptAttachment[] }): Promise<void> {
@@ -233,7 +263,10 @@ export class WorkspacePluginManager {
   }
 
   async closeAll(): Promise<void> {
-    const sessionIds = new Set([...this.launches.values()].map((launch) => launch.sessionId));
+    const sessionIds = new Set([
+      ...[...this.launches.values()].map((launch) => launch.sessionId),
+      ...this.openingSessionIds.values(),
+    ]);
     await Promise.all([...sessionIds].map(async (sessionId) => await this.closeSession(sessionId)));
   }
 
@@ -280,6 +313,24 @@ export class WorkspacePluginManager {
     this.launches.delete(launchKey(launch.pluginId, launch.sessionId));
     launch.process.kill();
     await launch.bridge.close();
+  }
+
+  private async closeKey(key: string): Promise<void> {
+    const launch = this.launches.get(key);
+    if (launch) {
+      await this.closeLaunch(launch);
+      return;
+    }
+
+    const opening = this.openings.get(key);
+    if (!opening) return;
+    try {
+      await opening;
+    } catch {
+      return;
+    }
+    const openedLaunch = this.launches.get(key);
+    if (openedLaunch) await this.closeLaunch(openedLaunch);
   }
 
   private async readPlugins(): Promise<WorkspacePluginRecord[]> {

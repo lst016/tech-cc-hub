@@ -267,6 +267,27 @@ describe("activity workspace tabs", () => {
     );
   });
 
+  it("keeps workspace plugins out of the main tabs until explicitly opened", () => {
+    const appSource = readFileSync("src/ui/App.tsx", "utf8");
+
+    assert.match(
+      appSource,
+      /openWorkspacePluginIdsBySessionId\[activeSessionId\] \?\? EMPTY_WORKSPACE_PLUGIN_IDS/,
+    );
+    assert.match(
+      appSource,
+      /workspacePlugins\.filter\(\(plugin\) => openWorkspacePluginIds\.includes\(plugin\.id\)\)/,
+    );
+    assert.match(
+      appSource,
+      /setOpenWorkspacePluginIdsBySessionId\([\s\S]{0,260}\[\.\.\.open, pluginId\]/,
+    );
+    assert.match(
+      appSource,
+      /setOpenWorkspacePluginIdsBySessionId\([\s\S]{0,260}open\.filter\(\(id\) => id !== pluginId\)/,
+    );
+  });
+
   it("returns a closed workspace plugin to the plus menu", () => {
     assert.deepEqual(
       buildActivityWorkspaceCreateOptions({

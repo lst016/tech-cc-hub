@@ -240,14 +240,23 @@ function syncPackagedCodeGraphRuntimeDeps() {
   log(`synced CodeGraph bundled runtime deps: ${path.relative(cwd, targetDeps)}`);
 }
 
+function validatePackagedCanvasRuntime() {
+  const canvasRoot = path.join(distDir, "win-unpacked", "resources", "plugins", "codex-canvas");
+  assertNonEmptyFile(path.join(canvasRoot, "dist", "codex-canvas.mjs"), "Canvas bundled runtime entry");
+  if (existsSync(path.join(canvasRoot, "node_modules"))) {
+    failPackaging("Canvas runtime must use the host-built bundle instead of packaged private node_modules");
+  }
+}
+
 function ensureWindowsAppUpdateConfig() {
   const resourcesDir = path.join(distDir, "win-unpacked", "resources");
   if (!existsSync(resourcesDir)) return;
 
   const appUpdatePath = path.join(resourcesDir, "app-update.yml");
   const content = [
-    "provider: generic",
-    "url: https://lushengtao.public.pookgitlab.com/tech-cc-hub/releases",
+    "provider: github",
+    "owner: lst016",
+    "repo: tech-cc-hub",
     "updaterCacheDirName: tech-cc-hub-updater",
     "",
   ].join("\n");
@@ -323,6 +332,7 @@ function runWithFallback(strategyLabel, commands) {
       ensureWindowsAppUpdateConfig();
       syncPackagedCodeGraphRuntimeDeps();
       validatePackagedCodeGraphRuntime();
+      validatePackagedCanvasRuntime();
     }
   }
 
@@ -388,6 +398,7 @@ async function main() {
   ensureUpdaterMetadataAliases();
   validateUpdaterArtifacts();
   validatePackagedCodeGraphRuntime();
+  validatePackagedCanvasRuntime();
   log("packaging done.");
 }
 

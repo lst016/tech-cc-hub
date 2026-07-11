@@ -20,6 +20,28 @@ export function hasTechCcHubTransport() {
   return Boolean(readBridgeConfig());
 }
 
+export async function getTechCcHubSessionSnapshot() {
+  const config = readBridgeConfig();
+  if (!config) return null;
+
+  const endpoint = new URL("/v1/session/snapshot", config.bridgeUrl);
+  const response = await fetch(endpoint, {
+    headers: { authorization: `Bearer ${config.token}` }
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(typeof result.error === "string" ? result.error : `Tech CC Hub bridge returned HTTP ${response.status}.`);
+    error.statusCode = response.status;
+    throw error;
+  }
+  const session = result.session;
+  if (!session || session.id !== config.sessionId) return null;
+  return {
+    id: session.id,
+    title: typeof session.title === "string" ? session.title.trim() : ""
+  };
+}
+
 export async function sendCanvasAssetToTechCcHub({ threadId, imagePath, prompt, action }) {
   const config = readBridgeConfig();
   if (!config) throw new Error("Tech CC Hub Canvas transport is not configured.");
@@ -54,5 +76,45 @@ export async function sendCanvasAssetToTechCcHub({ threadId, imagePath, prompt, 
     status: "submitted",
     durationMs: null,
     completionPending: true,
+  };
+}
+
+export async function generateCanvasImageWithTechCcHub({ threadId, prompt, referenceImagePaths, action = "edit", signal }) {
+  const config = readBridgeConfig();
+  if (!config) throw new Error("Tech CC Hub Canvas transport is not configured.");
+  if (threadId && threadId !== config.sessionId) {
+    const error = new Error("Codex-Canvas is bound to a different Tech CC Hub session.");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const endpoint = new URL("/v1/session/image-generate", config.bridgeUrl);
+  const response = await fetch(endpoint, {
+    method: "POST",
+    signal,
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${config.token}`,
+    },
+    body: JSON.stringify({
+      sessionId: config.sessionId,
+      action,
+      prompt,
+      referenceImagePaths,
+    }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.success || !Array.isArray(result.artifacts)) {
+    const error = new Error(typeof result.error === "string" ? result.error : `Tech CC Hub image bridge returned HTTP ${response.status}.`);
+    error.statusCode = response.status;
+    throw error;
+  }
+  const artifacts = result.artifacts
+    .filter((artifact) => artifact && typeof artifact.path === "string" && artifact.path.trim())
+    .map((artifact) => ({ path: artifact.path.trim() }));
+  if (!artifacts.length) throw new Error("Tech CC Hub image bridge returned no image artifacts.");
+  return {
+    model: typeof result.model === "string" ? result.model : "",
+    artifacts,
   };
 }

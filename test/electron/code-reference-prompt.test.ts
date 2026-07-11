@@ -132,6 +132,7 @@ test('hides message reference structured blocks and exposes message chips', () =
     sourceRole: 'assistant',
     sourceLabel: '助手消息',
     capturedAt: 1779368400000,
+    comment: undefined,
     textPreview: '这里是被引用的聊天记录',
   }]);
 });

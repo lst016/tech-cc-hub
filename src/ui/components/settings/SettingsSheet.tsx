@@ -117,7 +117,12 @@ export function SettingsSheet({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-[40000] flex overflow-hidden bg-[#F5F6F8] text-[#1D2129]">
+    <div
+      className="fixed inset-0 z-[40000] flex overflow-hidden bg-[#F5F6F8] text-[#1D2129]"
+      role="dialog"
+      aria-modal="true"
+      aria-label="设置"
+    >
       <aside className="flex w-[260px] shrink-0 flex-col border-r border-[#E5E6EB] bg-[#EEF0F3] px-5 py-7">
         <div className="flex items-center gap-3">
           <div className="grid h-12 w-12 place-items-center rounded-2xl bg-[#111318] shadow-[0_14px_30px_rgba(17,19,24,0.16)] overflow-hidden">

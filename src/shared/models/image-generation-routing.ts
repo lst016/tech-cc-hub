@@ -44,18 +44,20 @@ export function isLikelyImageGenerationModel(modelName: string | undefined | nul
 }
 
 function hasUsableImageGenerationSlot(config: ImageGenerationRouteConfig): boolean {
+  // 只要用户配置了生图模型，并且该配置有可用的 API Key 与 Base URL，就允许使用。
+  // 不要求生图模型必须出现在 config.models 列表里——很多网关的生图模型不在主模型清单中。
+  // codex OAuth 由 toRoute 单独拒绝。
   return Boolean(
     config.imageGenerationModel?.trim()
     && config.apiKey?.trim()
-    && config.baseURL?.trim()
-    && config.models?.some((model) => model.name === config.imageGenerationModel?.trim()),
+    && config.baseURL?.trim(),
   );
 }
 
 /**
  * 解析生图路由。解析顺序：
  *   1. selectedConfig 优先（当前主模型所在配置），若设置了 imageGenerationModel 且可用则采用。
- *   2. 否则按 enabledConfigs 顺序找第一个已设置生图模型、API Key 非空且模型在该配置模型列表中的配置。
+ *   2. 否则按 enabledConfigs 顺序找第一个已设置生图模型、API Key 非空的配置（不要求生图模型在 models 列表里）。
  *   3. provider=codex 直接返回明确错误（OAuth 不能替代标准 Images API Key）。
  *   4. provider=deepseek|minimax 只有在该配置明确返回并配置了生图模型时才允许，不靠品牌推断。
  */

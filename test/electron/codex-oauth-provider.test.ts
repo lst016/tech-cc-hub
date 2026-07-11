@@ -387,10 +387,10 @@ test("codex streaming responses are folded into anthropic-compatible output", ()
 test("codex settings use read-only agent handoff plus manual credential input", () => {
   const source = readFileSync("src/ui/components/settings/ApiProfilesSettingsPage.tsx", "utf8");
 
-  assert.match(source, /Manual credential JSON fallback/);
+  assert.match(source, /手动凭据 JSON 兜底/);
   assert.match(source, /normalizeCodexManualCredentialInput/);
   assert.match(source, /read-only credential handoff/);
-  assert.match(source, /Manual Codex credential JSON/);
+  assert.match(source, /应用手动凭据/);
   assert.match(source, /Do not create, update, delete, disable, rename, reorder, or normalize any API profile from the Agent session/);
   assert.match(source, /Never run a setup command or script that writes `api-config\.json`/);
   assert.match(source, /do not run any tech-cc-hub setup\/import script/);

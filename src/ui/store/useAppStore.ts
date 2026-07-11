@@ -218,8 +218,6 @@ function getAvailableModelsForProfiles(profiles: ApiConfigProfile[]): string[] {
       profile.smallModel,
       profile.imageModel,
       profile.analysisModel,
-      profile.embeddingModel,
-      profile.wikiModel,
       ...(profile.models ?? []).map((item) => item.name),
     ])),
   )

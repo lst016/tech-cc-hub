@@ -1,4 +1,4 @@
-export const WORKSPACE_PLUGIN_PERMISSIONS = ["session.snapshot", "session.send", "session.images.receive"] as const;
+export const WORKSPACE_PLUGIN_PERMISSIONS = ["session.snapshot", "session.send", "session.images.receive", "session.images.generate"] as const;
 export const WORKSPACE_PLUGIN_HOOKS = ["session.image.add"] as const;
 
 export type WorkspacePluginPermission = typeof WORKSPACE_PLUGIN_PERMISSIONS[number];

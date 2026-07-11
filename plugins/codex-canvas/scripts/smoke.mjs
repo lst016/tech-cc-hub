@@ -1,12 +1,14 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
+import { createServer as createHttpServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { PNG } from "pngjs";
 import { normalizePort } from "../src/cli.mjs";
 import { sendImageToBoundChat, stopActiveChatOperations } from "../src/codex-chat.mjs";
-import { resolveCodexExecutable } from "../src/codex-runner.mjs";
+import { resolveCodexExecutable, startCodexImageJob, stopCodexProcess } from "../src/codex-runner.mjs";
 import { collectRecentImages } from "../src/collector.mjs";
 import { createImageJob, getIgnoredGeneratedImagePaths, getImageJob, markTextRecognitionCancelledForTest, placeImportedElementLayersForTest, prepareImageForCollectionForTest } from "../src/jobs.mjs";
 import { checkImageProcessingDepsAvailable } from "../src/ocr-setup.mjs";
@@ -16,6 +18,7 @@ import { canvasIdForThread } from "../src/runtime.mjs";
 import { createOperationLease } from "../src/operation-leases.mjs";
 import { createServer as createAgentCanvasServer } from "../src/server.mjs";
 import { addImage, addObject, deleteObjects, markStaleJobPlaceholders, promptHistory, readState, reorderLayerGroupLayer, restoreObjects, searchObjects, setLayerGroupOrder, transformState, updateObject, updateObjects, updateSelection, updateViewport, versionGroups } from "../src/store.mjs";
+import { getTechCcHubSessionSnapshot } from "../src/tech-cc-hub-transport.mjs";
 import { appUpdateStatus, clearPublishedReleaseCacheForTest, updateApp } from "../src/updater.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -34,6 +37,7 @@ async function main() {
     ["batch object update atomicity", testBatchObjectUpdateAtomicity],
     ["object patch sanitization", testObjectPatchSanitization],
     ["object input sanitization", testObjectInputSanitization],
+    ["Cowart annotation object persistence", testCowartAnnotationObjectPersistence],
     ["layer group overlap reorder", testLayerGroupOverlapReorder],
     ["stale background fill cleanup", testStaleBackgroundFillCleanup],
     ["path image dedupe", testPathImageDedupe],
@@ -61,6 +65,7 @@ async function main() {
     ["http canvas mutation scope", testHttpCanvasMutationScope],
     ["image job error contract", testImageJobErrorContract],
     ["codex app CLI precedence", testCodexAppCliPrecedence],
+    ["Hub image bridge runner", testTechCcHubImageRunner],
     ["thread migration asset paths", testThreadMigrationAssetPaths],
     ["persistent project registry", testPersistentProjectRegistry],
     ["persistent project registry restored auto collector", testPersistentProjectRegistryRestoredAutoCollector],
@@ -81,6 +86,7 @@ async function main() {
     ["chat binding alias", testChatBindingAlias],
     ["chat websocket fallback", testChatWebSocketFallback],
     ["chat turn action contract", testChatTurnActionContract],
+    ["Cowart annotation canvas job contract", testCowartAnnotationCanvasJobContract],
     ["edit text cancellation cleanup", testEditTextCancellationCleanup],
     ["quick edit annotations", testQuickEditAnnotations],
     ["alpha recut edit outputs", testAlphaRecutEditOutputs],
@@ -854,6 +860,8 @@ async function testThreadScopedCollectorDefaults() {
   assertEqual(scoped.scannedRoots[0], threadDir, "default collection should use generated_images/<threadId>");
   assertEqual(scoped.imported.length, 1, "default collection should import only the bound thread output");
   assertEqual(path.resolve(scoped.imported[0].sourcePath), path.resolve(targetPath), "default collection should not import global or project-root images");
+  assertEqual(scoped.imported[0].x, 64, "the first imported image should use a compact left margin");
+  assertEqual(scoped.imported[0].y, 64, "the first imported image should use a compact top margin");
 
   const unboundProjectDir = path.join(fixtureRoot, "unbound-project");
   await fs.mkdir(unboundProjectDir, { recursive: true });
@@ -1274,8 +1282,35 @@ async function testFrontendActionContract() {
   if (!html.includes('data-tool="hand"') || !html.includes('data-history-action="undo"') || !html.includes('data-history-action="redo"')) {
     throw new Error("frontend should expose the default Hand tool plus Undo and Redo controls.");
   }
+  if (!html.includes('data-action="delete-selected"') || !app.includes('action === "delete-selected"') || !app.includes('deleteSelectedObject();')) {
+    throw new Error("the selection toolbar should expose Delete and route it through the existing delete behavior.");
+  }
+  if (!html.includes('data-tool="annotation"') || !html.includes('data-action="annotation-edit"')) {
+    throw new Error("the canvas should expose Cowart-style annotation drawing and an annotation edit action.");
+  }
+  if (!app.includes('type: "annotation-arrow"') || !app.includes("function startAnnotation")) {
+    throw new Error("the canvas should create persistent Cowart-style annotation arrow objects instead of temporary markup.");
+  }
+  if (!app.includes('apiPath("/api/annotation-edit")') || !app.includes("startAnnotationImageJob")) {
+    throw new Error("the annotation edit action should start the plugin's native canvas image-job flow.");
+  }
+  if (html.includes('id="projectMenu"') || html.includes('aria-label="Project options"') || app.includes("loadProjects") || app.includes("toggleProjectMenu")) {
+    throw new Error("a session-bound Canvas tab should not expose stale project switching UI or load the persisted project registry.");
+  }
+  if (/async function sendSelectedImageToChat\(\)[\s\S]*?window\.prompt\(/.test(app)) {
+    throw new Error("Send to chat should submit the selected image directly instead of relying on a browser-native prompt dialog.");
+  }
   if (!app.includes('const defaultCanvasTool = "hand"') || !app.includes('import { CanvasHistory } from "./canvas-history.js"')) {
     throw new Error("frontend should initialize the scoped canvas history with Hand as the default tool.");
+  }
+  if (!app.includes('"edit-elements": "拆分图层"')) {
+    throw new Error("the element split action should be labeled 拆分图层 in the Chinese canvas UI.");
+  }
+  if (!app.includes("loadBoundSessionTitle") || !app.includes("currentProjectDisplayTitle")) {
+    throw new Error("the canvas header should use the bound chat session title until the user assigns a custom canvas title.");
+  }
+  if (!styles.includes("right: 18px;") || !styles.includes(".canvas-controls") || !styles.includes("display: flex;")) {
+    throw new Error("the live canvas zoom percentage should be visible in the bottom-right controls.");
   }
 
   const frontendImageJobActions = [...domActions].filter((action) => stableFrontendImageActions.includes(action));
@@ -1364,6 +1399,64 @@ async function testImageJobErrorContract() {
   }
 }
 
+async function testCowartAnnotationObjectPersistence() {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-canvas-cowart-annotation-"));
+  const source = await addImage(projectDir, {
+    dataUrl: `data:image/png;base64,${pngOne}`,
+    name: "source.png",
+    x: 100,
+    y: 120,
+    width: 320,
+    height: 240
+  });
+  const arrow = await addObject(projectDir, {
+    type: "annotation-arrow",
+    name: "Annotation arrow",
+    x: 156,
+    y: 172,
+    width: 124,
+    height: 76,
+    points: [{ x: 8, y: 56 }, { x: 116, y: 12 }],
+    stroke: "#d93025",
+    strokeWidth: 4,
+    sourceImageId: source.id
+  });
+  assertEqual(arrow.type, "annotation-arrow", "Cowart annotation arrows should persist as a distinct canvas object type");
+  assertEqual(arrow.sourceImageId, source.id, "Cowart annotation arrows should retain their source image relation");
+  assertEqual(arrow.points.length, 2, "Cowart annotation arrows should retain their start and end points");
+  assertEqual(arrow.arrowhead, "start", "Cowart annotation arrows should point back to the pressed target point");
+  assertEqual(arrow.curve, "quadratic", "Cowart annotation arrows should persist a curved callout style");
+
+  const label = await addObject(projectDir, {
+    type: "text",
+    text: "Remove this sign",
+    x: 256,
+    y: 150,
+    width: 180,
+    height: 48,
+    fontSize: 22,
+    color: "#d93025",
+    sourceImageId: source.id,
+    annotationArrowId: arrow.id,
+    isAnnotationLabel: true
+  });
+  assertEqual(label.sourceImageId, source.id, "Cowart annotation labels should retain their source image relation");
+  assertEqual(label.annotationArrowId, arrow.id, "Cowart annotation labels should retain their arrow relation");
+  assertEqual(label.isAnnotationLabel, true, "Cowart annotation labels should persist their annotation marker");
+
+  const reloaded = await readState(projectDir);
+  const reloadedArrow = reloaded.objects.find((object) => object.id === arrow.id);
+  const reloadedLabel = reloaded.objects.find((object) => object.id === label.id);
+  assertEqual(reloadedArrow?.sourceImageId, source.id, "reloading should retain annotation arrow ownership");
+  assertEqual(reloadedArrow?.arrowhead, "start", "reloading should retain target-point arrow direction");
+  assertEqual(reloadedArrow?.curve, "quadratic", "reloading should retain the curved callout style");
+  assertEqual(reloadedLabel?.annotationArrowId, arrow.id, "reloading should retain the annotation arrow-label relation");
+
+  const patched = await updateObject(projectDir, arrow.id, { stroke: "#1a73e8", sourceImageId: "other-image" });
+  assertEqual(patched.stroke, "#1a73e8", "annotation arrows should support colour updates");
+  assertEqual(patched.sourceImageId, source.id, "annotation ownership should not be mutable after creation");
+}
+
 async function testCodexAppCliPrecedence() {
   if (process.platform !== "win32") return;
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-canvas-app-cli-"));
@@ -1403,6 +1496,143 @@ async function testCodexAppCliPrecedence() {
     else process.env["PROGRAMFILES(X86)"] = previousProgramFilesX86;
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
+  }
+}
+
+async function testTechCcHubImageRunner() {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-canvas-hub-image-"));
+  const imagePath = path.join(tmp, "source.png");
+  const artifactPath = path.join(tmp, "hub-result.png");
+  const outputDir = path.join(tmp, "outputs");
+  const logPath = path.join(tmp, "codex.log");
+  await fs.writeFile(imagePath, Buffer.from(pngOne, "base64"));
+  await fs.writeFile(artifactPath, Buffer.from(pngOne, "base64"));
+  const requests = [];
+  const server = createHttpServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/v1/session/snapshot") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ session: { id: "session-1", title: "Canvas conversation" } }));
+      return;
+    }
+    const chunks = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    requests.push({ url: request.url, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) });
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ success: true, model: "configured-image-model", artifacts: [{ path: artifactPath }] }));
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Hub image bridge smoke server did not bind a TCP port.");
+
+  const previousUrl = process.env.TECH_CC_HUB_BRIDGE_URL;
+  const previousToken = process.env.TECH_CC_HUB_BRIDGE_TOKEN;
+  const previousSessionId = process.env.TECH_CC_HUB_SESSION_ID;
+  const previousCli = process.env.CODEX_CANVAS_CODEX_CLI;
+  try {
+    process.env.TECH_CC_HUB_BRIDGE_URL = `http://127.0.0.1:${address.port}`;
+    process.env.TECH_CC_HUB_BRIDGE_TOKEN = "bridge-token";
+    process.env.TECH_CC_HUB_SESSION_ID = "session-1";
+    const snapshot = await getTechCcHubSessionSnapshot();
+    assertEqual(snapshot?.title, "Canvas conversation", "Canvas should read the title from its bound Tech CC Hub session");
+    const canvas = await createServer({ projectDir: tmp, port: 0, autoCollect: false });
+    try {
+      const canvasSession = await fetch(new URL("/api/session", canvas.url));
+      const canvasSessionPayload = await canvasSession.json();
+      assertEqual(canvasSessionPayload.session?.title, "Canvas conversation", "Canvas should expose its bound chat title to the header UI");
+    } finally {
+      await new Promise((resolve) => canvas.server.close(resolve));
+    }
+    const job = await startCodexImageJob({
+      projectDir: tmp,
+      action: "quick-edit",
+      imagePath,
+      outputDir,
+      logPath,
+      prompt: "Put the pig in a meadow."
+    });
+    assertEqual(job.executable, "tech-cc-hub-image-bridge", "Canvas image jobs should use the Hub bridge instead of the Codex CLI");
+    await job.done;
+    await fs.access(path.join(outputDir, "tech-cc-hub-1.png"));
+    assertEqual(requests.length, 1, "Canvas image jobs should submit exactly one request to the Hub image bridge");
+    assertEqual(requests[0].url, "/v1/session/image-generate", "Canvas image jobs should use the Hub image generation endpoint");
+    assertEqual(requests[0].body.sessionId, "session-1", "Canvas image jobs should keep the bound session id");
+    assertEqual(requests[0].body.action, "edit", "Canvas edits should use the Hub edit route");
+    assertEqual(requests[0].body.referenceImagePaths[0], imagePath, "Canvas image jobs should send the selected local canvas asset");
+
+    let releaseCancelledRequest;
+    const cancelledRequestStarted = new Promise((resolve) => {
+      releaseCancelledRequest = resolve;
+    });
+    server.removeAllListeners("request");
+    server.on("request", async (request, response) => {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      releaseCancelledRequest();
+      request.once("aborted", () => response.destroy());
+    });
+    const cancelledOutputDir = path.join(tmp, "cancelled-outputs");
+    const unhandled = [];
+    const handleUnhandled = (error) => unhandled.push(error);
+    process.on("unhandledRejection", handleUnhandled);
+    try {
+      const cancelledJob = await startCodexImageJob({
+        projectDir: tmp,
+        action: "quick-edit",
+        imagePath,
+        outputDir: cancelledOutputDir,
+        logPath: path.join(tmp, "cancelled.log"),
+        prompt: "Cancel this edit."
+      });
+      let requestStartTimeout;
+      await Promise.race([
+        cancelledRequestStarted,
+        new Promise((_, reject) => {
+          requestStartTimeout = setTimeout(() => reject(new Error("Timed out waiting for the cancellable Hub image request.")), 5000);
+          requestStartTimeout.unref?.();
+        }),
+      ]).finally(() => clearTimeout(requestStartTimeout));
+      assertEqual(await stopCodexProcess(cancelledJob.child), true, "Hub image jobs should abort through the existing child cancellation contract");
+      assertEqual(await stopCodexProcess(cancelledJob.child), false, "Hub image job cancellation should be idempotent");
+      await assertRejects(
+        () => cancelledJob.done,
+        "aborted",
+        "Cancelled Hub image jobs should reject their done promise"
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEqual(unhandled.length, 0, "Cancelled Hub image jobs should not create unhandled promise rejections");
+      const cancelledOutputs = await fs.readdir(cancelledOutputDir);
+      assertEqual(cancelledOutputs.length, 0, "Cancelled Hub image jobs should not copy late artifacts");
+    } finally {
+      process.off("unhandledRejection", handleUnhandled);
+    }
+
+    const splitCli = path.join(tmp, process.platform === "win32" ? "split-codex.cmd" : "split-codex");
+    await writeNodeExecutable(splitCli, fakeCodexCaptureImageJobScript());
+    process.env.CODEX_CANVAS_CODEX_CLI = splitCli;
+    const splitJob = await startCodexImageJob({ projectDir: tmp, action: "edit-elements", imagePath, outputDir, logPath, prompt: "" });
+    assertEqual(splitJob.executable, splitCli, "Split Layers should use the built-in Codex imagegen route instead of the Hub image model");
+    await splitJob.done;
+    const splitCapture = JSON.parse(await fs.readFile(path.join(outputDir, "codex-capture.json"), "utf8"));
+    if (!splitCapture.prompt.includes("canvas-edit-elements skill")) {
+      throw new Error("Split Layers should request the upstream instance-segmentation workflow.");
+    }
+    assertEqual(requests.length, 1, "Split Layers should not call the general Hub image generation bridge");
+  } finally {
+    if (previousUrl === undefined) delete process.env.TECH_CC_HUB_BRIDGE_URL;
+    else process.env.TECH_CC_HUB_BRIDGE_URL = previousUrl;
+    if (previousToken === undefined) delete process.env.TECH_CC_HUB_BRIDGE_TOKEN;
+    else process.env.TECH_CC_HUB_BRIDGE_TOKEN = previousToken;
+    if (previousSessionId === undefined) delete process.env.TECH_CC_HUB_SESSION_ID;
+    else process.env.TECH_CC_HUB_SESSION_ID = previousSessionId;
+    if (previousCli === undefined) delete process.env.CODEX_CANVAS_CODEX_CLI;
+    else process.env.CODEX_CANVAS_CODEX_CLI = previousCli;
+    await new Promise((resolve) => server.close(resolve));
   }
 }
 
@@ -2916,6 +3146,117 @@ async function testChatTurnActionContract() {
   } finally {
     process.env.CODEX_CANVAS_CODEX_CLI = previousCli;
     await stopActiveChatOperations();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+async function testCowartAnnotationCanvasJobContract() {
+  const deps = await checkImageProcessingDepsAvailable();
+  if (!deps.available) {
+    console.warn(`Skipping Cowart annotation canvas job smoke test; missing optional image dependencies: ${deps.missing?.join(", ") || "unknown"}.`);
+    return;
+  }
+
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-canvas-cowart-job-"));
+  const fakeCodex = path.join(tmp, process.platform === "win32" ? "codex.cmd" : "codex");
+  await writeNodeExecutable(fakeCodex, fakeCodexCaptureImageJobScript());
+  const previousCli = process.env.CODEX_CANVAS_CODEX_CLI;
+  process.env.CODEX_CANVAS_CODEX_CLI = fakeCodex;
+  const { server, url } = await createServer({
+    projectDir: tmp,
+    port: 0,
+    autoCollect: false,
+    chatThreadId: null
+  });
+  const base = url.replace(/\?.*/, "");
+  const search = new URL(url).search;
+  try {
+    const sourcePng = new PNG({ width: 160, height: 160 });
+    sourcePng.data.fill(255);
+    const image = await postJson(`${base}api/images${search}`, {
+      dataUrl: `data:image/png;base64,${PNG.sync.write(sourcePng).toString("base64")}`,
+      name: "annotation-source.png",
+      x: 40,
+      y: 1230,
+      width: 160,
+      height: 160
+    });
+    assertEqual(image.status, 201, "annotation job fixture should add a source image");
+    const arrow = await postJson(`${base}api/objects${search}`, {
+      type: "annotation-arrow",
+      x: 52,
+      y: 1248,
+      width: 108,
+      height: 72,
+      points: [{ x: 8, y: 56 }, { x: 96, y: 12 }],
+      stroke: "#d93025",
+      strokeWidth: 4,
+      sourceImageId: image.body.id
+    });
+    assertEqual(arrow.status, 201, "annotation job fixture should add a persistent arrow");
+    const label = await postJson(`${base}api/objects${search}`, {
+      type: "text",
+      text: "改成模特戴耳机，休闲点",
+      x: 120,
+      y: 1242,
+      width: 90,
+      height: 28,
+      fontSize: 16,
+      color: "#d93025",
+      sourceImageId: image.body.id,
+      annotationArrowId: arrow.body.id,
+      isAnnotationLabel: true
+    });
+    assertEqual(label.status, 201, "annotation job fixture should add a related label");
+
+    const missing = await postJson(`${base}api/annotation-edit${search}`, { objectId: image.body.id });
+    assertEqual(missing.status, 400, "annotation edit should require an explicit stable action");
+
+    const sent = await postJson(`${base}api/annotation-edit${search}`, {
+      action: "annotation-edit",
+      objectId: image.body.id
+    });
+    assertEqual(sent.status, 202, "annotation edit should start the plugin's native canvas image job");
+    assertEqual(sent.body.action, "quick-edit", "annotation edit should reuse the native quick-edit execution pipeline");
+    if (!sent.body.id || !sent.body.placeholder) {
+      throw new Error("annotation edit should return a pollable canvas job with a placeholder.");
+    }
+    if (!/annotation-reference-.*\.png$/i.test(String(sent.body.referenceImagePath || ""))) {
+      throw new Error("annotation edit should retain a project-local reference PNG for the native image job.");
+    }
+    await fs.access(sent.body.referenceImagePath);
+    const referencePng = PNG.sync.read(await fs.readFile(sent.body.referenceImagePath));
+    let redAnnotationPixels = 0;
+    for (let index = 0; index < referencePng.data.length; index += 4) {
+      const red = referencePng.data[index];
+      const green = referencePng.data[index + 1];
+      const blue = referencePng.data[index + 2];
+      if (red > 180 && green < 110 && blue < 110) redAnnotationPixels += 1;
+    }
+    if (redAnnotationPixels < 10) {
+      throw new Error("annotation reference should render arrow and label pixels when the source is away from the canvas origin");
+    }
+    const manifest = JSON.parse(await fs.readFile(sent.body.annotationManifestPath, "utf8"));
+    const manifestArrow = manifest.items.find((item) => item.type === "annotation-arrow");
+    assertEqual(manifestArrow?.arrowhead, "start", "annotation reference manifests should preserve target-point arrow direction");
+    assertEqual(manifestArrow?.curve, "quadratic", "annotation reference manifests should preserve the curved callout style");
+    if (!Number.isFinite(manifestArrow?.control?.x) || !Number.isFinite(manifestArrow?.control?.y)) {
+      throw new Error("annotation reference manifests should include a curved callout control point.");
+    }
+    const completed = await waitForImageJobDone(sent.body.id);
+    assertEqual(completed.status, "done", "annotation image job should complete inside the canvas pipeline");
+    const captured = await readCapturedCodexJob(tmp, sent.body.id);
+    assertEqual(captured.imageArgs[0], image.body.assetPath, "annotation image job should keep the original source as the primary imagegen input");
+    assertEqual(captured.imageArgs[1], sent.body.referenceImagePath, "annotation image job should pass the composed reference as secondary guidance");
+    if (!captured.prompt.includes("Apply only the indicated changes") || !captured.prompt.includes("first attached image")) {
+      throw new Error("annotation image job prompt should preserve the label-driven edit constraint.");
+    }
+    if (!captured.prompt.includes("改成模特戴耳机，休闲点")) {
+      throw new Error("annotation image job prompt should include the user's exact annotation instruction text.");
+    }
+  } finally {
+    if (previousCli === undefined) delete process.env.CODEX_CANVAS_CODEX_CLI;
+    else process.env.CODEX_CANVAS_CODEX_CLI = previousCli;
     await new Promise((resolve) => server.close(resolve));
   }
 }

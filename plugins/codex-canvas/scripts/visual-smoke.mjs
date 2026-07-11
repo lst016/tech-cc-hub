@@ -11,9 +11,11 @@ const pngOne = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9Q
 const pngTwo = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFUlEQVR4nGO8Y6D6n4GBgYEJRIAwACHvAjSDKprFAAAAAElFTkSuQmCC";
 const expectedSingleImageActions = [
   "quick-edit",
+  "annotation-edit",
   "remove-bg",
   "expand",
   "crop",
+  "delete-selected",
   "edit-elements",
   "edit-text",
   "send-to-chat",
@@ -24,6 +26,7 @@ const viewports = [
   { name: "desktop", width: 1280, height: 800 },
   { name: "mobile", width: 390, height: 844, isMobile: true, hasTouch: true }
 ];
+const visualScope = String(process.env.CODEX_CANVAS_VISUAL_SCOPE || "").trim();
 let visualProjectRegistryPath = null;
 
 async function main() {
@@ -39,14 +42,19 @@ async function main() {
   const browser = await launchChromium(playwright);
   const results = [];
   try {
-    for (const viewport of viewports) {
+    const smokeViewports = visualScope === "annotation"
+      ? viewports.filter((viewport) => viewport.name === "desktop")
+      : viewports;
+    for (const viewport of smokeViewports) {
       await runViewportSmoke(browser, viewport);
       results.push(viewport.name);
     }
-    await runEditElementsLayerSmoke(browser);
-    results.push("edit-elements-layers");
-    await runUploadPartialFailureSmoke(browser);
-    results.push("upload-partial-failure");
+    if (visualScope !== "annotation") {
+      await runEditElementsLayerSmoke(browser);
+      results.push("edit-elements-layers");
+      await runUploadPartialFailureSmoke(browser);
+      results.push("upload-partial-failure");
+    }
   } finally {
     await browser.close();
   }
@@ -206,7 +214,7 @@ async function runViewportSmoke(browser, viewport) {
     await waitForImageDecoded(page, `.canvas-object[data-id="${image.id}"] img`);
 
     await assertCanvasIsNotBlank(page, viewport);
-    if (viewport.name === "desktop") {
+    if (viewport.name === "desktop" && visualScope !== "annotation") {
       await assertCanvasInputInteractions(page, image.id);
     }
     await activateCanvasTool(page, "select");
@@ -215,7 +223,12 @@ async function runViewportSmoke(browser, viewport) {
     await waitForVisible(page, "#selectionToolbar", "selection toolbar should be visible after image selection");
     await assertLocatorClassContains(page, `.canvas-object[data-id="${image.id}"]`, "selected");
     if (viewport.name === "desktop") {
-      await assertObjectMoveUndoRedo(page, image.id);
+      if (visualScope !== "annotation") await assertObjectMoveUndoRedo(page, image.id);
+      await assertCowartAnnotationWorkflow(page, image.id);
+      if (visualScope === "annotation") {
+        assertDeepEqual(consoleErrors.filter((message) => !/favicon/i.test(message)), [], "annotation visual smoke should not emit console errors");
+        return;
+      }
     }
 
     await assertSingleImageActionToolbar(page);
@@ -401,6 +414,227 @@ async function assertCanvasInputInteractions(page, imageId) {
   await activateCanvasTool(page, "select");
 }
 
+async function assertCowartAnnotationWorkflow(page, imageId) {
+  await activateCanvasTool(page, "annotation");
+  const imageRect = await page.locator(`.canvas-object[data-id="${imageId}"]`).boundingBox();
+  assertRectVisible(imageRect, "image before Cowart annotation");
+  const annotationStart = {
+    x: imageRect.x + imageRect.width * 0.62,
+    y: imageRect.y + imageRect.height * 0.52
+  };
+  await page.mouse.move(annotationStart.x, annotationStart.y);
+  await page.mouse.down();
+  await page.mouse.move(annotationStart.x - imageRect.width * 0.2, annotationStart.y + imageRect.height * 0.08);
+  await page.waitForFunction(() => document.querySelector(".annotation-preview .annotation-arrow-content"), null, { timeout: 5000 });
+  await page.evaluate(() => {
+    document.querySelector(".annotation-preview .annotation-arrow-content")?.setAttribute("data-visual-token", "stable-preview");
+  });
+  await page.waitForTimeout(2200);
+  await page.mouse.move(annotationStart.x - imageRect.width * 0.42, annotationStart.y + imageRect.height * 0.14);
+  const previewStayedMounted = await page.evaluate(() => (
+    document.querySelector(".annotation-preview .annotation-arrow-content")?.getAttribute("data-visual-token") === "stable-preview"
+      && document.querySelector(".annotation-preview")?.isConnected === true
+  ));
+  assert(previewStayedMounted, "annotation drag preview should stay mounted across a background state refresh");
+  await page.mouse.up();
+  await page.waitForFunction(() => document.querySelectorAll(".annotation-arrow-object").length === 1, null, { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelector(".text-content.annotation-label[contenteditable='true']"), null, { timeout: 5000 });
+
+  const persisted = await page.evaluate(async (imageId) => {
+    const state = await fetch(`/api/state${window.location.search}`).then((response) => response.json());
+    const arrow = state.objects.find((object) => object.type === "annotation-arrow");
+    const label = state.objects.find((object) => object.isAnnotationLabel === true);
+    return { arrow, label, imageId };
+  }, imageId);
+  assert(persisted.arrow?.sourceImageId === imageId, "Cowart annotation arrow should persist an image ownership relation");
+  assert(persisted.arrow?.points?.length === 2, "Cowart annotation arrow should persist exactly two endpoint points");
+  assert(persisted.arrow?.arrowhead === "start", "annotation arrowheads should point back to the pressed target point");
+  assert(persisted.label?.annotationArrowId === persisted.arrow?.id, "Cowart annotation label should persist its arrow relation");
+  const arrowStartX = persisted.arrow.x + persisted.arrow.points[0].x;
+  const arrowEndX = persisted.arrow.x + persisted.arrow.points[1].x;
+  assert(arrowEndX < arrowStartX, "annotation test drag should run from the image target toward the left label position");
+  assert(
+    persisted.label.x + persisted.label.width <= arrowEndX,
+    "a target-to-left drag should place its text label beside the dragged endpoint"
+  );
+  assert(
+    arrowEndX - (persisted.label.x + persisted.label.width) <= 8,
+    "annotation text should stay close to the dragged arrow endpoint"
+  );
+  const textToArrowGap = await page.locator(`.canvas-object[data-id="${persisted.label.id}"]`).evaluate((element, endpointX) => {
+    const text = element.querySelector(".text-content.annotation-label");
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const textBounds = range.getBoundingClientRect();
+    const matrix = new DOMMatrixReadOnly(getComputedStyle(document.querySelector("#world")).transform);
+    const endpointScreenX = matrix.e + endpointX * matrix.a;
+    return endpointScreenX - textBounds.right;
+  }, arrowEndX);
+  assert(textToArrowGap >= 0 && textToArrowGap <= 24, "annotation glyphs should sit visually close to the arrow endpoint");
+  const arrowheadPath = await page.locator(`.canvas-object[data-id="${persisted.arrow.id}"] .annotation-arrow-head`).getAttribute("d");
+  assert(
+    arrowheadPath?.includes(`L ${persisted.arrow.points[0].x} ${persisted.arrow.points[0].y}`),
+    "the rendered arrowhead should use the pressed target point as its tip"
+  );
+  if (process.env.CODEX_CANVAS_VISUAL_SCREENSHOT) {
+    await page.screenshot({
+      path: process.env.CODEX_CANVAS_VISUAL_SCREENSHOT,
+      animations: "disabled"
+    });
+  }
+  await waitForVisible(
+    page,
+    `.canvas-object[data-id="${imageId}"] .annotation-edit-trigger`,
+    "an annotated source image should expose a direct edit-by-annotations button"
+  );
+
+  await page.locator(".text-content.annotation-label").fill("第一次修改");
+  const blank = await canvasBlankPoint(page);
+  await page.mouse.click(blank.x, blank.y);
+  await page.waitForFunction(() => {
+    const label = document.querySelector(".text-content.annotation-label");
+    if (label?.getAttribute("contenteditable") !== "false") return false;
+    const style = getComputedStyle(label);
+    return style.borderTopStyle === "none" || Number.parseFloat(style.borderTopWidth) === 0;
+  }, null, { timeout: 5000 });
+  const finishedLabelStyle = await page.locator(".text-content.annotation-label").evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      borderStyle: style.borderTopStyle,
+      borderWidth: Number.parseFloat(style.borderTopWidth),
+      boxShadow: style.boxShadow,
+      fontWeight: Number.parseInt(style.fontWeight, 10)
+    };
+  });
+  assert(
+    finishedLabelStyle.borderStyle === "none" || finishedLabelStyle.borderWidth === 0,
+    "finished annotation labels should render without an input border"
+  );
+  assert(finishedLabelStyle.boxShadow === "none", "finished annotation labels should render without an input shadow");
+  assert(finishedLabelStyle.fontWeight <= 500, "finished annotation labels should use a restrained text weight");
+  const deletePresentation = await page.locator(`.canvas-object[data-id="${persisted.label.id}"]`).evaluate((element) => {
+    const text = element.querySelector(".text-content.annotation-label");
+    const button = element.querySelector(".annotation-delete-trigger");
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const textBounds = range.getBoundingClientRect();
+    const buttonBounds = button.getBoundingClientRect();
+    const buttonStyle = getComputedStyle(button);
+    return {
+      gap: buttonBounds.left - textBounds.right,
+      topOffset: buttonBounds.top - textBounds.top,
+      borderWidth: Number.parseFloat(buttonStyle.borderTopWidth),
+      boxShadow: buttonStyle.boxShadow,
+      hasIcon: Boolean(button.querySelector("svg"))
+    };
+  });
+  assert(deletePresentation.gap <= 12, "annotation delete control should stay visually attached to its text");
+  assert(deletePresentation.topOffset <= 1, "annotation close icon should sit at the text's top-right corner instead of below it");
+  assert(deletePresentation.borderWidth === 0, "annotation delete control should not use a heavy outlined circle");
+  assert(deletePresentation.boxShadow === "none", "annotation delete control should not cast a floating shadow");
+  assert(deletePresentation.hasIcon, "annotation delete control should use a compact icon instead of a text glyph");
+  if (process.env.CODEX_CANVAS_FINISHED_SCREENSHOT) {
+    await page.screenshot({
+      path: process.env.CODEX_CANVAS_FINISHED_SCREENSHOT
+    });
+  }
+  await page.locator(".text-content.annotation-label").dblclick();
+  await page.waitForFunction(() => {
+    const label = document.querySelector(".text-content.annotation-label");
+    return label?.getAttribute("contenteditable") === "true" && document.activeElement === label;
+  }, null, { timeout: 5000 });
+  const editingLabelStyle = await page.locator(".text-content.annotation-label").evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { borderColor: style.borderTopColor, textColor: style.color };
+  });
+  assert(editingLabelStyle.borderColor !== editingLabelStyle.textColor, "annotation editing should use a neutral focus border instead of a heavy red outline");
+  await page.evaluate(() => {
+    document.querySelector(".text-content.annotation-label")?.setAttribute("data-editor-token", "same-editor");
+  });
+  await page.waitForTimeout(120);
+  const editorStateAfterDoubleClick = await page.evaluate(() => {
+    const label = document.querySelector(".text-content.annotation-label");
+    return {
+      token: label?.getAttribute("data-editor-token") || null,
+      contentEditable: label?.getAttribute("contenteditable") || null,
+      focused: document.activeElement === label
+    };
+  });
+  assert(
+    editorStateAfterDoubleClick.token === "same-editor" && editorStateAfterDoubleClick.focused,
+    `double-clicking a finished annotation should leave its original DOM node focused for keyboard and IME input: ${JSON.stringify(editorStateAfterDoubleClick)}`
+  );
+  await page.keyboard.press("Control+A");
+  await page.keyboard.type("第二次修改");
+  await page.keyboard.press("Control+Enter");
+  await page.waitForFunction(async (labelId) => {
+    const state = await fetch(`/api/state${window.location.search}`).then((response) => response.json());
+    return state.objects.find((object) => object.id === labelId)?.text === "第二次修改";
+  }, persisted.label.id, { timeout: 5000 });
+  assert(persisted.arrow?.curve === "quadratic", "Cowart annotation arrows should persist a curved callout style");
+  const arrowLinePath = await page.locator(`.canvas-object[data-id="${persisted.arrow.id}"] .annotation-arrow-line`).getAttribute("d");
+  assert(arrowLinePath?.includes(" Q "), "annotation callouts should render as a quadratic curve instead of a straight line");
+  await activateCanvasTool(page, "select");
+  await page.locator(`.canvas-object[data-id="${imageId}"]`).click({
+    // Keep this selection assertion away from the direct edit trigger in the bottom-right corner.
+    position: { x: imageRect.width * 0.12, y: imageRect.height * 0.16 }
+  });
+  await waitForVisible(page, '#selectionToolbar [data-action="annotation-edit"]', "annotation edit action should appear after selecting its source image");
+  const annotationActionText = (await page.locator('#selectionToolbar [data-action="annotation-edit"]').innerText()).trim();
+  assert(
+    annotationActionText === "按标注生成" || annotationActionText === "Generate from annotations",
+    "the annotation action should use the generate-from-annotations label"
+  );
+  const directTriggerText = (await page.locator(`.canvas-object[data-id="${imageId}"] .annotation-edit-trigger`).innerText()).trim();
+  assert(
+    directTriggerText === "按标注生成" || directTriggerText === "Generate from annotations",
+    "the annotated image trigger should use the generate-from-annotations label"
+  );
+
+  await page.route("**/api/annotation-edit**", (route) => route.fulfill({
+    status: 202,
+    contentType: "application/json",
+    body: JSON.stringify({
+      id: "annotation-visual-job",
+      action: "quick-edit",
+      status: "queued",
+      placeholder: null
+    })
+  }));
+  await page.route("**/api/jobs/annotation-visual-job**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ id: "annotation-visual-job", action: "quick-edit", status: "done", imported: [] })
+  }));
+  const annotationEditRequest = page.waitForRequest((request) => {
+    const requestUrl = new URL(request.url());
+    return request.method() === "POST" && requestUrl.pathname === "/api/annotation-edit";
+  });
+  const annotationJobPoll = page.waitForRequest((request) => {
+    const requestUrl = new URL(request.url());
+    return request.method() === "GET" && requestUrl.pathname === "/api/jobs/annotation-visual-job";
+  });
+  await page.locator(`.canvas-object[data-id="${imageId}"] .annotation-edit-trigger`).click();
+  const request = await annotationEditRequest;
+  await annotationJobPoll;
+  const annotationEditBody = JSON.parse(request.postData() || "{}");
+  assert(
+    annotationEditBody.action === "annotation-edit" && annotationEditBody.objectId === imageId,
+    "the direct annotation trigger should start the native annotation image job endpoint"
+  );
+
+  await page.locator(`.canvas-object[data-id="${persisted.label.id}"] .annotation-delete-trigger`).click();
+  await page.waitForFunction(async ({ arrowId, labelId, imageId }) => {
+    const state = await fetch(`/api/state${window.location.search}`).then((response) => response.json());
+    const ids = new Set(state.objects.map((object) => object.id));
+    return !ids.has(arrowId) && !ids.has(labelId) && ids.has(imageId);
+  }, { arrowId: persisted.arrow.id, labelId: persisted.label.id, imageId }, { timeout: 5000 });
+  await page.locator(`.canvas-object[data-id="${imageId}"]`).click({
+    position: { x: imageRect.width * 0.12, y: imageRect.height * 0.16 }
+  });
+  await waitForVisible(page, "#selectionToolbar", "source image toolbar should return after deleting its annotation");
+}
+
 async function activateCanvasTool(page, tool) {
   await page.locator(`[data-tool="${tool}"]`).click();
   await page.waitForFunction((tool) => (
@@ -524,7 +758,7 @@ async function assertVersionDiffOverlay(page, versionIds) {
   for (const rect of snapshot.boxRects) {
     assertRectVisible(rect, "version annotation box");
   }
-  assert(snapshot.labelText.includes("Pixel diff"), "version annotation overlay should include a pixel diff label");
+  assert(snapshot.labelText.trim().length > 0, "version annotation overlay should include a localized pixel-diff label");
   assert(snapshot.selected.every(Boolean), "version annotation overlay should keep all compared versions selected");
 }
 
@@ -990,7 +1224,7 @@ async function assertEditElementsLayerSelection(page, { backgroundId, foreground
   assert(selection.labelText === "", "Edit Elements unlocked selection should not show a group overlay label");
   assertDeepEqual(
     selection.visibleActions,
-    ["quick-edit", "remove-bg", "expand", "crop", "edit-elements", "reset-layer-group", "layer-down", "layer-up", "group-layer-group", "edit-text", "send-to-chat", "copy-file-mention", "download"],
+    ["quick-edit", "annotation-edit", "remove-bg", "expand", "crop", "delete-selected", "edit-elements", "reset-layer-group", "layer-down", "layer-up", "group-layer-group", "edit-text", "send-to-chat", "copy-file-mention", "download"],
     "Edit Elements unlocked layer selection should expose image actions plus group actions"
   );
   assert(
@@ -1001,8 +1235,8 @@ async function assertEditElementsLayerSelection(page, { backgroundId, foreground
     selection.actionRects.download.top === selection.actionRects["reset-layer-group"].top,
     "Edit Elements PSD download should render with the group actions row"
   );
-  assert(selection.actionText["layer-down"].includes("Layer down"), "Layer down should render text in the toolbar");
-  assert(selection.actionText["layer-up"].includes("Layer up"), "Layer up should render text in the toolbar");
+  assert(selection.actionText["layer-down"].trim().length > 0, "Layer down should render localized text in the toolbar");
+  assert(selection.actionText["layer-up"].trim().length > 0, "Layer up should render localized text in the toolbar");
   assert(
     selection.toolbarRect.width < 760,
     "Edit Elements two-row toolbar should stay compact instead of stretching across the viewport"
@@ -1055,7 +1289,10 @@ async function assertExpandComposer(page, viewport) {
   });
   assertRectVisible(snapshot.rect, "Expand composer");
   assertRectInsideViewport(snapshot.rect, viewport, "Expand composer");
-  assert(snapshot.placeholder.includes("extend"), "Expand composer should show expansion-specific placeholder text");
+  assert(
+    snapshot.placeholder && snapshot.placeholder !== "Describe your edit here",
+    "Expand composer should switch away from the generic Quick Edit placeholder"
+  );
   assert(snapshot.activeAction, "Expand composer should use the expand controls mode");
   await page.locator("#quickEditCancel").click();
   await waitForHidden(page, "#quickEditComposer", "Expand composer should close after cancel");
@@ -1198,11 +1435,11 @@ async function assertVisibleControlsDoNotOverlap(page, viewport) {
     const selectors = [
       ["project header", ".project-header"],
       ["settings button", "#settingsButton"],
+      ["zoom controls", ".canvas-controls"],
       ["tool dock", ".tool-dock"],
       ["selection toolbar", "#selectionToolbar"],
       ["quick edit composer", "#quickEditComposer"],
       ["settings menu", "#settingsMenu"],
-      ["project menu", "#projectMenu"],
       ["color palette", "#colorPalette"]
     ];
     return selectors.flatMap(([name, selector]) => {

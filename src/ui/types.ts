@@ -42,13 +42,6 @@ export type ApiConfigProfile = {
   imageModel?: string;
   imageGenerationModel?: string;
   analysisModel?: string;
-  embeddingModel?: string;
-  embeddingDimension?: number;
-  embeddingBatchSize?: number;
-  wikiModel?: string;
-  wikiModelCostTier?: "free" | "cheap" | "standard";
-  wikiModelMaxInputTokens?: number;
-  wikiModelMaxOutputTokens?: number;
   models?: ApiModelConfigProfile[];
   enabled: boolean;
   provider?: ApiProviderMode;

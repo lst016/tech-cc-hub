@@ -14,6 +14,19 @@ test("prompt input clears visible text before awaiting message dispatch", () => 
   assert.ok(clearStart < sendStart, "composer text must clear before slow title generation or dispatch awaits");
 });
 
+test("model usage increments only after a prompt is sent or queued", () => {
+  const source = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
+  const submitStart = source.indexOf("const submitCurrentInput = useCallback");
+  const submitEnd = source.indexOf("useEffect(() => {", submitStart);
+  const submitSection = source.slice(submitStart, submitEnd);
+
+  assert.ok(submitStart >= 0);
+  assert.ok(submitEnd > submitStart);
+  assert.match(submitSection, /const queued = queueCurrentDraft\(promptSnapshot\);\s*if \(queued\) incrementModelUsage\(selectedRuntimeModel\);/);
+  assert.match(submitSection, /if \(sent\) \{\s*incrementModelUsage\(selectedRuntimeModel\);/);
+  assert.equal(submitSection.match(/incrementModelUsage\(selectedRuntimeModel\)/g)?.length, 2);
+});
+
 test("prompt draft updates synchronously replace the contenteditable DOM", () => {
   const source = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
   const setDraftStart = source.indexOf("const setPromptDraft = useCallback");

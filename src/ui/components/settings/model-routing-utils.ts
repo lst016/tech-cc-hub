@@ -6,7 +6,7 @@ import {
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 
-export type ModelSlotPatch = Partial<Pick<ApiConfigProfile, "model" | "expertModel" | "smallModel" | "analysisModel" | "imageModel" | "imageGenerationModel" | "embeddingModel" | "wikiModel">>;
+export type ModelSlotPatch = Partial<Pick<ApiConfigProfile, "model" | "expertModel" | "smallModel" | "analysisModel" | "imageModel" | "imageGenerationModel">>;
 
 export type SharedModelRoutingState = {
   routedProfileIds: string[];
@@ -19,8 +19,6 @@ export type SharedModelRoutingState = {
   analysisModel: string;
   imageModel: string;
   imageGenerationModel: string;
-  embeddingModel: string;
-  wikiModel: string;
 };
 
 export function buildSharedModelRoutingState(profiles: ApiConfigProfile[]): SharedModelRoutingState {
@@ -41,8 +39,6 @@ export function buildSharedModelRoutingState(profiles: ApiConfigProfile[]): Shar
     analysisModel: pickAvailableModel(primaryProfile?.analysisModel, availableModels) || mainModel,
     imageModel: pickFirstConfiguredSlotModel(routedProfiles, "imageModel", availableModels),
     imageGenerationModel: pickFirstConfiguredSlotModel(routedProfiles, "imageGenerationModel", availableModels),
-    embeddingModel: pickFirstConfiguredSlotModel(routedProfiles, "embeddingModel", availableModels),
-    wikiModel: pickFirstConfiguredSlotModel(routedProfiles, "wikiModel", availableModels),
   };
 }
 
@@ -53,8 +49,6 @@ export function applySharedModelRoutingPatch(profiles: ApiConfigProfile[], patch
   const mergedModels = mergeModelConfigs(routedProfiles, state.availableModels);
   const hasImageModelPatch = Object.prototype.hasOwnProperty.call(patch, "imageModel");
   const hasImageGenerationModelPatch = Object.prototype.hasOwnProperty.call(patch, "imageGenerationModel");
-  const hasEmbeddingModelPatch = Object.prototype.hasOwnProperty.call(patch, "embeddingModel");
-  const hasWikiModelPatch = Object.prototype.hasOwnProperty.call(patch, "wikiModel");
 
   return profiles.map((profile) => {
     if (!routedIds.has(profile.id)) {
@@ -66,8 +60,6 @@ export function applySharedModelRoutingPatch(profiles: ApiConfigProfile[], patch
       ...patch,
       imageModel: hasImageModelPatch ? patch.imageModel || undefined : profile.imageModel,
       imageGenerationModel: hasImageGenerationModelPatch ? patch.imageGenerationModel || undefined : profile.imageGenerationModel,
-      embeddingModel: hasEmbeddingModelPatch ? patch.embeddingModel || undefined : profile.embeddingModel,
-      wikiModel: hasWikiModelPatch ? patch.wikiModel || undefined : profile.wikiModel,
       models: mergeModelConfigsForProfile(profile, mergedModels, state.availableModels),
     };
   });
@@ -80,7 +72,7 @@ function pickAvailableModel(model: string | undefined, availableModels: string[]
 
 function pickFirstConfiguredSlotModel(
   profiles: ApiConfigProfile[],
-  slot: "imageModel" | "imageGenerationModel" | "embeddingModel" | "wikiModel",
+  slot: "imageModel" | "imageGenerationModel",
   availableModels: string[],
 ): string {
   for (const profile of profiles) {

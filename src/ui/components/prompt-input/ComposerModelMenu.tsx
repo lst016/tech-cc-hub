@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { Check, ChevronDown, Search } from "lucide-react";
 import type { RuntimeReasoningMode } from "../../types";
 import type { ModelOption } from "../models/ModelSelect";
+import { MODEL_USAGE_CHANGED_EVENT, getModelUsageCounts } from "./model-usage-count";
 
 type ComposerModelMenuProps = {
   modelValue: string;
@@ -51,11 +52,18 @@ export function ComposerModelMenu({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const [modelFilter, setModelFilter] = useState("");
+  // 使用次数计数：仅作为排序依据，不在 UI 显示。计数在发送消息时累加，
+  // 通过 window 自定义事件通知此处刷新。
+  const [usageCounts, setUsageCounts] = useState(() => getModelUsageCounts());
 
   const displayOptions = useMemo(() => buildComposerModelOptions(modelOptions), [modelOptions]);
   const filteredOptions = useMemo(
     () => filterComposerModelOptions(displayOptions, modelFilter),
     [displayOptions, modelFilter],
+  );
+  const sortedOptions = useMemo(
+    () => sortOptionsByUsage(filteredOptions, modelFilter, usageCounts),
+    [filteredOptions, modelFilter, usageCounts],
   );
   const selectedOption = displayOptions.find((option) => option.value === modelValue);
   const selectedLabel = selectedOption?.displayLabel || modelValue || placeholder;
@@ -96,6 +104,13 @@ export function ComposerModelMenu({
     };
   }, [closeMenu, open]);
 
+  // 计数在发送消息时累加（发生在其他组件），通过 window 自定义事件通知此处刷新排序。
+  useEffect(() => {
+    const handleUsageChanged = () => setUsageCounts(getModelUsageCounts());
+    window.addEventListener(MODEL_USAGE_CHANGED_EVENT, handleUsageChanged);
+    return () => window.removeEventListener(MODEL_USAGE_CHANGED_EVENT, handleUsageChanged);
+  }, []);
+
   const selectModel = (model: string) => {
     onModelChange(model);
     closeMenu();
@@ -115,7 +130,6 @@ export function ComposerModelMenu({
         title={selectedOption?.title ?? selectedOption?.description ?? modelValue}
       >
         <span className="flex min-w-0 items-center gap-1.5">
-          <span className="shrink-0 text-[#73777f]">模型</span>
           <span className="min-w-0 truncate">{selectedLabel}</span>
         </span>
         <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-[#6f7480] transition ${open ? "rotate-180" : ""}`} aria-hidden="true" />
@@ -146,7 +160,7 @@ export function ComposerModelMenu({
               </label>
             </div>
             <div className="grid gap-1">
-              {filteredOptions.map((option) => (
+              {sortedOptions.map((option) => (
                 <ComposerModelRow
                   key={option.value}
                   option={option}
@@ -154,7 +168,7 @@ export function ComposerModelMenu({
                   onSelect={selectModel}
                 />
               ))}
-              {filteredOptions.length === 0 && (
+              {sortedOptions.length === 0 && (
                 <div className="px-3 py-8 text-center text-[13px] font-medium text-[#8a8f98]">
                   没有匹配模型
                 </div>
@@ -269,6 +283,24 @@ function filterComposerModelOptions(options: ComposerModelOption[], query: strin
     ].filter(Boolean).join(" "));
     return queryParts.every((part) => haystack.includes(part));
   });
+}
+
+/**
+ * 无搜索词时按使用次数降序排（常用模型靠上），次数并列时保留原顺序，
+ * 让未使用过的模型维持 profile 配置顺序。有搜索词时不重排，避免干扰相关性查找。
+ */
+function sortOptionsByUsage(
+  options: ComposerModelOption[],
+  query: string,
+  usageCounts: Record<string, number>,
+): ComposerModelOption[] {
+  if (query.trim()) return options;
+  if (options.length <= 1) return options;
+
+  return options
+    .map((option, index) => ({ option, index, count: usageCounts[option.value] ?? 0 }))
+    .sort((a, b) => b.count - a.count || a.index - b.index)
+    .map((entry) => entry.option);
 }
 
 function normalizeModelFilterText(value: string): string {

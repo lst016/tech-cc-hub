@@ -60,7 +60,14 @@ export async function createImageJob(projectDir, input, options = {}) {
     throw error;
   }
 
-  const quickEditAnnotations = action === "quick-edit"
+  const preparedImagePaths = Array.isArray(options.preparedImagePaths)
+    ? options.preparedImagePaths.filter((filePath) => typeof filePath === "string" && filePath.trim()).map((filePath) => path.resolve(filePath)).slice(0, 4)
+    : [];
+  for (const preparedImagePath of preparedImagePaths) {
+    await fs.access(preparedImagePath);
+  }
+
+  const quickEditAnnotations = action === "quick-edit" && preparedImagePaths.length === 0
     ? await collectQuickEditAnnotations(projectDir, object, storeOptions)
     : null;
   const expandOptions = action === "expand"
@@ -85,6 +92,7 @@ export async function createImageJob(projectDir, input, options = {}) {
     sourceObjectId: object.id,
     sourceImagePath: imagePath,
     imagePath,
+    preparedImagePaths,
     expandOptions,
     expandInputPath: null,
     transparentLayerMode,
@@ -628,6 +636,13 @@ function timeoutAfter(timeoutMs, onTimeout) {
 }
 
 async function prepareCodexInputForJob(job) {
+  if (job.action === "quick-edit" && job.preparedImagePaths?.length) {
+    return {
+      imagePath: job.preparedImagePaths,
+      prompt: job.prompt
+    };
+  }
+
   if (job.action === "expand") {
     const inputsDir = path.join(path.dirname(job.outputDir), "inputs");
     const expandInputPath = path.join(inputsDir, "expand-padded-input.png");
@@ -1116,7 +1131,7 @@ async function splitElementLayers(job, segmentationPath) {
 
   const scriptPath = path.join(pluginRoot, "scripts", "split_elements.py");
   await fs.access(scriptPath);
-  await appendJobLog(job, `Splitting Edit Elements layers from segmentation map: ${segmentationPath}`);
+  await appendJobLog(job, `Splitting layers from segmentation map: ${segmentationPath}`);
   await runPython([
     scriptPath,
     "--source", job.imagePath,
@@ -1139,20 +1154,20 @@ async function splitElementLayers(job, segmentationPath) {
 
   const manifest = await readJsonFile(manifestPath);
   const firstLayer = await findOutputImage(layersDir, 0);
-  if (!firstLayer) throw new Error("Edit Elements did not produce any transparent PNG layers.");
-  if (!await isPngRgba(firstLayer)) throw new Error("Edit Elements did not produce four-channel RGBA PNG layers.");
-  await appendJobLog(job, `Edit Elements alpha layers verified: ${manifest?.exportedLayers || "unknown"} layer(s) in ${layersDir}; background completion will continue after placement.`);
+  if (!firstLayer) throw new Error("Split Layers did not produce any transparent PNG layers.");
+  if (!await isPngRgba(firstLayer)) throw new Error("Split Layers did not produce four-channel RGBA PNG layers.");
+  await appendJobLog(job, `Split Layers alpha layers verified: ${manifest?.exportedLayers || "unknown"} layer(s) in ${layersDir}; background completion will continue after placement.`);
   return firstLayer;
 }
 
 async function completeElementBackground(job, manifest, layersDir, backgroundObject) {
   const backgroundLayer = (manifest.layers || []).find((layer) => layer?.kind === "background" && layer.path);
   if (!backgroundLayer) {
-    await appendJobLog(job, "Edit Elements did not produce a background layer to complete.");
+    await appendJobLog(job, "Split Layers did not produce a background layer to complete.");
     return manifest;
   }
   if (!backgroundObject?.assetPath) {
-    await appendJobLog(job, "Edit Elements background object has no local asset path; skipping background completion replacement.");
+    await appendJobLog(job, "Split Layers background object has no local asset path; skipping background completion replacement.");
     return manifest;
   }
 
@@ -1163,7 +1178,7 @@ async function completeElementBackground(job, manifest, layersDir, backgroundObj
 
   await fs.mkdir(completionDir, { recursive: true });
   job.backgroundCompletionRunning = true;
-  await appendJobLog(job, `Completing Edit Elements background from residual layer: ${backgroundPath}`);
+  await appendJobLog(job, `Completing Split Layers background from residual layer: ${backgroundPath}`);
   const codexJob = await startCodexImageJob({
     projectDir: job.projectDir,
     action: "edit-elements-background",
@@ -1187,22 +1202,22 @@ async function completeElementBackground(job, manifest, layersDir, backgroundObj
     );
     const timeout = timeoutAfter(backgroundCompletionTimeoutMs, () => stopChild(codexJob.child));
     const first = await Promise.race([outputReady, codexDone, timeout]);
-    if (first.type === "timeout") throw new Error(`Edit Elements background completion timed out after ${Math.round(backgroundCompletionTimeoutMs / 60_000)} minutes.`);
+    if (first.type === "timeout") throw new Error(`Split Layers background completion timed out after ${Math.round(backgroundCompletionTimeoutMs / 60_000)} minutes.`);
     if (first.type === "failed") throw first.error;
 
     let completedPath = first.imagePath;
     if (!completedPath) {
       const final = await Promise.race([outputReady, timeout]);
-      if (final.type === "timeout") throw new Error(`Edit Elements background completion timed out after ${Math.round(backgroundCompletionTimeoutMs / 60_000)} minutes.`);
+      if (final.type === "timeout") throw new Error(`Split Layers background completion timed out after ${Math.round(backgroundCompletionTimeoutMs / 60_000)} minutes.`);
       completedPath = final.imagePath;
     }
-    if (!completedPath) throw new Error("Edit Elements background completion did not produce an image.");
+    if (!completedPath) throw new Error("Split Layers background completion did not produce an image.");
 
     rememberGeneratedImagePaths([completedPath], job);
     await rememberGeneratedImages(startedAtMs, job);
     await prepareCompletedBackground(job.imagePath, completedPath, backgroundPath);
     rememberGeneratedImagePaths([backgroundPath], job);
-    if (!await isPngRgba(backgroundPath)) throw new Error("Completed Edit Elements background is not a four-channel RGBA PNG.");
+    if (!await isPngRgba(backgroundPath)) throw new Error("Completed Split Layers background is not a four-channel RGBA PNG.");
     await fs.copyFile(backgroundPath, backgroundObject.assetPath);
 
     const width = Number(manifest?.sourceSize?.width) || 1;
@@ -1225,7 +1240,7 @@ async function completeElementBackground(job, manifest, layersDir, backgroundObj
       layerGroupBackgroundStatus: "ready",
       imagegenPrompt: codexJob.prompt
     }, { canvasId: job.canvasId || null });
-    await appendJobLog(job, `Completed Edit Elements background integrated: ${backgroundPath}`);
+    await appendJobLog(job, `Completed Split Layers background integrated: ${backgroundPath}`);
     return manifest;
   } finally {
     job.backgroundCompletionRunning = false;
@@ -1554,7 +1569,7 @@ function jobPrompt(job) {
   if (job.action === "quick-edit") return `Canvas Quick Edit: ${job.prompt || "edited image"}`;
   if (job.action === "expand") return `Canvas Expand: ${job.prompt || "expanded image"}`;
   if (job.action === "edit-text") return "Canvas Edit Text result";
-  if (job.action === "edit-elements") return "Canvas Edit Elements layer";
+  if (job.action === "edit-elements") return "Canvas Split Layers layer";
   if (job.action === "remove-bg") return "Canvas Remove BG result";
   return `Canvas ${job.action} result`;
 }
@@ -1592,7 +1607,7 @@ function actionLabel(action) {
   if (action === "quick-edit") return "Quick Edit";
   if (action === "expand") return "Expand";
   if (action === "edit-text") return "Edit Text";
-  if (action === "edit-elements") return "Edit Elements";
+  if (action === "edit-elements") return "Split Layers";
   if (action === "remove-bg") return "Remove BG";
   return "Image job";
 }
@@ -1651,7 +1666,7 @@ async function placeImportedElementLayers(projectDir, job) {
   );
 
   const groupId = `layer_group_${job.id}`;
-  const groupName = `Edit Elements ${new Date().toLocaleTimeString("en-US", { hour12: false })}`;
+  const groupName = `Split Layers ${new Date().toLocaleTimeString("en-US", { hour12: false })}`;
   const positioned = [];
   for (const [order, imported] of job.imported.entries()) {
     const layer = layerByName.get(imported.name) || layerByName.get(path.basename(imported.sourcePath || ""));
@@ -1712,7 +1727,7 @@ function layerGroupIndexFor(layer, importedOrder) {
 function startElementBackgroundCompletion(projectDir, job, manifest, backgroundObject) {
   const layersDir = path.join(job.outputDir, "elements");
   job.backgroundCompletionPromise = completeElementBackground(job, manifest, layersDir, backgroundObject).catch(async (error) => {
-    await appendJobLog(job, `Edit Elements background completion failed after layers were placed: ${error?.message || String(error)}`);
+    await appendJobLog(job, `Split Layers background completion failed after layers were placed: ${error?.message || String(error)}`);
     await updateObject(projectDir, backgroundObject.id, {
       layerGroupBackgroundStatus: "failed"
     }, { canvasId: job.canvasId || null }).catch(() => {});
