@@ -9,6 +9,7 @@ import { useAppStore } from "./store/useAppStore";
 import { useWorkflowRunStore } from "./store/workflowRunStore";
 import type { AppUpdateStatus, PromptAttachment, ServerEvent, SettingsPageId, StreamMessage } from "./types";
 import { DEFAULT_SIDEBAR_WIDTH, Sidebar } from "./components/Sidebar";
+import { COLLAPSED_SESSION_RAIL_WIDTH, CollapsedSessionRail } from "./components/CollapsedSessionRail";
 import { TooltipButton } from "./components/TooltipButton";
 import { UpdateToast } from "./components/UpdateToast";
 import { PromptInput } from "./components/prompt-input/PromptInput";
@@ -411,6 +412,8 @@ function App() {
   }, []);
 
   const activeSessionId = useAppStore((s) => s.activeSessionId);
+  const sessions = useAppStore((s) => s.sessions);
+  const setActiveSessionId = useAppStore((s) => s.setActiveSessionId);
   activeSessionIdRef.current = activeSessionId;
   const partialMessage = activeSessionId ? (partialMessagesBySessionId[activeSessionId] ?? "") : "";
   const showPartialMessage = activeSessionId ? (partialVisibilityBySessionId[activeSessionId] ?? false) : false;
@@ -714,6 +717,15 @@ function App() {
   }, [handleServerEvent, handlePartialMessages]);
 
   const { connected, sendEvent } = useIPC(onEvent);
+  const requestCollapsedSessionPreviewHistory = useCallback((sessionId: string) => {
+    const session = sessions[sessionId];
+    if (!connected || !session || session.hydrated || historyRequested.has(sessionId)) return;
+    markHistoryRequested(sessionId);
+    sendEvent({
+      type: "session.history",
+      payload: { sessionId, limit: 80 },
+    });
+  }, [connected, historyRequested, markHistoryRequested, sendEvent, sessions]);
   const { handleStartFromModal, sendPromptDraft } = usePromptActions(sendEvent);
 
   const messages = activeSession?.messages ?? EMPTY_MESSAGES;
@@ -1572,7 +1584,8 @@ function App() {
     activityRailTab === "git";
   const expandedActivityWorkspaceActive = gitWorkspaceActive;
   const workspaceSidebarVisible = showSidebar;
-  const sidebarOffset = workspaceSidebarVisible ? sidebarWidth : 0;
+  const workspaceSidebarCollapsed = !showSidebar;
+  const sidebarOffset = workspaceSidebarVisible ? sidebarWidth : COLLAPSED_SESSION_RAIL_WIDTH;
   const maxActivityRailWidth = viewportWidth - sidebarOffset - MIN_CENTER_WIDTH;
   const effectiveActivityRailWidth = expandedActivityWorkspaceActive
     ? Math.max(MIN_ACTIVITY_RAIL_WIDTH, viewportWidth - sidebarOffset)
@@ -1902,6 +1915,16 @@ function App() {
             onOpenSettings={openSettings}
             onOpenCronPage={() => { setShowCronPage(true); setShowTaskPanel(false); }}
             width={sidebarWidth}
+          />
+        )}
+        {workspaceSidebarCollapsed && (
+          <CollapsedSessionRail
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+            partialMessagesBySessionId={partialMessagesBySessionId}
+            topClassName={sidebarHeaderOffsetClass}
+            onPreviewSession={requestCollapsedSessionPreviewHistory}
+            onSelectSession={setActiveSessionId}
           />
         )}
         {workspaceSidebarVisible && (
