@@ -123,6 +123,50 @@ test("selectCollapsedRailSessions returns the newest non-archived sessions witho
   assert.deepEqual(selectCollapsedRailSessions(sessions, -1), []);
 });
 
+test("selectCollapsedRailSessions keeps a valid required session within the bounded rail", () => {
+  type RailSession = { id: string; title: string; updatedAt: number; archivedAt?: number };
+  const sessions = Object.fromEntries(
+    Array.from({ length: 12 }, (_, index) => {
+      const rank = index + 1;
+      return [`session-${rank}`, { id: `session-${rank}`, title: `Session ${rank}`, updatedAt: rank }];
+    }),
+  ) as Record<string, RailSession>;
+  const normalIds = Array.from({ length: 10 }, (_, index) => `session-${12 - index}`);
+
+  const forcedIds = selectCollapsedRailSessions(sessions, 10, "session-1").map((session) => session.id);
+  assert.equal(forcedIds.length, 10);
+  assert.deepEqual(forcedIds, [
+    "session-12",
+    "session-11",
+    "session-10",
+    "session-9",
+    "session-8",
+    "session-7",
+    "session-6",
+    "session-5",
+    "session-4",
+    "session-1",
+  ]);
+  assert.equal(forcedIds.filter((id) => id === "session-1").length, 1);
+
+  assert.deepEqual(
+    selectCollapsedRailSessions(sessions, 10, "session-5").map((session) => session.id),
+    normalIds,
+  );
+  assert.deepEqual(
+    selectCollapsedRailSessions(sessions, 10, "missing").map((session) => session.id),
+    normalIds,
+  );
+  assert.deepEqual(
+    selectCollapsedRailSessions({
+      ...sessions,
+      archived: { id: "archived", title: "Archived", updatedAt: 100, archivedAt: 101 },
+    }, 10, "archived").map((session) => session.id),
+    normalIds,
+  );
+  assert.deepEqual(selectCollapsedRailSessions(sessions, 0, "session-1"), []);
+});
+
 test("clampSessionPreviewPosition keeps a 480px card inside the viewport", () => {
   assert.deepEqual(
     clampSessionPreviewPosition(

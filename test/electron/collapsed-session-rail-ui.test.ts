@@ -11,6 +11,7 @@ test("collapsed workspace sidebar keeps a keyboard-accessible recent-session rai
   assert.match(appSource, /<CollapsedSessionRail/);
   assert.match(appSource, /requestCollapsedSessionPreviewHistory/);
 
+  assert.match(railSource, /selectCollapsedRailSessions\(sessions, COLLAPSED_SESSION_RAIL_LIMIT, activeSessionId\)/);
   assert.match(railSource, /createPortal/);
   assert.match(railSource, /data-collapsed-session-rail/);
   assert.match(railSource, /data-session-preview-card/);

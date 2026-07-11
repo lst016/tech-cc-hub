@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from "react-dom";
 import type { SessionView } from "../store/useAppStore";
 import {
+  COLLAPSED_SESSION_RAIL_LIMIT,
   clampSessionPreviewPosition,
   extractLatestAssistantSummary,
   selectCollapsedRailSessions,
@@ -42,7 +43,10 @@ export function CollapsedSessionRail({
   onClearUnreadSession,
   onSelectSession,
 }: CollapsedSessionRailProps) {
-  const railSessions = useMemo(() => selectCollapsedRailSessions(sessions), [sessions]);
+  const railSessions = useMemo(
+    () => selectCollapsedRailSessions(sessions, COLLAPSED_SESSION_RAIL_LIMIT, activeSessionId),
+    [activeSessionId, sessions],
+  );
   const previewSessionIdRef = useRef<string | null>(null);
   const previewAnchorRef = useRef<{ right: number; top: number } | null>(null);
   const previewCardRef = useRef<HTMLDivElement>(null);

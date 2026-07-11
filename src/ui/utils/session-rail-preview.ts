@@ -37,13 +37,31 @@ export function extractLatestAssistantSummary(messages: readonly unknown[], part
 
 export function selectCollapsedRailSessions<
   T extends { id: string; title: string; updatedAt?: number; archivedAt?: number },
->(sessions: Record<string, T>, limit = COLLAPSED_SESSION_RAIL_LIMIT): T[] {
+>(
+  sessions: Record<string, T>,
+  limit = COLLAPSED_SESSION_RAIL_LIMIT,
+  requiredSessionId?: string | null,
+): T[] {
   const boundedLimit = Math.max(0, Math.floor(limit));
+  if (boundedLimit === 0) return [];
 
-  return Object.values(sessions)
+  const seenSessionIds = new Set<string>();
+  const orderedSessions = Object.values(sessions)
     .filter((session) => session.archivedAt === undefined)
     .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0))
-    .slice(0, boundedLimit);
+    .filter((session) => {
+      if (seenSessionIds.has(session.id)) return false;
+      seenSessionIds.add(session.id);
+      return true;
+    });
+  const visibleSessions = orderedSessions.slice(0, boundedLimit);
+  if (!requiredSessionId || visibleSessions.some((session) => session.id === requiredSessionId)) {
+    return visibleSessions;
+  }
+
+  const requiredSession = orderedSessions.find((session) => session.id === requiredSessionId);
+  if (!requiredSession) return visibleSessions;
+  return [...visibleSessions.slice(0, -1), requiredSession];
 }
 
 export function clampSessionPreviewPosition(
