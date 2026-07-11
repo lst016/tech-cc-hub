@@ -131,11 +131,10 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
   const qaSessionCwd = "D:/tool/tech-cc-hub";
   const qaSessionTimestamp = 1_783_800_000_000;
   const qaBackgroundSessionId = "qa-rail-background";
-  const qaBottomSessionId = "qa-rail-bottom";
   let qaBackgroundStatus: "running" | "completed" = "running";
   let qaBackgroundCompletionScheduled = false;
-  let qaBottomHistoryScheduled = false;
-  let qaBottomHistoryEmitted = false;
+  const qaHistoryScheduledSessionIds = new Set<string>();
+  const qaHistoryEmittedSessionIds = new Set<string>();
   const browserStateBySessionId: Record<string, BrowserWorkbenchState> = {};
   const createEmptyBrowserState = (): BrowserWorkbenchState => ({
     url: "",
@@ -157,78 +156,109 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
   };
   const platform = "browser";
 
-  const buildQaSessions = () => [
-    {
-      id: "qa-rail-active",
-      title: "收起会话栏验收",
-      status: "idle" as const,
-      updatedAt: qaSessionTimestamp + 8_000,
-    },
-    {
-      id: "qa-rail-github",
-      title: "github提交下版本吧",
-      status: "completed" as const,
-      updatedAt: qaSessionTimestamp + 7_000,
-    },
-    {
-      id: qaBackgroundSessionId,
-      title: "后台构建发布包",
-      status: qaBackgroundStatus,
-      updatedAt: qaSessionTimestamp + 6_000,
-    },
-    {
-      id: "qa-rail-release-notes",
-      title: "梳理更新说明",
-      status: "completed" as const,
-      updatedAt: qaSessionTimestamp + 5_000,
-    },
-    {
-      id: "qa-rail-installer",
-      title: "检查安装包清单",
-      status: "completed" as const,
-      updatedAt: qaSessionTimestamp + 4_000,
-    },
-    {
-      id: "qa-rail-metadata",
-      title: "同步升级元数据",
-      status: "completed" as const,
-      updatedAt: qaSessionTimestamp + 3_000,
-    },
-    {
-      id: "qa-rail-windows-build",
-      title: "复核 Windows 构建",
-      status: "completed" as const,
-      updatedAt: qaSessionTimestamp + 2_000,
-    },
-    {
-      id: qaBottomSessionId,
-      title: "核对长回复的底部会话",
-      status: "completed" as const,
-      updatedAt: qaSessionTimestamp + 1_000,
-    },
-  ].map((session, index) => ({
-    ...session,
-    cwd: qaSessionCwd,
-    model: "claude-sonnet-4-5",
-    runSurface: "development" as const,
-    slashCommands: browserPreviewSlashCommandNames,
-    createdAt: qaSessionTimestamp - ((index + 1) * 60_000),
-  }));
-
-  const qaAssistantTextBySessionId: Record<string, string> = {
-    "qa-rail-active": "验收环境已经准备好，可以开始检查收起后的会话栏。",
-    "qa-rail-github": "GitHub 最新已经是 v0.1.55，所以这次需要发 v0.1.56。但当前工作区还有约 60 个其他未提交修改，而刚才安装包也包含它们。请确认：v0.1.56 是否要包含这些修改。",
-    [qaBackgroundSessionId]: "Windows 安装包已经构建完成，校验结果正常。",
-    "qa-rail-release-notes": "更新说明已按功能、修复和验证结果重新整理。",
-    "qa-rail-installer": "安装包、blockmap 和 latest.yml 已经全部列入核对清单。",
-    "qa-rail-metadata": "升级元数据已经同步，公开下载路径保持一致。",
-    "qa-rail-windows-build": "Windows 构建产物已复核，文件名和版本号匹配。",
-    [qaBottomSessionId]: [
-      "这是一段专门用于验证底部会话预览动态重排的长回复，第一行说明历史记录会在悬停后延迟返回。",
-      "第二行补充足够多的自然语言内容，让摘要稳定占满三行并触发 ResizeObserver 重新测量卡片高度。",
-      "第三行确认无论初始窗口还是缩短后的窗口，预览卡片底边都必须保留至少十二像素的安全距离。",
-    ].join("\n"),
+  type QaCollapsedSessionRailFixture = {
+    id: string;
+    title: string;
+    status: "idle" | "running" | "completed";
+    updatedAt: number;
+    assistantText: string;
+    historyDelayMs?: number;
+    cwd: string;
+    model: string;
+    runSurface: "development";
+    slashCommands: string[];
+    createdAt: number;
   };
+  type QaCollapsedSessionRailFixtureDefinition = Omit<
+    QaCollapsedSessionRailFixture,
+    "cwd" | "model" | "runSurface" | "slashCommands" | "createdAt"
+  >;
+
+  const buildQaSessionFixtures = (): QaCollapsedSessionRailFixture[] => {
+    const fixtures: QaCollapsedSessionRailFixtureDefinition[] = [
+      {
+        id: "qa-rail-active",
+        title: "收起会话栏验收",
+        status: "idle",
+        updatedAt: qaSessionTimestamp + 8_000,
+        assistantText: "验收环境已经准备好，可以开始检查收起后的会话栏。",
+      },
+      {
+        id: "qa-rail-github",
+        title: "github提交下版本吧",
+        status: "completed",
+        updatedAt: qaSessionTimestamp + 7_000,
+        assistantText: "GitHub 最新已经是 v0.1.55，所以这次需要发 v0.1.56。但当前工作区还有约 60 个其他未提交修改，而刚才安装包也包含它们。请确认：v0.1.56 是否要包含这些修改。",
+      },
+      {
+        id: qaBackgroundSessionId,
+        title: "后台构建发布包",
+        status: qaBackgroundStatus,
+        updatedAt: qaSessionTimestamp + 6_000,
+        assistantText: "Windows 安装包已经构建完成，校验结果正常。",
+      },
+      {
+        id: "qa-rail-release-notes",
+        title: "梳理更新说明",
+        status: "completed",
+        updatedAt: qaSessionTimestamp + 5_000,
+        assistantText: "更新说明已按功能、修复和验证结果重新整理。",
+      },
+      {
+        id: "qa-rail-installer",
+        title: "检查安装包清单",
+        status: "completed",
+        updatedAt: qaSessionTimestamp + 4_000,
+        assistantText: "安装包、blockmap 和 latest.yml 已经全部列入核对清单。",
+      },
+      {
+        id: "qa-rail-metadata",
+        title: "同步升级元数据",
+        status: "completed",
+        updatedAt: qaSessionTimestamp + 3_000,
+        assistantText: "升级元数据已经同步，公开下载路径保持一致。",
+      },
+      {
+        id: "qa-rail-windows-build",
+        title: "复核 Windows 构建",
+        status: "completed",
+        updatedAt: qaSessionTimestamp + 2_000,
+        assistantText: "Windows 构建产物已复核，文件名和版本号匹配。",
+      },
+      {
+        id: "qa-rail-bottom",
+        title: "核对长回复的底部会话",
+        status: "completed",
+        updatedAt: qaSessionTimestamp + 1_000,
+        assistantText: [
+          "这是一段专门用于验证底部会话预览动态重排的长回复，第一行说明历史记录会在悬停后延迟返回。",
+          "第二行补充足够多的自然语言内容，让摘要稳定占满三行并触发 ResizeObserver 重新测量卡片高度。",
+          "第三行确认无论初始窗口还是缩短后的窗口，预览卡片底边都必须保留至少十二像素的安全距离。",
+        ].join("\n"),
+        historyDelayMs: 250,
+      },
+    ];
+    return fixtures.map((session, index) => ({
+      ...session,
+      cwd: qaSessionCwd,
+      model: "claude-sonnet-4-5",
+      runSurface: "development",
+      slashCommands: browserPreviewSlashCommandNames,
+      createdAt: qaSessionTimestamp - ((index + 1) * 60_000),
+    }));
+  };
+
+  const buildQaSessions = () => buildQaSessionFixtures().map((fixture) => ({
+    id: fixture.id,
+    title: fixture.title,
+    status: fixture.status,
+    updatedAt: fixture.updatedAt,
+    cwd: fixture.cwd,
+    model: fixture.model,
+    runSurface: fixture.runSurface,
+    slashCommands: fixture.slashCommands,
+    createdAt: fixture.createdAt,
+  }));
 
   const buildQaAssistantMessage = (sessionId: string, text: string) => ({
     type: "assistant",
@@ -275,21 +305,34 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
       };
     }
 
-    const session = buildQaSessions().find((candidate) => candidate.id === requestedSessionId) ?? buildQaSessions()[0];
-    const assistantText = qaAssistantTextBySessionId[session.id];
+    const fixture = buildQaSessionFixtures().find((candidate) => candidate.id === requestedSessionId);
+    if (!fixture) {
+      return {
+        type: "session.history",
+        payload: {
+          sessionId: requestedSessionId,
+          status: "idle",
+          mode: "replace",
+          hasMore: false,
+          slashCommands: browserPreviewSlashCommandNames,
+          messages: [],
+        },
+      };
+    }
+
     const messages: StreamMessage[] = [
       {
         type: "user_prompt",
-        prompt: `请处理会话：${session.title}`,
-        capturedAt: session.createdAt,
+        prompt: `请处理会话：${fixture.title}`,
+        capturedAt: fixture.createdAt,
       },
-      buildQaAssistantMessage(session.id, assistantText),
+      buildQaAssistantMessage(fixture.id, fixture.assistantText),
     ];
     return {
       type: "session.history",
       payload: {
-        sessionId: session.id,
-        status: session.status,
+        sessionId: fixture.id,
+        status: fixture.status,
         mode: "replace",
         hasMore: false,
         slashCommands: browserPreviewSlashCommandNames,
@@ -337,15 +380,19 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
       }
       if (event.type === "session.history") {
         const requestedSessionId = event.payload.sessionId;
-        if (qaCollapsedSessionRailEnabled && requestedSessionId === qaBottomSessionId) {
-          if (qaBottomHistoryEmitted) {
+        const qaFixture = qaCollapsedSessionRailEnabled
+          ? buildQaSessionFixtures().find((candidate) => candidate.id === requestedSessionId)
+          : undefined;
+        const historyDelayMs = qaFixture?.historyDelayMs ?? 0;
+        if (historyDelayMs > 0) {
+          if (qaHistoryEmittedSessionIds.has(requestedSessionId)) {
             emit(buildSessionHistoryEvent(requestedSessionId));
-          } else if (!qaBottomHistoryScheduled) {
-            qaBottomHistoryScheduled = true;
+          } else if (!qaHistoryScheduledSessionIds.has(requestedSessionId)) {
+            qaHistoryScheduledSessionIds.add(requestedSessionId);
             window.setTimeout(() => {
-              qaBottomHistoryEmitted = true;
+              qaHistoryEmittedSessionIds.add(requestedSessionId);
               emit(buildSessionHistoryEvent(requestedSessionId));
-            }, 250);
+            }, historyDelayMs);
           }
         } else {
           emit(buildSessionHistoryEvent(requestedSessionId));

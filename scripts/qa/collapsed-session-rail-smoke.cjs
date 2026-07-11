@@ -16,6 +16,8 @@ const backgroundTitle = "后台构建发布包";
 const bottomTitle = "核对长回复的底部会话";
 const markBTitle = "检查安装包清单";
 const markBSummary = "安装包、blockmap 和 latest.yml 已经全部列入核对清单。";
+const fallbackSummary = "暂无回复摘要";
+const processShutdownTimeoutMs = 3_000;
 
 function startDevServer() {
   const args = ["run", "dev:react", "--", "--host", "127.0.0.1", "--port", String(port), "--strictPort"];
@@ -30,6 +32,7 @@ function startDevServer() {
         cwd: repoRoot,
         env: process.env,
         stdio: "pipe",
+        detached: true,
       });
 
   child.stdout?.on("data", (chunk) => process.stdout.write(String(chunk)));
@@ -37,9 +40,65 @@ function startDevServer() {
   return child;
 }
 
-function stopProcessTree(child) {
-  if (!child || child.exitCode !== null) return;
+function hasProcessExited(child) {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+function waitForProcessExit(child, waitMs) {
+  if (hasProcessExited(child)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+    const finish = (exited) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      child.removeListener("exit", handleExit);
+      resolve(exited);
+    };
+    const handleExit = () => finish(true);
+    child.once("exit", handleExit);
+    if (hasProcessExited(child)) {
+      finish(true);
+      return;
+    }
+    if (settled) return;
+    timer = setTimeout(() => finish(hasProcessExited(child)), waitMs);
+  });
+}
+
+function posixProcessGroupExists(pid) {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    return true;
+  }
+}
+
+function signalPosixProcessGroup(pid, signal) {
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
+  }
+}
+
+async function waitForPosixProcessGroupExit(child, pid, waitMs) {
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline && posixProcessGroupExists(pid)) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  if (posixProcessGroupExists(pid)) return false;
+  await waitForProcessExit(child, Math.min(1_000, waitMs));
+  return true;
+}
+
+async function stopProcessTree(child) {
+  if (!child) return;
   if (process.platform === "win32") {
+    if (hasProcessExited(child)) return;
     try {
       execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
         stdio: "ignore",
@@ -48,9 +107,23 @@ function stopProcessTree(child) {
     } catch {
       // The process may exit between the liveness check and taskkill.
     }
+    await waitForProcessExit(child, processShutdownTimeoutMs);
     return;
   }
-  child.kill("SIGTERM");
+
+  const pid = child.pid;
+  if (!pid) return;
+  if (!posixProcessGroupExists(pid)) {
+    await waitForProcessExit(child, 1_000);
+    return;
+  }
+  signalPosixProcessGroup(pid, "SIGTERM");
+  const terminated = await waitForPosixProcessGroupExit(child, pid, processShutdownTimeoutMs);
+  if (!terminated) {
+    signalPosixProcessGroup(pid, "SIGKILL");
+    await waitForPosixProcessGroupExit(child, pid, processShutdownTimeoutMs);
+  }
+  await waitForProcessExit(child, 1_000);
 }
 
 async function waitForHttp(server) {
@@ -108,6 +181,33 @@ async function assertCardWithinViewport(card, viewportHeight, label) {
     box.y + box.height <= viewportHeight - 12 + 1,
     `${label}: card bottom ${box.y + box.height} exceeds ${viewportHeight - 12}`,
   );
+}
+
+async function installFallbackSummaryObserver(page) {
+  await page.evaluate((expectedSummary) => {
+    const state = { observed: false, observer: null };
+    const inspect = () => {
+      const summary = document.querySelector("[data-session-preview-card] p")?.textContent?.trim();
+      if (summary !== expectedSummary) return;
+      state.observed = true;
+      state.observer?.disconnect();
+      state.observer = null;
+    };
+    const observer = new MutationObserver(inspect);
+    state.observer = observer;
+    window.__collapsedSessionRailFallbackObservation = state;
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    inspect();
+  }, fallbackSummary);
+}
+
+async function cleanupFallbackSummaryObserver(page) {
+  if (!page) return;
+  await page.evaluate(() => {
+    const state = window.__collapsedSessionRailFallbackObservation;
+    state?.observer?.disconnect();
+    delete window.__collapsedSessionRailFallbackObservation;
+  }).catch(() => {});
 }
 
 async function main() {
@@ -192,13 +292,16 @@ async function main() {
     await assertUnreadAccent(backgroundMark, false, "selecting the completed background session should clear unread");
 
     const bottomMark = page.getByRole("button", { name: `打开会话：${bottomTitle}`, exact: true });
+    await installFallbackSummaryObserver(page);
     await bottomMark.hover();
-    await card.waitFor({ state: "visible", timeout: timeoutMs });
-    assert.equal((await card.locator("p").textContent())?.trim(), "暂无回复摘要", "delayed history should expose the fallback first");
+    await page.waitForFunction(() => (
+      window.__collapsedSessionRailFallbackObservation?.observed === true
+    ), undefined, { timeout: timeoutMs });
     await card.locator("p").getByText(/这是一段专门用于验证底部会话预览/, { exact: false }).waitFor({
       state: "visible",
       timeout: timeoutMs,
     });
+    await cleanupFallbackSummaryObserver(page);
     await assertCardWithinViewport(card, 560, "initial clamp");
 
     await bottomMark.focus();
@@ -210,9 +313,10 @@ async function main() {
     assert.ok(fs.statSync(artifactPath).size > 0, "screenshot artifact should be non-empty");
     console.log("COLLAPSED_SESSION_RAIL_QA_OK");
   } finally {
+    await cleanupFallbackSummaryObserver(page);
     await page?.close().catch(() => {});
     await browser?.close().catch(() => {});
-    stopProcessTree(server);
+    await stopProcessTree(server);
   }
 }
 
