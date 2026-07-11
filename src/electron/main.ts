@@ -131,6 +131,7 @@ import {
 } from "../shared/models/minimax.js";
 
 let cleanupComplete = false;
+let cleanupRunning = false;
 let mainWindow: BrowserWindow | null = null;
 const DEFAULT_BROWSER_WORKBENCH_SESSION_ID = "global";
 const browserWorkbenches = new Map<string, BrowserWorkbenchManager>();
@@ -1862,24 +1863,28 @@ function killViteDevServer(): void {
 }
 
 function cleanup(): void {
-  if (cleanupComplete) return;
-  cleanupComplete = true;
-
-  globalShortcut.unregisterAll();
-  stopPolling();
-  stopDevBackendBridge?.();
-  stopDevBackendBridge = null;
-  channelBridgeController?.stop();
-  channelBridgeController = null;
-  setChannelReplySender(null);
-  setBrowserToolHost(null);
-  setDesignToolHost(null);
-  void workspacePluginManager?.closeAll();
-  workspacePluginManager = null;
-  closeAllBrowserWorkbenches();
-  cleanupTerminalProcesses();
+  if (cleanupComplete || cleanupRunning) return;
+  cleanupRunning = true;
+  try {
+    globalShortcut.unregisterAll();
+    stopPolling();
+    stopDevBackendBridge?.();
+    stopDevBackendBridge = null;
+    channelBridgeController?.stop();
+    channelBridgeController = null;
+    setChannelReplySender(null);
+    setBrowserToolHost(null);
+    setDesignToolHost(null);
+    void workspacePluginManager?.closeAll();
+    workspacePluginManager = null;
+    closeAllBrowserWorkbenches();
+    cleanupTerminalProcesses();
     cleanupAllSessions();
     killViteDevServer();
+    cleanupComplete = true;
+  } finally {
+    cleanupRunning = false;
+  }
 }
 
 function handleSignal(): void {

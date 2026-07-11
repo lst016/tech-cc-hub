@@ -33,6 +33,7 @@ import {
 import { buildStatelessContinuationPayload } from "./stateless-continuation.js";
 import { ensureManagedCodeGraphSynced } from "./libs/codegraph/managed-codegraph.js";
 import { createSessionCodeGraphAutoSyncScheduler } from "./libs/codegraph/session-codegraph-autosync.js";
+import { createServerEventBatcher } from "./libs/server-event-batcher.js";
 import type { ClientEvent, PromptAttachment, RuntimeOverrides, ServerEvent, StreamMessage } from "./types.js";
 import { isDev } from "./util.js";
 import Database from "better-sqlite3";
@@ -199,7 +200,7 @@ export function listStoredSessionsForRenderer(archived = false, options?: { limi
   });
 }
 
-function broadcast(event: ServerEvent) {
+function sendRendererServerEvent(event: ServerEvent): void {
   const payload = JSON.stringify(event);
   if (isDev()) {
     console.log("[meta][server-event]", event.type);
@@ -208,6 +209,14 @@ function broadcast(event: ServerEvent) {
   for (const win of windows) {
     win.webContents.send("server-event", payload);
   }
+}
+
+const rendererEventBatcher = createServerEventBatcher({
+  send: sendRendererServerEvent,
+});
+
+function broadcast(event: ServerEvent) {
+  rendererEventBatcher.enqueue(event);
   for (const listener of serverEventListeners) {
     listener(event);
   }
@@ -2167,6 +2176,7 @@ export function addServerEventListener(listener: (event: ServerEvent) => void): 
 }
 
 export function cleanupAllSessions(): void {
+  rendererEventBatcher.dispose();
   for (const [, handle] of runnerHandles) {
     handle.abort();
   }

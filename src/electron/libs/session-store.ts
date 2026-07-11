@@ -128,6 +128,37 @@ export type SessionHistoryPage = SessionHistory & {
 
 const SESSION_LIST_DEFAULT_SUMMARY_LIMIT = 80;
 const SESSION_LIST_MAX_LIMIT = 500;
+const DEFAULT_MESSAGE_BATCH_DELAY_MS = 100;
+const CLOSE_MESSAGE_FLUSH_ATTEMPTS = 3;
+
+type MessagePersistence = "transient" | "batched" | "immediate";
+
+type PendingMessageWrite = {
+  id: string;
+  sessionId: string;
+  data: string;
+  capturedAt: number;
+};
+
+export type SessionStoreMessageTimerHandle = {
+  unref?: () => void;
+};
+
+export type SessionStoreOptions = {
+  messageBatchDelayMs?: number;
+  messageTimer?: {
+    setTimeout: (callback: () => void, delayMs: number) => SessionStoreMessageTimerHandle;
+    clearTimeout: (handle: SessionStoreMessageTimerHandle) => void;
+  };
+  onMessageFlushError?: (error: unknown) => void;
+};
+
+export type MessageWriteStats = {
+  pendingRows: number;
+  transactionCount: number;
+  insertedRows: number;
+  ignoredRows: number;
+};
 
 function normalizeSessionListLimit(limit: number | undefined, fallback?: number): number | undefined {
   const raw = limit ?? fallback;
@@ -148,6 +179,31 @@ function isTransientStreamEventMessage(message: StreamMessage): boolean {
       )
     )
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isExplicitErrorMessage(message: StreamMessage): boolean {
+  const record = message as unknown as Record<string, unknown>;
+  if (record.is_error === true || record.type === "error" || record.subtype === "error") {
+    return true;
+  }
+
+  const envelope = record.message;
+  if (!isRecord(envelope) || !Array.isArray(envelope.content)) return false;
+  return envelope.content.some((item) => (
+    isRecord(item) && item.type === "tool_result" && item.is_error === true
+  ));
+}
+
+export function classifyMessagePersistence(message: StreamMessage): MessagePersistence {
+  if (isTransientStreamEventMessage(message)) return "transient";
+  if (message.type === "user_prompt" || message.type === "result" || isExplicitErrorMessage(message)) {
+    return "immediate";
+  }
+  return "batched";
 }
 
 function parseStoredMessage(row: { id: string; data: string; created_at: number }): StreamMessage {
@@ -174,10 +230,27 @@ export class SessionStore {
   private sessions = new Map<string, Session>();
   private db: Database.Database;
   private workflowRuns: WorkflowRunRepository;
+  private readonly pendingMessageWrites = new Map<string, PendingMessageWrite[]>();
+  private readonly messageBatchDelayMs: number;
+  private readonly messageTimerApi: NonNullable<SessionStoreOptions["messageTimer"]>;
+  private readonly onMessageFlushError: (error: unknown) => void;
+  private messageFlushTimer: SessionStoreMessageTimerHandle | null = null;
+  private messageWriteTransactionCount = 0;
+  private messageInsertedRows = 0;
+  private messageIgnoredRows = 0;
+  private closed = false;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, options: SessionStoreOptions = {}) {
     this.db = new Database(dbPath);
     this.workflowRuns = new WorkflowRunRepository(this.db);
+    this.messageBatchDelayMs = Math.max(0, options.messageBatchDelayMs ?? DEFAULT_MESSAGE_BATCH_DELAY_MS);
+    this.messageTimerApi = options.messageTimer ?? {
+      setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+      clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    };
+    this.onMessageFlushError = options.onMessageFlushError ?? ((error) => {
+      console.error("Failed to flush pending session messages:", error);
+    });
     this.initialize();
     this.recoverSuccessfulErrorSessions();
     this.loadSessions();
@@ -349,6 +422,7 @@ export class SessionStore {
   }
 
   getSessionHistory(id: string): SessionHistory | null {
+    this.flushPendingMessagesForSession(id);
     const sessionRow = this.getSessionRow(id);
     if (!sessionRow) return null;
 
@@ -383,6 +457,7 @@ export class SessionStore {
       limit?: number;
     }
   ): SessionHistoryPage | null {
+    this.flushPendingMessagesForSession(id);
     const sessionRow = this.getSessionRow(id);
     if (!sessionRow) return null;
 
@@ -470,6 +545,7 @@ export class SessionStore {
   }
 
   recordMessage(sessionId: string, message: StreamMessage): StreamMessage {
+    if (this.closed) throw new Error("SessionStore is closed");
     const capturedAt = typeof message.capturedAt === "number" ? message.capturedAt : Date.now();
     const id = message.historyId
       ? String(message.historyId)
@@ -481,14 +557,30 @@ export class SessionStore {
       capturedAt,
       historyId: id,
     } satisfies StreamMessage;
-    if (isTransientStreamEventMessage(storedMessage)) {
+    const persistence = classifyMessagePersistence(storedMessage);
+    if (persistence === "transient") {
       return storedMessage;
     }
-    this.db
-      .prepare(
-        `insert or ignore into messages (id, session_id, data, created_at) values (?, ?, ?, ?)`
-      )
-      .run(id, sessionId, JSON.stringify(storedMessage), capturedAt);
+
+    const pending = this.pendingMessageWrites.get(sessionId) ?? [];
+    pending.push({
+      id,
+      sessionId,
+      data: JSON.stringify(storedMessage),
+      capturedAt,
+    });
+    this.pendingMessageWrites.set(sessionId, pending);
+
+    if (persistence === "immediate") {
+      try {
+        this.flushPendingMessagesForSession(sessionId);
+      } catch (error) {
+        this.scheduleMessageFlush();
+        throw error;
+      }
+    } else {
+      this.scheduleMessageFlush();
+    }
     return storedMessage;
   }
 
@@ -498,6 +590,7 @@ export class SessionStore {
     prompt: string,
     attachments?: PromptAttachment[],
   ): StreamMessage | null {
+    this.flushPendingMessagesForSession(sessionId);
     const row = this.db
       .prepare(
         `select rowid, id, data, created_at
@@ -533,6 +626,7 @@ export class SessionStore {
   }
 
   deleteSession(id: string): boolean {
+    this.dropPendingMessagesForSession(id);
     const existing = this.sessions.get(id);
     if (existing) {
       this.sessions.delete(id);
@@ -565,7 +659,21 @@ export class SessionStore {
   }
 
   getDatabaseForTest(): Database.Database {
+    this.flushAllPendingMessages();
     return this.db;
+  }
+
+  getMessageWriteStats(): MessageWriteStats {
+    let pendingRows = 0;
+    for (const writes of this.pendingMessageWrites.values()) {
+      pendingRows += writes.length;
+    }
+    return {
+      pendingRows,
+      transactionCount: this.messageWriteTransactionCount,
+      insertedRows: this.messageInsertedRows,
+      ignoredRows: this.messageIgnoredRows,
+    };
   }
 
   private persistSession(id: string, updates: Partial<Session>): void {
@@ -753,7 +861,91 @@ export class SessionStore {
   }
 
   close(): void {
-    this.db.close();
+    if (this.closed) return;
+    this.cancelMessageFlushTimer();
+    let lastError: unknown;
+    for (let attempt = 0; attempt < CLOSE_MESSAGE_FLUSH_ATTEMPTS; attempt += 1) {
+      try {
+        this.flushAllPendingMessages();
+        this.db.close();
+        this.closed = true;
+        return;
+      } catch (error) {
+        lastError = error;
+        this.reportMessageFlushError(error);
+      }
+    }
+    throw lastError;
+  }
+
+  private scheduleMessageFlush(): void {
+    if (this.closed || this.messageFlushTimer || this.pendingMessageWrites.size === 0) return;
+    this.messageFlushTimer = this.messageTimerApi.setTimeout(() => {
+      this.messageFlushTimer = null;
+      try {
+        this.flushAllPendingMessages();
+      } catch (error) {
+        this.scheduleMessageFlush();
+        this.reportMessageFlushError(error);
+      }
+    }, this.messageBatchDelayMs);
+    this.messageFlushTimer.unref?.();
+  }
+
+  private cancelMessageFlushTimer(): void {
+    if (!this.messageFlushTimer) return;
+    this.messageTimerApi.clearTimeout(this.messageFlushTimer);
+    this.messageFlushTimer = null;
+  }
+
+  private reportMessageFlushError(error: unknown): void {
+    try {
+      this.onMessageFlushError(error);
+    } catch (reportError) {
+      console.error("Failed to report session message flush error:", reportError);
+    }
+  }
+
+  private writeMessageRows(writes: PendingMessageWrite[]): void {
+    if (writes.length === 0) return;
+    let insertedRows = 0;
+    const insert = this.db.prepare(
+      "insert or ignore into messages (id, session_id, data, created_at) values (?, ?, ?, ?)",
+    );
+    const transaction = this.db.transaction(() => {
+      for (const write of writes) {
+        insertedRows += insert.run(write.id, write.sessionId, write.data, write.capturedAt).changes;
+      }
+    });
+    transaction();
+    this.messageWriteTransactionCount += 1;
+    this.messageInsertedRows += insertedRows;
+    this.messageIgnoredRows += writes.length - insertedRows;
+  }
+
+  private flushPendingMessagesForSession(sessionId: string): void {
+    const writes = this.pendingMessageWrites.get(sessionId);
+    if (!writes || writes.length === 0) return;
+    this.writeMessageRows(writes);
+    this.pendingMessageWrites.delete(sessionId);
+    if (this.pendingMessageWrites.size === 0) {
+      this.cancelMessageFlushTimer();
+    }
+  }
+
+  private flushAllPendingMessages(): void {
+    if (this.pendingMessageWrites.size === 0) return;
+    const writes = [...this.pendingMessageWrites.values()].flat();
+    this.writeMessageRows(writes);
+    this.pendingMessageWrites.clear();
+    this.cancelMessageFlushTimer();
+  }
+
+  private dropPendingMessagesForSession(sessionId: string): void {
+    this.pendingMessageWrites.delete(sessionId);
+    if (this.pendingMessageWrites.size === 0) {
+      this.cancelMessageFlushTimer();
+    }
   }
 
   private ensureSessionColumn(columnName: string, columnType: "text" | "integer"): void {
