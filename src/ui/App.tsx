@@ -7,7 +7,7 @@ import { useIPC } from "./hooks/useIPC";
 import { useMessageWindow } from "./hooks/useMessageWindow";
 import { useAppStore } from "./store/useAppStore";
 import { useWorkflowRunStore } from "./store/workflowRunStore";
-import type { AppUpdateStatus, PromptAttachment, ServerEvent, SettingsPageId, StreamMessage } from "./types";
+import type { AppUpdateStatus, PromptAttachment, ServerEvent, SessionStatus, SettingsPageId, StreamMessage } from "./types";
 import { DEFAULT_SIDEBAR_WIDTH, Sidebar } from "./components/Sidebar";
 import { COLLAPSED_SESSION_RAIL_WIDTH, CollapsedSessionRail } from "./components/CollapsedSessionRail";
 import { TooltipButton } from "./components/TooltipButton";
@@ -318,8 +318,10 @@ function App() {
   const activeSessionIdRef = useRef<string | null>(null);
   const partialFlushFrameRef = useRef<number | null>(null);
   const historyRetryTimerRef = useRef<number | null>(null);
+  const collapsedRailPreviousSessionStatusesRef = useRef<Record<string, SessionStatus | undefined>>({});
   const [partialMessagesBySessionId, setPartialMessagesBySessionId] = useState<Record<string, string>>({});
   const [partialVisibilityBySessionId, setPartialVisibilityBySessionId] = useState<Record<string, boolean>>({});
+  const [collapsedRailUnreadSessionIds, setCollapsedRailUnreadSessionIds] = useState<Record<string, "completed" | "error">>({});
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const shouldAutoScrollRef = useRef(true);
   const [hasNewMessages, setHasNewMessages] = useState(false);
@@ -415,6 +417,59 @@ function App() {
   const sessions = useAppStore((s) => s.sessions);
   const setActiveSessionId = useAppStore((s) => s.setActiveSessionId);
   activeSessionIdRef.current = activeSessionId;
+
+  useEffect(() => {
+    const previousStatuses = collapsedRailPreviousSessionStatusesRef.current;
+    const nextStatuses: Record<string, SessionStatus | undefined> = {};
+    const runningSessionIds = new Set<string>();
+    const finishedUnreadSessions: Record<string, "completed" | "error"> = {};
+
+    for (const session of Object.values(sessions)) {
+      const previousStatus = previousStatuses[session.id];
+      nextStatuses[session.id] = session.status;
+      if (session.status === "running") {
+        runningSessionIds.add(session.id);
+      } else if (
+        previousStatus === "running" &&
+        (session.status === "completed" || session.status === "error") &&
+        session.id !== activeSessionId
+      ) {
+        finishedUnreadSessions[session.id] = session.status;
+      }
+    }
+    collapsedRailPreviousSessionStatusesRef.current = nextStatuses;
+
+    // This state intentionally observes session lifecycle transitions across sidebar mounts.
+    setCollapsedRailUnreadSessionIds((current) => {
+      let next = current;
+      const removeSession = (sessionId: string) => {
+        if (!next[sessionId]) return;
+        if (next === current) next = { ...current };
+        delete next[sessionId];
+      };
+      for (const sessionId of Object.keys(current)) {
+        if (!sessions[sessionId] || runningSessionIds.has(sessionId) || sessionId === activeSessionId) {
+          removeSession(sessionId);
+        }
+      }
+      for (const [sessionId, status] of Object.entries(finishedUnreadSessions)) {
+        if (next[sessionId] === status) continue;
+        if (next === current) next = { ...current };
+        next[sessionId] = status;
+      }
+      return next;
+    });
+  }, [activeSessionId, sessions]);
+
+  const clearCollapsedRailUnreadSession = useCallback((sessionId: string) => {
+    setCollapsedRailUnreadSessionIds((current) => {
+      if (!current[sessionId]) return current;
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+  }, []);
+
   const partialMessage = activeSessionId ? (partialMessagesBySessionId[activeSessionId] ?? "") : "";
   const showPartialMessage = activeSessionId ? (partialVisibilityBySessionId[activeSessionId] ?? false) : false;
   const workspaceView = activeSessionId ? (workspaceViewBySessionId[activeSessionId] ?? "chat") : "chat";
@@ -1922,8 +1977,10 @@ function App() {
             sessions={sessions}
             activeSessionId={activeSessionId}
             partialMessagesBySessionId={partialMessagesBySessionId}
+            unreadSessionIds={collapsedRailUnreadSessionIds}
             topClassName={sidebarHeaderOffsetClass}
             onPreviewSession={requestCollapsedSessionPreviewHistory}
+            onClearUnreadSession={clearCollapsedRailUnreadSession}
             onSelectSession={setActiveSessionId}
           />
         )}

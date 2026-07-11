@@ -13,12 +13,14 @@ export interface CollapsedSessionRailProps {
   sessions: Record<string, SessionView>;
   activeSessionId: string | null;
   partialMessagesBySessionId: Record<string, string>;
+  unreadSessionIds: Record<string, UnreadSessionStatus>;
   topClassName: string;
   onPreviewSession: (sessionId: string) => void;
+  onClearUnreadSession: (sessionId: string) => void;
   onSelectSession: (sessionId: string) => void;
 }
 
-type UnreadSessionStatus = "completed" | "error";
+export type UnreadSessionStatus = "completed" | "error";
 
 interface PreviewState {
   sessionId: string;
@@ -29,29 +31,24 @@ interface PreviewState {
 const PREVIEW_CLOSE_DELAY_MS = 140;
 const PREVIEW_ESTIMATED_HEIGHT = 132;
 
-function collectSessionStatuses(sessions: Record<string, SessionView>) {
-  return Object.fromEntries(
-    Object.values(sessions).map((session) => [session.id, session.status]),
-  ) as Record<string, SessionView["status"] | undefined>;
-}
-
 export function CollapsedSessionRail({
   sessions,
   activeSessionId,
   partialMessagesBySessionId,
+  unreadSessionIds,
   topClassName,
   onPreviewSession,
+  onClearUnreadSession,
   onSelectSession,
 }: CollapsedSessionRailProps) {
   const railSessions = useMemo(() => selectCollapsedRailSessions(sessions), [sessions]);
-  const previousSessionStatusesRef = useRef(collectSessionStatuses(sessions));
   const previewSessionIdRef = useRef<string | null>(null);
+  const previewAnchorRef = useRef<{ right: number; top: number } | null>(null);
   const previewCardRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<number | null>(null);
-  const triggerHoveredRef = useRef(false);
-  const triggerFocusedRef = useRef(false);
-  const cardHoveredRef = useRef(false);
-  const [unreadSessionIds, setUnreadSessionIds] = useState<Record<string, UnreadSessionStatus>>({});
+  const hoveredTriggerSessionIdRef = useRef<string | null>(null);
+  const focusedTriggerSessionIdRef = useRef<string | null>(null);
+  const hoveredCardSessionIdRef = useRef<string | null>(null);
   const [preview, setPreview] = useState<PreviewState | null>(null);
 
   const cancelPreviewClose = useCallback(() => {
@@ -62,34 +59,36 @@ export function CollapsedSessionRail({
 
   const closePreview = useCallback(() => {
     cancelPreviewClose();
-    triggerHoveredRef.current = false;
-    triggerFocusedRef.current = false;
-    cardHoveredRef.current = false;
+    hoveredCardSessionIdRef.current = null;
     previewSessionIdRef.current = null;
+    previewAnchorRef.current = null;
     setPreview(null);
   }, [cancelPreviewClose]);
 
-  const canClosePreview = useCallback(() => (
-    !triggerHoveredRef.current &&
-    !triggerFocusedRef.current &&
-    !cardHoveredRef.current
+  const canClosePreview = useCallback((sessionId: string) => (
+    previewSessionIdRef.current === sessionId &&
+    hoveredTriggerSessionIdRef.current !== sessionId &&
+    focusedTriggerSessionIdRef.current !== sessionId &&
+    hoveredCardSessionIdRef.current !== sessionId
   ), []);
 
-  const schedulePreviewClose = useCallback(() => {
+  const schedulePreviewClose = useCallback((sessionId: string) => {
     cancelPreviewClose();
-    if (!canClosePreview()) return;
+    if (previewSessionIdRef.current !== sessionId) return;
+    if (!canClosePreview(sessionId)) return;
     closeTimerRef.current = window.setTimeout(() => {
       closeTimerRef.current = null;
-      if (!canClosePreview()) return;
-      previewSessionIdRef.current = null;
-      setPreview(null);
+      if (previewSessionIdRef.current !== sessionId) return;
+      if (!canClosePreview(sessionId)) return;
+      closePreview();
     }, PREVIEW_CLOSE_DELAY_MS);
-  }, [cancelPreviewClose, canClosePreview]);
+  }, [cancelPreviewClose, canClosePreview, closePreview]);
 
   const openPreview = useCallback((session: SessionView, trigger: HTMLButtonElement) => {
     cancelPreviewClose();
     const anchorRect = trigger.getBoundingClientRect();
     const anchor = { right: anchorRect.right, top: anchorRect.top };
+    previewAnchorRef.current = anchor;
     const cardWidth = Math.min(480, Math.max(0, window.innerWidth - 88));
     const position = clampSessionPreviewPosition(
       anchor,
@@ -107,55 +106,9 @@ export function CollapsedSessionRail({
 
   const selectSession = useCallback((sessionId: string) => {
     closePreview();
-    setUnreadSessionIds((current) => {
-      if (!current[sessionId]) return current;
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
+    onClearUnreadSession(sessionId);
     onSelectSession(sessionId);
-  }, [closePreview, onSelectSession]);
-
-  useEffect(() => {
-    const previousStatuses = previousSessionStatusesRef.current;
-    const nextStatuses: Record<string, SessionView["status"] | undefined> = {};
-    const finishedUnreadSessions: Record<string, UnreadSessionStatus> = {};
-    const runningSessionIds = new Set<string>();
-
-    for (const session of Object.values(sessions)) {
-      const previousStatus = previousStatuses[session.id];
-      nextStatuses[session.id] = session.status;
-      if (session.status === "running") {
-        runningSessionIds.add(session.id);
-      } else if (
-        previousStatus === "running" &&
-        (session.status === "completed" || session.status === "error") &&
-        session.id !== activeSessionId
-      ) {
-        finishedUnreadSessions[session.id] = session.status;
-      }
-    }
-    previousSessionStatusesRef.current = nextStatuses;
-
-    // Unread state is derived specifically from status transitions observed after render.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setUnreadSessionIds((current) => {
-      let next = current;
-      const removeSession = (sessionId: string) => {
-        if (!next[sessionId]) return;
-        if (next === current) next = { ...current };
-        delete next[sessionId];
-      };
-      for (const sessionId of runningSessionIds) removeSession(sessionId);
-      if (activeSessionId) removeSession(activeSessionId);
-      for (const [sessionId, status] of Object.entries(finishedUnreadSessions)) {
-        if (next[sessionId] === status) continue;
-        if (next === current) next = { ...current };
-        next[sessionId] = status;
-      }
-      return next;
-    });
-  }, [activeSessionId, sessions]);
+  }, [closePreview, onClearUnreadSession, onSelectSession]);
 
   useEffect(() => {
     if (!preview || railSessions.some((session) => session.id === preview.sessionId)) return;
@@ -175,18 +128,34 @@ export function CollapsedSessionRail({
     return () => window.removeEventListener("keydown", handleEscape);
   }, [closePreview, preview]);
 
-  useLayoutEffect(() => {
-    if (!preview || !previewCardRef.current) return;
+  const clampPreviewCard = useCallback(() => {
     const card = previewCardRef.current;
+    const anchor = previewAnchorRef.current;
+    if (!card || !anchor) return;
     const nextPosition = clampSessionPreviewPosition(
-      preview.anchor,
+      anchor,
       { width: window.innerWidth, height: window.innerHeight },
       card.offsetWidth,
       card.offsetHeight,
     );
-    if (nextPosition.left === preview.position.left && nextPosition.top === preview.position.top) return;
-    setPreview((current) => current ? { ...current, position: nextPosition } : current);
-  }, [preview]);
+    card.style.left = `${nextPosition.left}px`;
+    card.style.top = `${nextPosition.top}px`;
+  }, []);
+
+  useLayoutEffect(() => {
+    const card = previewCardRef.current;
+    if (!preview || !card) return;
+    clampPreviewCard();
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(clampPreviewCard);
+    resizeObserver?.observe(card);
+    window.addEventListener("resize", clampPreviewCard);
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", clampPreviewCard);
+    };
+  }, [clampPreviewCard, preview]);
 
   const previewSession = preview ? sessions[preview.sessionId] : undefined;
   const previewCardId = previewSession ? `collapsed-session-preview-${previewSession.id}` : undefined;
@@ -223,22 +192,26 @@ export function CollapsedSessionRail({
                 aria-controls={isPreviewOpen ? sessionPreviewCardId : undefined}
                 className="group relative grid h-9 w-12 shrink-0 place-items-center rounded-xl outline-none transition hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-ink-400/35"
                 onPointerEnter={(event) => {
-                  triggerHoveredRef.current = true;
+                  hoveredTriggerSessionIdRef.current = session.id;
                   cancelPreviewClose();
                   openPreview(session, event.currentTarget);
                 }}
                 onPointerLeave={() => {
-                  triggerHoveredRef.current = false;
-                  schedulePreviewClose();
+                  if (hoveredTriggerSessionIdRef.current === session.id) {
+                    hoveredTriggerSessionIdRef.current = null;
+                  }
+                  schedulePreviewClose(session.id);
                 }}
                 onFocus={(event) => {
-                  triggerFocusedRef.current = true;
+                  focusedTriggerSessionIdRef.current = session.id;
                   cancelPreviewClose();
                   openPreview(session, event.currentTarget);
                 }}
                 onBlur={() => {
-                  triggerFocusedRef.current = false;
-                  schedulePreviewClose();
+                  if (focusedTriggerSessionIdRef.current === session.id) {
+                    focusedTriggerSessionIdRef.current = null;
+                  }
+                  schedulePreviewClose(session.id);
                 }}
                 onClick={() => selectSession(session.id)}
                 onKeyDown={(event) => {
@@ -293,12 +266,14 @@ export function CollapsedSessionRail({
           className="fixed z-[70] w-[min(480px,calc(100vw-88px))] rounded-[20px] border border-black/10 bg-white px-5 py-4 shadow-[0_20px_55px_rgba(15,23,42,0.16)]"
           style={{ left: preview?.position.left, top: preview?.position.top }}
           onPointerEnter={() => {
-            cardHoveredRef.current = true;
+            hoveredCardSessionIdRef.current = previewSession.id;
             cancelPreviewClose();
           }}
           onPointerLeave={() => {
-            cardHoveredRef.current = false;
-            schedulePreviewClose();
+            if (hoveredCardSessionIdRef.current === previewSession.id) {
+              hoveredCardSessionIdRef.current = null;
+            }
+            schedulePreviewClose(previewSession.id);
           }}
         >
           <div id={previewTitleId} className="truncate text-sm font-bold text-ink-900">
