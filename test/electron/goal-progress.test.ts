@@ -157,12 +157,12 @@ describe("goal progress", () => {
     assert.equal(snapshot?.source, "get_goal");
   });
 
-  it("derives live goal state from the trimmed message window in the UI store", () => {
+  it("derives live goal state from the appended message window in the UI store", () => {
     const source = readFileSync("src/ui/store/useAppStore.ts", "utf8");
 
     assert.match(
       source,
-      /latestGoal:\s*deriveLatestGoalSnapshot\(session\.id,\s*trimmed\.messages,\s*session\.latestGoal\)/,
+      /latestGoal:\s*shouldUpdateGoal \? deriveLatestGoalSnapshot\(session\.id,\s*messages,\s*session\.latestGoal\) : session\.latestGoal/,
     );
     assert.match(
       source,

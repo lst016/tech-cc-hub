@@ -2169,6 +2169,7 @@ function App() {
                 partialMessage={partialMessage}
                 globalError={globalError}
                 activeTab={activityRailTab}
+                suspended={workspaceView === "browser"}
                 deferPreviewMount={!activityRailTabExplicitlySet && !pendingPreviewOpenRequest}
                 pendingPreviewOpenRequest={pendingPreviewOpenRequest}
                 onConsumePendingPreviewOpenRequest={() => {

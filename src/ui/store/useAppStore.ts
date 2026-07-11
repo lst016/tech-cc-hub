@@ -11,23 +11,24 @@ import type {
   ServerEvent,
   SessionStatus,
   StreamMessage,
-} from "../types";
+} from "../types.js";
 import {
   type SessionWorkflowState,
   type WorkflowScope,
   type WorkflowSpecDocument,
-} from "../../shared/workflow-markdown";
-import type { SessionExecutionMode } from "../../shared/session-semantics";
-import { deriveLatestGoalSnapshot, type SessionGoalSnapshot } from "../../shared/goal-progress";
-import { extractSlashCommandsFromMessages, mergeSlashCommandLists } from "../../shared/slash-commands";
-import { TASK_TOOL_NAMES } from "../../shared/claude-agent-teams";
+} from "../../shared/workflow-markdown.js";
+import type { SessionExecutionMode } from "../../shared/session-semantics.js";
+import { deriveLatestGoalSnapshot, type SessionGoalSnapshot } from "../../shared/goal-progress.js";
+import { extractSlashCommandsFromMessages, mergeSlashCommandLists } from "../../shared/slash-commands.js";
+import { TASK_TOOL_NAMES } from "../../shared/claude-agent-teams.js";
 import {
   normalizeTaskCreateArgs,
   normalizeUpdatePlanArgs,
   type SessionPlanSnapshot,
-} from "../../shared/plan-progress";
-import { mergeHistoryReplacementMessages, mergeMessages } from "../utils/session-history-merge";
-import { hydrateWorkflowView, mergeSessionListSession } from "../utils/session-list-merge";
+} from "../../shared/plan-progress.js";
+import { mergeHistoryReplacementMessages, mergeMessages } from "../utils/session-history-merge.js";
+import { hydrateWorkflowView, mergeSessionListSession } from "../utils/session-list-merge.js";
+import { appendPendingStreamMessages } from "../utils/pending-stream-messages.js";
 
 export type PermissionRequest = {
   toolUseId: string;
@@ -360,16 +361,15 @@ function deriveLatestPlanSnapshot(
   ), fallback);
 }
 
-function appendMessagesToSession(
+export function appendMessagesToSession(
   session: SessionView,
   nextMessages: StreamMessage[],
 ): SessionView {
-  let slashCommands = session.slashCommands;
-  for (const message of nextMessages) {
-    slashCommands = mergeSlashCommandLists(slashCommands, extractSlashCommands([message]));
-  }
-
-  const messages = [...session.messages, ...nextMessages];
+  const slashCommands = mergeSlashCommandLists(
+    session.slashCommands,
+    ...nextMessages.map((message) => extractSlashCommands([message])),
+  );
+  const messages = session.messages.concat(nextMessages);
   const shouldUpdateGoal = nextMessages.some(messageMayAffectGoalSnapshot);
 
   return {
@@ -731,7 +731,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     const state = get();
     const enqueueStreamMessages = (sessionId: string, messages: StreamMessage[]) => {
       const existing = pendingStreamMessagesBySession.get(sessionId) ?? [];
-      pendingStreamMessagesBySession.set(sessionId, [...existing, ...messages]);
+      pendingStreamMessagesBySession.set(
+        sessionId,
+        appendPendingStreamMessages(existing, messages),
+      );
 
       if (pendingStreamMessageTimer !== null) {
         return;

@@ -28,6 +28,7 @@ import {
   DEFAULT_ACTIVITY_RAIL_TAB,
   getWorkspacePluginIdFromTab,
   normalizeActivityRailTab,
+  shouldBuildActivityRailModel,
   type ActivityRailTab,
   type ActivityWorkspaceTab,
   type PluginRailTab,
@@ -1275,6 +1276,7 @@ export function ActivityRail({
   onOpenSessionAnalysis,
   onOpenBrowserWorkbench,
   activeTab,
+  suspended = false,
   pendingPreviewOpenRequest,
   onConsumePendingPreviewOpenRequest,
   onActiveTabChange,
@@ -1306,6 +1308,7 @@ export function ActivityRail({
   onOpenSessionAnalysis?: () => void;
   onOpenBrowserWorkbench?: () => void;
   activeTab?: ActivityRailTab;
+  suspended?: boolean;
   pendingPreviewOpenRequest?: {
     filePath: string;
     startLine?: number;
@@ -1339,22 +1342,37 @@ export function ActivityRail({
 }) {
   const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-12" : "top-10";
   const showLabels = width >= 300;
-  const deferredSession = useDeferredValue(session);
-  const modelSession = useMemo(
-    () => deferredSession ? limitActivityRailSessionMessages(deferredSession) : undefined,
-    [deferredSession],
-  );
-  const model = useMemo(
-    () => buildActivityRailModel(modelSession, modelSession?.permissionRequests ?? [], ""),
-    [modelSession],
-  );
-  const visibleTimeline = useMemo(
-    () => model.timeline.slice(0, INLINE_TRACE_TIMELINE_LIMIT),
-    [model.timeline],
-  );
   const [internalActiveTab, setInternalActiveTab] = useState<ActivityRailTab>(DEFAULT_ACTIVITY_RAIL_TAB);
   const requestedTab = activeTab ?? internalActiveTab;
   const selectedTab = normalizeActivityRailTab(requestedTab);
+  const detailStateResetKey = `${selectedTab}:${suspended ? "suspended" : "visible"}`;
+  const [previousDetailStateResetKey, setPreviousDetailStateResetKey] = useState(detailStateResetKey);
+  const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
+  const [showContextModal, setShowContextModal] = useState(false);
+  if (previousDetailStateResetKey !== detailStateResetKey) {
+    setPreviousDetailStateResetKey(detailStateResetKey);
+    setSelectedTimelineId(null);
+    setShowContextModal(false);
+  }
+  const deferredSession = useDeferredValue(session);
+  const modelSession = useMemo(
+    () => {
+      if (!shouldBuildActivityRailModel(selectedTab, suspended) || !deferredSession) return undefined;
+      return limitActivityRailSessionMessages(deferredSession);
+    },
+    [deferredSession, selectedTab, suspended],
+  );
+  const model = useMemo(
+    () => {
+      if (!modelSession) return null;
+      return buildActivityRailModel(modelSession, modelSession?.permissionRequests ?? [], "");
+    },
+    [modelSession],
+  );
+  const visibleTimeline = useMemo(
+    () => model?.timeline.slice(0, INLINE_TRACE_TIMELINE_LIMIT) ?? [],
+    [model],
+  );
   const selectedWorkspacePlugin = workspacePlugins.find((plugin) => plugin.id === getWorkspacePluginIdFromTab(selectedTab));
   const handleSelectTab = (tab: ActivityRailTab) => {
     if (!activeTab) setInternalActiveTab(tab);
@@ -1367,8 +1385,6 @@ export function ActivityRail({
     }
     handleSelectTab(tab);
   };
-  const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
-  const [showContextModal, setShowContextModal] = useState(false);
   const timelineRef = useRef<HTMLDivElement>(null);
   const toolWorkspaceActive = selectedTab === "preview" || selectedTab === "git" || selectedTab === "terminal" || selectedTab.startsWith("workflow-agent:") || Boolean(selectedWorkspacePlugin);
   const shouldMountPreviewPane = selectedTab === "preview" && (!deferPreviewMount || Boolean(pendingPreviewOpenRequest));
@@ -1380,13 +1396,14 @@ export function ActivityRail({
   }, [selectedTimelineId]);
 
   const selectedItem =
-    (selectedTimelineId ? model.timeline.find((item) => item.id === selectedTimelineId) : null) ??
+    (model && selectedTimelineId ? model.timeline.find((item) => item.id === selectedTimelineId) : null) ??
     null;
-  const relatedSteps = selectedItem
+  const relatedSteps = model && selectedItem
     ? model.executionSteps.filter((step) => step.timelineIds.includes(selectedItem.id))
     : [];
 
   const analysisCards = useMemo(() => {
+    if (!model) return [];
     if (!globalError) return model.analysisCards;
     return [
       {
@@ -1397,12 +1414,12 @@ export function ActivityRail({
       },
       ...model.analysisCards,
     ];
-  }, [globalError, model.analysisCards]);
+  }, [globalError, model]);
   const primaryAnalysisCard = analysisCards[0] ?? null;
   const secondaryAnalysisCards = analysisCards.slice(1);
 
   const activeAgentNodes = useMemo(() => {
-    if (session?.status !== "running") return [];
+    if (!model || session?.status !== "running") return [];
     const seen = new Set<string>();
     return model.timeline.filter((item) => {
       if (item.nodeKind !== "agent_progress" || item.metrics.status !== "running") {
@@ -1413,20 +1430,20 @@ export function ActivityRail({
       seen.add(key);
       return true;
     });
-  }, [model.timeline, session?.status]);
+  }, [model, session?.status]);
   const selectedWorkflowRun = findWorkflowRunForTranscript(selectedWorkflowAgent, workflowRuns);
 
-  const attachmentSummary = summarizeAttachments(
-    model.contextSnapshot.latestAttachments.map((attachment) => attachment.name),
-  );
+  const attachmentSummary = model
+    ? summarizeAttachments(model.contextSnapshot.latestAttachments.map((attachment) => attachment.name))
+    : "";
   const materialStatusItems = useMemo(
-    () => buildMaterialStatusItems(model, partialMessage),
+    () => model ? buildMaterialStatusItems(model, partialMessage) : [],
     [model, partialMessage],
   );
 
   return (
     <>
-      {showContextModal && (
+      {selectedTab === "usage" && model && showContextModal && (
         <ContextDistributionModal
           title={model.contextModalTitle}
           totalChars={model.contextDistribution.totalChars}
@@ -1437,7 +1454,7 @@ export function ActivityRail({
           onClose={() => setShowContextModal(false)}
         />
       )}
-      {selectedItem && (
+      {selectedTab === "usage" && model && selectedItem && (
         <DetailDrawer
           title={model.detailDrawerTitle}
           item={selectedItem}
@@ -1478,16 +1495,18 @@ export function ActivityRail({
         </div>
 
         {selectedTab === "usage" ? (
-          <div className="space-y-4 px-4 pt-4">
-            <ContextUsagePanel
-              model={model}
-              selectedModel={selectedModel}
-              contextWindow={contextWindow}
-              compressionThresholdPercent={compressionThresholdPercent}
-              partialMessage={partialMessage}
-            />
-            <PlanProgressPanel snapshot={session?.latestPlan} />
-          </div>
+          model ? (
+            <div className="space-y-4 px-4 pt-4">
+              <ContextUsagePanel
+                model={model}
+                selectedModel={selectedModel}
+                contextWindow={contextWindow}
+                compressionThresholdPercent={compressionThresholdPercent}
+                partialMessage={partialMessage}
+              />
+              <PlanProgressPanel snapshot={session?.latestPlan} />
+            </div>
+          ) : null
         ) : selectedTab === "preview" ? (
           <div className="min-h-0 flex-1">
             <div className="h-full overflow-hidden border-t border-[#d0d7de] bg-white shadow-none">
@@ -1541,7 +1560,7 @@ export function ActivityRail({
               isRunning={session?.status === "running"}
             />
           </div>
-        ) : (
+        ) : model ? (
         <div className="space-y-4 px-4 pt-4">
           <section className="rounded-[28px] border border-black/5 bg-white/70 p-4 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
             <div className="flex items-start justify-between gap-3">
@@ -1781,7 +1800,7 @@ export function ActivityRail({
             </section>
           )}
         </div>
-        )}
+        ) : null}
       </aside>
     </>
   );

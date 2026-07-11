@@ -11,6 +11,7 @@ import {
   getWorkspacePluginTabId,
   getWorkflowAgentTabId,
   normalizeActivityRailTab,
+  shouldBuildActivityRailModel,
   shouldShowCreateBrowserTab,
   shouldShowCreateGitTab,
   shouldShowCreateTerminalTab,
@@ -144,6 +145,80 @@ describe("activity workspace tabs", () => {
     assert.equal(normalizeActivityRailTab("trace"), "usage");
     assert.equal(normalizeActivityRailTab("workflow-agent:agent-1"), "workflow-agent:agent-1");
     assert.equal(normalizeActivityRailTab(undefined), "usage");
+  });
+
+  it("requires the activity model only for an unsuspended usage tab", () => {
+    for (const tab of [
+      "preview",
+      "git",
+      "terminal",
+      "workflow-agent:agent-1",
+      "plugin:codex-canvas",
+    ] as const) {
+      assert.equal(shouldBuildActivityRailModel(tab, false), false, `${tab} should stay model-free`);
+      assert.equal(shouldBuildActivityRailModel(tab, true), false, `${tab} should stay model-free while suspended`);
+    }
+    assert.equal(shouldBuildActivityRailModel("usage", false), true);
+    assert.equal(shouldBuildActivityRailModel("usage", true), false);
+  });
+
+  it("gates ActivityRail model work and usage-only derived state", () => {
+    const railSource = readFileSync("src/ui/components/ActivityRail.tsx", "utf8");
+    const selectedTabIndex = railSource.indexOf("const selectedTab = normalizeActivityRailTab(requestedTab);");
+    const modelSessionIndex = railSource.indexOf("const modelSession = useMemo(");
+
+    assert.ok(selectedTabIndex >= 0, "selectedTab should be declared");
+    assert.ok(modelSessionIndex > selectedTabIndex, "selectedTab should be available before model memoization");
+    assert.doesNotMatch(railSource, /const needsModel =/);
+    assert.match(
+      railSource,
+      /const modelSession = useMemo\([\s\S]{0,260}!shouldBuildActivityRailModel\(selectedTab, suspended\)[\s\S]{0,260}limitActivityRailSessionMessages\(deferredSession\)/,
+    );
+    assert.match(
+      railSource,
+      /const model = useMemo\([\s\S]{0,180}!modelSession[\s\S]{0,180}buildActivityRailModel\(modelSession/,
+    );
+    assert.match(railSource, /const visibleTimeline = useMemo\([\s\S]{0,180}model\?\.timeline[\s\S]{0,120}\?\? \[\]/);
+    assert.match(railSource, /const analysisCards = useMemo\(\(\) => \{\s*if \(!model\) return \[\];/);
+    assert.match(railSource, /const activeAgentNodes = useMemo\(\(\) => \{\s*if \(!model/);
+    assert.match(railSource, /const attachmentSummary = model\s*\? summarizeAttachments\(/);
+    assert.match(railSource, /const materialStatusItems = useMemo\([\s\S]{0,180}model \? buildMaterialStatusItems\(model, partialMessage\) : \[\]/);
+  });
+
+  it("clears usage detail state during render and guards model-backed rendering", () => {
+    const railSource = readFileSync("src/ui/components/ActivityRail.tsx", "utf8");
+
+    assert.doesNotMatch(
+      railSource,
+      /useEffect\(\(\) => \{\s*if \(!suspended && selectedTab === "usage"\) return;[\s\S]{0,180}setShowContextModal\(false\)/,
+    );
+    assert.match(railSource, /const detailStateResetKey = `\$\{selectedTab\}:\$\{suspended \? "suspended" : "visible"\}`;/);
+    assert.match(railSource, /useState\(detailStateResetKey\)/);
+    assert.match(
+      railSource,
+      /if \(previousDetailStateResetKey !== detailStateResetKey\) \{\s*setPreviousDetailStateResetKey\(detailStateResetKey\);\s*setSelectedTimelineId\(null\);\s*setShowContextModal\(false\);\s*\}/,
+    );
+    assert.match(railSource, /selectedTab === "usage" && model && showContextModal/);
+    assert.match(railSource, /selectedTab === "usage" && model && selectedItem/);
+    assert.match(railSource, /selectedTab === "usage" \? \(\s*model \? \(/);
+    assert.match(railSource, /\) : model \? \(\s*<div className="space-y-4 px-4 pt-4">/);
+  });
+
+  it("suspends the mounted ActivityRail while the browser workspace is visible", () => {
+    const appSource = readFileSync("src/ui/App.tsx", "utf8");
+    const railSource = readFileSync("src/ui/components/ActivityRail.tsx", "utf8");
+
+    assert.match(appSource, /<ActivityRail[\s\S]{0,500}suspended=\{workspaceView === "browser"\}/);
+    assert.match(railSource, /suspended = false,/);
+    assert.match(railSource, /suspended\?: boolean;/);
+    assert.match(
+      railSource,
+      /const modelSession = useMemo\([\s\S]{0,320}\[deferredSession, selectedTab, suspended\]/,
+    );
+    assert.match(
+      railSource,
+      /const model = useMemo\([\s\S]{0,320}\[modelSession\]/,
+    );
   });
 
   it("falls back to the previous workflow agent tab or usage when closing an agent transcript", () => {

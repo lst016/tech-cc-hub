@@ -75,7 +75,7 @@ test("renderer store keeps loaded messages instead of trimming chat history", ()
   assert.doesNotMatch(storeSource, /trimMessagesToRecent/);
   assert.doesNotMatch(renderWindowSource, /MAX_RENDERER_HISTORY_MESSAGES/);
   assert.doesNotMatch(renderWindowSource, /trimMessagesToRecent/);
-  assert.match(storeSource, /const messages = \[\.\.\.session\.messages, \.\.\.nextMessages\]/);
+  assert.match(storeSource, /const messages = session\.messages\.concat\(nextMessages\)/);
   assert.match(storeSource, /const shouldUpdateGoal = nextMessages\.some\(messageMayAffectGoalSnapshot\)/);
   assert.match(storeSource, /latestGoal: shouldUpdateGoal \? deriveLatestGoalSnapshot\(session\.id, messages, session\.latestGoal\) : session\.latestGoal/);
 });

@@ -38,6 +38,13 @@ export function normalizeActivityRailTab(tab: string | undefined): ActivityRailT
   return tab as ActivityRailTab;
 }
 
+export function shouldBuildActivityRailModel(
+  selectedTab: ActivityRailTab,
+  suspended: boolean,
+): boolean {
+  return selectedTab === "usage" && !suspended;
+}
+
 export function getWorkflowAgentTabId(agentId: string): WorkflowAgentRailTab {
   return `workflow-agent:${agentId}`;
 }
