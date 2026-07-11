@@ -225,6 +225,7 @@ async function main() {
       if (message.type() === "error") browserErrors.push(`[console:error] ${message.text()}`);
     });
     page.on("pageerror", (error) => browserErrors.push(`[pageerror] ${error.stack || error.message}`));
+    await page.route(/^http:\/\/localhost:(?:3000|4173|5173|8000|8001|8080)\/$/, (route) => route.abort("aborted"));
 
     await page.goto(qaUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
     const collapseButton = page.getByRole("button", { name: "收起左侧栏", exact: true });
@@ -255,6 +256,24 @@ async function main() {
     assert.ok(offsets, "rail, main, and composer should all be rendered");
     assert.ok(offsets.mainLeft >= offsets.railRight - 1, "main should be offset past the collapsed rail");
     assert.ok(offsets.composerLeft >= offsets.railRight - 1, "composer should be offset past the collapsed rail");
+
+    await page.evaluate(() => {
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLButtonElement && activeElement.getAttribute("aria-label") === "展开左侧栏") {
+        activeElement.blur();
+      }
+    });
+    await page.mouse.move(899, 559);
+    await page.waitForTimeout(220);
+    const visibleTooltips = await page.evaluate(() => (
+      Array.from(document.querySelectorAll("[role=tooltip]"))
+        .map((tooltip) => ({
+          text: tooltip.textContent?.trim() || "",
+          opacity: Number.parseFloat(window.getComputedStyle(tooltip).opacity),
+        }))
+        .filter((tooltip) => tooltip.opacity > 0.01)
+    ));
+    assert.deepEqual(visibleTooltips, [], `tooltips must be hidden before screenshot: ${JSON.stringify(visibleTooltips)}`);
 
     const card = page.locator("[data-session-preview-card]");
     const githubMark = page.getByRole("button", { name: `打开会话：${githubTitle}`, exact: true });
