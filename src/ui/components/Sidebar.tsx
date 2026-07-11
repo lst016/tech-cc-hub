@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Dialog from "@radix-ui/react-dialog";
 import { toast } from "sonner";
@@ -10,6 +10,8 @@ import {
   normalizeWorkspacePath,
   readLinkedWorkspacesFromStorage,
 } from "./prompt-input/linked-workspaces";
+import { SessionPlanPreview, type SessionPlanPreviewAnchor } from "./SessionPlanPreview";
+import { buildSessionPlanPreviewSummary } from "../utils/session-plan-preview";
 
 interface SidebarProps {
   connected: boolean;
@@ -103,6 +105,44 @@ export function Sidebar({
     left: number;
     top: number;
   } | null>(null);
+  const [sessionPlanPreview, setSessionPlanPreview] = useState<{
+    sessionId: string;
+    anchor: SessionPlanPreviewAnchor;
+  } | null>(null);
+  const sessionPlanCloseTimerRef = useRef<number | null>(null);
+
+  const clearSessionPlanPreviewCloseTimer = useCallback(() => {
+    if (sessionPlanCloseTimerRef.current === null) return;
+    window.clearTimeout(sessionPlanCloseTimerRef.current);
+    sessionPlanCloseTimerRef.current = null;
+  }, []);
+
+  const closeSessionPlanPreview = useCallback(() => {
+    clearSessionPlanPreviewCloseTimer();
+    setSessionPlanPreview(null);
+  }, [clearSessionPlanPreviewCloseTimer]);
+
+  const scheduleSessionPlanPreviewClose = useCallback(() => {
+    clearSessionPlanPreviewCloseTimer();
+    sessionPlanCloseTimerRef.current = window.setTimeout(() => {
+      sessionPlanCloseTimerRef.current = null;
+      setSessionPlanPreview(null);
+    }, 120);
+  }, [clearSessionPlanPreviewCloseTimer]);
+
+  const openSessionPlanPreview = useCallback((sessionId: string, anchorElement: HTMLElement) => {
+    clearSessionPlanPreviewCloseTimer();
+    const rect = anchorElement.getBoundingClientRect();
+    setSessionPlanPreview({
+      sessionId,
+      anchor: {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+      },
+    });
+  }, [clearSessionPlanPreviewCloseTimer]);
 
   useEffect(() => {
     const unsubscribe = window.electron.onAppUpdateStatus((status: AppUpdateStatus) => {
@@ -252,6 +292,27 @@ export function Sidebar({
       return next;
     });
   }, [activeSessionId]);
+
+  useEffect(() => {
+    closeSessionPlanPreview();
+  }, [activeSessionId, closeSessionPlanPreview]);
+
+  useEffect(() => {
+    if (!sessionPlanPreview) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeSessionPlanPreview();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", closeSessionPlanPreview);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", closeSessionPlanPreview);
+    };
+  }, [closeSessionPlanPreview, sessionPlanPreview]);
+
+  useEffect(() => () => {
+    clearSessionPlanPreviewCloseTimer();
+  }, [clearSessionPlanPreviewCloseTimer]);
 
   const workspaceGroups = useMemo(() => {
     const groups = new Map<string, { cwd?: string; sessions: typeof sessionList }>();
@@ -436,6 +497,15 @@ export function Sidebar({
       .filter((item) => !linkedWorkspacePaths.includes(item))
       .slice(0, 8)
     : [];
+  const previewSession = sessionPlanPreview
+    ? sessions[sessionPlanPreview.sessionId] ?? archivedSessions[sessionPlanPreview.sessionId]
+    : undefined;
+  const previewPlan = previewSession?.latestPlan?.plan.length
+    ? previewSession.latestPlan
+    : undefined;
+  const openPlanPreviewId = sessionPlanPreview
+    ? `session-plan-preview-${sessionPlanPreview.sessionId}`
+    : "";
 
   return (
     <>
@@ -459,7 +529,7 @@ export function Sidebar({
           </button>
         </div>
 
-        <div className="sidebar-scroll min-h-0 flex-1 overflow-y-auto">
+        <div className="sidebar-scroll min-h-0 flex-1 overflow-y-auto" onScroll={closeSessionPlanPreview}>
           {workspaceGroups.length === 0 && (
             <div className="rounded-xl border border-black/6 bg-white/70 px-3 py-4 text-center text-xs leading-6 text-muted">
               还没有会话。直接在底部输入框开始聊天，系统会按工作区自动归档到左侧。
@@ -490,6 +560,7 @@ export function Sidebar({
                     type="button"
                     className="min-w-0 flex-1 text-left"
                     onClick={() => setExpandedGroups((current) => {
+                      closeSessionPlanPreview();
                       const next = {
                         ...current,
                         [group.key]: !current[group.key],
@@ -575,6 +646,9 @@ export function Sidebar({
                     const isBackgroundSession = session.executionMode === "background";
                     const unreadSessionStatus = unreadSessionIds[session.id];
                     const sessionAge = formatSessionAge(session.updatedAt);
+                    const planSummary = buildSessionPlanPreviewSummary(session.latestPlan);
+                    const isPlanPreviewOpen = sessionPlanPreview?.sessionId === session.id && Boolean(previewPlan);
+                    const planPreviewId = `session-plan-preview-${session.id}`;
                     return (
                     <div
                       key={session.id}
@@ -591,7 +665,34 @@ export function Sidebar({
                     >
                       <div className="flex min-h-7 items-center justify-between gap-2">
                         <div className="flex min-w-0 flex-1 items-center gap-2">
-                          {unreadSessionStatus ? (
+                          {planSummary ? (
+                            <button
+                              type="button"
+                              className="-m-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full outline-none transition-colors hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-accent/45"
+                              aria-label={planSummary.label}
+                              aria-expanded={isPlanPreviewOpen}
+                              aria-controls={isPlanPreviewOpen ? planPreviewId : undefined}
+                              onMouseEnter={(event) => openSessionPlanPreview(session.id, event.currentTarget)}
+                              onMouseLeave={scheduleSessionPlanPreviewClose}
+                              onFocus={(event) => openSessionPlanPreview(session.id, event.currentTarget)}
+                              onBlur={scheduleSessionPlanPreviewClose}
+                              onClick={(event) => event.stopPropagation()}
+                              onKeyDown={(event) => {
+                                event.stopPropagation();
+                                if (event.key === "Escape") closeSessionPlanPreview();
+                              }}
+                            >
+                              {unreadSessionStatus ? (
+                                <span
+                                  className={`h-2.5 w-2.5 rounded-full shadow-[0_0_0_3px_rgba(210,106,61,0.12)] ${unreadSessionStatus === "error" ? "bg-error" : "bg-accent"}`}
+                                />
+                              ) : isRunningSession ? (
+                                <span className="h-3 w-3 animate-spin rounded-full border-2 border-emerald-500/25 border-t-emerald-500" />
+                              ) : (
+                                <span className="h-2 w-2 rounded-full bg-black/15" />
+                              )}
+                            </button>
+                          ) : unreadSessionStatus ? (
                             <span
                               className={`h-2.5 w-2.5 shrink-0 rounded-full shadow-[0_0_0_3px_rgba(210,106,61,0.12)] ${unreadSessionStatus === "error" ? "bg-error" : "bg-accent"}`}
                               title={unreadSessionStatus === "error" ? "执行失败，未查看" : "执行完成，未查看"}
@@ -952,6 +1053,15 @@ export function Sidebar({
         </Dialog.Portal>
       </Dialog.Root>
     </aside>
+    {sessionPlanPreview && previewPlan && (
+      <SessionPlanPreview
+        id={openPlanPreviewId}
+        plan={previewPlan}
+        anchor={sessionPlanPreview.anchor}
+        onMouseEnter={clearSessionPlanPreviewCloseTimer}
+        onMouseLeave={scheduleSessionPlanPreviewClose}
+      />
+    )}
     {workspaceHoverCard && (
       <div
         className="pointer-events-none fixed z-[80] w-[min(340px,calc(100vw-24px))] rounded-xl border border-black/10 bg-white px-4 py-3 text-sm text-ink-800 shadow-[0_18px_44px_rgba(15,23,42,0.16)]"
