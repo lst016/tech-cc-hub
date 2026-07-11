@@ -1,8 +1,8 @@
 export const COLLAPSED_SESSION_RAIL_LIMIT = 10;
 export const SESSION_PREVIEW_FALLBACK = "暂无回复摘要";
 
-const PREVIEW_MARGIN = 12;
-const PREVIEW_GAP = 12;
+const PREVIEW_VIEWPORT_MARGIN = 12;
+const PREVIEW_HORIZONTAL_GAP = 16;
 const PREVIEW_TOP_OFFSET = 10;
 
 function normalizePreviewText(value: string): string {
@@ -52,11 +52,11 @@ export function clampSessionPreviewPosition(
   cardWidth: number,
   cardHeight: number,
 ): { left: number; top: number } {
-  const maxLeft = Math.max(PREVIEW_MARGIN, viewport.width - cardWidth - PREVIEW_MARGIN);
-  const maxTop = Math.max(PREVIEW_MARGIN, viewport.height - cardHeight - PREVIEW_MARGIN);
+  const maxLeft = Math.max(PREVIEW_VIEWPORT_MARGIN, viewport.width - cardWidth - PREVIEW_VIEWPORT_MARGIN);
+  const maxTop = Math.max(PREVIEW_VIEWPORT_MARGIN, viewport.height - cardHeight - PREVIEW_VIEWPORT_MARGIN);
 
   return {
-    left: Math.min(Math.max(anchor.right + PREVIEW_GAP, PREVIEW_MARGIN), maxLeft),
-    top: Math.min(Math.max(anchor.top - PREVIEW_TOP_OFFSET, PREVIEW_MARGIN), maxTop),
+    left: Math.min(Math.max(anchor.right + PREVIEW_HORIZONTAL_GAP, PREVIEW_VIEWPORT_MARGIN), maxLeft),
+    top: Math.min(Math.max(anchor.top - PREVIEW_TOP_OFFSET, PREVIEW_VIEWPORT_MARGIN), maxTop),
   };
 }

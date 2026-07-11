@@ -131,7 +131,7 @@ test("clampSessionPreviewPosition keeps a 480px card inside the viewport", () =>
       480,
       170,
     ),
-    { left: 76, top: 768 },
+    { left: 80, top: 768 },
   );
 });
 
@@ -143,6 +143,6 @@ test("clampSessionPreviewPosition offsets an unclamped card above the anchor", (
       480,
       170,
     ),
-    { left: 76, top: 90 },
+    { left: 80, top: 90 },
   );
 });

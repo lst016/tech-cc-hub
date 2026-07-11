@@ -30,6 +30,7 @@ interface PreviewState {
 
 const PREVIEW_CLOSE_DELAY_MS = 140;
 const PREVIEW_ESTIMATED_HEIGHT = 132;
+const INACTIVE_MARK_WIDTH_CLASSES = ["w-4", "w-6", "w-8"] as const;
 
 export function CollapsedSessionRail({
   sessions,
@@ -87,7 +88,10 @@ export function CollapsedSessionRail({
   const openPreview = useCallback((session: SessionView, trigger: HTMLButtonElement) => {
     cancelPreviewClose();
     const anchorRect = trigger.getBoundingClientRect();
-    const anchor = { right: anchorRect.right, top: anchorRect.top };
+    const anchor = {
+      right: Math.max(anchorRect.right, COLLAPSED_SESSION_RAIL_WIDTH),
+      top: anchorRect.top,
+    };
     previewAnchorRef.current = anchor;
     const cardWidth = Math.min(480, Math.max(0, window.innerWidth - 88));
     const position = clampSessionPreviewPosition(
@@ -172,15 +176,16 @@ export function CollapsedSessionRail({
       <aside
         data-collapsed-session-rail
         aria-label="最近会话"
-        className={`fixed bottom-0 left-0 z-30 border-r border-black/8 bg-[#f6f7f9]/95 ${topClassName}`}
+        className={`fixed bottom-0 left-0 z-30 border-r border-black/8 bg-white/95 ${topClassName}`}
         style={{ width: COLLAPSED_SESSION_RAIL_WIDTH }}
       >
-        <div className="flex h-full flex-col items-center gap-1.5 overflow-y-auto py-3">
-          {railSessions.map((session) => {
+        <div className="flex h-full flex-col items-stretch gap-1.5 overflow-y-auto py-3">
+          {railSessions.map((session, index) => {
             const isActive = session.id === activeSessionId;
             const isPreviewOpen = session.id === preview?.sessionId;
             const isRunning = session.status === "running";
             const unreadStatus = unreadSessionIds[session.id];
+            const inactiveMarkWidthClass = INACTIVE_MARK_WIDTH_CLASSES[index % INACTIVE_MARK_WIDTH_CLASSES.length];
             const sessionPreviewCardId = `collapsed-session-preview-${session.id}`;
             return (
               <button
@@ -190,7 +195,7 @@ export function CollapsedSessionRail({
                 aria-current={isActive ? "page" : undefined}
                 aria-expanded={isPreviewOpen}
                 aria-controls={isPreviewOpen ? sessionPreviewCardId : undefined}
-                className="group relative grid h-9 w-12 shrink-0 place-items-center rounded-xl outline-none transition hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-ink-400/35"
+                className="group relative flex h-9 w-full items-center justify-start pl-4 pr-1 shrink-0 rounded-xl outline-none transition hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-ink-400/35"
                 onPointerEnter={(event) => {
                   hoveredTriggerSessionIdRef.current = session.id;
                   cancelPreviewClose();
@@ -228,14 +233,14 @@ export function CollapsedSessionRail({
                   aria-hidden="true"
                   className={`block rounded-full transition-all ${
                     isActive
-                      ? "h-1 w-7 bg-ink-900"
+                      ? "h-1 w-10 bg-ink-900"
                       : unreadStatus === "error"
-                        ? "h-1 w-4 bg-error"
+                        ? `h-1 ${inactiveMarkWidthClass} bg-error`
                         : unreadStatus === "completed"
-                          ? "h-1 w-4 bg-accent"
+                          ? `h-1 ${inactiveMarkWidthClass} bg-accent`
                           : isRunning
-                            ? "h-1 w-4 animate-pulse bg-emerald-500"
-                            : "h-1 w-4 bg-black/20 group-hover:bg-black/40"
+                            ? `h-1 ${inactiveMarkWidthClass} animate-pulse bg-emerald-500`
+                            : `h-1 ${inactiveMarkWidthClass} bg-black/20 group-hover:bg-black/40`
                   }`}
                 />
                 {(isRunning || unreadStatus) && (
@@ -263,7 +268,7 @@ export function CollapsedSessionRail({
           data-session-preview-card
           role="region"
           aria-labelledby={previewTitleId}
-          className="fixed z-[70] w-[min(480px,calc(100vw-88px))] rounded-[20px] border border-black/10 bg-white px-5 py-4 shadow-[0_20px_55px_rgba(15,23,42,0.16)]"
+          className="fixed z-[70] w-[min(480px,calc(100vw-88px))] rounded-[20px] border border-black/10 bg-white px-3 py-4 shadow-[0_18px_48px_rgba(15,23,42,0.14)]"
           style={{ left: preview?.position.left, top: preview?.position.top }}
           onPointerEnter={() => {
             hoveredCardSessionIdRef.current = previewSession.id;
@@ -276,10 +281,10 @@ export function CollapsedSessionRail({
             schedulePreviewClose(previewSession.id);
           }}
         >
-          <div id={previewTitleId} className="truncate text-sm font-bold text-ink-900">
+          <div id={previewTitleId} className="truncate text-xl leading-6 font-bold text-ink-900">
             {previewSession.title}
           </div>
-          <p className="mt-2 line-clamp-3 text-sm leading-5 text-muted">
+          <p className="mt-2 line-clamp-3 text-xl leading-[30px] text-muted">
             {previewSummary}
           </p>
         </div>,
