@@ -280,6 +280,21 @@ async function main() {
     await markB.press("Escape");
     await card.waitFor({ state: "detached", timeout: timeoutMs });
 
+    assert.notEqual(await markA.getAttribute("aria-current"), "page", "Enter target must start non-active");
+    await markA.focus();
+    await markA.press("Enter");
+    await page.waitForFunction((title) => (
+      document.querySelector(`button[aria-label="打开会话：${title}"]`)?.getAttribute("aria-current") === "page"
+    ), "梳理更新说明", { timeout: timeoutMs });
+
+    assert.notEqual(await markB.getAttribute("aria-current"), "page", "Space target must start non-active");
+    await markB.focus();
+    await markB.press("Space");
+    await page.waitForFunction((title) => (
+      document.querySelector(`button[aria-label="打开会话：${title}"]`)?.getAttribute("aria-current") === "page"
+    ), markBTitle, { timeout: timeoutMs });
+    assert.notEqual(await markA.getAttribute("aria-current"), "page", "Space selection must move away from the Enter target");
+
     const backgroundMark = page.getByRole("button", { name: `打开会话：${backgroundTitle}`, exact: true });
     await assertUnreadAccent(backgroundMark, true, "completed background session should be unread after collapse");
     await page.getByRole("button", { name: "展开左侧栏", exact: true }).click();
