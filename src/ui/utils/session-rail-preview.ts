@@ -3,7 +3,7 @@ export const SESSION_PREVIEW_FALLBACK = "暂无回复摘要";
 
 const PREVIEW_VIEWPORT_MARGIN = 12;
 const PREVIEW_HORIZONTAL_GAP = 16;
-const PREVIEW_TOP_OFFSET = 10;
+const PREVIEW_TOP_OFFSET = 37;
 
 function normalizePreviewText(value: string): string {
   return value.replace(/\s+/g, " ").trim();

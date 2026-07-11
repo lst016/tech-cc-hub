@@ -26,7 +26,7 @@ test("collapsed session marks share a left origin and cycle reference widths", (
   assert.match(railSource, /INACTIVE_MARK_WIDTH_CLASSES = \["w-4", "w-6", "w-8"\] as const/);
   assert.match(railSource, /index % INACTIVE_MARK_WIDTH_CLASSES\.length/);
   assert.match(railSource, /"h-1 w-10 bg-ink-900"/);
-  assert.match(railSource, /w-full items-center justify-start pl-4/);
+  assert.match(railSource, /w-full items-center justify-start pl-5/);
   assert.match(railSource, /bg-white\/95/);
   assert.doesNotMatch(railSource, /bg-\[#f6f7f9\]/);
 });
@@ -37,8 +37,9 @@ test("preview card anchors from the rail edge and matches reference typography",
   assert.match(railSource, /right: Math\.max\(anchorRect\.right, COLLAPSED_SESSION_RAIL_WIDTH\)/);
   assert.match(railSource, /w-\[min\(480px,calc\(100vw-88px\)\)\]/);
   assert.match(railSource, /rounded-\[20px\][^"]*bg-white px-3 py-4/);
-  assert.match(railSource, /text-xl leading-6 font-bold text-ink-900/);
-  assert.match(railSource, /line-clamp-3 text-xl leading-\[30px\] text-muted/);
+  assert.match(railSource, /text-xl leading-6 font-semibold text-ink-900/);
+  assert.doesNotMatch(railSource, /text-xl leading-6 font-bold text-ink-900/);
+  assert.match(railSource, /line-clamp-3 text-\[20px\] leading-\[30px\] text-\[#8b919a\]/);
   assert.match(railSource, /shadow-\[0_18px_48px_rgba\(15,23,42,0\.14\)\]/);
 });
 

@@ -195,7 +195,7 @@ export function CollapsedSessionRail({
                 aria-current={isActive ? "page" : undefined}
                 aria-expanded={isPreviewOpen}
                 aria-controls={isPreviewOpen ? sessionPreviewCardId : undefined}
-                className="group relative flex h-9 w-full items-center justify-start pl-4 pr-1 shrink-0 rounded-xl outline-none transition hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-ink-400/35"
+                className="group relative flex h-9 w-full items-center justify-start pl-5 pr-1 shrink-0 rounded-xl outline-none transition hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-ink-400/35"
                 onPointerEnter={(event) => {
                   hoveredTriggerSessionIdRef.current = session.id;
                   cancelPreviewClose();
@@ -281,10 +281,10 @@ export function CollapsedSessionRail({
             schedulePreviewClose(previewSession.id);
           }}
         >
-          <div id={previewTitleId} className="truncate text-xl leading-6 font-bold text-ink-900">
+          <div id={previewTitleId} className="truncate text-xl leading-6 font-semibold text-ink-900">
             {previewSession.title}
           </div>
-          <p className="mt-2 line-clamp-3 text-xl leading-[30px] text-muted">
+          <p className="mt-2 line-clamp-3 text-[20px] leading-[30px] text-[#8b919a]">
             {previewSummary}
           </p>
         </div>,

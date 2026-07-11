@@ -143,6 +143,6 @@ test("clampSessionPreviewPosition offsets an unclamped card above the anchor", (
       480,
       170,
     ),
-    { left: 80, top: 90 },
+    { left: 80, top: 63 },
   );
 });
