@@ -44,6 +44,9 @@ test("Windows packaging keeps the app icon enabled for packaged executables and 
   assert.doesNotMatch(releaseWorkflow, /script: dist:mac-x64/);
   assert.match(releaseWorkflow, /dist\/\*\.yml/);
   assert.match(releaseWorkflow, /dist\/\*\.blockmap/);
+  assert.match(releaseWorkflow, /Normalize GitHub asset names/);
+  assert.match(releaseWorkflow, /installer\.replace\(" ", "\."\)/);
+  assert.match(releaseWorkflow, /source\.rename\(target\)/);
   assert.match(releaseWorkflow, /Verify Windows updater assets/);
   assert.match(releaseWorkflow, /test -s latest\.yml/);
   assert.match(releaseWorkflow, /test -s "\$\{installer\}\.blockmap"/);

@@ -114,6 +114,33 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Normalize GitHub asset names
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          release_dir = Path("release-assets")
+          latest_path = release_dir / "latest.yml"
+          text = latest_path.read_text(encoding="utf-8")
+          match = re.search(r"^path:\s*['\"]?(.+?)['\"]?\s*$", text, re.M)
+          if not match:
+              raise SystemExit("latest.yml does not declare path")
+
+          installer = match.group(1)
+          normalized = installer.replace(" ", ".")
+          if normalized != installer:
+              for suffix in ("", ".blockmap"):
+                  source = release_dir / f"{installer}{suffix}"
+                  target = release_dir / f"{normalized}{suffix}"
+                  if not source.is_file():
+                      raise SystemExit(f"missing updater asset: {source}")
+                  source.rename(target)
+              latest_path.write_text(text.replace(installer, normalized), encoding="utf-8")
+          PY
+
       - name: List release assets
         run: |
           echo "Release assets:"
