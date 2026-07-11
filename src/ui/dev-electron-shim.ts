@@ -127,6 +127,15 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
   let sessionTitle = "新聊天";
   let sessionModel = "";
   let sessionMessages: StreamMessage[] = [];
+  const qaCollapsedSessionRailEnabled = new URL(window.location.href).searchParams.get("qaCollapsedSessionRail") === "1";
+  const qaSessionCwd = "D:/tool/tech-cc-hub";
+  const qaSessionTimestamp = 1_783_800_000_000;
+  const qaBackgroundSessionId = "qa-rail-background";
+  const qaBottomSessionId = "qa-rail-bottom";
+  let qaBackgroundStatus: "running" | "completed" = "running";
+  let qaBackgroundCompletionScheduled = false;
+  let qaBottomHistoryScheduled = false;
+  let qaBottomHistoryEmitted = false;
   const browserStateBySessionId: Record<string, BrowserWorkbenchState> = {};
   const createEmptyBrowserState = (): BrowserWorkbenchState => ({
     url: "",
@@ -148,10 +157,94 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
   };
   const platform = "browser";
 
+  const buildQaSessions = () => [
+    {
+      id: "qa-rail-active",
+      title: "收起会话栏验收",
+      status: "idle" as const,
+      updatedAt: qaSessionTimestamp + 8_000,
+    },
+    {
+      id: "qa-rail-github",
+      title: "github提交下版本吧",
+      status: "completed" as const,
+      updatedAt: qaSessionTimestamp + 7_000,
+    },
+    {
+      id: qaBackgroundSessionId,
+      title: "后台构建发布包",
+      status: qaBackgroundStatus,
+      updatedAt: qaSessionTimestamp + 6_000,
+    },
+    {
+      id: "qa-rail-release-notes",
+      title: "梳理更新说明",
+      status: "completed" as const,
+      updatedAt: qaSessionTimestamp + 5_000,
+    },
+    {
+      id: "qa-rail-installer",
+      title: "检查安装包清单",
+      status: "completed" as const,
+      updatedAt: qaSessionTimestamp + 4_000,
+    },
+    {
+      id: "qa-rail-metadata",
+      title: "同步升级元数据",
+      status: "completed" as const,
+      updatedAt: qaSessionTimestamp + 3_000,
+    },
+    {
+      id: "qa-rail-windows-build",
+      title: "复核 Windows 构建",
+      status: "completed" as const,
+      updatedAt: qaSessionTimestamp + 2_000,
+    },
+    {
+      id: qaBottomSessionId,
+      title: "核对长回复的底部会话",
+      status: "completed" as const,
+      updatedAt: qaSessionTimestamp + 1_000,
+    },
+  ].map((session, index) => ({
+    ...session,
+    cwd: qaSessionCwd,
+    model: "claude-sonnet-4-5",
+    runSurface: "development" as const,
+    slashCommands: browserPreviewSlashCommandNames,
+    createdAt: qaSessionTimestamp - ((index + 1) * 60_000),
+  }));
+
+  const qaAssistantTextBySessionId: Record<string, string> = {
+    "qa-rail-active": "验收环境已经准备好，可以开始检查收起后的会话栏。",
+    "qa-rail-github": "GitHub 最新已经是 v0.1.55，所以这次需要发 v0.1.56。但当前工作区还有约 60 个其他未提交修改，而刚才安装包也包含它们。请确认：v0.1.56 是否要包含这些修改。",
+    [qaBackgroundSessionId]: "Windows 安装包已经构建完成，校验结果正常。",
+    "qa-rail-release-notes": "更新说明已按功能、修复和验证结果重新整理。",
+    "qa-rail-installer": "安装包、blockmap 和 latest.yml 已经全部列入核对清单。",
+    "qa-rail-metadata": "升级元数据已经同步，公开下载路径保持一致。",
+    "qa-rail-windows-build": "Windows 构建产物已复核，文件名和版本号匹配。",
+    [qaBottomSessionId]: [
+      "这是一段专门用于验证底部会话预览动态重排的长回复，第一行说明历史记录会在悬停后延迟返回。",
+      "第二行补充足够多的自然语言内容，让摘要稳定占满三行并触发 ResizeObserver 重新测量卡片高度。",
+      "第三行确认无论初始窗口还是缩短后的窗口，预览卡片底边都必须保留至少十二像素的安全距离。",
+    ].join("\n"),
+  };
+
+  const buildQaAssistantMessage = (sessionId: string, text: string) => ({
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text }],
+    },
+    parent_tool_use_id: null,
+    uuid: `${sessionId}-assistant`,
+    session_id: sessionId,
+  } as unknown as StreamMessage);
+
   const buildSessionListEvent = (): ServerEvent => ({
     type: "session.list",
     payload: {
-      sessions: [
+      sessions: qaCollapsedSessionRailEnabled ? buildQaSessions() : [
         {
           id: browserPreviewSessionId,
           title: sessionTitle,
@@ -167,17 +260,43 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     },
   });
 
-  const buildSessionHistoryEvent = (): ServerEvent => ({
-    type: "session.history",
-    payload: {
-      sessionId: browserPreviewSessionId,
-      status: sessionStatus,
-      mode: "replace",
-      hasMore: false,
-      slashCommands: browserPreviewSlashCommandNames,
-      messages: sessionMessages,
-    },
-  });
+  const buildSessionHistoryEvent = (requestedSessionId = browserPreviewSessionId): ServerEvent => {
+    if (!qaCollapsedSessionRailEnabled) {
+      return {
+        type: "session.history",
+        payload: {
+          sessionId: browserPreviewSessionId,
+          status: sessionStatus,
+          mode: "replace",
+          hasMore: false,
+          slashCommands: browserPreviewSlashCommandNames,
+          messages: sessionMessages,
+        },
+      };
+    }
+
+    const session = buildQaSessions().find((candidate) => candidate.id === requestedSessionId) ?? buildQaSessions()[0];
+    const assistantText = qaAssistantTextBySessionId[session.id];
+    const messages: StreamMessage[] = [
+      {
+        type: "user_prompt",
+        prompt: `请处理会话：${session.title}`,
+        capturedAt: session.createdAt,
+      },
+      buildQaAssistantMessage(session.id, assistantText),
+    ];
+    return {
+      type: "session.history",
+      payload: {
+        sessionId: session.id,
+        status: session.status,
+        mode: "replace",
+        hasMore: false,
+        slashCommands: browserPreviewSlashCommandNames,
+        messages,
+      },
+    };
+  };
 
   const listeners = new Set<(event: ServerEvent) => void>();
   const emit = (event: ServerEvent) => {
@@ -193,6 +312,15 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     emit(buildSessionHistoryEvent());
   };
 
+  const scheduleQaBackgroundCompletion = () => {
+    if (!qaCollapsedSessionRailEnabled || qaBackgroundCompletionScheduled) return;
+    qaBackgroundCompletionScheduled = true;
+    window.setTimeout(() => {
+      qaBackgroundStatus = "completed";
+      emit(buildSessionListEvent());
+    }, 700);
+  };
+
   return {
     [DEV_SHIM_MARKER]: "fallback",
     platform,
@@ -205,9 +333,23 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     sendClientEvent: (event: ClientEvent) => {
       if (event.type === "session.list") {
         emit(buildSessionListEvent());
+        scheduleQaBackgroundCompletion();
       }
       if (event.type === "session.history") {
-        emit(buildSessionHistoryEvent());
+        const requestedSessionId = event.payload.sessionId;
+        if (qaCollapsedSessionRailEnabled && requestedSessionId === qaBottomSessionId) {
+          if (qaBottomHistoryEmitted) {
+            emit(buildSessionHistoryEvent(requestedSessionId));
+          } else if (!qaBottomHistoryScheduled) {
+            qaBottomHistoryScheduled = true;
+            window.setTimeout(() => {
+              qaBottomHistoryEmitted = true;
+              emit(buildSessionHistoryEvent(requestedSessionId));
+            }, 250);
+          }
+        } else {
+          emit(buildSessionHistoryEvent(requestedSessionId));
+        }
       }
       if (event.type === "session.create") {
         sessionCreatedAt = Date.now();
@@ -324,6 +466,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     onServerEvent: (callback: (event: ServerEvent) => void) => {
       listeners.add(callback);
       emit(buildSessionListEvent());
+      scheduleQaBackgroundCompletion();
       return () => {
         listeners.delete(callback);
       };
@@ -389,6 +532,9 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         } as T;
       }
       if (channel === "slash-commands:list") {
+        if (qaCollapsedSessionRailEnabled) {
+          return { commands: browserPreviewSlashCommands } as T;
+        }
         try {
           return await invokeBridge("listSlashCommands", args[0]) as T;
         } catch {
