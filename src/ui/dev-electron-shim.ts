@@ -121,10 +121,11 @@ const buildBrowserPreviewTitle = (input: string) => {
 };
 
 function createFallbackElectron(): typeof window.electron & Record<string, unknown> {
+  const qaPlanPreviewEnabled = new URLSearchParams(window.location.search).get("qaPlanPreview") === "1";
   let sessionCreatedAt = Date.now();
   let sessionUpdatedAt = sessionCreatedAt;
-  let sessionStatus: "idle" | "running" | "completed" = "idle";
-  let sessionTitle = "新聊天";
+  let sessionStatus: "idle" | "running" | "completed" = qaPlanPreviewEnabled ? "running" : "idle";
+  let sessionTitle = qaPlanPreviewEnabled ? "聊天列表计划预览" : "新聊天";
   let sessionModel = "";
   let sessionMessages: StreamMessage[] = [];
   const browserStateBySessionId: Record<string, BrowserWorkbenchState> = {};
@@ -176,6 +177,22 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
       hasMore: false,
       slashCommands: browserPreviewSlashCommandNames,
       messages: sessionMessages,
+    },
+  });
+
+  const buildPlanPreviewEvent = (): ServerEvent => ({
+    type: "session.plan.updated",
+    payload: {
+      sessionId: browserPreviewSessionId,
+      source: "update_plan",
+      updatedAt: Date.now(),
+      explanation: "聊天列表计划预览验收",
+      plan: [
+        { step: "检查聊天列表现有数据链路", status: "completed" },
+        { step: "实现计划清单悬浮预览", status: "completed" },
+        { step: "验证键盘与边界定位", status: "in_progress" },
+        { step: "运行定向测试与视觉验收", status: "pending" },
+      ],
     },
   });
 
@@ -324,6 +341,9 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     onServerEvent: (callback: (event: ServerEvent) => void) => {
       listeners.add(callback);
       emit(buildSessionListEvent());
+      if (qaPlanPreviewEnabled) {
+        emit(buildPlanPreviewEvent());
+      }
       return () => {
         listeners.delete(callback);
       };
