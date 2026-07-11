@@ -10,7 +10,7 @@ function normalizePreviewText(value: string): string {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function extractLatestAssistantSummary(messages: readonly unknown[], partial?: string): string {
@@ -57,6 +57,6 @@ export function clampSessionPreviewPosition(
 
   return {
     left: Math.min(Math.max(anchor.right + PREVIEW_GAP, PREVIEW_MARGIN), maxLeft),
-    top: Math.min(Math.max(anchor.top + PREVIEW_TOP_OFFSET, PREVIEW_MARGIN), maxTop),
+    top: Math.min(Math.max(anchor.top - PREVIEW_TOP_OFFSET, PREVIEW_MARGIN), maxTop),
   };
 }

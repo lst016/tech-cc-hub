@@ -87,6 +87,24 @@ test("extractLatestAssistantSummary ignores tool-only and system messages", () =
   assert.equal(extractLatestAssistantSummary(messages), SESSION_PREVIEW_FALLBACK);
 });
 
+test("extractLatestAssistantSummary rejects array-shaped text blocks", () => {
+  const malformedTextBlock = Object.assign([], {
+    type: "text",
+    text: "Malformed array content",
+  });
+  const messages = [
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [malformedTextBlock],
+      },
+    },
+  ];
+
+  assert.equal(extractLatestAssistantSummary(messages), SESSION_PREVIEW_FALLBACK);
+});
+
 test("selectCollapsedRailSessions returns the newest non-archived sessions without mutating input", () => {
   const sessions = {
     old: Object.freeze({ id: "old", title: "Old", updatedAt: 10 }),
@@ -114,5 +132,17 @@ test("clampSessionPreviewPosition keeps a 480px card inside the viewport", () =>
       170,
     ),
     { left: 76, top: 768 },
+  );
+});
+
+test("clampSessionPreviewPosition offsets an unclamped card above the anchor", () => {
+  assert.deepEqual(
+    clampSessionPreviewPosition(
+      { right: 64, top: 100 },
+      { width: 1200, height: 900 },
+      480,
+      170,
+    ),
+    { left: 76, top: 90 },
   );
 });
