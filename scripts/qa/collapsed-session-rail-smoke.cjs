@@ -14,6 +14,8 @@ const githubTitle = "github提交下版本吧";
 const githubSummary = "GitHub 最新已经是 v0.1.55，所以这次需要发 v0.1.56。但当前工作区还有约 60 个其他未提交修改，而刚才安装包也包含它们。请确认：v0.1.56 是否要包含这些修改。";
 const backgroundTitle = "后台构建发布包";
 const bottomTitle = "核对长回复的底部会话";
+const markBTitle = "检查安装包清单";
+const markBSummary = "安装包、blockmap 和 latest.yml 已经全部列入核对清单。";
 
 function startDevServer() {
   const args = ["run", "dev:react", "--", "--host", "127.0.0.1", "--port", String(port), "--strictPort"];
@@ -164,9 +166,11 @@ async function main() {
 
     // Focus belongs to mark A, but preview ownership moves to hovered mark B.
     const markA = page.getByRole("button", { name: "打开会话：梳理更新说明", exact: true });
-    const markB = page.getByRole("button", { name: "打开会话：检查安装包清单", exact: true });
+    const markB = page.getByRole("button", { name: `打开会话：${markBTitle}`, exact: true });
     await markA.focus();
     await markB.hover();
+    await waitForCardText(card, markBSummary);
+    assert.equal((await card.locator('[id$="-title"]').textContent())?.trim(), markBTitle);
     await page.mouse.move(899, 559);
     await page.waitForTimeout(240);
     assert.equal(await card.count(), 0, "mark B preview should close even while mark A remains focused");
