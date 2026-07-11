@@ -4,7 +4,7 @@
 
 **Goal:** Keep a narrow recent-conversation rail visible when the full sidebar is collapsed and show a title plus latest-assistant-reply card on hover or keyboard focus.
 
-**Architecture:** `App.tsx` continues to own `showSidebar` and swaps the existing `Sidebar` for a focused `CollapsedSessionRail`. A pure `session-rail-preview.ts` module owns message extraction and recency selection; the rail owns pointer/focus state, unread transitions, and portal positioning. Existing session IPC is reused to hydrate a hovered conversation before its preview is needed.
+**Architecture:** `App.tsx` continues to own `showSidebar`, swaps the existing `Sidebar` for a focused `CollapsedSessionRail`, and persists unread completion/error transitions across rail mounts. A pure `session-rail-preview.ts` module owns message extraction and recency selection; the rail owns session-scoped pointer/focus state and portal positioning. Existing session IPC is reused to hydrate a hovered conversation before its preview is needed.
 
 **Tech Stack:** React 19, TypeScript, ReactDOM portals, Tailwind CSS, Zustand, Node test runner, Playwright, Vite development shim.
 
@@ -14,7 +14,7 @@
 
 - Create `src/ui/utils/session-rail-preview.ts`: pure recent-session selection, assistant text extraction, and card positioning helpers.
 - Create `src/ui/components/CollapsedSessionRail.tsx`: accessible rail buttons, status visuals, hover/focus lifecycle, and portal card.
-- Modify `src/ui/App.tsx`: mount the rail when `showSidebar` is false, reserve its width, hydrate hovered histories, and pass live partial text.
+- Modify `src/ui/App.tsx`: mount the rail when `showSidebar` is false, reserve its width, hydrate hovered histories, persist unread transitions, and pass live partial text.
 - Modify `src/ui/dev-electron-shim.ts`: query-gated multi-session fixture with assistant replies.
 - Create `test/electron/session-rail-preview.test.ts`: behavioral tests for extraction, selection, and positioning.
 - Create `test/electron/collapsed-session-rail-ui.test.ts`: source contract for app wiring, accessibility, and portal rendering.
@@ -196,13 +196,15 @@ export interface CollapsedSessionRailProps {
   sessions: Record<string, SessionView>;
   activeSessionId: string | null;
   partialMessagesBySessionId: Record<string, string>;
+  unreadSessionIds: Record<string, "completed" | "error">;
   topClassName: string;
   onPreviewSession: (sessionId: string) => void;
+  onClearUnreadSession: (sessionId: string) => void;
   onSelectSession: (sessionId: string) => void;
 }
 ```
 
-Render one real button per selected session. Use `aria-label={`打开会话：${session.title}`}`, `aria-current`, `aria-expanded`, and `aria-controls`. A 140ms shared close timer bridges the trigger/card pointer gap. Enter/Space call the same select function as click; Escape only closes the preview. Track status transitions in a ref so background `running -> completed/error` sessions receive an unread accent until selected. Render the preview with `createPortal(..., document.body)`, a fixed `w-[min(480px,calc(100vw-88px))]` card, a bold one-line title, and a three-line clamped summary.
+Render one real button per selected session. Use `aria-label={`打开会话：${session.title}`}`, `aria-current`, `aria-expanded`, and `aria-controls`. A 140ms shared close timer bridges the trigger/card pointer gap while session-id ownership prevents focus on one mark from pinning another mark's preview. Enter/Space call the same select function as click; Escape only closes the preview. Read background completion/error accents from `unreadSessionIds` and clear them through `onClearUnreadSession` when selected. Re-clamp the portal card with `ResizeObserver` and the window resize event after history or live partial content changes. Render through `createPortal(..., document.body)` with a fixed `w-[min(480px,calc(100vw-88px))]` card, a bold one-line title, and a three-line clamped summary.
 
 - [ ] **Step 4: Wire the collapsed state in `App.tsx`**
 
@@ -225,7 +227,7 @@ const requestCollapsedSessionPreviewHistory = useCallback((sessionId: string) =>
 }, [connected, historyRequested, markHistoryRequested, sendEvent, sessions]);
 ```
 
-Mount `CollapsedSessionRail` next to the existing conditional `Sidebar`, pass `partialMessagesBySessionId`, and use `setActiveSessionId` for selection. Keep the resize handle exclusive to the full sidebar. The computed `sidebarOffset` automatically moves the main surface, prompt composer, and new-message button.
+Mount `CollapsedSessionRail` next to the existing conditional `Sidebar`, pass `partialMessagesBySessionId` plus App-owned unread state and its clear callback, and use `setActiveSessionId` for selection. Observe `running -> completed/error` transitions in `App.tsx`, clear the active session, and prune removed sessions so unread state survives rail unmounts without leaking stale ids. Keep the resize handle exclusive to the full sidebar. The computed `sidebarOffset` automatically moves the main surface, prompt composer, and new-message button.
 
 - [ ] **Step 5: Run focused tests and build**
 
