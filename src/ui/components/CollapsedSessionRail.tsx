@@ -48,6 +48,9 @@ export function CollapsedSessionRail({
   const previewSessionIdRef = useRef<string | null>(null);
   const previewCardRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<number | null>(null);
+  const triggerHoveredRef = useRef(false);
+  const triggerFocusedRef = useRef(false);
+  const cardHoveredRef = useRef(false);
   const [unreadSessionIds, setUnreadSessionIds] = useState<Record<string, UnreadSessionStatus>>({});
   const [preview, setPreview] = useState<PreviewState | null>(null);
 
@@ -59,18 +62,29 @@ export function CollapsedSessionRail({
 
   const closePreview = useCallback(() => {
     cancelPreviewClose();
+    triggerHoveredRef.current = false;
+    triggerFocusedRef.current = false;
+    cardHoveredRef.current = false;
     previewSessionIdRef.current = null;
     setPreview(null);
   }, [cancelPreviewClose]);
 
+  const canClosePreview = useCallback(() => (
+    !triggerHoveredRef.current &&
+    !triggerFocusedRef.current &&
+    !cardHoveredRef.current
+  ), []);
+
   const schedulePreviewClose = useCallback(() => {
     cancelPreviewClose();
+    if (!canClosePreview()) return;
     closeTimerRef.current = window.setTimeout(() => {
       closeTimerRef.current = null;
+      if (!canClosePreview()) return;
       previewSessionIdRef.current = null;
       setPreview(null);
     }, PREVIEW_CLOSE_DELAY_MS);
-  }, [cancelPreviewClose]);
+  }, [cancelPreviewClose, canClosePreview]);
 
   const openPreview = useCallback((session: SessionView, trigger: HTMLButtonElement) => {
     cancelPreviewClose();
@@ -92,6 +106,7 @@ export function CollapsedSessionRail({
   }, [cancelPreviewClose, onPreviewSession]);
 
   const selectSession = useCallback((sessionId: string) => {
+    closePreview();
     setUnreadSessionIds((current) => {
       if (!current[sessionId]) return current;
       const next = { ...current };
@@ -99,7 +114,7 @@ export function CollapsedSessionRail({
       return next;
     });
     onSelectSession(sessionId);
-  }, [onSelectSession]);
+  }, [closePreview, onSelectSession]);
 
   useEffect(() => {
     const previousStatuses = previousSessionStatusesRef.current;
@@ -207,10 +222,24 @@ export function CollapsedSessionRail({
                 aria-expanded={isPreviewOpen}
                 aria-controls={isPreviewOpen ? sessionPreviewCardId : undefined}
                 className="group relative grid h-9 w-12 shrink-0 place-items-center rounded-xl outline-none transition hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-ink-400/35"
-                onPointerEnter={(event) => openPreview(session, event.currentTarget)}
-                onPointerLeave={schedulePreviewClose}
-                onFocus={(event) => openPreview(session, event.currentTarget)}
-                onBlur={schedulePreviewClose}
+                onPointerEnter={(event) => {
+                  triggerHoveredRef.current = true;
+                  cancelPreviewClose();
+                  openPreview(session, event.currentTarget);
+                }}
+                onPointerLeave={() => {
+                  triggerHoveredRef.current = false;
+                  schedulePreviewClose();
+                }}
+                onFocus={(event) => {
+                  triggerFocusedRef.current = true;
+                  cancelPreviewClose();
+                  openPreview(session, event.currentTarget);
+                }}
+                onBlur={() => {
+                  triggerFocusedRef.current = false;
+                  schedulePreviewClose();
+                }}
                 onClick={() => selectSession(session.id)}
                 onKeyDown={(event) => {
                   if (event.key === "Escape") {
@@ -226,14 +255,14 @@ export function CollapsedSessionRail({
                   aria-hidden="true"
                   className={`block rounded-full transition-all ${
                     isActive
-                      ? "h-7 w-1.5 bg-ink-900"
+                      ? "h-1 w-7 bg-ink-900"
                       : unreadStatus === "error"
-                        ? "h-4 w-1 bg-error"
+                        ? "h-1 w-4 bg-error"
                         : unreadStatus === "completed"
-                          ? "h-4 w-1 bg-accent"
+                          ? "h-1 w-4 bg-accent"
                           : isRunning
-                            ? "h-5 w-1 animate-pulse bg-emerald-500"
-                            : "h-4 w-1 bg-black/20 group-hover:bg-black/40"
+                            ? "h-1 w-4 animate-pulse bg-emerald-500"
+                            : "h-1 w-4 bg-black/20 group-hover:bg-black/40"
                   }`}
                 />
                 {(isRunning || unreadStatus) && (
@@ -263,8 +292,14 @@ export function CollapsedSessionRail({
           aria-labelledby={previewTitleId}
           className="fixed z-[70] w-[min(480px,calc(100vw-88px))] rounded-[20px] border border-black/10 bg-white px-5 py-4 shadow-[0_20px_55px_rgba(15,23,42,0.16)]"
           style={{ left: preview?.position.left, top: preview?.position.top }}
-          onPointerEnter={cancelPreviewClose}
-          onPointerLeave={schedulePreviewClose}
+          onPointerEnter={() => {
+            cardHoveredRef.current = true;
+            cancelPreviewClose();
+          }}
+          onPointerLeave={() => {
+            cardHoveredRef.current = false;
+            schedulePreviewClose();
+          }}
         >
           <div id={previewTitleId} className="truncate text-sm font-bold text-ink-900">
             {previewSession.title}
