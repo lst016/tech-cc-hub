@@ -22,6 +22,7 @@ import {
 } from "../utils/context-usage-breakdown";
 import { buildSegmentedContextUsageCells, type ContextUsageCellSegment } from "../utils/context-usage-cells";
 import { ActivityWorkspaceTabs } from "./ActivityWorkspaceTabs";
+import { SideConversationPanel, type SideConversationPanelProps } from "./SideConversationPanel";
 import type { SessionView } from "../store/useAppStore";
 import type { WorkspacePluginDescriptor } from "../../shared/workspace-plugins";
 import {
@@ -1287,6 +1288,7 @@ export function ActivityRail({
   contextWindow,
   compressionThresholdPercent,
   hasBrowserTab = false,
+  hasSidechatTab = false,
   hasGitTab = false,
   hasTerminalTab = false,
   workspacePlugins = [],
@@ -1297,6 +1299,9 @@ export function ActivityRail({
   deferPreviewMount = false,
   onOpenGitWorkspace,
   onCloseGitWorkspace,
+  onOpenSidechatWorkspace,
+  onCloseSidechatWorkspace,
+  sideConversationProps,
   onOpenTerminalWorkspace,
   onCloseTerminalWorkspace,
   onCloseWorkspacePluginTab,
@@ -1325,6 +1330,7 @@ export function ActivityRail({
   contextWindow?: number;
   compressionThresholdPercent?: number;
   hasBrowserTab?: boolean;
+  hasSidechatTab?: boolean;
   hasGitTab?: boolean;
   hasTerminalTab?: boolean;
   workspacePlugins?: WorkspacePluginDescriptor[];
@@ -1335,6 +1341,9 @@ export function ActivityRail({
   deferPreviewMount?: boolean;
   onOpenGitWorkspace?: () => void;
   onCloseGitWorkspace?: () => void;
+  onOpenSidechatWorkspace?: () => void;
+  onCloseSidechatWorkspace?: () => void;
+  sideConversationProps?: SideConversationPanelProps;
   onOpenTerminalWorkspace?: () => void;
   onCloseTerminalWorkspace?: () => void;
   onCloseWorkspacePluginTab?: (tab: PluginRailTab) => void;
@@ -1389,7 +1398,7 @@ export function ActivityRail({
     handleSelectTab(tab);
   };
   const timelineRef = useRef<HTMLDivElement>(null);
-  const toolWorkspaceActive = selectedTab === "preview" || selectedTab === "git" || selectedTab === "terminal" || selectedTab.startsWith("workflow-agent:") || Boolean(selectedWorkspacePlugin);
+  const toolWorkspaceActive = selectedTab === "preview" || selectedTab === "sidechat" || selectedTab === "git" || selectedTab === "terminal" || selectedTab.startsWith("workflow-agent:") || Boolean(selectedWorkspacePlugin);
   const shouldMountPreviewPane = selectedTab === "preview" && (!deferPreviewMount || Boolean(pendingPreviewOpenRequest));
 
   useEffect(() => {
@@ -1478,15 +1487,19 @@ export function ActivityRail({
           <ActivityWorkspaceTabs
             activeTab={selectedTab}
             showBrowserTab={hasBrowserTab}
+            showSidechatTab={hasSidechatTab}
             showGitTab={hasGitTab}
             showTerminalTab={hasTerminalTab}
             workspacePlugins={workspacePlugins}
             hiddenWorkspacePlugins={hiddenWorkspacePlugins}
             workflowAgentTabs={workflowAgentTabs}
             showLabels={showLabels}
+            showCreateSidechatTab={!hasSidechatTab}
             showCreateGitTab={!hasGitTab}
             showCreateTerminalTab={!hasTerminalTab}
             onSelectTab={handleSelectWorkspaceTab}
+            onCreateSidechatTab={onOpenSidechatWorkspace}
+            onCloseSidechatTab={hasSidechatTab ? onCloseSidechatWorkspace : undefined}
             onCreateGitTab={onOpenGitWorkspace}
             onCloseGitTab={hasGitTab ? onCloseGitWorkspace : undefined}
             onCreateTerminalTab={onOpenTerminalWorkspace}
@@ -1510,6 +1523,8 @@ export function ActivityRail({
               <PlanProgressPanel snapshot={session?.latestPlan} />
             </div>
           ) : null
+        ) : selectedTab === "sidechat" && sideConversationProps ? (
+          <SideConversationPanel {...sideConversationProps} />
         ) : selectedTab === "preview" ? (
           <div className="min-h-0 flex-1">
             <div className="h-full overflow-hidden border-t border-[#d0d7de] bg-white shadow-none">

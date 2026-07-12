@@ -48,4 +48,34 @@ describe("side conversation panel source contract", () => {
     assert.ok(source.includes('messageIdPrefix={keyPrefix}'));
     assert.ok(processSource.includes('id={`${messageIdPrefix}-message-${entry.originalIndex}`}'));
   });
+
+  it("correlates background creation without changing the primary session", () => {
+    const source = readFileSync("src/ui/App.tsx", "utf8");
+
+    assert.match(source, /pendingSideConversationRequestsRef/);
+    assert.match(source, /event\.payload\.activation === "background"/);
+    assert.match(source, /pendingSideConversationRequestsRef\.current\.get\(event\.payload\.clientRequestId\)/);
+    assert.match(source, /setSideSessionIdByPrimarySessionId/);
+    assert.doesNotMatch(source, /setActiveSessionId\(event\.payload\.sessionId\)/);
+  });
+
+  it("opens and closes sidechat as optional per-primary-session state", () => {
+    const source = readFileSync("src/ui/App.tsx", "utf8");
+
+    assert.match(source, /sidechatTabBySessionId/);
+    assert.match(source, /sideSessionIdByPrimarySessionId/);
+    assert.match(source, /setActiveSessionActivityRailTab\("sidechat"\)/);
+    assert.match(source, /activityRailTab === "sidechat"/);
+    assert.match(source, /data-active-session-title/);
+  });
+
+  it("mounts SideConversationPanel only for the sidechat rail tab", () => {
+    const source = readFileSync("src/ui/components/ActivityRail.tsx", "utf8");
+
+    assert.match(source, /import[\s\S]{0,120}SideConversationPanel/);
+    assert.match(source, /showSidechatTab=\{hasSidechatTab\}/);
+    assert.match(source, /selectedTab === "sidechat"[\s\S]{0,180}<SideConversationPanel/);
+    assert.match(source, /onCreateSidechatTab/);
+    assert.match(source, /onCloseSidechatTab/);
+  });
 });

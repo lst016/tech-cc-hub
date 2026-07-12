@@ -39,6 +39,7 @@ import {
   type WorkflowAgentRailTab,
 } from "./utils/activity-workspace-tabs";
 import { buildWorkflowAgentSummaries } from "./utils/workflow-agent-transcripts";
+import { createSideConversationRequestId } from "./utils/side-conversation";
 import { ProcessGroupCard as SharedProcessGroupCard } from "./components/chat/ProcessGroupCard";
 import { WorkflowAgentCard } from "./components/workflow/WorkflowAgentCard";
 import type { WorkflowRunAction, WorkflowRunRecord } from "../shared/workflows/workflow-runs";
@@ -319,6 +320,7 @@ function App() {
   const partialFlushFrameRef = useRef<number | null>(null);
   const historyRetryTimerRef = useRef<number | null>(null);
   const collapsedRailPreviousSessionStatusesRef = useRef<Record<string, SessionStatus | undefined>>({});
+  const pendingSideConversationRequestsRef = useRef(new Map<string, string>());
   const [partialMessagesBySessionId, setPartialMessagesBySessionId] = useState<Record<string, string>>({});
   const [partialVisibilityBySessionId, setPartialVisibilityBySessionId] = useState<Record<string, boolean>>({});
   const [collapsedRailUnreadSessionIds, setCollapsedRailUnreadSessionIds] = useState<Record<string, "completed" | "error">>({});
@@ -337,6 +339,8 @@ function App() {
   const [pendingPreviewOpenRequestBySessionId, setPendingPreviewOpenRequestBySessionId] = useState<Record<string, PendingPreviewOpenRequest>>({});
   const [gitTabBySessionId, setGitTabBySessionId] = useState<Record<string, boolean>>({});
   const [terminalTabBySessionId, setTerminalTabBySessionId] = useState<Record<string, boolean>>({});
+  const [sidechatTabBySessionId, setSidechatTabBySessionId] = useState<Record<string, boolean>>({});
+  const [sideSessionIdByPrimarySessionId, setSideSessionIdByPrimarySessionId] = useState<Record<string, string>>({});
   const [workspacePlugins, setWorkspacePlugins] = useState<WorkspacePluginDescriptor[]>([]);
   const [openWorkspacePluginIdsBySessionId, setOpenWorkspacePluginIdsBySessionId] = useState<Record<string, string[]>>({});
   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
@@ -748,6 +752,18 @@ function App() {
 
   // Combined event handler
   const onEvent = useCallback((event: ServerEvent) => {
+    let sideConversationResult: { primarySessionId: string; sideSessionId: string } | null = null;
+    if (
+      event.type === "session.status"
+      && event.payload.activation === "background"
+      && event.payload.clientRequestId
+    ) {
+      const primarySessionId = pendingSideConversationRequestsRef.current.get(event.payload.clientRequestId);
+      if (primarySessionId) {
+        pendingSideConversationRequestsRef.current.delete(event.payload.clientRequestId);
+        sideConversationResult = { primarySessionId, sideSessionId: event.payload.sessionId };
+      }
+    }
     if (event.type === "session.history" || event.type === "session.deleted") {
       setIsLoadingHistory(false);
     }
@@ -768,10 +784,64 @@ function App() {
       setShowCronPage(target.type === "cron" && !hasSessionTarget);
     }
     handleServerEvent(event);
+    if (sideConversationResult) {
+      setSideSessionIdByPrimarySessionId((current) => ({
+        ...current,
+        [sideConversationResult.primarySessionId]: sideConversationResult.sideSessionId,
+      }));
+    }
     handlePartialMessages(event);
   }, [handleServerEvent, handlePartialMessages]);
 
   const { connected, sendEvent } = useIPC(onEvent);
+  const openSidechatWorkspace = useCallback(() => {
+    if (!activeSessionId) return;
+    setSidechatTabBySessionId((current) => ({ ...current, [activeSessionId]: true }));
+    setShowActivityRail(true);
+    setShowSessionAnalysis(false);
+    setActiveSessionWorkspaceView("chat");
+    setActiveSessionActivityRailTab("sidechat");
+  }, [activeSessionId, setActiveSessionActivityRailTab, setActiveSessionWorkspaceView]);
+  const closeSidechatWorkspace = useCallback(() => {
+    if (!activeSessionId) return;
+    setSidechatTabBySessionId((current) => ({ ...current, [activeSessionId]: false }));
+    if (activityRailTab === "sidechat") setActiveSessionActivityRailTab(DEFAULT_ACTIVITY_RAIL_TAB);
+  }, [activeSessionId, activityRailTab, setActiveSessionActivityRailTab]);
+  const selectSideConversationSession = useCallback((sessionId: string | null) => {
+    if (!activeSessionId) return;
+    setSideSessionIdByPrimarySessionId((current) => {
+      if (sessionId) return { ...current, [activeSessionId]: sessionId };
+      if (!(activeSessionId in current)) return current;
+      const next = { ...current };
+      delete next[activeSessionId];
+      return next;
+    });
+  }, [activeSessionId]);
+  const createSideConversationSession = useCallback(() => {
+    if (!activeSessionId || !activeSession?.cwd) {
+      setGlobalError("当前主会话缺少工作区，无法新建侧聊。");
+      return;
+    }
+    if (Array.from(pendingSideConversationRequestsRef.current.values()).includes(activeSessionId)) return;
+    const clientRequestId = createSideConversationRequestId(activeSessionId);
+    pendingSideConversationRequestsRef.current.set(clientRequestId, activeSessionId);
+    sendEvent({
+      type: "session.create",
+      payload: {
+        title: "新侧聊",
+        cwd: activeSession.cwd,
+        allowedTools: "*",
+        activation: "background",
+        clientRequestId,
+      },
+    });
+  }, [activeSession?.cwd, activeSessionId, sendEvent, setGlobalError]);
+  const requestSideConversationHistory = useCallback((sessionId: string) => {
+    const session = sessions[sessionId];
+    if (!connected || !session || session.hydrated || historyRequested.has(sessionId)) return;
+    markHistoryRequested(sessionId);
+    sendEvent({ type: "session.history", payload: { sessionId, limit: 80 } });
+  }, [connected, historyRequested, markHistoryRequested, sendEvent, sessions]);
   const requestCollapsedSessionPreviewHistory = useCallback((sessionId: string) => {
     const session = sessions[sessionId];
     if (!connected || !session || session.hydrated || historyRequested.has(sessionId)) return;
@@ -788,6 +858,9 @@ function App() {
   const isRunning = activeSession?.status === "running";
   const activeBrowserWorkbenchState = activeSessionId ? browserWorkbenchBySessionId[activeSessionId] : undefined;
   const activeHasBrowserTab = activeBrowserWorkbenchState?.hasBrowserTab ?? Boolean(activeBrowserWorkbenchState?.url);
+  const activeHasSidechatTab = activeSessionId ? sidechatTabBySessionId[activeSessionId] === true : false;
+  const activeSideSessionId = activeSessionId ? (sideSessionIdByPrimarySessionId[activeSessionId] ?? null) : null;
+  const sidePartialMessage = activeSideSessionId ? (partialMessagesBySessionId[activeSideSessionId] ?? "") : "";
   const activeHasGitTab = activeSessionId ? gitTabBySessionId[activeSessionId] === true : false;
   const activeHasTerminalTab = activeSessionId ? terminalTabBySessionId[activeSessionId] === true : false;
   const workflowAgents = useMemo(() => buildWorkflowAgentSummaries(messages, activeSession?.status), [messages, activeSession?.status]);
@@ -2004,6 +2077,7 @@ function App() {
             marginRight: `${activityRailOffset}px`,
           }}
         >
+          <span data-active-session-title className="sr-only">{activeSession?.title ?? ""}</span>
 
           {showCronPage ? (
             <div className="flex-1 min-h-0 overflow-hidden">
@@ -2269,6 +2343,7 @@ function App() {
                 contextWindow={selectedUsageModelConfig?.contextWindow}
                 compressionThresholdPercent={selectedUsageModelConfig?.compressionThresholdPercent}
                 hasBrowserTab={activeHasBrowserTab}
+                hasSidechatTab={activeHasSidechatTab}
                 hasGitTab={activeHasGitTab}
                 hasTerminalTab={activeHasTerminalTab}
                 workspacePlugins={visibleWorkspacePlugins}
@@ -2277,6 +2352,18 @@ function App() {
                 selectedWorkflowAgent={selectedWorkflowAgent}
                 workflowRuns={workflowRuns}
                 onWorkflowRunAction={handleWorkflowRunAction}
+                onOpenSidechatWorkspace={openSidechatWorkspace}
+                onCloseSidechatWorkspace={closeSidechatWorkspace}
+                sideConversationProps={activeSessionId ? {
+                  primarySessionId: activeSessionId,
+                  sideSessionId: activeSideSessionId,
+                  connected,
+                  partialMessage: sidePartialMessage,
+                  onSelectSession: selectSideConversationSession,
+                  onCreateSession: createSideConversationSession,
+                  onRequestHistory: requestSideConversationHistory,
+                  sendEvent,
+                } : undefined}
                 onOpenGitWorkspace={openGitWorkspace}
                 onCloseGitWorkspace={closeGitWorkspace}
                 onOpenTerminalWorkspace={openTerminalWorkspace}
