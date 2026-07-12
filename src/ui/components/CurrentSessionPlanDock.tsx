@@ -62,7 +62,7 @@ export function CurrentSessionPlanDock({ sessionTitle, plan }: CurrentSessionPla
         hidden={!isExpanded}
         className="absolute bottom-full left-1/2 w-[min(520px,calc(100vw-32px))] -translate-x-1/2 pb-2"
       >
-        <div className="overflow-hidden rounded-[18px] border border-black/12 bg-white/95 shadow-[0_16px_42px_rgba(15,23,42,0.18)] backdrop-blur-xl">
+        <div className="overflow-hidden rounded-[18px] border border-black/12 bg-white shadow-[0_16px_42px_rgba(15,23,42,0.18)]">
           <div className="flex items-center gap-2 border-b border-black/8 px-4 py-2.5">
             <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink-800">{sessionTitle}</span>
             <span className="shrink-0 rounded-full bg-black/5 px-2 py-0.5 text-[11px] font-medium text-muted">
