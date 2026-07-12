@@ -14,6 +14,7 @@ import {
   shouldBuildActivityRailModel,
   shouldShowCreateBrowserTab,
   shouldShowCreateGitTab,
+  shouldShowCreateSidechatTab,
   shouldShowCreateTerminalTab,
 } from "../../src/ui/utils/activity-workspace-tabs.js";
 
@@ -74,6 +75,25 @@ describe("activity workspace tabs", () => {
     assert.deepEqual(visibleTabs.map((tab) => tab.id), ["preview", "usage", "terminal", "browser"]);
     assert.equal(visibleTabs.find((tab) => tab.id === "terminal")?.active, true);
     assert.equal(shouldShowCreateTerminalTab(true), false);
+  });
+
+  it("keeps side chat in the plus menu until explicitly opened", () => {
+    const hiddenTabs = buildActivityWorkspaceTabs({
+      activeTab: "usage",
+      showBrowserTab: false,
+      showSidechatTab: false,
+    }).filter((tab) => tab.visible);
+    const visibleTabs = buildActivityWorkspaceTabs({
+      activeTab: "sidechat",
+      showBrowserTab: false,
+      showSidechatTab: true,
+    }).filter((tab) => tab.visible);
+
+    assert.equal(hiddenTabs.some((tab) => tab.id === "sidechat"), false);
+    assert.equal(visibleTabs.find((tab) => tab.id === "sidechat")?.label, "侧聊");
+    assert.equal(visibleTabs.find((tab) => tab.id === "sidechat")?.active, true);
+    assert.equal(shouldShowCreateSidechatTab(false), true);
+    assert.equal(shouldShowCreateSidechatTab(true), false);
   });
 
   it("shows the workflow agent tab only when agent transcripts exist", () => {
@@ -244,10 +264,11 @@ describe("activity workspace tabs", () => {
     assert.deepEqual(
       buildActivityWorkspaceCreateOptions({
         canCreateBrowserTab: shouldShowCreateBrowserTab(false),
+        canCreateSidechatTab: shouldShowCreateSidechatTab(false),
         canCreateGitTab: shouldShowCreateGitTab(false),
         canCreateTerminalTab: shouldShowCreateTerminalTab(false),
       }).map((option) => option.id),
-      ["git", "terminal"],
+      ["sidechat", "git", "terminal"],
     );
     assert.deepEqual(
       buildActivityWorkspaceCreateOptions({

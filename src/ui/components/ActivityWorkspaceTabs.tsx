@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
-import { Bot, Plus, Terminal, X } from "lucide-react";
+import { Bot, MessageCircle, Plus, Terminal, X } from "lucide-react";
 import type { WorkspacePluginDescriptor } from "../../shared/workspace-plugins";
 import {
   buildActivityWorkspaceCreateOptions,
   buildActivityWorkspaceTabs,
   shouldShowCreateGitTab,
+  shouldShowCreateSidechatTab,
   shouldShowCreateTerminalTab,
   type ActivityOptionalWorkspaceTab,
   type ActivityWorkspaceTab,
@@ -16,6 +17,7 @@ import {
 type ActivityWorkspaceTabsProps = {
   activeTab: ActivityWorkspaceTab;
   showBrowserTab: boolean;
+  showSidechatTab?: boolean;
   showGitTab?: boolean;
   showTerminalTab?: boolean;
   workspacePlugins?: WorkspacePluginDescriptor[];
@@ -24,9 +26,12 @@ type ActivityWorkspaceTabsProps = {
   showLabels?: boolean;
   browserLabel?: string;
   showCreateGitTab?: boolean;
+  showCreateSidechatTab?: boolean;
   showCreateTerminalTab?: boolean;
   onSelectTab: (tab: ActivityWorkspaceTab) => void;
   onCloseBrowserTab?: () => void;
+  onCloseSidechatTab?: () => void;
+  onCreateSidechatTab?: () => void;
   onCloseGitTab?: () => void;
   onCreateGitTab?: () => void;
   onCloseTerminalTab?: () => void;
@@ -48,6 +53,10 @@ function iconForTab(tab: ActivityWorkspaceTab | ActivityOptionalWorkspaceTab) {
 
   if (tab === "terminal") {
     return <Terminal className="h-4 w-4 shrink-0" aria-hidden="true" />;
+  }
+
+  if (tab === "sidechat") {
+    return <MessageCircle className="h-4 w-4 shrink-0" aria-hidden="true" />;
   }
 
   if (tab.startsWith("workflow-agent:")) {
@@ -100,6 +109,7 @@ function tabClassName(active: boolean) {
 export function ActivityWorkspaceTabs({
   activeTab,
   showBrowserTab,
+  showSidechatTab = false,
   showGitTab = false,
   showTerminalTab = false,
   workspacePlugins = [],
@@ -108,9 +118,12 @@ export function ActivityWorkspaceTabs({
   showLabels = true,
   browserLabel = "浏览器",
   showCreateGitTab,
+  showCreateSidechatTab,
   showCreateTerminalTab,
   onSelectTab,
   onCloseBrowserTab,
+  onCloseSidechatTab,
+  onCreateSidechatTab,
   onCloseGitTab,
   onCreateGitTab,
   onCloseTerminalTab,
@@ -122,21 +135,25 @@ export function ActivityWorkspaceTabs({
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const createMenuRef = useRef<HTMLDivElement>(null);
   const tabsScrollerRef = useRef<HTMLDivElement>(null);
-  const tabs = buildActivityWorkspaceTabs({ activeTab, showBrowserTab, showGitTab, showTerminalTab, workspacePlugins, workflowAgentTabs }).filter((tab) => tab.visible);
+  const tabs = buildActivityWorkspaceTabs({ activeTab, showBrowserTab, showSidechatTab, showGitTab, showTerminalTab, workspacePlugins, workflowAgentTabs }).filter((tab) => tab.visible);
   const createOptions = useMemo(
     () => buildActivityWorkspaceCreateOptions({
       canCreateBrowserTab: false,
+      canCreateSidechatTab: Boolean(onCreateSidechatTab) && (showCreateSidechatTab ?? shouldShowCreateSidechatTab(showSidechatTab)),
       canCreateGitTab: Boolean(onCreateGitTab) && (showCreateGitTab ?? shouldShowCreateGitTab(showGitTab)),
       canCreateTerminalTab: Boolean(onCreateTerminalTab) && (showCreateTerminalTab ?? shouldShowCreateTerminalTab(showTerminalTab)),
       workspacePlugins: onCreateWorkspacePluginTab ? hiddenWorkspacePlugins : [],
     }),
     [
       onCreateGitTab,
+      onCreateSidechatTab,
       onCreateWorkspacePluginTab,
       onCreateTerminalTab,
       hiddenWorkspacePlugins,
       showCreateGitTab,
+      showCreateSidechatTab,
       showCreateTerminalTab,
+      showSidechatTab,
       showGitTab,
       showTerminalTab,
     ],
@@ -161,6 +178,10 @@ export function ActivityWorkspaceTabs({
 
   const handleCreateOption = (id: ActivityOptionalWorkspaceTab) => {
     setCreateMenuOpen(false);
+    if (id === "sidechat") {
+      onCreateSidechatTab?.();
+      return;
+    }
     if (id === "git") {
       onCreateGitTab?.();
       return;
@@ -199,6 +220,8 @@ export function ActivityWorkspaceTabs({
             : isWorkflowAgentTab ? "max-w-[112px]" : "max-w-[160px]";
           const closeHandler = tab.id === "browser"
             ? onCloseBrowserTab
+            : tab.id === "sidechat"
+              ? onCloseSidechatTab
             : tab.id === "git"
               ? onCloseGitTab
             : tab.id === "terminal"

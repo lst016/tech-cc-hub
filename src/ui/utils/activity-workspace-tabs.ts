@@ -2,9 +2,9 @@ import { getWorkspacePluginTabId, type WorkspacePluginDescriptor } from "../../s
 
 export type WorkflowAgentRailTab = `workflow-agent:${string}`;
 export type PluginRailTab = `plugin:${string}`;
-export type ActivityRailTab = "trace" | "usage" | "preview" | "git" | "terminal" | WorkflowAgentRailTab | PluginRailTab;
+export type ActivityRailTab = "trace" | "usage" | "preview" | "sidechat" | "git" | "terminal" | WorkflowAgentRailTab | PluginRailTab;
 export type ActivityWorkspaceTab = "browser" | ActivityRailTab;
-export type ActivityOptionalWorkspaceTab = "git" | "terminal" | PluginRailTab;
+export type ActivityOptionalWorkspaceTab = "sidechat" | "git" | "terminal" | PluginRailTab;
 
 export const DEFAULT_ACTIVITY_RAIL_TAB: ActivityRailTab = "usage";
 
@@ -97,6 +97,7 @@ export function buildWorkflowAgentWorkspaceTabs(input: {
 export function buildActivityWorkspaceTabs(input: {
   activeTab: ActivityWorkspaceTab;
   showBrowserTab: boolean;
+  showSidechatTab?: boolean;
   showGitTab?: boolean;
   showTerminalTab?: boolean;
   workspacePlugins?: WorkspacePluginDescriptor[];
@@ -142,6 +143,13 @@ export function buildActivityWorkspaceTabs(input: {
       active: input.activeTab === "usage",
     },
     {
+      id: "sidechat",
+      label: "侧聊",
+      title: "侧边对话",
+      visible: input.showSidechatTab === true,
+      active: input.activeTab === "sidechat",
+    },
+    {
       id: "git",
       label: "Git",
       title: "Git 工作台",
@@ -169,11 +177,19 @@ export function buildActivityWorkspaceTabs(input: {
 
 export function buildActivityWorkspaceCreateOptions(input: {
   canCreateBrowserTab: boolean;
+  canCreateSidechatTab?: boolean;
   canCreateGitTab?: boolean;
   canCreateTerminalTab: boolean;
   workspacePlugins?: WorkspacePluginDescriptor[];
 }): ActivityWorkspaceCreateOption[] {
   return [
+    input.canCreateSidechatTab
+      ? {
+          id: "sidechat",
+          label: "侧聊",
+          title: "打开侧边对话",
+        }
+      : null,
     input.canCreateGitTab
       ? {
           id: "git",
@@ -203,6 +219,10 @@ export function shouldShowCreateBrowserTab(_showBrowserTab: boolean): boolean {
 
 export function shouldShowCreateGitTab(showGitTab: boolean): boolean {
   return !showGitTab;
+}
+
+export function shouldShowCreateSidechatTab(showSidechatTab: boolean): boolean {
+  return !showSidechatTab;
 }
 
 export function shouldShowCreateTerminalTab(showTerminalTab: boolean): boolean {
