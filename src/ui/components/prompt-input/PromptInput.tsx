@@ -175,10 +175,12 @@ export function PromptInput({
     if (!storeActiveSessionId) return undefined;
     const session = state.sessions[storeActiveSessionId] ?? state.archivedSessions[storeActiveSessionId];
     if (!session?.latestPlan || !shouldShowCurrentSessionPlan(session.latestPlan)) return undefined;
-    return {
-      title: session.title,
-      plan: session.latestPlan,
-    };
+    return session.latestPlan;
+  });
+  const activeSessionPlanTitle = useAppStore((state) => {
+    if (!storeActiveSessionId) return "";
+    const session = state.sessions[storeActiveSessionId] ?? state.archivedSessions[storeActiveSessionId];
+    return session?.title ?? "";
   });
   const selectedWorkspaceCwd = (storeCwd.trim() || storeActiveSessionCwd.trim());
   const { prompt, setPrompt, isRunning, handleStop, slashCommands, activeSessionId, browserAnnotations, sendPromptDraft, validatePromptDraft } = usePromptActions(
@@ -1366,8 +1368,8 @@ export function PromptInput({
           className="mx-auto mb-2 w-full max-w-[min(520px,calc(100vw-32px))]"
         >
           <CurrentSessionPlanDock
-            sessionTitle={activeSessionPlan.title}
-            plan={activeSessionPlan.plan}
+            sessionTitle={activeSessionPlanTitle}
+            plan={activeSessionPlan}
           />
         </div>
       )}

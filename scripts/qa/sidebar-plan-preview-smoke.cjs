@@ -88,10 +88,15 @@ async function main() {
     });
 
     await page.goto(previewUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
-    const sidebar = page.locator("aside.left-0");
-    await expect(sidebar).toBeVisible({ timeout: 15000 });
+    const composer = page.locator("[data-prompt-composer]");
+    try {
+      await expect(composer).toBeVisible({ timeout: 15000 });
+    } catch (error) {
+      const bodyText = await page.locator("body").innerText().catch(() => "");
+      throw new Error(`Prompt composer did not render at ${page.url()}. Body: ${bodyText.slice(0, 1200)}`, { cause: error });
+    }
 
-    const previewCard = sidebar.locator("[data-sidebar-plan-dock]");
+    const previewCard = composer.locator("[data-current-session-plan-dock]");
     await expect(previewCard).toBeVisible();
     await expect(previewCard.getByText("检查聊天列表现有数据链路", { exact: true })).toBeVisible();
     await expect(previewCard.getByText("实现计划清单底部固定展示", { exact: true })).toBeVisible();
@@ -102,21 +107,42 @@ async function main() {
     await expect(previewCard.locator('[data-plan-step-status="pending"]')).toHaveCount(1);
 
     const placement = await page.evaluate(() => {
-      const dock = document.querySelector("[data-sidebar-plan-dock]");
-      const scroller = document.querySelector(".sidebar-scroll");
-      const settings = document.querySelector('button[aria-label="设置"]');
-      if (!(dock instanceof HTMLElement) || !(scroller instanceof HTMLElement) || !(settings instanceof HTMLElement)) {
+      const dock = document.querySelector("[data-current-session-plan-dock]");
+      const composer = document.querySelector("[data-prompt-composer]");
+      const composerCard = document.querySelector(".prompt-composer-card");
+      const chatScroller = document.querySelector(".chat-scroll");
+      const sidebar = document.querySelector("aside.left-0");
+      if (
+        !(dock instanceof HTMLElement)
+        || !(composer instanceof HTMLElement)
+        || !(composerCard instanceof HTMLElement)
+        || !(chatScroller instanceof HTMLElement)
+        || !(sidebar instanceof HTMLElement)
+      ) {
         return null;
       }
       const dockRect = dock.getBoundingClientRect();
-      const settingsRect = settings.getBoundingClientRect();
+      const composerCardRect = composerCard.getBoundingClientRect();
+      const sidebarRect = sidebar.getBoundingClientRect();
       return {
-        insideScroller: scroller.contains(dock),
-        aboveFooter: dockRect.bottom <= settingsRect.top,
+        insideComposer: composer.contains(dock),
+        insideChatScroller: chatScroller.contains(dock),
+        aboveInput: dockRect.bottom <= composerCardRect.top,
+        rightOfSidebar: dockRect.left >= sidebarRect.right,
+        centeredWithInput: Math.abs(
+          (dockRect.left + dockRect.width / 2) - (composerCardRect.left + composerCardRect.width / 2),
+        ) <= 2,
       };
     });
-    if (!placement || placement.insideScroller || !placement.aboveFooter) {
-      throw new Error(`Plan dock is not fixed between the chat list and footer: ${JSON.stringify(placement)}`);
+    if (
+      !placement
+      || !placement.insideComposer
+      || placement.insideChatScroller
+      || !placement.aboveInput
+      || !placement.rightOfSidebar
+      || !placement.centeredWithInput
+    ) {
+      throw new Error(`Plan dock is not fixed above the current conversation input: ${JSON.stringify(placement)}`);
     }
 
     mkdirSync(path.dirname(artifactPath), { recursive: true });
