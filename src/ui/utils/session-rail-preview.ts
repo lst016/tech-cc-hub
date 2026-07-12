@@ -1,0 +1,80 @@
+export const COLLAPSED_SESSION_RAIL_LIMIT = 10;
+export const SESSION_PREVIEW_FALLBACK = "暂无回复摘要";
+
+const PREVIEW_VIEWPORT_MARGIN = 12;
+const PREVIEW_HORIZONTAL_GAP = 16;
+const PREVIEW_TOP_OFFSET = 37;
+
+function normalizePreviewText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function extractLatestAssistantSummary(messages: readonly unknown[], partial?: string): string {
+  const normalizedPartial = normalizePreviewText(partial ?? "");
+  if (normalizedPartial) return normalizedPartial;
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const entry = messages[index];
+    if (!isRecord(entry) || entry.type !== "assistant" || !isRecord(entry.message)) continue;
+
+    const message = entry.message;
+    if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+
+    const text = message.content
+      .filter((block): block is Record<string, unknown> => isRecord(block) && block.type === "text")
+      .map((block) => typeof block.text === "string" ? block.text : "")
+      .join(" ");
+    const normalizedText = normalizePreviewText(text);
+    if (normalizedText) return normalizedText;
+  }
+
+  return SESSION_PREVIEW_FALLBACK;
+}
+
+export function selectCollapsedRailSessions<
+  T extends { id: string; title: string; updatedAt?: number; archivedAt?: number },
+>(
+  sessions: Record<string, T>,
+  limit = COLLAPSED_SESSION_RAIL_LIMIT,
+  requiredSessionId?: string | null,
+): T[] {
+  const boundedLimit = Math.max(0, Math.floor(limit));
+  if (boundedLimit === 0) return [];
+
+  const seenSessionIds = new Set<string>();
+  const orderedSessions = Object.values(sessions)
+    .filter((session) => session.archivedAt === undefined)
+    .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0))
+    .filter((session) => {
+      if (seenSessionIds.has(session.id)) return false;
+      seenSessionIds.add(session.id);
+      return true;
+    });
+  const visibleSessions = orderedSessions.slice(0, boundedLimit);
+  if (!requiredSessionId || visibleSessions.some((session) => session.id === requiredSessionId)) {
+    return visibleSessions;
+  }
+
+  const requiredSession = orderedSessions.find((session) => session.id === requiredSessionId);
+  if (!requiredSession) return visibleSessions;
+  return [...visibleSessions.slice(0, -1), requiredSession];
+}
+
+export function clampSessionPreviewPosition(
+  anchor: { right: number; top: number },
+  viewport: { width: number; height: number },
+  cardWidth: number,
+  cardHeight: number,
+): { left: number; top: number } {
+  const maxLeft = Math.max(PREVIEW_VIEWPORT_MARGIN, viewport.width - cardWidth - PREVIEW_VIEWPORT_MARGIN);
+  const maxTop = Math.max(PREVIEW_VIEWPORT_MARGIN, viewport.height - cardHeight - PREVIEW_VIEWPORT_MARGIN);
+
+  return {
+    left: Math.min(Math.max(anchor.right + PREVIEW_HORIZONTAL_GAP, PREVIEW_VIEWPORT_MARGIN), maxLeft),
+    top: Math.min(Math.max(anchor.top - PREVIEW_TOP_OFFSET, PREVIEW_VIEWPORT_MARGIN), maxTop),
+  };
+}

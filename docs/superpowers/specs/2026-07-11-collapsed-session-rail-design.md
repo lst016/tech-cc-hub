@@ -41,16 +41,16 @@ The design uses existing color tokens where practical and avoids labels, badges,
 
 ## Architecture
 
-`App.tsx` remains the owner of expanded/collapsed sidebar state. It mounts either the existing `Sidebar` or a new `CollapsedSessionRail`, and computes the center/composer left offset from the visible surface.
+`App.tsx` remains the owner of expanded/collapsed sidebar state. It mounts either the existing `Sidebar` or a new `CollapsedSessionRail`, computes the center/composer left offset from the visible surface, and observes session status transitions so unread completion/error state survives rail unmounts.
 
-`CollapsedSessionRail.tsx` owns rail rendering, hover/focus state, anchor measurement, and the preview portal. Pure helpers in `session-rail-preview.ts` select recent sessions and extract a readable assistant summary from existing `SessionView.messages`. No Electron IPC, database, or session persistence changes are required.
+`CollapsedSessionRail.tsx` owns rail rendering, session-scoped hover/focus state, anchor measurement, and the preview portal. It receives unread state and a clear callback explicitly from `App.tsx`. Pure helpers in `session-rail-preview.ts` select recent sessions and extract a readable assistant summary from existing `SessionView.messages`. No Electron IPC, database, or session persistence changes are required.
 
 The helper accepts only the session fields it needs. This keeps message-shape parsing independently testable and prevents another large block of conditional UI from accumulating in `Sidebar.tsx`.
 
 ## Data Flow
 
 1. `useAppStore` continues receiving session list, status, history, and streaming message updates.
-2. `App.tsx` passes the current session map and selection callback to the collapsed rail.
+2. `App.tsx` derives persistent unread transitions and passes the current session map, unread state, selection callback, and unread-clear callback to the collapsed rail.
 3. A pure selector sorts conversations by `updatedAt` and applies the visible limit.
 4. A pure summary extractor scans messages from newest to oldest, skips tool-only/system/empty content, normalizes assistant text, and returns the first readable excerpt.
 5. Hover or focus records the session id and trigger rectangle; a portal renders the card using live store data.
