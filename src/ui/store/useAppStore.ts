@@ -40,6 +40,7 @@ export type SessionView = {
   id: string;
   title: string;
   status: SessionStatus;
+  error?: string;
   model?: string;
   executionMode?: SessionExecutionMode;
   reasoningMode?: RuntimeReasoningMode;
@@ -915,6 +916,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       case "session.status": {
         const { sessionId, status, title, cwd, model, executionMode, reasoningMode, permissionMode, slashCommands } = event.payload;
         const isNewSession = !state.sessions[sessionId];
+        const shouldActivateNewSession = event.payload.activation !== "background";
         set((state) => {
           const existing = state.sessions[sessionId] ?? createSession(sessionId);
           return {
@@ -930,18 +932,19 @@ export const useAppStore = create<AppState>((set, get) => ({
                 reasoningMode: reasoningMode ?? existing.reasoningMode,
                 permissionMode: permissionMode ?? existing.permissionMode,
                 slashCommands: slashCommands ?? existing.slashCommands,
+                error: event.payload.error,
                 updatedAt: Date.now()
               }
             }
           };
         });
 
-        if (state.pendingStart) {
+        if (state.pendingStart && shouldActivateNewSession) {
           get().setActiveSessionId(sessionId);
           set({ pendingStart: false, showStartModal: false });
         }
 
-        if (isNewSession) {
+        if (isNewSession && shouldActivateNewSession) {
           get().setActiveSessionId(sessionId);
         }
 

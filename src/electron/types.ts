@@ -111,6 +111,12 @@ export type StreamMessage = (SDKMessage | UserPromptMessage | PromptLedgerMessag
 };
 
 export type SessionStatus = "idle" | "running" | "completed" | "error";
+export type SessionActivation = "foreground" | "background";
+
+type SessionCreateMetadata = {
+  activation?: SessionActivation;
+  clientRequestId?: string;
+};
 
 export type AppUpdateState =
   | "idle"
@@ -215,7 +221,7 @@ export type McpServerInfo = {
 export type ServerEvent =
   | { type: "stream.message"; payload: { sessionId: string; message: StreamMessage } }
   | { type: "stream.user_prompt"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[]; capturedAt?: number; historyId?: string } }
-  | { type: "session.status"; payload: { sessionId: string; status: SessionStatus; title?: string; cwd?: string; model?: string; executionMode?: SessionExecutionMode; reasoningMode?: RuntimeReasoningMode; permissionMode?: RuntimeOverrides["permissionMode"]; error?: string; slashCommands?: string[] } }
+  | { type: "session.status"; payload: { sessionId: string; status: SessionStatus; title?: string; cwd?: string; model?: string; executionMode?: SessionExecutionMode; reasoningMode?: RuntimeReasoningMode; permissionMode?: RuntimeOverrides["permissionMode"]; error?: string; slashCommands?: string[]; activation?: SessionActivation; clientRequestId?: string } }
   | { type: "session.plan.updated"; payload: SessionPlanSnapshot }
   | { type: "session.workflow"; payload: { sessionId: string; markdown?: string; sourceLayer?: WorkflowScope; sourcePath?: string; state?: SessionWorkflowState; error?: string } }
   | { type: "session.workflow.catalog"; payload: SessionWorkflowCatalog }
@@ -256,8 +262,8 @@ export type ServerEvent =
 
 // Client -> Server events
 export type ClientEvent =
-  | { type: "session.create"; payload: { title?: string; cwd?: string; allowedTools?: string } }
-  | { type: "session.start"; payload: { title: string; prompt: string; agentPrompt?: string; workspaceContext?: LinkedWorkspaceContext; cwd?: string; allowedTools?: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides } }
+  | { type: "session.create"; payload: { title?: string; cwd?: string; allowedTools?: string } & SessionCreateMetadata }
+  | { type: "session.start"; payload: { title: string; prompt: string; agentPrompt?: string; workspaceContext?: LinkedWorkspaceContext; cwd?: string; allowedTools?: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides } & SessionCreateMetadata }
   | { type: "session.continue"; payload: { sessionId: string; prompt: string; agentPrompt?: string; workspaceContext?: LinkedWorkspaceContext; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides; displayUserPrompt?: boolean; replaceHistoryId?: string } }
   | { type: "session.set_model"; payload: { sessionId: string; model: string } }
   | { type: "session.append"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[] } }

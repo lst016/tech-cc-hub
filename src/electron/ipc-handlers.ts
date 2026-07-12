@@ -1366,6 +1366,8 @@ export async function handleClientEvent(event: ClientEvent) {
         title: session.title,
         cwd: session.cwd,
         slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
+        activation: event.payload.activation,
+        clientRequestId: event.payload.clientRequestId,
       },
     });
     return;
@@ -1417,6 +1419,8 @@ export async function handleClientEvent(event: ClientEvent) {
         reasoningMode: selectedReasoningMode,
         permissionMode: selectedPermissionMode,
         slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
+        activation: event.payload.activation,
+        clientRequestId: event.payload.clientRequestId,
       },
     });
 
