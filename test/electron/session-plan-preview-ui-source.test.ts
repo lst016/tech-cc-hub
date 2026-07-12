@@ -2,14 +2,16 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-test("sidebar plan preview uses a portal and accessible trigger contract", () => {
+test("sidebar plan dock is embedded, persistent, and has no hover portal trigger", () => {
   const sidebar = readFileSync("src/ui/components/Sidebar.tsx", "utf8");
-  const preview = readFileSync("src/ui/components/SessionPlanPreview.tsx", "utf8");
+  const dock = readFileSync("src/ui/components/SidebarPlanDock.tsx", "utf8");
 
-  assert.match(sidebar, /aria-expanded=\{isPlanPreviewOpen\}/);
-  assert.match(sidebar, /aria-controls=\{isPlanPreviewOpen \? planPreviewId : undefined\}/);
-  assert.match(sidebar, /event\.key === "Escape"/);
-  assert.match(preview, /createPortal/);
-  assert.match(preview, /role="region"/);
-  assert.match(preview, /data-session-plan-preview/);
+  assert.match(sidebar, /pickSidebarPlanDockSession/);
+  assert.match(sidebar, /dockSession && dockSession\.latestPlan/);
+  assert.match(sidebar, /<SidebarPlanDock/);
+  assert.doesNotMatch(sidebar, /openSessionPlanPreview/);
+  assert.doesNotMatch(dock, /createPortal/);
+  assert.match(dock, /role="region"/);
+  assert.match(dock, /data-sidebar-plan-dock/);
+  assert.match(dock, /shrink-0/);
 });
