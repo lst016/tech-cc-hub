@@ -10,8 +10,6 @@ import {
   normalizeWorkspacePath,
   readLinkedWorkspacesFromStorage,
 } from "./prompt-input/linked-workspaces";
-import { SidebarPlanDock } from "./SidebarPlanDock";
-import { pickSidebarPlanDockSession } from "../utils/session-plan-preview";
 
 interface SidebarProps {
   connected: boolean;
@@ -438,11 +436,6 @@ export function Sidebar({
       .filter((item) => !linkedWorkspacePaths.includes(item))
       .slice(0, 8)
     : [];
-  const dockSession = useMemo(
-    () => pickSidebarPlanDockSession(Object.values(sessions), activeSessionId),
-    [activeSessionId, sessions],
-  );
-
   return (
     <>
       <aside
@@ -719,15 +712,6 @@ export function Sidebar({
             })}
           </div>
         </div>
-
-        {dockSession && dockSession.latestPlan && (
-          <SidebarPlanDock
-            sessionId={dockSession.id}
-            sessionTitle={dockSession.title}
-            plan={dockSession.latestPlan}
-            onOpenSession={setActiveSessionId}
-          />
-        )}
 
         <div className="mt-auto space-y-1">
           <button

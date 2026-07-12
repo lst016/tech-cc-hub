@@ -3,7 +3,7 @@ import test from "node:test";
 import type { PlanStepStatus, SessionPlanSnapshot } from "../../src/shared/plan-progress.js";
 import {
   buildSessionPlanPreviewSummary,
-  pickSidebarPlanDockSession,
+  shouldShowCurrentSessionPlan,
 } from "../../src/ui/utils/session-plan-preview.js";
 
 function plan(sessionId: string, statuses: PlanStepStatus[], updatedAt: number): SessionPlanSnapshot {
@@ -46,30 +46,11 @@ test("returns no summary for a missing or empty plan", () => {
   }), null);
 });
 
-test("dock prefers the active conversation when its plan is unfinished", () => {
-  const selected = pickSidebarPlanDockSession([
-    { id: "active", title: "Active", updatedAt: 10, latestPlan: plan("active", ["in_progress", "pending"], 10) },
-    { id: "newer", title: "Newer", updatedAt: 20, latestPlan: plan("newer", ["pending"], 20) },
-  ], "active");
-
-  assert.equal(selected?.id, "active");
+test("current conversation plan stays visible while any step is unfinished", () => {
+  assert.equal(shouldShowCurrentSessionPlan(plan("active", ["completed", "in_progress", "pending"], 10)), true);
 });
 
-test("dock falls back to the latest unfinished plan when the active conversation has none", () => {
-  const selected = pickSidebarPlanDockSession([
-    { id: "active", title: "Active", updatedAt: 30 },
-    { id: "older", title: "Older", updatedAt: 10, latestPlan: plan("older", ["pending"], 10) },
-    { id: "newer", title: "Newer", updatedAt: 20, latestPlan: plan("newer", ["completed", "in_progress"], 20) },
-  ], "active");
-
-  assert.equal(selected?.id, "newer");
-});
-
-test("dock disappears when every available plan is complete", () => {
-  const selected = pickSidebarPlanDockSession([
-    { id: "active", title: "Active", updatedAt: 20, latestPlan: plan("active", ["completed", "completed"], 20) },
-    { id: "other", title: "Other", updatedAt: 10, latestPlan: plan("other", ["completed"], 10) },
-  ], "active");
-
-  assert.equal(selected, null);
+test("current conversation plan disappears when every step is complete", () => {
+  assert.equal(shouldShowCurrentSessionPlan(plan("active", ["completed", "completed"], 20)), false);
+  assert.equal(shouldShowCurrentSessionPlan(undefined), false);
 });
