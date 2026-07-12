@@ -8,7 +8,7 @@ Keep an unfinished plan visible at the bottom of the active conversation without
 
 The existing `CurrentSessionPlanDock` owns a small open/closed interaction state.
 
-- Closed by default: show one centered floating pill above the current conversation composer with `{completed}/{total} 步`.
+- Closed by default: the bottom surface contains only one centered `{completed}/{total} 步` trigger. It must not show the session title, step rows, card shell, or any other plan content.
 - Open on pointer hover or keyboard focus: reveal the existing plan header and step list in a popover anchored above the pill.
 - Keep the popover open while the pointer moves between the pill and the details.
 - Close when the pointer and keyboard focus leave the component.
@@ -30,10 +30,10 @@ No new dependency or cross-session state is introduced.
 
 ## Visual behavior
 
-- The compact pill is centered on the composer and visually floats with a white translucent surface, subtle border, and shadow.
+- The compact trigger is centered immediately above the composer and visually floats with a white translucent surface, subtle border, and shadow. No full-width card shell is visible in this state.
 - The label includes the Chinese unit: `2/4 步`.
 - The expanded card keeps the current session title, progress badge, status icons, and scroll limit.
-- Expansion grows upward from the compact pill so the input box remains stationary.
+- Expansion grows upward from the compact trigger as an overlay, matching the supplied reference: the full card covers conversation content instead of changing document flow, so the input box remains stationary.
 - A short opacity/scale transition may be used, but the interaction must remain correct without animation.
 
 ## Accessibility
