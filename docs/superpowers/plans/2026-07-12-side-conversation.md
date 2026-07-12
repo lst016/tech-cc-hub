@@ -1,409 +1,353 @@
-# 侧边对话功能实施计划
+# 临时多线程 BTW 侧聊 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**目标：** 在现有右侧活动栏中新增可选的 `侧聊` 页签，让用户在不切换主对话的前提下，新建、选择并继续另一个持久化会话。
+**Goal:** 在右侧 Activity Rail 实现不持久化、创建时快照、支持完整工具和多线程多轮追问的 BTW 侧聊，同时保持主输入框与侧聊输入框完全分离并同时可见。
 
-**架构：** 会话协议增加带请求关联的后台激活语义，`App.onEvent` 将后台创建结果绑定到发起请求的主对话，状态仓库只阻止后台会话抢占 `activeSessionId`。右栏通过现有加号菜单打开 `sidechat` 可选页签，`SideConversationPanel` 使用显式侧聊会话 ID 发送、停止和处理权限，不复用绑定主会话的 `PromptInput`。
+**Architecture:** 主进程使用独立的内存 `BtwRuntimeManager`，把普通 Runner 事件转换为 `btw.*` 事件，永不调用普通会话的创建、更新或消息持久化。Renderer 使用独立 `useBtwStore` 保存线程、消息和 Composer 状态；现有 `PromptInput` 接受可选 controller，从而复用同一套 Composer 视图但绑定不同状态与发送协议。
 
-**技术栈：** React 19、TypeScript 5.9、Zustand、Electron IPC、Node test runner、Playwright、Tailwind CSS。
+**Tech Stack:** Electron IPC、TypeScript、React 19、Zustand 5、Node test runner、Playwright/Vite dev shim。
 
 ---
 
-## 文件边界
+### Task 1: 锁定 BTW 协议和 Runtime 隔离契约
 
-- `src/electron/types.ts`、`src/ui/types.ts`：后台激活和请求关联协议。
-- `src/electron/ipc-handlers.ts`：首次状态回传创建元数据。
-- `src/ui/store/useAppStore.ts`：后台会话入库但不抢占主会话。
-- `src/ui/utils/activity-workspace-tabs.ts`、`src/ui/components/ActivityWorkspaceTabs.tsx`：可选侧聊页签及加号菜单。
-- `src/ui/utils/side-conversation.ts`：目标过滤和发送资格纯逻辑。
-- `src/ui/components/SideConversationPanel.tsx`：侧聊选择、消息、输入、停止和权限 UI。
-- `src/ui/components/ActivityRail.tsx`、`src/ui/App.tsx`：右栏挂载、每个主会话的侧聊状态和创建关联。
-- `src/ui/dev-electron-shim.ts`、`scripts/qa/side-conversation-smoke.cjs`：双会话浏览器夹具和隔离证明。
+**Files:**
+- Modify: `src/electron/types.ts`
+- Modify: `src/ui/types.ts`
+- Replace: `test/electron/side-conversation-background-session.test.ts`
 
-### Task 1：后台会话激活协议
+- [ ] **Step 1: 写失败的协议测试**
 
-**文件：**
-- 新建：`test/electron/side-conversation-background-session.test.ts`
-- 修改：`src/electron/types.ts`
-- 修改：`src/ui/types.ts`
-- 修改：`src/electron/ipc-handlers.ts`
-- 修改：`src/ui/store/useAppStore.ts`
-
-- [ ] **Step 1：先写失败测试**
+测试必须断言 ClientEvent 包含 `btw.thread.create/send/stop/permission.response/close` 和 `btw.parent.close_all`，ServerEvent 包含 created/status/stream/user_prompt/permission/error/closed，并继续禁止 background 普通 session。
 
 ```ts
-import { readFileSync } from "node:fs";
-import assert from "node:assert/strict";
-import { describe, it } from "node:test";
-
-describe("side conversation background session contract", () => {
-  it("echoes activation and request id from create and start", () => {
-    const source = readFileSync("src/electron/ipc-handlers.ts", "utf8");
-    assert.match(source, /activation: event\.payload\.activation/);
-    assert.match(source, /clientRequestId: event\.payload\.clientRequestId/);
-  });
-
-  it("does not activate a new background session", () => {
-    const source = readFileSync("src/ui/store/useAppStore.ts", "utf8");
-    assert.match(source, /const shouldActivateNewSession = event\.payload\.activation !== "background"/);
-    assert.match(source, /if \(state\.pendingStart && shouldActivateNewSession\)/);
-    assert.match(source, /if \(isNewSession && shouldActivateNewSession\)/);
-    assert.match(source, /error: event\.payload\.error/);
-  });
+it("declares a dedicated ephemeral btw protocol", () => {
+  for (const path of ["src/electron/types.ts", "src/ui/types.ts"]) {
+    const source = readFileSync(path, "utf8");
+    for (const type of [
+      "btw.thread.create", "btw.thread.send", "btw.thread.stop",
+      "btw.thread.permission.response", "btw.thread.close", "btw.parent.close_all",
+      "btw.thread.created", "btw.thread.status", "btw.stream.message",
+      "btw.stream.user_prompt", "btw.permission.request", "btw.runner.error",
+      "btw.thread.closed", "btw.parent.closed",
+    ]) assert.match(source, new RegExp(type.replaceAll(".", "\\\\.")));
+    assert.doesNotMatch(source, /SessionActivation|activation:\s*"background"/);
+  }
 });
 ```
 
-- [ ] **Step 2：运行并确认 RED**
+- [ ] **Step 2: 运行并确认 RED**
 
-```powershell
-npm run test:electron:build
-node --test dist-test/test/electron/side-conversation-background-session.test.js
-```
+Run: `npm run test:electron:build && node --test dist-test/test/electron/side-conversation-background-session.test.js`
 
-预期：FAIL，创建状态没有元数据，状态仓库没有后台激活保护。
+Expected: FAIL，提示缺少 `btw.thread.create`。
 
-- [ ] **Step 3：实现最小协议**
+- [ ] **Step 3: 添加最小类型契约**
 
-两份类型文件增加并复用：
+两个事件联合类型采用相同字段：
 
 ```ts
-export type SessionActivation = "foreground" | "background";
-type SessionCreateMetadata = { activation?: SessionActivation; clientRequestId?: string };
+| { type: "btw.thread.create"; payload: { parentSessionId: string } }
+| { type: "btw.thread.send"; payload: { threadId: string; prompt: string; agentPrompt?: string; workspaceContext?: LinkedWorkspaceContext; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides } }
+| { type: "btw.thread.stop"; payload: { threadId: string } }
+| { type: "btw.thread.permission.response"; payload: { threadId: string; toolUseId: string; result: PermissionResult } }
+| { type: "btw.thread.close"; payload: { threadId: string } }
+| { type: "btw.parent.close_all"; payload: { parentSessionId: string } }
 ```
 
-`session.create`、`session.start` payload 合并 `SessionCreateMetadata`，`session.status` 增加相同可选字段。两个首次状态事件加入：
+Server payload 始终携带 `threadId`，created/parent.closed 额外携带 `parentSessionId`。
+
+- [ ] **Step 4: 运行并确认 GREEN**
+
+Run: `npm run test:electron:build && node --test dist-test/test/electron/side-conversation-background-session.test.js`
+
+Expected: PASS。
+
+### Task 2: 用 TDD 实现内存 BtwRuntimeManager
+
+**Files:**
+- Create: `src/electron/libs/btw-runtime-manager.ts`
+- Create: `test/electron/btw-runtime-manager.test.ts`
+
+- [ ] **Step 1: 写多线程、快照和关闭失败测试**
+
+使用依赖注入的 fake runner，覆盖：创建为空、同一父会话多线程、不同创建时刻快照不同、发送只组合固定快照和线程私有历史、工具/权限事件按 threadId 转换、关闭后丢弃迟到事件、stop 只 abort 当前线程、closeParent 清除全部线程。
 
 ```ts
-activation: event.payload.activation,
-clientRequestId: event.payload.clientRequestId,
-```
-
-`SessionView` 增加可选 `error?: string`。状态仓库加入：
-
-```ts
-const shouldActivateNewSession = event.payload.activation !== "background";
-if (state.pendingStart && shouldActivateNewSession) {
-  get().setActiveSessionId(sessionId);
-  set({ pendingStart: false, showStartModal: false });
-}
-if (isNewSession && shouldActivateNewSession) get().setActiveSessionId(sessionId);
-```
-
-同一状态更新对象保存 `error: event.payload.error`，完成状态时清除旧错误，确保侧聊错误可以在对应面板内显示。
-
-- [ ] **Step 4：重复 Step 2，确认 GREEN**
-
-- [ ] **Step 5：按 Lore 协议提交上述五个文件**
-
-### Task 2：可选侧聊页签
-
-**文件：**
-- 修改：`test/electron/activity-workspace-tabs.test.ts`
-- 修改：`src/ui/utils/activity-workspace-tabs.ts`
-- 修改：`src/ui/components/ActivityWorkspaceTabs.tsx`
-
-- [ ] **Step 1：先增加失败测试**
-
-```ts
-it("keeps side chat in the plus menu until explicitly opened", () => {
-  const hidden = buildActivityWorkspaceTabs({ activeTab: "usage", showBrowserTab: false, showSidechatTab: false }).filter((tab) => tab.visible);
-  const visible = buildActivityWorkspaceTabs({ activeTab: "sidechat", showBrowserTab: false, showSidechatTab: true }).filter((tab) => tab.visible);
-  assert.equal(hidden.some((tab) => tab.id === "sidechat"), false);
-  assert.equal(visible.find((tab) => tab.id === "sidechat")?.label, "侧聊");
-  assert.equal(shouldShowCreateSidechatTab(false), true);
-  assert.equal(shouldShowCreateSidechatTab(true), false);
+const manager = new BtwRuntimeManager({
+  run: async (options) => {
+    runs.push(options);
+    return { abort: () => aborted.push(options.session.id), appendPrompt: async () => {}, stopTask: async () => {}, isClosed: () => false };
+  },
+  buildContinuation: (messages, prompt) => ({ prompt: JSON.stringify({ messages, prompt }), usedCompression: false, summaryText: "", summaryMessageCount: 0 }),
+  emit: (event) => events.push(event),
+  createId: () => `btw-${++sequence}`,
+  now: () => 1000 + sequence,
 });
 ```
 
-默认加号菜单预期改为 `["sidechat", "git", "terminal"]`。
+- [ ] **Step 2: 运行并确认 RED**
 
-- [ ] **Step 2：运行并确认 RED**
+Run: `npm run test:electron:build && node --test dist-test/test/electron/btw-runtime-manager.test.js`
 
-```powershell
-npm run test:electron:build
-node --test dist-test/test/electron/activity-workspace-tabs.test.js
-```
+Expected: FAIL，模块不存在。
 
-预期：FAIL，`sidechat` 类型和帮助函数不存在。
+- [ ] **Step 3: 实现最小 RuntimeManager**
 
-- [ ] **Step 3：实现最小页签模型**
+`BtwRuntimeManager` 保存以下纯内存结构，禁止接收 `SessionStore`：
 
 ```ts
-export type ActivityRailTab = "trace" | "usage" | "preview" | "sidechat" | "git" | "terminal" | WorkflowAgentRailTab | PluginRailTab;
-export type ActivityOptionalWorkspaceTab = "sidechat" | "git" | "terminal" | PluginRailTab;
-export function shouldShowCreateSidechatTab(showSidechatTab: boolean) { return !showSidechatTab; }
-```
-
-`buildActivityWorkspaceTabs` 在 Usage 后增加：
-
-```ts
-{ id: "sidechat", label: "侧聊", title: "侧边对话", visible: input.showSidechatTab === true, active: input.activeTab === "sidechat" }
-```
-
-`buildActivityWorkspaceCreateOptions` 在首位增加：
-
-```ts
-input.canCreateSidechatTab ? { id: "sidechat", label: "侧聊", title: "打开侧边对话" } : null
-```
-
-`ActivityWorkspaceTabs` 增加 `showSidechatTab`、`onCreateSidechatTab` 和 `onCloseSidechatTab`，分别接入加号菜单和页签关闭按钮。
-
-- [ ] **Step 4：重复 Step 2，确认 GREEN**
-
-- [ ] **Step 5：按 Lore 协议提交三个文件**
-
-### Task 3：侧聊纯逻辑
-
-**文件：**
-- 新建：`src/ui/utils/side-conversation.ts`
-- 新建：`test/electron/side-conversation-model.test.ts`
-
-- [ ] **Step 1：先写失败测试**
-
-```ts
-import assert from "node:assert/strict";
-import { describe, it } from "node:test";
-import { buildSideConversationTargets, canSendSideConversationDraft, createSideConversationRequestId } from "../../src/ui/utils/side-conversation.js";
-
-describe("side conversation model", () => {
-  it("excludes the primary conversation and sorts the rest by recency", () => {
-    const sessions = {
-      main: { id: "main", title: "Main", status: "idle", messages: [], permissionRequests: [], hydrated: true, updatedAt: 30 },
-      next: { id: "next", title: "Next", status: "completed", messages: [], permissionRequests: [], hydrated: true, updatedAt: 20 },
-    } as const;
-    assert.deepEqual(buildSideConversationTargets(sessions, "main").map((item) => item.id), ["next"]);
-  });
-
-  it("allows only non-empty idle connected sends with a model", () => {
-    assert.equal(canSendSideConversationDraft({ draft: " hi ", connected: true, status: "completed", model: "gpt" }), true);
-    assert.equal(canSendSideConversationDraft({ draft: "", connected: true, status: "completed", model: "gpt" }), false);
-    assert.equal(canSendSideConversationDraft({ draft: "hi", connected: true, status: "running", model: "gpt" }), false);
-  });
-
-  it("creates recognizable request ids", () => assert.match(createSideConversationRequestId("main"), /^sidechat:main:/));
-});
-```
-
-- [ ] **Step 2：运行并确认 RED**
-
-```powershell
-npm run test:electron:build
-node --test dist-test/test/electron/side-conversation-model.test.js
-```
-
-预期：FAIL，模块不存在。
-
-- [ ] **Step 3：实现纯函数**
-
-```ts
-export function buildSideConversationTargets(sessions: Record<string, SessionView>, primarySessionId: string) {
-  return Object.values(sessions)
-    .filter((session) => session.id !== primarySessionId)
-    .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
-}
-export function canSendSideConversationDraft(input: { draft: string; connected: boolean; status?: SessionStatus; model?: string }) {
-  return input.connected && Boolean(input.draft.trim()) && input.status !== "running" && Boolean(input.model?.trim());
-}
-export function createSideConversationRequestId(primarySessionId: string) {
-  return `sidechat:${primarySessionId}:${crypto.randomUUID()}`;
-}
-```
-
-- [ ] **Step 4：重复 Step 2，确认 GREEN**
-
-- [ ] **Step 5：按 Lore 协议提交两个文件**
-
-### Task 4：侧聊面板
-
-**文件：**
-- 新建：`src/ui/components/SideConversationPanel.tsx`
-- 新建：`test/electron/side-conversation-ui-source.test.ts`
-
-- [ ] **Step 1：先写失败的 UI 契约测试**
-
-```ts
-import { readFileSync } from "node:fs";
-import assert from "node:assert/strict";
-import { describe, it } from "node:test";
-
-describe("side conversation panel", () => {
-  it("targets every action at sideSessionId", () => {
-    const source = readFileSync("src/ui/components/SideConversationPanel.tsx", "utf8");
-    assert.match(source, /type: "session\.continue"[\s\S]{0,180}sessionId: sideSessionId/);
-    assert.match(source, /type: "session\.stop", payload: \{ sessionId: sideSessionId \}/);
-    assert.match(source, /type: "permission\.response"[\s\S]{0,160}sessionId: sideSessionId/);
-    assert.doesNotMatch(source, /activeSessionId/);
-  });
-
-  it("supports transcript, permission and keyboard send", () => {
-    const source = readFileSync("src/ui/components/SideConversationPanel.tsx", "utf8");
-    assert.match(source, /aria-label="选择侧聊会话"/);
-    assert.match(source, /aria-label="输入侧聊消息"/);
-    assert.match(source, /event\.key === "Enter" && !event\.shiftKey/);
-    assert.match(source, /<ChatTranscript/);
-    assert.match(source, /<DecisionPanel/);
-  });
-});
-```
-
-- [ ] **Step 2：运行并确认 RED**
-
-```powershell
-npm run test:electron:build
-node --test dist-test/test/electron/side-conversation-ui-source.test.js
-```
-
-预期：FAIL，组件不存在。
-
-- [ ] **Step 3：实现组件接口和显式会话事件**
-
-```ts
-export type SideConversationPanelProps = {
-  primarySessionId: string;
-  sideSessionId: string | null;
-  connected: boolean;
-  partialMessage: string;
-  onSelectSession: (sessionId: string | null) => void;
-  onCreateSession: () => void;
-  onRequestHistory: (sessionId: string) => void;
-  sendEvent: (event: ClientEvent) => void;
+type BtwRuntime = {
+  threadId: string;
+  parentSessionId: string;
+  session: Session;
+  snapshot: StreamMessage[];
+  messages: StreamMessage[];
+  handle?: RunnerHandle;
+  generation: number;
+  createdAt: number;
+  updatedAt: number;
 };
 ```
 
-发送逻辑固定为：
+公开方法为 `createThread`、`send`、`stop`、`respondPermission`、`closeThread`、`closeParent`、`closeAll`。`send` 每轮新建 runner，使用 `snapshot + messages` 构造 stateless prompt；Runner 的普通事件通过私有 `routeRunnerEvent` 转换成 `btw.*`，且先检查 thread 仍存在及 generation 相等。
+
+- [ ] **Step 4: 运行并确认 GREEN**
+
+Run: `npm run test:electron:build && node --test dist-test/test/electron/btw-runtime-manager.test.js`
+
+Expected: 所有 RuntimeManager 测试 PASS。
+
+- [ ] **Step 5: 覆盖率检查**
+
+Run: `node --experimental-test-coverage --test dist-test/test/electron/btw-runtime-manager.test.js`
+
+Expected: `btw-runtime-manager.js` line coverage >= 80%。
+
+### Task 3: 接入 Electron 事件分发且不持久化
+
+**Files:**
+- Modify: `src/electron/ipc-handlers.ts`
+- Modify: `test/electron/side-conversation-background-session.test.ts`
+
+- [ ] **Step 1: 写失败的 IPC 隔离测试**
+
+断言 BTW 分支调用 manager，并且分支文本中不出现 `store.createSession`、`store.updateSession`、`store.addMessage`、`setActiveSessionId`。
 
 ```ts
-sendEvent({ type: "session.continue", payload: {
-  sessionId: sideSessionId,
-  prompt: draft.trim(),
-  runtime: { model, reasoningMode, permissionMode, workflowMode },
-} });
-```
-
-Enter 且非 Shift、非输入法合成时发送；运行中按钮发送 `session.stop` 且不清空草稿。消息区使用 `ChatTranscript`，流式中的 `partialMessage` 显示在消息区末尾；只有用户已经接近底部时才自动跟随。权限区使用 `DecisionPanel` 并发送 `permission.response` 后调用 `resolvePermissionRequest`。
-
-若 `sideSessionId` 不再存在于未归档 `sessions` 中，组件调用 `onSelectSession(null)` 返回选择状态。空状态明确显示“请选择一个侧聊会话”或“当前没有其他会话”，执行错误显示 `sideSession.error` 并提供切换或重试入口，所有状态都保留 `新建侧聊` 按钮。
-
-- [ ] **Step 4：重复 Step 2，确认 GREEN**
-
-- [ ] **Step 5：按 Lore 协议提交两个文件**
-
-### Task 5：右栏与主应用接线
-
-**文件：**
-- 修改：`src/ui/components/ActivityRail.tsx`
-- 修改：`src/ui/App.tsx`
-- 修改：`test/electron/side-conversation-ui-source.test.ts`
-
-- [ ] **Step 1：先增加失败的接线测试**
-
-```ts
-it("correlates background creation without changing the primary session", () => {
-  const app = readFileSync("src/ui/App.tsx", "utf8");
-  assert.match(app, /pendingSideConversationRequestsRef/);
-  assert.match(app, /event\.payload\.activation === "background"/);
-  assert.match(app, /pendingSideConversationRequestsRef\.current\.get\(event\.payload\.clientRequestId\)/);
-  assert.match(app, /setSideSessionIdByPrimarySessionId/);
-  assert.doesNotMatch(app, /setActiveSessionId\(event\.payload\.sessionId\)/);
+it("routes btw events without ordinary session persistence", () => {
+  const source = readFileSync("src/electron/ipc-handlers.ts", "utf8");
+  const branch = source.slice(source.indexOf('event.type === "btw.thread.create"'), source.indexOf('event.type === "session.create"'));
+  assert.match(branch, /btwRuntimeManager\.createThread/);
+  assert.doesNotMatch(branch, /store\.(createSession|updateSession|addMessage)/);
 });
 ```
 
-- [ ] **Step 2：运行 Task 4 测试并确认 RED**
+- [ ] **Step 2: 运行并确认 RED**
 
-- [ ] **Step 3：实现每主会话状态与请求关联**
+Run: `npm run test:electron:build && node --test dist-test/test/electron/side-conversation-background-session.test.js`
+
+Expected: FAIL，缺少 manager 分支。
+
+- [ ] **Step 3: 接入 manager**
+
+`btw.thread.create` 从 `SessionStore` 只读父 session 和完整 history，深拷贝快照后创建内存线程；`btw.thread.send` 复用现有附件准备函数；其他事件直接路由 manager。`session.delete` 先 `closeParent(sessionId)`；`cleanupAllSessions` 调用 `closeAll()`。
+
+- [ ] **Step 4: 运行并确认 GREEN**
+
+Run: `npm run test:electron:build && node --test dist-test/test/electron/side-conversation-background-session.test.js dist-test/test/electron/btw-runtime-manager.test.js`
+
+Expected: PASS。
+
+### Task 4: 用 TDD 实现独立 useBtwStore
+
+**Files:**
+- Create: `src/ui/store/useBtwStore.ts`
+- Create: `test/electron/btw-store.test.ts`
+
+- [ ] **Step 1: 写失败的 Store 行为测试**
+
+测试真实 store API：created 添加空线程并自动选中；两个线程的消息/草稿/附件/模型互不影响；stream delta 只更新对应 partial；关闭线程清除全部字段并选择相邻线程；parent.closed 清空父会话；普通 `session.*` 事件被忽略。
 
 ```ts
-const pendingSideConversationRequestsRef = useRef(new Map<string, string>());
-const [sidechatTabBySessionId, setSidechatTabBySessionId] = useState<Record<string, boolean>>({});
-const [sideSessionIdByPrimarySessionId, setSideSessionIdByPrimarySessionId] = useState<Record<string, string>>({});
+const store = createBtwStore();
+store.getState().handleServerEvent(created("a", "parent"));
+store.getState().setDraft("a", "only-a");
+store.getState().handleServerEvent(created("b", "parent"));
+assert.equal(store.getState().threads.a.draft, "only-a");
+assert.equal(store.getState().threads.b.draft, "");
 ```
 
-`onEvent` 在 `handleServerEvent` 前匹配后台状态：
+- [ ] **Step 2: 运行并确认 RED**
+
+Run: `npm run test:electron:build && node --test dist-test/test/electron/btw-store.test.js`
+
+Expected: FAIL，模块不存在。
+
+- [ ] **Step 3: 实现 vanilla store + React hook**
+
+导出 `createBtwStore()` 供测试，导出 `useBtwStore` 供 React。状态只在内存，不使用 localStorage/persist middleware；所有 reducer 都先检查 thread 是否存在，以丢弃关闭后的迟到事件。
+
+- [ ] **Step 4: 运行并确认 GREEN 与 80% 覆盖率**
+
+Run: `npm run test:electron:build && node --experimental-test-coverage --test dist-test/test/electron/btw-store.test.js`
+
+Expected: 测试 PASS，`useBtwStore.js` line coverage >= 80%。
+
+### Task 5: 让同一 PromptInput 绑定独立 BTW controller
+
+**Files:**
+- Create: `src/ui/components/prompt-input/useBtwPromptController.ts`
+- Modify: `src/ui/components/prompt-input/PromptInput.tsx`
+- Modify: `src/ui/components/prompt-input/usePromptActions.ts`
+- Modify: `test/electron/prompt-input-min-width.test.ts`
+- Modify: `test/electron/side-conversation-ui-source.test.ts`
+
+- [ ] **Step 1: 写失败的双 Composer 契约测试**
+
+断言 `PromptInput` 接受 `controller`，BTW controller 发送 `btw.thread.send/stop`，不发送 `session.continue/stop/set_model`；side 模式不读取或写入主 prompt、主引用和持久化 queue。
+
+- [ ] **Step 2: 运行并确认 RED**
+
+Run: `npm run test:electron:build && node --test dist-test/test/electron/prompt-input-min-width.test.js dist-test/test/electron/side-conversation-ui-source.test.js`
+
+Expected: FAIL，缺少 `PromptInputController`。
+
+- [ ] **Step 3: 提取可注入 controller 边界**
 
 ```ts
-if (event.type === "session.status" && event.payload.activation === "background" && event.payload.clientRequestId) {
-  const primaryId = pendingSideConversationRequestsRef.current.get(event.payload.clientRequestId);
-  if (primaryId) {
-    pendingSideConversationRequestsRef.current.delete(event.payload.clientRequestId);
-    setSideSessionIdByPrimarySessionId((current) => ({ ...current, [primaryId]: event.payload.sessionId }));
-  }
-}
+export type PromptInputController = {
+  scope: "session" | "btw";
+  id: string | null;
+  prompt: string;
+  setPrompt: (value: string) => void;
+  attachments: PromptAttachment[];
+  setAttachments: (value: PromptAttachment[]) => void;
+  cwd: string;
+  model: string;
+  reasoningMode: RuntimeReasoningMode;
+  isRunning: boolean;
+  error?: string;
+  sendPromptDraft: (prompt: string, attachments: PromptAttachment[]) => Promise<boolean>;
+  stop: () => void;
+  setModel: (model: string) => void;
+  setReasoningMode: (mode: RuntimeReasoningMode) => void;
+  setError: (message: string | null) => void;
+};
 ```
 
-新建事件：
+未传 controller 时维持普通会话行为；传入 BTW controller 时，草稿、附件、模型、reasoning、错误、发送和停止全部走 `useBtwStore`。BTW queue 保持组件内存且不写 localStorage；主 Composer 继续沿用原逻辑。
 
-```ts
-const requestId = createSideConversationRequestId(activeSessionId);
-pendingSideConversationRequestsRef.current.set(requestId, activeSessionId);
-sendEvent({ type: "session.create", payload: {
-  title: "新侧聊", cwd: activeSession?.cwd, allowedTools: "*",
-  activation: "background", clientRequestId: requestId,
-} });
-```
+- [ ] **Step 4: 实现 BTW controller**
 
-打开侧聊时写入 `sidechatTabBySessionId` 并切换 `sidechat`；关闭时清除页签标记，若正在显示则回退 `usage`，但保留目标映射。
+`useBtwPromptController(threadId, sendEvent)` 从 `useBtwStore` 读写线程状态，构造完整 runtime，并发送 `btw.thread.send`。附件继续使用原 PromptInput 的选择、拖拽和粘贴 UI。
 
-- [ ] **Step 4：挂载 ActivityRail 正文**
+- [ ] **Step 5: 运行并确认 GREEN**
 
-`ActivityRail` 增加 `hasSidechatTab`、`sideConversationProps`、打开和关闭回调并转发给页签组件；当 `selectedTab === "sidechat"` 时渲染：
+Run: `npm run test:electron:build && node --test dist-test/test/electron/prompt-input-min-width.test.js dist-test/test/electron/side-conversation-ui-source.test.js dist-test/test/electron/btw-store.test.js`
 
-```tsx
-<SideConversationPanel {...sideConversationProps} />
-```
+Expected: PASS。
 
-- [ ] **Step 5：运行聚焦测试并确认 GREEN**
+### Task 6: 实现多线程侧栏和双输入框同时显示
+
+**Files:**
+- Replace: `src/ui/components/SideConversationPanel.tsx`
+- Modify: `src/ui/components/ActivityRail.tsx`
+- Modify: `src/ui/App.tsx`
+- Modify: `src/ui/events.ts`
+- Modify: `test/electron/side-conversation-ui-source.test.ts`
+- Modify: `test/electron/chat-selection-comment-actions.test.ts`
+
+- [ ] **Step 1: 写失败的 UI 契约测试**
+
+覆盖自动创建首线程、`+` 新建、线程标签切换/关闭、空初始 transcript、BTW 消息与权限 UI、关闭整个页签发 `btw.parent.close_all`、主 PromptInput 不因 sidechat 打开而隐藏、选区按钮不传选中文本。
+
+- [ ] **Step 2: 运行并确认 RED**
+
+Run: `npm run test:electron:build && node --test dist-test/test/electron/side-conversation-ui-source.test.js dist-test/test/electron/chat-selection-comment-actions.test.js`
+
+Expected: FAIL，当前仍镜像主会话且隐藏主 Composer。
+
+- [ ] **Step 3: 重写 SideConversationPanel**
+
+Panel 只接收 `parentSessionId/connected/sendEvent`，从 `useBtwStore` 读取当前父会话的线程。顶部渲染标签、状态、关闭按钮和 `+`；内容区渲染当前线程私有 `ChatTranscript`、partial、错误和权限；底部挂载带 BTW controller 的同一个 `PromptInput`。
+
+- [ ] **Step 4: 更新 App 生命周期**
+
+打开 sidechat 且无线程时发送一次 `btw.thread.create`；所有 `btw.*` ServerEvent 先交给 `useBtwStore.handleServerEvent`，不交给 `useAppStore`；关闭 Activity Rail 页签时发送 `btw.parent.close_all` 并清理 store；删除主 session 时同步清理。移除隐藏主 PromptInput 的 `activityRailTab === "sidechat"` 条件，确保左右两个输入框同时挂载。
+
+- [ ] **Step 5: 运行并确认 GREEN**
+
+Run: `npm run test:electron:build && node --test dist-test/test/electron/side-conversation-ui-source.test.js dist-test/test/electron/chat-selection-comment-actions.test.js dist-test/test/electron/prompt-input-min-width.test.js`
+
+Expected: PASS。
+
+### Task 7: 更新 dev shim 与浏览器 QA
+
+**Files:**
+- Modify: `src/ui/dev-electron-shim.ts`
+- Replace: `scripts/qa/side-conversation-smoke.cjs`
+- Modify: `package.json`
+
+- [ ] **Step 1: 先更新 QA 断言并确认失败**
+
+QA 必须验证：初始侧聊为空；创建两个线程；两个草稿互不覆盖；分别多轮发送；主消息数不变；关闭一个线程不影响另一个；关闭 sidechat 页签后重新打开无旧线程；页面同时存在主 Composer 和 BTW Composer。
+
+Run: `npm run qa:side-conversation`
+
+Expected: FAIL，旧 shim 只支持普通 session。
+
+- [ ] **Step 2: 为 shim 实现内存 btw.* 模拟**
+
+dev shim 按 threadId 保存临时线程，响应 create/send/stop/close/close_all，并发出与生产一致的 `btw.*` 事件。不得向普通 `qaSideConversationMessagesBySessionId` 写入 BTW 内容。
+
+- [ ] **Step 3: 运行并确认 GREEN**
+
+Run: `npm run qa:side-conversation`
+
+Expected: PASS，并输出多线程、双 Composer、关闭清理的断言摘要。
+
+### Task 8: 80 分停止线与完成审计
+
+**Files:**
+- Modify if needed: only files touched above
+
+- [ ] **Step 1: 聚焦测试和覆盖率**
+
+Run:
 
 ```powershell
 npm run test:electron:build
-node --test dist-test/test/electron/side-conversation-background-session.test.js dist-test/test/electron/side-conversation-model.test.js dist-test/test/electron/side-conversation-ui-source.test.js dist-test/test/electron/activity-workspace-tabs.test.js
+node --experimental-test-coverage --test `
+  dist-test/test/electron/btw-runtime-manager.test.js `
+  dist-test/test/electron/btw-store.test.js `
+  dist-test/test/electron/side-conversation-background-session.test.js `
+  dist-test/test/electron/side-conversation-ui-source.test.js `
+  dist-test/test/electron/chat-selection-comment-actions.test.js `
+  dist-test/test/electron/prompt-input-min-width.test.js
 ```
 
-- [ ] **Step 6：按 Lore 协议提交三个文件**
+Expected: 0 failures；新增核心模块 line coverage >= 80%。
 
-### Task 6：浏览器 QA 与 80 分验收
+- [ ] **Step 2: 类型、构建和范围 lint**
 
-**文件：**
-- 修改：`src/ui/dev-electron-shim.ts`
-- 新建：`scripts/qa/side-conversation-smoke.cjs`
-- 修改：`package.json`
-
-- [ ] **Step 1：先写浏览器烟测**
-
-脚本打开 `/?qaSideConversation=1`，通过“添加工作区标签”打开侧聊，选择 `qa-side-secondary`，发送“只回复 SIDE_OK”，断言侧聊出现 `SIDE_OK`，并断言带 `data-active-session-title` 的主标题发送前后完全一致。
-
-```js
-await page.getByRole("button", { name: "添加工作区标签" }).click();
-await page.getByRole("menuitem", { name: /侧聊/ }).click();
-await page.getByLabel("选择侧聊会话").selectOption("qa-side-secondary");
-const primaryTitle = await page.locator("[data-active-session-title]").textContent();
-await page.getByLabel("输入侧聊消息").fill("只回复 SIDE_OK");
-await page.getByLabel("输入侧聊消息").press("Enter");
-await expect(page.getByRole("region", { name: "侧聊消息" })).toContainText("SIDE_OK");
-await expect(page.locator("[data-active-session-title]")).toHaveText(primaryTitle ?? "");
-```
-
-- [ ] **Step 2：运行 `npm run qa:side-conversation` 并确认 RED**
-
-预期：FAIL，夹具或 UI 入口缺失。
-
-- [ ] **Step 3：实现双会话开发夹具**
-
-`qaSideConversation=1` 时 `session.list` 返回 `qa-side-primary` 和 `qa-side-secondary`；`session.history` 按请求 ID 返回独立历史；`session.continue` 只更新 payload 指定会话并追加 `SIDE_OK`；`session.create` 回传相同 `activation` 和 `clientRequestId`。
-
-- [ ] **Step 4：重复 Step 2，确认 GREEN 并生成 `tmp/qa/side-conversation.png`**
-
-- [ ] **Step 5：运行最终验证矩阵**
+Run:
 
 ```powershell
-npm run test:electron:build
-node --test dist-test/test/electron/side-conversation-background-session.test.js dist-test/test/electron/side-conversation-model.test.js dist-test/test/electron/side-conversation-ui-source.test.js dist-test/test/electron/activity-workspace-tabs.test.js
-npx eslint src/ui/App.tsx src/ui/components/ActivityRail.tsx src/ui/components/ActivityWorkspaceTabs.tsx src/ui/components/SideConversationPanel.tsx src/ui/utils/activity-workspace-tabs.ts src/ui/utils/side-conversation.ts src/ui/store/useAppStore.ts src/ui/types.ts src/electron/types.ts src/electron/ipc-handlers.ts test/electron/side-conversation-background-session.test.ts test/electron/side-conversation-model.test.ts test/electron/side-conversation-ui-source.test.ts
 npm run build
-npm run qa:side-conversation
+npx eslint src/electron/libs/btw-runtime-manager.ts src/electron/ipc-handlers.ts src/electron/types.ts src/ui/store/useBtwStore.ts src/ui/components/SideConversationPanel.tsx src/ui/components/prompt-input/PromptInput.tsx src/ui/components/prompt-input/useBtwPromptController.ts src/ui/App.tsx src/ui/types.ts
 git diff --check
 ```
 
-预期：全部退出码为 0。评分为功能与隔离 40、后台激活与持久化 20、交互与恢复 15、自动化覆盖 15、代码质量 10；低于 80 分不得结束。
+Expected: build PASS；ESLint 0 errors；diff-check PASS。
 
-- [ ] **Step 6：按 Lore 协议提交 QA 三个文件**
+- [ ] **Step 3: 浏览器和视觉验收**
+
+Run: `npm run qa:side-conversation`
+
+然后按 `visual-verdict` 检查右栏线程标签、空状态、双 Composer、窄宽度和运行状态，目标 >= 90/100。
+
+- [ ] **Step 4: 要求逐项审计**
+
+逐项证明：多线程、多轮、创建时快照、完整工具、权限隔离、主历史不污染、双输入框独立、选区不预填、关闭单线程清除、关闭页签清空、重启不恢复。任一证据不足则继续修复；全部成立且覆盖率达到 80% 后停止。
