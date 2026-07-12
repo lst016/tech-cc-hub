@@ -91,30 +91,40 @@ async function main() {
     const sidebar = page.locator("aside.left-0");
     await expect(sidebar).toBeVisible({ timeout: 15000 });
 
-    const workspaceButton = sidebar.getByRole("button", { name: /tech-cc-hub/i }).first();
-    await expect(workspaceButton).toBeVisible();
-    await workspaceButton.click();
-
-    const planButton = sidebar.locator('button[aria-label^="查看执行计划"]');
-    await expect(planButton).toBeVisible({ timeout: 10000 });
-    await planButton.hover();
-
-    const previewCard = page.locator("[data-session-plan-preview]");
+    const previewCard = sidebar.locator("[data-sidebar-plan-dock]");
     await expect(previewCard).toBeVisible();
     await expect(previewCard.getByText("检查聊天列表现有数据链路", { exact: true })).toBeVisible();
-    await expect(previewCard.getByText("实现计划清单悬浮预览", { exact: true })).toBeVisible();
-    await expect(previewCard.getByText("验证键盘与边界定位", { exact: true })).toBeVisible();
+    await expect(previewCard.getByText("实现计划清单底部固定展示", { exact: true })).toBeVisible();
+    await expect(previewCard.getByText("验证固定位置与自动消失", { exact: true })).toBeVisible();
     await expect(previewCard.getByText("运行定向测试与视觉验收", { exact: true })).toBeVisible();
     await expect(previewCard.locator('[data-plan-step-status="completed"]')).toHaveCount(2);
     await expect(previewCard.locator('[data-plan-step-status="in_progress"]')).toHaveCount(1);
     await expect(previewCard.locator('[data-plan-step-status="pending"]')).toHaveCount(1);
 
+    const placement = await page.evaluate(() => {
+      const dock = document.querySelector("[data-sidebar-plan-dock]");
+      const scroller = document.querySelector(".sidebar-scroll");
+      const settings = document.querySelector('button[aria-label="设置"]');
+      if (!(dock instanceof HTMLElement) || !(scroller instanceof HTMLElement) || !(settings instanceof HTMLElement)) {
+        return null;
+      }
+      const dockRect = dock.getBoundingClientRect();
+      const settingsRect = settings.getBoundingClientRect();
+      return {
+        insideScroller: scroller.contains(dock),
+        aboveFooter: dockRect.bottom <= settingsRect.top,
+      };
+    });
+    if (!placement || placement.insideScroller || !placement.aboveFooter) {
+      throw new Error(`Plan dock is not fixed between the chat list and footer: ${JSON.stringify(placement)}`);
+    }
+
     mkdirSync(path.dirname(artifactPath), { recursive: true });
     await page.screenshot({ path: artifactPath, fullPage: true });
 
-    await planButton.focus();
-    await expect(previewCard).toBeVisible();
-    await page.keyboard.press("Escape");
+    const hasCompletionApi = await page.evaluate(() => Boolean(window.__TECH_CC_HUB_PLAN_QA__?.complete));
+    if (!hasCompletionApi) throw new Error("Plan completion QA API is unavailable");
+    await page.evaluate(() => window.__TECH_CC_HUB_PLAN_QA__.complete());
     await expect(previewCard).toBeHidden();
 
     if (errors.length > 0) {

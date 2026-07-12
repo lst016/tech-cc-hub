@@ -180,18 +180,18 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     },
   });
 
-  const buildPlanPreviewEvent = (): ServerEvent => ({
+  const buildPlanPreviewEvent = (completed = false): ServerEvent => ({
     type: "session.plan.updated",
     payload: {
       sessionId: browserPreviewSessionId,
       source: "update_plan",
       updatedAt: Date.now(),
-      explanation: "聊天列表计划预览验收",
+      explanation: "聊天列表底部计划验收",
       plan: [
         { step: "检查聊天列表现有数据链路", status: "completed" },
-        { step: "实现计划清单悬浮预览", status: "completed" },
-        { step: "验证键盘与边界定位", status: "in_progress" },
-        { step: "运行定向测试与视觉验收", status: "pending" },
+        { step: "实现计划清单底部固定展示", status: "completed" },
+        { step: "验证固定位置与自动消失", status: completed ? "completed" : "in_progress" },
+        { step: "运行定向测试与视觉验收", status: completed ? "completed" : "pending" },
       ],
     },
   });
@@ -204,6 +204,20 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
       }
     }, 0);
   };
+
+  if (qaPlanPreviewEnabled) {
+    const qaWindow = window as Window & {
+      __TECH_CC_HUB_PLAN_QA__?: { complete: () => void };
+    };
+    qaWindow.__TECH_CC_HUB_PLAN_QA__ = {
+      complete: () => {
+        sessionUpdatedAt = Date.now();
+        sessionStatus = "completed";
+        emit(buildPlanPreviewEvent(true));
+        emit(buildSessionListEvent());
+      },
+    };
+  }
 
   const syncSession = () => {
     emit(buildSessionListEvent());
