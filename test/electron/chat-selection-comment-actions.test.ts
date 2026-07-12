@@ -20,6 +20,10 @@ test("chat selection popover supports compact comment actions alongside quote", 
   assert.match(popoverSource, /role="group"/);
   assert.match(popoverSource, /aria-label="选区操作"/);
   assert.match(popoverSource, /aria-expanded=\{selectionDraft\.commentOpen\}/);
+  assert.match(popoverSource, /OPEN_SIDE_CONVERSATION_EVENT/);
+  assert.match(popoverSource, /new CustomEvent\(OPEN_SIDE_CONVERSATION_EVENT/);
+  assert.match(popoverSource, /侧边对话/);
+  assert.doesNotMatch(popoverSource, /text: selectionText/);
   assert.match(popoverSource, /flex w-max max-w-\[calc\(100vw-24px\)\] flex-col gap-1\.5/);
   assert.match(popoverSource, /divide-x divide-black\/10/);
   assert.match(popoverSource, /rounded-\[10px\] border border-black\/10 bg-white\/98/);

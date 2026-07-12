@@ -21,7 +21,6 @@ import {
   type ContextUsageBreakdownCategory,
 } from "../utils/context-usage-breakdown";
 import { buildSegmentedContextUsageCells, type ContextUsageCellSegment } from "../utils/context-usage-cells";
-import { ActivityWorkspaceTabs } from "./ActivityWorkspaceTabs";
 import { SideConversationPanel, type SideConversationPanelProps } from "./SideConversationPanel";
 import type { SessionView } from "../store/useAppStore";
 import type { WorkspacePluginDescriptor } from "../../shared/workspace-plugins";
@@ -31,10 +30,6 @@ import {
   normalizeActivityRailTab,
   shouldBuildActivityRailModel,
   type ActivityRailTab,
-  type ActivityWorkspaceTab,
-  type PluginRailTab,
-  type WorkflowAgentRailTab,
-  type WorkflowAgentWorkspaceTabItem,
 } from "../utils/activity-workspace-tabs";
 import { WorkspacePluginViewPane } from "./workspace-plugins/WorkspacePluginViewPane";
 import { WorkflowAgentTranscriptPanel } from "./workflow/WorkflowAgentTranscriptPanel";
@@ -1278,7 +1273,6 @@ export function ActivityRail({
   partialMessage,
   globalError,
   onOpenSessionAnalysis,
-  onOpenBrowserWorkbench,
   activeTab,
   suspended = false,
   pendingPreviewOpenRequest,
@@ -1287,26 +1281,11 @@ export function ActivityRail({
   selectedModel,
   contextWindow,
   compressionThresholdPercent,
-  hasBrowserTab = false,
-  hasSidechatTab = false,
-  hasGitTab = false,
-  hasTerminalTab = false,
   workspacePlugins = [],
-  hiddenWorkspacePlugins = [],
-  workflowAgentTabs = [],
   selectedWorkflowAgent,
   workflowRuns = [],
   deferPreviewMount = false,
-  onOpenGitWorkspace,
-  onCloseGitWorkspace,
-  onOpenSidechatWorkspace,
-  onCloseSidechatWorkspace,
   sideConversationProps,
-  onOpenTerminalWorkspace,
-  onCloseTerminalWorkspace,
-  onCloseWorkspacePluginTab,
-  onOpenWorkspacePluginTab,
-  onCloseWorkflowAgentTab,
   onWorkflowRunAction,
   width = 420,
 }: {
@@ -1314,7 +1293,6 @@ export function ActivityRail({
   partialMessage: string;
   globalError: string | null;
   onOpenSessionAnalysis?: () => void;
-  onOpenBrowserWorkbench?: () => void;
   activeTab?: ActivityRailTab;
   suspended?: boolean;
   pendingPreviewOpenRequest?: {
@@ -1329,31 +1307,15 @@ export function ActivityRail({
   selectedModel?: string;
   contextWindow?: number;
   compressionThresholdPercent?: number;
-  hasBrowserTab?: boolean;
-  hasSidechatTab?: boolean;
-  hasGitTab?: boolean;
-  hasTerminalTab?: boolean;
   workspacePlugins?: WorkspacePluginDescriptor[];
-  hiddenWorkspacePlugins?: WorkspacePluginDescriptor[];
-  workflowAgentTabs?: WorkflowAgentWorkspaceTabItem[];
   selectedWorkflowAgent?: WorkflowAgentSummary;
   workflowRuns?: WorkflowRunRecord[];
   deferPreviewMount?: boolean;
-  onOpenGitWorkspace?: () => void;
-  onCloseGitWorkspace?: () => void;
-  onOpenSidechatWorkspace?: () => void;
-  onCloseSidechatWorkspace?: () => void;
   sideConversationProps?: SideConversationPanelProps;
-  onOpenTerminalWorkspace?: () => void;
-  onCloseTerminalWorkspace?: () => void;
-  onCloseWorkspacePluginTab?: (tab: PluginRailTab) => void;
-  onOpenWorkspacePluginTab?: (tab: PluginRailTab) => void;
-  onCloseWorkflowAgentTab?: (tab: WorkflowAgentRailTab) => void;
   onWorkflowRunAction?: (action: WorkflowRunAction, run: WorkflowRunRecord) => void;
   width?: number;
 }) {
   const sidebarHeaderOffsetClass = typeof window !== "undefined" && window.electron?.platform === "darwin" ? "top-12" : "top-10";
-  const showLabels = width >= 300;
   const [internalActiveTab, setInternalActiveTab] = useState<ActivityRailTab>(DEFAULT_ACTIVITY_RAIL_TAB);
   const requestedTab = activeTab ?? internalActiveTab;
   const selectedTab = normalizeActivityRailTab(requestedTab);
@@ -1389,13 +1351,6 @@ export function ActivityRail({
   const handleSelectTab = (tab: ActivityRailTab) => {
     if (!activeTab) setInternalActiveTab(tab);
     onActiveTabChange?.(tab);
-  };
-  const handleSelectWorkspaceTab = (tab: ActivityWorkspaceTab) => {
-    if (tab === "browser") {
-      onOpenBrowserWorkbench?.();
-      return;
-    }
-    handleSelectTab(tab);
   };
   const timelineRef = useRef<HTMLDivElement>(null);
   const toolWorkspaceActive = selectedTab === "preview" || selectedTab === "sidechat" || selectedTab === "git" || selectedTab === "terminal" || selectedTab.startsWith("workflow-agent:") || Boolean(selectedWorkspacePlugin);
@@ -1479,37 +1434,9 @@ export function ActivityRail({
       )}
 
       <aside
-        className={`fixed bottom-0 right-0 ${sidebarHeaderOffsetClass} hidden min-w-[400px] border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(240,244,248,0.96)_36%,rgba(234,239,245,0.98))] shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl lg:flex lg:flex-col ${toolWorkspaceActive ? "overflow-hidden pb-0" : "overflow-y-auto pb-6"}`}
+        className={`fixed bottom-0 right-0 ${sidebarHeaderOffsetClass} hidden min-w-[400px] border-l border-black/5 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(240,244,248,0.96)_36%,rgba(234,239,245,0.98))] pt-10 shadow-[inset_1px_0_0_rgba(255,255,255,0.72)] backdrop-blur-xl lg:flex lg:flex-col ${toolWorkspaceActive ? "overflow-hidden pb-0" : "overflow-y-auto pb-6"}`}
         style={{ width, minWidth: width }}
       >
-
-        <div className="sticky top-0 z-[160] flex h-10 shrink-0 items-center justify-between border-b border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,251,253,0.92))] px-4 backdrop-blur-xl">
-          <ActivityWorkspaceTabs
-            activeTab={selectedTab}
-            showBrowserTab={hasBrowserTab}
-            showSidechatTab={hasSidechatTab}
-            showGitTab={hasGitTab}
-            showTerminalTab={hasTerminalTab}
-            workspacePlugins={workspacePlugins}
-            hiddenWorkspacePlugins={hiddenWorkspacePlugins}
-            workflowAgentTabs={workflowAgentTabs}
-            showLabels={showLabels}
-            showCreateSidechatTab={!hasSidechatTab}
-            showCreateGitTab={!hasGitTab}
-            showCreateTerminalTab={!hasTerminalTab}
-            onSelectTab={handleSelectWorkspaceTab}
-            onCreateSidechatTab={onOpenSidechatWorkspace}
-            onCloseSidechatTab={hasSidechatTab ? onCloseSidechatWorkspace : undefined}
-            onCreateGitTab={onOpenGitWorkspace}
-            onCloseGitTab={hasGitTab ? onCloseGitWorkspace : undefined}
-            onCreateTerminalTab={onOpenTerminalWorkspace}
-            onCloseTerminalTab={hasTerminalTab ? onCloseTerminalWorkspace : undefined}
-            onCloseWorkspacePluginTab={onCloseWorkspacePluginTab}
-            onCreateWorkspacePluginTab={onOpenWorkspacePluginTab}
-            onCloseWorkflowAgentTab={onCloseWorkflowAgentTab}
-          />
-        </div>
-
         {selectedTab === "usage" ? (
           model ? (
             <div className="space-y-4 px-4 pt-4">

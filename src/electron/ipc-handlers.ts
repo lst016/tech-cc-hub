@@ -23,6 +23,7 @@ import { loadGlobalRuntimeConfig, saveGlobalRuntimeConfig } from "./libs/config-
 import { listExternalMcpServerInfos } from "./libs/external-mcp-servers.js";
 import { buildNextFigmaOfficialAuthStateRuntimeConfig, isFigmaMcpOAuthCallbackPrompt, redactFigmaMcpOAuthCallbackPrompt, type FigmaOfficialAuthState } from "./libs/figma-official-plugin.js";
 import { SessionStore } from "./libs/session-store.js";
+import { BtwRuntimeManager } from "./libs/btw-runtime-manager.js";
 import { buildSessionSlashCommands, resolveInvokedLocalSlashDefinition } from "./libs/slash-command-catalog.js";
 import { stripInlineBase64ImagesFromMessage } from "./libs/tool-output-sanitizer.js";
 import { buildSessionWorkflowCatalog } from "./libs/workflow-catalog.js";
@@ -675,6 +676,17 @@ function emit(event: ServerEvent) {
 
   broadcast(nextEvent);
 }
+
+const btwRuntimeManager = new BtwRuntimeManager({
+  emit,
+  run: runClaude,
+  buildContinuation: (messages, prompt, attachments) => buildStatelessContinuationPayload(
+    messages,
+    prompt,
+    attachments,
+    { recentTurnCount: 5 },
+  ),
+});
 
 function getWorkflowToolUseNamesForSession(sessionId: string): Map<string, string> {
   const existing = workflowToolUseNamesBySession.get(sessionId);
@@ -1351,6 +1363,50 @@ export async function handleClientEvent(event: ClientEvent) {
     return;
   }
 
+  if (event.type === "btw.thread.create") {
+    const parentSession = store.getSession(event.payload.parentSessionId);
+    const parentHistory = store.getSessionHistory(event.payload.parentSessionId);
+    if (!parentSession || !parentHistory) return;
+    btwRuntimeManager.createThread({
+      parentSession,
+      snapshot: parentHistory.messages,
+    });
+    return;
+  }
+
+  if (event.type === "btw.thread.send") {
+    await btwRuntimeManager.send({
+      threadId: event.payload.threadId,
+      prompt: event.payload.prompt,
+      agentPrompt: event.payload.agentPrompt,
+      workspaceContext: event.payload.workspaceContext,
+      attachments: event.payload.attachments,
+      displayAttachments: event.payload.attachments,
+      runtime: event.payload.runtime,
+    });
+    return;
+  }
+
+  if (event.type === "btw.thread.stop") {
+    btwRuntimeManager.stop(event.payload.threadId);
+    return;
+  }
+
+  if (event.type === "btw.thread.permission.response") {
+    btwRuntimeManager.respondPermission(event.payload.threadId, event.payload.toolUseId, event.payload.result);
+    return;
+  }
+
+  if (event.type === "btw.thread.close") {
+    btwRuntimeManager.closeThread(event.payload.threadId);
+    return;
+  }
+
+  if (event.type === "btw.parent.close_all") {
+    btwRuntimeManager.closeParent(event.payload.parentSessionId);
+    return;
+  }
+
   if (event.type === "session.create") {
     const session = store.createSession({
       cwd: event.payload.cwd,
@@ -1366,8 +1422,6 @@ export async function handleClientEvent(event: ClientEvent) {
         title: session.title,
         cwd: session.cwd,
         slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
-        activation: event.payload.activation,
-        clientRequestId: event.payload.clientRequestId,
       },
     });
     return;
@@ -1419,8 +1473,6 @@ export async function handleClientEvent(event: ClientEvent) {
         reasoningMode: selectedReasoningMode,
         permissionMode: selectedPermissionMode,
         slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
-        activation: event.payload.activation,
-        clientRequestId: event.payload.clientRequestId,
       },
     });
 
@@ -1966,6 +2018,7 @@ export async function handleClientEvent(event: ClientEvent) {
 
   if (event.type === "session.delete") {
     const sessionId = event.payload.sessionId;
+    btwRuntimeManager.closeParent(sessionId);
     closeRunnerHandle(sessionId);
     workflowToolUseNamesBySession.delete(sessionId);
     workflowTaskIdsBySession.delete(sessionId);
@@ -2181,6 +2234,7 @@ export function addServerEventListener(listener: (event: ServerEvent) => void): 
 
 export function cleanupAllSessions(): void {
   rendererEventBatcher.dispose();
+  btwRuntimeManager.closeAll();
   for (const [, handle] of runnerHandles) {
     handle.abort();
   }

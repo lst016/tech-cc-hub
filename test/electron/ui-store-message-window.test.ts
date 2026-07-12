@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { getUserPromptAnchoredWindowStart } from "../../src/ui/utils/render-history-window.js";
+import {
+  getUserPromptAnchoredWindowStart,
+  getVisibleLimitForMessageIndex,
+} from "../../src/ui/utils/render-history-window.js";
 import type { StreamMessage } from "../../src/ui/types.js";
 
 function assistantMessage(label: string): StreamMessage {
@@ -53,7 +56,7 @@ test("visible message windows keep the current turn boundary even when the turn 
   ];
   const targetWindowStart = messages.length - 160;
 
-  const windowStart = getUserPromptAnchoredWindowStart(messages, targetWindowStart, 260);
+  const windowStart = getUserPromptAnchoredWindowStart(messages, targetWindowStart);
 
   assert.equal(windowStart, 0);
   assert.equal(messages[windowStart]?.type, "user_prompt");
@@ -66,6 +69,12 @@ test("visible message windows keep the full loaded page when the user prompt bou
   const windowStart = getUserPromptAnchoredWindowStart(messages, targetWindowStart);
 
   assert.equal(windowStart, 0);
+});
+
+test("revealing a timeline turn expands the virtual window to include its original message index", () => {
+  assert.equal(getVisibleLimitForMessageIndex(1_000, 120, 160), 880);
+  assert.equal(getVisibleLimitForMessageIndex(1_000, 900, 160), 160);
+  assert.equal(getVisibleLimitForMessageIndex(1_000, -1, 160), 160);
 });
 
 test("renderer store keeps loaded messages instead of trimming chat history", () => {

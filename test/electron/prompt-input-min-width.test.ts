@@ -12,8 +12,9 @@ test("prompt composer keeps a smaller usable minimum after compacting controls",
 });
 
 test("prompt composer width contract is shared by palettes and input surface", () => {
-  const references = source.match(/COMPOSER_SURFACE_WIDTH_CLASS/g) ?? [];
-  assert.ok(references.length >= 4);
+  assert.match(source, /const composerSurfaceWidthClass = embedded/);
+  const references = source.match(/composerSurfaceWidthClass/g) ?? [];
+  assert.ok(references.length >= 5);
 });
 
 test("prompt composer hides runtime controls before hitting minimum width", () => {

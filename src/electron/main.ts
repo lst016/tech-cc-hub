@@ -123,6 +123,7 @@ import { resolveClaudeCodePluginDetails } from "./libs/claude/claude-code-plugin
 import { addServerEventListener } from "./ipc-handlers.js";
 import {
     extractApiModelsFromListPayload,
+    extractMiniMaxTextModelsFromListPayload,
     toImportedApiModels,
     type ImportedApiModel,
 } from "../shared/models/api-model-metadata.js";
@@ -2144,7 +2145,10 @@ async function fetchApiModels(payload: { baseURL?: string; apiKey?: string; prov
 
         const responsePayload = await response.json() as unknown;
         const fallbackContextWindow = provider === "deepseek" ? 1_000_000 : undefined;
-        const models = extractApiModelsFromListPayload(responsePayload).map((model) => ({
+        const importedModels = provider === "minimax"
+            ? extractMiniMaxTextModelsFromListPayload(responsePayload)
+            : extractApiModelsFromListPayload(responsePayload);
+        const models = importedModels.map((model) => ({
             ...model,
             contextWindow: model.contextWindow ?? (provider === "minimax" ? getMiniMaxFallbackContextWindow(model.name) : fallbackContextWindow),
         }));

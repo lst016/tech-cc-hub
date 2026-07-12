@@ -129,6 +129,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
   let sessionModel = "";
   let sessionMessages: StreamMessage[] = [];
   const qaCollapsedSessionRailEnabled = new URL(window.location.href).searchParams.get("qaCollapsedSessionRail") === "1";
+  const qaConversationTurnTimelineEnabled = new URL(window.location.href).searchParams.get("qaConversationTurnTimeline") === "1";
   const qaSideConversationEnabled = new URL(window.location.href).searchParams.get("qaSideConversation") === "1";
   const qaSessionCwd = "D:/tool/tech-cc-hub";
   const qaSessionTimestamp = 1_783_800_000_000;
@@ -273,16 +274,81 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     session_id: sessionId,
   } as unknown as StreamMessage);
 
+  if (qaConversationTurnTimelineEnabled) {
+    sessionCreatedAt = qaSessionTimestamp;
+    sessionUpdatedAt = qaSessionTimestamp + 8_000;
+    sessionStatus = "completed";
+    sessionTitle = "聊天轮次时间轴验收";
+    sessionModel = "claude-sonnet-4-5";
+    const assistantParagraph = [
+      "这一轮用于验证聊天内容列表左侧的会话时间轴。时间轴必须跟随聊天内容卡，而不是出现在工作区 Sidebar 里面。",
+      "滚动聊天时，视口中心之前最近的一条用户消息会成为当前轮次；当前轮使用黑色长刻度，其他轮使用灰色短刻度。",
+      "点击刻度后应平滑跳转到对应用户消息，同时保留现有消息卡、工具过程和输入框布局。",
+    ].join("\n\n");
+    const timelineVirtualWindowPadding = Array.from({ length: 170 }, (_, index) => ({
+      type: "system",
+      subtype: "init",
+      uuid: `${browserPreviewSessionId}-timeline-padding-${index}`,
+      session_id: browserPreviewSessionId,
+    } as unknown as StreamMessage));
+    sessionMessages = [
+      { type: "user_prompt", prompt: "虚拟窗口外的最早一轮：时间轴仍需完整显示。", capturedAt: qaSessionTimestamp - 2_000 } as StreamMessage,
+      buildQaAssistantMessage(browserPreviewSessionId, "这条回复位于初始虚拟窗口之外。"),
+      { type: "user_prompt", prompt: "第一轮：确认时间轴应该位于聊天列表左侧。", capturedAt: qaSessionTimestamp } as StreamMessage,
+      ...timelineVirtualWindowPadding,
+      buildQaAssistantMessage(browserPreviewSessionId, `${assistantParagraph}\n\n${assistantParagraph}`),
+      { type: "user_prompt", prompt: "第二轮：滚动后高亮当前视口对应的轮次。", capturedAt: qaSessionTimestamp + 2_000 } as StreamMessage,
+      buildQaAssistantMessage(browserPreviewSessionId, `${assistantParagraph}\n\n${assistantParagraph}`),
+      { type: "user_prompt", prompt: "第三轮：点击灰色刻度跳转到历史提问。", capturedAt: qaSessionTimestamp + 4_000 } as StreamMessage,
+      buildQaAssistantMessage(browserPreviewSessionId, `${assistantParagraph}\n\n${assistantParagraph}`),
+      { type: "user_prompt", prompt: "第四轮：完成视觉与键盘可访问性验收。", capturedAt: qaSessionTimestamp + 6_000 } as StreamMessage,
+      buildQaAssistantMessage(browserPreviewSessionId, assistantParagraph),
+    ];
+    const timelineThirdPromptIndex = timelineVirtualWindowPadding.length + 6;
+    sessionMessages[timelineThirdPromptIndex] = {
+      ...sessionMessages[timelineThirdPromptIndex],
+      attachments: [{
+        id: "qa-timeline-attachment",
+        kind: "image",
+        name: "side-conversation.png",
+        mimeType: "image/png",
+        data: "qa-timeline-image",
+      }],
+    } as StreamMessage;
+    sessionMessages[timelineThirdPromptIndex + 1] = {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: `${assistantParagraph}\n\n${assistantParagraph}` },
+          {
+            type: "tool_use",
+            id: "qa-timeline-tool",
+            name: "Edit",
+            input: { file_path: "D:/tool/tech-cc-hub/src/ui/App.tsx" },
+          },
+        ],
+      },
+      parent_tool_use_id: null,
+      uuid: `${browserPreviewSessionId}-timeline-assistant`,
+      session_id: browserPreviewSessionId,
+    } as unknown as StreamMessage;
+  }
+
   const qaSideConversationMessagesBySessionId: Record<string, StreamMessage[]> = {
     "qa-side-primary": [
       { type: "user_prompt", prompt: "主对话验收", capturedAt: qaSessionTimestamp } as StreamMessage,
       buildQaAssistantMessage("qa-side-primary", "主对话初始回复"),
     ],
-    "qa-side-secondary": [
-      { type: "user_prompt", prompt: "侧聊验收", capturedAt: qaSessionTimestamp + 1_000 } as StreamMessage,
-      buildQaAssistantMessage("qa-side-secondary", "侧聊初始回复"),
-    ],
   };
+  type QaBtwThread = {
+    id: string;
+    parentSessionId: string;
+    title: string;
+    turnCount: number;
+  };
+  const qaBtwThreads = new Map<string, QaBtwThread>();
+  let qaBtwSequence = 0;
 
   const buildQaSideConversationSessions = () => [
     {
@@ -295,17 +361,6 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
       slashCommands: browserPreviewSlashCommandNames,
       createdAt: qaSessionTimestamp,
       updatedAt: qaSessionTimestamp + 2_000,
-    },
-    {
-      id: "qa-side-secondary",
-      title: "侧聊验证",
-      status: "completed" as const,
-      cwd: qaSessionCwd,
-      model: "claude-sonnet-4-5",
-      runSurface: "development" as const,
-      slashCommands: browserPreviewSlashCommandNames,
-      createdAt: qaSessionTimestamp + 1_000,
-      updatedAt: qaSessionTimestamp + 1_000,
     },
   ];
 
@@ -455,6 +510,90 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
       totalMemoryGB: 0,
     }),
     sendClientEvent: (event: ClientEvent) => {
+      if (qaSideConversationEnabled && event.type === "btw.thread.create") {
+        const threadId = `qa-btw-${++qaBtwSequence}`;
+        const timestamp = Date.now();
+        const thread: QaBtwThread = {
+          id: threadId,
+          parentSessionId: event.payload.parentSessionId,
+          title: `侧聊 ${qaBtwSequence}`,
+          turnCount: 0,
+        };
+        qaBtwThreads.set(threadId, thread);
+        emit({
+          type: "btw.thread.created",
+          payload: {
+            threadId,
+            parentSessionId: thread.parentSessionId,
+            title: thread.title,
+            status: "idle",
+            cwd: qaSessionCwd,
+            model: "claude-sonnet-4-5",
+            reasoningMode: "high",
+            permissionMode: "default",
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+        });
+        return;
+      }
+      if (qaSideConversationEnabled && event.type === "btw.thread.send") {
+        const thread = qaBtwThreads.get(event.payload.threadId);
+        if (!thread) return;
+        thread.turnCount += 1;
+        const capturedAt = Date.now();
+        emit({
+          type: "btw.thread.status",
+          payload: { threadId: thread.id, status: "running", title: thread.title, updatedAt: capturedAt },
+        });
+        emit({
+          type: "btw.stream.user_prompt",
+          payload: { threadId: thread.id, prompt: event.payload.prompt, attachments: event.payload.attachments, capturedAt },
+        });
+        const assistantMessage = {
+          ...buildQaAssistantMessage(thread.id, `SIDE_OK ${thread.turnCount}: ${event.payload.prompt}`),
+          uuid: `${thread.id}-assistant-${thread.turnCount}`,
+        } as StreamMessage;
+        emit({ type: "btw.stream.message", payload: { threadId: thread.id, message: assistantMessage } });
+        emit({
+          type: "btw.thread.status",
+          payload: {
+            threadId: thread.id,
+            status: "completed",
+            title: thread.title,
+            model: event.payload.runtime?.model,
+            updatedAt: capturedAt + 1,
+          },
+        });
+        return;
+      }
+      if (qaSideConversationEnabled && event.type === "btw.thread.stop") {
+        const thread = qaBtwThreads.get(event.payload.threadId);
+        if (thread) {
+          emit({
+            type: "btw.thread.status",
+            payload: { threadId: thread.id, status: "idle", title: thread.title, updatedAt: Date.now() },
+          });
+        }
+        return;
+      }
+      if (qaSideConversationEnabled && event.type === "btw.thread.close") {
+        const thread = qaBtwThreads.get(event.payload.threadId);
+        if (thread) {
+          qaBtwThreads.delete(thread.id);
+          emit({ type: "btw.thread.closed", payload: { threadId: thread.id, parentSessionId: thread.parentSessionId } });
+        }
+        return;
+      }
+      if (qaSideConversationEnabled && event.type === "btw.parent.close_all") {
+        const threadIds = Array.from(qaBtwThreads.values())
+          .filter((thread) => thread.parentSessionId === event.payload.parentSessionId)
+          .map((thread) => thread.id);
+        for (const threadId of threadIds) qaBtwThreads.delete(threadId);
+        emit({ type: "btw.parent.closed", payload: { parentSessionId: event.payload.parentSessionId, threadIds } });
+        return;
+      }
+      if (qaSideConversationEnabled && event.type === "btw.thread.permission.response") return;
       if (event.type === "session.list") {
         emit(buildSessionListEvent());
         scheduleQaBackgroundCompletion();
@@ -480,24 +619,6 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         }
       }
       if (event.type === "session.create") {
-        if (qaSideConversationEnabled && event.payload.activation === "background") {
-          const sessionId = `qa-side-created-${Object.keys(qaSideConversationMessagesBySessionId).length}`;
-          qaSideConversationMessagesBySessionId[sessionId] = [];
-          emit({
-            type: "session.status",
-            payload: {
-              sessionId,
-              status: "idle",
-              title: event.payload.title?.trim() || "新侧聊",
-              cwd: event.payload.cwd || qaSessionCwd,
-              model: "claude-sonnet-4-5",
-              activation: event.payload.activation,
-              clientRequestId: event.payload.clientRequestId,
-              slashCommands: browserPreviewSlashCommandNames,
-            },
-          });
-          return;
-        }
         sessionCreatedAt = Date.now();
         sessionUpdatedAt = sessionCreatedAt;
         sessionStatus = "idle";
@@ -538,28 +659,6 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         syncSession();
       }
       if (event.type === "session.continue") {
-        if (qaSideConversationEnabled && event.payload.sessionId in qaSideConversationMessagesBySessionId) {
-          const capturedAt = Date.now();
-          const userMessage = {
-            type: "user_prompt",
-            prompt: event.payload.prompt,
-            attachments: event.payload.attachments,
-            capturedAt,
-          } as StreamMessage;
-          const assistantMessage = buildQaAssistantMessage(event.payload.sessionId, "SIDE_OK");
-          qaSideConversationMessagesBySessionId[event.payload.sessionId].push(userMessage, assistantMessage);
-          emit({ type: "stream.user_prompt", payload: { sessionId: event.payload.sessionId, prompt: event.payload.prompt, capturedAt } });
-          emit({ type: "stream.message", payload: { sessionId: event.payload.sessionId, message: assistantMessage } });
-          emit({
-            type: "session.status",
-            payload: {
-              sessionId: event.payload.sessionId,
-              status: "completed",
-              model: event.payload.runtime?.model,
-            },
-          });
-          return;
-        }
         sessionUpdatedAt = Date.now();
         sessionStatus = "completed";
         sessionModel = event.payload.runtime?.model?.trim() || sessionModel;

@@ -135,8 +135,8 @@ function isPathWithinOrEqualRoot(rootPath: string, candidatePath: string): boole
   return rootPath === candidatePath || isPathInsideRoot(rootPath, candidatePath);
 }
 
-function isVisiblePreviewEntry(name: string): boolean {
-  return !name.startsWith(".") || name === ".env";
+function isVisiblePreviewEntry(name: string, type: "file" | "directory"): boolean {
+  return type === "directory" || !name.startsWith(".") || name === ".env";
 }
 
 function isIgnoredPreviewDirectory(name: string): boolean {
@@ -336,10 +336,10 @@ export async function listPreviewDirectoryForRenderer(
 
     const gitignoreRules = await loadPreviewGitignoreRules(resolved.rootPath);
     const candidates = (await readdir(resolved.realPath, { withFileTypes: true }))
-      .filter((entry) => isVisiblePreviewEntry(entry.name))
       .flatMap((entry) => {
         const type = entry.isDirectory() ? "directory" as const : entry.isFile() ? "file" as const : null;
         if (!type) return [];
+        if (!isVisiblePreviewEntry(entry.name, type)) return [];
         if (type === "directory" && isIgnoredPreviewDirectory(entry.name)) return [];
         const entryPath = join(resolved.realPath, entry.name);
         const relativePath = normalizePreviewRelativePath(relative(resolved.rootPath, entryPath), entry.name);
@@ -429,13 +429,13 @@ export async function listPreviewFilesForRenderer(
       }
 
       const sortedChildren = children
-        .filter((entry) => isVisiblePreviewEntry(entry.name))
         .sort((left, right) => left.name.localeCompare(right.name));
 
       for (const child of sortedChildren) {
         const childPath = join(currentPath, child.name);
         const childRelativePath = normalizePreviewRelativePath(relative(rootPath, childPath), child.name);
         const childIsDirectory = child.isDirectory();
+        if (!isVisiblePreviewEntry(child.name, childIsDirectory ? "directory" : "file")) continue;
         if (isPreviewGitignored(gitignoreRules, childRelativePath, childIsDirectory)) continue;
         if (childIsDirectory) {
           if (!isIgnoredPreviewDirectory(child.name)) {

@@ -359,6 +359,20 @@ describe("activity workspace tabs", () => {
     assert.doesNotMatch(appSource, /workspaceView[\s\S]{0,180}closeBrowserWorkbench/);
   });
 
+  it("renders one shared workspace tab bar above both rail and browser content", () => {
+    const appSource = readFileSync("src/ui/App.tsx", "utf8");
+    const railSource = readFileSync("src/ui/components/ActivityRail.tsx", "utf8");
+    const browserSource = readFileSync("src/ui/components/BrowserWorkbenchPage.tsx", "utf8");
+
+    assert.equal((appSource.match(/<ActivityWorkspaceTabs/g) ?? []).length, 1);
+    assert.match(appSource, /activeTab=\{workspaceView === "browser" \? "browser" : activityRailTab\}/);
+    assert.match(appSource, /showSidechatTab=\{activeHasSidechatTab\}/);
+    assert.match(appSource, /onCreateSidechatTab=\{openSidechatWorkspace\}/);
+    assert.doesNotMatch(railSource, /ActivityWorkspaceTabs/);
+    assert.doesNotMatch(browserSource, /ActivityWorkspaceTabs/);
+    assert.doesNotMatch(browserSource, /onOpenUsage|onOpenPreview|onOpenGit|onOpenTerminal/);
+  });
+
   it("switches to the browser workspace when an agent opens a BrowserView page", () => {
     const appSource = readFileSync("src/ui/App.tsx", "utf8");
     const managerSource = readFileSync("src/electron/browser-manager.ts", "utf8");
@@ -384,8 +398,8 @@ describe("activity workspace tabs", () => {
     assert.match(appSource, /terminalTabBySessionId/);
     assert.match(appSource, /terminalTabBySessionId\[activeSessionId\] === true/);
     assert.match(appSource, /setActiveSessionActivityRailTab\("terminal"\)/);
-    assert.match(railSource, /showGitTab=\{hasGitTab\}/);
-    assert.match(railSource, /showTerminalTab=\{hasTerminalTab\}/);
+    assert.match(appSource, /showGitTab=\{activeHasGitTab\}/);
+    assert.match(appSource, /showTerminalTab=\{activeHasTerminalTab\}/);
     assert.match(railSource, /selectedTab === "terminal"/);
     assert.match(tabsSource, /buildActivityWorkspaceCreateOptions/);
   });

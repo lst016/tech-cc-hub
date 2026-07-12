@@ -60,6 +60,10 @@ export function extractApiModelsFromListPayload(payload: unknown): ImportedApiMo
   return Array.from(deduped.values());
 }
 
+export function extractMiniMaxTextModelsFromListPayload(payload: unknown): ImportedApiModel[] {
+  return extractApiModelsFromListPayload(payload).filter(({ name }) => /^minimax-m\d+(?:\.\d+)?(?:[-._].+)?$/i.test(name));
+}
+
 export function getImportedApiModelNames(models: readonly ImportedApiModel[]): string[] {
   return models.map((model) => model.name);
 }

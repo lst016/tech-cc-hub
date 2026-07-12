@@ -15,7 +15,7 @@ import MDContent from "../render/markdown";
 import { DecisionPanel } from "./DecisionPanel";
 import { resolveImageAttachmentSrc } from "../../shared/attachments";
 import { copyTextToClipboard as copyText } from "../utils/clipboard";
-import { OPEN_BROWSER_WORKBENCH_URL_EVENT, PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT, PROMPT_SUBMIT_EVENT } from "../events";
+import { OPEN_BROWSER_WORKBENCH_URL_EVENT, OPEN_SIDE_CONVERSATION_EVENT, PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT, PROMPT_SUBMIT_EVENT } from "../events";
 import { TASK_TOOL_NAMES } from "../../shared/claude-agent-teams";
 import { normalizeTaskCreateArgs } from "../../shared/plan-progress";
 import {
@@ -1134,6 +1134,17 @@ const CollapsibleText = ({
             >
               <span aria-hidden="true">↩</span>
               <span className="text-ink-700">添加到对话</span>
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 bg-white px-3.5 text-[13px] font-medium text-ink-700 transition-colors hover:bg-accent/6 hover:text-accent focus-visible:relative focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/35"
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent(OPEN_SIDE_CONVERSATION_EVENT));
+                clearSelectionDraft();
+              }}
+            >
+              <span aria-hidden="true">↗</span>
+              <span>侧边对话</span>
             </button>
             <button
               type="button"

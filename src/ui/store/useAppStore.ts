@@ -916,7 +916,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       case "session.status": {
         const { sessionId, status, title, cwd, model, executionMode, reasoningMode, permissionMode, slashCommands } = event.payload;
         const isNewSession = !state.sessions[sessionId];
-        const shouldActivateNewSession = event.payload.activation !== "background";
         set((state) => {
           const existing = state.sessions[sessionId] ?? createSession(sessionId);
           return {
@@ -939,12 +938,12 @@ export const useAppStore = create<AppState>((set, get) => ({
           };
         });
 
-        if (state.pendingStart && shouldActivateNewSession) {
+        if (state.pendingStart) {
           get().setActiveSessionId(sessionId);
           set({ pendingStart: false, showStartModal: false });
         }
 
-        if (isNewSession && shouldActivateNewSession) {
+        if (isNewSession) {
           get().setActiveSessionId(sessionId);
         }
 

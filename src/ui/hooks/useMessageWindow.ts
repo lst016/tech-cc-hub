@@ -1,10 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
 import type { StreamMessage } from "../types";
-import { getUserPromptAnchoredWindowStart } from "../utils/render-history-window";
+import {
+  getUserPromptAnchoredWindowStart,
+  getVisibleLimitForMessageIndex,
+} from "../utils/render-history-window";
 
 const INITIAL_VISIBLE_MESSAGE_LIMIT = 160;
 const LOAD_MORE_MESSAGE_STEP = 120;
-const MAX_ANCHORED_VISIBLE_MESSAGES = 260;
 
 export interface IndexedMessage {
   originalIndex: number;
@@ -17,6 +19,7 @@ export interface MessageWindowState {
   isLoadingHistory: boolean;
   isAtBeginning: boolean;
   loadMoreMessages: () => void;
+  revealMessage: (originalIndex: number) => void;
   resetToLatest: () => void;
   totalMessages: number;
   totalUserInputs: number;
@@ -37,7 +40,6 @@ export function useMessageWindow(
   const windowStart = getUserPromptAnchoredWindowStart(
     messages,
     targetWindowStart,
-    Math.max(visibleLimit, MAX_ANCHORED_VISIBLE_MESSAGES),
   );
   const hasMoreLocalHistory = windowStart > 0;
   const hasMoreHistory = hasMoreLocalHistory || hasPersistedHistory;
@@ -76,12 +78,17 @@ export function useMessageWindow(
     setVisibleLimit(INITIAL_VISIBLE_MESSAGE_LIMIT);
   }, []);
 
+  const revealMessage = useCallback((originalIndex: number) => {
+    setVisibleLimit((current) => getVisibleLimitForMessageIndex(messages.length, originalIndex, current));
+  }, [messages.length]);
+
   return {
     visibleMessages,
     hasMoreHistory,
     isLoadingHistory,
     isAtBeginning: !hasMoreHistory && messages.length > 0,
     loadMoreMessages,
+    revealMessage,
     resetToLatest,
     totalMessages: messages.length,
     totalUserInputs,

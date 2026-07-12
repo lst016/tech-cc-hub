@@ -6,11 +6,11 @@ describe("git workbench UI source wiring", () => {
   it("adds Git as a first-class activity workspace tab", () => {
     const tabsSource = readFileSync("src/ui/utils/activity-workspace-tabs.ts", "utf8");
     const railSource = readFileSync("src/ui/components/ActivityRail.tsx", "utf8");
-    const browserSource = readFileSync("src/ui/components/BrowserWorkbenchPage.tsx", "utf8");
+    const appSource = readFileSync("src/ui/App.tsx", "utf8");
 
     assert.match(tabsSource, /id: "git"/);
     assert.match(railSource, /selectedTab === "git"/);
-    assert.match(browserSource, /onOpenGit/);
+    assert.match(appSource, /onCreateGitTab=\{openGitWorkspace\}/);
   });
 
   it("keeps Git mutations behind preload IPC methods", () => {

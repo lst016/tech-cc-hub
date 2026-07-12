@@ -1,60 +1,42 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { MessageCircle, Plus, Send, Square } from "lucide-react";
+import { useEffect, useMemo, useRef } from "react";
+import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import { MessageCircle, Plus, X } from "lucide-react";
+
+import { useBtwStore } from "../store/useBtwStore.js";
 import type { ClientEvent } from "../types.js";
-import { useAppStore } from "../store/useAppStore.js";
-import { buildSideConversationTargets, canSendSideConversationDraft } from "../utils/side-conversation.js";
-import { DecisionPanel } from "./DecisionPanel.js";
 import { ChatTranscript } from "./chat/ChatTranscript.js";
+import { PromptInput } from "./prompt-input/PromptInput.js";
+import { useBtwPromptController } from "./prompt-input/useBtwPromptController.js";
 
 export type SideConversationPanelProps = {
-  primarySessionId: string;
-  sideSessionId: string | null;
+  parentSessionId: string;
   connected: boolean;
-  partialMessage: string;
-  onSelectSession: (sessionId: string | null) => void;
-  onCreateSession: () => void;
-  onRequestHistory: (sessionId: string) => void;
   sendEvent: (event: ClientEvent) => void;
+  onSendMessage?: () => void;
 };
 
+const EMPTY_THREAD_IDS: string[] = [];
+
 export function SideConversationPanel({
-  primarySessionId,
-  sideSessionId,
+  parentSessionId,
   connected,
-  partialMessage,
-  onSelectSession,
-  onCreateSession,
-  onRequestHistory,
   sendEvent,
+  onSendMessage,
 }: SideConversationPanelProps) {
-  const sessions = useAppStore((state) => state.sessions);
-  const apiConfigSettings = useAppStore((state) => state.apiConfigSettings);
-  const runtimeModel = useAppStore((state) => state.runtimeModel);
-  const reasoningMode = useAppStore((state) => state.reasoningMode);
-  const permissionMode = useAppStore((state) => state.permissionMode);
-  const workflowMode = useAppStore((state) => state.workflowMode);
-  const resolvePermissionRequest = useAppStore((state) => state.resolvePermissionRequest);
-  const [draft, setDraft] = useState("");
+  const threadIds = useBtwStore((state) => state.threadIdsByParent[parentSessionId] ?? EMPTY_THREAD_IDS);
+  const activeThreadId = useBtwStore((state) => state.activeThreadIdByParent[parentSessionId] ?? null);
+  const activeThread = useBtwStore((state) => activeThreadId ? state.threads[activeThreadId] : undefined);
+  const threadsById = useBtwStore((state) => state.threads);
+  const threads = useMemo(
+    () => threadIds.map((threadId) => threadsById[threadId]).filter((thread) => Boolean(thread)),
+    [threadIds, threadsById],
+  );
+  const setActiveThread = useBtwStore((state) => state.setActiveThread);
+  const resolvePermissionRequest = useBtwStore((state) => state.resolvePermissionRequest);
+  const clearThread = useBtwStore((state) => state.clearThread);
+  const controller = useBtwPromptController(activeThreadId, sendEvent);
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldFollowOutputRef = useRef(true);
-  const targets = useMemo(
-    () => buildSideConversationTargets(sessions, primarySessionId),
-    [primarySessionId, sessions],
-  );
-  const sideSession = sideSessionId ? sessions[sideSessionId] : undefined;
-  const enabledProfile = apiConfigSettings.profiles.find((profile) => profile.enabled) ?? apiConfigSettings.profiles[0];
-  const model = sideSession?.model?.trim() || runtimeModel.trim() || enabledProfile?.model?.trim() || "";
-  const isRunning = sideSession?.status === "running";
-  const canSend = canSendSideConversationDraft({ draft, connected, status: sideSession?.status, model });
-  const permissionRequest = sideSession?.permissionRequests[0];
-
-  useEffect(() => {
-    if (sideSessionId && !sideSession) onSelectSession(null);
-  }, [onSelectSession, sideSession, sideSessionId]);
-
-  useEffect(() => {
-    if (sideSession && !sideSession.hydrated) onRequestHistory(sideSession.id);
-  }, [onRequestHistory, sideSession]);
 
   useEffect(() => {
     const scroller = scrollRef.current;
@@ -63,139 +45,130 @@ export function SideConversationPanel({
       scroller.scrollTop = scroller.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [partialMessage, sideSession?.messages.length]);
+  }, [activeThread?.messages.length, activeThread?.partialMessage]);
 
-  const handleSend = () => {
-    if (!sideSessionId || !canSend) return;
-    sendEvent({
-      type: "session.continue",
-      payload: {
-        sessionId: sideSessionId,
-        prompt: draft.trim(),
-        runtime: {
-          model,
-          reasoningMode,
-          permissionMode: permissionMode === "plan" ? "bypassPermissions" : permissionMode,
-          workflowMode,
-        },
-      },
-    });
-    setDraft("");
+  const createThread = () => {
+    if (!connected) return;
+    sendEvent({ type: "btw.thread.create", payload: { parentSessionId } });
   };
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-      event.preventDefault();
-      handleSend();
-    }
+  const closeThread = (threadId: string) => {
+    sendEvent({ type: "btw.thread.close", payload: { threadId } });
+    clearThread(threadId);
+  };
+  const handlePermissionResult = (toolUseId: string, result: PermissionResult) => {
+    if (!activeThreadId) return;
+    sendEvent({
+      type: "btw.thread.permission.response",
+      payload: { threadId: activeThreadId, toolUseId, result },
+    });
+    resolvePermissionRequest(activeThreadId, toolUseId);
   };
 
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label="侧边对话">
-      <header className="flex items-center gap-2 border-b border-black/6 px-3 py-2.5">
-        <MessageCircle className="h-4 w-4 shrink-0 text-accent" aria-hidden="true" />
-        <select
-          aria-label="选择侧聊会话"
-          value={sideSessionId ?? ""}
-          onChange={(event) => onSelectSession(event.target.value || null)}
-          className="h-8 min-w-0 flex-1 rounded-lg border border-black/10 bg-white px-2 text-xs font-medium text-ink-800 outline-none focus:border-accent/40"
-        >
-          <option value="">选择会话</option>
-          {targets.map((target) => (
-            <option key={target.id} value={target.id}>{target.title || "未命名会话"}</option>
+      <header className="border-b border-black/6 bg-white/92 px-2 py-2">
+        <div className="flex items-center gap-1 overflow-x-auto" role="tablist" aria-label="侧聊线程">
+          <MessageCircle className="mx-1 h-4 w-4 shrink-0 text-accent" aria-hidden="true" />
+          {threads.map((thread) => (
+            <div
+              key={thread.id}
+              className={`flex min-w-0 shrink-0 items-center rounded-lg border text-xs ${thread.id === activeThreadId ? "border-accent/35 bg-[#fff4ee] text-accent" : "border-black/8 bg-white text-ink-700"}`}
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={thread.id === activeThreadId}
+                className="max-w-32 truncate px-2 py-1.5"
+                onClick={() => setActiveThread(parentSessionId, thread.id)}
+              >
+                <span className={`mr-1 inline-block h-1.5 w-1.5 rounded-full ${thread.status === "running" ? "animate-pulse bg-emerald-500" : thread.status === "error" ? "bg-red-500" : "bg-ink-300"}`} />
+                {thread.title}
+              </button>
+              <button
+                type="button"
+                className="mr-1 grid h-5 w-5 place-items-center rounded hover:bg-black/6"
+                aria-label={`关闭 ${thread.title}`}
+                onClick={() => closeThread(thread.id)}
+              >
+                <X className="h-3 w-3" aria-hidden="true" />
+              </button>
+            </div>
           ))}
-        </select>
-        <button
-          type="button"
-          onClick={onCreateSession}
-          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-black/10 bg-white px-2 text-xs font-semibold text-ink-700 transition hover:bg-black/[0.03]"
-          aria-label="新建侧聊"
-        >
-          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-          新建
-        </button>
+          <button
+            type="button"
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-dashed border-black/15 text-ink-500 hover:border-accent/40 hover:bg-[#fff4ee] hover:text-accent disabled:opacity-50"
+            aria-label="新建侧聊线程"
+            onClick={createThread}
+            disabled={!connected}
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        </div>
       </header>
 
-      <div
-        ref={scrollRef}
-        role="region"
-        aria-label="侧聊消息"
-        className="min-h-0 flex-1 overflow-y-auto px-3 py-4"
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          shouldFollowOutputRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 72;
-        }}
-      >
-        {targets.length === 0 && !sideSession ? (
-          <div className="grid h-full place-items-center text-center text-sm text-muted">
-            <div>
-              <p>当前没有其他会话</p>
-              <button type="button" onClick={onCreateSession} className="mt-3 rounded-lg bg-ink-900 px-3 py-2 text-xs font-semibold text-white">新建侧聊</button>
-            </div>
-          </div>
-        ) : !sideSession ? (
-          <div className="grid h-full place-items-center text-center text-sm text-muted">请选择一个侧聊会话</div>
-        ) : (
-          <div className="space-y-3">
-            {sideSession.error && (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">{sideSession.error}</div>
+      {activeThread && controller ? (
+        <>
+          <div
+            ref={scrollRef}
+            role="region"
+            aria-label="侧边对话消息"
+            className="min-h-0 flex-1 overflow-y-auto px-3 py-4"
+            onScroll={(event) => {
+              const element = event.currentTarget;
+              shouldFollowOutputRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 72;
+            }}
+          >
+            {activeThread.error && (
+              <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">{activeThread.error}</div>
             )}
-            <ChatTranscript messages={sideSession.messages} workspace={sideSession.cwd} isRunning={isRunning} keyPrefix={`sidechat-${sideSession.id}`} />
-            {partialMessage.trim() && (
-              <div className="whitespace-pre-wrap rounded-xl border border-accent/15 bg-white px-3 py-2 text-sm leading-6 text-ink-800 shadow-sm">{partialMessage}</div>
-            )}
-            {permissionRequest && sideSessionId && (
-              <DecisionPanel
-                request={permissionRequest}
-                compact
-                onSubmit={(result) => {
-                  sendEvent({
-                    type: "permission.response",
-                    payload: { sessionId: sideSessionId, toolUseId: permissionRequest.toolUseId, result },
-                  });
-                  resolvePermissionRequest(sideSessionId, permissionRequest.toolUseId);
-                }}
+            {activeThread.messages.length === 0 && !activeThread.partialMessage.trim() ? (
+              <div className="grid min-h-48 place-items-center text-center text-xs leading-5 text-muted">
+                <div>
+                  <MessageCircle className="mx-auto mb-2 h-6 w-6 text-accent/55" aria-hidden="true" />
+                  这是临时侧聊，不会写入主会话。
+                </div>
+              </div>
+            ) : (
+              <ChatTranscript
+                messages={activeThread.messages}
+                workspace={activeThread.cwd}
+                isRunning={activeThread.status === "running"}
+                keyPrefix={`sidechat-${activeThread.id}`}
               />
             )}
+            {(activeThread.partialVisible || activeThread.partialMessage.trim()) && (
+              <div className="mt-3 whitespace-pre-wrap rounded-xl border border-accent/15 bg-white px-3 py-2 text-sm leading-6 text-ink-800 shadow-sm">
+                {activeThread.partialMessage || "正在思考…"}
+              </div>
+            )}
           </div>
-        )}
-      </div>
 
-      <footer className="border-t border-black/6 bg-white/80 p-3">
-        <textarea
-          aria-label="输入侧聊消息"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={!sideSession || !connected}
-          placeholder={sideSession ? "输入侧聊消息，Enter 发送" : "请先选择或新建侧聊"}
-          rows={3}
-          className="w-full resize-none rounded-xl border border-black/10 bg-white px-3 py-2 text-sm leading-6 text-ink-800 outline-none transition focus:border-accent/40 disabled:cursor-not-allowed disabled:bg-black/[0.02]"
-        />
-        <div className="mt-2 flex items-center justify-between gap-2">
-          <span className="truncate text-[11px] text-muted">{!connected ? "连接已断开" : !model ? "请先配置模型" : sideSession?.title || "未选择会话"}</span>
-          {isRunning && sideSessionId ? (
+          <PromptInput
+            key={activeThread.id}
+            controller={controller}
+            embedded
+            sendEvent={sendEvent}
+            onSendMessage={onSendMessage}
+            permissionRequest={activeThread.permissionRequests[0]}
+            onPermissionResult={handlePermissionResult}
+            disabled={!connected}
+          />
+        </>
+      ) : (
+        <div className="grid min-h-0 flex-1 place-items-center px-6 text-center text-sm text-muted">
+          <div>
+            <p>当前没有侧聊线程</p>
             <button
               type="button"
-              aria-label="停止侧聊"
-              onClick={() => sendEvent({ type: "session.stop", payload: { sessionId: sideSessionId } })}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-red-600 px-3 text-xs font-semibold text-white"
+              className="mt-3 rounded-lg border border-accent/25 bg-[#fff4ee] px-3 py-1.5 text-xs font-medium text-accent disabled:opacity-50"
+              onClick={createThread}
+              disabled={!connected}
             >
-              <Square className="h-3 w-3 fill-current" aria-hidden="true" />停止
+              新建侧聊
             </button>
-          ) : (
-            <button
-              type="button"
-              aria-label="发送侧聊消息"
-              onClick={handleSend}
-              disabled={!canSend}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-ink-900 px-3 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-35"
-            >
-              <Send className="h-3.5 w-3.5" aria-hidden="true" />发送
-            </button>
-          )}
+          </div>
         </div>
-      </footer>
+      )}
     </section>
   );
 }

@@ -5,8 +5,6 @@ import { useAppStore } from "../store/useAppStore";
 import { hasRenderableBrowserWorkbenchBounds, shouldAttachBrowserWorkbench } from "../utils/browser-workbench-visibility";
 import { formatIpcInvokeError } from "../utils/ipc-error";
 import { normalizeWorkbenchUrl } from "../utils/workbench-url";
-import { ActivityWorkspaceTabs } from "./ActivityWorkspaceTabs";
-import type { ActivityWorkspaceTab } from "../utils/activity-workspace-tabs";
 import { BrowserRecordingWorkbenchPanel } from "./browser-workbench/BrowserRecordingWorkbenchPanel";
 
 type BrowserWorkbenchPageProps = {
@@ -14,14 +12,7 @@ type BrowserWorkbenchPageProps = {
   initialUrl?: string;
   occluded?: boolean;
   sessionId?: string | null;
-  onOpenUsage?: () => void;
-  onOpenPreview?: () => void;
-  onOpenGit?: () => void;
-  hasGitTab?: boolean;
-  onCloseGit?: () => void;
-  hasTerminalTab?: boolean;
-  onOpenTerminal?: () => void;
-  onCloseTerminal?: () => void;
+  closeRequestVersion?: number;
 };
 
 type AnnotationTool = "screenshot" | "page";
@@ -359,14 +350,7 @@ export function BrowserWorkbenchPage({
   initialUrl = "",
   occluded = false,
   sessionId = null,
-  onOpenUsage,
-  onOpenPreview,
-  onOpenGit,
-  hasGitTab = false,
-  onCloseGit,
-  hasTerminalTab = false,
-  onOpenTerminal,
-  onCloseTerminal,
+  closeRequestVersion = 0,
 }: BrowserWorkbenchPageProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const previewFrameRef = useRef<HTMLIFrameElement | null>(null);
@@ -374,6 +358,7 @@ export function BrowserWorkbenchPage({
   const isEditingUrlRef = useRef(false);
   const internalUrlUpdateRef = useRef<string | null>(null);
   const pendingNavigationRef = useRef<PendingNavigation | null>(null);
+  const closeRequestVersionRef = useRef(closeRequestVersion);
   const initialUrlRef = useRef(initialUrl);
   const sessionIdRef = useRef(sessionId);
   const sessionBrowserState = useAppStore((store) => (sessionId ? store.browserWorkbenchBySessionId[sessionId] : undefined));
@@ -1094,7 +1079,7 @@ export function BrowserWorkbenchPage({
     setStatusText(nextEnabled ? "标注模式已开启" : "标注模式已关闭");
   };
 
-  const handleCloseBrowserTab = async () => {
+  const handleCloseBrowserTab = useCallback(async () => {
     setHasBrowserTab(false);
     if (sessionId) setSessionBrowserHasTab(sessionId, false);
     hasOpenedRef.current = false;
@@ -1122,7 +1107,13 @@ export function BrowserWorkbenchPage({
       await window.electron.closeBrowserWorkbenchDevTools(sessionId ?? undefined);
       await window.electron.closeBrowserWorkbench(sessionId ?? undefined);
     }
-  };
+  }, [hasBrowserRuntime, persistAnnotations, persistUrl, sessionId, setSessionBrowserHasTab, setUrlEditing]);
+
+  useEffect(() => {
+    if (closeRequestVersionRef.current === closeRequestVersion) return;
+    closeRequestVersionRef.current = closeRequestVersion;
+    void handleCloseBrowserTab();
+  }, [closeRequestVersion, handleCloseBrowserTab]);
 
   const handleOpenLocalTarget = useCallback((targetUrl: string) => {
     const browserTargetUrl = toBrowserWorkbenchUrl(targetUrl);
@@ -1151,23 +1142,6 @@ export function BrowserWorkbenchPage({
     setStatusText("正在打开本地页面");
   }, [persistUrl, rememberLocalTarget, sessionId, setSessionBrowserHasTab, setUrlEditing, state.url]);
   const showBrowserSurface = showBrowserChrome;
-  const handleSelectWorkspaceTab = (tab: ActivityWorkspaceTab) => {
-    if (tab === "usage") {
-      onOpenUsage?.();
-      return;
-    }
-    if (tab === "preview") {
-      onOpenPreview?.();
-      return;
-    }
-    if (tab === "git") {
-      onOpenGit?.();
-      return;
-    }
-    if (tab === "terminal") {
-      onOpenTerminal?.();
-    }
-  };
 
   useEffect(() => {
     setLocalTargets(buildLocalBrowserTargets(workspaceKey));
@@ -1189,25 +1163,7 @@ export function BrowserWorkbenchPage({
   }, [localTargets]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-white/82">
-      <div className="relative z-[160] flex h-10 shrink-0 items-center justify-between border-b border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,251,253,0.92))] px-4 backdrop-blur-xl">
-        <ActivityWorkspaceTabs
-          activeTab="browser"
-          showBrowserTab={showBrowserChrome}
-          showGitTab={hasGitTab}
-          showTerminalTab={hasTerminalTab}
-          browserLabel={state.title || "浏览器"}
-          showCreateGitTab={!hasGitTab}
-          showCreateTerminalTab={!hasTerminalTab}
-          onSelectTab={handleSelectWorkspaceTab}
-          onCloseBrowserTab={hasBrowserTab ? () => { void handleCloseBrowserTab(); } : undefined}
-          onCreateGitTab={onOpenGit}
-          onCloseGitTab={hasGitTab ? onCloseGit : undefined}
-          onCreateTerminalTab={onOpenTerminal}
-          onCloseTerminalTab={hasTerminalTab ? onCloseTerminal : undefined}
-        />
-      </div>
-
+    <div className="flex min-h-0 flex-1 flex-col bg-white/82 pt-10">
       {showBrowserSurface ? (
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-b border-black/8 bg-white/72 shadow-[0_24px_70px_rgba(30,38,52,0.08)] backdrop-blur-xl">
         <form onSubmit={handleSubmit} className="grid h-10 shrink-0 grid-cols-[auto_minmax(220px,720px)_auto] items-center gap-3 border-b border-black/8 bg-white/92 px-4">

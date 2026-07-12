@@ -1,0 +1,57 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+test("chat stream mounts an accessible conversation turn timeline beside its content", () => {
+  const appSource = readFileSync("src/ui/App.tsx", "utf8");
+  const timelineSource = readFileSync("src/ui/components/ConversationTurnTimeline.tsx", "utf8");
+  const messageWindowSource = readFileSync("src/ui/hooks/useMessageWindow.ts", "utf8");
+
+  assert.match(appSource, /import \{ ConversationTurnTimeline \}/);
+  assert.match(appSource, /const chatContentRef = useRef<HTMLDivElement>\(null\)/);
+  assert.match(appSource, /buildConversationTurns\(messages\.map\(\(message, originalIndex\) => \(\{ message, originalIndex \}\)\)\)/);
+  assert.match(appSource, /<ConversationTurnTimeline/);
+  assert.match(appSource, /turns=\{conversationTurns\}/);
+  assert.match(appSource, /scrollContainerRef=\{scrollContainerRef\}/);
+  assert.match(appSource, /contentContainerRef=\{chatContentRef\}/);
+  assert.match(appSource, /onSelectTurn=\{scrollToMessageIndex\}/);
+  assert.match(appSource, /revealMessage\(index\)/);
+  assert.match(appSource, /pendingMessageScrollIndexRef/);
+  assert.match(appSource, /matchMedia\("\(prefers-reduced-motion: reduce\)"\)\.matches/);
+  assert.match(appSource, /ref=\{chatContentRef\}[\s\S]{0,180}chat-stream-content/);
+
+  assert.match(timelineSource, /<nav/);
+  assert.match(timelineSource, /data-conversation-turn-timeline/);
+  assert.match(timelineSource, /data-conversation-turn-preview/);
+  assert.match(timelineSource, /data-conversation-turn-index=\{turn\.index\}/);
+  assert.match(timelineSource, /relative flex flex-col gap-1 py-1/);
+  assert.match(timelineSource, /aria-current=\{isActive \? "step" : undefined\}/);
+  assert.match(timelineSource, /onPointerEnter=\{\(\) => openPreview\(turn\.index\)\}/);
+  assert.match(timelineSource, /setActiveIndex\(turn\.index\);[\s\S]{0,160}onSelectTurn\(turn\.originalIndex\)/);
+  assert.match(timelineSource, /aria-describedby=\{isPreviewed \? previewId : undefined\}/);
+  assert.match(timelineSource, /role="tooltip"/);
+  assert.match(timelineSource, /event\.key === "Escape"/);
+  assert.match(timelineSource, /scaleX\(/);
+  assert.match(timelineSource, /translate3d\(/);
+  assert.match(timelineSource, /MAGNETIC_SPRING_EASING/);
+  assert.match(timelineSource, /CSS\.supports\("transition-timing-function", MAGNETIC_SPRING_EASING\)/);
+  assert.match(timelineSource, /previewContentRef/);
+  assert.match(timelineSource, /previewContentRef\.current\.animate\(/);
+  assert.match(timelineSource, /animation\.cancel\(\)/);
+  assert.doesNotMatch(timelineSource, /transition-\[[^\]]*(?:top|width)/);
+  assert.doesNotMatch(timelineSource, /offsetTop/);
+  assert.match(timelineSource, /previewVisible/);
+  assert.match(timelineSource, /cubic-bezier\(0\.16,1,0\.3,1\)/);
+  assert.match(timelineSource, /motion-reduce:transition-none/);
+  assert.match(timelineSource, /requestAnimationFrame/);
+  assert.match(timelineSource, /new ResizeObserver/);
+  assert.match(timelineSource, /shouldShowConversationTurnTimeline\(viewportRect\.width\)/);
+  assert.match(timelineSource, /const \[isVisible, setIsVisible\] = useState\(false\)/);
+  assert.match(timelineSource, /if \(turns\.length < 2 \|\| !isVisible\) return null/);
+  assert.match(timelineSource, /left: CONVERSATION_TURN_TIMELINE_LEFT_OFFSET/);
+  assert.doesNotMatch(timelineSource, /contentRect\.left - hostRect\.left/);
+  assert.match(timelineSource, /chat-message-\$\{turn\.originalIndex\}/);
+  assert.doesNotMatch(timelineSource, /selectVisibleConversationTurns/);
+  assert.match(messageWindowSource, /revealMessage:/);
+  assert.match(messageWindowSource, /getVisibleLimitForMessageIndex/);
+});

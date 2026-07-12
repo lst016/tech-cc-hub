@@ -10,34 +10,64 @@ function readPanelSource(): string {
 }
 
 describe("side conversation panel source contract", () => {
-  it("targets every action at sideSessionId", () => {
+  it("renders private BTW threads instead of mirroring the active session", () => {
     const source = readPanelSource();
 
-    assert.match(source, /type: "session\.continue"[\s\S]{0,220}sessionId: sideSessionId/);
-    assert.match(source, /type: "session\.stop", payload: \{ sessionId: sideSessionId \}/);
-    assert.match(source, /type: "permission\.response"[\s\S]{0,180}sessionId: sideSessionId/);
-    assert.doesNotMatch(source, /activeSessionId/);
+    assert.match(source, /parentSessionId: string/);
+    assert.match(source, /useBtwStore/);
+    assert.match(source, /threadIdsByParent\[parentSessionId\]/);
+    assert.match(source, /activeThreadIdByParent\[parentSessionId\]/);
+    assert.match(source, /<ChatTranscript[\s\S]{0,220}messages=\{activeThread\.messages\}/);
+    assert.match(source, /aria-label="新建侧聊线程"/);
+    assert.match(source, /aria-label=\{`关闭 \$\{thread\.title\}`\}/);
+    assert.match(source, /clearThread\(threadId\)/);
+    assert.doesNotMatch(source, /useAppStore/);
+    assert.doesNotMatch(source, /state\.sessions\[/);
   });
 
-  it("supports accessible selection, transcript, permissions, and keyboard send", () => {
-    const source = readPanelSource();
+  it("reuses PromptInput with an isolated BTW controller instead of owning a textarea", () => {
+    const panelSource = readPanelSource();
+    const promptInputSource = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
+    const controllerSource = readFileSync("src/ui/components/prompt-input/useBtwPromptController.ts", "utf8");
 
-    assert.match(source, /aria-label="选择侧聊会话"/);
-    assert.match(source, /aria-label="输入侧聊消息"/);
-    assert.match(source, /role="region"[\s\S]{0,100}aria-label="侧聊消息"/);
-    assert.match(source, /event\.key === "Enter" && !event\.shiftKey/);
-    assert.match(source, /<ChatTranscript/);
-    assert.match(source, /<DecisionPanel/);
+    assert.match(panelSource, /import \{ PromptInput \}/);
+    assert.match(panelSource, /useBtwPromptController/);
+    assert.match(panelSource, /<PromptInput[\s\S]{0,320}controller=\{controller\}[\s\S]{0,120}embedded/);
+    assert.doesNotMatch(panelSource, /<textarea/);
+    assert.match(promptInputSource, /controller\?: PromptInputController/);
+    assert.match(promptInputSource, /controller \?\?/);
+    assert.match(promptInputSource, /embedded\?: boolean/);
+    assert.match(controllerSource, /type: "btw\.thread\.send"/);
+    assert.match(controllerSource, /type: "btw\.thread\.stop"/);
+    assert.doesNotMatch(controllerSource, /type: "session\.(continue|stop|set_model)"/);
   });
 
-  it("recovers from missing targets and renders stream and scoped errors", () => {
-    const source = readPanelSource();
+  it("routes BTW events separately and keeps both composers mounted", () => {
+    const source = readFileSync("src/ui/App.tsx", "utf8");
 
-    assert.match(source, /onSelectSession\(null\)/);
-    assert.match(source, /sideSession\.error/);
-    assert.match(source, /partialMessage/);
-    assert.match(source, /当前没有其他会话/);
-    assert.match(source, /请选择一个侧聊会话/);
+    assert.match(source, /event\.type\.startsWith\("btw\."\)/);
+    assert.match(source, /useBtwStore\.getState\(\)\.handleServerEvent\(event\)/);
+    assert.match(source, /sideConversationProps=\{activeSessionId \? \{[\s\S]{0,160}parentSessionId: activeSessionId/);
+    assert.doesNotMatch(source, /!\(showActivityRail && activityRailTab === "sidechat"\)/);
+    assert.match(source, /<PromptInput[\s\S]{0,220}sendEvent=\{sendEvent\}/);
+  });
+
+  it("creates the first thread on open and clears all threads when the tab closes", () => {
+    const source = readFileSync("src/ui/App.tsx", "utf8");
+
+    assert.match(source, /type: "btw\.thread\.create"/);
+    assert.match(source, /type: "btw\.parent\.close_all"/);
+    assert.match(source, /clearParent\(activeSessionId\)/);
+  });
+
+  it("opens from a selection without copying selected text into a new draft", () => {
+    const appSource = readFileSync("src/ui/App.tsx", "utf8");
+    const eventCardSource = readFileSync("src/ui/components/EventCard.tsx", "utf8");
+
+    assert.match(appSource, /window\.addEventListener\(OPEN_SIDE_CONVERSATION_EVENT/);
+    assert.match(appSource, /openSidechatWorkspace\(\)/);
+    assert.doesNotMatch(appSource, /buildSideConversationSelectionDraft/);
+    assert.doesNotMatch(eventCardSource, /text: selectionText/);
   });
 
   it("keeps transcript DOM ids isolated by key prefix", () => {
@@ -49,33 +79,14 @@ describe("side conversation panel source contract", () => {
     assert.ok(processSource.includes('id={`${messageIdPrefix}-message-${entry.originalIndex}`}'));
   });
 
-  it("correlates background creation without changing the primary session", () => {
-    const source = readFileSync("src/ui/App.tsx", "utf8");
-
-    assert.match(source, /pendingSideConversationRequestsRef/);
-    assert.match(source, /event\.payload\.activation === "background"/);
-    assert.match(source, /pendingSideConversationRequestsRef\.current\.get\(event\.payload\.clientRequestId\)/);
-    assert.match(source, /setSideSessionIdByPrimarySessionId/);
-    assert.doesNotMatch(source, /setActiveSessionId\(event\.payload\.sessionId\)/);
-  });
-
-  it("opens and closes sidechat as optional per-primary-session state", () => {
-    const source = readFileSync("src/ui/App.tsx", "utf8");
-
-    assert.match(source, /sidechatTabBySessionId/);
-    assert.match(source, /sideSessionIdByPrimarySessionId/);
-    assert.match(source, /setActiveSessionActivityRailTab\("sidechat"\)/);
-    assert.match(source, /activityRailTab === "sidechat"/);
-    assert.match(source, /data-active-session-title/);
-  });
-
-  it("mounts SideConversationPanel only for the sidechat rail tab", () => {
+  it("mounts SideConversationPanel only for the optional sidechat rail tab", () => {
+    const appSource = readFileSync("src/ui/App.tsx", "utf8");
     const source = readFileSync("src/ui/components/ActivityRail.tsx", "utf8");
 
     assert.match(source, /import[\s\S]{0,120}SideConversationPanel/);
-    assert.match(source, /showSidechatTab=\{hasSidechatTab\}/);
+    assert.match(appSource, /showSidechatTab=\{activeHasSidechatTab\}/);
     assert.match(source, /selectedTab === "sidechat"[\s\S]{0,180}<SideConversationPanel/);
-    assert.match(source, /onCreateSidechatTab/);
-    assert.match(source, /onCloseSidechatTab/);
+    assert.match(appSource, /onCreateSidechatTab=\{openSidechatWorkspace\}/);
+    assert.match(appSource, /onCloseSidechatTab=\{activeHasSidechatTab \? closeSidechatWorkspace : undefined\}/);
   });
 });

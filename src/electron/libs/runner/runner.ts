@@ -18,6 +18,12 @@ import {
   isSuccessfulRunnerResult,
   shouldSuppressRunnerErrorAfterSuccessfulResult,
 } from "../../../shared/runner-status.js";
+import {
+  getVisibleTerminalResultText,
+  hasAssistantTextActivity,
+  updateAwaitingVisiblePostToolResponse,
+} from "../../../shared/runner-result-visibility.js";
+import { resolveStructuredOutputIntent } from "../../../shared/structured-output.js";
 import { canMainModelReadImages } from "../../../shared/models/model-capabilities.js";
 import {
   filterEnabledBuiltinMcpServerNames,
@@ -425,13 +431,11 @@ const PLAN_OUTPUT_FORMAT_SCHEMA = {
   required: ["steps"],
 };
 
-const STRUCTURED_OUTPUT_HINT_PATTERN = /璇风敤\s*JSON|缁撴瀯鍖栬緭鍑簗杈撳嚭 JSON|output.*format.*json|json.*schema|structured.*output/i;
-
 const MAX_EMPTY_SUCCESS_AUTO_RETRIES = 2;
 const EMPTY_SUCCESS_RETRY_PROMPT =
   "Continue the task. The previous turn returned no assistant output and made no tool calls. Do not stop or return an empty result; resume from the last concrete step and keep executing.";
 
-function buildEmptySuccessFallbackMessage(sessionId: string, model?: string): SDKMessage {
+function buildVisibleAssistantMessage(sessionId: string, text: string, model?: string): SDKMessage {
   return {
     type: "assistant",
     message: {
@@ -439,7 +443,7 @@ function buildEmptySuccessFallbackMessage(sessionId: string, model?: string): SD
       type: "message",
       role: "assistant",
       model: model ?? "unknown",
-      content: [{ type: "text", text: "本轮工具执行已完成，但模型没有返回文字说明。" }],
+      content: [{ type: "text", text }],
       stop_reason: "end_turn",
       stop_sequence: null,
       usage: { input_tokens: 0, output_tokens: 0 },
@@ -450,6 +454,10 @@ function buildEmptySuccessFallbackMessage(sessionId: string, model?: string): SD
   } as SDKMessage;
 }
 
+function buildEmptySuccessFallbackMessage(sessionId: string, model?: string): SDKMessage {
+  return buildVisibleAssistantMessage(sessionId, "本轮工具执行已完成，但模型没有返回文字说明。", model);
+}
+
 function getRequestedModelName(configModel: string | undefined, runtimeModel: string | undefined): string | undefined {
   const normalizedRuntimeModel = runtimeModel?.trim();
   if (normalizedRuntimeModel) {
@@ -458,22 +466,6 @@ function getRequestedModelName(configModel: string | undefined, runtimeModel: st
 
   const normalizedConfigModel = configModel?.trim();
   return normalizedConfigModel || undefined;
-}
-
-function resolveOutputFormat(
-  runtimeOutputFormat: string | undefined,
-  systemPromptAppend: string | undefined,
-  prompt: string,
-): { type: "json_schema"; schema: Record<string, unknown> } | undefined {
-  if (runtimeOutputFormat === "none") return undefined;
-  if (runtimeOutputFormat === "json") {
-    return { type: "json_schema", schema: PLAN_OUTPUT_FORMAT_SCHEMA };
-  }
-  const systemText = systemPromptAppend ?? "";
-  if (STRUCTURED_OUTPUT_HINT_PATTERN.test(systemText) || STRUCTURED_OUTPUT_HINT_PATTERN.test(prompt)) {
-    return { type: "json_schema", schema: PLAN_OUTPUT_FORMAT_SCHEMA };
-  }
-  return undefined;
 }
 
 function appendBoundedText(current: string, chunk: string, maxChars: number): string {
@@ -494,6 +486,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   let emittedSuccessfulResult = false;
   let emittedTerminalStatus = false;
   let observedAssistantTextActivity = false;
+  let awaitingVisiblePostToolResponse = false;
   let emptySuccessAutoRetries = 0;
   let figmaRestAuthFailureSeen = false;
   let figmaImplementationAnchorSeen = false;
@@ -881,7 +874,10 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           includeAgentTeamsHint: runtimeProfile.enableAgentTeams,
         }) : undefined,
       );
-      const outputFormat = resolveOutputFormat(runtime?.outputFormat, systemPromptAppend, prompt);
+      const structuredOutputIntent = resolveStructuredOutputIntent(runtime?.outputFormat, currentDisplayPrompt);
+      const outputFormat = structuredOutputIntent === "none"
+        ? undefined
+        : { type: "json_schema" as const, schema: PLAN_OUTPUT_FORMAT_SCHEMA };
       const sdkModelOption = getClaudeCodeModelOption(config, effectiveModel);
       const dynamicWorkflowSettings = buildClaudeDynamicWorkflowSettings(currentDisplayPrompt, runtime?.reasoningMode, runtime?.workflowMode);
       const sdkModelSettings = {
@@ -911,6 +907,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         ultracodeEnabled: dynamicWorkflowSettings.ultracode === true,
         runtimeProfile: runtimeProfile.id,
         builtinMcpServers: enabledBuiltinMcpServerNames,
+        structuredOutputIntent,
       });
 
       const q = query({
@@ -1108,6 +1105,10 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         if (hasAssistantTextActivity(message)) {
           observedAssistantTextActivity = true;
         }
+        awaitingVisiblePostToolResponse = updateAwaitingVisiblePostToolResponse(
+          awaitingVisiblePostToolResponse,
+          message,
+        );
         recordToolUseNamesFromMessage(message, toolUseNamesById);
         if (message.type === "system" && "subtype" in message && message.subtype === "init") {
           const sdkSessionId = message.session_id;
@@ -1188,6 +1189,11 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           }
           if (emptySuccess) {
             sendMessage(buildEmptySuccessFallbackMessage(session.id, requestedModelForError));
+          }
+          const visibleResultText = getVisibleTerminalResultText(message, awaitingVisiblePostToolResponse);
+          if (visibleResultText) {
+            sendMessage(buildVisibleAssistantMessage(session.id, visibleResultText, requestedModelForError));
+            awaitingVisiblePostToolResponse = false;
           }
           sendMessage(message);
           onEvent({
@@ -1300,6 +1306,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       figmaSvgAssetSeen = false;
       codeGraphRetrievalSeen = false;
       observedAssistantTextActivity = false;
+      awaitingVisiblePostToolResponse = false;
       emptySuccessAutoRetries = 0;
       await ensureMcpServersForPrompt(nextPrompt, nextAttachments);
       promptInput.enqueue(nextPrompt, nextAttachments);
@@ -2967,24 +2974,6 @@ function createPromptMessage(prompt: string, attachments: PromptAttachment[]): S
     },
     parent_tool_use_id: null,
   };
-}
-
-function hasAssistantTextActivity(message: SDKMessage): boolean {
-  if (message.type !== "assistant") return false;
-  const content = Array.isArray(message.message.content)
-    ? message.message.content
-    : [message.message.content];
-  return content.some((item) => {
-    const value: unknown = item;
-    if (typeof value === "string") return value.trim().length > 0;
-    if (!item || typeof item !== "object") return false;
-    const type = "type" in item ? item.type : undefined;
-    if (type === "text") {
-      const text = "text" in item ? item.text : undefined;
-      return typeof text === "string" && text.trim().length > 0;
-    }
-    return false;
-  });
 }
 
 class PromptInputQueue implements AsyncIterable<SDKUserMessage>, AsyncIterator<SDKUserMessage> {

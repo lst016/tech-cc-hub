@@ -6,6 +6,7 @@ import type {
   ApiConfigProfile,
   ClientEvent,
   PromptAttachment,
+  RuntimeReasoningMode,
 } from "../../types";
 import {
   getCodeReferenceSessionKey,
@@ -139,6 +140,31 @@ type PromptOptimizeResult = {
   error?: string;
 };
 
+export type PromptInputController = {
+  scope: "btw";
+  activeSessionId: string;
+  prompt: string;
+  setPrompt: (value: string) => void;
+  attachments: PromptAttachment[];
+  setAttachments: (value: PromptAttachment[]) => void;
+  cwd: string;
+  model?: string;
+  reasoningMode?: RuntimeReasoningMode;
+  isRunning: boolean;
+  browserAnnotations: [];
+  slashCommands: SlashCommandOption[];
+  handleStop: () => void;
+  setModel: (model: string) => void;
+  setReasoningMode: (mode: RuntimeReasoningMode) => void;
+  setError: (message: string | null) => void;
+  sendPromptDraft: (
+    prompt: string,
+    attachments?: PromptAttachment[],
+    options?: { clearPrompt?: boolean; displayUserPrompt?: boolean; replaceHistoryId?: string },
+  ) => Promise<boolean>;
+  validatePromptDraft: (prompt: string) => string | null;
+};
+
 interface PromptInputProps {
   sendEvent: (event: ClientEvent) => void;
   onSendMessage?: () => void;
@@ -147,6 +173,8 @@ interface PromptInputProps {
   disabled?: boolean;
   leftOffset?: number;
   rightOffset?: number;
+  embedded?: boolean;
+  controller?: PromptInputController;
 }
 
 export function PromptInput({
@@ -157,6 +185,8 @@ export function PromptInput({
   disabled = false,
   leftOffset = 320,
   rightOffset = 340,
+  embedded = false,
+  controller,
 }: PromptInputProps) {
   const storeCwd = useAppStore((state) => state.cwd);
   const storeActiveSessionId = useAppStore((state) => state.activeSessionId);
@@ -164,49 +194,83 @@ export function PromptInput({
     if (!storeActiveSessionId) return "";
     return (state.sessions[storeActiveSessionId] ?? state.archivedSessions[storeActiveSessionId])?.cwd ?? "";
   });
-  const activeGoal = useAppStore((state) => {
+  const storeActiveGoal = useAppStore((state) => {
     if (!storeActiveSessionId) return undefined;
     const session = state.sessions[storeActiveSessionId] ?? state.archivedSessions[storeActiveSessionId];
     if (session?.status !== "running") return undefined;
     const goal = session.latestGoal;
     return goal?.objective && goal.status !== "complete" ? goal : undefined;
   });
-  const activeSessionPlan = useAppStore((state) => {
+  const storeActiveSessionPlan = useAppStore((state) => {
     if (!storeActiveSessionId) return undefined;
     const session = state.sessions[storeActiveSessionId] ?? state.archivedSessions[storeActiveSessionId];
     if (!session?.latestPlan || !shouldShowCurrentSessionPlan(session.latestPlan)) return undefined;
     return session.latestPlan;
   });
-  const activeSessionPlanTitle = useAppStore((state) => {
+  const storeActiveSessionPlanTitle = useAppStore((state) => {
     if (!storeActiveSessionId) return "";
     const session = state.sessions[storeActiveSessionId] ?? state.archivedSessions[storeActiveSessionId];
     return session?.title ?? "";
   });
+  const activeGoal = controller ? undefined : storeActiveGoal;
+  const activeSessionPlan = controller ? undefined : storeActiveSessionPlan;
+  const activeSessionPlanTitle = controller ? "" : storeActiveSessionPlanTitle;
   const selectedWorkspaceCwd = (storeCwd.trim() || storeActiveSessionCwd.trim());
-  const { prompt, setPrompt, isRunning, handleStop, slashCommands, activeSessionId, browserAnnotations, sendPromptDraft, validatePromptDraft } = usePromptActions(
+  const sessionPromptActions = usePromptActions(
     sendEvent,
     { workspaceCwd: selectedWorkspaceCwd },
   );
-  const setBrowserAnnotations = useAppStore((state) => state.setBrowserAnnotations);
-  const setBrowserWorkbenchAnnotations = useAppStore((state) => state.setBrowserWorkbenchAnnotations);
-  const clearBrowserAnnotations = useAppStore((state) => state.clearBrowserAnnotations);
+  const promptActions = controller ?? sessionPromptActions;
+  const { prompt, setPrompt, isRunning, handleStop, slashCommands, activeSessionId, browserAnnotations, sendPromptDraft, validatePromptDraft } = promptActions;
+  const appSetBrowserAnnotations = useAppStore((state) => state.setBrowserAnnotations);
+  const appSetBrowserWorkbenchAnnotations = useAppStore((state) => state.setBrowserWorkbenchAnnotations);
+  const appClearBrowserAnnotations = useAppStore((state) => state.clearBrowserAnnotations);
   const apiConfigSettings = useAppStore((state) => state.apiConfigSettings);
-  const runtimeModel = useAppStore((state) => state.runtimeModel);
-  const setRuntimeModel = useAppStore((state) => state.setRuntimeModel);
-  const setSessionModel = useAppStore((state) => state.setSessionModel);
-  const reasoningMode = useAppStore((state) => state.reasoningMode);
-  const setReasoningMode = useAppStore((state) => state.setReasoningMode);
+  const storeRuntimeModel = useAppStore((state) => state.runtimeModel);
+  const appSetRuntimeModel = useAppStore((state) => state.setRuntimeModel);
+  const appSetSessionModel = useAppStore((state) => state.setSessionModel);
+  const storeReasoningMode = useAppStore((state) => state.reasoningMode);
+  const appSetReasoningMode = useAppStore((state) => state.setReasoningMode);
   const codeReferencesBySessionId = useAppStore((state) => state.codeReferencesBySessionId);
   const messageReferencesBySessionId = useAppStore((state) => state.messageReferencesBySessionId);
   const fileReferencesBySessionId = useAppStore((state) => state.fileReferencesBySessionId);
-  const removeCodeReference = useAppStore((state) => state.removeCodeReference);
-  const updateCodeReference = useAppStore((state) => state.updateCodeReference);
-  const clearCodeReferences = useAppStore((state) => state.clearCodeReferences);
-  const removeMessageReference = useAppStore((state) => state.removeMessageReference);
-  const clearMessageReferences = useAppStore((state) => state.clearMessageReferences);
-  const addFileReference = useAppStore((state) => state.addFileReference);
-  const removeFileReference = useAppStore((state) => state.removeFileReference);
-  const clearFileReferences = useAppStore((state) => state.clearFileReferences);
+  const appRemoveCodeReference = useAppStore((state) => state.removeCodeReference);
+  const appUpdateCodeReference = useAppStore((state) => state.updateCodeReference);
+  const appClearCodeReferences = useAppStore((state) => state.clearCodeReferences);
+  const appRemoveMessageReference = useAppStore((state) => state.removeMessageReference);
+  const appClearMessageReferences = useAppStore((state) => state.clearMessageReferences);
+  const appAddFileReference = useAppStore((state) => state.addFileReference);
+  const appRemoveFileReference = useAppStore((state) => state.removeFileReference);
+  const appClearFileReferences = useAppStore((state) => state.clearFileReferences);
+  const referenceActions = useMemo(() => controller ? {
+    removeCodeReference: (...args: Parameters<typeof appRemoveCodeReference>) => { void args; },
+    updateCodeReference: (...args: Parameters<typeof appUpdateCodeReference>) => { void args; },
+    clearCodeReferences: (...args: Parameters<typeof appClearCodeReferences>) => { void args; },
+    removeMessageReference: (...args: Parameters<typeof appRemoveMessageReference>) => { void args; },
+    clearMessageReferences: (...args: Parameters<typeof appClearMessageReferences>) => { void args; },
+    addFileReference: (...args: Parameters<typeof appAddFileReference>) => { void args; },
+    removeFileReference: (...args: Parameters<typeof appRemoveFileReference>) => { void args; },
+    clearFileReferences: (...args: Parameters<typeof appClearFileReferences>) => { void args; },
+  } : {
+    removeCodeReference: appRemoveCodeReference,
+    updateCodeReference: appUpdateCodeReference,
+    clearCodeReferences: appClearCodeReferences,
+    removeMessageReference: appRemoveMessageReference,
+    clearMessageReferences: appClearMessageReferences,
+    addFileReference: appAddFileReference,
+    removeFileReference: appRemoveFileReference,
+    clearFileReferences: appClearFileReferences,
+  }, [appAddFileReference, appClearCodeReferences, appClearFileReferences, appClearMessageReferences, appRemoveCodeReference, appRemoveFileReference, appRemoveMessageReference, appUpdateCodeReference, controller]);
+  const {
+    removeCodeReference,
+    updateCodeReference,
+    clearCodeReferences,
+    removeMessageReference,
+    clearMessageReferences,
+    addFileReference,
+    removeFileReference,
+    clearFileReferences,
+  } = referenceActions;
   const promptRef = useRef<HTMLDivElement | null>(null);
   const promptDraftRef = useRef(prompt);
   const pendingCursorOffsetRef = useRef<number | null>(null);
@@ -218,7 +282,9 @@ export function PromptInput({
   const compositionEnterPendingRef = useRef(false);
   const [attachmentsBySessionId, setAttachmentsBySessionId] = useState<Record<string, PromptAttachment[]>>({});
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
-  const [queuedMessagesBySession, setQueuedMessagesBySession] = useState<Record<string, QueuedMessageDraft[]>>(readQueuedMessagesFromStorage);
+  const [queuedMessagesBySession, setQueuedMessagesBySession] = useState<Record<string, QueuedMessageDraft[]>>(
+    () => controller ? {} : readQueuedMessagesFromStorage(),
+  );
   const [showSlashBrowser, setShowSlashBrowser] = useState(false);
   const [dismissedSlashQuery, setDismissedSlashQuery] = useState<string | null>(null);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
@@ -238,17 +304,33 @@ export function PromptInput({
   const [goalModeEnabled, setGoalModeEnabled] = useState(false);
   const [workflowForceEnabled, setWorkflowForceEnabled] = useState(false);
   const [dismissedGoalKeyBySessionId, setDismissedGoalKeyBySessionId] = useState<Record<string, string>>({});
-  const setGlobalError = useAppStore((state) => state.setGlobalError);
+  const appSetGlobalError = useAppStore((state) => state.setGlobalError);
+  const setGlobalError = controller?.setError ?? appSetGlobalError;
+  const runtimeModel = controller?.model ?? storeRuntimeModel;
+  const reasoningMode = controller?.reasoningMode ?? storeReasoningMode;
+  const setReasoningMode = controller?.setReasoningMode ?? appSetReasoningMode;
+  const browserAnnotationActions = useMemo(() => controller ? {
+    setBrowserAnnotations: (...args: Parameters<typeof appSetBrowserAnnotations>) => { void args; },
+    setBrowserWorkbenchAnnotations: (...args: Parameters<typeof appSetBrowserWorkbenchAnnotations>) => { void args; },
+    clearBrowserAnnotations: (...args: Parameters<typeof appClearBrowserAnnotations>) => { void args; },
+  } : {
+    setBrowserAnnotations: appSetBrowserAnnotations,
+    setBrowserWorkbenchAnnotations: appSetBrowserWorkbenchAnnotations,
+    clearBrowserAnnotations: appClearBrowserAnnotations,
+  }, [appClearBrowserAnnotations, appSetBrowserAnnotations, appSetBrowserWorkbenchAnnotations, controller]);
+  const { setBrowserAnnotations, setBrowserWorkbenchAnnotations, clearBrowserAnnotations } = browserAnnotationActions;
   const composerDraftSessionKey = getPromptDraftSessionKey(activeSessionId);
   const codeReferenceSessionKey = getCodeReferenceSessionKey(activeSessionId);
-  const activeSessionCwd = useAppStore((state) => {
+  const storeSelectedSessionCwd = useAppStore((state) => {
     if (!activeSessionId) return "";
     return (state.sessions[activeSessionId] ?? state.archivedSessions[activeSessionId])?.cwd ?? "";
   });
-  const activeSessionModel = useAppStore((state) => {
+  const storeSelectedSessionModel = useAppStore((state) => {
     if (!activeSessionId) return "";
     return (state.sessions[activeSessionId] ?? state.archivedSessions[activeSessionId])?.model?.trim() ?? "";
   });
+  const activeSessionCwd = controller?.cwd ?? storeSelectedSessionCwd;
+  const activeSessionModel = controller?.model?.trim() ?? storeSelectedSessionModel;
   const activeGoalKey = activeGoal && activeSessionId
     ? `${activeSessionId}:${activeGoal.status}:${activeGoal.updatedAt}:${activeGoal.objective}`
     : "";
@@ -263,8 +345,16 @@ export function PromptInput({
     }));
   }, [activeGoalKey, activeSessionId]);
   const effectiveCwd = activeSessionCwd.trim() || selectedWorkspaceCwd;
-  const attachments = attachmentsBySessionId[composerDraftSessionKey] ?? EMPTY_ATTACHMENTS;
+  const localAttachments = attachmentsBySessionId[composerDraftSessionKey] ?? EMPTY_ATTACHMENTS;
+  const attachments = controller?.attachments ?? localAttachments;
   const setAttachments = useCallback((nextAttachments: SetStateAction<PromptAttachment[]>) => {
+    if (controller) {
+      const resolvedAttachments = typeof nextAttachments === "function"
+        ? nextAttachments(controller.attachments)
+        : nextAttachments;
+      controller.setAttachments(resolvedAttachments);
+      return;
+    }
     setAttachmentsBySessionId((current) => {
       const currentAttachments = current[composerDraftSessionKey] ?? EMPTY_ATTACHMENTS;
       const resolvedAttachments = typeof nextAttachments === "function"
@@ -281,10 +371,10 @@ export function PromptInput({
         [composerDraftSessionKey]: resolvedAttachments,
       };
     });
-  }, [composerDraftSessionKey]);
-  const codeReferences = codeReferencesBySessionId[codeReferenceSessionKey] || EMPTY_CODE_REFERENCES;
-  const messageReferences = messageReferencesBySessionId[codeReferenceSessionKey] || EMPTY_MESSAGE_REFERENCES;
-  const fileReferences = fileReferencesBySessionId[codeReferenceSessionKey] || EMPTY_FILE_REFERENCES;
+  }, [composerDraftSessionKey, controller]);
+  const codeReferences = controller ? EMPTY_CODE_REFERENCES : codeReferencesBySessionId[codeReferenceSessionKey] || EMPTY_CODE_REFERENCES;
+  const messageReferences = controller ? EMPTY_MESSAGE_REFERENCES : messageReferencesBySessionId[codeReferenceSessionKey] || EMPTY_MESSAGE_REFERENCES;
+  const fileReferences = controller ? EMPTY_FILE_REFERENCES : fileReferencesBySessionId[codeReferenceSessionKey] || EMPTY_FILE_REFERENCES;
   const slashDisplayParts = useMemo(() => buildSlashCommandDisplayParts(prompt, slashCommands), [prompt, slashCommands]);
   const slashCommandContext = useMemo(() => {
     const context = getSlashCommandContext(prompt, cursorIndex || prompt.length);
@@ -368,9 +458,13 @@ export function PromptInput({
   );
   const handleRuntimeModelChange = useCallback((model: string) => {
     const nextModel = model.trim();
-    setRuntimeModel(nextModel);
+    if (controller) {
+      controller.setModel(nextModel);
+      return;
+    }
+    appSetRuntimeModel(nextModel);
     if (activeSessionId) {
-      setSessionModel(activeSessionId, nextModel);
+      appSetSessionModel(activeSessionId, nextModel);
       sendEvent({
         type: "session.set_model",
         payload: {
@@ -379,7 +473,7 @@ export function PromptInput({
         },
       });
     }
-  }, [activeSessionId, sendEvent, setRuntimeModel, setSessionModel]);
+  }, [activeSessionId, appSetRuntimeModel, appSetSessionModel, controller, sendEvent]);
   useEffect(() => {
     promptDraftRef.current = prompt;
   }, [prompt]);
@@ -638,6 +732,10 @@ export function PromptInput({
     submitInFlightRef.current = true;
     try {
       if (isRunning) {
+        if (controller) {
+          setGlobalError("当前侧聊仍在执行中，请等待完成或先停止。");
+          return false;
+        }
         const queued = queueCurrentDraft(promptSnapshot);
         if (queued) incrementModelUsage(selectedRuntimeModel);
         return queued;
@@ -680,7 +778,7 @@ export function PromptInput({
       setSubmissionStatus(null);
       submitInFlightRef.current = false;
     }
-  }, [attachments, browserAnnotations, clearComposer, clearPromptDraftText, codeReferences, fileReferences, getCurrentPromptDraft, goalModeEnabled, isRunning, messageReferences, onSendMessage, queueCurrentDraft, selectedRuntimeModel, sendPromptDraft, setAttachments, setGlobalError, setPromptDraft, validatePromptDraft, workflowForceEnabled]);
+  }, [attachments, browserAnnotations, clearComposer, clearPromptDraftText, codeReferences, controller, fileReferences, getCurrentPromptDraft, goalModeEnabled, isRunning, messageReferences, onSendMessage, queueCurrentDraft, selectedRuntimeModel, sendPromptDraft, setAttachments, setGlobalError, setPromptDraft, validatePromptDraft, workflowForceEnabled]);
 
   useEffect(() => {
     const handlePromptSubmit = () => {
@@ -1202,8 +1300,9 @@ export function PromptInput({
   }, [activeSessionId, currentSessionQueue, disabled, isRunning, onSendMessage, sendPromptDraft]);
 
   useEffect(() => {
+    if (controller) return;
     writeQueuedMessagesToStorage(queuedMessagesBySession);
-  }, [queuedMessagesBySession]);
+  }, [controller, queuedMessagesBySession]);
 
   useEffect(() => {
     if (!activeGoal) return;
@@ -1213,6 +1312,7 @@ export function PromptInput({
   }, [activeGoal]);
 
   useEffect(() => {
+    if (embedded) return;
     const composerElement = composerRef.current;
     if (!composerElement) return;
 
@@ -1232,14 +1332,20 @@ export function PromptInput({
       window.removeEventListener("resize", updateComposerOffset);
       document.documentElement.style.removeProperty("--composer-bottom-offset");
     };
-  }, []);
+  }, [embedded]);
+
+  const composerSurfaceWidthClass = embedded
+    ? "w-full min-w-0 max-w-none"
+    : COMPOSER_SURFACE_WIDTH_CLASS;
 
   return (
     <section
       ref={composerRef}
       data-prompt-composer
-      className="fixed bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-[rgba(229,234,240,0.64)] via-[rgba(229,234,240,0.12)] to-transparent px-3 pb-3 pt-3 lg:pb-4"
-      style={{
+      className={embedded
+        ? "relative z-20 shrink-0 border-t border-black/6 bg-white/85 px-3 pb-3 pt-3"
+        : "fixed bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-[rgba(229,234,240,0.64)] via-[rgba(229,234,240,0.12)] to-transparent px-3 pb-3 pt-3 lg:pb-4"}
+      style={embedded ? undefined : {
         marginLeft: `${leftOffset}px`,
         marginRight: `${rightOffset}px`,
       }}
@@ -1255,7 +1361,7 @@ export function PromptInput({
         </div>
       )}
       {visibleGoal && (
-        <div className={`prompt-composer-goal mx-auto mb-2 ${COMPOSER_SURFACE_WIDTH_CLASS}`}>
+        <div className={`prompt-composer-goal mx-auto mb-2 ${composerSurfaceWidthClass}`}>
           <div className="flex min-h-10 items-center gap-2 rounded-2xl border border-[#e3e7ee] bg-[#fbfcfe]/95 px-3 py-2 text-[13px] text-ink-700 shadow-[0_8px_24px_rgba(15,18,24,0.05)] backdrop-blur-xl">
             <span
               className={`h-2 w-2 shrink-0 rounded-full ${visibleGoal.status === "blocked" ? "bg-amber-500" : "bg-[#34c759]"}`}
@@ -1279,7 +1385,7 @@ export function PromptInput({
         </div>
       )}
       {showSlashPalette && (
-        <div className={`prompt-composer-surface relative z-[130] mx-auto mb-3 ${COMPOSER_SURFACE_WIDTH_CLASS}`}>
+        <div className={`prompt-composer-surface relative z-[130] mx-auto mb-3 ${composerSurfaceWidthClass}`}>
           <div className="overflow-hidden rounded-[24px] border border-black/6 bg-white/94 shadow-[0_18px_50px_rgba(30,38,52,0.08)] backdrop-blur">
             <div className="flex items-center justify-between gap-3 border-b border-black/6 px-4 py-2 text-xs font-medium text-muted">
               <span>可用 Slash 命令</span>
@@ -1308,7 +1414,7 @@ export function PromptInput({
         </div>
       )}
       {showFileMentionPalette && (
-        <div className={`prompt-composer-surface mx-auto mb-3 ${COMPOSER_SURFACE_WIDTH_CLASS}`}>
+        <div className={`prompt-composer-surface mx-auto mb-3 ${composerSurfaceWidthClass}`}>
           <div className="overflow-hidden rounded-[22px] border border-[#d0d7de] bg-white/96 shadow-[0_18px_50px_rgba(30,38,52,0.10)] backdrop-blur">
             <div className="flex items-center justify-between gap-3 border-b border-black/6 px-4 py-2 text-xs font-medium text-muted">
               <span>@ 文件提及</span>
@@ -1374,7 +1480,7 @@ export function PromptInput({
         </div>
       )}
       <div
-        className={`prompt-composer-surface prompt-composer-card relative mx-auto ${COMPOSER_SURFACE_WIDTH_CLASS} rounded-[18px] border bg-white px-4 pb-3 pt-4 shadow-[0_10px_30px_rgba(15,18,24,0.07)] transition-colors ${isDraggingFiles ? "border-accent/45 shadow-[0_18px_42px_rgba(255,122,64,0.16)]" : "border-[#d9dde3]"} ${composerExpanded ? "prompt-composer-card--expanded" : ""}`}
+        className={`prompt-composer-surface prompt-composer-card relative mx-auto ${composerSurfaceWidthClass} rounded-[18px] border bg-white px-4 pb-3 pt-4 shadow-[0_10px_30px_rgba(15,18,24,0.07)] transition-colors ${isDraggingFiles ? "border-accent/45 shadow-[0_18px_42px_rgba(255,122,64,0.16)]" : "border-[#d9dde3]"} ${composerExpanded ? "prompt-composer-card--expanded" : ""}`}
       >
         {isDraggingFiles && (
           <div className="pointer-events-none absolute inset-2 z-10 grid place-items-center rounded-[22px] border border-dashed border-accent/45 bg-white/75 text-sm font-semibold text-accent shadow-inner backdrop-blur-sm">

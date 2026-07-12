@@ -77,6 +77,10 @@ export function Sidebar({
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const setActiveSessionId = useAppStore((state) => state.setActiveSessionId);
   const [showArchived, setShowArchived] = useState(false);
+  const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
+  const [sessionSearchQuery, setSessionSearchQuery] = useState("");
+  const [sessionSearchActiveIndex, setSessionSearchActiveIndex] = useState(0);
+  const sessionSearchInputRef = useRef<HTMLInputElement | null>(null);
   const [resumeSessionId, setResumeSessionId] = useState<string | null>(null);
   const [renameDialog, setRenameDialog] = useState<{ sessionId: string; initialTitle: string } | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
@@ -252,6 +256,34 @@ export function Sidebar({
       return next;
     });
   }, [activeSessionId]);
+
+  const sessionSearchResults = useMemo(() => {
+    const query = sessionSearchQuery.trim().toLocaleLowerCase();
+    if (!query) return sessionList.slice(0, 12);
+
+    return sessionList.filter((session) => (
+      [session.title, formatWorkspaceName(session.cwd), session.cwd ?? ""]
+        .some((value) => value.toLocaleLowerCase().includes(query))
+    )).slice(0, 12);
+  }, [sessionList, sessionSearchQuery]);
+
+  useEffect(() => {
+    setSessionSearchActiveIndex((current) => Math.min(current, Math.max(0, sessionSearchResults.length - 1)));
+  }, [sessionSearchResults.length]);
+
+  useEffect(() => {
+    if (!sessionSearchOpen) {
+      setSessionSearchQuery("");
+      setSessionSearchActiveIndex(0);
+      return;
+    }
+    window.requestAnimationFrame(() => sessionSearchInputRef.current?.focus());
+  }, [sessionSearchOpen]);
+
+  const selectSearchedSession = (sessionId: string) => {
+    setActiveSessionId(sessionId);
+    setSessionSearchOpen(false);
+  };
 
   const workspaceGroups = useMemo(() => {
     const groups = new Map<string, { cwd?: string; sessions: typeof sessionList }>();
@@ -455,6 +487,18 @@ export function Sidebar({
             onClick={() => setShowArchived((current) => !current)}
           >
             归档
+          </button>
+          <button
+            type="button"
+            className="rounded-lg border border-black/6 bg-white/65 p-2 text-ink-600 transition-colors hover:bg-white hover:text-ink-800"
+            onClick={() => setSessionSearchOpen(true)}
+            aria-label="搜索会话"
+            title="搜索会话"
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.9">
+              <circle cx="11" cy="11" r="6.5" />
+              <path d="m16 16 4.25 4.25" />
+            </svg>
           </button>
         </div>
 
@@ -741,6 +785,78 @@ export function Sidebar({
           </button>
         </div>
       </div>
+      <Dialog.Root open={sessionSearchOpen} onOpenChange={setSessionSearchOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[21000] bg-ink-900/15 backdrop-blur-[2px]" />
+          <Dialog.Content
+            className="fixed left-1/2 top-[18%] z-[21010] w-[min(600px,calc(100vw-32px))] -translate-x-1/2 rounded-xl border border-black/8 bg-white p-2 shadow-[0_20px_50px_rgba(15,23,42,0.18)] outline-none"
+            aria-describedby={undefined}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setSessionSearchActiveIndex((current) => Math.min(current + 1, sessionSearchResults.length - 1));
+              }
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setSessionSearchActiveIndex((current) => Math.max(current - 1, 0));
+              }
+              if (event.key === "Enter") {
+                const session = sessionSearchResults[sessionSearchActiveIndex];
+                if (session) {
+                  event.preventDefault();
+                  selectSearchedSession(session.id);
+                }
+              }
+            }}
+          >
+            <Dialog.Title className="sr-only">搜索会话</Dialog.Title>
+            <div className="flex items-center gap-3 border-b border-black/8 px-3 py-2">
+              <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-muted" fill="none" stroke="currentColor" strokeWidth="1.9">
+                <circle cx="11" cy="11" r="6.5" />
+                <path d="m16 16 4.25 4.25" />
+              </svg>
+              <input
+                ref={sessionSearchInputRef}
+                type="search"
+                value={sessionSearchQuery}
+                onChange={(event) => {
+                  setSessionSearchQuery(event.target.value);
+                  setSessionSearchActiveIndex(0);
+                }}
+                className="min-w-0 flex-1 bg-transparent py-1.5 text-sm text-ink-900 outline-none placeholder:text-muted"
+                placeholder="搜索会话"
+              />
+              <kbd className="rounded bg-surface-secondary px-1.5 py-0.5 text-[11px] text-muted">Esc</kbd>
+            </div>
+            <div className="max-h-[min(480px,calc(100vh-220px))] overflow-y-auto p-1">
+              {sessionSearchResults.length === 0 ? (
+                <div className="px-3 py-8 text-center text-sm text-muted">没有匹配的会话</div>
+              ) : (
+                sessionSearchResults.map((session, index) => {
+                  const isActive = index === sessionSearchActiveIndex;
+                  return (
+                    <button
+                      key={session.id}
+                      type="button"
+                      className={`flex h-10 w-full items-center gap-3 rounded-lg px-3 text-left transition-colors ${isActive ? "bg-surface-secondary" : "hover:bg-surface-secondary"}`}
+                      onMouseEnter={() => setSessionSearchActiveIndex(index)}
+                      onClick={() => selectSearchedSession(session.id)}
+                    >
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${session.status === "running" ? "bg-success" : "bg-black/15"}`} />
+                      <span className="min-w-0 flex-1 truncate text-sm text-ink-800">{session.title}</span>
+                      <span className="max-w-36 shrink-0 truncate text-xs text-muted">{formatWorkspaceName(session.cwd)}</span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+            <div className="flex items-center justify-between border-t border-black/8 px-3 py-2 text-[11px] text-muted">
+              <span>输入关键词模糊匹配会话</span>
+              <span>↑↓ 选择 · Enter 打开</span>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
       <Dialog.Root
         open={Boolean(renameDialog)}
         onOpenChange={(open) => {

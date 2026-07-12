@@ -75,15 +75,17 @@ test("preview quick-open file scan respects root gitignore rules", async () => {
 
 test("preview directory listing sorts before applying the visible-entry cap", async () => {
   await withTempWorkspace(async (root) => {
+    await mkdir(join(root, ".config"), { recursive: true });
     await mkdir(join(root, "a-directory"), { recursive: true });
     await mkdir(join(root, "dist-test"), { recursive: true });
+    await writeFile(join(root, ".hidden-file"), "hidden\n", "utf8");
     await writeFile(join(root, "b-file.ts"), "b\n", "utf8");
     await writeFile(join(root, "z-file.ts"), "z\n", "utf8");
 
     const result = await listPreviewDirectoryForRenderer({ cwd: root, path: root }, { maxEntries: 2 });
 
     assert.equal(result.success, true);
-    assert.deepEqual(result.entries?.map((entry) => entry.name), ["a-directory", "b-file.ts"]);
+    assert.deepEqual(result.entries?.map((entry) => entry.name), [".config", "a-directory"]);
   });
 });
 

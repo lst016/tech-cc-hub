@@ -1,15 +1,17 @@
-﻿import type { MouseEvent } from "react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import { Download, Loader2, PackageCheck } from "lucide-react";
 import { Toaster } from "sonner";
 import { useIPC } from "./hooks/useIPC";
 import { useMessageWindow } from "./hooks/useMessageWindow";
 import { useAppStore } from "./store/useAppStore";
+import { useBtwStore } from "./store/useBtwStore";
 import { useWorkflowRunStore } from "./store/workflowRunStore";
 import type { AppUpdateStatus, PromptAttachment, ServerEvent, SessionStatus, SettingsPageId, StreamMessage } from "./types";
 import { DEFAULT_SIDEBAR_WIDTH, Sidebar } from "./components/Sidebar";
 import { COLLAPSED_SESSION_RAIL_WIDTH, CollapsedSessionRail } from "./components/CollapsedSessionRail";
+import { ConversationTurnTimeline } from "./components/ConversationTurnTimeline";
+import { ActivityWorkspaceTabs } from "./components/ActivityWorkspaceTabs";
 import { TooltipButton } from "./components/TooltipButton";
 import { UpdateToast } from "./components/UpdateToast";
 import { PromptInput } from "./components/prompt-input/PromptInput";
@@ -18,6 +20,7 @@ import { SessionAnalysisPage, buildSessionWorkflowOptimizationPrompt } from "./c
 // FeedbackDialog removed — uses direct browser link
 import {
   OPEN_BROWSER_WORKBENCH_URL_EVENT,
+  OPEN_SIDE_CONVERSATION_EVENT,
   OPEN_WORKSPACE_PLUGIN_EVENT,
   PREVIEW_OPEN_FILE_EVENT,
   type OpenBrowserWorkbenchUrlDetail,
@@ -35,11 +38,12 @@ import {
   getWorkflowAgentIdFromTab,
   getWorkflowAgentTabId,
   type ActivityRailTab,
+  type ActivityWorkspaceTab,
   type PluginRailTab,
   type WorkflowAgentRailTab,
 } from "./utils/activity-workspace-tabs";
+import { buildConversationTurns } from "./utils/conversation-turn-timeline";
 import { buildWorkflowAgentSummaries } from "./utils/workflow-agent-transcripts";
-import { createSideConversationRequestId } from "./utils/side-conversation";
 import { ProcessGroupCard as SharedProcessGroupCard } from "./components/chat/ProcessGroupCard";
 import { WorkflowAgentCard } from "./components/workflow/WorkflowAgentCard";
 import type { WorkflowRunAction, WorkflowRunRecord } from "../shared/workflows/workflow-runs";
@@ -312,6 +316,7 @@ const DEFAULT_QA_ASSISTANT_MARKDOWN = [
 function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const chatContentRef = useRef<HTMLDivElement>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const partialMessagesRef = useRef<Record<string, string>>({});
   const partialVisibilityRef = useRef<Record<string, boolean>>({});
@@ -319,8 +324,9 @@ function App() {
   const activeSessionIdRef = useRef<string | null>(null);
   const partialFlushFrameRef = useRef<number | null>(null);
   const historyRetryTimerRef = useRef<number | null>(null);
+  const pendingMessageScrollIndexRef = useRef<number | null>(null);
   const collapsedRailPreviousSessionStatusesRef = useRef<Record<string, SessionStatus | undefined>>({});
-  const pendingSideConversationRequestsRef = useRef(new Map<string, string>());
+  const pendingBtwCreateParentIdsRef = useRef<Set<string>>(new Set());
   const [partialMessagesBySessionId, setPartialMessagesBySessionId] = useState<Record<string, string>>({});
   const [partialVisibilityBySessionId, setPartialVisibilityBySessionId] = useState<Record<string, boolean>>({});
   const [collapsedRailUnreadSessionIds, setCollapsedRailUnreadSessionIds] = useState<Record<string, "completed" | "error">>({});
@@ -340,7 +346,7 @@ function App() {
   const [gitTabBySessionId, setGitTabBySessionId] = useState<Record<string, boolean>>({});
   const [terminalTabBySessionId, setTerminalTabBySessionId] = useState<Record<string, boolean>>({});
   const [sidechatTabBySessionId, setSidechatTabBySessionId] = useState<Record<string, boolean>>({});
-  const [sideSessionIdByPrimarySessionId, setSideSessionIdByPrimarySessionId] = useState<Record<string, string>>({});
+  const [browserCloseRequestVersion, setBrowserCloseRequestVersion] = useState(0);
   const [workspacePlugins, setWorkspacePlugins] = useState<WorkspacePluginDescriptor[]>([]);
   const [openWorkspacePluginIdsBySessionId, setOpenWorkspacePluginIdsBySessionId] = useState<Record<string, string[]>>({});
   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
@@ -752,17 +758,12 @@ function App() {
 
   // Combined event handler
   const onEvent = useCallback((event: ServerEvent) => {
-    let sideConversationResult: { primarySessionId: string; sideSessionId: string } | null = null;
-    if (
-      event.type === "session.status"
-      && event.payload.activation === "background"
-      && event.payload.clientRequestId
-    ) {
-      const primarySessionId = pendingSideConversationRequestsRef.current.get(event.payload.clientRequestId);
-      if (primarySessionId) {
-        pendingSideConversationRequestsRef.current.delete(event.payload.clientRequestId);
-        sideConversationResult = { primarySessionId, sideSessionId: event.payload.sessionId };
+    if (event.type.startsWith("btw.")) {
+      useBtwStore.getState().handleServerEvent(event);
+      if (event.type === "btw.thread.created" || event.type === "btw.parent.closed") {
+        pendingBtwCreateParentIdsRef.current.delete(event.payload.parentSessionId);
       }
+      return;
     }
     if (event.type === "session.history" || event.type === "session.deleted") {
       setIsLoadingHistory(false);
@@ -784,64 +785,37 @@ function App() {
       setShowCronPage(target.type === "cron" && !hasSessionTarget);
     }
     handleServerEvent(event);
-    if (sideConversationResult) {
-      setSideSessionIdByPrimarySessionId((current) => ({
-        ...current,
-        [sideConversationResult.primarySessionId]: sideConversationResult.sideSessionId,
-      }));
-    }
     handlePartialMessages(event);
   }, [handleServerEvent, handlePartialMessages]);
 
   const { connected, sendEvent } = useIPC(onEvent);
   const openSidechatWorkspace = useCallback(() => {
     if (!activeSessionId) return;
+    const btwState = useBtwStore.getState();
+    const existingThreadIds = btwState.threadIdsByParent[activeSessionId] ?? [];
+    if (connected && existingThreadIds.length === 0 && !pendingBtwCreateParentIdsRef.current.has(activeSessionId)) {
+      pendingBtwCreateParentIdsRef.current.add(activeSessionId);
+      sendEvent({ type: "btw.thread.create", payload: { parentSessionId: activeSessionId } });
+    }
     setSidechatTabBySessionId((current) => ({ ...current, [activeSessionId]: true }));
     setShowActivityRail(true);
     setShowSessionAnalysis(false);
     setActiveSessionWorkspaceView("chat");
     setActiveSessionActivityRailTab("sidechat");
-  }, [activeSessionId, setActiveSessionActivityRailTab, setActiveSessionWorkspaceView]);
+  }, [activeSessionId, connected, sendEvent, setActiveSessionActivityRailTab, setActiveSessionWorkspaceView]);
   const closeSidechatWorkspace = useCallback(() => {
     if (!activeSessionId) return;
+    sendEvent({ type: "btw.parent.close_all", payload: { parentSessionId: activeSessionId } });
+    useBtwStore.getState().clearParent(activeSessionId);
+    pendingBtwCreateParentIdsRef.current.delete(activeSessionId);
     setSidechatTabBySessionId((current) => ({ ...current, [activeSessionId]: false }));
     if (activityRailTab === "sidechat") setActiveSessionActivityRailTab(DEFAULT_ACTIVITY_RAIL_TAB);
-  }, [activeSessionId, activityRailTab, setActiveSessionActivityRailTab]);
-  const selectSideConversationSession = useCallback((sessionId: string | null) => {
-    if (!activeSessionId) return;
-    setSideSessionIdByPrimarySessionId((current) => {
-      if (sessionId) return { ...current, [activeSessionId]: sessionId };
-      if (!(activeSessionId in current)) return current;
-      const next = { ...current };
-      delete next[activeSessionId];
-      return next;
-    });
-  }, [activeSessionId]);
-  const createSideConversationSession = useCallback(() => {
-    if (!activeSessionId || !activeSession?.cwd) {
-      setGlobalError("当前主会话缺少工作区，无法新建侧聊。");
-      return;
-    }
-    if (Array.from(pendingSideConversationRequestsRef.current.values()).includes(activeSessionId)) return;
-    const clientRequestId = createSideConversationRequestId(activeSessionId);
-    pendingSideConversationRequestsRef.current.set(clientRequestId, activeSessionId);
-    sendEvent({
-      type: "session.create",
-      payload: {
-        title: "新侧聊",
-        cwd: activeSession.cwd,
-        allowedTools: "*",
-        activation: "background",
-        clientRequestId,
-      },
-    });
-  }, [activeSession?.cwd, activeSessionId, sendEvent, setGlobalError]);
-  const requestSideConversationHistory = useCallback((sessionId: string) => {
-    const session = sessions[sessionId];
-    if (!connected || !session || session.hydrated || historyRequested.has(sessionId)) return;
-    markHistoryRequested(sessionId);
-    sendEvent({ type: "session.history", payload: { sessionId, limit: 80 } });
-  }, [connected, historyRequested, markHistoryRequested, sendEvent, sessions]);
+  }, [activeSessionId, activityRailTab, sendEvent, setActiveSessionActivityRailTab]);
+  useEffect(() => {
+    const handleOpenSideConversation = () => openSidechatWorkspace();
+    window.addEventListener(OPEN_SIDE_CONVERSATION_EVENT, handleOpenSideConversation);
+    return () => window.removeEventListener(OPEN_SIDE_CONVERSATION_EVENT, handleOpenSideConversation);
+  }, [openSidechatWorkspace]);
   const requestCollapsedSessionPreviewHistory = useCallback((sessionId: string) => {
     const session = sessions[sessionId];
     if (!connected || !session || session.hydrated || historyRequested.has(sessionId)) return;
@@ -859,8 +833,6 @@ function App() {
   const activeBrowserWorkbenchState = activeSessionId ? browserWorkbenchBySessionId[activeSessionId] : undefined;
   const activeHasBrowserTab = activeBrowserWorkbenchState?.hasBrowserTab ?? Boolean(activeBrowserWorkbenchState?.url);
   const activeHasSidechatTab = activeSessionId ? sidechatTabBySessionId[activeSessionId] === true : false;
-  const activeSideSessionId = activeSessionId ? (sideSessionIdByPrimarySessionId[activeSessionId] ?? null) : null;
-  const sidePartialMessage = activeSideSessionId ? (partialMessagesBySessionId[activeSideSessionId] ?? "") : "";
   const activeHasGitTab = activeSessionId ? gitTabBySessionId[activeSessionId] === true : false;
   const activeHasTerminalTab = activeSessionId ? terminalTabBySessionId[activeSessionId] === true : false;
   const workflowAgents = useMemo(() => buildWorkflowAgentSummaries(messages, activeSession?.status), [messages, activeSession?.status]);
@@ -929,6 +901,7 @@ function App() {
     visibleMessages,
     hasMoreHistory,
     loadMoreMessages,
+    revealMessage,
     resetToLatest,
     totalMessages,
   } = useMessageWindow(messages, {
@@ -1011,6 +984,11 @@ function App() {
     return entries;
   }, [activeSessionId, visibleMessages, workflowAgentsById, messages]);
 
+  const conversationTurns = useMemo(
+    () => buildConversationTurns(messages.map((message, originalIndex) => ({ message, originalIndex }))),
+    [messages],
+  );
+
   const chatOverview = useMemo(() => {
     const latestUserEntry = [...renderEntries].reverse().find((entry) => entry.type === "message" && entry.message.type === "user_prompt");
     let tools = 0;
@@ -1042,10 +1020,31 @@ function App() {
     lastRenderableEntryType,
   }), [isRunning, partialMessage, showPartialMessage, lastRenderableEntryType]);
 
+  const scrollMessageElementIntoView = useCallback((index: number): boolean => {
+    const element = document.getElementById(`chat-message-${index}`);
+    if (!element) return false;
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    element.scrollIntoView({
+      behavior: prefersReducedMotion ? "auto" : "smooth",
+      block: "center",
+    });
+    return true;
+  }, []);
+
   const scrollToMessageIndex = useCallback((index: number | null) => {
     if (index === null) return;
-    document.getElementById(`chat-message-${index}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, []);
+    if (scrollMessageElementIntoView(index)) return;
+    pendingMessageScrollIndexRef.current = index;
+    revealMessage(index);
+  }, [revealMessage, scrollMessageElementIntoView]);
+
+  useLayoutEffect(() => {
+    const pendingIndex = pendingMessageScrollIndexRef.current;
+    if (pendingIndex === null) return;
+    if (scrollMessageElementIntoView(pendingIndex)) {
+      pendingMessageScrollIndexRef.current = null;
+    }
+  }, [scrollMessageElementIntoView, visibleMessages]);
 
   // 閸氼垰濮╅弮鑸殿梾閺?API 闁板秶鐤?
   useEffect(() => {
@@ -1340,13 +1339,6 @@ function App() {
 
     setShowStartModal(true);
   }, [sendEvent, setCwd, setPrompt, setShowStartModal]);
-
-  const handleNewSessionClick = useCallback((event: MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setActiveSessionWorkspaceView("chat");
-    handleNewSession();
-  }, [handleNewSession, setActiveSessionWorkspaceView]);
 
   useEffect(() => {
     const handleOpenBrowserWorkbenchUrl = (event: Event) => {
@@ -1661,6 +1653,17 @@ function App() {
     }
   }, [activeSessionId, activityRailTab, setActiveSessionActivityRailTab]);
 
+  const selectActivityWorkspaceTab = useCallback((tab: ActivityWorkspaceTab) => {
+    setShowActivityRail(true);
+    setShowSessionAnalysis(false);
+    if (tab === "browser") {
+      setActiveSessionWorkspaceView("browser");
+      return;
+    }
+    setActiveSessionActivityRailTab(tab);
+    setActiveSessionWorkspaceView("chat");
+  }, [setActiveSessionActivityRailTab, setActiveSessionWorkspaceView]);
+
   const openTerminalWorkspace = useCallback(() => {
     if (!activeSessionId) return;
     setTerminalTabBySessionId((current) => (
@@ -1869,28 +1872,6 @@ function App() {
               <rect x="3.5" y="5" width="17" height="14" rx="2" />
               <path d="M9 5v14" />
             <path d="m7 12-2-2m2 2-2 2" />
-            </svg>
-          </TooltipButton>
-          <TooltipButton
-            type="button"
-            tooltip="新建工作区"
-            onClick={handleNewSessionClick}
-            onMouseDown={(event) => {
-              event.preventDefault();
-            }}
-            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/10 bg-white text-ink-700 transition hover:bg-ink-900/5"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              className="h-4 w-4"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              aria-hidden="true"
-            >
-              <path d="M4 20h4.5l9.4-9.4a2.1 2.1 0 0 0 0-3L16.4 6a2.1 2.1 0 0 0-3 0L4 15.4V20Z" />
-              <path d="m12.5 6.9 4.6 4.6" />
             </svg>
           </TooltipButton>
           <TooltipButton
@@ -2110,13 +2091,19 @@ function App() {
             <div className="min-h-0 flex-1" aria-hidden="true" />
           ) : (
             <>
-              <div className="flex min-h-0 flex-1 flex-col">
+              <div className="relative flex min-h-0 flex-1 flex-col">
+                <ConversationTurnTimeline
+                  turns={conversationTurns}
+                  scrollContainerRef={scrollContainerRef}
+                  contentContainerRef={chatContentRef}
+                  onSelectTurn={scrollToMessageIndex}
+                />
                 <div
                   ref={scrollContainerRef}
                   onScroll={handleScroll}
-                  className="chat-scroll flex-1 overflow-y-auto px-8 pb-40 pt-8"
+                  className="chat-scroll flex-1 overflow-y-auto pb-40 pl-16 pr-8 pt-8"
                 >
-                <div className="chat-stream-content mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[34px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(248,250,252,0.82))] px-8 py-7 shadow-[0_24px_60px_rgba(30,38,52,0.08)] backdrop-blur-xl xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
+                <div ref={chatContentRef} className="chat-stream-content mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[34px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(248,250,252,0.82))] px-8 py-7 shadow-[0_24px_60px_rgba(30,38,52,0.08)] backdrop-blur-xl xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
                   <div ref={topSentinelRef} className="h-1" />
                   {renderEntries.length > 0 && (
                     <div className="sticky top-3 z-10 mb-5 flex justify-end">
@@ -2312,6 +2299,38 @@ function App() {
 
         {!showSessionAnalysis && !isUtilityWorkspace && showActivityRail && (
           <div
+            className={`fixed right-0 ${sidebarHeaderOffsetClass} z-[160] hidden h-10 min-w-[400px] items-center border-b border-l border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(250,251,253,0.92))] px-4 backdrop-blur-xl lg:flex`}
+            style={{ width: effectiveActivityRailWidth, minWidth: effectiveActivityRailWidth }}
+          >
+            <ActivityWorkspaceTabs
+              activeTab={workspaceView === "browser" ? "browser" : activityRailTab}
+              showBrowserTab={activeHasBrowserTab}
+              showSidechatTab={activeHasSidechatTab}
+              showGitTab={activeHasGitTab}
+              showTerminalTab={activeHasTerminalTab}
+              workspacePlugins={visibleWorkspacePlugins}
+              hiddenWorkspacePlugins={hiddenWorkspacePlugins}
+              workflowAgentTabs={workflowAgentTabs}
+              showLabels={effectiveActivityRailWidth >= 300}
+              showCreateSidechatTab={!activeHasSidechatTab}
+              showCreateGitTab={!activeHasGitTab}
+              showCreateTerminalTab={!activeHasTerminalTab}
+              onSelectTab={selectActivityWorkspaceTab}
+              onCloseBrowserTab={activeHasBrowserTab ? () => setBrowserCloseRequestVersion((current) => current + 1) : undefined}
+              onCreateSidechatTab={openSidechatWorkspace}
+              onCloseSidechatTab={activeHasSidechatTab ? closeSidechatWorkspace : undefined}
+              onCreateGitTab={openGitWorkspace}
+              onCloseGitTab={activeHasGitTab ? closeGitWorkspace : undefined}
+              onCreateTerminalTab={openTerminalWorkspace}
+              onCloseTerminalTab={activeHasTerminalTab ? closeTerminalWorkspace : undefined}
+              onCloseWorkspacePluginTab={closeWorkspacePluginTab}
+              onCreateWorkspacePluginTab={openWorkspacePluginTab}
+              onCloseWorkflowAgentTab={closeWorkflowAgentTranscript}
+            />
+          </div>
+        )}
+        {!showSessionAnalysis && !isUtilityWorkspace && showActivityRail && (
+          <div
             className={workspaceView === "browser" ? "hidden" : "contents"}
             aria-hidden={workspaceView === "browser"}
           >
@@ -2334,43 +2353,19 @@ function App() {
                   });
                 }}
                 onActiveTabChange={setActiveSessionActivityRailTab}
-                onOpenBrowserWorkbench={() => {
-                  setShowActivityRail(true);
-                  setShowSessionAnalysis(false);
-                  setActiveSessionWorkspaceView("browser");
-                }}
                 selectedModel={selectedUsageModel}
                 contextWindow={selectedUsageModelConfig?.contextWindow}
                 compressionThresholdPercent={selectedUsageModelConfig?.compressionThresholdPercent}
-                hasBrowserTab={activeHasBrowserTab}
-                hasSidechatTab={activeHasSidechatTab}
-                hasGitTab={activeHasGitTab}
-                hasTerminalTab={activeHasTerminalTab}
                 workspacePlugins={visibleWorkspacePlugins}
-                hiddenWorkspacePlugins={hiddenWorkspacePlugins}
-                workflowAgentTabs={workflowAgentTabs}
                 selectedWorkflowAgent={selectedWorkflowAgent}
                 workflowRuns={workflowRuns}
                 onWorkflowRunAction={handleWorkflowRunAction}
-                onOpenSidechatWorkspace={openSidechatWorkspace}
-                onCloseSidechatWorkspace={closeSidechatWorkspace}
                 sideConversationProps={activeSessionId ? {
-                  primarySessionId: activeSessionId,
-                  sideSessionId: activeSideSessionId,
+                  parentSessionId: activeSessionId,
                   connected,
-                  partialMessage: sidePartialMessage,
-                  onSelectSession: selectSideConversationSession,
-                  onCreateSession: createSideConversationSession,
-                  onRequestHistory: requestSideConversationHistory,
                   sendEvent,
+                  onSendMessage: handleSendMessage,
                 } : undefined}
-                onOpenGitWorkspace={openGitWorkspace}
-                onCloseGitWorkspace={closeGitWorkspace}
-                onOpenTerminalWorkspace={openTerminalWorkspace}
-                onCloseTerminalWorkspace={closeTerminalWorkspace}
-                onCloseWorkspacePluginTab={closeWorkspacePluginTab}
-                onOpenWorkspacePluginTab={openWorkspacePluginTab}
-                onCloseWorkflowAgentTab={closeWorkflowAgentTranscript}
                 onOpenSessionAnalysis={() => setShowSessionAnalysis(true)}
                 width={effectiveActivityRailWidth}
               />
@@ -2389,22 +2384,7 @@ function App() {
                 initialUrl={activeSessionId ? (activeBrowserWorkbenchState?.url ?? "") : ""}
                 occluded={browserWorkbenchOccluded}
                 sessionId={activeSessionId}
-                onOpenUsage={() => {
-                  setActiveSessionActivityRailTab("usage");
-                  setActiveSessionWorkspaceView("chat");
-                }}
-                onOpenPreview={() => {
-                  setActiveSessionActivityRailTab("preview");
-                  setActiveSessionWorkspaceView("chat");
-                }}
-                onOpenGit={() => {
-                  openGitWorkspace();
-                }}
-                hasGitTab={activeHasGitTab}
-                onCloseGit={closeGitWorkspace}
-                hasTerminalTab={activeHasTerminalTab}
-                onOpenTerminal={openTerminalWorkspace}
-                onCloseTerminal={closeTerminalWorkspace}
+                closeRequestVersion={browserCloseRequestVersion}
               />
             </Suspense>
           </aside>
