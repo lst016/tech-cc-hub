@@ -15,4 +15,8 @@ test("current conversation plan is mounted above the prompt composer, not in the
   assert.doesNotMatch(dock, /createPortal/);
   assert.match(dock, /role="region"/);
   assert.match(dock, /data-current-session-plan-dock/);
+  assert.match(dock, /data-plan-summary-trigger/);
+  assert.match(dock, /data-current-session-plan-popover/);
+  assert.match(dock, /aria-expanded=\{isExpanded\}/);
+  assert.match(dock, /\{summary\.completed\}\/\{summary\.total\} 步/);
 });
