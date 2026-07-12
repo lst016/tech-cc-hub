@@ -8,6 +8,7 @@ const previewPort = Number(process.env.SIDEBAR_PLAN_PREVIEW_QA_PORT || 4317);
 const previewUrl = process.env.SIDEBAR_PLAN_PREVIEW_QA_URL
   || `http://127.0.0.1:${previewPort}/?__tech_cc_hub_browser_preview=1&qaPlanPreview=1`;
 const artifactPath = path.join(repoRoot, ".omx", "artifacts", "sidebar-plan-preview.png");
+const compactArtifactPath = path.join(repoRoot, ".omx", "artifacts", "current-session-plan-compact.png");
 const timeoutMs = Number(process.env.SIDEBAR_PLAN_PREVIEW_QA_TIMEOUT_MS || 60000);
 
 function startPreviewServer() {
@@ -96,8 +97,23 @@ async function main() {
       throw new Error(`Prompt composer did not render at ${page.url()}. Body: ${bodyText.slice(0, 1200)}`, { cause: error });
     }
 
-    const previewCard = composer.locator("[data-current-session-plan-dock]");
+    const composerCard = composer.locator(".prompt-composer-card");
+    const planSurface = composer.locator("[data-current-session-plan-surface]");
+    const previewCard = planSurface.locator("[data-current-session-plan-dock]");
+    const summaryTrigger = previewCard.locator("[data-plan-summary-trigger]");
+    const planPopover = previewCard.locator("[data-current-session-plan-popover]");
     await expect(previewCard).toBeVisible();
+    await expect(summaryTrigger).toBeVisible();
+    await expect(summaryTrigger).toHaveText("2/4 步");
+    await expect(planPopover).toBeHidden();
+    await expect(previewCard.getByText("检查聊天列表现有数据链路", { exact: true })).toBeHidden();
+
+    mkdirSync(path.dirname(artifactPath), { recursive: true });
+    await page.screenshot({ path: compactArtifactPath, fullPage: true });
+
+    const composerBeforeHover = await composerCard.boundingBox();
+    await summaryTrigger.hover();
+    await expect(planPopover).toBeVisible();
     await expect(previewCard.getByText("检查聊天列表现有数据链路", { exact: true })).toBeVisible();
     await expect(previewCard.getByText("实现计划清单底部固定展示", { exact: true })).toBeVisible();
     await expect(previewCard.getByText("验证固定位置与自动消失", { exact: true })).toBeVisible();
@@ -110,12 +126,14 @@ async function main() {
       const dock = document.querySelector("[data-current-session-plan-dock]");
       const composer = document.querySelector("[data-prompt-composer]");
       const composerCard = document.querySelector(".prompt-composer-card");
+      const popover = document.querySelector("[data-current-session-plan-popover]");
       const chatScroller = document.querySelector(".chat-scroll");
       const sidebar = document.querySelector("aside.left-0");
       if (
         !(dock instanceof HTMLElement)
         || !(composer instanceof HTMLElement)
         || !(composerCard instanceof HTMLElement)
+        || !(popover instanceof HTMLElement)
         || !(chatScroller instanceof HTMLElement)
         || !(sidebar instanceof HTMLElement)
       ) {
@@ -123,11 +141,13 @@ async function main() {
       }
       const dockRect = dock.getBoundingClientRect();
       const composerCardRect = composerCard.getBoundingClientRect();
+      const popoverRect = popover.getBoundingClientRect();
       const sidebarRect = sidebar.getBoundingClientRect();
       return {
         insideComposer: composer.contains(dock),
         insideChatScroller: chatScroller.contains(dock),
         aboveInput: dockRect.bottom <= composerCardRect.top,
+        popoverAboveTrigger: popoverRect.bottom <= dockRect.top + 1,
         rightOfSidebar: dockRect.left >= sidebarRect.right,
         centeredWithInput: Math.abs(
           (dockRect.left + dockRect.width / 2) - (composerCardRect.left + composerCardRect.width / 2),
@@ -139,14 +159,22 @@ async function main() {
       || !placement.insideComposer
       || placement.insideChatScroller
       || !placement.aboveInput
+      || !placement.popoverAboveTrigger
       || !placement.rightOfSidebar
       || !placement.centeredWithInput
     ) {
       throw new Error(`Plan dock is not fixed above the current conversation input: ${JSON.stringify(placement)}`);
     }
 
-    mkdirSync(path.dirname(artifactPath), { recursive: true });
+    const composerAfterHover = await composerCard.boundingBox();
+    if (JSON.stringify(composerAfterHover) !== JSON.stringify(composerBeforeHover)) {
+      throw new Error(`Plan hover moved the composer: ${JSON.stringify({ composerBeforeHover, composerAfterHover })}`);
+    }
+
     await page.screenshot({ path: artifactPath, fullPage: true });
+
+    await page.mouse.move(1100, 100);
+    await expect(planPopover).toBeHidden();
 
     const hasCompletionApi = await page.evaluate(() => Boolean(window.__TECH_CC_HUB_PLAN_QA__?.complete));
     if (!hasCompletionApi) throw new Error("Plan completion QA API is unavailable");
@@ -157,7 +185,7 @@ async function main() {
       throw new Error(`Unexpected browser errors:\n${errors.join("\n")}`);
     }
 
-    console.log(`SIDEBAR_PLAN_PREVIEW_QA_OK ${artifactPath}`);
+    console.log(`SIDEBAR_PLAN_PREVIEW_QA_OK ${compactArtifactPath} ${artifactPath}`);
   } finally {
     await browser?.close().catch(() => {});
     stopProcess(preview);

@@ -1365,7 +1365,7 @@ export function PromptInput({
       {activeSessionPlan && (
         <div
           data-current-session-plan-surface
-          className="mx-auto mb-2 w-full max-w-[min(520px,calc(100vw-32px))]"
+          className="relative z-30 mx-auto mb-2 flex h-8 w-full max-w-[min(520px,calc(100vw-32px))] items-end justify-center"
         >
           <CurrentSessionPlanDock
             sessionTitle={activeSessionPlanTitle}
