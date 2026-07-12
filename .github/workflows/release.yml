@@ -49,6 +49,10 @@ jobs:
       - name: Build desktop artifacts
         run: ${{ matrix.command }}
 
+      - name: Smoke test packaged Windows startup
+        if: matrix.platform == 'win'
+        run: npm run qa:packaged
+
       - name: Verify Windows updater artifacts
         if: matrix.platform == 'win'
         shell: pwsh
@@ -181,6 +185,6 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           draft: false
-          generate_release_notes: true
+          body_path: doc/90-releases/${{ github.ref_name }}.md
           files: release-assets/*
           fail_on_unmatched_files: false

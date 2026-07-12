@@ -31,6 +31,32 @@ test("main-process MCP SDK import is declared as a packaged runtime dependency",
   assert.equal(packageLock.packages?.[""]?.dependencies?.["@modelcontextprotocol/sdk"], packageJson.dependencies?.["@modelcontextprotocol/sdk"]);
 });
 
+test("better-sqlite3 is explicitly included and unpacked for packaged startup", () => {
+  const packageJson = readJson("package.json");
+  const builderConfig = readJson("electron-builder.json") as BuilderConfigLike;
+
+  assert.ok(packageJson.dependencies?.["better-sqlite3"]);
+  assert.ok(builderConfig.files?.includes("node_modules/better-sqlite3/**/*"));
+  assert.ok(builderConfig.asarUnpack?.includes("node_modules/better-sqlite3/**/*"));
+});
+
+test("Windows releases reject packaged startup package-resolution failures", () => {
+  const packagedSmoke = readFileSync("scripts/qa/packaged-smoke.cjs", "utf8");
+  const releaseWorkflow = readFileSync(".github/workflows/release.yml", "utf8");
+
+  assert.match(packagedSmoke, /Cannot find \(\?:module\|package\)/);
+  assert.match(packagedSmoke, /maxRetries:/);
+  assert.match(packagedSmoke, /retryDelay:/);
+  assert.match(packagedSmoke, /bestEffort/);
+  assert.match(releaseWorkflow, /npm run qa:packaged/);
+});
+
+test("tag releases publish the matching checked-in release notes", () => {
+  const releaseWorkflow = readFileSync(".github/workflows/release.yml", "utf8");
+
+  assert.match(releaseWorkflow, /body_path: doc\/90-releases\/\$\{\{ github\.ref_name \}\}\.md/);
+});
+
 test("CodeGraph bundled runtime dependencies are kept in Windows packages", () => {
   const packageJson = readJson("package.json");
   const packageLock = readJson("package-lock.json");
