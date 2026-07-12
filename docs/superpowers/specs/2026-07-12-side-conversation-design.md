@@ -1,117 +1,117 @@
-# Side Conversation Design
+# 侧边对话功能设计
 
-## Goal
+## 目标
 
-Add a `侧聊` feature to the existing right Activity Rail so a user can keep the primary conversation visible while reading and continuing a second conversation beside it. Side-conversation activity must never switch or mutate the primary conversation implicitly.
+在现有右侧活动栏（Activity Rail）中新增 `侧聊` 功能。用户可以在主对话保持可见的同时，在右侧阅读和继续另一个对话。侧聊中的任何操作都不得隐式切换或修改主对话。
 
-## Confirmed Scope
+## 已确认范围
 
-- `侧聊` is a first-class Activity Rail tab alongside usage, preview, Git, terminal, workflow-agent, and plugin tabs.
-- The primary conversation remains selected in the center workspace.
-- The side panel can open an existing non-archived conversation or create a new conversation in the same workspace.
-- A newly created side conversation is persisted as a normal session and remains available from the left sidebar after the panel closes.
-- The panel renders the selected conversation history, streaming output, run state, errors, and permission requests.
-- The panel supports text follow-ups, stopping a running turn, switching its target conversation, and closing the side view.
-- Side-conversation selection is remembered per primary conversation for the lifetime of the renderer.
+- `侧聊` 是右侧活动栏的一等页签，与用量、预览、Git、终端、工作流智能体和插件页签并列。
+- 主对话始终保持在中间工作区中选中。
+- 侧聊面板可以打开现有的未归档对话，也可以在同一工作区中新建对话。
+- 新建的侧聊会作为正常会话持久化；关闭面板后，仍可从左侧栏找到该会话。
+- 面板展示所选会话的历史消息、流式输出、运行状态、错误和权限请求。
+- 面板支持文字追问、停止正在运行的轮次、切换目标会话和关闭侧聊视图。
+- 在当前渲染进程生命周期内，每个主对话分别记住所选的侧聊会话。
 
-Version one does not add attachment picking, queued prompts, goal controls, message revision, or an additional Browser Workbench inside the side panel. These remain available when the same session is opened as the primary conversation.
+第一版不在侧聊面板内提供附件选择、消息队列、目标模式、消息修订或第二套浏览器工作台。这些能力仍可在该会话切换为主对话后使用。
 
-## Alternatives Considered
+## 备选方案
 
-### Activity Rail tab with a persisted session (selected)
+### 使用正常持久化会话的右侧活动栏页签（采用）
 
-This reuses the existing right-side layout, session protocol, store, transcript renderer, persistence, and resize behavior. It provides genuine side-by-side conversation without duplicating the complete workspace shell.
+该方案复用现有右侧布局、会话协议、状态仓库、消息渲染器、持久化和宽度调整逻辑，无需复制完整工作区即可提供真正的并排对话。
 
-### Ephemeral renderer-only side chat
+### 仅存在于渲染进程内的临时侧聊
 
-This would be smaller initially, but it would lose durable history and could not safely reuse the normal runner, tools, permission flow, or restart recovery.
+初期改动更少，但无法保留可靠历史，也不能安全复用正常的运行器、工具、权限流程和重启恢复能力。
 
-### Two complete chat workspaces
+### 两套完整聊天工作区
 
-This would offer full composer parity, but the current `App.tsx` and `PromptInput` are intentionally bound to one `activeSessionId`. Splitting every workspace concern into two instances would be a broad refactor that is not required for the first useful version.
+该方案可以提供完整的输入区能力，但当前 `App.tsx` 和 `PromptInput` 都有意绑定到单一 `activeSessionId`。将所有工作区能力拆分为两个实例会形成范围过大的重构，不是首个可用版本的必要条件。
 
-## Architecture
+## 架构
 
-`App.tsx` remains the owner of the primary `activeSessionId` and right-rail visibility. It stores `sideSessionIdByPrimarySessionId`, opens the Activity Rail on the `sidechat` tab, and passes the primary session id, selected side session, session list, and event dispatcher to a new `SideConversationPanel`.
+`App.tsx` 继续负责主对话的 `activeSessionId` 和右侧栏可见状态。它保存 `sideSessionIdByPrimarySessionId`，将右侧活动栏打开到 `sidechat` 页签，并把主会话 ID、当前侧聊会话、会话列表和事件发送器传给新的 `SideConversationPanel`。
 
-`activity-workspace-tabs.ts` adds the stable `sidechat` tab id. `ActivityWorkspaceTabs` exposes the `侧聊` tab and keeps existing fallback behavior when other dynamic tabs close. `ActivityRail` delegates only the side-chat body to `SideConversationPanel`; existing usage, preview, Git, terminal, workflow, and plugin rendering stays unchanged.
+`activity-workspace-tabs.ts` 增加稳定的 `sidechat` 页签 ID。`ActivityWorkspaceTabs` 展示 `侧聊` 页签，并保留其他动态页签关闭后的既有回退行为。`ActivityRail` 只把侧聊正文委托给 `SideConversationPanel`；现有的用量、预览、Git、终端、工作流和插件渲染保持不变。
 
-`SideConversationPanel` owns its local draft, target picker, scroll-to-latest behavior, send/stop actions, and permission responses. It uses the existing `ChatTranscript` for message rendering and targets protocol events explicitly by its own session id rather than reading `activeSessionId`.
+`SideConversationPanel` 负责自己的草稿、目标选择器、滚动到底部、发送、停止和权限响应。它复用现有 `ChatTranscript` 渲染消息，并始终使用自己的会话 ID 显式发送协议事件，不读取 `activeSessionId` 作为发送目标。
 
-A small pure helper module owns target filtering and send eligibility. This keeps session isolation rules independently testable and avoids embedding more conditional state in `App.tsx` or `ActivityRail.tsx`.
+一个小型纯函数模块负责目标过滤和发送资格判断。这样可以独立测试会话隔离规则，避免继续向 `App.tsx` 或 `ActivityRail.tsx` 堆叠条件状态。
 
-## Background Session Activation Contract
+## 后台会话激活协议
 
-Creating a session currently makes every newly observed session active. Side-chat creation therefore extends `session.create` and `session.start` with an optional `activation` value and an optional renderer-generated `clientRequestId`:
+当前逻辑会把每个首次发现的会话自动设为活动会话。因此，侧聊创建需要为 `session.create` 和 `session.start` 增加可选的 `activation` 字段，以及由渲染进程生成的可选 `clientRequestId`：
 
-- omitted or `foreground`: preserve current behavior and activate a new session;
-- `background`: persist and stream the session without changing `activeSessionId`.
+- 未传或传入 `foreground`：保持现有行为，自动激活新会话；
+- 传入 `background`：持久化并运行新会话，但不修改 `activeSessionId`。
 
-The initial `session.status` event echoes the activation value and request id. `useAppStore` still inserts and updates the session, but skips the automatic `setActiveSessionId` calls for a background session. It also exposes the latest `{ clientRequestId, sessionId }` background-create result as transient renderer state. Later status and stream events need no special handling because the session id is already known.
+首次 `session.status` 事件回传 `activation` 和请求 ID。`useAppStore` 仍然插入并更新该会话，但后台会话不会触发自动 `setActiveSessionId`。状态仓库还以临时渲染状态暴露最近的 `{ clientRequestId, sessionId }` 后台创建结果。后续状态和流式事件无需特殊处理，因为会话 ID 已经确定。
 
-The panel first sends `session.create` with `activation: "background"` and a unique request id. `App.tsx` records that request against the current primary conversation. When the matching background-create result arrives, it associates the new session id with that primary conversation and selects it in the side panel. Subsequent prompts use `session.continue`. This explicit correlation avoids relying on event ordering or title matching.
+面板先发送带有 `activation: "background"` 和唯一请求 ID 的 `session.create`。`App.tsx` 将该请求与当前主对话关联。匹配的后台创建结果返回后，再把新会话 ID 绑定到该主对话并选为侧聊目标。后续消息使用 `session.continue`。显式请求关联可以避免依赖事件顺序或标题匹配。
 
-## Data Flow
+## 数据流
 
-1. The user opens the `侧聊` Activity Rail tab.
-2. The panel defaults to the remembered side session, otherwise offers recent sessions excluding the primary conversation.
-3. `新建侧聊` sends a background `session.create` using the primary conversation workspace and records its unique request id.
-4. The renderer store receives the initial background status, records the session and matching request result, and keeps the primary `activeSessionId` unchanged.
-5. The panel matches the request result, selects the new session, and hydrates history through the existing `session.history` event.
-6. Sending text dispatches `session.continue` with the side session id and current runtime controls.
-7. Stream and status events update the shared session record, so the side transcript refreshes without touching the center transcript.
-8. Stop and permission actions dispatch existing session-scoped protocol events with the side session id.
+1. 用户打开右侧活动栏中的 `侧聊` 页签。
+2. 面板优先恢复该主对话记住的侧聊会话；否则展示排除主对话后的近期会话。
+3. 用户点击 `新建侧聊` 后，面板使用主对话的工作区发送后台 `session.create`，并记录唯一请求 ID。
+4. 状态仓库收到首次后台状态后，记录会话和对应请求结果，同时保持主 `activeSessionId` 不变。
+5. 面板匹配请求结果、选中新会话，并通过现有 `session.history` 事件加载历史。
+6. 发送文字时，使用侧聊会话 ID 和当前运行配置发送 `session.continue`。
+7. 流式和状态事件更新共享会话记录，侧聊消息随之刷新，中间主对话不受影响。
+8. 停止和权限操作使用侧聊会话 ID 发送现有的会话级协议事件。
 
-## Interaction and Visual Design
+## 交互与视觉设计
 
-- The Activity Rail tab label is `侧聊` and uses the existing tab sizing and focus treatment.
-- The panel header contains the current side-session title, a compact conversation selector, `新建侧聊`, and close controls.
-- The transcript fills the resizable rail body and follows new output when the user is already near the bottom.
-- The composer is a compact multiline text area with Enter to send and Shift+Enter for a newline.
-- While the selected side session is running, the send action becomes a stop action and the draft remains intact.
-- The primary conversation cannot be selected as its own side target.
-- Empty, loading, deleted, archived, and errored targets show explicit recovery actions rather than a blank rail.
+- 右侧活动栏页签名称为 `侧聊`，沿用现有页签尺寸和焦点样式。
+- 面板头部包含当前侧聊标题、紧凑的会话选择器、`新建侧聊` 和关闭控件。
+- 消息区占满可调整宽度的右栏正文；当用户已经接近底部时，新输出自动跟随。
+- 输入区使用紧凑的多行文本框：Enter 发送，Shift+Enter 换行。
+- 所选侧聊正在运行时，发送按钮切换为停止按钮，当前草稿保持不变。
+- 主对话不能被选为它自己的侧聊目标。
+- 目标为空、加载中、已删除、已归档或执行出错时，展示明确的恢复操作，不显示空白右栏。
 
-## Accessibility
+## 无障碍要求
 
-- The tab, target selector, transcript region, composer, send, stop, new-session, and close controls all have stable accessible names.
-- The target selector exposes the currently selected conversation.
-- Keyboard focus remains inside the control being used; opening the tab does not steal focus from the primary composer.
-- Enter sends only when the draft is non-empty and the side session is idle. Shift+Enter inserts a newline.
-- Live run and error state are exposed through concise status text without making the full transcript an assertive live region.
+- 页签、目标选择器、消息区域、输入框、发送、停止、新建和关闭控件都有稳定的无障碍名称。
+- 目标选择器明确暴露当前选中的会话。
+- 键盘焦点保留在用户正在操作的控件内；打开侧聊页签不会抢走主输入框焦点。
+- 仅当草稿非空且侧聊空闲时，Enter 才会发送；Shift+Enter 插入换行。
+- 运行和错误状态通过简短状态文字暴露，不把整个消息区设为强制播报区域。
 
-## Error Handling
+## 错误处理
 
-- A missing workspace disables side-session creation with an explanatory message.
-- A deleted or archived selected session clears the remembered target and returns to the picker.
-- A running side session rejects additional sends and retains the draft.
-- Protocol or runner errors remain scoped to the side session and render in the panel; they do not replace the primary workspace error state.
-- If a background create returns an unknown request id, it remains a normal persisted session and the panel presents it in the selector rather than guessing by title.
+- 缺少工作区时禁用新建侧聊，并展示原因。
+- 所选会话被删除或归档后，清除记忆的目标并返回会话选择状态。
+- 侧聊正在运行时拒绝重复发送，并保留草稿。
+- 协议或运行器错误只显示在对应侧聊中，不替换主工作区的错误状态。
+- 后台创建返回未知请求 ID 时，该会话仍作为正常会话持久化并出现在选择器中，系统不通过标题猜测归属。
 
-## TDD Plan and 80-Point Gate
+## TDD 计划与 80 分验收线
 
-Implementation follows strict RED-GREEN-REFACTOR order.
+实现严格遵循 RED-GREEN-REFACTOR 顺序。
 
-1. Pure tests first require target filtering, send eligibility, background activation semantics, and per-primary target retention.
-2. Protocol/store tests first prove that a background session is inserted without replacing `activeSessionId`, while foreground creation preserves existing behavior.
-3. UI source/integration tests first require the `sidechat` tab, isolated event targeting, keyboard send behavior, stop behavior, and explicit empty/error states.
-4. Browser QA first requires the development shim to expose two sessions and verifies that side-chat interaction never changes the center conversation.
-5. Only after each test fails for the intended missing behavior is the smallest production change implemented.
+1. 先编写纯函数测试，要求目标过滤、发送资格、后台激活语义和各主对话的目标记忆符合设计，并确认测试因功能缺失而失败。
+2. 先编写协议和状态仓库测试，证明后台会话会被插入但不会替换 `activeSessionId`，同时前台创建保持原有行为。
+3. 先编写 UI 源码和集成测试，要求存在 `sidechat` 页签、事件目标隔离、键盘发送、停止以及明确的空状态和错误状态。
+4. 先编写浏览器 QA，要求开发环境模拟层提供两个会话，并验证所有侧聊操作都不会改变中间主对话。
+5. 每项测试都必须先因目标行为缺失而出现预期失败，随后才编写使其通过的最小生产代码。
 
-The completion score is:
+最终评分：
 
-- Functional side-chat behavior and session isolation: 40 points
-- Correct background activation and persistence: 20 points
-- Interaction, accessibility, and recovery states: 15 points
-- Automated regression and browser coverage: 15 points
-- Code quality and scope control: 10 points
+- 侧聊功能与会话隔离：40 分
+- 后台激活和持久化正确性：20 分
+- 交互、无障碍和恢复状态：15 分
+- 自动化回归和浏览器覆盖：15 分
+- 代码质量与范围控制：10 分
 
-Completion requires at least 80/100, all focused tests passing, TypeScript and production build success, scoped ESLint with no errors, `git diff --check`, and a successful browser smoke run that proves the primary conversation remains unchanged.
+完成条件为总分不低于 80/100，全部聚焦测试通过，TypeScript 和生产构建成功，范围内 ESLint 零错误，`git diff --check` 通过，并且浏览器烟测能够证明主对话始终未被切换。
 
-## Scope Boundaries
+## 范围边界
 
-- No new dependency.
-- No database schema change.
-- No deletion or auto-archive when the side panel closes.
-- No full duplicate of `PromptInput` or the center workspace.
-- No attachment, queue, goal, revision, browser, preview, or terminal controls inside the first side-chat composer.
+- 不新增依赖。
+- 不修改数据库结构。
+- 关闭侧聊面板时不删除或自动归档会话。
+- 不完整复制 `PromptInput` 或中间工作区。
+- 第一版侧聊输入区不提供附件、队列、目标、修订、浏览器、预览或终端控件。
