@@ -109,17 +109,18 @@ export function ChatTranscript({
         const isLastMessage = index === entries.length - 1;
         if (entry.type === "process_group") {
           return (
-            <div key={entry.key} id={`chat-message-${entry.originalIndex}`}>
+            <div key={entry.key} id={`${keyPrefix}-message-${entry.originalIndex}`}>
               <ProcessGroupCard
                 messages={entry.messages}
                 workspace={workspace}
+                messageIdPrefix={keyPrefix}
               />
             </div>
           );
         }
 
         return (
-          <div key={entry.key} id={`chat-message-${entry.originalIndex}`}>
+          <div key={entry.key} id={`${keyPrefix}-message-${entry.originalIndex}`}>
             <Suspense fallback={<MarkdownLoadFallback />}>
               <MessageCard
                 message={entry.message}

@@ -243,15 +243,17 @@ function CompactProcessDetails({ message }: { message: StreamMessage }) {
 
 function CompactProcessRow({
   entry,
+  messageIdPrefix,
 }: {
   entry: { originalIndex: number; message: StreamMessage };
+  messageIdPrefix: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const label = getProcessEntryLabel(entry.message);
   const summary = getProcessGroupSummary([entry]);
 
   return (
-    <div id={`chat-message-${entry.originalIndex}`}>
+    <div id={`${messageIdPrefix}-message-${entry.originalIndex}`}>
       <button
         type="button"
         className="flex max-w-full items-center gap-1.5 py-0.5 text-left text-[11px] leading-5 text-muted/58 transition hover:text-muted"
@@ -366,9 +368,11 @@ function ChangedFileRow({ file }: { file: ChangedFileSummary }) {
 const ProcessGroupCard = memo(function ProcessGroupCard({
   messages,
   workspace,
+  messageIdPrefix = "chat",
 }: {
   messages: Array<{ originalIndex: number; message: StreamMessage }>;
   workspace?: string;
+  messageIdPrefix?: string;
 }) {
 
   const [expanded, setExpanded] = useState(false);
@@ -416,6 +420,7 @@ const ProcessGroupCard = memo(function ProcessGroupCard({
             <CompactProcessRow
               key={`${entry.originalIndex}-${index}`}
               entry={entry}
+              messageIdPrefix={messageIdPrefix}
             />
           ))}
           {remainingProcessMessageCount > 0 && (
