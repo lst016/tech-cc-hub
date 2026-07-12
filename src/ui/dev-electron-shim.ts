@@ -129,6 +129,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
   let sessionModel = "";
   let sessionMessages: StreamMessage[] = [];
   const qaCollapsedSessionRailEnabled = new URL(window.location.href).searchParams.get("qaCollapsedSessionRail") === "1";
+  const qaSideConversationEnabled = new URL(window.location.href).searchParams.get("qaSideConversation") === "1";
   const qaSessionCwd = "D:/tool/tech-cc-hub";
   const qaSessionTimestamp = 1_783_800_000_000;
   const qaBackgroundSessionId = "qa-rail-background";
@@ -272,10 +273,46 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     session_id: sessionId,
   } as unknown as StreamMessage);
 
+  const qaSideConversationMessagesBySessionId: Record<string, StreamMessage[]> = {
+    "qa-side-primary": [
+      { type: "user_prompt", prompt: "主对话验收", capturedAt: qaSessionTimestamp } as StreamMessage,
+      buildQaAssistantMessage("qa-side-primary", "主对话初始回复"),
+    ],
+    "qa-side-secondary": [
+      { type: "user_prompt", prompt: "侧聊验收", capturedAt: qaSessionTimestamp + 1_000 } as StreamMessage,
+      buildQaAssistantMessage("qa-side-secondary", "侧聊初始回复"),
+    ],
+  };
+
+  const buildQaSideConversationSessions = () => [
+    {
+      id: "qa-side-primary",
+      title: "主对话",
+      status: "completed" as const,
+      cwd: qaSessionCwd,
+      model: "claude-sonnet-4-5",
+      runSurface: "development" as const,
+      slashCommands: browserPreviewSlashCommandNames,
+      createdAt: qaSessionTimestamp,
+      updatedAt: qaSessionTimestamp + 2_000,
+    },
+    {
+      id: "qa-side-secondary",
+      title: "侧聊验证",
+      status: "completed" as const,
+      cwd: qaSessionCwd,
+      model: "claude-sonnet-4-5",
+      runSurface: "development" as const,
+      slashCommands: browserPreviewSlashCommandNames,
+      createdAt: qaSessionTimestamp + 1_000,
+      updatedAt: qaSessionTimestamp + 1_000,
+    },
+  ];
+
   const buildSessionListEvent = (): ServerEvent => ({
     type: "session.list",
     payload: {
-      sessions: qaCollapsedSessionRailEnabled ? buildQaSessions() : [
+      sessions: qaSideConversationEnabled ? buildQaSideConversationSessions() : qaCollapsedSessionRailEnabled ? buildQaSessions() : [
         {
           id: browserPreviewSessionId,
           title: sessionTitle,
@@ -292,6 +329,19 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
   });
 
   const buildSessionHistoryEvent = (requestedSessionId = browserPreviewSessionId): ServerEvent => {
+    if (qaSideConversationEnabled) {
+      return {
+        type: "session.history",
+        payload: {
+          sessionId: requestedSessionId,
+          status: "completed",
+          mode: "replace",
+          hasMore: false,
+          slashCommands: browserPreviewSlashCommandNames,
+          messages: [...(qaSideConversationMessagesBySessionId[requestedSessionId] ?? [])],
+        },
+      };
+    }
     if (!qaCollapsedSessionRailEnabled) {
       return {
         type: "session.history",
@@ -430,6 +480,24 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         }
       }
       if (event.type === "session.create") {
+        if (qaSideConversationEnabled && event.payload.activation === "background") {
+          const sessionId = `qa-side-created-${Object.keys(qaSideConversationMessagesBySessionId).length}`;
+          qaSideConversationMessagesBySessionId[sessionId] = [];
+          emit({
+            type: "session.status",
+            payload: {
+              sessionId,
+              status: "idle",
+              title: event.payload.title?.trim() || "新侧聊",
+              cwd: event.payload.cwd || qaSessionCwd,
+              model: "claude-sonnet-4-5",
+              activation: event.payload.activation,
+              clientRequestId: event.payload.clientRequestId,
+              slashCommands: browserPreviewSlashCommandNames,
+            },
+          });
+          return;
+        }
         sessionCreatedAt = Date.now();
         sessionUpdatedAt = sessionCreatedAt;
         sessionStatus = "idle";
@@ -470,6 +538,28 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         syncSession();
       }
       if (event.type === "session.continue") {
+        if (qaSideConversationEnabled && event.payload.sessionId in qaSideConversationMessagesBySessionId) {
+          const capturedAt = Date.now();
+          const userMessage = {
+            type: "user_prompt",
+            prompt: event.payload.prompt,
+            attachments: event.payload.attachments,
+            capturedAt,
+          } as StreamMessage;
+          const assistantMessage = buildQaAssistantMessage(event.payload.sessionId, "SIDE_OK");
+          qaSideConversationMessagesBySessionId[event.payload.sessionId].push(userMessage, assistantMessage);
+          emit({ type: "stream.user_prompt", payload: { sessionId: event.payload.sessionId, prompt: event.payload.prompt, capturedAt } });
+          emit({ type: "stream.message", payload: { sessionId: event.payload.sessionId, message: assistantMessage } });
+          emit({
+            type: "session.status",
+            payload: {
+              sessionId: event.payload.sessionId,
+              status: "completed",
+              model: event.payload.runtime?.model,
+            },
+          });
+          return;
+        }
         sessionUpdatedAt = Date.now();
         sessionStatus = "completed";
         sessionModel = event.payload.runtime?.model?.trim() || sessionModel;

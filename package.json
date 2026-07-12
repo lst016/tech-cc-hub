@@ -15,6 +15,7 @@
 		"qa:continue": "bash scripts/qa/electron-autostart-smoke.sh \"请只回复：SMOKE_ROUND_1\" \"请只回复：SMOKE_ROUND_2\"",
 		"qa:chat-ui": "node scripts/qa/chat-ui-smoke.cjs",
 		"qa:sidebar-plan-preview": "node scripts/qa/sidebar-plan-preview-smoke.cjs",
+		"qa:side-conversation": "node scripts/qa/side-conversation-smoke.cjs",
 		"qa:collapsed-session-rail": "node scripts/qa/collapsed-session-rail-smoke.cjs",
 		"qa:chat-selection-comment": "npm run build && node scripts/qa/chat-selection-comment-smoke.cjs",
 		"qa:design-element": "npm run transpile:electron && electron scripts/qa/design-element-tool-smoke.mjs",
