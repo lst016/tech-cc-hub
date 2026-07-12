@@ -18,6 +18,7 @@ import {
 } from "../../store/useAppStore";
 import { getPlainTextFromClipboardData } from "../../utils/clipboard-text";
 import { resetBrowserWorkbenchAnnotationState } from "../../utils/browser-annotation-reset";
+import { shouldShowCurrentSessionPlan } from "../../utils/session-plan-preview";
 import { getSlashCommandContext, getSlashCommandQuery, isCompletedSlashCommandContext, isDismissedSlashCommandQuery } from "../../utils/slash-command-input";
 import { buildSlashCommandDisplayParts, serializeSlashCommandDraft } from "../../utils/slash-command-display";
 import { getPromptTextFromEditor, getSelectionOffsetInEditor, getSelectionRangeInEditor, renderPromptEditorContent, restoreEditorSelection } from "../../utils/prompt-editor-content";
@@ -49,6 +50,7 @@ import {
   type AddPromptAttachmentDetail,
 } from "../../events";
 import { DecisionPanel } from "../DecisionPanel";
+import { CurrentSessionPlanDock } from "../CurrentSessionPlanDock";
 import { ComposerModelMenu } from "./ComposerModelMenu";
 import {
   AttachmentChips,
@@ -168,6 +170,15 @@ export function PromptInput({
     if (session?.status !== "running") return undefined;
     const goal = session.latestGoal;
     return goal?.objective && goal.status !== "complete" ? goal : undefined;
+  });
+  const activeSessionPlan = useAppStore((state) => {
+    if (!storeActiveSessionId) return undefined;
+    const session = state.sessions[storeActiveSessionId] ?? state.archivedSessions[storeActiveSessionId];
+    if (!session?.latestPlan || !shouldShowCurrentSessionPlan(session.latestPlan)) return undefined;
+    return {
+      title: session.title,
+      plan: session.latestPlan,
+    };
   });
   const selectedWorkspaceCwd = (storeCwd.trim() || storeActiveSessionCwd.trim());
   const { prompt, setPrompt, isRunning, handleStop, slashCommands, activeSessionId, browserAnnotations, sendPromptDraft, validatePromptDraft } = usePromptActions(
@@ -1347,6 +1358,17 @@ export function PromptInput({
               )}
             </div>
           </div>
+        </div>
+      )}
+      {activeSessionPlan && (
+        <div
+          data-current-session-plan-surface
+          className="mx-auto mb-2 w-full max-w-[min(520px,calc(100vw-32px))]"
+        >
+          <CurrentSessionPlanDock
+            sessionTitle={activeSessionPlan.title}
+            plan={activeSessionPlan.plan}
+          />
         </div>
       )}
       <div

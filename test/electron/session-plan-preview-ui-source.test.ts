@@ -2,16 +2,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-test("sidebar plan dock is embedded, persistent, and has no hover portal trigger", () => {
+test("current conversation plan is mounted above the prompt composer, not in the sidebar", () => {
   const sidebar = readFileSync("src/ui/components/Sidebar.tsx", "utf8");
-  const dock = readFileSync("src/ui/components/SidebarPlanDock.tsx", "utf8");
+  const promptInput = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
+  const dock = readFileSync("src/ui/components/CurrentSessionPlanDock.tsx", "utf8");
 
-  assert.match(sidebar, /pickSidebarPlanDockSession/);
-  assert.match(sidebar, /dockSession && dockSession\.latestPlan/);
-  assert.match(sidebar, /<SidebarPlanDock/);
-  assert.doesNotMatch(sidebar, /openSessionPlanPreview/);
+  assert.doesNotMatch(sidebar, /SidebarPlanDock/);
+  assert.doesNotMatch(sidebar, /dockSession/);
+  assert.match(promptInput, /shouldShowCurrentSessionPlan/);
+  assert.match(promptInput, /<CurrentSessionPlanDock/);
+  assert.match(promptInput, /data-current-session-plan-surface/);
   assert.doesNotMatch(dock, /createPortal/);
   assert.match(dock, /role="region"/);
-  assert.match(dock, /data-sidebar-plan-dock/);
-  assert.match(dock, /shrink-0/);
+  assert.match(dock, /data-current-session-plan-dock/);
 });
