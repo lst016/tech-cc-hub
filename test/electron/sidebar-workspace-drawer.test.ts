@@ -4,13 +4,15 @@ import { readFileSync } from "node:fs";
 
 test("workspace session drawers stay closed until manually opened", () => {
   const sidebarSource = readFileSync("src/ui/components/Sidebar.tsx", "utf8");
+  const sessionListSource = readFileSync("src/ui/components/sidebar/SidebarWorkspaceList.tsx", "utf8");
 
   assert.match(sidebarSource, /readExpandedWorkspaceGroupsFromStorage/);
   assert.match(sidebarSource, /SIDEBAR_EXPANDED_WORKSPACE_GROUPS_STORAGE_KEY/);
-  assert.match(sidebarSource, /\[group\.key\]: !current\[group\.key\]/);
+  assert.match(sidebarSource, /\[groupKey\]: !current\[groupKey\]/);
   assert.match(sidebarSource, /writeExpandedWorkspaceGroupsToStorage\(next\)/);
-  assert.match(sidebarSource, /expandedGroups\[group\.key\] \? "" : "hidden"/);
-  assert.doesNotMatch(sidebarSource, /current\[group\.key\]\s*\?\?\s*true/);
+  assert.match(sessionListSource, /onToggleWorkspaceGroup\(group\.key\)/);
+  assert.match(sessionListSource, /expandedGroups\[group\.key\] \? "" : "hidden"/);
+  assert.doesNotMatch(sessionListSource, /current\[group\.key\]\s*\?\?\s*true/);
 });
 
 test("workspace session drawer state survives sidebar remounts", () => {
@@ -23,22 +25,22 @@ test("workspace session drawer state survives sidebar remounts", () => {
 });
 
 test("background sessions show a compact sidebar badge", () => {
-  const sidebarSource = readFileSync("src/ui/components/Sidebar.tsx", "utf8");
+  const sessionListSource = readFileSync("src/ui/components/sidebar/SidebarWorkspaceList.tsx", "utf8");
 
-  assert.match(sidebarSource, /const isBackgroundSession = session\.executionMode === "background";/);
-  assert.match(sidebarSource, /isBackgroundSession && \(/);
-  assert.match(sidebarSource, /title="Background session"/);
-  assert.match(sidebarSource, />\s*BG\s*<\/span>/);
+  assert.match(sessionListSource, /const isBackgroundSession = session\.executionMode === "background";/);
+  assert.match(sessionListSource, /isBackgroundSession && \(/);
+  assert.match(sessionListSource, /title="Background session"/);
+  assert.match(sessionListSource, />\s*BG\s*<\/span>/);
 });
 
 test("expanded workspace lists preview five sessions before showing all", () => {
-  const sidebarSource = readFileSync("src/ui/components/Sidebar.tsx", "utf8");
+  const sessionListSource = readFileSync("src/ui/components/sidebar/SidebarWorkspaceList.tsx", "utf8");
 
-  assert.match(sidebarSource, /WORKSPACE_SESSION_PREVIEW_LIMIT = 5/);
-  assert.match(sidebarSource, /expandedSessionLists/);
-  assert.match(sidebarSource, /group\.sessions\.slice\(0, WORKSPACE_SESSION_PREVIEW_LIMIT\)/);
-  assert.match(sidebarSource, /visibleSessions\.map/);
-  assert.match(sidebarSource, /aria-expanded=\{sessionListExpanded\}/);
-  assert.match(sidebarSource, /展开显示/);
-  assert.match(sidebarSource, /折叠/);
+  assert.match(sessionListSource, /WORKSPACE_SESSION_PREVIEW_LIMIT = 5/);
+  assert.match(sessionListSource, /expandedSessionLists/);
+  assert.match(sessionListSource, /group\.sessions\.slice\(0, WORKSPACE_SESSION_PREVIEW_LIMIT\)/);
+  assert.match(sessionListSource, /visibleSessions\.map/);
+  assert.match(sessionListSource, /aria-expanded=\{sessionListExpanded\}/);
+  assert.match(sessionListSource, /展开显示/);
+  assert.match(sessionListSource, /折叠/);
 });

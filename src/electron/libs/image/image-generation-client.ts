@@ -85,6 +85,7 @@ export type GenerateImageParams = {
 const SUPPORTED_QUALITIES = new Set(["auto", "low", "medium", "high"]);
 const SUPPORTED_FORMATS = new Set(["png", "jpeg", "webp"]);
 const SUPPORTED_BACKGROUNDS = new Set(["auto", "opaque", "transparent"]);
+const DOUBAO_SEEDREAM_MODEL_PATTERN = /(?:^|[-_])(?:doubao[-_])?seedream(?:[-_]|$)/i;
 
 export async function generateImages(params: GenerateContext): Promise<ImageGenerationToolResult> {
   const route = resolveImageGenerationRoute(params.context.selectedConfig, params.context.enabledConfigs);
@@ -166,6 +167,10 @@ function resolveMode(request: ImageGenerationRequest): "generate" | "edit" {
   return (request.referenceImagePaths?.length ?? 0) > 0 ? "edit" : "generate";
 }
 
+function shouldDisableWatermark(model: string): boolean {
+  return DOUBAO_SEEDREAM_MODEL_PATTERN.test(model.trim());
+}
+
 async function runGenerateRequest(ctx: RequestCommon): Promise<ImageGenerationToolResult> {
   const { endpoint, route, params } = ctx;
   const body: Record<string, unknown> = {
@@ -177,6 +182,7 @@ async function runGenerateRequest(ctx: RequestCommon): Promise<ImageGenerationTo
   if (params.request.quality) body.quality = params.request.quality;
   if (params.request.outputFormat) body.output_format = params.request.outputFormat;
   if (params.request.background) body.background = params.request.background;
+  if (shouldDisableWatermark(route.model)) body.watermark = false;
 
   const response = await fetchWithTimeout(endpoint, {
     method: "POST",
@@ -225,6 +231,7 @@ async function runEditRequest(ctx: RequestCommon): Promise<ImageGenerationToolRe
   if (params.request.quality) formData.append("quality", params.request.quality);
   if (params.request.outputFormat) formData.append("output_format", params.request.outputFormat);
   if (params.request.background) formData.append("background", params.request.background);
+  if (shouldDisableWatermark(route.model)) formData.append("watermark", "false");
 
   // 第一张作为 image[]；OpenAI edits 接受多个 image 字段
   for (const ref of validatedRefs) {

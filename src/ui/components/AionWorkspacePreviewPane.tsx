@@ -19,6 +19,7 @@ import {
   normalizeMonacoLanguage,
 } from '../utils/preview-language';
 import { calculateSelectionOverlayPosition } from '../utils/selection-overlay-position';
+import { findMarkdownSelectionRange } from '../utils/markdown-selection';
 import {
   getPreviewFileAncestorDirectories,
 } from '../utils/preview-file-locator';
@@ -1166,6 +1167,36 @@ function PreviewSurface({
     return () => window.removeEventListener('keydown', handleTabSwitchShortcut, { capture: true });
   }, [activeTabPath, onSwitchTab, openTabs]);
 
+  const handleMarkdownSelection = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!file || markdownViewMode !== 'preview') return;
+    const selectedText = window.getSelection()?.toString() ?? '';
+    const range = findMarkdownSelectionRange(file.content, selectedText);
+    if (!range || !selectedText.trim()) {
+      setSelectionInfo(null);
+      setCommentOpen(false);
+      return;
+    }
+
+    const contentBounds = event.currentTarget.getBoundingClientRect();
+    const composerOffsetValue = window.getComputedStyle(document.documentElement).getPropertyValue('--composer-bottom-offset');
+    const composerBottomOffset = Number.parseFloat(composerOffsetValue) || 0;
+    const position = calculateSelectionOverlayPosition({
+      editorWidth: contentBounds.width,
+      editorHeight: contentBounds.height,
+      editorViewportTop: contentBounds.top,
+      selectionTop: event.clientY - contentBounds.top,
+      selectionLeft: event.clientX - contentBounds.left,
+      viewportHeight: window.innerHeight,
+      composerBottomOffset,
+    });
+
+    setSelectionInfo({
+      ...range,
+      text: selectedText,
+      ...position,
+    });
+  }, [file, markdownViewMode]);
+
   const calculateSelectionPosition = useCallback((editor: PreviewEditor, selection: PreviewSelection) => {
     const layout = editor.getLayoutInfo();
     const position = editor.getScrolledVisiblePosition({
@@ -1403,7 +1434,10 @@ function PreviewSurface({
         ) : file.contentType === 'html' ? (
           <iframe className="vscode-preview__iframe" title={file.fileName} srcDoc={file.content} />
         ) : isMarkdownFile && markdownViewMode === 'preview' ? (
-          <div className="vscode-preview__markdown">
+          <div
+            className="vscode-preview__markdown"
+            onMouseUp={handleMarkdownSelection}
+          >
             <MDContent text={file.content} />
           </div>
         ) : (

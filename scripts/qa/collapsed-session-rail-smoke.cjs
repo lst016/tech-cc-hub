@@ -10,6 +10,7 @@ const timeoutMs = Number(process.env.COLLAPSED_SESSION_RAIL_QA_TIMEOUT_MS || 450
 const baseUrl = `http://127.0.0.1:${port}`;
 const qaUrl = `${baseUrl}/?__tech_cc_hub_browser_preview=1&qaCollapsedSessionRail=1`;
 const artifactPath = path.join(repoRoot, ".omx", "artifacts", "collapsed-session-rail.png");
+const expandedArtifactPath = path.join(repoRoot, ".omx", "artifacts", "expanded-session-sidebar.png");
 const githubTitle = "github提交下版本吧";
 const githubSummary = "GitHub 最新已经是 v0.1.55，所以这次需要发 v0.1.56。但当前工作区还有约 60 个其他未提交修改，而刚才安装包也包含它们。请确认：v0.1.56 是否要包含这些修改。";
 const backgroundTitle = "后台构建发布包";
@@ -226,17 +227,46 @@ async function main() {
     });
     page.on("pageerror", (error) => browserErrors.push(`[pageerror] ${error.stack || error.message}`));
     await page.route(/^http:\/\/localhost:(?:3000|4173|5173|8000|8001|8080)\/$/, (route) => route.abort("aborted"));
+    await page.emulateMedia({ reducedMotion: "reduce" });
 
     await page.goto(qaUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
     const collapseButton = page.getByRole("button", { name: "收起左侧栏", exact: true });
     await collapseButton.waitFor({ state: "visible", timeout: timeoutMs });
 
+    const sidebarStyles = await page.evaluate(() => {
+      const sidebar = document.querySelector("[data-session-sidebar]");
+      const activeSession = document.querySelector('[data-session-item][data-session-active="true"]');
+      if (!(sidebar instanceof HTMLElement) || !(activeSession instanceof HTMLElement)) return null;
+
+      return {
+        sidebarBackground: window.getComputedStyle(sidebar).backgroundColor,
+        activeBackground: window.getComputedStyle(activeSession).backgroundColor,
+        activeShadow: window.getComputedStyle(activeSession).boxShadow,
+      };
+    });
+    assert.ok(sidebarStyles, "full session sidebar should expose dedicated style hooks");
+    assert.equal(sidebarStyles.sidebarBackground, "rgb(248, 249, 251)");
+    assert.equal(sidebarStyles.activeBackground, "rgb(238, 240, 243)");
+    assert.doesNotMatch(sidebarStyles.activeShadow, /rgb\(210, 106, 61\)/, "active session should not look like an orange notice card");
+
+    await page.locator("[data-session-workspace] button").first().click();
+    const runningSpinner = page.locator('[data-session-status="running"] [data-session-status-indicator]');
+    await runningSpinner.waitFor({ state: "visible", timeout: timeoutMs });
+    assert.equal(await runningSpinner.evaluate((element) => window.getComputedStyle(element).animationIterationCount), "infinite");
+
     // The lifecycle transition intentionally happens while the full Sidebar owns the screen.
     await page.waitForTimeout(900);
+    await page.locator('[data-session-item][data-session-active="true"]').waitFor({ state: "visible", timeout: timeoutMs });
+    await page.mouse.move(880, 520);
+    await page.waitForTimeout(160);
+    fs.mkdirSync(path.dirname(expandedArtifactPath), { recursive: true });
+    await page.screenshot({ path: expandedArtifactPath });
+
     await collapseButton.click();
 
     const rail = page.locator("[data-collapsed-session-rail]");
     await rail.waitFor({ state: "visible", timeout: timeoutMs });
+    assert.equal(await rail.evaluate((element) => window.getComputedStyle(element).backgroundColor), "rgb(248, 249, 251)");
     const railButtons = rail.locator('button[aria-label^="打开会话："]');
     const railButtonCount = await railButtons.count();
     assert.ok(railButtonCount >= 8, `expected at least 8 collapsed session marks, received ${railButtonCount}`);
@@ -280,6 +310,15 @@ async function main() {
     await githubMark.hover();
     await waitForCardText(card, githubSummary);
     assert.equal((await card.locator('[id$="-title"]').textContent())?.trim(), githubTitle);
+    const previewStyles = await card.locator("p").evaluate((element) => {
+      const styles = window.getComputedStyle(element);
+      return { color: styles.color, fontSize: styles.fontSize, lineHeight: styles.lineHeight };
+    });
+    assert.deepEqual(previewStyles, {
+      color: "rgb(105, 115, 132)",
+      fontSize: "13px",
+      lineHeight: "19px",
+    });
     fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
     await page.screenshot({ path: artifactPath });
 

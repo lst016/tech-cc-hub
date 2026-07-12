@@ -21,6 +21,10 @@ export type SessionPlanSnapshot = UpdatePlanArgs & {
   toolUseId?: string;
 };
 
+export function hasIncompletePlan(plan: readonly PlanItemArg[] | undefined): boolean {
+  return Boolean(plan?.some((item) => item.status !== "completed"));
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

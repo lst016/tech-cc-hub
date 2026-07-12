@@ -570,6 +570,7 @@ function emit(event: ServerEvent) {
   // "Unknown session" artifacts on the renderer side.
   if (
     (nextEvent.type === "session.status" ||
+      nextEvent.type === "session.plan.updated" ||
       nextEvent.type === "stream.message" ||
       nextEvent.type === "stream.user_prompt" ||
       nextEvent.type === "workflow.runs" ||
@@ -597,6 +598,9 @@ function emit(event: ServerEvent) {
       previousStatus,
       nextStatus: nextEvent.payload.status,
     });
+  }
+  if (nextEvent.type === "session.plan.updated") {
+    sessions.updateSession(nextEvent.payload.sessionId, { planSnapshot: nextEvent.payload });
   }
   if (nextEvent.type === "stream.message") {
     const normalizedMessage =
@@ -1375,13 +1379,14 @@ export async function handleClientEvent(event: ClientEvent) {
   }
 
   if (event.type === "btw.thread.send") {
+    const { displayAttachments, agentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
     await btwRuntimeManager.send({
       threadId: event.payload.threadId,
       prompt: event.payload.prompt,
       agentPrompt: event.payload.agentPrompt,
       workspaceContext: event.payload.workspaceContext,
-      attachments: event.payload.attachments,
-      displayAttachments: event.payload.attachments,
+      attachments: agentAttachments,
+      displayAttachments,
       runtime: event.payload.runtime,
     });
     return;
@@ -1977,15 +1982,17 @@ export async function handleClientEvent(event: ClientEvent) {
       return;
     }
 
+    const displayPrompt = event.payload.prompt;
+    const agentPrompt = event.payload.agentPrompt?.trim() ? event.payload.agentPrompt : displayPrompt;
     const { displayAttachments, agentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
-    store.updateSession(session.id, { lastPrompt: event.payload.prompt });
+    store.updateSession(session.id, { lastPrompt: displayPrompt });
     emit({
       type: "stream.user_prompt",
-      payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: displayAttachments },
+      payload: { sessionId: session.id, prompt: displayPrompt, attachments: displayAttachments },
     });
 
     try {
-      await handle.appendPrompt(event.payload.prompt, agentAttachments);
+      await handle.appendPrompt(agentPrompt, agentAttachments);
     } catch (error) {
       emit({
         type: "runner.error",

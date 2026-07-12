@@ -35,7 +35,7 @@ test("prompt draft updates synchronously replace the contenteditable DOM", () =>
 
   assert.ok(setDraftStart >= 0);
   assert.ok(clearComposerStart > setDraftStart);
-  assert.match(setDraftSection, /renderPromptEditorContent\(editor,\s*buildSlashCommandDisplayParts\(nextPrompt,\s*slashCommands\)\)/);
+  assert.match(setDraftSection, /renderPromptEditorContent\(\s*editor,\s*buildSlashCommandDisplayParts\(nextPrompt,\s*slashCommands\),/);
   assert.match(setDraftSection, /editor\.dataset\.renderedPrompt\s*=\s*nextPrompt/);
 });
 
@@ -54,4 +54,17 @@ test("selected prompt mode buttons clear after successful send or queue", () => 
   assert.match(queueSection, /setGoalModeEnabled\(false\);/);
   assert.match(queueSection, /setWorkflowForceEnabled\(false\);/);
   assert.match(submitSection, /if \(sent\) \{[\s\S]*setGoalModeEnabled\(false\);[\s\S]*setWorkflowForceEnabled\(false\);/);
+});
+
+test("temporary send clearing preserves image config until dispatch succeeds", () => {
+  const source = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
+  const clearComposerStart = source.indexOf("const clearComposer = useCallback");
+  const clearPromptStart = source.indexOf("const clearPromptDraftText = useCallback", clearComposerStart);
+  const nextCallbackStart = source.indexOf("const removeBrowserAnnotationDraft", clearPromptStart);
+  const clearComposerSection = source.slice(clearComposerStart, clearPromptStart);
+  const clearPromptSection = source.slice(clearPromptStart, nextCallbackStart);
+
+  assert.match(source, /const clearImageGenerationConfig = useCallback/);
+  assert.match(clearComposerSection, /clearImageGenerationConfig\(\);/);
+  assert.match(clearPromptSection, /preserveImageGenerationConfig: true/);
 });

@@ -7,6 +7,7 @@ test("app shell avoids fixed-width caps for the chat surface and prompt dock", (
   const appSource = readFileSync(join(process.cwd(), "src/ui/App.tsx"), "utf8");
   const activityRailSource = readFileSync(join(process.cwd(), "src/ui/components/ActivityRail.tsx"), "utf8");
   const promptInputSource = readFileSync(join(process.cwd(), "src/ui/components/prompt-input/PromptInput.tsx"), "utf8");
+  const promptPalettesSource = readFileSync(join(process.cwd(), "src/ui/components/prompt-input/PromptComposerPalettes.tsx"), "utf8");
 
   assert.equal(appSource.includes("max-w-[920px]"), false);
   assert.match(activityRailSource, /执行计划/);
@@ -14,7 +15,7 @@ test("app shell avoids fixed-width caps for the chat surface and prompt dock", (
   assert.match(activityRailSource, /打开 Trace Viewer/);
   assert.equal(promptInputSource.includes("lg:max-w-[900px]"), false);
   assert.equal(promptInputSource.includes("max-h-[min(55vh,420px)]"), false);
-  assert.match(promptInputSource, /max-h-\[min\(42vh,320px\)\]/);
+  assert.match(promptPalettesSource, /max-h-\[min\(42vh,320px\)\]/);
   assert.match(appSource, /clamp\(/);
   assert.match(promptInputSource, /clamp\(/);
 });
@@ -28,10 +29,11 @@ test("prompt composer does not expose workspace selection in the footer", () => 
   assert.doesNotMatch(promptInputSource, /selectDirectory/);
 });
 
-test("feedback button opens github issues directly", () => {
+test("feedback button opens the feedback form directly", () => {
   const appSource = readFileSync(join(process.cwd(), "src/ui/App.tsx"), "utf8");
 
-  assert.match(appSource, /github\.com\/lst016\/tech-cc-hub\/issues\/new/);
+  assert.match(appSource, /boke\.feishu\.cn\/base\/F9pNbMi61aD5x4sYGuqcMcLRnEf/);
+  assert.match(appSource, /tooltip="打开需求反馈表"/);
   assert.match(appSource, /shell:openExternal/);
   assert.match(appSource, /occluded=\{browserWorkbenchOccluded\}/);
   // FeedbackDialog removed in favor of direct browser link

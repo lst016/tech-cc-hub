@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   fileToAttachment,
   hasDraggedFiles,
@@ -32,11 +32,16 @@ test("prompt attachment drag detection accepts common file drag signals", () => 
 });
 
 test("prompt input exposes an explicit attachment picker button", () => {
-  const source = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
+  const footerPath = "src/ui/components/prompt-input/PromptComposerFooter.tsx";
+  const promptInputSource = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
+  const source = [
+    promptInputSource,
+    existsSync(footerPath) ? readFileSync(footerPath, "utf8") : "",
+  ].join("\n");
 
   assert.match(source, /Paperclip/);
-  assert.match(source, /const handleSelectAttachmentClick = useCallback/);
-  assert.match(source, /fileInputRef\.current\?\.click\(\)/);
+  assert.match(promptInputSource, /const handleSelectAttachmentClick = useCallback/);
+  assert.match(promptInputSource, /fileInputRef\.current\?\.click\(\)/);
   assert.match(source, /aria-label="添加附件"/);
   assert.match(source, /title="添加附件"/);
 });

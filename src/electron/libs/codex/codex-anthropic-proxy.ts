@@ -6,7 +6,6 @@ import {
   CODEX_OAUTH_BASE_URL,
   buildCodexRequestHeaders,
   buildCodexResponsesRequest,
-  buildSyntheticAnthropicStream,
   encodeCodexOAuthCredential,
   getCodexResponsesPath,
   parseCodexResponsesStream,
@@ -29,6 +28,7 @@ import { listenWithWindowsPortOwnerKill } from "../local-port-guard.js";
 const CODEX_PROXY_HOST = "127.0.0.1";
 const DEFAULT_CODEX_PROXY_PORT = 14559;
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
+const CODEX_UPSTREAM_IDLE_TIMEOUT_MS = 120_000;
 
 let proxyServer: http.Server | null = null;
 const credentialRefreshes = new Map<string, Promise<CodexOAuthCredential>>();
@@ -121,41 +121,293 @@ async function handleProxyRequest(request: IncomingMessage, response: ServerResp
       stream: true,
     };
     const upstreamUrl = new URL(getCodexResponsesPath(String(anthropicRequest.model ?? "")), profile.baseURL || CODEX_OAUTH_BASE_URL);
-    const upstream = await fetch(upstreamUrl.toString(), {
-      method: "POST",
-      headers: buildCodexRequestHeaders(credential, true),
-      body: JSON.stringify(upstreamPayload),
-    });
-    const upstreamText = await upstream.text();
+    const upstreamWatchdog = createUpstreamIdleWatchdog();
+    try {
+      const upstream = await fetch(upstreamUrl.toString(), {
+        method: "POST",
+        headers: buildCodexRequestHeaders(credential, true),
+        body: JSON.stringify(upstreamPayload),
+        signal: upstreamWatchdog.signal,
+      });
+      upstreamWatchdog.touch();
 
-    if (!upstream.ok) {
-      writeJson(response, upstream.status, {
+      if (!upstream.ok) {
+        const upstreamText = await readUpstreamText(upstream, upstreamWatchdog.touch);
+        writeJson(response, upstream.status, {
+          error: {
+            message: extractResponseErrorText(upstreamText) || upstream.statusText,
+          },
+        });
+        return;
+      }
+
+      if (wantsStream) {
+        await streamCodexResponse(upstream, response, codexRequest.model, upstreamWatchdog.touch);
+        return;
+      }
+
+      const upstreamText = await readUpstreamText(upstream, upstreamWatchdog.touch);
+      const upstreamJson = parseCodexResponsesStream(upstreamText);
+      writeJson(response, 200, toAnthropicMessageResponse(upstreamJson, codexRequest.model));
+    } finally {
+      upstreamWatchdog.dispose();
+    }
+  } catch (error) {
+    if (response.headersSent) {
+      writeSse(response, "error", {
+        type: "error",
         error: {
-          message: extractResponseErrorText(upstreamText) || upstream.statusText,
+          type: "api_error",
+          message: error instanceof Error ? error.message : String(error),
         },
       });
+      response.end();
       return;
     }
-
-    const upstreamJson = parseCodexResponsesStream(upstreamText);
-    const message = toAnthropicMessageResponse(upstreamJson, codexRequest.model);
-    if (wantsStream) {
-      response.writeHead(200, {
-        "content-type": "text/event-stream; charset=utf-8",
-        "cache-control": "no-cache",
-        connection: "keep-alive",
-      });
-      response.end(buildSyntheticAnthropicStream(message));
-      return;
-    }
-
-    writeJson(response, 200, message);
-  } catch (error) {
     writeJson(response, 500, {
       error: {
         message: error instanceof Error ? error.message : String(error),
       },
     });
+  }
+}
+
+function createUpstreamIdleWatchdog(timeoutMs = CODEX_UPSTREAM_IDLE_TIMEOUT_MS): {
+  signal: AbortSignal;
+  touch: () => void;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const dispose = () => {
+    if (!timer) return;
+    clearTimeout(timer);
+    timer = undefined;
+  };
+
+  const touch = () => {
+    if (controller.signal.aborted) return;
+    dispose();
+    timer = setTimeout(() => {
+      controller.abort(new Error("Codex upstream did not send data for 2 minutes."));
+    }, timeoutMs);
+    timer.unref?.();
+  };
+
+  touch();
+  return { signal: controller.signal, touch, dispose };
+}
+
+async function readUpstreamText(upstream: Response, onActivity: () => void): Promise<string> {
+  const reader = upstream.body?.getReader();
+  if (!reader) return "";
+
+  const decoder = new TextDecoder();
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      onActivity();
+      text += decoder.decode(value, { stream: true });
+    }
+    return text + decoder.decode();
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function streamCodexResponse(
+  upstream: Response,
+  response: ServerResponse,
+  fallbackModel: string,
+  onActivity: () => void,
+): Promise<void> {
+  const reader = upstream.body?.getReader();
+  if (!reader) {
+    throw new Error("Codex upstream returned no response body.");
+  }
+
+  response.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let messageStarted = false;
+  let nextBlockIndex = 0;
+  let activeTextBlockIndex: number | null = null;
+  let emittedText = false;
+  let emittedAnyBlock = false;
+  let emittedToolUse = false;
+  let completed = false;
+  const completedOutputItems: Record<string, unknown>[] = [];
+
+  const startMessage = (model = fallbackModel) => {
+    if (messageStarted) return;
+    messageStarted = true;
+    writeSse(response, "message_start", {
+      type: "message_start",
+      message: {
+        id: `msg_${Date.now().toString(36)}`,
+        type: "message",
+        role: "assistant",
+        model,
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+    });
+  };
+
+  const closeTextBlock = () => {
+    if (activeTextBlockIndex === null) return;
+    writeSse(response, "content_block_stop", {
+      type: "content_block_stop",
+      index: activeTextBlockIndex,
+    });
+    activeTextBlockIndex = null;
+  };
+
+  const emitText = (text: string) => {
+    if (!text) return;
+    emittedText = true;
+    startMessage();
+    if (activeTextBlockIndex === null) {
+      activeTextBlockIndex = nextBlockIndex;
+      nextBlockIndex += 1;
+      writeSse(response, "content_block_start", {
+        type: "content_block_start",
+        index: activeTextBlockIndex,
+        content_block: { type: "text", text: "" },
+      });
+    }
+    writeSse(response, "content_block_delta", {
+      type: "content_block_delta",
+      index: activeTextBlockIndex,
+      delta: { type: "text_delta", text },
+    });
+    emittedAnyBlock = true;
+  };
+
+  const emitToolUse = (id: string, name: string, input: unknown) => {
+    closeTextBlock();
+    startMessage();
+    const index = nextBlockIndex;
+    nextBlockIndex += 1;
+    writeSse(response, "content_block_start", {
+      type: "content_block_start",
+      index,
+      content_block: { type: "tool_use", id, name, input: {} },
+    });
+    writeSse(response, "content_block_delta", {
+      type: "content_block_delta",
+      index,
+      delta: { type: "input_json_delta", partial_json: JSON.stringify(input ?? {}) },
+    });
+    writeSse(response, "content_block_stop", { type: "content_block_stop", index });
+    emittedAnyBlock = true;
+    emittedToolUse = true;
+  };
+
+  const emitResponseBlocks = (payload: Record<string, unknown>) => {
+    const output = Array.isArray(payload.output) ? payload.output : completedOutputItems;
+    const message = toAnthropicMessageResponse({ ...payload, output }, fallbackModel);
+    for (const block of message.content) {
+      if (block.type === "text") {
+        if (!emittedText) emitText(block.text);
+        continue;
+      }
+      emitToolUse(block.id, block.name, block.input);
+    }
+  };
+
+  const completeResponse = (payload: Record<string, unknown>) => {
+    if (completed) return;
+    if (!emittedAnyBlock) emitResponseBlocks(payload);
+    closeTextBlock();
+    startMessage(readString(payload.model) || fallbackModel);
+    const usage = isRecord(payload.usage) ? payload.usage : {};
+    writeSse(response, "message_delta", {
+      type: "message_delta",
+      delta: {
+        stop_reason: emittedToolUse ? "tool_use" : "end_turn",
+        stop_sequence: null,
+      },
+      usage: { output_tokens: readNumber(usage.output_tokens) ?? 0 },
+    });
+    writeSse(response, "message_stop", { type: "message_stop" });
+    response.end();
+    completed = true;
+  };
+
+  const processEvent = (payload: Record<string, unknown>) => {
+    const type = readString(payload.type);
+    if (type === "response.created" && isRecord(payload.response)) {
+      startMessage(readString(payload.response.model) || fallbackModel);
+      return;
+    }
+    if (type === "response.output_text.delta") {
+      const delta = readString(payload.delta);
+      if (delta) {
+        emitText(delta);
+      }
+      return;
+    }
+    if (type === "response.output_text.done") {
+      if (!emittedText) emitText(readString(payload.text));
+      closeTextBlock();
+      return;
+    }
+    if (type === "response.output_item.done" && isRecord(payload.item)) {
+      completedOutputItems.push(payload.item);
+      emitResponseBlocks({ output: [payload.item] });
+      return;
+    }
+    if (type === "response.completed" && isRecord(payload.response)) {
+      completeResponse(payload.response);
+      return;
+    }
+    if (type === "response.failed" || type === "error") {
+      throw new Error(readString(payload.error) || readString(payload.message) || "Codex upstream response failed.");
+    }
+  };
+
+  const processBufferedEvents = () => {
+    const normalized = buffer.replace(/\r\n/g, "\n");
+    const frames = normalized.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      const data = frame
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart())
+        .join("\n");
+      if (!data || data === "[DONE]") continue;
+      const payload = JSON.parse(data) as unknown;
+      if (isRecord(payload)) processEvent(payload);
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      onActivity();
+      buffer += decoder.decode(value, { stream: true });
+      processBufferedEvents();
+    }
+    buffer += decoder.decode();
+    processBufferedEvents();
+    if (!completed) {
+      throw new Error("Codex upstream stream ended without a completed response.");
+    }
+  } finally {
+    reader.releaseLock();
   }
 }
 
@@ -294,6 +546,10 @@ function writeJson(response: ServerResponse, statusCode: number, payload: unknow
   response.end(JSON.stringify(payload));
 }
 
+function writeSse(response: ServerResponse, event: string, payload: unknown): void {
+  response.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+}
+
 function extractResponseErrorText(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -313,6 +569,14 @@ function extractResponseErrorText(text: string): string {
   } catch {
     return trimmed;
   }
+}
+
+function readString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

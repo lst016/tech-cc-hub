@@ -1,4 +1,5 @@
 import type { SlashCommandDisplayPart } from "./slash-command-display";
+import { IMAGE_GENERATION_PLUGIN_TOKEN } from "../components/prompt-input/image-generation-plugin";
 
 function isPromptEditorSentinelNode(node: Node): boolean {
   return node instanceof HTMLElement && node.dataset.promptEditorSentinel === "true";
@@ -34,6 +35,9 @@ function getPromptTextFromEditorNode(node: Node): string {
     const commandName = node.dataset.slashCommandName;
     if (commandName) {
       return `/${commandName}`;
+    }
+    if (node.dataset.imageGenerationPlugin === "true") {
+      return IMAGE_GENERATION_PLUGIN_TOKEN;
     }
   }
   if (node instanceof HTMLBRElement) {
@@ -81,7 +85,7 @@ function getEditorBoundaryOffset(editor: HTMLElement, targetNode: Node, targetOf
       return;
     }
 
-    if (node instanceof HTMLElement && node.dataset.slashCommandName) {
+    if (node instanceof HTMLElement && (node.dataset.slashCommandName || node.dataset.imageGenerationPlugin === "true")) {
       offset += getNodePromptLength(node);
       return;
     }
@@ -127,7 +131,7 @@ function findEditorPositionForOffset(editor: HTMLElement, offset: number): { nod
       return null;
     }
 
-    if (node instanceof HTMLElement && node.dataset.slashCommandName) {
+    if (node instanceof HTMLElement && (node.dataset.slashCommandName || node.dataset.imageGenerationPlugin === "true")) {
       const length = getNodePromptLength(node);
       if (remaining <= length) {
         return {
@@ -208,14 +212,52 @@ function createSlashCommandIconElement() {
   return svg;
 }
 
-function appendPromptTextNode(fragment: DocumentFragment, text: string) {
-  const segments = text.split("\n");
+function createImageGenerationPluginElement(onConfigure?: () => void, onRemove?: () => void) {
+  const token = document.createElement("span");
+  token.dataset.imageGenerationPlugin = "true";
+  token.contentEditable = "false";
+  token.className = "mx-1 inline-flex select-none items-center gap-1 rounded-md bg-blue-50 px-1.5 py-0.5 align-baseline text-[14px] font-medium text-blue-700 ring-1 ring-inset ring-blue-200";
+
+  const configure = document.createElement("button");
+  configure.type = "button";
+  configure.className = "inline-flex items-center gap-1 outline-none";
+  configure.textContent = "生图 ⚙";
+  configure.addEventListener("click", (event) => {
+    event.preventDefault();
+    onConfigure?.();
+  });
+  token.appendChild(configure);
+
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.ariaLabel = "移除生图插件";
+  remove.className = "rounded-sm px-0.5 hover:bg-blue-100";
+  remove.textContent = "×";
+  remove.addEventListener("click", (event) => {
+    event.preventDefault();
+    onRemove?.();
+  });
+  token.appendChild(remove);
+  return token;
+}
+
+function appendPromptTextNode(
+  fragment: DocumentFragment,
+  text: string,
+  onConfigureImageGeneration?: () => void,
+  onRemoveImageGeneration?: () => void,
+) {
+  const segments = text.split(IMAGE_GENERATION_PLUGIN_TOKEN);
   segments.forEach((segment, index) => {
-    if (index > 0) {
-      fragment.appendChild(document.createElement("br"));
-    }
     if (segment) {
-      fragment.appendChild(document.createTextNode(segment));
+      const lines = segment.split("\n");
+      lines.forEach((line, lineIndex) => {
+        if (lineIndex > 0) fragment.appendChild(document.createElement("br"));
+        if (line) fragment.appendChild(document.createTextNode(line));
+      });
+    }
+    if (index < segments.length - 1) {
+      fragment.appendChild(createImageGenerationPluginElement(onConfigureImageGeneration, onRemoveImageGeneration));
     }
   });
 }
@@ -226,14 +268,19 @@ function appendPromptEditorSentinel(fragment: DocumentFragment) {
   fragment.appendChild(sentinel);
 }
 
-export function renderPromptEditorContent(editor: HTMLElement, parts: SlashCommandDisplayPart[]) {
+export function renderPromptEditorContent(
+  editor: HTMLElement,
+  parts: SlashCommandDisplayPart[],
+  onConfigureImageGeneration?: () => void,
+  onRemoveImageGeneration?: () => void,
+) {
   const fragment = document.createDocumentFragment();
   let rawPromptText = "";
 
   for (const part of parts) {
     if (part.type === "text") {
       rawPromptText += part.text;
-      appendPromptTextNode(fragment, part.text);
+      appendPromptTextNode(fragment, part.text, onConfigureImageGeneration, onRemoveImageGeneration);
       continue;
     }
 

@@ -25,6 +25,9 @@ import {
 } from "../utils/ask-user-question";
 import { parseGeneratedImageResult } from "../utils/generated-image-result";
 import { GeneratedImageResultCard } from "./chat/GeneratedImageResultCard";
+import { EChartsCard } from "./chat/EChartsCard";
+import { getImageGenerationDisplayPromptFromSerialized } from "./prompt-input/image-generation-plugin";
+import { extractChartBlocks, stripChartBlocks } from "../utils/chart-blocks";
 import {
   extractCodeReferencesPrompt,
   extractFileReferencesPrompt,
@@ -1285,8 +1288,9 @@ const UserMessageCard = ({
     promptParsingSkipped,
     promptTruncated,
   } = useMemo(() => {
-    if (message.prompt.length > USER_PROMPT_PARSE_CHAR_LIMIT) {
-      const truncatedPrompt = message.prompt.slice(0, USER_PROMPT_RENDER_CHAR_LIMIT);
+    const displayCompatiblePrompt = getImageGenerationDisplayPromptFromSerialized(message.prompt);
+    if (displayCompatiblePrompt.length > USER_PROMPT_PARSE_CHAR_LIMIT) {
+      const truncatedPrompt = displayCompatiblePrompt.slice(0, USER_PROMPT_RENDER_CHAR_LIMIT);
       return {
         visiblePrompt: truncatedPrompt,
         annotations: [] as BrowserAnnotationSummary[],
@@ -1294,11 +1298,11 @@ const UserMessageCard = ({
         fileReferences: [] as FileReferencePromptSummary[],
         messageReferences: [] as MessageReferencePromptSummary[],
         promptParsingSkipped: true,
-        promptTruncated: message.prompt.length > USER_PROMPT_RENDER_CHAR_LIMIT,
+        promptTruncated: displayCompatiblePrompt.length > USER_PROMPT_RENDER_CHAR_LIMIT,
       };
     }
 
-    const browserResult = extractBrowserAnnotationsPrompt(message.prompt);
+    const browserResult = extractBrowserAnnotationsPrompt(displayCompatiblePrompt);
     const codeResult = extractCodeReferencesPrompt(browserResult.visiblePrompt);
     const fileResult = extractFileReferencesPrompt(codeResult.visiblePrompt);
     const messageResult = extractMessageReferencesPrompt(fileResult.visiblePrompt);
@@ -1314,6 +1318,7 @@ const UserMessageCard = ({
   }, [message.prompt]);
   const hasVisiblePrompt = visiblePrompt.trim().length > 0;
   const hasAttachments = Boolean(message.attachments?.length);
+  const isSingleImageAttachment = message.attachments?.length === 1 && message.attachments[0]?.kind === "image";
   const shouldHidePromptBubble = hasAttachments && isSyntheticAttachmentPrompt(visiblePrompt);
   const editablePrompt = visiblePrompt || message.prompt;
   const promptContextBlocks = useMemo(() => extractPromptContextBlocks(message.prompt), [message.prompt]);
@@ -1495,31 +1500,36 @@ const UserMessageCard = ({
         </div>
       )}
       {message.attachments && message.attachments.length > 0 && (
-        <div className="chat-attachment-list mt-2 grid w-full max-w-[78%] gap-2">
+        <div className={isSingleImageAttachment
+          ? "chat-attachment-list mt-2 grid w-full max-w-[22rem] grid-cols-1 gap-2"
+          : "chat-attachment-list mt-2 grid w-full max-w-[78%] grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-2"}
+        >
           {message.attachments.map((attachment) => {
             if (attachment.kind === "image") {
               const imageSrc = resolveImageAttachmentSrc(attachment);
               return (
-                <div key={`${attachment.id}-preview`} className="overflow-hidden rounded-2xl border border-black/6 bg-[#eef2f8] px-2 py-2">
-                  <button
-                    type="button"
-                    className="chat-attachment-image-row flex w-full min-w-0 items-center gap-3 text-left"
-                    onClick={() => setLightboxImage({ src: imageSrc, name: attachment.name })}
-                  >
-                    <span className="grid h-14 w-20 shrink-0 place-items-center overflow-hidden rounded-xl border border-black/6 bg-white">
-                      <img src={imageSrc} alt={attachment.name} className="chat-attachment-image-thumb block max-h-full max-w-full object-contain" />
-                    </span>
-                    <span className="chat-attachment-meta flex min-w-0 flex-1 items-center gap-2">
-                      <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-accent">图片</span>
-                      <span className="min-w-0 flex-1 truncate text-xs font-semibold text-ink-800">{attachment.name}</span>
-                    </span>
-                  </button>
-                </div>
+                <button
+                  key={`${attachment.id}-preview`}
+                  type="button"
+                  aria-label={`预览图片 ${attachment.name}`}
+                  title={attachment.name}
+                  className="chat-attachment-image-tile group/image relative aspect-[16/10] min-w-0 overflow-hidden rounded-2xl border border-black/8 bg-white text-left shadow-[0_8px_24px_rgba(15,23,42,0.08)] transition duration-200 hover:-translate-y-0.5 hover:border-accent/30 hover:shadow-[0_12px_30px_rgba(15,23,42,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                  onClick={() => setLightboxImage({ src: imageSrc, name: attachment.name })}
+                >
+                  <img
+                    src={imageSrc}
+                    alt={attachment.name}
+                    className="chat-attachment-image-thumb h-full w-full object-cover transition-transform duration-200 group-hover/image:scale-[1.02]"
+                  />
+                  <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent px-3 pb-2.5 pt-8">
+                    <span className="block truncate text-xs font-medium text-white drop-shadow-sm">{attachment.name}</span>
+                  </span>
+                </button>
               );
             }
 
             return (
-              <div key={`${attachment.id}-preview`} className="rounded-2xl border border-black/6 bg-[#eef2f8] p-3">
+              <div key={`${attachment.id}-preview`} className="col-span-full rounded-2xl border border-black/6 bg-[#eef2f8] p-3">
                 <div className="mb-2 flex items-center justify-between gap-2 text-xs font-semibold text-muted">
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-accent">文本</span>
@@ -1589,6 +1599,9 @@ const AssistantTextCard = ({
   const [expanded, setExpanded] = useState(tone !== "thinking");
   const thoughtExtraction = useMemo(() => extractThoughtBlocks(text), [text]);
   const visibleAssistantText = thoughtExtraction.visibleText || text;
+  const contentSegments = useMemo(() => extractChartBlocks(visibleAssistantText), [visibleAssistantText]);
+  const hasCharts = contentSegments.some((segment) => segment.type === "chart");
+  const plainAssistantText = stripChartBlocks(visibleAssistantText);
 
   if (tone === "thinking") {
     return (
@@ -1623,19 +1636,36 @@ const AssistantTextCard = ({
       <SectionLabel active={showIndicator} variant="success">{title}</SectionLabel>
       <ThoughtDisplay thoughts={thoughtExtraction.thoughts} showIndicator={showIndicator} />
       <div className="flex gap-2">
-        <div
-          className="min-w-0 flex-1 rounded-[26px] rounded-tl-[8px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 text-ink-800 shadow-[0_14px_30px_rgba(30,38,52,0.055)]"
-        >
-          <CollapsibleText
-            text={visibleAssistantText}
-            renderMarkdown
-            maxLines={24}
-            referenceSourceRole="assistant"
-            referenceSourceLabel={title}
-          />
+        <div className={hasCharts ? "min-w-0 flex-1 space-y-3" : "min-w-0 flex-1 rounded-[26px] rounded-tl-[8px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 text-ink-800 shadow-[0_14px_30px_rgba(30,38,52,0.055)]"}>
+          {hasCharts ? contentSegments.map((segment, index) => (
+            segment.type === "chart" ? (
+              <EChartsCard key={`chart-${index}-${segment.json.length}`} json={segment.json} />
+            ) : segment.text.trim() ? (
+              <div
+                key={`text-${index}`}
+                className="rounded-[26px] rounded-tl-[8px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 text-ink-800 shadow-[0_14px_30px_rgba(30,38,52,0.055)]"
+              >
+                <CollapsibleText
+                  text={segment.text.trim()}
+                  renderMarkdown
+                  maxLines={24}
+                  referenceSourceRole="assistant"
+                  referenceSourceLabel={title}
+                />
+              </div>
+            ) : null
+          )) : (
+            <CollapsibleText
+              text={visibleAssistantText}
+              renderMarkdown
+              maxLines={24}
+              referenceSourceRole="assistant"
+              referenceSourceLabel={title}
+            />
+          )}
         </div>
-        <IconButton label="引用" onClick={() => appendMessageReferenceToComposer(visibleAssistantText, "assistant", title)} />
-        <IconButton label="复制" onClick={() => void copyText(visibleAssistantText)} />
+        <IconButton label="引用" onClick={() => appendMessageReferenceToComposer(plainAssistantText, "assistant", title)} />
+        <IconButton label="复制" onClick={() => void copyText(plainAssistantText)} />
       </div>
     </div>
   );

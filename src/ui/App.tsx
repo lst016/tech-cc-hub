@@ -1876,8 +1876,8 @@ function App() {
           </TooltipButton>
           <TooltipButton
             type="button"
-            tooltip="在 GitHub 上提交需求反馈或问题"
-            onClick={() => window.electron.invoke("shell:openExternal", "https://github.com/lst016/tech-cc-hub/issues/new")}
+            tooltip="打开需求反馈表"
+            onClick={() => window.electron.invoke("shell:openExternal", "https://boke.feishu.cn/base/F9pNbMi61aD5x4sYGuqcMcLRnEf?table=tblhgcZ8nLtclI4U&view=vewHzVOB9x")}
             onMouseDown={(event) => {
               event.preventDefault();
             }}

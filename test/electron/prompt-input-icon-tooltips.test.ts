@@ -1,8 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
-const source = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
+const footerPath = "src/ui/components/prompt-input/PromptComposerFooter.tsx";
+const source = [
+  readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8"),
+  existsSync(footerPath) ? readFileSync(footerPath, "utf8") : "",
+].join("\n");
 
 test("prompt composer icon controls expose visible hover tooltips", () => {
   assert.match(source, /import \{ TooltipButton \} from "\.\.\/TooltipButton";/);
@@ -17,7 +21,8 @@ test("prompt composer icon controls expose visible hover tooltips", () => {
     assert.match(source, new RegExp(`tooltip="${label}"`));
   }
 
-  assert.match(source, /tooltip=\{!hasDraft && isRunning \? "停止会话" : isRunning \? "加入待发送队列" : "发送提示"\}/);
+  assert.match(source, /const primaryActionLabel = !hasDraft && isRunning/);
+  assert.match(source, /tooltip=\{primaryActionLabel\}/);
   assert.match(source, /COMPOSER_ICON_TOOLTIP_CLASS/);
   assert.match(source, /tooltipClassName=\{COMPOSER_ICON_TOOLTIP_CLASS\}/);
 });

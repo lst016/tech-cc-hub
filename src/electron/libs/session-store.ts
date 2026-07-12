@@ -3,6 +3,11 @@ import type { AgentRunSurface, PromptAttachment, RuntimeOverrides, RuntimeReason
 import { existsSync, realpathSync } from "fs";
 import electron from "electron";
 import { isSuccessfulRunnerResult } from "../../shared/runner-status.js";
+import {
+  hasIncompletePlan,
+  normalizeUpdatePlanArgs,
+  type SessionPlanSnapshot,
+} from "../../shared/plan-progress.js";
 import type { SessionExecutionMode } from "../../shared/session-semantics.js";
 import type { SessionWorkflowState, WorkflowScope } from "../../shared/workflow-markdown.js";
 import type { WorkflowRunPatch, WorkflowRunRecord } from "../../shared/workflows/workflow-runs.js";
@@ -78,6 +83,7 @@ export type Session = {
   workflowState?: SessionWorkflowState;
   workflowError?: string;
   runtimeProfileState?: RuntimeEfficiencyProfileState;
+  planSnapshot?: SessionPlanSnapshot;
   archivedAt?: number;
   pendingPermissions: Map<string, PendingPermission>;
   abortController?: AbortController;
@@ -185,6 +191,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function parseSessionPlanSnapshot(value: unknown): SessionPlanSnapshot | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    if (!isRecord(parsed)) return undefined;
+
+    const normalized = normalizeUpdatePlanArgs(parsed);
+    const sessionId = typeof parsed.sessionId === "string" ? parsed.sessionId : "";
+    if (!normalized || !sessionId) return undefined;
+
+    return {
+      plan: normalized.plan,
+      sessionId,
+      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : 0,
+      source: parsed.source === "task_create" ? "task_create" : "update_plan",
+      ...(normalized.explanation ? { explanation: normalized.explanation } : {}),
+      ...(typeof parsed.turnId === "string" ? { turnId: parsed.turnId } : {}),
+      ...(typeof parsed.toolName === "string" ? { toolName: parsed.toolName } : {}),
+      ...(typeof parsed.toolUseId === "string" ? { toolUseId: parsed.toolUseId } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function isExplicitErrorMessage(message: StreamMessage): boolean {
   const record = message as unknown as Record<string, unknown>;
   if (record.is_error === true || record.type === "error" || record.subtype === "error") {
@@ -252,6 +286,7 @@ export class SessionStore {
       console.error("Failed to flush pending session messages:", error);
     });
     this.initialize();
+    this.restoreIncompletePlanSessionStatuses();
     this.recoverSuccessfulErrorSessions();
     this.loadSessions();
   }
@@ -700,6 +735,7 @@ export class SessionStore {
       workflowState: "workflow_state",
       workflowError: "workflow_error",
       runtimeProfileState: "runtime_profile_state",
+      planSnapshot: "plan_state",
       archivedAt: "archived_at",
     } as const;
 
@@ -714,6 +750,10 @@ export class SessionStore {
       }
       if (key === "runtimeProfileState") {
         values.push(serializeRuntimeProfileState(value as RuntimeEfficiencyProfileState | undefined));
+        continue;
+      }
+      if (key === "planSnapshot") {
+        values.push(value === undefined ? null : JSON.stringify(value));
         continue;
       }
       values.push(value === undefined ? null : (value as string | number));
@@ -753,6 +793,7 @@ export class SessionStore {
         workflow_state text,
         workflow_error text,
         runtime_profile_state text,
+        plan_state text,
         archived_at integer,
         created_at integer not null,
         updated_at integer not null
@@ -772,6 +813,7 @@ export class SessionStore {
     this.ensureSessionColumn("workflow_state", "text");
     this.ensureSessionColumn("workflow_error", "text");
     this.ensureSessionColumn("runtime_profile_state", "text");
+    this.ensureSessionColumn("plan_state", "text");
     this.ensureSessionColumn("archived_at", "integer");
     this.db.exec(
       `create table if not exists messages (
@@ -792,7 +834,7 @@ export class SessionStore {
   private loadSessions(): void {
     const rows = this.db
       .prepare(
-        `select id, title, claude_session_id, status, model, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at
+        `select id, title, claude_session_id, status, model, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, plan_state, archived_at
          from sessions`
       )
       .all();
@@ -821,6 +863,7 @@ export class SessionStore {
         workflowState: parseWorkflowState(row.workflow_state),
         workflowError: row.workflow_error ? String(row.workflow_error) : undefined,
         runtimeProfileState: parseRuntimeProfileState(row.runtime_profile_state),
+        planSnapshot: parseSessionPlanSnapshot(row.plan_state),
         archivedAt: typeof row.archived_at === "number" ? Number(row.archived_at) : undefined,
         pendingPermissions: new Map()
       };
@@ -830,11 +873,12 @@ export class SessionStore {
 
   private recoverSuccessfulErrorSessions(): void {
     const rows = this.db
-      .prepare("select id from sessions where status = ?")
+      .prepare("select id, plan_state from sessions where status = ?")
       .all("error") as Array<Record<string, unknown>>;
 
     for (const row of rows) {
       const id = String(row.id);
+      const planSnapshot = parseSessionPlanSnapshot(row.plan_state);
       const latestResult = this.db
         .prepare(
           `select data
@@ -851,13 +895,85 @@ export class SessionStore {
       }
 
       try {
-        if (isSuccessfulRunnerResult(JSON.parse(latestResult.data) as { type?: unknown; subtype?: unknown })) {
+        if (
+          isSuccessfulRunnerResult(JSON.parse(latestResult.data) as { type?: unknown; subtype?: unknown }) &&
+          !hasIncompletePlan(planSnapshot?.plan)
+        ) {
           this.db.prepare("update sessions set status = ? where id = ?").run("completed", id);
         }
       } catch {
         // Leave malformed legacy rows untouched.
       }
     }
+  }
+
+  private restoreIncompletePlanSessionStatuses(): void {
+    const sessions = this.db
+      .prepare("select id, plan_state from sessions where status = ?")
+      .all("completed") as Array<Record<string, unknown>>;
+
+    for (const row of sessions) {
+      const sessionId = String(row.id);
+      const planSnapshot = parseSessionPlanSnapshot(row.plan_state) ?? this.findLatestPlanSnapshot(sessionId);
+      if (!planSnapshot) continue;
+
+      if (!row.plan_state) {
+        this.db.prepare("update sessions set plan_state = ? where id = ?").run(JSON.stringify(planSnapshot), sessionId);
+      }
+      if (hasIncompletePlan(planSnapshot.plan)) {
+        this.db.prepare("update sessions set status = ? where id = ?").run("idle", sessionId);
+      }
+    }
+  }
+
+  private findLatestPlanSnapshot(sessionId: string): SessionPlanSnapshot | undefined {
+    const rows = this.db
+      .prepare(
+        `select data, created_at
+         from messages
+         where session_id = ?
+           and data like '%update_plan%'
+         order by created_at asc, id asc`,
+      )
+      .all(sessionId) as Array<Record<string, unknown>>;
+    let latest: SessionPlanSnapshot | undefined;
+
+    for (const row of rows) {
+      if (typeof row.data !== "string") continue;
+      try {
+        const message = JSON.parse(row.data);
+        if (!isRecord(message) || !isRecord(message.message) || !Array.isArray(message.message.content)) continue;
+
+        for (const item of message.message.content) {
+          if (!isRecord(item) || item.type !== "tool_use") continue;
+          const toolName = typeof item.name === "string" ? item.name : "";
+          if (
+            toolName !== "update_plan" &&
+            !toolName.endsWith("__update_plan") &&
+            !toolName.endsWith(":update_plan") &&
+            !toolName.endsWith("/update_plan")
+          ) {
+            continue;
+          }
+
+          const args = normalizeUpdatePlanArgs(item.input);
+          if (!args) continue;
+          latest = {
+            ...args,
+            sessionId,
+            turnId: typeof message.uuid === "string" ? message.uuid : undefined,
+            updatedAt: typeof row.created_at === "number" ? row.created_at : 0,
+            source: "update_plan",
+            toolName,
+            toolUseId: typeof item.id === "string" ? item.id : undefined,
+          };
+        }
+      } catch {
+        // Skip malformed historical messages while rebuilding plan state.
+      }
+    }
+
+    return latest;
   }
 
   close(): void {

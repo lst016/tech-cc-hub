@@ -162,10 +162,11 @@ test("model select preserves routed option metadata for display and search", () 
 
 test("composer model control uses real configured models in the merged white menu", () => {
   const promptInputSource = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
+  const promptFooterSource = readFileSync("src/ui/components/prompt-input/PromptComposerFooter.tsx", "utf8");
   const modelSelectSource = readFileSync("src/ui/components/models/ModelSelect.tsx", "utf8");
   const composerModelMenuSource = readFileSync("src/ui/components/prompt-input/ComposerModelMenu.tsx", "utf8");
 
-  assert.match(promptInputSource, /import \{ ComposerModelMenu \} from "\.\/ComposerModelMenu"/);
+  assert.match(promptFooterSource, /import \{ ComposerModelMenu \} from "\.\/ComposerModelMenu"/);
   assert.match(promptInputSource, /getRoutedModelOptionsForProfiles/);
   assert.match(promptInputSource, /modelOptions=\{modelSelectOptions\}/);
   assert.match(promptInputSource, /onModelChange=\{handleRuntimeModelChange\}/);

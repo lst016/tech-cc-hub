@@ -52,6 +52,7 @@ export function ComposerModelMenu({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const [modelFilter, setModelFilter] = useState("");
+  const [activeOptionIndex, setActiveOptionIndex] = useState(0);
   // 使用次数计数：仅作为排序依据，不在 UI 显示。计数在发送消息时累加，
   // 通过 window 自定义事件通知此处刷新。
   const [usageCounts, setUsageCounts] = useState(() => getModelUsageCounts());
@@ -75,12 +76,26 @@ export function ComposerModelMenu({
     setModelFilter("");
   }, []);
 
+  const getInitialActiveOptionIndex = useCallback(() => {
+    const selectedIndex = sortedOptions.findIndex((option) => option.value === modelValue);
+    return selectedIndex >= 0 ? selectedIndex : 0;
+  }, [modelValue, sortedOptions]);
+
   const toggleMenu = useCallback(() => {
     setOpen((current) => {
-      if (current) setModelFilter("");
+      if (current) {
+        setModelFilter("");
+      } else {
+        setActiveOptionIndex(getInitialActiveOptionIndex());
+      }
       return !current;
     });
-  }, []);
+  }, [getInitialActiveOptionIndex]);
+
+  const selectModel = useCallback((model: string) => {
+    onModelChange(model);
+    closeMenu();
+  }, [closeMenu, onModelChange]);
 
   useEffect(() => {
     if (!open) return;
@@ -92,17 +107,36 @@ export function ComposerModelMenu({
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
         closeMenu();
+        return;
+      }
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        if (sortedOptions.length === 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setActiveOptionIndex((current) => (
+          event.key === "ArrowDown"
+            ? (current + 1) % sortedOptions.length
+            : (current - 1 + sortedOptions.length) % sortedOptions.length
+        ));
+        return;
+      }
+      if (event.key === "Enter" && sortedOptions.length > 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        selectModel(sortedOptions[activeOptionIndex]?.value ?? sortedOptions[0].value);
       }
     };
 
     document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown, true);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [closeMenu, open]);
+  }, [activeOptionIndex, closeMenu, open, selectModel, sortedOptions]);
 
   // 计数在发送消息时累加（发生在其他组件），通过 window 自定义事件通知此处刷新排序。
   useEffect(() => {
@@ -110,11 +144,6 @@ export function ComposerModelMenu({
     window.addEventListener(MODEL_USAGE_CHANGED_EVENT, handleUsageChanged);
     return () => window.removeEventListener(MODEL_USAGE_CHANGED_EVENT, handleUsageChanged);
   }, []);
-
-  const selectModel = (model: string) => {
-    onModelChange(model);
-    closeMenu();
-  };
 
   return (
     <div ref={containerRef} className="relative inline-flex items-center text-[13px] text-ink-700">
@@ -151,7 +180,10 @@ export function ComposerModelMenu({
                 <input
                   type="search"
                   value={modelFilter}
-                  onChange={(event) => setModelFilter(event.target.value)}
+                  onChange={(event) => {
+                    setModelFilter(event.target.value);
+                    setActiveOptionIndex(0);
+                  }}
                   className="h-7 w-full rounded-md border border-[#d9dde3] bg-white pl-7 pr-2 text-[12px] font-medium text-[#171b23] outline-none transition placeholder:text-[#a6a8ad] focus:border-[#9bbcf7] focus:ring-2 focus:ring-[#dbeafe]"
                   placeholder="筛选模型"
                   autoComplete="off"
@@ -160,11 +192,12 @@ export function ComposerModelMenu({
               </label>
             </div>
             <div className="grid gap-1">
-              {sortedOptions.map((option) => (
+              {sortedOptions.map((option, index) => (
                 <ComposerModelRow
                   key={option.value}
                   option={option}
                   selected={option.value === modelValue}
+                  active={index === activeOptionIndex}
                   onSelect={selectModel}
                 />
               ))}
@@ -233,10 +266,12 @@ export function ComposerModelMenu({
 function ComposerModelRow({
   option,
   selected,
+  active,
   onSelect,
 }: {
   option: ComposerModelOption;
   selected: boolean;
+  active: boolean;
   onSelect: (value: string) => void;
 }) {
   return (
@@ -246,7 +281,7 @@ function ComposerModelRow({
       aria-selected={selected}
       title={option.title ?? option.description ?? option.value}
       className={`flex h-9 min-w-0 items-center justify-between gap-4 rounded-md px-3 text-left text-[13px] transition ${
-        selected ? "bg-[#f4f6f8] text-[#171b23]" : "text-[#313743] hover:bg-[#f4f6f8]"
+        active || selected ? "bg-[#f4f6f8] text-[#171b23]" : "text-[#313743] hover:bg-[#f4f6f8]"
       }`}
       onClick={() => onSelect(option.value)}
     >

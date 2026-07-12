@@ -1,10 +1,17 @@
-import type { PromptAttachment } from "../../types";
+import type { PromptAttachment } from "../../types.js";
+import {
+  getImageGenerationDisplayPrompt,
+  restoreImageGenerationPluginFromPrompt,
+} from "./image-generation-plugin.js";
 
 const PROMPT_QUEUE_STORAGE_KEY = "tech-cc-hub:prompt-queue";
 
 export type QueuedMessageDraft = {
   id: string;
+  /** User-visible text without structured runtime instructions. */
   prompt: string;
+  /** Optional enriched prompt sent only to the runner. */
+  agentPrompt?: string;
   attachments: PromptAttachment[];
   createdAt: number;
 };
@@ -15,7 +22,21 @@ export function readQueuedMessagesFromStorage(): Record<string, QueuedMessageDra
     if (!stored) return {};
     const parsed = JSON.parse(stored) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return parsed as Record<string, QueuedMessageDraft[]>;
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, QueuedMessageDraft[]>).map(([sessionId, queue]) => [
+        sessionId,
+        Array.isArray(queue) ? queue.map((item) => {
+          if (item.agentPrompt) return item;
+          const restored = restoreImageGenerationPluginFromPrompt(item.prompt);
+          if (!restored) return item;
+          return {
+            ...item,
+            prompt: getImageGenerationDisplayPrompt(restored.prompt),
+            agentPrompt: item.prompt,
+          };
+        }) : [],
+      ]),
+    );
   } catch {
     return {};
   }
@@ -37,6 +58,16 @@ export function writeQueuedMessagesToStorage(queueBySession: Record<string, Queu
 }
 
 export function buildQueuedPrompt(queue: QueuedMessageDraft[]) {
+  if (queue.length === 1) return queue[0].agentPrompt ?? queue[0].prompt;
+  return queue
+    .map((item, index) => {
+      const content = (item.agentPrompt ?? item.prompt).trim() || "(no text, attachments only)";
+      return `Queued message ${index + 1}:\n${content}`;
+    })
+    .join("\n\n---\n\n");
+}
+
+export function buildQueuedDisplayPrompt(queue: QueuedMessageDraft[]) {
   if (queue.length === 1) return queue[0].prompt;
   return queue
     .map((item, index) => {

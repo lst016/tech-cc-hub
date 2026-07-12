@@ -13,6 +13,14 @@ test("prompt input keeps native edits out of the layout rerender path", () => {
   assert.match(handleInputMatch[0], /setPrompt\(nextPrompt\);/);
 });
 
+test("image token removal reads the live native editor draft", () => {
+  const source = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
+
+  assert.match(source, /const readCurrentPromptDraft = useCallback/);
+  assert.match(source, /readCurrentPromptDraft\(\)\.replaceAll\(IMAGE_GENERATION_PLUGIN_TOKEN, ""\)/);
+  assert.doesNotMatch(source, /nextPrompt\.replaceAll\(IMAGE_GENERATION_PLUGIN_TOKEN, ""\)/);
+});
+
 test("prompt input pastes clipboard html as plain text", () => {
   const source = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
 

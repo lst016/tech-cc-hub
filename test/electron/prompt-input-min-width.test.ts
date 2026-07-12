@@ -1,8 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
-const source = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
+const footerPath = "src/ui/components/prompt-input/PromptComposerFooter.tsx";
+const source = [
+  readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8"),
+  existsSync(footerPath) ? readFileSync(footerPath, "utf8") : "",
+].join("\n");
 const appSource = readFileSync("src/ui/App.tsx", "utf8");
 const styles = readFileSync("src/ui/index.css", "utf8");
 

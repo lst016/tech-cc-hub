@@ -154,6 +154,46 @@ test("generateImages posts JSON to /images/generations and persists b64_json art
   }
 });
 
+test("generateImages disables the default watermark for Doubao Seedream models", async () => {
+  let requestBody: Record<string, unknown> | undefined;
+  const mock = await startMockServer((req, res) => {
+    let rawBody = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      rawBody += chunk;
+    });
+    req.on("end", () => {
+      requestBody = JSON.parse(rawBody) as Record<string, unknown>;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        data: [{ b64_json: SAMPLE_PNG_BASE64 }],
+      }));
+    });
+  });
+
+  try {
+    const selected: ImageGenerationRouteConfig = {
+      id: "doubao-seedream",
+      provider: "custom",
+      baseURL: `http://127.0.0.1:${mock.port}`,
+      apiKey: "sk-test",
+      imageGenerationModel: "doubao-seedream-5-0-260128",
+      models: [{ name: "doubao-seedream-5-0-260128" }],
+    };
+
+    const result = await generateImages({
+      sessionId: "doubao-seedream-no-watermark",
+      request: { prompt: "draw a rabbit" },
+      context: { selectedConfig: selected, enabledConfigs: [selected] },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(requestBody?.watermark, false);
+  } finally {
+    await stopServer(mock.server);
+  }
+});
+
 test("generateImages downloads remote URL artifact and persists locally", async () => {
   const pngBytes = Buffer.from(SAMPLE_PNG_BASE64, "base64");
   const mock = await startMockServer((req, res) => {
@@ -306,13 +346,20 @@ test("generateImages edits route posts multipart and persists artifact", async (
   // 用临时目录伪造 userData 的 generated-images 根
   // 注意：artifacts 用 app.getPath('userData')，Electron 主进程下会返回真实路径。
   // 这里我们只验证 multipart 请求被发出 + b64 响应落盘成功。
+  let requestBody = "";
   const mock = await startMockServer((req, res) => {
     assert.equal(req.url, "/v1/images/edits");
     assert.equal(req.method, "POST");
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({
-      data: [{ b64_json: SAMPLE_PNG_BASE64 }],
-    }));
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      requestBody += chunk;
+    });
+    req.on("end", () => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        data: [{ b64_json: SAMPLE_PNG_BASE64 }],
+      }));
+    });
   });
 
   try {
@@ -320,6 +367,8 @@ test("generateImages edits route posts multipart and persists artifact", async (
     const configWithUrl: ImageGenerationRouteConfig = {
       ...selected,
       baseURL: `http://127.0.0.1:${mock.port}`,
+      imageGenerationModel: "doubao-seedream-5-0-260128",
+      models: [{ name: "doubao-seedream-5-0-260128" }],
     };
 
     // 生成一张真实参考图放在 generated-images 目录下
@@ -346,6 +395,7 @@ test("generateImages edits route posts multipart and persists artifact", async (
       assert.equal(result.mode, "edit");
       assert.equal(result.artifacts.length, 1);
     }
+    assert.match(requestBody, /name="watermark"\r\n\r\nfalse\r\n/);
 
     rmSync(refDir, { recursive: true, force: true });
   } finally {
