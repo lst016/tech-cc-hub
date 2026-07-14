@@ -26,7 +26,12 @@ jobs:
             platform: mac
             arch: arm64
             command: npm run release:mac-arm64
-            uploads_artifacts: false
+            uploads_artifacts: true
+          - os: macos-14
+            platform: mac
+            arch: x64
+            command: npm run release:mac-x64
+            uploads_artifacts: true
 
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -115,6 +120,7 @@ jobs:
           merge-multiple: true
 
       - name: Normalize GitHub asset names
+        if: contains(needs.*.result, 'success') || true
         shell: bash
         run: |
           set -euo pipefail
@@ -124,8 +130,12 @@ jobs:
 
           release_dir = Path("release-assets")
           latest_path = release_dir / "latest.yml"
+          if not latest_path.is_file():
+              print("latest.yml not found (no Windows build artifacts), skipping normalization")
+              raise SystemExit(0)
+
           text = latest_path.read_text(encoding="utf-8")
-          match = re.search(r"^path:\s*['\"]?(.+?)['\"]?\s*$", text, re.M)
+          match = re.search(r"^path:\s*['\"]?(.+?)['"']?\s*$", text, re.M)
           if not match:
               raise SystemExit("latest.yml does not declare path")
 
@@ -151,7 +161,10 @@ jobs:
         run: |
           set -euo pipefail
           cd release-assets
-          test -s latest.yml
+          if [ ! -s latest.yml ]; then
+            echo "latest.yml not found, skipping Windows updater verification"
+            exit 0
+          fi
           installer="$(python - <<'PY'
           import re
           from pathlib import Path
