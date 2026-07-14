@@ -108,6 +108,18 @@ test("CodeGraph bundled runtime dependencies are kept in Windows packages", () =
   assert.match(packagedSmoke, /Cannot find module/);
 });
 
+test("CodeGraph bundled runtime dependencies are repaired during macOS packaging", () => {
+  const afterPack = readFileSync("scripts/after-pack-win-icon.cjs", "utf8");
+
+  assert.match(afterPack, /syncMacCodeGraphRuntime/);
+  assert.match(afterPack, /vendor-node-modules/);
+  assert.match(afterPack, /process\.resourcesPath/);
+  assert.match(afterPack, /app\.asar\.unpacked/);
+  assert.match(afterPack, /web-tree-sitter/);
+  assert.match(afterPack, /tree-sitter-wasms/);
+  assert.match(afterPack, /picomatch/);
+});
+
 test("Canvas plugin runtime is bundled by the host project without private node_modules", () => {
   const packageJson = readJson("package.json");
   const builderConfig = readJson("electron-builder.json") as BuilderConfigLike;
