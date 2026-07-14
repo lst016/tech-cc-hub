@@ -919,6 +919,10 @@ export class BrowserWorkbenchManager {
     };
   }
 
+  hasLiveView(): boolean {
+    return Boolean(this.view && !this.view.webContents.isDestroyed());
+  }
+
   getConsoleLogs(limit = 80): BrowserWorkbenchConsoleLog[] {
     return this.logs.slice(-Math.min(Math.max(limit, 1), 300));
   }

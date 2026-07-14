@@ -129,14 +129,17 @@ export function useCronJobs(conversationId?: string) {
 export function useAllCronJobs() {
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
 
   const fetchJobs = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const allJobs = await getElectron().invoke("cron:list-jobs");
       setJobs(allJobs || []);
     } catch (err) {
       console.error("[useAllCronJobs] 获取任务失败:", err);
+      setError(err instanceof Error ? err : new Error("获取定时任务失败"));
     } finally {
       setLoading(false);
     }
@@ -173,7 +176,7 @@ export function useAllCronJobs() {
   const actions = useCronJobActions(handleJobUpdated, handleJobDeleted);
 
   return {
-    jobs, loading,
+    jobs, loading, error,
     activeCount: useMemo(() => jobs.filter((j) => j.enabled).length, [jobs]),
     hasError: useMemo(() => jobs.some((j) => j.state.lastStatus === "error"), [jobs]),
     refetch: fetchJobs,

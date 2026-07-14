@@ -3,6 +3,7 @@ import type { AgentRunSurface, PromptAttachment, RuntimeOverrides, RuntimeReason
 import { existsSync, realpathSync } from "fs";
 import electron from "electron";
 import { isSuccessfulRunnerResult } from "../../shared/runner-status.js";
+import { sanitizePromptAttachmentsForStorage } from "../../shared/attachments.js";
 import {
   hasIncompletePlan,
   normalizeUpdatePlanArgs,
@@ -130,6 +131,7 @@ export type SessionHistory = {
 export type SessionHistoryPage = SessionHistory & {
   hasMore: boolean;
   nextCursor?: SessionHistoryCursor;
+  totalMessages: number;
 };
 
 const SESSION_LIST_DEFAULT_SUMMARY_LIMIT = 80;
@@ -242,10 +244,15 @@ export function classifyMessagePersistence(message: StreamMessage): MessagePersi
 
 function parseStoredMessage(row: { id: string; data: string; created_at: number }): StreamMessage {
   const parsed = stripInlineBase64ImagesFromMessage(JSON.parse(String(row.data)) as StreamMessage);
-  return {
+  const message = {
     ...parsed,
     capturedAt: typeof parsed.capturedAt === "number" ? parsed.capturedAt : Number(row.created_at),
     historyId: parsed.historyId ? String(parsed.historyId) : String(row.id),
+  } satisfies StreamMessage;
+  if (message.type !== "user_prompt" || !message.attachments?.length) return message;
+  return {
+    ...message,
+    attachments: sanitizePromptAttachmentsForStorage(message.attachments),
   } satisfies StreamMessage;
 }
 
@@ -498,6 +505,9 @@ export class SessionStore {
 
     const limit = Math.max(1, Math.min(options?.limit ?? 400, 1_000));
     const before = options?.before;
+    const totalMessages = Number((this.db
+      .prepare("select count(*) as count from messages where session_id = ?")
+      .get(id) as { count?: number } | undefined)?.count ?? 0);
     const rows = before
       ? (this.db
           .prepare(
@@ -536,6 +546,7 @@ export class SessionStore {
       messages,
       hasMore,
       nextCursor: hasMore ? createHistoryCursor(messages[0]) : undefined,
+      totalMessages,
     };
   }
 
@@ -826,9 +837,6 @@ export class SessionStore {
     );
     this.db.exec(`create index if not exists messages_session_id on messages(session_id)`);
     this.db.exec(`create index if not exists messages_session_created_id on messages(session_id, created_at, id)`);
-    this.db
-      .prepare("delete from messages where coalesce(json_extract(data, '$.type'), '') = 'stream_event'")
-      .run();
   }
 
   private loadSessions(): void {
@@ -909,71 +917,18 @@ export class SessionStore {
 
   private restoreIncompletePlanSessionStatuses(): void {
     const sessions = this.db
-      .prepare("select id, plan_state from sessions where status = ?")
+      .prepare("select id, plan_state from sessions where status = ? and plan_state is not null")
       .all("completed") as Array<Record<string, unknown>>;
 
     for (const row of sessions) {
       const sessionId = String(row.id);
-      const planSnapshot = parseSessionPlanSnapshot(row.plan_state) ?? this.findLatestPlanSnapshot(sessionId);
+      const planSnapshot = parseSessionPlanSnapshot(row.plan_state);
       if (!planSnapshot) continue;
 
-      if (!row.plan_state) {
-        this.db.prepare("update sessions set plan_state = ? where id = ?").run(JSON.stringify(planSnapshot), sessionId);
-      }
       if (hasIncompletePlan(planSnapshot.plan)) {
         this.db.prepare("update sessions set status = ? where id = ?").run("idle", sessionId);
       }
     }
-  }
-
-  private findLatestPlanSnapshot(sessionId: string): SessionPlanSnapshot | undefined {
-    const rows = this.db
-      .prepare(
-        `select data, created_at
-         from messages
-         where session_id = ?
-           and data like '%update_plan%'
-         order by created_at asc, id asc`,
-      )
-      .all(sessionId) as Array<Record<string, unknown>>;
-    let latest: SessionPlanSnapshot | undefined;
-
-    for (const row of rows) {
-      if (typeof row.data !== "string") continue;
-      try {
-        const message = JSON.parse(row.data);
-        if (!isRecord(message) || !isRecord(message.message) || !Array.isArray(message.message.content)) continue;
-
-        for (const item of message.message.content) {
-          if (!isRecord(item) || item.type !== "tool_use") continue;
-          const toolName = typeof item.name === "string" ? item.name : "";
-          if (
-            toolName !== "update_plan" &&
-            !toolName.endsWith("__update_plan") &&
-            !toolName.endsWith(":update_plan") &&
-            !toolName.endsWith("/update_plan")
-          ) {
-            continue;
-          }
-
-          const args = normalizeUpdatePlanArgs(item.input);
-          if (!args) continue;
-          latest = {
-            ...args,
-            sessionId,
-            turnId: typeof message.uuid === "string" ? message.uuid : undefined,
-            updatedAt: typeof row.created_at === "number" ? row.created_at : 0,
-            source: "update_plan",
-            toolName,
-            toolUseId: typeof item.id === "string" ? item.id : undefined,
-          };
-        }
-      } catch {
-        // Skip malformed historical messages while rebuilding plan state.
-      }
-    }
-
-    return latest;
   }
 
   close(): void {

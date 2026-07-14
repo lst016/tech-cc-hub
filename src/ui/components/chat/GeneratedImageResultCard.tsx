@@ -20,6 +20,7 @@ import {
   type OpenWorkspacePluginDetail,
 } from "../../events";
 import { useAppStore } from "../../store/useAppStore";
+import { AppModalOverlay } from "../AppModalOverlay";
 
 type GeneratedImageResultCardProps = {
   mode: "generate" | "edit";
@@ -209,11 +210,9 @@ function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
   }, [onClose]);
 
   return (
-    <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-6"
+    <AppModalOverlay
+      className="z-50 grid place-items-center bg-black/70 p-6"
       onClick={onClose}
-      role="dialog"
-      aria-modal="true"
       aria-label="生成图片大图预览"
     >
       <img
@@ -222,7 +221,7 @@ function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
         className="max-h-full max-w-full rounded-xl object-contain shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       />
-    </div>
+    </AppModalOverlay>
   );
 }
 

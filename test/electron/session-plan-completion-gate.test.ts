@@ -70,7 +70,7 @@ test("the latest plan survives a session-store reload", () => {
   }
 });
 
-test("a legacy completed session restores its latest unfinished update_plan", () => {
+test("a legacy completed session does not scan message history during startup", () => {
   const dir = mkdtempSync(join(tmpdir(), "tech-cc-hub-legacy-plan-"));
   const dbPath = join(dir, "sessions.db");
   const store = new SessionStore(dbPath);
@@ -105,11 +105,8 @@ test("a legacy completed session restores its latest unfinished update_plan", ()
     const reloaded = new SessionStore(dbPath);
     try {
       const restored = reloaded.getSession(session.id) as (SessionWithPlan | undefined);
-      assert.equal(restored?.status, "idle");
-      assert.deepEqual(restored?.planSnapshot?.plan, [
-        { step: "implement", status: "completed" },
-        { step: "verify", status: "pending" },
-      ]);
+      assert.equal(restored?.status, "completed");
+      assert.equal(restored?.planSnapshot, undefined);
     } finally {
       reloaded.close();
     }

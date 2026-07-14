@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildStatelessContinuationPayload,
   buildStatelessContinuationPrompt,
   shouldCompressStatelessContinuation,
 } from "../../src/electron/stateless-continuation.js";
@@ -276,6 +277,27 @@ test("buildStatelessContinuationPrompt counts SDK-style user and assistant histo
   assert.match(prompt, /Earlier conversation summary:/);
   assert.match(prompt, /Bash: /);
   assert.match(prompt, /I found the relevant fields/);
+});
+
+test("buildStatelessContinuationPayload force-compresses a paged tail and records the full history count", () => {
+  const payload = buildStatelessContinuationPayload(
+    [
+      { type: "user_prompt", prompt: "Recent question" },
+      { type: "result", subtype: "success", result: "Recent answer" } as never,
+    ],
+    "Continue",
+    [],
+    {
+      contextWindow: 1_000_000,
+      compressionThresholdPercent: 90,
+      forceCompression: true,
+      historyMessageCount: 59_143,
+    },
+  );
+
+  assert.equal(payload.usedCompression, true);
+  assert.equal(payload.summaryMessageCount, 59_143);
+  assert.match(payload.prompt, /Recent conversation history:/);
 });
 
 test("buildStatelessContinuationPrompt still compresses when the latest five turns alone exceed the threshold", () => {

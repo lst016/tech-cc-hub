@@ -2,22 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-test("collapsed workspace sidebar keeps a keyboard-accessible recent-session rail", () => {
+test("collapsed workspace sidebar hides the session timeline without reserving its width", () => {
   const appSource = readFileSync("src/ui/App.tsx", "utf8");
-  const railSource = readFileSync("src/ui/components/CollapsedSessionRail.tsx", "utf8");
 
-  assert.match(appSource, /workspaceSidebarCollapsed/);
-  assert.match(appSource, /COLLAPSED_SESSION_RAIL_WIDTH/);
-  assert.match(appSource, /<CollapsedSessionRail/);
-  assert.match(appSource, /requestCollapsedSessionPreviewHistory/);
-
-  assert.match(railSource, /selectCollapsedRailSessions\(sessions, COLLAPSED_SESSION_RAIL_LIMIT, activeSessionId\)/);
-  assert.match(railSource, /createPortal/);
-  assert.match(railSource, /data-collapsed-session-rail/);
-  assert.match(railSource, /data-session-preview-card/);
-  assert.match(railSource, /aria-current=\{isActive \? "page" : undefined\}/);
-  assert.match(railSource, /aria-expanded=\{isPreviewOpen\}/);
-  assert.match(railSource, /event\.key === "Escape"/);
+  assert.match(appSource, /const sidebarOffset = workspaceSidebarVisible \? sidebarWidth : 0;/);
+  assert.doesNotMatch(appSource, /<CollapsedSessionRail/);
 });
 
 test("collapsed session marks share a left origin and cycle reference widths", () => {
@@ -73,18 +62,4 @@ test("preview position is re-clamped after card content and viewport size change
   assert.match(railSource, /window\.addEventListener\("resize"/);
   assert.match(railSource, /resizeObserver\?\.disconnect\(\)/);
   assert.match(railSource, /window\.removeEventListener\("resize"/);
-});
-
-test("app owns collapsed-rail unread transitions and prunes stale session ids", () => {
-  const appSource = readFileSync("src/ui/App.tsx", "utf8");
-  const railSource = readFileSync("src/ui/components/CollapsedSessionRail.tsx", "utf8");
-
-  assert.match(appSource, /collapsedRailPreviousSessionStatusesRef/);
-  assert.match(appSource, /collapsedRailUnreadSessionIds/);
-  assert.match(appSource, /delete next\[sessionId\]/);
-  assert.match(appSource, /unreadSessionIds=\{collapsedRailUnreadSessionIds\}/);
-  assert.match(appSource, /onClearUnreadSession=\{clearCollapsedRailUnreadSession\}/);
-  assert.match(railSource, /unreadSessionIds: Record<string, UnreadSessionStatus>/);
-  assert.match(railSource, /onClearUnreadSession: \(sessionId: string\) => void/);
-  assert.doesNotMatch(railSource, /previousSessionStatusesRef|setUnreadSessionIds/);
 });

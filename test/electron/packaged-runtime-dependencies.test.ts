@@ -7,7 +7,7 @@ type PackageLike = {
   scripts?: Record<string, string>;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
-  packages?: Record<string, { dependencies?: Record<string, string> }>;
+  packages?: Record<string, { version?: string; dependencies?: Record<string, string> }>;
 };
 
 type BuilderConfigLike = {
@@ -38,6 +38,25 @@ test("better-sqlite3 is explicitly included and unpacked for packaged startup", 
   assert.ok(packageJson.dependencies?.["better-sqlite3"]);
   assert.ok(builderConfig.files?.includes("node_modules/better-sqlite3/**/*"));
   assert.ok(builderConfig.asarUnpack?.includes("node_modules/better-sqlite3/**/*"));
+});
+
+test("official Codex login runtime is pinned and unpacked with the desktop app", () => {
+  const packageJson = readJson("package.json");
+  const packageLock = readJson("package-lock.json");
+  const builderConfig = readJson("electron-builder.json") as BuilderConfigLike;
+  const packageWinSafe = readFileSync("scripts/package-win-safe.mjs", "utf8");
+
+  assert.equal(packageJson.dependencies?.["@openai/codex"], "0.144.3");
+  assert.equal(packageLock.packages?.[""]?.dependencies?.["@openai/codex"], "0.144.3");
+  assert.equal(packageLock.packages?.["node_modules/@openai/codex-darwin-arm64"]?.version, "0.144.3-darwin-arm64");
+  assert.equal(packageLock.packages?.["node_modules/@openai/codex-darwin-x64"]?.version, "0.144.3-darwin-x64");
+  assert.ok(builderConfig.files?.includes("node_modules/@openai/codex/**/*"));
+  assert.ok(builderConfig.files?.includes("node_modules/@openai/codex-*/**/*"));
+  assert.ok(builderConfig.asarUnpack?.includes("node_modules/@openai/codex/**/*"));
+  assert.ok(builderConfig.asarUnpack?.includes("node_modules/@openai/codex-*/**/*"));
+  assert.match(packageWinSafe, /validatePackagedCodexLoginRuntime/);
+  assert.match(packageWinSafe, /"codex",\s*\n\s*"node_modules",\s*\n\s*"@openai",\s*\n\s*"codex"/);
+  assert.match(packageWinSafe, /Codex bundled login runtime/);
 });
 
 test("Windows releases reject packaged startup package-resolution failures", () => {

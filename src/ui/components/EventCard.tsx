@@ -12,7 +12,9 @@ import type { PromptAttachment, StreamMessage } from "../types";
 import type { PermissionRequest } from "../store/useAppStore";
 import { useAppStore } from "../store/useAppStore";
 import MDContent from "../render/markdown";
+import type { LarkMentionTone } from "../render/markdown";
 import { DecisionPanel } from "./DecisionPanel";
+import { AppModalOverlay } from "./AppModalOverlay";
 import { resolveImageAttachmentSrc } from "../../shared/attachments";
 import { copyTextToClipboard as copyText } from "../utils/clipboard";
 import { OPEN_BROWSER_WORKBENCH_URL_EVENT, OPEN_SIDE_CONVERSATION_EVENT, PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT, PROMPT_SUBMIT_EVENT } from "../events";
@@ -875,6 +877,7 @@ const CollapsibleText = ({
   className,
   maxLines = MAX_VISIBLE_LINES,
   renderMarkdown = false,
+  larkMentionTone = "rich-text",
   referenceSourceRole = "assistant",
   referenceSourceLabel = "聊天选区",
   referenceCapturedAt,
@@ -883,6 +886,7 @@ const CollapsibleText = ({
   className?: string;
   maxLines?: number;
   renderMarkdown?: boolean;
+  larkMentionTone?: LarkMentionTone;
   referenceSourceRole?: "user" | "assistant" | "tool" | "system";
   referenceSourceLabel?: string;
   referenceCapturedAt?: number;
@@ -1203,7 +1207,7 @@ const CollapsibleText = ({
         document.body,
       )}
       {renderMarkdown ? (
-        <MDContent text={visibleText} />
+        <MDContent text={visibleText} larkMentionTone={larkMentionTone} />
       ) : (
         <pre className="m-0 max-w-full whitespace-pre-wrap break-words font-mono text-[12px] leading-5 [overflow-wrap:anywhere]">{visibleText}</pre>
       )}
@@ -1318,6 +1322,12 @@ const UserMessageCard = ({
   }, [message.prompt]);
   const hasVisiblePrompt = visiblePrompt.trim().length > 0;
   const hasAttachments = Boolean(message.attachments?.length);
+  const hasRenderableContent = hasVisiblePrompt
+    || hasAttachments
+    || annotations.length > 0
+    || codeReferences.length > 0
+    || fileReferences.length > 0
+    || messageReferences.length > 0;
   const isSingleImageAttachment = message.attachments?.length === 1 && message.attachments[0]?.kind === "image";
   const shouldHidePromptBubble = hasAttachments && isSyntheticAttachmentPrompt(visiblePrompt);
   const editablePrompt = visiblePrompt || message.prompt;
@@ -1389,6 +1399,8 @@ const UserMessageCard = ({
     };
   }, [lightboxImage]);
 
+  if (!hasRenderableContent) return null;
+
   return (
     <div className="group mt-5 flex flex-col items-end">
       <SectionLabel active={showIndicator} variant="accent">用户</SectionLabel>
@@ -1451,6 +1463,7 @@ const UserMessageCard = ({
             <CollapsibleText
               text={visiblePrompt}
               renderMarkdown={!promptParsingSkipped}
+              larkMentionTone="chat"
               maxLines={24}
               referenceSourceRole="user"
               referenceSourceLabel="用户消息"
@@ -1461,10 +1474,6 @@ const UserMessageCard = ({
                 这条用户消息过大，已跳过富文本/引用解析，并仅渲染前 {USER_PROMPT_RENDER_CHAR_LIMIT.toLocaleString()} 个字符，避免打开会话时拖垮界面。
               </div>
             )}
-          </div>
-        ) : !hasAttachments && annotations.length === 0 && codeReferences.length === 0 && fileReferences.length === 0 && messageReferences.length === 0 ? (
-          <div className="max-w-[78%] rounded-[22px] border border-black/6 bg-[#eef2f8] px-4 py-3 text-sm text-muted">
-            已发送附件
           </div>
         ) : null}
       </div>
@@ -1552,11 +1561,9 @@ const UserMessageCard = ({
         </div>
       )}
       {lightboxImage && createPortal(
-        <div
-          role="dialog"
-          aria-modal="true"
+        <AppModalOverlay
           aria-label={lightboxImage.name}
-          className="fixed inset-0 z-[2147483647] flex h-dvh w-dvw items-center justify-center overflow-hidden bg-black/70 p-8"
+          className="z-[2147483647] flex h-dvh w-dvw items-center justify-center overflow-hidden bg-black/70 p-8"
           onClick={() => setLightboxImage(null)}
           onWheel={(event) => event.preventDefault()}
           onTouchMove={(event) => event.preventDefault()}
@@ -1578,7 +1585,7 @@ const UserMessageCard = ({
               图片预览地址为空
             </div>
           )}
-        </div>,
+        </AppModalOverlay>,
         document.body,
       )}
     </div>

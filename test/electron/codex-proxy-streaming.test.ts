@@ -9,5 +9,11 @@ test("codex proxy relays an upstream stream incrementally and aborts an idle ups
   assert.match(source, /async function streamCodexResponse\(/);
   assert.match(source, /signal: upstreamWatchdog\.signal/);
   assert.match(source, /await streamCodexResponse\(upstream, response, codexRequest\.model, upstreamWatchdog\.touch\)/);
+  assert.equal((source.match(/getUsableCredential\(profile, true\)/g) ?? []).length, 1);
+  assert.match(source, /if \(upstream\.status === 401\)/);
+  assert.doesNotMatch(source, /upstream\.status === 401 \|\| upstream\.status === 403/);
+  assert.doesNotMatch(source, /readCodexCliCredential/);
+  assert.match(source, /latestCredential\.accessToken !== staleCredential\.accessToken/);
+  assert.equal((source.match(/recoveredCredential\.accessToken !== staleCredential\.accessToken/g) ?? []).length, 1);
   assert.doesNotMatch(source, /const upstreamText = await upstream\.text\(\);[\s\S]*if \(wantsStream\)/);
 });

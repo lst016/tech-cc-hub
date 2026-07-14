@@ -22,7 +22,6 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync
 import { createServer, type Server } from "http";
 import { homedir } from "os";
 import { extname, join } from "path";
-import { startup } from "@anthropic-ai/claude-agent-sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { UnauthorizedError, type OAuthClientProvider, type OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -33,9 +32,11 @@ import { registerEmulatorRemoteIpc } from "./libs/emulator-remote/index.js";
 import { getPreloadPath, getUIPath, getIconPath } from "./pathResolver.js";
 import { getStaticData, pollResources, stopPolling } from "./test.js";
 import { handleClientEvent, sessions, cleanupAllSessions, setChannelReplySender, listStoredSessionsForRenderer, initializeTaskExecutor, initializeNoteRepository } from "./ipc-handlers.js";
-import { generateSessionTitle, getEnhancedEnv } from "./libs/util.js";
+import { generateSessionTitle } from "./libs/util.js";
 import {
   loadApiConfigSettings,
+  mergeRendererApiConfigSettings,
+  redactApiConfigSettingsForRenderer,
   type ApiConfigSettings,
   saveApiConfigSettings,
   loadGlobalRuntimeConfig,
@@ -43,31 +44,36 @@ import {
 } from "./libs/config-store.js";
 import { setBrowserToolHost } from "./libs/mcp-tools/browser.js";
 import { setDesignToolHost } from "./libs/mcp-tools/design.js";
-import { configureDesktopNotifications } from "./libs/desktop-notifications.js";
+import { configureDesktopNotifications, focusDesktopWindow } from "./libs/desktop-notifications.js";
 import { appAutoUpdater, type AppUpdateStatus } from "./libs/auto-updater/auto-updater.js";
 import { startChannelBridge, type ChannelBridgeController } from "./libs/channel/channel-bridge.js";
 import { ensureSystemWorkspace } from "./libs/system-workspace.js";
-import { getClaudeCodePath, getCurrentApiConfig, getEnabledUsableApiConfigs, getGlobalRuntimeEnvConfig, resolveApiConfigForModel, resolveImagePreprocessApiConfig } from "./libs/claude/claude-settings.js";
+import { getCurrentApiConfig, getEnabledUsableApiConfigs, getGlobalRuntimeEnvConfig, resolveApiConfigForModel, resolveImagePreprocessApiConfig } from "./libs/claude/claude-settings.js";
 import { preprocessImageAttachments } from "./libs/image/image-preprocessor.js";
 import { generateImages } from "./libs/image/image-generation-client.js";
 import { toImageGenerationRouteConfig } from "./libs/mcp-tools/image-generation.js";
 import {
     CODEX_OAUTH_BASE_URL,
+    CODEX_OAUTH_STORED_CREDENTIAL,
     buildCodexRequestHeaders,
     buildCodexResponsesRequest,
-    createCodexOAuthAuthorizationFlow,
-    encodeCodexOAuthCredential,
-    exchangeCodexAuthorizationCode,
     extractCodexModelIdsFromCache,
     getCodexResponsesPath,
     mergeCodexModelIds,
-    parseCodexAuthorizationInput,
     parseCodexResponsesStream,
     parseCodexOAuthCredential,
-    refreshCodexOAuthToken,
     toAnthropicMessageResponse,
-    tokenResultToCredential,
 } from "./libs/codex/codex-oauth.js";
+import {
+  CodexRuntimeLoginManager,
+  type CodexRuntimeLoginEvent,
+  type CodexRuntimeLoginStartInput,
+} from "./libs/codex/codex-runtime-login.js";
+import {
+  CODEX_OAUTH_DEEP_LINK_SCHEME,
+  buildCodexOAuthDeepLink,
+  findCodexOAuthDeepLink,
+} from "./libs/codex/codex-deep-link.js";
 import { loadAgentRuleDocuments, saveUserAgentRuleDocument } from "./libs/agent-rule-docs.js";
 import { handleSkillManagerInvoke, registerSkillManagerHandlers } from "./libs/skill-manager/ipc-handlers.js";
 import { registerCronIpcHandlers, IpcCronEventEmitter } from "./libs/cron/cron-ipc-handlers.js";
@@ -94,12 +100,14 @@ import { CronJobExecutor, CronBusyGuard } from "./libs/cron/cron-executor.js";
 import { setCronService } from "./libs/mcp-tools/cron.js";
 import type { ClientEvent, PromptAttachment, ServerEvent } from "./types.js";
 import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkbenchEvent, type BrowserWorkbenchNetworkLogInput, type BrowserWorkbenchRecordedAction, type BrowserWorkbenchState } from "./browser-manager.js";
+import { selectBrowserWorkbenchEvictionIds } from "./libs/browser-workbench/browser-workbench-retention.js";
 import { WorkspacePluginManager } from "./libs/workspace-plugins/workspace-plugin-manager.js";
 import type { WorkspacePluginImageGenerationRequest, WorkspacePluginImageGenerationResult } from "./libs/workspace-plugins/workspace-plugin-bridge.js";
 import { getGeneratedImagesRoot } from "./libs/image/image-generation-artifacts.js";
 import { startDevBackendBridge, DEV_BACKEND_BRIDGE_PORT } from "./dev-backend-bridge.js";
 import { buildSessionSlashCommandItems } from "./libs/slash-command-catalog.js";
 import { prepareExternalCliCommand, runExternalCli } from "./libs/external-cli.js";
+import { searchLarkContacts } from "./libs/lark-contact-search.js";
 import {
   buildFigmaOfficialActionResult,
   buildNextFigmaOfficialCodexAuthRuntimeConfig,
@@ -143,6 +151,43 @@ const browserWorkbenchEventListeners = new Set<(event: BrowserWorkbenchEvent) =>
 let stopDevBackendBridge: (() => void) | null = null;
 let channelBridgeController: ChannelBridgeController | null = null;
 let workspacePluginManager: WorkspacePluginManager | null = null;
+let codexRuntimeLoginManager: CodexRuntimeLoginManager | null = null;
+let pendingCodexOAuthDeepLinkActivation = false;
+
+function activateCodexOAuthDeepLink(args: readonly string[]): boolean {
+  if (!findCodexOAuthDeepLink(args)) return false;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    pendingCodexOAuthDeepLinkActivation = false;
+    focusDesktopWindow(mainWindow);
+  } else {
+    pendingCodexOAuthDeepLinkActivation = true;
+  }
+  return true;
+}
+
+function flushPendingCodexOAuthDeepLinkActivation(): void {
+  if (!pendingCodexOAuthDeepLinkActivation || !mainWindow || mainWindow.isDestroyed()) return;
+  pendingCodexOAuthDeepLinkActivation = false;
+  focusDesktopWindow(mainWindow);
+}
+
+function registerCodexOAuthProtocolClient(): void {
+  if (!app.isPackaged || process.platform !== "darwin") return;
+  if (!app.setAsDefaultProtocolClient(CODEX_OAUTH_DEEP_LINK_SCHEME)) {
+    log.warn("[codex-runtime-login] Failed to register tech-cc-hub protocol client");
+  }
+}
+
+function openCodexOAuthDeepLink(event: CodexRuntimeLoginEvent): void {
+  if (!app.isPackaged || event.type !== "completed") return;
+  const deepLink = buildCodexOAuthDeepLink({
+    attemptId: event.attemptId,
+    profileId: event.profileId,
+  });
+  void shell.openExternal(deepLink).catch((error) => {
+    log.warn("[codex-runtime-login] Failed to open tech-cc-hub callback:", error instanceof Error ? error.message : String(error));
+  });
+}
 
 type CodeGraphUiPayload = {
   workspaceRoot?: unknown;
@@ -1551,6 +1596,7 @@ function runTerminalCommandForRenderer(request: unknown): Promise<{
 
 ipcMain.handle("preview-list-directory", (_event, request: unknown) => listPreviewDirectoryForRenderer(request));
 ipcMain.handle("preview-list-files", (_event, request: unknown) => listPreviewFilesForRenderer(request));
+ipcMain.handle("lark:search-contacts", async (_event, query: unknown) => searchLarkContacts(query));
 ipcMain.handle("sessions:list", (_event, payload?: { archived?: boolean; limit?: number }) => ({
   sessions: listStoredSessionsForRenderer(Boolean(payload?.archived), {
     limit: typeof payload?.limit === "number" ? payload.limit : undefined,
@@ -1680,6 +1726,41 @@ function getBrowserWorkbench(sessionId?: unknown): BrowserWorkbenchManager | nul
   return manager;
 }
 
+function touchBrowserWorkbench(sessionId: string, manager: BrowserWorkbenchManager): void {
+  browserWorkbenches.delete(sessionId);
+  browserWorkbenches.set(sessionId, manager);
+}
+
+function enforceBrowserWorkbenchRetention(activeSessionId: string): void {
+  const evictionIds = selectBrowserWorkbenchEvictionIds(
+    Array.from(browserWorkbenches, ([sessionId, manager]) => ({
+      sessionId,
+      hasLiveView: manager.hasLiveView(),
+    })),
+    activeSessionId,
+  );
+
+  for (const sessionId of evictionIds) {
+    const manager = browserWorkbenches.get(sessionId);
+    if (!manager) continue;
+    manager.close();
+    browserWorkbenches.delete(sessionId);
+    log.info("[browser-retention] evicted inactive BrowserView", {
+      sessionId,
+      retained: browserWorkbenches.size,
+    });
+  }
+}
+
+function closeBrowserWorkbench(sessionId?: unknown): BrowserWorkbenchState {
+  const resolvedSessionId = resolveBrowserWorkbenchSessionId(sessionId);
+  const manager = browserWorkbenches.get(resolvedSessionId);
+  if (!manager) return buildBrowserWorkbenchFallbackState();
+  const state = manager.close();
+  browserWorkbenches.delete(resolvedSessionId);
+  return state;
+}
+
 function workspacePluginsRoot(): string {
   return app.isPackaged ? join(process.resourcesPath, "plugins") : join(app.getAppPath(), "plugins");
 }
@@ -1750,7 +1831,10 @@ function openBrowserWorkbenchForIpc(url: string, sessionId?: unknown): BrowserWo
   }
 
   try {
-    return browserWorkbench.open(url);
+    const state = browserWorkbench.open(url);
+    touchBrowserWorkbench(resolvedSessionId, browserWorkbench);
+    enforceBrowserWorkbenchRetention(resolvedSessionId);
+    return state;
   } catch (error) {
     log.error("[browser-open] failed", {
       sessionId: resolvedSessionId,
@@ -1922,6 +2006,8 @@ function cleanup(): void {
     setDesignToolHost(null);
     void workspacePluginManager?.closeAll();
     workspacePluginManager = null;
+    codexRuntimeLoginManager?.dispose();
+    codexRuntimeLoginManager = null;
     closeAllBrowserWorkbenches();
     cleanupTerminalProcesses();
     cleanupAllSessions();
@@ -2005,11 +2091,35 @@ function readPromptAttachmentPayload(attachments?: unknown[]): PromptAttachment[
 
 type ApiModelsProvider = "custom" | "deepseek" | "codex" | "minimax";
 
+type ApiConfigTestPayload = {
+    profileId?: string;
+    baseURL?: string;
+    apiKey?: string;
+    model?: string;
+    provider?: ApiModelsProvider;
+};
+
+function loadApiConfigSettingsForRenderer(): ApiConfigSettings {
+    return redactApiConfigSettingsForRenderer(loadApiConfigSettings());
+}
+
+function saveApiConfigSettingsFromRenderer(config: ApiConfigSettings): void {
+    saveApiConfigSettings(mergeRendererApiConfigSettings(config, loadApiConfigSettings()));
+}
+
+function resolveApiKeyForTest(payload: ApiConfigTestPayload, provider: ApiModelsProvider): string {
+    const apiKey = payload.apiKey?.trim() ?? "";
+    if (provider !== "codex" || apiKey !== CODEX_OAUTH_STORED_CREDENTIAL || !payload.profileId) {
+        return apiKey;
+    }
+    return loadApiConfigSettings().profiles.find((profile) => (
+        profile.id === payload.profileId && profile.provider === "codex"
+    ))?.apiKey ?? "";
+}
+
 const DEEPSEEK_OPENAI_BASE_URL = "https://api.deepseek.com";
 const DEEPSEEK_ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic";
 const MINIMAX_MODELS_ENDPOINT = `${MINIMAX_ANTHROPIC_BASE_URL}/v1/models`;
-let pendingCodexOAuthFlow: ReturnType<typeof createCodexOAuthAuthorizationFlow> | null = null;
-
 function resolveApiModelsProvider(provider: unknown, baseURL: string): ApiModelsProvider {
     if (provider === "custom" || provider === "deepseek" || provider === "codex" || provider === "minimax") {
         return provider;
@@ -2214,11 +2324,11 @@ function extractApiErrorText(payload: string): string {
     }
 }
 
-async function testApiConfig(payload: { baseURL?: string; apiKey?: string; model?: string; provider?: ApiModelsProvider }): Promise<{ success: boolean; message?: string; endpoint?: string; model?: string; error?: string }> {
+async function testApiConfig(payload: ApiConfigTestPayload): Promise<{ success: boolean; message?: string; endpoint?: string; model?: string; error?: string }> {
     const rawBaseURL = payload?.baseURL?.trim() ?? "";
-    const apiKey = payload?.apiKey?.trim() ?? "";
     const model = payload?.model?.trim() ?? "";
     const provider = resolveApiModelsProvider(payload?.provider, rawBaseURL);
+    const apiKey = resolveApiKeyForTest(payload, provider);
     const baseURL = rawBaseURL || (provider === "deepseek"
         ? DEEPSEEK_ANTHROPIC_BASE_URL
         : provider === "codex"
@@ -2494,75 +2604,6 @@ async function optimizePrompt(payload: { prompt?: string; model?: string }): Pro
     }
 }
 
-async function startCodexOAuth(): Promise<{ success: boolean; authorizeUrl?: string; error?: string }> {
-    try {
-        pendingCodexOAuthFlow = createCodexOAuthAuthorizationFlow();
-        await shell.openExternal(pendingCodexOAuthFlow.authorizeUrl);
-        return {
-            success: true,
-            authorizeUrl: pendingCodexOAuthFlow.authorizeUrl,
-        };
-    } catch (error) {
-        return {
-            success: false,
-            error: error instanceof Error ? error.message : String(error),
-        };
-    }
-}
-
-async function completeCodexOAuth(payload: { input?: string }): Promise<{ success: boolean; credential?: string; accountId?: string; email?: string; expiresAt?: string; error?: string }> {
-    try {
-        if (!pendingCodexOAuthFlow) {
-            throw new Error("Codex OAuth 流程尚未开始或已过期。");
-        }
-        const { code, state } = parseCodexAuthorizationInput(payload.input ?? "");
-        if (!code || !state) {
-            throw new Error("回调 URL 必须包含 code 和 state。");
-        }
-        if (state !== pendingCodexOAuthFlow.state) {
-            throw new Error("Codex OAuth state 不匹配，请重新授权。");
-        }
-        const result = await exchangeCodexAuthorizationCode(code, pendingCodexOAuthFlow.verifier);
-        pendingCodexOAuthFlow = null;
-        const credential = tokenResultToCredential(result);
-        return {
-            success: true,
-            credential: encodeCodexOAuthCredential(credential),
-            accountId: credential.accountId,
-            email: credential.email,
-            expiresAt: credential.expired,
-        };
-    } catch (error) {
-        return {
-            success: false,
-            error: error instanceof Error ? error.message : String(error),
-        };
-    }
-}
-
-async function refreshCodexOAuth(payload: { apiKey?: string }): Promise<{ success: boolean; credential?: string; accountId?: string; email?: string; expiresAt?: string; error?: string }> {
-    try {
-        const previous = parseCodexOAuthCredential(payload.apiKey ?? "");
-        if (!previous.refreshToken) {
-            throw new Error("Codex OAuth 凭据缺少 refresh_token，无法刷新。");
-        }
-        const result = await refreshCodexOAuthToken(previous.refreshToken);
-        const credential = tokenResultToCredential(result, previous);
-        return {
-            success: true,
-            credential: encodeCodexOAuthCredential(credential),
-            accountId: credential.accountId,
-            email: credential.email,
-            expiresAt: credential.expired,
-        };
-    } catch (error) {
-        return {
-            success: false,
-            error: error instanceof Error ? error.message : String(error),
-        };
-    }
-}
-
 installStdIoGuards();
 app.setName("tech-cc-hub");
 configureDesktopNotifications();
@@ -2619,30 +2660,63 @@ function logStartupEnvironment(): void {
     console.info("[startup] environment", startupInfo);
 }
 
-function prewarmClaudeCodeSubprocess(): void {
-    void startup({
-        options: {
-            env: getEnhancedEnv(),
-            pathToClaudeCodeExecutable: getClaudeCodePath(),
-        },
-        initializeTimeoutMs: 5000,
-    })
-        .then(() => {
-            console.info("[startup] Claude Code subprocess prewarmed");
-        })
-        .catch((error) => {
-            console.warn("[startup] prewarm failed", error instanceof Error ? error.message : String(error));
-        });
+function captureRuntimeDiagnostics(): Record<string, unknown> {
+    const memory = process.memoryUsage();
+    try {
+        const appMetrics = app.getAppMetrics();
+        return {
+            mainProcessMemoryMiB: {
+                rss: Math.round(memory.rss / 1024 / 1024),
+                heapUsed: Math.round(memory.heapUsed / 1024 / 1024),
+                external: Math.round(memory.external / 1024 / 1024),
+            },
+            browserWorkbenchManagers: browserWorkbenches.size,
+            processCount: appMetrics.length,
+            processes: appMetrics.map((metric) => ({
+                pid: metric.pid,
+                type: metric.type,
+                workingSetMiB: Math.round((metric.memory?.workingSetSize ?? 0) / 1024),
+            })),
+        };
+    } catch (error) {
+        return {
+            mainProcessMemoryMiB: {
+                rss: Math.round(memory.rss / 1024 / 1024),
+                heapUsed: Math.round(memory.heapUsed / 1024 / 1024),
+                external: Math.round(memory.external / 1024 / 1024),
+            },
+            browserWorkbenchManagers: browserWorkbenches.size,
+            metricsError: getErrorMessage(error),
+        };
+    }
 }
 
 configureUserDataOverride();
 configureDevelopmentRuntimeIsolation();
 
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+    app.quit();
+} else {
+    registerCodexOAuthProtocolClient();
+}
+
+app.on("second-instance", (_event, commandLine) => {
+    if (!activateCodexOAuthDeepLink(commandLine) && mainWindow && !mainWindow.isDestroyed()) {
+        focusDesktopWindow(mainWindow);
+    }
+});
+
+app.on("open-url", (event, url) => {
+    if (!activateCodexOAuthDeepLink([url])) return;
+    event.preventDefault();
+});
+
 // Initialize everything when app is ready
 app.on("ready", async () => {
+    if (!hasSingleInstanceLock) return;
     Menu.setApplicationMenu(null);
     logStartupEnvironment();
-    prewarmClaudeCodeSubprocess();
     addServerEventListener((event) => {
       if (event.type !== "stream.user_prompt" || !event.payload.attachments?.length) return;
       void workspacePluginManager?.syncSessionImages({
@@ -2687,6 +2761,26 @@ app.on("ready", async () => {
         backgroundColor: "#FAF9F6",
         trafficLightPosition: { x: 15, y: 18 }
     });
+    codexRuntimeLoginManager = new CodexRuntimeLoginManager({
+        appPath: app.getAppPath(),
+        isPackaged: app.isPackaged,
+        resourcesPath: process.resourcesPath,
+        userDataPath: app.getPath("userData"),
+        openExternal: async (url) => await shell.openExternal(url),
+        loadSettings: loadApiConfigSettings,
+        saveSettings: saveApiConfigSettings,
+        emit: (event) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                if (event.type === "completed" || event.type === "failed") {
+                    focusDesktopWindow(mainWindow);
+                }
+                mainWindow.webContents.send("codex-oauth-runtime-event", JSON.stringify(event));
+                openCodexOAuthDeepLink(event);
+            }
+        },
+    });
+    activateCodexOAuthDeepLink(process.argv);
+    flushPendingCodexOAuthDeepLinkActivation();
     mainWindow.webContents.on("will-navigate", () => {
         closeAllBrowserWorkbenches();
     });
@@ -2698,15 +2792,16 @@ app.on("ready", async () => {
             closeAllBrowserWorkbenches();
         }
     });
-    if (isDev()) {
-        mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-            if (!isMainFrame) return;
-            console.error("[main-window] did-fail-load", {
-                errorCode,
-                errorDescription,
-                validatedURL,
-            });
+    mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+        if (!isMainFrame) return;
+        log.error("[main-window] did-fail-load", {
+            errorCode,
+            errorDescription,
+            validatedURL,
+            ...captureRuntimeDiagnostics(),
         });
+    });
+    if (isDev()) {
         mainWindow.webContents.on("console-message", (details) => {
             const { level, message, lineNumber, sourceId } = details;
             if (level !== "warning" && level !== "error" && !/error|exception|failed|uncaught/i.test(message)) {
@@ -2734,7 +2829,18 @@ app.on("ready", async () => {
         }
         mainWindow.webContents.reload();
     });
-    mainWindow.webContents.on("render-process-gone", () => {
+    mainWindow.on("unresponsive", () => {
+        log.error("[main-window] unresponsive", captureRuntimeDiagnostics());
+    });
+    mainWindow.on("responsive", () => {
+        log.info("[main-window] responsive", captureRuntimeDiagnostics());
+    });
+    mainWindow.webContents.on("render-process-gone", (_event, details) => {
+        log.error("[main-window] render-process-gone", {
+            reason: details.reason,
+            exitCode: details.exitCode,
+            ...captureRuntimeDiagnostics(),
+        });
         closeAllBrowserWorkbenches();
     });
     mainWindow.on("closed", () => {
@@ -2742,8 +2848,8 @@ app.on("ready", async () => {
         mainWindow = null;
     });
     setBrowserToolHost({
-      open: (sessionId, url) => getBrowserWorkbench(sessionId)?.open(url) ?? buildBrowserWorkbenchFallbackState(),
-      close: (sessionId) => getBrowserWorkbench(sessionId)?.close() ?? buildBrowserWorkbenchFallbackState(),
+      open: (sessionId, url) => openBrowserWorkbenchForIpc(url, sessionId),
+      close: (sessionId) => closeBrowserWorkbench(sessionId),
       setBounds: (sessionId, bounds) => getBrowserWorkbench(sessionId)?.setBounds(bounds) ?? buildBrowserWorkbenchFallbackState(),
       reload: (sessionId) => getBrowserWorkbench(sessionId)?.reload() ?? buildBrowserWorkbenchFallbackState(),
       goBack: (sessionId) => getBrowserWorkbench(sessionId)?.goBack() ?? buildBrowserWorkbenchFallbackState(),
@@ -2989,7 +3095,7 @@ app.on("ready", async () => {
         }
         const type = input.type || (input.url ? "url" : "reload");
         if (type === "url" && input.url) {
-          return browserWorkbench.open(input.url);
+          return openBrowserWorkbenchForIpc(input.url, sessionId);
         }
         if (type === "back") {
           return browserWorkbench.goBack();
@@ -3272,13 +3378,13 @@ app.on("ready", async () => {
               return result.filePaths[0];
             }
           },
-          getApiConfig: () => loadApiConfigSettings(),
+          getApiConfig: () => loadApiConfigSettingsForRenderer(),
           saveApiConfig: (config: unknown) => {
-            saveApiConfigSettings(config as ApiConfigSettings);
+            saveApiConfigSettingsFromRenderer(config as ApiConfigSettings);
             return { success: true };
           },
           fetchApiModels: async (payload: { baseURL?: string; apiKey?: string; provider?: ApiModelsProvider }) => await fetchApiModels(payload),
-          testApiConfig: async (payload: { baseURL?: string; apiKey?: string; model?: string; provider?: ApiModelsProvider }) => await testApiConfig(payload),
+          testApiConfig: async (payload: ApiConfigTestPayload) => await testApiConfig(payload),
           getGlobalConfig: () => loadGlobalRuntimeConfig(),
           saveGlobalConfig: (config: unknown) => {
             saveGlobalRuntimeConfig(config as Record<string, unknown>);
@@ -3359,14 +3465,8 @@ app.on("ready", async () => {
             if (channel === "codegraph:status" || channel === "codegraph:sync") {
               return await handleCodeGraphUiInvoke(channel, args[0]);
             }
-            if (channel === "codex-oauth-start") {
-              return await startCodexOAuth();
-            }
-            if (channel === "codex-oauth-complete") {
-              return await completeCodexOAuth(args[0] as { input?: string });
-            }
-            if (channel === "codex-oauth-refresh") {
-              return await refreshCodexOAuth(args[0] as { apiKey?: string });
+            if (channel === "codex-oauth-runtime-start" || channel === "codex-oauth-runtime-cancel") {
+              return { success: false, error: "Codex 账号连接仅支持 Electron 桌面端。" };
             }
             if (channel.startsWith("git:")) {
               return await handleGitWorkbenchInvoke(channel, ...args);
@@ -3378,7 +3478,10 @@ app.on("ready", async () => {
           },
           checkApiConfig: () => {
             const config = getCurrentApiConfig();
-            return { hasConfig: config !== null, config };
+            const rendererConfig = config
+              ? redactApiConfigSettingsForRenderer({ profiles: [config] }).profiles[0] ?? null
+              : null;
+            return { hasConfig: rendererConfig !== null, config: rendererConfig };
           },
           debugSaveTraceSnapshot: (snapshot: unknown) => {
             const debugDir = join(app.getPath("userData"), "debug-artifacts");
@@ -3485,17 +3588,20 @@ app.on("ready", async () => {
 
     // Handle API config
     ipcMainHandle("get-api-config", () => {
-        return loadApiConfigSettings();
+        return loadApiConfigSettingsForRenderer();
     });
 
     ipcMainHandle("check-api-config", () => {
         const config = getCurrentApiConfig();
-        return { hasConfig: config !== null, config };
+        const rendererConfig = config
+            ? redactApiConfigSettingsForRenderer({ profiles: [config] }).profiles[0] ?? null
+            : null;
+        return { hasConfig: rendererConfig !== null, config: rendererConfig };
     });
 
     ipcMainHandle("save-api-config", (_: IpcMainInvokeEvent, config: unknown) => {
         try {
-            saveApiConfigSettings(config as ApiConfigSettings);
+            saveApiConfigSettingsFromRenderer(config as ApiConfigSettings);
             return { success: true };
         } catch (error) {
             return { 
@@ -3516,7 +3622,7 @@ app.on("ready", async () => {
         }
     });
 
-    ipcMainHandle("test-api-config", async (_: IpcMainInvokeEvent, payload: { baseURL?: string; apiKey?: string; model?: string; provider?: ApiModelsProvider }) => {
+    ipcMainHandle("test-api-config", async (_: IpcMainInvokeEvent, payload: ApiConfigTestPayload) => {
         try {
             return await testApiConfig(payload);
         } catch (error) {
@@ -3531,16 +3637,19 @@ app.on("ready", async () => {
         return await optimizePrompt(payload);
     });
 
-    ipcMainHandle("codex-oauth-start", async () => {
-        return await startCodexOAuth();
+    ipcMainHandle("codex-oauth-runtime-start", async (_: IpcMainInvokeEvent, payload: CodexRuntimeLoginStartInput) => {
+        if (!codexRuntimeLoginManager) {
+            return { success: false, error: "Codex 登录 runtime 尚未初始化。" };
+        }
+        return await codexRuntimeLoginManager.start(payload);
     });
 
-    ipcMainHandle("codex-oauth-complete", async (_: IpcMainInvokeEvent, payload: { input?: string }) => {
-        return await completeCodexOAuth(payload);
-    });
-
-    ipcMainHandle("codex-oauth-refresh", async (_: IpcMainInvokeEvent, payload: { apiKey?: string }) => {
-        return await refreshCodexOAuth(payload);
+    ipcMainHandle("codex-oauth-runtime-cancel", async (_: IpcMainInvokeEvent, payload: { attemptId?: string }) => {
+        const attemptId = payload?.attemptId?.trim();
+        if (!attemptId || !codexRuntimeLoginManager) {
+            return { success: false, error: "Codex 登录任务不存在。" };
+        }
+        return await codexRuntimeLoginManager.cancel(attemptId);
     });
 
     ipcMainHandle("app-update-get-status", () => {
@@ -3653,7 +3762,7 @@ app.on("ready", async () => {
     });
 
     ipcMainHandle("browser-close", (_: IpcMainInvokeEvent, sessionId?: string) => {
-        return getBrowserWorkbench(sessionId)!.close();
+        return closeBrowserWorkbench(sessionId);
     });
 
     ipcMainHandle("browser-set-bounds", (_: IpcMainInvokeEvent, bounds: BrowserWorkbenchBounds, sessionId?: string) => {

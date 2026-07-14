@@ -105,6 +105,12 @@ function focusPrimaryWindow(): void {
   const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
   if (!window) return;
 
+  focusDesktopWindow(window);
+}
+
+export function focusDesktopWindow(window: BrowserWindow): boolean {
+  if (window.isDestroyed()) return false;
+
   stopWindowAttention(window);
   if (window.isMinimized()) {
     window.restore();
@@ -117,6 +123,7 @@ function focusPrimaryWindow(): void {
   if (process.platform === "darwin" || process.platform === "win32") {
     app.focus({ steal: true });
   }
+  return true;
 }
 
 function showAttentionCue(cue: DesktopNotificationAttentionCue): void {

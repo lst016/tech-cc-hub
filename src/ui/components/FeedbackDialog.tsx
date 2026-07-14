@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from "react";
+import { AppModalOverlay } from "./AppModalOverlay";
 
 interface Attachment {
   id: string;
@@ -168,8 +169,9 @@ export function FeedbackDialog({ onClose }: FeedbackDialogProps) {
   const resultActionLabel = result?.fallback ? "打开草稿" : "查看 Issue";
 
   return (
-    <div
-      className="fixed inset-0 z-[40000] flex items-center justify-center bg-ink-900/20 px-4 py-8 backdrop-blur-sm"
+    <AppModalOverlay
+      aria-label="需求反馈"
+      className="z-[40000] flex items-center justify-center bg-ink-900/20 px-4 py-8 backdrop-blur-sm"
       onClick={handleBackdropClick}
     >
       <div
@@ -355,6 +357,6 @@ export function FeedbackDialog({ onClose }: FeedbackDialogProps) {
           </div>
         )}
       </div>
-    </div>
+    </AppModalOverlay>
   );
 }

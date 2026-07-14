@@ -17,7 +17,7 @@ Allow a user who is already signed in to ChatGPT in their system browser to conn
 - `src/electron/libs/codex/codex-oauth.ts` already parses Codex `auth.json`, normalizes OAuth credentials, exchanges and refreshes tokens, and exposes profile serialization helpers.
 - `src/electron/main.ts` contains legacy direct-PKCE IPC handlers, but the renderer does not use them and the flow has no managed local callback lifecycle.
 - `src/ui/components/settings/ApiProfilesSettingsPage.tsx` currently asks an agent to read `~/.codex/auth.json`, which makes a global Codex installation appear mandatory.
-- `src/electron/libs/codex/codex-anthropic-proxy.ts` already refreshes expiring credentials with a per-profile single-flight guard and persists rotated tokens, but it does not retry once after an upstream 401/403.
+- `src/electron/libs/codex/codex-anthropic-proxy.ts` already refreshes expiring credentials with a per-profile single-flight guard and persists rotated tokens, but it does not retry once after an upstream 401.
 - Credentials are currently serialized into `profile.apiKey`; the login flow must not expose the newly acquired raw value to the renderer.
 
 ## Chosen Architecture
@@ -66,7 +66,7 @@ The existing proxy reads the saved profile credential and continues to:
 - serialize refreshes per profile;
 - persist both rotated access and refresh tokens.
 
-Add one recovery path: if the upstream returns 401 or 403, force one single-flight refresh from the latest stored refresh token and replay the request once. A second authorization failure is returned to the caller and marks the profile as requiring reconnect; it must not loop.
+Add one recovery path: if the upstream returns 401, force one single-flight refresh from the latest stored refresh token and replay the request once. A second authorization failure is returned to the caller and marks the profile as requiring reconnect; it must not loop. A 403 is returned unchanged because it may represent an account, scope, or policy denial rather than an expired token.
 
 For a desktop client, request-time refresh plus the one-time authorization retry is preferred over New API's periodic server scheduler because there is no value in rotating an idle local user's token every few minutes.
 
@@ -108,7 +108,7 @@ The Codex profile editor replaces the agent-driven `codex login` instructions wi
 - Credential import rejects incomplete or expired `auth.json` files.
 - Profile persistence changes only the target profile.
 - Renderer events contain no access or refresh token.
-- Proxy refresh remains single-flight and a 401/403 is replayed at most once.
+- Proxy refresh remains single-flight and a 401 is replayed at most once; a 403 is not retried.
 
 ### Integration tests
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Image, Plus, Settings2, X } from "lucide-react";
+import { AppModalOverlay } from "../AppModalOverlay";
 import {
   DEFAULT_IMAGE_GENERATION_CONFIG,
   type ImageGenerationConfig,
@@ -94,8 +95,8 @@ export function ImageGenerationConfigDialog({ config, onCancel, onSave }: { conf
   if (typeof document === "undefined") return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] grid place-items-center bg-ink-900/35 p-5" role="presentation" onMouseDown={onCancel}>
-      <section className="w-full max-w-[560px] rounded-2xl border border-black/6 bg-surface p-6 shadow-[0_24px_80px_rgba(22,24,29,0.24)]" role="dialog" aria-modal="true" aria-label="生图配置" onMouseDown={(event) => event.stopPropagation()}>
+    <AppModalOverlay className="z-[100] grid place-items-center bg-ink-900/35 p-5" role="presentation" onMouseDown={onCancel}>
+      <section className="w-full max-w-[560px] rounded-2xl border border-black/6 bg-surface p-6 shadow-[0_24px_80px_rgba(22,24,29,0.24)]" role="dialog" aria-modal="true" aria-label="生图配置" data-keep-prompt-composer-visible="true" onMouseDown={(event) => event.stopPropagation()}>
         <header className="mb-6 flex items-start justify-between gap-4">
           <div><h2 className="text-[18px] font-semibold text-ink-900">生图配置</h2><p className="mt-1 text-[13px] text-muted">本次发送将使用以下参数；不调整时使用默认值。</p></div>
           <button type="button" className="rounded-lg p-1.5 text-muted hover:bg-surface-secondary" aria-label="关闭配置" onClick={onCancel}><X className="h-5 w-5" /></button>
@@ -108,7 +109,7 @@ export function ImageGenerationConfigDialog({ config, onCancel, onSave }: { conf
         </div>
         <footer className="mt-7 flex justify-end gap-2"><button type="button" className="h-9 rounded-lg px-4 text-[13px] font-medium text-ink-600 hover:bg-surface-secondary" onClick={onCancel}>取消</button><button type="button" className="h-9 rounded-lg bg-accent px-4 text-[13px] font-medium text-white hover:bg-accent-hover" onClick={() => onSave(draft)}>保存配置</button></footer>
       </section>
-    </div>,
+    </AppModalOverlay>,
     document.body,
   );
 }

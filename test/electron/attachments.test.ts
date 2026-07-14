@@ -5,6 +5,7 @@ import {
   createStoredUserPromptMessage,
   estimateAttachmentPromptChars,
   resolveImageAttachmentSrc,
+  sanitizePromptAttachmentsForStorage,
 } from "../../src/shared/attachments.js";
 
 test("createStoredUserPromptMessage preserves attachments for history replay", () => {
@@ -59,4 +60,23 @@ test("estimateAttachmentPromptChars counts stored image summary instead of raw i
   });
 
   assert.ok(chars < 1_000);
+});
+
+test("sanitizePromptAttachmentsForStorage drops inline image bytes when a file reference exists", () => {
+  const [stored] = sanitizePromptAttachmentsForStorage([{
+    id: "image-1",
+    kind: "image" as const,
+    name: "large.png",
+    mimeType: "image/png",
+    data: "data:image/png;base64,AAAA",
+    preview: `data:image/png;base64,${"A".repeat(1_000_000)}`,
+    runtimeData: "data:image/png;base64,BBBB",
+    storagePath: "D:\\tmp\\large.png",
+    storageUri: "file:///D:/tmp/large.png",
+  }]) ?? [];
+
+  assert.equal(stored.data, "file:///D:/tmp/large.png");
+  assert.equal(stored.preview, undefined);
+  assert.equal(stored.runtimeData, undefined);
+  assert.ok(JSON.stringify(stored).length < 1_000);
 });

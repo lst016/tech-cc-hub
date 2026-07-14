@@ -470,12 +470,12 @@ code, pre, textarea.mono, input.mono {
   animation: shimmer 1.4s linear infinite;
 }
 
-/* Full-screen dialogs temporarily remove the fixed composer from the visual stack. */
+/* Full-screen dialogs temporarily remove the fixed composer unless they configure that composer. */
 [data-prompt-composer] {
   transition: opacity 120ms ease, transform 120ms ease, visibility 0s linear;
 }
 
-body:has([aria-modal="true"]) [data-prompt-composer] {
+body:has([aria-modal="true"]:not([data-keep-prompt-composer-visible="true"])) [data-prompt-composer] {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;

@@ -200,14 +200,14 @@ export function sanitizePromptAttachmentsForStorage<TAttachment extends Attachme
       return attachment;
     }
 
-    const storageUri = attachment.storageUri?.trim() || attachment.preview?.trim() || attachment.data.trim();
-    const displayPreview = attachment.preview?.trim() || attachment.data.trim();
+    const storageUri = attachment.storageUri?.trim();
+    const inlineFallback = attachment.preview?.trim() || attachment.data.trim();
     return {
       ...attachment,
-      data: storageUri,
-      // preview is a UI field; keep the original data URL so local preview does
-      // not break when data is replaced by a file/storage URI.
-      preview: displayPreview,
+      data: storageUri || inlineFallback,
+      // A persisted file URI is enough for history rendering. Keeping the data
+      // URL here duplicates multi-megabyte images inside every SQLite row.
+      preview: storageUri ? undefined : inlineFallback,
       runtimeData: undefined,
     };
   }) as TAttachment[];

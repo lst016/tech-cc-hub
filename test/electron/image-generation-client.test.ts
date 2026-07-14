@@ -154,6 +154,98 @@ test("generateImages posts JSON to /images/generations and persists b64_json art
   }
 });
 
+test("generateImages fans out count as concurrent single-image requests", async () => {
+  const requestBodies: Array<Record<string, unknown>> = [];
+  let activeRequests = 0;
+  let maxActiveRequests = 0;
+  const mock = await startMockServer((req, res) => {
+    activeRequests += 1;
+    maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+    let rawBody = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      rawBody += chunk;
+    });
+    req.on("end", () => {
+      requestBodies.push(JSON.parse(rawBody) as Record<string, unknown>);
+      setTimeout(() => {
+        activeRequests -= 1;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({
+          data: [{ b64_json: SAMPLE_PNG_BASE64 }],
+        }));
+      }, 40);
+    });
+  });
+
+  try {
+    const selected: ImageGenerationRouteConfig = {
+      id: "parallel-images",
+      provider: "custom",
+      baseURL: `http://127.0.0.1:${mock.port}`,
+      apiKey: "sk-test",
+      imageGenerationModel: "doubao-seedream-5-0-260128",
+      models: [{ name: "doubao-seedream-5-0-260128" }],
+    };
+
+    const result = await generateImages({
+      sessionId: "parallel-images",
+      request: { prompt: "draw three cats", count: 3 },
+      context: { selectedConfig: selected, enabledConfigs: [selected] },
+    });
+
+    assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal(result.artifacts.length, 3);
+    }
+    assert.equal(requestBodies.length, 3);
+    assert.ok(maxActiveRequests > 1, "count requests should overlap instead of running sequentially");
+    assert.deepEqual(requestBodies.map((body) => body.n), [1, 1, 1]);
+  } finally {
+    await stopServer(mock.server);
+  }
+});
+
+test("generateImages keeps successful artifacts when one concurrent request fails", async () => {
+  let calls = 0;
+  const mock = await startMockServer((_req, res) => {
+    calls += 1;
+    if (calls === 2) {
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "temporary upstream failure" } }));
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ data: [{ b64_json: SAMPLE_PNG_BASE64 }] }));
+  });
+
+  try {
+    const selected: ImageGenerationRouteConfig = {
+      id: "partial-images",
+      provider: "custom",
+      baseURL: `http://127.0.0.1:${mock.port}`,
+      apiKey: "sk-test",
+      imageGenerationModel: "gpt-image-2",
+      models: [{ name: "gpt-image-2" }],
+    };
+
+    const result = await generateImages({
+      sessionId: "partial-images",
+      request: { prompt: "draw three cats", count: 3 },
+      context: { selectedConfig: selected, enabledConfigs: [selected] },
+    });
+
+    assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal(result.artifacts.length, 2);
+      assert.equal(result.outputHint, "已生成 2/3 张。");
+    }
+    assert.equal(calls, 3);
+  } finally {
+    await stopServer(mock.server);
+  }
+});
+
 test("generateImages disables the default watermark for Doubao Seedream models", async () => {
   let requestBody: Record<string, unknown> | undefined;
   const mock = await startMockServer((req, res) => {
@@ -397,6 +489,72 @@ test("generateImages edits route posts multipart and persists artifact", async (
     }
     assert.match(requestBody, /name="watermark"\r\n\r\nfalse\r\n/);
 
+    rmSync(refDir, { recursive: true, force: true });
+  } finally {
+    await stopServer(mock.server);
+  }
+});
+
+test("generateImages edits count with independent concurrent multipart requests", async () => {
+  const requestBodies: string[] = [];
+  let activeRequests = 0;
+  let maxActiveRequests = 0;
+  const mock = await startMockServer((req, res) => {
+    activeRequests += 1;
+    maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+    let requestBody = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      requestBody += chunk;
+    });
+    req.on("end", () => {
+      requestBodies.push(requestBody);
+      setTimeout(() => {
+        activeRequests -= 1;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ data: [{ b64_json: SAMPLE_PNG_BASE64 }] }));
+      }, 40);
+    });
+  });
+  const sessionId = "img-edit-parallel";
+
+  try {
+    const selected: ImageGenerationRouteConfig = {
+      id: "edit-parallel",
+      provider: "custom",
+      baseURL: `http://127.0.0.1:${mock.port}`,
+      apiKey: "sk-test",
+      imageGenerationModel: "doubao-seedream-5-0-260128",
+      models: [{ name: "doubao-seedream-5-0-260128" }],
+    };
+    const { getGeneratedImagesDirForSession } = await import("../../src/electron/libs/image/image-generation-artifacts.js");
+    const refDir = getGeneratedImagesDirForSession(sessionId);
+    mkdirSync(refDir, { recursive: true });
+    const refPath = join(refDir, "ref.png");
+    writeFileSync(refPath, Buffer.from(SAMPLE_PNG_BASE64, "base64"));
+
+    const result = await generateImages({
+      sessionId,
+      cwd: refDir,
+      request: {
+        prompt: "make two variants",
+        action: "edit",
+        referenceImagePaths: [refPath],
+        count: 2,
+      },
+      context: { selectedConfig: selected, enabledConfigs: [selected] },
+    });
+
+    assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal(result.artifacts.length, 2);
+    }
+    assert.equal(requestBodies.length, 2);
+    assert.ok(maxActiveRequests > 1, "edit requests should overlap instead of running sequentially");
+    for (const body of requestBodies) {
+      assert.match(body, /name="n"\r\n\r\n1\r\n/);
+      assert.match(body, /name="image\[\]"/);
+    }
     rmSync(refDir, { recursive: true, force: true });
   } finally {
     await stopServer(mock.server);

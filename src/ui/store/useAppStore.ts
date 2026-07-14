@@ -29,6 +29,9 @@ import {
 import { mergeHistoryReplacementMessages, mergeMessages } from "../utils/session-history-merge.js";
 import { hydrateWorkflowView, mergeSessionListSession } from "../utils/session-list-merge.js";
 import { appendPendingStreamMessages } from "../utils/pending-stream-messages.js";
+import { selectSessionMessageEvictionIds, touchRecentSessionId } from "../utils/session-message-retention.js";
+
+let recentlyActivatedSessionIds: string[] = [];
 
 export type PermissionRequest = {
   toolUseId: string;
@@ -695,10 +698,38 @@ export const useAppStore = create<AppState>((set, get) => ({
   setGlobalError: (globalError) => set({ globalError }),
   setShowStartModal: (showStartModal) => set({ showStartModal }),
   setShowSettingsModal: (showSettingsModal) => set({ showSettingsModal }),
-  setActiveSessionId: (id) => set((state) => ({
-    activeSessionId: id,
-    prompt: state.promptDraftsBySessionId[getPromptDraftSessionKey(id)] ?? "",
-  })),
+  setActiveSessionId: (id) => set((state) => {
+    recentlyActivatedSessionIds = touchRecentSessionId(recentlyActivatedSessionIds, id);
+    const evictionIds = selectSessionMessageEvictionIds(state.sessions, recentlyActivatedSessionIds, id);
+    if (evictionIds.length === 0) {
+      return {
+        activeSessionId: id,
+        prompt: state.promptDraftsBySessionId[getPromptDraftSessionKey(id)] ?? "",
+      };
+    }
+
+    const sessions = { ...state.sessions };
+    const historyRequested = new Set(state.historyRequested);
+    for (const sessionId of evictionIds) {
+      const session = sessions[sessionId];
+      if (!session) continue;
+      sessions[sessionId] = {
+        ...session,
+        messages: [],
+        hydrated: false,
+        hasMoreHistory: false,
+        historyCursor: undefined,
+      };
+      historyRequested.delete(sessionId);
+    }
+
+    return {
+      activeSessionId: id,
+      prompt: state.promptDraftsBySessionId[getPromptDraftSessionKey(id)] ?? "",
+      sessions,
+      historyRequested,
+    };
+  }),
   setApiConfigChecked: (apiConfigChecked) => set({ apiConfigChecked }),
   setSelectedAgentId: (selectedAgentId) => set({ selectedAgentId }),
 

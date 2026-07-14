@@ -1,10 +1,11 @@
-import { randomBytes, createHash } from "crypto";
+import { randomBytes } from "crypto";
 import {
   CODEX_OAUTH_BASE_URL,
   CODEX_OAUTH_COMPACT_MODEL_SUFFIX,
   CODEX_OAUTH_DEFAULT_MODEL,
   CODEX_OAUTH_MODELS,
   CODEX_OAUTH_SMALL_MODEL,
+  CODEX_OAUTH_STORED_CREDENTIAL,
   extractCodexModelIdsFromCache,
   mergeCodexModelIds,
 } from "../../../shared/codex-oauth.js";
@@ -16,6 +17,7 @@ export {
   CODEX_OAUTH_DEFAULT_MODEL,
   CODEX_OAUTH_MODELS,
   CODEX_OAUTH_SMALL_MODEL,
+  CODEX_OAUTH_STORED_CREDENTIAL,
   extractCodexModelIdsFromCache,
   mergeCodexModelIds,
 };
@@ -39,14 +41,6 @@ export type CodexStoredOAuthCredential = {
   email?: string;
   type?: string;
   expired?: string;
-};
-
-export type CodexOAuthFlow = {
-  state: string;
-  verifier: string;
-  challenge: string;
-  authorizeUrl: string;
-  createdAt: number;
 };
 
 export type CodexTokenResult = {
@@ -111,10 +105,7 @@ export type AnthropicMessageResponse = {
 };
 
 const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
-const CODEX_OAUTH_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
 const CODEX_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token";
-const CODEX_OAUTH_REDIRECT_URI = "http://localhost:1455/auth/callback";
-const CODEX_OAUTH_SCOPE = "openid profile email offline_access";
 const CODEX_JWT_AUTH_CLAIM = "https://api.openai.com/auth";
 
 export function parseCodexOAuthCredential(raw: string): CodexOAuthCredential {
@@ -223,75 +214,6 @@ export function encodeCodexOAuthCredential(input: CodexOAuthCredential): string 
   };
 
   return JSON.stringify(removeUndefined(stored), null, 2);
-}
-
-export function createCodexOAuthAuthorizationFlow(): CodexOAuthFlow {
-  const state = randomBytes(16).toString("hex");
-  const verifier = base64Url(randomBytes(32));
-  const challenge = base64Url(createHash("sha256").update(verifier).digest());
-  const url = new URL(CODEX_OAUTH_AUTHORIZE_URL);
-  url.searchParams.set("response_type", "code");
-  url.searchParams.set("client_id", CODEX_OAUTH_CLIENT_ID);
-  url.searchParams.set("redirect_uri", CODEX_OAUTH_REDIRECT_URI);
-  url.searchParams.set("scope", CODEX_OAUTH_SCOPE);
-  url.searchParams.set("code_challenge", challenge);
-  url.searchParams.set("code_challenge_method", "S256");
-  url.searchParams.set("state", state);
-  url.searchParams.set("id_token_add_organizations", "true");
-  url.searchParams.set("codex_cli_simplified_flow", "true");
-  url.searchParams.set("originator", "codex_cli_rs");
-
-  return {
-    state,
-    verifier,
-    challenge,
-    authorizeUrl: url.toString(),
-    createdAt: Date.now(),
-  };
-}
-
-export function parseCodexAuthorizationInput(input: string): { code: string; state: string } {
-  const value = input.trim();
-  if (!value) {
-    throw new Error("授权回调为空。");
-  }
-
-  if (value.includes("#")) {
-    const [code, state] = value.split("#", 2).map((item) => item.trim());
-    return { code, state };
-  }
-
-  if (value.includes("code=")) {
-    try {
-      const url = new URL(value);
-      return {
-        code: url.searchParams.get("code")?.trim() ?? "",
-        state: url.searchParams.get("state")?.trim() ?? "",
-      };
-    } catch {
-      const query = new URLSearchParams(value);
-      return {
-        code: query.get("code")?.trim() ?? "",
-        state: query.get("state")?.trim() ?? "",
-      };
-    }
-  }
-
-  return { code: value, state: "" };
-}
-
-export async function exchangeCodexAuthorizationCode(
-  code: string,
-  verifier: string,
-): Promise<CodexTokenResult> {
-  const form = new URLSearchParams();
-  form.set("grant_type", "authorization_code");
-  form.set("client_id", CODEX_OAUTH_CLIENT_ID);
-  form.set("code", code.trim());
-  form.set("code_verifier", verifier.trim());
-  form.set("redirect_uri", CODEX_OAUTH_REDIRECT_URI);
-
-  return requestCodexOAuthToken(form, "授权码交换失败");
 }
 
 export async function refreshCodexOAuthToken(refreshToken: string): Promise<CodexTokenResult> {
@@ -909,10 +831,6 @@ function safeJsonStringify(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-function base64Url(value: Buffer): string {
-  return value.toString("base64url");
 }
 
 function removeUndefined<T extends Record<string, unknown>>(value: T): Partial<T> {

@@ -92,6 +92,23 @@ test("keeps image-generation instructions out of the displayed user message", ()
   assert.match(promptActionsSource, /const promptForAgentInput = agentPrompt \?\? promptValue/);
 });
 
+test("keeps structured browser context in direct and queued display prompts", () => {
+  const promptInputSource = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
+
+  assert.match(
+    promptInputSource,
+    /const displayPrompt = getImageGenerationDisplayPrompt\(promptWithAnnotations\);/,
+  );
+  assert.match(
+    promptInputSource,
+    /prompt: getImageGenerationDisplayPrompt\(promptWithAnnotations\),\s*agentPrompt: promptForDispatch,/,
+  );
+  assert.doesNotMatch(
+    promptInputSource,
+    /const displayPrompt = getImageGenerationDisplayPrompt\(promptForMode\);/,
+  );
+});
+
 test("queued prompts preserve separate display and agent payloads", () => {
   const agentPrompt = mergePromptWithImageGenerationConfig(
     `画一只跳舞的小猫 ${IMAGE_GENERATION_PLUGIN_TOKEN}`,

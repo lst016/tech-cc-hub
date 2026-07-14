@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import {
+  BROWSER_WORKBENCH_OCCLUDER_SELECTOR,
   hasRenderableBrowserWorkbenchBounds,
+  hasVisibleBrowserWorkbenchOccluder,
   shouldAttachBrowserWorkbench,
 } from "../../src/ui/utils/browser-workbench-visibility.js";
 
@@ -27,12 +29,36 @@ describe("browser workbench visibility", () => {
     assert.equal(hasRenderableBrowserWorkbenchBounds({ width: 640, height: 480 }), true);
   });
 
+  it("detects semantic dialogs and full-screen renderer overlays as BrowserView occluders", () => {
+    const candidates = [{ id: "hidden-dialog" }, { id: "image-lightbox" }] as unknown as Element[];
+    let queriedSelector = "";
+    const root = {
+      querySelectorAll(selector: string) {
+        queriedSelector = selector;
+        return candidates;
+      },
+    } as unknown as Pick<ParentNode, "querySelectorAll">;
+
+    assert.equal(
+      hasVisibleBrowserWorkbenchOccluder(root, (element) => element === candidates[1]),
+      true,
+    );
+    assert.equal(hasVisibleBrowserWorkbenchOccluder(root, () => false), false);
+    assert.equal(queriedSelector, BROWSER_WORKBENCH_OCCLUDER_SELECTOR);
+    assert.match(queriedSelector, /\[aria-modal="true"\]/);
+    assert.match(queriedSelector, /\[role="dialog"\]/);
+    assert.match(queriedSelector, /dialog\[open\]/);
+    assert.match(queriedSelector, /\[class~="fixed"\]\[class~="inset-0"\]/);
+  });
+
   it("hides every BrowserView when app-level chrome occludes the workbench", () => {
     const appSource = readFileSync("src/ui/App.tsx", "utf8");
     const mainSource = readFileSync("src/electron/main.ts", "utf8");
     const preloadSource = readFileSync("src/electron/preload.cts", "utf8");
     const typesSource = readFileSync("types.d.ts", "utf8");
 
+    assert.match(appSource, /observeBrowserWorkbenchOcclusion\(setBrowserWorkbenchDomOccluded\)/);
+    assert.match(appSource, /showSettingsModal \|\| showStartModal \|\| browserWorkbenchDomOccluded/);
     assert.match(appSource, /if \(!browserWorkbenchOccluded \|\| typeof window\.electron\.hideAllBrowserWorkbenches !== "function"\) return/);
     assert.match(appSource, /void window\.electron\.hideAllBrowserWorkbenches\(\)/);
     assert.match(appSource, /\}, \[browserWorkbenchOccluded\]\)/);

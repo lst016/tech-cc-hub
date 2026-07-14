@@ -48,3 +48,28 @@ test("clipboard text leaves raw URLs and pasted JSON untouched", () => {
     '{ "node-id": "3-14041", "m": "dev" }',
   );
 });
+
+test("clipboard text preserves Feishu rich-text blocks and their individual links", () => {
+  const text = getPlainTextFromClipboardData(clipboardData({
+    "text/plain": "项目说明\n需求文档\n验收清单",
+    "text/html": [
+      '<div data-lark-record-data="true">',
+      "<p><strong>项目说明</strong></p>",
+      '<p><a href="https://example.feishu.cn/docx/first">需求文档</a></p>',
+      '<p><a href="https://example.feishu.cn/docx/second">验收清单</a></p>',
+      "</div>",
+    ].join(""),
+  }));
+
+  assert.equal(
+    text,
+    "项目说明\n[需求文档](https://example.feishu.cn/docx/first)\n[验收清单](https://example.feishu.cn/docx/second)",
+  );
+});
+
+test("clipboard text accepts the legacy text flavor used by rich clipboard producers", () => {
+  assert.equal(
+    getPlainTextFromClipboardData(clipboardData({ text: "飞书复制内容" })),
+    "飞书复制内容",
+  );
+});

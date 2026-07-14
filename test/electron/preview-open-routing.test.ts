@@ -30,10 +30,14 @@ test("preview open requests are routed through session-scoped pending state", ()
   assert.match(paneSource, /setActiveTabPath\(resolved\.path\)/);
 });
 
-test("process groups surface changed files with preview-open actions", () => {
+test("turn-level file-change cards preserve preview-open actions", () => {
   const processGroupSource = readFileSync("src/ui/components/chat/ProcessGroupCard.tsx", "utf8");
+  const turnCardStart = processGroupSource.indexOf("const TurnFileChangesCard");
+  const processGroupStart = processGroupSource.indexOf("const ProcessGroupCard");
+  const turnCardSource = processGroupSource.slice(turnCardStart, processGroupStart);
 
-  assert.match(processGroupSource, /collectCompletedPreviewFileChanges\(messages\.map\(\(entry\) => entry\.message\)\)/);
+  assert.notEqual(turnCardStart, -1);
+  assert.match(turnCardSource, /buildProcessChangedFiles\(messages, workspace\)/);
   assert.match(processGroupSource, /ChangePreviewPopover/);
   assert.match(processGroupSource, /operationLabel\(file\.operation\)/);
   assert.match(processGroupSource, /new CustomEvent<PreviewOpenFileDetail>\(PREVIEW_OPEN_FILE_EVENT/);
@@ -41,12 +45,32 @@ test("process groups surface changed files with preview-open actions", () => {
   assert.match(processGroupSource, /setPreviewOpen\(true\)/);
 });
 
-test("process groups render changed files after process details", () => {
+test("process groups no longer render file-change cards inline", () => {
   const processGroupSource = readFileSync("src/ui/components/chat/ProcessGroupCard.tsx", "utf8");
-  const detailsIndex = processGroupSource.indexOf("CompactProcessDetails");
-  const changedFilesIndex = processGroupSource.indexOf("changedFiles.length > 0");
+  const processGroupStart = processGroupSource.indexOf("const ProcessGroupCard");
+  const processGroupEnd = processGroupSource.indexOf("export default ProcessGroupCard");
+  const processGroupComponent = processGroupSource.slice(processGroupStart, processGroupEnd);
 
-  assert.notEqual(detailsIndex, -1);
-  assert.notEqual(changedFilesIndex, -1);
-  assert.ok(changedFilesIndex > detailsIndex);
+  assert.notEqual(processGroupStart, -1);
+  assert.doesNotMatch(processGroupComponent, /changedFiles|TurnFileChangesCard/);
+});
+
+test("main and shared transcripts append the same turn-level file-change entries", () => {
+  const appSource = readFileSync("src/ui/App.tsx", "utf8");
+  const transcriptSource = readFileSync("src/ui/components/chat/ChatTranscript.tsx", "utf8");
+
+  assert.match(appSource, /return appendTurnFileChangeEntries\(entries, activeSessionId \?\? "chat"\)/);
+  assert.match(appSource, /entry\.type === "turn_file_changes"[\s\S]{0,260}<TurnFileChangesCard/);
+  assert.match(transcriptSource, /return appendTurnFileChangeEntries\(entries, keyPrefix\)/);
+  assert.match(transcriptSource, /entry\.type === "turn_file_changes"[\s\S]{0,220}<TurnFileChangesCard/);
+});
+
+test("the active turn file-change card stays after streaming response content", () => {
+  const appSource = readFileSync("src/ui/App.tsx", "utf8");
+  const partialResponseIndex = appSource.indexOf("data-streaming-response");
+  const trailingFileChangesIndex = appSource.lastIndexOf("<TurnFileChangesCard");
+
+  assert.match(appSource, /const trailingTurnFileChanges/);
+  assert.notEqual(partialResponseIndex, -1);
+  assert.ok(trailingFileChangesIndex > partialResponseIndex);
 });

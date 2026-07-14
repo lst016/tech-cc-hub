@@ -10,6 +10,8 @@ export type StatelessContinuationOptions = {
   recentTurnCount?: number;
   existingSummary?: string;
   existingSummaryMessageCount?: number;
+  forceCompression?: boolean;
+  historyMessageCount?: number;
 };
 
 export type StatelessContinuationPayload = {
@@ -335,7 +337,7 @@ export function shouldCompressStatelessContinuation(
   const fullEstimatedTokens =
     estimatePromptTokens([fullHistoryText, latestMessageText, latestAttachmentSummary]) + latestAttachmentTokens;
 
-  return shouldCompressHistory(fullEstimatedTokens, options);
+  return Boolean(options.forceCompression) || shouldCompressHistory(fullEstimatedTokens, options);
 }
 
 export function buildStatelessContinuationPayload(
@@ -353,8 +355,9 @@ export function buildStatelessContinuationPayload(
   const fullHistoryText = formatHistory(dedupedHistory);
   const fullEstimatedTokens =
     estimatePromptTokens([fullHistoryText, latestMessageText, latestAttachmentSummary]) + latestAttachmentTokens;
+  const historyMessageCount = Math.max(messages.length, options.historyMessageCount ?? messages.length);
 
-  if (!shouldCompressHistory(fullEstimatedTokens, options)) {
+  if (!options.forceCompression && !shouldCompressHistory(fullEstimatedTokens, options)) {
     return {
       prompt: buildContinuationPrompt({
         recentHistoryText: fullHistoryText,
@@ -378,7 +381,7 @@ export function buildStatelessContinuationPayload(
     const canReuseExistingSummary =
       rawEntryCount === maxRawEntries &&
       options.existingSummary?.trim() &&
-      options.existingSummaryMessageCount === messages.length;
+      options.existingSummaryMessageCount === historyMessageCount;
     const summaryText = canReuseExistingSummary
       ? options.existingSummary!.trim()
       : buildSummary(summaryEntries, options.existingSummary);
@@ -403,7 +406,7 @@ export function buildStatelessContinuationPayload(
       }),
       usedCompression: true,
       summaryText,
-      summaryMessageCount: messages.length,
+      summaryMessageCount: historyMessageCount,
       estimatedTokens,
     };
   }
@@ -419,7 +422,7 @@ export function buildStatelessContinuationPayload(
     prompt: fallbackPrompt,
     usedCompression: true,
     summaryText: fallbackSummary,
-    summaryMessageCount: messages.length,
+    summaryMessageCount: historyMessageCount,
     estimatedTokens:
       estimatePromptTokens([fallbackSummary, latestMessageText, latestAttachmentSummary]) + latestAttachmentTokens,
   };

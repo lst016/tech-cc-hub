@@ -1,4 +1,5 @@
 import type { FileMentionOption } from "./file-mention-options";
+import type { LarkMentionOption } from "./lark-mention-options";
 import type { SlashCommandOption } from "./usePromptActions";
 
 type SlashCommandPaletteProps = {
@@ -51,6 +52,59 @@ type FileMentionPaletteProps = {
   onRefresh: () => void;
   onSelect: (option: FileMentionOption) => void;
 };
+
+type LarkMentionPaletteProps = {
+  surfaceWidthClass: string;
+  loading: boolean;
+  options: LarkMentionOption[];
+  activeIndex: number;
+  onSelect: (option: LarkMentionOption) => void;
+};
+
+export function LarkMentionPalette({
+  surfaceWidthClass,
+  loading,
+  options,
+  activeIndex,
+  onSelect,
+}: LarkMentionPaletteProps) {
+  return (
+    <div className={`prompt-composer-surface mx-auto mb-3 ${surfaceWidthClass}`}>
+      <div className="overflow-hidden rounded-[22px] border border-[#d0d7de] bg-white/96 shadow-[0_18px_50px_rgba(30,38,52,0.10)] backdrop-blur">
+        <div className="flex items-center justify-between gap-3 border-b border-black/6 px-4 py-2 text-xs font-medium text-muted">
+          <span>@ 飞书联系人</span>
+          <span>{loading ? "正在搜索..." : `${options.length} 个候选`}</span>
+        </div>
+        <div className="grid max-h-[min(42vh,320px)] gap-1 overflow-y-auto p-2">
+          {options.map((option, index) => (
+            <button
+              key={option.openId}
+              type="button"
+              className={`flex items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors ${index === activeIndex ? "bg-[#ddf4ff] text-[#0969da]" : "text-ink-700 hover:bg-surface-secondary"}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => onSelect(option)}
+            >
+              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-[#bfd7ff] bg-[#ddf4ff] text-[11px] font-bold text-[#0969da]">
+                飞
+              </span>
+              <span className="min-w-0 flex-1 truncate font-medium">{option.name}</span>
+              {option.department && (
+                <span className="max-w-48 shrink truncate text-xs text-muted" title={option.department}>
+                  {option.department}
+                </span>
+              )}
+            </button>
+          ))}
+          {!loading && options.length === 0 && (
+            <div className="px-4 py-5 text-center text-sm text-muted">
+              没找到匹配的飞书联系人。
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function FileMentionPalette({
   surfaceWidthClass,

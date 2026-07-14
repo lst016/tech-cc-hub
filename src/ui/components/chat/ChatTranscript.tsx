@@ -1,7 +1,8 @@
 import { Suspense, useMemo } from "react";
-import type { StreamMessage } from "../../types";
-import { MessageCard } from "../EventCard";
-import { ProcessGroupCard } from "./ProcessGroupCard";
+import type { StreamMessage } from "../../types.js";
+import { appendTurnFileChangeEntries, type TurnFileChangesEntry } from "../../utils/turn-file-changes.js";
+import { MessageCard } from "../EventCard.js";
+import { ProcessGroupCard, TurnFileChangesCard } from "./ProcessGroupCard.js";
 
 function MarkdownLoadFallback() {
   return (
@@ -46,7 +47,8 @@ function isProcessMessage(message: StreamMessage): boolean {
 
 type ChatTranscriptEntry =
   | { type: "message"; key: string; originalIndex: number; message: StreamMessage }
-  | { type: "process_group"; key: string; originalIndex: number; messages: Array<{ originalIndex: number; message: StreamMessage }> };
+  | { type: "process_group"; key: string; originalIndex: number; messages: Array<{ originalIndex: number; message: StreamMessage }> }
+  | TurnFileChangesEntry;
 
 export function buildChatTranscriptEntries(
   messages: StreamMessage[],
@@ -84,7 +86,7 @@ export function buildChatTranscriptEntries(
   });
 
   flushProcessGroup();
-  return entries;
+  return appendTurnFileChangeEntries(entries, keyPrefix);
 }
 
 export function ChatTranscript({
@@ -106,13 +108,21 @@ export function ChatTranscript({
   return (
     <>
       {entries.map((entry, index) => {
-        const isLastMessage = index === entries.length - 1;
+        const isLastMessage = index === entries.length - 1
+          || (index === entries.length - 2 && entries.at(-1)?.type === "turn_file_changes");
+        if (entry.type === "turn_file_changes") {
+          return (
+            <div key={entry.key}>
+              <TurnFileChangesCard messages={entry.messages} workspace={workspace} />
+            </div>
+          );
+        }
+
         if (entry.type === "process_group") {
           return (
             <div key={entry.key} id={`${keyPrefix}-message-${entry.originalIndex}`}>
               <ProcessGroupCard
                 messages={entry.messages}
-                workspace={workspace}
                 messageIdPrefix={keyPrefix}
               />
             </div>

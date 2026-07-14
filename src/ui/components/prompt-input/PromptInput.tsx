@@ -32,6 +32,13 @@ import {
   scoreFileMentionOption,
   type FileMentionOption,
 } from "./file-mention-options";
+import {
+  formatLarkMentionSearchError,
+  getLarkMentionContext,
+  searchLarkMentionOptions,
+  serializeLarkMention,
+  type LarkMentionOption,
+} from "./lark-mention-options";
 import { fileToAttachment, hasDraggedFiles, PROMPT_ATTACHMENT_ACCEPT } from "./prompt-attachments";
 import {
   buildQueuedDisplayPrompt,
@@ -61,7 +68,7 @@ import {
   QueuedMessagesPanel,
 } from "./PromptComposerContextChips";
 import { PromptComposerTerminalStrip } from "./PromptComposerTerminalStrip";
-import { FileMentionPalette, SlashCommandPalette } from "./PromptComposerPalettes";
+import { FileMentionPalette, LarkMentionPalette, SlashCommandPalette } from "./PromptComposerPalettes";
 import { PromptComposerFooter } from "./PromptComposerFooter";
 import {
   DEFAULT_IMAGE_GENERATION_CONFIG,
@@ -309,6 +316,10 @@ export function PromptInput({
   const [fileMentionOptions, setFileMentionOptions] = useState<FileMentionOption[]>([]);
   const [fileMentionLoading, setFileMentionLoading] = useState(false);
   const [fileMentionActiveIndex, setFileMentionActiveIndex] = useState(0);
+  const [larkMentionOptions, setLarkMentionOptions] = useState<LarkMentionOption[]>([]);
+  const [larkMentionLoading, setLarkMentionLoading] = useState(false);
+  const [larkMentionActiveIndex, setLarkMentionActiveIndex] = useState(0);
+  const [larkMentionUnavailable, setLarkMentionUnavailable] = useState(false);
   const [editingCodeReferenceId, setEditingCodeReferenceId] = useState<string | null>(null);
   const [editingCodeReferenceComment, setEditingCodeReferenceComment] = useState("");
   const [optimizingPrompt, setOptimizingPrompt] = useState(false);
@@ -419,7 +430,13 @@ export function PromptInput({
     () => getFileMentionContext(prompt, cursorIndex || prompt.length),
     [cursorIndex, prompt],
   );
+  const larkMentionContext = useMemo(
+    () => getLarkMentionContext(prompt, cursorIndex || prompt.length),
+    [cursorIndex, prompt],
+  );
+  const hasLarkMentionContext = Boolean(larkMentionContext);
   const deferredFileMentionQuery = useDeferredValue(fileMentionContext?.query ?? "");
+  const deferredLarkMentionQuery = useDeferredValue(larkMentionContext?.query ?? "");
   const currentSessionQueue = useMemo(() => {
     if (!activeSessionId) return [];
     return queuedMessagesBySession[activeSessionId] ?? [];
@@ -472,7 +489,20 @@ export function PromptInput({
       .slice(0, FILE_MENTION_PREVIEW_LIMIT)
       .map((item) => item.option);
   }, [deferredFileMentionQuery, fileMentionContext, fileMentionOptions]);
-  const showFileMentionPalette = Boolean(fileMentionContext) && !showSlashPalette && !disabled && (fileMentionLoading || filteredFileMentionOptions.length > 0);
+  const useLarkMentionSearch = Boolean(
+    larkMentionContext
+    && /\p{Script=Han}/u.test(deferredLarkMentionQuery)
+    && !larkMentionUnavailable
+  );
+  const showLarkMentionPalette = useLarkMentionSearch
+    && !showSlashPalette
+    && !disabled
+    && (larkMentionLoading || larkMentionOptions.length > 0);
+  const showFileMentionPalette = Boolean(fileMentionContext)
+    && !useLarkMentionSearch
+    && !showSlashPalette
+    && !disabled
+    && (fileMentionLoading || filteredFileMentionOptions.length > 0);
   const enabledProfiles = useMemo<ApiConfigProfile[]>(() => getEnabledProfiles(apiConfigSettings.profiles), [apiConfigSettings.profiles]);
   const routedModelOptions = useMemo(() => getRoutedModelOptionsForProfiles(enabledProfiles), [enabledProfiles]);
   const availableModels = useMemo(() => routedModelOptions.map((option) => option.value), [routedModelOptions]);
@@ -763,7 +793,7 @@ export function PromptInput({
 
     const nextQueuedMessage: QueuedMessageDraft = {
       id: crypto.randomUUID(),
-      prompt: getImageGenerationDisplayPrompt(currentPrompt),
+      prompt: getImageGenerationDisplayPrompt(promptWithAnnotations),
       agentPrompt: promptForDispatch,
       attachments,
       createdAt: Date.now(),
@@ -816,7 +846,7 @@ export function PromptInput({
         browserAnnotations,
       });
       const promptForDispatch = mergePromptWithImageGenerationConfig(promptWithAnnotations, imageGenerationConfig);
-      const displayPrompt = getImageGenerationDisplayPrompt(promptForMode);
+      const displayPrompt = getImageGenerationDisplayPrompt(promptWithAnnotations);
       const validationError = validatePromptDraft(promptForDispatch);
       if (validationError) {
         setGlobalError(validationError);
@@ -891,6 +921,19 @@ export function PromptInput({
       .finally(() => setFileMentionLoading(false));
   }, [effectiveCwd]);
 
+  const insertLarkMention = useCallback((option: LarkMentionOption) => {
+    if (!larkMentionContext) return;
+    const before = prompt.slice(0, larkMentionContext.start);
+    const after = prompt.slice(larkMentionContext.end);
+    const replacement = serializeLarkMention(option);
+    const nextPrompt = `${before}${replacement}${after}`;
+    const nextCursor = before.length + replacement.length;
+
+    setPromptDraft(nextPrompt, nextCursor);
+    setLarkMentionActiveIndex(0);
+    focusPromptEditor(nextCursor);
+  }, [focusPromptEditor, larkMentionContext, prompt, setPromptDraft]);
+
   const selectSlashCommand = useCallback((command: SlashCommandOption) => {
     const context = slashCommandContext;
     const before = context ? prompt.slice(0, context.start) : prompt.slice(0, cursorIndex || prompt.length);
@@ -952,6 +995,29 @@ export function PromptInput({
         e.preventDefault();
         setShowSlashBrowser(false);
         setDismissedSlashQuery(slashQuery?.toLowerCase() ?? null);
+        return;
+      }
+    }
+    if (showLarkMentionPalette) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setLarkMentionActiveIndex((current) => {
+          const count = larkMentionOptions.length;
+          if (count === 0) return 0;
+          return e.key === "ArrowDown"
+            ? (current + 1) % count
+            : (current - 1 + count) % count;
+        });
+        return;
+      }
+      if (((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") && larkMentionOptions.length > 0) {
+        e.preventDefault();
+        insertLarkMention(larkMentionOptions[larkMentionActiveIndex] ?? larkMentionOptions[0]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setLarkMentionOptions([]);
         return;
       }
     }
@@ -1062,6 +1128,19 @@ export function PromptInput({
   const handlePaste = useCallback(async (event: React.ClipboardEvent<HTMLDivElement>) => {
     if (disabled) return;
 
+    const plainText = getPlainTextFromClipboardData(event.clipboardData);
+    if (plainText) {
+      event.preventDefault();
+      const editor = promptRef.current ?? event.currentTarget;
+      const currentPrompt = getPromptTextFromEditor(editor);
+      const fallbackCursor = cursorIndex || currentPrompt.length;
+      const selection = getSelectionRangeInEditor(editor) ?? { start: fallbackCursor, end: fallbackCursor };
+      const nextDraft = insertTextIntoPrompt(currentPrompt, plainText, selection.start, selection.end);
+      setPromptDraft(nextDraft.prompt, nextDraft.cursorIndex);
+      focusPromptEditor(nextDraft.cursorIndex);
+      return;
+    }
+
     const clipboardFiles = Array.from(event.clipboardData.items)
       .filter((item) => item.kind === "file")
       .map((item) => item.getAsFile())
@@ -1072,18 +1151,6 @@ export function PromptInput({
       await addFiles(clipboardFiles);
       return;
     }
-
-    const plainText = getPlainTextFromClipboardData(event.clipboardData);
-    if (!plainText) return;
-
-    event.preventDefault();
-    const editor = promptRef.current ?? event.currentTarget;
-    const currentPrompt = getPromptTextFromEditor(editor);
-    const fallbackCursor = cursorIndex || currentPrompt.length;
-    const selection = getSelectionRangeInEditor(editor) ?? { start: fallbackCursor, end: fallbackCursor };
-    const nextDraft = insertTextIntoPrompt(currentPrompt, plainText, selection.start, selection.end);
-    setPromptDraft(nextDraft.prompt, nextDraft.cursorIndex);
-    focusPromptEditor(nextDraft.cursorIndex);
   }, [addFiles, cursorIndex, disabled, focusPromptEditor, setPromptDraft]);
 
   const handleFileInputChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1306,6 +1373,44 @@ export function PromptInput({
   }, [fileMentionContext?.query]);
 
   useEffect(() => {
+    setLarkMentionActiveIndex(0);
+  }, [larkMentionContext?.query]);
+
+  useEffect(() => {
+    if (!hasLarkMentionContext) setLarkMentionUnavailable(false);
+  }, [hasLarkMentionContext]);
+
+  useEffect(() => {
+    if (!useLarkMentionSearch || !larkMentionContext) {
+      setLarkMentionOptions([]);
+      setLarkMentionLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLarkMentionLoading(true);
+    void searchLarkMentionOptions(deferredLarkMentionQuery)
+      .then((options) => {
+        if (!cancelled) setLarkMentionOptions(options);
+      })
+      .catch((error) => {
+        console.warn("[prompt-input] Lark contact search failed", error);
+        if (!cancelled) {
+          setLarkMentionOptions([]);
+          setLarkMentionUnavailable(true);
+          setGlobalError(formatLarkMentionSearchError(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLarkMentionLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deferredLarkMentionQuery, larkMentionContext, setGlobalError, useLarkMentionSearch]);
+
+  useEffect(() => {
     setSlashActiveIndex(0);
   }, [showSlashBrowser, slashQuery]);
 
@@ -1486,6 +1591,15 @@ export function PromptInput({
           filteredCommands={filteredSlashCommands}
           activeIndex={slashActiveIndex}
           onSelect={selectSlashCommand}
+        />
+      )}
+      {showLarkMentionPalette && (
+        <LarkMentionPalette
+          surfaceWidthClass={composerSurfaceWidthClass}
+          loading={larkMentionLoading}
+          options={larkMentionOptions}
+          activeIndex={larkMentionActiveIndex}
+          onSelect={insertLarkMention}
         />
       )}
       {showFileMentionPalette && (

@@ -248,6 +248,25 @@ function validatePackagedCanvasRuntime() {
   }
 }
 
+function validatePackagedCodexLoginRuntime() {
+  const runtimeRoot = path.join(
+    distDir,
+    "win-unpacked",
+    "resources",
+    "app.asar.unpacked",
+    "node_modules",
+    "@openai",
+    "codex",
+    "node_modules",
+    "@openai",
+    "codex",
+    "vendor",
+    "x86_64-pc-windows-msvc",
+  );
+  assertNonEmptyFile(path.join(runtimeRoot, "bin", "codex.exe"), "Codex bundled login runtime");
+  assertNonEmptyFile(path.join(runtimeRoot, "codex-path", "rg.exe"), "Codex bundled search runtime");
+}
+
 function ensureWindowsAppUpdateConfig() {
   const resourcesDir = path.join(distDir, "win-unpacked", "resources");
   if (!existsSync(resourcesDir)) return;
@@ -333,6 +352,7 @@ function runWithFallback(strategyLabel, commands) {
       syncPackagedCodeGraphRuntimeDeps();
       validatePackagedCodeGraphRuntime();
       validatePackagedCanvasRuntime();
+      validatePackagedCodexLoginRuntime();
     }
   }
 

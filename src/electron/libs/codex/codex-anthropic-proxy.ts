@@ -1,7 +1,4 @@
 import http, { type IncomingMessage, type ServerResponse } from "http";
-import { existsSync, readFileSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
 import {
   CODEX_OAUTH_BASE_URL,
   buildCodexRequestHeaders,
@@ -9,7 +6,6 @@ import {
   encodeCodexOAuthCredential,
   getCodexResponsesPath,
   parseCodexResponsesStream,
-  parseCodexCliAuthCredential,
   parseCodexOAuthCredential,
   refreshCodexOAuthToken,
   shouldRefreshCodexCredential,
@@ -114,7 +110,7 @@ async function handleProxyRequest(request: IncomingMessage, response: ServerResp
     const body = await readRequestBody(request);
     const anthropicRequest = JSON.parse(body) as AnthropicMessagesRequest;
     const codexRequest = buildCodexResponsesRequest(anthropicRequest);
-    const credential = await getUsableCredential(profile);
+    let credential = await getUsableCredential(profile);
     const wantsStream = anthropicRequest.stream === true;
     const upstreamPayload = {
       ...codexRequest,
@@ -123,13 +119,21 @@ async function handleProxyRequest(request: IncomingMessage, response: ServerResp
     const upstreamUrl = new URL(getCodexResponsesPath(String(anthropicRequest.model ?? "")), profile.baseURL || CODEX_OAUTH_BASE_URL);
     const upstreamWatchdog = createUpstreamIdleWatchdog();
     try {
-      const upstream = await fetch(upstreamUrl.toString(), {
-        method: "POST",
-        headers: buildCodexRequestHeaders(credential, true),
-        body: JSON.stringify(upstreamPayload),
-        signal: upstreamWatchdog.signal,
-      });
+      const fetchUpstream = async () => await fetch(upstreamUrl.toString(), {
+          method: "POST",
+          headers: buildCodexRequestHeaders(credential, true),
+          body: JSON.stringify(upstreamPayload),
+          signal: upstreamWatchdog.signal,
+        });
+      let upstream = await fetchUpstream();
       upstreamWatchdog.touch();
+
+      if (upstream.status === 401) {
+        await readUpstreamText(upstream, upstreamWatchdog.touch);
+        credential = await getUsableCredential(profile, true);
+        upstream = await fetchUpstream();
+        upstreamWatchdog.touch();
+      }
 
       if (!upstream.ok) {
         const upstreamText = await readUpstreamText(upstream, upstreamWatchdog.touch);
@@ -411,9 +415,9 @@ async function streamCodexResponse(
   }
 }
 
-async function getUsableCredential(profile: ApiConfig): Promise<CodexOAuthCredential> {
+async function getUsableCredential(profile: ApiConfig, forceRefresh = false): Promise<CodexOAuthCredential> {
   const credential = parseCodexOAuthCredential(profile.apiKey);
-  if (!needsCredentialRefresh(credential)) {
+  if (!forceRefresh && !needsCredentialRefresh(credential)) {
     return credential;
   }
 
@@ -422,7 +426,7 @@ async function getUsableCredential(profile: ApiConfig): Promise<CodexOAuthCreden
     return inFlightRefresh;
   }
 
-  const refresh = refreshCredentialForProfile(profile.id, credential)
+  const refresh = refreshCredentialForProfile(profile.id, credential, forceRefresh)
     .finally(() => {
       credentialRefreshes.delete(profile.id);
     });
@@ -433,16 +437,15 @@ async function getUsableCredential(profile: ApiConfig): Promise<CodexOAuthCreden
 async function refreshCredentialForProfile(
   profileId: string,
   staleCredential: CodexOAuthCredential,
+  forceRefresh = false,
 ): Promise<CodexOAuthCredential> {
   const latestCredential = readProfileCredential(profileId);
-  if (latestCredential && !needsCredentialRefresh(latestCredential)) {
+  if (
+    latestCredential
+    && !needsCredentialRefresh(latestCredential)
+    && (!forceRefresh || latestCredential.accessToken !== staleCredential.accessToken)
+  ) {
     return latestCredential;
-  }
-
-  const importedCredential = readCodexCliCredential();
-  if (importedCredential && !needsCredentialRefresh(importedCredential)) {
-    saveRefreshedCredential(profileId, importedCredential);
-    return importedCredential;
   }
 
   const credential = latestCredential ?? staleCredential;
@@ -455,14 +458,12 @@ async function refreshCredentialForProfile(
     return refreshed;
   } catch (error) {
     const recoveredCredential = readProfileCredential(profileId);
-    if (recoveredCredential && !needsCredentialRefresh(recoveredCredential)) {
+    if (
+      recoveredCredential
+      && !needsCredentialRefresh(recoveredCredential)
+      && (!forceRefresh || recoveredCredential.accessToken !== staleCredential.accessToken)
+    ) {
       return recoveredCredential;
-    }
-
-    const recoveredCliCredential = readCodexCliCredential();
-    if (recoveredCliCredential && !needsCredentialRefresh(recoveredCliCredential)) {
-      saveRefreshedCredential(profileId, recoveredCliCredential);
-      return recoveredCliCredential;
     }
 
     throw new Error(buildRefreshFailureMessage(error));
@@ -477,19 +478,6 @@ function readProfileCredential(profileId: string): CodexOAuthCredential | null {
 
   try {
     return parseCodexOAuthCredential(profile.apiKey);
-  } catch {
-    return null;
-  }
-}
-
-function readCodexCliCredential(): CodexOAuthCredential | null {
-  const authPath = join(process.env.CODEX_HOME || join(homedir(), ".codex"), "auth.json");
-  if (!existsSync(authPath)) {
-    return null;
-  }
-
-  try {
-    return parseCodexCliAuthCredential(readFileSync(authPath, "utf8"));
   } catch {
     return null;
   }
@@ -514,7 +502,7 @@ function isCredentialLikelyUsable(credential: CodexOAuthCredential): boolean {
 function buildRefreshFailureMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (/refresh token.*already been used|already been used.*refresh token|invalid_grant/i.test(message)) {
-    return `${message} Re-run npm run codex:oauth:setup or codex login so tech-cc-hub can import the latest Codex credentials.`;
+    return `${message} 请在 tech-cc-hub 设置中重新连接 ChatGPT 账号。`;
   }
   return message;
 }

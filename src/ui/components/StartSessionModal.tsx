@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AppModalOverlay } from "./AppModalOverlay";
 
 interface StartSessionModalProps {
   cwd: string;
@@ -27,10 +28,8 @@ export function StartSessionModal({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/20 px-4 py-8 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
+    <AppModalOverlay
+      className="z-50 flex items-center justify-center bg-ink-900/20 px-4 py-8 backdrop-blur-sm"
       aria-label="新建工作区"
     >
       <div className="w-full max-w-lg rounded-2xl border border-ink-900/5 bg-surface p-6 shadow-elevated">
@@ -99,6 +98,6 @@ export function StartSessionModal({
           </button>
         </div>
       </div>
-    </div>
+    </AppModalOverlay>
   );
 }

@@ -1,4 +1,4 @@
-import { app } from "electron";
+import { app, safeStorage } from "electron";
 import {
   readFileSync,
   writeFileSync,
@@ -11,6 +11,7 @@ import {
   CODEX_OAUTH_BASE_URL,
   CODEX_OAUTH_DEFAULT_MODEL,
   CODEX_OAUTH_SMALL_MODEL,
+  CODEX_OAUTH_STORED_CREDENTIAL,
 } from "../../shared/codex-oauth.js";
 import {
   MINIMAX_ANTHROPIC_BASE_URL,
@@ -66,6 +67,14 @@ const DEFAULT_CONTEXT_WINDOW = 200_000;
 const DEEPSEEK_OFFICIAL_BASE_URL = "https://api.deepseek.com/anthropic";
 const CONFIG_FILE_NAME = "api-config.json";
 const GLOBAL_CONFIG_FILE_NAME = "agent-runtime.json";
+const CODEX_SAFE_STORAGE_PREFIX = "safe-storage:v1:";
+
+class CodexCredentialStorageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CodexCredentialStorageError";
+  }
+}
 
 function getConfigPath(): string {
   const userDataPath = app.getPath("userData");
@@ -107,7 +116,7 @@ export function loadApiConfigSettings(): ApiConfigSettings {
     }
     const raw = stripUtf8Bom(readFileSync(configPath, "utf8"));
     const parsed = JSON.parse(raw) as ApiConfig | ApiConfigSettings;
-    return normalizeApiSettings(parsed);
+    return normalizeApiSettings(decryptStoredCodexCredentials(parsed));
   } catch (error) {
     console.error("[config-store] Failed to load API config:", error);
     return createDefaultSettings();
@@ -128,12 +137,45 @@ export function saveApiConfigSettings(settings: ApiConfigSettings): void {
       throw new Error("Invalid config: at least one valid profile is required");
     }
 
-    writeFileSync(configPath, JSON.stringify(normalized, null, 2), "utf8");
+    const persisted = encryptStoredCodexCredentials(normalized);
+    writeFileSync(configPath, JSON.stringify(persisted, null, 2), "utf8");
     console.info("[config-store] API config saved successfully");
   } catch (error) {
     console.error("[config-store] Failed to save API config:", error);
     throw error;
   }
+}
+
+export function redactApiConfigSettingsForRenderer(settings: ApiConfigSettings): ApiConfigSettings {
+  return {
+    profiles: settings.profiles.map((profile) => (
+      profile.provider === "codex" && profile.apiKey
+        ? { ...profile, apiKey: CODEX_OAUTH_STORED_CREDENTIAL }
+        : profile
+    )),
+  };
+}
+
+export function mergeRendererApiConfigSettings(
+  incoming: ApiConfigSettings,
+  existing: ApiConfigSettings,
+): ApiConfigSettings {
+  const existingById = new Map(existing.profiles.map((profile) => [profile.id, profile]));
+  return {
+    profiles: incoming.profiles.map((profile) => {
+      if (profile.provider !== "codex") {
+        return profile;
+      }
+      const stored = existingById.get(profile.id);
+      const shouldPreserveStoredCredential = stored?.provider === "codex"
+        && Boolean(stored.apiKey)
+        && (!profile.apiKey || profile.apiKey === CODEX_OAUTH_STORED_CREDENTIAL);
+      return {
+        ...profile,
+        apiKey: shouldPreserveStoredCredential ? stored.apiKey : profile.apiKey,
+      };
+    }),
+  };
 }
 
 export function deleteApiConfig(): void {
@@ -267,6 +309,67 @@ function normalizeKnownConfigName(name: string, provider: ApiProviderMode): stri
 
 function stripUtf8Bom(value: string): string {
   return value.replace(/^\uFEFF/, "");
+}
+
+function decryptStoredCodexCredentials(input: ApiConfig | ApiConfigSettings): ApiConfig | ApiConfigSettings {
+  const decryptProfile = (profile: ApiConfig): ApiConfig => {
+    if (!profile.apiKey?.startsWith(CODEX_SAFE_STORAGE_PREFIX)) {
+      return profile;
+    }
+    try {
+      if (!safeStorage.isEncryptionAvailable()) {
+        throw new Error("OS credential encryption is unavailable");
+      }
+      const encoded = profile.apiKey.slice(CODEX_SAFE_STORAGE_PREFIX.length);
+      return {
+        ...profile,
+        apiKey: safeStorage.decryptString(Buffer.from(encoded, "base64")),
+      };
+    } catch (error) {
+      console.error("[config-store] Failed to decrypt a Codex credential:", error instanceof Error ? error.message : String(error));
+      // Keep the opaque envelope so one unreadable credential cannot hide all
+      // profiles. A later login can replace it without losing other settings.
+      return profile;
+    }
+  };
+
+  if (Array.isArray((input as ApiConfigSettings).profiles)) {
+    return {
+      profiles: (input as ApiConfigSettings).profiles.map(decryptProfile),
+    };
+  }
+  return decryptProfile(input as ApiConfig);
+}
+
+function encryptStoredCodexCredentials(settings: ApiConfigSettings): ApiConfigSettings {
+  return {
+    profiles: settings.profiles.map((profile) => {
+      if (
+        profile.provider !== "codex"
+        || !profile.apiKey
+        || profile.apiKey === CODEX_OAUTH_STORED_CREDENTIAL
+        || profile.apiKey.startsWith(CODEX_SAFE_STORAGE_PREFIX)
+      ) {
+        return profile;
+      }
+      try {
+        if (!safeStorage.isEncryptionAvailable()) {
+          throw new CodexCredentialStorageError("系统凭据加密不可用，Codex 凭据未保存。");
+        }
+        const encrypted = safeStorage.encryptString(profile.apiKey).toString("base64");
+        return {
+          ...profile,
+          apiKey: `${CODEX_SAFE_STORAGE_PREFIX}${encrypted}`,
+        };
+      } catch (error) {
+        console.error("[config-store] Failed to encrypt a Codex credential:", error instanceof Error ? error.message : String(error));
+        if (error instanceof CodexCredentialStorageError) {
+          throw error;
+        }
+        throw new CodexCredentialStorageError("系统凭据加密失败，Codex 凭据未保存。");
+      }
+    }),
+  };
 }
 
 function filterProviderCompatibleModels(provider: ApiProviderMode, models: ApiModelConfig[]): ApiModelConfig[] {

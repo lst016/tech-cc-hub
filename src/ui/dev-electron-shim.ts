@@ -1,6 +1,7 @@
 import type { ApiConfigSettings, ClientEvent, PromptAttachment, ServerEvent, StreamMessage, UiGitCommitDetail, UiGitCommitMessageSuggestion, UiGitDiffResult, UiGitResult, UiGitWorkbenchSnapshot } from "./types";
 import type { AppUpdateActionResult, AppUpdateStatus } from "./types";
 import type { BuiltinMcpServerName } from "../shared/builtin-mcp-registry";
+import type { CreateCronJobParams, CronJob } from "../types/cron";
 
 const browserPreviewSessionId = "browser-preview-session";
 const browserPreviewCwd = "/Users/lst01/Desktop/学习/tech-cc-hub";
@@ -121,7 +122,11 @@ const buildBrowserPreviewTitle = (input: string) => {
 };
 
 function createFallbackElectron(): typeof window.electron & Record<string, unknown> {
+  const previewUrl = new URL(window.location.href);
+  const browserPreviewEnabled = previewUrl.searchParams.has(DEV_BROWSER_PREVIEW_FLAG)
+    || previewUrl.hash.includes(DEV_BROWSER_PREVIEW_FLAG);
   const qaPlanPreviewEnabled = new URLSearchParams(window.location.search).get("qaPlanPreview") === "1";
+  const qaCronScenario = new URLSearchParams(window.location.search).get("qaCron");
   let sessionCreatedAt = Date.now();
   let sessionUpdatedAt = sessionCreatedAt;
   let sessionStatus: "idle" | "running" | "completed" = qaPlanPreviewEnabled ? "running" : "idle";
@@ -138,6 +143,210 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
   let qaBackgroundCompletionScheduled = false;
   const qaHistoryScheduledSessionIds = new Set<string>();
   const qaHistoryEmittedSessionIds = new Set<string>();
+  const qaCronTimestamp = 1_783_904_400_000;
+  let qaCronJobs: CronJob[] = [
+    {
+      id: "qa-cron-daily-brief",
+      name: "每日产品晨报",
+      description: "整理产品、技术与客户反馈，生成当天的行动摘要。",
+      enabled: true,
+      schedule: { kind: "cron", expr: "0 9 * * MON-FRI", description: "工作日 09:00" },
+      target: {
+        payload: { kind: "message", text: "汇总昨天的关键进展、风险和今天的优先事项。" },
+        executionMode: "existing",
+      },
+      metadata: {
+        conversationId: browserPreviewSessionId,
+        conversationTitle: "tech-cc-hub",
+        agentType: "claude",
+        createdBy: "user",
+        createdAt: qaCronTimestamp - 86_400_000,
+        updatedAt: qaCronTimestamp - 3_600_000,
+      },
+      state: {
+        nextRunAtMs: qaCronTimestamp + 3_600_000,
+        lastRunAtMs: qaCronTimestamp - 82_800_000,
+        lastStatus: "ok",
+        runCount: 18,
+        retryCount: 0,
+        maxRetries: 2,
+      },
+    },
+    {
+      id: "qa-cron-weekly-review",
+      name: "周度项目复盘",
+      description: "每周五汇总交付、质量与下周计划。",
+      enabled: false,
+      schedule: { kind: "cron", expr: "30 17 * * FRI", description: "每周五 17:30" },
+      target: {
+        payload: { kind: "message", text: "生成本周项目复盘，并列出下周三项最高优先级工作。" },
+        executionMode: "new_conversation",
+      },
+      metadata: {
+        conversationId: browserPreviewSessionId,
+        conversationTitle: "tech-cc-hub",
+        agentType: "codex",
+        createdBy: "user",
+        createdAt: qaCronTimestamp - 604_800_000,
+        updatedAt: qaCronTimestamp - 172_800_000,
+      },
+      state: {
+        lastRunAtMs: qaCronTimestamp - 604_800_000,
+        lastStatus: "ok",
+        runCount: 7,
+        retryCount: 0,
+        maxRetries: 1,
+        paused: true,
+      },
+    },
+    {
+      id: "qa-cron-health-check",
+      name: "发布健康检查",
+      description: "检查安装包、更新元数据与公开下载地址。",
+      enabled: true,
+      schedule: { kind: "every", everyMs: 7_200_000, description: "每 2 小时" },
+      target: {
+        payload: { kind: "message", text: "验证最新 Windows 安装包及 latest.yml 是否可以公开下载。" },
+        executionMode: "new_conversation",
+      },
+      metadata: {
+        conversationId: "__system__",
+        conversationTitle: "系统工作区",
+        agentType: "codex",
+        createdBy: "agent",
+        createdAt: qaCronTimestamp - 259_200_000,
+        updatedAt: qaCronTimestamp - 900_000,
+      },
+      state: {
+        nextRunAtMs: qaCronTimestamp + 6_300_000,
+        lastRunAtMs: qaCronTimestamp - 900_000,
+        lastStatus: "error",
+        lastError: "公开下载地址返回 504，请检查发布链路。",
+        runCount: 31,
+        retryCount: 2,
+        maxRetries: 3,
+      },
+    },
+    {
+      id: "qa-cron-manual-cleanup",
+      name: "手动整理变更记录",
+      description: "需要时手动生成当前工作区的变更说明。",
+      enabled: true,
+      schedule: { kind: "cron", expr: "", description: "手动触发" },
+      target: {
+        payload: { kind: "message", text: "按功能、修复和验证结果整理变更记录。" },
+        executionMode: "existing",
+      },
+      metadata: {
+        conversationId: "",
+        agentType: "claude",
+        createdBy: "user",
+        createdAt: qaCronTimestamp - 43_200_000,
+        updatedAt: qaCronTimestamp - 43_200_000,
+      },
+      state: {
+        runCount: 0,
+        retryCount: 0,
+        maxRetries: 0,
+      },
+    },
+  ];
+
+  const getQaCronPayload = <T,>(args: unknown[]): T => (
+    args[0] && typeof args[0] === "object" ? args[0] as T : {} as T
+  );
+
+  const updateQaCronJob = (jobId: string, updates: Partial<CronJob>): CronJob => {
+    const index = qaCronJobs.findIndex((job) => job.id === jobId);
+    if (index < 0) throw new Error(`定时任务不存在: ${jobId}`);
+    const current = qaCronJobs[index]!;
+    const updated = {
+      ...current,
+      ...updates,
+      metadata: updates.metadata ?? current.metadata,
+      state: updates.state ? { ...current.state, ...updates.state } : current.state,
+    };
+    qaCronJobs = qaCronJobs.map((job, jobIndex) => jobIndex === index ? updated : job);
+    return updated;
+  };
+
+  const invokeQaCron = <T,>(channel: string, args: unknown[]): T => {
+    if (channel === "cron:list-jobs") {
+      if (qaCronScenario === "error") throw new Error("定时任务预览数据加载失败");
+      return (qaCronScenario === "empty" ? [] : qaCronJobs) as T;
+    }
+    if (channel === "cron:list-jobs-by-conversation") {
+      if (qaCronScenario === "error") throw new Error("定时任务预览数据加载失败");
+      const { conversationId } = getQaCronPayload<{ conversationId?: string }>(args);
+      return (qaCronScenario === "empty"
+        ? []
+        : qaCronJobs.filter((job) => job.metadata.conversationId === conversationId)) as T;
+    }
+    if (channel === "cron:get-job") {
+      const { jobId } = getQaCronPayload<{ jobId?: string }>(args);
+      return (qaCronJobs.find((job) => job.id === jobId) ?? null) as T;
+    }
+    if (channel === "cron:add-job") {
+      const params = getQaCronPayload<CreateCronJobParams>(args);
+      const created: CronJob = {
+        id: `qa-cron-created-${qaCronJobs.length + 1}`,
+        name: params.name,
+        description: params.description,
+        enabled: true,
+        schedule: params.schedule,
+        target: {
+          payload: { kind: "message", text: params.prompt ?? params.message ?? "" },
+          executionMode: params.executionMode,
+        },
+        metadata: {
+          conversationId: params.conversationId,
+          conversationTitle: params.conversationTitle,
+          agentType: params.agentType,
+          createdBy: params.createdBy,
+          createdAt: qaCronTimestamp,
+          updatedAt: qaCronTimestamp,
+          agentConfig: params.agentConfig,
+        },
+        state: { runCount: 0, retryCount: 0, maxRetries: 0 },
+      };
+      qaCronJobs = [created, ...qaCronJobs];
+      return created as T;
+    }
+    if (channel === "cron:update-job") {
+      const { jobId, updates } = getQaCronPayload<{ jobId: string; updates: Partial<CronJob> }>(args);
+      return updateQaCronJob(jobId, updates) as T;
+    }
+    if (channel === "cron:pause-job" || channel === "cron:resume-job") {
+      const { jobId } = getQaCronPayload<{ jobId: string }>(args);
+      const paused = channel === "cron:pause-job";
+      return updateQaCronJob(jobId, {
+        enabled: !paused,
+        state: { ...qaCronJobs.find((job) => job.id === jobId)!.state, paused },
+      }) as T;
+    }
+    if (channel === "cron:remove-job") {
+      const { jobId } = getQaCronPayload<{ jobId: string }>(args);
+      qaCronJobs = qaCronJobs.filter((job) => job.id !== jobId);
+      return undefined as T;
+    }
+    if (channel === "cron:run-now") {
+      const { jobId } = getQaCronPayload<{ jobId: string }>(args);
+      const job = qaCronJobs.find((candidate) => candidate.id === jobId);
+      if (!job) throw new Error(`定时任务不存在: ${jobId}`);
+      updateQaCronJob(jobId, {
+        state: {
+          ...job.state,
+          lastRunAtMs: qaCronTimestamp,
+          lastStatus: "ok",
+          lastError: undefined,
+          runCount: job.state.runCount + 1,
+          retryCount: 0,
+        },
+      });
+      return { conversationId: job.metadata.conversationId } as T;
+    }
+    throw new Error(`定时任务预览未实现 IPC: ${channel}`);
+  };
   const browserStateBySessionId: Record<string, BrowserWorkbenchState> = {};
   const createEmptyBrowserState = (): BrowserWorkbenchState => ({
     url: "",
@@ -749,6 +958,9 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     saveApiConfig: async () => ({ success: true }),
     fetchApiModels: async () => ({ success: false, error: "当前没有连接 Electron 后端，无法拉取模型。" }),
     testApiConfig: async () => ({ success: false, error: "当前没有连接 Electron 后端，无法测试连接。" }),
+    startCodexOAuthRuntime: async () => ({ success: false, error: "Codex 账号连接仅支持 Electron 桌面端。" }),
+    cancelCodexOAuthRuntime: async () => ({ success: true }),
+    onCodexOAuthRuntimeEvent: () => () => {},
     getAppUpdateStatus: async () => createPreviewUpdateStatus(),
     checkForAppUpdates: createPreviewUpdateResult,
     downloadAppUpdate: createPreviewUpdateResult,
@@ -792,6 +1004,9 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     }),
     saveUserAgentRuleDocument: async () => ({ success: true }),
     invoke: async <T,>(channel: string, ...args: unknown[]): Promise<T> => {
+      if (qaCronScenario && channel.startsWith("cron:")) {
+        return invokeQaCron<T>(channel, args);
+      }
       if (channel === "sessions:list") {
         const payload = args[0] && typeof args[0] === "object" ? args[0] as { archived?: unknown } : {};
         const archived = payload.archived === true;
@@ -802,7 +1017,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         } as T;
       }
       if (channel === "slash-commands:list") {
-        if (qaCollapsedSessionRailEnabled) {
+        if (browserPreviewEnabled) {
           return { commands: browserPreviewSlashCommands } as T;
         }
         try {
@@ -849,6 +1064,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     readPreviewFile: async (payload) => await invokePreviewFs("read", payload),
     listPreviewDirectory: async (payload) => await invokePreviewFs("list", payload),
     listPreviewFiles: async (payload) => await invokePreviewFs("files", payload),
+    searchLarkContacts: async () => [],
     getPreviewImageBase64: async (payload) => await invokePreviewFs("read", payload),
     getPreviewFileMetadata: async () => null,
     writePreviewFile: async (payload) => await invokePreviewFs("write", payload),
@@ -1085,6 +1301,9 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       saveApiConfig: async (config) => await invokeBridge("saveApiConfig", config),
       fetchApiModels: async (payload) => await invokeBridge("fetchApiModels", payload),
       testApiConfig: async (payload) => await invokeBridge("testApiConfig", payload),
+      startCodexOAuthRuntime: async () => ({ success: false, error: "Codex 账号连接仅支持 Electron 桌面端。" }),
+      cancelCodexOAuthRuntime: async () => ({ success: true }),
+      onCodexOAuthRuntimeEvent: () => () => {},
       getAppUpdateStatus: async () => await invokeBridge("getAppUpdateStatus"),
       checkForAppUpdates: async () => await invokeBridge("checkForAppUpdates"),
       downloadAppUpdate: async () => await invokeBridge("downloadAppUpdate"),
@@ -1124,6 +1343,7 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       readPreviewFile: async (payload) => await invokePreviewFs("read", payload),
       listPreviewDirectory: async (payload) => await invokePreviewFs("list", payload),
       listPreviewFiles: async (payload) => await invokePreviewFs("files", payload),
+    searchLarkContacts: async () => [],
       getPreviewImageBase64: async (payload) => await invokePreviewFs("read", payload),
       getPreviewFileMetadata: async () => null,
       writePreviewFile: async (payload) => await invokePreviewFs("write", payload),
