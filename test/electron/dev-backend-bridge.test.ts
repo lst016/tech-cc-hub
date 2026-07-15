@@ -15,8 +15,19 @@ async function waitForBridgeHealth(port: number): Promise<void> {
   for (let attempt = 0; attempt < 60; attempt += 1) {
     const healthy = await new Promise<boolean>((resolve) => {
       const request = get(`http://127.0.0.1:${port}/health`, (response) => {
-        response.resume();
-        resolve(response.statusCode === 200);
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => {
+          body += chunk;
+        });
+        response.on("end", () => {
+          try {
+            const payload = JSON.parse(body) as { ok?: boolean; platform?: string };
+            resolve(response.statusCode === 200 && payload.ok === true && payload.platform === "test");
+          } catch {
+            resolve(false);
+          }
+        });
       });
       request.setTimeout(250, () => {
         request.destroy();

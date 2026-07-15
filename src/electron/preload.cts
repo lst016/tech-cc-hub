@@ -40,6 +40,21 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("fetch-api-models", payload),
     testApiConfig: (payload: any) =>
         ipcInvoke("test-api-config", payload),
+    startCodexOAuthRuntime: (payload: any) =>
+        ipcInvoke("codex-oauth-runtime-start", payload),
+    cancelCodexOAuthRuntime: (attemptId: string) =>
+        ipcInvoke("codex-oauth-runtime-cancel", { attemptId }),
+    onCodexOAuthRuntimeEvent: (callback: (event: any) => void) => {
+        const cb = (_: Electron.IpcRendererEvent, payload: string) => {
+            try {
+                callback(JSON.parse(payload));
+            } catch (error) {
+                console.error("Failed to parse Codex OAuth runtime event:", error);
+            }
+        };
+        electron.ipcRenderer.on("codex-oauth-runtime-event", cb);
+        return () => electron.ipcRenderer.off("codex-oauth-runtime-event", cb);
+    },
     getAppUpdateStatus: () =>
         ipcInvoke("app-update-get-status"),
     checkForAppUpdates: () =>
@@ -111,6 +126,8 @@ electron.contextBridge.exposeInMainWorld("electron", {
         electron.ipcRenderer.invoke("preview-list-directory", payload),
     listPreviewFiles: (payload: any) =>
         electron.ipcRenderer.invoke("preview-list-files", payload),
+    searchLarkContacts: (query: string) =>
+        electron.ipcRenderer.invoke("lark:search-contacts", query),
     getPreviewImageBase64: (payload: any) =>
         electron.ipcRenderer.invoke("preview-get-image-base64", payload),
     getPreviewFileMetadata: (payload: any) =>

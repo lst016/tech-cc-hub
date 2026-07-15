@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("Windows packaging keeps the app icon enabled for packaged executables and installers", async () => {
+test("Windows icon and macOS protocol checks run during packaging", async () => {
   const builderConfig = JSON.parse(await readFile("electron-builder.json", "utf8"));
   const packageJson = JSON.parse(await readFile("package.json", "utf8"));
   const packageWinSafe = await readFile("scripts/package-win-safe.mjs", "utf8");
@@ -15,7 +15,13 @@ test("Windows packaging keeps the app icon enabled for packaged executables and 
   assert.equal(builderConfig.afterPack, "scripts/after-pack-win-icon.cjs");
   assert.equal(builderConfig.artifactBuildStarted, undefined);
   assert.equal(builderConfig.afterAllArtifactBuild, undefined);
-  assert.match(await readFile("scripts/after-pack-win-icon.cjs", "utf8"), /throw new Error/);
+  const afterPackSource = await readFile("scripts/after-pack-win-icon.cjs", "utf8");
+  assert.match(afterPackSource, /throw new Error/);
+  assert.match(afterPackSource, /electronPlatformName === "darwin"/);
+  assert.match(afterPackSource, /CFBundleURLTypes/);
+  assert.match(afterPackSource, /CFBundleURLSchemes/);
+  assert.match(afterPackSource, /CODEX_OAUTH_PROTOCOL_SCHEME = "tech-cc-hub"/);
+  assert.match(afterPackSource, /\/usr\/bin\/plutil/);
 
   assert.equal(packageJson.scripts["release:win-x64"], "npm run dist:win");
   assert.equal(packageJson.scripts["dist:win"], "node scripts/package-win-safe.mjs");

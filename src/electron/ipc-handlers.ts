@@ -63,14 +63,13 @@ import type { WorkflowRunRecord } from "../shared/workflows/workflow-runs.js";
 
 let sessions: SessionStore;
 const runnerHandles = new Map<string, RunnerHandle>();
-const warmRunnerCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const serverEventListeners = new Set<(event: ServerEvent) => void>();
 const channelReplyTargets = new Map<string, ChannelReplyTarget>();
 const channelLatestAssistantText = new Map<string, string>();
 const channelLastSentAssistantText = new Map<string, string>();
 // Temporarily disable the embedded Figma Agent OAuth bridge; Codex OAuth remains the supported path.
 const FIGMA_AGENT_OAUTH_BRIDGE_ENABLED = false;
-const WARM_RUNNER_IDLE_MS = 30 * 60 * 1000;
+const CONTINUATION_HISTORY_LIMIT = 1_000;
 const figmaAuthToolUses = new Map<string, "authenticate" | "complete_authentication">();
 const figmaAuthUrlsBySession = new Map<string, string>();
 const workflowToolUseNamesBySession = new Map<string, Map<string, string>>();
@@ -302,8 +301,11 @@ function hasInlineImagePreview(attachment: PromptAttachment): boolean {
 }
 
 async function hydrateImagePreviewsForDisplay(messages: StreamMessage[]): Promise<StreamMessage[]> {
-  const hydratedMessages: StreamMessage[] = [];
+  // Packaged renderer pages can display persisted file URIs directly. The dev
+  // server is HTTP-based and still needs a data URL for local file previews.
+  if (!isDev()) return messages;
 
+  const hydratedMessages: StreamMessage[] = [];
   for (const message of messages) {
     if (message.type !== "user_prompt" || !message.attachments?.length) {
       hydratedMessages.push(message);
@@ -316,7 +318,6 @@ async function hydrateImagePreviewsForDisplay(messages: StreamMessage[]): Promis
         attachments.push(attachment);
         continue;
       }
-
       try {
         const restored = await rehydrateStoredImageAttachment(attachment);
         attachments.push(restored?.runtimeData ? { ...attachment, preview: restored.runtimeData } : attachment);
@@ -324,10 +325,8 @@ async function hydrateImagePreviewsForDisplay(messages: StreamMessage[]): Promis
         attachments.push(attachment);
       }
     }
-
     hydratedMessages.push({ ...message, attachments });
   }
-
   return hydratedMessages;
 }
 
@@ -501,46 +500,17 @@ function buildPromptLedgerForRun(options: {
   });
 }
 
-function clearWarmRunnerCleanupTimer(sessionId: string): void {
-  const timer = warmRunnerCleanupTimers.get(sessionId);
-  if (!timer) {
-    return;
-  }
-  clearTimeout(timer);
-  warmRunnerCleanupTimers.delete(sessionId);
-}
-
 function rememberRunnerHandle(sessionId: string, handle: RunnerHandle, reuseKey: string): void {
-  clearWarmRunnerCleanupTimer(sessionId);
   handle.reuseKey = reuseKey;
   runnerHandles.set(sessionId, handle);
 }
 
 function closeRunnerHandle(sessionId: string): void {
-  clearWarmRunnerCleanupTimer(sessionId);
   const handle = runnerHandles.get(sessionId);
   if (handle) {
     handle.abort();
     runnerHandles.delete(sessionId);
   }
-}
-
-function scheduleWarmRunnerCleanup(sessionId: string): void {
-  clearWarmRunnerCleanupTimer(sessionId);
-  const handle = runnerHandles.get(sessionId);
-  if (!handle || handle.isClosed()) {
-    return;
-  }
-
-  const timer = setTimeout(() => {
-    const latest = sessions.getSession(sessionId);
-    if (latest?.status === "running") {
-      return;
-    }
-    closeRunnerHandle(sessionId);
-  }, WARM_RUNNER_IDLE_MS);
-  timer.unref?.();
-  warmRunnerCleanupTimers.set(sessionId, timer);
 }
 
 function buildSessionRunnerReuseKey(options: {
@@ -570,6 +540,7 @@ function emit(event: ServerEvent) {
   // "Unknown session" artifacts on the renderer side.
   if (
     (nextEvent.type === "session.status" ||
+      nextEvent.type === "session.plan.updated" ||
       nextEvent.type === "stream.message" ||
       nextEvent.type === "stream.user_prompt" ||
       nextEvent.type === "workflow.runs" ||
@@ -588,15 +559,15 @@ function emit(event: ServerEvent) {
       : previousSession?.cwd;
 
     sessions.updateSession(nextEvent.payload.sessionId, { status: nextEvent.payload.status });
-    if (nextEvent.payload.status === "running") {
-      clearWarmRunnerCleanupTimer(nextEvent.payload.sessionId);
-    }
     scheduleCodeGraphAutoSyncAfterTurn({
       sessionId: nextEvent.payload.sessionId,
       cwd: sessionCwd,
       previousStatus,
       nextStatus: nextEvent.payload.status,
     });
+  }
+  if (nextEvent.type === "session.plan.updated") {
+    sessions.updateSession(nextEvent.payload.sessionId, { planSnapshot: nextEvent.payload });
   }
   if (nextEvent.type === "stream.message") {
     const normalizedMessage =
@@ -637,7 +608,7 @@ function emit(event: ServerEvent) {
       ...nextEvent,
       payload: {
         ...nextEvent.payload,
-        attachments: sanitizedAttachments,
+        attachments: isDev() ? nextEvent.payload.attachments : sanitizedAttachments,
         capturedAt: storedPrompt.capturedAt,
         historyId: storedPrompt.historyId,
       },
@@ -649,7 +620,7 @@ function emit(event: ServerEvent) {
 
   if (nextEvent.type === "session.status" && nextEvent.payload.status === "completed") {
     maybeSendChannelReply(nextEvent.payload.sessionId);
-    scheduleWarmRunnerCleanup(nextEvent.payload.sessionId);
+    closeRunnerHandle(nextEvent.payload.sessionId);
     const session = sessions.getSession(nextEvent.payload.sessionId);
     notifySessionFinished({
       sessionId: nextEvent.payload.sessionId,
@@ -1365,7 +1336,7 @@ export async function handleClientEvent(event: ClientEvent) {
 
   if (event.type === "btw.thread.create") {
     const parentSession = store.getSession(event.payload.parentSessionId);
-    const parentHistory = store.getSessionHistory(event.payload.parentSessionId);
+    const parentHistory = store.getSessionHistoryPage(event.payload.parentSessionId, { limit: CONTINUATION_HISTORY_LIMIT });
     if (!parentSession || !parentHistory) return;
     btwRuntimeManager.createThread({
       parentSession,
@@ -1375,13 +1346,14 @@ export async function handleClientEvent(event: ClientEvent) {
   }
 
   if (event.type === "btw.thread.send") {
+    const { displayAttachments, agentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
     await btwRuntimeManager.send({
       threadId: event.payload.threadId,
       prompt: event.payload.prompt,
       agentPrompt: event.payload.agentPrompt,
       workspaceContext: event.payload.workspaceContext,
-      attachments: event.payload.attachments,
-      displayAttachments: event.payload.attachments,
+      attachments: agentAttachments,
+      displayAttachments,
       runtime: event.payload.runtime,
     });
     return;
@@ -1598,11 +1570,11 @@ export async function handleClientEvent(event: ClientEvent) {
       }
     }
 
-    const history = store.getSessionHistory(session.id);
+    const history = store.getSessionHistoryPage(session.id, { limit: CONTINUATION_HISTORY_LIMIT });
     const historyMessagesForRun = replacingHistoryId
       ? (history?.messages ?? []).filter((message) => message.historyId !== replacingHistoryId)
       : history?.messages ?? [];
-    const shouldRetitleFromFirstPrompt = isPlaceholderSessionTitle(session.title) && (history?.messages.length ?? 0) === 0;
+    const shouldRetitleFromFirstPrompt = isPlaceholderSessionTitle(session.title) && (history?.totalMessages ?? 0) === 0;
     const nextTitle = shouldRetitleFromFirstPrompt
       ? buildTitleFromFirstPrompt(storagePrompt, event.payload.attachments)
       : session.title;
@@ -1637,6 +1609,8 @@ export async function handleClientEvent(event: ClientEvent) {
         recentTurnCount: 5,
         existingSummary: history?.session.continuationSummary,
         existingSummaryMessageCount: history?.session.continuationSummaryMessageCount,
+        forceCompression: history?.hasMore,
+        historyMessageCount: history?.totalMessages,
       },
     );
     const prompt = continuationPayload.prompt;
@@ -1977,15 +1951,17 @@ export async function handleClientEvent(event: ClientEvent) {
       return;
     }
 
+    const displayPrompt = event.payload.prompt;
+    const agentPrompt = event.payload.agentPrompt?.trim() ? event.payload.agentPrompt : displayPrompt;
     const { displayAttachments, agentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
-    store.updateSession(session.id, { lastPrompt: event.payload.prompt });
+    store.updateSession(session.id, { lastPrompt: displayPrompt });
     emit({
       type: "stream.user_prompt",
-      payload: { sessionId: session.id, prompt: event.payload.prompt, attachments: displayAttachments },
+      payload: { sessionId: session.id, prompt: displayPrompt, attachments: displayAttachments },
     });
 
     try {
-      await handle.appendPrompt(event.payload.prompt, agentAttachments);
+      await handle.appendPrompt(agentPrompt, agentAttachments);
     } catch (error) {
       emit({
         type: "runner.error",
@@ -2239,10 +2215,6 @@ export function cleanupAllSessions(): void {
     handle.abort();
   }
   runnerHandles.clear();
-  for (const [, timer] of warmRunnerCleanupTimers) {
-    clearTimeout(timer);
-  }
-  warmRunnerCleanupTimers.clear();
   taskExecutor?.stopPolling();
   taskExecutor = null;
   if (sessions) {

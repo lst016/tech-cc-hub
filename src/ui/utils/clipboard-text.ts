@@ -24,12 +24,6 @@ function containsHttpUrl(value: string) {
   return HTTP_URL_PATTERN.test(value);
 }
 
-function extractFirstLinkHref(html: string) {
-  const hrefMatch = html.match(/<a\b[^>]*\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i);
-  const href = hrefMatch ? (hrefMatch[1] ?? hrefMatch[2] ?? hrefMatch[3] ?? "") : "";
-  return decodeHtmlAttribute(href).trim();
-}
-
 function htmlToPlainText(html: string) {
   if (typeof document !== "undefined") {
     const container = document.createElement("div");
@@ -58,24 +52,58 @@ function formatMarkdownLink(label: string, href: string) {
   return `[${normalizedLabel.replace(/([\\\]])/g, "\\$1")}](${href})`;
 }
 
+type ClipboardHttpLink = {
+  href: string;
+  label: string;
+};
+
+function extractHttpLinks(html: string): ClipboardHttpLink[] {
+  const links: ClipboardHttpLink[] = [];
+  const anchorPattern = /<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi;
+  let anchorMatch: RegExpExecArray | null;
+
+  while ((anchorMatch = anchorPattern.exec(html))) {
+    const attributes = anchorMatch[1] ?? "";
+    const hrefMatch = attributes.match(/\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i);
+    const href = decodeHtmlAttribute(hrefMatch ? (hrefMatch[1] ?? hrefMatch[2] ?? hrefMatch[3] ?? "") : "").trim();
+    const label = htmlToPlainText(anchorMatch[2] ?? "").trim();
+    if (label && isHttpUrl(href)) links.push({ href, label });
+  }
+
+  return links;
+}
+
+function preserveRichHttpLinks(text: string, links: ClipboardHttpLink[]) {
+  const replacements: Array<{ start: number; end: number; markdown: string }> = [];
+
+  for (const link of [...links].sort((left, right) => right.label.length - left.label.length)) {
+    if (text.includes(link.href)) continue;
+    const start = text.indexOf(link.label);
+    if (start < 0 || text.indexOf(link.label, start + link.label.length) >= 0) continue;
+    const end = start + link.label.length;
+    if (replacements.some((replacement) => start < replacement.end && end > replacement.start)) continue;
+    replacements.push({ start, end, markdown: formatMarkdownLink(link.label, link.href) });
+  }
+
+  return replacements
+    .sort((left, right) => right.start - left.start)
+    .reduce(
+      (result, replacement) => `${result.slice(0, replacement.start)}${replacement.markdown}${result.slice(replacement.end)}`,
+      text,
+    );
+}
+
 export function getPlainTextFromClipboardData(clipboardData: ClipboardTextSource) {
-  const plainText = clipboardData.getData("text/plain");
+  const plainText = clipboardData.getData("text/plain") || clipboardData.getData("text");
   const html = clipboardData.getData("text/html");
-  const href = html ? extractFirstLinkHref(html) : "";
-  const shouldPreserveRichHttpLink = Boolean(href) && isHttpUrl(href);
+  const links = html ? extractHttpLinks(html) : [];
 
   if (plainText) {
-    if (shouldPreserveRichHttpLink && !containsHttpUrl(plainText)) {
-      return formatMarkdownLink(plainText, href);
-    }
-    return plainText;
+    return preserveRichHttpLinks(plainText, links);
   }
 
   if (!html) return "";
 
   const htmlText = htmlToPlainText(html);
-  if (shouldPreserveRichHttpLink && !containsHttpUrl(htmlText)) {
-    return formatMarkdownLink(htmlText, href);
-  }
-  return htmlText;
+  return preserveRichHttpLinks(htmlText, links);
 }

@@ -13,7 +13,8 @@ describe("workspace plugin view pane", () => {
     assert.match(paneSource, /openBrowserWorkbench\(launch\.url, surfaceId\)/);
     assert.match(paneSource, /setBrowserWorkbenchBounds\(\{ x: 0, y: 0, width: 0, height: 0 \}, surfaceId\)/);
     assert.match(paneSource, /new ResizeObserver\(syncBounds\)/);
-    assert.match(railSource, /workspacePlugins=\{workspacePlugins\}/);
+    assert.match(railSource, /workspacePlugins = \[\]/);
+    assert.match(railSource, /workspacePlugins\.find\(\(plugin\) => plugin\.id === getWorkspacePluginIdFromTab/);
     assert.match(railSource, /<WorkspacePluginViewPane/);
     assert.match(appSource, /window\.electron\.workspacePlugins\.list\(\)/);
     assert.match(appSource, /workspacePlugins=\{visibleWorkspacePlugins\}/);

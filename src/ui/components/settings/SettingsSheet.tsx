@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from "react";
+import { AppModalOverlay } from "../AppModalOverlay";
 
 export type SettingsStatusTone = "error" | "success" | "info";
 
@@ -117,10 +118,8 @@ export function SettingsSheet({
   }, [onClose]);
 
   return (
-    <div
-      className="fixed inset-0 z-[40000] flex overflow-hidden bg-[#F5F6F8] text-[#1D2129]"
-      role="dialog"
-      aria-modal="true"
+    <AppModalOverlay
+      className="z-[40000] flex overflow-hidden bg-[#F5F6F8] text-[#1D2129]"
       aria-label="设置"
     >
       <aside className="flex w-[260px] shrink-0 flex-col border-r border-[#E5E6EB] bg-[#EEF0F3] px-5 py-7">
@@ -192,6 +191,6 @@ export function SettingsSheet({
           </footer>
         </div>
       </main>
-    </div>
+    </AppModalOverlay>
   );
 }

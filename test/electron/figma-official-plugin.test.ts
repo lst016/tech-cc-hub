@@ -239,9 +239,11 @@ test("detects and redacts Figma MCP OAuth callback prompts", () => {
   assert.doesNotMatch(redacted, /secret-code|secret-state/);
 });
 
-test("keeps Agent OAuth callback resume behind the disabled bridge flag", () => {
+test("keeps Agent OAuth callbacks redacted while remote resume stays disabled", () => {
   const source = readFileSync("src/electron/ipc-handlers.ts", "utf8");
 
-  assert.match(source, /const canUseFigmaOAuthCallbackResume = FIGMA_AGENT_OAUTH_BRIDGE_ENABLED && isFigmaOAuthCallback && Boolean\(session\.claudeSessionId\);/);
-  assert.match(source, /const canUseRemoteResume =\s*!shouldForceStatelessCompression\s*&&\s*\(supportsResume \|\| canUseFigmaOAuthCallbackResume\)/);
+  assert.match(source, /const FIGMA_AGENT_OAUTH_BRIDGE_ENABLED = false;/);
+  assert.match(source, /isFigmaOAuthCallback \? storagePrompt : agentPrompt/);
+  assert.doesNotMatch(source, /canUseFigmaOAuthCallbackResume/);
+  assert.doesNotMatch(source, /const canUseRemoteResume/);
 });

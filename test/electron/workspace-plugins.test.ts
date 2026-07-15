@@ -68,7 +68,7 @@ test("ships Codex-Canvas as the first local browser-view plugin", () => {
     surface: "browser-view",
     start: {
       command: "node",
-      args: ["bin/codex-canvas.mjs", "start", "--host", "127.0.0.1", "--port", "{port}", "--project", "{workspace}", "--thread-id", "{sessionId}"],
+      args: ["dist/codex-canvas.mjs", "start", "--host", "127.0.0.1", "--port", "{port}", "--project", "{workspace}", "--thread-id", "{sessionId}"],
       urlTemplate: "http://127.0.0.1:{port}/?threadId={sessionId}",
       environment: {
         CODEX_CANVAS_GENERATED_IMAGES_ROOT: "{generatedImagesRoot}",

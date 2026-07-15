@@ -1,7 +1,7 @@
 {
 	"name": "tech-cc-hub",
 	"private": true,
-	"version": "0.1.57",
+	"version": "0.1.60",
 	"type": "module",
 	"main": "dist-electron/electron/main.js",
 	"scripts": {
@@ -17,6 +17,7 @@
 		"qa:sidebar-plan-preview": "node scripts/qa/sidebar-plan-preview-smoke.cjs",
 		"qa:side-conversation": "node scripts/qa/side-conversation-smoke.cjs",
 		"qa:collapsed-session-rail": "node scripts/qa/collapsed-session-rail-smoke.cjs",
+		"qa:cron-ui": "node scripts/qa/cron-ui-smoke.cjs",
 		"qa:conversation-turn-timeline": "node scripts/qa/conversation-turn-timeline-smoke.cjs",
 		"qa:chat-selection-comment": "npm run build && node scripts/qa/chat-selection-comment-smoke.cjs",
 		"qa:design-element": "npm run transpile:electron && electron scripts/qa/design-element-tool-smoke.mjs",
@@ -64,6 +65,7 @@
 		"@icon-park/react": "^1.4.2",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"@monaco-editor/react": "^4.7.0",
+		"@openai/codex": "0.144.3",
 		"@radix-ui/react-dialog": "^1.1.15",
 		"@radix-ui/react-dropdown-menu": "^2.1.16",
 		"@tailwindcss/vite": "^4.1.18",
@@ -77,6 +79,7 @@
 		"croner": "^10.0.1",
 		"diff": "^9.0.0",
 		"diff2html": "^3.4.56",
+		"echarts": "^6.1.0",
 		"electron-log": "^5.4.3",
 		"electron-updater": "^6.8.3",
 		"eventemitter3": "^5.0.4",

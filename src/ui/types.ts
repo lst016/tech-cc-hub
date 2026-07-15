@@ -402,7 +402,7 @@ export type ClientEvent =
   | { type: "session.start"; payload: { title: string; prompt: string; agentPrompt?: string; workspaceContext?: LinkedWorkspaceContext; cwd?: string; allowedTools?: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides } }
   | { type: "session.continue"; payload: { sessionId: string; prompt: string; agentPrompt?: string; workspaceContext?: LinkedWorkspaceContext; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides; displayUserPrompt?: boolean; replaceHistoryId?: string } }
   | { type: "session.set_model"; payload: { sessionId: string; model: string } }
-  | { type: "session.append"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[] } }
+  | { type: "session.append"; payload: { sessionId: string; prompt: string; agentPrompt?: string; attachments?: PromptAttachment[] } }
   | { type: "channel.message.receive"; payload: { provider: ChannelProviderId; text: string; externalConversationId?: string; externalMessageId?: string; senderId?: string; senderName?: string; channelName?: string; title?: string; allowedTools?: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides; receivedAt?: number } }
   | { type: "session.workflow.catalog.list"; payload: { sessionId: string } }
   | { type: "session.workflow.set"; payload: { sessionId: string; markdown: string; sourceLayer: WorkflowScope; sourcePath?: string } }

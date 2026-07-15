@@ -219,6 +219,122 @@ code, pre, textarea.mono, input.mono {
   background: #9B9B96;
 }
 
+/* Session navigation: retain the existing layout while giving states a clearer hierarchy. */
+[data-session-sidebar],
+[data-collapsed-session-rail] {
+  background-color: #F8F9FB;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 249, 251, 0.92) 56%, rgba(240, 242, 245, 0.9));
+  border-color: rgba(22, 24, 29, 0.1);
+}
+
+[data-session-sidebar] {
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.92), 10px 0 28px rgba(22, 24, 29, 0.035);
+}
+
+[data-session-sidebar] [data-session-sidebar-new] {
+  border-color: rgba(22, 24, 29, 0.1);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 1px 2px rgba(22, 24, 29, 0.045);
+}
+
+[data-session-sidebar] [data-session-sidebar-new]:hover {
+  border-color: rgba(210, 106, 61, 0.3);
+  box-shadow: 0 3px 10px rgba(22, 24, 29, 0.07);
+}
+
+[data-session-sidebar] [data-session-sidebar-archive],
+[data-session-sidebar] [data-session-sidebar-search] {
+  border-color: rgba(22, 24, 29, 0.08);
+  background: rgba(255, 255, 255, 0.64);
+}
+
+[data-session-sidebar] [data-session-workspace] {
+  border: 1px solid transparent;
+}
+
+[data-session-sidebar] [data-session-workspace]:hover,
+[data-session-sidebar] [data-session-workspace]:focus-within {
+  border-color: rgba(22, 24, 29, 0.065);
+  background: rgba(255, 255, 255, 0.76);
+}
+
+[data-session-sidebar] [data-session-item] {
+  border: 1px solid transparent;
+  background-color: transparent;
+  box-shadow: none;
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, color 140ms ease;
+}
+
+[data-session-sidebar] [data-session-item]:hover {
+  border-color: rgba(22, 24, 29, 0.065);
+  background-color: rgba(255, 255, 255, 0.84);
+}
+
+[data-session-sidebar] [data-session-item][data-session-active="true"] {
+  border-color: transparent;
+  background-color: #EEF0F3;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+[data-session-sidebar] [data-session-item][data-session-active="true"] [data-session-status-indicator] {
+  box-shadow: 0 0 0 3px rgba(61, 68, 80, 0.08);
+}
+
+[data-session-sidebar] [data-session-item]:focus-visible {
+  outline: 2px solid rgba(210, 106, 61, 0.48);
+  outline-offset: 2px;
+}
+
+[data-session-sidebar] [data-session-menu-trigger] {
+  --session-action-bg: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 0 0 4px var(--session-action-bg), 0 1px 3px rgba(22, 24, 29, 0.08);
+}
+
+[data-session-sidebar] [data-session-item][data-session-active="true"] [data-session-menu-trigger] {
+  --session-action-bg: #EEF0F3;
+}
+
+[data-collapsed-session-rail] {
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.92), 8px 0 22px rgba(22, 24, 29, 0.035);
+}
+
+[data-collapsed-session-rail] button:hover,
+[data-collapsed-session-rail] button:focus-visible {
+  background-color: rgba(255, 255, 255, 0.78);
+}
+
+[data-session-preview-card] {
+  border-color: rgba(22, 24, 29, 0.1);
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 16px 42px rgba(22, 24, 29, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+[data-session-preview-card] [id$="-title"] {
+  font-size: 15px;
+  line-height: 21px;
+}
+
+[data-session-preview-card] p {
+  margin-top: 6px;
+  color: #697384;
+  font-size: 13px;
+  line-height: 19px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-session-sidebar] *,
+  [data-collapsed-session-rail] * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  [data-session-sidebar] .animate-spin {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
 .activity-workspace-tabs-scroll {
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
@@ -354,12 +470,12 @@ code, pre, textarea.mono, input.mono {
   animation: shimmer 1.4s linear infinite;
 }
 
-/* Full-screen dialogs temporarily remove the fixed composer from the visual stack. */
+/* Full-screen dialogs temporarily remove the fixed composer unless they configure that composer. */
 [data-prompt-composer] {
   transition: opacity 120ms ease, transform 120ms ease, visibility 0s linear;
 }
 
-body:has([aria-modal="true"]) [data-prompt-composer] {
+body:has([aria-modal="true"]:not([data-keep-prompt-composer-visible="true"])) [data-prompt-composer] {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;

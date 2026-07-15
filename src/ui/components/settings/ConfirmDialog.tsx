@@ -1,6 +1,7 @@
 // Source: CV from skills-manager components/ConfirmDialog.tsx
 import { useState } from "react";
 import { X, AlertTriangle } from "lucide-react";
+import { AppModalOverlay } from "../AppModalOverlay";
 
 interface Props {
   open: boolean;
@@ -38,7 +39,7 @@ export function ConfirmDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <AppModalOverlay aria-label={title || "确认操作"} className="z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
       <div className="relative bg-white border border-[#E5E6EB] rounded-xl w-full max-w-sm p-5 shadow-2xl">
         <div className="flex items-center justify-between mb-4">
@@ -85,6 +86,6 @@ export function ConfirmDialog({
           </button>
         </div>
       </div>
-    </div>
+    </AppModalOverlay>
   );
 }

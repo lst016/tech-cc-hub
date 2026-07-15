@@ -43,6 +43,7 @@ function createHarness() {
   const runs: RunnerOptions[] = [];
   const continuationHistories: StreamMessage[][] = [];
   const aborted: string[] = [];
+  const appendedPrompts: Array<{ sessionId: string; prompt: string }> = [];
   let id = 0;
   let now = 1000;
 
@@ -58,14 +59,16 @@ function createHarness() {
       runs.push(options);
       return {
         abort: () => aborted.push(options.session.id),
-        appendPrompt: async () => {},
+        appendPrompt: async (prompt) => {
+          appendedPrompts.push({ sessionId: options.session.id, prompt });
+        },
         stopTask: async () => {},
         isClosed: () => false,
       } satisfies RunnerHandle;
     },
   });
 
-  return { manager, events, runs, continuationHistories, aborted };
+  return { manager, events, runs, continuationHistories, aborted, appendedPrompts };
 }
 
 async function createAndSend(harness: Harness, prompt = "侧聊问题") {
@@ -113,7 +116,7 @@ describe("BtwRuntimeManager", () => {
       type: "session.status",
       payload: { sessionId: created.threadId, status: "completed", title: "ignored" },
     });
-    await harness.manager.send({ threadId: created.threadId, prompt: "第二轮" });
+    await harness.manager.send({ threadId: created.threadId, prompt: "第二轮", runtime: { model: "gpt-next" } });
 
     assert.deepEqual(
       harness.continuationHistories[0].map((message) => message.type),
@@ -126,6 +129,74 @@ describe("BtwRuntimeManager", () => {
     assert.equal(
       harness.continuationHistories[1].some((message) => message.type === "user_prompt" && message.prompt === "创建后主问题"),
       false,
+    );
+  });
+
+  it("does not inherit the parent session execution plan", async () => {
+    const harness = createHarness();
+    const parentSession = createParentSession({
+      planSnapshot: {
+        sessionId: "main-1",
+        updatedAt: 900,
+        source: "update_plan",
+        plan: [
+          { step: "继续执行主任务", status: "in_progress" },
+          { step: "核验主任务结果", status: "pending" },
+        ],
+      },
+    });
+    const created = harness.manager.createThread({ parentSession, snapshot: [] });
+
+    await harness.manager.send({ threadId: created.threadId, prompt: "只回答侧聊问题" });
+
+    assert.equal(harness.runs[0].session.planSnapshot, undefined);
+  });
+
+  it("reuses one live runner for follow-up turns in the same thread", async () => {
+    const harness = createHarness();
+    const created = await createAndSend(harness, "第一轮问题");
+    harness.runs[0].onEvent({
+      type: "stream.message",
+      payload: { sessionId: created.threadId, message: assistantMessage(created.threadId, "第一轮回答") },
+    });
+    harness.runs[0].onEvent({
+      type: "session.status",
+      payload: { sessionId: created.threadId, status: "completed", title: "ignored" },
+    });
+
+    await harness.manager.send({ threadId: created.threadId, prompt: "第二轮追问" });
+
+    assert.equal(harness.runs.length, 1);
+    assert.deepEqual(harness.appendedPrompts, [{ sessionId: created.threadId, prompt: "第二轮追问" }]);
+    assert.equal(harness.continuationHistories.length, 1);
+    assert.deepEqual(harness.aborted, []);
+  });
+
+  it("rebuilds the same logical thread when its model changes", async () => {
+    const harness = createHarness();
+    const created = await createAndSend(harness, "第一轮问题");
+    harness.runs[0].onEvent({
+      type: "stream.message",
+      payload: { sessionId: created.threadId, message: assistantMessage(created.threadId, "第一轮回答") },
+    });
+    harness.runs[0].onEvent({
+      type: "session.status",
+      payload: { sessionId: created.threadId, status: "completed", title: "ignored" },
+    });
+
+    await harness.manager.send({
+      threadId: created.threadId,
+      prompt: "切换模型后的追问",
+      runtime: { model: "gpt-next" },
+    });
+
+    assert.equal(harness.runs.length, 2);
+    assert.equal(harness.runs[1].runtime?.model, "gpt-next");
+    assert.deepEqual(harness.aborted, [created.threadId]);
+    assert.deepEqual(harness.appendedPrompts, []);
+    assert.equal(
+      harness.continuationHistories[1].some((message) => message.type === "assistant" && message.message.content[0]?.type === "text" && message.message.content[0].text === "第一轮回答"),
+      true,
     );
   });
 

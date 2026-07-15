@@ -14,6 +14,7 @@ import {
 import { useAppStore } from "../store/useAppStore";
 import { estimatePromptLedgerTokens, type PromptLedgerSourceKind } from "../../shared/prompt-ledger";
 import type { PlanStepStatus, SessionPlanSnapshot } from "../../shared/plan-progress";
+import { AppModalOverlay } from "./AppModalOverlay";
 import {
   buildContextUsageBreakdown,
   buildContextUsageDriverGroups,
@@ -433,6 +434,13 @@ function promptSourceKinds(...kinds: PromptLedgerSourceKind[]): PromptLedgerSour
   return kinds;
 }
 
+function estimateLiveTextTokens(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  const sample = trimmed.slice(-2_048);
+  return Math.ceil(estimatePromptLedgerTokens(sample) * (trimmed.length / sample.length));
+}
+
 function ContextUsagePanel({
   model,
   selectedModel,
@@ -455,8 +463,8 @@ function ContextUsagePanel({
     ? Math.max(1, Math.min(99, compressionThresholdPercent))
     : 85;
   const autoCompactTokens = Math.round(windowTokens * (1 - thresholdPercent / 100));
-  const draftTokens = deferredPrompt.trim() ? estimatePromptLedgerTokens(deferredPrompt) : 0;
-  const streamingTokens = deferredPartialMessage.trim() ? estimatePromptLedgerTokens(deferredPartialMessage) : 0;
+  const draftTokens = estimateLiveTextTokens(deferredPrompt);
+  const streamingTokens = estimateLiveTextTokens(deferredPartialMessage);
   const toolPayloadTokens = bucketTokensByKind(model, ["tool"]);
   const uniqueToolNames = new Set(model.timeline.map((item) => item.toolName).filter(Boolean));
   const toolDefinitionTokens = uniqueToolNames.size > 0 ? Math.round(uniqueToolNames.size * 260) : 0;
@@ -1042,8 +1050,8 @@ function ContextDistributionModal({
   onClose: () => void;
 }) {
   return (
-    <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-ink-900/30 px-4 py-8 backdrop-blur-sm"
+    <AppModalOverlay
+      className="z-[70] flex items-center justify-center bg-ink-900/30 px-4 py-8 backdrop-blur-sm"
       onClick={onClose}
       role="presentation"
     >
@@ -1085,7 +1093,7 @@ function ContextDistributionModal({
           ))}
         </div>
       </div>
-    </div>
+    </AppModalOverlay>
   );
 }
 
@@ -1403,9 +1411,10 @@ export function ActivityRail({
   const attachmentSummary = model
     ? summarizeAttachments(model.contextSnapshot.latestAttachments.map((attachment) => attachment.name))
     : "";
+  const livePartialPreview = partialMessage.slice(-8_192);
   const materialStatusItems = useMemo(
-    () => model ? buildMaterialStatusItems(model, partialMessage) : [],
-    [model, partialMessage],
+    () => model ? buildMaterialStatusItems(model, livePartialPreview) : [],
+    [livePartialPreview, model],
   );
 
   return (
@@ -1428,7 +1437,7 @@ export function ActivityRail({
           relatedSteps={relatedSteps}
           latestPrompt={model.contextSnapshot.latestPrompt}
           attachmentSummary={attachmentSummary}
-          partialMessage={partialMessage}
+          partialMessage={livePartialPreview}
           onClose={() => setSelectedTimelineId(null)}
         />
       )}

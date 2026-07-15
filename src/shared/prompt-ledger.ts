@@ -104,6 +104,8 @@ type SegmentDraft = Omit<PromptLedgerSegment, "ratio">;
 
 const HISTORY_TOOL_OUTPUT_LIMIT = 120;
 const SEGMENT_TEXT_STORAGE_LIMIT = 2_000;
+const MAX_STORED_SEGMENTS = 120;
+const MAX_STORED_CONTEXT_SEGMENTS = 40;
 const SOURCE_ORDER: PromptLedgerSourceKind[] = [
   "system",
   "project",
@@ -167,7 +169,9 @@ export function buildPromptLedgerMessage(input: PromptLedgerBuildInput): PromptL
     return right.chars - left.chars;
   });
   const totalChars = ordered.reduce((sum, bucket) => sum + bucket.chars, 0);
-  const finalizedSegments = segments.map((segment) => ({
+  const storedSegments = selectSegmentsForStorage(segments);
+  const retainedSegmentIds = new Set(storedSegments.map((segment) => segment.id));
+  const finalizedSegments = storedSegments.map((segment) => ({
     ...segment,
     ratio: totalChars > 0 ? segment.chars / totalChars : 0,
   }));
@@ -181,10 +185,33 @@ export function buildPromptLedgerMessage(input: PromptLedgerBuildInput): PromptL
     totalTokenEstimate: ordered.reduce((sum, bucket) => sum + bucket.tokenEstimate, 0),
     buckets: ordered.map((bucket) => ({
       ...bucket,
+      segmentIds: bucket.segmentIds?.filter((segmentId) => retainedSegmentIds.has(segmentId)),
       ratio: totalChars > 0 ? bucket.chars / totalChars : 0,
     })),
     segments: finalizedSegments,
   };
+}
+
+function selectSegmentsForStorage(segments: SegmentDraft[]): SegmentDraft[] {
+  if (segments.length <= MAX_STORED_SEGMENTS) return segments;
+
+  const required = segments.filter((segment) => (
+    segment.segmentKind === "current_prompt" || segment.segmentKind === "attachment"
+  ));
+  const context = segments.filter((segment) => (
+    segment.segmentKind !== "current_prompt" &&
+    segment.segmentKind !== "attachment" &&
+    segment.sourceKind !== "history" &&
+    segment.sourceKind !== "tool"
+  )).slice(0, MAX_STORED_CONTEXT_SEGMENTS);
+  const selectedIds = new Set([...required, ...context].map((segment) => segment.id));
+  const recentBudget = Math.max(0, MAX_STORED_SEGMENTS - selectedIds.size);
+  const recent = segments
+    .filter((segment) => !selectedIds.has(segment.id))
+    .slice(-recentBudget);
+  for (const segment of recent) selectedIds.add(segment.id);
+
+  return segments.filter((segment) => selectedIds.has(segment.id));
 }
 
 function addSources(

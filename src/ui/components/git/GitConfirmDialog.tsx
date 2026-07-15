@@ -1,4 +1,5 @@
 import { AlertTriangle, X } from "lucide-react";
+import { AppModalOverlay } from "../AppModalOverlay";
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -23,10 +24,8 @@ export function GitConfirmDialog({
   const danger = state.tone === "danger";
 
   return (
-    <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/18 p-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
+    <AppModalOverlay
+      className="z-[90] flex items-center justify-center bg-slate-950/18 p-4 backdrop-blur-sm"
       aria-label={state.title}
     >
       <div className="w-full max-w-sm rounded-2xl border border-white/70 bg-white p-4 shadow-[0_24px_70px_rgba(15,23,42,0.2)]">
@@ -69,6 +68,6 @@ export function GitConfirmDialog({
           </button>
         </div>
       </div>
-    </div>
+    </AppModalOverlay>
   );
 }

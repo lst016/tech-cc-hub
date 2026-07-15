@@ -232,33 +232,57 @@ export function SettingsModal({
 
   const loadSettings = useCallback(() => {
     setLoading(true);
-    void Promise.all([
+    void Promise.allSettled([
       window.electron.getApiConfig(),
       window.electron.getGlobalConfig(),
       typeof electronApi.getAgentRuleDocuments === "function"
         ? electronApi.getAgentRuleDocuments()
         : Promise.resolve(DEFAULT_AGENT_RULE_DOCUMENTS),
     ])
-      .then(([apiSettings, globalSettings, ruleDocuments]) => {
-        const normalizedGlobalSettings = ensureLarkCliRuntimeDefaults(
-          typeof globalSettings === "object" && globalSettings !== null && !Array.isArray(globalSettings)
-            ? globalSettings as GlobalRuntimeConfig
-            : {},
-        );
-        const normalizedProfiles = apiSettings.profiles.length > 0
-          ? apiSettings.profiles.map((profile) => normalizeProfile(profile))
-          : [createProfile()];
+      .then(([apiSettingsResult, globalSettingsResult, ruleDocumentsResult]) => {
+        const failedSources: string[] = [];
 
-        setApiConfigSettings({ profiles: normalizedProfiles });
-        setProfiles(normalizedProfiles);
-        setApiConfigDirty(false);
+        if (apiSettingsResult.status === "fulfilled") {
+          const apiSettings = apiSettingsResult.value;
+          const normalizedProfiles = apiSettings.profiles.length > 0
+            ? apiSettings.profiles.map((profile) => normalizeProfile(profile))
+            : [createProfile()];
+          setApiConfigSettings({ profiles: normalizedProfiles });
+          setProfiles(normalizedProfiles);
+          setApiConfigDirty(false);
+        } else {
+          console.error("Failed to load API settings:", apiSettingsResult.reason);
+          failedSources.push("AI 接口配置");
+        }
+
+        if (globalSettingsResult.status === "fulfilled") {
+          const globalSettings = globalSettingsResult.value;
+          const normalizedGlobalSettings = ensureLarkCliRuntimeDefaults(
+            typeof globalSettings === "object" && globalSettings !== null && !Array.isArray(globalSettings)
+              ? globalSettings as GlobalRuntimeConfig
+              : {},
+          );
+          const globalConfigText = JSON.stringify(normalizedGlobalSettings, null, 2);
+          setGlobalConfigText(globalConfigText);
+          setGlobalConfigParseError(validateGlobalConfigText(globalConfigText));
+        } else {
+          console.error("Failed to load global settings:", globalSettingsResult.reason);
+          failedSources.push("全局配置");
+        }
+
+        if (ruleDocumentsResult.status === "fulfilled") {
+          const normalizedRuleDocuments = normalizeAgentRuleDocuments(ruleDocumentsResult.value);
+          setAgentRuleDocuments(normalizedRuleDocuments);
+          setUserAgentMarkdown(normalizedRuleDocuments.userAgentsMarkdown);
+        } else {
+          console.error("Failed to load agent rule documents:", ruleDocumentsResult.reason);
+          failedSources.push("默认规则");
+        }
+
         setActivePageId(initialPageId ?? "profiles");
-        const globalConfigText = JSON.stringify(normalizedGlobalSettings, null, 2);
-        setGlobalConfigText(globalConfigText);
-        setGlobalConfigParseError(validateGlobalConfigText(globalConfigText));
-        const normalizedRuleDocuments = normalizeAgentRuleDocuments(ruleDocuments);
-        setAgentRuleDocuments(normalizedRuleDocuments);
-        setUserAgentMarkdown(normalizedRuleDocuments.userAgentsMarkdown);
+        setStatus(failedSources.length > 0
+          ? { tone: "error", message: `部分设置加载失败：${failedSources.join("、")}。` }
+          : null);
       })
       .catch((error) => {
         console.error("Failed to load settings:", error);
@@ -455,7 +479,6 @@ export function SettingsModal({
           profiles={profiles}
           runtimeSource={runtimeSource}
           onChange={updateProfiles}
-          onStartGuideSession={handleStartGuideSession}
         />
       </div>
     </>

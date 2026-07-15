@@ -7,9 +7,8 @@ import { useMessageWindow } from "./hooks/useMessageWindow";
 import { useAppStore } from "./store/useAppStore";
 import { useBtwStore } from "./store/useBtwStore";
 import { useWorkflowRunStore } from "./store/workflowRunStore";
-import type { AppUpdateStatus, PromptAttachment, ServerEvent, SessionStatus, SettingsPageId, StreamMessage } from "./types";
+import type { AppUpdateStatus, PromptAttachment, ServerEvent, SettingsPageId, StreamMessage } from "./types";
 import { DEFAULT_SIDEBAR_WIDTH, Sidebar } from "./components/Sidebar";
-import { COLLAPSED_SESSION_RAIL_WIDTH, CollapsedSessionRail } from "./components/CollapsedSessionRail";
 import { ConversationTurnTimeline } from "./components/ConversationTurnTimeline";
 import { ActivityWorkspaceTabs } from "./components/ActivityWorkspaceTabs";
 import { TooltipButton } from "./components/TooltipButton";
@@ -28,6 +27,7 @@ import {
   type PreviewOpenFileDetail,
 } from "./events";
 import { copyTextToClipboard } from "./utils/clipboard";
+import { observeBrowserWorkbenchOcclusion } from "./utils/browser-workbench-visibility";
 import { shouldShowChatThinkingPlaceholder } from "./utils/chat-thinking-state";
 import {
   DEFAULT_ACTIVITY_RAIL_TAB,
@@ -43,8 +43,12 @@ import {
   type WorkflowAgentRailTab,
 } from "./utils/activity-workspace-tabs";
 import { buildConversationTurns } from "./utils/conversation-turn-timeline";
+import { appendTurnFileChangeEntries, type TurnFileChangesEntry } from "./utils/turn-file-changes";
 import { buildWorkflowAgentSummaries } from "./utils/workflow-agent-transcripts";
-import { ProcessGroupCard as SharedProcessGroupCard } from "./components/chat/ProcessGroupCard";
+import {
+  ProcessGroupCard as SharedProcessGroupCard,
+  TurnFileChangesCard,
+} from "./components/chat/ProcessGroupCard";
 import { WorkflowAgentCard } from "./components/workflow/WorkflowAgentCard";
 import type { WorkflowRunAction, WorkflowRunRecord } from "../shared/workflows/workflow-runs";
 import { getWorkspacePluginSurfaceId, type WorkspacePluginDescriptor } from "../shared/workspace-plugins";
@@ -57,7 +61,6 @@ import {
 
 const ActivityRail = lazy(() => import("./components/ActivityRail"));
 const BrowserWorkbenchPage = lazy(() => import("./components/BrowserWorkbenchPage").then((module) => ({ default: module.BrowserWorkbenchPage })));
-const MDContent = lazy(() => import("./render/markdown"));
 const MessageCard = lazy(() => import("./components/EventCard").then((module) => ({ default: module.MessageCard })));
 const ScheduledTasksPage = lazy(() => import("./components/cron/ScheduledTasksPage"));
 const SettingsModal = lazy(() => import("./components/SettingsModal").then((module) => ({ default: module.SettingsModal })));
@@ -81,7 +84,8 @@ type RenderEntry =
   | { type: "separator"; key: string; roundNumber: number }
   | { type: "message"; key: string; originalIndex: number; message: StreamMessage }
   | { type: "workflow_agent_card"; key: string; originalIndex: number; agentId: string }
-  | { type: "process_group"; key: string; originalIndex: number; messages: Array<{ originalIndex: number; message: StreamMessage }> };
+  | { type: "process_group"; key: string; originalIndex: number; messages: Array<{ originalIndex: number; message: StreamMessage }> }
+  | TurnFileChangesEntry;
 
 type PendingPreviewOpenRequest = PreviewOpenFileDetail & {
   nonce: number;
@@ -325,11 +329,9 @@ function App() {
   const partialFlushFrameRef = useRef<number | null>(null);
   const historyRetryTimerRef = useRef<number | null>(null);
   const pendingMessageScrollIndexRef = useRef<number | null>(null);
-  const collapsedRailPreviousSessionStatusesRef = useRef<Record<string, SessionStatus | undefined>>({});
   const pendingBtwCreateParentIdsRef = useRef<Set<string>>(new Set());
   const [partialMessagesBySessionId, setPartialMessagesBySessionId] = useState<Record<string, string>>({});
   const [partialVisibilityBySessionId, setPartialVisibilityBySessionId] = useState<Record<string, boolean>>({});
-  const [collapsedRailUnreadSessionIds, setCollapsedRailUnreadSessionIds] = useState<Record<string, "completed" | "error">>({});
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const shouldAutoScrollRef = useRef(true);
   const [hasNewMessages, setHasNewMessages] = useState(false);
@@ -424,61 +426,7 @@ function App() {
   }, []);
 
   const activeSessionId = useAppStore((s) => s.activeSessionId);
-  const sessions = useAppStore((s) => s.sessions);
-  const setActiveSessionId = useAppStore((s) => s.setActiveSessionId);
   activeSessionIdRef.current = activeSessionId;
-
-  useEffect(() => {
-    const previousStatuses = collapsedRailPreviousSessionStatusesRef.current;
-    const nextStatuses: Record<string, SessionStatus | undefined> = {};
-    const runningSessionIds = new Set<string>();
-    const finishedUnreadSessions: Record<string, "completed" | "error"> = {};
-
-    for (const session of Object.values(sessions)) {
-      const previousStatus = previousStatuses[session.id];
-      nextStatuses[session.id] = session.status;
-      if (session.status === "running") {
-        runningSessionIds.add(session.id);
-      } else if (
-        previousStatus === "running" &&
-        (session.status === "completed" || session.status === "error") &&
-        session.id !== activeSessionId
-      ) {
-        finishedUnreadSessions[session.id] = session.status;
-      }
-    }
-    collapsedRailPreviousSessionStatusesRef.current = nextStatuses;
-
-    // This state intentionally observes session lifecycle transitions across sidebar mounts.
-    setCollapsedRailUnreadSessionIds((current) => {
-      let next = current;
-      const removeSession = (sessionId: string) => {
-        if (!next[sessionId]) return;
-        if (next === current) next = { ...current };
-        delete next[sessionId];
-      };
-      for (const sessionId of Object.keys(current)) {
-        if (!sessions[sessionId] || runningSessionIds.has(sessionId) || sessionId === activeSessionId) {
-          removeSession(sessionId);
-        }
-      }
-      for (const [sessionId, status] of Object.entries(finishedUnreadSessions)) {
-        if (next[sessionId] === status) continue;
-        if (next === current) next = { ...current };
-        next[sessionId] = status;
-      }
-      return next;
-    });
-  }, [activeSessionId, sessions]);
-
-  const clearCollapsedRailUnreadSession = useCallback((sessionId: string) => {
-    setCollapsedRailUnreadSessionIds((current) => {
-      if (!current[sessionId]) return current;
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
-  }, []);
 
   const partialMessage = activeSessionId ? (partialMessagesBySessionId[activeSessionId] ?? "") : "";
   const showPartialMessage = activeSessionId ? (partialVisibilityBySessionId[activeSessionId] ?? false) : false;
@@ -583,7 +531,8 @@ function App() {
   const setShowStartModal = useAppStore((s) => s.setShowStartModal);
   const showSettingsModal = useAppStore((s) => s.showSettingsModal);
   const setShowSettingsModal = useAppStore((s) => s.setShowSettingsModal);
-  const browserWorkbenchOccluded = showSettingsModal || showStartModal;
+  const [browserWorkbenchDomOccluded, setBrowserWorkbenchDomOccluded] = useState(false);
+  const browserWorkbenchOccluded = showSettingsModal || showStartModal || browserWorkbenchDomOccluded;
   const globalError = useAppStore((s) => s.globalError);
   const setGlobalError = useAppStore((s) => s.setGlobalError);
   const historyRequested = useAppStore((s) => s.historyRequested);
@@ -816,15 +765,6 @@ function App() {
     window.addEventListener(OPEN_SIDE_CONVERSATION_EVENT, handleOpenSideConversation);
     return () => window.removeEventListener(OPEN_SIDE_CONVERSATION_EVENT, handleOpenSideConversation);
   }, [openSidechatWorkspace]);
-  const requestCollapsedSessionPreviewHistory = useCallback((sessionId: string) => {
-    const session = sessions[sessionId];
-    if (!connected || !session || session.hydrated || historyRequested.has(sessionId)) return;
-    markHistoryRequested(sessionId);
-    sendEvent({
-      type: "session.history",
-      payload: { sessionId, limit: 80 },
-    });
-  }, [connected, historyRequested, markHistoryRequested, sendEvent, sessions]);
   const { handleStartFromModal, sendPromptDraft } = usePromptActions(sendEvent);
 
   const messages = activeSession?.messages ?? EMPTY_MESSAGES;
@@ -981,8 +921,13 @@ function App() {
     }
 
     flushProcessGroup();
-    return entries;
+    return appendTurnFileChangeEntries(entries, activeSessionId ?? "chat");
   }, [activeSessionId, visibleMessages, workflowAgentsById, messages]);
+
+  const trailingTurnFileChanges = useMemo(() => {
+    const entry = renderEntries.at(-1);
+    return entry?.type === "turn_file_changes" ? entry : null;
+  }, [renderEntries]);
 
   const conversationTurns = useMemo(
     () => buildConversationTurns(messages.map((message, originalIndex) => ({ message, originalIndex }))),
@@ -1622,15 +1567,14 @@ function App() {
     sendEvent,
     setGlobalError,
   ]);
-  const headerWorkflowOptimizationPrompt = useMemo(
-    () => buildSessionWorkflowOptimizationPrompt(activeSession, partialMessage),
-    [activeSession, partialMessage],
-  );
   const headerWorkflowOptimizationDisabled =
-    !activeSessionId || activeSession?.status === "running" || !headerWorkflowOptimizationPrompt.trim();
+    !activeSessionId || activeSession?.status === "running";
   const handleHeaderWorkflowOptimization = useCallback(() => {
-    sendWorkflowOptimizationPrompt(headerWorkflowOptimizationPrompt);
-  }, [headerWorkflowOptimizationPrompt, sendWorkflowOptimizationPrompt]);
+    if (!activeSession || activeSession.status === "running") return;
+    const prompt = buildSessionWorkflowOptimizationPrompt(activeSession);
+    if (!prompt.trim()) return;
+    sendWorkflowOptimizationPrompt(prompt);
+  }, [activeSession, sendWorkflowOptimizationPrompt]);
 
   const openGitWorkspace = useCallback(() => {
     if (!activeSessionId) return;
@@ -1715,8 +1659,7 @@ function App() {
     activityRailTab === "git";
   const expandedActivityWorkspaceActive = gitWorkspaceActive;
   const workspaceSidebarVisible = showSidebar;
-  const workspaceSidebarCollapsed = !showSidebar;
-  const sidebarOffset = workspaceSidebarVisible ? sidebarWidth : COLLAPSED_SESSION_RAIL_WIDTH;
+  const sidebarOffset = workspaceSidebarVisible ? sidebarWidth : 0;
   const maxActivityRailWidth = viewportWidth - sidebarOffset - MIN_CENTER_WIDTH;
   const effectiveActivityRailWidth = expandedActivityWorkspaceActive
     ? Math.max(MIN_ACTIVITY_RAIL_WIDTH, viewportWidth - sidebarOffset)
@@ -1790,7 +1733,9 @@ function App() {
     appUpdateVersionMeta,
   ]);
 
-  useEffect(() => {
+  useEffect(() => observeBrowserWorkbenchOcclusion(setBrowserWorkbenchDomOccluded), []);
+
+  useLayoutEffect(() => {
     if (!browserWorkbenchOccluded || typeof window.electron.hideAllBrowserWorkbenches !== "function") return;
     void window.electron.hideAllBrowserWorkbenches();
   }, [browserWorkbenchOccluded]);
@@ -1876,8 +1821,8 @@ function App() {
           </TooltipButton>
           <TooltipButton
             type="button"
-            tooltip="在 GitHub 上提交需求反馈或问题"
-            onClick={() => window.electron.invoke("shell:openExternal", "https://github.com/lst016/tech-cc-hub/issues/new")}
+            tooltip="打开需求反馈表"
+            onClick={() => window.electron.invoke("shell:openExternal", "https://boke.feishu.cn/base/F9pNbMi61aD5x4sYGuqcMcLRnEf?table=tblhgcZ8nLtclI4U&view=vewHzVOB9x")}
             onMouseDown={(event) => {
               event.preventDefault();
             }}
@@ -2026,18 +1971,6 @@ function App() {
             width={sidebarWidth}
           />
         )}
-        {workspaceSidebarCollapsed && (
-          <CollapsedSessionRail
-            sessions={sessions}
-            activeSessionId={activeSessionId}
-            partialMessagesBySessionId={partialMessagesBySessionId}
-            unreadSessionIds={collapsedRailUnreadSessionIds}
-            topClassName={sidebarHeaderOffsetClass}
-            onPreviewSession={requestCollapsedSessionPreviewHistory}
-            onClearUnreadSession={clearCollapsedRailUnreadSession}
-            onSelectSession={setActiveSessionId}
-          />
-        )}
         {workspaceSidebarVisible && (
           <div
             className={`fixed bottom-0 ${sidebarHeaderOffsetClass} z-30 w-3 -translate-x-1/2 cursor-col-resize`}
@@ -2178,13 +2111,25 @@ function App() {
                         );
                       }
 
-                      const isLastMessage = idx === renderEntries.length - 1;
+                      const isLastMessage = idx === renderEntries.length - 1
+                        || (idx === renderEntries.length - 2 && renderEntries.at(-1)?.type === "turn_file_changes");
+                      if (entry.type === "turn_file_changes") {
+                        if (idx === renderEntries.length - 1) return null;
+                        return (
+                          <div key={entry.key}>
+                            <TurnFileChangesCard
+                              messages={entry.messages}
+                              workspace={activeSession?.cwd}
+                            />
+                          </div>
+                        );
+                      }
+
                       if (entry.type === "process_group") {
                         return (
                           <div key={entry.key} id={`chat-message-${entry.originalIndex}`}>
                             <SharedProcessGroupCard
                               messages={entry.messages}
-                              workspace={activeSession?.cwd}
                             />
                           </div>
                         );
@@ -2230,9 +2175,9 @@ function App() {
                         <span>正在生成</span>
                       </div>
                       {partialMessage.trim() && (
-                        <Suspense fallback={<MarkdownLoadFallback />}>
-                          <MDContent text={partialMessage} />
-                        </Suspense>
+                        <div data-streaming-response className="whitespace-pre-wrap break-words text-[14px] leading-7 text-ink-900">
+                          {partialMessage}
+                        </div>
                       )}
                       {showPartialMessage && (
                         <div className="mt-3 flex flex-col gap-2 px-1">
@@ -2254,6 +2199,13 @@ function App() {
                         </div>
                       )}
                     </div>
+                  )}
+
+                  {trailingTurnFileChanges && (
+                    <TurnFileChangesCard
+                      messages={trailingTurnFileChanges.messages}
+                      workspace={activeSession?.cwd}
+                    />
                   )}
 
                   <div ref={messagesEndRef} className="chat-bottom-anchor" />

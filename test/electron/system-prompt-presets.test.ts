@@ -1,16 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   buildBrowserWorkbenchPromptAppend,
   buildClaudeCodeCompatFeaturePromptAppend,
   buildClaudeCode2139FeaturePromptAppend,
   buildDesignParityPromptAppend,
+  buildEChartsPromptAppend,
   buildFeishuDocumentFetchPromptAppend,
   buildGlobalRuntimeSystemPromptExtAppend,
   buildToolCallOptimizationPromptAppend,
   extractFeishuDocumentUrls,
 } from "../../src/electron/libs/system-prompt-presets.js";
+
+test("ECharts prompt teaches the standalone directive and switch-friendly explicit data", () => {
+  const prompt = buildEChartsPromptAppend();
+
+  assert.match(prompt, /:::echarts/);
+  assert.match(prompt, /严格 JSON/);
+  assert.match(prompt, /series\.data/);
+  assert.match(prompt, /xAxis\.data/);
+  assert.match(prompt, /HTML formatter/);
+  assert.doesNotMatch(prompt, /MCP|```echarts/);
+
+  const runnerSource = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
+  assert.match(runnerSource, /buildEChartsPromptAppend\(\)/);
+});
 
 test("browser prompt encourages fetch log capture for API evidence", () => {
   const prompt = buildBrowserWorkbenchPromptAppend();

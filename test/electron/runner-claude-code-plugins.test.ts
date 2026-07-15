@@ -14,7 +14,7 @@ test("runner injects enabled Claude Code plugins into Agent SDK sessions", () =>
 
 test("runner requires visual Figma inspection before file mutation", () => {
   const source = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
-  const anchorToolSet = source.match(/const FIGMA_IMPLEMENTATION_ANCHOR_TOOL_NAMES = new Set\(\[\n([\s\S]*?)\n\]\);/);
+  const anchorToolSet = source.match(/const FIGMA_IMPLEMENTATION_ANCHOR_TOOL_NAMES = new Set\(\[\r?\n([\s\S]*?)\r?\n\]\);/);
 
   assert.ok(anchorToolSet);
   assert.match(anchorToolSet[1], /"design_inspect_image"/);

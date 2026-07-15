@@ -365,31 +365,93 @@ function ChangedFileRow({ file }: { file: ChangedFileSummary }) {
   );
 }
 
-const ProcessGroupCard = memo(function ProcessGroupCard({
+const TurnFileChangesCard = memo(function TurnFileChangesCard({
   messages,
   workspace,
-  messageIdPrefix = "chat",
 }: {
   messages: Array<{ originalIndex: number; message: StreamMessage }>;
   workspace?: string;
-  messageIdPrefix?: string;
 }) {
-
-  const [expanded, setExpanded] = useState(false);
   const [showAllFiles, setShowAllFiles] = useState(false);
-  const [visibleProcessCount, setVisibleProcessCount] = useState(PROCESS_ROW_BATCH_SIZE);
-  const summary = useMemo(() => getProcessGroupSummary(messages), [messages]);
   const changedFiles = useMemo(
     () => buildProcessChangedFiles(messages, workspace),
     [messages, workspace],
   );
-  const generatedImages = useMemo(() => collectGeneratedImageResults(messages), [messages]);
-  const visibleProcessMessages = expanded ? messages.slice(0, visibleProcessCount) : [];
-  const remainingProcessMessageCount = Math.max(0, messages.length - visibleProcessMessages.length);
   const visibleChangedFiles = showAllFiles ? changedFiles : changedFiles.slice(0, 4);
   const remainingChangedFileCount = Math.max(0, changedFiles.length - visibleChangedFiles.length);
   const totalAdditions = changedFiles.reduce((sum, file) => sum + file.additions, 0);
   const totalDeletions = changedFiles.reduce((sum, file) => sum + file.deletions, 0);
+
+  if (changedFiles.length === 0) return null;
+
+  return (
+    <div
+      data-turn-file-changes
+      className="relative mt-2 overflow-visible rounded-[24px] border border-black/6 bg-white/84 shadow-[0_12px_28px_rgba(30,38,52,0.05)]"
+    >
+      <div className="flex items-center justify-between gap-3 border-b border-black/6 px-4 py-3">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-ink-900">
+            <span className="grid h-9 w-9 place-items-center rounded-2xl bg-[#f3f6fb] text-ink-700">
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
+                <path d="M8 4.5h8l3 3V19.5H8z" />
+                <path d="M13 4.5V8h6M10.5 12h6M10.5 15.5h6" />
+              </svg>
+            </span>
+            <span className="min-w-0 truncate">已修改 {changedFiles.length} 个文件</span>
+          </div>
+          <p className="mt-1 text-xs text-muted">点击文件在右侧预览，并跳到首个修改处</p>
+        </div>
+        <div className="shrink-0 text-sm font-semibold tabular-nums">
+          <span className="text-emerald-600">+{totalAdditions}</span>
+          <span className="mx-1 text-muted/45">-</span>
+          <span className="text-red-600">{totalDeletions}</span>
+        </div>
+      </div>
+      <div className="divide-y divide-black/6 rounded-b-[24px]">
+        {visibleChangedFiles.map((file) => (
+          <ChangedFileRow key={file.path} file={file} />
+        ))}
+      </div>
+      {(remainingChangedFileCount > 0 || showAllFiles) && (
+        <div className="px-4 py-2.5">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-700 transition hover:text-accent"
+            onClick={() => setShowAllFiles((current) => !current)}
+          >
+            <span>{showAllFiles ? "收起" : `再显示 ${remainingChangedFileCount} 个文件`}</span>
+            <svg
+              viewBox="0 0 24 24"
+              className={`h-3.5 w-3.5 transition-transform ${showAllFiles ? "rotate-180" : ""}`}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              aria-hidden="true"
+            >
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+});
+
+const ProcessGroupCard = memo(function ProcessGroupCard({
+  messages,
+  messageIdPrefix = "chat",
+}: {
+  messages: Array<{ originalIndex: number; message: StreamMessage }>;
+  messageIdPrefix?: string;
+}) {
+
+  const [expanded, setExpanded] = useState(false);
+  const [visibleProcessCount, setVisibleProcessCount] = useState(PROCESS_ROW_BATCH_SIZE);
+  const summary = useMemo(() => getProcessGroupSummary(messages), [messages]);
+  const generatedImages = useMemo(() => collectGeneratedImageResults(messages), [messages]);
+  const visibleProcessMessages = expanded ? messages.slice(0, visibleProcessCount) : [];
+  const remainingProcessMessageCount = Math.max(0, messages.length - visibleProcessMessages.length);
 
   return (
     <div className="my-0.5">
@@ -444,58 +506,9 @@ const ProcessGroupCard = memo(function ProcessGroupCard({
           outputHint={result.outputHint}
         />
       ))}
-      {changedFiles.length > 0 && (
-        <div className="relative mt-2 overflow-visible rounded-[24px] border border-black/6 bg-white/84 shadow-[0_12px_28px_rgba(30,38,52,0.05)]">
-          <div className="flex items-center justify-between gap-3 border-b border-black/6 px-4 py-3">
-            <div className="min-w-0">
-              <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-ink-900">
-                <span className="grid h-9 w-9 place-items-center rounded-2xl bg-[#f3f6fb] text-ink-700">
-                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
-                    <path d="M8 4.5h8l3 3V19.5H8z" />
-                    <path d="M13 4.5V8h6M10.5 12h6M10.5 15.5h6" />
-                  </svg>
-                </span>
-                <span className="min-w-0 truncate">已修改 {changedFiles.length} 个文件</span>
-              </div>
-              <p className="mt-1 text-xs text-muted">点击文件在右侧预览，并跳到首个修改处</p>
-            </div>
-            <div className="shrink-0 text-sm font-semibold tabular-nums">
-              <span className="text-emerald-600">+{totalAdditions}</span>
-              <span className="mx-1 text-muted/45">-</span>
-              <span className="text-red-600">{totalDeletions}</span>
-            </div>
-          </div>
-          <div className="divide-y divide-black/6 rounded-b-[24px]">
-            {visibleChangedFiles.map((file) => (
-              <ChangedFileRow key={file.path} file={file} />
-            ))}
-          </div>
-          {(remainingChangedFileCount > 0 || showAllFiles) && (
-            <div className="px-4 py-2.5">
-              <button
-                type="button"
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-700 transition hover:text-accent"
-                onClick={() => setShowAllFiles((current) => !current)}
-              >
-                <span>{showAllFiles ? "收起" : `再显示 ${remainingChangedFileCount} 个文件`}</span>
-                <svg
-                  viewBox="0 0 24 24"
-                  className={`h-3.5 w-3.5 transition-transform ${showAllFiles ? "rotate-180" : ""}`}
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  aria-hidden="true"
-                >
-                  <path d="M6 9l6 6 6-6" />
-                </svg>
-              </button>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 });
 
 export default ProcessGroupCard;
-export { ProcessGroupCard };
+export { ProcessGroupCard, TurnFileChangesCard };

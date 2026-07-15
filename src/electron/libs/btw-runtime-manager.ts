@@ -39,6 +39,12 @@ export type SendBtwThreadInput = {
   runtime?: RuntimeOverrides;
 };
 
+type BtwRunnerConfig = {
+  model?: string;
+  reasoningMode?: RuntimeOverrides["reasoningMode"];
+  permissionMode?: RuntimeOverrides["permissionMode"];
+};
+
 type BtwRuntime = {
   threadId: string;
   parentSessionId: string;
@@ -46,6 +52,7 @@ type BtwRuntime = {
   snapshot: StreamMessage[];
   messages: StreamMessage[];
   handle?: RunnerHandle;
+  runnerConfig?: BtwRunnerConfig;
   generation: number;
   createdAt: number;
   updatedAt: number;
@@ -59,6 +66,21 @@ function buildThreadTitle(prompt: string, fallback: string): string {
   const normalized = prompt.replace(/\s+/g, " ").trim();
   if (!normalized) return fallback;
   return normalized.length > 20 ? `${normalized.slice(0, 20)}…` : normalized;
+}
+
+function resolveRunnerConfig(session: Session, runtime?: RuntimeOverrides): BtwRunnerConfig {
+  return {
+    model: runtime?.model ?? session.model,
+    reasoningMode: runtime?.reasoningMode ?? session.reasoningMode,
+    permissionMode: runtime?.permissionMode ?? session.permissionMode,
+  };
+}
+
+function sameRunnerConfig(left: BtwRunnerConfig | undefined, right: BtwRunnerConfig): boolean {
+  if (!left) return false;
+  return left.model === right.model
+    && left.reasoningMode === right.reasoningMode
+    && left.permissionMode === right.permissionMode;
 }
 
 export class BtwRuntimeManager {
@@ -84,6 +106,7 @@ export class BtwRuntimeManager {
       claudeSessionId: undefined,
       continuationSummary: undefined,
       continuationSummaryMessageCount: undefined,
+      planSnapshot: undefined,
       allowedTools: "*",
       lastPrompt: undefined,
       pendingPermissions: new Map(),
@@ -128,26 +151,36 @@ export class BtwRuntimeManager {
       return false;
     }
 
-    runtime.handle?.abort();
-    runtime.handle = undefined;
-    runtime.generation += 1;
-    const generation = runtime.generation;
     const timestamp = this.now();
     const displayPrompt = input.prompt;
     const agentPrompt = input.agentPrompt?.trim() || displayPrompt;
     const attachments = input.attachments ?? [];
     const displayAttachments = input.displayAttachments ?? attachments;
-    const continuation = this.dependencies.buildContinuation(
-      [...runtime.snapshot, ...runtime.messages],
-      agentPrompt,
-      attachments,
-    );
+    const nextConfig = resolveRunnerConfig(runtime.session, input.runtime);
+    const existingHandle = runtime.handle;
+    const canAppend = Boolean(existingHandle)
+      && !existingHandle!.isClosed()
+      && sameRunnerConfig(runtime.runnerConfig, nextConfig);
+    let continuation: BtwContinuationResult | undefined;
+
+    if (!canAppend) {
+      runtime.generation += 1;
+      existingHandle?.abort();
+      runtime.handle = undefined;
+      runtime.runnerConfig = undefined;
+      continuation = this.dependencies.buildContinuation(
+        [...runtime.snapshot, ...runtime.messages],
+        agentPrompt,
+        attachments,
+      );
+    }
+    const generation = runtime.generation;
 
     runtime.session.status = "running";
     runtime.session.lastPrompt = displayPrompt;
-    runtime.session.model = input.runtime?.model ?? runtime.session.model;
-    runtime.session.reasoningMode = input.runtime?.reasoningMode ?? runtime.session.reasoningMode;
-    runtime.session.permissionMode = input.runtime?.permissionMode ?? runtime.session.permissionMode;
+    runtime.session.model = nextConfig.model;
+    runtime.session.reasoningMode = nextConfig.reasoningMode;
+    runtime.session.permissionMode = nextConfig.permissionMode;
     runtime.session.title = runtime.messages.length === 0
       ? buildThreadTitle(displayPrompt, runtime.session.title)
       : runtime.session.title;
@@ -181,9 +214,35 @@ export class BtwRuntimeManager {
       },
     });
 
+    if (canAppend && existingHandle) {
+      try {
+        await existingHandle.appendPrompt(agentPrompt, attachments, {
+          displayPrompt,
+          workspaceContext: input.workspaceContext,
+        });
+        return true;
+      } catch (error) {
+        const current = this.runtimes.get(runtime.threadId);
+        if (!current || current.generation !== generation) return false;
+        current.generation += 1;
+        current.handle?.abort();
+        current.handle = undefined;
+        current.runnerConfig = undefined;
+        const message = String(error);
+        current.session.status = "error";
+        current.updatedAt = this.now();
+        this.dependencies.emit({ type: "btw.runner.error", payload: { threadId: current.threadId, message } });
+        this.dependencies.emit({
+          type: "btw.thread.status",
+          payload: { threadId: current.threadId, status: "error", error: message, updatedAt: current.updatedAt },
+        });
+        return false;
+      }
+    }
+
     try {
       const handle = await this.dependencies.run({
-        prompt: continuation.prompt,
+        prompt: continuation!.prompt,
         displayPrompt,
         attachments,
         runtime: {
@@ -208,6 +267,7 @@ export class BtwRuntimeManager {
         return false;
       }
       current.handle = handle;
+      current.runnerConfig = nextConfig;
       return true;
     } catch (error) {
       const current = this.runtimes.get(runtime.threadId);
@@ -230,6 +290,7 @@ export class BtwRuntimeManager {
     runtime.generation += 1;
     runtime.handle?.abort();
     runtime.handle = undefined;
+    runtime.runnerConfig = undefined;
     runtime.session.status = "idle";
     runtime.updatedAt = this.now();
     this.dependencies.emit({

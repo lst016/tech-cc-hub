@@ -256,12 +256,25 @@ type ApiConfigTestResult = {
     error?: string;
 };
 
-type CodexOAuthResult = {
+type CodexRuntimeLoginMode = "browser" | "device-code";
+
+type CodexRuntimeLoginStartResult = {
     success: boolean;
-    authorizeUrl?: string;
-    credential?: string;
-    accountId?: string;
+    attemptId?: string;
+    mode?: CodexRuntimeLoginMode;
+    verificationUrl?: string;
+    userCode?: string;
+    error?: string;
+};
+
+type CodexRuntimeLoginEvent = {
+    attemptId: string;
+    profileId: string;
+    type: "opening-browser" | "device-code" | "completed" | "cancelled" | "failed";
+    verificationUrl?: string;
+    userCode?: string;
     email?: string;
+    accountIdSuffix?: string;
     expiresAt?: string;
     error?: string;
 };
@@ -285,9 +298,8 @@ type EventPayloadMapping = {
         "save-api-config": { success: boolean; error?: string };
         "fetch-api-models": ApiModelsFetchResult;
         "test-api-config": ApiConfigTestResult;
-        "codex-oauth-start": CodexOAuthResult;
-        "codex-oauth-complete": CodexOAuthResult;
-        "codex-oauth-refresh": CodexOAuthResult;
+        "codex-oauth-runtime-start": CodexRuntimeLoginStartResult;
+        "codex-oauth-runtime-cancel": { success: boolean; error?: string };
         "app-update-get-status": AppUpdateStatus;
         "app-update-check": AppUpdateActionResult;
         "app-update-download": AppUpdateActionResult;
@@ -372,7 +384,10 @@ interface Window {
         getApiConfig: () => Promise<ApiConfigSettings>;
         saveApiConfig: (config: ApiConfigSettings) => Promise<{ success: boolean; error?: string }>;
         fetchApiModels: (payload: { baseURL: string; apiKey: string; provider?: ApiProviderMode }) => Promise<ApiModelsFetchResult>;
-        testApiConfig: (payload: { baseURL: string; apiKey: string; model: string; provider?: ApiProviderMode }) => Promise<ApiConfigTestResult>;
+        testApiConfig: (payload: { profileId?: string; baseURL: string; apiKey: string; model: string; provider?: ApiProviderMode }) => Promise<ApiConfigTestResult>;
+        startCodexOAuthRuntime: (payload: { profile: ApiConfig; mode?: CodexRuntimeLoginMode }) => Promise<CodexRuntimeLoginStartResult>;
+        cancelCodexOAuthRuntime: (attemptId: string) => Promise<{ success: boolean; error?: string }>;
+        onCodexOAuthRuntimeEvent: (callback: (event: CodexRuntimeLoginEvent) => void) => UnsubscribeFunction;
         getAppUpdateStatus: () => Promise<AppUpdateStatus>;
         checkForAppUpdates: () => Promise<AppUpdateActionResult>;
         downloadAppUpdate: () => Promise<AppUpdateActionResult>;
@@ -404,6 +419,7 @@ interface Window {
         readPreviewFile: (payload: { cwd: string; path: string }) => Promise<{ success: boolean; path?: string; content?: string; language?: string; error?: string }>;
         listPreviewDirectory: (payload: { cwd: string; path?: string }) => Promise<{ success: boolean; path?: string; entries?: Array<{ name: string; path: string; relativePath: string; type: "directory" | "file"; size?: number }>; error?: string }>;
         listPreviewFiles: (payload: { cwd: string; limit?: number }) => Promise<{ success: boolean; entries?: Array<{ name: string; path: string; relativePath: string; type: "file"; size?: number }>; truncated?: boolean; error?: string }>;
+        searchLarkContacts: (query: string) => Promise<Array<{ openId: string; name: string; department?: string }>>;
         getPreviewImageBase64: (payload: { cwd: string; path: string }) => Promise<{ success: boolean; path?: string; content?: string; error?: string }>;
         getPreviewFileMetadata: (payload: { cwd: string; path: string }) => Promise<{ name: string; path: string; size: number; type: string; lastModified: number; isDirectory?: boolean } | null>;
         writePreviewFile: (payload: { cwd: string; path: string; data: string }) => Promise<{ success: boolean; path?: string; error?: string }>;

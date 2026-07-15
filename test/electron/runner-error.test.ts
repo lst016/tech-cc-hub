@@ -9,8 +9,8 @@ test("normalizeRunnerError translates missing model failures into a clear messag
     "claude-3-7-sonnet",
   );
 
-  assert.match(message, /请求模型「claude-3-7-sonnet」失败/);
-  assert.match(message, /不可用|已下线|服务端没有找到/);
+  assert.match(message, /Requested model "claude-3-7-sonnet"/);
+  assert.match(message, /unavailable|offline|not supported/);
 });
 
 test("normalizeRunnerError keeps generic runtime errors readable", () => {
@@ -52,6 +52,6 @@ test("normalizeRunnerError adds Figma reauthorization guidance for auth failures
     "claude-sonnet-4-5",
   );
 
-  assert.match(message, /Figma OAuth 授权可能已过期/);
-  assert.match(message, /重新走 OAuth 授权/);
+  assert.match(message, /Figma OAuth authorization may be expired/);
+  assert.match(message, /Re-run OAuth/);
 });

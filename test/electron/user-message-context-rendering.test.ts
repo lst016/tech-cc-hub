@@ -13,3 +13,9 @@ test("user message cards hide structured file and message references behind chip
   assert.match(source, /messageReferences\.map/);
   assert.match(source, /browser_annotations\|code_references\|message_references\|file_references/);
 });
+
+test("empty user messages are not mislabeled as attachments", () => {
+  const source = readFileSync("src/ui/components/EventCard.tsx", "utf8");
+
+  assert.doesNotMatch(source, /!hasAttachments[\s\S]{0,300}已发送附件/);
+});

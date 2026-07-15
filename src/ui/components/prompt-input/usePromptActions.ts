@@ -191,14 +191,15 @@ export function usePromptActions(
   const sendPromptDraft = useCallback(async (
     promptValue: string,
     attachments: PromptAttachment[] = [],
-    options: { clearPrompt?: boolean; displayUserPrompt?: boolean; replaceHistoryId?: string } = {},
+    options: { clearPrompt?: boolean; displayUserPrompt?: boolean; replaceHistoryId?: string; agentPrompt?: string } = {},
   ) => {
-    const { clearPrompt = true, displayUserPrompt = true, replaceHistoryId } = options;
-    if (!promptValue.trim() && attachments.length === 0) return false;
+    const { clearPrompt = true, displayUserPrompt = true, replaceHistoryId, agentPrompt } = options;
+    const promptForAgentInput = agentPrompt ?? promptValue;
+    if (!promptValue.trim() && !promptForAgentInput.trim() && attachments.length === 0) return false;
     const linkedWorkspaceContext = getLinkedWorkspaceContextForCwd(effectiveWorkspaceCwd);
     const promptForAgent = linkedWorkspaceContext
-      ? mergePromptWithLinkedWorkspaceContext(promptValue, linkedWorkspaceContext)
-      : promptValue;
+      ? mergePromptWithLinkedWorkspaceContext(promptForAgentInput, linkedWorkspaceContext)
+      : promptForAgentInput;
     const runtime = buildRuntimeOverrides();
     if (!runtime) return false;
 

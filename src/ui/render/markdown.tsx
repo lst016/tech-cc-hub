@@ -10,6 +10,7 @@ import rehypeRaw from "rehype-raw";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { AppModalOverlay } from "../components/AppModalOverlay";
 import { copyTextToClipboard } from "../utils/clipboard";
 import {
   OPEN_BROWSER_WORKBENCH_URL_EVENT,
@@ -42,6 +43,46 @@ const SOURCE_FILE_EXTENSION_PATTERN = /\.(?:[cm]?[jt]sx?|jsonc?|ya?ml|toml|mdx?|
 const DEFAULT_EXPANDABLE_FRAME_CLASS = "group relative mt-3 overflow-hidden rounded-xl border border-black/8 bg-surface-tertiary";
 const MARKDOWN_REMARK_PLUGINS = [remarkGfm, remarkMath, remarkBreaks];
 const MARKDOWN_REHYPE_PLUGINS = [rehypeRaw, rehypeKatex, rehypeHighlight];
+
+export type LarkMentionTone = "rich-text" | "chat";
+
+type LarkMentionMarkdownProps = {
+  children?: ReactNode;
+  user_id?: string;
+};
+
+function MarkdownLarkMention({
+  children,
+  userId,
+  tone,
+}: {
+  children?: ReactNode;
+  userId?: string;
+  tone: LarkMentionTone;
+}) {
+  const title = `飞书联系人${userId ? ` · ${userId}` : ""}`;
+  if (tone === "chat") {
+    return (
+      <span
+        data-lark-mention-surface="chat"
+        className="mx-0.5 inline-flex items-center whitespace-nowrap rounded-md border border-accent/15 bg-white/80 px-1.5 py-0.5 align-baseline text-[0.9375em] font-medium leading-none text-ink-800 shadow-[0_1px_2px_rgba(30,38,52,0.05)]"
+        title={title}
+      >
+        @{children}
+      </span>
+    );
+  }
+
+  return (
+    <span
+      data-lark-mention-surface="rich-text"
+      className="mx-0.5 inline-flex items-center whitespace-nowrap rounded-md bg-[#e8f3ff] px-1.5 py-0.5 align-baseline text-[0.9375em] font-medium leading-none text-[#3370ff] ring-1 ring-inset ring-[#d6e4ff]"
+      title={title}
+    >
+      @{children}
+    </span>
+  );
+}
 
 function stripMarkdownLinkTarget(value: string): string {
   const trimmed = value.trim();
@@ -207,11 +248,9 @@ function MarkdownBlockLightbox({
   if (typeof document === "undefined") return null;
 
   return createPortal(
-    <div
-      role="dialog"
-      aria-modal="true"
+    <AppModalOverlay
       aria-label={title}
-      className="fixed inset-0 z-[2147483647] flex h-dvh w-dvw items-center justify-center bg-slate-950/70 p-6 backdrop-blur-sm"
+      className="z-[2147483647] flex h-dvh w-dvw items-center justify-center bg-slate-950/70 p-6 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
@@ -234,7 +273,7 @@ function MarkdownBlockLightbox({
           {children}
         </div>
       </div>
-    </div>,
+    </AppModalOverlay>,
     document.body,
   );
 }
@@ -659,10 +698,12 @@ function MDContent({
   text,
   sourceRoot,
   onOpenSourceFile,
+  larkMentionTone = "rich-text",
 }: {
   text: string;
   sourceRoot?: string;
   onOpenSourceFile?: (detail: PreviewOpenFileDetail) => void;
+  larkMentionTone?: LarkMentionTone;
 }) {
   const onOpenSourceFileRef = useRef(onOpenSourceFile);
   useEffect(() => {
@@ -681,6 +722,11 @@ function MDContent({
     ol: (props) => <ol className="mt-2 ml-4 grid min-w-0 list-decimal gap-1" {...props} />,
     li: (props) => <li className="min-w-0 text-ink-700 marker:text-muted [overflow-wrap:anywhere]" {...props} />,
     a: (props) => <MarkdownLink {...props} sourceRoot={sourceRoot} onOpenSourceFile={openSourceFile} />,
+    at: ({ children, user_id: userId }: LarkMentionMarkdownProps) => (
+      <MarkdownLarkMention tone={larkMentionTone} userId={userId}>
+        {children}
+      </MarkdownLarkMention>
+    ),
     strong: (props) => <strong className="text-ink-900 font-semibold" {...props} />,
     em: (props) => <em className="text-ink-800" {...props} />,
     table: (props) => {
@@ -763,7 +809,7 @@ function MDContent({
         </code>
       );
     },
-  }), [openSourceFile, sourceRoot]);
+  }) as Components, [larkMentionTone, openSourceFile, sourceRoot]);
 
   return (
     <ReactMarkdown

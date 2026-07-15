@@ -2,6 +2,7 @@ export const CODEX_OAUTH_BASE_URL = "https://chatgpt.com";
 export const CODEX_OAUTH_COMPACT_MODEL_SUFFIX = "-openai-compact";
 export const CODEX_OAUTH_DEFAULT_MODEL = "gpt-5.5";
 export const CODEX_OAUTH_SMALL_MODEL = "gpt-5.3-codex-spark";
+export const CODEX_OAUTH_STORED_CREDENTIAL = "__tech_cc_hub_codex_oauth_stored__";
 
 const CODEX_BASE_MODELS = [
   "gpt-5.5",

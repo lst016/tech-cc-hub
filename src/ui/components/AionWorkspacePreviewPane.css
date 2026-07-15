@@ -930,6 +930,7 @@
   overflow: auto;
   padding: 18px 22px 36px;
   background: #ffffff;
+  user-select: text;
 }
 
 .vscode-preview__markdown > *:first-child {

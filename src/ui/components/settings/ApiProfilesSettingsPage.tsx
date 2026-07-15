@@ -1,15 +1,14 @@
 import type { ApiConfigProfile } from "../../types";
 import type { DevElectronRuntimeSource } from "../../dev-electron-shim";
-import type { ChannelGuideSessionRequest } from "./ChannelsSettingsPage";
 import { ChevronDown, Plus } from "lucide-react";
 import {
   CODEX_OAUTH_BASE_URL,
   CODEX_OAUTH_DEFAULT_MODEL,
   CODEX_OAUTH_MODELS,
   CODEX_OAUTH_SMALL_MODEL,
+  CODEX_OAUTH_STORED_CREDENTIAL,
   mergeCodexModelIds,
 } from "../../../shared/codex-oauth";
-import { DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT } from "../../../shared/claude-agent-teams";
 import {
   extractApiModelsFromListPayload,
   getImportedApiModelNames,
@@ -36,13 +35,12 @@ import {
   MINIMAX_MODEL_CONFIGS,
   MINIMAX_SMALL_MODEL,
 } from "../../../shared/models/minimax";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type ApiProfilesSettingsPageProps = {
   profiles: ApiConfigProfile[];
   runtimeSource: DevElectronRuntimeSource;
   onChange: (updater: (current: ApiConfigProfile[]) => ApiConfigProfile[]) => void;
-  onStartGuideSession?: (request: ChannelGuideSessionRequest) => Promise<void> | void;
 };
 
 const runtimeSourceMeta: Record<DevElectronRuntimeSource, { label: string; description: string; className: string }> = {
@@ -73,6 +71,13 @@ type ModelImportStatus = {
   tone: "error" | "success";
   message: string;
 } | null;
+
+type CodexRuntimeLoginState = {
+  attemptId?: string;
+  phase: "starting" | "browser" | "device-code";
+  verificationUrl?: string;
+  userCode?: string;
+};
 
 type ApiProviderMode = NonNullable<ApiConfigProfile["provider"]>;
 
@@ -462,91 +467,67 @@ function normalizeCodexManualCredentialInput(raw: string): string {
   throw new Error("Manual Codex JSON needs access_token plus account_id, or an official Codex auth.json that contains them.");
 }
 
-function buildCodexGuidePrompt(profile: ApiConfigProfile, profiles: ApiConfigProfile[]): string {
-  const profileSummaries = profiles.map((item) => ({
-    id: item.id,
-    name: item.name,
-    enabled: item.enabled,
-    provider: item.provider,
-    baseURL: item.baseURL,
-    model: item.model,
-    smallModel: item.smallModel,
-    analysisModel: item.analysisModel,
-    isTargetCodexProfile: item.id === profile.id,
-    hasSavedCredential: Boolean(item.apiKey.trim()),
-  }));
-
-  return [
-    "Hard constraints:",
-    "- This app supports multiple API profiles/providers at the same time. Treat `api-config.json.profiles` as an append/update list, not a single gateway config.",
-    "- Preserve every existing non-Codex profile exactly, including custom/minimax/deepseek gateways, credentials, enabled flags, model fields, and ordering.",
-    "- Do not create, update, delete, disable, rename, reorder, or normalize any API profile from the Agent session.",
-    "- The Agent session is a read-only credential handoff. The user will paste the returned JSON into the settings input box and save manually.",
-    "- Never run a setup command or script that writes `api-config.json`; especially do not run `npm run codex:oauth:setup` for this flow.",
-    "",
-    "Secret-handling rules:",
-    "- Do not print raw secret values in diagnostics, shell output summaries, intermediate updates, or exploratory notes.",
-    "- Exception: the final handoff may contain exactly one fenced `Manual Codex credential JSON` block because the user explicitly needs to paste it into the UI input box.",
-    "- Treat these fields as secrets: `apiKey`, `access_token`, `refresh_token`, `id_token`, `authorization`, `x-api-key`, cookies, and any value from `~/.codex/auth.json`.",
-    "- Do not run broad text searches such as `rg apiKey`, `rg access_token`, or raw `cat/Get-Content` output over config files, backups, caches, or session databases.",
-    "- When reading config files, use a structured parser and print only redacted booleans/counts such as `hasApiKey`, `credentialLength`, profile ids, providers, and model names.",
-    "- Backups may contain secrets. Create them locally when needed, but do not read them back into chat except through the same redacted summary shape.",
-    "",
-    "Read-only handoff playbook:",
-    "1. Do not open or edit `api-config.json`; the UI snapshot below is enough context for this handoff.",
-    "2. Locate Codex CLI auth at `$env:CODEX_HOME\\auth.json` when `CODEX_HOME` is set, otherwise `$HOME\\.codex\\auth.json`.",
-    "3. If Codex CLI is not logged in, guide the user to run `codex login`; do not run any tech-cc-hub setup/import script.",
-    "4. Read Codex auth with a structured JSON parser. Avoid broad secret searches and do not echo the raw file during diagnostics.",
-    "5. Extract only `access_token`, optional `refresh_token`, `account_id`, optional `email`, optional expiry fields.",
-    "6. Return one fenced `Manual Codex credential JSON` block for the user to paste into the settings input box.",
-    "7. Tell the user to click `Apply manual credential`, then the settings save button, then test the connection.",
-    "",
-    "你在 tech-cc-hub 的系统工作区里，目标是只引导用户拿到 Codex credential JSON，不自动修改配置。",
-    "",
-    "请用 Agent 引导方式完成：Agent 只负责读取/整理值并显示给用户，用户自己粘贴到设置页输入框保存。",
-    "",
-    "禁止事项：",
-    "- 不要运行 `npm run codex:oauth:setup`。",
-    "- 不要写入、覆盖、格式化、备份或恢复 `api-config.json`。",
-    "- 不要修改任何已有网关、模型来源或 MCP 配置。",
-    "",
-    "最终交付：",
-    "- 输出一个 fenced `Manual Codex credential JSON` 代码块，包含 access_token、可选 refresh_token、account_id、可选 email/type/expired/last_refresh。",
-    "- 提醒用户把这段 JSON 粘贴到 Codex 配置卡片的手填输入框，点击 `Apply manual credential`，再点击设置页保存。",
-    "",
-    "当前 UI 配置快照：",
-    JSON.stringify({
-      id: profile.id,
-      name: profile.name,
-      enabled: profile.enabled,
-      baseURL: profile.baseURL,
-      model: profile.model,
-      expertModel: profile.expertModel,
-      smallModel: profile.smallModel,
-      analysisModel: profile.analysisModel,
-      provider: profile.provider,
-      hasSavedCredential: Boolean(profile.apiKey.trim()),
-    }, null, 2),
-    "",
-    "Additional acceptance criteria:",
-    "- `api-config.json.profiles` still contains every pre-existing non-Codex profile id from the snapshot below.",
-    "- Non-Codex profiles are not deleted, disabled, renamed, reordered, or overwritten.",
-    "- The final response must include a short before/after profile summary with secrets omitted.",
-    "",
-    "Existing API profile preservation snapshot (no secrets):",
-    JSON.stringify(profileSummaries, null, 2),
-  ].join("\n");
-}
-
-export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onStartGuideSession }: ApiProfilesSettingsPageProps) {
+export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: ApiProfilesSettingsPageProps) {
   const sourceMeta = runtimeSourceMeta[runtimeSource];
   const [importingProfileId, setImportingProfileId] = useState<string | null>(null);
   const [testingProfileId, setTestingProfileId] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<ModelImportStatus>(null);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [expandedModelLists, setExpandedModelLists] = useState<Record<string, boolean>>({});
-  const [launchingCodexGuideProfileId, setLaunchingCodexGuideProfileId] = useState<string | null>(null);
+  const [codexRuntimeLogins, setCodexRuntimeLogins] = useState<Record<string, CodexRuntimeLoginState>>({});
   const [manualCodexCredentialDrafts, setManualCodexCredentialDrafts] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const electronApi = window.electron as typeof window.electron & {
+      onCodexOAuthRuntimeEvent?: typeof window.electron.onCodexOAuthRuntimeEvent;
+    };
+    if (typeof electronApi.onCodexOAuthRuntimeEvent !== "function") return;
+    return electronApi.onCodexOAuthRuntimeEvent((event) => {
+      if (event.type === "opening-browser") {
+        setCodexRuntimeLogins((current) => ({
+          ...current,
+          [event.profileId]: { attemptId: event.attemptId, phase: "browser" },
+        }));
+        return;
+      }
+      if (event.type === "device-code") {
+        setCodexRuntimeLogins((current) => ({
+          ...current,
+          [event.profileId]: {
+            attemptId: event.attemptId,
+            phase: "device-code",
+            verificationUrl: event.verificationUrl,
+            userCode: event.userCode,
+          },
+        }));
+        return;
+      }
+
+      setCodexRuntimeLogins((current) => {
+        const next = { ...current };
+        delete next[event.profileId];
+        return next;
+      });
+      if (event.type === "completed") {
+        onChange((current) => current.map((profile) => profile.id === event.profileId
+          ? {
+              ...profile,
+              apiKey: CODEX_OAUTH_STORED_CREDENTIAL,
+              baseURL: CODEX_OAUTH_BASE_URL,
+              provider: "codex",
+            }
+          : profile));
+        const account = event.email || (event.accountIdSuffix ? `账号 …${event.accountIdSuffix}` : "ChatGPT 账号");
+        setImportStatus({ profileId: event.profileId, tone: "success", message: `${account} 已连接，凭据已安全保存。` });
+        return;
+      }
+      if (event.type === "cancelled") {
+        setImportStatus({ profileId: event.profileId, tone: "error", message: "已取消 ChatGPT 账号连接。" });
+        return;
+      }
+      setImportStatus({ profileId: event.profileId, tone: "error", message: event.error || "ChatGPT 账号连接失败。" });
+    });
+  }, [onChange]);
 
   const handleImportModels = async (profile: ApiConfigProfile) => {
     setImportStatus(null);
@@ -737,17 +718,17 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
     const model = profile.model?.trim() || profile.models?.find((item) => item.name.trim())?.name.trim() || "";
 
     if (!baseURL || !profile.apiKey.trim() || !model) {
-      setImportStatus({ profileId: profile.id, tone: "error", message: provider === "codex" ? "请先通过 Agent 引导配置完成 OpenAI 账号接入并选择默认主模型。" : provider === "minimax" ? "请先填写 MiniMax Token Plan Subscription Key 并选择默认主模型。" : "请先填写接口地址、API Key 和默认主模型。" });
+      setImportStatus({ profileId: profile.id, tone: "error", message: provider === "codex" ? "请先连接 ChatGPT 账号并选择默认主模型。" : provider === "minimax" ? "请先填写 MiniMax Token Plan Subscription Key 并选择默认主模型。" : "请先填写接口地址、API Key 和默认主模型。" });
       return;
     }
 
     setTestingProfileId(profile.id);
     try {
       const electronApi = window.electron as typeof window.electron & {
-        testApiConfig?: (payload: { baseURL: string; apiKey: string; model: string; provider?: ApiProviderMode }) => Promise<ApiProfileTestResult>;
+        testApiConfig?: (payload: { profileId?: string; baseURL: string; apiKey: string; model: string; provider?: ApiProviderMode }) => Promise<ApiProfileTestResult>;
       };
       const result = typeof electronApi.testApiConfig === "function"
-        ? await electronApi.testApiConfig({ baseURL, apiKey: profile.apiKey, model, provider })
+        ? await electronApi.testApiConfig({ profileId: profile.id, baseURL, apiKey: profile.apiKey, model, provider })
         : await testApiConfigInBrowser({ ...profile, baseURL, model }, provider);
 
       setImportStatus({
@@ -773,25 +754,45 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
     onChange((current) => [create(), ...current]);
   };
 
-  const handleStartCodexGuide = async (profile: ApiConfigProfile) => {
-    if (!onStartGuideSession) {
-      setImportStatus({ profileId: profile.id, tone: "error", message: "当前运行面无法启动 Agent 引导配置，请在桌面端使用。" });
-      return;
-    }
-
+  const handleStartCodexRuntimeLogin = async (profile: ApiConfigProfile, mode: CodexRuntimeLoginMode = "browser") => {
     setImportStatus(null);
-    setLaunchingCodexGuideProfileId(profile.id);
+    setCodexRuntimeLogins((current) => ({
+      ...current,
+      [profile.id]: { phase: "starting" },
+    }));
     try {
-      await Promise.resolve(onStartGuideSession({
-        title: "Codex 模型渠道引导配置",
-        prompt: buildCodexGuidePrompt(profile, profiles),
-        agentId: "codex-oauth-guide",
-        allowedTools: DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT,
+      const saveResult = await window.electron.saveApiConfig({ profiles });
+      if (!saveResult.success) {
+        throw new Error(saveResult.error || "保存 Codex 配置失败。");
+      }
+      const result = await window.electron.startCodexOAuthRuntime({ profile, mode });
+      if (!result.success || !result.attemptId) {
+        throw new Error(result.error || "无法启动内置 Codex 登录 runtime。" );
+      }
+      setCodexRuntimeLogins((current) => ({
+        ...current,
+        [profile.id]: {
+          attemptId: result.attemptId,
+          phase: mode === "device-code" ? "device-code" : "browser",
+          verificationUrl: result.verificationUrl,
+          userCode: result.userCode,
+        },
       }));
     } catch (error) {
-      setImportStatus({ profileId: profile.id, tone: "error", message: error instanceof Error ? error.message : "启动 Agent 引导配置失败。" });
-    } finally {
-      setLaunchingCodexGuideProfileId(null);
+      setCodexRuntimeLogins((current) => {
+        const next = { ...current };
+        delete next[profile.id];
+        return next;
+      });
+      setImportStatus({ profileId: profile.id, tone: "error", message: error instanceof Error ? error.message : "启动 ChatGPT 登录失败。" });
+    }
+  };
+
+  const handleCancelCodexRuntimeLogin = async (profileId: string, attemptId: string | undefined) => {
+    if (!attemptId) return;
+    const result = await window.electron.cancelCodexOAuthRuntime(attemptId);
+    if (!result.success) {
+      setImportStatus({ profileId, tone: "error", message: result.error || "取消 ChatGPT 登录失败。" });
     }
   };
 
@@ -888,6 +889,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
           const providerMode = getProviderMode(profile);
           const modelListExpanded = Boolean(expandedModelLists[profile.id]);
           const officialProvider = providerMode === "deepseek" || providerMode === "codex" || providerMode === "minimax";
+          const codexLogin = codexRuntimeLogins[profile.id];
           return (
           <div key={profile.id} className="rounded-[28px] border border-ink-900/10 bg-white/86 p-5 shadow-[0_18px_44px_rgba(24,32,46,0.06)]">
             <div className="flex items-center justify-between gap-3">
@@ -911,14 +913,18 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
                 {profiles.length > 1 && (
                   <button
                     type="button"
-                    className="rounded-full border border-ink-900/10 p-2 text-muted hover:bg-surface hover:text-ink-700"
-                    onClick={() => onChange((current) => {
-                      const next = current.filter((item) => item.id !== profile.id);
-                      if (next.every((item) => !item.enabled) && next[0]) {
-                        next[0] = { ...next[0], enabled: true };
-                      }
-                      return next;
-                    })}
+                    className="rounded-full border border-ink-900/10 p-2 text-muted hover:bg-surface hover:text-ink-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={Boolean(codexLogin)}
+                    onClick={() => {
+                      if (codexLogin) return;
+                      onChange((current) => {
+                        const next = current.filter((item) => item.id !== profile.id);
+                        if (next.every((item) => !item.enabled) && next[0]) {
+                          next[0] = { ...next[0], enabled: true };
+                        }
+                        return next;
+                      });
+                    }}
                     aria-label={`删除配置 ${profile.name}`}
                   >
                     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -967,18 +973,48 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
                     <div className="min-w-0">
                       <div className="text-xs font-semibold text-ink-900">OpenAI 账号接入</div>
                       <div className="mt-1 text-xs leading-5 text-muted">
-                        由 Agent 打开授权页、接收本机回调并写入配置；敏感令牌不会展示在表单里。
+                        使用应用内置的官方 Codex runtime 打开 ChatGPT 登录；无需另装 Codex，敏感令牌只在主进程保存。
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      className="inline-flex h-8 items-center rounded-full border border-[#F0C7B4] bg-[#FFF4EF] px-3 text-xs font-semibold text-[#C9572C] transition hover:border-[#D96B3A] hover:bg-[#FFEADF] disabled:cursor-not-allowed disabled:border-[#E5E6EB] disabled:bg-[#F7F8FA] disabled:text-[#86909C]"
-                      onClick={() => void handleStartCodexGuide(profile)}
-                      disabled={launchingCodexGuideProfileId === profile.id}
-                    >
-                      {launchingCodexGuideProfileId === profile.id ? "正在启动..." : "Agent 引导配置"}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {!codexLogin && (
+                        <button
+                          type="button"
+                          className="inline-flex h-8 items-center rounded-full border border-ink-900/10 bg-white px-3 text-xs font-medium text-ink-700 transition hover:bg-surface"
+                          onClick={() => void handleStartCodexRuntimeLogin(profile, "device-code")}
+                        >
+                          使用设备码
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="inline-flex h-8 items-center rounded-full border border-[#F0C7B4] bg-[#FFF4EF] px-3 text-xs font-semibold text-[#C9572C] transition hover:border-[#D96B3A] hover:bg-[#FFEADF] disabled:cursor-not-allowed disabled:border-[#E5E6EB] disabled:bg-[#F7F8FA] disabled:text-[#86909C]"
+                        onClick={() => codexLogin
+                          ? void handleCancelCodexRuntimeLogin(profile.id, codexLogin.attemptId)
+                          : void handleStartCodexRuntimeLogin(profile)}
+                        disabled={codexLogin?.phase === "starting"}
+                      >
+                        {codexLogin?.phase === "starting"
+                          ? "正在启动..."
+                          : codexLogin
+                            ? "取消登录"
+                            : profile.apiKey.trim()
+                              ? "重新连接 ChatGPT"
+                              : "连接 ChatGPT"}
+                      </button>
+                    </div>
                   </div>
+                  {codexLogin && (
+                    <div className="rounded-xl border border-sky-500/15 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+                      {codexLogin.phase === "starting" && "正在启动应用内置的 Codex 登录 runtime…"}
+                      {codexLogin.phase === "browser" && "登录页已在系统浏览器打开，完成 ChatGPT 授权后会自动返回。"}
+                      {codexLogin.phase === "device-code" && (
+                        <span>
+                          在已打开的页面输入设备码：<strong className="select-all font-mono text-sm tracking-wider">{codexLogin.userCode}</strong>
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-2 text-[11px]">
                     <span className={`rounded-full border px-2.5 py-1 font-medium ${profile.apiKey.trim() ? "border-emerald-500/20 bg-emerald-50 text-emerald-700" : "border-amber-500/20 bg-amber-50 text-amber-700"}`}>
                       {profile.apiKey.trim() ? "已保存账号凭据" : "未完成账号接入"}
@@ -993,7 +1029,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange, onS
                     </summary>
                     <div className="mt-3 grid gap-2">
                       <p className="leading-5">
-                        仅当这台机器无法运行 Agent 引导配置时再使用这里。你可以粘贴官方 Codex auth.json 内容，或者粘贴一个包含 access_token 和 account_id 的 JSON 对象。点击应用后，这里的内容会清空，之后再点设置页保存按钮即可持久化。
+                        仅当内置 runtime 登录无法完成时再使用这里。你可以粘贴官方 Codex auth.json 内容，或者粘贴一个包含 access_token 和 account_id 的 JSON 对象。点击应用后，这里的内容会清空，之后再点设置页保存按钮即可持久化。
                       </p>
                       <textarea
                         spellCheck={false}

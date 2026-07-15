@@ -1,34 +1,31 @@
-// Source: CV from AionUi CronStatusTag.tsx (50 lines)
-// Adapted for tech-cc-hub: Tailwind CSS instead of arco-design Tag, hardcoded Chinese
-
 import React from "react";
 import type { CronJob } from "../../../types/cron.js";
 
-type StatusTone = "paused" | "error" | "active";
+type StatusTone = "active" | "running" | "paused" | "warning" | "error";
+
+const TONE_CLASSES: Record<StatusTone, string> = {
+  active: "border-success/15 bg-success-light text-success",
+  running: "border-info/15 bg-info-light text-info",
+  paused: "border-ink-900/8 bg-surface-secondary text-ink-500",
+  warning: "border-warning/15 bg-warning-light text-warning",
+  error: "border-error/15 bg-error-light text-error",
+};
+
+function resolveStatus(job: CronJob): { label: string; tone: StatusTone } {
+  if (!job.enabled) return { label: "已暂停", tone: "paused" };
+  if (job.state.lastStatus === "retrying") return { label: "重试中", tone: "warning" };
+  if (job.state.lastStatus === "error") return { label: "异常", tone: "error" };
+  if (job.state.lastStatus === "missed") return { label: "已错过", tone: "error" };
+  if (job.state.lastStatus === "skipped") return { label: "已跳过", tone: "warning" };
+  return { label: "已启用", tone: "active" };
+}
 
 const CronStatusTag: React.FC<{ job: CronJob }> = ({ job }) => {
-  let label = "运行中";
-  let tone: StatusTone = "active";
-
-  if (!job.enabled) {
-    tone = "paused";
-    label = "已暂停";
-  } else if (job.state.lastStatus === "error") {
-    tone = "error";
-    label = "异常";
-  }
-
-  const colorClasses = {
-    active: "bg-green-50 text-green-700 border-green-200",
-    paused: "bg-gray-50 text-gray-500 border-gray-200",
-    error: "bg-red-50 text-red-600 border-red-200",
-  };
-
+  const status = resolveStatus(job);
   return (
-    <span
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${colorClasses[tone]}`}
-    >
-      {label}
+    <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${TONE_CLASSES[status.tone]}`}>
+      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" aria-hidden="true" />
+      {status.label}
     </span>
   );
 };

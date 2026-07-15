@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { ManagedSkill, ToolInfo, ScanResult, BatchImportResult } from "../../types";
+import { AppModalOverlay } from "../AppModalOverlay";
 import { cn } from "./skill-utils";
 
 const MARKET_PAGE_SIZE = 24;
@@ -1212,7 +1213,7 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
 
       {/* Git preview modal */}
       {gitPreview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <AppModalOverlay aria-label="Git 技能安装预览" className="z-50 flex items-center justify-center">
           <div
             className="absolute inset-0 bg-black/70 backdrop-blur-sm"
             onClick={gitInstalling ? undefined : closeGitPreview}
@@ -1285,7 +1286,7 @@ export function InstallSkillsView({ skills, tools: _tools, scanResult, onRefresh
               </button>
             </div>
           </div>
-        </div>
+        </AppModalOverlay>
       )}
     </div>
   );

@@ -13,12 +13,24 @@ test("prompt input keeps native edits out of the layout rerender path", () => {
   assert.match(handleInputMatch[0], /setPrompt\(nextPrompt\);/);
 });
 
+test("image token removal reads the live native editor draft", () => {
+  const source = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
+
+  assert.match(source, /const readCurrentPromptDraft = useCallback/);
+  assert.match(source, /readCurrentPromptDraft\(\)\.replaceAll\(IMAGE_GENERATION_PLUGIN_TOKEN, ""\)/);
+  assert.doesNotMatch(source, /nextPrompt\.replaceAll\(IMAGE_GENERATION_PLUGIN_TOKEN, ""\)/);
+});
+
 test("prompt input pastes clipboard html as plain text", () => {
   const source = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
+  const pasteStart = source.indexOf("const handlePaste");
+  const textStart = source.indexOf("const plainText = getPlainTextFromClipboardData", pasteStart);
+  const fileStart = source.indexOf("const clipboardFiles", pasteStart);
 
   assert.match(source, /import \{ getPlainTextFromClipboardData \} from "\.\.\/\.\.\/utils\/clipboard-text"/);
   assert.match(source, /insertTextIntoPrompt\(currentPrompt, plainText, selection\.start, selection\.end\)/);
   assert.match(source, /contentEditable=\{disabled \? false : "plaintext-only"\}/);
+  assert.ok(textStart > pasteStart && fileStart > textStart, "rich clipboard text should win over file representations");
   assert.doesNotMatch(source, /execCommand/);
   assert.doesNotMatch(source, /insertHTML/);
 });

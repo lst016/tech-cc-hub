@@ -11,8 +11,10 @@ const runnerSource = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
 
 test("chat composer defaults reasoning to xhigh", () => {
   assert.match(appStoreSource, /reasoningMode:\s*"xhigh"/);
-  assert.match(promptInputSource, /const reasoningMode = useAppStore\(\(state\) => state\.reasoningMode\)/);
-  assert.match(promptInputSource, /const setReasoningMode = useAppStore\(\(state\) => state\.setReasoningMode\)/);
+  assert.match(promptInputSource, /const storeReasoningMode = useAppStore\(\(state\) => state\.reasoningMode\)/);
+  assert.match(promptInputSource, /const appSetReasoningMode = useAppStore\(\(state\) => state\.setReasoningMode\)/);
+  assert.match(promptInputSource, /const reasoningMode = controller\?\.reasoningMode \?\? storeReasoningMode/);
+  assert.match(promptInputSource, /const setReasoningMode = controller\?\.setReasoningMode \?\? appSetReasoningMode/);
   assert.match(promptInputSource, /reasoningMode=\{reasoningMode\}/);
   assert.match(promptInputSource, /onReasoningModeChange=\{setReasoningMode\}/);
   assert.match(composerModelMenuSource, /REASONING_OPTIONS/);

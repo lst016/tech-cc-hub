@@ -18,6 +18,7 @@ test("parseSlashCommandDraft extracts command and editable argument", () => {
     prefixLength: "/ai-image-gen ".length,
     known: false,
     description: undefined,
+    resolvedFrom: undefined,
   });
 });
 
@@ -59,6 +60,7 @@ test("buildSlashCommandDisplayParts renders command tokens inline", () => {
       displayName: "Agent Reach",
       known: true,
       description: "Agent reach skill",
+      resolvedFrom: undefined,
     },
     { type: "text", text: " sss" },
   ]);

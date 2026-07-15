@@ -52,6 +52,16 @@ export function buildToolCallOptimizationPromptAppend(): string {
   ].join("\n");
 }
 
+export function buildEChartsPromptAppend(): string {
+  return [
+    "聊天图表规则：当趋势、对比、占比或分布用图表更清楚时，可在回答正文中输出独立的 `:::echarts` 块。",
+    "图表块格式：开始行仅写 `:::echarts`，中间仅写一个标准 ECharts option 严格 JSON 对象，结束行仅写 `:::`；不要使用 JavaScript 函数、注释或尾逗号。",
+    "图表安全规则：不要使用 HTML formatter、extraCssText、javascript: 或 data:text/html 链接；tooltip 会使用安全的 rich-text 模式渲染。",
+    "可切换图表规则：尽量显式提供 `xAxis.data` 和每个系列的 `series.data`，并给 series 设置 line、bar 或 pie 类型，让聊天卡片可在兼容类型间即时切换。",
+    "图表块前后保留简短文字结论；不要把图表配置放进 Markdown 代码围栏。",
+  ].join("\n");
+}
+
 export function extractFeishuDocumentUrls(text: string): string[] {
   const matches = text.match(FEISHU_DOC_URL_PATTERN) ?? [];
   const urls = matches
@@ -177,6 +187,12 @@ export function buildTechCCHubSystemPromptSources(): PromptLedgerSource[] {
       label: "tech-cc-hub 工具调用预设",
       sourceKind: "system",
       text: buildToolCallOptimizationPromptAppend(),
+    },
+    {
+      id: "tech-cc-hub-echarts-preset",
+      label: "tech-cc-hub 聊天图表预设",
+      sourceKind: "system",
+      text: buildEChartsPromptAppend(),
     },
     {
       id: "tech-cc-hub-design-preset",

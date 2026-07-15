@@ -45,6 +45,7 @@ import {
   createReadBeforeWriteHook,
 } from "../learning/learning-hooks.js";
 import {
+  hasIncompletePlan,
   normalizeTaskCreateArgs,
   normalizeUpdatePlanArgs,
   type SessionPlanSource,
@@ -118,6 +119,7 @@ import {
   buildDesignParityPromptAppend,
   buildFeishuDocumentFetchPromptAppend,
   buildGlobalRuntimeSystemPromptExtAppend,
+  buildEChartsPromptAppend,
   buildToolCallOptimizationPromptAppend,
 } from "../system-prompt-presets.js";
 import { buildInvokedLocalSlashDefinitionPromptAppend } from "../slash-command-catalog.js";
@@ -136,6 +138,7 @@ import {
   type LinkedWorkspaceContext,
 } from "../../../shared/linked-workspaces.js";
 import { isManagedCodeGraphInitialized } from "../codegraph/managed-codegraph.js";
+import { resolveImageGenerationToolDefaults } from "../../../shared/image-generation-prompt.js";
 
 export type RunnerOptions = {
   prompt: string;
@@ -195,6 +198,8 @@ const RASTER_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp
 const MAX_IMAGE_READS_PER_RUN = 1;
 const MAX_SINGLE_IMAGE_READ_BYTES = 400_000;
 const MAX_RUNNER_STDERR_CHARS = 12_000;
+const RUNNER_FIRST_EVENT_TIMEOUT_MS = 120_000;
+const RUNNER_IDLE_TIMEOUT_MS = 5 * 60_000;
 const BLOCKED_SHELL_TOOL_NAMES = new Set(["mcp__windows__Powershell-Tool"]);
 const BLOCKED_SHELL_TOOL_MESSAGE =
   "This Windows shell tool is disabled in tech-cc-hub because it can hang without returning a tool_result. Use Bash with cmd.exe instead, for example: cmd.exe /d /s /c \"<command>\".";
@@ -432,8 +437,11 @@ const PLAN_OUTPUT_FORMAT_SCHEMA = {
 };
 
 const MAX_EMPTY_SUCCESS_AUTO_RETRIES = 2;
+const MAX_UNFINISHED_PLAN_AUTO_RETRIES = 3;
 const EMPTY_SUCCESS_RETRY_PROMPT =
   "Continue the task. The previous turn returned no assistant output and made no tool calls. Do not stop or return an empty result; resume from the last concrete step and keep executing.";
+const UNFINISHED_PLAN_CONTINUATION_PROMPT =
+  "The current task plan still has unfinished steps. Continue executing the remaining work now, run the required verification, and update the plan before returning a final result. Do not ask the user to say continue unless a concrete decision or missing input is required.";
 
 function buildVisibleAssistantMessage(sessionId: string, text: string, model?: string): SDKMessage {
   return {
@@ -473,6 +481,41 @@ function appendBoundedText(current: string, chunk: string, maxChars: number): st
   return next.length > maxChars ? next.slice(-maxChars) : next;
 }
 
+function createRunnerActivityWatchdog(onTimeout: (message: string) => void): {
+  touch: () => void;
+  dispose: () => void;
+} {
+  let receivedEvent = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const dispose = () => {
+    if (!timer) return;
+    clearTimeout(timer);
+    timer = undefined;
+  };
+
+  const arm = () => {
+    dispose();
+    const timeoutMs = receivedEvent ? RUNNER_IDLE_TIMEOUT_MS : RUNNER_FIRST_EVENT_TIMEOUT_MS;
+    timer = setTimeout(() => {
+      onTimeout(
+        receivedEvent
+          ? "Runner stopped receiving events for 5 minutes."
+          : "Runner did not receive any events for 2 minutes.",
+      );
+    }, timeoutMs);
+    timer.unref?.();
+  };
+
+  const touch = () => {
+    receivedEvent = true;
+    arm();
+  };
+
+  arm();
+  return { touch, dispose };
+}
+
 export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   const { prompt, displayPrompt = prompt, attachments = [], runtime, session, workspaceContext, resumeSessionId, onEvent, onSessionUpdate } = options;
   const abortController = new AbortController();
@@ -488,11 +531,13 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   let observedAssistantTextActivity = false;
   let awaitingVisiblePostToolResponse = false;
   let emptySuccessAutoRetries = 0;
+  let unfinishedPlanAutoRetries = 0;
   let figmaRestAuthFailureSeen = false;
   let figmaImplementationAnchorSeen = false;
   let figmaSvgAssetSeen = false;
   let codeGraphRetrievalSeen = false;
   let latestGlobalRuntimeConfig: unknown = null;
+  let currentAgentPrompt = prompt;
   let currentDisplayPrompt = displayPrompt;
   let figmaContextSeen = hasFigmaContext(currentDisplayPrompt, session.lastPrompt);
   let latestWorkspaceContext = normalizeRunnerWorkspaceContext(workspaceContext);
@@ -507,6 +552,22 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   let recentClaudeStderr = "";
   const toolUseNamesById = new Map<string, string>();
   let statefulMcpRefresh: Promise<void> | null = null;
+  const runnerWatchdog = createRunnerActivityWatchdog((message) => {
+    if (runnerClosed || emittedTerminalStatus) return;
+    runnerClosed = true;
+    emittedTerminalStatus = true;
+    onEvent({
+      type: "runner.error",
+      payload: { sessionId: session.id, message },
+    });
+    onEvent({
+      type: "session.status",
+      payload: { sessionId: session.id, status: "error", title: session.title, error: message },
+    });
+    promptInput.close();
+    activeQuery?.close();
+    abortController.abort();
+  });
   const appendClaudeProcessStderr = (chunk: string) => {
     recentClaudeStderr = appendBoundedText(recentClaudeStderr, chunk, MAX_RUNNER_STDERR_CHARS);
   };
@@ -867,6 +928,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         runtimeProfile.includeProjectMemoryPrompt ? buildClaudeProjectMemoryPromptAppend(projectCwd) : undefined,
         enabledBuiltinMcpServerSet.has("tech-cc-hub-knowledge") ? buildKnowledgeOverviewPromptAppend(projectCwd) : undefined,
         buildToolCallOptimizationPromptAppend(),
+        buildEChartsPromptAppend(),
         runtimeProfile.includeBrowserPrompt && enabledBuiltinMcpServerSet.has("tech-cc-hub-browser") ? buildBrowserWorkbenchPromptAppend() : undefined,
         runtimeProfile.includeDesignPrompt && enabledBuiltinMcpServerSet.has("tech-cc-hub-design") ? buildDesignParityPromptAppend() : undefined,
         buildBuiltinMcpRegistryPromptAppend(enabledBuiltinMcpServerNames),
@@ -973,6 +1035,14 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                 toolName,
                 reason: linkedWorkspaceRoute.reason,
               });
+            }
+            const imageGenerationDefaults = resolveImageGenerationToolDefaults(
+              toolName,
+              effectiveInput,
+              currentAgentPrompt,
+            );
+            if (imageGenerationDefaults) {
+              effectiveInput = imageGenerationDefaults;
             }
             if (isCodeGraphRetrievalTool(toolName)) {
               codeGraphRetrievalSeen = true;
@@ -1101,6 +1171,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       });
 
       for await (const rawMessage of q) {
+        runnerWatchdog.touch();
         const message = normalizeKnownToolInputsInMessage(rawMessage);
         if (hasAssistantTextActivity(message)) {
           observedAssistantTextActivity = true;
@@ -1155,6 +1226,28 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               },
             });
           }
+          const hasUnfinishedPlan = hasIncompletePlan(session.planSnapshot?.plan);
+          if (
+            isSuccessfulRunnerResult(message) &&
+            hasUnfinishedPlan &&
+            unfinishedPlanAutoRetries < MAX_UNFINISHED_PLAN_AUTO_RETRIES
+          ) {
+            unfinishedPlanAutoRetries += 1;
+            observedAssistantTextActivity = false;
+            console.warn("[runner][unfinished-plan-auto-retry]", {
+              sessionId: session.id,
+              retry: unfinishedPlanAutoRetries,
+              maxRetries: MAX_UNFINISHED_PLAN_AUTO_RETRIES,
+            });
+            const visibleResultText = getVisibleTerminalResultText(message, awaitingVisiblePostToolResponse);
+            if (visibleResultText) {
+              sendMessage(buildVisibleAssistantMessage(session.id, visibleResultText, requestedModelForError));
+              awaitingVisiblePostToolResponse = false;
+            }
+            sendMessage(message);
+            promptInput.enqueue(UNFINISHED_PLAN_CONTINUATION_PROMPT, []);
+            continue;
+          }
           const emptySuccess = isEmptySuccessfulRunnerResult(message, observedAssistantTextActivity);
           if (emptySuccess && emptySuccessAutoRetries < MAX_EMPTY_SUCCESS_AUTO_RETRIES) {
             emptySuccessAutoRetries += 1;
@@ -1168,7 +1261,8 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             continue;
           }
 
-          const status = message.subtype === "success" && !emptySuccess ? "completed" : "error";
+          const completionBlockedByPlan = isSuccessfulRunnerResult(message) && hasUnfinishedPlan;
+          const status = message.subtype === "success" && !emptySuccess && !completionBlockedByPlan ? "completed" : "error";
           if (!emptySuccess && typeof activeQuery?.getContextUsage === "function") {
             try {
               const usage = await activeQuery.getContextUsage();
@@ -1204,11 +1298,14 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               title: session.title,
               error: emptySuccess
                 ? "Runner returned an empty success without assistant text output."
+                : completionBlockedByPlan
+                  ? "Runner stopped before completing all planned steps."
                 : undefined,
             },
           });
           emittedTerminalStatus = true;
-          if (isSuccessfulRunnerResult(message) && !emptySuccess) {
+          runnerWatchdog.dispose();
+          if (isSuccessfulRunnerResult(message) && !emptySuccess && !completionBlockedByPlan) {
             emittedSuccessfulResult = true;
           } else {
             promptInput.close();
@@ -1278,12 +1375,15 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         type: "session.status",
         payload: { sessionId: session.id, status: "error", title: session.title, error: errorMessage },
       });
+    } finally {
+      runnerWatchdog.dispose();
     }
   })();
 
   return {
     abort: () => {
       runnerClosed = true;
+      runnerWatchdog.dispose();
       promptInput.close();
       activeQuery?.close();
       abortController.abort();
@@ -1296,6 +1396,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       if (runnerClosed || promptInput.isClosed()) {
         throw new Error("Runner is closed.");
       }
+      currentAgentPrompt = nextPrompt;
       currentDisplayPrompt = appendOptions.displayPrompt ?? nextPrompt;
       if ("workspaceContext" in appendOptions) {
         latestWorkspaceContext = normalizeRunnerWorkspaceContext(appendOptions.workspaceContext);
@@ -1305,9 +1406,13 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       figmaContextSeen = figmaContextSeen || hasFigmaContext(currentDisplayPrompt, session.lastPrompt);
       figmaSvgAssetSeen = false;
       codeGraphRetrievalSeen = false;
+      emittedSuccessfulResult = false;
+      emittedTerminalStatus = false;
       observedAssistantTextActivity = false;
       awaitingVisiblePostToolResponse = false;
       emptySuccessAutoRetries = 0;
+      unfinishedPlanAutoRetries = 0;
+      runnerWatchdog.touch();
       await ensureMcpServersForPrompt(nextPrompt, nextAttachments);
       promptInput.enqueue(nextPrompt, nextAttachments);
     },

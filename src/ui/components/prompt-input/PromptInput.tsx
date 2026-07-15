@@ -1,7 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import type { SetStateAction } from "react";
-import { ArrowUp, Maximize2, Menu, Minimize2, Paperclip, Sparkles, Square, Target, Workflow, X } from "lucide-react";
+import { X } from "lucide-react";
 import type {
   ApiConfigProfile,
   ClientEvent,
@@ -32,8 +32,16 @@ import {
   scoreFileMentionOption,
   type FileMentionOption,
 } from "./file-mention-options";
+import {
+  formatLarkMentionSearchError,
+  getLarkMentionContext,
+  searchLarkMentionOptions,
+  serializeLarkMention,
+  type LarkMentionOption,
+} from "./lark-mention-options";
 import { fileToAttachment, hasDraggedFiles, PROMPT_ATTACHMENT_ACCEPT } from "./prompt-attachments";
 import {
+  buildQueuedDisplayPrompt,
   buildQueuedPrompt,
   mergeQueuedAttachments,
   readQueuedMessagesFromStorage,
@@ -52,7 +60,6 @@ import {
 } from "../../events";
 import { DecisionPanel } from "../DecisionPanel";
 import { CurrentSessionPlanDock } from "../CurrentSessionPlanDock";
-import { ComposerModelMenu } from "./ComposerModelMenu";
 import {
   AttachmentChips,
   BrowserAnnotationChips,
@@ -61,12 +68,25 @@ import {
   QueuedMessagesPanel,
 } from "./PromptComposerContextChips";
 import { PromptComposerTerminalStrip } from "./PromptComposerTerminalStrip";
+import { FileMentionPalette, LarkMentionPalette, SlashCommandPalette } from "./PromptComposerPalettes";
+import { PromptComposerFooter } from "./PromptComposerFooter";
+import {
+  DEFAULT_IMAGE_GENERATION_CONFIG,
+  ImageGenerationConfigDialog,
+  ImageGenerationPluginMenu,
+} from "./ImageGenerationPluginControls";
+import {
+  getImageGenerationDisplayPrompt,
+  IMAGE_GENERATION_PLUGIN_TOKEN,
+  mergePromptWithImageGenerationConfig,
+  restoreImageGenerationPluginFromPrompt,
+  type ImageGenerationConfig,
+} from "./image-generation-plugin";
 import {
   getEnabledProfiles,
   getRoutedModelOptionsForProfiles,
   resolveAvailableModelName,
 } from "../settings/settings-utils";
-import { TooltipButton } from "../TooltipButton";
 import { incrementModelUsage } from "./model-usage-count";
 
 const MAX_ROWS = 12;
@@ -77,7 +97,6 @@ const EXPANDED_MAX_HEIGHT = "70vh";
 const IME_ENTER_GRACE_MS = 120;
 const FILE_MENTION_PREVIEW_LIMIT = 10;
 const COMPOSER_SURFACE_WIDTH_CLASS = "w-full min-w-[min(430px,_100%)] max-w-[clamp(920px,_calc(100vw-420px),_1320px)] xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]";
-const COMPOSER_ICON_TOOLTIP_CLASS = "!top-auto bottom-full !mt-0 mb-2 whitespace-nowrap";
 const EMPTY_CODE_REFERENCES: CodeReferenceDraft[] = [];
 const EMPTY_FILE_REFERENCES: FileReferenceDraft[] = [];
 const EMPTY_MESSAGE_REFERENCES: MessageReferenceDraft[] = [];
@@ -160,7 +179,12 @@ export type PromptInputController = {
   sendPromptDraft: (
     prompt: string,
     attachments?: PromptAttachment[],
-    options?: { clearPrompt?: boolean; displayUserPrompt?: boolean; replaceHistoryId?: string },
+    options?: {
+      clearPrompt?: boolean;
+      displayUserPrompt?: boolean;
+      replaceHistoryId?: string;
+      agentPrompt?: string;
+    },
   ) => Promise<boolean>;
   validatePromptDraft: (prompt: string) => string | null;
 };
@@ -292,6 +316,10 @@ export function PromptInput({
   const [fileMentionOptions, setFileMentionOptions] = useState<FileMentionOption[]>([]);
   const [fileMentionLoading, setFileMentionLoading] = useState(false);
   const [fileMentionActiveIndex, setFileMentionActiveIndex] = useState(0);
+  const [larkMentionOptions, setLarkMentionOptions] = useState<LarkMentionOption[]>([]);
+  const [larkMentionLoading, setLarkMentionLoading] = useState(false);
+  const [larkMentionActiveIndex, setLarkMentionActiveIndex] = useState(0);
+  const [larkMentionUnavailable, setLarkMentionUnavailable] = useState(false);
   const [editingCodeReferenceId, setEditingCodeReferenceId] = useState<string | null>(null);
   const [editingCodeReferenceComment, setEditingCodeReferenceComment] = useState("");
   const [optimizingPrompt, setOptimizingPrompt] = useState(false);
@@ -303,6 +331,8 @@ export function PromptInput({
   const [goalNow, setGoalNow] = useState(() => Date.now());
   const [goalModeEnabled, setGoalModeEnabled] = useState(false);
   const [workflowForceEnabled, setWorkflowForceEnabled] = useState(false);
+  const [imageGenerationConfigsBySession, setImageGenerationConfigsBySession] = useState<Record<string, ImageGenerationConfig>>({});
+  const [imageGenerationConfigOpen, setImageGenerationConfigOpen] = useState(false);
   const [dismissedGoalKeyBySessionId, setDismissedGoalKeyBySessionId] = useState<Record<string, string>>({});
   const appSetGlobalError = useAppStore((state) => state.setGlobalError);
   const setGlobalError = controller?.setError ?? appSetGlobalError;
@@ -320,6 +350,21 @@ export function PromptInput({
   }, [appClearBrowserAnnotations, appSetBrowserAnnotations, appSetBrowserWorkbenchAnnotations, controller]);
   const { setBrowserAnnotations, setBrowserWorkbenchAnnotations, clearBrowserAnnotations } = browserAnnotationActions;
   const composerDraftSessionKey = getPromptDraftSessionKey(activeSessionId);
+  const imageGenerationConfig = imageGenerationConfigsBySession[composerDraftSessionKey] ?? DEFAULT_IMAGE_GENERATION_CONFIG;
+  const setImageGenerationConfig = useCallback((nextConfig: ImageGenerationConfig) => {
+    setImageGenerationConfigsBySession((current) => ({
+      ...current,
+      [composerDraftSessionKey]: nextConfig,
+    }));
+  }, [composerDraftSessionKey]);
+  const clearImageGenerationConfig = useCallback(() => {
+    setImageGenerationConfigsBySession((current) => {
+      if (!current[composerDraftSessionKey]) return current;
+      const next = { ...current };
+      delete next[composerDraftSessionKey];
+      return next;
+    });
+  }, [composerDraftSessionKey]);
   const codeReferenceSessionKey = getCodeReferenceSessionKey(activeSessionId);
   const storeSelectedSessionCwd = useAppStore((state) => {
     if (!activeSessionId) return "";
@@ -385,7 +430,13 @@ export function PromptInput({
     () => getFileMentionContext(prompt, cursorIndex || prompt.length),
     [cursorIndex, prompt],
   );
+  const larkMentionContext = useMemo(
+    () => getLarkMentionContext(prompt, cursorIndex || prompt.length),
+    [cursorIndex, prompt],
+  );
+  const hasLarkMentionContext = Boolean(larkMentionContext);
   const deferredFileMentionQuery = useDeferredValue(fileMentionContext?.query ?? "");
+  const deferredLarkMentionQuery = useDeferredValue(larkMentionContext?.query ?? "");
   const currentSessionQueue = useMemo(() => {
     if (!activeSessionId) return [];
     return queuedMessagesBySession[activeSessionId] ?? [];
@@ -438,7 +489,20 @@ export function PromptInput({
       .slice(0, FILE_MENTION_PREVIEW_LIMIT)
       .map((item) => item.option);
   }, [deferredFileMentionQuery, fileMentionContext, fileMentionOptions]);
-  const showFileMentionPalette = Boolean(fileMentionContext) && !showSlashPalette && !disabled && (fileMentionLoading || filteredFileMentionOptions.length > 0);
+  const useLarkMentionSearch = Boolean(
+    larkMentionContext
+    && /\p{Script=Han}/u.test(deferredLarkMentionQuery)
+    && !larkMentionUnavailable
+  );
+  const showLarkMentionPalette = useLarkMentionSearch
+    && !showSlashPalette
+    && !disabled
+    && (larkMentionLoading || larkMentionOptions.length > 0);
+  const showFileMentionPalette = Boolean(fileMentionContext)
+    && !useLarkMentionSearch
+    && !showSlashPalette
+    && !disabled
+    && (fileMentionLoading || filteredFileMentionOptions.length > 0);
   const enabledProfiles = useMemo<ApiConfigProfile[]>(() => getEnabledProfiles(apiConfigSettings.profiles), [apiConfigSettings.profiles]);
   const routedModelOptions = useMemo(() => getRoutedModelOptionsForProfiles(enabledProfiles), [enabledProfiles]);
   const availableModels = useMemo(() => routedModelOptions.map((option) => option.value), [routedModelOptions]);
@@ -493,12 +557,32 @@ export function PromptInput({
     }, 0);
   }, []);
 
-  const setPromptDraft = useCallback((nextPrompt: string, nextCursorIndex = nextPrompt.length) => {
+  const readCurrentPromptDraft = useCallback(() => (
+    promptRef.current ? getPromptTextFromEditor(promptRef.current) : promptDraftRef.current
+  ), []);
+
+  const setPromptDraft = useCallback((
+    nextPrompt: string,
+    nextCursorIndex = nextPrompt.length,
+    options: { preserveImageGenerationConfig?: boolean } = {},
+  ) => {
+    if (
+      !options.preserveImageGenerationConfig
+      && readCurrentPromptDraft().includes(IMAGE_GENERATION_PLUGIN_TOKEN)
+      && !nextPrompt.includes(IMAGE_GENERATION_PLUGIN_TOKEN)
+    ) {
+      clearImageGenerationConfig();
+    }
     promptDraftRef.current = nextPrompt;
     pendingCursorOffsetRef.current = nextCursorIndex;
     const editor = promptRef.current;
     if (editor && !isComposingRef.current) {
-      renderPromptEditorContent(editor, buildSlashCommandDisplayParts(nextPrompt, slashCommands));
+      renderPromptEditorContent(
+        editor,
+        buildSlashCommandDisplayParts(nextPrompt, slashCommands),
+        () => setImageGenerationConfigOpen(true),
+        () => setPromptDraft(readCurrentPromptDraft().replaceAll(IMAGE_GENERATION_PLUGIN_TOKEN, "")),
+      );
       editor.dataset.renderedPrompt = nextPrompt;
       if (document.activeElement === editor) {
         restoreEditorSelection(editor, nextCursorIndex);
@@ -507,7 +591,7 @@ export function PromptInput({
     }
     setPrompt(nextPrompt);
     setCursorIndex(nextCursorIndex);
-  }, [setPrompt, slashCommands]);
+  }, [clearImageGenerationConfig, readCurrentPromptDraft, setPrompt, slashCommands]);
 
   const isCompositionSettling = useCallback(() => (
     Date.now() - compositionEndedAtRef.current < IME_ENTER_GRACE_MS
@@ -519,13 +603,13 @@ export function PromptInput({
   }, []);
 
   const getCurrentPromptDraft = useCallback(() => {
-    const nextPrompt = promptRef.current ? getPromptTextFromEditor(promptRef.current) : promptDraftRef.current;
+    const nextPrompt = readCurrentPromptDraft();
     promptDraftRef.current = nextPrompt;
     if (nextPrompt !== prompt) {
       setPrompt(nextPrompt);
     }
     return nextPrompt;
-  }, [prompt, setPrompt]);
+  }, [prompt, readCurrentPromptDraft, setPrompt]);
 
   const handleOptimizePrompt = useCallback(async () => {
     if (disabled || optimizingPrompt) return;
@@ -566,6 +650,7 @@ export function PromptInput({
 
   const clearComposer = useCallback(() => {
     setPromptDraft("", 0);
+    clearImageGenerationConfig();
     setAttachments([]);
     setFileMentionActiveIndex(0);
     setSlashActiveIndex(0);
@@ -580,10 +665,10 @@ export function PromptInput({
       .catch((error) => console.warn("Failed to reset browser annotation state:", error));
     setShowSlashBrowser(false);
     setDismissedSlashQuery(null);
-  }, [activeSessionId, clearBrowserAnnotations, clearCodeReferences, clearFileReferences, clearMessageReferences, setAttachments, setBrowserWorkbenchAnnotations, setPromptDraft]);
+  }, [activeSessionId, clearBrowserAnnotations, clearCodeReferences, clearFileReferences, clearImageGenerationConfig, clearMessageReferences, setAttachments, setBrowserWorkbenchAnnotations, setPromptDraft]);
 
   const clearPromptDraftText = useCallback(() => {
-    setPromptDraft("", 0);
+    setPromptDraft("", 0, { preserveImageGenerationConfig: true });
     setShowSlashBrowser(false);
     setDismissedSlashQuery(null);
   }, [setPromptDraft]);
@@ -658,6 +743,7 @@ export function PromptInput({
       payload: {
         sessionId: activeSessionId,
         prompt: queuedMessage.prompt,
+        agentPrompt: queuedMessage.agentPrompt,
         attachments: preparedAttachments,
       },
     });
@@ -667,11 +753,16 @@ export function PromptInput({
   }, [activeSessionId, onSendMessage, prepareQueuedAttachmentsForDispatch, removeQueuedDraft, sendEvent]);
 
   const editQueuedDraft = useCallback((queuedMessage: QueuedMessageDraft) => {
-    setPromptDraft(queuedMessage.prompt, queuedMessage.prompt.length);
+    const restoredImagePlugin = restoreImageGenerationPluginFromPrompt(queuedMessage.agentPrompt ?? queuedMessage.prompt);
+    const editablePrompt = restoredImagePlugin?.prompt ?? queuedMessage.prompt;
+    if (restoredImagePlugin) {
+      setImageGenerationConfig(restoredImagePlugin.config);
+    }
+    setPromptDraft(editablePrompt, editablePrompt.length);
     setAttachments(queuedMessage.attachments);
     removeQueuedDraft(queuedMessage.id, activeSessionId);
-    focusPromptEditor(queuedMessage.prompt.length);
-  }, [activeSessionId, focusPromptEditor, removeQueuedDraft, setAttachments, setPromptDraft]);
+    focusPromptEditor(editablePrompt.length);
+  }, [activeSessionId, focusPromptEditor, removeQueuedDraft, setAttachments, setImageGenerationConfig, setPromptDraft]);
 
   const queueCurrentDraft = useCallback((promptOverride?: string) => {
     if (!activeSessionId) return false;
@@ -693,7 +784,8 @@ export function PromptInput({
       messageReferences,
       browserAnnotations,
     });
-    const validationError = validatePromptDraft(promptWithAnnotations);
+    const promptForDispatch = mergePromptWithImageGenerationConfig(promptWithAnnotations, imageGenerationConfig);
+    const validationError = validatePromptDraft(promptForDispatch);
     if (validationError) {
       setGlobalError(validationError);
       return false;
@@ -701,7 +793,8 @@ export function PromptInput({
 
     const nextQueuedMessage: QueuedMessageDraft = {
       id: crypto.randomUUID(),
-      prompt: promptWithAnnotations,
+      prompt: getImageGenerationDisplayPrompt(promptWithAnnotations),
+      agentPrompt: promptForDispatch,
       attachments,
       createdAt: Date.now(),
     };
@@ -716,7 +809,7 @@ export function PromptInput({
     setGlobalError(null);
     window.dispatchEvent(new CustomEvent(PROMPT_SENT_EVENT));
     return true;
-  }, [activeSessionId, attachments, browserAnnotations, clearComposer, codeReferences, fileReferences, goalModeEnabled, messageReferences, setGlobalError, validatePromptDraft, workflowForceEnabled]);
+  }, [activeSessionId, attachments, browserAnnotations, clearComposer, codeReferences, fileReferences, goalModeEnabled, imageGenerationConfig, messageReferences, setGlobalError, validatePromptDraft, workflowForceEnabled]);
 
   const submitCurrentInput = useCallback(async () => {
     const promptSnapshot = getCurrentPromptDraft();
@@ -752,7 +845,9 @@ export function PromptInput({
         messageReferences,
         browserAnnotations,
       });
-      const validationError = validatePromptDraft(promptWithAnnotations);
+      const promptForDispatch = mergePromptWithImageGenerationConfig(promptWithAnnotations, imageGenerationConfig);
+      const displayPrompt = getImageGenerationDisplayPrompt(promptWithAnnotations);
+      const validationError = validatePromptDraft(promptForDispatch);
       if (validationError) {
         setGlobalError(validationError);
         return false;
@@ -761,7 +856,10 @@ export function PromptInput({
       setSubmissionStatus("正在发送...");
       clearPromptDraftText();
 
-      const sent = await sendPromptDraft(promptWithAnnotations, attachmentsSnapshot, { clearPrompt: false });
+      const sent = await sendPromptDraft(displayPrompt, attachmentsSnapshot, {
+        agentPrompt: promptForDispatch,
+        clearPrompt: false,
+      });
       if (sent) {
         incrementModelUsage(selectedRuntimeModel);
         clearComposer();
@@ -778,7 +876,7 @@ export function PromptInput({
       setSubmissionStatus(null);
       submitInFlightRef.current = false;
     }
-  }, [attachments, browserAnnotations, clearComposer, clearPromptDraftText, codeReferences, controller, fileReferences, getCurrentPromptDraft, goalModeEnabled, isRunning, messageReferences, onSendMessage, queueCurrentDraft, selectedRuntimeModel, sendPromptDraft, setAttachments, setGlobalError, setPromptDraft, validatePromptDraft, workflowForceEnabled]);
+  }, [attachments, browserAnnotations, clearComposer, clearPromptDraftText, codeReferences, controller, fileReferences, getCurrentPromptDraft, goalModeEnabled, imageGenerationConfig, isRunning, messageReferences, onSendMessage, queueCurrentDraft, selectedRuntimeModel, sendPromptDraft, setAttachments, setGlobalError, setPromptDraft, validatePromptDraft, workflowForceEnabled]);
 
   useEffect(() => {
     const handlePromptSubmit = () => {
@@ -809,6 +907,32 @@ export function PromptInput({
     setFileMentionActiveIndex(0);
     focusPromptEditor(nextCursor);
   }, [activeSessionId, addFileReference, effectiveCwd, fileMentionContext, focusPromptEditor, prompt, setPromptDraft]);
+
+  const refreshFileMentionOptions = useCallback(() => {
+    const workspaceRoot = effectiveCwd;
+    if (!workspaceRoot) return;
+    fileMentionCacheRef.current = null;
+    setFileMentionLoading(true);
+    void collectFileMentionOptions(workspaceRoot)
+      .then((options) => {
+        fileMentionCacheRef.current = { cwd: workspaceRoot, options };
+        setFileMentionOptions(options);
+      })
+      .finally(() => setFileMentionLoading(false));
+  }, [effectiveCwd]);
+
+  const insertLarkMention = useCallback((option: LarkMentionOption) => {
+    if (!larkMentionContext) return;
+    const before = prompt.slice(0, larkMentionContext.start);
+    const after = prompt.slice(larkMentionContext.end);
+    const replacement = serializeLarkMention(option);
+    const nextPrompt = `${before}${replacement}${after}`;
+    const nextCursor = before.length + replacement.length;
+
+    setPromptDraft(nextPrompt, nextCursor);
+    setLarkMentionActiveIndex(0);
+    focusPromptEditor(nextCursor);
+  }, [focusPromptEditor, larkMentionContext, prompt, setPromptDraft]);
 
   const selectSlashCommand = useCallback((command: SlashCommandOption) => {
     const context = slashCommandContext;
@@ -871,6 +995,29 @@ export function PromptInput({
         e.preventDefault();
         setShowSlashBrowser(false);
         setDismissedSlashQuery(slashQuery?.toLowerCase() ?? null);
+        return;
+      }
+    }
+    if (showLarkMentionPalette) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setLarkMentionActiveIndex((current) => {
+          const count = larkMentionOptions.length;
+          if (count === 0) return 0;
+          return e.key === "ArrowDown"
+            ? (current + 1) % count
+            : (current - 1 + count) % count;
+        });
+        return;
+      }
+      if (((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") && larkMentionOptions.length > 0) {
+        e.preventDefault();
+        insertLarkMention(larkMentionOptions[larkMentionActiveIndex] ?? larkMentionOptions[0]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setLarkMentionOptions([]);
         return;
       }
     }
@@ -981,6 +1128,19 @@ export function PromptInput({
   const handlePaste = useCallback(async (event: React.ClipboardEvent<HTMLDivElement>) => {
     if (disabled) return;
 
+    const plainText = getPlainTextFromClipboardData(event.clipboardData);
+    if (plainText) {
+      event.preventDefault();
+      const editor = promptRef.current ?? event.currentTarget;
+      const currentPrompt = getPromptTextFromEditor(editor);
+      const fallbackCursor = cursorIndex || currentPrompt.length;
+      const selection = getSelectionRangeInEditor(editor) ?? { start: fallbackCursor, end: fallbackCursor };
+      const nextDraft = insertTextIntoPrompt(currentPrompt, plainText, selection.start, selection.end);
+      setPromptDraft(nextDraft.prompt, nextDraft.cursorIndex);
+      focusPromptEditor(nextDraft.cursorIndex);
+      return;
+    }
+
     const clipboardFiles = Array.from(event.clipboardData.items)
       .filter((item) => item.kind === "file")
       .map((item) => item.getAsFile())
@@ -991,18 +1151,6 @@ export function PromptInput({
       await addFiles(clipboardFiles);
       return;
     }
-
-    const plainText = getPlainTextFromClipboardData(event.clipboardData);
-    if (!plainText) return;
-
-    event.preventDefault();
-    const editor = promptRef.current ?? event.currentTarget;
-    const currentPrompt = getPromptTextFromEditor(editor);
-    const fallbackCursor = cursorIndex || currentPrompt.length;
-    const selection = getSelectionRangeInEditor(editor) ?? { start: fallbackCursor, end: fallbackCursor };
-    const nextDraft = insertTextIntoPrompt(currentPrompt, plainText, selection.start, selection.end);
-    setPromptDraft(nextDraft.prompt, nextDraft.cursorIndex);
-    focusPromptEditor(nextDraft.cursorIndex);
   }, [addFiles, cursorIndex, disabled, focusPromptEditor, setPromptDraft]);
 
   const handleFileInputChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1077,6 +1225,12 @@ export function PromptInput({
     }
     const previousPrompt = promptDraftRef.current;
     const nextPrompt = getPromptTextFromEditor(target);
+    if (
+      previousPrompt.includes(IMAGE_GENERATION_PLUGIN_TOKEN)
+      && !nextPrompt.includes(IMAGE_GENERATION_PLUGIN_TOKEN)
+    ) {
+      clearImageGenerationConfig();
+    }
     const nextCursor = resolvePromptEditorInputCursor(previousPrompt, nextPrompt, getSelectionOffsetInEditor(target));
     promptDraftRef.current = nextPrompt;
     pendingCursorOffsetRef.current = nextCursor;
@@ -1168,14 +1322,19 @@ export function PromptInput({
     const isActive = document.activeElement === editor;
     const cursorOffset = pendingCursorOffsetRef.current ?? (isActive ? getSelectionOffsetInEditor(editor) : null);
     if (editor.dataset.renderedPrompt !== prompt && !isComposingRef.current) {
-      renderPromptEditorContent(editor, slashDisplayParts);
+      renderPromptEditorContent(
+        editor,
+        slashDisplayParts,
+        () => setImageGenerationConfigOpen(true),
+        () => setPromptDraft(readCurrentPromptDraft().replaceAll(IMAGE_GENERATION_PLUGIN_TOKEN, "")),
+      );
       editor.dataset.renderedPrompt = prompt;
     }
     if (isActive && cursorOffset !== null && !isComposingRef.current) {
       restoreEditorSelection(editor, cursorOffset);
     }
     pendingCursorOffsetRef.current = null;
-  }, [prompt, slashDisplayParts]);
+  }, [prompt, readCurrentPromptDraft, setPromptDraft, slashDisplayParts]);
 
   useEffect(() => {
     const handlePromptFocus = () => {
@@ -1212,6 +1371,44 @@ export function PromptInput({
   useEffect(() => {
     setFileMentionActiveIndex(0);
   }, [fileMentionContext?.query]);
+
+  useEffect(() => {
+    setLarkMentionActiveIndex(0);
+  }, [larkMentionContext?.query]);
+
+  useEffect(() => {
+    if (!hasLarkMentionContext) setLarkMentionUnavailable(false);
+  }, [hasLarkMentionContext]);
+
+  useEffect(() => {
+    if (!useLarkMentionSearch || !larkMentionContext) {
+      setLarkMentionOptions([]);
+      setLarkMentionLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLarkMentionLoading(true);
+    void searchLarkMentionOptions(deferredLarkMentionQuery)
+      .then((options) => {
+        if (!cancelled) setLarkMentionOptions(options);
+      })
+      .catch((error) => {
+        console.warn("[prompt-input] Lark contact search failed", error);
+        if (!cancelled) {
+          setLarkMentionOptions([]);
+          setLarkMentionUnavailable(true);
+          setGlobalError(formatLarkMentionSearchError(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLarkMentionLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deferredLarkMentionQuery, larkMentionContext, setGlobalError, useLarkMentionSearch]);
 
   useEffect(() => {
     setSlashActiveIndex(0);
@@ -1277,7 +1474,11 @@ export function PromptInput({
 
     void (async () => {
       const queuedIds = new Set(queuedSnapshot.map((item) => item.id));
-      const sent = await sendPromptDraft(buildQueuedPrompt(queuedSnapshot), mergeQueuedAttachments(queuedSnapshot), { clearPrompt: false });
+      const sent = await sendPromptDraft(
+        buildQueuedDisplayPrompt(queuedSnapshot),
+        mergeQueuedAttachments(queuedSnapshot),
+        { agentPrompt: buildQueuedPrompt(queuedSnapshot), clearPrompt: false },
+      );
       if (sent) {
         setQueuedMessagesBySession((current) => {
           const remainingQueue = (current[activeSessionId] ?? []).filter((item) => !queuedIds.has(item.id));
@@ -1385,88 +1586,31 @@ export function PromptInput({
         </div>
       )}
       {showSlashPalette && (
-        <div className={`prompt-composer-surface relative z-[130] mx-auto mb-3 ${composerSurfaceWidthClass}`}>
-          <div className="overflow-hidden rounded-[24px] border border-black/6 bg-white/94 shadow-[0_18px_50px_rgba(30,38,52,0.08)] backdrop-blur">
-            <div className="flex items-center justify-between gap-3 border-b border-black/6 px-4 py-2 text-xs font-medium text-muted">
-              <span>可用 Slash 命令</span>
-              <span>{filteredSlashCommands.length} 个</span>
-            </div>
-            <div className="grid max-h-[min(42vh,320px)] gap-1 overflow-y-auto overflow-x-hidden p-2">
-              {filteredSlashCommands.map((command, index) => (
-                <button
-                  key={command.name}
-                  type="button"
-                  className={`min-w-0 rounded-xl px-3 py-2 text-left text-sm transition-colors ${index === slashActiveIndex ? "bg-accent/10 text-accent" : "text-ink-700 hover:bg-surface-secondary"}`}
-                  onClick={() => {
-                    selectSlashCommand(command);
-                  }}
-                >
-                  <span className="flex min-w-0 items-baseline gap-2 overflow-hidden">
-                    <span className="shrink-0 font-medium">/{command.name}</span>
-                    <span className="min-w-0 truncate text-xs font-normal text-muted" title={command.description || "Enter/Tab 选择"}>
-                      {command.description || "Enter/Tab 选择"}
-                    </span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+        <SlashCommandPalette
+          surfaceWidthClass={composerSurfaceWidthClass}
+          filteredCommands={filteredSlashCommands}
+          activeIndex={slashActiveIndex}
+          onSelect={selectSlashCommand}
+        />
+      )}
+      {showLarkMentionPalette && (
+        <LarkMentionPalette
+          surfaceWidthClass={composerSurfaceWidthClass}
+          loading={larkMentionLoading}
+          options={larkMentionOptions}
+          activeIndex={larkMentionActiveIndex}
+          onSelect={insertLarkMention}
+        />
       )}
       {showFileMentionPalette && (
-        <div className={`prompt-composer-surface mx-auto mb-3 ${composerSurfaceWidthClass}`}>
-          <div className="overflow-hidden rounded-[22px] border border-[#d0d7de] bg-white/96 shadow-[0_18px_50px_rgba(30,38,52,0.10)] backdrop-blur">
-            <div className="flex items-center justify-between gap-3 border-b border-black/6 px-4 py-2 text-xs font-medium text-muted">
-              <span>@ 文件提及</span>
-              <div className="flex items-center gap-2">
-                <span>{fileMentionLoading ? "扫描工作区..." : `${filteredFileMentionOptions.length} 个候选`}</span>
-                <button
-                  type="button"
-                  className="rounded-full border border-black/8 bg-white px-2 py-0.5 text-[11px] font-semibold text-muted transition hover:text-accent"
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => {
-                    const workspaceRoot = effectiveCwd;
-                    if (!workspaceRoot) return;
-                    fileMentionCacheRef.current = null;
-                    setFileMentionLoading(true);
-                    void collectFileMentionOptions(workspaceRoot)
-                      .then((options) => {
-                        fileMentionCacheRef.current = { cwd: workspaceRoot, options };
-                        setFileMentionOptions(options);
-                      })
-                      .finally(() => setFileMentionLoading(false));
-                  }}
-                >
-                  刷新
-                </button>
-              </div>
-            </div>
-            <div className="grid max-h-[min(42vh,320px)] gap-1 overflow-y-auto p-2">
-              {filteredFileMentionOptions.map((option, index) => (
-                <button
-                  key={option.path}
-                  type="button"
-                  className={`flex items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors ${index === fileMentionActiveIndex ? "bg-[#ddf4ff] text-[#0969da]" : "text-ink-700 hover:bg-surface-secondary"}`}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => insertFileMention(option)}
-                >
-                  <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-md border text-[12px] ${option.kind === "directory" ? "border-[#d0d7de] bg-[#f6f8fa] text-[#57606a]" : "border-[#bfd7ff] bg-[#ddf4ff] text-[#0969da]"}`}>
-                    {option.kind === "directory" ? "⌁" : "□"}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate font-medium">{option.label}</span>
-                  <span className="shrink-0 rounded-full border border-black/8 bg-white px-2 py-0.5 text-[11px] text-muted">
-                    {option.kind === "directory" ? "目录" : "文件"}
-                  </span>
-                </button>
-              ))}
-              {!fileMentionLoading && filteredFileMentionOptions.length === 0 && (
-                <div className="px-4 py-5 text-center text-sm text-muted">
-                  没找到匹配文件，试试缩短关键词。
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        <FileMentionPalette
+          surfaceWidthClass={composerSurfaceWidthClass}
+          loading={fileMentionLoading}
+          fileMentionOptions={filteredFileMentionOptions}
+          activeIndex={fileMentionActiveIndex}
+          onRefresh={refreshFileMentionOptions}
+          onSelect={insertFileMention}
+        />
       )}
       {activeSessionPlan && (
         <div
@@ -1603,125 +1747,64 @@ export function PromptInput({
           />
         </div>
         </div>
-        <div className="prompt-composer-footer mt-2 flex min-h-10 items-center justify-between gap-3 overflow-visible">
-          <div className="prompt-composer-runtime-controls flex min-w-max items-center gap-2 text-[#73777f]">
-            <ComposerModelMenu
-              modelValue={selectedRuntimeModel}
-              modelOptions={modelSelectOptions}
-              reasoningMode={reasoningMode}
-              disabled={disabled || availableModels.length === 0}
-              onModelChange={handleRuntimeModelChange}
-              onReasoningModeChange={setReasoningMode}
-              placeholder={availableModels.length === 0 ? "请先配置模型" : "选择模型"}
-            />
-          </div>
-          <div className="ml-auto flex min-w-max shrink-0 items-center gap-1 text-[#9ca0a7]">
-            <TooltipButton
-              type="button"
-              className={`grid h-8 w-8 place-items-center rounded-lg transition hover:bg-[#f4f6f8] disabled:cursor-not-allowed disabled:opacity-50 ${showSlashBrowser ? "bg-[#ecfaf7] text-[#00ad9a]" : ""}`}
-              onClick={() => setShowSlashBrowser((value) => !value)}
-              aria-label="打开 Slash 命令列表"
-              title="Slash 命令"
-              tooltip="Slash 命令"
-              tooltipClassName={COMPOSER_ICON_TOOLTIP_CLASS}
-              disabled={disabled || slashCommands.length === 0}
-            >
-              <Menu className="h-[19px] w-[19px]" aria-hidden="true" />
-            </TooltipButton>
-            <TooltipButton
-              type="button"
-              className={`grid h-8 w-8 place-items-center rounded-lg transition hover:bg-[#f4f6f8] disabled:cursor-not-allowed disabled:opacity-50 ${optimizingPrompt ? "bg-[#ecfaf7] text-[#00ad9a]" : ""}`}
-              onClick={() => { void handleOptimizePrompt(); }}
-              aria-label="优化 Prompt"
-              title="优化 Prompt"
-              tooltip="优化 Prompt"
-              tooltipClassName={COMPOSER_ICON_TOOLTIP_CLASS}
-              disabled={disabled || optimizingPrompt}
-            >
-              <Sparkles className={`h-[19px] w-[19px] ${optimizingPrompt ? "animate-pulse" : ""}`} aria-hidden="true" />
-            </TooltipButton>
-            <TooltipButton
-              type="button"
-              className="grid h-8 w-8 place-items-center rounded-lg transition hover:bg-[#f4f6f8] disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={handleSelectAttachmentClick}
-              aria-label="添加附件"
-              title="添加附件"
-              tooltip="添加附件"
-              tooltipClassName={COMPOSER_ICON_TOOLTIP_CLASS}
-              disabled={disabled}
-            >
-              <Paperclip className="h-[19px] w-[19px]" aria-hidden="true" />
-            </TooltipButton>
-            <TooltipButton
-              type="button"
-              className={`grid h-8 w-8 place-items-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                workflowForceEnabled
-                  ? "border-blue-200 bg-blue-50 text-blue-700"
-                  : "border-transparent text-[#73777f] hover:bg-[#f4f6f8]"
-              }`}
-              onClick={() => setWorkflowForceEnabled((value) => !value)}
-              aria-label={workflowForceEnabled ? "取消本次使用 Workflow" : "本次使用 Workflow"}
-              aria-pressed={workflowForceEnabled}
-              title="本次使用 Workflow"
-              tooltip="本次使用 Workflow"
-              tooltipClassName={COMPOSER_ICON_TOOLTIP_CLASS}
-              disabled={disabled}
-            >
-              <Workflow className="h-4 w-4 shrink-0" aria-hidden="true" />
-            </TooltipButton>
-            <TooltipButton
-              type="button"
-              className={`grid h-8 w-8 place-items-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                goalModeEnabled
-                  ? "border-[#34c759] bg-[#f3fbf6] text-[#1f9d4d]"
-                  : "border-transparent text-[#73777f] hover:bg-[#f4f6f8]"
-              }`}
-              onClick={() => setGoalModeEnabled((value) => !value)}
-              aria-label={goalModeEnabled ? "关闭追求目标模式" : "开启追求目标模式"}
-              aria-pressed={goalModeEnabled}
-              title="追求目标"
-              tooltip="追求目标"
-              tooltipClassName={COMPOSER_ICON_TOOLTIP_CLASS}
-              disabled={disabled}
-            >
-              <Target className="h-4 w-4 shrink-0" aria-hidden="true" />
-            </TooltipButton>
-            <TooltipButton
-              type="button"
-              className={`grid h-8 w-8 place-items-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                composerExpanded
-                  ? "border-accent/45 bg-[#fff4ee] text-accent"
-                  : "border-transparent text-[#73777f] hover:bg-[#f4f6f8]"
-              }`}
-              onClick={handleToggleComposerExpand}
-              aria-label={composerExpanded ? "收起输入框" : "放大输入框"}
-              aria-pressed={composerExpanded}
-              title={composerExpanded ? "收起输入框" : "放大输入框"}
-              tooltip={composerExpanded ? "收起输入框" : "放大输入框"}
-              tooltipClassName={COMPOSER_ICON_TOOLTIP_CLASS}
-              disabled={disabled}
-            >
-              {composerExpanded
-                ? <Minimize2 className="h-[19px] w-[19px]" aria-hidden="true" />
-                : <Maximize2 className="h-[19px] w-[19px]" aria-hidden="true" />}
-            </TooltipButton>
-            <TooltipButton
-              type="button"
-              className={`grid h-9 w-9 place-items-center rounded-lg transition disabled:cursor-not-allowed disabled:opacity-60 ${!hasDraft && isRunning ? "bg-error text-white hover:bg-error/90" : "bg-[#111111] text-white hover:bg-black"}`}
-              onClick={handleButtonClick}
-              aria-label={!hasDraft && isRunning ? "停止会话" : isRunning ? "加入待发送队列" : "发送提示"}
-              tooltip={!hasDraft && isRunning ? "停止会话" : isRunning ? "加入待发送队列" : "发送提示"}
-              tooltipClassName={COMPOSER_ICON_TOOLTIP_CLASS}
-              disabled={disabled}
-            >
-              {!hasDraft && isRunning ? (
-                <Square className="h-4 w-4 fill-current" aria-hidden="true" />
-              ) : (
-                <ArrowUp className="h-5 w-5 stroke-[2.4]" aria-hidden="true" />
-              )}
-            </TooltipButton>
-          </div>
-        </div>
+        <PromptComposerFooter
+          pluginMenu={<ImageGenerationPluginMenu
+            disabled={disabled}
+            onInsert={() => {
+              const currentPrompt = getCurrentPromptDraft();
+              if (currentPrompt.includes(IMAGE_GENERATION_PLUGIN_TOKEN)) {
+                setImageGenerationConfigOpen(true);
+                return;
+              }
+              const selection = promptRef.current
+                ? getSelectionRangeInEditor(promptRef.current)
+                : { start: currentPrompt.length, end: currentPrompt.length };
+              const nextDraft = insertTextIntoPrompt(
+                currentPrompt,
+                IMAGE_GENERATION_PLUGIN_TOKEN,
+                selection.start,
+                selection.end,
+              );
+              setPromptDraft(nextDraft.prompt, nextDraft.cursorIndex);
+              setImageGenerationConfigOpen(true);
+              focusPromptEditor(nextDraft.cursorIndex);
+            }}
+          />}
+          modelValue={selectedRuntimeModel}
+          modelOptions={modelSelectOptions}
+          reasoningMode={reasoningMode}
+          modelDisabled={disabled || availableModels.length === 0}
+          modelPlaceholder={availableModels.length === 0 ? "请先配置模型" : "选择模型"}
+          onModelChange={handleRuntimeModelChange}
+          onReasoningModeChange={setReasoningMode}
+          disabled={disabled}
+          slashBrowserOpen={showSlashBrowser}
+          slashCommandDisabled={disabled || slashCommands.length === 0}
+          onToggleSlashBrowser={() => setShowSlashBrowser((value) => !value)}
+          optimizingPrompt={optimizingPrompt}
+          onOptimizePrompt={() => { void handleOptimizePrompt(); }}
+          onSelectAttachment={handleSelectAttachmentClick}
+          workflowEnabled={workflowForceEnabled}
+          onToggleWorkflow={() => setWorkflowForceEnabled((value) => !value)}
+          goalEnabled={goalModeEnabled}
+          onToggleGoal={() => setGoalModeEnabled((value) => !value)}
+          expanded={composerExpanded}
+          onToggleExpanded={handleToggleComposerExpand}
+          hasDraft={hasDraft}
+          isRunning={isRunning}
+          onPrimaryAction={handleButtonClick}
+        />
+        {imageGenerationConfigOpen && (
+          <ImageGenerationConfigDialog
+            config={imageGenerationConfig}
+            onCancel={() => setImageGenerationConfigOpen(false)}
+            onSave={(nextConfig) => {
+              setImageGenerationConfig(nextConfig);
+              setImageGenerationConfigOpen(false);
+              focusPromptEditor();
+            }}
+          />
+        )}
         <input
           ref={fileInputRef}
           type="file"

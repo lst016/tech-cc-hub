@@ -21,8 +21,9 @@ test("active session model takes precedence over composer runtime model", () => 
     /const explicitRuntimeModel = activeSessionModel \|\| runtimeModel\.trim\(\);\s+const selectedRuntimeModel = resolveAvailableModelName\(\s+explicitRuntimeModel \|\| routedModelOptions\[0\]\?\.value \|\| activeProfile\?\.model\?\.trim\(\),\s+availableModels,\s+\);/,
   );
   assert.match(promptInputSource, /onModelChange=\{handleRuntimeModelChange\}/);
-  assert.match(promptInputSource, /setRuntimeModel\(nextModel\)/);
-  assert.match(promptInputSource, /setSessionModel\(activeSessionId, nextModel\)/);
+  assert.match(promptInputSource, /appSetRuntimeModel\(nextModel\)/);
+  assert.match(promptInputSource, /appSetSessionModel\(activeSessionId, nextModel\)/);
+  assert.match(promptInputSource, /controller\.setModel\(nextModel\)/);
   assert.match(promptInputSource, /type: "session\.set_model"/);
   assert.match(
     storeSource,

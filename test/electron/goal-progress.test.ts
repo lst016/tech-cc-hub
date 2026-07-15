@@ -188,15 +188,16 @@ describe("goal progress", () => {
   });
 
   it("keeps goal mode as a compact prompt composer button", () => {
-    const source = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
+    const promptInputSource = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
+    const footerSource = readFileSync("src/ui/components/prompt-input/PromptComposerFooter.tsx", "utf8");
 
-    assert.match(source, /formatGoalModePrompt/);
-    assert.match(source, /\/goal \$\{trimmed\}/);
-    assert.match(source, /aria-pressed=\{goalModeEnabled\}/);
-    assert.match(source, /title="追求目标"/);
-    assert.match(source, /grid h-8 w-8 place-items-center rounded-lg border/);
-    assert.match(source, /border-\[#34c759\]/);
-    assert.doesNotMatch(source, />追求目标<\/span>/);
-    assert.doesNotMatch(source, /h-4 w-7/);
+    assert.match(promptInputSource, /formatGoalModePrompt/);
+    assert.match(promptInputSource, /\/goal \$\{trimmed\}/);
+    assert.match(footerSource, /aria-pressed=\{goalEnabled\}/);
+    assert.match(footerSource, /title="追求目标"/);
+    assert.match(footerSource, /grid h-8 w-8 place-items-center rounded-lg border/);
+    assert.match(footerSource, /border-\[#34c759\]/);
+    assert.doesNotMatch(footerSource, />追求目标<\/span>/);
+    assert.doesNotMatch(footerSource, /h-4 w-7/);
   });
 });

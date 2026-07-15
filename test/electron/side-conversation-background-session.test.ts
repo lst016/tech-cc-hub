@@ -56,4 +56,16 @@ describe("ephemeral BTW protocol contract", () => {
     assert.match(btwBranches, /btwRuntimeManager\.closeParent/);
     assert.doesNotMatch(btwBranches, /store\.(createSession|updateSession|addMessage|deleteSession)/);
   });
+
+  it("prepares separate display and agent attachments before a BTW send", () => {
+    const source = readFileSync("src/electron/ipc-handlers.ts", "utf8");
+    const start = source.indexOf('if (event.type === "btw.thread.send")');
+    const end = source.indexOf('if (event.type === "btw.thread.stop")');
+    const sendBranch = source.slice(start, end);
+
+    assert.ok(start >= 0 && end > start, "BTW send branch should exist");
+    assert.match(sendBranch, /preparePromptAttachmentsForSession\(event\.payload\.attachments\)/);
+    assert.match(sendBranch, /attachments:\s*agentAttachments/);
+    assert.match(sendBranch, /displayAttachments[,\s]/);
+  });
 });

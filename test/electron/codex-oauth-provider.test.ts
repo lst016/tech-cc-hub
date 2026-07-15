@@ -384,29 +384,27 @@ test("codex streaming responses are folded into anthropic-compatible output", ()
   assert.equal(message.usage.output_tokens, 5);
 });
 
-test("codex settings use read-only agent handoff plus manual credential input", () => {
+test("codex settings use the bundled runtime plus manual credential fallback", () => {
   const source = readFileSync("src/ui/components/settings/ApiProfilesSettingsPage.tsx", "utf8");
+  const mainSource = readFileSync("src/electron/main.ts", "utf8");
+  const preloadSource = readFileSync("src/electron/preload.cts", "utf8");
 
   assert.match(source, /手动凭据 JSON 兜底/);
   assert.match(source, /normalizeCodexManualCredentialInput/);
-  assert.match(source, /read-only credential handoff/);
+  assert.match(source, /连接 ChatGPT/);
+  assert.match(source, /startCodexOAuthRuntime/);
+  assert.match(source, /saveApiConfig\(\{ profiles \}\)/);
+  assert.match(source, /disabled=\{Boolean\(codexLogin\)\}/);
+  assert.match(source, /使用设备码/);
+  assert.match(source, /CODEX_OAUTH_STORED_CREDENTIAL/);
   assert.match(source, /应用手动凭据/);
-  assert.match(source, /Do not create, update, delete, disable, rename, reorder, or normalize any API profile from the Agent session/);
-  assert.match(source, /Never run a setup command or script that writes `api-config\.json`/);
-  assert.match(source, /do not run any tech-cc-hub setup\/import script/);
-  assert.match(source, /multiple API profiles\/providers/);
-  assert.match(source, /Preserve every existing non-Codex profile exactly/);
-  assert.match(source, /Secret-handling rules/);
-  assert.match(source, /Do not print raw secret values in diagnostics/);
-  assert.match(source, /Do not run broad text searches such as `rg apiKey`/);
-  assert.match(source, /use a structured parser and print only redacted booleans\/counts/);
-  assert.match(source, /Existing API profile preservation snapshot/);
-  assert.doesNotMatch(source, /Run the setup command below/);
-  assert.doesNotMatch(source, /timestamped backup/);
-  assert.doesNotMatch(source, /npm run codex:oauth:setup -- --profile-id/);
-  assert.match(source, /Agent 引导配置/);
-  assert.doesNotMatch(source, /OAuth 凭据/);
-  assert.doesNotMatch(source, /Codex 授权/);
+  assert.doesNotMatch(source, /Agent 引导配置/);
+  assert.doesNotMatch(source, /buildCodexGuidePrompt/);
+  assert.match(mainSource, /new CodexRuntimeLoginManager/);
+  assert.match(mainSource, /codex-oauth-runtime-start/);
+  assert.match(mainSource, /redactApiConfigSettingsForRenderer/);
+  assert.match(preloadSource, /onCodexOAuthRuntimeEvent/);
+  assert.doesNotMatch(mainSource, /codex-oauth-complete/);
 });
 
 test("codex setup imports official codex login instead of composing oauth urls", () => {
@@ -421,14 +419,19 @@ test("codex setup imports official codex login instead of composing oauth urls",
   assert.doesNotMatch(source, /localhost:1455\/auth\/callback/);
 });
 
-test("codex proxy reloads credentials before retrying stale refresh tokens", () => {
+test("codex proxy refreshes the same profile once without importing another CLI account", () => {
   const source = readFileSync("src/electron/libs/codex/codex-anthropic-proxy.ts", "utf8");
 
   assert.match(source, /credentialRefreshes/);
   assert.match(source, /readProfileCredential/);
-  assert.match(source, /readCodexCliCredential/);
-  assert.match(source, /parseCodexCliAuthCredential/);
+  assert.doesNotMatch(source, /readCodexCliCredential/);
+  assert.doesNotMatch(source, /parseCodexCliAuthCredential/);
   assert.match(source, /already been used/);
+  assert.match(source, /upstream\.status === 401/);
+  assert.doesNotMatch(source, /upstream\.status === 401 \|\| upstream\.status === 403/);
+  assert.match(source, /getUsableCredential\(profile, true\)/);
+  assert.match(source, /forceRefresh = false/);
+  assert.match(source, /latestCredential\.accessToken !== staleCredential\.accessToken/);
 });
 
 test("development startup isolates Electron cache and Codex proxy port", () => {

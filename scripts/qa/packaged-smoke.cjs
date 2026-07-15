@@ -11,7 +11,7 @@ const timeoutMs = Number(process.env.TECH_CC_HUB_PACKAGED_SMOKE_TIMEOUT_MS || 30
 const fatalLogPatterns = [
   /A JavaScript error occurred/i,
   /Uncaught Exception/i,
-  /Cannot find module/i,
+  /Cannot find (?:module|package)/i,
   /Cannot find module ['"].*web-tree-sitter/i,
 ];
 
@@ -31,9 +31,21 @@ function assertInsideSmokeRoot(target) {
   }
 }
 
-function removeSmokeDir(target) {
+function removeSmokeDir(target, { bestEffort = false } = {}) {
   assertInsideSmokeRoot(target);
-  rmSync(target, { recursive: true, force: true });
+  try {
+    rmSync(target, {
+      recursive: true,
+      force: true,
+      maxRetries: 20,
+      retryDelay: 250,
+    });
+  } catch (error) {
+    if (!bestEffort) {
+      throw error;
+    }
+    console.warn(`[packaged-smoke] cleanup deferred for ${target}: ${error.message}`);
+  }
 }
 
 function killProcessTree(child) {
@@ -118,7 +130,7 @@ async function main() {
     throw new Error(`Packaged app wrote fatal startup log matching ${fatalPattern}:\n${tail(startupLog)}`);
   }
 
-  removeSmokeDir(userDataDir);
+  removeSmokeDir(userDataDir, { bestEffort: true });
   console.log(`PACKAGED_SMOKE_OK ${packagedExe}`);
 }
 

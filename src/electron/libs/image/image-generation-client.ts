@@ -85,6 +85,7 @@ export type GenerateImageParams = {
 const SUPPORTED_QUALITIES = new Set(["auto", "low", "medium", "high"]);
 const SUPPORTED_FORMATS = new Set(["png", "jpeg", "webp"]);
 const SUPPORTED_BACKGROUNDS = new Set(["auto", "opaque", "transparent"]);
+const DOUBAO_SEEDREAM_MODEL_PATTERN = /(?:^|[-_])(?:doubao[-_])?seedream(?:[-_]|$)/i;
 
 export async function generateImages(params: GenerateContext): Promise<ImageGenerationToolResult> {
   const route = resolveImageGenerationRoute(params.context.selectedConfig, params.context.enabledConfigs);
@@ -166,38 +167,38 @@ function resolveMode(request: ImageGenerationRequest): "generate" | "edit" {
   return (request.referenceImagePaths?.length ?? 0) > 0 ? "edit" : "generate";
 }
 
+function shouldDisableWatermark(model: string): boolean {
+  return DOUBAO_SEEDREAM_MODEL_PATTERN.test(model.trim());
+}
+
 async function runGenerateRequest(ctx: RequestCommon): Promise<ImageGenerationToolResult> {
   const { endpoint, route, params } = ctx;
-  const body: Record<string, unknown> = {
-    model: route.model,
-    prompt: params.request.prompt.trim(),
-    n: params.request.count ?? 1,
-  };
-  if (params.request.size) body.size = params.request.size;
-  if (params.request.quality) body.quality = params.request.quality;
-  if (params.request.outputFormat) body.output_format = params.request.outputFormat;
-  if (params.request.background) body.background = params.request.background;
+  const requestedCount = params.request.count ?? 1;
+  return runImageRequestBatch("generate", route, requestedCount, async () => {
+    const body: Record<string, unknown> = {
+      model: route.model,
+      prompt: params.request.prompt.trim(),
+      n: 1,
+    };
+    if (params.request.size) body.size = params.request.size;
+    if (params.request.quality) body.quality = params.request.quality;
+    if (params.request.outputFormat) body.output_format = params.request.outputFormat;
+    if (params.request.background) body.background = params.request.background;
+    if (shouldDisableWatermark(route.model)) body.watermark = false;
 
-  const response = await fetchWithTimeout(endpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${route.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  }, REQUEST_TIMEOUT_MS);
+    const response = await fetchWithTimeout(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${route.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }, REQUEST_TIMEOUT_MS);
 
-  const parsed = await parseUpstreamResponse(response);
-  if (!parsed.ok) {
-    return parsed.error;
-  }
-
-  const artifacts = await persistResponseImages(parsed.data, params, route.model);
-  if (!artifacts.ok) {
-    return artifacts.error;
-  }
-
-  return buildSuccess("generate", route, artifacts.artifacts, params.request.count ?? 1);
+    const parsed = await parseUpstreamResponse(response);
+    if (!parsed.ok) return { ok: false, error: parsed.error };
+    return persistResponseImages(parsed.data.slice(0, 1), params, route.model);
+  });
 }
 
 async function runEditRequest(ctx: RequestCommon): Promise<ImageGenerationToolResult> {
@@ -217,23 +218,17 @@ async function runEditRequest(ctx: RequestCommon): Promise<ImageGenerationToolRe
     validatedRefs.push(validated);
   }
 
-  const formData = new FormData();
-  formData.append("model", route.model);
-  formData.append("prompt", params.request.prompt.trim());
-  formData.append("n", String(params.request.count ?? 1));
-  if (params.request.size) formData.append("size", params.request.size);
-  if (params.request.quality) formData.append("quality", params.request.quality);
-  if (params.request.outputFormat) formData.append("output_format", params.request.outputFormat);
-  if (params.request.background) formData.append("background", params.request.background);
-
-  // 第一张作为 image[]；OpenAI edits 接受多个 image 字段
+  const referenceFiles: Array<{ blob: Blob; name: string }> = [];
   for (const ref of validatedRefs) {
     if (!ref.ok) continue;
-    const fileBuffer = await readFile(ref.realPath);
-    const blob = new Blob([fileBuffer], { type: ref.mimeType });
-    formData.append("image[]", blob, basename(ref.realPath));
+    const buffer = await readFile(ref.realPath);
+    referenceFiles.push({
+      blob: new Blob([buffer], { type: ref.mimeType }),
+      name: basename(ref.realPath),
+    });
   }
 
+  let maskFile: { blob: Blob; name: string } | undefined;
   if (params.request.maskPath) {
     const maskValidation = await validateReferenceImagePath({
       path: params.request.maskPath,
@@ -243,30 +238,44 @@ async function runEditRequest(ctx: RequestCommon): Promise<ImageGenerationToolRe
     if (!maskValidation.ok) {
       return toError(maskValidation.code, maskValidation.message);
     }
-    const maskBuffer = await readFile(maskValidation.realPath);
-    const maskBlob = new Blob([maskBuffer], { type: maskValidation.mimeType });
-    formData.append("mask", maskBlob, basename(maskValidation.realPath));
+    const buffer = await readFile(maskValidation.realPath);
+    maskFile = {
+      blob: new Blob([buffer], { type: maskValidation.mimeType }),
+      name: basename(maskValidation.realPath),
+    };
   }
 
-  const response = await fetchWithTimeout(endpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${route.apiKey}`,
-    },
-    body: formData,
-  }, REQUEST_TIMEOUT_MS);
+  const requestedCount = params.request.count ?? 1;
+  return runImageRequestBatch("edit", route, requestedCount, async () => {
+    const formData = new FormData();
+    formData.append("model", route.model);
+    formData.append("prompt", params.request.prompt.trim());
+    formData.append("n", "1");
+    if (params.request.size) formData.append("size", params.request.size);
+    if (params.request.quality) formData.append("quality", params.request.quality);
+    if (params.request.outputFormat) formData.append("output_format", params.request.outputFormat);
+    if (params.request.background) formData.append("background", params.request.background);
+    if (shouldDisableWatermark(route.model)) formData.append("watermark", "false");
 
-  const parsed = await parseUpstreamResponse(response);
-  if (!parsed.ok) {
-    return parsed.error;
-  }
+    for (const ref of referenceFiles) {
+      formData.append("image[]", ref.blob, ref.name);
+    }
+    if (maskFile) {
+      formData.append("mask", maskFile.blob, maskFile.name);
+    }
 
-  const artifacts = await persistResponseImages(parsed.data, params, route.model);
-  if (!artifacts.ok) {
-    return artifacts.error;
-  }
+    const response = await fetchWithTimeout(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${route.apiKey}`,
+      },
+      body: formData,
+    }, REQUEST_TIMEOUT_MS);
 
-  return buildSuccess("edit", route, artifacts.artifacts, params.request.count ?? 1);
+    const parsed = await parseUpstreamResponse(response);
+    if (!parsed.ok) return { ok: false, error: parsed.error };
+    return persistResponseImages(parsed.data.slice(0, 1), params, route.model);
+  });
 }
 
 type UpstreamImageData = {
@@ -356,6 +365,36 @@ type PersistedArtifact = Pick<GeneratedImageArtifact, "path" | "mimeType" | "siz
 type PersistResult =
   | { ok: true; artifacts: PersistedArtifact[] }
   | { ok: false; error: ImageGenerationErrorResult };
+
+async function runImageRequestBatch(
+  mode: "generate" | "edit",
+  route: ResolvedRoute,
+  requestedCount: number,
+  requestOne: () => Promise<PersistResult>,
+): Promise<ImageGenerationToolResult> {
+  const results = await Promise.allSettled(
+    Array.from({ length: requestedCount }, () => requestOne()),
+  );
+  const artifacts: PersistedArtifact[] = [];
+  let firstError: ImageGenerationErrorResult | undefined;
+
+  for (const result of results) {
+    if (result.status === "rejected") {
+      firstError ??= mapExceptionToError(result.reason);
+      continue;
+    }
+    if (!result.value.ok) {
+      firstError ??= result.value.error;
+      continue;
+    }
+    artifacts.push(...result.value.artifacts);
+  }
+
+  if (artifacts.length === 0) {
+    return firstError ?? toError("UPSTREAM_ERROR", "所有并发生图请求均未返回可用图片。");
+  }
+  return buildSuccess(mode, route, artifacts.slice(0, requestedCount), requestedCount);
+}
 
 async function persistResponseImages(
   images: UpstreamImageData[],

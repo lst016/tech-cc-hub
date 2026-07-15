@@ -1,7 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import * as Dialog from "@radix-ui/react-dialog";
-import { toast } from "sonner";
 import { useAppStore } from "../store/useAppStore";
 import type { AppUpdateStatus, SettingsPageId } from "../types";
 import {
@@ -10,6 +7,19 @@ import {
   normalizeWorkspacePath,
   readLinkedWorkspacesFromStorage,
 } from "./prompt-input/linked-workspaces";
+import {
+  SidebarWorkspaceList,
+  type SidebarWorkspaceGroup,
+  type SidebarUnreadSessionStatus,
+} from "./sidebar/SidebarWorkspaceList";
+import {
+  SidebarRenameDialog,
+  SidebarResumeDialog,
+  SidebarSessionSearchDialog,
+  WorkspaceLinkDialog,
+  type SidebarRenameDialogState,
+  type WorkspaceLinkDialogState,
+} from "./sidebar/SidebarDialogs";
 
 interface SidebarProps {
   connected: boolean;
@@ -26,7 +36,6 @@ interface SidebarProps {
 }
 
 export const DEFAULT_SIDEBAR_WIDTH = 280;
-export const WORKSPACE_SESSION_PREVIEW_LIMIT = 5;
 export const SIDEBAR_EXPANDED_WORKSPACE_GROUPS_STORAGE_KEY = "tech-cc-hub:sidebar-expanded-workspace-groups";
 
 function readExpandedWorkspaceGroupsFromStorage(): Record<string, boolean> {
@@ -78,25 +87,14 @@ export function Sidebar({
   const setActiveSessionId = useAppStore((state) => state.setActiveSessionId);
   const [showArchived, setShowArchived] = useState(false);
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
-  const [sessionSearchQuery, setSessionSearchQuery] = useState("");
-  const [sessionSearchActiveIndex, setSessionSearchActiveIndex] = useState(0);
-  const sessionSearchInputRef = useRef<HTMLInputElement | null>(null);
   const [resumeSessionId, setResumeSessionId] = useState<string | null>(null);
-  const [renameDialog, setRenameDialog] = useState<{ sessionId: string; initialTitle: string } | null>(null);
-  const [renameTitle, setRenameTitle] = useState("");
-  const [copied, setCopied] = useState(false);
+  const [renameDialog, setRenameDialog] = useState<SidebarRenameDialogState>(null);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() => readExpandedWorkspaceGroupsFromStorage());
-  const [expandedSessionLists, setExpandedSessionLists] = useState<Record<string, boolean>>({});
-  const closeTimerRef = useRef<number | null>(null);
   const [hasUpdate, setHasUpdate] = useState(false);
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
   const previousSessionStatusRef = useRef<Record<string, string | undefined>>({});
-  const [unreadSessionIds, setUnreadSessionIds] = useState<Record<string, "completed" | "error">>({});
-  const [workspaceLinkDialog, setWorkspaceLinkDialog] = useState<{
-    key: string;
-    name: string;
-    cwd?: string;
-  } | null>(null);
+  const [unreadSessionIds, setUnreadSessionIds] = useState<Record<string, SidebarUnreadSessionStatus>>({});
+  const [workspaceLinkDialog, setWorkspaceLinkDialog] = useState<WorkspaceLinkDialogState>(null);
   const [linkedWorkspacesByGroup, setLinkedWorkspacesByGroup] = useState<Record<string, string[]>>({});
   const [linkedWorkspacesHydrated, setLinkedWorkspacesHydrated] = useState(false);
   const [recentCwds, setRecentCwds] = useState<string[]>([]);
@@ -185,40 +183,30 @@ export function Sidebar({
   }, [archivedSessions, sessions, showArchived]);
 
   useEffect(() => {
-    if (showArchived) {
-      onRefreshArchivedSessions();
-    }
+    if (showArchived) onRefreshArchivedSessions();
   }, [onRefreshArchivedSessions, showArchived]);
 
   useEffect(() => {
     const previousStatuses = previousSessionStatusRef.current;
     const nextStatuses: Record<string, string | undefined> = {};
-    const sessionValues = Object.values(sessions);
     const runningSessionIds = new Set<string>();
-    const finishedUnreadSessions: Record<string, "completed" | "error"> = {};
+    const finishedUnreadSessions: Record<string, SidebarUnreadSessionStatus> = {};
 
-    for (const session of sessionValues) {
+    for (const session of Object.values(sessions)) {
       const previousStatus = previousStatuses[session.id];
       nextStatuses[session.id] = session.status;
-
-      if (session.status === "running") {
-        runningSessionIds.add(session.id);
-      }
-
+      if (session.status === "running") runningSessionIds.add(session.id);
       if (
-        previousStatus === "running" &&
-        (session.status === "completed" || session.status === "error") &&
-        session.id !== activeSessionId
+        previousStatus === "running"
+        && (session.status === "completed" || session.status === "error")
+        && session.id !== activeSessionId
       ) {
         finishedUnreadSessions[session.id] = session.status;
       }
     }
 
     previousSessionStatusRef.current = nextStatuses;
-
-    if (runningSessionIds.size === 0 && Object.keys(finishedUnreadSessions).length === 0) {
-      return;
-    }
+    if (runningSessionIds.size === 0 && Object.keys(finishedUnreadSessions).length === 0) return;
 
     setUnreadSessionIds((current) => {
       let next = current;
@@ -232,17 +220,11 @@ export function Sidebar({
       };
 
       for (const sessionId of runningSessionIds) {
-        if (next[sessionId]) {
-          delete ensureNext()[sessionId];
-        }
+        if (next[sessionId]) delete ensureNext()[sessionId];
       }
-
       for (const [sessionId, status] of Object.entries(finishedUnreadSessions)) {
-        if (next[sessionId] !== status) {
-          ensureNext()[sessionId] = status;
-        }
+        if (next[sessionId] !== status) ensureNext()[sessionId] = status;
       }
-
       return changed ? next : current;
     });
   }, [activeSessionId, sessions]);
@@ -257,36 +239,8 @@ export function Sidebar({
     });
   }, [activeSessionId]);
 
-  const sessionSearchResults = useMemo(() => {
-    const query = sessionSearchQuery.trim().toLocaleLowerCase();
-    if (!query) return sessionList.slice(0, 12);
-
-    return sessionList.filter((session) => (
-      [session.title, formatWorkspaceName(session.cwd), session.cwd ?? ""]
-        .some((value) => value.toLocaleLowerCase().includes(query))
-    )).slice(0, 12);
-  }, [sessionList, sessionSearchQuery]);
-
-  useEffect(() => {
-    setSessionSearchActiveIndex((current) => Math.min(current, Math.max(0, sessionSearchResults.length - 1)));
-  }, [sessionSearchResults.length]);
-
-  useEffect(() => {
-    if (!sessionSearchOpen) {
-      setSessionSearchQuery("");
-      setSessionSearchActiveIndex(0);
-      return;
-    }
-    window.requestAnimationFrame(() => sessionSearchInputRef.current?.focus());
-  }, [sessionSearchOpen]);
-
-  const selectSearchedSession = (sessionId: string) => {
-    setActiveSessionId(sessionId);
-    setSessionSearchOpen(false);
-  };
-
   const workspaceGroups = useMemo(() => {
-    const groups = new Map<string, { cwd?: string; sessions: typeof sessionList }>();
+    const groups = new Map<string, SidebarWorkspaceGroup>();
     for (const session of sessionList) {
       const key = normalizeWorkspacePath(session.cwd ?? "") || "__no_workspace__";
       const existing = groups.get(key);
@@ -294,14 +248,10 @@ export function Sidebar({
         existing.sessions.push(session);
         continue;
       }
-      groups.set(key, {
-        cwd: session.cwd,
-        sessions: [sessionList.find((item) => item.id === session.id)!],
-      });
+      groups.set(key, { key, cwd: session.cwd, sessions: [session] });
     }
 
-    return Array.from(groups.entries())
-      .map(([key, value]) => ({ key, cwd: value.cwd, sessions: value.sessions }))
+    return Array.from(groups.values())
       .sort((a, b) => {
         const aLatest = Math.max(...a.sessions.map((session) => session.updatedAt ?? 0));
         const bLatest = Math.max(...b.sessions.map((session) => session.updatedAt ?? 0));
@@ -309,63 +259,12 @@ export function Sidebar({
       });
   }, [sessionList]);
 
-  useEffect(() => {
-    if (closeTimerRef.current) {
-      window.clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-  }, [resumeSessionId]);
-
-  useEffect(() => {
-    if (!renameDialog) {
-      setRenameTitle("");
-    }
-  }, [renameDialog]);
-
-  useEffect(() => {
-    return () => {
-      if (closeTimerRef.current) {
-        window.clearTimeout(closeTimerRef.current);
-        closeTimerRef.current = null;
-      }
-    };
-  }, []);
-
-  const handleCopyCommand = async () => {
-    if (!resumeSessionId) return;
-    const command = `claude --resume ${resumeSessionId}`;
-    try {
-      await navigator.clipboard.writeText(command);
-    } catch {
-      return;
-    }
-    setCopied(true);
-    if (closeTimerRef.current) {
-      window.clearTimeout(closeTimerRef.current);
-    }
-    closeTimerRef.current = window.setTimeout(() => {
-      setResumeSessionId(null);
-    }, 3000);
-  };
-
-  const openRenameDialog = (sessionId: string, title: string) => {
-    setRenameDialog({ sessionId, initialTitle: title });
-    setRenameTitle(title);
-  };
-
-  const handleRenameSubmit = () => {
-    if (!renameDialog) return;
-    const nextTitle = renameTitle.trim();
-    if (!nextTitle) {
-      toast.error("会话标题不能为空");
-      return;
-    }
-    if (nextTitle === renameDialog.initialTitle.trim()) {
-      setRenameDialog(null);
-      return;
-    }
-    onRenameSession(renameDialog.sessionId, nextTitle);
-    setRenameDialog(null);
+  const toggleWorkspaceGroup = (groupKey: string) => {
+    setExpandedGroups((current) => {
+      const next = { ...current, [groupKey]: !current[groupKey] };
+      writeExpandedWorkspaceGroupsToStorage(next);
+      return next;
+    });
   };
 
   const openSettings = (pageId?: SettingsPageId) => {
@@ -376,7 +275,7 @@ export function Sidebar({
     useAppStore.getState().setShowSettingsModal(true);
   };
 
-  const showWorkspaceHoverCard = (group: (typeof workspaceGroups)[number], anchor: HTMLElement) => {
+  const showWorkspaceHoverCard = (group: SidebarWorkspaceGroup, anchor: HTMLElement) => {
     const cardWidth = 340;
     const cardHeight = 104;
     const rect = anchor.getBoundingClientRect();
@@ -395,21 +294,14 @@ export function Sidebar({
     const normalizedGroupKey = normalizeWorkspacePath(groupKey);
     const normalizedPath = normalizeWorkspacePath(path);
     const normalizedPrimary = normalizeWorkspacePath(primaryCwd ?? "");
-    if (!normalizedGroupKey || !normalizedPath) return;
-    if (normalizedPrimary && normalizedPath === normalizedPrimary) return;
+    if (!normalizedGroupKey || !normalizedPath || (normalizedPrimary && normalizedPath === normalizedPrimary)) return;
 
     setLinkedWorkspacesByGroup((current) => {
       const currentItems = current[normalizedGroupKey] ?? [];
       if (currentItems.includes(normalizedPath)) return current;
-      return {
-        ...current,
-        [normalizedGroupKey]: [...currentItems, normalizedPath],
-      };
+      return { ...current, [normalizedGroupKey]: [...currentItems, normalizedPath] };
     });
-    setRecentCwds((current) => {
-      const deduped = [normalizedPath, ...current.filter((item) => item !== normalizedPath)];
-      return deduped.slice(0, 20);
-    });
+    setRecentCwds((current) => [normalizedPath, ...current.filter((item) => item !== normalizedPath)].slice(0, 20));
   };
 
   const removeLinkedWorkspace = (groupKey: string, path: string) => {
@@ -425,19 +317,12 @@ export function Sidebar({
         delete next[normalizedGroupKey];
         return next;
       }
-      return {
-        ...current,
-        [normalizedGroupKey]: nextItems,
-      };
+      return { ...current, [normalizedGroupKey]: nextItems };
     });
   };
 
-  const openWorkspaceLinkDialog = (group: (typeof workspaceGroups)[number]) => {
-    setWorkspaceLinkDialog({
-      key: group.key,
-      name: formatWorkspaceName(group.cwd),
-      cwd: group.cwd,
-    });
+  const openWorkspaceLinkDialog = (group: SidebarWorkspaceGroup) => {
+    setWorkspaceLinkDialog({ key: group.key, name: formatWorkspaceName(group.cwd), cwd: group.cwd });
     window.electron.getRecentCwds(20)
       .then((items) => {
         setRecentCwds(Array.isArray(items)
@@ -445,16 +330,15 @@ export function Sidebar({
           : []);
       })
       .catch(() => {
-        // Keep previous recent list if refresh failed.
+        // Keep the previous recent list if refresh failed.
       });
   };
 
-  const handlePickLinkedWorkspace = async () => {
+  const pickLinkedWorkspace = async () => {
     if (!workspaceLinkDialog) return;
     const result = await window.electron.selectDirectory();
     const path = result?.trim();
-    if (!path) return;
-    addLinkedWorkspace(workspaceLinkDialog.key, workspaceLinkDialog.cwd, path);
+    if (path) addLinkedWorkspace(workspaceLinkDialog.key, workspaceLinkDialog.cwd, path);
   };
 
   const linkedWorkspacePaths = workspaceLinkDialog
@@ -463,625 +347,151 @@ export function Sidebar({
   const suggestedWorkspacePaths = workspaceLinkDialog
     ? recentCwds
       .map((item) => normalizeWorkspacePath(item))
-      .filter((item) => Boolean(item))
+      .filter(Boolean)
       .filter((item) => item !== normalizeWorkspacePath(workspaceLinkDialog.cwd ?? ""))
       .filter((item) => !linkedWorkspacePaths.includes(item))
       .slice(0, 8)
     : [];
+
   return (
     <>
       <aside
+        data-session-sidebar
         className={`fixed bottom-0 left-0 ${sidebarHeaderOffsetClass} flex min-w-[250px] flex-col gap-2 border-r border-black/8 bg-[#f3f3f3] px-2 pb-2 pt-2 shadow-[inset_-1px_0_0_rgba(255,255,255,0.7)]`}
         style={{ width }}
       >
-      <div className="flex min-h-0 flex-1 flex-col gap-2">
-        <div className="flex gap-1.5">
-          <button
-            className="flex-1 rounded-lg border border-black/6 bg-white/75 px-3 py-1.5 text-sm font-medium text-ink-800 transition-colors hover:border-black/10 hover:bg-white"
-            onClick={() => onNewSession()}
-          >
-            + 新建工作区
-          </button>
-          <button
-            className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${showArchived ? "border-accent/20 bg-accent/10 text-accent" : "border-black/6 bg-white/65 text-ink-600 hover:bg-white"}`}
-            onClick={() => setShowArchived((current) => !current)}
-          >
-            归档
-          </button>
-          <button
-            type="button"
-            className="rounded-lg border border-black/6 bg-white/65 p-2 text-ink-600 transition-colors hover:bg-white hover:text-ink-800"
-            onClick={() => setSessionSearchOpen(true)}
-            aria-label="搜索会话"
-            title="搜索会话"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.9">
-              <circle cx="11" cy="11" r="6.5" />
-              <path d="m16 16 4.25 4.25" />
-            </svg>
-          </button>
-        </div>
-
-        <div className="sidebar-scroll min-h-0 flex-1 overflow-y-auto">
-          {workspaceGroups.length === 0 && (
-            <div className="rounded-xl border border-black/6 bg-white/70 px-3 py-4 text-center text-xs leading-6 text-muted">
-              还没有会话。直接在底部输入框开始聊天，系统会按工作区自动归档到左侧。
-            </div>
-          )}
-
-          <div className="flex flex-col gap-0.5">
-            {workspaceGroups.map((group) => {
-              const linkedWorkspaceCount = linkedWorkspacesByGroup[group.key]?.length ?? 0;
-              const sessionListExpanded = Boolean(expandedSessionLists[group.key]);
-              const hasSessionOverflow = group.sessions.length > WORKSPACE_SESSION_PREVIEW_LIMIT;
-              const visibleSessions = sessionListExpanded || !hasSessionOverflow
-                ? group.sessions
-                : group.sessions.slice(0, WORKSPACE_SESSION_PREVIEW_LIMIT);
-              return (
-                <div
-                  key={group.key}
-                  className="py-px"
-                >
-                <div
-                  className="group/workspace flex items-center justify-between gap-1 rounded-lg px-2.5 py-1.5 transition-colors hover:bg-[#e7e7e7]"
-                  onMouseEnter={(event) => showWorkspaceHoverCard(group, event.currentTarget)}
-                  onMouseLeave={() => setWorkspaceHoverCard(null)}
-                  onFocus={(event) => showWorkspaceHoverCard(group, event.currentTarget)}
-                  onBlur={() => setWorkspaceHoverCard(null)}
-                >
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 text-left"
-                    onClick={() => setExpandedGroups((current) => {
-                      const next = {
-                        ...current,
-                        [group.key]: !current[group.key],
-                      };
-                      writeExpandedWorkspaceGroupsToStorage(next);
-                      return next;
-                    })}
-                  >
-                    <div className="flex items-center gap-2 text-[13px] font-semibold text-ink-700">
-                      <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-muted" fill="none" stroke="currentColor" strokeWidth="1.8">
-                        <path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-10Z" />
-                      </svg>
-                      <span className="truncate">{formatWorkspaceName(group.cwd)}</span>
-                      {linkedWorkspaceCount > 0 && (
-                        <span
-                          className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-accent/10 px-1.5 text-[11px] font-semibold text-accent"
-                          title={`已关联 ${linkedWorkspaceCount} 个工作区`}
-                        >
-                          {linkedWorkspaceCount}
-                        </span>
-                      )}
-                      <svg
-                        viewBox="0 0 24 24"
-                        className={`h-3.5 w-3.5 shrink-0 text-muted transition-transform ${expandedGroups[group.key] ? "rotate-90" : ""}`}
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                      >
-                        <path d="m9 6 6 6-6 6" />
-                      </svg>
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    className="shrink-0 rounded-md p-1 text-ink-500 opacity-0 transition-all hover:bg-white hover:text-ink-800 group-hover/workspace:opacity-100 focus:opacity-100"
-                    onClick={() => onNewSession(group.cwd)}
-                    aria-label={`在 ${formatWorkspaceName(group.cwd)} 中新建会话`}
-                  >
-                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
-                      <path d="M12 5v14M5 12h14" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    className="shrink-0 rounded-md p-1 text-ink-500 opacity-0 transition-all hover:bg-white hover:text-ink-800 group-hover/workspace:opacity-100 focus:opacity-100"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      openWorkspaceLinkDialog(group);
-                    }}
-                    aria-label={`关联工作区到 ${formatWorkspaceName(group.cwd)}`}
-                    title="关联其他工作区"
-                  >
-                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
-                      <path d="M9.75 8.5H7a4 4 0 1 0 0 8h2.75" />
-                      <path d="M14.25 8.5H17a4 4 0 1 1 0 8h-2.75" />
-                      <path d="M8.75 12h6.5" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    className="shrink-0 rounded-md p-1 text-ink-500 opacity-0 transition-all hover:bg-white hover:text-error group-hover/workspace:opacity-100 focus:opacity-100"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onDeleteWorkspace(
-                        group.sessions.map((session) => session.id),
-                        formatWorkspaceName(group.cwd),
-                      );
-                    }}
-                    aria-label={`删除工作区 ${formatWorkspaceName(group.cwd)}`}
-                  >
-                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
-                      <path d="M4 7h16" />
-                      <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                      <path d="M7 7l1 12a1 1 0 0 0 1 .9h6a1 1 0 0 0 1-.9l1-12" />
-                    </svg>
-                  </button>
-                </div>
-
-                    <div className={`mt-0.5 flex flex-col gap-0.5 ${expandedGroups[group.key] ? "" : "hidden"}`}>
-                  {visibleSessions.map((session) => {
-                    const isActiveSession = activeSessionId === session.id;
-                    const isRunningSession = session.status === "running";
-                    const isBackgroundSession = session.executionMode === "background";
-                    const unreadSessionStatus = unreadSessionIds[session.id];
-                    const sessionAge = formatSessionAge(session.updatedAt);
-                    return (
-                    <div
-                      key={session.id}
-                      className={`group/session relative cursor-pointer overflow-hidden rounded-lg px-2.5 py-1.5 text-left transition-colors ${isActiveSession ? "bg-[#dedede] text-ink-900" : "text-ink-700 hover:bg-[#e7e7e7]"}`}
-                      onClick={() => setActiveSessionId(session.id)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          setActiveSessionId(session.id);
-                        }
-                      }}
-                      role="button"
-                      tabIndex={0}
-                    >
-                      <div className="flex min-h-7 items-center justify-between gap-2">
-                        <div className="flex min-w-0 flex-1 items-center gap-2">
-                          {unreadSessionStatus ? (
-                            <span
-                              className={`h-2.5 w-2.5 shrink-0 rounded-full shadow-[0_0_0_3px_rgba(210,106,61,0.12)] ${unreadSessionStatus === "error" ? "bg-error" : "bg-accent"}`}
-                              title={unreadSessionStatus === "error" ? "执行失败，未查看" : "执行完成，未查看"}
-                            />
-                          ) : isRunningSession ? (
-                            <span
-                              className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-emerald-500/25 border-t-emerald-500"
-                              title="正在聊天"
-                            />
-                          ) : (
-                            <span className="h-2 w-2 shrink-0 rounded-full bg-black/10" />
-                          )}
-                          <div className={`min-w-0 flex-1 truncate text-[13px] ${isActiveSession ? "font-semibold text-ink-900" : "font-medium text-ink-700"}`}>
-                            {session.title}
-                          </div>
-                          {isBackgroundSession && (
-                            <span
-                              className="shrink-0 rounded-full border border-emerald-500/25 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.08em] text-emerald-700"
-                              title="Background session"
-                            >
-                              BG
-                            </span>
-                          )}
-                        </div>
-                        {sessionAge && (
-                          <span className="pointer-events-none shrink-0 text-[12px] text-muted transition-opacity group-hover/session:opacity-0 group-focus-within/session:opacity-0">
-                            {sessionAge}
-                          </span>
-                        )}
-                        <DropdownMenu.Root>
-                          <DropdownMenu.Trigger asChild>
-                            <button
-                              className={`absolute right-1.5 top-1/2 z-10 flex-shrink-0 -translate-y-1/2 rounded-md bg-[var(--session-action-bg)] p-1.5 text-ink-500 opacity-0 shadow-[0_0_0_4px_var(--session-action-bg)] transition hover:brightness-95 group-hover/session:opacity-100 focus:opacity-100 ${isActiveSession ? "[--session-action-bg:#dedede]" : "[--session-action-bg:#e7e7e7]"}`}
-                              aria-label="打开会话菜单"
-                              onClick={(event) => event.stopPropagation()}
-                              onPointerDown={(event) => event.stopPropagation()}
-                            >
-                              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
-                                <circle cx="5" cy="12" r="1.7" />
-                                <circle cx="12" cy="12" r="1.7" />
-                                <circle cx="19" cy="12" r="1.7" />
-                              </svg>
-                            </button>
-                          </DropdownMenu.Trigger>
-                          <DropdownMenu.Portal>
-                            <DropdownMenu.Content className="z-50 min-w-[220px] rounded-xl border border-ink-900/10 bg-white p-1 shadow-lg" align="center" sideOffset={8}>
-                              <DropdownMenu.Item
-                                className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-700 outline-none hover:bg-ink-900/5"
-                                onSelect={() => openRenameDialog(session.id, session.title)}
-                              >
-                                <svg viewBox="0 0 24 24" className="h-4 w-4 text-ink-500" fill="none" stroke="currentColor" strokeWidth="1.8">
-                                  <path d="M4 20h4l10.5-10.5a2.12 2.12 0 1 0-3-3L5.5 17v3z" />
-                                  <path d="M13.5 6.5l4 4" />
-                                </svg>
-                                重命名这个会话
-                              </DropdownMenu.Item>
-                              <DropdownMenu.Item
-                                className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-700 outline-none hover:bg-ink-900/5"
-                                onSelect={() => showArchived ? onUnarchiveSession(session.id) : onArchiveSession(session.id)}
-                              >
-                                <svg viewBox="0 0 24 24" className="h-4 w-4 text-ink-500" fill="none" stroke="currentColor" strokeWidth="1.8">
-                                  {showArchived ? (
-                                    <path d="M4 12a8 8 0 1 0 2.34-5.66M4 4v6h6" />
-                                  ) : (
-                                    <path d="M4 7h16M6 7l1.2 11.2A2 2 0 0 0 9.2 20h5.6a2 2 0 0 0 2-1.8L18 7M9 7V5h6v2" />
-                                  )}
-                                </svg>
-                                {showArchived ? "恢复这个会话" : "归档这个会话"}
-                              </DropdownMenu.Item>
-                              <DropdownMenu.Item
-                                className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-700 outline-none hover:bg-ink-900/5"
-                                onSelect={() => onDeleteSession(session.id)}
-                              >
-                                <svg viewBox="0 0 24 24" className="h-4 w-4 text-error/80" fill="none" stroke="currentColor" strokeWidth="1.8">
-                                  <path d="M4 7h16" />
-                                  <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                                  <path d="M7 7l1 12a1 1 0 0 0 1 .9h6a1 1 0 0 0 1-.9l1-12" />
-                                </svg>
-                                删除这个会话
-                              </DropdownMenu.Item>
-                              <DropdownMenu.Item
-                                className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-700 outline-none hover:bg-ink-900/5"
-                                onSelect={() => {
-                                  setCopied(false);
-                                  setResumeSessionId(session.id);
-                                }}
-                              >
-                                <svg viewBox="0 0 24 24" className="h-4 w-4 text-ink-500" fill="none" stroke="currentColor" strokeWidth="1.8">
-                                  <path d="M4 5h16v14H4z" />
-                                  <path d="M7 9h10M7 12h6" />
-                                  <path d="M13 15l3 2-3 2" />
-                                </svg>
-                                在 Claude Code 中恢复
-                              </DropdownMenu.Item>
-                            </DropdownMenu.Content>
-                          </DropdownMenu.Portal>
-                        </DropdownMenu.Root>
-                      </div>
-                    </div>
-                    );
-                  })}
-                  {hasSessionOverflow && (
-                    <button
-                      type="button"
-                      className="ml-8 mt-0.5 w-fit px-0 py-0.5 text-xs font-medium text-muted transition-colors hover:text-ink-800 focus:outline-none focus-visible:text-ink-800"
-                      aria-expanded={sessionListExpanded}
-                      aria-label={`${sessionListExpanded ? "折叠" : "展开显示"} ${formatWorkspaceName(group.cwd)} 的会话列表`}
-                      onClick={() => setExpandedSessionLists((current) => ({
-                        ...current,
-                        [group.key]: !current[group.key],
-                      }))}
-                    >
-                      {sessionListExpanded ? "折叠" : "展开显示"}
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-            })}
-          </div>
-        </div>
-
-        <div className="mt-auto space-y-1">
-          <button
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-[#e2e2e2] hover:text-ink-950"
-            onClick={() => onOpenCronPage?.()}
-            aria-label="定时任务"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 6v6l4 2" />
-            </svg>
-            <span className="min-w-0 truncate">定时任务</span>
-          </button>
-          <button
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-[#e2e2e2] hover:text-ink-950"
-            onClick={() => openSettings()}
-            aria-label="设置"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-            <span className="min-w-0 truncate">设置</span>
-            {hasUpdate && (
-              <span className="h-2 w-2 shrink-0 rounded-full bg-error" />
-            )}
-          </button>
-        </div>
-      </div>
-      <Dialog.Root open={sessionSearchOpen} onOpenChange={setSessionSearchOpen}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-[21000] bg-ink-900/15 backdrop-blur-[2px]" />
-          <Dialog.Content
-            className="fixed left-1/2 top-[18%] z-[21010] w-[min(600px,calc(100vw-32px))] -translate-x-1/2 rounded-xl border border-black/8 bg-white p-2 shadow-[0_20px_50px_rgba(15,23,42,0.18)] outline-none"
-            aria-describedby={undefined}
-            onKeyDown={(event) => {
-              if (event.key === "ArrowDown") {
-                event.preventDefault();
-                setSessionSearchActiveIndex((current) => Math.min(current + 1, sessionSearchResults.length - 1));
-              }
-              if (event.key === "ArrowUp") {
-                event.preventDefault();
-                setSessionSearchActiveIndex((current) => Math.max(current - 1, 0));
-              }
-              if (event.key === "Enter") {
-                const session = sessionSearchResults[sessionSearchActiveIndex];
-                if (session) {
-                  event.preventDefault();
-                  selectSearchedSession(session.id);
-                }
-              }
-            }}
-          >
-            <Dialog.Title className="sr-only">搜索会话</Dialog.Title>
-            <div className="flex items-center gap-3 border-b border-black/8 px-3 py-2">
-              <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-muted" fill="none" stroke="currentColor" strokeWidth="1.9">
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
+          <div className="flex gap-1.5">
+            <button
+              data-session-sidebar-new
+              className="flex-1 rounded-lg border border-black/6 bg-white/75 px-3 py-1.5 text-sm font-medium text-ink-800 transition-colors hover:border-black/10 hover:bg-white"
+              onClick={() => onNewSession()}
+            >
+              + 新建工作区
+            </button>
+            <button
+              data-session-sidebar-archive
+              className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${showArchived ? "border-accent/20 bg-accent/10 text-accent" : "border-black/6 bg-white/65 text-ink-600 hover:bg-white"}`}
+              onClick={() => setShowArchived((current) => !current)}
+            >
+              归档
+            </button>
+            <button
+              type="button"
+              data-session-sidebar-search
+              className="rounded-lg border border-black/6 bg-white/65 p-2 text-ink-600 transition-colors hover:bg-white hover:text-ink-800"
+              onClick={() => setSessionSearchOpen(true)}
+              aria-label="搜索会话"
+              title="搜索会话"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.9">
                 <circle cx="11" cy="11" r="6.5" />
                 <path d="m16 16 4.25 4.25" />
               </svg>
-              <input
-                ref={sessionSearchInputRef}
-                type="search"
-                value={sessionSearchQuery}
-                onChange={(event) => {
-                  setSessionSearchQuery(event.target.value);
-                  setSessionSearchActiveIndex(0);
-                }}
-                className="min-w-0 flex-1 bg-transparent py-1.5 text-sm text-ink-900 outline-none placeholder:text-muted"
-                placeholder="搜索会话"
-              />
-              <kbd className="rounded bg-surface-secondary px-1.5 py-0.5 text-[11px] text-muted">Esc</kbd>
-            </div>
-            <div className="max-h-[min(480px,calc(100vh-220px))] overflow-y-auto p-1">
-              {sessionSearchResults.length === 0 ? (
-                <div className="px-3 py-8 text-center text-sm text-muted">没有匹配的会话</div>
-              ) : (
-                sessionSearchResults.map((session, index) => {
-                  const isActive = index === sessionSearchActiveIndex;
-                  return (
-                    <button
-                      key={session.id}
-                      type="button"
-                      className={`flex h-10 w-full items-center gap-3 rounded-lg px-3 text-left transition-colors ${isActive ? "bg-surface-secondary" : "hover:bg-surface-secondary"}`}
-                      onMouseEnter={() => setSessionSearchActiveIndex(index)}
-                      onClick={() => selectSearchedSession(session.id)}
-                    >
-                      <span className={`h-2 w-2 shrink-0 rounded-full ${session.status === "running" ? "bg-success" : "bg-black/15"}`} />
-                      <span className="min-w-0 flex-1 truncate text-sm text-ink-800">{session.title}</span>
-                      <span className="max-w-36 shrink-0 truncate text-xs text-muted">{formatWorkspaceName(session.cwd)}</span>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-            <div className="flex items-center justify-between border-t border-black/8 px-3 py-2 text-[11px] text-muted">
-              <span>输入关键词模糊匹配会话</span>
-              <span>↑↓ 选择 · Enter 打开</span>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-      <Dialog.Root
-        open={Boolean(renameDialog)}
-        onOpenChange={(open) => {
-          if (!open) {
-            setRenameDialog(null);
-          }
-        }}
-      >
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-[21000] bg-ink-900/40 backdrop-blur-sm" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-[21010] w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-6 shadow-xl">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <Dialog.Title className="text-lg font-semibold text-ink-800">重命名会话</Dialog.Title>
-                <Dialog.Description className="mt-1 text-sm text-muted">
-                  改一个更好找的标题，方便后续继续使用这个会话。
-                </Dialog.Description>
-              </div>
-              <Dialog.Close asChild>
-                <button className="rounded-full p-1 text-ink-500 hover:bg-ink-900/10" aria-label="关闭弹窗">
-                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M6 6l12 12M18 6l-12 12" />
-                  </svg>
-                </button>
-              </Dialog.Close>
-            </div>
-            <form
-              className="mt-5 space-y-4"
-              onSubmit={(event) => {
-                event.preventDefault();
-                handleRenameSubmit();
-              }}
+            </button>
+          </div>
+
+          <SidebarWorkspaceList
+            workspaceGroups={workspaceGroups}
+            expandedGroups={expandedGroups}
+            linkedWorkspacesByGroup={linkedWorkspacesByGroup}
+            activeSessionId={activeSessionId}
+            unreadSessionIds={unreadSessionIds}
+            showArchived={showArchived}
+            formatWorkspaceName={formatWorkspaceName}
+            formatSessionAge={formatSessionAge}
+            onToggleWorkspaceGroup={toggleWorkspaceGroup}
+            onShowWorkspaceHoverCard={showWorkspaceHoverCard}
+            onHideWorkspaceHoverCard={() => setWorkspaceHoverCard(null)}
+            onNewSession={onNewSession}
+            onOpenWorkspaceLinkDialog={openWorkspaceLinkDialog}
+            onDeleteWorkspace={onDeleteWorkspace}
+            onSelectSession={setActiveSessionId}
+            onRenameSession={(sessionId, title) => setRenameDialog({ sessionId, initialTitle: title })}
+            onArchiveSession={onArchiveSession}
+            onUnarchiveSession={onUnarchiveSession}
+            onDeleteSession={onDeleteSession}
+            onOpenResumeDialog={setResumeSessionId}
+          />
+
+          <div className="mt-auto space-y-1">
+            <button
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-[#e2e2e2] hover:text-ink-950"
+              onClick={() => onOpenCronPage?.()}
+              aria-label="定时任务"
             >
-              <label className="block">
-                <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-light">会话标题</span>
-                <input
-                  autoFocus
-                  type="text"
-                  value={renameTitle}
-                  onChange={(event) => setRenameTitle(event.target.value)}
-                  maxLength={120}
-                  className="w-full rounded-xl border border-black/10 bg-surface px-3 py-2.5 text-sm text-ink-900 outline-none transition focus:border-accent/40 focus:bg-white focus:ring-2 focus:ring-accent/10"
-                  placeholder="输入新的会话标题"
-                />
-              </label>
-              <div className="flex items-center justify-end gap-2">
-                <Dialog.Close asChild>
-                  <button
-                    type="button"
-                    className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-ink-700 transition hover:bg-surface-tertiary"
-                  >
-                    取消
-                  </button>
-                </Dialog.Close>
-                <button
-                  type="submit"
-                  className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-accent-hover"
-                >
-                  保存
-                </button>
-              </div>
-            </form>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-      <Dialog.Root
-        open={!!resumeSessionId}
-        onOpenChange={(open) => {
-          if (!open) {
-            setCopied(false);
-            setResumeSessionId(null);
-          }
-        }}
-      >
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-[21000] bg-ink-900/40 backdrop-blur-sm" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-[21010] w-full max-w-xl -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-6 shadow-xl">
-            <div className="flex items-start justify-between gap-4">
-              <Dialog.Title className="text-lg font-semibold text-ink-800">恢复命令</Dialog.Title>
-              <Dialog.Close asChild>
-                <button className="rounded-full p-1 text-ink-500 hover:bg-ink-900/10" aria-label="关闭弹窗">
-                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M6 6l12 12M18 6l-12 12" />
-                  </svg>
-                </button>
-              </Dialog.Close>
-            </div>
-            <div className="mt-4 flex items-center gap-2 rounded-xl border border-ink-900/10 bg-surface px-3 py-2 font-mono text-xs text-ink-700">
-              <span className="flex-1 break-all">{resumeSessionId ? `claude --resume ${resumeSessionId}` : ""}</span>
-              <button className="rounded-lg p-1.5 text-ink-600 hover:bg-ink-900/10" onClick={handleCopyCommand} aria-label="复制恢复命令">
-                {copied ? (
-                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M5 12l4 4L19 6" />
-                  </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-                    <rect x="9" y="9" width="11" height="11" rx="2" />
-                    <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-                  </svg>
-                )}
-              </button>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-      <Dialog.Root
-        open={Boolean(workspaceLinkDialog)}
-        onOpenChange={(open) => {
-          if (!open) {
-            setWorkspaceLinkDialog(null);
-          }
-        }}
-      >
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-[21000] bg-ink-900/40 backdrop-blur-sm" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-[21010] w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-6 shadow-xl">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <Dialog.Title className="text-lg font-semibold text-ink-800">关联工作区</Dialog.Title>
-                <div className="mt-1 text-xs text-muted">
-                  主工作区：{workspaceLinkDialog?.name || "未绑定工作区"}
-                </div>
-                <div className="mt-1 text-[11px] text-muted-light">
-                  {workspaceLinkDialog?.cwd || "未绑定工作区路径"}
-                </div>
-              </div>
-              <Dialog.Close asChild>
-                <button className="rounded-full p-1 text-ink-500 hover:bg-ink-900/10" aria-label="关闭弹窗">
-                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M6 6l12 12M18 6l-12 12" />
-                  </svg>
-                </button>
-              </Dialog.Close>
-            </div>
-
-            <div className="mt-5 space-y-4">
-              <div>
-                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-light">已关联</div>
-                {linkedWorkspacePaths.length === 0 ? (
-                  <div className="rounded-xl border border-black/8 bg-surface px-3 py-3 text-sm text-muted">
-                    还没有关联工作区。点击下方「选择目录」或最近目录快速添加。
-                  </div>
-                ) : (
-                  <div className="max-h-48 space-y-2 overflow-y-auto pr-1">
-                    {linkedWorkspacePaths.map((path) => (
-                      <div
-                        key={path}
-                        className="flex items-center justify-between gap-3 rounded-xl border border-black/8 bg-surface px-3 py-2"
-                      >
-                        <span className="min-w-0 truncate text-sm text-ink-800" title={path}>{path}</span>
-                        <button
-                          type="button"
-                          className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-muted transition hover:bg-black/5 hover:text-error"
-                          onClick={() => {
-                            if (!workspaceLinkDialog) return;
-                            removeLinkedWorkspace(workspaceLinkDialog.key, path);
-                          }}
-                        >
-                          移除
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {suggestedWorkspacePaths.length > 0 && (
-                <div>
-                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-light">最近目录</div>
-                  <div className="flex flex-wrap gap-2">
-                    {suggestedWorkspacePaths.map((path) => (
-                      <button
-                        key={path}
-                        type="button"
-                        className="max-w-full truncate rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs text-ink-700 transition hover:border-accent/30 hover:bg-accent/5"
-                        title={path}
-                        onClick={() => {
-                          if (!workspaceLinkDialog) return;
-                          addLinkedWorkspace(workspaceLinkDialog.key, workspaceLinkDialog.cwd, path);
-                        }}
-                      >
-                        {path}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="mt-6 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-ink-700 transition hover:bg-surface-tertiary"
-                onClick={() => { void handlePickLinkedWorkspace(); }}
-              >
-                选择目录...
-              </button>
-              <Dialog.Close asChild>
-                <button
-                  type="button"
-                  className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-accent-hover"
-                >
-                  完成
-                </button>
-              </Dialog.Close>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-    </aside>
-    {workspaceHoverCard && (
-      <div
-        className="pointer-events-none fixed z-[80] w-[min(340px,calc(100vw-24px))] rounded-xl border border-black/10 bg-white px-4 py-3 text-sm text-ink-800 shadow-[0_18px_44px_rgba(15,23,42,0.16)]"
-        style={{ left: workspaceHoverCard.left, top: workspaceHoverCard.top }}
-      >
-        <div className="truncate font-semibold">{workspaceHoverCard.name}</div>
-        <div className="mt-2 flex items-center gap-2 text-xs text-muted">
-          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <path d="M4 5h6l2 2h8v12H4z" />
-          </svg>
-          <span className="min-w-0 truncate">{workspaceHoverCard.cwd}</span>
+              <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 6v6l4 2" />
+              </svg>
+              <span className="min-w-0 truncate">定时任务</span>
+            </button>
+            <button
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-[#e2e2e2] hover:text-ink-950"
+              onClick={() => openSettings()}
+              aria-label="设置"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+              <span className="min-w-0 truncate">设置</span>
+              {hasUpdate && <span className="h-2 w-2 shrink-0 rounded-full bg-error" />}
+            </button>
+          </div>
         </div>
-        <div className="mt-1.5 text-xs text-muted">{workspaceHoverCard.sessionCount} 个会话</div>
-      </div>
-    )}
+
+        <SidebarSessionSearchDialog
+          open={sessionSearchOpen}
+          sessions={sessionList}
+          formatWorkspaceName={formatWorkspaceName}
+          onOpenChange={setSessionSearchOpen}
+          onSelectSession={setActiveSessionId}
+        />
+        <SidebarRenameDialog
+          dialog={renameDialog}
+          onOpenChange={(open) => {
+            if (!open) setRenameDialog(null);
+          }}
+          onRenameSession={onRenameSession}
+        />
+        <SidebarResumeDialog
+          sessionId={resumeSessionId}
+          onOpenChange={(open) => {
+            if (!open) setResumeSessionId(null);
+          }}
+        />
+        <WorkspaceLinkDialog
+          dialog={workspaceLinkDialog}
+          linkedWorkspacePaths={linkedWorkspacePaths}
+          suggestedWorkspacePaths={suggestedWorkspacePaths}
+          onOpenChange={(open) => {
+            if (!open) setWorkspaceLinkDialog(null);
+          }}
+          onRemoveLinkedWorkspace={(path) => {
+            if (workspaceLinkDialog) removeLinkedWorkspace(workspaceLinkDialog.key, path);
+          }}
+          onAddLinkedWorkspace={(path) => {
+            if (workspaceLinkDialog) addLinkedWorkspace(workspaceLinkDialog.key, workspaceLinkDialog.cwd, path);
+          }}
+          onPickLinkedWorkspace={() => { void pickLinkedWorkspace(); }}
+        />
+      </aside>
+      {workspaceHoverCard && (
+        <div
+          className="pointer-events-none fixed z-[80] w-[min(340px,calc(100vw-24px))] rounded-xl border border-black/10 bg-white px-4 py-3 text-sm text-ink-800 shadow-[0_18px_44px_rgba(15,23,42,0.16)]"
+          style={{ left: workspaceHoverCard.left, top: workspaceHoverCard.top }}
+        >
+          <div className="truncate font-semibold">{workspaceHoverCard.name}</div>
+          <div className="mt-2 flex items-center gap-2 text-xs text-muted">
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M4 5h6l2 2h8v12H4z" />
+            </svg>
+            <span className="min-w-0 truncate">{workspaceHoverCard.cwd}</span>
+          </div>
+          <div className="mt-1.5 text-xs text-muted">{workspaceHoverCard.sessionCount} 个会话</div>
+        </div>
+      )}
     </>
   );
 }
