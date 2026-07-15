@@ -15,6 +15,7 @@ const CREDENTIAL_READ_DENY_PATTERNS = [
 export type ClaudeSandboxPolicyOptions = {
   enabled: boolean;
   workspaceRoot?: string;
+  additionalWriteRoots?: string[];
 };
 
 function normalizeWorkspacePattern(workspaceRoot: string | undefined): string | null {
@@ -25,7 +26,10 @@ function normalizeWorkspacePattern(workspaceRoot: string | undefined): string | 
 
 export function buildClaudeSandboxSettings(options: ClaudeSandboxPolicyOptions): SandboxSettings {
   const workspacePattern = normalizeWorkspacePattern(options.workspaceRoot);
-  const allowWrite = workspacePattern ? [workspacePattern] : undefined;
+  const allowWrite = [
+    workspacePattern,
+    ...(options.additionalWriteRoots ?? []).map(normalizeWorkspacePattern),
+  ].filter((pattern): pattern is string => Boolean(pattern));
 
   return {
     enabled: options.enabled,
@@ -34,7 +38,7 @@ export function buildClaudeSandboxSettings(options: ClaudeSandboxPolicyOptions):
     allowUnsandboxedCommands: !options.enabled,
     filesystem: {
       denyRead: [...CREDENTIAL_READ_DENY_PATTERNS],
-      ...(allowWrite ? { allowWrite } : {}),
+      ...(allowWrite.length > 0 ? { allowWrite: [...new Set(allowWrite)] } : {}),
     },
     network: {
       allowLocalBinding: true,

@@ -95,6 +95,8 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
         title: "Reading and diagnostics",
         tools: [
           { name: "browser_extract_page", description: "Extract page text, title, links, and image summary." },
+          { name: "browser_extract_canvas", description: "Read semantic data and metadata from Canvas, WebGL, and SVG providers across page frames." },
+          { name: "browser_wait_canvas", description: "Wait for any rendered-surface provider data to change, match text, or stabilize." },
           { name: "browser_get_element", description: "Read text, html, value, attributes, box, and style details." },
           { name: "browser_get_dom_stats", description: "Inspect DOM size and common element counts." },
           { name: "browser_snapshot_interactive", description: "Create @e1/@e2 references for interactive elements." },

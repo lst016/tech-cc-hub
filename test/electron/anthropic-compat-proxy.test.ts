@@ -42,6 +42,7 @@ test("anthropic compatibility proxy is used for third-party gateways only", () =
   assert.equal(shouldUseAnthropicCompatProxy(baseConfig), false);
   assert.equal(shouldUseAnthropicCompatProxy({
     ...baseConfig,
+    provider: "boke",
     baseURL: "https://ai.pocketcity.com/v1",
   }), true);
   assert.equal(shouldUseAnthropicCompatProxy({

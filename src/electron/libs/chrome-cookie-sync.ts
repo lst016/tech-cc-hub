@@ -1,8 +1,10 @@
-import { existsSync, copyFileSync, readFileSync, unlinkSync } from "fs";
+import { existsSync, readFileSync } from "fs";
+import { copyFile, unlink } from "fs/promises";
 import { join } from "path";
 import { tmpdir, homedir } from "os";
-import { execSync } from "child_process";
+import { execFile } from "child_process";
 import { createDecipheriv, createHash } from "crypto";
+import { promisify } from "util";
 import Database from "better-sqlite3";
 
 // ---------------------------------------------------------------------------
@@ -75,6 +77,8 @@ const CHROME_EPOCH_OFFSET = 11644473600000000n;
 // ---------------------------------------------------------------------------
 
 let cachedMasterKey: Buffer | null = null;
+let pendingMasterKey: Promise<Buffer | null> | null = null;
+const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
 // Exported API
@@ -98,7 +102,7 @@ export async function getChromeCookies(domain: string): Promise<ChromeCookieSync
   if (process.platform !== "win32") return emptyResult("unsupported");
 
   try {
-    const masterKey = getMasterKey();
+    const masterKey = await getMasterKey();
     if (!masterKey) return emptyResult("unavailable", ["Chrome master key is unavailable"]);
 
     const profiles = getChromeProfileCandidates();
@@ -111,7 +115,7 @@ export async function getChromeCookies(domain: string): Promise<ChromeCookieSync
     let sawLockedProfile = false;
 
     for (const profile of profiles) {
-      const readResult = readCookieRows(profile, domain);
+      const readResult = await readCookieRows(profile, domain);
       if (readResult.locked) sawLockedProfile = true;
       if (readResult.error) errors.push(`${profile.name}: ${readResult.error}`);
       if (!readResult.rows.length) continue;
@@ -247,8 +251,19 @@ function getChromeProfileCandidates(): ChromeProfileCandidate[] {
  * Extract and decrypt the AES master key from Chrome's Local State via DPAPI.
  * The result is cached for the lifetime of the process.
  */
-function getMasterKey(): Buffer | null {
+async function getMasterKey(): Promise<Buffer | null> {
   if (cachedMasterKey) return cachedMasterKey;
+
+  if (pendingMasterKey) return await pendingMasterKey;
+  pendingMasterKey = loadMasterKey();
+  try {
+    return await pendingMasterKey;
+  } finally {
+    pendingMasterKey = null;
+  }
+}
+
+async function loadMasterKey(): Promise<Buffer | null> {
 
   const localStatePath = getChromeLocalStatePath();
   if (!existsSync(localStatePath)) {
@@ -273,7 +288,7 @@ function getMasterKey(): Buffer | null {
   const encryptedKey = Buffer.from(encryptedKeyB64, "base64").subarray(5);
 
   // Decrypt via DPAPI using PowerShell
-  const decrypted = dpapiDecrypt(encryptedKey);
+  const decrypted = await dpapiDecrypt(encryptedKey);
   if (!decrypted) return null;
 
   cachedMasterKey = decrypted;
@@ -283,7 +298,7 @@ function getMasterKey(): Buffer | null {
 /**
  * Use PowerShell + DPAPI to decrypt a byte array.
  */
-function dpapiDecrypt(encrypted: Buffer): Buffer | null {
+async function dpapiDecrypt(encrypted: Buffer): Promise<Buffer | null> {
   const b64Input = encrypted.toString("base64");
 
   const psScript = [
@@ -294,13 +309,18 @@ function dpapiDecrypt(encrypted: Buffer): Buffer | null {
   ].join(" ");
 
   try {
-    const stdout = execSync(`powershell -NoProfile -NonInteractive -Command "${psScript}"`, {
+    const { stdout } = await execFileAsync("powershell", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      psScript,
+    ], {
       encoding: "utf-8",
       timeout: 10000,
       windowsHide: true,
-    }).trim();
+    });
 
-    return Buffer.from(stdout, "base64");
+    return Buffer.from(stdout.trim(), "base64");
   } catch (err) {
     console.error("[chrome-cookie-sync] DPAPI decryption failed:", (err as Error).message);
     return null;
@@ -311,7 +331,7 @@ function dpapiDecrypt(encrypted: Buffer): Buffer | null {
  * Copy the Chrome Cookies DB to a temp location (to bypass file lock)
  * and read rows matching the domain.
  */
-function readCookieRows(profile: ChromeProfileCandidate, domain: string): CookieRowsResult {
+async function readCookieRows(profile: ChromeProfileCandidate, domain: string): Promise<CookieRowsResult> {
   const cookiePath = profile.cookiePath;
   if (!existsSync(cookiePath)) {
     const message = "Chrome Cookies DB not found";
@@ -321,7 +341,7 @@ function readCookieRows(profile: ChromeProfileCandidate, domain: string): Cookie
 
   const tempPath = join(tmpdir(), `${CHROME_COOKIE_TMP_PREFIX}-${process.pid}-${Date.now()}-${profile.dirName}`);
   try {
-    copyFileSync(cookiePath, tempPath);
+    await copyFile(cookiePath, tempPath);
   } catch (err) {
     const error = err as NodeJS.ErrnoException;
     const message = `Failed to copy Cookies DB: ${error.message}`;
@@ -350,7 +370,7 @@ function readCookieRows(profile: ChromeProfileCandidate, domain: string): Cookie
     return { rows: [], error: message };
   } finally {
     try { db?.close(); } catch { /* ignore */ }
-    try { unlinkSync(tempPath); } catch { /* ignore */ }
+    try { await unlink(tempPath); } catch { /* ignore */ }
   }
 }
 

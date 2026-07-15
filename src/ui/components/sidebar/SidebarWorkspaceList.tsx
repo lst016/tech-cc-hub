@@ -71,6 +71,7 @@ export function SidebarWorkspaceList({
       <div className="flex flex-col gap-0.5">
         {workspaceGroups.map((group) => {
           const linkedWorkspaceCount = linkedWorkspacesByGroup[group.key]?.length ?? 0;
+          const workspaceGroupExpanded = Boolean(expandedGroups[group.key]);
           const sessionListExpanded = Boolean(expandedSessionLists[group.key]);
           const hasSessionOverflow = group.sessions.length > WORKSPACE_SESSION_PREVIEW_LIMIT;
           const visibleSessions = sessionListExpanded || !hasSessionOverflow
@@ -109,7 +110,7 @@ export function SidebarWorkspaceList({
                     )}
                     <svg
                       viewBox="0 0 24 24"
-                      className={`h-3.5 w-3.5 shrink-0 text-muted transition-transform ${expandedGroups[group.key] ? "rotate-90" : ""}`}
+                      className={`h-3.5 w-3.5 shrink-0 text-muted transition-transform ${workspaceGroupExpanded ? "rotate-90" : ""}`}
                       fill="none"
                       stroke="currentColor"
                       strokeWidth="1.8"
@@ -164,7 +165,7 @@ export function SidebarWorkspaceList({
                 </button>
               </div>
 
-              <div className={`mt-0.5 flex flex-col gap-0.5 ${expandedGroups[group.key] ? "" : "hidden"}`}>
+              <div className={`mt-0.5 flex flex-col gap-0.5 ${workspaceGroupExpanded ? "" : "hidden"}`}>
                 {visibleSessions.map((session) => {
                   const isActiveSession = activeSessionId === session.id;
                   const isRunningSession = session.status === "running";

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Image, Plus, Settings2, X } from "lucide-react";
+import { BarChart3, Image, Plus, Settings2, X } from "lucide-react";
 import { AppModalOverlay } from "../AppModalOverlay";
 import {
   DEFAULT_IMAGE_GENERATION_CONFIG,
@@ -22,7 +22,15 @@ function getDimensions(aspectRatio: ImageGenerationConfig["aspectRatio"], resolu
   return dimensions[aspectRatio];
 }
 
-export function ImageGenerationPluginMenu({ disabled, onInsert }: { disabled?: boolean; onInsert: () => void }) {
+export function ImageGenerationPluginMenu({
+  disabled,
+  onInsert,
+  onInsertVisualization,
+}: {
+  disabled?: boolean;
+  onInsert: () => void;
+  onInsertVisualization: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -48,7 +56,7 @@ export function ImageGenerationPluginMenu({ disabled, onInsert }: { disabled?: b
         <Plus className="h-[19px] w-[19px]" aria-hidden="true" />
       </button>
       {open && !disabled && (
-        <div className="absolute bottom-full left-0 z-50 mb-2 w-36 rounded-xl border border-black/6 bg-surface p-1.5 shadow-[0_18px_50px_rgba(22,24,29,0.14)]">
+        <div className="absolute bottom-full left-0 z-50 mb-2 w-40 rounded-xl border border-black/6 bg-surface p-1.5 shadow-[0_18px_50px_rgba(22,24,29,0.14)]">
           <button
             type="button"
             className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-ink-900 transition hover:bg-accent-subtle hover:text-accent"
@@ -59,6 +67,17 @@ export function ImageGenerationPluginMenu({ disabled, onInsert }: { disabled?: b
           >
             <span className="grid h-7 w-7 place-items-center rounded-md bg-accent-subtle text-accent"><Image className="h-4 w-4" /></span>
             <span>生图</span>
+          </button>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-ink-900 transition hover:bg-accent-subtle hover:text-accent"
+            onClick={() => {
+              onInsertVisualization();
+              setOpen(false);
+            }}
+          >
+            <span className="grid h-7 w-7 place-items-center rounded-md bg-violet-50 text-violet-600"><BarChart3 className="h-4 w-4" /></span>
+            <span>可视化</span>
           </button>
         </div>
       )}

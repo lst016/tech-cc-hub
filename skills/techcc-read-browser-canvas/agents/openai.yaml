@@ -1,0 +1,4 @@
+interface:
+  display_name: "Read Browser Canvas"
+  short_description: "Extract semantic data from rendered surfaces"
+  default_prompt: "Use $techcc-read-browser-canvas to inspect the canvas or rendered surface open in the tech-cc-hub browser."

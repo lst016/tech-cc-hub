@@ -30,6 +30,21 @@
                 "**/*",
                 "!node_modules{,/**/*}"
             ]
+        },
+        {
+            "from": "skills/techcc-visualize",
+            "to": "skills/techcc-visualize",
+            "filter": [
+                "SKILL.md"
+            ]
+        },
+        {
+            "from": "skills/techcc-read-browser-canvas",
+            "to": "skills/techcc-read-browser-canvas",
+            "filter": [
+                "SKILL.md",
+                "agents/openai.yaml"
+            ]
         }
     ],
     "publish": [

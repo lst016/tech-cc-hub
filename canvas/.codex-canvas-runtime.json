@@ -1,14 +1,14 @@
 {
-  "url": "http://127.0.0.1:62900/?project=YWqmv1qjsszQ&threadId=1f9c005f-2675-4c00-9670-155584583994",
-  "pid": 47068,
+  "url": "http://127.0.0.1:53439/?project=dYmhTLJgV5jB&threadId=0a6efdf5-6bb2-442d-a0f2-deec07bcf947",
+  "pid": 17508,
   "serverName": "codex-canvas",
   "serverProtocolVersion": 1,
   "serverVersion": "0.2.1",
-  "serverInstanceId": "a8d10cbc-208b-4b53-b80c-5ecee8279070",
+  "serverInstanceId": "476c12c3-a198-4bfa-ad95-e3df3317461c",
   "projectDir": "D:\\tool\\tech-cc-hub",
-  "projectId": "YWqmv1qjsszQ",
-  "canvasId": "thread-1f9c005f-2675-4c00-9670-155584583994-Ve9hOiSLW_BnB0qQ",
-  "startedAt": "2026-07-11T12:39:29.355Z",
+  "projectId": "dYmhTLJgV5jB",
+  "canvasId": "thread-0a6efdf5-6bb2-442d-a0f2-deec07bcf947-lT3utvAcmlY6GIRJ",
+  "startedAt": "2026-07-15T12:49:06.360Z",
   "autoCollect": true,
-  "chatThreadId": "1f9c005f-2675-4c00-9670-155584583994"
+  "chatThreadId": "0a6efdf5-6bb2-442d-a0f2-deec07bcf947"
 }

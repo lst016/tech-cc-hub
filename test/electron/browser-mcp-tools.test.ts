@@ -5,6 +5,7 @@ import {
   buildDiagnosePortPowerShellScript,
   buildPowerShellEncodedCommandArgs,
   classifyHttpPingStatus,
+  getBrowserToolNames,
   normalizeBrowserEvalExpression,
 } from "../../src/electron/libs/mcp-tools/browser.js";
 import {
@@ -62,4 +63,11 @@ test("browser eval normalizes bare function expressions into invocations", () =>
 test("browser eval leaves already executable expressions unchanged", () => {
   assert.equal(normalizeBrowserEvalExpression("document.title"), "document.title");
   assert.equal(normalizeBrowserEvalExpression("(() => document.title)()"), "(() => document.title)()");
+});
+
+test("browser MCP exposes generic rendered-surface extraction", () => {
+  assert.equal(getBrowserToolNames().includes("browser_extract_canvas"), true);
+  assert.equal(getBrowserToolNames().includes("browser_wait_canvas"), true);
+  assert.equal(getBrowserToolNames().includes("browser_extract_terminal"), false);
+  assert.equal(getBrowserToolNames().includes("browser_wait_terminal"), false);
 });

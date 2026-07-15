@@ -40,6 +40,7 @@ import {
   type ApiConfigSettings,
   saveApiConfigSettings,
   loadGlobalRuntimeConfig,
+  onGlobalRuntimeConfigSaved,
   saveGlobalRuntimeConfig,
 } from "./libs/config-store.js";
 import { setBrowserToolHost } from "./libs/mcp-tools/browser.js";
@@ -51,6 +52,7 @@ import { ensureSystemWorkspace } from "./libs/system-workspace.js";
 import { getCurrentApiConfig, getEnabledUsableApiConfigs, getGlobalRuntimeEnvConfig, resolveApiConfigForModel, resolveImagePreprocessApiConfig } from "./libs/claude/claude-settings.js";
 import { preprocessImageAttachments } from "./libs/image/image-preprocessor.js";
 import { generateImages } from "./libs/image/image-generation-client.js";
+import { readNativeClipboardImagePayload } from "./libs/clipboard-image.js";
 import { toImageGenerationRouteConfig } from "./libs/mcp-tools/image-generation.js";
 import {
     CODEX_OAUTH_BASE_URL,
@@ -128,7 +130,7 @@ import { normalizePluginVersion, summarizePluginUpdate, type PluginUpdateSummary
 import { submitFeedbackIssue, type FeedbackSubmitPayload } from "./libs/feedback.js";
 import "./libs/claude/claude-settings.js";
 import { resolveClaudeCodePluginDetails } from "./libs/claude/claude-code-plugins.js";
-import { addServerEventListener } from "./ipc-handlers.js";
+import { addServerEventListener, broadcastServerEvent } from "./ipc-handlers.js";
 import {
     extractApiModelsFromListPayload,
     extractMiniMaxTextModelsFromListPayload,
@@ -141,6 +143,21 @@ import {
     MINIMAX_M2_CONTEXT_WINDOW,
     MINIMAX_M3_CONTEXT_WINDOW,
 } from "../shared/models/minimax.js";
+import {
+    BOKE_GATEWAY_BASE_URL,
+    resolveSharedApiProviderMode,
+    type SharedApiProviderMode,
+} from "../shared/models/model-provider-routing.js";
+import {
+  createTechccVisualizationLaunch,
+  installTechccVisualizationProtocol,
+  registerTechccVisualizationScheme,
+} from "./libs/techcc-visualization-protocol.js";
+import {
+  startModelCatalogSyncScheduler,
+  syncManagedModelCatalog,
+  type ModelCatalogSyncScheduler,
+} from "./libs/model-catalog-sync.js";
 
 let cleanupComplete = false;
 let cleanupRunning = false;
@@ -150,9 +167,13 @@ const browserWorkbenches = new Map<string, BrowserWorkbenchManager>();
 const browserWorkbenchEventListeners = new Set<(event: BrowserWorkbenchEvent) => void>();
 let stopDevBackendBridge: (() => void) | null = null;
 let channelBridgeController: ChannelBridgeController | null = null;
+let unsubscribeChannelConfig: (() => void) | null = null;
 let workspacePluginManager: WorkspacePluginManager | null = null;
 let codexRuntimeLoginManager: CodexRuntimeLoginManager | null = null;
+let modelCatalogSyncScheduler: ModelCatalogSyncScheduler | null = null;
 let pendingCodexOAuthDeepLinkActivation = false;
+
+registerTechccVisualizationScheme();
 
 function activateCodexOAuthDeepLink(args: readonly string[]): boolean {
   if (!findCodexOAuthDeepLink(args)) return false;
@@ -1771,7 +1792,7 @@ async function generateWorkspacePluginImage(
   const session = sessions.getSession(request.sessionId);
   if (!session?.cwd) return { success: false, error: "Bound session has no workspace." };
 
-  const selectedConfig = resolveApiConfigForModel(session.model)?.config ?? getCurrentApiConfig();
+  const selectedConfig = resolveApiConfigForModel(session.model, session.configProfileId)?.config ?? getCurrentApiConfig();
   const enabledConfigs = getEnabledUsableApiConfigs()
     .map((config) => toImageGenerationRouteConfig(config))
     .filter((config): config is NonNullable<ReturnType<typeof toImageGenerationRouteConfig>> => Boolean(config));
@@ -2001,6 +2022,8 @@ function cleanup(): void {
     stopDevBackendBridge = null;
     channelBridgeController?.stop();
     channelBridgeController = null;
+    unsubscribeChannelConfig?.();
+    unsubscribeChannelConfig = null;
     setChannelReplySender(null);
     setBrowserToolHost(null);
     setDesignToolHost(null);
@@ -2008,6 +2031,8 @@ function cleanup(): void {
     workspacePluginManager = null;
     codexRuntimeLoginManager?.dispose();
     codexRuntimeLoginManager = null;
+    modelCatalogSyncScheduler?.stop();
+    modelCatalogSyncScheduler = null;
     closeAllBrowserWorkbenches();
     cleanupTerminalProcesses();
     cleanupAllSessions();
@@ -2089,7 +2114,7 @@ function readPromptAttachmentPayload(attachments?: unknown[]): PromptAttachment[
     return Array.isArray(attachments) ? (attachments as PromptAttachment[]) : [];
 }
 
-type ApiModelsProvider = "custom" | "deepseek" | "codex" | "minimax";
+type ApiModelsProvider = SharedApiProviderMode;
 
 type ApiConfigTestPayload = {
     profileId?: string;
@@ -2121,23 +2146,13 @@ const DEEPSEEK_OPENAI_BASE_URL = "https://api.deepseek.com";
 const DEEPSEEK_ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic";
 const MINIMAX_MODELS_ENDPOINT = `${MINIMAX_ANTHROPIC_BASE_URL}/v1/models`;
 function resolveApiModelsProvider(provider: unknown, baseURL: string): ApiModelsProvider {
-    if (provider === "custom" || provider === "deepseek" || provider === "codex" || provider === "minimax") {
-        return provider;
-    }
-
-    try {
-        const url = new URL(baseURL);
-        if (url.hostname === "api.deepseek.com") return "deepseek";
-        if (url.hostname === "chatgpt.com") return "codex";
-        if (url.hostname === "api.minimax.io" || url.hostname === "api.minimaxi.com") return "minimax";
-    } catch {
-        // Invalid URLs are handled by the generic path below.
-    }
-
-    return "custom";
+    return resolveSharedApiProviderMode(provider, baseURL);
 }
 
 function normalizeApiBaseURLForModels(value: string, provider: ApiModelsProvider): string {
+    if (provider === "boke") {
+        return BOKE_GATEWAY_BASE_URL;
+    }
     if (provider === "deepseek") {
         return DEEPSEEK_ANTHROPIC_BASE_URL;
     }
@@ -2212,7 +2227,7 @@ function readCodexModelIdsFromCache(): string[] {
     }
 }
 
-async function fetchApiModels(payload: { baseURL?: string; apiKey?: string; provider?: ApiModelsProvider }): Promise<{ success: boolean; models?: ImportedApiModel[]; baseURL?: string; error?: string }> {
+async function fetchApiModels(payload: { baseURL?: string; apiKey?: string; provider?: ApiModelsProvider }, signal?: AbortSignal): Promise<{ success: boolean; models?: ImportedApiModel[]; baseURL?: string; error?: string }> {
     const rawBaseURL = payload?.baseURL?.trim() ?? "";
     const apiKey = payload?.apiKey?.trim() ?? "";
     const provider = resolveApiModelsProvider(payload?.provider, rawBaseURL);
@@ -2242,6 +2257,7 @@ async function fetchApiModels(payload: { baseURL?: string; apiKey?: string; prov
     try {
         const { endpoint, normalizedBaseURL } = buildModelsEndpoint(baseURL, provider);
         const response = await fetch(endpoint, {
+            signal,
             headers: {
                 authorization: `Bearer ${apiKey}`,
                 "x-api-key": apiKey,
@@ -2504,7 +2520,7 @@ function extractOptimizedPromptText(payload: unknown): string {
     return "";
 }
 
-async function optimizePrompt(payload: { prompt?: string; model?: string }): Promise<PromptOptimizeResult> {
+async function optimizePrompt(payload: { prompt?: string; model?: string; configProfileId?: string }): Promise<PromptOptimizeResult> {
     const prompt = payload?.prompt?.trim() ?? "";
     if (!prompt) {
         return { success: false, error: "请先在输入框里写一段 prompt。" };
@@ -2513,7 +2529,7 @@ async function optimizePrompt(payload: { prompt?: string; model?: string }): Pro
         return { success: false, error: `当前 prompt 过长，请先压缩到 ${PROMPT_OPTIMIZE_MAX_INPUT_CHARS} 字以内。` };
     }
 
-    const resolved = resolveApiConfigForModel(payload?.model);
+    const resolved = resolveApiConfigForModel(payload?.model, payload?.configProfileId);
     if (!resolved) {
         return { success: false, error: "当前没有可用模型，请先在设置里启用配置。" };
     }
@@ -2715,6 +2731,7 @@ app.on("open-url", (event, url) => {
 // Initialize everything when app is ready
 app.on("ready", async () => {
     if (!hasSingleInstanceLock) return;
+    installTechccVisualizationProtocol();
     Menu.setApplicationMenu(null);
     logStartupEnvironment();
     addServerEventListener((event) => {
@@ -2876,6 +2893,13 @@ app.on("ready", async () => {
           return { success: false, error: "浏览器工作台尚未初始化。" };
         }
         return await browserWorkbench.extractPageSnapshot();
+      },
+      extractRenderedContent: async (sessionId, input) => {
+        const browserWorkbench = getBrowserWorkbench(sessionId);
+        if (!browserWorkbench) {
+          return { success: false, error: "浏览器工作台尚未初始化。" };
+        }
+        return await browserWorkbench.extractRenderedContent(input);
       },
       captureVisible: async (sessionId) => {
         const browserWorkbench = getBrowserWorkbench(sessionId);
@@ -3229,6 +3253,14 @@ app.on("ready", async () => {
       },
     });
 
+    ipcMainHandle("browser-open", (_: IpcMainInvokeEvent, url: string, sessionId?: string) => {
+      return openBrowserWorkbenchForIpc(url, sessionId);
+    });
+
+    ipcMainHandle("browser-set-bounds", (_: IpcMainInvokeEvent, bounds: BrowserWorkbenchBounds, sessionId?: string) => {
+      return getBrowserWorkbench(sessionId)!.setBounds(bounds);
+    });
+
     try {
         await loadRenderer(mainWindow);
         mainWindow.show();
@@ -3236,6 +3268,28 @@ app.on("ready", async () => {
         if (process.platform === "darwin") {
             app.focus({ steal: true });
         }
+        modelCatalogSyncScheduler = startModelCatalogSyncScheduler({
+            sync: async (signal) => {
+                const result = await syncManagedModelCatalog({
+                    loadSettings: loadApiConfigSettings,
+                    saveSettings: saveApiConfigSettings,
+                    fetchModels: async (profile, requestSignal) => await fetchApiModels({
+                        baseURL: profile.baseURL,
+                        apiKey: profile.apiKey,
+                        provider: profile.provider,
+                    }, requestSignal),
+                    onModelsAdded: (payload) => broadcastServerEvent({
+                        type: "model.catalog.updated",
+                        payload,
+                    }),
+                    signal,
+                });
+                for (const error of result.errors) {
+                    console.warn(`[model-catalog-sync] ${error.profileName}: ${error.error}`);
+                }
+            },
+            onError: (error) => console.warn("[model-catalog-sync] unexpected failure:", error),
+        });
     } catch (error) {
         console.error("[main] Failed to load renderer:", error);
         dialog.showErrorBox(
@@ -3326,13 +3380,18 @@ app.on("ready", async () => {
     const noteDbPath = join(app.getPath("userData"), "notes.db");
     initializeNoteRepository(noteDbPath);
     console.log("[main] Note repository initialized");
-    channelBridgeController = startChannelBridge(async (message) => {
-      await handleClientEvent({
-        type: "channel.message.receive",
-        payload: message,
+    const restartChannelBridge = () => {
+      channelBridgeController?.stop();
+      channelBridgeController = startChannelBridge(async (message) => {
+        await handleClientEvent({
+          type: "channel.message.receive",
+          payload: message,
+        });
       });
-    });
-    setChannelReplySender(channelBridgeController.sendText);
+      setChannelReplySender(channelBridgeController);
+    };
+    restartChannelBridge();
+    unsubscribeChannelConfig = onGlobalRuntimeConfigSaved(() => restartChannelBridge());
 
     if (isDev()) {
       const bridge = startDevBackendBridge({
@@ -3549,6 +3608,26 @@ app.on("ready", async () => {
         return getStaticData();
     });
 
+    ipcMainHandle("clipboard:read-image", () => {
+        return readNativeClipboardImagePayload(clipboard.readImage());
+    });
+
+    ipcMainHandle("techcc-visualization-create-launch", async (_: IpcMainInvokeEvent, payload: unknown) => {
+        if (
+            !payload
+            || typeof payload !== "object"
+            || typeof (payload as { sessionId?: unknown }).sessionId !== "string"
+            || typeof (payload as { fileName?: unknown }).fileName !== "string"
+        ) {
+            throw new Error("Visualization launch requires sessionId and fileName.");
+        }
+        return await createTechccVisualizationLaunch({
+            rootDir: app.getPath("userData"),
+            sessionId: (payload as { sessionId: string }).sessionId,
+            fileName: (payload as { fileName: string }).fileName,
+        });
+    });
+
     // Handle client events
     ipcMain.on("client-event", (_: IpcMainEvent, event: ClientEvent) => {
         void handleClientEvent(event);
@@ -3733,10 +3812,6 @@ app.on("ready", async () => {
         }
     });
 
-    ipcMainHandle("browser-open", (_: IpcMainInvokeEvent, url: string, sessionId?: string) => {
-      return openBrowserWorkbenchForIpc(url, sessionId);
-    });
-
     ipcMainHandle("workspace-plugins:list", async () => {
       return await getWorkspacePluginManager().list();
     });
@@ -3763,10 +3838,6 @@ app.on("ready", async () => {
 
     ipcMainHandle("browser-close", (_: IpcMainInvokeEvent, sessionId?: string) => {
         return closeBrowserWorkbench(sessionId);
-    });
-
-    ipcMainHandle("browser-set-bounds", (_: IpcMainInvokeEvent, bounds: BrowserWorkbenchBounds, sessionId?: string) => {
-        return getBrowserWorkbench(sessionId)!.setBounds(bounds);
     });
 
     ipcMainHandle("browser-hide-all", () => {

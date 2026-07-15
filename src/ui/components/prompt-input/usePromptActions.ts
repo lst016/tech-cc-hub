@@ -15,7 +15,7 @@ import {
 } from "./linked-workspaces";
 import {
   getEnabledProfiles,
-  getRoutedModelOptionsForProfiles,
+  getModelDeploymentOptionsForProfiles,
   resolveAvailableModelName,
 } from "../settings/settings-utils";
 
@@ -78,6 +78,7 @@ export function usePromptActions(
   const cwd = useAppStore((state) => state.cwd);
   const apiConfigSettings = useAppStore((state) => state.apiConfigSettings);
   const runtimeModel = useAppStore((state) => state.runtimeModel);
+  const runtimeConfigProfileId = useAppStore((state) => state.runtimeConfigProfileId);
   const reasoningMode = useAppStore((state) => state.reasoningMode);
   const permissionMode = useAppStore((state) => state.permissionMode);
   const workflowMode = useAppStore((state) => state.workflowMode);
@@ -138,7 +139,7 @@ export function usePromptActions(
   }, [activeSession?.slashCommands, workspaceSlashCommands]);
   const enabledProfiles = useMemo(() => getEnabledProfiles(apiConfigSettings.profiles), [apiConfigSettings.profiles]);
   const activeProfile = enabledProfiles[0];
-  const routedModelOptions = useMemo(() => getRoutedModelOptionsForProfiles(enabledProfiles), [enabledProfiles]);
+  const routedModelOptions = useMemo(() => getModelDeploymentOptionsForProfiles(enabledProfiles), [enabledProfiles]);
   const availableModels = useMemo(() => routedModelOptions.map((option) => option.value), [routedModelOptions]);
   const activeSessionModel = activeSession?.model?.trim();
 
@@ -182,11 +183,12 @@ export function usePromptActions(
 
     return {
       model: selectedModel,
+      configProfileId: activeSession?.configProfileId?.trim() || runtimeConfigProfileId.trim() || undefined,
       reasoningMode,
       permissionMode: permissionMode === "plan" ? "bypassPermissions" : permissionMode,
       workflowMode,
     };
-  }, [activeProfile, availableModels, permissionMode, reasoningMode, resolveSessionRuntimeModel, routedModelOptions, runtimeModel, setGlobalError, workflowMode]);
+  }, [activeProfile, activeSession?.configProfileId, availableModels, permissionMode, reasoningMode, resolveSessionRuntimeModel, routedModelOptions, runtimeConfigProfileId, runtimeModel, setGlobalError, workflowMode]);
 
   const sendPromptDraft = useCallback(async (
     promptValue: string,

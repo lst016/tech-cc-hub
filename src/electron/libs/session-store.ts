@@ -68,6 +68,7 @@ export type Session = {
   claudeSessionId?: string;
   status: SessionStatus;
   model?: string;
+  configProfileId?: string;
   executionMode?: SessionExecutionMode;
   reasoningMode?: RuntimeReasoningMode;
   permissionMode?: RuntimeOverrides["permissionMode"];
@@ -95,6 +96,7 @@ export type StoredSession = {
   title: string;
   status: SessionStatus;
   model?: string;
+  configProfileId?: string;
   executionMode?: SessionExecutionMode;
   reasoningMode?: RuntimeReasoningMode;
   permissionMode?: RuntimeOverrides["permissionMode"];
@@ -337,6 +339,7 @@ export class SessionStore {
     runSurface?: AgentRunSurface;
     agentId?: string;
     model?: string;
+    configProfileId?: string;
     allowedTools?: string;
     prompt?: string;
     title: string;
@@ -348,6 +351,7 @@ export class SessionStore {
       title: options.title,
       status: "idle",
       model: options.model?.trim() || undefined,
+      configProfileId: options.configProfileId?.trim() || undefined,
       executionMode: options.executionMode ?? "foreground",
       reasoningMode: options.reasoningMode,
       permissionMode: options.permissionMode,
@@ -362,8 +366,8 @@ export class SessionStore {
     this.db
       .prepare(
         `insert into sessions
-          (id, title, claude_session_id, status, model, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at, created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          (id, title, claude_session_id, status, model, config_profile_id, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -371,6 +375,7 @@ export class SessionStore {
         session.claudeSessionId ?? null,
         session.status,
         session.model ?? null,
+        session.configProfileId ?? null,
         session.executionMode ?? null,
         session.reasoningMode ?? null,
         session.permissionMode ?? null,
@@ -406,8 +411,8 @@ export class SessionStore {
       summary ? SESSION_LIST_DEFAULT_SUMMARY_LIMIT : undefined,
     );
     const columns = summary
-      ? "id, title, claude_session_id, status, model, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, archived_at, created_at, updated_at"
-      : "id, title, claude_session_id, status, model, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at, created_at, updated_at";
+      ? "id, title, claude_session_id, status, model, config_profile_id, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, archived_at, created_at, updated_at"
+      : "id, title, claude_session_id, status, model, config_profile_id, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at, created_at, updated_at";
     const sql = `select ${columns}
          from sessions
          where archived_at is ${archived ? "not null" : "null"}
@@ -736,6 +741,7 @@ export class SessionStore {
       runSurface: "run_surface",
       agentId: "agent_id",
       model: "model",
+      configProfileId: "config_profile_id",
       allowedTools: "allowed_tools",
       lastPrompt: "last_prompt",
       continuationSummary: "continuation_summary",
@@ -788,6 +794,7 @@ export class SessionStore {
         claude_session_id text,
         status text not null,
         model text,
+        config_profile_id text,
         execution_mode text,
         reasoning_mode text,
         permission_mode text,
@@ -813,6 +820,7 @@ export class SessionStore {
     this.ensureSessionColumn("continuation_summary", "text");
     this.ensureSessionColumn("continuation_summary_message_count", "integer");
     this.ensureSessionColumn("model", "text");
+    this.ensureSessionColumn("config_profile_id", "text");
     this.ensureSessionColumn("execution_mode", "text");
     this.ensureSessionColumn("reasoning_mode", "text");
     this.ensureSessionColumn("permission_mode", "text");
@@ -837,12 +845,23 @@ export class SessionStore {
     );
     this.db.exec(`create index if not exists messages_session_id on messages(session_id)`);
     this.db.exec(`create index if not exists messages_session_created_id on messages(session_id, created_at, id)`);
+    this.db.exec(
+      `create table if not exists channel_seen_message_ids (
+        message_id text not null,
+        provider text not null,
+        created_at integer not null,
+        primary key (message_id, provider)
+      )`,
+    );
+    this.db
+      .prepare("delete from channel_seen_message_ids where created_at < ?")
+      .run(Date.now() - 7 * 24 * 60 * 60 * 1000);
   }
 
   private loadSessions(): void {
     const rows = this.db
       .prepare(
-        `select id, title, claude_session_id, status, model, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, plan_state, archived_at
+        `select id, title, claude_session_id, status, model, config_profile_id, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, plan_state, archived_at
          from sessions`
       )
       .all();
@@ -853,6 +872,7 @@ export class SessionStore {
         claudeSessionId: row.claude_session_id ? String(row.claude_session_id) : undefined,
         status: row.status as SessionStatus,
         model: row.model ? String(row.model) : undefined,
+        configProfileId: row.config_profile_id ? String(row.config_profile_id) : undefined,
         executionMode: row.execution_mode === "background" ? "background" : row.execution_mode === "foreground" ? "foreground" : undefined,
         reasoningMode: row.reasoning_mode ? (String(row.reasoning_mode) as RuntimeReasoningMode) : undefined,
         permissionMode: row.permission_mode ? (String(row.permission_mode) as RuntimeOverrides["permissionMode"]) : undefined,
@@ -929,6 +949,20 @@ export class SessionStore {
         this.db.prepare("update sessions set status = ? where id = ?").run("idle", sessionId);
       }
     }
+  }
+
+  claimChannelMessage(messageId: string, provider: string): boolean {
+    const result = this.db
+      .prepare("insert or ignore into channel_seen_message_ids (message_id, provider, created_at) values (?, ?, ?)")
+      .run(messageId, provider, Date.now());
+    return result.changes === 1;
+  }
+
+  releaseChannelMessage(messageId: string, provider: string): boolean {
+    const result = this.db
+      .prepare("delete from channel_seen_message_ids where message_id = ? and provider = ?")
+      .run(messageId, provider);
+    return result.changes === 1;
   }
 
   close(): void {
@@ -1030,7 +1064,7 @@ export class SessionStore {
   private getSessionRow(id: string): Record<string, unknown> | undefined {
     return this.db
       .prepare(
-        `select id, title, claude_session_id, status, model, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at, created_at, updated_at
+        `select id, title, claude_session_id, status, model, config_profile_id, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, archived_at, created_at, updated_at
          from sessions
           where id = ?`
       )
@@ -1043,6 +1077,7 @@ export class SessionStore {
         title: String(sessionRow.title),
         status: sessionRow.status as SessionStatus,
         model: sessionRow.model ? String(sessionRow.model) : undefined,
+        configProfileId: sessionRow.config_profile_id ? String(sessionRow.config_profile_id) : undefined,
         executionMode: sessionRow.execution_mode === "background" ? "background" : sessionRow.execution_mode === "foreground" ? "foreground" : undefined,
         reasoningMode: sessionRow.reasoning_mode ? (String(sessionRow.reasoning_mode) as RuntimeReasoningMode) : undefined,
         permissionMode: sessionRow.permission_mode ? (String(sessionRow.permission_mode) as RuntimeOverrides["permissionMode"]) : undefined,

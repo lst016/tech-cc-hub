@@ -45,6 +45,7 @@ export type SessionView = {
   status: SessionStatus;
   error?: string;
   model?: string;
+  configProfileId?: string;
   executionMode?: SessionExecutionMode;
   reasoningMode?: RuntimeReasoningMode;
   permissionMode?: RuntimeOverrides["permissionMode"];
@@ -135,6 +136,7 @@ interface AppState {
   cwd: string;
   apiConfigSettings: ApiConfigSettings;
   runtimeModel: string;
+  runtimeConfigProfileId: string;
   reasoningMode: RuntimeReasoningMode;
   permissionMode: RuntimePermissionMode;
   workflowMode: RuntimeWorkflowMode;
@@ -177,8 +179,8 @@ interface AppState {
   clearFileReferences: (sessionId?: string | null) => void;
   setCwd: (cwd: string) => void;
   setApiConfigSettings: (settings: ApiConfigSettings) => void;
-  setRuntimeModel: (model: string) => void;
-  setSessionModel: (sessionId: string | null | undefined, model: string) => void;
+  setRuntimeModel: (model: string, configProfileId?: string) => void;
+  setSessionModel: (sessionId: string | null | undefined, model: string, configProfileId?: string) => void;
   setReasoningMode: (mode: RuntimeReasoningMode) => void;
   setPermissionMode: (mode: RuntimePermissionMode) => void;
   setWorkflowMode: (workflowMode: RuntimeWorkflowMode) => void;
@@ -216,17 +218,86 @@ function getEnabledProfiles(settings: ApiConfigSettings): ApiConfigProfile[] {
 
 function getAvailableModelsForProfiles(profiles: ApiConfigProfile[]): string[] {
   return Array.from(
-    new Set(profiles.flatMap((profile) => [
-      profile.model,
-      profile.expertModel,
-      profile.smallModel,
-      profile.imageModel,
-      profile.analysisModel,
-      ...(profile.models ?? []).map((item) => item.name),
-    ])),
+    new Set(profiles.flatMap((profile) => (profile.models ?? [])
+      .filter((model) => model.catalogStatus !== "excluded")
+      .map((model) => model.name))),
   )
     .map((item) => item?.trim() ?? "")
     .filter(Boolean);
+}
+
+function getFallbackRuntimeModel(profiles: ApiConfigProfile[], availableModels: string[]): string {
+  for (const profile of profiles) {
+    const managedModels = new Set((profile.models ?? [])
+      .filter((model) => model.catalogStatus !== "excluded")
+      .map((model) => model.name.trim())
+      .filter(Boolean));
+    const configuredModel = profile.model.trim();
+    if (managedModels.has(configuredModel)) {
+      return configuredModel;
+    }
+  }
+  return availableModels[0] ?? "";
+}
+
+function resolveSelectableModel(
+  model: string | undefined,
+  availableModels: string[],
+  fallbackModel: string,
+): string | undefined {
+  const normalizedModel = model?.trim();
+  if (!normalizedModel) {
+    return undefined;
+  }
+  return availableModels.includes(normalizedModel)
+    ? normalizedModel
+    : (fallbackModel || undefined);
+}
+
+function profileOwnsSelectableModel(profile: ApiConfigProfile, model: string | undefined): boolean {
+  const normalizedModel = model?.trim();
+  return Boolean(normalizedModel && (profile.models ?? []).some((item) => (
+    item.name.trim() === normalizedModel
+    && item.catalogStatus !== "excluded"
+  )));
+}
+
+function normalizeConfigProfileId(
+  configProfileId: string | undefined,
+  model: string | undefined,
+  profiles: ApiConfigProfile[],
+): string {
+  const normalizedProfileId = configProfileId?.trim();
+  if (!normalizedProfileId) return "";
+  const profile = profiles.find((item) => item.id === normalizedProfileId);
+  return profile && profileOwnsSelectableModel(profile, model) ? profile.id : "";
+}
+
+function normalizeSessionModels(
+  sessions: Record<string, SessionView>,
+  profiles: ApiConfigProfile[],
+  availableModels: string[],
+  fallbackModel: string,
+): Record<string, SessionView> {
+  let nextSessions = sessions;
+
+  for (const [sessionId, session] of Object.entries(sessions)) {
+    const normalizedModel = resolveSelectableModel(session.model, availableModels, fallbackModel);
+    const normalizedConfigProfileId = normalizeConfigProfileId(session.configProfileId, normalizedModel, profiles) || undefined;
+    if (normalizedModel === session.model && normalizedConfigProfileId === session.configProfileId) {
+      continue;
+    }
+    if (nextSessions === sessions) {
+      nextSessions = { ...sessions };
+    }
+    nextSessions[sessionId] = {
+      ...session,
+      model: normalizedModel,
+      configProfileId: normalizedConfigProfileId,
+    };
+  }
+
+  return nextSessions;
 }
 
 function hasApiProfiles(settings: ApiConfigSettings): boolean {
@@ -398,6 +469,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   cwd: "",
   apiConfigSettings: { profiles: [] },
   runtimeModel: "",
+  runtimeConfigProfileId: "",
   reasoningMode: "xhigh",
   pendingStart: false,
   globalError: null,
@@ -431,7 +503,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       ...state.browserWorkbenchBySessionId,
       [sessionId]: {
         ...state.browserWorkbenchBySessionId[sessionId],
-        hasBrowserTab: state.browserWorkbenchBySessionId[sessionId]?.hasBrowserTab ?? true,
+        hasBrowserTab: url.trim()
+          ? true
+          : (state.browserWorkbenchBySessionId[sessionId]?.hasBrowserTab ?? true),
         annotations: state.browserWorkbenchBySessionId[sessionId]?.annotations ?? [],
         url,
       },
@@ -643,23 +717,44 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? apiConfigSettings
         : state.apiConfigSettings;
       const enabledProfiles = getEnabledProfiles(nextApiConfigSettings);
-      const enabledProfile = enabledProfiles[0];
       const availableModels = getAvailableModelsForProfiles(enabledProfiles);
-      const runtimeModel = availableModels.includes(state.runtimeModel)
-        ? state.runtimeModel
-        : (enabledProfile?.model || availableModels[0] || "");
+      const fallbackModel = getFallbackRuntimeModel(enabledProfiles, availableModels);
+      const runtimeModel = resolveSelectableModel(state.runtimeModel, availableModels, fallbackModel)
+        ?? fallbackModel;
+      const runtimeConfigProfileId = normalizeConfigProfileId(
+        state.runtimeConfigProfileId,
+        runtimeModel,
+        enabledProfiles,
+      );
 
       return {
         apiConfigSettings: nextApiConfigSettings,
         runtimeModel,
+        runtimeConfigProfileId,
+        sessions: normalizeSessionModels(state.sessions, enabledProfiles, availableModels, fallbackModel),
+        archivedSessions: normalizeSessionModels(state.archivedSessions, enabledProfiles, availableModels, fallbackModel),
       };
     });
   },
-  setRuntimeModel: (runtimeModel) => set({ runtimeModel }),
-  setSessionModel: (sessionId, model) => {
+  setRuntimeModel: (runtimeModel, configProfileId) => set((state) => {
+    const enabledProfiles = getEnabledProfiles(state.apiConfigSettings);
+    const availableModels = getAvailableModelsForProfiles(enabledProfiles);
+    const fallbackModel = getFallbackRuntimeModel(enabledProfiles, availableModels);
+    const nextModel = resolveSelectableModel(runtimeModel, availableModels, fallbackModel) ?? fallbackModel;
+    return {
+      runtimeModel: nextModel,
+      runtimeConfigProfileId: normalizeConfigProfileId(configProfileId, nextModel, enabledProfiles),
+    };
+  }),
+  setSessionModel: (sessionId, model, configProfileId) => {
     if (!sessionId) return;
-    const nextModel = model.trim() || undefined;
     set((state) => {
+      const enabledProfiles = getEnabledProfiles(state.apiConfigSettings);
+      const availableModels = getAvailableModelsForProfiles(enabledProfiles);
+      const fallbackModel = resolveSelectableModel(state.runtimeModel, availableModels, "")
+        ?? getFallbackRuntimeModel(enabledProfiles, availableModels);
+      const nextModel = resolveSelectableModel(model, availableModels, fallbackModel);
+      const nextConfigProfileId = normalizeConfigProfileId(configProfileId, nextModel, enabledProfiles) || undefined;
       const activeSession = state.sessions[sessionId];
       if (activeSession) {
         return {
@@ -668,6 +763,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             [sessionId]: {
               ...activeSession,
               model: nextModel,
+              configProfileId: nextConfigProfileId,
               updatedAt: Date.now(),
             },
           },
@@ -682,6 +778,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             [sessionId]: {
               ...archivedSession,
               model: nextModel,
+              configProfileId: nextConfigProfileId,
               updatedAt: Date.now(),
             },
           },
@@ -824,10 +921,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     switch (event.type) {
       case "session.list": {
         const nextSessions: Record<string, SessionView> = {};
+        const enabledProfiles = getEnabledProfiles(state.apiConfigSettings);
+        const availableModels = getAvailableModelsForProfiles(enabledProfiles);
+        const fallbackModel = resolveSelectableModel(state.runtimeModel, availableModels, "")
+          ?? getFallbackRuntimeModel(enabledProfiles, availableModels);
         for (const session of event.payload.sessions) {
           const existing = (event.payload.archived ? state.archivedSessions[session.id] : state.sessions[session.id])
             ?? createSession(session.id);
-          nextSessions[session.id] = mergeSessionListSession(existing, session);
+          const mergedSession = mergeSessionListSession(existing, session);
+          nextSessions[session.id] = {
+            ...mergedSession,
+            model: resolveSelectableModel(mergedSession.model, availableModels, fallbackModel),
+          };
         }
 
         if (event.payload.archived) {
@@ -945,10 +1050,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       case "session.status": {
-        const { sessionId, status, title, cwd, model, executionMode, reasoningMode, permissionMode, slashCommands } = event.payload;
+        const { sessionId, status, title, cwd, model, configProfileId, executionMode, reasoningMode, permissionMode, slashCommands } = event.payload;
         const isNewSession = !state.sessions[sessionId];
         set((state) => {
           const existing = state.sessions[sessionId] ?? createSession(sessionId);
+          const enabledProfiles = getEnabledProfiles(state.apiConfigSettings);
+          const availableModels = getAvailableModelsForProfiles(enabledProfiles);
+          const fallbackModel = resolveSelectableModel(state.runtimeModel, availableModels, "")
+            ?? getFallbackRuntimeModel(enabledProfiles, availableModels);
           return {
             sessions: {
               ...state.sessions,
@@ -957,7 +1066,12 @@ export const useAppStore = create<AppState>((set, get) => ({
                 status,
                 title: title ?? existing.title,
                 cwd: cwd ?? existing.cwd,
-                model: model ?? existing.model,
+                model: resolveSelectableModel(model ?? existing.model, availableModels, fallbackModel),
+                configProfileId: normalizeConfigProfileId(
+                  configProfileId ?? existing.configProfileId,
+                  model ?? existing.model,
+                  enabledProfiles,
+                ) || undefined,
                 executionMode: executionMode ?? existing.executionMode,
                 reasoningMode: reasoningMode ?? existing.reasoningMode,
                 permissionMode: permissionMode ?? existing.permissionMode,
@@ -1025,6 +1139,10 @@ export const useAppStore = create<AppState>((set, get) => ({
           const nextSessions = { ...state.sessions };
           const existing = nextSessions[sessionId];
           delete nextSessions[sessionId];
+          const enabledProfiles = getEnabledProfiles(state.apiConfigSettings);
+          const availableModels = getAvailableModelsForProfiles(enabledProfiles);
+          const fallbackModel = resolveSelectableModel(state.runtimeModel, availableModels, "")
+            ?? getFallbackRuntimeModel(enabledProfiles, availableModels);
 
           const archivedSession = session
             ? {
@@ -1032,7 +1150,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                 status: session.status,
                 title: session.title,
                 cwd: session.cwd,
-                model: session.model ?? existing?.model,
+                model: resolveSelectableModel(session.model ?? existing?.model, availableModels, fallbackModel),
                 executionMode: session.executionMode ?? existing?.executionMode,
                 reasoningMode: session.reasoningMode ?? existing?.reasoningMode,
                 permissionMode: session.permissionMode ?? existing?.permissionMode,
@@ -1073,6 +1191,10 @@ export const useAppStore = create<AppState>((set, get) => ({
           const nextArchivedSessions = { ...state.archivedSessions };
           const existing = nextArchivedSessions[sessionId];
           delete nextArchivedSessions[sessionId];
+          const enabledProfiles = getEnabledProfiles(state.apiConfigSettings);
+          const availableModels = getAvailableModelsForProfiles(enabledProfiles);
+          const fallbackModel = resolveSelectableModel(state.runtimeModel, availableModels, "")
+            ?? getFallbackRuntimeModel(enabledProfiles, availableModels);
 
           const restoredSession = session
             ? {
@@ -1080,7 +1202,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                 status: session.status,
                 title: session.title,
                 cwd: session.cwd,
-                model: session.model ?? existing?.model,
+                model: resolveSelectableModel(session.model ?? existing?.model, availableModels, fallbackModel),
                 executionMode: session.executionMode ?? existing?.executionMode,
                 reasoningMode: session.reasoningMode ?? existing?.reasoningMode,
                 permissionMode: session.permissionMode ?? existing?.permissionMode,

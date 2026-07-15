@@ -118,6 +118,9 @@ test("built-in MCP registry tool names stay unique", () => {
   assert.equal(toolNames.includes("figma_match_ui_nodes"), true);
   assert.equal(toolNames.includes("browser_fetch_logs"), true);
   assert.equal(toolNames.includes("browser_http_request"), true);
+  assert.equal(toolNames.includes("browser_extract_canvas"), true);
+  assert.equal(toolNames.includes("browser_wait_canvas"), true);
+  assert.equal(toolNames.includes("browser_extract_terminal"), false);
   assert.equal(toolNames.includes("design_lint_visual_parity"), false);
   assert.equal(toolNames.includes("image_generate"), true);
 });

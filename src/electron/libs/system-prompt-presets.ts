@@ -21,6 +21,7 @@ export function buildBrowserWorkbenchPromptAppend(): string {
     "Current BrowserView first: before starting a dev server, opening localhost, or launching external browser automation, call browser_get_state. If the right-side BrowserView already has an active URL/title, reuse that page and inspect it with browser_extract_page/browser_query_nodes/browser_fetch_logs/browser_capture_visible.",
     "Do not run npm run dev or open a new local page just to inspect an already-open BrowserView. Start or reopen only after browser_get_state/http_ping/diagnose_port shows there is no usable page, the current URL is wrong, or the user explicitly asked to launch a service.",
     "Use focused browser helpers when possible: http_ping/diagnose_port for service checks, browser_console_logs(waitFor) for HMR/build waits, browser_fetch_logs for API request/response evidence after page interactions, browser_http_request for credentialed direct API probes from the current BrowserView session, browser_query_nodes/browser_get_element/browser_inspect_styles for DOM/style evidence, browser_query_nodes/browser_inspect_styles(fields) for compact output, and browser_apply_styles for temporary CSS preview.",
+    "Rendered surface rule: when meaningful content lives in Canvas/WebGL/SVG, use browser_extract_canvas before screenshots or OCR. Inspect the returned accessibility, chart, scene, terminal, text, or custom provider semantics without assuming one business type. Reuse its fingerprint with browser_wait_canvas to wait for provider changes, matching text, or stable content. Use pixel capture only when the tool reports that no semantic provider matched.",
     "Save/display mismatch rule: when a UI save returns 200 but the screen still shows old data, capture the submitted payload, response body or responseJsonFields, direct BrowserView-session API result via browser_http_request when useful, and the next read response before editing frontend or backend code.",
     "For local services, a background Bash exit code only proves the launch command returned; verify readiness separately with diagnose_port/http_ping and inspect logs. Spring Boot /actuator/health 503 means the process is reachable but not ready.",
     "For Figma-backed UI fixes, gather DOM node fields (text, selector, box, attributes, componentStack, context.nearbyText) and use figma_match_ui_nodes to map rendered UI nodes to Figma nodes before editing.",
@@ -72,21 +73,14 @@ export function extractFeishuDocumentUrls(text: string): string[] {
 
 export function buildFeishuDocumentFetchPromptAppend(
   prompt: string,
-  runtimeEnv: Record<string, string | undefined>,
 ): string | undefined {
   const urls = extractFeishuDocumentUrls(prompt);
   if (urls.length === 0) {
     return undefined;
   }
 
-  const hasLarkCliCommand = Boolean(runtimeEnv.LARK_CLI_COMMAND?.trim());
-  const hasLarkCliProfile = Boolean(runtimeEnv.LARK_CLI_PROFILE?.trim());
-  if (!hasLarkCliCommand || !hasLarkCliProfile) {
-    return undefined;
-  }
-
   const commands = urls.map((url) =>
-    `- \`$LARK_CLI_COMMAND --profile $LARK_CLI_PROFILE docs +fetch --doc "${url}" --format pretty 2>&1\``
+    `- \`lark-cli docs +fetch --doc "${url}" --format pretty 2>&1\``
   );
 
   return [

@@ -12,7 +12,7 @@ import type {
   AgentRuleDocuments,
   SettingsPageId,
 } from "../types";
-import { ApiProfilesSettingsPage } from "./settings/ApiProfilesSettingsPage";
+import { AiInterfaceSettingsPage } from "./settings/AiInterfaceSettingsPage";
 import { AgentRulesSettingsPage } from "./settings/AgentRulesSettingsPage";
 import {
   ChannelsSettingsPage,
@@ -20,12 +20,16 @@ import {
   type ChannelGuideSessionRequest,
 } from "./settings/ChannelsSettingsPage";
 import { GlobalJsonSettingsPage } from "./settings/GlobalJsonSettingsPage";
-import { ModelRoutingSettingsPage } from "./settings/ModelRoutingSettingsPage";
 import { SettingsSheet, type SettingsPageDefinition } from "./settings/SettingsSheet";
 import { SkillsManagementPage } from "./settings/SkillsManagementPage";
 import { PluginsSettingsPage } from "./settings/PluginsSettingsPage";
 import { McpSettingsPage } from "./settings/McpSettingsPage";
 import { AboutPage } from "./settings/AboutPage";
+import {
+  MODEL_CATALOG_UPDATED_EVENT,
+  mergeAutoSyncedModelsIntoDraft,
+  type UiModelCatalogUpdatedPayload,
+} from "../utils/model-catalog-sync";
 import {
   buildRoutingSummary,
   createProfile,
@@ -33,7 +37,6 @@ import {
   normalizeProfile,
   validateProfiles,
 } from "./settings/settings-utils";
-import { ensureLarkCliRuntimeDefaults } from "../../shared/lark-runtime-defaults.js";
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -230,6 +233,16 @@ export function SettingsModal({
     }
   }, [initialPageId]);
 
+  useEffect(() => {
+    const mergeAddedModels = (event: Event) => {
+      const detail = (event as CustomEvent<UiModelCatalogUpdatedPayload>).detail;
+      if (!detail?.addedModels?.length) return;
+      setProfiles((current) => mergeAutoSyncedModelsIntoDraft(current, detail.addedModels));
+    };
+    window.addEventListener(MODEL_CATALOG_UPDATED_EVENT, mergeAddedModels);
+    return () => window.removeEventListener(MODEL_CATALOG_UPDATED_EVENT, mergeAddedModels);
+  }, []);
+
   const loadSettings = useCallback(() => {
     setLoading(true);
     void Promise.allSettled([
@@ -257,11 +270,11 @@ export function SettingsModal({
 
         if (globalSettingsResult.status === "fulfilled") {
           const globalSettings = globalSettingsResult.value;
-          const normalizedGlobalSettings = ensureLarkCliRuntimeDefaults(
-            typeof globalSettings === "object" && globalSettings !== null && !Array.isArray(globalSettings)
-              ? globalSettings as GlobalRuntimeConfig
-              : {},
-          );
+          const normalizedGlobalSettings = typeof globalSettings === "object"
+            && globalSettings !== null
+            && !Array.isArray(globalSettings)
+            ? globalSettings as GlobalRuntimeConfig
+            : {};
           const globalConfigText = JSON.stringify(normalizedGlobalSettings, null, 2);
           setGlobalConfigText(globalConfigText);
           setGlobalConfigParseError(validateGlobalConfigText(globalConfigText));
@@ -472,16 +485,11 @@ export function SettingsModal({
   };
 
   let content = (
-    <>
-      <ModelRoutingSettingsPage profiles={profiles} onChange={updateProfiles} />
-      <div className="mt-6">
-        <ApiProfilesSettingsPage
-          profiles={profiles}
-          runtimeSource={runtimeSource}
-          onChange={updateProfiles}
-        />
-      </div>
-    </>
+    <AiInterfaceSettingsPage
+      profiles={profiles}
+      runtimeSource={runtimeSource}
+      onChange={updateProfiles}
+    />
   );
   if (activePageId === "global-json") {
     content = (

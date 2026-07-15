@@ -4,7 +4,30 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
-import { runExternalCli } from "../../src/electron/libs/external-cli.js";
+import { resolveExternalCliCommand, runExternalCli } from "../../src/electron/libs/external-cli.js";
+
+test("resolveExternalCliCommand prefers the stable Volta shim over stale PATH wrappers", (t) => {
+  if (process.platform !== "win32") {
+    t.skip("Windows Volta shim behavior only applies on win32");
+    return;
+  }
+
+  const tempRoot = mkdtempSync(join(tmpdir(), "tech-cc-hub-volta-"));
+  const staleDir = join(tempRoot, "stale-node-image");
+  const voltaBin = join(tempRoot, "Volta", "bin");
+  mkdirSync(staleDir, { recursive: true });
+  mkdirSync(voltaBin, { recursive: true });
+  writeFileSync(join(staleDir, "lark-cli.cmd"), "@echo stale\r\n", "utf8");
+  writeFileSync(join(voltaBin, "lark-cli.cmd"), "@echo current\r\n", "utf8");
+
+  assert.equal(
+    resolveExternalCliCommand("lark-cli", {
+      LOCALAPPDATA: tempRoot,
+      PATH: staleDir,
+    }),
+    join(voltaBin, "lark-cli.cmd"),
+  );
+});
 
 test("runExternalCli preserves JSON arguments through Windows .cmd shims", async (t) => {
   if (process.platform !== "win32") {

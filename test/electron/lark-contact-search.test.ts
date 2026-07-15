@@ -105,7 +105,7 @@ test("does not execute contact search when lark-cli user auth is not ready", asy
     module as unknown as {
       searchLarkContactsWithCli?: (
         query: unknown,
-        config: { command: string; profile?: string; runtimeEnv: NodeJS.ProcessEnv },
+        config: { command: string; runtimeEnv: NodeJS.ProcessEnv },
         invoke: (command: string, args: string[], runtimeEnv: NodeJS.ProcessEnv) => Promise<{ stdout: string; stderr: string }>,
       ) => Promise<unknown>;
     }
@@ -164,13 +164,13 @@ test("prompt input falls back to ordinary file mentions after a Lark setup failu
   assert.match(source, /if \(!hasLarkMentionContext\) setLarkMentionUnavailable\(false\)/);
 });
 
-test("reuses a successful lark-cli readiness check across consecutive contact queries", async () => {
+test("rechecks the active lark-cli profile across consecutive contact queries", async () => {
   const module = await import("../../src/electron/libs/lark-contact-search.js");
   const searchLarkContactsWithCli = (
     module as unknown as {
       searchLarkContactsWithCli?: (
         query: unknown,
-        config: { command: string; profile?: string; runtimeEnv: NodeJS.ProcessEnv },
+        config: { command: string; runtimeEnv: NodeJS.ProcessEnv },
         invoke: (command: string, args: string[], runtimeEnv: NodeJS.ProcessEnv) => Promise<{ stdout: string; stderr: string }>,
       ) => Promise<unknown>;
     }
@@ -186,8 +186,15 @@ test("reuses a successful lark-cli readiness check across consecutive contact qu
         stdout: JSON.stringify({
           identity: "user",
           verified: true,
-          tokenStatus: "valid",
-          scope: "contact:user:search",
+          identities: {
+            user: {
+              status: "ready",
+              available: true,
+              verified: true,
+              tokenStatus: "valid",
+              scope: "contact:user:search",
+            },
+          },
         }),
         stderr: "",
       };
@@ -202,8 +209,12 @@ test("reuses a successful lark-cli readiness check across consecutive contact qu
   await searchLarkContactsWithCli("顾", config, invoke);
   await searchLarkContactsWithCli("顾凯", config, invoke);
 
-  assert.equal(calls.filter((args) => args.includes("auth")).length, 1);
+  assert.equal(calls.filter((args) => args.includes("auth")).length, 2);
   assert.equal(calls.filter((args) => args.includes("+search-user")).length, 2);
+  for (const args of calls.filter((item) => item.includes("+search-user"))) {
+    assert.deepEqual(args.slice(args.indexOf("--as"), args.indexOf("--as") + 2), ["--as", "user"]);
+    assert.equal(args.includes("--user-id-type"), false);
+  }
 });
 
 test("does not execute contact search when the required Lark contact scope is missing", async () => {
@@ -212,7 +223,7 @@ test("does not execute contact search when the required Lark contact scope is mi
     module as unknown as {
       searchLarkContactsWithCli?: (
         query: unknown,
-        config: { command: string; profile?: string; runtimeEnv: NodeJS.ProcessEnv },
+        config: { command: string; runtimeEnv: NodeJS.ProcessEnv },
         invoke: (command: string, args: string[], runtimeEnv: NodeJS.ProcessEnv) => Promise<{ stdout: string; stderr: string }>,
       ) => Promise<unknown>;
     }

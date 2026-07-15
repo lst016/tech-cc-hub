@@ -27,9 +27,16 @@ export type ApiModelConfigProfile = {
   contextWindow?: number;
   compressionThresholdPercent?: number;
   routingWeight?: number;
+  catalogStatus?: "discovered" | "managed" | "excluded";
+  alias?: string;
+  tags?: string[];
+  notes?: string;
+  ownedBy?: string;
+  supportedEndpointTypes?: string[];
+  createdAt?: number;
 };
 
-export type ApiProviderMode = "custom" | "deepseek" | "codex" | "minimax";
+export type ApiProviderMode = "custom" | "boke" | "deepseek" | "codex" | "minimax";
 
 export type ApiConfigProfile = {
   id: string;
@@ -213,26 +220,20 @@ export type ChannelProviderId =
   | "lark"
   | "wechat";
 
-export type ChannelTransportMode = "bot-api" | "lark-cli" | "lark-open-platform" | "weixin-native" | "weixin-openclaw";
+export type ChannelTransportMode = "bot-api" | "lark-cli" | "weixin-native" | "weixin-openclaw";
 
 export type ChannelConnectionConfig = {
   provider: ChannelProviderId;
   enabled: boolean;
   chatEnabled?: boolean;
+  realtimeEnabled?: boolean;
   transport: ChannelTransportMode;
   displayName?: string;
   botTokenEnv?: string;
   chatIdEnv?: string;
   webhookUrlEnv?: string;
   appIdEnv?: string;
-  appSecretEnv?: string;
   tenantKeyEnv?: string;
-  cliCommand?: string;
-  cliProfile?: string;
-  cliSendArgsTemplate?: string;
-  cliReceiveArgsTemplate?: string;
-  allowedSenderIds?: string;
-  allowedConversationIds?: string;
   notes?: string;
 };
 
@@ -246,6 +247,7 @@ export type SettingsPageId = "profiles" | "channels" | "plugins" | "mcp" | "glob
 
 export type RuntimeOverrides = {
   model?: string;
+  configProfileId?: string;
   reasoningMode?: RuntimeReasoningMode;
   workflowMode?: RuntimeWorkflowMode;
   permissionMode?: RuntimePermissionMode;
@@ -294,6 +296,7 @@ export type SessionInfo = {
   title: string;
   status: SessionStatus;
   model?: string;
+  configProfileId?: string;
   executionMode?: SessionExecutionMode;
   reasoningMode?: RuntimeReasoningMode;
   permissionMode?: RuntimePermissionMode;
@@ -342,10 +345,12 @@ export type DesktopNotificationOpenTarget =
 // Server -> Client events
 export type ServerEvent =
   | { type: "stream.message"; payload: { sessionId: string; message: StreamMessage } }
+  | { type: "model.catalog.updated"; payload: { addedModels: Array<{ profileId: string; profileName: string; modelName: string; model: ApiModelConfigProfile }>; syncedAt: number } }
   | { type: "stream.user_prompt"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[]; capturedAt?: number; historyId?: string } }
-  | { type: "session.status"; payload: { sessionId: string; status: SessionStatus; title?: string; cwd?: string; model?: string; executionMode?: SessionExecutionMode; reasoningMode?: RuntimeReasoningMode; permissionMode?: RuntimePermissionMode; error?: string; slashCommands?: string[] } }
-  | { type: "btw.thread.created"; payload: { threadId: string; parentSessionId: string; title: string; status: SessionStatus; cwd?: string; model?: string; reasoningMode?: RuntimeReasoningMode; permissionMode?: RuntimePermissionMode; createdAt: number; updatedAt: number } }
-  | { type: "btw.thread.status"; payload: { threadId: string; status: SessionStatus; title?: string; model?: string; reasoningMode?: RuntimeReasoningMode; permissionMode?: RuntimePermissionMode; error?: string; updatedAt: number } }
+  | { type: "session.append.result"; payload: { sessionId: string; requestId: string; success: boolean; error?: string } }
+  | { type: "session.status"; payload: { sessionId: string; status: SessionStatus; title?: string; cwd?: string; model?: string; configProfileId?: string; executionMode?: SessionExecutionMode; reasoningMode?: RuntimeReasoningMode; permissionMode?: RuntimePermissionMode; error?: string; slashCommands?: string[] } }
+  | { type: "btw.thread.created"; payload: { threadId: string; parentSessionId: string; title: string; status: SessionStatus; cwd?: string; model?: string; configProfileId?: string; reasoningMode?: RuntimeReasoningMode; permissionMode?: RuntimePermissionMode; createdAt: number; updatedAt: number } }
+  | { type: "btw.thread.status"; payload: { threadId: string; status: SessionStatus; title?: string; model?: string; configProfileId?: string; reasoningMode?: RuntimeReasoningMode; permissionMode?: RuntimePermissionMode; error?: string; updatedAt: number } }
   | { type: "btw.stream.message"; payload: { threadId: string; message: StreamMessage } }
   | { type: "btw.stream.user_prompt"; payload: { threadId: string; prompt: string; attachments?: PromptAttachment[]; capturedAt?: number } }
   | { type: "btw.permission.request"; payload: { threadId: string; toolUseId: string; toolName: string; input: unknown } }
@@ -401,8 +406,8 @@ export type ClientEvent =
   | { type: "session.create"; payload: { title?: string; cwd?: string; allowedTools?: string } }
   | { type: "session.start"; payload: { title: string; prompt: string; agentPrompt?: string; workspaceContext?: LinkedWorkspaceContext; cwd?: string; allowedTools?: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides } }
   | { type: "session.continue"; payload: { sessionId: string; prompt: string; agentPrompt?: string; workspaceContext?: LinkedWorkspaceContext; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides; displayUserPrompt?: boolean; replaceHistoryId?: string } }
-  | { type: "session.set_model"; payload: { sessionId: string; model: string } }
-  | { type: "session.append"; payload: { sessionId: string; prompt: string; agentPrompt?: string; attachments?: PromptAttachment[] } }
+  | { type: "session.set_model"; payload: { sessionId: string; model: string; configProfileId?: string } }
+  | { type: "session.append"; payload: { sessionId: string; requestId?: string; prompt: string; agentPrompt?: string; attachments?: PromptAttachment[] } }
   | { type: "channel.message.receive"; payload: { provider: ChannelProviderId; text: string; externalConversationId?: string; externalMessageId?: string; senderId?: string; senderName?: string; channelName?: string; title?: string; allowedTools?: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides; receivedAt?: number } }
   | { type: "session.workflow.catalog.list"; payload: { sessionId: string } }
   | { type: "session.workflow.set"; payload: { sessionId: string; markdown: string; sourceLayer: WorkflowScope; sourcePath?: string } }

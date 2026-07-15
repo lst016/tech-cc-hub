@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import {
   buildChromeCookieDomainCandidates,
@@ -31,5 +32,14 @@ describe("chrome cookie sync helpers", () => {
 
     assert.equal(stripChromeCookieHostHash(valueWithHostHash, hostKey).toString("utf-8"), "logged-in-cookie-value");
     assert.equal(stripChromeCookieHostHash(valueWithHostHash, ".another-example.com"), valueWithHostHash);
+  });
+
+  it("keeps PowerShell and cookie database copies off the Electron main event loop", () => {
+    const source = readFileSync("src/electron/libs/chrome-cookie-sync.ts", "utf8");
+
+    assert.doesNotMatch(source, /\bexecSync\b/);
+    assert.doesNotMatch(source, /\bcopyFileSync\b/);
+    assert.match(source, /await execFileAsync\(/);
+    assert.match(source, /await copyFile\(/);
   });
 });

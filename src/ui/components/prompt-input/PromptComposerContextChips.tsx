@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, CornerDownLeft, ListOrdered, Pencil, Trash2, X } from "lucide-react";
 import type { PromptAttachment } from "../../types";
 import type {
   CodeReferenceDraft,
@@ -66,14 +66,25 @@ export function QueuedMessagesPanel({
   const { label: nextLabel } = getQueuedMessagePanelDetail(nextQueuedMessage);
 
   return (
-    <div className={`mb-3 min-w-0 overflow-hidden rounded-2xl border border-black/6 bg-[#f6f8fb] px-3 ${collapsed ? "py-2" : "py-3"}`}>
-      <div className={`flex flex-wrap items-center justify-between gap-2 ${collapsed ? "" : "mb-2"}`}>
+    <div
+      role="region"
+      aria-label="待发送队列"
+      data-queued-messages-panel
+      className="mb-3 min-w-0 overflow-hidden rounded-2xl border border-ink-900/8 bg-surface-cream shadow-soft"
+    >
+      <div className={`flex min-h-10 items-center justify-between gap-3 px-3 ${collapsed ? "" : "border-b border-ink-900/6"}`}>
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <div className="shrink-0 text-xs font-medium text-ink-700">待发送队列 · {queue.length} 条</div>
+          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-accent-subtle text-accent">
+            <ListOrdered className="h-3.5 w-3.5" aria-hidden="true" />
+          </span>
+          <div className="shrink-0 text-xs font-semibold text-ink-800">待发送队列</div>
+          <span className="grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-surface-tertiary px-1.5 text-[10px] font-semibold tabular-nums text-ink-600">
+            {queue.length}
+          </span>
           {collapsed && (
             <button
               type="button"
-              className="hidden min-w-0 flex-1 truncate text-left text-[11px] font-medium text-muted transition hover:text-accent sm:block"
+              className="hidden min-w-0 flex-1 truncate rounded-md px-1.5 py-1 text-left text-[11px] font-medium text-muted transition hover:bg-white hover:text-accent focus-visible:outline-2 focus-visible:outline-accent/40 sm:block"
               onClick={() => onEdit(nextQueuedMessage)}
               title={nextLabel}
             >
@@ -81,19 +92,22 @@ export function QueuedMessagesPanel({
             </button>
           )}
         </div>
-        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 text-[11px] text-muted">
+        <div className="flex shrink-0 items-center gap-0.5 text-[11px] text-muted">
           <button
             type="button"
-            className="shrink-0 rounded-full border border-black/8 bg-white px-2 py-0.5 font-semibold transition hover:text-accent"
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg px-2 text-[11px] font-medium transition hover:bg-error-light/70 hover:text-error focus-visible:outline-2 focus-visible:outline-error/30"
             onClick={onClear}
+            aria-label="清空待发送队列"
           >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
             清空队列
           </button>
           <button
             type="button"
-            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-black/8 bg-white px-2 py-0.5 font-semibold transition hover:text-accent"
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg px-2 text-[11px] font-medium transition hover:bg-white hover:text-ink-800 focus-visible:outline-2 focus-visible:outline-accent/40"
             onClick={() => setCollapsed((value) => !value)}
             aria-expanded={!collapsed}
+            aria-label={collapsed ? "展开待发送队列" : "收起待发送队列"}
           >
             <ChevronDown className={`h-3.5 w-3.5 transition-transform ${collapsed ? "" : "rotate-180"}`} aria-hidden="true" />
             {collapsed ? "展开" : "收起"}
@@ -101,59 +115,78 @@ export function QueuedMessagesPanel({
         </div>
       </div>
       {!collapsed && (
-        <div className="grid max-h-[240px] gap-2 overflow-y-auto pr-1">
+        <div className="queued-messages-scroll max-h-[216px] overflow-y-auto overscroll-contain">
           {queue.map((queuedMessage, index) => {
             const { contextCount, label } = getQueuedMessagePanelDetail(queuedMessage);
 
             return (
-              <div key={queuedMessage.id} className="group grid min-w-0 grid-cols-[auto,minmax(0,1fr)] items-start gap-x-2 gap-y-2 overflow-hidden rounded-2xl border border-black/6 bg-white px-3 py-2 text-xs text-ink-700 transition hover:border-accent/18 hover:shadow-[0_10px_24px_rgba(30,38,52,0.06)] sm:grid-cols-[auto,minmax(0,1fr),auto]">
-                <span className="mt-0.5 shrink-0 rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-semibold text-accent">
-                  {index === 0 ? "下一条" : `排队 ${index + 1}`}
+              <div
+                key={queuedMessage.id}
+                data-queued-message-row
+                data-queue-next={index === 0 ? "true" : undefined}
+                aria-current={index === 0 ? "true" : undefined}
+                className={`queued-message-row group grid min-w-0 items-center gap-x-2.5 gap-y-1 border-b border-ink-900/6 px-3 py-2.5 text-xs text-ink-700 transition-colors last:border-b-0 hover:bg-white ${index === 0 ? "bg-white/80" : "bg-white/35"}`}
+              >
+                <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-[11px] font-semibold tabular-nums ${index === 0 ? "bg-accent-subtle text-accent" : "bg-surface-tertiary text-ink-500"}`}>
+                  {index + 1}
                 </span>
-                <button
-                  type="button"
-                  className="min-w-0 overflow-hidden text-left leading-5 transition hover:text-accent [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] [overflow-wrap:anywhere]"
-                  onClick={() => onEdit(queuedMessage)}
-                  title={label}
-                >
-                  {label}
-                </button>
-                <div className="col-span-2 flex min-w-0 flex-wrap items-center gap-1.5 sm:col-span-1 sm:justify-end">
-                  {queuedMessage.attachments.length > 0 && (
-                    <span className="shrink-0 rounded-full bg-[#eef2f8] px-2 py-0.5 text-[11px] text-muted">
-                      附件 {queuedMessage.attachments.length}
+                <div className="min-w-0">
+                  <button
+                    type="button"
+                    className="min-w-0 max-w-full overflow-hidden text-left text-[13px] font-medium leading-5 text-ink-800 transition hover:text-accent focus-visible:rounded focus-visible:outline-2 focus-visible:outline-accent/40 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] [overflow-wrap:anywhere]"
+                    onClick={() => onEdit(queuedMessage)}
+                    title={label}
+                  >
+                    {label}
+                  </button>
+                  <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 text-[10px] leading-4 text-ink-500">
+                    <span className={index === 0 ? "font-semibold text-accent" : "font-medium text-ink-500"}>
+                      {index === 0 ? "下一条" : `排队 ${index + 1}`}
                     </span>
-                  )}
-                  {contextCount > 0 && (
-                    <span className="shrink-0 rounded-full bg-accent/10 px-2 py-0.5 text-[11px] text-accent">
-                      上下文 {contextCount}
-                    </span>
-                  )}
-                  <span className="shrink-0 text-[11px] text-muted">{formatShortTime(queuedMessage.createdAt)}</span>
+                    {queuedMessage.attachments.length > 0 && (
+                      <>
+                        <span className="text-ink-400" aria-hidden="true">·</span>
+                        <span>附件 {queuedMessage.attachments.length}</span>
+                      </>
+                    )}
+                    {contextCount > 0 && (
+                      <>
+                        <span className="text-ink-400" aria-hidden="true">·</span>
+                        <span>上下文 {contextCount}</span>
+                      </>
+                    )}
+                    <span className="text-ink-400" aria-hidden="true">·</span>
+                    <span className="tabular-nums">{formatShortTime(queuedMessage.createdAt)}</span>
+                  </div>
+                </div>
+                <div className="queued-message-actions flex min-w-0 items-center justify-end gap-0.5">
                   {isRunning && (
                     <button
                       type="button"
-                      className="shrink-0 rounded-full border border-accent/18 bg-accent/8 px-2.5 py-1 text-[11px] font-semibold text-accent transition hover:bg-accent/14"
+                      className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg bg-accent-subtle px-2 text-[11px] font-semibold text-accent transition hover:bg-accent/15 focus-visible:outline-2 focus-visible:outline-accent/40"
                       onClick={() => onAppend(queuedMessage)}
                       title="把这条消息作为补充命令插入当前执行"
                     >
+                      <CornerDownLeft className="h-3.5 w-3.5" aria-hidden="true" />
                       插入
                     </button>
                   )}
                   <button
                     type="button"
-                    className="shrink-0 rounded-full border border-black/6 bg-white px-2.5 py-1 text-[11px] font-medium text-ink-700 shadow-sm transition-colors hover:border-accent/20 hover:bg-accent/8 hover:text-accent"
+                    className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg px-2 text-[11px] font-medium text-ink-600 transition-colors hover:bg-surface-tertiary hover:text-ink-800 focus-visible:outline-2 focus-visible:outline-accent/40"
                     onClick={() => onEdit(queuedMessage)}
+                    aria-label={`编辑排队消息 ${index + 1}`}
                   >
+                    <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                     编辑
                   </button>
                   <button
                     type="button"
-                    className="shrink-0 rounded-full p-1 text-muted transition-colors hover:bg-black/5 hover:text-ink-700"
+                    className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-error-light/70 hover:text-error focus-visible:outline-2 focus-visible:outline-error/30"
                     onClick={() => onRemove(queuedMessage.id)}
-                    aria-label="移除待发送消息"
+                    aria-label={`移除排队消息 ${index + 1}`}
                   >
-                    <RemoveIcon />
+                    <X className="h-3.5 w-3.5" aria-hidden="true" />
                   </button>
                 </div>
               </div>

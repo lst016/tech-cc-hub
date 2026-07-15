@@ -89,6 +89,8 @@ const BUILTIN_TOOL_GROUPS: Record<string, BuiltinToolGroup[]> = {
       title: "页面读取",
       tools: [
         { name: "browser_extract_page", description: "提取正文、标题、链接、图片等页面摘要" },
+        { name: "browser_extract_canvas", description: "读取 Canvas、WebGL、SVG 的通用语义 provider 和渲染元数据" },
+        { name: "browser_wait_canvas", description: "等待任意渲染表面语义发生变化、匹配文本或稳定" },
         { name: "browser_get_element", description: "读取 text/html/value/attr/title/url/count/box/styles" },
         { name: "browser_get_dom_stats", description: "统计 DOM 规模和常见标签" },
         { name: "browser_query_nodes", description: "按 CSS selector 或 XPath 查询节点" },

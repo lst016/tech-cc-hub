@@ -1,10 +1,12 @@
-import type { ApiConfigProfile, ApiModelConfigProfile } from "../../types.js";
+import type { ApiConfigProfile } from "../../types.js";
 import {
+  getAvailableModels,
   getAvailableModelsForProfiles,
   getEnabledProfiles,
+  getImageGenerationModelsForProfiles,
+  getImageUnderstandingModelsForProfiles,
+  getRoutedModelOptionsForProfiles,
 } from "./settings-utils.js";
-
-const DEFAULT_CONTEXT_WINDOW = 200_000;
 
 export type ModelSlotPatch = Partial<Pick<ApiConfigProfile, "model" | "expertModel" | "smallModel" | "analysisModel" | "imageModel" | "imageGenerationModel">>;
 
@@ -13,6 +15,9 @@ export type SharedModelRoutingState = {
   routedProfileNames: string[];
   enabledCount: number;
   availableModels: string[];
+  roleModels: string[];
+  imageUnderstandingModels: string[];
+  imageGenerationModels: string[];
   mainModel: string;
   expertModel: string;
   smallModel: string;
@@ -26,6 +31,7 @@ export function buildSharedModelRoutingState(profiles: ApiConfigProfile[]): Shar
   const routedProfiles = getEnabledProfiles(profiles);
   const availableModels = getAvailableModelsForProfiles(routedProfiles);
   const primaryProfile = routedProfiles[0];
+  const roleModels = primaryProfile ? getAvailableModels(primaryProfile) : [];
   const mainModel = pickAvailableModel(primaryProfile?.model, availableModels) || availableModels[0] || "";
 
   return {
@@ -33,10 +39,13 @@ export function buildSharedModelRoutingState(profiles: ApiConfigProfile[]): Shar
     routedProfileNames: routedProfiles.map((profile) => profile.name || "未命名配置"),
     enabledCount,
     availableModels,
+    roleModels,
+    imageUnderstandingModels: getImageUnderstandingModelsForProfiles(routedProfiles),
+    imageGenerationModels: getImageGenerationModelsForProfiles(routedProfiles),
     mainModel,
-    expertModel: pickAvailableModel(primaryProfile?.expertModel, availableModels) || mainModel,
-    smallModel: pickAvailableModel(primaryProfile?.smallModel, availableModels) || mainModel,
-    analysisModel: pickAvailableModel(primaryProfile?.analysisModel, availableModels) || mainModel,
+    expertModel: pickAvailableModel(primaryProfile?.expertModel, roleModels) || mainModel,
+    smallModel: pickAvailableModel(primaryProfile?.smallModel, roleModels) || mainModel,
+    analysisModel: pickAvailableModel(primaryProfile?.analysisModel, roleModels) || mainModel,
     imageModel: pickFirstConfiguredSlotModel(routedProfiles, "imageModel", availableModels),
     imageGenerationModel: pickFirstConfiguredSlotModel(routedProfiles, "imageGenerationModel", availableModels),
   };
@@ -45,24 +54,112 @@ export function buildSharedModelRoutingState(profiles: ApiConfigProfile[]): Shar
 export function applySharedModelRoutingPatch(profiles: ApiConfigProfile[], patch: ModelSlotPatch): ApiConfigProfile[] {
   const state = buildSharedModelRoutingState(profiles);
   const routedIds = new Set(state.routedProfileIds);
-  const routedProfiles = profiles.filter((profile) => routedIds.has(profile.id));
-  const mergedModels = mergeModelConfigs(routedProfiles, state.availableModels);
+  const hasModelPatch = Object.prototype.hasOwnProperty.call(patch, "model");
+  const hasExpertModelPatch = Object.prototype.hasOwnProperty.call(patch, "expertModel");
+  const hasSmallModelPatch = Object.prototype.hasOwnProperty.call(patch, "smallModel");
+  const hasAnalysisModelPatch = Object.prototype.hasOwnProperty.call(patch, "analysisModel");
   const hasImageModelPatch = Object.prototype.hasOwnProperty.call(patch, "imageModel");
   const hasImageGenerationModelPatch = Object.prototype.hasOwnProperty.call(patch, "imageGenerationModel");
+  const routedProfiles = getEnabledProfiles(profiles);
+  const modelOwners = getRoutedModelOptionsForProfiles(routedProfiles);
+  const findOwnerId = (modelName: string | undefined): string | undefined => {
+    const normalized = modelName?.trim();
+    return normalized
+      ? modelOwners.find((option) => option.value === normalized)?.profileId
+      : undefined;
+  };
+  const mainOwnerId = hasModelPatch ? findOwnerId(patch.model) : state.routedProfileIds[0];
+  const roleOwnerId = mainOwnerId ?? state.routedProfileIds[0];
+  const imageOwnerId = hasImageModelPatch ? findOwnerId(patch.imageModel) : undefined;
+  const imageGenerationOwnerId = hasImageGenerationModelPatch ? findOwnerId(patch.imageGenerationModel) : undefined;
 
-  return profiles.map((profile) => {
+  const nextProfiles = profiles.map((profile) => {
     if (!routedIds.has(profile.id)) {
       return profile;
     }
 
+    const locallyManagedModels = new Set(getAvailableModels(profile));
+    const fallbackModel = locallyManagedModels.values().next().value ?? "";
+
     return {
       ...profile,
-      ...patch,
-      imageModel: hasImageModelPatch ? patch.imageModel || undefined : profile.imageModel,
-      imageGenerationModel: hasImageGenerationModelPatch ? patch.imageGenerationModel || undefined : profile.imageGenerationModel,
-      models: mergeModelConfigsForProfile(profile, mergedModels, state.availableModels),
+      model: resolveRequiredLocalSlot(
+        profile.model,
+        patch.model,
+        hasModelPatch && profile.id === mainOwnerId,
+        locallyManagedModels,
+        fallbackModel,
+      ),
+      expertModel: resolveRequiredLocalSlot(
+        profile.expertModel,
+        patch.expertModel,
+        hasExpertModelPatch && profile.id === roleOwnerId,
+        locallyManagedModels,
+        fallbackModel,
+      ),
+      smallModel: resolveRequiredLocalSlot(
+        profile.smallModel,
+        patch.smallModel,
+        hasSmallModelPatch && profile.id === roleOwnerId,
+        locallyManagedModels,
+        fallbackModel,
+      ),
+      analysisModel: resolveRequiredLocalSlot(
+        profile.analysisModel,
+        patch.analysisModel,
+        hasAnalysisModelPatch && profile.id === roleOwnerId,
+        locallyManagedModels,
+        fallbackModel,
+      ),
+      imageModel: hasImageModelPatch
+        ? profile.id === imageOwnerId ? patch.imageModel?.trim() || undefined : undefined
+        : retainOptionalLocalSlot(profile.imageModel, locallyManagedModels),
+      imageGenerationModel: hasImageGenerationModelPatch
+        ? profile.id === imageGenerationOwnerId ? patch.imageGenerationModel?.trim() || undefined : undefined
+        : retainOptionalLocalSlot(profile.imageGenerationModel, locallyManagedModels),
     };
   });
+
+  if (!hasModelPatch || !mainOwnerId) {
+    return nextProfiles;
+  }
+  return promoteEnabledProfile(nextProfiles, mainOwnerId);
+}
+
+function promoteEnabledProfile(profiles: ApiConfigProfile[], profileId: string): ApiConfigProfile[] {
+  const enabledProfiles = profiles.filter((profile) => profile.enabled);
+  const ownerIndex = enabledProfiles.findIndex((profile) => profile.id === profileId);
+  if (ownerIndex <= 0) {
+    return profiles;
+  }
+
+  const [owner] = enabledProfiles.splice(ownerIndex, 1);
+  enabledProfiles.unshift(owner);
+  let enabledIndex = 0;
+  return profiles.map((profile) => profile.enabled ? enabledProfiles[enabledIndex++] : profile);
+}
+
+function resolveRequiredLocalSlot(
+  currentValue: string | undefined,
+  requestedValue: string | undefined,
+  hasPatch: boolean,
+  locallyManagedModels: Set<string>,
+  fallbackModel: string,
+): string {
+  const current = currentValue?.trim() ?? "";
+  const requested = requestedValue?.trim() ?? "";
+  if (hasPatch && requested && locallyManagedModels.has(requested)) {
+    return requested;
+  }
+  return locallyManagedModels.has(current) ? current : fallbackModel;
+}
+
+function retainOptionalLocalSlot(
+  currentValue: string | undefined,
+  locallyManagedModels: Set<string>,
+): string | undefined {
+  const current = currentValue?.trim() ?? "";
+  return locallyManagedModels.has(current) ? current : undefined;
 }
 
 function pickAvailableModel(model: string | undefined, availableModels: string[]): string {
@@ -82,56 +179,4 @@ function pickFirstConfiguredSlotModel(
     }
   }
   return "";
-}
-
-function mergeModelConfigs(profiles: ApiConfigProfile[], availableModels: string[]): ApiModelConfigProfile[] {
-  const byName = new Map<string, ApiModelConfigProfile>();
-
-  for (const profile of profiles) {
-    for (const model of profile.models ?? []) {
-      const name = model.name.trim();
-      if (!name) {
-        continue;
-      }
-      const previous = byName.get(name);
-      byName.set(name, {
-        name,
-        contextWindow: model.contextWindow ?? previous?.contextWindow,
-        compressionThresholdPercent: model.compressionThresholdPercent ?? previous?.compressionThresholdPercent,
-        routingWeight: model.routingWeight ?? previous?.routingWeight,
-      });
-    }
-  }
-
-  return availableModels.map((name) => {
-    const model = byName.get(name);
-    return {
-      name,
-      contextWindow: model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
-      compressionThresholdPercent: model?.compressionThresholdPercent ?? 70,
-      routingWeight: model?.routingWeight,
-    };
-  });
-}
-
-function mergeModelConfigsForProfile(
-  profile: ApiConfigProfile,
-  fallbackModels: ApiModelConfigProfile[],
-  availableModels: string[],
-): ApiModelConfigProfile[] {
-  const localModels = new Map((profile.models ?? [])
-    .map((model) => [model.name.trim(), model] as const)
-    .filter(([name]) => Boolean(name)));
-  const fallbackByName = new Map(fallbackModels.map((model) => [model.name, model] as const));
-
-  return availableModels.map((name) => {
-    const localModel = localModels.get(name);
-    const fallbackModel = fallbackByName.get(name);
-    return {
-      name,
-      contextWindow: localModel?.contextWindow ?? fallbackModel?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
-      compressionThresholdPercent: localModel?.compressionThresholdPercent ?? fallbackModel?.compressionThresholdPercent ?? 70,
-      routingWeight: localModel?.routingWeight,
-    };
-  });
 }

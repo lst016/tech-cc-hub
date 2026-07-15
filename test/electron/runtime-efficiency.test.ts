@@ -330,6 +330,22 @@ test("runner reuse key stays stable across normal coding prompts", () => {
   assert.equal(first, second);
 });
 
+test("runner reuse key changes when the same model switches API profile", () => {
+  const gateway = buildRunnerReuseKey({
+    model: "gpt-5.6-terra",
+    runtime: { model: "gpt-5.6-terra", configProfileId: "boke-gateway" },
+    prompt: "hello",
+  });
+  const codex = buildRunnerReuseKey({
+    model: "gpt-5.6-terra",
+    runtime: { model: "gpt-5.6-terra", configProfileId: "codex-oauth" },
+    prompt: "hello",
+  });
+
+  assert.equal(canReuseRunner(gateway, codex), false);
+  assert.equal(canReuseRunner(codex, gateway), false);
+});
+
 test("runner reuse allows compatible turns to expand the tool surface in-place", () => {
   const coding = buildRunnerReuseKey({
     cwd: "D:\\tool\\tech-cc-hub",

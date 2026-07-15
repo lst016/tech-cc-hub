@@ -1,6 +1,6 @@
 import type { ApiConfigProfile } from "../../types";
 import type { DevElectronRuntimeSource } from "../../dev-electron-shim";
-import { ChevronDown, Plus } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, Plus, Search, Trash2 } from "lucide-react";
 import {
   CODEX_OAUTH_BASE_URL,
   CODEX_OAUTH_DEFAULT_MODEL,
@@ -12,12 +12,17 @@ import {
 import {
   extractApiModelsFromListPayload,
   getImportedApiModelNames,
+  normalizeImportedApiModels,
   toImportedApiModels,
   type ImportedApiModel,
 } from "../../../shared/models/api-model-metadata";
-import { isLikelyImageUnderstandingModel } from "../../../shared/models/model-capabilities";
-import { ModelSelect } from "../models/ModelSelect";
 import {
+  BOKE_GATEWAY_BASE_URL,
+  resolveSharedApiProviderMode,
+} from "../../../shared/models/model-provider-routing";
+import { inferModelCapabilities } from "./model-catalog-utils";
+import {
+  createBokeGatewayProfile,
   createCodexOAuthProfile,
   createDeepSeekOfficialProfile,
   createMiniMaxOfficialProfile,
@@ -26,7 +31,6 @@ import {
   DEEPSEEK_OFFICIAL_BASE_URL,
   DEEPSEEK_OFFICIAL_MODELS,
   MINIMAX_OFFICIAL_BASE_URL,
-  getAvailableModels,
 } from "./settings-utils";
 import {
   MINIMAX_DEFAULT_MODEL,
@@ -103,6 +107,12 @@ const createProfileOptions: CreateProfileOption[] = [
     create: createProfile,
   },
   {
+    id: "boke",
+    label: "波克网关",
+    description: "固定识别 ai.pocketcity.com，并同步厂商与模型端点类型。",
+    create: createBokeGatewayProfile,
+  },
+  {
     id: "deepseek",
     label: "DeepSeek 官方",
     description: "只填 SK，自动使用 DeepSeek 官方 Anthropic 接口。",
@@ -140,34 +150,14 @@ type CodexManualCredential = {
   last_refresh?: string;
 };
 
-function isDeepSeekBaseURL(baseURL: string | undefined): boolean {
-  try {
-    return new URL(baseURL?.trim() || "").hostname === "api.deepseek.com";
-  } catch {
-    return false;
-  }
-}
-
-function isMiniMaxBaseURL(baseURL: string | undefined): boolean {
-  try {
-    const hostname = new URL(baseURL?.trim() || "").hostname;
-    return hostname === "api.minimax.io" || hostname === "api.minimaxi.com";
-  } catch {
-    return false;
-  }
-}
-
 function getProviderMode(profile: ApiConfigProfile): ApiProviderMode {
-  if (profile.provider === "custom" || profile.provider === "deepseek" || profile.provider === "codex" || profile.provider === "minimax") {
-    return profile.provider;
-  }
-
-  if (isDeepSeekBaseURL(profile.baseURL)) return "deepseek";
-  if (isMiniMaxBaseURL(profile.baseURL)) return "minimax";
-  return "custom";
+  return resolveSharedApiProviderMode(profile.provider, profile.baseURL);
 }
 
 function buildModelsEndpoint(baseURL: string, provider: ApiProviderMode = "custom"): string {
+  if (provider === "boke") {
+    return `${BOKE_GATEWAY_BASE_URL}/models`;
+  }
   if (provider === "deepseek") {
     return DEEPSEEK_MODELS_ENDPOINT;
   }
@@ -191,6 +181,9 @@ function buildModelsEndpoint(baseURL: string, provider: ApiProviderMode = "custo
 }
 
 function normalizeApiBaseURL(baseURL: string, provider: ApiProviderMode = "custom"): string {
+  if (provider === "boke") {
+    return BOKE_GATEWAY_BASE_URL;
+  }
   if (provider === "deepseek") {
     return DEEPSEEK_OFFICIAL_BASE_URL;
   }
@@ -217,23 +210,6 @@ function normalizeApiBaseURL(baseURL: string, provider: ApiProviderMode = "custo
   return url.toString().replace(/\/$/, "");
 }
 
-function normalizeImportedModels(models: Array<string | ImportedApiModel> | undefined): ImportedApiModel[] {
-  const deduped = new Map<string, ImportedApiModel>();
-  for (const model of models ?? []) {
-    const name = typeof model === "string" ? model.trim() : model.name.trim();
-    if (!name) continue;
-
-    const contextWindow = typeof model === "string" ? undefined : model.contextWindow;
-    const previous = deduped.get(name);
-    deduped.set(name, {
-      name,
-      contextWindow: previous?.contextWindow ?? contextWindow,
-    });
-  }
-
-  return Array.from(deduped.values());
-}
-
 function buildImportedModelConfigs(
   importedModels: ImportedApiModel[],
   existingModels: Map<string, NonNullable<ApiConfigProfile["models"]>[number]>,
@@ -246,6 +222,13 @@ function buildImportedModelConfigs(
       contextWindow: resolveImportedContextWindow(existing?.contextWindow, model.contextWindow, fallbackContextWindow),
       compressionThresholdPercent: existing?.compressionThresholdPercent ?? 70,
       routingWeight: existing?.routingWeight,
+      catalogStatus: existing?.catalogStatus === "excluded" ? "excluded" : "managed",
+      alias: existing?.alias,
+      tags: existing?.tags,
+      notes: existing?.notes,
+      ownedBy: model.ownedBy ?? existing?.ownedBy,
+      supportedEndpointTypes: model.supportedEndpointTypes ?? existing?.supportedEndpointTypes,
+      createdAt: model.createdAt ?? existing?.createdAt,
     };
   });
 }
@@ -263,6 +246,28 @@ function resolveImportedContextWindow(existingContextWindow: number | undefined,
 
 function getMiniMaxFallbackContextWindow(modelName: string): number {
   return modelName === MINIMAX_DEFAULT_MODEL ? MINIMAX_M3_CONTEXT_WINDOW : MINIMAX_M2_CONTEXT_WINDOW;
+}
+
+function ensureRoutedModelsManaged(
+  models: NonNullable<ApiConfigProfile["models"]>,
+  selectedModels: Array<string | undefined>,
+): NonNullable<ApiConfigProfile["models"]> {
+  const selected = new Set(selectedModels.map((model) => model?.trim()).filter(Boolean));
+  return models.map((model) => selected.has(model.name)
+    ? { ...model, catalogStatus: "managed" }
+    : model);
+}
+
+const endpointTypeLabels: Record<string, string> = {
+  anthropic: "Anthropic",
+  gemini: "Gemini",
+  openai: "OpenAI",
+  "openai-response": "Responses",
+  "image-generation": "生图",
+};
+
+function getEndpointTypeLabel(endpointType: string): string {
+  return endpointTypeLabels[endpointType] ?? endpointType;
 }
 
 function getFallbackImportedModelsForProvider(provider: ApiProviderMode): ImportedApiModel[] {
@@ -320,6 +325,9 @@ async function fetchModelsInBrowser(baseURL: string, apiKey: string, provider: A
 }
 
 function normalizeMessagesBaseURL(baseURL: string, provider: ApiProviderMode): string {
+  if (provider === "boke") {
+    return BOKE_GATEWAY_BASE_URL;
+  }
   if (provider === "deepseek") {
     return `${DEEPSEEK_OFFICIAL_BASE_URL}/v1`;
   }
@@ -474,8 +482,17 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
   const [importStatus, setImportStatus] = useState<ModelImportStatus>(null);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [expandedModelLists, setExpandedModelLists] = useState<Record<string, boolean>>({});
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(() => profiles[0]?.id ?? null);
+  const [profileQuery, setProfileQuery] = useState("");
+  const [visibleApiKeys, setVisibleApiKeys] = useState<Record<string, boolean>>({});
   const [codexRuntimeLogins, setCodexRuntimeLogins] = useState<Record<string, CodexRuntimeLoginState>>({});
   const [manualCodexCredentialDrafts, setManualCodexCredentialDrafts] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!selectedProfileId || !profiles.some((profile) => profile.id === selectedProfileId)) {
+      setSelectedProfileId(profiles[0]?.id ?? null);
+    }
+  }, [profiles, selectedProfileId]);
 
   useEffect(() => {
     const electronApi = window.electron as typeof window.electron & {
@@ -561,8 +578,10 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
           };
         }
       })();
-      const importedResultModels = normalizeImportedModels(
-        result.success ? result.models : toImportedApiModels(CODEX_OAUTH_MODELS, DEFAULT_IMPORTED_CONTEXT_WINDOW),
+      const importedResultModels = normalizeImportedApiModels(
+        result.success && result.models?.length
+          ? result.models
+          : toImportedApiModels(CODEX_OAUTH_MODELS, DEFAULT_IMPORTED_CONTEXT_WINDOW),
       );
       const importedModelsByName = new Map(importedResultModels.map((model) => [model.name, model]));
       const modelIds = mergeCodexModelIds(getImportedApiModelNames(importedResultModels));
@@ -575,15 +594,18 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
         const existingModels = new Map((item.models ?? []).map((model) => [model.name, model]));
         const nextModels = buildImportedModelConfigs(importedModels, existingModels, DEFAULT_IMPORTED_CONTEXT_WINDOW);
         const fallbackModel = item.model && modelIds.includes(item.model) ? item.model : CODEX_OAUTH_DEFAULT_MODEL;
+        const expertModel = item.expertModel && modelIds.includes(item.expertModel) ? item.expertModel : fallbackModel;
+        const smallModel = item.smallModel && modelIds.includes(item.smallModel) ? item.smallModel : CODEX_OAUTH_SMALL_MODEL;
+        const analysisModel = item.analysisModel && modelIds.includes(item.analysisModel) ? item.analysisModel : CODEX_OAUTH_SMALL_MODEL;
         return {
           ...item,
           baseURL: CODEX_OAUTH_BASE_URL,
-          models: nextModels,
+          models: ensureRoutedModelsManaged(nextModels, [fallbackModel, expertModel, smallModel, analysisModel]),
           model: fallbackModel,
-          expertModel: item.expertModel && modelIds.includes(item.expertModel) ? item.expertModel : fallbackModel,
-          smallModel: item.smallModel && modelIds.includes(item.smallModel) ? item.smallModel : CODEX_OAUTH_SMALL_MODEL,
+          expertModel,
+          smallModel,
           imageModel: undefined,
-          analysisModel: item.analysisModel && modelIds.includes(item.analysisModel) ? item.analysisModel : CODEX_OAUTH_SMALL_MODEL,
+          analysisModel,
           provider: "codex",
         };
       }));
@@ -627,15 +649,18 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
               provider === "minimax" ? MINIMAX_M2_CONTEXT_WINDOW : DEEPSEEK_CONTEXT_WINDOW,
             );
             const fallbackModel = item.model && modelIds.includes(item.model) ? item.model : fallbackMainModel;
+            const expertModel = item.expertModel && modelIds.includes(item.expertModel) ? item.expertModel : fallbackExpertModel;
+            const smallModel = item.smallModel && modelIds.includes(item.smallModel) ? item.smallModel : fallbackSmallModel;
+            const analysisModel = item.analysisModel && modelIds.includes(item.analysisModel) ? item.analysisModel : fallbackSmallModel;
             return {
               ...item,
               baseURL: provider === "minimax" ? MINIMAX_OFFICIAL_BASE_URL : DEEPSEEK_OFFICIAL_BASE_URL,
-              models: nextModels,
+              models: ensureRoutedModelsManaged(nextModels, [fallbackModel, expertModel, smallModel, analysisModel]),
               model: fallbackModel,
-              expertModel: item.expertModel && modelIds.includes(item.expertModel) ? item.expertModel : fallbackExpertModel,
-              smallModel: item.smallModel && modelIds.includes(item.smallModel) ? item.smallModel : fallbackSmallModel,
+              expertModel,
+              smallModel,
               imageModel: undefined,
-              analysisModel: item.analysisModel && modelIds.includes(item.analysisModel) ? item.analysisModel : fallbackSmallModel,
+              analysisModel,
               provider,
             };
           }));
@@ -649,7 +674,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
         throw new Error(result.error || "拉取模型失败。");
       }
 
-      const importedModels = normalizeImportedModels(result.models);
+      const importedModels = normalizeImportedApiModels(result.models ?? []);
       const modelIds = getImportedApiModelNames(importedModels);
       if (modelIds.length === 0) {
         throw new Error("接口没有返回可用模型。");
@@ -672,27 +697,56 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
         const fallbackAnalysisModel = item.analysisModel && modelIds.includes(item.analysisModel) ? item.analysisModel : fallbackModel;
         const fallbackExpertModel = item.expertModel && modelIds.includes(item.expertModel) ? item.expertModel : fallbackModel;
         const fallbackSmallModel = item.smallModel && modelIds.includes(item.smallModel) ? item.smallModel : fallbackAnalysisModel;
-        const fallbackImageModel = item.imageModel && modelIds.includes(item.imageModel) && isLikelyImageUnderstandingModel(item.imageModel)
-          ? item.imageModel
-          : modelIds.find(isLikelyImageUnderstandingModel);
+        const importedByName = new Map(importedModels.map((model) => [model.name, model] as const));
+        const imageUnderstandingModels = importedModels
+          .filter((model) => inferModelCapabilities(model).includes("image-understanding"))
+          .map((model) => model.name);
+        const selectedImageModel = item.imageModel
+          ? importedByName.get(item.imageModel)
+          : undefined;
+        const fallbackImageModel = selectedImageModel
+          && inferModelCapabilities(selectedImageModel).includes("image-understanding")
+          ? selectedImageModel.name
+          : imageUnderstandingModels[0];
+        const imageGenerationModels = importedModels
+          .filter((model) => inferModelCapabilities(model).includes("image-generation"))
+          .map((model) => model.name);
+        const selectedImageGenerationModel = item.imageGenerationModel
+          ? importedByName.get(item.imageGenerationModel)
+          : undefined;
+        const fallbackImageGenerationModel = item.imageGenerationModel
+          && modelIds.includes(item.imageGenerationModel)
+          && selectedImageGenerationModel
+          && inferModelCapabilities(selectedImageGenerationModel).includes("image-generation")
+            ? item.imageGenerationModel
+            : imageGenerationModels[0];
 
         return {
           ...item,
           baseURL: normalizedBaseURL,
-          models: nextModels,
+          models: ensureRoutedModelsManaged(nextModels, [
+            fallbackModel,
+            fallbackExpertModel,
+            fallbackSmallModel,
+            fallbackAnalysisModel,
+            fallbackImageModel,
+            fallbackImageGenerationModel,
+          ]),
           model: fallbackModel,
           expertModel: fallbackExpertModel,
           smallModel: fallbackSmallModel,
           imageModel: fallbackImageModel && modelIds.includes(fallbackImageModel) ? fallbackImageModel : undefined,
+          imageGenerationModel: fallbackImageGenerationModel,
           analysisModel: fallbackAnalysisModel,
           provider,
         };
       }));
       const contextCount = importedModels.filter((model) => model.contextWindow).length;
+      const catalogMetadataCount = importedModels.filter((model) => model.ownedBy || model.supportedEndpointTypes?.length).length;
       setImportStatus({
         profileId: profile.id,
         tone: "success",
-        message: `已拉取 ${modelIds.length} 个模型${contextCount > 0 ? `，同步 ${contextCount} 个上下文窗口` : ""}，接口地址已规范为 ${normalizedBaseURL}`,
+        message: `已拉取 ${modelIds.length} 个模型${contextCount > 0 ? `，同步 ${contextCount} 个上下文窗口` : ""}${catalogMetadataCount > 0 ? `，保留 ${catalogMetadataCount} 个目录元数据` : ""}，接口地址已规范为 ${normalizedBaseURL}`,
       });
     } catch (error) {
       setImportStatus({
@@ -750,8 +804,10 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
   };
 
   const handleCreateProfile = (create: () => ApiConfigProfile) => {
+    const profile = create();
     setCreateMenuOpen(false);
-    onChange((current) => [create(), ...current]);
+    setSelectedProfileId(profile.id);
+    onChange((current) => [profile, ...current]);
   };
 
   const handleStartCodexRuntimeLogin = async (profile: ApiConfigProfile, mode: CodexRuntimeLoginMode = "browser") => {
@@ -827,74 +883,113 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
   };
 
   return (
-    <div className="grid gap-4">
-      <div className="flex items-center justify-between">
-        <div className="min-w-0">
-          <div className="text-xs font-medium text-muted">配置列表</div>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${sourceMeta.className}`}>
-              {sourceMeta.label}
-            </span>
-            <span className="text-[11px] text-muted">{sourceMeta.description}</span>
+    <div className="grid min-h-[calc(100vh-230px)] overflow-hidden rounded-[18px] border border-ink-900/10 bg-white shadow-[0_1px_2px_rgba(24,32,46,0.04)] lg:h-full lg:min-h-0 lg:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[340px_minmax(0,1fr)]">
+      <aside className="flex min-h-0 flex-col border-b border-ink-900/8 bg-[#F8F9FB] lg:border-b-0 lg:border-r">
+        <div className="border-b border-ink-900/8 p-4">
+          <div className="flex items-center gap-2">
+            <label className="relative min-w-0 flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+              <input
+                type="search"
+                value={profileQuery}
+                onChange={(event) => setProfileQuery(event.target.value)}
+                placeholder="搜索接口名称或地址"
+                className="h-10 w-full rounded-xl border border-ink-900/10 bg-white pl-9 pr-3 text-xs text-ink-800 outline-none focus:border-accent"
+              />
+            </label>
+            <div
+              className="relative"
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setCreateMenuOpen(false);
+              }}
+            >
+              <button
+                type="button"
+                className="inline-flex h-10 items-center gap-1.5 whitespace-nowrap rounded-xl bg-accent px-3 text-xs font-semibold text-white transition hover:bg-accent/90"
+                aria-haspopup="menu"
+                aria-expanded={createMenuOpen}
+                onClick={() => setCreateMenuOpen((open) => !open)}
+              >
+                <Plus className="h-4 w-4" />新增接口<ChevronDown className={`h-3.5 w-3.5 transition ${createMenuOpen ? "rotate-180" : ""}`} />
+              </button>
+              {createMenuOpen && (
+                <div role="menu" className="absolute right-0 top-[calc(100%+8px)] z-[80] w-[270px] rounded-xl border border-ink-900/10 bg-white p-1.5 shadow-[0_18px_44px_rgba(24,32,46,0.16)]">
+                  {createProfileOptions.map((option) => (
+                    <button key={option.id} type="button" role="menuitem" className="grid w-full gap-0.5 rounded-lg px-3 py-2.5 text-left hover:bg-ink-900/5" onClick={() => handleCreateProfile(option.create)}>
+                      <span className="text-sm font-semibold text-ink-900">{option.label}</span>
+                      <span className="text-xs leading-5 text-muted">{option.description}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold ${sourceMeta.className}`}>{sourceMeta.label}</span>
+            <span className="truncate text-[10px] text-muted">{sourceMeta.description}</span>
           </div>
         </div>
-        <div
-          className="relative"
-          onBlur={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-              setCreateMenuOpen(false);
-            }
-          }}
-        >
-          <button
-            type="button"
-            className="inline-flex items-center gap-2 rounded-xl border border-accent/20 bg-accent/8 px-3 py-2 text-sm font-medium text-accent transition-colors hover:bg-accent/12"
-            aria-haspopup="menu"
-            aria-expanded={createMenuOpen}
-            onClick={() => setCreateMenuOpen((open) => !open)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                setCreateMenuOpen(false);
-              }
-            }}
-          >
-            <Plus className="h-4 w-4" />
-            <span>新增配置</span>
-            <ChevronDown className={`h-4 w-4 text-accent/70 transition-transform ${createMenuOpen ? "rotate-180" : ""}`} />
-          </button>
-          {createMenuOpen && (
-            <div
-              role="menu"
-              className="absolute right-0 top-[calc(100%+8px)] z-[80] w-[260px] rounded-xl border border-ink-900/10 bg-white p-1.5 shadow-[0_18px_44px_rgba(24,32,46,0.16)]"
-            >
-              {createProfileOptions.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  role="menuitem"
-                  className="grid w-full cursor-pointer gap-0.5 rounded-lg px-3 py-2.5 text-left outline-none transition-colors hover:bg-ink-900/5 focus:bg-ink-900/5"
-                  onClick={() => handleCreateProfile(option.create)}
-                >
-                  <span className="text-sm font-semibold text-ink-900">{option.label}</span>
-                  <span className="text-xs leading-5 text-muted">{option.description}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
 
-      <div className="grid gap-4">
-        {profiles.map((profile) => {
+        <div className="min-h-0 flex-1 overflow-y-auto py-1">
+          {profiles
+            .filter((profile) => {
+              const query = profileQuery.trim().toLowerCase();
+              return !query || profile.name.toLowerCase().includes(query) || profile.baseURL.toLowerCase().includes(query);
+            })
+            .map((profile) => {
+              const providerMode = getProviderMode(profile);
+              const selected = profile.id === selectedProfileId;
+              const managedCount = (profile.models ?? []).filter((model) => model.catalogStatus !== "excluded").length;
+              return (
+                <button
+                  key={profile.id}
+                  type="button"
+                  onClick={() => setSelectedProfileId(profile.id)}
+                  className={`relative grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-ink-900/[0.055] px-5 py-4 text-left transition ${selected ? "bg-accent/[0.065]" : "hover:bg-white"}`}
+                >
+                  {selected && <span className="absolute inset-y-0 left-0 w-[3px] bg-accent" />}
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-2"><span className="truncate text-sm font-semibold text-ink-900">{profile.name || "未命名配置"}</span>{providerMode === "boke" && <span className="rounded-full bg-orange-50 px-1.5 py-0.5 text-[9px] font-semibold text-orange-700">波克</span>}</span>
+                    <span className="mt-1 block truncate text-[11px] text-muted">{profile.baseURL || "尚未配置接口地址"}</span>
+                    <span className="mt-1.5 flex items-center gap-2 text-[10px]"><span className={profile.enabled ? "text-emerald-700" : "text-muted"}>{profile.enabled ? "● 已启用" : "○ 未启用"}</span><span className="text-muted">{managedCount} 个可用模型</span></span>
+                  </span>
+                  <span className="mt-1 text-muted">›</span>
+                </button>
+              );
+            })}
+        </div>
+        <div className="border-t border-ink-900/8 px-5 py-3 text-xs text-muted">共 {profiles.length} 个接口</div>
+      </aside>
+
+      <section className="min-w-0 bg-white lg:min-h-0 lg:overflow-y-auto">
+        {profiles.filter((profile) => profile.id === selectedProfileId).map((profile) => {
           const providerMode = getProviderMode(profile);
           const modelListExpanded = Boolean(expandedModelLists[profile.id]);
           const officialProvider = providerMode === "deepseek" || providerMode === "codex" || providerMode === "minimax";
           const codexLogin = codexRuntimeLogins[profile.id];
+          const profileModels = profile.models ?? [];
+          const managedModelCount = profileModels.filter((model) => model.catalogStatus !== "excluded").length;
+          const protocolLabel = providerMode === "boke"
+            ? "波克 · Anthropic"
+            : providerMode === "codex"
+              ? "Codex OAuth"
+              : providerMode === "deepseek"
+                ? "DeepSeek · Anthropic"
+                : providerMode === "minimax"
+                  ? "MiniMax · Anthropic"
+                  : "Anthropic Compatible";
           return (
-          <div key={profile.id} className="rounded-[28px] border border-ink-900/10 bg-white/86 p-5 shadow-[0_18px_44px_rgba(24,32,46,0.06)]">
-            <div className="flex items-center justify-between gap-3">
+          <div key={profile.id} className="min-h-full">
+            <div className="flex items-center justify-between gap-3 border-b border-ink-900/8 px-6 py-5">
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold text-ink-900">{profile.name || "未命名配置"}</div>
+                <div className="flex min-w-0 items-center gap-2">
+                  <div className="truncate text-sm font-semibold text-ink-900">{profile.name || "未命名配置"}</div>
+                  {providerMode === "boke" && (
+                    <span className="shrink-0 rounded-full border border-orange-500/20 bg-orange-50 px-2 py-0.5 text-[10px] font-semibold text-orange-700">
+                      波克网关
+                    </span>
+                  )}
+                </div>
                 <div className="mt-1 text-[11px] text-muted">{profile.enabled ? "当前启用" : "未启用"}</div>
               </div>
               <div className="flex items-center gap-2">
@@ -917,6 +1012,8 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                     disabled={Boolean(codexLogin)}
                     onClick={() => {
                       if (codexLogin) return;
+                      const nextSelectedProfile = profiles.find((item) => item.id !== profile.id);
+                      setSelectedProfileId(nextSelectedProfile?.id ?? null);
                       onChange((current) => {
                         const next = current.filter((item) => item.id !== profile.id);
                         if (next.every((item) => !item.enabled) && next[0]) {
@@ -927,15 +1024,17 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                     }}
                     aria-label={`删除配置 ${profile.name}`}
                   >
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-                      <path d="M6 6l12 12M18 6 6 18" />
-                    </svg>
+                    <Trash2 className="h-4 w-4" />
                   </button>
                 )}
               </div>
             </div>
 
-            <div className="mt-4 grid gap-3">
+            <div className="grid gap-4 px-6 py-6 xl:grid-cols-2">
+              <div className="flex items-center gap-3 xl:col-span-2">
+                <span className="text-xs font-semibold text-ink-900">连接凭据</span>
+                <span className="h-px flex-1 bg-ink-900/8" />
+              </div>
               <label className="grid gap-1.5">
                 <span className="text-xs font-medium text-muted">配置名称</span>
                 <input
@@ -965,10 +1064,13 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                       : item
                   )))}
                 />
+                {providerMode === "boke" && (
+                  <span className="text-[11px] text-orange-700">已由 ai.pocketcity.com 域名自动识别；运行时继续使用 Anthropic 兼容协议。</span>
+                )}
               </label>
 
               {providerMode === "codex" ? (
-                <div className="grid gap-3 rounded-2xl border border-accent/15 bg-accent/5 p-4">
+                <div className="grid gap-3 rounded-2xl border border-accent/15 bg-accent/5 p-4 xl:col-span-2">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="text-xs font-semibold text-ink-900">OpenAI 账号接入</div>
@@ -1063,25 +1165,33 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                   </details>
                 </div>
               ) : (
-                <label className="grid gap-1.5">
+                <label className="grid gap-1.5 xl:col-span-2">
                   <span className="text-xs font-medium text-muted">{providerMode === "minimax" ? "Token Plan Subscription Key" : "API 密钥"}</span>
-                  <input
-                    type="text"
-                    className="rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
-                    placeholder={providerMode === "minimax" ? "sk-cp-..." : "sk-..."}
-                    value={profile.apiKey}
-                    onChange={(event) => onChange((current) => current.map((item) => (
-                      item.id === profile.id
-                        ? { ...item, apiKey: event.target.value }
-                      : item
-                    )))}
-                  />
+                  <span className="relative">
+                    <input
+                      type={visibleApiKeys[profile.id] ? "text" : "password"}
+                      className="w-full rounded-xl border border-ink-900/10 bg-surface px-4 py-2.5 pr-11 text-sm text-ink-800 placeholder:text-muted-light transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/20"
+                      placeholder={providerMode === "minimax" ? "sk-cp-..." : "sk-..."}
+                      value={profile.apiKey}
+                      onChange={(event) => onChange((current) => current.map((item) => (
+                        item.id === profile.id
+                          ? { ...item, apiKey: event.target.value }
+                        : item
+                      )))}
+                    />
+                    <button type="button" onClick={() => setVisibleApiKeys((current) => ({ ...current, [profile.id]: !current[profile.id] }))} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-2 text-muted hover:bg-white hover:text-ink-800" aria-label={visibleApiKeys[profile.id] ? "隐藏 API 密钥" : "显示 API 密钥"}>
+                      {visibleApiKeys[profile.id] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </span>
                 </label>
               )}
 
-              <div className="grid gap-2">
+              <div className="mt-1 grid gap-3 border-t border-ink-900/8 pt-5 xl:col-span-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-muted">模型列表</span>
+                  <div>
+                    <div className="text-xs font-semibold text-ink-900">模型发现与同步</div>
+                    <div className="mt-1 text-[11px] text-muted">从当前网关拉取真实模型，分类与纳管在模型目录统一维护。</div>
+                  </div>
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <button
                       type="button"
@@ -1097,7 +1207,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                       onClick={() => void handleImportModels(profile)}
                       disabled={importingProfileId === profile.id}
                     >
-                      {importingProfileId === profile.id ? "拉取中..." : providerMode === "deepseek" ? "从 DeepSeek 拉取模型" : providerMode === "minimax" ? "从 MiniMax 拉取模型" : providerMode === "codex" ? "使用内置 Codex 模型" : "从接口拉取模型"}
+                      {importingProfileId === profile.id ? "拉取中..." : providerMode === "boke" ? "从波克网关拉取模型" : providerMode === "deepseek" ? "从 DeepSeek 拉取模型" : providerMode === "minimax" ? "从 MiniMax 拉取模型" : providerMode === "codex" ? "使用内置 Codex 模型" : "从接口拉取模型"}
                     </button>
                     <button
                       type="button"
@@ -1228,6 +1338,24 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                                 }))}
                               />
                             </label>
+
+                            {(modelItem.ownedBy || modelItem.supportedEndpointTypes?.length) && (
+                              <div className="flex flex-wrap items-center gap-1.5 lg:col-span-4">
+                                {modelItem.ownedBy && (
+                                  <span className="rounded-full border border-ink-900/10 bg-white px-2 py-0.5 text-[10px] text-muted">
+                                    厂商 {modelItem.ownedBy}
+                                  </span>
+                                )}
+                                {modelItem.supportedEndpointTypes?.map((endpointType) => (
+                                  <span
+                                    key={endpointType}
+                                    className={`rounded-full border px-2 py-0.5 text-[10px] ${endpointType === "image-generation" ? "border-violet-500/20 bg-violet-50 text-violet-700" : "border-sky-500/15 bg-sky-50 text-sky-700"}`}
+                                  >
+                                    {getEndpointTypeLabel(endpointType)}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
 
                           {(profile.models ?? []).length > 1 && (
@@ -1246,6 +1374,7 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                                   expertModel: item.expertModel === deletedName ? fallbackModel : item.expertModel,
                                   smallModel: item.smallModel === deletedName ? fallbackModel : item.smallModel,
                                   imageModel: item.imageModel === deletedName ? undefined : item.imageModel,
+                                  imageGenerationModel: item.imageGenerationModel === deletedName ? undefined : item.imageGenerationModel,
                                   analysisModel: item.analysisModel === deletedName ? fallbackModel : item.analysisModel,
                                 };
                               }))}
@@ -1263,79 +1392,30 @@ export function ApiProfilesSettingsPage({ profiles, runtimeSource, onChange }: A
                 )}
               </div>
 
-              <ModelSelect
-                label="默认主模型"
-                value={profile.model}
-                models={getAvailableModels(profile)}
-                onChange={(value) => onChange((current) => current.map((item) => (
-                  item.id === profile.id
-                    ? { ...item, model: value }
-                    : item
-                )))}
-              />
+              <div className="grid gap-3 sm:grid-cols-2 xl:col-span-2 2xl:grid-cols-4">
+                <ProfileSummaryMetric label="接口协议" value={protocolLabel} />
+                <ProfileSummaryMetric label="发现模型" value={`${profileModels.length} 个`} />
+                <ProfileSummaryMetric label="已纳管" value={`${managedModelCount} 个`} tone="success" />
+                <ProfileSummaryMetric label="默认主模型" value={profile.model || "尚未设置"} mono />
+              </div>
 
-              <ModelSelect
-                label="小模型 / 后台模型"
-                value={profile.smallModel ?? profile.model}
-                models={getAvailableModels(profile)}
-                onChange={(value) => onChange((current) => current.map((item) => (
-                  item.id === profile.id
-                    ? { ...item, smallModel: value }
-                    : item
-                )))}
-              />
-              <span className="-mt-0.5 text-[11px] text-muted">
-                用于标题生成、Haiku / small-fast 后台调用，避免 Claude Code 请求网关没有的官方小模型。
-              </span>
-
-              <ModelSelect
-                label="图片预处理模型"
-                value={profile.imageModel ?? ""}
-                models={getAvailableModels(profile)}
-                emptyOption={{ value: "", label: "不预处理图片" }}
-                onChange={(value) => onChange((current) => current.map((item) => (
-                  item.id === profile.id
-                    ? { ...item, imageModel: value || undefined }
-                    : item
-                )))}
-              />
-              <span className="-mt-0.5 text-[11px] text-muted">
-                有图片附件时，先走图片模型提取 OCR 和界面摘要，再把文本交给主 Agent。
-              </span>
-
-              <ModelSelect
-                label="生图模型"
-                value={profile.imageGenerationModel ?? ""}
-                models={getAvailableModels(profile)}
-                emptyOption={{ value: "", label: "不启用生图" }}
-                onChange={(value) => onChange((current) => current.map((item) => (
-                  item.id === profile.id
-                    ? { ...item, imageGenerationModel: value || undefined }
-                    : item
-                )))}
-              />
-              <span className="-mt-0.5 text-[11px] text-muted">
-                图片预处理模型负责看图；生图模型负责生成和编辑图片。生图要求网关支持 OpenAI Images 兼容接口。
-              </span>
-
-              <ModelSelect
-                label="Prompt 分析模型"
-                value={profile.analysisModel ?? profile.model}
-                models={getAvailableModels(profile)}
-                onChange={(value) => onChange((current) => current.map((item) => (
-                  item.id === profile.id
-                    ? { ...item, analysisModel: value }
-                    : item
-                )))}
-              />
-              <span className="-mt-0.5 text-[11px] text-muted">
-                用于 Prompt 分布诊断、改写建议和上下文压缩建议，避免占用主执行模型的路由。
-              </span>
+              <div className="rounded-xl border border-sky-500/15 bg-sky-50 px-3 py-2 text-[11px] leading-5 text-sky-800 xl:col-span-2">
+                模型分类、纳管和本地参数统一在“模型目录”维护；主模型、图片模型等分工统一在“路由策略”配置。
+              </div>
             </div>
           </div>
           );
         })}
-      </div>
+      </section>
+    </div>
+  );
+}
+
+function ProfileSummaryMetric({ label, value, tone = "default", mono = false }: { label: string; value: string; tone?: "default" | "success"; mono?: boolean }) {
+  return (
+    <div className="min-w-0 rounded-xl border border-ink-900/8 bg-[#F8F9FB] px-3.5 py-3">
+      <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-muted">{label}</div>
+      <div className={`mt-1.5 truncate text-xs font-semibold ${tone === "success" ? "text-emerald-700" : "text-ink-900"} ${mono ? "font-mono" : ""}`} title={value}>{value}</div>
     </div>
   );
 }

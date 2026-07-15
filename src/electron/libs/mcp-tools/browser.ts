@@ -41,6 +41,11 @@ import type {
   BrowserWorkbenchWaitResult,
   BrowserWorkbenchEvalResult,
 } from "../../browser-manager.js";
+import type {
+  BrowserRenderedContentInput,
+  BrowserRenderedContentResult,
+} from "../browser-workbench/browser-rendered-content.js";
+import { waitForBrowserRenderedContent } from "../browser-workbench/browser-rendered-content-wait.js";
 import { toTextToolResult } from "./tool-result.js";
 
 export const BROWSER_TOOL_NAMES = [
@@ -53,6 +58,8 @@ export const BROWSER_TOOL_NAMES = [
   "browser_navigate",
   "browser_reload",
   "browser_extract_page",
+  "browser_extract_canvas",
+  "browser_wait_canvas",
   "browser_capture_visible",
   "browser_save_screenshot",
   "browser_save_pdf",
@@ -139,6 +146,7 @@ export type BrowserWorkbenchToolHost = {
   getNetworkLogs: (sessionId: string, input?: BrowserWorkbenchNetworkLogInput) => { success: boolean; result?: BrowserWorkbenchNetworkLogResult; error?: string };
   httpRequest: (sessionId: string, input: BrowserWorkbenchHttpRequestInput) => Promise<{ success: boolean; result?: BrowserWorkbenchHttpRequestResult; error?: string }>;
   extractPageSnapshot: (sessionId: string) => Promise<{ success: boolean; snapshot?: BrowserWorkbenchPageSnapshot; error?: string }>;
+  extractRenderedContent: (sessionId: string, input?: BrowserRenderedContentInput) => Promise<{ success: boolean; result?: BrowserRenderedContentResult; error?: string }>;
   captureVisible: (sessionId: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>;
   saveScreenshot: (sessionId: string, input: { path?: string; format?: "png" | "jpeg"; quality?: number }) => Promise<{ success: boolean; result?: BrowserWorkbenchSavedFileResult; error?: string }>;
   savePdf: (sessionId: string, input: { path?: string; landscape?: boolean; printBackground?: boolean }) => Promise<{ success: boolean; result?: BrowserWorkbenchSavedFileResult; error?: string }>;
@@ -959,6 +967,57 @@ export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWit
         sessionId: resolvedSessionId,
         snapshot: result.snapshot,
       });
+    },
+  );
+
+  const renderedContentToolSchema = {
+    selector: z.string().trim().min(1).optional().describe("可选的 canvas、SVG 或其容器 CSS 选择器。"),
+    maxSurfaces: z.number().int().min(1).max(50).optional().describe("最多返回的渲染表面数量，默认 20。"),
+    maxChars: z.number().int().min(1_000).max(200_000).optional().describe("所有 provider 合计最多返回的语义文本字符数，默认 60000。"),
+    includeSvg: z.boolean().optional().describe("是否同时检查 SVG 渲染表面，默认 true。"),
+  } as const;
+
+  const extractCanvasTool = tool(
+    "browser_extract_canvas",
+    "通用读取页面及 iframe/Shadow DOM 内的 Canvas、WebGL-backed Canvas 和 SVG。优先从可访问性、渲染库公开 API、结构化场景或自定义 provider 获取语义；终端、图表和白板只是 provider 类型，不绑定具体业务。",
+    renderedContentToolSchema,
+    async (input) => {
+      const host = getHost();
+      const result = await host.extractRenderedContent(resolvedSessionId, input);
+      if (!result.success) {
+        return toTextToolResult({ action: "browser_extract_canvas", success: false, error: result.error }, true);
+      }
+      return toTextToolResult({
+        action: "browser_extract_canvas",
+        success: true,
+        sessionId: resolvedSessionId,
+        result: result.result,
+      });
+    },
+  );
+
+  const waitCanvasTool = tool(
+    "browser_wait_canvas",
+    "等待任意 Canvas/SVG 语义 provider 的数据发生变化、出现指定文本或停止变化，并返回最新结构化内容。适用于图表刷新、白板变化、终端输出和其他渲染业务。",
+    {
+      ...renderedContentToolSchema,
+      previousFingerprint: z.string().trim().min(1).max(200).optional().describe("browser_extract_canvas 上一次返回的 fingerprint；提供后等待任意 provider 数据变化。"),
+      untilText: z.string().trim().min(1).max(4_000).optional().describe("等待任一语义 provider 出现的原样文本。"),
+      timeoutMs: z.number().int().min(100).max(60_000).optional().describe("最长等待时间，默认 30000ms。"),
+      pollIntervalMs: z.number().int().min(100).max(5_000).optional().describe("语义 provider 轮询间隔，默认 500ms。"),
+      stableMs: z.number().int().min(0).max(10_000).optional().describe("所有语义内容需保持不变的时间；无其他条件时默认 800ms。"),
+    },
+    async (input) => {
+      const host = getHost();
+      const result = await waitForBrowserRenderedContent(
+        async (readInput) => await host.extractRenderedContent(resolvedSessionId, readInput),
+        input,
+      );
+      return toTextToolResult({
+        action: "browser_wait_canvas",
+        sessionId: resolvedSessionId,
+        ...result,
+      }, !result.success);
     },
   );
 
@@ -2114,6 +2173,8 @@ export function getBrowserMcpServer(sessionId = "global"): McpSdkServerConfigWit
       navigateTool,
       reloadTool,
       extractPageTool,
+      extractCanvasTool,
+      waitCanvasTool,
       captureTool,
       saveScreenshotTool,
       savePdfTool,

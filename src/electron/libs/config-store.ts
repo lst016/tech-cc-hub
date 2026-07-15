@@ -19,19 +19,30 @@ import {
   MINIMAX_SMALL_MODEL,
 } from "../../shared/models/minimax.js";
 import {
+  BOKE_GATEWAY_BASE_URL,
   isModelCompatibleWithApiProvider,
-  pickProviderCompatibleModel,
+  resolveSharedApiProviderMode,
+  type SharedApiProviderMode,
 } from "../../shared/models/model-provider-routing.js";
+import { normalizeImportedApiModels } from "../../shared/models/api-model-metadata.js";
 import { normalizeModelRoutingWeight } from "../../shared/models/model-routing-weight.js";
+import { removeLegacyLarkRuntimeConfig } from "../../shared/lark-cli-runtime.js";
 
 export type ApiType = "anthropic";
-export type ApiProviderMode = "custom" | "deepseek" | "codex" | "minimax";
+export type ApiProviderMode = SharedApiProviderMode;
 
 export type ApiModelConfig = {
   name: string;
   contextWindow?: number;
   compressionThresholdPercent?: number;
   routingWeight?: number;
+  catalogStatus?: "discovered" | "managed" | "excluded";
+  alias?: string;
+  tags?: string[];
+  notes?: string;
+  ownedBy?: string;
+  supportedEndpointTypes?: string[];
+  createdAt?: number;
 };
 
 export type ApiConfig = {
@@ -57,6 +68,13 @@ export type ApiConfigSettings = {
 
 export type GlobalRuntimeConfig = Record<string, unknown>;
 
+const globalRuntimeConfigListeners = new Set<(config: GlobalRuntimeConfig) => void>();
+
+export function onGlobalRuntimeConfigSaved(listener: (config: GlobalRuntimeConfig) => void): () => void {
+  globalRuntimeConfigListeners.add(listener);
+  return () => globalRuntimeConfigListeners.delete(listener);
+}
+
 const DEFAULT_MODEL = "claude-sonnet-4-5";
 const DEFAULT_MODEL_CONFIG: ApiModelConfig = {
   name: DEFAULT_MODEL,
@@ -68,6 +86,10 @@ const DEEPSEEK_OFFICIAL_BASE_URL = "https://api.deepseek.com/anthropic";
 const CONFIG_FILE_NAME = "api-config.json";
 const GLOBAL_CONFIG_FILE_NAME = "agent-runtime.json";
 const CODEX_SAFE_STORAGE_PREFIX = "safe-storage:v1:";
+
+export function isUnreadableStoredCodexCredential(value: string | undefined): boolean {
+  return Boolean(value?.startsWith(CODEX_SAFE_STORAGE_PREFIX));
+}
 
 class CodexCredentialStorageError extends Error {
   constructor(message: string) {
@@ -209,7 +231,11 @@ export function loadGlobalRuntimeConfig(): GlobalRuntimeConfig {
       return {};
     }
 
-    return parsed as GlobalRuntimeConfig;
+    const migrated = removeLegacyLarkRuntimeConfig(parsed as GlobalRuntimeConfig);
+    if (migrated.changed) {
+      saveGlobalRuntimeConfig(migrated.config);
+    }
+    return migrated.config;
   } catch (error) {
     console.error("[config-store] Failed to load global runtime config:", error);
     return {};
@@ -231,6 +257,13 @@ export function saveGlobalRuntimeConfig(config: GlobalRuntimeConfig): void {
 
     writeFileSync(configPath, JSON.stringify(config, null, 2), "utf8");
     console.info("[config-store] Global runtime config saved successfully");
+    for (const listener of globalRuntimeConfigListeners) {
+      try {
+        listener(config);
+      } catch (error) {
+        console.warn("[config-store] Global runtime config listener failed:", error);
+      }
+    }
   } catch (error) {
     console.error("[config-store] Failed to save global runtime config:", error);
     throw error;
@@ -238,54 +271,80 @@ export function saveGlobalRuntimeConfig(config: GlobalRuntimeConfig): void {
 }
 
 function normalizeApiConfig(config: ApiConfig | null | undefined): ApiConfig | null {
-  if (!config?.name) {
+  const name = normalizeOptionalText(config?.name);
+  if (!config || !name) {
     return null;
   }
 
-  const provider = normalizeProvider(config.provider, config.baseURL);
-  const baseURL = normalizeBaseURL(config.baseURL, provider);
+  const rawBaseURL = normalizeOptionalText(config.baseURL) ?? "";
+  const provider = normalizeProvider(config.provider, rawBaseURL);
+  const baseURL = normalizeBaseURL(rawBaseURL, provider);
   if (!baseURL) {
     return null;
   }
 
-  const dedupedModels = dedupeModelConfigs([
-    config.model,
-    config.expertModel,
-    config.smallModel,
-    config.imageModel,
-    config.imageGenerationModel,
-    config.analysisModel,
-    ...(config.models ?? []),
-  ]);
+  const rawModels: readonly unknown[] = Array.isArray(config.models) ? config.models : [];
+  const hasDeclaredModels = rawModels.some(hasModelName);
+  const configuredModel = normalizeOptionalText(config.model);
+  const configuredExpertModel = normalizeOptionalText(config.expertModel);
+  const configuredSmallModel = normalizeOptionalText(config.smallModel);
+  const configuredImageModel = normalizeOptionalText(config.imageModel);
+  const configuredImageGenerationModel = normalizeOptionalText(config.imageGenerationModel);
+  const configuredAnalysisModel = normalizeOptionalText(config.analysisModel);
+  const dedupedModels = dedupeModelConfigs(hasDeclaredModels
+    ? rawModels
+    : [
+      configuredModel,
+      configuredExpertModel,
+      configuredSmallModel,
+      configuredImageModel,
+      configuredImageGenerationModel,
+      configuredAnalysisModel,
+    ]);
   const compatibleModels = filterProviderCompatibleModels(provider, dedupedModels);
   const compatibleModelNames = compatibleModels.map((item) => item.name);
-  const selectedModel = pickProviderCompatibleModel(provider, config.model, compatibleModelNames[0])
-    || getProviderDefaultModel(provider, "main")
-    || compatibleModelNames[0];
+  const managedModelNames = compatibleModels
+    .filter((model) => model.catalogStatus !== "excluded")
+    .map((model) => model.name);
+  let selectedModel = pickLocalModelName(provider, managedModelNames, [
+    configuredModel,
+    getProviderDefaultModel(provider, "main"),
+    managedModelNames[0],
+  ]);
+  if (!selectedModel && !hasDeclaredModels) {
+    selectedModel = [configuredModel, getProviderDefaultModel(provider, "main")]
+      .find((candidate): candidate is string => Boolean(candidate && isModelCompatibleWithApiProvider(provider, candidate))) ?? "";
+  }
   if (!selectedModel) {
     return null;
   }
 
-  if (!compatibleModelNames.includes(selectedModel)) {
+  if (!hasDeclaredModels && !compatibleModelNames.includes(selectedModel)) {
     compatibleModels.unshift({
       name: selectedModel,
       contextWindow: DEFAULT_CONTEXT_WINDOW,
       compressionThresholdPercent: 70,
     });
     compatibleModelNames.unshift(selectedModel);
+    managedModelNames.unshift(selectedModel);
   }
+  const analysisModel = pickLocalModelName(provider, managedModelNames, [
+    configuredAnalysisModel,
+    getProviderDefaultModel(provider, "small"),
+    selectedModel,
+  ]) || selectedModel;
 
   return {
-    id: config.id?.trim() || crypto.randomUUID(),
-    name: normalizeKnownConfigName(config.name, provider),
-    apiKey: config.apiKey.trim(),
+    id: normalizeOptionalText(config.id) || crypto.randomUUID(),
+    name: normalizeKnownConfigName(name, provider),
+    apiKey: normalizeOptionalText(config.apiKey) ?? "",
     baseURL,
     model: selectedModel,
-    expertModel: normalizeProviderRoleModel(provider, config.expertModel, selectedModel),
-    smallModel: normalizeProviderRoleModel(provider, config.smallModel, normalizeProviderRoleModel(provider, config.analysisModel, getProviderDefaultModel(provider, "small") || selectedModel)),
-    imageModel: normalizeOptionalModel(config.imageModel, compatibleModelNames),
-    imageGenerationModel: normalizeOptionalModel(config.imageGenerationModel, compatibleModelNames),
-    analysisModel: normalizeProviderRoleModel(provider, config.analysisModel, getProviderDefaultModel(provider, "small") || selectedModel),
+    expertModel: pickLocalModelName(provider, managedModelNames, [configuredExpertModel, selectedModel]) || selectedModel,
+    smallModel: pickLocalModelName(provider, managedModelNames, [configuredSmallModel, analysisModel, selectedModel]) || selectedModel,
+    imageModel: normalizeOptionalModel(configuredImageModel, managedModelNames),
+    imageGenerationModel: normalizeOptionalModel(configuredImageGenerationModel, managedModelNames),
+    analysisModel,
     models: compatibleModels,
     enabled: Boolean(config.enabled),
     provider,
@@ -373,7 +432,7 @@ function encryptStoredCodexCredentials(settings: ApiConfigSettings): ApiConfigSe
 }
 
 function filterProviderCompatibleModels(provider: ApiProviderMode, models: ApiModelConfig[]): ApiModelConfig[] {
-  if (provider === "custom") {
+  if (provider === "custom" || provider === "boke") {
     return models;
   }
   return models.filter((model) => isModelCompatibleWithApiProvider(provider, model.name));
@@ -392,27 +451,14 @@ function getProviderDefaultModel(provider: ApiProviderMode, slot: "main" | "smal
   return "";
 }
 
-function normalizeProviderRoleModel(provider: ApiProviderMode, value: string | undefined, fallbackModel: string): string {
-  return pickProviderCompatibleModel(provider, value, fallbackModel) || fallbackModel;
-}
-
 function normalizeProvider(value: unknown, baseURL: string): ApiProviderMode {
-  if (value === "custom" || value === "deepseek" || value === "codex" || value === "minimax") {
-    return value;
-  }
-
-  try {
-    const hostname = new URL(baseURL.trim()).hostname;
-    if (hostname === "api.deepseek.com") return "deepseek";
-    if (hostname === "chatgpt.com") return "codex";
-    if (hostname === "api.minimax.io" || hostname === "api.minimaxi.com") return "minimax";
-    return "custom";
-  } catch {
-    return "custom";
-  }
+  return resolveSharedApiProviderMode(value, baseURL);
 }
 
 function normalizeBaseURL(value: string, provider: ApiProviderMode): string {
+  if (provider === "boke") {
+    return BOKE_GATEWAY_BASE_URL;
+  }
   if (provider === "deepseek") {
     return DEEPSEEK_OFFICIAL_BASE_URL;
   }
@@ -465,7 +511,7 @@ function normalizeApiSettings(input: ApiConfig | ApiConfigSettings | null | unde
   return { profiles: normalizedProfiles };
 }
 
-function normalizeModelConfig(input: string | ApiModelConfig | null | undefined): ApiModelConfig | null {
+function normalizeModelConfig(input: unknown): ApiModelConfig | null {
   if (typeof input === "string") {
     const name = input.trim();
     if (!name) {
@@ -476,24 +522,33 @@ function normalizeModelConfig(input: string | ApiModelConfig | null | undefined)
     };
   }
 
-  if (!input) {
+  if (!input || typeof input !== "object") {
     return null;
   }
 
-  const name = input.name?.trim();
+  const record = input as Record<string, unknown>;
+  const name = normalizeOptionalText(record.name);
   if (!name) {
     return null;
   }
 
+  const metadata = normalizeImportedApiModels([record])[0];
   return {
     name,
-    contextWindow: normalizePositiveInteger(input.contextWindow),
-    compressionThresholdPercent: normalizePercent(input.compressionThresholdPercent),
-    routingWeight: normalizeModelRoutingWeight(input.routingWeight),
+    contextWindow: normalizePositiveInteger(record.contextWindow),
+    compressionThresholdPercent: normalizePercent(record.compressionThresholdPercent),
+    routingWeight: normalizeModelRoutingWeight(record.routingWeight),
+    catalogStatus: normalizeCatalogStatus(record.catalogStatus),
+    alias: normalizeOptionalText(record.alias),
+    tags: normalizeTags(record.tags),
+    notes: normalizeOptionalText(record.notes),
+    ownedBy: metadata?.ownedBy,
+    supportedEndpointTypes: metadata?.supportedEndpointTypes,
+    createdAt: metadata?.createdAt,
   };
 }
 
-function dedupeModelConfigs(inputs: Array<string | ApiModelConfig | null | undefined>): ApiModelConfig[] {
+function dedupeModelConfigs(inputs: readonly unknown[]): ApiModelConfig[] {
   const deduped = new Map<string, ApiModelConfig>();
 
   for (const input of inputs) {
@@ -503,11 +558,22 @@ function dedupeModelConfigs(inputs: Array<string | ApiModelConfig | null | undef
     }
 
     const previous = deduped.get(model.name);
+    const metadata = normalizeImportedApiModels([
+      ...(previous ? [previous] : []),
+      model,
+    ])[0];
     deduped.set(model.name, {
       name: model.name,
       contextWindow: model.contextWindow ?? previous?.contextWindow,
       compressionThresholdPercent: model.compressionThresholdPercent ?? previous?.compressionThresholdPercent,
       routingWeight: model.routingWeight ?? previous?.routingWeight,
+      catalogStatus: model.catalogStatus ?? previous?.catalogStatus,
+      alias: model.alias ?? previous?.alias,
+      tags: model.tags ?? previous?.tags,
+      notes: model.notes ?? previous?.notes,
+      ownedBy: metadata?.ownedBy,
+      supportedEndpointTypes: metadata?.supportedEndpointTypes,
+      createdAt: metadata?.createdAt,
     });
   }
 
@@ -518,7 +584,33 @@ function dedupeModelConfigs(inputs: Array<string | ApiModelConfig | null | undef
   }));
 }
 
-function normalizePositiveInteger(value: number | null | undefined): number | undefined {
+function normalizeCatalogStatus(value: unknown): ApiModelConfig["catalogStatus"] {
+  if (value === "excluded") return "excluded";
+  if (value === "discovered" || value === "managed") return "managed";
+  return undefined;
+}
+
+function normalizeOptionalText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return value.trim() || undefined;
+}
+
+function normalizeTags(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const tags = Array.from(new Set(value
+    .filter((tag): tag is string => typeof tag === "string")
+    .map((tag) => tag.trim())
+    .filter(Boolean)));
+  return tags.length > 0 ? tags : undefined;
+}
+
+function hasModelName(value: unknown): boolean {
+  if (typeof value === "string") return Boolean(value.trim());
+  if (!value || typeof value !== "object") return false;
+  return Boolean(normalizeOptionalText((value as Record<string, unknown>).name));
+}
+
+function normalizePositiveInteger(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return undefined;
   }
@@ -527,7 +619,7 @@ function normalizePositiveInteger(value: number | null | undefined): number | un
   return normalized > 0 ? normalized : undefined;
 }
 
-function normalizePercent(value: number | null | undefined): number | undefined {
+function normalizePercent(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return undefined;
   }
@@ -547,4 +639,22 @@ function normalizeOptionalModel(value: string | undefined, availableModels: stri
   }
 
   return availableModels.includes(normalized) ? normalized : undefined;
+}
+
+function pickLocalModelName(
+  provider: ApiProviderMode,
+  availableModels: readonly string[],
+  candidates: readonly (string | undefined)[],
+): string {
+  for (const candidate of candidates) {
+    const normalized = candidate?.trim();
+    if (!normalized || !isModelCompatibleWithApiProvider(provider, normalized)) continue;
+    const exact = availableModels.find((model) => model === normalized);
+    if (exact) return exact;
+    if (provider === "deepseek" || provider === "minimax") {
+      const caseInsensitive = availableModels.find((model) => model.toLowerCase() === normalized.toLowerCase());
+      if (caseInsensitive) return caseInsensitive;
+    }
+  }
+  return "";
 }

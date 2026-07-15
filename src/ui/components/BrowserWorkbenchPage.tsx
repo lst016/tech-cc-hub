@@ -13,6 +13,7 @@ type BrowserWorkbenchPageProps = {
   occluded?: boolean;
   sessionId?: string | null;
   closeRequestVersion?: number;
+  openRequestVersion?: number;
 };
 
 type AnnotationTool = "screenshot" | "page";
@@ -351,6 +352,7 @@ export function BrowserWorkbenchPage({
   occluded = false,
   sessionId = null,
   closeRequestVersion = 0,
+  openRequestVersion = 0,
 }: BrowserWorkbenchPageProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const previewFrameRef = useRef<HTMLIFrameElement | null>(null);
@@ -359,6 +361,7 @@ export function BrowserWorkbenchPage({
   const internalUrlUpdateRef = useRef<string | null>(null);
   const pendingNavigationRef = useRef<PendingNavigation | null>(null);
   const closeRequestVersionRef = useRef(closeRequestVersion);
+  const openRequestVersionRef = useRef(openRequestVersion);
   const initialUrlRef = useRef(initialUrl);
   const sessionIdRef = useRef(sessionId);
   const sessionBrowserState = useAppStore((store) => (sessionId ? store.browserWorkbenchBySessionId[sessionId] : undefined));
@@ -514,7 +517,17 @@ export function BrowserWorkbenchPage({
     };
     setUrl(targetUrl);
     persistUrl(targetUrl);
-    const nextState = await window.electron.openBrowserWorkbench(targetUrl, sessionId ?? undefined);
+    let nextState: BrowserWorkbenchState;
+    try {
+      nextState = await window.electron.openBrowserWorkbench(targetUrl, sessionId ?? undefined);
+    } catch (error) {
+      pendingNavigationRef.current = null;
+      hasOpenedRef.current = false;
+      const message = formatIpcInvokeError(error);
+      setState((current) => ({ ...current, loading: false, error: message }));
+      setStatusText(`页面打开失败：${message}`);
+      return;
+    }
     const returnedComparableUrl = toComparableWorkbenchUrl(nextState.url);
     const openedTarget = isSameWorkbenchUrl(returnedComparableUrl, targetComparableUrl);
     const isStaleReturn = Boolean(pendingNavigationRef.current?.staleUrl && isSameWorkbenchUrl(returnedComparableUrl, pendingNavigationRef.current.staleUrl));
@@ -568,6 +581,16 @@ export function BrowserWorkbenchPage({
   }, [initialUrl, sessionBrowserState?.annotations, sessionBrowserState?.hasBrowserTab, sessionBrowserState?.url, sessionId, setUrlEditing]);
 
   useEffect(() => {
+    if (openRequestVersionRef.current !== openRequestVersion) {
+      openRequestVersionRef.current = openRequestVersion;
+      initialUrlRef.current = initialUrl;
+      if (!initialUrl) return;
+      setHasBrowserTab(true);
+      if (sessionId) setSessionBrowserHasTab(sessionId, true);
+      hasOpenedRef.current = false;
+      void openUrl(initialUrl);
+      return;
+    }
     if (initialUrlRef.current === initialUrl) return;
     initialUrlRef.current = initialUrl;
     const nextUrl = normalizeWorkbenchUrl(initialUrl) ?? initialUrl;
@@ -590,7 +613,7 @@ export function BrowserWorkbenchPage({
       hasOpenedRef.current = false;
       autoOpenUrl(nextUrl);
     }
-  }, [active, autoOpenUrl, hasBrowserTab, initialUrl, persistUrl, setUrlEditing]);
+  }, [active, autoOpenUrl, hasBrowserTab, initialUrl, openRequestVersion, openUrl, persistUrl, sessionId, setSessionBrowserHasTab, setUrlEditing]);
 
   useEffect(() => {
     const unsubscribe = window.electron.onBrowserWorkbenchEvent((event) => {
@@ -604,6 +627,11 @@ export function BrowserWorkbenchPage({
           pendingNavigationRef.current = null;
         }
         setState(isStaleUrl ? { ...event.payload, url: pendingNavigation?.targetUrl ?? event.payload.url } : event.payload);
+        if (event.payload.error) {
+          pendingNavigationRef.current = null;
+          hasOpenedRef.current = false;
+          setStatusText(`页面打开失败：${event.payload.error}`);
+        }
         if (!event.payload.annotationMode) {
           setAnnotationTool(null);
         }
@@ -1186,6 +1214,7 @@ export function BrowserWorkbenchPage({
                 setUrlEditing(true);
                 setUrl(event.target.value);
               }}
+              onBlur={() => setUrlEditing(false)}
               spellCheck={false}
               className="min-w-0 flex-1 bg-transparent text-[12px] text-ink-700 outline-none placeholder:text-muted"
               placeholder="输入 URL"

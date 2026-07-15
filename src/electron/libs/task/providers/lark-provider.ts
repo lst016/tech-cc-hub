@@ -1,6 +1,5 @@
 import type { TaskProvider, ExternalTask, ExternalTaskStatus, TaskProviderCapability } from "../types.js";
 import { getGlobalRuntimeEnvConfig } from "../../claude/claude-settings.js";
-import { loadGlobalRuntimeConfig } from "../../config-store.js";
 import { runExternalCli } from "../../external-cli.js";
 
 type LarkTaskItem = {
@@ -64,14 +63,7 @@ function mapLarkPriority(priority?: string): ExternalTask["priority"] {
   }
 }
 
-type LarkProviderConfig = {
-  cliCommand?: string;
-  cliProfile?: string;
-};
-
-const DEFAULT_CONFIG: LarkProviderConfig = {
-  cliCommand: "lark-cli",
-};
+const LARK_CLI_COMMAND = "lark-cli";
 
 const LARK_TASK_PAGE_SIZE = 100;
 const RECENT_SYNC_WINDOW_DAYS = 30;
@@ -107,18 +99,6 @@ function toEpochMs(value: unknown): number | undefined {
 
 function getTaskActivityTime(item: LarkTaskItem): number | undefined {
   return toEpochMs(item.updated_at) ?? toEpochMs(item.completed_at) ?? toEpochMs(item.created_at);
-}
-
-function resolveLarkChannelConfig(): LarkProviderConfig {
-  const rootConfig = loadGlobalRuntimeConfig();
-  const channels = isRecord(rootConfig.channels) ? rootConfig.channels : {};
-  const items = isRecord(channels.items) ? channels.items : {};
-  const lark = isRecord(items.lark) ? items.lark : {};
-  const envConfig = getGlobalRuntimeEnvConfig();
-  return {
-    cliCommand: asText(lark.cliCommand) ?? asText(envConfig.LARK_CLI_COMMAND),
-    cliProfile: asText(lark.cliProfile) ?? asText(envConfig.LARK_CLI_PROFILE),
-  };
 }
 
 function getNestedItems(payload: unknown): LarkTaskItem[] {
@@ -157,28 +137,6 @@ function formatCliError(payload: LarkCliPayload, stderr?: string): string {
 export class LarkTaskProvider implements TaskProvider {
   readonly id = "lark" as const;
   readonly name = "飞书任务";
-  private config: LarkProviderConfig;
-
-  constructor(config?: LarkProviderConfig) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
-  }
-
-  private getConfig(): LarkProviderConfig {
-    return {
-      ...DEFAULT_CONFIG,
-      ...this.config,
-      ...resolveLarkChannelConfig(),
-    };
-  }
-
-  private getCliCommand(): string {
-    return this.getConfig().cliCommand?.trim() || DEFAULT_CONFIG.cliCommand!;
-  }
-
-  private withProfileArgs(args: string[]): string[] {
-    const profile = this.getConfig().cliProfile?.trim();
-    return profile ? ["--profile", profile, ...args] : args;
-  }
 
   isEnabled(): boolean {
     return true;
@@ -190,7 +148,7 @@ export class LarkTaskProvider implements TaskProvider {
   }
 
   private async runCli(args: string[], timeout = 30000): Promise<{ stdout: string; stderr: string }> {
-    const { stdout, stderr } = await runExternalCli(this.getCliCommand(), this.withProfileArgs(args), {
+    const { stdout, stderr } = await runExternalCli(LARK_CLI_COMMAND, args, {
       timeout,
       env: { ...process.env, ...getGlobalRuntimeEnvConfig() },
     });

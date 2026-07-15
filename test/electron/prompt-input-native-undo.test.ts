@@ -21,16 +21,25 @@ test("image token removal reads the live native editor draft", () => {
   assert.doesNotMatch(source, /nextPrompt\.replaceAll\(IMAGE_GENERATION_PLUGIN_TOKEN, ""\)/);
 });
 
-test("prompt input pastes clipboard html as plain text", () => {
+test("prompt input distinguishes copied images from rich clipboard text", () => {
   const source = readFileSync("src/ui/components/prompt-input/PromptInput.tsx", "utf8");
   const pasteStart = source.indexOf("const handlePaste");
-  const textStart = source.indexOf("const plainText = getPlainTextFromClipboardData", pasteStart);
   const fileStart = source.indexOf("const clipboardFiles", pasteStart);
+  const imagePriorityStart = source.indexOf("shouldPreferClipboardImageFiles", fileStart);
+  const textStart = source.indexOf("const plainText = getPlainTextFromClipboardData", imagePriorityStart);
 
   assert.match(source, /import \{ getPlainTextFromClipboardData \} from "\.\.\/\.\.\/utils\/clipboard-text"/);
+  assert.match(source, /getClipboardFiles\(event\.clipboardData\)/);
+  assert.match(source, /shouldPreferClipboardImageFiles\(event\.clipboardData, clipboardFiles\)/);
+  assert.match(source, /shouldReadNativeClipboardImage\(event\.clipboardData, clipboardFiles\)/);
+  assert.match(source, /window\.electron\.invoke<ClipboardImagePayload \| null>\("clipboard:read-image"\)/);
+  assert.match(source, /clipboardImagePayloadToFile\(nativeClipboardImage\)/);
   assert.match(source, /insertTextIntoPrompt\(currentPrompt, plainText, selection\.start, selection\.end\)/);
   assert.match(source, /contentEditable=\{disabled \? false : "plaintext-only"\}/);
-  assert.ok(textStart > pasteStart && fileStart > textStart, "rich clipboard text should win over file representations");
+  assert.ok(
+    fileStart > pasteStart && imagePriorityStart > fileStart && textStart > imagePriorityStart,
+    "copied images should be classified before rich clipboard text is inserted",
+  );
   assert.doesNotMatch(source, /execCommand/);
   assert.doesNotMatch(source, /insertHTML/);
 });
