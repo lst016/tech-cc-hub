@@ -460,9 +460,8 @@ function LarkConfigForm({
             <label className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-[#E5E6EB] bg-[#F7F8FA] px-3 py-2 text-sm font-medium text-[#4E5969]">
               <input
                 type="checkbox"
-                checked={channel.enabled && channel.chatEnabled === true && channel.realtimeEnabled === true}
+                checked={channel.realtimeEnabled === true}
                 onChange={(event) => onPatch({
-                  enabled: event.target.checked,
                   chatEnabled: event.target.checked,
                   realtimeEnabled: event.target.checked,
                 })}
@@ -579,13 +578,10 @@ export function ChannelsSettingsPage({ configText, parseError, onChange, onStart
     const current = runtimeConfig.items[provider];
     const definition = CHANNEL_BY_ID.get(provider);
     if (!current || !definition) return;
-    const normalizedPatch = provider === "lark" && typeof patch.enabled === "boolean"
-      ? { ...patch, chatEnabled: patch.enabled, realtimeEnabled: patch.enabled }
-      : patch;
     const nextChannel: ChannelConnectionConfig = {
       ...definition.defaults,
       ...current,
-      ...normalizedPatch,
+      ...patch,
       provider,
     };
     onChange(serializeConfigWithChannel(rootConfig, nextChannel));

@@ -32,6 +32,14 @@ test("Lark remains CLI-only while exposing a realtime message switch", () => {
   assert.doesNotMatch(source, /protobufjs/);
 });
 
+test("Lark channel master switch and realtime preference are persisted independently", () => {
+  const source = readFileSync("src/ui/components/settings/ChannelsSettingsPage.tsx", "utf8");
+
+  assert.match(source, /checked=\{channel\.realtimeEnabled === true\}/);
+  assert.match(source, /onChange=\{\(event\) => onPatch\(\{\s*chatEnabled: event\.target\.checked,\s*realtimeEnabled: event\.target\.checked,\s*\}\)\}/);
+  assert.doesNotMatch(source, /provider === "lark" && typeof patch\.enabled === "boolean"/);
+});
+
 test("Lark CLI consumers rely on the active CLI profile instead of persisted channel pointers", () => {
   for (const file of [
     "src/electron/libs/lark-contact-search.ts",

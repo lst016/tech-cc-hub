@@ -62,6 +62,7 @@ import {
   collectSafeChannelReplyAttachments,
   removeUploadedAttachmentReferences,
 } from "./libs/channel/channel-reply-attachments.js";
+import { buildChannelAgentPrompt } from "./libs/channel/channel-agent-prompt.js";
 import { notifySessionFinished, notifyTaskExecutionFinished } from "./libs/desktop-notifications.js";
 import type { WorkflowRunRecord } from "../shared/workflows/workflow-runs.js";
 
@@ -1066,6 +1067,7 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
             title: event.payload.title,
           }, workspace),
           prompt: text,
+          agentPrompt: buildChannelAgentPrompt(event.payload.provider, text),
           cwd: workspace.root,
           allowedTools: event.payload.allowedTools,
           attachments: event.payload.attachments,
@@ -1093,6 +1095,7 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
         payload: {
           sessionId: existingSession.id,
           prompt: text,
+          agentPrompt: buildChannelAgentPrompt(event.payload.provider, text),
           attachments: event.payload.attachments,
         },
       });
@@ -1109,6 +1112,7 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
       payload: {
         sessionId: existingSession.id,
         prompt: text,
+        agentPrompt: buildChannelAgentPrompt(event.payload.provider, text),
         attachments: event.payload.attachments,
         runtime: event.payload.runtime,
       },

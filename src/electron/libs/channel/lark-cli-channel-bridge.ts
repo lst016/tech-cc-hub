@@ -22,10 +22,20 @@ type LarkIdentity = {
   botOpenId: string | null;
 };
 
+type LarkOutboundFingerprintLookup = {
+  has: (fingerprint: string) => boolean;
+};
+
+export type RecentLarkOutboundTracker = LarkOutboundFingerprintLookup & {
+  remember: (chatId: string, content: string) => string;
+  forget: (fingerprint: string) => void;
+};
+
 const LARK_CLI_COMMAND = "lark-cli";
 const LARK_EVENT_KEY = "im.message.receive_v1";
 const IDENTITY_POLL_MS = 30_000;
 const RECONNECT_DELAY_MS = 3_000;
+const RECENT_OUTBOUND_TTL_MS = 30_000;
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -33,6 +43,42 @@ function isRecord(value: unknown): value is UnknownRecord {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function buildLarkMessageFingerprint(chatId: string, content: string): string {
+  return createHash("sha256")
+    .update([chatId.trim(), content.trim()].join("\0"))
+    .digest("hex");
+}
+
+export function createRecentLarkOutboundTracker(
+  ttlMs = RECENT_OUTBOUND_TTL_MS,
+  now: () => number = Date.now,
+): RecentLarkOutboundTracker {
+  const fingerprints = new Map<string, number>();
+
+  const prune = () => {
+    const cutoff = now() - ttlMs;
+    for (const [fingerprint, sentAt] of fingerprints) {
+      if (sentAt <= cutoff) fingerprints.delete(fingerprint);
+    }
+  };
+
+  return {
+    remember: (chatId, content) => {
+      prune();
+      const fingerprint = buildLarkMessageFingerprint(chatId, content);
+      fingerprints.set(fingerprint, now());
+      return fingerprint;
+    },
+    forget: (fingerprint) => {
+      fingerprints.delete(fingerprint);
+    },
+    has: (fingerprint) => {
+      prune();
+      return fingerprints.has(fingerprint);
+    },
+  };
 }
 
 export function isLarkCliRealtimeEnabled(rootConfig: UnknownRecord): boolean {
@@ -45,17 +91,36 @@ export function isLarkCliRealtimeEnabled(rootConfig: UnknownRecord): boolean {
     && lark.transport === "lark-cli";
 }
 
+export function shouldRefreshLarkIdentity(
+  activeAppId: string | null,
+  botOpenId: string | null,
+  nextAppId: string | null,
+): boolean {
+  return !botOpenId || Boolean(activeAppId && nextAppId && nextAppId !== activeAppId);
+}
+
 export function normalizeLarkCliRealtimeEvent(
   value: unknown,
   botOpenId?: string | null,
+  recentOutbound?: LarkOutboundFingerprintLookup,
 ): ChannelInboundMessage | null {
   if (!isRecord(value) || value.type !== LARK_EVENT_KEY) return null;
-  if (value.sender_type === "bot") return null;
-
   const text = asString(value.content);
   const chatId = asString(value.chat_id);
   const messageId = asString(value.message_id) ?? asString(value.id);
   if (!text || !chatId || !messageId) return null;
+
+  const senderType = asString(value.sender_type)?.toLowerCase();
+  const senderId = asString(value.sender_id);
+  if (senderType === "bot" || (senderType && senderType !== "user")) return null;
+  // Older CLI event shapes can omit sender_type for valid human messages, so
+  // keep sender_id-bearing events compatible while still rejecting anonymous
+  // payloads and anything sent by the current bot identity.
+  if ((botOpenId && senderId === botOpenId) || (!senderType && !senderId)) return null;
+  // The fallback fingerprint is only needed for legacy events with no sender
+  // type. Explicit user events must not be suppressed when a person repeats a
+  // recent bot response verbatim.
+  if (!senderType && recentOutbound?.has(buildLarkMessageFingerprint(chatId, text))) return null;
 
   const chatType = asString(value.chat_type);
   if (chatType === "group") {
@@ -72,7 +137,7 @@ export function normalizeLarkCliRealtimeEvent(
     text,
     externalConversationId: chatId,
     externalMessageId: messageId,
-    senderId: asString(value.sender_id),
+    senderId,
     channelName: chatType,
     receivedAt: Number.isFinite(receivedAt) ? receivedAt : Date.now(),
   };
@@ -131,12 +196,88 @@ export function buildLarkCliMessageArgs(
   ];
 }
 
+export type LarkStructuredTextFormat = "post" | "text";
+
+export function buildLarkCliStructuredTextArgs(
+  target: ChannelReplyTarget,
+  text: string,
+  format: LarkStructuredTextFormat,
+  idempotencyKey: string,
+): string[] {
+  const targetArgs = target.externalMessageId
+    ? ["+messages-reply", "--message-id", target.externalMessageId]
+    : ["+messages-send", "--chat-id", target.rawConversationId];
+  const content = format === "post"
+    ? { zh_cn: { content: [[{ tag: "md", text }]] } }
+    : { text };
+  return [
+    "im",
+    ...targetArgs,
+    "--msg-type",
+    format,
+    "--content",
+    JSON.stringify(content),
+    "--as",
+    "bot",
+    "--idempotency-key",
+    idempotencyKey,
+    "--json",
+  ];
+}
+
 function buildIdempotencyKey(target: ChannelReplyTarget, kind: string, value: string): string {
   const digest = createHash("sha256")
     .update([target.rawConversationId, target.externalMessageId ?? "", kind, value].join("\0"))
     .digest("hex")
     .slice(0, 40);
   return `techcc-${digest}`;
+}
+
+type LarkTextReplyAttempt = (
+  format: LarkStructuredTextFormat,
+  idempotencyKey: string,
+  preserveFingerprintOnFailure: boolean,
+) => Promise<void>;
+
+export function isAmbiguousLarkDeliveryError(error: unknown): boolean {
+  if (!isRecord(error)) return false;
+  const code = typeof error.code === "string" ? error.code.toUpperCase() : "";
+  const message = typeof error.message === "string" ? error.message : "";
+  return error.killed === true
+    || typeof error.signal === "string"
+    || ["ETIMEDOUT", "ECONNRESET", "EPIPE"].includes(code)
+    || /timed?\s*out|timeout/i.test(message);
+}
+
+export async function sendLarkCliTextWithFallback(
+  target: ChannelReplyTarget,
+  text: string,
+  sendAttempt: LarkTextReplyAttempt,
+): Promise<void> {
+  const idempotencyKey = buildIdempotencyKey(target, "text", text);
+  const failures: unknown[] = [];
+  let preserveFingerprintOnFailure = false;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await sendAttempt("post", idempotencyKey, preserveFingerprintOnFailure);
+      return;
+    } catch (error) {
+      failures.push(error);
+      preserveFingerprintOnFailure ||= isAmbiguousLarkDeliveryError(error);
+    }
+  }
+
+  if (!preserveFingerprintOnFailure) {
+    try {
+      await sendAttempt("text", idempotencyKey, false);
+      return;
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+
+  throw new AggregateError(failures, "Lark text reply failed after structured retry and plain-text fallback");
 }
 
 function assertSafeRelativeMediaPath(value: string): void {
@@ -191,6 +332,7 @@ export function startLarkCliChannelBridge(
   let identityTimer: ReturnType<typeof setInterval> | null = null;
   let activeAppId: string | null = null;
   let botOpenId: string | null = null;
+  const recentOutbound = createRecentLarkOutboundTracker();
 
   const realtimeEnabled = () => isLarkCliRealtimeEnabled(loadGlobalRuntimeConfig());
 
@@ -230,7 +372,7 @@ export function startLarkCliChannelBridge(
     for (const line of lines) {
       if (!line.trim()) continue;
       try {
-        const message = normalizeLarkCliRealtimeEvent(JSON.parse(line), botOpenId);
+        const message = normalizeLarkCliRealtimeEvent(JSON.parse(line), botOpenId, recentOutbound);
         if (!message) continue;
         void Promise.resolve(dispatch(message)).catch((error) => {
           console.warn("[lark-cli-channel] inbound dispatch failed:", error);
@@ -270,13 +412,16 @@ export function startLarkCliChannelBridge(
   async function refreshIdentity(restartOnChange: boolean): Promise<void> {
     const nextAppId = await readCurrentAppId();
     if (stopped) return;
-    if (restartOnChange && activeAppId && nextAppId && nextAppId !== activeAppId) {
+    const appChanged = Boolean(restartOnChange && activeAppId && nextAppId && nextAppId !== activeAppId);
+    if (shouldRefreshLarkIdentity(activeAppId, botOpenId, nextAppId)) {
       const identity = await readCurrentIdentity();
       if (stopped) return;
       activeAppId = identity.appId ?? nextAppId;
       botOpenId = identity.botOpenId;
-      stopConsumer();
-      startConsumer();
+      if (appChanged) {
+        stopConsumer();
+        startConsumer();
+      }
       return;
     }
     if (!activeAppId && nextAppId) activeAppId = nextAppId;
@@ -293,10 +438,34 @@ export function startLarkCliChannelBridge(
     identityTimer.unref?.();
   })();
 
-  async function send(target: ChannelReplyTarget, flag: "--markdown" | "--image" | "--file", value: string): Promise<void> {
-    if (flag !== "--markdown") assertSafeRelativeMediaPath(value);
-    const args = buildLarkCliMessageArgs(target, flag, value, buildIdempotencyKey(target, flag, value));
+  async function send(
+    target: ChannelReplyTarget,
+    flag: "--image" | "--file",
+    value: string,
+    idempotencyKey = buildIdempotencyKey(target, flag, value),
+  ): Promise<void> {
+    assertSafeRelativeMediaPath(value);
+    const args = buildLarkCliMessageArgs(target, flag, value, idempotencyKey);
     await runExternalCli(LARK_CLI_COMMAND, args, { cwd: target.workspaceRoot, timeout: 60_000 });
+  }
+
+  async function sendStructuredText(
+    target: ChannelReplyTarget,
+    text: string,
+    format: LarkStructuredTextFormat,
+    idempotencyKey: string,
+    preserveFingerprintOnFailure: boolean,
+  ): Promise<void> {
+    const outboundFingerprint = recentOutbound.remember(target.rawConversationId, text);
+    const args = buildLarkCliStructuredTextArgs(target, text, format, idempotencyKey);
+    try {
+      await runExternalCli(LARK_CLI_COMMAND, args, { cwd: target.workspaceRoot, timeout: 60_000 });
+    } catch (error) {
+      if (!preserveFingerprintOnFailure && !isAmbiguousLarkDeliveryError(error)) {
+        recentOutbound.forget(outboundFingerprint);
+      }
+      throw error;
+    }
   }
 
   return {
@@ -308,7 +477,17 @@ export function startLarkCliChannelBridge(
       identityTimer = null;
       stopConsumer();
     },
-    sendText: async (target, text) => await send(target, "--markdown", text),
+    sendText: async (target, text) => await sendLarkCliTextWithFallback(
+      target,
+      text,
+      async (format, idempotencyKey, preserveFingerprintOnFailure) => await sendStructuredText(
+        target,
+        text,
+        format,
+        idempotencyKey,
+        preserveFingerprintOnFailure,
+      ),
+    ),
     sendImage: async (target, relativePath) => await send(target, "--image", relativePath),
     sendFile: async (target, relativePath) => await send(target, "--file", relativePath),
     addReaction: async (target, emojiType) => {
