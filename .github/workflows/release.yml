@@ -26,7 +26,7 @@ jobs:
             platform: mac
             arch: arm64
             command: npm run release:mac-arm64
-            uploads_artifacts: false
+            uploads_artifacts: true
 
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
