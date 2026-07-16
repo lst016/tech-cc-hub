@@ -66,7 +66,10 @@
     "afterPack": "scripts/after-pack-win-icon.cjs",
     "icon": "./build/icon",
     "mac": {
-        "identity": null,
+        "hardenedRuntime": true,
+        "notarize": true,
+        "entitlements": "build/entitlements.mac.plist",
+        "entitlementsInherit": "build/entitlements.mac.plist",
         "target": [
             "dmg",
             "zip"

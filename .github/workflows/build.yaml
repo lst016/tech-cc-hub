@@ -23,7 +23,7 @@ jobs:
             platform: mac
             arch: arm64
             script: dist:mac-arm64
-          - os: macos-15-large
+          - os: macos-15-intel
             platform: mac
             arch: x64
             script: dist:mac-x64
@@ -43,13 +43,40 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Require macOS signing credentials
+        if: matrix.platform == 'mac'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bash scripts/qa/require-macos-signing-env.sh
+
       - name: Build Desktop
+        if: matrix.platform != 'mac'
         run: bun run ${{ matrix.script }}
+
+      - name: Build signed and notarized macOS artifacts
+        if: matrix.platform == 'mac'
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bun run ${{ matrix.script }}
+
+      - name: Verify signed and notarized macOS DMG
+        if: matrix.platform == 'mac'
+        run: npm run qa:macos-packaged -- ${{ matrix.arch }}
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: error
           path: |
             dist/*.dmg
             dist/*.AppImage
