@@ -1,6 +1,6 @@
 # Codex-Compatible Plugin Platform Design
 
-**Status:** Product design approved on 2026-07-17; written specification pending final user review.
+**Status:** Approved for implementation on 2026-07-17.
 
 ## Summary
 
