@@ -9,6 +9,7 @@ import {
   type ThinkingConfig,
 } from "@anthropic-ai/claude-agent-sdk";
 import { execFileSync } from "child_process";
+import { app } from "electron";
 import { existsSync, statSync } from "fs";
 import { basename, extname, isAbsolute, join } from "path";
 
@@ -90,7 +91,9 @@ import {
   listBuiltinMcpToolNames,
 } from "../builtin-mcp-servers.js";
 import { setImageGenerationSessionContext, toImageGenerationRouteConfig } from "../mcp-tools/image-generation.js";
+import { createRunnerActivityWatchdog } from "./runner-activity-watchdog.js";
 import { normalizeRunnerError } from "./runner-error.js";
+import { RunnerTurnLifecycle } from "./runner-turn-lifecycle.js";
 import {
   normalizeKnownToolInputsInMessage,
   normalizeToolInputForKnownSchemas,
@@ -139,6 +142,12 @@ import {
 } from "../../../shared/linked-workspaces.js";
 import { isManagedCodeGraphInitialized } from "../codegraph/managed-codegraph.js";
 import { resolveImageGenerationToolDefaults } from "../../../shared/image-generation-prompt.js";
+import { ensureVisualizationSessionDir } from "../visualization-artifacts.js";
+import {
+  buildTechccVisualizationSkillPrompt,
+  isTechccVisualizationRequested,
+  loadTechccVisualizationSkillMarkdown,
+} from "../techcc-visualization-skill.js";
 
 export type RunnerOptions = {
   prompt: string;
@@ -154,7 +163,7 @@ export type RunnerOptions = {
 
 export type RunnerHandle = {
   abort: () => void;
-  appendPrompt: (prompt: string, attachments?: PromptAttachment[], options?: { displayPrompt?: string; workspaceContext?: LinkedWorkspaceContext }) => Promise<void>;
+  appendPrompt: (prompt: string, attachments?: PromptAttachment[] | Promise<PromptAttachment[]>, options?: { displayPrompt?: string; workspaceContext?: LinkedWorkspaceContext }) => Promise<void>;
   stopTask: (taskId: string) => Promise<void>;
   isClosed: () => boolean;
   reuseKey?: string;
@@ -481,49 +490,26 @@ function appendBoundedText(current: string, chunk: string, maxChars: number): st
   return next.length > maxChars ? next.slice(-maxChars) : next;
 }
 
-function createRunnerActivityWatchdog(onTimeout: (message: string) => void): {
-  touch: () => void;
-  dispose: () => void;
-} {
-  let receivedEvent = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-
-  const dispose = () => {
-    if (!timer) return;
-    clearTimeout(timer);
-    timer = undefined;
-  };
-
-  const arm = () => {
-    dispose();
-    const timeoutMs = receivedEvent ? RUNNER_IDLE_TIMEOUT_MS : RUNNER_FIRST_EVENT_TIMEOUT_MS;
-    timer = setTimeout(() => {
-      onTimeout(
-        receivedEvent
-          ? "Runner stopped receiving events for 5 minutes."
-          : "Runner did not receive any events for 2 minutes.",
-      );
-    }, timeoutMs);
-    timer.unref?.();
-  };
-
-  const touch = () => {
-    receivedEvent = true;
-    arm();
-  };
-
-  arm();
-  return { touch, dispose };
-}
-
 export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
-  const { prompt, displayPrompt = prompt, attachments = [], runtime, session, workspaceContext, resumeSessionId, onEvent, onSessionUpdate } = options;
+  const {
+    prompt,
+    displayPrompt = prompt,
+    attachments = [],
+    runtime,
+    session,
+    workspaceContext,
+    resumeSessionId,
+    onEvent,
+    onSessionUpdate,
+  } = options;
   const abortController = new AbortController();
   const permissionMode = runtime?.permissionMode ?? "bypassPermissions";
   const promptInput = new PromptInputQueue();
   promptInput.enqueue(prompt, attachments);
   let activeQuery: Query | null = null;
+  let contextUsageCapture: Promise<void> | null = null;
   let runnerClosed = false;
+  const turnLifecycle = new RunnerTurnLifecycle();
   let rasterImageReads = 0;
   let requestedModelForError: string | undefined;
   let emittedSuccessfulResult = false;
@@ -567,7 +553,32 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
     promptInput.close();
     activeQuery?.close();
     abortController.abort();
+    runnerWatchdog.dispose();
+  }, {
+    firstEventTimeoutMs: RUNNER_FIRST_EVENT_TIMEOUT_MS,
+    idleTimeoutMs: RUNNER_IDLE_TIMEOUT_MS,
   });
+  const beginNextTurn = () => {
+    emittedSuccessfulResult = false;
+    emittedTerminalStatus = false;
+    observedAssistantTextActivity = false;
+    awaitingVisiblePostToolResponse = false;
+    emptySuccessAutoRetries = 0;
+    unfinishedPlanAutoRetries = 0;
+    figmaSvgAssetSeen = false;
+    codeGraphRetrievalSeen = false;
+    runnerWatchdog.touch();
+  };
+  const restoreCompletedStatusAfterCancelledAppend = () => {
+    if (runnerClosed || emittedTerminalStatus) return;
+    emittedSuccessfulResult = true;
+    emittedTerminalStatus = true;
+    runnerWatchdog.dispose();
+    onEvent({
+      type: "session.status",
+      payload: { sessionId: session.id, status: "completed", title: session.title },
+    });
+  };
   const appendClaudeProcessStderr = (chunk: string) => {
     recentClaudeStderr = appendBoundedText(recentClaudeStderr, chunk, MAX_RUNNER_STDERR_CHARS);
   };
@@ -579,6 +590,36 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
     });
   };
 
+  const captureContextUsage = () => {
+    const query = activeQuery;
+    if (contextUsageCapture || !query || typeof query.getContextUsage !== "function") return;
+
+    // This SDK control request is optional telemetry and can outlive the final result.
+    // Keep it off the terminal path so the renderer can end the turn immediately.
+    contextUsageCapture = query.getContextUsage()
+      .then((usage) => {
+        onEvent({
+          type: "stream.message",
+          payload: {
+            sessionId: session.id,
+            message: {
+              type: "context_usage",
+              usage,
+              capturedAt: Date.now(),
+            },
+          },
+        });
+      })
+      .catch((error) => {
+        if (!abortController.signal.aborted) {
+          console.warn("[runner][context-usage] failed", error instanceof Error ? error.message : String(error));
+        }
+      })
+      .finally(() => {
+        contextUsageCapture = null;
+      });
+  };
+
   const sendPermissionRequest = (toolUseId: string, toolName: string, input: unknown) => {
     onEvent({
       type: "permission.request",
@@ -588,24 +629,47 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
 
   const requestPermissionDecision = (toolName: string, input: unknown, signal?: AbortSignal) => {
     const toolUseId = crypto.randomUUID();
+    runnerWatchdog.pause();
 
-    sendPermissionRequest(toolUseId, toolName, input);
+    return new Promise<PermissionResult>((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        session.pendingPermissions.delete(toolUseId);
+        signal?.removeEventListener("abort", handleAbort);
+        runnerWatchdog.resume();
+      };
+      const settle = (result: PermissionResult) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(result);
+      };
+      const handleAbort = () => {
+        settle({ behavior: "deny", message: "Session aborted" });
+      };
 
-    return new Promise<PermissionResult>((resolve) => {
       session.pendingPermissions.set(toolUseId, {
         toolUseId,
         toolName,
         input,
-        resolve: (result) => {
-          session.pendingPermissions.delete(toolUseId);
-          resolve(result as PermissionResult);
-        },
+        resolve: (result) => settle(result as PermissionResult),
       });
 
-      signal?.addEventListener("abort", () => {
-        session.pendingPermissions.delete(toolUseId);
-        resolve({ behavior: "deny", message: "Session aborted" });
-      }, { once: true });
+      if (signal?.aborted) {
+        handleAbort();
+        return;
+      }
+      signal?.addEventListener("abort", handleAbort, { once: true });
+
+      try {
+        sendPermissionRequest(toolUseId, toolName, input);
+      } catch (error) {
+        if (!settled) {
+          settled = true;
+          cleanup();
+        }
+        reject(error);
+      }
     });
   };
 
@@ -818,9 +882,13 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       }
 
       const requestedModel = getRequestedModelName(defaultConfig.model, runtime?.model);
-      const resolvedConfig = resolveApiConfigForModel(requestedModel);
+      const requestedConfigProfileId = runtime?.configProfileId?.trim() || session.configProfileId;
+      const resolvedConfig = resolveApiConfigForModel(requestedModel, requestedConfigProfileId);
       if (!resolvedConfig) {
-        const errorMessage = `Requested model "${requestedModel ?? ""}" is not available in the enabled API profiles. Enable a profile that supports this model first.`;
+        const requestedDeployment = requestedConfigProfileId
+          ? `deployment "${requestedConfigProfileId} / ${requestedModel ?? ""}"`
+          : `model "${requestedModel ?? ""}"`;
+        const errorMessage = `Requested ${requestedDeployment} is not executable. Enable the profile and reconnect its credential if needed.`;
         onEvent({
           type: "runner.error",
           payload: {
@@ -852,6 +920,23 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       const projectCwd = session.cwd && existsSync(session.cwd) ? session.cwd : undefined;
       latestProjectCwd = projectCwd;
       const resolvedCwd = projectCwd ?? DEFAULT_CWD;
+      const visualizationSessionDirectory = isTechccVisualizationRequested(currentDisplayPrompt)
+        ? await ensureVisualizationSessionDir({ rootDir: app.getPath("userData"), sessionId: session.id })
+        : undefined;
+      const techccVisualizationPromptAppend = visualizationSessionDirectory
+        ? buildTechccVisualizationSkillPrompt({
+            displayPrompt: currentDisplayPrompt,
+            sessionDirectory: visualizationSessionDirectory,
+            skillMarkdown: loadTechccVisualizationSkillMarkdown({
+              cwd: app.getAppPath(),
+              resourcesPath: process.resourcesPath,
+            }),
+          })
+        : undefined;
+      const additionalDirectories = [
+        ...(latestWorkspaceContext?.linkedCwds ?? []),
+        ...(visualizationSessionDirectory ? [visualizationSessionDirectory] : []),
+      ];
       const runSurface = runtime?.runSurface ?? session.runSurface ?? "development";
       latestRunSurface = runSurface;
       const agentId = runtime?.agentId ?? session.agentId;
@@ -921,7 +1006,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       const sdkPluginMcpServerNames = listClaudeCodePluginMcpServerNames(sdkPlugins);
       const systemPromptAppend = combineSystemPromptAppend(
         buildGlobalRuntimePromptAppend(syncedGlobalRuntimeConfig, mergedEnv),
-        buildFeishuDocumentFetchPromptAppend(currentDisplayPrompt, mergedEnv),
+        buildFeishuDocumentFetchPromptAppend(currentDisplayPrompt),
         enabledBuiltinMcpServerSet.has("tech-cc-hub-admin") ? buildAdminConfigPromptAppend() : undefined,
         buildInvokedLocalSlashDefinitionPromptAppend(currentDisplayPrompt, projectCwd),
         agentContext.systemPromptAppend,
@@ -929,6 +1014,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         enabledBuiltinMcpServerSet.has("tech-cc-hub-knowledge") ? buildKnowledgeOverviewPromptAppend(projectCwd) : undefined,
         buildToolCallOptimizationPromptAppend(),
         buildEChartsPromptAppend(),
+        techccVisualizationPromptAppend,
         runtimeProfile.includeBrowserPrompt && enabledBuiltinMcpServerSet.has("tech-cc-hub-browser") ? buildBrowserWorkbenchPromptAppend() : undefined,
         runtimeProfile.includeDesignPrompt && enabledBuiltinMcpServerSet.has("tech-cc-hub-design") ? buildDesignParityPromptAppend() : undefined,
         buildBuiltinMcpRegistryPromptAppend(enabledBuiltinMcpServerNames),
@@ -978,9 +1064,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           model: sdkModelOption,
           betas: buildBetasForModel(effectiveModel),
           cwd: resolvedCwd,
-          additionalDirectories: latestWorkspaceContext?.linkedCwds?.length
-            ? latestWorkspaceContext.linkedCwds
-            : undefined,
+          additionalDirectories: additionalDirectories.length > 0 ? additionalDirectories : undefined,
           resume: resumeSessionId,
           abortController,
           env: mergedEnv,
@@ -995,6 +1079,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           sandbox: buildClaudeSandboxSettings({
             enabled: permissionMode !== "bypassPermissions",
             workspaceRoot: resolvedCwd,
+            additionalWriteRoots: visualizationSessionDirectory ? [visualizationSessionDirectory] : undefined,
           }),
           ...(enabledSkills ? { skills: enabledSkills } : {}),
           systemPrompt: buildClaudeCodeSystemPromptOption(systemPromptAppend),
@@ -1200,6 +1285,10 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           });
         }
 
+        if (message.type === "assistant" && message.message.stop_reason === "end_turn") {
+          captureContextUsage();
+        }
+
         if (message.type === "result") {
           const resultMeta = message as Record<string, unknown>;
           const origin = typeof resultMeta.origin === "string" ? resultMeta.origin : undefined;
@@ -1263,24 +1352,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
 
           const completionBlockedByPlan = isSuccessfulRunnerResult(message) && hasUnfinishedPlan;
           const status = message.subtype === "success" && !emptySuccess && !completionBlockedByPlan ? "completed" : "error";
-          if (!emptySuccess && typeof activeQuery?.getContextUsage === "function") {
-            try {
-              const usage = await activeQuery.getContextUsage();
-              onEvent({
-                type: "stream.message",
-                payload: {
-                  sessionId: session.id,
-                  message: {
-                    type: "context_usage",
-                    usage,
-                    capturedAt: Date.now(),
-                  },
-                },
-              });
-            } catch (error) {
-              console.warn("[runner][context-usage] failed", error instanceof Error ? error.message : String(error));
-            }
-          }
+          if (!emptySuccess) captureContextUsage();
           if (emptySuccess) {
             sendMessage(buildEmptySuccessFallbackMessage(session.id, requestedModelForError));
           }
@@ -1290,6 +1362,11 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             awaitingVisiblePostToolResponse = false;
           }
           sendMessage(message);
+          const { hasPendingTurns } = turnLifecycle.completeCurrentTurn();
+          if (status === "completed" && hasPendingTurns) {
+            beginNextTurn();
+            continue;
+          }
           onEvent({
             type: "session.status",
             payload: {
@@ -1383,18 +1460,22 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   return {
     abort: () => {
       runnerClosed = true;
-      runnerWatchdog.dispose();
       promptInput.close();
       activeQuery?.close();
       abortController.abort();
+      runnerWatchdog.dispose();
     },
     appendPrompt: async (
       nextPrompt: string,
-      nextAttachments: PromptAttachment[] = [],
+      nextAttachments: PromptAttachment[] | Promise<PromptAttachment[]> = [],
       appendOptions: { displayPrompt?: string; workspaceContext?: LinkedWorkspaceContext } = {},
     ) => {
       if (runnerClosed || promptInput.isClosed()) {
         throw new Error("Runner is closed.");
+      }
+      const { startsNewCycle } = turnLifecycle.reserveAppendedTurn();
+      if (startsNewCycle) {
+        beginNextTurn();
       }
       currentAgentPrompt = nextPrompt;
       currentDisplayPrompt = appendOptions.displayPrompt ?? nextPrompt;
@@ -1404,17 +1485,20 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       requiresFigmaImplementationAnchor = shouldRequireFigmaImplementationAnchor(currentDisplayPrompt);
       requiresFigmaSvgAsset = shouldRequireFigmaSvgAsset(currentDisplayPrompt);
       figmaContextSeen = figmaContextSeen || hasFigmaContext(currentDisplayPrompt, session.lastPrompt);
-      figmaSvgAssetSeen = false;
-      codeGraphRetrievalSeen = false;
-      emittedSuccessfulResult = false;
-      emittedTerminalStatus = false;
-      observedAssistantTextActivity = false;
-      awaitingVisiblePostToolResponse = false;
-      emptySuccessAutoRetries = 0;
-      unfinishedPlanAutoRetries = 0;
-      runnerWatchdog.touch();
-      await ensureMcpServersForPrompt(nextPrompt, nextAttachments);
-      promptInput.enqueue(nextPrompt, nextAttachments);
+      try {
+        const resolvedNextAttachments = await nextAttachments;
+        await ensureMcpServersForPrompt(nextPrompt, resolvedNextAttachments);
+        if (runnerClosed || promptInput.isClosed()) {
+          throw new Error("Runner is closed.");
+        }
+        promptInput.enqueue(nextPrompt, resolvedNextAttachments);
+      } catch (error) {
+        const { hasPendingTurns } = turnLifecycle.cancelAppendedTurn();
+        if (!hasPendingTurns) {
+          restoreCompletedStatusAfterCancelledAppend();
+        }
+        throw error;
+      }
     },
     stopTask: async (taskId: string) => {
       if (runnerClosed || promptInput.isClosed() || !activeQuery) {

@@ -175,9 +175,9 @@ export function SettingsSheet({
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex min-h-full w-full max-w-[1360px] flex-col px-10 pt-8">
-          <section className="min-h-0 flex-1 pb-28">
+      <main className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+        <div className="flex h-full min-h-0 w-full flex-col px-6 pt-6 2xl:px-8 2xl:pt-7">
+          <section className="min-h-0 flex-1 overflow-y-auto pb-6">
             {status && (
               <div className={`mb-5 rounded-2xl border px-4 py-3 text-sm ${toneClasses[status.tone]}`}>
                 {status.message}
@@ -186,7 +186,7 @@ export function SettingsSheet({
             {children}
           </section>
 
-          <footer className="sticky bottom-0 -mx-10 flex flex-wrap items-center justify-end gap-3 border-t border-[#E5E6EB] bg-[#F5F6F8]/92 px-10 py-4 backdrop-blur">
+          <footer className="-mx-6 flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[#E5E6EB] bg-[#F5F6F8]/94 px-6 py-4 backdrop-blur 2xl:-mx-8 2xl:px-8">
             {footer}
           </footer>
         </div>

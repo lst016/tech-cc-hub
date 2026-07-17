@@ -33,3 +33,17 @@ test("modal overlays render above the fixed prompt composer", () => {
   assert.match(imageGenerationControlsSource, /data-keep-prompt-composer-visible="true"/);
   assert.doesNotMatch(startSessionModalSource, /data-keep-prompt-composer-visible/);
 });
+
+test("settings constrain scrolling to their content regions", () => {
+  const settingsSheetSource = readFileSync("src/ui/components/settings/SettingsSheet.tsx", "utf8");
+  const aiInterfaceSource = readFileSync("src/ui/components/settings/AiInterfaceSettingsPage.tsx", "utf8");
+  const apiProfilesSource = readFileSync("src/ui/components/settings/ApiProfilesSettingsPage.tsx", "utf8");
+
+  assert.match(settingsSheetSource, /<main className="flex min-h-0 min-w-0 flex-1 overflow-hidden">/);
+  assert.match(settingsSheetSource, /<section className="min-h-0 flex-1 overflow-y-auto pb-6">/);
+  assert.match(settingsSheetSource, /<footer className="-mx-6 flex shrink-0/);
+  assert.doesNotMatch(settingsSheetSource, /<footer className="sticky bottom-0/);
+  assert.match(aiInterfaceSource, /<div className="flex h-full min-h-0 min-w-0 flex-col">/);
+  assert.match(apiProfilesSource, /lg:h-full lg:min-h-0 lg:grid-cols/);
+  assert.match(apiProfilesSource, /lg:min-h-0 lg:overflow-y-auto/);
+});

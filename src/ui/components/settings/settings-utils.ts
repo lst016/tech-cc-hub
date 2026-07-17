@@ -17,11 +17,17 @@ import {
   pickHighestWeightedModelOwner,
 } from "../../../shared/models/model-routing-weight.js";
 import {
+  BOKE_GATEWAY_BASE_URL,
   isDeepSeekModelName,
   isMiniMaxModelName,
   isModelCompatibleWithApiProvider,
-  pickProviderCompatibleModel,
+  resolveSharedApiProviderMode,
 } from "../../../shared/models/model-provider-routing.js";
+import {
+  normalizeImportedApiModels,
+} from "../../../shared/models/api-model-metadata.js";
+import { inferModelCapabilities, type ModelCapability } from "./model-catalog-utils.js";
+import { createModelDeploymentKey } from "./model-catalog-utils.js";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 const DEEPSEEK_CONTEXT_WINDOW = 1_000_000;
@@ -32,6 +38,7 @@ export const MINIMAX_OFFICIAL_BASE_URL = MINIMAX_ANTHROPIC_BASE_URL;
 export const MINIMAX_OFFICIAL_MODELS = MINIMAX_MODEL_CONFIGS.map((model) => model.name);
 
 export type RoutedModelOption = {
+  deploymentKey: string;
   value: string;
   label: string;
   profileId: string;
@@ -67,6 +74,15 @@ export function createProfile(): ApiConfigProfile {
     enabled: true,
     provider: "custom",
     apiType: "anthropic",
+  };
+}
+
+export function createBokeGatewayProfile(): ApiConfigProfile {
+  return {
+    ...createProfile(),
+    name: "波克网关",
+    baseURL: BOKE_GATEWAY_BASE_URL,
+    provider: "boke",
   };
 }
 
@@ -166,23 +182,14 @@ function normalizePercent(value: number | null | undefined): number | undefined 
   return normalized;
 }
 
-function normalizeProvider(value: unknown, baseURL: string): "custom" | "deepseek" | "codex" | "minimax" {
-  if (value === "custom" || value === "deepseek" || value === "codex" || value === "minimax") {
-    return value;
-  }
-
-  try {
-    const hostname = new URL(baseURL.trim()).hostname;
-    if (hostname === "api.deepseek.com") return "deepseek";
-    if (hostname === "chatgpt.com") return "codex";
-    if (hostname === "api.minimax.io" || hostname === "api.minimaxi.com") return "minimax";
-    return "custom";
-  } catch {
-    return "custom";
-  }
+function normalizeProvider(value: unknown, baseURL: string): ApiProviderMode {
+  return resolveSharedApiProviderMode(value, baseURL);
 }
 
-function normalizeBaseURL(value: string, provider: "custom" | "deepseek" | "codex" | "minimax"): string {
+function normalizeBaseURL(value: string, provider: ApiProviderMode): string {
+  if (provider === "boke") {
+    return BOKE_GATEWAY_BASE_URL;
+  }
   if (provider === "deepseek") {
     return DEEPSEEK_OFFICIAL_BASE_URL;
   }
@@ -216,12 +223,20 @@ function normalizeModel(model: ApiModelConfigProfile): ApiModelConfigProfile | n
 
   const contextWindow = normalizePositiveInteger(model.contextWindow);
   const compressionThresholdPercent = normalizePercent(model.compressionThresholdPercent);
+  const metadata = normalizeImportedApiModels([model])[0];
 
   return {
     name,
     contextWindow,
     compressionThresholdPercent,
     routingWeight: normalizeModelRoutingWeight(model.routingWeight),
+    catalogStatus: normalizeCatalogStatus(model.catalogStatus),
+    alias: model.alias?.trim() || undefined,
+    tags: normalizeModelTags(model.tags),
+    notes: model.notes?.trim() || undefined,
+    ownedBy: metadata?.ownedBy,
+    supportedEndpointTypes: metadata?.supportedEndpointTypes,
+    createdAt: metadata?.createdAt,
   };
 }
 
@@ -235,11 +250,22 @@ function dedupeModels(models: ApiModelConfigProfile[]): ApiModelConfigProfile[] 
     }
 
     const previous = deduped.get(normalized.name);
+    const metadata = normalizeImportedApiModels([
+      ...(previous ? [previous] : []),
+      normalized,
+    ])[0];
     deduped.set(normalized.name, {
       name: normalized.name,
       contextWindow: normalized.contextWindow ?? previous?.contextWindow,
       compressionThresholdPercent: normalized.compressionThresholdPercent ?? previous?.compressionThresholdPercent,
       routingWeight: normalized.routingWeight ?? previous?.routingWeight,
+      catalogStatus: normalized.catalogStatus ?? previous?.catalogStatus,
+      alias: normalized.alias ?? previous?.alias,
+      tags: normalized.tags ?? previous?.tags,
+      notes: normalized.notes ?? previous?.notes,
+      ownedBy: metadata?.ownedBy,
+      supportedEndpointTypes: metadata?.supportedEndpointTypes,
+      createdAt: metadata?.createdAt,
     });
   }
 
@@ -252,29 +278,38 @@ function dedupeModels(models: ApiModelConfigProfile[]): ApiModelConfigProfile[] 
 
 export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
   const provider = normalizeProvider(profile.provider, profile.baseURL);
-  const dedupeInput = [
-    ...(profile.models ?? []),
-    { name: profile.model },
-    { name: profile.expertModel ?? "" },
-    { name: profile.smallModel ?? "" },
-    { name: profile.imageModel ?? "" },
-    { name: profile.imageGenerationModel ?? "" },
-    { name: profile.analysisModel ?? "" },
-  ];
+  const hasDeclaredModels = (profile.models ?? []).some((model) => Boolean(model.name.trim()));
+  const dedupeInput = hasDeclaredModels
+    ? profile.models ?? []
+    : [
+      { name: profile.model },
+      { name: profile.expertModel ?? "" },
+      { name: profile.smallModel ?? "" },
+      { name: profile.imageModel ?? "" },
+      { name: profile.imageGenerationModel ?? "" },
+      { name: profile.analysisModel ?? "" },
+    ];
   const models = filterProviderCompatibleModels(provider, dedupeModels(dedupeInput));
-  const selectedModel = pickProviderCompatibleModel(provider, profile.model, models[0]?.name)
-    || getProviderDefaultModel(provider, "main")
-    || models[0]?.name
-    || "";
+  const managedModels = models.filter(isManagedModel);
+  const selectedModel = pickLocalManagedModel(provider, managedModels, [
+    profile.model,
+    getProviderDefaultModel(provider, "main"),
+    managedModels[0]?.name,
+  ]);
+  const analysisModel = pickLocalManagedModel(provider, managedModels, [
+    profile.analysisModel,
+    getProviderDefaultModel(provider, "small"),
+    selectedModel,
+  ]);
+  const expertModel = pickLocalManagedModel(provider, managedModels, [profile.expertModel, selectedModel]);
+  const smallModel = pickLocalManagedModel(provider, managedModels, [
+    profile.smallModel,
+    analysisModel,
+    getProviderDefaultModel(provider, "small"),
+    selectedModel,
+  ]);
   const imageModel = profile.imageModel?.trim();
   const imageGenerationModel = profile.imageGenerationModel?.trim();
-
-  if (selectedModel && !models.some((item) => item.name === selectedModel)) {
-    models.unshift({
-      name: selectedModel,
-      compressionThresholdPercent: 70,
-    });
-  }
 
   return {
     ...profile,
@@ -282,11 +317,11 @@ export function normalizeProfile(profile: ApiConfigProfile): ApiConfigProfile {
     apiKey: profile.apiKey.trim(),
     baseURL: normalizeBaseURL(profile.baseURL, provider),
     model: selectedModel,
-    expertModel: normalizeProviderRoleModel(provider, profile.expertModel, selectedModel),
-    smallModel: normalizeProviderRoleModel(provider, profile.smallModel, normalizeProviderRoleModel(provider, profile.analysisModel, getProviderDefaultModel(provider, "small") || selectedModel)),
-    imageModel: imageModel && models.some((item) => item.name === imageModel) ? imageModel : undefined,
-    imageGenerationModel: imageGenerationModel && models.some((item) => item.name === imageGenerationModel) ? imageGenerationModel : undefined,
-    analysisModel: normalizeProviderRoleModel(provider, profile.analysisModel, getProviderDefaultModel(provider, "small") || selectedModel),
+    expertModel,
+    smallModel,
+    imageModel: imageModel && managedModels.some((item) => item.name === imageModel) ? imageModel : undefined,
+    imageGenerationModel: imageGenerationModel && managedModels.some((item) => item.name === imageGenerationModel) ? imageGenerationModel : undefined,
+    analysisModel,
     models,
     enabled: Boolean(profile.enabled),
     provider,
@@ -309,7 +344,7 @@ function normalizeKnownProfileName(name: string, provider: ApiProviderMode): str
 }
 
 function filterProviderCompatibleModels(provider: ApiProviderMode, models: ApiModelConfigProfile[]): ApiModelConfigProfile[] {
-  if (provider === "custom") {
+  if (provider === "custom" || provider === "boke") {
     return models;
   }
   return models.filter((model) => isModelCompatibleWithApiProvider(provider, model.name));
@@ -328,8 +363,28 @@ function getProviderDefaultModel(provider: ApiProviderMode, slot: "main" | "smal
   return "";
 }
 
-function normalizeProviderRoleModel(provider: ApiProviderMode, value: string | undefined, fallbackModel: string): string {
-  return pickProviderCompatibleModel(provider, value, fallbackModel) || fallbackModel;
+function isManagedModel(model: ApiModelConfigProfile): boolean {
+  return model.catalogStatus !== "excluded";
+}
+
+function pickLocalManagedModel(
+  provider: ApiProviderMode,
+  models: ApiModelConfigProfile[],
+  candidates: Array<string | undefined>,
+): string {
+  for (const candidate of candidates) {
+    const normalized = candidate?.trim();
+    if (!normalized || !isModelCompatibleWithApiProvider(provider, normalized)) {
+      continue;
+    }
+    const exact = models.find((model) => model.name === normalized);
+    if (exact) return exact.name;
+    if (provider === "deepseek" || provider === "minimax") {
+      const caseInsensitive = models.find((model) => model.name.toLowerCase() === normalized.toLowerCase());
+      if (caseInsensitive) return caseInsensitive.name;
+    }
+  }
+  return "";
 }
 
 export function getEnabledProfile(profiles: ApiConfigProfile[]): ApiConfigProfile | undefined {
@@ -345,19 +400,82 @@ export function getEnabledProfiles(profiles: ApiConfigProfile[]): ApiConfigProfi
 }
 
 export function getAvailableModels(profile: ApiConfigProfile): string[] {
+  const modelsByName = new Map((profile.models ?? [])
+    .map((model) => [model.name.trim(), model] as const)
+    .filter(([name]) => Boolean(name)));
+  const isManagedName = (name: string | undefined) => {
+    const normalized = name?.trim();
+    if (!normalized) return false;
+    const model = modelsByName.get(normalized);
+    return model
+      ? isManagedModel(model)
+      : modelsByName.size === 0;
+  };
   return dedupeAvailableModelNames([
-    profile.model,
-    profile.expertModel,
-    profile.smallModel,
-    profile.imageModel,
-    profile.imageGenerationModel,
-    profile.analysisModel,
-    ...(profile.models ?? []).map((item) => item.name),
+    isManagedName(profile.model) ? profile.model : undefined,
+    isManagedName(profile.expertModel) ? profile.expertModel : undefined,
+    isManagedName(profile.smallModel) ? profile.smallModel : undefined,
+    isManagedName(profile.imageModel) ? profile.imageModel : undefined,
+    isManagedName(profile.imageGenerationModel) ? profile.imageGenerationModel : undefined,
+    isManagedName(profile.analysisModel) ? profile.analysisModel : undefined,
+    ...(profile.models ?? [])
+      .filter((model) => model.catalogStatus !== "excluded")
+      .map((item) => item.name),
   ]);
 }
 
 export function getAvailableModelsForProfiles(profiles: ApiConfigProfile[]): string[] {
   return dedupeAvailableModelNames(profiles.flatMap((profile) => getAvailableModels(profile)));
+}
+
+function normalizeModelTags(tags: string[] | undefined): string[] | undefined {
+  if (!tags) return undefined;
+  const normalized = Array.from(new Set(tags.map((tag) => tag.trim()).filter(Boolean)));
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeCatalogStatus(value: ApiModelConfigProfile["catalogStatus"]): ApiModelConfigProfile["catalogStatus"] {
+  if (value === "excluded") return "excluded";
+  if (value === "discovered" || value === "managed") return "managed";
+  return undefined;
+}
+
+export function getImageUnderstandingModels(profile: ApiConfigProfile): string[] {
+  return getImageUnderstandingModelsForProfiles([profile]);
+}
+
+export function getImageUnderstandingModelsForProfiles(profiles: ApiConfigProfile[]): string[] {
+  const selected = new Set(profiles
+    .map((profile) => profile.imageModel?.trim())
+    .filter((model): model is string => Boolean(model)));
+  return getRoutedCapabilityModels(profiles, "image-understanding", selected);
+}
+
+export function getImageGenerationModels(profile: ApiConfigProfile): string[] {
+  return getImageGenerationModelsForProfiles([profile]);
+}
+
+export function getImageGenerationModelsForProfiles(profiles: ApiConfigProfile[]): string[] {
+  const selected = new Set(profiles
+    .map((profile) => profile.imageGenerationModel?.trim())
+    .filter((model): model is string => Boolean(model)));
+  return getRoutedCapabilityModels(profiles, "image-generation", selected);
+}
+
+function getRoutedCapabilityModels(
+  profiles: ApiConfigProfile[],
+  capability: ModelCapability,
+  selected: Set<string>,
+): string[] {
+  const profilesById = new Map(profiles.map((profile) => [profile.id, profile] as const));
+  return getRoutedModelOptionsForProfiles(profiles)
+    .filter((option) => {
+      if (selected.has(option.value)) return true;
+      const owner = profilesById.get(option.profileId);
+      const deployment = owner?.models?.find((model) => model.name.trim() === option.value);
+      return Boolean(deployment && inferModelCapabilities(deployment).includes(capability));
+    })
+    .map((option) => option.value);
 }
 
 function dedupeAvailableModelNames(models: Array<string | undefined>): string[] {
@@ -414,6 +532,12 @@ export function getRoutedModelOptionsForProfiles(profiles: ApiConfigProfile[]): 
     .filter((option): option is RoutedModelOption => Boolean(option));
 }
 
+export function getModelDeploymentOptionsForProfiles(profiles: ApiConfigProfile[]): RoutedModelOption[] {
+  return profiles.flatMap((profile) => getAvailableModels(profile)
+    .filter((modelName) => isModelCompatibleWithApiProvider(profile.provider, modelName))
+    .map((modelName) => buildModelDeploymentOption(profile, modelName)));
+}
+
 function buildRoutedModelOption(profiles: ApiConfigProfile[], modelName: string): RoutedModelOption | null {
   const owner = pickHighestWeightedModelOwner(
     profiles,
@@ -425,19 +549,24 @@ function buildRoutedModelOption(profiles: ApiConfigProfile[], modelName: string)
     return null;
   }
 
-  const routingWeight = getModelRoutingWeight(owner, modelName);
-  const profileName = owner.name?.trim() || "Unnamed profile";
-  const providerLabel = getApiProviderLabel(owner.provider);
+  return buildModelDeploymentOption(owner, modelName);
+}
+
+function buildModelDeploymentOption(profile: ApiConfigProfile, modelName: string): RoutedModelOption {
+  const routingWeight = getModelRoutingWeight(profile, modelName);
+  const profileName = profile.name?.trim() || "Unnamed profile";
+  const providerLabel = getApiProviderLabel(profile.provider);
   const weightLabel = routingWeight > 0 ? ` / weight ${routingWeight}` : "";
-  const modelConfig = owner.models?.find((model) => model.name === modelName);
+  const modelConfig = profile.models?.find((model) => model.name === modelName);
 
   return {
+    deploymentKey: createModelDeploymentKey(profile.id, modelName),
     value: modelName,
     label: modelName,
-    profileId: owner.id,
+    profileId: profile.id,
     profileName,
     contextWindow: modelConfig?.contextWindow,
-    provider: owner.provider,
+    provider: profile.provider,
     providerLabel,
     routingWeight,
     routeLabel: `${profileName} / ${providerLabel}${weightLabel}`,
@@ -450,6 +579,7 @@ function profileOwnsRoutableModel(profile: ApiConfigProfile, modelName: string):
 }
 
 function getApiProviderLabel(provider: ApiProviderMode | undefined): string {
+  if (provider === "boke") return "波克网关";
   if (provider === "codex") return "Codex OAuth";
   if (provider === "deepseek") return "DeepSeek";
   if (provider === "minimax") return "MiniMax";
@@ -496,21 +626,27 @@ export function validateProfiles(profiles: ApiConfigProfile[]): string | null {
       return `配置“${profile.name}”至少要保留一个模型。`;
     }
 
-    const selectedModel = profile.models?.find((item) => item.name === profile.model);
+    const hasManagedModel = (modelName: string | undefined) => Boolean(modelName && profile.models?.some((item) => (
+      item.name === modelName && isManagedModel(item)
+    )));
+    const selectedModel = profile.models?.find((item) => item.name === profile.model && isManagedModel(item));
     if (!selectedModel?.contextWindow) {
       return `配置“${profile.name}”的默认主模型需要填写上下文窗口。`;
     }
 
-    if (profile.imageModel && !profile.models?.some((item) => item.name === profile.imageModel)) {
+    if (profile.expertModel && !hasManagedModel(profile.expertModel)) {
+      return `配置“${profile.name}”的专家模型必须属于该网关的已纳管模型。`;
+    }
+    if (profile.imageModel && !hasManagedModel(profile.imageModel)) {
       return `配置“${profile.name}”的图片预处理模型必须在模型列表中。`;
     }
-    if (profile.imageGenerationModel && !profile.models?.some((item) => item.name === profile.imageGenerationModel)) {
+    if (profile.imageGenerationModel && !hasManagedModel(profile.imageGenerationModel)) {
       return `配置“${profile.name}”的生图模型必须在模型列表中。`;
     }
-    if (profile.smallModel && !profile.models?.some((item) => item.name === profile.smallModel)) {
+    if (profile.smallModel && !hasManagedModel(profile.smallModel)) {
       return `配置“${profile.name}”的小模型必须在模型列表中。`;
     }
-    if (profile.analysisModel && !profile.models?.some((item) => item.name === profile.analysisModel)) {
+    if (profile.analysisModel && !hasManagedModel(profile.analysisModel)) {
       return `配置“${profile.name}”的 Prompt 分析模型必须在模型列表中。`;
     }
 

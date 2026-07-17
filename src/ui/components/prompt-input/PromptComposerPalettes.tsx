@@ -84,9 +84,6 @@ export function LarkMentionPalette({
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => onSelect(option)}
             >
-              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-[#bfd7ff] bg-[#ddf4ff] text-[11px] font-bold text-[#0969da]">
-                飞
-              </span>
               <span className="min-w-0 flex-1 truncate font-medium">{option.name}</span>
               {option.department && (
                 <span className="max-w-48 shrink truncate text-xs text-muted" title={option.department}>

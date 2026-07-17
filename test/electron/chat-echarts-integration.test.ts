@@ -7,7 +7,8 @@ test("assistant chat renders ECharts directives as a dedicated non-Markdown card
   const chartCardPath = "src/ui/components/chat/EChartsCard.tsx";
 
   assert.equal(existsSync(chartCardPath), true);
-  assert.match(eventCardSource, /extractChartBlocks\(visibleAssistantText\)/);
+  assert.match(eventCardSource, /extractVisualizationDirectives\(visibleAssistantText\)/);
+  assert.match(eventCardSource, /extractChartBlocks\(segment\.text\)/);
   assert.match(eventCardSource, /segment\.type === "chart"/);
   assert.match(eventCardSource, /<EChartsCard/);
 });
@@ -15,7 +16,7 @@ test("assistant chat renders ECharts directives as a dedicated non-Markdown card
 test("assistant reference and copy actions never leak raw chart configuration", () => {
   const eventCardSource = readFileSync("src/ui/components/EventCard.tsx", "utf8");
 
-  assert.match(eventCardSource, /stripChartBlocks\(visibleAssistantText\)/);
+  assert.match(eventCardSource, /stripChartBlocks\(stripVisualizationDirectives\(visibleAssistantText\)\)/);
   assert.match(eventCardSource, /appendMessageReferenceToComposer\(plainAssistantText/);
   assert.match(eventCardSource, /copyText\(plainAssistantText\)/);
 });

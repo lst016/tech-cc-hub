@@ -23,6 +23,7 @@ export type BtwThreadView = {
   status: SessionStatus;
   cwd?: string;
   model?: string;
+  configProfileId?: string;
   reasoningMode?: RuntimeReasoningMode;
   permissionMode?: RuntimePermissionMode;
   messages: StreamMessage[];
@@ -44,7 +45,7 @@ export type BtwState = {
   setActiveThread: (parentSessionId: string, threadId: string) => void;
   setDraft: (threadId: string, draft: string) => void;
   setAttachments: (threadId: string, attachments: PromptAttachment[]) => void;
-  setModel: (threadId: string, model: string) => void;
+  setModel: (threadId: string, model: string, configProfileId?: string) => void;
   setReasoningMode: (threadId: string, mode: RuntimeReasoningMode) => void;
   setThreadError: (threadId: string, error: string | null) => void;
   resolvePermissionRequest: (threadId: string, toolUseId: string) => void;
@@ -138,6 +139,7 @@ const createBtwState: StateCreator<BtwState> = (set) => ({
               status: payload.status,
               cwd: payload.cwd,
               model: payload.model,
+              configProfileId: payload.configProfileId,
               reasoningMode: payload.reasoningMode,
               permissionMode: payload.permissionMode,
               messages: [],
@@ -163,6 +165,7 @@ const createBtwState: StateCreator<BtwState> = (set) => ({
         status: event.payload.status,
         title: event.payload.title ?? thread.title,
         model: event.payload.model ?? thread.model,
+        configProfileId: event.payload.configProfileId ?? thread.configProfileId,
         reasoningMode: event.payload.reasoningMode ?? thread.reasoningMode,
         permissionMode: event.payload.permissionMode ?? thread.permissionMode,
         error: event.payload.error,
@@ -235,7 +238,7 @@ const createBtwState: StateCreator<BtwState> = (set) => ({
   }),
   setDraft: (threadId, draft) => set((state) => updateThread(state, threadId, (thread) => ({ ...thread, draft }))),
   setAttachments: (threadId, attachments) => set((state) => updateThread(state, threadId, (thread) => ({ ...thread, attachments }))),
-  setModel: (threadId, model) => set((state) => updateThread(state, threadId, (thread) => ({ ...thread, model }))),
+  setModel: (threadId, model, configProfileId) => set((state) => updateThread(state, threadId, (thread) => ({ ...thread, model, configProfileId }))),
   setReasoningMode: (threadId, reasoningMode) => set((state) => updateThread(state, threadId, (thread) => ({ ...thread, reasoningMode }))),
   setThreadError: (threadId, error) => set((state) => updateThread(state, threadId, (thread) => ({ ...thread, error: error ?? undefined }))),
   resolvePermissionRequest: (threadId, toolUseId) => set((state) => updateThread(state, threadId, (thread) => ({

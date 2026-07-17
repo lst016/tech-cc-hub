@@ -1,4 +1,5 @@
 import { ModelSelect } from "../models/ModelSelect";
+import { ChartNoAxesColumnIncreasing, ImageIcon, Route } from "lucide-react";
 import {
   applySharedModelRoutingPatch,
   buildSharedModelRoutingState,
@@ -25,112 +26,158 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
 
   if (!hasProfiles) {
     return (
-      <div className="rounded-[28px] border border-ink-900/10 bg-white/86 p-5 text-sm leading-6 text-muted shadow-[0_18px_44px_rgba(24,32,46,0.06)]">
-        还没有可用配置，请先在下方新增一个 AI 接口配置。
+      <div className="rounded-[18px] border border-ink-900/10 bg-white p-6 text-sm leading-6 text-muted shadow-[0_1px_2px_rgba(24,32,46,0.04)]">
+        还没有可用配置，请先到“接口连接”新增一个 AI 接口。
       </div>
     );
   }
 
   return (
-    <div className="rounded-[28px] border border-ink-900/10 bg-white/86 p-5 shadow-[0_18px_44px_rgba(24,32,46,0.06)]">
-      <div className="grid gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <div className="truncate text-sm font-semibold text-ink-900">共享模型路由</div>
-              <span className="rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-medium text-accent">
-                {routedLabel}
-              </span>
-            </div>
-            {routedNames && (
-              <p className="mt-1 truncate text-xs text-muted">
-                模型候选已合并：{routedNames}
-              </p>
-            )}
-          </div>
-          <div className="flex flex-wrap justify-end gap-2">
-            <button
-              type="button"
-              className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-xs text-ink-700 transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={() => patchRouting({ expertModel: state.mainModel })}
-              disabled={!state.mainModel}
-            >
-              专家模型同步主模型
-            </button>
-            <button
-              type="button"
-              className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-xs text-ink-700 transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={() => patchRouting({ smallModel: state.mainModel })}
-              disabled={!state.mainModel}
-            >
-              小模型同步主模型
-            </button>
-            <button
-              type="button"
-              className="rounded-xl border border-ink-900/10 bg-white px-3 py-2 text-xs text-ink-700 transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={() => patchRouting({ imageModel: state.mainModel })}
-              disabled={!state.mainModel}
-            >
-              图片模型同步主模型
-            </button>
-          </div>
+    <div className="space-y-5">
+      <section className="relative overflow-visible rounded-[18px] border border-ink-900/10 bg-white px-6 py-5 shadow-[0_1px_2px_rgba(24,32,46,0.04)]">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <h3 className="text-base font-semibold text-ink-900">共享模型路由</h3>
+          <span className="rounded-full bg-accent/10 px-2.5 py-1 text-[11px] font-medium text-accent">
+            {routedLabel}
+          </span>
         </div>
-        <p className="text-sm leading-6 text-muted">
-          启用配置共用这一套模型分工：主模型对话，专家兜底，小模型处理后台调用，Prompt 分析复盘，图片模型先读图，生图模型调用 OpenAI Images 接口。
+        <p className="mt-1.5 text-sm leading-6 text-muted">
+          按任务分配模型，系统会根据模型归属自动选择对应网关。
         </p>
-      </div>
+        {routedNames && (
+          <p className="mt-2 truncate text-xs text-muted/80" title={routedNames}>
+            模型来源：{routedNames}
+          </p>
+        )}
+      </section>
 
       {state.availableModels.length === 0 ? (
-        <div className="mt-4 rounded-2xl border border-ink-900/8 bg-surface px-4 py-3 text-sm leading-6 text-muted">
-          当前启用配置还没有可用模型，请先在下方配置列表里补齐模型列表。
+        <div className="rounded-[18px] border border-ink-900/8 bg-white px-5 py-4 text-sm leading-6 text-muted shadow-[0_1px_2px_rgba(24,32,46,0.04)]">
+          当前启用配置还没有已纳管模型，请先到“模型目录”把模型加入可用池。
         </div>
       ) : (
-        <div className="mt-4 rounded-3xl border border-ink-900/8 bg-surface/80 p-4">
-          <div className="text-xs font-semibold tracking-[0.16em] text-muted">MODEL SLOTS</div>
-          <div className="mt-2 text-sm text-ink-800">
-            这里的候选模型来自所有启用配置的合并列表；调整后会同步写回启用配置，避免多张配置卡各自维护一套路由。
-          </div>
-          <div className="mt-4 grid gap-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <>
+          <section className="relative grid gap-6 overflow-visible rounded-[18px] border border-accent/25 bg-accent/[0.025] p-6 shadow-[0_1px_2px_rgba(24,32,46,0.03)] lg:grid-cols-[320px_minmax(0,1fr)] lg:items-center">
+            <div className="flex items-center gap-3">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-accent/15 bg-white text-accent shadow-[0_1px_2px_rgba(24,32,46,0.04)]">
+                <Route className="h-5 w-5" />
+              </span>
+              <div>
+                <div className="text-base font-semibold text-ink-900">主路由</div>
+                <div className="mt-1 text-xs leading-5 text-muted">对话与任务执行的默认入口</div>
+              </div>
+            </div>
             <ModelSelect
               label="默认主模型"
               value={state.mainModel}
               models={state.availableModels}
               onChange={(model) => patchRouting({ model })}
             />
-            <ModelSelect
-              label="专家模型"
-              value={state.expertModel}
-              models={state.availableModels}
-              onChange={(expertModel) => patchRouting({ expertModel })}
-            />
-            <ModelSelect
-              label="小模型 / 后台模型"
-              value={state.smallModel}
-              models={state.availableModels}
-              onChange={(smallModel) => patchRouting({ smallModel })}
-            />
-            <ModelSelect
-              label="Prompt 分析模型"
-              value={state.analysisModel}
-              models={state.availableModels}
-              onChange={(analysisModel) => patchRouting({ analysisModel })}
-            />
-            <ModelSelect
-              label="图片预处理模型"
-              value={state.imageModel}
-              models={state.availableModels}
-              emptyOption={{ value: "", label: "不启用图片预处理" }}
-              onChange={(imageModel) => patchRouting({ imageModel: imageModel || undefined })}
-            />
-            <ModelSelect
-              label="生图模型"
-              value={state.imageGenerationModel}
-              models={state.availableModels}
-              emptyOption={{ value: "", label: "不启用生图" }}
-              onChange={(imageGenerationModel) => patchRouting({ imageGenerationModel: imageGenerationModel || undefined })}
-            />
+          </section>
+
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(340px,1fr)]">
+            <section className="relative overflow-visible rounded-[18px] border border-ink-900/10 bg-white p-6 shadow-[0_1px_2px_rgba(24,32,46,0.04)]">
+              <div className="flex items-start gap-3">
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-sky-200/70 bg-sky-50 text-sky-600">
+                  <ChartNoAxesColumnIncreasing className="h-5 w-5" />
+                </span>
+                <div>
+                  <div className="text-base font-semibold text-ink-900">执行分工</div>
+                  <p className="mt-1 text-xs leading-5 text-muted">
+                    细分推理、后台任务与 Prompt 分析。
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6">
+                <ModelSelect
+                  label="专家模型"
+                  value={state.expertModel}
+                  models={state.roleModels}
+                  onChange={(expertModel) => patchRouting({ expertModel })}
+                />
+              </div>
+
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <div className="relative min-w-0">
+                  <ModelSelect
+                    label="小模型 / 后台模型"
+                    value={state.smallModel}
+                    models={state.roleModels}
+                    onChange={(smallModel) => patchRouting({ smallModel })}
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-0 top-[-2px] rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-600 transition-colors hover:border-sky-300 hover:bg-sky-100 disabled:cursor-not-allowed disabled:border-ink-900/8 disabled:bg-surface disabled:text-muted/50"
+                    onClick={() => patchRouting({ smallModel: state.mainModel })}
+                    disabled={!state.mainModel}
+                  >
+                    跟随主模型
+                  </button>
+                </div>
+                <div className="relative min-w-0">
+                  <ModelSelect
+                    label="Prompt 分析模型"
+                    value={state.analysisModel}
+                    models={state.roleModels}
+                    onChange={(analysisModel) => patchRouting({ analysisModel })}
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-0 top-[-2px] rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-600 transition-colors hover:border-sky-300 hover:bg-sky-100 disabled:cursor-not-allowed disabled:border-ink-900/8 disabled:bg-surface disabled:text-muted/50"
+                    onClick={() => patchRouting({ analysisModel: state.mainModel })}
+                    disabled={!state.mainModel}
+                  >
+                    跟随主模型
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section className="relative overflow-visible rounded-[18px] border border-ink-900/10 bg-white p-6 shadow-[0_1px_2px_rgba(24,32,46,0.04)]">
+              <div className="flex items-start gap-3">
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-violet-500/10 bg-violet-500/8 text-violet-700">
+                  <ImageIcon className="h-5 w-5" />
+                </span>
+                <div>
+                  <div className="text-base font-semibold text-ink-900">多模态能力</div>
+                  <div className="mt-1 text-xs leading-5 text-muted">只显示能力匹配的模型</div>
+                </div>
+              </div>
+
+              <div className="mt-6">
+                <div className="relative min-w-0">
+                  <ModelSelect
+                    label="图片预处理模型"
+                    value={state.imageModel}
+                    models={state.imageUnderstandingModels}
+                    emptyOption={{ value: "", label: "不启用图片预处理" }}
+                    onChange={(imageModel) => patchRouting({ imageModel: imageModel || undefined })}
+                  />
+                  <button
+                    type="button"
+                    title={state.imageUnderstandingModels.includes(state.mainModel) ? undefined : "当前主模型不支持图片理解"}
+                    className="absolute right-0 top-[-2px] rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 transition-colors hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:border-ink-900/8 disabled:bg-surface disabled:text-muted/50"
+                    onClick={() => patchRouting({ imageModel: state.mainModel })}
+                    disabled={!state.imageUnderstandingModels.includes(state.mainModel)}
+                  >
+                    跟随主模型
+                  </button>
+                </div>
+
+                <div className="my-5 h-px bg-ink-900/8" />
+
+                <ModelSelect
+                  label="生图模型"
+                  value={state.imageGenerationModel}
+                  models={state.imageGenerationModels}
+                  emptyOption={{ value: "", label: "不启用生图" }}
+                  onChange={(imageGenerationModel) => patchRouting({ imageGenerationModel: imageGenerationModel || undefined })}
+                />
+              </div>
+            </section>
           </div>
-        </div>
+        </>
       )}
     </div>
   );

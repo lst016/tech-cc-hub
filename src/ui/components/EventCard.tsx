@@ -26,10 +26,16 @@ import {
   type AskUserQuestionInput,
 } from "../utils/ask-user-question";
 import { parseGeneratedImageResult } from "../utils/generated-image-result";
+import { getCollapsibleTextPreview } from "../utils/collapsible-text-preview";
 import { GeneratedImageResultCard } from "./chat/GeneratedImageResultCard";
 import { EChartsCard } from "./chat/EChartsCard";
+import { InlineVisualizationCard } from "./chat/InlineVisualizationCard";
 import { getImageGenerationDisplayPromptFromSerialized } from "./prompt-input/image-generation-plugin";
 import { extractChartBlocks, stripChartBlocks } from "../utils/chart-blocks";
+import {
+  extractVisualizationDirectives,
+  stripVisualizationDirectives,
+} from "../utils/visualization-directives";
 import {
   extractCodeReferencesPrompt,
   extractFileReferencesPrompt,
@@ -876,6 +882,7 @@ const CollapsibleText = ({
   text,
   className,
   maxLines = MAX_VISIBLE_LINES,
+  maxChars = 1400,
   renderMarkdown = false,
   larkMentionTone = "rich-text",
   referenceSourceRole = "assistant",
@@ -885,6 +892,7 @@ const CollapsibleText = ({
   text: string;
   className?: string;
   maxLines?: number;
+  maxChars?: number;
   renderMarkdown?: boolean;
   larkMentionTone?: LarkMentionTone;
   referenceSourceRole?: "user" | "assistant" | "tool" | "system";
@@ -905,9 +913,10 @@ const CollapsibleText = ({
   const selectionCaptureFrameRef = useRef<number | null>(null);
   const selectionCaptureTimeoutRef = useRef<number | null>(null);
   const selectionStartBlockRef = useRef<HTMLElement | null>(null);
-  const lines = useMemo(() => text.split("\n"), [text]);
-  const hasMore = lines.length > maxLines || text.length > 1400;
-  const visibleText = hasMore && !expanded ? lines.slice(0, maxLines).join("\n") : text;
+  const { expandLabel, hasMore, visibleText } = useMemo(
+    () => getCollapsibleTextPreview(text, { expanded, maxLines, maxChars }),
+    [expanded, maxChars, maxLines, text],
+  );
   const selectionText = selectionDraft?.text ?? "";
   const selectionComment = selectionDraft?.comment ?? "";
 
@@ -1217,7 +1226,7 @@ const CollapsibleText = ({
           onClick={() => setExpanded((value) => !value)}
           className="mt-3 inline-flex items-center gap-1 rounded-full border border-accent/20 bg-white/80 px-3 py-1 text-xs font-semibold text-accent transition hover:bg-accent/8"
         >
-          <span>{expanded ? "收起" : `展开剩余 ${Math.max(lines.length - maxLines, 1)} 行`}</span>
+          <span>{expandLabel}</span>
         </button>
       )}
     </div>
@@ -1464,7 +1473,8 @@ const UserMessageCard = ({
               text={visiblePrompt}
               renderMarkdown={!promptParsingSkipped}
               larkMentionTone="chat"
-              maxLines={24}
+              maxLines={4}
+              maxChars={180}
               referenceSourceRole="user"
               referenceSourceLabel="用户消息"
               referenceCapturedAt={message.capturedAt}
@@ -1604,11 +1614,70 @@ const AssistantTextCard = ({
   tone?: "normal" | "thinking";
 }) => {
   const [expanded, setExpanded] = useState(tone !== "thinking");
+  const activeSessionId = useAppStore((state) => state.activeSessionId);
   const thoughtExtraction = useMemo(() => extractThoughtBlocks(text), [text]);
   const visibleAssistantText = thoughtExtraction.visibleText || text;
-  const contentSegments = useMemo(() => extractChartBlocks(visibleAssistantText), [visibleAssistantText]);
-  const hasCharts = contentSegments.some((segment) => segment.type === "chart");
-  const plainAssistantText = stripChartBlocks(visibleAssistantText);
+  const contentSegments = useMemo(
+    () => extractVisualizationDirectives(visibleAssistantText),
+    [visibleAssistantText],
+  );
+  const hasVisualizations = contentSegments.some((segment) => segment.type === "visualization");
+  const hasCharts = contentSegments.some((segment) => (
+    segment.type === "text" && extractChartBlocks(segment.text).some((part) => part.type === "chart")
+  ));
+  const hasRichContent = hasCharts || hasVisualizations;
+  const plainAssistantText = stripChartBlocks(stripVisualizationDirectives(visibleAssistantText));
+  const sendVisualizationFollowUp = useCallback((request: { prompt: string }) => {
+    appendTextToComposer(request.prompt);
+    window.setTimeout(() => {
+      const submit = () => window.dispatchEvent(new CustomEvent(PROMPT_SUBMIT_EVENT));
+      if (typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(submit);
+        return;
+      }
+      submit();
+    }, 0);
+  }, []);
+
+  const renderTextSegment = (segmentText: string, segmentKey: string) => {
+    const chartSegments = extractChartBlocks(segmentText);
+    const segmentHasCharts = chartSegments.some((segment) => segment.type === "chart");
+    if (!segmentHasCharts) {
+      return segmentText.trim() ? (
+        <div
+          key={segmentKey}
+          className="rounded-[26px] rounded-tl-[8px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 text-ink-800 shadow-[0_14px_30px_rgba(30,38,52,0.055)]"
+        >
+          <CollapsibleText
+            text={segmentText.trim()}
+            renderMarkdown
+            maxLines={24}
+            referenceSourceRole="assistant"
+            referenceSourceLabel={title}
+          />
+        </div>
+      ) : null;
+    }
+
+    return chartSegments.map((segment, index) => (
+      segment.type === "chart" ? (
+        <EChartsCard key={`${segmentKey}-chart-${index}-${segment.json.length}`} json={segment.json} />
+      ) : segment.text.trim() ? (
+        <div
+          key={`${segmentKey}-text-${index}`}
+          className="rounded-[26px] rounded-tl-[8px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 text-ink-800 shadow-[0_14px_30px_rgba(30,38,52,0.055)]"
+        >
+          <CollapsibleText
+            text={segment.text.trim()}
+            renderMarkdown
+            maxLines={24}
+            referenceSourceRole="assistant"
+            referenceSourceLabel={title}
+          />
+        </div>
+      ) : null
+    ));
+  };
 
   if (tone === "thinking") {
     return (
@@ -1643,24 +1712,23 @@ const AssistantTextCard = ({
       <SectionLabel active={showIndicator} variant="success">{title}</SectionLabel>
       <ThoughtDisplay thoughts={thoughtExtraction.thoughts} showIndicator={showIndicator} />
       <div className="flex gap-2">
-        <div className={hasCharts ? "min-w-0 flex-1 space-y-3" : "min-w-0 flex-1 rounded-[26px] rounded-tl-[8px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 text-ink-800 shadow-[0_14px_30px_rgba(30,38,52,0.055)]"}>
-          {hasCharts ? contentSegments.map((segment, index) => (
-            segment.type === "chart" ? (
-              <EChartsCard key={`chart-${index}-${segment.json.length}`} json={segment.json} />
-            ) : segment.text.trim() ? (
-              <div
-                key={`text-${index}`}
-                className="rounded-[26px] rounded-tl-[8px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 text-ink-800 shadow-[0_14px_30px_rgba(30,38,52,0.055)]"
-              >
-                <CollapsibleText
-                  text={segment.text.trim()}
-                  renderMarkdown
-                  maxLines={24}
-                  referenceSourceRole="assistant"
-                  referenceSourceLabel={title}
+        <div className={hasRichContent ? "min-w-0 flex-1 space-y-3" : "min-w-0 flex-1 rounded-[26px] rounded-tl-[8px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 text-ink-800 shadow-[0_14px_30px_rgba(30,38,52,0.055)]"}>
+          {hasRichContent ? contentSegments.map((segment, index) => (
+            segment.type === "visualization" ? (
+              activeSessionId ? (
+                <InlineVisualizationCard
+                  key={`visualization-${segment.file}-${index}`}
+                  sessionId={activeSessionId}
+                  fileName={segment.file}
+                  title={segment.title || title}
+                  onFollowUp={sendVisualizationFollowUp}
                 />
-              </div>
-            ) : null
+              ) : (
+                <div key={`visualization-error-${index}`} className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  当前会话不可用，无法加载交互视图。
+                </div>
+              )
+            ) : renderTextSegment(segment.text, `text-${index}`)
           )) : (
             <CollapsibleText
               text={visibleAssistantText}

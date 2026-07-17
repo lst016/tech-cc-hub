@@ -1,8 +1,7 @@
 import { CodeEditor } from "./CodeEditor";
-import { ensureLarkCliRuntimeDefaults } from "../../../shared/lark-runtime-defaults.js";
 
 const GLOBAL_JSON_PLACEHOLDER = JSON.stringify(
-  ensureLarkCliRuntimeDefaults({
+  {
     systemPromptExt: [
       "工具调用必须少而准；能直接回答时不要调用工具。",
       "多个互不依赖的只读工具调用要并行或批量执行。",
@@ -19,7 +18,7 @@ const GLOBAL_JSON_PLACEHOLDER = JSON.stringify(
         env: ["GROQ_API_KEY"],
       },
     },
-  }),
+  },
   null,
   2,
 );

@@ -18,31 +18,32 @@ test("active session model takes precedence over composer runtime model", () => 
   );
   assert.match(
     promptInputSource,
-    /const explicitRuntimeModel = activeSessionModel \|\| runtimeModel\.trim\(\);\s+const selectedRuntimeModel = resolveAvailableModelName\(\s+explicitRuntimeModel \|\| routedModelOptions\[0\]\?\.value \|\| activeProfile\?\.model\?\.trim\(\),\s+availableModels,\s+\);/,
+    /const explicitRuntimeModel = activeSessionModel \|\| runtimeModel\.trim\(\);\s+const selectedRuntimeModel = resolveAvailableModelName\(\s+explicitRuntimeModel \|\| fallbackRoutedModelOptions\[0\]\?\.value \|\| activeProfile\?\.model\?\.trim\(\),\s+availableModels,\s+\);/,
   );
+  assert.match(promptInputSource, /value: option\.deploymentKey/);
   assert.match(promptInputSource, /onModelChange=\{handleRuntimeModelChange\}/);
-  assert.match(promptInputSource, /appSetRuntimeModel\(nextModel\)/);
-  assert.match(promptInputSource, /appSetSessionModel\(activeSessionId, nextModel\)/);
-  assert.match(promptInputSource, /controller\.setModel\(nextModel\)/);
+  assert.match(promptInputSource, /appSetRuntimeModel\(nextModel, nextConfigProfileId\)/);
+  assert.match(promptInputSource, /appSetSessionModel\(activeSessionId, nextModel, nextConfigProfileId\)/);
+  assert.match(promptInputSource, /controller\.setModel\(nextModel, nextConfigProfileId\)/);
   assert.match(promptInputSource, /type: "session\.set_model"/);
   assert.match(
     storeSource,
-    /setSessionModel: \(sessionId: string \| null \| undefined, model: string\) => void;/,
+    /setSessionModel: \(sessionId: string \| null \| undefined, model: string, configProfileId\?: string\) => void;/,
   );
   assert.match(
     storeSource,
-    /setSessionModel: \(sessionId, model\) => \{/,
+    /setSessionModel: \(sessionId, model, configProfileId\) => \{/,
   );
   assert.match(
     electronTypesSource,
-    /\| \{ type: "session\.set_model"; payload: \{ sessionId: string; model: string \} \}/,
+    /\| \{ type: "session\.set_model"; payload: \{ sessionId: string; model: string; configProfileId\?: string \} \}/,
   );
   assert.match(
     uiTypesSource,
-    /\| \{ type: "session\.set_model"; payload: \{ sessionId: string; model: string \} \}/,
+    /\| \{ type: "session\.set_model"; payload: \{ sessionId: string; model: string; configProfileId\?: string \} \}/,
   );
   assert.match(
     ipcHandlersSource,
-    /if \(event\.type === "session\.set_model"\) \{[\s\S]*store\.updateSession\(session\.id, \{ model: selectedModel \}\);[\s\S]*type: "session\.status"/,
+    /if \(event\.type === "session\.set_model"\) \{[\s\S]*store\.updateSession\(session\.id, \{[\s\S]*model: selectedModel,[\s\S]*configProfileId: selectedConfigProfileId,[\s\S]*\}\);[\s\S]*type: "session\.status"/,
   );
 });

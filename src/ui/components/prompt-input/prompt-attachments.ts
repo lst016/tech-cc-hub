@@ -148,6 +148,90 @@ type ZipArchive = {
   readText(entry: ZipDirectoryEntry): Promise<string>;
 };
 
+type ClipboardFileData = Pick<DataTransfer, "files" | "items" | "types" | "getData">;
+
+export type ClipboardImagePayload = {
+  base64: string;
+  mimeType: "image/png";
+  name: string;
+  size: number;
+};
+
+export function getClipboardFiles(dataTransfer: Pick<ClipboardFileData, "files" | "items">): File[] {
+  const itemFiles = Array.from(dataTransfer.items ?? [])
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file));
+
+  if (itemFiles.length > 0) return itemFiles;
+  return Array.from(dataTransfer.files ?? []);
+}
+
+export function shouldPreferClipboardImageFiles(dataTransfer: ClipboardFileData, files: File[]): boolean {
+  return files.length > 0
+    && files.every((file) => isSupportedImageFile(file))
+    && isImageOnlyClipboardPayload(dataTransfer, files);
+}
+
+export function shouldReadNativeClipboardImage(dataTransfer: ClipboardFileData, files: File[]): boolean {
+  if (files.some((file) => !isImageFile(file))) return false;
+  if (!isImageOnlyClipboardPayload(dataTransfer, files)) return false;
+  return files.length === 0 || files.some((file) => !isSupportedImageFile(file));
+}
+
+export function clipboardImagePayloadToFile(payload: ClipboardImagePayload): File {
+  const binary = atob(payload.base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new File([bytes], payload.name, { type: payload.mimeType });
+}
+
+function isImageOnlyClipboardPayload(dataTransfer: ClipboardFileData, files: File[]): boolean {
+  const html = dataTransfer.getData("text/html");
+  if (html) return isImageOnlyClipboardHtml(html);
+
+  const hasImageSignal = files.some((file) => isImageFile(file))
+    || Array.from(dataTransfer.items ?? []).some((item) => (
+      item.kind === "file" && item.type.toLowerCase().startsWith("image/")
+    ))
+    || Array.from(dataTransfer.types ?? []).some((type) => type.toLowerCase().startsWith("image/"));
+
+  const plainText = dataTransfer.getData("text/plain") || dataTransfer.getData("text");
+  if (plainText.trim().length > 0) return hasImageSignal;
+
+  // Some Chromium/Electron builds expose native Bitmap/TIFF clipboard data
+  // without a renderer File or MIME item. A blank paste payload is therefore
+  // worth checking through Electron's native clipboard bridge.
+  return hasImageSignal || files.length === 0;
+}
+
+function isImageFile(file: File): boolean {
+  const mimeType = file.type.toLowerCase();
+  return mimeType.startsWith("image/")
+    || mimeType === "public.tiff"
+    || /\.(?:avif|bmp|gif|heic|heif|ico|jpe?g|png|tiff?|webp)$/i.test(file.name);
+}
+
+function isSupportedImageFile(file: File): boolean {
+  return SUPPORTED_IMAGE_TYPES.has(resolveMimeType(file).toLowerCase());
+}
+
+function isImageOnlyClipboardHtml(html: string): boolean {
+  if (!/<img\b/i.test(html)) return false;
+
+  const visibleText = html
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<(script|style|title|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "")
+    .replace(/<img\b[^>]*>/gi, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/(?:&nbsp;|&#160;|&#x0*a0;)/gi, " ")
+    .trim();
+
+  return visibleText.length === 0;
+}
+
 export function hasDraggedFiles(dataTransfer: DataTransfer | null): boolean {
   if (!dataTransfer) return false;
 

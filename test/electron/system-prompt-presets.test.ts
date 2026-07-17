@@ -45,6 +45,11 @@ test("browser prompt encourages fetch log capture for API evidence", () => {
   assert.match(prompt, /API request\/response evidence/);
   assert.match(prompt, /Save\/display mismatch rule/);
   assert.match(prompt, /responseJsonFields/);
+  assert.match(prompt, /browser_extract_canvas/);
+  assert.match(prompt, /browser_wait_canvas/);
+  assert.match(prompt, /Canvas\/WebGL\/SVG/);
+  assert.doesNotMatch(prompt, /Terminal canvas rule/);
+  assert.match(prompt, /before screenshot|before OCR/);
 });
 
 test("tool optimization prompt keeps tool calls sparse, batched, and bounded", () => {
@@ -162,10 +167,7 @@ test("feishu document prompt hint routes directly to lark-cli docs fetch", () =>
     "https://boke.feishu.cn/docx/DocToken123",
   ]);
 
-  const hint = buildFeishuDocumentFetchPromptAppend(prompt, {
-    LARK_CLI_COMMAND: "lark-cli",
-    LARK_CLI_PROFILE: "default",
-  });
+  const hint = buildFeishuDocumentFetchPromptAppend(prompt);
 
   assert.ok(hint);
   assert.match(hint, /docs \+fetch --doc "https:\/\/boke\.feishu\.cn\/wiki\/V1IgwHb6ki1sETkjO4bcOqP3nFb" --format pretty/);
@@ -173,11 +175,12 @@ test("feishu document prompt hint routes directly to lark-cli docs fetch", () =>
   assert.match(hint, /不要先试 `wiki get`/);
 });
 
-test("feishu document prompt hint requires injected lark cli env", () => {
-  assert.equal(
-    buildFeishuDocumentFetchPromptAppend("https://boke.feishu.cn/wiki/V1IgwHb6ki1sETkjO4bcOqP3nFb", {}),
-    undefined,
+test("feishu document prompt hint uses the active lark-cli profile", () => {
+  const hint = buildFeishuDocumentFetchPromptAppend(
+    "https://boke.feishu.cn/wiki/V1IgwHb6ki1sETkjO4bcOqP3nFb",
   );
+  assert.match(hint ?? "", /lark-cli docs \+fetch/);
+  assert.doesNotMatch(hint ?? "", /LARK_CLI_PROFILE|--profile/);
   assert.deepEqual(
     extractFeishuDocumentUrls("普通链接 https://example.com/docs/abc"),
     [],

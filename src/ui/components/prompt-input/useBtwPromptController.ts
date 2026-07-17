@@ -18,6 +18,7 @@ export function useBtwPromptController(
   const setReasoningMode = useBtwStore((state) => state.setReasoningMode);
   const setThreadError = useBtwStore((state) => state.setThreadError);
   const fallbackModel = useAppStore((state) => state.runtimeModel);
+  const fallbackConfigProfileId = useAppStore((state) => state.runtimeConfigProfileId);
   const fallbackReasoningMode = useAppStore((state) => state.reasoningMode);
   const parentSlashCommands = useAppStore((state) => {
     if (!thread) return EMPTY_SLASH_COMMANDS;
@@ -30,8 +31,8 @@ export function useBtwPromptController(
   const updateAttachments = useCallback((value: PromptAttachment[]) => {
     if (threadId) setAttachments(threadId, value);
   }, [setAttachments, threadId]);
-  const updateModel = useCallback((value: string) => {
-    if (threadId) setModel(threadId, value);
+  const updateModel = useCallback((value: string, configProfileId?: string) => {
+    if (threadId) setModel(threadId, value, configProfileId);
   }, [setModel, threadId]);
   const updateReasoningMode = useCallback((value: RuntimeReasoningMode) => {
     if (threadId) setReasoningMode(threadId, value);
@@ -51,6 +52,7 @@ export function useBtwPromptController(
       setAttachments: updateAttachments,
       cwd: thread.cwd ?? "",
       model: thread.model?.trim() || fallbackModel.trim(),
+      configProfileId: thread.configProfileId?.trim() || fallbackConfigProfileId.trim() || undefined,
       reasoningMode: thread.reasoningMode ?? fallbackReasoningMode,
       isRunning: thread.status === "running",
       browserAnnotations: [],
@@ -70,6 +72,7 @@ export function useBtwPromptController(
             attachments,
             runtime: {
               model: thread.model?.trim() || fallbackModel.trim() || undefined,
+              configProfileId: thread.configProfileId?.trim() || fallbackConfigProfileId.trim() || undefined,
               reasoningMode: thread.reasoningMode ?? fallbackReasoningMode,
               permissionMode: thread.permissionMode,
             },
@@ -79,5 +82,5 @@ export function useBtwPromptController(
         return true;
       },
     } satisfies PromptInputController;
-  }, [fallbackModel, fallbackReasoningMode, parentSlashCommands, sendEvent, thread, updateAttachments, updateError, updateModel, updatePrompt, updateReasoningMode]);
+  }, [fallbackConfigProfileId, fallbackModel, fallbackReasoningMode, parentSlashCommands, sendEvent, thread, updateAttachments, updateError, updateModel, updatePrompt, updateReasoningMode]);
 }

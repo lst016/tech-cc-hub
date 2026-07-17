@@ -10,19 +10,29 @@ type StaticData = {
     totalMemoryGB: number;
 }
 
-type ApiModelConfig = {
-    name: string;
-    contextWindow?: number;
-    compressionThresholdPercent?: number;
-    routingWeight?: number;
+  type ApiModelConfig = {
+      name: string;
+      contextWindow?: number;
+      compressionThresholdPercent?: number;
+      routingWeight?: number;
+      catalogStatus?: "discovered" | "managed" | "excluded";
+      alias?: string;
+      tags?: string[];
+      notes?: string;
+      ownedBy?: string;
+    supportedEndpointTypes?: string[];
+    createdAt?: number;
 }
 
 type ApiModelsFetchModel = {
     name: string;
     contextWindow?: number;
+    ownedBy?: string;
+    supportedEndpointTypes?: string[];
+    createdAt?: number;
 }
 
-type ApiProviderMode = "custom" | "deepseek" | "codex" | "minimax";
+type ApiProviderMode = "custom" | "boke" | "deepseek" | "codex" | "minimax";
 
 type ApiConfig = {
     id: string;
@@ -61,6 +71,7 @@ type BrowserWorkbenchState = {
     canGoBack: boolean;
     canGoForward: boolean;
     annotationMode: boolean;
+    error?: string;
 }
 
 type BrowserWorkbenchConsoleLog = {
@@ -290,6 +301,8 @@ type UiGitCommitMessageSuggestion = import("./src/ui/types").UiGitCommitMessageS
 type EventPayloadMapping = {
     statistics: Statistics;
     getStaticData: StaticData;
+    "clipboard:read-image": import("./src/electron/libs/clipboard-image").ClipboardImagePayload | null;
+    "techcc-visualization-create-launch": import("./src/shared/techcc-visualization-protocol").TechccVisualizationLaunch;
     "generate-session-title": string;
     "get-recent-cwds": string[];
     "get-system-workspace": string;

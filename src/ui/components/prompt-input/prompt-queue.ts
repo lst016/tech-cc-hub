@@ -68,10 +68,15 @@ export function buildQueuedPrompt(queue: QueuedMessageDraft[]) {
 }
 
 export function buildQueuedDisplayPrompt(queue: QueuedMessageDraft[]) {
-  if (queue.length === 1) return queue[0].prompt;
+  const getDisplayContent = (item: QueuedMessageDraft) => (
+    getQueuedPromptPreview(item.prompt, countStructuredContextBlocks(item.prompt)).trim()
+      || "(no text, attachments only)"
+  );
+
+  if (queue.length === 1) return getDisplayContent(queue[0]);
   return queue
     .map((item, index) => {
-      const content = item.prompt.trim() || "(no text, attachments only)";
+      const content = getDisplayContent(item);
       return `Queued message ${index + 1}:\n${content}`;
     })
     .join("\n\n---\n\n");

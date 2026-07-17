@@ -8,8 +8,9 @@ import { getGlobalRuntimeEnvConfig } from "../claude/claude-settings.js";
 import { loadGlobalRuntimeConfig } from "../config-store.js";
 import { runExternalCli } from "../external-cli.js";
 import type { ChannelInboundMessage, ChannelProviderId, ChannelReplyTarget } from "./channel-workspace.js";
+import { startLarkCliChannelBridge } from "./lark-cli-channel-bridge.js";
 
-type ChannelTransportMode = "bot-api" | "webhook" | "lark-cli" | "lark-open-platform" | "weixin-native" | "weixin-openclaw";
+type ChannelTransportMode = "bot-api" | "webhook" | "weixin-native" | "weixin-openclaw";
 
 type ChannelConnectionConfig = {
   provider?: ChannelProviderId;
@@ -19,14 +20,7 @@ type ChannelConnectionConfig = {
   botTokenEnv?: string;
   webhookUrlEnv?: string;
   appIdEnv?: string;
-  appSecretEnv?: string;
   tenantKeyEnv?: string;
-  cliCommand?: string;
-  cliProfile?: string;
-  cliSendArgsTemplate?: string;
-  cliReceiveArgsTemplate?: string;
-  allowedSenderIds?: string;
-  allowedConversationIds?: string;
 };
 
 type ChannelRuntimeConfig = {
@@ -38,6 +32,10 @@ export type ChannelBridgeDispatch = (message: ChannelInboundMessage) => Promise<
 export type ChannelBridgeController = {
   stop: () => void;
   sendText: (target: ChannelReplyTarget, text: string) => Promise<void>;
+  sendImage: (target: ChannelReplyTarget, relativePath: string) => Promise<void>;
+  sendFile: (target: ChannelReplyTarget, relativePath: string) => Promise<void>;
+  addReaction: (target: ChannelReplyTarget, emojiType: string) => Promise<string>;
+  removeReaction: (target: ChannelReplyTarget, reactionId: string) => Promise<void>;
 };
 
 const POLL_INTERVAL_MS = 2500;
@@ -346,12 +344,14 @@ asyncio.run(main())
 export function startChannelBridge(dispatch: ChannelBridgeDispatch): ChannelBridgeController {
   const controller = new AbortController();
   const weixinBridge = startHermesWeixinInboundBridge(dispatch);
+  const larkBridge = startLarkCliChannelBridge(dispatch);
   void pollTelegram(controller.signal, dispatch);
 
   return {
     stop: () => {
       controller.abort();
       weixinBridge?.kill("SIGTERM");
+      larkBridge.stop();
     },
     sendText: async (target, text) => {
       if (target.provider === "telegram") {
@@ -365,7 +365,27 @@ export function startChannelBridge(dispatch: ChannelBridgeDispatch): ChannelBrid
           return;
         }
       }
+      if (target.provider === "lark") {
+        await larkBridge.sendText(target, text);
+        return;
+      }
       await sendWebhookText(target, text);
+    },
+    sendImage: async (target, relativePath) => {
+      if (target.provider !== "lark") throw new Error(`Image replies are not supported for ${target.provider}`);
+      await larkBridge.sendImage(target, relativePath);
+    },
+    sendFile: async (target, relativePath) => {
+      if (target.provider !== "lark") throw new Error(`File replies are not supported for ${target.provider}`);
+      await larkBridge.sendFile(target, relativePath);
+    },
+    addReaction: async (target, emojiType) => {
+      if (target.provider !== "lark") throw new Error(`Reactions are not supported for ${target.provider}`);
+      return await larkBridge.addReaction(target, emojiType);
+    },
+    removeReaction: async (target, reactionId) => {
+      if (target.provider !== "lark") throw new Error(`Reactions are not supported for ${target.provider}`);
+      await larkBridge.removeReaction(target, reactionId);
     },
   };
 }

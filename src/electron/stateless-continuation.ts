@@ -25,6 +25,9 @@ export type StatelessContinuationPayload = {
 const DEFAULT_RECENT_TURN_COUNT = 5;
 const SUMMARY_ENTRY_PREVIEW_LIMIT = 6;
 const SUMMARY_TEXT_LIMIT = 160;
+const PREVIOUS_SUMMARY_SNAPSHOT_LIMIT = 600;
+const SUMMARY_HARD_LIMIT = 2_000;
+const PREVIOUS_SUMMARY_SNAPSHOT_MARKER = "Previous summary snapshot:";
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 const DEFAULT_COMPRESSION_THRESHOLD_PERCENT = 70;
 const DEFAULT_IMAGE_ATTACHMENT_TOKEN_ESTIMATE = 6_000;
@@ -188,37 +191,51 @@ function compressText(text: string, maxLength: number): string {
 }
 
 function buildSummary(entries: ConversationEntry[], fallbackSummary?: string): string {
-  if (entries.length === 0) {
-    return fallbackSummary?.trim() ?? "";
-  }
-
-  const previewEntries =
-    entries.length <= SUMMARY_ENTRY_PREVIEW_LIMIT
-      ? entries
-      : [
-          ...entries.slice(0, 2),
-          ...entries.slice(-(SUMMARY_ENTRY_PREVIEW_LIMIT - 2)),
-        ];
-
-  const summaryLines = previewEntries.map((entry) => {
-    const prefix = entry.role === "user" ? "User asked" : "Assistant replied";
-    return `- ${prefix}: ${compressText(entry.text, SUMMARY_TEXT_LIMIT)}`;
-  });
-
-  const hiddenCount = entries.length - previewEntries.length;
-  if (hiddenCount > 0) {
-    summaryLines.splice(
-      2,
-      0,
-      `- ${hiddenCount} earlier message${hiddenCount === 1 ? "" : "s"} were compressed into this summary.`,
+  const summaryLines: string[] = [];
+  const normalizedFallbackSummary = fallbackSummary
+    ?.replaceAll(PREVIOUS_SUMMARY_SNAPSHOT_MARKER, "")
+    .replaceAll("Newly summarized history:", "")
+    .trim();
+  if (normalizedFallbackSummary) {
+    summaryLines.push(
+      PREVIOUS_SUMMARY_SNAPSHOT_MARKER,
+      compressText(normalizedFallbackSummary, PREVIOUS_SUMMARY_SNAPSHOT_LIMIT),
     );
   }
 
-  if (fallbackSummary?.trim()) {
-    summaryLines.unshift("- Existing summary snapshot reused as the base context.");
+  if (entries.length > 0) {
+    const previewEntries =
+      entries.length <= SUMMARY_ENTRY_PREVIEW_LIMIT
+        ? entries
+        : [
+            ...entries.slice(0, 2),
+            ...entries.slice(-(SUMMARY_ENTRY_PREVIEW_LIMIT - 2)),
+          ];
+
+    const historyLines = previewEntries.map((entry) => {
+      const prefix = entry.role === "user" ? "User asked" : "Assistant replied";
+      return `- ${prefix}: ${compressText(entry.text, SUMMARY_TEXT_LIMIT)}`;
+    });
+
+    const hiddenCount = entries.length - previewEntries.length;
+    if (hiddenCount > 0) {
+      historyLines.splice(
+        2,
+        0,
+        `- ${hiddenCount} earlier message${hiddenCount === 1 ? "" : "s"} were compressed into this summary.`,
+      );
+    }
+
+    if (summaryLines.length > 0) {
+      summaryLines.push("Newly summarized history:");
+    }
+    summaryLines.push(...historyLines);
   }
 
-  return summaryLines.join("\n");
+  const summary = summaryLines.join("\n");
+  return summary.length <= SUMMARY_HARD_LIMIT
+    ? summary
+    : `${summary.slice(0, SUMMARY_HARD_LIMIT - 1).trimEnd()}…`;
 }
 
 function estimateTextTokens(text: string): number {
@@ -383,7 +400,7 @@ export function buildStatelessContinuationPayload(
       options.existingSummary?.trim() &&
       options.existingSummaryMessageCount === historyMessageCount;
     const summaryText = canReuseExistingSummary
-      ? options.existingSummary!.trim()
+      ? buildSummary([], options.existingSummary)
       : buildSummary(summaryEntries, options.existingSummary);
     const recentHistoryText = formatHistory(recentHistory);
     const estimatedTokens = estimatePromptTokens([

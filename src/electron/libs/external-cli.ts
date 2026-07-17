@@ -48,7 +48,6 @@ function getDefaultWindowsCliDirs(env: CliEnv): string[] {
   const localAppData = env.LOCALAPPDATA ?? join(env.USERPROFILE ?? homedir(), "AppData", "Local");
   const appData = env.APPDATA ?? join(env.USERPROFILE ?? homedir(), "AppData", "Roaming");
   return uniqueExistingDirs([
-    join(localAppData, "Volta", "bin"),
     ...getVoltaNodeImageDirs(localAppData),
     join(appData, "npm"),
     env.ProgramFiles ? join(env.ProgramFiles, "Volta") : undefined,
@@ -72,7 +71,9 @@ export function buildExternalCliEnv(env: CliEnv = process.env): NodeJS.ProcessEn
     return { ...env } as NodeJS.ProcessEnv;
   }
 
+  const localAppData = env.LOCALAPPDATA ?? join(env.USERPROFILE ?? homedir(), "AppData", "Local");
   const pathEntries = uniqueExistingDirs([
+    join(localAppData, "Volta", "bin"),
     ...splitPathEntries(env),
     ...getDefaultWindowsCliDirs(env),
   ]);

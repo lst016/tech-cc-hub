@@ -16,6 +16,7 @@ export type RunnerReuseKeyInput = {
 type RunnerReuseDescriptor = {
   cwd: string;
   model: string;
+  configProfileId: string;
   origin: string;
   permissionMode: string;
   reasoningMode: string;
@@ -43,6 +44,7 @@ export function canReuseRunner(existingKey: string | undefined, requestedKey: st
   return (
     existing.cwd === requested.cwd &&
     existing.model === requested.model &&
+    existing.configProfileId === requested.configProfileId &&
     existing.origin === requested.origin &&
     existing.permissionMode === requested.permissionMode &&
     existing.reasoningMode === requested.reasoningMode &&
@@ -68,6 +70,7 @@ function buildRunnerReuseDescriptor(input: RunnerReuseKeyInput): RunnerReuseDesc
   return {
     cwd: normalizeKeyPart(input.cwd),
     model: normalizeKeyPart(input.model),
+    configProfileId: normalizeKeyPart(input.runtime?.configProfileId),
     origin: normalizeKeyPart((input.runtime as { origin?: string } | undefined)?.origin),
     permissionMode: input.runtime?.permissionMode ?? "bypassPermissions",
     reasoningMode: input.runtime?.reasoningMode ?? "",
@@ -100,6 +103,7 @@ function parseRunnerReuseKey(value: string | undefined): RunnerReuseDescriptor |
     return {
       cwd: typeof parsed.cwd === "string" ? parsed.cwd : "",
       model: typeof parsed.model === "string" ? parsed.model : "",
+      configProfileId: typeof parsed.configProfileId === "string" ? parsed.configProfileId : "",
       origin: typeof parsed.origin === "string" ? parsed.origin : "",
       permissionMode: typeof parsed.permissionMode === "string" ? parsed.permissionMode : "",
       reasoningMode: typeof parsed.reasoningMode === "string" ? parsed.reasoningMode : "",

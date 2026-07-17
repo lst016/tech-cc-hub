@@ -29,3 +29,16 @@ test("generated image cards use a compact result header and toolbar", () => {
   assert.match(source, /function shouldShowOutputHint/);
   assert.doesNotMatch(source, /bg-fuchsia-100/);
 });
+
+test("generated image lightboxes render against the viewport", () => {
+  const source = readFileSync("src/ui/components/chat/GeneratedImageResultCard.tsx", "utf8");
+  const lightboxStart = source.indexOf("function Lightbox");
+  const lightboxEnd = source.indexOf("function openFile", lightboxStart);
+  const lightboxSource = source.slice(lightboxStart, lightboxEnd);
+
+  assert.ok(lightboxStart >= 0);
+  assert.ok(lightboxEnd > lightboxStart);
+  assert.match(lightboxSource, /createPortal\(/);
+  assert.match(lightboxSource, /document\.body/);
+  assert.match(lightboxSource, /h-dvh w-dvw/);
+});

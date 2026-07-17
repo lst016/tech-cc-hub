@@ -12,7 +12,7 @@ test("Claude Code Opus and expert routes map to the configured expert model", ()
   assert.match(claudeSettingsSource, /ANTHROPIC_DEFAULT_OPUS_MODEL: expertModel/);
   assert.match(claudeSettingsSource, /ANTHROPIC_REASONING_MODEL: expertModel/);
   assert.match(claudeSettingsSource, /pickProviderOwnedModelForApiConfig/);
-  assert.match(claudeSettingsSource, /const routedOwner = getApiConfigForModel\(pickedModel\)/);
+  assert.match(claudeSettingsSource, /const routedOwner = getApiConfigForModel\(pickedModel, config\.id\)/);
   assert.match(claudeSettingsSource, /CLAUDE_CODE_OPUS_MODEL_OVERRIDE_KEYS/);
   assert.match(claudeSettingsSource, /"opus"/);
   assert.match(claudeSettingsSource, /"claude-opus-4-6"/);

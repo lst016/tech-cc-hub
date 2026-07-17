@@ -2,9 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import {
+  clipboardImagePayloadToFile,
+  getClipboardFiles,
   fileToAttachment,
   hasDraggedFiles,
   PROMPT_ATTACHMENT_ACCEPT,
+  shouldPreferClipboardImageFiles,
+  shouldReadNativeClipboardImage,
 } from "../../src/ui/components/prompt-input/prompt-attachments.js";
 
 function dataTransfer(input: {
@@ -19,6 +23,30 @@ function dataTransfer(input: {
   } as unknown as DataTransfer;
 }
 
+function clipboardData(input: {
+  files?: File[];
+  itemFiles?: Array<File | null>;
+  types?: string[];
+  text?: string;
+  html?: string;
+}): DataTransfer {
+  const files = input.files ?? [];
+  return {
+    files: Object.assign(files, { item: (index: number) => files[index] ?? null }),
+    items: (input.itemFiles ?? []).map((file) => ({
+      kind: "file",
+      type: file?.type ?? "image/png",
+      getAsFile: () => file,
+    })),
+    types: input.types ?? [],
+    getData: (type: string) => {
+      if (type === "text/plain" || type === "text") return input.text ?? "";
+      if (type === "text/html") return input.html ?? "";
+      return "";
+    },
+  } as unknown as DataTransfer;
+}
+
 test("prompt attachment drag detection accepts common file drag signals", () => {
   assert.equal(hasDraggedFiles(dataTransfer({ types: ["Files"] })), true);
   assert.equal(hasDraggedFiles(dataTransfer({ types: ["files"] })), true);
@@ -29,6 +57,75 @@ test("prompt attachment drag detection accepts common file drag signals", () => 
     hasDraggedFiles(dataTransfer({ types: ["text/plain"], items: [{ kind: "string" }], filesLength: 0 })),
     false,
   );
+});
+
+test("Windows clipboard falls back from an unmaterialized Bitmap item to the PNG file list", () => {
+  const image = new File([new Uint8Array([1, 2, 3])], "clipboard.png", { type: "image/png" });
+
+  assert.deepEqual(getClipboardFiles(clipboardData({ files: [image], itemFiles: [null] })), [image]);
+});
+
+test("prompt clipboard recognizes Chromium copy-image payloads without stealing rich text", () => {
+  const image = new File([new Uint8Array([1, 2, 3])], "clipboard.png", { type: "image/png" });
+
+  assert.equal(shouldPreferClipboardImageFiles(clipboardData({
+    files: [image],
+    itemFiles: [image],
+    text: "Fish illustration",
+    html: '<img src="https://example.test/fish.png" alt="Fish illustration">',
+  }), [image]), true);
+
+  assert.equal(shouldPreferClipboardImageFiles(clipboardData({
+    files: [image],
+    itemFiles: [image],
+  }), [image]), true);
+
+  assert.equal(shouldPreferClipboardImageFiles(clipboardData({
+    files: [image],
+    itemFiles: [image],
+    text: "Release notes\nArchitecture diagram",
+    html: '<p>Release notes</p><img src="https://example.test/diagram.png" alt="Architecture diagram">',
+  }), [image]), false);
+});
+
+test("macOS TIFF clipboard images use the native PNG bridge instead of becoming text attachments", () => {
+  const tiff = new File([new Uint8Array([1, 2, 3])], "", { type: "image/tiff" });
+  const clipboard = clipboardData({
+    files: [tiff],
+    itemFiles: [tiff],
+    types: ["image/tiff", "text/html", "text/plain"],
+    text: "Fish illustration",
+    html: '<meta charset="utf-8"><img src="https://example.test/fish.png" alt="Fish illustration">',
+  });
+
+  assert.equal(shouldPreferClipboardImageFiles(clipboard, [tiff]), false);
+  assert.equal(shouldReadNativeClipboardImage(clipboard, [tiff]), true);
+
+  const publicTiff = new File([new Uint8Array([1, 2, 3])], "", { type: "public.tiff" });
+  assert.equal(shouldReadNativeClipboardImage(clipboardData({
+    files: [publicTiff],
+    itemFiles: [publicTiff],
+    types: ["public.tiff"],
+  }), [publicTiff]), true);
+});
+
+test("native clipboard probing covers renderer-empty Windows bitmaps without intercepting plain text", () => {
+  assert.equal(shouldReadNativeClipboardImage(clipboardData({}), []), true);
+  assert.equal(shouldReadNativeClipboardImage(clipboardData({ text: "ordinary pasted text" }), []), false);
+});
+
+test("native clipboard PNG payloads re-enter the shared File attachment pipeline", async () => {
+  const file = clipboardImagePayloadToFile({
+    base64: "AQID",
+    mimeType: "image/png",
+    name: "clipboard-image-123.png",
+    size: 3,
+  });
+
+  assert.equal(file.name, "clipboard-image-123.png");
+  assert.equal(file.type, "image/png");
+  assert.equal(file.size, 3);
+  assert.deepEqual(new Uint8Array(await file.arrayBuffer()), new Uint8Array([1, 2, 3]));
 });
 
 test("prompt input exposes an explicit attachment picker button", () => {

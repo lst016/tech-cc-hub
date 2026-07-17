@@ -1,6 +1,9 @@
 export type ImportedApiModel = {
   name: string;
   contextWindow?: number;
+  ownedBy?: string;
+  supportedEndpointTypes?: string[];
+  createdAt?: number;
 };
 
 const DIRECT_CONTEXT_KEYS = [
@@ -43,21 +46,16 @@ export function extractApiModelsFromListPayload(payload: unknown): ImportedApiMo
     return [];
   }
 
-  const deduped = new Map<string, ImportedApiModel>();
+  const models: ImportedApiModel[] = [];
   for (const item of data) {
     const model = normalizeApiModelItem(item);
     if (!model) {
       continue;
     }
-
-    const previous = deduped.get(model.name);
-    deduped.set(model.name, {
-      name: model.name,
-      contextWindow: previous?.contextWindow ?? model.contextWindow,
-    });
+    models.push(model);
   }
 
-  return Array.from(deduped.values());
+  return normalizeImportedApiModels(models);
 }
 
 export function extractMiniMaxTextModelsFromListPayload(payload: unknown): ImportedApiModel[] {
@@ -74,6 +72,32 @@ export function toImportedApiModels(modelNames: readonly string[], contextWindow
       name,
       contextWindow,
     }));
+}
+
+export function normalizeImportedApiModels(
+  models: readonly unknown[],
+): ImportedApiModel[] {
+  const deduped = new Map<string, ImportedApiModel>();
+
+  for (const input of models) {
+    const model = normalizeApiModelItem(input);
+    if (!model) {
+      continue;
+    }
+
+    const previous = deduped.get(model.name);
+    deduped.set(model.name, mergeImportedApiModels(previous, model));
+  }
+
+  return Array.from(deduped.values());
+}
+
+export function supportsApiEndpointType(
+  model: Pick<ImportedApiModel, "supportedEndpointTypes"> | null | undefined,
+  endpointType: string,
+): boolean {
+  const normalized = endpointType.trim().toLowerCase();
+  return Boolean(normalized && model?.supportedEndpointTypes?.includes(normalized));
 }
 
 function normalizeApiModelItem(item: unknown): ImportedApiModel | null {
@@ -96,7 +120,52 @@ function normalizeApiModelItem(item: unknown): ImportedApiModel | null {
   return {
     name,
     contextWindow: readContextWindow(record),
+    ownedBy: readFirstString(record, ["owned_by", "ownedBy"])?.trim(),
+    supportedEndpointTypes: normalizeEndpointTypes(record.supported_endpoint_types ?? record.supportedEndpointTypes),
+    createdAt: parsePositiveInteger(record.created_at ?? record.createdAt ?? record.created),
   };
+}
+
+function mergeImportedApiModels(
+  previous: ImportedApiModel | undefined,
+  model: ImportedApiModel,
+): ImportedApiModel {
+  const supportedEndpointTypes = normalizeEndpointTypes([
+    ...(previous?.supportedEndpointTypes ?? []),
+    ...(model.supportedEndpointTypes ?? []),
+  ]);
+
+  const merged: ImportedApiModel = {
+    name: model.name,
+    contextWindow: previous?.contextWindow ?? model.contextWindow,
+  };
+  const ownedBy = previous?.ownedBy ?? model.ownedBy;
+  const createdAt = previous?.createdAt ?? model.createdAt;
+  if (ownedBy) merged.ownedBy = ownedBy;
+  if (supportedEndpointTypes) merged.supportedEndpointTypes = supportedEndpointTypes;
+  if (createdAt) merged.createdAt = createdAt;
+  return merged;
+}
+
+function normalizeEndpointTypes(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const normalized = Array.from(new Set(value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean)));
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function parsePositiveInteger(value: unknown): number | undefined {
+  const parsed = typeof value === "string" && value.trim() ? Number(value) : value;
+  if (typeof parsed !== "number" || !Number.isFinite(parsed)) {
+    return undefined;
+  }
+  const normalized = Math.floor(parsed);
+  return normalized > 0 ? normalized : undefined;
 }
 
 function readFirstString(record: Record<string, unknown>, keys: readonly string[]): string | undefined {

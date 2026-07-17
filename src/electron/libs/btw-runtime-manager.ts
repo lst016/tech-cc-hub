@@ -41,6 +41,7 @@ export type SendBtwThreadInput = {
 
 type BtwRunnerConfig = {
   model?: string;
+  configProfileId?: string;
   reasoningMode?: RuntimeOverrides["reasoningMode"];
   permissionMode?: RuntimeOverrides["permissionMode"];
 };
@@ -71,6 +72,7 @@ function buildThreadTitle(prompt: string, fallback: string): string {
 function resolveRunnerConfig(session: Session, runtime?: RuntimeOverrides): BtwRunnerConfig {
   return {
     model: runtime?.model ?? session.model,
+    configProfileId: runtime?.configProfileId ?? session.configProfileId,
     reasoningMode: runtime?.reasoningMode ?? session.reasoningMode,
     permissionMode: runtime?.permissionMode ?? session.permissionMode,
   };
@@ -79,6 +81,7 @@ function resolveRunnerConfig(session: Session, runtime?: RuntimeOverrides): BtwR
 function sameRunnerConfig(left: BtwRunnerConfig | undefined, right: BtwRunnerConfig): boolean {
   if (!left) return false;
   return left.model === right.model
+    && left.configProfileId === right.configProfileId
     && left.reasoningMode === right.reasoningMode
     && left.permissionMode === right.permissionMode;
 }
@@ -131,6 +134,7 @@ export class BtwRuntimeManager {
       status: session.status,
       cwd: session.cwd,
       model: session.model,
+      configProfileId: session.configProfileId,
       reasoningMode: session.reasoningMode,
       permissionMode: session.permissionMode,
       createdAt: timestamp,
@@ -179,6 +183,7 @@ export class BtwRuntimeManager {
     runtime.session.status = "running";
     runtime.session.lastPrompt = displayPrompt;
     runtime.session.model = nextConfig.model;
+    runtime.session.configProfileId = nextConfig.configProfileId;
     runtime.session.reasoningMode = nextConfig.reasoningMode;
     runtime.session.permissionMode = nextConfig.permissionMode;
     runtime.session.title = runtime.messages.length === 0
@@ -199,6 +204,7 @@ export class BtwRuntimeManager {
         status: "running",
         title: runtime.session.title,
         model: runtime.session.model,
+        configProfileId: runtime.session.configProfileId,
         reasoningMode: runtime.session.reasoningMode,
         permissionMode: runtime.session.permissionMode,
         updatedAt: timestamp,
@@ -248,6 +254,7 @@ export class BtwRuntimeManager {
         runtime: {
           ...(input.runtime ?? {}),
           model: runtime.session.model,
+          configProfileId: runtime.session.configProfileId,
           reasoningMode: runtime.session.reasoningMode,
           permissionMode: runtime.session.permissionMode,
         },

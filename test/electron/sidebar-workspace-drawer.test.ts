@@ -11,14 +11,15 @@ test("workspace session drawers stay closed until manually opened", () => {
   assert.match(sidebarSource, /\[groupKey\]: !current\[groupKey\]/);
   assert.match(sidebarSource, /writeExpandedWorkspaceGroupsToStorage\(next\)/);
   assert.match(sessionListSource, /onToggleWorkspaceGroup\(group\.key\)/);
-  assert.match(sessionListSource, /expandedGroups\[group\.key\] \? "" : "hidden"/);
-  assert.doesNotMatch(sessionListSource, /current\[group\.key\]\s*\?\?\s*true/);
+  assert.match(sessionListSource, /const workspaceGroupExpanded = Boolean\(expandedGroups\[group\.key\]\)/);
+  assert.match(sessionListSource, /workspaceGroupExpanded \? "" : "hidden"/);
 });
 
 test("workspace session drawer state survives sidebar remounts", () => {
   const sidebarSource = readFileSync("src/ui/components/Sidebar.tsx", "utf8");
 
   assert.match(sidebarSource, /window\.localStorage\.getItem\(SIDEBAR_EXPANDED_WORKSPACE_GROUPS_STORAGE_KEY\)/);
+  assert.match(sidebarSource, /const expandedOnly = Object\.fromEntries/);
   assert.match(sidebarSource, /window\.localStorage\.setItem\(SIDEBAR_EXPANDED_WORKSPACE_GROUPS_STORAGE_KEY, JSON\.stringify\(expandedOnly\)\)/);
   assert.match(sidebarSource, /window\.localStorage\.removeItem\(SIDEBAR_EXPANDED_WORKSPACE_GROUPS_STORAGE_KEY\)/);
   assert.match(sidebarSource, /useState<Record<string, boolean>>\(\(\) => readExpandedWorkspaceGroupsFromStorage\(\)\)/);
@@ -33,11 +34,13 @@ test("background sessions show a compact sidebar badge", () => {
   assert.match(sessionListSource, />\s*BG\s*<\/span>/);
 });
 
-test("expanded workspace lists preview five sessions before showing all", () => {
+test("workspace lists preview five sessions before showing all", () => {
   const sessionListSource = readFileSync("src/ui/components/sidebar/SidebarWorkspaceList.tsx", "utf8");
 
   assert.match(sessionListSource, /WORKSPACE_SESSION_PREVIEW_LIMIT = 5/);
   assert.match(sessionListSource, /expandedSessionLists/);
+  assert.match(sessionListSource, /const sessionListExpanded = Boolean\(expandedSessionLists\[group\.key\]\)/);
+  assert.match(sessionListSource, /\[group\.key\]: !current\[group\.key\]/);
   assert.match(sessionListSource, /group\.sessions\.slice\(0, WORKSPACE_SESSION_PREVIEW_LIMIT\)/);
   assert.match(sessionListSource, /visibleSessions\.map/);
   assert.match(sessionListSource, /aria-expanded=\{sessionListExpanded\}/);

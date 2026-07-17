@@ -2,13 +2,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  createBokeGatewayProfile,
   createMiniMaxOfficialProfile,
   createDeepSeekOfficialProfile,
   getAvailableModelsForProfiles,
   getEnabledProfiles,
+  getImageGenerationModelsForProfiles,
+  getImageUnderstandingModelsForProfiles,
+  getModelDeploymentOptionsForProfiles,
   getRoutedModelOptionsForProfiles,
   normalizeProfile,
   resolveAvailableModelName,
+  validateProfiles,
 } from "../../src/ui/components/settings/settings-utils.js";
 import {
   applySharedModelRoutingPatch,
@@ -28,6 +33,10 @@ import {
   type ImagePreprocessRouteConfig,
 } from "../../src/shared/models/image-preprocess-routing.js";
 import { extractApiModelsFromListPayload } from "../../src/shared/models/api-model-metadata.js";
+import {
+  isBokeGatewayBaseURL,
+  resolveSharedApiProviderMode,
+} from "../../src/shared/models/model-provider-routing.js";
 
 const MODEL_SEARCH_FIXTURE = [
   "gpt-5.4",
@@ -46,6 +55,9 @@ function getModelSearchValues(query: string): string[] {
 
 test("settings modal and shared types expose per-model context compression fields", () => {
   const apiProfilesSettingsSource = readFileSync("src/ui/components/settings/ApiProfilesSettingsPage.tsx", "utf8");
+  const aiInterfaceSettingsSource = readFileSync("src/ui/components/settings/AiInterfaceSettingsPage.tsx", "utf8");
+  const modelRoutingSettingsSource = readFileSync("src/ui/components/settings/ModelRoutingSettingsPage.tsx", "utf8");
+  const modelCatalogSettingsSource = readFileSync("src/ui/components/settings/ModelCatalogSettingsPage.tsx", "utf8");
   const uiTypesSource = readFileSync("src/ui/types.ts", "utf8");
   const configStoreSource = readFileSync("src/electron/libs/config-store.ts", "utf8");
   const claudeSettingsSource = readFileSync("src/electron/libs/claude/claude-settings.ts", "utf8");
@@ -71,9 +83,13 @@ test("settings modal and shared types expose per-model context compression field
   assert.match(claudeSettingsSource, /DISABLE_TELEMETRY/);
   assert.match(claudeSettingsSource, /getApiConfigForModel/);
   assert.match(claudeSettingsSource, /getEnabledUsableApiConfigs/);
-  assert.match(apiProfilesSettingsSource, /Prompt 分析模型/);
+  assert.match(modelRoutingSettingsSource, /Prompt 分析模型/);
   assert.match(apiProfilesSettingsSource, /测试连接/);
-  assert.match(apiProfilesSettingsSource, /onChange\(\(current\) => \[create\(\), \.\.\.current\]\)/);
+  assert.match(apiProfilesSettingsSource, /onChange\(\(current\) => \[profile, \.\.\.current\]\)/);
+  assert.match(aiInterfaceSettingsSource, /接口连接/);
+  assert.match(aiInterfaceSettingsSource, /模型目录/);
+  assert.match(aiInterfaceSettingsSource, /路由策略/);
+  assert.match(modelCatalogSettingsSource, /加入可用池/);
   assert.doesNotMatch(apiProfilesSettingsSource, /enabled:\s*item\.id === profile\.id/);
   assert.doesNotMatch(settingsModalSource, /enabled:\s*index === enabledIndex/);
   assert.doesNotMatch(configStoreSource, /profile\.enabled && !hasEnabled/);
@@ -94,25 +110,211 @@ test("settings modal and shared types expose per-model context compression field
   assert.match(configStoreSource, /MINIMAX_ANTHROPIC_BASE_URL/);
 });
 
-test("model import extracts context windows from common gateway payloads", () => {
+test("model catalog filters use the app-styled accessible listbox", () => {
+  const modelCatalogSettingsSource = readFileSync("src/ui/components/settings/ModelCatalogSettingsPage.tsx", "utf8");
+
+  assert.doesNotMatch(modelCatalogSettingsSource, /<select/);
+  assert.doesNotMatch(modelCatalogSettingsSource, /<option/);
+  assert.match(modelCatalogSettingsSource, /role="combobox"/);
+  assert.match(modelCatalogSettingsSource, /role="listbox"/);
+  assert.match(modelCatalogSettingsSource, /role="option"/);
+  assert.match(modelCatalogSettingsSource, /aria-activedescendant/);
+  assert.match(modelCatalogSettingsSource, /event\.key === "ArrowDown"/);
+  assert.match(modelCatalogSettingsSource, /event\.stopPropagation\(\)/);
+  assert.match(modelCatalogSettingsSource, /document\.addEventListener\("pointerdown"/);
+});
+
+test("model catalog keeps scrolling inside the table viewport", () => {
+  const modelCatalogSettingsSource = readFileSync("src/ui/components/settings/ModelCatalogSettingsPage.tsx", "utf8");
+
+  assert.match(modelCatalogSettingsSource, /relative grid h-full min-h-0 overflow-hidden/);
+  assert.match(modelCatalogSettingsSource, /<section className="flex min-h-0 min-w-0 flex-col overflow-hidden">/);
+  assert.match(modelCatalogSettingsSource, /data-model-catalog-scroll-region/);
+  assert.match(modelCatalogSettingsSource, /className="min-h-0 flex-1 overflow-auto overscroll-contain"/);
+  assert.doesNotMatch(modelCatalogSettingsSource, /min-h-\[calc\(100vh-230px\)\]/);
+});
+
+test("model catalog presents manual exclusion as the default routing policy", () => {
+  const modelCatalogSettingsSource = readFileSync("src/ui/components/settings/ModelCatalogSettingsPage.tsx", "utf8");
+
+  assert.match(modelCatalogSettingsSource, />路由状态</);
+  assert.match(modelCatalogSettingsSource, />默认可用</);
+  assert.match(modelCatalogSettingsSource, />手动排除</);
+  assert.match(modelCatalogSettingsSource, />网关未启用</);
+  assert.doesNotMatch(modelCatalogSettingsSource, /:\s*"未使用"/);
+  assert.doesNotMatch(modelCatalogSettingsSource, /待纳管/);
+});
+
+test("model import preserves context and Boke gateway catalog metadata", () => {
   const models = extractApiModelsFromListPayload({
     data: [
-      { id: "gpt-5.5", context_window: 200_000 },
+      {
+        id: "gpt-5.5",
+        context_window: 200_000,
+        owned_by: "openai",
+        supported_endpoint_types: ["openai", "openai-response"],
+        created: 1_752_470_400,
+      },
       { id: "deepseek-v4-pro", context_length: "1M" },
       { id: "openrouter-model", top_provider: { context_length: "128k" } },
       { name: "limit-model", limits: { contextWindow: "32,768" } },
       "plain-model",
-      { id: "gpt-5.5", metadata: { context_window: 400_000 } },
+      {
+        id: "gpt-5.5",
+        metadata: { context_window: 400_000 },
+        supported_endpoint_types: ["openai-response", "image-generation", ""],
+      },
     ],
   });
 
   assert.deepEqual(models, [
-    { name: "gpt-5.5", contextWindow: 200_000 },
+    {
+      name: "gpt-5.5",
+      contextWindow: 200_000,
+      ownedBy: "openai",
+      supportedEndpointTypes: ["openai", "openai-response", "image-generation"],
+      createdAt: 1_752_470_400,
+    },
     { name: "deepseek-v4-pro", contextWindow: 1_000_000 },
     { name: "openrouter-model", contextWindow: 128_000 },
     { name: "limit-model", contextWindow: 32_768 },
     { name: "plain-model", contextWindow: undefined },
   ]);
+});
+
+test("Boke provider is locked to the exact gateway hostname", () => {
+  assert.equal(isBokeGatewayBaseURL("https://ai.pocketcity.com/v1"), true);
+  assert.equal(isBokeGatewayBaseURL("HTTPS://AI.POCKETCITY.COM:443/v1"), true);
+  assert.equal(isBokeGatewayBaseURL("https://edge.ai.pocketcity.com/v1"), false);
+  assert.equal(isBokeGatewayBaseURL("https://ai.pocketcity.com.evil.test/v1"), false);
+  assert.equal(isBokeGatewayBaseURL("https://notai.pocketcity.com/v1"), false);
+  assert.equal(isBokeGatewayBaseURL("not a url"), false);
+
+  assert.equal(resolveSharedApiProviderMode(undefined, "https://ai.pocketcity.com/v1"), "boke");
+  assert.equal(resolveSharedApiProviderMode("custom", "https://ai.pocketcity.com/v1"), "boke");
+  assert.equal(resolveSharedApiProviderMode("boke", "https://example.com/v1"), "custom");
+  assert.equal(resolveSharedApiProviderMode("custom", "https://api.deepseek.com/anthropic"), "custom");
+});
+
+test("legacy Boke profile normalizes to the locked provider without changing Anthropic mode", () => {
+  const normalized = normalizeProfile({
+    id: "boke-profile",
+    name: "波克",
+    apiKey: "sk-test",
+    baseURL: "https://ai.pocketcity.com/v1",
+    model: "openai/gpt-5.5",
+    models: [{
+      name: "openai/gpt-5.5",
+      ownedBy: "openai",
+      supportedEndpointTypes: ["openai", "openai-response"],
+      createdAt: 1_752_470_400,
+    }],
+    enabled: true,
+    provider: "custom",
+    apiType: "anthropic",
+  });
+
+  assert.equal(normalized.provider, "boke");
+  assert.equal(normalized.apiType, "anthropic");
+  assert.deepEqual(normalized.models?.[0], {
+    name: "openai/gpt-5.5",
+    contextWindow: 200_000,
+      compressionThresholdPercent: 70,
+      routingWeight: undefined,
+      catalogStatus: undefined,
+      alias: undefined,
+      tags: undefined,
+      notes: undefined,
+      ownedBy: "openai",
+    supportedEndpointTypes: ["openai", "openai-response"],
+    createdAt: 1_752_470_400,
+  });
+});
+
+test("profile normalization auto-manages discovered models while preserving explicit exclusions", () => {
+  const normalized = normalizeProfile({
+    id: "default-managed-catalog",
+    name: "Default managed catalog",
+    apiKey: "sk-test",
+    baseURL: "https://example.com/v1",
+    model: "text-model",
+    models: [
+      { name: "text-model", catalogStatus: "managed" },
+      {
+        name: "doubao-seedream-5-0-pro-260628",
+        catalogStatus: "discovered",
+        supportedEndpointTypes: ["image-generation"],
+      },
+      {
+        name: "excluded-image-model",
+        catalogStatus: "excluded",
+        supportedEndpointTypes: ["image-generation"],
+      },
+    ],
+    enabled: true,
+    provider: "custom",
+    apiType: "anthropic",
+  });
+
+  assert.equal(
+    normalized.models?.find((model) => model.name === "doubao-seedream-5-0-pro-260628")?.catalogStatus,
+    "managed",
+  );
+  assert.equal(
+    normalized.models?.find((model) => model.name === "excluded-image-model")?.catalogStatus,
+    "excluded",
+  );
+  assert.deepEqual(getImageGenerationModelsForProfiles([normalized]), [
+    "doubao-seedream-5-0-pro-260628",
+  ]);
+});
+
+test("gateway imports default every non-excluded model into the managed pool", () => {
+  const source = readFileSync("src/ui/components/settings/ApiProfilesSettingsPage.tsx", "utf8");
+
+  assert.match(
+    source,
+    /catalogStatus:\s*existing\?\.catalogStatus === "excluded"\s*\?\s*"excluded"\s*:\s*"managed"/,
+  );
+  assert.doesNotMatch(source, /catalogStatus:\s*existing\s*\?\s*existing\.catalogStatus\s*:\s*"discovered"/);
+});
+
+test("Boke factory and endpoint metadata separate image models from the full catalog", () => {
+  const profile = {
+    ...createBokeGatewayProfile(),
+    id: "boke-capabilities",
+    apiKey: "sk-test",
+    model: "openai/gpt-5.5",
+    models: [
+      {
+        name: "openai/gpt-5.5",
+        ownedBy: "openai",
+        supportedEndpointTypes: ["openai", "openai-response"],
+      },
+      {
+        name: "openai/gpt-image-1",
+        ownedBy: "openai",
+        supportedEndpointTypes: ["openai", "image-generation"],
+      },
+      {
+        name: "qwen/qwen-vl-max",
+        ownedBy: "qwen",
+        supportedEndpointTypes: ["openai"],
+      },
+    ],
+  };
+
+  assert.equal(profile.provider, "boke");
+  assert.equal(profile.baseURL, "https://ai.pocketcity.com/v1");
+
+  const state = buildSharedModelRoutingState([profile]);
+  assert.deepEqual(state.imageGenerationModels, ["openai/gpt-image-1"]);
+  assert.deepEqual(state.imageUnderstandingModels, ["qwen/qwen-vl-max"]);
+
+  const option = getRoutedModelOptionsForProfiles([profile])
+    .find((item) => item.value === "openai/gpt-5.5");
+  assert.equal(option?.provider, "boke");
+  assert.equal(option?.providerLabel, "波克网关");
 });
 
 test("shared model routing model slots use grouped searchable comboboxes", () => {
@@ -126,6 +328,8 @@ test("shared model routing model slots use grouped searchable comboboxes", () =>
   assert.match(modelSelectSource, /getModelSearchScore/);
   assert.match(modelSelectSource, /isFuzzySubsequence/);
   assert.doesNotMatch(modelRoutingSource, /<select/);
+  assert.match(modelRoutingSource, /overflow-visible rounded-\[18px\]/);
+  assert.doesNotMatch(modelRoutingSource, /overflow-hidden rounded-\[18px\]/);
 });
 
 test("model select search keeps short numeric tokens precise", () => {
@@ -226,11 +430,7 @@ test("enabled profile helpers preserve list order and dedupe models across enabl
   assert.deepEqual(getEnabledProfiles(profiles).map((profile) => profile.id), ["first", "second"]);
   assert.deepEqual(getAvailableModelsForProfiles(getEnabledProfiles(profiles)), [
     "shared-model",
-    "first-expert",
-    "first-small",
     "first-extra",
-    "second-expert",
-    "second-small",
     "second-extra",
   ]);
 });
@@ -258,7 +458,6 @@ test("enabled profile helpers keep distinct deepseek casing variants when both e
 
   assert.deepEqual(getAvailableModelsForProfiles(getEnabledProfiles(profiles)), [
     "DeepSeek-V4-Pro",
-    "gpt-5.5",
     "deepseek-v4-pro",
     "deepseek-chat",
   ]);
@@ -515,7 +714,7 @@ test("image preprocessing config lookup can use image models from another enable
     resolveImagePreprocessRouteConfig(selectedConfig, [selectedConfig, imageConfig])?.id,
     "default",
   );
-  assert.match(settingsPageSource, /isLikelyImageUnderstandingModel/);
+  assert.match(settingsPageSource, /inferModelCapabilities/);
   assert.doesNotMatch(settingsPageSource, /function isLikelyVisionUnderstandingModel/);
 });
 
@@ -589,7 +788,7 @@ test("imageGenerationModel persists, normalizes, and clears independently from i
   assert.equal(cleared[0]?.imageModel, "gemini-3-pro-image-preview");
 });
 
-test("shared model routing merges enabled profile models into one editable surface", () => {
+test("shared model routing keeps gateway model ownership isolated on one editable surface", () => {
   const profiles = [
     {
       id: "codex",
@@ -630,14 +829,15 @@ test("shared model routing merges enabled profile models into one editable surfa
     "deepseek-v4-pro",
     "GLM-5.1-FP8",
   ]);
+  assert.deepEqual(state.roleModels, ["gpt-5.4", "gpt-5.3-codex-spark"]);
 
   const nextProfiles = applySharedModelRoutingPatch(profiles, { smallModel: "GLM-5.1-FP8" });
-  assert.equal(nextProfiles[0]?.smallModel, "GLM-5.1-FP8");
+  assert.equal(nextProfiles[0]?.smallModel, "gpt-5.3-codex-spark");
   assert.equal(nextProfiles[1]?.smallModel, "GLM-5.1-FP8");
-  assert.ok(nextProfiles[0]?.models?.some((model) => model.name === "deepseek-v4-pro"));
-  assert.ok(nextProfiles[1]?.models?.some((model) => model.name === "gpt-5.4"));
+  assert.equal(nextProfiles[0]?.models?.some((model) => model.name === "deepseek-v4-pro"), false);
+  assert.equal(nextProfiles[1]?.models?.some((model) => model.name === "gpt-5.4"), false);
   assert.equal(nextProfiles[0]?.models?.find((model) => model.name === "gpt-5.4")?.routingWeight, 25);
-  assert.equal(nextProfiles[0]?.models?.find((model) => model.name === "GLM-5.1-FP8")?.routingWeight, undefined);
+  assert.equal(nextProfiles[0]?.models?.find((model) => model.name === "GLM-5.1-FP8"), undefined);
   assert.equal(nextProfiles[1]?.models?.find((model) => model.name === "GLM-5.1-FP8")?.routingWeight, 10);
 
   const withoutImageModels = applySharedModelRoutingPatch(nextProfiles, { imageModel: "" });
@@ -645,12 +845,184 @@ test("shared model routing merges enabled profile models into one editable surfa
   assert.equal(withoutImageModels[1]?.imageModel, undefined);
 
   const withImageGenerationModels = applySharedModelRoutingPatch(nextProfiles, { imageGenerationModel: "GLM-5.1-FP8" });
-  assert.equal(withImageGenerationModels[0]?.imageGenerationModel, "GLM-5.1-FP8");
+  assert.equal(withImageGenerationModels[0]?.imageGenerationModel, undefined);
   assert.equal(withImageGenerationModels[1]?.imageGenerationModel, "GLM-5.1-FP8");
 
   const withoutImageGenerationModels = applySharedModelRoutingPatch(withImageGenerationModels, { imageGenerationModel: "" });
   assert.equal(withoutImageGenerationModels[0]?.imageGenerationModel, undefined);
   assert.equal(withoutImageGenerationModels[1]?.imageGenerationModel, undefined);
+
+  const withForeignExpert = applySharedModelRoutingPatch(nextProfiles, { expertModel: "GLM-5.1-FP8" });
+  assert.equal(withForeignExpert[0]?.expertModel, "gpt-5.4");
+  assert.equal(withForeignExpert[1]?.expertModel, "deepseek-v4-pro");
+  assert.equal(validateProfiles(withForeignExpert.map(normalizeProfile)), null);
+
+  const withGatewayMain = applySharedModelRoutingPatch(nextProfiles, { model: "GLM-5.1-FP8" });
+  assert.deepEqual(withGatewayMain.map((profile) => profile.id), ["default", "codex"]);
+  const gatewayState = buildSharedModelRoutingState(withGatewayMain);
+  assert.equal(gatewayState.mainModel, "GLM-5.1-FP8");
+  assert.deepEqual(gatewayState.roleModels, ["GLM-5.1-FP8", "deepseek-v4-pro", "deepseek-v4-flash"]);
+  assert.equal(validateProfiles(withGatewayMain.map(normalizeProfile)), null);
+});
+
+test("model deployment options keep same-name gateway and Codex routes separate", () => {
+  const profiles = [
+    {
+      id: "gateway",
+      name: "Boke Gateway",
+      apiKey: "sk-gateway",
+      baseURL: "https://ai.pocketcity.com/v1",
+      model: "gpt-5.6-terra",
+      models: [{ name: "gpt-5.6-terra", routingWeight: 0 }],
+      enabled: true,
+      provider: "boke" as const,
+      apiType: "anthropic" as const,
+    },
+    {
+      id: "codex",
+      name: "Codex OAuth",
+      apiKey: "{}",
+      baseURL: "https://chatgpt.com",
+      model: "gpt-5.6-terra",
+      models: [{ name: "gpt-5.6-terra", routingWeight: 10 }],
+      enabled: true,
+      provider: "codex" as const,
+      apiType: "anthropic" as const,
+    },
+  ];
+
+  const deployments = getModelDeploymentOptionsForProfiles(profiles);
+  assert.deepEqual(deployments.map((option) => option.profileId), ["gateway", "codex"]);
+  assert.equal(new Set(deployments.map((option) => option.deploymentKey)).size, 2);
+  assert.deepEqual(deployments.map((option) => option.value), ["gpt-5.6-terra", "gpt-5.6-terra"]);
+});
+
+test("profile normalization repairs legacy role slots to locally managed models", () => {
+  const normalized = normalizeProfile({
+    id: "legacy",
+    name: "Legacy gateway",
+    apiKey: "sk-test",
+    baseURL: "https://example.com/v1",
+    model: "foreign-main",
+    expertModel: "foreign-expert",
+    smallModel: "foreign-small",
+    analysisModel: "foreign-analysis",
+    imageModel: "foreign-vision",
+    imageGenerationModel: "foreign-image-generation",
+    models: [{ name: "local-model", catalogStatus: "managed", contextWindow: 128_000 }],
+    enabled: true,
+    provider: "custom",
+    apiType: "anthropic",
+  });
+
+  assert.equal(normalized.model, "local-model");
+  assert.equal(normalized.expertModel, "local-model");
+  assert.equal(normalized.smallModel, "local-model");
+  assert.equal(normalized.analysisModel, "local-model");
+  assert.equal(normalized.imageModel, undefined);
+  assert.equal(normalized.imageGenerationModel, undefined);
+  assert.equal(validateProfiles([normalized]), null);
+});
+
+test("official profile normalization drops provider-incompatible historical shared-catalog copies", () => {
+  const normalized = normalizeProfile({
+    id: "legacy-codex",
+    name: "Codex OAuth",
+    apiKey: "{}",
+    baseURL: "https://chatgpt.com",
+    model: "gpt-5.5",
+    expertModel: "foreign-model",
+    smallModel: "foreign-model",
+    analysisModel: "foreign-model",
+    models: [
+      { name: "gpt-5.5", contextWindow: 200_000 },
+      { name: "foreign-model", contextWindow: 200_000 },
+    ],
+    enabled: true,
+    provider: "codex",
+    apiType: "anthropic",
+  });
+
+  assert.deepEqual(normalized.models?.map((model) => model.name), ["gpt-5.5"]);
+  assert.equal(normalized.expertModel, "gpt-5.5");
+  assert.equal(normalized.smallModel, "gpt-5.5");
+  assert.equal(normalized.analysisModel, "gpt-5.5");
+});
+
+test("image routing candidates use the same explicit capability aliases as the model catalog", () => {
+  const profiles = [{
+    id: "gateway",
+    name: "Gateway",
+    apiKey: "sk-test",
+    baseURL: "https://example.com/v1",
+    model: "opaque-text-model",
+    expertModel: "opaque-text-model",
+    smallModel: "opaque-text-model",
+    analysisModel: "opaque-text-model",
+    models: [
+      { name: "opaque-text-model", catalogStatus: "managed" as const },
+      { name: "opaque-vision-model", catalogStatus: "managed" as const, supportedEndpointTypes: ["openai", "vision"] },
+      { name: "opaque-multimodal-model", catalogStatus: "managed" as const, supportedEndpointTypes: ["multimodal"] },
+      { name: "opaque-understanding-model", catalogStatus: "managed" as const, supportedEndpointTypes: ["image-understanding"] },
+      { name: "opaque-images-model", catalogStatus: "managed" as const, supportedEndpointTypes: ["openai", "images"] },
+      { name: "opaque-generation-model", catalogStatus: "managed" as const, supportedEndpointTypes: ["image-generation"] },
+    ],
+    enabled: true,
+    provider: "custom" as const,
+    apiType: "anthropic" as const,
+  }];
+
+  assert.deepEqual(getImageUnderstandingModelsForProfiles(profiles), [
+    "opaque-vision-model",
+    "opaque-multimodal-model",
+    "opaque-understanding-model",
+  ]);
+  assert.deepEqual(getImageGenerationModelsForProfiles(profiles), [
+    "opaque-images-model",
+    "opaque-generation-model",
+  ]);
+});
+
+test("image capability routing follows the weighted deployment owner for duplicate model IDs", () => {
+  const profiles = [
+    {
+      id: "text-owner",
+      name: "Text owner",
+      apiKey: "sk-a",
+      baseURL: "https://a.example/v1",
+      model: "opaque-shared-model",
+      models: [{
+        name: "opaque-shared-model",
+        catalogStatus: "managed" as const,
+        routingWeight: 20,
+        supportedEndpointTypes: ["openai"],
+      }],
+      enabled: true,
+      provider: "custom" as const,
+      apiType: "anthropic" as const,
+    },
+    {
+      id: "vision-owner",
+      name: "Vision owner",
+      apiKey: "sk-b",
+      baseURL: "https://b.example/v1",
+      model: "opaque-shared-model",
+      models: [{
+        name: "opaque-shared-model",
+        catalogStatus: "managed" as const,
+        routingWeight: 10,
+        supportedEndpointTypes: ["vision"],
+      }],
+      enabled: true,
+      provider: "custom" as const,
+      apiType: "anthropic" as const,
+    },
+  ];
+
+  assert.deepEqual(getImageUnderstandingModelsForProfiles(profiles), []);
+
+  profiles[1]!.models[0]!.routingWeight = 30;
+  assert.deepEqual(getImageUnderstandingModelsForProfiles(profiles), ["opaque-shared-model"]);
 });
 
 test("shared model routing shows optional slots configured on later enabled profiles", () => {

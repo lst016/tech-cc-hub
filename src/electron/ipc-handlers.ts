@@ -18,7 +18,7 @@ import { runClaude, type RunnerHandle } from "./libs/runner/runner.js";
 import { buildRunnerReuseKey } from "./libs/runner/runner-reuse.js";
 import { persistImageAttachmentReference, rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
 import { listAvailableClaudeAgents, resolveAgentRuntimeContext } from "./libs/agent-resolver.js";
-import { getApiConfigForModel, getCurrentApiConfig, getModelConfig, resolveApiConfigForModel } from "./libs/claude/claude-settings.js";
+import { getCurrentApiConfig, getModelConfig, resolveApiConfigForModel } from "./libs/claude/claude-settings.js";
 import { loadGlobalRuntimeConfig, saveGlobalRuntimeConfig } from "./libs/config-store.js";
 import { listExternalMcpServerInfos } from "./libs/external-mcp-servers.js";
 import { buildNextFigmaOfficialAuthStateRuntimeConfig, isFigmaMcpOAuthCallbackPrompt, redactFigmaMcpOAuthCallbackPrompt, type FigmaOfficialAuthState } from "./libs/figma-official-plugin.js";
@@ -58,6 +58,11 @@ import {
   recordChannelInboundMessage,
   type ChannelReplyTarget,
 } from "./libs/channel/channel-workspace.js";
+import {
+  collectSafeChannelReplyAttachments,
+  removeUploadedAttachmentReferences,
+} from "./libs/channel/channel-reply-attachments.js";
+import { buildChannelAgentPrompt } from "./libs/channel/channel-agent-prompt.js";
 import { notifySessionFinished, notifyTaskExecutionFinished } from "./libs/desktop-notifications.js";
 import type { WorkflowRunRecord } from "../shared/workflows/workflow-runs.js";
 
@@ -65,8 +70,12 @@ let sessions: SessionStore;
 const runnerHandles = new Map<string, RunnerHandle>();
 const serverEventListeners = new Set<(event: ServerEvent) => void>();
 const channelReplyTargets = new Map<string, ChannelReplyTarget>();
+const pendingChannelReplyTargetsByWorkspace = new Map<string, { target: ChannelReplyTarget; claim?: ChannelMessageClaim }>();
 const channelLatestAssistantText = new Map<string, string>();
-const channelLastSentAssistantText = new Map<string, string>();
+const channelLastSentReplySignature = new Map<string, string>();
+const channelProcessingReactions = new Map<string, { reactionId: string; target: ChannelReplyTarget }>();
+const channelProcessingReactionGenerations = new Map<string, number>();
+const channelMessageClaimsBySession = new Map<string, ChannelMessageClaim[]>();
 // Temporarily disable the embedded Figma Agent OAuth bridge; Codex OAuth remains the supported path.
 const FIGMA_AGENT_OAUTH_BRIDGE_ENABLED = false;
 const CONTINUATION_HISTORY_LIMIT = 1_000;
@@ -74,7 +83,17 @@ const figmaAuthToolUses = new Map<string, "authenticate" | "complete_authenticat
 const figmaAuthUrlsBySession = new Map<string, string>();
 const workflowToolUseNamesBySession = new Map<string, Map<string, string>>();
 const workflowTaskIdsBySession = new Map<string, Set<string>>();
-let channelReplySender: ((target: ChannelReplyTarget, text: string) => Promise<void> | void) | null = null;
+type ChannelMessageClaim = { messageId: string; provider: string };
+
+type ChannelReplySender = {
+  sendText: (target: ChannelReplyTarget, text: string) => Promise<void> | void;
+  sendImage?: (target: ChannelReplyTarget, relativePath: string) => Promise<void> | void;
+  sendFile?: (target: ChannelReplyTarget, relativePath: string) => Promise<void> | void;
+  addReaction?: (target: ChannelReplyTarget, emojiType: string) => Promise<string>;
+  removeReaction?: (target: ChannelReplyTarget, reactionId: string) => Promise<void>;
+};
+
+let channelReplySender: ChannelReplySender | null = null;
 
 let taskExecutor: TaskExecutor | null = null;
 
@@ -176,7 +195,7 @@ export function initializeTaskExecutor(dbPath: string): TaskExecutor {
   return executor;
 }
 
-export function setChannelReplySender(sender: ((target: ChannelReplyTarget, text: string) => Promise<void> | void) | null) {
+export function setChannelReplySender(sender: ChannelReplySender | null) {
   channelReplySender = sender;
 }
 
@@ -220,6 +239,10 @@ function broadcast(event: ServerEvent) {
   for (const listener of serverEventListeners) {
     listener(event);
   }
+}
+
+export function broadcastServerEvent(event: ServerEvent): void {
+  broadcast(event);
 }
 
 function hasLiveSession(sessionId: string): boolean {
@@ -619,7 +642,8 @@ function emit(event: ServerEvent) {
   }
 
   if (nextEvent.type === "session.status" && nextEvent.payload.status === "completed") {
-    maybeSendChannelReply(nextEvent.payload.sessionId);
+    finalizeChannelMessageClaims(nextEvent.payload.sessionId, false);
+    void maybeSendChannelReply(nextEvent.payload.sessionId);
     closeRunnerHandle(nextEvent.payload.sessionId);
     const session = sessions.getSession(nextEvent.payload.sessionId);
     notifySessionFinished({
@@ -633,6 +657,8 @@ function emit(event: ServerEvent) {
 
   // 清理 runner handle，避免 appendPrompt 将消息写入已完成的 runner 内部 dead array
   if (nextEvent.type === "session.status" && nextEvent.payload.status === "error") {
+    finalizeChannelMessageClaims(nextEvent.payload.sessionId, true);
+    void clearChannelProcessingReaction(nextEvent.payload.sessionId);
     closeRunnerHandle(nextEvent.payload.sessionId);
     const session = sessions.getSession(nextEvent.payload.sessionId);
     notifySessionFinished({
@@ -853,24 +879,110 @@ function extractAssistantText(message: StreamMessage): string | null {
   return text || null;
 }
 
-function maybeSendChannelReply(sessionId: string) {
+async function maybeSendChannelReply(sessionId: string): Promise<void> {
   const target = channelReplyTargets.get(sessionId);
   const text = channelLatestAssistantText.get(sessionId)?.trim();
   if (!target || !text || !channelReplySender) return;
-  if (channelLastSentAssistantText.get(sessionId) === text) return;
+  const replySignature = `${target.externalMessageId ?? target.rawConversationId}\0${text}`;
+  if (channelLastSentReplySignature.get(sessionId) === replySignature) return;
 
-  channelLastSentAssistantText.set(sessionId, text);
-  void Promise.resolve(channelReplySender(target, text))
-    .then(() => {
-      recordChannelOutboundMessage(target.workspaceRoot, target, text);
-    })
-    .catch((error) => {
-      console.warn("[channel] Failed to send channel reply:", error);
-    });
+  const attachments = target.provider === "lark"
+    ? collectSafeChannelReplyAttachments(text, target.workspaceRoot)
+    : [];
+  const uploaded = [] as typeof attachments;
+  try {
+    for (const attachment of attachments) {
+      try {
+        if (attachment.kind === "image" && channelReplySender.sendImage) {
+          await channelReplySender.sendImage(target, attachment.relativePath);
+        } else if (attachment.kind === "file" && channelReplySender.sendFile) {
+          await channelReplySender.sendFile(target, attachment.relativePath);
+        } else {
+          continue;
+        }
+        uploaded.push(attachment);
+        recordChannelOutboundMessage(target.workspaceRoot, target, `[${attachment.kind}] ${attachment.relativePath}`);
+      } catch (error) {
+        console.warn(`[channel] Failed to send ${attachment.kind} reply:`, error);
+      }
+    }
+
+    const replyText = removeUploadedAttachmentReferences(text, uploaded);
+    if (replyText) {
+      await channelReplySender.sendText(target, replyText);
+      recordChannelOutboundMessage(target.workspaceRoot, target, replyText);
+    }
+    channelLastSentReplySignature.set(sessionId, replySignature);
+  } catch (error) {
+    console.warn("[channel] Failed to send channel reply:", error);
+  } finally {
+    await clearChannelProcessingReaction(sessionId);
+  }
 }
 
-function registerChannelSession(sessionId: string, target: ChannelReplyTarget) {
+function registerChannelSession(sessionId: string, target: ChannelReplyTarget, claim?: ChannelMessageClaim) {
   channelReplyTargets.set(sessionId, target);
+  channelLatestAssistantText.delete(sessionId);
+  if (claim) {
+    const claims = channelMessageClaimsBySession.get(sessionId) ?? [];
+    claims.push(claim);
+    channelMessageClaimsBySession.set(sessionId, claims);
+  }
+  if (target.provider !== "lark") return;
+  const generation = (channelProcessingReactionGenerations.get(sessionId) ?? 0) + 1;
+  channelProcessingReactionGenerations.set(sessionId, generation);
+  void (async () => {
+    await clearChannelProcessingReaction(sessionId, false);
+    if (!channelReplySender?.addReaction) return;
+    try {
+      const reactionId = await channelReplySender.addReaction(target, "GLANCE");
+      if (channelProcessingReactionGenerations.get(sessionId) !== generation) {
+        await channelReplySender.removeReaction?.(target, reactionId);
+        return;
+      }
+      channelProcessingReactions.set(sessionId, { reactionId, target });
+    } catch (error) {
+      console.warn("[channel] Failed to add Lark processing reaction:", error);
+    }
+  })();
+}
+
+async function clearChannelProcessingReaction(sessionId: string, invalidatePending = true): Promise<void> {
+  if (invalidatePending) {
+    channelProcessingReactionGenerations.set(
+      sessionId,
+      (channelProcessingReactionGenerations.get(sessionId) ?? 0) + 1,
+    );
+  }
+  const pending = channelProcessingReactions.get(sessionId);
+  if (!pending) return;
+  channelProcessingReactions.delete(sessionId);
+  if (!channelReplySender?.removeReaction) return;
+  try {
+    await channelReplySender.removeReaction(pending.target, pending.reactionId);
+  } catch (error) {
+    console.warn("[channel] Failed to remove Lark processing reaction:", error);
+  }
+}
+
+function finalizeChannelMessageClaims(sessionId: string, release: boolean): void {
+  const claims = channelMessageClaimsBySession.get(sessionId);
+  if (!claims) return;
+  channelMessageClaimsBySession.delete(sessionId);
+  if (!release) return;
+  for (const claim of claims) {
+    sessions.releaseChannelMessage(claim.messageId, claim.provider);
+  }
+}
+
+function releaseChannelMessageClaim(sessionId: string, claim: ChannelMessageClaim | undefined): void {
+  if (!claim) return;
+  sessions.releaseChannelMessage(claim.messageId, claim.provider);
+  const claims = channelMessageClaimsBySession.get(sessionId);
+  if (!claims) return;
+  const remaining = claims.filter((item) => item !== claim);
+  if (remaining.length > 0) channelMessageClaimsBySession.set(sessionId, remaining);
+  else channelMessageClaimsBySession.delete(sessionId);
 }
 
 async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "channel.message.receive" }>) {
@@ -884,6 +996,10 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
     return;
   }
 
+  const claim = event.payload.externalMessageId
+    ? { messageId: event.payload.externalMessageId, provider: event.payload.provider }
+    : undefined;
+
   const workspace = ensureChannelWorkspace({
     provider: event.payload.provider,
     text,
@@ -895,6 +1011,10 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
     title: event.payload.title,
     receivedAt: event.payload.receivedAt,
   });
+  if (claim && !store.claimChannelMessage(claim.messageId, claim.provider)) {
+    console.info(`[channel] Duplicate message skipped: provider=${claim.provider} message=${claim.messageId}`);
+    return;
+  }
   recordChannelInboundMessage(workspace, {
     provider: event.payload.provider,
     text,
@@ -910,6 +1030,7 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
     provider: event.payload.provider,
     text,
     externalConversationId: event.payload.externalConversationId,
+    externalMessageId: event.payload.externalMessageId,
     senderId: event.payload.senderId,
     senderName: event.payload.senderName,
     channelName: event.payload.channelName,
@@ -932,56 +1053,74 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
   }
 
   if (!existingSession || sessionExpired) {
-    await handleClientEvent({
-      type: "session.start",
-      payload: {
-        title: buildChannelSessionTitle({
-          provider: event.payload.provider,
-          text,
-          externalConversationId: event.payload.externalConversationId,
-          senderName: event.payload.senderName,
-          channelName: event.payload.channelName,
-          title: event.payload.title,
-        }, workspace),
-        prompt: text,
-        cwd: workspace.root,
-        allowedTools: event.payload.allowedTools,
-        attachments: event.payload.attachments,
-        runtime: event.payload.runtime,
-      },
-    });
+    pendingChannelReplyTargetsByWorkspace.set(workspace.root, { target: replyTarget, claim });
+    try {
+      await handleClientEvent({
+        type: "session.start",
+        payload: {
+          title: buildChannelSessionTitle({
+            provider: event.payload.provider,
+            text,
+            externalConversationId: event.payload.externalConversationId,
+            senderName: event.payload.senderName,
+            channelName: event.payload.channelName,
+            title: event.payload.title,
+          }, workspace),
+          prompt: text,
+          agentPrompt: buildChannelAgentPrompt(event.payload.provider, text),
+          cwd: workspace.root,
+          allowedTools: event.payload.allowedTools,
+          attachments: event.payload.attachments,
+          runtime: event.payload.runtime,
+        },
+      });
+    } catch (error) {
+      pendingChannelReplyTargetsByWorkspace.delete(workspace.root);
+      if (claim) store.releaseChannelMessage(claim.messageId, claim.provider);
+      throw error;
+    }
     const createdSession = store
       .listSessions({ archived: false })
       .find((session) => session.cwd === workspace.root);
-    if (createdSession) {
-      registerChannelSession(createdSession.id, replyTarget);
+    if (!createdSession) pendingChannelReplyTargetsByWorkspace.delete(workspace.root);
+    return;
+  }
+
+  registerChannelSession(existingSession.id, replyTarget, claim);
+
+  if (existingSession.status === "running") {
+    try {
+      await handleClientEvent({
+        type: "session.append",
+        payload: {
+          sessionId: existingSession.id,
+          prompt: text,
+          agentPrompt: buildChannelAgentPrompt(event.payload.provider, text),
+          attachments: event.payload.attachments,
+        },
+      });
+    } catch (error) {
+      releaseChannelMessageClaim(existingSession.id, claim);
+      throw error;
     }
     return;
   }
 
-  registerChannelSession(existingSession.id, replyTarget);
-
-  if (existingSession.status === "running") {
+  try {
     await handleClientEvent({
-      type: "session.append",
+      type: "session.continue",
       payload: {
         sessionId: existingSession.id,
         prompt: text,
+        agentPrompt: buildChannelAgentPrompt(event.payload.provider, text),
         attachments: event.payload.attachments,
+        runtime: event.payload.runtime,
       },
     });
-    return;
+  } catch (error) {
+    releaseChannelMessageClaim(existingSession.id, claim);
+    throw error;
   }
-
-  await handleClientEvent({
-    type: "session.continue",
-    payload: {
-      sessionId: existingSession.id,
-      prompt: text,
-      attachments: event.payload.attachments,
-      runtime: event.payload.runtime,
-    },
-  });
 }
 
 function buildWorkflowRunResumePrompt(run: WorkflowRunRecord): string {
@@ -1405,7 +1544,10 @@ export async function handleClientEvent(event: ClientEvent) {
     const { displayAttachments, agentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
     const config = getCurrentApiConfig();
     const requestedModel = event.payload.runtime?.model?.trim() || config?.model;
-    const selectedModel = resolveApiConfigForModel(requestedModel)?.model ?? requestedModel;
+    const requestedConfigProfileId = event.payload.runtime?.configProfileId?.trim();
+    const resolvedRoute = resolveApiConfigForModel(requestedModel, requestedConfigProfileId);
+    const selectedModel = resolvedRoute?.model ?? requestedModel;
+    const selectedConfigProfileId = resolvedRoute?.config.id ?? requestedConfigProfileId;
     const selectedExecutionMode = event.payload.runtime?.executionMode ?? "foreground";
     const selectedReasoningMode = event.payload.runtime?.reasoningMode;
     const selectedPermissionMode = event.payload.runtime?.permissionMode;
@@ -1418,9 +1560,19 @@ export async function handleClientEvent(event: ClientEvent) {
       runSurface: event.payload.runtime?.runSurface ?? "development",
       agentId: event.payload.runtime?.agentId,
       model: selectedModel,
+      configProfileId: selectedConfigProfileId,
       allowedTools: event.payload.allowedTools,
       prompt: displayPrompt,
     });
+
+    const pendingChannelWorkspace = session.cwd?.trim();
+    const pendingChannel = pendingChannelWorkspace
+      ? pendingChannelReplyTargetsByWorkspace.get(pendingChannelWorkspace)
+      : undefined;
+    if (pendingChannel && pendingChannelWorkspace) {
+      pendingChannelReplyTargetsByWorkspace.delete(pendingChannelWorkspace);
+      registerChannelSession(session.id, pendingChannel.target, pendingChannel.claim);
+    }
 
     store.updateSession(session.id, {
       status: "running",
@@ -1430,6 +1582,7 @@ export async function handleClientEvent(event: ClientEvent) {
       runSurface: event.payload.runtime?.runSurface ?? session.runSurface ?? "development",
       agentId: event.payload.runtime?.agentId ?? session.agentId,
       model: selectedModel,
+      configProfileId: selectedConfigProfileId,
       lastPrompt: displayPrompt,
     });
 
@@ -1441,6 +1594,7 @@ export async function handleClientEvent(event: ClientEvent) {
         title: session.title,
         cwd: session.cwd,
         model: selectedModel,
+        configProfileId: selectedConfigProfileId,
         executionMode: selectedExecutionMode,
         reasoningMode: selectedReasoningMode,
         permissionMode: selectedPermissionMode,
@@ -1476,6 +1630,7 @@ export async function handleClientEvent(event: ClientEvent) {
       reasoningMode: nextReasoningMode,
       permissionMode: nextPermissionMode,
       model: selectedModel,
+      configProfileId: selectedConfigProfileId,
     };
     const reuseKey = buildSessionRunnerReuseKey({
       session,
@@ -1583,8 +1738,11 @@ export async function handleClientEvent(event: ClientEvent) {
       || session.model
       || resolveLatestMessageModel(history?.messages)
       || defaultConfig?.model;
-    const selectedModel = resolveApiConfigForModel(requestedModel)?.model ?? requestedModel;
-    const config = selectedModel ? getApiConfigForModel(selectedModel) ?? defaultConfig : defaultConfig;
+    const requestedConfigProfileId = event.payload.runtime?.configProfileId?.trim() || session.configProfileId;
+    const resolvedRoute = resolveApiConfigForModel(requestedModel, requestedConfigProfileId);
+    const selectedModel = resolvedRoute?.model ?? requestedModel;
+    const selectedConfigProfileId = resolvedRoute?.config.id ?? requestedConfigProfileId;
+    const config = resolvedRoute?.config ?? defaultConfig;
     const modelConfig = config && selectedModel ? getModelConfig(config, selectedModel) : null;
     const nextExecutionMode = event.payload.runtime?.executionMode ?? session.executionMode ?? "foreground";
     const nextReasoningMode = event.payload.runtime?.reasoningMode ?? session.reasoningMode;
@@ -1595,6 +1753,7 @@ export async function handleClientEvent(event: ClientEvent) {
       reasoningMode: nextReasoningMode,
       permissionMode: nextPermissionMode,
       model: selectedModel,
+      configProfileId: selectedConfigProfileId,
     };
     if (runnerHandles.has(session.id)) {
       closeRunnerHandle(session.id);
@@ -1629,6 +1788,7 @@ export async function handleClientEvent(event: ClientEvent) {
       runSurface: event.payload.runtime?.runSurface ?? session.runSurface ?? "development",
       agentId: event.payload.runtime?.agentId ?? session.agentId,
       model: selectedModel,
+      configProfileId: selectedConfigProfileId,
       lastPrompt: storagePrompt,
       continuationSummary: continuationPayload.usedCompression ? continuationPayload.summaryText : undefined,
       continuationSummaryMessageCount: continuationPayload.usedCompression
@@ -1643,6 +1803,7 @@ export async function handleClientEvent(event: ClientEvent) {
         title: nextTitle,
         cwd: session.cwd,
         model: selectedModel,
+        configProfileId: selectedConfigProfileId,
         executionMode: nextExecutionMode,
         reasoningMode: nextReasoningMode,
         permissionMode: nextPermissionMode,
@@ -1923,7 +2084,7 @@ export async function handleClientEvent(event: ClientEvent) {
     */
   }
 
-  if (event.type === "session.append") {
+  if (event.type === "session.set_model") {
     const session = store.getSession(event.payload.sessionId);
     if (!session) {
       emit({ type: "session.deleted", payload: { sessionId: event.payload.sessionId } });
@@ -1934,38 +2095,101 @@ export async function handleClientEvent(event: ClientEvent) {
       return;
     }
 
-    if (session.status !== "running") {
+    const requestedModel = event.payload.model.trim();
+    const requestedConfigProfileId = event.payload.configProfileId?.trim();
+    const resolvedRoute = resolveApiConfigForModel(requestedModel, requestedConfigProfileId);
+    const selectedModel = resolvedRoute?.model ?? requestedModel;
+    const selectedConfigProfileId = resolvedRoute?.config.id ?? requestedConfigProfileId;
+    if (!selectedModel) return;
+
+    store.updateSession(session.id, {
+      model: selectedModel,
+      configProfileId: selectedConfigProfileId,
+    });
+    emit({
+      type: "session.status",
+      payload: {
+        sessionId: session.id,
+        status: session.status,
+        title: session.title,
+        cwd: session.cwd,
+        model: selectedModel,
+        configProfileId: selectedConfigProfileId,
+        slashCommands: buildSessionSlashCommands({ cwd: session.cwd }),
+      },
+    });
+    return;
+  }
+
+  if (event.type === "session.append") {
+    const appendRequestId = event.payload.requestId?.trim();
+    const emitAppendResult = (success: boolean, error?: string) => {
+      if (!appendRequestId) return;
+      emit({
+        type: "session.append.result",
+        payload: {
+          sessionId: event.payload.sessionId,
+          requestId: appendRequestId,
+          success,
+          error,
+        },
+      });
+    };
+    const session = store.getSession(event.payload.sessionId);
+    if (!session) {
+      const message = "Session no longer exists.";
+      emit({ type: "session.deleted", payload: { sessionId: event.payload.sessionId } });
+      emitAppendResult(false, message);
       emit({
         type: "runner.error",
-        payload: { sessionId: session.id, message: "当前会话没有正在执行的任务，不能插入补充指令。" },
+        payload: { sessionId: event.payload.sessionId, message },
+      });
+      return;
+    }
+
+    if (session.status !== "running") {
+      const message = "当前会话没有正在执行的任务，不能插入补充指令。";
+      emitAppendResult(false, message);
+      emit({
+        type: "runner.error",
+        payload: { sessionId: session.id, message },
       });
       return;
     }
 
     const handle = runnerHandles.get(session.id);
     if (!handle || handle.isClosed()) {
+      const message = "当前执行器还未就绪，稍后再插入补充指令。";
+      emitAppendResult(false, message);
       emit({
         type: "runner.error",
-        payload: { sessionId: session.id, message: "当前执行器还未就绪，稍后再插入补充指令。" },
+        payload: { sessionId: session.id, message },
       });
       return;
     }
 
     const displayPrompt = event.payload.prompt;
     const agentPrompt = event.payload.agentPrompt?.trim() ? event.payload.agentPrompt : displayPrompt;
-    const { displayAttachments, agentAttachments } = await preparePromptAttachmentsForSession(event.payload.attachments);
-    store.updateSession(session.id, { lastPrompt: displayPrompt });
-    emit({
-      type: "stream.user_prompt",
-      payload: { sessionId: session.id, prompt: displayPrompt, attachments: displayAttachments },
-    });
 
     try {
-      await handle.appendPrompt(agentPrompt, agentAttachments);
+      const preparedAttachmentsPromise = preparePromptAttachmentsForSession(event.payload.attachments);
+      const appendPromptPromise = handle.appendPrompt(
+        agentPrompt,
+        preparedAttachmentsPromise.then(({ agentAttachments }) => agentAttachments),
+      );
+      const [{ displayAttachments }] = await Promise.all([preparedAttachmentsPromise, appendPromptPromise]);
+      store.updateSession(session.id, { lastPrompt: displayPrompt });
+      emit({
+        type: "stream.user_prompt",
+        payload: { sessionId: session.id, prompt: displayPrompt, attachments: displayAttachments },
+      });
+      emitAppendResult(true);
     } catch (error) {
+      const message = `插入补充指令失败：${String(error)}`;
+      emitAppendResult(false, message);
       emit({
         type: "runner.error",
-        payload: { sessionId: session.id, message: `插入补充指令失败：${String(error)}` },
+        payload: { sessionId: session.id, message },
       });
     }
     return;

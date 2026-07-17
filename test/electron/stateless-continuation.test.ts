@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-
 import {
   buildStatelessContinuationPayload,
   buildStatelessContinuationPrompt,
@@ -298,6 +297,59 @@ test("buildStatelessContinuationPayload force-compresses a paged tail and record
   assert.equal(payload.usedCompression, true);
   assert.equal(payload.summaryMessageCount, 59_143);
   assert.match(payload.prompt, /Recent conversation history:/);
+});
+
+test("buildStatelessContinuationPayload keeps rolling summaries bounded without nested snapshots", () => {
+  let existingSummary: string | undefined;
+  let existingSummaryMessageCount: number | undefined;
+
+  for (let round = 1; round <= 20; round += 1) {
+    const payload = buildStatelessContinuationPayload(
+      [
+        { type: "user_prompt", prompt: `Round ${round} question ${"detail ".repeat(120)}` },
+        { type: "result", subtype: "success", result: `Round ${round} answer ${"result ".repeat(120)}` } as never,
+      ],
+      "Continue",
+      [],
+      {
+        forceCompression: true,
+        historyMessageCount: round * 2,
+        existingSummary,
+        existingSummaryMessageCount,
+      },
+    );
+
+    existingSummary = payload.summaryText;
+    existingSummaryMessageCount = payload.summaryMessageCount;
+    assert.ok((existingSummary?.length ?? 0) <= 2_000);
+    assert.ok((existingSummary?.match(/Previous summary snapshot:/g) ?? []).length <= 1);
+  }
+});
+
+test("buildStatelessContinuationPayload bounds an oversized existing summary", () => {
+  const oversizedSummary = [
+    "Previous summary snapshot:",
+    "Previous summary snapshot:",
+    "legacy context ".repeat(20_000),
+  ].join("\n");
+  const payload = buildStatelessContinuationPayload(
+    [
+      { type: "user_prompt", prompt: "Current question" },
+      { type: "result", subtype: "success", result: "Current answer" } as never,
+    ],
+    "Continue",
+    [],
+    {
+      forceCompression: true,
+      existingSummary: oversizedSummary,
+      existingSummaryMessageCount: 2,
+      historyMessageCount: 2,
+    },
+  );
+
+  assert.ok((payload.summaryText?.length ?? 0) <= 2_000);
+  assert.equal((payload.summaryText?.match(/Previous summary snapshot:/g) ?? []).length, 1);
+  assert.ok(payload.prompt.length < oversizedSummary.length);
 });
 
 test("buildStatelessContinuationPrompt still compresses when the latest five turns alone exceed the threshold", () => {

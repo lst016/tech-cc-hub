@@ -1,6 +1,42 @@
 import { CODEX_OAUTH_COMPACT_MODEL_SUFFIX } from "../codex-oauth.js";
 
-export type SharedApiProviderMode = "custom" | "deepseek" | "codex" | "minimax";
+export const BOKE_GATEWAY_HOSTNAME = "ai.pocketcity.com";
+export const BOKE_GATEWAY_BASE_URL = `https://${BOKE_GATEWAY_HOSTNAME}/v1`;
+
+export type SharedApiProviderMode = "custom" | "boke" | "deepseek" | "codex" | "minimax";
+
+export function isBokeGatewayBaseURL(baseURL: string | null | undefined): boolean {
+  try {
+    return new URL(baseURL?.trim() || "").hostname.toLowerCase() === BOKE_GATEWAY_HOSTNAME;
+  } catch {
+    return false;
+  }
+}
+
+export function resolveSharedApiProviderMode(
+  value: unknown,
+  baseURL: string | null | undefined,
+): SharedApiProviderMode {
+  // Boke is domain-locked so legacy profiles stored as `custom` migrate on read.
+  if (isBokeGatewayBaseURL(baseURL)) {
+    return "boke";
+  }
+
+  if (value === "custom" || value === "deepseek" || value === "codex" || value === "minimax") {
+    return value;
+  }
+
+  try {
+    const hostname = new URL(baseURL?.trim() || "").hostname.toLowerCase();
+    if (hostname === "api.deepseek.com") return "deepseek";
+    if (hostname === "chatgpt.com") return "codex";
+    if (hostname === "api.minimax.io" || hostname === "api.minimaxi.com") return "minimax";
+  } catch {
+    // Invalid and incomplete URLs stay custom while the user edits them.
+  }
+
+  return "custom";
+}
 
 export function isCodexModelName(modelName: string): boolean {
   const normalized = stripCodexCompactSuffix(modelName).toLowerCase();

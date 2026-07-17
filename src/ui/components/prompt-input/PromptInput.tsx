@@ -39,7 +39,16 @@ import {
   serializeLarkMention,
   type LarkMentionOption,
 } from "./lark-mention-options";
-import { fileToAttachment, hasDraggedFiles, PROMPT_ATTACHMENT_ACCEPT } from "./prompt-attachments";
+import {
+  clipboardImagePayloadToFile,
+  fileToAttachment,
+  getClipboardFiles,
+  hasDraggedFiles,
+  PROMPT_ATTACHMENT_ACCEPT,
+  shouldPreferClipboardImageFiles,
+  shouldReadNativeClipboardImage,
+  type ClipboardImagePayload,
+} from "./prompt-attachments";
 import {
   buildQueuedDisplayPrompt,
   buildQueuedPrompt,
@@ -53,10 +62,12 @@ import {
 } from "./prompt-context-blocks";
 import {
   ADD_PROMPT_ATTACHMENT_EVENT,
+  PROMPT_APPEND_RESULT_EVENT,
   PROMPT_FOCUS_EVENT,
   PROMPT_SENT_EVENT,
   PROMPT_SUBMIT_EVENT,
   type AddPromptAttachmentDetail,
+  type PromptAppendResultDetail,
 } from "../../events";
 import { DecisionPanel } from "../DecisionPanel";
 import { CurrentSessionPlanDock } from "../CurrentSessionPlanDock";
@@ -82,8 +93,10 @@ import {
   restoreImageGenerationPluginFromPrompt,
   type ImageGenerationConfig,
 } from "./image-generation-plugin";
+import { VISUALIZATION_PLUGIN_TOKEN } from "./visualization-plugin";
 import {
   getEnabledProfiles,
+  getModelDeploymentOptionsForProfiles,
   getRoutedModelOptionsForProfiles,
   resolveAvailableModelName,
 } from "../settings/settings-utils";
@@ -168,12 +181,13 @@ export type PromptInputController = {
   setAttachments: (value: PromptAttachment[]) => void;
   cwd: string;
   model?: string;
+  configProfileId?: string;
   reasoningMode?: RuntimeReasoningMode;
   isRunning: boolean;
   browserAnnotations: [];
   slashCommands: SlashCommandOption[];
   handleStop: () => void;
-  setModel: (model: string) => void;
+  setModel: (model: string, configProfileId?: string) => void;
   setReasoningMode: (mode: RuntimeReasoningMode) => void;
   setError: (message: string | null) => void;
   sendPromptDraft: (
@@ -251,6 +265,7 @@ export function PromptInput({
   const appClearBrowserAnnotations = useAppStore((state) => state.clearBrowserAnnotations);
   const apiConfigSettings = useAppStore((state) => state.apiConfigSettings);
   const storeRuntimeModel = useAppStore((state) => state.runtimeModel);
+  const storeRuntimeConfigProfileId = useAppStore((state) => state.runtimeConfigProfileId);
   const appSetRuntimeModel = useAppStore((state) => state.setRuntimeModel);
   const appSetSessionModel = useAppStore((state) => state.setSessionModel);
   const storeReasoningMode = useAppStore((state) => state.reasoningMode);
@@ -326,6 +341,7 @@ export function PromptInput({
   const [promptFocused, setPromptFocused] = useState(false);
   const [composerExpanded, setComposerExpanded] = useState(false);
   const autoDispatchRef = useRef<string | null>(null);
+  const appendInFlightIdsRef = useRef<Set<string>>(new Set());
   const submitInFlightRef = useRef(false);
   const [submissionStatus, setSubmissionStatus] = useState<string | null>(null);
   const [goalNow, setGoalNow] = useState(() => Date.now());
@@ -374,8 +390,13 @@ export function PromptInput({
     if (!activeSessionId) return "";
     return (state.sessions[activeSessionId] ?? state.archivedSessions[activeSessionId])?.model?.trim() ?? "";
   });
+  const storeSelectedSessionConfigProfileId = useAppStore((state) => {
+    if (!activeSessionId) return "";
+    return (state.sessions[activeSessionId] ?? state.archivedSessions[activeSessionId])?.configProfileId?.trim() ?? "";
+  });
   const activeSessionCwd = controller?.cwd ?? storeSelectedSessionCwd;
   const activeSessionModel = controller?.model?.trim() ?? storeSelectedSessionModel;
+  const activeSessionConfigProfileId = controller?.configProfileId?.trim() ?? storeSelectedSessionConfigProfileId;
   const activeGoalKey = activeGoal && activeSessionId
     ? `${activeSessionId}:${activeGoal.status}:${activeGoal.updatedAt}:${activeGoal.objective}`
     : "";
@@ -504,40 +525,54 @@ export function PromptInput({
     && !disabled
     && (fileMentionLoading || filteredFileMentionOptions.length > 0);
   const enabledProfiles = useMemo<ApiConfigProfile[]>(() => getEnabledProfiles(apiConfigSettings.profiles), [apiConfigSettings.profiles]);
-  const routedModelOptions = useMemo(() => getRoutedModelOptionsForProfiles(enabledProfiles), [enabledProfiles]);
-  const availableModels = useMemo(() => routedModelOptions.map((option) => option.value), [routedModelOptions]);
-  const modelSelectOptions = useMemo(() => routedModelOptions.map((option) => ({
-    value: option.value,
+  const deploymentOptions = useMemo(() => getModelDeploymentOptionsForProfiles(enabledProfiles), [enabledProfiles]);
+  const fallbackRoutedModelOptions = useMemo(() => getRoutedModelOptionsForProfiles(enabledProfiles), [enabledProfiles]);
+  const availableModels = useMemo(() => deploymentOptions.map((option) => option.value), [deploymentOptions]);
+  const modelSelectOptions = useMemo(() => deploymentOptions.map((option) => ({
+    value: option.deploymentKey,
     label: option.label,
     description: option.routeLabel,
     badge: option.routingWeight > 0 ? `W${option.routingWeight}` : option.providerLabel,
     title: `${option.value} -> ${option.routeLabel}`,
     contextWindow: option.contextWindow,
-  })), [routedModelOptions]);
+  })), [deploymentOptions]);
   const activeProfile = enabledProfiles[0];
   const explicitRuntimeModel = activeSessionModel || runtimeModel.trim();
   const selectedRuntimeModel = resolveAvailableModelName(
-    explicitRuntimeModel || routedModelOptions[0]?.value || activeProfile?.model?.trim(),
+    explicitRuntimeModel || fallbackRoutedModelOptions[0]?.value || activeProfile?.model?.trim(),
     availableModels,
   );
-  const handleRuntimeModelChange = useCallback((model: string) => {
-    const nextModel = model.trim();
+  const explicitConfigProfileId = activeSessionConfigProfileId || storeRuntimeConfigProfileId.trim();
+  const fallbackProfileId = fallbackRoutedModelOptions.find((option) => option.value === selectedRuntimeModel)?.profileId;
+  const selectedDeployment = deploymentOptions.find((option) => (
+    option.value === selectedRuntimeModel && option.profileId === explicitConfigProfileId
+  )) ?? deploymentOptions.find((option) => (
+    option.value === selectedRuntimeModel && option.profileId === fallbackProfileId
+  )) ?? deploymentOptions.find((option) => option.value === selectedRuntimeModel);
+  const selectedRuntimeDeploymentKey = selectedDeployment?.deploymentKey ?? "";
+  const selectedRuntimeConfigProfileId = selectedDeployment?.profileId;
+  const handleRuntimeModelChange = useCallback((deploymentKey: string) => {
+    const selectedOption = deploymentOptions.find((option) => option.deploymentKey === deploymentKey);
+    if (!selectedOption) return;
+    const nextModel = selectedOption.value;
+    const nextConfigProfileId = selectedOption.profileId;
     if (controller) {
-      controller.setModel(nextModel);
+      controller.setModel(nextModel, nextConfigProfileId);
       return;
     }
-    appSetRuntimeModel(nextModel);
+    appSetRuntimeModel(nextModel, nextConfigProfileId);
     if (activeSessionId) {
-      appSetSessionModel(activeSessionId, nextModel);
+      appSetSessionModel(activeSessionId, nextModel, nextConfigProfileId);
       sendEvent({
         type: "session.set_model",
         payload: {
           sessionId: activeSessionId,
           model: nextModel,
+          configProfileId: nextConfigProfileId,
         },
       });
     }
-  }, [activeSessionId, appSetRuntimeModel, appSetSessionModel, controller, sendEvent]);
+  }, [activeSessionId, appSetRuntimeModel, appSetSessionModel, controller, deploymentOptions, sendEvent]);
   useEffect(() => {
     promptDraftRef.current = prompt;
   }, [prompt]);
@@ -627,6 +662,7 @@ export function PromptInput({
       const result = await window.electron.invoke<PromptOptimizeResult>("prompt:optimize", {
         prompt: sourcePrompt,
         model: selectedRuntimeModel || undefined,
+        configProfileId: selectedRuntimeConfigProfileId,
       });
 
       if (!result?.success || !result.optimizedPrompt?.trim()) {
@@ -646,7 +682,7 @@ export function PromptInput({
       setSubmissionStatus(null);
       setOptimizingPrompt(false);
     }
-  }, [disabled, focusPromptEditor, optimizingPrompt, prompt, selectedRuntimeModel, setGlobalError, setPromptDraft]);
+  }, [disabled, focusPromptEditor, optimizingPrompt, prompt, selectedRuntimeConfigProfileId, selectedRuntimeModel, setGlobalError, setPromptDraft]);
 
   const clearComposer = useCallback(() => {
     setPromptDraft("", 0);
@@ -711,6 +747,7 @@ export function PromptInput({
 
   const removeQueuedDraft = useCallback((queueId: string, sessionId = activeSessionId) => {
     if (!sessionId) return;
+    appendInFlightIdsRef.current.delete(queueId);
     setQueuedMessagesBySession((current) => {
       const nextQueue = (current[sessionId] ?? []).filter((item) => item.id !== queueId);
       if (nextQueue.length === 0) {
@@ -735,22 +772,41 @@ export function PromptInput({
 
   const appendQueuedDraft = useCallback(async (queuedMessage: QueuedMessageDraft) => {
     if (!activeSessionId) return;
+    if (appendInFlightIdsRef.current.has(queuedMessage.id)) return;
     const preparedAttachments = await prepareQueuedAttachmentsForDispatch(queuedMessage.prompt, queuedMessage.attachments);
     if (!preparedAttachments) return;
 
+    appendInFlightIdsRef.current.add(queuedMessage.id);
     sendEvent({
       type: "session.append",
       payload: {
         sessionId: activeSessionId,
+        requestId: queuedMessage.id,
         prompt: queuedMessage.prompt,
         agentPrompt: queuedMessage.agentPrompt,
         attachments: preparedAttachments,
       },
     });
-    removeQueuedDraft(queuedMessage.id, activeSessionId);
-    onSendMessage?.();
-    window.dispatchEvent(new CustomEvent(PROMPT_SENT_EVENT));
-  }, [activeSessionId, onSendMessage, prepareQueuedAttachmentsForDispatch, removeQueuedDraft, sendEvent]);
+  }, [activeSessionId, prepareQueuedAttachmentsForDispatch, sendEvent]);
+
+  useEffect(() => {
+    const handleAppendResult = (event: Event) => {
+      const detail = (event as CustomEvent<PromptAppendResultDetail>).detail;
+      if (!detail || !appendInFlightIdsRef.current.has(detail.requestId)) return;
+      appendInFlightIdsRef.current.delete(detail.requestId);
+      if (!detail.success) {
+        setGlobalError(detail.error || "插入补充指令失败，消息已保留在待发送队列中。");
+        return;
+      }
+
+      removeQueuedDraft(detail.requestId, detail.sessionId);
+      onSendMessage?.();
+      window.dispatchEvent(new CustomEvent(PROMPT_SENT_EVENT));
+    };
+
+    window.addEventListener(PROMPT_APPEND_RESULT_EVENT, handleAppendResult);
+    return () => window.removeEventListener(PROMPT_APPEND_RESULT_EVENT, handleAppendResult);
+  }, [onSendMessage, removeQueuedDraft, setGlobalError]);
 
   const editQueuedDraft = useCallback((queuedMessage: QueuedMessageDraft) => {
     const restoredImagePlugin = restoreImageGenerationPluginFromPrompt(queuedMessage.agentPrompt ?? queuedMessage.prompt);
@@ -1128,23 +1184,46 @@ export function PromptInput({
   const handlePaste = useCallback(async (event: React.ClipboardEvent<HTMLDivElement>) => {
     if (disabled) return;
 
-    const plainText = getPlainTextFromClipboardData(event.clipboardData);
-    if (plainText) {
+    const clipboardFiles = getClipboardFiles(event.clipboardData);
+    if (shouldPreferClipboardImageFiles(event.clipboardData, clipboardFiles)) {
       event.preventDefault();
-      const editor = promptRef.current ?? event.currentTarget;
+      await addFiles(clipboardFiles);
+      return;
+    }
+
+    const plainText = getPlainTextFromClipboardData(event.clipboardData);
+    const editor = promptRef.current ?? event.currentTarget;
+    const pastePlainText = () => {
+      if (!plainText) return false;
       const currentPrompt = getPromptTextFromEditor(editor);
       const fallbackCursor = cursorIndex || currentPrompt.length;
       const selection = getSelectionRangeInEditor(editor) ?? { start: fallbackCursor, end: fallbackCursor };
       const nextDraft = insertTextIntoPrompt(currentPrompt, plainText, selection.start, selection.end);
       setPromptDraft(nextDraft.prompt, nextDraft.cursorIndex);
       focusPromptEditor(nextDraft.cursorIndex);
+      return true;
+    };
+
+    if (shouldReadNativeClipboardImage(event.clipboardData, clipboardFiles)) {
+      event.preventDefault();
+      try {
+        const nativeClipboardImage = await window.electron.invoke<ClipboardImagePayload | null>("clipboard:read-image");
+        if (nativeClipboardImage) {
+          await addFiles([clipboardImagePayloadToFile(nativeClipboardImage)]);
+          return;
+        }
+      } catch (error) {
+        console.warn("Failed to read native clipboard image:", error);
+      }
+      pastePlainText();
       return;
     }
 
-    const clipboardFiles = Array.from(event.clipboardData.items)
-      .filter((item) => item.kind === "file")
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => Boolean(file));
+    if (plainText) {
+      event.preventDefault();
+      pastePlainText();
+      return;
+    }
 
     if (clipboardFiles.length > 0) {
       event.preventDefault();
@@ -1769,8 +1848,26 @@ export function PromptInput({
               setImageGenerationConfigOpen(true);
               focusPromptEditor(nextDraft.cursorIndex);
             }}
+            onInsertVisualization={() => {
+              const currentPrompt = getCurrentPromptDraft();
+              if (currentPrompt.includes(VISUALIZATION_PLUGIN_TOKEN.trim())) {
+                focusPromptEditor(currentPrompt.length);
+                return;
+              }
+              const selection = promptRef.current
+                ? getSelectionRangeInEditor(promptRef.current)
+                : { start: currentPrompt.length, end: currentPrompt.length };
+              const nextDraft = insertTextIntoPrompt(
+                currentPrompt,
+                VISUALIZATION_PLUGIN_TOKEN,
+                selection.start,
+                selection.end,
+              );
+              setPromptDraft(nextDraft.prompt, nextDraft.cursorIndex);
+              focusPromptEditor(nextDraft.cursorIndex);
+            }}
           />}
-          modelValue={selectedRuntimeModel}
+          modelValue={selectedRuntimeDeploymentKey}
           modelOptions={modelSelectOptions}
           reasoningMode={reasoningMode}
           modelDisabled={disabled || availableModels.length === 0}

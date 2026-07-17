@@ -20,6 +20,7 @@ import {
 import { resolveImagePreprocessRouteConfig } from "../../../shared/models/image-preprocess-routing.js";
 import { pickHighestWeightedModelOwner } from "../../../shared/models/model-routing-weight.js";
 import {
+  isUnreadableStoredCodexCredential,
   loadApiConfigSettings,
   loadGlobalRuntimeConfig,
   type ApiConfig,
@@ -46,6 +47,7 @@ const CLAUDE_CODE_OPUS_MODEL_OVERRIDE_KEYS = [
 function isUsableConfig(config: ApiConfig | null | undefined): config is ApiConfig {
   return Boolean(
     config?.apiKey?.trim() &&
+    !(config.provider === "codex" && isUnreadableStoredCodexCredential(config.apiKey)) &&
     config.baseURL?.trim() &&
     config.model?.trim(),
   );
@@ -217,14 +219,25 @@ export function getCurrentApiConfig(): ApiConfig | null {
 }
 
 export function getConfiguredModelNames(config: ApiConfig): string[] {
+  const modelsByName = new Map((config.models ?? [])
+    .map((model) => [model.name.trim(), model] as const)
+    .filter(([name]) => Boolean(name)));
+  const isManagedModelName = (value: string | undefined): boolean => {
+    const name = value?.trim();
+    if (!name) return false;
+    const model = modelsByName.get(name);
+    return model ? model.catalogStatus !== "excluded" : modelsByName.size === 0;
+  };
   return Array.from(new Set([
-    config.model,
-    config.expertModel,
-    config.smallModel,
-    config.imageModel,
-    config.imageGenerationModel,
-    config.analysisModel,
-    ...(config.models ?? []).map((item) => item.name),
+    isManagedModelName(config.model) ? config.model : undefined,
+    isManagedModelName(config.expertModel) ? config.expertModel : undefined,
+    isManagedModelName(config.smallModel) ? config.smallModel : undefined,
+    isManagedModelName(config.imageModel) ? config.imageModel : undefined,
+    isManagedModelName(config.imageGenerationModel) ? config.imageGenerationModel : undefined,
+    isManagedModelName(config.analysisModel) ? config.analysisModel : undefined,
+    ...(config.models ?? [])
+      .filter((model) => model.catalogStatus !== "excluded")
+      .map((item) => item.name),
   ].map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
 }
 
@@ -233,9 +246,23 @@ export function getRoutableModelNames(config: ApiConfig): string[] {
     .filter((modelName) => isModelCompatibleWithApiProvider(config.provider, modelName));
 }
 
-export function getApiConfigForModel(modelName?: string): ApiConfig | null {
+export function getApiConfigForModel(modelName?: string, configProfileId?: string): ApiConfig | null {
   const normalizedModel = modelName?.trim();
+  const normalizedProfileId = configProfileId?.trim();
   const enabledConfigs = getEnabledUsableApiConfigs();
+
+  if (normalizedProfileId) {
+    const explicitConfig = enabledConfigs.find((config) => config.id === normalizedProfileId);
+    if (!explicitConfig) {
+      return null;
+    }
+    if (!normalizedModel) {
+      return explicitConfig;
+    }
+    return getRoutableModelNames(explicitConfig).includes(normalizedModel)
+      ? explicitConfig
+      : null;
+  }
 
   if (!normalizedModel) {
     return enabledConfigs[0] ?? getFallbackClaudeSettingsConfig();
@@ -263,14 +290,21 @@ export type ResolvedApiConfigForModel = {
   fellBack: boolean;
 };
 
-export function resolveApiConfigForModel(modelName?: string): ResolvedApiConfigForModel | null {
-  const defaultConfig = getCurrentApiConfig();
+export function resolveApiConfigForModel(modelName?: string, configProfileId?: string): ResolvedApiConfigForModel | null {
+  const normalizedProfileId = configProfileId?.trim();
+  const explicitConfig = normalizedProfileId
+    ? getApiConfigForModel(undefined, normalizedProfileId)
+    : null;
+  if (normalizedProfileId && !explicitConfig) {
+    return null;
+  }
+  const defaultConfig = explicitConfig ?? getCurrentApiConfig();
   if (!defaultConfig) {
     return null;
   }
 
   const requestedModel = modelName?.trim() || defaultConfig.model;
-  const matchedConfig = getApiConfigForModel(requestedModel);
+  const matchedConfig = getApiConfigForModel(requestedModel, normalizedProfileId);
   if (matchedConfig) {
     const model = normalizeModelForApiConfig(matchedConfig, requestedModel, matchedConfig.model);
     return {
@@ -279,6 +313,10 @@ export function resolveApiConfigForModel(modelName?: string): ResolvedApiConfigF
       requestedModel,
       fellBack: model !== requestedModel,
     };
+  }
+
+  if (normalizedProfileId) {
+    return null;
   }
 
   const model = normalizeModelForApiConfig(defaultConfig, defaultConfig.model, defaultConfig.model);
@@ -399,7 +437,7 @@ function pickProviderOwnedModelForApiConfig(
     return null;
   }
 
-  const routedOwner = getApiConfigForModel(pickedModel);
+  const routedOwner = getApiConfigForModel(pickedModel, config.id);
   return routedOwner?.id === config.id ? pickedModel : null;
 }
 

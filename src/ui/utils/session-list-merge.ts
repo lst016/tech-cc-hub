@@ -20,6 +20,7 @@ export type SessionListMergeTarget = WorkflowViewFields & {
   title: string;
   status: SessionInfo["status"];
   model?: SessionInfo["model"];
+  configProfileId?: SessionInfo["configProfileId"];
   executionMode?: SessionInfo["executionMode"];
   reasoningMode?: SessionInfo["reasoningMode"];
   permissionMode?: SessionInfo["permissionMode"];
@@ -88,6 +89,7 @@ export function mergeSessionListSession<T extends SessionListMergeTarget>(
     status: session.status,
     title: session.title,
     model: session.model,
+    configProfileId: session.configProfileId,
     executionMode: session.executionMode,
     reasoningMode: session.reasoningMode,
     permissionMode: session.permissionMode,

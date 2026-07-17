@@ -138,7 +138,11 @@ test("append queue events display the user prompt but execute the agent prompt",
   assert.match(uiTypes, /session\.append[^\n]+agentPrompt\?: string/);
   assert.match(electronTypes, /session\.append[^\n]+agentPrompt\?: string/);
   assert.match(ipcHandlers, /const displayPrompt = event\.payload\.prompt/);
-  assert.match(ipcHandlers, /await handle\.appendPrompt\(agentPrompt, agentAttachments\)/);
+  assert.match(
+    ipcHandlers,
+    /const appendPromptPromise = handle\.appendPrompt\(\s*agentPrompt,\s*preparedAttachmentsPromise\.then\(\(\{ agentAttachments \}\) => agentAttachments\),\s*\)/,
+  );
+  assert.match(ipcHandlers, /payload: \{ sessionId: session\.id, prompt: displayPrompt, attachments: displayAttachments \}/);
 });
 
 test("historical user cards hide serialized image-generation instructions", () => {

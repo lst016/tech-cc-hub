@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import { Download, Loader2, PackageCheck } from "lucide-react";
-import { Toaster } from "sonner";
+import { Toaster, toast } from "sonner";
 import { useIPC } from "./hooks/useIPC";
 import { useMessageWindow } from "./hooks/useMessageWindow";
 import { useAppStore } from "./store/useAppStore";
@@ -21,9 +21,11 @@ import {
   OPEN_BROWSER_WORKBENCH_URL_EVENT,
   OPEN_SIDE_CONVERSATION_EVENT,
   OPEN_WORKSPACE_PLUGIN_EVENT,
+  PROMPT_APPEND_RESULT_EVENT,
   PREVIEW_OPEN_FILE_EVENT,
   type OpenBrowserWorkbenchUrlDetail,
   type OpenWorkspacePluginDetail,
+  type PromptAppendResultDetail,
   type PreviewOpenFileDetail,
 } from "./events";
 import { copyTextToClipboard } from "./utils/clipboard";
@@ -53,6 +55,10 @@ import { WorkflowAgentCard } from "./components/workflow/WorkflowAgentCard";
 import type { WorkflowRunAction, WorkflowRunRecord } from "../shared/workflows/workflow-runs";
 import { getWorkspacePluginSurfaceId, type WorkspacePluginDescriptor } from "../shared/workspace-plugins";
 import { DEFAULT_RESTRICTED_ALLOWED_TOOLS_TEXT } from "../shared/claude-agent-teams";
+import {
+  MODEL_CATALOG_UPDATED_EVENT,
+  type UiModelCatalogUpdatedPayload,
+} from "./utils/model-catalog-sync";
 import {
   DEV_BRIDGE_READY_EVENT,
   getDevElectronRuntimeSource,
@@ -302,6 +308,7 @@ type QaAssistantConversationSeed = {
 
 type TechCcHubQaApi = {
   seedAssistantConversation: (seed?: QaAssistantConversationSeed) => { sessionId: string; assistantMarkdown: string };
+  getActiveSessionId: () => string | null;
   getMessageReferences: (sessionId?: string) => Array<{ kind: string; text: string; comment?: string }>;
 };
 
@@ -349,6 +356,7 @@ function App() {
   const [terminalTabBySessionId, setTerminalTabBySessionId] = useState<Record<string, boolean>>({});
   const [sidechatTabBySessionId, setSidechatTabBySessionId] = useState<Record<string, boolean>>({});
   const [browserCloseRequestVersion, setBrowserCloseRequestVersion] = useState(0);
+  const [browserOpenRequestVersion, setBrowserOpenRequestVersion] = useState(0);
   const [workspacePlugins, setWorkspacePlugins] = useState<WorkspacePluginDescriptor[]>([]);
   const [openWorkspacePluginIdsBySessionId, setOpenWorkspacePluginIdsBySessionId] = useState<Record<string, string[]>>({});
   const [runtimeSource, setRuntimeSource] = useState<DevElectronRuntimeSource>(() => getDevElectronRuntimeSource());
@@ -544,6 +552,7 @@ function App() {
   const setCwd = useAppStore((s) => s.setCwd);
   const apiConfigSettings = useAppStore((s) => s.apiConfigSettings);
   const runtimeModel = useAppStore((s) => s.runtimeModel);
+  const runtimeConfigProfileId = useAppStore((s) => s.runtimeConfigProfileId);
   const setBrowserWorkbenchSessionUrl = useAppStore((s) => s.setBrowserWorkbenchUrl);
   const browserWorkbenchBySessionId = useAppStore((s) => s.browserWorkbenchBySessionId);
   const reasoningMode = useAppStore((s) => s.reasoningMode);
@@ -611,6 +620,7 @@ function App() {
 
         return { sessionId, assistantMarkdown };
       },
+      getActiveSessionId: () => useAppStore.getState().activeSessionId,
       getMessageReferences: (sessionId?: string) => {
         const state = useAppStore.getState();
         const targetSessionId = sessionId ?? state.activeSessionId ?? "";
@@ -733,9 +743,31 @@ function App() {
       setShowTaskPanel(target.type === "task" && !hasSessionTarget);
       setShowCronPage(target.type === "cron" && !hasSessionTarget);
     }
+    if (event.type === "model.catalog.updated") {
+      const modelNames = event.payload.addedModels.map((item) => item.modelName);
+      const visibleNames = modelNames.slice(0, 4).join("、");
+      const remainingCount = modelNames.length - 4;
+      toast.success("发现新模型", {
+        description: remainingCount > 0
+          ? `${visibleNames} 等 ${modelNames.length} 个模型已自动纳管。`
+          : `${visibleNames} 已自动纳管。`,
+        duration: 10_000,
+      });
+      window.dispatchEvent(new CustomEvent<UiModelCatalogUpdatedPayload>(MODEL_CATALOG_UPDATED_EVENT, {
+        detail: event.payload,
+      }));
+      void window.electron.getApiConfig()
+        .then((settings) => setApiConfigSettings(settings))
+        .catch((error) => console.error("Failed to refresh auto-synced model catalog:", error));
+    }
+    if (event.type === "session.append.result") {
+      window.dispatchEvent(new CustomEvent<PromptAppendResultDetail>(PROMPT_APPEND_RESULT_EVENT, {
+        detail: event.payload,
+      }));
+    }
     handleServerEvent(event);
     handlePartialMessages(event);
-  }, [handleServerEvent, handlePartialMessages]);
+  }, [handleServerEvent, handlePartialMessages, setApiConfigSettings]);
 
   const { connected, sendEvent } = useIPC(onEvent);
   const openSidechatWorkspace = useCallback(() => {
@@ -1295,6 +1327,7 @@ function App() {
       if (activeSessionId) {
         setBrowserWorkbenchSessionUrl(activeSessionId, url);
       }
+      setBrowserOpenRequestVersion((version) => version + 1);
       setActiveSessionWorkspaceView("browser");
     };
 
@@ -1549,6 +1582,7 @@ function App() {
         prompt: trimmedPrompt,
         runtime: {
           model: selectedModel,
+          configProfileId: activeSession?.configProfileId ?? (runtimeConfigProfileId || undefined),
           reasoningMode,
           permissionMode,
         },
@@ -1558,11 +1592,13 @@ function App() {
     setGlobalError(null);
   }, [
     activeSession?.status,
+    activeSession?.configProfileId,
     activeSessionId,
     apiConfigSettings,
     permissionMode,
     reasoningMode,
     runtimeModel,
+    runtimeConfigProfileId,
     resolveSessionRuntimeModel,
     sendEvent,
     setGlobalError,
@@ -2034,7 +2070,8 @@ function App() {
                 <div
                   ref={scrollContainerRef}
                   onScroll={handleScroll}
-                  className="chat-scroll flex-1 overflow-y-auto pb-40 pl-16 pr-8 pt-8"
+                  className="chat-scroll flex-1 overflow-y-auto pl-16 pr-8 pt-8"
+                  style={{ paddingBottom: "calc(var(--composer-bottom-offset, 160px) + 1.5rem)" }}
                 >
                 <div ref={chatContentRef} className="chat-stream-content mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[34px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(248,250,252,0.82))] px-8 py-7 shadow-[0_24px_60px_rgba(30,38,52,0.08)] backdrop-blur-xl xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
                   <div ref={topSentinelRef} className="h-1" />
@@ -2337,6 +2374,7 @@ function App() {
                 occluded={browserWorkbenchOccluded}
                 sessionId={activeSessionId}
                 closeRequestVersion={browserCloseRequestVersion}
+                openRequestVersion={browserOpenRequestVersion}
               />
             </Suspense>
           </aside>

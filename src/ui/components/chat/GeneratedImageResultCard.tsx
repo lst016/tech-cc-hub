@@ -1,6 +1,7 @@
 // 生图结果卡片：把 image_generate 的成功结果渲染成图片缩略图 + 元数据 + 动作。
 // 详见 .omx/plans/2026-07-10-image-generation-integration.md §9.3 / §9.4。
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   CheckCircle2,
   Copy,
@@ -209,9 +210,11 @@ function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
 
-  return (
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <AppModalOverlay
-      className="z-50 grid place-items-center bg-black/70 p-6"
+      className="z-50 grid h-dvh w-dvw place-items-center bg-black/70 p-6"
       onClick={onClose}
       aria-label="生成图片大图预览"
     >
@@ -221,7 +224,8 @@ function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
         className="max-h-full max-w-full rounded-xl object-contain shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       />
-    </AppModalOverlay>
+    </AppModalOverlay>,
+    document.body,
   );
 }
 

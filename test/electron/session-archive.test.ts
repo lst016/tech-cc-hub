@@ -135,6 +135,7 @@ test("SessionStore persists execution mode and runtime controls across reloads",
       cwd: dir,
       executionMode: "background",
       model: "gpt-5.5",
+      configProfileId: "codex-oauth",
       reasoningMode: "xhigh",
       permissionMode: "plan",
     });
@@ -146,9 +147,11 @@ test("SessionStore persists execution mode and runtime controls across reloads",
       const restored = reopened.getSession(session.id);
       assert.equal(restored?.executionMode, "background");
       assert.equal(restored?.model, "gpt-5.5");
+      assert.equal(restored?.configProfileId, "codex-oauth");
       assert.equal(restored?.reasoningMode, "xhigh");
       assert.equal(restored?.permissionMode, "plan");
       assert.equal(reopened.listSessions()[0]?.executionMode, "background");
+      assert.equal(reopened.listSessions()[0]?.configProfileId, "codex-oauth");
       assert.equal(reopened.listSessions()[0]?.reasoningMode, "xhigh");
       assert.equal(reopened.listSessions()[0]?.permissionMode, "plan");
     } finally {

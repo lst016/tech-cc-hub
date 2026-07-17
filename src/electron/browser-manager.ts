@@ -11,6 +11,28 @@ import {
   shouldDetachBrowserWorkbenchForBounds,
 } from "./libs/browser-workbench/browser-workbench-bounds.js";
 import {
+  BrowserNavigationCoordinator,
+  runIfCurrentBrowserNavigation,
+} from "./libs/browser-workbench/browser-navigation-coordinator.js";
+import {
+  buildBrowserTerminalReadExpression,
+  createBrowserTerminalFingerprint,
+  normalizeBrowserTerminalReadInput,
+  type BrowserTerminalFrameExtraction,
+  type BrowserTerminalReadInput,
+  type BrowserTerminalReadResult,
+} from "./libs/browser-workbench/browser-terminal-reader.js";
+import { extractBrowserTerminalViaDebugger } from "./libs/browser-workbench/browser-terminal-debugger.js";
+import {
+  buildBrowserRenderedContentExpression,
+  createBrowserRenderedContentFingerprint,
+  normalizeBrowserRenderedContentInput,
+  type BrowserRenderedContentInput,
+  type BrowserRenderedContentResult,
+  type BrowserRenderedFrameExtraction,
+  type BrowserRenderedSurface,
+} from "./libs/browser-workbench/browser-rendered-content.js";
+import {
   appendBrowserWorkbenchRecordedAction,
   buildBrowserWorkbenchRecorderInjectionScript,
   createBrowserWorkbenchRecordingSession,
@@ -53,13 +75,18 @@ export type BrowserWorkbenchBounds = {
   height: number;
 };
 
-type BrowserWorkbenchManagerOptions = {
-  resolveWorkspaceRoot?: () => string | undefined;
+type BrowserWorkbenchCookieSyncOutcome = {
+  imported: number;
 };
 
-type BrowserWorkbenchCookieSyncResult = {
+type BrowserWorkbenchManagerOptions = {
+  resolveWorkspaceRoot?: () => string | undefined;
+  createView?: () => BrowserView;
+  syncCookies?: (url: string) => Promise<BrowserWorkbenchCookieSyncOutcome>;
+};
+
+type BrowserWorkbenchCookieSyncResult = BrowserWorkbenchCookieSyncOutcome & {
   status: ChromeCookieSyncStatus | "skipped";
-  imported: number;
   failed: number;
   cacheable: boolean;
 };
@@ -71,6 +98,7 @@ export type BrowserWorkbenchState = {
   canGoBack: boolean;
   canGoForward: boolean;
   annotationMode: boolean;
+  error?: string;
 };
 
 export type BrowserWorkbenchConsoleLog = {
@@ -601,6 +629,17 @@ function normalizeUrl(input: string): string {
   return `http://${trimmed}`;
 }
 
+function formatBrowserNavigationError(description: string, url?: string): string {
+  const message = description.trim().replace(/^Error:\s*/i, "") || "未知加载错误";
+  if (!url) return message;
+  try {
+    const target = new URL(url);
+    return target.host ? `${message} (${target.host})` : message;
+  } catch {
+    return message;
+  }
+}
+
 function toLogLevel(level: unknown): BrowserWorkbenchConsoleLog["level"] {
   if (typeof level === "number") {
     if (level >= 3) return "error";
@@ -683,6 +722,9 @@ export class BrowserWorkbenchManager {
   private recordingRunAbortController: AbortController | null = null;
   private listeners = new Set<(event: BrowserWorkbenchEvent) => void>();
   private cookieSyncCache = new Map<string, number>();
+  private cookieSyncInFlight = new Map<string, Promise<BrowserWorkbenchCookieSyncOutcome>>();
+  private readonly navigationCoordinator = new BrowserNavigationCoordinator();
+  private navigationError: string | undefined;
   private readonly COOKIE_SYNC_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
   constructor(
@@ -693,8 +735,10 @@ export class BrowserWorkbenchManager {
 
   open(url: string): BrowserWorkbenchState {
     const targetUrl = normalizeUrl(url);
+    this.navigationError = undefined;
     this.emit({ type: "browser.open-requested", payload: { url: targetUrl } });
     const view = this.ensureView();
+    const navigationGeneration = this.navigationCoordinator.begin();
     // Reattach the existing view without reloading when the URL is unchanged.
     const currentUrl = view.webContents.getURL();
     if (currentUrl && !view.webContents.isLoading()) {
@@ -703,9 +747,14 @@ export class BrowserWorkbenchManager {
         const targetParsed = new URL(targetUrl);
         if (currentParsed.href === targetParsed.href) {
           view.setBounds(this.bounds);
-          void this.syncChromeCookies(targetUrl).then((result) => {
-            if (result.imported > 0 && !view.webContents.isDestroyed()) {
-              view.webContents.reload();
+          void this.syncBrowserCookies(targetUrl).then((result) => {
+            if (result.imported > 0) {
+              runIfCurrentBrowserNavigation(
+                this.navigationCoordinator,
+                navigationGeneration,
+                () => this.view === view && !view.webContents.isDestroyed(),
+                () => view.webContents.reload(),
+              );
             }
           });
           this.emitState();
@@ -716,16 +765,21 @@ export class BrowserWorkbenchManager {
       }
     }
     this.clearNetworkLogs();
-    void this.syncChromeCookies(targetUrl).then(() => {
-      if (!view.webContents.isDestroyed()) {
-        view.webContents.loadURL(targetUrl);
-      }
+    void this.syncBrowserCookies(targetUrl).then(() => {
+      runIfCurrentBrowserNavigation(
+        this.navigationCoordinator,
+        navigationGeneration,
+        () => this.view === view && !view.webContents.isDestroyed(),
+        () => this.loadUrl(view, targetUrl, navigationGeneration),
+      );
     });
     this.emitState();
     return this.getState();
   }
 
   close(): BrowserWorkbenchState {
+    this.navigationCoordinator.invalidate();
+    this.navigationError = undefined;
     if (this.view) {
       const closingView = this.view;
       this.window.removeBrowserView(closingView);
@@ -775,6 +829,21 @@ export class BrowserWorkbenchManager {
     const lastSync = this.cookieSyncCache.get(domain);
     if (!lastSync) return true;
     return Date.now() - lastSync > this.COOKIE_SYNC_INTERVAL;
+  }
+
+  private syncBrowserCookies(url: string): Promise<BrowserWorkbenchCookieSyncOutcome> {
+    const existing = this.cookieSyncInFlight.get(url);
+    if (existing) return existing;
+
+    const task = this.options.syncCookies?.(url) ?? this.syncChromeCookies(url);
+    this.cookieSyncInFlight.set(url, task);
+    const clearInFlight = () => {
+      if (this.cookieSyncInFlight.get(url) === task) {
+        this.cookieSyncInFlight.delete(url);
+      }
+    };
+    void task.then(clearInFlight, clearInFlight);
+    return task;
   }
 
   private async syncChromeCookies(url: string): Promise<BrowserWorkbenchCookieSyncResult> {
@@ -846,7 +915,12 @@ export class BrowserWorkbenchManager {
 
   reload(): BrowserWorkbenchState {
     this.clearNetworkLogs();
-    this.view?.webContents.reload();
+    const contents = this.view?.webContents;
+    if (contents) {
+      this.navigationCoordinator.invalidate();
+      this.navigationError = undefined;
+      contents.reload();
+    }
     return this.getState();
   }
 
@@ -893,20 +967,28 @@ export class BrowserWorkbenchManager {
 
   goBack(): BrowserWorkbenchState {
     const contents = this.view?.webContents;
-    if (contents?.canGoBack()) contents.goBack();
+    if (contents?.canGoBack()) {
+      this.navigationCoordinator.invalidate();
+      this.navigationError = undefined;
+      contents.goBack();
+    }
     return this.getState();
   }
 
   goForward(): BrowserWorkbenchState {
     const contents = this.view?.webContents;
-    if (contents?.canGoForward()) contents.goForward();
+    if (contents?.canGoForward()) {
+      this.navigationCoordinator.invalidate();
+      this.navigationError = undefined;
+      contents.goForward();
+    }
     return this.getState();
   }
 
   getState(): BrowserWorkbenchState {
     const contents = this.view?.webContents;
     if (!contents || contents.isDestroyed()) {
-      return emptyState(this.annotationMode);
+      return { ...emptyState(this.annotationMode), error: this.navigationError };
     }
 
     return {
@@ -916,6 +998,7 @@ export class BrowserWorkbenchManager {
       canGoBack: contents.canGoBack(),
       canGoForward: contents.canGoForward(),
       annotationMode: this.annotationMode,
+      error: this.navigationError,
     };
   }
 
@@ -1537,6 +1620,279 @@ export class BrowserWorkbenchManager {
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  async extractXtermProviderContent(input: BrowserTerminalReadInput = {}): Promise<{
+    success: boolean;
+    result?: BrowserTerminalReadResult;
+    error?: string;
+  }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+
+    const contents = this.view.webContents;
+    const normalized = normalizeBrowserTerminalReadInput(input);
+    const expression = buildBrowserTerminalReadExpression(normalized);
+    const terminals: BrowserTerminalReadResult["terminals"] = [];
+    const canvases: BrowserTerminalReadResult["canvases"] = [];
+    const warnings: string[] = [];
+    const frames = contents.mainFrame.framesInSubtree.slice(0, 50);
+    let framesFailed = 0;
+    let remainingChars = normalized.maxChars;
+
+    for (const frame of frames) {
+      if (frame.detached) {
+        framesFailed += 1;
+        continue;
+      }
+      try {
+        const frameResult = await frame.executeJavaScript(expression, true) as BrowserTerminalFrameExtraction;
+        const frameUrl = frame.url || "about:blank";
+        const frameName = frame.name || undefined;
+
+        for (const terminal of frameResult.terminals) {
+          if (terminals.length >= 8 || remainingChars <= 0) break;
+          let text = terminal.text;
+          let truncatedStart = terminal.truncatedStart;
+          let truncatedEnd = terminal.truncatedEnd;
+          if (text.length > remainingChars) {
+            if (normalized.scope === "tail") {
+              text = text.slice(-remainingChars);
+              truncatedStart = true;
+            } else {
+              text = text.slice(0, remainingChars);
+              truncatedEnd = true;
+            }
+          }
+          remainingChars -= text.length;
+          terminals.push({
+            ...terminal,
+            text,
+            truncated: terminal.truncated || Boolean(truncatedStart || truncatedEnd),
+            ...(truncatedStart ? { truncatedStart: true } : {}),
+            ...(truncatedEnd ? { truncatedEnd: true } : {}),
+            frameUrl,
+            ...(frameName ? { frameName } : {}),
+          });
+        }
+
+        for (const canvas of frameResult.canvases) {
+          if (canvases.length >= 40) break;
+          canvases.push({
+            ...canvas,
+            frameUrl,
+            ...(frameName ? { frameName } : {}),
+          });
+        }
+        if (frameResult.terminals.length > 0 || frameResult.canvases.length > 0) {
+          warnings.push(...frameResult.warnings.map((warning) => `${frameUrl}: ${warning}`));
+        }
+      } catch (error) {
+        framesFailed += 1;
+        if (warnings.length < 10) {
+          warnings.push(`Frame ${frame.url || "about:blank"} could not be inspected: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+
+    if (!terminals.some((terminal) => terminal.text.length > 0)) {
+      let attachedForTerminalRead = false;
+      try {
+        if (!contents.debugger.isAttached()) {
+          contents.debugger.attach();
+          attachedForTerminalRead = true;
+        }
+        const debuggerResult = await extractBrowserTerminalViaDebugger({
+          sendCommand: async (method, params) => await contents.debugger.sendCommand(method, params),
+        }, normalized);
+        warnings.push(...debuggerResult.warnings);
+        if (debuggerResult.terminal) {
+          for (let index = warnings.length - 1; index >= 0; index -= 1) {
+            if (warnings[index].includes("Canvas pixels expose no semantic text")) warnings.splice(index, 1);
+          }
+          let text = debuggerResult.terminal.text;
+          let truncatedStart = debuggerResult.terminal.truncatedStart;
+          let truncatedEnd = debuggerResult.terminal.truncatedEnd;
+          if (text.length > remainingChars) {
+            if (normalized.scope === "tail") {
+              text = text.slice(-remainingChars);
+              truncatedStart = true;
+            } else {
+              text = text.slice(0, remainingChars);
+              truncatedEnd = true;
+            }
+          }
+          remainingChars -= text.length;
+          terminals.push({
+            ...debuggerResult.terminal,
+            text,
+            truncated: debuggerResult.terminal.truncated || Boolean(truncatedStart || truncatedEnd),
+            ...(truncatedStart ? { truncatedStart: true } : {}),
+            ...(truncatedEnd ? { truncatedEnd: true } : {}),
+            frameUrl: contents.getURL(),
+          });
+        }
+      } catch (error) {
+        warnings.push(`CDP terminal fallback could not attach: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        if (attachedForTerminalRead && contents.debugger.isAttached()) {
+          try {
+            contents.debugger.detach();
+          } catch {
+            // Navigation or destruction can detach the temporary debugger before cleanup.
+          }
+        }
+      }
+    }
+
+    if (remainingChars <= 0) {
+      warnings.push(`Terminal text was capped at ${normalized.maxChars} characters.`);
+    }
+    if (terminals.length === 0 && canvases.length === 0) {
+      warnings.push("No xterm buffer, terminal accessibility rows, or canvas elements were found in the page frames.");
+    }
+
+    return {
+      success: true,
+      result: {
+        url: contents.getURL(),
+        title: contents.getTitle() || undefined,
+        scope: normalized.scope,
+        buffer: normalized.buffer,
+        framesScanned: frames.length,
+        framesFailed,
+        readable: terminals.some((terminal) => terminal.text.length > 0),
+        terminalCount: terminals.length,
+        terminals,
+        canvasCount: canvases.length,
+        canvases,
+        fingerprint: createBrowserTerminalFingerprint(terminals),
+        warnings,
+      },
+    };
+  }
+
+  async extractRenderedContent(input: BrowserRenderedContentInput = {}): Promise<{
+    success: boolean;
+    result?: BrowserRenderedContentResult;
+    error?: string;
+  }> {
+    if (!this.view || this.view.webContents.isDestroyed()) {
+      return { success: false, error: "浏览器工作台尚未打开页面。" };
+    }
+
+    const contents = this.view.webContents;
+    const normalized = normalizeBrowserRenderedContentInput(input);
+    const expression = buildBrowserRenderedContentExpression(normalized);
+    const frames = contents.mainFrame.framesInSubtree.slice(0, 50);
+    const surfaces: BrowserRenderedContentResult["surfaces"] = [];
+    const warnings: string[] = [];
+    let framesFailed = 0;
+
+    for (const frame of frames) {
+      if (surfaces.length >= normalized.maxSurfaces) break;
+      if (frame.detached) {
+        framesFailed += 1;
+        continue;
+      }
+      try {
+        const frameResult = await frame.executeJavaScript(expression, true) as BrowserRenderedFrameExtraction;
+        const frameUrl = frame.url || "about:blank";
+        const frameName = frame.name || undefined;
+        for (const surface of frameResult.surfaces) {
+          if (surfaces.length >= normalized.maxSurfaces) break;
+          surfaces.push({
+            ...surface,
+            frameUrl,
+            ...(frameName ? { frameName } : {}),
+          });
+        }
+        if (frameResult.surfaces.length > 0 || frameResult.warnings.length > 0) {
+          warnings.push(...frameResult.warnings.slice(0, 5).map((warning) => `${frameUrl}: ${warning}`));
+        }
+      } catch (error) {
+        framesFailed += 1;
+        if (warnings.length < 20) {
+          warnings.push(`Frame ${frame.url || "about:blank"} could not be inspected: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+
+    const xtermSurfaces = surfaces.filter((surface) => surface.hints?.includes("xterm"));
+    if (xtermSurfaces.length > 0) {
+      const xtermResult = await this.extractXtermProviderContent({
+        scope: "tail",
+        maxLines: 200,
+        maxChars: normalized.maxChars,
+      });
+      if (xtermResult.success && xtermResult.result) {
+        for (const terminal of xtermResult.result.terminals) {
+          const semantic = {
+            provider: "xterm",
+            kind: "terminal" as const,
+            text: terminal.text,
+            data: {
+              source: terminal.source,
+              targetPath: terminal.targetPath,
+              bufferType: terminal.bufferType,
+              cols: terminal.cols,
+              rows: terminal.rows,
+              baseY: terminal.baseY,
+              viewportY: terminal.viewportY,
+              cursorX: terminal.cursorX,
+              cursorY: terminal.cursorY,
+              truncated: terminal.truncated,
+            },
+          };
+          const matchingSurface = xtermSurfaces.find((surface) => (
+            surface.frameUrl === terminal.frameUrl && !surface.semantics.some((entry) => entry.provider === "xterm")
+          )) ?? xtermSurfaces.find((surface) => !surface.semantics.some((entry) => entry.provider === "xterm"));
+          if (matchingSurface) {
+            matchingSurface.semantics.push(semantic);
+            matchingSurface.semantic = true;
+          } else if (surfaces.length < normalized.maxSurfaces) {
+            const syntheticSurface: BrowserRenderedSurface & { frameUrl: string; frameName?: string } = {
+              selector: terminal.selector,
+              tagName: "canvas",
+              hints: ["xterm"],
+              semantic: true,
+              semantics: [semantic],
+              frameUrl: terminal.frameUrl,
+              ...(terminal.frameName ? { frameName: terminal.frameName } : {}),
+            };
+            surfaces.push(syntheticSurface);
+          }
+        }
+        warnings.push(...xtermResult.result.warnings.slice(0, 10).map((warning) => `xterm provider: ${warning}`));
+      } else if (xtermResult.error) {
+        warnings.push(`xterm provider failed: ${xtermResult.error}`);
+      }
+    }
+
+    const semanticSurfaceCount = surfaces.filter((surface) => surface.semantic).length;
+    if (semanticSurfaceCount > 0) {
+      for (let index = warnings.length - 1; index >= 0; index -= 1) {
+        if (warnings[index].includes("no accessibility data, public renderer API")) warnings.splice(index, 1);
+      }
+    } else if (surfaces.length > 0) {
+      warnings.push("No semantic provider matched these rendered surfaces. Use a targeted screenshot or pixel capture for visual interpretation.");
+    }
+
+    return {
+      success: true,
+      result: {
+        url: contents.getURL(),
+        title: contents.getTitle() || undefined,
+        framesScanned: frames.length,
+        framesFailed,
+        surfaceCount: surfaces.length,
+        semanticSurfaceCount,
+        surfaces,
+        fingerprint: createBrowserRenderedContentFingerprint(surfaces),
+        warnings,
+      },
+    };
   }
 
   async getDomStats(): Promise<{ success: boolean; stats?: BrowserWorkbenchDomStats; error?: string }> {
@@ -2508,7 +2864,7 @@ export class BrowserWorkbenchManager {
       return this.view;
     }
 
-    const view = new BrowserView({
+    const view = this.options.createView?.() ?? new BrowserView({
       webPreferences: buildBrowserWorkbenchWebPreferences(getBrowserWorkbenchPreloadPath()),
     });
 
@@ -2518,17 +2874,24 @@ export class BrowserWorkbenchManager {
     view.setAutoResize({ width: false, height: false });
     view.webContents.setWindowOpenHandler(({ url }) => {
       if (url) {
-        void this.syncChromeCookies(url).then(() => {
-          if (!view.webContents.isDestroyed()) {
-            view.webContents.loadURL(url);
-          }
+        const navigationGeneration = this.navigationCoordinator.begin();
+        void this.syncBrowserCookies(url).then(() => {
+          runIfCurrentBrowserNavigation(
+            this.navigationCoordinator,
+            navigationGeneration,
+            () => this.view === view && !view.webContents.isDestroyed(),
+            () => this.loadUrl(view, url, navigationGeneration),
+          );
         });
       }
       return { action: "deny" };
     });
 
     this.ensureNetworkCapture(view);
-    view.webContents.on("did-start-loading", () => this.emitState());
+    view.webContents.on("did-start-loading", () => {
+      this.navigationError = undefined;
+      this.emitState();
+    });
     view.webContents.on("did-stop-loading", () => this.emitState());
     view.webContents.on("page-title-updated", () => this.emitState());
     view.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
@@ -2545,12 +2908,28 @@ export class BrowserWorkbenchManager {
       this.emitState();
     });
     view.webContents.on("did-finish-load", () => {
+      this.navigationError = undefined;
       if (this.annotationMode) {
         void this.installAnnotationScript();
       }
       if (this.recordingSession || this.recordingLocatorPickActionId) {
         void this.installRecordingScript();
       }
+      this.emitState();
+    });
+    view.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame || errorCode === -3 || this.view !== view) return;
+      this.navigationError = formatBrowserNavigationError(errorDescription, validatedURL);
+      this.emitState();
+    });
+    view.webContents.on("unresponsive", () => {
+      if (this.view !== view) return;
+      this.navigationError = "页面无响应，请重试";
+      this.emitState();
+    });
+    view.webContents.on("render-process-gone", (_event, details) => {
+      if (this.view !== view) return;
+      this.navigationError = `页面进程已退出：${details.reason}`;
       this.emitState();
     });
     view.webContents.on("console-message", (_event, level, message, line, sourceId) => {
@@ -2566,6 +2945,26 @@ export class BrowserWorkbenchManager {
     });
 
     return view;
+  }
+
+  private loadUrl(view: BrowserView, url: string, navigationGeneration: number): void {
+    try {
+      void view.webContents.loadURL(url).catch((error) => {
+        if (!this.navigationCoordinator.isCurrent(navigationGeneration) || this.view !== view || view.webContents.isDestroyed()) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        if (/ERR_ABORTED|-3/.test(message)) return;
+        this.navigationError = formatBrowserNavigationError(message, url);
+        this.emitState();
+      });
+    } catch (error) {
+      if (!this.navigationCoordinator.isCurrent(navigationGeneration) || this.view !== view || view.webContents.isDestroyed()) {
+        return;
+      }
+      this.navigationError = formatBrowserNavigationError(error instanceof Error ? error.message : String(error), url);
+      this.emitState();
+    }
   }
 
   private ensureNetworkCapture(view: BrowserView): void {
