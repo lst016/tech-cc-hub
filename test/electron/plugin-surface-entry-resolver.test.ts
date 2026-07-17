@@ -67,6 +67,7 @@ test("resolves a declared installed surface to a main-process-only file URL", as
       pluginId: "surface-plugin",
       surfaceId: "quick-action",
       placement: "composer",
+      packageRoot: await realpath(packageRoot),
       entryPath,
       entryUrl: pathToFileURL(entryPath).toString(),
     });

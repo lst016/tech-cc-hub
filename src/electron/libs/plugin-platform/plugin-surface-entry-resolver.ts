@@ -18,6 +18,7 @@ export type ResolveInstalledPluginSurfaceEntryResult =
       pluginId: string;
       surfaceId: string;
       placement: PluginSurfacePlacement;
+      packageRoot: string;
       entryPath: string;
       entryUrl: string;
     }
@@ -82,6 +83,7 @@ export async function resolveInstalledPluginSurfaceEntry(
     pluginId: input.pluginId,
     surfaceId: input.surfaceId,
     placement: surface.placement,
+    packageRoot: installed.packageRoot,
     entryPath,
     entryUrl: pathToFileURL(entryPath).toString(),
   };
