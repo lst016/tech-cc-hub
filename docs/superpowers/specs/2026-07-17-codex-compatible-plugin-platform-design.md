@@ -143,6 +143,24 @@ type PluginRecord = {
 
 Plugin identity is derived from the canonical package name and installation source. Duplicate contributions, incompatible engine ranges, unsafe paths, unknown required capabilities, and conflicting plugin identities block activation with structured validation errors.
 
+### MCP runtime classification
+
+The shared manifest normalizer remains a pure function and does not read `.mcp.json` from disk. The package loader resolves the safe relative path declared by `mcpServers`, parses that file, and passes the parsed value as `mcpManifest` beside the Codex, tech-cc-hub, and legacy workspace manifests.
+
+Runtime classification uses the actual server transports rather than the existence of the `mcpServers` pointer:
+
+- a server with a non-empty `command` and no `url` is local stdio and makes the package `native-local`;
+- a server with an `http` or `https` `url` and no `command` is remote and does not make the package native;
+- an omitted `type` is inferred from `command` or `url`;
+- an explicit `type` must agree with its transport: `stdio` requires `command`, while `http` or `sse` requires `url`;
+- a package containing both local and remote servers is `native-local`;
+- a server containing both `command` and `url`, neither transport, an unsupported type, or an invalid URL produces `MANIFEST_INVALID` at its server path;
+- an empty `mcpServers` record contributes no native process and is classified as declarative unless another contribution requires native execution.
+
+Supplying `mcpManifest` without a Codex `mcpServers` pointer is invalid. If a pointer exists but the parsed MCP manifest is unavailable, the normalizer keeps the safe `native-local` fallback and emits `MCP_RUNTIME_UNCLASSIFIED`; it does not silently claim that the package is declarative.
+
+An enhancement manifest may force `runtime.kind: "native-local"`. A declared `runtime.kind: "declarative"` cannot override an actual stdio command or a legacy workspace process. This makes runtime classification evidence-based while preserving the safe fallback for incomplete package-loading data.
+
 ## Architecture
 
 ### Plugin Kernel
@@ -477,6 +495,8 @@ explicit user action in active session
 
 - Codex manifest fixtures normalize without a tech-cc-hub manifest.
 - enhanced manifest validation rejects unknown required capabilities, unsafe paths, incompatible engines, and duplicate contributions.
+- MCP classification distinguishes remote-only, local-only, mixed, missing, and invalid parsed server configurations.
+- an enhancement manifest cannot classify a stdio MCP server as declarative.
 - grant-profile expansion produces the correct atomic capabilities.
 - capability intersection rejects undeclared, ungranted, unavailable, and out-of-lease calls.
 - Full Trust expands `tools.call:*`; Custom grants preserve named-tool restrictions.
