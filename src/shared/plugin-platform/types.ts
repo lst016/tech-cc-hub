@@ -59,6 +59,20 @@ export type PluginSurfaceContribution = {
   entry: string;
 };
 
+export type PluginActivityRailDescriptor = {
+  pluginId: string;
+  surfaceId: string;
+  label: string;
+} & (
+  | {
+      source: "enhanced";
+      entry: string;
+    }
+  | {
+      source: "legacy-workspace";
+    }
+);
+
 export type PluginCommandContribution = {
   id: string;
   title: string;

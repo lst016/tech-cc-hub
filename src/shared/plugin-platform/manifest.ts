@@ -148,6 +148,10 @@ function normalizeSurfaces(value: unknown, errors: PluginManifestValidationError
     if (!id || !CONTRIBUTION_ID_PATTERN.test(id)) pushInvalid(errors, `${basePath}.id`, "Invalid surface id.");
     if (!placement || !SURFACE_PLACEMENTS.has(placement)) pushInvalid(errors, `${basePath}.placement`, "Invalid surface placement.");
     if (id && CONTRIBUTION_ID_PATTERN.test(id) && placement && SURFACE_PLACEMENTS.has(placement) && entry) {
+      if (placement === "activity-rail" && surfaces.some((item) => item.placement === "activity-rail")) {
+        pushInvalid(errors, `${basePath}.placement`, "Only one Activity Rail surface is supported per plugin.");
+        return;
+      }
       surfaces.push({ id, placement, entry });
     }
   });
