@@ -1,4 +1,5 @@
 import { normalizeWorkspacePluginManifest } from "../workspace-plugins.js";
+import { isSafePluginPackageRelativePath } from "./paths.js";
 import {
   PLUGIN_ATOMIC_EXACT_CAPABILITIES,
   PLUGIN_CAPABILITY_BUNDLES,
@@ -39,13 +40,6 @@ function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
 }
 
-function isSafeRelativePluginPath(value: string): boolean {
-  const normalized = value.trim().replace(/\\/g, "/");
-  if (!normalized || normalized.startsWith("/") || /^[a-zA-Z]:\//.test(normalized)) return false;
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(normalized)) return false;
-  return !normalized.split("/").some((segment) => segment === "..");
-}
-
 function isKnownPluginCapability(value: string): value is PluginCapability {
   if (PLUGIN_ATOMIC_EXACT_CAPABILITIES.includes(value as typeof PLUGIN_ATOMIC_EXACT_CAPABILITIES[number])) return true;
   if (PLUGIN_CAPABILITY_BUNDLES.includes(value as typeof PLUGIN_CAPABILITY_BUNDLES[number])) return true;
@@ -68,7 +62,7 @@ function normalizeContributionPath(
 ): string | undefined {
   if (value === undefined) return undefined;
   const normalized = normalizedString(value);
-  if (!normalized || !isSafeRelativePluginPath(normalized)) {
+  if (!normalized || !isSafePluginPackageRelativePath(normalized)) {
     pushInvalid(errors, path, "Contribution paths must stay inside the plugin package.");
     return undefined;
   }
