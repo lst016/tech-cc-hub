@@ -8,7 +8,7 @@
 		"rebuild": "npx electron-rebuild -f -w better-sqlite3",
 		"dev": "node scripts/dev.mjs",
 		"dev:react": "vite",
-		"dev:electron": "npm run prepare:workspace-plugins && bun run transpile:electron && node scripts/dev-electron.mjs",
+		"dev:electron": "npm run prepare:workspace-plugins && npm run transpile:electron && node scripts/dev-electron.mjs",
 		"qa:smoke": "bash scripts/qa/electron-autostart-smoke.sh \"请只回复：SMOKE_OK\"",
 		"qa:slash": "bash scripts/qa/electron-autostart-smoke.sh \"/debug\"",
 		"qa:codex": "SMOKE_TIMEOUT_SECONDS=120 bash scripts/qa/electron-autostart-smoke.sh \"/codex consult 你好，只回复 CODEX_SMOKE_OK\"",

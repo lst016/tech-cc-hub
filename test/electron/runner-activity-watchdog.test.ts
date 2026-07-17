@@ -84,7 +84,7 @@ test("does not treat time spent waiting for a user decision as runner inactivity
   timers.advance(299_999);
   assert.deepEqual(timeouts, []);
   timers.advance(1);
-  assert.deepEqual(timeouts, ["Runner stopped receiving events for 5 minutes."]);
+  assert.deepEqual(timeouts, ["运行超时：任务连续 5 分钟没有进展，已被中断。"]);
 });
 
 test("keeps the watchdog paused until every concurrent user decision settles", () => {
@@ -111,5 +111,5 @@ test("preserves the first-event timeout when no runner activity arrives", () => 
   timers.advance(119_999);
   assert.deepEqual(timeouts, []);
   timers.advance(1);
-  assert.deepEqual(timeouts, ["Runner did not receive any events for 2 minutes."]);
+  assert.deepEqual(timeouts, ["运行超时：任务启动 2 分钟内没有进展，已被中断。"]);
 });

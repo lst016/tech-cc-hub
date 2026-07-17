@@ -76,6 +76,13 @@ const channelLastSentReplySignature = new Map<string, string>();
 const channelProcessingReactions = new Map<string, { reactionId: string; target: ChannelReplyTarget }>();
 const channelProcessingReactionGenerations = new Map<string, number>();
 const channelMessageClaimsBySession = new Map<string, ChannelMessageClaim[]>();
+// 渠道心跳：长任务在飞书侧长时间静默时，定期发一条「仍在处理中」提示，避免被误以为卡死。
+// 仅对注册了回复目标的渠道会话生效；每个 turn 的首次 status:running 重新 arm，终态时清除。
+const channelHeartbeatTimers = new Map<string, ReturnType<typeof setTimeout>>();
+// 首次心跳：turn 启动后多久还没出结果就先发一条「仍在处理中」。
+const RUNNER_CHANNEL_HEARTBEAT_DELAY_MS = 45_000;
+// 后续心跳：首次之后每隔多久再提醒一次，直到终态。
+const RUNNER_CHANNEL_HEARTBEAT_INTERVAL_MS = 90_000;
 // Temporarily disable the embedded Figma Agent OAuth bridge; Codex OAuth remains the supported path.
 const FIGMA_AGENT_OAUTH_BRIDGE_ENABLED = false;
 const CONTINUATION_HISTORY_LIMIT = 1_000;
@@ -614,8 +621,15 @@ function emit(event: ServerEvent) {
       },
     };
     const assistantText = extractAssistantText(message);
+    console.log("[channel-debug] stream.message: sessionId=%s, messageType=%s, hasChannelTarget=%s, extractedAssistantText=%s",
+      nextEvent.payload.sessionId,
+      message.type,
+      channelReplyTargets.has(nextEvent.payload.sessionId) ? "yes" : "no",
+      assistantText ? `length=${assistantText.length}` : "null");
     if (assistantText && channelReplyTargets.has(nextEvent.payload.sessionId)) {
       channelLatestAssistantText.set(nextEvent.payload.sessionId, assistantText);
+      console.log("[channel-debug] channelLatestAssistantText SET: sessionId=%s, textLength=%d",
+        nextEvent.payload.sessionId, assistantText.length);
     }
   }
   if (nextEvent.type === "stream.user_prompt") {
@@ -641,8 +655,17 @@ function emit(event: ServerEvent) {
     nextEvent = withFigmaAuthUrlPermissionInput(nextEvent);
   }
 
+  if (nextEvent.type === "session.status" && nextEvent.payload.status === "running") {
+    // 渠道会话每次进入 running（新 turn 或 append 续聊）重新 arm 心跳；终态会清除。
+    armChannelHeartbeat(nextEvent.payload.sessionId);
+  }
+
   if (nextEvent.type === "session.status" && nextEvent.payload.status === "completed") {
+    console.log("[channel-debug] session.status:completed: sessionId=%s, channelLatestAssistantTextKeys=%j",
+      nextEvent.payload.sessionId,
+      [...channelLatestAssistantText.keys()]);
     finalizeChannelMessageClaims(nextEvent.payload.sessionId, false);
+    clearChannelHeartbeat(nextEvent.payload.sessionId);
     void maybeSendChannelReply(nextEvent.payload.sessionId);
     closeRunnerHandle(nextEvent.payload.sessionId);
     const session = sessions.getSession(nextEvent.payload.sessionId);
@@ -657,8 +680,14 @@ function emit(event: ServerEvent) {
 
   // 清理 runner handle，避免 appendPrompt 将消息写入已完成的 runner 内部 dead array
   if (nextEvent.type === "session.status" && nextEvent.payload.status === "error") {
+    console.log("[channel-debug] session.status:error: sessionId=%s, channelLatestAssistantTextKeys=%j, error=%s",
+      nextEvent.payload.sessionId,
+      [...channelLatestAssistantText.keys()],
+      nextEvent.payload.error?.substring(0, 200) ?? "none");
     finalizeChannelMessageClaims(nextEvent.payload.sessionId, true);
+    clearChannelHeartbeat(nextEvent.payload.sessionId);
     void clearChannelProcessingReaction(nextEvent.payload.sessionId);
+    void sendChannelErrorReply(nextEvent.payload.sessionId, nextEvent.payload.error);
     closeRunnerHandle(nextEvent.payload.sessionId);
     const session = sessions.getSession(nextEvent.payload.sessionId);
     notifySessionFinished({
@@ -861,11 +890,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function extractAssistantText(message: StreamMessage): string | null {
-  if (message.type !== "assistant") return null;
+  if (message.type !== "assistant") {
+    console.log("[channel-debug] extractAssistantText: message.type=%s, skipping", message.type);
+    return null;
+  }
   const sdkMessage = "message" in message && typeof message.message === "object" && message.message !== null
     ? message.message as { content?: unknown }
     : null;
   const content = Array.isArray(sdkMessage?.content) ? sdkMessage.content : [];
+  const blockTypes = content.map((item) => {
+    if (!item || typeof item !== "object") return "unknown";
+    const block = item as { type?: unknown };
+    return typeof block.type === "string" ? block.type : "unknown";
+  });
   const text = content
     .map((item) => {
       if (!item || typeof item !== "object") return "";
@@ -876,15 +913,34 @@ function extractAssistantText(message: StreamMessage): string | null {
     .join("\n\n")
     .trim();
 
-  return text || null;
+  const result = text || null;
+  console.log("[channel-debug] extractAssistantText: contentBlocks=%j, blockTypes=%j, extractedLength=%d, result=%s",
+    content.length, blockTypes, result?.length ?? 0, result ? "has-text" : "null");
+  return result;
 }
 
 async function maybeSendChannelReply(sessionId: string): Promise<void> {
   const target = channelReplyTargets.get(sessionId);
   const text = channelLatestAssistantText.get(sessionId)?.trim();
-  if (!target || !text || !channelReplySender) return;
+  console.log("[channel-debug] maybeSendChannelReply: sessionId=%s, hasTarget=%s, hasText=%s, textLength=%d, hasSender=%s, targetProvider=%s, targetConversationId=%s, targetExternalMessageId=%s",
+    sessionId,
+    target ? "yes" : "no",
+    text ? "yes" : "no",
+    text?.length ?? 0,
+    channelReplySender ? "yes" : "no",
+    target?.provider ?? "none",
+    target?.rawConversationId ?? "none",
+    target?.externalMessageId ?? "none");
+  if (!target || !text || !channelReplySender) {
+    console.warn("[channel-debug] maybeSendChannelReply SKIPPED: reason=%s",
+      !target ? "no-reply-target" : (!text ? "no-assistant-text" : "no-channel-sender"));
+    return;
+  }
   const replySignature = `${target.externalMessageId ?? target.rawConversationId}\0${text}`;
-  if (channelLastSentReplySignature.get(sessionId) === replySignature) return;
+  if (channelLastSentReplySignature.get(sessionId) === replySignature) {
+    console.warn("[channel-debug] maybeSendChannelReply SKIPPED: duplicate-reply-signature");
+    return;
+  }
 
   const attachments = target.provider === "lark"
     ? collectSafeChannelReplyAttachments(text, target.workspaceRoot)
@@ -908,19 +964,84 @@ async function maybeSendChannelReply(sessionId: string): Promise<void> {
     }
 
     const replyText = removeUploadedAttachmentReferences(text, uploaded);
+    console.log("[channel-debug] maybeSendChannelReply sending: sessionId=%s, replyTextLength=%d, uploadedCount=%d, attachmentsFound=%d",
+      sessionId, replyText?.length ?? 0, uploaded.length, attachments.length);
     if (replyText) {
       await channelReplySender.sendText(target, replyText);
       recordChannelOutboundMessage(target.workspaceRoot, target, replyText);
+      console.log("[channel-debug] maybeSendChannelReply text SENT OK: sessionId=%s", sessionId);
     }
     channelLastSentReplySignature.set(sessionId, replySignature);
   } catch (error) {
     console.warn("[channel] Failed to send channel reply:", error);
+    console.warn("[channel-debug] maybeSendChannelReply FAILED: sessionId=%s, errorMessage=%s", sessionId, (error as Error)?.message ?? String(error));
   } finally {
     await clearChannelProcessingReaction(sessionId);
   }
 }
 
+async function sendChannelErrorReply(sessionId: string, error?: string): Promise<void> {
+  const target = channelReplyTargets.get(sessionId);
+  if (!target || !channelReplySender) return;
+  // 先尝试回传超时/出错前已生成的部分文本（无文本时 maybeSendChannelReply 内部会跳过）。
+  await maybeSendChannelReply(sessionId);
+  // 再补一条兜底提示，确保渠道侧一定能看到任务未正常结束，避免"不返回结果"。
+  const reason = error?.trim() ? error.trim() : "任务执行失败";
+  const fallback = `⚠️ 任务未正常完成：${reason}\n（未生成完整结果，请重试或简化指令后重试）`;
+  const fallbackSignature = `${target.externalMessageId ?? target.rawConversationId}\0${fallback}`;
+  if (channelLastSentReplySignature.get(sessionId) === fallbackSignature) return;
+  try {
+    await channelReplySender.sendText(target, fallback);
+    recordChannelOutboundMessage(target.workspaceRoot, target, fallback);
+    channelLastSentReplySignature.set(sessionId, fallbackSignature);
+  } catch (sendError) {
+    console.warn("[channel] Failed to send channel error reply:", sendError);
+  }
+}
+
+// 渠道心跳：长任务在飞书侧长时间静默时，先发一条「仍在处理中」提示，避免被误以为卡死。
+// 仅对注册了回复目标的渠道会话生效；每个 turn 的首次 status:running 重新 arm，终态时清除。
+function armChannelHeartbeat(sessionId: string): void {
+  clearChannelHeartbeat(sessionId);
+  if (!channelReplyTargets.has(sessionId)) return;
+  scheduleChannelHeartbeat(sessionId, RUNNER_CHANNEL_HEARTBEAT_DELAY_MS);
+}
+
+function scheduleChannelHeartbeat(sessionId: string, delayMs: number): void {
+  const timer = setTimeout(() => void fireChannelHeartbeat(sessionId), delayMs);
+  timer.unref?.();
+  channelHeartbeatTimers.set(sessionId, timer);
+}
+
+async function fireChannelHeartbeat(sessionId: string): Promise<void> {
+  channelHeartbeatTimers.delete(sessionId);
+  const session = sessions.getSession(sessionId);
+  if (!session || session.status !== "running") return;
+  const target = channelReplyTargets.get(sessionId);
+  if (target && channelReplySender) {
+    const text = "⏳ 仍在处理中，请稍候…";
+    try {
+      await channelReplySender.sendText(target, text);
+      recordChannelOutboundMessage(target.workspaceRoot, target, text);
+    } catch (error) {
+      console.warn("[channel] Failed to send heartbeat:", error);
+    }
+  }
+  // 仍在 running 就继续按间隔提醒，直到终态清除。
+  scheduleChannelHeartbeat(sessionId, RUNNER_CHANNEL_HEARTBEAT_INTERVAL_MS);
+}
+
+function clearChannelHeartbeat(sessionId: string): void {
+  const timer = channelHeartbeatTimers.get(sessionId);
+  if (timer) {
+    clearTimeout(timer);
+    channelHeartbeatTimers.delete(sessionId);
+  }
+}
+
 function registerChannelSession(sessionId: string, target: ChannelReplyTarget, claim?: ChannelMessageClaim) {
+  console.log("[channel-debug] registerChannelSession: sessionId=%s, provider=%s, conversationId=%s, externalMessageId=%s",
+    sessionId, target.provider, target.rawConversationId, target.externalMessageId ?? "none");
   channelReplyTargets.set(sessionId, target);
   channelLatestAssistantText.delete(sessionId);
   if (claim) {

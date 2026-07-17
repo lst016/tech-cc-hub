@@ -227,6 +227,7 @@ export type ChannelConnectionConfig = {
   enabled: boolean;
   chatEnabled?: boolean;
   realtimeEnabled?: boolean;
+  groupChatEnabled?: boolean;
   transport: ChannelTransportMode;
   displayName?: string;
   botTokenEnv?: string;
