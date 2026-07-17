@@ -6,6 +6,7 @@ import {
   buildLarkCliStructuredTextArgs,
   createRecentLarkOutboundTracker,
   isLarkCliRealtimeEnabled,
+  isLarkGroupChatEnabled,
   normalizeLarkCliRealtimeEvent,
   parseCurrentLarkAppId,
   sendLarkCliTextWithFallback,
@@ -157,8 +158,79 @@ test("recent Lark outbound fingerprints expire instead of suppressing later huma
 
 test("Lark identity polling retries a missing bot identity without requiring an app change", () => {
   assert.equal(shouldRefreshLarkIdentity("cli_app", null, "cli_app"), true);
-  assert.equal(shouldRefreshLarkIdentity("cli_app", "ou_bot", "cli_app"), false);
-  assert.equal(shouldRefreshLarkIdentity("cli_app", "ou_bot", "other_app"), true);
+  assert.equal(shouldRefreshLarkIdentity("cli_app", "ou_bot", "cli_app"), true);
+  assert.equal(shouldRefreshLarkIdentity("cli_app", "ou_bot", "cli_app", "ou_owner"), false);
+  assert.equal(shouldRefreshLarkIdentity("cli_app", "ou_bot", "other_app", "ou_owner"), true);
+});
+
+test("Lark group chat toggle defaults on and can be turned off", () => {
+  assert.equal(isLarkGroupChatEnabled({}), true);
+  assert.equal(isLarkGroupChatEnabled({ channels: { items: { lark: {} } } }), true);
+  assert.equal(isLarkGroupChatEnabled({ channels: { items: { lark: { groupChatEnabled: true } } } }), true);
+  assert.equal(isLarkGroupChatEnabled({ channels: { items: { lark: { groupChatEnabled: false } } } }), false);
+});
+
+test("Lark group events are ignored when group chat is disabled", () => {
+  const groupEvent = {
+    type: "im.message.receive_v1",
+    content: "ping",
+    chat_id: "oc_demo",
+    chat_type: "group",
+    message_id: "om_demo",
+    sender_id: "ou_sender",
+    sender_type: "user",
+    mentions: [{ id: "ou_bot", key: "@_user_1", name: "bot" }],
+    create_time: "1784095200123",
+  };
+  assert.equal(normalizeLarkCliRealtimeEvent(groupEvent, "ou_bot", undefined, false), null);
+  const enabledMessage = normalizeLarkCliRealtimeEvent(groupEvent, "ou_bot", undefined, true);
+  assert.equal(enabledMessage?.text, "ping");
+});
+
+test("Lark group events only respond when the owner mentions the bot", () => {
+  const baseGroupEvent = {
+    type: "im.message.receive_v1",
+    content: "ping",
+    chat_id: "oc_demo",
+    chat_type: "group",
+    message_id: "om_demo",
+    sender_type: "user",
+    mentions: [{ id: "ou_bot", key: "@_user_1", name: "bot" }],
+    create_time: "1784095200123",
+  };
+
+  // 本人（owner）@ 机器人 → 响应
+  const ownerMessage = normalizeLarkCliRealtimeEvent(
+    { ...baseGroupEvent, sender_id: "ou_owner" },
+    "ou_bot",
+    undefined,
+    true,
+    "ou_owner",
+  );
+  assert.equal(ownerMessage?.text, "ping");
+  assert.equal(ownerMessage?.senderId, "ou_owner");
+
+  // 其他人 @ 机器人 → 忽略
+  assert.equal(
+    normalizeLarkCliRealtimeEvent(
+      { ...baseGroupEvent, sender_id: "ou_other_member" },
+      "ou_bot",
+      undefined,
+      true,
+      "ou_owner",
+    ),
+    null,
+  );
+
+  // owner 身份未知时不额外拦截，退化为原 mention 行为（不破坏启动初期可用性）
+  const unknownOwnerMessage = normalizeLarkCliRealtimeEvent(
+    { ...baseGroupEvent, sender_id: "ou_other_member" },
+    "ou_bot",
+    undefined,
+    true,
+    null,
+  );
+  assert.equal(unknownOwnerMessage?.text, "ping");
 });
 
 test("Lark CLI replies never fall through to webhook arguments", () => {

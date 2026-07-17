@@ -38,8 +38,8 @@ export function createRunnerActivityWatchdog(
       timer = undefined;
       onTimeout(
         receivedEvent
-          ? "Runner stopped receiving events for 5 minutes."
-          : "Runner did not receive any events for 2 minutes.",
+          ? "运行超时：任务连续 5 分钟没有进展，已被中断。"
+          : "运行超时：任务启动 2 分钟内没有进展，已被中断。",
       );
     }, timeoutMs);
     timer.unref?.();

@@ -20,6 +20,8 @@ export type LarkCliChannelBridge = {
 type LarkIdentity = {
   appId: string | null;
   botOpenId: string | null;
+  // 机器人所有者（lark-cli 当前登录用户）的 openId，用于把群聊响应限定为本人 @。
+  ownerOpenId: string | null;
 };
 
 type LarkOutboundFingerprintLookup = {
@@ -91,18 +93,32 @@ export function isLarkCliRealtimeEnabled(rootConfig: UnknownRecord): boolean {
     && lark.transport === "lark-cli";
 }
 
+export function isLarkGroupChatEnabled(rootConfig: UnknownRecord): boolean {
+  const channels = isRecord(rootConfig.channels) ? rootConfig.channels : {};
+  const items = isRecord(channels.items) ? channels.items : {};
+  const lark = isRecord(items.lark) ? items.lark : {};
+  // Default to enabled so existing setups keep responding to group @mentions.
+  return lark.groupChatEnabled !== false;
+}
+
 export function shouldRefreshLarkIdentity(
   activeAppId: string | null,
   botOpenId: string | null,
   nextAppId: string | null,
+  ownerOpenId?: string | null,
 ): boolean {
-  return !botOpenId || Boolean(activeAppId && nextAppId && nextAppId !== activeAppId);
+  // Bot 或 owner 身份任一缺失都需重拉，否则群聊 owner 限制无法生效。
+  return !botOpenId
+    || !ownerOpenId
+    || Boolean(activeAppId && nextAppId && nextAppId !== activeAppId);
 }
 
 export function normalizeLarkCliRealtimeEvent(
   value: unknown,
   botOpenId?: string | null,
   recentOutbound?: LarkOutboundFingerprintLookup,
+  groupChatEnabled: boolean = true,
+  ownerOpenId?: string | null,
 ): ChannelInboundMessage | null {
   if (!isRecord(value) || value.type !== LARK_EVENT_KEY) return null;
   const text = asString(value.content);
@@ -124,10 +140,13 @@ export function normalizeLarkCliRealtimeEvent(
 
   const chatType = asString(value.chat_type);
   if (chatType === "group") {
+    if (!groupChatEnabled) return null;
     if (!botOpenId) return null;
     const mentions = Array.isArray(value.mentions) ? value.mentions : [];
     const mentioned = mentions.some((mention) => isRecord(mention) && asString(mention.id) === botOpenId);
     if (!mentioned) return null;
+    // 群聊硬限制：只有机器人所有者本人 @ 机器人时才响应；其他成员 @ 一律忽略。
+    if (ownerOpenId && senderId !== ownerOpenId) return null;
   }
 
   const receivedAtRaw = asString(value.create_time) ?? asString(value.timestamp);
@@ -162,15 +181,17 @@ export function parseCurrentLarkAppId(stdout: string): string | null {
 function parseLarkIdentity(stdout: string): LarkIdentity {
   try {
     const value = JSON.parse(stdout) as unknown;
-    if (!isRecord(value)) return { appId: null, botOpenId: null };
+    if (!isRecord(value)) return { appId: null, botOpenId: null, ownerOpenId: null };
     const identities = isRecord(value.identities) ? value.identities : {};
     const bot = isRecord(identities.bot) ? identities.bot : {};
+    const user = isRecord(identities.user) ? identities.user : {};
     return {
       appId: asString(value.appId) ?? null,
       botOpenId: asString(bot.openId) ?? null,
+      ownerOpenId: asString(user.openId) ?? null,
     };
   } catch {
-    return { appId: null, botOpenId: null };
+    return { appId: null, botOpenId: null, ownerOpenId: null };
   }
 }
 
@@ -309,7 +330,7 @@ async function readCurrentIdentity(): Promise<LarkIdentity> {
     const { stdout } = await runExternalCli(LARK_CLI_COMMAND, ["auth", "status", "--verify", "--json"], { timeout: 15_000 });
     return parseLarkIdentity(stdout);
   } catch {
-    return { appId: null, botOpenId: null };
+    return { appId: null, botOpenId: null, ownerOpenId: null };
   }
 }
 
@@ -332,6 +353,7 @@ export function startLarkCliChannelBridge(
   let identityTimer: ReturnType<typeof setInterval> | null = null;
   let activeAppId: string | null = null;
   let botOpenId: string | null = null;
+  let ownerOpenId: string | null = null;
   const recentOutbound = createRecentLarkOutboundTracker();
 
   const realtimeEnabled = () => isLarkCliRealtimeEnabled(loadGlobalRuntimeConfig());
@@ -369,10 +391,11 @@ export function startLarkCliChannelBridge(
     stdoutBuffer += String(chunk);
     const lines = stdoutBuffer.split(/\r?\n/);
     stdoutBuffer = lines.pop() ?? "";
+    const groupChatEnabled = isLarkGroupChatEnabled(loadGlobalRuntimeConfig());
     for (const line of lines) {
       if (!line.trim()) continue;
       try {
-        const message = normalizeLarkCliRealtimeEvent(JSON.parse(line), botOpenId, recentOutbound);
+        const message = normalizeLarkCliRealtimeEvent(JSON.parse(line), botOpenId, recentOutbound, groupChatEnabled, ownerOpenId);
         if (!message) continue;
         void Promise.resolve(dispatch(message)).catch((error) => {
           console.warn("[lark-cli-channel] inbound dispatch failed:", error);
@@ -413,11 +436,12 @@ export function startLarkCliChannelBridge(
     const nextAppId = await readCurrentAppId();
     if (stopped) return;
     const appChanged = Boolean(restartOnChange && activeAppId && nextAppId && nextAppId !== activeAppId);
-    if (shouldRefreshLarkIdentity(activeAppId, botOpenId, nextAppId)) {
+    if (shouldRefreshLarkIdentity(activeAppId, botOpenId, nextAppId, ownerOpenId)) {
       const identity = await readCurrentIdentity();
       if (stopped) return;
       activeAppId = identity.appId ?? nextAppId;
       botOpenId = identity.botOpenId;
+      ownerOpenId = identity.ownerOpenId;
       if (appChanged) {
         stopConsumer();
         startConsumer();
@@ -433,6 +457,7 @@ export function startLarkCliChannelBridge(
     if (stopped) return;
     activeAppId = identity.appId;
     botOpenId = identity.botOpenId;
+    ownerOpenId = identity.ownerOpenId;
     startConsumer();
     identityTimer = setInterval(() => void refreshIdentity(true), IDENTITY_POLL_MS);
     identityTimer.unref?.();

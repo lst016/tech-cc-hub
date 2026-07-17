@@ -1454,6 +1454,33 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       });
     } finally {
       runnerWatchdog.dispose();
+      // 终态兜底：runner 任何退出路径都必须发过一次 session.status 终态（completed/error），
+      // 否则 UI 侧 session.status 会停在 running，发送按钮一直显示红色「工作中」。
+      // 正常路径已在 result 分支或 catch 里发过终态并置 emittedTerminalStatus=true；
+      // 这里只兜住「runner 退出但漏发终态」的边角路径（如 append 排队时下一 turn 异常、
+      // SDK 流提前结束但没走到 result 分支）。
+      if (!emittedTerminalStatus) {
+        emittedTerminalStatus = true;
+        const fallbackStatus = emittedSuccessfulResult ? "completed" : "error";
+        const fallbackError = emittedSuccessfulResult
+          ? undefined
+          : "Runner exited without a terminal status.";
+        onEvent({
+          type: "session.status",
+          payload: {
+            sessionId: session.id,
+            status: fallbackStatus,
+            title: session.title,
+            error: fallbackError,
+          },
+        });
+        if (fallbackStatus === "error") {
+          onEvent({
+            type: "runner.error",
+            payload: { sessionId: session.id, message: fallbackError ?? "Runner exited unexpectedly." },
+          });
+        }
+      }
     }
   })();
 

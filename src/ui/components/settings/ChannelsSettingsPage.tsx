@@ -74,6 +74,7 @@ const CHANNEL_DEFINITIONS: ChannelDefinition[] = [
       enabled: false,
       chatEnabled: false,
       realtimeEnabled: false,
+      groupChatEnabled: true,
       transport: "lark-cli",
       displayName: "飞书 / Lark",
     },
@@ -146,6 +147,9 @@ function readChannelRuntimeConfig(rootConfig: Record<string, unknown> | null): C
       realtimeEnabled: typeof rawItem.realtimeEnabled === "boolean"
         ? rawItem.realtimeEnabled
         : definition.defaults.realtimeEnabled,
+      groupChatEnabled: typeof rawItem.groupChatEnabled === "boolean"
+        ? rawItem.groupChatEnabled
+        : definition.defaults.groupChatEnabled,
       transport: asTransport(rawItem.transport, definition.defaultTransport),
       displayName: asText(rawItem.displayName) ?? definition.defaults.displayName,
       botTokenEnv: asText(rawItem.botTokenEnv) ?? definition.defaults.botTokenEnv,
@@ -468,6 +472,21 @@ function LarkConfigForm({
                 className="h-4 w-4 rounded border-[#C9CDD4] text-[#D96B3A] focus:ring-[#D96B3A]"
               />
               {channel.realtimeEnabled ? "已启用" : "未启用"}
+            </label>
+          </PreferenceRow>
+          <PreferenceRow
+            label="群聊消息"
+            description="开启后机器人才响应群聊中被 @ 的消息；关闭则只处理单聊，群聊消息一律忽略。仅在长连接开启时生效。"
+          >
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-[#E5E6EB] bg-[#F7F8FA] px-3 py-2 text-sm font-medium text-[#4E5969]">
+              <input
+                type="checkbox"
+                checked={channel.groupChatEnabled !== false}
+                disabled={!channel.realtimeEnabled}
+                onChange={(event) => onPatch({ groupChatEnabled: event.target.checked })}
+                className="h-4 w-4 rounded border-[#C9CDD4] text-[#D96B3A] focus:ring-[#D96B3A] disabled:opacity-40"
+              />
+              {channel.groupChatEnabled === false ? "已关闭" : "已启用"}
             </label>
           </PreferenceRow>
         </div>
