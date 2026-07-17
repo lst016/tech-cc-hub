@@ -1,5 +1,5 @@
 import { readFile, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 
 import { normalizePluginPackageManifests } from "../../../shared/plugin-platform/manifest.js";
 import { isSafePluginPackageRelativePath } from "../../../shared/plugin-platform/paths.js";
@@ -7,6 +7,7 @@ import type {
   PluginManifestValidationError,
   PluginManifestValidationResult,
 } from "../../../shared/plugin-platform/types.js";
+import { isPathInsidePluginPackage } from "./plugin-package-paths.js";
 
 type JsonFileResult =
   | { ok: true; found: false }
@@ -29,12 +30,6 @@ function failed(error: PluginManifestValidationError): PluginManifestValidationR
   return { ok: false, errors: [error], warnings: [] };
 }
 
-function isInsidePackage(packageRoot: string, targetPath: string): boolean {
-  const relativePath = relative(packageRoot, targetPath);
-  return relativePath === ""
-    || (!isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith(`..${sep}`));
-}
-
 async function readJsonFile(input: {
   packageRoot: string;
   filePath: string;
@@ -52,7 +47,7 @@ async function readJsonFile(input: {
     };
   }
 
-  if (!isInsidePackage(input.packageRoot, resolvedPath)) {
+  if (!isPathInsidePluginPackage(input.packageRoot, resolvedPath)) {
     return {
       ok: false,
       error: manifestError(input.manifestPath, "Manifest paths must stay inside the plugin package."),
