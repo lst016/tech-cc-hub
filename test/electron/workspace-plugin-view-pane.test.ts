@@ -17,7 +17,9 @@ describe("workspace plugin view pane", () => {
     assert.match(railSource, /workspacePlugins = \[\]/);
     assert.match(railSource, /workspacePlugins\.find\(\(plugin\) => plugin\.id === getWorkspacePluginIdFromTab/);
     assert.match(railSource, /<WorkspacePluginViewPane/);
-    assert.match(appSource, /window\.electron\.workspacePlugins\.list\(\)/);
+    assert.match(appSource, /window\.electron\.pluginPlatform\.list\(\)/);
+    assert.match(appSource, /projectPluginActivityRailCatalog\(catalog\.records\)/);
+    assert.match(appSource, /getLegacyWorkspacePluginsFromCatalog/);
     assert.match(appSource, /workspacePlugins=\{visibleWorkspacePlugins\}/);
     assert.match(appSource, /\[openWorkspacePluginIdsBySessionId, setOpenWorkspacePluginIdsBySessionId\]/);
     assert.match(appSource, /closeWorkspacePluginTab/);

@@ -63,6 +63,10 @@ import {
   type UiModelCatalogUpdatedPayload,
 } from "./utils/model-catalog-sync";
 import {
+  getLegacyWorkspacePluginsFromCatalog,
+  projectPluginActivityRailCatalog,
+} from "./utils/plugin-platform-catalog";
+import {
   DEV_BRIDGE_READY_EVENT,
   getDevElectronRuntimeSource,
   type DevElectronRuntimeSource,
@@ -393,10 +397,14 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!window.electron?.workspacePlugins?.list) return;
-    void window.electron.workspacePlugins.list()
-      .then((plugins) => {
-        if (!cancelled) setWorkspacePlugins(plugins);
+    if (!window.electron?.pluginPlatform?.list) return;
+    void window.electron.pluginPlatform.list()
+      .then((catalog) => {
+        if (!cancelled) {
+          setWorkspacePlugins(getLegacyWorkspacePluginsFromCatalog(
+            projectPluginActivityRailCatalog(catalog.records),
+          ));
+        }
       })
       .catch(() => {
         if (!cancelled) setWorkspacePlugins([]);
