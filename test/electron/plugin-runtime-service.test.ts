@@ -27,6 +27,42 @@ function createHarness() {
   const calls: Array<{ adapter: string; input: unknown }> = [];
   const registry = new PluginCapabilityGrantRegistry();
   const service = new PluginRuntimeService(registry, {
+    readSessionContext: (context, request) => {
+      calls.push({ adapter: "readSessionContext", input: { context, request } });
+      return { sessionId: "main-session" };
+    },
+    createMainMessage: (context, message) => {
+      calls.push({ adapter: "createMainMessage", input: { context, message } });
+      return { messageId: "message-1" };
+    },
+    startMainRun: (context, request) => {
+      calls.push({ adapter: "startMainRun", input: { context, request } });
+      return { runId: "run-1" };
+    },
+    cancelMainRun: (context, request) => {
+      calls.push({ adapter: "cancelMainRun", input: { context, request } });
+      return { cancelled: true };
+    },
+    setMainModel: (context, selection) => {
+      calls.push({ adapter: "setMainModel", input: { context, selection } });
+      return { selected: selection };
+    },
+    createChildSession: (context, request) => {
+      calls.push({ adapter: "createChildSession", input: { context, request } });
+      return { sessionId: "child-session" };
+    },
+    readChildSession: (context, request) => {
+      calls.push({ adapter: "readChildSession", input: { context, request } });
+      return { sessionId: "child-session", messages: [] };
+    },
+    publishChildSession: (context, request) => {
+      calls.push({ adapter: "publishChildSession", input: { context, request } });
+      return { published: true };
+    },
+    receiveSessionAttachments: (context, attachments) => {
+      calls.push({ adapter: "receiveSessionAttachments", input: { context, attachments } });
+      return { received: true };
+    },
     listModels: (context) => {
       calls.push({ adapter: "listModels", input: context });
       return [{ id: "model-a" }];
@@ -148,4 +184,69 @@ test("never invokes adapters for denied, invalid, or deactivated operations", as
     capability: "models.list",
   });
   assert.deepEqual(calls, []);
+});
+
+test("routes Standard real-time session inputs without granting main-session control", async () => {
+  const { calls, registry, service } = createHarness();
+  registry.activate({
+    manifest: manifest("session-observer", [
+      "session.context.read",
+      "session.main.message.create",
+      "session.child.create",
+      "session.child.read",
+      "session.attachments.receive",
+    ]),
+    profile: "standard",
+  });
+  const contextRequest = { sessionId: "main-session" };
+  const childRequest = { parentSessionId: "main-session" };
+  const attachments = [{ id: "image-1", mimeType: "image/png" }];
+
+  assert.equal((await service.readSessionContext("session-observer", contextRequest)).ok, true);
+  assert.equal((await service.createChildSession("session-observer", childRequest)).ok, true);
+  assert.equal((await service.readChildSession("session-observer", { sessionId: "child-session" })).ok, true);
+  assert.equal((await service.receiveSessionAttachments("session-observer", attachments)).ok, true);
+  assert.deepEqual(await service.createMainMessage("session-observer", { text: "no" }), {
+    ok: false,
+    code: "CAPABILITY_NOT_GRANTED",
+    capability: "session.main.message.create",
+  });
+  assert.deepEqual(calls.map((call) => call.adapter), [
+    "readSessionContext",
+    "createChildSession",
+    "readChildSession",
+    "receiveSessionAttachments",
+  ]);
+});
+
+test("keeps every main-session mutation behind its atomic capability", async () => {
+  const { calls, registry, service } = createHarness();
+  registry.activate({
+    manifest: manifest("session-controller", [
+      "session.main.message.create",
+      "session.main.run.start",
+      "session.main.run.cancel",
+      "session.main.model.set",
+    ]),
+    profile: "custom",
+    customGrants: [
+      "session.main.message.create",
+      "session.main.run.start",
+      "session.main.model.set",
+    ],
+  });
+
+  assert.equal((await service.createMainMessage("session-controller", { text: "hello" })).ok, true);
+  assert.equal((await service.startMainRun("session-controller", { sessionId: "main" })).ok, true);
+  assert.equal((await service.setMainModel("session-controller", { modelId: "model-b" })).ok, true);
+  assert.deepEqual(await service.cancelMainRun("session-controller", { runId: "run-1" }), {
+    ok: false,
+    code: "CAPABILITY_NOT_GRANTED",
+    capability: "session.main.run.cancel",
+  });
+  assert.deepEqual(calls.map((call) => call.adapter), [
+    "createMainMessage",
+    "startMainRun",
+    "setMainModel",
+  ]);
 });

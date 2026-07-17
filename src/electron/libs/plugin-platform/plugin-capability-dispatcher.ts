@@ -2,6 +2,15 @@ import type { PluginAtomicCapability } from "../../../shared/plugin-platform/typ
 import type { PluginCapabilityGrantRegistry } from "./plugin-capability-grant-registry.js";
 
 export type PluginCapabilityOperation =
+  | { kind: "session.context.read" }
+  | { kind: "session.main.message.create" }
+  | { kind: "session.main.run.start" }
+  | { kind: "session.main.run.cancel" }
+  | { kind: "session.main.model.set" }
+  | { kind: "session.child.create" }
+  | { kind: "session.child.read" }
+  | { kind: "session.child.publish" }
+  | { kind: "session.attachments.receive" }
   | { kind: "models.list" }
   | { kind: "models.select" }
   | { kind: "models.invoke" }

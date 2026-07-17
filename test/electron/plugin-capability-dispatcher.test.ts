@@ -183,3 +183,83 @@ test("custom named-tool grants cannot dispatch a different tool", async () => {
     capability: "tools.call:design_inspect_image",
   });
 });
+
+test("keeps main-session message creation separate from run control", async () => {
+  const registry = new PluginCapabilityGrantRegistry();
+  registry.activate({
+    manifest: manifest("session-writer", [], [
+      "session.main.message.create",
+      "session.main.run.start",
+      "session.main.run.cancel",
+    ]),
+    profile: "custom",
+    customGrants: ["session.main.message.create"],
+  });
+  const dispatched: string[] = [];
+
+  assert.deepEqual(await dispatchPluginCapabilityOperation({
+    registry,
+    pluginId: "session-writer",
+    operation: { kind: "session.main.message.create" },
+    dispatch: (operation) => {
+      dispatched.push(operation.kind);
+      return "created";
+    },
+  }), { ok: true, value: "created" });
+
+  for (const kind of ["session.main.run.start", "session.main.run.cancel"] as const) {
+    assert.deepEqual(await dispatchPluginCapabilityOperation({
+      registry,
+      pluginId: "session-writer",
+      operation: { kind },
+      dispatch: (operation) => {
+        dispatched.push(operation.kind);
+        return "should-not-run";
+      },
+    }), {
+      ok: false,
+      code: "CAPABILITY_NOT_GRANTED",
+      capability: kind,
+    });
+  }
+  assert.deepEqual(dispatched, ["session.main.message.create"]);
+});
+
+test("dispatches Standard session reads, child creation, and attachment delivery", async () => {
+  const registry = new PluginCapabilityGrantRegistry();
+  registry.activate({
+    manifest: manifest("session-observer", [], [
+      "session.context.read",
+      "session.child.create",
+      "session.child.read",
+      "session.attachments.receive",
+      "session.child.publish",
+    ]),
+    profile: "standard",
+  });
+
+  for (const kind of [
+    "session.context.read",
+    "session.child.create",
+    "session.child.read",
+    "session.attachments.receive",
+  ] as const) {
+    assert.deepEqual(await dispatchPluginCapabilityOperation({
+      registry,
+      pluginId: "session-observer",
+      operation: { kind },
+      dispatch: (operation) => operation.kind,
+    }), { ok: true, value: kind });
+  }
+
+  assert.deepEqual(await dispatchPluginCapabilityOperation({
+    registry,
+    pluginId: "session-observer",
+    operation: { kind: "session.child.publish" },
+    dispatch: () => "should-not-run",
+  }), {
+    ok: false,
+    code: "CAPABILITY_NOT_GRANTED",
+    capability: "session.child.publish",
+  });
+});
