@@ -97,7 +97,7 @@ export type PluginManifestValidationError = {
 };
 
 export type PluginManifestWarning = {
-  code: "UNKNOWN_OPTIONAL_CAPABILITY";
+  code: "UNKNOWN_OPTIONAL_CAPABILITY" | "MCP_RUNTIME_UNCLASSIFIED";
   path: string;
   message: string;
 };
@@ -116,6 +116,7 @@ export type PluginManifestValidationResult =
 
 export type NormalizePluginPackageManifestsInput = {
   codexManifest: unknown;
+  mcpManifest?: unknown;
   extensionManifest?: unknown;
   legacyWorkspaceManifest?: unknown;
 };

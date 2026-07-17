@@ -8,12 +8,19 @@ const codexCanvasManifest = JSON.parse(
   readFileSync("plugins/codex-canvas/.codex-plugin/plugin.json", "utf8"),
 ) as unknown;
 
+const codexCanvasMcpManifest = JSON.parse(
+  readFileSync("plugins/codex-canvas/.mcp.json", "utf8"),
+) as unknown;
+
 const legacyCanvasManifest = JSON.parse(
   readFileSync("plugins/codex-canvas/tech-cc-hub.plugin.json", "utf8"),
 ) as unknown;
 
 test("normalizes an unmodified Codex plugin package", () => {
-  const result = normalizePluginPackageManifests({ codexManifest: codexCanvasManifest });
+  const result = normalizePluginPackageManifests({
+    codexManifest: codexCanvasManifest,
+    mcpManifest: codexCanvasMcpManifest,
+  });
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
@@ -29,6 +36,171 @@ test("normalizes an unmodified Codex plugin package", () => {
     hooks: [],
   });
   assert.deepEqual(result.warnings, []);
+});
+
+test("keeps a remote-only MCP plugin declarative", () => {
+  const result = normalizePluginPackageManifests({
+    codexManifest: { name: "linear", version: "1.0.0", mcpServers: "./.mcp.json" },
+    mcpManifest: {
+      mcpServers: {
+        linear: { url: "https://mcp.linear.app/mcp" },
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.manifest.runtimeClass, "declarative");
+  assert.deepEqual(result.warnings, []);
+});
+
+test("classifies an inferred stdio MCP server as native-local", () => {
+  const result = normalizePluginPackageManifests({
+    codexManifest: { name: "local-mcp", version: "1.0.0", mcpServers: "./.mcp.json" },
+    mcpManifest: {
+      mcpServers: {
+        local: { command: "node", args: ["./server.mjs"] },
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.manifest.runtimeClass, "native-local");
+});
+
+test("classifies mixed remote and stdio MCP servers as native-local", () => {
+  const result = normalizePluginPackageManifests({
+    codexManifest: { name: "mixed-mcp", version: "1.0.0", mcpServers: "./.mcp.json" },
+    mcpManifest: {
+      mcpServers: {
+        remote: { type: "sse", url: "https://example.com/events" },
+        local: { type: "stdio", command: "node", args: ["./server.mjs"] },
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.manifest.runtimeClass, "native-local");
+});
+
+test("uses a warned native-local fallback when an MCP pointer cannot be inspected", () => {
+  const result = normalizePluginPackageManifests({
+    codexManifest: { name: "uninspected-mcp", version: "1.0.0", mcpServers: "./.mcp.json" },
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.manifest.runtimeClass, "native-local");
+  assert.equal(result.warnings[0]?.code, "MCP_RUNTIME_UNCLASSIFIED");
+  assert.equal(result.warnings[0]?.path, "mcp");
+});
+
+test("rejects an MCP server with both command and URL transports", () => {
+  const result = normalizePluginPackageManifests({
+    codexManifest: { name: "ambiguous-mcp", version: "1.0.0", mcpServers: "./.mcp.json" },
+    mcpManifest: {
+      mcpServers: {
+        ambiguous: { command: "node", url: "https://example.com/mcp" },
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.errors[0]?.code, "MANIFEST_INVALID");
+  assert.equal(result.errors[0]?.path, "mcp.mcpServers.ambiguous");
+});
+
+test("rejects an MCP server without a transport", () => {
+  const result = normalizePluginPackageManifests({
+    codexManifest: { name: "missing-mcp-transport", version: "1.0.0", mcpServers: "./.mcp.json" },
+    mcpManifest: { mcpServers: { missing: { args: ["./server.mjs"] } } },
+  });
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.errors[0]?.code, "MANIFEST_INVALID");
+  assert.equal(result.errors[0]?.path, "mcp.mcpServers.missing");
+});
+
+test("rejects MCP transport types that disagree with their fields", () => {
+  for (const [serverName, server] of [
+    ["http-command", { type: "http", command: "node" }],
+    ["stdio-url", { type: "stdio", url: "https://example.com/mcp" }],
+    ["unsupported-url", { type: "websocket", url: "https://example.com/mcp" }],
+  ] as const) {
+    const result = normalizePluginPackageManifests({
+      codexManifest: { name: "mismatched-mcp", version: "1.0.0", mcpServers: "./.mcp.json" },
+      mcpManifest: { mcpServers: { [serverName]: server } },
+    });
+
+    assert.equal(result.ok, false, `expected ${serverName} to be rejected`);
+    if (!result.ok) {
+      assert.equal(result.errors[0]?.code, "MANIFEST_INVALID");
+      assert.equal(result.errors[0]?.path, `mcp.mcpServers.${serverName}`);
+    }
+  }
+});
+
+test("rejects non-HTTP MCP URLs", () => {
+  const result = normalizePluginPackageManifests({
+    codexManifest: { name: "unsafe-remote-mcp", version: "1.0.0", mcpServers: "./.mcp.json" },
+    mcpManifest: { mcpServers: { remote: { url: "file:///tmp/mcp.sock" } } },
+  });
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.errors[0]?.code, "MANIFEST_INVALID");
+  assert.equal(result.errors[0]?.path, "mcp.mcpServers.remote");
+});
+
+test("rejects a parsed MCP manifest without a Codex MCP pointer", () => {
+  const result = normalizePluginPackageManifests({
+    codexManifest: { name: "orphan-mcp", version: "1.0.0" },
+    mcpManifest: { mcpServers: {} },
+  });
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.errors[0]?.code, "MANIFEST_INVALID");
+  assert.equal(result.errors[0]?.path, "mcp");
+});
+
+test("keeps an empty MCP server record declarative", () => {
+  const result = normalizePluginPackageManifests({
+    codexManifest: { name: "empty-mcp", version: "1.0.0", mcpServers: "./.mcp.json" },
+    mcpManifest: { mcpServers: {} },
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.manifest.runtimeClass, "declarative");
+});
+
+test("does not let a declarative extension override a local MCP transport", () => {
+  const result = normalizePluginPackageManifests({
+    codexManifest: { name: "local-override", version: "1.0.0", mcpServers: "./.mcp.json" },
+    mcpManifest: { mcpServers: { local: { type: "stdio", command: "node" } } },
+    extensionManifest: { schemaVersion: 1, runtime: { kind: "declarative" } },
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.manifest.runtimeClass, "native-local");
+});
+
+test("lets a native-local extension force a remote MCP package into the native runtime", () => {
+  const result = normalizePluginPackageManifests({
+    codexManifest: { name: "remote-override", version: "1.0.0", mcpServers: "./.mcp.json" },
+    mcpManifest: { mcpServers: { remote: { type: "http", url: "https://example.com/mcp" } } },
+    extensionManifest: { schemaVersion: 1, runtime: { kind: "native-local" } },
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.manifest.runtimeClass, "native-local");
 });
 
 test("keeps Codex interface capability labels out of host capability grants", () => {

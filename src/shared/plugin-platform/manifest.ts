@@ -176,6 +176,79 @@ function normalizeCommands(value: unknown, errors: PluginManifestValidationError
   return commands;
 }
 
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function classifyMcpRuntime(
+  mcpServersPath: string | undefined,
+  mcpManifest: unknown,
+  errors: PluginManifestValidationError[],
+  warnings: PluginManifestWarning[],
+): PluginRuntimeClass {
+  if (!mcpServersPath) {
+    if (mcpManifest !== undefined) {
+      pushInvalid(errors, "mcp", "A parsed MCP manifest requires a Codex mcpServers contribution.");
+    }
+    return "declarative";
+  }
+
+  if (mcpManifest === undefined) {
+    warnings.push({
+      code: "MCP_RUNTIME_UNCLASSIFIED",
+      path: "mcp",
+      message: "MCP transports were not inspected; using the native-local runtime as a safe fallback.",
+    });
+    return "native-local";
+  }
+
+  if (!isRecord(mcpManifest) || !isRecord(mcpManifest.mcpServers)) {
+    pushInvalid(errors, "mcp", "The MCP manifest must contain an mcpServers object.");
+    return "native-local";
+  }
+
+  let hasLocalServer = false;
+  for (const [serverName, value] of Object.entries(mcpManifest.mcpServers)) {
+    const path = `mcp.mcpServers.${serverName}`;
+    if (!isRecord(value)) {
+      pushInvalid(errors, path, "MCP server definitions must be objects.");
+      continue;
+    }
+
+    const command = normalizedString(value.command);
+    const url = normalizedString(value.url);
+    const type = value.type === undefined ? null : normalizedString(value.type);
+    if ((command && url) || (!command && !url)) {
+      pushInvalid(errors, path, "MCP servers must declare exactly one command or URL transport.");
+      continue;
+    }
+    if (value.type !== undefined && !type) {
+      pushInvalid(errors, path, "MCP transport type must be stdio, http, or sse.");
+      continue;
+    }
+
+    if (command) {
+      if (type && type !== "stdio") {
+        pushInvalid(errors, path, "Command-based MCP servers must use the stdio transport type.");
+        continue;
+      }
+      hasLocalServer = true;
+      continue;
+    }
+
+    if ((type && type !== "http" && type !== "sse") || !url || !isHttpUrl(url)) {
+      pushInvalid(errors, path, "URL-based MCP servers must use an HTTP or SSE transport with an HTTP(S) URL.");
+    }
+  }
+
+  return hasLocalServer ? "native-local" : "declarative";
+}
+
 export function normalizePluginPackageManifests(
   input: NormalizePluginPackageManifestsInput,
 ): PluginManifestValidationResult {
@@ -195,7 +268,7 @@ export function normalizePluginPackageManifests(
   const mcpServers = normalizeContributionPath(input.codexManifest.mcpServers, "codex.mcpServers", errors);
   const apps = normalizeContributionPath(input.codexManifest.apps, "codex.apps", errors);
 
-  let runtimeClass: PluginRuntimeClass = mcpServers ? "native-local" : "declarative";
+  let runtimeClass = classifyMcpRuntime(mcpServers, input.mcpManifest, errors, warnings);
   let surfaces: PluginSurfaceContribution[] = [];
   let commands: PluginCommandContribution[] = [];
   let hooks: string[] = [];
