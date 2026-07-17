@@ -105,6 +105,7 @@ import { BrowserWorkbenchManager, type BrowserWorkbenchBounds, type BrowserWorkb
 import { selectBrowserWorkbenchEvictionIds } from "./libs/browser-workbench/browser-workbench-retention.js";
 import { WorkspacePluginManager } from "./libs/workspace-plugins/workspace-plugin-manager.js";
 import type { WorkspacePluginImageGenerationRequest, WorkspacePluginImageGenerationResult } from "./libs/workspace-plugins/workspace-plugin-bridge.js";
+import { listPluginPackageCatalog } from "./libs/plugin-platform/plugin-package-registry.js";
 import { getGeneratedImagesRoot } from "./libs/image/image-generation-artifacts.js";
 import { startDevBackendBridge, DEV_BACKEND_BRIDGE_PORT } from "./dev-backend-bridge.js";
 import { buildSessionSlashCommandItems } from "./libs/slash-command-catalog.js";
@@ -3818,6 +3819,10 @@ app.on("ready", async () => {
                 error: error instanceof Error ? error.message : String(error),
             };
         }
+    });
+
+    ipcMainHandle("plugin-platform:list", async () => {
+      return await listPluginPackageCatalog(workspacePluginsRoot());
     });
 
     ipcMainHandle("workspace-plugins:list", async () => {

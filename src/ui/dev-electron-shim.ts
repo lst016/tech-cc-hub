@@ -1132,6 +1132,9 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     openPreviewFile: async () => ({ success: false, error: "浏览器预览态暂不支持用系统应用打开文件。" }),
     showPreviewItemInFolder: async () => ({ success: false, error: "浏览器预览态暂不支持在 Finder 中定位。" }),
     openPreviewDirectoryDialog: async () => [],
+    pluginPlatform: {
+      list: async () => ({ records: [], failures: [] }),
+    },
     workspacePlugins: {
       list: async () => [],
       open: async () => {
@@ -1423,6 +1426,9 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       openPreviewFile: async () => ({ success: false, error: "浏览器预览态暂不支持用系统应用打开文件。" }),
       showPreviewItemInFolder: async () => ({ success: false, error: "浏览器预览态暂不支持在 Finder 中定位。" }),
       openPreviewDirectoryDialog: async () => [],
+      pluginPlatform: {
+        list: async () => ({ records: [], failures: [] }),
+      },
       workspacePlugins: {
         list: async () => [],
         open: async () => {

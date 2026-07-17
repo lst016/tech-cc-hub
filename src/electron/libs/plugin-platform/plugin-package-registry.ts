@@ -1,5 +1,5 @@
 import { access, readdir, realpath } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 import { getPluginActivityRailDescriptor } from "../../../shared/plugin-platform/surfaces.js";
 import type {
@@ -26,6 +26,23 @@ export type PluginPackageRegistryFailure = {
 export type PluginPackageDiscoveryResult = {
   records: PluginPackageRegistryRecord[];
   failures: PluginPackageRegistryFailure[];
+};
+
+export type PluginPackageCatalogRecord = {
+  manifest: CanonicalPluginManifest;
+  warnings: PluginManifestWarning[];
+  activityRail: PluginActivityRailDescriptor | null;
+};
+
+export type PluginPackageCatalogFailure = {
+  packageName: string;
+  errors: PluginManifestValidationError[];
+  warnings: PluginManifestWarning[];
+};
+
+export type PluginPackageCatalog = {
+  records: PluginPackageCatalogRecord[];
+  failures: PluginPackageCatalogFailure[];
 };
 
 function registryError(path: string, message: string): PluginManifestValidationError {
@@ -111,4 +128,21 @@ export async function discoverPluginPackages(pluginsPath: string): Promise<Plugi
   }
 
   return { records, failures };
+}
+
+export async function listPluginPackageCatalog(pluginsPath: string): Promise<PluginPackageCatalog> {
+  const discovery = await discoverPluginPackages(pluginsPath);
+
+  return {
+    records: discovery.records.map((record) => ({
+      manifest: record.manifest,
+      warnings: record.warnings,
+      activityRail: record.activityRail,
+    })),
+    failures: discovery.failures.map((failure) => ({
+      packageName: basename(failure.packageRoot),
+      errors: failure.errors,
+      warnings: failure.warnings,
+    })),
+  };
 }
