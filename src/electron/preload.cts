@@ -128,6 +128,12 @@ electron.contextBridge.exposeInMainWorld("electron", {
         electron.ipcRenderer.invoke("preview-list-files", payload),
     searchLarkContacts: (query: string) =>
         electron.ipcRenderer.invoke("lark:search-contacts", query),
+    searchLarkShareChats: (query: string) =>
+        electron.ipcRenderer.invoke("lark:search-share-chats", query),
+    searchLarkShareRecipients: (query: string) =>
+        electron.ipcRenderer.invoke("lark:search-share-recipients", query),
+    sendLarkShareMessage: (input: { recipient: { kind: "user" | "chat"; id: string; name: string; detail?: string }; text: string }) =>
+        electron.ipcRenderer.invoke("lark:send-shared-message", input),
     getPreviewImageBase64: (payload: any) =>
         electron.ipcRenderer.invoke("preview-get-image-base64", payload),
     getPreviewFileMetadata: (payload: any) =>

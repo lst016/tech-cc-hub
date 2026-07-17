@@ -13,7 +13,7 @@ test("shows thinking placeholder while the assistant has not streamed any visibl
   }), true);
 });
 
-test("hides thinking placeholder once partial output starts or another entry appears", () => {
+test("hides thinking placeholder once partial output starts", () => {
   assert.equal(shouldShowChatThinkingPlaceholder({
     isRunning: true,
     partialMessage: "",
@@ -28,11 +28,26 @@ test("hides thinking placeholder once partial output starts or another entry app
     lastRenderableEntryType: "user_prompt",
   }), false);
 
+});
+
+test("keeps thinking placeholder visible between stream blocks while the session is still running", () => {
+  for (const lastRenderableEntryType of ["assistant", "process_group", "result"]) {
+    assert.equal(shouldShowChatThinkingPlaceholder({
+      isRunning: true,
+      partialMessage: "",
+      showPartialMessage: false,
+      lastRenderableEntryType,
+    }), true);
+  }
+});
+
+test("hides thinking placeholder while the runner is waiting for user input", () => {
   assert.equal(shouldShowChatThinkingPlaceholder({
     isRunning: true,
     partialMessage: "",
     showPartialMessage: false,
-    lastRenderableEntryType: "process_group",
+    lastRenderableEntryType: "assistant",
+    isWaitingForUserInput: true,
   }), false);
 });
 

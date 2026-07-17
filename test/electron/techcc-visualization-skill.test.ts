@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   buildTechccVisualizationSkillPrompt,
   isTechccVisualizationRequested,
+  resolveTechccVisualizationSdkSkills,
 } from "../../src/electron/libs/techcc-visualization-skill.js";
 import { buildClaudeSandboxSettings } from "../../src/electron/libs/claude/claude-sandbox-policy.js";
 
@@ -29,6 +30,18 @@ test("runtime prompt injects the isolated session directory and exact public con
     sessionDirectory: "D:/unused",
     skillMarkdown: "unused",
   }), undefined);
+});
+
+test("@可视化 hides unrelated SDK skills after its owned contract is injected", () => {
+  assert.deepEqual(
+    resolveTechccVisualizationSdkSkills("@可视化 创建 Agent 页面", ["claude-api", "frontend-design"]),
+    [],
+  );
+  assert.deepEqual(
+    resolveTechccVisualizationSdkSkills("创建 Agent 页面", ["claude-api"]),
+    ["claude-api"],
+  );
+  assert.equal(resolveTechccVisualizationSdkSkills("创建 Agent 页面"), undefined);
 });
 
 test("bundled skill is techcc-owned and contains no foreign runtime namespace", () => {

@@ -8,6 +8,15 @@ const source = [
   existsSync(footerPath) ? readFileSync(footerPath, "utf8") : "",
 ].join("\n");
 
+test("prompt composer keeps the add affordance for rich text actions", () => {
+  assert.match(source, /import \{[^}]*\bPlus\b[^}]*\} from "lucide-react";/);
+  assert.match(source, /onToggleSlashBrowser=\{\(\) => setShowSlashBrowser\(\(value\) => !value\)\}/);
+  assert.match(
+    source,
+    /onClick=\{onToggleSlashBrowser\}[\s\S]*?<Plus className="h-\[19px\] w-\[19px\]" aria-hidden="true" \/>[\s\S]*?<\/TooltipButton>/,
+  );
+});
+
 test("prompt composer icon controls expose visible hover tooltips", () => {
   assert.match(source, /import \{ TooltipButton \} from "\.\.\/TooltipButton";/);
 

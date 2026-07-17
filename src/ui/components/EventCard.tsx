@@ -1,11 +1,11 @@
 ﻿import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useCallback } from "react";
+import { Copy, CornerUpLeft, GitFork, MoreHorizontal, Pencil, Send } from "lucide-react";
 import type {
   PermissionResult,
   SDKAssistantMessage,
   SDKMessage,
-  SDKResultMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { PromptAttachment, StreamMessage } from "../types";
@@ -17,7 +17,16 @@ import { DecisionPanel } from "./DecisionPanel";
 import { AppModalOverlay } from "./AppModalOverlay";
 import { resolveImageAttachmentSrc } from "../../shared/attachments";
 import { copyTextToClipboard as copyText } from "../utils/clipboard";
-import { OPEN_BROWSER_WORKBENCH_URL_EVENT, OPEN_SIDE_CONVERSATION_EVENT, PREVIEW_OPEN_FILE_EVENT, PROMPT_FOCUS_EVENT, PROMPT_SUBMIT_EVENT } from "../events";
+import { toast } from "sonner";
+import {
+  FORK_ASSISTANT_MESSAGE_EVENT,
+  OPEN_BROWSER_WORKBENCH_URL_EVENT,
+  OPEN_SIDE_CONVERSATION_EVENT,
+  PREVIEW_OPEN_FILE_EVENT,
+  PROMPT_FOCUS_EVENT,
+  PROMPT_SUBMIT_EVENT,
+  type ForkAssistantMessageDetail,
+} from "../events";
 import { TASK_TOOL_NAMES } from "../../shared/claude-agent-teams";
 import { normalizeTaskCreateArgs } from "../../shared/plan-progress";
 import {
@@ -30,6 +39,7 @@ import { getCollapsibleTextPreview } from "../utils/collapsible-text-preview";
 import { GeneratedImageResultCard } from "./chat/GeneratedImageResultCard";
 import { EChartsCard } from "./chat/EChartsCard";
 import { InlineVisualizationCard } from "./chat/InlineVisualizationCard";
+import { LarkMessageShareDialog } from "./chat/LarkMessageShareDialog";
 import { getImageGenerationDisplayPromptFromSerialized } from "./prompt-input/image-generation-plugin";
 import { extractChartBlocks, stripChartBlocks } from "../utils/chart-blocks";
 import {
@@ -54,6 +64,11 @@ const TOOL_RESULT_PREVIEW_CHAR_LIMIT = 2_000;
 const TOOL_RESULT_RENDER_CHAR_LIMIT = 30_000;
 const USER_PROMPT_PARSE_CHAR_LIMIT = 40_000;
 const USER_PROMPT_RENDER_CHAR_LIMIT = 16_000;
+const LARK_USER_SEND_PERMISSION_AGENT_PROMPT = [
+  "请使用 lark-shared 和 lark-im 技能，帮助我为当前 lark-cli 登录用户一次性增量申请完整的飞书 IM 交互域权限（--domain im），覆盖本人发送、会话读取与搜索、消息回复、表情、置顶和群成员交互等后续可能用到的用户权限。",
+  "请先检查当前用户授权状态；若 IM 域权限尚未完整授权，使用 split-flow 发起 --domain im 授权，生成并展示新的授权链接和二维码，然后等待我完成授权。",
+  "权限范围仅限 IM 域，不要使用 --domain all，不要申请通讯录、云文档等无关权限，也不要发送消息或执行其他写操作来测试。",
+].join("\n");
 
 type SystemInitMessage = SDKMessage & {
   subtype?: string;
@@ -186,16 +201,6 @@ const formatTime = (value?: number) => {
   return `${date.getMonth() + 1}-${date.getDate()} ${hh}:${mm}`;
 };
 
-const formatMinutes = (ms: number | undefined) =>
-  typeof ms !== "number" ? "-" : `${(ms / 60000).toFixed(2)} min`;
-
-const formatTokens = (tokens: number | undefined) => {
-  if (typeof tokens !== "number") return "-";
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(4)} M`;
-  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)} k`;
-  return String(tokens);
-};
-
 const compactPreview = (text: string, limit = 160) => {
   const normalized = text.replace(/\s+/g, " ").trim();
   return normalized.length > limit ? `${normalized.slice(0, limit)}...` : normalized;
@@ -273,9 +278,9 @@ const StatusDot = ({
           : "bg-accent";
 
   return (
-    <span className="relative inline-flex h-2.5 w-2.5 shrink-0">
+    <span className="relative inline-flex h-2 w-2 shrink-0">
       {active && <span className={cx("absolute inline-flex h-full w-full animate-ping rounded-full opacity-70", colorClass)} />}
-      <span className={cx("relative inline-flex h-2.5 w-2.5 rounded-full", colorClass)} />
+      <span className={cx("relative inline-flex h-2 w-2 rounded-full", colorClass)} />
     </span>
   );
 };
@@ -289,7 +294,7 @@ const SectionLabel = ({
   active?: boolean;
   variant?: "accent" | "success" | "error" | "muted";
 }) => (
-  <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
+  <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted">
     <StatusDot variant={variant} active={active} />
     <span>{children}</span>
   </div>
@@ -301,18 +306,56 @@ const IconButton = ({
 }: {
   label: string;
   onClick: () => void;
-}) => (
-  <button
-    type="button"
-    aria-label={label}
-    title={label}
-    onMouseDown={(event) => event.preventDefault()}
-    onClick={onClick}
-    className="grid h-7 w-7 place-items-center rounded-full border border-black/8 bg-white/80 text-[13px] text-muted opacity-0 shadow-sm transition hover:border-accent/30 hover:text-accent group-hover:opacity-100"
-  >
-    {label === "复制" ? "⧉" : label === "引用" ? "↩" : label === "修改" ? "✎" : "⋯"}
-  </button>
-);
+}) => {
+  const Icon = label === "复制"
+    ? Copy
+    : label === "引用"
+      ? CornerUpLeft
+      : label === "修改"
+        ? Pencil
+        : MoreHorizontal;
+
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onClick}
+      className="grid h-7 w-7 place-items-center rounded-lg border border-transparent bg-white text-muted opacity-0 transition hover:bg-[#f3f5f8] hover:text-accent focus-visible:opacity-100 group-hover:opacity-100"
+    >
+      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+    </button>
+  );
+};
+
+const AssistantActionButton = ({
+  label,
+  onClick,
+}: {
+  label: "复制" | "引用" | "发送到飞书" | "Fork";
+  onClick: () => void;
+}) => {
+  const Icon = label === "复制"
+    ? Copy
+    : label === "引用"
+      ? CornerUpLeft
+      : label === "发送到飞书"
+        ? Send
+        : GitFork;
+
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className="grid h-7 w-7 place-items-center rounded-lg text-muted transition hover:bg-[#f3f5f8] hover:text-ink-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25"
+    >
+      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+    </button>
+  );
+};
 
 export function isMarkdown(text: string): boolean {
   if (!text || typeof text !== "string") return false;
@@ -883,6 +926,7 @@ const CollapsibleText = ({
   className,
   maxLines = MAX_VISIBLE_LINES,
   maxChars = 1400,
+  defaultExpanded = false,
   renderMarkdown = false,
   larkMentionTone = "rich-text",
   referenceSourceRole = "assistant",
@@ -893,13 +937,14 @@ const CollapsibleText = ({
   className?: string;
   maxLines?: number;
   maxChars?: number;
+  defaultExpanded?: boolean;
   renderMarkdown?: boolean;
   larkMentionTone?: LarkMentionTone;
   referenceSourceRole?: "user" | "assistant" | "tool" | "system";
   referenceSourceLabel?: string;
   referenceCapturedAt?: number;
 }) => {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const [selectionDraft, setSelectionDraft] = useState<{
     text: string;
     x: number;
@@ -1411,7 +1456,7 @@ const UserMessageCard = ({
   if (!hasRenderableContent) return null;
 
   return (
-    <div className="group mt-5 flex flex-col items-end">
+    <div className="group mt-4 flex flex-col items-end">
       <SectionLabel active={showIndicator} variant="accent">用户</SectionLabel>
       <div className="flex w-full justify-end gap-2">
         {!isEditing && canRevisePrompt && <IconButton label="修改" onClick={handleRevise} />}
@@ -1426,7 +1471,7 @@ const UserMessageCard = ({
         )}
         {isEditing ? (
           <form
-            className="w-full max-w-[78%] rounded-[26px] rounded-tr-[8px] border border-accent/20 bg-white px-4 py-3 shadow-[0_18px_34px_rgba(210,106,61,0.10)]"
+            className="w-full max-w-[82%] rounded-[14px] rounded-tr-[5px] border border-accent/20 bg-white px-4 py-3 shadow-[0_1px_3px_rgba(30,38,52,0.05)]"
             onSubmit={(event) => {
               event.preventDefault();
               void submitRevision();
@@ -1468,13 +1513,12 @@ const UserMessageCard = ({
             </div>
           </form>
         ) : hasVisiblePrompt && !shouldHidePromptBubble ? (
-          <div className="max-w-[78%] rounded-[26px] rounded-tr-[8px] border border-accent/16 bg-[linear-gradient(180deg,rgba(253,244,241,0.98),rgba(255,255,255,0.96))] px-5 py-4 text-ink-800 shadow-[0_18px_34px_rgba(210,106,61,0.08)]">
+          <div className="max-w-[82%] rounded-[14px] rounded-tr-[5px] border border-accent/16 bg-accent/8 px-4 py-3 text-ink-800 shadow-[0_1px_3px_rgba(30,38,52,0.04)]">
             <CollapsibleText
               text={visiblePrompt}
               renderMarkdown={!promptParsingSkipped}
               larkMentionTone="chat"
-              maxLines={4}
-              maxChars={180}
+              maxLines={24}
               referenceSourceRole="user"
               referenceSourceLabel="用户消息"
               referenceCapturedAt={message.capturedAt}
@@ -1607,13 +1651,16 @@ const AssistantTextCard = ({
   text,
   showIndicator = false,
   tone = "normal",
+  forkTarget,
 }: {
   title: string;
   text: string;
   showIndicator?: boolean;
   tone?: "normal" | "thinking";
+  forkTarget?: ForkAssistantMessageDetail;
 }) => {
   const [expanded, setExpanded] = useState(tone !== "thinking");
+  const [larkShareOpen, setLarkShareOpen] = useState(false);
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const thoughtExtraction = useMemo(() => extractThoughtBlocks(text), [text]);
   const visibleAssistantText = thoughtExtraction.visibleText || text;
@@ -1627,8 +1674,8 @@ const AssistantTextCard = ({
   ));
   const hasRichContent = hasCharts || hasVisualizations;
   const plainAssistantText = stripChartBlocks(stripVisualizationDirectives(visibleAssistantText));
-  const sendVisualizationFollowUp = useCallback((request: { prompt: string }) => {
-    appendTextToComposer(request.prompt);
+  const submitPromptToAgent = useCallback((prompt: string) => {
+    appendTextToComposer(prompt);
     window.setTimeout(() => {
       const submit = () => window.dispatchEvent(new CustomEvent(PROMPT_SUBMIT_EVENT));
       if (typeof window.requestAnimationFrame === "function") {
@@ -1638,6 +1685,13 @@ const AssistantTextCard = ({
       submit();
     }, 0);
   }, []);
+  const sendVisualizationFollowUp = useCallback((request: { prompt: string }) => {
+    submitPromptToAgent(request.prompt);
+  }, [submitPromptToAgent]);
+  const requestLarkPermissionAssist = useCallback(() => {
+    setLarkShareOpen(false);
+    submitPromptToAgent(LARK_USER_SEND_PERMISSION_AGENT_PROMPT);
+  }, [submitPromptToAgent]);
 
   const renderTextSegment = (segmentText: string, segmentKey: string) => {
     const chartSegments = extractChartBlocks(segmentText);
@@ -1646,12 +1700,13 @@ const AssistantTextCard = ({
       return segmentText.trim() ? (
         <div
           key={segmentKey}
-          className="rounded-[26px] rounded-tl-[8px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 text-ink-800 shadow-[0_14px_30px_rgba(30,38,52,0.055)]"
+          className="rounded-[14px] rounded-tl-[5px] border border-[#dce1e7] bg-white px-4 py-3.5 text-ink-800 shadow-[0_1px_3px_rgba(30,38,52,0.05)]"
         >
           <CollapsibleText
             text={segmentText.trim()}
             renderMarkdown
             maxLines={24}
+            defaultExpanded
             referenceSourceRole="assistant"
             referenceSourceLabel={title}
           />
@@ -1665,12 +1720,13 @@ const AssistantTextCard = ({
       ) : segment.text.trim() ? (
         <div
           key={`${segmentKey}-text-${index}`}
-          className="rounded-[26px] rounded-tl-[8px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 text-ink-800 shadow-[0_14px_30px_rgba(30,38,52,0.055)]"
+          className="rounded-[14px] rounded-tl-[5px] border border-[#dce1e7] bg-white px-4 py-3.5 text-ink-800 shadow-[0_1px_3px_rgba(30,38,52,0.05)]"
         >
           <CollapsibleText
             text={segment.text.trim()}
             renderMarkdown
             maxLines={24}
+            defaultExpanded
             referenceSourceRole="assistant"
             referenceSourceLabel={title}
           />
@@ -1679,13 +1735,28 @@ const AssistantTextCard = ({
     ));
   };
 
+  const handleFork = () => {
+    if (!forkTarget) return;
+    window.dispatchEvent(new CustomEvent<ForkAssistantMessageDetail>(FORK_ASSISTANT_MESSAGE_EVENT, {
+      detail: forkTarget,
+    }));
+  };
+  const handleCopy = async () => {
+    const copied = await copyText(plainAssistantText);
+    if (copied) {
+      toast.success("已复制");
+      return;
+    }
+    toast.error("复制失败", { description: "请检查剪贴板权限后重试。" });
+  };
+
   if (tone === "thinking") {
     return (
-      <div className="group mt-5">
+      <div className="group mt-4">
         <button
           type="button"
           onClick={() => setExpanded((value) => !value)}
-          className="mb-2 flex w-full items-center gap-2 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted"
+          className="mb-2 flex w-full items-center gap-2 text-left text-xs font-semibold text-muted"
         >
           <StatusDot variant="success" active={showIndicator} />
           <span>{title}</span>
@@ -1694,7 +1765,7 @@ const AssistantTextCard = ({
           </span>
         </button>
         {expanded && (
-          <div className="rounded-[22px] border border-black/6 bg-[#f4f7fb] px-4 py-3 text-sm text-ink-700">
+          <div className="rounded-[14px] border border-[#e0e4e9] bg-[#f6f8fa] px-4 py-3 text-sm text-ink-700">
             <CollapsibleText
               text={text}
               renderMarkdown={isMarkdown(text)}
@@ -1708,11 +1779,11 @@ const AssistantTextCard = ({
   }
 
   return (
-    <div className="group mt-5">
+    <div className="group mt-4">
       <SectionLabel active={showIndicator} variant="success">{title}</SectionLabel>
       <ThoughtDisplay thoughts={thoughtExtraction.thoughts} showIndicator={showIndicator} />
-      <div className="flex gap-2">
-        <div className={hasRichContent ? "min-w-0 flex-1 space-y-3" : "min-w-0 flex-1 rounded-[26px] rounded-tl-[8px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,249,252,0.94))] px-5 py-4 text-ink-800 shadow-[0_14px_30px_rgba(30,38,52,0.055)]"}>
+      <div>
+        <div className={hasRichContent ? "min-w-0 flex-1 space-y-3" : "min-w-0 flex-1 rounded-[14px] rounded-tl-[5px] border border-[#dce1e7] bg-white px-4 py-3.5 text-ink-800 shadow-[0_1px_3px_rgba(30,38,52,0.05)]"}>
           {hasRichContent ? contentSegments.map((segment, index) => (
             segment.type === "visualization" ? (
               activeSessionId ? (
@@ -1734,14 +1805,26 @@ const AssistantTextCard = ({
               text={visibleAssistantText}
               renderMarkdown
               maxLines={24}
+              defaultExpanded
               referenceSourceRole="assistant"
               referenceSourceLabel={title}
             />
           )}
         </div>
-        <IconButton label="引用" onClick={() => appendMessageReferenceToComposer(plainAssistantText, "assistant", title)} />
-        <IconButton label="复制" onClick={() => void copyText(plainAssistantText)} />
+        <div className="mt-1 flex items-center gap-0.5 pl-1">
+          <AssistantActionButton label="引用" onClick={() => appendMessageReferenceToComposer(plainAssistantText, "assistant", title)} />
+          <AssistantActionButton label="复制" onClick={() => void handleCopy()} />
+          <AssistantActionButton label="发送到飞书" onClick={() => setLarkShareOpen(true)} />
+          {forkTarget && <AssistantActionButton label="Fork" onClick={handleFork} />}
+        </div>
       </div>
+      {larkShareOpen && (
+        <LarkMessageShareDialog
+          message={plainAssistantText}
+          onClose={() => setLarkShareOpen(false)}
+          onRequestPermissionAssist={requestLarkPermissionAssist}
+        />
+      )}
     </div>
   );
 };
@@ -2003,18 +2086,18 @@ const ToolProcessGroup = ({
     : `${getToolDisplayLabel(firstContent)} · ${getToolSummary(firstContent) || firstContent.name}`;
 
   return (
-    <div className="mt-3 overflow-hidden rounded-[22px] border border-black/6 bg-white/72 shadow-[0_10px_22px_rgba(30,38,52,0.03)]">
+    <div className="mt-2 overflow-hidden rounded-[14px] border border-[#dfe4ea] bg-[#fbfcfe]">
       <button
         type="button"
-        className="flex w-full items-center gap-3 px-4 py-3 text-left"
+        className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left transition hover:bg-[#f5f7f9]"
         onClick={() => setExpanded((value) => !value)}
       >
         <StatusDot variant="accent" active={showIndicator && !expanded} />
-        <span className="shrink-0 rounded-lg bg-white px-2.5 py-1 text-sm font-semibold text-accent">过程明细</span>
-        <span className="min-w-0 flex-1 truncate text-sm text-muted">
+        <span className="shrink-0 text-xs font-semibold text-ink-700">过程明细</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted">
           {contents.length} 个工具调用 · {shortLabel}
         </span>
-        <span className="rounded-full border border-black/8 bg-white px-2 py-0.5 text-[11px] font-semibold text-muted">
+        <span className="rounded-lg border border-black/8 bg-white px-2 py-0.5 text-[11px] font-semibold text-muted">
           {expanded ? "收起" : "查看"}
         </span>
       </button>
@@ -2193,12 +2276,12 @@ const ToolResultGroup = ({ contents }: { contents: ToolResultContent[] }) => {
 
   return (
     <div className={cx(
-      "mt-3 overflow-hidden rounded-[22px] border px-4 py-3",
-      hasError ? "border-red-200 bg-red-50" : "border-black/6 bg-[#f4f7fb]",
+      "mt-2 overflow-hidden rounded-[14px] border px-4 py-2.5",
+      hasError ? "border-red-200 bg-red-50" : "border-[#dfe4ea] bg-[#f8fafc]",
     )}>
       <div className="flex items-center gap-2">
         <StatusDot variant={hasError ? "error" : "success"} />
-        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">过程输出</span>
+        <span className="text-xs font-semibold text-ink-700">过程输出</span>
         <span className="min-w-0 flex-1 truncate text-[11px] normal-case tracking-normal text-muted">
           {toolResults.length} 条工具返回{hasError ? " · 有失败" : ""}{preview ? ` · ${preview}` : ""}
         </span>
@@ -2250,7 +2333,7 @@ const AskUserQuestionCard = ({
   }
 
   return (
-    <div className="mt-3 rounded-[22px] border border-accent/16 bg-accent/8 px-4 py-3">
+    <div className="mt-2 rounded-[14px] border border-accent/16 bg-accent/8 px-4 py-3">
       <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-accent">
         <StatusDot variant="accent" />
         <span>向你提问</span>
@@ -2341,31 +2424,9 @@ const InfoItem = ({ name, value, wide = false }: { name: string; value: string; 
   </div>
 );
 
-const SessionResult = ({ message }: { message: SDKResultMessage }) => {
-  return (
-    <div className="mt-5">
-      <SectionLabel variant="success">本轮结果</SectionLabel>
-      <div className="rounded-[26px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(245,247,250,0.92))] px-4 py-4 shadow-[0_12px_26px_rgba(30,38,52,0.05)]">
-        <div className="grid gap-2 sm:grid-cols-4">
-          <MetricPill label="总耗时" value={formatMinutes(message.duration_ms)} />
-          <MetricPill label="API 耗时" value={formatMinutes(message.duration_api_ms)} />
-          <MetricPill label="输入" value={formatTokens(message.usage?.input_tokens)} />
-          <MetricPill label="输出" value={formatTokens(message.usage?.output_tokens)} />
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const MetricPill = ({ label, value }: { label: string; value: string }) => (
-  <div className="rounded-2xl bg-[#eef2f8] px-3 py-2">
-    <div className="text-[11px] font-semibold text-muted">{label}</div>
-    <div className="mt-1 text-sm font-semibold text-ink-800">{value}</div>
-  </div>
-);
-
 function MessageCardBase({
   message,
+  sessionId,
   isLast = false,
   isRunning = false,
   permissionRequest,
@@ -2373,6 +2434,7 @@ function MessageCardBase({
   onReviseUserPrompt,
 }: {
   message: StreamMessage;
+  sessionId?: string;
   isLast?: boolean;
   isRunning?: boolean;
   permissionRequest?: PermissionRequest;
@@ -2400,7 +2462,7 @@ function MessageCardBase({
 
   if (sdkMessage.type === "result") {
     if (sdkMessage.subtype === "success") {
-      return <SessionResult message={sdkMessage} />;
+      return null;
     }
     return (
       <div className="mt-4 rounded-[22px] border border-red-200 bg-red-50 px-4 py-3 text-red-700">
@@ -2412,6 +2474,9 @@ function MessageCardBase({
 
   if (sdkMessage.type === "assistant") {
     const messageContents = sdkMessage.message.content as MessageContent[];
+    const forkTarget = sessionId && sdkMessage.parent_tool_use_id === null && sdkMessage.uuid
+      ? { sessionId, messageId: String(sdkMessage.uuid) }
+      : undefined;
     const processToolContents = messageContents.filter((content): content is Extract<MessageContent, { type: "tool_use" }> =>
       content.type === "tool_use" && content.name !== "AskUserQuestion",
     );
@@ -2441,6 +2506,7 @@ function MessageCardBase({
                 title="助手"
                 text={content.text}
                 showIndicator={isLastContent && showIndicator}
+                forkTarget={forkTarget}
               />
             );
           }

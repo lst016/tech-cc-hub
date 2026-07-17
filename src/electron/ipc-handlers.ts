@@ -18,12 +18,18 @@ import { runClaude, type RunnerHandle } from "./libs/runner/runner.js";
 import { buildRunnerReuseKey } from "./libs/runner/runner-reuse.js";
 import { persistImageAttachmentReference, rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
 import { listAvailableClaudeAgents, resolveAgentRuntimeContext } from "./libs/agent-resolver.js";
-import { getCurrentApiConfig, getModelConfig, resolveApiConfigForModel } from "./libs/claude/claude-settings.js";
+import {
+  getCurrentApiConfig,
+  getModelConfig,
+  resolveApiConfigForModel,
+  supportsRemoteSessionResume,
+} from "./libs/claude/claude-settings.js";
 import { loadGlobalRuntimeConfig, saveGlobalRuntimeConfig } from "./libs/config-store.js";
 import { listExternalMcpServerInfos } from "./libs/external-mcp-servers.js";
 import { buildNextFigmaOfficialAuthStateRuntimeConfig, isFigmaMcpOAuthCallbackPrompt, redactFigmaMcpOAuthCallbackPrompt, type FigmaOfficialAuthState } from "./libs/figma-official-plugin.js";
 import { SessionStore } from "./libs/session-store.js";
 import { BtwRuntimeManager } from "./libs/btw-runtime-manager.js";
+import { forkStoredSession } from "./libs/session-fork/index.js";
 import { buildSessionSlashCommands, resolveInvokedLocalSlashDefinition } from "./libs/slash-command-catalog.js";
 import { stripInlineBase64ImagesFromMessage } from "./libs/tool-output-sanitizer.js";
 import { buildSessionWorkflowCatalog } from "./libs/workflow-catalog.js";
@@ -1659,6 +1665,52 @@ export async function handleClientEvent(event: ClientEvent) {
     return;
   }
 
+  if (event.type === "session.fork") {
+    try {
+      const result = await forkStoredSession({
+        store,
+        sourceSessionId: event.payload.sessionId,
+        upToMessageId: event.payload.upToMessageId,
+        title: event.payload.title,
+      });
+      emit({
+        type: "session.status",
+        payload: {
+          sessionId: result.session.id,
+          status: "idle",
+          title: result.session.title,
+          cwd: result.session.cwd,
+          model: result.session.model,
+          configProfileId: result.session.configProfileId,
+          executionMode: result.session.executionMode,
+          reasoningMode: result.session.reasoningMode,
+          permissionMode: result.session.permissionMode,
+          slashCommands: buildSessionSlashCommands({ cwd: result.session.cwd }),
+        },
+      });
+      emit({
+        type: "session.history",
+        payload: {
+          sessionId: result.session.id,
+          status: "idle",
+          messages: result.messages,
+          mode: "replace",
+          hasMore: false,
+          slashCommands: buildSessionSlashCommands({ cwd: result.session.cwd }),
+        },
+      });
+    } catch (error) {
+      emit({
+        type: "runner.error",
+        payload: {
+          sessionId: event.payload.sessionId,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+    return;
+  }
+
   if (event.type === "session.start") {
     const displayPrompt = event.payload.prompt;
     const agentPrompt = event.payload.agentPrompt?.trim() ? event.payload.agentPrompt : displayPrompt;
@@ -1864,6 +1916,7 @@ export async function handleClientEvent(event: ClientEvent) {
     const selectedModel = resolvedRoute?.model ?? requestedModel;
     const selectedConfigProfileId = resolvedRoute?.config.id ?? requestedConfigProfileId;
     const config = resolvedRoute?.config ?? defaultConfig;
+    const previousModel = resolveLatestMessageModel(history?.messages) || session.model || defaultConfig?.model;
     const modelConfig = config && selectedModel ? getModelConfig(config, selectedModel) : null;
     const nextExecutionMode = event.payload.runtime?.executionMode ?? session.executionMode ?? "foreground";
     const nextReasoningMode = event.payload.runtime?.reasoningMode ?? session.reasoningMode;
@@ -1879,22 +1932,41 @@ export async function handleClientEvent(event: ClientEvent) {
     if (runnerHandles.has(session.id)) {
       closeRunnerHandle(session.id);
     }
-    const continuationPayload = buildStatelessContinuationPayload(
-      historyMessagesForRun,
-      isFigmaOAuthCallback ? storagePrompt : agentPrompt,
-      currentAgentAttachments,
-      {
-        contextWindow: modelConfig?.contextWindow,
-        compressionThresholdPercent: modelConfig?.compressionThresholdPercent,
-        recentTurnCount: 5,
-        existingSummary: history?.session.continuationSummary,
-        existingSummaryMessageCount: history?.session.continuationSummaryMessageCount,
-        forceCompression: history?.hasMore,
-        historyMessageCount: history?.totalMessages,
-      },
+    const supportsResume = config ? supportsRemoteSessionResume(config) : true;
+    const canUseFigmaOAuthCallbackResume =
+      FIGMA_AGENT_OAUTH_BRIDGE_ENABLED && isFigmaOAuthCallback && Boolean(session.claudeSessionId);
+    const switchedModel = Boolean(
+      selectedModel
+      && previousModel
+      && selectedModel.trim() !== previousModel.trim(),
     );
-    const prompt = continuationPayload.prompt;
-    const resumeSessionId = undefined;
+    const canUseRemoteResume = Boolean(session.claudeSessionId)
+      && (supportsResume || canUseFigmaOAuthCallbackResume)
+      && !switchedModel
+      && !replacingHistoryId;
+    const thinResumePrompt = isFigmaOAuthCallback ? storagePrompt : agentPrompt;
+    const continuationPayload = canUseRemoteResume
+      ? null
+      : buildStatelessContinuationPayload(
+          historyMessagesForRun,
+          thinResumePrompt,
+          currentAgentAttachments,
+          {
+            contextWindow: modelConfig?.contextWindow,
+            compressionThresholdPercent: modelConfig?.compressionThresholdPercent,
+            recentTurnCount: 5,
+            existingSummary: history?.session.continuationSummary,
+            existingSummaryMessageCount: history?.session.continuationSummaryMessageCount,
+            forceCompression: history?.hasMore,
+            historyMessageCount: history?.totalMessages,
+          },
+        );
+    const prompt = canUseRemoteResume
+      ? thinResumePrompt
+      : continuationPayload?.prompt ?? thinResumePrompt;
+    const resumeSessionId = canUseRemoteResume
+      ? session.claudeSessionId
+      : undefined;
     const rehydratedAttachments = shouldRehydrateRecentImages(displayPrompt, displayAttachments)
       ? await loadRecentReferencedImages(history?.messages ?? [])
       : [];
@@ -1911,10 +1983,16 @@ export async function handleClientEvent(event: ClientEvent) {
       model: selectedModel,
       configProfileId: selectedConfigProfileId,
       lastPrompt: storagePrompt,
-      continuationSummary: continuationPayload.usedCompression ? continuationPayload.summaryText : undefined,
-      continuationSummaryMessageCount: continuationPayload.usedCompression
-        ? continuationPayload.summaryMessageCount
-        : undefined,
+      continuationSummary: canUseRemoteResume
+        ? session.continuationSummary
+        : continuationPayload?.usedCompression
+          ? continuationPayload.summaryText
+          : undefined,
+      continuationSummaryMessageCount: canUseRemoteResume
+        ? session.continuationSummaryMessageCount
+        : continuationPayload?.usedCompression
+          ? continuationPayload.summaryMessageCount
+          : undefined,
     });
     emit({
       type: "session.status",
@@ -1940,9 +2018,11 @@ export async function handleClientEvent(event: ClientEvent) {
           prompt: storagePrompt,
           attachments: attachmentsForRun,
           session,
-          historyMessages: continuationPayload.usedCompression ? [] : historyMessagesForRun,
+          historyMessages: canUseRemoteResume || continuationPayload?.usedCompression
+            ? []
+            : historyMessagesForRun,
           model: selectedModel,
-          continuationSummary: continuationPayload.summaryText,
+          continuationSummary: continuationPayload?.summaryText,
         }),
       },
     });

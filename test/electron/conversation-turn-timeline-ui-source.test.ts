@@ -19,6 +19,9 @@ test("chat stream mounts an accessible conversation turn timeline beside its con
   assert.match(appSource, /pendingMessageScrollIndexRef/);
   assert.match(appSource, /matchMedia\("\(prefers-reduced-motion: reduce\)"\)\.matches/);
   assert.match(appSource, /ref=\{chatContentRef\}[\s\S]{0,180}chat-stream-content/);
+  const chatStreamLine = appSource.split("\n").find((line) => line.includes("chat-stream-content")) ?? "";
+  assert.match(chatStreamLine, /px-1 py-4 sm:px-4/);
+  assert.doesNotMatch(chatStreamLine, /rounded-\[34px\]|border-black\/6|linear-gradient|shadow-\[|backdrop-blur/);
 
   assert.match(timelineSource, /<nav/);
   assert.match(timelineSource, /data-conversation-turn-timeline/);

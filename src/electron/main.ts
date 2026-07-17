@@ -111,6 +111,11 @@ import { buildSessionSlashCommandItems } from "./libs/slash-command-catalog.js";
 import { prepareExternalCliCommand, runExternalCli } from "./libs/external-cli.js";
 import { searchLarkContacts } from "./libs/lark-contact-search.js";
 import {
+  searchLarkShareChats,
+  searchLarkShareRecipients,
+  sendLarkShareMessage,
+} from "./libs/lark-message-share.js";
+import {
   buildFigmaOfficialActionResult,
   buildNextFigmaOfficialCodexAuthRuntimeConfig,
   buildNextFigmaOfficialDesktopRuntimeConfig,
@@ -1618,6 +1623,9 @@ function runTerminalCommandForRenderer(request: unknown): Promise<{
 ipcMain.handle("preview-list-directory", (_event, request: unknown) => listPreviewDirectoryForRenderer(request));
 ipcMain.handle("preview-list-files", (_event, request: unknown) => listPreviewFilesForRenderer(request));
 ipcMain.handle("lark:search-contacts", async (_event, query: unknown) => searchLarkContacts(query));
+ipcMain.handle("lark:search-share-chats", async (_event, query: unknown) => searchLarkShareChats(query));
+ipcMain.handle("lark:search-share-recipients", async (_event, query: unknown) => searchLarkShareRecipients(query));
+ipcMain.handle("lark:send-shared-message", async (_event, input: unknown) => sendLarkShareMessage(input));
 ipcMain.handle("sessions:list", (_event, payload?: { archived?: boolean; limit?: number }) => ({
   sessions: listStoredSessionsForRenderer(Boolean(payload?.archived), {
     limit: typeof payload?.limit === "number" ? payload.limit : undefined,

@@ -109,7 +109,7 @@ const MAX_HEIGHT = MAX_ROWS * LINE_HEIGHT;
 const EXPANDED_MAX_HEIGHT = "70vh";
 const IME_ENTER_GRACE_MS = 120;
 const FILE_MENTION_PREVIEW_LIMIT = 10;
-const COMPOSER_SURFACE_WIDTH_CLASS = "w-full min-w-[min(430px,_100%)] max-w-[clamp(920px,_calc(100vw-420px),_1320px)] xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]";
+const COMPOSER_SURFACE_WIDTH_CLASS = "w-full min-w-[min(430px,_100%)] max-w-[820px]";
 const EMPTY_CODE_REFERENCES: CodeReferenceDraft[] = [];
 const EMPTY_FILE_REFERENCES: FileReferenceDraft[] = [];
 const EMPTY_MESSAGE_REFERENCES: MessageReferenceDraft[] = [];
@@ -1624,7 +1624,7 @@ export function PromptInput({
       data-prompt-composer
       className={embedded
         ? "relative z-20 shrink-0 border-t border-black/6 bg-white/85 px-3 pb-3 pt-3"
-        : "fixed bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-[rgba(229,234,240,0.64)] via-[rgba(229,234,240,0.12)] to-transparent px-3 pb-3 pt-3 lg:pb-4"}
+        : "fixed bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-white via-white/92 to-transparent px-3 pb-3 pt-5 lg:pb-4"}
       style={embedded ? undefined : {
         marginLeft: `${leftOffset}px`,
         marginRight: `${rightOffset}px`,
@@ -1703,7 +1703,7 @@ export function PromptInput({
         </div>
       )}
       <div
-        className={`prompt-composer-surface prompt-composer-card relative mx-auto ${composerSurfaceWidthClass} rounded-[18px] border bg-white px-4 pb-3 pt-4 shadow-[0_10px_30px_rgba(15,18,24,0.07)] transition-colors ${isDraggingFiles ? "border-accent/45 shadow-[0_18px_42px_rgba(255,122,64,0.16)]" : "border-[#d9dde3]"} ${composerExpanded ? "prompt-composer-card--expanded" : ""}`}
+        className={`prompt-composer-surface prompt-composer-card relative mx-auto ${composerSurfaceWidthClass} rounded-[16px] border bg-white px-4 pb-2.5 pt-3.5 shadow-[0_4px_18px_rgba(15,18,24,0.08)] transition-colors ${isDraggingFiles ? "border-accent/45 shadow-[0_8px_28px_rgba(30,38,52,0.10)]" : "border-[#d9dee6]"} ${composerExpanded ? "prompt-composer-card--expanded" : ""}`}
       >
         {isDraggingFiles && (
           <div className="pointer-events-none absolute inset-2 z-10 grid place-items-center rounded-[22px] border border-dashed border-accent/45 bg-white/75 text-sm font-semibold text-accent shadow-inner backdrop-blur-sm">
@@ -1783,7 +1783,7 @@ export function PromptInput({
 
         <div className="relative grid gap-2">
           {!prompt && !promptFocused && (
-            <div className="pointer-events-none absolute inset-x-0 top-0 z-0 px-1 pb-2 pt-0 text-[17px] leading-7 text-[#a6a8ad]">
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-0 px-1 pb-2 pt-0 text-[15px] leading-6 text-[#9aa1ab]">
               {disabled
                 ? "先创建或选择一个会话..."
                 : attachments.length > 0
@@ -1806,7 +1806,7 @@ export function PromptInput({
             spellCheck={false}
             autoCorrect="off"
             autoCapitalize="off"
-            className="prompt-composer-editor relative z-10 min-h-[86px] w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words bg-transparent px-1 pb-2 pt-0 text-[17px] leading-7 text-ink-800 caret-ink-800 focus:outline-none aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+            className="prompt-composer-editor relative z-10 min-h-[72px] w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words bg-transparent px-1 pb-2 pt-0 text-[15px] leading-6 text-ink-800 caret-ink-800 focus:outline-none aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
             style={{ maxHeight: composerExpanded ? EXPANDED_MAX_HEIGHT : MAX_HEIGHT }}
             onInput={handleInput}
             onSelect={syncPromptEditorState}

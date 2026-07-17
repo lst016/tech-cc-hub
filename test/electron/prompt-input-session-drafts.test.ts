@@ -10,7 +10,7 @@ test("prompt text drafts are scoped to the active session", () => {
   assert.match(storeSource, /promptDraftsBySessionId: nextDrafts/);
   assert.match(
     storeSource,
-    /setActiveSessionId: \(id\) => set\(\(state\) => \(\{\s*activeSessionId: id,\s*prompt: state\.promptDraftsBySessionId\[getPromptDraftSessionKey\(id\)\] \?\? "",\s*\}\)\),/s,
+    /setActiveSessionId: \(id\) => set\(\(state\) => \{[\s\S]*?activeSessionId: id,\s*prompt: state\.promptDraftsBySessionId\[getPromptDraftSessionKey\(id\)\] \?\? "",/,
   );
 });
 

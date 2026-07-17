@@ -6,6 +6,23 @@ import { tmpdir } from "os";
 
 import { resolveExternalCliCommand, runExternalCli } from "../../src/electron/libs/external-cli.js";
 
+test("runExternalCli preserves process output when a command fails", async () => {
+  const failure = await runExternalCli(process.execPath, [
+    "-e",
+    "process.stdout.write('stdout-detail'); process.stderr.write('{\"error\":{\"message\":\"missing scope\"}}'); process.exit(7)",
+  ]).then(
+    () => null,
+    (error: unknown) => error,
+  );
+
+  assert.ok(failure instanceof Error);
+  assert.equal((failure as Error & { stdout?: string }).stdout, "stdout-detail");
+  assert.equal(
+    (failure as Error & { stderr?: string }).stderr,
+    '{"error":{"message":"missing scope"}}',
+  );
+});
+
 test("resolveExternalCliCommand prefers the stable Volta shim over stale PATH wrappers", (t) => {
   if (process.platform !== "win32") {
     t.skip("Windows Volta shim behavior only applies on win32");

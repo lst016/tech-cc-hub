@@ -18,11 +18,13 @@ import { usePromptActions } from "./components/prompt-input/usePromptActions";
 import { SessionAnalysisPage, buildSessionWorkflowOptimizationPrompt } from "./components/SessionAnalysisPage";
 // FeedbackDialog removed — uses direct browser link
 import {
+  FORK_ASSISTANT_MESSAGE_EVENT,
   OPEN_BROWSER_WORKBENCH_URL_EVENT,
   OPEN_SIDE_CONVERSATION_EVENT,
   OPEN_WORKSPACE_PLUGIN_EVENT,
   PROMPT_APPEND_RESULT_EVENT,
   PREVIEW_OPEN_FILE_EVENT,
+  type ForkAssistantMessageDetail,
   type OpenBrowserWorkbenchUrlDetail,
   type OpenWorkspacePluginDetail,
   type PromptAppendResultDetail,
@@ -49,6 +51,7 @@ import { appendTurnFileChangeEntries, type TurnFileChangesEntry } from "./utils/
 import { buildWorkflowAgentSummaries } from "./utils/workflow-agent-transcripts";
 import {
   ProcessGroupCard as SharedProcessGroupCard,
+  ProcessHistoryDisclosure,
   TurnFileChangesCard,
 } from "./components/chat/ProcessGroupCard";
 import { WorkflowAgentCard } from "./components/workflow/WorkflowAgentCard";
@@ -342,6 +345,7 @@ function App() {
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const shouldAutoScrollRef = useRef(true);
   const [hasNewMessages, setHasNewMessages] = useState(false);
+  const [expandedProcessHistorySessionId, setExpandedProcessHistorySessionId] = useState<string | null>(null);
   const [showSessionAnalysis, setShowSessionAnalysis] = useState(false);
   const [showCronPage, setShowCronPage] = useState(false);
   const [showTaskPanel, setShowTaskPanel] = useState(false);
@@ -434,6 +438,7 @@ function App() {
   }, []);
 
   const activeSessionId = useAppStore((s) => s.activeSessionId);
+  const processHistoryExpanded = expandedProcessHistorySessionId === activeSessionId;
   activeSessionIdRef.current = activeSessionId;
 
   const partialMessage = activeSessionId ? (partialMessagesBySessionId[activeSessionId] ?? "") : "";
@@ -936,10 +941,11 @@ function App() {
       }
 
       if (isProcessMessage(item.message)) {
-        pendingProcessGroup.push({
+        const processMessage = {
           originalIndex: item.originalIndex,
           message: item.message,
-        });
+        };
+        pendingProcessGroup.push(processMessage);
         continue;
       }
 
@@ -966,6 +972,20 @@ function App() {
     [messages],
   );
 
+  const processHistorySummary = useMemo(() => {
+    let firstIndex = -1;
+    let groupCount = 0;
+    let eventCount = 0;
+
+    renderEntries.forEach((entry, index) => {
+      if (entry.type !== "process_group") return;
+      if (firstIndex === -1) firstIndex = index;
+      groupCount += 1;
+      eventCount += entry.messages.length;
+    });
+
+    return { firstIndex, groupCount, eventCount };
+  }, [renderEntries]);
   const chatOverview = useMemo(() => {
     const latestUserEntry = [...renderEntries].reverse().find((entry) => entry.type === "message" && entry.message.type === "user_prompt");
     let tools = 0;
@@ -995,7 +1015,8 @@ function App() {
     partialMessage,
     showPartialMessage,
     lastRenderableEntryType,
-  }), [isRunning, partialMessage, showPartialMessage, lastRenderableEntryType]);
+    isWaitingForUserInput: permissionRequests.length > 0,
+  }), [isRunning, partialMessage, showPartialMessage, lastRenderableEntryType, permissionRequests.length]);
 
   const scrollMessageElementIntoView = useCallback((index: number): boolean => {
     const element = document.getElementById(`chat-message-${index}`);
@@ -1316,6 +1337,28 @@ function App() {
 
     setShowStartModal(true);
   }, [sendEvent, setCwd, setPrompt, setShowStartModal]);
+
+  useEffect(() => {
+    const handleForkAssistantMessage = (event: Event) => {
+      const detail = (event as CustomEvent<ForkAssistantMessageDetail>).detail;
+      const sessionId = detail?.sessionId?.trim();
+      const messageId = detail?.messageId?.trim();
+      if (!sessionId || !messageId) return;
+
+      const state = useAppStore.getState();
+      state.setGlobalError(null);
+      sendEvent({
+        type: "session.fork",
+        payload: {
+          sessionId,
+          upToMessageId: messageId,
+        },
+      });
+    };
+
+    window.addEventListener(FORK_ASSISTANT_MESSAGE_EVENT, handleForkAssistantMessage);
+    return () => window.removeEventListener(FORK_ASSISTANT_MESSAGE_EVENT, handleForkAssistantMessage);
+  }, [sendEvent]);
 
   useEffect(() => {
     const handleOpenBrowserWorkbenchUrl = (event: Event) => {
@@ -2073,13 +2116,13 @@ function App() {
                   className="chat-scroll flex-1 overflow-y-auto pl-16 pr-8 pt-8"
                   style={{ paddingBottom: "calc(var(--composer-bottom-offset, 160px) + 1.5rem)" }}
                 >
-                <div ref={chatContentRef} className="chat-stream-content mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] rounded-[34px] border border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(248,250,252,0.82))] px-8 py-7 shadow-[0_24px_60px_rgba(30,38,52,0.08)] backdrop-blur-xl xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
+                <div ref={chatContentRef} className="chat-stream-content mx-auto w-full max-w-[clamp(920px,_calc(100vw-420px),_1320px)] px-1 py-4 sm:px-4 xl:max-w-[clamp(920px,_calc(100vw-780px),_1320px)]">
                   <div ref={topSentinelRef} className="h-1" />
                   {renderEntries.length > 0 && (
-                    <div className="sticky top-3 z-10 mb-5 flex justify-end">
-                      <div className="flex items-center gap-1 rounded-full border border-black/6 bg-white/88 px-2 py-1 text-[11px] text-muted shadow-[0_14px_34px_rgba(30,38,52,0.10)] backdrop-blur-xl">
-                        <span className="rounded-full bg-[#eef2f8] px-2 py-1">轮次 {chatOverview.rounds}</span>
-                        <span className="rounded-full bg-[#eef2f8] px-2 py-1">工具 {chatOverview.tools}</span>
+                    <div className="sticky top-2 z-10 mb-4 flex justify-end">
+                      <div className="flex items-center gap-0.5 rounded-xl border border-[#e0e4e9] bg-white/92 px-1.5 py-1 text-[11px] text-muted shadow-[0_4px_16px_rgba(30,38,52,0.07)] backdrop-blur-xl">
+                        <span className="rounded-lg bg-[#f3f5f8] px-2 py-1">轮次 {chatOverview.rounds}</span>
+                        <span className="rounded-lg bg-[#f3f5f8] px-2 py-1">工具 {chatOverview.tools}</span>
                         <button
                           type="button"
                           className="rounded-full px-2 py-1 font-semibold text-accent transition hover:bg-accent/10"
@@ -2139,8 +2182,8 @@ function App() {
                     renderEntries.map((entry, idx) => {
                       if (entry.type === "separator") {
                         return (
-                          <div key={entry.key} className="mb-5 mt-7 flex items-center justify-center">
-                            <div className="flex items-center gap-3 rounded-full border border-black/6 bg-[#f5f7fb] px-4 py-2 text-xs font-medium text-muted shadow-[0_10px_24px_rgba(30,38,52,0.06)]">
+                          <div key={entry.key} className="mb-4 mt-6 flex items-center justify-center">
+                            <div className="flex items-center gap-2 rounded-lg border border-[#e2e6eb] bg-[#f7f9fb] px-3 py-1.5 text-xs font-medium text-muted">
                               <span className="h-1.5 w-1.5 rounded-full bg-accent" />
                               <span>第 {entry.roundNumber} 轮执行</span>
                             </div>
@@ -2161,12 +2204,22 @@ function App() {
                           </div>
                         );
                       }
-
                       if (entry.type === "process_group") {
                         return (
                           <div key={entry.key} id={`chat-message-${entry.originalIndex}`}>
+                            {idx === processHistorySummary.firstIndex && (
+                              <ProcessHistoryDisclosure
+                                expanded={processHistoryExpanded}
+                                groupCount={processHistorySummary.groupCount}
+                                eventCount={processHistorySummary.eventCount}
+                                onToggle={() => setExpandedProcessHistorySessionId((current) => (
+                                  current === activeSessionId ? null : activeSessionId
+                                ))}
+                              />
+                            )}
                             <SharedProcessGroupCard
                               messages={entry.messages}
+                              showProcessSummary={processHistoryExpanded}
                             />
                           </div>
                         );
@@ -2191,6 +2244,7 @@ function App() {
                           <Suspense fallback={<MarkdownLoadFallback />}>
                             <MessageCard
                               message={entry.message}
+                              sessionId={activeSessionId ?? undefined}
                               isLast={isLastMessage}
                               isRunning={isRunning}
                               permissionRequest={permissionRequests[0]?.toolName === "AskUserQuestion" ? undefined : permissionRequests[0]}
@@ -2206,8 +2260,8 @@ function App() {
                   {showThinkingPlaceholder && <ThinkingTextPlaceholder />}
 
                   {(showPartialMessage || partialMessage.trim()) && (
-                    <div className="partial-message rounded-[26px] border border-black/5 bg-[linear-gradient(180deg,rgba(245,247,250,0.95),rgba(255,255,255,0.86))] px-6 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
-                      <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
+                    <div className="partial-message rounded-[14px] border border-[#dde2e8] bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(30,38,52,0.04)]">
+                      <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted">
                         <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
                         <span>正在生成</span>
                       </div>

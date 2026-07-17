@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ArrowUp, Maximize2, Menu, Minimize2, Paperclip, Sparkles, Square, Target, Workflow } from "lucide-react";
+import { ArrowUp, Maximize2, Minimize2, Paperclip, Plus, Sparkles, Square, Target, Workflow } from "lucide-react";
 import type { RuntimeReasoningMode } from "../../types";
 import type { ModelOption } from "../models/ModelSelect";
 import { TooltipButton } from "../TooltipButton";
@@ -91,7 +91,7 @@ export function PromptComposerFooter({
           tooltipClassName={COMPOSER_ICON_TOOLTIP_CLASS}
           disabled={slashCommandDisabled}
         >
-          <Menu className="h-[19px] w-[19px]" aria-hidden="true" />
+          <Plus className="h-[19px] w-[19px]" aria-hidden="true" />
         </TooltipButton>
         <TooltipButton
           type="button"

@@ -836,6 +836,53 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         sessionMessages = [];
         syncSession();
       }
+      if (event.type === "session.fork") {
+        const sourceMessages = qaSideConversationMessagesBySessionId[event.payload.sessionId] ?? sessionMessages;
+        const forkPointIndex = sourceMessages.findIndex((message) => (
+          message.type === "assistant"
+          && "uuid" in message
+          && message.uuid === event.payload.upToMessageId
+        ));
+        if (forkPointIndex < 0) {
+          emit({
+            type: "runner.error",
+            payload: { sessionId: event.payload.sessionId, message: "找不到要 Fork 的助手消息。" },
+          });
+          return;
+        }
+
+        const forkedSessionId = `browser-preview-fork-${crypto.randomUUID()}`;
+        const forkedMessages = sourceMessages.slice(0, forkPointIndex + 1).map((message) => {
+          const cloned = structuredClone(message);
+          const historyId = crypto.randomUUID();
+          if ("uuid" in cloned) cloned.uuid = historyId;
+          if ("session_id" in cloned) cloned.session_id = forkedSessionId;
+          cloned.historyId = historyId;
+          return cloned;
+        });
+        emit({
+          type: "session.status",
+          payload: {
+            sessionId: forkedSessionId,
+            status: "idle",
+            title: event.payload.title?.trim() || `${sessionTitle}（分支）`,
+            cwd: browserPreviewCwd,
+            model: sessionModel,
+            slashCommands: browserPreviewSlashCommandNames,
+          },
+        });
+        emit({
+          type: "session.history",
+          payload: {
+            sessionId: forkedSessionId,
+            status: "idle",
+            mode: "replace",
+            hasMore: false,
+            slashCommands: browserPreviewSlashCommandNames,
+            messages: forkedMessages,
+          },
+        });
+      }
       if (event.type === "session.start") {
         sessionUpdatedAt = Date.now();
         sessionStatus = "completed";
@@ -1064,7 +1111,19 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     readPreviewFile: async (payload) => await invokePreviewFs("read", payload),
     listPreviewDirectory: async (payload) => await invokePreviewFs("list", payload),
     listPreviewFiles: async (payload) => await invokePreviewFs("files", payload),
-    searchLarkContacts: async () => [],
+    searchLarkContacts: async (query) => query.trim() ? [
+      { openId: "ou_preview_wangning", name: "王宁", department: "事业二处-技术二组-业务开发组" },
+      { openId: "ou_preview_qinningning", name: "秦宁宁", department: "事业二处-业务测试部-测试九组" },
+      { openId: "ou_preview_wangning_admin", name: "王宁", department: "职能中台-行政部" },
+    ] : [],
+    searchLarkShareChats: async (query) => query.trim() ? [
+      { kind: "chat" as const, id: "oc_preview_support", name: "海外客服-测试小分队", detail: "群聊" },
+      { kind: "chat" as const, id: "oc_preview_ai", name: "支撑AI 生态构建", detail: "群聊" },
+      { kind: "chat" as const, id: "oc_preview_food", name: "技术干饭人", detail: "群聊" },
+      { kind: "chat" as const, id: "oc_preview_online", name: "客服系统线上问题跟踪处理群", detail: "群聊" },
+    ] : [],
+    searchLarkShareRecipients: async () => [],
+    sendLarkShareMessage: async () => ({ messageId: "preview-message" }),
     getPreviewImageBase64: async (payload) => await invokePreviewFs("read", payload),
     getPreviewFileMetadata: async () => null,
     writePreviewFile: async (payload) => await invokePreviewFs("write", payload),
@@ -1343,7 +1402,19 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       readPreviewFile: async (payload) => await invokePreviewFs("read", payload),
       listPreviewDirectory: async (payload) => await invokePreviewFs("list", payload),
       listPreviewFiles: async (payload) => await invokePreviewFs("files", payload),
-    searchLarkContacts: async () => [],
+      searchLarkContacts: async (query) => query.trim() ? [
+        { openId: "ou_preview_wangning", name: "王宁", department: "事业二处-技术二组-业务开发组" },
+        { openId: "ou_preview_qinningning", name: "秦宁宁", department: "事业二处-业务测试部-测试九组" },
+        { openId: "ou_preview_wangning_admin", name: "王宁", department: "职能中台-行政部" },
+      ] : [],
+      searchLarkShareChats: async (query) => query.trim() ? [
+        { kind: "chat" as const, id: "oc_preview_support", name: "海外客服-测试小分队", detail: "群聊" },
+        { kind: "chat" as const, id: "oc_preview_ai", name: "支撑AI 生态构建", detail: "群聊" },
+        { kind: "chat" as const, id: "oc_preview_food", name: "技术干饭人", detail: "群聊" },
+        { kind: "chat" as const, id: "oc_preview_online", name: "客服系统线上问题跟踪处理群", detail: "群聊" },
+      ] : [],
+      searchLarkShareRecipients: async () => [],
+      sendLarkShareMessage: async () => ({ messageId: "preview-message" }),
       getPreviewImageBase64: async (payload) => await invokePreviewFs("read", payload),
       getPreviewFileMetadata: async () => null,
       writePreviewFile: async (payload) => await invokePreviewFs("write", payload),
