@@ -3,6 +3,7 @@ import type {
   PluginCapabilityGrantResult,
   PluginGrantProfile,
 } from "../../../shared/plugin-platform/types.js";
+import { fingerprintPluginCapabilities } from "./plugin-consent.js";
 import type { PluginCapabilityGrantRegistry } from "./plugin-capability-grant-registry.js";
 import { discoverPluginPackages } from "./plugin-package-registry.js";
 
@@ -10,6 +11,10 @@ export type ActivateInstalledPluginInput = {
   pluginId: string;
   profile: PluginGrantProfile;
   customGrants?: readonly PluginCapability[];
+  expectedConsent?: {
+    pluginVersion: string;
+    capabilityFingerprint: string;
+  };
 };
 
 export type ActivateInstalledPluginResult =
@@ -21,6 +26,11 @@ export type ActivateInstalledPluginResult =
   | {
       ok: false;
       code: "PLUGIN_NOT_INSTALLED";
+      pluginId: string;
+    }
+  | {
+      ok: false;
+      code: "PACKAGE_CHANGED_DURING_ACTIVATION";
       pluginId: string;
     }
   | {
@@ -57,6 +67,20 @@ export class PluginActivationService {
       return {
         ok: false,
         code: "PLUGIN_NOT_INSTALLED",
+        pluginId: input.pluginId,
+      };
+    }
+    if (
+      input.expectedConsent
+      && (
+        installed.manifest.version !== input.expectedConsent.pluginVersion
+        || fingerprintPluginCapabilities(installed.manifest)
+          !== input.expectedConsent.capabilityFingerprint
+      )
+    ) {
+      return {
+        ok: false,
+        code: "PACKAGE_CHANGED_DURING_ACTIVATION",
         pluginId: input.pluginId,
       };
     }
