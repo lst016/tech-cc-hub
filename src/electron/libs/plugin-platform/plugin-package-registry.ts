@@ -1,12 +1,16 @@
 import { access, readdir, realpath } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
-import { getPluginActivityRailDescriptor } from "../../../shared/plugin-platform/surfaces.js";
+import {
+  getPluginActivityRailDescriptor,
+  getPluginSurfaceDescriptors,
+} from "../../../shared/plugin-platform/surfaces.js";
 import type {
   CanonicalPluginManifest,
   PluginActivityRailDescriptor,
   PluginManifestValidationError,
   PluginManifestWarning,
+  PluginSurfaceDescriptor,
 } from "../../../shared/plugin-platform/types.js";
 import { loadPluginPackage } from "./plugin-package-loader.js";
 
@@ -15,6 +19,7 @@ export type PluginPackageRegistryRecord = {
   manifest: CanonicalPluginManifest;
   warnings: PluginManifestWarning[];
   activityRail: PluginActivityRailDescriptor | null;
+  surfaces: PluginSurfaceDescriptor[];
 };
 
 export type PluginPackageRegistryFailure = {
@@ -32,6 +37,7 @@ export type PluginPackageCatalogRecord = {
   manifest: CanonicalPluginManifest;
   warnings: PluginManifestWarning[];
   activityRail: PluginActivityRailDescriptor | null;
+  surfaces: PluginSurfaceDescriptor[];
 };
 
 export type PluginPackageCatalogFailure = {
@@ -124,6 +130,7 @@ export async function discoverPluginPackages(pluginsPath: string): Promise<Plugi
       manifest: loaded.result.manifest,
       warnings: loaded.result.warnings,
       activityRail: getPluginActivityRailDescriptor(loaded.result.manifest),
+      surfaces: getPluginSurfaceDescriptors(loaded.result.manifest),
     });
   }
 
@@ -138,6 +145,7 @@ export async function listPluginPackageCatalog(pluginsPath: string): Promise<Plu
       manifest: record.manifest,
       warnings: record.warnings,
       activityRail: record.activityRail,
+      surfaces: record.surfaces,
     })),
     failures: discovery.failures.map((failure) => ({
       packageName: basename(failure.packageRoot),

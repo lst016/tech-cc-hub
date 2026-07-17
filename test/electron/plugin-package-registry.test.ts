@@ -46,7 +46,16 @@ test("discovers headless and workspace packages without conflating UI presence",
 
     assert.deepEqual(result.records.map((record) => record.manifest.id), ["headless-agent", "workspace-agent"]);
     assert.equal(result.records[0]?.activityRail, null);
+    assert.deepEqual(result.records[0]?.surfaces, []);
     assert.equal(result.records[1]?.activityRail?.source, "enhanced");
+    assert.deepEqual(result.records[1]?.surfaces, [{
+      pluginId: "workspace-agent",
+      surfaceId: "workspace",
+      label: "Workspace Agent",
+      placement: "activity-rail",
+      source: "enhanced",
+      entry: "./ui/index.html",
+    }]);
     assert.deepEqual(result.failures, []);
   } finally {
     await rm(pluginsRoot, { recursive: true, force: true });

@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   getPluginActivityRailDescriptor,
+  getPluginSurfaceDescriptors,
   normalizePluginPackageManifests,
 } from "../../src/shared/plugin-platform/index.js";
 
@@ -123,4 +124,87 @@ test("rejects a second Activity Rail surface because tabs are keyed by plugin ID
   if (result.ok) return;
   assert.equal(result.errors[0]?.code, "MANIFEST_INVALID");
   assert.equal(result.errors[0]?.path, "extension.contributes.surfaces[1].placement");
+});
+
+test("projects composer, Activity Rail, and settings surfaces independently", () => {
+  const result = normalizePluginPackageManifests({
+    codexManifest: {
+      name: "multi-surface",
+      version: "1.0.0",
+      interface: { displayName: "Multi Surface" },
+    },
+    extensionManifest: {
+      schemaVersion: 1,
+      contributes: {
+        surfaces: [
+          { id: "quick-action", placement: "composer", entry: "./ui/quick-action.html" },
+          { id: "workbench", placement: "activity-rail", entry: "./ui/workbench.html" },
+          { id: "preferences", placement: "settings", entry: "./ui/preferences.html" },
+        ],
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(getPluginSurfaceDescriptors(result.manifest), [
+    {
+      pluginId: "multi-surface",
+      surfaceId: "quick-action",
+      label: "Multi Surface",
+      placement: "composer",
+      source: "enhanced",
+      entry: "./ui/quick-action.html",
+    },
+    {
+      pluginId: "multi-surface",
+      surfaceId: "workbench",
+      label: "Multi Surface",
+      placement: "activity-rail",
+      source: "enhanced",
+      entry: "./ui/workbench.html",
+    },
+    {
+      pluginId: "multi-surface",
+      surfaceId: "preferences",
+      label: "Multi Surface",
+      placement: "settings",
+      source: "enhanced",
+      entry: "./ui/preferences.html",
+    },
+  ]);
+});
+
+test("adds a legacy workspace only when no enhanced Activity Rail surface replaces it", () => {
+  const result = normalizePluginPackageManifests({
+    codexManifest: codexCanvasManifest,
+    mcpManifest: codexCanvasMcpManifest,
+    extensionManifest: {
+      schemaVersion: 1,
+      contributes: {
+        surfaces: [{ id: "quick-action", placement: "composer", entry: "./ui/action.html" }],
+      },
+    },
+    legacyWorkspaceManifest: legacyCanvasManifest,
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(getPluginSurfaceDescriptors(result.manifest), [
+    {
+      pluginId: "codex-canvas",
+      surfaceId: "quick-action",
+      label: "Codex Canvas",
+      placement: "composer",
+      source: "enhanced",
+      entry: "./ui/action.html",
+    },
+    {
+      pluginId: "codex-canvas",
+      surfaceId: "workspace",
+      label: "Codex Canvas",
+      placement: "activity-rail",
+      source: "legacy-workspace",
+    },
+  ]);
 });

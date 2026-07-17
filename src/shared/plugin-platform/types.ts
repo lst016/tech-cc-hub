@@ -59,6 +59,23 @@ export type PluginSurfaceContribution = {
   entry: string;
 };
 
+export type PluginSurfaceDescriptor =
+  | {
+      pluginId: string;
+      surfaceId: string;
+      label: string;
+      placement: PluginSurfacePlacement;
+      source: "enhanced";
+      entry: string;
+    }
+  | {
+      pluginId: string;
+      surfaceId: string;
+      label: string;
+      placement: "activity-rail";
+      source: "legacy-workspace";
+    };
+
 export type PluginActivityRailDescriptor = {
   pluginId: string;
   surfaceId: string;
