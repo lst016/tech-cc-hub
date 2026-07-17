@@ -83,8 +83,10 @@ test("deactivation revokes future calls", () => {
     profile: "standard",
   });
 
+  assert.equal(registry.isActive("temporary"), true);
   assert.equal(registry.authorize("temporary", "models.list").ok, true);
   assert.equal(registry.deactivate("temporary"), true);
+  assert.equal(registry.isActive("temporary"), false);
   assert.equal(registry.deactivate("temporary"), false);
   assert.deepEqual(registry.authorize("temporary", "models.list"), {
     ok: false,

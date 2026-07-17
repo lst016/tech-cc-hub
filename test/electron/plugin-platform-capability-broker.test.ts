@@ -118,3 +118,28 @@ test("fails closed when required capabilities prevent plugin activation", () => 
     capability: "models.list",
   });
 });
+
+test("keeps scoped wildcards inside their own capability namespace", () => {
+  const grant = activeGrant(["network.connect:*", "workspace.read:*"]);
+
+  assert.deepEqual(authorizePluginCapability({
+    grant,
+    capability: "network.connect:https://api.example.com",
+  }), {
+    ok: true,
+    capability: "network.connect:https://api.example.com",
+    grantedBy: "network.connect:*",
+  });
+  assert.equal(authorizePluginCapability({
+    grant,
+    capability: "workspace.read:docs/readme.md",
+  }).ok, true);
+  assert.equal(authorizePluginCapability({
+    grant,
+    capability: "secrets.use:api-token",
+  }).ok, false);
+  assert.equal(authorizePluginCapability({
+    grant,
+    capability: "tools.call:image_generate",
+  }).ok, false);
+});

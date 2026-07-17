@@ -78,6 +78,10 @@ export class PluginCapabilityGrantRegistry {
     return authorizePluginCapability({ grant, capability });
   }
 
+  isActive(pluginId: string): boolean {
+    return this.#grants.has(pluginId);
+  }
+
   deactivate(pluginId: string): boolean {
     return this.#grants.delete(pluginId);
   }

@@ -117,3 +117,27 @@ test("reports every missing atomic required capability and blocks activation", (
   ]);
   assert.equal(result.canActivate, false);
 });
+
+test("custom grants can narrow any declared scoped wildcard", () => {
+  const result = resolvePluginCapabilityGrant({
+    requested: {
+      required: [],
+      optional: [
+        "network.connect:*",
+        "workspace.read:*",
+        "secrets.use:declared-secret",
+      ],
+    },
+    profile: "custom",
+    customGrants: [
+      "network.connect:https://api.example.com",
+      "workspace.read:docs/**",
+      "secrets.use:undeclared-secret",
+    ],
+  });
+
+  assert.deepEqual(result.effectiveCapabilities, [
+    "network.connect:https://api.example.com",
+    "workspace.read:docs/**",
+  ]);
+});

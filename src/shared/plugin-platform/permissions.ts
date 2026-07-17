@@ -32,8 +32,12 @@ function isBundle(capability: PluginCapability): capability is PluginCapabilityB
   return capability in BUNDLE_EXPANSIONS;
 }
 
-function isNamedToolCapability(capability: PluginAtomicCapability): capability is `tools.call:${string}` {
-  return capability.startsWith("tools.call:") && capability !== "tools.call:*";
+function scopedWildcardFor(
+  capability: PluginAtomicCapability,
+): PluginAtomicCapability | null {
+  const separator = capability.indexOf(":");
+  if (separator < 1 || capability.endsWith(":*")) return null;
+  return `${capability.slice(0, separator)}:*` as PluginAtomicCapability;
 }
 
 export function expandPluginCapabilityBundles(
@@ -54,20 +58,20 @@ function resolveCustomCapabilities(
   customGrants: readonly PluginAtomicCapability[],
 ): PluginAtomicCapability[] {
   const effective: PluginAtomicCapability[] = [];
-  const requestedToolWildcard = requested.includes("tools.call:*");
-  const customToolWildcard = customGrants.includes("tools.call:*");
 
   for (const capability of requested) {
     if (customGrants.includes(capability)) {
       effective.push(capability);
-    } else if (isNamedToolCapability(capability) && customToolWildcard) {
-      effective.push(capability);
+    } else {
+      const wildcard = scopedWildcardFor(capability);
+      if (wildcard && customGrants.includes(wildcard)) effective.push(capability);
     }
   }
 
-  if (requestedToolWildcard && !customToolWildcard) {
-    for (const capability of customGrants) {
-      if (isNamedToolCapability(capability)) effective.push(capability);
+  for (const capability of customGrants) {
+    const requestedWildcard = scopedWildcardFor(capability);
+    if (requestedWildcard && requested.includes(requestedWildcard)) {
+      effective.push(capability);
     }
   }
   return unique(effective);

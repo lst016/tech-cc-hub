@@ -20,8 +20,12 @@ export type PluginCapabilityAuthorizationResult =
       capability: PluginAtomicCapability;
     };
 
-function isNamedToolCall(capability: PluginAtomicCapability): capability is `tools.call:${string}` {
-  return capability.startsWith("tools.call:") && capability !== "tools.call:*";
+function scopedWildcardFor(
+  capability: PluginAtomicCapability,
+): PluginAtomicCapability | null {
+  const separator = capability.indexOf(":");
+  if (separator < 1 || capability.endsWith(":*")) return null;
+  return `${capability.slice(0, separator)}:*` as PluginAtomicCapability;
 }
 
 export function authorizePluginCapability(
@@ -43,11 +47,12 @@ export function authorizePluginCapability(
     };
   }
 
-  if (isNamedToolCall(input.capability) && input.grant.effectiveCapabilities.includes("tools.call:*")) {
+  const wildcard = scopedWildcardFor(input.capability);
+  if (wildcard && input.grant.effectiveCapabilities.includes(wildcard)) {
     return {
       ok: true,
       capability: input.capability,
-      grantedBy: "tools.call:*",
+      grantedBy: wildcard,
     };
   }
 
