@@ -1,6 +1,7 @@
 import { normalizeWorkspacePluginManifest } from "../workspace-plugins.js";
 import {
-  PLUGIN_EXACT_CAPABILITIES,
+  PLUGIN_ATOMIC_EXACT_CAPABILITIES,
+  PLUGIN_CAPABILITY_BUNDLES,
   type CanonicalPluginManifest,
   type NormalizePluginPackageManifestsInput,
   type PluginCapability,
@@ -46,7 +47,8 @@ function isSafeRelativePluginPath(value: string): boolean {
 }
 
 function isKnownPluginCapability(value: string): value is PluginCapability {
-  if (PLUGIN_EXACT_CAPABILITIES.includes(value as typeof PLUGIN_EXACT_CAPABILITIES[number])) return true;
+  if (PLUGIN_ATOMIC_EXACT_CAPABILITIES.includes(value as typeof PLUGIN_ATOMIC_EXACT_CAPABILITIES[number])) return true;
+  if (PLUGIN_CAPABILITY_BUNDLES.includes(value as typeof PLUGIN_CAPABILITY_BUNDLES[number])) return true;
   const separator = value.indexOf(":");
   if (separator < 1 || separator === value.length - 1) return false;
   const prefix = value.slice(0, separator);

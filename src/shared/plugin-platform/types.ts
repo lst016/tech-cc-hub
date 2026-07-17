@@ -1,12 +1,11 @@
 import type { WorkspacePluginManifest } from "../workspace-plugins.js";
 
-export const PLUGIN_EXACT_CAPABILITIES = [
+export const PLUGIN_ATOMIC_EXACT_CAPABILITIES = [
   "session.context.read",
   "session.main.message.create",
   "session.main.run.start",
   "session.main.run.cancel",
   "session.main.model.set",
-  "session.main.control",
   "session.child.create",
   "session.child.read",
   "session.child.publish",
@@ -19,14 +18,37 @@ export const PLUGIN_EXACT_CAPABILITIES = [
   "desktop.control",
 ] as const;
 
-export type PluginExactCapability = typeof PLUGIN_EXACT_CAPABILITIES[number];
+export const PLUGIN_CAPABILITY_BUNDLES = ["session.main.control"] as const;
+
+export type PluginAtomicExactCapability = typeof PLUGIN_ATOMIC_EXACT_CAPABILITIES[number];
+export type PluginCapabilityBundle = typeof PLUGIN_CAPABILITY_BUNDLES[number];
 export type PluginScopedCapability =
   | `tools.call:${string}`
   | `workspace.read:${string}`
   | `workspace.write:${string}`
   | `network.connect:${string}`
   | `secrets.use:${string}`;
-export type PluginCapability = PluginExactCapability | PluginScopedCapability;
+export type PluginAtomicCapability = PluginAtomicExactCapability | PluginScopedCapability;
+export type PluginCapability = PluginAtomicCapability | PluginCapabilityBundle;
+
+export type PluginGrantProfile = "standard" | "full-trust" | "custom";
+
+export type PluginCapabilityRequestSet = {
+  required: readonly PluginCapability[];
+  optional: readonly PluginCapability[];
+};
+
+export type ResolvePluginCapabilityGrantInput = {
+  requested: PluginCapabilityRequestSet;
+  profile: PluginGrantProfile;
+  customGrants?: readonly PluginCapability[];
+};
+
+export type PluginCapabilityGrantResult = {
+  effectiveCapabilities: PluginAtomicCapability[];
+  missingRequiredCapabilities: PluginAtomicCapability[];
+  canActivate: boolean;
+};
 
 export type PluginRuntimeClass = "declarative" | "native-local";
 export type PluginSurfacePlacement = "activity-rail" | "settings" | "composer";
