@@ -86,7 +86,7 @@ An enhanced package may add `tech-cc-hub.json` beside the Codex manifest:
       {
         "id": "workspace",
         "placement": "activity-rail",
-        "entry": "http://127.0.0.1:{port}/"
+        "entry": "./ui/index.html"
       }
     ],
     "commands": [
@@ -115,6 +115,19 @@ An enhanced package may add `tech-cc-hub.json` beside the Codex manifest:
 ```
 
 `required` means the plugin cannot activate unless the user grants the capability. `optional` means the plugin must remain usable with the associated feature disabled. The normalized manifest records which contributions depend on each optional capability so the host can disable only the affected feature.
+
+### Surface presence and Activity Rail visibility
+
+The package author decides whether a plugin has a user interface through static surface contributions. The host does not infer UI visibility from runtime class, capabilities, MCP servers, Skills, Apps, or Commands:
+
+- a plugin with no `contributes.surfaces` value, or an empty surface list, is headless. Its non-UI contributions remain available, but it does not appear in the Activity Rail `+` menu or as a right-side tab;
+- a plugin with one `placement: "activity-rail"` surface is a workspace plugin. While closed, it appears once in the Activity Rail `+` menu under the canonical plugin `displayName`;
+- selecting that menu item opens a per-session `plugin:<pluginId>` tab. Closing the tab returns the plugin to the `+` menu without disabling the plugin or unregistering its non-UI contributions;
+- installation and enablement never open a workspace tab automatically. Opening is an explicit user action;
+- schema version 1 permits at most one `activity-rail` surface per plugin because the current tab and runtime routes are keyed by plugin ID. A second Activity Rail surface is a structured manifest validation error;
+- package-native surface entries remain safe paths relative to the package root. A legacy `tech-cc-hub.plugin.json` browser view is projected as one Activity Rail workspace descriptor by the compatibility adapter, while its loopback URL remains owned by `WorkspacePluginManager`.
+
+The canonical UI projection returns either one Activity Rail descriptor or `null`. A `null` projection is normal for a headless plugin and does not produce a warning. The renderer builds the `+` menu and open tabs only from non-null descriptors. Runtime and permission services continue to operate on all enabled plugins, including headless plugins.
 
 ### Canonical plugin record
 
@@ -497,6 +510,9 @@ explicit user action in active session
 - enhanced manifest validation rejects unknown required capabilities, unsafe paths, incompatible engines, and duplicate contributions.
 - MCP classification distinguishes remote-only, local-only, mixed, missing, and invalid parsed server configurations.
 - an enhancement manifest cannot classify a stdio MCP server as declarative.
+- a headless plugin produces no Activity Rail descriptor while retaining its non-UI contributions.
+- one Activity Rail surface produces one closed-state `+` option and one user-opened tab; duplicate Activity Rail surfaces are rejected.
+- a legacy workspace manifest projects one Activity Rail descriptor without turning its loopback URL into a package-relative entry.
 - grant-profile expansion produces the correct atomic capabilities.
 - capability intersection rejects undeclared, ungranted, unavailable, and out-of-lease calls.
 - Full Trust expands `tools.call:*`; Custom grants preserve named-tool restrictions.
@@ -533,6 +549,7 @@ explicit user action in active session
 - No privileged model or tool request succeeds without a valid user-triggered operation lease.
 - Native local code is clearly identified and requires Full Trust in the first release.
 - Current workspace plugins, skills, MCP servers, and Claude plugins remain available throughout adapter migration.
+- Plugin authors control UI presence through surface contributions: headless plugins never appear in the Activity Rail, and workspace plugins appear in `+` until explicitly opened.
 - Permission changes, crashes, update failures, and denied calls produce structured errors and audit evidence.
 
 ## Delivery Decomposition
