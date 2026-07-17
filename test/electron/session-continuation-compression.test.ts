@@ -4,28 +4,30 @@ import test from "node:test";
 
 const ipcHandlersSource = readFileSync("src/electron/ipc-handlers.ts", "utf8");
 const runnerSource = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
-const sessionContinueStart = ipcHandlersSource.indexOf('if (event.type === "session.continue")');
-const sessionContinueEnd = ipcHandlersSource.indexOf(
-  "/* Legacy session.continue append path removed:",
-  sessionContinueStart,
+const continueStart = ipcHandlersSource.indexOf('if (event.type === "session.continue")');
+const continueBranch = ipcHandlersSource.slice(
+  continueStart,
+  ipcHandlersSource.indexOf("    return;\n    /* Legacy session.continue append path removed:", continueStart),
 );
-const activeSessionContinueSource = ipcHandlersSource.slice(sessionContinueStart, sessionContinueEnd);
 
-test("session continue builds one stateless payload before starting a fresh runner", () => {
-  assert.match(activeSessionContinueSource, /const continuationPayload = buildStatelessContinuationPayload\(/);
-  assert.match(activeSessionContinueSource, /const prompt = continuationPayload\.prompt;/);
-  assert.match(activeSessionContinueSource, /const resumeSessionId = undefined;/);
-  assert.doesNotMatch(activeSessionContinueSource, /initialPromptContextBudget/);
-  assert.ok(
-    activeSessionContinueSource.indexOf("if (runnerHandles.has(session.id))") < activeSessionContinueSource.indexOf("const continuationPayload = buildStatelessContinuationPayload("),
-    "session.continue should close any warm runner before rebuilding stateless history",
+test("session continue keeps app-managed compression as the no-resume fallback", () => {
+  assert.match(
+    continueBranch,
+    /const continuationPayload = canUseRemoteResume\s*\? null\s*: buildStatelessContinuationPayload\(/,
   );
+  assert.match(continueBranch, /const resumeSessionId = canUseRemoteResume[\s\S]*?: undefined;/);
+  assert.ok(
+    continueBranch.indexOf("if (runnerHandles.has(session.id))") < continueBranch.indexOf("const continuationPayload = canUseRemoteResume"),
+    "session.continue should close any warm runner before choosing resume or stateless fallback",
+  );
+  assert.match(continueBranch, /forceCompression: history\?\.hasMore,/);
+  assert.match(continueBranch, /historyMessageCount: history\?\.totalMessages,/);
 });
 
 test("prompt ledger reflects the stateless payload selected before runner startup", () => {
   assert.match(
-    activeSessionContinueSource,
-    /historyMessages: continuationPayload\.usedCompression \? \[\] : historyMessagesForRun/,
+    continueBranch,
+    /historyMessages: canUseRemoteResume \|\| continuationPayload\?\.usedCompression\s*\? \[\]\s*: historyMessagesForRun/,
   );
 });
 

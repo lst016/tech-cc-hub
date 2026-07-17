@@ -55,6 +55,19 @@ test("process groups no longer render file-change cards inline", () => {
   assert.doesNotMatch(processGroupComponent, /changedFiles|TurnFileChangesCard/);
 });
 
+test("turn-level changed-file cards stay separate from collapsed process details", () => {
+  const processGroupSource = readFileSync("src/ui/components/chat/ProcessGroupCard.tsx", "utf8");
+  const turnCardStart = processGroupSource.indexOf("const TurnFileChangesCard");
+  const processGroupStart = processGroupSource.indexOf("const ProcessGroupCard");
+  const processGroupBody = processGroupSource.slice(processGroupStart);
+
+  assert.notEqual(turnCardStart, -1);
+  assert.notEqual(processGroupStart, -1);
+  assert.ok(turnCardStart < processGroupStart);
+  assert.match(processGroupSource.slice(turnCardStart, processGroupStart), /buildProcessChangedFiles\(messages, workspace\)/);
+  assert.doesNotMatch(processGroupBody, /buildProcessChangedFiles\(messages, workspace\)/);
+});
+
 test("main and shared transcripts append the same turn-level file-change entries", () => {
   const appSource = readFileSync("src/ui/App.tsx", "utf8");
   const transcriptSource = readFileSync("src/ui/components/chat/ChatTranscript.tsx", "utf8");

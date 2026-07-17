@@ -147,6 +147,7 @@ import {
   buildTechccVisualizationSkillPrompt,
   isTechccVisualizationRequested,
   loadTechccVisualizationSkillMarkdown,
+  resolveTechccVisualizationSdkSkills,
 } from "../techcc-visualization-skill.js";
 
 export type RunnerOptions = {
@@ -958,9 +959,10 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         agentContext.allowedTools,
         agentContext.enforceAllowedTools,
       );
-      const enabledSkills = agentContext.skills.length > 0
-        ? agentContext.skills
-        : undefined;
+      const enabledSkills = resolveTechccVisualizationSdkSkills(
+        currentDisplayPrompt,
+        agentContext.skills,
+      );
       const hooks = buildQualityHooks(resolvedCwd, {
         config,
         mainModelName: effectiveModel,
@@ -1081,7 +1083,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             workspaceRoot: resolvedCwd,
             additionalWriteRoots: visualizationSessionDirectory ? [visualizationSessionDirectory] : undefined,
           }),
-          ...(enabledSkills ? { skills: enabledSkills } : {}),
+          ...(enabledSkills !== undefined ? { skills: enabledSkills } : {}),
           systemPrompt: buildClaudeCodeSystemPromptOption(systemPromptAppend),
           includePartialMessages: runtimeProfile.includePartialMessages,
           includeHookEvents: runtimeProfile.includeHookEvents,

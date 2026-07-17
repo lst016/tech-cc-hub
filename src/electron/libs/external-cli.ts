@@ -179,7 +179,10 @@ export function runExternalCli(command: string, args: string[], options: RunExte
       windowsHide: true,
     }, (error, stdout, stderr) => {
       if (error) {
-        reject(error);
+        reject(Object.assign(error, {
+          stdout: String(stdout ?? ""),
+          stderr: String(stderr ?? ""),
+        }));
         return;
       }
       resolve({ stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });

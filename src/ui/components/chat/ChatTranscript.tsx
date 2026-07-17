@@ -1,8 +1,12 @@
-import { Suspense, useMemo } from "react";
+import { Suspense, useMemo, useState } from "react";
 import type { StreamMessage } from "../../types.js";
 import { appendTurnFileChangeEntries, type TurnFileChangesEntry } from "../../utils/turn-file-changes.js";
 import { MessageCard } from "../EventCard.js";
-import { ProcessGroupCard, TurnFileChangesCard } from "./ProcessGroupCard.js";
+import {
+  ProcessGroupCard,
+  ProcessHistoryDisclosure,
+  TurnFileChangesCard,
+} from "./ProcessGroupCard.js";
 
 function MarkdownLoadFallback() {
   return (
@@ -32,9 +36,9 @@ function isProcessMessage(message: StreamMessage): boolean {
 
   if (message.type === "assistant") {
     return contentItems.every((item) => (
-      isRecord(item) &&
-      item.type === "tool_use" &&
-      item.name !== "AskUserQuestion"
+      isRecord(item)
+      && item.type === "tool_use"
+      && item.name !== "AskUserQuestion"
     ));
   }
 
@@ -54,7 +58,7 @@ export function buildChatTranscriptEntries(
   messages: StreamMessage[],
   keyPrefix: string,
 ): ChatTranscriptEntry[] {
-  const entries: ChatTranscriptEntry[] = [];
+  const entries: Array<Exclude<ChatTranscriptEntry, TurnFileChangesEntry>> = [];
   let pendingProcessGroup: Array<{ originalIndex: number; message: StreamMessage }> = [];
 
   const flushProcessGroup = () => {
@@ -91,25 +95,43 @@ export function buildChatTranscriptEntries(
 
 export function ChatTranscript({
   messages,
+  sessionId,
   workspace,
   isRunning,
   emptyMessage,
   keyPrefix = "transcript",
 }: {
   messages: StreamMessage[];
+  sessionId?: string;
   workspace?: string;
   isRunning: boolean;
   emptyMessage?: StreamMessage;
   keyPrefix?: string;
 }) {
-  const renderMessages = messages.length > 0 ? messages : emptyMessage ? [emptyMessage] : [];
-  const entries = useMemo(() => buildChatTranscriptEntries(renderMessages, keyPrefix), [keyPrefix, renderMessages]);
+  const entries = useMemo(() => buildChatTranscriptEntries(
+    messages.length > 0 ? messages : emptyMessage ? [emptyMessage] : [],
+    keyPrefix,
+  ), [emptyMessage, keyPrefix, messages]);
+  const [expandedProcessHistoryKey, setExpandedProcessHistoryKey] = useState<string | null>(null);
+  const processHistoryExpanded = expandedProcessHistoryKey === keyPrefix;
+  const processHistorySummary = useMemo(() => {
+    let firstIndex = -1;
+    let groupCount = 0;
+    let eventCount = 0;
+
+    entries.forEach((entry, index) => {
+      if (entry.type !== "process_group") return;
+      if (firstIndex === -1) firstIndex = index;
+      groupCount += 1;
+      eventCount += entry.messages.length;
+    });
+
+    return { firstIndex, groupCount, eventCount };
+  }, [entries]);
 
   return (
     <>
       {entries.map((entry, index) => {
-        const isLastMessage = index === entries.length - 1
-          || (index === entries.length - 2 && entries.at(-1)?.type === "turn_file_changes");
         if (entry.type === "turn_file_changes") {
           return (
             <div key={entry.key}>
@@ -118,12 +140,26 @@ export function ChatTranscript({
           );
         }
 
+        const isLastMessage = entries
+          .slice(index + 1)
+          .every((nextEntry) => nextEntry.type === "turn_file_changes");
         if (entry.type === "process_group") {
           return (
             <div key={entry.key} id={`${keyPrefix}-message-${entry.originalIndex}`}>
+              {index === processHistorySummary.firstIndex && (
+                <ProcessHistoryDisclosure
+                  expanded={processHistoryExpanded}
+                  groupCount={processHistorySummary.groupCount}
+                  eventCount={processHistorySummary.eventCount}
+                  onToggle={() => setExpandedProcessHistoryKey((current) => (
+                    current === keyPrefix ? null : keyPrefix
+                  ))}
+                />
+              )}
               <ProcessGroupCard
                 messages={entry.messages}
                 messageIdPrefix={keyPrefix}
+                showProcessSummary={processHistoryExpanded}
               />
             </div>
           );
@@ -134,6 +170,7 @@ export function ChatTranscript({
             <Suspense fallback={<MarkdownLoadFallback />}>
               <MessageCard
                 message={entry.message}
+                sessionId={sessionId}
                 isLast={isLastMessage}
                 isRunning={isRunning}
               />

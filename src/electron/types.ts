@@ -283,6 +283,7 @@ export type ClientEvent =
   | { type: "btw.parent.close_all"; payload: { parentSessionId: string } }
   | { type: "session.create"; payload: { title?: string; cwd?: string; allowedTools?: string } }
   | { type: "session.start"; payload: { title: string; prompt: string; agentPrompt?: string; workspaceContext?: LinkedWorkspaceContext; cwd?: string; allowedTools?: string; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides } }
+  | { type: "session.fork"; payload: { sessionId: string; upToMessageId: string; title?: string } }
   | { type: "session.continue"; payload: { sessionId: string; prompt: string; agentPrompt?: string; workspaceContext?: LinkedWorkspaceContext; attachments?: PromptAttachment[]; runtime?: RuntimeOverrides; displayUserPrompt?: boolean; replaceHistoryId?: string } }
   | { type: "session.set_model"; payload: { sessionId: string; model: string; configProfileId?: string } }
   | { type: "session.append"; payload: { sessionId: string; requestId?: string; prompt: string; agentPrompt?: string; attachments?: PromptAttachment[] } }

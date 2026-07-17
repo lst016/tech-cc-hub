@@ -111,6 +111,8 @@ code, pre, textarea.mono, input.mono {
 }
 
 .chat-scroll {
+  background: rgba(255, 255, 255, 0.86);
+  overscroll-behavior: contain;
   scrollbar-width: auto;
   scrollbar-color: rgba(26, 25, 21, 0.22) transparent;
   scrollbar-gutter: stable both-edges;
@@ -217,13 +219,13 @@ code, pre, textarea.mono, input.mono {
 }
 
 .chat-scroll::-webkit-scrollbar {
-  width: 16px;
+  width: 10px;
 }
 
 .chat-scroll::-webkit-scrollbar-track {
   background: transparent;
   border-radius: 999px;
-  border-right: 4px solid transparent;
+  border-right: 2px solid transparent;
   background-clip: padding-box;
 }
 
@@ -232,7 +234,7 @@ code, pre, textarea.mono, input.mono {
   border-radius: 999px;
   border-top: 1px solid transparent;
   border-bottom: 1px solid transparent;
-  border-right: 4px solid transparent;
+  border-right: 2px solid transparent;
   background-clip: padding-box;
 }
 
@@ -240,12 +242,17 @@ code, pre, textarea.mono, input.mono {
   background: rgba(26, 25, 21, 0.34);
   border-top: 1px solid transparent;
   border-bottom: 1px solid transparent;
-  border-right: 4px solid transparent;
+  border-right: 2px solid transparent;
   background-clip: padding-box;
 }
 
 .sidebar-scroll {
   scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  scrollbar-gutter: stable;
+}
+
+.sidebar-scroll:hover {
   scrollbar-color: #D1D1CC transparent;
 }
 
@@ -259,11 +266,15 @@ code, pre, textarea.mono, input.mono {
 }
 
 .sidebar-scroll::-webkit-scrollbar-thumb {
-  background: #D1D1CC;
+  background: transparent;
   border-radius: 3px;
 }
 
-.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+.sidebar-scroll:hover::-webkit-scrollbar-thumb {
+  background: #D1D1CC;
+}
+
+.sidebar-scroll:hover::-webkit-scrollbar-thumb:hover {
   background: #9B9B96;
 }
 

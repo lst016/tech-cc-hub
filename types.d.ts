@@ -433,6 +433,9 @@ interface Window {
         listPreviewDirectory: (payload: { cwd: string; path?: string }) => Promise<{ success: boolean; path?: string; entries?: Array<{ name: string; path: string; relativePath: string; type: "directory" | "file"; size?: number }>; error?: string }>;
         listPreviewFiles: (payload: { cwd: string; limit?: number }) => Promise<{ success: boolean; entries?: Array<{ name: string; path: string; relativePath: string; type: "file"; size?: number }>; truncated?: boolean; error?: string }>;
         searchLarkContacts: (query: string) => Promise<Array<{ openId: string; name: string; department?: string }>>;
+        searchLarkShareChats: (query: string) => Promise<Array<{ kind: "chat"; id: string; name: string; detail?: string; avatarUrl?: string }>>;
+        searchLarkShareRecipients: (query: string) => Promise<Array<{ kind: "user" | "chat"; id: string; name: string; detail?: string; avatarUrl?: string }>>;
+        sendLarkShareMessage: (input: { recipient: { kind: "user" | "chat"; id: string; name: string; detail?: string; avatarUrl?: string }; text: string }) => Promise<{ messageId?: string; chatId?: string }>;
         getPreviewImageBase64: (payload: { cwd: string; path: string }) => Promise<{ success: boolean; path?: string; content?: string; error?: string }>;
         getPreviewFileMetadata: (payload: { cwd: string; path: string }) => Promise<{ name: string; path: string; size: number; type: string; lastModified: number; isDirectory?: boolean } | null>;
         writePreviewFile: (payload: { cwd: string; path: string; data: string }) => Promise<{ success: boolean; path?: string; error?: string }>;

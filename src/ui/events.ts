@@ -2,6 +2,7 @@ export const PROMPT_FOCUS_EVENT = "techcc:prompt-focus";
 export const PROMPT_SUBMIT_EVENT = "techcc:prompt-submit";
 export const PROMPT_SENT_EVENT = "techcc:prompt-sent";
 export const PROMPT_APPEND_RESULT_EVENT = "techcc:prompt-append-result";
+export const FORK_ASSISTANT_MESSAGE_EVENT = "techcc:fork-assistant-message";
 export const PREVIEW_OPEN_FILE_EVENT = "techcc:preview-open-file";
 export const OPEN_BROWSER_WORKBENCH_URL_EVENT = "tech-cc-hub:open-browser-workbench-url";
 export const OPEN_WORKSPACE_PLUGIN_EVENT = "tech-cc-hub:open-workspace-plugin";
@@ -13,6 +14,11 @@ export type PreviewOpenFileDetail = {
   startLine?: number;
   endLine?: number;
   revealFirstChange?: boolean;
+};
+
+export type ForkAssistantMessageDetail = {
+  sessionId: string;
+  messageId: string;
 };
 
 export type OpenBrowserWorkbenchUrlDetail = {

@@ -14,6 +14,16 @@ export function isTechccVisualizationRequested(displayPrompt: string): boolean {
   return VISUALIZATION_TRIGGER_PATTERN.test(displayPrompt);
 }
 
+export function resolveTechccVisualizationSdkSkills(
+  displayPrompt: string,
+  configuredSkills?: string[],
+): string[] | undefined {
+  if (isTechccVisualizationRequested(displayPrompt)) {
+    return [];
+  }
+  return configuredSkills && configuredSkills.length > 0 ? configuredSkills : undefined;
+}
+
 export function buildTechccVisualizationSkillPrompt(
   input: BuildTechccVisualizationSkillPromptInput,
 ): string | undefined {

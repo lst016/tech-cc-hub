@@ -2,6 +2,27 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
+test("sidebar scrollbar stays hidden until the session list is hovered", () => {
+  const styles = readFileSync("src/ui/index.css", "utf8");
+
+  assert.match(
+    styles,
+    /\.sidebar-scroll\s*\{[^}]*scrollbar-color:\s*transparent transparent;[^}]*scrollbar-gutter:\s*stable;/s,
+  );
+  assert.match(
+    styles,
+    /\.sidebar-scroll:hover\s*\{[^}]*scrollbar-color:\s*#D1D1CC transparent;/s,
+  );
+  assert.match(
+    styles,
+    /\.sidebar-scroll::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*transparent;/s,
+  );
+  assert.match(
+    styles,
+    /\.sidebar-scroll:hover::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*#D1D1CC;/s,
+  );
+});
+
 test("workspace session drawers stay closed until manually opened", () => {
   const sidebarSource = readFileSync("src/ui/components/Sidebar.tsx", "utf8");
   const sessionListSource = readFileSync("src/ui/components/sidebar/SidebarWorkspaceList.tsx", "utf8");
