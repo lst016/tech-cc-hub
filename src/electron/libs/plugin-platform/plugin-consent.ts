@@ -106,7 +106,7 @@ export function createPluginConsentRecord(
   };
 }
 
-function parseConsentRecord(value: unknown): PluginConsentRecord | null {
+export function normalizePluginConsentRecord(value: unknown): PluginConsentRecord | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (
@@ -143,7 +143,7 @@ function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
 export function validatePluginConsentRecord(
   input: ValidatePluginConsentRecordInput,
 ): ValidatePluginConsentRecordResult {
-  const record = parseConsentRecord(input.record);
+  const record = normalizePluginConsentRecord(input.record);
   if (!record || record.pluginId !== input.manifest.id) {
     return { ok: false, code: "CONSENT_INVALID" };
   }
