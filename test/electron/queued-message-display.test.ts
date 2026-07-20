@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   buildQueuedDisplayPrompt,
   buildQueuedPrompt,
+  findLatestQueuedForkPoint,
   type QueuedMessageDraft,
 } from "../../src/ui/components/prompt-input/prompt-queue.js";
 import { getCollapsibleTextPreview } from "../../src/ui/utils/collapsible-text-preview.js";
@@ -39,6 +40,25 @@ test("combined queued display stays compact when every item carries structured c
   const displayPrompt = buildQueuedDisplayPrompt(queue);
   assert.equal(displayPrompt, "Queued message 1:\n国际化\n\n---\n\nQueued message 2:\n缩短预览");
   assert.doesNotMatch(displayPrompt, /browser_annotations|internal browser context/);
+});
+
+test("queued fork starts from the last completed top-level assistant turn", () => {
+  const messages = [
+    { type: "user_prompt", prompt: "first" },
+    { type: "assistant", uuid: "assistant-first", parent_tool_use_id: null },
+    { type: "assistant", uuid: "assistant-subagent", parent_tool_use_id: "tool-1" },
+    { type: "user_prompt", prompt: "currently running" },
+    { type: "assistant", uuid: "assistant-streaming", parent_tool_use_id: null },
+  ];
+
+  assert.equal(findLatestQueuedForkPoint(messages), "assistant-first");
+});
+
+test("queued fork is unavailable before the first completed assistant turn", () => {
+  assert.equal(findLatestQueuedForkPoint([
+    { type: "user_prompt", prompt: "currently running" },
+    { type: "assistant", uuid: "assistant-streaming", parent_tool_use_id: null },
+  ]), null);
 });
 
 test("user message cards use a compact collapsed preview", () => {

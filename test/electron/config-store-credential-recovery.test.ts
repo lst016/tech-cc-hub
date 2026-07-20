@@ -113,6 +113,102 @@ test("an explicit profile keeps same-name gateway and Codex deployments independ
   }
 });
 
+test("MiniMax routing wins when a gateway returns the same model with different casing", () => {
+  const previousUserData = app.getPath("userData");
+  const root = join(tmpdir(), `tech-cc-hub-minimax-routing-${Date.now()}`);
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, "api-config.json"), JSON.stringify({
+    profiles: [
+      {
+        id: "gateway-profile",
+        name: "Default Gateway",
+        apiKey: "gateway-secret",
+        baseURL: "https://gateway.example.com/v1",
+        model: "minimax-m3",
+        enabled: true,
+        provider: "custom",
+        apiType: "anthropic",
+        models: [{ name: "minimax-m3", routingWeight: 0 }],
+      },
+      {
+        id: "minimax-profile",
+        name: "MiniMax Official",
+        apiKey: "minimax-secret",
+        baseURL: "https://api.minimaxi.com/anthropic",
+        model: "MiniMax-M3",
+        enabled: true,
+        provider: "minimax",
+        apiType: "anthropic",
+        models: [{ name: "MiniMax-M3", routingWeight: 100 }],
+      },
+    ],
+  }), "utf8");
+
+  try {
+    app.setPath("userData", root);
+    const resolved = resolveApiConfigForModel("minimax-m3");
+    assert.equal(resolved?.config.id, "minimax-profile");
+    assert.equal(resolved?.model, "MiniMax-M3");
+
+    const explicitlyPinned = resolveApiConfigForModel("minimax-m3", "gateway-profile");
+    assert.equal(explicitlyPinned?.config.id, "gateway-profile");
+    assert.equal(explicitlyPinned?.model, "minimax-m3");
+  } finally {
+    app.setPath("userData", previousUserData);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an unassigned managed MiniMax model does not enter automatic routing", () => {
+  const previousUserData = app.getPath("userData");
+  const root = join(tmpdir(), `tech-cc-hub-minimax-unassigned-routing-${Date.now()}`);
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, "api-config.json"), JSON.stringify({
+    profiles: [
+      {
+        id: "gateway-profile",
+        name: "Default Gateway",
+        apiKey: "gateway-secret",
+        baseURL: "https://gateway.example.com/v1",
+        model: "gateway-main",
+        enabled: true,
+        provider: "custom",
+        apiType: "anthropic",
+        models: [{ name: "gateway-main", routingWeight: 0 }],
+      },
+      {
+        id: "minimax-profile",
+        name: "MiniMax Official",
+        apiKey: "minimax-secret",
+        baseURL: "https://api.minimaxi.com/anthropic",
+        model: "MiniMax-M2.7",
+        enabled: true,
+        provider: "minimax",
+        apiType: "anthropic",
+        models: [
+          { name: "MiniMax-M2.7", routingWeight: 0 },
+          { name: "MiniMax-M3", routingWeight: 100 },
+        ],
+      },
+    ],
+  }), "utf8");
+
+  try {
+    app.setPath("userData", root);
+    const automaticResolution = resolveApiConfigForModel("MiniMax-M3");
+    assert.equal(automaticResolution?.config.id, "gateway-profile");
+    assert.equal(automaticResolution?.model, "gateway-main");
+    assert.equal(automaticResolution?.fellBack, true);
+
+    const explicitlyPinned = resolveApiConfigForModel("MiniMax-M3", "minimax-profile");
+    assert.equal(explicitlyPinned?.config.id, "minimax-profile");
+    assert.equal(explicitlyPinned?.model, "MiniMax-M3");
+  } finally {
+    app.setPath("userData", previousUserData);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("legacy Boke gateway config migrates by domain and preserves catalog metadata", () => {
   const previousUserData = app.getPath("userData");
   const root = join(tmpdir(), `tech-cc-hub-boke-config-${Date.now()}`);

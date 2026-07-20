@@ -162,11 +162,11 @@ describe("goal progress", () => {
 
     assert.match(
       source,
-      /latestGoal:\s*shouldUpdateGoal \? deriveLatestGoalSnapshot\(session\.id,\s*messages,\s*session\.latestGoal\) : session\.latestGoal/,
+      /latestGoal:\s*hasRetractions[\s\S]*deriveLatestGoalSnapshot\(session\.id, messages\)[\s\S]*shouldUpdateGoal[\s\S]*deriveLatestGoalSnapshot\(session\.id, messages, baseSession\.latestGoal\)/,
     );
     assert.match(
       source,
-      /latestGoal:\s*deriveLatestGoalSnapshot\(sessionId,\s*mergedMessages,\s*existing\.latestGoal\)/,
+      /updateRetractedSession[\s\S]*latestGoal:\s*deriveLatestGoalSnapshot\(session\.id, messages\)[\s\S]*latestPlan:\s*deriveLatestPlanSnapshot\(session\.id, messages\)/,
     );
   });
 

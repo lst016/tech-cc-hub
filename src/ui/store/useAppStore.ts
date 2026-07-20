@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type {
   ApiConfigProfile,
   ApiConfigSettings,
+  PermissionRequestPayload,
   RuntimePermissionMode,
   RuntimeReasoningMode,
   RuntimeOverrides,
@@ -18,26 +19,30 @@ import {
   type WorkflowSpecDocument,
 } from "../../shared/workflow-markdown.js";
 import type { SessionExecutionMode } from "../../shared/session-semantics.js";
+import { RELEASE_DEFAULT_PERMISSION_MODE } from "../../shared/runtime-permissions.js";
 import { deriveLatestGoalSnapshot, type SessionGoalSnapshot } from "../../shared/goal-progress.js";
-import { extractSlashCommandsFromMessages, mergeSlashCommandLists } from "../../shared/slash-commands.js";
-import { TASK_TOOL_NAMES } from "../../shared/claude-agent-teams.js";
 import {
-  normalizeTaskCreateArgs,
-  normalizeUpdatePlanArgs,
+  applySlashCommandMessages,
+  mergeSlashCommandLists,
+  type SlashCommandDetail,
+} from "../../shared/slash-commands.js";
+import {
+  deriveLatestPlanSnapshot,
   type SessionPlanSnapshot,
 } from "../../shared/plan-progress.js";
 import { mergeHistoryReplacementMessages, mergeMessages } from "../utils/session-history-merge.js";
 import { hydrateWorkflowView, mergeSessionListSession } from "../utils/session-list-merge.js";
-import { appendPendingStreamMessages } from "../utils/pending-stream-messages.js";
 import { selectSessionMessageEvictionIds, touchRecentSessionId } from "../utils/session-message-retention.js";
+import { appendStoreMessages } from "./sdk-message-buffer.js";
+import {
+  getClaudeRetractionIds,
+  isClaudeConversationReset,
+  removeRetractedClaudeMessages,
+} from "../../shared/claude-agent-sdk-messages.js";
 
 let recentlyActivatedSessionIds: string[] = [];
 
-export type PermissionRequest = {
-  toolUseId: string;
-  toolName: string;
-  input: unknown;
-};
+export type PermissionRequest = PermissionRequestPayload;
 
 export type SessionView = {
   id: string;
@@ -51,6 +56,7 @@ export type SessionView = {
   permissionMode?: RuntimeOverrides["permissionMode"];
   cwd?: string;
   slashCommands?: string[];
+  slashCommandDetails?: SlashCommandDetail[];
   messages: StreamMessage[];
   permissionRequests: PermissionRequest[];
   lastPrompt?: string;
@@ -208,6 +214,42 @@ function createSession(id: string): SessionView {
   };
 }
 
+function toPermissionRequest(payload: PermissionRequest): PermissionRequest {
+  return {
+    toolUseId: payload.toolUseId,
+    toolName: payload.toolName,
+    input: payload.input,
+    requestId: payload.requestId,
+    suggestions: payload.suggestions,
+    blockedPath: payload.blockedPath,
+    decisionReason: payload.decisionReason,
+    title: payload.title,
+    displayName: payload.displayName,
+    description: payload.description,
+    matchedAskRule: payload.matchedAskRule,
+    agentId: payload.agentId,
+  };
+}
+
+export function resetSessionViewForConversationReset(session: SessionView, resetAt = Date.now()): SessionView {
+  return {
+    ...session,
+    title: "New Session",
+    error: undefined,
+    messages: [],
+    permissionRequests: [],
+    lastPrompt: undefined,
+    workflowState: undefined,
+    workflowError: undefined,
+    latestGoal: undefined,
+    latestPlan: undefined,
+    hydrated: true,
+    hasMoreHistory: false,
+    historyCursor: undefined,
+    updatedAt: resetAt,
+  };
+}
+
 function getEnabledProfiles(settings: ApiConfigSettings): ApiConfigProfile[] {
   const enabledProfiles = settings.profiles.filter((profile) => profile.enabled);
   if (enabledProfiles.length > 0) {
@@ -304,10 +346,6 @@ function hasApiProfiles(settings: ApiConfigSettings): boolean {
   return settings.profiles.length > 0;
 }
 
-function extractSlashCommands(messages: StreamMessage[]): string[] | undefined {
-  return extractSlashCommandsFromMessages(messages);
-}
-
 function isTransientStreamEventMessage(message: StreamMessage): boolean {
   return (
     "type" in message &&
@@ -372,85 +410,62 @@ function messageMayAffectGoalSnapshot(message: StreamMessage): boolean {
   return false;
 }
 
-function extractPlanSnapshotFromMessage(sessionId: string, message: StreamMessage): SessionPlanSnapshot | null {
-  if (message.type !== "assistant") return null;
-  const content = (message as { message?: { content?: unknown[] }; uuid?: string }).message?.content;
-  if (!Array.isArray(content)) return null;
-
-  let snapshot: SessionPlanSnapshot | null = null;
-  for (const item of content) {
-    if (!isRecord(item) || item.type !== "tool_use") continue;
-    const toolName = typeof item.name === "string" ? item.name : "";
-    const toolUseId = typeof item.id === "string" ? item.id : undefined;
-    const turnId = typeof (message as { uuid?: unknown }).uuid === "string"
-      ? (message as { uuid: string }).uuid
-      : undefined;
-
-    if (toolName === "update_plan" || toolName.endsWith("__update_plan") || toolName.endsWith(":update_plan") || toolName.endsWith("/update_plan")) {
-      const args = normalizeUpdatePlanArgs(item.input);
-      if (args) {
-        snapshot = {
-          sessionId,
-          turnId,
-          updatedAt: message.capturedAt ?? Date.now(),
-          source: "update_plan",
-          toolName,
-          toolUseId,
-          ...args,
-        };
-      }
-      continue;
-    }
-
-    if ((TASK_TOOL_NAMES as readonly string[]).includes(toolName)) {
-      const input = toolName === "TaskUpdate"
-        ? { item: item.input }
-        : item.input;
-      const args = normalizeTaskCreateArgs(input);
-      if (args) {
-        snapshot = {
-          sessionId,
-          turnId,
-          updatedAt: message.capturedAt ?? Date.now(),
-          source: "task_create",
-          toolName,
-          toolUseId,
-          ...args,
-        };
-      }
-    }
-  }
-
-  return snapshot;
-}
-
-function deriveLatestPlanSnapshot(
-  sessionId: string,
-  messages: StreamMessage[],
-  fallback?: SessionPlanSnapshot,
-): SessionPlanSnapshot | undefined {
-  return messages.reduce<SessionPlanSnapshot | undefined>((latest, message) => (
-    extractPlanSnapshotFromMessage(sessionId, message) ?? latest
-  ), fallback);
-}
-
 export function appendMessagesToSession(
   session: SessionView,
   nextMessages: StreamMessage[],
 ): SessionView {
-  const slashCommands = mergeSlashCommandLists(
-    session.slashCommands,
-    ...nextMessages.map((message) => extractSlashCommands([message])),
+  let lastResetIndex = -1;
+  for (let index = 0; index < nextMessages.length; index += 1) {
+    if (isClaudeConversationReset(nextMessages[index])) lastResetIndex = index;
+  }
+  const resetMessage = lastResetIndex >= 0 ? nextMessages[lastResetIndex] : undefined;
+  const resetAt = resetMessage && typeof resetMessage.capturedAt === "number"
+    ? resetMessage.capturedAt
+    : Date.now();
+  const baseSession = lastResetIndex >= 0
+    ? resetSessionViewForConversationReset(session, resetAt)
+    : session;
+  const incomingMessages = lastResetIndex >= 0
+    ? nextMessages.slice(lastResetIndex)
+    : nextMessages;
+  const slashCommandCatalog = applySlashCommandMessages(
+    baseSession.slashCommands,
+    baseSession.slashCommandDetails,
+    incomingMessages,
   );
-  const messages = session.messages.concat(nextMessages);
-  const shouldUpdateGoal = nextMessages.some(messageMayAffectGoalSnapshot);
+  let messages = baseSession.messages;
+  let pendingMessages: StreamMessage[] = [];
+  let hasRetractions = false;
+  const flushPendingMessages = () => {
+    if (pendingMessages.length === 0) return;
+    messages = appendStoreMessages(messages, pendingMessages);
+    pendingMessages = [];
+  };
+  for (const message of incomingMessages) {
+    const retractedIds = getClaudeRetractionIds(message);
+    if (retractedIds.length > 0) {
+      hasRetractions = true;
+      flushPendingMessages();
+      messages = removeRetractedClaudeMessages(messages, retractedIds);
+    }
+    pendingMessages.push(message);
+  }
+  flushPendingMessages();
+  const shouldUpdateGoal = incomingMessages.some(messageMayAffectGoalSnapshot);
 
   return {
-    ...session,
-    slashCommands: slashCommands ?? session.slashCommands,
+    ...baseSession,
+    slashCommands: slashCommandCatalog?.names ?? baseSession.slashCommands,
+    slashCommandDetails: slashCommandCatalog?.details ?? baseSession.slashCommandDetails,
     messages,
-    latestGoal: shouldUpdateGoal ? deriveLatestGoalSnapshot(session.id, messages, session.latestGoal) : session.latestGoal,
-    latestPlan: deriveLatestPlanSnapshot(session.id, nextMessages, session.latestPlan),
+    latestGoal: hasRetractions
+      ? deriveLatestGoalSnapshot(session.id, messages)
+      : shouldUpdateGoal
+      ? deriveLatestGoalSnapshot(session.id, messages, baseSession.latestGoal)
+      : baseSession.latestGoal,
+    latestPlan: hasRetractions
+      ? deriveLatestPlanSnapshot(session.id, messages)
+      : deriveLatestPlanSnapshot(session.id, incomingMessages, baseSession.latestPlan),
   };
 }
 
@@ -473,7 +488,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   reasoningMode: "xhigh",
   pendingStart: false,
   globalError: null,
-  permissionMode: "bypassPermissions",
+  permissionMode: RELEASE_DEFAULT_PERMISSION_MODE,
   workflowMode: "auto",
   sessionsLoaded: false,
   showStartModal: false,
@@ -860,7 +875,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const existing = pendingStreamMessagesBySession.get(sessionId) ?? [];
       pendingStreamMessagesBySession.set(
         sessionId,
-        appendPendingStreamMessages(existing, messages),
+        appendStoreMessages(existing, messages),
       );
 
       if (pendingStreamMessageTimer !== null) {
@@ -973,17 +988,20 @@ export const useAppStore = create<AppState>((set, get) => ({
           const mergedMessages = mode === "prepend"
             ? mergeMessages(messages, existing.messages)
             : mergeHistoryReplacementMessages(messages, existing, status);
-          const slashCommands = mergeSlashCommandLists(
-            event.payload.slashCommands,
-            extractSlashCommands(mergedMessages),
+          const reconstructed = appendMessagesToSession(
+            {
+              ...existing,
+              messages: [],
+              slashCommands: mergeSlashCommandLists(
+                event.payload.slashCommands,
+                existing.slashCommands,
+              ) ?? existing.slashCommands,
+            },
+            mergedMessages,
           );
           const nextSession = {
-            ...existing,
+            ...reconstructed,
             status,
-            messages: mergedMessages,
-            slashCommands: slashCommands ?? existing.slashCommands,
-            latestGoal: deriveLatestGoalSnapshot(sessionId, mergedMessages, existing.latestGoal),
-            latestPlan: deriveLatestPlanSnapshot(sessionId, mergedMessages, existing.latestPlan),
             hydrated: true,
             hasMoreHistory: hasMore,
             historyCursor: nextCursor,
@@ -1319,6 +1337,58 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (isTransientStreamEventMessage(message)) {
           break;
         }
+        if (isClaudeConversationReset(message)) {
+          pendingStreamMessagesBySession.delete(sessionId);
+          set((currentState) => {
+            const currentSession = currentState.sessions[sessionId];
+            const currentArchivedSession = currentState.archivedSessions[sessionId];
+            return {
+              sessions: currentSession ? {
+                ...currentState.sessions,
+                [sessionId]: appendMessagesToSession(currentSession, [message]),
+              } : currentState.sessions,
+              archivedSessions: currentArchivedSession ? {
+                ...currentState.archivedSessions,
+                [sessionId]: appendMessagesToSession(currentArchivedSession, [message]),
+              } : currentState.archivedSessions,
+              globalError: currentState.activeSessionId === sessionId
+                ? null
+                : currentState.globalError,
+            };
+          });
+          break;
+        }
+        const retractedIds = getClaudeRetractionIds(message);
+        if (retractedIds.length > 0) {
+          const queued = pendingStreamMessagesBySession.get(sessionId) ?? [];
+          pendingStreamMessagesBySession.set(
+            sessionId,
+            removeRetractedClaudeMessages(queued, retractedIds),
+          );
+          set((currentState) => {
+            const currentSession = currentState.sessions[sessionId];
+            const currentArchivedSession = currentState.archivedSessions[sessionId];
+            const updateRetractedSession = (session: SessionView): SessionView => {
+              const messages = removeRetractedClaudeMessages(session.messages, retractedIds);
+              return {
+                ...session,
+                messages,
+                latestGoal: deriveLatestGoalSnapshot(session.id, messages),
+                latestPlan: deriveLatestPlanSnapshot(session.id, messages),
+              };
+            };
+            return {
+              sessions: currentSession ? {
+                ...currentState.sessions,
+                [sessionId]: updateRetractedSession(currentSession),
+              } : currentState.sessions,
+              archivedSessions: currentArchivedSession ? {
+                ...currentState.archivedSessions,
+                [sessionId]: updateRetractedSession(currentArchivedSession),
+              } : currentState.archivedSessions,
+            };
+          });
+        }
         enqueueStreamMessages(sessionId, [message]);
         break;
       }
@@ -1330,7 +1400,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       case "permission.request": {
-        const { sessionId, toolUseId, toolName, input } = event.payload;
+        const payload = event.payload;
+        const { sessionId } = payload;
         set((state) => {
           const existing = state.sessions[sessionId] ?? createSession(sessionId);
           return {
@@ -1338,7 +1409,7 @@ export const useAppStore = create<AppState>((set, get) => ({
               ...state.sessions,
               [sessionId]: {
                 ...existing,
-                permissionRequests: [...existing.permissionRequests, { toolUseId, toolName, input }]
+                permissionRequests: [...existing.permissionRequests, toPermissionRequest(payload)]
               }
             }
           };

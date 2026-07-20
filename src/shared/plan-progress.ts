@@ -1,3 +1,5 @@
+import { TASK_TOOL_NAMES } from "./claude-agent-teams.js";
+
 export type PlanStepStatus = "pending" | "in_progress" | "completed";
 
 export type PlanItemArg = {
@@ -85,4 +87,45 @@ export function normalizeTaskCreateArgs(input: unknown): UpdatePlanArgs | null {
   if (plan.length === 0) return null;
 
   return { plan };
+}
+
+export function extractPlanSnapshotFromMessage(
+  sessionId: string,
+  message: unknown,
+): SessionPlanSnapshot | null {
+  if (!isRecord(message) || message.type !== "assistant" || !isRecord(message.message)) return null;
+  const content = Array.isArray(message.message.content) ? message.message.content : [];
+  let snapshot: SessionPlanSnapshot | null = null;
+
+  for (const item of content) {
+    if (!isRecord(item) || item.type !== "tool_use") continue;
+    const toolName = typeof item.name === "string" ? item.name : "";
+    const toolUseId = typeof item.id === "string" ? item.id : undefined;
+    const turnId = typeof message.uuid === "string" ? message.uuid : undefined;
+    const updatedAt = typeof message.capturedAt === "number" ? message.capturedAt : Date.now();
+
+    if (toolName === "update_plan" || toolName.endsWith("__update_plan") || toolName.endsWith(":update_plan") || toolName.endsWith("/update_plan")) {
+      const args = normalizeUpdatePlanArgs(item.input);
+      if (args) snapshot = { sessionId, turnId, updatedAt, source: "update_plan", toolName, toolUseId, ...args };
+      continue;
+    }
+
+    if ((TASK_TOOL_NAMES as readonly string[]).includes(toolName)) {
+      const input = toolName === "TaskUpdate" ? { item: item.input } : item.input;
+      const args = normalizeTaskCreateArgs(input);
+      if (args) snapshot = { sessionId, turnId, updatedAt, source: "task_create", toolName, toolUseId, ...args };
+    }
+  }
+
+  return snapshot;
+}
+
+export function deriveLatestPlanSnapshot(
+  sessionId: string,
+  messages: readonly unknown[],
+  fallback?: SessionPlanSnapshot,
+): SessionPlanSnapshot | undefined {
+  return messages.reduce<SessionPlanSnapshot | undefined>((latest, message) => (
+    extractPlanSnapshotFromMessage(sessionId, message) ?? latest
+  ), fallback);
 }

@@ -1,11 +1,14 @@
 import {
   query,
+  type CanUseTool,
   type EffortLevel,
   type HookCallbackMatcher,
   type PermissionResult,
   type Query,
   type SDKMessage,
+  type SDKMessageOrigin,
   type SDKUserMessage,
+  type SlashCommand,
   type ThinkingConfig,
 } from "@anthropic-ai/claude-agent-sdk";
 import { execFileSync } from "child_process";
@@ -14,9 +17,14 @@ import { existsSync, statSync } from "fs";
 import { basename, extname, isAbsolute, join } from "path";
 
 import { buildRunnerPromptContentBlocks } from "../../../shared/runner-prompt.js";
+import { normalizeReleasePermissionMode } from "../../../shared/runtime-permissions.js";
 import {
+  getRunnerTerminalReason,
+  getRunnerTerminalReasonLabel,
   isEmptySuccessfulRunnerResult,
+  isRunnerResultForPromptOrigin,
   isSuccessfulRunnerResult,
+  shouldAutoContinueUnfinishedPlan,
   shouldSuppressRunnerErrorAfterSuccessfulResult,
 } from "../../../shared/runner-status.js";
 import {
@@ -67,7 +75,15 @@ import {
 } from "../claude/claude-settings.js";
 import { buildClaudeProjectMemoryPromptAppend } from "../claude/claude-project-memory.js";
 import { buildBetasForModel } from "../claude/claude-betas.js";
-import { buildClaudeSandboxSettings } from "../claude/claude-sandbox-policy.js";
+import {
+  getUnexpectedRunnerEndMessage,
+  RunnerBackgroundTaskLifecycle,
+} from "../../../shared/runner-background-lifecycle.js";
+import {
+  buildClaudeSandboxSettings,
+  getClaudeCredentialAccessDenyMessage,
+  isLikelyCredentialEnvName,
+} from "../claude/claude-sandbox-policy.js";
 import { buildKnowledgeOverviewPromptAppend } from "../knowledge/knowledge-overview.js";
 import { saveGlobalRuntimeConfig } from "../config-store.js";
 import {
@@ -152,6 +168,8 @@ import {
 
 export type RunnerOptions = {
   prompt: string;
+  promptOrigin?: SDKMessageOrigin;
+  toolPermissionPolicy?: ToolPermissionPolicy;
   displayPrompt?: string;
   attachments?: PromptAttachment[];
   runtime?: RuntimeOverrides;
@@ -164,20 +182,86 @@ export type RunnerOptions = {
 
 export type RunnerHandle = {
   abort: () => void;
-  appendPrompt: (prompt: string, attachments?: PromptAttachment[] | Promise<PromptAttachment[]>, options?: { displayPrompt?: string; workspaceContext?: LinkedWorkspaceContext }) => Promise<void>;
+  appendPrompt: (
+    prompt: string,
+    attachments?: PromptAttachment[] | Promise<PromptAttachment[]>,
+    options?: { displayPrompt?: string; workspaceContext?: LinkedWorkspaceContext; origin?: SDKMessageOrigin },
+  ) => Promise<void>;
   stopTask: (taskId: string) => Promise<void>;
   isClosed: () => boolean;
   reuseKey?: string;
 };
 
 type QueryWithMcpOAuth = Query & {
-  mcpAuthenticate: (serverName: string, redirectUri?: string) => Promise<unknown>;
+  mcpAuthenticate?: (serverName: string, redirectUri?: string) => Promise<unknown>;
+};
+
+export type ToolPermissionPolicy = "interactive" | "unattended-auto-approve";
+
+export type RunnerToolPermissionContext = {
+  matchedAskRule?: { source: string; toolName: string; ruleContent?: string };
+  blockedPath?: string;
+  decisionReason?: string;
 };
 
 type StatefulMcpNotConnectedResult = {
   toolName: string;
   toolUseId: string;
 };
+
+type CanUseToolOptions = Parameters<CanUseTool>[2];
+type PermissionRequestMetadata = Partial<Pick<CanUseToolOptions,
+  | "requestId"
+  | "suggestions"
+  | "blockedPath"
+  | "decisionReason"
+  | "title"
+  | "displayName"
+  | "description"
+  | "matchedAskRule"
+  | "agentID"
+>>;
+
+export function resolveRunnerToolPermissionPolicy(
+  policy: ToolPermissionPolicy,
+  toolName: string,
+  input: Record<string, unknown>,
+  context: RunnerToolPermissionContext = {},
+): PermissionResult | null {
+  if (policy === "interactive") {
+    return null;
+  }
+
+  if (toolName === "AskUserQuestion") {
+    return {
+      behavior: "deny",
+      message: "Unattended scheduled tasks cannot answer interactive questions.",
+    };
+  }
+
+  if (context.matchedAskRule) {
+    return {
+      behavior: "deny",
+      message: "A user-configured ask rule requires human approval; the unattended task was denied.",
+    };
+  }
+
+  if (context.blockedPath?.trim()) {
+    return {
+      behavior: "deny",
+      message: "The SDK reported a blocked path that requires human approval; the unattended task was denied.",
+    };
+  }
+
+  if (/^mcp__/i.test(toolName)) {
+    return {
+      behavior: "deny",
+      message: "Host and external MCP tools require interactive approval; the unattended task was denied.",
+    };
+  }
+
+  return { behavior: "allow", updatedInput: input };
+}
 
 const DEFAULT_CWD = process.cwd();
 const BUILTIN_MCP_TOOL_NAMES = listBuiltinMcpToolNames();
@@ -188,6 +272,20 @@ let claudeCodeAutoTruncateSupport: boolean | null = null;
 const ALWAYS_ALLOWED_TOOLS = new Set([
   "AskUserQuestion",
   ...BUILTIN_MCP_TOOL_NAMES,
+]);
+const PLAN_MODE_READ_ONLY_TOOLS = new Set([
+  "AskUserQuestion",
+  "ExitPlanMode",
+  "Glob",
+  "Grep",
+  "Read",
+  "Search",
+  "Skill",
+  "TaskGet",
+  "TaskList",
+  "TodoRead",
+  "WebFetch",
+  "WebSearch",
 ]);
 const SKILL_ENV_HINTS: Record<string, string[]> = {
   feishu: ["FEISHU", "LARK"],
@@ -423,6 +521,127 @@ function routeLinkedWorkspaceToolInput(
   return { input, routed: false };
 }
 
+export type RunnerHardToolPolicyContext = {
+  workspaceContext: LinkedWorkspaceContext | null;
+  displayPrompt: string;
+  agentPrompt: string;
+  projectCwd?: string;
+  activeBuiltinMcpServerNames: ReadonlySet<BuiltinMcpServerName>;
+  codeGraphRetrievalSeen: boolean;
+  permissionMode: string;
+  requiresFigmaImplementationAnchor: boolean;
+  figmaImplementationAnchorSeen: boolean;
+  requiresFigmaSvgAsset: boolean;
+  figmaContextSeen: boolean;
+  figmaSvgAssetSeen: boolean;
+  figmaRestAuthFailureSeen: boolean;
+  globalRuntimeConfig: unknown;
+  effectiveAllowedTools: ReadonlySet<string> | null;
+  sdkPluginMcpServerNames: Iterable<string>;
+};
+
+export type RunnerHardToolPolicyResult = {
+  input: Record<string, unknown>;
+  fixes: string[];
+  denyMessage?: string;
+};
+
+/**
+ * Host-owned policy that must run from PreToolUse as well as canUseTool.
+ * The SDK intentionally skips canUseTool in bypassPermissions mode, while
+ * PreToolUse remains the fail-closed enforcement point.
+ */
+export function applyRunnerHardToolPolicy(
+  toolName: string,
+  input: Record<string, unknown>,
+  context: RunnerHardToolPolicyContext,
+): RunnerHardToolPolicyResult {
+  const fixes: string[] = [];
+  let effectiveInput = input;
+  const linkedWorkspaceRoute = routeLinkedWorkspaceToolInput(toolName, effectiveInput, {
+    context: context.workspaceContext,
+    prompt: context.displayPrompt,
+  });
+  if (linkedWorkspaceRoute.routed) {
+    effectiveInput = linkedWorkspaceRoute.input;
+    fixes.push(linkedWorkspaceRoute.reason ?? "Routed tool input to linked workspace");
+  }
+
+  const imageGenerationDefaults = resolveImageGenerationToolDefaults(
+    toolName,
+    effectiveInput,
+    context.agentPrompt,
+  );
+  if (imageGenerationDefaults) {
+    effectiveInput = imageGenerationDefaults;
+    fixes.push("Applied image generation defaults");
+  }
+
+  const denyGuards: Array<() => string | null | undefined> = [
+    () => isBlockedShellTool(toolName) ? BLOCKED_SHELL_TOOL_MESSAGE : undefined,
+    () => shouldDenyPowerShellCommand(toolName, effectiveInput)
+      ? "PowerShell is disabled by tech-cc-hub's Windows shell policy because it is unstable in this environment. Use cmd.exe instead, for example: cmd.exe /d /s /c \"<command>\"."
+      : undefined,
+    () => isSdkBuiltinCronTool(toolName)
+      ? "SDK CronCreate/CronDelete/CronList are disabled. Use the tech-cc-hub cron MCP tools so schedules are persisted with history and retry metadata."
+      : undefined,
+    () => getKnowledgeIndexDenyMessage(toolName, context.displayPrompt),
+    () => context.activeBuiltinMcpServerNames.has("tech-cc-hub-knowledge")
+      ? getCodeGraphFirstDenyMessage(
+          toolName,
+          context.projectCwd,
+          context.codeGraphRetrievalSeen,
+          effectiveInput,
+        )
+      : undefined,
+    () => getFigmaImplementationAnchorDenyMessage(
+      toolName,
+      context.requiresFigmaImplementationAnchor,
+      context.figmaImplementationAnchorSeen,
+    ),
+    () => getFigmaSvgAssetDenyMessage(
+      toolName,
+      effectiveInput,
+      context.requiresFigmaSvgAsset,
+      context.figmaContextSeen,
+      context.figmaSvgAssetSeen,
+    ),
+    () => getFigmaOfficialRouteDenyMessage(
+      toolName,
+      context.globalRuntimeConfig,
+      context.figmaRestAuthFailureSeen,
+    ),
+    () => getClaudeCredentialAccessDenyMessage(toolName, effectiveInput),
+    () => context.permissionMode === "plan" && !PLAN_MODE_READ_ONLY_TOOLS.has(toolName)
+      ? "Current run is in plan mode; tools will not be executed."
+      : undefined,
+    () => toolName === "Skill" && shouldDenyExternalBrowseSkill(effectiveInput, context.displayPrompt)
+      ? "This task is testing the built-in tech-cc-hub browser workbench. Use tech-cc-hub browser MCP tools instead of the external browse skill."
+      : undefined,
+    () => getAuthenticatedUrlWebFetchDenyMessage(
+      toolName,
+      effectiveInput,
+      context.activeBuiltinMcpServerNames.has("tech-cc-hub-browser"),
+      context.displayPrompt,
+    ),
+    () => context.effectiveAllowedTools
+      && !context.effectiveAllowedTools.has(toolName)
+      && !isAlwaysAllowedTool(toolName, context.globalRuntimeConfig)
+      && !isClaudeCodePluginMcpTool(toolName, context.sdkPluginMcpServerNames)
+      ? `Current run surface does not allow tool: ${toolName}`
+      : undefined,
+  ];
+
+  for (const guard of denyGuards) {
+    const denyMessage = guard();
+    if (denyMessage) {
+      return { input: effectiveInput, fixes, denyMessage };
+    }
+  }
+
+  return { input: effectiveInput, fixes };
+}
+
 const POWERSHELL_COMMAND_PATTERN = /(^|[^\w.-])(powershell(?:\.exe)?|pwsh(?:\.exe)?)(?=$|[^\w.-])/i;
 const LARGE_IMAGE_READ_GUIDANCE =
   "Image file is too large for direct Read into the main context. Use the built-in image/design MCP tools instead.";
@@ -446,10 +665,7 @@ const PLAN_OUTPUT_FORMAT_SCHEMA = {
   required: ["steps"],
 };
 
-const MAX_EMPTY_SUCCESS_AUTO_RETRIES = 2;
 const MAX_UNFINISHED_PLAN_AUTO_RETRIES = 3;
-const EMPTY_SUCCESS_RETRY_PROMPT =
-  "Continue the task. The previous turn returned no assistant output and made no tool calls. Do not stop or return an empty result; resume from the last concrete step and keep executing.";
 const UNFINISHED_PLAN_CONTINUATION_PROMPT =
   "The current task plan still has unfinished steps. Continue executing the remaining work now, run the required verification, and update the plan before returning a final result. Do not ask the user to say continue unless a concrete decision or missing input is required.";
 
@@ -473,7 +689,21 @@ function buildVisibleAssistantMessage(sessionId: string, text: string, model?: s
 }
 
 function buildEmptySuccessFallbackMessage(sessionId: string, model?: string): SDKMessage {
-  return buildVisibleAssistantMessage(sessionId, "本轮工具执行已完成，但模型没有返回文字说明。", model);
+  return buildVisibleAssistantMessage(
+    sessionId,
+    "模型返回了空响应，已停止在当前 provider 会话中续跑。下一次发送消息将自动使用压缩历史创建新的 provider 会话。",
+    model,
+  );
+}
+
+export function buildSdkSupportedCommandsMessage(commands: SlashCommand[], sessionId: string): SDKMessage {
+  return {
+    type: "system",
+    subtype: "commands_changed",
+    commands,
+    uuid: crypto.randomUUID(),
+    session_id: sessionId,
+  } as SDKMessage;
 }
 
 function getRequestedModelName(configModel: string | undefined, runtimeModel: string | undefined): string | undefined {
@@ -494,6 +724,8 @@ function appendBoundedText(current: string, chunk: string, maxChars: number): st
 export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   const {
     prompt,
+    promptOrigin = { kind: "human" },
+    toolPermissionPolicy = "interactive",
     displayPrompt = prompt,
     attachments = [],
     runtime,
@@ -504,20 +736,27 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
     onSessionUpdate,
   } = options;
   const abortController = new AbortController();
-  const permissionMode = runtime?.permissionMode ?? "bypassPermissions";
+  const permissionMode = normalizeReleasePermissionMode(runtime?.permissionMode);
   const promptInput = new PromptInputQueue();
-  promptInput.enqueue(prompt, attachments);
+  promptInput.enqueue(prompt, attachments, promptOrigin);
   let activeQuery: Query | null = null;
+  let sdkSupportedCommandsPublished = false;
   let contextUsageCapture: Promise<void> | null = null;
   let runnerClosed = false;
+  let abortRequested = false;
   const turnLifecycle = new RunnerTurnLifecycle();
+  let currentPromptOrigin = promptOrigin;
+  const pendingPromptOrigins: SDKMessageOrigin[] = [];
   let rasterImageReads = 0;
   let requestedModelForError: string | undefined;
   let emittedSuccessfulResult = false;
   let emittedTerminalStatus = false;
+  const backgroundLifecycle = new RunnerBackgroundTaskLifecycle();
+  let backgroundCompletionSeen = false;
+  let foregroundTurnPending = true;
+  let activeBackgroundTerminalReason: string | undefined;
   let observedAssistantTextActivity = false;
   let awaitingVisiblePostToolResponse = false;
-  let emptySuccessAutoRetries = 0;
   let unfinishedPlanAutoRetries = 0;
   let figmaRestAuthFailureSeen = false;
   let figmaImplementationAnchorSeen = false;
@@ -528,7 +767,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   let currentDisplayPrompt = displayPrompt;
   let figmaContextSeen = hasFigmaContext(currentDisplayPrompt, session.lastPrompt);
   let latestWorkspaceContext = normalizeRunnerWorkspaceContext(workspaceContext);
-  let requiresFigmaImplementationAnchor = shouldRequireFigmaImplementationAnchor(currentDisplayPrompt);
+  let requiresFigmaImplementationAnchor = false;
   let requiresFigmaSvgAsset = shouldRequireFigmaSvgAsset(currentDisplayPrompt);
   const desiredBuiltinMcpServerNames = new Set<BuiltinMcpServerName>();
   let activeBuiltinMcpServerNames = new Set<BuiltinMcpServerName>();
@@ -562,13 +801,18 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   const beginNextTurn = () => {
     emittedSuccessfulResult = false;
     emittedTerminalStatus = false;
+    backgroundCompletionSeen = false;
+    foregroundTurnPending = true;
+    backgroundLifecycle.beginTurn();
     observedAssistantTextActivity = false;
     awaitingVisiblePostToolResponse = false;
-    emptySuccessAutoRetries = 0;
     unfinishedPlanAutoRetries = 0;
     figmaSvgAssetSeen = false;
     codeGraphRetrievalSeen = false;
     runnerWatchdog.touch();
+  };
+  const activateNextPendingPromptOrigin = () => {
+    currentPromptOrigin = pendingPromptOrigins.shift() ?? currentPromptOrigin;
   };
   const restoreCompletedStatusAfterCancelledAppend = () => {
     if (runnerClosed || emittedTerminalStatus) return;
@@ -582,6 +826,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   };
   const appendClaudeProcessStderr = (chunk: string) => {
     recentClaudeStderr = appendBoundedText(recentClaudeStderr, chunk, MAX_RUNNER_STDERR_CHARS);
+  };
+  const closeFailedPreflight = () => {
+    runnerClosed = true;
+    emittedTerminalStatus = true;
+    promptInput.close();
+    runnerWatchdog.dispose();
   };
 
   const sendMessage = (message: SDKMessage) => {
@@ -621,15 +871,33 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       });
   };
 
-  const sendPermissionRequest = (toolUseId: string, toolName: string, input: unknown) => {
+  const sendPermissionRequest = (
+    toolUseId: string,
+    toolName: string,
+    input: unknown,
+    metadata: PermissionRequestMetadata = {},
+  ) => {
     onEvent({
       type: "permission.request",
-      payload: { sessionId: session.id, toolUseId, toolName, input },
-    });
+      payload: {
+        sessionId: session.id,
+        toolUseId,
+        toolName,
+        input,
+        ...metadata,
+        ...(metadata.agentID ? { agentId: metadata.agentID } : {}),
+      },
+    } as ServerEvent);
   };
 
-  const requestPermissionDecision = (toolName: string, input: unknown, signal?: AbortSignal) => {
-    const toolUseId = crypto.randomUUID();
+  const requestPermissionDecision = (
+    toolName: string,
+    input: unknown,
+    signal?: AbortSignal,
+    sdkToolUseId?: string,
+    metadata: PermissionRequestMetadata = {},
+  ) => {
+    const toolUseId = sdkToolUseId?.trim() || crypto.randomUUID();
     runnerWatchdog.pause();
 
     return new Promise<PermissionResult>((resolve, reject) => {
@@ -653,6 +921,17 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         toolUseId,
         toolName,
         input,
+        metadata: {
+          requestId: metadata.requestId,
+          suggestions: metadata.suggestions,
+          blockedPath: metadata.blockedPath,
+          decisionReason: metadata.decisionReason,
+          title: metadata.title,
+          displayName: metadata.displayName,
+          description: metadata.description,
+          matchedAskRule: metadata.matchedAskRule,
+          agentId: metadata.agentID,
+        },
         resolve: (result) => settle(result as PermissionResult),
       });
 
@@ -663,7 +942,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       signal?.addEventListener("abort", handleAbort, { once: true });
 
       try {
-        sendPermissionRequest(toolUseId, toolName, input);
+        sendPermissionRequest(toolUseId, toolName, input, metadata);
       } catch (error) {
         if (!settled) {
           settled = true;
@@ -879,6 +1158,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             error: "API configuration not found. Please configure API settings.",
           },
         });
+        closeFailedPreflight();
         return;
       }
 
@@ -907,6 +1187,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             error: errorMessage,
           },
         });
+        closeFailedPreflight();
         return;
       }
 
@@ -914,6 +1195,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       selectedImageGenerationConfig = config;
       const effectiveModel = resolvedConfig.model;
       requestedModelForError = effectiveModel;
+      requiresFigmaImplementationAnchor = shouldRequireFigmaImplementationAnchor(currentDisplayPrompt, effectiveModel);
 
       const env = buildEnvForConfig(config, effectiveModel);
       const globalRuntimeConfig = getGlobalRuntimeConfig();
@@ -963,30 +1245,6 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         currentDisplayPrompt,
         agentContext.skills,
       );
-      const hooks = buildQualityHooks(resolvedCwd, {
-        config,
-        mainModelName: effectiveModel,
-        getPrompt: () => currentDisplayPrompt,
-        projectCwd,
-        sessionId: session.id,
-        isCodeGraphRetrievalSeen: () => codeGraphRetrievalSeen,
-        onCodeGraphRetrieval: () => {
-          codeGraphRetrievalSeen = true;
-        },
-        onFigmaRestAuthFailure: () => {
-          figmaRestAuthFailureSeen = true;
-        },
-        onFigmaImplementationAnchor: () => {
-          figmaImplementationAnchorSeen = true;
-          figmaContextSeen = true;
-        },
-        onFigmaContext: () => {
-          figmaContextSeen = true;
-        },
-        onFigmaSvgAsset: () => {
-          figmaSvgAssetSeen = true;
-        },
-      });
       const enabledBuiltinMcpServerNames = resolveUserEnabledBuiltinMcpServers(
         [...desiredBuiltinMcpServerNames],
         syncedGlobalRuntimeConfig,
@@ -1006,6 +1264,62 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       const emulatorMcpServers = await buildEmulatorMcpServers();
       const sdkPlugins = resolveEnabledClaudeCodeSdkPlugins();
       const sdkPluginMcpServerNames = listClaudeCodePluginMcpServerNames(sdkPlugins);
+      const onSkillDiscovered = (requestedSkill: string): void => {
+        syncedGlobalRuntimeConfig = persistDiscoveredRuntimeConfig(
+          syncedGlobalRuntimeConfig,
+          mergedEnv,
+          requestedSkill,
+        );
+        latestGlobalRuntimeConfig = syncedGlobalRuntimeConfig;
+      };
+      const applyHardToolPolicy = (
+        toolName: string,
+        input: Record<string, unknown>,
+      ): RunnerHardToolPolicyResult => applyRunnerHardToolPolicy(toolName, input, {
+        workspaceContext: latestWorkspaceContext,
+        displayPrompt: currentDisplayPrompt,
+        agentPrompt: currentAgentPrompt,
+        projectCwd,
+        activeBuiltinMcpServerNames,
+        codeGraphRetrievalSeen,
+        permissionMode,
+        requiresFigmaImplementationAnchor,
+        figmaImplementationAnchorSeen,
+        requiresFigmaSvgAsset,
+        figmaContextSeen,
+        figmaSvgAssetSeen,
+        figmaRestAuthFailureSeen,
+        globalRuntimeConfig: syncedGlobalRuntimeConfig,
+        effectiveAllowedTools,
+        sdkPluginMcpServerNames,
+      });
+      const hooks = buildQualityHooks(resolvedCwd, {
+        config,
+        mainModelName: effectiveModel,
+        getPrompt: () => currentDisplayPrompt,
+        sessionId: session.id,
+        permissionMode,
+        toolPermissionPolicy,
+        applyHardToolPolicy,
+        requestPermissionDecision,
+        onSkillDiscovered,
+        onCodeGraphRetrieval: () => {
+          codeGraphRetrievalSeen = true;
+        },
+        onFigmaRestAuthFailure: () => {
+          figmaRestAuthFailureSeen = true;
+        },
+        onFigmaImplementationAnchor: () => {
+          figmaImplementationAnchorSeen = true;
+          figmaContextSeen = true;
+        },
+        onFigmaContext: () => {
+          figmaContextSeen = true;
+        },
+        onFigmaSvgAsset: () => {
+          figmaSvgAssetSeen = true;
+        },
+      });
       const systemPromptAppend = combineSystemPromptAppend(
         buildGlobalRuntimePromptAppend(syncedGlobalRuntimeConfig, mergedEnv),
         buildFeishuDocumentFetchPromptAppend(currentDisplayPrompt),
@@ -1079,9 +1393,11 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           settingSources: agentContext.settingSources,
           settings: sdkModelSettings,
           sandbox: buildClaudeSandboxSettings({
-            enabled: permissionMode !== "bypassPermissions",
+            enabled: true,
+            failIfUnavailable: false,
             workspaceRoot: resolvedCwd,
             additionalWriteRoots: visualizationSessionDirectory ? [visualizationSessionDirectory] : undefined,
+            environment: mergedEnv,
           }),
           ...(enabledSkills !== undefined ? { skills: enabledSkills } : {}),
           systemPrompt: buildClaudeCodeSystemPromptOption(systemPromptAppend),
@@ -1099,7 +1415,34 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           hooks,
           disallowedTools: agentTeamsDisallowedTools,
           allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
-          canUseTool: async (toolName, input, { signal }) => {
+          // Do not advertise supportedDialogKinds until a dialog kind has a
+          // documented payload/result contract that this UI can answer. The
+          // SDK then fails closed instead of parking an unrenderable dialog.
+          canUseTool: permissionMode === "bypassPermissions" ? undefined : async (toolName, input, permissionOptions) => {
+            const {
+              signal,
+              toolUseID,
+              requestId,
+              suggestions,
+              blockedPath,
+              decisionReason,
+              title,
+              displayName,
+              description,
+              matchedAskRule,
+              agentID,
+            } = permissionOptions;
+            const permissionMetadata: PermissionRequestMetadata = {
+              requestId,
+              suggestions,
+              blockedPath,
+              decisionReason,
+              title,
+              displayName,
+              description,
+              matchedAskRule,
+              agentID,
+            };
             const schemaNormalization = isRecord(input)
               ? normalizeToolInputForKnownSchemas(toolName, input)
               : { input: input as Record<string, unknown>, fixes: [], mutated: false };
@@ -1111,110 +1454,20 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
                 fixes: schemaNormalization.fixes,
               });
             }
-            const linkedWorkspaceRoute = routeLinkedWorkspaceToolInput(toolName, effectiveInput, {
-              context: latestWorkspaceContext,
-              prompt: currentDisplayPrompt,
-            });
-            if (linkedWorkspaceRoute.routed) {
-              effectiveInput = linkedWorkspaceRoute.input;
-              console.info("[runner][linked-workspace-routed]", {
-                sessionId: session.id,
-                toolName,
-                reason: linkedWorkspaceRoute.reason,
-              });
-            }
-            const imageGenerationDefaults = resolveImageGenerationToolDefaults(
-              toolName,
-              effectiveInput,
-              currentAgentPrompt,
-            );
-            if (imageGenerationDefaults) {
-              effectiveInput = imageGenerationDefaults;
-            }
             if (isCodeGraphRetrievalTool(toolName)) {
               codeGraphRetrievalSeen = true;
             }
-
-            const denyGuards: Array<() => { behavior: "deny"; message: string } | null> = [
-              () => isBlockedShellTool(toolName)
-                ? { behavior: "deny", message: BLOCKED_SHELL_TOOL_MESSAGE }
-                : null,
-              () => shouldDenyPowerShellCommand(toolName, effectiveInput)
-                ? { behavior: "deny", message: "PowerShell is disabled by tech-cc-hub's Windows shell policy because it is unstable in this environment. Use cmd.exe instead, for example: cmd.exe /d /s /c \"<command>\"." }
-                : null,
-              () => isSdkBuiltinCronTool(toolName)
-                ? { behavior: "deny", message: "SDK CronCreate/CronDelete/CronList are disabled. Use the tech-cc-hub cron MCP tools so schedules are persisted with history and retry metadata." }
-                : null,
-              () => {
-                const message = getKnowledgeIndexDenyMessage(toolName, currentDisplayPrompt);
-                return message ? { behavior: "deny", message } : null;
-              },
-              () => {
-                if (!activeBuiltinMcpServerNames.has("tech-cc-hub-knowledge")) {
-                  return null;
-                }
-                const message = getCodeGraphFirstDenyMessage(
-                  toolName,
-                  projectCwd,
-                  codeGraphRetrievalSeen,
-                  effectiveInput,
-                );
-                return message ? { behavior: "deny", message } : null;
-              },
-              () => {
-                const message = getFigmaImplementationAnchorDenyMessage(
-                  toolName, requiresFigmaImplementationAnchor, figmaImplementationAnchorSeen,
-                );
-                return message ? { behavior: "deny", message } : null;
-              },
-              () => {
-                const message = getFigmaSvgAssetDenyMessage(
-                  toolName, effectiveInput, requiresFigmaSvgAsset, figmaContextSeen, figmaSvgAssetSeen,
-                );
-                return message ? { behavior: "deny", message } : null;
-              },
-              () => {
-                const message = getFigmaOfficialRouteDenyMessage(
-                  toolName, syncedGlobalRuntimeConfig, figmaRestAuthFailureSeen,
-                );
-                return message ? { behavior: "deny", message } : null;
-              },
-              () => permissionMode === "plan"
-                ? { behavior: "deny", message: "Current run is in plan mode; tools will not be executed." }
-                : null,
-              () => toolName === "Skill" && shouldDenyExternalBrowseSkill(effectiveInput, currentDisplayPrompt)
-                ? { behavior: "deny", message: "This task is testing the built-in tech-cc-hub browser workbench. Use tech-cc-hub browser MCP tools instead of the external browse skill." }
-                : null,
-              () => {
-                const message = getAuthenticatedUrlWebFetchDenyMessage(
-                  toolName,
-                  effectiveInput,
-                  activeBuiltinMcpServerNames.has("tech-cc-hub-browser"),
-                  currentDisplayPrompt,
-                );
-                return message ? { behavior: "deny", message } : null;
-              },
-            ];
-
-            for (const guard of denyGuards) {
-              const result = guard();
-              if (result) return result;
+            const hardPolicy = applyHardToolPolicy(toolName, effectiveInput);
+            effectiveInput = hardPolicy.input;
+            if (hardPolicy.fixes.length > 0) {
+              console.info("[runner][hard-tool-policy]", {
+                sessionId: session.id,
+                toolName,
+                fixes: hardPolicy.fixes,
+              });
             }
-
-            if (toolName === "AskUserQuestion") {
-              return requestPermissionDecision(toolName, effectiveInput, signal);
-            }
-
-            if (toolName === "Skill" && isRecord(effectiveInput)) {
-              const requestedSkill = typeof effectiveInput.skill === "string" ? effectiveInput.skill.trim() : "";
-              if (requestedSkill) {
-                syncedGlobalRuntimeConfig = persistDiscoveredRuntimeConfig(
-                  syncedGlobalRuntimeConfig,
-                  mergedEnv,
-                  requestedSkill,
-                );
-                latestGlobalRuntimeConfig = syncedGlobalRuntimeConfig;
-              }
+            if (hardPolicy.denyMessage) {
+              return { behavior: "deny", message: hardPolicy.denyMessage };
             }
 
             if (toolName === "Read" && isRecord(effectiveInput)) {
@@ -1233,19 +1486,32 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               }
             }
 
-            if (
-              effectiveAllowedTools &&
-              !effectiveAllowedTools.has(toolName) &&
-              !isAlwaysAllowedTool(toolName, syncedGlobalRuntimeConfig) &&
-              !isClaudeCodePluginMcpTool(toolName, sdkPluginMcpServerNames)
-            ) {
-              return {
-                behavior: "deny",
-                message: `Current run surface does not allow tool: ${toolName}`,
-              };
+            const automaticDecision = resolveRunnerToolPermissionPolicy(
+              toolPermissionPolicy,
+              toolName,
+              effectiveInput,
+              permissionMetadata,
+            );
+            if (automaticDecision) {
+              console.info("[runner][tool-permission-policy]", {
+                sessionId: session.id,
+                toolName,
+                toolUseID,
+                requestId,
+                promptOrigin,
+                policy: toolPermissionPolicy,
+                behavior: automaticDecision.behavior,
+              });
+              return automaticDecision;
             }
 
-            return { behavior: "allow", updatedInput: effectiveInput };
+            return requestPermissionDecision(
+              toolName,
+              effectiveInput,
+              signal,
+              toolUseID,
+              permissionMetadata,
+            );
           },
         },
       });
@@ -1260,6 +1526,8 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       for await (const rawMessage of q) {
         runnerWatchdog.touch();
         const message = normalizeKnownToolInputsInMessage(rawMessage);
+        const backgroundLevelTransition = backgroundLifecycle.observeMessage(message);
+        const completeBackgroundAfterMessage = backgroundLevelTransition.completed;
         if (hasAssistantTextActivity(message)) {
           observedAssistantTextActivity = true;
         }
@@ -1274,6 +1542,24 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             session.claudeSessionId = sdkSessionId;
             onSessionUpdate?.({ claudeSessionId: sdkSessionId });
           }
+          if (!sdkSupportedCommandsPublished) {
+            sdkSupportedCommandsPublished = true;
+            void q.supportedCommands()
+              .then((commands) => {
+                if (activeQuery !== q || runnerClosed) return;
+                sendMessage(buildSdkSupportedCommandsMessage(commands, sdkSessionId || session.id));
+              })
+              .catch((error) => {
+                console.warn("[runner][slash-commands] Failed to read SDK supported commands:", error);
+              });
+          }
+        }
+
+        if (message.type === "conversation_reset") {
+          const sdkSessionId = message.new_conversation_id;
+          session.claudeSessionId = sdkSessionId;
+          session.planSnapshot = undefined;
+          onSessionUpdate?.({ claudeSessionId: sdkSessionId, planSnapshot: undefined });
         }
 
         if (message.type === "system" && "subtype" in message && message.subtype === "memory_recall") {
@@ -1293,7 +1579,13 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
 
         if (message.type === "result") {
           const resultMeta = message as Record<string, unknown>;
-          const origin = typeof resultMeta.origin === "string" ? resultMeta.origin : undefined;
+          const originRecord = isRecord(resultMeta.origin) ? resultMeta.origin : undefined;
+          const origin = originRecord
+            ? [
+                typeof originRecord.kind === "string" ? originRecord.kind : "unknown",
+                typeof originRecord.subkind === "string" ? originRecord.subkind : undefined,
+              ].filter(Boolean).join(":")
+            : undefined;
           const stopReason = typeof resultMeta.stop_reason === "string" ? resultMeta.stop_reason : undefined;
           if (origin || stopReason === "refusal") {
             console.info("[runner][result]", {
@@ -1301,6 +1593,15 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               origin,
               stopReason,
             });
+          }
+          if (!isRunnerResultForPromptOrigin(message, currentPromptOrigin)) {
+            console.info("[runner][auxiliary-result]", {
+              sessionId: session.id,
+              currentPromptOrigin: currentPromptOrigin.kind,
+              resultOrigin: origin,
+            });
+            sendMessage(message);
+            continue;
           }
           if (stopReason === "refusal") {
             const refusalMessage = normalizeRunnerError(
@@ -1317,12 +1618,24 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               },
             });
           }
+          const terminalReason = getRunnerTerminalReason(message);
+          const backgroundRequested = terminalReason === "background_requested";
+          if (backgroundRequested) {
+            const backgroundState = backgroundLifecycle.requestBackground();
+            backgroundCompletionSeen = backgroundState.completedBeforeResult;
+            activeBackgroundTerminalReason = terminalReason;
+          }
+          const backgroundActive = backgroundLifecycle.isActive();
           const hasUnfinishedPlan = hasIncompletePlan(session.planSnapshot?.plan);
-          if (
-            isSuccessfulRunnerResult(message) &&
-            hasUnfinishedPlan &&
-            unfinishedPlanAutoRetries < MAX_UNFINISHED_PLAN_AUTO_RETRIES
-          ) {
+          const emptySuccess = !backgroundActive
+            && isEmptySuccessfulRunnerResult(message, observedAssistantTextActivity);
+          if (shouldAutoContinueUnfinishedPlan(message, {
+            backgroundActive,
+            hasAssistantTextActivity: observedAssistantTextActivity,
+            hasUnfinishedPlan,
+            retryCount: unfinishedPlanAutoRetries,
+            maxRetries: MAX_UNFINISHED_PLAN_AUTO_RETRIES,
+          })) {
             unfinishedPlanAutoRetries += 1;
             observedAssistantTextActivity = false;
             console.warn("[runner][unfinished-plan-auto-retry]", {
@@ -1336,24 +1649,20 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               awaitingVisiblePostToolResponse = false;
             }
             sendMessage(message);
-            promptInput.enqueue(UNFINISHED_PLAN_CONTINUATION_PROMPT, []);
-            continue;
-          }
-          const emptySuccess = isEmptySuccessfulRunnerResult(message, observedAssistantTextActivity);
-          if (emptySuccess && emptySuccessAutoRetries < MAX_EMPTY_SUCCESS_AUTO_RETRIES) {
-            emptySuccessAutoRetries += 1;
-            observedAssistantTextActivity = false;
-            console.warn("[runner][empty-success-auto-retry]", {
-              sessionId: session.id,
-              retry: emptySuccessAutoRetries,
-              maxRetries: MAX_EMPTY_SUCCESS_AUTO_RETRIES,
-            });
-            promptInput.enqueue(EMPTY_SUCCESS_RETRY_PROMPT, []);
+            currentPromptOrigin = { kind: "auto-continuation" };
+            promptInput.enqueue(UNFINISHED_PLAN_CONTINUATION_PROMPT, [], { kind: "auto-continuation" });
             continue;
           }
 
-          const completionBlockedByPlan = isSuccessfulRunnerResult(message) && hasUnfinishedPlan;
-          const status = message.subtype === "success" && !emptySuccess && !completionBlockedByPlan ? "completed" : "error";
+          const completionBlockedByPlan = !backgroundActive
+            && isSuccessfulRunnerResult(message)
+            && hasUnfinishedPlan;
+          const successfulResult = isSuccessfulRunnerResult(message);
+          const status = backgroundActive
+            ? "running"
+            : successfulResult && !emptySuccess && !completionBlockedByPlan
+              ? "completed"
+              : "error";
           if (!emptySuccess) captureContextUsage();
           if (emptySuccess) {
             sendMessage(buildEmptySuccessFallbackMessage(session.id, requestedModelForError));
@@ -1364,9 +1673,11 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             awaitingVisiblePostToolResponse = false;
           }
           sendMessage(message);
+          foregroundTurnPending = false;
           const { hasPendingTurns } = turnLifecycle.completeCurrentTurn();
           if (status === "completed" && hasPendingTurns) {
             beginNextTurn();
+            activateNextPendingPromptOrigin();
             continue;
           }
           onEvent({
@@ -1375,16 +1686,29 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
               sessionId: session.id,
               status,
               title: session.title,
-              error: emptySuccess
-                ? "Runner returned an empty success without assistant text output."
-                : completionBlockedByPlan
-                  ? "Runner stopped before completing all planned steps."
+              backgroundActive,
+              terminalReason,
+              error: status === "error"
+                ? emptySuccess
+                  ? "Runner returned an empty success without assistant text output."
+                  : completionBlockedByPlan
+                    ? "Runner stopped before completing all planned steps."
+                    : getRunnerTerminalReasonLabel(terminalReason)
                 : undefined,
             },
-          });
-          emittedTerminalStatus = true;
-          runnerWatchdog.dispose();
-          if (isSuccessfulRunnerResult(message) && !emptySuccess && !completionBlockedByPlan) {
+          } as ServerEvent);
+          if (!backgroundActive) {
+            emittedTerminalStatus = true;
+            runnerWatchdog.dispose();
+          }
+          if (backgroundActive) {
+            if (hasPendingTurns) {
+              beginNextTurn();
+              activateNextPendingPromptOrigin();
+            }
+            continue;
+          }
+          if (successfulResult && !backgroundActive && !emptySuccess && !completionBlockedByPlan) {
             emittedSuccessfulResult = true;
           } else {
             promptInput.close();
@@ -1394,6 +1718,25 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         }
 
         sendMessage(message);
+        if (completeBackgroundAfterMessage) {
+          backgroundCompletionSeen = true;
+          activeBackgroundTerminalReason = undefined;
+          if (!foregroundTurnPending) {
+            emittedSuccessfulResult = true;
+            emittedTerminalStatus = true;
+            runnerWatchdog.dispose();
+            onEvent({
+              type: "session.status",
+              payload: {
+                sessionId: session.id,
+                status: "completed",
+                title: session.title,
+                backgroundActive: false,
+                terminalReason: "completed",
+              },
+            });
+          }
+        }
         extractPlanUpdateFromMessage(message);
         const statefulNotConnectedResult = findStatefulMcpNotConnectedResult(message, toolUseNamesById);
         if (statefulNotConnectedResult) {
@@ -1402,7 +1745,8 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       }
 
       if (!emittedTerminalStatus && !runnerClosed) {
-        const errorMessage = "Runner ended without a result message.";
+        const errorMessage = getUnexpectedRunnerEndMessage(backgroundLifecycle.isActive());
+        emittedTerminalStatus = true;
         onEvent({
           type: "runner.error",
           payload: {
@@ -1422,7 +1766,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       activeQuery = null;
       runnerClosed = true;
       promptInput.close();
-      if ((error as Error).name === "AbortError") {
+      if (abortRequested || abortController.signal.aborted || (error as Error).name === "AbortError") {
         return;
       }
 
@@ -1433,12 +1777,22 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         { processStderr: recentClaudeStderr },
       );
 
-      if (shouldSuppressRunnerErrorAfterSuccessfulResult(emittedSuccessfulResult)) {
+      if (shouldSuppressRunnerErrorAfterSuccessfulResult(
+        emittedSuccessfulResult || (backgroundCompletionSeen && !foregroundTurnPending),
+      )) {
         console.warn("[runner] Ignoring late runner error after successful result:", errorMessage);
         onEvent({
           type: "session.status",
-          payload: { sessionId: session.id, status: "completed", title: session.title },
-        });
+          payload: backgroundLifecycle.isActive()
+            ? {
+                sessionId: session.id,
+                status: "running",
+                title: session.title,
+                backgroundActive: true,
+                terminalReason: activeBackgroundTerminalReason,
+              }
+            : { sessionId: session.id, status: "completed", title: session.title },
+        } as ServerEvent);
         return;
       }
 
@@ -1454,6 +1808,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         type: "session.status",
         payload: { sessionId: session.id, status: "error", title: session.title, error: errorMessage },
       });
+      emittedTerminalStatus = true;
     } finally {
       runnerWatchdog.dispose();
       // 终态兜底：runner 任何退出路径都必须发过一次 session.status 终态（completed/error），
@@ -1461,12 +1816,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       // 正常路径已在 result 分支或 catch 里发过终态并置 emittedTerminalStatus=true；
       // 这里只兜住「runner 退出但漏发终态」的边角路径（如 append 排队时下一 turn 异常、
       // SDK 流提前结束但没走到 result 分支）。
-      if (!emittedTerminalStatus) {
+      if (!emittedTerminalStatus && !abortRequested) {
         emittedTerminalStatus = true;
         const fallbackStatus = emittedSuccessfulResult ? "completed" : "error";
         const fallbackError = emittedSuccessfulResult
           ? undefined
-          : "Runner exited without a terminal status.";
+          : getUnexpectedRunnerEndMessage(backgroundLifecycle.isActive());
         onEvent({
           type: "session.status",
           payload: {
@@ -1474,8 +1829,10 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             status: fallbackStatus,
             title: session.title,
             error: fallbackError,
+            backgroundActive: false,
+            terminalReason: backgroundLifecycle.isActive() ? activeBackgroundTerminalReason : undefined,
           },
-        });
+        } as ServerEvent);
         if (fallbackStatus === "error") {
           onEvent({
             type: "runner.error",
@@ -1488,6 +1845,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
 
   return {
     abort: () => {
+      abortRequested = true;
       runnerClosed = true;
       promptInput.close();
       activeQuery?.close();
@@ -1497,7 +1855,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
     appendPrompt: async (
       nextPrompt: string,
       nextAttachments: PromptAttachment[] | Promise<PromptAttachment[]> = [],
-      appendOptions: { displayPrompt?: string; workspaceContext?: LinkedWorkspaceContext } = {},
+      appendOptions: { displayPrompt?: string; workspaceContext?: LinkedWorkspaceContext; origin?: SDKMessageOrigin } = {},
     ) => {
       if (runnerClosed || promptInput.isClosed()) {
         throw new Error("Runner is closed.");
@@ -1506,12 +1864,17 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       if (startsNewCycle) {
         beginNextTurn();
       }
+      const nextPromptOrigin = appendOptions.origin ?? { kind: "human" };
+      pendingPromptOrigins.push(nextPromptOrigin);
+      if (startsNewCycle) {
+        activateNextPendingPromptOrigin();
+      }
       currentAgentPrompt = nextPrompt;
       currentDisplayPrompt = appendOptions.displayPrompt ?? nextPrompt;
       if ("workspaceContext" in appendOptions) {
         latestWorkspaceContext = normalizeRunnerWorkspaceContext(appendOptions.workspaceContext);
       }
-      requiresFigmaImplementationAnchor = shouldRequireFigmaImplementationAnchor(currentDisplayPrompt);
+      requiresFigmaImplementationAnchor = shouldRequireFigmaImplementationAnchor(currentDisplayPrompt, requestedModelForError);
       requiresFigmaSvgAsset = shouldRequireFigmaSvgAsset(currentDisplayPrompt);
       figmaContextSeen = figmaContextSeen || hasFigmaContext(currentDisplayPrompt, session.lastPrompt);
       try {
@@ -1520,8 +1883,12 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         if (runnerClosed || promptInput.isClosed()) {
           throw new Error("Runner is closed.");
         }
-        promptInput.enqueue(nextPrompt, resolvedNextAttachments);
+        promptInput.enqueue(nextPrompt, resolvedNextAttachments, nextPromptOrigin);
       } catch (error) {
+        const pendingOriginIndex = pendingPromptOrigins.indexOf(nextPromptOrigin);
+        if (pendingOriginIndex >= 0) {
+          pendingPromptOrigins.splice(pendingOriginIndex, 1);
+        }
         const { hasPendingTurns } = turnLifecycle.cancelAppendedTurn();
         if (!hasPendingTurns) {
           restoreCompletedStatusAfterCancelledAppend();
@@ -1558,7 +1925,12 @@ async function maybeRunFigmaGuideOAuth(
       return;
     }
 
-    const auth = await (q as QueryWithMcpOAuth).mcpAuthenticate(figmaServer.name);
+    const oauthQuery = q as QueryWithMcpOAuth;
+    if (typeof oauthQuery.mcpAuthenticate !== "function") {
+      console.warn("[runner][figma-oauth] SDK runtime does not expose mcpAuthenticate; skipping guided OAuth.");
+      return;
+    }
+    const auth = await oauthQuery.mcpAuthenticate(figmaServer.name);
     const authUrl = isRecord(auth) && typeof auth.authUrl === "string" ? auth.authUrl : "";
     if (!authUrl) {
       return;
@@ -2009,60 +2381,6 @@ function getDiscoveredCredentialEnvKeys(runtimeEnv: Record<string, string | unde
     .sort();
 }
 
-function isLikelyCredentialEnvName(name: string): boolean {
-  if (!/^[A-Z_][A-Z0-9_]*$/i.test(name)) {
-    return false;
-  }
-
-  const upper = name.toUpperCase();
-
-  if (upper === "ANTHROPIC_AUTH_TOKEN" || upper === "ANTHROPIC_BASE_URL" || upper === "ANTHROPIC_MODEL") {
-    return false;
-  }
-
-  const noisyEnvVars = new Set([
-    "PATH",
-    "HOME",
-    "SHELL",
-    "TERM",
-    "TERM_PROGRAM",
-    "TERM_PROGRAM_VERSION",
-    "TMPDIR",
-    "TMP",
-    "TEMP",
-    "HOSTNAME",
-    "PWD",
-    "OLDPWD",
-    "USER",
-    "LOGNAME",
-    "LANG",
-    "LC_ALL",
-    "SHLVL",
-    "COLORTERM",
-    "SSH_ASKPASS",
-    "SSH_AGENT_PID",
-    "SSH_CONNECTION",
-    "TZ",
-    "XDG_SESSION_ID",
-    "XDG_RUNTIME_DIR",
-    "LC_CTYPE",
-    "LC_COLLATE",
-    "LC_MESSAGES",
-    "COMSPEC",
-    "SYSTEMROOT",
-    "WINDIR",
-    "APPDATA",
-    "LOCALAPPDATA",
-  ]);
-
-  if (noisyEnvVars.has(upper) || upper.startsWith("LC_") || upper.startsWith("XDG_")) {
-    return false;
-  }
-
-  const credentialMarker = /(TOKEN|KEY|SECRET|PASSWORD|PASS|AUTH|CREDENTIAL|CLIENT|ACCESS|BEARER|PAT|SIGN|OAUTH|API|CERT|PRIVATE)/i;
-  return credentialMarker.test(upper);
-}
-
 function getSkillCredentialHints(globalRuntimeConfig: unknown): string[] {
   if (!isRecord(globalRuntimeConfig)) {
     return [];
@@ -2259,26 +2577,37 @@ function shouldPreprocessImageRead(
   filePath: string,
   mainModelName?: string,
 ): boolean {
-  void mainModelName;
-
   // 涓存椂鍏抽棴 Read 鍥剧墖鏃剁殑鍥剧墖妯″瀷鎽樿鎷︽埅锛岄伩鍏嶆埅鍥炬瘮鐓?闄勪欢閾捐矾琚浛鎹㈡垚涓嶅彲闈犳枃鏈€?
-  return Boolean(config?.imageModel?.trim() && RASTER_IMAGE_EXTENSIONS.has(extname(filePath).toLowerCase()));
+  return !canMainModelReadImages(mainModelName ?? config?.model)
+    && Boolean(config?.imageModel?.trim() && RASTER_IMAGE_EXTENSIONS.has(extname(filePath).toLowerCase()));
 }
 
 function createImageSummaryToolOutput(summary: string): Array<{ type: "text"; text: string }> {
   return createTextToolOutputBlocks(summary);
 }
 
-function buildQualityHooks(
+export function buildQualityHooks(
   _cwd: string,
   options: {
     config: NonNullable<ReturnType<typeof getCurrentApiConfig>>;
     mainModelName?: string;
     prompt?: string;
     getPrompt?: () => string;
-    projectCwd?: string;
     sessionId: string;
-    isCodeGraphRetrievalSeen?: () => boolean;
+    permissionMode: string;
+    toolPermissionPolicy?: ToolPermissionPolicy;
+    applyHardToolPolicy?: (
+      toolName: string,
+      input: Record<string, unknown>,
+    ) => RunnerHardToolPolicyResult;
+    requestPermissionDecision?: (
+      toolName: string,
+      input: unknown,
+      signal?: AbortSignal,
+      sdkToolUseId?: string,
+      metadata?: PermissionRequestMetadata,
+    ) => Promise<PermissionResult>;
+    onSkillDiscovered?: (requestedSkill: string) => void;
     onCodeGraphRetrieval?: () => void;
     onFigmaRestAuthFailure?: () => void;
     onFigmaImplementationAnchor?: () => void;
@@ -2291,8 +2620,11 @@ function buildQualityHooks(
     config,
     mainModelName,
     sessionId,
-    projectCwd,
-    isCodeGraphRetrievalSeen,
+    permissionMode,
+    toolPermissionPolicy,
+    applyHardToolPolicy,
+    requestPermissionDecision,
+    onSkillDiscovered,
     onCodeGraphRetrieval,
     onFigmaRestAuthFailure,
     onFigmaImplementationAnchor,
@@ -2390,7 +2722,7 @@ function buildQualityHooks(
       }],
     }],
     PreToolUse: [{
-      hooks: [async (input) => {
+      hooks: [async (input, toolUseID, { signal }) => {
         if (!("tool_name" in input) || typeof input.tool_name !== "string") {
           return { continue: true };
         }
@@ -2516,21 +2848,85 @@ function buildQualityHooks(
           fixes.push(...schemaNormalization.fixes);
         }
 
-        const codeGraphDenyMessage = getCodeGraphFirstDenyMessage(
-          toolName,
-          projectCwd,
-          isCodeGraphRetrievalSeen?.() ?? false,
-          normalizedInput,
-        );
-        if (codeGraphDenyMessage) {
+        const hardPolicy = applyHardToolPolicy?.(toolName, normalizedInput);
+        if (hardPolicy) {
+          if (hardPolicy.input !== normalizedInput) {
+            normalizedInput = hardPolicy.input;
+            didMutate = true;
+          }
+          fixes.push(...hardPolicy.fixes);
+        }
+        if (hardPolicy?.denyMessage) {
           return {
             continue: true,
             hookSpecificOutput: {
               hookEventName: "PreToolUse",
               permissionDecision: "deny",
-              permissionDecisionReason: codeGraphDenyMessage,
-              additionalContext: codeGraphDenyMessage,
+              permissionDecisionReason: hardPolicy.denyMessage,
+              additionalContext: hardPolicy.denyMessage,
               ...(didMutate ? { updatedInput: normalizedInput } : {}),
+            },
+          };
+        }
+
+        if (toolName === "Skill") {
+          const requestedSkill = typeof normalizedInput.skill === "string"
+            ? normalizedInput.skill.trim()
+            : "";
+          if (requestedSkill) {
+            onSkillDiscovered?.(requestedSkill);
+          }
+        }
+
+        if (permissionMode === "bypassPermissions" && toolName === "AskUserQuestion") {
+          if (toolPermissionPolicy === "unattended-auto-approve") {
+            const message = "Unattended scheduled tasks cannot answer interactive questions.";
+            return {
+              continue: true,
+              hookSpecificOutput: {
+                hookEventName: "PreToolUse",
+                permissionDecision: "deny",
+                permissionDecisionReason: message,
+                additionalContext: message,
+                ...(didMutate ? { updatedInput: normalizedInput } : {}),
+              },
+            };
+          }
+          if (!requestPermissionDecision) {
+            return { continue: true };
+          }
+          const inputToolUseId = "tool_use_id" in input && typeof input.tool_use_id === "string"
+            ? input.tool_use_id
+            : undefined;
+          const decision = await requestPermissionDecision(
+            toolName,
+            normalizedInput,
+            signal,
+            toolUseID ?? inputToolUseId,
+          );
+          if (decision.behavior === "deny") {
+            return {
+              continue: true,
+              hookSpecificOutput: {
+                hookEventName: "PreToolUse",
+                permissionDecision: "deny",
+                permissionDecisionReason: decision.message,
+                additionalContext: decision.message,
+                ...(didMutate ? { updatedInput: normalizedInput } : {}),
+              },
+            };
+          }
+
+          const approvedInput = decision.updatedInput ?? normalizedInput;
+          return {
+            continue: true,
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              permissionDecision: "allow",
+              ...(approvedInput !== normalizedInput || didMutate ? { updatedInput: approvedInput } : {}),
+              ...([...fixes, ...hints].length > 0
+                ? { additionalContext: `Tool input optimization: ${[...fixes, ...hints].join("; ")}` }
+                : {}),
             },
           };
         }
@@ -2659,16 +3055,6 @@ function buildQualityHooks(
             },
           };
         } catch (error) {
-          if (canMainModelReadImages(mainModelName ?? config.model)) {
-            return {
-              continue: true,
-              hookSpecificOutput: {
-                hookEventName: "PostToolUse",
-                additionalContext: "Image preprocessing failed; the selected main model supports image understanding, so the raw image Read output was left available as a fallback.",
-              },
-            };
-          }
-
           const message = error instanceof Error ? error.message : String(error);
           const fallback = [
             `Image file: ${filePath}`,
@@ -2854,8 +3240,8 @@ function getFigmaSvgAssetDenyMessage(
   ].join("\n");
 }
 
-function shouldRequireFigmaImplementationAnchor(prompt: string): boolean {
-  return FIGMA_URL_PATTERN.test(prompt);
+function shouldRequireFigmaImplementationAnchor(prompt: string, mainModelName?: string): boolean {
+  return FIGMA_URL_PATTERN.test(prompt) && !canMainModelReadImages(mainModelName);
 }
 
 function shouldRequireFigmaSvgAsset(prompt: string): boolean {
@@ -3175,13 +3561,21 @@ function buildClaudeDynamicWorkflowSettings(
   };
 }
 
-export function createPromptSource(prompt: string, attachments: PromptAttachment[]): AsyncIterable<SDKUserMessage> {
+export function createPromptSource(
+  prompt: string,
+  attachments: PromptAttachment[],
+  origin: SDKMessageOrigin = { kind: "human" },
+): AsyncIterable<SDKUserMessage> {
   return (async function* promptSource(): AsyncIterable<SDKUserMessage> {
-    yield createPromptMessage(prompt, attachments);
+    yield createPromptMessage(prompt, attachments, origin);
   })();
 }
 
-function createPromptMessage(prompt: string, attachments: PromptAttachment[]): SDKUserMessage {
+function createPromptMessage(
+  prompt: string,
+  attachments: PromptAttachment[],
+  origin: SDKMessageOrigin = { kind: "human" },
+): SDKUserMessage {
   const content = buildRunnerPromptContentBlocks(prompt, attachments) as unknown as SDKUserMessage["message"]["content"];
 
   return {
@@ -3191,6 +3585,7 @@ function createPromptMessage(prompt: string, attachments: PromptAttachment[]): S
       content,
     },
     parent_tool_use_id: null,
+    origin,
   };
 }
 
@@ -3203,12 +3598,16 @@ class PromptInputQueue implements AsyncIterable<SDKUserMessage>, AsyncIterator<S
     return this;
   }
 
-  enqueue(prompt: string, attachments: PromptAttachment[]): void {
+  enqueue(
+    prompt: string,
+    attachments: PromptAttachment[],
+    origin: SDKMessageOrigin = { kind: "human" },
+  ): void {
     if (this.closed) {
       throw new Error("Prompt input queue is closed.");
     }
 
-    const message = createPromptMessage(prompt, attachments);
+    const message = createPromptMessage(prompt, attachments, origin);
     if (this.waiter) {
       const waiter = this.waiter;
       this.waiter = null;

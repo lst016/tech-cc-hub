@@ -20,11 +20,12 @@ test("mergeSlashCommandItemsByPriority: higher-priority source wins on name", ()
 });
 
 test("mergeSlashCommandItemsByPriority: lower-priority fills description when higher is empty", () => {
-  const compat = [{ name: "agents", description: "compat rich desc", source: "claude-code-compat" }];
+  const compat = [{ name: "agents", description: "compat rich desc", icon: "data:image/png;base64,AAAA", source: "claude-code-compat" }];
   const local = [{ name: "agents", source: "local" }];
   const out = mergeSlashCommandItemsByPriority([compat, [], local, []]);
   assert.equal(out.length, 1);
   assert.equal(out[0].description, "compat rich desc");
+  assert.equal(out[0].icon, "data:image/png;base64,AAAA");
   assert.equal(out[0].source, "local");
 });
 

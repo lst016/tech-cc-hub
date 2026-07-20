@@ -26,6 +26,7 @@ import { ensureTaskWorkspace } from "./workspace.js";
 import { applyTaskSettingsToWorkflow, loadTaskSettings, saveTaskSettings } from "./settings.js";
 import type { ServerEvent } from "../../types.js";
 import type { Session, SessionStore } from "../session-store.js";
+import { RELEASE_DEFAULT_PERMISSION_MODE } from "../../../shared/runtime-permissions.js";
 
 export type TaskExecutorEvents = {
   onTaskUpdated?: (task: StoredTask) => void;
@@ -373,17 +374,29 @@ export class TaskExecutor {
     try {
       const handle = await runClaude({
         prompt,
-        runtime: { model, reasoningMode },
+        promptOrigin: options.manual
+          ? { kind: "task-notification" }
+          : { kind: "task-notification", subkind: "scheduled-trigger" },
+        toolPermissionPolicy: options.manual ? "interactive" : "unattended-auto-approve",
+        runtime: { model, reasoningMode, permissionMode: RELEASE_DEFAULT_PERMISSION_MODE },
         session,
         onEvent: (event) => {
           this.markExecutionActive(task.id, execution.id);
           this.emitServerEvent?.(event);
 
           if (event.type === "session.status") {
-            const statusPayload = event.payload as { sessionId: string; status: string; error?: string };
+            const statusPayload = event.payload as {
+              sessionId: string;
+              status: string;
+              error?: string;
+              backgroundActive?: boolean;
+              terminalReason?: string;
+            };
             if (statusPayload.sessionId === session.id) {
-              if (statusPayload.status === "completed") {
-                completion.finish({ success: true, terminalReason: "completed" });
+              if (statusPayload.backgroundActive) {
+                return;
+              } else if (statusPayload.status === "completed") {
+                completion.finish({ success: true, terminalReason: statusPayload.terminalReason ?? "completed" });
               } else if (statusPayload.status === "error") {
                 completion.finish({ success: false, error: statusPayload.error ?? "Unknown error", terminalReason: "runner-error" });
               }
@@ -424,14 +437,25 @@ export class TaskExecutor {
       });
       completion.running.handle = handle;
 
-      const result = await Promise.race([
-        completion.promise,
-        new Promise<CompletionResult>((resolvePromise) =>
-          setTimeout(() => resolvePromise({ success: false, error: "Task execution timed out after 30 minutes", terminalReason: "timeout" }), DEFAULT_EXECUTION_TIMEOUT_MS),
-        ),
-      ]);
+      let executionTimeout: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<CompletionResult>((resolvePromise) => {
+        executionTimeout = setTimeout(
+          () => resolvePromise({ success: false, error: "Task execution timed out after 30 minutes", terminalReason: "timeout" }),
+          DEFAULT_EXECUTION_TIMEOUT_MS,
+        );
+        executionTimeout.unref?.();
+      });
+      let result: CompletionResult;
+      try {
+        result = await Promise.race([completion.promise, timeoutPromise]);
+      } finally {
+        if (executionTimeout) clearTimeout(executionTimeout);
+      }
 
-      if (!result.success) handle.abort();
+      // Task executions never reuse their query. Once the authoritative
+      // completion signal arrives, close it on both success and failure so a
+      // successful streaming query cannot retain listeners or background I/O.
+      handle.abort();
       await this.finalizeExecution(task, execution, attempt, result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

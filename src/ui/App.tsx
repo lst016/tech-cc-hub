@@ -1,3 +1,4 @@
+// @refresh reset
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import { Download, Loader2, PackageCheck } from "lucide-react";
@@ -21,11 +22,13 @@ import {
   FORK_ASSISTANT_MESSAGE_EVENT,
   OPEN_BROWSER_WORKBENCH_URL_EVENT,
   OPEN_SIDE_CONVERSATION_EVENT,
+  OPEN_VISUALIZATION_PREVIEW_EVENT,
   OPEN_WORKSPACE_PLUGIN_EVENT,
   PROMPT_APPEND_RESULT_EVENT,
   PREVIEW_OPEN_FILE_EVENT,
   type ForkAssistantMessageDetail,
   type OpenBrowserWorkbenchUrlDetail,
+  type OpenVisualizationPreviewDetail,
   type OpenWorkspacePluginDetail,
   type PromptAppendResultDetail,
   type PreviewOpenFileDetail,
@@ -54,6 +57,7 @@ import {
   ProcessHistoryDisclosure,
   TurnFileChangesCard,
 } from "./components/chat/ProcessGroupCard";
+import { ScrollToBottomButton } from "./components/chat/ScrollToBottomButton";
 import { WorkflowAgentCard } from "./components/workflow/WorkflowAgentCard";
 import type { WorkflowRunAction, WorkflowRunRecord } from "../shared/workflows/workflow-runs";
 import { getWorkspacePluginSurfaceId, type WorkspacePluginDescriptor } from "../shared/workspace-plugins";
@@ -360,6 +364,7 @@ function App() {
   const [activityRailTabBySessionId, setActivityRailTabBySessionId] = useState<Record<string, ActivityRailTab>>({});
   const [openWorkflowAgentTabsBySessionId, setOpenWorkflowAgentTabsBySessionId] = useState<Record<string, string[]>>({});
   const [pendingPreviewOpenRequestBySessionId, setPendingPreviewOpenRequestBySessionId] = useState<Record<string, PendingPreviewOpenRequest>>({});
+  const [visualizationPreviewBySessionId, setVisualizationPreviewBySessionId] = useState<Record<string, OpenVisualizationPreviewDetail>>({});
   const [gitTabBySessionId, setGitTabBySessionId] = useState<Record<string, boolean>>({});
   const [terminalTabBySessionId, setTerminalTabBySessionId] = useState<Record<string, boolean>>({});
   const [sidechatTabBySessionId, setSidechatTabBySessionId] = useState<Record<string, boolean>>({});
@@ -471,6 +476,7 @@ function App() {
   );
   const selectedWorkflowAgentId = getWorkflowAgentIdFromTab(activityRailTab) ?? undefined;
   const pendingPreviewOpenRequest = activeSessionId ? pendingPreviewOpenRequestBySessionId[activeSessionId] : undefined;
+  const visualizationPreview = activeSessionId ? visualizationPreviewBySessionId[activeSessionId] : undefined;
   const setActiveSessionWorkspaceView = useCallback((nextView: WorkspaceView) => {
     if (!activeSessionId) return;
     setWorkspaceViewBySessionId((current) => (
@@ -1429,6 +1435,12 @@ function App() {
       setWorkspaceViewBySessionId((current) => (
         current[sessionId] === "chat" ? current : { ...current, [sessionId]: "chat" }
       ));
+      setVisualizationPreviewBySessionId((current) => {
+        if (!(sessionId in current)) return current;
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
       setPendingPreviewOpenRequestBySessionId((current) => ({
         ...current,
         [sessionId]: {
@@ -1444,6 +1456,38 @@ function App() {
     window.addEventListener(PREVIEW_OPEN_FILE_EVENT, handlePreviewOpenFile);
     return () => {
       window.removeEventListener(PREVIEW_OPEN_FILE_EVENT, handlePreviewOpenFile);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleOpenVisualizationPreview = (event: Event) => {
+      const detail = (event as CustomEvent<OpenVisualizationPreviewDetail>).detail;
+      const activeId = activeSessionIdRef.current;
+      if (!detail?.sessionId || !detail.fileName || !detail.title || detail.sessionId !== activeId) return;
+
+      setShowSessionAnalysis(false);
+      setShowActivityRail(true);
+      setWorkspaceViewBySessionId((current) => (
+        current[detail.sessionId] === "chat" ? current : { ...current, [detail.sessionId]: "chat" }
+      ));
+      setPendingPreviewOpenRequestBySessionId((current) => {
+        if (!(detail.sessionId in current)) return current;
+        const next = { ...current };
+        delete next[detail.sessionId];
+        return next;
+      });
+      setVisualizationPreviewBySessionId((current) => ({
+        ...current,
+        [detail.sessionId]: detail,
+      }));
+      setActivityRailTabBySessionId((current) => (
+        current[detail.sessionId] === "preview" ? current : { ...current, [detail.sessionId]: "preview" }
+      ));
+    };
+
+    window.addEventListener(OPEN_VISUALIZATION_PREVIEW_EVENT, handleOpenVisualizationPreview);
+    return () => {
+      window.removeEventListener(OPEN_VISUALIZATION_PREVIEW_EVENT, handleOpenVisualizationPreview);
     };
   }, []);
 
@@ -2335,15 +2379,7 @@ function App() {
               }}
               className="pointer-events-none fixed z-40 flex justify-center"
             >
-              <button
-                onClick={scrollToBottom}
-                className="pointer-events-auto flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-medium text-white shadow-lg transition-all hover:bg-accent-hover hover:scale-105 animate-bounce-subtle"
-              >
-                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 5v14M5 12l7 7 7-7" />
-                </svg>
-                    <span>有新消息</span>
-              </button>
+              <ScrollToBottomButton onClick={scrollToBottom} />
             </div>
           )}
         </main>
@@ -2394,6 +2430,16 @@ function App() {
                 suspended={workspaceView === "browser"}
                 deferPreviewMount={!activityRailTabExplicitlySet && !pendingPreviewOpenRequest}
                 pendingPreviewOpenRequest={pendingPreviewOpenRequest}
+                visualizationPreview={visualizationPreview}
+                onCloseVisualizationPreview={() => {
+                  if (!activeSessionId) return;
+                  setVisualizationPreviewBySessionId((current) => {
+                    if (!(activeSessionId in current)) return current;
+                    const next = { ...current };
+                    delete next[activeSessionId];
+                    return next;
+                  });
+                }}
                 onConsumePendingPreviewOpenRequest={() => {
                   if (!activeSessionId) return;
                   setPendingPreviewOpenRequestBySessionId((current) => {

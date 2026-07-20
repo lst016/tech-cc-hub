@@ -1,4 +1,4 @@
-import type { SDKControlGetContextUsageResponse, SDKMessage, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKControlGetContextUsageResponse, SDKMessage, PermissionResult, PermissionUpdate } from "@anthropic-ai/claude-agent-sdk";
 import type { LinkedWorkspaceContext } from "../shared/linked-workspaces.js";
 import type { BuiltinMcpServerName } from "../shared/builtin-mcp-registry.js";
 import type { PromptLedgerMessage } from "../shared/prompt-ledger.js";
@@ -207,6 +207,7 @@ export type SessionWorkflowCatalog = {
 export type SessionHistoryCursor = {
   beforeCreatedAt: number;
   beforeId: string;
+  beforeSequence?: number;
 };
 
 export type McpServerInfo = {
@@ -220,18 +221,36 @@ export type McpServerInfo = {
   enabled: boolean;
 };
 
+export type PermissionRequestMetadata = {
+  requestId?: string;
+  suggestions?: PermissionUpdate[];
+  blockedPath?: string;
+  decisionReason?: string;
+  title?: string;
+  displayName?: string;
+  description?: string;
+  matchedAskRule?: { source: string; toolName: string; ruleContent?: string };
+  agentId?: string;
+};
+
+export type PermissionRequestPayload = PermissionRequestMetadata & {
+  toolUseId: string;
+  toolName: string;
+  input: unknown;
+};
+
 // Server -> Client events
 export type ServerEvent =
   | { type: "stream.message"; payload: { sessionId: string; message: StreamMessage } }
   | { type: "model.catalog.updated"; payload: { addedModels: Array<{ profileId: string; profileName: string; modelName: string; model: ApiModelConfig }>; syncedAt: number } }
   | { type: "stream.user_prompt"; payload: { sessionId: string; prompt: string; attachments?: PromptAttachment[]; capturedAt?: number; historyId?: string } }
   | { type: "session.append.result"; payload: { sessionId: string; requestId: string; success: boolean; error?: string } }
-  | { type: "session.status"; payload: { sessionId: string; status: SessionStatus; title?: string; cwd?: string; model?: string; configProfileId?: string; executionMode?: SessionExecutionMode; reasoningMode?: RuntimeReasoningMode; permissionMode?: RuntimeOverrides["permissionMode"]; error?: string; slashCommands?: string[] } }
+  | { type: "session.status"; payload: { sessionId: string; status: SessionStatus; title?: string; cwd?: string; model?: string; configProfileId?: string; executionMode?: SessionExecutionMode; reasoningMode?: RuntimeReasoningMode; permissionMode?: RuntimeOverrides["permissionMode"]; error?: string; slashCommands?: string[]; backgroundActive?: boolean; terminalReason?: string } }
   | { type: "btw.thread.created"; payload: { threadId: string; parentSessionId: string; title: string; status: SessionStatus; cwd?: string; model?: string; configProfileId?: string; reasoningMode?: RuntimeReasoningMode; permissionMode?: RuntimeOverrides["permissionMode"]; createdAt: number; updatedAt: number } }
-  | { type: "btw.thread.status"; payload: { threadId: string; status: SessionStatus; title?: string; model?: string; configProfileId?: string; reasoningMode?: RuntimeReasoningMode; permissionMode?: RuntimeOverrides["permissionMode"]; error?: string; updatedAt: number } }
+  | { type: "btw.thread.status"; payload: { threadId: string; status: SessionStatus; title?: string; model?: string; configProfileId?: string; reasoningMode?: RuntimeReasoningMode; permissionMode?: RuntimeOverrides["permissionMode"]; error?: string; updatedAt: number; backgroundActive?: boolean; terminalReason?: string } }
   | { type: "btw.stream.message"; payload: { threadId: string; message: StreamMessage } }
   | { type: "btw.stream.user_prompt"; payload: { threadId: string; prompt: string; attachments?: PromptAttachment[]; capturedAt?: number } }
-  | { type: "btw.permission.request"; payload: { threadId: string; toolUseId: string; toolName: string; input: unknown } }
+  | { type: "btw.permission.request"; payload: PermissionRequestPayload & { threadId: string } }
   | { type: "btw.runner.error"; payload: { threadId: string; message: string } }
   | { type: "btw.thread.closed"; payload: { threadId: string; parentSessionId: string } }
   | { type: "btw.parent.closed"; payload: { parentSessionId: string; threadIds: string[] } }
@@ -247,7 +266,7 @@ export type ServerEvent =
   | { type: "session.renamed"; payload: { sessionId: string; title: string; updatedAt: number } }
   | { type: "session.deleted"; payload: { sessionId: string } }
   | { type: "desktop.notification.opened"; payload: { target: DesktopNotificationOpenTarget } }
-  | { type: "permission.request"; payload: { sessionId: string; toolUseId: string; toolName: string; input: unknown } }
+  | { type: "permission.request"; payload: PermissionRequestPayload & { sessionId: string } }
   | { type: "runner.error"; payload: { sessionId?: string; message: string } }
   | { type: "agent.list"; payload: { agents: Array<{ id: string; name: string; description?: string; scope: string }> } }
   // MCP server events

@@ -4,7 +4,54 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
-import { resolveExternalCliCommand, runExternalCli } from "../../src/electron/libs/external-cli.js";
+import {
+  buildExternalCliEnv,
+  buildExternalCliStringEnv,
+  resolveExternalCliCommand,
+  runExternalCli,
+} from "../../src/electron/libs/external-cli.js";
+
+test("buildExternalCliEnv supplements the restricted macOS GUI PATH", () => {
+  const env = buildExternalCliEnv({
+    HOME: "/Users/techcc",
+    PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+  }, "darwin");
+
+  assert.equal(
+    env.PATH,
+    [
+      "/usr/bin",
+      "/bin",
+      "/usr/sbin",
+      "/sbin",
+      "/Users/techcc/.local/bin",
+      "/Users/techcc/.volta/bin",
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+    ].join(":"),
+  );
+});
+
+test("buildExternalCliStringEnv preserves enhanced PATH and omits undefined values", () => {
+  const env = buildExternalCliStringEnv({
+    HOME: "/Users/techcc",
+    PATH: "/usr/bin:/bin",
+    UNSET: undefined,
+  }, "darwin");
+
+  assert.equal(env.UNSET, undefined);
+  assert.equal(
+    env.PATH,
+    [
+      "/usr/bin",
+      "/bin",
+      "/Users/techcc/.local/bin",
+      "/Users/techcc/.volta/bin",
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+    ].join(":"),
+  );
+});
 
 test("runExternalCli preserves process output when a command fails", async () => {
   const failure = await runExternalCli(process.execPath, [

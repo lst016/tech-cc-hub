@@ -61,6 +61,7 @@ test("contentEditable non-paragraph input remains native", () => {
 
 test("contentEditable replacement input only suppresses latin auto-correct rewrites", () => {
   assert.equal(shouldSuppressPromptAutoReplacement({ inputType: "insertReplacementText", data: "teh" }), true);
+  assert.equal(shouldSuppressPromptAutoReplacement({ inputType: "insertReplacementText", data: "t" }), false);
   assert.equal(shouldSuppressPromptAutoReplacement({ inputType: "insertReplacementText", data: "你" }), false);
   assert.equal(shouldSuppressPromptAutoReplacement({ inputType: "insertReplacementText", data: "你", isComposing: true }), false);
   assert.equal(shouldSuppressPromptAutoReplacement({ inputType: "insertReplacementText", data: "teh" }, true), false);

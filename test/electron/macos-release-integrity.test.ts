@@ -39,6 +39,14 @@ test("macOS release artifacts are signed, notarized, and verified before upload"
 
   assert.match(buildWorkflow, /os:\s*macos-15-intel/);
   assert.doesNotMatch(buildWorkflow, /os:\s*macos-15-large/);
+  assert.match(releaseWorkflow, /os:\s*macos-15-intel/);
+  assert.match(releaseWorkflow, /Prepare macOS updater metadata/);
+  assert.match(releaseWorkflow, /Verify macOS updater assets/);
+  assert.match(releaseWorkflow, /latest-x64-mac\.yml/);
+  assert.match(releaseWorkflow, /latest-mac\.yml/);
+  assert.match(releaseWorkflow, /blockmap_path\.rename\(renamed_blockmap\)/);
+  assert.match(releaseWorkflow, /points to missing blockmap/);
+  assert.match(releaseWorkflow, /seen_artifacts/);
   assert.match(verificationScript, /codesign --verify --deep --strict/);
   assert.match(verificationScript, /spctl --assess --type execute/);
   assert.match(verificationScript, /xcrun stapler validate/);

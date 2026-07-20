@@ -1043,3 +1043,121 @@ test("buildActivityRailModel keeps explicit plan when hint and actions appear", 
   assert.equal(model.planSteps[0]?.title, "检查当前仓库结构");
   assert.equal(model.planSteps[1]?.title, "修复异常");
 });
+
+test("buildActivityRailModel surfaces SDK retry, background level, and terminal reason", () => {
+  const model = buildActivityRailModel({
+    id: "sdk-compat-session",
+    title: "SDK compatibility",
+    status: "error",
+    messages: [
+      {
+        type: "tool_progress",
+        uuid: "retry-progress",
+        tool_use_id: "tool-retry",
+        tool_name: "Task",
+        elapsed_time_seconds: 3,
+        parent_tool_use_id: null,
+        subagent_type: "researcher",
+        subagent_retry: {
+          agent_id: "agent-1",
+          attempt: 2,
+          max_retries: 4,
+          retry_delay_ms: 2000,
+          error_status: 429,
+          error_category: "rate_limit",
+        },
+      } as never,
+      {
+        type: "system",
+        subtype: "background_tasks_changed",
+        uuid: "background-level",
+        tasks: [{ task_id: "agent-1", task_type: "sub_agent", description: "Inspect SDK changes" }],
+      } as never,
+      {
+        type: "result",
+        subtype: "success",
+        uuid: "terminal-result",
+        result: "",
+        terminal_reason: "budget_exhausted",
+      } as never,
+    ],
+  }, [], "");
+
+  assert.ok(model.timeline.some((item) => item.title.includes("正在重试") && item.attention));
+  assert.ok(model.timeline.some((item) => item.title.includes("后台任务运行中")));
+  assert.ok(model.timeline.some((item) => item.title === "预算已用尽" && item.tone === "error"));
+});
+
+test("buildActivityRailModel treats task progress as cumulative and task notification as authoritative", () => {
+  const model = buildActivityRailModel({
+    id: "task-metrics-session",
+    title: "Task metrics",
+    status: "running",
+    messages: [
+      { type: "system", subtype: "task_started", uuid: "task-start", task_id: "task-metrics", description: "Measure task" } as never,
+      { type: "system", subtype: "task_progress", uuid: "task-progress-1", task_id: "task-metrics", description: "Measure task", usage: { duration_ms: 1000, total_tokens: 100, tool_uses: 1 } } as never,
+      { type: "system", subtype: "task_progress", uuid: "task-progress-2", task_id: "task-metrics", description: "Measure task", usage: { duration_ms: 2500, total_tokens: 240, tool_uses: 3 } } as never,
+      { type: "system", subtype: "task_updated", uuid: "task-paused", task_id: "task-metrics", patch: { status: "paused" } } as never,
+      { type: "system", subtype: "task_updated", uuid: "task-resumed", task_id: "task-metrics", patch: { status: "running" } } as never,
+      { type: "system", subtype: "task_updated", uuid: "task-completed", task_id: "task-metrics", patch: { status: "completed" } } as never,
+      { type: "system", subtype: "task_notification", uuid: "task-done", task_id: "task-metrics", status: "completed", summary: "Task done", output_file: "task.txt", usage: { duration_ms: 3000, total_tokens: 300, tool_uses: 4 } } as never,
+    ],
+  }, [], "");
+
+  const task = model.timeline.find((item) => item.id === "task-started-task-metrics");
+  assert.ok(task);
+  assert.equal(task.statusLabel, "已完成");
+  assert.equal(task.metrics.durationMs, 3000);
+  assert.equal(task.metrics.outputTokens, 300);
+  assert.equal(task.metrics.totalCount, 1);
+  assert.equal(task.metrics.status, "success");
+  assert.match(task.detail, /Task done/);
+  assert.equal(model.timeline.filter((item) => item.parentTaskId === "task-metrics").length, 1);
+});
+
+test("buildActivityRailModel keeps background levels independent and deduplicates progress nodes", () => {
+  const model = buildActivityRailModel({
+    id: "level-and-progress-session",
+    title: "Levels",
+    status: "running",
+    messages: [
+      { type: "system", subtype: "task_started", uuid: "edge-start", task_id: "edge-task", description: "Edge task" } as never,
+      { type: "system", subtype: "background_tasks_changed", uuid: "level-one", tasks: [{ task_id: "edge-task", task_type: "sub_agent", description: "Level only" }] } as never,
+      { type: "system", subtype: "background_tasks_changed", uuid: "level-empty", tasks: [] } as never,
+      { type: "tool_progress", uuid: "heartbeat-one", tool_use_id: "tool-heartbeat", tool_name: "Bash", elapsed_time_seconds: 1, parent_tool_use_id: null, heartbeat: true } as never,
+      { type: "tool_progress", uuid: "heartbeat-two", tool_use_id: "tool-heartbeat", tool_name: "Bash", elapsed_time_seconds: 2, parent_tool_use_id: null, heartbeat: true } as never,
+      { type: "system", subtype: "control_request_progress", uuid: "control-start", request_id: "request-1", status: "started" } as never,
+      { type: "system", subtype: "control_request_progress", uuid: "control-retry", request_id: "request-1", status: "api_retry", attempt: 2, max_retries: 3, retry_delay_ms: 1000 } as never,
+    ],
+  }, [], "");
+
+  const edgeTask = model.timeline.find((item) => item.id === "task-started-edge-task");
+  assert.equal(edgeTask?.statusLabel, "运行中");
+  assert.ok(model.timeline.some((item) => item.id === "background-tasks-level-one"));
+  assert.equal(model.timeline.some((item) => item.id === "background-tasks-level-empty"), false);
+  assert.equal(model.timeline.filter((item) => item.id === "tool-progress-tool-heartbeat").length, 1);
+  const controlItems = model.timeline.filter((item) => item.id === "control-request-request-1");
+  assert.equal(controlItems.length, 1);
+  assert.equal(controlItems[0]?.statusLabel, "重试中");
+});
+
+test("buildActivityRailModel surfaces user-visible SDK system events and defensive command lifecycle", () => {
+  const model = buildActivityRailModel({
+    id: "visible-events-session",
+    title: "Visible events",
+    status: "running",
+    messages: [
+      { type: "system", subtype: "api_retry", uuid: "api-retry", attempt: 1, max_retries: 3, retry_delay_ms: 1000, error_status: 429, error: "rate_limit" } as never,
+      { type: "system", subtype: "permission_denied", uuid: "denied", tool_name: "Bash", tool_use_id: "bash-1", message: "Denied by rule" } as never,
+      { type: "system", subtype: "informational", uuid: "blocked", content: "Stop hook blocked continuation", level: "warning", prevent_continuation: true } as never,
+      { type: "system", subtype: "command_lifecycle", uuid: "command", command_id: "cmd-1", command: "npm test", status: "completed" } as never,
+      { type: "system", subtype: "session_state_changed", uuid: "action", state: "requires_action" } as never,
+    ],
+  }, [], "");
+
+  assert.ok(model.timeline.some((item) => item.title === "模型请求正在重试"));
+  assert.ok(model.timeline.some((item) => item.title.includes("权限已拒绝")));
+  assert.ok(model.timeline.some((item) => item.title === "执行已被阻止" && item.attention));
+  assert.ok(model.timeline.some((item) => item.title === "命令已完成"));
+  assert.ok(model.timeline.some((item) => item.title === "会话需要你的操作" && item.attention));
+});

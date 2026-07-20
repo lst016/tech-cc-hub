@@ -99,19 +99,3 @@
     @apply bg-background text-foreground;
   }
 }
-
-@keyframes bounce-subtle {
-
-  0%,
-  100% {
-    transform: translateX(-50%) translateY(0);
-  }
-
-  50% {
-    transform: translateX(-50%) translateY(-4px);
-  }
-}
-
-.animate-bounce-subtle {
-  animation: bounce-subtle 1.5s ease-in-out infinite;
-}

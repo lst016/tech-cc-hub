@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, CornerDownLeft, ListOrdered, Pencil, Trash2, X } from "lucide-react";
+import { ChevronDown, CornerDownLeft, GitFork, ListOrdered, Pencil, Trash2, X } from "lucide-react";
 import type { PromptAttachment } from "../../types";
 import type {
   CodeReferenceDraft,
@@ -46,15 +46,21 @@ function getQueuedMessagePanelDetail(queuedMessage: QueuedMessageDraft) {
 export function QueuedMessagesPanel({
   queue,
   isRunning,
+  canFork,
+  forkInFlightIds,
   onClear,
   onAppend,
+  onFork,
   onEdit,
   onRemove,
 }: {
   queue: QueuedMessageDraft[];
   isRunning: boolean;
+  canFork: boolean;
+  forkInFlightIds: ReadonlySet<string>;
   onClear: () => void;
   onAppend: (queuedMessage: QueuedMessageDraft) => void;
+  onFork: (queuedMessage: QueuedMessageDraft) => void;
   onEdit: (queuedMessage: QueuedMessageDraft) => void;
   onRemove: (queueId: string) => void;
 }) {
@@ -64,6 +70,7 @@ export function QueuedMessagesPanel({
 
   const nextQueuedMessage = queue[0]!;
   const { label: nextLabel } = getQueuedMessagePanelDetail(nextQueuedMessage);
+  const isAnyForking = forkInFlightIds.size > 0;
 
   return (
     <div
@@ -118,6 +125,7 @@ export function QueuedMessagesPanel({
         <div className="queued-messages-scroll max-h-[216px] overflow-y-auto overscroll-contain">
           {queue.map((queuedMessage, index) => {
             const { contextCount, label } = getQueuedMessagePanelDetail(queuedMessage);
+            const isForking = forkInFlightIds.has(queuedMessage.id);
 
             return (
               <div
@@ -161,15 +169,28 @@ export function QueuedMessagesPanel({
                 </div>
                 <div className="queued-message-actions flex min-w-0 items-center justify-end gap-0.5">
                   {isRunning && (
-                    <button
-                      type="button"
-                      className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg bg-accent-subtle px-2 text-[11px] font-semibold text-accent transition hover:bg-accent/15 focus-visible:outline-2 focus-visible:outline-accent/40"
-                      onClick={() => onAppend(queuedMessage)}
-                      title="把这条消息作为补充命令插入当前执行"
-                    >
-                      <CornerDownLeft className="h-3.5 w-3.5" aria-hidden="true" />
-                      插入
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg bg-surface-tertiary px-2 text-[11px] font-semibold text-ink-600 transition hover:bg-ink-900/8 hover:text-ink-800 focus-visible:outline-2 focus-visible:outline-accent/40 disabled:cursor-not-allowed disabled:opacity-45"
+                        onClick={() => onFork(queuedMessage)}
+                        disabled={!canFork || isAnyForking}
+                        title={canFork ? "从当前轮之前的最近回复 Fork，并立即执行这条消息" : "当前会话还没有可 Fork 的已完成助手回复"}
+                        aria-label={`Fork 执行排队消息 ${index + 1}`}
+                      >
+                        <GitFork className="h-3.5 w-3.5" aria-hidden="true" />
+                        {isForking ? "Fork 中" : "Fork 执行"}
+                      </button>
+                      <button
+                        type="button"
+                        className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg bg-accent-subtle px-2 text-[11px] font-semibold text-accent transition hover:bg-accent/15 focus-visible:outline-2 focus-visible:outline-accent/40"
+                        onClick={() => onAppend(queuedMessage)}
+                        title="把这条消息作为补充命令插入当前执行"
+                      >
+                        <CornerDownLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                        插入
+                      </button>
+                    </>
                   )}
                   <button
                     type="button"

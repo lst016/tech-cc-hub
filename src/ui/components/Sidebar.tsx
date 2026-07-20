@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Help } from "@icon-park/react";
 import { useAppStore } from "../store/useAppStore";
 import type { AppUpdateStatus, SettingsPageId } from "../types";
 import {
@@ -20,6 +21,7 @@ import {
   type SidebarRenameDialogState,
   type WorkspaceLinkDialogState,
 } from "./sidebar/SidebarDialogs";
+import { WooAuthDialog, WooAvatar } from "./WooAuthDialog";
 
 interface SidebarProps {
   connected: boolean;
@@ -105,6 +107,46 @@ export function Sidebar({
     left: number;
     top: number;
   } | null>(null);
+  const [wooAuthDialogOpen, setWooAuthDialogOpen] = useState(false);
+  const [wooLoginBusy, setWooLoginBusy] = useState(false);
+  const [wooLoginError, setWooLoginError] = useState("");
+  const [wooAuthState, setWooAuthState] = useState<{
+    status: "anonymous" | "authenticated";
+    user: { realName?: string; userHandle?: string; avatarUrl?: string } | null;
+  }>({ status: "anonymous", user: null });
+  const handleWooAuthStateChange = useCallback((state: {
+    status: "anonymous" | "authenticated";
+    user: { realName?: string; userHandle?: string; avatarUrl?: string } | null;
+  }) => {
+    setWooAuthState({ status: state.status, user: state.user });
+  }, []);
+  const handleWooAuthTriggerClick = useCallback(async () => {
+    if (wooAuthState.status === "authenticated") {
+      setWooAuthDialogOpen((current) => !current);
+      return;
+    }
+    if (wooLoginBusy) return;
+
+    setWooLoginBusy(true);
+    setWooLoginError("");
+    setWooAuthDialogOpen(false);
+    try {
+      const result = await window.electron.invoke("woo-auth:login-third-party") as {
+        status?: unknown;
+        user?: unknown;
+      };
+      handleWooAuthStateChange({
+        status: result?.status === "authenticated" ? "authenticated" : "anonymous",
+        user: result?.user && typeof result.user === "object"
+          ? result.user as { realName?: string; userHandle?: string; avatarUrl?: string }
+          : null,
+      });
+    } catch (error) {
+      setWooLoginError(error instanceof Error ? error.message : "Woo 浏览器登录失败。");
+    } finally {
+      setWooLoginBusy(false);
+    }
+  }, [handleWooAuthStateChange, wooAuthState.status, wooLoginBusy]);
 
   useEffect(() => {
     const unsubscribe = window.electron.onAppUpdateStatus((status: AppUpdateStatus) => {
@@ -155,6 +197,19 @@ export function Sidebar({
       .catch(() => {
         setRecentCwds([]);
       });
+  }, []);
+
+  useEffect(() => {
+    void window.electron.invoke("woo-auth:get-state")
+      .then((state: unknown) => {
+        if (!state || typeof state !== "object") return;
+        const authState = state as { status?: unknown; user?: unknown };
+        setWooAuthState({
+          status: authState.status === "authenticated" ? "authenticated" : "anonymous",
+          user: authState.user && typeof authState.user === "object" ? authState.user as { realName?: string; userHandle?: string; avatarUrl?: string } : null,
+        });
+      })
+      .catch(() => undefined);
   }, []);
 
   const formatWorkspaceName = (cwd?: string) => {
@@ -426,18 +481,55 @@ export function Sidebar({
               </svg>
               <span className="min-w-0 truncate">定时任务</span>
             </button>
-            <button
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-[#e2e2e2] hover:text-ink-950"
-              onClick={() => openSettings()}
-              aria-label="设置"
-            >
-              <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-              <span className="min-w-0 truncate">设置</span>
-              {hasUpdate && <span className="h-2 w-2 shrink-0 rounded-full bg-error" />}
-            </button>
+            {wooAuthState.status === "anonymous" && (
+              <button
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-[#e2e2e2] hover:text-ink-950"
+                onClick={() => openSettings()}
+                aria-label="设置"
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+                <span className="min-w-0 truncate">设置</span>
+                {hasUpdate && <span className="h-2 w-2 shrink-0 rounded-full bg-error" />}
+              </button>
+            )}
+            <div className="relative">
+              <WooAuthDialog
+                open={wooAuthState.status === "authenticated" && wooAuthDialogOpen}
+                onOpenChange={setWooAuthDialogOpen}
+                onStateChange={handleWooAuthStateChange}
+                onOpenSettings={() => openSettings()}
+              />
+              {wooAuthState.status === "anonymous" && wooLoginError && (
+                <p
+                  role="alert"
+                  data-woo-auth-error
+                  className="absolute bottom-full left-0 right-0 z-[160] mb-2 rounded-lg border border-error/20 bg-white px-3 py-2 text-xs leading-5 text-error shadow-lg"
+                >
+                  {wooLoginError}
+                </p>
+              )}
+              <button
+                type="button"
+                data-woo-auth-trigger
+                disabled={wooLoginBusy}
+                className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-[#e2e2e2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 disabled:cursor-wait disabled:opacity-60"
+                onClick={() => void handleWooAuthTriggerClick()}
+                aria-label={wooAuthState.status === "authenticated" ? "Woo 账号" : wooLoginBusy ? "正在登录 Woo 账号" : "登录 Woo 账号"}
+                aria-haspopup={wooAuthState.status === "authenticated" ? "dialog" : undefined}
+                aria-expanded={wooAuthState.status === "authenticated" && wooAuthDialogOpen}
+              >
+                <WooAvatar key={wooAuthState.user?.avatarUrl ?? "anonymous"} user={wooAuthState.user} size="menu" />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink-800">
+                  {wooAuthState.status === "authenticated"
+                    ? (wooAuthState.user?.realName || wooAuthState.user?.userHandle || "Woo 用户")
+                    : wooLoginBusy ? "等待浏览器登录..." : "登录 Woo 账号"}
+                </span>
+                <Help theme="outline" size={20} fill="currentColor" strokeWidth={2.2} className="shrink-0 text-ink-400" aria-hidden="true" />
+              </button>
+            </div>
           </div>
         </div>
 

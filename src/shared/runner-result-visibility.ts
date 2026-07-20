@@ -1,8 +1,11 @@
+import { isSuccessfulRunnerResult } from "./runner-status.js";
+
 type RunnerMessageLike = {
   type?: unknown;
   subtype?: unknown;
   result?: unknown;
   message?: unknown;
+  terminal_reason?: unknown;
 };
 
 function getAssistantContent(message: RunnerMessageLike): unknown[] {
@@ -44,7 +47,7 @@ export function getVisibleTerminalResultText(
   message: RunnerMessageLike,
   awaitingVisiblePostToolResponse: boolean,
 ): string | undefined {
-  if (!awaitingVisiblePostToolResponse || message.type !== "result" || message.subtype !== "success") {
+  if (!awaitingVisiblePostToolResponse || !isSuccessfulRunnerResult(message)) {
     return undefined;
   }
 

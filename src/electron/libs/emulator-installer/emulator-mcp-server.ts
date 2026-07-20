@@ -15,26 +15,19 @@ import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 
 import { getRemoteAgentUrl } from "../emulator-remote/index.js";
 import { isPackageInstalledGlobally } from "./install-from-npm.js";
+import { buildMobileMcpServerConfig } from "./mobile-mcp-config.js";
 
 const MOBILE_MCP_PACKAGE = "@mobilenext/mobile-mcp";
-const MOBILE_MCP_BIN = "mobile-mcp";
 const MOBILE_MCP_SERVER_NAME = "mobile-mcp";
 const IOS_EMULATOR_PLUGIN_ID = "ios-emulator";
-const REMOTE_AGENT_ENV_KEY = "MOBILE_MCP_REMOTE_AGENT_URL";
 
 export async function buildEmulatorMcpServers(): Promise<Record<string, McpServerConfig>> {
   const state = await isPackageInstalledGlobally(MOBILE_MCP_PACKAGE);
   if (!state.installed) return {};
 
-  const env: Record<string, string> = {};
   const remoteUrl = await getRemoteAgentUrl(IOS_EMULATOR_PLUGIN_ID);
-  if (remoteUrl) env[REMOTE_AGENT_ENV_KEY] = remoteUrl;
 
   return {
-    [MOBILE_MCP_SERVER_NAME]: {
-      type: "stdio",
-      command: MOBILE_MCP_BIN,
-      env,
-    },
+    [MOBILE_MCP_SERVER_NAME]: buildMobileMcpServerConfig(remoteUrl),
   };
 }

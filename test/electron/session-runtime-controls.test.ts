@@ -11,7 +11,7 @@ test("session continue preserves execution mode and runtime controls before stat
 
   assert.match(
     continueSection,
-    /const nextExecutionMode = event\.payload\.runtime\?\.executionMode \?\? session\.executionMode \?\? "foreground";[\s\S]*const nextReasoningMode = event\.payload\.runtime\?\.reasoningMode \?\? session\.reasoningMode;[\s\S]*const nextPermissionMode = event\.payload\.runtime\?\.permissionMode \?\? session\.permissionMode;[\s\S]*const runnerRuntime = \{[\s\S]*executionMode: nextExecutionMode,[\s\S]*reasoningMode: nextReasoningMode,[\s\S]*permissionMode: nextPermissionMode,[\s\S]*model: selectedModel,/,
+    /const nextExecutionMode = event\.payload\.runtime\?\.executionMode \?\? session\.executionMode \?\? "foreground";[\s\S]*const nextReasoningMode = event\.payload\.runtime\?\.reasoningMode \?\? session\.reasoningMode;[\s\S]*const nextPermissionMode = normalizeReleasePermissionMode\(event\.payload\.runtime\?\.permissionMode \?\? session\.permissionMode\);[\s\S]*const runnerRuntime = \{[\s\S]*executionMode: nextExecutionMode,[\s\S]*reasoningMode: nextReasoningMode,[\s\S]*permissionMode: nextPermissionMode,[\s\S]*model: selectedModel,/,
   );
   assert.ok(
     continueSection.indexOf("const nextExecutionMode") < continueSection.indexOf("const continuationPayload"),
@@ -30,5 +30,6 @@ test("prompt runtime defaults SDK workflow mode to auto and sends it with prompt
 
   assert.match(promptActionsSource, /const workflowMode = useAppStore\(\(state\) => state\.workflowMode\);/);
   assert.match(promptActionsSource, /workflowMode,/);
-  assert.match(promptActionsSource, /permissionMode: permissionMode === "plan" \? "bypassPermissions" : permissionMode,[\s\S]*workflowMode,/);
+  assert.match(promptActionsSource, /permissionMode,[\s\S]*workflowMode,/);
+  assert.doesNotMatch(promptActionsSource, /permissionMode === "plan" \? "bypassPermissions"/);
 });

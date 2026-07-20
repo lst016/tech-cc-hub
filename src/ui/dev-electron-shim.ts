@@ -1,6 +1,7 @@
 import type { ApiConfigSettings, ClientEvent, PromptAttachment, ServerEvent, StreamMessage, UiGitCommitDetail, UiGitCommitMessageSuggestion, UiGitDiffResult, UiGitResult, UiGitWorkbenchSnapshot } from "./types";
 import type { AppUpdateActionResult, AppUpdateStatus } from "./types";
 import type { BuiltinMcpServerName } from "../shared/builtin-mcp-registry";
+import { RELEASE_DEFAULT_PERMISSION_MODE } from "../shared/runtime-permissions";
 import type { CreateCronJobParams, CronJob } from "../types/cron";
 
 const browserPreviewSessionId = "browser-preview-session";
@@ -127,6 +128,25 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     || previewUrl.hash.includes(DEV_BROWSER_PREVIEW_FLAG);
   const qaPlanPreviewEnabled = new URLSearchParams(window.location.search).get("qaPlanPreview") === "1";
   const qaCronScenario = new URLSearchParams(window.location.search).get("qaCron");
+  const qaWooAuthEnabled = new URLSearchParams(window.location.search).get("qaWooAuth") === "1";
+  let qaWooAuthenticated = false;
+  const buildQaWooAuthState = () => qaWooAuthenticated ? {
+    status: "authenticated" as const,
+    user: {
+      universalUserId: "woo-qa-user",
+      realName: "Woo QA 用户",
+      userHandle: "woo_qa",
+      userEmail: "woo.qa@example.com",
+      avatarUrl: "https://s1-imfile.feishucdn.com/qa/woo-avatar.png",
+    },
+    challenges: [],
+    loginMethods: { password: false, email: false, thirdParty: true },
+  } : {
+    status: "anonymous" as const,
+    user: null,
+    challenges: [],
+    loginMethods: { password: true, email: true, thirdParty: false },
+  };
   let sessionCreatedAt = Date.now();
   let sessionUpdatedAt = sessionCreatedAt;
   let sessionStatus: "idle" | "running" | "completed" = qaPlanPreviewEnabled ? "running" : "idle";
@@ -739,7 +759,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
             cwd: qaSessionCwd,
             model: "claude-sonnet-4-5",
             reasoningMode: "high",
-            permissionMode: "default",
+            permissionMode: RELEASE_DEFAULT_PERMISSION_MODE,
             createdAt: timestamp,
             updatedAt: timestamp,
           },
@@ -915,6 +935,27 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
         syncSession();
       }
       if (event.type === "session.continue") {
+        if (event.payload.sessionId !== browserPreviewSessionId) {
+          emit({
+            type: "session.status",
+            payload: {
+              sessionId: event.payload.sessionId,
+              status: "completed",
+              cwd: browserPreviewCwd,
+              model: event.payload.runtime?.model?.trim() || sessionModel,
+              slashCommands: browserPreviewSlashCommandNames,
+            },
+          });
+          emit({
+            type: "stream.user_prompt",
+            payload: {
+              sessionId: event.payload.sessionId,
+              prompt: event.payload.prompt,
+              attachments: event.payload.attachments,
+            },
+          });
+          return;
+        }
         sessionUpdatedAt = Date.now();
         sessionStatus = "completed";
         sessionModel = event.payload.runtime?.model?.trim() || sessionModel;
@@ -1053,6 +1094,23 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     invoke: async <T,>(channel: string, ...args: unknown[]): Promise<T> => {
       if (qaCronScenario && channel.startsWith("cron:")) {
         return invokeQaCron<T>(channel, args);
+      }
+      if (qaWooAuthEnabled && channel.startsWith("woo-auth:")) {
+        if (
+          channel === "woo-auth:login-password"
+          || channel === "woo-auth:login-email"
+          || channel === "woo-auth:login-third-party"
+        ) {
+          qaWooAuthenticated = true;
+          window.sessionStorage.setItem("qa:woo-last-auth-channel", channel);
+        }
+        if (channel === "woo-auth:logout") qaWooAuthenticated = false;
+        if (channel === "woo-auth:send-email-code") return { success: true } as T;
+        return buildQaWooAuthState() as T;
+      }
+      if (qaWooAuthEnabled && channel === "shell:openExternal") {
+        window.sessionStorage.setItem("qa:woo-last-external-url", String(args[0] ?? ""));
+        return { success: true } as T;
       }
       if (channel === "sessions:list") {
         const payload = args[0] && typeof args[0] === "object" ? args[0] as { archived?: unknown } : {};

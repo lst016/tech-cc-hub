@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
-import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import type { PermissionResult, PermissionUpdate } from "@anthropic-ai/claude-agent-sdk";
 import { CheckCircle2, ChevronDown, ChevronUp, MessageSquare, Sparkles } from "lucide-react";
 import type { PermissionRequest } from "../store/useAppStore";
+import type { PermissionRequestMetadata } from "../types";
 import {
   normalizeAskUserQuestions,
   type AskUserQuestion,
@@ -18,6 +19,18 @@ type SelectedOptionsByQuestion = Record<number, string[]>;
 type OtherInputsByQuestion = Record<number, string>;
 
 const OPTION_LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+const ANSI_CSI_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g");
+
+function sanitizePermissionText(value: string | undefined): string {
+  if (!value) return "";
+  return Array.from(value.replace(ANSI_CSI_PATTERN, ""))
+    .filter((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint === 9 || codePoint === 10 || codePoint === 13 || (codePoint >= 32 && codePoint !== 127);
+    })
+    .join("")
+    .trim();
+}
 
 function clampQuestionIndex(index: number, total: number): number {
   if (total <= 0) return 0;
@@ -82,12 +95,36 @@ function buildAnswers(
   return answers;
 }
 
+function describePermissionUpdate(update: PermissionUpdate): string {
+  const scope = update.destination;
+  switch (update.type) {
+    case "addRules":
+    case "replaceRules":
+    case "removeRules":
+      return `${scope} · ${update.type} (${update.behavior}): ${update.rules
+        .map((rule) => `${rule.toolName}${rule.ruleContent ? `(${rule.ruleContent})` : ""}`)
+        .join(", ")}`;
+    case "setMode":
+      return `${scope} · setMode: ${update.mode}`;
+    case "addDirectories":
+    case "removeDirectories":
+      return `${scope} · ${update.type}: ${update.directories.join(", ")}`;
+  }
+}
+
+function isSafePersistentRuleSuggestion(update: PermissionUpdate): boolean {
+  return update.type === "addRules"
+    && update.behavior === "allow"
+    && update.destination !== "userSettings"
+    && update.destination !== "cliArg";
+}
+
 export function DecisionPanel({
   request,
   onSubmit,
   compact = false,
 }: {
-  request: PermissionRequest;
+  request: PermissionRequest & PermissionRequestMetadata;
   onSubmit: (result: PermissionResult) => void;
   compact?: boolean;
 }) {
@@ -393,24 +430,72 @@ export function DecisionPanel({
     );
   }
 
+  const requestTitle = sanitizePermissionText(request.title);
+  const requestDisplayName = sanitizePermissionText(request.displayName) || request.toolName;
+  const requestDescription = sanitizePermissionText(request.description);
+  const permissionSuggestionSummaries = request.suggestions?.map(describePermissionUpdate) ?? [];
+  const persistentRuleSuggestions = request.suggestions?.filter(isSafePersistentRuleSuggestion) ?? [];
+  const matchedAskRule = request.matchedAskRule;
+  const matchedAskRuleSummary = matchedAskRule
+    ? `人工确认规则：${sanitizePermissionText(matchedAskRule.source)} · ${sanitizePermissionText(matchedAskRule.toolName)}${
+      matchedAskRule.ruleContent ? `(${sanitizePermissionText(matchedAskRule.ruleContent)})` : ""
+    }`
+    : "";
+  const requestContext = [
+    sanitizePermissionText(request.decisionReason) ? `原因：${sanitizePermissionText(request.decisionReason)}` : "",
+    sanitizePermissionText(request.blockedPath) ? `受限路径：${sanitizePermissionText(request.blockedPath)}` : "",
+    matchedAskRuleSummary,
+    sanitizePermissionText(request.agentId) ? `Agent：${sanitizePermissionText(request.agentId)}` : "",
+  ].filter(Boolean);
+
   return (
     <div className="rounded-lg border border-[#dfe3ea] bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.10)]">
       <div className="text-xs font-semibold text-muted">权限请求</div>
       <p className="mt-2 text-sm text-ink-700">
-        Agent 想要使用：<span className="font-medium">{request.toolName}</span>
+        {requestTitle || <>Agent 想要使用：<span className="font-medium">{requestDisplayName}</span></>}
       </p>
+      {requestDescription && <p className="mt-1 text-sm leading-5 text-muted">{requestDescription}</p>}
+      {requestContext.length > 0 && (
+        <div className="mt-2 space-y-1 rounded-md border border-amber-100 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+          {requestContext.map((item) => <div key={item}>{item}</div>)}
+        </div>
+      )}
+      {permissionSuggestionSummaries.length > 0 && (
+        <div className="mt-3 rounded-md border border-sky-100 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-900">
+          <div className="font-semibold">Persistent permission changes</div>
+          {permissionSuggestionSummaries.map((summary, index) => (
+            <div key={`${index}-${summary}`} className="break-words font-mono">{summary}</div>
+          ))}
+        </div>
+      )}
       <div className="mt-3 rounded-md bg-[#f6f8fa] p-3">
         <pre className="max-h-40 whitespace-pre-wrap break-words font-mono text-xs text-ink-600">
           {JSON.stringify(request.input, null, 2)}
         </pre>
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
+        {persistentRuleSuggestions.length > 0 ? (
+          <button
+            type="button"
+            className="rounded-md border border-[#cfd8e3] bg-[#f3f7fb] px-4 py-2 text-sm font-medium text-ink-800 transition hover:bg-[#eaf0f6]"
+            onClick={() => onSubmit({
+              behavior: "allow",
+              updatedInput: request.input as Record<string, unknown>,
+              updatedPermissions: persistentRuleSuggestions,
+            })}
+          >
+            始终允许
+          </button>
+        ) : null}
         <button
           type="button"
           className="rounded-md bg-[#111111] px-4 py-2 text-sm font-medium text-white transition hover:bg-black"
-          onClick={() => onSubmit({ behavior: "allow", updatedInput: request.input as Record<string, unknown> })}
+          onClick={() => onSubmit({
+            behavior: "allow",
+            updatedInput: request.input as Record<string, unknown>,
+          })}
         >
-          允许
+          允许一次
         </button>
         <button
           type="button"

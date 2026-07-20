@@ -8,12 +8,12 @@ const source = [
   existsSync(footerPath) ? readFileSync(footerPath, "utf8") : "",
 ].join("\n");
 
-test("prompt composer keeps the add affordance for rich text actions", () => {
-  assert.match(source, /import \{[^}]*\bPlus\b[^}]*\} from "lucide-react";/);
+test("prompt composer uses a slash glyph for the Slash command browser", () => {
+  assert.match(source, /import \{[^}]*\bSlash\b[^}]*\} from "lucide-react";/);
   assert.match(source, /onToggleSlashBrowser=\{\(\) => setShowSlashBrowser\(\(value\) => !value\)\}/);
   assert.match(
     source,
-    /onClick=\{onToggleSlashBrowser\}[\s\S]*?<Plus className="h-\[19px\] w-\[19px\]" aria-hidden="true" \/>[\s\S]*?<\/TooltipButton>/,
+    /onClick=\{onToggleSlashBrowser\}[\s\S]*?<Slash className="h-\[19px\] w-\[19px\]" aria-hidden="true" \/>[\s\S]*?<\/TooltipButton>/,
   );
 });
 

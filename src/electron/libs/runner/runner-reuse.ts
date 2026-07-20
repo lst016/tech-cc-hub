@@ -11,6 +11,7 @@ export type RunnerReuseKeyInput = {
   runtime?: RuntimeOverrides;
   prompt: string;
   attachments?: readonly PromptAttachment[];
+  toolPermissionPolicy?: "interactive" | "unattended-auto-approve";
 };
 
 type RunnerReuseDescriptor = {
@@ -19,6 +20,7 @@ type RunnerReuseDescriptor = {
   configProfileId: string;
   origin: string;
   permissionMode: string;
+  toolPermissionPolicy: string;
   reasoningMode: string;
   workflowMode: string;
   outputFormat: string;
@@ -47,6 +49,7 @@ export function canReuseRunner(existingKey: string | undefined, requestedKey: st
     existing.configProfileId === requested.configProfileId &&
     existing.origin === requested.origin &&
     existing.permissionMode === requested.permissionMode &&
+    existing.toolPermissionPolicy === requested.toolPermissionPolicy &&
     existing.reasoningMode === requested.reasoningMode &&
     existing.workflowMode === requested.workflowMode &&
     existing.outputFormat === requested.outputFormat &&
@@ -72,7 +75,8 @@ function buildRunnerReuseDescriptor(input: RunnerReuseKeyInput): RunnerReuseDesc
     model: normalizeKeyPart(input.model),
     configProfileId: normalizeKeyPart(input.runtime?.configProfileId),
     origin: normalizeKeyPart((input.runtime as { origin?: string } | undefined)?.origin),
-    permissionMode: input.runtime?.permissionMode ?? "bypassPermissions",
+    permissionMode: input.runtime?.permissionMode ?? "default",
+    toolPermissionPolicy: input.toolPermissionPolicy ?? "interactive",
     reasoningMode: input.runtime?.reasoningMode ?? "",
     workflowMode: input.runtime?.workflowMode ?? "auto",
     outputFormat: input.runtime?.outputFormat ?? "",
@@ -106,6 +110,7 @@ function parseRunnerReuseKey(value: string | undefined): RunnerReuseDescriptor |
       configProfileId: typeof parsed.configProfileId === "string" ? parsed.configProfileId : "",
       origin: typeof parsed.origin === "string" ? parsed.origin : "",
       permissionMode: typeof parsed.permissionMode === "string" ? parsed.permissionMode : "",
+      toolPermissionPolicy: typeof parsed.toolPermissionPolicy === "string" ? parsed.toolPermissionPolicy : "",
       reasoningMode: typeof parsed.reasoningMode === "string" ? parsed.reasoningMode : "",
       workflowMode: typeof parsed.workflowMode === "string" ? parsed.workflowMode : "auto",
       outputFormat: typeof parsed.outputFormat === "string" ? parsed.outputFormat : "",

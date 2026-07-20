@@ -37,7 +37,7 @@ export type ReleaseUpdatePlan = {
 export function isMissingPlatformUpdateMetadataError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /(?:404|not\s*found|cannot\s+find|cannot\s+download|no\s+published\s+versions)/i.test(message) &&
-    /(?:latest(?:-[\w]+)?\.ya?ml|update\s+info|release\s+artifacts?|\.exe|\.blockmap)/i.test(message);
+    /(?:latest(?:-[\w-]+)?\.ya?ml|update\s+info|release\s+artifacts?|\.exe|\.blockmap)/i.test(message);
 }
 
 export function normalizeAppVersion(value: string | undefined): string {
@@ -59,8 +59,21 @@ export function compareAppVersions(left: string | undefined, right: string | und
   return 0;
 }
 
+export function getPlatformUpdateChannel(platform: NodeJS.Platform, arch: string): string | undefined {
+  if (platform === 'darwin' && arch === 'x64') {
+    return 'latest-x64';
+  }
+  if (platform === 'win32' && arch === 'arm64') {
+    return 'latest-win-arm64';
+  }
+  return undefined;
+}
+
 export function getPlatformUpdateMetadataCandidates(platform: NodeJS.Platform, arch: string): string[] {
-  if (platform === 'darwin') return ['latest-mac.yml'];
+  if (platform === 'darwin') {
+    const channel = getPlatformUpdateChannel(platform, arch);
+    return [channel ? `${channel}-mac.yml` : 'latest-mac.yml'];
+  }
   if (platform === 'linux') return ['latest-linux.yml'];
   if (platform === 'win32') {
     return arch === 'arm64' ? ['latest-win-arm64.yml', 'latest.yml'] : ['latest.yml'];
@@ -68,7 +81,11 @@ export function getPlatformUpdateMetadataCandidates(platform: NodeJS.Platform, a
   return [];
 }
 
-function hasInstallerAssetForPlatform(assetNames: Set<string>, platform: NodeJS.Platform): boolean {
+function hasMacArchMarker(name: string, arch: string): boolean {
+  return new RegExp(`(?:^|[-_. ])${arch}(?:[-_. ]|$)`, 'i').test(name);
+}
+
+function hasInstallerAssetForPlatform(assetNames: Set<string>, platform: NodeJS.Platform, arch: string): boolean {
   if (platform === 'win32') {
     return [...assetNames].some((name) => (
       /\.exe$/i.test(name) &&
@@ -76,7 +93,9 @@ function hasInstallerAssetForPlatform(assetNames: Set<string>, platform: NodeJS.
       /(?:^tech-cc-hub|setup)/i.test(name)
     ));
   }
-  if (platform === 'darwin') return [...assetNames].some((name) => /\.(?:zip|dmg)$/i.test(name));
+  if (platform === 'darwin') {
+    return [...assetNames].some((name) => /\.(?:zip|dmg)$/i.test(name) && hasMacArchMarker(name, arch));
+  }
   if (platform === 'linux') return [...assetNames].some((name) => /\.(?:AppImage|deb|rpm|snap|tar\.gz)$/i.test(name));
   return false;
 }
@@ -98,7 +117,7 @@ export function summarizeGitHubReleaseForUpdates(
   );
   const metadataCandidates = getPlatformUpdateMetadataCandidates(platform, arch);
   const metadataFile = metadataCandidates.find((candidate) => assetNames.has(candidate));
-  const hasCompatibleInstallerAsset = hasInstallerAssetForPlatform(assetNames, platform);
+  const hasCompatibleInstallerAsset = hasInstallerAssetForPlatform(assetNames, platform, arch);
   const missingUpdateAssets = [
     ...(metadataFile ? [] : [`one of ${metadataCandidates.join(', ') || 'platform updater metadata'}`]),
     ...(hasCompatibleInstallerAsset ? [] : ['platform installer asset']),

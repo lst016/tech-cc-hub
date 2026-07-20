@@ -2,12 +2,28 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 
-const componentPath = "src/ui/components/chat/InlineVisualizationCard.tsx";
+const cardPath = "src/ui/components/chat/VisualizationPreviewCard.tsx";
+const framePath = "src/ui/components/chat/TechccVisualizationFrame.tsx";
+const panePath = "src/ui/components/chat/VisualizationPreviewPane.tsx";
 const documentPath = "src/shared/techcc-visualization-protocol.ts";
 
-test("inline visualization card uses a script-only sandboxed custom-scheme iframe", () => {
-  assert.equal(existsSync(componentPath), true);
-  const source = readFileSync(componentPath, "utf8");
+test("visualization result stays a compact preview card until the user opens it", () => {
+  assert.equal(existsSync(cardPath), true);
+  const source = readFileSync(cardPath, "utf8");
+
+  assert.match(source, /网页预览/);
+  assert.match(source, /网站/);
+  assert.match(source, /打开/);
+  assert.match(source, /OPEN_VISUALIZATION_PREVIEW_EVENT/);
+  assert.match(source, /window\.dispatchEvent/);
+  assert.doesNotMatch(source, /<iframe/);
+  assert.doesNotMatch(source, /techcc-visualization-create-launch/);
+});
+
+test("right-side visualization pane uses a script-only sandboxed custom-scheme iframe", () => {
+  assert.equal(existsSync(framePath), true);
+  assert.equal(existsSync(panePath), true);
+  const source = readFileSync(framePath, "utf8");
 
   assert.match(source, /<iframe/);
   assert.match(source, /sandbox="allow-scripts"/);
@@ -18,8 +34,8 @@ test("inline visualization card uses a script-only sandboxed custom-scheme ifram
   assert.doesNotMatch(source, /dangerouslySetInnerHTML/);
 });
 
-test("inline visualization card authenticates messages before forwarding follow-up requests", () => {
-  const source = readFileSync(componentPath, "utf8");
+test("right-side visualization pane authenticates messages before forwarding follow-up requests", () => {
+  const source = readFileSync(framePath, "utf8");
 
   assert.match(source, /event\.source !== iframeRef\.current\?\.contentWindow/);
   assert.match(source, /parseTechccVisualizationMessage\(event\.data, launch\.nonce\)/);
@@ -29,7 +45,7 @@ test("inline visualization card authenticates messages before forwarding follow-
 });
 
 test("iframe follow-ups require an explicit host confirmation before submission", () => {
-  const source = readFileSync(componentPath, "utf8");
+  const source = readFileSync(framePath, "utf8");
 
   assert.match(source, /setPendingFollowUp\(\(current\) => current \?\?/);
   assert.match(source, /交互视图请求继续对话/);
@@ -42,7 +58,7 @@ test("iframe follow-ups require an explicit host confirmation before submission"
 });
 
 test("host confirmation keeps the complete follow-up prompt reviewable", () => {
-  const source = readFileSync(componentPath, "utf8");
+  const source = readFileSync(framePath, "utf8");
 
   assert.match(source, /max-h-\d+/);
   assert.match(source, /overflow-y-auto/);
@@ -50,8 +66,8 @@ test("host confirmation keeps the complete follow-up prompt reviewable", () => {
   assert.doesNotMatch(source, /line-clamp/);
 });
 
-test("inline visualization card handles resize, loading, errors, and explicit reloads", () => {
-  const source = readFileSync(componentPath, "utf8");
+test("right-side visualization pane handles resize, loading, errors, and explicit reloads", () => {
+  const source = readFileSync(framePath, "utf8");
 
   assert.match(source, /message\.type === "resize"/);
   assert.match(source, /setHeight\(message\.height\)/);
@@ -63,7 +79,7 @@ test("inline visualization card handles resize, loading, errors, and explicit re
 });
 
 test("visualization card public surface stays techcc-only and never exposes the app bridge", () => {
-  const componentSource = readFileSync(componentPath, "utf8");
+  const componentSource = readFileSync(framePath, "utf8");
   const documentSource = readFileSync(documentPath, "utf8");
   const source = `${componentSource}\n${documentSource}`;
 

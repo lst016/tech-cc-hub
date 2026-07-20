@@ -22,6 +22,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync
 import { createServer, type Server } from "http";
 import { homedir } from "os";
 import { extname, join } from "path";
+import { RELEASE_DEFAULT_PERMISSION_MODE } from "../shared/runtime-permissions.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { UnauthorizedError, type OAuthClientProvider, type OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -76,6 +77,8 @@ import {
   buildCodexOAuthDeepLink,
   findCodexOAuthDeepLink,
 } from "./libs/codex/codex-deep-link.js";
+import { findWooAuthDeepLink } from "./libs/woo/woo-deep-link.js";
+import { WooAuthManager } from "./libs/woo/woo-auth-manager.js";
 import { loadAgentRuleDocuments, saveUserAgentRuleDocument } from "./libs/agent-rule-docs.js";
 import { handleSkillManagerInvoke, registerSkillManagerHandlers } from "./libs/skill-manager/ipc-handlers.js";
 import { registerCronIpcHandlers, IpcCronEventEmitter } from "./libs/cron/cron-ipc-handlers.js";
@@ -177,7 +180,9 @@ let unsubscribeChannelConfig: (() => void) | null = null;
 let workspacePluginManager: WorkspacePluginManager | null = null;
 let codexRuntimeLoginManager: CodexRuntimeLoginManager | null = null;
 let modelCatalogSyncScheduler: ModelCatalogSyncScheduler | null = null;
+let wooAuthManager: WooAuthManager | null = null;
 let pendingCodexOAuthDeepLinkActivation = false;
+let pendingWooAuthDeepLinkActivation = false;
 
 registerTechccVisualizationScheme();
 
@@ -195,6 +200,23 @@ function activateCodexOAuthDeepLink(args: readonly string[]): boolean {
 function flushPendingCodexOAuthDeepLinkActivation(): void {
   if (!pendingCodexOAuthDeepLinkActivation || !mainWindow || mainWindow.isDestroyed()) return;
   pendingCodexOAuthDeepLinkActivation = false;
+  focusDesktopWindow(mainWindow);
+}
+
+function activateWooAuthDeepLink(args: readonly string[]): boolean {
+  if (!findWooAuthDeepLink(args)) return false;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    pendingWooAuthDeepLinkActivation = false;
+    focusDesktopWindow(mainWindow);
+  } else {
+    pendingWooAuthDeepLinkActivation = true;
+  }
+  return true;
+}
+
+function flushPendingWooAuthDeepLinkActivation(): void {
+  if (!pendingWooAuthDeepLinkActivation || !mainWindow || mainWindow.isDestroyed()) return;
+  pendingWooAuthDeepLinkActivation = false;
   focusDesktopWindow(mainWindow);
 }
 
@@ -2119,6 +2141,24 @@ function registerReloadShortcuts(): void {
     registerFocusedShortcuts();
 }
 
+function registerQuitShortcut(): void {
+    if (process.platform === "darwin") {
+        return;
+    }
+
+    try {
+        const registered = globalShortcut.register("CommandOrControl+Q", () => {
+            cleanup();
+            app.quit();
+        });
+        if (!registered) {
+            console.warn("[main] Failed to register quit shortcut: CommandOrControl+Q");
+        }
+    } catch (error) {
+        console.warn("[main] Failed to bind quit shortcut CommandOrControl+Q:", error);
+    }
+}
+
 function readPromptAttachmentPayload(attachments?: unknown[]): PromptAttachment[] {
     return Array.isArray(attachments) ? (attachments as PromptAttachment[]) : [];
 }
@@ -2727,13 +2767,13 @@ if (!hasSingleInstanceLock) {
 }
 
 app.on("second-instance", (_event, commandLine) => {
-    if (!activateCodexOAuthDeepLink(commandLine) && mainWindow && !mainWindow.isDestroyed()) {
+    if (!activateCodexOAuthDeepLink(commandLine) && !activateWooAuthDeepLink(commandLine) && mainWindow && !mainWindow.isDestroyed()) {
         focusDesktopWindow(mainWindow);
     }
 });
 
 app.on("open-url", (event, url) => {
-    if (!activateCodexOAuthDeepLink([url])) return;
+    if (!activateCodexOAuthDeepLink([url]) && !activateWooAuthDeepLink([url])) return;
     event.preventDefault();
 });
 
@@ -2787,6 +2827,8 @@ app.on("ready", async () => {
         backgroundColor: "#FAF9F6",
         trafficLightPosition: { x: 15, y: 18 }
     });
+    wooAuthManager = new WooAuthManager(app.getPath("userData"));
+    void wooAuthManager.restore();
     codexRuntimeLoginManager = new CodexRuntimeLoginManager({
         appPath: app.getAppPath(),
         isPackaged: app.isPackaged,
@@ -2806,7 +2848,9 @@ app.on("ready", async () => {
         },
     });
     activateCodexOAuthDeepLink(process.argv);
+    activateWooAuthDeepLink(process.argv);
     flushPendingCodexOAuthDeepLinkActivation();
+    flushPendingWooAuthDeepLinkActivation();
     mainWindow.webContents.on("will-navigate", () => {
         closeAllBrowserWorkbenches();
     });
@@ -2842,10 +2886,18 @@ app.on("ready", async () => {
         });
     }
     mainWindow.webContents.on("before-input-event", (event, input) => {
-        const isReloadShortcut =
-            input.key.toLowerCase() === "r" &&
-            (input.meta || input.control);
-        if (!isReloadShortcut) return;
+        const key = input.key.toLowerCase();
+        const usesPrimaryModifier = input.meta || input.control;
+        if (!usesPrimaryModifier) return;
+
+        if (process.platform === "darwin" && key === "q" && input.meta && !input.control && !input.alt && !input.shift) {
+            event.preventDefault();
+            cleanup();
+            app.quit();
+            return;
+        }
+
+        if (key !== "r") return;
         closeAllBrowserWorkbenches();
         if (!mainWindow || mainWindow.isDestroyed()) return;
         event.preventDefault();
@@ -2870,8 +2922,8 @@ app.on("ready", async () => {
         closeAllBrowserWorkbenches();
     });
     mainWindow.on("closed", () => {
-        closeAllBrowserWorkbenches();
         mainWindow = null;
+        closeAllBrowserWorkbenches();
     });
     setBrowserToolHost({
       open: (sessionId, url) => openBrowserWorkbenchForIpc(url, sessionId),
@@ -3311,10 +3363,7 @@ app.on("ready", async () => {
     }
     appAutoUpdater.initialize(broadcastAppUpdateStatus);
 
-    globalShortcut.register('CommandOrControl+Q', () => {
-        cleanup();
-        app.quit();
-    });
+    registerQuitShortcut();
     registerReloadShortcuts();
 
     pollResources(mainWindow);
@@ -3326,6 +3375,37 @@ app.on("ready", async () => {
 
     const sendCronMessage = async (conversationId: string, text: string, executionMode?: string) => {
       const store = sessions;
+      const scheduledContext = {
+        promptOrigin: { kind: "task-notification", subkind: "scheduled-trigger" },
+        toolPermissionPolicy: "unattended-auto-approve",
+      } as const;
+      const handleScheduledClientEvent = (event: Parameters<typeof handleClientEvent>[0]) => {
+        if (event.type !== "session.start" && event.type !== "session.continue") {
+          return handleClientEvent(event, scheduledContext);
+        }
+        if (event.type === "session.start") {
+          return handleClientEvent({
+            type: "session.start",
+            payload: {
+              ...event.payload,
+              runtime: {
+                ...event.payload.runtime,
+                permissionMode: RELEASE_DEFAULT_PERMISSION_MODE,
+              },
+            },
+          }, scheduledContext);
+        }
+        return handleClientEvent({
+          type: "session.continue",
+          payload: {
+            ...event.payload,
+            runtime: {
+              ...event.payload.runtime,
+              permissionMode: RELEASE_DEFAULT_PERMISSION_MODE,
+            },
+          },
+        }, scheduledContext);
+      };
       if (!store) {
         console.error("[CronExecutor] SessionStore 未初始化");
         return;
@@ -3337,7 +3417,7 @@ app.on("ready", async () => {
           conversationId === "__system__"
             ? systemWorkspacePath
             : (store.getSession(conversationId)?.cwd ?? systemWorkspacePath);
-        await handleClientEvent({
+        await handleScheduledClientEvent({
           type: "session.start",
           payload: { title: "定时任务", cwd, prompt: text },
         });
@@ -3350,12 +3430,12 @@ app.on("ready", async () => {
         const systemSession = allSessions.find((s) => s.cwd === systemWorkspacePath);
 
         if (systemSession) {
-          await handleClientEvent({
+          await handleScheduledClientEvent({
             type: "session.continue",
             payload: { sessionId: systemSession.id, prompt: text },
           });
         } else {
-          await handleClientEvent({
+          await handleScheduledClientEvent({
             type: "session.start",
             payload: {
               title: "系统工作区",
@@ -3366,7 +3446,7 @@ app.on("ready", async () => {
         }
       } else {
         // Normal session task
-        await handleClientEvent({
+        await handleScheduledClientEvent({
           type: "session.continue",
           payload: { sessionId: conversationId, prompt: text },
         });
@@ -3723,6 +3803,46 @@ app.on("ready", async () => {
 
     ipcMain.handle("prompt:optimize", async (_: IpcMainInvokeEvent, payload: { prompt?: string; model?: string }) => {
         return await optimizePrompt(payload);
+    });
+
+    ipcMain.handle("woo-auth:get-state", () => wooAuthManager?.getState() ?? {
+        status: "anonymous",
+        user: null,
+        challenges: [],
+        loginMethods: null,
+    });
+    ipcMain.handle("woo-auth:get-login-methods", async () => {
+        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
+        return await wooAuthManager.getLoginMethods();
+    });
+    ipcMain.handle("woo-auth:login-password", async (_event: IpcMainInvokeEvent, input: { userName?: string; password?: string }) => {
+        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
+        return await wooAuthManager.loginWithPassword({
+            userName: input?.userName?.trim() ?? "",
+            password: input?.password ?? "",
+        });
+    });
+    ipcMain.handle("woo-auth:send-email-code", async (_event: IpcMainInvokeEvent, input: { mail?: string }) => {
+        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
+        await wooAuthManager.sendEmailCode({ mail: input?.mail?.trim() ?? "" });
+        return { success: true };
+    });
+    ipcMain.handle("woo-auth:login-email", async (_event: IpcMainInvokeEvent, input: { mail?: string; code?: string }) => {
+        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
+        return await wooAuthManager.loginWithEmail({
+            mail: input?.mail?.trim() ?? "",
+            code: input?.code?.trim() ?? "",
+        });
+    });
+    ipcMain.handle("woo-auth:login-third-party", async () => {
+        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
+        return await wooAuthManager.loginWithThirdParty(async (url) => {
+            await shell.openExternal(url);
+        });
+    });
+    ipcMain.handle("woo-auth:logout", async () => {
+        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
+        return await wooAuthManager.logout();
     });
 
     ipcMainHandle("codex-oauth-runtime-start", async (_: IpcMainInvokeEvent, payload: CodexRuntimeLoginStartInput) => {

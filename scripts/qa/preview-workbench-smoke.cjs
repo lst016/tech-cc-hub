@@ -58,7 +58,8 @@ async function main() {
 
   await page.goto(DEFAULT_URL, { waitUntil: 'domcontentloaded', timeout: 15000 });
   await page.waitForTimeout(1500);
-  await page.getByText('预览', { exact: true }).first().click({ timeout: 8000 });
+  const previewTab = page.locator('.activity-workspace-tabs-scroll [title="文件预览"] button').first();
+  await previewTab.click({ timeout: 8000 });
   await page.waitForTimeout(1200);
 
   const explorer = page.locator('.native-explorer').first();

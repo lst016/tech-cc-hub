@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, realpathSync } from "fs";
-import { join } from "path";
+import { delimiter, join } from "path";
 import { homedir } from "os";
 import { spawnSync } from "child_process";
 import type { Settings } from "@anthropic-ai/claude-agent-sdk";
@@ -18,7 +18,11 @@ import {
   pickProviderCompatibleModel,
 } from "../../../shared/models/model-provider-routing.js";
 import { resolveImagePreprocessRouteConfig } from "../../../shared/models/image-preprocess-routing.js";
-import { pickHighestWeightedModelOwner } from "../../../shared/models/model-routing-weight.js";
+import {
+  findMatchingModelName,
+  getAssignedModelNames,
+  pickHighestWeightedModelOwner,
+} from "../../../shared/models/model-routing-weight.js";
 import {
   isUnreadableStoredCodexCredential,
   loadApiConfigSettings,
@@ -80,15 +84,14 @@ function resolveSystemClaudePath(): string | null {
     }
   }
 
-  const result = spawnSync("which", ["claude"], {
+  const result = spawnSync(process.platform === "win32" ? "where.exe" : "which", ["claude"], {
     encoding: "utf8",
     env: process.env,
   });
 
   if (result.status === 0) {
-    const path = result.stdout.trim();
-    if (path && existsSync(path)) {
-      const resolvedPath = resolveNativeClaudePath(path);
+    for (const executablePath of result.stdout.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
+      const resolvedPath = resolveNativeClaudePath(executablePath);
       if (resolvedPath) {
         return resolvedPath;
       }
@@ -100,10 +103,13 @@ function resolveSystemClaudePath(): string | null {
 
 function getPathsFromEnvironment(): string[] {
   const pathValue = process.env.PATH ?? "";
+  const executableNames = process.platform === "win32"
+    ? ["claude.exe", "claude.cmd", "claude.bat", "claude"]
+    : ["claude"];
   return pathValue
-    .split(":")
+    .split(delimiter)
     .filter(Boolean)
-    .map((entry) => join(entry, "claude"));
+    .flatMap((entry) => executableNames.map((name) => join(entry, name)));
 }
 
 function resolveNativeClaudePath(candidatePath: string): string | null {
@@ -123,23 +129,52 @@ function resolveNativeClaudePath(candidatePath: string): string | null {
   }
 }
 
-function resolveSdkBundledClaudePath(): string | null {
-  const basePath = app.isPackaged
-    ? join(process.resourcesPath, "app.asar.unpacked/node_modules")
-    : join(app.getAppPath(), "node_modules");
+type ResolveSdkBundledClaudePathOptions = {
+  platform?: NodeJS.Platform;
+  arch?: NodeJS.Architecture;
+  isPackaged?: boolean;
+  appPath?: string;
+  resourcesPath?: string;
+  exists?: (path: string) => boolean;
+};
 
-  const candidates = [
-    join(basePath, "@anthropic-ai/claude-agent-sdk-darwin-arm64/claude"),
-    join(basePath, "@anthropic-ai/claude-agent-sdk-darwin-x64/claude"),
-    join(basePath, "@anthropic-ai/claude-agent-sdk-linux-arm64/claude"),
-    join(basePath, "@anthropic-ai/claude-agent-sdk-linux-x64/claude"),
-    join(basePath, "@anthropic-ai/claude-agent-sdk-linux-arm64-musl/claude"),
-    join(basePath, "@anthropic-ai/claude-agent-sdk-linux-x64-musl/claude"),
-    join(basePath, "@anthropic-ai/claude-agent-sdk-win32-arm64/claude.exe"),
-    join(basePath, "@anthropic-ai/claude-agent-sdk-win32-x64/claude.exe"),
-  ];
+function getSdkBundledClaudePackageNames(
+  platform: NodeJS.Platform,
+  arch: NodeJS.Architecture,
+): string[] {
+  if (platform === "darwin" && (arch === "arm64" || arch === "x64")) {
+    return [`@anthropic-ai/claude-agent-sdk-darwin-${arch}`];
+  }
+  if (platform === "win32" && (arch === "arm64" || arch === "x64")) {
+    return [`@anthropic-ai/claude-agent-sdk-win32-${arch}`];
+  }
+  if (platform === "linux" && (arch === "arm64" || arch === "x64")) {
+    return [
+      `@anthropic-ai/claude-agent-sdk-linux-${arch}`,
+      `@anthropic-ai/claude-agent-sdk-linux-${arch}-musl`,
+    ];
+  }
+  return [];
+}
 
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+export function resolveSdkBundledClaudePath(options: ResolveSdkBundledClaudePathOptions = {}): string | null {
+  const platform = options.platform ?? process.platform;
+  const arch = options.arch ?? process.arch;
+  const packageNames = getSdkBundledClaudePackageNames(platform, arch);
+  if (packageNames.length === 0) {
+    return null;
+  }
+
+  const isPackaged = options.isPackaged ?? app.isPackaged;
+  const basePath = isPackaged
+    ? join(options.resourcesPath ?? process.resourcesPath, "app.asar.unpacked/node_modules")
+    : join(options.appPath ?? app.getAppPath(), "node_modules");
+  const executableName = platform === "win32" ? "claude.exe" : "claude";
+  const exists = options.exists ?? existsSync;
+
+  return packageNames
+    .map((packageName) => join(basePath, packageName, executableName))
+    .find((candidate) => exists(candidate)) ?? null;
 }
 
 const claudeCodeAgentTeamsSupportCache = new Map<string, boolean>();
@@ -194,18 +229,27 @@ function parseSemver(version: string): [number, number, number] {
 
 // Get Claude Code executable path
 export function getClaudeCodePath(): string | undefined {
-  const explicitPath = process.env.CLAUDE_CODE_PATH;
-  if (explicitPath && existsSync(explicitPath)) {
+  const explicitPath = process.env.CLAUDE_CODE_PATH?.trim();
+  if (explicitPath) {
     return explicitPath;
+  }
+
+  // CLAUDE_PATH predates CLAUDE_CODE_PATH and is still an explicit operator
+  // override. Keep it ahead of the SDK-bundled binary for compatibility.
+  const legacyExplicitPath = process.env.CLAUDE_PATH?.trim();
+  if (legacyExplicitPath) {
+    return legacyExplicitPath;
   }
 
   const systemPath = resolveSystemClaudePath();
   const bundledPath = resolveSdkBundledClaudePath();
-  if (systemPath && supportsClaudeCodeAgentTeams(systemPath)) {
-    return systemPath;
-  }
-
-  return bundledPath ?? systemPath ?? undefined;
+  // The SDK control protocol evolves together with its bundled CLI. Prefer the
+  // matching binary so new message/control fields cannot be paired with an
+  // older system installation. CLAUDE_CODE_PATH/CLAUDE_PATH remain explicit overrides.
+  return bundledPath
+    ?? (systemPath && supportsClaudeCodeAgentTeams(systemPath) ? systemPath : undefined)
+    ?? systemPath
+    ?? undefined;
 }
 
 // 获取当前有效的配置（优先界面配置，回退到文件配置）
@@ -242,8 +286,22 @@ export function getConfiguredModelNames(config: ApiConfig): string[] {
 }
 
 export function getRoutableModelNames(config: ApiConfig): string[] {
-  return getConfiguredModelNames(config)
+  return getAssignedModelNames(config)
     .filter((modelName) => isModelCompatibleWithApiProvider(config.provider, modelName));
+}
+
+function findRoutableModelName(config: ApiConfig, modelName: string): string | undefined {
+  return findMatchingModelName(
+    { models: getRoutableModelNames(config).map((name) => ({ name })) },
+    modelName,
+  );
+}
+
+function findConfiguredModelName(config: ApiConfig, modelName: string): string | undefined {
+  return findMatchingModelName(
+    { models: getConfiguredModelNames(config).map((name) => ({ name })) },
+    modelName,
+  );
 }
 
 export function getApiConfigForModel(modelName?: string, configProfileId?: string): ApiConfig | null {
@@ -259,7 +317,7 @@ export function getApiConfigForModel(modelName?: string, configProfileId?: strin
     if (!normalizedModel) {
       return explicitConfig;
     }
-    return getRoutableModelNames(explicitConfig).includes(normalizedModel)
+    return findConfiguredModelName(explicitConfig, normalizedModel)
       ? explicitConfig
       : null;
   }
@@ -271,14 +329,14 @@ export function getApiConfigForModel(modelName?: string, configProfileId?: strin
   const matchedConfig = pickHighestWeightedModelOwner(
     enabledConfigs,
     normalizedModel,
-    (config, targetModel) => getRoutableModelNames(config).includes(targetModel),
+    (config, targetModel) => Boolean(findRoutableModelName(config, targetModel)),
   );
   if (matchedConfig) {
     return matchedConfig;
   }
 
   const fallbackConfig = getFallbackClaudeSettingsConfig();
-  return fallbackConfig && getRoutableModelNames(fallbackConfig).includes(normalizedModel)
+  return fallbackConfig && Boolean(findRoutableModelName(fallbackConfig, normalizedModel))
     ? fallbackConfig
     : null;
 }
@@ -306,7 +364,8 @@ export function resolveApiConfigForModel(modelName?: string, configProfileId?: s
   const requestedModel = modelName?.trim() || defaultConfig.model;
   const matchedConfig = getApiConfigForModel(requestedModel, normalizedProfileId);
   if (matchedConfig) {
-    const model = normalizeModelForApiConfig(matchedConfig, requestedModel, matchedConfig.model);
+    const routedModel = findRoutableModelName(matchedConfig, requestedModel) ?? requestedModel;
+    const model = normalizeModelForApiConfig(matchedConfig, routedModel, matchedConfig.model);
     return {
       config: matchedConfig,
       model,
@@ -393,8 +452,10 @@ export function normalizeModelForApiConfig(
   fallbackModel = config.model,
 ): string {
   const providerFallbackModel = getProviderDefaultModel(config, "main");
+  const locallyNamedModel = modelName ? findConfiguredModelName(config, modelName) : undefined;
+  const locallyNamedFallback = fallbackModel ? findConfiguredModelName(config, fallbackModel) : undefined;
   const selected = (
-    pickProviderCompatibleModel(config.provider, modelName, fallbackModel) ||
+    pickProviderCompatibleModel(config.provider, locallyNamedModel ?? modelName, locallyNamedFallback ?? fallbackModel) ||
     pickProviderCompatibleModel(config.provider, providerFallbackModel, config.model) ||
     modelName?.trim() ||
     config.model
@@ -438,7 +499,9 @@ function pickProviderOwnedModelForApiConfig(
   }
 
   const routedOwner = getApiConfigForModel(pickedModel, config.id);
-  return routedOwner?.id === config.id ? pickedModel : null;
+  return routedOwner?.id === config.id
+    ? findRoutableModelName(config, pickedModel) ?? pickedModel
+    : null;
 }
 
 function getProviderDefaultModel(config: ApiConfig, slot: "main" | "small"): string {

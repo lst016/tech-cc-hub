@@ -36,9 +36,14 @@ import {
 } from "../utils/ask-user-question";
 import { parseGeneratedImageResult } from "../utils/generated-image-result";
 import { getCollapsibleTextPreview } from "../utils/collapsible-text-preview";
+import {
+  getRunnerTerminalReason,
+  getRunnerTerminalReasonLabel,
+  isSuccessfulRunnerResult,
+} from "../../shared/runner-status";
 import { GeneratedImageResultCard } from "./chat/GeneratedImageResultCard";
 import { EChartsCard } from "./chat/EChartsCard";
-import { InlineVisualizationCard } from "./chat/InlineVisualizationCard";
+import { VisualizationPreviewCard } from "./chat/VisualizationPreviewCard";
 import { LarkMessageShareDialog } from "./chat/LarkMessageShareDialog";
 import { getImageGenerationDisplayPromptFromSerialized } from "./prompt-input/image-generation-plugin";
 import { extractChartBlocks, stripChartBlocks } from "../utils/chart-blocks";
@@ -70,13 +75,7 @@ const LARK_USER_SEND_PERMISSION_AGENT_PROMPT = [
   "权限范围仅限 IM 域，不要使用 --domain all，不要申请通讯录、云文档等无关权限，也不要发送消息或执行其他写操作来测试。",
 ].join("\n");
 
-type SystemInitMessage = SDKMessage & {
-  subtype?: string;
-  session_id?: string;
-  model?: string;
-  permissionMode?: string;
-  cwd?: string;
-};
+type SystemInitMessage = Extract<SDKMessage, { type: "system"; subtype: "init" }>;
 
 type BrowserAnnotationsPayload = {
   count?: number;
@@ -184,6 +183,10 @@ const getRecordString = (input: Record<string, unknown>, key: string) => {
   const value = input[key];
   return typeof value === "string" ? value : null;
 };
+
+const isRecordValue = (value: unknown): value is Record<string, unknown> => (
+  typeof value === "object" && value !== null && !Array.isArray(value)
+);
 
 const formatTime = (value?: number) => {
   if (!value) return "";
@@ -1652,12 +1655,16 @@ const AssistantTextCard = ({
   showIndicator = false,
   tone = "normal",
   forkTarget,
+  presentation = "default",
+  timestamp,
 }: {
   title: string;
   text: string;
   showIndicator?: boolean;
   tone?: "normal" | "thinking";
   forkTarget?: ForkAssistantMessageDetail;
+  presentation?: "default" | "agent";
+  timestamp?: string;
 }) => {
   const [expanded, setExpanded] = useState(tone !== "thinking");
   const [larkShareOpen, setLarkShareOpen] = useState(false);
@@ -1674,6 +1681,9 @@ const AssistantTextCard = ({
   ));
   const hasRichContent = hasCharts || hasVisualizations;
   const plainAssistantText = stripChartBlocks(stripVisualizationDirectives(visibleAssistantText));
+  const textSurfaceClass = presentation === "agent"
+    ? "text-ink-800"
+    : "rounded-[14px] rounded-tl-[5px] border border-[#dce1e7] bg-white px-4 py-3.5 text-ink-800 shadow-[0_1px_3px_rgba(30,38,52,0.05)]";
   const submitPromptToAgent = useCallback((prompt: string) => {
     appendTextToComposer(prompt);
     window.setTimeout(() => {
@@ -1700,7 +1710,7 @@ const AssistantTextCard = ({
       return segmentText.trim() ? (
         <div
           key={segmentKey}
-          className="rounded-[14px] rounded-tl-[5px] border border-[#dce1e7] bg-white px-4 py-3.5 text-ink-800 shadow-[0_1px_3px_rgba(30,38,52,0.05)]"
+          className={textSurfaceClass}
         >
           <CollapsibleText
             text={segmentText.trim()}
@@ -1720,7 +1730,7 @@ const AssistantTextCard = ({
       ) : segment.text.trim() ? (
         <div
           key={`${segmentKey}-text-${index}`}
-          className="rounded-[14px] rounded-tl-[5px] border border-[#dce1e7] bg-white px-4 py-3.5 text-ink-800 shadow-[0_1px_3px_rgba(30,38,52,0.05)]"
+          className={textSurfaceClass}
         >
           <CollapsibleText
             text={segment.text.trim()}
@@ -1779,15 +1789,17 @@ const AssistantTextCard = ({
   }
 
   return (
-    <div className="group mt-4">
-      <SectionLabel active={showIndicator} variant="success">{title}</SectionLabel>
+    <div className={presentation === "agent" ? "group mt-6" : "group mt-4"}>
+      {presentation === "default" && (
+        <SectionLabel active={showIndicator} variant="success">{title}</SectionLabel>
+      )}
       <ThoughtDisplay thoughts={thoughtExtraction.thoughts} showIndicator={showIndicator} />
       <div>
-        <div className={hasRichContent ? "min-w-0 flex-1 space-y-3" : "min-w-0 flex-1 rounded-[14px] rounded-tl-[5px] border border-[#dce1e7] bg-white px-4 py-3.5 text-ink-800 shadow-[0_1px_3px_rgba(30,38,52,0.05)]"}>
+        <div className={hasRichContent ? "min-w-0 flex-1 space-y-3" : `min-w-0 flex-1 ${textSurfaceClass}`}>
           {hasRichContent ? contentSegments.map((segment, index) => (
             segment.type === "visualization" ? (
               activeSessionId ? (
-                <InlineVisualizationCard
+                <VisualizationPreviewCard
                   key={`visualization-${segment.file}-${index}`}
                   sessionId={activeSessionId}
                   fileName={segment.file}
@@ -1816,6 +1828,11 @@ const AssistantTextCard = ({
           <AssistantActionButton label="复制" onClick={() => void handleCopy()} />
           <AssistantActionButton label="发送到飞书" onClick={() => setLarkShareOpen(true)} />
           {forkTarget && <AssistantActionButton label="Fork" onClick={handleFork} />}
+          {formatSdkTimestamp(timestamp) && (
+            <time className="ml-auto pr-1 text-[10px] text-muted-light" dateTime={timestamp} title={timestamp}>
+              {formatSdkTimestamp(timestamp)}
+            </time>
+          )}
         </div>
       </div>
       {larkShareOpen && (
@@ -2256,7 +2273,73 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
   );
 };
 
-const ToolResultGroup = ({ contents }: { contents: ToolResultContent[] }) => {
+const StructuredToolResultDetails = ({ result }: { result: unknown }) => {
+  if (!isRecordValue(result)) return null;
+
+  const resolvedModel = getRecordString(result, "resolvedModel")?.trim();
+  const modelsUsed = Array.isArray(result.modelsUsed)
+    ? result.modelsUsed.filter((model): model is string => typeof model === "string" && model.trim().length > 0)
+    : [];
+  const totalTokens = typeof result.totalTokens === "number" ? result.totalTokens : undefined;
+  const totalDurationMs = typeof result.totalDurationMs === "number" ? result.totalDurationMs : undefined;
+  const totalToolUseCount = typeof result.totalToolUseCount === "number" ? result.totalToolUseCount : undefined;
+  const toolStats = isRecordValue(result.toolStats) ? result.toolStats : undefined;
+  const timedOutAfterMs = typeof result.timedOutAfterMs === "number" ? result.timedOutAfterMs : undefined;
+  const oldSource = typeof result.old_source === "string" ? result.old_source : undefined;
+  const newSource = typeof result.new_source === "string" ? result.new_source : undefined;
+  const statLabels = toolStats
+    ? [
+        ["读取", toolStats.readCount],
+        ["搜索", toolStats.searchCount],
+        ["命令", toolStats.bashCount],
+        ["编辑", toolStats.editFileCount],
+        ["新增行", toolStats.linesAdded],
+        ["删除行", toolStats.linesRemoved],
+        ["其他", toolStats.otherToolCount],
+      ].flatMap(([label, value]) => typeof value === "number" && value > 0 ? [`${label} ${value}`] : [])
+    : [];
+  const agentMetrics = [
+    resolvedModel ? `模型 ${resolvedModel}` : "",
+    modelsUsed.length > 1 ? `使用模型 ${Array.from(new Set(modelsUsed)).join(" → ")}` : "",
+    totalTokens !== undefined ? `${totalTokens.toLocaleString()} tokens` : "",
+    totalDurationMs !== undefined ? formatDurationMs(totalDurationMs) : "",
+    totalToolUseCount !== undefined ? `${totalToolUseCount} 次工具调用` : "",
+  ].filter(Boolean);
+  const hasAgentSummary = agentMetrics.length > 0 || statLabels.length > 0;
+
+  if (!hasAgentSummary && timedOutAfterMs === undefined && oldSource === undefined) return null;
+
+  return (
+    <div className="mt-2 space-y-2 border-t border-black/6 pt-2">
+      {hasAgentSummary && (
+        <div className="rounded-xl border border-violet-100 bg-violet-50/65 px-3 py-2 text-xs text-violet-800">
+          <div className="font-semibold">子 Agent 执行摘要</div>
+          {agentMetrics.length > 0 && <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">{agentMetrics.map((item) => <span key={item}>{item}</span>)}</div>}
+          {statLabels.length > 0 && <div className="mt-1 text-violet-700/80">{statLabels.join(" · ")}</div>}
+        </div>
+      )}
+      {timedOutAfterMs !== undefined && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          命令在 {formatDurationMs(timedOutAfterMs)} 后超时并转入后台；这不等同于执行失败。
+        </div>
+      )}
+      {oldSource !== undefined && (
+        <div className="grid gap-2 md:grid-cols-2">
+          <div className="min-w-0 rounded-xl border border-red-100 bg-red-50/60 px-3 py-2">
+            <div className="mb-1 text-[11px] font-semibold text-red-700">Notebook 原单元格</div>
+            <CollapsibleText text={oldSource || "（空）"} maxLines={8} />
+          </div>
+          <div className="min-w-0 rounded-xl border border-emerald-100 bg-emerald-50/60 px-3 py-2">
+            <div className="mb-1 text-[11px] font-semibold text-emerald-700">Notebook 新单元格</div>
+            <CollapsibleText text={newSource || "（已删除）"} maxLines={8} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ToolResultGroup = ({ contents, structuredResult }: { contents: ToolResultContent[]; structuredResult?: unknown }) => {
   const [expanded, setExpanded] = useState(false);
   const toolResults = useMemo(() => contents.filter(isToolResultContent), [contents]);
 
@@ -2293,6 +2376,7 @@ const ToolResultGroup = ({ contents }: { contents: ToolResultContent[] }) => {
           {expanded ? "收起" : "查看"}
         </button>
       </div>
+      <StructuredToolResultDetails result={structuredResult} />
       {expanded && (
         <div className="mt-3 border-t border-black/6 pt-1">
           {toolResults.map((content, index) => (
@@ -2303,6 +2387,47 @@ const ToolResultGroup = ({ contents }: { contents: ToolResultContent[] }) => {
     </div>
   );
 };
+
+const formatSdkTimestamp = (value?: string) => {
+  if (!value) return "";
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? formatTime(timestamp) : "";
+};
+
+const formatDurationMs = (value: number) => {
+  if (value < 1000) return `${Math.round(value)} ms`;
+  if (value < 60_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)} 秒`;
+  return `${(value / 60_000).toFixed(1)} 分钟`;
+};
+
+function getSdkUserMessageText(message: SDKUserMessage): string {
+  if (message.origin?.kind === "peer" && message.origin.body) return message.origin.body;
+  const contents = Array.isArray(message.message.content) ? message.message.content : [message.message.content];
+  return contents.flatMap((content) => {
+    if (typeof content === "string") return [content];
+    if (content && typeof content === "object" && "type" in content && content.type === "text" && "text" in content) {
+      return typeof content.text === "string" ? [content.text] : [];
+    }
+    return [];
+  }).join("\n").trim();
+}
+
+function getSdkUserOriginTitle(message: SDKUserMessage): string | undefined {
+  const origin = message.origin;
+  if (!origin || origin.kind === "human") return undefined;
+  if (origin.kind === "peer") return origin.name
+    ? `协作消息 · ${origin.name} · ${origin.from}`
+    : `协作消息 · ${origin.from}`;
+  if (origin.kind === "task-notification") {
+    return origin.subkind === "scheduled-trigger" ? "定时任务触发" : "后台任务通知";
+  }
+  if (origin.kind === "channel") return `频道消息 · ${origin.server}`;
+  if (origin.kind === "coordinator") return "协调器消息";
+  if (origin.kind === "observer") return `观察者消息 · ${origin.from}`;
+  if (origin.kind === "observer-activity") return "观察者消息";
+  if (origin.kind === "auto-continuation") return "自动续跑";
+  return "系统消息";
+}
 
 const AskUserQuestionCard = ({
   messageContent,
@@ -2347,8 +2472,124 @@ const AskUserQuestionCard = ({
   );
 };
 
+type SystemNoticeTone = "neutral" | "info" | "warning" | "error" | "success";
+
+const SystemNoticeCard = ({
+  title,
+  detail,
+  tone = "info",
+  meta,
+}: {
+  title: string;
+  detail?: string;
+  tone?: SystemNoticeTone;
+  meta?: string;
+}) => {
+  const toneClass: Record<SystemNoticeTone, string> = {
+    neutral: "border-slate-200 bg-slate-50 text-slate-700",
+    info: "border-sky-100 bg-sky-50/70 text-sky-800",
+    warning: "border-amber-200 bg-amber-50 text-amber-800",
+    error: "border-red-200 bg-red-50 text-red-700",
+    success: "border-emerald-100 bg-emerald-50 text-emerald-700",
+  };
+  const dotVariant = tone === "error" ? "error" : tone === "success" ? "success" : "accent";
+  return (
+    <div className={cx("mt-3 rounded-[18px] border px-3.5 py-3 text-sm", toneClass[tone])}>
+      <div className="flex min-w-0 items-center gap-2 font-semibold">
+        <StatusDot variant={dotVariant} />
+        <span className="min-w-0 flex-1 break-words">{title}</span>
+        {meta && <span className="shrink-0 font-mono text-[10px] font-medium opacity-65">{meta}</span>}
+      </div>
+      {detail && <div className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-5 opacity-90">{detail}</div>}
+    </div>
+  );
+};
+
 const SystemInfoCard = ({ message, showIndicator = false }: { message: SDKMessage; showIndicator?: boolean }) => {
   if (message.type !== "system" || !("subtype" in message)) return null;
+
+  const rawSystemMessage = message as unknown as Record<string, unknown>;
+  if (rawSystemMessage.subtype === "command_lifecycle") {
+    const status = typeof rawSystemMessage.status === "string" ? rawSystemMessage.status : "queued";
+    if (["queued", "started", "completed", "cancelled", "discarded"].includes(status)) {
+      const statusLabel = status === "queued" ? "命令已排队"
+        : status === "started" ? "命令已开始"
+          : status === "completed" ? "命令已完成"
+            : status === "cancelled" ? "命令已取消" : "命令已丢弃";
+      const detail = [rawSystemMessage.command, rawSystemMessage.name, rawSystemMessage.reason]
+        .filter((value): value is string => typeof value === "string" && value.length > 0)
+        .join(" · ");
+      return (
+        <SystemNoticeCard
+          title={statusLabel}
+          detail={detail}
+          meta={typeof rawSystemMessage.command_id === "string" ? rawSystemMessage.command_id : undefined}
+          tone={status === "completed" ? "success" : status === "cancelled" || status === "discarded" ? "warning" : "info"}
+        />
+      );
+    }
+  }
+
+  if (message.subtype === "api_retry") {
+    const retryLabel = `第 ${message.attempt}/${message.max_retries} 次`;
+    const delayLabel = message.retry_delay_ms > 0 ? `，${formatDurationMs(message.retry_delay_ms)} 后继续` : "";
+    const statusLabel = message.error_status === null ? "连接错误" : `HTTP ${message.error_status}`;
+    return <SystemNoticeCard title="模型请求正在重试" detail={`${retryLabel}${delayLabel} · ${statusLabel} · ${message.error}`} tone="warning" />;
+  }
+
+  if (message.subtype === "permission_denied") {
+    const reason = [message.decision_reason_type, message.decision_reason, message.message].filter(Boolean).join(" · ");
+    return <SystemNoticeCard title={`权限已拒绝 · ${message.tool_name}`} detail={reason} tone="error" meta={message.agent_id} />;
+  }
+
+  if (message.subtype === "informational") {
+    const tone: SystemNoticeTone = message.prevent_continuation || message.level === "warning"
+      ? "warning"
+      : message.level === "suggestion" ? "info" : "neutral";
+    return (
+      <SystemNoticeCard
+        title={message.prevent_continuation ? "执行已被阻止" : message.level === "suggestion" ? "建议" : "运行提示"}
+        detail={message.content}
+        tone={tone}
+      />
+    );
+  }
+
+  if (message.subtype === "local_command_output") {
+    return <SystemNoticeCard title="本地命令输出" detail={message.content} tone="neutral" />;
+  }
+
+  if (message.subtype === "mirror_error") {
+    return (
+      <SystemNoticeCard
+        title="会话记录同步失败"
+        detail={`${message.error}\n${message.key.projectKey} / ${message.key.sessionId}${message.key.subpath ? ` / ${message.key.subpath}` : ""}`}
+        tone="error"
+      />
+    );
+  }
+
+  if (message.subtype === "notification") {
+    const tone: SystemNoticeTone = message.priority === "immediate" || message.priority === "high"
+      ? "warning"
+      : message.priority === "medium" ? "info" : "neutral";
+    return <SystemNoticeCard title="系统通知" detail={message.text} tone={tone} meta={message.key} />;
+  }
+
+  if (message.subtype === "session_state_changed") {
+    const stateLabel = message.state === "requires_action" ? "需要你的操作" : message.state === "running" ? "会话运行中" : "当前轮次已结束（后台任务可能仍在运行）";
+    return <SystemNoticeCard title={stateLabel} tone={message.state === "requires_action" ? "warning" : message.state === "idle" ? "success" : "info"} />;
+  }
+
+  if (message.subtype === "worker_shutting_down") {
+    return (
+      <SystemNoticeCard
+        title="远程工作进程关闭事件"
+        detail={`原因：${message.reason}`}
+        tone="warning"
+      />
+    );
+  }
 
   if (
     message.subtype === "task_started"
@@ -2360,34 +2601,87 @@ const SystemInfoCard = ({ message, showIndicator = false }: { message: SDKMessag
     const patch = typeof systemMsg.patch === "object" && systemMsg.patch !== null
       ? systemMsg.patch as Record<string, unknown>
       : {};
-    const status = typeof patch.status === "string" ? patch.status : "";
+    const status = typeof systemMsg.status === "string"
+      ? systemMsg.status
+      : typeof patch.status === "string" ? patch.status : "";
     const description = typeof systemMsg.description === "string" ? systemMsg.description : "";
     const summary = typeof systemMsg.summary === "string" ? systemMsg.summary : "";
     const prompt = typeof systemMsg.prompt === "string" ? systemMsg.prompt : "";
     const taskId = typeof systemMsg.task_id === "string" ? systemMsg.task_id : "";
+    const statusLabel = status === "completed"
+      ? "completed"
+      : status === "failed" ? "failed"
+        : status === "stopped" ? "stopped"
+          : status === "killed" ? "killed"
+            : status === "paused" ? "paused"
+              : status === "running" ? "running" : "updated";
     const label = message.subtype === "task_started"
       ? "Agent started"
       : message.subtype === "task_progress"
         ? "Agent progress"
-        : message.subtype === "task_notification"
-          ? "Agent notice"
-          : status === "completed"
-            ? "Agent completed"
-            : status === "failed"
-              ? "Agent failed"
-              : "Agent updated";
+        : `Agent ${statusLabel}`;
     const title = description || summary || (typeof systemMsg.workflow_name === "string" ? systemMsg.workflow_name : "") || taskId.slice(0, 8);
     const detail = summary || prompt || description || (typeof patch.error === "string" ? patch.error : "");
 
     return (
       <div className="mt-3 rounded-[18px] border border-sky-100 bg-sky-50/70 px-3.5 py-3 text-sm text-ink-700">
         <div className="mb-1.5 flex min-w-0 items-center gap-2 font-semibold text-sky-700">
-          <StatusDot variant={status === "failed" ? "error" : status === "completed" ? "success" : "accent"} />
+          <StatusDot variant={status === "failed" || status === "killed" ? "error" : status === "completed" ? "success" : "accent"} />
           <span className="shrink-0">{label}</span>
           {taskId && <span className="truncate font-mono text-[11px] font-medium text-sky-600/70">{taskId}</span>}
         </div>
         {title && <div className="break-words font-medium text-ink-800">{title}</div>}
         {detail && detail !== title && <div className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-5 text-ink-600">{detail}</div>}
+      </div>
+    );
+  }
+
+  if (message.subtype === "background_tasks_changed") {
+    const tasks = message.tasks;
+    if (tasks.length === 0) return null;
+    return (
+      <div className="mt-3 rounded-[18px] border border-violet-100 bg-violet-50/65 px-3.5 py-3 text-sm text-ink-700">
+        <div className="flex items-center gap-2 font-semibold text-violet-700">
+          <StatusDot variant="accent" />
+          <span>{tasks.length} 个后台任务运行中</span>
+        </div>
+        <div className="mt-1.5 space-y-1 text-[13px] text-ink-600">
+          {tasks.map((task) => <div key={task.task_id}>{task.description || task.task_id}</div>)}
+        </div>
+      </div>
+    );
+  }
+
+  if (message.subtype === "control_request_progress") {
+    const retry = message.status === "api_retry";
+    const retryLabel = retry && message.attempt !== undefined && message.max_retries !== undefined
+      ? `第 ${message.attempt}/${message.max_retries} 次重试`
+      : "请求已开始";
+    return (
+      <div className="mt-3 rounded-[18px] border border-amber-100 bg-amber-50/70 px-3.5 py-3 text-sm text-amber-800">
+        <div className="font-semibold">{retry ? "控制请求正在重试" : "控制请求处理中"}</div>
+        <div className="mt-1 text-[13px]">{retryLabel}{message.retry_delay_ms ? ` · 等待 ${(message.retry_delay_ms / 1000).toFixed(1)} 秒` : ""}</div>
+      </div>
+    );
+  }
+
+  if (message.subtype === "model_refusal_fallback") {
+    const directionLabel = message.direction === "retry"
+      ? `正在改用 ${message.fallback_model} 重试`
+      : message.direction === "revert" ? `已恢复 ${message.original_model}` : `继续使用 ${message.fallback_model}`;
+    return (
+      <div className="mt-3 rounded-[18px] border border-amber-100 bg-amber-50/70 px-3.5 py-3 text-sm text-amber-800">
+        <div className="font-semibold">模型拒绝回退</div>
+        <div className="mt-1 whitespace-pre-wrap break-words text-[13px]">{directionLabel}{message.content ? ` · ${message.content}` : ""}</div>
+      </div>
+    );
+  }
+
+  if (message.subtype === "model_refusal_no_fallback") {
+    return (
+      <div className="mt-3 rounded-[18px] border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700">
+        <div className="font-semibold">模型拒绝且无可用回退</div>
+        <div className="mt-1 whitespace-pre-wrap break-words text-[13px]">{message.content || message.api_refusal_explanation || message.original_model}</div>
       </div>
     );
   }
@@ -2404,6 +2698,13 @@ const SystemInfoCard = ({ message, showIndicator = false }: { message: SDKMessag
         <InfoItem name="模型" value={systemMsg.model || "-"} />
         <InfoItem name="权限" value={systemMsg.permissionMode || "-"} />
         <InfoItem name="目录" value={systemMsg.cwd || "-"} />
+        {systemMsg.plugins.length > 0 && (
+          <InfoItem
+            name="插件"
+            value={systemMsg.plugins.map((plugin) => `${plugin.name}${plugin.version ? `@${plugin.version}` : ""}`).join(", ")}
+            wide
+          />
+        )}
       </div>
     </div>
   );
@@ -2432,6 +2733,7 @@ function MessageCardBase({
   permissionRequest,
   onPermissionResult,
   onReviseUserPrompt,
+  presentation = "default",
 }: {
   message: StreamMessage;
   sessionId?: string;
@@ -2440,6 +2742,7 @@ function MessageCardBase({
   permissionRequest?: PermissionRequest;
   onPermissionResult?: (toolUseId: string, result: PermissionResult) => void;
   onReviseUserPrompt?: UserPromptRevisionHandler;
+  presentation?: "default" | "agent";
 }) {
   const showIndicator = isLast && isRunning;
 
@@ -2456,25 +2759,82 @@ function MessageCardBase({
 
   const sdkMessage = message as SDKMessage;
 
+  if (sdkMessage.type === "rate_limit_event") {
+    const info = sdkMessage.rate_limit_info;
+    const rejected = info.status === "rejected" || info.overageStatus === "rejected";
+    const utilization = typeof info.utilization === "number"
+      ? `${Math.round((info.utilization <= 1 ? info.utilization * 100 : info.utilization))}%`
+      : undefined;
+    const details = [
+      info.rateLimitType?.replaceAll("_", " "),
+      utilization ? `已使用 ${utilization}` : undefined,
+      info.isUsingOverage || info.overageInUse ? "正在使用超额额度" : undefined,
+      info.overageDisabledReason?.replaceAll("_", " "),
+    ].filter(Boolean).join(" · ");
+    return (
+      <SystemNoticeCard
+        title={rejected ? "已达到用量限制" : info.status === "allowed_warning" ? "用量即将达到限制" : "用量限制已更新"}
+        detail={details}
+        tone={rejected ? "error" : info.status === "allowed_warning" ? "warning" : "info"}
+      />
+    );
+  }
+
   if (sdkMessage.type === "system") {
     return <SystemInfoCard message={sdkMessage} showIndicator={showIndicator} />;
   }
 
   if (sdkMessage.type === "result") {
-    if (sdkMessage.subtype === "success") {
+    const terminalReason = getRunnerTerminalReason(sdkMessage);
+    if (terminalReason === "tool_deferred" && sdkMessage.subtype === "success" && sdkMessage.deferred_tool_use) {
+      const deferred = sdkMessage.deferred_tool_use;
+      return (
+        <SystemNoticeCard
+          title={`工具已延后 · ${deferred.name}`}
+          detail={`ID: ${deferred.id}\n${JSON.stringify(deferred.input, null, 2)}`}
+          tone="warning"
+        />
+      );
+    }
+    if (isSuccessfulRunnerResult(sdkMessage)) {
       return null;
     }
+    const terminalLabel = getRunnerTerminalReasonLabel(terminalReason);
     return (
       <div className="mt-4 rounded-[22px] border border-red-200 bg-red-50 px-4 py-3 text-red-700">
-        <div className="mb-2 text-sm font-semibold">会话错误</div>
-        <pre className="whitespace-pre-wrap break-words text-sm">{JSON.stringify(sdkMessage, null, 2)}</pre>
+        <div className="mb-2 text-sm font-semibold">{terminalLabel ?? "会话错误"}</div>
+        {terminalReason
+          ? <div className="whitespace-pre-wrap break-words text-sm">{sdkMessage.subtype === "success" ? sdkMessage.result : sdkMessage.errors.join("\n")}</div>
+          : <pre className="whitespace-pre-wrap break-words text-sm">{JSON.stringify(sdkMessage, null, 2)}</pre>}
+      </div>
+    );
+  }
+
+  if (sdkMessage.type === "conversation_reset") {
+    return (
+      <div className="mt-3 rounded-[18px] border border-sky-100 bg-sky-50/70 px-3.5 py-3 text-sm text-sky-700">
+        <div className="font-semibold">已切换到新会话</div>
+        <div className="mt-1 truncate font-mono text-[11px]">{sdkMessage.new_conversation_id}</div>
+      </div>
+    );
+  }
+
+  if (sdkMessage.type === "tool_progress" && sdkMessage.subagent_retry) {
+    const retry = sdkMessage.subagent_retry;
+    return (
+      <div className="mt-3 rounded-[18px] border border-amber-100 bg-amber-50/70 px-3.5 py-3 text-sm text-amber-800">
+        <div className="font-semibold">子智能体调用正在重试</div>
+        <div className="mt-1 text-[13px]">
+          {sdkMessage.subagent_type || sdkMessage.tool_name} · {retry.attempt}/{retry.max_retries}
+          {retry.retry_delay_ms ? ` · 等待 ${(retry.retry_delay_ms / 1000).toFixed(1)} 秒` : ""}
+        </div>
       </div>
     );
   }
 
   if (sdkMessage.type === "assistant") {
     const messageContents = sdkMessage.message.content as MessageContent[];
-    const forkTarget = sessionId && sdkMessage.parent_tool_use_id === null && sdkMessage.uuid
+    const forkTarget = !sdkMessage.aborted && sessionId && sdkMessage.parent_tool_use_id === null && sdkMessage.uuid
       ? { sessionId, messageId: String(sdkMessage.uuid) }
       : undefined;
     const processToolContents = messageContents.filter((content): content is Extract<MessageContent, { type: "tool_use" }> =>
@@ -2496,6 +2856,7 @@ function MessageCardBase({
                 text={content.thinking}
                 tone="thinking"
                 showIndicator={isLastContent && showIndicator}
+                presentation={presentation}
               />
             );
           }
@@ -2503,10 +2864,12 @@ function MessageCardBase({
             return (
               <AssistantTextCard
                 key={index}
-                title="助手"
+                title={sdkMessage.aborted ? "助手（已中断，内容可能不完整）" : "助手"}
                 text={content.text}
                 showIndicator={isLastContent && showIndicator}
                 forkTarget={forkTarget}
+                presentation={presentation}
+                timestamp={sdkMessage.timestamp}
               />
             );
           }
@@ -2542,7 +2905,19 @@ function MessageCardBase({
     const contents = Array.isArray(sdkMessage.message.content)
       ? sdkMessage.message.content
       : [sdkMessage.message.content];
-    return <ToolResultGroup contents={contents as ToolResultContent[]} />;
+    const toolResults = (contents as ToolResultContent[]).filter(isToolResultContent);
+    if (toolResults.length > 0) return <ToolResultGroup contents={toolResults} structuredResult={sdkMessage.tool_use_result} />;
+    const originTitle = getSdkUserOriginTitle(sdkMessage);
+    const originText = getSdkUserMessageText(sdkMessage);
+    if (!originTitle || !originText) return null;
+    return (
+      <AssistantTextCard
+        title={originTitle}
+        text={originText}
+        presentation={presentation}
+        timestamp={sdkMessage.timestamp}
+      />
+    );
   }
 
   return null;

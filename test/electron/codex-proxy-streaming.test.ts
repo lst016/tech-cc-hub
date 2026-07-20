@@ -16,4 +16,7 @@ test("codex proxy relays an upstream stream incrementally and aborts an idle ups
   assert.match(source, /latestCredential\.accessToken !== staleCredential\.accessToken/);
   assert.equal((source.match(/recoveredCredential\.accessToken !== staleCredential\.accessToken/g) ?? []).length, 1);
   assert.doesNotMatch(source, /const upstreamText = await upstream\.text\(\);[\s\S]*if \(wantsStream\)/);
+  assert.doesNotMatch(source, /throw new Error\("Codex upstream completed without assistant output\."\)/);
+  assert.doesNotMatch(source, /hasCodexAnthropicOutput/);
+  assert.match(source, /if \(!emittedAnyBlock\) emitResponseBlocks\(payload\);[\s\S]*startMessage\(readString\(payload\.model\) \|\| fallbackModel\);/);
 });

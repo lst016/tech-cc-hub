@@ -8,3 +8,9 @@ test("renderer CSP allows pasted image previews via data URLs", async () => {
 
   assert.match(indexHtml, /img-src\s+'self'\s+data:\s+blob:/);
 });
+
+test("renderer CSP allows Woo avatars from the Feishu image CDN", async () => {
+  const indexHtml = await readFile(join(process.cwd(), "index.html"), "utf8");
+
+  assert.match(indexHtml, /img-src[^;]*https:\/\/\*\.feishucdn\.com/);
+});

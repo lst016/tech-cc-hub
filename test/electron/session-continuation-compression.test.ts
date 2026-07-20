@@ -33,7 +33,7 @@ test("prompt ledger reflects the stateless payload selected before runner startu
 
 test("runner seeds the prompt queue before constructing the SDK query", () => {
   const queueIndex = runnerSource.indexOf("const promptInput = new PromptInputQueue()");
-  const enqueueIndex = runnerSource.indexOf("promptInput.enqueue(prompt, attachments)", queueIndex);
+  const enqueueIndex = runnerSource.indexOf("promptInput.enqueue(prompt, attachments, promptOrigin)", queueIndex);
   const queryIndex = runnerSource.indexOf("const q = query(", enqueueIndex);
 
   assert.notEqual(queueIndex, -1);

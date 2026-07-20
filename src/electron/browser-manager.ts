@@ -782,10 +782,20 @@ export class BrowserWorkbenchManager {
     this.navigationError = undefined;
     if (this.view) {
       const closingView = this.view;
-      this.window.removeBrowserView(closingView);
       this.view = null;
-      if (!closingView.webContents.isDestroyed()) {
-        closingView.webContents.close({ waitForBeforeUnload: false });
+      try {
+        if (!this.window.isDestroyed()) {
+          this.window.removeBrowserView(closingView);
+        }
+      } catch {
+        // BrowserWindow destruction can race cleanup; the view is already detached logically.
+      }
+      try {
+        if (!closingView.webContents.isDestroyed()) {
+          closingView.webContents.close({ waitForBeforeUnload: false });
+        }
+      } catch {
+        // The BrowserView may be destroyed between the state check and close().
       }
     }
     this.logs = [];

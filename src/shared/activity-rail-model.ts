@@ -6,6 +6,11 @@ import type {
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { PromptLedgerBucket, PromptLedgerMessage, PromptLedgerSegment } from "./prompt-ledger.js";
+import {
+  getRunnerTerminalReason,
+  getRunnerTerminalReasonLabel,
+  isSuccessfulRunnerResult,
+} from "./runner-status.js";
 import { buildSessionSemanticState, type SessionExecutionMode, type SessionSemanticState } from "./session-semantics.js";
 
 export type ActivityRailTone = "neutral" | "info" | "success" | "warning" | "error";
@@ -1740,6 +1745,8 @@ export function buildActivityRailModel(
   const taskToolUseMap = new Map<string, string>();
   const toolUseTaskMap = new Map<string, string>();
   const activeTaskNodes = new Map<string, ActivityTimelineItem>();
+  const toolProgressNodes = new Map<string, ActivityTimelineItem>();
+  const controlRequestProgressNodes = new Map<string, ActivityTimelineItem>();
   const seenInitRemoteSessionIds = new Set<string>();
   const recordUsageTokens = (
     usage: { inputTokens?: number; outputTokens?: number },
@@ -1800,6 +1807,14 @@ export function buildActivityRailModel(
       const toolName = typeof toolProgress.tool_name === "string" ? toolProgress.tool_name : "未知工具";
       const elapsedSec = typeof toolProgress.elapsed_time_seconds === "number" ? toolProgress.elapsed_time_seconds : undefined;
       const taskId = typeof toolProgress.task_id === "string" ? toolProgress.task_id : undefined;
+      const subagentType = typeof toolProgress.subagent_type === "string" ? toolProgress.subagent_type : undefined;
+      const subagentRetry = isRecord(toolProgress.subagent_retry) ? toolProgress.subagent_retry : undefined;
+      const retryAttempt = typeof subagentRetry?.attempt === "number" ? subagentRetry.attempt : undefined;
+      const retryMax = typeof subagentRetry?.max_retries === "number" ? subagentRetry.max_retries : undefined;
+      const retryDelayMs = typeof subagentRetry?.retry_delay_ms === "number" ? subagentRetry.retry_delay_ms : undefined;
+      const retryLabel = retryAttempt !== undefined && retryMax !== undefined
+        ? `重试 ${retryAttempt}/${retryMax}${retryDelayMs !== undefined ? ` · 等待 ${(retryDelayMs / 1000).toFixed(1)} 秒` : ""}`
+        : undefined;
       const parentAgentId = typeof toolProgress.parent_tool_use_id === "string"
         ? toolUseTaskMap.get(toolProgress.parent_tool_use_id)
         : taskId;
@@ -1809,40 +1824,46 @@ export function buildActivityRailModel(
           : `${elapsedSec.toFixed(0)} 秒`
         : "";
       const progressId = `tool-progress-${toolUseId}`;
-      const existing = timelineChronological.find((item) => item.id === progressId);
+      const existing = toolProgressNodes.get(progressId);
       if (existing) {
-        existing.statusLabel = `进行中 · ${elapsedLabel}`;
+        existing.statusLabel = retryLabel ?? `进行中 · ${elapsedLabel}`;
+        if (retryLabel) {
+          existing.tone = "warning";
+          existing.attention = true;
+          existing.detail = `${subagentType ?? toolName} ${retryLabel}`;
+        }
         continue;
       }
       sequence += 1;
-      timelineChronological.push(
-        createTimelineItem({
-          id: progressId,
-          filterKey: "tool",
-          layer: "工具",
-          tone: "info",
-          nodeKind: "tool_input",
-          title: `${toolName} 执行中`,
-          detail: `工具已运行 ${elapsedLabel}`,
-          round: Math.max(round, 1),
-          sequence,
-          statusLabel: `进行中 · ${elapsedLabel}`,
-          chips: [toolName],
-          attention: false,
-          toolName,
-          stageKind: "implement",
-          parentTaskId: parentAgentId,
-          metrics: createEmptyMetrics({
-            totalCount: 1,
-            status: "running",
-          }),
+      const progressNode = createTimelineItem({
+        id: progressId,
+        filterKey: "tool",
+        layer: "工具",
+        tone: retryLabel ? "warning" : "info",
+        nodeKind: "tool_input",
+        title: retryLabel ? `${subagentType ?? toolName} 正在重试` : `${toolName} 执行中`,
+        detail: retryLabel ? `${subagentType ?? toolName} ${retryLabel}` : `工具已运行 ${elapsedLabel}`,
+        round: Math.max(round, 1),
+        sequence,
+        statusLabel: retryLabel ?? `进行中 · ${elapsedLabel}`,
+        chips: [toolName, ...(subagentType ? [subagentType] : [])],
+        attention: Boolean(retryLabel),
+        toolName,
+        stageKind: "implement",
+        parentTaskId: parentAgentId,
+        metrics: createEmptyMetrics({
+          totalCount: 1,
+          status: "running",
         }),
-      );
+      });
+      timelineChronological.push(progressNode);
+      toolProgressNodes.set(progressId, progressNode);
       continue;
     }
 
     if (message.type === "assistant") {
       const assistant = message as SDKAssistantMessage;
+      const assistantAborted = assistant.aborted === true;
       const assistantCapturedAt = getCapturedAt(message);
       latestModel = assistant.message.model || latestModel;
       const assistantUsage = extractUsageTokens(assistant.message);
@@ -2038,7 +2059,7 @@ export function buildActivityRailModel(
               distributionBuckets,
               "assistant-output",
               "中间结果",
-              "neutral",
+              assistantAborted ? "warning" : "neutral",
               text,
               undefined,
               textTimelineId,
@@ -2048,15 +2069,15 @@ export function buildActivityRailModel(
                 id: textTimelineId,
                 filterKey: "result",
                 layer: "结果",
-                tone: "neutral",
+                tone: assistantAborted ? "warning" : "neutral",
                 nodeKind: "assistant_output",
-                title: "生成中间结论",
+                title: assistantAborted ? "生成已中断的回复" : "生成中间结论",
                 detail: text,
                 round: Math.max(round, 1),
                 sequence,
-                statusLabel: "输出",
+                statusLabel: assistantAborted ? "已中断" : "输出",
                 chips: [],
-                attention: false,
+                attention: assistantAborted,
                 stageKind: "deliver",
                 parentTaskId: parentAgentId,
                 metrics: createEmptyMetrics({
@@ -2081,12 +2102,83 @@ export function buildActivityRailModel(
           roundContextChars += getToolResultDetail(content).length;
         }
       }
+      const structuredResult = isRecord(user.tool_use_result) ? user.tool_use_result : undefined;
+      if (structuredResult) {
+        const resolvedModel = typeof structuredResult.resolvedModel === "string" ? structuredResult.resolvedModel : undefined;
+        const modelsUsed = Array.isArray(structuredResult.modelsUsed)
+          ? structuredResult.modelsUsed.filter((model): model is string => typeof model === "string")
+          : [];
+        const totalTokens = typeof structuredResult.totalTokens === "number" ? structuredResult.totalTokens : undefined;
+        const totalDurationMs = typeof structuredResult.totalDurationMs === "number" ? structuredResult.totalDurationMs : undefined;
+        const totalToolUseCount = typeof structuredResult.totalToolUseCount === "number" ? structuredResult.totalToolUseCount : undefined;
+        const toolStats = isRecord(structuredResult.toolStats) ? structuredResult.toolStats : undefined;
+        const toolResultId = contents.find((content) => typeof content !== "string" && content.type === "tool_result")?.tool_use_id;
+        const parentTaskId = typeof toolResultId === "string" ? toolUseTaskMap.get(toolResultId) : undefined;
+        if (resolvedModel || modelsUsed.length > 0 || totalTokens !== undefined || totalDurationMs !== undefined || totalToolUseCount !== undefined || toolStats) {
+          const modelLabels = Array.from(new Set([resolvedModel, ...modelsUsed].filter((model): model is string => Boolean(model))));
+          sequence += 1;
+          timelineChronological.push(createTimelineItem({
+            id: `agent-result-${String(user.uuid ?? toolResultId ?? sequence)}`,
+            filterKey: "result",
+            layer: "结果",
+            tone: "success",
+            nodeKind: "agent_progress",
+            title: "子 Agent 执行摘要",
+            detail: [
+              modelLabels.length > 0 ? `模型：${modelLabels.join(" → ")}` : "",
+              totalToolUseCount !== undefined ? `工具调用：${totalToolUseCount}` : "",
+              toolStats ? `读取 ${String(toolStats.readCount ?? 0)} · 搜索 ${String(toolStats.searchCount ?? 0)} · 命令 ${String(toolStats.bashCount ?? 0)} · 编辑 ${String(toolStats.editFileCount ?? 0)}` : "",
+            ].filter(Boolean).join("\n"),
+            round: Math.max(round, 1),
+            sequence,
+            statusLabel: "已完成",
+            chips: modelLabels,
+            attention: false,
+            stageKind: "deliver",
+            parentTaskId,
+            metrics: createEmptyMetrics({
+              durationMs: totalDurationMs,
+              outputTokens: totalTokens,
+              totalCount: 1,
+              successCount: 1,
+              status: "success",
+            }),
+          }));
+        }
+      }
+      continue;
+    }
+
+    if (message.type === "conversation_reset") {
+      latestRemoteSessionId = message.new_conversation_id;
+      sequence += 1;
+      timelineChronological.push(
+        createTimelineItem({
+          id: `conversation-reset-${message.uuid}`,
+          filterKey: "flow",
+          layer: "流程",
+          tone: "info",
+          nodeKind: "lifecycle",
+          title: "切换到新会话",
+          detail: message.new_conversation_id,
+          round: Math.max(round, 1),
+          sequence,
+          statusLabel: "已重置",
+          chips: ["Conversation"],
+          attention: false,
+          stageKind: "plan",
+          metrics: createEmptyMetrics(),
+        }),
+      );
       continue;
     }
 
     if (message.type === "result") {
       const result = message as SDKResultMessage;
       const resultUsage = extractUsageTokens(result);
+      const successfulResult = isSuccessfulRunnerResult(result);
+      const terminalReason = getRunnerTerminalReason(result);
+      const terminalLabel = getRunnerTerminalReasonLabel(terminalReason);
       sequence += 1;
       latestDurationMs = result.duration_ms ?? latestDurationMs;
       // Result usage is cumulative for the whole agent run. Keep it on the
@@ -2095,14 +2187,14 @@ export function buildActivityRailModel(
       latestCostUsd = result.total_cost_usd ?? latestCostUsd;
       latestResultText = getResultText(result) || latestResultText;
       latestRemoteSessionId = result.session_id ?? latestRemoteSessionId;
-      finalResultSuccess = result.subtype === "success";
-      latestRoundResultSuccess = result.subtype === "success";
+      finalResultSuccess = successfulResult;
+      latestRoundResultSuccess = successfulResult;
       finalResultTimelineId = `${result.uuid}-result`;
       addDistribution(
         distributionBuckets,
         "final-result",
         "最终结果",
-        result.subtype === "success" ? "success" : "error",
+        successfulResult ? "success" : "error",
         latestResultText,
         undefined,
         finalResultTimelineId,
@@ -2113,15 +2205,15 @@ export function buildActivityRailModel(
           id: `${result.uuid}-result`,
           filterKey: "result",
           layer: "结果",
-          tone: result.subtype === "success" ? "success" : "error",
-          nodeKind: result.subtype === "success" ? "assistant_output" : "error",
-          title: result.subtype === "success" ? "本轮执行完成" : "本轮执行失败",
-          detail: getResultText(result) || (result.subtype === "success" ? "任务已完成" : "任务失败"),
+          tone: successfulResult ? "success" : "error",
+          nodeKind: successfulResult ? "assistant_output" : "error",
+          title: successfulResult ? "本轮执行完成" : terminalLabel ?? "本轮执行失败",
+          detail: getResultText(result) || (successfulResult ? "任务已完成" : terminalLabel ?? "任务失败"),
           round: Math.max(round, 1),
           sequence,
-          statusLabel: result.subtype === "success" ? "完成" : "失败",
-          chips: [],
-          attention: result.subtype !== "success",
+          statusLabel: successfulResult ? terminalLabel ?? "完成" : terminalLabel ?? "失败",
+          chips: terminalReason ? [terminalReason] : [],
+          attention: !successfulResult,
           stageKind: "deliver",
           metrics: createEmptyMetrics({
             contextChars: roundContextChars,
@@ -2129,15 +2221,42 @@ export function buildActivityRailModel(
             durationMs: result.duration_ms,
             inputTokens: resultUsage.inputTokens,
             outputTokens: resultUsage.outputTokens,
-            successCount: result.subtype === "success" ? 1 : 0,
-            failureCount: result.subtype === "success" ? 0 : 1,
+            successCount: successfulResult ? 1 : 0,
+            failureCount: successfulResult ? 0 : 1,
             totalCount: 1,
-            status: result.subtype === "success" ? "success" : "failure",
+            status: successfulResult ? "success" : "failure",
           }),
         }),
       );
       roundContextChars += latestResultText.length;
       previousToolKey = null;
+      continue;
+    }
+
+    if (message.type === "rate_limit_event") {
+      const info = message.rate_limit_info;
+      const rejected = info.status === "rejected" || info.overageStatus === "rejected";
+      const warning = info.status === "allowed_warning" || info.overageStatus === "allowed_warning";
+      const utilization = typeof info.utilization === "number"
+        ? `${Math.round((info.utilization <= 1 ? info.utilization * 100 : info.utilization))}%`
+        : undefined;
+      sequence += 1;
+      timelineChronological.push(createTimelineItem({
+        id: `rate-limit-${message.uuid}`,
+        filterKey: rejected ? "result" : "flow",
+        layer: rejected ? "结果" : "流程",
+        tone: rejected ? "error" : warning ? "warning" : "info",
+        nodeKind: rejected ? "error" : "lifecycle",
+        title: rejected ? "已达到用量限制" : warning ? "用量即将达到限制" : "用量限制已更新",
+        detail: [info.rateLimitType?.replaceAll("_", " "), utilization ? `已使用 ${utilization}` : "", info.overageDisabledReason?.replaceAll("_", " ")].filter(Boolean).join(" · "),
+        round: Math.max(round, 1),
+        sequence,
+        statusLabel: rejected ? "已限制" : warning ? "需关注" : "可用",
+        chips: ["Rate limit"],
+        attention: rejected || warning,
+        stageKind: "other",
+        metrics: createEmptyMetrics({ failureCount: rejected ? 1 : 0, totalCount: 1, status: rejected ? "failure" : "neutral" }),
+      }));
       continue;
     }
 
@@ -2147,6 +2266,184 @@ export function buildActivityRailModel(
       latestRemoteSessionId =
         (remoteSessionId || undefined) ??
         latestRemoteSessionId;
+
+      if (systemMessage.subtype === "command_lifecycle") {
+        const status = typeof systemMessage.status === "string" ? systemMessage.status : "queued";
+        if (["queued", "started", "completed", "cancelled", "discarded"].includes(status)) {
+          sequence += 1;
+          const cancelled = status === "cancelled" || status === "discarded";
+          timelineChronological.push(createTimelineItem({
+            id: `command-lifecycle-${String(systemMessage.command_id ?? systemMessage.uuid ?? sequence)}-${status}`,
+            filterKey: "flow",
+            layer: "流程",
+            tone: status === "completed" ? "success" : cancelled ? "warning" : "info",
+            nodeKind: "lifecycle",
+            title: status === "queued" ? "命令已排队" : status === "started" ? "命令已开始" : status === "completed" ? "命令已完成" : status === "cancelled" ? "命令已取消" : "命令已丢弃",
+            detail: [systemMessage.command, systemMessage.name, systemMessage.reason].filter((value) => typeof value === "string" && value).join(" · "),
+            round: Math.max(round, 1),
+            sequence,
+            statusLabel: status,
+            chips: ["Command"],
+            attention: cancelled,
+            stageKind: "implement",
+            metrics: createEmptyMetrics({ totalCount: 1, successCount: status === "completed" ? 1 : 0, status: status === "completed" ? "success" : status === "started" ? "running" : "neutral" }),
+          }));
+        }
+        continue;
+      }
+
+      if (message.subtype === "api_retry") {
+        sequence += 1;
+        timelineChronological.push(createTimelineItem({
+          id: `api-retry-${String(systemMessage.uuid ?? sequence)}`,
+          filterKey: "flow",
+          layer: "流程",
+          tone: "warning",
+          nodeKind: "lifecycle",
+          title: "模型请求正在重试",
+          detail: `重试 ${String(systemMessage.attempt ?? "?")}/${String(systemMessage.max_retries ?? "?")} · ${String(systemMessage.error ?? "请求失败")}${typeof systemMessage.retry_delay_ms === "number" ? ` · 等待 ${(systemMessage.retry_delay_ms / 1000).toFixed(1)} 秒` : ""}`,
+          round: Math.max(round, 1),
+          sequence,
+          statusLabel: "重试中",
+          chips: [systemMessage.error_status === null ? "连接错误" : `HTTP ${String(systemMessage.error_status ?? "-")}`],
+          attention: true,
+          stageKind: "implement",
+          metrics: createEmptyMetrics({ totalCount: 1, status: "running" }),
+        }));
+        continue;
+      }
+
+      if (message.subtype === "permission_denied") {
+        sequence += 1;
+        timelineChronological.push(createTimelineItem({
+          id: `permission-denied-${String(systemMessage.tool_use_id ?? systemMessage.uuid ?? sequence)}`,
+          filterKey: "result",
+          layer: "结果",
+          tone: "error",
+          nodeKind: "permission",
+          title: `权限已拒绝 · ${String(systemMessage.tool_name ?? "工具")}`,
+          detail: [systemMessage.decision_reason_type, systemMessage.decision_reason, systemMessage.message].filter((value) => typeof value === "string" && value).join(" · "),
+          round: Math.max(round, 1),
+          sequence,
+          statusLabel: "已拒绝",
+          chips: [String(systemMessage.tool_name ?? "工具")],
+          attention: true,
+          stageKind: "other",
+          metrics: createEmptyMetrics({ failureCount: 1, totalCount: 1, status: "failure" }),
+        }));
+        continue;
+      }
+
+      if (message.subtype === "informational") {
+        const preventsContinuation = systemMessage.prevent_continuation === true;
+        const level = String(systemMessage.level ?? "info");
+        sequence += 1;
+        timelineChronological.push(createTimelineItem({
+          id: `informational-${String(systemMessage.uuid ?? sequence)}`,
+          filterKey: preventsContinuation ? "result" : "flow",
+          layer: preventsContinuation ? "结果" : "流程",
+          tone: preventsContinuation ? "error" : level === "warning" ? "warning" : "info",
+          nodeKind: preventsContinuation ? "error" : "lifecycle",
+          title: preventsContinuation ? "执行已被阻止" : level === "suggestion" ? "运行建议" : "运行提示",
+          detail: String(systemMessage.content ?? ""),
+          round: Math.max(round, 1),
+          sequence,
+          statusLabel: preventsContinuation ? "已阻止" : level === "warning" ? "需关注" : "提示",
+          chips: [level],
+          attention: preventsContinuation || level === "warning",
+          stageKind: "other",
+          metrics: createEmptyMetrics({ failureCount: preventsContinuation ? 1 : 0, totalCount: 1, status: preventsContinuation ? "failure" : "neutral" }),
+        }));
+        continue;
+      }
+
+      if (message.subtype === "local_command_output") {
+        sequence += 1;
+        timelineChronological.push(createTimelineItem({
+          id: `local-command-${String(systemMessage.uuid ?? sequence)}`,
+          filterKey: "result",
+          layer: "结果",
+          tone: "neutral",
+          nodeKind: "assistant_output",
+          title: "本地命令输出",
+          detail: String(systemMessage.content ?? ""),
+          round: Math.max(round, 1),
+          sequence,
+          statusLabel: "已输出",
+          chips: ["Local command"],
+          attention: false,
+          stageKind: "deliver",
+          metrics: createEmptyMetrics(),
+        }));
+        continue;
+      }
+
+      if (message.subtype === "mirror_error") {
+        const key = isRecord(systemMessage.key) ? systemMessage.key : {};
+        sequence += 1;
+        timelineChronological.push(createTimelineItem({
+          id: `mirror-error-${String(systemMessage.uuid ?? sequence)}`,
+          filterKey: "result",
+          layer: "结果",
+          tone: "error",
+          nodeKind: "error",
+          title: "会话记录同步失败",
+          detail: `${String(systemMessage.error ?? "未知错误")}\n${[key.projectKey, key.sessionId, key.subpath].filter(Boolean).join(" / ")}`.trim(),
+          round: Math.max(round, 1),
+          sequence,
+          statusLabel: "数据可能缺失",
+          chips: ["Mirror"],
+          attention: true,
+          stageKind: "verify",
+          metrics: createEmptyMetrics({ failureCount: 1, totalCount: 1, status: "failure" }),
+        }));
+        continue;
+      }
+
+      if (message.subtype === "notification") {
+        const priority = String(systemMessage.priority ?? "low");
+        const urgent = priority === "high" || priority === "immediate";
+        sequence += 1;
+        timelineChronological.push(createTimelineItem({
+          id: `notification-${String(systemMessage.key ?? systemMessage.uuid ?? sequence)}`,
+          filterKey: "flow",
+          layer: "流程",
+          tone: urgent ? "warning" : "info",
+          nodeKind: "lifecycle",
+          title: "系统通知",
+          detail: String(systemMessage.text ?? ""),
+          round: Math.max(round, 1),
+          sequence,
+          statusLabel: urgent ? "需关注" : "通知",
+          chips: [priority],
+          attention: urgent,
+          stageKind: "other",
+          metrics: createEmptyMetrics(),
+        }));
+        continue;
+      }
+
+      if (message.subtype === "session_state_changed") {
+        const state = String(systemMessage.state ?? "idle");
+        sequence += 1;
+        timelineChronological.push(createTimelineItem({
+          id: `session-state-${String(systemMessage.uuid ?? sequence)}`,
+          filterKey: "flow",
+          layer: "流程",
+          tone: state === "requires_action" ? "warning" : state === "idle" ? "success" : "info",
+          nodeKind: "lifecycle",
+          title: state === "requires_action" ? "会话需要你的操作" : state === "running" ? "会话运行中" : "会话已空闲",
+          detail: "",
+          round: Math.max(round, 1),
+          sequence,
+          statusLabel: state === "requires_action" ? "等待操作" : state === "running" ? "运行中" : "空闲",
+          chips: [state],
+          attention: state === "requires_action",
+          stageKind: "other",
+          metrics: createEmptyMetrics({ status: state === "running" ? "running" : "neutral" }),
+        }));
+        continue;
+      }
 
       if (message.subtype === "init") {
         const reusedRuntime = remoteSessionId.length > 0 && seenInitRemoteSessionIds.has(remoteSessionId);
@@ -2169,7 +2466,7 @@ export function buildActivityRailModel(
             tone: "info",
             nodeKind: "lifecycle",
             title: reusedRuntime ? "复用执行环境" : "初始化执行环境",
-            detail: `模型：${modelLabel} · 权限：${String(systemMessage.permissionMode ?? systemMessage.permission_mode ?? "bypassPermissions")}`,
+            detail: `模型：${modelLabel} · 权限：${String(systemMessage.permissionMode ?? systemMessage.permission_mode ?? "default")}`,
             round: Math.max(round, 1),
             sequence,
             statusLabel: reusedRuntime ? "已复用" : "已初始化",
@@ -2179,6 +2476,127 @@ export function buildActivityRailModel(
             metrics: createEmptyMetrics({
               contextChars: roundContextChars,
             }),
+          }),
+        );
+        continue;
+      }
+
+      if (message.subtype === "background_tasks_changed") {
+        const tasks = Array.isArray(systemMessage.tasks)
+          ? systemMessage.tasks.filter(isRecord)
+          : [];
+        if (tasks.length === 0) continue;
+        sequence += 1;
+        timelineChronological.push(
+          createTimelineItem({
+            id: `background-tasks-${String(systemMessage.uuid ?? sequence)}`,
+            filterKey: "flow",
+            layer: "流程",
+            tone: "info",
+            nodeKind: "agent_progress",
+            title: `${tasks.length} 个后台任务运行中`,
+            detail: tasks.map((task) => (
+              typeof task.description === "string" ? task.description : String(task.task_id ?? "")
+            )).filter(Boolean).join("\n"),
+            round: Math.max(round, 1),
+            sequence,
+            statusLabel: "运行中",
+            chips: tasks.map((task) => String(task.task_type ?? "后台任务")),
+            attention: false,
+            stageKind: "implement",
+            metrics: createEmptyMetrics({
+              totalCount: tasks.length,
+              status: "running",
+            }),
+          }),
+        );
+        continue;
+      }
+
+      if (message.subtype === "control_request_progress") {
+        const retrying = systemMessage.status === "api_retry";
+        const attempt = typeof systemMessage.attempt === "number" ? systemMessage.attempt : undefined;
+        const maxRetries = typeof systemMessage.max_retries === "number" ? systemMessage.max_retries : undefined;
+        const delayMs = typeof systemMessage.retry_delay_ms === "number" ? systemMessage.retry_delay_ms : undefined;
+        const requestId = String(systemMessage.request_id ?? systemMessage.uuid ?? sequence + 1);
+        const progressId = `control-request-${requestId}`;
+        const detail = retrying && attempt !== undefined && maxRetries !== undefined
+          ? `重试 ${attempt}/${maxRetries}${delayMs !== undefined ? ` · 等待 ${(delayMs / 1000).toFixed(1)} 秒` : ""}`
+          : requestId;
+        const existing = controlRequestProgressNodes.get(progressId);
+        if (existing) {
+          existing.tone = retrying ? "warning" : "info";
+          existing.title = retrying ? "控制请求正在重试" : "控制请求已开始";
+          existing.detail = detail;
+          existing.statusLabel = retrying ? "重试中" : "处理中";
+          existing.attention = retrying;
+          continue;
+        }
+        sequence += 1;
+        const progressNode = createTimelineItem({
+            id: progressId,
+            filterKey: "flow",
+            layer: "流程",
+            tone: retrying ? "warning" : "info",
+            nodeKind: "lifecycle",
+            title: retrying ? "控制请求正在重试" : "控制请求已开始",
+            detail,
+            round: Math.max(round, 1),
+            sequence,
+            statusLabel: retrying ? "重试中" : "处理中",
+            chips: ["Control request"],
+            attention: retrying,
+            stageKind: "implement",
+            metrics: createEmptyMetrics({ status: "running", totalCount: 1 }),
+          });
+        timelineChronological.push(progressNode);
+        controlRequestProgressNodes.set(progressId, progressNode);
+        continue;
+      }
+
+      if (message.subtype === "model_refusal_fallback") {
+        sequence += 1;
+        const direction = String(systemMessage.direction ?? "retry");
+        const fallbackModel = String(systemMessage.fallback_model ?? "fallback model");
+        timelineChronological.push(
+          createTimelineItem({
+            id: `model-refusal-fallback-${String(systemMessage.uuid ?? sequence)}`,
+            filterKey: "flow",
+            layer: "流程",
+            tone: "warning",
+            nodeKind: "lifecycle",
+            title: direction === "retry" ? "模型拒绝，正在回退重试" : "模型拒绝回退状态已更新",
+            detail: String(systemMessage.content ?? `${String(systemMessage.original_model ?? "Model")} → ${fallbackModel}`),
+            round: Math.max(round, 1),
+            sequence,
+            statusLabel: direction === "retry" ? "重试中" : "已切换",
+            chips: [fallbackModel],
+            attention: true,
+            stageKind: "deliver",
+            metrics: createEmptyMetrics({ totalCount: 1, status: "running" }),
+          }),
+        );
+        continue;
+      }
+
+      if (message.subtype === "model_refusal_no_fallback") {
+        sequence += 1;
+        timelineChronological.push(
+          createTimelineItem({
+            id: `model-refusal-${String(systemMessage.uuid ?? sequence)}`,
+            filterKey: "result",
+            layer: "结果",
+            tone: "error",
+            nodeKind: "error",
+            title: "模型拒绝且无可用回退",
+            detail: String(systemMessage.content ?? systemMessage.api_refusal_explanation ?? systemMessage.original_model ?? ""),
+            round: Math.max(round, 1),
+            sequence,
+            statusLabel: "需关注",
+            chips: [String(systemMessage.original_model ?? "Model")],
+            attention: true,
+            stageKind: "deliver",
+            metrics: createEmptyMetrics({ failureCount: 1, totalCount: 1, status: "failure" }),
           }),
         );
         continue;
@@ -2260,12 +2678,13 @@ export function buildActivityRailModel(
           } else if (description) {
             existing.agentDescription = description;
           }
-          existing.metrics = mergeMetrics(existing.metrics, createEmptyMetrics({
-            durationMs,
-            outputTokens: totalTokens,
-            totalCount: 1,
+          existing.metrics = {
+            ...existing.metrics,
+            durationMs: durationMs ?? existing.metrics.durationMs,
+            outputTokens: totalTokens ?? existing.metrics.outputTokens,
+            totalCount: Math.max(existing.metrics.totalCount, 1),
             status: "running",
-          }));
+          };
           continue;
         }
 
@@ -2304,25 +2723,88 @@ export function buildActivityRailModel(
         const patch = isRecord(systemMessage.patch) ? systemMessage.patch : {};
         const newStatus = typeof patch.status === "string" ? patch.status : undefined;
         const errorDetail = typeof patch.error === "string" ? patch.error : undefined;
+        const description = typeof patch.description === "string" ? patch.description : undefined;
 
         if (!taskId) continue;
 
-        if (newStatus === "completed" || newStatus === "failed" || newStatus === "killed") {
-          const existing = activeTaskNodes.get(taskId);
+        const existing = activeTaskNodes.get(taskId);
+        if (existing && newStatus === "running") {
+          existing.statusLabel = "运行中";
+          existing.tone = "info";
+          existing.attention = false;
+          existing.metrics.status = "running";
+          if (description) existing.agentDescription = description;
+          continue;
+        }
+
+        if (newStatus === "completed" || newStatus === "failed" || newStatus === "killed" || newStatus === "paused") {
           if (existing) {
-            existing.statusLabel = newStatus === "completed" ? "已完成" : newStatus === "failed" ? "失败" : "终止";
-            existing.tone = newStatus === "completed" ? "success" : "error";
-            existing.metrics = mergeMetrics(existing.metrics, createEmptyMetrics({
+            existing.statusLabel = newStatus === "completed" ? "已完成" : newStatus === "failed" ? "失败" : newStatus === "paused" ? "已暂停" : "终止";
+            existing.tone = newStatus === "completed" ? "success" : newStatus === "paused" ? "warning" : "error";
+            existing.attention = newStatus === "failed" || newStatus === "killed";
+            if (description) existing.agentDescription = description;
+            existing.metrics = {
+              ...existing.metrics,
               successCount: newStatus === "completed" ? 1 : 0,
               failureCount: newStatus === "failed" ? 1 : 0,
-              totalCount: 1,
-            }));
-            existing.metrics.status = newStatus === "completed" ? "success" : "failure";
+              totalCount: Math.max(existing.metrics.totalCount, 1),
+              status: newStatus === "completed" ? "success" : newStatus === "paused" ? "neutral" : "failure",
+            };
             if (errorDetail) {
               existing.detail = `${existing.detail}\n错误：${errorDetail}`;
             }
-            activeTaskNodes.delete(taskId);
           }
+        }
+        continue;
+      }
+
+      if (message.subtype === "task_notification") {
+        const taskId = typeof systemMessage.task_id === "string" ? systemMessage.task_id : "";
+        const status = typeof systemMessage.status === "string" ? systemMessage.status : "";
+        const summary = typeof systemMessage.summary === "string" ? systemMessage.summary : "";
+        const outputFile = typeof systemMessage.output_file === "string" ? systemMessage.output_file : "";
+        const usage = isRecord(systemMessage.usage) ? systemMessage.usage : undefined;
+        const durationMs = typeof usage?.duration_ms === "number" ? usage.duration_ms : undefined;
+        const totalTokens = typeof usage?.total_tokens === "number" ? usage.total_tokens : undefined;
+        let existing = activeTaskNodes.get(taskId);
+        if (!existing && taskId && (status === "completed" || status === "failed" || status === "stopped")) {
+          sequence += 1;
+          existing = createTimelineItem({
+            id: `task-notification-${taskId}-${String(systemMessage.uuid ?? sequence)}`,
+            filterKey: status === "failed" ? "result" : "flow",
+            layer: status === "failed" ? "结果" : "流程",
+            tone: status === "completed" ? "success" : status === "failed" ? "error" : "warning",
+            nodeKind: status === "failed" ? "error" : "agent_progress",
+            title: summary || `后台任务 ${status === "completed" ? "已完成" : status === "failed" ? "失败" : "已停止"}`,
+            detail: [summary, outputFile].filter(Boolean).join("\n"),
+            round: Math.max(round, 1),
+            sequence,
+            statusLabel: status === "completed" ? "已完成" : status === "failed" ? "失败" : "已停止",
+            chips: ["后台任务"],
+            attention: status === "failed",
+            stageKind: "deliver",
+            parentTaskId: taskId,
+            metrics: createEmptyMetrics(),
+          });
+          timelineChronological.push(existing);
+        }
+        if (existing && (status === "completed" || status === "failed" || status === "stopped")) {
+          const completed = status === "completed";
+          existing.statusLabel = completed ? "已完成" : status === "failed" ? "失败" : "已停止";
+          existing.tone = completed ? "success" : status === "failed" ? "error" : "warning";
+          existing.attention = status === "failed";
+          if (summary) existing.agentDescription = summary;
+          if (summary || outputFile) existing.detail = [summary, outputFile].filter(Boolean).join("\n");
+          existing.metrics = {
+            ...existing.metrics,
+            durationMs: durationMs ?? existing.metrics.durationMs,
+            outputTokens: totalTokens ?? existing.metrics.outputTokens,
+            successCount: completed ? 1 : 0,
+            failureCount: status === "failed" ? 1 : 0,
+            totalCount: 1,
+            status: completed ? "success" : status === "failed" ? "failure" : "neutral",
+          };
+          activeTaskNodes.delete(taskId);
         }
         continue;
       }

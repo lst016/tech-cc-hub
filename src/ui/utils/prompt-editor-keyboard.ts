@@ -55,7 +55,7 @@ export function shouldSuppressPromptAutoReplacement(
 ) {
   if (event.inputType !== "insertReplacementText") return false;
   if (isComposing || event.isComposing) return false;
-  if (typeof event.data !== "string" || event.data.length === 0) return false;
+  if (typeof event.data !== "string" || event.data.length <= 1) return false;
   const normalized = event.data.normalize("NFKC");
   return /^[A-Za-z][A-Za-z'’-]*$/.test(normalized);
 }

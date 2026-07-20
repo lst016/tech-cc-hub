@@ -64,10 +64,14 @@ export function getBuiltinMcpServers(
   );
 }
 
-export function listBuiltinMcpToolNames(enabledServerNames?: readonly BuiltinMcpServerName[]): string[] {
-  if (!enabledServerNames) {
-    return Object.values(BUILTIN_MCP_TOOL_NAMES).flatMap((tools) => [...tools]);
-  }
-
-  return enabledServerNames.flatMap((serverName) => [...(BUILTIN_MCP_TOOL_NAMES[serverName] ?? [])]);
+export function listBuiltinMcpToolNames(
+  enabledServerNames?: readonly BuiltinMcpServerName[],
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  const enabledNames = enabledServerNames ? new Set(enabledServerNames) : null;
+  return BUILTIN_MCP_SERVERS
+    .filter((server) => !enabledNames || enabledNames.has(server.name))
+    .flatMap((server) => server.toolGroups.flatMap((group) => group.tools
+      .filter((tool) => !tool.platforms || tool.platforms.includes(platform))
+      .map((tool) => tool.name)));
 }

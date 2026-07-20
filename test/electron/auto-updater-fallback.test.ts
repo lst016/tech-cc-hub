@@ -6,6 +6,7 @@ import {
   buildGitHubReleaseDownloadFeedUrl,
   compareAppVersions,
   createReleaseUpdatePlan,
+  getPlatformUpdateChannel,
   getPlatformUpdateMetadataCandidates,
   isMissingPlatformUpdateMetadataError,
   selectBestReleaseForUpdate,
@@ -14,7 +15,7 @@ import {
 
 test('detects missing updater metadata errors from electron-updater', () => {
   assert.equal(
-    isMissingPlatformUpdateMetadataError(new Error('Cannot find latest.yml in the latest release artifacts (404)')),
+    isMissingPlatformUpdateMetadataError(new Error('Cannot find latest-arm64-mac.yml in the latest release artifacts (404)')),
     true,
   );
   assert.equal(isMissingPlatformUpdateMetadataError(new Error('net::ERR_CONNECTION_RESET')), false);
@@ -44,9 +45,49 @@ test('reports missing Windows updater metadata for mac-only releases', () => {
 });
 
 test('uses electron-updater default metadata names per platform', () => {
+  assert.equal(getPlatformUpdateChannel('darwin', 'arm64'), undefined);
+  assert.equal(getPlatformUpdateChannel('darwin', 'x64'), 'latest-x64');
+  assert.equal(getPlatformUpdateChannel('win32', 'arm64'), 'latest-win-arm64');
+  assert.equal(getPlatformUpdateChannel('win32', 'x64'), undefined);
   assert.deepEqual(getPlatformUpdateMetadataCandidates('darwin', 'arm64'), ['latest-mac.yml']);
+  assert.deepEqual(getPlatformUpdateMetadataCandidates('darwin', 'x64'), ['latest-x64-mac.yml']);
   assert.deepEqual(getPlatformUpdateMetadataCandidates('win32', 'x64'), ['latest.yml']);
   assert.deepEqual(getPlatformUpdateMetadataCandidates('linux', 'x64'), ['latest-linux.yml']);
+});
+
+test('reports missing macOS updater assets when only the other architecture is published', () => {
+  const fallback = summarizeGitHubReleaseForUpdates({
+    tag_name: 'v0.1.5',
+    name: '0.1.5',
+    html_url: 'https://github.com/lst016/tech-cc-hub/releases/tag/v0.1.5',
+    assets: [
+      { name: 'latest-x64-mac.yml' },
+      { name: 'tech-cc-hub-0.1.5-x64.zip' },
+      { name: 'tech-cc-hub-0.1.5-x64.dmg' },
+    ],
+  }, 'darwin', 'arm64');
+
+  assert.equal(fallback.hasCompatibleUpdateMetadata, false);
+  assert.equal(fallback.hasCompatibleInstallerAsset, false);
+  assert.deepEqual(fallback.missingUpdateAssets, ['one of latest-mac.yml', 'platform installer asset']);
+});
+
+test('accepts matching macOS updater metadata and installer assets per architecture', () => {
+  const fallback = summarizeGitHubReleaseForUpdates({
+    tag_name: 'v0.1.5',
+    name: '0.1.5',
+    html_url: 'https://github.com/lst016/tech-cc-hub/releases/tag/v0.1.5',
+    assets: [
+      { name: 'latest-mac.yml' },
+      { name: 'tech-cc-hub-0.1.5-arm64.zip' },
+      { name: 'tech-cc-hub-0.1.5-x64.zip' },
+    ],
+  }, 'darwin', 'arm64');
+
+  assert.equal(fallback.metadataFile, 'latest-mac.yml');
+  assert.equal(fallback.hasCompatibleUpdateMetadata, true);
+  assert.equal(fallback.hasCompatibleInstallerAsset, true);
+  assert.deepEqual(fallback.missingUpdateAssets, []);
 });
 
 test('selects the newest complete release above the current version', () => {
@@ -210,4 +251,5 @@ test('auto-updater fallback prepares the next release without nesting another ch
   assert.doesNotMatch(fallbackSource, /autoUpdater\.checkForUpdates\(/);
   assert.match(fallbackSource, /prepared \$\{fallback\.tagName\} for the next update check/);
   assert.match(fallbackSource, /skippedUpdateReleaseTags\.add\(failedTag\)/);
+  assert.match(source, /getPlatformUpdateChannel\(process\.platform, process\.arch\)/);
 });

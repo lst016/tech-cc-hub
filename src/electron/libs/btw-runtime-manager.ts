@@ -2,9 +2,17 @@ import { randomUUID } from "node:crypto";
 
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import type { LinkedWorkspaceContext } from "../../shared/linked-workspaces.js";
+import { deriveLatestPlanSnapshot } from "../../shared/plan-progress.js";
+import { normalizeBackgroundRunnerStatus } from "../../shared/runner-background-lifecycle.js";
 import type { PromptAttachment, RuntimeOverrides, ServerEvent, StreamMessage } from "../types.js";
 import type { RunnerHandle, RunnerOptions } from "./runner/runner.js";
 import type { Session } from "./session-store.js";
+import {
+  getClaudeConversationResetId,
+  getClaudeRetractionIds,
+  isClaudeConversationReset,
+  removeRetractedClaudeMessages,
+} from "../../shared/claude-agent-sdk-messages.js";
 
 type BtwServerEvent = Extract<ServerEvent, { type: `btw.${string}` }>;
 
@@ -54,6 +62,7 @@ type BtwRuntime = {
   messages: StreamMessage[];
   handle?: RunnerHandle;
   runnerConfig?: BtwRunnerConfig;
+  backgroundActive: boolean;
   generation: number;
   createdAt: number;
   updatedAt: number;
@@ -121,6 +130,7 @@ export class BtwRuntimeManager {
       session,
       snapshot: cloneMessages(input.snapshot),
       messages: [],
+      backgroundActive: false,
       generation: 0,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -181,12 +191,19 @@ export class BtwRuntimeManager {
     const generation = runtime.generation;
 
     runtime.session.status = "running";
+    runtime.backgroundActive = false;
     runtime.session.lastPrompt = displayPrompt;
     runtime.session.model = nextConfig.model;
     runtime.session.configProfileId = nextConfig.configProfileId;
     runtime.session.reasoningMode = nextConfig.reasoningMode;
     runtime.session.permissionMode = nextConfig.permissionMode;
-    runtime.session.title = runtime.messages.length === 0
+    const hasConversationContent = runtime.messages.some((message) => (
+      message.type === "user_prompt"
+      || message.type === "user"
+      || message.type === "assistant"
+      || message.type === "result"
+    ));
+    runtime.session.title = !hasConversationContent
       ? buildThreadTitle(displayPrompt, runtime.session.title)
       : runtime.session.title;
     runtime.updatedAt = timestamp;
@@ -225,6 +242,7 @@ export class BtwRuntimeManager {
         await existingHandle.appendPrompt(agentPrompt, attachments, {
           displayPrompt,
           workspaceContext: input.workspaceContext,
+          origin: { kind: "human" },
         });
         return true;
       } catch (error) {
@@ -249,6 +267,7 @@ export class BtwRuntimeManager {
     try {
       const handle = await this.dependencies.run({
         prompt: continuation!.prompt,
+        promptOrigin: { kind: "human" },
         displayPrompt,
         attachments,
         runtime: {
@@ -271,6 +290,11 @@ export class BtwRuntimeManager {
       const current = this.runtimes.get(runtime.threadId);
       if (!current || current.generation !== generation) {
         handle.abort();
+        return false;
+      }
+      if (handle.isClosed()) {
+        current.handle = undefined;
+        current.runnerConfig = undefined;
         return false;
       }
       current.handle = handle;
@@ -299,6 +323,7 @@ export class BtwRuntimeManager {
     runtime.handle = undefined;
     runtime.runnerConfig = undefined;
     runtime.session.status = "idle";
+    runtime.backgroundActive = false;
     runtime.updatedAt = this.now();
     this.dependencies.emit({
       type: "btw.thread.status",
@@ -365,15 +390,46 @@ export class BtwRuntimeManager {
     if (!runtime || runtime.generation !== generation) return;
 
     if (event.type === "stream.message") {
+      const retractedIds = getClaudeRetractionIds(event.payload.message);
+      if (isClaudeConversationReset(event.payload.message)) {
+        runtime.messages = [];
+        runtime.snapshot = [];
+        runtime.session.title = "New Session";
+        runtime.session.claudeSessionId = getClaudeConversationResetId(event.payload.message);
+        runtime.session.lastPrompt = undefined;
+        runtime.session.continuationSummary = undefined;
+        runtime.session.continuationSummaryMessageCount = undefined;
+        runtime.session.planSnapshot = undefined;
+        runtime.session.workflowState = undefined;
+        runtime.session.workflowError = undefined;
+        const pendingPermissions = Array.from(runtime.session.pendingPermissions.values());
+        runtime.session.pendingPermissions.clear();
+        for (const permission of pendingPermissions) {
+          permission.resolve({ behavior: "deny", message: "Conversation was reset before the permission request was answered." });
+        }
+      } else if (retractedIds.length > 0) {
+        runtime.messages = removeRetractedClaudeMessages(runtime.messages, retractedIds);
+      }
       runtime.messages.push(event.payload.message);
+      if (retractedIds.length > 0) {
+        // BTW owns a private conversation. Rebuild only from its messages so a
+        // retraction can restore the previous BTW plan without inheriting the
+        // parent session snapshot.
+        runtime.session.planSnapshot = deriveLatestPlanSnapshot(threadId, runtime.messages);
+      }
       runtime.updatedAt = this.now();
       this.dependencies.emit({ type: "btw.stream.message", payload: { threadId, message: event.payload.message } });
+      return;
+    }
+    if (event.type === "session.plan.updated") {
+      runtime.session.planSnapshot = event.payload;
+      runtime.updatedAt = this.now();
       return;
     }
     if (event.type === "permission.request") {
       this.dependencies.emit({
         type: "btw.permission.request",
-        payload: { threadId, toolUseId: event.payload.toolUseId, toolName: event.payload.toolName, input: event.payload.input },
+        payload: { ...event.payload, threadId },
       });
       return;
     }
@@ -382,18 +438,24 @@ export class BtwRuntimeManager {
       return;
     }
     if (event.type === "session.status") {
-      runtime.session.status = event.payload.status;
+      runtime.backgroundActive = Boolean(event.payload.backgroundActive);
+      runtime.session.status = normalizeBackgroundRunnerStatus(
+        event.payload.status,
+        runtime.backgroundActive,
+      );
       runtime.updatedAt = this.now();
       this.dependencies.emit({
         type: "btw.thread.status",
         payload: {
           threadId,
-          status: event.payload.status,
+          status: runtime.session.status,
           title: runtime.session.title,
           model: event.payload.model ?? runtime.session.model,
           reasoningMode: event.payload.reasoningMode ?? runtime.session.reasoningMode,
           permissionMode: event.payload.permissionMode ?? runtime.session.permissionMode,
           error: event.payload.error,
+          backgroundActive: runtime.backgroundActive,
+          terminalReason: event.payload.terminalReason,
           updatedAt: runtime.updatedAt,
         },
       });

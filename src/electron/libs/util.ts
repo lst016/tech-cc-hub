@@ -7,22 +7,23 @@ import {
   getClaudeCodePath,
 } from "./claude/claude-settings.js";
 import { app } from "electron";
+import { buildExternalCliEnv } from "./external-cli.js";
 
 // Build enhanced PATH for packaged environment
 export function getEnhancedEnv(): Record<string, string | undefined> {
 
   const config = getCurrentApiConfig();
   if (!config) {
-    return {
+    return buildExternalCliEnv({
       ...process.env,
-    };
+    });
   }
   
   const env = buildEnvForConfig(config);
-  return {
+  return buildExternalCliEnv({
     ...process.env,
     ...env,
-  };
+  });
 }
 
 export const generateSessionTitle = async (userIntent: string | null, options: { model?: string } = {}) => {
@@ -46,10 +47,10 @@ export const generateSessionTitle = async (userIntent: string | null, options: {
     return words.join(" ").toUpperCase() + (trimmedIntent.split(/\s+/).length > 5 ? "..." : "");
   }
   const requestedModel = options.model?.trim() || apiConfig.smallModel?.trim() || apiConfig.analysisModel?.trim() || apiConfig.model;
-  const currentEnv = {
+  const currentEnv = buildExternalCliEnv({
     ...process.env,
     ...buildEnvForConfig(apiConfig, requestedModel),
-  };
+  });
 
   try {
     const claudeCodeModelOption = getClaudeCodeModelOption(apiConfig, requestedModel);

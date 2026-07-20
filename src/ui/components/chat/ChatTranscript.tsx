@@ -100,6 +100,7 @@ export function ChatTranscript({
   isRunning,
   emptyMessage,
   keyPrefix = "transcript",
+  presentation = "default",
 }: {
   messages: StreamMessage[];
   sessionId?: string;
@@ -107,6 +108,7 @@ export function ChatTranscript({
   isRunning: boolean;
   emptyMessage?: StreamMessage;
   keyPrefix?: string;
+  presentation?: "default" | "agent";
 }) {
   const entries = useMemo(() => buildChatTranscriptEntries(
     messages.length > 0 ? messages : emptyMessage ? [emptyMessage] : [],
@@ -173,6 +175,7 @@ export function ChatTranscript({
                 sessionId={sessionId}
                 isLast={isLastMessage}
                 isRunning={isRunning}
+                presentation={presentation}
               />
             </Suspense>
           </div>

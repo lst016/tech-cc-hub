@@ -8,6 +8,8 @@ test("preview qa smoke script supports resilient file selection and log filterin
   assert.match(source, /http:\/\/localhost:4173\//);
   assert.match(source, /PREVIEW_QA_CHROME_PATH/);
   assert.match(source, /resolveChromePath/);
+  assert.match(source, /activity-workspace-tabs-scroll/);
+  assert.match(source, /title="文件预览"/);
   assert.match(source, /native-explorer__row--file/);
   assert.match(source, /package\.json/);
   assert.match(source, /let chosenFileName =/);

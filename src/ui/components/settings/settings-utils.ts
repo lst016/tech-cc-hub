@@ -12,12 +12,16 @@ import {
   MINIMAX_SMALL_MODEL,
 } from "../../../shared/models/minimax.js";
 import {
+  findMatchingModelName,
+  getAssignedModelNames,
   getModelRoutingWeight,
   normalizeModelRoutingWeight,
   pickHighestWeightedModelOwner,
 } from "../../../shared/models/model-routing-weight.js";
 import {
+  areModelNamesEquivalent,
   BOKE_GATEWAY_BASE_URL,
+  canonicalizeModelNameForRouting,
   isDeepSeekModelName,
   isMiniMaxModelName,
   isModelCompatibleWithApiProvider,
@@ -425,7 +429,7 @@ export function getAvailableModels(profile: ApiConfigProfile): string[] {
 }
 
 export function getAvailableModelsForProfiles(profiles: ApiConfigProfile[]): string[] {
-  return dedupeAvailableModelNames(profiles.flatMap((profile) => getAvailableModels(profile)));
+  return dedupeAvailableModelNames(profiles.flatMap((profile) => getAvailableModels(profile)), true);
 }
 
 function normalizeModelTags(tags: string[] | undefined): string[] | undefined {
@@ -472,14 +476,19 @@ function getRoutedCapabilityModels(
     .filter((option) => {
       if (selected.has(option.value)) return true;
       const owner = profilesById.get(option.profileId);
-      const deployment = owner?.models?.find((model) => model.name.trim() === option.value);
+      const deployment = owner ? owner.models?.find((model) => (
+        model.catalogStatus !== "excluded"
+        && areModelNamesEquivalent(model.name, option.value)
+      )) : undefined;
       return Boolean(deployment && inferModelCapabilities(deployment).includes(capability));
     })
     .map((option) => option.value);
 }
 
-function dedupeAvailableModelNames(models: Array<string | undefined>): string[] {
-  const seen = new Set<string>();
+function dedupeAvailableModelNames(
+  models: Array<string | undefined>,
+  canonicalizeMiniMax = false,
+): string[] {
   const deduped: string[] = [];
 
   for (const model of models) {
@@ -488,11 +497,14 @@ function dedupeAvailableModelNames(models: Array<string | undefined>): string[] 
       continue;
     }
 
-    if (seen.has(normalized)) {
+    const existingIndex = deduped.findIndex((existing) => areModelNamesEquivalent(existing, normalized));
+    if (existingIndex >= 0) {
+      if (canonicalizeMiniMax && isMiniMaxModelName(normalized)) {
+        deduped[existingIndex] = canonicalizeModelNameForRouting(normalized);
+      }
       continue;
     }
 
-    seen.add(normalized);
     deduped.push(normalized);
   }
 
@@ -516,9 +528,7 @@ export function resolveAvailableModelName(modelName: string | undefined, availab
     }
   }
   if (isMiniMaxModelName(normalized)) {
-    const matchedModel = availableModels.find((availableModel) =>
-      isMiniMaxModelName(availableModel) && availableModel.toLowerCase() === normalized.toLowerCase()
-    );
+    const matchedModel = availableModels.find((availableModel) => areModelNamesEquivalent(availableModel, normalized));
     if (matchedModel) {
       return matchedModel;
     }
@@ -532,37 +542,51 @@ export function getRoutedModelOptionsForProfiles(profiles: ApiConfigProfile[]): 
     .filter((option): option is RoutedModelOption => Boolean(option));
 }
 
+export function getAutomaticRoutedModelOptionsForProfiles(profiles: ApiConfigProfile[]): RoutedModelOption[] {
+  return dedupeAvailableModelNames(
+    profiles.flatMap((profile) => getAssignedModelNames(profile)),
+    true,
+  )
+    .map((modelName) => buildRoutedModelOption(profiles, modelName, profileOwnsAssignedRoutableModel))
+    .filter((option): option is RoutedModelOption => Boolean(option));
+}
+
 export function getModelDeploymentOptionsForProfiles(profiles: ApiConfigProfile[]): RoutedModelOption[] {
   return profiles.flatMap((profile) => getAvailableModels(profile)
     .filter((modelName) => isModelCompatibleWithApiProvider(profile.provider, modelName))
     .map((modelName) => buildModelDeploymentOption(profile, modelName)));
 }
 
-function buildRoutedModelOption(profiles: ApiConfigProfile[], modelName: string): RoutedModelOption | null {
+function buildRoutedModelOption(
+  profiles: ApiConfigProfile[],
+  modelName: string,
+  isRoutable = profileOwnsRoutableModel,
+): RoutedModelOption | null {
   const owner = pickHighestWeightedModelOwner(
     profiles,
     modelName,
-    (profile, targetModel) => profileOwnsRoutableModel(profile, targetModel),
+    (profile, targetModel) => isRoutable(profile, targetModel),
   );
 
   if (!owner) {
     return null;
   }
 
-  return buildModelDeploymentOption(owner, modelName);
+  return buildModelDeploymentOption(owner, findMatchingModelName(owner, modelName) ?? modelName);
 }
 
 function buildModelDeploymentOption(profile: ApiConfigProfile, modelName: string): RoutedModelOption {
-  const routingWeight = getModelRoutingWeight(profile, modelName);
+  const routedModelName = findMatchingModelName(profile, modelName) ?? modelName;
+  const routingWeight = getModelRoutingWeight(profile, routedModelName);
   const profileName = profile.name?.trim() || "Unnamed profile";
   const providerLabel = getApiProviderLabel(profile.provider);
   const weightLabel = routingWeight > 0 ? ` / weight ${routingWeight}` : "";
-  const modelConfig = profile.models?.find((model) => model.name === modelName);
+  const modelConfig = profile.models?.find((model) => model.name === routedModelName);
 
   return {
-    deploymentKey: createModelDeploymentKey(profile.id, modelName),
-    value: modelName,
-    label: modelName,
+    deploymentKey: createModelDeploymentKey(profile.id, routedModelName),
+    value: routedModelName,
+    label: routedModelName,
     profileId: profile.id,
     profileName,
     contextWindow: modelConfig?.contextWindow,
@@ -574,7 +598,18 @@ function buildModelDeploymentOption(profile: ApiConfigProfile, modelName: string
 }
 
 function profileOwnsRoutableModel(profile: ApiConfigProfile, modelName: string): boolean {
-  return getAvailableModels(profile).includes(modelName)
+  return Boolean(findMatchingModelName(
+    { models: getAvailableModels(profile).map((name) => ({ name })) },
+    modelName,
+  ))
+    && isModelCompatibleWithApiProvider(profile.provider, modelName);
+}
+
+function profileOwnsAssignedRoutableModel(profile: ApiConfigProfile, modelName: string): boolean {
+  return Boolean(findMatchingModelName(
+    { models: getAssignedModelNames(profile).map((name) => ({ name })) },
+    modelName,
+  ))
     && isModelCompatibleWithApiProvider(profile.provider, modelName);
 }
 

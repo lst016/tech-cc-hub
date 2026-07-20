@@ -2,6 +2,7 @@ import { create, type StateCreator } from "zustand";
 import { createStore } from "zustand/vanilla";
 
 import type {
+  PermissionRequestPayload,
   PromptAttachment,
   RuntimePermissionMode,
   RuntimeReasoningMode,
@@ -9,12 +10,14 @@ import type {
   SessionStatus,
   StreamMessage,
 } from "../types.js";
+import {
+  getClaudeRetractionIds,
+  isClaudeConversationReset,
+  removeRetractedClaudeMessages,
+} from "../../shared/claude-agent-sdk-messages.js";
+import { appendStoreMessages } from "./sdk-message-buffer.js";
 
-export type BtwPermissionRequest = {
-  toolUseId: string;
-  toolName: string;
-  input: unknown;
-};
+export type BtwPermissionRequest = PermissionRequestPayload;
 
 export type BtwThreadView = {
   id: string;
@@ -86,6 +89,36 @@ function extractPartialDelta(message: StreamMessage): { kind: "start" | "delta" 
   const valueKey = delta?.type?.split("_")[0];
   const value = valueKey ? delta?.[valueKey] : undefined;
   return { kind: "delta", text: typeof value === "string" ? value : "" };
+}
+
+function toBtwPermissionRequest(payload: BtwPermissionRequest): BtwPermissionRequest {
+  return {
+    toolUseId: payload.toolUseId,
+    toolName: payload.toolName,
+    input: payload.input,
+    requestId: payload.requestId,
+    suggestions: payload.suggestions,
+    blockedPath: payload.blockedPath,
+    decisionReason: payload.decisionReason,
+    title: payload.title,
+    displayName: payload.displayName,
+    description: payload.description,
+    matchedAskRule: payload.matchedAskRule,
+    agentId: payload.agentId,
+  };
+}
+
+export function resetBtwThreadForConversationReset(thread: BtwThreadView): BtwThreadView {
+  return {
+    ...thread,
+    title: "New Session",
+    messages: [],
+    partialMessage: "",
+    partialVisible: false,
+    permissionRequests: [],
+    error: undefined,
+    updatedAt: Date.now(),
+  };
 }
 
 function removeThreadState(state: BtwState, threadId: string, parentSessionId: string): Partial<BtwState> {
@@ -197,19 +230,24 @@ const createBtwState: StateCreator<BtwState> = (set) => ({
         if (partial.kind === "start") return { ...thread, partialMessage: "", partialVisible: true };
         if (partial.kind === "delta") return { ...thread, partialMessage: `${thread.partialMessage}${partial.text}`, partialVisible: true };
         if (partial.kind === "stop") return { ...thread, partialMessage: "", partialVisible: false };
-        return { ...thread, messages: [...thread.messages, event.payload.message] };
+        const retractedIds = getClaudeRetractionIds(event.payload.message);
+        const baseThread = isClaudeConversationReset(event.payload.message)
+          ? resetBtwThreadForConversationReset(thread)
+          : thread;
+        const messages = removeRetractedClaudeMessages(baseThread.messages, retractedIds);
+        return {
+          ...baseThread,
+          messages: appendStoreMessages(messages, [event.payload.message]),
+        };
       }));
       return;
     }
 
     if (event.type === "btw.permission.request") {
+      const payload = event.payload;
       set((state) => updateThread(state, event.payload.threadId, (thread) => ({
         ...thread,
-        permissionRequests: [...thread.permissionRequests, {
-          toolUseId: event.payload.toolUseId,
-          toolName: event.payload.toolName,
-          input: event.payload.input,
-        }],
+        permissionRequests: [...thread.permissionRequests, toBtwPermissionRequest(payload)],
       })));
       return;
     }

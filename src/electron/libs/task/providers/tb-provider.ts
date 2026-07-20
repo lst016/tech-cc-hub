@@ -1,10 +1,7 @@
-import { execFile } from "child_process";
-import { promisify } from "util";
 import { getGlobalRuntimeEnvConfig } from "../../claude/claude-settings.js";
+import { runExternalCli } from "../../external-cli.js";
 import { loadTaskSettings } from "../settings.js";
 import type { ExternalTask, ExternalTaskStatus, TaskProvider, TaskProviderCapability } from "../types.js";
-
-const execFileAsync = promisify(execFile);
 
 type TbTaskItem = {
   id?: string;
@@ -79,7 +76,7 @@ export class TbTaskProvider implements TaskProvider {
 
   private async runCli(command: string, argsTemplate: string, values: Record<string, string>): Promise<{ stdout: string; stderr: string }> {
     const args = splitArgs(renderTemplate(argsTemplate, values));
-    const { stdout, stderr } = await execFileAsync(command, args, {
+    const { stdout, stderr } = await runExternalCli(command, args, {
       timeout: 30000,
       env: { ...process.env, ...getGlobalRuntimeEnvConfig() },
     });

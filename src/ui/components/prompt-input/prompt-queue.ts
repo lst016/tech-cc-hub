@@ -16,6 +16,33 @@ export type QueuedMessageDraft = {
   createdAt: number;
 };
 
+type QueuedForkMessage = {
+  [key: string]: unknown;
+  type: string;
+  uuid?: string;
+  parent_tool_use_id?: string | null;
+  aborted?: boolean;
+};
+
+export function findLatestQueuedForkPoint(messages: readonly QueuedForkMessage[]): string | null {
+  const currentTurnStart = messages.findLastIndex((message) => message.type === "user_prompt");
+  const searchEnd = currentTurnStart >= 0 ? currentTurnStart : messages.length;
+
+  for (let index = searchEnd - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (
+      message.type === "assistant"
+      && message.parent_tool_use_id === null
+      && !message.aborted
+      && message.uuid?.trim()
+    ) {
+      return message.uuid;
+    }
+  }
+
+  return null;
+}
+
 export function readQueuedMessagesFromStorage(): Record<string, QueuedMessageDraft[]> {
   try {
     const stored = localStorage.getItem(PROMPT_QUEUE_STORAGE_KEY);

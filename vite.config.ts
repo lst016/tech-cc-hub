@@ -87,7 +87,7 @@ export default defineConfig(() => {
 		base: './',
 		optimizeDeps: {
 			entries: ['index.html'],
-			exclude: ['monaco-editor'],
+			exclude: ['@monaco-editor/react', 'monaco-editor'],
 		},
 		build: {
 			outDir: 'dist-react',
