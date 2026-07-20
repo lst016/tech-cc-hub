@@ -5,6 +5,7 @@ import type { ProgressInfo, UpdateInfo } from "electron-updater";
 import {
   buildGitHubReleaseDownloadFeedUrl,
   createReleaseUpdatePlan,
+  getPlatformUpdateChannel,
   isMissingPlatformUpdateMetadataError,
   selectNewestReleaseAboveCurrent,
   type GitHubReleaseLike,
@@ -59,11 +60,7 @@ export type AppUpdateActionResult = {
 type AppUpdateStatusListener = (status: AppUpdateStatus) => void;
 
 function getUpdateChannel(): string | undefined {
-  const { platform, arch } = process;
-  if (platform === "win32" && arch === "arm64") {
-    return "latest-win-arm64";
-  }
-  return undefined;
+  return getPlatformUpdateChannel(process.platform, process.arch);
 }
 
 function normalizeReleaseNotes(releaseNotes: UpdateInfo["releaseNotes"]): string | undefined {

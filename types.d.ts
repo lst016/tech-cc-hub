@@ -324,6 +324,7 @@ type EventPayloadMapping = {
         "save-user-agent-rule-document": { success: boolean; error?: string };
         "debug-save-trace-snapshot": { success: boolean; path?: string; error?: string };
         "preprocess-image-attachments": ImagePreprocessResult;
+        "plugin-platform:list": import("./src/electron/libs/plugin-platform/plugin-package-registry").PluginPackageCatalog;
         "workspace-plugins:list": import("./src/shared/workspace-plugins").WorkspacePluginDescriptor[];
         "workspace-plugins:open": import("./src/electron/libs/workspace-plugins/workspace-plugin-manager").WorkspacePluginLaunch;
         "workspace-plugins:close": void;
@@ -444,6 +445,9 @@ interface Window {
         openPreviewFile: (payload: { path: string }) => Promise<{ success: boolean; error?: string }>;
         showPreviewItemInFolder: (payload: { path: string }) => Promise<{ success: boolean; error?: string }>;
         openPreviewDirectoryDialog: (payload: { properties?: string[] }) => Promise<string[]>;
+        pluginPlatform: {
+            list: () => Promise<import("./src/electron/libs/plugin-platform/plugin-package-registry").PluginPackageCatalog>;
+        };
         workspacePlugins: {
             list: () => Promise<import("./src/shared/workspace-plugins").WorkspacePluginDescriptor[]>;
             open: (input: { pluginId: string; sessionId: string }) => Promise<import("./src/electron/libs/workspace-plugins/workspace-plugin-manager").WorkspacePluginLaunch>;

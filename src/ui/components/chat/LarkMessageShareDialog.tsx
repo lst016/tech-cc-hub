@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CircleX, LoaderCircle, Sparkles, UserRound, UsersRound, X } from "lucide-react";
+import { CircleAlert, CircleX, LoaderCircle, Sparkles, UserRound, UsersRound, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 
@@ -19,6 +19,8 @@ type LarkContactOption = {
   name: string;
   department?: string;
 };
+
+type LarkShareTab = "people" | "chats";
 
 export type LarkMessageShareDialogProps = {
   message: string;
@@ -65,6 +67,7 @@ function RecipientAvatar({ recipient }: { recipient: LarkShareRecipient }) {
 
 export function LarkMessageShareDialog({ message, onClose, onRequestPermissionAssist }: LarkMessageShareDialogProps) {
   const [query, setQuery] = useState("");
+  const [activeTab, setActiveTab] = useState<LarkShareTab>("people");
   const [people, setPeople] = useState<LarkShareRecipient[]>([]);
   const [chats, setChats] = useState<LarkShareRecipient[]>([]);
   const [selected, setSelected] = useState<LarkShareRecipient | null>(null);
@@ -76,10 +79,12 @@ export function LarkMessageShareDialog({ message, onClose, onRequestPermissionAs
   const [sending, setSending] = useState(false);
   const requestIdRef = useRef(0);
 
-  const recipients = [...people, ...chats];
-  const loading = peopleLoading || chatsLoading;
+  const recipients = activeTab === "people" ? people : chats;
+  const loading = activeTab === "people" ? peopleLoading : chatsLoading;
+  const recipientLabel = activeTab === "people" ? "人员" : "群聊";
+  const activeSearchError = activeTab === "people" ? peopleError : chatsError;
   const searchError = !loading && recipients.length === 0
-    ? peopleError ?? chatsError
+    ? activeSearchError
     : null;
   const canRequestPermissionAssist = Boolean(sendError?.includes("im:message.send_as_user"));
 
@@ -151,6 +156,13 @@ export function LarkMessageShareDialog({ message, onClose, onRequestPermissionAs
     setSelected(null);
   };
 
+  const handleTabChange = (tab: LarkShareTab) => {
+    if (tab === activeTab) return;
+    setActiveTab(tab);
+    setSelected(null);
+    setSendError(null);
+  };
+
   const handleSend = async () => {
     if (!selected || sending) return;
     setSending(true);
@@ -174,7 +186,7 @@ export function LarkMessageShareDialog({ message, onClose, onRequestPermissionAs
         if (event.target === event.currentTarget && !sending) onClose();
       }}
     >
-      <div className="flex max-h-[min(680px,calc(100vh-32px))] w-full max-w-[600px] flex-col overflow-hidden rounded-[14px] border border-slate-200 bg-white shadow-[0_24px_72px_rgba(15,23,42,0.22)]">
+      <div className="flex max-h-[min(760px,calc(100vh-32px))] w-full max-w-[600px] flex-col overflow-hidden rounded-[14px] border border-slate-200 bg-white shadow-[0_24px_72px_rgba(15,23,42,0.22)]">
         <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
           <div>
             <h2 id="lark-share-dialog-title" className="text-[17px] font-semibold text-slate-950">发送到飞书</h2>
@@ -191,14 +203,51 @@ export function LarkMessageShareDialog({ message, onClose, onRequestPermissionAs
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 px-5 py-4">
-          <div className="relative">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-4">
+          <div
+            role="tablist"
+            aria-label="选择接收对象类型"
+            className="mb-3 grid h-10 shrink-0 grid-cols-2 gap-1 rounded-[9px] bg-slate-100 p-1"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "people"}
+              aria-controls="lark-share-recipient-results"
+              onClick={() => handleTabChange("people")}
+              className={`inline-flex items-center justify-center gap-2 rounded-[7px] text-sm font-medium transition ${
+                activeTab === "people"
+                  ? "bg-white text-[#3156e8] shadow-sm ring-1 ring-slate-200"
+                  : "text-slate-600 hover:bg-white/60 hover:text-slate-900"
+              }`}
+            >
+              <UserRound className="h-4 w-4" aria-hidden="true" />
+              人员
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "chats"}
+              aria-controls="lark-share-recipient-results"
+              onClick={() => handleTabChange("chats")}
+              className={`inline-flex items-center justify-center gap-2 rounded-[7px] text-sm font-medium transition ${
+                activeTab === "chats"
+                  ? "bg-white text-[#3156e8] shadow-sm ring-1 ring-slate-200"
+                  : "text-slate-600 hover:bg-white/60 hover:text-slate-900"
+              }`}
+            >
+              <UsersRound className="h-4 w-4" aria-hidden="true" />
+              群聊
+            </button>
+          </div>
+
+          <div className="relative shrink-0">
             <input
               id="lark-share-recipient-search"
               autoFocus
               value={query}
               onChange={(event) => handleQueryChange(event.target.value)}
-              placeholder="输入人员或群名"
+              placeholder={`输入${recipientLabel}名称`}
               className="h-10 w-full rounded-[8px] border border-slate-300 bg-white px-3 pr-10 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#3156e8] focus:ring-1 focus:ring-[#3156e8]"
             />
             {query && (
@@ -213,15 +262,19 @@ export function LarkMessageShareDialog({ message, onClose, onRequestPermissionAs
             )}
           </div>
 
-          <div className="mt-3 min-h-[330px] max-h-[410px] overflow-y-auto rounded-[10px] border border-slate-200 bg-white p-2">
+          <div
+            id="lark-share-recipient-results"
+            role="tabpanel"
+            className="mt-3 min-h-[240px] max-h-[410px] flex-1 overflow-y-auto rounded-[10px] border border-slate-200 bg-white p-2"
+          >
             {!query.trim() ? (
-              <div className="grid min-h-[312px] place-items-center text-sm text-slate-400">输入人员或群名开始搜索</div>
+              <div className="grid h-full min-h-[220px] place-items-center text-sm text-slate-400">输入{recipientLabel}名称开始搜索</div>
             ) : recipients.length === 0 && loading ? (
-              <div className="grid min-h-[312px] place-items-center text-sm text-slate-500" aria-live="polite">正在搜索人员和群聊…</div>
+              <div className="grid h-full min-h-[220px] place-items-center text-sm text-slate-500" aria-live="polite">正在搜索{recipientLabel}…</div>
             ) : searchError ? (
-              <div className="grid min-h-[312px] place-items-center px-8 text-center text-sm leading-6 text-red-600" role="alert">{searchError}</div>
+              <div className="grid h-full min-h-[220px] place-items-center px-8 text-center text-sm leading-6 text-red-600" role="alert">{searchError}</div>
             ) : recipients.length === 0 ? (
-              <div className="grid min-h-[312px] place-items-center text-sm text-slate-400">没有找到匹配的人员或群聊</div>
+              <div className="grid h-full min-h-[220px] place-items-center text-sm text-slate-400">没有找到匹配的{recipientLabel}</div>
             ) : (
               <div className="space-y-0.5">
                 {recipients.map((recipient) => {
@@ -256,8 +309,14 @@ export function LarkMessageShareDialog({ message, onClose, onRequestPermissionAs
           </div>
 
           {sendError && (
-            <div role="alert" className="mt-3 flex flex-wrap items-center gap-2 rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
-              <span className="min-w-0 flex-1">{sendError}</span>
+            <div role="alert" className="mt-3 flex max-h-[132px] shrink-0 flex-wrap items-start gap-3 overflow-y-auto rounded-[8px] border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-5 text-red-700">
+              <div className="flex min-w-[240px] flex-1 items-start gap-2">
+                <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <div className="min-w-0">
+                  <p className="font-semibold">发送失败</p>
+                  <p className="mt-0.5 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{sendError}</p>
+                </div>
+              </div>
               {canRequestPermissionAssist && (
                 <button
                   type="button"

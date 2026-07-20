@@ -12,7 +12,11 @@ import {
   discoverSlashCommandsInRoots,
 } from "../../src/electron/libs/slash-command-discovery.js";
 import { CLAUDE_CODE_BUILTIN_COMMAND_ITEMS } from "../../src/electron/libs/claude/claude-code-builtin-commands.js";
-import { extractSlashCommandsFromMessages, mergeSlashCommandLists } from "../../src/shared/slash-commands.js";
+import {
+  applySlashCommandMessages,
+  extractSlashCommandsFromMessages,
+  mergeSlashCommandLists,
+} from "../../src/shared/slash-commands.js";
 
 test("discoverSlashCommandsInRoots collects project and user markdown command files", () => {
   const sandboxRoot = mkdtempSync(join(tmpdir(), "slash-commands-"));
@@ -65,11 +69,33 @@ test("slash command sources merge local commands with runtime init commands", ()
   }
 });
 
-test("Claude Code built-in slash command seed includes stable default commands", () => {
+test("Claude Code built-in slash command seed includes stable SDK commands", () => {
   const names = CLAUDE_CODE_BUILTIN_COMMAND_ITEMS.map((item) => item.name);
 
-  for (const expected of ["help", "init", "doctor", "model", "skills", "goal", "code-review", "usage-credits"]) {
+  for (const expected of [
+    "help",
+    "init",
+    "doctor",
+    "model",
+    "skills",
+    "goal",
+    "code-review",
+    "usage-credits",
+    "workflows",
+    "reload-skills",
+    "__remote-workflow",
+    "design",
+    "design-consent",
+    "design-revoke",
+  ]) {
     assert.ok(names.includes(expected), `expected /${expected} in built-in slash command seed`);
+  }
+});
+
+test("Claude Code built-in SDK descriptions are localized for the Chinese UI", () => {
+  for (const command of CLAUDE_CODE_BUILTIN_COMMAND_ITEMS) {
+    assert.match(command.description ?? "", /[\u3400-\u9fff]/u, `expected Chinese description for /${command.name}`);
+    assert.doesNotMatch(command.description ?? "", /^Claude Code (?:built-in|bundled skill):/i);
   }
 });
 
@@ -84,10 +110,9 @@ test("Claude Code /code-review seed tells agents to split oversized reviews", ()
   const command = CLAUDE_CODE_BUILTIN_COMMAND_ITEMS.find((item) => item.name === "code-review");
 
   assert.ok(command);
-  assert.match(command.description ?? "", /split/i);
-  assert.match(command.description ?? "", /oversized|large|long/i);
-  assert.match(command.description ?? "", /chunk/i);
-  assert.match(command.description ?? "", /summar/i);
+  assert.match(command.description ?? "", /过大|大型|超长/);
+  assert.match(command.description ?? "", /拆分/);
+  assert.match(command.description ?? "", /汇总/);
 });
 
 test("project commands do not shadow Claude Code built-in /goal", () => {
@@ -164,6 +189,103 @@ test("skill definition discovery returns the matched SKILL.md path", () => {
   }
 });
 
+test("skill discovery reads a quoted description from CRLF frontmatter", () => {
+  const sandboxRoot = mkdtempSync(join(tmpdir(), "slash-skill-crlf-"));
+
+  try {
+    const skillDir = join(sandboxRoot, "skills", ".curated", "sentry");
+    const iconSvg = '<svg xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="8" /></svg>';
+    mkdirSync(skillDir, { recursive: true });
+    mkdirSync(join(skillDir, "agents"), { recursive: true });
+    mkdirSync(join(skillDir, "assets"), { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        'name: "sentry"',
+        'description: "Read-only Sentry observability"',
+        "---",
+        "",
+        "# Sentry",
+      ].join("\r\n"),
+      "utf8",
+    );
+    writeFileSync(
+      join(skillDir, "agents", "openai.yaml"),
+      'interface:\n  icon_small: "./assets/sentry-small.svg"\n  icon_large: "./assets/sentry.png"\n',
+      "utf8",
+    );
+    writeFileSync(join(skillDir, "assets", "sentry-small.svg"), iconSvg, "utf8");
+    writeFileSync(join(skillDir, "assets", "sentry.png"), "large-icon", "utf8");
+
+    const skills = discoverSkillDefinitionItemsInRoots({
+      skillRoots: [join(sandboxRoot, "skills")],
+    });
+
+    assert.equal(skills[0]?.name, "sentry");
+    assert.equal(skills[0]?.description, "Read-only Sentry observability");
+    assert.equal(
+      skills[0]?.icon,
+      `data:image/svg+xml;base64,${Buffer.from(iconSvg).toString("base64")}`,
+    );
+  } finally {
+    rmSync(sandboxRoot, { recursive: true, force: true });
+  }
+});
+
+test("skill discovery does not read icons outside the skill directory", () => {
+  const sandboxRoot = mkdtempSync(join(tmpdir(), "slash-skill-icon-boundary-"));
+
+  try {
+    const skillDir = join(sandboxRoot, "skills", "safe-skill");
+    mkdirSync(join(skillDir, "agents"), { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: safe-skill\n---\n", "utf8");
+    writeFileSync(join(sandboxRoot, "outside.svg"), "<svg />", "utf8");
+    writeFileSync(
+      join(skillDir, "agents", "openai.yaml"),
+      'interface:\n  icon_small: "../../outside.svg"\n',
+      "utf8",
+    );
+
+    const skills = discoverSkillDefinitionItemsInRoots({
+      skillRoots: [join(sandboxRoot, "skills")],
+    });
+
+    assert.equal(skills[0]?.icon, undefined);
+  } finally {
+    rmSync(sandboxRoot, { recursive: true, force: true });
+  }
+});
+
+test("skill discovery falls back to icon_large when icon_small is unavailable", () => {
+  const sandboxRoot = mkdtempSync(join(tmpdir(), "slash-skill-icon-fallback-"));
+
+  try {
+    const skillDir = join(sandboxRoot, "skills", "large-icon-skill");
+    const iconBytes = Buffer.from("large-icon");
+    mkdirSync(join(skillDir, "agents"), { recursive: true });
+    mkdirSync(join(skillDir, "assets"), { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: large-icon-skill\n---\n", "utf8");
+    writeFileSync(
+      join(skillDir, "agents", "openai.yaml"),
+      'interface:\n  icon_small: "./assets/missing.svg"\n  icon_large: "./assets/large.png"\n',
+      "utf8",
+    );
+    writeFileSync(join(skillDir, "assets", "large.png"), iconBytes);
+
+    const skills = discoverSkillDefinitionItemsInRoots({
+      skillRoots: [join(sandboxRoot, "skills")],
+    });
+
+    assert.equal(
+      skills[0]?.icon,
+      `data:image/png;base64,${iconBytes.toString("base64")}`,
+    );
+  } finally {
+    rmSync(sandboxRoot, { recursive: true, force: true });
+  }
+});
+
 test("local Claude definition discovery keeps project and global command files usable", () => {
   const sandboxRoot = mkdtempSync(join(tmpdir(), "slash-definition-scope-"));
 
@@ -211,4 +333,42 @@ test("extractSlashCommandsFromMessages ignores non-init messages", () => {
   ]);
 
   assert.deepEqual(commands, ["second", "valid"]);
+});
+
+test("commands_changed atomically replaces command names and preserves metadata", () => {
+  const catalog = applySlashCommandMessages(
+    ["help", "removed"],
+    undefined,
+    [{
+      type: "system",
+      subtype: "commands_changed",
+      commands: [{
+        name: "/review",
+        description: "Review the current changes",
+        argumentHint: "[path]",
+        aliases: ["audit", "/review"],
+      }],
+    }],
+  );
+
+  assert.deepEqual(catalog?.names, ["audit", "review"]);
+  assert.deepEqual(catalog?.details, [{
+    name: "review",
+    description: "Review the current changes",
+    argumentHint: "[path]",
+    aliases: ["audit"],
+  }]);
+});
+
+test("commands_changed treats an empty list as an authoritative empty snapshot", () => {
+  const catalog = applySlashCommandMessages(
+    ["help"],
+    [{ name: "help", description: "Help" }],
+    [{ type: "system", subtype: "commands_changed", commands: [] }],
+  );
+
+  assert.deepEqual(catalog, { names: [], details: [] });
+  assert.deepEqual(extractSlashCommandsFromMessages([
+    { type: "system", subtype: "commands_changed", commands: [] },
+  ]), []);
 });

@@ -37,8 +37,10 @@ import { WorkflowAgentTranscriptPanel } from "./workflow/WorkflowAgentTranscript
 import type { WorkflowAgentSummary } from "../utils/workflow-agent-transcripts";
 import { findWorkflowRunForTranscript } from "../utils/workflow-run-transcript";
 import type { WorkflowRunAction, WorkflowRunRecord } from "../../shared/workflows/workflow-runs";
+import type { OpenVisualizationPreviewDetail } from "../events";
 
 const AionWorkspacePreviewPane = lazy(() => import("./AionWorkspacePreviewPane").then((module) => ({ default: module.AionWorkspacePreviewPane })));
+const VisualizationPreviewPane = lazy(() => import("./chat/VisualizationPreviewPane").then((module) => ({ default: module.VisualizationPreviewPane })));
 const GitWorkbenchPanel = lazy(() => import("./git/GitWorkbenchPanel").then((module) => ({ default: module.GitWorkbenchPanel })));
 const TerminalWorkspacePanel = lazy(() => import("./TerminalWorkspacePanel").then((module) => ({ default: module.TerminalWorkspacePanel })));
 
@@ -1285,6 +1287,8 @@ export function ActivityRail({
   suspended = false,
   pendingPreviewOpenRequest,
   onConsumePendingPreviewOpenRequest,
+  visualizationPreview,
+  onCloseVisualizationPreview,
   onActiveTabChange,
   selectedModel,
   contextWindow,
@@ -1311,6 +1315,8 @@ export function ActivityRail({
     nonce: number;
   };
   onConsumePendingPreviewOpenRequest?: () => void;
+  visualizationPreview?: OpenVisualizationPreviewDetail;
+  onCloseVisualizationPreview?: () => void;
   onActiveTabChange?: (tab: ActivityRailTab) => void;
   selectedModel?: string;
   contextWindow?: number;
@@ -1465,7 +1471,15 @@ export function ActivityRail({
           <div className="min-h-0 flex-1">
             <div className="h-full overflow-hidden border-t border-[#d0d7de] bg-white shadow-none">
               <Suspense fallback={<WorkspacePaneFallback label="正在加载文件预览..." />}>
-                {shouldMountPreviewPane ? (
+                {visualizationPreview ? (
+                  <VisualizationPreviewPane
+                    preview={visualizationPreview}
+                    onClose={() => {
+                      onCloseVisualizationPreview?.();
+                      handleSelectTab(DEFAULT_ACTIVITY_RAIL_TAB);
+                    }}
+                  />
+                ) : shouldMountPreviewPane ? (
                   <AionWorkspacePreviewPane
                     key={`${session?.id ?? "no-session"}:${session?.cwd ?? "no-workspace"}`}
                     workspace={session?.cwd}

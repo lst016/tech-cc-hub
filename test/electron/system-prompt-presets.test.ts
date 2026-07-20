@@ -116,10 +116,12 @@ test("design parity prompt requires a 90 percent visual acceptance loop", () => 
   assert.match(prompt, /design_compare_element_to_reference/);
 });
 
-test("design parity prompt requires a locked Figma reference before file edits", () => {
+test("design parity prompt accepts direct multimodal inspection while retaining reference evidence", () => {
   const prompt = buildDesignParityPromptAppend();
 
   assert.match(prompt, /Figma reference-lock rule/);
+  assert.match(prompt, /Direct multimodal inspection is valid/);
+  assert.match(prompt, /多模态主模型可以直接读取/);
   assert.match(prompt, /qualityGate\.confidence >= 0\.75/);
   assert.match(prompt, /Figma wrong-reference recovery rule/);
   assert.match(prompt, /figma_match_ui_nodes/);

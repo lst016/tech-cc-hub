@@ -17,7 +17,7 @@ test("session continue resumes an existing provider session with a thin prompt",
   assert.match(continueBranch, /const supportsResume = config \? supportsRemoteSessionResume\(config\) : true;/);
   assert.match(
     continueBranch,
-    /const canUseRemoteResume = Boolean\(session\.claudeSessionId\)[\s\S]*?&& \(supportsResume \|\| canUseFigmaOAuthCallbackResume\)[\s\S]*?&& !switchedModel[\s\S]*?&& !replacingHistoryId;/,
+    /const canUseRemoteResume = Boolean\(session\.claudeSessionId\)[\s\S]*?&& \(supportsResume \|\| canUseFigmaOAuthCallbackResume\)[\s\S]*?&& !switchedModel[\s\S]*?&& !replacingHistoryId[\s\S]*?&& !providerResumeBlockedByEmptySuccess;/,
   );
   assert.match(continueBranch, /const thinResumePrompt = isFigmaOAuthCallback \? storagePrompt : agentPrompt;/);
   assert.match(
@@ -47,6 +47,16 @@ test("session continue avoids provider resume when history or model identity cha
   );
   assert.match(continueBranch, /&& !switchedModel/);
   assert.match(continueBranch, /&& !replacingHistoryId/);
+});
+
+test("session continue rebuilds stateless context after an empty provider result", () => {
+  const continueBranch = getContinueBranch();
+
+  assert.match(
+    continueBranch,
+    /const providerResumeBlockedByEmptySuccess = shouldBypassProviderResumeAfterEmptySuccess\(historyMessagesForRun\);/,
+  );
+  assert.match(continueBranch, /&& !providerResumeBlockedByEmptySuccess/);
 });
 
 test("session continue falls back to stateless history when no provider session exists", () => {

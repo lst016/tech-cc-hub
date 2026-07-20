@@ -86,17 +86,17 @@ test("native session fork creates a resumable local branch and remaps assistant 
     },
   };
   const sourceTranscript = [
-    { type: "user" as const, uuid: "remote-user-1", session_id: "remote-source", message: {}, parent_tool_use_id: null },
-    { type: "assistant" as const, uuid: "old-assistant-1", session_id: "remote-source", message: {}, parent_tool_use_id: null },
-    { type: "user" as const, uuid: "remote-user-2", session_id: "remote-source", message: {}, parent_tool_use_id: null },
-    { type: "assistant" as const, uuid: "old-assistant-2", session_id: "remote-source", message: {}, parent_tool_use_id: null },
-    { type: "assistant" as const, uuid: "old-assistant-3", session_id: "remote-source", message: {}, parent_tool_use_id: null },
+    { type: "user" as const, uuid: "remote-user-1", session_id: "remote-source", message: {}, parent_tool_use_id: null, parent_agent_id: null },
+    { type: "assistant" as const, uuid: "old-assistant-1", session_id: "remote-source", message: {}, parent_tool_use_id: null, parent_agent_id: null },
+    { type: "user" as const, uuid: "remote-user-2", session_id: "remote-source", message: {}, parent_tool_use_id: null, parent_agent_id: null },
+    { type: "assistant" as const, uuid: "old-assistant-2", session_id: "remote-source", message: {}, parent_tool_use_id: null, parent_agent_id: null },
+    { type: "assistant" as const, uuid: "old-assistant-3", session_id: "remote-source", message: {}, parent_tool_use_id: null, parent_agent_id: null },
   ];
   const targetTranscript = [
-    { type: "user" as const, uuid: "new-user-1", session_id: "remote-fork", message: {}, parent_tool_use_id: null },
-    { type: "assistant" as const, uuid: "new-assistant-1", session_id: "remote-fork", message: {}, parent_tool_use_id: null },
-    { type: "user" as const, uuid: "new-user-2", session_id: "remote-fork", message: {}, parent_tool_use_id: null },
-    { type: "assistant" as const, uuid: "new-assistant-2", session_id: "remote-fork", message: {}, parent_tool_use_id: null },
+    { type: "user" as const, uuid: "new-user-1", session_id: "remote-fork", message: {}, parent_tool_use_id: null, parent_agent_id: null },
+    { type: "assistant" as const, uuid: "new-assistant-1", session_id: "remote-fork", message: {}, parent_tool_use_id: null, parent_agent_id: null },
+    { type: "user" as const, uuid: "new-user-2", session_id: "remote-fork", message: {}, parent_tool_use_id: null, parent_agent_id: null },
+    { type: "assistant" as const, uuid: "new-assistant-2", session_id: "remote-fork", message: {}, parent_tool_use_id: null, parent_agent_id: null },
   ];
   const forkCalls: unknown[][] = [];
   const sdk: SessionForkSdk = {

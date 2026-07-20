@@ -1,5 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, shell, type MessageBoxOptions } from "electron";
 import { join } from "path";
+import type { SDKMessageOrigin } from "@anthropic-ai/claude-agent-sdk";
 
 import {
   createStoredUserPromptMessage,
@@ -7,6 +8,10 @@ import {
   sanitizePromptAttachmentsForStorage,
 } from "../shared/attachments.js";
 import { buildPromptLedgerMessage, type PromptLedgerMessage, type PromptLedgerSource } from "../shared/prompt-ledger.js";
+import { deriveLatestPlanSnapshot } from "../shared/plan-progress.js";
+import { normalizeBackgroundRunnerStatus } from "../shared/runner-background-lifecycle.js";
+import { shouldBypassProviderResumeAfterEmptySuccess } from "../shared/runner-status.js";
+import { normalizeReleasePermissionMode } from "../shared/runtime-permissions.js";
 import { createInitialSessionWorkflowState, parseWorkflowMarkdown } from "../shared/workflow-markdown.js";
 import {
   buildNextBuiltinMcpServerEnabledConfig,
@@ -14,7 +19,11 @@ import {
   listBuiltinMcpServerInfos,
   resolveEnabledBuiltinMcpServerNames,
 } from "../shared/builtin-mcp-registry.js";
-import { runClaude, type RunnerHandle } from "./libs/runner/runner.js";
+import {
+  runClaude,
+  type RunnerHandle,
+  type ToolPermissionPolicy,
+} from "./libs/runner/runner.js";
 import { buildRunnerReuseKey } from "./libs/runner/runner-reuse.js";
 import { persistImageAttachmentReference, rehydrateStoredImageAttachment } from "./libs/attachment-store.js";
 import { listAvailableClaudeAgents, resolveAgentRuntimeContext } from "./libs/agent-resolver.js";
@@ -71,6 +80,11 @@ import {
 import { buildChannelAgentPrompt } from "./libs/channel/channel-agent-prompt.js";
 import { notifySessionFinished, notifyTaskExecutionFinished } from "./libs/desktop-notifications.js";
 import type { WorkflowRunRecord } from "../shared/workflows/workflow-runs.js";
+import {
+  getClaudeConversationResetId,
+  getClaudeRetractionIds,
+  isClaudeConversationReset,
+} from "../shared/claude-agent-sdk-messages.js";
 
 let sessions: SessionStore;
 const runnerHandles = new Map<string, RunnerHandle>();
@@ -537,6 +551,7 @@ function buildPromptLedgerForRun(options: {
 }
 
 function rememberRunnerHandle(sessionId: string, handle: RunnerHandle, reuseKey: string): void {
+  if (handle.isClosed()) return;
   handle.reuseKey = reuseKey;
   runnerHandles.set(sessionId, handle);
 }
@@ -555,6 +570,7 @@ function buildSessionRunnerReuseKey(options: {
   runtime?: RuntimeOverrides;
   prompt: string;
   attachments?: PromptAttachment[];
+  toolPermissionPolicy?: ToolPermissionPolicy;
 }): string {
   return buildRunnerReuseKey({
     cwd: options.session.cwd,
@@ -565,6 +581,7 @@ function buildSessionRunnerReuseKey(options: {
     runtime: options.runtime,
     prompt: options.prompt,
     attachments: options.attachments,
+    toolPermissionPolicy: options.toolPermissionPolicy,
   });
 }
 
@@ -588,6 +605,18 @@ function emit(event: ServerEvent) {
   }
 
   if (nextEvent.type === "session.status") {
+    if (nextEvent.payload.backgroundActive) {
+      const normalizedStatus = normalizeBackgroundRunnerStatus(
+        nextEvent.payload.status,
+        nextEvent.payload.backgroundActive,
+      );
+      if (normalizedStatus !== nextEvent.payload.status) {
+        nextEvent = {
+          ...nextEvent,
+          payload: { ...nextEvent.payload, status: normalizedStatus },
+        };
+      }
+    }
     const previousSession = sessions.getSession(nextEvent.payload.sessionId);
     const previousStatus = previousSession?.status;
     const sessionCwd = typeof nextEvent.payload.cwd === "string" && nextEvent.payload.cwd.trim()
@@ -612,6 +641,26 @@ function emit(event: ServerEvent) {
         : { ...nextEvent.payload.message, capturedAt: Date.now() };
     if (isThinkingTokenStreamMessage(normalizedMessage)) {
       return;
+    }
+    if (isClaudeConversationReset(normalizedMessage)) {
+      sessions.resetConversation(nextEvent.payload.sessionId, {
+        claudeSessionId: getClaudeConversationResetId(normalizedMessage),
+      });
+      workflowToolUseNamesBySession.delete(nextEvent.payload.sessionId);
+      workflowTaskIdsBySession.delete(nextEvent.payload.sessionId);
+      channelLatestAssistantText.delete(nextEvent.payload.sessionId);
+      figmaAuthUrlsBySession.delete(nextEvent.payload.sessionId);
+    }
+    const retractedMessageIds = getClaudeRetractionIds(normalizedMessage);
+    if (retractedMessageIds.length > 0) {
+      sessions.retractMessages(nextEvent.payload.sessionId, retractedMessageIds);
+      const currentPlan = sessions.getSession(nextEvent.payload.sessionId)?.planSnapshot;
+      if (currentPlan?.turnId && retractedMessageIds.includes(currentPlan.turnId)) {
+        const remainingMessages = sessions.getSessionHistory(nextEvent.payload.sessionId)?.messages ?? [];
+        sessions.updateSession(nextEvent.payload.sessionId, {
+          planSnapshot: deriveLatestPlanSnapshot(nextEvent.payload.sessionId, remainingMessages),
+        });
+      }
     }
     trackFigmaAuthToolState(nextEvent.payload.sessionId, normalizedMessage);
     const message = sessions.recordMessage(
@@ -1200,7 +1249,7 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
           attachments: event.payload.attachments,
           runtime: event.payload.runtime,
         },
-      });
+      }, { promptOrigin: { kind: "channel", server: event.payload.provider } });
     } catch (error) {
       pendingChannelReplyTargetsByWorkspace.delete(workspace.root);
       if (claim) store.releaseChannelMessage(claim.messageId, claim.provider);
@@ -1225,7 +1274,7 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
           agentPrompt: buildChannelAgentPrompt(event.payload.provider, text),
           attachments: event.payload.attachments,
         },
-      });
+      }, { promptOrigin: { kind: "channel", server: event.payload.provider } });
     } catch (error) {
       releaseChannelMessageClaim(existingSession.id, claim);
       throw error;
@@ -1243,7 +1292,7 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
         attachments: event.payload.attachments,
         runtime: event.payload.runtime,
       },
-    });
+    }, { promptOrigin: { kind: "channel", server: event.payload.provider } });
   } catch (error) {
     releaseChannelMessageClaim(existingSession.id, claim);
     throw error;
@@ -1332,7 +1381,12 @@ async function continueWorkflowRunFromPrompt(options: {
   });
 }
 
-export async function handleClientEvent(event: ClientEvent) {
+type ClientEventContext = {
+  promptOrigin?: SDKMessageOrigin;
+  toolPermissionPolicy?: ToolPermissionPolicy;
+};
+
+export async function handleClientEvent(event: ClientEvent, context: ClientEventContext = {}) {
   const store = initializeSessions();
 
   if (event.type === "channel.message.receive") {
@@ -1490,6 +1544,21 @@ export async function handleClientEvent(event: ClientEvent) {
         }),
       },
     });
+    if (!event.payload.before) {
+      const activeSession = store.getSession(history.session.id);
+      for (const pending of activeSession?.pendingPermissions.values() ?? []) {
+        emit({
+          type: "permission.request",
+          payload: {
+            sessionId: history.session.id,
+            toolUseId: pending.toolUseId,
+            toolName: pending.toolName,
+            input: pending.input,
+            ...pending.metadata,
+          },
+        });
+      }
+    }
     return;
   }
 
@@ -1723,7 +1792,7 @@ export async function handleClientEvent(event: ClientEvent) {
     const selectedConfigProfileId = resolvedRoute?.config.id ?? requestedConfigProfileId;
     const selectedExecutionMode = event.payload.runtime?.executionMode ?? "foreground";
     const selectedReasoningMode = event.payload.runtime?.reasoningMode;
-    const selectedPermissionMode = event.payload.runtime?.permissionMode;
+    const selectedPermissionMode = normalizeReleasePermissionMode(event.payload.runtime?.permissionMode);
     const session = store.createSession({
       cwd: event.payload.cwd,
       title: event.payload.title,
@@ -1796,7 +1865,7 @@ export async function handleClientEvent(event: ClientEvent) {
 
     const nextExecutionMode = event.payload.runtime?.executionMode ?? session.executionMode ?? "foreground";
     const nextReasoningMode = event.payload.runtime?.reasoningMode ?? session.reasoningMode;
-    const nextPermissionMode = event.payload.runtime?.permissionMode ?? session.permissionMode;
+    const nextPermissionMode = normalizeReleasePermissionMode(event.payload.runtime?.permissionMode ?? session.permissionMode);
     const runnerRuntime = {
       ...(event.payload.runtime ?? {}),
       executionMode: nextExecutionMode,
@@ -1811,10 +1880,13 @@ export async function handleClientEvent(event: ClientEvent) {
       runtime: runnerRuntime,
       prompt: agentPrompt,
       attachments: agentAttachments,
+      toolPermissionPolicy: context.toolPermissionPolicy,
     });
 
     runClaude({
       prompt: agentPrompt,
+      promptOrigin: context.promptOrigin ?? { kind: "human" },
+      toolPermissionPolicy: context.toolPermissionPolicy,
       displayPrompt,
       workspaceContext: event.payload.workspaceContext,
       attachments: agentAttachments,
@@ -1902,7 +1974,13 @@ export async function handleClientEvent(event: ClientEvent) {
     const historyMessagesForRun = replacingHistoryId
       ? (history?.messages ?? []).filter((message) => message.historyId !== replacingHistoryId)
       : history?.messages ?? [];
-    const shouldRetitleFromFirstPrompt = isPlaceholderSessionTitle(session.title) && (history?.totalMessages ?? 0) === 0;
+    const hasConversationContent = (history?.messages ?? []).some((message) => (
+      message.type === "user_prompt"
+      || message.type === "user"
+      || message.type === "assistant"
+      || message.type === "result"
+    ));
+    const shouldRetitleFromFirstPrompt = isPlaceholderSessionTitle(session.title) && !hasConversationContent;
     const nextTitle = shouldRetitleFromFirstPrompt
       ? buildTitleFromFirstPrompt(storagePrompt, event.payload.attachments)
       : session.title;
@@ -1920,7 +1998,7 @@ export async function handleClientEvent(event: ClientEvent) {
     const modelConfig = config && selectedModel ? getModelConfig(config, selectedModel) : null;
     const nextExecutionMode = event.payload.runtime?.executionMode ?? session.executionMode ?? "foreground";
     const nextReasoningMode = event.payload.runtime?.reasoningMode ?? session.reasoningMode;
-    const nextPermissionMode = event.payload.runtime?.permissionMode ?? session.permissionMode;
+    const nextPermissionMode = normalizeReleasePermissionMode(event.payload.runtime?.permissionMode ?? session.permissionMode);
     const runnerRuntime = {
       ...(event.payload.runtime ?? {}),
       executionMode: nextExecutionMode,
@@ -1940,10 +2018,12 @@ export async function handleClientEvent(event: ClientEvent) {
       && previousModel
       && selectedModel.trim() !== previousModel.trim(),
     );
+    const providerResumeBlockedByEmptySuccess = shouldBypassProviderResumeAfterEmptySuccess(historyMessagesForRun);
     const canUseRemoteResume = Boolean(session.claudeSessionId)
       && (supportsResume || canUseFigmaOAuthCallbackResume)
       && !switchedModel
-      && !replacingHistoryId;
+      && !replacingHistoryId
+      && !providerResumeBlockedByEmptySuccess;
     const thinResumePrompt = isFigmaOAuthCallback ? storagePrompt : agentPrompt;
     const continuationPayload = canUseRemoteResume
       ? null
@@ -2035,6 +2115,8 @@ export async function handleClientEvent(event: ClientEvent) {
 
     runClaude({
       prompt,
+      promptOrigin: context.promptOrigin ?? { kind: "human" },
+      toolPermissionPolicy: context.toolPermissionPolicy,
       displayPrompt: storagePrompt,
       workspaceContext: event.payload.workspaceContext,
       attachments: attachmentsForRun,
@@ -2053,6 +2135,7 @@ export async function handleClientEvent(event: ClientEvent) {
           runtime: runnerRuntime,
           prompt,
           attachments: attachmentsForRun,
+          toolPermissionPolicy: context.toolPermissionPolicy,
         });
         rememberRunnerHandle(session.id, handle, coldReuseKey);
       })
@@ -2213,6 +2296,8 @@ export async function handleClientEvent(event: ClientEvent) {
 
     runClaude({
       prompt,
+      promptOrigin: context.promptOrigin ?? { kind: "human" },
+      toolPermissionPolicy: context.toolPermissionPolicy,
       displayPrompt: storagePrompt,
       workspaceContext: event.payload.workspaceContext,
       attachments: attachmentsForRun,
@@ -2231,6 +2316,7 @@ export async function handleClientEvent(event: ClientEvent) {
           runtime: runnerRuntime,
           prompt,
           attachments: attachmentsForRun,
+          toolPermissionPolicy: context.toolPermissionPolicy,
         });
         rememberRunnerHandle(session.id, handle, coldReuseKey);
       })
@@ -2377,6 +2463,7 @@ export async function handleClientEvent(event: ClientEvent) {
       const appendPromptPromise = handle.appendPrompt(
         agentPrompt,
         preparedAttachmentsPromise.then(({ agentAttachments }) => agentAttachments),
+        { origin: context.promptOrigin ?? { kind: "human" } },
       );
       const [{ displayAttachments }] = await Promise.all([preparedAttachmentsPromise, appendPromptPromise]);
       store.updateSession(session.id, { lastPrompt: displayPrompt });

@@ -18,7 +18,7 @@ test("active session model takes precedence over composer runtime model", () => 
   );
   assert.match(
     promptInputSource,
-    /const explicitRuntimeModel = activeSessionModel \|\| runtimeModel\.trim\(\);\s+const selectedRuntimeModel = resolveAvailableModelName\(\s+explicitRuntimeModel \|\| fallbackRoutedModelOptions\[0\]\?\.value \|\| activeProfile\?\.model\?\.trim\(\),\s+availableModels,\s+\);/,
+    /const explicitRuntimeModel = activeSessionModel \|\| runtimeModel\.trim\(\);\s+const explicitConfigProfileId = activeSessionConfigProfileId \|\| storeRuntimeConfigProfileId\.trim\(\);[\s\S]*const selectedRuntimeModel = resolveAvailableModelName\(\s+routedRuntimeModel \|\| explicitRuntimeModel \|\| fallbackRoutedModelOptions\[0\]\?\.value \|\| activeProfile\?\.model\?\.trim\(\),\s+availableModels,\s+\);/,
   );
   assert.match(promptInputSource, /value: option\.deploymentKey/);
   assert.match(promptInputSource, /onModelChange=\{handleRuntimeModelChange\}/);

@@ -40,6 +40,51 @@ test("better-sqlite3 is explicitly included and unpacked for packaged startup", 
   assert.ok(builderConfig.asarUnpack?.includes("node_modules/better-sqlite3/**/*"));
 });
 
+test("Claude Agent SDK version and native runtimes stay aligned across package managers", () => {
+  const packageJson = readJson("package.json");
+  const packageLock = readJson("package-lock.json");
+  const builderConfig = readJson("electron-builder.json") as BuilderConfigLike;
+  const bunLock = readFileSync("bun.lock", "utf8");
+  const sdkRange = packageJson.dependencies?.["@anthropic-ai/claude-agent-sdk"];
+  const sdkVersion = packageLock.packages?.["node_modules/@anthropic-ai/claude-agent-sdk"]?.version;
+
+  assert.equal(sdkRange, "^0.3.214");
+  assert.equal(sdkVersion, "0.3.214");
+  assert.equal(packageLock.packages?.[""]?.dependencies?.["@anthropic-ai/claude-agent-sdk"], sdkRange);
+  assert.match(bunLock, /"@anthropic-ai\/claude-agent-sdk": "\^0\.3\.214"/);
+  assert.match(bunLock, /@anthropic-ai\/claude-agent-sdk@0\.3\.214/);
+  for (const platform of [
+    "darwin-arm64",
+    "darwin-x64",
+    "linux-arm64",
+    "linux-arm64-musl",
+    "linux-x64",
+    "linux-x64-musl",
+    "win32-arm64",
+    "win32-x64",
+  ]) {
+    assert.equal(
+      packageLock.packages?.[`node_modules/@anthropic-ai/claude-agent-sdk-${platform}`]?.version,
+      sdkVersion,
+    );
+    assert.match(bunLock, new RegExp(`@anthropic-ai/claude-agent-sdk-${platform}@0\\.3\\.214`));
+  }
+  assert.ok(builderConfig.files?.includes("node_modules/@anthropic-ai/claude-agent-sdk/**/*"));
+  assert.ok(builderConfig.files?.includes("node_modules/@anthropic-ai/claude-agent-sdk-*/*"));
+  assert.ok(builderConfig.asarUnpack?.includes("node_modules/@anthropic-ai/claude-agent-sdk/**/*"));
+  assert.ok(builderConfig.asarUnpack?.includes("node_modules/@anthropic-ai/claude-agent-sdk-*/*"));
+});
+
+test("Claude Agent SDK uses its matching CLI unless the user explicitly overrides it", () => {
+  const claudeSettings = readFileSync("src/electron/libs/claude/claude-settings.ts", "utf8");
+  const runner = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
+
+  assert.match(claudeSettings, /const explicitPath = process\.env\.CLAUDE_CODE_PATH/);
+  assert.match(claudeSettings, /return bundledPath\s*\?\?/);
+  assert.match(runner, /message\.type === "conversation_reset"/);
+  assert.match(runner, /sdkToolUseId\?\.trim\(\) \|\| crypto\.randomUUID\(\)/);
+});
+
 test("official Codex login runtime is pinned and unpacked with the desktop app", () => {
   const packageJson = readJson("package.json");
   const packageLock = readJson("package-lock.json");

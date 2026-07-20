@@ -1,9 +1,10 @@
 import Database from "better-sqlite3";
-import type { AgentRunSurface, PromptAttachment, RuntimeOverrides, RuntimeReasoningMode, SessionHistoryCursor, SessionStatus, StreamMessage } from "../types.js";
+import type { AgentRunSurface, PermissionRequestMetadata, PromptAttachment, RuntimeOverrides, RuntimeReasoningMode, SessionHistoryCursor, SessionStatus, StreamMessage } from "../types.js";
 import { existsSync, realpathSync } from "fs";
 import electron from "electron";
 import { isSuccessfulRunnerResult } from "../../shared/runner-status.js";
 import { sanitizePromptAttachmentsForStorage } from "../../shared/attachments.js";
+import { normalizeReleasePermissionMode } from "../../shared/runtime-permissions.js";
 import {
   hasIncompletePlan,
   normalizeUpdatePlanArgs,
@@ -55,10 +56,16 @@ function serializeRuntimeProfileState(value: RuntimeEfficiencyProfileState | und
   return normalized ? JSON.stringify(normalized) : null;
 }
 
+function normalizeStoredPermissionMode(value: unknown): RuntimeOverrides["permissionMode"] | undefined {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  return normalizeReleasePermissionMode(normalized);
+}
+
 export type PendingPermission = {
   toolUseId: string;
   toolName: string;
   input: unknown;
+  metadata?: PermissionRequestMetadata;
   resolve: (result: { behavior: "allow" | "deny"; updatedInput?: unknown; message?: string }) => void;
 };
 
@@ -87,6 +94,8 @@ export type Session = {
   runtimeProfileState?: RuntimeEfficiencyProfileState;
   planSnapshot?: SessionPlanSnapshot;
   archivedAt?: number;
+  createdAt?: number;
+  updatedAt?: number;
   pendingPermissions: Map<string, PendingPermission>;
   abortController?: AbortController;
 };
@@ -183,6 +192,11 @@ function isTransientStreamEventMessage(message: StreamMessage): boolean {
     (
       message.type === "stream_event" ||
       (
+        message.type === "tool_progress" &&
+        message.heartbeat === true &&
+        !message.subagent_retry
+      ) ||
+      (
         message.type === "system" &&
         "subtype" in message &&
         (message.subtype === "status" || message.subtype === "thinking_tokens")
@@ -258,14 +272,15 @@ function parseStoredMessage(row: { id: string; data: string; created_at: number 
   } satisfies StreamMessage;
 }
 
-function createHistoryCursor(message: StreamMessage | undefined): SessionHistoryCursor | undefined {
-  if (!message || typeof message.capturedAt !== "number" || !message.historyId) {
+function createHistoryCursor(row: Record<string, unknown> | undefined): SessionHistoryCursor | undefined {
+  if (!row || typeof row.created_at !== "number" || typeof row.id !== "string") {
     return undefined;
   }
 
   return {
-    beforeCreatedAt: message.capturedAt,
-    beforeId: message.historyId,
+    beforeCreatedAt: Number(row.created_at),
+    beforeId: row.id,
+    beforeSequence: Number(row.sequence),
   };
 }
 
@@ -354,12 +369,14 @@ export class SessionStore {
       configProfileId: options.configProfileId?.trim() || undefined,
       executionMode: options.executionMode ?? "foreground",
       reasoningMode: options.reasoningMode,
-      permissionMode: options.permissionMode,
+      permissionMode: normalizeReleasePermissionMode(options.permissionMode),
       cwd: options.cwd,
       runSurface: options.runSurface,
       agentId: options.agentId,
       allowedTools: options.allowedTools,
       lastPrompt: options.prompt,
+      createdAt: now,
+      updatedAt: now,
       pendingPermissions: new Map()
     };
     this.sessions.set(id, session);
@@ -429,6 +446,7 @@ export class SessionStore {
     const session = this.sessions.get(id);
     if (session) {
       session.archivedAt = now;
+      session.updatedAt = now;
     }
     const result = this.db
       .prepare("update sessions set archived_at = ?, updated_at = ? where id = ?")
@@ -443,6 +461,7 @@ export class SessionStore {
     const session = this.sessions.get(id);
     if (session) {
       session.archivedAt = undefined;
+      session.updatedAt = now;
     }
     const result = this.db
       .prepare("update sessions set archived_at = null, updated_at = ? where id = ?")
@@ -475,11 +494,11 @@ export class SessionStore {
 
     const messages = (this.db
       .prepare(
-        `select id, data, created_at
+        `select rowid as sequence, id, data, created_at
          from messages
          where session_id = ?
            and coalesce(json_extract(data, '$.type'), '') != 'stream_event'
-         order by created_at asc, id asc`
+         order by created_at asc, rowid asc`
       )
       .all(id) as Array<Record<string, unknown>>)
       .map((row) =>
@@ -513,25 +532,37 @@ export class SessionStore {
     const totalMessages = Number((this.db
       .prepare("select count(*) as count from messages where session_id = ?")
       .get(id) as { count?: number } | undefined)?.count ?? 0);
-    const rows = before
+    const rows = before?.beforeSequence !== undefined
       ? (this.db
           .prepare(
-            `select id, data, created_at
+            `select rowid as sequence, id, data, created_at
+             from messages
+             where session_id = ?
+               and coalesce(json_extract(data, '$.type'), '') != 'stream_event'
+               and (created_at < ? or (created_at = ? and rowid < ?))
+             order by created_at desc, rowid desc
+             limit ?`
+          )
+          .all(id, before.beforeCreatedAt, before.beforeCreatedAt, before.beforeSequence, limit + 1) as Array<Record<string, unknown>>)
+      : before
+      ? (this.db
+          .prepare(
+            `select rowid as sequence, id, data, created_at
              from messages
              where session_id = ?
                and coalesce(json_extract(data, '$.type'), '') != 'stream_event'
                and (created_at < ? or (created_at = ? and id < ?))
-             order by created_at desc, id desc
+             order by created_at desc, rowid desc
              limit ?`
           )
           .all(id, before.beforeCreatedAt, before.beforeCreatedAt, before.beforeId, limit + 1) as Array<Record<string, unknown>>)
       : (this.db
           .prepare(
-            `select id, data, created_at
+            `select rowid as sequence, id, data, created_at
              from messages
              where session_id = ?
                and coalesce(json_extract(data, '$.type'), '') != 'stream_event'
-             order by created_at desc, id desc
+             order by created_at desc, rowid desc
              limit ?`
           )
           .all(id, limit + 1) as Array<Record<string, unknown>>);
@@ -550,7 +581,7 @@ export class SessionStore {
       session: this.mapSessionRow(sessionRow),
       messages,
       hasMore,
-      nextCursor: hasMore ? createHistoryCursor(messages[0]) : undefined,
+      nextCursor: hasMore ? createHistoryCursor(pageRows[0]) : undefined,
       totalMessages,
     };
   }
@@ -559,12 +590,14 @@ export class SessionStore {
     const session = this.sessions.get(id);
     if (!session) return undefined;
     Object.assign(session, updates);
-    this.persistSession(id, updates);
+    const updatedAt = this.persistSession(id, updates);
+    if (updatedAt !== undefined) session.updatedAt = updatedAt;
     return session;
   }
 
   recoverInterruptedSessions(): string[] {
     const recoveredIds: string[] = [];
+    const recoveredAt = Date.now();
 
     for (const session of this.sessions.values()) {
       if (session.status !== "running") {
@@ -574,6 +607,7 @@ export class SessionStore {
       session.status = "idle";
       session.abortController = undefined;
       session.pendingPermissions.clear();
+      session.updatedAt = recoveredAt;
       recoveredIds.push(session.id);
     }
 
@@ -583,8 +617,8 @@ export class SessionStore {
 
     const placeholders = recoveredIds.map(() => "?").join(", ");
     this.db
-      .prepare(`update sessions set status = ? where id in (${placeholders})`)
-      .run("idle", ...recoveredIds);
+      .prepare(`update sessions set status = ?, updated_at = ? where id in (${placeholders})`)
+      .run("idle", recoveredAt, ...recoveredIds);
 
     return recoveredIds;
   }
@@ -633,6 +667,85 @@ export class SessionStore {
       this.scheduleMessageFlush();
     }
     return storedMessage;
+  }
+
+  retractMessages(sessionId: string, messageIds: readonly string[]): number {
+    const ids = Array.from(new Set(messageIds.filter(Boolean)));
+    if (ids.length === 0) return 0;
+
+    const idSet = new Set(ids);
+    const pending = this.pendingMessageWrites.get(sessionId) ?? [];
+    const remaining = pending.filter((entry) => !idSet.has(entry.id));
+    if (remaining.length > 0) {
+      this.pendingMessageWrites.set(sessionId, remaining);
+    } else {
+      this.pendingMessageWrites.delete(sessionId);
+    }
+
+    const placeholders = ids.map(() => "?").join(", ");
+    const result = this.db
+      .prepare(`delete from messages where session_id = ? and id in (${placeholders})`)
+      .run(sessionId, ...ids);
+    return Number(result.changes) + (pending.length - remaining.length);
+  }
+
+  clearMessages(sessionId: string): number {
+    const pendingCount = this.pendingMessageWrites.get(sessionId)?.length ?? 0;
+    this.pendingMessageWrites.delete(sessionId);
+    const result = this.db.prepare("delete from messages where session_id = ?").run(sessionId);
+    return Number(result.changes) + pendingCount;
+  }
+
+  resetConversation(
+    sessionId: string,
+    options: { claudeSessionId?: string; title?: string } = {},
+  ): Session | undefined {
+    const session = this.sessions.get(sessionId);
+    if (!session) return undefined;
+
+    const pendingMessages = this.pendingMessageWrites.get(sessionId)?.length ?? 0;
+    const nextTitle = options.title?.trim() || "New Session";
+    const resetAt = Date.now();
+    const resetDatabase = this.db.transaction(() => {
+      const deleted = this.db.prepare("delete from messages where session_id = ?").run(sessionId);
+      this.db.prepare("delete from workflow_runs where session_id = ?").run(sessionId);
+      this.db.prepare(
+        `update sessions
+         set title = ?, claude_session_id = ?, last_prompt = null,
+             continuation_summary = null, continuation_summary_message_count = null,
+             plan_state = null, workflow_state = null, workflow_error = null,
+             updated_at = ?
+         where id = ?`,
+      ).run(nextTitle, options.claudeSessionId ?? null, resetAt, sessionId);
+      return Number(deleted.changes);
+    });
+
+    const deletedMessages = resetDatabase();
+    this.pendingMessageWrites.delete(sessionId);
+    const pendingPermissions = Array.from(session.pendingPermissions.values());
+    Object.assign(session, {
+      title: nextTitle,
+      claudeSessionId: options.claudeSessionId,
+      lastPrompt: undefined,
+      continuationSummary: undefined,
+      continuationSummaryMessageCount: undefined,
+      planSnapshot: undefined,
+      workflowState: undefined,
+      workflowError: undefined,
+      updatedAt: resetAt,
+    } satisfies Partial<Session>);
+    session.pendingPermissions.clear();
+    for (const permission of pendingPermissions) {
+      permission.resolve({ behavior: "deny", message: "Conversation was reset before the permission request was answered." });
+    }
+
+    if (deletedMessages + pendingMessages > 0) {
+      console.info("[session-store] Reset conversation transcript", {
+        sessionId,
+        removedMessages: deletedMessages + pendingMessages,
+      });
+    }
+    return session;
   }
 
   replaceUserPromptAndPrune(
@@ -727,7 +840,7 @@ export class SessionStore {
     };
   }
 
-  private persistSession(id: string, updates: Partial<Session>): void {
+  private persistSession(id: string, updates: Partial<Session>): number | undefined {
     const fields: string[] = [];
     const values: Array<string | number | null> = [];
     const updatable = {
@@ -776,13 +889,15 @@ export class SessionStore {
       values.push(value === undefined ? null : (value as string | number));
     }
 
-    if (fields.length === 0) return;
+    if (fields.length === 0) return undefined;
+    const updatedAt = Date.now();
     fields.push("updated_at = ?");
-    values.push(Date.now());
+    values.push(updatedAt);
     values.push(id);
     this.db
       .prepare(`update sessions set ${fields.join(", ")} where id = ?`)
       .run(...values);
+    return updatedAt;
   }
 
   private initialize(): void {
@@ -861,7 +976,7 @@ export class SessionStore {
   private loadSessions(): void {
     const rows = this.db
       .prepare(
-        `select id, title, claude_session_id, status, model, config_profile_id, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, plan_state, archived_at
+        `select id, title, claude_session_id, status, model, config_profile_id, execution_mode, reasoning_mode, permission_mode, cwd, run_surface, agent_id, allowed_tools, last_prompt, continuation_summary, continuation_summary_message_count, workflow_markdown, workflow_source_layer, workflow_source_path, workflow_state, workflow_error, runtime_profile_state, plan_state, archived_at, created_at, updated_at
          from sessions`
       )
       .all();
@@ -875,7 +990,7 @@ export class SessionStore {
         configProfileId: row.config_profile_id ? String(row.config_profile_id) : undefined,
         executionMode: row.execution_mode === "background" ? "background" : row.execution_mode === "foreground" ? "foreground" : undefined,
         reasoningMode: row.reasoning_mode ? (String(row.reasoning_mode) as RuntimeReasoningMode) : undefined,
-        permissionMode: row.permission_mode ? (String(row.permission_mode) as RuntimeOverrides["permissionMode"]) : undefined,
+        permissionMode: normalizeStoredPermissionMode(row.permission_mode),
         cwd: row.cwd ? String(row.cwd) : undefined,
         runSurface: row.run_surface ? (String(row.run_surface) as AgentRunSurface) : undefined,
         agentId: row.agent_id ? String(row.agent_id) : undefined,
@@ -893,6 +1008,8 @@ export class SessionStore {
         runtimeProfileState: parseRuntimeProfileState(row.runtime_profile_state),
         planSnapshot: parseSessionPlanSnapshot(row.plan_state),
         archivedAt: typeof row.archived_at === "number" ? Number(row.archived_at) : undefined,
+        createdAt: typeof row.created_at === "number" ? Number(row.created_at) : undefined,
+        updatedAt: typeof row.updated_at === "number" ? Number(row.updated_at) : undefined,
         pendingPermissions: new Map()
       };
       this.sessions.set(session.id, session);
@@ -1080,7 +1197,7 @@ export class SessionStore {
         configProfileId: sessionRow.config_profile_id ? String(sessionRow.config_profile_id) : undefined,
         executionMode: sessionRow.execution_mode === "background" ? "background" : sessionRow.execution_mode === "foreground" ? "foreground" : undefined,
         reasoningMode: sessionRow.reasoning_mode ? (String(sessionRow.reasoning_mode) as RuntimeReasoningMode) : undefined,
-        permissionMode: sessionRow.permission_mode ? (String(sessionRow.permission_mode) as RuntimeOverrides["permissionMode"]) : undefined,
+        permissionMode: normalizeStoredPermissionMode(sessionRow.permission_mode),
         cwd: sessionRow.cwd ? String(sessionRow.cwd) : undefined,
       runSurface: sessionRow.run_surface ? (String(sessionRow.run_surface) as AgentRunSurface) : undefined,
       agentId: sessionRow.agent_id ? String(sessionRow.agent_id) : undefined,

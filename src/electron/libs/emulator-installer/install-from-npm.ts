@@ -7,10 +7,7 @@
 // path quoting and .cmd shimming sane.
 // -----------------------------------------------------------------------------
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
+import { runExternalCli } from "../external-cli.js";
 
 function npmCommand(): string {
   return process.platform === "win32" ? "npm.cmd" : "npm";
@@ -38,7 +35,7 @@ export type NpmInstallOptions = {
 export async function fetchLatestNpmVersion(packageName: string): Promise<string | null> {
   try {
     const { stdout } = await withTimeout(
-      execFileAsync(npmCommand(), ["view", packageName, "version"], {
+      runExternalCli(npmCommand(), ["view", packageName, "version"], {
         timeout: 30_000,
         maxBuffer: 1024 * 256,
       }),
@@ -57,7 +54,7 @@ export async function isPackageInstalledGlobally(
 ): Promise<{ installed: boolean; version?: string }> {
   try {
     const { stdout } = await withTimeout(
-      execFileAsync(npmCommand(), ["list", "-g", packageName, "--depth=0", "--json"], {
+      runExternalCli(npmCommand(), ["list", "-g", packageName, "--depth=0", "--json"], {
         timeout: 30_000,
         maxBuffer: 1024 * 256,
       }),
@@ -80,7 +77,7 @@ export async function installNpmPackageGlobal(
 ): Promise<{ success: boolean; version?: string; error?: string }> {
   try {
     await withTimeout(
-      execFileAsync(npmCommand(), ["install", "-g", options.packageName], {
+      runExternalCli(npmCommand(), ["install", "-g", options.packageName], {
         timeout: 300_000,
         maxBuffer: 1024 * 1024,
       }),

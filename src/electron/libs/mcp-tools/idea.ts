@@ -30,6 +30,17 @@ export const IDEA_TOOL_NAMES = [
   "idea_wait_ready",
 ] as const;
 
+const WINDOWS_ONLY_IDEA_TOOL_NAMES = new Set<string>([
+  "idea_restart",
+  "idea_read_logs",
+]);
+
+export function listIdeaToolNames(platform: NodeJS.Platform = process.platform): string[] {
+  return IDEA_TOOL_NAMES.filter((name) => (
+    platform === "win32" || !WINDOWS_ONLY_IDEA_TOOL_NAMES.has(name)
+  ));
+}
+
 const IDEA_TOOLS_SERVER_NAME = "tech-cc-hub-idea";
 const IDEA_MCP_SERVER_VERSION = "1.0.0";
 
@@ -99,7 +110,9 @@ const IDEA_WAIT_READY_SCHEMA = {
   intervalMs: z.number().int().positive().max(5000).optional().describe("轮询间隔，单位毫秒，默认 1000。"),
 };
 
-export function getIdeaMcpServer(): McpSdkServerConfigWithInstance {
+export function getIdeaMcpServer(
+  platform: NodeJS.Platform = process.platform,
+): McpSdkServerConfigWithInstance {
   const statusHandler = tool(
     "idea_status",
     "发现本机已安装的 IntelliJ IDEA 启动器和正在运行的 IDEA 进程。Java/Spring 本地运行验证前先用它确认是否可复用用户已有 IDE，避免重复启动 java -jar 或 bootRun。",
@@ -245,7 +258,14 @@ export function getIdeaMcpServer(): McpSdkServerConfigWithInstance {
   return createSdkMcpServer({
     name: IDEA_TOOLS_SERVER_NAME,
     version: IDEA_MCP_SERVER_VERSION,
-    tools: [statusHandler, openHandler, runHandler, restartHandler, readLogsHandler, focusHandler, waitReadyHandler],
+    tools: [
+      statusHandler,
+      openHandler,
+      runHandler,
+      ...(platform === "win32" ? [restartHandler, readLogsHandler] : []),
+      focusHandler,
+      waitReadyHandler,
+    ],
   });
 
 }

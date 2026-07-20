@@ -318,6 +318,7 @@ export function mergeSlashCommandItemsByPriority(groups) {
         ...item,
         name: existing.name || item.name,
         description: item.description?.trim() || existing.description?.trim() || undefined,
+        icon: item.icon?.trim() || existing.icon?.trim() || undefined,
       });
     }
   }

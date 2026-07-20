@@ -38,6 +38,29 @@ function assistantMessage(sessionId: string, text: string): StreamMessage {
   } as StreamMessage;
 }
 
+function planMessage(
+  sessionId: string,
+  uuid: string,
+  step: string,
+  status: "pending" | "in_progress" | "completed",
+): StreamMessage {
+  return {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{
+        type: "tool_use",
+        id: `tool-${uuid}`,
+        name: "update_plan",
+        input: { plan: [{ step, status }] },
+      }],
+    },
+    parent_tool_use_id: null,
+    uuid,
+    session_id: sessionId,
+  } as StreamMessage;
+}
+
 function createHarness() {
   const events: ServerEvent[] = [];
   const runs: RunnerOptions[] = [];
@@ -152,6 +175,61 @@ describe("BtwRuntimeManager", () => {
     assert.equal(harness.runs[0].session.planSnapshot, undefined);
   });
 
+  it("tracks its private plan for completion gating and restores the previous plan after supersedes", async () => {
+    const harness = createHarness();
+    const created = await createAndSend(harness, "plan work");
+    const runnerEvent = harness.runs[0].onEvent;
+    const firstPlan = planMessage(created.threadId, "btw-plan-1", "first plan", "in_progress");
+    const secondPlan = planMessage(created.threadId, "btw-plan-2", "second plan", "pending");
+
+    runnerEvent({
+      type: "session.plan.updated",
+      payload: {
+        sessionId: created.threadId,
+        turnId: "btw-plan-1",
+        updatedAt: 10,
+        source: "update_plan",
+        plan: [{ step: "first plan", status: "in_progress" }],
+      },
+    });
+    runnerEvent({
+      type: "stream.message",
+      payload: { sessionId: created.threadId, message: firstPlan },
+    });
+    assert.equal(harness.runs[0].session.planSnapshot?.plan[0]?.step, "first plan");
+
+    runnerEvent({
+      type: "session.plan.updated",
+      payload: {
+        sessionId: created.threadId,
+        turnId: "btw-plan-2",
+        updatedAt: 20,
+        source: "update_plan",
+        plan: [{ step: "second plan", status: "pending" }],
+      },
+    });
+    runnerEvent({
+      type: "stream.message",
+      payload: { sessionId: created.threadId, message: secondPlan },
+    });
+    assert.equal(harness.runs[0].session.planSnapshot?.plan[0]?.step, "second plan");
+
+    runnerEvent({
+      type: "stream.message",
+      payload: {
+        sessionId: created.threadId,
+        message: {
+          ...assistantMessage(created.threadId, "replacement"),
+          uuid: "btw-replacement",
+          supersedes: ["btw-plan-2"],
+        } as unknown as StreamMessage,
+      },
+    });
+
+    assert.equal(harness.runs[0].session.planSnapshot?.plan[0]?.step, "first plan");
+    assert.equal(harness.runs[0].session.planSnapshot?.sessionId, created.threadId);
+  });
+
   it("reuses one live runner for follow-up turns in the same thread", async () => {
     const harness = createHarness();
     const created = await createAndSend(harness, "第一轮问题");
@@ -222,6 +300,109 @@ describe("BtwRuntimeManager", () => {
     assert.ok(harness.events.some((event) => event.type === "btw.runner.error" && event.payload.threadId === created.threadId));
     assert.ok(harness.events.some((event) => event.type === "btw.thread.status" && event.payload.threadId === created.threadId && event.payload.status === "error"));
     assert.equal(harness.events.some((event) => event.type === "stream.message" || event.type === "session.status"), false);
+  });
+
+  it("keeps background work live until the runner reports membership drain completion", async () => {
+    const harness = createHarness();
+    const created = await createAndSend(harness, "start background task");
+    const runnerEvent = harness.runs[0].onEvent;
+
+    runnerEvent({
+      type: "session.status",
+      payload: {
+        sessionId: created.threadId,
+        status: "completed",
+        title: "ignored",
+        backgroundActive: true,
+        terminalReason: "background_requested",
+      },
+    });
+    const backgroundStatus = harness.events.findLast((event) => event.type === "btw.thread.status");
+    assert.equal(backgroundStatus?.type, "btw.thread.status");
+    if (backgroundStatus?.type === "btw.thread.status") {
+      assert.equal(backgroundStatus.payload.status, "running");
+      assert.equal(backgroundStatus.payload.backgroundActive, true);
+    }
+    assert.deepEqual(harness.aborted, []);
+
+    runnerEvent({
+      type: "stream.message",
+      payload: {
+        sessionId: created.threadId,
+        message: {
+          type: "system",
+          subtype: "session_state_changed",
+          state: "idle",
+          uuid: "idle-1",
+          session_id: created.threadId,
+        } as unknown as StreamMessage,
+      },
+    });
+    const statusAfterIdle = harness.events.findLast((event) => event.type === "btw.thread.status");
+    assert.equal(statusAfterIdle?.type, "btw.thread.status");
+    if (statusAfterIdle?.type === "btw.thread.status") {
+      assert.equal(statusAfterIdle.payload.status, "running");
+      assert.equal(statusAfterIdle.payload.backgroundActive, true);
+    }
+
+    runnerEvent({
+      type: "session.status",
+      payload: {
+        sessionId: created.threadId,
+        status: "completed",
+        title: "ignored",
+        backgroundActive: false,
+        terminalReason: "completed",
+      },
+    });
+    const completedStatus = harness.events.findLast((event) => event.type === "btw.thread.status");
+    assert.equal(completedStatus?.type, "btw.thread.status");
+    if (completedStatus?.type === "btw.thread.status") {
+      assert.equal(completedStatus.payload.status, "completed");
+      assert.equal(completedStatus.payload.backgroundActive, false);
+    }
+
+    await harness.manager.send({ threadId: created.threadId, prompt: "follow up" });
+    assert.deepEqual(harness.appendedPrompts, [{ sessionId: created.threadId, prompt: "follow up" }]);
+    assert.deepEqual(harness.aborted, []);
+  });
+
+  it("drops the parent snapshot and derived state after conversation reset", async () => {
+    const harness = createHarness();
+    const created = await createAndSend(harness, "first turn");
+    harness.runs[0].session.continuationSummary = "old summary";
+    harness.runs[0].session.planSnapshot = {
+      sessionId: created.threadId,
+      updatedAt: 1,
+      source: "update_plan",
+      plan: [{ step: "old plan", status: "in_progress" }],
+    };
+    harness.runs[0].onEvent({
+      type: "stream.message",
+      payload: {
+        sessionId: created.threadId,
+        message: {
+          type: "conversation_reset",
+          new_conversation_id: "fresh-btw-conversation",
+          uuid: "reset-1",
+          session_id: created.threadId,
+        } as unknown as StreamMessage,
+      },
+    });
+    harness.runs[0].onEvent({
+      type: "session.status",
+      payload: { sessionId: created.threadId, status: "completed", title: "ignored" },
+    });
+
+    await harness.manager.send({ threadId: created.threadId, prompt: "after reset", runtime: { model: "gpt-next" } });
+
+    assert.equal(harness.runs[0].session.claudeSessionId, "fresh-btw-conversation");
+    assert.equal(harness.runs[0].session.continuationSummary, undefined);
+    assert.equal(harness.runs[0].session.planSnapshot, undefined);
+    assert.equal(
+      harness.continuationHistories[1].some((message) => message.type === "assistant" || message.type === "user_prompt"),
+      false,
+    );
   });
 
   it("resolves permissions against the private runtime session", async () => {

@@ -30,7 +30,19 @@ export function SlashCommandPalette({
               className={`min-w-0 rounded-xl px-3 py-2 text-left text-sm transition-colors ${index === activeIndex ? "bg-accent/10 text-accent" : "text-ink-700 hover:bg-surface-secondary"}`}
               onClick={() => onSelect(command)}
             >
-              <span className="flex min-w-0 items-baseline gap-2 overflow-hidden">
+              <span className="flex min-w-0 items-center gap-2.5 overflow-hidden">
+                <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-lg border border-black/8 bg-white">
+                  {command.icon ? (
+                    <img
+                      src={command.icon}
+                      alt=""
+                      className="h-5 w-5 object-contain"
+                      draggable={false}
+                    />
+                  ) : (
+                    <span className="text-xs font-semibold text-muted" aria-hidden="true">/</span>
+                  )}
+                </span>
                 <span className="shrink-0 font-medium">/{command.name}</span>
                 <span className="min-w-0 truncate text-xs font-normal text-muted" title={command.description || "Enter/Tab 选择"}>
                   {command.description || "Enter/Tab 选择"}

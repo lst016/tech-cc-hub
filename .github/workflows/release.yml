@@ -27,7 +27,7 @@ jobs:
             arch: arm64
             command: npm run release:mac-arm64
             uploads_artifacts: true
-          - os: macos-14
+          - os: macos-15-intel
             platform: mac
             arch: x64
             command: npm run release:mac-x64
@@ -82,6 +82,69 @@ jobs:
       - name: Verify signed and notarized macOS DMG
         if: matrix.platform == 'mac'
         run: npm run qa:macos-packaged -- ${{ matrix.arch }}
+
+      - name: Prepare macOS updater metadata
+        if: matrix.platform == 'mac'
+        shell: bash
+        env:
+          MAC_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          arch = os.environ["MAC_ARCH"]
+          dist = Path("dist")
+          source = dist / "latest-mac.yml"
+          target = dist / "latest-x64-mac.yml" if arch == "x64" else source
+          if not source.is_file():
+              raise SystemExit("dist/latest-mac.yml is missing")
+
+          text = source.read_text(encoding="utf-8")
+          match = re.search(r"^path:\s*['\"]?(.+?)['\"]?\s*$", text, re.M)
+          if not match:
+              raise SystemExit("latest-mac.yml does not declare path")
+
+          artifact = match.group(1)
+          artifact_path = dist / artifact
+          if not artifact_path.is_file():
+              raise SystemExit(f"latest-mac.yml points to missing artifact: {artifact}")
+
+          arch_pattern = re.compile(rf"(?:^|[-_. ]){re.escape(arch)}(?:[-_. ]|$)", re.I)
+          if not arch_pattern.search(artifact_path.name):
+              if arch != "x64":
+                  raise SystemExit(f"{source.name} points to an artifact without the macOS architecture marker: {artifact_path.name}")
+              renamed = artifact_path.with_name(f"{artifact_path.stem}-{arch}{artifact_path.suffix}")
+              if renamed.exists():
+                  raise SystemExit(f"cannot rename {artifact_path.name}; target exists: {renamed.name}")
+              blockmap_path = Path(f"{artifact_path}.blockmap")
+              renamed_blockmap = Path(f"{renamed}.blockmap")
+              if not blockmap_path.is_file():
+                  raise SystemExit(f"missing updater blockmap before rename: {blockmap_path.name}")
+              if renamed_blockmap.exists():
+                  raise SystemExit(f"cannot rename {blockmap_path.name}; target exists: {renamed_blockmap.name}")
+              artifact_path.rename(renamed)
+              blockmap_path.rename(renamed_blockmap)
+              text = text.replace(artifact_path.name, renamed.name)
+              artifact_path = renamed
+
+          wrong_arch = "x64" if arch == "arm64" else "arm64"
+          wrong_pattern = re.compile(rf"(?:^|[-_. ]){wrong_arch}(?:[-_. ]|$)", re.I)
+          if not arch_pattern.search(artifact_path.name) or wrong_pattern.search(artifact_path.name):
+              raise SystemExit(f"{source.name} points to the wrong macOS architecture artifact: {artifact_path.name}")
+          blockmap_path = Path(f"{artifact_path}.blockmap")
+          if not blockmap_path.is_file():
+              raise SystemExit(f"missing updater blockmap: {blockmap_path.name}")
+
+          source.write_text(text, encoding="utf-8")
+          if target != source and target.exists():
+              raise SystemExit(f"target updater metadata already exists: {target}")
+          if target != source:
+              source.rename(target)
+          print(f"Prepared {target} -> {artifact_path.name}")
+          PY
 
       - name: Verify Windows updater artifacts
         if: matrix.platform == 'win'
@@ -211,6 +274,52 @@ jobs:
           fi
           test -s "$installer"
           test -s "${installer}.blockmap"
+
+      - name: Verify macOS updater assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          release_dir = Path(".")
+          seen_artifacts = set()
+          for arch, metadata_name in (("arm64", "latest-mac.yml"), ("x64", "latest-x64-mac.yml")):
+              metadata = release_dir / metadata_name
+              if not metadata.is_file():
+                  raise SystemExit(f"{metadata} is missing")
+
+              text = metadata.read_text(encoding="utf-8")
+              match = re.search(r"^path:\s*['\"]?(.+?)['\"]?\s*$", text, re.M)
+              if not match:
+                  raise SystemExit(f"{metadata} does not declare path")
+
+              arch_pattern = re.compile(rf"(?:^|[-_. ]){re.escape(arch)}(?:[-_. ]|$)", re.I)
+              wrong_arch = "x64" if arch == "arm64" else "arm64"
+              wrong_pattern = re.compile(rf"(?:^|[-_. ]){wrong_arch}(?:[-_. ]|$)", re.I)
+              refs = set(re.findall(r"^\s*(?:-\s*)?(?:url|path):\s*['\"]?(.+?)['\"]?\s*$", text, re.M))
+              if match.group(1) not in refs:
+                  raise SystemExit(f"{metadata} path is not represented in updater file refs")
+
+              for artifact in refs:
+                  artifact_path = release_dir / artifact
+                  if not artifact_path.is_file():
+                      raise SystemExit(f"{metadata} points to missing artifact: {artifact}")
+                  if not arch_pattern.search(artifact_path.name) or wrong_pattern.search(artifact_path.name):
+                      raise SystemExit(f"{metadata} points to the wrong macOS architecture artifact: {artifact_path.name}")
+                  blockmap_path = Path(f"{artifact_path}.blockmap")
+                  if not blockmap_path.is_file():
+                      raise SystemExit(f"{metadata} points to missing blockmap: {blockmap_path.name}")
+
+              artifact_name = match.group(1)
+              if artifact_name in seen_artifacts:
+                  raise SystemExit(f"macOS updater metadata files point to the same artifact: {artifact_name}")
+              seen_artifacts.add(artifact_name)
+
+              print(f"{metadata} -> {artifact_name}")
+          PY
 
       - name: Generate checksums
         run: |

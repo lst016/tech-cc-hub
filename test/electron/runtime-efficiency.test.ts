@@ -389,6 +389,24 @@ test("runner reuse changes when SDK workflow mode changes", () => {
   assert.equal(canReuseRunner(disabledWorkflow, autoWorkflow), false);
 });
 
+test("runner reuse never crosses interactive and unattended permission policies", () => {
+  const interactive = buildRunnerReuseKey({
+    cwd: "D:\\tool\\tech-cc-hub",
+    model: "gpt-5.5",
+    prompt: "continue",
+    toolPermissionPolicy: "interactive",
+  });
+  const unattended = buildRunnerReuseKey({
+    cwd: "D:\\tool\\tech-cc-hub",
+    model: "gpt-5.5",
+    prompt: "scheduled continuation",
+    toolPermissionPolicy: "unattended-auto-approve",
+  });
+
+  assert.equal(canReuseRunner(interactive, unattended), false);
+  assert.equal(canReuseRunner(unattended, interactive), false);
+});
+
 test("runner reuse changes when Agent Teams env eligibility changes", () => {
   const standard = buildRunnerReuseKey({
     cwd: "D:\\tool\\tech-cc-hub",

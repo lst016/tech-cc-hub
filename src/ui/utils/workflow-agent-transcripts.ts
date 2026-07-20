@@ -1,6 +1,6 @@
 import type { StreamMessage } from "../types.js";
 
-export type WorkflowAgentStatus = "running" | "completed" | "failed" | "killed" | "unknown";
+export type WorkflowAgentStatus = "running" | "paused" | "completed" | "failed" | "killed" | "stopped" | "unknown";
 type WorkflowParentSessionStatus = "idle" | "running" | "completed" | "error";
 
 export type WorkflowAgentSummary = {
@@ -14,7 +14,15 @@ export type WorkflowAgentSummary = {
   toolCount: number;
   startedAt?: number;
   updatedAt?: number;
+  parentAgentId?: string;
+  depth?: number;
   transcript: StreamMessage[];
+};
+
+export type WorkflowAgentTranscriptView = {
+  messages: StreamMessage[];
+  statusEventCount: number;
+  latestProgress: string;
 };
 
 type MutableWorkflowAgentSummary = WorkflowAgentSummary & {
@@ -35,9 +43,22 @@ function getPatchStatus(record: Record<string, unknown>): WorkflowAgentStatus | 
   const patch = record.patch;
   if (!isRecord(patch)) return undefined;
   const status = getString(patch, "status");
-  if (status === "completed" || status === "failed" || status === "killed" || status === "running") {
+  if (status === "completed" || status === "failed" || status === "killed" || status === "running" || status === "paused") {
     return status;
   }
+  return undefined;
+}
+
+function getNotificationStatus(record: Record<string, unknown>): WorkflowAgentStatus | undefined {
+  const status = getString(record, "status");
+  if (status === "completed" || status === "failed") return status;
+  if (status === "stopped") return "stopped";
+  return undefined;
+}
+
+function getTaskStatus(record: Record<string, unknown>, subtype: string | undefined): WorkflowAgentStatus | undefined {
+  if (subtype === "task_updated") return getPatchStatus(record);
+  if (subtype === "task_notification") return getNotificationStatus(record);
   return undefined;
 }
 
@@ -70,6 +91,11 @@ function getMessageTaskId(message: StreamMessage): string | undefined {
   return typeof taskId === "string" && taskId.trim() ? taskId.trim() : undefined;
 }
 
+function getParentAgentId(message: StreamMessage): string | undefined {
+  const parentAgentId = (message as { parent_agent_id?: unknown }).parent_agent_id;
+  return typeof parentAgentId === "string" && parentAgentId.trim() ? parentAgentId.trim() : undefined;
+}
+
 function getLinkedToolUseIds(message: StreamMessage): string[] {
   const ids: string[] = [];
   for (const item of getContentItems(message)) {
@@ -94,10 +120,42 @@ function isUnlinkedTaskFallbackMessage(message: StreamMessage): boolean {
 }
 
 function isTaskTranscriptSubtype(subtype: string | undefined) {
-  return subtype === "task_started"
-    || subtype === "task_progress"
+  return subtype === "task_progress"
     || subtype === "task_updated"
     || subtype === "task_notification";
+}
+
+function isTaskStatusSubtype(subtype: string | undefined) {
+  return subtype === "task_started" || isTaskTranscriptSubtype(subtype);
+}
+
+function getTaskStatusText(record: Record<string, unknown>): string | undefined {
+  const patch = isRecord(record.patch) ? record.patch : undefined;
+  return getString(record, "summary")
+    ?? getString(record, "description")
+    ?? (patch ? getString(patch, "description") : undefined)
+    ?? (patch ? getString(patch, "error") : undefined);
+}
+
+function getSubagentRetryText(message: StreamMessage): string | undefined {
+  if (message.type !== "tool_progress") return undefined;
+  const retry = (message as { subagent_retry?: unknown }).subagent_retry;
+  if (!isRecord(retry)) return undefined;
+  const attempt = typeof retry.attempt === "number" ? retry.attempt : undefined;
+  const maxRetries = typeof retry.max_retries === "number" ? retry.max_retries : undefined;
+  const retryDelayMs = typeof retry.retry_delay_ms === "number" ? retry.retry_delay_ms : undefined;
+  if (attempt === undefined || maxRetries === undefined) return "子智能体正在重试";
+  const delay = retryDelayMs === undefined ? "" : `，等待 ${(retryDelayMs / 1000).toFixed(1)} 秒`;
+  return `子智能体重试 ${attempt}/${maxRetries}${delay}`;
+}
+
+function normalizeTaskTitle(title: string): string {
+  const separatorIndex = title.indexOf(":");
+  if (separatorIndex < 1) return title;
+
+  const prefix = title.slice(0, separatorIndex).trim().toLowerCase();
+  const detail = title.slice(separatorIndex + 1).trim();
+  return detail.toLowerCase().startsWith(`${prefix}:`) ? detail : title;
 }
 
 function roleLabel(taskType?: string, workflowName?: string): string {
@@ -120,7 +178,20 @@ export function buildWorkflowAgentSummaries(
     if (message.type !== "system") continue;
     const record = message as unknown as Record<string, unknown>;
     const subtype = getString(record, "subtype");
-    if (subtype !== "task_started" && subtype !== "task_progress" && subtype !== "task_updated") continue;
+    if (subtype === "init") {
+      continue;
+    }
+    if (subtype === "background_tasks_changed") {
+      // This is a per-process level signal. Its IDs must not be correlated
+      // with task_started/task_notification edge events.
+      continue;
+    }
+    if (
+      subtype !== "task_started"
+      && subtype !== "task_progress"
+      && subtype !== "task_updated"
+      && subtype !== "task_notification"
+    ) continue;
 
     const taskId = getString(record, "task_id");
     if (!taskId) continue;
@@ -130,12 +201,14 @@ export function buildWorkflowAgentSummaries(
     }
 
     const existing = agents.get(taskId);
-    const description = getString(record, "description");
+    const patch = isRecord(record.patch) ? record.patch : undefined;
+    const description = getString(record, "description") ?? (patch ? getString(patch, "description") : undefined);
+    const displayDescription = description ? normalizeTaskTitle(description) : undefined;
     const summary = getString(record, "summary");
-    const prompt = getString(record, "prompt");
     const taskType = getString(record, "task_type");
     const workflowName = getString(record, "workflow_name");
     const toolUseId = getString(record, "tool_use_id") ?? existing?.toolUseId;
+    const parentAgentId = getString(record, "parent_agent_id") ?? existing?.parentAgentId;
     const timestamp = getMessageTime(message);
 
     if (toolUseId) taskByToolUseId.set(toolUseId, taskId);
@@ -143,29 +216,32 @@ export function buildWorkflowAgentSummaries(
     const next: MutableWorkflowAgentSummary = existing ?? {
       id: taskId,
       taskId,
-      title: description ?? summary ?? workflowName ?? taskId.slice(0, 8),
+      title: displayDescription ?? summary ?? workflowName ?? taskId.slice(0, 8),
       role: roleLabel(taskType, workflowName),
       status: "running",
-      latestSummary: summary ?? description ?? prompt ?? "",
+      latestSummary: summary ?? displayDescription ?? "",
       messageCount: 0,
       toolCount: 0,
       startedAt: timestamp,
       updatedAt: timestamp,
       transcript: [],
+      depth: 1,
+      parentAgentId,
       toolUseId,
       taskType,
     };
 
-    if (description) next.title = description;
+    if (displayDescription && subtype === "task_started") next.title = displayDescription;
     if (workflowName || taskType) next.role = roleLabel(taskType, workflowName);
-    if (summary || description || prompt) next.latestSummary = summary ?? description ?? prompt ?? next.latestSummary;
+    if (summary || displayDescription) next.latestSummary = summary ?? displayDescription ?? next.latestSummary;
     if (timestamp) {
       next.startedAt = next.startedAt ?? timestamp;
       next.updatedAt = timestamp;
     }
     if (toolUseId) next.toolUseId = toolUseId;
     if (taskType) next.taskType = taskType;
-    if (subtype === "task_updated") next.status = getPatchStatus(record) ?? next.status;
+    if (parentAgentId) next.parentAgentId = parentAgentId;
+    next.status = getTaskStatus(record, subtype) ?? next.status;
     if (subtype === "task_progress" && next.status === "unknown") next.status = "running";
     agents.set(taskId, next);
   }
@@ -197,9 +273,11 @@ export function buildWorkflowAgentSummaries(
         if (!activeTaskIds.includes(taskId)) activeTaskIds.push(taskId);
         continue;
       }
-      if (subtype === "task_updated") {
-        const status = getPatchStatus(record);
-        if (status === "completed" || status === "failed" || status === "killed") {
+      if (subtype === "task_updated" || subtype === "task_notification") {
+        const status = getTaskStatus(record, subtype);
+        if (status === "running") {
+          if (!activeTaskIds.includes(taskId)) activeTaskIds.push(taskId);
+        } else if (status === "completed" || status === "failed" || status === "killed" || status === "stopped") {
           const index = activeTaskIds.indexOf(taskId);
           if (index >= 0) activeTaskIds.splice(index, 1);
         }
@@ -208,6 +286,10 @@ export function buildWorkflowAgentSummaries(
     }
 
     if (appendToAgent(getMessageTaskId(message), message)) {
+      const taskId = getMessageTaskId(message);
+      const parentAgentId = getParentAgentId(message);
+      const agent = taskId ? agents.get(taskId) : undefined;
+      if (agent && parentAgentId) agent.parentAgentId = parentAgentId;
       continue;
     }
 
@@ -230,6 +312,18 @@ export function buildWorkflowAgentSummaries(
 
   const fallbackStatus = getTerminalFallbackStatus(parentSessionStatus);
 
+  const getDepth = (agent: MutableWorkflowAgentSummary): number => {
+    let depth = 1;
+    let parentAgentId = agent.parentAgentId;
+    const visited = new Set([agent.id]);
+    while (parentAgentId && !visited.has(parentAgentId) && depth < 8) {
+      visited.add(parentAgentId);
+      depth += 1;
+      parentAgentId = agents.get(parentAgentId)?.parentAgentId;
+    }
+    return depth;
+  };
+
   return Array.from(agents.values()).map((agent) => ({
     id: agent.id,
     taskId: agent.taskId,
@@ -243,8 +337,42 @@ export function buildWorkflowAgentSummaries(
     toolCount: countToolUses(agent.transcript),
     startedAt: agent.startedAt,
     updatedAt: agent.updatedAt,
+    parentAgentId: agent.parentAgentId,
+    depth: getDepth(agent),
     transcript: agent.transcript,
   }));
+}
+
+export function buildWorkflowAgentTranscriptView(
+  agent: WorkflowAgentSummary,
+): WorkflowAgentTranscriptView {
+  const messages: StreamMessage[] = [];
+  let statusEventCount = 0;
+  let latestProgress = "";
+
+  for (const message of agent.transcript) {
+    const retryText = getSubagentRetryText(message);
+    if (retryText) {
+      statusEventCount += 1;
+      latestProgress = retryText;
+      continue;
+    }
+    if (message.type === "system") {
+      const record = message as unknown as Record<string, unknown>;
+      if (isTaskStatusSubtype(getString(record, "subtype"))) {
+        statusEventCount += 1;
+        latestProgress = getTaskStatusText(record) ?? latestProgress;
+        continue;
+      }
+    }
+    messages.push(message);
+  }
+
+  return {
+    messages,
+    statusEventCount,
+    latestProgress: latestProgress || agent.latestSummary,
+  };
 }
 
 function getTerminalFallbackStatus(status: WorkflowParentSessionStatus | undefined): WorkflowAgentStatus | undefined {

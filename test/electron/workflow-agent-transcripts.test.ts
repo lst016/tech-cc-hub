@@ -1,10 +1,96 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildWorkflowAgentSummaries } from "../../src/ui/utils/workflow-agent-transcripts.js";
+import {
+  buildWorkflowAgentSummaries,
+  buildWorkflowAgentTranscriptView,
+} from "../../src/ui/utils/workflow-agent-transcripts.js";
 import type { StreamMessage } from "../../src/ui/types.js";
 
 describe("workflow agent transcripts", () => {
+  it("compacts repeated task telemetry into one latest progress summary", () => {
+    const view = buildWorkflowAgentTranscriptView({
+      id: "figma-prep",
+      taskId: "figma-prep",
+      title: "并行探查项目文档、知识库与 Figma 节点整理范围",
+      role: "figma-node-documentation-prep",
+      status: "running",
+      latestSummary: "节点文档设计：doc-template",
+      messageCount: 5,
+      toolCount: 0,
+      transcript: [
+        {
+          type: "system",
+          subtype: "task_progress",
+          task_id: "figma-prep",
+          summary: "并行探查项目文档、知识库与 Figma 节点整理范围",
+        } as never,
+        {
+          type: "system",
+          subtype: "task_progress",
+          task_id: "figma-prep",
+          description: "本地范围探查：repo-scope",
+        } as never,
+        {
+          type: "system",
+          subtype: "task_progress",
+          task_id: "figma-prep",
+          description: "节点文档设计：doc-template",
+        } as never,
+        {
+          type: "assistant",
+          task_id: "figma-prep",
+          message: { role: "assistant", content: [{ type: "text", text: "已完成文档结构检查。" }] },
+        } as never,
+        {
+          type: "system",
+          subtype: "task_updated",
+          task_id: "figma-prep",
+          patch: { status: "running" },
+        } as never,
+      ],
+    });
+
+    assert.equal(view.statusEventCount, 4);
+    assert.equal(view.latestProgress, "节点文档设计：doc-template");
+    assert.equal(view.messages.length, 1);
+    assert.equal(view.messages[0]?.type, "assistant");
+  });
+
+  it("keeps dynamic workflow source prompts out of the visible agent transcript", () => {
+    const workflowSource = [
+      "const dimensions = [{ key: 'architecture', prompt: String.raw`Review ALL changes` }]",
+      "phase('Review')",
+      "const reviews = await parallel(dimensions.map((dimension) => agent(dimension.prompt)))",
+    ].join("\n");
+    const agents = buildWorkflowAgentSummaries([
+      {
+        type: "system",
+        subtype: "task_started",
+        task_id: "review-architecture",
+        tool_use_id: "tool-review-architecture",
+        workflow_name: "ultracode-full-review",
+        description: "Review: review:architecture",
+        prompt: workflowSource,
+      } as never,
+      {
+        type: "system",
+        subtype: "task_progress",
+        task_id: "review-architecture",
+        summary: "正在审查架构与回归风险",
+      } as never,
+    ]);
+
+    assert.equal(agents.length, 1);
+    assert.equal(agents[0]?.title, "review:architecture");
+    assert.equal(agents[0]?.messageCount, 1);
+    assert.deepEqual(
+      agents[0]?.transcript.map((message) => (message as { subtype?: string }).subtype),
+      ["task_progress"],
+    );
+    assert.equal(JSON.stringify(agents[0]?.transcript).includes(workflowSource), false);
+  });
+
   it("derives agent cards and child transcripts from task events", () => {
     const messages: StreamMessage[] = [
       {
@@ -73,10 +159,9 @@ describe("workflow agent transcripts", () => {
     assert.equal(agents[0]?.role, "Subagent");
     assert.equal(agents[0]?.status, "completed");
     assert.equal(agents[0]?.latestSummary, "Located config and homepage files");
-    assert.equal(agents[0]?.messageCount, 5);
+    assert.equal(agents[0]?.messageCount, 4);
     assert.equal(agents[0]?.toolCount, 1);
     assert.deepEqual(agents[0]?.transcript.map((message) => message.type), [
-      "system",
       "assistant",
       "user",
       "system",
@@ -131,9 +216,9 @@ describe("workflow agent transcripts", () => {
 
     assert.equal(agents.length, 1);
     assert.equal(agents[0]?.role, "Task");
-    assert.equal(agents[0]?.messageCount, 3);
-    assert.equal(agents[0]?.transcript[0]?.type, "system");
-    assert.equal(agents[0]?.transcript[1]?.type, "user");
+    assert.equal(agents[0]?.messageCount, 2);
+    assert.equal(agents[0]?.transcript[0]?.type, "user");
+    assert.equal(agents[0]?.transcript[1]?.type, "system");
   });
 
   it("does not place main assistant messages into the active agent transcript", () => {
@@ -180,10 +265,10 @@ describe("workflow agent transcripts", () => {
     ]);
 
     assert.equal(agents.length, 1);
-    assert.equal(agents[0]?.messageCount, 2);
+    assert.equal(agents[0]?.messageCount, 1);
     assert.deepEqual(
       agents[0]?.transcript.map((message) => message.type),
-      ["system", "system"],
+      ["system"],
     );
     assert.equal(agents[0]?.toolCount, 0);
   });
@@ -215,7 +300,7 @@ describe("workflow agent transcripts", () => {
     ]);
 
     assert.equal(agents.length, 1);
-    assert.equal(agents[0]?.messageCount, 2);
+    assert.equal(agents[0]?.messageCount, 1);
     assert.equal(agents[0]?.toolCount, 1);
   });
 
@@ -260,7 +345,7 @@ describe("workflow agent transcripts", () => {
     ]);
 
     assert.equal(agents.length, 1);
-    assert.equal(agents[0]?.messageCount, 2);
+    assert.equal(agents[0]?.messageCount, 1);
   });
 
   it("keeps task progress events in the selected agent transcript", () => {
@@ -295,10 +380,10 @@ describe("workflow agent transcripts", () => {
     ]);
 
     assert.equal(agents.length, 1);
-    assert.equal(agents[0]?.messageCount, 4);
+    assert.equal(agents[0]?.messageCount, 3);
     assert.deepEqual(
       agents[0]?.transcript.map((message) => (message as { subtype?: string }).subtype),
-      ["task_started", "task_progress", "task_progress", "task_updated"],
+      ["task_progress", "task_progress", "task_updated"],
     );
     assert.equal(agents[0]?.latestSummary, "Reading ChatListController.java");
     assert.equal(agents[0]?.status, "completed");
@@ -384,5 +469,117 @@ describe("workflow agent transcripts", () => {
     ], "error");
 
     assert.equal(agents[0]?.status, "failed");
+  });
+
+  it("uses task notifications as terminal edges even without task_started", () => {
+    const agents = buildWorkflowAgentSummaries([{
+      type: "system",
+      subtype: "task_notification",
+      task_id: "notification-only",
+      status: "failed",
+      summary: "Typecheck failed",
+      output_file: "output.txt",
+    } as never]);
+
+    assert.equal(agents.length, 1);
+    assert.equal(agents[0]?.status, "failed");
+    assert.equal(agents[0]?.latestSummary, "Typecheck failed");
+    assert.equal(agents[0]?.messageCount, 1);
+  });
+
+  it("keeps background level snapshots separate from task edge state", () => {
+    const agents = buildWorkflowAgentSummaries([
+      {
+        type: "system",
+        subtype: "task_started",
+        task_id: "edge-task",
+        description: "Edge-owned task",
+      } as never,
+      {
+        type: "system",
+        subtype: "background_tasks_changed",
+        tasks: [{ task_id: "background-1", task_type: "background_task", description: "Index repository" }],
+      } as never,
+      {
+        type: "system",
+        subtype: "background_tasks_changed",
+        tasks: [],
+      } as never,
+    ]);
+
+    assert.equal(agents.length, 1);
+    assert.equal(agents[0]?.taskId, "edge-task");
+    assert.equal(agents[0]?.status, "running");
+  });
+
+  it("distinguishes a user-stopped notification from a killed task", () => {
+    const agents = buildWorkflowAgentSummaries([{
+      type: "system",
+      subtype: "task_notification",
+      task_id: "stopped-task",
+      status: "stopped",
+      summary: "Stopped by user",
+    } as never]);
+
+    assert.equal(agents[0]?.status, "stopped");
+  });
+
+  it("restores paused tasks to the active window when they resume", () => {
+    const agents = buildWorkflowAgentSummaries([
+      { type: "system", subtype: "task_started", task_id: "resume-task", description: "Resume me" } as never,
+      { type: "system", subtype: "task_updated", task_id: "resume-task", patch: { status: "paused" } } as never,
+      { type: "system", subtype: "task_updated", task_id: "resume-task", patch: { status: "running" } } as never,
+      {
+        type: "user",
+        parent_tool_use_id: null,
+        message: { role: "user", content: [{ type: "tool_result", tool_use_id: "unlinked", content: "resumed output" }] },
+      } as never,
+    ]);
+
+    assert.equal(agents[0]?.status, "running");
+    assert.equal(agents[0]?.transcript.some((message) => message.type === "user"), true);
+  });
+
+  it("preserves parent_agent_id and computes depth for nested agents", () => {
+    const agents = buildWorkflowAgentSummaries([
+      { type: "system", subtype: "task_started", task_id: "parent", description: "Parent" } as never,
+      { type: "system", subtype: "task_started", task_id: "child", parent_agent_id: "parent", description: "Child" } as never,
+      { type: "system", subtype: "task_started", task_id: "grandchild", parent_agent_id: "child", description: "Grandchild" } as never,
+    ]);
+
+    assert.equal(agents.find((agent) => agent.id === "child")?.parentAgentId, "parent");
+    assert.equal(agents.find((agent) => agent.id === "child")?.depth, 2);
+    assert.equal(agents.find((agent) => agent.id === "grandchild")?.depth, 3);
+  });
+
+  it("compacts subagent retry telemetry into the latest agent progress", () => {
+    const view = buildWorkflowAgentTranscriptView({
+      id: "retry-agent",
+      taskId: "retry-agent",
+      title: "Retry agent",
+      role: "Subagent",
+      status: "running",
+      latestSummary: "Working",
+      messageCount: 1,
+      toolCount: 0,
+      transcript: [{
+        type: "tool_progress",
+        tool_use_id: "tool-retry",
+        tool_name: "Task",
+        task_id: "retry-agent",
+        subagent_retry: {
+          agent_id: "retry-agent",
+          attempt: 2,
+          max_retries: 4,
+          retry_delay_ms: 1500,
+          error_status: 429,
+          error_category: "rate_limit",
+        },
+      } as never],
+    });
+
+    assert.equal(view.statusEventCount, 1);
+    assert.equal(view.messages.length, 0);
+    assert.equal(view.latestProgress, "子智能体重试 2/4，等待 1.5 秒");
   });
 });

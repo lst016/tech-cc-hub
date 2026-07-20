@@ -1,4 +1,5 @@
 import { CODEX_OAUTH_COMPACT_MODEL_SUFFIX } from "../codex-oauth.js";
+import { MINIMAX_MODELS } from "./minimax.js";
 
 export const BOKE_GATEWAY_HOSTNAME = "ai.pocketcity.com";
 export const BOKE_GATEWAY_BASE_URL = `https://${BOKE_GATEWAY_HOSTNAME}/v1`;
@@ -49,6 +50,33 @@ export function isDeepSeekModelName(modelName: string): boolean {
 
 export function isMiniMaxModelName(modelName: string): boolean {
   return modelName.trim().toLowerCase().includes("minimax");
+}
+
+/**
+ * Gateways do not always preserve the official casing of MiniMax model IDs.
+ * Keep one routing identity while using the official spelling when known.
+ */
+export function canonicalizeModelNameForRouting(modelName: string): string {
+  const normalized = modelName.trim();
+  if (!isMiniMaxModelName(normalized)) {
+    return normalized;
+  }
+
+  return MINIMAX_MODELS.find((officialModel) => officialModel.toLowerCase() === normalized.toLowerCase())
+    ?? normalized;
+}
+
+export function areModelNamesEquivalent(left: string, right: string): boolean {
+  const normalizedLeft = left.trim();
+  const normalizedRight = right.trim();
+  if (normalizedLeft === normalizedRight) {
+    return true;
+  }
+
+  return isMiniMaxModelName(normalizedLeft)
+    && isMiniMaxModelName(normalizedRight)
+    && canonicalizeModelNameForRouting(normalizedLeft).toLowerCase()
+      === canonicalizeModelNameForRouting(normalizedRight).toLowerCase();
 }
 
 export function isModelCompatibleWithApiProvider(
@@ -104,6 +132,10 @@ export function normalizeProviderModelName(
 
   if (provider === "deepseek" && isDeepSeekModelName(normalized)) {
     return normalized.toLowerCase();
+  }
+
+  if (provider === "minimax") {
+    return canonicalizeModelNameForRouting(normalized);
   }
 
   return normalized;

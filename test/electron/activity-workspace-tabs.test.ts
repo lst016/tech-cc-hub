@@ -202,7 +202,7 @@ describe("activity workspace tabs", () => {
     assert.match(railSource, /const analysisCards = useMemo\(\(\) => \{\s*if \(!model\) return \[\];/);
     assert.match(railSource, /const activeAgentNodes = useMemo\(\(\) => \{\s*if \(!model/);
     assert.match(railSource, /const attachmentSummary = model\s*\? summarizeAttachments\(/);
-    assert.match(railSource, /const materialStatusItems = useMemo\([\s\S]{0,180}model \? buildMaterialStatusItems\(model, partialMessage\) : \[\]/);
+    assert.match(railSource, /const materialStatusItems = useMemo\([\s\S]{0,180}model \? buildMaterialStatusItems\(model, livePartialPreview\) : \[\]/);
   });
 
   it("clears usage detail state during render and guards model-backed rendering", () => {

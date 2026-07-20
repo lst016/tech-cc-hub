@@ -29,6 +29,15 @@ type SuccessfulGeneratedImageResult = Extract<GeneratedImageResult, {
   success: true;
 }>;
 
+type StructuredProcessResult = {
+  key: string;
+  metrics: string[];
+  toolStats: string[];
+  timedOutAfterMs?: number;
+  oldSource?: string;
+  newSource?: string;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -38,6 +47,51 @@ function getMessageContentItems(message: StreamMessage): unknown[] {
   if (!isRecord(envelope.message)) return [];
   const content = envelope.message.content;
   return Array.isArray(content) ? content : content ? [content] : [];
+}
+
+function formatDurationMs(value: number): string {
+  if (value < 1000) return `${Math.round(value)} ms`;
+  if (value < 60_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)} 秒`;
+  return `${(value / 60_000).toFixed(1)} 分钟`;
+}
+
+function collectStructuredProcessResults(
+  messages: Array<{ originalIndex: number; message: StreamMessage }>,
+): StructuredProcessResult[] {
+  return messages.flatMap(({ originalIndex, message }) => {
+    const result = (message as { tool_use_result?: unknown }).tool_use_result;
+    if (!isRecord(result)) return [];
+    const resolvedModel = typeof result.resolvedModel === "string" ? result.resolvedModel : undefined;
+    const modelsUsed = Array.isArray(result.modelsUsed)
+      ? result.modelsUsed.filter((model): model is string => typeof model === "string" && model.length > 0)
+      : [];
+    const totalTokens = typeof result.totalTokens === "number" ? result.totalTokens : undefined;
+    const totalDurationMs = typeof result.totalDurationMs === "number" ? result.totalDurationMs : undefined;
+    const totalToolUseCount = typeof result.totalToolUseCount === "number" ? result.totalToolUseCount : undefined;
+    const stats = isRecord(result.toolStats) ? result.toolStats : undefined;
+    const timedOutAfterMs = typeof result.timedOutAfterMs === "number" ? result.timedOutAfterMs : undefined;
+    const oldSource = typeof result.old_source === "string" ? result.old_source : undefined;
+    const newSource = typeof result.new_source === "string" ? result.new_source : undefined;
+    const modelTrail = Array.from(new Set([resolvedModel, ...modelsUsed].filter((model): model is string => Boolean(model))));
+    const metrics = [
+      modelTrail.length > 0 ? `模型 ${modelTrail.join(" → ")}` : "",
+      totalTokens !== undefined ? `${totalTokens.toLocaleString()} tokens` : "",
+      totalDurationMs !== undefined ? formatDurationMs(totalDurationMs) : "",
+      totalToolUseCount !== undefined ? `${totalToolUseCount} 次工具调用` : "",
+    ].filter(Boolean);
+    const toolStats = stats
+      ? [
+          ["读取", stats.readCount],
+          ["搜索", stats.searchCount],
+          ["命令", stats.bashCount],
+          ["编辑", stats.editFileCount],
+          ["新增行", stats.linesAdded],
+          ["删除行", stats.linesRemoved],
+        ].flatMap(([label, count]) => typeof count === "number" && count > 0 ? [`${label} ${count}`] : [])
+      : [];
+    if (metrics.length === 0 && toolStats.length === 0 && timedOutAfterMs === undefined && oldSource === undefined) return [];
+    return [{ key: `${originalIndex}-${String(result.agentId ?? "result")}`, metrics, toolStats, timedOutAfterMs, oldSource, newSource }];
+  });
 }
 
 function getProcessGroupSummary(groupMessages: Array<{ message: StreamMessage }>): string {
@@ -280,6 +334,34 @@ function CompactProcessRow({
   );
 }
 
+function StructuredProcessResultCard({ result }: { result: StructuredProcessResult }) {
+  return (
+    <div className="mt-2 space-y-2 rounded-[12px] border border-violet-100 bg-violet-50/55 px-3 py-2 text-xs text-violet-800">
+      {(result.metrics.length > 0 || result.toolStats.length > 0) && (
+        <div>
+          <div className="font-semibold">子 Agent 执行摘要</div>
+          {result.metrics.length > 0 && <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">{result.metrics.map((metric) => <span key={metric}>{metric}</span>)}</div>}
+          {result.toolStats.length > 0 && <div className="mt-1 opacity-80">{result.toolStats.join(" · ")}</div>}
+        </div>
+      )}
+      {result.timedOutAfterMs !== undefined && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-amber-800">
+          命令在 {formatDurationMs(result.timedOutAfterMs)} 后超时并转入后台。
+        </div>
+      )}
+      {result.oldSource !== undefined && (
+        <details className="rounded-lg border border-black/6 bg-white/70 px-2 py-1.5">
+          <summary className="cursor-pointer font-medium">Notebook 单元格变更</summary>
+          <div className="mt-2 grid gap-2 md:grid-cols-2">
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-red-50 p-2 text-[11px] text-red-800">{result.oldSource || "（空）"}</pre>
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-emerald-50 p-2 text-[11px] text-emerald-800">{result.newSource || "（已删除）"}</pre>
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
 function ChangePreviewPopover({
   changedFiles,
   summary,
@@ -502,10 +584,11 @@ const ProcessGroupCard = memo(function ProcessGroupCard({
   const [visibleProcessCount, setVisibleProcessCount] = useState(PROCESS_ROW_BATCH_SIZE);
   const summary = useMemo(() => getProcessGroupSummary(messages), [messages]);
   const generatedImages = useMemo(() => collectGeneratedImageResults(messages), [messages]);
+  const structuredResults = useMemo(() => collectStructuredProcessResults(messages), [messages]);
   const visibleProcessMessages = expanded ? messages.slice(0, visibleProcessCount) : [];
   const remainingProcessMessageCount = Math.max(0, messages.length - visibleProcessMessages.length);
 
-  if (!showProcessSummary && generatedImages.length === 0) {
+  if (!showProcessSummary && generatedImages.length === 0 && structuredResults.length === 0) {
     return null;
   }
 
@@ -547,6 +630,7 @@ const ProcessGroupCard = memo(function ProcessGroupCard({
           )}
         </>
       )}
+      {structuredResults.map((result) => <StructuredProcessResultCard key={result.key} result={result} />)}
       {generatedImages.map((result) => (
         <GeneratedImageResultCard
           key={result.artifacts.map((artifact) => artifact.path).join("\u0000")}

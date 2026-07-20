@@ -111,22 +111,28 @@ class FakeBrowserView {
 
 class FakeBrowserWindow {
   readonly webContents = { send: () => undefined };
+  destroyed = false;
+  removeBrowserViewCalls = 0;
 
   setBrowserView(): void {}
 
-  removeBrowserView(): void {}
+  removeBrowserView(): void {
+    if (this.destroyed) throw new TypeError("Object has been destroyed");
+    this.removeBrowserViewCalls += 1;
+  }
 
   isDestroyed(): boolean {
-    return false;
+    return this.destroyed;
   }
 }
 
 function createManagerHarness(initialUrl = "") {
   const view = new FakeBrowserView(initialUrl);
+  const window = new FakeBrowserWindow();
   const pendingSyncs = new Map<string, ReturnType<typeof deferred<CookieSyncOutcome>>>();
   const syncCalls: string[] = [];
   const manager = new BrowserWorkbenchManager(
-    new FakeBrowserWindow() as unknown as BrowserWindow,
+    window as unknown as BrowserWindow,
     undefined,
     {
       createView: () => view as unknown as BrowserView,
@@ -138,7 +144,7 @@ function createManagerHarness(initialUrl = "") {
       },
     },
   );
-  return { manager, pendingSyncs, syncCalls, webContents: view.webContents };
+  return { manager, pendingSyncs, syncCalls, webContents: view.webContents, window };
 }
 
 function resolveSync(
@@ -243,6 +249,23 @@ test("BrowserWorkbenchManager.close blocks a delayed same-URL cookie reload", as
   await settleNavigation();
 
   assert.equal(webContents.reloadCalls, 0);
+});
+
+test("BrowserWorkbenchManager.close is idempotent after its BrowserWindow is destroyed", async () => {
+  const { manager, pendingSyncs, webContents, window } = createManagerHarness();
+  const url = "https://example.test/a";
+
+  manager.open(url);
+  window.destroyed = true;
+
+  assert.doesNotThrow(() => manager.close());
+  assert.doesNotThrow(() => manager.close());
+  assert.equal(window.removeBrowserViewCalls, 0);
+  assert.equal(manager.hasLiveView(), false);
+
+  resolveSync(pendingSyncs, url, { imported: 0 });
+  await settleNavigation();
+  assert.deepEqual(webContents.loadCalls, []);
 });
 
 test("BrowserWorkbenchManager exposes the latest main-frame load failure", async () => {

@@ -47,4 +47,5 @@ test("non-empty terminal result becomes visible only after an unanswered tool ca
   assert.equal(getVisibleTerminalResultText(result, false), undefined);
   assert.equal(getVisibleTerminalResultText({ ...result, result: "  " }, true), undefined);
   assert.equal(getVisibleTerminalResultText({ ...result, subtype: "error" }, true), undefined);
+  assert.equal(getVisibleTerminalResultText({ ...result, terminal_reason: "budget_exhausted" }, true), undefined);
 });

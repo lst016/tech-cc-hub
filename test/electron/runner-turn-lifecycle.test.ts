@@ -37,7 +37,7 @@ test("runner reserves appended turns before preflight and gates terminal status 
   const reserveIndex = appendSource.indexOf("turnLifecycle.reserveAppendedTurn()");
   const attachmentWaitIndex = appendSource.indexOf("await nextAttachments");
   const preflightIndex = appendSource.indexOf("await ensureMcpServersForPrompt(");
-  const enqueueIndex = appendSource.indexOf("promptInput.enqueue(nextPrompt, resolvedNextAttachments)");
+  const enqueueIndex = appendSource.indexOf("promptInput.enqueue(nextPrompt, resolvedNextAttachments, nextPromptOrigin)");
   const rollbackIndex = appendSource.indexOf("turnLifecycle.cancelAppendedTurn()");
 
   assert.notEqual(appendStart, -1);

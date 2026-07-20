@@ -1,6 +1,6 @@
 import { execFile } from "child_process";
 import { existsSync, readdirSync } from "fs";
-import { delimiter, dirname, extname, isAbsolute, join } from "path";
+import { delimiter, dirname, extname, isAbsolute, join, posix } from "path";
 import { homedir } from "os";
 
 type CliEnv = Record<string, string | undefined>;
@@ -9,6 +9,7 @@ type RunExternalCliOptions = {
   timeout?: number;
   cwd?: string;
   env?: CliEnv;
+  maxBuffer?: number;
 };
 
 type PreparedExternalCliCommand = {
@@ -26,6 +27,18 @@ function uniqueExistingDirs(dirs: Array<string | undefined>): string[] {
   for (const dir of dirs) {
     const normalized = dir?.trim();
     if (!normalized || seen.has(normalized.toLowerCase()) || !existsSync(normalized)) continue;
+    seen.add(normalized.toLowerCase());
+    result.push(normalized);
+  }
+  return result;
+}
+
+function uniquePathEntries(dirs: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const dir of dirs) {
+    const normalized = dir?.trim();
+    if (!normalized || seen.has(normalized.toLowerCase())) continue;
     seen.add(normalized.toLowerCase());
     result.push(normalized);
   }
@@ -55,19 +68,49 @@ function getDefaultWindowsCliDirs(env: CliEnv): string[] {
   ]);
 }
 
-function splitPathEntries(env: CliEnv): string[] {
+function getDefaultDarwinCliDirs(env: CliEnv): string[] {
+  const home = env.HOME?.trim() || homedir();
+  return [
+    posix.join(home, ".local", "bin"),
+    posix.join(home, ".volta", "bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+  ];
+}
+
+function splitPathEntries(env: CliEnv, pathDelimiter = delimiter): string[] {
   return Object.entries(env)
     .filter(([key]) => key.toLowerCase() === "path")
     .map(([, value]) => value)
     .filter((value): value is string => Boolean(value))
-    .join(delimiter)
-    .split(delimiter)
+    .join(pathDelimiter)
+    .split(pathDelimiter)
     .map((entry) => entry.trim())
     .filter(Boolean);
 }
 
-export function buildExternalCliEnv(env: CliEnv = process.env): NodeJS.ProcessEnv {
-  if (process.platform !== "win32") {
+export function buildExternalCliEnv(
+  env: CliEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  if (platform === "darwin") {
+    const normalizedEnv = { ...env };
+    for (const key of Object.keys(normalizedEnv)) {
+      if (key.toLowerCase() === "path") {
+        delete normalizedEnv[key];
+      }
+    }
+    const pathEntries = uniquePathEntries([
+      ...splitPathEntries(env, ":"),
+      ...getDefaultDarwinCliDirs(env),
+    ]);
+    return {
+      ...normalizedEnv,
+      PATH: pathEntries.join(":"),
+    } as NodeJS.ProcessEnv;
+  }
+
+  if (platform !== "win32") {
     return { ...env } as NodeJS.ProcessEnv;
   }
 
@@ -88,6 +131,16 @@ export function buildExternalCliEnv(env: CliEnv = process.env): NodeJS.ProcessEn
     ...normalizedEnv,
     Path: pathEntries.join(delimiter),
   } as NodeJS.ProcessEnv;
+}
+
+export function buildExternalCliStringEnv(
+  env: CliEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string> {
+  const mergedEnv = buildExternalCliEnv(env, platform);
+  return Object.fromEntries(
+    Object.entries(mergedEnv).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
 }
 
 function hasPathSeparator(command: string): boolean {
@@ -175,6 +228,7 @@ export function runExternalCli(command: string, args: string[], options: RunExte
       timeout: options.timeout,
       cwd: options.cwd,
       env: prepared.env,
+      maxBuffer: options.maxBuffer,
       windowsVerbatimArguments: prepared.windowsVerbatimArguments,
       windowsHide: true,
     }, (error, stdout, stderr) => {

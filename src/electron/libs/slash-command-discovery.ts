@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, readdirSync } from "fs";
-import { extname, join, relative } from "path";
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "fs";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "path";
 
 import { mergeSlashCommandLists } from "../../shared/slash-commands.js";
 
@@ -11,6 +11,7 @@ export type SlashCommandRoots = Partial<Record<"system" | "user" | "project", st
 export type SlashCommandItem = {
   name: string;
   description?: string;
+  icon?: string;
   source?: "claude-code-compat" | "claude-code-builtin" | "local" | "message";
   aliasOf?: string;
 };
@@ -46,6 +47,16 @@ const IGNORED_SCAN_DIRS = new Set([
 const DISCOVERY_CACHE_TTL_MS = 10_000;
 const MAX_DISCOVERY_FILES = 1_000;
 const MAX_DISCOVERY_DIRS = 2_000;
+const MAX_SKILL_ICON_BYTES = 64 * 1_024;
+const SKILL_ICON_MIME_TYPES = new Map([
+  [".gif", "image/gif"],
+  [".ico", "image/x-icon"],
+  [".jpeg", "image/jpeg"],
+  [".jpg", "image/jpeg"],
+  [".png", "image/png"],
+  [".svg", "image/svg+xml"],
+  [".webp", "image/webp"],
+]);
 
 type DiscoveryCacheEntry = {
   items: SlashCommandItem[] | undefined;
@@ -155,9 +166,11 @@ function mergeSlashCommandItems(commandNames: string[], commandItems: SlashComma
     const key = name.toLowerCase();
     const existing = merged.get(key);
     const description = item.description?.trim();
+    const icon = item.icon?.trim();
     merged.set(key, {
       name: existing?.name ?? name,
       description: existing?.description || description || undefined,
+      icon: existing?.icon || icon || undefined,
     });
   }
 
@@ -216,11 +229,14 @@ function discoverSkillDefinitionItemsInSkillRoot(skillsRoot: string): SkillDefin
 
   const items: SkillDefinitionItem[] = [];
   for (const filePath of walkSkillDefinitionFiles(skillsRoot)) {
-    const commandName = commandNameFromSkillPath(skillsRoot, filePath);
+    const metadata = readSlashCommandMetadata(filePath);
+    const commandName = normalizeCommandName(metadata.name ?? "")
+      ?? commandNameFromSkillPath(skillsRoot, filePath);
     if (commandName) {
       items.push({
         name: commandName,
-        description: readSlashCommandDescription(filePath),
+        description: metadata.description,
+        icon: readSkillIconDataUrl(filePath),
         filePath,
         definitionKind: "skill",
       });
@@ -261,16 +277,88 @@ function discoverNestedSkillRoots(rootPath: string, maxDepth = 5): string[] {
 }
 
 function readSlashCommandDescription(filePath: string): string | undefined {
+  return readSlashCommandMetadata(filePath).description;
+}
+
+function readSlashCommandMetadata(filePath: string): { name?: string; description?: string } {
   try {
     const content = readFileSync(filePath, "utf8");
-    const frontmatter = content.match(/^---\s*\n([\s\S]*?)\n---/);
+    const frontmatter = content.match(
+      /^(?:\uFEFF)?---[^\S\r\n]*\r?\n([\s\S]*?)\r?\n---(?:[^\S\r\n]*(?:\r?\n|$))/,
+    );
     if (frontmatter) {
-      return readFrontmatterDescription(frontmatter[1]);
+      return {
+        name: readFrontmatterName(frontmatter[1]),
+        description: readFrontmatterDescription(frontmatter[1]),
+      };
     }
-    return undefined;
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+function readFrontmatterName(frontmatter: string): string | undefined {
+  for (const line of frontmatter.split(/\r?\n/)) {
+    const inline = line.match(/^name:\s*(.*)$/);
+    if (inline) {
+      return cleanupDescription(inline[1]);
+    }
+  }
+  return undefined;
+}
+
+function readSkillIconDataUrl(skillFilePath: string): string | undefined {
+  const skillDir = dirname(skillFilePath);
+  const interfacePath = join(skillDir, "agents", "openai.yaml");
+  if (!existsSync(interfacePath)) return undefined;
+
+  let interfaceYaml: string;
+  try {
+    interfaceYaml = readFileSync(interfacePath, "utf8");
   } catch {
     return undefined;
   }
+
+  const iconPaths = ["icon_small", "icon_large"]
+    .map((field) => readYamlStringField(interfaceYaml, field))
+    .filter((value): value is string => Boolean(value));
+
+  for (const iconPath of iconPaths) {
+    try {
+      if (isAbsolute(iconPath)) continue;
+      const resolvedIconPath = resolve(skillDir, iconPath);
+      if (!isPathWithin(skillDir, resolvedIconPath) || !existsSync(resolvedIconPath)) continue;
+
+      const realSkillDir = realpathSync(skillDir);
+      const realIconPath = realpathSync(resolvedIconPath);
+      if (!isPathWithin(realSkillDir, realIconPath)) continue;
+
+      const mimeType = SKILL_ICON_MIME_TYPES.get(extname(realIconPath).toLowerCase());
+      const iconStat = statSync(realIconPath);
+      if (!mimeType || !iconStat.isFile() || iconStat.size <= 0 || iconStat.size > MAX_SKILL_ICON_BYTES) continue;
+
+      return `data:${mimeType};base64,${readFileSync(realIconPath).toString("base64")}`;
+    } catch {
+      // A missing or unreadable small icon should not prevent falling back to icon_large.
+    }
+  }
+
+  return undefined;
+}
+
+function readYamlStringField(yaml: string, field: string): string | undefined {
+  const match = yaml.match(new RegExp(`^\\s*${field}:\\s*(.*?)\\s*$`, "m"));
+  const value = cleanupDescription(match?.[1]);
+  return value && value !== "null" ? value : undefined;
+}
+
+function isPathWithin(rootPath: string, candidatePath: string): boolean {
+  const relativePath = relative(rootPath, candidatePath);
+  return relativePath.length > 0
+    && relativePath !== ".."
+    && !relativePath.startsWith(`..${sep}`)
+    && !isAbsolute(relativePath);
 }
 
 function readFrontmatterDescription(frontmatter: string): string | undefined {

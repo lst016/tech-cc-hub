@@ -5,6 +5,7 @@ import {
   createBokeGatewayProfile,
   createMiniMaxOfficialProfile,
   createDeepSeekOfficialProfile,
+  getAutomaticRoutedModelOptionsForProfiles,
   getAvailableModelsForProfiles,
   getEnabledProfiles,
   getImageGenerationModelsForProfiles,
@@ -371,7 +372,7 @@ test("composer model control uses real configured models in the merged white men
   const composerModelMenuSource = readFileSync("src/ui/components/prompt-input/ComposerModelMenu.tsx", "utf8");
 
   assert.match(promptFooterSource, /import \{ ComposerModelMenu \} from "\.\/ComposerModelMenu"/);
-  assert.match(promptInputSource, /getRoutedModelOptionsForProfiles/);
+  assert.match(promptInputSource, /getAutomaticRoutedModelOptionsForProfiles/);
   assert.match(promptInputSource, /modelOptions=\{modelSelectOptions\}/);
   assert.match(promptInputSource, /onModelChange=\{handleRuntimeModelChange\}/);
   assert.match(promptInputSource, /reasoningMode=\{reasoningMode\}/);
@@ -560,7 +561,7 @@ test("minimax provider routes only minimax models and resolves casing", () => {
   ];
 
   const availableModels = getAvailableModelsForProfiles(getEnabledProfiles(profiles));
-  assert.equal(resolveAvailableModelName("minimax-m3", availableModels), "minimax-m3");
+  assert.equal(resolveAvailableModelName("minimax-m3", availableModels), "MiniMax-M3");
   assert.equal(resolveAvailableModelName("MiniMax-M3", availableModels), "MiniMax-M3");
   assert.equal(resolveAvailableModelName("minimax-m3", ["MiniMax-M3"]), "MiniMax-M3");
 
@@ -570,8 +571,36 @@ test("minimax provider routes only minimax models and resolves casing", () => {
   assert.equal(officialOption?.profileId, "official-minimax");
   assert.equal(officialOption?.provider, "minimax");
   assert.equal(officialOption?.contextWindow, 1_000_000);
-  assert.equal(gatewayOption?.profileId, "gateway");
-  assert.equal(gatewayOption?.provider, "custom");
+  assert.equal(gatewayOption, undefined);
+
+  const deploymentOptions = getModelDeploymentOptionsForProfiles(getEnabledProfiles(profiles));
+  assert.equal(deploymentOptions.find((option) => option.value === "minimax-m3")?.profileId, "gateway");
+});
+
+test("automatic routing excludes managed models that are not assigned to a route slot", () => {
+  const profile = {
+    id: "minimax",
+    name: "MiniMax Official",
+    apiKey: "sk-cp-test",
+    baseURL: "https://api.minimaxi.com/anthropic",
+    model: "MiniMax-M2.7",
+    expertModel: "MiniMax-M2.7",
+    smallModel: "MiniMax-M2.7",
+    analysisModel: "MiniMax-M2.7",
+    models: [
+      { name: "MiniMax-M2.7" },
+      { name: "MiniMax-M3", routingWeight: 100 },
+    ],
+    enabled: true,
+    provider: "minimax" as const,
+    apiType: "anthropic" as const,
+  };
+
+  const catalogOptions = getRoutedModelOptionsForProfiles([profile]);
+  const automaticOptions = getAutomaticRoutedModelOptionsForProfiles([profile]);
+  assert.equal(catalogOptions.some((option) => option.value === "MiniMax-M3"), true);
+  assert.equal(automaticOptions.some((option) => option.value === "MiniMax-M3"), false);
+  assert.deepEqual(automaticOptions.map((option) => option.value), ["MiniMax-M2.7"]);
 });
 
 test("routed model options expose the platform owner selected by routing weight", () => {

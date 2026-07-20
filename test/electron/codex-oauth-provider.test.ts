@@ -384,6 +384,19 @@ test("codex streaming responses are folded into anthropic-compatible output", ()
   assert.equal(message.usage.output_tokens, 5);
 });
 
+test("codex completed responses without assistant output remain a valid empty success", () => {
+  const response = toAnthropicMessageResponse({
+    id: "resp_empty",
+    model: "gpt-5.6-sol",
+    output: [],
+    usage: { input_tokens: 12, output_tokens: 0 },
+  }, "gpt-5.6-sol");
+
+  assert.equal(response.stop_reason, "end_turn");
+  assert.deepEqual(response.content, [{ type: "text", text: "" }]);
+  assert.deepEqual(response.usage, { input_tokens: 12, output_tokens: 0 });
+});
+
 test("codex settings use the bundled runtime plus manual credential fallback", () => {
   const source = readFileSync("src/ui/components/settings/ApiProfilesSettingsPage.tsx", "utf8");
   const mainSource = readFileSync("src/electron/main.ts", "utf8");

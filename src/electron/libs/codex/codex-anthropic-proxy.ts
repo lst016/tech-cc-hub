@@ -376,8 +376,18 @@ async function streamCodexResponse(
       completeResponse(payload.response);
       return;
     }
-    if (type === "response.failed" || type === "error") {
-      throw new Error(readString(payload.error) || readString(payload.message) || "Codex upstream response failed.");
+    if (type === "response.failed" || type === "response.incomplete" || type === "error") {
+      const responsePayload = isRecord(payload.response) ? payload.response : payload;
+      const errorPayload = isRecord(responsePayload.error) ? responsePayload.error : undefined;
+      const incompleteDetails = isRecord(responsePayload.incomplete_details)
+        ? responsePayload.incomplete_details
+        : undefined;
+      throw new Error(
+        readString(errorPayload?.message)
+          || readString(payload.message)
+          || readString(incompleteDetails?.reason)
+          || `Codex upstream ${type === "response.incomplete" ? "response was incomplete" : "response failed"}.`,
+      );
     }
   };
 

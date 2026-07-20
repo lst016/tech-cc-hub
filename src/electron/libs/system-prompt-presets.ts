@@ -147,14 +147,14 @@ export function buildClaudeCode2139FeaturePromptAppend(
 export function buildDesignParityPromptAppend(): string {
   return [
     ...FIGMA_COMPONENT_DEVELOPMENT_WORKFLOW_HINTS,
-    "Figma visual-first rule: for UI implementation, use figma_list_node_index to narrow the node, figma_export_node_images to save a local image, then design_inspect_image on the returned imagePath before coding from JSON.",
-    "Figma reference-lock rule: before editing files, lock one reference tuple: Figma nodeId + exported local imagePath + design_inspect_image qualityGate.confidence >= 0.75 + the DOM target selector/region to repair. Compare and iterate against that same locked tuple.",
+    "Figma visual-first rule: for UI implementation, use figma_list_node_index to narrow the node and figma_export_node_images to save a local image. A multimodal main model may inspect that image directly; a text-only main model must use design_inspect_image before coding from JSON.",
+    "Figma reference-lock rule: before editing files, lock one reference tuple: Figma nodeId + exported local imagePath + visual evidence + the DOM target selector/region to repair. Direct multimodal inspection is valid; a text-only main model still requires design_inspect_image qualityGate.confidence >= 0.75. Compare and iterate against that same locked tuple.",
     "Figma wrong-reference recovery rule: if the first visual diff is mostly full-page, the diff worsens after an edit, aspect/size is far off, or the agent realizes the reference was cropped from the wrong node, stop patching and relock the reference with figma_list_node_index / figma_match_ui_nodes / figma_export_node_images.",
     "Figma 90% acceptance rule: after implementing, capture the target component and run design_compare_element_to_reference or design_compare_current_view with maxDifferenceRatio <= 0.10. If the report verdict fails or is invalid, keep iterating unless a real blocker remains.",
     "Element-level visual diff rule: when a selector/ref/xpath is known, use design_compare_element_to_reference instead of full-page comparison so the VLM/code loop patches the exact DOM region.",
     "Semantic visual diff rule: when the reference/candidate contains charts, Sankey diagrams, tables, labels, values, or flow topology, run design_compare_images_semantic after pixel diff and patch critical topology/text/value issues before styling details.",
-    "设计还原规则：只要用户提供截图、Figma 图、页面参考图，并要求生成或修改 UI/前端代码，必须优先使用内置设计 MCP 工具。",
-    "设计还原/视觉比对场景中，如果当前轮包含用户上传/粘贴的单张参考图，第一步必须调用 `design_inspect_image` 读取结构化视觉摘要；普通图像问答可由支持多模态的主模型直接读取图片。不要把同一张图传给 `design_compare_images` 的 reference 和 candidate。",
+    "设计还原规则：用户提供截图、Figma 图或页面参考图并要求生成或修改 UI/前端代码时，支持多模态的主模型可以直接分析参考图；纯文本主模型必须优先使用内置设计 MCP 工具。",
+    "设计还原/视觉比对场景中，如果当前轮包含用户上传或粘贴的单张参考图，多模态主模型可以直接读取，`design_inspect_image` 作为结构化摘要或增强视觉判断的可选工具；纯文本主模型第一步必须调用 `design_inspect_image`。不要把同一张图传给 `design_compare_images` 的 reference 和 candidate。",
     "`design_capture_current_view` 可将当前 BrowserView 截图保存成 PNG；`design_compare_current_view` / `design_compare_images` 会返回当前截图、diff 图、三栏 comparison 图、JSON report、差异比例、差异边界、topDiffRegions 和 verdict；批量场景用 `design_compare_current_view_batch` / `design_compare_images_batch`。",
     "已有 JSON report 路径时用 `design_read_comparison_report` 复查差异和验收结论；需要找回最近视觉产物时用 `design_list_artifacts`，不要让用户手动翻目录。",
     "视觉比照时可按需设置 `ignoreRegions` 忽略时间戳/头像/动画等动态区域，设置 `maxDifferenceRatio` 形成通过/失败结论，文字抗锯齿噪声较多时可开启 `ignoreAntialiasing`，需要区分变亮/变暗时用 `diffColorMode: directional`。",

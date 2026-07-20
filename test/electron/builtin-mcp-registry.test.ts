@@ -102,7 +102,7 @@ test("built-in MCP registry contains displayable tool metadata", () => {
 });
 
 test("built-in MCP registry tool names stay unique", () => {
-  const toolNames = listBuiltinMcpToolNames();
+  const toolNames = listBuiltinMcpToolNames({ platform: "win32" });
   const uniqueToolNames = new Set(toolNames);
 
   assert.equal(uniqueToolNames.size, toolNames.length);
@@ -125,8 +125,20 @@ test("built-in MCP registry tool names stay unique", () => {
   assert.equal(toolNames.includes("image_generate"), true);
 });
 
+test("built-in MCP registry hides Windows-only IDEA tools on macOS", () => {
+  const toolNames = listBuiltinMcpToolNames({ platform: "darwin" });
+
+  assert.equal(toolNames.includes("idea_status"), true);
+  assert.equal(toolNames.includes("idea_open"), true);
+  assert.equal(toolNames.includes("idea_run"), true);
+  assert.equal(toolNames.includes("idea_restart"), false);
+  assert.equal(toolNames.includes("idea_read_logs"), false);
+  assert.equal(toolNames.includes("idea_focus"), true);
+  assert.equal(toolNames.includes("idea_wait_ready"), true);
+});
+
 test("built-in MCP prompt hints are sourced from the registry", () => {
-  const hints = buildBuiltinMcpPromptHints();
+  const hints = buildBuiltinMcpPromptHints(undefined, { platform: "win32" });
 
   assert.match(hints, /mcp__tech-cc-hub-idea__idea_status/);
   assert.match(hints, /mcp__tech-cc-hub-idea__idea_wait_ready/);
@@ -136,6 +148,15 @@ test("built-in MCP prompt hints are sourced from the registry", () => {
   assert.match(hints, /正在运行的日志/);
   assert.match(hints, /Only use mcp__tech-cc-hub-idea__idea_run when the user explicitly asks/);
   assert.match(hints, /java -jar/);
+});
+
+test("built-in MCP prompt hints avoid Windows-only IDEA routing on macOS", () => {
+  const hints = buildBuiltinMcpPromptHints(undefined, { platform: "darwin" });
+
+  assert.match(hints, /mcp__tech-cc-hub-idea__idea_status/);
+  assert.match(hints, /mcp__tech-cc-hub-idea__idea_wait_ready/);
+  assert.doesNotMatch(hints, /mcp__tech-cc-hub-idea__idea_restart/);
+  assert.doesNotMatch(hints, /mcp__tech-cc-hub-idea__idea_read_logs/);
 });
 
 test("built-in Figma MCP hints include the child component development workflow", () => {

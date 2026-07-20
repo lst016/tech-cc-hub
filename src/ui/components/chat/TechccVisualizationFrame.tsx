@@ -6,7 +6,7 @@ import {
   type TechccVisualizationLaunch,
 } from "../../../shared/techcc-visualization-protocol";
 
-export type InlineVisualizationCardProps = {
+export type TechccVisualizationFrameProps = {
   sessionId: string;
   fileName: string;
   title: string;
@@ -14,11 +14,7 @@ export type InlineVisualizationCardProps = {
   reloadKey?: string | number;
 };
 
-type TechccVisualizationFrameProps = {
-  sessionId: string;
-  fileName: string;
-  title: string;
-  onFollowUp?: InlineVisualizationCardProps["onFollowUp"];
+type VisualizationFrameInstanceProps = Omit<TechccVisualizationFrameProps, "reloadKey"> & {
   onReload: () => void;
 };
 
@@ -38,13 +34,13 @@ function createTechccVisualizationFrameKey(
   return `${String(reloadKey)}:${reloadAttempt}:${(hash >>> 0).toString(36)}`;
 }
 
-function TechccVisualizationFrame({
+function VisualizationFrameInstance({
   sessionId,
   fileName,
   title,
   onFollowUp,
   onReload,
-}: TechccVisualizationFrameProps) {
+}: VisualizationFrameInstanceProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [height, setHeight] = useState(MIN_TECHCC_VISUALIZATION_HEIGHT);
   const [isLoading, setIsLoading] = useState(true);
@@ -119,7 +115,7 @@ function TechccVisualizationFrame({
   };
 
   return (
-    <div className="relative bg-transparent" style={{ minHeight: MIN_TECHCC_VISUALIZATION_HEIGHT }}>
+    <div className="relative h-full min-h-full bg-transparent" style={{ minHeight: MIN_TECHCC_VISUALIZATION_HEIGHT }}>
       {launch ? (
         <iframe
           ref={iframeRef}
@@ -133,7 +129,7 @@ function TechccVisualizationFrame({
             setError("交互视图加载失败。");
           }}
           className="block w-full border-0 bg-transparent transition-[height] duration-150"
-          style={{ height }}
+          style={{ height, minHeight: "100%" }}
         />
       ) : null}
       {isLoading ? (
@@ -145,7 +141,7 @@ function TechccVisualizationFrame({
         <div
           role="alertdialog"
           aria-label="确认发送后续问题"
-          className="flex flex-col gap-3 border-t border-black/8 bg-violet-50/80 px-4 py-3 sm:flex-row sm:items-center"
+          className="absolute inset-x-0 bottom-0 flex flex-col gap-3 border-t border-black/8 bg-violet-50/95 px-4 py-3 shadow-[0_-8px_24px_rgba(76,29,149,0.08)] sm:flex-row sm:items-center"
         >
           <div className="min-w-0 flex-1">
             <p className="text-xs font-semibold text-violet-900">
@@ -188,13 +184,13 @@ function TechccVisualizationFrame({
   );
 }
 
-export const InlineVisualizationCard = memo(function InlineVisualizationCard({
+export const TechccVisualizationFrame = memo(function TechccVisualizationFrame({
   sessionId,
   fileName,
   title,
   onFollowUp,
   reloadKey = 0,
-}: InlineVisualizationCardProps) {
+}: TechccVisualizationFrameProps) {
   const [reloadAttempt, setReloadAttempt] = useState(0);
   const frameKey = useMemo(
     () => createTechccVisualizationFrameKey(sessionId, fileName, title, reloadKey, reloadAttempt),
@@ -203,29 +199,13 @@ export const InlineVisualizationCard = memo(function InlineVisualizationCard({
   const reload = () => setReloadAttempt((attempt) => attempt + 1);
 
   return (
-    <section
-      className="overflow-hidden rounded-2xl border border-black/8 bg-white/90 shadow-[0_10px_30px_rgba(15,23,42,0.07)]"
-      aria-label={title}
-      data-techcc-visualization={fileName}
-    >
-      <div className="flex min-w-0 items-center gap-3 border-b border-black/6 px-4 py-3">
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink-800">{title}</span>
-        <button
-          type="button"
-          onClick={reload}
-          className="rounded-lg border border-black/10 px-2.5 py-1 text-xs font-semibold text-ink-700 transition hover:border-accent/30 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
-        >
-          重新加载
-        </button>
-      </div>
-      <TechccVisualizationFrame
-        key={frameKey}
-        sessionId={sessionId}
-        fileName={fileName}
-        title={title}
-        onFollowUp={onFollowUp}
-        onReload={reload}
-      />
-    </section>
+    <VisualizationFrameInstance
+      key={frameKey}
+      sessionId={sessionId}
+      fileName={fileName}
+      title={title}
+      onFollowUp={onFollowUp}
+      onReload={reload}
+    />
   );
 });

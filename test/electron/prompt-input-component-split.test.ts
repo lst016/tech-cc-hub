@@ -5,6 +5,7 @@ import test from "node:test";
 const promptInputPath = "src/ui/components/prompt-input/PromptInput.tsx";
 const palettesPath = "src/ui/components/prompt-input/PromptComposerPalettes.tsx";
 const footerPath = "src/ui/components/prompt-input/PromptComposerFooter.tsx";
+const promptActionsPath = "src/ui/components/prompt-input/usePromptActions.ts";
 
 test("PromptInput composes low-risk presentational children", () => {
   assert.ok(existsSync(palettesPath), "palette components should live outside PromptInput");
@@ -13,6 +14,7 @@ test("PromptInput composes low-risk presentational children", () => {
   const promptInput = readFileSync(promptInputPath, "utf8");
   const palettes = readFileSync(palettesPath, "utf8");
   const footer = readFileSync(footerPath, "utf8");
+  const promptActions = readFileSync(promptActionsPath, "utf8");
 
   assert.match(promptInput, /<SlashCommandPalette/);
   assert.match(promptInput, /<FileMentionPalette/);
@@ -20,6 +22,9 @@ test("PromptInput composes low-risk presentational children", () => {
   assert.doesNotMatch(promptInput, /filteredSlashCommands\.map/);
   assert.doesNotMatch(promptInput, /prompt-composer-footer mt-2/);
   assert.match(palettes, /filteredCommands\.map/);
+  assert.match(palettes, /command\.icon/);
+  assert.match(palettes, /src=\{command\.icon\}/);
   assert.match(palettes, /fileMentionOptions\.map/);
   assert.match(footer, /<ComposerModelMenu/);
+  assert.match(promptActions, /activeSession\?\.slashCommandDetails/);
 });

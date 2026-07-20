@@ -7,6 +7,10 @@ import {
   findCodexOAuthDeepLink,
   parseCodexOAuthDeepLink,
 } from "../../src/electron/libs/codex/codex-deep-link.js";
+import {
+  findWooAuthDeepLink,
+  parseWooAuthDeepLink,
+} from "../../src/electron/libs/woo/woo-deep-link.js";
 
 test("Codex OAuth handoff uses the registered tech-cc-hub protocol without credentials", () => {
   assert.equal(CODEX_OAUTH_DEEP_LINK_SCHEME, "tech-cc-hub");
@@ -40,6 +44,15 @@ test("Codex OAuth deep links are discovered in packaged Windows argv", () => {
     "--some-electron-flag",
     "tech-cc-hub://oauth/codex?attempt_id=a&profile_id=p&result=completed",
   ]), { attemptId: "a", profileId: "p" });
+});
+
+test("Woo callbacks accept only a state and completion result", () => {
+  const callback = "tech-cc-hub://woo/auth/callback?state=attempt-123&result=completed";
+  assert.deepEqual(parseWooAuthDeepLink(callback), { state: "attempt-123", result: "completed" });
+  assert.deepEqual(findWooAuthDeepLink(["tech-cc-hub.exe", callback]), { state: "attempt-123", result: "completed" });
+  assert.equal(parseWooAuthDeepLink("tech-cc-hub://woo/auth/callback?state=attempt-123&result=completed&access_token=secret"), null);
+  assert.equal(parseWooAuthDeepLink("tech-cc-hub://woo/auth/other?state=attempt-123&result=completed"), null);
+  assert.equal(parseWooAuthDeepLink("tech-cc-hub://woo/auth/callback?state=&result=completed"), null);
 });
 
 test("Windows and macOS packaging wire the tech-cc-hub protocol handoff", () => {

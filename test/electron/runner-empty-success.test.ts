@@ -15,7 +15,7 @@ test("runner resets empty-success tracking for each warm appended prompt", () =>
   const beginNextTurnStart = runnerSource.indexOf("const beginNextTurn = () =>");
   const beginNextTurnEnd = runnerSource.indexOf("const restoreCompletedStatusAfterCancelledAppend", beginNextTurnStart);
   const beginNextTurnSource = runnerSource.slice(beginNextTurnStart, beginNextTurnEnd);
-  assert.match(beginNextTurnSource, /emittedSuccessfulResult = false;\s*emittedTerminalStatus = false;\s*observedAssistantTextActivity = false;\s*awaitingVisiblePostToolResponse = false;\s*emptySuccessAutoRetries = 0;\s*unfinishedPlanAutoRetries = 0;/);
+  assert.match(beginNextTurnSource, /emittedSuccessfulResult = false;\s*emittedTerminalStatus = false;[\s\S]*observedAssistantTextActivity = false;\s*awaitingVisiblePostToolResponse = false;\s*unfinishedPlanAutoRetries = 0;/);
 
   const appendStart = runnerSource.indexOf("appendPrompt: async (");
   const appendEnd = runnerSource.indexOf("stopTask: async", appendStart);
@@ -24,7 +24,7 @@ test("runner resets empty-success tracking for each warm appended prompt", () =>
 });
 
 test("runner reports a missing terminal result instead of silently completing", () => {
-  assert.match(runnerSource, /const errorMessage = "Runner ended without a result message\.";/);
+  assert.match(runnerSource, /const errorMessage = getUnexpectedRunnerEndMessage\(backgroundLifecycle\.isActive\(\)\);/);
   assert.match(runnerSource, /type: "runner\.error"/);
   assert.match(runnerSource, /status: "error", title: session\.title, error: errorMessage/);
 });
@@ -53,8 +53,28 @@ test("runner pauses inactivity monitoring while AskUserQuestion waits for a resp
 
 test("runner emits a visible assistant fallback for an empty successful result", () => {
   assert.match(runnerSource, /function buildEmptySuccessFallbackMessage\(sessionId: string, model\?: string\): SDKMessage/);
-  assert.match(runnerSource, /本轮工具执行已完成，但模型没有返回文字说明。/);
+  assert.match(runnerSource, /下一次发送消息将自动使用压缩历史创建新的 provider 会话。/);
   assert.match(runnerSource, /if \(emptySuccess\) \{\s*sendMessage\(buildEmptySuccessFallbackMessage/);
+});
+
+test("runner ignores auxiliary results before classifying an empty foreground success", () => {
+  const resultStart = runnerSource.indexOf('if (message.type === "result")');
+  const originGuardIndex = runnerSource.indexOf(
+    "if (!isRunnerResultForPromptOrigin(message, currentPromptOrigin))",
+    resultStart,
+  );
+  const emptySuccessIndex = runnerSource.indexOf("const emptySuccess =", resultStart);
+  const guardSource = runnerSource.slice(originGuardIndex, emptySuccessIndex);
+
+  assert.ok(resultStart >= 0 && originGuardIndex > resultStart && emptySuccessIndex > originGuardIndex);
+  assert.match(guardSource, /sendMessage\(message\);\s*continue;/);
+  assert.doesNotMatch(guardSource, /promptInput\.close\(\)|q\.close\(\)/);
+});
+
+test("runner leaves empty-response retry ownership to SDK and never amplifies it", () => {
+  assert.doesNotMatch(runnerSource, /EMPTY_SUCCESS_RETRY_PROMPT/);
+  assert.doesNotMatch(runnerSource, /empty-success-auto-retry/);
+  assert.match(runnerSource, /const emptySuccess =[\s\S]*shouldAutoContinueUnfinishedPlan\(message,/);
 });
 
 test("runner emits non-empty terminal result text after an unanswered tool call", () => {
@@ -64,5 +84,5 @@ test("runner emits non-empty terminal result text after an unanswered tool call"
 
 test("runner continues instead of completing while its latest plan has unfinished steps", () => {
   assert.match(runnerSource, /hasIncompletePlan\(session\.planSnapshot\?\.plan\)/);
-  assert.match(runnerSource, /promptInput\.enqueue\(UNFINISHED_PLAN_CONTINUATION_PROMPT, \[\]\);/);
+  assert.match(runnerSource, /promptInput\.enqueue\(UNFINISHED_PLAN_CONTINUATION_PROMPT, \[\], \{ kind: "auto-continuation" \}\);/);
 });

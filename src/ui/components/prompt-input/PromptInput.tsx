@@ -52,6 +52,7 @@ import {
 import {
   buildQueuedDisplayPrompt,
   buildQueuedPrompt,
+  findLatestQueuedForkPoint,
   mergeQueuedAttachments,
   readQueuedMessagesFromStorage,
   writeQueuedMessagesToStorage,
@@ -63,11 +64,13 @@ import {
 import {
   ADD_PROMPT_ATTACHMENT_EVENT,
   PROMPT_APPEND_RESULT_EVENT,
+  PROMPT_FORK_RESULT_EVENT,
   PROMPT_FOCUS_EVENT,
   PROMPT_SENT_EVENT,
   PROMPT_SUBMIT_EVENT,
   type AddPromptAttachmentDetail,
   type PromptAppendResultDetail,
+  type PromptForkResultDetail,
 } from "../../events";
 import { DecisionPanel } from "../DecisionPanel";
 import { CurrentSessionPlanDock } from "../CurrentSessionPlanDock";
@@ -94,10 +97,11 @@ import {
   type ImageGenerationConfig,
 } from "./image-generation-plugin";
 import { VISUALIZATION_PLUGIN_TOKEN } from "./visualization-plugin";
+import { areModelNamesEquivalent } from "../../../shared/models/model-provider-routing";
 import {
   getEnabledProfiles,
+  getAutomaticRoutedModelOptionsForProfiles,
   getModelDeploymentOptionsForProfiles,
-  getRoutedModelOptionsForProfiles,
   resolveAvailableModelName,
 } from "../settings/settings-utils";
 import { incrementModelUsage } from "./model-usage-count";
@@ -109,7 +113,7 @@ const MAX_HEIGHT = MAX_ROWS * LINE_HEIGHT;
 const EXPANDED_MAX_HEIGHT = "70vh";
 const IME_ENTER_GRACE_MS = 120;
 const FILE_MENTION_PREVIEW_LIMIT = 10;
-const COMPOSER_SURFACE_WIDTH_CLASS = "w-full min-w-[min(430px,_100%)] max-w-[820px]";
+const COMPOSER_SURFACE_WIDTH_CLASS = "w-full min-w-[min(430px,_100%)] max-w-[clamp(820px,_calc(100vw-420px),_1120px)]";
 const EMPTY_CODE_REFERENCES: CodeReferenceDraft[] = [];
 const EMPTY_FILE_REFERENCES: FileReferenceDraft[] = [];
 const EMPTY_MESSAGE_REFERENCES: MessageReferenceDraft[] = [];
@@ -200,6 +204,13 @@ export type PromptInputController = {
       agentPrompt?: string;
     },
   ) => Promise<boolean>;
+  forkPromptDraft?: (
+    upToMessageId: string,
+    requestId: string,
+    prompt: string,
+    attachments?: PromptAttachment[],
+    options?: { agentPrompt?: string },
+  ) => Promise<boolean>;
   validatePromptDraft: (prompt: string) => string | null;
 };
 
@@ -250,6 +261,12 @@ export function PromptInput({
     const session = state.sessions[storeActiveSessionId] ?? state.archivedSessions[storeActiveSessionId];
     return session?.title ?? "";
   });
+  const storeQueuedForkPointMessageId = useAppStore((state) => {
+    const sessionId = state.activeSessionId;
+    if (!sessionId) return null;
+    const session = state.sessions[sessionId] ?? state.archivedSessions[sessionId];
+    return findLatestQueuedForkPoint(session?.messages ?? []);
+  });
   const activeGoal = controller ? undefined : storeActiveGoal;
   const activeSessionPlan = controller ? undefined : storeActiveSessionPlan;
   const activeSessionPlanTitle = controller ? "" : storeActiveSessionPlanTitle;
@@ -259,7 +276,8 @@ export function PromptInput({
     { workspaceCwd: selectedWorkspaceCwd },
   );
   const promptActions = controller ?? sessionPromptActions;
-  const { prompt, setPrompt, isRunning, handleStop, slashCommands, activeSessionId, browserAnnotations, sendPromptDraft, validatePromptDraft } = promptActions;
+  const { prompt, setPrompt, isRunning, handleStop, slashCommands, activeSessionId, browserAnnotations, sendPromptDraft, forkPromptDraft, validatePromptDraft } = promptActions;
+  const queuedForkPointMessageId = controller ? null : storeQueuedForkPointMessageId;
   const appSetBrowserAnnotations = useAppStore((state) => state.setBrowserAnnotations);
   const appSetBrowserWorkbenchAnnotations = useAppStore((state) => state.setBrowserWorkbenchAnnotations);
   const appClearBrowserAnnotations = useAppStore((state) => state.clearBrowserAnnotations);
@@ -342,6 +360,8 @@ export function PromptInput({
   const [composerExpanded, setComposerExpanded] = useState(false);
   const autoDispatchRef = useRef<string | null>(null);
   const appendInFlightIdsRef = useRef<Set<string>>(new Set());
+  const forkInFlightIdsRef = useRef<Set<string>>(new Set());
+  const [forkInFlightIds, setForkInFlightIds] = useState<Set<string>>(() => new Set());
   const submitInFlightRef = useRef(false);
   const [submissionStatus, setSubmissionStatus] = useState<string | null>(null);
   const [goalNow, setGoalNow] = useState(() => Date.now());
@@ -526,7 +546,7 @@ export function PromptInput({
     && (fileMentionLoading || filteredFileMentionOptions.length > 0);
   const enabledProfiles = useMemo<ApiConfigProfile[]>(() => getEnabledProfiles(apiConfigSettings.profiles), [apiConfigSettings.profiles]);
   const deploymentOptions = useMemo(() => getModelDeploymentOptionsForProfiles(enabledProfiles), [enabledProfiles]);
-  const fallbackRoutedModelOptions = useMemo(() => getRoutedModelOptionsForProfiles(enabledProfiles), [enabledProfiles]);
+  const fallbackRoutedModelOptions = useMemo(() => getAutomaticRoutedModelOptionsForProfiles(enabledProfiles), [enabledProfiles]);
   const availableModels = useMemo(() => deploymentOptions.map((option) => option.value), [deploymentOptions]);
   const modelSelectOptions = useMemo(() => deploymentOptions.map((option) => ({
     value: option.deploymentKey,
@@ -538,11 +558,17 @@ export function PromptInput({
   })), [deploymentOptions]);
   const activeProfile = enabledProfiles[0];
   const explicitRuntimeModel = activeSessionModel || runtimeModel.trim();
+  const explicitConfigProfileId = activeSessionConfigProfileId || storeRuntimeConfigProfileId.trim();
+  const routedRuntimeModel = explicitConfigProfileId
+    ? undefined
+    : fallbackRoutedModelOptions.find((option) => areModelNamesEquivalent(option.value, explicitRuntimeModel))?.value;
   const selectedRuntimeModel = resolveAvailableModelName(
-    explicitRuntimeModel || fallbackRoutedModelOptions[0]?.value || activeProfile?.model?.trim(),
+    routedRuntimeModel
+      || (explicitConfigProfileId ? explicitRuntimeModel : undefined)
+      || fallbackRoutedModelOptions[0]?.value
+      || activeProfile?.model?.trim(),
     availableModels,
   );
-  const explicitConfigProfileId = activeSessionConfigProfileId || storeRuntimeConfigProfileId.trim();
   const fallbackProfileId = fallbackRoutedModelOptions.find((option) => option.value === selectedRuntimeModel)?.profileId;
   const selectedDeployment = deploymentOptions.find((option) => (
     option.value === selectedRuntimeModel && option.profileId === explicitConfigProfileId
@@ -745,9 +771,19 @@ export function PromptInput({
     }
   }, [prompt, setPrompt]);
 
+  const setQueuedForkInFlight = useCallback((queueId: string, inFlight: boolean) => {
+    if (inFlight) {
+      forkInFlightIdsRef.current.add(queueId);
+    } else {
+      forkInFlightIdsRef.current.delete(queueId);
+    }
+    setForkInFlightIds(new Set(forkInFlightIdsRef.current));
+  }, []);
+
   const removeQueuedDraft = useCallback((queueId: string, sessionId = activeSessionId) => {
     if (!sessionId) return;
     appendInFlightIdsRef.current.delete(queueId);
+    setQueuedForkInFlight(queueId, false);
     setQueuedMessagesBySession((current) => {
       const nextQueue = (current[sessionId] ?? []).filter((item) => item.id !== queueId);
       if (nextQueue.length === 0) {
@@ -760,7 +796,7 @@ export function PromptInput({
         [sessionId]: nextQueue,
       };
     });
-  }, [activeSessionId]);
+  }, [activeSessionId, setQueuedForkInFlight]);
 
   const prepareQueuedAttachmentsForDispatch = useCallback(async (
     promptValue: string,
@@ -789,6 +825,30 @@ export function PromptInput({
     });
   }, [activeSessionId, prepareQueuedAttachmentsForDispatch, sendEvent]);
 
+  const forkQueuedDraft = useCallback(async (queuedMessage: QueuedMessageDraft) => {
+    if (!activeSessionId || !forkPromptDraft) return;
+    if (!queuedForkPointMessageId) {
+      setGlobalError("当前会话还没有可 Fork 的已完成助手回复，消息仍保留在待发送队列中。");
+      return;
+    }
+    if (forkInFlightIdsRef.current.has(queuedMessage.id)) return;
+
+    const preparedAttachments = await prepareQueuedAttachmentsForDispatch(queuedMessage.prompt, queuedMessage.attachments);
+    if (!preparedAttachments) return;
+
+    setQueuedForkInFlight(queuedMessage.id, true);
+    const started = await forkPromptDraft(
+      queuedForkPointMessageId,
+      queuedMessage.id,
+      queuedMessage.prompt,
+      preparedAttachments,
+      { agentPrompt: queuedMessage.agentPrompt },
+    );
+    if (!started) {
+      setQueuedForkInFlight(queuedMessage.id, false);
+    }
+  }, [activeSessionId, forkPromptDraft, prepareQueuedAttachmentsForDispatch, queuedForkPointMessageId, setGlobalError, setQueuedForkInFlight]);
+
   useEffect(() => {
     const handleAppendResult = (event: Event) => {
       const detail = (event as CustomEvent<PromptAppendResultDetail>).detail;
@@ -807,6 +867,25 @@ export function PromptInput({
     window.addEventListener(PROMPT_APPEND_RESULT_EVENT, handleAppendResult);
     return () => window.removeEventListener(PROMPT_APPEND_RESULT_EVENT, handleAppendResult);
   }, [onSendMessage, removeQueuedDraft, setGlobalError]);
+
+  useEffect(() => {
+    const handleForkResult = (event: Event) => {
+      const detail = (event as CustomEvent<PromptForkResultDetail>).detail;
+      if (!detail || !forkInFlightIdsRef.current.has(detail.requestId)) return;
+      setQueuedForkInFlight(detail.requestId, false);
+      if (!detail.success) {
+        setGlobalError(detail.error || "Fork 执行失败，消息已保留在待发送队列中。");
+        return;
+      }
+
+      removeQueuedDraft(detail.requestId, detail.sourceSessionId);
+      onSendMessage?.();
+      window.dispatchEvent(new CustomEvent(PROMPT_SENT_EVENT));
+    };
+
+    window.addEventListener(PROMPT_FORK_RESULT_EVENT, handleForkResult);
+    return () => window.removeEventListener(PROMPT_FORK_RESULT_EVENT, handleForkResult);
+  }, [onSendMessage, removeQueuedDraft, setGlobalError, setQueuedForkInFlight]);
 
   const editQueuedDraft = useCallback((queuedMessage: QueuedMessageDraft) => {
     const restoredImagePlugin = restoreImageGenerationPluginFromPrompt(queuedMessage.agentPrompt ?? queuedMessage.prompt);
@@ -1538,7 +1617,7 @@ export function PromptInput({
   }, [disabled, effectiveCwd, fileMentionContext]);
 
   useEffect(() => {
-    if (!activeSessionId || disabled || isRunning || currentSessionQueue.length === 0) {
+    if (!activeSessionId || disabled || isRunning || currentSessionQueue.length === 0 || forkInFlightIds.size > 0) {
       autoDispatchRef.current = null;
       return;
     }
@@ -1577,7 +1656,7 @@ export function PromptInput({
 
       autoDispatchRef.current = null;
     })();
-  }, [activeSessionId, currentSessionQueue, disabled, isRunning, onSendMessage, sendPromptDraft]);
+  }, [activeSessionId, currentSessionQueue, disabled, forkInFlightIds, isRunning, onSendMessage, sendPromptDraft]);
 
   useEffect(() => {
     if (controller) return;
@@ -1714,6 +1793,8 @@ export function PromptInput({
         <QueuedMessagesPanel
           queue={currentSessionQueue}
           isRunning={isRunning}
+          canFork={Boolean(forkPromptDraft && queuedForkPointMessageId)}
+          forkInFlightIds={forkInFlightIds}
           onClear={() => {
             if (!activeSessionId) return;
             setQueuedMessagesBySession((current) => {
@@ -1723,10 +1804,11 @@ export function PromptInput({
             });
           }}
           onAppend={(queuedMessage) => { void appendQueuedDraft(queuedMessage); }}
+          onFork={(queuedMessage) => { void forkQueuedDraft(queuedMessage); }}
           onEdit={editQueuedDraft}
           onRemove={removeQueuedDraft}
         />
-        {permissionRequest?.toolName === "AskUserQuestion" && onPermissionResult && (
+        {permissionRequest && onPermissionResult && (
           <div className="mb-3">
             <DecisionPanel
               request={permissionRequest}

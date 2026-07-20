@@ -15,6 +15,8 @@ import {
 } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { buildExternalCliEnv } from "./external-cli.js";
+
 export type SpringBootBuildTool = "auto" | "maven" | "gradle";
 
 export type SpringBootCommandPlan = {
@@ -113,7 +115,7 @@ async function startSpringBoot(input: SpringBootRunInput, options: StartOptions)
     const child = spawn(spawnSpec.command, spawnSpec.args, {
       cwd: plan.cwd,
       detached: true,
-      env: buildRunEnv(input),
+      env: buildSpringBootRunEnv(input),
       stdio: ["ignore", logFd, logFd],
       windowsHide: true,
     });
@@ -183,12 +185,15 @@ function toSpawnSpec(plan: SpringBootCommandPlan): { command: string; args: stri
   };
 }
 
-function buildRunEnv(input: SpringBootRunInput): NodeJS.ProcessEnv {
-  return {
+export function buildSpringBootRunEnv(
+  input: SpringBootRunInput,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  return buildExternalCliEnv({
     ...process.env,
     ...input.env,
     ...(input.profile?.trim() ? { SPRING_PROFILES_ACTIVE: input.profile.trim() } : {}),
-  };
+  }, platform);
 }
 
 function buildVerification(port?: number): SpringBootRunResult["verification"] {

@@ -29,19 +29,29 @@ test("runner activates the bundled skill and grants only the session artifact di
 test("assistant output renders techcc directives outside Markdown and sends follow-ups", () => {
   const app = readFileSync("src/ui/App.tsx", "utf8");
   const eventCard = readFileSync("src/ui/components/EventCard.tsx", "utf8");
-  const card = readFileSync("src/ui/components/chat/InlineVisualizationCard.tsx", "utf8");
+  const events = readFileSync("src/ui/events.ts", "utf8");
+  const card = readFileSync("src/ui/components/chat/VisualizationPreviewCard.tsx", "utf8");
+  const frame = readFileSync("src/ui/components/chat/TechccVisualizationFrame.tsx", "utf8");
+  const pane = readFileSync("src/ui/components/chat/VisualizationPreviewPane.tsx", "utf8");
+  const activityRail = readFileSync("src/ui/components/ActivityRail.tsx", "utf8");
 
   assert.match(app, /paddingBottom:\s*["']calc\(var\(--composer-bottom-offset/);
   assert.match(eventCard, /extractVisualizationDirectives\(visibleAssistantText\)/);
   assert.match(eventCard, /stripVisualizationDirectives/);
   assert.match(eventCard, /segment\.type === "visualization"/);
-  assert.match(eventCard, /<InlineVisualizationCard/);
+  assert.match(eventCard, /<VisualizationPreviewCard/);
   assert.match(eventCard, /PROMPT_SUBMIT_EVENT/);
-  assert.match(card, /sandbox="allow-scripts"/);
-  assert.match(card, /referrerPolicy="no-referrer"/);
-  assert.match(card, /event\.source/);
-  assert.match(card, /techcc-visualization/);
-  assert.doesNotMatch(card, /dangerouslySetInnerHTML/);
+  assert.match(events, /OPEN_VISUALIZATION_PREVIEW_EVENT/);
+  assert.match(card, /OPEN_VISUALIZATION_PREVIEW_EVENT/);
+  assert.match(app, /OPEN_VISUALIZATION_PREVIEW_EVENT/);
+  assert.match(app, /visualizationPreview=/);
+  assert.match(activityRail, /<VisualizationPreviewPane/);
+  assert.match(pane, /<TechccVisualizationFrame/);
+  assert.match(frame, /sandbox="allow-scripts"/);
+  assert.match(frame, /referrerPolicy="no-referrer"/);
+  assert.match(frame, /event\.source/);
+  assert.match(frame, /techcc-visualization/);
+  assert.doesNotMatch(`${card}\n${frame}\n${pane}`, /dangerouslySetInnerHTML/);
 });
 
 test("bundled visualization guidance avoids stale artifacts and narrow-screen overflow", () => {

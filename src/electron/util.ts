@@ -1,12 +1,12 @@
-import { ipcMain, WebContents, WebFrameMain } from "electron";
+import { app, ipcMain, WebContents, WebFrameMain } from "electron";
 import { getUIPath } from "./pathResolver.js";
 import { pathToFileURL } from "url";
 export { DEV_PORT } from "./ipc-frame-validation.js";
-import { DEV_PORT, isAllowedDevFrameUrl } from "./ipc-frame-validation.js";
+import { isAllowedDevFrameUrl } from "./ipc-frame-validation.js";
 
 // Checks if you are in development mode
 export function isDev(): boolean {
-    return process.env.NODE_ENV == "development";
+    return !app.isPackaged && process.env.NODE_ENV === "development";
 }
 
 // Making IPC Typesafe

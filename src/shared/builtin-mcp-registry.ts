@@ -26,6 +26,7 @@ export type BuiltinMcpToolInfo = {
   description: string;
   tag?: string;
   intent?: string;
+  platforms?: readonly NodeJS.Platform[];
 };
 
 export type BuiltinMcpToolGroup = {
@@ -66,6 +67,7 @@ export const DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES: readonly BuiltinMcpServer
 const BUILTIN_MCP_ENABLED_SERVERS_SCHEMA_VERSION = 2;
 const LEGACY_DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES: readonly BuiltinMcpServerName[] = DEFAULT_ENABLED_BUILTIN_MCP_SERVER_NAMES
   .filter((name) => name !== "tech-cc-hub-image");
+const WINDOWS_ONLY_BUILTIN_MCP_TOOL_NAMES = new Set(["idea_restart", "idea_read_logs"]);
 
 export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
   {
@@ -257,8 +259,8 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
       "需要设计系统上下文时用 `figma_list_file_library` 和 `figma_get_file_variables`；需要协作上下文时用 `figma_list_file_comments`、`figma_list_file_versions`、`figma_get_dev_resources`。",
       "Figma URL 中的 `node-id=1-2` 需要作为节点读取，工具会自动转换成 API 需要的 `1:2`。不要把 Figma PAT 当作官方 Remote MCP OAuth bearer token 使用；高级工具失败时优先提示用户补对应 PAT scope。",
       "Figma progressive disclosure rule: when a design response is too large or figma_read_design returns result.truncated=true, use `figma_list_node_index` or result.progressiveDisclosure.nodeIndex to pick the smallest relevant node, then call `figma_summarize_design` or `figma_read_design` with that nodeId and a small depth.",
-      "Figma visual-first rule: for UI implementation, prefer `figma_list_node_index` -> `figma_export_node_images` -> `design_inspect_image` before reading deep node JSON. `figma_get_image_urls` is only a URL lookup; exported local image paths are the implementation-grade visual reference.",
-      "Figma reference-lock rule: before editing UI files, lock one tuple of Figma nodeId + exported local imagePath + `design_inspect_image` qualityGate.confidence >= 0.75 + DOM target selector/region. Compare and iterate against that same locked tuple; do not keep patching if the reference was cropped from the wrong node.",
+      "Figma visual-first rule: for UI implementation, prefer `figma_list_node_index` -> `figma_export_node_images` before reading deep node JSON. A multimodal main model may inspect the exported image directly; for a text-only main model, use `design_inspect_image` first. `figma_get_image_urls` is only a URL lookup; exported local image paths are the implementation-grade visual reference.",
+      "Figma reference-lock rule: before editing UI files, lock one tuple of Figma nodeId + exported local imagePath + visual evidence + DOM target selector/region. Direct multimodal inspection is valid; a text-only main model still requires `design_inspect_image` qualityGate.confidence >= 0.75. Compare and iterate against that same locked tuple; do not keep patching if the reference was cropped from the wrong node.",
       "Figma wrong-reference recovery rule: if diffBoundingBox is mostly full-page, aspect/size is far off, differenceRatio gets worse after an edit, or the agent says the reference crop is wrong, relock via `figma_list_node_index` / `figma_match_ui_nodes` / `figma_export_node_images` before further edits.",
       "Figma 90% acceptance rule: after implementing UI from Figma, capture the target component and compare it with `design_compare_element_to_reference` or `design_compare_current_view` using `maxDifferenceRatio <= 0.10`; if the report fails or is invalid, continue patching instead of stopping at functional correctness.",
       "Figma anchor rule: when the user provides a figma.com URL with node-id, pass that URL directly to `figma_list_node_index` with a query from the requested UI text (Chinese/English terms and `|` alternatives are OK). Do not ask the user to manually provide a Frame number before trying the node/text index.",
@@ -312,8 +314,8 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
           { name: "idea_status", description: "检测已安装的 IDEA 启动器和正在运行的 IDEA 进程。" },
           { name: "idea_open", description: "通过 Toolbox 脚本或最新 IDEA 启动器打开项目/文件；可用时优先复用已运行 IDEA。" },
           { name: "idea_run", description: "Explicit escape hatch: start Spring Boot from tech-cc-hub with Maven/Gradle when the user asks for an external service process." },
-          { name: "idea_restart", description: "Rerun the current IntelliJ IDEA Run Configuration for the requested/open project; does not start Maven/Gradle from tech-cc-hub." },
-          { name: "idea_read_logs", description: "Read the current IntelliJ IDEA Run console logs for the requested/open project; restores the clipboard and does not start Maven/Gradle." },
+          { name: "idea_restart", description: "Rerun the current IntelliJ IDEA Run Configuration for the requested/open project; does not start Maven/Gradle from tech-cc-hub.", platforms: ["win32"] },
+          { name: "idea_read_logs", description: "Read the current IntelliJ IDEA Run console logs for the requested/open project; restores the clipboard and does not start Maven/Gradle.", platforms: ["win32"] },
           { name: "idea_focus", description: "把已运行的 IDEA 窗口拉到前台，不启动新的 IDE。" },
           { name: "idea_wait_ready", description: "在启动或复用请求后等待 IDEA 进入运行状态。" },
         ],
@@ -553,16 +555,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-export function listBuiltinMcpToolNames(): string[] {
+type BuiltinMcpPlatformOptions = {
+  platform?: NodeJS.Platform;
+};
+
+function isToolAvailableOnPlatform(tool: BuiltinMcpToolInfo, platform: NodeJS.Platform): boolean {
+  return !tool.platforms || tool.platforms.includes(platform);
+}
+
+function isPromptHintAvailableOnPlatform(hint: string, platform: NodeJS.Platform): boolean {
+  if (platform === "win32") {
+    return true;
+  }
+  return !Array.from(WINDOWS_ONLY_BUILTIN_MCP_TOOL_NAMES).some((toolName) => hint.includes(toolName));
+}
+
+export function listBuiltinMcpToolNames(options: BuiltinMcpPlatformOptions = {}): string[] {
+  const platform = options.platform ?? process.platform;
   return BUILTIN_MCP_SERVERS.flatMap((server) => (
-    server.toolGroups.flatMap((group) => group.tools.map((tool) => tool.name))
+    server.toolGroups.flatMap((group) => group.tools
+      .filter((tool) => isToolAvailableOnPlatform(tool, platform))
+      .map((tool) => tool.name))
   ));
 }
 
-export function buildBuiltinMcpPromptHints(enabledServerNames?: readonly BuiltinMcpServerName[]): string {
+export function buildBuiltinMcpPromptHints(
+  enabledServerNames?: readonly BuiltinMcpServerName[],
+  options: BuiltinMcpPlatformOptions = {},
+): string {
   const enabledNames = enabledServerNames ? new Set(enabledServerNames) : null;
+  const platform = options.platform ?? process.platform;
   return BUILTIN_MCP_SERVERS
     .filter((server) => !enabledNames || enabledNames.has(server.name))
     .flatMap((server) => server.promptHints ?? [])
+    .filter((hint) => isPromptHintAvailableOnPlatform(hint, platform))
     .join("\n");
 }

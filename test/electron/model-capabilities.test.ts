@@ -30,9 +30,11 @@ test("runner routes image Read policy through the selected main model capability
   assert.match(source, /shouldPreprocessImageRead\(config, filePath, mainModelName\)/);
 });
 
-test("runner keeps preprocessing enabled before direct image fallback", () => {
+test("runner lets image-capable main models read images without forced secondary preprocessing", () => {
   const source = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
 
-  assert.match(source, /RASTER_IMAGE_EXTENSIONS\.has\(extname\(filePath\)\.toLowerCase\(\)\)/);
-  assert.match(source, /Image preprocessing failed; the selected main model supports image understanding/);
+  assert.match(
+    source,
+    /return !canMainModelReadImages\(mainModelName \?\? config\?\.model\)[\s\S]*RASTER_IMAGE_EXTENSIONS\.has\(extname\(filePath\)\.toLowerCase\(\)\)/,
+  );
 });

@@ -16,6 +16,7 @@ import {
 } from "../../src/electron/libs/idea-launcher.js";
 import {
   buildSpringBootCommandPlan,
+  buildSpringBootRunEnv,
 } from "../../src/electron/libs/spring-boot-runner.js";
 
 function installation(overrides: Partial<IdeaInstallation>): IdeaInstallation {
@@ -175,4 +176,21 @@ test("plans Spring Boot Maven and Gradle runner commands", () => {
   assert.deepEqual(mavenPlan.args, ["spring-boot:run"]);
   assert.equal(gradlePlan.tool, "gradle");
   assert.deepEqual(gradlePlan.args, ["bootRun"]);
+});
+
+test("builds Spring Boot run env with macOS CLI PATH entries", () => {
+  const env = buildSpringBootRunEnv({
+    projectPath: process.cwd(),
+    profile: "local",
+    env: {
+      HOME: "/Users/techcc",
+      PATH: "/usr/bin:/bin",
+      CUSTOM_ENV: "1",
+    },
+  }, "darwin");
+
+  assert.equal(env.SPRING_PROFILES_ACTIVE, "local");
+  assert.equal(env.CUSTOM_ENV, "1");
+  assert.match(env.PATH ?? "", /\/Users\/techcc\/\.volta\/bin/);
+  assert.match(env.PATH ?? "", /\/opt\/homebrew\/bin/);
 });
