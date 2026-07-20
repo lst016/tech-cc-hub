@@ -8,20 +8,24 @@ test("macOS release artifacts are signed, notarized, and verified before upload"
   const releaseWorkflow = readFileSync(".github/workflows/release.yml", "utf8");
   const buildWorkflow = readFileSync(".github/workflows/build.yaml", "utf8");
   const verificationScript = readFileSync("scripts/qa/macos-packaged-smoke.sh", "utf8");
+  const fastPackageScript = readFileSync("scripts/package-mac-fast.mjs", "utf8");
   const entitlements = readFileSync("build/entitlements.mac.plist", "utf8");
 
   assert.equal(Object.hasOwn(builder.mac, "identity"), false);
+  assert.equal(builder.mac?.executableName, "tech-cc-hub");
   assert.equal(builder.mac?.hardenedRuntime, true);
   assert.equal(builder.mac?.notarize, true);
   assert.equal(builder.mac?.entitlements, "build/entitlements.mac.plist");
   assert.equal(builder.mac?.entitlementsInherit, "build/entitlements.mac.plist");
   assert.deepEqual(builder.mac?.target, ["dmg", "zip"]);
+  assert.equal(builder.dmg?.title, "tech-cc-hub ${version}");
 
   assert.match(entitlements, /com\.apple\.security\.cs\.allow-jit/);
   assert.match(entitlements, /com\.apple\.security\.cs\.allow-unsigned-executable-memory/);
   assert.match(entitlements, /com\.apple\.security\.cs\.disable-library-validation/);
 
   assert.match(packageJson.scripts["package:mac"], /--mac dmg zip --arm64 --publish never/);
+  assert.match(packageJson.scripts["package:mac:fast"], /node scripts\/package-mac-fast\.mjs/);
   assert.match(packageJson.scripts["release:mac-arm64"], /--mac dmg zip --arm64 --publish never/);
   assert.match(packageJson.scripts["release:mac-x64"], /--mac dmg zip --x64 --publish never/);
   assert.equal(packageJson.scripts["qa:macos-packaged"], "bash scripts/qa/macos-packaged-smoke.sh");
@@ -51,4 +55,11 @@ test("macOS release artifacts are signed, notarized, and verified before upload"
   assert.match(verificationScript, /spctl --assess --type execute/);
   assert.match(verificationScript, /xcrun stapler validate/);
   assert.match(verificationScript, /hdiutil attach/);
+  assert.match(verificationScript, /basename "\$app_path"\)\" == "tech-cc-hub\.app"/);
+  assert.match(verificationScript, /CFBundleDisplayName/);
+  assert.match(verificationScript, /CFBundleExecutable/);
+  assert.match(fastPackageScript, /dist\/\.mac-fast-building/);
+  assert.match(fastPackageScript, /expectedAppName = "tech-cc-hub\.app"/);
+  assert.match(fastPackageScript, /CFBundleDisplayName/);
+  assert.match(fastPackageScript, /PACKAGED_MAC_FAST_OK/);
 });

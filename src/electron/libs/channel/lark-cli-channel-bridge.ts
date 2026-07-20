@@ -213,7 +213,6 @@ export function buildLarkCliMessageArgs(
     "bot",
     "--idempotency-key",
     idempotencyKey,
-    "--json",
   ];
 }
 
@@ -242,7 +241,6 @@ export function buildLarkCliStructuredTextArgs(
     "bot",
     "--idempotency-key",
     idempotencyKey,
-    "--json",
   ];
 }
 

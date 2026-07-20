@@ -145,7 +145,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     status: "anonymous" as const,
     user: null,
     challenges: [],
-    loginMethods: { password: true, email: true, thirdParty: false },
+    loginMethods: { password: false, email: false, thirdParty: true },
   };
   let sessionCreatedAt = Date.now();
   let sessionUpdatedAt = sessionCreatedAt;

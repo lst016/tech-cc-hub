@@ -16,6 +16,12 @@ export type PromptBeforeInputEventLike = {
   data?: string | null;
 };
 
+export type PromptEditorInputCursorOptions = {
+  inputType?: string;
+  isComposing?: boolean;
+  compositionRecentlyEnded?: boolean;
+};
+
 export type PromptParagraphInputAction = "allow" | "block" | "submit";
 
 export function shouldSubmitPromptOnEnter(
@@ -74,10 +80,43 @@ export function insertTextIntoPrompt(
   };
 }
 
+function getPromptChangeRange(previousPrompt: string, nextPrompt: string) {
+  let start = 0;
+  const sharedLength = Math.min(previousPrompt.length, nextPrompt.length);
+  while (start < sharedLength && previousPrompt[start] === nextPrompt[start]) {
+    start += 1;
+  }
+
+  let previousEnd = previousPrompt.length;
+  let nextEnd = nextPrompt.length;
+  while (
+    previousEnd > start
+    && nextEnd > start
+    && previousPrompt[previousEnd - 1] === nextPrompt[nextEnd - 1]
+  ) {
+    previousEnd -= 1;
+    nextEnd -= 1;
+  }
+
+  return { start, nextEnd };
+}
+
+function isCompositionCursorInput(options?: PromptEditorInputCursorOptions) {
+  const inputType = options?.inputType ?? "";
+  return Boolean(
+    options?.isComposing
+    || options?.compositionRecentlyEnded
+    || inputType === "insertCompositionText"
+    || inputType === "deleteCompositionText"
+    || inputType === "insertFromComposition",
+  );
+}
+
 export function resolvePromptEditorInputCursor(
   previousPrompt: string,
   nextPrompt: string,
   measuredCursorIndex: number,
+  options?: PromptEditorInputCursorOptions,
 ) {
   const safeCursor = Math.max(0, Math.min(measuredCursorIndex, nextPrompt.length));
 
@@ -87,6 +126,13 @@ export function resolvePromptEditorInputCursor(
     && safeCursor <= previousPrompt.length
   ) {
     return nextPrompt.length;
+  }
+
+  if (isCompositionCursorInput(options) && previousPrompt !== nextPrompt) {
+    const change = getPromptChangeRange(previousPrompt, nextPrompt);
+    if (safeCursor <= change.start && change.nextEnd > change.start) {
+      return change.nextEnd;
+    }
   }
 
   return safeCursor;

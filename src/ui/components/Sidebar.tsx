@@ -108,8 +108,6 @@ export function Sidebar({
     top: number;
   } | null>(null);
   const [wooAuthDialogOpen, setWooAuthDialogOpen] = useState(false);
-  const [wooLoginBusy, setWooLoginBusy] = useState(false);
-  const [wooLoginError, setWooLoginError] = useState("");
   const [wooAuthState, setWooAuthState] = useState<{
     status: "anonymous" | "authenticated";
     user: { realName?: string; userHandle?: string; avatarUrl?: string } | null;
@@ -125,28 +123,9 @@ export function Sidebar({
       setWooAuthDialogOpen((current) => !current);
       return;
     }
-    if (wooLoginBusy) return;
 
-    setWooLoginBusy(true);
-    setWooLoginError("");
-    setWooAuthDialogOpen(false);
-    try {
-      const result = await window.electron.invoke("woo-auth:login-third-party") as {
-        status?: unknown;
-        user?: unknown;
-      };
-      handleWooAuthStateChange({
-        status: result?.status === "authenticated" ? "authenticated" : "anonymous",
-        user: result?.user && typeof result.user === "object"
-          ? result.user as { realName?: string; userHandle?: string; avatarUrl?: string }
-          : null,
-      });
-    } catch (error) {
-      setWooLoginError(error instanceof Error ? error.message : "Woo 浏览器登录失败。");
-    } finally {
-      setWooLoginBusy(false);
-    }
-  }, [handleWooAuthStateChange, wooAuthState.status, wooLoginBusy]);
+    setWooAuthDialogOpen(true);
+  }, [wooAuthState.status]);
 
   useEffect(() => {
     const unsubscribe = window.electron.onAppUpdateStatus((status: AppUpdateStatus) => {
@@ -497,35 +476,25 @@ export function Sidebar({
             )}
             <div className="relative">
               <WooAuthDialog
-                open={wooAuthState.status === "authenticated" && wooAuthDialogOpen}
+                open={wooAuthDialogOpen}
                 onOpenChange={setWooAuthDialogOpen}
                 onStateChange={handleWooAuthStateChange}
-                onOpenSettings={() => openSettings()}
+                onOpenSettings={() => openSettings("global-json")}
               />
-              {wooAuthState.status === "anonymous" && wooLoginError && (
-                <p
-                  role="alert"
-                  data-woo-auth-error
-                  className="absolute bottom-full left-0 right-0 z-[160] mb-2 rounded-lg border border-error/20 bg-white px-3 py-2 text-xs leading-5 text-error shadow-lg"
-                >
-                  {wooLoginError}
-                </p>
-              )}
               <button
                 type="button"
                 data-woo-auth-trigger
-                disabled={wooLoginBusy}
-                className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-[#e2e2e2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 disabled:cursor-wait disabled:opacity-60"
+                className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-[#e2e2e2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
                 onClick={() => void handleWooAuthTriggerClick()}
-                aria-label={wooAuthState.status === "authenticated" ? "Woo 账号" : wooLoginBusy ? "正在登录 Woo 账号" : "登录 Woo 账号"}
-                aria-haspopup={wooAuthState.status === "authenticated" ? "dialog" : undefined}
-                aria-expanded={wooAuthState.status === "authenticated" && wooAuthDialogOpen}
+                aria-label={wooAuthState.status === "authenticated" ? "Woo 账号" : "登录 Woo 账号"}
+                aria-haspopup="dialog"
+                aria-expanded={wooAuthDialogOpen}
               >
                 <WooAvatar key={wooAuthState.user?.avatarUrl ?? "anonymous"} user={wooAuthState.user} size="menu" />
                 <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink-800">
                   {wooAuthState.status === "authenticated"
                     ? (wooAuthState.user?.realName || wooAuthState.user?.userHandle || "Woo 用户")
-                    : wooLoginBusy ? "等待浏览器登录..." : "登录 Woo 账号"}
+                    : "登录 Woo 账号"}
                 </span>
                 <Help theme="outline" size={20} fill="currentColor" strokeWidth={2.2} className="shrink-0 text-ink-400" aria-hidden="true" />
               </button>

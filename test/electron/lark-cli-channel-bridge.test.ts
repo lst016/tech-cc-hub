@@ -245,7 +245,6 @@ test("Lark CLI replies never fall through to webhook arguments", () => {
     "bot",
     "--idempotency-key",
     "reply-key",
-    "--json",
   ]);
 
   assert.deepEqual(buildLarkCliMessageArgs({ ...target, externalMessageId: undefined }, "--file", "result.pdf", "send-key"), [
@@ -259,7 +258,6 @@ test("Lark CLI replies never fall through to webhook arguments", () => {
     "bot",
     "--idempotency-key",
     "send-key",
-    "--json",
   ]);
 });
 

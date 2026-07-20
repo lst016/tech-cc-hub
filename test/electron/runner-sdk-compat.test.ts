@@ -274,11 +274,12 @@ test("runner publishes the SDK supported command metadata after initialization",
   assert.match(source, /commands,\s*uuid:\s*crypto\.randomUUID\(\),\s*session_id:/);
 });
 
-test("full-access runtime degrades gracefully when Windows sandbox is unavailable", () => {
+test("full-access runtime disables SDK sandbox by default", () => {
   const source = readFileSync("src/electron/libs/runner/runner.ts", "utf8");
+  assert.match(source, /const sdkSandboxEnabled = permissionMode !== "bypassPermissions"/);
   assert.match(
     source,
-    /sandbox: buildClaudeSandboxSettings\(\{\s*enabled: true,\s*failIfUnavailable: false,/,
+    /sandbox: buildClaudeSandboxSettings\(\{\s*enabled: sdkSandboxEnabled,\s*failIfUnavailable: false,/,
   );
   assert.doesNotMatch(
     source,

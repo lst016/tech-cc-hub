@@ -737,6 +737,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   } = options;
   const abortController = new AbortController();
   const permissionMode = normalizeReleasePermissionMode(runtime?.permissionMode);
+  const sdkSandboxEnabled = permissionMode !== "bypassPermissions";
   const promptInput = new PromptInputQueue();
   promptInput.enqueue(prompt, attachments, promptOrigin);
   let activeQuery: Query | null = null;
@@ -1393,7 +1394,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           settingSources: agentContext.settingSources,
           settings: sdkModelSettings,
           sandbox: buildClaudeSandboxSettings({
-            enabled: true,
+            enabled: sdkSandboxEnabled,
             failIfUnavailable: false,
             workspaceRoot: resolvedCwd,
             additionalWriteRoots: visualizationSessionDirectory ? [visualizationSessionDirectory] : undefined,

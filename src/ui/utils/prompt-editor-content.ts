@@ -198,6 +198,15 @@ export function restoreEditorSelection(editor: HTMLElement, offset: number) {
   selection?.addRange(range);
 }
 
+export function preparePromptEditorForNativeComposition(editor: HTMLElement) {
+  if (!isNativeEmptyPromptEditor(editor) || editor.childNodes.length === 0) {
+    return false;
+  }
+
+  editor.replaceChildren();
+  return true;
+}
+
 function createSlashCommandIconElement() {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");

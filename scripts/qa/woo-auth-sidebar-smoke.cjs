@@ -141,7 +141,9 @@ async function main() {
     await page.screenshot({ path: artifactPath, fullPage: true });
 
     await trigger.click();
-    await expect(popover).toHaveCount(0);
+    await expect(popover).toBeVisible();
+    await popover.getByRole("button", { name: "使用浏览器登录 Woo" }).click();
+    await expect(popover).toBeHidden();
     await expect(trigger).toContainText("Woo QA 用户");
     assert.equal(
       await page.evaluate(() => window.sessionStorage.getItem("qa:woo-last-auth-channel")),
@@ -209,7 +211,9 @@ async function main() {
 
     await page.setViewportSize({ width: 900, height: 560 });
     await trigger.click();
-    await expect(popover).toHaveCount(0);
+    await expect(popover).toBeVisible();
+    await popover.getByRole("button", { name: "使用浏览器登录 Woo" }).click();
+    await expect(popover).toBeHidden();
     await expect(trigger).toContainText("Woo QA 用户");
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
 

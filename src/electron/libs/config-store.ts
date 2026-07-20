@@ -6,7 +6,7 @@ import {
   mkdirSync,
   unlinkSync,
 } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import {
   CODEX_OAUTH_BASE_URL,
   CODEX_OAUTH_DEFAULT_MODEL,
@@ -106,6 +106,76 @@ function getConfigPath(): string {
 function getGlobalConfigPath(): string {
   const userDataPath = app.getPath("userData");
   return join(userDataPath, GLOBAL_CONFIG_FILE_NAME);
+}
+
+function isGlobalRuntimeConfigObject(value: unknown): value is GlobalRuntimeConfig {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readGlobalRuntimeConfigFile(configPath: string): GlobalRuntimeConfig | null {
+  const raw = stripUtf8Bom(readFileSync(configPath, "utf8"));
+  const parsed = JSON.parse(raw) as unknown;
+
+  if (!isGlobalRuntimeConfigObject(parsed)) {
+    console.error("[config-store] Invalid global runtime config format, expecting object:", configPath);
+    return null;
+  }
+
+  return parsed;
+}
+
+function isPlainRuntimeRecord(value: unknown): value is Record<string, unknown> {
+  if (!isGlobalRuntimeConfigObject(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+export function mergeGlobalRuntimeConfigDefaults(
+  defaults: GlobalRuntimeConfig,
+  config: GlobalRuntimeConfig,
+): GlobalRuntimeConfig {
+  const merged: GlobalRuntimeConfig = { ...defaults };
+
+  for (const [key, value] of Object.entries(config)) {
+    const defaultValue = merged[key];
+    merged[key] = isPlainRuntimeRecord(defaultValue) && isPlainRuntimeRecord(value)
+      ? mergeGlobalRuntimeConfigDefaults(defaultValue, value)
+      : value;
+  }
+
+  return merged;
+}
+
+function getBundledGlobalConfigPaths(): string[] {
+  const userConfigPath = resolve(getGlobalConfigPath());
+  const candidates = [
+    join(app.getAppPath(), GLOBAL_CONFIG_FILE_NAME),
+    process.resourcesPath ? join(process.resourcesPath, GLOBAL_CONFIG_FILE_NAME) : "",
+    join(process.cwd(), GLOBAL_CONFIG_FILE_NAME),
+  ].filter(Boolean);
+  const seen = new Set<string>();
+
+  return candidates
+    .map((candidate) => resolve(candidate))
+    .filter((candidate) => {
+      if (candidate === userConfigPath || seen.has(candidate)) return false;
+      seen.add(candidate);
+      return true;
+    });
+}
+
+function loadBundledGlobalRuntimeConfig(): GlobalRuntimeConfig {
+  for (const configPath of getBundledGlobalConfigPaths()) {
+    try {
+      if (!existsSync(configPath)) continue;
+      const parsed = readGlobalRuntimeConfigFile(configPath);
+      if (!parsed) continue;
+      return removeLegacyLarkRuntimeConfig(parsed).config;
+    } catch (error) {
+      console.error("[config-store] Failed to load bundled global runtime config:", error);
+    }
+  }
+  return {};
 }
 
 function createDefaultSettings(): ApiConfigSettings {
@@ -215,30 +285,22 @@ export function deleteApiConfig(): void {
 export function loadGlobalRuntimeConfig(): GlobalRuntimeConfig {
   try {
     const configPath = getGlobalConfigPath();
+    const bundledConfig = loadBundledGlobalRuntimeConfig();
     if (!existsSync(configPath)) {
-      return {};
+      return bundledConfig;
     }
 
-    const raw = stripUtf8Bom(readFileSync(configPath, "utf8"));
-    const parsed = JSON.parse(raw) as unknown;
+    const parsed = readGlobalRuntimeConfigFile(configPath);
+    if (!parsed) return bundledConfig;
 
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      Array.isArray(parsed)
-    ) {
-      console.error("[config-store] Invalid global runtime config format, expecting object:", configPath);
-      return {};
-    }
-
-    const migrated = removeLegacyLarkRuntimeConfig(parsed as GlobalRuntimeConfig);
+    const migrated = removeLegacyLarkRuntimeConfig(parsed);
     if (migrated.changed) {
       saveGlobalRuntimeConfig(migrated.config);
     }
-    return migrated.config;
+    return mergeGlobalRuntimeConfigDefaults(bundledConfig, migrated.config);
   } catch (error) {
     console.error("[config-store] Failed to load global runtime config:", error);
-    return {};
+    return loadBundledGlobalRuntimeConfig();
   }
 }
 

@@ -9,6 +9,8 @@ const GLOBAL_JSON_PLACEHOLDER = JSON.stringify(
     env: {
       GITHUB_TOKEN: "ghp_xxx",
       GROQ_API_KEY: "gsk_xxx",
+      WOO_BASE_URL: "https://woo.example.com",
+      WOO_CLIENT_ID: "woo-client-id",
     },
     skillCredentials: {
       github: [
@@ -63,7 +65,7 @@ export function GlobalJsonSettingsPage({
           全局 JSON 配置
         </label>
         <p className="mt-1 text-xs text-muted">
-          行号、Tab 缩进都开启了，粘贴 JSON 后可直接点击“格式化 JSON”。`systemPromptExt` 会追加到每次会话的 system prompt；建议保留 `env`，并在其中放入技能需要的 token。
+          行号、Tab 缩进都开启了，粘贴 JSON 后可直接点击“格式化 JSON”。`systemPromptExt` 会追加到每次会话的 system prompt；建议保留 `env`，并在其中放入技能需要的 token。Woo 登录需要 `env.WOO_BASE_URL` 和 `env.WOO_CLIENT_ID`。
         </p>
         <CodeEditor
           id="global-json"
