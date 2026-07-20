@@ -5,10 +5,18 @@ import { loadGlobalRuntimeConfig } from "../config-store.js";
 
 type WooRuntimeEnv = Record<string, unknown>;
 
-type WooAuthConfig = {
+export type WooAuthConfig = {
   baseUrl: string;
   projectId: string;
 };
+
+// Desktop OAuth clients cannot keep a client secret. These public deployment
+// identifiers are packaged so a fresh install can start the hosted login flow;
+// controlled runtime config can still replace the pair for another deployment.
+export const DEFAULT_WOO_AUTH_CONFIG = Object.freeze({
+  baseUrl: "https://iaccount.hwlnk.com",
+  projectId: "4ca11f5f21214dd2970ab5ad4b984431",
+});
 
 type WooTokenInfo = {
   universalUserId: string;
@@ -58,15 +66,21 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-function getRuntimeConfig(): WooAuthConfig {
-  const runtime = loadGlobalRuntimeConfig();
-  const env = asRecord(runtime.env) as WooRuntimeEnv | null;
+export function resolveWooAuthConfig(runtime: unknown): WooAuthConfig {
+  const env = asRecord(asRecord(runtime)?.env) as WooRuntimeEnv | null;
   const baseUrl = typeof env?.WOO_BASE_URL === "string" ? env.WOO_BASE_URL.trim().replace(/\/$/, "") : "";
   const projectId = typeof env?.WOO_CLIENT_ID === "string" ? env.WOO_CLIENT_ID.trim() : "";
+  if (!baseUrl && !projectId) {
+    return { ...DEFAULT_WOO_AUTH_CONFIG };
+  }
   if (!baseUrl || !projectId) {
     throw new Error("Woo 登录尚未配置。请在受控运行时配置中设置 WOO_BASE_URL 与 WOO_CLIENT_ID。");
   }
   return { baseUrl, projectId };
+}
+
+function getRuntimeConfig(): WooAuthConfig {
+  return resolveWooAuthConfig(loadGlobalRuntimeConfig());
 }
 
 function unwrapResponse(payload: unknown): unknown {

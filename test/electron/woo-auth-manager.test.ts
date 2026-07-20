@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { WooAuthManager } from "../../src/electron/libs/woo/woo-auth-manager.js";
+import {
+  DEFAULT_WOO_AUTH_CONFIG,
+  resolveWooAuthConfig,
+  WooAuthManager,
+} from "../../src/electron/libs/woo/woo-auth-manager.js";
 
 function jsonResponse(data: unknown): Response {
   return new Response(JSON.stringify({ code: 0, message: "success", data }), {
@@ -11,6 +15,28 @@ function jsonResponse(data: unknown): Response {
     headers: { "content-type": "application/json" },
   });
 }
+
+test("Woo auth uses the packaged public client config on a fresh install", () => {
+  assert.deepEqual(resolveWooAuthConfig({}), DEFAULT_WOO_AUTH_CONFIG);
+  assert.deepEqual(resolveWooAuthConfig({ env: {} }), DEFAULT_WOO_AUTH_CONFIG);
+});
+
+test("Woo auth keeps controlled runtime config as an all-or-nothing override", () => {
+  assert.deepEqual(resolveWooAuthConfig({
+    env: {
+      WOO_BASE_URL: "https://account.example.com/",
+      WOO_CLIENT_ID: "custom-project",
+    },
+  }), {
+    baseUrl: "https://account.example.com",
+    projectId: "custom-project",
+  });
+
+  assert.throws(
+    () => resolveWooAuthConfig({ env: { WOO_BASE_URL: "https://account.example.com" } }),
+    /WOO_BASE_URL.*WOO_CLIENT_ID/,
+  );
+});
 
 test("Woo third-party login opens the hosted login page and persists the polled session", async () => {
   const userDataPath = mkdtempSync(join(tmpdir(), "tech-cc-hub-woo-auth-"));
