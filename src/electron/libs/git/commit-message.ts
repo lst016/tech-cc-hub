@@ -23,24 +23,36 @@ export async function generateCommitMessageSuggestion(input: {
       getClaudeCodeModelOption,
       getClaudeCodePath,
       getCurrentApiConfig,
+      resolveApiConfigForModel,
     },
   ] = await Promise.all([
     import("@anthropic-ai/claude-agent-sdk"),
     import("../claude/claude-settings.js"),
   ]);
-  const apiConfig = getCurrentApiConfig();
-  if (!apiConfig?.model?.trim()) {
+  const currentApiConfig = getCurrentApiConfig();
+  if (!currentApiConfig?.model?.trim()) {
     return fallback;
   }
 
-  const requestedModel = apiConfig.smallModel?.trim() || apiConfig.analysisModel?.trim() || apiConfig.model;
+  const requestedModel = currentApiConfig.analysisModel?.trim() || currentApiConfig.smallModel?.trim() || currentApiConfig.model;
+  const resolvedRoute = resolveApiConfigForModel(requestedModel);
+  const apiConfig = resolvedRoute?.config ?? currentApiConfig;
+  const routedModel = resolvedRoute?.model ?? requestedModel;
+  console.info("[git][route]", {
+    purpose: "commit-message",
+    configProfileId: apiConfig.id,
+    configProfileName: apiConfig.name,
+    configProvider: apiConfig.provider,
+    requestedModel,
+    routedModel,
+  });
   const prompt = buildPrompt({
     ...input,
     language: input.language?.trim() || "zh-CN",
   });
 
   try {
-    const claudeCodeModelOption = getClaudeCodeModelOption(apiConfig, requestedModel);
+    const claudeCodeModelOption = getClaudeCodeModelOption(apiConfig, routedModel);
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort(), AI_COMMIT_MESSAGE_TIMEOUT_MS);
     const result = await runSinglePromptQuery(query, prompt, {
@@ -49,10 +61,10 @@ export async function generateCommitMessageSuggestion(input: {
       maxTurns: 1,
       tools: [],
       settingSources: [],
-      settings: buildClaudeCodeModelSettings(apiConfig, requestedModel),
+      settings: buildClaudeCodeModelSettings(apiConfig, routedModel),
       env: {
         ...process.env,
-        ...buildEnvForConfig(apiConfig, requestedModel),
+        ...buildEnvForConfig(apiConfig, routedModel),
       },
       pathToClaudeCodeExecutable: getClaudeCodePath(),
     }).finally(() => clearTimeout(timeout));
@@ -61,7 +73,7 @@ export async function generateCommitMessageSuggestion(input: {
       return fallback;
     }
 
-    return normalizeAiSuggestion(result.result, fallback, requestedModel);
+    return normalizeAiSuggestion(result.result, fallback, routedModel);
   } catch (error) {
     console.warn("[git] failed to generate commit message, using fallback:", error);
     return fallback;

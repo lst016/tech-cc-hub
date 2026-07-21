@@ -11,6 +11,7 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { AppModalOverlay } from "../components/AppModalOverlay";
+import { AnnotationBadge } from "../components/annotations/AnnotationBadge";
 import { copyTextToClipboard } from "../utils/clipboard";
 import {
   OPEN_BROWSER_WORKBENCH_URL_EVENT,
@@ -19,6 +20,7 @@ import {
   type PreviewOpenFileDetail,
 } from "../events";
 import { normalizeWorkbenchUrl } from "../utils/workbench-url";
+import type { Annotation } from "../../shared/annotation";
 
 type MermaidApi = {
   initialize: (config: Record<string, unknown>) => void;
@@ -699,11 +701,17 @@ function MDContent({
   sourceRoot,
   onOpenSourceFile,
   larkMentionTone = "rich-text",
+  annotations,
+  onAnnotationClick,
 }: {
   text: string;
   sourceRoot?: string;
   onOpenSourceFile?: (detail: PreviewOpenFileDetail) => void;
   larkMentionTone?: LarkMentionTone;
+  /** 当前消息的评论/标注列表（按 created_at 升序）。没有则所有段落都不渲染气泡。 */
+  annotations?: Annotation[];
+  /** 点击段落末尾气泡时回调，由上层决定弹浮层或跳详情。 */
+  onAnnotationClick?: (annotation: Annotation) => void;
 }) {
   const onOpenSourceFileRef = useRef(onOpenSourceFile);
   useEffect(() => {
@@ -713,14 +721,71 @@ function MDContent({
     onOpenSourceFileRef.current?.(detail);
   }, []);
 
-  const markdownComponents = useMemo<Components>(() => ({
+  const annotationsByParagraph = useMemo(() => {
+    const map = new Map<number, Array<{ annotation: Annotation; order: number }>>();
+    if (!annotations || annotations.length === 0) return map;
+    annotations.forEach((annotation, index) => {
+      const bucket = map.get(annotation.paragraphIndex) ?? [];
+      bucket.push({ annotation, order: index + 1 });
+      map.set(annotation.paragraphIndex, bucket);
+    });
+    return map;
+  }, [annotations]);
+
+  const renderParagraphBadges = useCallback((paragraphIndex: number) => {
+    const bucket = annotationsByParagraph.get(paragraphIndex);
+    if (!bucket || bucket.length === 0) return null;
+    return (
+      <>
+        {bucket.map(({ annotation, order }) => (
+          <AnnotationBadge
+            key={annotation.id}
+            annotation={annotation}
+            order={order}
+            onClick={onAnnotationClick}
+          />
+        ))}
+      </>
+    );
+  }, [annotationsByParagraph, onAnnotationClick]);
+
+  // 段落 (p / li) 在渲染树里出现的顺序就是 paragraphIndex。
+  let paragraphCounter = 0;
+  const nextParagraphIndex = () => paragraphCounter++;
+  const markdownComponents = {
     h1: (props) => <h1 className="mt-4 text-xl font-semibold text-ink-900" {...props} />,
     h2: (props) => <h2 className="mt-4 text-lg font-semibold text-ink-900" {...props} />,
     h3: (props) => <h3 className="mt-3 text-base font-semibold text-ink-800" {...props} />,
-    p: (props) => <p className="mt-2 min-w-0 text-base leading-relaxed text-ink-700 [overflow-wrap:anywhere]" {...props} />,
+    p: (props) => {
+      const paragraphIndex = nextParagraphIndex();
+      const { children, ...rest } = props;
+      return (
+        <p
+          data-annotation-paragraph={paragraphIndex}
+          className="mt-2 min-w-0 text-base leading-relaxed text-ink-700 [overflow-wrap:anywhere]"
+          {...rest}
+        >
+          {children}
+          {renderParagraphBadges(paragraphIndex)}
+        </p>
+      );
+    },
     ul: (props) => <ul className="mt-2 ml-4 grid min-w-0 list-disc gap-1 has-[:checked]:list-none has-[:checked]:ml-0" {...props} />,
     ol: (props) => <ol className="mt-2 ml-4 grid min-w-0 list-decimal gap-1" {...props} />,
-    li: (props) => <li className="min-w-0 text-ink-700 marker:text-muted [overflow-wrap:anywhere]" {...props} />,
+    li: (props) => {
+      const paragraphIndex = nextParagraphIndex();
+      const { children, ...rest } = props;
+      return (
+        <li
+          data-annotation-paragraph={paragraphIndex}
+          className="min-w-0 text-ink-700 marker:text-muted [overflow-wrap:anywhere]"
+          {...rest}
+        >
+          {children}
+          {renderParagraphBadges(paragraphIndex)}
+        </li>
+      );
+    },
     a: (props) => <MarkdownLink {...props} sourceRoot={sourceRoot} onOpenSourceFile={openSourceFile} />,
     at: ({ children, user_id: userId }: LarkMentionMarkdownProps) => (
       <MarkdownLarkMention tone={larkMentionTone} userId={userId}>
@@ -809,7 +874,7 @@ function MDContent({
         </code>
       );
     },
-  }) as Components, [larkMentionTone, openSourceFile, sourceRoot]);
+  } as Components;
 
   return (
     <ReactMarkdown

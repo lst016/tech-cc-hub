@@ -326,6 +326,52 @@ test("codex responses tool schemas and function call arguments are normalized", 
   });
 });
 
+test("codex responses removes invalid required keywords from nested tool schemas", () => {
+  const warnings: unknown[][] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args);
+
+  try {
+    const request = buildCodexResponsesRequest({
+      model: "gpt-5.5",
+      messages: [{ role: "user", content: "run the tool" }],
+      tools: [
+        {
+          name: "mcp__example__nested_tool",
+          input_schema: {
+            type: "object",
+            required: { query: true },
+            properties: {
+              required: { type: "string" },
+              options: {
+                type: "object",
+                required: ["mode", 1],
+                properties: { mode: { type: "string" } },
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    const parameters = request.tools?.[0]?.parameters as Record<string, unknown>;
+    const properties = parameters.properties as Record<string, Record<string, unknown>>;
+    assert.equal("required" in parameters, false);
+    assert.deepEqual(properties.required, { type: "string" });
+    assert.deepEqual(properties.options.required, ["mode"]);
+    assert.deepEqual(warnings.map((warning) => warning[1]), [
+      { toolName: "mcp__example__nested_tool", path: "$.required", actualType: "object" },
+      {
+        toolName: "mcp__example__nested_tool",
+        path: "$.properties.options.required",
+        actualType: "array-with-non-string-items",
+      },
+    ]);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
 test("codex responses are translated back to anthropic message and stream shapes", () => {
   const response = toAnthropicMessageResponse({
     id: "resp_123",

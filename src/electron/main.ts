@@ -32,7 +32,7 @@ import { registerEmulatorInstallerIpc } from "./libs/emulator-installer/ipc.js";
 import { registerEmulatorRemoteIpc } from "./libs/emulator-remote/index.js";
 import { getPreloadPath, getUIPath, getIconPath } from "./pathResolver.js";
 import { getStaticData, pollResources, stopPolling } from "./test.js";
-import { handleClientEvent, sessions, cleanupAllSessions, setChannelReplySender, listStoredSessionsForRenderer, initializeTaskExecutor, initializeNoteRepository } from "./ipc-handlers.js";
+import { handleClientEvent, handleLarkCardAction, sessions, cleanupAllSessions, setChannelReplySender, listStoredSessionsForRenderer, initializeTaskExecutor, initializeNoteRepository, initializeAnnotationStore, registerAnnotationIpcHandlers } from "./ipc-handlers.js";
 import { generateSessionTitle } from "./libs/util.js";
 import {
   loadApiConfigSettings,
@@ -218,6 +218,53 @@ function flushPendingWooAuthDeepLinkActivation(): void {
   if (!pendingWooAuthDeepLinkActivation || !mainWindow || mainWindow.isDestroyed()) return;
   pendingWooAuthDeepLinkActivation = false;
   focusDesktopWindow(mainWindow);
+}
+
+function registerWooAuthIpcHandlers(): void {
+    ipcMain.handle("woo-auth:get-state", async () => wooAuthManager ? await wooAuthManager.getRestoredState() : {
+        status: "anonymous",
+        user: null,
+        hasStoredSession: false,
+        challenges: [],
+        loginMethods: null,
+    });
+    ipcMain.handle("woo-auth:restore", async () => {
+        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
+        return await wooAuthManager.restore();
+    });
+    ipcMain.handle("woo-auth:get-login-methods", async () => {
+        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
+        return await wooAuthManager.getLoginMethods();
+    });
+    ipcMain.handle("woo-auth:login-password", async (_event: IpcMainInvokeEvent, input: { userName?: string; password?: string }) => {
+        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
+        return await wooAuthManager.loginWithPassword({
+            userName: input?.userName?.trim() ?? "",
+            password: input?.password ?? "",
+        });
+    });
+    ipcMain.handle("woo-auth:send-email-code", async (_event: IpcMainInvokeEvent, input: { mail?: string }) => {
+        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
+        await wooAuthManager.sendEmailCode({ mail: input?.mail?.trim() ?? "" });
+        return { success: true };
+    });
+    ipcMain.handle("woo-auth:login-email", async (_event: IpcMainInvokeEvent, input: { mail?: string; code?: string }) => {
+        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
+        return await wooAuthManager.loginWithEmail({
+            mail: input?.mail?.trim() ?? "",
+            code: input?.code?.trim() ?? "",
+        });
+    });
+    ipcMain.handle("woo-auth:login-third-party", async () => {
+        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
+        return await wooAuthManager.loginWithThirdParty(async (url) => {
+            await shell.openExternal(url);
+        });
+    });
+    ipcMain.handle("woo-auth:logout", async () => {
+        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
+        return await wooAuthManager.logout();
+    });
 }
 
 function registerCodexOAuthProtocolClient(): void {
@@ -2829,6 +2876,7 @@ app.on("ready", async () => {
     });
     wooAuthManager = new WooAuthManager(app.getPath("userData"));
     void wooAuthManager.restore();
+    registerWooAuthIpcHandlers();
     codexRuntimeLoginManager = new CodexRuntimeLoginManager({
         appPath: app.getAppPath(),
         isPackaged: app.isPackaged,
@@ -3453,7 +3501,14 @@ app.on("ready", async () => {
       }
     };
 
-    const cronExecutor = new CronJobExecutor(cronBusyGuard, sendCronMessage);
+    const cronExecutor = new CronJobExecutor(cronBusyGuard, sendCronMessage, (conversationId) => {
+      if (conversationId === "__system__") {
+        return sessions.listSessions().some(
+          (session) => session.cwd === systemWorkspacePath && session.status === "running",
+        );
+      }
+      return sessions.getSession(conversationId)?.status === "running";
+    });
     const cronEventEmitter = new IpcCronEventEmitter();
     const cronRepo = new CronRepository();
     const cronService = new CronService(cronRepo, cronEventEmitter, cronExecutor);
@@ -3469,6 +3524,12 @@ app.on("ready", async () => {
     const noteDbPath = join(app.getPath("userData"), "notes.db");
     initializeNoteRepository(noteDbPath);
     console.log("[main] Note repository initialized");
+
+    // Initialize chat message annotations
+    const annotationDbPath = join(app.getPath("userData"), "annotations.db");
+    initializeAnnotationStore(annotationDbPath);
+    registerAnnotationIpcHandlers(ipcMainHandle);
+    console.log("[main] Annotation store initialized");
     const restartChannelBridge = () => {
       channelBridgeController?.stop();
       channelBridgeController = startChannelBridge(async (message) => {
@@ -3476,7 +3537,7 @@ app.on("ready", async () => {
           type: "channel.message.receive",
           payload: message,
         });
-      });
+      }, handleLarkCardAction);
       setChannelReplySender(channelBridgeController);
     };
     restartChannelBridge();
@@ -3803,46 +3864,6 @@ app.on("ready", async () => {
 
     ipcMain.handle("prompt:optimize", async (_: IpcMainInvokeEvent, payload: { prompt?: string; model?: string }) => {
         return await optimizePrompt(payload);
-    });
-
-    ipcMain.handle("woo-auth:get-state", () => wooAuthManager?.getState() ?? {
-        status: "anonymous",
-        user: null,
-        challenges: [],
-        loginMethods: null,
-    });
-    ipcMain.handle("woo-auth:get-login-methods", async () => {
-        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
-        return await wooAuthManager.getLoginMethods();
-    });
-    ipcMain.handle("woo-auth:login-password", async (_event: IpcMainInvokeEvent, input: { userName?: string; password?: string }) => {
-        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
-        return await wooAuthManager.loginWithPassword({
-            userName: input?.userName?.trim() ?? "",
-            password: input?.password ?? "",
-        });
-    });
-    ipcMain.handle("woo-auth:send-email-code", async (_event: IpcMainInvokeEvent, input: { mail?: string }) => {
-        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
-        await wooAuthManager.sendEmailCode({ mail: input?.mail?.trim() ?? "" });
-        return { success: true };
-    });
-    ipcMain.handle("woo-auth:login-email", async (_event: IpcMainInvokeEvent, input: { mail?: string; code?: string }) => {
-        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
-        return await wooAuthManager.loginWithEmail({
-            mail: input?.mail?.trim() ?? "",
-            code: input?.code?.trim() ?? "",
-        });
-    });
-    ipcMain.handle("woo-auth:login-third-party", async () => {
-        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
-        return await wooAuthManager.loginWithThirdParty(async (url) => {
-            await shell.openExternal(url);
-        });
-    });
-    ipcMain.handle("woo-auth:logout", async () => {
-        if (!wooAuthManager) throw new Error("Woo 登录尚未初始化。");
-        return await wooAuthManager.logout();
     });
 
     ipcMainHandle("codex-oauth-runtime-start", async (_: IpcMainInvokeEvent, payload: CodexRuntimeLoginStartInput) => {

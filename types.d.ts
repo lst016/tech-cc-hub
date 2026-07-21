@@ -379,6 +379,11 @@ type EventPayloadMapping = {
         "git:stashDrop": UiGitResult<UiGitWorkbenchSnapshot>;
         "feedback:capture-screenshot": string | null;
         "feedback:submit-issue": FeedbackSubmitResult;
+        "annotations:list-by-message": import("./src/shared/annotation").Annotation[];
+        "annotations:list-by-session": import("./src/shared/annotation").Annotation[];
+        "annotations:create": import("./src/shared/annotation").Annotation;
+        "annotations:update": import("./src/shared/annotation").Annotation | null;
+        "annotations:remove": boolean;
 }
 
 type FeedbackSubmitResult = { success: boolean; issueUrl?: string; error?: string; fallback?: boolean; message?: string };
@@ -494,5 +499,10 @@ interface Window {
         onCronJobExecuted: (callback: (data: { jobId: string; status: "ok" | "error" | "skipped" | "missed"; error?: string }) => void) => UnsubscribeFunction;
         captureScreenshot: () => Promise<string | null>;
         submitFeedback: (payload: { body: string; images?: Array<{ dataUrl: string; name: string }> }) => Promise<FeedbackSubmitResult>;
+        annotationsListByMessage: (sessionId: string, messageId: string) => Promise<import("./src/shared/annotation").Annotation[]>;
+        annotationsListBySession: (sessionId: string) => Promise<import("./src/shared/annotation").Annotation[]>;
+        annotationsCreate: (input: import("./src/shared/annotation").AnnotationInput) => Promise<import("./src/shared/annotation").Annotation>;
+        annotationsUpdate: (id: string, body: string) => Promise<import("./src/shared/annotation").Annotation | null>;
+        annotationsRemove: (id: string) => Promise<boolean>;
     }
 }

@@ -326,11 +326,17 @@ export function getApiConfigForModel(modelName?: string, configProfileId?: strin
     return enabledConfigs[0] ?? getFallbackClaudeSettingsConfig();
   }
 
-  const matchedConfig = pickHighestWeightedModelOwner(
-    enabledConfigs,
-    normalizedModel,
-    (config, targetModel) => Boolean(findRoutableModelName(config, targetModel)),
-  );
+  const isAssignedModel = enabledConfigs.some((config) => Boolean(findRoutableModelName(config, normalizedModel)));
+  const matchedConfig = isAssignedModel
+    ? pickHighestWeightedModelOwner(
+      enabledConfigs,
+      normalizedModel,
+      (config, targetModel) => (
+        isModelCompatibleWithApiProvider(config.provider, targetModel)
+        && Boolean(findConfiguredModelName(config, targetModel))
+      ),
+    )
+    : undefined;
   if (matchedConfig) {
     return matchedConfig;
   }

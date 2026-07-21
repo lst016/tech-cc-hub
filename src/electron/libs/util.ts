@@ -5,6 +5,7 @@ import {
   buildEnvForConfig,
   getClaudeCodeModelOption,
   getClaudeCodePath,
+  resolveApiConfigForModel,
 } from "./claude/claude-settings.js";
 import { app } from "electron";
 import { buildExternalCliEnv } from "./external-cli.js";
@@ -41,19 +42,30 @@ export const generateSessionTitle = async (userIntent: string | null, options: {
   // Get the Claude Code path when needed, not at module load time
   const claudeCodePath = getClaudeCodePath();
   // Get fresh env each time to ensure latest API config is used
-  const apiConfig = getCurrentApiConfig();
-  if (!apiConfig?.model?.trim()) {
+  const currentApiConfig = getCurrentApiConfig();
+  if (!currentApiConfig?.model?.trim()) {
     const words = trimmedIntent.split(/\s+/).slice(0, 5);
     return words.join(" ").toUpperCase() + (trimmedIntent.split(/\s+/).length > 5 ? "..." : "");
   }
-  const requestedModel = options.model?.trim() || apiConfig.smallModel?.trim() || apiConfig.analysisModel?.trim() || apiConfig.model;
+  const requestedModel = options.model?.trim() || currentApiConfig.analysisModel?.trim() || currentApiConfig.smallModel?.trim() || currentApiConfig.model;
+  const resolvedRoute = resolveApiConfigForModel(requestedModel);
+  const apiConfig = resolvedRoute?.config ?? currentApiConfig;
+  const routedModel = resolvedRoute?.model ?? requestedModel;
+  console.info("[single-query][route]", {
+    purpose: "session-title",
+    configProfileId: apiConfig.id,
+    configProfileName: apiConfig.name,
+    configProvider: apiConfig.provider,
+    requestedModel,
+    routedModel,
+  });
   const currentEnv = buildExternalCliEnv({
     ...process.env,
-    ...buildEnvForConfig(apiConfig, requestedModel),
+    ...buildEnvForConfig(apiConfig, routedModel),
   });
 
   try {
-    const claudeCodeModelOption = getClaudeCodeModelOption(apiConfig, requestedModel);
+    const claudeCodeModelOption = getClaudeCodeModelOption(apiConfig, routedModel);
     const result = await runSinglePromptQuery(
       `please analyze the following user input to generate a short but clear title to identify this conversation theme:
       ${trimmedIntent}
@@ -62,7 +74,7 @@ export const generateSessionTitle = async (userIntent: string | null, options: {
       maxTurns: 1,
       tools: [],
       settingSources: [],
-      settings: buildClaudeCodeModelSettings(apiConfig, requestedModel),
+      settings: buildClaudeCodeModelSettings(apiConfig, routedModel),
       env: currentEnv,
       pathToClaudeCodeExecutable: claudeCodePath,
     });

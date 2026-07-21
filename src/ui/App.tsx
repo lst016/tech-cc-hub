@@ -14,6 +14,7 @@ import { ConversationTurnTimeline } from "./components/ConversationTurnTimeline"
 import { ActivityWorkspaceTabs } from "./components/ActivityWorkspaceTabs";
 import { TooltipButton } from "./components/TooltipButton";
 import { UpdateToast } from "./components/UpdateToast";
+import { AppModalOverlay } from "./components/AppModalOverlay";
 import { PromptInput } from "./components/prompt-input/PromptInput";
 import { usePromptActions } from "./components/prompt-input/usePromptActions";
 import { SessionAnalysisPage, buildSessionWorkflowOptimizationPrompt } from "./components/SessionAnalysisPage";
@@ -36,6 +37,7 @@ import {
 import { copyTextToClipboard } from "./utils/clipboard";
 import { observeBrowserWorkbenchOcclusion } from "./utils/browser-workbench-visibility";
 import { shouldShowChatThinkingPlaceholder } from "./utils/chat-thinking-state";
+import { keepLatestApiRetryPerTurn } from "./utils/api-retry-messages";
 import {
   DEFAULT_ACTIVITY_RAIL_TAB,
   buildWorkflowAgentWorkspaceTabs,
@@ -357,6 +359,7 @@ function App() {
   const [showSessionAnalysis, setShowSessionAnalysis] = useState(false);
   const [showCronPage, setShowCronPage] = useState(false);
   const [showTaskPanel, setShowTaskPanel] = useState(false);
+  const [sessionPendingDeletion, setSessionPendingDeletion] = useState<{ id: string; title: string } | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
   const [showActivityRail, setShowActivityRail] = useState(true);
@@ -927,7 +930,7 @@ function App() {
       pendingProcessGroup = [];
     };
 
-    for (const item of visibleMessages) {
+    for (const item of keepLatestApiRetryPerTurn(visibleMessages)) {
       if (item.message.type === "system" && item.message.subtype === "init") continue;
       if (item.message.type === "user_prompt") {
         flushProcessGroup();
@@ -1492,8 +1495,16 @@ function App() {
   }, []);
 
   const handleDeleteSession = useCallback((sessionId: string) => {
-    sendEvent({ type: "session.delete", payload: { sessionId } });
-  }, [sendEvent]);
+    const session = useAppStore.getState().sessions[sessionId]
+      ?? useAppStore.getState().archivedSessions[sessionId];
+    setSessionPendingDeletion({ id: sessionId, title: session?.title ?? "这个会话" });
+  }, []);
+
+  const handleConfirmSessionDeletion = useCallback(() => {
+    if (!sessionPendingDeletion) return;
+    sendEvent({ type: "session.delete", payload: { sessionId: sessionPendingDeletion.id } });
+    setSessionPendingDeletion(null);
+  }, [sendEvent, sessionPendingDeletion]);
 
   const handleArchiveSession = useCallback((sessionId: string) => {
     sendEvent({ type: "session.archive", payload: { sessionId } });
@@ -2500,6 +2511,49 @@ function App() {
           </div>
         )}
       </div>
+
+      {sessionPendingDeletion && (
+        <AppModalOverlay
+          role="alertdialog"
+          aria-labelledby="session-delete-title"
+          aria-describedby="session-delete-description"
+          className="z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-[2px]"
+          onClick={() => setSessionPendingDeletion(null)}
+        >
+          <div
+            className="w-full max-w-[420px] rounded-2xl border border-ink-900/8 bg-white p-6 shadow-elevated"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <span className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-error-light text-error">
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                <path d="M4 7h16" />
+                <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                <path d="M7 7l1 12a1 1 0 0 0 1 .9h6a1 1 0 0 0 1-.9l1-12" />
+              </svg>
+            </span>
+            <h2 id="session-delete-title" className="m-0 text-lg font-bold text-ink-900">删除会话？</h2>
+            <p id="session-delete-description" className="mb-6 mt-2 text-sm leading-6 text-ink-600">
+              “{sessionPendingDeletion.title}”将被永久删除，此操作无法撤销。
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                className="h-10 rounded-xl border border-ink-900/10 bg-white px-4 text-sm font-semibold text-ink-700 transition-colors hover:bg-surface-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25"
+                onClick={() => setSessionPendingDeletion(null)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="h-10 rounded-xl bg-error px-4 text-sm font-semibold text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-error/25"
+                onClick={handleConfirmSessionDeletion}
+              >
+                确认删除
+              </button>
+            </div>
+          </div>
+        </AppModalOverlay>
+      )}
 
       {showStartModal && (
         <Suspense fallback={null}>

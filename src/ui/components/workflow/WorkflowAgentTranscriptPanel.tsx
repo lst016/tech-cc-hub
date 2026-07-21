@@ -24,7 +24,8 @@ function statusTone(status: WorkflowAgentSummary["status"]) {
 }
 
 function agentLabel(role: string) {
-  if (role === "Subagent" || role === "Task") return "智能体";
+  if (role === "Agent" || role === "Subagent") return "智能体";
+  if (role === "Task") return "任务";
   if (role === "Workflow") return "工作流";
   if (role === "Background task") return "后台任务";
   return role;
@@ -80,19 +81,30 @@ function AgentProgressSummary({
   status,
   summary,
   updateCount,
+  taskLabel,
 }: {
   status: WorkflowAgentSummary["status"];
   summary: string;
   updateCount: number;
+  taskLabel: string;
 }) {
   return (
-    <section data-workflow-agent-progress className="mb-5 border-b border-black/6 pb-5" aria-label="智能体当前进度">
+    <section data-workflow-agent-progress className="mb-5 border-b border-black/6 pb-5" aria-label={`${taskLabel}当前进度`}>
       <div className={`flex items-center gap-2 text-[12px] font-medium ${statusTone(status)}`}>
         <StatusIcon status={status} />
         <span>{status === "running" ? "正在执行" : statusLabel(status)}</span>
         <span className="font-normal text-muted-light">· {updateCount} 次进度更新</span>
       </div>
       <p className="mt-2 text-[14px] leading-6 text-ink-700">{summary}</p>
+    </section>
+  );
+}
+
+function TaskPromptSummary({ prompt, taskLabel }: { prompt: string; taskLabel: string }) {
+  return (
+    <section className="mb-5 border-b border-black/6 pb-5" aria-label={`${taskLabel}执行内容`}>
+      <div className="text-[12px] font-medium text-muted">执行内容</div>
+      <p className="mt-2 whitespace-pre-wrap break-words text-[14px] leading-6 text-ink-700">{prompt}</p>
     </section>
   );
 }
@@ -205,7 +217,7 @@ export function WorkflowAgentTranscriptPanel({
     return (
       <div data-workflow-agent-transcript className="flex h-full min-h-0 w-full min-w-0 flex-col bg-white">
         <div className="border-b border-black/6 bg-white px-5 py-3">
-          <div className="text-sm font-semibold text-ink-900">智能体记录</div>
+          <div className="text-sm font-semibold text-ink-900">任务记录</div>
         </div>
         <div className="chat-scroll flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 text-center">
           <div className="max-w-xs text-sm text-muted">在对话中选择一条智能体更新，即可查看完整记录。</div>
@@ -215,6 +227,8 @@ export function WorkflowAgentTranscriptPanel({
   }
 
   const transcriptView = buildWorkflowAgentTranscriptView(agent);
+  const taskLabel = agentLabel(agent.role);
+  const taskPrompt = agent.taskPrompt?.trim() ?? "";
   const showProgress = Boolean(transcriptView.latestProgress)
     && (agent.status === "running" || transcriptView.messages.length === 0);
 
@@ -228,7 +242,13 @@ export function WorkflowAgentTranscriptPanel({
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold text-ink-900">{agent.title}</div>
             <div className="mt-0.5 flex min-w-0 items-center gap-2 truncate text-[11px] text-muted">
-              <span>{agentLabel(agent.role)}</span>
+              <span>{taskLabel}</span>
+              {agent.agentType && (agent.role === "Agent" || agent.role === "Subagent") && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span>{agent.agentType}</span>
+                </>
+              )}
               {transcriptView.messages.length > 0 && (
                 <>
                   <span aria-hidden="true">·</span>
@@ -256,11 +276,14 @@ export function WorkflowAgentTranscriptPanel({
             <WorkflowRunSummary run={workflowRun} onAction={onWorkflowRunAction} />
           )}
 
+          {taskPrompt && <TaskPromptSummary prompt={taskPrompt} taskLabel={taskLabel} />}
+
           {showProgress && (
             <AgentProgressSummary
               status={agent.status}
               summary={transcriptView.latestProgress}
               updateCount={transcriptView.statusEventCount}
+              taskLabel={taskLabel}
             />
           )}
 
@@ -274,7 +297,7 @@ export function WorkflowAgentTranscriptPanel({
               type: "assistant",
               message: {
                 role: "assistant",
-                content: [{ type: "text", text: "智能体已启动，正在等待首条进展。" }],
+                content: [{ type: "text", text: `${taskLabel}已启动，正在等待首条进展。` }],
               },
             } as never)}
           />

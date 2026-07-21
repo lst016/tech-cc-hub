@@ -24,6 +24,8 @@ import {
   buildGroupedModelOptions,
   getModelSearchScore,
 } from "../../src/ui/components/models/ModelSelect.js";
+import { getModelSelectMenuLayout } from "../../src/ui/components/models/model-select-layout.js";
+import { filterComposerModelOptions } from "../../src/ui/components/prompt-input/ComposerModelMenu.js";
 import {
   getModelRoutingWeight,
   pickHighestWeightedModelOwner,
@@ -90,7 +92,7 @@ test("settings modal and shared types expose per-model context compression field
   assert.match(aiInterfaceSettingsSource, /接口连接/);
   assert.match(aiInterfaceSettingsSource, /模型目录/);
   assert.match(aiInterfaceSettingsSource, /路由策略/);
-  assert.match(modelCatalogSettingsSource, /加入可用池/);
+  assert.match(modelCatalogSettingsSource, /恢复默认使用/);
   assert.doesNotMatch(apiProfilesSettingsSource, /enabled:\s*item\.id === profile\.id/);
   assert.doesNotMatch(settingsModalSource, /enabled:\s*index === enabledIndex/);
   assert.doesNotMatch(configStoreSource, /profile\.enabled && !hasEnabled/);
@@ -310,7 +312,7 @@ test("Boke factory and endpoint metadata separate image models from the full cat
 
   const state = buildSharedModelRoutingState([profile]);
   assert.deepEqual(state.imageGenerationModels, ["openai/gpt-image-1"]);
-  assert.deepEqual(state.imageUnderstandingModels, ["qwen/qwen-vl-max"]);
+  assert.deepEqual(state.imageUnderstandingModels, ["openai/gpt-5.5", "qwen/qwen-vl-max"]);
 
   const option = getRoutedModelOptionsForProfiles([profile])
     .find((item) => item.value === "openai/gpt-5.5");
@@ -328,6 +330,8 @@ test("shared model routing model slots use grouped searchable comboboxes", () =>
   assert.match(modelSelectSource, /buildGroupedModelOptions/);
   assert.match(modelSelectSource, /getModelSearchScore/);
   assert.match(modelSelectSource, /isFuzzySubsequence/);
+  assert.match(modelSelectSource, /createPortal/);
+  assert.match(modelSelectSource, /z-\[50000\]/);
   assert.doesNotMatch(modelRoutingSource, /<select/);
   assert.match(modelRoutingSource, /overflow-visible rounded-\[18px\]/);
   assert.doesNotMatch(modelRoutingSource, /overflow-hidden rounded-\[18px\]/);
@@ -346,6 +350,91 @@ test("model select search rejects loose two-character subsequences", () => {
 test("model select search keeps useful direct and tight shorthand matches", () => {
   assert.deepEqual(getModelSearchValues("deep"), ["deepseek-v4-flash", "deepseek-v4-pro"]);
   assert.deepEqual(getModelSearchValues("v4f"), ["deepseek-v4-flash"]);
+});
+
+test("composer model search treats dotted versions as one term and ignores opaque deployment keys", () => {
+  const options = [
+    {
+      value: "profile-with-5-and-6::deepseek-v4-flash",
+      label: "deepseek-v4-flash",
+      displayLabel: "deepseek-v4-flash",
+      detailLabel: "W10",
+    },
+    {
+      value: "profile::doubao-seedream-5-0-pro-260628",
+      label: "doubao-seedream-5-0-pro-260628",
+      displayLabel: "doubao-seedream-5-0-pro-260628",
+      detailLabel: "Boke",
+    },
+    {
+      value: "profile::gpt-5.6-sol",
+      label: "gpt-5.6-sol",
+      displayLabel: "gpt-5.6-sol",
+      detailLabel: "Boke",
+    },
+  ];
+
+  assert.deepEqual(
+    filterComposerModelOptions(options, "5.6").map((option) => option.displayLabel),
+    ["gpt-5.6-sol"],
+  );
+});
+
+test("model select menu escapes settings clipping and flips above a short viewport", () => {
+  const layout = getModelSelectMenuLayout(
+    { left: 580, top: 558, bottom: 600, width: 254 },
+    1280,
+    720,
+    "bottom",
+    false,
+  );
+
+  assert.deepEqual(layout, {
+    direction: "top",
+    left: 580,
+    width: 254,
+    bottom: 170,
+  });
+});
+
+test("model select menu keeps its preferred lower placement when space is available", () => {
+  const layout = getModelSelectMenuLayout(
+    { left: 48, top: 72, bottom: 114, width: 420 },
+    1280,
+    720,
+    "bottom",
+    false,
+  );
+
+  assert.deepEqual(layout, {
+    direction: "bottom",
+    left: 48,
+    width: 420,
+    top: 122,
+  });
+});
+
+test("prompt analysis tasks prefer the configured analysis model over the background model", () => {
+  const utilSource = readFileSync("src/electron/libs/util.ts", "utf8");
+  const commitMessageSource = readFileSync("src/electron/libs/git/commit-message.ts", "utf8");
+
+  assert.match(utilSource, /currentApiConfig\.analysisModel\?\.trim\(\) \|\| currentApiConfig\.smallModel\?\.trim\(\)/);
+  assert.match(commitMessageSource, /currentApiConfig\.analysisModel\?\.trim\(\) \|\| currentApiConfig\.smallModel\?\.trim\(\)/);
+  assert.match(utilSource, /resolveApiConfigForModel\(requestedModel\)/);
+  assert.match(commitMessageSource, /resolveApiConfigForModel\(requestedModel\)/);
+  assert.match(utilSource, /buildEnvForConfig\(apiConfig, routedModel\)/);
+  assert.match(commitMessageSource, /buildEnvForConfig\(apiConfig, routedModel\)/);
+  assert.match(utilSource, /purpose: "session-title"/);
+  assert.match(commitMessageSource, /purpose: "commit-message"/);
+});
+
+test("model select ranks direct group matches ahead of loose fuzzy matches", () => {
+  const groups = buildGroupedModelOptions([
+    "gpt-5-codex-openai-compact",
+    "deepseek-v4-pro",
+  ], "dee");
+  assert.equal(groups[0]?.id, "deepseek");
+  assert.equal(groups[0]?.options[0]?.value, "deepseek-v4-pro");
 });
 
 test("model select preserves routed option metadata for display and search", () => {
@@ -817,7 +906,7 @@ test("imageGenerationModel persists, normalizes, and clears independently from i
   assert.equal(cleared[0]?.imageModel, "gemini-3-pro-image-preview");
 });
 
-test("shared model routing keeps gateway model ownership isolated on one editable surface", () => {
+test("shared model routing switches to a compatible role gateway without changing the main model", () => {
   const profiles = [
     {
       id: "codex",
@@ -842,7 +931,7 @@ test("shared model routing keeps gateway model ownership isolated on one editabl
       expertModel: "deepseek-v4-pro",
       smallModel: "GLM-5.1-FP8",
       analysisModel: "GLM-5.1-FP8",
-      models: [{ name: "deepseek-v4-flash" }, { name: "deepseek-v4-pro" }, { name: "GLM-5.1-FP8", routingWeight: 10 }],
+      models: [{ name: "deepseek-v4-flash" }, { name: "deepseek-v4-pro" }, { name: "GLM-5.1-FP8", routingWeight: 10 }, { name: "gpt-5.4" }],
       enabled: true,
       provider: "custom" as const,
       apiType: "anthropic" as const,
@@ -858,40 +947,96 @@ test("shared model routing keeps gateway model ownership isolated on one editabl
     "deepseek-v4-pro",
     "GLM-5.1-FP8",
   ]);
-  assert.deepEqual(state.roleModels, ["gpt-5.4", "gpt-5.3-codex-spark"]);
+  assert.deepEqual(state.roleModels, [
+    "gpt-5.4",
+    "gpt-5.3-codex-spark",
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+    "GLM-5.1-FP8",
+  ]);
 
   const nextProfiles = applySharedModelRoutingPatch(profiles, { smallModel: "GLM-5.1-FP8" });
-  assert.equal(nextProfiles[0]?.smallModel, "gpt-5.3-codex-spark");
-  assert.equal(nextProfiles[1]?.smallModel, "GLM-5.1-FP8");
-  assert.equal(nextProfiles[0]?.models?.some((model) => model.name === "deepseek-v4-pro"), false);
-  assert.equal(nextProfiles[1]?.models?.some((model) => model.name === "gpt-5.4"), false);
-  assert.equal(nextProfiles[0]?.models?.find((model) => model.name === "gpt-5.4")?.routingWeight, 25);
-  assert.equal(nextProfiles[0]?.models?.find((model) => model.name === "GLM-5.1-FP8"), undefined);
-  assert.equal(nextProfiles[1]?.models?.find((model) => model.name === "GLM-5.1-FP8")?.routingWeight, 10);
+  assert.deepEqual(nextProfiles.map((profile) => profile.id), ["default", "codex"]);
+  assert.equal(nextProfiles[0]?.model, "gpt-5.4");
+  assert.equal(nextProfiles[0]?.expertModel, "gpt-5.4");
+  assert.equal(nextProfiles[0]?.smallModel, "GLM-5.1-FP8");
+  assert.equal(nextProfiles[1]?.smallModel, "gpt-5.3-codex-spark");
+  assert.equal(nextProfiles[0]?.models?.find((model) => model.name === "GLM-5.1-FP8")?.routingWeight, 10);
+  assert.equal(nextProfiles[1]?.models?.find((model) => model.name === "gpt-5.4")?.routingWeight, 25);
+  assert.equal(buildSharedModelRoutingState(nextProfiles).roleProfileId, "default");
 
   const withoutImageModels = applySharedModelRoutingPatch(nextProfiles, { imageModel: "" });
   assert.equal(withoutImageModels[0]?.imageModel, undefined);
   assert.equal(withoutImageModels[1]?.imageModel, undefined);
 
   const withImageGenerationModels = applySharedModelRoutingPatch(nextProfiles, { imageGenerationModel: "GLM-5.1-FP8" });
-  assert.equal(withImageGenerationModels[0]?.imageGenerationModel, undefined);
-  assert.equal(withImageGenerationModels[1]?.imageGenerationModel, "GLM-5.1-FP8");
+  assert.equal(withImageGenerationModels[0]?.imageGenerationModel, "GLM-5.1-FP8");
+  assert.equal(withImageGenerationModels[1]?.imageGenerationModel, undefined);
 
   const withoutImageGenerationModels = applySharedModelRoutingPatch(withImageGenerationModels, { imageGenerationModel: "" });
   assert.equal(withoutImageGenerationModels[0]?.imageGenerationModel, undefined);
   assert.equal(withoutImageGenerationModels[1]?.imageGenerationModel, undefined);
 
   const withForeignExpert = applySharedModelRoutingPatch(nextProfiles, { expertModel: "GLM-5.1-FP8" });
-  assert.equal(withForeignExpert[0]?.expertModel, "gpt-5.4");
-  assert.equal(withForeignExpert[1]?.expertModel, "deepseek-v4-pro");
+  assert.equal(withForeignExpert[0]?.expertModel, "GLM-5.1-FP8");
+  assert.equal(withForeignExpert[1]?.expertModel, "gpt-5.4");
   assert.equal(validateProfiles(withForeignExpert.map(normalizeProfile)), null);
 
   const withGatewayMain = applySharedModelRoutingPatch(nextProfiles, { model: "GLM-5.1-FP8" });
   assert.deepEqual(withGatewayMain.map((profile) => profile.id), ["default", "codex"]);
   const gatewayState = buildSharedModelRoutingState(withGatewayMain);
   assert.equal(gatewayState.mainModel, "GLM-5.1-FP8");
-  assert.deepEqual(gatewayState.roleModels, ["GLM-5.1-FP8", "deepseek-v4-pro", "deepseek-v4-flash"]);
+  assert.deepEqual(gatewayState.roleModels, ["GLM-5.1-FP8", "gpt-5.4", "deepseek-v4-flash", "deepseek-v4-pro"]);
   assert.equal(validateProfiles(withGatewayMain.map(normalizeProfile)), null);
+});
+
+test("Prompt analysis options display the highest-weight gateway independently", () => {
+  const profiles = [
+    {
+      id: "boke",
+      name: "波克网关",
+      apiKey: "sk-boke",
+      baseURL: "https://ai.pocketcity.com/v1",
+      model: "gpt-5.6-terra",
+      expertModel: "gpt-5.6-terra",
+      smallModel: "deepseek-v4-flash",
+      analysisModel: "MiniMax-M3",
+      models: [
+        { name: "gpt-5.6-terra" },
+        { name: "deepseek-v4-flash" },
+        { name: "MiniMax-M3", routingWeight: 0 },
+      ],
+      enabled: true,
+      provider: "boke" as const,
+      apiType: "anthropic" as const,
+    },
+    {
+      id: "minimax",
+      name: "MiniMax 官方",
+      apiKey: "sk-minimax",
+      baseURL: "https://api.minimaxi.com/anthropic",
+      model: "MiniMax-M2.7",
+      expertModel: "MiniMax-M2.7",
+      smallModel: "MiniMax-M2.7-highspeed",
+      analysisModel: "MiniMax-M2.7",
+      models: [
+        { name: "MiniMax-M2.7" },
+        { name: "MiniMax-M2.7-highspeed" },
+        { name: "MiniMax-M3", routingWeight: 100 },
+      ],
+      enabled: true,
+      provider: "minimax" as const,
+      apiType: "anthropic" as const,
+    },
+  ];
+
+  const state = buildSharedModelRoutingState(profiles);
+  const option = state.analysisModelOptions.find((item) => item.value === "MiniMax-M3");
+
+  assert.equal(state.analysisModel, "MiniMax-M3");
+  assert.equal(option?.profileId, "minimax");
+  assert.equal(option?.routingWeight, 100);
+  assert.match(option?.routeLabel ?? "", /MiniMax 官方/);
 });
 
 test("model deployment options keep same-name gateway and Codex routes separate", () => {

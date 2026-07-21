@@ -14,6 +14,20 @@ type ModelRoutingSettingsPageProps = {
 
 export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSettingsPageProps) {
   const state = buildSharedModelRoutingState(profiles);
+  const roleModelOptions = state.roleModelOptions.map((option) => ({
+    value: option.value,
+    label: option.label,
+    description: option.routeLabel,
+    badge: option.providerLabel,
+    title: `${option.value} → ${option.routeLabel}`,
+  }));
+  const analysisModelOptions = state.analysisModelOptions.map((option) => ({
+    value: option.value,
+    label: option.label,
+    description: option.routeLabel,
+    badge: option.providerLabel,
+    title: `${option.value} → ${option.routeLabel}`,
+  }));
   const hasProfiles = profiles.length > 0;
   const routedLabel = state.enabledCount > 0
     ? `${state.enabledCount} 个启用配置共用`
@@ -86,6 +100,9 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
                   <p className="mt-1 text-xs leading-5 text-muted">
                     细分推理、后台任务与 Prompt 分析。
                   </p>
+                  <p className="mt-1 text-[11px] leading-5 text-sky-700">
+                    当前专家/后台网关：{state.roleProfileName}。Prompt 分析按同名模型权重独立选择网关。
+                  </p>
                 </div>
               </div>
 
@@ -94,6 +111,7 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
                   label="专家模型"
                   value={state.expertModel}
                   models={state.roleModels}
+                  modelOptions={roleModelOptions}
                   onChange={(expertModel) => patchRouting({ expertModel })}
                 />
               </div>
@@ -104,6 +122,7 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
                     label="小模型 / 后台模型"
                     value={state.smallModel}
                     models={state.roleModels}
+                    modelOptions={roleModelOptions}
                     onChange={(smallModel) => patchRouting({ smallModel })}
                   />
                   <button
@@ -119,7 +138,8 @@ export function ModelRoutingSettingsPage({ profiles, onChange }: ModelRoutingSet
                   <ModelSelect
                     label="Prompt 分析模型"
                     value={state.analysisModel}
-                    models={state.roleModels}
+                    models={state.analysisModels}
+                    modelOptions={analysisModelOptions}
                     onChange={(analysisModel) => patchRouting({ analysisModel })}
                   />
                   <button

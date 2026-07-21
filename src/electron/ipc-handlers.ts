@@ -78,6 +78,15 @@ import {
   removeUploadedAttachmentReferences,
 } from "./libs/channel/channel-reply-attachments.js";
 import { buildChannelAgentPrompt } from "./libs/channel/channel-agent-prompt.js";
+import {
+  buildLarkWorkflowCard,
+  createLarkWorkflowCardCoordinator,
+  resolveLarkWorkflowReplyDelivery,
+  type LarkCardActionEvent,
+  type LarkCardJson,
+  type LarkWorkflowCardSnapshot,
+  type LarkWorkflowCardSendResult,
+} from "./libs/channel/lark-workflow-card.js";
 import { notifySessionFinished, notifyTaskExecutionFinished } from "./libs/desktop-notifications.js";
 import type { WorkflowRunRecord } from "../shared/workflows/workflow-runs.js";
 import {
@@ -86,7 +95,11 @@ import {
   isClaudeConversationReset,
 } from "../shared/claude-agent-sdk-messages.js";
 
+import { AnnotationStore } from "./libs/annotations-store.js";
+import type { AnnotationInput } from "../shared/annotation.js";
+
 let sessions: SessionStore;
+let annotationStore: AnnotationStore | null = null;
 const runnerHandles = new Map<string, RunnerHandle>();
 const serverEventListeners = new Set<(event: ServerEvent) => void>();
 const channelReplyTargets = new Map<string, ChannelReplyTarget>();
@@ -118,9 +131,31 @@ type ChannelReplySender = {
   sendFile?: (target: ChannelReplyTarget, relativePath: string) => Promise<void> | void;
   addReaction?: (target: ChannelReplyTarget, emojiType: string) => Promise<string>;
   removeReaction?: (target: ChannelReplyTarget, reactionId: string) => Promise<void>;
+  sendWorkflowCard?: (
+    target: ChannelReplyTarget,
+    card: LarkCardJson,
+    idempotencyKey: string,
+  ) => Promise<LarkWorkflowCardSendResult>;
+  updateWorkflowCard?: (messageId: string, card: LarkCardJson) => Promise<void>;
+  updateWorkflowCardAfterAction?: (token: string, card: LarkCardJson) => Promise<void>;
 };
 
 let channelReplySender: ChannelReplySender | null = null;
+const larkWorkflowCardPermissions = new Map<string, LarkWorkflowCardSnapshot["permission"]>();
+const larkWorkflowCardErrors = new Map<string, string>();
+const larkWorkflowCardActionNotices = new Map<string, string>();
+const larkWorkflowCardCoordinator = createLarkWorkflowCardCoordinator({
+  send: async (target, card, idempotencyKey) => {
+    const sender = channelReplySender;
+    if (!sender?.sendWorkflowCard) throw new Error("Lark workflow card sender is unavailable");
+    return await sender.sendWorkflowCard(target, card, idempotencyKey);
+  },
+  update: async (messageId, card) => {
+    const sender = channelReplySender;
+    if (!sender?.updateWorkflowCard) throw new Error("Lark workflow card updater is unavailable");
+    await sender.updateWorkflowCard(messageId, card);
+  },
+});
 
 let taskExecutor: TaskExecutor | null = null;
 
@@ -140,6 +175,37 @@ export function initializeNoteRepository(dbPath: string): NoteRepository {
   const noteDb = new Database(dbPath);
   noteRepo = new NoteRepository(noteDb);
   return noteRepo;
+}
+
+export function initializeAnnotationStore(dbPath: string): AnnotationStore {
+  const annotationDb = new Database(dbPath);
+  annotationStore = new AnnotationStore(annotationDb);
+  return annotationStore;
+}
+
+function requireAnnotationStore(): AnnotationStore {
+  if (!annotationStore) {
+    throw new Error("AnnotationStore not initialized");
+  }
+  return annotationStore;
+}
+
+export function registerAnnotationIpcHandlers(ipcMainHandle: typeof import("./util.js").ipcMainHandle): void {
+  ipcMainHandle("annotations:list-by-message", (_event: unknown, sessionId: string, messageId: string) => {
+    return requireAnnotationStore().listByMessage(sessionId, messageId);
+  });
+  ipcMainHandle("annotations:list-by-session", (_event: unknown, sessionId: string) => {
+    return requireAnnotationStore().listBySession(sessionId);
+  });
+  ipcMainHandle("annotations:create", (_event: unknown, input: AnnotationInput) => {
+    return requireAnnotationStore().create(input);
+  });
+  ipcMainHandle("annotations:update", (_event: unknown, id: string, body: string) => {
+    return requireAnnotationStore().update(id, body);
+  });
+  ipcMainHandle("annotations:remove", (_event: unknown, id: string) => {
+    return requireAnnotationStore().remove(id);
+  });
 }
 
 export function initializeTaskExecutor(dbPath: string): TaskExecutor {
@@ -224,6 +290,67 @@ export function initializeTaskExecutor(dbPath: string): TaskExecutor {
 
 export function setChannelReplySender(sender: ChannelReplySender | null) {
   channelReplySender = sender;
+}
+
+function buildLarkWorkflowCardSnapshot(sessionId: string): LarkWorkflowCardSnapshot | null {
+  if (!sessions) return null;
+  const session = sessions.getSession(sessionId);
+  if (!session) return null;
+  const runs = sessions.listWorkflowRuns(sessionId).map((run) => ({
+    id: run.id,
+    taskId: run.taskId,
+    workflowRunId: run.id,
+    workflowName: run.workflowName,
+    status: run.status,
+    summary: run.summary,
+    warning: run.warning,
+    error: run.error,
+    sessionUrl: run.sessionUrl,
+    canResume: Boolean(run.runId)
+      && run.taskType !== "remote_agent"
+      && run.status !== "running"
+      && run.status !== "launching"
+      && run.status !== "backgrounded",
+    canRerun: Boolean(run.scriptPath)
+      && (run.status === "failed" || run.status === "killed" || run.status === "completed"),
+  }));
+  const latestRunUpdate = runs.reduce((latest, run) => {
+    const record = sessions.getWorkflowRun(run.id);
+    return Math.max(latest, record?.updatedAt ?? 0);
+  }, 0);
+  return {
+    sessionId,
+    title: session.title,
+    prompt: session.lastPrompt,
+    status: session.status,
+    updatedAt: Math.max(session.updatedAt ?? 0, latestRunUpdate, Date.now()),
+    assistantSummary: channelLatestAssistantText.get(sessionId),
+    error: larkWorkflowCardErrors.get(sessionId),
+    actionNotice: larkWorkflowCardActionNotices.get(sessionId),
+    runs,
+    permission: larkWorkflowCardPermissions.get(sessionId),
+  };
+}
+
+async function syncLarkWorkflowCard(sessionId: string): Promise<boolean> {
+  const target = channelReplyTargets.get(sessionId);
+  const sender = channelReplySender;
+  if (
+    target?.provider !== "lark"
+    || !sender?.sendWorkflowCard
+    || !sender.updateWorkflowCard
+  ) {
+    return false;
+  }
+  const snapshot = buildLarkWorkflowCardSnapshot(sessionId);
+  if (!snapshot) return false;
+  try {
+    await larkWorkflowCardCoordinator.sync(target, snapshot);
+    return true;
+  } catch (error) {
+    console.warn("[channel] Failed to synchronize Lark workflow card:", error);
+    return false;
+  }
 }
 
 function initializeSessions() {
@@ -683,6 +810,8 @@ function emit(event: ServerEvent) {
       assistantText ? `length=${assistantText.length}` : "null");
     if (assistantText && channelReplyTargets.has(nextEvent.payload.sessionId)) {
       channelLatestAssistantText.set(nextEvent.payload.sessionId, assistantText);
+      larkWorkflowCardActionNotices.delete(nextEvent.payload.sessionId);
+      void syncLarkWorkflowCard(nextEvent.payload.sessionId);
       console.log("[channel-debug] channelLatestAssistantText SET: sessionId=%s, textLength=%d",
         nextEvent.payload.sessionId, assistantText.length);
     }
@@ -708,6 +837,29 @@ function emit(event: ServerEvent) {
   }
   if (nextEvent.type === "permission.request") {
     nextEvent = withFigmaAuthUrlPermissionInput(nextEvent);
+    larkWorkflowCardActionNotices.delete(nextEvent.payload.sessionId);
+    larkWorkflowCardPermissions.set(nextEvent.payload.sessionId, {
+      toolUseId: nextEvent.payload.toolUseId,
+      toolName: nextEvent.payload.toolName,
+      input: nextEvent.payload.input,
+    });
+    void syncLarkWorkflowCard(nextEvent.payload.sessionId);
+  }
+
+  if (nextEvent.type === "session.status") {
+    larkWorkflowCardActionNotices.delete(nextEvent.payload.sessionId);
+    if (nextEvent.payload.status === "error") {
+      larkWorkflowCardErrors.set(
+        nextEvent.payload.sessionId,
+        nextEvent.payload.error?.trim() || "任务执行失败",
+      );
+    } else {
+      larkWorkflowCardErrors.delete(nextEvent.payload.sessionId);
+    }
+    if (nextEvent.payload.status !== "running") {
+      larkWorkflowCardPermissions.delete(nextEvent.payload.sessionId);
+    }
+    void syncLarkWorkflowCard(nextEvent.payload.sessionId);
   }
 
   if (nextEvent.type === "session.status" && nextEvent.payload.status === "running") {
@@ -805,6 +957,10 @@ function trackWorkflowRunsFromStreamMessage(sessionId: string, message: StreamMe
       payload: run,
     });
   }
+  if (patches.length > 0) {
+    larkWorkflowCardActionNotices.delete(sessionId);
+    void syncLarkWorkflowCard(sessionId);
+  }
 }
 
 function trackFigmaAuthToolState(sessionId: string, message: StreamMessage): void {
@@ -867,7 +1023,9 @@ function trackFigmaAuthToolState(sessionId: string, message: StreamMessage): voi
   }
 }
 
-function withFigmaAuthUrlPermissionInput(event: Extract<ServerEvent, { type: "permission.request" }>): ServerEvent {
+function withFigmaAuthUrlPermissionInput(
+  event: Extract<ServerEvent, { type: "permission.request" }>,
+): Extract<ServerEvent, { type: "permission.request" }> {
   if (!FIGMA_AGENT_OAUTH_BRIDGE_ENABLED) {
     return event;
   }
@@ -974,7 +1132,9 @@ function extractAssistantText(message: StreamMessage): string | null {
   return result;
 }
 
-async function maybeSendChannelReply(sessionId: string): Promise<void> {
+type ChannelReplyDeliveryResult = "workflow_card" | "text" | "skipped";
+
+async function maybeSendChannelReply(sessionId: string): Promise<ChannelReplyDeliveryResult> {
   const target = channelReplyTargets.get(sessionId);
   const text = channelLatestAssistantText.get(sessionId)?.trim();
   console.log("[channel-debug] maybeSendChannelReply: sessionId=%s, hasTarget=%s, hasText=%s, textLength=%d, hasSender=%s, targetProvider=%s, targetConversationId=%s, targetExternalMessageId=%s",
@@ -986,18 +1146,36 @@ async function maybeSendChannelReply(sessionId: string): Promise<void> {
     target?.provider ?? "none",
     target?.rawConversationId ?? "none",
     target?.externalMessageId ?? "none");
-  if (!target || !text || !channelReplySender) {
+  if (!target || !channelReplySender) {
     console.warn("[channel-debug] maybeSendChannelReply SKIPPED: reason=%s",
-      !target ? "no-reply-target" : (!text ? "no-assistant-text" : "no-channel-sender"));
-    return;
-  }
-  const replySignature = `${target.externalMessageId ?? target.rawConversationId}\0${text}`;
-  if (channelLastSentReplySignature.get(sessionId) === replySignature) {
-    console.warn("[channel-debug] maybeSendChannelReply SKIPPED: duplicate-reply-signature");
-    return;
+      !target ? "no-reply-target" : "no-channel-sender");
+    return "skipped";
   }
 
-  const attachments = target.provider === "lark"
+  // A synchronized Lark workflow card is the primary and only textual reply.
+  // Plain text remains a compatibility fallback when card delivery is unavailable.
+  const delivery = await resolveLarkWorkflowReplyDelivery(
+    target.provider,
+    () => syncLarkWorkflowCard(sessionId),
+  );
+  if (delivery === "skipped") {
+    console.warn("[channel-debug] maybeSendChannelReply SKIPPED: Lark workflow card delivery unavailable");
+    await clearChannelProcessingReaction(sessionId);
+    return "skipped";
+  }
+  if (delivery === "text" && !text) {
+    console.warn("[channel-debug] maybeSendChannelReply SKIPPED: reason=no-assistant-text");
+    return "skipped";
+  }
+
+  const replySignature = `${target.externalMessageId ?? target.rawConversationId}\0${delivery}\0${text ?? ""}`;
+  if (channelLastSentReplySignature.get(sessionId) === replySignature) {
+    console.warn("[channel-debug] maybeSendChannelReply SKIPPED: duplicate-reply-signature");
+    await clearChannelProcessingReaction(sessionId);
+    return delivery;
+  }
+
+  const attachments = target.provider === "lark" && text
     ? collectSafeChannelReplyAttachments(text, target.workspaceRoot)
     : [];
   const uploaded = [] as typeof attachments;
@@ -1018,7 +1196,13 @@ async function maybeSendChannelReply(sessionId: string): Promise<void> {
       }
     }
 
-    const replyText = removeUploadedAttachmentReferences(text, uploaded);
+    if (delivery === "workflow_card") {
+      channelLastSentReplySignature.set(sessionId, replySignature);
+      console.log("[channel-debug] maybeSendChannelReply card SENT OK: sessionId=%s", sessionId);
+      return "workflow_card";
+    }
+
+    const replyText = removeUploadedAttachmentReferences(text ?? "", uploaded);
     console.log("[channel-debug] maybeSendChannelReply sending: sessionId=%s, replyTextLength=%d, uploadedCount=%d, attachmentsFound=%d",
       sessionId, replyText?.length ?? 0, uploaded.length, attachments.length);
     if (replyText) {
@@ -1027,9 +1211,11 @@ async function maybeSendChannelReply(sessionId: string): Promise<void> {
       console.log("[channel-debug] maybeSendChannelReply text SENT OK: sessionId=%s", sessionId);
     }
     channelLastSentReplySignature.set(sessionId, replySignature);
+    return "text";
   } catch (error) {
     console.warn("[channel] Failed to send channel reply:", error);
     console.warn("[channel-debug] maybeSendChannelReply FAILED: sessionId=%s, errorMessage=%s", sessionId, (error as Error)?.message ?? String(error));
+    return "skipped";
   } finally {
     await clearChannelProcessingReaction(sessionId);
   }
@@ -1039,7 +1225,8 @@ async function sendChannelErrorReply(sessionId: string, error?: string): Promise
   const target = channelReplyTargets.get(sessionId);
   if (!target || !channelReplySender) return;
   // 先尝试回传超时/出错前已生成的部分文本（无文本时 maybeSendChannelReply 内部会跳过）。
-  await maybeSendChannelReply(sessionId);
+  const delivery = await maybeSendChannelReply(sessionId);
+  if (delivery !== "text") return;
   // 再补一条兜底提示，确保渠道侧一定能看到任务未正常结束，避免"不返回结果"。
   const reason = error?.trim() ? error.trim() : "任务执行失败";
   const fallback = `⚠️ 任务未正常完成：${reason}\n（未生成完整结果，请重试或简化指令后重试）`;
@@ -1074,6 +1261,17 @@ async function fireChannelHeartbeat(sessionId: string): Promise<void> {
   if (!session || session.status !== "running") return;
   const target = channelReplyTargets.get(sessionId);
   if (target && channelReplySender) {
+    const delivery = await resolveLarkWorkflowReplyDelivery(
+      target.provider,
+      () => syncLarkWorkflowCard(sessionId),
+    );
+    if (delivery !== "text") {
+      if (delivery === "skipped") {
+        console.warn("[channel] Lark heartbeat card delivery unavailable; plain-text downgrade suppressed");
+      }
+      scheduleChannelHeartbeat(sessionId, RUNNER_CHANNEL_HEARTBEAT_INTERVAL_MS);
+      return;
+    }
     const text = "⏳ 仍在处理中，请稍候…";
     try {
       await channelReplySender.sendText(target, text);
@@ -1105,6 +1303,7 @@ function registerChannelSession(sessionId: string, target: ChannelReplyTarget, c
     channelMessageClaimsBySession.set(sessionId, claims);
   }
   if (target.provider !== "lark") return;
+  void syncLarkWorkflowCard(sessionId);
   const generation = (channelProcessingReactionGenerations.get(sessionId) ?? 0) + 1;
   channelProcessingReactionGenerations.set(sessionId, generation);
   void (async () => {
@@ -1379,6 +1578,79 @@ async function continueWorkflowRunFromPrompt(options: {
       },
     },
   });
+}
+
+export async function handleLarkCardAction(event: LarkCardActionEvent): Promise<void> {
+  const accepted = larkWorkflowCardCoordinator.acceptAction(event);
+  if (!accepted.ok) {
+    console.warn(`[channel] Ignored Lark workflow card action: ${accepted.reason}`);
+    return;
+  }
+
+  const action = event.action;
+  let notice: string;
+  if (action.action === "stop_session") {
+    await handleClientEvent({ type: "session.stop", payload: { sessionId: action.sessionId } });
+    notice = "流程停止请求已执行。";
+  } else if (action.action === "stop_task" && action.taskId) {
+    await handleClientEvent({
+      type: "workflow.run.stop",
+      payload: { sessionId: action.sessionId, taskId: action.taskId },
+    });
+    notice = "子任务停止请求已提交。";
+  } else if (action.action === "rerun_run" && action.workflowRunId) {
+    await handleClientEvent({
+      type: "workflow.run.rerun",
+      payload: { sessionId: action.sessionId, workflowRunId: action.workflowRunId },
+    });
+    notice = "重新执行请求已提交。";
+  } else if (action.action === "resume_run" && action.workflowRunId) {
+    await handleClientEvent({
+      type: "workflow.run.resume",
+      payload: { sessionId: action.sessionId, workflowRunId: action.workflowRunId },
+    });
+    notice = "继续执行请求已提交。";
+  } else if (
+    (action.action === "permission_allow" || action.action === "permission_deny")
+    && action.toolUseId
+  ) {
+    const session = initializeSessions().getSession(action.sessionId);
+    const pending = session?.pendingPermissions.get(action.toolUseId);
+    if (!pending) {
+      console.warn("[channel] Ignored Lark permission action because the request is no longer pending");
+      return;
+    }
+    larkWorkflowCardPermissions.delete(action.sessionId);
+    await handleClientEvent({
+      type: "permission.response",
+      payload: {
+        sessionId: action.sessionId,
+        toolUseId: action.toolUseId,
+        result: action.action === "permission_allow"
+          ? {
+              behavior: "allow",
+              updatedInput: isRecord(pending.input) ? pending.input : { value: pending.input },
+            }
+          : { behavior: "deny", message: "User denied the request from the Lark workflow card" },
+      },
+    });
+    notice = action.action === "permission_allow" ? "已允许一次，流程继续执行。" : "已拒绝本次工具调用。";
+  } else {
+    return;
+  }
+
+  larkWorkflowCardActionNotices.set(action.sessionId, notice);
+  await syncLarkWorkflowCard(action.sessionId);
+
+  const state = larkWorkflowCardCoordinator.getState(action.sessionId);
+  const snapshot = buildLarkWorkflowCardSnapshot(action.sessionId);
+  if (!state?.messageId || !snapshot || !channelReplySender?.updateWorkflowCardAfterAction) return;
+  try {
+    const card = buildLarkWorkflowCard({ ...snapshot, cardVersion: state.version });
+    await channelReplySender.updateWorkflowCardAfterAction(event.callbackToken, card);
+  } catch (error) {
+    console.warn("[channel] Failed to acknowledge Lark workflow card action visually:", error);
+  }
 }
 
 type ClientEventContext = {
@@ -2510,6 +2782,10 @@ export async function handleClientEvent(event: ClientEvent, context: ClientEvent
     closeRunnerHandle(sessionId);
     workflowToolUseNamesBySession.delete(sessionId);
     workflowTaskIdsBySession.delete(sessionId);
+    larkWorkflowCardPermissions.delete(sessionId);
+    larkWorkflowCardErrors.delete(sessionId);
+    larkWorkflowCardActionNotices.delete(sessionId);
+    larkWorkflowCardCoordinator.forget(sessionId);
 
     store.deleteSession(sessionId);
     emit({
@@ -2527,6 +2803,8 @@ export async function handleClientEvent(event: ClientEvent, context: ClientEvent
     if (pending) {
       pending.resolve(event.payload.result);
     }
+    larkWorkflowCardPermissions.delete(event.payload.sessionId);
+    void syncLarkWorkflowCard(event.payload.sessionId);
     return;
   }
 

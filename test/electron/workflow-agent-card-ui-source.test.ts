@@ -6,6 +6,7 @@ const cardSource = readFileSync("src/ui/components/workflow/WorkflowAgentCard.ts
 const panelSource = readFileSync("src/ui/components/workflow/WorkflowAgentTranscriptPanel.tsx", "utf8");
 const transcriptSource = readFileSync("src/ui/components/chat/ChatTranscript.tsx", "utf8");
 const eventCardSource = readFileSync("src/ui/components/EventCard.tsx", "utf8");
+const devElectronShimSource = readFileSync("src/ui/dev-electron-shim.ts", "utf8");
 
 test("workflow agents render as lightweight inline conversation updates", () => {
   assert.match(cardSource, /data-workflow-agent-card/);
@@ -13,9 +14,15 @@ test("workflow agents render as lightweight inline conversation updates", () => 
   assert.match(cardSource, /aria-current=\{selected \? "true" : undefined\}/);
   assert.match(cardSource, /Sparkles/);
   assert.match(cardSource, /ChevronRight/);
+  assert.match(cardSource, /agent\.taskPrompt/);
+  assert.match(cardSource, /agent\.agentType/);
   assert.match(cardSource, /line-clamp-2/);
   assert.doesNotMatch(cardSource, /rounded-\[22px\]/);
   assert.doesNotMatch(cardSource, /shadow-\[0_12px_30px/);
+});
+
+test("background task levels do not duplicate the task card in chat history", () => {
+  assert.doesNotMatch(eventCardSource, /\{tasks\.length\} 个后台任务运行中/);
 });
 
 test("workflow agent status reads accurately instead of as a badge", () => {
@@ -39,6 +46,20 @@ test("workflow agent transcript presents telemetry as one compact progress updat
   assert.match(panelSource, /messages=\{transcriptView\.messages\}/);
   assert.match(panelSource, /presentation="agent"/);
   assert.doesNotMatch(panelSource, /messages=\{agent\.transcript\}/);
+});
+
+test("task transcript shows the original execution content and semantic task label", () => {
+  assert.match(panelSource, /agent\.taskPrompt/);
+  assert.match(panelSource, /agentLabel\(agent\.role\)/);
+  assert.match(panelSource, /执行内容/);
+});
+
+test("browser preview provides a visual regression fixture for semantic task cards", () => {
+  assert.match(devElectronShimSource, /qaTaskCards/);
+  assert.match(devElectronShimSource, /task_type: "local_bash"/);
+  assert.match(devElectronShimSource, /task_type: "local_agent"/);
+  assert.match(devElectronShimSource, /task_type: "local_workflow"/);
+  assert.match(devElectronShimSource, /background_tasks_changed/);
 });
 
 test("agent presentation keeps assistant replies visually plain without changing main chat", () => {

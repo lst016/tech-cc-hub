@@ -24,8 +24,10 @@ test("Claude Code Opus and expert routes map to the configured expert model", ()
   assert.match(runnerSource, /const dynamicWorkflowSettings = buildClaudeDynamicWorkflowSettings\(currentDisplayPrompt, runtime\?\.reasoningMode, runtime\?\.workflowMode\);/);
   assert.match(runnerSource, /\.\.\.buildClaudeCodeModelSettings\(config, effectiveModel\)/);
   assert.match(runnerSource, /\.\.\.dynamicWorkflowSettings/);
+  assert.match(runnerSource, /const sdkExpertModel = getClaudeCodeExpertModel\(config, effectiveModel\)/);
   assert.match(runnerSource, /settings: sdkModelSettings,/);
   assert.match(runnerSource, /sdkExpertModel/);
+  assert.match(runnerSource, /sdkSmallModel: sdkModelSettings\.env\?\.CLAUDE_CODE_SMALL_FAST_MODEL/);
   assert.match(runnerSource, /settingsEnvBaseURL: sdkModelSettings\.env\?\.ANTHROPIC_BASE_URL/);
 
   assert.match(utilSource, /settings: buildClaudeCodeModelSettings\(apiConfig, requestedModel\),/);

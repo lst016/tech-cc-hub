@@ -1747,6 +1747,7 @@ export function buildActivityRailModel(
   const activeTaskNodes = new Map<string, ActivityTimelineItem>();
   const toolProgressNodes = new Map<string, ActivityTimelineItem>();
   const controlRequestProgressNodes = new Map<string, ActivityTimelineItem>();
+  const apiRetryNodes = new Map<string, ActivityTimelineItem>();
   const seenInitRemoteSessionIds = new Set<string>();
   const recordUsageTokens = (
     usage: { inputTokens?: number; outputTokens?: number },
@@ -2293,23 +2294,37 @@ export function buildActivityRailModel(
       }
 
       if (message.subtype === "api_retry") {
+        const attempt = typeof systemMessage.attempt === "number" ? systemMessage.attempt : undefined;
+        const maxRetries = typeof systemMessage.max_retries === "number" ? systemMessage.max_retries : undefined;
+        const error = String(systemMessage.error ?? "请求失败");
+        const errorStatus = systemMessage.error_status === null ? "连接错误" : `HTTP ${String(systemMessage.error_status ?? "-")}`;
+        const retryKey = `api-retry-${errorStatus}-${error}`;
+        const existing = apiRetryNodes.get(retryKey);
+        if (existing) {
+          // 已有同类型重试记录，更新为最新状态，不新增卡片
+          existing.detail = `重试 ${String(attempt ?? "?")}/${String(maxRetries ?? "?")} · ${error}${typeof systemMessage.retry_delay_ms === "number" ? ` · 等待 ${(systemMessage.retry_delay_ms / 1000).toFixed(1)} 秒` : ""}`;
+          existing.sequence = sequence;
+          continue;
+        }
         sequence += 1;
-        timelineChronological.push(createTimelineItem({
-          id: `api-retry-${String(systemMessage.uuid ?? sequence)}`,
+        const retryNode = createTimelineItem({
+          id: retryKey,
           filterKey: "flow",
           layer: "流程",
           tone: "warning",
           nodeKind: "lifecycle",
           title: "模型请求正在重试",
-          detail: `重试 ${String(systemMessage.attempt ?? "?")}/${String(systemMessage.max_retries ?? "?")} · ${String(systemMessage.error ?? "请求失败")}${typeof systemMessage.retry_delay_ms === "number" ? ` · 等待 ${(systemMessage.retry_delay_ms / 1000).toFixed(1)} 秒` : ""}`,
+          detail: `重试 ${String(attempt ?? "?")}/${String(maxRetries ?? "?")} · ${error}${typeof systemMessage.retry_delay_ms === "number" ? ` · 等待 ${(systemMessage.retry_delay_ms / 1000).toFixed(1)} 秒` : ""}`,
           round: Math.max(round, 1),
           sequence,
           statusLabel: "重试中",
-          chips: [systemMessage.error_status === null ? "连接错误" : `HTTP ${String(systemMessage.error_status ?? "-")}`],
+          chips: [errorStatus],
           attention: true,
           stageKind: "implement",
           metrics: createEmptyMetrics({ totalCount: 1, status: "running" }),
-        }));
+        });
+        timelineChronological.push(retryNode);
+        apiRetryNodes.set(retryKey, retryNode);
         continue;
       }
 
@@ -2482,34 +2497,9 @@ export function buildActivityRailModel(
       }
 
       if (message.subtype === "background_tasks_changed") {
-        const tasks = Array.isArray(systemMessage.tasks)
-          ? systemMessage.tasks.filter(isRecord)
-          : [];
-        if (tasks.length === 0) continue;
-        sequence += 1;
-        timelineChronological.push(
-          createTimelineItem({
-            id: `background-tasks-${String(systemMessage.uuid ?? sequence)}`,
-            filterKey: "flow",
-            layer: "流程",
-            tone: "info",
-            nodeKind: "agent_progress",
-            title: `${tasks.length} 个后台任务运行中`,
-            detail: tasks.map((task) => (
-              typeof task.description === "string" ? task.description : String(task.task_id ?? "")
-            )).filter(Boolean).join("\n"),
-            round: Math.max(round, 1),
-            sequence,
-            statusLabel: "运行中",
-            chips: tasks.map((task) => String(task.task_type ?? "后台任务")),
-            attention: false,
-            stageKind: "implement",
-            metrics: createEmptyMetrics({
-              totalCount: tasks.length,
-              status: "running",
-            }),
-          }),
-        );
+        // This is a replace-style live level from the SDK, not a historical
+        // timeline edge. task_started/task_updated/task_notification own the
+        // durable task card and status history.
         continue;
       }
 
@@ -2607,6 +2597,8 @@ export function buildActivityRailModel(
         const toolUseId = typeof systemMessage.tool_use_id === "string" ? systemMessage.tool_use_id : undefined;
         const description = typeof systemMessage.description === "string" ? systemMessage.description : "";
         const taskType = typeof systemMessage.task_type === "string" ? systemMessage.task_type : undefined;
+        const normalizedTaskType = taskType?.trim().toLowerCase().replace(/[\s-]+/g, "_");
+        const subagentType = typeof systemMessage.subagent_type === "string" ? systemMessage.subagent_type.trim() : "";
         const skipTranscript = systemMessage.skip_transcript === true;
 
         if (toolUseId && taskId) {
@@ -2616,9 +2608,14 @@ export function buildActivityRailModel(
 
         if (skipTranscript || !taskId) continue;
 
-        const agentLabel = taskType === "local_workflow"
-          ? (typeof systemMessage.workflow_name === "string" ? systemMessage.workflow_name : "本地工作流")
-          : taskType === "sub_agent" ? "子 Agent" : "后台任务";
+        const workflowName = typeof systemMessage.workflow_name === "string" ? systemMessage.workflow_name.trim() : "";
+        const agentLabel = normalizedTaskType === "local_workflow" || workflowName
+          ? `工作流${workflowName ? ` · ${workflowName}` : ""}`
+          : normalizedTaskType === "local_agent" || normalizedTaskType === "remote_agent" || normalizedTaskType === "sub_agent"
+            ? `智能体${subagentType ? ` · ${subagentType}` : ""}`
+            : normalizedTaskType === "local_bash" || normalizedTaskType === "background" || normalizedTaskType === "background_task"
+              ? "后台任务"
+              : "任务";
         sequence += 1;
         const startedId = `task-started-${taskId}`;
         timelineChronological.push(

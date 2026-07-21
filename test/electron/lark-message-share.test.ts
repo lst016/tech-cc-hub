@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   buildLarkShareSendArgs,
   parseLarkChatSearchResponse,
+  parseLarkShareSendResponse,
   searchLarkShareChatsWithCli,
   searchLarkShareRecipientsWithCli,
   sendLarkShareMessageWithCli,
@@ -146,6 +147,22 @@ test("builds an explicit user-identity send with an idempotency key", () => {
   }, "techcc-share-123").includes(text), false);
 });
 
+test("parses a Lark send response after CLI informational output", () => {
+  assert.deepEqual(parseLarkShareSendResponse([
+    "=== Dry Run ===",
+    JSON.stringify({
+      ok: true,
+      data: {
+        message_id: "om_sent",
+        chat_id: "oc_project",
+      },
+    }),
+  ].join("\n")), {
+    messageId: "om_sent",
+    chatId: "oc_project",
+  });
+});
+
 test("surfaces a structured Lark user-send error without hiding the recovery hint", async () => {
   await assert.rejects(
     sendLarkShareMessageWithCli(
@@ -177,7 +194,10 @@ test("assistant message actions expose the confirmed Lark send flow", () => {
   assert.match(eventCardSource, /label="发送到飞书"/);
   assert.match(eventCardSource, /<LarkMessageShareDialog/);
   assert.match(eventCardSource, /LARK_USER_SEND_PERMISSION_AGENT_PROMPT/);
-  assert.match(eventCardSource, /--domain im/);
+  assert.match(eventCardSource, /auth check --scope \\"im:message\.send_as_user im:message\\" --json/);
+  assert.match(eventCardSource, /auth login --scope \\"im:message\.send_as_user im:message\\"/);
+  assert.match(eventCardSource, /授权完成后再次运行上述 auth check/);
+  assert.doesNotMatch(eventCardSource, /--domain im/);
   assert.match(eventCardSource, /不要使用 --domain all/);
   assert.match(eventCardSource, /onRequestPermissionAssist=\{requestLarkPermissionAssist\}/);
   assert.match(dialogSource, /placeholder=\{`输入\$\{recipientLabel\}名称`\}/);

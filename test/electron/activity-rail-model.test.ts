@@ -1044,7 +1044,7 @@ test("buildActivityRailModel keeps explicit plan when hint and actions appear", 
   assert.equal(model.planSteps[1]?.title, "修复异常");
 });
 
-test("buildActivityRailModel surfaces SDK retry, background level, and terminal reason", () => {
+test("buildActivityRailModel surfaces SDK retry and terminal reason without live background levels", () => {
   const model = buildActivityRailModel({
     id: "sdk-compat-session",
     title: "SDK compatibility",
@@ -1084,7 +1084,7 @@ test("buildActivityRailModel surfaces SDK retry, background level, and terminal 
   }, [], "");
 
   assert.ok(model.timeline.some((item) => item.title.includes("正在重试") && item.attention));
-  assert.ok(model.timeline.some((item) => item.title.includes("后台任务运行中")));
+  assert.equal(model.timeline.some((item) => item.id === "background-tasks-background-level"), false);
   assert.ok(model.timeline.some((item) => item.title === "预算已用尽" && item.tone === "error"));
 });
 
@@ -1115,7 +1115,54 @@ test("buildActivityRailModel treats task progress as cumulative and task notific
   assert.equal(model.timeline.filter((item) => item.parentTaskId === "task-metrics").length, 1);
 });
 
-test("buildActivityRailModel keeps background levels independent and deduplicates progress nodes", () => {
+test("buildActivityRailModel distinguishes agents, workflows, and background commands", () => {
+  const model = buildActivityRailModel({
+    id: "typed-task-session",
+    title: "Typed tasks",
+    status: "running",
+    messages: [
+      {
+        type: "system",
+        subtype: "task_started",
+        uuid: "agent-start",
+        task_id: "local-agent",
+        task_type: "local_agent",
+        subagent_type: "debugger",
+        description: "Inspect loading behavior",
+        prompt: "Compare both implementations and report exact evidence.",
+      } as never,
+      {
+        type: "system",
+        subtype: "task_started",
+        uuid: "workflow-start",
+        task_id: "local-workflow",
+        task_type: "local_workflow",
+        workflow_name: "verify-loading-fix",
+        description: "Verify the loading fix",
+        prompt: "Run the verification workflow.",
+      } as never,
+      {
+        type: "system",
+        subtype: "task_started",
+        uuid: "bash-start",
+        task_id: "local-bash",
+        task_type: "local_bash",
+        description: "Build PC Vue client",
+      } as never,
+    ],
+  }, [], "");
+
+  const agent = model.timeline.find((item) => item.parentTaskId === "local-agent");
+  const workflow = model.timeline.find((item) => item.parentTaskId === "local-workflow");
+  const background = model.timeline.find((item) => item.parentTaskId === "local-bash");
+
+  assert.match(agent?.title ?? "", /启动智能体 · debugger/);
+  assert.equal(agent?.detail, "Compare both implementations and report exact evidence.");
+  assert.match(workflow?.title ?? "", /启动工作流 · verify-loading-fix/);
+  assert.match(background?.title ?? "", /启动后台任务/);
+});
+
+test("buildActivityRailModel omits live background levels and deduplicates progress nodes", () => {
   const model = buildActivityRailModel({
     id: "level-and-progress-session",
     title: "Levels",
@@ -1133,7 +1180,7 @@ test("buildActivityRailModel keeps background levels independent and deduplicate
 
   const edgeTask = model.timeline.find((item) => item.id === "task-started-edge-task");
   assert.equal(edgeTask?.statusLabel, "运行中");
-  assert.ok(model.timeline.some((item) => item.id === "background-tasks-level-one"));
+  assert.equal(model.timeline.some((item) => item.id === "background-tasks-level-one"), false);
   assert.equal(model.timeline.some((item) => item.id === "background-tasks-level-empty"), false);
   assert.equal(model.timeline.filter((item) => item.id === "tool-progress-tool-heartbeat").length, 1);
   const controlItems = model.timeline.filter((item) => item.id === "control-request-request-1");

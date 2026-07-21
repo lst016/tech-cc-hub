@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, ChevronDown, Search } from "lucide-react";
 import { isLikelyImageUnderstandingModel } from "../../../shared/models/model-capabilities.js";
+import {
+  getModelSelectMenuLayout,
+  type ModelSelectMenuLayout,
+} from "./model-select-layout.js";
 
 export type ModelOption = {
   value: string;
@@ -144,8 +149,11 @@ export function ModelSelect({
   const labelId = useId();
   const listboxId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [menuLayout, setMenuLayout] = useState<ModelSelectMenuLayout | null>(null);
   const groupedOptions = useMemo(
     () => buildGroupedModelOptions(modelOptions ?? models, query, emptyOption),
     [emptyOption, modelOptions, models, query],
@@ -166,7 +174,8 @@ export function ModelSelect({
     }
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (!containerRef.current?.contains(target) && !menuRef.current?.contains(target)) {
         closeMenu();
       }
     };
@@ -183,6 +192,35 @@ export function ModelSelect({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [closeMenu, open]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const updateMenuLayout = () => {
+      const trigger = triggerRef.current;
+      if (!trigger) {
+        return;
+      }
+
+      setMenuLayout(getModelSelectMenuLayout(
+        trigger.getBoundingClientRect(),
+        window.innerWidth,
+        window.innerHeight,
+        placement,
+        isComposer,
+      ));
+    };
+
+    updateMenuLayout();
+    window.addEventListener("resize", updateMenuLayout, { passive: true });
+    window.addEventListener("scroll", updateMenuLayout, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener("resize", updateMenuLayout);
+      window.removeEventListener("scroll", updateMenuLayout, true);
+    };
+  }, [isComposer, open, placement]);
 
   const selectOption = (nextValue: string) => {
     onChange(nextValue);
@@ -209,6 +247,7 @@ export function ModelSelect({
         {label}
       </span>
       <button
+        ref={triggerRef}
         type="button"
         role="combobox"
         aria-expanded={open}
@@ -237,17 +276,24 @@ export function ModelSelect({
         />
       </button>
 
-      {open && !disabled && (
-        <div
-          className={cx(
-            "absolute z-50 overflow-hidden rounded-2xl border border-ink-900/10 bg-white shadow-[0_18px_48px_rgba(24,32,46,0.16)]",
-            placement === "top"
-              ? isComposer
-                ? "bottom-full left-0 mb-2 w-80 max-w-[calc(100vw-2rem)] min-w-full"
-                : "bottom-full left-0 right-0 mb-2"
-              : "left-0 right-0 top-full mt-2",
-          )}
-        >
+      {open && !disabled && typeof document !== "undefined"
+        ? createPortal(
+          <div
+            ref={menuRef}
+            className={cx(
+              "fixed z-[50000] overflow-hidden rounded-2xl border border-ink-900/10 bg-white shadow-[0_18px_48px_rgba(24,32,46,0.16)]",
+              !menuLayout && "invisible",
+            )}
+            style={menuLayout
+              ? {
+                  left: menuLayout.left,
+                  width: menuLayout.width,
+                  ...(menuLayout.direction === "top"
+                    ? { bottom: menuLayout.bottom }
+                    : { top: menuLayout.top }),
+                }
+              : undefined}
+          >
           <div className="relative border-b border-ink-900/8">
             <Search
               className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
@@ -319,8 +365,10 @@ export function ModelSelect({
               ))
             )}
           </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )
+        : null}
     </div>
   );
 }
@@ -351,7 +399,12 @@ export function buildGroupedModelOptions(models: Array<string | ModelOption>, qu
     }
   });
 
-  return Array.from(groups.values()).map((group) => ({
+  const visibleGroups = Array.from(groups.values());
+  if (hasQuery) {
+    visibleGroups.sort(compareScoredModelGroups);
+  }
+
+  return visibleGroups.map((group) => ({
     id: group.id,
     label: group.label,
     options: (hasQuery ? [...group.options].sort(compareScoredModelOptions) : group.options).map(toModelOption),
@@ -491,6 +544,12 @@ function compareScoredModelOptions(left: ScoredModelOption, right: ScoredModelOp
     return scoreDelta;
   }
   return left.label.localeCompare(right.label, undefined, { numeric: true, sensitivity: "base" });
+}
+
+function compareScoredModelGroups(left: ScoredModelGroup, right: ScoredModelGroup): number {
+  const leftScore = Math.max(...left.options.map((option) => option.searchScore));
+  const rightScore = Math.max(...right.options.map((option) => option.searchScore));
+  return rightScore - leftScore;
 }
 
 export function getFuzzySubsequenceScore(needle: string, haystack: string): number {

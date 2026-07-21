@@ -209,6 +209,57 @@ test("an unassigned managed MiniMax model does not enter automatic routing", () 
   }
 });
 
+test("an assigned Prompt model routes to the highest-weight catalog owner", () => {
+  const previousUserData = app.getPath("userData");
+  const root = join(tmpdir(), `tech-cc-hub-minimax-prompt-routing-${Date.now()}`);
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, "api-config.json"), JSON.stringify({
+    profiles: [
+      {
+        id: "gateway-profile",
+        name: "Boke Gateway",
+        apiKey: "gateway-secret",
+        baseURL: "https://ai.pocketcity.com/v1",
+        model: "gpt-5.6-terra",
+        analysisModel: "MiniMax-M3",
+        enabled: true,
+        provider: "boke",
+        apiType: "anthropic",
+        models: [
+          { name: "gpt-5.6-terra", routingWeight: 0 },
+          { name: "MiniMax-M3", routingWeight: 0 },
+        ],
+      },
+      {
+        id: "minimax-profile",
+        name: "MiniMax Official",
+        apiKey: "minimax-secret",
+        baseURL: "https://api.minimaxi.com/anthropic",
+        model: "MiniMax-M2.7",
+        analysisModel: "MiniMax-M2.7",
+        enabled: true,
+        provider: "minimax",
+        apiType: "anthropic",
+        models: [
+          { name: "MiniMax-M2.7", routingWeight: 0 },
+          { name: "MiniMax-M3", routingWeight: 100 },
+        ],
+      },
+    ],
+  }), "utf8");
+
+  try {
+    app.setPath("userData", root);
+    const resolved = resolveApiConfigForModel("MiniMax-M3");
+    assert.equal(resolved?.config.id, "minimax-profile");
+    assert.equal(resolved?.model, "MiniMax-M3");
+    assert.equal(resolved?.fellBack, false);
+  } finally {
+    app.setPath("userData", previousUserData);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("legacy Boke gateway config migrates by domain and preserves catalog metadata", () => {
   const previousUserData = app.getPath("userData");
   const root = join(tmpdir(), `tech-cc-hub-boke-config-${Date.now()}`);

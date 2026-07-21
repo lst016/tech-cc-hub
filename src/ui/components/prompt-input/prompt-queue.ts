@@ -96,8 +96,7 @@ export function buildQueuedPrompt(queue: QueuedMessageDraft[]) {
 
 export function buildQueuedDisplayPrompt(queue: QueuedMessageDraft[]) {
   const getDisplayContent = (item: QueuedMessageDraft) => (
-    getQueuedPromptPreview(item.prompt, countStructuredContextBlocks(item.prompt)).trim()
-      || "(no text, attachments only)"
+    item.prompt.trim() || "(no text, attachments only)"
   );
 
   if (queue.length === 1) return getDisplayContent(queue[0]);

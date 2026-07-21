@@ -70,9 +70,11 @@ const TOOL_RESULT_RENDER_CHAR_LIMIT = 30_000;
 const USER_PROMPT_PARSE_CHAR_LIMIT = 40_000;
 const USER_PROMPT_RENDER_CHAR_LIMIT = 16_000;
 const LARK_USER_SEND_PERMISSION_AGENT_PROMPT = [
-  "请使用 lark-shared 和 lark-im 技能，帮助我为当前 lark-cli 登录用户一次性增量申请完整的飞书 IM 交互域权限（--domain im），覆盖本人发送、会话读取与搜索、消息回复、表情、置顶和群成员交互等后续可能用到的用户权限。",
-  "请先检查当前用户授权状态；若 IM 域权限尚未完整授权，使用 split-flow 发起 --domain im 授权，生成并展示新的授权链接和二维码，然后等待我完成授权。",
-  "权限范围仅限 IM 域，不要使用 --domain all，不要申请通讯录、云文档等无关权限，也不要发送消息或执行其他写操作来测试。",
+  "请使用 lark-shared 和 lark-im 技能，修复当前 lark-cli 登录用户发送飞书消息时缺少用户授权的问题。",
+  "先运行 `lark-cli auth check --scope \"im:message.send_as_user im:message\" --json`，明确区分应用后台已开通的 scope 与当前用户令牌实际获得的 scope。",
+  "若仍有 missing scope，在后台运行 `lark-cli auth login --scope \"im:message.send_as_user im:message\"`，提取并打开验证链接，然后等待我完成授权。",
+  "授权完成后再次运行上述 auth check；只有 missing 为空时才能报告修复成功，不要用发送消息作为权限测试。",
+  "仅申请这两个发送所需 scope，不要使用 --domain all，也不要申请通讯录、云文档等无关权限。",
 ].join("\n");
 
 type SystemInitMessage = Extract<SDKMessage, { type: "system"; subtype: "init" }>;
@@ -2637,19 +2639,9 @@ const SystemInfoCard = ({ message, showIndicator = false }: { message: SDKMessag
   }
 
   if (message.subtype === "background_tasks_changed") {
-    const tasks = message.tasks;
-    if (tasks.length === 0) return null;
-    return (
-      <div className="mt-3 rounded-[18px] border border-violet-100 bg-violet-50/65 px-3.5 py-3 text-sm text-ink-700">
-        <div className="flex items-center gap-2 font-semibold text-violet-700">
-          <StatusDot variant="accent" />
-          <span>{tasks.length} 个后台任务运行中</span>
-        </div>
-        <div className="mt-1.5 space-y-1 text-[13px] text-ink-600">
-          {tasks.map((task) => <div key={task.task_id}>{task.description || task.task_id}</div>)}
-        </div>
-      </div>
-    );
+    // This is a replace-style live-level signal, not a historical entry. The
+    // matching task edge events render one status-aware background-task card.
+    return null;
   }
 
   if (message.subtype === "control_request_progress") {

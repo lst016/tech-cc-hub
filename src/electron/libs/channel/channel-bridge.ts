@@ -9,6 +9,7 @@ import { loadGlobalRuntimeConfig } from "../config-store.js";
 import { runExternalCli } from "../external-cli.js";
 import type { ChannelInboundMessage, ChannelProviderId, ChannelReplyTarget } from "./channel-workspace.js";
 import { startLarkCliChannelBridge } from "./lark-cli-channel-bridge.js";
+import type { LarkCardActionEvent, LarkCardJson, LarkWorkflowCardSendResult } from "./lark-workflow-card.js";
 
 type ChannelTransportMode = "bot-api" | "webhook" | "weixin-native" | "weixin-openclaw";
 
@@ -28,6 +29,7 @@ type ChannelRuntimeConfig = {
 };
 
 export type ChannelBridgeDispatch = (message: ChannelInboundMessage) => Promise<void> | void;
+export type LarkCardActionDispatch = (event: LarkCardActionEvent) => Promise<void> | void;
 
 export type ChannelBridgeController = {
   stop: () => void;
@@ -36,6 +38,13 @@ export type ChannelBridgeController = {
   sendFile: (target: ChannelReplyTarget, relativePath: string) => Promise<void>;
   addReaction: (target: ChannelReplyTarget, emojiType: string) => Promise<string>;
   removeReaction: (target: ChannelReplyTarget, reactionId: string) => Promise<void>;
+  sendWorkflowCard: (
+    target: ChannelReplyTarget,
+    card: LarkCardJson,
+    idempotencyKey: string,
+  ) => Promise<LarkWorkflowCardSendResult>;
+  updateWorkflowCard: (messageId: string, card: LarkCardJson) => Promise<void>;
+  updateWorkflowCardAfterAction: (token: string, card: LarkCardJson) => Promise<void>;
 };
 
 const POLL_INTERVAL_MS = 2500;
@@ -341,10 +350,13 @@ asyncio.run(main())
   }
 }
 
-export function startChannelBridge(dispatch: ChannelBridgeDispatch): ChannelBridgeController {
+export function startChannelBridge(
+  dispatch: ChannelBridgeDispatch,
+  dispatchLarkCardAction?: LarkCardActionDispatch,
+): ChannelBridgeController {
   const controller = new AbortController();
   const weixinBridge = startHermesWeixinInboundBridge(dispatch);
-  const larkBridge = startLarkCliChannelBridge(dispatch);
+  const larkBridge = startLarkCliChannelBridge(dispatch, dispatchLarkCardAction);
   void pollTelegram(controller.signal, dispatch);
 
   return {
@@ -386,6 +398,16 @@ export function startChannelBridge(dispatch: ChannelBridgeDispatch): ChannelBrid
     removeReaction: async (target, reactionId) => {
       if (target.provider !== "lark") throw new Error(`Reactions are not supported for ${target.provider}`);
       await larkBridge.removeReaction(target, reactionId);
+    },
+    sendWorkflowCard: async (target, card, idempotencyKey) => {
+      if (target.provider !== "lark") throw new Error(`Workflow cards are not supported for ${target.provider}`);
+      return await larkBridge.sendWorkflowCard(target, card, idempotencyKey);
+    },
+    updateWorkflowCard: async (messageId, card) => {
+      await larkBridge.updateWorkflowCard(messageId, card);
+    },
+    updateWorkflowCardAfterAction: async (token, card) => {
+      await larkBridge.updateWorkflowCardAfterAction(token, card);
     },
   };
 }

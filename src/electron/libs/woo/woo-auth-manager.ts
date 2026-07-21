@@ -39,6 +39,7 @@ type WooUser = {
 export type WooAuthState = {
   status: "anonymous" | "authenticated";
   user: WooUser | null;
+  hasStoredSession: boolean;
   challenges: string[];
   loginMethods: {
     password: boolean;
@@ -61,6 +62,24 @@ type ThirdPartyLoginOptions = {
   timeoutMs?: number;
   pollIntervalMs?: number;
 };
+
+class WooRequestError extends Error {
+  constructor(
+    message: string,
+    readonly httpStatus?: number,
+    readonly code?: number,
+  ) {
+    super(message);
+    this.name = "WooRequestError";
+  }
+}
+
+class WooSessionInvalidError extends Error {
+  constructor(cause: unknown) {
+    super("Woo 登录凭据已失效。", { cause });
+    this.name = "WooSessionInvalidError";
+  }
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -87,9 +106,24 @@ function unwrapResponse(payload: unknown): unknown {
   const record = asRecord(payload);
   if (!record || !("code" in record)) return payload;
   if (record.code !== 0) {
-    throw new Error(typeof record.message === "string" ? record.message : "Woo 请求失败");
+    throw new WooRequestError(
+      typeof record.message === "string" ? record.message : "Woo 请求失败",
+      undefined,
+      typeof record.code === "number" ? record.code : undefined,
+    );
   }
   return record.data;
+}
+
+function isAuthenticationRejected(error: unknown): boolean {
+  return error instanceof WooRequestError
+    && error.httpStatus === 401;
+}
+
+function isExpiredAccessToken(error: unknown): boolean {
+  return error instanceof WooRequestError
+    && error.httpStatus === 401
+    && error.code === 10000;
 }
 
 function normalizeTokenInfo(payload: unknown): WooTokenInfo {
@@ -121,9 +155,12 @@ export class WooAuthManager {
   private state: WooAuthState = {
     status: "anonymous",
     user: null,
+    hasStoredSession: false,
     challenges: [],
     loginMethods: null,
   };
+  private restorePromise: Promise<WooAuthState> | null = null;
+  private restoreAttempted = false;
 
   constructor(
     private readonly userDataPath: string,
@@ -131,6 +168,12 @@ export class WooAuthManager {
   ) {}
 
   getState(): WooAuthState {
+    return this.state;
+  }
+
+  async getRestoredState(): Promise<WooAuthState> {
+    if (this.restorePromise) return await this.restorePromise;
+    if (!this.restoreAttempted) return await this.restore();
     return this.state;
   }
 
@@ -213,13 +256,47 @@ export class WooAuthManager {
   }
 
   async restore(): Promise<WooAuthState> {
+    if (this.restorePromise) return await this.restorePromise;
+
+    const restorePromise = this.restoreStoredSession();
+    this.restorePromise = restorePromise;
+    try {
+      return await restorePromise;
+    } finally {
+      if (this.restorePromise === restorePromise) {
+        this.restorePromise = null;
+      }
+      this.restoreAttempted = true;
+    }
+  }
+
+  private async restoreStoredSession(): Promise<WooAuthState> {
     const session = this.readSession();
     if (!session) return this.state;
     try {
       return await this.completeSession(session);
-    } catch {
-      this.clearStoredSession();
-      this.state = { ...this.state, status: "anonymous", user: null, challenges: [], error: "Woo 登录已失效，请重新登录。" };
+    } catch (error) {
+      if (error instanceof WooSessionInvalidError || isAuthenticationRejected(error)) {
+        this.clearStoredSession();
+        this.state = {
+          ...this.state,
+          status: "anonymous",
+          user: null,
+          hasStoredSession: false,
+          challenges: [],
+          error: "Woo 登录已失效，请重新登录。",
+        };
+        return this.state;
+      }
+
+      this.state = {
+        ...this.state,
+        status: "anonymous",
+        user: null,
+        hasStoredSession: true,
+        challenges: session.challenges,
+        error: "暂时无法恢复 Woo 登录，请检查网络后重试。",
+      };
       return this.state;
     }
   }
@@ -238,7 +315,13 @@ export class WooAuthManager {
       }
     }
     this.clearStoredSession();
-    this.state = { status: "anonymous", user: null, challenges: [], loginMethods: this.state.loginMethods };
+    this.state = {
+      status: "anonymous",
+      user: null,
+      hasStoredSession: false,
+      challenges: [],
+      loginMethods: this.state.loginMethods,
+    };
     return this.state;
   }
 
@@ -256,12 +339,31 @@ export class WooAuthManager {
 
   private async completeSession(session: StoredWooSession): Promise<WooAuthState> {
     const config = this.resolveRuntimeConfig();
-    const response = await this.request(`${config.baseUrl}/api/v1/account/current`, { token: session.tokenInfo.accessToken });
+    let activeSession = session;
+    let response: unknown;
+    try {
+      response = await this.request(`${config.baseUrl}/api/v1/account/current`, {
+        token: activeSession.tokenInfo.accessToken,
+      });
+    } catch (error) {
+      if (!isExpiredAccessToken(error)) throw error;
+      activeSession = await this.refreshSession(activeSession, config);
+      try {
+        response = await this.request(`${config.baseUrl}/api/v1/account/current`, {
+          token: activeSession.tokenInfo.accessToken,
+        });
+      } catch (retryError) {
+        if (isAuthenticationRejected(retryError)) {
+          throw new WooSessionInvalidError(retryError);
+        }
+        throw retryError;
+      }
+    }
     const user = asRecord(unwrapResponse(response));
     if (!user || typeof user.universalUserId !== "string") {
       throw new Error("Woo 未返回当前用户信息。");
     }
-    this.writeSession(session);
+    this.writeSession(activeSession);
     this.state = {
       status: "authenticated",
       user: {
@@ -272,10 +374,41 @@ export class WooAuthManager {
         avatarUrl: typeof user.avatarUrl === "string" ? user.avatarUrl : undefined,
         ifEnabled: typeof user.ifEnabled === "boolean" ? user.ifEnabled : undefined,
       },
-      challenges: session.challenges,
+      hasStoredSession: true,
+      challenges: activeSession.challenges,
       loginMethods: this.state.loginMethods,
     };
     return this.state;
+  }
+
+  private async refreshSession(session: StoredWooSession, config: WooAuthConfig): Promise<StoredWooSession> {
+    const refreshToken = session.tokenInfo.refreshToken.trim();
+    if (!refreshToken) {
+      throw new WooSessionInvalidError(new Error("Woo 登录未返回 refresh token。"));
+    }
+
+    let response: unknown;
+    try {
+      response = await this.request(`${config.baseUrl}/api/v1/auth/token/refresh`, {
+        method: "POST",
+        token: refreshToken,
+      });
+    } catch (error) {
+      if (isAuthenticationRejected(error)) {
+        throw new WooSessionInvalidError(error);
+      }
+      throw error;
+    }
+
+    const refreshed = normalizeTokenInfo(unwrapResponse(response));
+    return {
+      ...session,
+      tokenInfo: {
+        ...refreshed,
+        universalUserId: refreshed.universalUserId || session.tokenInfo.universalUserId,
+        refreshToken: refreshed.refreshToken || session.tokenInfo.refreshToken,
+      },
+    };
   }
 
   private async request(url: string, options: { method?: "POST"; body?: Record<string, string>; token?: string } = {}): Promise<unknown> {
@@ -290,7 +423,11 @@ export class WooAuthManager {
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
       const record = asRecord(payload);
-      throw new Error(typeof record?.message === "string" ? record.message : `Woo 请求失败（HTTP ${response.status}）。`);
+      throw new WooRequestError(
+        typeof record?.message === "string" ? record.message : `Woo 请求失败（HTTP ${response.status}）。`,
+        response.status,
+        typeof record?.code === "number" ? record.code : undefined,
+      );
     }
     return payload;
   }

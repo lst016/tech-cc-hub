@@ -24,22 +24,40 @@ function queuedMessage(id: string, prompt: string): QueuedMessageDraft {
   };
 }
 
-test("queued display prompt omits structured context while runner prompt keeps it", () => {
+test("queued display prompt preserves structured context for rich message rendering", () => {
   const queue = [queuedMessage("one", `国际化\n\n${browserAnnotation}`)];
 
-  assert.equal(buildQueuedDisplayPrompt(queue), "国际化");
+  assert.equal(buildQueuedDisplayPrompt(queue), `国际化\n\n${browserAnnotation}`);
   assert.match(buildQueuedPrompt(queue), /<browser_annotations>/);
 });
 
-test("combined queued display stays compact when every item carries structured context", () => {
+test("annotation-only queued display keeps the annotation block instead of a placeholder", () => {
+  const queue = [queuedMessage("one", browserAnnotation)];
+
+  const displayPrompt = buildQueuedDisplayPrompt(queue);
+  assert.equal(displayPrompt, browserAnnotation);
+  assert.doesNotMatch(displayPrompt, /1 个结构化上下文/);
+});
+
+test("queued agent prompt remains independent from the display prompt", () => {
+  const queue = [queuedMessage("one", browserAnnotation)];
+  queue[0].agentPrompt = `Agent-only guidance\n\n${browserAnnotation}`;
+
+  assert.equal(buildQueuedDisplayPrompt(queue), browserAnnotation);
+  assert.equal(buildQueuedPrompt(queue), `Agent-only guidance\n\n${browserAnnotation}`);
+});
+
+test("combined queued display preserves each item's structured context", () => {
   const queue = [
     queuedMessage("one", `国际化\n\n${browserAnnotation}`),
     queuedMessage("two", `缩短预览\n\n${browserAnnotation}`),
   ];
 
   const displayPrompt = buildQueuedDisplayPrompt(queue);
-  assert.equal(displayPrompt, "Queued message 1:\n国际化\n\n---\n\nQueued message 2:\n缩短预览");
-  assert.doesNotMatch(displayPrompt, /browser_annotations|internal browser context/);
+  assert.equal(
+    displayPrompt,
+    `Queued message 1:\n国际化\n\n${browserAnnotation}\n\n---\n\nQueued message 2:\n缩短预览\n\n${browserAnnotation}`,
+  );
 });
 
 test("queued fork starts from the last completed top-level assistant turn", () => {
@@ -61,16 +79,14 @@ test("queued fork is unavailable before the first completed assistant turn", () 
   ]), null);
 });
 
-test("user message cards use a compact collapsed preview", () => {
+test("user message cards use the current collapsed preview limit", () => {
   const source = readFileSync("src/ui/components/EventCard.tsx", "utf8");
   const userMessageCard = source.slice(
     source.indexOf("const UserMessageCard"),
     source.indexOf("const AssistantTextCard"),
   );
 
-  assert.match(userMessageCard, /<CollapsibleText[\s\S]*?maxLines=\{4\}/);
-  assert.match(userMessageCard, /<CollapsibleText[\s\S]*?maxChars=\{180\}/);
-  assert.doesNotMatch(userMessageCard, /<CollapsibleText[\s\S]*?maxLines=\{24\}/);
+  assert.match(userMessageCard, /<CollapsibleText[\s\S]*?maxLines=\{24\}/);
 });
 
 test("collapsed text preview caps a long wrapped line by characters", () => {

@@ -127,6 +127,7 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
   const browserPreviewEnabled = previewUrl.searchParams.has(DEV_BROWSER_PREVIEW_FLAG)
     || previewUrl.hash.includes(DEV_BROWSER_PREVIEW_FLAG);
   const qaPlanPreviewEnabled = new URLSearchParams(window.location.search).get("qaPlanPreview") === "1";
+  const qaTaskCardsEnabled = new URLSearchParams(window.location.search).get("qaTaskCards") === "1";
   const qaCronScenario = new URLSearchParams(window.location.search).get("qaCron");
   const qaWooAuthEnabled = new URLSearchParams(window.location.search).get("qaWooAuth") === "1";
   let qaWooAuthenticated = false;
@@ -149,10 +150,79 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
   };
   let sessionCreatedAt = Date.now();
   let sessionUpdatedAt = sessionCreatedAt;
-  let sessionStatus: "idle" | "running" | "completed" = qaPlanPreviewEnabled ? "running" : "idle";
-  let sessionTitle = qaPlanPreviewEnabled ? "聊天列表计划预览" : "新聊天";
+  let sessionStatus: "idle" | "running" | "completed" = qaPlanPreviewEnabled
+    ? "running"
+    : qaTaskCardsEnabled ? "completed" : "idle";
+  let sessionTitle = qaPlanPreviewEnabled
+    ? "聊天列表计划预览"
+    : qaTaskCardsEnabled ? "任务卡片语义预览" : "新聊天";
   let sessionModel = "";
-  let sessionMessages: StreamMessage[] = [];
+  let sessionMessages: StreamMessage[] = qaTaskCardsEnabled ? [
+    {
+      type: "user_prompt",
+      prompt: "验证后台任务、智能体与工作流卡片的分类和执行内容。",
+      capturedAt: sessionCreatedAt - 1_000,
+    } as StreamMessage,
+    {
+      type: "system",
+      subtype: "background_tasks_changed",
+      uuid: "qa-background-level",
+      tasks: [{ task_id: "qa-local-bash", task_type: "local_bash", description: "Build PC Vue client with Node 18" }],
+    } as unknown as StreamMessage,
+    {
+      type: "system",
+      subtype: "task_started",
+      uuid: "qa-local-bash-started",
+      task_id: "qa-local-bash",
+      task_type: "local_bash",
+      description: "Build PC Vue client with Node 18",
+      prompt: "npm run build:pc -- --node-version 18",
+    } as unknown as StreamMessage,
+    {
+      type: "system",
+      subtype: "task_notification",
+      uuid: "qa-local-bash-completed",
+      task_id: "qa-local-bash",
+      status: "completed",
+      summary: "PC Vue client build completed (exit code 0)",
+    } as unknown as StreamMessage,
+    {
+      type: "system",
+      subtype: "task_started",
+      uuid: "qa-local-agent-started",
+      task_id: "qa-local-agent",
+      task_type: "local_agent",
+      subagent_type: "debugger",
+      description: "Trace task card classification",
+      prompt: "Inspect SDK task events, identify why local Bash commands render as agents, and report exact evidence.",
+    } as unknown as StreamMessage,
+    {
+      type: "system",
+      subtype: "task_notification",
+      uuid: "qa-local-agent-completed",
+      task_id: "qa-local-agent",
+      status: "completed",
+      summary: "Classification root cause confirmed",
+    } as unknown as StreamMessage,
+    {
+      type: "system",
+      subtype: "task_started",
+      uuid: "qa-local-workflow-started",
+      task_id: "qa-local-workflow",
+      task_type: "local_workflow",
+      workflow_name: "verify-task-card-ui",
+      description: "Verify task card UI",
+      prompt: "Validate that task cards show semantic role labels and their concrete execution content in the chat UI.",
+    } as unknown as StreamMessage,
+    {
+      type: "system",
+      subtype: "task_notification",
+      uuid: "qa-local-workflow-completed",
+      task_id: "qa-local-workflow",
+      status: "completed",
+      summary: "Task card UI verification completed",
+    } as unknown as StreamMessage,
+  ] : [];
   const qaCollapsedSessionRailEnabled = new URL(window.location.href).searchParams.get("qaCollapsedSessionRail") === "1";
   const qaConversationTurnTimelineEnabled = new URL(window.location.href).searchParams.get("qaConversationTurnTimeline") === "1";
   const qaSideConversationEnabled = new URL(window.location.href).searchParams.get("qaSideConversation") === "1";
@@ -1343,6 +1413,14 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
     onCronJobExecuted: () => () => {},
     captureScreenshot: async () => null,
     submitFeedback: async () => ({ success: false, error: "浏览器预览态不支持提交反馈，请在 Electron 窗口中操作。" }),
+    annotationsListByMessage: async () => [],
+    annotationsListBySession: async () => [],
+    annotationsCreate: async (input) => {
+      const now = Date.now();
+      return { ...input, id: crypto.randomUUID(), createdAt: now, updatedAt: now };
+    },
+    annotationsUpdate: async () => null,
+    annotationsRemove: async () => false,
   };
 }
 
@@ -1541,6 +1619,14 @@ async function createBridgeElectron(): Promise<(typeof window.electron & Record<
       onCronJobExecuted: () => () => {},
       captureScreenshot: async () => await invokeBridge("captureScreenshot"),
       submitFeedback: async (payload) => await invokeBridge("submitFeedback", payload),
+      annotationsListByMessage: async () => [],
+      annotationsListBySession: async () => [],
+      annotationsCreate: async (input) => {
+        const now = Date.now();
+        return { ...input, id: crypto.randomUUID(), createdAt: now, updatedAt: now };
+      },
+      annotationsUpdate: async () => null,
+      annotationsRemove: async () => false,
     };
   } catch {
     return null;
