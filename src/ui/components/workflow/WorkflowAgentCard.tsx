@@ -12,7 +12,8 @@ function statusLabel(status: WorkflowAgentSummary["status"]) {
 }
 
 function agentLabel(role: string) {
-  if (role === "Subagent" || role === "Task") return "智能体";
+  if (role === "Agent" || role === "Subagent") return "智能体";
+  if (role === "Task") return "任务";
   if (role === "Workflow") return "工作流";
   if (role === "Background task") return "后台任务";
   return role;
@@ -41,8 +42,11 @@ export function WorkflowAgentCard({
   onOpen: (agentId: string) => void;
 }) {
   const tone = statusTone(agent.status);
+  const taskLabel = agentLabel(agent.role);
+  const taskPrompt = agent.taskPrompt?.trim() ?? "";
   const showSummary = agent.latestSummary.trim()
-    && agent.latestSummary.trim() !== agent.title.trim();
+    && agent.latestSummary.trim() !== agent.title.trim()
+    && agent.latestSummary.trim() !== taskPrompt;
 
   return (
     <button
@@ -52,7 +56,7 @@ export function WorkflowAgentCard({
       data-workflow-agent-parent-id={agent.parentAgentId}
       data-workflow-agent-depth={agent.depth ?? 1}
       aria-current={selected ? "true" : undefined}
-      aria-label={`打开${agentLabel(agent.role)}记录：${agent.title}`}
+      aria-label={`打开${taskLabel}记录：${agent.title}`}
       onClick={() => onOpen(agent.id)}
       style={(agent.depth ?? 1) > 1 ? {
         marginLeft: `${Math.min(((agent.depth ?? 1) - 1) * 16, 48)}px`,
@@ -61,7 +65,7 @@ export function WorkflowAgentCard({
       className={`group mt-3 block w-full rounded-[14px] px-2 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9a7ae0]/45 ${
         selected ? "bg-[#faf8ff]" : "hover:bg-ink-900/[0.025]"
       }`}
-      title="打开智能体记录"
+      title={`打开${taskLabel}记录`}
     >
       <span className="flex min-w-0 items-start gap-3">
         <span className={`mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-[10px] ring-1 ${tone.icon}`}>
@@ -73,7 +77,10 @@ export function WorkflowAgentCard({
 
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2 text-[13px] leading-5">
-            <span className="shrink-0 font-medium text-ink-700">{agentLabel(agent.role)}</span>
+            <span className="shrink-0 font-medium text-ink-700">{taskLabel}</span>
+            {agent.agentType && (agent.role === "Agent" || agent.role === "Subagent") && (
+              <span className="truncate text-muted-light">· {agent.agentType}</span>
+            )}
             <span className={tone.text}>{statusLabel(agent.status)}</span>
             <ChevronRight
               className={`ml-auto h-3.5 w-3.5 shrink-0 text-muted-light/70 transition-transform group-hover:translate-x-0.5 group-hover:text-[#8264d7] ${
@@ -86,9 +93,14 @@ export function WorkflowAgentCard({
           <span className="mt-1 block text-[14px] font-medium leading-5 text-ink-900">
             {agent.title}
           </span>
+          {taskPrompt && taskPrompt !== agent.title.trim() && (
+            <span className="mt-1 block line-clamp-3 whitespace-pre-line text-[13px] leading-5 text-ink-600">
+              <span className="font-medium text-ink-700">执行内容：</span>{taskPrompt}
+            </span>
+          )}
           {showSummary && (
             <span className="mt-1 block line-clamp-2 text-[13px] leading-5 text-ink-600">
-              {agent.latestSummary}
+              <span className="font-medium text-ink-700">最新进展：</span>{agent.latestSummary}
             </span>
           )}
         </span>

@@ -1363,6 +1363,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         modelFallback: resolvedConfig.fellBack,
         sdkModelOption,
         sdkExpertModel,
+        sdkSmallModel: sdkModelSettings.env?.CLAUDE_CODE_SMALL_FAST_MODEL,
         settingSources: agentContext.settingSources,
         claudePath: getClaudeCodePath(),
         sdkPlugins: sdkPlugins.map((plugin) => plugin.path),

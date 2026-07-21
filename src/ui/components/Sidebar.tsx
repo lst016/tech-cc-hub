@@ -108,45 +108,59 @@ export function Sidebar({
     top: number;
   } | null>(null);
   const [wooAuthDialogOpen, setWooAuthDialogOpen] = useState(false);
+  const [wooAuthHydrating, setWooAuthHydrating] = useState(true);
   const [wooLoginBusy, setWooLoginBusy] = useState(false);
   const [wooLoginError, setWooLoginError] = useState("");
   const [wooAuthState, setWooAuthState] = useState<{
     status: "anonymous" | "authenticated";
     user: { realName?: string; userHandle?: string; avatarUrl?: string } | null;
-  }>({ status: "anonymous", user: null });
+    hasStoredSession: boolean;
+  }>({ status: "anonymous", user: null, hasStoredSession: false });
   const handleWooAuthStateChange = useCallback((state: {
     status: "anonymous" | "authenticated";
     user: { realName?: string; userHandle?: string; avatarUrl?: string } | null;
+    hasStoredSession?: boolean;
   }) => {
-    setWooAuthState({ status: state.status, user: state.user });
+    setWooAuthState({
+      status: state.status,
+      user: state.user,
+      hasStoredSession: state.status === "authenticated" || state.hasStoredSession === true,
+    });
   }, []);
   const handleWooAuthTriggerClick = useCallback(async () => {
     if (wooAuthState.status === "authenticated") {
       setWooAuthDialogOpen((current) => !current);
       return;
     }
-    if (wooLoginBusy) return;
+    if (wooAuthHydrating || wooLoginBusy) return;
 
     setWooLoginBusy(true);
     setWooLoginError("");
     setWooAuthDialogOpen(false);
     try {
-      const result = await window.electron.invoke("woo-auth:login-third-party") as {
+      const channel = wooAuthState.hasStoredSession ? "woo-auth:restore" : "woo-auth:login-third-party";
+      const result = await window.electron.invoke(channel) as {
         status?: unknown;
         user?: unknown;
+        hasStoredSession?: unknown;
+        error?: unknown;
       };
       handleWooAuthStateChange({
         status: result?.status === "authenticated" ? "authenticated" : "anonymous",
         user: result?.user && typeof result.user === "object"
           ? result.user as { realName?: string; userHandle?: string; avatarUrl?: string }
           : null,
+        hasStoredSession: result?.hasStoredSession === true,
       });
+      if (result?.status !== "authenticated" && typeof result?.error === "string") {
+        setWooLoginError(result.error);
+      }
     } catch (error) {
-      setWooLoginError(error instanceof Error ? error.message : "Woo 浏览器登录失败。");
+      setWooLoginError(error instanceof Error ? error.message : "Woo 登录失败。");
     } finally {
       setWooLoginBusy(false);
     }
-  }, [handleWooAuthStateChange, wooAuthState.status, wooLoginBusy]);
+  }, [handleWooAuthStateChange, wooAuthHydrating, wooAuthState.hasStoredSession, wooAuthState.status, wooLoginBusy]);
 
   useEffect(() => {
     const unsubscribe = window.electron.onAppUpdateStatus((status: AppUpdateStatus) => {
@@ -203,13 +217,20 @@ export function Sidebar({
     void window.electron.invoke("woo-auth:get-state")
       .then((state: unknown) => {
         if (!state || typeof state !== "object") return;
-        const authState = state as { status?: unknown; user?: unknown };
+        const authState = state as { status?: unknown; user?: unknown; hasStoredSession?: unknown; error?: unknown };
         setWooAuthState({
           status: authState.status === "authenticated" ? "authenticated" : "anonymous",
           user: authState.user && typeof authState.user === "object" ? authState.user as { realName?: string; userHandle?: string; avatarUrl?: string } : null,
+          hasStoredSession: authState.status === "authenticated" || authState.hasStoredSession === true,
         });
+        if (authState.status !== "authenticated" && typeof authState.error === "string") {
+          setWooLoginError(authState.error);
+        }
       })
-      .catch(() => undefined);
+      .catch((error: unknown) => {
+        setWooLoginError(error instanceof Error ? error.message : "Woo 登录状态恢复失败。");
+      })
+      .finally(() => setWooAuthHydrating(false));
   }, []);
 
   const formatWorkspaceName = (cwd?: string) => {
@@ -514,10 +535,16 @@ export function Sidebar({
               <button
                 type="button"
                 data-woo-auth-trigger
-                disabled={wooLoginBusy}
+                disabled={wooAuthHydrating || wooLoginBusy}
                 className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-[#e2e2e2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 disabled:cursor-wait disabled:opacity-60"
                 onClick={() => void handleWooAuthTriggerClick()}
-                aria-label={wooAuthState.status === "authenticated" ? "Woo 账号" : wooLoginBusy ? "正在登录 Woo 账号" : "登录 Woo 账号"}
+                aria-label={wooAuthState.status === "authenticated"
+                  ? "Woo 账号"
+                  : wooAuthHydrating
+                    ? "正在恢复 Woo 账号"
+                    : wooLoginBusy
+                      ? (wooAuthState.hasStoredSession ? "正在重新连接 Woo 账号" : "正在登录 Woo 账号")
+                      : (wooAuthState.hasStoredSession ? "重新连接 Woo 账号" : "登录 Woo 账号")}
                 aria-haspopup={wooAuthState.status === "authenticated" ? "dialog" : undefined}
                 aria-expanded={wooAuthState.status === "authenticated" && wooAuthDialogOpen}
               >
@@ -525,7 +552,11 @@ export function Sidebar({
                 <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink-800">
                   {wooAuthState.status === "authenticated"
                     ? (wooAuthState.user?.realName || wooAuthState.user?.userHandle || "Woo 用户")
-                    : wooLoginBusy ? "等待浏览器登录..." : "登录 Woo 账号"}
+                    : wooAuthHydrating
+                      ? "正在恢复 Woo 账号..."
+                      : wooLoginBusy
+                        ? (wooAuthState.hasStoredSession ? "正在重新连接..." : "等待浏览器登录...")
+                        : (wooAuthState.hasStoredSession ? "重新连接 Woo 账号" : "登录 Woo 账号")}
                 </span>
                 <Help theme="outline" size={20} fill="currentColor" strokeWidth={2.2} className="shrink-0 text-ink-400" aria-hidden="true" />
               </button>

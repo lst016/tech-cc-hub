@@ -83,6 +83,8 @@ describe("workflow agent transcripts", () => {
 
     assert.equal(agents.length, 1);
     assert.equal(agents[0]?.title, "review:architecture");
+    assert.equal(agents[0]?.role, "Workflow");
+    assert.equal(agents[0]?.taskPrompt, "Review ALL changes");
     assert.equal(agents[0]?.messageCount, 1);
     assert.deepEqual(
       agents[0]?.transcript.map((message) => (message as { subtype?: string }).subtype),
@@ -157,6 +159,7 @@ describe("workflow agent transcripts", () => {
     assert.equal(agents[0]?.id, "task-1");
     assert.equal(agents[0]?.title, "Inspect Module 20 config");
     assert.equal(agents[0]?.role, "Subagent");
+    assert.equal(agents[0]?.taskPrompt, "Find selected fixes");
     assert.equal(agents[0]?.status, "completed");
     assert.equal(agents[0]?.latestSummary, "Located config and homepage files");
     assert.equal(agents[0]?.messageCount, 4);
@@ -313,6 +316,70 @@ describe("workflow agent transcripts", () => {
         tool_use_id: "tool-background-task",
         task_type: "background_task",
         description: "Run scheduled follow-up",
+      } as never,
+    ]);
+
+    assert.equal(agents[0]?.role, "Background task");
+  });
+
+  it("classifies SDK local bash tasks as background tasks rather than agents", () => {
+    const agents = buildWorkflowAgentSummaries([
+      {
+        type: "system",
+        subtype: "task_started",
+        task_id: "background-command",
+        task_type: "local_bash",
+        description: "Build PC Vue client with Node 18",
+      } as never,
+      {
+        type: "system",
+        subtype: "task_notification",
+        task_id: "background-command",
+        status: "completed",
+        summary: "Background command completed (exit code 0)",
+      } as never,
+    ]);
+
+    assert.equal(agents[0]?.role, "Background task");
+    assert.equal(agents[0]?.status, "completed");
+  });
+
+  it("preserves local agent type and full execution prompt after later progress updates", () => {
+    const agents = buildWorkflowAgentSummaries([
+      {
+        type: "system",
+        subtype: "task_started",
+        task_id: "local-agent",
+        task_type: "local_agent",
+        subagent_type: "debugger",
+        description: "Compare history loading",
+        prompt: "Inspect the React and Vue loading flows, then report exact file evidence.",
+      } as never,
+      {
+        type: "system",
+        subtype: "task_progress",
+        task_id: "local-agent",
+        summary: "Reading the history-loading controller",
+      } as never,
+    ]);
+
+    assert.equal(agents[0]?.role, "Agent");
+    assert.equal(agents[0]?.agentType, "debugger");
+    assert.equal(
+      agents[0]?.taskPrompt,
+      "Inspect the React and Vue loading flows, then report exact file evidence.",
+    );
+    assert.equal(agents[0]?.latestSummary, "Reading the history-loading controller");
+  });
+
+  it("normalizes background task type variants before labeling", () => {
+    const agents = buildWorkflowAgentSummaries([
+      {
+        type: "system",
+        subtype: "task_started",
+        task_id: "background-task-variant",
+        task_type: "Background task",
+        description: "Run detached follow-up",
       } as never,
     ]);
 

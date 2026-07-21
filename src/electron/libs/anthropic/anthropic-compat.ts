@@ -1,3 +1,8 @@
+import {
+  logToolSchemaNormalizationIssue,
+  normalizeToolJsonSchema,
+} from "../tool-schema-normalizer.js";
+
 type AnthropicCompatConfig = {
   provider?: string;
   baseURL: string;
@@ -47,7 +52,25 @@ export function sanitizeAnthropicMessagesPayload(payload: unknown): unknown {
     ...payload,
     ...(systemParts.length > 0 ? { system: systemParts.join("\n\n") } : {}),
     messages,
+    ...(Array.isArray(payload.tools) ? { tools: normalizeAnthropicTools(payload.tools) } : {}),
   };
+}
+
+function normalizeAnthropicTools(tools: unknown[]): unknown[] {
+  return tools.map((tool, index) => {
+    if (!isRecord(tool) || !("input_schema" in tool)) {
+      return tool;
+    }
+
+    const toolName = stringValue(tool.name) || `<unnamed-tool-${index}>`;
+    return {
+      ...tool,
+      input_schema: normalizeToolJsonSchema(
+        tool.input_schema,
+        (issue) => logToolSchemaNormalizationIssue(toolName, issue),
+      ),
+    };
+  });
 }
 
 function normalizeSystemParts(system: unknown): string[] {

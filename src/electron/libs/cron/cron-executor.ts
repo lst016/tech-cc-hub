@@ -105,10 +105,11 @@ export class CronJobExecutor implements ICronJobExecutor {
   constructor(
     private readonly busyGuard: CronBusyGuard,
     private readonly sendMessage?: (conversationId: string, text: string, executionMode?: string) => Promise<void>,
+    private readonly isSessionRunning?: (conversationId: string) => boolean,
   ) {}
 
   isConversationBusy(conversationId: string): boolean {
-    return this.busyGuard.isProcessing(conversationId);
+    return this.busyGuard.isProcessing(conversationId) || (this.isSessionRunning?.(conversationId) ?? false);
   }
 
   async executeJob(
@@ -119,7 +120,6 @@ export class CronJobExecutor implements ICronJobExecutor {
     const conversationId = preparedConversationId ?? job.metadata.conversationId;
 
     this.busyGuard.setProcessing(conversationId, true);
-    onAcquired?.();
 
     try {
       const text = this.buildMessageText(job);
@@ -128,8 +128,9 @@ export class CronJobExecutor implements ICronJobExecutor {
       } else {
         console.log(`[CronExecutor] 定时任务 "${job.name}" 触发, 会话: ${conversationId}, 内容: ${text}`);
       }
+      onAcquired?.();
     } finally {
-      // Busy state cleared by CronService via onceIdle callback
+      this.busyGuard.setProcessing(conversationId, false);
     }
 
     return conversationId;

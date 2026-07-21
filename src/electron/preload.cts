@@ -261,6 +261,17 @@ electron.contextBridge.exposeInMainWorld("electron", {
         ipcInvoke("feedback:capture-screenshot"),
     submitFeedback: (payload: any) =>
         ipcInvoke("feedback:submit-issue", payload),
+    // 聊天消息评论/标注
+    annotationsListByMessage: (sessionId: string, messageId: string) =>
+        ipcInvoke("annotations:list-by-message", sessionId, messageId),
+    annotationsListBySession: (sessionId: string) =>
+        ipcInvoke("annotations:list-by-session", sessionId),
+    annotationsCreate: (input: any) =>
+        ipcInvoke("annotations:create", input),
+    annotationsUpdate: (id: string, body: string) =>
+        ipcInvoke("annotations:update", id, body),
+    annotationsRemove: (id: string) =>
+        ipcInvoke("annotations:remove", id),
 } satisfies Window['electron'])
 
 function ipcInvoke<Key extends keyof EventPayloadMapping>(key: Key, ...args: any[]): Promise<EventPayloadMapping[Key]> {

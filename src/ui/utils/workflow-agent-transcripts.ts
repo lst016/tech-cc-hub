@@ -8,6 +8,8 @@ export type WorkflowAgentSummary = {
   taskId: string;
   title: string;
   role: string;
+  agentType?: string;
+  taskPrompt?: string;
   status: WorkflowAgentStatus;
   latestSummary: string;
   messageCount: number;
@@ -158,11 +160,41 @@ function normalizeTaskTitle(title: string): string {
   return detail.toLowerCase().startsWith(`${prefix}:`) ? detail : title;
 }
 
+function normalizeTaskType(taskType?: string): string | undefined {
+  return taskType?.trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+const WORKFLOW_AGENT_PROMPT_PATTERNS = [
+  /(?:agent\s*\(\s*|prompt\s*:\s*)String\.raw`((?:\\`|[^`])*)`/gs,
+  /agent\s*\(\s*`((?:\\`|[^`])*)`/gs,
+];
+
+function getDisplayTaskPrompt(prompt: string, taskType?: string, workflowName?: string): string {
+  if (normalizeTaskType(taskType) !== "local_workflow" && !workflowName) return prompt;
+
+  const prompts: string[] = [];
+  const seen = new Set<string>();
+  for (const pattern of WORKFLOW_AGENT_PROMPT_PATTERNS) {
+    for (const match of prompt.matchAll(pattern)) {
+      const value = match[1]?.replace(/\\`/g, "`").trim();
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
+      prompts.push(value);
+    }
+  }
+  return prompts.join("\n\n") || prompt;
+}
+
 function roleLabel(taskType?: string, workflowName?: string): string {
-  if (workflowName) return workflowName;
-  if (taskType === "sub_agent") return "Subagent";
-  if (taskType === "local_workflow") return "Workflow";
-  if (taskType === "background" || taskType === "background_task") return "Background task";
+  const normalizedTaskType = normalizeTaskType(taskType);
+  if (normalizedTaskType === "local_agent" || normalizedTaskType === "remote_agent") return "Agent";
+  if (normalizedTaskType === "sub_agent") return "Subagent";
+  if (normalizedTaskType === "local_workflow" || workflowName) return "Workflow";
+  if (
+    normalizedTaskType === "local_bash"
+    || normalizedTaskType === "background"
+    || normalizedTaskType === "background_task"
+  ) return "Background task";
   return "Task";
 }
 
@@ -207,6 +239,8 @@ export function buildWorkflowAgentSummaries(
     const summary = getString(record, "summary");
     const taskType = getString(record, "task_type");
     const workflowName = getString(record, "workflow_name");
+    const agentType = getString(record, "subagent_type") ?? existing?.agentType;
+    const prompt = getString(record, "prompt");
     const toolUseId = getString(record, "tool_use_id") ?? existing?.toolUseId;
     const parentAgentId = getString(record, "parent_agent_id") ?? existing?.parentAgentId;
     const timestamp = getMessageTime(message);
@@ -218,6 +252,8 @@ export function buildWorkflowAgentSummaries(
       taskId,
       title: displayDescription ?? summary ?? workflowName ?? taskId.slice(0, 8),
       role: roleLabel(taskType, workflowName),
+      agentType,
+      taskPrompt: prompt ? getDisplayTaskPrompt(prompt, taskType, workflowName) : undefined,
       status: "running",
       latestSummary: summary ?? displayDescription ?? "",
       messageCount: 0,
@@ -233,6 +269,8 @@ export function buildWorkflowAgentSummaries(
 
     if (displayDescription && subtype === "task_started") next.title = displayDescription;
     if (workflowName || taskType) next.role = roleLabel(taskType, workflowName);
+    if (agentType) next.agentType = agentType;
+    if (prompt) next.taskPrompt = getDisplayTaskPrompt(prompt, taskType ?? next.taskType, workflowName);
     if (summary || displayDescription) next.latestSummary = summary ?? displayDescription ?? next.latestSummary;
     if (timestamp) {
       next.startedAt = next.startedAt ?? timestamp;
@@ -329,6 +367,8 @@ export function buildWorkflowAgentSummaries(
     taskId: agent.taskId,
     title: agent.title,
     role: agent.role,
+    agentType: agent.agentType,
+    taskPrompt: agent.taskPrompt,
     status: agent.status === "running" && agent.taskType !== "local_workflow" && fallbackStatus
       ? fallbackStatus
       : agent.status,

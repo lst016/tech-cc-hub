@@ -1,5 +1,6 @@
 import { Suspense, useMemo, useState } from "react";
 import type { StreamMessage } from "../../types.js";
+import { keepLatestApiRetryPerTurn } from "../../utils/api-retry-messages.js";
 import { appendTurnFileChangeEntries, type TurnFileChangesEntry } from "../../utils/turn-file-changes.js";
 import { MessageCard } from "../EventCard.js";
 import {
@@ -74,17 +75,21 @@ export function buildChatTranscriptEntries(
     pendingProcessGroup = [];
   };
 
-  messages.forEach((message, index) => {
+  const transcriptMessages = keepLatestApiRetryPerTurn(
+    messages.map((message, originalIndex) => ({ message, originalIndex })),
+  );
+
+  transcriptMessages.forEach(({ message, originalIndex }) => {
     if (isProcessMessage(message)) {
-      pendingProcessGroup.push({ originalIndex: index, message });
+      pendingProcessGroup.push({ originalIndex, message });
       return;
     }
 
     flushProcessGroup();
     entries.push({
       type: "message",
-      key: `${keyPrefix}-msg-${index}`,
-      originalIndex: index,
+      key: `${keyPrefix}-msg-${originalIndex}`,
+      originalIndex,
       message,
     });
   });

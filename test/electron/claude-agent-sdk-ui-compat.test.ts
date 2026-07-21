@@ -29,8 +29,9 @@ test("EventCard renders user-visible Claude Agent SDK lifecycle events", () => {
   assert.match(eventCardSource, /plugin\.version/);
 });
 
-test("EventCard hides empty background task snapshots", () => {
-  assert.match(eventCardSource, /if \(tasks\.length === 0\) return null;/);
+test("EventCard keeps replace-style background task levels out of chat history", () => {
+  assert.match(eventCardSource, /message\.subtype === "background_tasks_changed"[\s\S]*?return null;/);
+  assert.doesNotMatch(eventCardSource, /\{tasks\.length\} 个后台任务运行中/);
 });
 
 test("EventCard exposes structured Agent, Bash, and Notebook output fields", () => {

@@ -10,6 +10,10 @@ import {
   mergeCodexModelIds,
 } from "../../../shared/codex-oauth.js";
 import { normalizeToolInputForKnownSchemas } from "../tool-input-normalizer.js";
+import {
+  logToolSchemaNormalizationIssue,
+  normalizeToolJsonSchema,
+} from "../tool-schema-normalizer.js";
 
 export {
   CODEX_OAUTH_BASE_URL,
@@ -543,13 +547,11 @@ function convertAnthropicTools(tools: AnthropicMessagesRequest["tools"]): Array<
 }
 
 function normalizeToolSchemaForCodexResponses(toolName: string, schema: unknown): Record<string, unknown> {
-  const normalized = cloneJsonRecord(schema) ?? { type: "object", properties: {} };
-  if (normalized.type !== "object") {
-    normalized.type = "object";
-  }
-
-  const properties = isRecord(normalized.properties) ? normalized.properties : {};
-  normalized.properties = properties;
+  const normalized = normalizeToolJsonSchema(
+    schema,
+    (issue) => logToolSchemaNormalizationIssue(toolName, issue),
+  );
+  const properties = normalized.properties as Record<string, unknown>;
 
   if (matchesToolName(toolName, "Read") && isRecord(properties.pages)) {
     delete properties.pages;
@@ -835,18 +837,6 @@ function safeJsonStringify(value: unknown): string {
 
 function removeUndefined<T extends Record<string, unknown>>(value: T): Partial<T> {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as Partial<T>;
-}
-
-function cloneJsonRecord(value: unknown): Record<string, unknown> | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-  try {
-    const cloned = JSON.parse(JSON.stringify(value)) as unknown;
-    return isRecord(cloned) ? cloned : null;
-  } catch {
-    return { ...value };
-  }
 }
 
 function matchesToolName(toolName: string, baseName: string): boolean {

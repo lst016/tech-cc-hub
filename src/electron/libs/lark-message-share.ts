@@ -49,11 +49,22 @@ function asText(value: unknown): string | undefined {
 }
 
 function parseJsonRecord(raw: string, fallbackMessage: string): UnknownRecord {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (isRecord(parsed)) return parsed;
-  } catch {
-    // Fall through to the stable user-facing error below.
+  const normalized = raw.trim();
+  const jsonStart = normalized.indexOf("{");
+  const jsonEnd = normalized.lastIndexOf("}");
+  const candidates = [
+    normalized,
+    jsonStart >= 0 && jsonEnd > jsonStart ? normalized.slice(jsonStart, jsonEnd + 1) : "",
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (isRecord(parsed)) return parsed;
+    } catch {
+      // Try the JSON object embedded in CLI informational output next.
+    }
   }
   throw new Error(fallbackMessage);
 }

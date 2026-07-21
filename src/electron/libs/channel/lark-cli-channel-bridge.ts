@@ -1,10 +1,23 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
-import { isAbsolute } from "node:path";
+import { mkdtemp, rmdir, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
 
 import { loadGlobalRuntimeConfig } from "../config-store.js";
 import { prepareExternalCliCommand, runExternalCli } from "../external-cli.js";
 import type { ChannelInboundMessage, ChannelReplyTarget } from "./channel-workspace.js";
+import {
+  buildLarkCliCardPatchFileArgs,
+  buildLarkCliDelayedCardUpdateFileArgs,
+  buildLarkCliWorkflowCardSendFileArgs,
+  buildLarkWorkflowCardSendBody,
+  normalizeLarkCardActionEvent,
+  parseLarkWorkflowCardSendResponse,
+  type LarkCardActionEvent,
+  type LarkCardJson,
+  type LarkWorkflowCardSendResult,
+} from "./lark-workflow-card.js";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -15,6 +28,13 @@ export type LarkCliChannelBridge = {
   sendFile: (target: ChannelReplyTarget, relativePath: string) => Promise<void>;
   addReaction: (target: ChannelReplyTarget, emojiType: string) => Promise<string>;
   removeReaction: (target: ChannelReplyTarget, reactionId: string) => Promise<void>;
+  sendWorkflowCard: (
+    target: ChannelReplyTarget,
+    card: LarkCardJson,
+    idempotencyKey: string,
+  ) => Promise<LarkWorkflowCardSendResult>;
+  updateWorkflowCard: (messageId: string, card: LarkCardJson) => Promise<void>;
+  updateWorkflowCardAfterAction: (token: string, card: LarkCardJson) => Promise<void>;
 };
 
 type LarkIdentity = {
@@ -35,6 +55,7 @@ export type RecentLarkOutboundTracker = LarkOutboundFingerprintLookup & {
 
 const LARK_CLI_COMMAND = "lark-cli";
 const LARK_EVENT_KEY = "im.message.receive_v1";
+const LARK_CARD_ACTION_EVENT_KEY = "card.action.trigger";
 const IDENTITY_POLL_MS = 30_000;
 const RECONNECT_DELAY_MS = 3_000;
 const RECENT_OUTBOUND_TTL_MS = 30_000;
@@ -343,13 +364,36 @@ async function readCurrentAppId(): Promise<string | null> {
   }
 }
 
+async function runLarkCliWithJsonFile(
+  payload: UnknownRecord,
+  buildArgs: (dataFilePath: string) => string[],
+  options: { timeout: number },
+): Promise<{ stdout: string; stderr: string }> {
+  const directory = await mkdtemp(join(tmpdir(), "techcc-lark-card-"));
+  const dataFilePath = join(directory, "payload.json");
+  try {
+    await writeFile(dataFilePath, JSON.stringify(payload), { encoding: "utf8", mode: 0o600 });
+    return await runExternalCli(LARK_CLI_COMMAND, buildArgs("payload.json"), {
+      ...options,
+      cwd: directory,
+    });
+  } finally {
+    await unlink(dataFilePath).catch(() => undefined);
+    await rmdir(directory).catch(() => undefined);
+  }
+}
+
 export function startLarkCliChannelBridge(
   dispatch: (message: ChannelInboundMessage) => Promise<void> | void,
+  dispatchCardAction?: (event: LarkCardActionEvent) => Promise<void> | void,
 ): LarkCliChannelBridge {
   let stopped = false;
   let child: ChildProcessWithoutNullStreams | null = null;
   let stdoutBuffer = "";
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let cardActionChild: ChildProcessWithoutNullStreams | null = null;
+  let cardActionStdoutBuffer = "";
+  let cardActionReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let identityTimer: ReturnType<typeof setInterval> | null = null;
   let activeAppId: string | null = null;
   let botOpenId: string | null = null;
@@ -377,6 +421,27 @@ export function startLarkCliChannelBridge(
       startConsumer();
     }, RECONNECT_DELAY_MS);
     reconnectTimer.unref?.();
+  }
+
+  function stopCardActionConsumer(): void {
+    const current = cardActionChild;
+    cardActionChild = null;
+    cardActionStdoutBuffer = "";
+    if (!current) return;
+    current.removeAllListeners("error");
+    current.removeAllListeners("close");
+    current.stdin.end();
+    const killTimer = setTimeout(() => current.kill("SIGTERM"), 1_500);
+    killTimer.unref?.();
+  }
+
+  function scheduleCardActionReconnect(): void {
+    if (stopped || !dispatchCardAction || cardActionReconnectTimer || !realtimeEnabled()) return;
+    cardActionReconnectTimer = setTimeout(() => {
+      cardActionReconnectTimer = null;
+      startCardActionConsumer();
+    }, RECONNECT_DELAY_MS);
+    cardActionReconnectTimer.unref?.();
   }
 
   function handleConsumerEnd(process: ChildProcessWithoutNullStreams, error?: unknown): void {
@@ -432,6 +497,59 @@ export function startLarkCliChannelBridge(
     process.once("close", (code) => handleConsumerEnd(process, code === 0 ? undefined : new Error(`exit ${code}`)));
   }
 
+  function handleCardActionStdout(chunk: Buffer | string): void {
+    cardActionStdoutBuffer += String(chunk);
+    const lines = cardActionStdoutBuffer.split(/\r?\n/);
+    cardActionStdoutBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const event = normalizeLarkCardActionEvent(JSON.parse(line));
+        if (!event || (ownerOpenId && event.operatorId !== ownerOpenId)) continue;
+        void Promise.resolve(dispatchCardAction?.(event)).catch((error) => {
+          console.warn("[lark-cli-channel] card action dispatch failed:", error);
+        });
+      } catch {
+        console.warn("[lark-cli-channel] ignored malformed card action output");
+      }
+    }
+  }
+
+  function handleCardActionConsumerEnd(process: ChildProcessWithoutNullStreams, error?: unknown): void {
+    if (cardActionChild !== process) return;
+    cardActionChild = null;
+    cardActionStdoutBuffer = "";
+    if (error) console.warn("[lark-cli-channel] card action consumer stopped unexpectedly");
+    scheduleCardActionReconnect();
+  }
+
+  function startCardActionConsumer(): void {
+    if (stopped || !dispatchCardAction || cardActionChild || !realtimeEnabled()) return;
+    const prepared = prepareExternalCliCommand(LARK_CLI_COMMAND, [
+      "event",
+      "consume",
+      LARK_CARD_ACTION_EVENT_KEY,
+      "--as",
+      "bot",
+    ]);
+    const process = spawn(prepared.command, prepared.args, {
+      env: prepared.env,
+      windowsHide: true,
+      windowsVerbatimArguments: prepared.windowsVerbatimArguments,
+      stdio: "pipe",
+    });
+    cardActionChild = process;
+    process.stdout.on("data", handleCardActionStdout);
+    process.stderr.on("data", () => {
+      // The ready marker and daemon diagnostics are intentionally consumed here.
+    });
+    process.once("error", (error) => handleCardActionConsumerEnd(process, error));
+    process.once("close", (code) => handleCardActionConsumerEnd(
+      process,
+      code === 0 ? undefined : new Error(`exit ${code}`),
+    ));
+  }
+
   async function refreshIdentity(restartOnChange: boolean): Promise<void> {
     const nextAppId = await readCurrentAppId();
     if (stopped) return;
@@ -444,7 +562,9 @@ export function startLarkCliChannelBridge(
       ownerOpenId = identity.ownerOpenId;
       if (appChanged) {
         stopConsumer();
+        stopCardActionConsumer();
         startConsumer();
+        startCardActionConsumer();
       }
       return;
     }
@@ -459,6 +579,7 @@ export function startLarkCliChannelBridge(
     botOpenId = identity.botOpenId;
     ownerOpenId = identity.ownerOpenId;
     startConsumer();
+    startCardActionConsumer();
     identityTimer = setInterval(() => void refreshIdentity(true), IDENTITY_POLL_MS);
     identityTimer.unref?.();
   })();
@@ -497,10 +618,13 @@ export function startLarkCliChannelBridge(
     stop: () => {
       stopped = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (cardActionReconnectTimer) clearTimeout(cardActionReconnectTimer);
       if (identityTimer) clearInterval(identityTimer);
       reconnectTimer = null;
+      cardActionReconnectTimer = null;
       identityTimer = null;
       stopConsumer();
+      stopCardActionConsumer();
     },
     sendText: async (target, text) => await sendLarkCliTextWithFallback(
       target,
@@ -549,6 +673,28 @@ export function startLarkCliChannelBridge(
         "bot",
         "--json",
       ], { cwd: target.workspaceRoot, timeout: 30_000 });
+    },
+    sendWorkflowCard: async (target, card, idempotencyKey) => {
+      const { stdout } = await runLarkCliWithJsonFile(
+        buildLarkWorkflowCardSendBody(target, card, idempotencyKey),
+        buildLarkCliWorkflowCardSendFileArgs,
+        { timeout: 60_000 },
+      );
+      return parseLarkWorkflowCardSendResponse(stdout);
+    },
+    updateWorkflowCard: async (messageId, card) => {
+      await runLarkCliWithJsonFile(
+        { content: JSON.stringify(card) },
+        (dataFilePath) => buildLarkCliCardPatchFileArgs(messageId, dataFilePath),
+        { timeout: 60_000 },
+      );
+    },
+    updateWorkflowCardAfterAction: async (token, card) => {
+      await runLarkCliWithJsonFile(
+        { token, card },
+        buildLarkCliDelayedCardUpdateFileArgs,
+        { timeout: 60_000 },
+      );
     },
   };
 }
