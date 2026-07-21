@@ -138,8 +138,6 @@ test("builds an explicit user-identity send with an idempotency key", () => {
     "user",
     "--idempotency-key",
     "techcc-share-123",
-    "--format",
-    "json",
   ]);
   assert.equal(buildLarkShareSendArgs({
     recipient: { kind: "user", id: "ou_alice", name: "Alice" },

@@ -38,7 +38,7 @@
 		"transpile:electron": "tsc --project src/electron/tsconfig.json",
 		"prepare:workspace-plugins": "node scripts/build-canvas-plugin-runtime.mjs",
 		"package:mac": "npm run prepare:workspace-plugins && bun run transpile:electron && bun run build && electron-builder --mac dmg zip --arm64 --publish never",
-		"package:mac:fast": "npm run prepare:workspace-plugins && bun run transpile:electron && bun run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --arm64 --publish never --config.mac.identity=- --config.mac.notarize=false",
+		"package:mac:fast": "npm run prepare:workspace-plugins && bun run transpile:electron && bun run build && node scripts/package-mac-fast.mjs",
 		"package:win": "node scripts/package-win-safe.mjs",
 		"dist:mac-arm64": "npm run prepare:workspace-plugins && bun run transpile:electron && bun run build && electron-builder --mac --arm64",
 		"dist:mac-x64": "npm run prepare:workspace-plugins && bun run transpile:electron && bun run build && electron-builder --mac --x64",

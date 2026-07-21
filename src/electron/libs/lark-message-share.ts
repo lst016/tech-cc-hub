@@ -281,8 +281,6 @@ export function buildLarkShareSendArgs(input: LarkShareSendInput, idempotencyKey
     "user",
     "--idempotency-key",
     idempotencyKey,
-    "--format",
-    "json",
   ];
 }
 

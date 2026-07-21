@@ -72,6 +72,10 @@ const accountMenuIconProps = {
   strokeWidth: 2.4,
 };
 
+function isWooConfigMessage(message: string) {
+  return /Woo 登录尚未配置|WOO_BASE_URL|WOO_CLIENT_ID/.test(message);
+}
+
 export function WooAuthDialog({ open, onOpenChange, onStateChange, onOpenSettings }: WooAuthDialogProps) {
   const panelId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -219,12 +223,13 @@ export function WooAuthDialog({ open, onOpenChange, onStateChange, onOpenSetting
   };
 
   if (!open) return null;
-  const allowPassword = state.loginMethods?.password !== false;
-  const allowEmail = state.loginMethods?.email !== false;
+  const allowPassword = state.loginMethods?.password === true;
+  const allowEmail = state.loginMethods?.email === true;
   const allowThirdParty = state.loginMethods?.thirdParty === true;
   const hasLoginMethod = allowPassword || allowEmail || allowThirdParty;
   const authenticatedMenu = !loading && state.status === "authenticated";
   const displayName = state.user?.realName || state.user?.userHandle || "Woo 用户";
+  const configMissing = state.status === "anonymous" && isWooConfigMessage(message);
 
   return (
     <div
@@ -429,13 +434,27 @@ export function WooAuthDialog({ open, onOpenChange, onStateChange, onOpenSetting
             </form>
           )}
 
-          {!hasLoginMethod && !message && (
-            <p className="rounded-lg bg-ink-900/5 px-3 py-2 text-xs leading-5 text-ink-700">当前 Woo 配置未启用可用登录方式。</p>
+          {!hasLoginMethod && (
+            <div className="rounded-lg bg-ink-900/5 px-3 py-2 text-xs leading-5 text-ink-700">
+              <p>{message || "当前 Woo 配置未启用可用登录方式。"}</p>
+              {configMissing && (
+                <button
+                  type="button"
+                  className="mt-2 inline-flex h-8 items-center rounded-md bg-ink-900 px-2.5 text-xs font-medium text-white transition-colors hover:bg-ink-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
+                  onClick={() => {
+                    onOpenChange(false);
+                    onOpenSettings?.();
+                  }}
+                >
+                  打开全局配置
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}
 
-      {message && (
+      {message && hasLoginMethod && (
         <p className="mx-3.5 mb-3.5 rounded-lg bg-ink-900/5 px-3 py-2 text-xs leading-5 text-ink-700" role="status">
           {message}
         </p>

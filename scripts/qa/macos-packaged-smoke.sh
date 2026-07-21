@@ -36,6 +36,17 @@ hdiutil attach "$dmg_path" -nobrowse -readonly -mountpoint "$mount_dir" >/dev/nu
 mounted=true
 app_path="$(find "$mount_dir" -maxdepth 2 -type d -name '*.app' -print -quit)"
 [[ -n "$app_path" ]] || fail "DMG does not contain an application bundle: $dmg_path"
+[[ "$(basename "$app_path")" == "tech-cc-hub.app" ]] || fail "unexpected app bundle name: $(basename "$app_path")"
+
+info_plist="$app_path/Contents/Info.plist"
+[[ -f "$info_plist" ]] || fail "missing Info.plist: $info_plist"
+bundle_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$info_plist")"
+bundle_display_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$info_plist")"
+bundle_executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$info_plist")"
+[[ "$bundle_name" == "tech-cc-hub" ]] || fail "unexpected CFBundleName: $bundle_name"
+[[ "$bundle_display_name" == "tech-cc-hub" ]] || fail "unexpected CFBundleDisplayName: $bundle_display_name"
+[[ "$bundle_executable" == "tech-cc-hub" ]] || fail "unexpected CFBundleExecutable: $bundle_executable"
+[[ -x "$app_path/Contents/MacOS/tech-cc-hub" ]] || fail "missing packaged executable: $app_path/Contents/MacOS/tech-cc-hub"
 
 signature_info="$(codesign -dv --verbose=4 "$app_path" 2>&1)"
 grep -q '^Authority=Developer ID Application:' <<<"$signature_info" \

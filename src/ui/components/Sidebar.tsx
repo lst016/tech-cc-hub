@@ -109,8 +109,6 @@ export function Sidebar({
   } | null>(null);
   const [wooAuthDialogOpen, setWooAuthDialogOpen] = useState(false);
   const [wooAuthHydrating, setWooAuthHydrating] = useState(true);
-  const [wooLoginBusy, setWooLoginBusy] = useState(false);
-  const [wooLoginError, setWooLoginError] = useState("");
   const [wooAuthState, setWooAuthState] = useState<{
     status: "anonymous" | "authenticated";
     user: { realName?: string; userHandle?: string; avatarUrl?: string } | null;
@@ -128,39 +126,14 @@ export function Sidebar({
     });
   }, []);
   const handleWooAuthTriggerClick = useCallback(async () => {
+    if (wooAuthHydrating) return;
     if (wooAuthState.status === "authenticated") {
       setWooAuthDialogOpen((current) => !current);
       return;
     }
-    if (wooAuthHydrating || wooLoginBusy) return;
 
-    setWooLoginBusy(true);
-    setWooLoginError("");
-    setWooAuthDialogOpen(false);
-    try {
-      const channel = wooAuthState.hasStoredSession ? "woo-auth:restore" : "woo-auth:login-third-party";
-      const result = await window.electron.invoke(channel) as {
-        status?: unknown;
-        user?: unknown;
-        hasStoredSession?: unknown;
-        error?: unknown;
-      };
-      handleWooAuthStateChange({
-        status: result?.status === "authenticated" ? "authenticated" : "anonymous",
-        user: result?.user && typeof result.user === "object"
-          ? result.user as { realName?: string; userHandle?: string; avatarUrl?: string }
-          : null,
-        hasStoredSession: result?.hasStoredSession === true,
-      });
-      if (result?.status !== "authenticated" && typeof result?.error === "string") {
-        setWooLoginError(result.error);
-      }
-    } catch (error) {
-      setWooLoginError(error instanceof Error ? error.message : "Woo 登录失败。");
-    } finally {
-      setWooLoginBusy(false);
-    }
-  }, [handleWooAuthStateChange, wooAuthHydrating, wooAuthState.hasStoredSession, wooAuthState.status, wooLoginBusy]);
+    setWooAuthDialogOpen(true);
+  }, [wooAuthHydrating, wooAuthState.status]);
 
   useEffect(() => {
     const unsubscribe = window.electron.onAppUpdateStatus((status: AppUpdateStatus) => {
@@ -223,12 +196,9 @@ export function Sidebar({
           user: authState.user && typeof authState.user === "object" ? authState.user as { realName?: string; userHandle?: string; avatarUrl?: string } : null,
           hasStoredSession: authState.status === "authenticated" || authState.hasStoredSession === true,
         });
-        if (authState.status !== "authenticated" && typeof authState.error === "string") {
-          setWooLoginError(authState.error);
-        }
       })
       .catch((error: unknown) => {
-        setWooLoginError(error instanceof Error ? error.message : "Woo 登录状态恢复失败。");
+        console.warn("Woo auth state hydration failed:", error);
       })
       .finally(() => setWooAuthHydrating(false));
   }, []);
@@ -518,35 +488,24 @@ export function Sidebar({
             )}
             <div className="relative">
               <WooAuthDialog
-                open={wooAuthState.status === "authenticated" && wooAuthDialogOpen}
+                open={wooAuthDialogOpen}
                 onOpenChange={setWooAuthDialogOpen}
                 onStateChange={handleWooAuthStateChange}
-                onOpenSettings={() => openSettings()}
+                onOpenSettings={() => openSettings("global-json")}
               />
-              {wooAuthState.status === "anonymous" && wooLoginError && (
-                <p
-                  role="alert"
-                  data-woo-auth-error
-                  className="absolute bottom-full left-0 right-0 z-[160] mb-2 rounded-lg border border-error/20 bg-white px-3 py-2 text-xs leading-5 text-error shadow-lg"
-                >
-                  {wooLoginError}
-                </p>
-              )}
               <button
                 type="button"
                 data-woo-auth-trigger
-                disabled={wooAuthHydrating || wooLoginBusy}
+                disabled={wooAuthHydrating}
                 className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-[#e2e2e2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 disabled:cursor-wait disabled:opacity-60"
                 onClick={() => void handleWooAuthTriggerClick()}
                 aria-label={wooAuthState.status === "authenticated"
                   ? "Woo 账号"
                   : wooAuthHydrating
                     ? "正在恢复 Woo 账号"
-                    : wooLoginBusy
-                      ? (wooAuthState.hasStoredSession ? "正在重新连接 Woo 账号" : "正在登录 Woo 账号")
-                      : (wooAuthState.hasStoredSession ? "重新连接 Woo 账号" : "登录 Woo 账号")}
-                aria-haspopup={wooAuthState.status === "authenticated" ? "dialog" : undefined}
-                aria-expanded={wooAuthState.status === "authenticated" && wooAuthDialogOpen}
+                    : (wooAuthState.hasStoredSession ? "重新连接 Woo 账号" : "登录 Woo 账号")}
+                aria-haspopup="dialog"
+                aria-expanded={wooAuthDialogOpen}
               >
                 <WooAvatar key={wooAuthState.user?.avatarUrl ?? "anonymous"} user={wooAuthState.user} size="menu" />
                 <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink-800">
@@ -554,9 +513,7 @@ export function Sidebar({
                     ? (wooAuthState.user?.realName || wooAuthState.user?.userHandle || "Woo 用户")
                     : wooAuthHydrating
                       ? "正在恢复 Woo 账号..."
-                      : wooLoginBusy
-                        ? (wooAuthState.hasStoredSession ? "正在重新连接..." : "等待浏览器登录...")
-                        : (wooAuthState.hasStoredSession ? "重新连接 Woo 账号" : "登录 Woo 账号")}
+                      : (wooAuthState.hasStoredSession ? "重新连接 Woo 账号" : "登录 Woo 账号")}
                 </span>
                 <Help theme="outline" size={20} fill="currentColor" strokeWidth={2.2} className="shrink-0 text-ink-400" aria-hidden="true" />
               </button>

@@ -22,7 +22,7 @@ import { resetBrowserWorkbenchAnnotationState } from "../../utils/browser-annota
 import { shouldShowCurrentSessionPlan } from "../../utils/session-plan-preview";
 import { getSlashCommandContext, getSlashCommandQuery, isCompletedSlashCommandContext, isDismissedSlashCommandQuery } from "../../utils/slash-command-input";
 import { buildSlashCommandDisplayParts, serializeSlashCommandDraft } from "../../utils/slash-command-display";
-import { getPromptTextFromEditor, getSelectionOffsetInEditor, getSelectionRangeInEditor, renderPromptEditorContent, restoreEditorSelection } from "../../utils/prompt-editor-content";
+import { getPromptTextFromEditor, getSelectionOffsetInEditor, getSelectionRangeInEditor, preparePromptEditorForNativeComposition, renderPromptEditorContent, restoreEditorSelection } from "../../utils/prompt-editor-content";
 import { getPromptParagraphInputAction, insertTextIntoPrompt, resolvePromptEditorInputCursor, shouldBlockPromptEnterAfterComposition, shouldInsertPromptNewline, shouldSubmitPromptOnEnter, shouldSuppressPromptAutoReplacement } from "../../utils/prompt-editor-keyboard";
 import { usePromptActions, type SlashCommandOption } from "./usePromptActions";
 import {
@@ -661,6 +661,19 @@ export function PromptInput({
   const clearCompositionEnterGuard = useCallback(() => {
     compositionEnterPendingRef.current = false;
     compositionEndedAtRef.current = 0;
+  }, []);
+
+  const handleCompositionStart = useCallback(() => {
+    isComposingRef.current = true;
+    const editor = promptRef.current;
+    if (editor && preparePromptEditorForNativeComposition(editor)) {
+      editor.dataset.renderedPrompt = "";
+    }
+  }, []);
+
+  const handleCompositionEnd = useCallback(() => {
+    isComposingRef.current = false;
+    compositionEndedAtRef.current = Date.now();
   }, []);
 
   const getCurrentPromptDraft = useCallback(() => {
@@ -1377,6 +1390,7 @@ export function PromptInput({
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
     const nativeEvent = e.nativeEvent as InputEvent;
+    const wasComposing = isComposingRef.current;
     const composingInputType = nativeEvent.inputType === "insertCompositionText" || nativeEvent.inputType === "deleteCompositionText";
     if (nativeEvent.isComposing || composingInputType) {
       isComposingRef.current = true;
@@ -1389,7 +1403,11 @@ export function PromptInput({
     ) {
       clearImageGenerationConfig();
     }
-    const nextCursor = resolvePromptEditorInputCursor(previousPrompt, nextPrompt, getSelectionOffsetInEditor(target));
+    const nextCursor = resolvePromptEditorInputCursor(previousPrompt, nextPrompt, getSelectionOffsetInEditor(target), {
+      inputType: nativeEvent.inputType,
+      isComposing: wasComposing || nativeEvent.isComposing || composingInputType,
+      compositionRecentlyEnded: isCompositionSettling(),
+    });
     promptDraftRef.current = nextPrompt;
     pendingCursorOffsetRef.current = nextCursor;
     // Avoid repainting native edits; replacing contenteditable children clears the browser undo stack.
@@ -1897,13 +1915,8 @@ export function PromptInput({
             onKeyDown={handleKeyDown}
             onFocus={() => setPromptFocused(true)}
             onBlur={() => setPromptFocused(false)}
-            onCompositionStart={() => {
-              isComposingRef.current = true;
-            }}
-            onCompositionEnd={() => {
-              isComposingRef.current = false;
-              compositionEndedAtRef.current = Date.now();
-            }}
+            onCompositionStart={handleCompositionStart}
+            onCompositionEnd={handleCompositionEnd}
             onPaste={(event) => { void handlePaste(event); }}
           />
         </div>

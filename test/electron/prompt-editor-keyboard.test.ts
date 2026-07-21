@@ -80,6 +80,17 @@ test("input cursor resolves to the end when contentEditable reports the pre-inse
   assert.equal(resolvePromptEditorInputCursor("tee wst ", "tee wst /", "tee wst /".length), "tee wst /".length);
 });
 
+test("input cursor resolves after committed IME replacement text", () => {
+  assert.equal(
+    resolvePromptEditorInputCursor("ni", "你", 0, { compositionRecentlyEnded: true }),
+    "你".length,
+  );
+  assert.equal(
+    resolvePromptEditorInputCursor("先 ni 后", "先 你 后", "先 ".length, { inputType: "insertFromComposition" }),
+    "先 你".length,
+  );
+});
+
 test("input cursor preserves true middle edits", () => {
   assert.equal(resolvePromptEditorInputCursor("tee wst", "tee west", 5), 5);
 });
