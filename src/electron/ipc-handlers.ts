@@ -81,6 +81,7 @@ import { buildChannelAgentPrompt } from "./libs/channel/channel-agent-prompt.js"
 import {
   buildLarkWorkflowCard,
   createLarkWorkflowCardCoordinator,
+  deriveLarkAgentConversationEntries,
   resolveLarkWorkflowReplyDelivery,
   type LarkCardActionEvent,
   type LarkCardJson,
@@ -318,6 +319,10 @@ function buildLarkWorkflowCardSnapshot(sessionId: string): LarkWorkflowCardSnaps
     const record = sessions.getWorkflowRun(run.id);
     return Math.max(latest, record?.updatedAt ?? 0);
   }, 0);
+  const conversation = deriveLarkAgentConversationEntries(
+    sessions.getSessionHistory(sessionId)?.messages ?? [],
+    session.status,
+  );
   return {
     sessionId,
     title: session.title,
@@ -329,6 +334,7 @@ function buildLarkWorkflowCardSnapshot(sessionId: string): LarkWorkflowCardSnaps
     actionNotice: larkWorkflowCardActionNotices.get(sessionId),
     runs,
     permission: larkWorkflowCardPermissions.get(sessionId),
+    conversation,
   };
 }
 
@@ -834,6 +840,7 @@ function emit(event: ServerEvent) {
         historyId: storedPrompt.historyId,
       },
     };
+    void syncLarkWorkflowCard(nextEvent.payload.sessionId);
   }
   if (nextEvent.type === "permission.request") {
     nextEvent = withFigmaAuthUrlPermissionInput(nextEvent);
@@ -1297,13 +1304,16 @@ function registerChannelSession(sessionId: string, target: ChannelReplyTarget, c
     sessionId, target.provider, target.rawConversationId, target.externalMessageId ?? "none");
   channelReplyTargets.set(sessionId, target);
   channelLatestAssistantText.delete(sessionId);
+  larkWorkflowCardPermissions.delete(sessionId);
+  larkWorkflowCardErrors.delete(sessionId);
+  larkWorkflowCardActionNotices.delete(sessionId);
+  channelLastSentReplySignature.delete(sessionId);
   if (claim) {
     const claims = channelMessageClaimsBySession.get(sessionId) ?? [];
     claims.push(claim);
     channelMessageClaimsBySession.set(sessionId, claims);
   }
   if (target.provider !== "lark") return;
-  void syncLarkWorkflowCard(sessionId);
   const generation = (channelProcessingReactionGenerations.get(sessionId) ?? 0) + 1;
   channelProcessingReactionGenerations.set(sessionId, generation);
   void (async () => {

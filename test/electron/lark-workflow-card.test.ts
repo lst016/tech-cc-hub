@@ -11,6 +11,7 @@ import {
   buildLarkWorkflowCardSendBody,
   buildLarkWorkflowCard,
   createLarkWorkflowCardCoordinator,
+  deriveLarkAgentConversationEntries,
   normalizeLarkCardActionEvent,
   parseLarkWorkflowCardSendResponse,
   resolveLarkWorkflowReplyDelivery,
@@ -46,23 +47,98 @@ function runningSnapshot(overrides: Partial<LarkWorkflowCardSnapshot> = {}): Lar
   };
 }
 
-test("builds a Card 2.0 workflow view with semantic progress and versioned stop actions", () => {
+test("builds a quiet Card 2.0 agent conversation instead of a colored workflow dashboard", () => {
   const card = buildLarkWorkflowCard({ ...runningSnapshot(), cardVersion: 3 });
   const serialized = JSON.stringify(card);
 
   assert.equal(card.schema, "2.0");
   assert.equal(card.config.update_multi, true);
   assert.equal(card.config.enable_forward, false);
-  assert.equal(card.header.title.content, "交付飞书流程卡片");
-  assert.equal(card.header.template, "blue");
-  assert.match(serialized, /请完成飞书深度交互接入/);
+  assert.equal(card.header, undefined);
+  assert.match(serialized, /> 请完成飞书深度交互接入/);
   assert.match(serialized, /正在实现卡片原位更新/);
-  assert.match(serialized, /停止流程/);
-  assert.match(serialized, /停止此任务/);
+  assert.match(serialized, /"tag":"collapsible_panel"/);
+  assert.match(serialized, /正在处理/);
+  assert.doesNotMatch(serialized, /当前状态|子任务完成|最近更新|执行进度/);
+  assert.doesNotMatch(serialized, /green-50|blue-50|yellow-50/);
+  assert.match(serialized, /停止/);
   assert.match(serialized, /"action":"stop_session"/);
-  assert.match(serialized, /"action":"stop_task"/);
   assert.match(serialized, /"sessionId":"session-1"/);
   assert.match(serialized, /"cardVersion":3/);
+});
+
+test("derives the current agent turn as narrative plus collapsible tool activity", () => {
+  const entries = deriveLarkAgentConversationEntries([
+    {
+      type: "user_prompt",
+      prompt: "补齐构建链路",
+      capturedAt: 1,
+    },
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "我先确认 Web 产物与桌面端壳体之间的依赖关系。" },
+          { type: "tool_use", id: "tool-read", name: "Read", input: { file_path: "package.json" } },
+          { type: "tool_use", id: "tool-bash", name: "Bash", input: { command: "npm run build" } },
+        ],
+      },
+    },
+    {
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "tool-read", content: "ok" },
+          { type: "tool_result", tool_use_id: "tool-bash", content: "failed", is_error: true },
+        ],
+      },
+    },
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "问题在产物交接，我继续修复。" }],
+      },
+    },
+  ] as never[], "running");
+
+  assert.deepEqual(entries, [
+    {
+      id: "assistant-1-0",
+      kind: "assistant",
+      text: "我先确认 Web 产物与桌面端壳体之间的依赖关系。",
+    },
+    {
+      id: "tools-1",
+      kind: "tools",
+      title: "运行 1 条命令，读取 1 个文件",
+      detail: "读取文件：package.json\n运行命令：npm run build",
+      status: "error",
+    },
+    {
+      id: "assistant-3-0",
+      kind: "assistant",
+      text: "问题在产物交接，我继续修复。",
+    },
+  ]);
+});
+
+test("keeps long agent conversations below the Feishu card payload limit", () => {
+  const card = buildLarkWorkflowCard({
+    ...runningSnapshot({
+      runs: [],
+      conversation: Array.from({ length: 20 }, (_, index) => ({
+        id: `assistant-${index}`,
+        kind: "assistant" as const,
+        text: `${index} ${"长内容".repeat(1_500)}`,
+      })),
+    }),
+    cardVersion: 3,
+  });
+
+  assert.ok(Buffer.byteLength(JSON.stringify(card), "utf8") < 30_000);
 });
 
 test("renders permission confirmation without leaking tool input secrets", () => {
@@ -78,10 +154,11 @@ test("renders permission confirmation without leaking tool input secrets", () =>
   });
   const serialized = JSON.stringify(card);
 
-  assert.equal(card.header.template, "yellow");
+  assert.equal(card.header, undefined);
   assert.match(serialized, /等待确认/);
   assert.match(serialized, /Bash/);
   assert.doesNotMatch(serialized, /secret-token-must-not-render/);
+  assert.doesNotMatch(serialized, /yellow-50/);
   assert.match(serialized, /"action":"permission_allow"/);
   assert.match(serialized, /"action":"permission_deny"/);
   assert.match(serialized, /"toolUseId":"tool-1"/);
@@ -106,7 +183,7 @@ test("uses terminal state semantics and exposes only valid recovery or delivery 
     cardVersion: 5,
   });
   const failedJson = JSON.stringify(failed);
-  assert.equal(failed.header.template, "red");
+  assert.equal(failed.header, undefined);
   assert.match(failedJson, /继续执行/);
   assert.match(failedJson, /"action":"resume_run"/);
   assert.match(failedJson, /重新执行/);
@@ -130,9 +207,10 @@ test("uses terminal state semantics and exposes only valid recovery or delivery 
     cardVersion: 6,
   });
   const completedJson = JSON.stringify(completed);
-  assert.equal(completed.header.template, "green");
+  assert.equal(completed.header, undefined);
   assert.match(completedJson, /已完成并通过全部测试/);
   assert.match(completedJson, /https:\/\/example\.com\/delivery/);
+  assert.doesNotMatch(completedJson, /交付摘要|green-50/);
   assert.doesNotMatch(completedJson, /"action":"stop_session"/);
 });
 
@@ -302,6 +380,39 @@ test("coordinator sends once, updates the same message, rejects stale or foreign
   assert.deepEqual(coordinator.acceptAction(foreignOperator), { ok: false, reason: "foreign_operator" });
   const foreignMessage = { ...current, eventId: "evt-message", messageId: "om_other" };
   assert.deepEqual(coordinator.acceptAction(foreignMessage), { ok: false, reason: "foreign_message" });
+});
+
+test("coordinator starts a fresh bottom card for each inbound Lark message in the same session", async () => {
+  const sent: Array<{ idempotencyKey: string; card: unknown }> = [];
+  const updated: Array<{ messageId: string; card: unknown }> = [];
+  const coordinator = createLarkWorkflowCardCoordinator({
+    send: async (_target, card, idempotencyKey) => {
+      sent.push({ card, idempotencyKey });
+      return { messageId: `om_card_${sent.length}`, chatId: "oc_demo" };
+    },
+    update: async (messageId, card) => {
+      updated.push({ messageId, card });
+    },
+  });
+  const firstQuestion = { ...target, externalMessageId: "om_question_1" };
+  const secondQuestion = { ...target, externalMessageId: "om_question_2" };
+
+  await coordinator.sync(firstQuestion, runningSnapshot({ prompt: "first question" }));
+  await coordinator.sync(secondQuestion, runningSnapshot({ prompt: "second question" }));
+
+  assert.equal(sent.length, 2);
+  assert.notEqual(sent[0]?.idempotencyKey, sent[1]?.idempotencyKey);
+  assert.equal(coordinator.getState("session-1")?.messageId, "om_card_2");
+  assert.equal(updated.length, 1);
+  assert.equal(updated[0]?.messageId, "om_card_1");
+  assert.doesNotMatch(JSON.stringify(updated[0]?.card), /正在处理|stop_session/);
+
+  await coordinator.sync(secondQuestion, runningSnapshot({
+    prompt: "second question",
+    assistantSummary: "second answer",
+  }));
+  assert.equal(sent.length, 2);
+  assert.equal(updated.at(-1)?.messageId, "om_card_2");
 });
 
 test("never downgrades a Lark workflow reply to plain text", async () => {
