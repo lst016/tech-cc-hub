@@ -1,5 +1,6 @@
 import {
   buildLinkedWorkspacePromptAppend,
+  getWorkspacePathComparisonKey,
   mergePromptWithLinkedWorkspaceContext,
   normalizeLinkedWorkspaceContext,
   normalizeWorkspacePath,
@@ -8,6 +9,7 @@ import {
 
 export {
   buildLinkedWorkspacePromptAppend,
+  getWorkspacePathComparisonKey,
   mergePromptWithLinkedWorkspaceContext,
   normalizeLinkedWorkspaceContext,
   normalizeWorkspacePath,

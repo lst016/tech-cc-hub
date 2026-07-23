@@ -81,6 +81,10 @@ export function SidebarWorkspaceList({
         {workspaceGroups.map((group) => {
           const linkedWorkspaceCount = linkedWorkspacesByGroup[group.key]?.length ?? 0;
           const isLarkWorkspace = Boolean(group.cwd && larkWorkspaceRoots.has(group.cwd));
+          const workspaceName = formatWorkspaceName(group.cwd);
+          const displayedWorkspaceName = isLarkWorkspace && workspaceName.startsWith("飞书-")
+            ? workspaceName.slice("飞书-".length)
+            : workspaceName;
           const workspaceGroupExpanded = Boolean(expandedGroups[group.key]);
           const sessionListExpanded = Boolean(expandedSessionLists[group.key]);
           const hasSessionOverflow = group.sessions.length > WORKSPACE_SESSION_PREVIEW_LIMIT;
@@ -119,7 +123,7 @@ export function SidebarWorkspaceList({
                         <path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-10Z" />
                       </svg>
                     )}
-                    <span className="truncate">{formatWorkspaceName(group.cwd)}</span>
+                    <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-clip">{displayedWorkspaceName}</span>
                     {linkedWorkspaceCount > 0 && (
                       <span
                         className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-accent/10 px-1.5 text-[11px] font-semibold text-accent"
@@ -128,21 +132,12 @@ export function SidebarWorkspaceList({
                         {linkedWorkspaceCount}
                       </span>
                     )}
-                    <svg
-                      viewBox="0 0 24 24"
-                      className={`h-3.5 w-3.5 shrink-0 text-muted transition-transform ${workspaceGroupExpanded ? "rotate-90" : ""}`}
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                    >
-                      <path d="m9 6 6 6-6 6" />
-                    </svg>
                   </div>
                 </button>
                 <button
                   type="button"
                   data-workspace-new-session
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-500 transition-colors hover:bg-white hover:text-ink-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-500 opacity-0 transition-[opacity,background-color,color] hover:bg-white hover:text-ink-800 focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25 group-hover/workspace:opacity-100"
                   onClick={(event) => {
                     event.stopPropagation();
                     onNewSession(group.cwd);

@@ -336,14 +336,19 @@ export class SessionStore {
     return undefined;
   }
 
+  private canonicalizeCwd(cwd?: string): string | undefined {
+    if (!cwd) return undefined;
+    return this.resolveCwd(cwd) ?? cwd;
+  }
+
   private normalizeStoredCwd(sessionId: string, cwd?: string): string | undefined {
-    const resolvedCwd = this.resolveCwd(cwd);
-    if (resolvedCwd !== cwd) {
+    const canonicalCwd = this.canonicalizeCwd(cwd);
+    if (canonicalCwd !== cwd) {
       this.db
-        .prepare("update sessions set cwd = ?, updated_at = ? where id = ?")
-        .run(resolvedCwd ?? null, Date.now(), sessionId);
+        .prepare("update sessions set cwd = ? where id = ?")
+        .run(canonicalCwd ?? null, sessionId);
     }
-    return resolvedCwd;
+    return canonicalCwd;
   }
 
   createSession(options: {
@@ -370,7 +375,7 @@ export class SessionStore {
       executionMode: options.executionMode ?? "foreground",
       reasoningMode: options.reasoningMode,
       permissionMode: normalizeReleasePermissionMode(options.permissionMode),
-      cwd: options.cwd,
+      cwd: this.canonicalizeCwd(options.cwd),
       runSurface: options.runSurface,
       agentId: options.agentId,
       allowedTools: options.allowedTools,
@@ -484,7 +489,9 @@ export class SessionStore {
       .all(limit) as Array<Record<string, unknown>>;
     return rows
       .map((row) => this.resolveCwd(String(row.cwd)))
-      .filter((cwd): cwd is string => Boolean(cwd));
+      .filter((cwd): cwd is string => Boolean(cwd))
+      .filter((cwd, index, items) => items.indexOf(cwd) === index)
+      .slice(0, limit);
   }
 
   getSessionHistory(id: string): SessionHistory | null {
@@ -589,8 +596,11 @@ export class SessionStore {
   updateSession(id: string, updates: Partial<Session>): Session | undefined {
     const session = this.sessions.get(id);
     if (!session) return undefined;
-    Object.assign(session, updates);
-    const updatedAt = this.persistSession(id, updates);
+    const normalizedUpdates = Object.prototype.hasOwnProperty.call(updates, "cwd")
+      ? { ...updates, cwd: this.canonicalizeCwd(updates.cwd) }
+      : updates;
+    Object.assign(session, normalizedUpdates);
+    const updatedAt = this.persistSession(id, normalizedUpdates);
     if (updatedAt !== undefined) session.updatedAt = updatedAt;
     return session;
   }
@@ -991,7 +1001,10 @@ export class SessionStore {
         executionMode: row.execution_mode === "background" ? "background" : row.execution_mode === "foreground" ? "foreground" : undefined,
         reasoningMode: row.reasoning_mode ? (String(row.reasoning_mode) as RuntimeReasoningMode) : undefined,
         permissionMode: normalizeStoredPermissionMode(row.permission_mode),
-        cwd: row.cwd ? String(row.cwd) : undefined,
+        cwd: this.normalizeStoredCwd(
+          String(row.id),
+          row.cwd ? String(row.cwd) : undefined,
+        ),
         runSurface: row.run_surface ? (String(row.run_surface) as AgentRunSurface) : undefined,
         agentId: row.agent_id ? String(row.agent_id) : undefined,
         allowedTools: row.allowed_tools ? String(row.allowed_tools) : undefined,
@@ -1198,7 +1211,10 @@ export class SessionStore {
         executionMode: sessionRow.execution_mode === "background" ? "background" : sessionRow.execution_mode === "foreground" ? "foreground" : undefined,
         reasoningMode: sessionRow.reasoning_mode ? (String(sessionRow.reasoning_mode) as RuntimeReasoningMode) : undefined,
         permissionMode: normalizeStoredPermissionMode(sessionRow.permission_mode),
-        cwd: sessionRow.cwd ? String(sessionRow.cwd) : undefined,
+        cwd: this.normalizeStoredCwd(
+          String(sessionRow.id),
+          sessionRow.cwd ? String(sessionRow.cwd) : undefined,
+        ),
       runSurface: sessionRow.run_surface ? (String(sessionRow.run_surface) as AgentRunSurface) : undefined,
       agentId: sessionRow.agent_id ? String(sessionRow.agent_id) : undefined,
       allowedTools: sessionRow.allowed_tools ? String(sessionRow.allowed_tools) : undefined,

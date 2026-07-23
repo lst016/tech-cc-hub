@@ -4,6 +4,7 @@ import { useAppStore } from "../store/useAppStore";
 import type { AppUpdateStatus, SettingsPageId } from "../types";
 import {
   LINKED_WORKSPACE_STORAGE_KEY,
+  getWorkspacePathComparisonKey,
   normalizeLinkedWorkspacesByGroup,
   normalizeWorkspacePath,
   readLinkedWorkspacesFromStorage,
@@ -362,13 +363,18 @@ export function Sidebar({
   const allWorkspaceGroups = useMemo(() => {
     const groups = new Map<string, SidebarWorkspaceGroup>();
     for (const session of sessionList) {
-      const key = normalizeWorkspacePath(session.cwd ?? "") || "__no_workspace__";
-      const existing = groups.get(key);
+      const normalizedCwd = normalizeWorkspacePath(session.cwd ?? "");
+      const comparisonKey = getWorkspacePathComparisonKey(normalizedCwd) || "__no_workspace__";
+      const existing = groups.get(comparisonKey);
       if (existing) {
         existing.sessions.push(session);
         continue;
       }
-      groups.set(key, { key, cwd: session.cwd, sessions: [session] });
+      groups.set(comparisonKey, {
+        key: normalizedCwd || "__no_workspace__",
+        cwd: session.cwd,
+        sessions: [session],
+      });
     }
 
     return Array.from(groups.values())

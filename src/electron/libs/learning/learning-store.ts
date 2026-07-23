@@ -226,7 +226,7 @@ export class LearningStore {
     return results.filter(r => r.id !== learningId).slice(0, limit);
   }
 
-  // Session stats (like pro-workflow sessions table)
+  // Session statistics
   startSession(sessionId: string, project?: string): void {
     this.db.prepare(
       "INSERT INTO learnings_sessions (session_id, project) VALUES (?, ?)"

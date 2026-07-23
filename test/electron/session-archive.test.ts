@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import Database from "better-sqlite3";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -9,6 +10,59 @@ import {
   resolveRuntimeEfficiencyProfile,
   runtimeEfficiencyProfileToState,
 } from "../../src/electron/libs/runtime-efficiency.js";
+
+test("SessionStore canonicalizes equivalent workspace paths before listing sessions", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tech-cc-hub-session-cwd-"));
+  const dbPath = join(dir, "sessions.db");
+  const workspacePath = join(dir, "workspace");
+  mkdirSync(workspacePath);
+  const canonicalWorkspacePath = realpathSync(workspacePath);
+  const alternateWorkspacePath = process.platform === "win32"
+    ? canonicalWorkspacePath.replace(/\\/g, "/")
+    : `${canonicalWorkspacePath}/.`;
+  const store = new SessionStore(dbPath);
+
+  try {
+    const canonicalSession = store.createSession({ title: "Canonical path", cwd: canonicalWorkspacePath });
+    const alternateSession = store.createSession({ title: "Alternate path", cwd: alternateWorkspacePath });
+
+    assert.equal(canonicalSession.cwd, canonicalWorkspacePath);
+    assert.equal(alternateSession.cwd, canonicalWorkspacePath);
+    assert.deepEqual(store.listRecentCwds(), [canonicalWorkspacePath]);
+
+    store.close();
+
+    const legacyUpdatedAt = 123_456_789;
+    const db = new Database(dbPath);
+    db.prepare("update sessions set cwd = ?, updated_at = ? where id = ?")
+      .run(alternateWorkspacePath, legacyUpdatedAt, alternateSession.id);
+    db.close();
+
+    const reopened = new SessionStore(dbPath);
+    try {
+      assert.equal(reopened.getSession(alternateSession.id)?.cwd, canonicalWorkspacePath);
+      assert.deepEqual(
+        new Set(reopened.listSessions().map((session) => session.cwd)),
+        new Set([canonicalWorkspacePath]),
+      );
+      assert.deepEqual(reopened.listRecentCwds(), [canonicalWorkspacePath]);
+      assert.equal(reopened.getSession(alternateSession.id)?.updatedAt, legacyUpdatedAt);
+    } finally {
+      reopened.close();
+    }
+
+    const migratedDb = new Database(dbPath, { readonly: true });
+    const migratedRow = migratedDb
+      .prepare("select cwd, updated_at from sessions where id = ?")
+      .get(alternateSession.id) as { cwd: string; updated_at: number };
+    migratedDb.close();
+    assert.equal(migratedRow.cwd, canonicalWorkspacePath);
+    assert.equal(migratedRow.updated_at, legacyUpdatedAt);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("SessionStore archives sessions outside the default list and restores them", () => {
   const dir = mkdtempSync(join(tmpdir(), "tech-cc-hub-session-archive-"));

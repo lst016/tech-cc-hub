@@ -29,11 +29,20 @@ test("workspace session drawers stay closed until manually opened", () => {
 
   assert.match(sidebarSource, /readExpandedWorkspaceGroupsFromStorage/);
   assert.match(sidebarSource, /SIDEBAR_EXPANDED_WORKSPACE_GROUPS_STORAGE_KEY/);
+  assert.match(sidebarSource, /getWorkspacePathComparisonKey/);
+  assert.match(sidebarSource, /groups\.get\(comparisonKey\)/);
+  assert.match(sidebarSource, /groups\.set\(comparisonKey,/);
   assert.match(sidebarSource, /\[groupKey\]: !current\[groupKey\]/);
   assert.match(sidebarSource, /writeExpandedWorkspaceGroupsToStorage\(next\)/);
   assert.match(sessionListSource, /onToggleWorkspaceGroup\(group\.key\)/);
   assert.match(sessionListSource, /const workspaceGroupExpanded = Boolean\(expandedGroups\[group\.key\]\)/);
   assert.match(sessionListSource, /workspaceGroupExpanded \? "" : "hidden"/);
+  assert.doesNotMatch(sessionListSource, /<path d="m9 6 6 6-6 6" \/>/);
+  assert.doesNotMatch(sessionListSource, /<span className="truncate">\{formatWorkspaceName\(group\.cwd\)\}<\/span>/);
+  assert.match(
+    sessionListSource,
+    /<span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-clip">\{displayedWorkspaceName\}<\/span>/,
+  );
 });
 
 test("Lark channel workspaces use the Feishu icon while local workspaces keep the folder icon", () => {
@@ -46,16 +55,21 @@ test("Lark channel workspaces use the Feishu icon while local workspaces keep th
   assert.match(sessionListSource, /isLarkWorkspace \? \(/);
   assert.match(sessionListSource, /data-lark-workspace-icon/);
   assert.match(sessionListSource, /new URL\("\.\.\/\.\.\/assets\/lark-logo\.svg", import\.meta\.url\)\.href/);
+  assert.match(sessionListSource, /const workspaceName = formatWorkspaceName\(group\.cwd\);/);
+  assert.match(sessionListSource, /workspaceName\.startsWith\("飞书-"\)/);
+  assert.match(sessionListSource, /workspaceName\.slice\("飞书-"\.length\)/);
 });
 
-test("workspace actions keep direct session creation beside a compact overflow menu", () => {
+test("workspace actions reveal direct session creation on hover beside a compact overflow menu", () => {
   const sessionListSource = readFileSync("src/ui/components/sidebar/SidebarWorkspaceList.tsx", "utf8");
   const directNewSessionButton = sessionListSource.match(
     /<button[\s\S]*?data-workspace-new-session[\s\S]*?<\/button>/,
   )?.[0];
 
   assert.ok(directNewSessionButton);
-  assert.doesNotMatch(directNewSessionButton, /opacity-0/);
+  assert.match(directNewSessionButton, /opacity-0/);
+  assert.match(directNewSessionButton, /group-hover\/workspace:opacity-100/);
+  assert.match(directNewSessionButton, /focus:opacity-100/);
   assert.match(sessionListSource, /data-workspace-new-session/);
   assert.match(sessionListSource, /onClick=\{\(event\) => \{[\s\S]*onNewSession\(group\.cwd\)/);
   assert.match(sessionListSource, /title="新建会话"/);

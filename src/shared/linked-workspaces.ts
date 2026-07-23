@@ -12,6 +12,13 @@ export function normalizeWorkspacePath(value: string): string {
   return trimmed.replace(/[\\/]+$/g, "");
 }
 
+export function getWorkspacePathComparisonKey(value: string): string {
+  const normalized = normalizeWorkspacePath(value);
+  if (!normalized) return "";
+  const isWindowsPath = /^[A-Za-z]:(?:[\\/]|$)/.test(normalized) || /^[\\/]{2}/.test(normalized);
+  return isWindowsPath ? normalized.replace(/\\/g, "/").toLowerCase() : normalized;
+}
+
 export function normalizeLinkedWorkspaceContext(input: {
   primaryCwd?: string;
   linkedCwds?: string[];
