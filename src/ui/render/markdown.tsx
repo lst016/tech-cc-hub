@@ -10,6 +10,7 @@ import rehypeRaw from "rehype-raw";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { remarkRestrictRawHtml } from "./markdown-raw-html";
 import { AppModalOverlay } from "../components/AppModalOverlay";
 import { AnnotationBadge } from "../components/annotations/AnnotationBadge";
 import { copyTextToClipboard } from "../utils/clipboard";
@@ -43,7 +44,7 @@ const mermaidRenderCache = new Map<string, MermaidRenderPayload | Promise<Mermai
 
 const SOURCE_FILE_EXTENSION_PATTERN = /\.(?:[cm]?[jt]sx?|jsonc?|ya?ml|toml|mdx?|py|sh|zsh|css|scss|html|go|rs|java|kt|swift|sql|vue|svelte|astro)(?::\d+(?:-\d+)?)?$/i;
 const DEFAULT_EXPANDABLE_FRAME_CLASS = "group relative mt-3 overflow-hidden rounded-xl border border-black/8 bg-surface-tertiary";
-const MARKDOWN_REMARK_PLUGINS = [remarkGfm, remarkMath, remarkBreaks];
+const MARKDOWN_REMARK_PLUGINS = [remarkRestrictRawHtml, remarkGfm, remarkMath, remarkBreaks];
 const MARKDOWN_REHYPE_PLUGINS = [rehypeRaw, rehypeKatex, rehypeHighlight];
 
 export type LarkMentionTone = "rich-text" | "chat";
