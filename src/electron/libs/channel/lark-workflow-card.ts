@@ -175,7 +175,7 @@ export async function resolveLarkWorkflowReplyDelivery(
 }
 
 const MAX_TITLE_CHARS = 80;
-const MAX_PROMPT_CHARS = 600;
+const MAX_PROMPT_CHUNK_CHARS = 600;
 const MAX_SUMMARY_CHARS = 3_000;
 const MAX_RUNS = 6;
 const MAX_CONVERSATION_ENTRIES = 16;
@@ -543,6 +543,24 @@ function buildButtonRow(buttons: UnknownRecord[]): UnknownRecord {
   };
 }
 
+function buildPromptElements(prompt: string): UnknownRecord[] {
+  const normalizedPrompt = prompt.trim();
+  const characters = Array.from(normalizedPrompt);
+  const chunks = Array.from(
+    { length: Math.ceil(characters.length / MAX_PROMPT_CHUNK_CHARS) },
+    (_, index) => characters
+      .slice(index * MAX_PROMPT_CHUNK_CHARS, (index + 1) * MAX_PROMPT_CHUNK_CHARS)
+      .join(""),
+  );
+
+  return chunks.map((chunk, index) => ({
+    tag: "markdown",
+    content: index === 0
+      ? `> ${chunk.replace(/\r?\n/g, "\n> ")}`
+      : `> （续 ${index + 1}/${chunks.length}）${chunk.replace(/\r?\n/g, "\n> ")}`,
+  }));
+}
+
 function buildRunActivityPanel(runs: LarkWorkflowCardRun[]): UnknownRecord {
   const visibleRuns = runs.slice(0, MAX_RUNS);
   const detail = visibleRuns.map((run) => {
@@ -657,8 +675,7 @@ export function buildLarkWorkflowCard(
   const elements: UnknownRecord[] = [];
 
   if (snapshot.prompt?.trim()) {
-    const quotedPrompt = truncateText(snapshot.prompt, MAX_PROMPT_CHARS).replace(/\r?\n/g, "\n> ");
-    elements.push({ tag: "markdown", content: `> ${quotedPrompt}` });
+    elements.push(...buildPromptElements(snapshot.prompt));
   }
 
   const conversation = limitConversationEntries(snapshot.conversation ?? []);

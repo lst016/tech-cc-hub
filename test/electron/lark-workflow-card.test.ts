@@ -74,6 +74,22 @@ test("builds a quiet Card 2.0 agent conversation instead of a colored workflow d
   assert.match(serialized, /"cardVersion":3/);
 });
 
+test("renders every part of long requester feedback without dropping the tail", () => {
+  const feedback = Array.from({ length: 1_300 }, (_, index) => String(index % 10)).join("");
+  const card = buildLarkWorkflowCard({
+    ...runningSnapshot({ prompt: feedback, runs: [] }),
+    cardVersion: 3,
+  });
+  const feedbackBlocks = card.body.elements.slice(0, 3) as Array<{ tag?: string; content?: string }>;
+
+  assert.equal(feedbackBlocks.length, 3);
+  assert.deepEqual(feedbackBlocks.map((block) => block.tag), ["markdown", "markdown", "markdown"]);
+  assert.equal(feedbackBlocks[0]?.content, `> ${feedback.slice(0, 600)}`);
+  assert.equal(feedbackBlocks[1]?.content, `> （续 2/3）${feedback.slice(600, 1_200)}`);
+  assert.equal(feedbackBlocks[2]?.content, `> （续 3/3）${feedback.slice(1_200)}`);
+  assert.ok((feedbackBlocks[2]?.content ?? "").endsWith(feedback.slice(-100)));
+});
+
 test("derives the current agent turn as narrative plus one compact tool summary", () => {
   const entries = deriveLarkAgentConversationEntries([
     {
