@@ -38,7 +38,7 @@ tags:
 2. 将 ActivityRail / SessionAnalysis 的重型模型构建从主交互路径移走。
 3. 降低首次打开代码编辑器时 Monaco lazy chunk 带来的顿挫。
 4. 给预览、会话列表、分析面板建立可重复的性能预算和回归测试。
-5. 确认 CodeGraph 检索链路是否仍存在全量向量算分风险；`pro-workflow` 仅做退场边界，不再投入性能优化。
+5. 确认 CodeGraph 检索链路是否仍存在全量向量算分风险。
 
 ## 非目标
 
@@ -46,7 +46,6 @@ tags:
 - 不新增 VSCode 级功能，例如符号跳转、全局搜索替换、多选批量文件操作。
 - 不把 computer-use 作为本轮强制门禁；当前问题是环境拿不到稳定窗口内容。
 - 不在本轮大改数据库 schema，除非确认某条查询已经成为实际瓶颈。
-- 不优化 `pro-workflow`：该模块后续计划移除，本轮只防止新增依赖或误触发。
 
 ## 优先级
 
@@ -56,7 +55,7 @@ tags:
 | P0 | ActivityRail / SessionAnalysis 重算 | 输入已截断，但仍在主线程同步构建 | Worker 或增量缓存，避免切换/滚动卡顿 |
 | P0 | 性能预算与测试证据 | 有 smoke，无细粒度预算 | 加入可重复的 perf contract tests |
 | P1 | Monaco 打开时顿挫 | 首屏已 lazy split，打开编辑器仍加载大 chunk | idle prefetch / read-only fallback / 加载状态优化 |
-| P1 | CodeGraph 检索与 `pro-workflow` 退场边界 | 未深修，只在扫描报告中标记 | 确认 CodeGraph active path；禁止继续扩大 `pro-workflow` 依赖 |
+| P1 | CodeGraph 检索链路 | 未深修，只在扫描报告中标记 | 确认 CodeGraph active path，并建立性能边界 |
 
 ## 设计方案
 
@@ -145,12 +144,11 @@ tags:
 - 性能预算测试在 CI/本地可重复，不依赖真实大仓库。
 - 失败信息要指出具体预算项，而不是只报超时。
 
-### 5. CodeGraph 检索确认与 `pro-workflow` 退场边界
+### 5. CodeGraph 检索确认
 
 问题：
 
 - 第一轮扫描提到“全量向量算分 + sort”风险，但当前代码中 legacy vector knowledge 已显示 disabled，需要确认实际仍在运行的 CodeGraph 入口。
-- `pro-workflow` 后续计划移除，不应在第二轮继续投入优化成本。
 
 方案：
 
@@ -160,17 +158,12 @@ tags:
   - 增加 topK early cutoff 或候选预过滤。
   - 将全量 sort 改为 bounded heap / partial ranking。
   - 对大输入加最大候选数和耗时日志。
-- 对 `pro-workflow` 只加退场约束：
-  - 不新增功能依赖。
-  - 不新增性能优化工作。
-  - 如果普通预览、session list、ActivityRail 仍会触发它，改为断开或降级。
 
 验收：
 
 - 有明确文档说明当前 active 检索路径。
 - 任一 active search path 都必须有 topK / candidate limit。
 - 不能在普通预览或 session list 切换时触发向量检索。
-- `pro-workflow` 不出现在第二轮 P0/P1 实现依赖里。
 
 ## TDD 顺序
 
@@ -178,7 +171,7 @@ tags:
 2. 再写 ActivityRail worker hook tests：大 session 不同步 build，旧结果不覆盖新 session。
 3. 写 Monaco lazy/prefetch contract：首屏不 import Monaco，idle 后允许预取。
 4. 写 performance budget tests：session list payload、quick open scan、bundle split。
-5. 最后做 CodeGraph active path tests，并补 `pro-workflow` 退场防依赖测试。
+5. 最后做 CodeGraph active path tests。
 
 ## 冒烟测试
 
