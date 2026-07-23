@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
+import { inflateSync } from "node:zlib";
 
 import {
   buildDesktopNotificationAttentionCue,
@@ -9,6 +10,11 @@ import {
   buildTaskExecutionDesktopNotification,
   shouldShowDesktopNotification,
 } from "../../src/electron/libs/desktop-notification-model.js";
+import {
+  createUnreadBadgePng,
+  formatUnreadBadgeCount,
+  normalizeUnreadBadgeCount,
+} from "../../src/electron/libs/desktop-unread-badge.js";
 
 test("desktop notifications stay quiet while a visible app window is focused", () => {
   assert.equal(
@@ -62,6 +68,43 @@ test("desktop notifications auto-close after a short timeout", () => {
   assert.match(source, /DESKTOP_NOTIFICATION_AUTO_CLOSE_MS\s*=\s*6_000/);
   assert.match(source, /setTimeout\(\(\)\s*=>\s*\{\s*notification\.close\(\);/s);
   assert.match(source, /notification\.once\("close",\s*\(\)\s*=>\s*\{/);
+});
+
+test("desktop unread count follows taskbar badge limits", () => {
+  assert.equal(normalizeUnreadBadgeCount(Number.NaN), 0);
+  assert.equal(normalizeUnreadBadgeCount(-1), 0);
+  assert.equal(normalizeUnreadBadgeCount(3.8), 3);
+  assert.equal(formatUnreadBadgeCount(0), "");
+  assert.equal(formatUnreadBadgeCount(1), "1");
+  assert.equal(formatUnreadBadgeCount(99), "99");
+  assert.equal(formatUnreadBadgeCount(100), "99+");
+});
+
+test("desktop unread badge is a valid 16px RGBA PNG", () => {
+  const badge = createUnreadBadgePng(7);
+  assert.deepEqual([...badge.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+
+  const chunks = readPngChunks(badge);
+  const header = chunks.find((chunk) => chunk.type === "IHDR");
+  assert.ok(header);
+  assert.equal(header.data.readUInt32BE(0), 16);
+  assert.equal(header.data.readUInt32BE(4), 16);
+  assert.equal(header.data[8], 8);
+  assert.equal(header.data[9], 6);
+
+  const imageData = inflateSync(Buffer.concat(
+    chunks.filter((chunk) => chunk.type === "IDAT").map((chunk) => chunk.data),
+  ));
+  assert.equal(imageData.length, 16 * (1 + 16 * 4));
+  assert.ok(imageData.some((value, index) => index % 65 !== 0 && value === 255));
+});
+
+test("desktop notification lifecycle increments the taskbar badge and clears it on focus", () => {
+  const source = readFileSync("src/electron/libs/desktop-notifications.ts", "utf8");
+
+  assert.match(source, /rememberDedupeKey\(intent\.dedupeKey\);\s*incrementDesktopUnreadBadge\(\);/s);
+  assert.match(source, /window\.on\("focus", clearDesktopUnreadBadge\)/);
+  assert.match(source, /window\.setOverlayIcon\(/);
 });
 
 test("builds a completed task notification with a session click target", () => {
@@ -167,3 +210,18 @@ test("builds cron completion notifications", () => {
     },
   );
 });
+
+function readPngChunks(png: Buffer): Array<{ type: string; data: Buffer }> {
+  const chunks: Array<{ type: string; data: Buffer }> = [];
+  let offset = 8;
+  while (offset < png.length) {
+    const length = png.readUInt32BE(offset);
+    const type = png.toString("ascii", offset + 4, offset + 8);
+    chunks.push({
+      type,
+      data: png.subarray(offset + 8, offset + 8 + length),
+    });
+    offset += 12 + length;
+  }
+  return chunks;
+}
