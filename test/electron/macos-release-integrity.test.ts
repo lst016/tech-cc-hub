@@ -28,6 +28,14 @@ test("macOS release artifacts are signed, notarized, and verified before upload"
   assert.match(packageJson.scripts["package:mac:fast"], /node scripts\/package-mac-fast\.mjs/);
   assert.match(packageJson.scripts["release:mac-arm64"], /--mac dmg zip --arm64 --publish never/);
   assert.match(packageJson.scripts["release:mac-x64"], /--mac dmg zip --x64 --publish never/);
+  assert.match(
+    packageJson.scripts["release:internal:mac-arm64"],
+    /prepare-internal-release\.mjs mac-arm64/,
+  );
+  assert.match(
+    packageJson.scripts["release:internal:mac-x64"],
+    /prepare-internal-release\.mjs mac-x64/,
+  );
   assert.equal(packageJson.scripts["qa:macos-packaged"], "bash scripts/qa/macos-packaged-smoke.sh");
 
   for (const workflow of [releaseWorkflow, buildWorkflow]) {

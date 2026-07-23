@@ -23,7 +23,7 @@ const UPDATE_STATE_META: Record<AppUpdateState, { label: string; tone: string; d
   idle: {
     label: "待检查",
     tone: "border-ink-900/10 bg-white text-ink-700",
-    description: "可手动检查 GitHub Releases 是否有新版本。",
+    description: "可手动检查内网更新源，内网不可用时自动回退到 GitHub。",
   },
   disabled: {
     label: "未启用",
@@ -33,7 +33,7 @@ const UPDATE_STATE_META: Record<AppUpdateState, { label: string; tone: string; d
   checking: {
     label: "检查中",
     tone: "border-blue-500/20 bg-blue-50 text-blue-700",
-    description: "正在连接 GitHub Releases 获取更新元数据。",
+    description: "正在按内网优先、GitHub 备用的顺序获取更新元数据。",
   },
   available: {
     label: "发现新版",
@@ -63,7 +63,7 @@ const UPDATE_STATE_META: Record<AppUpdateState, { label: string; tone: string; d
   error: {
     label: "检查失败",
     tone: "border-red-500/20 bg-red-50 text-red-700",
-    description: "更新链路返回错误，请检查 GitHub Release 或网络。",
+    description: "更新链路返回错误，请检查内网更新目录、GitHub Release 或网络。",
   },
 };
 
@@ -139,6 +139,7 @@ export function SystemMaintenancePage({
   const canDownloadUpdate = updateBusy === null && updateStatus?.status === "available";
   const canInstallUpdate = updateBusy === null && updateStatus?.status === "downloaded";
   const downloadPercent = updateStatus?.progress?.percent ?? 0;
+  const updateProviderLabel = updateStatus?.provider === "internal" ? "内网更新源" : "GitHub Releases";
 
   return (
     <section className="grid gap-4">
@@ -146,9 +147,9 @@ export function SystemMaintenancePage({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="text-xs font-medium text-muted">版本更新</div>
-            <h3 className="mt-1 text-base font-semibold text-ink-900">GitHub Releases 自动更新</h3>
+            <h3 className="mt-1 text-base font-semibold text-ink-900">内网优先自动更新</h3>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-              使用 electron-updater 检查 GitHub Release 元数据，下载完成后通过重启安装。当前不做运行时代码热替换，避免签名和主进程状态风险。
+              优先从内网更新源检查和下载，源不可用或暂无新版时回退到 GitHub Releases。下载完成后通过重启安装。
             </p>
           </div>
           <span className={`rounded-full border px-3 py-1 text-xs font-medium ${updateMeta.tone}`}>
@@ -163,7 +164,7 @@ export function SystemMaintenancePage({
           </div>
           <div className="rounded-2xl border border-ink-900/10 bg-surface px-4 py-3">
             <div className="text-xs text-muted">更新源</div>
-            <div className="mt-1 text-sm font-semibold text-ink-900">GitHub Releases</div>
+            <div className="mt-1 text-sm font-semibold text-ink-900">{updateProviderLabel}</div>
           </div>
           <div className="rounded-2xl border border-ink-900/10 bg-surface px-4 py-3">
             <div className="text-xs text-muted">目标版本</div>

@@ -46,12 +46,12 @@ tags:
 
 配置文件：`electron-builder.json`
 
-## GitHub Releases 自动更新
+## 内网优先自动更新
 
-- 实现：[src/electron/libs/auto-updater.ts](../../src/electron/libs/auto-updater.ts)
+- 实现：[src/electron/libs/auto-updater/auto-updater.ts](../../src/electron/libs/auto-updater/auto-updater.ts)
 - 发布脚本：[scripts/github-release.mjs](../../scripts/github-release.mjs)
 - CI Workflow：[.github/workflows/release.yml](../../.github/workflows/release.yml)
-- 详细流程：[github-release-autoupdate-runbook.md](github-release-autoupdate-runbook.md)
+- 详细流程：[内网优先与 GitHub 备用自动更新发布流程](github-release-autoupdate-runbook.md)
 
 ## 版本记录
 

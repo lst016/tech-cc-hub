@@ -135,7 +135,7 @@ export type AppUpdateStatus = {
   status: AppUpdateState;
   currentVersion: string;
   isPackaged: boolean;
-  provider: "github";
+  provider: "internal" | "github";
   channel?: string;
   version?: string;
   releaseName?: string;

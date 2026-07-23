@@ -90,7 +90,7 @@ const createPreviewUpdateStatus = (): AppUpdateStatus => ({
   currentVersion: "0.1.1",
   isPackaged: false,
   provider: "github",
-  error: "浏览器预览态不会检查 GitHub Releases 更新，请在打包后的 Electron 客户端里使用。",
+  error: "浏览器预览态不会检查应用更新，请在打包后的 Electron 客户端里使用。",
 });
 
 const createPreviewUpdateResult = async (): Promise<AppUpdateActionResult> => {

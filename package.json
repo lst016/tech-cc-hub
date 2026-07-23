@@ -48,6 +48,9 @@
 		"release:mac-arm64": "npm run prepare:workspace-plugins && npm run transpile:electron && npm run build && electron-builder --mac dmg zip --arm64 --publish never",
 		"release:mac-x64": "npm run prepare:workspace-plugins && npm run transpile:electron && npm run build && electron-builder --mac dmg zip --x64 --publish never",
 		"release:win-x64": "npm run dist:win",
+		"release:internal:mac-arm64": "npm run release:mac-arm64 && node scripts/prepare-internal-release.mjs mac-arm64",
+		"release:internal:mac-x64": "npm run release:mac-x64 && node scripts/prepare-internal-release.mjs mac-x64",
+		"release:internal:win-x64": "npm run release:win-x64 && node scripts/prepare-internal-release.mjs win-x64",
 		"release:github": "node scripts/github-release.mjs"
 	},
 	"dependencies": {
