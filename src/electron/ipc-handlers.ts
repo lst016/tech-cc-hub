@@ -69,6 +69,8 @@ import {
   buildChannelSessionTitle,
   buildChannelReplyTarget,
   ensureChannelWorkspace,
+  resolveChannelWorkspaceLocation,
+  resolveChannelWorkspaceIds,
   recordChannelOutboundMessage,
   recordChannelInboundMessage,
   type ChannelReplyTarget,
@@ -106,7 +108,12 @@ let annotationStore: AnnotationStore | null = null;
 const runnerHandles = new Map<string, RunnerHandle>();
 const serverEventListeners = new Set<(event: ServerEvent) => void>();
 const channelReplyTargets = new Map<string, ChannelReplyTarget>();
-const pendingChannelReplyTargetsByWorkspace = new Map<string, { target: ChannelReplyTarget; claim?: ChannelMessageClaim }>();
+const pendingChannelReplyTargetsByConversation = new Map<string, {
+  target: ChannelReplyTarget;
+  claim?: ChannelMessageClaim;
+  workspaceRoot: string;
+}>();
+const channelMessageQueues = new Map<string, Promise<void>>();
 const channelLatestAssistantText = new Map<string, string>();
 const channelLastSentReplySignature = new Map<string, string>();
 const channelProcessingReactions = new Map<string, { reactionId: string; target: ChannelReplyTarget }>();
@@ -1372,7 +1379,27 @@ function releaseChannelMessageClaim(sessionId: string, claim: ChannelMessageClai
   else channelMessageClaimsBySession.delete(sessionId);
 }
 
-async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "channel.message.receive" }>) {
+function buildChannelSessionRouteKey(
+  provider: string,
+  workspaceId: string,
+  conversationId: string,
+): string {
+  return `${provider.trim()}\0${workspaceId.trim()}\0${conversationId.trim()}`;
+}
+
+function getChannelEventWorkspaceIds(
+  event: Extract<ClientEvent, { type: "channel.message.receive" }>,
+): { workspaceId: string; conversationId: string } {
+  return resolveChannelWorkspaceIds({
+    provider: event.payload.provider,
+    text: event.payload.text,
+    externalConversationId: event.payload.externalConversationId,
+    senderId: event.payload.senderId,
+    channelName: event.payload.channelName,
+  });
+}
+
+async function handleChannelMessageEventLocked(event: Extract<ClientEvent, { type: "channel.message.receive" }>) {
   const store = initializeSessions();
   const text = event.payload.text.trim();
   if (!text) {
@@ -1387,7 +1414,7 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
     ? { messageId: event.payload.externalMessageId, provider: event.payload.provider }
     : undefined;
 
-  const workspace = ensureChannelWorkspace({
+  const inboundMessage = {
     provider: event.payload.provider,
     text,
     externalConversationId: event.payload.externalConversationId,
@@ -1397,22 +1424,26 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
     channelName: event.payload.channelName,
     title: event.payload.title,
     receivedAt: event.payload.receivedAt,
+  };
+  const workspaceLocation = resolveChannelWorkspaceLocation(inboundMessage);
+  const existingWorkspaceRoute = store.getChannelWorkspaceRoute(
+    event.payload.provider,
+    workspaceLocation.workspaceId,
+  );
+  const workspaceRoute = store.getOrCreateChannelWorkspaceRoute({
+    provider: event.payload.provider,
+    workspaceId: workspaceLocation.workspaceId,
+    workspaceRoot: existingWorkspaceRoute?.workspaceRoot ?? workspaceLocation.root,
   });
+  const workspace = ensureChannelWorkspace(inboundMessage, workspaceRoute.workspaceRoot);
+  const adoptedLegacyConversationRoot = !existingWorkspaceRoute
+    && workspaceLocation.adoptedLegacyConversationRoot
+    && workspace.root === workspaceLocation.root;
   if (claim && !store.claimChannelMessage(claim.messageId, claim.provider)) {
     console.info(`[channel] Duplicate message skipped: provider=${claim.provider} message=${claim.messageId}`);
     return;
   }
-  recordChannelInboundMessage(workspace, {
-    provider: event.payload.provider,
-    text,
-    externalConversationId: event.payload.externalConversationId,
-    externalMessageId: event.payload.externalMessageId,
-    senderId: event.payload.senderId,
-    senderName: event.payload.senderName,
-    channelName: event.payload.channelName,
-    title: event.payload.title,
-    receivedAt: event.payload.receivedAt,
-  });
+  recordChannelInboundMessage(workspace, inboundMessage);
   const replyTarget = buildChannelReplyTarget({
     provider: event.payload.provider,
     text,
@@ -1425,9 +1456,28 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
 
   const CHANNEL_SESSION_IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 1 小时
 
-  const existingSession = store
-    .listSessions({ archived: false })
-    .find((session) => session.cwd === workspace.root);
+  let route = store.getChannelSessionRoute(
+    event.payload.provider,
+    workspace.workspaceId,
+    workspace.conversationId,
+  );
+  if (!route && adoptedLegacyConversationRoot) {
+    const legacySession = store
+      .listSessions({ archived: false })
+      .find((session) => session.cwd === workspace.root);
+    if (legacySession) {
+      route = store.setChannelSessionRoute({
+        provider: event.payload.provider,
+        workspaceId: workspace.workspaceId,
+        conversationId: workspace.conversationId,
+        workspaceRoot: workspace.root,
+        sessionId: legacySession.id,
+      });
+    }
+  }
+  const existingSession = route?.workspaceRoot === workspace.root
+    ? store.listSessions({ archived: false }).find((session) => session.id === route.sessionId)
+    : undefined;
 
   const sessionExpired = existingSession
     ? Date.now() - existingSession.updatedAt > CHANNEL_SESSION_IDLE_TIMEOUT_MS
@@ -1440,7 +1490,16 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
   }
 
   if (!existingSession || sessionExpired) {
-    pendingChannelReplyTargetsByWorkspace.set(workspace.root, { target: replyTarget, claim });
+    const routeKey = buildChannelSessionRouteKey(
+      event.payload.provider,
+      workspace.workspaceId,
+      workspace.conversationId,
+    );
+    pendingChannelReplyTargetsByConversation.set(routeKey, {
+      target: replyTarget,
+      claim,
+      workspaceRoot: workspace.root,
+    });
     try {
       await handleClientEvent({
         type: "session.start",
@@ -1460,16 +1519,26 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
           attachments: event.payload.attachments,
           runtime: event.payload.runtime,
         },
-      }, { promptOrigin: { kind: "channel", server: event.payload.provider } });
+      }, {
+        promptOrigin: { kind: "channel", server: event.payload.provider },
+        channelRoute: {
+          provider: event.payload.provider,
+          workspaceId: workspace.workspaceId,
+          conversationId: workspace.conversationId,
+        },
+      });
     } catch (error) {
-      pendingChannelReplyTargetsByWorkspace.delete(workspace.root);
+      pendingChannelReplyTargetsByConversation.delete(routeKey);
       if (claim) store.releaseChannelMessage(claim.messageId, claim.provider);
       throw error;
     }
-    const createdSession = store
-      .listSessions({ archived: false })
-      .find((session) => session.cwd === workspace.root);
-    if (!createdSession) pendingChannelReplyTargetsByWorkspace.delete(workspace.root);
+    if (!store.getChannelSessionRoute(
+      event.payload.provider,
+      workspace.workspaceId,
+      workspace.conversationId,
+    )) {
+      pendingChannelReplyTargetsByConversation.delete(routeKey);
+    }
     return;
   }
 
@@ -1532,6 +1601,23 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
   } catch (error) {
     releaseChannelMessageClaim(existingSession.id, claim);
     throw error;
+  }
+}
+
+async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "channel.message.receive" }>) {
+  const { workspaceId, conversationId } = getChannelEventWorkspaceIds(event);
+  const routeKey = buildChannelSessionRouteKey(event.payload.provider, workspaceId, conversationId);
+  const previous = channelMessageQueues.get(routeKey) ?? Promise.resolve();
+  const queued = previous
+    .catch(() => undefined)
+    .then(() => handleChannelMessageEventLocked(event));
+  channelMessageQueues.set(routeKey, queued);
+  try {
+    await queued;
+  } finally {
+    if (channelMessageQueues.get(routeKey) === queued) {
+      channelMessageQueues.delete(routeKey);
+    }
   }
 }
 
@@ -1711,6 +1797,11 @@ export async function handleLarkCardAction(event: LarkCardActionEvent): Promise<
 type ClientEventContext = {
   promptOrigin?: SDKMessageOrigin;
   toolPermissionPolicy?: ToolPermissionPolicy;
+  channelRoute?: {
+    provider: string;
+    workspaceId: string;
+    conversationId: string;
+  };
 };
 
 export async function handleClientEvent(event: ClientEvent, context: ClientEventContext = {}) {
@@ -2134,12 +2225,25 @@ export async function handleClientEvent(event: ClientEvent, context: ClientEvent
       prompt: displayPrompt,
     });
 
-    const pendingChannelWorkspace = session.cwd?.trim();
-    const pendingChannel = pendingChannelWorkspace
-      ? pendingChannelReplyTargetsByWorkspace.get(pendingChannelWorkspace)
+    const pendingChannelKey = context.channelRoute
+      ? buildChannelSessionRouteKey(
+        context.channelRoute.provider,
+        context.channelRoute.workspaceId,
+        context.channelRoute.conversationId,
+      )
       : undefined;
-    if (pendingChannel && pendingChannelWorkspace) {
-      pendingChannelReplyTargetsByWorkspace.delete(pendingChannelWorkspace);
+    const pendingChannel = pendingChannelKey
+      ? pendingChannelReplyTargetsByConversation.get(pendingChannelKey)
+      : undefined;
+    if (pendingChannel && pendingChannelKey && context.channelRoute) {
+      pendingChannelReplyTargetsByConversation.delete(pendingChannelKey);
+      store.setChannelSessionRoute({
+        provider: context.channelRoute.provider,
+        workspaceId: context.channelRoute.workspaceId,
+        conversationId: context.channelRoute.conversationId,
+        workspaceRoot: pendingChannel.workspaceRoot,
+        sessionId: session.id,
+      });
       registerChannelSession(session.id, pendingChannel.target, pendingChannel.claim);
     }
 

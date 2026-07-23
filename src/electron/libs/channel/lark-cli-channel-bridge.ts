@@ -150,10 +150,11 @@ export function normalizeLarkCliRealtimeEvent(
   const senderType = asString(value.sender_type)?.toLowerCase();
   const senderId = asString(value.sender_id);
   if (senderType === "bot" || (senderType && senderType !== "user")) return null;
+  if (!senderId) return null;
   // Older CLI event shapes can omit sender_type for valid human messages, so
   // keep sender_id-bearing events compatible while still rejecting anonymous
   // payloads and anything sent by the current bot identity.
-  if ((botOpenId && senderId === botOpenId) || (!senderType && !senderId)) return null;
+  if (botOpenId && senderId === botOpenId) return null;
   // The fallback fingerprint is only needed for legacy events with no sender
   // type. Explicit user events must not be suppressed when a person repeats a
   // recent bot response verbatim.

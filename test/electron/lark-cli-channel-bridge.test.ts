@@ -116,6 +116,13 @@ test("Lark CLI NDJSON events map to channel messages and reject bot loops", () =
   }), null);
   assert.equal(normalizeLarkCliRealtimeEvent({
     type: "im.message.receive_v1",
+    content: "user event without an openId",
+    chat_id: "oc_demo",
+    message_id: "om_missing_open_id",
+    sender_type: "user",
+  }), null);
+  assert.equal(normalizeLarkCliRealtimeEvent({
+    type: "im.message.receive_v1",
     content: "self event with incorrect sender type",
     chat_id: "oc_demo",
     message_id: "om_self",

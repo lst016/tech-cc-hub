@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import type { AgentRunSurface, PermissionRequestMetadata, PromptAttachment, RuntimeOverrides, RuntimeReasoningMode, SessionHistoryCursor, SessionStatus, StreamMessage } from "../types.js";
 import { existsSync, realpathSync } from "fs";
+import { basename } from "node:path";
 import electron from "electron";
 import { isSuccessfulRunnerResult } from "../../shared/runner-status.js";
 import { sanitizePromptAttachmentsForStorage } from "../../shared/attachments.js";
@@ -134,6 +135,22 @@ export type SessionListOptions = {
   summary?: boolean;
 };
 
+export type ChannelSessionRoute = {
+  provider: string;
+  workspaceId: string;
+  conversationId: string;
+  workspaceRoot: string;
+  sessionId: string;
+  updatedAt: number;
+};
+
+export type ChannelWorkspaceRoute = {
+  provider: string;
+  workspaceId: string;
+  workspaceRoot: string;
+  updatedAt: number;
+};
+
 export type SessionHistory = {
   session: StoredSession;
   messages: StreamMessage[];
@@ -148,6 +165,23 @@ export type SessionHistoryPage = SessionHistory & {
 const SESSION_LIST_DEFAULT_SUMMARY_LIMIT = 80;
 const SESSION_LIST_MAX_LIMIT = 500;
 const DEFAULT_MESSAGE_BATCH_DELAY_MS = 100;
+const CHANNEL_WORKSPACE_ROUTES_SCHEMA = `create table if not exists channel_workspace_routes (
+  provider text not null,
+  workspace_id text not null,
+  workspace_root text not null,
+  updated_at integer not null,
+  primary key (provider, workspace_id)
+)`;
+const CHANNEL_SESSION_ROUTES_SCHEMA = `create table if not exists channel_session_routes (
+  provider text not null,
+  workspace_id text not null,
+  conversation_id text not null,
+  workspace_root text not null,
+  session_id text not null,
+  updated_at integer not null,
+  primary key (provider, workspace_id, conversation_id),
+  foreign key (session_id) references sessions(id)
+)`;
 const CLOSE_MESSAGE_FLUSH_ATTEMPTS = 3;
 
 type MessagePersistence = "transient" | "batched" | "immediate";
@@ -970,6 +1004,8 @@ export class SessionStore {
     );
     this.db.exec(`create index if not exists messages_session_id on messages(session_id)`);
     this.db.exec(`create index if not exists messages_session_created_id on messages(session_id, created_at, id)`);
+    this.db.exec(CHANNEL_WORKSPACE_ROUTES_SCHEMA);
+    this.initializeChannelSessionRoutes();
     this.db.exec(
       `create table if not exists channel_seen_message_ids (
         message_id text not null,
@@ -1088,6 +1124,93 @@ export class SessionStore {
     return result.changes === 1;
   }
 
+  getChannelSessionRoute(
+    provider: string,
+    workspaceId: string,
+    conversationId: string,
+  ): ChannelSessionRoute | undefined {
+    const row = this.db
+      .prepare(
+        `select provider, workspace_id, conversation_id, workspace_root, session_id, updated_at
+         from channel_session_routes
+         where provider = ? and workspace_id = ? and conversation_id = ?`,
+      )
+      .get(provider.trim(), workspaceId.trim(), conversationId.trim()) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return {
+      provider: String(row.provider),
+      workspaceId: String(row.workspace_id),
+      conversationId: String(row.conversation_id),
+      workspaceRoot: String(row.workspace_root),
+      sessionId: String(row.session_id),
+      updatedAt: Number(row.updated_at),
+    };
+  }
+
+  getChannelWorkspaceRoute(provider: string, workspaceId: string): ChannelWorkspaceRoute | undefined {
+    const row = this.db
+      .prepare(
+        `select provider, workspace_id, workspace_root, updated_at
+         from channel_workspace_routes
+         where provider = ? and workspace_id = ?`,
+      )
+      .get(provider.trim(), workspaceId.trim()) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return {
+      provider: String(row.provider),
+      workspaceId: String(row.workspace_id),
+      workspaceRoot: String(row.workspace_root),
+      updatedAt: Number(row.updated_at),
+    };
+  }
+
+  getOrCreateChannelWorkspaceRoute(
+    input: Omit<ChannelWorkspaceRoute, "updatedAt">,
+  ): ChannelWorkspaceRoute {
+    const provider = input.provider.trim();
+    const workspaceId = input.workspaceId.trim();
+    const workspaceRoot = input.workspaceRoot.trim();
+    if (!provider || !workspaceId || !workspaceRoot) {
+      throw new Error("Channel workspace routes require provider, workspaceId, and workspaceRoot");
+    }
+    this.db
+      .prepare(
+        `insert or ignore into channel_workspace_routes
+          (provider, workspace_id, workspace_root, updated_at)
+         values (?, ?, ?, ?)`,
+      )
+      .run(provider, workspaceId, workspaceRoot, Date.now());
+    const route = this.getChannelWorkspaceRoute(provider, workspaceId);
+    if (!route) throw new Error("Failed to persist channel workspace route");
+    return route;
+  }
+
+  setChannelSessionRoute(input: Omit<ChannelSessionRoute, "updatedAt">): ChannelSessionRoute {
+    const provider = input.provider.trim();
+    const workspaceId = input.workspaceId.trim();
+    const conversationId = input.conversationId.trim();
+    const workspaceRoot = input.workspaceRoot.trim();
+    const sessionId = input.sessionId.trim();
+    if (!provider || !workspaceId || !conversationId || !workspaceRoot || !sessionId) {
+      throw new Error(
+        "Channel session routes require provider, workspaceId, conversationId, workspaceRoot, and sessionId",
+      );
+    }
+    const updatedAt = Date.now();
+    this.db
+      .prepare(
+        `insert into channel_session_routes
+          (provider, workspace_id, conversation_id, workspace_root, session_id, updated_at)
+         values (?, ?, ?, ?, ?, ?)
+         on conflict(provider, workspace_id, conversation_id) do update set
+           workspace_root = excluded.workspace_root,
+           session_id = excluded.session_id,
+           updated_at = excluded.updated_at`,
+      )
+      .run(provider, workspaceId, conversationId, workspaceRoot, sessionId, updatedAt);
+    return { provider, workspaceId, conversationId, workspaceRoot, sessionId, updatedAt };
+  }
+
   releaseChannelMessage(messageId: string, provider: string): boolean {
     const result = this.db
       .prepare("delete from channel_seen_message_ids where message_id = ? and provider = ?")
@@ -1189,6 +1312,44 @@ export class SessionStore {
     if (!hasColumn) {
       this.db.exec(`alter table sessions add column ${columnName} ${columnType}`);
     }
+  }
+
+  private initializeChannelSessionRoutes(): void {
+    const columns = this.db
+      .prepare("pragma table_info(channel_session_routes)")
+      .all() as Array<Record<string, unknown>>;
+    if (columns.length === 0 || columns.some((column) => column.name === "workspace_id")) {
+      this.db.exec(CHANNEL_SESSION_ROUTES_SCHEMA);
+      return;
+    }
+
+    const legacyRows = this.db
+      .prepare(
+        `select provider, conversation_id, workspace_root, session_id, updated_at
+         from channel_session_routes`,
+      )
+      .all() as Array<Record<string, unknown>>;
+    this.db.transaction(() => {
+      this.db.exec("alter table channel_session_routes rename to channel_session_routes_legacy");
+      this.db.exec(CHANNEL_SESSION_ROUTES_SCHEMA);
+      const insert = this.db.prepare(
+        `insert into channel_session_routes
+          (provider, workspace_id, conversation_id, workspace_root, session_id, updated_at)
+         values (?, ?, ?, ?, ?, ?)`,
+      );
+      for (const row of legacyRows) {
+        const workspaceRoot = String(row.workspace_root);
+        insert.run(
+          String(row.provider),
+          basename(workspaceRoot) || workspaceRoot,
+          String(row.conversation_id),
+          workspaceRoot,
+          String(row.session_id),
+          Number(row.updated_at),
+        );
+      }
+      this.db.exec("drop table channel_session_routes_legacy");
+    })();
   }
 
   private getSessionRow(id: string): Record<string, unknown> | undefined {

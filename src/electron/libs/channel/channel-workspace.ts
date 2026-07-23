@@ -26,6 +26,7 @@ export type ChannelInboundMessage = {
 export type ChannelWorkspace = {
   root: string;
   provider: ChannelProviderId;
+  workspaceId: string;
   conversationId: string;
   label: string;
 };
@@ -64,13 +65,43 @@ function sanitizePathSegment(value: string): string {
   return normalized || "default";
 }
 
-function getChannelConversationId(message: ChannelInboundMessage): string {
-  return sanitizePathSegment(
-    message.externalConversationId?.trim()
-      || message.channelName?.trim()
-      || message.senderId?.trim()
-      || "default",
-  );
+export function resolveChannelWorkspaceIds(message: ChannelInboundMessage): {
+  workspaceId: string;
+  conversationId: string;
+} {
+  const conversationId = message.externalConversationId?.trim()
+    || message.channelName?.trim()
+    || message.senderId?.trim()
+    || "default";
+  const workspaceId = message.provider === "lark"
+    ? message.senderId?.trim() || conversationId
+    : conversationId;
+  return { workspaceId, conversationId };
+}
+
+export function resolveChannelWorkspaceLocation(
+  message: ChannelInboundMessage,
+  channelsRoot = getChannelsRoot(),
+): {
+  workspaceId: string;
+  conversationId: string;
+  root: string;
+  adoptedLegacyConversationRoot: boolean;
+} {
+  const { workspaceId, conversationId } = resolveChannelWorkspaceIds(message);
+  const providerRoot = join(channelsRoot, sanitizePathSegment(message.provider));
+  const openIdRoot = join(providerRoot, sanitizePathSegment(workspaceId));
+  const legacyConversationRoot = join(providerRoot, sanitizePathSegment(conversationId));
+  const adoptedLegacyConversationRoot = message.provider === "lark"
+    && openIdRoot !== legacyConversationRoot
+    && !existsSync(openIdRoot)
+    && existsSync(legacyConversationRoot);
+  return {
+    workspaceId,
+    conversationId,
+    root: adoptedLegacyConversationRoot ? legacyConversationRoot : openIdRoot,
+    adoptedLegacyConversationRoot,
+  };
 }
 
 function buildReadme(workspace: ChannelWorkspace): string {
@@ -80,6 +111,7 @@ function buildReadme(workspace: ChannelWorkspace): string {
     "这是 tech-cc-hub 自动创建的渠道会话工作区。",
     "",
     `- 渠道：${CHANNEL_LABELS[workspace.provider]}`,
+    `- Workspace：${workspace.workspaceId}`,
     `- Conversation：${workspace.conversationId}`,
     "- 原始消息日志：`.channel/messages.jsonl`",
     "",
@@ -91,12 +123,16 @@ export function getChannelsRoot(): string {
   return join(app.getPath("userData"), "channels");
 }
 
-export function ensureChannelWorkspace(message: ChannelInboundMessage): ChannelWorkspace {
+export function ensureChannelWorkspace(
+  message: ChannelInboundMessage,
+  routedRoot?: string,
+): ChannelWorkspace {
   const provider = message.provider;
-  const conversationId = getChannelConversationId(message);
-  const root = join(getChannelsRoot(), sanitizePathSegment(provider), conversationId);
-  const label = `${CHANNEL_LABELS[provider]} · ${message.channelName?.trim() || message.senderName?.trim() || conversationId}`;
-  const workspace: ChannelWorkspace = { root, provider, conversationId, label };
+  const location = resolveChannelWorkspaceLocation(message);
+  const { workspaceId, conversationId } = location;
+  const root = routedRoot?.trim() || location.root;
+  const label = `${CHANNEL_LABELS[provider]} · ${message.channelName?.trim() || message.senderName?.trim() || workspaceId}`;
+  const workspace: ChannelWorkspace = { root, provider, workspaceId, conversationId, label };
 
   mkdirSync(join(root, ".channel"), { recursive: true });
 
@@ -112,6 +148,7 @@ export function recordChannelInboundMessage(workspace: ChannelWorkspace, message
   const payload = {
     direction: "inbound",
     provider: workspace.provider,
+    workspaceId: workspace.workspaceId,
     conversationId: workspace.conversationId,
     externalMessageId: message.externalMessageId,
     senderId: message.senderId,
