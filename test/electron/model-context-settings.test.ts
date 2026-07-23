@@ -25,7 +25,7 @@ import {
   getModelSearchScore,
 } from "../../src/ui/components/models/ModelSelect.js";
 import { getModelSelectMenuLayout } from "../../src/ui/components/models/model-select-layout.js";
-import { filterComposerModelOptions } from "../../src/ui/components/prompt-input/ComposerModelMenu.js";
+import { filterComposerModelOptions } from "../../src/ui/components/prompt-input/composer-model-search.js";
 import {
   getModelRoutingWeight,
   pickHighestWeightedModelOwner,
@@ -462,6 +462,8 @@ test("composer model control uses real configured models in the merged white men
 
   assert.match(promptFooterSource, /import \{ ComposerModelMenu \} from "\.\/ComposerModelMenu"/);
   assert.match(promptInputSource, /getAutomaticRoutedModelOptionsForProfiles/);
+  assert.match(promptInputSource, /getRoutedModelOptionsForProfiles/);
+  assert.doesNotMatch(promptInputSource, /getModelDeploymentOptionsForProfiles/);
   assert.match(promptInputSource, /modelOptions=\{modelSelectOptions\}/);
   assert.match(promptInputSource, /onModelChange=\{handleRuntimeModelChange\}/);
   assert.match(promptInputSource, /reasoningMode=\{reasoningMode\}/);
@@ -1069,6 +1071,40 @@ test("model deployment options keep same-name gateway and Codex routes separate"
   assert.deepEqual(deployments.map((option) => option.profileId), ["gateway", "codex"]);
   assert.equal(new Set(deployments.map((option) => option.deploymentKey)).size, 2);
   assert.deepEqual(deployments.map((option) => option.value), ["gpt-5.6-terra", "gpt-5.6-terra"]);
+});
+
+test("composer routing collapses same-name GPT deployments to the weighted OAuth owner", () => {
+  const profiles = [
+    {
+      id: "gateway",
+      name: "Boke Gateway",
+      apiKey: "sk-gateway",
+      baseURL: "https://ai.pocketcity.com/v1",
+      model: "gpt-5.6-terra",
+      models: [{ name: "gpt-5.6-terra", routingWeight: 0 }],
+      enabled: true,
+      provider: "boke" as const,
+      apiType: "anthropic" as const,
+    },
+    {
+      id: "codex",
+      name: "Codex OAuth",
+      apiKey: "{}",
+      baseURL: "https://chatgpt.com",
+      model: "gpt-5.6-terra",
+      models: [{ name: "gpt-5.6-terra", routingWeight: 10 }],
+      enabled: true,
+      provider: "codex" as const,
+      apiType: "anthropic" as const,
+    },
+  ];
+
+  const options = getRoutedModelOptionsForProfiles(profiles)
+    .filter((option) => option.value === "gpt-5.6-terra");
+
+  assert.equal(options.length, 1);
+  assert.equal(options[0]?.profileId, "codex");
+  assert.equal(options[0]?.provider, "codex");
 });
 
 test("profile normalization repairs legacy role slots to locally managed models", () => {

@@ -200,7 +200,7 @@ test("runtime efficiency sticky state keeps visual tools for later plain prompts
   assert.equal(merged.includeClaudeCompatPrompt, true);
 });
 
-test("runtime efficiency does not keep non-stateful tools from previous turns", () => {
+test("runtime efficiency keeps cron tools available for automation follow-up turns", () => {
   const automation = resolveRuntimeEfficiencyProfile({
     prompt: "schedule a reminder every day to check the build",
   });
@@ -210,10 +210,16 @@ test("runtime efficiency does not keep non-stateful tools from previous turns", 
 
   const merged = mergeRuntimeEfficiencyProfile(plain, runtimeEfficiencyProfileToState(automation));
 
-  assert.deepEqual(merged.builtinMcpServers, BASE_BUILTIN_MCP_SERVERS);
+  assert.deepEqual(merged.builtinMcpServers, AUTOMATION_BUILTIN_MCP_SERVERS);
   assert.equal(merged.includeBrowserPrompt, false);
   assert.equal(merged.includeDesignPrompt, false);
-  assert.equal(merged.includeClaudeCompatPrompt, false);
+  assert.equal(merged.includeClaudeCompatPrompt, true);
+
+  const secondFollowUp = mergeRuntimeEfficiencyProfile(
+    plain,
+    runtimeEfficiencyProfileToState(merged),
+  );
+  assert.deepEqual(secondFollowUp.builtinMcpServers, AUTOMATION_BUILTIN_MCP_SERVERS);
 });
 
 test("runtime efficiency drops stale all-server state from old plain turns", () => {

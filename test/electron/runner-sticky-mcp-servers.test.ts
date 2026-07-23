@@ -43,7 +43,7 @@ test("runner keeps stateful visual MCP servers available on later turns", () => 
   assert.equal(profile.includeClaudeCompatPrompt, true);
 });
 
-test("runner does not keep non-stateful MCP servers when the profile omits them", () => {
+test("runner keeps cron MCP available for follow-up turns but still drops unrelated utility servers", () => {
   const nextServerNames: BuiltinMcpServerName[] = [
     "tech-cc-hub-admin",
     "tech-cc-hub-plan",
@@ -54,7 +54,10 @@ test("runner does not keep non-stateful MCP servers when the profile omits them"
     "tech-cc-hub-idea",
   ]);
 
-  assert.deepEqual(mergeStickyBuiltinMcpServerNames(nextServerNames, [activeUtilityServers]), nextServerNames);
+  assert.deepEqual(mergeStickyBuiltinMcpServerNames(nextServerNames, [activeUtilityServers]), [
+    ...nextServerNames,
+    "tech-cc-hub-cron",
+  ]);
 });
 
 test("runner keeps first-turn plain prompts on the base MCP surface", () => {

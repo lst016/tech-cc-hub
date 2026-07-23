@@ -62,6 +62,9 @@ test("tool optimization prompt keeps tool calls sparse, batched, and bounded", (
   assert.match(prompt, /under 200 lines/);
   assert.match(prompt, /Stop exploring once the collected evidence is sufficient/);
   assert.match(prompt, /taskkill \/\/PID 1234 \/\/F/);
+  assert.match(prompt, /MCP calls are direct tool calls/);
+  assert.match(prompt, /never.*MCP tool.*Bash/i);
+  assert.match(prompt, /ToolSearch once/);
 });
 
 test("Claude Code compatibility prompt includes Agent Teams guidance", () => {

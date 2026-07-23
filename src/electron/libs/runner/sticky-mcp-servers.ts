@@ -5,6 +5,7 @@ export const STATEFUL_BUILTIN_MCP_SERVER_NAMES: readonly BuiltinMcpServerName[] 
   "tech-cc-hub-browser",
   "tech-cc-hub-design",
   "tech-cc-hub-figma",
+  "tech-cc-hub-cron",
 ];
 
 const STATEFUL_BUILTIN_MCP_SERVER_NAME_SET = new Set<BuiltinMcpServerName>(

@@ -46,11 +46,19 @@ export class CronService {
       // H-4：pausedJobs 启动时从 DB 状态 reload，否则暂停任务会在重启后自动恢复
       for (const job of jobs) {
         if (job.state.paused) this.pausedJobs.add(job.id);
-        await this.startTimer(job);
+      }
+
+      // Check the persisted nextRunAt before startTimer refreshes it to a future
+      // occurrence. Otherwise a single missed run is silently forgotten on restart.
+      await this.triggerCatchup();
+
+      // Catch-up updates run state, so reload before installing the live timers to
+      // avoid writing stale runCount/lastRunAt values back to the repository.
+      const refreshedJobs = await this.repo.listEnabled();
+      for (const job of refreshedJobs) {
+        await this.startTimer(job, true);
       }
       this.initialized = true;
-      // F-05：init 启动时对 enabled 的周期任务跑 missed-run 追补
-      await this.triggerCatchup();
       // F-07：stuck job watchdog，5 分钟扫描一次
       this.startWatchdog();
     } catch (error) {
@@ -153,8 +161,12 @@ export class CronService {
 
   // ── Timer management ──
 
-  private async startTimer(job: CronJob): Promise<void> {
-    this.stopTimer(job.id);
+  private async startTimer(job: CronJob, preserveRetry = false): Promise<void> {
+    if (preserveRetry) {
+      this.stopScheduledTimer(job.id);
+    } else {
+      this.stopTimer(job.id);
+    }
 
     const { schedule } = job;
     switch (schedule.kind) {
@@ -218,7 +230,7 @@ export class CronService {
     }
   }
 
-  private stopTimer(jobId: string): void {
+  private stopScheduledTimer(jobId: string): void {
     const timer = this.timers.get(jobId);
     if (timer) {
       if (timer instanceof Cron) {
@@ -229,6 +241,10 @@ export class CronService {
       }
       this.timers.delete(jobId);
     }
+  }
+
+  private stopTimer(jobId: string): void {
+    this.stopScheduledTimer(jobId);
 
     const retryTimer = this.retryTimers.get(jobId);
     if (retryTimer) {
@@ -450,17 +466,16 @@ export class CronService {
 
     for (const job of jobs) {
       if (this.pausedJobs.has(job.id) || job.state.paused) continue;
-      const expectedInterval = this.computeExpectedIntervalMs(job);
-      if (!expectedInterval) continue;
-
-      const lastCheckedAt = job.state.lastRunAtMs ?? job.metadata.createdAt;
-      const rawMissed = Math.floor((now - lastCheckedAt) / expectedInterval) - 1;
-      const missed = Math.max(0, rawMissed);
+      const policy: MisfirePolicy = job.state.misfirePolicy ?? "fire-once";
+      const missed = this.countDueRuns(
+        job,
+        now,
+        policy === "catchup" ? CATCHUP_MAX_FIRES : 1,
+      );
       if (missed <= 0) continue;
 
-      const policy: MisfirePolicy = job.state.misfirePolicy ?? "fire-once";
       if (policy === "skip") {
-        await this.markMissed(job, `错过 ${missed} 次未触发（策略: skip）`);
+        await this.markMissed(job, "至少错过 1 次未触发（策略: skip）");
         missedCount += 1;
         continue;
       }
@@ -474,6 +489,44 @@ export class CronService {
     }
 
     return { checkedJob: jobs.length, firedCount, missedCount };
+  }
+
+  private countDueRuns(job: CronJob, now: number, limit: number): number {
+    if (job.schedule.kind === "at" || limit <= 0) return 0;
+
+    const persistedNextRunAt = job.state.nextRunAtMs;
+    if (typeof persistedNextRunAt === "number") {
+      if (persistedNextRunAt > now) return 0;
+
+      if (job.schedule.kind === "every") {
+        return Math.min(
+          limit,
+          Math.floor((now - persistedNextRunAt) / job.schedule.everyMs) + 1,
+        );
+      }
+
+      try {
+        const cron = new Cron(job.schedule.expr, { timezone: job.schedule.tz });
+        let count = 1;
+        let cursor = persistedNextRunAt;
+        while (count < limit) {
+          const next = cron.nextRun(new Date(cursor + 1));
+          if (!next || next.getTime() > now) break;
+          cursor = next.getTime();
+          count += 1;
+        }
+        return count;
+      } catch {
+        return 0;
+      }
+    }
+
+    // Legacy rows may not have nextRunAt. Fall back to the most recent known
+    // execution anchor, without the previous off-by-one subtraction.
+    const expectedInterval = this.computeExpectedIntervalMs(job);
+    if (!expectedInterval) return 0;
+    const lastCheckedAt = job.state.lastRunAtMs ?? job.metadata.createdAt;
+    return Math.min(limit, Math.max(0, Math.floor((now - lastCheckedAt) / expectedInterval)));
   }
 
   private computeExpectedIntervalMs(job: CronJob): number | undefined {

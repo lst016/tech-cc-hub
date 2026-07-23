@@ -101,7 +101,7 @@ import { areModelNamesEquivalent } from "../../../shared/models/model-provider-r
 import {
   getEnabledProfiles,
   getAutomaticRoutedModelOptionsForProfiles,
-  getModelDeploymentOptionsForProfiles,
+  getRoutedModelOptionsForProfiles,
   resolveAvailableModelName,
 } from "../settings/settings-utils";
 import { incrementModelUsage } from "./model-usage-count";
@@ -545,7 +545,7 @@ export function PromptInput({
     && !disabled
     && (fileMentionLoading || filteredFileMentionOptions.length > 0);
   const enabledProfiles = useMemo<ApiConfigProfile[]>(() => getEnabledProfiles(apiConfigSettings.profiles), [apiConfigSettings.profiles]);
-  const deploymentOptions = useMemo(() => getModelDeploymentOptionsForProfiles(enabledProfiles), [enabledProfiles]);
+  const deploymentOptions = useMemo(() => getRoutedModelOptionsForProfiles(enabledProfiles), [enabledProfiles]);
   const fallbackRoutedModelOptions = useMemo(() => getAutomaticRoutedModelOptionsForProfiles(enabledProfiles), [enabledProfiles]);
   const availableModels = useMemo(() => deploymentOptions.map((option) => option.value), [deploymentOptions]);
   const modelSelectOptions = useMemo(() => deploymentOptions.map((option) => ({

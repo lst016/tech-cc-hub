@@ -39,6 +39,7 @@ interface SidebarProps {
 
 export const DEFAULT_SIDEBAR_WIDTH = 280;
 export const SIDEBAR_EXPANDED_WORKSPACE_GROUPS_STORAGE_KEY = "tech-cc-hub:sidebar-expanded-workspace-groups";
+export const SIDEBAR_HIDDEN_WORKSPACES_STORAGE_KEY = "tech-cc-hub:sidebar-hidden-workspaces";
 
 function readExpandedWorkspaceGroupsFromStorage(): Record<string, boolean> {
   if (typeof window === "undefined") return {};
@@ -70,6 +71,44 @@ function writeExpandedWorkspaceGroupsToStorage(groups: Record<string, boolean>) 
   }
 }
 
+function readHiddenWorkspacesFromStorage(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(SIDEBAR_HIDDEN_WORKSPACES_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter((entry): entry is [string, string] => (
+          typeof entry[0] === "string" && typeof entry[1] === "string" && entry[1].length > 0
+        )),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeHiddenWorkspacesToStorage(workspaces: Record<string, string>) {
+  if (typeof window === "undefined") return;
+  try {
+    if (Object.keys(workspaces).length === 0) {
+      window.localStorage.removeItem(SIDEBAR_HIDDEN_WORKSPACES_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(SIDEBAR_HIDDEN_WORKSPACES_STORAGE_KEY, JSON.stringify(workspaces));
+  } catch {
+    // Losing this preference is better than breaking the sidebar render path.
+  }
+}
+
+function getWorkspaceActivityRevision(group: SidebarWorkspaceGroup): string {
+  return group.sessions
+    .map((session) => `${session.id}:${session.updatedAt ?? session.createdAt ?? 0}`)
+    .sort()
+    .join("|");
+}
+
 export function Sidebar({
   onNewSession,
   onArchiveSession,
@@ -92,6 +131,7 @@ export function Sidebar({
   const [resumeSessionId, setResumeSessionId] = useState<string | null>(null);
   const [renameDialog, setRenameDialog] = useState<SidebarRenameDialogState>(null);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() => readExpandedWorkspaceGroupsFromStorage());
+  const [hiddenWorkspaceRevisions, setHiddenWorkspaceRevisions] = useState<Record<string, string>>(() => readHiddenWorkspacesFromStorage());
   const [hasUpdate, setHasUpdate] = useState(false);
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
   const previousSessionStatusRef = useRef<Record<string, string | undefined>>({});
@@ -100,6 +140,7 @@ export function Sidebar({
   const [linkedWorkspacesByGroup, setLinkedWorkspacesByGroup] = useState<Record<string, string[]>>({});
   const [linkedWorkspacesHydrated, setLinkedWorkspacesHydrated] = useState(false);
   const [recentCwds, setRecentCwds] = useState<string[]>([]);
+  const [workspaceDisplayNames, setWorkspaceDisplayNames] = useState<Record<string, string>>({});
   const [workspaceHoverCard, setWorkspaceHoverCard] = useState<{
     name: string;
     cwd: string;
@@ -205,6 +246,8 @@ export function Sidebar({
 
   const formatWorkspaceName = (cwd?: string) => {
     if (!cwd) return "未绑定工作区";
+    const resolvedName = workspaceDisplayNames[cwd];
+    if (resolvedName) return resolvedName;
     const parts = cwd.split(/[\\/]+/).filter(Boolean);
     return parts.at(-1) || cwd;
   };
@@ -227,6 +270,37 @@ export function Sidebar({
     list.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
     return list;
   }, [archivedSessions, sessions, showArchived]);
+
+  const workspaceLabelLookupKey = useMemo(() => Array.from(new Set(
+    sessionList
+      .map((session) => session.cwd?.trim())
+      .filter((cwd): cwd is string => Boolean(cwd)),
+  )).sort().join("\0"), [sessionList]);
+
+  useEffect(() => {
+    if (!workspaceLabelLookupKey) {
+      setWorkspaceDisplayNames({});
+      return;
+    }
+
+    let cancelled = false;
+    const workspaceRoots = workspaceLabelLookupKey.split("\0");
+    void window.electron.invoke<Record<string, string>>("channel:resolve-workspace-labels", workspaceRoots)
+      .then((labels) => {
+        if (cancelled || !labels || typeof labels !== "object") return;
+        setWorkspaceDisplayNames(Object.fromEntries(
+          Object.entries(labels).filter((entry): entry is [string, string] => (
+            typeof entry[0] === "string" && typeof entry[1] === "string" && entry[1].trim().length > 0
+          )),
+        ));
+      })
+      .catch(() => {
+        // The sidebar keeps using the workspace directory name when Lark metadata is unavailable.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceLabelLookupKey]);
 
   useEffect(() => {
     if (showArchived) onRefreshArchivedSessions();
@@ -285,7 +359,7 @@ export function Sidebar({
     });
   }, [activeSessionId]);
 
-  const workspaceGroups = useMemo(() => {
+  const allWorkspaceGroups = useMemo(() => {
     const groups = new Map<string, SidebarWorkspaceGroup>();
     for (const session of sessionList) {
       const key = normalizeWorkspacePath(session.cwd ?? "") || "__no_workspace__";
@@ -304,6 +378,39 @@ export function Sidebar({
         return bLatest - aLatest;
       });
   }, [sessionList]);
+
+  const workspaceGroups = useMemo(() => {
+    if (showArchived) return allWorkspaceGroups;
+    return allWorkspaceGroups.filter((group) => (
+      hiddenWorkspaceRevisions[group.key] !== getWorkspaceActivityRevision(group)
+    ));
+  }, [allWorkspaceGroups, hiddenWorkspaceRevisions, showArchived]);
+
+  const hiddenWorkspaceCount = showArchived ? 0 : allWorkspaceGroups.length - workspaceGroups.length;
+
+  useEffect(() => {
+    if (showArchived) return;
+    setHiddenWorkspaceRevisions((current) => {
+      let next = current;
+      for (const group of allWorkspaceGroups) {
+        const hiddenRevision = current[group.key];
+        if (!hiddenRevision || hiddenRevision === getWorkspaceActivityRevision(group)) continue;
+        if (next === current) next = { ...current };
+        delete next[group.key];
+      }
+      if (next !== current) writeHiddenWorkspacesToStorage(next);
+      return next;
+    });
+  }, [allWorkspaceGroups, showArchived]);
+
+  const hideWorkspaceGroup = (group: SidebarWorkspaceGroup) => {
+    setHiddenWorkspaceRevisions((current) => {
+      const next = { ...current, [group.key]: getWorkspaceActivityRevision(group) };
+      writeHiddenWorkspacesToStorage(next);
+      return next;
+    });
+    setWorkspaceHoverCard(null);
+  };
 
   const toggleWorkspaceGroup = (groupKey: string) => {
     setExpandedGroups((current) => {
@@ -439,8 +546,10 @@ export function Sidebar({
 
           <SidebarWorkspaceList
             workspaceGroups={workspaceGroups}
+            hiddenWorkspaceCount={hiddenWorkspaceCount}
             expandedGroups={expandedGroups}
             linkedWorkspacesByGroup={linkedWorkspacesByGroup}
+            larkWorkspaceRoots={new Set(Object.keys(workspaceDisplayNames))}
             activeSessionId={activeSessionId}
             unreadSessionIds={unreadSessionIds}
             showArchived={showArchived}
@@ -451,6 +560,7 @@ export function Sidebar({
             onHideWorkspaceHoverCard={() => setWorkspaceHoverCard(null)}
             onNewSession={onNewSession}
             onOpenWorkspaceLinkDialog={openWorkspaceLinkDialog}
+            onHideWorkspace={hideWorkspaceGroup}
             onDeleteWorkspace={onDeleteWorkspace}
             onSelectSession={setActiveSessionId}
             onRenameSession={(sessionId, title) => setRenameDialog({ sessionId, initialTitle: title })}

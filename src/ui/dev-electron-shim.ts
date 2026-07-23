@@ -1201,6 +1201,9 @@ function createFallbackElectron(): typeof window.electron & Record<string, unkno
           return { commands: browserPreviewSlashCommands } as T;
         }
       }
+      if (channel === "channel:resolve-workspace-labels") {
+        return {} as T;
+      }
       if (channel === "terminal:run") {
         return await invokePreviewTerminal("run", args[0]) as T;
       }

@@ -122,6 +122,7 @@ test("built-in MCP registry tool names stay unique", () => {
   assert.equal(toolNames.includes("browser_wait_canvas"), true);
   assert.equal(toolNames.includes("browser_extract_terminal"), false);
   assert.equal(toolNames.includes("design_lint_visual_parity"), false);
+  assert.equal(toolNames.includes("update_scheduled_task"), true);
   assert.equal(toolNames.includes("image_generate"), true);
 });
 

@@ -2,6 +2,10 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { Check, ChevronDown, Search } from "lucide-react";
 import type { RuntimeReasoningMode } from "../../types";
 import type { ModelOption } from "../models/ModelSelect";
+import {
+  filterComposerModelOptions,
+  type ComposerModelOption,
+} from "./composer-model-search.js";
 import { MODEL_USAGE_CHANGED_EVENT, getModelUsageCounts } from "./model-usage-count";
 
 type ComposerModelMenuProps = {
@@ -12,11 +16,6 @@ type ComposerModelMenuProps = {
   onModelChange: (model: string) => void;
   onReasoningModeChange: (mode: RuntimeReasoningMode) => void;
   placeholder?: string;
-};
-
-type ComposerModelOption = ModelOption & {
-  displayLabel: string;
-  detailLabel: string;
 };
 
 const CONTEXT_OPTIONS = [
@@ -303,23 +302,6 @@ function buildComposerModelOptions(options: ModelOption[]): ComposerModelOption[
   }));
 }
 
-function filterComposerModelOptions(options: ComposerModelOption[], query: string): ComposerModelOption[] {
-  const normalizedQuery = normalizeModelFilterText(query);
-  if (!normalizedQuery) return options;
-
-  const queryParts = normalizedQuery.split(" ").filter(Boolean);
-  return options.filter((option) => {
-    const haystack = normalizeModelFilterText([
-      option.value,
-      option.displayLabel,
-      option.detailLabel,
-      option.description,
-      option.title,
-    ].filter(Boolean).join(" "));
-    return queryParts.every((part) => haystack.includes(part));
-  });
-}
-
 /**
  * 无搜索词时按使用次数降序排（常用模型靠上），次数并列时保留原顺序，
  * 让未使用过的模型维持 profile 配置顺序。有搜索词时不重排，避免干扰相关性查找。
@@ -336,14 +318,6 @@ function sortOptionsByUsage(
     .map((option, index) => ({ option, index, count: usageCounts[option.value] ?? 0 }))
     .sort((a, b) => b.count - a.count || a.index - b.index)
     .map((entry) => entry.option);
-}
-
-function normalizeModelFilterText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[_./:-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 function getModelKind(value: string, label = value): string {

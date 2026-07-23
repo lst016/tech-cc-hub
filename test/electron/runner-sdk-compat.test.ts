@@ -100,6 +100,22 @@ test("hard tool policy denies host-owned restrictions even in bypass mode", () =
   const cron = applyRunnerHardToolPolicy("CronCreate", {}, createPolicyContext());
   assert.match(cron.denyMessage ?? "", /SDK CronCreate\/CronDelete\/CronList are disabled/);
 
+  const cronViaBash = applyRunnerHardToolPolicy(
+    "Bash",
+    {
+      command: "mcp__tech-cc-hub-cron__create_scheduled_task {\"scheduleKind\":\"cron\"}",
+    },
+    createPolicyContext(),
+  );
+  assert.match(cronViaBash.denyMessage ?? "", /MCP tools cannot be invoked through Bash/);
+
+  const cronSearch = applyRunnerHardToolPolicy(
+    "Bash",
+    { command: "rg -n \"mcp__tech-cc-hub-cron__create_scheduled_task\" src" },
+    createPolicyContext(),
+  );
+  assert.equal(cronSearch.denyMessage, undefined);
+
   const surfaceRestriction = applyRunnerHardToolPolicy(
     "Write",
     { file_path: "README.md", content: "test" },

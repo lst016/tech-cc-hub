@@ -220,6 +220,140 @@ test("anthropic messages are converted to codex responses requests", () => {
   assert.equal(request.tools?.[0]?.name, "Read");
 });
 
+test("anthropic image blocks are converted to codex responses image inputs", () => {
+  const request = buildCodexResponsesRequest({
+    model: "gpt-5.6-sol",
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Inspect both screenshots." },
+          {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/jpeg",
+              data: "AQID",
+            },
+          },
+          {
+            type: "image",
+            source: {
+              type: "url",
+              url: "https://example.com/screenshot.png",
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.deepEqual(request.input, [
+    {
+      role: "user",
+      content: [
+        { type: "input_text", text: "Inspect both screenshots." },
+        {
+          type: "input_image",
+          image_url: "data:image/jpeg;base64,AQID",
+          detail: "auto",
+        },
+        {
+          type: "input_image",
+          image_url: "https://example.com/screenshot.png",
+          detail: "auto",
+        },
+      ],
+    },
+  ]);
+});
+
+test("image tool results stay inside their matching function outputs", () => {
+  const request = buildCodexResponsesRequest({
+    model: "gpt-5.6-sol",
+    messages: [
+      {
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "call_read", name: "Read", input: { file_path: "screenshot.jpg" } },
+          { type: "tool_use", id: "call_read_2", name: "Read", input: { file_path: "mobile.png" } },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "call_read",
+            content: [
+              { type: "text", text: "Screenshot from desktop." },
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/jpeg",
+                  data: "AQID",
+                },
+              },
+            ],
+          },
+          {
+            type: "tool_result",
+            tool_use_id: "call_read_2",
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "url",
+                  url: "https://example.com/mobile.png",
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.deepEqual(request.input, [
+    {
+      type: "function_call",
+      call_id: "call_read",
+      name: "Read",
+      arguments: JSON.stringify({ file_path: "screenshot.jpg" }),
+    },
+    {
+      type: "function_call",
+      call_id: "call_read_2",
+      name: "Read",
+      arguments: JSON.stringify({ file_path: "mobile.png" }),
+    },
+    {
+      type: "function_call_output",
+      call_id: "call_read",
+      output: [
+        { type: "input_text", text: "Screenshot from desktop." },
+        {
+          type: "input_image",
+          image_url: "data:image/jpeg;base64,AQID",
+          detail: "auto",
+        },
+      ],
+    },
+    {
+      type: "function_call_output",
+      call_id: "call_read_2",
+      output: [
+        {
+          type: "input_image",
+          image_url: "https://example.com/mobile.png",
+          detail: "auto",
+        },
+      ],
+    },
+  ]);
+});
+
 test("codex responses tool schemas and function call arguments are normalized", () => {
   const request = buildCodexResponsesRequest({
     model: "gpt-5.5",

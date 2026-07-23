@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  buildLarkAskUserQuestionAnsweredInput,
+  buildLarkAskUserQuestionOptionAnswerInput,
   buildLarkCliCardPatchArgs,
   buildLarkCliCardPatchFileArgs,
   buildLarkCliDelayedCardUpdateArgs,
@@ -55,10 +58,14 @@ test("builds a quiet Card 2.0 agent conversation instead of a colored workflow d
   assert.equal(card.config.update_multi, true);
   assert.equal(card.config.enable_forward, false);
   assert.equal(card.header, undefined);
+  assert.equal(card.body.padding, "12px 16px 12px 16px");
+  assert.equal(card.body.vertical_spacing, "6px");
   assert.match(serialized, /> 请完成飞书深度交互接入/);
+  assert.match(serialized, /执行过程/);
   assert.match(serialized, /正在实现卡片原位更新/);
   assert.match(serialized, /"tag":"collapsible_panel"/);
-  assert.match(serialized, /正在处理/);
+  assert.match(serialized, /"expanded":false/);
+  assert.match(serialized, /正在执行/);
   assert.doesNotMatch(serialized, /当前状态|子任务完成|最近更新|执行进度/);
   assert.doesNotMatch(serialized, /green-50|blue-50|yellow-50/);
   assert.match(serialized, /停止/);
@@ -67,7 +74,7 @@ test("builds a quiet Card 2.0 agent conversation instead of a colored workflow d
   assert.match(serialized, /"cardVersion":3/);
 });
 
-test("derives the current agent turn as narrative plus collapsible tool activity", () => {
+test("derives the current agent turn as narrative plus one compact tool summary", () => {
   const entries = deriveLarkAgentConversationEntries([
     {
       type: "user_prompt",
@@ -111,18 +118,78 @@ test("derives the current agent turn as narrative plus collapsible tool activity
       text: "我先确认 Web 产物与桌面端壳体之间的依赖关系。",
     },
     {
-      id: "tools-1",
-      kind: "tools",
-      title: "运行 1 条命令，读取 1 个文件",
-      detail: "读取文件：package.json\n运行命令：npm run build",
-      status: "error",
-    },
-    {
       id: "assistant-3-0",
       kind: "assistant",
       text: "问题在产物交接，我继续修复。",
     },
+    {
+      id: "tools-1",
+      kind: "tools",
+      title: "运行 1 条命令，读取 1 个文件",
+      detail: "• 读取文件：package.json\n• 运行命令：npm run build",
+      status: "error",
+    },
   ]);
+});
+
+test("keeps the Lark question bridge out of the execution activity summary", () => {
+  const entries = deriveLarkAgentConversationEntries([
+    {
+      type: "assistant",
+      message: {
+        content: [{
+          type: "tool_use",
+          id: "ask-bridge-1",
+          name: "mcp__tech-cc-hub-lark__ask_user_question",
+          input: { questions: [{ question: "项目在哪里？" }] },
+        }],
+      },
+    } as never,
+  ], "running");
+
+  assert.deepEqual(entries, []);
+});
+
+test("compresses repeated tool updates into one collapsed activity panel", () => {
+  const conversation = deriveLarkAgentConversationEntries([
+    { type: "user_prompt", prompt: "继续修复", capturedAt: 1 },
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "read-1", name: "Read", input: { file_path: "C:\\Users\\demo\\AppData\\Local\\Temp\\tasks\\result.output" } },
+          { type: "tool_use", id: "read-2", name: "Read", input: { file_path: "package.json" } },
+          { type: "tool_use", id: "bash-1", name: "Bash", input: { command: "npm run build" } },
+          { type: "tool_use", id: "bash-2", name: "Bash", input: { command: "npm test" } },
+        ],
+      },
+    },
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "search-1", name: "ToolSearch", input: { query: "lark card" } },
+          { type: "tool_use", id: "task-1", name: "TaskOutput", input: { task_id: "task-1" } },
+          { type: "tool_use", id: "plan-1", name: "mcp__tech-cc-hub-plan__update_plan", input: {} },
+        ],
+      },
+    },
+  ] as never[], "running");
+  const card = buildLarkWorkflowCard({
+    ...runningSnapshot({ runs: [], conversation }),
+    cardVersion: 3,
+  });
+  const serialized = JSON.stringify(card);
+
+  assert.equal(serialized.match(/"tag":"collapsible_panel"/g)?.length, 1);
+  assert.match(serialized, /执行过程 · 运行 2 条命令，读取 2 个文件，搜索 1 次，其他 2 项/);
+  assert.match(serialized, /"expanded":false/);
+  assert.match(serialized, /读取任务结果：task-1/);
+  assert.match(serialized, /更新计划/);
+  assert.match(serialized, /…\/tasks\/result\.output/);
+  assert.doesNotMatch(serialized, /Users\\\\demo\\\\AppData/);
 });
 
 test("keeps long agent conversations below the Feishu card payload limit", () => {
@@ -162,6 +229,111 @@ test("renders permission confirmation without leaking tool input secrets", () =>
   assert.match(serialized, /"action":"permission_allow"/);
   assert.match(serialized, /"action":"permission_deny"/);
   assert.match(serialized, /"toolUseId":"tool-1"/);
+});
+
+test("renders AskUserQuestion as answer buttons instead of a generic permission prompt", () => {
+  const card = buildLarkWorkflowCard({
+    ...runningSnapshot({
+      permission: {
+        toolUseId: "ask-1",
+        toolName: "AskUserQuestion",
+        input: {
+          questions: [{
+            header: "发布方式",
+            question: "这次要怎么发布？",
+            options: [
+              { label: "直接发布", description: "构建后推送正式版本" },
+              { label: "仅打包", description: "先生成安装包检查" },
+            ],
+          }],
+        },
+      },
+    }),
+    cardVersion: 5,
+  });
+  const serialized = JSON.stringify(card);
+
+  assert.match(serialized, /请回答以下问题/);
+  assert.match(serialized, /这次要怎么发布/);
+  assert.match(serialized, /直接发布/);
+  assert.match(serialized, /仅打包/);
+  assert.match(serialized, /"action":"question_answer"/);
+  assert.match(serialized, /"answer":"直接发布"/);
+  assert.doesNotMatch(serialized, /"action":"permission_allow"/);
+  assert.doesNotMatch(serialized, /工具 \*\*AskUserQuestion\*\*/);
+
+  const action = normalizeLarkCardActionEvent({
+    type: "card.action.trigger",
+    event_id: "evt-answer",
+    operator_id: "ou_owner",
+    message_id: "om_card",
+    chat_id: "oc_demo",
+    token: "callback-token",
+    action_tag: "button",
+    action_value: JSON.stringify({
+      v: 1,
+      action: "question_answer",
+      sessionId: "session-1",
+      cardVersion: 5,
+      toolUseId: "ask-1",
+      answer: "直接发布",
+    }),
+  });
+  assert.equal(action?.action.action, "question_answer");
+  assert.equal(action?.action.answer, "直接发布");
+
+  assert.deepEqual(buildLarkAskUserQuestionAnsweredInput({
+    questions: [
+      { question: "发布渠道？" },
+      { question: "版本说明？" },
+    ],
+  }, "1. 飞书\n2. 修复 AskUserQuestion"), {
+    questions: [
+      { question: "发布渠道？" },
+      { question: "版本说明？" },
+    ],
+    answers: {
+      "发布渠道？": "飞书",
+      "版本说明？": "修复 AskUserQuestion",
+    },
+  });
+  assert.deepEqual(buildLarkAskUserQuestionOptionAnswerInput({
+    questions: [{
+      question: "这次要怎么发布？",
+      options: [{ label: "直接发布" }, { label: "仅打包" }],
+    }],
+  }, "仅打包"), {
+    questions: [{
+      question: "这次要怎么发布？",
+      options: [{ label: "直接发布" }, { label: "仅打包" }],
+    }],
+    answers: { "这次要怎么发布？": "仅打包" },
+  });
+  assert.equal(buildLarkAskUserQuestionOptionAnswerInput({
+    questions: [{ question: "这次要怎么发布？", options: [{ label: "直接发布" }] }],
+  }, "伪造选项"), null);
+
+  const freeformCard = buildLarkWorkflowCard({
+    ...runningSnapshot({
+      permission: {
+        toolUseId: "ask-freeform",
+        toolName: "AskUserQuestion",
+        input: { questions: [{ question: "请输入版本说明" }] },
+      },
+    }),
+    cardVersion: 6,
+  });
+  const freeformJson = JSON.stringify(freeformCard);
+  assert.match(freeformJson, /请直接回复这条飞书消息/);
+  assert.match(freeformJson, /"action":"permission_deny"/);
+});
+
+test("routes a Lark text reply into the pending AskUserQuestion permission", () => {
+  const source = readFileSync("src/electron/ipc-handlers.ts", "utf8");
+  assert.match(source, /activeSession = store\.getSession\(existingSession\.id\)/);
+  assert.match(source, /pendingQuestion = \[\.\.\.\(activeSession\?\.pendingPermissions\.values\(\) \?\? \[\]\)\]/);
+  assert.match(source, /buildLarkAskUserQuestionAnsweredInput\(pendingQuestion\.input, text\)/);
+  assert.match(source, /type: "permission\.response"[\s\S]*toolUseId: pendingQuestion\.toolUseId[\s\S]*updatedInput/);
 });
 
 test("uses terminal state semantics and exposes only valid recovery or delivery actions", () => {

@@ -275,15 +275,16 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServerDefinition[] = [
     envKeys: [],
     enabled: true,
     iconKey: "timer",
-    description: "Persistent scheduled task management for creating, listing, and deleting background agent follow-up tasks.",
+    description: "Persistent scheduled task management for creating, listing, updating, and deleting background agent follow-up tasks.",
     iconClassName: "border-amber-500/15 bg-amber-50 text-amber-700",
-    highlights: ["Create", "List", "Delete"],
+    highlights: ["Create", "List", "Update", "Delete"],
     toolGroups: [
       {
         title: "Scheduled tasks",
         tools: [
           { name: "create_scheduled_task", description: "Create a persistent scheduled task." },
           { name: "list_scheduled_tasks", description: "List scheduled tasks and execution state." },
+          { name: "update_scheduled_task", description: "Update an agent-created scheduled task." },
           { name: "delete_scheduled_task", description: "Delete a scheduled task by id." },
         ],
       },

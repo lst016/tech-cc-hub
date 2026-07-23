@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Delete, LinkTwo, More } from "@icon-park/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { SessionView } from "../../store/useAppStore";
 import { getImageGenerationDisplayPromptFromSerialized } from "../prompt-input/image-generation-plugin";
@@ -15,8 +16,10 @@ export type SidebarUnreadSessionStatus = "completed" | "error";
 
 interface SidebarWorkspaceListProps {
   workspaceGroups: SidebarWorkspaceGroup[];
+  hiddenWorkspaceCount: number;
   expandedGroups: Record<string, boolean>;
   linkedWorkspacesByGroup: Record<string, string[]>;
+  larkWorkspaceRoots: ReadonlySet<string>;
   activeSessionId: string | null;
   unreadSessionIds: Record<string, SidebarUnreadSessionStatus>;
   showArchived: boolean;
@@ -27,6 +30,7 @@ interface SidebarWorkspaceListProps {
   onHideWorkspaceHoverCard: () => void;
   onNewSession: (cwd?: string) => void;
   onOpenWorkspaceLinkDialog: (group: SidebarWorkspaceGroup) => void;
+  onHideWorkspace: (group: SidebarWorkspaceGroup) => void;
   onDeleteWorkspace: (sessionIds: string[], workspaceName: string) => void;
   onSelectSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, title: string) => void;
@@ -38,8 +42,10 @@ interface SidebarWorkspaceListProps {
 
 export function SidebarWorkspaceList({
   workspaceGroups,
+  hiddenWorkspaceCount,
   expandedGroups,
   linkedWorkspacesByGroup,
+  larkWorkspaceRoots,
   activeSessionId,
   unreadSessionIds,
   showArchived,
@@ -50,6 +56,7 @@ export function SidebarWorkspaceList({
   onHideWorkspaceHoverCard,
   onNewSession,
   onOpenWorkspaceLinkDialog,
+  onHideWorkspace,
   onDeleteWorkspace,
   onSelectSession,
   onRenameSession,
@@ -64,13 +71,16 @@ export function SidebarWorkspaceList({
     <div className="sidebar-scroll min-h-0 flex-1 overflow-y-auto">
       {workspaceGroups.length === 0 && (
         <div className="rounded-xl border border-black/6 bg-white/70 px-3 py-4 text-center text-xs leading-6 text-muted">
-          还没有会话。直接在底部输入框开始聊天，系统会按工作区自动归档到左侧。
+          {hiddenWorkspaceCount > 0
+            ? "工作区已隐藏，收到新会话后会自动显示。"
+            : "还没有会话。直接在底部输入框开始聊天，系统会按工作区自动归档到左侧。"}
         </div>
       )}
 
       <div className="flex flex-col gap-0.5">
         {workspaceGroups.map((group) => {
           const linkedWorkspaceCount = linkedWorkspacesByGroup[group.key]?.length ?? 0;
+          const isLarkWorkspace = Boolean(group.cwd && larkWorkspaceRoots.has(group.cwd));
           const workspaceGroupExpanded = Boolean(expandedGroups[group.key]);
           const sessionListExpanded = Boolean(expandedSessionLists[group.key]);
           const hasSessionOverflow = group.sessions.length > WORKSPACE_SESSION_PREVIEW_LIMIT;
@@ -96,9 +106,19 @@ export function SidebarWorkspaceList({
                   onClick={() => onToggleWorkspaceGroup(group.key)}
                 >
                   <div className="flex items-center gap-2 text-[13px] font-semibold text-ink-700">
-                    <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-muted" fill="none" stroke="currentColor" strokeWidth="1.8">
-                      <path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-10Z" />
-                    </svg>
+                    {isLarkWorkspace ? (
+                      <img
+                        data-lark-workspace-icon
+                        aria-hidden="true"
+                        alt=""
+                        src={new URL("../../assets/lark-logo.svg", import.meta.url).href}
+                        className="h-4 w-4 shrink-0 object-contain"
+                      />
+                    ) : (
+                      <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-muted" fill="none" stroke="currentColor" strokeWidth="1.8">
+                        <path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-10Z" />
+                      </svg>
+                    )}
                     <span className="truncate">{formatWorkspaceName(group.cwd)}</span>
                     {linkedWorkspaceCount > 0 && (
                       <span
@@ -121,48 +141,80 @@ export function SidebarWorkspaceList({
                 </button>
                 <button
                   type="button"
-                  className="shrink-0 rounded-md p-1 text-ink-500 opacity-0 transition-all hover:bg-white hover:text-ink-800 group-hover/workspace:opacity-100 focus:opacity-100"
-                  onClick={() => onNewSession(group.cwd)}
+                  data-workspace-new-session
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-500 transition-colors hover:bg-white hover:text-ink-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onNewSession(group.cwd);
+                  }}
                   aria-label={`在 ${formatWorkspaceName(group.cwd)} 中新建会话`}
+                  title="新建会话"
                 >
-                  <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-3.5 w-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    aria-hidden="true"
+                  >
                     <path d="M12 5v14M5 12h14" />
                   </svg>
                 </button>
-                <button
-                  type="button"
-                  className="shrink-0 rounded-md p-1 text-ink-500 opacity-0 transition-all hover:bg-white hover:text-ink-800 group-hover/workspace:opacity-100 focus:opacity-100"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onOpenWorkspaceLinkDialog(group);
-                  }}
-                  aria-label={`关联工作区到 ${formatWorkspaceName(group.cwd)}`}
-                  title="关联其他工作区"
-                >
-                  <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
-                    <path d="M9.75 8.5H7a4 4 0 1 0 0 8h2.75" />
-                    <path d="M14.25 8.5H17a4 4 0 1 1 0 8h-2.75" />
-                    <path d="M8.75 12h6.5" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  className="shrink-0 rounded-md p-1 text-ink-500 opacity-0 transition-all hover:bg-white hover:text-error group-hover/workspace:opacity-100 focus:opacity-100"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onDeleteWorkspace(
-                      group.sessions.map((session) => session.id),
-                      formatWorkspaceName(group.cwd),
-                    );
-                  }}
-                  aria-label={`删除工作区 ${formatWorkspaceName(group.cwd)}`}
-                >
-                  <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
-                    <path d="M4 7h16" />
-                    <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                    <path d="M7 7l1 12a1 1 0 0 0 1 .9h6a1 1 0 0 0 1-.9l1-12" />
-                  </svg>
-                </button>
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      type="button"
+                      data-workspace-actions-menu
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-500 opacity-0 transition-[opacity,background-color,color] hover:bg-white hover:text-ink-800 focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25 group-hover/workspace:opacity-100 data-[state=open]:bg-white data-[state=open]:text-ink-800 data-[state=open]:opacity-100"
+                      aria-label={`${formatWorkspaceName(group.cwd)} 工作区操作`}
+                      onClick={(event) => event.stopPropagation()}
+                      onPointerDown={(event) => event.stopPropagation()}
+                    >
+                      <More aria-hidden="true" size={16} strokeWidth={3} />
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      align="end"
+                      sideOffset={5}
+                      className="z-50 min-w-[176px] rounded-xl border border-black/10 bg-white p-1.5 shadow-[0_14px_38px_rgba(15,23,42,0.16)]"
+                    >
+                      <DropdownMenu.Item
+                        className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium text-ink-700 outline-none transition-colors data-[highlighted]:bg-black/[0.045] data-[highlighted]:text-ink-900"
+                        onSelect={() => onOpenWorkspaceLinkDialog(group)}
+                      >
+                        <LinkTwo aria-hidden="true" className="shrink-0 text-ink-500" size={15} strokeWidth={3} />
+                        关联工作区
+                      </DropdownMenu.Item>
+                      {!showArchived && (
+                        <DropdownMenu.Item
+                          className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium text-ink-700 outline-none transition-colors data-[highlighted]:bg-black/[0.045] data-[highlighted]:text-ink-900"
+                          onSelect={() => onHideWorkspace(group)}
+                        >
+                          <svg viewBox="0 0 24 24" className="h-[15px] w-[15px] shrink-0 text-ink-500" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                            <path d="m3 3 18 18" />
+                            <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" />
+                            <path d="M9.9 4.24A10.8 10.8 0 0 1 12 4c5 0 9 4 10 8a12.7 12.7 0 0 1-2.1 4.35" />
+                            <path d="M6.6 6.6A12.4 12.4 0 0 0 2 12c1 4 5 8 10 8 1.5 0 2.9-.36 4.1-.96" />
+                          </svg>
+                          隐藏工作区
+                        </DropdownMenu.Item>
+                      )}
+                      <DropdownMenu.Separator className="my-1 h-px bg-black/[0.07]" />
+                      <DropdownMenu.Item
+                        className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium text-error outline-none transition-colors data-[highlighted]:bg-error/[0.07]"
+                        onSelect={() => onDeleteWorkspace(
+                          group.sessions.map((session) => session.id),
+                          formatWorkspaceName(group.cwd),
+                        )}
+                      >
+                        <Delete aria-hidden="true" className="shrink-0" size={15} strokeWidth={3} />
+                        删除工作区
+                      </DropdownMenu.Item>
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
               </div>
 
               <div className={`mt-0.5 flex flex-col gap-0.5 ${workspaceGroupExpanded ? "" : "hidden"}`}>

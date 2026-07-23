@@ -49,6 +49,8 @@ import { setDesignToolHost } from "./libs/mcp-tools/design.js";
 import { configureDesktopNotifications, focusDesktopWindow } from "./libs/desktop-notifications.js";
 import { appAutoUpdater, type AppUpdateStatus } from "./libs/auto-updater/auto-updater.js";
 import { startChannelBridge, type ChannelBridgeController } from "./libs/channel/channel-bridge.js";
+import { getChannelsRoot } from "./libs/channel/channel-workspace.js";
+import { resolveChannelWorkspaceDisplayNames } from "./libs/channel/lark-workspace-label.js";
 import { ensureSystemWorkspace } from "./libs/system-workspace.js";
 import { getCurrentApiConfig, getEnabledUsableApiConfigs, getGlobalRuntimeEnvConfig, resolveApiConfigForModel, resolveImagePreprocessApiConfig } from "./libs/claude/claude-settings.js";
 import { preprocessImageAttachments } from "./libs/image/image-preprocessor.js";
@@ -1696,6 +1698,9 @@ ipcMain.handle("lark:search-contacts", async (_event, query: unknown) => searchL
 ipcMain.handle("lark:search-share-chats", async (_event, query: unknown) => searchLarkShareChats(query));
 ipcMain.handle("lark:search-share-recipients", async (_event, query: unknown) => searchLarkShareRecipients(query));
 ipcMain.handle("lark:send-shared-message", async (_event, input: unknown) => sendLarkShareMessage(input));
+ipcMain.handle("channel:resolve-workspace-labels", async (_event, input: unknown) => (
+  resolveChannelWorkspaceDisplayNames(input, getChannelsRoot())
+));
 ipcMain.handle("sessions:list", (_event, payload?: { archived?: boolean; limit?: number }) => ({
   sessions: listStoredSessionsForRenderer(Boolean(payload?.archived), {
     limit: typeof payload?.limit === "number" ? payload.limit : undefined,
@@ -3620,6 +3625,9 @@ app.on("ready", async () => {
             if (channel === "slash-commands:list") {
               const payload = args[0] as { cwd?: string } | undefined;
               return { commands: buildSessionSlashCommandItems({ cwd: payload?.cwd }) ?? [] };
+            }
+            if (channel === "channel:resolve-workspace-labels") {
+              return await resolveChannelWorkspaceDisplayNames(args[0], getChannelsRoot());
             }
             if (channel === "plugins:getOpenComputerUseStatus") {
               return await getOpenComputerUsePluginStatus();

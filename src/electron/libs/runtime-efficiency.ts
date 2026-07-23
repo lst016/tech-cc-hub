@@ -82,6 +82,7 @@ const STATEFUL_STICKY_SERVERS = new Set<BuiltinMcpServerName>([
   "tech-cc-hub-browser",
   "tech-cc-hub-design",
   "tech-cc-hub-figma",
+  "tech-cc-hub-cron",
 ]);
 
 const FIGMA_URL_PATTERN = /https?:\/\/(?:www\.)?figma\.com\/(?:design|file|proto|board|slides|make)\//i;
@@ -191,6 +192,8 @@ export function mergeRuntimeEfficiencyProfile(
 
   const builtinMcpServers = resolveStickyBuiltinMcpServers(profile, stickyState);
   const stickyPromptState = shouldCarryStickyPromptState(stickyState);
+  const stickyCronState = builtinMcpServers.includes("tech-cc-hub-cron")
+    && stickyState.includeClaudeCompatPrompt;
 
   return {
     ...profile,
@@ -198,7 +201,9 @@ export function mergeRuntimeEfficiencyProfile(
     includeBrowserPrompt: profile.includeBrowserPrompt || (stickyPromptState && stickyState.includeBrowserPrompt),
     includeDesignPrompt: profile.includeDesignPrompt || (stickyPromptState && stickyState.includeDesignPrompt),
     includeProjectMemoryPrompt: profile.includeProjectMemoryPrompt,
-    includeClaudeCompatPrompt: profile.includeClaudeCompatPrompt || (stickyPromptState && stickyState.includeClaudeCompatPrompt),
+    includeClaudeCompatPrompt: profile.includeClaudeCompatPrompt
+      || (stickyPromptState && stickyState.includeClaudeCompatPrompt)
+      || stickyCronState,
     includePartialMessages: profile.includePartialMessages || (stickyPromptState && stickyState.includePartialMessages),
     includeHookEvents: profile.includeHookEvents || (stickyPromptState && stickyState.includeHookEvents),
     agentProgressSummaries: profile.agentProgressSummaries || (stickyPromptState && stickyState.agentProgressSummaries),
@@ -275,11 +280,18 @@ function resolveStickyBuiltinMcpServers(
   stickyState: RuntimeEfficiencyProfileState,
 ): BuiltinMcpServerName[] {
   const profileServers = normalizeBuiltinMcpServerNames(profile.builtinMcpServers);
-  const stickyServers = shouldCarryStickyPromptState(stickyState)
-    ? normalizeBuiltinMcpServerNames(stickyState.builtinMcpServers).filter((serverName) =>
-      STATEFUL_STICKY_SERVERS.has(serverName)
-    )
-    : [];
+  const stickyServers = normalizeBuiltinMcpServerNames(stickyState.builtinMcpServers).filter((serverName) => {
+    if (!STATEFUL_STICKY_SERVERS.has(serverName)) {
+      return false;
+    }
+    if (serverName === "tech-cc-hub-cron") {
+      // Automation profiles enable the Claude compatibility prompt. Requiring
+      // that signal avoids reviving stale legacy "all servers" snapshots while
+      // keeping create/list/update/delete available for natural follow-ups.
+      return stickyState.includeClaudeCompatPrompt;
+    }
+    return shouldCarryStickyPromptState(stickyState);
+  });
   return normalizeBuiltinMcpServerNames([...profileServers, ...stickyServers]);
 }
 

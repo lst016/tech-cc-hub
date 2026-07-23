@@ -79,6 +79,8 @@ import {
 } from "./libs/channel/channel-reply-attachments.js";
 import { buildChannelAgentPrompt } from "./libs/channel/channel-agent-prompt.js";
 import {
+  buildLarkAskUserQuestionAnsweredInput,
+  buildLarkAskUserQuestionOptionAnswerInput,
   buildLarkWorkflowCard,
   createLarkWorkflowCardCoordinator,
   deriveLarkAgentConversationEntries,
@@ -1471,6 +1473,31 @@ async function handleChannelMessageEvent(event: Extract<ClientEvent, { type: "ch
     return;
   }
 
+  if (event.payload.provider === "lark" && existingSession.status === "running") {
+    const activeSession = store.getSession(existingSession.id);
+    const pendingQuestion = [...(activeSession?.pendingPermissions.values() ?? [])]
+      .find((pending) => pending.toolName === "AskUserQuestion");
+    const updatedInput = pendingQuestion
+      ? buildLarkAskUserQuestionAnsweredInput(pendingQuestion.input, text)
+      : null;
+    if (pendingQuestion && updatedInput) {
+      if (!channelReplyTargets.has(existingSession.id)) {
+        registerChannelSession(existingSession.id, replyTarget, claim);
+      }
+      larkWorkflowCardActionNotices.set(existingSession.id, "已收到回答，继续执行。");
+      await handleClientEvent({
+        type: "permission.response",
+        payload: {
+          sessionId: existingSession.id,
+          toolUseId: pendingQuestion.toolUseId,
+          result: { behavior: "allow", updatedInput },
+        },
+      });
+      await syncLarkWorkflowCard(existingSession.id);
+      return;
+    }
+  }
+
   registerChannelSession(existingSession.id, replyTarget, claim);
 
   if (existingSession.status === "running") {
@@ -1620,6 +1647,24 @@ export async function handleLarkCardAction(event: LarkCardActionEvent): Promise<
       payload: { sessionId: action.sessionId, workflowRunId: action.workflowRunId },
     });
     notice = "继续执行请求已提交。";
+  } else if (action.action === "question_answer" && action.toolUseId && action.answer) {
+    const session = initializeSessions().getSession(action.sessionId);
+    const pending = session?.pendingPermissions.get(action.toolUseId);
+    const updatedInput = buildLarkAskUserQuestionOptionAnswerInput(pending?.input, action.answer);
+    if (!pending || pending.toolName !== "AskUserQuestion" || !updatedInput) {
+      console.warn("[channel] Ignored Lark question answer because it does not match the pending question");
+      return;
+    }
+    larkWorkflowCardPermissions.delete(action.sessionId);
+    await handleClientEvent({
+      type: "permission.response",
+      payload: {
+        sessionId: action.sessionId,
+        toolUseId: action.toolUseId,
+        result: { behavior: "allow", updatedInput },
+      },
+    });
+    notice = `已回答：${action.answer}`;
   } else if (
     (action.action === "permission_allow" || action.action === "permission_deny")
     && action.toolUseId
@@ -2813,6 +2858,13 @@ export async function handleClientEvent(event: ClientEvent, context: ClientEvent
     if (pending) {
       pending.resolve(event.payload.result);
     }
+    emit({
+      type: "permission.resolved",
+      payload: {
+        sessionId: event.payload.sessionId,
+        toolUseId: event.payload.toolUseId,
+      },
+    });
     larkWorkflowCardPermissions.delete(event.payload.sessionId);
     void syncLarkWorkflowCard(event.payload.sessionId);
     return;

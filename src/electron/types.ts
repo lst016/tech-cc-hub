@@ -267,6 +267,7 @@ export type ServerEvent =
   | { type: "session.deleted"; payload: { sessionId: string } }
   | { type: "desktop.notification.opened"; payload: { target: DesktopNotificationOpenTarget } }
   | { type: "permission.request"; payload: PermissionRequestPayload & { sessionId: string } }
+  | { type: "permission.resolved"; payload: { sessionId: string; toolUseId: string } }
   | { type: "runner.error"; payload: { sessionId?: string; message: string } }
   | { type: "agent.list"; payload: { agents: Array<{ id: string; name: string; description?: string; scope: string }> } }
   // MCP server events

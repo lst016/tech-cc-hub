@@ -3,6 +3,7 @@ import {
   type CanUseTool,
   type EffortLevel,
   type HookCallbackMatcher,
+  type McpSdkServerConfigWithInstance,
   type PermissionResult,
   type Query,
   type SDKMessage,
@@ -107,6 +108,11 @@ import {
   listBuiltinMcpToolNames,
 } from "../builtin-mcp-servers.js";
 import { setImageGenerationSessionContext, toImageGenerationRouteConfig } from "../mcp-tools/image-generation.js";
+import {
+  getLarkInteractionMcpServer,
+  LARK_INTERACTION_MCP_SERVER_NAME,
+  LARK_INTERACTION_MCP_TOOL_NAME,
+} from "../mcp-tools/lark-interaction.js";
 import { createRunnerActivityWatchdog } from "./runner-activity-watchdog.js";
 import { normalizeRunnerError } from "./runner-error.js";
 import { RunnerTurnLifecycle } from "./runner-turn-lifecycle.js";
@@ -271,10 +277,12 @@ const CLAUDE_CODE_AUTO_TRUNCATE_ARGS: Record<string, string | null> = {
 let claudeCodeAutoTruncateSupport: boolean | null = null;
 const ALWAYS_ALLOWED_TOOLS = new Set([
   "AskUserQuestion",
+  LARK_INTERACTION_MCP_TOOL_NAME,
   ...BUILTIN_MCP_TOOL_NAMES,
 ]);
 const PLAN_MODE_READ_ONLY_TOOLS = new Set([
   "AskUserQuestion",
+  LARK_INTERACTION_MCP_TOOL_NAME,
   "ExitPlanMode",
   "Glob",
   "Grep",
@@ -337,9 +345,22 @@ const CODEGRAPH_WORKSPACE_TOOL_NAMES = new Set([
 const BROAD_CODE_EXPLORATION_TOOL_NAMES = new Set(["Grep", "Glob", "Task", "Search"]);
 const BASH_CODE_EXPLORATION_COMMAND_PATTERN =
   /(?:^|[;&|()\s])(?:rg|grep|find|fd|tree|findstr)(?:\.exe)?(?=\s|$)|\bgit\s+(?:grep|ls-files)\b|\b(?:Get-ChildItem|Select-String)\b/i;
+const MCP_TOOL_BASH_INVOCATION_PATTERN =
+  /(?:^|[\s"'`])mcp__[a-z0-9_-]+__[a-z0-9_-]+(?=\s|\(|\{|$)/i;
 
 function isSdkBuiltinCronTool(toolName: string): boolean {
   return SDK_BUILTIN_CRON_TOOLS.has(toolName);
+}
+
+function getMcpBashInvocationDenyMessage(toolName: string, input: unknown): string | undefined {
+  if (toolName !== "Bash" || !isRecord(input)) {
+    return undefined;
+  }
+  const command = typeof input.command === "string" ? input.command.trim() : "";
+  if (!MCP_TOOL_BASH_INVOCATION_PATTERN.test(command)) {
+    return undefined;
+  }
+  return "MCP tools cannot be invoked through Bash. Call the MCP tool directly; if it is deferred, use ToolSearch once, and if it remains unavailable report the blocker instead of retrying Bash.";
 }
 
 function isKnowledgeIndexTool(toolName: string): boolean {
@@ -582,6 +603,7 @@ export function applyRunnerHardToolPolicy(
     () => shouldDenyPowerShellCommand(toolName, effectiveInput)
       ? "PowerShell is disabled by tech-cc-hub's Windows shell policy because it is unstable in this environment. Use cmd.exe instead, for example: cmd.exe /d /s /c \"<command>\"."
       : undefined,
+    () => getMcpBashInvocationDenyMessage(toolName, effectiveInput),
     () => isSdkBuiltinCronTool(toolName)
       ? "SDK CronCreate/CronDelete/CronList are disabled. Use the tech-cc-hub cron MCP tools so schedules are persisted with history and retry metadata."
       : undefined,
@@ -738,6 +760,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   const abortController = new AbortController();
   const permissionMode = normalizeReleasePermissionMode(runtime?.permissionMode);
   const sdkSandboxEnabled = permissionMode !== "bypassPermissions";
+  const isLarkChannelSession = promptOrigin.kind === "channel" && promptOrigin.server.toLowerCase() === "lark";
   const promptInput = new PromptInputQueue();
   promptInput.enqueue(prompt, attachments, promptOrigin);
   let activeQuery: Query | null = null;
@@ -954,6 +977,19 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
     });
   };
 
+  const buildLarkInteractionMcpServers = (): Record<string, McpSdkServerConfigWithInstance> => isLarkChannelSession
+    ? {
+        [LARK_INTERACTION_MCP_SERVER_NAME]: getLarkInteractionMcpServer({
+          signal: abortController.signal,
+          requestQuestion: (input, signal) => requestPermissionDecision(
+            "AskUserQuestion",
+            input,
+            signal,
+          ),
+        }),
+      }
+    : {};
+
   const collectRuntimeProfileForPrompt = (
     nextPrompt: string,
     nextAttachments: readonly PromptAttachment[],
@@ -1026,6 +1062,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         cwd: latestProjectCwd,
         figmaToolMode: latestFigmaToolMode,
       }, enabledBuiltinMcpServerNames),
+      ...buildLarkInteractionMcpServers(),
     });
     activeBuiltinMcpServerNames = nextBuiltinMcpServerNames;
     console.info("[runner][mcp-expanded]", {
@@ -1043,6 +1080,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
       cwd: latestProjectCwd,
       figmaToolMode: latestFigmaToolMode,
     }, enabledBuiltinMcpServerNames),
+    ...buildLarkInteractionMcpServers(),
   });
 
   const refreshStatefulMcpServers = async (reason: StatefulMcpNotConnectedResult): Promise<void> => {
@@ -1413,6 +1451,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             ...emulatorMcpServers,
             ...getExternalMcpServers(syncedGlobalRuntimeConfig, { projectDir: projectCwd }),
             ...builtinMcpServers,
+            ...buildLarkInteractionMcpServers(),
           },
           hooks,
           disallowedTools: agentTeamsDisallowedTools,
@@ -1470,6 +1509,10 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
             }
             if (hardPolicy.denyMessage) {
               return { behavior: "deny", message: hardPolicy.denyMessage };
+            }
+
+            if (toolName === LARK_INTERACTION_MCP_TOOL_NAME) {
+              return { behavior: "allow", updatedInput: effectiveInput };
             }
 
             if (toolName === "Read" && isRecord(effectiveInput)) {

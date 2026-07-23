@@ -69,6 +69,101 @@ Passed. Visual-verdict score: 95/100. The remaining routing differences are a sl
 
 final result: passed
 
+# Design QA — Workspace action menu
+
+## Scope and evidence
+
+- Source visual truth: `C:\Users\LUSHEN~1\AppData\Local\Temp\codex-clipboard-5a56687c-3090-48ed-8188-716527d77ac8.png` (384×539), showing three equal-weight hover actions competing with the workspace title.
+- Implementation capture: `C:\Users\LUSHEN~1\AppData\Local\Temp\tech-cc-hub-workspace-actions-menu-open.png` (1480×900), captured from the live Electron dev build in light theme with a Feishu workspace action menu open.
+- Focused comparison: `C:\Users\LUSHEN~1\AppData\Local\Temp\tech-cc-hub-workspace-actions-comparison.png` (834×540), comparing the original inline button cluster with the revised overflow menu.
+- Viewport: 1480×900 physical pixels at Windows 150% scaling, approximately 987×600 CSS pixels.
+
+## Required fidelity surfaces
+
+- Fonts and typography: passed. Existing sidebar typography is unchanged; menu labels use the compact 13px application scale.
+- Spacing and layout rhythm: passed. A single 28px overflow trigger replaces the three-button cluster, preserving more width for long workspace names. The 176px menu uses consistent 6px internal padding and compact item heights.
+- Colors and visual tokens: passed. The menu uses the existing neutral surface, border, shadow, and hover tokens; deletion is isolated in the existing destructive red treatment.
+- Image quality and asset fidelity: passed. `More`, `Add`, `LinkTwo`, and `Delete` reuse the installed Icon Park set; no new asset or dependency was introduced.
+- Copy and content: passed. Actions read “新建会话”, “关联工作区”, and “删除工作区” in task order, with the destructive action placed after a separator.
+
+## Interaction and accessibility checks
+
+- Default row: passed. Only one overflow affordance appears on hover or keyboard focus, so title and expansion state remain visually primary.
+- Menu trigger: passed. The trigger retains an explicit Chinese `aria-label`, keyboard focus styling, and Radix menu semantics.
+- Action wiring: passed. The existing create, link, and delete callbacks are preserved inside menu items.
+- Destructive action: passed. Delete is visually and spatially separated from reversible actions.
+- Regression coverage: passed. All seven focused sidebar workspace-drawer tests pass, including the compact overflow-menu contract.
+
+## Findings
+
+- P0: none.
+- P1: none.
+- P2: none.
+- P3: none.
+
+## Comparison history
+
+### Iteration 1
+
+- Finding: P2. Three equal-weight icon buttons fragmented the title row, compressed long workspace names, and placed the destructive action directly beside routine actions.
+- Fix: replaced the cluster with one overflow trigger, grouped routine actions in task order, and moved deletion into a separated destructive section.
+- Post-fix evidence: the focused comparison shows a calmer default row, clearer action hierarchy, and more usable title width. The live open-menu capture verifies spacing, alignment, hover surface, divider, and destructive styling.
+
+### Final visual verdict
+
+- Verdict: pass.
+- Category match: true.
+- No actionable P0, P1, or P2 differences remain.
+
+final result: passed
+
+---
+
+# Design QA — Feishu workspace icon
+
+## Comparison target
+
+- Source visual truth: `C:/Users/LUSHEN~1/AppData/Local/Temp/codex-clipboard-5a56687c-3090-48ed-8188-716527d77ac8.png` (384 x 539 physical pixels).
+- Implementation screenshot: `C:/Users/LUSHEN~1/AppData/Local/Temp/tech-cc-hub-sidebar-feishu-icon-printwindow.png` (1480 x 900 physical pixels).
+- Combined comparison input: `C:/Users/LUSHEN~1/AppData/Local/Temp/tech-cc-hub-sidebar-feishu-icon-comparison.png` (834 x 770 physical pixels).
+
+## Viewport and state
+
+- Desktop Electron window: 1480 x 900 physical pixels at Windows 150% display scaling, approximately 987 x 600 CSS pixels.
+- State: light theme; one Feishu workspace expanded; ordinary and Feishu workspace rows visible together.
+- Density normalization: the supplied source is a cropped physical-pixel capture with unknown CSS viewport. The focused comparison keeps both captures at native physical density because only the 16px workspace icon slot is being evaluated.
+
+## Comparison evidence
+
+- Full-view evidence: the live Electron capture shows the sidebar, main workspace, selected Feishu workspace, and unchanged workspace/session interactions without clipping or overlap.
+- Focused evidence: required because the requested change is a small icon. The combined image places the supplied sidebar crop and the live sidebar crop together; Feishu rows now use the blue Lark/Feishu brand mark while `boke-kefu-vue` retains the existing folder icon.
+
+## Required fidelity surfaces
+
+- Fonts and typography: passed. Workspace labels retain the existing 13px semibold typography, truncation, and line height.
+- Spacing and layout rhythm: passed. The replacement occupies the same 16 x 16 slot, so row height, 8px icon-to-label gap, disclosure chevron, and hover actions do not move.
+- Colors and visual tokens: passed. The icon uses Feishu blue `#3370ff`; all existing neutral sidebar tokens remain unchanged.
+- Image quality and asset fidelity: passed. The brand mark is the vector `Lark` icon from the project's existing Icon Park dependency, not a raster placeholder or handcrafted SVG.
+- Copy and content: passed. Workspace and session labels are unchanged.
+- Interaction and accessibility: passed. Expand/collapse, hover actions, selection, and local-workspace folder treatment remain unchanged; the decorative icon is hidden from assistive technology.
+
+## Findings
+
+- P0: none.
+- P1: none.
+- P2: none.
+- P3: the source and implementation show different session contents because they were captured at different moments; this does not affect the icon-slot comparison.
+
+## Comparison history
+
+### Iteration 1
+
+- Earlier finding: Feishu-generated workspace rows used the same generic folder icon as local projects, so their channel origin was not recognizable at a glance.
+- Fix: detect workspace roots already resolved by the Feishu channel metadata path and render Icon Park's filled `Lark` mark in the existing 16px slot; preserve the folder icon for other workspaces.
+- Post-fix evidence: the combined focused capture shows blue Feishu marks on `飞书-陆晟韬`, `飞书-海外客服-…`, and `飞书-王星星, lst`, while `boke-kefu-vue` remains a folder. No alignment or spacing regression is visible.
+
+final result: passed
+
 ---
 
 # Design QA: Woo 账号菜单

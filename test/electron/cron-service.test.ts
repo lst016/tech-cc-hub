@@ -90,6 +90,10 @@ function getPausedJobs(svc: CronService): Set<string> {
   return (svc as unknown as { pausedJobs: Set<string> }).pausedJobs;
 }
 
+function getRetryTimers(svc: CronService): Map<string, NodeJS.Timeout> {
+  return (svc as unknown as { retryTimers: Map<string, NodeJS.Timeout> }).retryTimers;
+}
+
 // 鈹€鈹€ 1. Busy-Retry 閫€閬跨畻娉曪紙F-04锛夆攢鈹€
 
 test("computeBackoffMs: nextRunAtMs 10s 鍚?鈫?鍙?(10s)/2 = 5s", () => {
@@ -380,4 +384,109 @@ test("H-4: init() 把 DB 中 paused=true 的 job 装进 pausedJobs Set", async (
   assert.ok(!getPausedJobs(svc).has("cron_h4_running"), "paused=false 的 job 不能进 pausedJobs");
 
   svc.destroy();
+});
+
+test("init catches up a single overdue recurring run before refreshing nextRunAt", async () => {
+  const now = Date.now();
+  const job = makeJob({
+    id: "cron_init_single_misfire",
+    schedule: { kind: "every", everyMs: 60_000, description: "every minute" },
+    metadata: {
+      conversationId: "conv_single_misfire",
+      agentType: "claude",
+      createdBy: "user",
+      createdAt: now - 120_000,
+      updatedAt: now - 120_000,
+    },
+    state: {
+      runCount: 0,
+      retryCount: 0,
+      maxRetries: 3,
+      lastRunAtMs: now - 60_000,
+      nextRunAtMs: now - 5_000,
+    },
+  });
+  const repo = makeRepo([job]);
+  const executor = makeExecutor();
+  const svc = new CronService(repo, makeEmitter(), executor);
+
+  deleteCronJob(job.id);
+  insertCronJob(job);
+  try {
+    await svc.init();
+
+    assert.equal(executor.executeCount, 1, "the overdue occurrence must run once during startup");
+    const updated = await repo.getById(job.id);
+    assert.equal(updated?.state.runCount, 1);
+    assert.ok((updated?.state.nextRunAtMs ?? 0) > now, "startup must preserve the following occurrence");
+  } finally {
+    svc.destroy();
+    deleteCronJob(job.id);
+  }
+});
+
+test("an every schedule remains active after its first execution", async () => {
+  const now = Date.now();
+  const job = makeJob({
+    id: "cron_every_repeats",
+    schedule: { kind: "every", everyMs: 30, description: "every 30ms" },
+    metadata: {
+      conversationId: "conv_every_repeats",
+      agentType: "claude",
+      createdBy: "user",
+      createdAt: now,
+      updatedAt: now,
+    },
+    state: {
+      runCount: 0,
+      retryCount: 0,
+      maxRetries: 3,
+      nextRunAtMs: now + 30,
+    },
+  });
+  const repo = makeRepo([job]);
+  const executor = makeExecutor();
+  const svc = new CronService(repo, makeEmitter(), executor);
+
+  deleteCronJob(job.id);
+  insertCronJob(job);
+  try {
+    await svc.init();
+    await new Promise((resolve) => setTimeout(resolve, 125));
+
+    assert.ok(executor.executeCount >= 2, "the recurring timer must fire more than once");
+  } finally {
+    svc.destroy();
+    deleteCronJob(job.id);
+  }
+});
+
+test("startup catch-up keeps its busy retry after installing the recurring timer", async () => {
+  const now = Date.now();
+  const job = makeJob({
+    id: "cron_init_busy_retry",
+    schedule: { kind: "every", everyMs: 60_000, description: "every minute" },
+    metadata: {
+      conversationId: "conv_init_busy_retry",
+      agentType: "claude",
+      createdBy: "user",
+      createdAt: now - 120_000,
+      updatedAt: now - 120_000,
+    },
+    state: {
+      runCount: 0,
+      retryCount: 0,
+      maxRetries: 3,
+      lastRunAtMs: now - 60_000,
+      nextRunAtMs: now - 5_000,
+    },
+  });
+  const svc = new CronService(makeRepo([job]), makeEmitter(), makeExecutor({ busy: true }));
+
+  try {
+    await svc.init();
+    assert.ok(getRetryTimers(svc).has(job.id), "installing the live timer must not cancel catch-up retry");
+  } finally {
+    svc.destroy();
+  }
 });

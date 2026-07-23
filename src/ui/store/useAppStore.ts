@@ -1417,6 +1417,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         break;
       }
 
+      case "permission.resolved": {
+        const { sessionId, toolUseId } = event.payload;
+        get().resolvePermissionRequest(sessionId, toolUseId);
+        break;
+      }
+
       case "runner.error": {
         set({ globalError: event.payload.message });
         break;

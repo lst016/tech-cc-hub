@@ -29,6 +29,18 @@ export type LarkWorkflowCardPermission = {
   input: unknown;
 };
 
+export type LarkAskUserQuestionOption = {
+  label: string;
+  description?: string;
+};
+
+export type LarkAskUserQuestion = {
+  question: string;
+  header?: string;
+  options: LarkAskUserQuestionOption[];
+  multiSelect: boolean;
+};
+
 export type LarkAgentConversationEntry =
   | {
       id: string;
@@ -62,6 +74,7 @@ export type LarkWorkflowCardActionName =
   | "stop_task"
   | "permission_allow"
   | "permission_deny"
+  | "question_answer"
   | "resume_run"
   | "rerun_run";
 
@@ -73,6 +86,7 @@ export type LarkWorkflowCardActionPayload = {
   taskId?: string;
   workflowRunId?: string;
   toolUseId?: string;
+  answer?: string;
 };
 
 export type LarkCardActionEvent = {
@@ -165,9 +179,16 @@ const MAX_PROMPT_CHARS = 600;
 const MAX_SUMMARY_CHARS = 3_000;
 const MAX_RUNS = 6;
 const MAX_CONVERSATION_ENTRIES = 16;
-const MAX_TOOL_DETAIL_CHARS = 1_800;
+const MAX_TOOL_DETAIL_CHARS = 1_200;
+const MAX_TOOL_DETAIL_ITEMS = 10;
 const MAX_CONVERSATION_BYTES = 12_000;
 const MAX_ACTION_EVENT_IDS = 2_000;
+const MAX_ASK_QUESTIONS = 3;
+const MAX_ASK_OPTIONS = 6;
+const LARK_QUESTION_TOOL_NAMES = new Set([
+  "AskUserQuestion",
+  "mcp__tech-cc-hub-lark__ask_user_question",
+]);
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -179,6 +200,67 @@ function asString(value: unknown): string | undefined {
 
 function asPositiveInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+export function normalizeLarkAskUserQuestions(input: unknown): LarkAskUserQuestion[] {
+  if (!isRecord(input)) return [];
+  const rawQuestions = input.questions;
+  const items = Array.isArray(rawQuestions)
+    ? rawQuestions
+    : typeof rawQuestions === "string" && rawQuestions.trim()
+      ? [{ question: rawQuestions }]
+      : isRecord(rawQuestions)
+        ? [rawQuestions]
+        : [];
+
+  return items.flatMap((item): LarkAskUserQuestion[] => {
+    if (typeof item === "string" && item.trim()) {
+      return [{ question: item.trim(), options: [], multiSelect: false }];
+    }
+    if (!isRecord(item)) return [];
+    const question = asString(item.question) ?? asString(item.prompt) ?? asString(item.text);
+    if (!question) return [];
+    const options = Array.isArray(item.options)
+      ? item.options.flatMap((option): LarkAskUserQuestionOption[] => {
+        if (typeof option === "string" && option.trim()) return [{ label: option.trim() }];
+        if (!isRecord(option)) return [];
+        const label = asString(option.label);
+        if (!label) return [];
+        return [{ label, ...(asString(option.description) ? { description: asString(option.description) } : {}) }];
+      })
+      : [];
+    return [{
+      question,
+      ...(asString(item.header) ? { header: asString(item.header) } : {}),
+      options,
+      multiSelect: item.multiSelect === true,
+    }];
+  });
+}
+
+export function buildLarkAskUserQuestionAnsweredInput(input: unknown, reply: string): UnknownRecord | null {
+  if (!isRecord(input)) return null;
+  const questions = normalizeLarkAskUserQuestions(input);
+  const trimmedReply = reply.trim();
+  if (questions.length === 0 || !trimmedReply) return null;
+
+  const replyLines = trimmedReply.split(/\r?\n/)
+    .map((line) => line.replace(/^\s*(?:\d+[.)、]|[-*])\s*/, "").trim())
+    .filter(Boolean);
+  const answers: Record<string, string> = {};
+  questions.forEach((question, index) => {
+    const answer = questions.length === 1 ? trimmedReply : replyLines[index];
+    if (answer) answers[question.question] = answer;
+  });
+  if (Object.keys(answers).length === 0) return null;
+  return { ...input, answers };
+}
+
+export function buildLarkAskUserQuestionOptionAnswerInput(input: unknown, answer: string): UnknownRecord | null {
+  const questions = normalizeLarkAskUserQuestions(input);
+  const question = questions.length === 1 && !questions[0].multiSelect ? questions[0] : undefined;
+  if (!question?.options.some((option) => option.label === answer)) return null;
+  return buildLarkAskUserQuestionAnsweredInput(input, answer);
 }
 
 function compactText(value: string | undefined, limit: number, fallback = "未提供"): string {
@@ -267,8 +349,18 @@ function toolLabel(name: string): string {
     Task: "调度 Agent",
     Agent: "调度 Agent",
     Skill: "使用技能",
+    ToolSearch: "查找工具",
+    TaskOutput: "读取任务结果",
+    "mcp__tech-cc-hub-plan__update_plan": "更新计划",
   };
   return labels[name] ?? name;
+}
+
+function compactToolPath(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const parts = value.split(/[\\/]+/).filter(Boolean);
+  if (parts.length <= 2) return value;
+  return `…/${parts.slice(-2).join("/")}`;
 }
 
 function recordString(record: UnknownRecord, ...keys: string[]): string | undefined {
@@ -285,11 +377,13 @@ function toolDetail(tool: UnknownRecord): string {
   const summary = name === "Bash"
     ? recordString(input, "command")
     : name === "Read" || name === "Write" || name === "Edit" || name === "MultiEdit"
-      ? recordString(input, "file_path", "path")
+      ? compactToolPath(recordString(input, "file_path", "path"))
       : name === "Glob" || name === "Grep"
-        ? [recordString(input, "pattern"), recordString(input, "path")].filter(Boolean).join(" · ")
-        : recordString(input, "description", "query", "url", "prompt");
-  return summary ? `${toolLabel(name)}：${compactText(summary, 360)}` : toolLabel(name);
+        ? [recordString(input, "pattern"), compactToolPath(recordString(input, "path"))].filter(Boolean).join(" · ")
+        : name === "TaskOutput"
+          ? recordString(input, "task_id", "taskId")
+          : recordString(input, "description", "query", "url", "prompt");
+  return summary ? `${toolLabel(name)}：${compactText(summary, 160)}` : toolLabel(name);
 }
 
 function toolGroupTitle(tools: UnknownRecord[]): string {
@@ -302,11 +396,11 @@ function toolGroupTitle(tools: UnknownRecord[]): string {
         ? "read"
         : name === "Write" || name === "Edit" || name === "MultiEdit"
           ? "edit"
-          : name === "Glob" || name === "Grep"
+          : name === "Glob" || name === "Grep" || name === "WebSearch" || name === "ToolSearch"
             ? "search"
             : name === "Task" || name === "Agent"
               ? "agent"
-              : name;
+              : "other";
     counts.set(category, (counts.get(category) ?? 0) + 1);
   }
 
@@ -322,9 +416,7 @@ function toolGroupTitle(tools: UnknownRecord[]): string {
   append("edit", (count) => `编辑 ${count} 个文件`);
   append("search", (count) => `搜索 ${count} 次`);
   append("agent", (count) => `调度 ${count} 个 Agent`);
-  for (const [name, count] of counts) {
-    phrases.push(`${toolLabel(name)} ${count} 次`);
-  }
+  append("other", (count) => `其他 ${count} 项`);
   return phrases.join("，") || "处理任务";
 }
 
@@ -352,6 +444,8 @@ export function deriveLarkAgentConversationEntries(
   }
 
   const entries: LarkAgentConversationEntry[] = [];
+  const tools: UnknownRecord[] = [];
+  let firstToolTurnIndex: number | undefined;
   turnMessages.forEach((message, turnIndex) => {
     if (message.type !== "assistant") return;
     const contentItems = messageContentItems(message);
@@ -366,8 +460,15 @@ export function deriveLarkAgentConversationEntries(
       });
     });
 
-    const tools = contentItems.filter((content) => content.type === "tool_use");
-    if (tools.length === 0) return;
+    const messageTools = contentItems.filter((content) =>
+      content.type === "tool_use" && !LARK_QUESTION_TOOL_NAMES.has(asString(content.name) ?? "")
+    );
+    if (messageTools.length === 0) return;
+    firstToolTurnIndex ??= turnIndex;
+    tools.push(...messageTools);
+  });
+
+  if (tools.length > 0) {
     const resultStates = tools.map((tool) => {
       const toolUseId = asString(tool.id);
       return toolUseId ? toolResults.get(toolUseId) : undefined;
@@ -377,14 +478,19 @@ export function deriveLarkAgentConversationEntries(
       : resultStates.every((result) => result === "completed") || sessionStatus !== "running"
         ? "completed"
         : "running";
+    const uniqueDetails = [...new Set(tools.map(toolDetail))];
+    const visibleDetails = uniqueDetails.slice(0, MAX_TOOL_DETAIL_ITEMS);
+    const hiddenDetailCount = uniqueDetails.length - visibleDetails.length;
+    const detailLines = visibleDetails.map((detail) => `• ${detail}`);
+    if (hiddenDetailCount > 0) detailLines.push(`• 另有 ${hiddenDetailCount} 项操作`);
     entries.push({
-      id: `tools-${turnIndex + turnStart + 1}`,
+      id: `tools-${(firstToolTurnIndex ?? 0) + turnStart + 1}`,
       kind: "tools",
       title: toolGroupTitle(tools),
-      detail: truncateText(tools.map(toolDetail).join("\n"), MAX_TOOL_DETAIL_CHARS),
+      detail: truncateText(detailLines.join("\n"), MAX_TOOL_DETAIL_CHARS),
       status,
     });
-  });
+  }
 
   return limitConversationEntries(entries);
 }
@@ -437,30 +543,33 @@ function buildButtonRow(buttons: UnknownRecord[]): UnknownRecord {
   };
 }
 
-function buildRunBlock(run: LarkWorkflowCardRun): UnknownRecord {
-  const name = compactText(run.workflowName, 80, "子任务");
-  const detail = compactText(run.error ?? run.warning ?? run.summary, 500, "等待进度更新");
+function buildRunActivityPanel(runs: LarkWorkflowCardRun[]): UnknownRecord {
+  const visibleRuns = runs.slice(0, MAX_RUNS);
+  const detail = visibleRuns.map((run) => {
+    const name = compactText(run.workflowName, 60, "子任务");
+    const summary = compactText(run.error ?? run.warning ?? run.summary, 180, "等待进度更新");
+    return `• ${name}：${summary}`;
+  }).join("\n");
   return {
     tag: "collapsible_panel",
-    expanded: run.status === "failed",
+    expanded: false,
     header: {
-      title: { tag: "plain_text", content: name },
+      title: { tag: "plain_text", content: `执行过程 · ${visibleRuns.length} 个子任务` },
     },
     elements: [{ tag: "markdown", content: detail, text_size: "notation" }],
   };
 }
 
-function buildConversationEntry(entry: LarkAgentConversationEntry): UnknownRecord {
-  if (entry.kind === "assistant") {
-    return { tag: "markdown", content: entry.text };
-  }
+function buildConversationActivityPanel(entries: Extract<LarkAgentConversationEntry, { kind: "tools" }>[]): UnknownRecord {
+  const title = entries.length === 1 ? entries[0].title : `${entries.length} 个阶段`;
+  const detail = [...new Set(entries.map((entry) => entry.detail))].join("\n");
   return {
     tag: "collapsible_panel",
-    expanded: entry.status === "error",
+    expanded: false,
     header: {
-      title: { tag: "plain_text", content: entry.title },
+      title: { tag: "plain_text", content: `执行过程 · ${title}` },
     },
-    elements: [{ tag: "markdown", content: entry.detail, text_size: "notation" }],
+    elements: [{ tag: "markdown", content: truncateText(detail, MAX_TOOL_DETAIL_CHARS), text_size: "notation" }],
   };
 }
 
@@ -479,6 +588,69 @@ function actionPayload(
   };
 }
 
+function buildAskUserQuestionElements(
+  snapshot: LarkWorkflowCardSnapshot & { cardVersion: number },
+  permission: LarkWorkflowCardPermission,
+): UnknownRecord[] {
+  const questions = normalizeLarkAskUserQuestions(permission.input).slice(0, MAX_ASK_QUESTIONS);
+  if (questions.length === 0) return [];
+
+  const elements: UnknownRecord[] = [{
+    tag: "markdown",
+    content: `**请回答以下问题**${questions.length > 1 ? ` · ${questions.length} 题` : ""}`,
+  }];
+  const canAnswerWithButtons = questions.length === 1
+    && !questions[0].multiSelect
+    && questions[0].options.length > 0
+    && questions[0].options.length <= MAX_ASK_OPTIONS;
+
+  questions.forEach((question, questionIndex) => {
+    const header = question.header ? `<font color='grey'>${compactText(question.header, 40)}</font>\n` : "";
+    const multiSelectHint = question.multiSelect ? " · 多选" : "";
+    elements.push({
+      tag: "markdown",
+      content: `${header}**${questionIndex + 1}. ${truncateText(question.question, 500)}**${multiSelectHint}`,
+    });
+
+    if (!canAnswerWithButtons && question.options.length > 0) {
+      const optionLines = question.options.slice(0, MAX_ASK_OPTIONS).map((option, optionIndex) => {
+        const description = option.description ? ` — ${compactText(option.description, 120)}` : "";
+        return `${String.fromCharCode(65 + optionIndex)}. ${compactText(option.label, 80)}${description}`;
+      });
+      elements.push({ tag: "markdown", content: optionLines.join("\n"), text_size: "notation" });
+    }
+  });
+
+  if (canAnswerWithButtons) {
+    const buttons = questions[0].options.map((option, optionIndex) => buildCallbackButton({
+      text: compactText(option.label, 40),
+      type: optionIndex === 0 ? "primary_filled" : "default",
+      width: "fill",
+      action: actionPayload(snapshot, snapshot.cardVersion, "question_answer", {
+        toolUseId: permission.toolUseId,
+        answer: option.label,
+      }),
+    }));
+    for (let index = 0; index < buttons.length; index += 2) {
+      elements.push(buildButtonRow(buttons.slice(index, index + 2)));
+    }
+  } else {
+    elements.push({
+      tag: "markdown",
+      content: "<font color='grey'>请直接回复这条飞书消息；多题时每行回答一题。</font>",
+    });
+  }
+
+  elements.push(buildButtonRow([buildCallbackButton({
+    text: "取消",
+    type: "default",
+    action: actionPayload(snapshot, snapshot.cardVersion, "permission_deny", {
+      toolUseId: permission.toolUseId,
+    }),
+  })]));
+  return elements;
+}
+
 export function buildLarkWorkflowCard(
   snapshot: LarkWorkflowCardSnapshot & { cardVersion: number },
 ): LarkCardJson {
@@ -490,14 +662,37 @@ export function buildLarkWorkflowCard(
   }
 
   const conversation = limitConversationEntries(snapshot.conversation ?? []);
-  if (conversation.length > 0) {
-    elements.push(...conversation.map(buildConversationEntry));
-  } else {
-    const visibleRuns = snapshot.runs.slice(0, MAX_RUNS);
-    elements.push(...visibleRuns.map(buildRunBlock));
+  const toolEntries = conversation.filter(
+    (entry): entry is Extract<LarkAgentConversationEntry, { kind: "tools" }> => entry.kind === "tools",
+  );
+  const latestAssistant = [...conversation].reverse().find((entry) => entry.kind === "assistant");
+  if (toolEntries.length > 0) {
+    elements.push(buildConversationActivityPanel(toolEntries));
+  } else if (snapshot.runs.length > 0) {
+    elements.push(buildRunActivityPanel(snapshot.runs));
+  }
+  if (latestAssistant?.kind === "assistant") {
+    elements.push({ tag: "markdown", content: latestAssistant.text });
   }
 
-  if (snapshot.permission) {
+  if (snapshot.permission?.toolName === "AskUserQuestion") {
+    const questionElements = buildAskUserQuestionElements(snapshot, snapshot.permission);
+    if (questionElements.length > 0) {
+      elements.push(...questionElements);
+    } else {
+      elements.push({
+        tag: "markdown",
+        content: "**等待回答**\n问题内容无法解析，请取消后让 Agent 重新提问。",
+      });
+      elements.push(buildButtonRow([buildCallbackButton({
+        text: "取消",
+        type: "default",
+        action: actionPayload(snapshot, snapshot.cardVersion, "permission_deny", {
+          toolUseId: snapshot.permission.toolUseId,
+        }),
+      })]));
+    }
+  } else if (snapshot.permission) {
     elements.push({
       tag: "markdown",
       content: `**等待确认**\n工具 **${compactText(snapshot.permission.toolName, 80)}** 请求继续执行。`,
@@ -535,16 +730,9 @@ export function buildLarkWorkflowCard(
   }
 
   if (snapshot.status === "running" && !snapshot.permission) {
-    const activeConversation = [...conversation].reverse().find((entry) => entry.kind === "tools" && entry.status === "running");
-    const activeRun = snapshot.runs.find((run) =>
-      run.status === "running" || run.status === "launching" || run.status === "backgrounded"
-    );
-    const activeLabel = activeConversation?.kind === "tools"
-      ? activeConversation.title
-      : activeRun?.summary || activeRun?.workflowName;
     elements.push({
       tag: "markdown",
-      content: `<font color='blue'>正在处理${activeLabel ? `：${compactText(activeLabel, 120)}` : ""}…</font>`,
+      content: "<font color='blue'>正在执行…</font>",
     });
   } else if (snapshot.status === "error" && snapshot.error) {
     elements.push({ tag: "markdown", content: "<font color='red'>执行遇到问题</font>" });
@@ -605,8 +793,8 @@ export function buildLarkWorkflowCard(
     },
     body: {
       direction: "vertical",
-      padding: "16px 20px 16px 20px",
-      vertical_spacing: "8px",
+      padding: "12px 16px 12px 16px",
+      vertical_spacing: "6px",
       elements,
     },
   };
@@ -780,6 +968,7 @@ function parseActionPayload(value: unknown): LarkWorkflowCardActionPayload | nul
     "stop_task",
     "permission_allow",
     "permission_deny",
+    "question_answer",
     "resume_run",
     "rerun_run",
   ];
@@ -788,6 +977,7 @@ function parseActionPayload(value: unknown): LarkWorkflowCardActionPayload | nul
   const taskId = asString(parsed.taskId);
   const workflowRunId = asString(parsed.workflowRunId);
   const toolUseId = asString(parsed.toolUseId);
+  const answer = asString(parsed.answer);
   const payload: LarkWorkflowCardActionPayload = {
     v: 1,
     action,
@@ -796,9 +986,11 @@ function parseActionPayload(value: unknown): LarkWorkflowCardActionPayload | nul
     ...(taskId ? { taskId } : {}),
     ...(workflowRunId ? { workflowRunId } : {}),
     ...(toolUseId ? { toolUseId } : {}),
+    ...(answer ? { answer } : {}),
   };
   if (action === "stop_task" && !payload.taskId) return null;
   if ((action === "permission_allow" || action === "permission_deny") && !payload.toolUseId) return null;
+  if (action === "question_answer" && (!payload.toolUseId || !payload.answer)) return null;
   if ((action === "resume_run" || action === "rerun_run") && !payload.workflowRunId) return null;
   return payload;
 }

@@ -50,6 +50,7 @@ export function buildToolCallOptimizationPromptAppend(): string {
     "After Edit/Write/MultiEdit, immediately run the smallest meaningful verification and report the result.",
     "Use bounded non-interactive shell commands; on Windows avoid unstable PowerShell surfaces and quote paths carefully. In Git Bash, protect Windows executable switches with double slashes when needed, for example `taskkill //PID 1234 //F`.",
     "For scheduled tasks use the persistent tech-cc-hub cron MCP tools, not SDK CronCreate/CronDelete/CronList.",
+    "MCP calls are direct tool calls: never invoke an MCP tool by typing its `mcp__...` name or JSON payload into Bash. If a needed MCP tool is deferred, use ToolSearch once to load it; if it is still unavailable or fails, report the blocker instead of retrying through Bash.",
   ].join("\n");
 }
 
