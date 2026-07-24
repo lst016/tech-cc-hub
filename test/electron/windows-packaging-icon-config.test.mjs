@@ -46,6 +46,8 @@ test("Windows icon and macOS protocol checks run during packaging", async () => 
   assert.doesNotMatch(buildWorkflow, /push:\s*\n\s*tags:/);
   assert.doesNotMatch(buildWorkflow, /softprops\/action-gh-release/);
   assert.match(releaseWorkflow, /command: npm run release:win-x64/);
+  assert.match(releaseWorkflow, /continue-on-error: \$\{\{ matrix\.platform == 'mac' \}\}/);
+  assert.match(releaseWorkflow, /if: always\(\) && startsWith\(github\.ref, 'refs\/tags\/v'\)/);
   assert.doesNotMatch(releaseWorkflow, /script: dist:linux/);
   assert.doesNotMatch(releaseWorkflow, /script: dist:mac-x64/);
   assert.match(releaseWorkflow, /dist\/\*\.yml/);
@@ -60,6 +62,9 @@ test("Windows icon and macOS protocol checks run during packaging", async () => 
   assert.match(releaseWorkflow, /source\.rename\(target\)/);
   assert.match(releaseWorkflow, /Verify Windows updater assets/);
   assert.match(releaseWorkflow, /if \[ ! -s latest\.yml \]/);
+  assert.match(releaseWorkflow, /latest\.yml is required for a Windows release/);
   assert.match(releaseWorkflow, /test -s "\$\{installer\}\.blockmap"/);
   assert.match(releaseWorkflow, /latest\.yml size mismatch/);
+  assert.match(releaseWorkflow, /No macOS updater metadata found; publishing the verified Windows release only/);
+  assert.match(releaseWorkflow, /incomplete macOS updater metadata/);
 });

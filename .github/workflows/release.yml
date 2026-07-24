@@ -13,6 +13,7 @@ jobs:
   build-desktop:
     name: Build ${{ matrix.platform }} ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.platform == 'mac' }}
     strategy:
       fail-fast: false
       matrix:
@@ -199,7 +200,7 @@ jobs:
     name: Publish GitHub Release
     needs: [build-desktop]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: always() && startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -255,8 +256,8 @@ jobs:
           set -euo pipefail
           cd release-assets
           if [ ! -s latest.yml ]; then
-            echo "latest.yml not found, skipping Windows updater verification"
-            exit 0
+            echo "latest.yml is required for a Windows release"
+            exit 1
           fi
           installer="$(python - <<'PY'
           import re
@@ -285,6 +286,15 @@ jobs:
           from pathlib import Path
 
           release_dir = Path(".")
+          metadata_paths = [release_dir / "latest-mac.yml", release_dir / "latest-x64-mac.yml"]
+          present_metadata = [path for path in metadata_paths if path.is_file()]
+          if not present_metadata:
+              print("No macOS updater metadata found; publishing the verified Windows release only")
+              raise SystemExit(0)
+          if len(present_metadata) != len(metadata_paths):
+              missing = ", ".join(path.name for path in metadata_paths if not path.is_file())
+              raise SystemExit(f"incomplete macOS updater metadata; missing: {missing}")
+
           seen_artifacts = set()
           for arch, metadata_name in (("arm64", "latest-mac.yml"), ("x64", "latest-x64-mac.yml")):
               metadata = release_dir / metadata_name
