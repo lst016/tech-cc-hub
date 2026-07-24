@@ -228,7 +228,7 @@ jobs:
               raise SystemExit(0)
 
           text = latest_path.read_text(encoding="utf-8")
-          match = re.search(r"^path:\s*['\"]?(.+?)['"']?\s*$", text, re.M)
+          match = re.search(r"^path:\s*['\"]?(.+?)['\"]?\s*$", text, re.M)
           if not match:
               raise SystemExit("latest.yml does not declare path")
 

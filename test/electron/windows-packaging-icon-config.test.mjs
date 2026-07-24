@@ -51,10 +51,15 @@ test("Windows icon and macOS protocol checks run during packaging", async () => 
   assert.match(releaseWorkflow, /dist\/\*\.yml/);
   assert.match(releaseWorkflow, /dist\/\*\.blockmap/);
   assert.match(releaseWorkflow, /Normalize GitHub asset names/);
+  assert.equal(releaseWorkflow.includes(String.raw`['"']?`), false);
+  assert.equal(
+    releaseWorkflow.includes(String.raw`match = re.search(r"^path:\s*['\"]?(.+?)['\"]?\s*$", text, re.M)`),
+    true,
+  );
   assert.match(releaseWorkflow, /installer\.replace\(" ", "\."\)/);
   assert.match(releaseWorkflow, /source\.rename\(target\)/);
   assert.match(releaseWorkflow, /Verify Windows updater assets/);
-  assert.match(releaseWorkflow, /test -s latest\.yml/);
+  assert.match(releaseWorkflow, /if \[ ! -s latest\.yml \]/);
   assert.match(releaseWorkflow, /test -s "\$\{installer\}\.blockmap"/);
   assert.match(releaseWorkflow, /latest\.yml size mismatch/);
 });
